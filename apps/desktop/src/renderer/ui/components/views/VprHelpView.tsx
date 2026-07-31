@@ -61,7 +61,7 @@ const HELP_TOPICS: HelpTopic[] = [
         sections: [
           {
             heading: 'Set the new session model',
-            body: 'Apply sets the model new sessions start on: everything you connect routes through it. With Auto select on, AntSeed keeps re-picking the best seller for that model based on your price and trust preferences.',
+            body: 'Use sets the model new sessions start on: everything you connect routes through it. With Auto select on, AntSeed keeps re-picking the best seller for that model based on your price and trust preferences.',
           },
           {
             heading: 'Pin a seller',

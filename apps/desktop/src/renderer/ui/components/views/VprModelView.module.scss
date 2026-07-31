@@ -54,49 +54,43 @@
   line-height: 24px;
 }
 
+/* Always a single line: the "+N" chip absorbs the tail, and anything that
+   still doesn't fit is clipped rather than wrapped. */
+/* Checkmark marking the applied model on its own page. */
+.titleCheck {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent-green);
+}
+
 .badgeRow {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 2px;
+  min-width: 0;
+  overflow: hidden;
 }
 
-/* "+N" overflow chip: hover/focus reveals the collapsed categories. */
+.badgeRow > * {
+  flex: 0 0 auto;
+}
+
+/* "+N" overflow chip: its title attribute names the collapsed categories. */
 .badgeMore {
-  position: relative;
   display: inline-flex;
   cursor: default;
-  outline: none;
-}
-
-.badgeMoreTip {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 20;
-  width: max-content;
-  max-width: 260px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg-card);
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 18px;
-  box-shadow: var(--shadow-float);
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.12s ease;
-  pointer-events: none;
-}
-
-.badgeMore:hover .badgeMoreTip,
-.badgeMore:focus-visible .badgeMoreTip {
-  opacity: 1;
-  visibility: visible;
 }
 
 .headActions {
   flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.headActionsRow {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -135,7 +129,9 @@
   fill: currentColor;
 }
 
-.apply {
+/* ---------- CTAs (Start chat / Use <model>, in the header row) ---------- */
+
+.use {
   flex: 0 0 auto;
   padding: 8px 12px;
   border: none;
@@ -149,12 +145,37 @@
   transition: filter 0.12s ease;
 }
 
-.apply:hover {
+.use:hover {
   filter: brightness(1.08);
 }
 
-.apply:focus-visible {
+.use:focus-visible {
   outline: none;
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+}
+
+/* Secondary CTA as a plain text link under the Use button. */
+.startChat {
+  flex: 0 0 auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  cursor: pointer;
+  transition: color 0.12s ease;
+}
+
+.startChat:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+.startChat:focus-visible {
+  outline: none;
+  border-radius: 4px;
   box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
 }
 

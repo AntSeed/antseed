@@ -572,6 +572,13 @@ registerActions({
     saveVprRouteSelection(uiState.vprRouteSelection);
     notifyUiStateChanged();
   },
+  setVprModelSellerPin: (provider, serviceId, peerId) => {
+    uiState.vprModelPins = peerId
+      ? setVprModelPin(uiState.vprModelPins, provider, serviceId, peerId)
+      : clearVprModelPin(uiState.vprModelPins, provider, serviceId);
+    saveVprModelPins(uiState.vprModelPins);
+    notifyUiStateChanged();
+  },
   updateVprRoutingPreferences: (patch) => {
     uiState.vprRoutingPreferences = { ...uiState.vprRoutingPreferences, ...patch };
     saveVprRoutingPreferences(uiState.vprRoutingPreferences);

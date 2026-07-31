@@ -10,6 +10,7 @@ import {
 } from '../../../modules/catalog/view-models';
 import { findCatalogEntry } from '../../../modules/catalog/model-catalog';
 import { loadFavoriteModels } from '../../../modules/catalog/favorites';
+import { setVprModelPageTarget } from '../../../modules/catalog/model-page-target';
 import {
   catalogEntryKey,
   selectFavoriteVprCatalog,
@@ -144,7 +145,10 @@ export function VprExploreView({ onSelectView }: Props) {
             entry={selectedEntry}
             auto={snap.selection.mode === 'auto'}
             pinnedPeerLabel={pinnedSeller}
-            onClick={() => onSelectView?.('model')}
+            onClick={() => {
+              setVprModelPageTarget(selectedEntry.provider, selectedEntry.serviceId);
+              onSelectView?.('model');
+            }}
           />
         )}
 
@@ -190,7 +194,9 @@ export function VprExploreView({ onSelectView }: Props) {
               favoriteKeys={favorites}
               pinnedPeerLabels={listedPins}
               onSelect={(provider, serviceId) => {
-                actions.selectVprModel(provider, serviceId);
+                // Drilling into a model only browses it — the model page's
+                // "Use" button is what makes it the active route.
+                setVprModelPageTarget(provider, serviceId);
                 onSelectView?.('model');
               }}
               emptyLabel="No matching models"
@@ -209,7 +215,9 @@ export function VprExploreView({ onSelectView }: Props) {
               selectedServiceId={selectedModel?.serviceId}
               pinnedPeerLabels={listedPins}
               onSelect={(provider, serviceId) => {
-                actions.selectVprModel(provider, serviceId);
+                // Drilling into a model only browses it — the model page's
+                // "Use" button is what makes it the active route.
+                setVprModelPageTarget(provider, serviceId);
                 onSelectView?.('model');
               }}
               emptyLabel="No matching models"

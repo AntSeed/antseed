@@ -1,10 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { PreferenceHorizontalIcon, StarIcon, Tick02Icon } from '@hugeicons/core-free-icons';
 import { chooseBestVprRoute } from '../../../modules/routing/select';
 import { routesForSelectedModel } from '../../../modules/catalog/view-models';
 import { findCatalogEntry } from '../../../modules/catalog/model-catalog';
 import { favoriteModelKey, loadFavoriteModels, toggleFavoriteModel } from '../../../modules/catalog/favorites';
+import { vprModelPageTarget } from '../../../modules/catalog/model-page-target';
+import { modelPinKey, vprModelPinFor } from '../../../modules/routing/model-pins';
 import { isFreeRoute, sellerMetaLabel, sellerReputationLabel } from '../../../modules/catalog/seller-format';
 import type { DiscoverRow } from '../../../core/state';
 import { formatCategoryLabel } from '../chat/discover-filter-util';
@@ -16,10 +18,6 @@ import { formatUsdShort, VprBadge, VprCard, VprPage, VprSettingRow, VprStatRow, 
 import styles from './VprModelView.module.scss';
 
 type Props = { onSelectView?: (view: ViewName) => void };
-
-/* Category badges shown before collapsing into a "+N" chip — the full list
-   easily runs past twenty tags and would swamp the page head. */
-const MAX_VISIBLE_CATEGORIES = 5;
 
 function priceTile(entry: { minInputUsdPerMillion: number | null; maxInputUsdPerMillion: number | null }): string {
   const min = entry.minInputUsdPerMillion;
@@ -37,9 +35,17 @@ export function VprModelView({ onSelectView }: Props) {
     discoverRows: state.vprRoutableRows,
     selection: state.vprRouteSelection,
     preferences: state.vprRoutingPreferences,
+    pins: state.vprModelPins,
   }), shallowEqual);
   const [favorites, setFavorites] = useState(loadFavoriteModels);
-  const model = snap.selection.model;
+  // The page shows the model the user drilled into, which may not be the
+  // applied route — browsing must not change routing until "Use" is pressed.
+  const selectionModel = snap.selection.model;
+  const model = useMemo(() => vprModelPageTarget()
+    ?? (selectionModel ? { provider: selectionModel.provider, serviceId: selectionModel.serviceId } : null),
+  [selectionModel]);
+  const applied = Boolean(model && selectionModel
+    && modelPinKey(selectionModel.provider, selectionModel.serviceId) === modelPinKey(model.provider, model.serviceId));
   const entry = model ? findCatalogEntry(snap.catalog, model.provider, model.serviceId) : null;
   const routes = useMemo(() => {
     const list = routesForSelectedModel(snap.discoverRows, model);
@@ -51,9 +57,18 @@ export function VprModelView({ onSelectView }: Props) {
   }, [model, snap.discoverRows]);
   const bestRoute = useMemo(() => chooseBestVprRoute(routes, snap.preferences), [routes, snap.preferences]);
 
-  const autoSelect = snap.selection.mode === 'auto';
+  // An unapplied model previews its remembered pin (if that seller still
+  // serves it); the applied model reflects the live selection.
+  const pinnedPeerId = useMemo(() => {
+    if (applied) return snap.selection.mode === 'pinned-peer' ? snap.selection.peerId : null;
+    if (!model) return null;
+    const pin = vprModelPinFor(snap.pins, model.provider, model.serviceId);
+    return pin && routes.some((route) => route.peerId === pin) ? pin : null;
+  }, [applied, model, routes, snap.pins, snap.selection]);
+
+  const autoSelect = pinnedPeerId === null;
   // The active route (auto-chosen or pinned) leads the list with a checkmark.
-  const activePeerId = autoSelect ? bestRoute?.peerId : snap.selection.peerId;
+  const activePeerId = autoSelect ? bestRoute?.peerId : pinnedPeerId;
   const sortedRoutes = useMemo(() => {
     const active = routes.filter((route) => route.peerId === activePeerId);
     return [...active, ...routes.filter((route) => !active.includes(route))];
@@ -72,6 +87,12 @@ export function VprModelView({ onSelectView }: Props) {
   const favorite = favorites.has(favoriteModelKey(model.provider, model.serviceId));
   const priceValue = priceTile(entry);
 
+  const viewedModel = model;
+  /** Make the browsed model (and its previewed pin) the active route. */
+  function applyModel(): void {
+    actions.selectVprModel(viewedModel.provider, viewedModel.serviceId, pinnedPeerId);
+  }
+
   return (
     <section className={`view view-vpr-model view-pinned-header ${styles.view}`} role="tabpanel">
       <VprPage title="Models" backFallback="explore">
@@ -82,42 +103,50 @@ export function VprModelView({ onSelectView }: Props) {
             <div className={styles.titleLine}>
               <BrandIcon name={model.provider} hints={[entry.label]} size={20} />
               <h2 className={styles.title}>{entry.label}</h2>
+              {applied && (
+                <span className={styles.titleCheck} title="Currently selected model">
+                  <HugeiconsIcon icon={Tick02Icon} size={18} strokeWidth={2} />
+                </span>
+              )}
             </div>
             {entry.categories.length > 0 && (
-              <div className={styles.badgeRow}>
-                {entry.categories.slice(0, MAX_VISIBLE_CATEGORIES).map((category) => (
-                  <VprBadge key={category} tone="type">{formatCategoryLabel(category)}</VprBadge>
-                ))}
-                {entry.categories.length > MAX_VISIBLE_CATEGORIES && (
-                  <span className={styles.badgeMore} tabIndex={0}>
-                    <VprBadge tone="type">+{entry.categories.length - MAX_VISIBLE_CATEGORIES}</VprBadge>
-                    <span className={styles.badgeMoreTip} role="tooltip">
-                      {entry.categories.slice(MAX_VISIBLE_CATEGORIES).map(formatCategoryLabel).join(' · ')}
-                    </span>
-                  </span>
-                )}
-              </div>
+              <CategoryBadges categories={entry.categories} />
             )}
           </div>
           <div className={styles.headActions}>
+            <div className={styles.headActionsRow}>
+              <button
+                type="button"
+                className={`${styles.star}${favorite ? ` ${styles.starActive}` : ''}`}
+                aria-pressed={favorite}
+                title={favorite ? 'Remove from favorites' : 'Add to favorites'}
+                onClick={() => setFavorites(new Set(toggleFavoriteModel(model.provider, model.serviceId)))}
+              >
+                <HugeiconsIcon icon={StarIcon} size={20} strokeWidth={1.8} />
+              </button>
+              <button
+                type="button"
+                className={styles.use}
+                onClick={() => {
+                  applyModel();
+                  onSelectView?.('home');
+                }}
+              >
+                Use
+              </button>
+            </div>
             <button
               type="button"
-              className={`${styles.star}${favorite ? ` ${styles.starActive}` : ''}`}
-              aria-pressed={favorite}
-              title={favorite ? 'Remove from favorites' : 'Add to favorites'}
-              onClick={() => setFavorites(new Set(toggleFavoriteModel(model.provider, model.serviceId)))}
-            >
-              <HugeiconsIcon icon={StarIcon} size={20} strokeWidth={1.8} />
-            </button>
-            <button
-              type="button"
-              className={styles.apply}
+              className={styles.startChat}
               onClick={() => {
-                actions.selectVprModel(model.provider, model.serviceId, autoSelect ? null : snap.selection.peerId);
-                onSelectView?.('home');
+                // New chat first: applying the model while a conversation is
+                // open would rebind that conversation instead of a fresh one.
+                actions.startNewChat();
+                applyModel();
+                onSelectView?.('chat');
               }}
             >
-              Apply
+              Start chat
             </button>
           </div>
         </div>
@@ -148,10 +177,15 @@ export function VprModelView({ onSelectView }: Props) {
                 <VprToggle
                   checked={autoSelect}
                   onChange={(next) => {
+                    // Only the applied model touches the live route; browsing
+                    // stages the choice in the per-model pin memory.
                     if (next) {
-                      actions.clearVprPinnedPeer();
+                      if (applied) actions.clearVprPinnedPeer();
+                      else actions.setVprModelSellerPin(model.provider, model.serviceId, null);
                     } else {
-                      actions.selectVprModel(model.provider, model.serviceId, bestRoute?.peerId ?? entry.bestPeerId ?? undefined);
+                      const peerId = bestRoute?.peerId ?? entry.bestPeerId ?? null;
+                      if (applied) actions.selectVprModel(model.provider, model.serviceId, peerId ?? undefined);
+                      else if (peerId) actions.setVprModelSellerPin(model.provider, model.serviceId, peerId);
                     }
                   }}
                   ariaLabel="Auto select seller"
@@ -189,11 +223,15 @@ export function VprModelView({ onSelectView }: Props) {
                     active={active}
                     auto={autoSelect}
                     onClick={() => {
-                      // Clicking the pinned seller unpins it; anyone else pins them.
+                      // Clicking the pinned seller unpins it; anyone else pins
+                      // them. Only the applied model touches the live route.
                       if (active && !autoSelect) {
-                        actions.clearVprPinnedPeer();
-                      } else {
+                        if (applied) actions.clearVprPinnedPeer();
+                        else actions.setVprModelSellerPin(model.provider, model.serviceId, null);
+                      } else if (applied) {
                         actions.selectVprModel(model.provider, model.serviceId, route.peerId);
+                      } else {
+                        actions.setVprModelSellerPin(model.provider, model.serviceId, route.peerId);
                       }
                     }}
                   />
@@ -205,6 +243,77 @@ export function VprModelView({ onSelectView }: Props) {
       </div>
       </VprPage>
     </section>
+  );
+}
+
+/* Gap between badges — must match .badgeRow's gap in the stylesheet. */
+const BADGE_GAP = 2;
+
+/**
+ * Category tags on a single line, always. The row measures itself before
+ * paint and shows only as many tags as actually fit, collapsing the rest into
+ * a "+N" chip whose title lists them — no wrapping, no clipped chips.
+ */
+function CategoryBadges({ categories }: { categories: string[] }) {
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  // null = measuring pass: render every tag (plus a worst-case "+N" chip) so
+  // their widths can be read; the fitted count replaces it before paint.
+  const [visibleCount, setVisibleCount] = useState<number | null>(null);
+
+  useLayoutEffect(() => {
+    setVisibleCount(null);
+  }, [categories]);
+
+  // Refit when the row's width changes (window resize, layout shifts).
+  useLayoutEffect(() => {
+    const row = rowRef.current;
+    if (!row) return undefined;
+    const observer = new ResizeObserver(() => setVisibleCount(null));
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, []);
+
+  useLayoutEffect(() => {
+    if (visibleCount !== null) return;
+    const row = rowRef.current;
+    if (!row) return;
+    const children = Array.from(row.children) as HTMLElement[];
+    if (children.length < 2) return;
+    const chip = children[children.length - 1];
+    const badges = children.slice(0, -1);
+    const fitted = (budget: number): number => {
+      let width = 0;
+      let count = 0;
+      for (const badge of badges) {
+        width += (count > 0 ? BADGE_GAP : 0) + badge.offsetWidth;
+        if (width > budget) break;
+        count += 1;
+      }
+      return count;
+    };
+    const max = row.clientWidth;
+    setVisibleCount(fitted(max) === badges.length
+      ? badges.length
+      : fitted(max - BADGE_GAP - chip.offsetWidth));
+  }, [visibleCount]);
+
+  const visible = visibleCount ?? categories.length;
+  const hiddenCategories = categories.slice(visible);
+
+  return (
+    <div className={styles.badgeRow} ref={rowRef}>
+      {categories.slice(0, visible).map((category) => (
+        <VprBadge key={category} tone="type">{formatCategoryLabel(category)}</VprBadge>
+      ))}
+      {(visibleCount === null || hiddenCategories.length > 0) && (
+        <span
+          className={styles.badgeMore}
+          title={hiddenCategories.map(formatCategoryLabel).join(' · ')}
+        >
+          <VprBadge tone="type">+{hiddenCategories.length || categories.length}</VprBadge>
+        </span>
+      )}
+    </div>
   );
 }
 

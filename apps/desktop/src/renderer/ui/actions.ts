@@ -24,6 +24,12 @@ export type AppActions = {
   clearPinnedPeer: () => void;
   selectVprModel: (provider: string, serviceId: string, peerId?: string | null) => void;
   clearVprPinnedPeer: () => void;
+  /**
+   * Remember (or forget, with null) a seller pin for a model without applying
+   * the model — used while browsing a model page that isn't the active route.
+   * selectVprModel picks the remembered pin up when the model is applied.
+   */
+  setVprModelSellerPin: (provider: string, serviceId: string, peerId: string | null) => void;
   updateVprRoutingPreferences: (patch: Partial<VprRoutingPreferences>) => void;
   setVprPeerListing: (peerId: string, listing: VprPeerListing) => void;
   setChatPermissionMode: (mode: ChatPermissionMode) => void;
