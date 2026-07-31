@@ -1,724 +1,742 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts/access/Ownable2Step.sol";
-import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import "@openzeppelin/contracts/utils/Strings.sol";
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { Ownable2Step } from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import { Strings } from "@openzeppelin/contracts/utils/Strings.sol";
+import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import { IAntseedDeposits } from "../interfaces/IAntseedDeposits.sol";
+import { IAntseedEmissionsGate } from "../interfaces/IAntseedEmissionsGate.sol";
 import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
-import { IAntseedUsageAccounting } from "../interfaces/IAntseedUsageAccounting.sol";
+import { IAntseedRelayTreasury } from "../interfaces/IAntseedRelayTreasury.sol";
 import { IAntseedVerifierRegistry } from "../interfaces/IAntseedVerifierRegistry.sol";
 import { IERC8004Registry } from "../interfaces/IERC8004Registry.sol";
 
-/**
- * @title AntseedVerifierRegistry
- * @notice Whitelisted verifier registry and on-chain attestation log.
- *
- *         Approved verifier peers probe sellers as buyers and attest whether
- *         each seller truthfully serves the model it advertises. Every audit
- *         follows commit → anchor → attest → reveal: the probe set is sealed
- *         on-chain before it runs (`commitProbeSet`), every probed exchange
- *         is hash+signature-anchored under an on-chain-recomputed Merkle root
- *         (`anchorExchangeBatch`) before any verdict, verdicts must reference
- *         that anchored batch (`submitAttestation`), and the probe set is
- *         opened on-chain afterward (`revealProbeSet`) — so anyone can re-run
- *         the entire audit from public data and reach the same verdict.
- *
- *         Attestations earn per-epoch credits used by AntseedVerifierRewards
- *         to split the emissions verification bucket pro-rata. Crediting is
- *         rate-limited two ways:
- *           - per audited (agentId, serviceHash): at most one credit per
- *             `auditCooldown`, shared across all verifiers, so re-auditing
- *             the same service cannot be farmed;
- *           - per verifier: at most `maxCreditsPerVerifierPerEpoch` credits
- *             per epoch.
- *
- *         The epoch clock is resolved through `registry.emissions()`, which
- *         post-cutover points at AntseedUsageAccounting — the same clock the
- *         emissions gate runs on.
- */
-contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
-    // ─── Constants ───────────────────────────────────────────────────
-    /// @dev Upper bound on the audit cooldown so a misconfigured value can
-    ///      never block crediting for unreasonably long.
-    uint64 public constant MAX_AUDIT_COOLDOWN = 30 days;
-    /// @dev Upper bound on records per anchored exchange batch. Keeps a
-    ///      single anchor transaction within sane calldata/gas limits.
-    uint256 public constant MAX_BATCH_RECORDS = 256;
-    /// @dev Protocol-wide stealth request limit. The CLI validates the same
-    ///      1..3 range; bounding it on-chain prevents a verifier from turning
-    ///      one signed exchange into an arbitrary amount of delegate credit.
-    uint32 public constant MAX_PROBES_PER_RECORD = 3;
-    /// @dev EIP-191 domain tag every peer-signed data blob carries — FROZEN,
-    ///      mirrors `signData` in packages/node/src/p2p/identity.ts: the
-    ///      signed digest is the personal-sign hash of
-    ///      ("antseed-data-v1:" || payload).
+contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step, ReentrancyGuard {
+    uint256 public constant BPS_DENOMINATOR = 10_000;
+    uint256 public constant FORCE_CLAIM_DELAY = 6 hours;
+    uint256 public constant FORCE_CLAIM_WINDOW = 30 days;
+    uint256 public constant MAX_AUDIT_JOBS = 100;
+    uint256 public constant MAX_RELAY_CLAIMS = 50;
+    uint8 public constant MAX_RELAY_ATTEMPTS = 3;
+
     bytes private constant DATA_DOMAIN = "antseed-data-v1:";
-    /// @dev keccak256 of the first (domain) field every ResponseAuth signing
-    ///      payload must open with — FROZEN, mirrors RESPONSE_AUTH_DOMAIN in
-    ///      packages/node/src/verification/response-auth.ts.
     bytes32 private constant RESPONSE_AUTH_DOMAIN_HASH = keccak256("antseed-response-auth-v1");
-    /// @dev Number of length-prefixed fields in a ResponseAuth signing
-    ///      payload (see `parseResponseAuthPayload`).
+    bytes32 private constant RESPONSE_AUTH_VERSION_HASH = keccak256("1");
     uint256 private constant RESPONSE_AUTH_FIELD_COUNT = 13;
+    uint256 private constant RESPONSE_AUTH_SIGNATURE_LENGTH = 65;
 
-    // ─── External Contracts ──────────────────────────────────────────
-    IAntseedRegistry public immutable registry;
+    IAntseedRegistry public immutable override registry;
+    IAntseedEmissionsGate public immutable override emissionsGate;
+    address private _relayTreasury;
 
-    // ─── Verifier Whitelist & Config ─────────────────────────────────
-    mapping(address => bool) public approvedVerifiers;
-    uint64 public auditCooldown = 1 days;
-    uint32 public maxCreditsPerVerifierPerEpoch = 100;
-    uint32 public minProbeCount = 10;
-
-    // ─── Attestation State ───────────────────────────────────────────
-    mapping(address verifier => mapping(bytes32 commitment => uint64 committedAt)) public probeCommittedAt;
-    mapping(uint256 agentId => mapping(bytes32 serviceHash => uint64 creditedAt)) public lastCreditedAt;
+    mapping(address verifier => bool approved) public override approvedVerifiers;
+    mapping(bytes32 auditId => Audit audit) private _audits;
+    mapping(bytes32 auditId => Attestation attestation) private _attestations;
+    mapping(bytes32 auditId => uint256 paidBitmap) public override relayJobPaidBitmap;
+    mapping(bytes32 requestHash => bytes32 paymentKey) public override paidRequestHashes;
     mapping(uint256 agentId => mapping(bytes32 serviceHash => Attestation attestation)) private _latestAttestations;
-    mapping(uint256 agentId => mapping(bytes32 serviceHash => ServiceVerificationStats stats)) private
-        _verificationStats;
-    mapping(uint256 => mapping(bytes32 => mapping(address => bool))) private _hasAttested;
-    mapping(uint256 => ServiceVerificationStats) private _agentStats;
-    mapping(uint256 => mapping(address => bool)) private _hasAttestedAgent;
-    /// @dev Each verifier's latest verdict per (agentId, serviceHash)
-    ///      (0 = never attested). Drives `activeDiffVerifierCount`: a DIFF
-    ///      raises it once per verifier, and the same verifier's later
-    ///      SAME/UNDETERMINED on the SAME service lowers it — a standing,
-    ///      retractable accusation rather than a permanent historical mark.
-    mapping(uint256 => mapping(bytes32 => mapping(address => uint8))) private _lastVerdictByVerifier;
-    /// @dev Services of `agentId` on which `verifier` currently stands at
-    ///      DIFF. The agent-level `activeDiffVerifierCount` counts verifiers
-    ///      with a standing DIFF on ANY service — a SAME on an honestly
-    ///      served service must never launder a standing DIFF on the
-    ///      substituted one.
-    mapping(uint256 => mapping(address => uint32)) private _verifierDiffServiceCount;
-    mapping(uint256 epoch => mapping(address verifier => uint256 credits)) public epochCredits;
-    mapping(uint256 epoch => uint256 credits) public epochTotalCredits;
+    mapping(uint256 agentId => mapping(bytes32 serviceHash => uint256 sequence)) public override
+        lastAcceptedAuditSequence;
+    uint256 public auditCommitSequence;
 
-    // ─── Exchange Anchoring & Probe Reveal (transparent audits) ──────
-    // Order enforced on-chain: commit strictly before anchor; anchor before
-    // (or in the same second as) attest; reveal only after at least one
-    // attestation referenced the commitment. This makes every audit fully
-    // recomputable from public data: the probe set is sealed before it runs,
-    // every seller answer is hash+signature-anchored before anything is
-    // revealed, and the probes are opened afterward.
+    mapping(bytes32 serviceKey => uint16 penaltyBps) private _servicePointsPenaltyBps;
+    mapping(uint256 agentId => uint256 penaltyBps) private _agentPointsPenaltyBps;
 
-    /// @notice Anchor state per (verifier, batchRoot): when it was anchored
-    ///         (anchoredAt == 0 means never), how many exchange records it
-    ///         holds, and the verifier-declared total probe count bundled
-    ///         across those records. The probe-set commitment the batch was
-    ///         anchored under is `commitmentBatchRoot`'s inverse (one batch
-    ///         per commitment). One `ExchangeRecord` covers one signed stealth request,
-    ///         which bundles 1..3 probes — so the batch's
-    ///         probe count is declared explicitly at anchor time rather than
-    ///         inferred from the record count. The declared `probeCount`
-    ///         caps the `probeCount` any attestation referencing the batch
-    ///         may claim, so credited work (and the delegate budget it
-    ///         backs) is bounded by a claim sealed before the verdict —
-    ///         and the claim is recomputable by third parties from the
-    ///         revealed probe set + anchored records.
-    mapping(address verifier => mapping(bytes32 batchRoot => BatchAnchor anchor)) public batchAnchors;
-    mapping(
-        address verifier
-            => mapping(bytes32 batchRoot => mapping(uint256 agentId => mapping(bytes32 serviceHash => uint32 probeCount)))
-    ) public batchTargetProbeCount;
-    mapping(
-        address verifier
-            => mapping(bytes32 batchRoot => mapping(uint256 agentId => mapping(bytes32 serviceHash => bool attested)))
-    ) public batchTargetAttested;
-    /// @notice The sole batch root anchored for a verifier's probe commitment.
-    ///         One batch per commitment prevents replaying the same signed
-    ///         exchange across several roots to multiply delegate accrual.
-    mapping(address verifier => mapping(bytes32 commitment => bytes32 batchRoot)) public commitmentBatchRoot;
-    /// @notice When `verifier` opened `commitment` on-chain (0 = never).
-    mapping(address verifier => mapping(bytes32 commitment => uint64 revealedAt)) public probeRevealedAt;
-    /// @notice Whether any attestation by `verifier` referenced `commitment` —
-    ///         gates `revealProbeSet` (no reveal-then-probe). Per-commitment
-    ///         attestation counts are reconstructible from
-    ///         `AttestationSubmitted` events.
-    mapping(address verifier => mapping(bytes32 commitment => bool attested)) public commitmentAttested;
-
-    // ─── Delegate Crediting ──────────────────────────────────────────
-    // Probe execution is delegated to organic buyer peers so probe traffic
-    // is indistinguishable from real usage (the verifier whitelist is
-    // public, so verifier-originated traffic is linkable and a cheating
-    // seller could serve the real model only to verifiers).
-    //
-    // Which buyer carried which exchange is NOT the verifier's word: every
-    // anchored ExchangeRecord's seller-signed ResponseAuth payload names the
-    // buyer peer the seller actually answered, the signature is verified
-    // on-chain at anchor time, and the carried probe counts accrue here per
-    // (verifier, commitment, TARGET, buyer) — the target being the audited
-    // (agentId, serviceHash) the buyer's exchange actually probed. The
-    // buyer's OPERATOR later claims the accrued credits and collects the
-    // delegate share of the verification emissions bucket via
-    // AntseedVerifierRewards.
-    //
-    // The claim resolves and pays the buyer's deposits operator, so the
-    // iron rule holds — the buyer hot wallet never receives funds — and the
-    // "is this a real, operator-bound buyer" check is enforced on-chain.
-    //
-    // Grants remain anchored to audit work, PER TARGET: every CREDITED
-    // attestation adds its probeCount to the delegate budget of the exact
-    // (commitment, target) it attested, and cumulative claims against that
-    // target may never exceed its budget. Keying the budget by target (not
-    // just by commitment) stops cross-target siphoning: a buyer that
-    // carried probes only for a target the verifier never got credited on
-    // has no budget to claim from, and cannot race the carriers of a
-    // credited target for theirs. Since credited attestations are
-    // themselves rate-limited (per-service cooldown + per-verifier epoch
-    // cap), a verifier cannot farm the delegate pool without doing real,
-    // commit-anchor-attest-reveal audit work — accrued-but-unbacked
-    // credits are simply unclaimable.
-
-    /// @notice Share of the verification bucket reserved for delegates, in
-    ///         bps of the epoch budget. Applied by AntseedVerifierRewards
-    ///         only for epochs that have delegate credits.
-    uint16 public delegateShareBps = 2000;
-    /// @notice Cap on delegate credits a single verifier may grant per epoch.
-    uint32 public maxDelegateCreditsPerVerifierPerEpoch = 200;
-
-    mapping(uint256 epoch => mapping(address delegate => uint256 credits)) public epochDelegateCredits;
-    mapping(uint256 epoch => uint256 credits) public epochTotalDelegateCredits;
-    mapping(uint256 epoch => mapping(address verifier => uint256 credits)) public epochDelegateCreditsGrantedBy;
-    /// @notice Delegate-credit budget per (verifier, probeCommitment,
-    ///         target): the sum of probeCount over the verifier's CREDITED
-    ///         attestations of that target under the commitment (at most
-    ///         one — targets attest once per batch). The target key is
-    ///         `delegateTargetKey(agentId, serviceHash)`. Budget is keyed
-    ///         by target so a credited attestation only backs claims from
-    ///         the buyers that carried THAT target's probes — carriers of
-    ///         a never-credited target cannot siphon it.
-    mapping(address verifier => mapping(bytes32 commitment => mapping(bytes32 targetKey => uint256 budget))) public
-        commitmentDelegateBudget;
-    /// @notice Credits already granted (claimed) against (verifier,
-    ///         commitment, target), across all buyers. Never exceeds
-    ///         `commitmentDelegateBudget` for the same key.
-    mapping(address verifier => mapping(bytes32 commitment => mapping(bytes32 targetKey => uint256 granted))) public
-        commitmentDelegateCredits;
-    /// @notice Probe counts accrued at anchor time per carrier buyer and
-    ///         audited target, from the buyer named inside each
-    ///         seller-signed ResponseAuth payload: (verifier,
-    ///         probeCommitment, target, buyer) → carried probes.
-    mapping(
-        address verifier
-            => mapping(bytes32 commitment => mapping(bytes32 targetKey => mapping(address buyer => uint32 accrued)))
-    ) public commitmentDelegateAccrued;
-    /// @notice Portion of `commitmentDelegateAccrued` already claimed for
-    ///         the same (verifier, probeCommitment, target, buyer) key.
-    mapping(
-        address verifier
-            => mapping(bytes32 commitment => mapping(bytes32 targetKey => mapping(address buyer => uint32 claimed)))
-    ) public commitmentDelegateClaimed;
-    /// @notice Which verifier anchored a given seller-signed request hash
-    ///         (address(0) = never anchored). GLOBAL across verifiers and
-    ///         commitments: a signed exchange is anchorable exactly once,
-    ///         so the same witnessed exchange cannot be replayed under
-    ///         other commitments or by other verifiers to multiply
-    ///         delegate accrual or attestation evidence.
-    mapping(bytes32 requestHash => address verifier) public anchoredExchangeBy;
-
-    // ─── Events ──────────────────────────────────────────────────────
     event VerifierApprovalSet(address indexed verifier, bool approved);
-    event AuditCooldownSet(uint64 auditCooldown);
-    event MaxCreditsPerVerifierPerEpochSet(uint32 maxCreditsPerVerifierPerEpoch);
-    event MinProbeCountSet(uint32 minProbeCount);
-    event ProbeSetCommitted(address indexed verifier, bytes32 indexed commitment);
-    event ExchangeBatchAnchored(
-        address indexed verifier,
-        bytes32 indexed probeCommitment,
-        bytes32 indexed batchRoot,
-        uint32 recordCount,
-        uint32 probeCount
+    event RelayTreasurySet(address indexed treasury);
+    event AuditCommitted(
+        bytes32 indexed auditId,
+        address indexed committer,
+        uint256 commitSequence,
+        bytes32 targetCommitment,
+        bytes32 probeRoot,
+        bytes32 auditJobRoot,
+        uint32 probeCount,
+        uint16 jobCount,
+        uint96 payoutPerJobUsdc,
+        uint96 reservedRelayBudgetUsdc,
+        uint64 executeAfter,
+        uint64 executeBefore
     );
-    event ProbeSetRevealed(address indexed verifier, bytes32 indexed probeCommitment, string packUri);
-    event DelegateShareBpsSet(uint16 delegateShareBps);
-    event MaxDelegateCreditsPerVerifierPerEpochSet(uint32 maxDelegateCreditsPerVerifierPerEpoch);
-    /// @notice Probe credits accrued to a carrier buyer at anchor time,
-    ///         derived from the buyer named inside the seller-signed
-    ///         ResponseAuth payloads (aggregated per distinct
-    ///         (buyer, target) per anchor call). `agentId`/`serviceHash`
-    ///         name the audited target the probes were carried for — the
-    ///         buyer's operator passes them back to `claimDelegateCredits`.
-    event DelegateCreditsAccrued(
-        address indexed verifier,
-        bytes32 indexed probeCommitment,
-        address indexed buyer,
-        uint256 agentId,
-        bytes32 serviceHash,
-        uint32 credits
+    event RelayJobPaid(
+        bytes32 indexed auditId,
+        uint16 indexed jobIndex,
+        address indexed relayBuyer,
+        address recipient,
+        uint96 amount,
+        bool forced
     );
-    event DelegateCredited(
-        uint256 indexed epoch, address indexed verifier, address indexed delegate, bytes32 probeCommitment,
-        bytes32 targetKey, uint32 credits
-    );
-    event VerifierStandingCleared(address indexed verifier, uint256 indexed agentId, bytes32 indexed serviceHash);
+    event ServicePointsPenaltySet(uint256 indexed agentId, bytes32 indexed serviceHash, uint16 modelShareBps);
     event AttestationSubmitted(
+        bytes32 indexed auditId,
+        address indexed verifier,
+        uint256 indexed agentId,
+        bytes32 serviceHash,
+        Verdict verdict,
+        uint16 modelShareBps,
+        bytes32 evidenceHash,
+        uint256 relayClaimCount,
+        uint96 relayPayoutUsdc
+    );
+    event MetricSnapshotSubmitted(
+        bytes32 indexed auditId,
         uint256 indexed agentId,
         bytes32 indexed serviceHash,
-        address indexed verifier,
-        uint8 verdict,
-        bytes32 evidenceHash,
-        bytes32 probeCommitment,
-        bytes32 batchRoot,
-        uint32 probeCount,
-        uint32 cohortSize,
-        bool credited,
-        uint256 epoch
+        uint64 windowStartedAt,
+        uint64 windowEndedAt,
+        uint16 eligibleAttempts,
+        uint16 successfulAttempts,
+        uint32 p50TtftMs,
+        uint32 p95TtftMs,
+        uint32 p50OutputTokensPerSecondMilli,
+        uint16 schemaVersion,
+        bytes32 observationsRoot
     );
+    event EvidencePublished(bytes32 indexed auditId, string evidenceUri);
 
-    // ─── Custom Errors ───────────────────────────────────────────────
     error InvalidAddress();
     error InvalidValue();
+    error EmissionsGateMismatch();
     error NotApprovedVerifier();
-    error InvalidVerdict();
-    error ProbeCountTooLow();
-    error CommitmentAlreadySet();
-    error ProbeSetNotCommitted();
-    error ProbeSetTooRecent();
+    error AuditAlreadyCommitted();
+    error AuditNotFound();
+    error AuditAlreadyAttested();
+    error AuditNotReady();
+    error AttestationExpired();
+    error InvalidJobCount();
+    error InvalidAuditWindow();
+    error InvalidPayout();
+    error RelayTreasuryNotConfigured();
+    error RelayTreasuryAlreadyConfigured();
+    error RelayTreasuryMismatch();
+    error InvalidTargetOpening();
     error UnknownAgent();
     error SelfAudit();
-    error SelfDelegate();
-    error NotBuyerOperator();
-    error NothingToClaim();
-    error NoStandingDiff();
-    error BatchNotAnchored();
-    error BatchAlreadyAnchored();
-    error CommitmentBatchAlreadyAnchored();
-    error BatchCommitmentMismatch();
-    error EmptyBatch();
-    error BatchTooLarge();
-    error ArrayLengthMismatch();
+    error StaleAudit();
+    error InvalidVerdict();
+    error InvalidModelShareBps();
+    error TooManyRelayClaims();
+    error InsufficientRelayCoverage();
+    error InsufficientRelayDiversity();
+    error InvalidJob();
+    error InvalidJobProof();
+    error InvalidResponseAuth();
     error MalformedSigningPayload();
-    error RecordSignerMismatch(uint256 index);
-    error RecordHashMismatch(uint256 index);
-    error RecordProbeCountZero(uint256 index);
-    error RecordProbeCountTooHigh(uint256 index);
-    error ExchangeAlreadyAnchored(uint256 index);
-    error ZeroRecordHash(uint256 index);
-    error ProbeCountOverflow();
-    error RevealMismatch();
-    error RevealBeforeAttest();
-    error AlreadyRevealed();
-    error ProbeCountExceedsBatch();
-    error TargetNotInBatch();
-    error TargetAlreadyAttested();
-    error ProbeCountExceedsTarget();
-    error ExchangePredatesCommitment(uint256 index);
-    error InvalidResponseTiming(uint256 index);
+    error RelayJobAlreadyPaid();
+    error RequestHashAlreadyPaid();
+    error InconsistentPaymentState();
+    error RelayOperatorUnavailable();
+    error ForceClaimNotAvailable();
+    error ForceClaimExpired();
+    error EvidenceAlreadyPublished();
+    error EvidenceNotAvailable();
 
-    // ─── Modifiers ───────────────────────────────────────────────────
+    struct ParsedResponseAuth {
+        address buyer;
+        address seller;
+        bytes32 advertisedServiceHash;
+        uint16 statusCode;
+        bytes32 requestHash;
+        bytes32 responseHash;
+        uint64 responseStartedAt;
+        uint64 responseCompletedAt;
+    }
+
+    struct ValidatedRelayClaim {
+        uint16 jobIndex;
+        address relayBuyer;
+        bytes32 requestHash;
+    }
+
     modifier onlyApprovedVerifier() {
         if (!approvedVerifiers[msg.sender]) revert NotApprovedVerifier();
         _;
     }
 
-    // ─── Constructor ─────────────────────────────────────────────────
-    constructor(address _registry) Ownable(msg.sender) {
-        if (_registry == address(0)) revert InvalidAddress();
-        registry = IAntseedRegistry(_registry);
+    constructor(address registry_, address emissionsGate_) Ownable(msg.sender) {
+        if (
+            registry_ == address(0) || emissionsGate_ == address(0) || registry_.code.length == 0
+                || emissionsGate_.code.length == 0
+        ) revert InvalidAddress();
+        if (address(IAntseedEmissionsGate(emissionsGate_).registry()) != registry_) revert EmissionsGateMismatch();
+        registry = IAntseedRegistry(registry_);
+        emissionsGate = IAntseedEmissionsGate(emissionsGate_);
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //                        OWNER CONFIGURATION
-    // ═══════════════════════════════════════════════════════════════════
+    function relayTreasury() external view override returns (address) {
+        return _relayTreasury;
+    }
 
-    function setVerifier(address verifier, bool approved) external onlyOwner {
+    function setVerifier(address verifier, bool approved) external override onlyOwner {
         if (verifier == address(0)) revert InvalidAddress();
         approvedVerifiers[verifier] = approved;
         emit VerifierApprovalSet(verifier, approved);
     }
 
-    function setAuditCooldown(uint64 _auditCooldown) external onlyOwner {
-        if (_auditCooldown > MAX_AUDIT_COOLDOWN) revert InvalidValue();
-        auditCooldown = _auditCooldown;
-        emit AuditCooldownSet(_auditCooldown);
+    function setRelayTreasury(address treasury) external override onlyOwner {
+        if (treasury == address(0) || treasury.code.length == 0) revert InvalidAddress();
+        if (_relayTreasury != address(0)) revert RelayTreasuryAlreadyConfigured();
+
+        IAntseedRelayTreasury candidate = IAntseedRelayTreasury(treasury);
+        if (candidate.verifierRegistry() != address(this)) revert RelayTreasuryMismatch();
+        address depositsAddress = registry.deposits();
+        if (depositsAddress == address(0) || depositsAddress.code.length == 0) revert InvalidAddress();
+        if (address(candidate.usdc()) != IAntseedDeposits(depositsAddress).usdc()) revert RelayTreasuryMismatch();
+
+        _relayTreasury = treasury;
+        emit RelayTreasurySet(treasury);
     }
 
-    function setMaxCreditsPerVerifierPerEpoch(uint32 _maxCreditsPerVerifierPerEpoch) external onlyOwner {
-        if (_maxCreditsPerVerifierPerEpoch == 0) revert InvalidValue();
-        maxCreditsPerVerifierPerEpoch = _maxCreditsPerVerifierPerEpoch;
-        emit MaxCreditsPerVerifierPerEpochSet(_maxCreditsPerVerifierPerEpoch);
+    function commitProbes(
+        bytes32 auditId,
+        bytes32 targetCommitment,
+        bytes32 probeRoot,
+        bytes32 auditJobRoot,
+        bytes32 referenceId,
+        bytes32 verifierConfigHash,
+        uint32 probeCount,
+        uint16 jobCount,
+        uint96 payoutPerJobUsdc
+    ) external override onlyApprovedVerifier {
+        if (_relayTreasury == address(0)) revert RelayTreasuryNotConfigured();
+        if (auditId == bytes32(0) || targetCommitment == bytes32(0)) revert InvalidValue();
+        if (_audits[auditId].committer != address(0)) revert AuditAlreadyCommitted();
+        if (probeRoot == bytes32(0) || auditJobRoot == bytes32(0) || probeCount == 0) revert InvalidValue();
+        if (jobCount == 0 || jobCount > MAX_AUDIT_JOBS) revert InvalidJobCount();
+
+        uint256 computedBudget = uint256(payoutPerJobUsdc) * jobCount;
+        IAntseedRelayTreasury treasury = IAntseedRelayTreasury(_relayTreasury);
+        if (
+            payoutPerJobUsdc == 0 || payoutPerJobUsdc > treasury.maxPayoutPerJob()
+                || computedBudget > treasury.maxPayoutPerAudit() || computedBudget > type(uint96).max
+        ) revert InvalidPayout();
+
+        uint64 committedAt = uint64(block.timestamp);
+        (uint256 currentEpoch, uint64 executeBefore) = _currentEpochAndEnd();
+        uint256 forceClaimAvailableAt = uint256(executeBefore) + FORCE_CLAIM_DELAY;
+        uint256 forceClaimDeadline = forceClaimAvailableAt + FORCE_CLAIM_WINDOW;
+        if (forceClaimDeadline > type(uint64).max) revert InvalidAuditWindow();
+
+        treasury.reserveAuditBudget(auditId, currentEpoch, jobCount, payoutPerJobUsdc, uint64(forceClaimDeadline));
+        uint256 commitSequence = ++auditCommitSequence;
+        uint96 reservedRelayBudgetUsdc = uint96(computedBudget);
+
+        _audits[auditId] = Audit({
+            committer: msg.sender,
+            targetCommitment: targetCommitment,
+            probeRoot: probeRoot,
+            auditJobRoot: auditJobRoot,
+            referenceId: referenceId,
+            verifierConfigHash: verifierConfigHash,
+            commitSequence: commitSequence,
+            probeCount: probeCount,
+            jobCount: jobCount,
+            payoutPerJobUsdc: payoutPerJobUsdc,
+            reservedRelayBudgetUsdc: reservedRelayBudgetUsdc,
+            totalRelayPaidUsdc: 0,
+            committedAt: committedAt,
+            executeAfter: committedAt,
+            executeBefore: executeBefore,
+            forceClaimAvailableAt: uint64(forceClaimAvailableAt),
+            forceClaimDeadline: uint64(forceClaimDeadline),
+            attestedAt: 0,
+            attested: false,
+            evidenceHash: bytes32(0),
+            evidenceUri: ""
+        });
+
+        emit AuditCommitted(
+            auditId,
+            msg.sender,
+            commitSequence,
+            targetCommitment,
+            probeRoot,
+            auditJobRoot,
+            probeCount,
+            jobCount,
+            payoutPerJobUsdc,
+            reservedRelayBudgetUsdc,
+            committedAt,
+            executeBefore
+        );
     }
 
-    function setMinProbeCount(uint32 _minProbeCount) external onlyOwner {
-        if (_minProbeCount == 0) revert InvalidValue();
-        minProbeCount = _minProbeCount;
-        emit MinProbeCountSet(_minProbeCount);
-    }
+    function submitAttestation(
+        bytes32 auditId,
+        uint256 agentId,
+        bytes32 serviceHash,
+        bytes32 targetSalt,
+        Verdict verdict,
+        uint16 modelShareBps,
+        MetricSnapshot calldata metrics,
+        bytes32 evidenceHash,
+        string calldata evidenceUri,
+        RelayClaim[] calldata relayClaims
+    ) external override nonReentrant {
+        Audit storage audit = _audits[auditId];
+        if (audit.committer == address(0)) revert AuditNotFound();
+        if (msg.sender != audit.committer) revert NotApprovedVerifier();
+        if (audit.attested) revert AuditAlreadyAttested();
+        if (block.timestamp < audit.executeBefore) revert AuditNotReady();
+        if (block.timestamp > audit.forceClaimDeadline) revert AttestationExpired();
+        if (evidenceHash == bytes32(0)) revert EvidenceNotAvailable();
+        if (audit.targetCommitment != hashAuditTarget(agentId, serviceHash, targetSalt)) revert InvalidTargetOpening();
 
-    function setDelegateShareBps(uint16 _delegateShareBps) external onlyOwner {
-        if (_delegateShareBps > 10_000) revert InvalidValue();
-        delegateShareBps = _delegateShareBps;
-        emit DelegateShareBpsSet(_delegateShareBps);
-    }
+        address seller = _resolveAgentOwner(agentId);
+        if (seller == msg.sender) revert SelfAudit();
+        if (audit.commitSequence <= lastAcceptedAuditSequence[agentId][serviceHash]) revert StaleAudit();
+        _validateAttestation(verdict, modelShareBps);
 
-    function setMaxDelegateCreditsPerVerifierPerEpoch(uint32 _max) external onlyOwner {
-        if (_max == 0) revert InvalidValue();
-        maxDelegateCreditsPerVerifierPerEpoch = _max;
-        emit MaxDelegateCreditsPerVerifierPerEpochSet(_max);
-    }
+        uint256 claimCount = relayClaims.length;
+        if (claimCount > audit.jobCount || claimCount > MAX_RELAY_CLAIMS) revert TooManyRelayClaims();
 
-    /// @notice Retract `verifier`'s standing DIFF on `(agentId, serviceHash)`
-    ///         exactly as the verifier's own SAME/UNDETERMINED re-attestation
-    ///         would: both `activeDiffVerifierCount` accumulators drop via
-    ///         the shared `_updateActiveDiff` bookkeeping, and the verifier's
-    ///         stored verdict on the key resets to 0 ("never attested" — no
-    ///         fabricated SAME). Historical counters, the stored latest
-    ///         attestation and epoch credits are untouched, and nothing is
-    ///         credited.
-    ///
-    ///         Remediation tool for rogue-verifier damage: a verifier removed
-    ///         from the whitelist can no longer attest, so its standing DIFF
-    ///         accusations — and the points-policy penalty they drive — would
-    ///         otherwise stand forever. Reverts with `NoStandingDiff` when
-    ///         the verifier holds no standing DIFF on the key, so a mistyped
-    ///         key fails loudly instead of emitting a misleading event.
-    function clearVerifierStanding(address verifier, uint256 agentId, bytes32 serviceHash) external onlyOwner {
-        if (_lastVerdictByVerifier[agentId][serviceHash][verifier] != uint8(Verdict.DIFF)) revert NoStandingDiff();
-        _updateActiveDiff(
+        address[] memory recipients = new address[](claimCount);
+        uint16[] memory recipientJobCounts = new uint16[](claimCount);
+        address[] memory distinctRelays = new address[](claimCount);
+        uint256 recipientCount;
+        uint256 distinctRelayCount;
+        uint256 suppliedJobBitmap;
+
+        for (uint256 i = 0; i < claimCount; i++) {
+            ValidatedRelayClaim memory claim =
+                _validateRelayClaim(audit, auditId, relayClaims[i], seller, serviceHash, true);
+            uint256 jobBit = uint256(1) << claim.jobIndex;
+            if (suppliedJobBitmap & jobBit != 0) revert RelayJobAlreadyPaid();
+            suppliedJobBitmap |= jobBit;
+
+            bytes32 paymentKey = _paymentKey(auditId, claim.jobIndex);
+            bool alreadyPaid = _isRelayJobPaid(auditId, claim.jobIndex);
+            bytes32 requestPaymentKey = paidRequestHashes[claim.requestHash];
+            if (alreadyPaid) {
+                if (requestPaymentKey != paymentKey) revert InconsistentPaymentState();
+            } else {
+                if (requestPaymentKey != bytes32(0)) revert RequestHashAlreadyPaid();
+                paidRequestHashes[claim.requestHash] = paymentKey;
+                _markRelayJobPaid(auditId, claim.jobIndex);
+                _addRelayPayout(audit);
+
+                address operator = _relayOperator(claim.relayBuyer);
+                recipientCount = _addRecipientJob(recipients, recipientJobCounts, recipientCount, operator);
+                emit RelayJobPaid(auditId, claim.jobIndex, claim.relayBuyer, operator, audit.payoutPerJobUsdc, false);
+            }
+            distinctRelayCount = _addDistinctRelay(distinctRelays, distinctRelayCount, claim.relayBuyer);
+        }
+
+        _validateRelayDistribution(verdict, audit.jobCount, claimCount, distinctRelayCount);
+        lastAcceptedAuditSequence[agentId][serviceHash] = audit.commitSequence;
+        _applyAttestationPoints(agentId, serviceHash, verdict, modelShareBps);
+
+        uint64 attestedAt = uint64(block.timestamp);
+        Attestation memory attestation = Attestation({
+            auditId: auditId,
+            verifier: msg.sender,
+            agentId: agentId,
+            serviceHash: serviceHash,
+            verdict: verdict,
+            modelShareBps: modelShareBps,
+            attestedAt: attestedAt,
+            evidenceHash: evidenceHash
+        });
+
+        audit.attested = true;
+        audit.attestedAt = attestedAt;
+        audit.evidenceHash = evidenceHash;
+        audit.evidenceUri = evidenceUri;
+        _attestations[auditId] = attestation;
+        _latestAttestations[agentId][serviceHash] = attestation;
+
+        if (recipientCount != 0) {
+            assembly ("memory-safe") {
+                mstore(recipients, recipientCount)
+                mstore(recipientJobCounts, recipientCount)
+            }
+            IAntseedRelayTreasury(_relayTreasury).payBatch(auditId, recipients, recipientJobCounts);
+        }
+
+        emit AttestationSubmitted(
+            auditId,
+            msg.sender,
             agentId,
             serviceHash,
-            verifier,
-            uint8(Verdict.UNKNOWN),
-            _verificationStats[agentId][serviceHash],
-            _agentStats[agentId]
+            verdict,
+            modelShareBps,
+            evidenceHash,
+            claimCount,
+            audit.totalRelayPaidUsdc
         );
-        emit VerifierStandingCleared(verifier, agentId, serviceHash);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //                CORE — COMMIT / ANCHOR / ATTEST / REVEAL
-    // ═══════════════════════════════════════════════════════════════════
-
-    /// @notice Publish a commitment to a probe set before running it. The
-    ///         attestation must reference a commitment recorded in a strictly
-    ///         earlier second, so probe results cannot be fabricated after
-    ///         the fact and committed in the same transaction.
-    function commitProbeSet(bytes32 commitment) external onlyApprovedVerifier {
-        if (commitment == bytes32(0)) revert InvalidValue();
-        if (probeCommittedAt[msg.sender][commitment] != 0) revert CommitmentAlreadySet();
-        probeCommittedAt[msg.sender][commitment] = uint64(block.timestamp);
-        emit ProbeSetCommitted(msg.sender, commitment);
-    }
-
-    /// @notice Anchor the full probe exchange batch on-chain as calldata,
-    ///         BEFORE attesting and before anything is revealed. The Merkle
-    ///         root is recomputed on-chain from the calldata records (see
-    ///         `computeBatchRoot`), so the root ↔ data binding is chain-
-    ///         verified rather than verifier-claimed, AND every record's
-    ///         seller signature is verified on-chain: `signingPayloads[i]`
-    ///         is the exact ResponseAuth signing preimage (13 length-
-    ///         prefixed fields, see `parseResponseAuthPayload`),
-    ///         `records[i].responseAuthSig` must recover — over the EIP-191
-    ///         digest of ("antseed-data-v1:" || payload) — to the ERC-8004
-    ///         owner of `records[i].agentId`, and the payload's embedded
-    ///         request/response hashes must equal the anchored ones. A
-    ///         verifier therefore cannot anchor an exchange the audited
-    ///         seller never signed.
-    ///
-    ///         The referenced probe-set commitment must have been committed
-    ///         in a strictly earlier second (commit before anchor), and the
-    ///         seller-signed response must have started at or after that
-    ///         commitment. The same root cannot be anchored twice by the
-    ///         same verifier. Together these checks prevent an old signed
-    ///         exchange from being replayed under a fresh commitment.
-    ///
-    ///         `recordProbeCounts[i]` is the number of probes bundled in
-    ///         record i's signed stealth request (each request carries
-    ///         1..3 probes); every entry must be in that range. The
-    ///         batch's total probe count — which caps the `probeCount` any
-    ///         attestation referencing the batch may claim — is the enforced
-    ///         SUM of these declarations, fixed here before any verdict.
-    ///         Third parties can recompute the true per-record values from
-    ///         the revealed probe set + anchored records, so an inflated
-    ///         declaration is publicly detectable.
-    ///
-    ///         Delegate crediting happens here as well: each verified
-    ///         payload names the buyer peer that carried the exchange; for
-    ///         every buyer that is neither the verifier itself nor the
-    ///         record's seller, `recordProbeCounts[i]` accrues to
-    ///         `commitmentDelegateAccrued[msg.sender][probeCommitment]
-    ///         [delegateTargetKey(agentId, serviceHash)][buyer]` (aggregated
-    ///         per distinct (buyer, target) — one store + one
-    ///         `DelegateCreditsAccrued` event each), claimable later by the
-    ///         buyer's deposits operator via `claimDelegateCredits` within
-    ///         that target's credited-attestation budget.
-    function anchorExchangeBatch(
-        bytes32 probeCommitment,
-        ExchangeRecord[] calldata records,
-        bytes[] calldata signingPayloads,
-        uint32[] calldata recordProbeCounts
-    ) external onlyApprovedVerifier returns (bytes32 batchRoot) {
-        if (records.length == 0) revert EmptyBatch();
-        if (records.length > MAX_BATCH_RECORDS) revert BatchTooLarge();
-        if (signingPayloads.length != records.length || recordProbeCounts.length != records.length) {
-            revert ArrayLengthMismatch();
-        }
-        uint64 committedAt = probeCommittedAt[msg.sender][probeCommitment];
-        if (committedAt == 0) revert ProbeSetNotCommitted();
-        if (committedAt >= block.timestamp) revert ProbeSetTooRecent();
-        // One commitment = one sealed lifecycle: once its probes are public,
-        // no further exchange may be anchored under it. Otherwise a verifier
-        // could reveal, then anchor a fresh batch against a seller that has
-        // now seen the probes ("reveal-then-probe").
-        if (probeRevealedAt[msg.sender][probeCommitment] != 0) revert AlreadyRevealed();
-        if (commitmentBatchRoot[msg.sender][probeCommitment] != bytes32(0)) {
-            revert CommitmentBatchAlreadyAnchored();
-        }
-
-        _checkUniqueRequestHashes(records);
-
-        batchRoot = computeBatchRoot(records);
-        if (batchAnchors[msg.sender][batchRoot].anchoredAt != 0) revert BatchAlreadyAnchored();
-
-        uint32 probeCount = _verifyRecordsAndAccrue(
-            probeCommitment, committedAt, batchRoot, records, signingPayloads, recordProbeCounts
+        emit MetricSnapshotSubmitted(
+            auditId,
+            agentId,
+            serviceHash,
+            metrics.windowStartedAt,
+            metrics.windowEndedAt,
+            metrics.eligibleAttempts,
+            metrics.successfulAttempts,
+            metrics.p50TtftMs,
+            metrics.p95TtftMs,
+            metrics.p50OutputTokensPerSecondMilli,
+            metrics.schemaVersion,
+            metrics.observationsRoot
         );
-
-        // Single struct assignment: anchoredAt/recordCount/probeCount pack
-        // into one slot — one SSTORE total. The commitment the batch was
-        // anchored under is not stored here: `commitmentBatchRoot` already
-        // holds the (bijective) inverse.
-        batchAnchors[msg.sender][batchRoot] =
-            BatchAnchor({ anchoredAt: uint64(block.timestamp), recordCount: uint32(records.length), probeCount: probeCount });
-        commitmentBatchRoot[msg.sender][probeCommitment] = batchRoot;
-        emit ExchangeBatchAnchored(msg.sender, probeCommitment, batchRoot, uint32(records.length), probeCount);
     }
 
-    /// @dev Reject a zero request/response hash, duplicate request hashes in
-    ///      one batch, and any request hash ever anchored before — by ANY
-    ///      verifier under ANY commitment (`anchoredExchangeBy`). The global
-    ///      registry makes every seller-signed exchange usable for delegate
-    ///      accrual and attestation evidence at most once network-wide: a
-    ///      witnessed organic exchange (or another verifier's probe traffic)
-    ///      cannot be re-anchored under other commitments to multiply
-    ///      accrual. Honest verifiers never collide — probe requests derive
-    ///      from verifier-specific committed nonces, so their hashes are
-    ///      unique per audit. Marks happen before signature checks; a later
-    ///      revert in the same anchor call rolls them back.
-    function _checkUniqueRequestHashes(ExchangeRecord[] calldata records) private {
-        for (uint256 i = 0; i < records.length; i++) {
-            bytes32 requestHash = records[i].requestHash;
-            if (requestHash == bytes32(0) || records[i].responseHash == bytes32(0)) revert ZeroRecordHash(i);
-            // The global registry doubles as the in-batch duplicate check:
-            // a repeat inside this batch was marked by an earlier iteration.
-            if (anchoredExchangeBy[requestHash] != address(0)) {
-                revert ExchangeAlreadyAnchored(i);
-            }
-            anchoredExchangeBy[requestHash] = msg.sender;
-        }
+    function forceClaimRelayJob(bytes32 auditId, RelayClaim calldata relayClaim) external override nonReentrant {
+        Audit storage audit = _audits[auditId];
+        if (audit.committer == address(0)) revert AuditNotFound();
+        if (block.timestamp <= audit.forceClaimAvailableAt) revert ForceClaimNotAvailable();
+        if (block.timestamp > audit.forceClaimDeadline) revert ForceClaimExpired();
+
+        ValidatedRelayClaim memory claim =
+            _validateRelayClaim(audit, auditId, relayClaim, address(0), bytes32(0), false);
+        if (_isRelayJobPaid(auditId, claim.jobIndex)) revert RelayJobAlreadyPaid();
+        if (paidRequestHashes[claim.requestHash] != bytes32(0)) revert RequestHashAlreadyPaid();
+
+        paidRequestHashes[claim.requestHash] = _paymentKey(auditId, claim.jobIndex);
+        _markRelayJobPaid(auditId, claim.jobIndex);
+        _addRelayPayout(audit);
+
+        address operator = _relayOperator(claim.relayBuyer);
+        IAntseedRelayTreasury(_relayTreasury).payJob(auditId, operator);
+        emit RelayJobPaid(auditId, claim.jobIndex, claim.relayBuyer, operator, audit.payoutPerJobUsdc, true);
     }
 
-    /// @dev Per-record on-chain authentication + delegate accrual for
-    ///      `anchorExchangeBatch`. For each record: resolve the seller as
-    ///      the ERC-8004 owner of the record's agentId (resolution cached in
-    ///      memory — cohorts repeat few sellers), verify the 65-byte
-    ///      ResponseAuth signature over the EIP-191 digest of
-    ///      ("antseed-data-v1:" || signingPayloads[i]) recovers to that
-    ///      seller, and require the payload's embedded request/response
-    ///      hashes to match the anchored record. Buyer credits (the payload's
-    ///      buyer field) are aggregated in memory per distinct buyer and
-    ///      flushed as one SSTORE + one event each. Returns the checked
-    ///      uint32 sum of `recordProbeCounts`.
-    function _verifyRecordsAndAccrue(
-        bytes32 probeCommitment,
-        uint64 committedAt,
-        bytes32 batchRoot,
-        ExchangeRecord[] calldata records,
-        bytes[] calldata signingPayloads,
-        uint32[] calldata recordProbeCounts
-    ) private returns (uint32) {
-        address identityRegistry = registry.identityRegistry();
-        if (identityRegistry == address(0) || identityRegistry.code.length == 0) revert UnknownAgent();
-
-        uint256 n = records.length;
-        // agentId → seller memory cache (linear scan; distinct sellers per
-        // batch are few — one cohort's members).
-        uint256[] memory cachedAgentIds = new uint256[](n);
-        address[] memory cachedSellers = new address[](n);
-        uint256 cachedCount = 0;
-        // Per-(buyer, target) accrual aggregation: accrual is keyed by the
-        // audited target so claims can only draw on that target's budget.
-        address[] memory buyers = new address[](n);
-        uint256[] memory buyerAgentIds = new uint256[](n);
-        bytes32[] memory buyerServiceHashes = new bytes32[](n);
-        uint256[] memory buyerProbes = new uint256[](n);
-        uint256 buyerCount = 0;
-        uint256[] memory targetAgentIds = new uint256[](n);
-        bytes32[] memory targetServiceHashes = new bytes32[](n);
-        uint256[] memory targetProbes = new uint256[](n);
-        uint256 targetCount = 0;
-
-        uint256 totalProbes = 0;
-        for (uint256 i = 0; i < n; i++) {
-            if (recordProbeCounts[i] == 0) revert RecordProbeCountZero(i);
-            if (recordProbeCounts[i] > MAX_PROBES_PER_RECORD) revert RecordProbeCountTooHigh(i);
-            totalProbes += recordProbeCounts[i];
-
-            // Resolve (or reuse) the seller address for this agentId.
-            address seller = address(0);
-            uint256 agentId = records[i].agentId;
-            for (uint256 j = 0; j < cachedCount; j++) {
-                if (cachedAgentIds[j] == agentId) {
-                    seller = cachedSellers[j];
-                    break;
-                }
-            }
-            if (seller == address(0)) {
-                seller = _resolveAgentOwner(identityRegistry, agentId);
-                cachedAgentIds[cachedCount] = agentId;
-                cachedSellers[cachedCount] = seller;
-                cachedCount++;
-            }
-
-            // The seller must have signed exactly this payload.
-            (address recovered, ECDSA.RecoverError err,) =
-                ECDSA.tryRecover(responseAuthDigest(signingPayloads[i]), records[i].responseAuthSig);
-            if (err != ECDSA.RecoverError.NoError || recovered != seller) revert RecordSignerMismatch(i);
-
-            // The payload must describe the anchored exchange.
-            (
-                address buyer,
-                bytes32 advertisedServiceHash,
-                bytes32 requestHash,
-                bytes32 responseHash,
-                uint64 responseStartedAt,
-                uint64 responseCompletedAt
-            ) = parseResponseAuthPayload(signingPayloads[i]);
-            if (requestHash != records[i].requestHash || responseHash != records[i].responseHash) {
-                revert RecordHashMismatch(i);
-            }
-            if (responseCompletedAt < responseStartedAt) revert InvalidResponseTiming(i);
-            if (uint256(responseStartedAt) < uint256(committedAt) * 1000) {
-                revert ExchangePredatesCommitment(i);
-            }
-            bool targetFound = false;
-            for (uint256 j = 0; j < targetCount; j++) {
-                if (targetAgentIds[j] == agentId && targetServiceHashes[j] == advertisedServiceHash) {
-                    targetProbes[j] += recordProbeCounts[i];
-                    targetFound = true;
-                    break;
-                }
-            }
-            if (!targetFound) {
-                targetAgentIds[targetCount] = agentId;
-                targetServiceHashes[targetCount] = advertisedServiceHash;
-                targetProbes[targetCount] = recordProbeCounts[i];
-                targetCount++;
-            }
-
-            // A verifier probing directly (buyer == verifier) and a seller
-            // "carrying" its own audit (buyer == seller) earn no delegate
-            // credits.
-            if (buyer != msg.sender && buyer != seller) {
-                bool found = false;
-                for (uint256 j = 0; j < buyerCount; j++) {
-                    if (
-                        buyers[j] == buyer && buyerAgentIds[j] == agentId
-                            && buyerServiceHashes[j] == advertisedServiceHash
-                    ) {
-                        buyerProbes[j] += recordProbeCounts[i];
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    buyers[buyerCount] = buyer;
-                    buyerAgentIds[buyerCount] = agentId;
-                    buyerServiceHashes[buyerCount] = advertisedServiceHash;
-                    buyerProbes[buyerCount] = recordProbeCounts[i];
-                    buyerCount++;
-                }
-            }
-        }
-        if (totalProbes > type(uint32).max) revert ProbeCountOverflow();
-
-        for (uint256 j = 0; j < targetCount; j++) {
-            batchTargetProbeCount[msg.sender][batchRoot][targetAgentIds[j]][targetServiceHashes[j]] =
-                uint32(targetProbes[j]);
-        }
-
-        for (uint256 j = 0; j < buyerCount; j++) {
-            uint32 credits = uint32(buyerProbes[j]); // <= totalProbes, checked above
-            bytes32 targetKey = delegateTargetKey(buyerAgentIds[j], buyerServiceHashes[j]);
-            commitmentDelegateAccrued[msg.sender][probeCommitment][targetKey][buyers[j]] += credits;
-            emit DelegateCreditsAccrued(
-                msg.sender, probeCommitment, buyers[j], buyerAgentIds[j], buyerServiceHashes[j], credits
-            );
-        }
-        return uint32(totalProbes);
+    function publishEvidence(bytes32 auditId, string calldata evidenceUri) external override {
+        Audit storage audit = _audits[auditId];
+        if (audit.committer == address(0)) revert AuditNotFound();
+        if (msg.sender != audit.committer) revert NotApprovedVerifier();
+        if (!audit.attested || audit.evidenceHash == bytes32(0)) revert EvidenceNotAvailable();
+        if (bytes(audit.evidenceUri).length != 0) revert EvidenceAlreadyPublished();
+        if (bytes(evidenceUri).length == 0) revert InvalidValue();
+        audit.evidenceUri = evidenceUri;
+        emit EvidencePublished(auditId, evidenceUri);
     }
 
-    /// @dev agentId → seller address, resolved the way the protocol
-    ///      canonically binds peers to agents: the ERC-8004 IdentityRegistry
-    ///      owner IS the peer's signing address (shared with
-    ///      `_checkAuditedAgent`; AntseedStaking requires
-    ///      `ownerOf(agentId) == seller` at stake time). The caller has
-    ///      already checked the registry address and its code size.
-    function _resolveAgentOwner(address identityRegistry, uint256 agentId) private view returns (address) {
-        try IERC8004Registry(identityRegistry).ownerOf(agentId) returns (address agentOwner) {
-            if (agentOwner == address(0)) revert UnknownAgent();
-            return agentOwner;
-        } catch {
-            revert UnknownAgent();
-        }
+    function getAudit(bytes32 auditId) external view override returns (Audit memory) {
+        return _audits[auditId];
     }
 
-    /// @notice EIP-191 digest a peer signs over a data payload — FROZEN,
-    ///         mirrors `signData` in packages/node/src/p2p/identity.ts:
-    ///         personal-sign hash of ("antseed-data-v1:" || payload), i.e.
-    ///         keccak256("\x19Ethereum Signed Message:\n" || decimal(16 +
-    ///         payload.length) || "antseed-data-v1:" || payload). Public
-    ///         pure so off-chain mirrors can cross-check via `eth_call`.
-    ///
-    ///         Built in a single buffer (equivalent to OZ
-    ///         MessageHashUtils.toEthSignedMessageHash over the tagged
-    ///         bytes, pinned against it in the test suite) — the two-step
-    ///         concat-then-wrap version copies the payload twice, and this
-    ///         digest runs once per anchored record.
-    function responseAuthDigest(bytes calldata signingPayload) public pure returns (bytes32) {
-        bytes memory lengthDecimal = bytes(Strings.toString(DATA_DOMAIN.length + signingPayload.length));
-        return keccak256(bytes.concat("\x19Ethereum Signed Message:\n", lengthDecimal, DATA_DOMAIN, signingPayload));
+    function getAttestation(bytes32 auditId) external view override returns (Attestation memory) {
+        return _attestations[auditId];
     }
 
-    /// @notice Parse a ResponseAuth signing payload and extract the fields
-    ///         the contract binds on-chain. FROZEN wire format — mirrors
-    ///         `buildResponseAuthSigningBytes` in
-    ///         packages/node/src/verification/response-auth.ts: exactly 13
-    ///         fields, each prefixed with a 4-byte big-endian uint32 byte
-    ///         length, UTF-8 encoded, in order:
-    ///           [0] "antseed-response-auth-v1" (domain — enforced, so no
-    ///               other `signData`-domain blob can pose as a ResponseAuth)
-    ///           [1] version          [2] requestId      [3] channelId ("" ok)
-    ///           [4] buyerPeerId      [5] sellerPeerId   [6] advertisedService
-    ///           [7] provider         [8] statusCode     [9] requestHash
-    ///           [10] responseHash    [11] responseStartedAt
-    ///           [12] responseCompletedAt
-    ///         Peer ids are lowercase hex EVM addresses (40 nibbles, the
-    ///         protocol writes them without a 0x prefix; a 0x prefix is
-    ///         tolerated), hashes are 64-nibble hex (the protocol writes
-    ///         them 0x-prefixed). The payload must be consumed exactly —
-    ///         no trailing bytes.
-    function parseResponseAuthPayload(bytes calldata payload)
+    function latestAttestation(uint256 agentId, bytes32 serviceHash)
+        external
+        view
+        override
+        returns (Attestation memory)
+    {
+        return _latestAttestations[agentId][serviceHash];
+    }
+
+    function agentPointsPenaltyBps(uint256 agentId) external view override returns (uint16) {
+        uint256 penaltyBps = _agentPointsPenaltyBps[agentId];
+        if (penaltyBps > BPS_DENOMINATOR) penaltyBps = BPS_DENOMINATOR;
+        return uint16(penaltyBps);
+    }
+
+    function hashAuditTarget(uint256 agentId, bytes32 serviceHash, bytes32 targetSalt)
+        public
+        view
+        override
+        returns (bytes32)
+    {
+        return keccak256(
+            abi.encode("antseed-audit-target-v0", block.chainid, address(this), agentId, serviceHash, targetSalt)
+        );
+    }
+
+    function hashAuditJob(AuditJob memory job) public view override returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                "antseed-audit-job-v1",
+                block.chainid,
+                address(this),
+                job.auditId,
+                job.jobIndex,
+                job.relayBuyer,
+                job.sellerPeerId,
+                job.serviceHash,
+                job.requestHash,
+                job.jobSalt,
+                job.attempt,
+                job.executeAfter,
+                job.executeBefore
+            )
+        );
+    }
+
+    function verifyAuditJobProof(bytes32 root, bytes32 leaf, uint16 jobIndex, uint16 jobCount, bytes32[] calldata proof)
         public
         pure
+        override
+        returns (bool)
+    {
+        if (root == bytes32(0) || leaf == bytes32(0) || jobCount == 0 || jobCount > MAX_AUDIT_JOBS) return false;
+        if (jobIndex >= jobCount) return false;
+
+        uint256 capacity = 1;
+        uint256 depth;
+        while (capacity < jobCount) {
+            capacity <<= 1;
+            depth++;
+        }
+        if (capacity > 128 || proof.length != depth) return false;
+
+        bytes32 computed = leaf;
+        uint256 index = jobIndex;
+        for (uint256 i = 0; i < proof.length; i++) {
+            computed = index & 1 == 0 ? _hashNode(computed, proof[i]) : _hashNode(proof[i], computed);
+            index >>= 1;
+        }
+        return computed == root;
+    }
+
+    function hashNormalizedService(string calldata advertisedService) external pure override returns (bytes32) {
+        return _normalizedServiceHashMemory(bytes(advertisedService));
+    }
+
+    function responseAuthDigest(bytes calldata signingPayload) external pure override returns (bytes32) {
+        return _responseAuthDigest(signingPayload);
+    }
+
+    function parseResponseAuthPayload(bytes calldata payload)
+        external
+        pure
+        override
         returns (
             address buyer,
+            address seller,
             bytes32 advertisedServiceHash,
+            uint16 statusCode,
             bytes32 requestHash,
             bytes32 responseHash,
             uint64 responseStartedAt,
             uint64 responseCompletedAt
         )
     {
-        uint256 offset = 0;
-        for (uint256 f = 0; f < RESPONSE_AUTH_FIELD_COUNT; f++) {
+        ParsedResponseAuth memory auth = _parseResponseAuthPayload(payload);
+        return (
+            auth.buyer,
+            auth.seller,
+            auth.advertisedServiceHash,
+            auth.statusCode,
+            auth.requestHash,
+            auth.responseHash,
+            auth.responseStartedAt,
+            auth.responseCompletedAt
+        );
+    }
+
+    function isRelayJobPaid(bytes32 auditId, uint16 jobIndex) external view override returns (bool) {
+        return _isRelayJobPaid(auditId, jobIndex);
+    }
+
+    function requiredRelayCount(uint16 jobCount) public pure override returns (uint16) {
+        if (jobCount == 0) return 0;
+        uint16 required = uint16((uint256(jobCount) + 4) / 5);
+        if (required < 3) required = 3;
+        if (required > 10) required = 10;
+        return required > jobCount ? jobCount : required;
+    }
+
+    function _validateRelayClaim(
+        Audit storage audit,
+        bytes32 auditId,
+        RelayClaim calldata relayClaim,
+        address expectedSeller,
+        bytes32 expectedServiceHash,
+        bool enforceTarget
+    ) internal view returns (ValidatedRelayClaim memory claim) {
+        AuditJob calldata job = relayClaim.job;
+        _validateAuditJob(audit, auditId, job);
+        if (
+            !verifyAuditJobProof(
+                audit.auditJobRoot, hashAuditJob(job), job.jobIndex, audit.jobCount, relayClaim.jobProof
+            )
+        ) {
+            revert InvalidJobProof();
+        }
+
+        bytes calldata responseAuthPayload = relayClaim.responseAuthPayload;
+        if (responseAuthPayload.length <= RESPONSE_AUTH_SIGNATURE_LENGTH) revert InvalidResponseAuth();
+        uint256 signingPayloadLength = responseAuthPayload.length - RESPONSE_AUTH_SIGNATURE_LENGTH;
+        bytes calldata signingPayload = responseAuthPayload[:signingPayloadLength];
+        bytes calldata responseSignature = responseAuthPayload[signingPayloadLength:];
+
+        ParsedResponseAuth memory auth = _parseResponseAuthPayload(signingPayload);
+        (address responseSigner, ECDSA.RecoverError responseError,) =
+            ECDSA.tryRecover(_responseAuthDigest(signingPayload), responseSignature);
+        if (responseError != ECDSA.RecoverError.NoError || responseSigner != job.sellerPeerId) {
+            revert InvalidResponseAuth();
+        }
+        if (
+            auth.buyer != job.relayBuyer || auth.seller != job.sellerPeerId
+                || auth.advertisedServiceHash != job.serviceHash || auth.statusCode != 200
+                || auth.requestHash != job.requestHash || auth.responseHash == bytes32(0)
+                || auth.responseCompletedAt < auth.responseStartedAt
+                || uint256(auth.responseStartedAt) < uint256(job.executeAfter) * 1000
+                || uint256(auth.responseCompletedAt) > uint256(job.executeBefore) * 1000
+        ) revert InvalidResponseAuth();
+
+        if (enforceTarget && (job.sellerPeerId != expectedSeller || job.serviceHash != expectedServiceHash)) {
+            revert InvalidJob();
+        }
+        claim =
+            ValidatedRelayClaim({ jobIndex: job.jobIndex, relayBuyer: job.relayBuyer, requestHash: job.requestHash });
+    }
+
+    function _validateAuditJob(Audit storage audit, bytes32 auditId, AuditJob calldata job) internal view {
+        if (
+            job.auditId == bytes32(0) || job.auditId != auditId || job.jobIndex >= audit.jobCount
+                || job.relayBuyer == address(0) || job.sellerPeerId == address(0) || job.serviceHash == bytes32(0)
+                || job.requestHash == bytes32(0) || job.jobSalt == bytes32(0) || job.attempt >= MAX_RELAY_ATTEMPTS
+                || job.executeBefore <= job.executeAfter || job.executeAfter < audit.executeAfter
+                || job.executeBefore > audit.executeBefore
+        ) revert InvalidJob();
+    }
+
+    function _validateAttestation(Verdict verdict, uint16 modelShareBps) internal pure {
+        if (verdict == Verdict.UNKNOWN) revert InvalidVerdict();
+        if (verdict == Verdict.DIFF) {
+            if (modelShareBps > BPS_DENOMINATOR) revert InvalidModelShareBps();
+        } else if (modelShareBps != 0) {
+            revert InvalidModelShareBps();
+        }
+    }
+
+    function _validateRelayDistribution(
+        Verdict verdict,
+        uint16 jobCount,
+        uint256 claimCount,
+        uint256 distinctRelayCount
+    ) internal pure {
+        if (verdict != Verdict.SAME && verdict != Verdict.DIFF) return;
+        if (claimCount * 2 < jobCount) revert InsufficientRelayCoverage();
+        if (distinctRelayCount < requiredRelayCount(jobCount)) revert InsufficientRelayDiversity();
+    }
+
+    function _applyAttestationPoints(uint256 agentId, bytes32 serviceHash, Verdict verdict, uint16 modelShareBps)
+        internal
+    {
+        if (verdict == Verdict.DIFF) {
+            _setServicePointsPenalty(agentId, serviceHash, modelShareBps);
+        } else if (verdict == Verdict.SAME) {
+            _clearServicePointsPenalty(agentId, serviceHash);
+        }
+    }
+
+    function _setServicePointsPenalty(uint256 agentId, bytes32 serviceHash, uint16 modelShareBps) internal {
+        bytes32 key = _serviceKey(agentId, serviceHash);
+        uint16 oldPenaltyBps = _servicePointsPenaltyBps[key];
+        _servicePointsPenaltyBps[key] = modelShareBps;
+        _agentPointsPenaltyBps[agentId] = _agentPointsPenaltyBps[agentId] - oldPenaltyBps + modelShareBps;
+        emit ServicePointsPenaltySet(agentId, serviceHash, modelShareBps);
+    }
+
+    function _clearServicePointsPenalty(uint256 agentId, bytes32 serviceHash) internal {
+        bytes32 key = _serviceKey(agentId, serviceHash);
+        uint16 penaltyBps = _servicePointsPenaltyBps[key];
+        if (penaltyBps == 0) return;
+        delete _servicePointsPenaltyBps[key];
+        _agentPointsPenaltyBps[agentId] -= penaltyBps;
+        emit ServicePointsPenaltySet(agentId, serviceHash, 0);
+    }
+
+    function _addRelayPayout(Audit storage audit) internal {
+        uint96 newTotal = audit.totalRelayPaidUsdc + audit.payoutPerJobUsdc;
+        if (newTotal > audit.reservedRelayBudgetUsdc) revert InvalidPayout();
+        audit.totalRelayPaidUsdc = newTotal;
+    }
+
+    function _addRecipientJob(
+        address[] memory recipients,
+        uint16[] memory jobCounts,
+        uint256 recipientCount,
+        address recipient
+    ) internal pure returns (uint256) {
+        for (uint256 i = 0; i < recipientCount; i++) {
+            if (recipients[i] == recipient) {
+                jobCounts[i]++;
+                return recipientCount;
+            }
+        }
+        recipients[recipientCount] = recipient;
+        jobCounts[recipientCount] = 1;
+        return recipientCount + 1;
+    }
+
+    function _addDistinctRelay(address[] memory relays, uint256 relayCount, address relay)
+        internal
+        pure
+        returns (uint256)
+    {
+        for (uint256 i = 0; i < relayCount; i++) {
+            if (relays[i] == relay) return relayCount;
+        }
+        relays[relayCount] = relay;
+        return relayCount + 1;
+    }
+
+    function _relayOperator(address relayBuyer) internal view returns (address operator) {
+        address depositsAddress = registry.deposits();
+        if (depositsAddress == address(0) || depositsAddress.code.length == 0) revert RelayOperatorUnavailable();
+        operator = IAntseedDeposits(depositsAddress).getOperator(relayBuyer);
+        if (operator == address(0)) revert RelayOperatorUnavailable();
+    }
+
+    function _resolveAgentOwner(uint256 agentId) internal view returns (address agentOwner) {
+        address identityRegistry = registry.identityRegistry();
+        if (identityRegistry == address(0) || identityRegistry.code.length == 0) revert UnknownAgent();
+        try IERC8004Registry(identityRegistry).ownerOf(agentId) returns (address owner) {
+            if (owner == address(0)) revert UnknownAgent();
+            return owner;
+        } catch {
+            revert UnknownAgent();
+        }
+    }
+
+    function _currentEpochAndEnd() internal view returns (uint256 epoch, uint64 epochEnd) {
+        uint256 duration = emissionsGate.EPOCH_DURATION();
+        if (duration == 0) revert InvalidAuditWindow();
+        epoch = emissionsGate.currentEpoch();
+        uint256 end = emissionsGate.GENESIS() + (epoch + 1) * duration;
+        if (end <= block.timestamp || end > type(uint64).max) revert InvalidAuditWindow();
+        return (epoch, uint64(end));
+    }
+
+    function _isRelayJobPaid(bytes32 auditId, uint16 jobIndex) internal view returns (bool) {
+        return relayJobPaidBitmap[auditId] & (uint256(1) << jobIndex) != 0;
+    }
+
+    function _markRelayJobPaid(bytes32 auditId, uint16 jobIndex) internal {
+        relayJobPaidBitmap[auditId] |= uint256(1) << jobIndex;
+    }
+
+    function _paymentKey(bytes32 auditId, uint16 jobIndex) internal pure returns (bytes32) {
+        return keccak256(abi.encode(auditId, jobIndex));
+    }
+
+    function _hashNode(bytes32 left, bytes32 right) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked(bytes1(0x01), left, right));
+    }
+
+    function _serviceKey(uint256 agentId, bytes32 serviceHash) internal pure returns (bytes32) {
+        return keccak256(abi.encode(agentId, serviceHash));
+    }
+
+    function _responseAuthDigest(bytes calldata signingPayload) internal pure returns (bytes32) {
+        bytes memory lengthDecimal = bytes(Strings.toString(DATA_DOMAIN.length + signingPayload.length));
+        return keccak256(bytes.concat("\x19Ethereum Signed Message:\n", lengthDecimal, DATA_DOMAIN, signingPayload));
+    }
+
+    function _parseResponseAuthPayload(bytes calldata payload) internal pure returns (ParsedResponseAuth memory auth) {
+        uint256 offset;
+        for (uint256 fieldIndex = 0; fieldIndex < RESPONSE_AUTH_FIELD_COUNT; fieldIndex++) {
             if (offset + 4 > payload.length) revert MalformedSigningPayload();
             uint256 fieldLength;
-            // 4-byte big-endian length prefix. Bounds checked above;
-            // calldata reads past the end are zero-padded, never unsafe.
             assembly ("memory-safe") {
                 fieldLength := shr(224, calldataload(add(payload.offset, offset)))
             }
@@ -727,26 +745,34 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
             bytes calldata field = payload[offset:offset + fieldLength];
             offset += fieldLength;
 
-            if (f == 0) {
+            if (fieldIndex == 0) {
                 if (keccak256(field) != RESPONSE_AUTH_DOMAIN_HASH) revert MalformedSigningPayload();
-            } else if (f == 4) {
-                buyer = address(uint160(_parseHex(field, 40)));
-            } else if (f == 6) {
-                advertisedServiceHash = _normalizedServiceHash(field);
-            } else if (f == 9) {
-                requestHash = bytes32(_parseHex(field, 64));
-            } else if (f == 10) {
-                responseHash = bytes32(_parseHex(field, 64));
-            } else if (f == 11) {
-                responseStartedAt = _parseUint64(field);
-            } else if (f == 12) {
-                responseCompletedAt = _parseUint64(field);
+            } else if (fieldIndex == 1) {
+                if (keccak256(field) != RESPONSE_AUTH_VERSION_HASH) revert MalformedSigningPayload();
+            } else if (fieldIndex == 4) {
+                auth.buyer = address(uint160(_parseHex(field, 40)));
+            } else if (fieldIndex == 5) {
+                auth.seller = address(uint160(_parseHex(field, 40)));
+            } else if (fieldIndex == 6) {
+                auth.advertisedServiceHash = _normalizedServiceHash(field);
+            } else if (fieldIndex == 8) {
+                uint64 statusCode = _parseUint64(field);
+                if (statusCode > type(uint16).max) revert MalformedSigningPayload();
+                auth.statusCode = uint16(statusCode);
+            } else if (fieldIndex == 9) {
+                auth.requestHash = bytes32(_parseHex(field, 64));
+            } else if (fieldIndex == 10) {
+                auth.responseHash = bytes32(_parseHex(field, 64));
+            } else if (fieldIndex == 11) {
+                auth.responseStartedAt = _parseUint64(field);
+            } else if (fieldIndex == 12) {
+                auth.responseCompletedAt = _parseUint64(field);
             }
         }
         if (offset != payload.length) revert MalformedSigningPayload();
     }
 
-    function _normalizedServiceHash(bytes calldata field) private pure returns (bytes32) {
+    function _normalizedServiceHashMemory(bytes memory field) internal pure returns (bytes32) {
         uint256 start;
         uint256 end = field.length;
         while (start < end && _isAsciiWhitespace(uint8(field[start]))) start++;
@@ -755,483 +781,63 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
 
         bytes memory normalized = new bytes(end - start);
         for (uint256 i = start; i < end; i++) {
-            uint8 c = uint8(field[i]);
-            if (c >= 0x41 && c <= 0x5A) c += 0x20;
-            normalized[i - start] = bytes1(c);
+            uint8 character = uint8(field[i]);
+            if (character >= 0x41 && character <= 0x5A) character += 0x20;
+            normalized[i - start] = bytes1(character);
         }
         return keccak256(normalized);
     }
 
-    function _isAsciiWhitespace(uint8 c) private pure returns (bool) {
-        return c == 0x20 || (c >= 0x09 && c <= 0x0D);
+    function _normalizedServiceHash(bytes calldata field) internal pure returns (bytes32) {
+        uint256 start;
+        uint256 end = field.length;
+        while (start < end && _isAsciiWhitespace(uint8(field[start]))) start++;
+        while (end > start && _isAsciiWhitespace(uint8(field[end - 1]))) end--;
+        if (start == end) revert MalformedSigningPayload();
+
+        bytes memory normalized = new bytes(end - start);
+        for (uint256 i = start; i < end; i++) {
+            uint8 character = uint8(field[i]);
+            if (character >= 0x41 && character <= 0x5A) character += 0x20;
+            normalized[i - start] = bytes1(character);
+        }
+        return keccak256(normalized);
     }
 
-    function _parseUint64(bytes calldata field) private pure returns (uint64 value) {
+    function _isAsciiWhitespace(uint8 character) internal pure returns (bool) {
+        return character == 0x20 || (character >= 0x09 && character <= 0x0D);
+    }
+
+    function _parseUint64(bytes calldata field) internal pure returns (uint64 value) {
         if (field.length == 0 || field.length > 20) revert MalformedSigningPayload();
         uint256 parsed;
-        assembly ("memory-safe") {
-            let cursor := field.offset
-            let end := add(cursor, field.length)
-            for {} lt(cursor, end) { cursor := add(cursor, 1) } {
-                let c := byte(0, calldataload(cursor))
-                if or(lt(c, 0x30), gt(c, 0x39)) {
-                    mstore(0, shl(224, 0x8f159627))
-                    revert(0, 4)
-                }
-                parsed := add(mul(parsed, 10), sub(c, 0x30))
-            }
+        for (uint256 i = 0; i < field.length; i++) {
+            uint8 character = uint8(field[i]);
+            if (character < 0x30 || character > 0x39) revert MalformedSigningPayload();
+            parsed = parsed * 10 + character - 0x30;
         }
         if (parsed > type(uint64).max) revert MalformedSigningPayload();
         return uint64(parsed);
     }
 
-    /// @dev Parse an ASCII-hex field (optionally 0x-prefixed, either case)
-    ///      of exactly `expectedNibbles` (33..64) hex digits into its
-    ///      integer value.
-    ///
-    ///      GAS: this runs on ~170 hex digits per anchored record, so the
-    ///      decode is word-parallel assembly (32 ASCII chars per step, two
-    ///      overlapping calldata words per field) instead of a per-digit
-    ///      loop — per-digit decoding measured ~120 gas/nibble, ~20k per
-    ///      record, and dominated `anchorExchangeBatch`.
-    ///
-    ///      Per byte b of a loaded word: case-fold c = b | 0x20, nibble
-    ///      v = (c & 0x0F) + 9 * (c >> 6); valid iff every v <= 15 AND the
-    ///      re-encoding v -> ASCII lowercase reproduces c exactly. This
-    ///      rejects every byte except: digits, a-f, A-F — and, as a KNOWN
-    ///      quirk of case-folding, the control bytes 0x10..0x19, which
-    ///      alias '0'..'9'. That leniency is harmless here: the seller's
-    ///      signature binds the exact payload bytes, and the strict
-    ///      off-chain parser (packages/node response-auth.ts) rejects such
-    ///      payloads anyway — a seller signing control bytes only breaks
-    ///      its own exchanges' recomputability.
-    function _parseHex(bytes calldata field, uint256 expectedNibbles) private pure returns (uint256 value) {
-        uint256 start = 0;
+    function _parseHex(bytes calldata field, uint256 expectedNibbles) internal pure returns (uint256 value) {
+        uint256 start;
         if (field.length >= 2 && field[0] == "0" && field[1] == "x") start = 2;
         if (field.length - start != expectedNibbles) revert MalformedSigningPayload();
-        // Callers pass 40 (addresses) or 64 (bytes32) only; the two-word
-        // overlapping-load scheme below needs 32 < n <= 64.
-        if (expectedNibbles <= 32 || expectedNibbles > 64) revert MalformedSigningPayload();
-        bool malformed = false;
-        assembly ("memory-safe") {
-            // Decode one 32-char ASCII-hex calldata word into a 128-bit
-            // value, word-parallel. Masks operate per byte lane.
-            function decodeHexWord(word) -> v, ok {
-                let cf := or(word, 0x2020202020202020202020202020202020202020202020202020202020202020)
-                v :=
-                    add(
-                        and(cf, 0x0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f),
-                        mul(and(shr(6, cf), 0x0303030303030303030303030303030303030303030303030303030303030303), 9)
-                    )
-                // Every nibble value must fit in 4 bits...
-                ok := iszero(and(v, 0xf0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0))
-                // ...and re-encoding to ASCII lowercase must reproduce the
-                // folded input ('0'-'9' -> +0x30, 'a'-'f' -> +0x57).
-                let gap :=
-                    shr(4, and(add(v, 0x0606060606060606060606060606060606060606060606060606060606060606),
-                        0x1010101010101010101010101010101010101010101010101010101010101010))
-                ok :=
-                    and(
-                        ok,
-                        eq(
-                            add(
-                                add(v, 0x3030303030303030303030303030303030303030303030303030303030303030),
-                                mul(gap, 0x27)
-                            ),
-                            cf
-                        )
-                    )
-                // Pack the 32 byte-lane nibbles into the low 128 bits.
-                v := and(or(v, shr(4, v)), 0x00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff)
-                v := and(or(v, shr(8, v)), 0xffff0000ffff0000ffff0000ffff0000ffff0000ffff0000ffff0000ffff)
-                v := and(or(v, shr(16, v)), 0xffffffff00000000ffffffff00000000ffffffff00000000ffffffff)
-                v := and(or(v, shr(32, v)), 0xffffffffffffffff0000000000000000ffffffffffffffff)
-                v := and(or(v, shr(64, v)), 0xffffffffffffffffffffffffffffffff)
+
+        for (uint256 i = start; i < field.length; i++) {
+            uint8 character = uint8(field[i]);
+            uint8 nibble;
+            if (character >= 0x30 && character <= 0x39) {
+                nibble = character - 0x30;
+            } else if (character >= 0x61 && character <= 0x66) {
+                nibble = character - 0x57;
+            } else if (character >= 0x41 && character <= 0x46) {
+                nibble = character - 0x37;
+            } else {
+                revert MalformedSigningPayload();
             }
-
-            let ptr := add(field.offset, start)
-            // Chars 0..31 (the high 32 nibbles) and the last 32 chars
-            // (overlapping — overlapped chars decode identically twice).
-            let hi, okHi := decodeHexWord(calldataload(ptr))
-            let lo, okLo := decodeHexWord(calldataload(add(ptr, sub(expectedNibbles, 32))))
-            let tailBits := shl(2, sub(expectedNibbles, 32)) // (n - 32) * 4
-            value := or(shl(tailBits, hi), and(lo, sub(shl(tailBits, 1), 1)))
-            malformed := iszero(and(okHi, okLo))
-        }
-        if (malformed) revert MalformedSigningPayload();
-    }
-
-    /// @notice Merkle root over an exchange batch. Public pure so off-chain
-    ///         mirrors (packages/node `exchange-batch.ts`) can cross-check
-    ///         their implementation against the contract via `eth_call`.
-    ///
-    ///         Tree shape (MUST stay in lockstep with the TypeScript mirror):
-    ///           leaf   = keccak256(abi.encode(
-    ///                        agentId, requestHash, responseHash,
-    ///                        keccak256(responseAuthSig)))
-    ///           parent = keccak256(left || right)   (pairwise, in order)
-    ///           an odd trailing node is promoted to the next level as-is;
-    ///           a single-record batch's root is its leaf.
-    function computeBatchRoot(ExchangeRecord[] calldata records) public pure returns (bytes32) {
-        uint256 n = records.length;
-        if (n == 0) revert EmptyBatch();
-        bytes32[] memory nodes = new bytes32[](n);
-        for (uint256 i = 0; i < n; i++) {
-            nodes[i] = keccak256(
-                abi.encode(
-                    records[i].agentId,
-                    records[i].requestHash,
-                    records[i].responseHash,
-                    keccak256(records[i].responseAuthSig)
-                )
-            );
-        }
-        while (n > 1) {
-            uint256 next = (n + 1) >> 1;
-            for (uint256 i = 0; i + 1 < n; i += 2) {
-                nodes[i >> 1] = keccak256(bytes.concat(nodes[i], nodes[i + 1]));
-            }
-            if (n & 1 == 1) nodes[next - 1] = nodes[n - 1];
-            n = next;
-        }
-        return nodes[0];
-    }
-
-    /// @notice Open a probe-set commitment on-chain: publish the exact
-    ///         canonical probe-set JSON bytes and verify them against the
-    ///         commitment. Allowed only after at least one attestation has
-    ///         referenced the commitment, so a verifier can never reveal
-    ///         probes and then probe with them ("reveal-then-probe"). The
-    ///         opened bytes live in this transaction's calldata — the event
-    ///         carries no bytes; auditors read them from the tx input.
-    ///
-    ///         `packUri` is an OPTIONAL on-chain pointer to the off-chain
-    ///         response pack (request/response plaintexts + ResponseAuths,
-    ///         whose hashes are already anchored) so a third party can locate
-    ///         it from chain data alone. It is emitted verbatim in the event
-    ///         and otherwise unvalidated; an empty string is allowed when the
-    ///         verifier publishes the pack out of band.
-    ///
-    ///         BYTE DERIVATION — mirrors `computeProbeCommitment` in
-    ///         packages/fingerprints/src/types.ts exactly: the commitment is
-    ///         `sha256(utf8(canonicalJsonStringify({service, probes, nonce})))`
-    ///         (canonicalHashBytes32 hashes the UTF-8 canonical-JSON string
-    ///         DIRECTLY — no domain prefix, no length framing), so a plain
-    ///         `sha256(probeSetJson)` over the exact canonical bytes is the
-    ///         correct opening check.
-    ///
-    ///         NOT `onlyApprovedVerifier`: the opening is self-authenticating
-    ///         (sha256 must equal the commitment) and the reveal is keyed by
-    ///         the caller's own commit/attest state, so a verifier that has
-    ///         since been removed from the whitelist can still complete the
-    ///         transparency of its own past audits — the audits people most
-    ///         want to re-run — rather than having them permanently sealed.
-    function revealProbeSet(bytes32 probeCommitment, bytes calldata probeSetJson, string calldata packUri) external {
-        if (probeCommittedAt[msg.sender][probeCommitment] == 0) revert ProbeSetNotCommitted();
-        if (probeRevealedAt[msg.sender][probeCommitment] != 0) revert AlreadyRevealed();
-        if (!commitmentAttested[msg.sender][probeCommitment]) revert RevealBeforeAttest();
-        if (sha256(probeSetJson) != probeCommitment) revert RevealMismatch();
-        probeRevealedAt[msg.sender][probeCommitment] = uint64(block.timestamp);
-        emit ProbeSetRevealed(msg.sender, probeCommitment, packUri);
-    }
-
-    /// @notice Record an audit verdict for `(agentId, serviceHash)`. The
-    ///         attestation is credited toward the verifier's epoch reward
-    ///         share only when the per-service cooldown has elapsed and the
-    ///         verifier is below its per-epoch credit cap; the attestation
-    ///         itself is stored either way.
-    ///
-    ///         TRUST MODEL — whitelist plus total recomputability, not ZK
-    ///         proof. The verdict itself is still the verifier's claim, but
-    ///         it must reference an exchange batch anchored on-chain under
-    ///         the same pre-audit probe-set commitment, and the commitment
-    ///         is opened on-chain afterward (`revealProbeSet`) — so anyone
-    ///         can re-run the audit from public data and check the verdict.
-    ///         `evidenceHash` remains a pointer to the off-chain response
-    ///         pack (plaintexts whose hashes are anchored in the batch).
-    ///         Verifiers are owner-whitelisted and the whitelist is the
-    ///         enforcement lever; integrators MUST NOT treat epoch credits
-    ///         or stored attestations alone as cryptographic proof of audit
-    ///         work — recompute via the anchored batch + revealed probes.
-    function submitAttestation(
-        uint256 agentId,
-        bytes32 serviceHash,
-        uint8 verdict,
-        bytes32 evidenceHash,
-        bytes32 probeCommitment,
-        bytes32 batchRoot,
-        uint32 probeCount,
-        uint32 cohortSize
-    ) external onlyApprovedVerifier {
-        if (agentId == 0 || serviceHash == bytes32(0) || evidenceHash == bytes32(0)) revert InvalidValue();
-        // UNKNOWN (0) is a placeholder, not an attestable verdict.
-        if (verdict == uint8(Verdict.UNKNOWN) || verdict > uint8(Verdict.UNDETERMINED)) revert InvalidVerdict();
-        if (probeCount < minProbeCount) revert ProbeCountTooLow();
-
-        uint64 committedAt = probeCommittedAt[msg.sender][probeCommitment];
-        if (committedAt == 0) revert ProbeSetNotCommitted();
-        if (committedAt >= block.timestamp) revert ProbeSetTooRecent();
-
-        // The verdict must reference an exchange batch this verifier anchored
-        // under the SAME probe-set commitment (anchor before / with attest).
-        // `commitmentBatchRoot` is the sole batch per commitment, so the
-        // root↔commitment binding is checked from that side.
-        BatchAnchor storage anchor = batchAnchors[msg.sender][batchRoot];
-        if (anchor.anchoredAt == 0) revert BatchNotAnchored();
-        if (commitmentBatchRoot[msg.sender][probeCommitment] != batchRoot) revert BatchCommitmentMismatch();
-        // The claimed probe count can never exceed the probe count declared
-        // when the batch was anchored (records bundle multiple probes, so
-        // this is a per-PROBE cap, not the record count), so credited work —
-        // and the delegate budget it backs — is bounded by a claim fixed
-        // before the verdict, not by the verifier's later word.
-        if (probeCount > anchor.probeCount) revert ProbeCountExceedsBatch();
-        // Once the commitment's probes are public no new verdict may credit
-        // against it (matches the anchor-after-reveal seal).
-        if (probeRevealedAt[msg.sender][probeCommitment] != 0) revert AlreadyRevealed();
-        _checkAuditedAgent(agentId);
-
-        uint32 targetProbeCount = batchTargetProbeCount[msg.sender][batchRoot][agentId][serviceHash];
-        if (targetProbeCount == 0) revert TargetNotInBatch();
-        if (probeCount > targetProbeCount) revert ProbeCountExceedsTarget();
-        if (batchTargetAttested[msg.sender][batchRoot][agentId][serviceHash]) revert TargetAlreadyAttested();
-
-        batchTargetAttested[msg.sender][batchRoot][agentId][serviceHash] = true;
-
-        uint64 nowTs = uint64(block.timestamp);
-        uint256 epoch = currentEpoch();
-
-        _latestAttestations[agentId][serviceHash] = Attestation({
-            verifier: msg.sender,
-            attestedAt: nowTs,
-            verdict: verdict,
-            probeCount: probeCount,
-            cohortSize: cohortSize,
-            evidenceHash: evidenceHash,
-            probeCommitment: probeCommitment,
-            batchRoot: batchRoot
-        });
-        // Gate for revealProbeSet: the probe set may be opened only once at
-        // least one verdict has referenced it.
-        commitmentAttested[msg.sender][probeCommitment] = true;
-
-        ServiceVerificationStats storage stats = _verificationStats[agentId][serviceHash];
-        bool firstForService = !_hasAttested[agentId][serviceHash][msg.sender];
-        if (firstForService) _hasAttested[agentId][serviceHash][msg.sender] = true;
-        _bumpStats(stats, verdict, firstForService);
-
-        ServiceVerificationStats storage agentStats = _agentStats[agentId];
-        bool firstForAgent = !_hasAttestedAgent[agentId][msg.sender];
-        if (firstForAgent) _hasAttestedAgent[agentId][msg.sender] = true;
-        _bumpStats(agentStats, verdict, firstForAgent);
-
-        _updateActiveDiff(agentId, serviceHash, msg.sender, verdict, stats, agentStats);
-
-        bool credited = nowTs - lastCreditedAt[agentId][serviceHash] >= auditCooldown
-            && epochCredits[epoch][msg.sender] < maxCreditsPerVerifierPerEpoch;
-        if (credited) {
-            lastCreditedAt[agentId][serviceHash] = nowTs;
-            epochCredits[epoch][msg.sender]++;
-            epochTotalCredits[epoch]++;
-            // Credited audit work backs delegate vouchers: cumulative voucher
-            // claims against this commitment's TARGET are capped by the
-            // probes its attestation attested to — only carriers of this
-            // exact (agentId, serviceHash) can draw on it. Only CREDITED
-            // attestations grow the budget — uncredited re-attestations are
-            // unlimited and would otherwise let a verifier mint voucher
-            // budget for free.
-            commitmentDelegateBudget[msg.sender][probeCommitment][delegateTargetKey(agentId, serviceHash)] +=
-                probeCount;
-        }
-
-        emit AttestationSubmitted(
-            agentId,
-            serviceHash,
-            msg.sender,
-            verdict,
-            evidenceHash,
-            probeCommitment,
-            batchRoot,
-            probeCount,
-            cohortSize,
-            credited,
-            epoch
-        );
-    }
-
-    /// @notice Claim the delegate credits accrued to `buyer` at anchor time
-    ///         for probe traffic it carried for `verifier` under
-    ///         `probeCommitment`. Replaces the off-chain EIP-712
-    ///         DelegateVoucher: which buyer carried which exchange is proven
-    ///         by the seller-signed ResponseAuth payloads verified in
-    ///         `anchorExchangeBatch`, not vouched by the verifier.
-    ///
-    ///         Callable only by the buyer's deposits operator; credits land
-    ///         in the CURRENT epoch, keyed by that operator, and drive the
-    ///         delegate share of the verification bucket in
-    ///         AntseedVerifierRewards.
-    ///
-    ///         The claimable amount is the buyer's unclaimed accrual on the
-    ///         (verifier, commitment, target) key — the target being the
-    ///         audited (agentId, serviceHash) named in the accrual event —
-    ///         clamped to
-    ///           - that target's remaining delegate budget (the probeCount
-    ///             of the verifier's CREDITED attestation of the target
-    ///             under the commitment, minus credits already granted) —
-    ///             so nothing is claimable before the target's own credited
-    ///             attestation exists: a verifier cannot farm the delegate
-    ///             pool by anchoring unattested batches, and carriers of
-    ///             one target cannot drain the budget another target's
-    ///             attestation minted; and
-    ///           - the verifier's remaining per-epoch delegate-credit
-    ///             allowance (`maxDelegateCreditsPerVerifierPerEpoch`).
-    ///         A clamped remainder stays claimable later (next epoch, or
-    ///         after further credited attestations grow the budget).
-    function claimDelegateCredits(
-        address verifier,
-        bytes32 probeCommitment,
-        address buyer,
-        uint256 agentId,
-        bytes32 serviceHash
-    ) external {
-        if (verifier == address(0) || buyer == address(0)) revert InvalidValue();
-        if (!approvedVerifiers[verifier]) revert NotApprovedVerifier();
-        if (buyer == verifier) revert SelfDelegate();
-
-        address operator = IAntseedDeposits(registry.deposits()).getOperator(buyer);
-        if (operator == address(0) || msg.sender != operator) revert NotBuyerOperator();
-        if (operator == verifier) revert SelfDelegate();
-
-        bytes32 targetKey = delegateTargetKey(agentId, serviceHash);
-        uint256 alreadyClaimed = commitmentDelegateClaimed[verifier][probeCommitment][targetKey][buyer];
-        uint256 claimable = commitmentDelegateAccrued[verifier][probeCommitment][targetKey][buyer] - alreadyClaimed;
-
-        uint256 granted = commitmentDelegateCredits[verifier][probeCommitment][targetKey];
-        uint256 budget = commitmentDelegateBudget[verifier][probeCommitment][targetKey];
-        uint256 budgetLeft = budget > granted ? budget - granted : 0;
-        if (claimable > budgetLeft) claimable = budgetLeft;
-
-        uint256 epoch = currentEpoch();
-        uint256 epochGranted = epochDelegateCreditsGrantedBy[epoch][verifier];
-        uint256 cap = maxDelegateCreditsPerVerifierPerEpoch;
-        uint256 capLeft = cap > epochGranted ? cap - epochGranted : 0;
-        if (claimable > capLeft) claimable = capLeft;
-
-        if (claimable == 0) revert NothingToClaim();
-
-        commitmentDelegateClaimed[verifier][probeCommitment][targetKey][buyer] = uint32(alreadyClaimed + claimable);
-        commitmentDelegateCredits[verifier][probeCommitment][targetKey] = granted + claimable;
-        epochDelegateCreditsGrantedBy[epoch][verifier] = epochGranted + claimable;
-        epochDelegateCredits[epoch][operator] += claimable;
-        epochTotalDelegateCredits[epoch] += claimable;
-
-        emit DelegateCredited(epoch, verifier, operator, probeCommitment, targetKey, uint32(claimable));
-    }
-
-    /// @notice Storage key binding delegate accrual/budget to the audited
-    ///         target: keccak256(agentId || serviceHash). Public so
-    ///         off-chain mirrors and the public budget/accrual mappings can
-    ///         be queried without re-deriving the packing.
-    function delegateTargetKey(uint256 agentId, bytes32 serviceHash) public pure returns (bytes32) {
-        return keccak256(abi.encodePacked(agentId, serviceHash));
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //                        VIEWS
-    // ═══════════════════════════════════════════════════════════════════
-
-    function latestAttestation(uint256 agentId, bytes32 serviceHash) external view returns (Attestation memory) {
-        return _latestAttestations[agentId][serviceHash];
-    }
-
-    /// @notice Reputation accumulators for `(agentId, serviceHash)`. The
-    ///         stats timestamp is `latestAttestation(agentId, serviceHash)
-    ///         .attestedAt`.
-    function verificationStats(uint256 agentId, bytes32 serviceHash)
-        external
-        view
-        returns (ServiceVerificationStats memory)
-    {
-        return _verificationStats[agentId][serviceHash];
-    }
-
-    /// @notice Reputation accumulators aggregated across all services of
-    ///         `agentId`, maintained incrementally on every attestation.
-    ///         `distinctVerifierCount` counts each verifier once per agent
-    ///         regardless of how many of its services it audited.
-    function agentVerificationStats(uint256 agentId) external view returns (ServiceVerificationStats memory) {
-        return _agentStats[agentId];
-    }
-
-    /// @notice Emission epoch clock, resolved through `registry.emissions()`
-    ///         (AntseedUsageAccounting post-cutover) so verifier credits land
-    ///         in the same epochs the emissions gate finalizes.
-    function currentEpoch() public view returns (uint256) {
-        return IAntseedUsageAccounting(registry.emissions()).currentEpoch();
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    //                        INTERNAL HELPERS
-    // ═══════════════════════════════════════════════════════════════════
-
-    /// @dev The audited agent must exist in the ERC-8004 identity registry,
-    ///      and a verifier may never audit its own agent. `ownerOf` reverts
-    ///      for unknown ids on the deployed registry; the explicit code-size
-    ///      check keeps a missing/unset registry from decoding as success.
-    function _checkAuditedAgent(uint256 agentId) internal view {
-        address identityRegistry = registry.identityRegistry();
-        if (identityRegistry == address(0) || identityRegistry.code.length == 0) revert UnknownAgent();
-        if (_resolveAgentOwner(identityRegistry, agentId) == msg.sender) revert SelfAudit();
-    }
-
-    /// @dev Apply one attestation to a stats accumulator (per-service or
-    ///      per-agent): verdict tally, last verdict/verifier, and the
-    ///      distinct-verifier bump when this is the verifier's first
-    ///      attestation against the key.
-    function _bumpStats(ServiceVerificationStats storage stats, uint8 verdict, bool firstAttestation) private {
-        if (verdict == uint8(Verdict.SAME)) stats.sameCount++;
-        else if (verdict == uint8(Verdict.DIFF)) stats.diffCount++;
-        else stats.undeterminedCount++;
-        stats.lastVerdict = verdict;
-        stats.lastVerifier = msg.sender;
-        if (firstAttestation) stats.distinctVerifierCount++;
-    }
-
-    /// @dev Maintain both `activeDiffVerifierCount` accumulators from
-    ///      `verifier`'s per-service verdict transition (the attesting
-    ///      caller, or the owner's remediation target in
-    ///      `clearVerifierStanding`). Entering DIFF raises the service-level
-    ///      count once per verifier; leaving DIFF (a later SAME/UNDETERMINED
-    ///      on the same service, or an owner clearance to 0) lowers it. The
-    ///      agent-level count tracks verifiers with a standing DIFF on ANY of
-    ///      the agent's services via `_verifierDiffServiceCount`, so a SAME
-    ///      on an honestly served service never launders a standing DIFF on
-    ///      the substituted one. A stored verdict of 0 means "never attested
-    ///      / cleared" (UNKNOWN is not attestable, so 0 is unambiguous). No
-    ///      counter can underflow: every decrement requires this verifier's
-    ///      stored DIFF on this exact key, which implies the matching earlier
-    ///      increment.
-    function _updateActiveDiff(
-        uint256 agentId,
-        bytes32 serviceHash,
-        address verifier,
-        uint8 verdict,
-        ServiceVerificationStats storage stats,
-        ServiceVerificationStats storage agentStats
-    ) internal {
-        uint8 previous = _lastVerdictByVerifier[agentId][serviceHash][verifier];
-        if (previous == verdict) return;
-        _lastVerdictByVerifier[agentId][serviceHash][verifier] = verdict;
-
-        if (verdict == uint8(Verdict.DIFF)) {
-            stats.activeDiffVerifierCount++;
-            if (++_verifierDiffServiceCount[agentId][verifier] == 1) {
-                agentStats.activeDiffVerifierCount++;
-            }
-        } else if (previous == uint8(Verdict.DIFF)) {
-            stats.activeDiffVerifierCount--;
-            if (--_verifierDiffServiceCount[agentId][verifier] == 0) {
-                agentStats.activeDiffVerifierCount--;
-            }
+            value = (value << 4) | nibble;
         }
     }
 }

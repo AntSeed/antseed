@@ -3,41 +3,26 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Script.sol";
 
-import { AntseedEmissionsGate } from "../emissions/AntseedEmissionsGate.sol";
-import { AntseedVerifierRegistry } from "../verification/AntseedVerifierRegistry.sol";
-import { AntseedVerifierRewards } from "../verification/AntseedVerifierRewards.sol";
+import { IAntseedDeposits } from "../interfaces/IAntseedDeposits.sol";
+import { IAntseedEmissionsGate } from "../interfaces/IAntseedEmissionsGate.sol";
 import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
+import { IAntseedUsageAccounting } from "../interfaces/IAntseedUsageAccounting.sol";
+import { AntseedRelayTreasury } from "../verification/AntseedRelayTreasury.sol";
+import { AntseedVerifierPointsPolicy } from "../verification/AntseedVerifierPointsPolicy.sol";
+import { AntseedVerifierRegistry } from "../verification/AntseedVerifierRegistry.sol";
 
 /**
  * @title DeployVerifierNetwork
- * @notice Deploys the verifier network (AntseedVerifierRegistry +
- *         AntseedVerifierRewards) against an ALREADY-deployed emissions gate
- *         and protocol registry, replacing the current verification bucket
- *         controller.
- *
- *         The controller flip (`gate.setMinterController`) belongs to the
- *         gate owner and only runs when SET_MINTER_CONTROLLER=true; otherwise
- *         the exact call for the gate owner is printed.
+ * @notice Deploys reference-audit verification and the shared USDC relay
+ *         treasury against an existing recognized-usage deployment.
  *
  * Required env:
- *   DEPLOYER_PRIVATE_KEY   Broadcaster key (becomes VerifierRegistry owner).
- *   ANTSEED_REGISTRY       Deployed AntseedRegistry address.
- *   EMISSIONS_GATE         Deployed AntseedEmissionsGate address.
- *
+ *   DEPLOYER_PRIVATE_KEY   Owner of the current UsageAccounting contract.
+ *   ANTSEED_REGISTRY
  * Optional env:
- *   SET_MINTER_CONTROLLER  true = the broadcaster is the gate owner and the
- *                          verification bucket controller is flipped in this
- *                          broadcast. Default false: print the call instead.
- *
- * Usage:
- *   cd packages/contracts
- *   source .env
- *   forge script script/DeployVerifierNetwork.s.sol \
- *     --rpc-url $BASE_MAINNET_RPC_URL \
- *     --broadcast \
- *     --verify \
- *     --etherscan-api-key $BASESCAN_API_KEY \
- *     --via-ir
+ *   RELAY_MAX_PAYOUT_PER_JOB_USDC   Default 1 USDC (1e6 units).
+ *   RELAY_MAX_PAYOUT_PER_AUDIT_USDC Default 50 USDC (50e6 units).
+ *   RELAY_MAX_COMMITTED_BUDGET_PER_EPOCH_USDC Default 500 USDC (500e6 units).
  */
 contract DeployVerifierNetwork is Script {
     bytes32 public constant VERIFICATION_MINTER_ID = keccak256("antseed.emissions.verification.v1");
@@ -46,98 +31,77 @@ contract DeployVerifierNetwork is Script {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
         address registryAddress = vm.envAddress("ANTSEED_REGISTRY");
-        address gateAddress = vm.envAddress("EMISSIONS_GATE");
-        bool setMinterController = vm.envOr("SET_MINTER_CONTROLLER", false);
+        uint256 maxRelayPayoutPerJob = vm.envOr("RELAY_MAX_PAYOUT_PER_JOB_USDC", uint256(1e6));
+        uint256 maxRelayPayoutPerAudit = vm.envOr("RELAY_MAX_PAYOUT_PER_AUDIT_USDC", uint256(50e6));
+        uint256 maxCommittedBudgetPerEpoch = vm.envOr("RELAY_MAX_COMMITTED_BUDGET_PER_EPOCH_USDC", uint256(500e6));
+
+        require(maxRelayPayoutPerJob <= type(uint96).max, "relay job cap too large");
+        require(maxRelayPayoutPerAudit <= type(uint96).max, "relay audit cap too large");
+        require(maxCommittedBudgetPerEpoch <= type(uint96).max, "relay epoch cap too large");
 
         IAntseedRegistry registry = IAntseedRegistry(registryAddress);
-        AntseedEmissionsGate gate = AntseedEmissionsGate(gateAddress);
-        require(registry.identityRegistry() != address(0), "identity registry not set");
-        require(registry.emissions() != address(0), "registry emissions not set");
-        // claimDelegateCredits staticcalls registry.deposits() for the buyer's
-        // operator; an unset deposits address makes every claim revert on a
-        // codeless call.
-        require(registry.deposits() != address(0), "registry deposits not set");
-        // The gate and the verifier registry MUST share one registry —
-        // mismatched registries silently cross ownership, operator, and
-        // reserve boundaries between two protocol deployments.
-        require(address(gate.registry()) == registryAddress, "gate registry mismatch");
-        (address currentController, uint32 shareBps,) = gate.minters(VERIFICATION_MINTER_ID);
-        require(currentController != address(0), "verification bucket not configured");
+        address depositsAddress = registry.deposits();
+        address usageAccountingAddress = registry.emissions();
+        require(registryAddress.code.length != 0, "registry has no code");
+        require(depositsAddress != address(0) && depositsAddress.code.length != 0, "registry deposits not set");
+        require(
+            usageAccountingAddress != address(0) && usageAccountingAddress.code.length != 0,
+            "registry emissions not set"
+        );
+        require(
+            registry.identityRegistry() != address(0) && registry.identityRegistry().code.length != 0,
+            "identity registry not set"
+        );
+
+        address emissionsGateAddress = address(IAntseedUsageAccounting(usageAccountingAddress).emissionsGate());
+        require(emissionsGateAddress != address(0) && emissionsGateAddress.code.length != 0, "emissions gate not set");
+        require(
+            address(IAntseedEmissionsGate(emissionsGateAddress).registry()) == registryAddress, "gate registry mismatch"
+        );
+
+        address usdc = IAntseedDeposits(depositsAddress).usdc();
+        require(usdc != address(0) && usdc.code.length != 0, "USDC not set");
+
+        (address legacyVerificationController, uint32 legacyVerificationShareBps,) =
+            IAntseedEmissionsGate(emissionsGateAddress).minters(VERIFICATION_MINTER_ID);
 
         console.log("=== AntSeed Verifier Network Deployment ===");
         console.log("Deployer:               ", deployer);
         console.log("Registry:               ", registryAddress);
-        console.log("EmissionsGate:          ", gateAddress);
-        console.log("Current bucket minter:  ", currentController);
-        console.log("Bucket share (bps/1e5): ", shareBps);
-        console.log("");
+        console.log("UsageAccounting:        ", usageAccountingAddress);
+        console.log("EmissionsGate:          ", emissionsGateAddress);
+        console.log("USDC:                   ", usdc);
+        console.log("Legacy verifier controller:", legacyVerificationController);
+        console.log("Legacy verifier share bps: ", legacyVerificationShareBps);
 
         vm.startBroadcast(deployerPrivateKey);
 
-        AntseedVerifierRegistry verifierRegistry = new AntseedVerifierRegistry(registryAddress);
-        console.log("VerifierRegistry:       ", address(verifierRegistry));
+        AntseedVerifierRegistry verifierRegistry = new AntseedVerifierRegistry(registryAddress, emissionsGateAddress);
+        AntseedRelayTreasury relayTreasury = new AntseedRelayTreasury(
+            usdc,
+            address(verifierRegistry),
+            uint96(maxRelayPayoutPerJob),
+            uint96(maxRelayPayoutPerAudit),
+            uint96(maxCommittedBudgetPerEpoch)
+        );
+        verifierRegistry.setRelayTreasury(address(relayTreasury));
 
-        AntseedVerifierRewards verifierRewards = new AntseedVerifierRewards(gateAddress, address(verifierRegistry));
-        console.log("VerifierRewards:        ", address(verifierRewards));
-
-        if (currentController != address(verifierRewards)) {
-            console.log("");
-            console.log("!!! WARNING: the verification bucket is currently controlled by");
-            console.log("!!!   ", currentController);
-            console.log("!!! Flipping the controller DELETES that controller's minter binding");
-            console.log("!!! in the gate: every reward not yet claimed through it is STRANDED");
-            console.log("!!! (its gate.claim reverts NotEmissionMinter; untouched epochs freeze");
-            console.log("!!! a zero budget). Settle ALL pending claims and epoch remainders on");
-            console.log("!!! the old controller BEFORE the flip.");
-            console.log("");
-        }
-
-        if (setMinterController) {
-            gate.setMinterController(VERIFICATION_MINTER_ID, address(verifierRewards));
-            console.log("Verification bucket controller flipped to VerifierRewards");
-        }
+        // Wire the new verifier into the existing usage-points path.
+        AntseedVerifierPointsPolicy verifierPointsPolicy =
+            new AntseedVerifierPointsPolicy(registryAddress, address(verifierRegistry));
+        IAntseedUsageAccounting(usageAccountingAddress).setPointsPolicy(address(verifierPointsPolicy));
 
         vm.stopBroadcast();
 
-        console.log("");
-        console.log("=== Verifier network deployment complete ===");
-        if (!setMinterController) {
-            console.log("GATE OWNER ACTION REQUIRED - flip the bucket controller:");
-            console.log("  gate.setMinterController(");
-            console.log("    keccak256(\"antseed.emissions.verification.v1\"),");
-            console.log("    ", address(verifierRewards));
-            console.log("  )");
-            console.log("  cast calldata example:");
-            console.log(
-                "  cast send %s \"setMinterController(bytes32,address)\" %s %s",
-                gateAddress,
-                vm.toString(VERIFICATION_MINTER_ID),
-                address(verifierRewards)
-            );
-        }
+        console.log("VerifierRegistry:       ", address(verifierRegistry));
+        console.log("VerifierPointsPolicy:   ", address(verifierPointsPolicy));
+        console.log("RelayTreasury:          ", address(relayTreasury));
         console.log("");
         console.log("POST-DEPLOY CHECKLIST (manual):");
-        console.log("- The deployer EOA owns AntseedVerifierRegistry. Transfer ownership");
-        console.log("  to the ops multisig (Ownable2Step: transferOwnership + accept).");
-        console.log("- Whitelist each approved verifier peer:");
-        console.log("  verifierRegistry.setVerifier(<verifier>, true)");
-        console.log("- Verifier rewards only accrue from the NEXT finalized epoch after");
-        console.log("  the controller flip. The flip does NOT preserve the previous");
-        console.log("  controller's claims: the gate deletes its minter binding, so any");
-        console.log("  rewards still unclaimed through it become unmintable. Drain the old");
-        console.log("  controller (claims + settleEpochRemainder) before flipping.");
-        console.log("- Zero-credit finalized epochs should be settled via");
-        console.log("  verifierRewards.settleEpochRemainder(epoch) to route the bucket");
-        console.log("  through burn/reserve.");
-        // NOTE: To shape recognized-usage points by verification standing,
-        // the UsageAccounting owner may deploy AntseedVerifierPointsPolicy
-        // (constructor: registry + verifierRegistry) and wire it via
-        // `UsageAccounting.setPointsPolicy(address)`. Like the
-        // SET_MINTER_CONTROLLER pattern above, that wiring is an owner
-        // action behind its own env flag in a follow-up script — it is
-        // deliberately NOT force-set in this broadcast.
-        console.log("- Optional: deploy AntseedVerifierPointsPolicy and have the");
-        console.log("  UsageAccounting owner wire it via setPointsPolicy(address) to");
-        console.log("  cut seller emissions for DIFF-flagged sellers.");
+        console.log("- Fund RelayTreasury with USDC before committing audits.");
+        console.log("- Whitelist each validator with verifierRegistry.setVerifier.");
+        console.log("- Transfer both Ownable2Step contracts to the ops multisig.");
+        console.log("- Monitor treasury balance and payout-cap utilization.");
+        console.log("- Do not rotate the reported legacy verifier controller until all old claims/remainders settle.");
     }
 }

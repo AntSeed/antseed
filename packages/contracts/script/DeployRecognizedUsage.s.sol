@@ -8,11 +8,13 @@ import { AntseedEmissionsGate } from "../emissions/AntseedEmissionsGate.sol";
 import { AntseedLegacyEmissionsEscrow } from "../emissions/AntseedLegacyEmissionsEscrow.sol";
 import { AntseedSellerPoolsRewards } from "../emissions/AntseedSellerPoolsRewards.sol";
 import { AntseedUsageAccounting } from "../emissions/AntseedUsageAccounting.sol";
+import { IAntseedDeposits } from "../interfaces/IAntseedDeposits.sol";
 import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
 import { AntseedSellerPools } from "../sellers/AntseedSellerPools.sol";
 import { AntseedSellerRegistry } from "../sellers/AntseedSellerRegistry.sol";
+import { AntseedRelayTreasury } from "../verification/AntseedRelayTreasury.sol";
+import { AntseedVerifierPointsPolicy } from "../verification/AntseedVerifierPointsPolicy.sol";
 import { AntseedVerifierRegistry } from "../verification/AntseedVerifierRegistry.sol";
-import { AntseedVerifierRewards } from "../verification/AntseedVerifierRewards.sol";
 
 interface IAntseedRegistryRecognizedUsageAdmin is IAntseedRegistry {
     function setEmissions(address emissions) external;
@@ -61,7 +63,6 @@ interface IAntseedLegacyEmissionsAdmin {
  */
 contract DeployRecognizedUsage is Script {
     address public constant ANTS_TOKEN = 0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263;
-    bytes32 public constant VERIFICATION_MINTER_ID = keccak256("antseed.emissions.verification.v1");
     bytes32 public constant SELLER_POOLS_MINTER_ID = keccak256("antseed.emissions.seller-pools.v1");
     bytes32 public constant USAGE_MINTER_ID = keccak256("antseed.emissions.usage.v1");
 
@@ -81,6 +82,15 @@ contract DeployRecognizedUsage is Script {
         require(existingEmissions != address(0), "existing emissions not set");
         require(existingChannels != address(0), "channels not set");
         require(existingDeposits != address(0), "deposits not set");
+        address usdc = IAntseedDeposits(existingDeposits).usdc();
+        require(usdc != address(0), "USDC not set");
+
+        uint256 maxRelayPayoutPerJob = vm.envOr("RELAY_MAX_PAYOUT_PER_JOB_USDC", uint256(1e6));
+        uint256 maxRelayPayoutPerAudit = vm.envOr("RELAY_MAX_PAYOUT_PER_AUDIT_USDC", uint256(50e6));
+        uint256 maxCommittedBudgetPerEpoch = vm.envOr("RELAY_MAX_COMMITTED_BUDGET_PER_EPOCH_USDC", uint256(500e6));
+        require(maxRelayPayoutPerJob <= type(uint96).max, "relay job cap too large");
+        require(maxRelayPayoutPerAudit <= type(uint96).max, "relay audit cap too large");
+        require(maxCommittedBudgetPerEpoch <= type(uint96).max, "relay epoch cap too large");
 
         address emissionsReserveWallet = vm.envOr("EMISSIONS_RESERVE_WALLET", address(0));
         address teamWallet = registry.teamWallet();
@@ -90,7 +100,7 @@ contract DeployRecognizedUsage is Script {
 
         vm.startBroadcast(deployerPrivateKey);
 
-        AntseedEmissionsGate gate = new AntseedEmissionsGate(registryAddress, 15_000, 15_000);
+        AntseedEmissionsGate gate = new AntseedEmissionsGate(registryAddress, 15_000, 25_000);
         if (emissionsReserveWallet != address(0)) {
             gate.setMinterController(gate.RESERVE_MINTER_ID(), emissionsReserveWallet);
         }
@@ -134,19 +144,30 @@ contract DeployRecognizedUsage is Script {
 
         console.log("EmissionsGate:          ", address(gate));
 
-        // Verifier network: whitelisted verifier peers attest seller model
-        // truthfulness and split the verification bucket pro-rata by credits.
-        AntseedVerifierRegistry verifierRegistry = new AntseedVerifierRegistry(registryAddress);
+        // Verifier network: allowlisted validators commit reference audits,
+        // attest lifecycle state, and atomically pay relay operators in USDC.
+        AntseedVerifierRegistry verifierRegistry = new AntseedVerifierRegistry(registryAddress, address(gate));
         console.log("VerifierRegistry:       ", address(verifierRegistry));
 
-        AntseedVerifierRewards verifierRewards = new AntseedVerifierRewards(address(gate), address(verifierRegistry));
-        console.log("VerifierRewards:        ", address(verifierRewards));
-
-        gate.setMinter(VERIFICATION_MINTER_ID, address(verifierRewards), 10_000, true);
+        AntseedRelayTreasury relayTreasury = new AntseedRelayTreasury(
+            usdc,
+            address(verifierRegistry),
+            uint96(maxRelayPayoutPerJob),
+            uint96(maxRelayPayoutPerAudit),
+            uint96(maxCommittedBudgetPerEpoch)
+        );
+        verifierRegistry.setRelayTreasury(address(relayTreasury));
+        console.log("RelayTreasury:          ", address(relayTreasury));
 
         AntseedUsageAccounting usageAccounting =
             new AntseedUsageAccounting(address(sellerPools), existingChannels, address(gate));
         console.log("UsageAccounting:        ", address(usageAccounting));
+
+        // This policy reduces seller points while the verifier reports a DIFF discount.
+        AntseedVerifierPointsPolicy verifierPointsPolicy =
+            new AntseedVerifierPointsPolicy(registryAddress, address(verifierRegistry));
+        usageAccounting.setPointsPolicy(address(verifierPointsPolicy));
+        console.log("VerifierPointsPolicy:   ", address(verifierPointsPolicy));
 
         AntseedSellerPoolsRewards sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
@@ -170,8 +191,7 @@ contract DeployRecognizedUsage is Script {
         // itself, so its unchanged mint() claims draw from a fixed pre-minted
         // pot instead of minting. The gate then refuses pre-effective epochs
         // unconditionally.
-        AntseedLegacyEmissionsEscrow legacyEscrow =
-            new AntseedLegacyEmissionsEscrow(registryAddress, existingEmissions);
+        AntseedLegacyEmissionsEscrow legacyEscrow = new AntseedLegacyEmissionsEscrow(registryAddress, existingEmissions);
         console.log("LegacyEmissionsEscrow:  ", address(legacyEscrow));
 
         // SellerPools must be able to pay out withdrawals and slash to the dead
@@ -212,8 +232,7 @@ contract DeployRecognizedUsage is Script {
         console.log("Seller pools bucket:      2-40% dynamic (40% max)");
         console.log("Usage bucket:             buyer 5-10%, seller/operator 5-10% dynamic (20% max)");
         console.log("Team bucket:              15%");
-        console.log("Reserve bucket:           15%");
-        console.log("Verification bucket:      10%");
+        console.log("Reserve bucket:           25% (includes unused verification allocation)");
         console.log("Seller pools minter:      ", address(sellerPoolsRewards));
         console.log("Usage minter:             ", address(usageRewards));
         console.log("Legacy claims minter:     ", existingEmissions);
@@ -221,7 +240,9 @@ contract DeployRecognizedUsage is Script {
         console.log("Team recipient:           ", teamWallet);
         console.log("Reserve recipient:        ", gate.emissionsReserve());
         console.log("Verifier registry:        ", address(verifierRegistry));
-        console.log("Verification minter:      ", address(verifierRewards));
+        console.log("Verifier points policy:   ", address(verifierPointsPolicy));
+        console.log("Relay treasury:           ", address(relayTreasury));
+        console.log("Treasury funding required before the first audit reservation.");
         console.log("");
         console.log("POST-DEPLOY CHECKLIST (manual):");
         console.log("- The deployer EOA still owns ANTSToken, the gate, and every new");
@@ -231,12 +252,10 @@ contract DeployRecognizedUsage is Script {
         console.log("  included). Transfer ownership to the ops multisig, and once");
         console.log("  minters/deposits/escrow are final call gate.renounceOwnership()");
         console.log("  to freeze the emission plan.");
-        console.log("- The verification bucket pays through AntseedVerifierRewards, but");
-        console.log("  no verifier is whitelisted yet: for each approved verifier peer");
+        console.log("- No verifier is whitelisted yet: for each approved verifier peer");
         console.log("  call verifierRegistry.setVerifier(<verifier>, true). Verifier");
-        console.log("  addresses are a post-deploy decision; until at least one verifier");
-        console.log("  earns credits, settleEpochRemainder routes each finalized epoch's");
-        console.log("  verification budget to burn/reserve.");
+        console.log("  addresses are a post-deploy decision. Fund RelayTreasury with USDC");
+        console.log("  before committing audits and monitor its balance operationally.");
         console.log("- Sellers staked in legacy USDC staking stay eligible via the");
         console.log("  SellerRegistry legacy fallback. Call setLegacyStakeEligibilityEnabled(false)");
         console.log("  only after seller pools are seeded with ANTS stake.");

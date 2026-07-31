@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import { IAntseedRegistry } from "./IAntseedRegistry.sol";
+
 interface IAntseedEmissionsGate {
     struct Minter {
         address controller;
@@ -8,6 +10,9 @@ interface IAntseedEmissionsGate {
         bool editable;
     }
 
+    function registry() external view returns (IAntseedRegistry);
+    function GENESIS() external view returns (uint256);
+    function EPOCH_DURATION() external view returns (uint256);
     function currentEpoch() external view returns (uint256);
     function effectiveEpoch() external view returns (uint256);
     function getEpochEmission(uint256 epoch) external view returns (uint256);
