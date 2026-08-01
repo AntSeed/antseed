@@ -679,29 +679,33 @@
   color: #FFFFFF;
 }
 
-/* Both privacy cards link to their blog posts — same card visuals,
-   block-level anchors with a soft lift on hover. Colors are pinned per
-   card because the copy inherits and the global a:hover would tint it. */
-.privacyCardLink {
-  display: block;
-  height: 100%;
-  text-decoration: none;
-  transition: transform 0.2s var(--as-ease);
+/* "Learn more" links in the privacy cards — same voice as the
+   owned-cards "View on GitHub" link: underlined, after the copy with a
+   small gap. Only the link is clickable; the card has no hover state.
+   Color is inherited so it reads white on the dark card, ink on green
+   (the :hover pin outranks the global a:hover tint). */
+.privacyMore {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 12px;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
-.privacyCardLink:hover {
-  text-decoration: none;
-  transform: translateY(-2px);
+.privacyMore:hover {
+  color: inherit;
+  text-decoration: underline;
 }
 
-a.privacyCardDark,
-a.privacyCardDark:hover {
-  color: #FFFFFF;
-}
-
-a.privacyCardGreen,
-a.privacyCardGreen:hover {
-  color: var(--as-ink);
+.privacyMore svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
 }
 
 .privacyCardGreen {

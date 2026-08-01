@@ -699,31 +699,31 @@ function PrivateByDesign() {
           <h2 className={styles.privacyGhostTitle}>Private by design</h2>
         </Reveal>
         <div className={styles.privacyGrid}>
-          <Reveal>
-            <Link
-              to="/blog/trust-without-a-middleman"
-              className={`${styles.privacyCardDark} ${styles.privacyCardLink}`}>
-              <img className={styles.privacySpy} src="/img/home/spy-dots.png" alt="" aria-hidden="true" />
-              <div className={styles.privacyCopy}>
-                <h3>Anonymous</h3>
-                <p>No account, no email, like using AI with VPN.</p>
-              </div>
-            </Link>
+          <Reveal className={styles.privacyCardDark}>
+            <img className={styles.privacySpy} src="/img/home/spy-dots.png" alt="" aria-hidden="true" />
+            <div className={styles.privacyCopy}>
+              <h3>Anonymous</h3>
+              <p>No account, no email, like using AI with VPN.</p>
+              <Link to="/blog/trust-without-a-middleman" className={styles.privacyMore}>
+                Learn more
+                <ArrowRight size={16} />
+              </Link>
+            </div>
           </Reveal>
-          <Reveal delay={110}>
-            <Link
-              to="/blog/dont-trust-the-tee-label"
-              className={`${styles.privacyCardGreen} ${styles.privacyCardLink}`}>
-              <img className={styles.privacyShield} src="/img/home/shield-dots.png" alt="" aria-hidden="true" />
-              <div className={styles.privacyCopyGreen}>
-                <h3>Private</h3>
-                <p>
-                  Choose a TEE-verified provider for extra privacy, your request runs end-to-end
-                  encrypted inside a sealed hardware enclave, so not even the provider can see your
-                  prompt.
-                </p>
-              </div>
-            </Link>
+          <Reveal className={styles.privacyCardGreen} delay={110}>
+            <img className={styles.privacyShield} src="/img/home/shield-dots.png" alt="" aria-hidden="true" />
+            <div className={styles.privacyCopyGreen}>
+              <h3>Private</h3>
+              <p>
+                Choose a TEE-verified provider for extra privacy, your request runs end-to-end
+                encrypted inside a sealed hardware enclave, so not even the provider can see your
+                prompt.
+              </p>
+              <Link to="/blog/dont-trust-the-tee-label" className={styles.privacyMore}>
+                Learn more
+                <ArrowRight size={16} />
+              </Link>
+            </div>
           </Reveal>
         </div>
       </div>
