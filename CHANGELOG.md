@@ -23,6 +23,16 @@ This project uses selective package publishing. Each release entry lists the pub
 - Fixed the buyer's Responses→Chat Completions request adapter to group parallel tool calls into a single assistant `tool_calls` message. Previously each call became its own assistant message, so strict chat-completions upstreams rejected multi-tool turns with `an assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'`.
 - Fixed the Responses request normalizer to drop non-message input items with no renderable text (e.g. Codex `reasoning` items) instead of converting them into empty user messages mid-history.
 
+## 2026-08-01 — Desktop alpha: quiet update-check errors
+
+### Desktop
+
+- `@antseed/desktop@0.1.115-alpha.29` (prerelease)
+
+### Fixed
+
+- Transient network errors no longer raise a red "Update failed" banner. Background update checks that fail (e.g. `net::ERR_NETWORK_CHANGED` when a VPN toggles or WiFi switches mid-check) are logged and silently retried on the next periodic check, and an interrupted update download quietly retries up to five times — the retry budget resets whenever bytes flow again, so long downloads survive flaky networks. Real failures (retries exhausted, non-network errors, or errors while installing) still surface as before.
+
 ## 2026-08-01 — Desktop alpha: opt-in update downloads
 
 ### Desktop

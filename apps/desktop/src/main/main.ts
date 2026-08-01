@@ -645,6 +645,19 @@ app.whenReady().then(async () => {
   // "available" but must not regress an in-flight or finished download.
   let updatePhase: 'idle' | 'available' | 'downloading' | 'ready' = 'idle';
 
+  const TRANSIENT_UPDATE_ERROR = /net::ERR_|ETIMEDOUT|ESOCKETTIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket hang up/i;
+  const MAX_DOWNLOAD_RETRIES = 5;
+  let downloadRetries = 0;
+  let downloadRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const clearDownloadRetry = () => {
+    if (downloadRetryTimer) {
+      clearTimeout(downloadRetryTimer);
+      downloadRetryTimer = null;
+    }
+    downloadRetries = 0;
+  };
+
   autoUpdater.on('update-available', (info) => {
     if (updatePhase === 'downloading' || updatePhase === 'ready') return;
     updatePhase = 'available';
@@ -657,21 +670,19 @@ app.whenReady().then(async () => {
       return { ok: true };
     }
     updatePhase = 'downloading';
+    clearDownloadRetry();
     startStallWatchdog();
     sendUpdateStatus({ status: 'downloading', version: updateVersion ?? '', percent: 0 });
-    try {
-      void autoUpdater.downloadUpdate().catch((err) => {
-        updatePhase = 'available';
-        reportUpdateError(err, 'download failed');
-      });
-      return { ok: true };
-    } catch (err) {
-      updatePhase = 'available';
-      return reportUpdateError(err, 'download failed');
-    }
+    void autoUpdater.downloadUpdate().catch(() => {
+      // Failures surface through the 'error' event, where transient network
+      // errors are retried before anything is shown.
+    });
+    return { ok: true };
   });
   autoUpdater.on('download-progress', (progress) => {
     if (!updateVersion) return;
+    // Bytes are flowing again — a past interruption no longer counts.
+    downloadRetries = 0;
     lastDownloadProgressAt = Date.now();
     const percent = Math.max(0, Math.min(100, Math.round(progress.percent ?? 0)));
     lastDownloadPercent = percent;
@@ -713,6 +724,7 @@ app.whenReady().then(async () => {
     updatePhase = 'ready';
     updateVersion = info.version;
     clearStallWatchdog();
+    clearDownloadRetry();
     if (updateCheckInterval) {
       clearInterval(updateCheckInterval);
       updateCheckInterval = null;
@@ -729,6 +741,42 @@ app.whenReady().then(async () => {
     }, 3 * 60_000);
   });
   autoUpdater.on('error', (err) => {
+    const message = errorMessage(err);
+
+    // Background check failures (no download in flight, nothing being
+    // installed) are routine on network changes — a VPN toggling or WiFi
+    // switching mid-check must not raise an "Update failed" banner. The
+    // periodic re-check retries on its own.
+    if (!isInstallingUpdate && updatePhase !== 'downloading') {
+      appendLog('connect', 'system', `Auto-update check failed (will retry): ${message}`);
+      return;
+    }
+
+    // A download interrupted by a transient network error rides it out:
+    // retry quietly a few times before surfacing a failure.
+    if (
+      !isInstallingUpdate
+      && updatePhase === 'downloading'
+      && TRANSIENT_UPDATE_ERROR.test(message)
+      && downloadRetries < MAX_DOWNLOAD_RETRIES
+    ) {
+      if (downloadRetryTimer) return; // a retry is already scheduled
+      downloadRetries += 1;
+      appendLog('connect', 'system', `Auto-update download interrupted (${message}) — retry ${downloadRetries}/${MAX_DOWNLOAD_RETRIES} in 15s`);
+      downloadRetryTimer = setTimeout(() => {
+        downloadRetryTimer = null;
+        startStallWatchdog();
+        void autoUpdater.downloadUpdate().catch(() => {
+          // Failure re-enters through the 'error' event.
+        });
+      }, 15_000);
+      return;
+    }
+
+    if (!isInstallingUpdate && updatePhase === 'downloading') {
+      // Let the next periodic check re-announce the update after the banner.
+      updatePhase = 'available';
+    }
     reportUpdateError(err, 'error');
   });
 
