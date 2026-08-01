@@ -23,6 +23,18 @@ This project uses selective package publishing. Each release entry lists the pub
 - Fixed the buyer's Responses→Chat Completions request adapter to group parallel tool calls into a single assistant `tool_calls` message. Previously each call became its own assistant message, so strict chat-completions upstreams rejected multi-tool turns with `an assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'`.
 - Fixed the Responses request normalizer to drop non-message input items with no renderable text (e.g. Codex `reasoning` items) instead of converting them into empty user messages mid-history.
 
+## 2026-08-01 — Desktop alpha: opt-in update downloads
+
+### Desktop
+
+- `@antseed/desktop@0.1.115-alpha.28` (prerelease)
+
+### Changed
+
+- Update downloads are now opt-in: detecting a new version shows an "Update available" banner with a Download button instead of fetching hundreds of megabytes automatically. Download progress, background verification, and the "Restart & update" step follow only after clicking. Dismissing the banner hides it for the current session; it returns the next time the app opens until the update is taken.
+- The Home usage card shows the measured savings amount without the percentage suffix.
+- The bundled runtime picks up the latest payment and protocol work from main, including buyer-requested cooperative channel close, seller channel-recovery fixes, and the parallel-tool-call adapter fix (see Unreleased for the package-level details).
+
 ## 2026-07-31 — Desktop alpha: deposit chooser polish, faster update handoff
 
 ### Desktop
