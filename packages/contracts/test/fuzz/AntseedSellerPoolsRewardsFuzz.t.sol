@@ -31,10 +31,10 @@ contract MockAgentLookup {
  *         and distributes.
  *
  *         Invariants under any random staker set / usage:
- *           1. The pool epoch settles gross == its share of the controller
- *              dynamic staker budget, and claimable == gross.
+ *           1. The pool epoch settles its share of the controller
+ *              dynamic staker budget as a single fully-claimable amount.
  *           2. The controller never mints past its Gate share budget.
- *           3. Stakers collectively claim <= the claimable amount minted to the
+ *           3. Stakers collectively claim <= the settled amount minted to the
  *              controller — it can NEVER become insolvent. Residual is dust.
  *           4. Each individual position's claim is proportional to its weight and
  *              double-claim is impossible (cursor advances).
@@ -155,21 +155,16 @@ contract AntseedSellerPoolsRewardsFuzzTest is Test {
         rewards.indexPoolRewards(agentId, 10);
 
         // ── Invariant 1: settlement routing ──
-        (bool settled, uint256 gross, uint256 claimable, uint256 burned, uint256 reserveAmt) =
-            rewards.poolEpochEmissions(5, agentId);
+        (bool settled, uint256 settledAmount) = rewards.poolEpochEmissions(5, agentId);
         assertTrue(settled, "epoch not settled");
         // Single pool => it owns the whole dynamic staker budget.
-        assertEq(gross, rewards.stakerEpochBudget(5), "gross != dynamic staker budget");
-        assertLe(gross, controllerBudget, "gross over controller budget");
-        assertEq(claimable, gross, "uncapped pool should have claimable == gross");
-        assertEq(burned, 0, "no burn while uncapped");
-        assertEq(reserveAmt, 0, "no reserve while uncapped");
+        assertEq(settledAmount, rewards.stakerEpochBudget(5), "settled amount != dynamic staker budget");
+        assertLe(settledAmount, controllerBudget, "settled amount over controller budget");
 
-        // ── Invariant 2: controller minted exactly the claimable to itself ──
-        // (gross == claimable here; burn/reserve are 0)
-        assertEq(gate.minterEpochMinted(SELLER_POOLS_MINTER_ID, 5), gross, "minted != gross");
+        // ── Invariant 2: controller minted exactly the settled amount to itself ──
+        assertEq(gate.minterEpochMinted(SELLER_POOLS_MINTER_ID, 5), settledAmount, "minted != settled amount");
         assertLe(gate.minterEpochMinted(SELLER_POOLS_MINTER_ID, 5), controllerBudget, "over budget");
-        assertEq(token.balanceOf(address(rewards)), claimable, "controller did not custody claimable");
+        assertEq(token.balanceOf(address(rewards)), settledAmount, "controller did not custody settled amount");
 
         // ── All positions claim ──
         uint256 totalClaimed;
@@ -184,12 +179,12 @@ contract AntseedSellerPoolsRewardsFuzzTest is Test {
         }
 
         // ── Invariant 3: conservation + solvency ──
-        assertLe(totalClaimed, claimable, "stakers claimed more than minted");
+        assertLe(totalClaimed, settledAmount, "stakers claimed more than minted");
         // The controller holds exactly the undistributed dust; never negative.
-        assertEq(token.balanceOf(address(rewards)), claimable - totalClaimed, "insolvency / leak");
+        assertEq(token.balanceOf(address(rewards)), settledAmount - totalClaimed, "insolvency / leak");
 
         // Dust is bounded by one wei per position (flooring in mulDiv).
-        assertLe(claimable - totalClaimed, positionIds.length, "dust larger than rounding bound");
+        assertLe(settledAmount - totalClaimed, positionIds.length, "dust larger than rounding bound");
 
         // ── Invariant 4: double-claim is impossible ──
         for (uint256 i = 0; i < positionIds.length; i++) {

@@ -522,24 +522,16 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         activeStake += _totalMaxLockWeightAmount.upperLookupRecent(epoch);
     }
 
-    function poolPowerWeightAtEpoch(uint256 agentId, uint256 epoch) public view returns (uint256) {
-        return poolWeightAtEpoch(agentId, epoch);
-    }
-
-    function poolPowerWeightAtEpoch(address seller, uint256 epoch) public view returns (uint256) {
-        return poolWeightAtEpoch(seller, epoch);
-    }
-
     function totalPowerWeightAtEpoch(uint256 epoch) external view returns (uint256) {
         return _powerAtEpoch(_totalPowerTree, epoch) + _totalMaxLockPowerAtEpoch(epoch);
     }
 
     function currentPoolSecurityWeight(uint256 agentId) external view returns (uint256) {
-        return poolPowerWeightAtEpoch(agentId, currentEpoch());
+        return poolWeightAtEpoch(agentId, currentEpoch());
     }
 
     function currentPoolSecurityWeight(address seller) external view returns (uint256) {
-        return poolPowerWeightAtEpoch(seller, currentEpoch());
+        return poolWeightAtEpoch(seller, currentEpoch());
     }
 
     function currentTotalSecurityWeight() external view returns (uint256) {
@@ -547,9 +539,9 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         return _powerAtEpoch(_totalPowerTree, epoch) + _totalMaxLockPowerAtEpoch(epoch);
     }
 
-    function currentPoolSecurityShareBps(uint256 agentId) external view returns (uint256 shareBps) {
+    function currentPoolSecurityShareBps(uint256 agentId) public view returns (uint256 shareBps) {
         uint256 epoch = currentEpoch();
-        uint256 poolWeight = poolPowerWeightAtEpoch(agentId, epoch);
+        uint256 poolWeight = poolWeightAtEpoch(agentId, epoch);
         uint256 totalWeight = _powerAtEpoch(_totalPowerTree, epoch) + _totalMaxLockPowerAtEpoch(epoch);
         if (poolWeight == 0 || totalWeight == 0) return 0;
         return (poolWeight * BPS_DENOMINATOR) / totalWeight;
@@ -558,11 +550,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
     function currentPoolSecurityShareBps(address seller) external view returns (uint256 shareBps) {
         uint256 agentId = agentIdForSeller(seller);
         if (agentId == 0) return 0;
-        uint256 epoch = currentEpoch();
-        uint256 poolWeight = poolPowerWeightAtEpoch(agentId, epoch);
-        uint256 totalWeight = _powerAtEpoch(_totalPowerTree, epoch) + _totalMaxLockPowerAtEpoch(epoch);
-        if (poolWeight == 0 || totalWeight == 0) return 0;
-        return (poolWeight * BPS_DENOMINATOR) / totalWeight;
+        return currentPoolSecurityShareBps(agentId);
     }
 
     function stakerPositionCount(address staker) public view returns (uint256) {
@@ -730,19 +718,19 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
     }
 
     function _increaseActiveStake(address staker, uint256 agentId, uint256 amount) internal {
-        stakerTotalActiveStake[staker] += amount;
-        stakerAgentActiveStake[staker][agentId] += amount;
-        emit StakerActiveStakeUpdated(
-            staker, agentId, stakerTotalActiveStake[staker], stakerAgentActiveStake[staker][agentId]
-        );
+        uint256 newTotalStake = stakerTotalActiveStake[staker] + amount;
+        uint256 newAgentStake = stakerAgentActiveStake[staker][agentId] + amount;
+        stakerTotalActiveStake[staker] = newTotalStake;
+        stakerAgentActiveStake[staker][agentId] = newAgentStake;
+        emit StakerActiveStakeUpdated(staker, agentId, newTotalStake, newAgentStake);
     }
 
     function _decreaseActiveStake(address staker, uint256 agentId, uint256 amount) internal {
-        stakerTotalActiveStake[staker] -= amount;
-        stakerAgentActiveStake[staker][agentId] -= amount;
-        emit StakerActiveStakeUpdated(
-            staker, agentId, stakerTotalActiveStake[staker], stakerAgentActiveStake[staker][agentId]
-        );
+        uint256 newTotalStake = stakerTotalActiveStake[staker] - amount;
+        uint256 newAgentStake = stakerAgentActiveStake[staker][agentId] - amount;
+        stakerTotalActiveStake[staker] = newTotalStake;
+        stakerAgentActiveStake[staker][agentId] = newAgentStake;
+        emit StakerActiveStakeUpdated(staker, agentId, newTotalStake, newAgentStake);
     }
 
     function _earlyExitSlashBps(uint256 positionId, uint256 effectiveCloseEpoch) internal view returns (uint256) {

@@ -319,23 +319,50 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
     //                        INTERNAL HELPERS
     // ═══════════════════════════════════════════════════════════════════
 
-    function _claimAgentReward(uint256 agentId, uint256 epoch, address claimant) internal {
+    /// @dev Values shared by the claim and stake tails of a reward: share,
+    ///      frozen-budget amounts, and the verified recipient. Populated by
+    ///      `_prepareAgentReward` / `_prepareBuyerReward`, which also mark
+    ///      the epoch claimed.
+    struct PreparedReward {
+        address recipient;
+        uint256 weightedPoints;
+        uint256 totalWeightedPoints;
+        uint256 grossAmount;
+        uint256 claimableAmount;
+        uint256 reserveAmount;
+    }
+
+    function _prepareAgentReward(uint256 agentId, uint256 epoch, address claimant)
+        internal
+        returns (PreparedReward memory reward)
+    {
         if (agentId == 0) revert InvalidAddress();
         if (agentEpochClaimed[agentId][epoch]) revert AlreadyClaimed();
 
-        (uint256 weightedPoints, uint256 totalWeightedPoints) = _agentShare(agentId, epoch);
+        (reward.weightedPoints, reward.totalWeightedPoints) = _agentShare(agentId, epoch);
         (, uint256 sellerBudget) = _freezeUsageEpochBudgets(epoch);
-        (uint256 grossAmount, uint256 claimableAmount, uint256 reserveAmount) =
-            _rewardAmounts(sellerBudget, weightedPoints, totalWeightedPoints);
+        (reward.grossAmount, reward.claimableAmount, reward.reserveAmount) =
+            _rewardAmounts(sellerBudget, reward.weightedPoints, reward.totalWeightedPoints);
 
-        address seller = _agentOwner(agentId);
-        if (claimant != seller) revert NotRewardRecipient();
+        reward.recipient = _agentOwner(agentId);
+        if (claimant != reward.recipient) revert NotRewardRecipient();
 
         agentEpochClaimed[agentId][epoch] = true;
-        _mintReward(epoch, seller, claimableAmount, reserveAmount);
+    }
+
+    function _claimAgentReward(uint256 agentId, uint256 epoch, address claimant) internal {
+        PreparedReward memory reward = _prepareAgentReward(agentId, epoch, claimant);
+        _mintReward(epoch, reward.recipient, reward.claimableAmount, reward.reserveAmount);
 
         emit SellerOperatorRewardClaimed(
-            seller, agentId, epoch, weightedPoints, totalWeightedPoints, grossAmount, claimableAmount, reserveAmount
+            reward.recipient,
+            agentId,
+            epoch,
+            reward.weightedPoints,
+            reward.totalWeightedPoints,
+            reward.grossAmount,
+            reward.claimableAmount,
+            reward.reserveAmount
         );
     }
 
@@ -343,50 +370,52 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         internal
         returns (uint256 newPositionId)
     {
-        if (agentId == 0) revert InvalidAddress();
-        if (agentEpochClaimed[agentId][epoch]) revert AlreadyClaimed();
-
-        (uint256 weightedPoints, uint256 totalWeightedPoints) = _agentShare(agentId, epoch);
-        (, uint256 sellerBudget) = _freezeUsageEpochBudgets(epoch);
-        (uint256 grossAmount, uint256 claimableAmount, uint256 reserveAmount) =
-            _rewardAmounts(sellerBudget, weightedPoints, totalWeightedPoints);
-
-        address seller = _agentOwner(agentId);
-        if (msg.sender != seller) revert NotRewardRecipient();
-
-        agentEpochClaimed[agentId][epoch] = true;
-        newPositionId = _stakeClaimedReward(seller, agentId, stakeEpochs, epoch, claimableAmount, reserveAmount);
+        PreparedReward memory reward = _prepareAgentReward(agentId, epoch, msg.sender);
+        newPositionId = _stakeClaimedReward(
+            reward.recipient, agentId, stakeEpochs, epoch, reward.claimableAmount, reward.reserveAmount
+        );
 
         emit SellerOperatorRewardStaked(
-            seller,
+            reward.recipient,
             agentId,
             epoch,
             newPositionId,
-            weightedPoints,
-            totalWeightedPoints,
-            grossAmount,
-            claimableAmount,
-            reserveAmount
+            reward.weightedPoints,
+            reward.totalWeightedPoints,
+            reward.grossAmount,
+            reward.claimableAmount,
+            reward.reserveAmount
         );
     }
 
-    function _claimBuyerReward(address buyer, uint256 epoch) internal {
+    function _prepareBuyerReward(address buyer, uint256 epoch) internal returns (PreparedReward memory reward) {
         if (buyer == address(0)) revert InvalidAddress();
         if (buyerEpochClaimed[buyer][epoch]) revert AlreadyClaimed();
 
-        (uint256 weightedPoints, uint256 totalWeightedPoints) = _buyerShare(buyer, epoch);
+        (reward.weightedPoints, reward.totalWeightedPoints) = _buyerShare(buyer, epoch);
         (uint256 buyerBudget,) = _freezeUsageEpochBudgets(epoch);
-        (uint256 grossAmount, uint256 claimableAmount, uint256 reserveAmount) =
-            _rewardAmounts(buyerBudget, weightedPoints, totalWeightedPoints);
+        (reward.grossAmount, reward.claimableAmount, reward.reserveAmount) =
+            _rewardAmounts(buyerBudget, reward.weightedPoints, reward.totalWeightedPoints);
 
-        address recipient = _buyerRewardRecipient(buyer);
-        if (msg.sender != recipient) revert NotRewardRecipient();
+        reward.recipient = _buyerRewardRecipient(buyer);
+        if (msg.sender != reward.recipient) revert NotRewardRecipient();
 
         buyerEpochClaimed[buyer][epoch] = true;
-        _mintReward(epoch, recipient, claimableAmount, reserveAmount);
+    }
+
+    function _claimBuyerReward(address buyer, uint256 epoch) internal {
+        PreparedReward memory reward = _prepareBuyerReward(buyer, epoch);
+        _mintReward(epoch, reward.recipient, reward.claimableAmount, reward.reserveAmount);
 
         emit BuyerUsageRewardClaimed(
-            buyer, recipient, epoch, weightedPoints, totalWeightedPoints, grossAmount, claimableAmount, reserveAmount
+            buyer,
+            reward.recipient,
+            epoch,
+            reward.weightedPoints,
+            reward.totalWeightedPoints,
+            reward.grossAmount,
+            reward.claimableAmount,
+            reward.reserveAmount
         );
     }
 
@@ -394,31 +423,23 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         internal
         returns (uint256 newPositionId)
     {
-        if (buyer == address(0) || stakeAgentId == 0) revert InvalidAddress();
-        if (buyerEpochClaimed[buyer][epoch]) revert AlreadyClaimed();
-
-        (uint256 weightedPoints, uint256 totalWeightedPoints) = _buyerShare(buyer, epoch);
-        (uint256 buyerBudget,) = _freezeUsageEpochBudgets(epoch);
-        (uint256 grossAmount, uint256 claimableAmount, uint256 reserveAmount) =
-            _rewardAmounts(buyerBudget, weightedPoints, totalWeightedPoints);
-
-        address operator = _buyerRewardRecipient(buyer);
-        if (msg.sender != operator) revert NotRewardRecipient();
-
-        buyerEpochClaimed[buyer][epoch] = true;
-        newPositionId = _stakeClaimedReward(operator, stakeAgentId, stakeEpochs, epoch, claimableAmount, reserveAmount);
+        if (stakeAgentId == 0) revert InvalidAddress();
+        PreparedReward memory reward = _prepareBuyerReward(buyer, epoch);
+        newPositionId = _stakeClaimedReward(
+            reward.recipient, stakeAgentId, stakeEpochs, epoch, reward.claimableAmount, reward.reserveAmount
+        );
 
         emit BuyerUsageRewardStaked(
             buyer,
-            operator,
+            reward.recipient,
             stakeAgentId,
             epoch,
             newPositionId,
-            weightedPoints,
-            totalWeightedPoints,
-            grossAmount,
-            claimableAmount,
-            reserveAmount
+            reward.weightedPoints,
+            reward.totalWeightedPoints,
+            reward.grossAmount,
+            reward.claimableAmount,
+            reward.reserveAmount
         );
     }
 
@@ -439,10 +460,22 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     function _liveUsageEpochBudgets(uint256 epoch) internal view returns (uint256 buyerBudget, uint256 sellerBudget) {
-        uint256 desiredBuyerBudget = _shareBudget(epoch, _buyerShareBpsAt(epoch));
-        uint256 desiredSellerBudget = _shareBudget(epoch, _sellerShareBpsAt(epoch));
+        return _liveUsageEpochBudgets(epoch, emissionsGate.controllerEpochBudget(address(this), epoch));
+    }
+
+    /// @dev Epoch volume and epoch emission are hoisted so each external
+    ///      fetch happens once for both share budgets; `maxBudget` is passed
+    ///      in so a caller that already holds the gate budget saves the call.
+    function _liveUsageEpochBudgets(uint256 epoch, uint256 maxBudget)
+        internal
+        view
+        returns (uint256 buyerBudget, uint256 sellerBudget)
+    {
+        uint256 epochVolume = _epochVolume(epoch);
+        uint256 epochEmission = emissionsGate.getEpochEmission(epoch);
+        uint256 desiredBuyerBudget = _shareBudget(epochEmission, _buyerShareBpsAt(epoch, epochVolume));
+        uint256 desiredSellerBudget = _shareBudget(epochEmission, _sellerShareBpsAt(epoch, epochVolume));
         uint256 desiredTotal = desiredBuyerBudget + desiredSellerBudget;
-        uint256 maxBudget = emissionsGate.controllerEpochBudget(address(this), epoch);
         if (desiredTotal <= maxBudget) return (desiredBuyerBudget, desiredSellerBudget);
         if (desiredTotal == 0) return (0, 0);
 
@@ -464,7 +497,7 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         if (epochRemainderSettled[epoch]) revert AlreadyClaimed();
 
         uint256 maxBudget = emissionsGate.controllerEpochBudget(address(this), epoch);
-        (uint256 buyerBudget, uint256 sellerBudget) = _freezeUsageEpochBudgets(epoch);
+        (uint256 buyerBudget, uint256 sellerBudget) = _freezeUsageEpochBudgets(epoch, maxBudget);
 
         // A side with a zero weighted denominator has no possible claimant
         // (the gate only lets finalized epochs reach this point, so the
@@ -472,7 +505,7 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         IAntseedUsageAccounting accounting = usageAccounting;
         uint256 allocatedBudget;
         if (accounting.totalWeightedBuyerPointsByEpoch(epoch) != 0) allocatedBudget += buyerBudget;
-        if (accounting.totalWeightedSellerPointsByEpoch(epoch) != 0) allocatedBudget += sellerBudget;
+        if (accounting.totalWeightedPoolPointsByEpoch(epoch) != 0) allocatedBudget += sellerBudget;
         if (allocatedBudget >= maxBudget) revert NothingToClaim();
 
         uint256 unallocatedAmount = maxBudget - allocatedBudget;
@@ -484,8 +517,17 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
     function _freezeUsageEpochBudgets(uint256 epoch) internal returns (uint256 buyerBudget, uint256 sellerBudget) {
         FrozenUsageBudgets storage frozen = _frozenUsageBudgets[epoch];
         if (frozen.frozen) return (frozen.buyerBudget, frozen.sellerBudget);
+        return _freezeUsageEpochBudgets(epoch, emissionsGate.controllerEpochBudget(address(this), epoch));
+    }
 
-        (buyerBudget, sellerBudget) = _liveUsageEpochBudgets(epoch);
+    function _freezeUsageEpochBudgets(uint256 epoch, uint256 maxBudget)
+        internal
+        returns (uint256 buyerBudget, uint256 sellerBudget)
+    {
+        FrozenUsageBudgets storage frozen = _frozenUsageBudgets[epoch];
+        if (frozen.frozen) return (frozen.buyerBudget, frozen.sellerBudget);
+
+        (buyerBudget, sellerBudget) = _liveUsageEpochBudgets(epoch, maxBudget);
         frozen.frozen = true;
         frozen.buyerBudget = buyerBudget;
         frozen.sellerBudget = sellerBudget;
@@ -539,17 +581,19 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         token.forceApprove(address(pools), 0);
     }
 
-    function _buyerShareBpsAt(uint256 epoch) internal view returns (uint32) {
+    /// @dev `epochVolume` is passed in so the caller computes it once for
+    ///      both the buyer and seller share lookups.
+    function _buyerShareBpsAt(uint256 epoch, uint256 epochVolume) internal view returns (uint32) {
         DynamicUsageConfig memory config = dynamicUsageConfigAt(epoch);
         return AntseedShareMath.saturatingShareBps(
-            _epochVolume(epoch), config.buyerMinShareBps, config.buyerMaxShareBps, config.volumeShareTarget
+            epochVolume, config.buyerMinShareBps, config.buyerMaxShareBps, config.volumeShareTarget
         );
     }
 
-    function _sellerShareBpsAt(uint256 epoch) internal view returns (uint32) {
+    function _sellerShareBpsAt(uint256 epoch, uint256 epochVolume) internal view returns (uint32) {
         DynamicUsageConfig memory config = dynamicUsageConfigAt(epoch);
         return AntseedShareMath.saturatingShareBps(
-            _epochVolume(epoch), config.sellerMinShareBps, config.sellerMaxShareBps, config.volumeShareTarget
+            epochVolume, config.sellerMinShareBps, config.sellerMaxShareBps, config.volumeShareTarget
         );
     }
 
@@ -560,9 +604,9 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         return buyerPoints > sellerPoints ? buyerPoints : sellerPoints;
     }
 
-    function _shareBudget(uint256 epoch, uint32 shareBps) internal view returns (uint256) {
+    function _shareBudget(uint256 epochEmission, uint32 shareBps) internal pure returns (uint256) {
         if (shareBps == 0) return 0;
-        return Math.mulDiv(emissionsGate.getEpochEmission(epoch), shareBps, GATE_SHARE_DENOMINATOR);
+        return Math.mulDiv(epochEmission, shareBps, GATE_SHARE_DENOMINATOR);
     }
 
     function _emissionsReserve() internal view returns (address reserve) {
@@ -589,8 +633,8 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
     {
         IAntseedUsageAccounting accounting = usageAccounting;
         if (address(accounting) == address(0)) revert InvalidAddress();
-        weightedPoints = accounting.weightedAgentSellerPointsByEpoch(epoch, agentId);
-        totalWeightedPoints = accounting.totalWeightedSellerPointsByEpoch(epoch);
+        weightedPoints = accounting.weightedPoolPointsByEpoch(epoch, agentId);
+        totalWeightedPoints = accounting.totalWeightedPoolPointsByEpoch(epoch);
     }
 
     function _agentOwner(uint256 agentId) internal view returns (address owner) {

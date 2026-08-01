@@ -133,7 +133,7 @@ contract AntseedUsageAccountingGasTest is Test {
 
     function test_minimumAccountedPoolPowerFiltersUsage() public {
         uint256 agentId = _agentId(seller);
-        uint256 poolPower = sellerPools.poolPowerWeightAtEpoch(agentId, 5);
+        uint256 poolPower = sellerPools.poolWeightAtEpoch(agentId, 5);
         assertGt(poolPower, 0);
         assertEq(usageAccounting.minimumAccountedPoolPower(), 1);
 
@@ -238,18 +238,17 @@ contract AntseedUsageAccountingGasTest is Test {
         policy.setWeights(5_000, 2_500);
         usageAccounting.accruePoints(keccak256("weighted-policy"), buyer, seller, 40);
 
-        uint256 poolPower = sellerPools.poolPowerWeightAtEpoch(agentId, 5);
+        uint256 poolPower = sellerPools.poolWeightAtEpoch(agentId, 5);
         assertEq(usageAccounting.totalBuyerPointsByEpoch(5), 10);
         assertEq(usageAccounting.totalSellerPointsByEpoch(5), 20);
         assertEq(usageAccounting.totalPoolPointsByEpoch(5), 20);
         assertEq(usageAccounting.totalWeightedBuyerPointsByEpoch(5), 10 * poolPower);
-        assertEq(usageAccounting.totalWeightedSellerPointsByEpoch(5), 20 * poolPower);
         assertEq(usageAccounting.totalWeightedPoolPointsByEpoch(5), 20 * poolPower);
         assertEq(usageAccounting.buyerPointsByEpoch(5, buyer), 10);
         assertEq(usageAccounting.sellerPointsByEpoch(5, seller), 20);
         assertEq(usageAccounting.weightedBuyerPointsByEpoch(5, buyer), 10 * poolPower);
-        assertEq(usageAccounting.weightedAgentSellerPointsByEpoch(5, agentId), 20 * poolPower);
-        assertEq(usageAccounting.weightedSellerPointsByEpoch(5, seller), 20 * poolPower);
+        assertEq(usageAccounting.weightedPoolPointsByEpoch(5, agentId), 20 * poolPower);
+        assertEq(usageAccounting.weightedPoolPointsByEpoch(5, seller), 20 * poolPower);
         assertEq(usageAccounting.agentPoolPointsByEpoch(5, agentId), 20);
         assertEq(usageAccounting.poolPointsByEpoch(5, seller), 20);
         assertEq(usageAccounting.sellerAgentIdByEpoch(5, seller), agentId);

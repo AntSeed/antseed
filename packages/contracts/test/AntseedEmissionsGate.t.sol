@@ -801,20 +801,20 @@ contract AntseedEmissionsGateTest is Test {
     function test_poolWeightPolicyDefaultsToLinearPoolPower() public {
         uint256 agentId = _setupUsagePool();
 
-        uint256 poolPower = sellerPools.poolPowerWeightAtEpoch(agentId, 5);
+        uint256 poolPower = sellerPools.poolWeightAtEpoch(agentId, 5);
         assertGt(poolPower, 0);
 
         usageAccounting.accrueSellerPoints(seller, 100);
         usageAccounting.accrueBuyerPoints(buyer, 100);
 
-        assertEq(usageAccounting.weightedAgentSellerPointsByEpoch(5, agentId), 100 * poolPower);
+        assertEq(usageAccounting.weightedPoolPointsByEpoch(5, agentId), 100 * poolPower);
         assertEq(usageAccounting.weightedBuyerPointsByEpoch(5, buyer), 100 * poolPower);
     }
 
     function test_poolWeightPolicyConvertsRawPoolPowerToEffectiveWeight() public {
         uint256 agentId = _setupUsagePool();
 
-        uint256 poolPower = sellerPools.poolPowerWeightAtEpoch(agentId, 5);
+        uint256 poolPower = sellerPools.poolWeightAtEpoch(agentId, 5);
         uint256 cappedWeight = 7;
         assertGt(poolPower, cappedWeight);
         usageAccounting.setPoolWeightPolicy(address(new MockCappedPoolWeightPolicy(cappedWeight)));
@@ -824,7 +824,7 @@ contract AntseedEmissionsGateTest is Test {
 
         // Raw points are unaffected; only the pool multiplier changes.
         assertEq(usageAccounting.sellerPointsByEpoch(5, seller), 100);
-        assertEq(usageAccounting.weightedAgentSellerPointsByEpoch(5, agentId), 100 * cappedWeight);
+        assertEq(usageAccounting.weightedPoolPointsByEpoch(5, agentId), 100 * cappedWeight);
         assertEq(usageAccounting.weightedBuyerPointsByEpoch(5, buyer), 100 * cappedWeight);
     }
 
@@ -834,11 +834,11 @@ contract AntseedEmissionsGateTest is Test {
         usageAccounting.setPoolWeightPolicy(address(new MockCappedPoolWeightPolicy(7)));
         usageAccounting.setPoolWeightPolicy(address(0));
 
-        uint256 poolPower = sellerPools.poolPowerWeightAtEpoch(agentId, 5);
+        uint256 poolPower = sellerPools.poolWeightAtEpoch(agentId, 5);
         usageAccounting.accrueSellerPoints(seller, 100);
         usageAccounting.accrueBuyerPoints(buyer, 100);
 
-        assertEq(usageAccounting.weightedAgentSellerPointsByEpoch(5, agentId), 100 * poolPower);
+        assertEq(usageAccounting.weightedPoolPointsByEpoch(5, agentId), 100 * poolPower);
     }
 
     function test_revertingPoolWeightPolicySkipsAccrualWithoutBlockingSettlement() public {
@@ -852,7 +852,7 @@ contract AntseedEmissionsGateTest is Test {
         usageAccounting.accrueBuyerPoints(buyer, 100);
 
         assertEq(usageAccounting.sellerPointsByEpoch(5, seller), 0);
-        assertEq(usageAccounting.weightedAgentSellerPointsByEpoch(5, agentId), 0);
+        assertEq(usageAccounting.weightedPoolPointsByEpoch(5, agentId), 0);
         assertEq(usageAccounting.weightedBuyerPointsByEpoch(5, buyer), 0);
     }
 
@@ -892,11 +892,8 @@ contract AntseedEmissionsGateTest is Test {
 
         _warpGateEpoch(6);
         uint256 expectedStakerClaim = (sellerPoolsRewards.stakerEpochBudget(5) * 400 ether) / 404 ether;
-        (uint256 grossReward, uint256 claimableReward, uint256 burnedReward) =
-            sellerPoolsRewards.pendingStakerReward(positionId, 5);
-        assertEq(grossReward, expectedStakerClaim);
-        assertEq(claimableReward, expectedStakerClaim);
-        assertEq(burnedReward, 0);
+        uint256 pendingReward = sellerPoolsRewards.pendingStakerReward(positionId, 5);
+        assertEq(pendingReward, expectedStakerClaim);
 
         sellerPoolsRewards.indexPoolRewards(_agentId(poolSeller), 10);
         vm.prank(staker);
@@ -1075,8 +1072,8 @@ contract AntseedEmissionsGateTest is Test {
         uint256 expectedBudget = sellerPoolsRewards.stakerEpochBudget(6);
         uint256 maxLockPower = 10_400 ether;
         uint256 normalPower = 300 ether;
-        (uint256 maxLockedGross,,) = sellerPoolsRewards.pendingStakerReward(maxLockedPositionId, 6);
-        (uint256 normalGross,,) = sellerPoolsRewards.pendingStakerReward(normalPositionId, 6);
+        uint256 maxLockedGross = sellerPoolsRewards.pendingStakerReward(maxLockedPositionId, 6);
+        uint256 normalGross = sellerPoolsRewards.pendingStakerReward(normalPositionId, 6);
 
         assertEq(maxLockedGross, (expectedBudget * maxLockPower) / (maxLockPower + normalPower));
         assertEq(normalGross, (expectedBudget * normalPower) / (maxLockPower + normalPower));
@@ -1165,8 +1162,8 @@ contract AntseedEmissionsGateTest is Test {
         assertEq(token.balanceOf(staker), 800 ether + expectedClaim);
         assertEq(sellerPoolsRewards.positionClaimCursor(extendedPositionId), 7);
 
-        (uint256 normalEpoch5Gross,,) = sellerPoolsRewards.pendingStakerReward(normalPositionId, 5);
-        (uint256 normalEpoch6Gross,,) = sellerPoolsRewards.pendingStakerReward(normalPositionId, 6);
+        uint256 normalEpoch5Gross = sellerPoolsRewards.pendingStakerReward(normalPositionId, 5);
+        uint256 normalEpoch6Gross = sellerPoolsRewards.pendingStakerReward(normalPositionId, 6);
         assertEq(normalEpoch5Gross, (epoch5Budget * 400 ether) / 800 ether);
         assertEq(normalEpoch6Gross, (epoch6Budget * 300 ether) / 900 ether);
     }
@@ -1198,10 +1195,10 @@ contract AntseedEmissionsGateTest is Test {
         assertEq(_configuredMinter(RESERVE_MINTER_ID), reserveDest);
         assertEq(gate.genesis(), 1_775_728_461);
         assertEq(gate.epochDuration(), 7 days);
-        assertEq(gate.halvingInterval(), 104);
-        assertEq(gate.initialEmission(), 5_000_000 ether);
+        assertEq(gate.HALVING_INTERVAL(), 104);
+        assertEq(gate.INITIAL_EMISSION(), 5_000_000 ether);
         assertEq(gate.effectiveEpoch(), 4);
-        assertEq(gate.currentEmissionRate(), gate.initialEmission() / gate.epochDuration());
+        assertEq(gate.currentEmissionRate(), gate.INITIAL_EMISSION() / gate.epochDuration());
         assertEq(gate.SHARE_DENOMINATOR(), 100_000);
         assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 4), _shareBudget(SELLER_POOLS_SHARE_BPS, 4));
         assertEq(gate.minterEpochBudget(USAGE_MINTER_ID, 4), _shareBudget(USAGE_SHARE_BPS, 4));
@@ -1269,7 +1266,7 @@ contract AntseedEmissionsGateTest is Test {
         gate.renounceOwnership();
         assertEq(gate.owner(), address(0));
         assertEq(gate.minterEpochBudget(SELLER_POOLS_MINTER_ID, 4), _shareBudget(SELLER_POOLS_SHARE_BPS, 4));
-        assertEq(gate.currentEmissionRate(), gate.initialEmission() / gate.epochDuration());
+        assertEq(gate.currentEmissionRate(), gate.INITIAL_EMISSION() / gate.epochDuration());
 
         vm.expectRevert();
         _setSellerPoolsMinter(address(this));
@@ -1371,19 +1368,16 @@ contract AntseedEmissionsGateTest is Test {
 
         IAntseedUsageAccounting.SellerUsage memory sellerAgentUsage = usageAccounting.agentEpochUsage(5, sellerAgentId);
         assertEq(sellerAgentUsage.points, 70);
-        assertEq(sellerAgentUsage.poolPoints, 70);
         assertEq(sellerAgentUsage.weightedPoints, usageAccounting.weightedPoolPointsByEpoch(5, sellerAgentId));
         assertEq(usageAccounting.sellerAgentIdByEpoch(5, seller), sellerAgentId);
 
         IAntseedUsageAccounting.UsageTotals memory epochUsage = usageAccounting.epochUsage(5);
         assertEq(epochUsage.buyers.points, 100);
         assertEq(epochUsage.sellers.points, 100);
-        assertEq(epochUsage.sellers.poolPoints, 100);
 
         IAntseedUsageAccounting.UsageTotals memory totalUsage = usageAccounting.totalUsage();
         assertEq(totalUsage.buyers.points, 100);
         assertEq(totalUsage.sellers.points, 100);
-        assertEq(totalUsage.sellers.poolPoints, 100);
     }
 
     function test_usageAccountingRequiresMinimumAccountedPoolPower() public {
@@ -1396,7 +1390,7 @@ contract AntseedEmissionsGateTest is Test {
         uint256 agentId = _agentId(seller);
 
         _warpGateEpoch(5);
-        uint256 poolPower = sellerPools.poolPowerWeightAtEpoch(agentId, 5);
+        uint256 poolPower = sellerPools.poolWeightAtEpoch(agentId, 5);
         assertGt(poolPower, 0);
         assertEq(usageAccounting.minimumAccountedPoolPower(), 1);
 
@@ -1471,11 +1465,8 @@ contract AntseedEmissionsGateTest is Test {
 
         _warpGateEpoch(6);
         uint256 positionId = sellerPools.nextPositionId() - 1;
-        (uint256 grossReward, uint256 claimableReward, uint256 burnedReward) =
-            sellerPoolsRewards.pendingStakerReward(positionId, 5);
-        assertEq(grossReward, sellerPoolsRewards.stakerEpochBudget(5));
-        assertEq(claimableReward, sellerPoolsRewards.stakerEpochBudget(5));
-        assertEq(burnedReward, 0);
+        uint256 pendingReward = sellerPoolsRewards.pendingStakerReward(positionId, 5);
+        assertEq(pendingReward, sellerPoolsRewards.stakerEpochBudget(5));
 
         assertEq(token.balanceOf(seller), 0);
     }
@@ -1494,17 +1485,17 @@ contract AntseedEmissionsGateTest is Test {
         usageAccounting.accruePoints(keccak256("unverified"), buyer, seller, 10);
         assertEq(usageAccounting.sellerPointsByEpoch(5, seller), 0);
         assertEq(usageAccounting.poolPointsByEpoch(5, poolSeller), 0);
-        assertEq(usageAccounting.weightedSellerPointsByEpoch(5, seller), 0);
+        assertEq(usageAccounting.weightedPoolPointsByEpoch(5, seller), 0);
         assertEq(usageAccounting.weightedPoolPointsByEpoch(5, poolSeller), 0);
 
         policy.setSellerWeightBps(seller, 5_000);
-        uint256 poolPower = sellerPools.poolPowerWeightAtEpoch(poolSeller, 5);
+        uint256 poolPower = sellerPools.poolWeightAtEpoch(poolSeller, 5);
         usageAccounting.accruePoints(keccak256("verified-half"), buyer, seller, 10);
         assertEq(usageAccounting.sellerPointsByEpoch(5, seller), 5);
         assertEq(usageAccounting.buyerPointsByEpoch(5, buyer), 20);
         assertEq(usageAccounting.poolPointsByEpoch(5, poolSeller), 5);
-        assertEq(usageAccounting.weightedSellerPointsByEpoch(5, seller), poolPower * 5);
-        assertEq(usageAccounting.totalWeightedSellerPointsByEpoch(5), poolPower * 5);
+        assertEq(usageAccounting.weightedPoolPointsByEpoch(5, seller), poolPower * 5);
+        assertEq(usageAccounting.totalWeightedPoolPointsByEpoch(5), poolPower * 5);
         assertEq(usageAccounting.weightedPoolPointsByEpoch(5, poolSeller), poolPower * 5);
     }
 
@@ -1540,8 +1531,8 @@ contract AntseedEmissionsGateTest is Test {
         usageAccounting.accruePoints(keccak256("honest"), buyer, seller, 1_000);
         usageAccounting.accruePoints(keccak256("wash"), address(0x21), otherSeller, 1_000_000);
 
-        uint256 honestPower = sellerPools.poolPowerWeightAtEpoch(honestSeller, 5);
-        uint256 washPower = sellerPools.poolPowerWeightAtEpoch(washSeller, 5);
+        uint256 honestPower = sellerPools.poolWeightAtEpoch(honestSeller, 5);
+        uint256 washPower = sellerPools.poolWeightAtEpoch(washSeller, 5);
 
         assertEq(usageAccounting.weightedPoolPointsByEpoch(5, washSeller), 1_000_000 * washPower);
         assertEq(usageAccounting.weightedPoolPointsByEpoch(5, honestSeller), 1_000 * honestPower);
@@ -1591,16 +1582,10 @@ contract AntseedEmissionsGateTest is Test {
         uint256 stakerBudget = sellerPoolsRewards.stakerEpochBudget(5);
         uint256 expectedHonestReward = (stakerBudget * honestPoints) / totalPoints;
         uint256 expectedWashReward = (stakerBudget * washPoints) / totalPoints;
-        (uint256 honestGross, uint256 honestClaimable, uint256 honestBurned) =
-            sellerPoolsRewards.pendingStakerReward(honestPositionId, 5);
-        (uint256 washGross, uint256 washClaimable, uint256 washBurned) =
-            sellerPoolsRewards.pendingStakerReward(washPositionId, 5);
-        assertEq(honestGross, expectedHonestReward);
-        assertEq(washGross, expectedWashReward);
-        assertEq(honestClaimable, honestGross);
-        assertEq(washClaimable, washGross);
-        assertEq(honestBurned, 0);
-        assertEq(washBurned, 0);
+        uint256 honestReward = sellerPoolsRewards.pendingStakerReward(honestPositionId, 5);
+        uint256 washReward = sellerPoolsRewards.pendingStakerReward(washPositionId, 5);
+        assertEq(honestReward, expectedHonestReward);
+        assertEq(washReward, expectedWashReward);
     }
 
     function test_stakerRemainderRoutesThroughGateBurnCapToReserve() public {
@@ -1635,13 +1620,9 @@ contract AntseedEmissionsGateTest is Test {
         assertEq(token.balanceOf(gate.DEAD_ADDRESS()), unallocated < burnCap ? unallocated : burnCap);
         assertEq(token.balanceOf(reserveDest), unallocated > burnCap ? unallocated - burnCap : 0);
         assertEq(gate.epochBurnedAmount(5), unallocated < burnCap ? unallocated : burnCap);
-        (bool settled, uint256 settledGross, uint256 settledClaimable, uint256 settledBurned, uint256 settledReserved) =
-            sellerPoolsRewards.poolEpochEmissions(5, _agentId(otherSeller));
+        (bool settled, uint256 settledAmount) = sellerPoolsRewards.poolEpochEmissions(5, _agentId(otherSeller));
         assertTrue(settled);
-        assertApproxEqAbs(settledGross, indexedClaimableReward, 1);
-        assertApproxEqAbs(settledClaimable, indexedClaimableReward, 1);
-        assertEq(settledBurned, 0);
-        assertEq(settledReserved, 0);
+        assertApproxEqAbs(settledAmount, indexedClaimableReward, 1);
     }
 
     function test_stressWashTradingBuyerRewardRemainsCappedAfterStakerApyCapRemoval() public {
@@ -1693,8 +1674,8 @@ contract AntseedEmissionsGateTest is Test {
 
             uint256 honestAgentId = _agentId(seller);
             uint256 washAgentId = _agentId(otherSeller);
-            uint256 honestPower = sellerPools.poolPowerWeightAtEpoch(honestAgentId, 5);
-            uint256 washPower = sellerPools.poolPowerWeightAtEpoch(washAgentId, 5);
+            uint256 honestPower = sellerPools.poolWeightAtEpoch(honestAgentId, 5);
+            uint256 washPower = sellerPools.poolWeightAtEpoch(washAgentId, 5);
             run.firstWeightedPoints = honestTotalVolume * honestPower;
             run.washWeightedPoints = washVolume * washPower;
             run.expectedTotalWeightedPoints = run.firstWeightedPoints + run.washWeightedPoints;
@@ -1713,18 +1694,12 @@ contract AntseedEmissionsGateTest is Test {
         _warpGateEpoch(6);
         {
             uint256 sellerPoolsBudget = sellerPoolsRewards.stakerEpochBudget(5);
-            (uint256 honestGross, uint256 honestClaimable, uint256 honestBurned) =
-                sellerPoolsRewards.pendingStakerReward(run.firstPositionId, 5);
-            (uint256 washGross, uint256 washClaimable, uint256 washBurned) =
-                sellerPoolsRewards.pendingStakerReward(run.washPositionId, 5);
-            run.firstClaimable = honestClaimable;
-            run.washClaimable = washClaimable;
-            assertEq(honestGross, (sellerPoolsBudget * run.firstWeightedPoints) / run.expectedTotalWeightedPoints);
-            assertEq(washGross, (sellerPoolsBudget * run.washWeightedPoints) / run.expectedTotalWeightedPoints);
-            assertEq(washClaimable, washGross);
-            assertEq(honestClaimable, honestGross);
-            assertEq(washBurned, 0);
-            assertEq(honestBurned, 0);
+            uint256 honestReward = sellerPoolsRewards.pendingStakerReward(run.firstPositionId, 5);
+            uint256 washReward = sellerPoolsRewards.pendingStakerReward(run.washPositionId, 5);
+            run.firstClaimable = honestReward;
+            run.washClaimable = washReward;
+            assertEq(honestReward, (sellerPoolsBudget * run.firstWeightedPoints) / run.expectedTotalWeightedPoints);
+            assertEq(washReward, (sellerPoolsBudget * run.washWeightedPoints) / run.expectedTotalWeightedPoints);
         }
 
         {
@@ -1784,7 +1759,7 @@ contract AntseedEmissionsGateTest is Test {
 
             usageAccounting.accruePoints(keccak256(abi.encodePacked("stress", i)), buyer_, seller_, volume);
 
-            uint256 weightedPoints = volume * sellerPools.poolPowerWeightAtEpoch(_agentId(seller_), 5);
+            uint256 weightedPoints = volume * sellerPools.poolWeightAtEpoch(_agentId(seller_), 5);
             run.expectedTotalWeightedPoints += weightedPoints;
             if (seller_ == firstSeller) run.firstWeightedPoints = weightedPoints;
             if (seller_ == washSeller) run.washWeightedPoints = weightedPoints;
@@ -1805,18 +1780,12 @@ contract AntseedEmissionsGateTest is Test {
             uint256 expectedFirstGross = (sellerPoolsBudget * run.firstWeightedPoints) / run.expectedTotalWeightedPoints;
             uint256 expectedWashGross = (sellerPoolsBudget * run.washWeightedPoints) / run.expectedTotalWeightedPoints;
 
-            (uint256 firstGross, uint256 firstClaimable, uint256 firstBurned) =
-                sellerPoolsRewards.pendingStakerReward(run.firstPositionId, 5);
-            (uint256 washGross, uint256 washClaimable, uint256 washBurned) =
-                sellerPoolsRewards.pendingStakerReward(run.washPositionId, 5);
-            run.firstClaimable = firstClaimable;
-            run.washClaimable = washClaimable;
-            assertEq(firstGross, expectedFirstGross);
-            assertEq(washGross, expectedWashGross);
-            assertEq(firstClaimable, firstGross);
-            assertEq(washClaimable, washGross);
-            assertEq(firstBurned, 0);
-            assertEq(washBurned, 0);
+            uint256 firstReward = sellerPoolsRewards.pendingStakerReward(run.firstPositionId, 5);
+            uint256 washReward = sellerPoolsRewards.pendingStakerReward(run.washPositionId, 5);
+            run.firstClaimable = firstReward;
+            run.washClaimable = washReward;
+            assertEq(firstReward, expectedFirstGross);
+            assertEq(washReward, expectedWashGross);
         }
 
         sellerPoolsRewards.indexPoolRewards(firstAgentId, 10);
@@ -2039,8 +2008,8 @@ contract AntseedEmissionsGateTest is Test {
         usageAccounting.accruePoints(keccak256("high-power"), buyer, seller, 100);
         usageAccounting.accruePoints(keccak256("low-power"), secondBuyer, otherSeller, 100);
 
-        uint256 highPower = sellerPools.poolPowerWeightAtEpoch(seller, 4);
-        uint256 lowPower = sellerPools.poolPowerWeightAtEpoch(otherSeller, 4);
+        uint256 highPower = sellerPools.poolWeightAtEpoch(seller, 4);
+        uint256 lowPower = sellerPools.poolWeightAtEpoch(otherSeller, 4);
         uint256 buyerWeightedPoints = 100 * highPower;
         uint256 secondBuyerWeightedPoints = 100 * lowPower;
         uint256 totalWeightedPoints = buyerWeightedPoints + secondBuyerWeightedPoints;
@@ -2777,8 +2746,8 @@ contract AntseedEmissionsGateTest is Test {
         positionIds[1] = secondPositionId;
         positionIds[2] = noRewardPositionId;
 
-        (uint256 firstGross,,) = sellerPoolsRewards.pendingStakerReward(firstPositionId, 5);
-        (uint256 secondGross,,) = sellerPoolsRewards.pendingStakerReward(secondPositionId, 5);
+        uint256 firstGross = sellerPoolsRewards.pendingStakerReward(firstPositionId, 5);
+        uint256 secondGross = sellerPoolsRewards.pendingStakerReward(secondPositionId, 5);
 
         sellerPoolsRewards.indexPoolRewards(_agentId(poolSeller), 10);
         vm.prank(staker);
@@ -2825,8 +2794,8 @@ contract AntseedEmissionsGateTest is Test {
         positionIds[1] = secondPositionId;
         positionIds[2] = noRewardPositionId;
 
-        (uint256 firstGross,,) = sellerPoolsRewards.pendingStakerReward(firstPositionId, 5);
-        (uint256 secondGross,,) = sellerPoolsRewards.pendingStakerReward(secondPositionId, 5);
+        uint256 firstGross = sellerPoolsRewards.pendingStakerReward(firstPositionId, 5);
+        uint256 secondGross = sellerPoolsRewards.pendingStakerReward(secondPositionId, 5);
 
         sellerPoolsRewards.indexPoolRewards(_agentId(poolSeller), 10);
         vm.prank(staker);

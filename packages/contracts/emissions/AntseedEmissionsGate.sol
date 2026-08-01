@@ -167,10 +167,6 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
         return (minter.controller, minter.shareBps, minter.editable);
     }
 
-    function minterConfig(bytes32 id) external view returns (Minter memory) {
-        return _minters[id];
-    }
-
     function minterEpochBudget(bytes32 id, uint256 epoch) public view returns (uint256) {
         Minter memory minter = _minters[id];
         if (minter.controller == address(0)) return 0;
@@ -204,14 +200,6 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
 
     function epochDuration() external pure returns (uint256) {
         return EPOCH_DURATION;
-    }
-
-    function halvingInterval() external pure returns (uint256) {
-        return HALVING_INTERVAL;
-    }
-
-    function initialEmission() external pure returns (uint256) {
-        return INITIAL_EMISSION;
     }
 
     /// @notice Total scheduled emission for epochs `0..epochExclusive-1`.
