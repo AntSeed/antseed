@@ -442,7 +442,7 @@ export function VprHomeView({ onSelectView }: Props) {
                           : 'Estimated from current network price spread'}
                       >
                         {measuredSavings
-                          ? `${formatSavedUsd(measuredSavings.baselineUsd - measuredSavings.actualUsd)} · ${measuredSavings.pct}%`
+                          ? `${formatSavedUsd(measuredSavings.baselineUsd - measuredSavings.actualUsd)}`
                           : `${expectedSavingsPct}%`}
                       </span>
                     )
