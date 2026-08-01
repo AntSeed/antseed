@@ -1,4 +1,4 @@
-import { type AbstractSigner, type TypedDataDomain, AbiCoder, id, keccak256 } from 'ethers';
+import { type AbstractSigner, type TypedDataDomain, AbiCoder, hexlify, id, keccak256, randomBytes } from 'ethers';
 
 // =========================================================================
 // EIP-712 Types — AntSeed SpendingAuth (cumulative payment authorization)
@@ -44,6 +44,31 @@ export const FREE_USAGE_AUTH_TYPES = {
 };
 
 // =========================================================================
+// EIP-712 Types — EIP-3009 (USDC)
+// =========================================================================
+
+/**
+ * EIP-3009 receiveWithAuthorization typed data, as implemented by Circle's
+ * FiatToken (USDC). Must match the token's typehash exactly:
+ *   ReceiveWithAuthorization(address from,address to,uint256 value,
+ *     uint256 validAfter,uint256 validBefore,bytes32 nonce)
+ *
+ * For deposit sweeps this is the ONLY buyer signature: addressing the
+ * authorization to the AntseedDepositRelay contract is consent to its
+ * public, immutable fixed FEE.
+ */
+export const RECEIVE_WITH_AUTHORIZATION_TYPES = {
+  ReceiveWithAuthorization: [
+    { name: 'from', type: 'address' },
+    { name: 'to', type: 'address' },
+    { name: 'value', type: 'uint256' },
+    { name: 'validAfter', type: 'uint256' },
+    { name: 'validBefore', type: 'uint256' },
+    { name: 'nonce', type: 'bytes32' },
+  ],
+};
+
+// =========================================================================
 // Message interfaces
 // =========================================================================
 
@@ -74,6 +99,15 @@ export interface FreeUsageAuthMessage {
   sequence: bigint;
   metadataHash: string;
   deadline: bigint;
+}
+
+export interface ReceiveAuthorizationMessage {
+  from: string;
+  to: string;
+  value: bigint;
+  validAfter: bigint;
+  validBefore: bigint;
+  nonce: string; // bytes32 hex
 }
 
 // =========================================================================
@@ -332,6 +366,22 @@ export function makeFreeUsageDomain(chainId: number, contractAddress: string): T
   };
 }
 
+/**
+ * EIP-712 domain of Circle's USDC (FiatTokenV2). Verified against the deployed
+ * Base mainnet token (0x8335...2913): name "USD Coin", version "2". MockUSDC
+ * on base-local mirrors the same params. Callers with RPC access should verify
+ * via the token's DOMAIN_SEPARATOR() before first use (the params can differ
+ * on other deployments).
+ */
+export function makeUsdcDomain(chainId: number, usdcAddress: string): TypedDataDomain {
+  return {
+    name: 'USD Coin',
+    version: '2',
+    chainId,
+    verifyingContract: usdcAddress,
+  };
+}
+
 // =========================================================================
 // Signing functions — EIP-712 (on-chain)
 // =========================================================================
@@ -374,4 +424,37 @@ export async function signFreeUsageAuth(
   msg: FreeUsageAuthMessage,
 ): Promise<string> {
   return signer.signTypedData(domain, FREE_USAGE_AUTH_TYPES, msg);
+}
+
+export interface SignedReceiveAuthorization {
+  message: ReceiveAuthorizationMessage;
+  signature: string;
+}
+
+/**
+ * Build and sign an EIP-3009 ReceiveWithAuthorization for USDC. Works with a
+ * provider-less signer — the hot wallet never needs RPC access to sign.
+ * A random 32-byte nonce is generated when none is supplied.
+ */
+export async function buildReceiveAuthorization(
+  signer: AbstractSigner,
+  domain: TypedDataDomain,
+  params: {
+    to: string;
+    value: bigint;
+    validAfter: bigint;
+    validBefore: bigint;
+    nonce?: string;
+  },
+): Promise<SignedReceiveAuthorization> {
+  const message: ReceiveAuthorizationMessage = {
+    from: await signer.getAddress(),
+    to: params.to,
+    value: params.value,
+    validAfter: params.validAfter,
+    validBefore: params.validBefore,
+    nonce: params.nonce ?? hexlify(randomBytes(32)),
+  };
+  const signature = await signer.signTypedData(domain, RECEIVE_WITH_AUTHORIZATION_TYPES, message);
+  return { message, signature };
 }

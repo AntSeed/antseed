@@ -27,12 +27,13 @@ const OPENAI_TOKEN_URL = 'https://auth.openai.com/oauth/token';
 const OPENAI_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const DEFAULT_INPUT_PRICE = 10;
 const DEFAULT_OUTPUT_PRICE = 10;
-const DEFAULT_MAX_CONCURRENCY = 5;
+const DEFAULT_MAX_CONCURRENCY = 50;
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 const FETCH_TIMEOUT_MS = DEFAULT_HTTP_TIMEOUT_MS;
 const RESPONSE_PATH_PREFIX = '/v1/responses';
 const RELAY_PATH = '/responses';
 const AUTH_CLAIM_PATH = 'https://api.openai.com/auth';
+const CLIENT_STREAM_REQUESTED_HEADER = 'x-antseed-client-stream-requested';
 
 function expandHome(path: string): string {
   if (path === '~') return homedir();
@@ -271,14 +272,22 @@ function extractAccountIdFromTokens(accessToken: string, idToken: string | undef
 function prepareRequestBody(
   request: SerializedHttpRequest,
   serviceRewriteMap: Record<string, string> | undefined,
-): SerializedHttpRequest {
+): { request: SerializedHttpRequest; forcedStream: boolean } {
   if (request.method === 'GET' || request.method === 'HEAD') {
-    return request;
+    return { request, forcedStream: false };
+  }
+
+  const normalizedPath = request.path.split('?')[0] ?? request.path;
+  if (normalizedPath !== RESPONSE_PATH_PREFIX) {
+    return { request, forcedStream: false };
   }
 
   try {
     const parsed = JSON.parse(new TextDecoder().decode(request.body)) as Record<string, unknown>;
     parsed.store ??= false;
+    const clientStreamRequested = parseClientStreamRequestedHeader(request.headers);
+    const forcedStream = clientStreamRequested === false || parsed.stream !== true;
+    parsed.stream = true;
 
     const requestedService = (parsed.model ?? parsed.service) as string | undefined;
     if (serviceRewriteMap && typeof requestedService === 'string' && requestedService.trim().length > 0) {
@@ -293,10 +302,14 @@ function prepareRequestBody(
     }
     delete parsed.service;
 
-    // Strip parameters the Codex backend doesn't support.
+    // Strip parameters the upstream backend doesn't support.
+    delete parsed.metadata;
+    delete parsed.user;
     delete parsed.max_output_tokens;
+    delete parsed.temperature;
+    delete parsed.top_p;
 
-    // The Codex backend requires `instructions` as a top-level field.
+    // The upstream backend requires `instructions` as a top-level field.
     // Some clients (e.g. pi's openai-responses provider) send the system
     // prompt as a developer/system message in `input` instead. Extract it
     // and move to `instructions` so the request is accepted.
@@ -322,12 +335,127 @@ function prepareRequestBody(
     }
 
     return {
-      ...request,
-      body: new TextEncoder().encode(JSON.stringify(parsed)),
+      request: {
+        ...request,
+        headers: withoutHeader(request.headers, CLIENT_STREAM_REQUESTED_HEADER),
+        body: new TextEncoder().encode(JSON.stringify(parsed)),
+      },
+      forcedStream,
     };
   } catch {
-    return request;
+    return { request, forcedStream: false };
   }
+}
+
+function parseClientStreamRequestedHeader(headers: Record<string, string>): boolean | undefined {
+  const value = getHeader(headers, CLIENT_STREAM_REQUESTED_HEADER);
+  if (!value) return undefined;
+  return value.toLowerCase() === 'true';
+}
+
+function getHeader(headers: Record<string, string>, name: string): string {
+  const normalizedName = name.toLowerCase();
+  for (const [headerName, value] of Object.entries(headers)) {
+    if (headerName.toLowerCase() === normalizedName) return value;
+  }
+  return '';
+}
+
+function withoutHeader(headers: Record<string, string>, name: string): Record<string, string> {
+  const normalizedName = name.toLowerCase();
+  const next: Record<string, string> = {};
+  for (const [headerName, value] of Object.entries(headers)) {
+    if (headerName.toLowerCase() !== normalizedName) next[headerName] = value;
+  }
+  return next;
+}
+
+function collapseResponsesSseResponse(response: SerializedHttpResponse): SerializedHttpResponse {
+  const result = parseResponsesSse(new TextDecoder().decode(response.body));
+  if (!result) {
+    return response;
+  }
+
+  return {
+    ...response,
+    statusCode: result.statusCode ?? response.statusCode,
+    headers: {
+      ...response.headers,
+      'content-type': 'application/json',
+    },
+    body: new TextEncoder().encode(JSON.stringify(result.body)),
+  };
+}
+
+function parseResponsesSse(text: string): { body: Record<string, unknown>; statusCode?: number } | null {
+  for (const block of text.replace(/\r\n/g, '\n').split('\n\n')) {
+    const lines = block.split('\n');
+    const event = lines
+      .find((line) => line.startsWith('event: '))
+      ?.slice('event: '.length)
+      .trim();
+    if (
+      event !== 'response.completed'
+      && event !== 'response.failed'
+      && event !== 'error'
+    ) {
+      continue;
+    }
+
+    const data = lines
+      .filter((line) => line.startsWith('data: '))
+      .map((line) => line.slice('data: '.length))
+      .join('\n')
+      .trim();
+    if (!data || data === '[DONE]') continue;
+
+    try {
+      const parsed = JSON.parse(data) as Record<string, unknown>;
+      if (event === 'error') {
+        return { body: normalizeUpstreamStreamError(parsed), statusCode: 502 };
+      }
+
+      const nested = parsed.response;
+      if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+        const body = nested as Record<string, unknown>;
+        if (event === 'response.failed') {
+          return { body: normalizeUpstreamStreamError(body), statusCode: 502 };
+        }
+        return { body };
+      }
+
+      if (event === 'response.failed') {
+        return { body: normalizeUpstreamStreamError(parsed), statusCode: 502 };
+      }
+
+      if (Array.isArray(parsed.output) || typeof parsed.output_text === 'string') {
+        return { body: parsed };
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+function normalizeUpstreamStreamError(payload: Record<string, unknown>): Record<string, unknown> {
+  const error = payload.error && typeof payload.error === 'object' && !Array.isArray(payload.error)
+    ? payload.error as Record<string, unknown>
+    : {};
+  const message = typeof error.message === 'string'
+    ? error.message
+    : (typeof payload.message === 'string' ? payload.message : 'Responses stream failed');
+  const type = typeof error.type === 'string'
+    ? error.type
+    : (typeof payload.type === 'string' ? payload.type : 'api_error');
+  return {
+    error: {
+      ...error,
+      type,
+      message,
+    },
+  };
 }
 
 function toRelayPath(path: string): string | null {
@@ -467,7 +595,8 @@ class OpenAIResponsesProvider implements Provider {
     if ('response' in prepared) {
       return prepared.response;
     }
-    return this.inner.handleRequest(prepared.request);
+    const response = await this.inner.handleRequest(prepared.request);
+    return prepared.forcedStream ? collapseResponsesSseResponse(response) : response;
   }
 
   async handleRequestStream(
@@ -484,12 +613,15 @@ class OpenAIResponsesProvider implements Provider {
       });
       return prepared.response;
     }
+    if (prepared.forcedStream) {
+      return collapseResponsesSseResponse(await this.inner.handleRequest(prepared.request));
+    }
     return this.inner.handleRequestStream!(prepared.request, callbacks);
   }
 
   private prepareRequest(
     req: SerializedHttpRequest,
-  ): { request: SerializedHttpRequest } | { response: SerializedHttpResponse } {
+  ): { request: SerializedHttpRequest; forcedStream: boolean } | { response: SerializedHttpResponse } {
     const normalizedPath = req.path.split('?')[0] ?? req.path;
     const relayPath = toRelayPath(req.path);
     if (!relayPath) {
@@ -499,9 +631,10 @@ class OpenAIResponsesProvider implements Provider {
     const preparedBody = prepareRequestBody(req, this.serviceRewriteMap);
     return {
       request: {
-        ...preparedBody,
+        ...preparedBody.request,
         path: relayPath,
       },
+      forcedStream: preparedBody.forcedStream,
     };
   }
 }

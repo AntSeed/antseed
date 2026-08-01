@@ -1,5 +1,6 @@
 import {
   PAYMENT_CODE_CHANNEL_EXHAUSTED,
+  CLOSE_CHANNEL_REJECT_CODES,
   type SpendingAuthPayload,
   type AuthAckPayload,
   type FreeUsageOpenPayload,
@@ -8,6 +9,9 @@ import {
   type NeedFreeUsageAuthPayload,
   type PaymentRequiredPayload,
   type NeedAuthPayload,
+  type CloseChannelRequestPayload,
+  type CloseChannelResultPayload,
+  type CloseChannelRejectCode,
 } from '../types/protocol.js';
 import { parseJsonObject, requireStringField } from '../utils/json-codec.js';
 
@@ -63,6 +67,14 @@ export function encodePaymentRequired(payload: PaymentRequiredPayload): Uint8Arr
 }
 
 export function encodeNeedAuth(payload: NeedAuthPayload): Uint8Array {
+  return encoder.encode(JSON.stringify(payload));
+}
+
+export function encodeCloseChannelRequest(payload: CloseChannelRequestPayload): Uint8Array {
+  return encoder.encode(JSON.stringify(payload));
+}
+
+export function encodeCloseChannelResult(payload: CloseChannelResultPayload): Uint8Array {
   return encoder.encode(JSON.stringify(payload));
 }
 
@@ -172,5 +184,53 @@ export function decodeNeedAuth(data: Uint8Array): NeedAuthPayload {
   if (typeof obj.cachedInputTokens === 'string') result.cachedInputTokens = obj.cachedInputTokens;
   if (typeof obj.freshInputTokens === 'string') result.freshInputTokens = obj.freshInputTokens;
   if (typeof obj.service === 'string') result.service = obj.service;
+  return result;
+}
+
+export function decodeCloseChannelRequest(data: Uint8Array): CloseChannelRequestPayload {
+  const obj = parsePaymentJson(data);
+  const result: CloseChannelRequestPayload = {
+    version: 1,
+    channelId: requireStringField(obj, 'channelId'),
+  };
+  // The four auth fields are only meaningful together — a partial set would
+  // leave the seller unable to verify the signature, so drop it wholesale.
+  if (
+    typeof obj.cumulativeAmount === 'string'
+    && typeof obj.metadataHash === 'string'
+    && typeof obj.metadata === 'string'
+    && typeof obj.spendingAuthSig === 'string'
+  ) {
+    result.cumulativeAmount = obj.cumulativeAmount;
+    result.metadataHash = obj.metadataHash;
+    result.metadata = obj.metadata;
+    result.spendingAuthSig = obj.spendingAuthSig;
+  }
+  return result;
+}
+
+export function decodeCloseChannelResult(data: Uint8Array): CloseChannelResultPayload {
+  const obj = parsePaymentJson(data);
+  const status = requireStringField(obj, 'status');
+  if (status !== 'closed' && status !== 'rejected') {
+    throw new Error(`Payment payload field "status" must be "closed" or "rejected"`);
+  }
+  const result: CloseChannelResultPayload = {
+    version: 1,
+    channelId: requireStringField(obj, 'channelId'),
+    status,
+  };
+  if (typeof obj.txHash === 'string') result.txHash = obj.txHash;
+  if (typeof obj.finalAmount === 'string') result.finalAmount = obj.finalAmount;
+  if (typeof obj.code === 'string' && (CLOSE_CHANNEL_REJECT_CODES as readonly string[]).includes(obj.code)) {
+    result.code = obj.code as CloseChannelRejectCode;
+  }
+  if (typeof obj.reason === 'string') result.reason = obj.reason;
+  if (typeof obj.retryAfterMs === 'number' && Number.isFinite(obj.retryAfterMs)) {
+    result.retryAfterMs = obj.retryAfterMs;
+  }
+  if (typeof obj.requiredCumulativeAmount === 'string') {
+    result.requiredCumulativeAmount = obj.requiredCumulativeAmount;
+  }
   return result;
 }

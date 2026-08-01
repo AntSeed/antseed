@@ -8,6 +8,8 @@ import {
   encodeNeedFreeUsageAuth, decodeNeedFreeUsageAuth,
   encodePaymentRequired, decodePaymentRequired,
   encodeNeedAuth, decodeNeedAuth,
+  encodeCloseChannelRequest, decodeCloseChannelRequest,
+  encodeCloseChannelResult, decodeCloseChannelResult,
 } from '../src/p2p/payment-codec.js';
 
 describe('payment codec round-trips', () => {
@@ -167,5 +169,78 @@ describe('payment codec round-trips', () => {
     const encoded = encodeNeedAuth(payload);
     const decoded = decodeNeedAuth(encoded);
     expect(decoded).toEqual(payload);
+  });
+
+  it('CloseChannelRequest without an attached auth', () => {
+    const payload = { version: 1 as const, channelId: '0x' + 'aa'.repeat(32) };
+    expect(decodeCloseChannelRequest(encodeCloseChannelRequest(payload))).toEqual(payload);
+  });
+
+  it('CloseChannelRequest with an attached auth', () => {
+    const payload = {
+      version: 1 as const,
+      channelId: '0x' + 'aa'.repeat(32),
+      cumulativeAmount: '750000',
+      metadataHash: '0x' + 'cc'.repeat(32),
+      metadata: '0x' + 'dd'.repeat(128),
+      spendingAuthSig: '0x' + 'ee'.repeat(65),
+    };
+    expect(decodeCloseChannelRequest(encodeCloseChannelRequest(payload))).toEqual(payload);
+  });
+
+  it('CloseChannelRequest drops a partial auth rather than passing it on unverifiable', () => {
+    const wire = new TextEncoder().encode(JSON.stringify({
+      version: 1,
+      channelId: '0x' + 'aa'.repeat(32),
+      cumulativeAmount: '750000',
+      spendingAuthSig: '0x' + 'ee'.repeat(65),
+      // metadata / metadataHash missing
+    }));
+    const decoded = decodeCloseChannelRequest(wire);
+    expect(decoded.cumulativeAmount).toBeUndefined();
+    expect(decoded.spendingAuthSig).toBeUndefined();
+  });
+
+  it('CloseChannelResult success', () => {
+    const payload = {
+      version: 1 as const,
+      channelId: '0x' + 'aa'.repeat(32),
+      status: 'closed' as const,
+      txHash: '0x' + 'bb'.repeat(32),
+      finalAmount: '750000',
+    };
+    expect(decodeCloseChannelResult(encodeCloseChannelResult(payload))).toEqual(payload);
+  });
+
+  it('CloseChannelResult rejection', () => {
+    const payload = {
+      version: 1 as const,
+      channelId: '0x' + 'aa'.repeat(32),
+      status: 'rejected' as const,
+      code: 'pending_auth' as const,
+      reason: 'unsigned spend outstanding',
+      retryAfterMs: 2000,
+      requiredCumulativeAmount: '750000',
+    };
+    expect(decodeCloseChannelResult(encodeCloseChannelResult(payload))).toEqual(payload);
+  });
+
+  it('CloseChannelResult drops an unrecognized reject code', () => {
+    const wire = new TextEncoder().encode(JSON.stringify({
+      version: 1,
+      channelId: '0x' + 'aa'.repeat(32),
+      status: 'rejected',
+      code: 'not_a_real_code',
+    }));
+    expect(decodeCloseChannelResult(wire).code).toBeUndefined();
+  });
+
+  it('CloseChannelResult rejects an unknown status', () => {
+    const wire = new TextEncoder().encode(JSON.stringify({
+      version: 1,
+      channelId: '0x' + 'aa'.repeat(32),
+      status: 'maybe',
+    }));
+    expect(() => decodeCloseChannelResult(wire)).toThrow(/status/);
   });
 });

@@ -3,6 +3,7 @@ import type {
   Provider,
   ProviderStreamCallbacks,
 } from './interfaces/seller-provider.js';
+import { ANTSEED_ATTEST_PATH, type Prover } from './interfaces/plugin.js';
 import type { SellerSessionTracker } from './metering/seller-session-tracker.js';
 import type { PaymentMux } from './p2p/payment-mux.js';
 import type { Identity } from './p2p/identity.js';
@@ -26,6 +27,7 @@ import { hasJsonContentType, tryParseJsonObject } from './utils/json-codec.js';
 export interface SellerRequestHandlerDeps {
   identity: Identity;
   providers: Provider[];
+  provers?: Prover[];
   sellerPaymentManager: SellerPaymentManager | null;
   sellerFreeUsageManager?: SellerFreeUsageManager | null;
   sessionTracker: SellerSessionTracker | null;
@@ -40,6 +42,10 @@ export interface SellerRequestHandlerDeps {
 const METADATA_REFRESH_DEBOUNCE_MS = 200;
 /** Time to wait for a catch-up SpendingAuth before returning 402. */
 const DEFAULT_CATCH_UP_WAIT_MS = 5_000;
+/** Per-buyer rate limit for the free attestation route. */
+const ATTEST_RATE_WINDOW_MS = 60_000;
+const ATTEST_RATE_MAX_PER_WINDOW = 10;
+const ATTEST_RATE_MAX_TRACKED_PEERS = 1024;
 /**
  * Handles all seller-side request processing: provider matching, execution,
  * cost tracking, payment auth checks, and load management.
@@ -50,10 +56,31 @@ const DEFAULT_CATCH_UP_WAIT_MS = 5_000;
 export class SellerRequestHandler {
   private readonly _deps: SellerRequestHandlerDeps;
   private readonly _providerLoadCounts = new Map<string, number>();
+  private readonly _attestRateWindows = new Map<string, { start: number; count: number }>();
   private _metadataRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(deps: SellerRequestHandlerDeps) {
     this._deps = deps;
+  }
+
+  private _allowAttest(buyerPeerId: string): boolean {
+    const now = Date.now();
+    const win = this._attestRateWindows.get(buyerPeerId);
+    if (!win || now - win.start >= ATTEST_RATE_WINDOW_MS) {
+      if (this._attestRateWindows.size >= ATTEST_RATE_MAX_TRACKED_PEERS) {
+        for (const [peer, w] of this._attestRateWindows) {
+          if (now - w.start >= ATTEST_RATE_WINDOW_MS) this._attestRateWindows.delete(peer);
+        }
+        if (!this._attestRateWindows.has(buyerPeerId) && this._attestRateWindows.size >= ATTEST_RATE_MAX_TRACKED_PEERS) {
+          return false;
+        }
+      }
+      this._attestRateWindows.set(buyerPeerId, { start: now, count: 1 });
+      return true;
+    }
+    if (win.count >= ATTEST_RATE_MAX_PER_WINDOW) return false;
+    win.count += 1;
+    return true;
   }
 
   /**
@@ -80,6 +107,73 @@ export class SellerRequestHandler {
       if (request.method === 'GET' && (pathOnly === '/v1/models' || pathOnly.startsWith('/v1/models/'))) {
         const modelsResponse = this._handleModelsRequest(request);
         mux.sendProxyResponse(modelsResponse);
+        return;
+      }
+
+      if (pathOnly.startsWith(ANTSEED_ATTEST_PATH + '/')) {
+        let verifierId: string;
+        try {
+          verifierId = decodeURIComponent(pathOnly.slice((ANTSEED_ATTEST_PATH + '/').length));
+        } catch {
+          mux.sendProxyResponse({
+            requestId: request.requestId,
+            statusCode: 400,
+            headers: { 'content-type': 'application/json' },
+            body: new TextEncoder().encode(JSON.stringify({
+              error: { message: 'Malformed attestation path.', type: 'invalid_request_error' },
+            })),
+          });
+          return;
+        }
+        const prover = (this._deps.provers ?? []).find((p) => p.name === verifierId);
+        if (!prover) {
+          mux.sendProxyResponse({
+            requestId: request.requestId,
+            statusCode: 404,
+            headers: { 'content-type': 'application/json' },
+            body: new TextEncoder().encode(JSON.stringify({
+              error: { message: `No prover for verifier "${verifierId}".`, type: 'verifier_error', code: 'prover_not_found' },
+            })),
+          });
+          return;
+        }
+        // Rate-limit only the expensive path (quote generation); cheap 400/404
+        // rejections above don't consume a buyer's attestation quota.
+        if (!this._allowAttest(buyerPeerId)) {
+          mux.sendProxyResponse({
+            requestId: request.requestId,
+            statusCode: 429,
+            headers: { 'content-type': 'application/json' },
+            body: new TextEncoder().encode(JSON.stringify({
+              error: { message: 'Attestation rate limit exceeded.', type: 'rate_limit_error' },
+            })),
+          });
+          return;
+        }
+        try {
+          const resp = await prover.prove({
+            method: request.method,
+            path: request.path,
+            headers: request.headers,
+            body: request.body,
+          });
+          mux.sendProxyResponse({
+            requestId: request.requestId,
+            statusCode: resp.statusCode,
+            headers: resp.headers,
+            body: resp.body,
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          mux.sendProxyResponse({
+            requestId: request.requestId,
+            statusCode: 500,
+            headers: { 'content-type': 'application/json' },
+            body: new TextEncoder().encode(JSON.stringify({
+              error: { message: `Prover failed: ${message}`, type: 'verifier_error' },
+            })),
+          });
+        }
         return;
       }
 
@@ -141,7 +235,7 @@ export class SellerRequestHandler {
               headers: { "content-type": "application/json" },
               body: new TextEncoder().encode(paymentBody),
             });
-            paymentMux.sendPaymentRequired(requirements);
+            this._sendPaymentRequiredBestEffort(paymentMux, requirements, buyerPeerId, 'missing-session');
           } else {
             debugWarn(`[SellerHandler] No payment session — returning 402`);
             mux.sendProxyResponse({
@@ -291,7 +385,7 @@ export class SellerRequestHandler {
                 ...(requirements.cachedInputUsdPerMillion != null ? { cachedInputUsdPerMillion: requirements.cachedInputUsdPerMillion } : {}),
               })),
             });
-            paymentMux.sendPaymentRequired(requirements);
+            this._sendPaymentRequiredBestEffort(paymentMux, requirements, buyerPeerId, 'budget-exhausted');
             // Auto-sign catch-up via NeedAuth so a transient underfund recovers
             // without the 402 round-tripping to the user.
             if (!isFullyExhausted) {
@@ -330,6 +424,11 @@ export class SellerRequestHandler {
       let streamAuthStatusCode = 0;
       let streamAuthHeaders: Record<string, string> | null = null;
       let responseUsage: import('./utils/response-usage.js').ResponseUsage = { inputTokens: 0, outputTokens: 0, freshInputTokens: 0, cachedInputTokens: 0 };
+      // Hold the channel open for the whole billable span — provider call,
+      // spend recording, and NeedAuth — so a buyer-requested close can't land
+      // between serving the request and claiming its cost.
+      const isBillable = !isFreeService && (spm?.hasSession(buyerPeerId) ?? false);
+      if (isBillable) spm!.beginBillableRequest(buyerPeerId);
       this.adjustProviderLoad(provider.name, 1);
       try {
         try {
@@ -485,6 +584,7 @@ export class SellerRequestHandler {
         }
       } finally {
         this.adjustProviderLoad(provider.name, -1);
+        if (isBillable) spm!.endBillableRequest(buyerPeerId);
       }
     });
 
@@ -703,6 +803,21 @@ export class SellerRequestHandler {
     } catch (err) {
       debugWarn(
         `[SellerHandler] NeedAuth send skipped (${phase}) for ${buyerPeerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+
+  private _sendPaymentRequiredBestEffort(
+    paymentMux: PaymentMux,
+    payload: Parameters<PaymentMux['sendPaymentRequired']>[0],
+    buyerPeerId: string,
+    phase: 'missing-session' | 'budget-exhausted',
+  ): void {
+    try {
+      paymentMux.sendPaymentRequired(payload);
+    } catch (err) {
+      debugWarn(
+        `[SellerHandler] PaymentRequired send skipped (${phase}) for ${buyerPeerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`,
       );
     }
   }

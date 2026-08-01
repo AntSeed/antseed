@@ -285,7 +285,12 @@ async function main() {
         "--rpc-url", RPC_URL,
         "--broadcast",
       ],
-      { cwd: contractsDir }
+      {
+        cwd: contractsDir,
+        env: {
+          DEPLOYER_PRIVATE_KEY,
+        },
+      }
     );
 
     info(`MockUSDC:      ${USDC_ADDRESS}`);

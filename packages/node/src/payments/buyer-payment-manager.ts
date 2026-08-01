@@ -6,6 +6,7 @@ import type {
   SpendingAuthPayload,
   AuthAckPayload,
   NeedAuthPayload,
+  CloseChannelRequestPayload,
 } from '../types/protocol.js';
 import { DepositsClient } from './evm/deposits-client.js';
 import {
@@ -104,6 +105,9 @@ export class BuyerPaymentManager {
 
   /** sellerPeerId -> current on-chain reserve ceiling (can grow with top-ups) */
   private readonly _currentReserveCeiling = new Map<string, bigint>();
+
+  /** sellerPeerId -> original first-reserve amount for replaying reserve() safely. */
+  private readonly _initialReserveAmount = new Map<string, bigint>();
 
   /** sellerPeerId -> salt used in the current reserve */
   private readonly _reserveSalt = new Map<string, string>();
@@ -208,6 +212,7 @@ export class BuyerPaymentManager {
     this._verifiedCost.delete(sellerPeerId);
     this._sessionPricing.delete(sellerPeerId);
     this._currentReserveCeiling.delete(sellerPeerId);
+    this._initialReserveAmount.delete(sellerPeerId);
     this._reserveSalt.delete(sellerPeerId);
     this._confirmedPeers.delete(sellerPeerId);
     this._rejectedPeers.delete(sellerPeerId);
@@ -325,6 +330,48 @@ export class BuyerPaymentManager {
     return session.sessionId;
   }
 
+  /**
+   * Build a CloseChannelRequest for an active session.
+   *
+   * With `includeAuth` (the default) the buyer signs its current cumulative so
+   * a seller that lost the last SpendingAuth can still close at the full
+   * amount owed. Signing costs nothing extra: the cumulative is unchanged, so
+   * this authorizes no more than the seller could already claim. Pass
+   * `includeAuth: false` to send a bare request and let the seller close using
+   * whatever auth it already holds.
+   */
+  async buildCloseChannelRequest(
+    sellerPeerId: string,
+    { includeAuth = true }: { includeAuth?: boolean } = {},
+  ): Promise<CloseChannelRequestPayload> {
+    const session = this.getActiveSession(sellerPeerId);
+    if (!session) {
+      throw new Error(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}...`);
+    }
+
+    const cumulativeAmount = this._cumulativeAmount.get(sellerPeerId) ?? BigInt(session.authMax);
+    if (!includeAuth || cumulativeAmount <= 0n) {
+      return { version: 1, channelId: session.sessionId };
+    }
+
+    const currentMeta = this._sanitizeMetadata(this._metadata.get(sellerPeerId));
+    const metadataHash = computeMetadataHash(currentMeta);
+    const metadataMsg: SpendingAuthMessage = {
+      channelId: session.sessionId,
+      cumulativeAmount,
+      metadataHash,
+    };
+
+    return {
+      version: 1,
+      channelId: session.sessionId,
+      cumulativeAmount: cumulativeAmount.toString(),
+      metadataHash,
+      metadata: encodeMetadata(currentMeta),
+      spendingAuthSig: await signSpendingAuth(this._signer, this._channelsDomain, metadataMsg),
+    };
+  }
+
   async resendReserveAuth(
     sellerPeerId: string,
     paymentMux: PaymentMux,
@@ -338,7 +385,12 @@ export class BuyerPaymentManager {
     // Force a fresh AuthAck after replaying the reserve path.
     this._confirmedPeers.delete(sellerPeerId);
 
-    const maxAmount = this._currentReserveCeiling.get(sellerPeerId) ?? this._config.maxReserveAmountUsdc;
+    const replayAmount = this._initialReserveAmount.get(sellerPeerId)
+      ?? this._currentReserveCeiling.get(sellerPeerId)
+      ?? this._config.maxReserveAmountUsdc;
+    const maxAmount = replayAmount > this._config.maxReserveAmountUsdc
+      ? this._config.maxReserveAmountUsdc
+      : replayAmount;
     const deadline = Math.floor(Date.now() / 1000) + this._config.defaultAuthDurationSecs;
     const reserveMsg: ReserveAuthMessage = {
       channelId: session.sessionId,
@@ -542,6 +594,7 @@ export class BuyerPaymentManager {
     this._metadata.set(sellerPeerId, this._sanitizeMetadata({ ...ZERO_METADATA }));
     this._verifiedCost.set(sellerPeerId, 0n);
     this._currentReserveCeiling.set(sellerPeerId, maxAmount);
+    this._initialReserveAmount.set(sellerPeerId, maxAmount);
     this._reserveSalt.set(sellerPeerId, salt);
 
     // Store session

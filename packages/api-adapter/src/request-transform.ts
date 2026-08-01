@@ -19,7 +19,10 @@ export interface ServiceApiRequestTransformResult {
 export interface ServiceApiRequestTransformOptions {
   from: ServiceApiProtocol;
   to: ServiceApiProtocol;
+  streamRequested?: boolean;
 }
+
+const CLIENT_STREAM_REQUESTED_HEADER = 'x-antseed-client-stream-requested';
 
 type RequestNormalizer = (body: Record<string, unknown>) => CanonicalLlmRequest;
 type RequestRenderer = (
@@ -63,26 +66,35 @@ export function transformRequest(
   if (!body) return null;
 
   const normalized = normalize(body);
+  const streamRequested = options.streamRequested ?? normalized.stream;
   if (options.from === options.to) {
     return {
       request,
-      streamRequested: normalized.stream,
+      streamRequested,
       requestedModel: normalized.model,
     };
   }
 
   const render = REQUEST_RENDERERS[options.to];
   if (!render) return null;
-  const transformedBody = render(normalized, options);
+  const requestForRender = streamRequested === normalized.stream
+    ? normalized
+    : { ...normalized, stream: streamRequested };
+  const transformedBody = render(requestForRender, options);
+  const transformedHeaders = headersForTargetProtocol(request.headers, options.to);
+  if (options.to === 'openai-responses') {
+    transformedBody.stream = true;
+    transformedHeaders[CLIENT_STREAM_REQUESTED_HEADER] = streamRequested ? 'true' : 'false';
+  }
 
   return {
     request: {
       ...request,
       path,
-      headers: headersForTargetProtocol(request.headers, options.to),
+      headers: transformedHeaders,
       body: encodeJson(transformedBody),
     },
-    streamRequested: normalized.stream,
+    streamRequested,
     requestedModel: normalized.model,
   };
 }

@@ -3,6 +3,7 @@ import { registerBuyerStartCommand } from './start.js';
 import { registerBuyerStatusCommand } from './status.js';
 import { registerBuyerDepositCommand } from './deposit.js';
 import { registerBuyerWithdrawCommand } from './withdraw.js';
+import { registerBuyerSweepCommand } from './sweep.js';
 import { registerBuyerBalanceCommand } from './balance.js';
 import { registerBuyerConnectionCommand } from './connection.js';
 import { registerBuyerChannelsCommand } from './channels.js';
@@ -18,6 +19,7 @@ export function registerBuyerCommands(program: Command): void {
   registerBuyerStatusCommand(buyerCmd);
   registerBuyerDepositCommand(buyerCmd);
   registerBuyerWithdrawCommand(buyerCmd);
+  registerBuyerSweepCommand(buyerCmd);
   registerBuyerBalanceCommand(buyerCmd);
   registerBuyerConnectionCommand(buyerCmd);
   registerBuyerChannelsCommand(buyerCmd);

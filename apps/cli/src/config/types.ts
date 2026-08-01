@@ -125,6 +125,12 @@ export interface SellerCLIConfig {
   verifications?: VerificationConfig;
   /** Maximum upload body size (bytes) accepted from buyers per request. Default: 64 MiB. */
   maxUploadBodyBytes?: number;
+  /**
+   * Verifier SDK ids this seller advertises and runs provers for (first is the
+   * default). Chosen in `antseed seller setup`; overridden at launch by
+   * `--verifiers` or the ANTSEED_VERIFIER_SDKS env var.
+   */
+  verifiers?: string[];
 }
 
 /**
@@ -210,9 +216,26 @@ export interface PaymentsCLIConfig {
     identityRegistryAddress?: string;
     /** Deployed AntseedEmissions contract address */
     emissionsContractAddress?: string;
+    /** Deployed AntseedDepositRelay contract address (gasless deposit sweeps) */
+    depositRelayAddress?: string;
     /** Default lock amount per session in human-readable USDC (e.g. "1" = 1 USDC) */
     defaultLockAmountUSDC?: string;
   };
+}
+
+/**
+ * Seller-side deposit-sweep relayer configuration. ON by default (opt-out).
+ */
+export interface RelayerCLIConfig {
+  /** Relay buyer deposit sweeps with the seller wallet. Default: true. */
+  enabled?: boolean;
+  /** Minimum acceptable profit (FEE - estimated gas cost) in USDC base units.
+   *  May be negative to relay at a loss (local testing). Default: "0". */
+  minProfitBaseUnits?: string;
+  /** Max concurrent sweep submissions. Default: 2. */
+  maxInFlight?: number;
+  /** Max sweep requests accepted per peer per minute. Default: 6. */
+  maxPerPeerPerMinute?: number;
 }
 
 /**
@@ -238,6 +261,8 @@ export interface AntseedConfig {
   buyer: BuyerCLIConfig;
   /** Payment settings */
   payments: PaymentsCLIConfig;
+  /** Seller-side deposit-sweep relayer settings (opt-out, ON by default) */
+  relayer?: RelayerCLIConfig;
   /** Network / DHT settings */
   network: NetworkCLIConfig;
   /** Installed plugins */

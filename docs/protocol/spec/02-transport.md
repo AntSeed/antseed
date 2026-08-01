@@ -64,8 +64,14 @@ If `payloadLength` exceeds `MAX_PAYLOAD_SIZE`, the frame MUST be rejected with a
 | 0x22 | HttpResponseChunk  | Seller -> Buyer: streaming chunk |
 | 0x23 | HttpResponseEnd    | Seller -> Buyer: final streaming chunk |
 | 0x24 | HttpResponseError  | Seller -> Buyer: error response |
+| 0xA0 | SweepRequest       | Buyer -> Peers: broadcast signed gasless deposit sweep (see 09-deposit-sweep.md) |
+| 0xA1 | SweepReceipt       | Relayer -> Buyer: optional sweep progress report (see 09-deposit-sweep.md) |
 | 0xF0 | Disconnect         | Graceful disconnect notification |
 | 0xFF | Error              | Protocol-level error |
+
+Ranges 0x50-0x5F (payments), 0x80-0x8F (verification), 0x90-0x9F (reserved:
+delegated verification), and 0xA0-0xAF (deposit sweep) are dispatched to
+dedicated per-range muxes; see their spec files for payload schemas.
 
 ### Streaming Frame Decoder
 

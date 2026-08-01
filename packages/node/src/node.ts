@@ -47,7 +47,17 @@ import {
 import { HttpMetadataResolver } from "./discovery/http-metadata-resolver.js";
 import { ProxyMux } from "./proxy/proxy-mux.js";
 import { PaymentMux } from "./p2p/payment-mux.js";
+import { SweepMux } from "./p2p/sweep-mux.js";
 import { VerificationMux } from "./verification/verification-mux.js";
+import { DepositRelayer } from "./payments/deposit-relayer.js";
+import {
+  CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
+  CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
+  peerSupportsCooperativeClose,
+  type SweepRequestPayload,
+  type SweepReceiptPayload,
+  type CloseChannelResultPayload,
+} from "./types/protocol.js";
 import { VerificationStorage } from "./verification/storage.js";
 import { VerificationSampler } from "./verification/samples.js";
 import { FrameDecoder, encodeFrame } from "./p2p/message-protocol.js";
@@ -58,6 +68,7 @@ import type {
   ProviderStreamCallbacks,
 } from "./interfaces/seller-provider.js";
 import type { Router } from "./interfaces/buyer-router.js";
+import type { Prover } from "./interfaces/plugin.js";
 import { NatTraversal } from "./p2p/nat-traversal.js";
 import { signUtf8 } from "./p2p/identity.js";
 import {
@@ -157,6 +168,20 @@ export interface NodePaymentsConfig {
   maxReserveAmountUsdc?: string;
   /** Disable per-service buyer attribution in metadata v2. Default: false. */
   disableMetadataV2Services?: boolean;
+  /** Deployed AntseedDepositRelay contract address (gasless deposit sweeps). */
+  depositRelayAddress?: string;
+}
+
+export interface NodeRelayerConfig {
+  /** Relay buyer deposit sweeps with the seller wallet. Default: true (opt-out). */
+  enabled?: boolean;
+  /** Minimum acceptable profit (FEE - estimated gas cost) in USDC base units.
+   *  May be negative to relay at a loss (local testing). Default: "0". */
+  minProfitBaseUnits?: string;
+  /** Max concurrent sweep submissions. Default: 2. */
+  maxInFlight?: number;
+  /** Max sweep requests accepted per peer per minute. Default: 6. */
+  maxPerPeerPerMinute?: number;
 }
 
 export interface NodeVerificationConfig {
@@ -175,6 +200,8 @@ export interface NodeConfig {
   publicAddress?: string;
   /** External ownership claims announced in signed peer metadata. */
   verifications?: PeerVerifications;
+  /** Extra peer capability strings to advertise (e.g. supported verifier SDKs). */
+  capabilities?: string[];
   dataDir?: string;           // Default: ~/.antseed
   dhtPort?: number;           // Default: 6881 for seller, 0 for buyer
   signalingPort?: number;     // Default: 6882 for seller
@@ -197,6 +224,8 @@ export interface NodeConfig {
   dhtOperationTimeoutMs?: number;
   /** Optional seller-side payment runtime wiring. */
   payments?: NodePaymentsConfig;
+  /** Seller-side deposit-sweep relayer settings (opt-out, ON by default). */
+  relayer?: NodeRelayerConfig;
   /** Optional buyer-side verification storage and sampling settings. */
   verification?: NodeVerificationConfig;
   /** Pluggable identity storage backend. When set, takes precedence over dataDir for identity loading. */
@@ -247,6 +276,7 @@ export class AntseedNode extends EventEmitter {
   private _dht: DHTNode | null = null;
   private _connectionManager: ConnectionManager | null = null;
   private _providers: Provider[] = [];
+  private _provers: Prover[] = [];
   private _router: Router | null = null;
   private _started = false;
   private _announcer: PeerAnnouncer | null = null;
@@ -268,6 +298,10 @@ export class AntseedNode extends EventEmitter {
   private _identityClient: IdentityClient | null = null;
   private _paymentMuxes = new Map<PeerId, PaymentMux>();
   private _verificationMuxes = new Map<PeerId, VerificationMux>();
+  private _sweepMuxes = new Map<PeerId, SweepMux>();
+  private _peerCapabilities = new Map<PeerId, Set<string>>();
+  /** Seller-side deposit-sweep relayer (initialized when configured + enabled). */
+  private _depositRelayer: DepositRelayer | null = null;
   /** Seller-side request handler (provider matching, execution, load tracking). */
   private _sellerHandler: SellerRequestHandler | null = null;
   /** Buyer-side payment manager (initialized when buyer has payment config). */
@@ -318,6 +352,11 @@ export class AntseedNode extends EventEmitter {
 
   registerProvider(provider: Provider): void {
     this._providers.push(provider);
+  }
+
+  /** Register an embedded verifier prover (serves reserved attestation requests). */
+  registerProver(prover: Prover): void {
+    this._provers.push(prover);
   }
 
   setRouter(router: Router): void {
@@ -468,6 +507,7 @@ export class AntseedNode extends EventEmitter {
     // Close all proxy muxes
     this._muxes.clear();
     this._paymentMuxes.clear();
+    this._peerCapabilities.clear();
     for (const verificationMux of this._verificationMuxes.values()) {
       verificationMux.close();
     }
@@ -941,6 +981,69 @@ export class AntseedNode extends EventEmitter {
   }
 
   /**
+   * Ask a seller to close our payment channel with it right now, releasing the
+   * reserved deposit without the on-chain `requestClose()` → 15-minute grace →
+   * `withdraw()` round trip.
+   *
+   * The seller refuses while it is still serving (or still owed for) requests
+   * on that channel; those refusals come back as `{ status: 'rejected', code }`
+   * rather than as exceptions. Only a missing session, a peer we can't reach,
+   * or an unanswered request throws.
+   *
+   * By default the buyer attaches its latest SpendingAuth so a seller that lost
+   * the last one can still close at the full amount owed; the seller settles at
+   * whichever cumulative is higher.
+   */
+  async requestChannelClose(
+    sellerPeerId: string,
+    opts: { includeAuth?: boolean; timeoutMs?: number } = {},
+  ): Promise<CloseChannelResultPayload> {
+    const negotiator = this._buyerNegotiator;
+    if (!negotiator) {
+      throw new Error('Buyer payments are not configured on this node');
+    }
+    if (!this._connectionManager) {
+      throw new Error('Node not started');
+    }
+
+    const peerId = sellerPeerId as PeerId;
+    let conn = this._connectionManager.getConnection(peerId);
+    if (!conn || (conn.state !== ConnectionState.Open && conn.state !== ConnectionState.Authenticated)) {
+      const peer = await this.findPeer(sellerPeerId);
+      if (!peer) {
+        throw new Error(
+          `Seller ${sellerPeerId.slice(0, 12)}... is not connected and could not be found on the network. ` +
+          `A cooperative close needs the seller online — otherwise use the on-chain request-close flow.`,
+        );
+      }
+      await this.connectToPeer(peer);
+      conn = this._connectionManager.getConnection(peer.peerId);
+      if (!conn) {
+        throw new Error(`Failed to establish a connection to seller ${sellerPeerId.slice(0, 12)}...`);
+      }
+    }
+
+    // A seller that predates this feature drops the 0x59 frame silently, so
+    // without this the buyer would wait out the full 60s response timeout and
+    // get a vague "did not answer". Note the capability must come from the
+    // peer's discovery metadata (`_peerCapabilities`), not
+    // `conn.hasRemoteCapability` — the latter is only populated for *inbound*
+    // connections, so on the buyer's own outbound connection it is always
+    // empty and would reject every close.
+    const capabilities = this._peerCapabilities.get(peerId);
+    if (capabilities && capabilities.size > 0
+      && !peerSupportsCooperativeClose({ capabilities: [...capabilities] })) {
+      throw new Error(
+        `Seller ${sellerPeerId.slice(0, 12)}... does not support cooperative close ` +
+        `(missing ${CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1}). ` +
+        `Use the on-chain request-close flow instead.`,
+      );
+    }
+
+    return negotiator.requestChannelClose(peerId, conn, opts);
+  }
+
+  /**
    * Query session stats for a specific seller peer.
    * Combines channel store data (authoritative payment/session info) with
    * metering events when available.
@@ -1179,6 +1282,7 @@ export class AntseedNode extends EventEmitter {
       const proxyMux = this._muxes.get(peerId);
       const paymentMux = this._paymentMuxes.get(peerId);
       const verificationMux = this._verificationMuxes.get(peerId);
+      const sweepMux = this._sweepMuxes.get(peerId);
       for (const frame of frames) {
         // Keepalive: respond to Ping, dispatch Pong to manager
         if (frame.type === MessageType.Ping) {
@@ -1205,6 +1309,11 @@ export class AntseedNode extends EventEmitter {
             const message = err instanceof Error ? err.message : String(err);
             debugWarn(`[Node] Failed to handle verification frame from ${peerId.slice(0, 12)}...: ${message}`);
           });
+        } else if (sweepMux && SweepMux.isSweepMessage(frame.type)) {
+          sweepMux.handleFrame(frame).catch((err) => {
+            const message = err instanceof Error ? err.message : String(err);
+            debugWarn(`[Node] Failed to handle sweep frame from ${peerId.slice(0, 12)}...: ${message}`);
+          });
         } else if (proxyMux) {
           proxyMux.handleFrame(frame).catch((err) => {
             const message = err instanceof Error ? err.message : String(err);
@@ -1230,8 +1339,10 @@ export class AntseedNode extends EventEmitter {
         this._muxes.get(peerId)?.abortPendingUploads();
         this._muxes.delete(peerId);
         this._paymentMuxes.delete(peerId);
+        this._peerCapabilities.delete(peerId);
         this._verificationMuxes.get(peerId)?.close();
         this._verificationMuxes.delete(peerId);
+        this._sweepMuxes.delete(peerId);
         this._decoders.delete(peerId);
         // Clean up buyer-side payment state on disconnect
         this._buyerNegotiator?.onPeerDisconnect(peerId);
@@ -1379,6 +1490,7 @@ export class AntseedNode extends EventEmitter {
         ...(this._config.displayName ? { displayName: this._config.displayName } : {}),
         ...(this._config.publicAddress ? { publicAddress: this._config.publicAddress } : {}),
         ...(this._config.verifications ? { verifications: this._config.verifications } : {}),
+        ...(this._config.capabilities ? { capabilities: this._config.capabilities } : {}),
         region: "unknown",
         pricing: new Map(
           this._providers.map((p) => [
@@ -1397,6 +1509,7 @@ export class AntseedNode extends EventEmitter {
         ...(this._channelsClient ? { channelsClient: this._channelsClient } : {}),
         ...(this._stakingClient ? { stakingClient: this._stakingClient, paymentsEnabled: true } : {}),
         ...(this._config.sellerContract ? { sellerContract: this._config.sellerContract } : {}),
+        ...(this._depositRelayer ? { relaysSweeps: true } : {}),
       };
       this._announcer = new PeerAnnouncer(announcerConfig);
       this._announcer.startPeriodicAnnounce();
@@ -1411,6 +1524,7 @@ export class AntseedNode extends EventEmitter {
     this._sellerHandler = new SellerRequestHandler({
       identity,
       providers: this._providers,
+      provers: this._provers,
       sellerPaymentManager: this._sellerPaymentManager,
       sellerFreeUsageManager: this._sellerFreeUsageManager,
       sessionTracker: this._sessionTracker,
@@ -1559,9 +1673,43 @@ export class AntseedNode extends EventEmitter {
             debugWarn(`[Node] SpendingAuth handler error for ${buyerPeerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
           });
       });
+      paymentMux.onCloseChannelRequest((payload) => {
+        void spm.handleCloseChannelRequest(buyerPeerId, payload, paymentMux)
+          .then((result) => {
+            paymentMux.sendCloseChannelResult(result);
+            if (result.status === 'closed') {
+              this.emit('payment:channel-closed', {
+                buyerPeerId,
+                channelId: result.channelId,
+                txHash: result.txHash,
+                finalAmount: result.finalAmount,
+              });
+            }
+          })
+          .catch((err) => {
+            const message = err instanceof Error ? err.message : String(err);
+            debugWarn(`[Node] CloseChannelRequest handler error for ${buyerPeerId.slice(0, 12)}...: ${message}`);
+            paymentMux.sendCloseChannelResult({
+              version: 1,
+              channelId: payload.channelId,
+              status: 'rejected',
+              code: 'close_failed',
+              reason: message,
+            });
+          });
+      });
     } else {
       paymentMux.onSpendingAuth(() => {
         debugWarn(`[Node] SpendingAuth rejected — SellerPaymentManager not configured`);
+      });
+      paymentMux.onCloseChannelRequest((payload) => {
+        paymentMux.sendCloseChannelResult({
+          version: 1,
+          channelId: payload.channelId,
+          status: 'rejected',
+          code: 'unsupported',
+          reason: 'This peer has no payment manager configured',
+        });
       });
     }
     if (this._sellerFreeUsageManager) {
@@ -1582,6 +1730,18 @@ export class AntseedNode extends EventEmitter {
     }
     this._paymentMuxes.set(buyerPeerId, paymentMux);
     this._verificationMuxes.set(buyerPeerId, verificationMux);
+
+    // Deposit-sweep relaying (seller side, opt-out)
+    const sweepMux = new SweepMux(conn);
+    if (this._depositRelayer) {
+      const relayer = this._depositRelayer;
+      sweepMux.onSweepRequest((payload) => {
+        void relayer.handleSweepRequest(buyerPeerId, payload, sweepMux).catch((err) => {
+          debugWarn(`[Node] Sweep relay handler error for ${buyerPeerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
+        });
+      });
+    }
+    this._sweepMuxes.set(buyerPeerId, sweepMux);
 
     const { mux } = this._sellerHandler!.handleConnection(conn, buyerPeerId, paymentMux, verificationMux);
 
@@ -1730,6 +1890,26 @@ export class AntseedNode extends EventEmitter {
       this._sellerPaymentManager = new SellerPaymentManager(this._identity, sellerConfig, this._channelStore);
       debugLog(`[Node] SellerPaymentManager initialized`);
 
+      // Deposit-sweep relayer (opt-out — ON by default when the chain has a relay)
+      const relayerConfig = this._config.relayer;
+      if (relayerConfig?.enabled !== false && payments.depositRelayAddress && payments.usdcAddress) {
+        this._depositRelayer = new DepositRelayer(this._identity, {
+          rpcUrl: payments.rpcUrl,
+          ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
+          relayAddress: payments.depositRelayAddress,
+          usdcAddress: payments.usdcAddress,
+          evmChainId: payments.chainId ?? 8453,
+          ...(relayerConfig?.minProfitBaseUnits !== undefined
+            ? { minProfitBaseUnits: BigInt(relayerConfig.minProfitBaseUnits) }
+            : {}),
+          ...(relayerConfig?.maxInFlight !== undefined ? { maxInFlight: relayerConfig.maxInFlight } : {}),
+          ...(relayerConfig?.maxPerPeerPerMinute !== undefined
+            ? { maxPerPeerPerMinute: relayerConfig.maxPerPeerPerMinute }
+            : {}),
+        });
+        debugLog(`[Node] DepositRelayer initialized (relay=${payments.depositRelayAddress.slice(0, 10)}...)`);
+      }
+
       // Startup recovery: validate hydrated channels against on-chain state, then check timeouts
       await this._sellerPaymentManager.validateHydratedChannels();
       await this._sellerPaymentManager.checkTimeouts();
@@ -1792,6 +1972,8 @@ export class AntseedNode extends EventEmitter {
     }
 
     const existing = this._connectionManager.getConnection(peer.peerId);
+    const peerCapabilities = new Set(peer.capabilities ?? peer.metadata?.capabilities ?? []);
+    this._peerCapabilities.set(peer.peerId, peerCapabilities);
     let endpointChanged = false;
 
     // Check if the peer's endpoint has changed (e.g. IP rotation).
@@ -1804,6 +1986,7 @@ export class AntseedNode extends EventEmitter {
       if (currentEndpoint && (currentEndpoint.host !== newHost || currentEndpoint.port !== newPort)) {
         debugLog(`[Node] Peer ${peer.peerId.slice(0, 12)}... endpoint changed from ${currentEndpoint.host}:${currentEndpoint.port} to ${newHost}:${newPort}, reconnecting`);
         existing.close();
+        this._peerCapabilities.set(peer.peerId, peerCapabilities);
         endpointChanged = true;
       }
     }
@@ -1865,6 +2048,7 @@ export class AntseedNode extends EventEmitter {
     });
 
     debugLog(`[Node] Connected to ${peer.peerId.slice(0, 12)}...`);
+    this._peerCapabilities.set(peer.peerId, peerCapabilities);
     this._wireConnection(conn, peer.peerId);
     return conn;
   }
@@ -1891,6 +2075,47 @@ export class AntseedNode extends EventEmitter {
     const mux = new VerificationMux(conn);
     this._verificationMuxes.set(peerId, mux);
     return mux;
+  }
+
+  private _getOrCreateSweepMux(peerId: PeerId, conn: PeerConnection): SweepMux {
+    const existing = this._sweepMuxes.get(peerId);
+    if (existing) {
+      return existing;
+    }
+
+    const mux = new SweepMux(conn);
+    // Buyer side: surface relayer progress reports as node events.
+    mux.onSweepReceipt((payload: SweepReceiptPayload) => {
+      this.emit('sweep:receipt', { peerId, payload });
+    });
+    this._sweepMuxes.set(peerId, mux);
+    return mux;
+  }
+
+  /**
+   * Broadcast a signed deposit-sweep request to all currently connected peers.
+   * Relayers submit it on-chain permissionlessly; progress reports arrive as
+   * 'sweep:receipt' events. Returns the number of peers the request was sent to.
+   */
+  broadcastSweepRequest(payload: SweepRequestPayload): number {
+    if (!this._connectionManager) {
+      throw new Error('Node not started');
+    }
+    let sent = 0;
+    for (const peerId of this._muxes.keys()) {
+      const capabilities = this._peerCapabilities.get(peerId);
+      if (!capabilities?.has(CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1)) continue;
+      const conn = this._connectionManager.getConnection(peerId);
+      if (!conn) continue;
+      if (conn.state !== ConnectionState.Open && conn.state !== ConnectionState.Authenticated) continue;
+      try {
+        this._getOrCreateSweepMux(peerId, conn).sendSweepRequest(payload);
+        sent++;
+      } catch (err) {
+        debugWarn(`[Node] Failed to send sweep request to ${peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+    return sent;
   }
 
   private _resolvePublicAddress(result: LookupResult): string {

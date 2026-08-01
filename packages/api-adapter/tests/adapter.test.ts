@@ -291,6 +291,7 @@ describe('transformRequest anthropic to responses', () => {
     expect(body.stop).toEqual(['END']);
     expect(body.metadata).toEqual({ trace: 'abc' });
     expect(body.user).toBe('user-123');
+    expect(body.prompt_cache_key).toBe('user-123');
     expect(body.tool_choice).toEqual({ type: 'function', name: 'write' });
     expect(body.tools).toEqual([{
       type: 'function',
@@ -309,6 +310,75 @@ describe('transformRequest anthropic to responses', () => {
     expect(input).toEqual([
       { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
     ]);
+  });
+
+  it('maps anthropic metadata.user_id to a responses prompt_cache_key', () => {
+    const transformed = transformRequest(makeRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'claude-sonnet',
+        max_tokens: 256,
+        metadata: { user_id: 'user_abc_session_f00d' },
+        messages: [
+          { role: 'user', content: 'hello' },
+        ],
+      })),
+    }), { from: 'anthropic-messages', to: 'openai-responses' });
+
+    const body = JSON.parse(new TextDecoder().decode(transformed!.request.body)) as Record<string, unknown>;
+    expect(body.prompt_cache_key).toBe('user_abc_session_f00d');
+  });
+
+  it('omits prompt_cache_key when the anthropic request has no session identity', () => {
+    const transformed = transformRequest(makeRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'claude-sonnet',
+        max_tokens: 256,
+        messages: [
+          { role: 'user', content: 'hello' },
+        ],
+      })),
+    }), { from: 'anthropic-messages', to: 'openai-responses' });
+
+    const body = JSON.parse(new TextDecoder().decode(transformed!.request.body)) as Record<string, unknown>;
+    expect(body.prompt_cache_key).toBeUndefined();
+  });
+
+  it('forces upstream responses streaming without changing original non-stream preference', () => {
+    const transformed = transformRequest(makeRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'claude-sonnet',
+        max_tokens: 256,
+        messages: [
+          { role: 'user', content: 'hello' },
+        ],
+      })),
+    }), { from: 'anthropic-messages', to: 'openai-responses' });
+
+    expect(transformed).not.toBeNull();
+    expect(transformed!.streamRequested).toBe(false);
+    expect(transformed!.request.headers['x-antseed-client-stream-requested']).toBe('false');
+
+    const body = JSON.parse(new TextDecoder().decode(transformed!.request.body)) as Record<string, unknown>;
+    expect(body.stream).toBe(true);
+  });
+
+  it('honors an explicit streaming preference when rendering responses requests', () => {
+    const transformed = transformRequest(makeRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'claude-sonnet',
+        max_tokens: 256,
+        messages: [
+          { role: 'user', content: 'hello' },
+        ],
+      })),
+    }), { from: 'anthropic-messages', to: 'openai-responses', streamRequested: true });
+
+    expect(transformed).not.toBeNull();
+    expect(transformed!.streamRequested).toBe(true);
+    expect(transformed!.request.headers['x-antseed-client-stream-requested']).toBe('true');
+
+    const body = JSON.parse(new TextDecoder().decode(transformed!.request.body)) as Record<string, unknown>;
+    expect(body.stream).toBe(true);
   });
 
   it('preserves tool calls and tool results through responses input', () => {
@@ -887,6 +957,52 @@ describe('transformRequest responses to chat', () => {
     });
   });
 
+  it('groups parallel function calls into a single assistant tool_calls message', () => {
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        input: [
+          { role: 'user', content: 'run two things' },
+          { type: 'function_call', call_id: 'exec_command:0', name: 'exec_command', arguments: '{"cmd":"ls"}' },
+          { type: 'function_call', call_id: 'exec_command:1', name: 'exec_command', arguments: '{"cmd":"pwd"}' },
+          { type: 'function_call_output', call_id: 'exec_command:0', output: 'a b c' },
+          { type: 'function_call_output', call_id: 'exec_command:1', output: '/tmp' },
+        ],
+      })),
+    });
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+    const messages = body.messages as Array<Record<string, unknown>>;
+
+    expect(messages).toHaveLength(4);
+    expect(messages[1].role).toBe('assistant');
+    expect((messages[1].tool_calls as unknown[]).length).toBe(2);
+    expect(messages[2]).toEqual({ role: 'tool', tool_call_id: 'exec_command:0', content: 'a b c' });
+    expect(messages[3]).toEqual({ role: 'tool', tool_call_id: 'exec_command:1', content: '/tmp' });
+  });
+
+  it('drops reasoning items instead of emitting empty user messages', () => {
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        input: [
+          { role: 'user', content: 'hi' },
+          { type: 'reasoning', id: 'rs_1', summary: [] },
+          { type: 'function_call', call_id: 'exec_command:0', name: 'exec_command', arguments: '{}' },
+          { type: 'function_call_output', call_id: 'exec_command:0', output: 'ok' },
+        ],
+      })),
+    });
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+    const messages = body.messages as Array<Record<string, unknown>>;
+
+    expect(messages).toHaveLength(3);
+    expect(messages[0]).toEqual({ role: 'user', content: 'hi' });
+    expect(messages[1].role).toBe('assistant');
+    expect(messages[2].role).toBe('tool');
+  });
+
   it('returns null for unsupported request protocols', () => {
     const request = makeResponsesRequest();
     expect(transformRequest(request, { from: 'openai-completions', to: 'openai-chat-completions' })).toBeNull();
@@ -987,6 +1103,61 @@ describe('transformResponse chat to responses', () => {
     expect(usage.input_tokens).toBe(15);
     expect(usage.output_tokens).toBe(8);
     expect(usage.total_tokens).toBe(23);
+  });
+
+  it('preserves cached input token details in responses usage', () => {
+    const chatResponse = makeOpenAIResponse({
+      body: new TextEncoder().encode(JSON.stringify({
+        id: 'chatcmpl-cache',
+        model: 'gpt-4.1',
+        choices: [{
+          index: 0,
+          finish_reason: 'stop',
+          message: { role: 'assistant', content: 'cached' },
+        }],
+        usage: {
+          prompt_tokens: 1000,
+          completion_tokens: 8,
+          prompt_tokens_details: { cached_tokens: 900 },
+        },
+      })),
+    });
+
+    const result = adaptResponseForTest('openai-chat-completions', 'openai-responses', chatResponse);
+    const body = JSON.parse(new TextDecoder().decode(result.body)) as Record<string, unknown>;
+    expect(body.usage).toMatchObject({
+      input_tokens: 1000,
+      output_tokens: 8,
+      total_tokens: 1008,
+      input_tokens_details: { cached_tokens: 900 },
+    });
+  });
+
+  it('maps Anthropic cache reads to Responses cached token details', () => {
+    const anthropicResponse = makeAnthropicResponse({
+      body: new TextEncoder().encode(JSON.stringify({
+        id: 'msg_cache',
+        type: 'message',
+        role: 'assistant',
+        model: 'claude-sonnet',
+        content: [{ type: 'text', text: 'cached' }],
+        stop_reason: 'end_turn',
+        usage: {
+          input_tokens: 3000,
+          cache_read_input_tokens: 34_500_000,
+          output_tokens: 42,
+        },
+      })),
+    });
+
+    const result = adaptResponseForTest('anthropic-messages', 'openai-responses', anthropicResponse);
+    const body = JSON.parse(new TextDecoder().decode(result.body)) as Record<string, unknown>;
+    expect(body.usage).toMatchObject({
+      input_tokens: 34_503_000,
+      output_tokens: 42,
+      total_tokens: 34_503_042,
+      input_tokens_details: { cached_tokens: 34_500_000 },
+    });
   });
 
   it('maps tool calls to function_call items', () => {
@@ -1200,6 +1371,9 @@ describe('transformRequest chat to responses', () => {
     expect(result).not.toBeNull();
 
     const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+    expect(result!.streamRequested).toBe(false);
+    expect(result!.request.headers['x-antseed-client-stream-requested']).toBe('false');
+    expect(body.stream).toBe(true);
     expect(body.max_output_tokens).toBe(64);
     expect(body.stop).toEqual(['END']);
     expect(body.metadata).toEqual({ trace: 'abc' });
@@ -1207,6 +1381,24 @@ describe('transformRequest chat to responses', () => {
     expect(body.input).toEqual([
       { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
     ]);
+  });
+
+  it('carries an explicit prompt_cache_key through to the responses body', () => {
+    const request: SerializedHttpRequest = {
+      requestId: 'req-chat-cache-key',
+      method: 'POST',
+      path: '/v1/chat/completions',
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        messages: [{ role: 'user', content: 'hello' }],
+        prompt_cache_key: 'conv-42',
+      })),
+    };
+    const result = transformRequest(request, { from: 'openai-chat-completions', to: 'openai-responses' });
+
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+    expect(body.prompt_cache_key).toBe('conv-42');
   });
 });
 
@@ -1282,6 +1474,40 @@ describe('transformResponse responses to anthropic', () => {
       { type: 'text', text: 'Working on it' },
       { type: 'tool_use', id: 'call_123', name: 'write', input: { path: 'hello.txt' } },
     ]);
+  });
+
+  it('maps cached Responses usage to Anthropic cache fields', () => {
+    const result = adaptResponseForTest('openai-responses', 'anthropic-messages', {
+      requestId: 'req-resp-cache',
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({
+        id: 'resp_cache',
+        model: 'gpt-5.5',
+        status: 'completed',
+        output: [{
+          type: 'message',
+          id: 'msg_1',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'cached' }],
+        }],
+        usage: {
+          input_tokens: 34_503_000,
+          input_tokens_details: { cached_tokens: 34_500_000 },
+          output_tokens: 42,
+        },
+      })),
+    }, {
+      streamRequested: false,
+      fallbackModel: 'claude-sonnet',
+    });
+
+    const body = JSON.parse(new TextDecoder().decode(result.body)) as Record<string, unknown>;
+    expect(body.usage).toEqual({
+      input_tokens: 3000,
+      output_tokens: 42,
+      cache_read_input_tokens: 34_500_000,
+    });
   });
 
   it('maps incomplete responses stop reasons to anthropic stop reasons', () => {
