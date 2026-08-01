@@ -428,6 +428,18 @@ export class SellerRequestHandler {
       // spend recording, and NeedAuth — so a buyer-requested close can't land
       // between serving the request and claiming its cost.
       const isBillable = !isFreeService && (spm?.hasSession(buyerPeerId) ?? false);
+      if (isBillable && spm!.hasClosingChannel(buyerPeerId)) {
+        mux.sendProxyResponse({
+          requestId: request.requestId,
+          statusCode: 503,
+          headers: { 'content-type': 'application/json', 'retry-after': '2' },
+          body: new TextEncoder().encode(JSON.stringify({
+            error: 'channel_closing',
+            message: 'Payment channel is closing; retry shortly or open a new channel',
+          })),
+        });
+        return;
+      }
       if (isBillable) spm!.beginBillableRequest(buyerPeerId);
       this.adjustProviderLoad(provider.name, 1);
       try {

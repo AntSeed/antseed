@@ -56,6 +56,7 @@ function makeSpmMock(overrides: Record<string, unknown> = {}): any {
     beginBillableRequest: vi.fn(),
     endBillableRequest: vi.fn(),
     hasInFlightRequests: () => false,
+    hasClosingChannel: () => false,
     ...overrides,
   };
 }
@@ -373,6 +374,46 @@ describe('SellerRequestHandler payment pricing selection', () => {
     expect(recordSpend).toHaveBeenCalledWith('session-1', costUsdc);
     expect(sendNeedAuth).toHaveBeenCalledOnce();
     expect(sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'req-codex-cost', lastRequestCost: costUsdc.toString(), requiredCumulativeAmount: costUsdc.toString(), inputTokens: '30426', cachedInputTokens: '1920', freshInputTokens: '28506', outputTokens: '108' }));
+  });
+
+  it('rejects a billable request with 503 while the channel is closing', async () => {
+    const provider = makeProvider(1, 1, {
+      name: 'openai-responses',
+      services: ['gpt-5.3-codex-spark'],
+    });
+    provider.handleRequest = vi.fn(async (req) => ({
+      requestId: req.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({ usage: { prompt_tokens: 10, completion_tokens: 10 } })),
+    }));
+
+    const recordSpend = vi.fn();
+    const beginBillableRequest = vi.fn();
+    const handler = new SellerRequestHandler({
+      providers: [provider],
+      sellerPaymentManager: makeSpmMock({ recordSpend, beginBillableRequest, hasClosingChannel: () => true }),
+      sessionTracker: null,
+      channelsClient: {} as any,
+      announcer: null,
+      emit: () => false,
+    });
+
+    const sentFrames: Uint8Array[] = [];
+    const conn = makeConn(sentFrames);
+    const paymentMux = { sendNeedAuth: vi.fn(), sendPaymentRequired: vi.fn() } as any;
+    const { mux } = handler.handleConnection(conn, 'b'.repeat(40), paymentMux);
+
+    await mux.handleFrame({ type: MessageType.HttpRequest, messageId: 1, payload: encodeHttpRequest({ requestId: 'req-closing', method: 'POST', path: '/v1/responses', headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({ model: 'gpt-5.3-codex-spark' })) }) });
+
+    const decoded = decodeFrame(sentFrames[0]!);
+    const response = decodeHttpResponse(decoded!.message.payload);
+    expect(response.statusCode).toBe(503);
+    const body = JSON.parse(new TextDecoder().decode(response.body));
+    expect(body.error).toBe('channel_closing');
+    expect(provider.handleRequest).not.toHaveBeenCalled();
+    expect(beginBillableRequest).not.toHaveBeenCalled();
+    expect(recordSpend).not.toHaveBeenCalled();
   });
 
   it('keeps post-response NeedAuth below the reserve ceiling when cumulative spend is still covered', async () => {

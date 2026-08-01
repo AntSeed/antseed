@@ -1213,6 +1213,17 @@ export class SellerPaymentManager {
     return (this._inFlightRequests.get(buyerPeerId) ?? 0) > 0;
   }
 
+  /**
+   * Whether a close transaction is in flight for this buyer's active channel.
+   * Request admission refuses new billable work while this is true: the close
+   * would remove the session mid-request and its spend would never be recorded.
+   */
+  hasClosingChannel(buyerPeerId: string): boolean {
+    if (this._closingChannels.size === 0) return false;
+    const session = this._channelStore.getActiveChannelByPeer(buyerPeerId, CHANNEL_ROLE.SELLER);
+    return session != null && this._closingChannels.has(session.sessionId);
+  }
+
   // ── Disconnect handling ───────────────────────────────────────
 
   onBuyerDisconnect(buyerPeerId: string): void {
@@ -1584,6 +1595,25 @@ export class SellerPaymentManager {
       onChainSettled = (await this._channelsClient.getSession(channelId)).settled;
     } catch (err) {
       return reject('close_failed', `could not read on-chain channel state: ${this._formatError(err)}`);
+    }
+
+    // Re-check after the awaits above: a request admitted while this handler
+    // was verifying and waiting must finish billing before the channel closes,
+    // and any spend it recorded must be signed for or the close settles short.
+    // Everything from here to the submission is synchronous, so nothing can
+    // land in between.
+    if (this.hasInFlightRequests(buyerPeerId)) {
+      return reject('busy', 'a request is still being served on this channel', {
+        retryAfterMs: CLOSE_RETRY_AFTER_MS,
+      });
+    }
+    spent = this._spent.get(channelId) ?? 0n;
+    best = this._getSettleParams(channelId);
+    if (spent > best.amount) {
+      return reject('pending_auth', `unsigned spend outstanding (spent=${spent} signed=${best.amount})`, {
+        retryAfterMs: CLOSE_RETRY_AFTER_MS,
+        requiredCumulativeAmount: spent.toString(),
+      });
     }
 
     const useSignedAuth = best.sig !== '0x' && best.amount > onChainSettled;
