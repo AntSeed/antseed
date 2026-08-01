@@ -112,6 +112,7 @@ type PluginInstallResult = {
 };
 
 type UpdateStatus =
+  | { status: 'available'; version: string }
   | { status: 'downloading'; version: string; percent: number }
   | { status: 'ready'; version: string }
   | { status: 'installing'; version: string | null }
@@ -517,6 +518,9 @@ const api = {
   },
   installUpdate(): Promise<InstallUpdateResult> {
     return ipcRenderer.invoke('app:install-update') as Promise<InstallUpdateResult>;
+  },
+  downloadUpdate(): Promise<InstallUpdateResult> {
+    return ipcRenderer.invoke('app:download-update') as Promise<InstallUpdateResult>;
   },
   getUpdateStatus(): Promise<UpdateStatus | null> {
     return ipcRenderer.invoke('app:get-update-status') as Promise<UpdateStatus | null>;

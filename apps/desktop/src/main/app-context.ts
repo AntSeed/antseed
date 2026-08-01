@@ -20,6 +20,7 @@ export const DESKTOP_DEBUG_ENV = 'ANTSEED_DESKTOP_DEBUG';
 export const DESKTOP_DEBUG_FLAGS = new Set(['--debug-runtime', '--desktop-debug']);
 
 export type UpdateStatus =
+  | { status: 'available'; version: string }
   | { status: 'downloading'; version: string; percent: number }
   | { status: 'ready'; version: string }
   | { status: 'installing'; version: string | null }

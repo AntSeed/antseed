@@ -83,7 +83,12 @@ export function UpdateBanner() {
 
   // The network alert owns the slot — an update can't install offline anyway.
   if (networkAlert !== 'none' || !update) return null;
-  if ((update.status === 'downloading' || update.status === 'ready') && update.version === dismissedVersion) {
+  // Dismissal is deliberately session-only (component state): the banner
+  // returns on the next app launch until the update is taken.
+  if (
+    (update.status === 'available' || update.status === 'downloading' || update.status === 'ready')
+    && update.version === dismissedVersion
+  ) {
     return null;
   }
 
@@ -116,6 +121,7 @@ export function UpdateBanner() {
 
   const installing = update.status === 'installing';
   const downloading = update.status === 'downloading';
+  const available = update.status === 'available';
   const percent = update.status === 'downloading' ? update.percent : 0;
   return (
     <div className={styles.banner} role="status">
@@ -131,7 +137,9 @@ export function UpdateBanner() {
             ? 'The app will restart on the new version in a moment.'
             : downloading
               ? `Version ${update.version} · ${percent}%`
-              : `Version ${update.version} is downloaded and ready to install.`}
+              : available
+                ? `Version ${update.version} is available.`
+                : `Version ${update.version} is downloaded and ready to install.`}
         </span>
         {downloading && (
           <span className={styles.progressTrack} aria-hidden="true">
@@ -141,7 +149,16 @@ export function UpdateBanner() {
       </div>
       {!installing && (
         <>
-          {!downloading && (
+          {available && (
+            <button
+              type="button"
+              className={styles.action}
+              onClick={() => { void window.antseedDesktop?.downloadUpdate?.(); }}
+            >
+              Download
+            </button>
+          )}
+          {update.status === 'ready' && (
             <button type="button" className={styles.action} onClick={handleInstall}>
               Restart &amp; update
             </button>

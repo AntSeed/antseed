@@ -158,6 +158,7 @@ export type PluginInstallResult = {
 };
 
 export type UpdateStatus =
+  | { status: 'available'; version: string }
   | { status: 'downloading'; version: string; percent: number }
   | { status: 'ready'; version: string }
   | { status: 'installing'; version: string | null }
@@ -367,6 +368,7 @@ export type DesktopBridge = {
   onAppSetupComplete?: (handler: () => void) => () => void;
   onUpdateStatus?: (handler: (data: UpdateStatus) => void) => () => void;
   installUpdate?: () => Promise<InstallUpdateResult>;
+  downloadUpdate?: () => Promise<InstallUpdateResult>;
   getUpdateStatus?: () => Promise<UpdateStatus | null>;
   setDebugLogs?: (enabled: boolean) => Promise<{ ok: true }>;
   creditsGetInfo?: () => Promise<{ ok: boolean; data: { evmAddress: string | null; operatorAddress: string | null; balanceUsdc: string; reservedUsdc: string; availableUsdc: string; pendingUsdc: string; spendableUsdc: string; creditLimitUsdc: string } | null; error: string | null }>;

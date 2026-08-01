@@ -571,7 +571,9 @@ app.whenReady().then(async () => {
   // minutes (network drop, stuck CDN connection, etc.) we re-trigger the
   // update check so electron-updater resumes/restarts the download instead
   // of sitting idle forever.
-  autoUpdater.autoDownload = true;
+  // Downloads are opt-in: detection only surfaces an "Update available"
+  // banner, and the (hundreds of MB) download starts when the user clicks it.
+  autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
 
   const UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000;
@@ -632,18 +634,41 @@ app.whenReady().then(async () => {
       const idleMs = Date.now() - lastDownloadProgressAt;
       if (idleMs < DOWNLOAD_STALL_TIMEOUT_MS) return;
       console.warn(`[auto-update] download stalled (${Math.round(idleMs / 1000)}s with no progress) — retrying`);
-      clearStallWatchdog();
-      updateVersion = null;
-      void autoUpdater.checkForUpdates().catch((err) => {
+      startStallWatchdog();
+      void autoUpdater.downloadUpdate().catch((err) => {
         reportUpdateError(err, 'stall-retry failed');
       });
     }, DOWNLOAD_STALL_POLL_MS);
   };
 
+  // idle → available → downloading → ready; periodic re-checks re-announce
+  // "available" but must not regress an in-flight or finished download.
+  let updatePhase: 'idle' | 'available' | 'downloading' | 'ready' = 'idle';
+
   autoUpdater.on('update-available', (info) => {
+    if (updatePhase === 'downloading' || updatePhase === 'ready') return;
+    updatePhase = 'available';
     updateVersion = info.version;
+    sendUpdateStatus({ status: 'available', version: info.version });
+  });
+
+  ipcMain.handle('app:download-update', async (): Promise<InstallUpdateResult> => {
+    if (updatePhase === 'downloading' || updatePhase === 'ready') {
+      return { ok: true };
+    }
+    updatePhase = 'downloading';
     startStallWatchdog();
-    sendUpdateStatus({ status: 'downloading', version: info.version, percent: 0 });
+    sendUpdateStatus({ status: 'downloading', version: updateVersion ?? '', percent: 0 });
+    try {
+      void autoUpdater.downloadUpdate().catch((err) => {
+        updatePhase = 'available';
+        reportUpdateError(err, 'download failed');
+      });
+      return { ok: true };
+    } catch (err) {
+      updatePhase = 'available';
+      return reportUpdateError(err, 'download failed');
+    }
   });
   autoUpdater.on('download-progress', (progress) => {
     if (!updateVersion) return;
@@ -685,6 +710,7 @@ app.whenReady().then(async () => {
   }
 
   autoUpdater.on('update-downloaded', (info) => {
+    updatePhase = 'ready';
     updateVersion = info.version;
     clearStallWatchdog();
     if (updateCheckInterval) {
