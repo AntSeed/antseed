@@ -5,7 +5,6 @@ import "@openzeppelin/contracts/access/Ownable2Step.sol";
 
 import { IERC8004Registry } from "../interfaces/IERC8004Registry.sol";
 import { IAntseedSellerPools } from "../interfaces/IAntseedSellerPools.sol";
-import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
 import { IAntseedStaking } from "../interfaces/IAntseedStaking.sol";
 
 /**
@@ -37,7 +36,7 @@ import { IAntseedStaking } from "../interfaces/IAntseedStaking.sol";
  */
 contract AntseedSellerRegistry is IAntseedStaking, Ownable2Step {
     // ─── External Contracts ──────────────────────────────────────────
-    IAntseedRegistry public registry;
+    address public immutable identityRegistry;
     IAntseedSellerPools public sellerPools;
     IAntseedStaking public legacyStaking;
 
@@ -58,7 +57,6 @@ contract AntseedSellerRegistry is IAntseedStaking, Ownable2Step {
     mapping(uint256 => address) public agentSeller;
 
     // ─── Events ──────────────────────────────────────────────────────
-    event RegistrySet(address indexed registry);
     event SellerPoolsSet(address indexed sellerPools);
     event LegacyStakingSet(address indexed legacyStaking);
     event MinSellerPoolStakeSet(uint256 minSellerPoolStake);
@@ -74,9 +72,9 @@ contract AntseedSellerRegistry is IAntseedStaking, Ownable2Step {
     error UnsupportedStakeOperation();
 
     // ─── Constructor ─────────────────────────────────────────────────
-    constructor(address _registry, address _sellerPools, address _legacyStaking) Ownable(msg.sender) {
-        if (_registry == address(0) || _sellerPools == address(0)) revert InvalidAddress();
-        registry = IAntseedRegistry(_registry);
+    constructor(address _identityRegistry, address _sellerPools, address _legacyStaking) Ownable(msg.sender) {
+        if (_identityRegistry == address(0) || _sellerPools == address(0)) revert InvalidAddress();
+        identityRegistry = _identityRegistry;
         sellerPools = IAntseedSellerPools(_sellerPools);
         legacyStaking = IAntseedStaking(_legacyStaking);
     }
@@ -87,7 +85,7 @@ contract AntseedSellerRegistry is IAntseedStaking, Ownable2Step {
 
     function registerSeller(uint256 agentId) external {
         if (agentId == 0) revert InvalidValue();
-        if (IERC8004Registry(registry.identityRegistry()).ownerOf(agentId) != msg.sender) revert NotAgentOwner();
+        if (IERC8004Registry(identityRegistry).ownerOf(agentId) != msg.sender) revert NotAgentOwner();
 
         // A seller stays limited to one agent, but an agent it has since sold
         // must not lock the address out of registering a replacement.
@@ -161,12 +159,6 @@ contract AntseedSellerRegistry is IAntseedStaking, Ownable2Step {
     //                        ADMIN FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════
 
-    function setRegistry(address _registry) external onlyOwner {
-        if (_registry == address(0)) revert InvalidAddress();
-        registry = IAntseedRegistry(_registry);
-        emit RegistrySet(_registry);
-    }
-
     function setSellerPools(address _sellerPools) external onlyOwner {
         if (_sellerPools == address(0)) revert InvalidAddress();
         sellerPools = IAntseedSellerPools(_sellerPools);
@@ -208,9 +200,7 @@ contract AntseedSellerRegistry is IAntseedStaking, Ownable2Step {
     ///      deployed and calls getAgentId() unguarded while settling and
     ///      closing, so a revert here would trap buyer funds in a channel.
     function _ownsAgent(address seller, uint256 agentId) internal view returns (bool) {
-        address identity = registry.identityRegistry();
-        if (identity == address(0)) return false;
-        try IERC8004Registry(identity).ownerOf(agentId) returns (address owner) {
+        try IERC8004Registry(identityRegistry).ownerOf(agentId) returns (address owner) {
             return owner == seller;
         } catch {
             return false;

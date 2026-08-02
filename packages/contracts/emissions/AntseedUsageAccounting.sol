@@ -86,8 +86,12 @@ contract AntseedUsageAccounting is IAntseedUsageAccounting, Ownable2Step, Pausab
     mapping(uint256 => mapping(address => uint256)) private _sellerAgentIdByEpoch;
 
     // ─── Modifiers ───────────────────────────────────────────────────
+    /// @dev Skips (no-op) instead of reverting for unrecognized callers: if a
+    ///      recorder is later revoked (e.g. Channels/Deposits superseded by a
+    ///      v2 the registry points at), channels still settling through the
+    ///      old contract must keep working — they just stop earning emissions.
     modifier onlyUsageRecorder() {
-        if (!usageRecorders[msg.sender]) revert NotUsageRecorder();
+        if (!usageRecorders[msg.sender]) return;
         _;
     }
 

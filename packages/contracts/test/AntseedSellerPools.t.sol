@@ -69,10 +69,11 @@ contract AntseedSellerPoolsTest is Test {
         registry.setEmissions(address(this));
         registry.setIdentityRegistry(address(identityRegistry));
 
-        pools = new AntseedSellerPools(address(registry));
+        pools = new AntseedSellerPools(address(token), address(this), address(identityRegistry), address(0));
         token.setTransferWhitelist(address(pools), true);
-        sellerRegistry = new AntseedSellerRegistry(address(registry), address(pools), address(0));
+        sellerRegistry = new AntseedSellerRegistry(address(identityRegistry), address(pools), address(0));
         registry.setStaking(address(sellerRegistry));
+        pools.setStakingSource(address(sellerRegistry));
         vm.prank(seller);
         agentId = identityRegistry.register();
         vm.prank(seller);
@@ -92,13 +93,15 @@ contract AntseedSellerPoolsTest is Test {
         return (block.timestamp - genesis) / EPOCH_DURATION;
     }
 
-    function test_currentEpochRevertsWhenEmissionsUnset() public {
-        AntseedRegistry unsetRegistry = new AntseedRegistry();
-        unsetRegistry.setAntsToken(address(token));
-        AntseedSellerPools unsetPools = new AntseedSellerPools(address(unsetRegistry));
+    function test_constructorRejectsZeroCoreAddresses() public {
+        vm.expectRevert(IAntseedSellerPools.InvalidAddress.selector);
+        new AntseedSellerPools(address(0), address(this), address(identityRegistry), address(0));
 
-        vm.expectRevert(IAntseedSellerPools.EmissionsNotConfigured.selector);
-        unsetPools.currentEpoch();
+        vm.expectRevert(IAntseedSellerPools.InvalidAddress.selector);
+        new AntseedSellerPools(address(token), address(0), address(identityRegistry), address(0));
+
+        vm.expectRevert(IAntseedSellerPools.InvalidAddress.selector);
+        new AntseedSellerPools(address(token), address(this), address(0), address(0));
     }
 
     function test_stakeActivatesNextEpochAndUsesAgentIdWeight() public {
@@ -770,7 +773,7 @@ contract AntseedSellerPoolsTest is Test {
 
     function test_sellerRegistryLegacyStakeFallbackKeepsSellersEligible() public {
         MockLegacyStaking legacy = new MockLegacyStaking();
-        AntseedSellerRegistry adapter = new AntseedSellerRegistry(address(registry), address(pools), address(legacy));
+        AntseedSellerRegistry adapter = new AntseedSellerRegistry(address(identityRegistry), address(pools), address(legacy));
 
         legacy.setAgent(seller, agentId);
         legacy.setStaked(seller, true);
@@ -792,7 +795,7 @@ contract AntseedSellerPoolsTest is Test {
 
     function test_sellerRegistryAgentHandoverSupersedesLegacyBinding() public {
         MockLegacyStaking legacy = new MockLegacyStaking();
-        AntseedSellerRegistry adapter = new AntseedSellerRegistry(address(registry), address(pools), address(legacy));
+        AntseedSellerRegistry adapter = new AntseedSellerRegistry(address(identityRegistry), address(pools), address(legacy));
 
         address oldSeller = address(0x600);
         vm.prank(oldSeller);
@@ -807,7 +810,7 @@ contract AntseedSellerPoolsTest is Test {
         identityRegistry.transferAgent(soldAgentId, newOwner);
         vm.prank(newOwner);
         adapter.registerSeller(soldAgentId);
-        registry.setStaking(address(adapter));
+        pools.setStakingSource(address(adapter));
 
         assertEq(adapter.getAgentId(newOwner), soldAgentId);
         assertEq(adapter.getAgentId(oldSeller), 0);
@@ -908,7 +911,7 @@ contract AntseedSellerPoolsTest is Test {
 
     function test_agentTransferEndsLegacyBindingWithoutNewOwnerRegistering() public {
         MockLegacyStaking legacy = new MockLegacyStaking();
-        AntseedSellerRegistry adapter = new AntseedSellerRegistry(address(registry), address(pools), address(legacy));
+        AntseedSellerRegistry adapter = new AntseedSellerRegistry(address(identityRegistry), address(pools), address(legacy));
 
         address oldSeller = address(0x600);
         vm.prank(oldSeller);
@@ -943,21 +946,4 @@ contract AntseedSellerPoolsTest is Test {
         sellerRegistry.registerSeller(secondAgentId);
     }
 
-    function test_getAgentIdFailsClosedWhenIdentityRegistryIsUnset() public {
-        AntseedRegistry blankRegistry = new AntseedRegistry();
-        blankRegistry.setAntsToken(address(token));
-        blankRegistry.setEmissions(address(this));
-        AntseedSellerPools blankPools = new AntseedSellerPools(address(blankRegistry));
-        MockLegacyStaking legacy = new MockLegacyStaking();
-        AntseedSellerRegistry adapter =
-            new AntseedSellerRegistry(address(blankRegistry), address(blankPools), address(legacy));
-
-        legacy.setAgent(seller, agentId);
-        legacy.setStaked(seller, true);
-
-        // Ownership cannot be proven without an identity registry, so the
-        // seller must resolve to nothing rather than the unverified binding.
-        assertEq(adapter.getAgentId(seller), 0);
-        assertFalse(adapter.isStakedAboveMin(seller));
-    }
 }

@@ -65,7 +65,7 @@ contract AntseedEmissionsGateFuzzTest is Test {
     function _deployGate(uint256 atEpoch) internal {
         // Deploy so that currentEpoch() == atEpoch.
         vm.warp(GATE_GENESIS + GATE_EPOCH_DURATION * atEpoch + 1);
-        gate = new AntseedEmissionsGate(address(registry), 15_000, 15_000);
+        gate = new AntseedEmissionsGate(teamWallet, reserve, 15_000, 15_000);
         token.setRegistry(address(gate));
         // No bucket mints until the legacy escrow is settled; any recipient
         // address marks the pot funded.

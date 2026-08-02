@@ -86,12 +86,14 @@ contract DeployRecognizedUsage is Script {
         address emissionsReserveWallet = vm.envOr("EMISSIONS_RESERVE_WALLET", address(0));
         address teamWallet = registry.teamWallet();
         address protocolReserve = registry.protocolReserve();
+        address identityRegistry = registry.identityRegistry();
         require(teamWallet != address(0), "team wallet not set");
         require(protocolReserve != address(0), "protocol reserve not set");
+        require(identityRegistry != address(0), "identity registry not set");
 
         vm.startBroadcast(deployerPrivateKey);
 
-        AntseedEmissionsGate gate = new AntseedEmissionsGate(registryAddress, 15_000, 15_000);
+        AntseedEmissionsGate gate = new AntseedEmissionsGate(teamWallet, protocolReserve, 15_000, 15_000);
         if (emissionsReserveWallet != address(0)) {
             gate.setMinterController(gate.RESERVE_MINTER_ID(), emissionsReserveWallet);
         }
@@ -100,10 +102,8 @@ contract DeployRecognizedUsage is Script {
         uint256 genesis = gate.genesis();
         uint256 epochDuration = gate.epochDuration();
 
-        // SellerPools resolves epochs via registry.emissions(): the legacy
-        // clock until the pointer flip below, the gate's clock after — and
-        // the escrow funding below settles pre-effective epochs on the
-        // gate's schedule, so the two clocks must agree.
+        // The escrow funding below settles pre-effective epochs on the
+        // gate's schedule, so the legacy and gate clocks must agree.
         require(
             IAntseedLegacyEmissionsClock(existingEmissions).genesis() == genesis
                 && IAntseedLegacyEmissionsClock(existingEmissions).EPOCH_DURATION() == epochDuration,
@@ -126,11 +126,12 @@ contract DeployRecognizedUsage is Script {
         console.log("Effective Epoch:        ", effectiveEpoch);
         console.log("");
 
-        AntseedSellerPools sellerPools = new AntseedSellerPools(registryAddress);
+        AntseedSellerPools sellerPools =
+            new AntseedSellerPools(antsToken, address(gate), identityRegistry, existingStaking);
         console.log("SellerPools:          ", address(sellerPools));
 
         AntseedSellerRegistry sellerRegistry =
-            new AntseedSellerRegistry(registryAddress, address(sellerPools), existingStaking);
+            new AntseedSellerRegistry(identityRegistry, address(sellerPools), existingStaking);
         console.log("SellerRegistry:       ", address(sellerRegistry));
 
         console.log("EmissionsGate:          ", address(gate));
@@ -145,7 +146,7 @@ contract DeployRecognizedUsage is Script {
         console.log("SellerPoolsRewards: ", address(sellerPoolsRewards));
 
         AntseedUsageRewards usageRewards =
-            new AntseedUsageRewards(address(gate), registryAddress, address(usageAccounting));
+            new AntseedUsageRewards(address(gate), address(usageAccounting), identityRegistry, existingDeposits);
         usageRewards.setSellerPools(address(sellerPools));
         console.log("UsageRewards:       ", address(usageRewards));
 

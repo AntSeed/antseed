@@ -8,10 +8,9 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/structs/Checkpoints.sol";
 
-import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
+import { IAntseedEmissionsGate } from "../interfaces/IAntseedEmissionsGate.sol";
 import { IAntseedSellerPools } from "../interfaces/IAntseedSellerPools.sol";
 import { IAntseedStaking } from "../interfaces/IAntseedStaking.sol";
-import { IAntseedUsageAccounting } from "../interfaces/IAntseedUsageAccounting.sol";
 import { IERC8004Registry } from "../interfaces/IERC8004Registry.sol";
 
 /**
@@ -52,7 +51,9 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
     address public constant DEAD_ADDRESS = 0x000000000000000000000000000000000000dEaD;
 
     // ─── External Contracts ──────────────────────────────────────────
-    IAntseedRegistry public registry;
+    IAntseedEmissionsGate public immutable emissionsGate;
+    address public immutable identityRegistry;
+    address public stakingSource;
     IERC20 public immutable antsToken;
 
     // ─── Configurable Parameters ─────────────────────────────────────
@@ -108,19 +109,22 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
     }
 
     // ─── Constructor ─────────────────────────────────────────────────
-    constructor(address _registry) ERC721("Locked Antseed Stake", "lANTS") Ownable(msg.sender) {
-        if (_registry == address(0)) revert InvalidAddress();
-        registry = IAntseedRegistry(_registry);
-        address token = registry.antsToken();
-        if (token == address(0)) revert InvalidAddress();
-        antsToken = IERC20(token);
+    constructor(address _antsToken, address _emissionsGate, address _identityRegistry, address _stakingSource)
+        ERC721("Locked Antseed Stake", "lANTS")
+        Ownable(msg.sender)
+    {
+        if (_antsToken == address(0) || _emissionsGate == address(0) || _identityRegistry == address(0)) {
+            revert InvalidAddress();
+        }
+        antsToken = IERC20(_antsToken);
+        emissionsGate = IAntseedEmissionsGate(_emissionsGate);
+        identityRegistry = _identityRegistry;
+        stakingSource = _stakingSource;
     }
 
     // ─── Epoch Helpers ────────────────────────────────────────────────
     function currentEpoch() public view returns (uint256) {
-        address emissions = registry.emissions();
-        if (emissions == address(0)) revert EmissionsNotConfigured();
-        return IAntseedUsageAccounting(emissions).currentEpoch();
+        return emissionsGate.currentEpoch();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -440,7 +444,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
 
     function agentIdForSeller(address seller) public view returns (uint256) {
         if (seller == address(0)) return 0;
-        address staking = registry.staking();
+        address staking = stakingSource;
         if (staking == address(0)) return 0;
         return IAntseedStaking(staking).getAgentId(seller);
     }
@@ -581,10 +585,10 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
     //                        ADMIN FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════
 
-    function setRegistry(address _registry) external onlyOwner {
-        if (_registry == address(0)) revert InvalidAddress();
-        registry = IAntseedRegistry(_registry);
-        emit RegistrySet(_registry);
+    function setStakingSource(address _stakingSource) external onlyOwner {
+        if (_stakingSource == address(0)) revert InvalidAddress();
+        stakingSource = _stakingSource;
+        emit StakingSourceSet(_stakingSource);
     }
 
     function setPoolConfig(
@@ -658,9 +662,6 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
     function _requireRegisteredSellerAgent(uint256 agentId) internal view {
         if (agentId == 0) revert InvalidValue();
 
-        address identityRegistry = registry.identityRegistry();
-        if (identityRegistry == address(0)) revert InvalidAddress();
-
         address owner;
         try IERC8004Registry(identityRegistry).ownerOf(agentId) returns (address agentOwner) {
             owner = agentOwner;
@@ -669,7 +670,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         }
         if (owner == address(0)) revert InvalidValue();
 
-        address staking = registry.staking();
+        address staking = stakingSource;
         if (staking == address(0)) revert InvalidAddress();
 
         try IAntseedStaking(staking).getAgentId(owner) returns (uint256 registeredAgentId) {

@@ -43,7 +43,6 @@ interface IAntseedUsageAccounting {
 
     error InvalidAddress();
     error InvalidValue();
-    error NotUsageRecorder();
     error NoPendingSellerAccrual();
     error UsageRewardsNotSet();
 

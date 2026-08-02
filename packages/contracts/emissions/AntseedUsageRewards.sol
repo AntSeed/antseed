@@ -10,7 +10,6 @@ import "@openzeppelin/contracts/utils/math/Math.sol";
 
 import { IAntseedDeposits } from "../interfaces/IAntseedDeposits.sol";
 import { IAntseedEmissionsGate } from "../interfaces/IAntseedEmissionsGate.sol";
-import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
 import { IAntseedSellerPools } from "../interfaces/IAntseedSellerPools.sol";
 import { IAntseedUsageAccounting } from "../interfaces/IAntseedUsageAccounting.sol";
 import { IERC8004Registry } from "../interfaces/IERC8004Registry.sol";
@@ -46,9 +45,10 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
 
     // ─── External Contracts ──────────────────────────────────────────
     IAntseedEmissionsGate public immutable emissionsGate;
-    IAntseedRegistry public immutable registry;
+    address public immutable identityRegistry;
     IAntseedUsageAccounting public immutable usageAccounting;
     IAntseedSellerPools public sellerPools;
+    address public operatorSource;
 
     /// @notice Contract allowed to initiate agent reward claims on a seller's
     ///         behalf via `claimAgentRewardFor`. Rewards still pay the agent
@@ -93,6 +93,7 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
 
     // ─── Events ──────────────────────────────────────────────────────
     event SellerPoolsSet(address indexed sellerPools);
+    event OperatorSourceSet(address indexed operatorSource);
     event ClaimForwarderSet(address indexed claimForwarder);
     event SellerOperatorRewardClaimed(
         address indexed seller,
@@ -160,13 +161,19 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
     error NotClaimForwarder();
 
     // ─── Constructor ─────────────────────────────────────────────────
-    constructor(address _emissionsGate, address _registry, address _usageAccounting) Ownable(msg.sender) {
-        if (_emissionsGate == address(0) || _registry == address(0) || _usageAccounting == address(0)) {
+    constructor(address _emissionsGate, address _usageAccounting, address _identityRegistry, address _operatorSource)
+        Ownable(msg.sender)
+    {
+        if (
+            _emissionsGate == address(0) || _usageAccounting == address(0) || _identityRegistry == address(0)
+                || _operatorSource == address(0)
+        ) {
             revert InvalidAddress();
         }
 
         emissionsGate = IAntseedEmissionsGate(_emissionsGate);
-        registry = IAntseedRegistry(_registry);
+        identityRegistry = _identityRegistry;
+        operatorSource = _operatorSource;
         usageAccounting = IAntseedUsageAccounting(_usageAccounting);
 
         _currentConfig = DynamicUsageConfig({
@@ -276,6 +283,12 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         if (_sellerPools == address(0)) revert InvalidAddress();
         sellerPools = IAntseedSellerPools(_sellerPools);
         emit SellerPoolsSet(_sellerPools);
+    }
+
+    function setOperatorSource(address _operatorSource) external onlyOwner {
+        if (_operatorSource == address(0)) revert InvalidAddress();
+        operatorSource = _operatorSource;
+        emit OperatorSourceSet(_operatorSource);
     }
 
     function setDynamicUsageConfig(
@@ -611,7 +624,6 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
 
     function _emissionsReserve() internal view returns (address reserve) {
         reserve = emissionsGate.emissionsReserve();
-        if (reserve == address(0)) reserve = registry.protocolReserve();
         if (reserve == address(0)) revert InvalidAddress();
     }
 
@@ -638,8 +650,6 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
     }
 
     function _agentOwner(uint256 agentId) internal view returns (address owner) {
-        address identityRegistry = registry.identityRegistry();
-        if (identityRegistry == address(0)) revert InvalidAddress();
         owner = IERC8004Registry(identityRegistry).ownerOf(agentId);
         if (owner == address(0)) revert InvalidAddress();
     }
@@ -648,7 +658,7 @@ contract AntseedUsageRewards is Ownable2Step, Pausable, ReentrancyGuard {
         // Iron rule: the buyer hot wallet never receives funds. If the
         // operator cannot be resolved, revert (rolling back the claimed flag)
         // so the claim can be retried once an operator is available.
-        address depositsAddress = registry.deposits();
+        address depositsAddress = operatorSource;
         if (depositsAddress == address(0)) revert RewardRecipientUnavailable();
 
         address operator = IAntseedDeposits(depositsAddress).getOperator(buyer);

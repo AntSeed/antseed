@@ -224,7 +224,7 @@ contract AntseedEmissionsGateTest is Test {
     ///      their minters here rather than after the warp.
     function _deployGate(uint256 warpEpoch, address sellerPoolsMinter, address usageMinter) internal {
         vm.warp(GATE_GENESIS + GATE_EPOCH_DURATION * (warpEpoch - 1) + 1);
-        gate = new AntseedEmissionsGate(address(realRegistry), TEAM_SHARE_BPS, RESERVE_SHARE_BPS);
+        gate = new AntseedEmissionsGate(teamWallet, reserveDest, TEAM_SHARE_BPS, RESERVE_SHARE_BPS);
         // Minters checkpoint from the NEXT epoch, so configure them in the
         // deploy epoch (mirroring the production broadcast) to have them
         // active from effectiveEpoch onward.
@@ -328,7 +328,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_fundLegacyEscrowMintsExactBacklogOnce() public {
         vm.warp(GATE_GENESIS + GATE_EPOCH_DURATION * 3 + 1);
         AntseedEmissionsGate freshGate =
-            new AntseedEmissionsGate(address(realRegistry), TEAM_SHARE_BPS, RESERVE_SHARE_BPS);
+            new AntseedEmissionsGate(teamWallet, reserveDest, TEAM_SHARE_BPS, RESERVE_SHARE_BPS);
         token.setRegistry(address(freshGate));
 
         AntseedLegacyEmissionsEscrow escrow =
@@ -482,7 +482,7 @@ contract AntseedEmissionsGateTest is Test {
     function _setupUsagePoolNoWarp(address poolSeller_) internal returns (uint256 agentId) {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
 
         address poolSeller = _createSellerPool(sellerPools, poolSeller_, 5_000, keccak256("terms"));
@@ -506,7 +506,7 @@ contract AntseedEmissionsGateTest is Test {
         // The usage minter is wired during epoch 4 — one epoch before the
         // usage it rewards — because its share only applies from the NEXT
         // epoch after setMinter.
-        usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
+        usageRewards = new AntseedUsageRewards(address(gate), address(usageAccounting), address(identityRegistry), address(deposits));
         usageRewards.setSellerPools(address(sellerPools));
         _setUsageMinter(address(usageRewards));
 
@@ -620,7 +620,7 @@ contract AntseedEmissionsGateTest is Test {
     function _setupStakerRewardsFixture() internal returns (uint256 positionId) {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
@@ -694,7 +694,7 @@ contract AntseedEmissionsGateTest is Test {
 
     function test_usageRewardRestakeFollowsPinnedPoolsTokenAfterRegistryRepoint() public {
         uint256 agentId = _setupUsagePoolNoWarp(seller);
-        usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
+        usageRewards = new AntseedUsageRewards(address(gate), address(usageAccounting), address(identityRegistry), address(deposits));
         usageRewards.setSellerPools(address(sellerPools));
         sellerPools.setRewardStaker(address(usageRewards), true);
         _setUsageMinter(address(usageRewards));
@@ -872,7 +872,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_sellerPoolsRewardsUsePostMigrationBucketAndPools() public {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
@@ -904,7 +904,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_lantsTransferCarriesUnclaimedStakerRewards() public {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
@@ -938,7 +938,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_burnedLantsPositionKeepsPastRewardClaimRightsAfterWithdraw() public {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
@@ -972,7 +972,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_burnedLantsPositionKeepsPastRewardClaimRightsAfterMove() public {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
@@ -1006,7 +1006,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_sellerPoolMaxLockKeepsPowerAtMaxUntilDisabled() public {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         uint256 agentId = _agentId(seller);
         sellerAgentLookup.setAgent(seller, agentId);
         identityRegistry.setOwner(agentId, seller);
@@ -1044,7 +1044,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_sellerPoolsRewardsUseMaxLockPowerForEpochShare() public {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
@@ -1082,7 +1082,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_sellerPoolsRewardsIndexedClaimUsesCursor() public {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
@@ -1120,7 +1120,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_sellerPoolsRewardsIndexedClaimUsesExtendedLockSegments() public {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
@@ -1171,7 +1171,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_sellerPoolsRewardsDoNotClaimWithoutWeightedPoints() public {
         _deployGate(5);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
@@ -1253,7 +1253,7 @@ contract AntseedEmissionsGateTest is Test {
         // backlog settlement is part of the required wiring.
         vm.warp(GATE_GENESIS + GATE_EPOCH_DURATION * 3 + 1);
         AntseedEmissionsGate freshGate =
-            new AntseedEmissionsGate(address(realRegistry), TEAM_SHARE_BPS, RESERVE_SHARE_BPS);
+            new AntseedEmissionsGate(teamWallet, reserveDest, TEAM_SHARE_BPS, RESERVE_SHARE_BPS);
         freshGate.setMinter(VERIFICATION_MINTER_ID, verificationWallet, VERIFICATION_SHARE_BPS, true);
         freshGate.setMinter(SELLER_POOLS_MINTER_ID, address(this), SELLER_POOLS_SHARE_BPS, true);
         freshGate.setMinter(USAGE_MINTER_ID, address(0xBEEF), USAGE_SHARE_BPS, true);
@@ -1294,9 +1294,11 @@ contract AntseedEmissionsGateTest is Test {
     function test_gateAccrualValidationAndFutureChannelIdPath() public {
         _deployGate(5);
 
+        // Non-recorder accruals are skipped, not reverted, so settlement
+        // through a revoked recorder keeps working without emissions.
         vm.prank(seller);
-        vm.expectRevert(IAntseedUsageAccounting.NotUsageRecorder.selector);
         usageAccounting.accrueSellerPoints(seller, 1);
+        assertEq(usageAccounting.pendingSellerAccrual(), address(0));
 
         vm.expectRevert(IAntseedUsageAccounting.InvalidAddress.selector);
         usageAccounting.accrueSellerPoints(address(0), 1);
@@ -1329,7 +1331,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_usageAccountingTracksBuyerAgentRatiosByEpoch() public {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         _createSellerPool(sellerPools, seller, 5_000, keccak256("seller"));
         _createSellerPool(sellerPools, otherSeller, 5_000, keccak256("other-seller"));
@@ -1383,7 +1385,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_usageAccountingRequiresMinimumAccountedPoolPower() public {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         _createSellerPool(sellerPools, seller, 5_000, keccak256("seller"));
 
@@ -1419,7 +1421,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_usageAccountingGasSnapshotsRecordUsageCases() public {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         _createSellerPool(sellerPools, seller, 5_000, keccak256("seller"));
         _createSellerPool(sellerPools, otherSeller, 5_000, keccak256("other-seller"));
@@ -1449,7 +1451,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_sellerPoolsRewardsRecordsWeightedPoolPoints() public {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
@@ -1474,7 +1476,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_pointsPolicyCanZeroOrScaleSellerPoolPoints() public {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         address poolSeller = _createSellerPool(sellerPools, seller, 5_000, keccak256("terms"));
 
@@ -1502,7 +1504,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_poolWeightedPointsAreSavedUncapped() public {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
 
         uint256 honestStake = 1_000_000 ether;
@@ -1543,7 +1545,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_stakerDynamicBudgetDistributesHighVolumeReward() public {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
@@ -1591,7 +1593,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_stakerRemainderRoutesThroughGateBurnCapToReserve() public {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
@@ -1631,11 +1633,11 @@ contract AntseedEmissionsGateTest is Test {
 
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
-        usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
+        usageRewards = new AntseedUsageRewards(address(gate), address(usageAccounting), address(identityRegistry), address(deposits));
         sellerPools.setRewardStaker(address(sellerPoolsRewards), true);
         _setSellerPoolsMinter(address(sellerPoolsRewards));
         _setUsageMinter(address(usageRewards));
@@ -1731,11 +1733,11 @@ contract AntseedEmissionsGateTest is Test {
 
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
-        usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
+        usageRewards = new AntseedUsageRewards(address(gate), address(usageAccounting), address(identityRegistry), address(deposits));
         sellerPools.setRewardStaker(address(sellerPoolsRewards), true);
         _setSellerPoolsMinter(address(sellerPoolsRewards));
         _setUsageMinter(address(usageRewards));
@@ -1821,7 +1823,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_stakeCreatedDuringEpochDoesNotEarnUntilNextEpoch() public {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         address poolSeller = _createSellerPool(sellerPools, seller, 5_000, keccak256("terms"));
 
@@ -1840,7 +1842,7 @@ contract AntseedEmissionsGateTest is Test {
         address secondBuyer = address(0x21);
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         _createSellerPool(sellerPools, seller, 5_000, keccak256("terms"));
 
@@ -1849,7 +1851,7 @@ contract AntseedEmissionsGateTest is Test {
         policy.setBuyerWeightBps(0);
         usageAccounting.setPointsPolicy(address(policy));
 
-        usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
+        usageRewards = new AntseedUsageRewards(address(gate), address(usageAccounting), address(identityRegistry), address(deposits));
         _setUsageMinter(address(usageRewards));
 
         _warpGateEpoch(5);
@@ -1871,9 +1873,9 @@ contract AntseedEmissionsGateTest is Test {
     function test_usageDynamicBudgetsFollowSameEpochVolume() public {
         _deployGate(3);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
-        usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
+        usageRewards = new AntseedUsageRewards(address(gate), address(usageAccounting), address(identityRegistry), address(deposits));
         usageRewards.setDynamicUsageConfig(5_000, 10_000, 5_000, 10_000, 1_000);
         _setUsageMinter(address(usageRewards));
 
@@ -1896,9 +1898,9 @@ contract AntseedEmissionsGateTest is Test {
     function test_usageDynamicBudgetsScaleDownToGateBucket() public {
         _deployGate(3);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
-        usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
+        usageRewards = new AntseedUsageRewards(address(gate), address(usageAccounting), address(identityRegistry), address(deposits));
         usageRewards.setDynamicUsageConfig(5_000, 10_000, 5_000, 10_000, 1_000);
         _setUsageMinter(address(usageRewards));
         gate.setMinter(USAGE_MINTER_ID, address(usageRewards), 10_000, true);
@@ -1917,9 +1919,9 @@ contract AntseedEmissionsGateTest is Test {
     function test_usageRemainderRoutesThroughGlobalBurnCap() public {
         _deployGate(3);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
-        usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
+        usageRewards = new AntseedUsageRewards(address(gate), address(usageAccounting), address(identityRegistry), address(deposits));
         usageRewards.setDynamicUsageConfig(5_000, 10_000, 5_000, 10_000, 1_000);
         _setUsageMinter(address(usageRewards));
 
@@ -1945,9 +1947,9 @@ contract AntseedEmissionsGateTest is Test {
     function test_unclaimableSideBudgetRoutesToRemainder() public {
         _deployGate(3);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
-        usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
+        usageRewards = new AntseedUsageRewards(address(gate), address(usageAccounting), address(identityRegistry), address(deposits));
         usageRewards.setDynamicUsageConfig(5_000, 10_000, 5_000, 10_000, 1_000);
         _setUsageMinter(address(usageRewards));
 
@@ -1981,10 +1983,10 @@ contract AntseedEmissionsGateTest is Test {
         address secondBuyer = address(0x21);
         _deployGate(3);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
 
-        usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
+        usageRewards = new AntseedUsageRewards(address(gate), address(usageAccounting), address(identityRegistry), address(deposits));
         _setUsageMinter(address(usageRewards));
 
         deal(address(token), seller, 100 ether);
@@ -2065,9 +2067,9 @@ contract AntseedEmissionsGateTest is Test {
     function test_buyerRewardsCanStakeAsBuyerThroughOperatorViaStakeFor() public {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
-        usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
+        usageRewards = new AntseedUsageRewards(address(gate), address(usageAccounting), address(identityRegistry), address(deposits));
         usageRewards.setSellerPools(address(sellerPools));
         _setUsageMinter(address(usageRewards));
 
@@ -2117,15 +2119,18 @@ contract AntseedEmissionsGateTest is Test {
         _deployGate(4);
 
         vm.expectRevert(AntseedUsageRewards.InvalidAddress.selector);
-        new AntseedUsageRewards(address(0), address(realRegistry), address(usageAccounting));
+        new AntseedUsageRewards(address(0), address(usageAccounting), address(identityRegistry), address(deposits));
 
         vm.expectRevert(AntseedUsageRewards.InvalidAddress.selector);
-        new AntseedUsageRewards(address(gate), address(0), address(usageAccounting));
+        new AntseedUsageRewards(address(gate), address(0), address(identityRegistry), address(deposits));
 
         vm.expectRevert(AntseedUsageRewards.InvalidAddress.selector);
-        new AntseedUsageRewards(address(gate), address(realRegistry), address(0));
+        new AntseedUsageRewards(address(gate), address(usageAccounting), address(0), address(deposits));
 
-        usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
+        vm.expectRevert(AntseedUsageRewards.InvalidAddress.selector);
+        new AntseedUsageRewards(address(gate), address(usageAccounting), address(identityRegistry), address(0));
+
+        usageRewards = new AntseedUsageRewards(address(gate), address(usageAccounting), address(identityRegistry), address(deposits));
         _setUsageMinter(address(usageRewards));
         assertEq(usageRewards.dynamicUsageConfigAt(0).volumeShareTarget, 1_000_000e6);
 
@@ -2146,9 +2151,9 @@ contract AntseedEmissionsGateTest is Test {
     function test_sellerOperatorRewardsPaySellerDirectly() public {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
-        usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
+        usageRewards = new AntseedUsageRewards(address(gate), address(usageAccounting), address(identityRegistry), address(deposits));
         _setUsageMinter(address(usageRewards));
 
         _createSellerPool(sellerPools, seller, 5_000, keccak256("terms"));
@@ -2177,9 +2182,9 @@ contract AntseedEmissionsGateTest is Test {
     function test_sellerOperatorRewardsCanStakeInsteadOfClaimingViaStakeFor() public {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
-        usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
+        usageRewards = new AntseedUsageRewards(address(gate), address(usageAccounting), address(identityRegistry), address(deposits));
         usageRewards.setSellerPools(address(sellerPools));
         _setUsageMinter(address(usageRewards));
 
@@ -2223,9 +2228,9 @@ contract AntseedEmissionsGateTest is Test {
         address newOwner = address(0x1111);
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
-        usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
+        usageRewards = new AntseedUsageRewards(address(gate), address(usageAccounting), address(identityRegistry), address(deposits));
         _setUsageMinter(address(usageRewards));
 
         _createSellerPool(sellerPools, seller, 5_000, keccak256("terms"));
@@ -2256,9 +2261,9 @@ contract AntseedEmissionsGateTest is Test {
     function test_sellerOperatorRewardsAreSeparateFromPoolRewards() public {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
-        usageRewards = new AntseedUsageRewards(address(gate), address(realRegistry), address(usageAccounting));
+        usageRewards = new AntseedUsageRewards(address(gate), address(usageAccounting), address(identityRegistry), address(deposits));
         sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
         sellerPools.setRewardStaker(address(sellerPoolsRewards), true);
@@ -2344,7 +2349,7 @@ contract AntseedEmissionsGateTest is Test {
 
     function test_gateCapsTotalBucketMintsByEpochEmission() public {
         vm.warp(GATE_GENESIS + GATE_EPOCH_DURATION * 3 + 1);
-        gate = new AntseedEmissionsGate(address(realRegistry), TEAM_SHARE_BPS, RESERVE_SHARE_BPS);
+        gate = new AntseedEmissionsGate(teamWallet, reserveDest, TEAM_SHARE_BPS, RESERVE_SHARE_BPS);
         _setVerificationMinter(verificationWallet);
         address usageMinter = address(0xBEEF);
         _setEmissionMinters(address(this), usageMinter);
@@ -2640,7 +2645,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_sellerPoolsRewardsDistributionValidation() public {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
@@ -2670,7 +2675,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_stakerDynamicBudgetFollowsActiveStakeSmoothly() public {
         _deployGate(3);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
@@ -2690,7 +2695,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_stakerDynamicBudgetTargetsAmountAndClampsAfterHalving() public {
         _deployGate(102);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
@@ -2719,7 +2724,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_sellerPoolsRewardsBatchClaimUsesPositionLogic() public {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
@@ -2766,7 +2771,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_sellerPoolsRewardsBatchRestakeUsesPositionLogicAndCreatesSeparatePositions() public {
         _deployGate(4);
 
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
@@ -2826,7 +2831,7 @@ contract AntseedEmissionsGateTest is Test {
 
     function test_sellerPoolsRewardsAdminAndPause() public {
         _deployGate(5);
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
 
@@ -2851,7 +2856,7 @@ contract AntseedEmissionsGateTest is Test {
     function test_gateEffectiveEpochIsCurrentEpochPlusOneAtDeployment() public {
         vm.warp(GATE_GENESIS + GATE_EPOCH_DURATION * 10 + 1);
         AntseedEmissionsGate deployedGate =
-            new AntseedEmissionsGate(address(realRegistry), TEAM_SHARE_BPS, RESERVE_SHARE_BPS);
+            new AntseedEmissionsGate(teamWallet, reserveDest, TEAM_SHARE_BPS, RESERVE_SHARE_BPS);
         assertEq(deployedGate.currentEpoch(), 10);
         assertEq(deployedGate.effectiveEpoch(), 11);
     }
@@ -2861,7 +2866,7 @@ contract AntseedEmissionsGateTest is Test {
         // time; a bucket mint landing first would inflate supply and
         // underfund pre-effective legacy claims.
         vm.warp(GATE_GENESIS + GATE_EPOCH_DURATION * 3 + 1);
-        gate = new AntseedEmissionsGate(address(realRegistry), TEAM_SHARE_BPS, RESERVE_SHARE_BPS);
+        gate = new AntseedEmissionsGate(teamWallet, reserveDest, TEAM_SHARE_BPS, RESERVE_SHARE_BPS);
         _setSellerPoolsMinter(address(this));
         token.setRegistry(address(gate));
         _warpGateEpoch(5);
@@ -2933,13 +2938,13 @@ contract AntseedEmissionsGateTest is Test {
         // 3 must land in epoch 4 — the gate refuses pre-effective epochs
         // forever, so epoch-3 bookkeeping would be permanently unclaimable.
         vm.warp(GATE_GENESIS + GATE_EPOCH_DURATION * 3 + 1);
-        gate = new AntseedEmissionsGate(address(realRegistry), TEAM_SHARE_BPS, RESERVE_SHARE_BPS);
+        gate = new AntseedEmissionsGate(teamWallet, reserveDest, TEAM_SHARE_BPS, RESERVE_SHARE_BPS);
         token.setRegistry(address(gate));
         legacyEscrow = new AntseedLegacyEmissionsEscrow(address(realRegistry), address(legacyV2));
         gate.fundLegacyEscrow(address(legacyEscrow));
         usageAccounting = new AntseedUsageAccounting(address(0), address(this), address(gate));
         realRegistry.setEmissions(address(usageAccounting));
-        sellerPools = new AntseedSellerPools(address(realRegistry));
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
         _createSellerPool(sellerPools, seller, 5_000, keccak256("terms"));
 

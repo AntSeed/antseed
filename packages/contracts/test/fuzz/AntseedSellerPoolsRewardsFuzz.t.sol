@@ -89,13 +89,13 @@ contract AntseedSellerPoolsRewardsFuzzTest is Test {
         // Deploy the gate at epoch 4 so legacy epochs exist and claims for
         // finalized epochs are allowed.
         vm.warp(GATE_GENESIS + GATE_EPOCH_DURATION * 4 + 1);
-        gate = new AntseedEmissionsGate(address(registry), 15_000, 15_000);
+        gate = new AntseedEmissionsGate(teamWallet, reserve, 15_000, 15_000);
         token.setRegistry(address(gate));
         // No bucket mints until the legacy escrow is settled; any recipient
         // address marks the pot funded.
         gate.fundLegacyEscrow(address(0xE5C0));
 
-        pools = new AntseedSellerPools(address(registry)); // uncapped APY
+        pools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(agentLookup)); // uncapped APY
         token.setTransferWhitelist(address(pools), true);
 
         usageAccounting = new AntseedUsageAccounting(address(pools), address(this), address(gate));

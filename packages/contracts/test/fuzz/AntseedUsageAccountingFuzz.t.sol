@@ -105,10 +105,10 @@ contract AntseedUsageAccountingFuzzTest is Test {
         token.enableTransfers();
 
         vm.warp(GATE_GENESIS + GATE_EPOCH_DURATION * 4 + 1);
-        gate = new AntseedEmissionsGate(address(registry), 15_000, 15_000);
+        gate = new AntseedEmissionsGate(teamWallet, reserve, 15_000, 15_000);
         token.setRegistry(address(gate));
 
-        pools = new AntseedSellerPools(address(registry));
+        pools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(agentLookup));
         token.setTransferWhitelist(address(pools), true);
 
         usageAccounting = new AntseedUsageAccounting(address(pools), address(this), address(gate));

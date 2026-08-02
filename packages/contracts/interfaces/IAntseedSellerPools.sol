@@ -3,10 +3,8 @@ pragma solidity ^0.8.24;
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-import { IAntseedRegistry } from "./IAntseedRegistry.sol";
-
 interface IAntseedSellerPools {
-    event RegistrySet(address indexed registry);
+    event StakingSourceSet(address indexed stakingSource);
     event StakeCreated(
         uint256 indexed positionId,
         address indexed staker,
@@ -64,7 +62,6 @@ interface IAntseedSellerPools {
     error PositionChangePending();
     error AlreadyWithdrawn();
     error NotRewardStaker();
-    error EmissionsNotConfigured();
 
     function stake(uint256 agentId, uint256 amount, uint256 stakeEpochs) external returns (uint256 positionId);
     function stakeFor(address staker, uint256 agentId, uint256 amount, uint256 stakeEpochs)
@@ -94,7 +91,7 @@ interface IAntseedSellerPools {
         uint256 maxSlashBps,
         uint256 minEarlyExitSlashBps
     ) external;
-    function registry() external view returns (IAntseedRegistry);
+    function stakingSource() external view returns (address);
 
     function antsToken() external view returns (IERC20);
     function currentEpoch() external view returns (uint256);

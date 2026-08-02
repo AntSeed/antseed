@@ -78,7 +78,7 @@ contract AntseedSellerPoolsFuzzTest is Test {
         _registerSellerAgent(7);
         _registerSellerAgent(fixedAgent());
 
-        pools = new AntseedSellerPools(address(registry));
+        pools = new AntseedSellerPools(address(token), address(this), address(identityRegistry), address(agentLookup));
         token.setTransferWhitelist(address(pools), true);
 
         token.mint(staker, 1_000_000_000 ether);

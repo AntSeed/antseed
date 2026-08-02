@@ -522,7 +522,6 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
 
     function _emissionsReserve() internal view returns (address reserve) {
         reserve = emissionsGate.emissionsReserve();
-        if (reserve == address(0)) reserve = sellerPools.registry().protocolReserve();
         if (reserve == address(0)) revert InvalidAddress();
     }
 }

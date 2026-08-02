@@ -7,7 +7,6 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import { IANTSToken } from "../interfaces/IANTSToken.sol";
 import { IAntseedEmissionsGate } from "../interfaces/IAntseedEmissionsGate.sol";
-import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
 
 /**
  * @title AntseedEmissionsGate
@@ -35,7 +34,6 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
     bytes32 public constant RESERVE_MINTER_ID = keccak256("antseed.emissions.reserve.v1");
 
     IANTSToken private immutable _antsToken;
-    IAntseedRegistry public immutable registry;
 
     uint256 public immutable effectiveEpoch;
     /// @notice Escrow holding the one-time pre-minted backlog covering every
@@ -77,24 +75,18 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
     error LegacyEscrowAlreadyFunded();
     error LegacyEscrowNotFunded();
     error MintersNotSet();
-    error DepositsNotConfigured();
     error InvalidMinterId();
 
-    constructor(address registry_, uint32 teamShareBps, uint32 reserveShareBps) Ownable(msg.sender) {
-        if (registry_ == address(0)) revert InvalidAddress();
+    constructor(address teamWallet, address protocolReserve, uint32 teamShareBps, uint32 reserveShareBps)
+        Ownable(msg.sender)
+    {
+        if (teamWallet == address(0) || protocolReserve == address(0)) revert InvalidAddress();
         _antsToken = IANTSToken(ANTS_TOKEN);
-        registry = IAntseedRegistry(registry_);
         uint256 epoch = block.timestamp <= GENESIS ? 0 : (block.timestamp - GENESIS) / EPOCH_DURATION;
         effectiveEpoch = epoch + 1;
 
-        address teamWallet = registry.teamWallet();
-        address protocolReserve = registry.protocolReserve();
-        if (teamWallet == address(0) || protocolReserve == address(0)) {
-            revert InvalidAddress();
-        }
-
         _setMinter(TEAM_MINTER_ID, teamWallet, teamShareBps, false);
-        _setMinter(RESERVE_MINTER_ID, _emissionsReserve(), reserveShareBps, false);
+        _setMinter(RESERVE_MINTER_ID, protocolReserve, reserveShareBps, false);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -235,7 +227,6 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
 
     function renounceOwnership() public override onlyOwner {
         if (totalMinterShareBps != SHARE_DENOMINATOR) revert MintersNotSet();
-        if (registry.deposits() == address(0)) revert DepositsNotConfigured();
         if (legacyEscrow == address(0)) revert LegacyEscrowNotFunded();
         super.renounceOwnership();
     }
@@ -355,7 +346,6 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
 
     function _emissionsReserve() internal view returns (address reserve) {
         reserve = _minters[RESERVE_MINTER_ID].controller;
-        if (reserve == address(0)) reserve = registry.protocolReserve();
     }
 
     function _recordMinterShare(bytes32 id, uint256 startEpoch, uint32 shareBps) internal {

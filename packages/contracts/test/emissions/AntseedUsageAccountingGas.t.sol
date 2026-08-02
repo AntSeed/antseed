@@ -80,11 +80,12 @@ contract AntseedUsageAccountingGasTest is Test {
         token.setRegistry(address(registry));
         token.enableTransfers();
 
-        gate = new AntseedEmissionsGate(address(registry), 15_000, 15_000);
+        gate = new AntseedEmissionsGate(address(0x80), address(0x70), 15_000, 15_000);
         usageAccounting = new AntseedUsageAccounting(address(0), address(this), address(gate));
         registry.setEmissions(address(usageAccounting));
 
-        sellerPools = new AntseedSellerPools(address(registry));
+        sellerPools =
+            new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
         usageAccounting.setSellerPools(address(sellerPools));
 
         _stakeAgentPool(seller, 1 ether, 4);
@@ -165,9 +166,11 @@ contract AntseedUsageAccountingGasTest is Test {
 
         assertEq(usageAccounting.currentEpoch(), 5);
 
+        // Non-recorder accruals are skipped, not reverted, so settlement
+        // through a revoked recorder keeps working without emissions.
         vm.prank(recorder);
-        vm.expectRevert(IAntseedUsageAccounting.NotUsageRecorder.selector);
         usageAccounting.accrueSellerPoints(seller, 1);
+        assertEq(usageAccounting.pendingSellerAccrual(), address(0));
 
         vm.expectRevert(IAntseedUsageAccounting.InvalidAddress.selector);
         usageAccounting.setUsageRecorder(address(0), true);
