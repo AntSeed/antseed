@@ -119,6 +119,21 @@ const config: Config = {
   ],
 
   headTags: [
+    // Second Search Console owner. A site can carry several verification tags,
+    // one per Google account, and removing one un-verifies that account — so
+    // this is additive, not a replacement for the token in themeConfig.metadata.
+    //
+    // It lives here rather than alongside the other one because themeConfig
+    // metadata is rendered through react-helmet, which dedupes <meta> by name:
+    // two google-site-verification entries there would collapse into one and
+    // this token would silently never ship. headTags is injected verbatim.
+    {
+      tagName: 'meta',
+      attributes: {
+        name: 'google-site-verification',
+        content: 'wiMhtNPC3UWtvOKXeJBto55Y8F6-7ORyA1aAI_DkZ-A',
+      },
+    },
     {
       tagName: 'script',
       attributes: {type: 'application/ld+json'},
