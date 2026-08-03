@@ -74,11 +74,19 @@ describe('buildHealthProbeRequest', () => {
     expect(body).toMatchObject({ model: 'gpt-x', max_tokens: 1 });
   });
 
-  it('respects the responses API minimum output tokens', () => {
+  it('builds a canonical responses message-list probe', () => {
     const req = buildHealthProbeRequest('codex-x', 'openai-responses');
     expect(req.path).toBe('/v1/responses');
     const body = JSON.parse(new TextDecoder().decode(req.body));
-    expect(body.max_output_tokens).toBeGreaterThanOrEqual(16);
+    expect(body).toEqual({
+      model: 'codex-x',
+      input: [{
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: 'ping' }],
+      }],
+      max_output_tokens: 16,
+    });
   });
 });
 
