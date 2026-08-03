@@ -148,6 +148,11 @@ export async function getTransfersEnabled(): Promise<{ enabled: boolean; configu
   return fetchJson('/api/emissions/transfers-enabled');
 }
 
+/** Tell the host app a pay action completed — it refocuses and refreshes. */
+export async function notifyPaymentCompleted(): Promise<void> {
+  await fetchJson('/api/pay/completed', { method: 'POST' });
+}
+
 export interface BuyerUsageChannelPoint {
   reservedAt: number;
   updatedAt: number;

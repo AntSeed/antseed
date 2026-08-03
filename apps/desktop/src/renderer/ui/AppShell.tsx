@@ -1,12 +1,10 @@
-import { useEffect, useState } from 'react';
-import { Sidebar } from './components/Sidebar';
-import { StreamingIndicator } from './components/StreamingIndicator';
-import { TitleBar } from './components/TitleBar';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ViewHost } from './components/ViewHost';
 import { SetupScreen } from './components/SetupScreen';
-import { preloadViews } from './components/viewRegistry';
+import { preloadViews, viewsForPreload } from './components/viewRegistry';
 import { shallowEqual, useUiSelector } from './hooks/useUiSelector';
-import type { ViewName } from './types';
+import { VIEW_NAMES, type ViewName } from './types';
+import { VprShell } from './components/VprShell';
 
 type IdleCallbackHandle = ReturnType<typeof setTimeout> | number;
 
@@ -31,11 +29,38 @@ export function AppShell() {
     appSetupNeeded: state.appSetupNeeded,
     appSetupComplete: state.appSetupComplete,
     chatServiceCount: state.chatServiceOptions.length,
-    devMode: state.devMode,
+    chatPanelExpanded: state.chatPanelExpanded,
   }), shallowEqual);
-  const [activeView, setActiveView] = useState<ViewName>('discover');
+  const [activeView, setActiveView] = useState<ViewName>('home');
   const [setupVisible, setSetupVisible] = useState(false);
   const [setupDismissed, setSetupDismissed] = useState(false);
+
+  // Screens visited before the current one, most recent last. Header back
+  // buttons pop this so "back" returns to where the user actually came from;
+  // the per-view fallback target only applies when the stack is empty.
+  const viewHistoryRef = useRef<ViewName[]>([]);
+  const activeViewRef = useRef<ViewName>(activeView);
+
+  const handleSelectView = useCallback((view: ViewName) => {
+    const current = activeViewRef.current;
+    if (view === current) return;
+    const stack = viewHistoryRef.current;
+    stack.push(current);
+    if (stack.length > 32) stack.shift();
+    activeViewRef.current = view;
+    setActiveView(view);
+  }, []);
+
+  const handleNavigateBack = useCallback((fallback: ViewName) => {
+    const current = activeViewRef.current;
+    const stack = viewHistoryRef.current;
+    let target = stack.pop();
+    while (target === current) target = stack.pop();
+    const next = target ?? fallback;
+    if (next === current) return;
+    activeViewRef.current = next;
+    setActiveView(next);
+  }, []);
 
   const hasServices = snap.chatServiceCount > 0;
 
@@ -83,40 +108,40 @@ export function AppShell() {
   const showSetup = setupVisible;
 
   useEffect(() => {
-    if (!snap.devMode && (activeView === 'connection' || activeView === 'peers' || activeView === 'desktop')) {
-      setActiveView('overview');
-    }
-  }, [activeView, snap.devMode]);
+    return window.antseedDesktop?.onNavigateView?.((viewName) => {
+      if (!(VIEW_NAMES as readonly string[]).includes(viewName)) return;
+      handleSelectView(viewName as ViewName);
+    });
+  }, [handleSelectView]);
 
   useEffect(() => {
     if (showSetup) return undefined;
 
-    void preloadViews(['discover', 'chat']);
+    void preloadViews(viewsForPreload('eager'));
 
     return scheduleRoutePreload(() => {
-      void preloadViews(['external-clients', 'config']);
+      void preloadViews(viewsForPreload('idle'));
     });
   }, [showSetup]);
 
   useEffect(() => {
     if (showSetup) return;
+    // Chat supports both window sizes: thin by default, expanded to the
+    // standard preset when the user opens the conversation-list panel.
+    if (activeView === 'chat' && snap.chatPanelExpanded) {
+      void window.antseedDesktop?.applyWindowPreset?.('standard');
+      return;
+    }
     void window.antseedDesktop?.applyWindowView?.(activeView);
-  }, [activeView, showSetup]);
+  }, [activeView, showSetup, snap.chatPanelExpanded]);
 
   if (showSetup) {
     return <SetupScreen />;
   }
 
   return (
-    <>
-      <TitleBar />
-      <div className="app-container">
-        <Sidebar activeView={activeView} onSelectView={setActiveView} />
-        <main className="main-content">
-          <ViewHost activeView={activeView} onSelectView={setActiveView} />
-        </main>
-      </div>
-      <StreamingIndicator />
-    </>
+    <VprShell activeView={activeView} onSelectView={handleSelectView} onNavigateBack={handleNavigateBack}>
+      <ViewHost activeView={activeView} onSelectView={handleSelectView} />
+    </VprShell>
   );
 }

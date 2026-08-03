@@ -82,6 +82,7 @@ import {
   SellerFreeUsageManager,
   StakingClient,
   ChannelStore,
+  CHANNEL_KIND,
   CHANNEL_ROLE,
   CHANNEL_STATUS,
 } from "./payments/index.js";
@@ -246,6 +247,17 @@ export interface BuyerUsageChannelPoint {
   outputTokens: string;
 }
 
+/** Per-service usage summed across all buyer channels (paid + free).
+    `serviceIdHash` is keccak256(serviceName) — see getServiceMetadataId. */
+export interface BuyerUsageServicePoint {
+  serviceIdHash: string;
+  amountUsdc: string;
+  inputTokens: string;
+  cachedInputTokens: string;
+  outputTokens: string;
+  requestCount: number;
+}
+
 export interface BuyerUsageTotals {
   totalRequests: number;
   totalInputTokens: string;
@@ -254,6 +266,7 @@ export interface BuyerUsageTotals {
   uniqueSellers: number;
   activeChannels: number;
   channels: BuyerUsageChannelPoint[];
+  services: BuyerUsageServicePoint[];
 }
 
 const EMPTY_BUYER_USAGE: BuyerUsageTotals = {
@@ -264,9 +277,20 @@ const EMPTY_BUYER_USAGE: BuyerUsageTotals = {
   uniqueSellers: 0,
   activeChannels: 0,
   channels: [],
+  services: [],
 };
 
 const EXTERNAL_VERIFICATION_RESULT_TTL_MS = 15 * 60_000;
+
+/** How long one relayer gets exclusive first refusal on a sweep offer before
+ *  it passes to the next candidate. The relayer replies 'submitted' right
+ *  after its local checks + one Base RPC simulation (~1-2s on healthy RPCs),
+ *  so a peer that hasn't answered in 3s isn't going to win the deposit —
+ *  move on. */
+const DEFAULT_SWEEP_OFFER_TIMEOUT_MS = 3_000;
+/** Don't offer a sweep whose authorization expires too soon to safely land —
+ *  mirrors MIN_REMAINING_VALIDITY_SECS in the seller-side relayer. */
+const MIN_SWEEP_DISPATCH_VALIDITY_SECS = 30;
 
 export class AntseedNode extends EventEmitter {
   private _config: NodeConfig;
@@ -388,6 +412,11 @@ export class AntseedNode extends EventEmitter {
   /** Actual DHT port after binding (0 means not started). */
   get dhtPort(): number {
     return this._dht?.getPort() ?? 0;
+  }
+
+  /** DHT routing-table size — stays 0 when UDP is blocked or there is no internet. */
+  get dhtNodeCount(): number {
+    return this._dht?.getNodeCount() ?? 0;
   }
 
   /** Actual signaling/connection port after binding (0 means not started). */
@@ -1145,6 +1174,7 @@ export class AntseedNode extends EventEmitter {
     status: string;
     requestCount: number;
     tokensDelivered: string;
+    outputTokens: string;
   }> {
     const buyerAddress = this._identity?.wallet.address ?? null;
     if (!buyerAddress || !this._channelStore) return [];
@@ -1166,6 +1196,9 @@ export class AntseedNode extends EventEmitter {
         status: c.status,
         requestCount: c.requestCount,
         tokensDelivered: c.tokensDelivered,
+        // Buyer rows overload previousConsumption as cumulative output tokens
+        // (see getBuyerUsageTotals).
+        outputTokens: c.previousConsumption,
       };
     });
   }
@@ -1183,6 +1216,7 @@ export class AntseedNode extends EventEmitter {
     status: string;
     requestCount: number;
     tokensDelivered: string;
+    outputTokens: string;
   }> {
     const buyerAddress = this._identity?.wallet.address ?? null;
     if (!buyerAddress || !this._channelStore) return [];
@@ -1199,6 +1233,9 @@ export class AntseedNode extends EventEmitter {
       status: c.status,
       requestCount: c.requestCount,
       tokensDelivered: c.tokensDelivered,
+      // Buyer rows overload previousConsumption as cumulative output tokens
+      // (see getBuyerUsageTotals).
+      outputTokens: c.previousConsumption,
     }));
   }
 
@@ -1211,7 +1248,12 @@ export class AntseedNode extends EventEmitter {
   getBuyerUsageTotals(): BuyerUsageTotals {
     const buyerAddress = this._identity?.wallet.address ?? null;
     if (!buyerAddress || !this._channelStore) return EMPTY_BUYER_USAGE;
-    const stored = this._channelStore.getAllChannelsByBuyer('buyer', buyerAddress);
+    // Paid channels plus free-usage sessions — both carry real traffic and
+    // the desktop usage tiles/float must reflect the sum.
+    const stored = [
+      ...this._channelStore.getAllChannelsByBuyer('buyer', buyerAddress),
+      ...this._channelStore.getAllChannelsByBuyer('buyer', buyerAddress, CHANNEL_KIND.FREE),
+    ];
     let totalRequests = 0;
     let totalInput = 0n;
     let totalOutput = 0n;
@@ -1223,8 +1265,12 @@ export class AntseedNode extends EventEmitter {
       totalRequests += c.requestCount;
       try { totalInput += BigInt(c.tokensDelivered || '0'); } catch { /* skip */ }
       try { totalOutput += BigInt(c.previousConsumption || '0'); } catch { /* skip */ }
-      if (c.status === CHANNEL_STATUS.SETTLED) totalSettlements += 1;
-      if (c.status === CHANNEL_STATUS.ACTIVE) activeChannels += 1;
+      // Settlement/active-channel counters describe paid channels only —
+      // free sessions never settle and can't be closed from the UI.
+      if (c.channelKind !== CHANNEL_KIND.FREE) {
+        if (c.status === CHANNEL_STATUS.SETTLED) totalSettlements += 1;
+        if (c.status === CHANNEL_STATUS.ACTIVE) activeChannels += 1;
+      }
       if (c.peerId) sellers.add(c.peerId);
       channels.push({
         reservedAt: c.reservedAt,
@@ -1234,6 +1280,17 @@ export class AntseedNode extends EventEmitter {
         outputTokens: c.previousConsumption || '0',
       });
     }
+    // Per-service usage (model attribution for the desktop savings tile).
+    // Documented as lower bounds — requests that raced NeedAuth may lack
+    // service attribution, so Σ services ≤ channel totals.
+    const services = this._channelStore.getBuyerServiceUsageTotals(buyerAddress).map((s) => ({
+      serviceIdHash: s.serviceId,
+      amountUsdc: s.amountUsdc,
+      inputTokens: s.inputTokens,
+      cachedInputTokens: s.cachedInputTokens,
+      outputTokens: s.outputTokens,
+      requestCount: s.requestCount,
+    }));
     return {
       totalRequests,
       totalInputTokens: totalInput.toString(),
@@ -1242,6 +1299,7 @@ export class AntseedNode extends EventEmitter {
       uniqueSellers: sellers.size,
       activeChannels,
       channels,
+      services,
     };
   }
 
@@ -1619,6 +1677,9 @@ export class AntseedNode extends EventEmitter {
           dataDir: paymentsDir,
         };
         this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig, this._channelStore, this._sellerAddressResolver ?? undefined);
+        // Re-emit per-request spend so callers can attribute it to whatever
+        // issued the request — the node only knows the seller and requestId.
+        this._buyerPaymentManager.setSpendListener((event) => this.emit('payment:spend', event));
         debugLog(`[Node] Buyer payment manager initialized (wallet=${identity.wallet.address.slice(0, 10)}... chainId=${buyerPaymentConfig.chainId} deposits=${buyerPaymentConfig.depositsContractAddress.slice(0, 10)}...)`);
 
         // Create negotiator that wraps the BPM with 402 handling and per-request auth
@@ -2098,9 +2159,93 @@ export class AntseedNode extends EventEmitter {
   }
 
   /**
+   * Offer a signed deposit-sweep request to connected relayers ONE AT A TIME.
+   * Broadcasting to everyone makes relayers race the same EIP-3009 nonce and
+   * the losers burn gas on reverted transactions; offering sequentially gives
+   * each relayer an uncontested window. Candidates are shuffled so no single
+   * relayer always gets first refusal. A relayer that reports 'rejected' (or
+   * stays silent past `perPeerTimeoutMs`) forfeits its turn; 'submitted' or
+   * 'confirmed' ends the round. Progress still arrives as 'sweep:receipt'
+   * events, and the wire protocol is unchanged — relayers need no upgrade.
+   */
+  async dispatchSweepRequest(
+    payload: SweepRequestPayload,
+    opts?: { perPeerTimeoutMs?: number },
+  ): Promise<{ offered: number; accepted: boolean }> {
+    if (!this._connectionManager) {
+      throw new Error('Node not started');
+    }
+    const perPeerTimeoutMs = opts?.perPeerTimeoutMs ?? DEFAULT_SWEEP_OFFER_TIMEOUT_MS;
+
+    const candidates: Array<{ peerId: PeerId; conn: PeerConnection }> = [];
+    for (const peerId of this._muxes.keys()) {
+      const capabilities = this._peerCapabilities.get(peerId);
+      if (!capabilities?.has(CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1)) continue;
+      const conn = this._connectionManager.getConnection(peerId);
+      if (!conn) continue;
+      if (conn.state !== ConnectionState.Open && conn.state !== ConnectionState.Authenticated) continue;
+      candidates.push({ peerId, conn });
+    }
+    for (let i = candidates.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [candidates[i], candidates[j]] = [candidates[j]!, candidates[i]!];
+    }
+
+    const wantNonce = payload.nonce.toLowerCase();
+    let offered = 0;
+    for (const { peerId, conn } of candidates) {
+      // Stop offering when the authorization is too close to expiry for a
+      // relayer to safely land it (mirrors the relayer's own guard).
+      const nowSecs = Math.floor(Date.now() / 1000);
+      if (nowSecs >= payload.validBefore - MIN_SWEEP_DISPATCH_VALIDITY_SECS) break;
+      try {
+        this._getOrCreateSweepMux(peerId, conn).sendSweepRequest(payload);
+      } catch (err) {
+        debugWarn(`[Node] Failed to offer sweep request to ${peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
+        continue;
+      }
+      offered++;
+      const receipt = await this._waitForSweepReceipt(peerId, wantNonce, perPeerTimeoutMs);
+      if (receipt && (receipt.status === 'submitted' || receipt.status === 'confirmed')) {
+        return { offered, accepted: true };
+      }
+      // 'rejected' or silence — pass the opportunity to the next relayer.
+    }
+    return { offered, accepted: false };
+  }
+
+  /** Resolve with the first 'sweep:receipt' from `peerId` for `authNonce`
+   *  (lowercased), or null after `timeoutMs`. */
+  private _waitForSweepReceipt(
+    peerId: PeerId,
+    authNonce: string,
+    timeoutMs: number,
+  ): Promise<SweepReceiptPayload | null> {
+    return new Promise((resolve) => {
+      const listener = (event: { peerId: string; payload: SweepReceiptPayload }): void => {
+        if (event.peerId !== peerId) return;
+        if (event.payload.authNonce.toLowerCase() !== authNonce) return;
+        cleanup();
+        resolve(event.payload);
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve(null);
+      }, timeoutMs);
+      const cleanup = (): void => {
+        clearTimeout(timer);
+        this.off('sweep:receipt', listener);
+      };
+      this.on('sweep:receipt', listener);
+    });
+  }
+
+  /**
    * Broadcast a signed deposit-sweep request to all currently connected peers.
    * Relayers submit it on-chain permissionlessly; progress reports arrive as
    * 'sweep:receipt' events. Returns the number of peers the request was sent to.
+   * Prefer {@link dispatchSweepRequest} — simultaneous broadcast makes relayers
+   * race each other and losers burn gas on reverted transactions.
    */
   broadcastSweepRequest(payload: SweepRequestPayload): number {
     if (!this._connectionManager) {

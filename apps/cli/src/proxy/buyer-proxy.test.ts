@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -14,7 +14,9 @@ import {
   parsePersistedPeers,
   rewritePeerPinnedServiceInBody,
   selectCandidatePeersForRouting,
+  substituteRoutedModelAlias,
 } from './buyer-proxy.js'
+import { overrideRoutedModelInBody, SYSTEM_ROUTED_MODEL_HEADER } from './request-utils.js'
 
 function makePeer(seed: string, providers: string[]): PeerInfo {
   const repeated = (seed.repeat(40) + 'a'.repeat(40)).slice(0, 40)
@@ -186,7 +188,7 @@ test('selectCandidatePeersForRouting keeps all peers when no protocol or provide
   assert.equal(result.routePlanByPeerId.size, 0)
 })
 
-test('sweep control endpoint validates and broadcasts via the running node', async () => {
+test('sweep control endpoint validates and dispatches sequentially via the running node', async () => {
   const validSweep = {
     version: 1,
     evmChainId: 31337,
@@ -199,7 +201,7 @@ test('sweep control endpoint validates and broadcasts via the running node', asy
     sig3009: '0x' + 'ab'.repeat(65),
   }
 
-  const broadcasts: unknown[] = []
+  const dispatches: unknown[] = []
   const listeners = new Map<string, (event: unknown) => void>()
   const proxy = new BuyerProxy({
     port: 0,
@@ -207,25 +209,25 @@ test('sweep control endpoint validates and broadcasts via the running node', asy
     node: {
       router: null,
       on: (event: string, listener: (event: unknown) => void) => listeners.set(event, listener),
-      broadcastSweepRequest: (payload: unknown) => {
-        broadcasts.push(payload)
-        return 3
+      dispatchSweepRequest: async (payload: unknown) => {
+        dispatches.push(payload)
+        return { offered: 3, accepted: true }
       },
     } as any,
   })
 
   const res = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/sweep', body: validSweep }))
   assert.equal(res.statusCode, 200)
-  assert.deepEqual(JSON.parse(res.body), { ok: true, sent: 3 })
-  assert.equal(broadcasts.length, 1)
+  assert.deepEqual(JSON.parse(res.body), { ok: true, sent: 3, accepted: true })
+  assert.equal(dispatches.length, 1)
 
-  // Malformed payloads are rejected by the wire codec, not broadcast.
+  // Malformed payloads are rejected by the wire codec, not dispatched.
   const bad = await invokeProxy(proxy, makeProxyRequest({
     path: '/_antseed/sweep',
     body: { ...validSweep, sig3009: 'garbage' },
   }))
   assert.equal(bad.statusCode, 400)
-  assert.equal(broadcasts.length, 1)
+  assert.equal(dispatches.length, 1)
 
   // Receipts surfaced via node events are readable per-nonce.
   const emit = listeners.get('sweep:receipt')
@@ -1086,6 +1088,133 @@ test('rewritePeerPinnedServiceInBody returns original when body is not JSON cont
   assert.equal(result.pinnedPeerId, null)
 })
 
+test('substituteRoutedModelAlias replaces the alias model with the default routed model', () => {
+  const body = makeJsonBody({ model: 'antseed', messages: [] })
+  const result = substituteRoutedModelAlias(body, jsonHeaders, `${validPeerId}@gpt-4o`)
+  assert.equal(result.aliasRequested, true)
+  assert.equal(result.substituted, true)
+  const parsed = parseJsonBody(result.body)
+  assert.equal(parsed['model'], `${validPeerId}@gpt-4o`)
+})
+
+test('substituteRoutedModelAlias handles the alias in the service field and is case-insensitive', () => {
+  const body = makeJsonBody({ service: 'AntSeed', messages: [] })
+  const result = substituteRoutedModelAlias(body, jsonHeaders, `${validPeerId}@gpt-4o`)
+  assert.equal(result.substituted, true)
+  const parsed = parseJsonBody(result.body)
+  assert.equal(parsed['service'], `${validPeerId}@gpt-4o`)
+})
+
+test('substituteRoutedModelAlias reports an unresolvable alias when no default route is set', () => {
+  const body = makeJsonBody({ model: 'antseed', messages: [] })
+  const result = substituteRoutedModelAlias(body, jsonHeaders, null)
+  assert.equal(result.aliasRequested, true)
+  assert.equal(result.substituted, false)
+  assert.equal(result.body, body)
+})
+
+test('substituteRoutedModelAlias leaves non-alias models untouched', () => {
+  const body = makeJsonBody({ model: 'gpt-4o', messages: [] })
+  const result = substituteRoutedModelAlias(body, jsonHeaders, `${validPeerId}@gpt-4o`)
+  assert.equal(result.aliasRequested, false)
+  assert.equal(result.substituted, false)
+  assert.equal(result.body, body)
+})
+
+test('overrideRoutedModelInBody swaps the model, mirrors an identical service field, and fixes content-length', () => {
+  const oldRoute = `${validPeerId}@gpt-4o`
+  const newRoute = `${'bb'.repeat(20)}@glm-5`
+  const body = makeJsonBody({ model: oldRoute, service: oldRoute, messages: [] })
+  const headers = { ...jsonHeaders, 'content-length': String(body.length) }
+  const result = overrideRoutedModelInBody(body, headers, newRoute)
+  assert.equal(result.overridden, true)
+  const parsed = parseJsonBody(result.body)
+  assert.equal(parsed['model'], newRoute)
+  assert.equal(parsed['service'], newRoute)
+  assert.equal(result.headers['content-length'], String(result.body.length))
+})
+
+test('overrideRoutedModelInBody leaves a differing service field alone', () => {
+  const body = makeJsonBody({ model: `${validPeerId}@gpt-4o`, service: 'something-else', messages: [] })
+  const result = overrideRoutedModelInBody(body, jsonHeaders, `${'bb'.repeat(20)}@glm-5`)
+  assert.equal(result.overridden, true)
+  const parsed = parseJsonBody(result.body)
+  assert.equal(parsed['model'], `${'bb'.repeat(20)}@glm-5`)
+  assert.equal(parsed['service'], 'something-else')
+})
+
+test('overrideRoutedModelInBody no-ops on a matching model, a missing model, or non-JSON bodies', () => {
+  const route = `${validPeerId}@gpt-4o`
+  const matching = makeJsonBody({ model: route })
+  assert.equal(overrideRoutedModelInBody(matching, jsonHeaders, route).overridden, false)
+  const missing = makeJsonBody({ messages: [] })
+  assert.equal(overrideRoutedModelInBody(missing, jsonHeaders, route).overridden, false)
+  const nonJson = makeJsonBody({ model: 'other' })
+  assert.equal(overrideRoutedModelInBody(nonJson, { 'content-type': 'text/plain' }, route).overridden, false)
+})
+
+test('route control endpoint sets, persists, and returns the default routed model', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'antseed-buyer-route-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const proxy = new BuyerProxy({
+    port: 0,
+    dataDir: dir,
+    node: { router: null } as any,
+  })
+
+  const set = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { model: `${validPeerId}@gpt-4o` } }))
+  assert.equal(set.statusCode, 200)
+  assert.deepEqual(JSON.parse(set.body), { ok: true, model: `${validPeerId}@gpt-4o` })
+
+  const get = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/route' }))
+  assert.deepEqual(JSON.parse(get.body), { ok: true, model: `${validPeerId}@gpt-4o` })
+
+  const persisted = JSON.parse(await readFile(join(dir, 'buyer.state.json'), 'utf-8')) as Record<string, unknown>
+  assert.equal(persisted['defaultRoutedModel'], `${validPeerId}@gpt-4o`)
+
+  const invalid = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { model: 'gpt-4o' } }))
+  assert.equal(invalid.statusCode, 400)
+
+  const cleared = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { model: '' } }))
+  assert.deepEqual(JSON.parse(cleared.body), { ok: true, model: null })
+})
+
+test('buyer-usage endpoint reports lastActivityAt, null until a request is dispatched', async () => {
+  const proxy = new BuyerProxy({
+    port: 0,
+    dataDir: '/tmp/antseed-test',
+    node: { router: null, getBuyerUsageTotals: () => ({ totalRequests: 0 }) } as any,
+  })
+
+  const before = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/buyer-usage' }))
+  assert.equal(before.statusCode, 200)
+  assert.equal((JSON.parse(before.body) as { lastActivityAt: number | null }).lastActivityAt, null)
+
+  ;(proxy as any)._markModelActivity()
+
+  const after = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/buyer-usage' }))
+  const parsed = JSON.parse(after.body) as { ok: boolean; lastActivityAt: number | null }
+  assert.equal(parsed.ok, true)
+  assert.equal(typeof parsed.lastActivityAt, 'number')
+  assert.ok((parsed.lastActivityAt ?? 0) > 0)
+})
+
+test('requests with the routed-model alias fail clearly when no default route is set', async () => {
+  const proxy = makeBuyerProxyWithPeers([makePeer('a', ['openai'])])
+
+  const res = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'antseed', messages: [] } }))
+  assert.equal(res.statusCode, 400)
+  const parsed = JSON.parse(res.body) as { error?: { code?: string } }
+  assert.equal(parsed.error?.code, 'no_default_route')
+})
+
+test('substituteRoutedModelAlias updates content-length when substituting', () => {
+  const original = makeJsonBody({ model: 'antseed', messages: [] })
+  const headers = { 'content-type': 'application/json', 'content-length': String(original.length) }
+  const result = substituteRoutedModelAlias(original, headers, `${validPeerId}@gpt-4o`)
+  assert.equal(result.headers['content-length'], String(result.body.length))
+})
+
 test('rewritePeerPinnedServiceInBody returns original when body is empty', () => {
   const body = new Uint8Array(0)
   const result = rewritePeerPinnedServiceInBody(body, jsonHeaders)
@@ -1098,6 +1227,294 @@ test('rewritePeerPinnedServiceInBody returns original when body is not a JSON ob
   const result = rewritePeerPinnedServiceInBody(body, jsonHeaders)
   assert.equal(result.body, body)
   assert.equal(result.pinnedPeerId, null)
+})
+
+// ---------- Per-chat conversations (tracking, pins, control endpoints) ----------
+
+async function makeConversationProxy(): Promise<{ proxy: BuyerProxy; dir: string }> {
+  const dir = await mkdtemp(join(tmpdir(), 'antseed-buyer-conv-'))
+  const proxy = new BuyerProxy({
+    port: 0,
+    dataDir: dir,
+    node: { router: null } as any,
+  })
+  ;(proxy as any)._getPeers = async () => []
+  ;(proxy as any)._cacheLastUpdatedAtMs = Date.now()
+  return { proxy, dir }
+}
+
+test('per-chat pin overrides the default routed model for the antseed alias', async () => {
+  const { proxy, dir } = await makeConversationProxy()
+  try {
+    const defaultRoute = `${'aa'.repeat(20)}@default-model`
+    const pinnedRoute = `${'bb'.repeat(20)}@pinned-model`
+    ;(proxy as any)._defaultRoutedModel = defaultRoute
+    const store = (proxy as any)._conversations
+    store.touch({ tool: 'codex-exec', sessionKey: 'sess-1' })
+    store.setPinnedModel('codex-exec:sess-1', pinnedRoute)
+
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/responses',
+      headers: { originator: 'codex_exec', 'session-id': 'sess-1' },
+      body: {
+        model: 'antseed',
+        input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello there' }] }],
+      },
+    }))
+
+    // Routing itself fails (no peers), but the pin was applied during alias
+    // substitution and recorded as the conversation's resolved model.
+    const record = store.get('codex-exec:sess-1')
+    assert.equal(record?.lastModel, pinnedRoute)
+
+    // A different chat without a pin resolves to the default route.
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/responses',
+      headers: { originator: 'codex_exec', 'session-id': 'sess-2' },
+      body: {
+        model: 'antseed',
+        input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'second chat' }] }],
+      },
+    }))
+    const second = store.get('codex-exec:sess-2')
+    assert.equal(second?.lastModel, defaultRoute)
+    assert.equal(second?.snippet, 'second chat')
+    await store.flush()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('chat pin overrides a system-proxy-routed model on intercepted requests', async () => {
+  const { proxy, dir } = await makeConversationProxy()
+  try {
+    const proxyRoute = `${'aa'.repeat(20)}@default-model`
+    const pinnedRoute = `${'bb'.repeat(20)}@pinned-model`
+    const store = (proxy as any)._conversations
+
+    // First intercepted request: the system proxy already rewrote the tool's
+    // upstream model to its connect-time route and marked the request. The
+    // chat auto-pins to the model that served it.
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/messages',
+      headers: { 'x-claude-code-session-id': 'cc-1', [SYSTEM_ROUTED_MODEL_HEADER]: '1' },
+      body: { model: proxyRoute, messages: [{ role: 'user', content: 'hello there' }] },
+    }))
+    assert.equal(store.get('claude-code:cc-1')?.pinnedModel, proxyRoute)
+
+    // The user re-pins the chat from the desktop (float / chats view).
+    store.setPinnedModel('claude-code:cc-1', pinnedRoute)
+
+    // Later requests still arrive with the proxy-assigned model; the pin wins.
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/messages',
+      headers: { 'x-claude-code-session-id': 'cc-1', [SYSTEM_ROUTED_MODEL_HEADER]: '1' },
+      body: { model: proxyRoute, messages: [{ role: 'user', content: 'again' }] },
+    }))
+    assert.equal(store.get('claude-code:cc-1')?.lastModel, pinnedRoute)
+
+    // Without the marker the model is a client choice and is respected.
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/messages',
+      headers: { 'x-claude-code-session-id': 'cc-1' },
+      body: { model: proxyRoute, messages: [{ role: 'user', content: 'explicit' }] },
+    }))
+    assert.equal(store.get('claude-code:cc-1')?.lastModel, proxyRoute)
+    await store.flush()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('count_tokens is answered locally and never reaches a seller', async () => {
+  const { proxy, dir } = await makeConversationProxy()
+  try {
+    let routed = 0
+    ;(proxy as any)._getPeers = async () => { routed += 1; return [] }
+
+    const res = await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/messages/count_tokens',
+      headers: { 'x-claude-code-session-id': 'cc-count' },
+      body: {
+        model: 'claude-sonnet-4-5',
+        system: 'You are a CLI assistant. '.repeat(40),
+        messages: [{ role: 'user', content: 'how big is this conversation?' }],
+      },
+    }))
+
+    assert.equal(res.statusCode, 200)
+    const body = JSON.parse(res.body) as { input_tokens: number }
+    assert.ok(body.input_tokens > 50, `expected a token count, got ${JSON.stringify(body)}`)
+    assert.equal(routed, 0, 'count_tokens must not route to a peer')
+    // It is a probe about a chat, not a turn in one.
+    assert.deepEqual((proxy as any)._conversations.list(), [])
+    await (proxy as any)._conversations.flush()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('a thread the tool opened for itself never becomes a chat', async () => {
+  const { proxy, dir } = await makeConversationProxy()
+  try {
+    const store = (proxy as any)._conversations
+    const turnMetadata = (threadId: string, threadSource: string): string =>
+      JSON.stringify({ thread_id: threadId, request_kind: 'turn', thread_source: threadSource })
+
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/responses',
+      headers: {
+        originator: 'Codex Desktop',
+        'thread-id': 'thread-real',
+        'x-codex-turn-metadata': turnMetadata('thread-real', 'user'),
+      },
+      body: { input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'yo' }] }] },
+    }))
+
+    // Codex titles the chat from a system thread of its own, milliseconds later.
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/responses',
+      headers: {
+        originator: 'Codex Desktop',
+        'thread-id': 'thread-title',
+        'x-codex-turn-metadata': turnMetadata('thread-title', 'system'),
+      },
+      body: { input: 'You are a helpful assistant... provide a short title...\n\nUser prompt:\nyo' },
+    }))
+
+    assert.deepEqual(store.list().map((c: any) => c.id), ['codex-desktop:thread-real'])
+    assert.equal(store.get('codex-desktop:thread-real')?.snippet, 'yo')
+    await store.flush()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('conversation control endpoints list, rename, pin, reject bad pins, delete', async () => {
+  const { proxy, dir } = await makeConversationProxy()
+  try {
+    const store = (proxy as any)._conversations
+    store.touch({ tool: 'opencode', sessionKey: 'ses_x', snippet: 'refactor the login flow' })
+
+    const list = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/conversations' }))
+    assert.equal(list.statusCode, 200)
+    const listed = JSON.parse(list.body) as { ok: boolean; conversations: Array<{ id: string; snippet: string }> }
+    assert.equal(listed.ok, true)
+    assert.equal(listed.conversations.length, 1)
+    assert.equal(listed.conversations[0]?.id, 'opencode:ses_x')
+
+    const rename = await invokeProxy(proxy, makeProxyRequest({
+      path: '/_antseed/conversations/update',
+      body: { id: 'opencode:ses_x', label: 'Login refactor' },
+    }))
+    assert.equal(rename.statusCode, 200)
+    assert.equal(store.get('opencode:ses_x')?.label, 'Login refactor')
+
+    const badPin = await invokeProxy(proxy, makeProxyRequest({
+      path: '/_antseed/conversations/update',
+      body: { id: 'opencode:ses_x', pinnedModel: 'not-a-route' },
+    }))
+    assert.equal(badPin.statusCode, 400)
+
+    const goodPin = await invokeProxy(proxy, makeProxyRequest({
+      path: '/_antseed/conversations/update',
+      body: { id: 'opencode:ses_x', pinnedModel: `${'cc'.repeat(20)}@glm-5` },
+    }))
+    assert.equal(goodPin.statusCode, 200)
+    assert.equal(store.getPinnedModel('opencode', 'ses_x'), `${'cc'.repeat(20)}@glm-5`)
+
+    const clearPin = await invokeProxy(proxy, makeProxyRequest({
+      path: '/_antseed/conversations/update',
+      body: { id: 'opencode:ses_x', pinnedModel: '' },
+    }))
+    assert.equal(clearPin.statusCode, 200)
+    assert.equal(store.getPinnedModel('opencode', 'ses_x'), null)
+
+    const missing = await invokeProxy(proxy, makeProxyRequest({
+      path: '/_antseed/conversations/update',
+      body: { id: 'nope:missing', label: 'x' },
+    }))
+    assert.equal(missing.statusCode, 404)
+
+    const removed = await invokeProxy(proxy, makeProxyRequest({
+      path: '/_antseed/conversations/update',
+      body: { id: 'opencode:ses_x', delete: true },
+    }))
+    assert.equal(removed.statusCode, 200)
+    assert.equal(store.get('opencode:ses_x'), null)
+    await store.flush()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('subagent requests roll up into the parent conversation', async () => {
+  const { proxy, dir } = await makeConversationProxy()
+  try {
+    ;(proxy as any)._defaultRoutedModel = `${'aa'.repeat(20)}@default-model`
+    const store = (proxy as any)._conversations
+
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/chat/completions',
+      headers: { 'user-agent': 'opencode/1.0', 'x-session-id': 'ses_child', 'x-parent-session-id': 'ses_parent' },
+      body: { model: 'antseed', messages: [{ role: 'user', content: 'subtask prompt' }] },
+    }))
+
+    assert.equal(store.get('opencode:ses_child'), null)
+    assert.notEqual(store.get('opencode:ses_parent'), null)
+    await store.flush()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('title request racing ahead of the first turn does not name the chat', async () => {
+  const { proxy, dir } = await makeConversationProxy()
+  try {
+    ;(proxy as any)._defaultRoutedModel = `${'aa'.repeat(20)}@default-model`
+    const store = (proxy as any)._conversations
+
+    // OpenCode's ensureTitle request lands first, on the same session.
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/chat/completions',
+      headers: { 'user-agent': 'opencode/1.0', 'x-session-id': 'ses_race' },
+      body: {
+        model: 'antseed',
+        messages: [
+          { role: 'user', content: 'Generate a title for this conversation:\n' },
+          { role: 'user', content: 'hi' },
+        ],
+      },
+    }))
+    // Title-only housekeeping routes normally but no longer creates the row.
+    assert.equal(store.get('opencode:ses_race'), null)
+
+    // A Claude/T3 Code-style pure title request routes normally but does not
+    // create a blank conversation row.
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/messages',
+      headers: { 'user-agent': 'claude-cli/2.0 (external)', 'x-claude-code-session-id': 'cc_race' },
+      body: {
+        model: 'antseed',
+        messages: [{ role: 'user', content: 'You write concise thread titles for a coding chat.' }],
+      },
+    }))
+    assert.equal(store.get('claude-code:cc_race'), null)
+
+    // The real first turn creates the conversation afterwards.
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/messages',
+      headers: { 'user-agent': 'claude-cli/2.0 (external)', 'x-claude-code-session-id': 'cc_race' },
+      body: {
+        model: 'antseed',
+        messages: [{ role: 'user', content: 'fix the login bug' }],
+      },
+    }))
+    assert.equal(store.get('claude-code:cc_race')?.snippet, 'fix the login bug')
+    await store.flush()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })
 
 test('makeVerifierReach: rejects non-attest paths, sends the attest route as a payment-free control-plane request', async () => {

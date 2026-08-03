@@ -1,0 +1,66 @@
+.form {
+  display: grid;
+  gap: 10px;
+}
+
+.field {
+  display: grid;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.field input {
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+
+.field input:focus-visible {
+  border-color: rgba(var(--brand-rgb), 0.5);
+}
+
+.startButton {
+  min-height: 40px;
+  padding: 8px 14px;
+  border: none;
+  border-radius: 12px;
+  background: var(--accent-green);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.startButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.hint {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.notice {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/* The Crossmint iframe sizes itself; give it room and let it scroll within. */
+.embed {
+  width: 100%;
+  min-height: 420px;
+}

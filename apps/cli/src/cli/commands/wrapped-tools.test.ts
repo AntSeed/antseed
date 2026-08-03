@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { ANTSEED_MODEL_CONTEXT_WINDOW, ANTSEED_MODEL_MAX_OUTPUT_TOKENS } from '@antseed/node/types'
 import { spawnSync } from 'node:child_process'
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -159,6 +160,7 @@ test('buildCodexConfigArgs uses ephemeral config overrides on the real Codex hom
   assert.ok(args.includes('model_providers.antseed.env_key="ANTSEED_API_KEY"'))
   assert.ok(args.includes(`model="${MODEL_ID}"`))
   assert.ok(args.includes('model_provider="antseed"'))
+  assert.ok(args.includes(`model_context_window=${ANTSEED_MODEL_CONTEXT_WINDOW}`))
 })
 
 test('buildOpenCodeConfigContent configures AntSeed provider and selected model', () => {
@@ -168,7 +170,10 @@ test('buildOpenCodeConfigContent configures AntSeed provider and selected model'
   assert.ok(parsed.provider.antseed)
   assert.equal(parsed.provider.antseed.options.baseURL, V1_PROXY_URL)
   assert.equal(parsed.model, `antseed/${model}`)
-  assert.ok(parsed.provider.antseed.models[model])
+  assert.deepEqual(parsed.provider.antseed.models[model], {
+    name: `${model} (via AntSeed)`,
+    limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
+  })
 })
 
 test('wrapped tool execution', async (t) => {

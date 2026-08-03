@@ -8,6 +8,7 @@ export {
   type RequestStreamResponseMetadata,
   type BuyerUsageTotals,
   type BuyerUsageChannelPoint,
+  type BuyerUsageServicePoint,
 } from './node.js';
 export type { Provider, ProviderStreamCallbacks } from './interfaces/seller-provider.js';
 export {
@@ -81,6 +82,12 @@ export { MetadataServer, type MetadataServerConfig } from './discovery/metadata-
 export { parsePublicAddress, MAX_PUBLIC_ADDRESS_LENGTH, type ParsedPublicAddress } from './discovery/public-address.js';
 export { MeteringStorage } from './metering/storage.js';
 export { BalanceManager } from './payments/balance-manager.js';
+export {
+  computeCostUsdc,
+  estimateTokensFromBytes,
+  estimateTokensFromText,
+  type ServicePricing,
+} from './payments/pricing.js';
 export { DepositsClient, type DepositsClientConfig, type BuyerBalanceInfo } from './payments/evm/deposits-client.js';
 export {
   DepositRelayClient,
@@ -156,6 +163,7 @@ export type {
 } from './payments/evm/signatures.js';
 export { NatTraversal, type NatMapping, type NatTraversalResult } from './p2p/nat-traversal.js';
 export { BuyerPaymentManager } from './payments/buyer-payment-manager.js';
+export type { BuyerSpendEvent, BuyerSpendListener } from './payments/buyer-payment-manager.js';
 export type { BuyerPaymentConfig } from './payments/buyer-payment-manager.js';
 export { BuyerFreeUsageManager } from './payments/buyer-free-usage-manager.js';
 export type { BuyerFreeUsageConfig } from './payments/buyer-free-usage-manager.js';

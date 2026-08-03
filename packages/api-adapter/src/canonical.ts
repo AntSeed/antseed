@@ -18,10 +18,35 @@ export type CanonicalToolChoice =
   | 'required'
   | { type: 'function'; name: string };
 
+// Anthropic requires max_tokens; the OpenAI protocols treat it as optional.
+export const DEFAULT_ANTHROPIC_MAX_TOKENS = 16_384;
+
+export type CanonicalContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; url?: string; mediaType?: string; data?: string };
+
 export type CanonicalInputItem =
-  | { type: 'message'; role: 'user' | 'assistant'; text: string }
+  | { type: 'message'; role: 'user' | 'assistant'; content: CanonicalContentPart[] }
   | { type: 'function_call'; id: string; name: string; arguments: Record<string, unknown> | string }
   | { type: 'function_call_output'; callId: string; output: string };
+
+/**
+ * Where a prompt prefix ends and may be cached by the seller's upstream.
+ *
+ * Only Anthropic expresses this in the request (`cache_control` markers); the
+ * OpenAI protocols cache prefixes automatically. Carrying the positions
+ * through canonical form lets an Anthropic client's own breakpoints survive a
+ * round trip, and lets a request that arrived without any get a standard set
+ * on the way out to an Anthropic seller — which otherwise caches nothing.
+ */
+export interface CanonicalCacheBreakpoints {
+  /** End the cacheable prefix after the system prompt. */
+  instructions: boolean;
+  /** End it after the tool definitions. */
+  tools: boolean;
+  /** Indices into `input` after which the prefix may be cached. */
+  inputIndices: number[];
+}
 
 export interface CanonicalLlmRequest {
   model: string | null;
@@ -37,6 +62,7 @@ export interface CanonicalLlmRequest {
   metadata?: Record<string, unknown>;
   user?: string;
   promptCacheKey?: string;
+  cacheBreakpoints?: CanonicalCacheBreakpoints;
 }
 
 export type CanonicalOutputItem =
@@ -78,13 +104,14 @@ export function renderCanonicalRequestToOpenAIChatBody(
     if (item.type === 'message') {
       if (options.groupAssistantToolCallsWithPreviousMessage && item.role === 'assistant') {
         const previous = messages[messages.length - 1];
+        const text = textFromCanonicalContent(item.content);
         if (isAssistantMessageWithToolCalls(previous)) {
           const existingContent = typeof previous.content === 'string' ? previous.content : '';
-          previous.content = existingContent.length > 0 ? `${existingContent}\n${item.text}` : item.text;
+          previous.content = existingContent.length > 0 && text.length > 0 ? `${existingContent}\n${text}` : existingContent || text;
           continue;
         }
       }
-      messages.push({ role: item.role, content: item.text });
+      messages.push({ role: item.role, content: renderCanonicalContentToOpenAIChat(item.content) });
       continue;
     }
     if (item.type === 'function_call') {
@@ -93,16 +120,13 @@ export function renderCanonicalRequestToOpenAIChatBody(
         type: 'function',
         function: { name: item.name, arguments: stringifyToolArguments(item.arguments) },
       };
+      // Parallel calls must share one assistant message: OpenAI requires the
+      // tool results to immediately follow the message that requested them.
       const previous = messages[messages.length - 1];
-      // Parallel tool calls must share one assistant message: an assistant
-      // message with tool_calls must be immediately followed by its tool
-      // responses, so consecutive function_call items always merge.
-      if (isAssistantMessageWithToolCalls(previous)) {
-        previous.tool_calls = [...previous.tool_calls as unknown[], toolCall];
-        continue;
-      }
-      if (options.groupAssistantToolCallsWithPreviousMessage && isAssistantMessage(previous)) {
-        previous.tool_calls = [toolCall];
+      if (isAssistantMessage(previous)
+        && (options.groupAssistantToolCallsWithPreviousMessage || Array.isArray(previous.tool_calls))) {
+        const toolCalls = Array.isArray(previous.tool_calls) ? previous.tool_calls : [];
+        previous.tool_calls = [...toolCalls, toolCall];
         continue;
       }
       messages.push({
@@ -131,10 +155,17 @@ export function renderCanonicalRequestToOpenAIChatBody(
   if (toolChoice !== undefined) body.tool_choice = toolChoice;
   if (request.metadata) body.metadata = request.metadata;
   if (request.user) body.user = request.user;
+  // Routes the request to the cache that holds this conversation's prefix.
+  // Anthropic clients have no such field, so their per-session `user_id`
+  // stands in for it (see normalizeAnthropicMessagesRequestBody).
+  if (request.promptCacheKey) body.prompt_cache_key = request.promptCacheKey;
   return body;
 }
 
-export function renderCanonicalRequestToOpenAIResponsesBody(request: CanonicalLlmRequest): Record<string, unknown> {
+export function renderCanonicalRequestToOpenAIResponsesBody(
+  request: CanonicalLlmRequest,
+  options: { includeMetadata?: boolean; includeUser?: boolean } = {},
+): Record<string, unknown> {
   const input: unknown[] = [];
 
   for (const item of request.input) {
@@ -142,7 +173,7 @@ export function renderCanonicalRequestToOpenAIResponsesBody(request: CanonicalLl
       input.push({
         type: 'message',
         role: item.role,
-        content: [{ type: item.role === 'assistant' ? 'output_text' : 'input_text', text: item.text }],
+        content: renderCanonicalContentToOpenAIResponses(item.content, item.role),
       });
       continue;
     }
@@ -178,14 +209,55 @@ export function renderCanonicalRequestToOpenAIResponsesBody(request: CanonicalLl
   if (tools) body.tools = tools;
   const toolChoice = renderCanonicalToolChoiceToOpenAIResponses(request.toolChoice);
   if (toolChoice !== undefined) body.tool_choice = toolChoice;
-  if (request.metadata) body.metadata = request.metadata;
-  if (request.user) body.user = request.user;
+  if (options.includeMetadata !== false && request.metadata) body.metadata = request.metadata;
+  if (options.includeUser !== false && request.user) body.user = request.user;
   if (request.promptCacheKey) body.prompt_cache_key = request.promptCacheKey;
   return body;
 }
 
+const EPHEMERAL_CACHE_CONTROL = { type: 'ephemeral' } as const;
+
+/**
+ * Below Anthropic's minimum cacheable prompt a breakpoint buys nothing, and a
+ * cache write costs more than a plain read — so a synthesized breakpoint is
+ * only worth placing on a prompt that is plausibly over it. Measured in
+ * characters (~4 per token) against the 1024-token floor, with headroom.
+ */
+const MIN_SYNTHESIZED_CACHE_CHARS = 6_000;
+
+/**
+ * Breakpoints to render for an Anthropic seller. A request that carried its
+ * own is reproduced verbatim — the client knows its prompt best. One that
+ * carried none (every OpenAI-protocol client, which never declares them) gets
+ * the standard pair: after the tools + system preamble, and after the last
+ * turn, so the next turn reads back everything before its own input.
+ */
+function resolveCacheBreakpoints(request: CanonicalLlmRequest): CanonicalCacheBreakpoints {
+  const declared = request.cacheBreakpoints;
+  if (declared && (declared.instructions || declared.tools || declared.inputIndices.length > 0)) {
+    return declared;
+  }
+
+  const instructionsLength = request.instructions?.length ?? 0;
+  const inputLength = request.input.reduce((total, item) => (
+    total + (item.type === 'message' ? textFromCanonicalContent(item.content).length : item.type === 'function_call_output' ? item.output.length : 0)
+  ), 0);
+  if (instructionsLength + inputLength < MIN_SYNTHESIZED_CACHE_CHARS) {
+    return { instructions: false, tools: false, inputIndices: [] };
+  }
+
+  return {
+    // Tools sit before the system prompt in Anthropic's prefix order, so one
+    // marker after the system prompt already covers both.
+    instructions: instructionsLength > 0,
+    tools: instructionsLength === 0 && (request.tools?.length ?? 0) > 0,
+    inputIndices: request.input.length > 0 ? [request.input.length - 1] : [],
+  };
+}
+
 export function renderCanonicalRequestToAnthropicMessagesBody(request: CanonicalLlmRequest): Record<string, unknown> {
   const messages: Array<{ role: 'user' | 'assistant'; content: unknown[] }> = [];
+  const breakpoints = resolveCacheBreakpoints(request);
 
   const appendBlock = (role: 'user' | 'assistant', block: Record<string, unknown>): void => {
     const previous = messages[messages.length - 1];
@@ -196,25 +268,32 @@ export function renderCanonicalRequestToAnthropicMessagesBody(request: Canonical
     messages.push({ role, content: [block] });
   };
 
-  for (const item of request.input) {
-    if (item.type === 'message') {
-      appendBlock(item.role, { type: 'text', text: item.text });
-      continue;
+  const markLastBlock = (): void => {
+    const lastMessage = messages[messages.length - 1];
+    const lastBlock = lastMessage?.content[lastMessage.content.length - 1];
+    if (lastBlock && typeof lastBlock === 'object') {
+      (lastBlock as Record<string, unknown>).cache_control = EPHEMERAL_CACHE_CONTROL;
     }
-    if (item.type === 'function_call') {
+  };
+
+  for (const [index, item] of request.input.entries()) {
+    if (item.type === 'message') {
+      for (const part of renderCanonicalContentToAnthropic(item.content)) appendBlock(item.role, part);
+    } else if (item.type === 'function_call') {
       appendBlock('assistant', {
         type: 'tool_use',
         id: item.id,
         name: item.name,
         input: parseToolArguments(item.arguments),
       });
-      continue;
+    } else {
+      appendBlock('user', {
+        type: 'tool_result',
+        tool_use_id: item.callId,
+        content: item.output,
+      });
     }
-    appendBlock('user', {
-      type: 'tool_result',
-      tool_use_id: item.callId,
-      content: item.output,
-    });
+    if (breakpoints.inputIndices.includes(index)) markLastBlock();
   }
 
   const body: Record<string, unknown> = {
@@ -222,13 +301,25 @@ export function renderCanonicalRequestToAnthropicMessagesBody(request: Canonical
     messages,
     stream: request.stream,
   };
-  if (request.instructions !== undefined) body.system = request.instructions;
-  if (typeof request.maxOutputTokens === 'number') body.max_tokens = request.maxOutputTokens;
+  if (request.instructions !== undefined) {
+    body.system = breakpoints.instructions
+      ? [{ type: 'text', text: request.instructions, cache_control: EPHEMERAL_CACHE_CONTROL }]
+      : request.instructions;
+  }
+  body.max_tokens = typeof request.maxOutputTokens === 'number'
+    ? request.maxOutputTokens
+    : DEFAULT_ANTHROPIC_MAX_TOKENS;
   if (typeof request.temperature === 'number') body.temperature = request.temperature;
   if (typeof request.topP === 'number') body.top_p = request.topP;
   if (request.stop !== undefined) body.stop_sequences = Array.isArray(request.stop) ? request.stop : [request.stop];
   const tools = renderCanonicalToolsToAnthropic(request.tools);
-  if (tools) body.tools = tools;
+  if (tools) {
+    if (breakpoints.tools) {
+      const lastTool = tools[tools.length - 1];
+      if (lastTool) lastTool.cache_control = EPHEMERAL_CACHE_CONTROL;
+    }
+    body.tools = tools;
+  }
   const toolChoice = renderCanonicalToolChoiceToAnthropic(request.toolChoice);
   if (toolChoice !== undefined) body.tool_choice = toolChoice;
   if (request.metadata || request.user) {
@@ -247,6 +338,8 @@ export function normalizeAnthropicMessagesRequestBody(body: Record<string, unkno
     input: [],
   };
 
+  const breakpoints: CanonicalCacheBreakpoints = { instructions: false, tools: false, inputIndices: [] };
+
   const messages = Array.isArray(body.messages) ? body.messages : [];
   for (const rawMessage of messages) {
     if (!rawMessage || typeof rawMessage !== 'object') continue;
@@ -254,18 +347,26 @@ export function normalizeAnthropicMessagesRequestBody(body: Record<string, unkno
     const role = message.role === 'assistant' ? 'assistant' : 'user';
 
     if (Array.isArray(message.content)) {
-      appendAnthropicContentBlocks(request.input, role, message.content);
+      const cached = appendAnthropicContentBlocks(request.input, role, message.content);
+      // Blocks coalesce into items, so the marker lands on the item the
+      // message ends with — the position a client's breakpoint means.
+      if (cached && request.input.length > 0) breakpoints.inputIndices.push(request.input.length - 1);
       continue;
     }
 
     const text = toStringContent(message.content);
     if (text.length > 0) {
-      request.input.push({ type: 'message', role, text });
+      request.input.push({ type: 'message', role, content: [{ type: 'text', text }] });
     }
   }
 
   const instructions = body.system !== undefined ? toStringContent(body.system) : '';
   if (instructions.length > 0) request.instructions = instructions;
+  breakpoints.instructions = hasAnthropicCacheControl(body.system);
+  breakpoints.tools = hasAnthropicCacheControl(body.tools);
+  if (breakpoints.instructions || breakpoints.tools || breakpoints.inputIndices.length > 0) {
+    request.cacheBreakpoints = breakpoints;
+  }
   if (typeof body.max_tokens === 'number') request.maxOutputTokens = body.max_tokens;
   if (typeof body.temperature === 'number') request.temperature = body.temperature;
   if (typeof body.top_p === 'number') request.topP = body.top_p;
@@ -317,7 +418,7 @@ export function normalizeOpenAIChatRequestBody(body: Record<string, unknown>): C
 
     if (role === 'assistant' && Array.isArray(msg.tool_calls)) {
       const text = textFromContent(msg.content);
-      if (text.length > 0) request.input.push({ type: 'message', role: 'assistant', text });
+      if (text.length > 0) request.input.push({ type: 'message', role: 'assistant', content: [{ type: 'text', text }] });
       for (const [index, rawToolCall] of (msg.tool_calls as unknown[]).entries()) {
         if (!rawToolCall || typeof rawToolCall !== 'object') continue;
         const toolCall = rawToolCall as Record<string, unknown>;
@@ -335,7 +436,7 @@ export function normalizeOpenAIChatRequestBody(body: Record<string, unknown>): C
     }
 
     if (role === 'user' || role === 'assistant') {
-      request.input.push({ type: 'message', role, text: textFromContent(msg.content) });
+      request.input.push({ type: 'message', role, content: canonicalContentFromOpenAIChat(msg.content) });
     }
   }
 
@@ -368,7 +469,7 @@ export function normalizeOpenAIResponsesRequestBody(body: Record<string, unknown
 
   const input = body.input;
   if (typeof input === 'string') {
-    request.input.push({ type: 'message', role: 'user', text: input });
+    request.input.push({ type: 'message', role: 'user', content: [{ type: 'text', text: input }] });
   } else if (Array.isArray(input)) {
     for (const item of input) {
       if (!item || typeof item !== 'object') continue;
@@ -395,12 +496,17 @@ export function normalizeOpenAIResponsesRequestBody(body: Record<string, unknown
         continue;
       }
 
+      // Codex interleaves reasoning/local_shell_call items with messages. They
+      // have no role, and turning them into empty messages would separate a
+      // function_call from its output.
+      if (type !== 'message' && typeof msg.role !== 'string') continue;
+
       const role = msg.role === 'assistant' ? 'assistant' : 'user';
-      const text = textFromResponsesContent(msg.content);
+      const content = canonicalContentFromOpenAIResponses(msg.content);
       // Non-message items (reasoning, web_search_call, ...) carry no renderable
       // text — dropping them avoids injecting empty user messages mid-history.
-      if (type !== 'message' && text.length === 0) continue;
-      request.input.push({ type: 'message', role, text });
+      if (type !== 'message' && textFromCanonicalContent(content).length === 0) continue;
+      request.input.push({ type: 'message', role, content });
     }
   }
 
@@ -695,6 +801,108 @@ function isAssistantMessageWithToolCalls(value: unknown): value is Record<string
   return isAssistantMessage(value) && Array.isArray(value.tool_calls);
 }
 
+function textFromCanonicalContent(content: CanonicalContentPart[]): string {
+  return content
+    .filter((part): part is Extract<CanonicalContentPart, { type: 'text' }> => part.type === 'text')
+    .map((part) => part.text)
+    .filter((text) => text.length > 0)
+    .join('\n');
+}
+
+function renderCanonicalContentToOpenAIChat(content: CanonicalContentPart[]): string | unknown[] {
+  const hasImage = content.some((part) => part.type === 'image');
+  if (!hasImage) return textFromCanonicalContent(content);
+  const rendered: unknown[] = [];
+  for (const part of content) {
+    if (part.type === 'text') {
+      if (part.text.length > 0) rendered.push({ type: 'text', text: part.text });
+      continue;
+    }
+    const url = imageUrlFromCanonicalPart(part);
+    if (url) rendered.push({ type: 'image_url', image_url: { url } });
+  }
+  return rendered;
+}
+
+function renderCanonicalContentToOpenAIResponses(content: CanonicalContentPart[], role: 'user' | 'assistant'): unknown[] {
+  const textType = role === 'assistant' ? 'output_text' : 'input_text';
+  const rendered: unknown[] = [];
+  for (const part of content) {
+    if (part.type === 'text') {
+      if (part.text.length > 0) rendered.push({ type: textType, text: part.text });
+      continue;
+    }
+    const url = imageUrlFromCanonicalPart(part);
+    if (url) rendered.push({ type: 'input_image', image_url: url });
+  }
+  return rendered;
+}
+
+function renderCanonicalContentToAnthropic(content: CanonicalContentPart[]): Array<Record<string, unknown>> {
+  const rendered: Array<Record<string, unknown>> = [];
+  for (const part of content) {
+    if (part.type === 'text') {
+      if (part.text.length > 0) rendered.push({ type: 'text', text: part.text });
+      continue;
+    }
+    if (part.data && part.mediaType) {
+      rendered.push({ type: 'image', source: { type: 'base64', media_type: part.mediaType, data: part.data } });
+      continue;
+    }
+    if (part.url) rendered.push({ type: 'image', source: { type: 'url', url: part.url } });
+  }
+  return rendered;
+}
+
+function imageUrlFromCanonicalPart(part: Extract<CanonicalContentPart, { type: 'image' }>): string | undefined {
+  if (part.url) return part.url;
+  if (part.data && part.mediaType) return `data:${part.mediaType};base64,${part.data}`;
+  return undefined;
+}
+
+function canonicalContentFromOpenAIChat(value: unknown): CanonicalContentPart[] {
+  if (typeof value === 'string') return value.length > 0 ? [{ type: 'text', text: value }] : [];
+  if (!Array.isArray(value)) return textFromContent(value).length > 0 ? [{ type: 'text', text: textFromContent(value) }] : [];
+  return value.flatMap((part): CanonicalContentPart[] => {
+    if (!part || typeof part !== 'object') return [];
+    const block = part as Record<string, unknown>;
+    if (typeof block.text === 'string') return [{ type: 'text', text: block.text }];
+    if (block.type === 'image_url' && block.image_url && typeof block.image_url === 'object') {
+      const url = (block.image_url as Record<string, unknown>).url;
+      return typeof url === 'string' ? [canonicalImageFromUrl(url)] : [];
+    }
+    if (block.type === 'input_image' && typeof block.image_url === 'string') return [canonicalImageFromUrl(block.image_url)];
+    return [];
+  });
+}
+
+function canonicalContentFromOpenAIResponses(value: unknown): CanonicalContentPart[] {
+  if (typeof value === 'string') return value.length > 0 ? [{ type: 'text', text: value }] : [];
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((part): CanonicalContentPart[] => {
+    if (!part || typeof part !== 'object') return [];
+    const block = part as Record<string, unknown>;
+    if (typeof block.text === 'string') return [{ type: 'text', text: block.text }];
+    if (block.type === 'input_image' && typeof block.image_url === 'string') return [canonicalImageFromUrl(block.image_url)];
+    return [];
+  });
+}
+
+function canonicalImageFromUrl(url: string): CanonicalContentPart {
+  const data = url.match(/^data:([^;,]+);base64,(.*)$/);
+  return data ? { type: 'image', mediaType: data[1], data: data[2] } : { type: 'image', url };
+}
+
+function canonicalImageFromAnthropicSource(source: unknown): CanonicalContentPart | undefined {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return undefined;
+  const src = source as Record<string, unknown>;
+  if (src.type === 'base64' && typeof src.media_type === 'string' && typeof src.data === 'string') {
+    return { type: 'image', mediaType: src.media_type, data: src.data };
+  }
+  if (src.type === 'url' && typeof src.url === 'string') return { type: 'image', url: src.url };
+  return undefined;
+}
+
 function textFromContent(value: unknown): string {
   if (typeof value === 'string') return value;
   if (value === null || value === undefined) return '';
@@ -728,16 +936,28 @@ function textFromResponsesContent(value: unknown): string {
     .join('\n');
 }
 
+/** True when any block in this value carries a `cache_control` marker. */
+function hasAnthropicCacheControl(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  return value.some((block) => (
+    block !== null
+    && typeof block === 'object'
+    && (block as Record<string, unknown>).cache_control !== undefined
+  ));
+}
+
+/** Returns whether the message declared a cache breakpoint on any of its blocks. */
 function appendAnthropicContentBlocks(
   input: CanonicalInputItem[],
   role: 'user' | 'assistant',
   blocks: unknown[],
-): void {
-  const textParts: string[] = [];
-  const flushText = (): void => {
-    if (textParts.length === 0) return;
-    input.push({ type: 'message', role, text: textParts.join('\n') });
-    textParts.length = 0;
+): boolean {
+  const startLength = input.length;
+  let contentParts: CanonicalContentPart[] = [];
+  const flushMessage = (): void => {
+    if (contentParts.length === 0) return;
+    input.push({ type: 'message', role, content: contentParts });
+    contentParts = [];
   };
 
   for (const blockRaw of blocks) {
@@ -745,7 +965,7 @@ function appendAnthropicContentBlocks(
     const block = blockRaw as Record<string, unknown>;
 
     if (role === 'assistant' && block.type === 'tool_use') {
-      flushText();
+      flushMessage();
       input.push({
         type: 'function_call',
         id: typeof block.id === 'string' && block.id.length > 0 ? block.id : `call_${input.length + 1}`,
@@ -758,7 +978,7 @@ function appendAnthropicContentBlocks(
     }
 
     if (role === 'user' && block.type === 'tool_result') {
-      flushText();
+      flushMessage();
       const callId = typeof block.tool_use_id === 'string' ? block.tool_use_id : '';
       if (callId.length > 0) {
         input.push({ type: 'function_call_output', callId, output: toStringContent(block.content) });
@@ -766,11 +986,18 @@ function appendAnthropicContentBlocks(
       continue;
     }
 
+    if (role === 'user' && block.type === 'image') {
+      const image = canonicalImageFromAnthropicSource(block.source);
+      if (image) contentParts.push(image);
+      continue;
+    }
+
     const text = toStringContent(block);
-    if (text.length > 0) textParts.push(text);
+    if (text.length > 0) contentParts.push({ type: 'text', text });
   }
 
-  flushText();
+  flushMessage();
+  return input.length > startLength && hasAnthropicCacheControl(blocks);
 }
 
 function normalizeAnthropicTools(toolsRaw: unknown): CanonicalFunctionTool[] | undefined {
@@ -818,7 +1045,9 @@ function normalizeResponsesTools(tools: unknown[]): CanonicalFunctionTool[] | un
   return out.length > 0 ? out : undefined;
 }
 
-function renderCanonicalToolsToAnthropic(tools: CanonicalFunctionTool[] | undefined): unknown[] | undefined {
+function renderCanonicalToolsToAnthropic(
+  tools: CanonicalFunctionTool[] | undefined,
+): Array<Record<string, unknown>> | undefined {
   if (!tools || tools.length === 0) return undefined;
   return tools.map((tool) => ({
     name: tool.name,

@@ -1,11 +1,11 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist/main",
-    "rootDir": "src/main",
+    "outDir": "dist",
+    "rootDir": "src",
     "declaration": false,
     "declarationMap": false,
     "types": ["node", "electron"]
   },
-  "include": ["src/main/**/*.ts", "src/main/**/*.cts"]
+  "include": ["src/main/**/*.ts", "src/main/**/*.cts", "src/shared/**/*.ts"]
 }

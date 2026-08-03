@@ -1,6 +1,8 @@
 import type {
-  ChatWorkspaceGitStatus,
   DaemonStateSnapshot,
+  DesktopBuyerUsageTotals,
+  DesktopPaymentChannelSummary,
+  DesktopRewardsSummary,
   LogEvent,
   RuntimeProcessState,
 } from '../types/bridge';
@@ -71,6 +73,61 @@ export type ChatServiceOptionEntry = {
   cachedInputUsdPerMillion?: number | null;
   categories: string[];
   description: string;
+};
+
+export type VprRouteMode = 'auto' | 'pinned-peer';
+
+export type VprSelectedModel = {
+  provider: string;
+  serviceId: string;
+  label: string;
+  categories: string[];
+};
+
+export type VprRouteSelection = {
+  model: VprSelectedModel | null;
+  mode: VprRouteMode;
+  peerId: string | null;
+};
+
+export type VprRoutingPreferences = {
+  autoRouting: boolean;
+  preferFreePeers: boolean;
+  maxInputUsdPerMillion: number;
+  minTrustScore: number;
+  /**
+   * Peer allowlist. While non-empty, auto routing only ever considers these
+   * peers — every other seller is dropped before scoring.
+   */
+  allowedPeerIds: string[];
+  /** Peers auto routing never selects. Takes precedence over the allowlist. */
+  blockedPeerIds: string[];
+};
+
+/** Which routing list a peer sits on. A peer is never on both. */
+export type VprPeerListing = 'allowed' | 'blocked' | 'none';
+
+export type VprModelCatalogEntry = {
+  provider: string;
+  serviceId: string;
+  label: string;
+  peerCount: number;
+  categories: string[];
+  minInputUsdPerMillion: number | null;
+  maxInputUsdPerMillion: number | null;
+  minOutputUsdPerMillion: number | null;
+  maxOutputUsdPerMillion: number | null;
+  minCachedInputUsdPerMillion: number | null;
+  maxCachedInputUsdPerMillion: number | null;
+  expectedSavingsPct: number | null;
+  bestPeerId: string | null;
+  /**
+   * Reference/retail price for the equivalent model on the OpenRouter catalog,
+   * in USD per million tokens. Used to calculate the discount shown on the
+   * Home model list. `null`/absent when no OpenRouter match is found.
+   */
+  baselineInputUsdPerMillion?: number | null;
+  baselineOutputUsdPerMillion?: number | null;
 };
 
 export type DiscoverVerificationLink = {
@@ -164,13 +221,16 @@ export type RendererUiState = {
   daemonState: DaemonStateSnapshot | null;
 
   // --- Runtime display ---
-  connectState: string;
   connectBadge: BadgeState;
-  connectWarning: string | null;
   runtimeActivity: { tone: BadgeTone; message: string };
 
   // --- Logs ---
   logs: LogEvent[];
+
+  // --- Network reachability alert ---
+  /** 'blocked' = internet up but DHT unreachable (firewall/VPN dropping UDP);
+      'no-peers' = on the DHT but discovery sweeps keep coming back empty. */
+  networkAlert: 'none' | 'no-internet' | 'blocked' | 'no-peers';
 
   // --- Overview display ---
   overviewBadge: BadgeState;
@@ -184,11 +244,9 @@ export type RendererUiState = {
   overviewPeers: PeerEntry[];
 
   // --- Peers display ---
-  peersMeta: BadgeState;
   peersMessage: string;
   lastPeers: PeerEntry[];
   peerSort: SortState;
-  peerFilter: string;
   lastDebugKey: string;
 
   // --- Connection display ---
@@ -197,10 +255,8 @@ export type RendererUiState = {
   connectionNetwork: string;
   connectionSources: string;
   connectionNotes: string;
-  overviewDataSources: string;
 
   // --- Config display ---
-  configMeta: BadgeState;
   configMessage: { text: string; type: 'success' | 'error' | 'info' } | null;
   configFormData: ConfigFormData | null;
   configSaving: boolean;
@@ -210,20 +266,25 @@ export type RendererUiState = {
   installedPlugins: Set<string>;
   pluginHints: PluginHints;
   pluginInstallBusy: boolean;
-  pluginSetupStatus: string;
-  pluginInstallBtnLabel: string;
-  pluginInstallBtnDisabled: boolean;
-  pluginRefreshBtnDisabled: boolean;
 
   // --- Credits / Payments ---
+  /** Unreserved deposits — what a new channel reserve or a withdrawal draws on.
+      Payment gating reads this; the headline balance does not. */
   creditsAvailableUsdc: string;
   creditsReservedUsdc: string;
+  /** Everything on deposit (available + reserved). */
   creditsTotalUsdc: string;
+  /** Signed but not yet settled on-chain — spent in every sense but the ledger's. */
+  creditsPendingUsdc: string;
+  /** Total minus pending: the balance the user actually still owns. Headline. */
+  creditsSpendableUsdc: string;
   creditsCreditLimitUsdc: string;
   creditsEvmAddress: string | null;
   creditsOperatorAddress: string | null;
-  creditsLoading: boolean;
-  creditsLastRefreshedAt: number;
+  creditsBuyerUsage: DesktopBuyerUsageTotals | null;
+  creditsChannels: DesktopPaymentChannelSummary[];
+  creditsRewards: DesktopRewardsSummary | null;
+  creditsSummaryLoading: boolean;
 
   // --- Agent access / tool approval ---
   chatPermissionMode: ChatPermissionMode;
@@ -232,7 +293,6 @@ export type RendererUiState = {
 
   // --- Session approval ---
   chatPaymentApprovalVisible: boolean;
-  chatPaymentApprovalPeerId: string | null;
   chatPaymentApprovalPeerName: string | null;
   chatPaymentApprovalAmount: string;
   chatPaymentApprovalPeerInfo: {
@@ -252,10 +312,12 @@ export type RendererUiState = {
   // --- Chat display ---
   chatActiveConversation: string | null;
   chatOpeningConversationId: string | null;
-  chatConversationTitle: string;
   chatConversations: unknown[];
   chatConversationsLoaded: boolean;
   chatProxyPort: number;
+  /** Chat opens thin (compact window, no conversation list). The header
+      toggle expands the window to the standard preset and shows the panel. */
+  chatPanelExpanded: boolean;
   chatMessages: unknown[];
   chatStreamingMessage: ChatMessage | null;
   chatSending: boolean;
@@ -263,7 +325,6 @@ export type RendererUiState = {
   /** IDs of all conversations currently running a request, across the whole app. */
   chatSendingConversationIds: string[];
   chatError: string | null;
-  chatThreadMeta: string;
   chatRoutedPeer: string;
   chatRoutedPeerId: string;
   chatSessionStarted: string;
@@ -275,12 +336,25 @@ export type RendererUiState = {
   chatLifetimeSessions: string;
   chatServiceOptions: ChatServiceOptionEntry[];
   discoverRows: DiscoverRow[];
+  /**
+   * `discoverRows` minus every seller the peer allow/block rules exclude.
+   * Every browse and routing surface reads this; `discoverRows` stays complete
+   * so the Manage-sellers modal can still list the peers being excluded.
+   */
+  vprRoutableRows: DiscoverRow[];
+  vprModelCatalog: VprModelCatalogEntry[];
+  vprRouteSelection: VprRouteSelection;
+  /** Remembered seller pin per model (`provider:serviceId` -> peer id), so a
+   * pinned model stays pinned across model switches. */
+  vprModelPins: Record<string, string>;
+  vprRoutingPreferences: VprRoutingPreferences;
+  /** Whether the detachable always-on-top pill window is currently open. */
+  vprFloatOpen: boolean;
+  /** Opt-in: pop the pill open on its own when routed traffic starts. */
+  vprFloatAutoOpen: boolean;
   chatDiscoverRowsLoaded: boolean;
   chatSelectedServiceValue: string;
   chatSelectedPeerId: string;
-  chatServiceStatus: BadgeState;
-  chatProxyStatus: BadgeState;
-  chatDeleteVisible: boolean;
   chatInputDisabled: boolean;
   chatSendDisabled: boolean;
   chatAbortVisible: boolean;
@@ -291,11 +365,8 @@ export type RendererUiState = {
   browserPreviewRequestId: number;
   chatWorkspacePath: string;
   chatWorkspaceDefaultPath: string;
-  chatWorkspaceGitStatus: ChatWorkspaceGitStatus;
 
   // --- Streaming indicator ---
-  chatStreamingIndicatorText: string;
-  chatStreamingActive: boolean;
   chatThinkingElapsedMs: number;
   chatWaitingForStream: boolean;
   chatThinkingPhase: string | null;
@@ -321,13 +392,14 @@ export function createInitialUiState(): RendererUiState {
     daemonState: null,
 
     // Runtime display
-    connectState: '',
     connectBadge: { tone: 'idle', label: 'Stopped' },
-    connectWarning: null,
     runtimeActivity: { tone: 'idle', message: 'Idle' },
 
     // Logs
     logs: [],
+
+    // Network reachability alert
+    networkAlert: 'none',
 
     // Overview
     overviewBadge: { tone: 'idle', label: 'Idle' },
@@ -341,11 +413,9 @@ export function createInitialUiState(): RendererUiState {
     overviewPeers: [],
 
     // Peers
-    peersMeta: { tone: 'idle', label: '0 peers' },
     peersMessage: 'Loading peer visibility...',
     lastPeers: [],
     peerSort: { key: 'reputation', dir: 'desc' },
-    peerFilter: '',
     lastDebugKey: '',
 
     // Connection
@@ -354,10 +424,8 @@ export function createInitialUiState(): RendererUiState {
     connectionNetwork: 'No network stats.',
     connectionSources: 'No data source info.',
     connectionNotes: 'No notes.',
-    overviewDataSources: '',
 
     // Config
-    configMeta: { tone: 'idle', label: 'Redacted' },
     configMessage: null,
     configFormData: null,
     configSaving: false,
@@ -367,20 +435,20 @@ export function createInitialUiState(): RendererUiState {
     installedPlugins: new Set<string>(),
     pluginHints: { router: null },
     pluginInstallBusy: false,
-    pluginSetupStatus: '',
-    pluginInstallBtnLabel: 'Install',
-    pluginInstallBtnDisabled: true,
-    pluginRefreshBtnDisabled: true,
 
     // Credits / Payments
     creditsAvailableUsdc: '0',
     creditsReservedUsdc: '0',
     creditsTotalUsdc: '0',
+    creditsPendingUsdc: '0',
+    creditsSpendableUsdc: '0',
     creditsCreditLimitUsdc: '0',
     creditsEvmAddress: null,
     creditsOperatorAddress: null,
-    creditsLoading: false,
-    creditsLastRefreshedAt: 0,
+    creditsBuyerUsage: null,
+    creditsChannels: [],
+    creditsRewards: null,
+    creditsSummaryLoading: false,
 
     // Agent access / tool approval
     chatPermissionMode: 'manual',
@@ -389,7 +457,6 @@ export function createInitialUiState(): RendererUiState {
 
     // Session approval
     chatPaymentApprovalVisible: false,
-    chatPaymentApprovalPeerId: null,
     chatPaymentApprovalPeerName: null,
     chatPaymentApprovalAmount: '1.00',
     chatPaymentApprovalPeerInfo: null,
@@ -403,17 +470,16 @@ export function createInitialUiState(): RendererUiState {
     // Chat
     chatActiveConversation: null,
     chatOpeningConversationId: null,
-    chatConversationTitle: 'Conversation',
     chatConversations: [],
     chatConversationsLoaded: false,
     chatProxyPort: 0,
+    chatPanelExpanded: false,
     chatMessages: [],
     chatStreamingMessage: null,
     chatSending: false,
     chatSendingConversationId: null,
     chatSendingConversationIds: [],
     chatError: null,
-    chatThreadMeta: 'No conversation selected',
     chatRoutedPeer: '',
     chatRoutedPeerId: '',
     chatSessionStarted: '',
@@ -425,12 +491,27 @@ export function createInitialUiState(): RendererUiState {
     chatLifetimeSessions: '',
     chatServiceOptions: [],
     discoverRows: [],
+    vprRoutableRows: [],
+    vprModelCatalog: [],
+    vprRouteSelection: {
+      model: null,
+      mode: 'auto',
+      peerId: null,
+    },
+    vprModelPins: {},
+    vprRoutingPreferences: {
+      autoRouting: true,
+      preferFreePeers: false,
+      maxInputUsdPerMillion: 25,
+      minTrustScore: 0,
+      allowedPeerIds: [],
+      blockedPeerIds: [],
+    },
+    vprFloatOpen: false,
+    vprFloatAutoOpen: false,
     chatDiscoverRowsLoaded: false,
     chatSelectedServiceValue: '',
     chatSelectedPeerId: '',
-    chatServiceStatus: { tone: 'idle', label: 'Services idle' },
-    chatProxyStatus: { tone: 'idle', label: 'Proxy offline' },
-    chatDeleteVisible: false,
     chatInputDisabled: false,
     chatSendDisabled: false,
     chatAbortVisible: false,
@@ -441,22 +522,8 @@ export function createInitialUiState(): RendererUiState {
     browserPreviewRequestId: 0,
     chatWorkspacePath: '',
     chatWorkspaceDefaultPath: '',
-    chatWorkspaceGitStatus: {
-      available: false,
-      rootPath: null,
-      branch: null,
-      isDetached: false,
-      ahead: 0,
-      behind: 0,
-      stagedFiles: 0,
-      modifiedFiles: 0,
-      untrackedFiles: 0,
-      error: null,
-    },
 
     // Streaming indicator
-    chatStreamingIndicatorText: '',
-    chatStreamingActive: false,
     chatThinkingElapsedMs: 0,
     chatWaitingForStream: false,
     chatThinkingPhase: null,

@@ -2,6 +2,18 @@
    SetupScreen — first-run installation screen
    =================================================================== */
 
+/* Nothing visible on top — just an invisible drag handle so the frameless
+   window can still be moved while setting up. */
+.dragStrip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 44px;
+  z-index: 10000;
+  -webkit-app-region: drag;
+}
+
 .container {
   position: fixed;
   inset: 0;
@@ -9,8 +21,6 @@
   justify-content: center;
   background: var(--bg-primary);
   z-index: 9999;
-  top: 44px;
-  bottom: 0;
 }
 
 .content {
@@ -24,9 +34,19 @@
   text-align: center;
 }
 
-.logo {
+/* Ant mark + "VPR" wordmark — the setup screen's only branding. */
+.brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
   margin-bottom: 28px;
-  opacity: 0.95;
+}
+
+.brandName {
+  color: var(--accent-green);
+  font-size: 20px;
+  font-weight: 700;
 }
 
 .title {
@@ -34,7 +54,6 @@
   font-weight: 600;
   color: var(--text-primary);
   margin: 0 0 8px;
-  letter-spacing: -0.01em;
 }
 
 .subtitle {
@@ -146,4 +165,22 @@
   border-radius: 50%;
   background: var(--accent-green);
   flex-shrink: 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Network trouble hint                                               */
+/* ------------------------------------------------------------------ */
+
+.networkHint {
+  max-width: 380px;
+  margin-top: 20px;
+  padding: 10px 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #fbbf24;
+  text-align: left;
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.2);
+  border-radius: 8px;
+  animation: fade-in 0.4s ease;
 }

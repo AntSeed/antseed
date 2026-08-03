@@ -8,6 +8,7 @@ import {
   computeOnChainReputationScore,
   decodeSweepRequest,
   type AntseedNode,
+  type BuyerSpendEvent,
   type PeerInfo,
   type PeerMetadata,
   type RequestStreamResponseMetadata,
@@ -32,7 +33,13 @@ import {
   summarizeRequestShape,
   summarizeErrorResponse,
   requestWantsStreaming,
+  parsePeerPinnedService,
   rewritePeerPinnedServiceInBody,
+  substituteRoutedModelAlias,
+  overrideRoutedModelInBody,
+  ROUTED_MODEL_ALIAS,
+  SYSTEM_PROXY_SOURCE_HEADER,
+  SYSTEM_ROUTED_MODEL_HEADER,
 } from './request-utils.js'
 import {
   getExplicitProviderOverride,
@@ -48,11 +55,20 @@ import {
   attachStreamingAntseedHeaders,
 } from './telemetry.js'
 import { DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from '../config/defaults.js'
+import {
+  extractConversationIdentity,
+  extractFirstUserSnippet,
+  isCompletionRequestPath,
+  isTitleGenerationRequest,
+  parseRequestBodyObject,
+} from './conversation-identity.js'
+import { ConversationStore } from './conversation-store.js'
+import { estimateAnthropicPromptTokens, isCountTokensPath } from './count-tokens.js'
 import { getCachedVerdict, runVerifier, verifierSupportFingerprint, type CachedVerdict, type VerifierPolicy, type SellerReach, type VerifyOutcome } from '../plugins/verifier.js'
 
 // Re-export for backward compatibility (used by tests and other consumers)
 export { selectCandidatePeersForRouting, type CandidatePeerRouteSelection } from './routing.js'
-export { parsePeerPinnedService, rewritePeerPinnedServiceInBody } from './request-utils.js'
+export { parsePeerPinnedService, rewritePeerPinnedServiceInBody, substituteRoutedModelAlias, ROUTED_MODEL_ALIAS } from './request-utils.js'
 
 export interface BuyerProxyConfig {
   port: number
@@ -115,6 +131,12 @@ export function isModelNotFoundResponse(response: SerializedHttpResponse): boole
  */
 const CARRY_FORWARD_TTL_MS = 2 * 60 * 60_000
 const PEER_FAILURE_WINDOW_MS = 5 * 60_000
+/**
+ * Requests kept in the spend-attribution map. Entries outlive their request on
+ * purpose (a seller-initiated auth can land after the response), so this is
+ * sized for in-flight plus recently-finished traffic, not for concurrency.
+ */
+const MAX_TRACKED_REQUEST_CONVERSATIONS = 512
 /** Min gap between background peer refreshes triggered by model_not_found responses. */
 const MODEL_NOT_FOUND_REFRESH_THROTTLE_MS = 30_000
 /** Verification is expensive; bound how many verdicts we retain (TTL = peer-cache TTL). */
@@ -410,6 +432,20 @@ export class BuyerProxy {
   private readonly _stateFile: string
   private _stateFileWatching = false
   private _pinnedPeer: string | null
+  /**
+   * Route substituted for the `antseed` model alias (`<peerId>@<service>`).
+   * Set via `POST /_antseed/route` (the desktop keeps it on the current VPR
+   * selection) and persisted in buyer.state.json like the session peer pin.
+   */
+  private _defaultRoutedModel: string | null = null
+  private _conversations!: ConversationStore
+  /**
+   * Wall-clock of the last model-request activity (dispatch or streamed
+   * frame). Exposed on /_antseed/buyer-usage so the desktop pill can show a
+   * live "traffic" signal without depending on debug logging. A single field
+   * write per frame — negligible next to the routing/payment/stream work.
+   */
+  private _lastModelActivityAt = 0
   private readonly _verifier?: VerifierPolicy
   private readonly _verifyCache = new Map<string, CachedVerdict>()
   private _stateWatchDebounce: ReturnType<typeof setTimeout> | null = null
@@ -421,11 +457,25 @@ export class BuyerProxy {
   private _cacheMutationEpoch = 0
   private _peerRefreshPromise: Promise<PeerInfo[]> | null = null
   private _lastStaleCacheLogAtMs = 0
+  private _startedAtMs = 0
+  /** After a network switch the DHT routing table can stay populated with stale
+      nodes, so repeated empty sweeps are the reachability signal — not node count. */
+  private _consecutiveEmptyDiscoveries = 0
   private _lastModelNotFoundRefreshAtMs = 0
   private _bgRefreshHandle: ReturnType<typeof setInterval> | null = null
   private _peerFailures: Map<string, PeerFailureEntry> = new Map()
   /** Latest relayer receipt per sweep authNonce, for CLI progress polling. */
   private readonly _sweepReceipts = new Map<string, SweepReceiptPayload>()
+
+  /**
+   * requestId -> the conversation that issued it, so the node's per-request
+   * spend events can be attributed to a chat. Only the proxy knows this
+   * mapping; the payment layer sees a seller and a request id.
+   *
+   * `counted` guards requestCount: one request can produce several spend
+   * deltas (buyer- and seller-initiated auth both advance the cumulative).
+   */
+  private readonly _requestConversations = new Map<string, { convId: string; counted: boolean }>()
 
   constructor(config: BuyerProxyConfig) {
     this._node = config.node
@@ -435,6 +485,7 @@ export class BuyerProxy {
     this._peerCacheTtlMs = Math.max(0, config.peerCacheTtlMs ?? Math.max(6 * 60_000, this._bgRefreshIntervalMs + 60_000))
     this._stateDir = config.dataDir
     this._stateFile = join(config.dataDir, 'buyer.state.json')
+    this._conversations = new ConversationStore(config.dataDir)
     this._pinnedPeer = config.pinnedPeerId?.toLowerCase() ?? null
     this._server = createServer((req, res) => {
       this._handleRequest(req, res).catch((err) => {
@@ -459,6 +510,15 @@ export class BuyerProxy {
       })
     }
 
+    const spendEventNode = this._node as AntseedNode & {
+      on?: (event: 'payment:spend', listener: (event: BuyerSpendEvent) => void) => unknown
+    }
+    if (typeof spendEventNode.on === 'function') {
+      spendEventNode.on('payment:spend', (event: BuyerSpendEvent) => {
+        this._attributeSpend(event)
+      })
+    }
+
     const eventNode = this._node as AntseedNode & {
       on?: (event: 'peers:discovered', listener: (peers: PeerInfo[]) => void) => unknown
     }
@@ -471,18 +531,50 @@ export class BuyerProxy {
     }
   }
 
+  /** Roll a signed spend delta into the conversation that triggered it. */
+  private _attributeSpend(event: BuyerSpendEvent): void {
+    if (!event.requestId) return
+    const entry = this._requestConversations.get(event.requestId)
+    if (!entry) return
+    this._conversations.addSpend(
+      entry.convId,
+      {
+        amountUsdc: event.amountUsdc,
+        inputTokens: event.inputTokens,
+        cachedInputTokens: event.cachedInputTokens,
+        outputTokens: event.outputTokens,
+      },
+      !entry.counted,
+    )
+    entry.counted = true
+  }
+
+  /**
+   * Remember which chat a request belongs to for the life of the request plus
+   * a grace window — the seller-initiated auth path can land just after the
+   * response is returned. Bounded so a leaked id can't grow the map forever.
+   */
+  private _trackRequestConversation(requestId: string, convId: string): void {
+    this._requestConversations.set(requestId, { convId, counted: false })
+    while (this._requestConversations.size > MAX_TRACKED_REQUEST_CONVERSATIONS) {
+      const oldest = this._requestConversations.keys().next().value
+      if (oldest === undefined) break
+      this._requestConversations.delete(oldest)
+    }
+  }
+
   async start(): Promise<void> {
+    this._startedAtMs = Date.now()
     // Hydrate the in-memory peer cache from the persisted state file BEFORE
     // the server starts accepting requests. This lets the first request after
     // startup route from the warm cache without blocking on DHT discovery.
     // The background refresh still runs to pick up fresh peers and IP changes.
     await this._hydratePeersFromStateFile()
-    // If the CLI didn't pass --peer, adopt whatever a previous
-    // `antseed buyer connection set --peer` wrote to buyer.state.json so the
-    // pin survives daemon restart.
-    if (this._pinnedPeer === null) {
-      await this._reloadSessionOverrides()
-    }
+    // Adopt persisted session overrides (peer pin, default routed model) so
+    // they survive daemon restart. A --peer CLI flag beats the persisted pin
+    // at startup; runtime `connection set` writes still take over via the
+    // state-file watcher.
+    await this._reloadSessionOverrides({ preservePeerPin: this._pinnedPeer !== null })
     await new Promise<void>((resolve, reject) => {
       this._server.once('error', reject)
       this._server.listen(this._port, '127.0.0.1', () => {
@@ -537,6 +629,7 @@ export class BuyerProxy {
       this._bgRefreshHandle = null
     }
     await this._writeStateFile('stopped')
+    await this._conversations.flush()
     return new Promise((resolve) => {
       this._server.close(() => resolve())
     })
@@ -563,18 +656,27 @@ export class BuyerProxy {
     }
   }
 
-  private async _reloadSessionOverrides(): Promise<void> {
+  private async _reloadSessionOverrides(opts: { preservePeerPin?: boolean } = {}): Promise<void> {
     try {
       const raw = await readFile(this._stateFile, 'utf-8')
       const parsed = JSON.parse(raw) as Record<string, unknown>
-      const pinnedPeer = typeof parsed.pinnedPeerId === 'string' && parsed.pinnedPeerId.trim().length > 0
-        ? parsed.pinnedPeerId.trim().toLowerCase()
-        : null
-      this._pinnedPeer = pinnedPeer
-      log(`Session overrides reloaded: peer=${pinnedPeer ?? 'none'}`)
+      if (!opts.preservePeerPin) {
+        const pinnedPeer = typeof parsed.pinnedPeerId === 'string' && parsed.pinnedPeerId.trim().length > 0
+          ? parsed.pinnedPeerId.trim().toLowerCase()
+          : null
+        this._pinnedPeer = pinnedPeer
+      }
+      const routedModel = typeof parsed.defaultRoutedModel === 'string' ? parsed.defaultRoutedModel.trim() : ''
+      this._defaultRoutedModel = parsePeerPinnedService(routedModel) ? routedModel : null
+      log(`Session overrides reloaded: peer=${this._pinnedPeer ?? 'none'} route=${this._defaultRoutedModel ?? 'none'}`)
     } catch {
       // state file unreadable; keep current values
     }
+  }
+
+  /** Stamp the last model-request activity time (dispatch or streamed frame). */
+  private _markModelActivity(): void {
+    this._lastModelActivityAt = Date.now()
   }
 
   /** Serialised read-modify-write to buyer.state.json. Returns the queued write promise. */
@@ -601,11 +703,11 @@ export class BuyerProxy {
   }
 
   private async _writeStateFile(state: 'connected' | 'stopped'): Promise<void> {
-    // When stopping, preserve whatever pinnedPeerId is already
+    // When stopping, preserve whatever session overrides are already
     // in the file — the debounce may have been cancelled before
     // _reloadSessionOverrides could commit the latest CLI-written values.
     const sessionOverrides = state === 'connected'
-      ? { pinnedPeerId: this._pinnedPeer }
+      ? { pinnedPeerId: this._pinnedPeer, defaultRoutedModel: this._defaultRoutedModel }
       : {}
     await this._mergeStateFile({
       state,
@@ -818,9 +920,11 @@ export class BuyerProxy {
     this._peerRefreshPromise = (async () => {
       const peers = await this._discoverPeersFromNetwork()
       if (peers.length > 0) {
+        this._consecutiveEmptyDiscoveries = 0
         this._replacePeers(peers)
         return peers
       }
+      this._consecutiveEmptyDiscoveries += 1
 
       const fallbackPeers = previousCachedPeers.length > 0 && this._cacheMutationEpoch === mutationEpochAtStart
         ? [...previousCachedPeers]
@@ -905,6 +1009,21 @@ export class BuyerProxy {
       return
     }
 
+    if (path === '/_antseed/status' && method === 'GET') {
+      // Network reachability snapshot for UI diagnostics.
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({
+        ok: true,
+        dhtNodeCount: this._node.dhtNodeCount,
+        consecutiveEmptyDiscoveries: this._consecutiveEmptyDiscoveries,
+        peerCount: this._cachedPeers.length,
+        peersUpdatedAt: this._cacheLastUpdatedAtMs > 0 ? this._cacheLastUpdatedAtMs : null,
+        startedAt: this._startedAtMs,
+        uptimeMs: this._startedAtMs > 0 ? Date.now() - this._startedAtMs : 0,
+      }))
+      return
+    }
+
     if (path === '/_antseed/peers/refresh' && method === 'POST') {
       try {
         const peers = await this._refreshPeersNow()
@@ -935,6 +1054,109 @@ export class BuyerProxy {
       }))
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ ok: true, peers: payload }))
+      return
+    }
+
+    if (path === '/_antseed/route' && method === 'GET') {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, model: this._defaultRoutedModel }))
+      return
+    }
+
+    if (path === '/_antseed/route' && method === 'POST') {
+      const chunks: Buffer[] = []
+      let totalSize = 0
+      for await (const chunk of req) {
+        totalSize += (chunk as Buffer).length
+        if (totalSize > 8192) {
+          res.writeHead(413, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: 'Request body too large' }))
+          return
+        }
+        chunks.push(chunk as Buffer)
+      }
+      let model: string
+      try {
+        const body = JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>
+        model = typeof body.model === 'string' ? body.model.trim() : ''
+      } catch {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'Invalid JSON body' }))
+        return
+      }
+      if (model.length > 0 && !parsePeerPinnedService(model)) {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'model must be "<peerId>@<service>" (or empty to clear)' }))
+        return
+      }
+      this._defaultRoutedModel = model.length > 0 ? model : null
+      await this._mergeStateFile({ defaultRoutedModel: this._defaultRoutedModel })
+      log(`Default routed model set: ${this._defaultRoutedModel ?? 'none'}`)
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, model: this._defaultRoutedModel }))
+      return
+    }
+
+    if (path === '/_antseed/conversations' && method === 'GET') {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, conversations: this._conversations.list() }))
+      return
+    }
+
+    if (path === '/_antseed/conversations/update' && method === 'POST') {
+      const chunks: Buffer[] = []
+      let totalSize = 0
+      for await (const chunk of req) {
+        totalSize += (chunk as Buffer).length
+        if (totalSize > 8192) {
+          res.writeHead(413, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: 'Request body too large' }))
+          return
+        }
+        chunks.push(chunk as Buffer)
+      }
+      let parsed: Record<string, unknown>
+      try {
+        parsed = JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>
+      } catch {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'Invalid JSON body' }))
+        return
+      }
+      const id = typeof parsed.id === 'string' ? parsed.id : ''
+      if (!id) {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'id is required' }))
+        return
+      }
+      if (parsed.delete === true) {
+        const removed = this._conversations.remove(id)
+        res.writeHead(removed ? 200 : 404, { 'content-type': 'application/json' })
+        res.end(JSON.stringify(removed ? { ok: true } : { ok: false, error: 'Unknown conversation' }))
+        return
+      }
+      let conversation = this._conversations.get(id)
+      if (!conversation) {
+        res.writeHead(404, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'Unknown conversation' }))
+        return
+      }
+      if ('pinnedModel' in parsed) {
+        const pin = typeof parsed.pinnedModel === 'string' ? parsed.pinnedModel.trim() : ''
+        if (pin.length > 0 && !parsePeerPinnedService(pin)) {
+          res.writeHead(400, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: 'pinnedModel must be "<peerId>@<service>" (or empty to clear)' }))
+          return
+        }
+        conversation = this._conversations.setPinnedModel(id, pin.length > 0 ? pin : null)
+        log(`Conversation ${id.slice(0, 40)} pin: ${pin || 'cleared'}`)
+      }
+      if ('label' in parsed) {
+        const label = typeof parsed.label === 'string' ? parsed.label : null
+        conversation = this._conversations.setLabel(id, label)
+      }
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, conversation }))
       return
     }
 
@@ -998,7 +1220,7 @@ export class BuyerProxy {
     if (path.startsWith('/_antseed/buyer-usage') && method === 'GET') {
       const totals = this._node.getBuyerUsageTotals()
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ ok: true, totals }))
+      res.end(JSON.stringify({ ok: true, totals, lastActivityAt: this._lastModelActivityAt || null }))
       return
     }
 
@@ -1011,8 +1233,11 @@ export class BuyerProxy {
       return
     }
 
-    // Broadcast a signed deposit-sweep request over the daemon's existing
-    // seller connections (see docs/protocol/spec/09-deposit-sweep.md).
+    // Offer a signed deposit-sweep request to the daemon's connected relayers
+    // one at a time (see docs/protocol/spec/09-deposit-sweep.md) — sequential
+    // dispatch keeps relayers from racing the same nonce and burning gas on
+    // reverted transactions. Responds only after a relayer accepts, every
+    // candidate declines, or the offer round runs out of peers.
     if (path === '/_antseed/sweep' && method === 'POST') {
       const chunks: Buffer[] = []
       let totalSize = 0
@@ -1028,10 +1253,10 @@ export class BuyerProxy {
       try {
         // Re-validate through the wire codec — same rules as inbound P2P frames.
         const payload = decodeSweepRequest(new Uint8Array(Buffer.concat(chunks)))
-        const sent = this._node.broadcastSweepRequest(payload)
-        log(`Sweep request ${payload.nonce.slice(0, 10)}... broadcast to ${sent} peer(s)`)
+        const { offered, accepted } = await this._node.dispatchSweepRequest(payload)
+        log(`Sweep request ${payload.nonce.slice(0, 10)}... offered to ${offered} peer(s), accepted=${accepted}`)
         res.writeHead(200, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ ok: true, sent }))
+        res.end(JSON.stringify({ ok: true, sent: offered, accepted }))
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         res.writeHead(400, { 'content-type': 'application/json' })
@@ -1130,6 +1355,18 @@ export class BuyerProxy {
     }
     const body = Buffer.concat(chunks)
 
+    // `/v1/messages/count_tokens` sits under the completion prefix but is not
+    // a turn — Anthropic tools call it before most turns to size the context.
+    // Answering it locally keeps it off the wire: routed to a seller it costs
+    // a full inference and answers in a shape the caller cannot read.
+    if (method === 'POST' && isCountTokensPath(normalizedPath)) {
+      const inputTokens = estimateAnthropicPromptTokens(new Uint8Array(body))
+      log(`count_tokens answered locally: ${inputTokens} tokens`)
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ input_tokens: inputTokens }))
+      return
+    }
+
     // Build serialized request
     const headers: Record<string, string> = {}
     for (const [key, value] of Object.entries(req.headers)) {
@@ -1141,6 +1378,11 @@ export class BuyerProxy {
     }
     // Remove host header (points to localhost, not the seller)
     delete headers['host']
+    // Internal marker from the system proxy: the body's model was assigned
+    // by the proxy's route rewrite, not chosen by the tool. Stripped here so
+    // it never reaches a seller.
+    const systemRoutedModel = headers[SYSTEM_ROUTED_MODEL_HEADER] === '1'
+    delete headers[SYSTEM_ROUTED_MODEL_HEADER]
 
     let serializedReq: SerializedHttpRequest = {
       requestId: randomUUID(),
@@ -1150,9 +1392,111 @@ export class BuyerProxy {
       body: new Uint8Array(body),
     }
 
-    // Snapshot the session peer pin before any await so a concurrent
+    // Snapshot the session overrides before any await so a concurrent
     // _reloadSessionOverrides() cannot change routing mid-request.
     const effectivePinnedPeer = this._pinnedPeer
+
+    // Per-chat routing: completion requests carry a stable per-conversation
+    // identity (see conversation-identity.ts). A chat pinned to a model
+    // overrides the session default when resolving the `antseed` alias;
+    // subagent sessions inherit their parent chat's pin. The default route
+    // only steers a chat's first request — the model that serves it becomes
+    // the chat's own pin (ConversationStore.touch), so changing the default
+    // later applies to new chats only.
+    const isConversationRequest = method === 'POST' && isCompletionRequestPath(path)
+    const conversationBody = isConversationRequest
+      ? parseRequestBodyObject(serializedReq.body, serializedReq.headers)
+      : null
+    const conversationIdentity = isConversationRequest
+      ? extractConversationIdentity(serializedReq.headers, conversationBody)
+      : null
+    // Internal marker from the system proxy: source profile used only for
+    // local conversation attribution. Stripped here so it never reaches a seller.
+    delete serializedReq.headers[SYSTEM_PROXY_SOURCE_HEADER]
+    const chatPinnedModel = conversationIdentity
+      ? this._conversations.getPinnedModel(conversationIdentity.tool, conversationIdentity.sessionKey)
+        ?? (conversationIdentity.parentSessionKey
+          ? this._conversations.getPinnedModel(conversationIdentity.tool, conversationIdentity.parentSessionKey)
+          : null)
+      : null
+    const effectiveRoutedModel = chatPinnedModel ?? this._defaultRoutedModel
+
+    // Resolve the `antseed` model alias to the session's default route first,
+    // so the regular `<peerId>@<service>` pin rewrite below picks up the
+    // substituted value. Tool configs written by the desktop carry the alias
+    // so route changes apply to running sessions without config rewrites.
+    const aliasResult = substituteRoutedModelAlias(serializedReq.body, serializedReq.headers, effectiveRoutedModel)
+    if (aliasResult.aliasRequested && !aliasResult.substituted) {
+      log(`Request rejected: model alias "${ROUTED_MODEL_ALIAS}" with no default route set`)
+      res.writeHead(400, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({
+        error: {
+          type: 'no_default_route',
+          code: 'no_default_route',
+          message: `Model "${ROUTED_MODEL_ALIAS}" routes to the model selected in AntStation, but no route is set. `
+            + 'Pick a model in the desktop app, or request "<peerId>@<model>" explicitly.',
+          param: 'model',
+        },
+      }))
+      return
+    }
+    if (aliasResult.substituted) {
+      serializedReq = { ...serializedReq, body: aliasResult.body, headers: aliasResult.headers }
+      log(`Model alias applied: ${ROUTED_MODEL_ALIAS} -> ${effectiveRoutedModel}${chatPinnedModel ? ' (chat pin)' : ''}`)
+    }
+
+    // System-proxy-intercepted tools can't carry the alias — the proxy
+    // rewrites their upstream model names to its connect-time route and
+    // marks the request. A chat pin must still win there, exactly as it
+    // does for alias-carrying configs; otherwise pinning a chat in the
+    // desktop silently does nothing for intercepted apps.
+    let chatPinOverrideApplied = false
+    if (systemRoutedModel && !aliasResult.aliasRequested && chatPinnedModel) {
+      const pinOverride = overrideRoutedModelInBody(serializedReq.body, serializedReq.headers, chatPinnedModel)
+      if (pinOverride.overridden) {
+        serializedReq = { ...serializedReq, body: pinOverride.body, headers: pinOverride.headers }
+        chatPinOverrideApplied = true
+        log(`Chat pin applied to system-routed model: -> ${chatPinnedModel}`)
+      }
+    }
+
+    // Track the conversation (subagent traffic rolls up into the parent
+    // chat). The snippet is only extracted the first time a chat is seen.
+    // A thread the tool opened for its own housekeeping is routed and paid
+    // for normally, but is not a chat — Codex titles every new chat from one.
+    if (conversationIdentity?.isUserThread) {
+      const rawModel = typeof conversationBody?.['model'] === 'string' ? conversationBody['model'] : ''
+      const resolvedModel = aliasResult.substituted
+        ? effectiveRoutedModel
+        : chatPinOverrideApplied
+          ? chatPinnedModel
+          : (parsePeerPinnedService(rawModel) ? rawModel : null)
+      const trackedKey = conversationIdentity.parentSessionKey ?? conversationIdentity.sessionKey
+      const known = this._conversations.get(`${conversationIdentity.tool}:${trackedKey}`)
+      // A title turn runs on the tool's own small model and races ahead of the
+      // first real turn, so it must not become the chat's model: that pin
+      // outranks the default route for every later turn, which would strand
+      // the whole session on a model the user never picked.
+      const titleTurn = isTitleGenerationRequest(conversationBody)
+      const snippet = known?.snippet ? null : extractFirstUserSnippet(conversationBody)
+      // Some tools (T3/Claude) fire title-only requests when a new chat opens.
+      // Route them normally, but do not create a blank AntSeed conversation row
+      // until the first genuine user turn arrives.
+      if (known || !titleTurn) {
+        const tracked = this._conversations.touch({
+          tool: conversationIdentity.tool,
+          sessionKey: trackedKey,
+          // Extract until a label sticks: a tool's title-generation request can
+          // race ahead of the first real turn and create the row snippet-less.
+          snippet,
+          lastModel: titleTurn ? null : resolvedModel,
+        })
+        // Bind the request to the chat so its cost can be attributed when the
+        // payment layer signs for it (see _attributeSpend).
+        this._trackRequestConversation(serializedReq.requestId, tracked.id)
+      }
+    }
+
     const {
       body: servicePinBody,
       headers: servicePinHeaders,
@@ -1594,6 +1938,7 @@ export class BuyerProxy {
       log(`Outbound request shape: ${summarizeRequestShape(requestForPeer)}`)
     }
     log(`Routing to peer ${selectedPeer.peerId.slice(0, 12)}...`)
+    this._markModelActivity()
 
     // Forward through P2P
     const wantsStreaming = clientWantsStreaming
@@ -1626,6 +1971,7 @@ export class BuyerProxy {
           },
           onResponseChunk: (chunk: SerializedHttpResponseChunk) => {
             if (!streamed) return
+            this._markModelActivity()
             const adaptedChunks = streamResponseAdapter
               ? streamResponseAdapter.adaptChunk(chunk)
               : [chunk]
@@ -1726,6 +2072,7 @@ export class BuyerProxy {
           response = inject402PeerId(response, selectedPeer.peerId)
         }
         const latencyMs = Date.now() - startTime
+        this._markModelActivity()
 
         log(`Response: ${response.statusCode} (${latencyMs}ms, ${response.body.length} bytes)`)
         if (response.statusCode >= 400) {

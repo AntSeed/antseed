@@ -34,10 +34,12 @@ function identityFromHex(hex: string): Identity {
 
 // Returned when identity.enc exists but cannot be decrypted with the current
 // safeStorage key. On macOS, safeStorage's encryption key lives in a keychain
-// entry named after the app's productName ("<productName> Safe Storage"), so a
-// rename of the app rotates the key and makes a previously-written identity.enc
-// undecryptable. This MUST be distinguished from "file absent" — treating it as
-// absent and creating a fresh identity would silently destroy the signer key.
+// entry named after the app's runtime name set via app.setName() ("<name> Safe
+// Storage" — INTERNAL_APP_NAME in main.ts, NOT the electron-builder
+// productName). Changing that runtime name rotates the key and makes a
+// previously-written identity.enc undecryptable. This MUST be distinguished
+// from "file absent" — treating it as absent and creating a fresh identity
+// would silently destroy the signer key.
 const UNDECRYPTABLE = Symbol('undecryptable-identity');
 
 async function loadEncryptedIdentity(): Promise<string | null | typeof UNDECRYPTABLE> {
@@ -60,7 +62,7 @@ async function loadEncryptedIdentity(): Promise<string | null | typeof UNDECRYPT
 
 // Preserve an undecryptable identity.enc before it gets overwritten, so the
 // original ciphertext can still be recovered later (e.g. by restoring the
-// original productName, which brings back the matching keychain key).
+// original app.setName() value, which brings back the matching keychain key).
 async function backupUndecryptableIdentity(): Promise<string | null> {
   const backupPath = `${ENCRYPTED_IDENTITY_PATH}.bak-${Date.now()}`;
   try {
@@ -114,10 +116,10 @@ export async function ensureSecureIdentity(): Promise<void> {
         const backup = await backupUndecryptableIdentity();
         console.error(
           `[desktop] identity at ${ENCRYPTED_IDENTITY_PATH} could not be decrypted with the current safeStorage key. ` +
-          `This usually means the app's productName changed, which rotates the macOS keychain key. ` +
+          `This usually means the app's runtime name (app.setName / INTERNAL_APP_NAME) changed, which rotates the macOS keychain key. ` +
           `Refusing to overwrite it to avoid destroying the signer.` +
           (backup ? ` A copy was saved to ${backup}.` : '') +
-          ` Restore the original productName (or a matching identity.enc) to recover the original signer.`
+          ` Restore the original app.setName value (or a matching identity.enc) to recover the original signer.`
         );
         return;
       }
@@ -178,4 +180,46 @@ export async function ensureSecureIdentity(): Promise<void> {
 
 export function getSecureIdentity(): Identity | null {
   return secureIdentity;
+}
+
+export function exportIdentityPrivateKeyHex(): string | null {
+  if (!secureIdentity) return null;
+  return bytesToHex(secureIdentity.privateKey);
+}
+
+// Preserve the current encrypted identity before an import overwrites it, so
+// the previous signer stays recoverable from disk.
+async function backupIdentityBeforeImport(): Promise<string | null> {
+  const backupPath = `${ENCRYPTED_IDENTITY_PATH}.bak-${Date.now()}`;
+  try {
+    await copyFile(ENCRYPTED_IDENTITY_PATH, backupPath);
+    return backupPath;
+  } catch {
+    return null; // No existing identity file — nothing to back up.
+  }
+}
+
+export async function importIdentityPrivateKeyHex(rawKey: string): Promise<{
+  ok: boolean;
+  address?: string;
+  backupPath?: string | null;
+  error?: string;
+}> {
+  if (!safeStorageAvailable()) {
+    return { ok: false, error: 'Secure storage is not available on this system.' };
+  }
+  const hex = rawKey.trim().replace(/^0x/i, '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(hex)) {
+    return { ok: false, error: 'Invalid private key: expected 64 hex characters (with or without a 0x prefix).' };
+  }
+  let identity: Identity;
+  try {
+    identity = identityFromHex(hex);
+  } catch (err) {
+    return { ok: false, error: `Invalid private key: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  const backupPath = await backupIdentityBeforeImport();
+  await saveEncryptedIdentity(hex);
+  secureIdentity = identity;
+  return { ok: true, address: identity.wallet.address, backupPath };
 }

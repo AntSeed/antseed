@@ -30,10 +30,6 @@ name: Release Desktop
 #   Windows (optional, for signed installers):
 #     WIN_CSC_LINK              base64 of a .pfx
 #     WIN_CSC_KEY_PASSWORD      password for the .pfx
-#   Desktop profile config (optional):
-#     ANTSEED_SYSTEM_PROXY_PROFILES_JSON_B64
-#                               base64 of the private System Proxy profile JSON.
-#                               If unset, the packaged app ships with [].
 #
 # Publishing auth uses the built-in GITHUB_TOKEN (contents: write).
 
@@ -88,25 +84,6 @@ jobs:
           pnpm run build:tier1
           pnpm run build:tier2
           pnpm run build:tier3
-
-      - name: Write private desktop System Proxy profiles
-        env:
-          ANTSEED_SYSTEM_PROXY_PROFILES_JSON_B64: ${{ secrets.ANTSEED_SYSTEM_PROXY_PROFILES_JSON_B64 }}
-          PROFILE_FILE: apps/desktop/build/system-proxy-profiles.json
-        run: |
-          set -euo pipefail
-          if [ -z "${ANTSEED_SYSTEM_PROXY_PROFILES_JSON_B64:-}" ]; then
-            echo "No private desktop System Proxy profiles secret configured; using empty packaged profile list."
-            printf '[]\n' > "$PROFILE_FILE"
-            exit 0
-          fi
-          node - <<'NODE'
-          const fs = require('fs');
-          const file = process.env.PROFILE_FILE;
-          const json = Buffer.from(process.env.ANTSEED_SYSTEM_PROXY_PROFILES_JSON_B64 || '', 'base64').toString('utf8');
-          JSON.parse(json);
-          fs.writeFileSync(file, json.endsWith('\n') ? json : `${json}\n`);
-          NODE
 
       - name: Write Apple API key to disk
         # electron-builder's notarization expects APPLE_API_KEY to be a
@@ -186,25 +163,6 @@ jobs:
           pnpm run build:tier3
         shell: pwsh
 
-      - name: Write private desktop System Proxy profiles
-        env:
-          ANTSEED_SYSTEM_PROXY_PROFILES_JSON_B64: ${{ secrets.ANTSEED_SYSTEM_PROXY_PROFILES_JSON_B64 }}
-          PROFILE_FILE: apps/desktop/build/system-proxy-profiles.json
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:ANTSEED_SYSTEM_PROXY_PROFILES_JSON_B64)) {
-            Write-Host "No private desktop System Proxy profiles secret configured; using empty packaged profile list."
-            Set-Content -Path $env:PROFILE_FILE -Value "[]" -Encoding UTF8
-            exit 0
-          }
-          $bytes = [Convert]::FromBase64String($env:ANTSEED_SYSTEM_PROXY_PROFILES_JSON_B64)
-          $json = [Text.Encoding]::UTF8.GetString($bytes)
-          $null = $json | ConvertFrom-Json
-          if (-not $json.EndsWith("`n")) {
-            $json = "$json`n"
-          }
-          Set-Content -Path $env:PROFILE_FILE -Value $json -NoNewline -Encoding UTF8
-        shell: pwsh
-
       - name: Build & publish desktop (Windows)
         working-directory: apps/desktop
         env:
@@ -230,3 +188,63 @@ jobs:
             apps/desktop/release/latest*.yml
           if-no-files-found: warn
           retention-days: 14
+
+  # Keep the rolling `alpha` release pointing at the newest prerelease build,
+  # under fixed asset names, so a single shareable link
+  # (releases/download/alpha/AntSeed-VPR-alpha-arm64.dmg) always serves the
+  # latest alpha. Prerelease + non-semver tag, so electron-updater and stable
+  # users never see it. Runs after the platform jobs and pulls the installers
+  # from the just-published versioned release (drafts included) — the local
+  # build outputs are not reliable by the end of a job (the mac x64 files
+  # disappear from disk), the release assets are.
+  mirror-alpha:
+    name: Mirror to rolling alpha release
+    needs: [mac, win]
+    # Run when nothing failed, at least one platform published, and this is a
+    # real publish (not a dry run). A platform skipped via the `platforms`
+    # input must not block the mirror.
+    if: >-
+      !cancelled() &&
+      inputs.dry_run != true &&
+      needs.mac.result != 'failure' &&
+      needs.win.result != 'failure' &&
+      (needs.mac.result == 'success' || needs.win.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Mirror installers to the rolling alpha release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./apps/desktop/package.json').version")
+          case "$version" in
+            *-*) ;;
+            *) echo "Stable version $version — skipping alpha mirror"; exit 0 ;;
+          esac
+          mkdir -p alpha
+          for pair in \
+            "AntSeed-VPR-${version}-arm64.dmg:AntSeed-VPR-alpha-arm64.dmg" \
+            "AntSeed-VPR-${version}.dmg:AntSeed-VPR-alpha.dmg" \
+            "AntSeed-VPR-Setup-${version}.exe:AntSeed-VPR-Setup-alpha.exe"; do
+            src="${pair%%:*}"; dst="${pair##*:}"
+            if gh release download "v${version}" -p "$src" --dir alpha --clobber; then
+              mv "alpha/$src" "alpha/$dst"
+            else
+              echo "Asset $src not on v${version} (platform skipped this run) — keeping the previous alpha copy"
+            fi
+          done
+          if [ -z "$(ls -A alpha)" ]; then
+            echo "No installers to mirror"; exit 0
+          fi
+          if ! gh release view alpha >/dev/null 2>&1; then
+            gh release create alpha --prerelease --title "AntSeed VPR alpha (rolling)" \
+              --notes "Rolling prerelease — always the latest alpha build."
+          fi
+          gh release upload alpha alpha/* --clobber
+          gh release edit alpha --prerelease --draft=false \
+            --notes "Rolling prerelease — always the latest alpha build. Currently mirrors v${version}."

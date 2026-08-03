@@ -27,6 +27,124 @@ This project uses selective package publishing. Each release entry lists the pub
 - Fixed the buyer's Responses→Chat Completions request adapter to group parallel tool calls into a single assistant `tool_calls` message. Previously each call became its own assistant message, so strict chat-completions upstreams rejected multi-tool turns with `an assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'`.
 - Fixed the Responses request normalizer to drop non-message input items with no renderable text (e.g. Codex `reasoning` items) instead of converting them into empty user messages mid-history.
 
+## 2026-08-03 — Desktop beta
+
+### Desktop
+
+- `@antseed/desktop@0.2.0`
+
+### Changed
+
+- AntSeed VPR graduates from alpha to beta and becomes the recommended desktop build, replacing AntStation 0.1.114 as the latest release. Existing AntStation installs auto-update to it; alpha-channel installs graduate to it.
+- Highlights since 0.1.114: in-app deposit flow (QR → hot wallet → sponsored sweep, with live status), per-chat model routing with conversation pins and float-pill chat/model dropdowns, Telegram bridge over the local agent, network reachability diagnostics surfaced as a banner, opt-in update downloads with staged macOS installs, and large idle CPU reductions in the main process and compositor.
+- The Fun checkout CTA and the Stripe payment option are hidden for the beta; the deposit chooser lists the USDC options directly.
+
+## 2026-08-01 — Desktop alpha: quiet update-check errors
+
+### Desktop
+
+- `@antseed/desktop@0.1.115-alpha.29` (prerelease)
+
+### Fixed
+
+- Transient network errors no longer raise a red "Update failed" banner. Background update checks that fail (e.g. `net::ERR_NETWORK_CHANGED` when a VPN toggles or WiFi switches mid-check) are logged and silently retried on the next periodic check, and an interrupted update download quietly retries up to five times — the retry budget resets whenever bytes flow again, so long downloads survive flaky networks. Real failures (retries exhausted, non-network errors, or errors while installing) still surface as before.
+
+## 2026-08-01 — Desktop alpha: opt-in update downloads
+
+### Desktop
+
+- `@antseed/desktop@0.1.115-alpha.28` (prerelease)
+
+### Changed
+
+- Update downloads are now opt-in: detecting a new version shows an "Update available" banner with a Download button instead of fetching hundreds of megabytes automatically. Download progress, background verification, and the "Restart & update" step follow only after clicking. Dismissing the banner hides it for the current session; it returns the next time the app opens until the update is taken.
+- The Home usage card shows the measured savings amount without the percentage suffix.
+- The bundled runtime picks up the latest payment and protocol work from main, including buyer-requested cooperative channel close, seller channel-recovery fixes, and the parallel-tool-call adapter fix (see Unreleased for the package-level details).
+
+## 2026-07-31 — Desktop alpha: deposit chooser polish, faster update handoff
+
+### Desktop
+
+- `@antseed/desktop@0.1.115-alpha.27` (prerelease)
+
+### Changed
+
+- Deposit chooser polish: single-line option rows with tighter padding — USDC on Base, USDC from any chain (Meridian behind the scenes, with ETH/Arbitrum/BNB/Polygon chain badges), and Stripe with its official mark. The main CTA now reads just "Deposit", and the verbose trust card is replaced by a compact strip: payment/crypto icon row, the encrypted/non-custodial line, and a pay-per-request line.
+- Faster, clearer macOS updates: the "Update available" button now appears only after the update is fully staged and signature-verified in the background, so clicking "Restart & update" goes straight to the final bundle swap instead of silently stalling for tens of seconds. The update watchdog also steps in after ~2–6 seconds instead of a fixed wait, and a system notification ("Installing the update — the app will reopen shortly") covers the brief gap while the app is closed.
+
+## 2026-07-31 — Desktop alpha: deposit chooser, model browsing, wallet pages in browser
+
+### Desktop
+
+- `@antseed/desktop@0.1.115-alpha.26` (prerelease)
+
+### Added
+
+- Redesigned the deposit page around a Fun-branded primary option, with everything else behind a "More options" expander: USDC on Base (QR flow), Meridian (crypto, cross-chain), and AntSeed Pay (Stripe card checkout), each with official brand marks, payment-network badges, and a non-custodial trust line.
+- Browsing models from Explore no longer changes the active route — the model page's new "Use" button is what applies it, and a "Start chat" link always opens a fresh conversation on the chosen model. The applied model's page shows a checkmark, and category tags self-fit into a single line with a +N chip.
+
+### Changed
+
+- Wallet pay pages (deposit, withdraw, authorize, claims, channel close) and the card-purchase page now open in a regular browser tab in the default browser instead of a chromeless app-mode window.
+
+## 2026-07-30 — Desktop alpha: reliable macOS update installs
+
+### Desktop
+
+- `@antseed/desktop@0.1.115-alpha.25` (prerelease)
+
+### Fixed
+
+- macOS updates now install reliably even when launchd declines to auto-start Squirrel's ShipIt helper (seen on machines where Background Task Management doesn't recognize the renamed app, leaving the update staged but never installed). Before quitting for an update, the app spawns a detached watchdog that waits for the app to exit and starts the installer itself if launchd didn't — kickstarting the registered job or running the helper directly. The `alpha.23` approach of clearing the previous ShipIt registration is removed: it made the fresh registration fail outright.
+
+## 2026-07-30 — Desktop alpha: simpler tray menu
+
+### Desktop
+
+- `@antseed/desktop@0.1.115-alpha.24` (prerelease)
+
+### Changed
+
+- The menu-bar tray menu is now three actions — show the app, show the floating window, and Connect/Disconnect — replacing the old peer/model/per-app submenus, and it stays in sync with the runtime state. The Connect/Disconnect entry toggles the main routing runtime, and "Show Floating Window" opens the app first when no window is up.
+- Preferences copy: the floating-window auto-open setting now reads "Show on traffic".
+
+## 2026-07-30 — Desktop alpha: fix silent macOS update installs
+
+### Desktop
+
+- `@antseed/desktop@0.1.115-alpha.23` (prerelease)
+
+### Fixed
+
+- Fixed a macOS auto-update failure where clicking "Restart & update" quit the app but never installed the update or relaunched. A ShipIt launchd job left registered by a previous update (observed after the AntSeed Desktop → AntSeed VPR rename) made launchd accept Squirrel's fresh submission without ever starting the installer helper. The install handler now clears any existing `com.antseed.desktop.ShipIt` registration before handing off to Squirrel. If a machine hits this once more on the way to this version, the pending install can be completed with `launchctl kickstart gui/$(id -u)/com.antseed.desktop.ShipIt` or by simply relaunching the app.
+
+## 2026-07-30 — Desktop alpha: connect toggle for set-up apps
+
+### Desktop
+
+- `@antseed/desktop@0.1.115-alpha.22` (prerelease)
+
+### Added
+
+- Connected Apps rows now show an on/off toggle for apps that have been set up before, so reconnecting a previously configured tool is one click instead of re-running Connect. The set of ever-connected apps (`setupProfileNames`) persists across app restarts and proxy stops, including state files written by older builds.
+- Disconnecting an app now restarts it so it immediately drops the proxy configuration instead of keeping stale settings until its next manual restart.
+
+## 2026-07-30 — Desktop alpha: network trouble alerts + visible auto-updates
+
+### Desktop
+
+- `@antseed/desktop@0.1.115-alpha.21` (prerelease)
+
+### Added
+
+- Desktop now detects and explains why the peer-to-peer network is unreachable instead of silently looking connected. A banner distinguishes three cases: no internet connection, a firewall/VPN blocking peer-to-peer (UDP) traffic, and being on the network but finding no providers. The first-launch setup screen shows the same hint when peer discovery stalls, and the Home power button renders as off while the network is unreachable.
+- Detection is driven by a new `GET /_antseed/status` buyer-proxy endpoint reporting the DHT routing-table size and consecutive empty discovery sweeps (blocked UDP produces no errors — lookups silently return nothing, and cached peers keep rendering as online). Grace periods cover DHT bootstrap after startup and re-bootstrap after connectivity returns, so the alerts don't flash during normal recovery.
+- Auto-updates are visible again: a banner shows download progress, an "Update available — Restart & update" action when the new version is ready, and failure details on error. The update UI had been lost in the VPR shell redesign — updates downloaded and installed on quit, but nothing in the app ever showed them.
+
+### Fixed
+
+- Alpha prerelease versioning switched from `-alpha-0.N` to `-alpha.N` so installed alphas auto-update to newer prereleases and graduate to stable releases when one is published. Installs of `0.1.115-alpha-0.20` and earlier can't see the new format — install this release manually once; updates are automatic from then on.
+
 ## 2026-07-16 — Gasless deposit sweep live on Base mainnet
 
 ### Published
@@ -50,6 +168,7 @@ This project uses selective package publishing. Each release entry lists the pub
 - Added `depositRelayAddress` to chain-config presets, EIP-3009 signing helpers (`buildReceiveAuthorization`, `makeUsdcDomain` with an on-chain `DOMAIN_SEPARATOR()` verification guard), and a `DepositRelayClient` to `@antseed/node`.
 - Added a macOS menu bar icon for Desktop with quick actions to show or quit AntSeed.
 - Added System Proxy commands to the CLI and a Desktop System Proxy view/tray controls for connecting supported local tools through AntSeed.
+- Added T3 Code to Desktop Connected Apps, creating a managed AntSeed Claude provider that routes its models through the local buyer proxy.
 - Added Desktop runtime log source filters and buyer debug log filtering via `antseed buyer start --log-filter` / `ANTSEED_LOG_FILTER`.
 - Added Desktop peer favicons from verified domains, showing fetched site icons in Discover and chat peer avatars when available.
 - Added zero-price free usage authorization for advertised free services, including buyer-signed P2P usage records, seller on-chain reporting through `AntseedFreeUsage`, and CLI configuration for the deployed free usage contract address.
@@ -63,6 +182,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
+- Set generated model metadata for supported connected tools and CLI wrappers to a 280,000-token context window, with an 8,192-token output limit where the tool supports one.
 - Changed API adapter streaming transforms to use canonical stream events with per-protocol normalizers and renderers, so new stream protocols can be added without pairwise routes.
 - Changed Desktop renderer navigation to load only the active view, preload likely next views, and show a lightweight loading state while lazily loaded pages resolve.
 - Reduced the default buyer response-auth evidence sample rate from 20% to 0.5% to limit local `verification_samples` growth during high-request sessions.
@@ -71,6 +191,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Fixed the Desktop Telegram bridge so `/model` offers the same curated list as the in-app model dropdown (starred favorites first, then the recommended lineup, routed to the same sellers), and so models outside the buyer pricing policy are never offered or kept as the default route — previously a stored route to an over-priced seller made every Telegram message fail with a routing-policy 502.
 - Fixed the DIEM staking site so wallet transactions explicitly switch to and execute on Base mainnet instead of following a wallet that remains on Ethereum mainnet.
 - Fixed Desktop auto-update failures so download and install errors appear in the title bar with copyable details, and fixed macOS Quit so the first menu action exits after cleanup instead of requiring a second click.
 - Fixed buyer response-auth timeout warnings for non-inference probes and sellers that do not advertise response-auth support.

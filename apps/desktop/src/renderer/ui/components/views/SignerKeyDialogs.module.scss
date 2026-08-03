@@ -1,0 +1,93 @@
+.dialogBody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.body {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(var(--warning-rgb), 0.4);
+  border-radius: 8px;
+  background: rgba(var(--warning-rgb), 0.12);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.warning svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--accent-yellow);
+}
+
+.error {
+  margin: 0;
+  color: var(--accent-red, #d64545);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.path {
+  overflow-wrap: anywhere;
+}
+
+.backupLink {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent-green);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.backupLink:hover {
+  color: var(--brand);
+}
+
+.keyInput {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-family: monospace;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.keyInput:focus {
+  outline: none;
+  border-color: var(--border-strong);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}

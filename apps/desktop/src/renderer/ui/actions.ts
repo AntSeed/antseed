@@ -1,4 +1,4 @@
-import type { ConfigFormData } from '../core/state';
+import type { ConfigFormData, VprPeerListing, VprRoutingPreferences } from '../core/state';
 import type { ChatPermissionMode, RawChatAttachment, ToolApprovalDecision } from '../types/bridge';
 
 export type AppActions = {
@@ -22,18 +22,30 @@ export type AppActions = {
   handleServiceFocus: () => void;
   handleServiceBlur: () => void;
   clearPinnedPeer: () => void;
+  selectVprModel: (provider: string, serviceId: string, peerId?: string | null) => void;
+  clearVprPinnedPeer: () => void;
+  /**
+   * Remember (or forget, with null) a seller pin for a model without applying
+   * the model — used while browsing a model page that isn't the active route.
+   * selectVprModel picks the remembered pin up when the model is applied.
+   */
+  setVprModelSellerPin: (provider: string, serviceId: string, peerId: string | null) => void;
+  updateVprRoutingPreferences: (patch: Partial<VprRoutingPreferences>) => void;
+  setVprPeerListing: (peerId: string, listing: VprPeerListing) => void;
   setChatPermissionMode: (mode: ChatPermissionMode) => void;
   decideToolApproval: (decision: ToolApprovalDecision, requestId?: string) => void;
   rejectPaymentSession: () => void;
   retryAfterPayment: () => void;
-  requestChannelClose: () => void;
-  refreshCredits: () => void;
+  refreshCredits: () => Promise<void>;
+  refreshPaymentSummary: (force?: boolean) => Promise<void>;
   refreshWorkspace: () => Promise<void>;
-  refreshWorkspaceGitStatus: () => Promise<void>;
   chooseWorkspace: () => Promise<void>;
   refreshPlugins: () => Promise<void>;
   installPlugin: () => Promise<void>;
-  openPaymentsPortal?: (tab?: string) => void;
+  /** Open the floating pill (always lands with the chat dropdown expanded). */
+  openVprFloat?: (profileName?: string) => Promise<void>;
+  closeVprFloat?: () => Promise<void>;
+  setVprFloatAutoOpen?: (enabled: boolean) => void;
 };
 
 let _actions: AppActions | null = null;

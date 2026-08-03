@@ -1,23 +1,11 @@
 import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
-import { HugeiconsIcon } from '@hugeicons/react';
-import { Sun02Icon } from '@hugeicons/core-free-icons';
-import { Moon02Icon } from '@hugeicons/core-free-icons';
-import { Button } from '@antseed/ui';
 import { AntStationLogo } from './AntStationLogo';
-import { shallowEqual, useUiSelector } from '../hooks/useUiSelector';
-import { useActions } from '../hooks/useActions';
 import type { UpdateStatus } from '../../types/bridge';
 import styles from './TitleBar.module.scss';
 
-const THEME_STORAGE_KEY = 'antseed:theme';
 const DEFAULT_UPDATE_INSTALL_HINT = 'Quit AntSeed, reopen, and try again.';
 
 export function TitleBar() {
-  const [isDark, setIsDark] = useState(() => {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY);
-    if (saved !== null) return saved === 'dark';
-    return document.body.classList.contains('dark-theme');
-  });
   const [updateState, setUpdateState] = useState<
     UpdateStatus | null
   >(null);
@@ -25,15 +13,6 @@ export function TitleBar() {
   const [detailsCopied, setDetailsCopied] = useState(false);
   const updateErrorFromEventRef = useRef(false);
   const updateErrorWrapRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (isDark) {
-      document.body.classList.add('dark-theme');
-    } else {
-      document.body.classList.remove('dark-theme');
-    }
-    localStorage.setItem(THEME_STORAGE_KEY, isDark ? 'dark' : 'light');
-  }, [isDark]);
 
   useEffect(() => {
     const bridge = window.antseedDesktop;
@@ -112,46 +91,6 @@ export function TitleBar() {
       setDetailsCopied(false);
     });
   }, [updateState]);
-
-  const {
-    creditsAvailableUsdc,
-    creditsReservedUsdc,
-    creditsOperatorAddress,
-    creditsEvmAddress,
-  } = useUiSelector((state) => ({
-    creditsAvailableUsdc: state.creditsAvailableUsdc,
-    creditsReservedUsdc: state.creditsReservedUsdc,
-    creditsOperatorAddress: state.creditsOperatorAddress,
-    creditsEvmAddress: state.creditsEvmAddress,
-  }), shallowEqual);
-  const actions = useActions();
-  const [creditsDropdownOpen, setCreditsDropdownOpen] = useState(false);
-
-  const creditsDisplay = parseFloat(creditsAvailableUsdc) > 0
-    ? `$${parseFloat(creditsAvailableUsdc).toFixed(2)}`
-    : '$0.00';
-
-  const handleManageCredits = useCallback(() => {
-    setCreditsDropdownOpen(false);
-    actions.openPaymentsPortal?.();
-  }, [actions]);
-
-  const handleDepositCredits = useCallback(() => {
-    setCreditsDropdownOpen(false);
-    actions.openPaymentsPortal?.('deposit');
-  }, [actions]);
-
-  useEffect(() => {
-    if (!creditsDropdownOpen) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest(`.${styles.titleBarCreditsWrapper}`)) {
-        setCreditsDropdownOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [creditsDropdownOpen]);
 
   useEffect(() => {
     if (!errorDetailsOpen || updateState?.status !== 'error') return;
@@ -246,86 +185,11 @@ export function TitleBar() {
       <div className={styles.titleBarLeft}>
         <AntStationLogo height={20} className={styles.titleBarLogo} />
       </div>
-      <div className={styles.titleBarRight}>
-        {updateControl && (
-          <div className={styles.titleBarCenter}>
-            {updateControl}
-          </div>
-        )}
-        <div className={styles.titleBarCreditsWrapper}>
-          <button
-            className={styles.titleBarCreditsBtn}
-            onClick={() => setCreditsDropdownOpen((prev) => !prev)}
-            aria-label={`Credits: ${creditsDisplay}`}
-            title="Credits balance"
-          >
-            {creditsDisplay}
-          </button>
-          {creditsDropdownOpen && (
-            <div className={styles.titleBarCreditsDropdown}>
-              <div className={styles.creditsDropdownSection}>
-                <div className={styles.creditsDropdownRow}>
-                  <span className={styles.creditsDropdownLabel}>Available</span>
-                  <span className={styles.creditsDropdownValue}>{creditsDisplay}</span>
-                </div>
-                <div className={styles.creditsDropdownRow}>
-                  <span className={styles.creditsDropdownLabel}>Reserved</span>
-                  <span className={styles.creditsDropdownValueMuted}>${parseFloat(creditsReservedUsdc).toFixed(2)}</span>
-                </div>
-              </div>
-              <div className={styles.creditsDropdownSection}>
-                <div className={styles.creditsDropdownRow}>
-                  <span className={styles.creditsDropdownLabel}>Your Wallet</span>
-                  {creditsOperatorAddress ? (
-                    <span className={styles.creditsDropdownValueGreen}>
-                      {creditsOperatorAddress.slice(0, 6)}...{creditsOperatorAddress.slice(-4)}
-                    </span>
-                  ) : (
-                    <span className={styles.creditsDropdownValueWarn}>Not set</span>
-                  )}
-                </div>
-                {creditsEvmAddress && (
-                  <div className={styles.creditsDropdownRow}>
-                    <span className={styles.creditsDropdownLabel}>Your Signer</span>
-                    <span className={styles.creditsDropdownValueMuted}>
-                      {creditsEvmAddress.slice(0, 6)}...{creditsEvmAddress.slice(-4)}
-                    </span>
-                  </div>
-                )}
-              </div>
-              <div className={styles.creditsDropdownActions}>
-                <Button
-                  className={styles.creditsDropdownManageBtn}
-                  size="sm"
-                  variant="outline"
-                  onClick={handleManageCredits}
-                >
-                  Portal
-                </Button>
-                <Button
-                  className={styles.creditsDropdownAddBtn}
-                  size="sm"
-                  onClick={handleDepositCredits}
-                >
-                  Deposit
-                </Button>
-              </div>
-            </div>
-          )}
+      {updateControl && (
+        <div className={styles.titleBarCenter}>
+          {updateControl}
         </div>
-        <button
-          className={styles.titleBarThemeToggle}
-          onClick={() => setIsDark((d) => !d)}
-          aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
-          title={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
-        >
-          <HugeiconsIcon
-            icon={isDark ? Sun02Icon : Moon02Icon}
-            size={16}
-            strokeWidth={1.5}
-          />
-        </button>
-      </div>
+      )}
     </header>
   );
 }

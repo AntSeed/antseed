@@ -4,6 +4,11 @@ import { transformRequest } from '../src/request-transform.js';
 import { transformResponse } from '../src/response-transform.js';
 import { createStreamingAdapter } from '../src/stream-transform.js';
 import {
+  DEFAULT_ANTHROPIC_MAX_TOKENS,
+  normalizeAnthropicMessagesRequestBody,
+  renderCanonicalRequestToAnthropicMessagesBody,
+} from '../src/canonical.js';
+import {
   detectRequestServiceApiProtocol,
   inferProviderDefaultServiceApiProtocols,
   selectTargetProtocolForRequest,
@@ -218,6 +223,76 @@ describe('transformRequest anthropic to chat', () => {
     });
   });
 
+  it('preserves anthropic image blocks when rendering chat completions', () => {
+    const transformed = transformRequest(makeRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'claude-sonnet',
+        max_tokens: 128,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: 'What is in this image?' },
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'aW1hZ2U=' } },
+          ],
+        }],
+      })),
+    }), { from: 'anthropic-messages', to: 'openai-chat-completions' });
+    expect(transformed).not.toBeNull();
+
+    const body = JSON.parse(new TextDecoder().decode(transformed!.request.body)) as { messages: Array<{ content: unknown }> };
+    expect(body.messages[0]!.content).toEqual([
+      { type: 'text', text: 'What is in this image?' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,aW1hZ2U=' } },
+    ]);
+  });
+
+  it('preserves chat image URLs when rendering anthropic messages', () => {
+    const transformed = transformRequest(makeRequest({
+      path: '/v1/chat/completions',
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4o',
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Describe this' },
+            { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,anBn' } },
+          ],
+        }],
+      })),
+    }), { from: 'openai-chat-completions', to: 'anthropic-messages' });
+    expect(transformed).not.toBeNull();
+
+    const body = JSON.parse(new TextDecoder().decode(transformed!.request.body)) as { messages: Array<{ content: unknown[] }> };
+    expect(body.messages[0]!.content).toEqual([
+      { type: 'text', text: 'Describe this' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'anBn' } },
+    ]);
+  });
+
+  it('preserves responses input images when rendering anthropic messages', () => {
+    const transformed = transformRequest(makeRequest({
+      path: '/v1/responses',
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4o',
+        input: [{
+          type: 'message',
+          role: 'user',
+          content: [
+            { type: 'input_text', text: 'Describe this' },
+            { type: 'input_image', image_url: 'data:image/webp;base64,d2VicA==' },
+          ],
+        }],
+      })),
+    }), { from: 'openai-responses', to: 'anthropic-messages' });
+    expect(transformed).not.toBeNull();
+
+    const body = JSON.parse(new TextDecoder().decode(transformed!.request.body)) as { messages: Array<{ content: unknown[] }> };
+    expect(body.messages[0]!.content).toEqual([
+      { type: 'text', text: 'Describe this' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/webp', data: 'd2VicA==' } },
+    ]);
+  });
+
   it('preserves mixed assistant text and tool calls in one chat message', () => {
     const transformed = transformRequest(makeRequest({
       body: new TextEncoder().encode(JSON.stringify({
@@ -244,6 +319,115 @@ describe('transformRequest anthropic to chat', () => {
         function: { name: 'search', arguments: '{"q":"antseed"}' },
       }],
     }]);
+  });
+});
+
+describe('prompt cache breakpoints', () => {
+  const decode = (body: Uint8Array): Record<string, unknown> =>
+    JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
+  const long = 'The repository holds the protocol SDK, plugins, a CLI and a desktop app. '.repeat(120);
+  const anthropicRequest = (body: Record<string, unknown>): SerializedHttpRequest =>
+    makeRequest({ body: new TextEncoder().encode(JSON.stringify(body)) });
+  const responsesRequest = (body: Record<string, unknown>): SerializedHttpRequest =>
+    makeRequest({ path: '/v1/responses', body: new TextEncoder().encode(JSON.stringify(body)) });
+
+  it('carries an anthropic session identity to a chat-completions cache key', () => {
+    const transformed = transformRequest(anthropicRequest({
+      model: 'claude-sonnet',
+      max_tokens: 128,
+      messages: [{ role: 'user', content: 'hello' }],
+      metadata: { user_id: 'user_abc_session_f00d' },
+    }), { from: 'anthropic-messages', to: 'openai-chat-completions' });
+
+    expect(decode(transformed!.request.body).prompt_cache_key).toBe('user_abc_session_f00d');
+  });
+
+  it('omits the chat-completions cache key when the request has no session identity', () => {
+    const transformed = transformRequest(anthropicRequest({
+      model: 'claude-sonnet',
+      max_tokens: 128,
+      messages: [{ role: 'user', content: 'hello' }],
+    }), { from: 'anthropic-messages', to: 'openai-chat-completions' });
+
+    expect(decode(transformed!.request.body).prompt_cache_key).toBeUndefined();
+  });
+
+  it('gives an anthropic seller breakpoints a responses client never declares', () => {
+    const transformed = transformRequest(responsesRequest({
+      model: 'gpt-5',
+      instructions: `You are a coding agent. ${long}`,
+      input: [{ role: 'user', content: [{ type: 'input_text', text: long }] }],
+    }), { from: 'openai-responses', to: 'anthropic-messages' });
+
+    const body = decode(transformed!.request.body);
+    expect(body.system).toEqual([{
+      type: 'text',
+      text: `You are a coding agent. ${long}`,
+      cache_control: { type: 'ephemeral' },
+    }]);
+    // The last turn closes the prefix, so the next turn reads all of it back.
+    const messages = body.messages as Array<{ content: Array<Record<string, unknown>> }>;
+    expect(messages.at(-1)!.content.at(-1)!.cache_control).toEqual({ type: 'ephemeral' });
+  });
+
+  it('marks the tools when an anthropic seller gets no system prompt', () => {
+    const transformed = transformRequest(responsesRequest({
+      model: 'gpt-5',
+      tools: [{ type: 'function', name: 'write', description: long, parameters: { type: 'object' } }],
+      input: [{ role: 'user', content: [{ type: 'input_text', text: long }] }],
+    }), { from: 'openai-responses', to: 'anthropic-messages' });
+
+    const body = decode(transformed!.request.body);
+    expect((body.tools as Array<Record<string, unknown>>).at(-1)!.cache_control).toEqual({ type: 'ephemeral' });
+  });
+
+  it('leaves a short prompt unmarked — a cache write there costs more than it saves', () => {
+    const transformed = transformRequest(responsesRequest({
+      model: 'gpt-5',
+      instructions: 'You are terse.',
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'hi' }] }],
+    }), { from: 'openai-responses', to: 'anthropic-messages' });
+
+    const body = decode(transformed!.request.body);
+    expect(body.system).toBe('You are terse.');
+    expect(JSON.stringify(body)).not.toContain('cache_control');
+  });
+
+  it('reproduces the breakpoints a client declared rather than synthesizing new ones', () => {
+    // Same-protocol requests are passed through untouched, so exercise the
+    // round trip directly: a client that declares breakpoints must get back
+    // exactly those positions, not the standard pair.
+    const canonical = normalizeAnthropicMessagesRequestBody({
+      model: 'claude-sonnet',
+      max_tokens: 128,
+      system: [
+        { type: 'text', text: 'You are a coding agent.' },
+        { type: 'text', text: long, cache_control: { type: 'ephemeral' } },
+      ],
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: long, cache_control: { type: 'ephemeral' } }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'noted' }] },
+        { role: 'user', content: [{ type: 'text', text: 'and now?' }] },
+      ],
+    });
+    expect(canonical.cacheBreakpoints).toEqual({ instructions: true, tools: false, inputIndices: [0] });
+
+    const rendered = renderCanonicalRequestToAnthropicMessagesBody(canonical);
+    const messages = rendered.messages as Array<{ content: Array<Record<string, unknown>> }>;
+    expect((rendered.system as Array<Record<string, unknown>>)[0]!.cache_control).toEqual({ type: 'ephemeral' });
+    expect(messages[0]!.content[0]!.cache_control).toEqual({ type: 'ephemeral' });
+    // The client left the final turn unmarked — it stays unmarked.
+    expect(messages.at(-1)!.content.at(-1)!.cache_control).toBeUndefined();
+  });
+
+  it('records no breakpoints for an anthropic request that declares none', () => {
+    const canonical = normalizeAnthropicMessagesRequestBody({
+      model: 'claude-sonnet',
+      max_tokens: 128,
+      system: 'be helpful',
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+    expect(canonical.cacheBreakpoints).toBeUndefined();
   });
 });
 
@@ -289,8 +473,8 @@ describe('transformRequest anthropic to responses', () => {
     expect(body.stream).toBe(true);
     expect(body.max_output_tokens).toBe(256);
     expect(body.stop).toEqual(['END']);
-    expect(body.metadata).toEqual({ trace: 'abc' });
-    expect(body.user).toBe('user-123');
+    expect(body.metadata).toBeUndefined();
+    expect(body.user).toBeUndefined();
     expect(body.prompt_cache_key).toBe('user-123');
     expect(body.tool_choice).toEqual({ type: 'function', name: 'write' });
     expect(body.tools).toEqual([{
@@ -326,6 +510,8 @@ describe('transformRequest anthropic to responses', () => {
 
     const body = JSON.parse(new TextDecoder().decode(transformed!.request.body)) as Record<string, unknown>;
     expect(body.prompt_cache_key).toBe('user_abc_session_f00d');
+    expect(body.metadata).toBeUndefined();
+    expect(body.user).toBeUndefined();
   });
 
   it('omits prompt_cache_key when the anthropic request has no session identity', () => {
@@ -957,6 +1143,30 @@ describe('transformRequest responses to chat', () => {
     });
   });
 
+  it('keeps parallel tool calls in one assistant message followed by their results', () => {
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        input: [
+          { type: 'function_call', call_id: 'get_goal:0', name: 'get_goal', arguments: '{}' },
+          { type: 'function_call', call_id: 'search:1', name: 'search', arguments: '{"q":"antseed"}' },
+          { type: 'function_call_output', call_id: 'get_goal:0', output: 'ship it' },
+          { type: 'function_call_output', call_id: 'search:1', output: 'done' },
+        ],
+      })),
+    });
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+    const messages = body.messages as Array<Record<string, unknown>>;
+
+    expect(messages).toHaveLength(3);
+    expect(messages[0].role).toBe('assistant');
+    expect((messages[0].tool_calls as Array<Record<string, unknown>>).map((call) => call.id))
+      .toEqual(['get_goal:0', 'search:1']);
+    expect(messages[1]).toEqual({ role: 'tool', tool_call_id: 'get_goal:0', content: 'ship it' });
+    expect(messages[2]).toEqual({ role: 'tool', tool_call_id: 'search:1', content: 'done' });
+  });
+
   it('groups parallel function calls into a single assistant tool_calls message', () => {
     const request = makeResponsesRequest({
       body: new TextEncoder().encode(JSON.stringify({
@@ -1001,6 +1211,27 @@ describe('transformRequest responses to chat', () => {
     expect(messages[0]).toEqual({ role: 'user', content: 'hi' });
     expect(messages[1].role).toBe('assistant');
     expect(messages[2].role).toBe('tool');
+  });
+
+  it('drops reasoning items so they cannot split a tool call from its result', () => {
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        input: [
+          { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+          { type: 'reasoning', id: 'rs_1', summary: [] },
+          { type: 'function_call', call_id: 'get_goal:0', name: 'get_goal', arguments: '{}' },
+          { type: 'reasoning', id: 'rs_2', summary: [] },
+          { type: 'function_call_output', call_id: 'get_goal:0', output: 'ship it' },
+        ],
+      })),
+    });
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+    const messages = body.messages as Array<Record<string, unknown>>;
+
+    expect(messages.map((message) => message.role)).toEqual(['user', 'assistant', 'tool']);
+    expect(messages[2]).toEqual({ role: 'tool', tool_call_id: 'get_goal:0', content: 'ship it' });
   });
 
   it('returns null for unsupported request protocols', () => {
@@ -1059,6 +1290,36 @@ describe('transformRequest responses to anthropic', () => {
         content: [{ type: 'tool_result', tool_use_id: 'call_search_1', content: 'done' }],
       },
     ]);
+  });
+
+  it('defaults max_tokens when the responses request omits max_output_tokens', () => {
+    const result = transformRequest(makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        input: [{ role: 'user', content: [{ type: 'input_text', text: 'hello' }] }],
+      })),
+    }), { from: 'openai-responses', to: 'anthropic-messages' });
+    expect(result).not.toBeNull();
+
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+    expect(body.max_tokens).toBe(DEFAULT_ANTHROPIC_MAX_TOKENS);
+  });
+
+  it('defaults max_tokens when the chat completions request omits max_tokens', () => {
+    const result = transformRequest({
+      requestId: 'req-chat-no-max',
+      method: 'POST',
+      path: '/v1/chat/completions',
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        messages: [{ role: 'user', content: 'hello' }],
+      })),
+    }, { from: 'openai-chat-completions', to: 'anthropic-messages' });
+    expect(result).not.toBeNull();
+
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+    expect(body.max_tokens).toBe(DEFAULT_ANTHROPIC_MAX_TOKENS);
   });
 });
 

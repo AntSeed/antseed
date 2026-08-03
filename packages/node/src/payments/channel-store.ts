@@ -73,6 +73,17 @@ export interface StoredChannelServiceTotal {
   updatedAt: number;
 }
 
+/** Per-service usage aggregated across all of a buyer's channels (paid + free).
+    `serviceId` is the keccak hash of the service name (see getServiceMetadataId). */
+export interface BuyerServiceUsageTotal {
+  serviceId: string;
+  amountUsdc: string; // bigint as string (base units)
+  inputTokens: string; // bigint as string
+  cachedInputTokens: string; // bigint as string
+  outputTokens: string; // bigint as string
+  requestCount: number;
+}
+
 export class ChannelStore {
   private _db: Database.Database;
 
@@ -503,6 +514,57 @@ export class ChannelStore {
   getServiceTotals(sessionId: string): StoredChannelServiceTotal[] {
     const rows = this._stmts.getServiceTotals.all(sessionId) as ServiceTotalRow[];
     return rows.map(rowToServiceTotal);
+  }
+
+  /**
+   * Aggregate per-service usage across every channel owned by `buyerEvmAddr`
+   * (all statuses, paid and free). Values are summed as bigints in JS — the
+   * columns are TEXT-encoded bigints, so SQL SUM would silently lose precision.
+   */
+  getBuyerServiceUsageTotals(buyerEvmAddr: string): BuyerServiceUsageTotal[] {
+    const rows = this._db
+      .prepare(`
+        SELECT t.service_id, t.cumulative_amount, t.cumulative_input_tokens,
+               t.cumulative_cached_input_tokens, t.cumulative_output_tokens,
+               t.cumulative_request_count
+        FROM payment_channel_service_totals t
+        JOIN payment_channels c ON c.session_id = t.session_id
+        WHERE c.role = ? AND c.buyer_evm_addr = ?
+      `)
+      .all(CHANNEL_ROLE.BUYER, buyerEvmAddr) as Array<{
+        service_id: string;
+        cumulative_amount: string;
+        cumulative_input_tokens: string;
+        cumulative_cached_input_tokens: string;
+        cumulative_output_tokens: string;
+        cumulative_request_count: string;
+      }>;
+
+    const byService = new Map<string, {
+      amount: bigint; input: bigint; cached: bigint; output: bigint; requests: bigint;
+    }>();
+    const toBigInt = (value: string): bigint => {
+      try { return BigInt(value || '0'); } catch { return 0n; }
+    };
+    for (const row of rows) {
+      const entry = byService.get(row.service_id) ?? {
+        amount: 0n, input: 0n, cached: 0n, output: 0n, requests: 0n,
+      };
+      entry.amount += toBigInt(row.cumulative_amount);
+      entry.input += toBigInt(row.cumulative_input_tokens);
+      entry.cached += toBigInt(row.cumulative_cached_input_tokens);
+      entry.output += toBigInt(row.cumulative_output_tokens);
+      entry.requests += toBigInt(row.cumulative_request_count);
+      byService.set(row.service_id, entry);
+    }
+    return Array.from(byService.entries()).map(([serviceId, entry]) => ({
+      serviceId,
+      amountUsdc: entry.amount.toString(),
+      inputTokens: entry.input.toString(),
+      cachedInputTokens: entry.cached.toString(),
+      outputTokens: entry.output.toString(),
+      requestCount: Number(entry.requests),
+    }));
   }
 
   getMetadataServiceTotals(sessionId: string): SpendingAuthServiceMetadata[] {

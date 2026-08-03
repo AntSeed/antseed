@@ -1,12 +1,17 @@
 import type { PeerInfo, SerializedHttpRequest } from '@antseed/node'
-import { toNonNegativeInt } from '@antseed/api-adapter'
+import { extractUsage, toNonNegativeInt } from '@antseed/api-adapter'
 import { pickProviderForPeer } from './routing.js'
 import { extractRequestedService } from './request-utils.js'
 
 const decoder = new TextDecoder()
 
 export type TokenUsageSummary = {
+  /** Total input tokens, cache hits included. */
   inputTokens: number
+  /** Input tokens billed at the full rate (total minus cache hits). */
+  freshInputTokens: number
+  /** Input tokens served from the provider's prompt cache. */
+  cachedInputTokens: number
   outputTokens: number
   totalTokens: number
   source: 'usage' | 'estimated'
@@ -17,6 +22,7 @@ type RoutingPricing = {
   service: string | null
   inputUsdPerMillion: number | null
   outputUsdPerMillion: number | null
+  cachedInputUsdPerMillion: number | null
 }
 
 export type ResponseTelemetry = {
@@ -25,10 +31,33 @@ export type ResponseTelemetry = {
   estimatedCostUsd: number | null
 }
 
-function parseUsageObject(value: unknown): { inputTokens: number; outputTokens: number; totalTokens: number } {
+type UsageCounts = {
+  inputTokens: number
+  freshInputTokens: number
+  cachedInputTokens: number
+  outputTokens: number
+  totalTokens: number
+}
+
+const EMPTY_USAGE: UsageCounts = {
+  inputTokens: 0,
+  freshInputTokens: 0,
+  cachedInputTokens: 0,
+  outputTokens: 0,
+  totalTokens: 0,
+}
+
+function parseUsageObject(value: unknown): UsageCounts {
   if (!value || typeof value !== 'object') {
-    return { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+    return EMPTY_USAGE
   }
+
+  // Cache hits arrive in two shapes — a subset of the input count (OpenAI) or
+  // a sibling of it (Anthropic). The metering layer already discriminates
+  // between them, so reuse it rather than guessing here: without the split,
+  // a cached OpenAI response bills every cache hit at the full input rate and
+  // a cached Anthropic response bills none of them at all.
+  const canonical = extractUsage({ usage: value })
 
   const usage = value as Record<string, unknown>
   const total = toNonNegativeInt(usage.totalTokens ?? usage.total_tokens ?? usage.total_token_count)
@@ -51,6 +80,12 @@ function parseUsageObject(value: unknown): { inputTokens: number; outputTokens: 
     ?? usage.completion_token_count,
   )
 
+  // Prefer the canonical counts whenever the provider reported usage in a
+  // shape the metering layer understands; the loose key matching above only
+  // covers the stragglers that report nothing recognizable.
+  if (canonical.inputTokens > 0) input = canonical.inputTokens
+  if (canonical.outputTokens > 0) output = canonical.outputTokens
+
   if (total > 0) {
     if (input === 0 && output === 0) {
       output = total
@@ -61,8 +96,11 @@ function parseUsageObject(value: unknown): { inputTokens: number; outputTokens: 
     }
   }
 
+  const cachedInputTokens = Math.min(canonical.cachedInputTokens, input)
   return {
     inputTokens: input,
+    freshInputTokens: Math.max(0, input - cachedInputTokens),
+    cachedInputTokens,
     outputTokens: output,
     totalTokens: input + output,
   }
@@ -76,18 +114,21 @@ function estimateTokensFromBytes(inputBytes: number, outputBytes: number): Token
   const outputTokens = Math.max(1, Math.round(Math.max(0, outputBytes) / BYTES_PER_TOKEN_ESTIMATE))
   return {
     inputTokens,
+    freshInputTokens: inputTokens,
+    cachedInputTokens: 0,
     outputTokens,
     totalTokens: inputTokens + outputTokens,
     source: 'estimated',
   }
 }
 
-function parseSseUsage(body: Uint8Array): { inputTokens: number; outputTokens: number; totalTokens: number } {
+function parseSseUsage(body: Uint8Array): UsageCounts {
   const text = decoder.decode(body)
   const lines = text.split('\n')
   let inputTokens = 0
   let outputTokens = 0
   let totalTokens = 0
+  let cachedInputTokens = 0
 
   for (const line of lines) {
     const trimmed = line.trim()
@@ -108,6 +149,7 @@ function parseSseUsage(body: Uint8Array): { inputTokens: number; outputTokens: n
       inputTokens = Math.max(inputTokens, directUsage.inputTokens)
       outputTokens = Math.max(outputTokens, directUsage.outputTokens)
       totalTokens = Math.max(totalTokens, directUsage.totalTokens)
+      cachedInputTokens = Math.max(cachedInputTokens, directUsage.cachedInputTokens)
     }
 
     const message = parsed.message
@@ -116,6 +158,7 @@ function parseSseUsage(body: Uint8Array): { inputTokens: number; outputTokens: n
       inputTokens = Math.max(inputTokens, messageUsage.inputTokens)
       outputTokens = Math.max(outputTokens, messageUsage.outputTokens)
       totalTokens = Math.max(totalTokens, messageUsage.totalTokens)
+      cachedInputTokens = Math.max(cachedInputTokens, messageUsage.cachedInputTokens)
     }
   }
 
@@ -123,10 +166,17 @@ function parseSseUsage(body: Uint8Array): { inputTokens: number; outputTokens: n
     totalTokens = inputTokens + outputTokens
   }
 
-  return { inputTokens, outputTokens, totalTokens }
+  const cached = Math.min(cachedInputTokens, inputTokens)
+  return {
+    inputTokens,
+    freshInputTokens: Math.max(0, inputTokens - cached),
+    cachedInputTokens: cached,
+    outputTokens,
+    totalTokens,
+  }
 }
 
-function parseJsonUsage(body: Uint8Array): { inputTokens: number; outputTokens: number; totalTokens: number } {
+function parseJsonUsage(body: Uint8Array): UsageCounts {
   try {
     const parsed = JSON.parse(decoder.decode(body)) as Record<string, unknown>
     const direct = parseUsageObject(parsed.usage)
@@ -150,9 +200,9 @@ function parseJsonUsage(body: Uint8Array): { inputTokens: number; outputTokens: 
       }
     }
 
-    return { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+    return EMPTY_USAGE
   } catch {
-    return { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+    return EMPTY_USAGE
   }
 }
 
@@ -181,7 +231,13 @@ function setPeerIdentityHeaders(headers: Record<string, string>, selectedPeer: P
   }
 }
 
-function resolvePeerPricing(peer: PeerInfo, provider: string, service: string | null): { inputUsdPerMillion: number | null; outputUsdPerMillion: number | null } {
+type ResolvedPricing = {
+  inputUsdPerMillion: number | null
+  outputUsdPerMillion: number | null
+  cachedInputUsdPerMillion: number | null
+}
+
+function resolvePeerPricing(peer: PeerInfo, provider: string, service: string | null): ResolvedPricing {
   const providerPricing = peer.providerPricing?.[provider]
   if (providerPricing) {
     const servicePricing = service ? providerPricing.services?.[service] : undefined
@@ -189,17 +245,20 @@ function resolvePeerPricing(peer: PeerInfo, provider: string, service: string | 
       return {
         inputUsdPerMillion: toFiniteNumberOrNull(servicePricing.inputUsdPerMillion),
         outputUsdPerMillion: toFiniteNumberOrNull(servicePricing.outputUsdPerMillion),
+        cachedInputUsdPerMillion: toFiniteNumberOrNull(servicePricing.cachedInputUsdPerMillion),
       }
     }
     return {
       inputUsdPerMillion: toFiniteNumberOrNull(providerPricing.defaults.inputUsdPerMillion),
       outputUsdPerMillion: toFiniteNumberOrNull(providerPricing.defaults.outputUsdPerMillion),
+      cachedInputUsdPerMillion: toFiniteNumberOrNull(providerPricing.defaults.cachedInputUsdPerMillion),
     }
   }
 
   return {
     inputUsdPerMillion: toFiniteNumberOrNull(peer.defaultInputUsdPerMillion),
     outputUsdPerMillion: toFiniteNumberOrNull(peer.defaultOutputUsdPerMillion),
+    cachedInputUsdPerMillion: toFiniteNumberOrNull(peer.defaultCachedInputUsdPerMillion),
   }
 }
 
@@ -220,12 +279,7 @@ export function computeResponseTelemetry(
 
   let usage: TokenUsageSummary
   if (usageFromBody.totalTokens > 0) {
-    usage = {
-      inputTokens: usageFromBody.inputTokens,
-      outputTokens: usageFromBody.outputTokens,
-      totalTokens: usageFromBody.totalTokens,
-      source: 'usage',
-    }
+    usage = { ...usageFromBody, source: 'usage' }
   } else {
     usage = estimateTokensFromBytes(request.body.length, responseBody.length)
   }
@@ -237,8 +291,14 @@ export function computeResponseTelemetry(
     Number.isFinite(pricing.inputUsdPerMillion) &&
     Number.isFinite(pricing.outputUsdPerMillion)
   ) {
-    estimatedCostUsd =
-      (usage.inputTokens * pricing.inputUsdPerMillion + usage.outputTokens * pricing.outputUsdPerMillion) / 1_000_000
+    // Sellers meter cache hits at their own rate; a seller that advertises no
+    // cached rate charges them as fresh input.
+    const cachedUsdPerMillion = pricing.cachedInputUsdPerMillion ?? pricing.inputUsdPerMillion
+    estimatedCostUsd = (
+      usage.freshInputTokens * pricing.inputUsdPerMillion
+      + usage.cachedInputTokens * cachedUsdPerMillion
+      + usage.outputTokens * pricing.outputUsdPerMillion
+    ) / 1_000_000
   }
 
   return {
@@ -248,6 +308,7 @@ export function computeResponseTelemetry(
       service,
       inputUsdPerMillion: pricing.inputUsdPerMillion,
       outputUsdPerMillion: pricing.outputUsdPerMillion,
+      cachedInputUsdPerMillion: pricing.cachedInputUsdPerMillion,
     },
     estimatedCostUsd,
   }
@@ -273,8 +334,10 @@ export function attachAntseedTelemetryHeaders(
   }
   setFiniteNumberHeader(headers, 'x-antseed-input-usd-per-million', telemetry.pricing.inputUsdPerMillion)
   setFiniteNumberHeader(headers, 'x-antseed-output-usd-per-million', telemetry.pricing.outputUsdPerMillion)
+  setFiniteNumberHeader(headers, 'x-antseed-cached-input-usd-per-million', telemetry.pricing.cachedInputUsdPerMillion)
   headers['x-antseed-token-source'] = telemetry.usage.source
   headers['x-antseed-input-tokens'] = String(telemetry.usage.inputTokens)
+  headers['x-antseed-cached-input-tokens'] = String(telemetry.usage.cachedInputTokens)
   headers['x-antseed-output-tokens'] = String(telemetry.usage.outputTokens)
   headers['x-antseed-total-tokens'] = String(telemetry.usage.totalTokens)
   if (telemetry.estimatedCostUsd !== null && Number.isFinite(telemetry.estimatedCostUsd)) {
