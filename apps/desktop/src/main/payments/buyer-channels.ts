@@ -243,3 +243,4 @@ export async function getPendingSpendUsdc(): Promise<bigint> {
   if (!channels) return cachedPendingSpend;
   return notePendingSpend(channels);
 }
+

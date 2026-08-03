@@ -279,8 +279,8 @@ function adaptBuyerFaultErrorResponse(
     ? {
         type: 'error',
         error: {
-          type: reason ?? 'api_error',
-          message: markedMessage,
+          type: 'api_error',
+          message: reason ? `${markedMessage} (${reason})` : markedMessage,
         },
       }
     : {

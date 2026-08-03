@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { readPeerHealth } from './peer-cache.js';
+import { readPeerHealth } from './peer-health.js';
 
 const NOW = 1_700_000_000_000;
 

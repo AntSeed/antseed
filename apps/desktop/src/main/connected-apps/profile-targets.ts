@@ -125,3 +125,4 @@ export function readInstalledAppTarget(value: unknown): AppLaunchTarget | null {
   if (!['.app', '.lnk', '.exe'].includes(extension) || !existsSync(appPath)) return null;
   return { name: appName, path: appPath };
 }
+

@@ -3112,7 +3112,11 @@ export function initChatModule({
         );
         const outputAlreadyStarted = Boolean(
           finalized
-          && (!Array.isArray(finalized.content) || finalized.content.length > 0),
+          && (Array.isArray(finalized.content)
+            ? finalized.content.length > 0
+            : typeof finalized.content === 'string'
+              ? finalized.content.length > 0
+              : finalized.content != null),
         );
         if (finalized && outputAlreadyStarted) {
           if (data.conversationId === uiState.chatActiveConversation) {

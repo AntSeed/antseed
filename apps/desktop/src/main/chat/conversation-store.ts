@@ -11,7 +11,11 @@ import path from 'node:path';
 import type { Message } from '@mariozechner/pi-ai';
 import { SessionManager } from '@mariozechner/pi-coding-agent';
 import { CHAT_DATA_DIR, getCurrentChatWorkspaceDir } from './workspace.js';
-import { ANTSEED_PEER_CUSTOM_TYPE, resolveLatestPeerBinding } from './peer-selection.js';
+import {
+  ANTSEED_PEER_CUSTOM_TYPE,
+  resolveLatestPeerBinding,
+  type ChatRouteMode,
+} from './peer-selection.js';
 import { sanitizeProviderHint } from './provider-hint.js';
 import { normalizeServiceId, normalizeTokenCount } from './normalize.js';
 import {
@@ -39,7 +43,7 @@ type CachedSummary = {
   summary: AiConversationSummary | null;
 };
 
-export type AntseedPeerData = { peerId: string; peerLabel?: string };
+export type AntseedPeerData = { peerId: string; peerLabel?: string; routeMode?: ChatRouteMode };
 
 export function extractPeerFromEntries(manager: SessionManager): AntseedPeerData | null {
   return resolveLatestPeerBinding(
@@ -251,7 +255,13 @@ export class PiConversationStore {
     return await this.readConversationFromPath(sessionPath);
   }
 
-  async create(service?: string, provider?: string, peerId?: string, peerLabel?: string): Promise<AiConversation> {
+  async create(
+    service?: string,
+    provider?: string,
+    peerId?: string,
+    peerLabel?: string,
+    routeMode?: ChatRouteMode,
+  ): Promise<AiConversation> {
     const workspaceDir = await this.ensureWorkspaceDir();
     const manager = SessionManager.create(workspaceDir, this.sessionsDir);
     // Persist '' (not the local proxy sentinel) when no real upstream
@@ -265,6 +275,7 @@ export class PiConversationStore {
       manager.appendCustomEntry(ANTSEED_PEER_CUSTOM_TYPE, {
         peerId: trimmedPeerId,
         ...(peerLabel ? { peerLabel } : {}),
+        ...(routeMode ? { routeMode } : {}),
       } satisfies AntseedPeerData);
     }
     const sessionPath = manager.getSessionFile();
@@ -277,10 +288,14 @@ export class PiConversationStore {
     return conversation;
   }
 
-  async setPeer(id: string, peerId: string, peerLabel?: string): Promise<void> {
+  async setPeer(id: string, peerId: string, peerLabel?: string, routeMode?: ChatRouteMode): Promise<void> {
     const manager = await this.openSessionManager(id);
     if (!manager) return;
-    manager.appendCustomEntry(ANTSEED_PEER_CUSTOM_TYPE, { peerId, peerLabel } satisfies AntseedPeerData);
+    const effectiveMode = routeMode ?? extractPeerFromEntries(manager)?.routeMode;
+    manager.appendCustomEntry(
+      ANTSEED_PEER_CUSTOM_TYPE,
+      { peerId, peerLabel, ...(effectiveMode ? { routeMode: effectiveMode } : {}) } satisfies AntseedPeerData,
+    );
   }
 
   /** Persist an in-conversation model switch. Without this the rebinding only
