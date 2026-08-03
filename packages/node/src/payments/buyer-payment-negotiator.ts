@@ -3,7 +3,11 @@ import type { PeerConnection } from '../p2p/connection-manager.js';
 import { PaymentMux } from '../p2p/payment-mux.js';
 import type { PeerInfo, PeerId } from '../types/peer.js';
 import type { SerializedHttpRequest, SerializedHttpResponse } from '../types/http.js';
-import { PAYMENT_CODE_CHANNEL_EXHAUSTED, type PaymentRequiredPayload } from '../types/protocol.js';
+import {
+  PAYMENT_CODE_CHANNEL_EXHAUSTED,
+  type PaymentRequiredPayload,
+  type SpendingAuthPayload,
+} from '../types/protocol.js';
 import type { BuyerPaymentManager } from './buyer-payment-manager.js';
 import type { BuyerFreeUsageManager } from './buyer-free-usage-manager.js';
 import type { DepositsClient } from './evm/deposits-client.js';
@@ -43,6 +47,11 @@ interface LastResponseCost {
   latencyMs: number;
   service?: string;
   requestId?: string;
+}
+
+export interface BuyerResponsePaymentEvidence {
+  sellerChargeUsdc: bigint;
+  spendingAuth: SpendingAuthPayload;
 }
 
 function parsePaymentRequiredBody(body: Uint8Array): Record<string, unknown> | null {
@@ -221,13 +230,13 @@ export class BuyerPaymentNegotiator {
    * This ensures the seller always has a valid SpendingAuth for close(),
    * even if the buyer disconnects before the next request.
    */
-  async sendPostResponseAuth(peer: PeerInfo, conn: PeerConnection): Promise<void> {
-    if (!this._lockedPeers.has(peer.peerId)) return;
-    if (!this._lastResponseCost.has(peer.peerId)) return;
-    await this._sendPerRequestAuth(peer, conn);
+  async sendPostResponseAuth(peer: PeerInfo, conn: PeerConnection): Promise<BuyerResponsePaymentEvidence | null> {
+    if (!this._lockedPeers.has(peer.peerId)) return null;
+    if (!this._lastResponseCost.has(peer.peerId)) return null;
+    return this._sendPerRequestAuth(peer, conn);
   }
 
-  private async _sendPerRequestAuth(peer: PeerInfo, conn: PeerConnection): Promise<void> {
+  private async _sendPerRequestAuth(peer: PeerInfo, conn: PeerConnection): Promise<BuyerResponsePaymentEvidence> {
     const pmux = this.getOrCreatePaymentMux(peer.peerId, conn);
 
     const lastCost = this._lastResponseCost.get(peer.peerId);
@@ -253,6 +262,7 @@ export class BuyerPaymentNegotiator {
         debugLog(`[BuyerNegotiator] Reserve top-up needed for ${peer.peerId.slice(0, 12)}...`);
         await this._bpm.topUpReserve(peer.peerId, pmux);
       }
+      return { sellerChargeUsdc: sellerClaimedCost ?? 0n, spendingAuth: payload };
     } catch (err) {
       debugWarn(`[BuyerNegotiator] Failed to send per-request SpendingAuth: ${err instanceof Error ? err.message : err}`);
       throw err;

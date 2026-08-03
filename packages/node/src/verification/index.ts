@@ -1,33 +1,46 @@
 export { decodeResponseAuth, encodeResponseAuth } from './codec.js';
 export { VerificationMux } from './verification-mux.js';
-export { DelegationMux, type DelegationMessageHandler } from './delegation-mux.js';
-export { DelegationManager, type ConnectedDelegate, type DelegationManagerDeps } from './delegation-manager.js';
+export { RelayMux, type RelayMessageHandler } from './relay-mux.js';
 export {
-  decodeDelegateHello,
-  decodeDelegateWelcome,
-  decodeProbeJobRequest,
-  decodeProbeJobResult,
-  decodeTargetQuery,
-  decodeTargetSuggestion,
-  encodeDelegateHello,
-  encodeDelegateWelcome,
-  encodeProbeJobRequest,
-  encodeProbeJobResult,
-  encodeTargetQuery,
-  encodeTargetSuggestion,
-} from './delegation-codec.js';
+  RelayManager,
+  assignRelaysRoundRobin,
+  type ConnectedRelay,
+  type RelayManagerDeps,
+} from './relay-manager.js';
 export {
-  computeBatchRoot,
-  computeExchangeLeaf,
-  type ExchangeRecord,
-} from './exchange-batch.js';
+  decodeAuditRelayJob,
+  decodeAuditRelayResult,
+  decodeRelayHello,
+  decodeRelayWelcome,
+  encodeAuditRelayJob,
+  encodeAuditRelayResult,
+  encodeRelayHello,
+  encodeRelayWelcome,
+} from './relay-codec.js';
+export {
+  buildPositionalMerkleTree,
+  verifyPositionalMerkleProof,
+  type PositionalMerkleTree,
+} from './positional-merkle.js';
+export {
+  RelayJobValidator,
+  estimateFrozenRelayPayout,
+  preflightRelayBudget,
+  type RelayJobValidatorConfig,
+  type ValidatedRelayJob,
+} from './relay-validation.js';
 export {
   buildResponseAuthSigningBytes,
+  decodeContractResponseAuthPayload,
+  encodeContractResponseAuthPayload,
+  extractContractResponseAuthSigningPayload,
   createResponseAuthPayload,
   hashRequest,
   hashResponse,
   toResponseAuthPayload,
   verifyResponseAuth,
+  verifyResponseAuthExecutionWindow,
+  type ResponseAuthExecutionWindow,
   type ResponseAuthInput,
   type ResponseAuthVerificationExpected,
   type ResponseAuthVerificationResult,
@@ -38,4 +51,29 @@ export {
   type StoredVerificationSample,
   type VerificationSampleConfig,
 } from './samples.js';
-export { VerificationStorage, type StoredResponseAuth } from './storage.js';
+export {
+  VerificationStorage,
+  type StoredResponseAuth,
+  type AuditLifecycleState,
+  type AuditJobState,
+  type AuditAssignmentState,
+  type RelayEntitlementState,
+  type AuditRoundState,
+  type AuditRoundMemberState,
+  type VerificationAuditStore,
+  type VerificationRelayStore,
+  type VerificationSettlementStore,
+  type StoredAuditPlan,
+  type StoredAuditJob,
+  type StoredRelayEntitlement,
+  type StoredCertifiedKbfProbe,
+  type StoredAuditRound,
+  type StoredAuditRoundMember,
+  type SettlementIndexCursor,
+  type SettlementUsageEvent,
+} from './storage.js';
+export {
+  indexFinalizedChannelSettlements,
+  type SettlementIndexerConfig,
+  type SettlementIndexResult,
+} from './settlement-indexer.js';

@@ -1,234 +1,152 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-  computeModelVerificationScore,
-  toPeerModelVerification,
+  VERIFIER_VERDICT_DIFF,
+  VERIFIER_VERDICT_SAME,
+  VERIFIER_VERDICT_UNDETERMINED,
+  serviceHash,
+  type AttestationSubmittedEvent,
+} from '../src/payments/evm/verifier-client.js';
+import {
+  derivePeerModelVerification,
   hasModelSubstitutionFlag,
+  hasModelVerificationWarning,
+  peerHasActiveSubstitutionFlag,
+  peerHasModelVerificationWarning,
 } from '../src/routing/verification-score.js';
-import type { ServiceVerificationStats } from '../src/payments/evm/verifier-client.js';
+import type { PeerInfo } from '../src/types/peer.js';
 
-function stats(over: Partial<Parameters<typeof computeModelVerificationScore>[0]>) {
+const SERVICE = 'gpt-5.6-sol';
+const SERVICE_HASH = serviceHash(SERVICE);
+
+function event(
+  verdict: number,
+  blockNumber: number,
+  overrides: Partial<AttestationSubmittedEvent> = {},
+): AttestationSubmittedEvent {
   return {
-    sameCount: 0,
-    diffCount: 0,
-    distinctVerifierCount: 0,
-    activeDiffVerifierCount: 0,
-    ...over,
+    auditId: `0x${blockNumber.toString(16).padStart(64, '0')}`,
+    verifier: '0x' + '11'.repeat(20),
+    agentId: 7n,
+    serviceHash: SERVICE_HASH,
+    verdict: verdict as AttestationSubmittedEvent['verdict'],
+    modelShareBps: verdict === VERIFIER_VERDICT_DIFF ? 2500 : 0,
+    evidenceHash: '0x' + '22'.repeat(32),
+    relayClaimCount: 3,
+    relayPayoutUsdc: 3_000n,
+    blockNumber,
+    logIndex: 0,
+    transactionHash: '0x' + '33'.repeat(32),
+    ...overrides,
   };
 }
 
-function fullStats(over: Partial<ServiceVerificationStats>): ServiceVerificationStats {
+function peerWith(events: AttestationSubmittedEvent[], fetchedAt = Date.now()): PeerInfo {
   return {
-    sameCount: 0,
-    diffCount: 0,
-    undeterminedCount: 0,
-    distinctVerifierCount: 0,
-    lastVerdict: 0,
-    lastVerifier: '0x' + '0'.repeat(40),
-    activeDiffVerifierCount: 0,
-    ...over,
+    peerId: 'a'.repeat(40) as PeerInfo['peerId'],
+    providers: [],
+    lastSeen: Date.now(),
+    modelVerification: {
+      [SERVICE]: derivePeerModelVerification(SERVICE_HASH, events),
+    },
+    modelVerificationFetchedAt: fetchedAt,
   };
 }
 
-describe('computeModelVerificationScore', () => {
-  it('returns null with no evidence', () => {
-    expect(computeModelVerificationScore(stats({}))).toBeNull();
-  });
-
-  it('returns null for a single-verifier clean history (not corroborated)', () => {
-    expect(computeModelVerificationScore(stats({ sameCount: 5, distinctVerifierCount: 1 }))).toBeNull();
-  });
-
-  it('returns null for a single SAME even with a second (UNDETERMINED-only) verifier', () => {
-    // SAME(1 attestation) + UNDETERMINED-only second verifier: the on-chain
-    // stats cannot exclude UNDETERMINED-only verifiers from
-    // distinctVerifierCount, so corroboration also requires >= 2 SAMEs.
-    expect(computeModelVerificationScore(stats({ sameCount: 1, distinctVerifierCount: 2 }))).toBeNull();
-  });
-
-  it('scores a corroborated clean history positively', () => {
-    const score = computeModelVerificationScore(stats({ sameCount: 8, distinctVerifierCount: 4 }));
-    expect(score).not.toBeNull();
-    expect(score!).toBeGreaterThan(80);
-    expect(score!).toBeLessThanOrEqual(95);
-  });
-
-  it('caps clean scores below 100 (SAME is never proof)', () => {
-    const score = computeModelVerificationScore(stats({ sameCount: 1000, distinctVerifierCount: 50 }));
-    expect(score!).toBeLessThanOrEqual(95);
-  });
-
-  it('drives score low on a standing (active) DIFF regardless of verifier count', () => {
-    const score = computeModelVerificationScore(stats({
-      sameCount: 0, diffCount: 1, distinctVerifierCount: 1, activeDiffVerifierCount: 1,
-    }));
-    expect(score).toBe(0);
-  });
-
-  it('lets many clean attestations partially offset a standing DIFF, but keeps it low', () => {
-    const score = computeModelVerificationScore(stats({
-      sameCount: 9, diffCount: 1, distinctVerifierCount: 5, activeDiffVerifierCount: 1,
-    }));
-    expect(score!).toBeGreaterThan(0);
-    expect(score!).toBeLessThanOrEqual(40);
-  });
-
-  it('lowers the ceiling further with each additional active accuser', () => {
-    const one = computeModelVerificationScore(stats({
-      sameCount: 9, diffCount: 1, distinctVerifierCount: 5, activeDiffVerifierCount: 1,
-    }))!;
-    const three = computeModelVerificationScore(stats({
-      sameCount: 9, diffCount: 1, distinctVerifierCount: 5, activeDiffVerifierCount: 3,
-    }))!;
-    expect(three).toBeLessThan(one);
-  });
-
-  it('recovers when every DIFF accuser retracts (activeDiffVerifierCount drops to 0)', () => {
-    const flagged = computeModelVerificationScore(stats({
-      sameCount: 6, diffCount: 2, distinctVerifierCount: 3, activeDiffVerifierCount: 2,
-    }))!;
-    const retracted = computeModelVerificationScore(stats({
-      sameCount: 8, diffCount: 2, distinctVerifierCount: 3, activeDiffVerifierCount: 0,
-    }))!;
-    expect(flagged).toBeLessThanOrEqual(40);
-    expect(retracted).toBeGreaterThan(40);
-  });
-
-  it('caps a retracted-DIFF history below a spotless one (history stays a secondary signal)', () => {
-    const retracted = computeModelVerificationScore(stats({
-      sameCount: 1000, diffCount: 2, distinctVerifierCount: 8, activeDiffVerifierCount: 0,
-    }))!;
-    const spotless = computeModelVerificationScore(stats({
-      sameCount: 1000, diffCount: 0, distinctVerifierCount: 8,
-    }))!;
-    expect(retracted).toBeLessThanOrEqual(75);
-    expect(retracted).toBeLessThan(spotless);
-  });
-
-  it('scores more SAMEs and verifiers monotonically higher on clean history', () => {
-    const low = computeModelVerificationScore(stats({ sameCount: 2, distinctVerifierCount: 2 }))!;
-    const high = computeModelVerificationScore(stats({ sameCount: 20, distinctVerifierCount: 4 }))!;
-    expect(high).toBeGreaterThan(low);
-  });
-});
-
-describe('toPeerModelVerification', () => {
-  it('projects raw on-chain stats (including activeDiffVerifierCount) and computes the score', () => {
-    const mv = toPeerModelVerification(fullStats({
-      sameCount: 6,
-      diffCount: 1,
-      undeterminedCount: 1,
-      distinctVerifierCount: 3,
-      lastVerdict: 1,
-      activeDiffVerifierCount: 1,
-    }));
-    expect(mv.sameCount).toBe(6);
-    expect(mv.undeterminedCount).toBe(1);
-    expect(mv.activeDiffVerifierCount).toBe(1);
-    expect(mv.score).not.toBeNull();
-    // No threshold supplied at enrichment: the field is absent, not stamped 0.
-    expect('exclusionThreshold' in mv).toBe(false);
-  });
-
-  it('stamps the chain-read exclusion threshold when supplied', () => {
-    const mv = toPeerModelVerification(fullStats({ sameCount: 1 }), 3);
-    expect(mv.exclusionThreshold).toBe(3);
-  });
-});
-
-describe('hasModelSubstitutionFlag', () => {
-  it('is false when unset or clean', () => {
-    expect(hasModelSubstitutionFlag(undefined)).toBe(false);
-    expect(hasModelSubstitutionFlag(toPeerModelVerification(fullStats({
-      sameCount: 3, distinctVerifierCount: 2, lastVerdict: 1,
-    })))).toBe(false);
-  });
-
-  it('does NOT exclude on a single standing DIFF (one verifier is not corroboration)', () => {
-    // A lone accuser only deprioritizes (lowers the authenticity score); it
-    // must not blackball the seller, or one wrong/malicious verifier becomes a
-    // routing kill-switch while the on-chain emissions penalty (which needs
-    // >=2 distinct DIFF verifiers) has not even triggered.
-    expect(hasModelSubstitutionFlag(toPeerModelVerification(fullStats({
-      diffCount: 1, distinctVerifierCount: 1, lastVerdict: 2, activeDiffVerifierCount: 1,
-    })))).toBe(false);
-  });
-
-  it('excludes once a second distinct verifier corroborates the DIFF (>= threshold)', () => {
-    expect(hasModelSubstitutionFlag(toPeerModelVerification(fullStats({
-      diffCount: 2, distinctVerifierCount: 2, lastVerdict: 2, activeDiffVerifierCount: 2,
-    })))).toBe(true);
-  });
-
-  it('uses the exclusionThreshold stamped at enrichment time (chain-read policy value)', () => {
-    // Policy raised to 3: two standing accusers no longer exclude…
-    const twoAccusers = toPeerModelVerification(fullStats({
-      diffCount: 2, distinctVerifierCount: 2, lastVerdict: 2, activeDiffVerifierCount: 2,
-    }), 3);
-    expect(hasModelSubstitutionFlag(twoAccusers)).toBe(false);
-    // …but three do.
-    const threeAccusers = toPeerModelVerification(fullStats({
-      diffCount: 3, distinctVerifierCount: 3, lastVerdict: 2, activeDiffVerifierCount: 3,
-    }), 3);
-    expect(hasModelSubstitutionFlag(threeAccusers)).toBe(true);
-    // Policy lowered to 1: a lone accuser excludes.
-    const oneAccuser = toPeerModelVerification(fullStats({
-      diffCount: 1, distinctVerifierCount: 1, lastVerdict: 2, activeDiffVerifierCount: 1,
-    }), 1);
-    expect(hasModelSubstitutionFlag(oneAccuser)).toBe(true);
-  });
-
-  it('ignores an invalid persisted stamp and falls back to the offline default', () => {
-    // Persisted peer state can carry arbitrary JSON: anything outside the
-    // contract setter's domain (integer >= 1) must not be trusted.
-    const base = fullStats({
-      diffCount: 1, distinctVerifierCount: 1, lastVerdict: 2, activeDiffVerifierCount: 1,
+describe('derivePeerModelVerification', () => {
+  it('starts provisional when there is no matching evidence', () => {
+    expect(derivePeerModelVerification(SERVICE_HASH, [])).toMatchObject({
+      serviceHash: SERVICE_HASH,
+      lifecycle: 'provisional',
+      sameCount: 0,
+      diffCount: 0,
+      undeterminedCount: 0,
+      consecutiveDiffCount: 0,
+      lastVerdict: 0,
+      lastConclusiveVerdict: 0,
+      modelShareBps: 0,
     });
-    for (const bad of [0, -1, 1.5, NaN]) {
-      const mv = { ...toPeerModelVerification(base), exclusionThreshold: bad };
-      expect(hasModelSubstitutionFlag(mv)).toBe(false); // falls back to 2
-    }
-    const stringStamp = { ...toPeerModelVerification(base), exclusionThreshold: '1' as unknown as number };
-    expect(hasModelSubstitutionFlag(stringStamp)).toBe(false);
   });
 
-  it('lets an explicit caller override beat the stamped threshold', () => {
-    const mv = toPeerModelVerification(fullStats({
-      diffCount: 1, distinctVerifierCount: 1, lastVerdict: 2, activeDiffVerifierCount: 1,
-    }), 2);
-    expect(hasModelSubstitutionFlag(mv)).toBe(false);
-    expect(hasModelSubstitutionFlag(mv, 1)).toBe(true);
+  it('flags the first conclusive DIFF and suspends on the second consecutive DIFF', () => {
+    const flagged = derivePeerModelVerification(SERVICE_HASH, [event(VERIFIER_VERDICT_DIFF, 10)]);
+    expect(flagged.lifecycle).toBe('flagged');
+    expect(flagged.consecutiveDiffCount).toBe(1);
+    expect(flagged.modelShareBps).toBe(2500);
+
+    const suspended = derivePeerModelVerification(SERVICE_HASH, [
+      event(VERIFIER_VERDICT_DIFF, 10),
+      event(VERIFIER_VERDICT_DIFF, 11, { modelShareBps: 4000 }),
+    ]);
+    expect(suspended.lifecycle).toBe('suspended');
+    expect(suspended.consecutiveDiffCount).toBe(2);
+    expect(suspended.modelShareBps).toBe(4000);
   });
 
-  it('honors an explicit corroboration threshold override', () => {
-    const mv = toPeerModelVerification(fullStats({
-      diffCount: 1, distinctVerifierCount: 1, lastVerdict: 2, activeDiffVerifierCount: 1,
-    }));
-    // With the default (2) a single accuser does not exclude; a caller that
-    // deliberately lowers the bar to 1 gets the stricter exclusion.
-    expect(hasModelSubstitutionFlag(mv)).toBe(false);
-    expect(hasModelSubstitutionFlag(mv, 1)).toBe(true);
+  it('SAME clears the service penalty and routing exclusion', () => {
+    const result = derivePeerModelVerification(SERVICE_HASH, [
+      event(VERIFIER_VERDICT_DIFF, 10),
+      event(VERIFIER_VERDICT_DIFF, 11),
+      event(VERIFIER_VERDICT_SAME, 12),
+    ]);
+    expect(result.lifecycle).toBe('verified');
+    expect(result.consecutiveDiffCount).toBe(0);
+    expect(result.lastConclusiveVerdict).toBe(VERIFIER_VERDICT_SAME);
+    expect(result.modelShareBps).toBe(0);
   });
 
-  it('clears once every DIFF is retracted, despite the historical diffCount', () => {
-    expect(hasModelSubstitutionFlag(toPeerModelVerification(fullStats({
-      sameCount: 4, diffCount: 2, distinctVerifierCount: 2, lastVerdict: 1, activeDiffVerifierCount: 0,
-    })))).toBe(false);
+  it('UNDETERMINED records availability without changing lifecycle or penalty', () => {
+    const result = derivePeerModelVerification(SERVICE_HASH, [
+      event(VERIFIER_VERDICT_DIFF, 10),
+      event(VERIFIER_VERDICT_UNDETERMINED, 12),
+    ]);
+    expect(result.lifecycle).toBe('flagged');
+    expect(result.undeterminedCount).toBe(1);
+    expect(result.lastVerdict).toBe(VERIFIER_VERDICT_UNDETERMINED);
+    expect(result.lastConclusiveVerdict).toBe(VERIFIER_VERDICT_DIFF);
+    expect(result.modelShareBps).toBe(2500);
   });
 
-  it('does not flag after an owner clear even while lastVerdict is still DIFF', () => {
-    // clearVerifierStanding decrements activeDiffVerifierCount to 0 but never
-    // rewrites stats.lastVerdict (only submitAttestation does), so the exact
-    // post-owner-clear state is activeDiffVerifierCount==0 with lastVerdict==DIFF.
-    // Routing must track activeDiffVerifierCount alone so the block lifts in
-    // lockstep with the on-chain points penalty and the CLI 502 gate.
-    expect(hasModelSubstitutionFlag(toPeerModelVerification(fullStats({
-      diffCount: 1, distinctVerifierCount: 1, lastVerdict: 2, activeDiffVerifierCount: 0,
-    })))).toBe(false);
+  it('sorts events by chain position and ignores other services', () => {
+    const otherService = event(VERIFIER_VERDICT_DIFF, 99, { serviceHash: serviceHash('other') });
+    const result = derivePeerModelVerification(SERVICE_HASH, [
+      event(VERIFIER_VERDICT_SAME, 12),
+      otherService,
+      event(VERIFIER_VERDICT_DIFF, 10),
+      event(VERIFIER_VERDICT_UNDETERMINED, 12, { logIndex: 1 }),
+    ]);
+    expect(result.lifecycle).toBe('verified');
+    expect(result.diffCount).toBe(1);
+    expect(result.sameCount).toBe(1);
+    expect(result.latestBlockNumber).toBe(12);
+    expect(result.lastVerdict).toBe(VERIFIER_VERDICT_UNDETERMINED);
+  });
+});
+
+describe('verification routing state', () => {
+  it('distinguishes deprioritized flagged peers from excluded suspended peers', () => {
+    const flagged = derivePeerModelVerification(SERVICE_HASH, [event(VERIFIER_VERDICT_DIFF, 1)]);
+    const suspended = derivePeerModelVerification(SERVICE_HASH, [
+      event(VERIFIER_VERDICT_DIFF, 1),
+      event(VERIFIER_VERDICT_DIFF, 2),
+    ]);
+    expect(hasModelVerificationWarning(flagged)).toBe(true);
+    expect(hasModelSubstitutionFlag(flagged)).toBe(false);
+    expect(hasModelVerificationWarning(suspended)).toBe(false);
+    expect(hasModelSubstitutionFlag(suspended)).toBe(true);
   });
 
-  it('flags whenever activeDiffVerifierCount reaches the corroboration threshold', () => {
-    expect(hasModelSubstitutionFlag(toPeerModelVerification(fullStats({
-      diffCount: 3, distinctVerifierCount: 3, lastVerdict: 2, activeDiffVerifierCount: 3,
-    })))).toBe(true);
+  it('honors fresh service-specific state and ignores stale state', () => {
+    const now = 1_800_000_000_000;
+    const suspendedEvents = [event(VERIFIER_VERDICT_DIFF, 1), event(VERIFIER_VERDICT_DIFF, 2)];
+    const fresh = peerWith(suspendedEvents, now - 1_000);
+    const stale = peerWith(suspendedEvents, now - 31 * 60_000);
+    expect(peerHasActiveSubstitutionFlag(fresh, SERVICE, now)).toBe(true);
+    expect(peerHasActiveSubstitutionFlag(stale, SERVICE, now)).toBe(false);
+  });
+
+  it('does not apply one service lifecycle to another service', () => {
+    const flagged = peerWith([event(VERIFIER_VERDICT_DIFF, 1)]);
+    expect(peerHasModelVerificationWarning(flagged, SERVICE)).toBe(true);
+    expect(peerHasModelVerificationWarning(flagged, 'other-model')).toBe(false);
   });
 });

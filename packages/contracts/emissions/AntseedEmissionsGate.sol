@@ -23,7 +23,6 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
         uint32 shareBps;
     }
 
-    address public constant ANTS_TOKEN = 0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263;
     uint256 public constant GENESIS = 1_775_728_461;
     uint256 public constant EPOCH_DURATION = 7 days;
     uint256 public constant HALVING_INTERVAL = 104;
@@ -82,8 +81,10 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
 
     constructor(address registry_, uint32 teamShareBps, uint32 reserveShareBps) Ownable(msg.sender) {
         if (registry_ == address(0)) revert InvalidAddress();
-        _antsToken = IANTSToken(ANTS_TOKEN);
         registry = IAntseedRegistry(registry_);
+        address antsToken = registry.antsToken();
+        if (antsToken == address(0) || antsToken.code.length == 0) revert InvalidAddress();
+        _antsToken = IANTSToken(antsToken);
         uint256 epoch = block.timestamp <= GENESIS ? 0 : (block.timestamp - GENESIS) / EPOCH_DURATION;
         effectiveEpoch = epoch + 1;
 
@@ -239,7 +240,7 @@ contract AntseedEmissionsGate is IAntseedEmissionsGate, Ownable2Step, Reentrancy
         legacyEscrow = escrow;
 
         uint256 scheduled = cumulativeEmissionThrough(effectiveEpoch);
-        uint256 supply = IERC20(ANTS_TOKEN).totalSupply();
+        uint256 supply = IERC20(address(_antsToken)).totalSupply();
         amount = scheduled > supply ? scheduled - supply : 0;
         if (amount != 0) _antsToken.mint(escrow, amount);
         emit LegacyEscrowFunded(escrow, amount);

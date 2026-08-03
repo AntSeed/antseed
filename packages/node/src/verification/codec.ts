@@ -26,8 +26,8 @@ export function decodeResponseAuth(data: Uint8Array): ResponseAuthPayload {
 
 /**
  * Validate an already-parsed JSON value as a ResponseAuth payload. The bytes
- * wire path (`decodeResponseAuth`) and embedded-object callers (delegation
- * codec) share this core so field validation can never diverge.
+ * wire path (`decodeResponseAuth`) and embedded-object callers share this core
+ * so field validation can never diverge.
  */
 export function responseAuthFromObject(raw: unknown): ResponseAuthPayload {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {

@@ -7,7 +7,7 @@ import type {
   SellerProviderConfig,
   TokenPricingUsdPerMillion,
 } from './types.js';
-import { MAX_AUDIT_PROBES_PER_REQUEST } from '../verifier/limits.js';
+import { MAX_AUDIT_DURATION_MS, MIN_AUDIT_DURATION_MS } from '../verifier/audit-duration.js';
 
 const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const MAX_PUBLIC_ADDRESS_LENGTH = 255;
@@ -299,15 +299,22 @@ function validateBuyerVerification(
 // unfiltered (see mergeVerifierConfig), so a typo'd key must fail here loudly
 // instead of being silently ignored.
 const VERIFIER_KEYS = new Set([
-  'services', 'maxAuditsPerEpoch', 'probesPerAudit', 'maxProbesPerRequest',
-  'cohortMinSize', 'cohortMaxSize', 'auditIntervalMs', 'stalenessWindowSecs',
-  'probeSource', 'probeAuthorModel', 'probeRotationHistory', 'referencesDir',
-  'publishDir', 'publishBaseUrl', 'revealDelayMs', 'probeLogDir',
-  'upstream', 'delegation',
+  'services', 'referencesDir', 'upstream', 'referenceEndpoint', 'referencePolicy', 'trustedImportedReferenceIds',
+  'jobTimeoutMs', 'flatRelayFeeUsdc', 'relaySignalingPort', 'maxRelays', 'auditDurationMs',
 ]);
 const VERIFIER_UPSTREAM_KEYS = new Set(['baseUrl', 'apiKey', 'apiKeyEnv', 'modelMap']);
-const VERIFIER_DELEGATION_KEYS = new Set([
-  'enabled', 'signalingPort', 'jobTimeoutMs', 'minDelegates', 'requireDelegates',
+const VERIFIER_REFERENCE_ENDPOINT_KEYS = new Set([
+  'baseUrl', 'apiKey', 'apiKeyEnv', 'sourceId', 'trust', 'antseedPeerId', 'models',
+]);
+const VERIFIER_REFERENCE_MODEL_KEYS = new Set(['upstreamModel', 'contrastModels']);
+const VERIFIER_REFERENCE_POLICY_KEYS = new Set([
+  'certifiedProbeCount', 'auditProbeCount', 'maxProbeUsesPerTarget', 'maxReferenceAgeDays',
+  'maxRequestsPerBuild', 'minimumAuditProbeCount', 'maximumAuditProbeCount', 'auditProbeStep',
+  'minimumStatisticalPower', 'maxRequestsPerRound', 'requestTimeoutMs', 'batchRetryCount',
+  'generationDomainConcurrency', 'maxConcurrentReferenceRequests', 'maxConcurrentRequestsPerModel',
+]);
+const RELAY_KEYS = new Set([
+  'enabled', 'minimumPayoutPerJobUsdc', 'maxConcurrentJobs', 'maxJobsPerHour', 'discoveryIntervalMs',
 ]);
 
 function validateVerifierConfig(
@@ -337,13 +344,9 @@ function validateVerifierConfig(
     }
   }
   const positiveInts: Array<[string, number | undefined]> = [
-    ['maxAuditsPerEpoch', verifier.maxAuditsPerEpoch],
-    ['probesPerAudit', verifier.probesPerAudit],
-    ['maxProbesPerRequest', verifier.maxProbesPerRequest],
-    ['cohortMinSize', verifier.cohortMinSize],
-    ['cohortMaxSize', verifier.cohortMaxSize],
-    ['auditIntervalMs', verifier.auditIntervalMs],
-    ['stalenessWindowSecs', verifier.stalenessWindowSecs],
+    ['jobTimeoutMs', verifier.jobTimeoutMs],
+    ['relaySignalingPort', verifier.relaySignalingPort],
+    ['maxRelays', verifier.maxRelays],
   ];
   for (const [key, value] of positiveInts) {
     if (value !== undefined && (!Number.isInteger(value) || value < 1)) {
@@ -351,54 +354,25 @@ function validateVerifierConfig(
     }
   }
   if (
-    verifier.maxProbesPerRequest !== undefined &&
-    verifier.maxProbesPerRequest > MAX_AUDIT_PROBES_PER_REQUEST
+    verifier.auditDurationMs !== undefined
+    && (
+      !Number.isSafeInteger(verifier.auditDurationMs)
+      || verifier.auditDurationMs < MIN_AUDIT_DURATION_MS
+      || verifier.auditDurationMs > MAX_AUDIT_DURATION_MS
+    )
   ) {
-    errors.push(`${path}.maxProbesPerRequest must be <= ${MAX_AUDIT_PROBES_PER_REQUEST}`);
-  }
-  if (
-    verifier.cohortMinSize !== undefined &&
-    verifier.cohortMaxSize !== undefined &&
-    verifier.cohortMaxSize < verifier.cohortMinSize
-  ) {
-    errors.push(`${path}.cohortMaxSize must be >= ${path}.cohortMinSize`);
-  }
-  if (
-    verifier.probeSource !== undefined &&
-    verifier.probeSource !== 'llm' &&
-    verifier.probeSource !== 'compositional' &&
-    verifier.probeSource !== 'bank'
-  ) {
-    errors.push(`${path}.probeSource must be "llm", "compositional" or "bank"`);
-  }
-  if (
-    verifier.probeAuthorModel !== undefined &&
-    (typeof verifier.probeAuthorModel !== 'string' || verifier.probeAuthorModel.trim().length === 0)
-  ) {
-    errors.push(`${path}.probeAuthorModel must be a non-empty string when provided`);
-  }
-  if (
-    verifier.probeRotationHistory !== undefined &&
-    (!Number.isInteger(verifier.probeRotationHistory) || verifier.probeRotationHistory < 0)
-  ) {
-    errors.push(`${path}.probeRotationHistory must be an integer >= 0`);
-  }
-  if (
-    verifier.revealDelayMs !== undefined &&
-    (!Number.isInteger(verifier.revealDelayMs) || verifier.revealDelayMs < 0)
-  ) {
-    errors.push(`${path}.revealDelayMs must be an integer >= 0`);
+    errors.push(`${path}.auditDurationMs must be an integer between 86400000 and 172800000`);
   }
   const dirKeys: Array<[string, unknown]> = [
     ['referencesDir', verifier.referencesDir],
-    ['publishDir', verifier.publishDir],
-    ['publishBaseUrl', verifier.publishBaseUrl],
-    ['probeLogDir', verifier.probeLogDir],
   ];
   for (const [key, value] of dirKeys) {
     if (value !== undefined && (typeof value !== 'string' || value.trim().length === 0)) {
       errors.push(`${path}.${key} must be a non-empty string when provided`);
     }
+  }
+  if (verifier.upstream !== undefined && verifier.referenceEndpoint !== undefined) {
+    errors.push(`${path}.upstream and ${path}.referenceEndpoint cannot both be configured`);
   }
   if (verifier.upstream !== undefined) {
     const upstream = verifier.upstream;
@@ -430,54 +404,155 @@ function validateVerifierConfig(
       }
     }
   }
-  if (verifier.delegation !== undefined) {
-    const delegation = verifier.delegation;
-    if (!delegation || typeof delegation !== 'object' || Array.isArray(delegation)) {
-      errors.push(`${path}.delegation must be an object when provided`);
-    } else {
-      for (const key of Object.keys(delegation).filter((k) => !VERIFIER_DELEGATION_KEYS.has(k))) {
-        errors.push(`${path}.delegation.${key} is not a supported delegation option`);
-      }
-      if (typeof delegation.enabled !== 'boolean') {
-        errors.push(`${path}.delegation.enabled must be a boolean`);
-      }
-      const delegationInts: Array<[string, number | undefined]> = [
-        ['signalingPort', delegation.signalingPort],
-        ['jobTimeoutMs', delegation.jobTimeoutMs],
-        ['minDelegates', delegation.minDelegates],
-      ];
-      for (const [key, value] of delegationInts) {
-        if (value !== undefined && (!Number.isInteger(value) || value < 1)) {
-          errors.push(`${path}.delegation.${key} must be an integer >= 1`);
-        }
-      }
-      if (delegation.signalingPort !== undefined && Number.isInteger(delegation.signalingPort) && delegation.signalingPort > 65535) {
-        errors.push(`${path}.delegation.signalingPort must be <= 65535`);
-      }
-      if (delegation.requireDelegates !== undefined && typeof delegation.requireDelegates !== 'boolean') {
-        errors.push(`${path}.delegation.requireDelegates must be a boolean when provided`);
-      }
+  if (verifier.relaySignalingPort !== undefined && verifier.relaySignalingPort > 65535) {
+    errors.push(`${path}.relaySignalingPort must be <= 65535`);
+  }
+  if (verifier.flatRelayFeeUsdc !== undefined && !/^\d+$/.test(verifier.flatRelayFeeUsdc)) {
+    errors.push(`${path}.flatRelayFeeUsdc must be a non-negative integer string`);
+  }
+  if (verifier.trustedImportedReferenceIds !== undefined) {
+    if (!Array.isArray(verifier.trustedImportedReferenceIds)
+      || verifier.trustedImportedReferenceIds.some((value) => typeof value !== 'string' || value.length === 0)) {
+      errors.push(`${path}.trustedImportedReferenceIds must be a string array`);
+    }
+  }
+  if (verifier.referenceEndpoint !== undefined) {
+    validateReferenceEndpoint(`${path}.referenceEndpoint`, verifier.referenceEndpoint, errors);
+  }
+  if (verifier.referencePolicy !== undefined) {
+    validateReferencePolicy(`${path}.referencePolicy`, verifier.referencePolicy, errors);
+  }
+}
+
+function validateReferenceEndpoint(path: string, endpoint: unknown, errors: string[]): void {
+  if (!endpoint || typeof endpoint !== 'object' || Array.isArray(endpoint)) {
+    errors.push(`${path} must be an object when provided`);
+    return;
+  }
+  const value = endpoint as Record<string, unknown>;
+  for (const key of Object.keys(value).filter((key) => !VERIFIER_REFERENCE_ENDPOINT_KEYS.has(key))) {
+    errors.push(`${path}.${key} is not a supported reference endpoint option`);
+  }
+  for (const key of ['baseUrl', 'sourceId'] as const) {
+    if (typeof value[key] !== 'string' || value[key].trim().length === 0) {
+      errors.push(`${path}.${key} must be a non-empty string`);
+    }
+  }
+  if (value.apiKey !== undefined && typeof value.apiKey !== 'string') errors.push(`${path}.apiKey must be a string`);
+  if (value.apiKeyEnv !== undefined && (typeof value.apiKeyEnv !== 'string' || value.apiKeyEnv.trim().length === 0)) {
+    errors.push(`${path}.apiKeyEnv must be a non-empty string`);
+  }
+  if (value.antseedPeerId !== undefined && (typeof value.antseedPeerId !== 'string' || !/^[0-9a-fA-F]{40}$/.test(value.antseedPeerId))) {
+    errors.push(`${path}.antseedPeerId must be a 40-character hex peer id`);
+  }
+  if (value.trust !== 'smoke' && value.trust !== 'trusted') errors.push(`${path}.trust must be "smoke" or "trusted"`);
+  if (!value.models || typeof value.models !== 'object' || Array.isArray(value.models)) {
+    errors.push(`${path}.models must be a non-empty object`);
+    return;
+  }
+  const models = Object.entries(value.models as Record<string, unknown>);
+  if (models.length === 0) errors.push(`${path}.models must not be empty`);
+  for (const [service, modelConfig] of models) {
+    const modelPath = `${path}.models[${JSON.stringify(service)}]`;
+    if (!modelConfig || typeof modelConfig !== 'object' || Array.isArray(modelConfig)) {
+      errors.push(`${modelPath} must be an object`);
+      continue;
+    }
+    const model = modelConfig as Record<string, unknown>;
+    for (const key of Object.keys(model).filter((key) => !VERIFIER_REFERENCE_MODEL_KEYS.has(key))) {
+      errors.push(`${modelPath}.${key} is not supported`);
+    }
+    if (typeof model.upstreamModel !== 'string' || model.upstreamModel.trim().length === 0) {
+      errors.push(`${modelPath}.upstreamModel must be a non-empty string`);
+    }
+    if (!Array.isArray(model.contrastModels) || model.contrastModels.length === 0
+      || model.contrastModels.some((contrast) => typeof contrast !== 'string' || contrast.trim().length === 0)) {
+      errors.push(`${modelPath}.contrastModels must be a non-empty string array`);
     }
   }
 }
 
-function validateDelegateConfig(
-  path: string,
-  delegate: AntseedConfig['buyer']['delegate'],
-  errors: string[],
-): void {
-  if (delegate === undefined) return;
-  if (!delegate || typeof delegate !== 'object' || Array.isArray(delegate)) {
+function validateReferencePolicy(path: string, policy: unknown, errors: string[]): void {
+  if (!policy || typeof policy !== 'object' || Array.isArray(policy)) {
     errors.push(`${path} must be an object when provided`);
     return;
   }
-  if (typeof delegate.enabled !== 'boolean') {
-    errors.push(`${path}.enabled must be a boolean`);
+  const value = policy as Record<string, unknown>;
+  for (const key of Object.keys(value).filter((key) => !VERIFIER_REFERENCE_POLICY_KEYS.has(key))) {
+    errors.push(`${path}.${key} is not a supported reference policy option`);
+  }
+  const multiplesOfTen = [
+    'certifiedProbeCount', 'auditProbeCount', 'minimumAuditProbeCount',
+    'maximumAuditProbeCount', 'auditProbeStep',
+  ] as const;
+  for (const key of multiplesOfTen) {
+    const candidate = value[key];
+    if (candidate !== undefined && (!Number.isInteger(candidate) || Number(candidate) < 10 || Number(candidate) > 500 || Number(candidate) % 10 !== 0)) {
+      errors.push(`${path}.${key} must be a multiple of 10 from 10 through 500`);
+    }
+  }
+  for (const key of ['maxProbeUsesPerTarget', 'maxReferenceAgeDays', 'maxRequestsPerBuild', 'maxRequestsPerRound', 'requestTimeoutMs'] as const) {
+    const candidate = value[key];
+    if (candidate !== undefined && (!Number.isInteger(candidate) || Number(candidate) < 1)) {
+      errors.push(`${path}.${key} must be an integer >= 1`);
+    }
+  }
+  if (value.batchRetryCount !== undefined && (!Number.isInteger(value.batchRetryCount) || Number(value.batchRetryCount) < 0)) {
+    errors.push(`${path}.batchRetryCount must be an integer >= 0`);
+  }
+  for (const key of ['generationDomainConcurrency', 'maxConcurrentReferenceRequests', 'maxConcurrentRequestsPerModel'] as const) {
+    const candidate = value[key];
+    if (candidate !== undefined && (!Number.isInteger(candidate) || Number(candidate) < 1)) {
+      errors.push(`${path}.${key} must be an integer >= 1`);
+    }
+  }
+  if (value.generationDomainConcurrency !== undefined && Number(value.generationDomainConcurrency) > 15) {
+    errors.push(`${path}.generationDomainConcurrency must not exceed 15`);
+  }
+  if (value.maxConcurrentReferenceRequests !== undefined && Number(value.maxConcurrentReferenceRequests) > 64) {
+    errors.push(`${path}.maxConcurrentReferenceRequests must not exceed 64`);
+  }
+  if (value.maxConcurrentRequestsPerModel !== undefined && Number(value.maxConcurrentRequestsPerModel) > 16) {
+    errors.push(`${path}.maxConcurrentRequestsPerModel must not exceed 16`);
+  }
+  if (value.maxConcurrentReferenceRequests !== undefined
+    && value.maxConcurrentRequestsPerModel !== undefined
+    && Number(value.maxConcurrentRequestsPerModel) > Number(value.maxConcurrentReferenceRequests)) {
+    errors.push(`${path}.maxConcurrentRequestsPerModel must not exceed maxConcurrentReferenceRequests`);
+  }
+  const minimum = Number(value.minimumAuditProbeCount ?? value.auditProbeCount ?? 100);
+  const maximum = Number(value.maximumAuditProbeCount ?? 500);
+  if (minimum > maximum) {
+    errors.push(`${path}.minimumAuditProbeCount must not exceed maximumAuditProbeCount`);
+  }
+  if (value.minimumStatisticalPower !== undefined
+    && (typeof value.minimumStatisticalPower !== 'number'
+      || value.minimumStatisticalPower < 0.9 || value.minimumStatisticalPower > 1)) {
+    errors.push(`${path}.minimumStatisticalPower must be a number from 0.9 through 1`);
+  }
+}
+
+function validateRelayConfig(
+  path: string,
+  relay: AntseedConfig['buyer']['relay'],
+  errors: string[],
+): void {
+  if (relay === undefined) return;
+  if (!relay || typeof relay !== 'object' || Array.isArray(relay)) {
+    errors.push(`${path} must be an object when provided`);
+    return;
+  }
+  for (const key of Object.keys(relay).filter((candidate) => !RELAY_KEYS.has(candidate))) {
+    errors.push(`${path}.${key} is not a supported relay option`);
+  }
+  if (typeof relay.enabled !== 'boolean') errors.push(`${path}.enabled must be a boolean`);
+  if (relay.minimumPayoutPerJobUsdc !== undefined && !/^\d+$/.test(relay.minimumPayoutPerJobUsdc)) {
+    errors.push(`${path}.minimumPayoutPerJobUsdc must be a non-negative integer string`);
   }
   const positiveInts: Array<[string, number | undefined]> = [
-    ['maxConcurrentJobs', delegate.maxConcurrentJobs],
-    ['maxJobsPerHour', delegate.maxJobsPerHour],
-    ['discoveryIntervalMs', delegate.discoveryIntervalMs],
+    ['maxConcurrentJobs', relay.maxConcurrentJobs],
+    ['maxJobsPerHour', relay.maxJobsPerHour],
+    ['discoveryIntervalMs', relay.discoveryIntervalMs],
   ];
   for (const [key, value] of positiveInts) {
     if (value !== undefined && (!Number.isInteger(value) || value < 1)) {
@@ -516,7 +591,7 @@ export function validateConfig(config: AntseedConfig): string[] {
   }
 
   validateBuyerVerification('buyer.verification', config.buyer.verification, errors);
-  validateDelegateConfig('buyer.delegate', config.buyer.delegate, errors);
+  validateRelayConfig('buyer.relay', config.buyer.relay, errors);
 
   if (!Number.isInteger(config.seller.maxConcurrentBuyers) || config.seller.maxConcurrentBuyers < 1) {
     errors.push('seller.maxConcurrentBuyers must be an integer >= 1');

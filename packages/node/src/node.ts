@@ -50,17 +50,15 @@ import { PaymentMux } from "./p2p/payment-mux.js";
 import { VerificationMux } from "./verification/verification-mux.js";
 import { VerificationStorage, type StoredResponseAuth } from "./verification/storage.js";
 import { VerificationSampler } from "./verification/samples.js";
-import { DelegationManager, type ConnectedDelegate } from "./verification/delegation-manager.js";
+import { RelayManager, type ConnectedRelay } from "./verification/relay-manager.js";
 import { FrameDecoder, encodeFrame } from "./p2p/message-protocol.js";
 import { KeepaliveManager, buildPongPayload } from "./p2p/keepalive.js";
 import {
   MessageType,
-  CONNECTION_CAPABILITY_PROBE_DELEGATION_V1,
-  type DelegateHelloPayload,
-  type ProbeJobRequestPayload,
-  type ProbeJobResultPayload,
-  type TargetQueryPayload,
-  type TargetSuggestionPayload,
+  CONNECTION_CAPABILITY_AUDIT_RELAY_V1,
+  type AuditRelayJobPayload,
+  type AuditRelayResultPayload,
+  type RelayHelloPayload,
 } from "./types/protocol.js";
 import type {
   Provider,
@@ -86,13 +84,17 @@ import {
 import { debugLog, debugWarn } from "./utils/debug.js";
 import { parsePublicAddress } from "./discovery/public-address.js";
 import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-payment-manager.js";
-import { BuyerPaymentNegotiator } from "./payments/buyer-payment-negotiator.js";
+import {
+  BuyerPaymentNegotiator,
+  type BuyerResponsePaymentEvidence,
+} from "./payments/buyer-payment-negotiator.js";
 import { SellerAddressResolver } from "./discovery/seller-address-resolver.js";
 import { Contract as EthersContract } from "ethers";
 import { SellerPaymentManager, type SellerPaymentConfig } from "./payments/seller-payment-manager.js";
 import { IdentityClient } from "./payments/evm/identity-client.js";
 import { VerifierRegistryClient } from "./payments/evm/verifier-client.js";
-import { toPeerModelVerification } from "./routing/verification-score.js";
+import { derivePeerModelVerification } from "./routing/verification-score.js";
+import { serviceHash } from "./payments/evm/verifier-client.js";
 import { SellerRequestHandler } from "./seller-request-handler.js";
 import {
   BuyerRequestHandler,
@@ -150,6 +152,10 @@ export interface NodePaymentsConfig {
   stakingAddress?: string;
   /** Optional AntseedVerifierRegistry address. Enables per-(peer, model) verification reputation on discovered peers. */
   verifierRegistryAddress?: string;
+  /** Optional AntseedRelayTreasury address used by verifier/relay tooling. */
+  relayTreasuryAddress?: string;
+  /** Optional AntseedVerifierPointsPolicy address used for penalty reads. */
+  verifierPointsPolicyAddress?: string;
   /** Chain ID for EIP-712 domain. Default: 8453 (Base) */
   chainId?: number;
   /** Default maximum USDC per spending auth. Default: 500000 ($0.50) */
@@ -221,23 +227,18 @@ export interface NodeConfig {
    */
   sellerContract?: SellerContractConfig;
   /**
-   * Host probe delegation (buyer role only): listen for inbound delegate
-   * buyer connections and announce the probe-delegation capability on the
-   * DHT. Used by the verifier daemon so organic buyers can carry its probe
-   * traffic.
+   * Host atomic audit relays (buyer role only): listen for inbound relay
+   * buyers and announce the audit-relay capability on the DHT.
    */
-  delegationHost?: {
-    /** TCP port for the delegate signaling listener. Default: 6882. */
+  relayHost?: {
+    /** TCP port for the relay signaling listener. Default: 6882. */
     signalingPort?: number;
-    /**
-     * Maximum delegates registered at once; excess hellos are rejected with
-     * a `delegate_capacity` welcome. Default: DEFAULT_MAX_DELEGATES.
-     */
-    maxDelegates?: number;
+    /** Maximum relays registered at once. */
+    maxRelays?: number;
   };
 }
 
-export type { ConnectedDelegate } from "./verification/delegation-manager.js";
+export type { ConnectedRelay } from "./verification/relay-manager.js";
 
 export interface BuyerUsageChannelPoint {
   reservedAt: number;
@@ -297,8 +298,8 @@ export class AntseedNode extends EventEmitter {
   private _verifierRegistryClient: VerifierRegistryClient | null = null;
   private _paymentMuxes = new Map<PeerId, PaymentMux>();
   private _verificationMuxes = new Map<PeerId, VerificationMux>();
-  /** Probe-delegation state (buyer role only): muxes, delegate roster, jobs. */
-  private _delegation: DelegationManager | null = null;
+  /** Atomic audit-relay state (buyer role only). */
+  private _relay: RelayManager | null = null;
   /** Seller-side request handler (provider matching, execution, load tracking). */
   private _sellerHandler: SellerRequestHandler | null = null;
   /** Buyer-side payment manager (initialized when buyer has payment config). */
@@ -362,6 +363,10 @@ export class AntseedNode extends EventEmitter {
   /** Buyer-side payment manager (null if payments not enabled or not in buyer mode). */
   get buyerPaymentManager(): BuyerPaymentManager | null {
     return this._buyerPaymentManager;
+  }
+
+  get verificationStorage(): VerificationStorage | null {
+    return this._verificationStorage;
   }
 
   /** Buyer-side payment negotiator (null if payments not configured for buyer). */
@@ -503,8 +508,8 @@ export class AntseedNode extends EventEmitter {
       verificationMux.close();
     }
     this._verificationMuxes.clear();
-    this._delegation?.close();
-    this._delegation = null;
+    this._relay?.close();
+    this._relay = null;
     this._decoders.clear();
 
     // Close all connections
@@ -942,7 +947,8 @@ export class AntseedNode extends EventEmitter {
       }
     };
     const workers: Array<Promise<void>> = [];
-    for (let i = 0; i < Math.min(DISCOVERY_RPC_CONCURRENCY, queue.length); i++) {
+    const workerCount = Math.min(DISCOVERY_RPC_CONCURRENCY, queue.length);
+    for (let i = 0; i < workerCount; i++) {
       workers.push((async () => {
         for (;;) {
           const next = queue.shift();
@@ -958,14 +964,13 @@ export class AntseedNode extends EventEmitter {
 
   /**
    * Attach model-verification reputation to discovered peers. For each peer
-   * with an on-chain agent id, read the verifier registry's per-service stats
-   * (when discovery filtered on a service) plus the per-agent aggregate, and
-   * compute a buyer-local authenticity score. No-op when no verifier registry
-   * is configured. Failures are per-peer and non-fatal.
+   * with an on-chain agent id, read ordered attestation events for the requested
+   * service and derive its buyer-local lifecycle. No-op without a requested
+   * service or verifier registry. Failures are per-peer and non-fatal.
    */
   private async _enrichPeersWithVerification(peers: PeerInfo[], service?: string): Promise<void> {
     const client = this._verifierRegistryClient;
-    if (!client || peers.length === 0) return;
+    if (!client || peers.length === 0 || !service?.trim()) return;
 
     const VERIFICATION_RPC_CONCURRENCY = 8;
     // Throttle verifier-registry reads across rapid discovery cycles — the
@@ -975,50 +980,42 @@ export class AntseedNode extends EventEmitter {
     // discovery filtered on; otherwise re-read to pick up per-service stats.
     const MODEL_VERIFICATION_TTL_MS = 60_000;
     const nowMs = Date.now();
-    const serviceKey = service?.trim().toLowerCase();
+    const serviceKey = service.trim().toLowerCase();
     const queue = peers.filter((p) =>
       typeof p.onChainAgentId === 'number' && p.onChainAgentId > 0
       && !(
         typeof p.modelVerificationFetchedAt === 'number'
         && nowMs - p.modelVerificationFetchedAt < MODEL_VERIFICATION_TTL_MS
-        && (serviceKey === undefined || p.modelVerification?.[serviceKey] !== undefined)
+        && p.modelVerification?.[serviceKey] !== undefined
       ));
     if (queue.length === 0) return;
-    // Effective points-policy exclusion threshold (minDistinctDiffVerifiers),
-    // stamped onto every enrichment result so routing exclusion fires at the
-    // same corroboration bar as the on-chain economic penalty. TTL-cached in
-    // the client and never throws (falls back to the offline default), so
-    // this adds at most one resolution walk per TTL, not per peer.
-    const exclusionThreshold = await client.getMinDistinctDiffVerifiers();
     const enrichOne = async (p: PeerInfo): Promise<void> => {
       const agentId = p.onChainAgentId!;
-      const modelVerification: Record<string, ReturnType<typeof toPeerModelVerification>> = {};
-      // Both reads are independent — run them concurrently, and keep whichever
-      // succeeds: a failed aggregate read must not discard already-fetched
-      // per-service stats (and vice versa). Failures leave the corresponding
-      // key unset rather than fabricating a score.
-      const [serviceRead, aggregateRead] = await Promise.allSettled([
-        // The service the buyer asked for is the one that matters for routing.
-        service ? client.verificationStats(agentId, service) : Promise.resolve(null),
-        // The cross-service aggregate is exposed under the '*' key so callers
-        // that route without a specific service still see a substitution flag.
-        client.agentVerificationStats(agentId),
-      ]);
-      if (service && serviceRead.status === 'fulfilled' && serviceRead.value) {
-        modelVerification[service.trim().toLowerCase()] = toPeerModelVerification(serviceRead.value, exclusionThreshold);
-      }
-      if (aggregateRead.status === 'fulfilled') {
-        modelVerification['*'] = toPeerModelVerification(aggregateRead.value, exclusionThreshold);
-      }
-      if (Object.keys(modelVerification).length > 0) {
-        p.modelVerification = modelVerification;
+      try {
+        const attestations = await client.queryAttestations(agentId);
+        const targetServiceHash = serviceHash(serviceKey);
+        const matching = attestations.filter(
+          (event) => event.serviceHash.toLowerCase() === targetServiceHash.toLowerCase(),
+        );
+        if (matching.length > 0) {
+          p.modelVerification = {
+            ...(p.modelVerification ?? {}),
+            [serviceKey]: derivePeerModelVerification(targetServiceHash, matching),
+          };
+        } else if (p.modelVerification?.[serviceKey]) {
+          const { [serviceKey]: _removed, ...remaining } = p.modelVerification;
+          p.modelVerification = remaining;
+        }
         p.modelVerificationFetchedAt = Date.now();
+      } catch {
+        // Per-peer registry failures leave the previous lifecycle untouched.
       }
     };
 
     const workers: Array<Promise<void>> = [];
     const pending = queue.slice();
-    for (let i = 0; i < Math.min(VERIFICATION_RPC_CONCURRENCY, pending.length); i++) {
+    const workerCount = Math.min(VERIFICATION_RPC_CONCURRENCY, pending.length);
+    for (let i = 0; i < workerCount; i++) {
       workers.push((async () => {
         for (;;) {
           const next = pending.shift();
@@ -1282,6 +1279,24 @@ export class AntseedNode extends EventEmitter {
     return this._verificationStorage?.getResponseAuth(requestId) ?? null;
   }
 
+  async waitForResponseAuth(requestId: string, timeoutMs = 30_000): Promise<StoredResponseAuth> {
+    const deadline = Date.now() + Math.max(1, timeoutMs);
+    for (;;) {
+      const responseAuth = this.getResponseAuth(requestId);
+      if (responseAuth) return responseAuth;
+      if (Date.now() >= deadline) throw new Error(`ResponseAuth ${requestId} timed out after ${timeoutMs}ms`);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
+  async finalizeResponsePayment(peer: PeerInfo): Promise<BuyerResponsePaymentEvidence> {
+    if (!this._buyerNegotiator) throw new Error('Buyer payment negotiator is not configured');
+    const connection = await this._getOrCreateConnection(peer);
+    const evidence = await this._buyerNegotiator.sendPostResponseAuth(peer, connection);
+    if (!evidence) throw new Error('No paid response is available to finalize');
+    return evidence;
+  }
+
   private _createDHTConfig(port: number, bootstrapNodes: Array<{ host: string; port: number }>): DHTNodeConfig {
     return {
       peerId: this._identity!.peerId,
@@ -1334,8 +1349,8 @@ export class AntseedNode extends EventEmitter {
             const message = err instanceof Error ? err.message : String(err);
             debugWarn(`[Node] Failed to handle verification frame from ${peerId.slice(0, 12)}...: ${message}`);
           });
-        } else if (this._delegation?.tryDispatchFrame(peerId, frame)) {
-          // Delegation frame — routed inside the manager.
+        } else if (this._relay?.tryDispatchFrame(peerId, frame)) {
+          // Audit relay frame — routed inside the manager.
         } else if (proxyMux) {
           proxyMux.handleFrame(frame).catch((err) => {
             const message = err instanceof Error ? err.message : String(err);
@@ -1363,7 +1378,7 @@ export class AntseedNode extends EventEmitter {
         this._paymentMuxes.delete(peerId);
         this._verificationMuxes.get(peerId)?.close();
         this._verificationMuxes.delete(peerId);
-        this._delegation?.onPeerDisconnect(peerId);
+        this._relay?.onPeerDisconnect(peerId);
         this._decoders.delete(peerId);
         // Clean up buyer-side payment state on disconnect
         this._buyerNegotiator?.onPeerDisconnect(peerId);
@@ -1667,30 +1682,26 @@ export class AntseedNode extends EventEmitter {
       },
     );
 
-    // Probe-delegation state lives in its own manager; the node only owns
-    // connection lifecycle and forwards frames/APIs.
-    this._delegation = new DelegationManager({
+    this._relay = new RelayManager({
       emit: (event, ...args) => this.emit(event, ...args),
-      ...(this._config.delegationHost?.maxDelegates !== undefined
-        ? { maxDelegates: this._config.delegationHost.maxDelegates }
+      ...(this._config.relayHost?.maxRelays !== undefined
+        ? { maxRelays: this._config.relayHost.maxRelays }
         : {}),
+      ...(payments?.chainId !== undefined ? { expectedChainId: String(payments.chainId) } : {}),
+      ...(payments?.verifierRegistryAddress ? { expectedRegistryAddress: payments.verifierRegistryAddress } : {}),
+      ...(payments?.relayTreasuryAddress ? { expectedTreasuryAddress: payments.relayTreasuryAddress } : {}),
     });
 
     debugLog(`[Node] Buyer ready — DHT running on port ${this._dht!.getPort()}`);
 
-    if (this._config.delegationHost) {
-      await this._startDelegationHost();
+    if (this._config.relayHost) {
+      await this._startRelayHost();
     }
   }
 
-  /**
-   * Turn this buyer node into a probe-delegation host: listen for inbound
-   * delegate connections and announce the delegation capability on the DHT
-   * with an empty provider catalog. Used by the verifier daemon.
-   */
-  private async _startDelegationHost(): Promise<void> {
+  private async _startRelayHost(): Promise<void> {
     const identity = this._identity!;
-    const signalingPort = this._config.delegationHost?.signalingPort ?? 6882;
+    const signalingPort = this._config.relayHost?.signalingPort ?? 6882;
 
     await this._connectionManager!.startListening({
       peerId: identity.peerId,
@@ -1704,7 +1715,7 @@ export class AntseedNode extends EventEmitter {
     if (natResult.success) {
       this.emit("nat:mapped", natResult);
     } else {
-      debugWarn("[NAT] UPnP/NAT-PMP mapping failed — delegation host may not be reachable from the internet");
+      debugWarn("[NAT] UPnP/NAT-PMP mapping failed — relay host may not be reachable from the internet");
       this.emit("nat:failed");
     }
 
@@ -1712,7 +1723,7 @@ export class AntseedNode extends EventEmitter {
       identity,
       dht: this._dht!,
       providers: [],
-      extraCapabilities: [CONNECTION_CAPABILITY_PROBE_DELEGATION_V1],
+      extraCapabilities: [CONNECTION_CAPABILITY_AUDIT_RELAY_V1],
       ...(this._config.displayName ? { displayName: this._config.displayName } : {}),
       ...(this._config.publicAddress ? { publicAddress: this._config.publicAddress } : {}),
       region: "unknown",
@@ -1726,78 +1737,43 @@ export class AntseedNode extends EventEmitter {
     );
 
     this._connectionManager!.on("connection", (conn: PeerConnection) => {
-      this._handleIncomingDelegateConnection(conn);
+      this._handleIncomingRelayConnection(conn);
     });
 
-    debugLog(`[Node] Delegation host ready — signaling port ${actualSignalingPort}`);
+    debugLog(`[Node] Relay host ready — signaling port ${actualSignalingPort}`);
   }
 
-  private _handleIncomingDelegateConnection(conn: PeerConnection): void {
-    this._delegation!.registerInboundDelegate(conn);
+  private _handleIncomingRelayConnection(conn: PeerConnection): void {
+    this._relay!.registerInboundRelay(conn);
     this._wireConnection(conn, conn.remotePeerId);
     this.emit("connection", conn);
   }
 
-  /** Delegate buyers currently registered with this delegation host. */
-  getConnectedDelegates(): ConnectedDelegate[] {
-    return this._delegation?.getConnectedDelegates() ?? [];
+  getConnectedRelays(): ConnectedRelay[] {
+    return this._relay?.getConnectedRelays() ?? [];
   }
 
-  /**
-   * Dispatch one probe job to a registered delegate and await its result.
-   * The caller must independently verify the returned ResponseAuth — the
-   * delegate is untrusted transport.
-   */
-  async runProbeJob(
-    delegatePeerId: PeerId,
-    job: Omit<ProbeJobRequestPayload, "version">,
+  async runRelayJob(
+    relayPeerId: PeerId,
+    job: Omit<AuditRelayJobPayload, "version">,
     timeoutMs?: number,
-  ): Promise<ProbeJobResultPayload> {
-    if (!this._delegation) {
+  ): Promise<AuditRelayResultPayload> {
+    if (!this._relay) {
       throw new Error("Node not started or not in buyer mode");
     }
-    return this._delegation.runProbeJob(delegatePeerId, job, timeoutMs);
+    return this._relay.runRelayJob(relayPeerId, job, timeoutMs);
   }
 
-  /**
-   * Ask a registered delegate which sellers of `query.service` it ALREADY
-   * uses (Transparent Audits v2 target solicitation). The answer is a
-   * routing hint from an untrusted peer — callers must not treat it as
-   * anything stronger. An empty seller list is a valid answer.
-   */
-  async queryDelegateTargets(
-    delegatePeerId: PeerId,
-    query: Omit<TargetQueryPayload, "version">,
-    timeoutMs?: number,
-  ): Promise<TargetSuggestionPayload> {
-    if (!this._delegation) {
-      throw new Error("Node not started or not in buyer mode");
-    }
-    return this._delegation.queryDelegateTargets(delegatePeerId, query, timeoutMs);
-  }
-
-  /**
-   * Register with a delegation host (verifier) and serve its probe jobs.
-   * `handler` receives each job and must return the result payload; errors
-   * thrown by the handler are reported to the verifier as failed jobs.
-   * Delegate credits for carried probes accrue on-chain when the verifier
-   * anchors the seller-signed exchanges; the carrier discovers and claims
-   * them from chain events, so nothing is delivered over this channel to
-   * persist. `onTargetQuery` answers the verifier's target solicitations from
-   * local history (empty list is fine; omitted = every query answered empty).
-   * Resolves with the verifier's welcome (accepted or rejected).
-   */
-  async serveProbeJobs(
+  async serveRelayJobs(
     verifierPeer: PeerInfo,
-    hello: Omit<DelegateHelloPayload, "version">,
-    handler: (job: ProbeJobRequestPayload) => Promise<Omit<ProbeJobResultPayload, "version" | "jobId">>,
-    onTargetQuery?: (query: TargetQueryPayload) => Promise<TargetSuggestionPayload["sellers"]>,
+    hello: Omit<RelayHelloPayload, "version">,
+    handler: (job: AuditRelayJobPayload) => Promise<Omit<AuditRelayResultPayload, "version" | "jobId">>,
   ): Promise<{ accepted: boolean; reason?: string }> {
-    if (!this._delegation) {
+    if (!this._relay) {
       throw new Error("Node not started or not in buyer mode");
     }
     const conn = await this._getOrCreateConnection(verifierPeer);
-    return this._delegation.serveProbeJobs(verifierPeer, conn, hello, handler, undefined, onTargetQuery);
+    return this._relay.serveRelayJobs(verifierPeer, conn, hello, handler);
   }
 
   private _handleIncomingConnection(conn: PeerConnection): void {

@@ -7,12 +7,8 @@ import { homedir } from 'node:os'
 import { createConnection } from 'node:net'
 import { getGlobalOptions } from '../types.js'
 import { loadConfig } from '../../../config/loader.js'
-import { AntseedNode, DepositsClient, VerifierRegistryClient, getInstance, resolveChainConfig } from '@antseed/node'
-import { ZeroAddress } from 'ethers'
+import { AntseedNode, DepositsClient, getInstance, resolveChainConfig } from '@antseed/node'
 import type { NodePaymentsConfig } from '@antseed/node'
-import { DelegateWorker } from '../../../delegate/worker.js'
-import { CreditStore } from '../../../delegate/credit-store.js'
-import { discoverDelegateAccruals } from '../../../delegate/credit-discovery.js'
 import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
 import { paymentsConfigFromChain } from '../network/chain-config-helper.js'
@@ -22,6 +18,9 @@ import { resolvePluginPackage } from '../../../plugins/registry.js'
 import { BuyerProxy } from '../../../proxy/buyer-proxy.js'
 import { resolveEffectiveBuyerConfig, type BuyerRuntimeOverrides } from '../../../config/effective.js'
 import type { BuyerCLIConfig } from '../../../config/types.js'
+import { RelayWorker } from '../../../relay/worker.js'
+import { createRelayValidator, resolveVerificationChain } from '../verification-chain.js'
+import { ZeroAddress } from 'ethers'
 
 interface LocalSeederInfo {
   dhtPort: number
@@ -279,7 +278,10 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       }
 
       const seederInfo = await getLocalSeederInfo(globalOpts.dataDir)
-      const allBootstrapEntries = buildBuyerBootstrapEntries(config.network?.bootstrapNodes, seederInfo?.dhtPort)
+      const configuredBootstrapNodes = config.network?.bootstrapNodes ?? []
+      const allBootstrapEntries = config.payments?.crypto?.chainId === 'base-local' && configuredBootstrapNodes.length > 0
+        ? configuredBootstrapNodes
+        : buildBuyerBootstrapEntries(configuredBootstrapNodes, seederInfo?.dhtPort)
       const bootstrapNodes = toBootstrapConfig(parseBootstrapList(allBootstrapEntries))
 
       const nodeSpinner = ora('Connecting to P2P network...').start()
@@ -366,6 +368,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       const node = new AntseedNode({
         role: 'buyer',
         bootstrapNodes,
+        noOfficialBootstrap: config.payments?.crypto?.chainId === 'base-local' && configuredBootstrapNodes.length > 0,
         allowPrivateIPs: true,
         dataDir: globalOpts.dataDir,
         configPath: globalOpts.config,
@@ -404,6 +407,47 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         }
       }
 
+      let relayWorker: RelayWorker | null = null
+      if (effectiveBuyerConfig.relay.enabled) {
+        try {
+          if (!paymentsConfig?.enabled) throw new Error('payments are disabled')
+          const context = resolveVerificationChain(config)
+          const identity = node.identity
+          const storage = node.verificationStorage
+          if (!identity || !storage) throw new Error('buyer identity or verification storage is unavailable')
+          const deposits = new DepositsClient({
+            rpcUrl: context.chain.rpcUrl,
+            ...(context.chain.fallbackRpcUrls ? { fallbackRpcUrls: context.chain.fallbackRpcUrls } : {}),
+            contractAddress: context.chain.depositsContractAddress,
+            usdcAddress: context.chain.usdcContractAddress,
+            evmChainId: context.chain.evmChainId,
+          })
+          const operator = await deposits.getOperator(identity.wallet.address)
+          if (!operator || operator === ZeroAddress) throw new Error('buyer has no AntseedDeposits operator')
+          const minimumPayout = BigInt(effectiveBuyerConfig.relay.minimumPayoutPerJobUsdc ?? '1000')
+          relayWorker = new RelayWorker({
+            node,
+            validator: createRelayValidator(node, context, minimumPayout),
+            storage,
+            chainId: String(context.chain.evmChainId),
+            registryAddress: context.chain.verifierRegistryAddress!,
+            treasuryAddress: context.chain.relayTreasuryAddress!,
+            relayBuyerAddress: identity.wallet.address,
+            minimumPayoutPerJobUsdc: minimumPayout,
+            isApprovedVerifier: (address) => context.registryClient.isApprovedVerifier(address),
+            maxConcurrentJobs: effectiveBuyerConfig.relay.maxConcurrentJobs,
+            maxJobsPerHour: effectiveBuyerConfig.relay.maxJobsPerHour,
+            discoveryIntervalMs: effectiveBuyerConfig.relay.discoveryIntervalMs,
+            log: (message) => console.log(chalk.dim(message)),
+            warn: (message) => console.warn(chalk.yellow(message)),
+          })
+          relayWorker.start()
+          console.log(chalk.green(`Relay worker enabled (${minimumPayout} minimum USDC base units/job)`))
+        } catch (error) {
+          console.warn(chalk.yellow(`Relay worker skipped: ${(error as Error).message}`))
+        }
+      }
+
       const proxyPort = effectiveBuyerConfig.proxyPort
       const proxySpinner = ora(`Starting local proxy on port ${proxyPort}...`).start()
       const proxy = new BuyerProxy({
@@ -425,6 +469,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           console.log(chalk.yellow('Proxy request logs will be emitted by the process that already owns this port.'))
         } else {
           proxySpinner.fail(chalk.red(`Failed to start proxy: ${(err as Error).message}`))
+          relayWorker?.stop()
           await node.stop()
           process.exit(1)
         }
@@ -447,68 +492,9 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       console.log(chalk.dim('Filter debug logs: antseed buyer start --log-filter ProxyMux'))
       console.log('')
 
-      // Opt-in probe carrier: serve probe jobs for on-chain-approved
-      // verifiers over this buyer's ordinary paid request path. Carried jobs
-      // earn delegate credits that accrue ON-CHAIN when the verifier anchors
-      // the seller-signed exchanges naming this buyer; the worker discovers
-      // those accruals from DelegateCreditsAccrued logs and the buyer's
-      // deposits operator claims them on-chain for a share of the verification
-      // emissions bucket.
-      let delegateWorker: DelegateWorker | null = null
-      const delegateConfig = config.buyer?.delegate
-      if (delegateConfig?.enabled) {
-        if (!paymentsConfig?.enabled) {
-          console.log(chalk.yellow('Delegate mode configured but payments are disabled; probe jobs need the paid buyer path. Skipping.'))
-        } else if (!chainConfig.verifierRegistryAddress) {
-          console.log(chalk.yellow('Delegate mode configured but no verifier registry address is available for this chain. Skipping.'))
-        } else {
-          // Credits are claimable only by the operator registered for this
-          // buyer in AntseedDeposits — resolved by the contract at claim
-          // time, so carrying can start before the operator exists. Warn
-          // early anyway so unclaimed accruals are not a surprise.
-          try {
-            const operatorDeposits = new DepositsClient({
-              rpcUrl: chainConfig.rpcUrl,
-              ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
-              contractAddress: chainConfig.depositsContractAddress,
-              usdcAddress: chainConfig.usdcContractAddress,
-              evmChainId: chainConfig.evmChainId,
-            })
-            const operator = await operatorDeposits.getOperator(node.identity!.wallet.address)
-            if (!operator || operator === ZeroAddress) {
-              console.log(chalk.yellow('Delegate mode: no operator registered on AntseedDeposits yet — credits can be earned but only a registered operator can claim them.'))
-            }
-          } catch (err) {
-            console.log(chalk.yellow(`Delegate mode: operator lookup failed (${(err as Error).message}); continuing — the binding is enforced on-chain at claim time.`))
-          }
-          const verifierRegistry = new VerifierRegistryClient({
-            rpcUrl: chainConfig.rpcUrl,
-            ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
-            contractAddress: chainConfig.verifierRegistryAddress,
-            evmChainId: chainConfig.evmChainId,
-          })
-          const creditStore = new CreditStore(join(globalOpts.dataDir, 'delegate', 'credits.json'))
-          delegateWorker = new DelegateWorker({
-            node,
-            isApprovedVerifier: (address) => verifierRegistry.isApprovedVerifier(address),
-            creditStore,
-            discoverAccruals: (buyer, fromBlock) =>
-              discoverDelegateAccruals(verifierRegistry, buyer, fromBlock),
-            ...(delegateConfig.maxConcurrentJobs !== undefined ? { maxConcurrentJobs: delegateConfig.maxConcurrentJobs } : {}),
-            ...(delegateConfig.maxJobsPerHour !== undefined ? { maxJobsPerHour: delegateConfig.maxJobsPerHour } : {}),
-            ...(delegateConfig.discoveryIntervalMs !== undefined ? { discoveryIntervalMs: delegateConfig.discoveryIntervalMs } : {}),
-            log: (m) => console.log(chalk.dim(`[delegate] ${m}`)),
-            warn: (m) => console.warn(chalk.yellow(`[delegate] ${m}`)),
-          })
-          delegateWorker.start()
-          console.log(chalk.dim('Delegate mode: carrying probe jobs for approved verifiers (credit accruals land in delegate/credits.json, claimable by the operator)'))
-          console.log('')
-        }
-      }
-
       setupShutdownHandler(async () => {
         nodeSpinner.start('Shutting down...')
-        delegateWorker?.stop()
+        relayWorker?.stop()
         if (ownsProxyListener) await proxy.stop()
         await node.stop()
         nodeSpinner.succeed('Disconnected. All channels finalized.')

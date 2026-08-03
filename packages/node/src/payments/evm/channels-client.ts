@@ -40,6 +40,7 @@ const CHANNELS_ABI = [
   'function domainSeparator() external view returns (bytes32)',
   'function FIRST_SIGN_CAP() external view returns (uint256)',
   'event CloseRequested(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint256 gracePeriodEnd)',
+  'event ChannelSettled(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 cumulativeAmount, uint128 delta, uint128 totalSettled, uint256 platformFee, bytes metadata)',
 ] as const;
 
 /// @dev Probe ABI for the seller-facade passthrough. Present on
@@ -53,6 +54,21 @@ const SELLER_FACADE_PROBE_ABI = [
 export interface CloseRequestedEvent {
   channelId: string;
   buyer: string;
+}
+
+export interface ChannelSettledEvent {
+  channelId: string;
+  buyer: string;
+  seller: string;
+  cumulativeAmount: bigint;
+  delta: bigint;
+  totalSettled: bigint;
+  platformFee: bigint;
+  metadata: string;
+  blockNumber: number;
+  blockHash: string;
+  transactionHash: string;
+  logIndex: number;
 }
 
 export class ChannelsClient extends BaseEvmClient {
@@ -274,6 +290,38 @@ export class ChannelsClient extends BaseEvmClient {
       channelId: log.topics[1]!,
       buyer: ethers.getAddress('0x' + log.topics[2]!.slice(26)),
     }));
+  }
+
+  async getChannelSettledEvents(
+    fromBlock: number | 'earliest',
+    toBlock: number | 'latest' = 'latest',
+  ): Promise<ChannelSettledEvent[]> {
+    const iface = new ethers.Interface(CHANNELS_ABI);
+    const eventTopic = iface.getEvent('ChannelSettled')!.topicHash;
+    const logs = await this._provider.getLogs({
+      address: await this._getReadAddress(),
+      topics: [eventTopic],
+      fromBlock,
+      toBlock,
+    });
+    return logs.map((log) => {
+      const parsed = iface.parseLog(log);
+      if (!parsed) throw new Error('failed to decode ChannelSettled event');
+      return {
+        channelId: String(parsed.args.channelId ?? parsed.args[0]),
+        buyer: ethers.getAddress(String(parsed.args.buyer ?? parsed.args[1])),
+        seller: ethers.getAddress(String(parsed.args.seller ?? parsed.args[2])),
+        cumulativeAmount: BigInt(parsed.args.cumulativeAmount ?? parsed.args[3]),
+        delta: BigInt(parsed.args.delta ?? parsed.args[4]),
+        totalSettled: BigInt(parsed.args.totalSettled ?? parsed.args[5]),
+        platformFee: BigInt(parsed.args.platformFee ?? parsed.args[6]),
+        metadata: String(parsed.args.metadata ?? parsed.args[7]),
+        blockNumber: log.blockNumber,
+        blockHash: log.blockHash,
+        transactionHash: log.transactionHash,
+        logIndex: log.index,
+      };
+    });
   }
 
   /**

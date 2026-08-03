@@ -21,7 +21,7 @@ export { DepositsClient } from './evm/deposits-client.js';
 export type { DepositsClientConfig, BuyerBalanceInfo } from './evm/deposits-client.js';
 
 // Channels client (reserve, settle, timeout)
-export { ChannelsClient } from './evm/channels-client.js';
+export { ChannelsClient, type ChannelSettledEvent } from './evm/channels-client.js';
 export type { ChannelsClientConfig, ChannelInfo, AgentStats, CloseRequestedEvent } from './evm/channels-client.js';
 
 // Free usage client (zero-price signed usage)
@@ -36,28 +36,34 @@ export type { IdentityClientConfig } from './evm/identity-client.js';
 export { StakingClient } from './evm/staking-client.js';
 export type { StakingClientConfig } from './evm/staking-client.js';
 
-// Verifier network clients (model-verification attestations + rewards)
+// Verifier network clients (reference audits + fixed-price relay payouts)
 export {
   VerifierRegistryClient,
-  VerifierRewardsClient,
   serviceHash,
-  delegateTargetKey,
   VERIFIER_VERDICT_UNKNOWN,
   VERIFIER_VERDICT_SAME,
   VERIFIER_VERDICT_DIFF,
   VERIFIER_VERDICT_UNDETERMINED,
-  decodeAnchorCalldata,
-  decodeRevealCalldata,
 } from './evm/verifier-client.js';
 export type {
   VerifierRegistryClientConfig,
-  VerifierRewardsClientConfig,
-  BatchAnchor,
-  DecodedAnchor,
-  FetchedAnchor,
-  ProbeSetReveal,
-  OnChainAttestation,
+  VerifierVerdict,
+  AuditJob,
+  RelayAssignment,
+  RelayClaim,
+  MetricSnapshot,
+  AuditState,
+  AttestationState,
+  ParsedResponseAuth,
+  CommitProbesInput,
+  SubmitAttestationInput,
+  AttestationSubmittedEvent,
 } from './evm/verifier-client.js';
+export { RelayTreasuryClient } from './evm/relay-treasury-client.js';
+export type {
+  RelayTreasuryClientConfig,
+  RelayTreasuryReservation,
+} from './evm/relay-treasury-client.js';
 
 export {
   signSpendingAuth,
@@ -74,6 +80,7 @@ export {
   FREE_USAGE_AUTH_TYPES,
   SET_OPERATOR_TYPES,
   computeMetadataHash,
+  decodeMetadata,
   encodeMetadata,
   computeFreeUsageMetadataHash,
   encodeFreeUsageMetadata,

@@ -141,6 +141,30 @@ export function encodeMetadata(metadata: SpendingAuthMetadata): string {
   );
 }
 
+export function decodeMetadata(encoded: string): SpendingAuthMetadata {
+  const coder = AbiCoder.defaultAbiCoder();
+  const decoded = coder.decode(
+    ['uint256', 'uint256', 'uint256', 'uint256', SERVICE_METADATA_ABI_TYPE],
+    encoded,
+  );
+  const version = BigInt(decoded[0]);
+  if (version !== METADATA_VERSION) throw new Error(`unsupported SpendingAuth metadata version ${version}`);
+  const rawServices = decoded[4] as unknown as Array<Record<string | number, unknown>>;
+  return {
+    cumulativeInputTokens: BigInt(decoded[1]),
+    cumulativeOutputTokens: BigInt(decoded[2]),
+    cumulativeRequestCount: BigInt(decoded[3]),
+    services: rawServices.map((service) => ({
+      serviceId: String(service.serviceId ?? service[0]),
+      cumulativeAmount: BigInt(service.cumulativeAmount as bigint ?? service[1] as bigint),
+      cumulativeInputTokens: BigInt(service.cumulativeInputTokens as bigint ?? service[2] as bigint),
+      cumulativeCachedInputTokens: BigInt(service.cumulativeCachedInputTokens as bigint ?? service[3] as bigint),
+      cumulativeOutputTokens: BigInt(service.cumulativeOutputTokens as bigint ?? service[4] as bigint),
+      cumulativeRequestCount: BigInt(service.cumulativeRequestCount as bigint ?? service[5] as bigint),
+    })),
+  };
+}
+
 export function getServiceMetadataId(service: string): string {
   return id(service.trim());
 }

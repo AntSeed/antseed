@@ -19,6 +19,7 @@ import { canonicalHash } from '../../canonical-json.js';
 import type { FingerprintVerifier, VerifyOptions } from '../../registry.js';
 import { computeMatchVector } from './scoring.js';
 import { computeKbfVerdict } from './verdict.js';
+import { subsetReferenceSelfTest, type KbfReferenceV1 } from './reference.js';
 
 export * from './prompts.js';
 export * from './parser.js';
@@ -26,6 +27,7 @@ export * from './scoring.js';
 export * from './stats.js';
 export * from './stealth.js';
 export * from './verdict.js';
+export * from './reference.js';
 
 export const KBF_KIND = 'kbf';
 
@@ -84,9 +86,18 @@ export class KbfVerifier implements FingerprintVerifier {
       matchVector = computeMatchVector(observation.answers, reference.probes);
     }
 
+    let selectedSelfTest;
+    try {
+      selectedSelfTest = subsetReferenceSelfTest(
+        reference as KbfReferenceV1,
+        reference.probes.map((probe) => probe.id),
+      );
+    } catch (error) {
+      return unknown(`invalid reference self-test: ${error instanceof Error ? error.message : String(error)}`);
+    }
     const { verdict, verdictReason, stats } = computeKbfVerdict({
-      selfHamming: reference.selfTest.hamming,
-      selfTotal: reference.selfTest.total,
+      selfHamming: selectedSelfTest.hamming,
+      selfTotal: selectedSelfTest.total,
       targetMatchVector: matchVector,
       minCoverage: options.minCoverage,
       cpConfidence: options.cpConfidence,
@@ -100,7 +111,7 @@ export class KbfVerifier implements FingerprintVerifier {
       selfTotal: stats.selfTotal,
       targetHamming: stats.targetHamming,
       targetTotal: stats.targetTotal,
-      selfCoverage: reference.selfTest.coverage,
+      selfCoverage: selectedSelfTest.coverage,
       targetCoverage: stats.targetCoverage,
       p0Cp99: stats.p0Cp99,
       pValueBinomial: stats.pValueBinomial,

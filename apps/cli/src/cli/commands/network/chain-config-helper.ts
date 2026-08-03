@@ -19,6 +19,9 @@ export interface ChainCryptoOverrides {
   usdcContractAddress?: string;
   stakingContractAddress?: string;
   identityRegistryAddress?: string;
+  verifierRegistryAddress?: string;
+  relayTreasuryAddress?: string;
+  verifierPointsPolicyAddress?: string;
 }
 
 /**
@@ -78,5 +81,8 @@ export function paymentsConfigFromChain(resolved: ChainConfig): NodePaymentsConf
     chainId: resolved.evmChainId,
     ...(resolved.stakingContractAddress ? { stakingAddress: resolved.stakingContractAddress } : {}),
     ...(resolved.identityRegistryAddress ? { identityRegistryAddress: resolved.identityRegistryAddress } : {}),
+    ...(resolved.verifierRegistryAddress ? { verifierRegistryAddress: resolved.verifierRegistryAddress } : {}),
+    ...(resolved.relayTreasuryAddress ? { relayTreasuryAddress: resolved.relayTreasuryAddress } : {}),
+    ...(resolved.verifierPointsPolicyAddress ? { verifierPointsPolicyAddress: resolved.verifierPointsPolicyAddress } : {}),
   };
 }

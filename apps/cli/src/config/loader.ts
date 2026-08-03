@@ -28,6 +28,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function assertKnownKeys(value: Record<string, unknown>, path: string, knownKeys: ReadonlySet<string>): void {
+  const unknownKey = Object.keys(value).find((key) => !knownKeys.has(key));
+  if (unknownKey) throw new Error(`${path}.${unknownKey} is not a supported ${path} option`);
+}
+
+const BUYER_KEYS = new Set([
+  'maxPricing', 'minPeerReputation', 'proxyPort', 'peerRefreshIntervalMs',
+  'metadataFetchTimeoutMs', 'disableMetadataV2Services', 'verification', 'relay',
+]);
+const BUYER_VERIFICATION_KEYS = new Set(['sampleRate', 'maxSampleBytes']);
+const BUYER_RELAY_KEYS = new Set([
+  'enabled', 'minimumPayoutPerJobUsdc', 'maxConcurrentJobs', 'maxJobsPerHour', 'discoveryIntervalMs',
+]);
+
 function toFiniteOrNaN(value: unknown): number {
   return typeof value === 'number' ? value : Number.NaN;
 }
@@ -329,41 +343,11 @@ function normalizeBuyerVerification(
     const cloned = cloneBuyerVerification(fallback);
     return cloned ? { verification: cloned } : {};
   }
+  assertKnownKeys(value, 'buyer.verification', BUYER_VERIFICATION_KEYS);
   return {
     verification: {
       ...(value['sampleRate'] !== undefined ? { sampleRate: toFiniteOrNaN(value['sampleRate']) } : {}),
       ...(value['maxSampleBytes'] !== undefined ? { maxSampleBytes: toFiniteOrNaN(value['maxSampleBytes']) } : {}),
-    },
-  };
-}
-
-function cloneBuyerDelegate(
-  value: AntseedConfig['buyer']['delegate'],
-): AntseedConfig['buyer']['delegate'] {
-  if (!value) return undefined;
-  return {
-    enabled: value.enabled,
-    ...(value.maxConcurrentJobs !== undefined ? { maxConcurrentJobs: value.maxConcurrentJobs } : {}),
-    ...(value.maxJobsPerHour !== undefined ? { maxJobsPerHour: value.maxJobsPerHour } : {}),
-    ...(value.discoveryIntervalMs !== undefined ? { discoveryIntervalMs: value.discoveryIntervalMs } : {}),
-  };
-}
-
-function normalizeBuyerDelegate(
-  value: unknown,
-  fallback?: AntseedConfig['buyer']['delegate'],
-): { delegate: NonNullable<AntseedConfig['buyer']['delegate']> } | Record<string, never> {
-  if (!isRecord(value)) {
-    if (value !== undefined) return { delegate: value as NonNullable<AntseedConfig['buyer']['delegate']> };
-    const cloned = cloneBuyerDelegate(fallback);
-    return cloned ? { delegate: cloned } : {};
-  }
-  return {
-    delegate: {
-      enabled: value['enabled'] as boolean,
-      ...(value['maxConcurrentJobs'] !== undefined ? { maxConcurrentJobs: value['maxConcurrentJobs'] as number } : {}),
-      ...(value['maxJobsPerHour'] !== undefined ? { maxJobsPerHour: value['maxJobsPerHour'] as number } : {}),
-      ...(value['discoveryIntervalMs'] !== undefined ? { discoveryIntervalMs: value['discoveryIntervalMs'] as number } : {}),
     },
   };
 }
@@ -381,9 +365,10 @@ function mergeBuyerConfig(
       metadataFetchTimeoutMs: defaults.metadataFetchTimeoutMs,
       disableMetadataV2Services: defaults.disableMetadataV2Services,
       ...(normalizeBuyerVerification(undefined, defaults.verification)),
-      ...(normalizeBuyerDelegate(undefined, defaults.delegate)),
+      relay: { ...defaults.relay },
     };
   }
+  assertKnownKeys(value, 'buyer', BUYER_KEYS);
   return {
     maxPricing: mergeHierarchicalPricing(defaults.maxPricing, value['maxPricing']),
     minPeerReputation: normalizeMinPeerReputation(value['minPeerReputation'], defaults.minPeerReputation),
@@ -402,7 +387,24 @@ function mergeBuyerConfig(
       'buyer.disableMetadataV2Services',
     ),
     ...(normalizeBuyerVerification(value['verification'], defaults.verification)),
-    ...(normalizeBuyerDelegate(value['delegate'], defaults.delegate)),
+    relay: normalizeBuyerRelay(value['relay'], defaults.relay),
+  };
+}
+
+function normalizeBuyerRelay(value: unknown, fallback: AntseedConfig['buyer']['relay']): AntseedConfig['buyer']['relay'] {
+  if (value === undefined) return { ...fallback };
+  if (!isRecord(value)) return value as AntseedConfig['buyer']['relay'];
+  assertKnownKeys(value, 'buyer.relay', BUYER_RELAY_KEYS);
+  return {
+    enabled: normalizeBooleanConfigValue(value['enabled'], fallback.enabled, 'buyer.relay.enabled'),
+    minimumPayoutPerJobUsdc: typeof value['minimumPayoutPerJobUsdc'] === 'string'
+      ? value['minimumPayoutPerJobUsdc']
+      : fallback.minimumPayoutPerJobUsdc,
+    maxConcurrentJobs: typeof value['maxConcurrentJobs'] === 'number' ? value['maxConcurrentJobs'] : fallback.maxConcurrentJobs,
+    maxJobsPerHour: typeof value['maxJobsPerHour'] === 'number' ? value['maxJobsPerHour'] : fallback.maxJobsPerHour,
+    discoveryIntervalMs: typeof value['discoveryIntervalMs'] === 'number'
+      ? value['discoveryIntervalMs']
+      : fallback.discoveryIntervalMs,
   };
 }
 
@@ -412,16 +414,14 @@ function normalizeBooleanConfigValue(value: unknown, defaultValue: boolean, path
   throw new Error(`${path} must be a boolean`);
 }
 
-// Raw pass-through, like the delegate/delegation sections: every value
-// (including nested upstream/delegation and unknown keys) reaches
+// Raw pass-through: every value (including nested upstream and unknown keys) reaches
 // assertValidConfig unchanged, which rejects mistyped or unknown entries
 // loudly. Filtering here would silently widen the config — e.g.
 // `services: [123]` collapsing to `[]` means "audit EVERYTHING", and a typo'd
 // upstream would silently disable reference enrollment.
 function mergeVerifierConfig(value: unknown): AntseedConfig['verifier'] {
-  if (!isRecord(value)) {
-    return value !== undefined ? (value as AntseedConfig['verifier']) : undefined;
-  }
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error('verifier must be an object');
   return { services: [], ...(value as NonNullable<AntseedConfig['verifier']>) };
 }
 
@@ -452,6 +452,7 @@ export async function loadConfig(configPath: string): Promise<AntseedConfig> {
 
   const defaults = createDefaultConfig();
   const parsed = isRecord(parsedRaw) ? parsedRaw : {};
+  if ('relay' in parsed) throw new Error('relay is no longer supported; use buyer.relay');
 
   const merged: AntseedConfig = {
     ...defaults,
@@ -473,8 +474,30 @@ export async function loadConfig(configPath: string): Promise<AntseedConfig> {
   };
 
   const verifier = mergeVerifierConfig(parsed['verifier']);
-  if (verifier) merged.verifier = verifier;
-  else delete merged.verifier;
+  const rawReferencePolicy = verifier?.referencePolicy;
+  const referencePolicy = {
+    ...defaults.verifier?.referencePolicy,
+    ...rawReferencePolicy,
+  };
+  if (rawReferencePolicy?.auditProbeCount !== undefined && rawReferencePolicy.minimumAuditProbeCount === undefined) {
+    referencePolicy.minimumAuditProbeCount = rawReferencePolicy.auditProbeCount;
+    console.warn('Warning: verifier.referencePolicy.auditProbeCount is deprecated; use minimumAuditProbeCount.');
+  }
+  if (rawReferencePolicy?.maxRequestsPerBuild !== undefined && rawReferencePolicy.maxRequestsPerRound === undefined) {
+    referencePolicy.maxRequestsPerRound = rawReferencePolicy.maxRequestsPerBuild;
+    console.warn('Warning: verifier.referencePolicy.maxRequestsPerBuild is deprecated; use maxRequestsPerRound.');
+  }
+  if (rawReferencePolicy?.certifiedProbeCount !== undefined) {
+    console.warn('Warning: verifier.referencePolicy.certifiedProbeCount is deprecated; the verifier now uses a certified probe catalog.');
+  }
+  if (rawReferencePolicy?.maxProbeUsesPerTarget !== undefined) {
+    console.warn('Warning: verifier.referencePolicy.maxProbeUsesPerTarget is deprecated; same-agent probe reuse is disabled.');
+  }
+  merged.verifier = {
+    ...defaults.verifier,
+    ...verifier,
+    referencePolicy,
+  };
 
   assertValidConfig(merged);
   return merged;

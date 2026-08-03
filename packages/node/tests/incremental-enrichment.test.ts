@@ -1,12 +1,40 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AntseedNode, type PeerInfo } from '../src/node.js';
 import { GITHUB_VERIFICATION_PROOF_TYPE } from '../src/discovery/github-verification.js';
+import {
+  VERIFIER_VERDICT_DIFF,
+  VERIFIER_VERDICT_SAME,
+  serviceHash,
+  type AttestationSubmittedEvent,
+} from '../src/payments/evm/verifier-client.js';
 
 function makePeer(peerId = 'a'.repeat(40)): PeerInfo {
   return {
     peerId: peerId as PeerInfo['peerId'],
     providers: ['openai'],
     lastSeen: Date.now(),
+  };
+}
+
+function attestation(
+  verdict: number,
+  blockNumber: number,
+  overrides: Partial<AttestationSubmittedEvent> = {},
+): AttestationSubmittedEvent {
+  return {
+    auditId: `0x${blockNumber.toString(16).padStart(64, '0')}`,
+    verifier: '0x' + '11'.repeat(20),
+    agentId: 7n,
+    serviceHash: serviceHash('kimi-k2'),
+    verdict: verdict as AttestationSubmittedEvent['verdict'],
+    modelShareBps: verdict === VERIFIER_VERDICT_DIFF ? 2500 : 0,
+    evidenceHash: '0x' + '22'.repeat(32),
+    relayClaimCount: 3,
+    relayPayoutUsdc: 3000n,
+    blockNumber,
+    logIndex: 0,
+    transactionHash: '0x' + '33'.repeat(32),
+    ...overrides,
   };
 }
 
@@ -47,7 +75,7 @@ describe('AntseedNode incremental discovery enrichment', () => {
     expect(peers[0]?.onChainReputationScore).toEqual(expect.any(Number));
   });
 
-  it('includes verifier-registry enrichment in the partial-enrichment queue', async () => {
+  it('does not query verifier attestations in a metadata-only partial update without a service', async () => {
     const node = new AntseedNode({ role: 'buyer' });
     const peer = makePeer();
     const nowSec = Math.floor(Date.now() / 1000);
@@ -69,17 +97,7 @@ describe('AntseedNode incremental discovery enrichment', () => {
       }),
     };
     (node as any)._verifierRegistryClient = {
-      verificationStats: vi.fn(),
-      agentVerificationStats: vi.fn().mockResolvedValue({
-        sameCount: 4,
-        diffCount: 0,
-        undeterminedCount: 0,
-        distinctVerifierCount: 2,
-        lastVerdict: 1,
-        lastVerifier: '0x' + '1'.repeat(40),
-        activeDiffVerifierCount: 0,
-      }),
-      getMinDistinctDiffVerifiers: vi.fn().mockResolvedValue(3),
+      queryAttestations: vi.fn(),
     };
 
     (node as any)._queuePartialPeerEnrichment([peer]);
@@ -87,82 +105,72 @@ describe('AntseedNode incremental discovery enrichment', () => {
 
     expect(discovered).toHaveBeenCalledTimes(1);
     const [[peers]] = discovered.mock.calls as [[PeerInfo[]]];
-    expect(peers[0]?.modelVerification?.['*']?.sameCount).toBe(4);
-    expect(peers[0]?.modelVerification?.['*']?.activeDiffVerifierCount).toBe(0);
-    // The chain-read points-policy exclusion threshold is stamped onto the
-    // enrichment result so routing exclusion fires at the on-chain bar.
-    expect(peers[0]?.modelVerification?.['*']?.exclusionThreshold).toBe(3);
-    expect((node as any)._verifierRegistryClient.agentVerificationStats).toHaveBeenCalledWith(123);
+    expect(peers[0]?.modelVerification).toBeUndefined();
+    expect((node as any)._verifierRegistryClient.queryAttestations).not.toHaveBeenCalled();
   });
 
-  it('keeps per-service verification stats when the aggregate read fails (and vice versa)', async () => {
+  it('derives service lifecycle from ordered attestation events', async () => {
     const node = new AntseedNode({ role: 'buyer' });
-    const serviceStats = {
-      sameCount: 3,
-      diffCount: 1,
+    const peer = { ...makePeer('a'.repeat(40)), onChainAgentId: 7 };
+    (node as any)._verifierRegistryClient = {
+      queryAttestations: vi.fn().mockResolvedValue([
+        attestation(VERIFIER_VERDICT_DIFF, 10),
+        attestation(VERIFIER_VERDICT_DIFF, 11),
+      ]),
+    };
+    await (node as any)._enrichPeersWithVerification([peer], 'Kimi-K2');
+    expect(peer.modelVerification?.['kimi-k2']?.lifecycle).toBe('suspended');
+    expect(peer.modelVerification?.['kimi-k2']?.consecutiveDiffCount).toBe(2);
+    expect((node as any)._verifierRegistryClient.queryAttestations).toHaveBeenCalledWith(7);
+  });
+
+  it('keeps a previous lifecycle when the registry read fails', async () => {
+    const node = new AntseedNode({ role: 'buyer' });
+    const existing = {
+      serviceHash: serviceHash('kimi-k2'),
+      lifecycle: 'verified' as const,
+      sameCount: 1,
+      diffCount: 0,
       undeterminedCount: 0,
-      distinctVerifierCount: 2,
-      lastVerdict: 2,
-      lastVerifier: '0x' + '2'.repeat(40),
-      activeDiffVerifierCount: 1,
+      consecutiveDiffCount: 0,
+      lastVerdict: VERIFIER_VERDICT_SAME,
+      lastConclusiveVerdict: VERIFIER_VERDICT_SAME,
+      latestAuditId: '0x' + '11'.repeat(32),
+      latestEvidenceHash: '0x' + '22'.repeat(32),
+      latestVerifier: '0x' + '33'.repeat(20),
+      latestBlockNumber: 10,
+      modelShareBps: 0,
     };
-
-    // Aggregate read fails — per-service stats must survive.
-    const peerA = { ...makePeer('a'.repeat(40)), onChainAgentId: 7 };
+    const peer = { ...makePeer(), onChainAgentId: 9, modelVerification: { 'kimi-k2': existing } };
     (node as any)._verifierRegistryClient = {
-      verificationStats: vi.fn().mockResolvedValue(serviceStats),
-      agentVerificationStats: vi.fn().mockRejectedValue(new Error('rpc down')),
-      getMinDistinctDiffVerifiers: vi.fn().mockResolvedValue(2),
+      queryAttestations: vi.fn().mockRejectedValue(new Error('rpc down')),
     };
-    await (node as any)._enrichPeersWithVerification([peerA], 'Kimi-K2');
-    expect(peerA.modelVerification?.['kimi-k2']?.activeDiffVerifierCount).toBe(1);
-    expect(peerA.modelVerification?.['*']).toBeUndefined();
-
-    // Per-service read fails — aggregate stats must survive.
-    const peerB = { ...makePeer('b'.repeat(40)), onChainAgentId: 8 };
-    (node as any)._verifierRegistryClient = {
-      verificationStats: vi.fn().mockRejectedValue(new Error('rpc down')),
-      agentVerificationStats: vi.fn().mockResolvedValue(serviceStats),
-      getMinDistinctDiffVerifiers: vi.fn().mockResolvedValue(2),
-    };
-    await (node as any)._enrichPeersWithVerification([peerB], 'kimi-k2');
-    expect(peerB.modelVerification?.['kimi-k2']).toBeUndefined();
-    expect(peerB.modelVerification?.['*']?.sameCount).toBe(3);
+    await (node as any)._enrichPeersWithVerification([peer], 'kimi-k2');
+    expect(peer.modelVerification?.['kimi-k2']).toEqual(existing);
   });
 
-  it('issues the per-service and aggregate verification reads concurrently', async () => {
+  it('issues attestation reads concurrently across peers', async () => {
     const node = new AntseedNode({ role: 'buyer' });
-    const peer = { ...makePeer(), onChainAgentId: 9 };
-    let resolveService!: (value: unknown) => void;
-    let resolveAggregate!: (value: unknown) => void;
-    const started: string[] = [];
-    const stats = {
-      sameCount: 1, diffCount: 0, undeterminedCount: 0, distinctVerifierCount: 1,
-      lastVerdict: 1, lastVerifier: '0x0', activeDiffVerifierCount: 0,
-    };
+    const peers = [
+      { ...makePeer('a'.repeat(40)), onChainAgentId: 7 },
+      { ...makePeer('b'.repeat(40)), onChainAgentId: 8 },
+    ];
+    const started: number[] = [];
+    const resolvers = new Map<number, (value: AttestationSubmittedEvent[]) => void>();
     (node as any)._verifierRegistryClient = {
-      verificationStats: vi.fn(() => {
-        started.push('service');
-        return new Promise((res) => { resolveService = res; });
+      queryAttestations: vi.fn((agentId: number) => {
+        started.push(agentId);
+        return new Promise<AttestationSubmittedEvent[]>((resolve) => resolvers.set(agentId, resolve));
       }),
-      agentVerificationStats: vi.fn(() => {
-        started.push('aggregate');
-        return new Promise((res) => { resolveAggregate = res; });
-      }),
-      getMinDistinctDiffVerifiers: vi.fn().mockResolvedValue(2),
     };
-
-    const done = (node as any)._enrichPeersWithVerification([peer], 'kimi-k2');
-    // Flush microtasks past the (mock-resolved) exclusion-threshold read that
-    // precedes the per-peer stat reads.
+    const done = (node as any)._enrichPeersWithVerification(peers, 'kimi-k2');
     await new Promise((resolve) => setImmediate(resolve));
-    // Both reads must be in flight before either resolves.
-    expect(started).toEqual(['service', 'aggregate']);
-    resolveService(stats);
-    resolveAggregate(stats);
+    expect(started.sort()).toEqual([7, 8]);
+    resolvers.get(7)!([attestation(VERIFIER_VERDICT_SAME, 10, { agentId: 7n })]);
+    resolvers.get(8)!([attestation(VERIFIER_VERDICT_DIFF, 11, { agentId: 8n })]);
     await done;
-    expect(peer.modelVerification?.['kimi-k2']).toBeDefined();
-    expect(peer.modelVerification?.['*']).toBeDefined();
+    expect(peers[0]?.modelVerification?.['kimi-k2']?.lifecycle).toBe('verified');
+    expect(peers[1]?.modelVerification?.['kimi-k2']?.lifecycle).toBe('flagged');
   });
 
   it('emits external verification results without blocking initial discovery events', async () => {

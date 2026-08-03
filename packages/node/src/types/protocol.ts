@@ -34,20 +34,12 @@ export enum MessageType {
   // Verification / attestation protocol (0x80-0x8F)
   VerificationResponseAuth = 0x80,
 
-  // Probe delegation protocol (0x90-0x9F): verifiers dispatch probe jobs to
-  // organic buyer peers so probe traffic is indistinguishable from real usage.
-  DelegateHello = 0x90,
-  DelegateWelcome = 0x91,
-  ProbeJobRequest = 0x92,
-  ProbeJobResult = 0x93,
-  // 0x94 RETIRED (reserved, never reassign): formerly DelegateVoucher, the
-  // off-chain EIP-712 voucher a verifier signed for a carrier. Delegate
-  // credits now accrue on-chain at anchor time (AntseedVerifierRegistry
-  // .anchorExchangeBatch verifies each seller-signed ResponseAuth and credits
-  // the buyer named in it); carriers discover accruals from the
-  // DelegateCreditsAccrued event and claim them via claimDelegateCredits.
-  TargetQuery = 0x95,
-  TargetSuggestion = 0x96,
+  // Atomic audit-relay protocol (0x90-0x9F).
+  RelayHello = 0x90,
+  RelayWelcome = 0x91,
+  AuditRelayJob = 0x92,
+  AuditRelayResult = 0x93,
+  // 0x94-0x96 are retired and remain reserved.
 
   Disconnect = 0xF0,
   Error = 0xFF,
@@ -55,11 +47,11 @@ export enum MessageType {
 
 export const CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 = 'verification.response-auth.v1' as const;
 /**
- * Announced by verifier nodes that host probe delegation: buyers that opt in
- * discover them by this capability, connect, and carry probe jobs in exchange
- * for a share of the verification emissions bucket.
+ * Announced by verifier nodes that accept atomic audit-relay registrations.
+ * Eligible relay buyers discover the verifier, execute committed jobs through
+ * paid seller channels, and claim their frozen Treasury payout.
  */
-export const CONNECTION_CAPABILITY_PROBE_DELEGATION_V1 = 'verification.probe-delegation.v1' as const;
+export const CONNECTION_CAPABILITY_AUDIT_RELAY_V1 = 'verification.audit-relay.v1' as const;
 
 export interface FramedMessage {
   type: MessageType;
@@ -237,90 +229,76 @@ export interface ResponseAuthPayload {
   signature: string;
 }
 
-// ─── Probe Delegation Messages ─────────────────────────────────
+// ─── Atomic Audit Relay Messages ───────────────────────────────
 
-/**
- * Delegate buyer introduces itself to a verifier after connecting. The
- * delegate's on-chain identity IS the connection's peerId (an EVM address),
- * so there is nothing to assert: that address is the buyer named in the
- * seller-signed ResponseAuth payloads the verifier anchors, and the contract
- * credits it (resolving its deposits operator at claim time).
- */
-export interface DelegateHelloPayload {
+export interface RelayHelloPayload {
   version: 1;
-  /** Max probe jobs the delegate is willing to run concurrently. */
+  chainId: string;
+  registryAddress: string;
+  treasuryAddress: string;
+  minPayoutPerJobUsdc: string;
   maxConcurrentJobs?: number;
 }
 
-/**
- * Verifier accepts or rejects a delegate registration.
- */
-export interface DelegateWelcomePayload {
+export interface RelayWelcomePayload {
   version: 1;
   accepted: boolean;
   reason?: string;
 }
 
-/**
- * One probe job: the delegate relays `request` to `targetPeerId` byte-for-byte
- * over its ordinary paid buyer path and returns the seller's response plus the
- * seller-signed ResponseAuth. The request is fully verifier-crafted — its hash
- * is what the seller signs, so the delegate can only carry it or drop it,
- * never alter or fabricate an observation.
- */
-export interface ProbeJobRequestPayload {
+export interface AuditRelayJobPayload {
   version: 1;
   jobId: string;
+  chainId: string;
+  registryAddress: string;
+  treasuryAddress: string;
+  auditSnapshot: {
+    committer: string;
+    auditJobRoot: string;
+    jobCount: number;
+    payoutPerJobUsdc: string;
+    reservedRelayBudgetUsdc: string;
+    executeAfter: number;
+    executeBefore: number;
+    forceClaimAvailableAt: number;
+    forceClaimDeadline: number;
+    attested: boolean;
+  };
+  job: {
+    auditId: string;
+    jobIndex: number;
+    sellerPeerId: string;
+    serviceHash: string;
+    requestHash: string;
+    jobSalt: string;
+    executeAfter: number;
+    executeBefore: number;
+  };
+  jobProof: string[];
+  assignment: {
+    auditId: string;
+    jobIndex: number;
+    attempt: number;
+    relayBuyer: string;
+    payoutPerJobUsdc: string;
+    executeAfter: number;
+    executeBefore: number;
+  };
+  verifierSignature: string;
   targetPeerId: string;
   service: string;
-  request: {
-    requestId: string;
-    method: string;
-    path: string;
-    headers: Record<string, string>;
-    bodyBase64: string;
-  };
+  requestBytesBase64: string;
+  payoutPerJobUsdc: string;
   timeoutMs: number;
 }
 
-/**
- * Verifier asks a connected delegate which sellers of `service` the delegate
- * ALREADY uses, so probe jobs can be routed over organic buyer→seller pairs
- * (traffic indistinguishable from the delegate's real usage). Correlated with
- * its TargetSuggestion by `queryId`.
- */
-export interface TargetQueryPayload {
-  version: 1;
-  queryId: string;
-  service: string;
-}
-
-/**
- * Delegate's answer to a TargetQuery: sellers of `service` it has organically
- * routed to. An empty list is a valid answer (the verifier falls back to
- * assignment); the verifier trusts nothing here beyond a routing hint.
- */
-export interface TargetSuggestionPayload {
-  version: 1;
-  queryId: string;
-  service: string;
-  sellers: Array<{ peerId: string; agentId: number }>;
-}
-
-/**
- * Delegate's result for one probe job. The verifier trusts nothing here
- * blindly: it re-verifies the seller's ResponseAuth signature against the
- * request it crafted and the response body returned.
- */
-export interface ProbeJobResultPayload {
+export interface AuditRelayResultPayload {
   version: 1;
   jobId: string;
   status: 'ok' | 'error';
   error?: string;
-  response?: {
-    statusCode: number;
-    headers: Record<string, string>;
-    bodyBase64: string;
-  };
-  responseAuth?: ResponseAuthPayload;
+  responseBytesBase64?: string;
+  responseAuthPayloadBase64?: string;
+  sellerChargeUsdc?: string;
+  paymentMetadata?: Record<string, unknown>;
 }

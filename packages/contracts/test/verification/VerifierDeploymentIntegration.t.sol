@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import { Test } from "forge-std/Test.sol";
 
+import { ANTSToken } from "../../core/ANTSToken.sol";
 import { AntseedRegistry } from "../../core/AntseedRegistry.sol";
 import { AntseedEmissionsGate } from "../../emissions/AntseedEmissionsGate.sol";
 import { AntseedUsageAccounting } from "../../emissions/AntseedUsageAccounting.sol";
@@ -72,6 +73,7 @@ contract VerifierDeploymentIntegrationTest is Test {
 
     function _registry() private returns (AntseedRegistry registry) {
         registry = new AntseedRegistry();
+        registry.setAntsToken(address(new ANTSToken()));
         registry.setTeamWallet(address(0xA11CE));
         registry.setProtocolReserve(address(0xB0B));
     }

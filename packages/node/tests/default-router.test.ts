@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { DefaultRouter } from '../src/routing/default-router.js';
+import { serviceHash } from '../src/payments/evm/verifier-client.js';
 import type { PeerInfo } from '../src/types/peer.js';
 import type { SerializedHttpRequest } from '../src/types/http.js';
 
@@ -12,6 +13,25 @@ function makePeer(overrides?: Partial<PeerInfo>): PeerInfo {
     defaultInputUsdPerMillion: 10,
     ...overrides,
   };
+}
+
+function verification(lifecycle: 'verified' | 'flagged' | 'suspended') {
+  const diffCount = lifecycle === 'verified' ? 0 : lifecycle === 'flagged' ? 1 : 2;
+  return {
+    serviceHash: serviceHash('kimi-k2'),
+    lifecycle,
+    sameCount: lifecycle === 'verified' ? 1 : 0,
+    diffCount,
+    undeterminedCount: 0,
+    consecutiveDiffCount: diffCount,
+    lastVerdict: lifecycle === 'verified' ? 1 : 2,
+    lastConclusiveVerdict: lifecycle === 'verified' ? 1 : 2,
+    latestAuditId: '0x' + '11'.repeat(32),
+    latestEvidenceHash: '0x' + '22'.repeat(32),
+    latestVerifier: '0x' + '33'.repeat(20),
+    latestBlockNumber: 100,
+    modelShareBps: lifecycle === 'verified' ? 0 : 2500,
+  } as const;
 }
 
 const dummyReq: SerializedHttpRequest = {
@@ -102,36 +122,20 @@ describe('DefaultRouter', () => {
       expect(selected?.peerId).toBe('a'.repeat(40));
     });
 
-    it('should exclude a cheaper seller with a CORROBORATED substitution flag (>= 2 verifiers) for the requested model', () => {
+    it('should exclude a cheaper seller after a second consecutive DIFF for the requested model', () => {
       const router = new DefaultRouter();
       const flagged = makePeer({
         peerId: 'a'.repeat(40) as any,
         defaultInputUsdPerMillion: 1,
         modelVerification: {
-          'kimi-k2': {
-            sameCount: 0,
-            diffCount: 2,
-            undeterminedCount: 0,
-            distinctVerifierCount: 2,
-            activeDiffVerifierCount: 2,
-            lastVerdict: 2,
-            score: 0,
-          },
+          'kimi-k2': verification('suspended'),
         },
       });
       const clean = makePeer({
         peerId: 'b'.repeat(40) as any,
         defaultInputUsdPerMillion: 100,
         modelVerification: {
-          'kimi-k2': {
-            sameCount: 5,
-            diffCount: 0,
-            undeterminedCount: 0,
-            distinctVerifierCount: 3,
-            activeDiffVerifierCount: 0,
-            lastVerdict: 1,
-            score: 90,
-          },
+          'kimi-k2': verification('verified'),
         },
       });
       const req: SerializedHttpRequest = {
@@ -143,24 +147,13 @@ describe('DefaultRouter', () => {
       expect(selected?.peerId).toBe('b'.repeat(40));
     });
 
-    it('should NOT exclude on a single standing DIFF (one verifier is not corroboration)', () => {
-      // A lone accuser must not blackball the seller: it may deprioritize via
-      // the authenticity score, but exclusion requires the same >=2 distinct
-      // DIFF verifiers the on-chain emissions penalty gates on.
+    it('should deprioritize rather than exclude after the first DIFF', () => {
       const router = new DefaultRouter();
       const singleAccuser = makePeer({
         peerId: 'a'.repeat(40) as any,
         defaultInputUsdPerMillion: 1,
         modelVerification: {
-          'kimi-k2': {
-            sameCount: 0,
-            diffCount: 1,
-            undeterminedCount: 0,
-            distinctVerifierCount: 1,
-            activeDiffVerifierCount: 1,
-            lastVerdict: 2,
-            score: 10,
-          },
+          'kimi-k2': verification('flagged'),
         },
       });
       const pricier = makePeer({ peerId: 'b'.repeat(40) as any, defaultInputUsdPerMillion: 100 });
@@ -169,53 +162,39 @@ describe('DefaultRouter', () => {
         body: new TextEncoder().encode(JSON.stringify({ model: 'kimi-k2' })),
       };
 
-      // The single-accuser seller stays eligible (and here wins on price).
       const selected = router.selectPeer(req, [singleAccuser, pricier]);
-      expect(selected?.peerId).toBe('a'.repeat(40));
+      expect(selected?.peerId).toBe('b'.repeat(40));
     });
 
-    it('should fall back to the agent-wide substitution flag when the request names no service', () => {
+    it('should not apply a service suspension when the request names no service', () => {
       const router = new DefaultRouter();
       const flagged = makePeer({
         peerId: 'a'.repeat(40) as any,
         defaultInputUsdPerMillion: 1,
         modelVerification: {
-          '*': {
-            sameCount: 0,
-            diffCount: 2,
-            undeterminedCount: 0,
-            distinctVerifierCount: 2,
-            activeDiffVerifierCount: 2,
-            lastVerdict: 2,
-            score: 0,
-          },
+          'kimi-k2': verification('suspended'),
         },
       });
       const clean = makePeer({ peerId: 'b'.repeat(40) as any, defaultInputUsdPerMillion: 100 });
 
       const selected = router.selectPeer(dummyReq, [flagged, clean]);
-      expect(selected?.peerId).toBe('b'.repeat(40));
+      expect(selected?.peerId).toBe('a'.repeat(40));
     });
 
-    it('should keep a peer whose flag was fully retracted (active count 0)', () => {
+    it('should keep a peer whose service penalty was cleared by SAME', () => {
       const router = new DefaultRouter();
       const retracted = makePeer({
         peerId: 'a'.repeat(40) as any,
         defaultInputUsdPerMillion: 1,
         modelVerification: {
-          '*': {
-            sameCount: 4,
-            diffCount: 2,
-            undeterminedCount: 0,
-            distinctVerifierCount: 2,
-            activeDiffVerifierCount: 0,
-            lastVerdict: 1,
-            score: 70,
-          },
+          'kimi-k2': verification('verified'),
         },
       });
-
-      const selected = router.selectPeer(dummyReq, [retracted]);
+      const request = {
+        ...dummyReq,
+        body: new TextEncoder().encode(JSON.stringify({ model: 'kimi-k2' })),
+      };
+      const selected = router.selectPeer(request, [retracted]);
       expect(selected?.peerId).toBe('a'.repeat(40));
     });
 

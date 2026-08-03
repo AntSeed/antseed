@@ -33,6 +33,7 @@ contract AntseedVerifierRegistryTest is ResponseAuthFixture {
     uint256 private constant VERIFIER_KEY = 0xA11CE;
     uint256 private constant SELLER_KEY = 0xB0B;
     uint96 private constant PAYOUT = 30_000;
+    uint256 private constant TARGET_CHAIN_BLOCK_GAS_LIMIT = 30_000_000;
 
     AntseedRegistry private registry;
     AntseedVerifierRegistry private verifierRegistry;
@@ -44,8 +45,8 @@ contract AntseedVerifierRegistryTest is ResponseAuthFixture {
 
     address private verifier;
     address private seller;
-    address[4] private relays;
-    address[4] private operators;
+    address[10] private relays;
+    address[10] private operators;
     bytes32 private serviceHash;
     string private service = "openai/gpt-4o";
     uint256 private auditNonce;
@@ -60,7 +61,7 @@ contract AntseedVerifierRegistryTest is ResponseAuthFixture {
         usdc = new MockUSDC();
         gate = new VerifierTestGate(address(registry), block.timestamp - 3 days, 7 days);
 
-        for (uint256 i = 0; i < 4; i++) {
+        for (uint256 i = 0; i < 10; i++) {
             relays[i] = address(uint160(0xA001 + i));
             operators[i] = address(uint160(0xB001 + i));
             deposits.setOperator(relays[i], operators[i]);
@@ -108,6 +109,30 @@ contract AntseedVerifierRegistryTest is ResponseAuthFixture {
         emptyRegistry.commitProbes(
             bytes32("audit"), bytes32("target"), bytes32("probe"), bytes32("root"), 0, 0, 1, 1, PAYOUT
         );
+    }
+
+    function test_revokedVerifierCannotSubmitCommittedAudit() public {
+        (bytes32 auditId, bytes32 targetSalt,,) = _commitAudit(1, bytes32(0));
+        verifierRegistry.setVerifier(verifier, false);
+        vm.warp(verifierRegistry.getAudit(auditId).executeBefore);
+
+        IAntseedVerifierRegistry.RelayClaim[] memory claims = new IAntseedVerifierRegistry.RelayClaim[](0);
+        vm.prank(verifier);
+        vm.expectRevert(AntseedVerifierRegistry.NotApprovedVerifier.selector);
+        verifierRegistry.submitAttestation(
+            auditId,
+            1,
+            serviceHash,
+            targetSalt,
+            IAntseedVerifierRegistry.Verdict.UNDETERMINED,
+            0,
+            _metrics(),
+            bytes32("evidence"),
+            "",
+            claims
+        );
+
+        assertFalse(verifierRegistry.getAudit(auditId).attested);
     }
 
     function test_positionalProofRejectsWrongSideDepthAndIndex() public {
@@ -210,9 +235,12 @@ contract AntseedVerifierRegistryTest is ResponseAuthFixture {
     function test_responseBuyerMustMatchCommittedRelayBuyer() public {
         (bytes32 auditId,, IAntseedVerifierRegistry.AuditJob[] memory jobs, bytes32[][] memory proofs) =
             _commitAudit(1, bytes32(0));
+        IAntseedVerifierRegistry.RelayAssignment memory assignment = _assignment(jobs[0], relays[0]);
         IAntseedVerifierRegistry.RelayClaim memory claim = IAntseedVerifierRegistry.RelayClaim({
             job: jobs[0],
             jobProof: proofs[0],
+            assignment: assignment,
+            verifierSignature: _signAssignment(assignment, VERIFIER_KEY),
             responseAuthPayload: _signedResponseAuth(
                 verifierRegistry,
                 SELLER_KEY,
@@ -227,6 +255,53 @@ contract AntseedVerifierRegistryTest is ResponseAuthFixture {
         });
         vm.warp(verifierRegistry.getAudit(auditId).forceClaimAvailableAt + 1);
         vm.expectRevert(AntseedVerifierRegistry.InvalidResponseAuth.selector);
+        verifierRegistry.forceClaimRelayJob(auditId, claim);
+    }
+
+    function test_assignmentSignerMustBeAuditCommitter() public {
+        (bytes32 auditId,, IAntseedVerifierRegistry.AuditJob[] memory jobs, bytes32[][] memory proofs) =
+            _commitAudit(1, bytes32(0));
+        IAntseedVerifierRegistry.RelayClaim memory claim = _claim(jobs[0], proofs[0], 200);
+        claim.verifierSignature = _signAssignment(claim.assignment, SELLER_KEY);
+
+        vm.warp(verifierRegistry.getAudit(auditId).forceClaimAvailableAt + 1);
+        vm.expectRevert(AntseedVerifierRegistry.InvalidRelayAssignment.selector);
+        verifierRegistry.forceClaimRelayJob(auditId, claim);
+    }
+
+    function test_assignmentPayoutMustMatchCommittedPayout() public {
+        (bytes32 auditId,, IAntseedVerifierRegistry.AuditJob[] memory jobs, bytes32[][] memory proofs) =
+            _commitAudit(1, bytes32(0));
+        IAntseedVerifierRegistry.RelayClaim memory claim = _claim(jobs[0], proofs[0], 200);
+        claim.assignment.payoutPerJobUsdc = PAYOUT - 1;
+        claim.verifierSignature = _signAssignment(claim.assignment, VERIFIER_KEY);
+
+        vm.warp(verifierRegistry.getAudit(auditId).forceClaimAvailableAt + 1);
+        vm.expectRevert(AntseedVerifierRegistry.InvalidRelayAssignment.selector);
+        verifierRegistry.forceClaimRelayJob(auditId, claim);
+    }
+
+    function test_assignmentJobIndexMustMatchCommittedJob() public {
+        (bytes32 auditId,, IAntseedVerifierRegistry.AuditJob[] memory jobs, bytes32[][] memory proofs) =
+            _commitAudit(2, bytes32(0));
+        IAntseedVerifierRegistry.RelayClaim memory claim = _claim(jobs[0], proofs[0], 200);
+        claim.assignment.jobIndex = 1;
+        claim.verifierSignature = _signAssignment(claim.assignment, VERIFIER_KEY);
+
+        vm.warp(verifierRegistry.getAudit(auditId).forceClaimAvailableAt + 1);
+        vm.expectRevert(AntseedVerifierRegistry.InvalidRelayAssignment.selector);
+        verifierRegistry.forceClaimRelayJob(auditId, claim);
+    }
+
+    function test_assignmentWindowMustFitCommittedJobWindow() public {
+        (bytes32 auditId,, IAntseedVerifierRegistry.AuditJob[] memory jobs, bytes32[][] memory proofs) =
+            _commitAudit(1, bytes32(0));
+        IAntseedVerifierRegistry.RelayClaim memory claim = _claim(jobs[0], proofs[0], 200);
+        claim.assignment.executeBefore = jobs[0].executeBefore + 1;
+        claim.verifierSignature = _signAssignment(claim.assignment, VERIFIER_KEY);
+
+        vm.warp(verifierRegistry.getAudit(auditId).forceClaimAvailableAt + 1);
+        vm.expectRevert(AntseedVerifierRegistry.InvalidRelayAssignment.selector);
         verifierRegistry.forceClaimRelayJob(auditId, claim);
     }
 
@@ -260,6 +335,75 @@ contract AntseedVerifierRegistryTest is ResponseAuthFixture {
         }
         assertEq(verifierRegistry.getAudit(auditId).totalRelayPaidUsdc, PAYOUT * 3);
         assertEq(treasury.totalLockedUsdc(), PAYOUT);
+    }
+
+    function test_fiftyClaimAttestationWithTenRelaysStaysBelowHalfTargetBlockGasLimit() public {
+        (
+            bytes32 auditId,
+            bytes32 targetSalt,
+            IAntseedVerifierRegistry.AuditJob[] memory jobs,
+            bytes32[][] memory proofs
+        ) = _commitAudit(50, bytes32(0));
+        IAntseedVerifierRegistry.RelayClaim[] memory claims = new IAntseedVerifierRegistry.RelayClaim[](50);
+        for (uint256 i = 0; i < claims.length; i++) {
+            claims[i] = _claim(jobs[i], proofs[i], 200);
+        }
+
+        vm.warp(verifierRegistry.getAudit(auditId).executeBefore);
+        vm.prank(verifier);
+        uint256 gasBefore = gasleft();
+        verifierRegistry.submitAttestation(
+            auditId,
+            1,
+            serviceHash,
+            targetSalt,
+            IAntseedVerifierRegistry.Verdict.SAME,
+            0,
+            _metrics(),
+            bytes32("evidence"),
+            "",
+            claims
+        );
+        uint256 gasUsed = gasBefore - gasleft();
+        emit log_named_uint("50-claim attestation gas", gasUsed);
+        assertLt(gasUsed, TARGET_CHAIN_BLOCK_GAS_LIMIT / 2);
+        for (uint256 i = 0; i < 10; i++) {
+            assertEq(usdc.balanceOf(operators[i]), PAYOUT * 5);
+        }
+        assertEq(verifierRegistry.getAudit(auditId).totalRelayPaidUsdc, PAYOUT * 50);
+        assertEq(treasury.totalLockedUsdc(), 0);
+    }
+
+    function test_evidenceCanBePublishedExactlyOnceAfterLocalHashAttestation() public {
+        (
+            bytes32 auditId,
+            bytes32 targetSalt,
+            IAntseedVerifierRegistry.AuditJob[] memory jobs,
+            bytes32[][] memory proofs
+        ) = _commitAudit(1, bytes32(0));
+        IAntseedVerifierRegistry.RelayClaim[] memory claims = new IAntseedVerifierRegistry.RelayClaim[](1);
+        claims[0] = _claim(jobs[0], proofs[0], 200);
+        vm.warp(verifierRegistry.getAudit(auditId).executeBefore);
+        vm.prank(verifier);
+        verifierRegistry.submitAttestation(
+            auditId,
+            1,
+            serviceHash,
+            targetSalt,
+            IAntseedVerifierRegistry.Verdict.SAME,
+            0,
+            _metrics(),
+            bytes32("evidence"),
+            "",
+            claims
+        );
+
+        vm.prank(verifier);
+        verifierRegistry.publishEvidence(auditId, "ipfs://evidence");
+        assertEq(verifierRegistry.getAudit(auditId).evidenceUri, "ipfs://evidence");
+        vm.prank(verifier);
+        vm.expectRevert(AntseedVerifierRegistry.EvidenceAlreadyPublished.selector);
+        verifierRegistry.publishEvidence(auditId, "ipfs://replacement");
     }
 
     function test_staleAttestationRejectedAfterFallbackDeadline() public {
@@ -347,14 +491,12 @@ contract AntseedVerifierRegistryTest is ResponseAuthFixture {
             jobs[i] = IAntseedVerifierRegistry.AuditJob({
                 auditId: auditId,
                 jobIndex: i,
-                relayBuyer: relays[i % 4],
                 sellerPeerId: seller,
                 serviceHash: serviceHash,
                 requestHash: forcedRequestHash == bytes32(0)
                     ? keccak256(abi.encode(auditId, i, "request"))
                     : forcedRequestHash,
                 jobSalt: keccak256(abi.encode(auditId, i, "salt")),
-                attempt: uint8(i % 3),
                 executeAfter: executeAfter,
                 executeBefore: executeBefore
             });
@@ -398,13 +540,17 @@ contract AntseedVerifierRegistryTest is ResponseAuthFixture {
         private
         returns (IAntseedVerifierRegistry.RelayClaim memory)
     {
+        address relayBuyer = relays[job.jobIndex % 10];
+        IAntseedVerifierRegistry.RelayAssignment memory assignment = _assignment(job, relayBuyer);
         return IAntseedVerifierRegistry.RelayClaim({
             job: job,
             jobProof: proof,
+            assignment: assignment,
+            verifierSignature: _signAssignment(assignment, VERIFIER_KEY),
             responseAuthPayload: _signedResponseAuth(
                 verifierRegistry,
                 SELLER_KEY,
-                job.relayBuyer,
+                relayBuyer,
                 seller,
                 service,
                 statusCode,
@@ -413,6 +559,30 @@ contract AntseedVerifierRegistryTest is ResponseAuthFixture {
                 job.executeBefore * 1000
             )
         });
+    }
+
+    function _assignment(IAntseedVerifierRegistry.AuditJob memory job, address relayBuyer)
+        private
+        pure
+        returns (IAntseedVerifierRegistry.RelayAssignment memory)
+    {
+        return IAntseedVerifierRegistry.RelayAssignment({
+            auditId: job.auditId,
+            jobIndex: job.jobIndex,
+            attempt: 0,
+            relayBuyer: relayBuyer,
+            payoutPerJobUsdc: PAYOUT,
+            executeAfter: job.executeAfter,
+            executeBefore: job.executeBefore
+        });
+    }
+
+    function _signAssignment(IAntseedVerifierRegistry.RelayAssignment memory assignment, uint256 signerKey)
+        private
+        returns (bytes memory)
+    {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerKey, verifierRegistry.hashRelayAssignment(assignment));
+        return abi.encodePacked(r, s, v);
     }
 
     function _metrics() private pure returns (IAntseedVerifierRegistry.MetricSnapshot memory) {

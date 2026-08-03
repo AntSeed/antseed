@@ -184,7 +184,7 @@ export function computeProbeCommitment(
 /**
  * THE canonical probe-set reveal bytes: the exact canonical-JSON string whose
  * `SHA-256(utf8(...))` (0x-prefixed) IS `computeProbeCommitment` — i.e. the
- * preimage `revealProbeSet` hashes on-chain against the pre-audit commitment.
+ * preimage a legacy regression fixture hashes against its pre-audit commitment.
  * Single source of truth: `computeProbeCommitment` is DEFINED as the hash of
  * exactly this string, so the commitment and the published reveal bytes can
  * never diverge (divergence would make the on-chain reveal revert forever).

@@ -1,6 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { FingerprintReference } from '@antseed/fingerprints'
+import { validateKbfReferenceV1, type KbfReferenceV1 } from '@antseed/fingerprints'
 
 /**
  * Load trusted KBF references from a local directory. Files are JSON in the
@@ -10,7 +10,8 @@ import type { FingerprintReference } from '@antseed/fingerprints'
 export async function loadReferences(
   referencesDir: string,
   warn: (message: string) => void,
-): Promise<FingerprintReference[]> {
+  options: { trustedImportedReferenceIds?: readonly string[] } = {},
+): Promise<KbfReferenceV1[]> {
   let entries: string[]
   try {
     entries = await readdir(referencesDir)
@@ -18,30 +19,29 @@ export async function loadReferences(
     return []
   }
 
-  const references: FingerprintReference[] = []
+  const references: KbfReferenceV1[] = []
+  const trustedImported = new Set(options.trustedImportedReferenceIds ?? [])
   for (const entry of entries) {
     if (!entry.endsWith('.json')) continue
     const filePath = join(referencesDir, entry)
     try {
       const raw = await readFile(filePath, 'utf-8')
-      const parsed = JSON.parse(raw) as FingerprintReference
-      if (parsed?.kind !== 'kbf' || !Array.isArray(parsed.probes) || parsed.probes.length === 0) {
-        warn(`Skipping reference ${entry}: not a KBF reference with probes`)
-        continue
-      }
-      references.push(parsed)
+      const parsed = JSON.parse(raw) as { referenceId?: unknown; source?: unknown }
+      const trustImported = parsed.source !== 'imported'
+        || (typeof parsed.referenceId === 'string' && trustedImported.has(parsed.referenceId))
+      references.push(validateKbfReferenceV1(parsed, { trustImported }))
     } catch (err) {
       warn(`Skipping reference ${entry}: ${(err as Error).message}`)
     }
   }
-  return references
+  return references.sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
 }
 
 /** Find the first reference whose serviceAliases match the advertised service. */
 export function findReferenceForService(
-  references: FingerprintReference[],
+  references: KbfReferenceV1[],
   service: string,
-): FingerprintReference | undefined {
+): KbfReferenceV1 | undefined {
   const normalized = service.trim().toLowerCase()
   return references.find((ref) =>
     (ref.serviceAliases ?? []).some((alias) => alias.trim().toLowerCase() === normalized)

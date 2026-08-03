@@ -891,47 +891,53 @@ test('rewritePeerPinnedServiceInBody returns original when body is not a JSON ob
 // same bar the on-chain emissions penalty gates on. Only this level of
 // corroboration excludes; a single accuser (SINGLE_ACCUSER_STATS) does not.
 const FLAGGED_STATS = {
+  serviceHash: `0x${'1'.repeat(64)}`,
+  lifecycle: 'suspended' as const,
   sameCount: 1,
   diffCount: 3,
   undeterminedCount: 0,
-  distinctVerifierCount: 2,
-  activeDiffVerifierCount: 2,
+  consecutiveDiffCount: 2,
   lastVerdict: 2,
-  score: 10,
+  lastConclusiveVerdict: 2,
+  latestAuditId: `0x${'2'.repeat(64)}`,
+  latestEvidenceHash: `0x${'3'.repeat(64)}`,
+  latestVerifier: `0x${'4'.repeat(40)}`,
+  latestBlockNumber: 10,
+  modelShareBps: 5000,
 }
 
 // One verifier alone stands by a DIFF: not enough to exclude (that would make a
 // single wrong/malicious verifier a routing kill-switch). Deprioritizes only.
 const SINGLE_ACCUSER_STATS = {
+  ...FLAGGED_STATS,
+  lifecycle: 'flagged' as const,
   sameCount: 1,
   diffCount: 1,
   undeterminedCount: 0,
-  distinctVerifierCount: 1,
-  activeDiffVerifierCount: 1,
+  consecutiveDiffCount: 1,
   lastVerdict: 2,
-  score: 20,
 }
 
 const CLEAN_STATS = {
+  ...FLAGGED_STATS,
+  lifecycle: 'verified' as const,
   sameCount: 5,
   diffCount: 0,
   undeterminedCount: 0,
-  distinctVerifierCount: 3,
-  activeDiffVerifierCount: 0,
+  consecutiveDiffCount: 0,
   lastVerdict: 1,
-  score: 88,
+  lastConclusiveVerdict: 1,
+  modelShareBps: 0,
 }
 
 // Historical DIFFs with no standing accuser (every accusing verifier
 // re-attested SAME) must not block routing — only lower the score ceiling.
 const RETRACTED_STATS = {
+  ...CLEAN_STATS,
   sameCount: 4,
   diffCount: 2,
   undeterminedCount: 0,
-  distinctVerifierCount: 3,
-  activeDiffVerifierCount: 0,
   lastVerdict: 1,
-  score: 60,
 }
 
 function makeDispatchCountingProxy(peer: PeerInfo): { proxy: BuyerProxy; dispatched: () => number } {
@@ -999,7 +1005,7 @@ test('clean pinned peer is dispatched; a flag on a different service does not bl
   assert.equal(dispatched(), 1, 'clean peer must be dispatched')
 })
 
-test('substitution gate falls back to the agent-wide aggregate when per-service stats are missing', async () => {
+test('substitution gate does not apply an agent aggregate to a service with no lifecycle state', async () => {
   const peer = makePeer('a', ['openai'])
   peer.modelVerification = { '*': FLAGGED_STATS }
   ;(peer as any).modelVerificationFetchedAt = Date.now()
@@ -1010,9 +1016,8 @@ test('substitution gate falls back to the agent-wide aggregate when per-service 
     body: { model: 'gpt-4o', messages: [] },
   }))
 
-  assert.equal(res.statusCode, 502)
-  assert.match(res.body, /model-substitution flag/)
-  assert.equal(dispatched(), 0)
+  assert.equal(res.statusCode, 200)
+  assert.equal(dispatched(), 1)
 })
 
 test('retracted substitution flag (no standing accuser) does not block routing', async () => {
@@ -1064,7 +1069,7 @@ test('GET /v1/models service listing is exempt from the substitution gate', asyn
 // flagged peer must NOT be exempt from the substitution gate for it.
 test('POST /v1/models on a flagged peer is NOT exempt from the substitution gate', async () => {
   const peer = makePeer('a', ['openai'])
-  peer.modelVerification = { '*': FLAGGED_STATS }
+  peer.modelVerification = { 'gpt-4o': FLAGGED_STATS }
   ;(peer as any).modelVerificationFetchedAt = Date.now()
   const { proxy, dispatched } = makeDispatchCountingProxy(peer)
 
@@ -1122,7 +1127,7 @@ test('a fresh substitution flag within max-age still blocks routing', async () =
 // dropped at rehydration by parsePersistedPeers.
 test('a substitution flag with no freshness stamp still blocks routing', async () => {
   const peer = makePeer('a', ['openai'])
-  peer.modelVerification = { '*': FLAGGED_STATS }
+  peer.modelVerification = { 'gpt-4o': FLAGGED_STATS }
   const { proxy, dispatched } = makeDispatchCountingProxy(peer)
 
   const res = await invokeProxy(proxy, makeProxyRequest({

@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { Ownable2Step } from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import { EIP712 } from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import { Strings } from "@openzeppelin/contracts/utils/Strings.sol";
 import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
@@ -14,7 +15,7 @@ import { IAntseedRelayTreasury } from "../interfaces/IAntseedRelayTreasury.sol";
 import { IAntseedVerifierRegistry } from "../interfaces/IAntseedVerifierRegistry.sol";
 import { IERC8004Registry } from "../interfaces/IERC8004Registry.sol";
 
-contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step, ReentrancyGuard {
+contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step, ReentrancyGuard, EIP712 {
     uint256 public constant BPS_DENOMINATOR = 10_000;
     uint256 public constant FORCE_CLAIM_DELAY = 6 hours;
     uint256 public constant FORCE_CLAIM_WINDOW = 30 days;
@@ -25,6 +26,9 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step, Reen
     bytes private constant DATA_DOMAIN = "antseed-data-v1:";
     bytes32 private constant RESPONSE_AUTH_DOMAIN_HASH = keccak256("antseed-response-auth-v1");
     bytes32 private constant RESPONSE_AUTH_VERSION_HASH = keccak256("1");
+    bytes32 private constant RELAY_ASSIGNMENT_TYPEHASH = keccak256(
+        "RelayAssignment(bytes32 auditId,uint16 jobIndex,uint8 attempt,address relayBuyer,uint96 payoutPerJobUsdc,uint64 executeAfter,uint64 executeBefore)"
+    );
     uint256 private constant RESPONSE_AUTH_FIELD_COUNT = 13;
     uint256 private constant RESPONSE_AUTH_SIGNATURE_LENGTH = 65;
 
@@ -123,6 +127,7 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step, Reen
     error InsufficientRelayDiversity();
     error InvalidJob();
     error InvalidJobProof();
+    error InvalidRelayAssignment();
     error InvalidResponseAuth();
     error MalformedSigningPayload();
     error RelayJobAlreadyPaid();
@@ -156,7 +161,10 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step, Reen
         _;
     }
 
-    constructor(address registry_, address emissionsGate_) Ownable(msg.sender) {
+    constructor(address registry_, address emissionsGate_)
+        Ownable(msg.sender)
+        EIP712("AntseedVerifierRegistry", "1")
+    {
         if (
             registry_ == address(0) || emissionsGate_ == address(0) || registry_.code.length == 0
                 || emissionsGate_.code.length == 0
@@ -279,6 +287,7 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step, Reen
         Audit storage audit = _audits[auditId];
         if (audit.committer == address(0)) revert AuditNotFound();
         if (msg.sender != audit.committer) revert NotApprovedVerifier();
+        if (!approvedVerifiers[msg.sender]) revert NotApprovedVerifier();
         if (audit.attested) revert AuditAlreadyAttested();
         if (block.timestamp < audit.executeBefore) revert AuditNotReady();
         if (block.timestamp > audit.forceClaimDeadline) revert AttestationExpired();
@@ -456,14 +465,29 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step, Reen
                 address(this),
                 job.auditId,
                 job.jobIndex,
-                job.relayBuyer,
                 job.sellerPeerId,
                 job.serviceHash,
                 job.requestHash,
                 job.jobSalt,
-                job.attempt,
                 job.executeAfter,
                 job.executeBefore
+            )
+        );
+    }
+
+    function hashRelayAssignment(RelayAssignment memory assignment) public view override returns (bytes32) {
+        return _hashTypedDataV4(
+            keccak256(
+                abi.encode(
+                    RELAY_ASSIGNMENT_TYPEHASH,
+                    assignment.auditId,
+                    assignment.jobIndex,
+                    assignment.attempt,
+                    assignment.relayBuyer,
+                    assignment.payoutPerJobUsdc,
+                    assignment.executeAfter,
+                    assignment.executeBefore
+                )
             )
         );
     }
@@ -560,6 +584,20 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step, Reen
             revert InvalidJobProof();
         }
 
+        RelayAssignment calldata assignment = relayClaim.assignment;
+        if (
+            assignment.auditId != auditId || assignment.jobIndex != job.jobIndex
+                || assignment.attempt >= MAX_RELAY_ATTEMPTS || assignment.relayBuyer == address(0)
+                || assignment.payoutPerJobUsdc != audit.payoutPerJobUsdc
+                || assignment.executeBefore <= assignment.executeAfter
+                || assignment.executeAfter < job.executeAfter || assignment.executeBefore > job.executeBefore
+        ) revert InvalidRelayAssignment();
+        (address assignmentSigner, ECDSA.RecoverError assignmentError,) =
+            ECDSA.tryRecover(hashRelayAssignment(assignment), relayClaim.verifierSignature);
+        if (assignmentError != ECDSA.RecoverError.NoError || assignmentSigner != audit.committer) {
+            revert InvalidRelayAssignment();
+        }
+
         bytes calldata responseAuthPayload = relayClaim.responseAuthPayload;
         if (responseAuthPayload.length <= RESPONSE_AUTH_SIGNATURE_LENGTH) revert InvalidResponseAuth();
         uint256 signingPayloadLength = responseAuthPayload.length - RESPONSE_AUTH_SIGNATURE_LENGTH;
@@ -573,27 +611,29 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step, Reen
             revert InvalidResponseAuth();
         }
         if (
-            auth.buyer != job.relayBuyer || auth.seller != job.sellerPeerId
+            auth.buyer != assignment.relayBuyer || auth.seller != job.sellerPeerId
                 || auth.advertisedServiceHash != job.serviceHash || auth.statusCode != 200
                 || auth.requestHash != job.requestHash || auth.responseHash == bytes32(0)
                 || auth.responseCompletedAt < auth.responseStartedAt
-                || uint256(auth.responseStartedAt) < uint256(job.executeAfter) * 1000
-                || uint256(auth.responseCompletedAt) > uint256(job.executeBefore) * 1000
+                || uint256(auth.responseStartedAt) < uint256(assignment.executeAfter) * 1000
+                || uint256(auth.responseCompletedAt) > uint256(assignment.executeBefore) * 1000
         ) revert InvalidResponseAuth();
 
         if (enforceTarget && (job.sellerPeerId != expectedSeller || job.serviceHash != expectedServiceHash)) {
             revert InvalidJob();
         }
-        claim =
-            ValidatedRelayClaim({ jobIndex: job.jobIndex, relayBuyer: job.relayBuyer, requestHash: job.requestHash });
+        claim = ValidatedRelayClaim({
+            jobIndex: job.jobIndex,
+            relayBuyer: assignment.relayBuyer,
+            requestHash: job.requestHash
+        });
     }
 
     function _validateAuditJob(Audit storage audit, bytes32 auditId, AuditJob calldata job) internal view {
         if (
             job.auditId == bytes32(0) || job.auditId != auditId || job.jobIndex >= audit.jobCount
-                || job.relayBuyer == address(0) || job.sellerPeerId == address(0) || job.serviceHash == bytes32(0)
-                || job.requestHash == bytes32(0) || job.jobSalt == bytes32(0) || job.attempt >= MAX_RELAY_ATTEMPTS
-                || job.executeBefore <= job.executeAfter || job.executeAfter < audit.executeAfter
+                || job.sellerPeerId == address(0) || job.serviceHash == bytes32(0) || job.requestHash == bytes32(0)
+                || job.jobSalt == bytes32(0) || job.executeBefore <= job.executeAfter || job.executeAfter < audit.executeAfter
                 || job.executeBefore > audit.executeBefore
         ) revert InvalidJob();
     }

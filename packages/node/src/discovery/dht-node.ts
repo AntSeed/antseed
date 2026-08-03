@@ -139,9 +139,9 @@ export class DHTNode {
   async start(): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       this.dht = new DHT({
-        bootstrap: this.config.bootstrapNodes.map(
-          (n) => `${n.host}:${n.port}`
-        ),
+        bootstrap: this.config.bootstrapNodes.length === 0
+          ? false
+          : this.config.bootstrapNodes.map((n) => `${n.host}:${n.port}`),
       });
 
       const timeout = setTimeout(() => {

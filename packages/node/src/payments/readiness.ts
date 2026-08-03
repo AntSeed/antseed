@@ -45,7 +45,7 @@ export async function checkSellerReadiness(
 
   // 3. Staked (seller on-chain address = proxy when configured)
   const stake = await stakingClient.getStake(sellerAddr);
-  const hasStake = stake > 0n;
+  const hasStake = stake > 0n || await stakingClient.isStakedAboveMin(sellerAddr);
   checks.push({
     name: 'Stake',
     passed: hasStake,

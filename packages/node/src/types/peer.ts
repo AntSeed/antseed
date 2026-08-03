@@ -149,38 +149,35 @@ export interface PeerInfo {
   modelVerificationFetchedAt?: number;
 }
 
-/** Buyer-computed model-verification reputation for one (peer, model). */
+export type PeerVerificationLifecycle =
+  | 'bootstrap'
+  | 'provisional'
+  | 'verified'
+  | 'flagged'
+  | 'suspended';
+
+/** Buyer-computed event-backed verification lifecycle for one service. */
 export interface PeerModelVerification {
-  /** SAME attestations recorded on-chain for this (agent, service). */
+  /** Keccak-256 hash of the normalized service identifier. */
+  serviceHash: string;
+  /** Routing lifecycle derived from ordered on-chain attestations. */
+  lifecycle: PeerVerificationLifecycle;
+  /** Total SAME attestations observed for this service. */
   sameCount: number;
-  /** DIFF (substitution-flag) attestations. */
+  /** Total conclusive DIFF attestations observed for this service. */
   diffCount: number;
-  /** UNDETERMINED attestations. */
+  /** Total availability-only UNDETERMINED attestations observed. */
   undeterminedCount: number;
-  /** Distinct approved verifiers that attested this (agent, service). */
-  distinctVerifierCount: number;
-  /**
-   * Distinct verifiers whose LATEST verdict is DIFF — a standing, retractable
-   * accusation (a verifier retracts by later attesting SAME), unlike the
-   * monotonic historical `diffCount`. This is the field routing decisions
-   * gate on, mirroring the on-chain points penalty.
-   */
-  activeDiffVerifierCount: number;
-  /** Latest on-chain verdict code (0 unknown, 1 same, 2 diff, 3 undetermined). */
+  /** Consecutive conclusive DIFF verdicts since the last SAME. */
+  consecutiveDiffCount: number;
+  /** Latest on-chain verdict, including UNDETERMINED. */
   lastVerdict: number;
-  /**
-   * Buyer-computed confidence score in [0,100] that the model is authentic,
-   * or null when there is no usable evidence (no attestations / single
-   * verifier only). Never fabricated — reflects only recorded attestations.
-   */
-  score: number | null;
-  /**
-   * Effective `AntseedVerifierPointsPolicy.minDistinctDiffVerifiers` at
-   * enrichment time — the number of distinct standing-DIFF verifiers at which
-   * the on-chain economic penalty triggers, read from chain (TTL-cached) and
-   * stamped here so routing exclusion (`hasModelSubstitutionFlag`) fires at
-   * the same bar. Absent when the value could not be determined at enrichment
-   * (consumers then fall back to MIN_DISTINCT_DIFF_VERIFIERS_FOR_EXCLUSION).
-   */
-  exclusionThreshold?: number;
+  /** Latest conclusive SAME or DIFF verdict; UNDETERMINED never changes it. */
+  lastConclusiveVerdict: number;
+  latestAuditId: string;
+  latestEvidenceHash: string;
+  latestVerifier: string;
+  latestBlockNumber: number;
+  /** Current service points penalty declared by the latest conclusive verdict. */
+  modelShareBps: number;
 }

@@ -15,12 +15,20 @@ interface IAntseedVerifierRegistry {
     struct AuditJob {
         bytes32 auditId;
         uint16 jobIndex;
-        address relayBuyer;
         address sellerPeerId;
         bytes32 serviceHash;
         bytes32 requestHash;
         bytes32 jobSalt;
+        uint64 executeAfter;
+        uint64 executeBefore;
+    }
+
+    struct RelayAssignment {
+        bytes32 auditId;
+        uint16 jobIndex;
         uint8 attempt;
+        address relayBuyer;
+        uint96 payoutPerJobUsdc;
         uint64 executeAfter;
         uint64 executeBefore;
     }
@@ -28,6 +36,8 @@ interface IAntseedVerifierRegistry {
     struct RelayClaim {
         AuditJob job;
         bytes32[] jobProof;
+        RelayAssignment assignment;
+        bytes verifierSignature;
         bytes responseAuthPayload;
     }
 
@@ -127,6 +137,7 @@ interface IAntseedVerifierRegistry {
         view
         returns (bytes32);
     function hashAuditJob(AuditJob memory job) external view returns (bytes32);
+    function hashRelayAssignment(RelayAssignment memory assignment) external view returns (bytes32);
     function verifyAuditJobProof(bytes32 root, bytes32 leaf, uint16 jobIndex, uint16 jobCount, bytes32[] calldata proof)
         external
         pure

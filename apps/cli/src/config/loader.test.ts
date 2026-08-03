@@ -182,7 +182,7 @@ test('loadConfig preserves buyer verification sampling settings', async () => {
   );
 });
 
-test('loadConfig preserves buyer delegate settings', async () => {
+test('loadConfig rejects retired buyer delegate settings', async () => {
   await withTempConfig(
     JSON.stringify({
       buyer: {
@@ -195,31 +195,7 @@ test('loadConfig preserves buyer delegate settings', async () => {
       },
     }),
     async (configPath) => {
-      const config = await loadConfig(configPath);
-      assert.deepEqual(config.buyer.delegate, {
-        enabled: true,
-        maxConcurrentJobs: 4,
-        maxJobsPerHour: 120,
-        discoveryIntervalMs: 60_000,
-      });
-    }
-  );
-});
-
-test('loadConfig rejects invalid buyer delegate settings', async () => {
-  await withTempConfig(
-    JSON.stringify({
-      buyer: {
-        delegate: {
-          enabled: 'true',
-        },
-      },
-    }),
-    async (configPath) => {
-      await assert.rejects(
-        async () => loadConfig(configPath),
-        /buyer\.delegate\.enabled/
-      );
+      await assert.rejects(async () => loadConfig(configPath), /buyer\.delegate/);
     }
   );
 });
@@ -242,7 +218,7 @@ test('loadConfig rejects invalid buyer verification sampleRate', async () => {
   );
 });
 
-test('loadConfig preserves verifier delegation settings', async () => {
+test('loadConfig rejects retired verifier delegation settings', async () => {
   await withTempConfig(
     JSON.stringify({
       verifier: {
@@ -257,14 +233,7 @@ test('loadConfig preserves verifier delegation settings', async () => {
       },
     }),
     async (configPath) => {
-      const config = await loadConfig(configPath);
-      assert.deepEqual(config.verifier?.delegation, {
-        enabled: true,
-        signalingPort: 6883,
-        jobTimeoutMs: 45_000,
-        minDelegates: 2,
-        requireDelegates: true,
-      });
+      await assert.rejects(async () => loadConfig(configPath), /verifier\.delegation/);
     }
   );
 });
@@ -302,7 +271,7 @@ test('loadConfig rejects maxProbesPerRequest above the contract limit', async ()
   await withTempConfig(
     JSON.stringify({ verifier: { maxProbesPerRequest: 4 } }),
     async (configPath) => {
-      await assert.rejects(async () => loadConfig(configPath), /verifier\.maxProbesPerRequest must be <= 3/);
+      await assert.rejects(async () => loadConfig(configPath), /verifier\.maxProbesPerRequest is not a supported verifier option/);
     }
   );
 });
@@ -337,7 +306,7 @@ test('loadConfig rejects a mistyped verifier upstream instead of silently disabl
   );
 });
 
-test('loadConfig rejects mistyped verifier directories', async () => {
+test('loadConfig rejects retired verifier publication settings', async () => {
   await withTempConfig(
     JSON.stringify({ verifier: { publishDir: 42 } }),
     async (configPath) => {
@@ -346,7 +315,7 @@ test('loadConfig rejects mistyped verifier directories', async () => {
   );
 });
 
-test('loadConfig rejects an invalid verifier revealDelayMs', async () => {
+test('loadConfig rejects retired verifier reveal settings', async () => {
   await withTempConfig(
     JSON.stringify({ verifier: { revealDelayMs: -1 } }),
     async (configPath) => {
@@ -360,12 +329,13 @@ test('loadConfig preserves a valid verifier section end-to-end', async () => {
     JSON.stringify({
       verifier: {
         services: ['Kimi-K2'],
-        probesPerAudit: 24,
-        probeSource: 'llm',
-        probeAuthorModel: 'gpt-5.2',
-        publishDir: './packs',
-        revealDelayMs: 5000,
         referencesDir: './refs',
+        trustedImportedReferenceIds: [`0x${'1'.repeat(64)}`],
+        jobTimeoutMs: 45_000,
+        flatRelayFeeUsdc: '1500',
+        relaySignalingPort: 6883,
+        maxRelays: 20,
+        auditDurationMs: 36 * 60 * 60 * 1_000,
         upstream: {
           baseUrl: 'https://openrouter.ai/api/v1',
           apiKeyEnv: 'OPENROUTER_KEY',
@@ -376,12 +346,13 @@ test('loadConfig preserves a valid verifier section end-to-end', async () => {
     async (configPath) => {
       const config = await loadConfig(configPath);
       assert.deepEqual(config.verifier?.services, ['Kimi-K2']);
-      assert.equal(config.verifier?.probesPerAudit, 24);
-      assert.equal(config.verifier?.probeSource, 'llm');
-      assert.equal(config.verifier?.probeAuthorModel, 'gpt-5.2');
-      assert.equal(config.verifier?.publishDir, './packs');
-      assert.equal(config.verifier?.revealDelayMs, 5000);
       assert.equal(config.verifier?.referencesDir, './refs');
+      assert.deepEqual(config.verifier?.trustedImportedReferenceIds, [`0x${'1'.repeat(64)}`]);
+      assert.equal(config.verifier?.jobTimeoutMs, 45_000);
+      assert.equal(config.verifier?.flatRelayFeeUsdc, '1500');
+      assert.equal(config.verifier?.relaySignalingPort, 6883);
+      assert.equal(config.verifier?.maxRelays, 20);
+      assert.equal(config.verifier?.auditDurationMs, 36 * 60 * 60 * 1_000);
       assert.deepEqual(config.verifier?.upstream, {
         baseUrl: 'https://openrouter.ai/api/v1',
         apiKeyEnv: 'OPENROUTER_KEY',
@@ -389,6 +360,127 @@ test('loadConfig preserves a valid verifier section end-to-end', async () => {
       });
     }
   );
+});
+
+test('loadConfig preserves Venice reference endpoint settings and merges partial policy defaults', async () => {
+  const peerId = '9e8f9aaee684298b7f2af2ae008e3692f0e9f4f7';
+  await withTempConfig(JSON.stringify({
+    verifier: {
+      services: ['gpt-5.6-sol'],
+      referenceEndpoint: {
+        baseUrl: 'http://127.0.0.1:8377/v1',
+        apiKeyEnv: 'ANTSEED_REFERENCE_API_KEY',
+        sourceId: 'antseed-venice-sol-smoke-v1',
+        trust: 'smoke',
+        antseedPeerId: peerId,
+        models: {
+          'gpt-5.6-sol': {
+            upstreamModel: 'gpt-5.6-sol',
+            contrastModels: ['kimi-k3', 'gpt-5.6-luna', 'sonnet-4.8'],
+          },
+        },
+      },
+      referencePolicy: { certifiedProbeCount: 100 },
+    },
+  }), async (configPath) => {
+    const config = await loadConfig(configPath);
+    assert.equal(config.verifier?.referenceEndpoint?.antseedPeerId, peerId);
+    assert.equal(config.verifier?.referencePolicy?.certifiedProbeCount, 100);
+    assert.equal(config.verifier?.referencePolicy?.minimumAuditProbeCount, 100);
+    assert.equal(config.verifier?.referencePolicy?.maximumAuditProbeCount, 500);
+    assert.equal(config.verifier?.referencePolicy?.auditProbeStep, 10);
+    assert.equal(config.verifier?.referencePolicy?.minimumStatisticalPower, 0.9);
+    assert.equal(config.verifier?.referencePolicy?.generationDomainConcurrency, 3);
+    assert.equal(config.verifier?.referencePolicy?.maxConcurrentReferenceRequests, 4);
+    assert.equal(config.verifier?.referencePolicy?.maxConcurrentRequestsPerModel, 2);
+  });
+});
+
+test('loadConfig accepts a direct trusted endpoint and rejects simultaneous legacy upstream', async () => {
+  const referenceEndpoint = {
+    baseUrl: 'https://reference.example/v1',
+    sourceId: 'trusted-sol-v1',
+    trust: 'trusted',
+    models: {
+      'gpt-5.6-sol': {
+        upstreamModel: 'gpt-5.6-sol',
+        contrastModels: ['kimi-k3'],
+      },
+    },
+  };
+  await withTempConfig(JSON.stringify({ verifier: { referenceEndpoint } }), async (configPath) => {
+    const config = await loadConfig(configPath);
+    assert.equal(config.verifier?.referenceEndpoint?.antseedPeerId, undefined);
+  });
+  await withTempConfig(JSON.stringify({
+    verifier: { upstream: { baseUrl: 'https://legacy.example/v1' }, referenceEndpoint },
+  }), async (configPath) => {
+    await assert.rejects(() => loadConfig(configPath), /cannot both be configured/);
+  });
+});
+
+test('loadConfig validates reference concurrency limits', async () => {
+  await withTempConfig(JSON.stringify({
+    verifier: {
+      referencePolicy: {
+        generationDomainConcurrency: 16,
+        maxConcurrentReferenceRequests: 2,
+        maxConcurrentRequestsPerModel: 3,
+      },
+    },
+  }), async (configPath) => {
+    await assert.rejects(
+      () => loadConfig(configPath),
+      /generationDomainConcurrency must not exceed 15.*maxConcurrentRequestsPerModel must not exceed maxConcurrentReferenceRequests/s,
+    );
+  });
+});
+
+test('loadConfig restricts verifier audit duration to 24 through 48 hours', async () => {
+  await withTempConfig(
+    JSON.stringify({ verifier: { auditDurationMs: 24 * 60 * 60 * 1_000 - 1 } }),
+    async (configPath) => {
+      await assert.rejects(async () => loadConfig(configPath), /verifier\.auditDurationMs/);
+    }
+  );
+  await withTempConfig(
+    JSON.stringify({ verifier: { auditDurationMs: 48 * 60 * 60 * 1_000 + 1 } }),
+    async (configPath) => {
+      await assert.rejects(async () => loadConfig(configPath), /verifier\.auditDurationMs/);
+    }
+  );
+});
+
+test('loadConfig preserves valid nested buyer relay settings', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      buyer: {
+        relay: {
+          enabled: false,
+          minimumPayoutPerJobUsdc: '2500',
+          maxConcurrentJobs: 3,
+          maxJobsPerHour: 80,
+          discoveryIntervalMs: 10_000,
+        },
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.deepEqual(config.buyer.relay, {
+        enabled: false,
+        minimumPayoutPerJobUsdc: '2500',
+        maxConcurrentJobs: 3,
+        maxJobsPerHour: 80,
+        discoveryIntervalMs: 10_000,
+      });
+    },
+  );
+});
+
+test('loadConfig rejects the removed top-level relay section', async () => {
+  await withTempConfig(JSON.stringify({ relay: { enabled: true } }), async (configPath) => {
+    await assert.rejects(loadConfig(configPath), /relay is no longer supported; use buyer\.relay/);
+  });
 });
 
 test('loadConfig rejects unknown verifier keys so typos fail loudly instead of being silently dropped', async () => {
@@ -407,25 +499,24 @@ test('loadConfig rejects unknown verifier keys so typos fail loudly instead of b
   await withTempConfig(
     JSON.stringify({ verifier: { delegation: { enabled: true, minDelegate: 2 } } }),
     async (configPath) => {
-      await assert.rejects(async () => loadConfig(configPath), /verifier\.delegation\.minDelegate is not a supported delegation option/);
+      await assert.rejects(async () => loadConfig(configPath), /verifier\.delegation is not a supported verifier option/);
     }
   );
 });
 
-test('loadConfig rejects invalid verifier delegation settings', async () => {
+test('loadConfig rejects invalid relay settings', async () => {
   await withTempConfig(
     JSON.stringify({
-      verifier: {
-        delegation: {
-          enabled: true,
-          minDelegates: 0,
+      buyer: {
+        relay: {
+          maxConcurrentJobs: 0,
         },
       },
     }),
     async (configPath) => {
       await assert.rejects(
         async () => loadConfig(configPath),
-        /verifier\.delegation\.minDelegates/
+        /buyer\.relay\.maxConcurrentJobs/
       );
     }
   );

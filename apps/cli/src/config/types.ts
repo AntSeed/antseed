@@ -145,28 +145,8 @@ export interface BuyerCLIConfig {
   disableMetadataV2Services: boolean;
   /** Buyer-side response-auth evidence sampling settings. */
   verification?: BuyerVerificationConfig;
-  /** Opt-in probe-carrier mode: serve probe jobs for whitelisted verifiers. */
-  delegate?: DelegateCLIConfig;
-}
-
-/**
- * Opt-in delegate (probe carrier) settings. A participating buyer connects
- * to on-chain-approved verifiers discovered on the DHT and relays their
- * probe requests over its ordinary paid buyer path. Carried jobs earn
- * delegate credits that accrue ON-CHAIN when the verifier anchors the
- * seller-signed exchanges naming this buyer; the worker discovers them from
- * DelegateCreditsAccrued logs and the buyer's deposits operator claims them
- * on-chain for a share of the verification emissions bucket. There is no
- * payout setting — the contract resolves the operator at claim time.
- */
-export interface DelegateCLIConfig {
-  enabled: boolean;
-  /** Max probe jobs run concurrently. Default: 2. */
-  maxConcurrentJobs?: number;
-  /** Rate cap on carried jobs. Default: 60. */
-  maxJobsPerHour?: number;
-  /** How often to scan the DHT for verifiers to serve. Default: 300000 (5 min). */
-  discoveryIntervalMs?: number;
+  /** Paid verifier relay worker settings. */
+  relay: RelayCLIConfig;
 }
 
 /**
@@ -232,132 +212,56 @@ export interface PaymentsCLIConfig {
     emissionsContractAddress?: string;
     /** Deployed AntseedVerifierRegistry contract address */
     verifierRegistryAddress?: string;
-    /** Deployed AntseedVerifierRewards contract address */
-    verifierRewardsAddress?: string;
+    /** Deployed AntseedRelayTreasury contract address */
+    relayTreasuryAddress?: string;
+    /** Deployed AntseedVerifierPointsPolicy contract address */
+    verifierPointsPolicyAddress?: string;
     /** Default lock amount per session in human-readable USDC (e.g. "1" = 1 USDC) */
     defaultLockAmountUSDC?: string;
   };
 }
 
-/**
- * Verifier-specific configuration within the Antseed config.
- * Used by `antseed verifier start` — a whitelisted verifier probes sellers
- * advertising the configured services and attests model-identity verdicts
- * on-chain.
- */
+/** Verifier-specific configuration for reference-only KBF audits. */
 export interface VerifierCLIConfig {
-  /**
-   * Advertised services (model IDs) to verify, e.g. ["kimi-k2", "deepseek-v3.1"].
-   * Empty (or omitted): auto-discover mode — the verifier audits every service
-   * advertised by peers on the network.
-   */
+  /** Optional allowlist used by operator tooling. */
   services?: string[];
-  /** Max credited audits this verifier attempts per emissions epoch. Default: 50. */
-  maxAuditsPerEpoch?: number;
-  /** Numeric probes per audited seller. Default: 24. */
-  probesPerAudit?: number;
-  /**
-   * Max probes woven into a single stealth chat request. Lower = more organic
-   * (harder for a seller to detect probing) but more requests per audit, each
-   * incurring the per-request minimum fee. Default: 3.
-   */
-  maxProbesPerRequest?: number;
-  /** Minimum sellers advertising the same service required for a cohort audit. Default: 3. */
-  cohortMinSize?: number;
-  /** Maximum sellers probed per cohort round. Default: 10. */
-  cohortMaxSize?: number;
-  /** Pause between audit rounds in ms. Default: 300000 (5 min). */
-  auditIntervalMs?: number;
-  /** Skip sellers audited on-chain within this many seconds. Default: on-chain auditCooldown. */
-  stalenessWindowSecs?: number;
-  /**
-   * Origin of probes when no reference matches the service. `llm` authors
-   * fresh candidates per audit via the configured `upstream` and certifies
-   * them with the existing reference machinery (cheap, unbounded supply, no
-   * fixed generator fingerprint — falls back to `compositional` when
-   * authoring fails); `compositional` draws from a large procedural
-   * entity/attribute space so a seller cannot memorize a finite bank; `bank`
-   * uses the small built-in fixture (tests/bootstrap). A matching reference
-   * always takes precedence (reference mode). Default: "llm" when `upstream`
-   * is configured, otherwise "compositional".
-   */
-  probeSource?: 'llm' | 'compositional' | 'bank';
-  /**
-   * Upstream model id used to AUTHOR probe candidates in `llm` probe-source
-   * mode (certification always runs against the audited service's reference
-   * model). Defaults to the certification model, i.e. the upstream model
-   * resolved for the audited service.
-   */
-  probeAuthorModel?: string;
-  /**
-   * Recently-used probe ids remembered per service and excluded from later
-   * rounds, so a revealed probe is not reused until the pool cycles. 0 disables
-   * rotation. Ignored in reference mode. Default: 2000.
-   */
-  probeRotationHistory?: number;
-  /**
-   * Directory of trusted KBF reference files (JSON, spec 07 reference schema).
-   * When a reference matches an audited service, reference-based KBF verdicts
-   * are computed in addition to cohort consensus. Default: <dataDir>/fingerprints/references.
-   */
+  /** Directory of trusted KBF reference files. */
   referencesDir?: string;
   /**
-   * Directory where audit packs are published, one per audit round
-   * (`<publishDir>/<probeCommitment>.json`, canonical JSON bytes whose
-   * SHA-256 is the on-chain evidenceHash). The pack holds the revealed probe
-   * set plus every request/response plaintext and seller ResponseAuth, so
-   * anyone can re-run the audit from public data (`antseed audit verify`).
-   * Default: <dataDir>/verifier/packs.
-   */
-  publishDir?: string;
-  /**
-   * Public base URL under which packs written to `publishDir` are served
-   * (e.g. "https://packs.example.com/audits"). When set, each round posts the
-   * pack URI `<publishBaseUrl>/<probeCommitment>.json` on-chain in the reveal,
-   * so a re-runner (`antseed audit verify`) can fetch the pack from chain data
-   * alone. Unset publishes packs locally only (verifiers must pass --pack).
-   */
-  publishBaseUrl?: string;
-  /**
-   * Milliseconds to wait between the round's attestations and revealing the
-   * probe set on-chain. 0 (default) reveals immediately after attesting;
-   * end-of-epoch reveal batching is a future knob.
-   */
-  revealDelayMs?: number;
-  /** Directory for the per-service probe rotation log. Default: <dataDir>/fingerprints/probe-log. */
-  probeLogDir?: string;
-  /**
    * Trusted OpenAI-compatible upstream used to enroll certified KBF references
-   * (`antseed verifier reference build`, plus automatic enrollment in the
-   * daemon for discovered services that lack one). Point it at the canonical
-   * provider, OpenRouter, or a local deployment of the open weights. With a
-   * reference, a service can be audited down to a single seller; without one,
-   * cohort consensus needs cohortMinSize sellers.
+   * (`antseed verifier reference build`). Point it at the canonical provider,
+   * OpenRouter, or a local deployment of the open weights.
    */
   upstream?: VerifierUpstreamConfig;
-  /**
-   * Delegated probing: announce as a delegation host on the DHT and route
-   * probes through opt-in organic buyers instead of this daemon's own
-   * (whitelist-linkable) buyer identity. Carried exchanges credit each carrier
-   * on-chain at anchor time; carriers claim those credits themselves via their
-   * operator (no voucher is signed or sent).
-   */
-  delegation?: VerifierDelegationConfig;
+  /** Preferred reference endpoint configuration. Replaces `upstream`. */
+  referenceEndpoint?: VerifierReferenceEndpointConfig;
+  /** Reference enrollment, rotation, and expiry policy. */
+  referencePolicy?: VerifierReferencePolicyConfig;
+  /** Explicitly trusted imported reference ids. */
+  trustedImportedReferenceIds?: string[];
+  /** Relay job timeout. Default: 120000. */
+  jobTimeoutMs?: number;
+  /** Flat relay fee in USDC base units. Default: "1000". */
+  flatRelayFeeUsdc?: string;
+  /** Verifier relay-host signaling port. Default: 6882. */
+  relaySignalingPort?: number;
+  /** Maximum connected relays. Default: 64. */
+  maxRelays?: number;
+  /** Duration over which audit jobs are scheduled. Must be 24-48 hours. Default: 24 hours. */
+  auditDurationMs?: number;
 }
 
-export interface VerifierDelegationConfig {
+export interface RelayCLIConfig {
+  /** Participate in paid audit relaying. Default: true. */
   enabled: boolean;
-  /** TCP port for the delegate signaling listener. Default: 6882. */
-  signalingPort?: number;
-  /** Per-job execution budget granted to a delegate. Default: 60000. */
-  jobTimeoutMs?: number;
-  /** Delegates required before probing through them. Default: 1. */
-  minDelegates?: number;
-  /**
-   * Never fall back to direct probing when too few delegates are connected —
-   * skip the round instead. Default: false (fall back to direct probing).
-   */
-  requireDelegates?: boolean;
+  /** Minimum accepted payout per job in USDC base units. Default: "1000". */
+  minimumPayoutPerJobUsdc?: string;
+  /** Maximum concurrently executed relay jobs. Default: 2. */
+  maxConcurrentJobs?: number;
+  /** Maximum jobs accepted per rolling hour. Default: 60. */
+  maxJobsPerHour?: number;
+  /** Verifier discovery cadence. Default: 300000. */
+  discoveryIntervalMs?: number;
 }
 
 export interface VerifierUpstreamConfig {
@@ -374,6 +278,63 @@ export interface VerifierUpstreamConfig {
    * Without an entry, the advertised spelling is sent to the upstream as-is.
    */
   modelMap?: Record<string, string>;
+}
+
+export interface VerifierReferenceModelConfig {
+  /** Model id sent to the reference endpoint. */
+  upstreamModel: string;
+  /** Models used to reject non-distinguishing candidate probes. */
+  contrastModels: string[];
+}
+
+export interface VerifierReferenceEndpointConfig {
+  /** OpenAI-compatible base URL, e.g. "http://127.0.0.1:8377/v1". */
+  baseUrl: string;
+  /** API key sent as a Bearer token. Prefer apiKeyEnv over inlining secrets. */
+  apiKey?: string;
+  /** Environment variable containing the API key. */
+  apiKeyEnv?: string;
+  /** Stable operator-controlled identity used to invalidate references. */
+  sourceId: string;
+  /** Whether references from this endpoint are smoke-only or trusted. */
+  trust: 'smoke' | 'trusted';
+  /** Optional AntSeed buyer-proxy peer pin. Omit for direct trusted APIs. */
+  antseedPeerId?: string;
+  /** Network service id to upstream reference/contrast model configuration. */
+  models: Record<string, VerifierReferenceModelConfig>;
+}
+
+export interface VerifierReferencePolicyConfig {
+  /** @deprecated Catalog warm-up compatibility option. */
+  certifiedProbeCount?: number;
+  /** @deprecated Alias for minimumAuditProbeCount. */
+  auditProbeCount?: number;
+  /** @deprecated Probes are never reused for the same agent/service. */
+  maxProbeUsesPerTarget?: number;
+  /** Initial probes selected for each audit. Default: 100. */
+  minimumAuditProbeCount?: number;
+  /** Maximum probes selected for an adaptive audit. Default: 500. */
+  maximumAuditProbeCount?: number;
+  /** Adaptive growth increment. Default: 10. */
+  auditProbeStep?: number;
+  /** Required one-sided binomial statistical power. Default: 0.9. */
+  minimumStatisticalPower?: number;
+  /** Maximum reference age in days. Default: 49. */
+  maxReferenceAgeDays?: number;
+  /** @deprecated Alias for maxRequestsPerRound. */
+  maxRequestsPerBuild?: number;
+  /** Maximum upstream calls while preparing one service round. Default: 2000. */
+  maxRequestsPerRound?: number;
+  /** Timeout for one reference request. Default: 120000. */
+  requestTimeoutMs?: number;
+  /** Retry count after the initial batch attempt. Default: 3. */
+  batchRetryCount?: number;
+  /** Adaptive generation domains processed concurrently. Default: 3. */
+  generationDomainConcurrency?: number;
+  /** Maximum concurrent upstream reference requests. Default: 4. */
+  maxConcurrentReferenceRequests?: number;
+  /** Maximum concurrent upstream requests for one model. Default: 2. */
+  maxConcurrentRequestsPerModel?: number;
 }
 
 /**

@@ -2,7 +2,10 @@ import type { Router } from '../interfaces/buyer-router.js';
 import type { PeerInfo } from '../types/peer.js';
 import type { SerializedHttpRequest } from '../types/http.js';
 import { computeOnChainReputationScore } from '../reputation/on-chain-reputation.js';
-import { peerHasActiveSubstitutionFlag } from './verification-score.js';
+import {
+  peerHasActiveSubstitutionFlag,
+  peerHasModelVerificationWarning,
+} from './verification-score.js';
 import { extractServiceFromBody } from '../utils/json-codec.js';
 
 export interface DefaultRouterConfig {
@@ -43,6 +46,9 @@ export class DefaultRouter implements Router {
     if (eligible.length === 0) return null;
 
     eligible.sort((a, b) => {
+      const warningA = peerHasModelVerificationWarning(a, requestedService, nowMs) ? 1 : 0;
+      const warningB = peerHasModelVerificationWarning(b, requestedService, nowMs) ? 1 : 0;
+      if (warningA !== warningB) return warningA - warningB;
       const priceA = a.defaultInputUsdPerMillion ?? Infinity;
       const priceB = b.defaultInputUsdPerMillion ?? Infinity;
       if (priceA !== priceB) return priceA - priceB;

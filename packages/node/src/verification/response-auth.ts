@@ -35,6 +35,11 @@ export interface ResponseAuthVerificationResult {
   reason?: string;
 }
 
+export interface ResponseAuthExecutionWindow {
+  responseStartedAt: number;
+  responseCompletedAt: number;
+}
+
 export function createResponseAuthPayload(input: ResponseAuthInput, signer: Wallet): ResponseAuthPayload {
   const payload: Omit<ResponseAuthPayload, 'signature'> = {
     version: 1,
@@ -130,6 +135,30 @@ export function verifyResponseAuth(
   return { valid: true };
 }
 
+export function verifyResponseAuthExecutionWindow(
+  payload: ResponseAuthExecutionWindow,
+  executeAfterSeconds: number,
+  executeBeforeSeconds: number,
+): ResponseAuthVerificationResult {
+  if (![payload.responseStartedAt, payload.responseCompletedAt, executeAfterSeconds, executeBeforeSeconds]
+    .every(Number.isSafeInteger)) {
+    return { valid: false, reason: 'invalid_execution_timestamp' };
+  }
+  if (executeBeforeSeconds <= executeAfterSeconds) {
+    return { valid: false, reason: 'invalid_execution_window' };
+  }
+  if (payload.responseCompletedAt < payload.responseStartedAt) {
+    return { valid: false, reason: 'response_time_reversed' };
+  }
+  if (payload.responseStartedAt < executeAfterSeconds * 1_000) {
+    return { valid: false, reason: 'response_started_before_window' };
+  }
+  if (payload.responseCompletedAt > executeBeforeSeconds * 1_000) {
+    return { valid: false, reason: 'response_completed_after_window' };
+  }
+  return { valid: true };
+}
+
 export function hashRequest(request: SerializedHttpRequest): string {
   return keccak256(encodeHttpRequest(request));
 }
@@ -167,6 +196,62 @@ export function buildResponseAuthSigningBytes(payload: Omit<ResponseAuthPayload,
     offset += field.length;
   }
   return out;
+}
+
+export function encodeContractResponseAuthPayload(payload: ResponseAuthPayload): Uint8Array {
+  const { signature, ...unsigned } = payload;
+  const signingBytes = buildResponseAuthSigningBytes(unsigned);
+  const signatureBytes = hexToBytes(signature);
+  if (signatureBytes.length !== 65) throw new Error('ResponseAuth signature must be 65 bytes');
+  const output = new Uint8Array(signingBytes.length + signatureBytes.length);
+  output.set(signingBytes, 0);
+  output.set(signatureBytes, signingBytes.length);
+  return output;
+}
+
+export function extractContractResponseAuthSigningPayload(payload: Uint8Array): Uint8Array {
+  if (payload.length <= 65) throw new Error('Contract ResponseAuth payload is too short');
+  return payload.subarray(0, payload.length - 65);
+}
+
+export function decodeContractResponseAuthPayload(payload: Uint8Array): ResponseAuthPayload {
+  const signingBytes = extractContractResponseAuthSigningPayload(payload);
+  const signature = bytesToHex(payload.subarray(payload.length - 65));
+  const decoder = new TextDecoder();
+  const view = new DataView(signingBytes.buffer, signingBytes.byteOffset, signingBytes.byteLength);
+  const fields: string[] = [];
+  let offset = 0;
+  for (let index = 0; index < 13; index += 1) {
+    if (offset + 4 > signingBytes.length) throw new Error('Malformed ResponseAuth signing payload');
+    const length = view.getUint32(offset);
+    offset += 4;
+    if (offset + length > signingBytes.length) throw new Error('Malformed ResponseAuth signing payload');
+    fields.push(decoder.decode(signingBytes.subarray(offset, offset + length)));
+    offset += length;
+  }
+  if (offset !== signingBytes.length) throw new Error('ResponseAuth signing payload has trailing bytes');
+  if (fields[0] !== RESPONSE_AUTH_DOMAIN || fields[1] !== '1') throw new Error('ResponseAuth signing domain mismatch');
+  const statusCode = Number(fields[8]);
+  const responseStartedAt = Number(fields[11]);
+  const responseCompletedAt = Number(fields[12]);
+  if (![statusCode, responseStartedAt, responseCompletedAt].every(Number.isSafeInteger)) {
+    throw new Error('ResponseAuth numeric field is invalid');
+  }
+  return {
+    version: 1,
+    requestId: fields[2]!,
+    ...(fields[3] ? { channelId: fields[3] } : {}),
+    buyerPeerId: fields[4]!,
+    sellerPeerId: fields[5]!,
+    advertisedService: fields[6]!,
+    provider: fields[7]!,
+    statusCode,
+    requestHash: fields[9]!,
+    responseHash: fields[10]!,
+    responseStartedAt,
+    responseCompletedAt,
+    signature,
+  };
 }
 
 function stripStreamingHeader(response: SerializedHttpResponse): SerializedHttpResponse {

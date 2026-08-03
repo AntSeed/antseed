@@ -8,6 +8,7 @@ import { registerBuyerConnectionCommand } from './connection.js';
 import { registerBuyerChannelsCommand } from './channels.js';
 import { registerBuyerMeteringCommand } from './metering.js';
 import { registerBuyerEmissionsCommand } from './emissions.js';
+import { registerRelayClaimsCommand } from '../relay/claims.js';
 
 export function registerBuyerCommands(program: Command): void {
   const buyerCmd = program
@@ -23,4 +24,9 @@ export function registerBuyerCommands(program: Command): void {
   registerBuyerChannelsCommand(buyerCmd);
   registerBuyerMeteringCommand(buyerCmd);
   registerBuyerEmissionsCommand(buyerCmd);
+
+  const relayCmd = buyerCmd
+    .command('relay')
+    .description('Embedded audit relay management');
+  registerRelayClaimsCommand(relayCmd);
 }

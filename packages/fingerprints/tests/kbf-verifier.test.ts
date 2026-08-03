@@ -18,6 +18,11 @@ const PROBES = generateProbeSet({
 }).probes;
 
 function makeReference(overrides: Partial<FingerprintReference> = {}): FingerprintReference {
+  const outcomes = PROBES.map((probe) => ({
+    probeId: probe.id,
+    answer: probe.consensus,
+    match: 1 as const,
+  }));
   return {
     version: 1,
     kind: 'kbf',
@@ -32,7 +37,7 @@ function makeReference(overrides: Partial<FingerprintReference> = {}): Fingerpri
       verifierKind: 'kbf',
       params: {},
     },
-    selfTest: { hamming: 0, total: 200, coverage: 1, errorRate: 0 },
+    selfTest: { hamming: 0, total: PROBES.length, coverage: 1, errorRate: 0, outcomes },
     probes: PROBES,
     ...overrides,
   };
@@ -124,7 +129,7 @@ describe('KbfVerifier', () => {
 
   it('returns UNKNOWN for an invalid self-test', () => {
     const reference = makeReference({
-      selfTest: { hamming: 0, total: 0, coverage: 0, errorRate: 0 },
+      selfTest: { hamming: 0, total: 0, coverage: 0, errorRate: 0, outcomes: [] },
     });
     const fragment = verifier.verify(reference, makeObservation(PROBES.map((p) => p.consensus)));
     expect(fragment.verdict).toBe('UNKNOWN');
