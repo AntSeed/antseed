@@ -18,7 +18,7 @@
     "build": "npm run build:main && npm run build:renderer",
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "vite build",
-    "test": "pnpm run build:main && node --test \"dist/main/**/*.test.js\" && pnpm run test:renderer",
+    "test": "pnpm run build:main && node --test $(find dist/main -name '*.test.js') && pnpm run test:renderer",
     "test:renderer": "vitest run --dir src/renderer",
     "typecheck:renderer": "tsc -p tsconfig.renderer.json --noEmit",
     "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:main\" \"npm:dev:electron\"",
