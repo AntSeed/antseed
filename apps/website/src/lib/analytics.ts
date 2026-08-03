@@ -7,7 +7,8 @@
  * helpers work regardless of load order, and no-op cleanly when GTM is absent
  * (local dev, or before GTM_CONTAINER_ID is set).
  *
- * See ANALYTICS.md for the GTM/GA4 configuration these events expect.
+ * GA4 is configured as a tag inside the GTM container; nothing else is
+ * loaded here.
  */
 
 type DataLayerEvent = Record<string, unknown> & {event: string};

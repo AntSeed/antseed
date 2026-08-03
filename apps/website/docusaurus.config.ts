@@ -25,7 +25,7 @@ const statsProxyPlugin: PluginModule = () => ({
   },
 });
 
-/** Google Tag Manager container for antseed.com. See ANALYTICS.md. */
+/** Google Tag Manager container for antseed.com. */
 const GTM_CONTAINER_ID = process.env.GTM_CONTAINER_ID ?? 'GTM-NHCLBQQK';
 
 const config: Config = {
@@ -88,7 +88,7 @@ const config: Config = {
     // throwaway test container. Set it to an empty string to disable GTM.
     //
     // GA4 (G-DF97Q4KV2X) is configured as a tag *inside* this container, not
-    // loaded here — see ANALYTICS.md.
+    // loaded here, so there is one tag on the page and no double-counting.
     ...(GTM_CONTAINER_ID
       ? [['@docusaurus/plugin-google-tag-manager', {containerId: GTM_CONTAINER_ID}] as const]
       : []),

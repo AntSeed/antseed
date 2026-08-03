@@ -75,7 +75,7 @@ function useClickTracking() {
       };
 
       if (isDownloadUrl(absolute)) {
-        // Mark this as the key event in GA4 — see ANALYTICS.md.
+        // Conversion event. Marked as the key event in GA4.
         track('download_vpr', {
           ...common,
           platform: platformFromUrl(absolute),
