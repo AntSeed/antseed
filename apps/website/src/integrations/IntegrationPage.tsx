@@ -14,6 +14,7 @@ import {
   type Step,
 } from './integrations';
 import styles from './integrations.module.css';
+import {ArrowRight, Button, FinalCta, Ticks, ticksToHtml} from '../components/ui';
 
 function CopyButton({value}: {value: string}) {
   const [copied, setCopied] = useState(false);
@@ -75,7 +76,7 @@ function ConfigBlockRenderer({b}: {b: ConfigBlock}) {
           <summary>Show as shell exports</summary>
           <CodeBlock snippet={lines} />
         </details>
-        {b.note && <p className={styles.stepNote}>{b.note}</p>}
+        {b.note && <p className={styles.stepNote}><Ticks>{b.note}</Ticks></p>}
       </div>
     );
   }
@@ -83,7 +84,7 @@ function ConfigBlockRenderer({b}: {b: ConfigBlock}) {
     return (
       <>
         <CodeBlock path={b.path} language={b.language} snippet={b.snippet} />
-        {b.note && <p className={styles.stepNote}>{b.note}</p>}
+        {b.note && <p className={styles.stepNote}><Ticks>{b.note}</Ticks></p>}
       </>
     );
   }
@@ -91,14 +92,14 @@ function ConfigBlockRenderer({b}: {b: ConfigBlock}) {
     return (
       <>
         <CodeBlock language={b.language} snippet={b.snippet} />
-        {b.note && <p className={styles.stepNote}>{b.note}</p>}
+        {b.note && <p className={styles.stepNote}><Ticks>{b.note}</Ticks></p>}
       </>
     );
   }
   return (
     <>
-      <div className={styles.guiBlock}>{b.instructions}</div>
-      {b.note && <p className={styles.stepNote}>{b.note}</p>}
+      <div className={styles.guiBlock}><Ticks>{b.instructions}</Ticks></div>
+      {b.note && <p className={styles.stepNote}><Ticks>{b.note}</Ticks></p>}
     </>
   );
 }
@@ -109,7 +110,7 @@ function StepBlock({s}: {s: Step}) {
       <span className={styles.stepLabel}>{s.label}</span>
       {s.command && <CodeBlock language={s.language} snippet={s.command} />}
       {s.output && <ExampleOutput label={s.outputLabel} snippet={s.output} />}
-      {s.note && <p className={styles.stepNote}>{s.note}</p>}
+      {s.note && <p className={styles.stepNote}><Ticks>{s.note}</Ticks></p>}
     </li>
   );
 }
@@ -145,14 +146,14 @@ function RunFirstBanner() {
           <p className={styles.glossaryTitle}>The model in your head</p>
           <ul className={styles.glossaryList}>
             <li>
-              <strong>Buyer proxy</strong> — a small server on{' '}
+              <strong>Buyer proxy</strong> - a small server on{' '}
               <code>localhost:8377</code> that accepts API calls from your tools and
               forwards them to the AntSeed network. It speaks{' '}
-              <em>all four LLM protocols</em> at once —{' '}
+              <em>all four LLM protocols</em> at once -{' '}
               <code>/v1/messages</code> (Anthropic),{' '}
               <code>/v1/chat/completions</code> (OpenAI Chat),{' '}
               <code>/v1/responses</code> (OpenAI Responses), and{' '}
-              <code>/v1/completions</code> (legacy) — and translates between them via{' '}
+              <code>/v1/completions</code> (legacy) - and translates between them via{' '}
               <a
                 href="https://github.com/AntSeed/antseed/tree/main/packages/api-adapter"
                 target="_blank"
@@ -163,18 +164,18 @@ function RunFirstBanner() {
               peer (and vice versa).
             </li>
             <li>
-              <strong>Peer</strong> — someone selling inference. Every peer has a{' '}
+              <strong>Peer</strong> - someone selling inference. Every peer has a{' '}
               <code>peerId</code> (40-char hex), a display name, and a list of services.
             </li>
             <li>
-              <strong>Service</strong> — a single model id like{' '}
+              <strong>Service</strong> - a single model id like{' '}
               <code>claude-sonnet-4-6</code> or <code>deepseek-v4-flash</code>. <em>This
               is what you pass as <code>model</code> in your tool's config.</em>
               Each service has its own native protocol list and{' '}
               <code>in</code>/<code>cachedIn</code>/<code>out</code> pricing.
             </li>
             <li>
-              <strong>Protocols</strong> (per service) — the wire formats a service
+              <strong>Protocols</strong> (per service) - the wire formats a service
               accepts <em>natively</em>, advertised on each peer in{' '}
               <code>providerServiceApiProtocols[provider].services[service]</code>. Values:{' '}
               <code>anthropic-messages</code>, <code>openai-chat-completions</code>,{' '}
@@ -184,7 +185,7 @@ function RunFirstBanner() {
               the api-adapter translates on the fly.
             </li>
             <li>
-              <strong>Cached input pricing</strong> — services charge a separate,
+              <strong>Cached input pricing</strong> - services charge a separate,
               much lower rate (typically 4–10×) for tokens that are reused across
               requests: system prompts, tool schemas, prior conversation turns, long
               files you keep referencing. The CLI exposes it as{' '}
@@ -192,8 +193,8 @@ function RunFirstBanner() {
               chatbots, this is often the dominant cost line.
             </li>
             <li>
-              <strong>Pin</strong> — telling your buyer proxy “route requests to{' '}
-              <em>this</em> peer.” No auto-selection — you choose, the proxy obeys.
+              <strong>Pin</strong> - telling your buyer proxy “route requests to{' '}
+              <em>this</em> peer.” No auto-selection - you choose, the proxy obeys.
               Two ways: a session-wide pin via{' '}
               <code>antseed buyer connection set --peer &lt;id&gt;</code> (saved to{' '}
               <code>~/.antseed/buyer.state.json</code>), or a per-request{' '}
@@ -210,14 +211,14 @@ function RunFirstBanner() {
                 Install the CLI and start the buyer proxy.
               </p>
               <p className={styles.runFirstHint}>
-                Prefer a GUI? <Link to="/install">AntStation</Link> wraps everything below
+                Prefer a GUI? The <Link to="/install">VPR</Link> wraps everything below
                 in one app. CLI flow:
               </p>
               <CodeBlock
                 snippet={`# 1. Install\nnpm install -g @antseed/cli\n\n# 2. Set a buyer identity (64-char hex private key).\n#    This signs requests; it never holds USDC. Generate once, reuse forever.\nexport ANTSEED_IDENTITY_HEX=$(openssl rand -hex 32)\n\n# 3. Start the proxy on http://localhost:8377\nantseed buyer start`}
               />
               <p className={styles.runFirstHint}>
-                Save the value of <code>ANTSEED_IDENTITY_HEX</code> somewhere safe —
+                Save the value of <code>ANTSEED_IDENTITY_HEX</code> somewhere safe -
                 losing it means losing access to whatever USDC you've deposited under that
                 buyer address.
               </p>
@@ -228,11 +229,11 @@ function RunFirstBanner() {
             <span className={styles.runFirstNum}>2</span>
             <div className={styles.runFirstBody}>
               <p className={styles.runFirstStepTitle}>
-                Browse the network as JSON — see who's selling what.
+                Browse the network as JSON - see who's selling what.
               </p>
               <p className={styles.runFirstHint}>
                 Pretty TUI table: <code>antseed network browse</code>. For docs and
-                scripts we use the JSON form instead — it's compact, agent-readable, and
+                scripts we use the JSON form instead - it's compact, agent-readable, and
                 tells you exactly which fields exist.
               </p>
               <p className={styles.runFirstHint}>
@@ -260,7 +261,7 @@ function RunFirstBanner() {
     })'`}
               />
               <ExampleOutput
-                label="Example response (2 peers, abbreviated — fictional)"
+                label="Example response (2 peers, abbreviated - fictional)"
                 snippet={`[
   {
     "peerId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -285,11 +286,11 @@ function RunFirstBanner() {
               <p className={styles.runFirstHint}>
                 <strong>How to read it:</strong> each row is a model you can pass as{' '}
                 <code>model</code> in your tool's config. <code>protocols</code> is the
-                field to match against your tool's wire format — if your tool sends
+                field to match against your tool's wire format - if your tool sends
                 Anthropic Messages, look for <code>anthropic-messages</code>; if it
                 sends OpenAI Chat, look for <code>openai-chat-completions</code>; etc.
                 <code>in</code> / <code>cachedIn</code> / <code>out</code> are USD per
-                1M tokens (fresh input / cached input / output) —{' '}
+                1M tokens (fresh input / cached input / output) -{' '}
                 <code>cachedIn</code> is what you pay when prompt prefixes are reused
                 (system prompts, tool schemas, prior turns), typically 4–10× cheaper
                 than <code>in</code> and often the dominant cost line for long agents.
@@ -309,7 +310,7 @@ function RunFirstBanner() {
             <span className={styles.runFirstNum}>3</span>
             <div className={styles.runFirstBody}>
               <p className={styles.runFirstStepTitle}>
-                Inspect one peer's full menu — every service, every price.
+                Inspect one peer's full menu - every service, every price.
               </p>
               <CodeBlock
                 snippet={`antseed network peer cccccccccccccccccccccccccccccccccccccccc --json \\
@@ -334,7 +335,7 @@ function RunFirstBanner() {
     }'`}
               />
               <ExampleOutput
-                label="Example response (Demo Provider, abbreviated — fictional)"
+                label="Example response (Demo Provider, abbreviated - fictional)"
                 snippet={`{
   "peer": {
     "peerId": "cccccccccccccccccccccccccccccccccccccccc",
@@ -355,11 +356,11 @@ function RunFirstBanner() {
               </p>
               <ul className={styles.runFirstFieldList}>
                 <li>
-                  <code>service</code> — the model id. This is what you put in your
+                  <code>service</code> - the model id. This is what you put in your
                   tool's <code>model</code> field.
                 </li>
                 <li>
-                  <code>protocols</code> — projected from{' '}
+                  <code>protocols</code> - projected from{' '}
                   <code>providerServiceApiProtocols</code>; the wire formats this
                   service accepts <em>natively</em>. Match your tool's wire format
                   against this list: if it's in there, the request passes through untouched; if not,{' '}
@@ -367,26 +368,26 @@ function RunFirstBanner() {
                   <code>openai-responses</code>-only services require streaming.
                 </li>
                 <li>
-                  <code>in</code> / <code>out</code> — USD per <strong>1M tokens</strong>{' '}
+                  <code>in</code> / <code>out</code> - USD per <strong>1M tokens</strong>{' '}
                   (fresh input / output). <code>0 / 0</code> = free.
                 </li>
                 <li>
-                  <code>cachedIn</code> — USD per 1M <em>cached</em> input tokens.
+                  <code>cachedIn</code> - USD per 1M <em>cached</em> input tokens.
                   When a request reuses prefix tokens (the system prompt, tool
                   schemas, prior turns of a conversation, a long file you keep
                   re-asking about, …) those tokens bill at this rate instead of{' '}
-                  <code>in</code>. Typically <strong>4–10× cheaper</strong> — e.g.{' '}
+                  <code>in</code>. Typically <strong>4–10× cheaper</strong> - e.g.{' '}
                   <code>minimax-m2.7</code> charges $0.21/M for fresh input but only
                   $0.04/M for cache hits. For long-running coding agents and
                   chatbots, this is often the dominant cost line; use it when
                   comparing peers.
                 </li>
                 <li>
-                  <code>tags</code> — capability hints. <code>coding</code>,{' '}
+                  <code>tags</code> - capability hints. <code>coding</code>,{' '}
                   <code>vision</code>, <code>fast</code>, <code>free</code>, etc.
                 </li>
                 <li>
-                  <code>sessions</code> / <code>ghosts</code> — on-chain reputation.
+                  <code>sessions</code> / <code>ghosts</code> - on-chain reputation.
                   Sessions = settled streams. Ghosts = streams that opened but never
                   closed cleanly.
                 </li>
@@ -406,10 +407,10 @@ function RunFirstBanner() {
                 Tell the proxy which peer to use, then verify it serves your models.
               </p>
               <p className={styles.runFirstHint}>
-                Two ways to do this. Pick whichever fits your workflow — you can mix them.
+                Two ways to do this. Pick whichever fits your workflow - you can mix them.
               </p>
               <p className={styles.runFirstHint} style={{marginTop: 6}}>
-                <strong>Option A — session pin (most common).</strong> One command, every
+                <strong>Option A - session pin (most common).</strong> One command, every
                 future request goes to that peer. Persists in{' '}
                 <code>~/.antseed/buyer.state.json</code> across restarts.
               </p>
@@ -431,7 +432,7 @@ function RunFirstBanner() {
                 proxy returns <code>404 model_not_found</code>.
               </p>
               <p className={styles.runFirstHint} style={{marginTop: 12}}>
-                <strong>Option B — per-request header (no pin needed).</strong> Send{' '}
+                <strong>Option B - per-request header (no pin needed).</strong> Send{' '}
                 <code>x-antseed-pin-peer: &lt;peerId&gt;</code> on each call. Overrides
                 any session pin for that one request, and works even if no peer has been
                 pinned at all. Best for scripts, schedulers, and multi-tenant deployments
@@ -454,7 +455,7 @@ function RunFirstBanner() {
             <div className={styles.runFirstBody}>
               <p className={styles.runFirstStepTitle}>
                 <span className={styles.runFirstOptionalTag}>Optional</span>
-                Deposit USDC — only needed for paid services. Use the payments portal
+                Deposit USDC - only needed for paid services. Use the payments portal
                 so funding flows from a <strong>separate cold wallet</strong>, not from
                 the buyer identity:
               </p>
@@ -468,7 +469,7 @@ function RunFirstBanner() {
               </p>
               <p className={styles.runFirstHint}>
                 <strong>Don't send funds to your <code>ANTSEED_IDENTITY_HEX</code>{' '}
-                wallet directly</strong> — it's a hot signing key, not a treasury. The
+                wallet directly</strong> - it's a hot signing key, not a treasury. The
                 portal handles the deposit contract call from your cold wallet.
               </p>
             </div>
@@ -500,7 +501,7 @@ function WireFormatPanel({i}: {i: Integration}) {
       <section className={styles.wireFormat}>
         <p className={styles.wireFormatTitle}>Wire format • multi-protocol</p>
         <p className={styles.wireFormatBody}>
-          {i.name} can send <strong>any</strong> of AntSeed's supported protocols —
+          {i.name} can send <strong>any</strong> of AntSeed's supported protocols -
           configure per call. AntSeed will match each request to the peer's advertised
           service protocols (see <code>providerServiceApiProtocols</code> on a peer)
           and translate when they don't match.
@@ -540,7 +541,7 @@ function WireFormatPanel({i}: {i: Integration}) {
         <li>
           <strong>Best-fit services:</strong> any service whose{' '}
           <code>protocols</code> array contains <code>{protocol}</code>. That's what
-          the peer advertises as natively-supported — zero translation overhead,
+          the peer advertises as natively-supported - zero translation overhead,
           no transform edge cases.
         </li>
         <li>
@@ -565,7 +566,7 @@ function WireFormatPanel({i}: {i: Integration}) {
           ) : (
             <code>anthropic-messages</code>
           )}{' '}
-          — just with a small transform step.
+          - just with a small transform step.
         </li>
         {fmt !== 'openai-responses' && (
           <li className={styles.wireFormatWarn}>
@@ -603,7 +604,7 @@ export default function IntegrationPage({integration}: {integration: Integration
 
   return (
     <Layout
-      title={`${i.name} + AntSeed`}
+      title={i.name}
       description={`Connect ${i.name} to the AntSeed peer-to-peer inference network. ${i.oneLiner}`}>
       <Head>
         <link rel="alternate" type="text/markdown" href="/skill.md" title="Agent-readable integration guide" />
@@ -631,7 +632,7 @@ export default function IntegrationPage({integration}: {integration: Integration
           </div>
           <div className={styles.detailHeaderText}>
             <h1>{i.name}</h1>
-            <p className={styles.detailOneLiner}>{i.oneLiner}</p>
+            <p className={styles.detailOneLiner}><Ticks>{i.oneLiner}</Ticks></p>
             <div className={styles.detailBadgeRow}>
               <span className={`${styles.detailBadge} ${styles.detailBadgeGreen}`}>{CATEGORY_LABELS[i.category]}</span>
               <span className={styles.detailBadge}>{FORMAT_LABELS[i.format]}</span>
@@ -644,7 +645,7 @@ export default function IntegrationPage({integration}: {integration: Integration
 
         <div className={styles.description}>
           {i.description.map((p, idx) => (
-            <p key={idx} dangerouslySetInnerHTML={{__html: p}} />
+            <p key={idx} dangerouslySetInnerHTML={{__html: ticksToHtml(p)}} />
           ))}
         </div>
 
@@ -653,7 +654,7 @@ export default function IntegrationPage({integration}: {integration: Integration
         {i.prereqs && i.prereqs.length > 0 && (
           <Section eyebrow="Before you start" title="Prerequisites">
             <ul className={styles.bulletList}>
-              {i.prereqs.map((p, idx) => <li key={idx}>{p}</li>)}
+              {i.prereqs.map((p, idx) => <li key={idx}><Ticks>{p}</Ticks></li>)}
             </ul>
           </Section>
         )}
@@ -679,7 +680,7 @@ export default function IntegrationPage({integration}: {integration: Integration
             <div className={styles.modelChips}>
               {i.modelHints.suggested.map((m) => <span key={m} className={styles.modelChip}>{m}</span>)}
             </div>
-            {i.modelHints.note && <p className={styles.modelNote}>{i.modelHints.note}</p>}
+            {i.modelHints.note && <p className={styles.modelNote}><Ticks>{i.modelHints.note}</Ticks></p>}
             <p className={styles.modelNote}>
               The exact list of models depends on which peer you pin. Run{' '}
               <code>antseed network browse</code> or open the{' '}
@@ -705,8 +706,8 @@ export default function IntegrationPage({integration}: {integration: Integration
             <ul className={styles.troubleshootList}>
               {i.troubleshooting.map((t, idx) => (
                 <li key={idx}>
-                  <strong>{t.problem}</strong>
-                  {t.fix}
+                  <strong><Ticks>{t.problem}</Ticks></strong>
+                  <Ticks>{t.fix}</Ticks>
                 </li>
               ))}
             </ul>
@@ -718,7 +719,7 @@ export default function IntegrationPage({integration}: {integration: Integration
             <p className={styles.sectionEyebrow}>Heads up</p>
             <h2 className={styles.sectionTitle}>Caveats</h2>
             <ul className={styles.bulletList}>
-              {i.caveats.map((c, idx) => <li key={idx}>{c}</li>)}
+              {i.caveats.map((c, idx) => <li key={idx}><Ticks>{c}</Ticks></li>)}
             </ul>
           </section>
         )}
@@ -738,7 +739,7 @@ export default function IntegrationPage({integration}: {integration: Integration
         {i.agentSummary && (
           <aside className={styles.agentBox}>
             <h3>For agents</h3>
-            <p>{i.agentSummary}</p>
+            <p><Ticks>{i.agentSummary}</Ticks></p>
             <p>
               Full machine-readable catalog of every AntSeed integration:{' '}
               <a href="/skill.md">/skill.md</a>
@@ -754,11 +755,24 @@ export default function IntegrationPage({integration}: {integration: Integration
               {related.map((r) => (
                 <Link key={r.slug} to={`/integrations/${r.slug}`}>{r.name}</Link>
               ))}
-              <Link to="/integrations">All integrations →</Link>
+              <Link to="/integrations">All integrations<ArrowRight size={16} /></Link>
             </div>
           </section>
         )}
       </article>
+
+      <FinalCta
+        title={`Run ${i.name} on the open market`}
+        sub="Install AntSeed, point this tool at your local proxy, and pay per request in USDC."
+        note={
+          <>
+            <a href="/integrations">All integrations</a>
+            <a href="/docs/guides/using-the-api">Protocol guide</a>
+          </>
+        }>
+        <Button to="/docs/install" variant="white" size="lg" arrow>Install AntSeed</Button>
+        <Button to="/providers" variant="light" size="lg">Become a provider</Button>
+      </FinalCta>
     </Layout>
   );
 }
