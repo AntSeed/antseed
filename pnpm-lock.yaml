@@ -321,6 +321,9 @@ importers:
       '@docusaurus/plugin-client-redirects':
         specifier: ^3.7.0
         version: 3.9.2(@mdx-js/react@3.1.1(@types/react@18.3.28)(react@19.2.8))(bufferutil@4.1.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3)(utf-8-validate@5.0.10)
+      '@docusaurus/plugin-google-tag-manager':
+        specifier: ^3.7.0
+        version: 3.9.2(@mdx-js/react@3.1.1(@types/react@18.3.28)(react@19.2.8))(bufferutil@4.1.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3)(utf-8-validate@5.0.10)
       '@docusaurus/preset-classic':
         specifier: ^3.7.0
         version: 3.9.2(@algolia/client-search@5.49.1)(@mdx-js/react@3.1.1(@types/react@18.3.28)(react@19.2.8))(@types/react@18.3.28)(bufferutil@4.1.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(search-insights@2.17.3)(typescript@5.9.3)(utf-8-validate@5.0.10)
@@ -3717,6 +3720,7 @@ packages:
 
   '@metamask/sdk-communication-layer@0.33.0':
     resolution: {integrity: sha512-d0Jvk6V+plhF/3cy+5apJG16z6rmcJOy5B86PTUgghuzkBzrN7+7Ovzpp0JBr0EUuuoFXjEqc7Y6KakQ5WXv1Q==}
+    deprecated: No longer maintained, superseded by https://docs.metamask.io/metamask-connect
     peerDependencies:
       cross-fetch: ^4.0.0
       eciesjs: '*'

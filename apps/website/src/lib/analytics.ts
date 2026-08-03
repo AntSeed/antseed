@@ -1,0 +1,102 @@
+/**
+ * Analytics event helpers.
+ *
+ * Events are pushed to the GTM dataLayer, and GTM forwards them to GA4 (and any
+ * other tag configured later) without further code changes. The dataLayer array
+ * is safe to push to before GTM loads — GTM replays anything queued — so these
+ * helpers work regardless of load order, and no-op cleanly when GTM is absent
+ * (local dev, or before GTM_CONTAINER_ID is set).
+ *
+ * See ANALYTICS.md for the GTM/GA4 configuration these events expect.
+ */
+
+type DataLayerEvent = Record<string, unknown> & {event: string};
+
+declare global {
+  interface Window {
+    dataLayer?: DataLayerEvent[];
+  }
+}
+
+/** Push an event to the dataLayer. No-ops during SSR. */
+export function track(event: string, params: Record<string, unknown> = {}): void {
+  if (typeof window === 'undefined') return;
+  window.dataLayer = window.dataLayer || [];
+  window.dataLayer.push({event, ...params});
+}
+
+/**
+ * Any link that points at our GitHub releases counts as a VPR download —
+ * both the direct per-platform asset URL and the releases-page fallback that
+ * `useLatestDesktopDownload` returns when detection fails.
+ */
+export function isDownloadUrl(href: string): boolean {
+  return /^https?:\/\/(www\.)?github\.com\/AntSeed\/antseed\/releases(\/|$)/i.test(href);
+}
+
+/**
+ * Which OS a download link is for, read from the release asset filename
+ * (`…-arm64.dmg`, `…-x64.exe`, `….AppImage`). Derived from the URL rather than
+ * passed down as a prop so no button or call site needs to know about
+ * analytics. Returns 'releases_page' for the generic fallback link, where the
+ * user picks the asset themselves and we genuinely don't know yet.
+ */
+export function platformFromUrl(href: string): string {
+  if (/\.(dmg|pkg)(\?|$)/i.test(href)) return 'mac';
+  if (/\.(exe|msi)(\?|$)/i.test(href)) return 'win';
+  if (/\.(appimage|deb|rpm|tar\.gz)(\?|$)/i.test(href)) return 'linux';
+  return 'releases_page';
+}
+
+/** True for links leaving antseed.com. Protocol links (mailto:, tel:) excluded. */
+export function isOutboundUrl(href: string): boolean {
+  if (!/^https?:\/\//i.test(href)) return false;
+  if (typeof window === 'undefined') return false;
+  try {
+    return new URL(href).hostname !== window.location.hostname;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Label for where on the page a click happened, so GA4 can tell the hero CTA
+ * apart from the one in the footer.
+ *
+ * Order of preference: an explicit `data-analytics-section`, then the heading
+ * of the nearest section/header/footer, then that element's tag name. Ids that
+ * Docusaurus generates for its own layout (`__docusaurus_skipToContent_fallback`
+ * and friends) are skipped — they are the same on every page and would make
+ * every click look like it came from the same place.
+ */
+export function sectionOf(el: Element | null): string {
+  let node: Element | null = el;
+  while (node && node !== document.body) {
+    const explicit = node.getAttribute?.('data-analytics-section');
+    if (explicit) return explicit;
+
+    if (node.id && !node.id.startsWith('__docusaurus')) return node.id;
+
+    if (/^(SECTION|HEADER|FOOTER|ARTICLE|ASIDE)$/.test(node.tagName)) {
+      const heading = node.querySelector('h1, h2, h3');
+      const text = heading && (heading as HTMLElement).innerText;
+      if (text) return text.trim().replace(/\s+/g, ' ').slice(0, 60);
+      return node.tagName.toLowerCase();
+    }
+
+    node = node.parentElement;
+  }
+  return 'unknown';
+}
+
+/**
+ * The label a user actually saw. `textContent` concatenates every child
+ * including responsive variants hidden with CSS — the download CTA would report
+ * "Download VPRGet Started" because it carries both a desktop and a mobile
+ * label. `innerText` respects rendered visibility and returns just the visible
+ * one.
+ */
+export function visibleLabel(el: HTMLElement): string {
+  const text = el.innerText || el.textContent || '';
+  return text.trim().replace(/\s+/g, ' ').slice(0, 100);
+}
