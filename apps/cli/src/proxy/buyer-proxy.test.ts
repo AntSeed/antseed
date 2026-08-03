@@ -4,10 +4,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import test from 'node:test'
-import { CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1, type PeerInfo } from '@antseed/node'
+import { CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1, type PeerInfo, type SerializedHttpResponse } from '@antseed/node'
 import { DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from '../config/defaults.js'
 import {
   BuyerProxy,
+  isModelNotFoundResponse,
   makeVerifierReach,
   parsePeerPinnedService,
   parsePersistedPeers,
@@ -1122,4 +1123,32 @@ test('makeVerifierReach: rejects non-attest paths, sends the attest route as a p
   assert.equal(resp.statusCode, 200)
   assert.equal(opts!.controlPlane, true)
   assert.equal(opts!.signal, signal)
+})
+
+test('isModelNotFoundResponse: detects seller and upstream model_not_found rejections', () => {
+  const makeResponse = (statusCode: number, body: unknown): SerializedHttpResponse => ({
+    requestId: 'r1',
+    statusCode,
+    headers: { 'content-type': 'application/json' },
+    body: typeof body === 'string' ? new TextEncoder().encode(body) : new TextEncoder().encode(JSON.stringify(body)),
+  })
+
+  // Seller-side pre-payment rejection (seller-request-handler shape).
+  assert.equal(isModelNotFoundResponse(makeResponse(400, {
+    error: { message: 'Service "x" is not served by this peer.', type: 'invalid_request_error', code: 'model_not_found' },
+  })), true)
+  // Upstream 404 pass-through with the same code.
+  assert.equal(isModelNotFoundResponse(makeResponse(404, {
+    error: { message: 'The model does not exist', type: 'invalid_request_error', code: 'model_not_found' },
+  })), true)
+
+  // Other 400s must not be misclassified.
+  assert.equal(isModelNotFoundResponse(makeResponse(400, {
+    error: { message: 'Missing model field', type: 'invalid_request_error', code: 'model_required' },
+  })), false)
+  assert.equal(isModelNotFoundResponse(makeResponse(400, 'not json')), false)
+  assert.equal(isModelNotFoundResponse(makeResponse(200, { ok: true })), false)
+  assert.equal(isModelNotFoundResponse(makeResponse(500, {
+    error: { code: 'model_not_found' },
+  })), false)
 })

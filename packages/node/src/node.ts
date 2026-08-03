@@ -352,6 +352,16 @@ export class AntseedNode extends EventEmitter {
     this._providers.push(provider);
   }
 
+  /**
+   * Re-sign the advertised seller metadata snapshot without a DHT announce.
+   * Call after mutating a provider's `services` at runtime (e.g. when the
+   * model health checker unadvertises or restores a service) so the next
+   * `GET /metadata` fetch reflects the change immediately.
+   */
+  async refreshSellerMetadata(): Promise<void> {
+    await this._announcer?.refreshMetadata();
+  }
+
   /** Register an embedded verifier prover (serves reserved attestation requests). */
   registerProver(prover: Prover): void {
     this._provers.push(prover);

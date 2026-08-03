@@ -50,6 +50,11 @@ export const CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 = 'verification.response-aut
 export const CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1 = 'payments.relays-sweeps.v1' as const;
 /** Seller honours buyer-initiated cooperative channel close (0x59 / 0x5A). */
 export const CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1 = 'payments.cooperative-close.v1' as const;
+/**
+ * Seller runs periodic model health self-checks and unadvertises services
+ * that stop working, so its announced service list reflects live health.
+ */
+export const CONNECTION_CAPABILITY_MODEL_HEALTH_V1 = 'seller.model-health.v1' as const;
 
 export function peerRelaysSweeps(peer: { capabilities?: string[]; metadata?: { capabilities?: string[] } }): boolean {
   return peer.capabilities?.includes(CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1) === true
@@ -61,6 +66,13 @@ export function peerSupportsCooperativeClose(
 ): boolean {
   return peer.capabilities?.includes(CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1) === true
     || peer.metadata?.capabilities?.includes(CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1) === true;
+}
+
+export function peerRunsModelHealthChecks(
+  peer: { capabilities?: string[]; metadata?: { capabilities?: string[] } },
+): boolean {
+  return peer.capabilities?.includes(CONNECTION_CAPABILITY_MODEL_HEALTH_V1) === true
+    || peer.metadata?.capabilities?.includes(CONNECTION_CAPABILITY_MODEL_HEALTH_V1) === true;
 }
 
 export interface FramedMessage {
