@@ -1,5 +1,5 @@
 import {themes as prismThemes} from 'prism-react-renderer';
-import type {Config, Plugin, PluginModule} from '@docusaurus/types';
+import type {Config, Plugin, PluginConfig, PluginModule} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 import integrationsPagesPlugin from './plugins/integrations-pages';
 import {integrations as integrationEntries} from './src/integrations/integrations';
@@ -27,6 +27,14 @@ const statsProxyPlugin: PluginModule = () => ({
 
 /** Google Tag Manager container for antseed.com. */
 const GTM_CONTAINER_ID = process.env.GTM_CONTAINER_ID ?? 'GTM-NHCLBQQK';
+
+/**
+ * Typed explicitly: an inline array literal widens to `string | object`, which
+ * does not satisfy PluginConfig's [name, options] tuple.
+ */
+const gtmPlugin: PluginConfig[] = GTM_CONTAINER_ID
+  ? [['@docusaurus/plugin-google-tag-manager', {containerId: GTM_CONTAINER_ID}]]
+  : [];
 
 const config: Config = {
   title: 'AntSeed',
@@ -89,9 +97,7 @@ const config: Config = {
     //
     // GA4 (G-DF97Q4KV2X) is configured as a tag *inside* this container, not
     // loaded here, so there is one tag on the page and no double-counting.
-    ...(GTM_CONTAINER_ID
-      ? [['@docusaurus/plugin-google-tag-manager', {containerId: GTM_CONTAINER_ID}] as const]
-      : []),
+    ...gtmPlugin,
     [
       '@docusaurus/plugin-client-redirects',
       {
