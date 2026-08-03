@@ -1,4 +1,5 @@
 import {
+  ANTSEED_FAULT_ATTRIBUTION_HEADER,
   ANTSEED_STREAMING_RESPONSE_HEADER,
   ANTSEED_SPENDING_AUTH_HEADER,
   type SerializedHttpRequest,
@@ -230,7 +231,7 @@ export class BuyerRequestHandler {
         if (activeTimeout) clearTimeout(activeTimeout);
         cleanupAbortListener();
         cleanupConnectionListener();
-        const cleaned = stripStreamingHeader(response);
+        const cleaned = stripPeerControlledResponseHeaders(stripStreamingHeader(response));
         debugLog(`[BuyerRequest] Response for ${req.requestId.slice(0, 8)}: status=${cleaned.statusCode} (${Date.now() - startTime}ms, ${cleaned.body.length}b)`);
         resolve(cleaned);
       };
@@ -252,14 +253,17 @@ export class BuyerRequestHandler {
             streamStarted = true;
             streamStartedAtMs = Date.now();
             streamBufferedBytes = 0;
-            streamStartResponse = stripStreamingHeader(response);
+            streamStartResponse = stripPeerControlledResponseHeaders(stripStreamingHeader(response));
             debugLog(`[BuyerRequest] Stream started for ${req.requestId.slice(0, 8)}; idle-timeout=${streamIdleTimeoutMs}ms`);
             resetTimeout(streamIdleTimeoutMs);
             callbacks?.onResponseStart?.(streamStartResponse, { streaming: true });
             return;
           }
 
-          callbacks?.onResponseStart?.(stripStreamingHeader(response), { streaming: false });
+          callbacks?.onResponseStart?.(
+            stripPeerControlledResponseHeaders(stripStreamingHeader(response)),
+            { streaming: false },
+          );
           finish(response);
         },
         (chunk) => {
@@ -424,6 +428,20 @@ function stripStreamingHeader(response: SerializedHttpResponse): SerializedHttpR
   }
   const headers = { ...response.headers };
   delete headers[ANTSEED_STREAMING_RESPONSE_HEADER];
+  return { ...response, headers };
+}
+
+export function stripPeerControlledResponseHeaders(
+  response: SerializedHttpResponse,
+): SerializedHttpResponse {
+  const controlledHeader = Object.keys(response.headers).find(
+    (name) => name.toLowerCase() === ANTSEED_FAULT_ATTRIBUTION_HEADER,
+  );
+  if (!controlledHeader) {
+    return response;
+  }
+  const headers = { ...response.headers };
+  delete headers[controlledHeader];
   return { ...response, headers };
 }
 

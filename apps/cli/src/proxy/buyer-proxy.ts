@@ -4,6 +4,7 @@ import { watchFile, unwatchFile } from 'node:fs'
 import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
+  ANTSEED_BUYER_FAULT_ERROR_CODE,
   ANTSEED_FAULT_ATTRIBUTION_HEADER,
   ANTSEED_ATTEST_PATH,
   computeOnChainReputationScore,
@@ -241,6 +242,58 @@ function adaptOpenAICompatibleErrorResponse(
       'content-type': 'application/json',
     },
     body: Buffer.from(JSON.stringify(wrappedError)),
+  }
+}
+
+function adaptBuyerFaultErrorResponse(
+  response: SerializedHttpResponse,
+  requestProtocol: ServiceApiProtocol | null,
+): SerializedHttpResponse {
+  if (
+    response.statusCode < 400
+    || response.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER]?.toLowerCase() !== 'buyer'
+  ) {
+    return response
+  }
+
+  let parsed: Record<string, unknown> = {}
+  try {
+    parsed = JSON.parse(Buffer.from(response.body).toString('utf-8')) as Record<string, unknown>
+  } catch {
+    // Buyer-generated failures should be JSON, but keep a useful fallback if
+    // a future path emits plain text.
+  }
+
+  const nestedError = parsed.error && typeof parsed.error === 'object' && !Array.isArray(parsed.error)
+    ? parsed.error as Record<string, unknown>
+    : null
+  const reason = [nestedError?.code, parsed.code, parsed.reason, nestedError?.type, parsed.error]
+    .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+  const message = [nestedError?.message, parsed.message, parsed.error]
+    .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    ?? 'The request failed on the buyer.'
+  const markedMessage = `${ANTSEED_BUYER_FAULT_ERROR_CODE}: ${message}`
+
+  const body = requestProtocol === 'anthropic-messages'
+    ? {
+        type: 'error',
+        error: {
+          type: reason ?? 'api_error',
+          message: markedMessage,
+        },
+      }
+    : {
+        error: {
+          type: 'api_error',
+          code: reason ?? ANTSEED_BUYER_FAULT_ERROR_CODE,
+          message: markedMessage,
+        },
+      }
+
+  return {
+    ...response,
+    headers: { ...response.headers, 'content-type': 'application/json' },
+    body: Buffer.from(JSON.stringify(body)),
   }
 }
 
@@ -984,7 +1037,13 @@ export class BuyerProxy {
     for (const peerId of peerIds) {
       const entry = this._peerHealth.get(peerId)
       if (!entry || (entry.failureStreak === 0 && entry.cooldownUntil === 0)) continue
-      this._peerHealth.set(peerId, { ...entry, failureStreak: 0, windowStartedAt: 0, cooldownUntil: 0 })
+      this._peerHealth.set(peerId, {
+        ...entry,
+        failureStreak: 0,
+        windowStartedAt: 0,
+        episodeStartedAt: 0,
+        cooldownUntil: 0,
+      })
       changed = true
     }
     if (changed) {
@@ -2195,8 +2254,12 @@ export class BuyerProxy {
           },
         }, { signal: requestSignal })
 
-        let responseForClient = response
-        if (!streamed && adaptResponse) {
+        let responseForClient = adaptBuyerFaultErrorResponse(response, requestProtocol)
+        if (
+          !streamed
+          && adaptResponse
+          && responseForClient.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER]?.toLowerCase() !== 'buyer'
+        ) {
           responseForClient = adaptResponse(response)
         }
         responseForClient = adaptOpenAICompatibleErrorResponse(responseForClient, requestProtocol)
@@ -2277,8 +2340,11 @@ export class BuyerProxy {
           log(`Upstream raw error detail: ${summarizeErrorResponse(upstreamResponse)}`)
         }
 
-        let response = upstreamResponse
-        if (adaptResponse) {
+        let response = adaptBuyerFaultErrorResponse(upstreamResponse, requestProtocol)
+        if (
+          adaptResponse
+          && response.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER]?.toLowerCase() !== 'buyer'
+        ) {
           response = adaptResponse(response)
         }
         response = adaptOpenAICompatibleErrorResponse(response, requestProtocol)
@@ -2394,18 +2460,26 @@ export class BuyerProxy {
       }
 
       if (fault === 'buyer') {
-        const body = JSON.stringify({
-          error: {
-            type: 'buyer_request_failed',
-            code: faultCode ?? 'buyer_request_failed',
-            message,
+        const buyerResponse = adaptBuyerFaultErrorResponse({
+          requestId: requestForPeer.requestId,
+          statusCode: 503,
+          headers: {
+            'content-type': 'application/json',
+            [ANTSEED_FAULT_ATTRIBUTION_HEADER]: 'buyer',
           },
-        })
+          body: Buffer.from(JSON.stringify({
+            error: {
+              type: 'buyer_request_failed',
+              code: faultCode ?? 'buyer_request_failed',
+              message,
+            },
+          })),
+        }, requestProtocol)
         return {
           done: false,
-          statusCode: 503,
-          responseBody: Buffer.from(body),
-          responseHeaders: { 'content-type': 'application/json' },
+          statusCode: buyerResponse.statusCode,
+          responseBody: Buffer.from(buyerResponse.body),
+          responseHeaders: buyerResponse.headers,
           errorMessage: message,
         }
       }

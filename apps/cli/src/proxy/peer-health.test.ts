@@ -9,6 +9,7 @@ import {
   computeCooldownMs,
   reasonEscalates,
   PEER_HEALTH_WINDOW_MS,
+  PEER_HEALTH_COALESCE_MS,
   PEER_HEALTH_MAX_COOLDOWN_MS,
   PEER_HEALTH_RETENTION_MS,
   PEER_HEALTH_MAX_ENTRIES,
@@ -81,6 +82,15 @@ test('failures inside the coalesce window count as a single episode', () => {
 
   assert.equal(entry.failureStreak, 1)
   assert.equal(isCoolingDown(entry, NOW + 200), false)
+})
+
+test('the coalesce window is anchored to the episode start', () => {
+  let entry = recordPeerFailureEntry(undefined, 'request-failed', NOW, true)
+  entry = recordPeerFailureEntry(entry, 'request-failed', NOW + PEER_HEALTH_COALESCE_MS - 100, true)
+  entry = recordPeerFailureEntry(entry, 'request-failed', NOW + PEER_HEALTH_COALESCE_MS + 100, true)
+
+  assert.equal(entry.failureStreak, 2)
+  assert.equal(entry.episodeStartedAt, NOW + PEER_HEALTH_COALESCE_MS + 100)
 })
 
 test('a lapsed window starts a fresh streak instead of compounding', () => {
@@ -214,6 +224,7 @@ test('prunePeerHealth caps the map keeping the most recently active peers', () =
     const peerId = i.toString(16).padStart(40, '0')
     entries.set(peerId, {
       failureStreak: 1, windowStartedAt: 0, lastFailureAt: NOW - (total - i) * 1_000,
+      episodeStartedAt: NOW - (total - i) * 1_000,
       lastReason: 'request-failed', cooldownUntil: 0, lastSuccessAt: 0,
     })
   }

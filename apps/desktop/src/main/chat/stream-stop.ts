@@ -1,3 +1,5 @@
+import { ANTSEED_BUYER_FAULT_ERROR_CODE } from '@antseed/node/types';
+
 // Note: `payment_required` is part of this union but is intentionally never
 // produced by `classifyChatStreamFailure`. Payment-required stops are emitted
 // via the dedicated `emitPaymentRequiredStreamError` path in pi-chat-engine.
@@ -141,6 +143,7 @@ function parseStatusCodeFromText(text: string): number | undefined {
     /\bstatus(?:\s+code)?\s*(?:=|:)?\s*(\d{3})\b/i,
     /\bhttp\s*(\d{3})\b/i,
     /\bresponse failed:\s*(\d{3})\b/i,
+    /^\s*([45]\d{2})\b/,
     /\b(\d{3})\s+(?:bad gateway|gateway timeout|service unavailable|too many requests|request timeout|internal server error)\b/i,
   ];
 
@@ -171,19 +174,16 @@ function describeHttpStatus(statusCode: number): string {
  * Buyer-side faults the proxy reports as a structured 503 rather than a
  * peer-blaming 502. Matched on the codes the proxy and negotiator emit.
  */
-const BUYER_FAULT_PATTERN =
-  /buyer_request_failed|buyer-deposits-insufficient|buyer-session-state|buyer-transport-closed|buyer-budget-too-low|buyer-reserve-misconfigured|chain[-_]rpc[-_]unavailable|payment_negotiation_failed|deposits_not_configured|node-not-started|node-stopped/i;
-
-function isBuyerFaultBody(normalized: string): boolean {
-  return BUYER_FAULT_PATTERN.test(normalized);
+function isBuyerFault(normalized: string): boolean {
+  return normalized.includes(ANTSEED_BUYER_FAULT_ERROR_CODE);
 }
 
 function buildBuyerFaultMessage(normalized: string, statusCode: number): string {
-  if (/chain[-_]rpc[-_]unavailable/i.test(normalized)) {
+  if (/chain[-_ ]rpc|rpc (?:url|endpoint)|could not reach.*rpc|unreachable.*rpc/i.test(normalized)) {
     return 'Could not reach the chain RPC to check your deposits. '
       + 'Check your network and the RPC URL in chain settings, then retry.';
   }
-  if (/buyer-deposits-insufficient|deposits_not_configured/i.test(normalized)) {
+  if (/deposit|balance is too low|insufficient buyer/i.test(normalized)) {
     return 'Your deposit balance is too low to open a payment channel. '
       + 'Top up your deposits and retry.';
   }
@@ -212,6 +212,7 @@ export function classifyChatStreamFailure({
   const normalized = rawMessage.toLowerCase();
   const statusCode = signals.statusCodes[0] ?? parseStatusCodeFromText(rawMessage);
   const errorCode = signals.errorCodes.find(Boolean) ?? parseErrorCodeFromText(rawMessage);
+  const buyerFault = isBuyerFault(normalized);
 
   // Keep the text-based abort match narrow so transport-side aborts (e.g.
   // "connection aborted by remote") aren't misclassified as user-initiated.
@@ -247,20 +248,29 @@ export function classifyChatStreamFailure({
     };
   }
 
+  if (buyerFault) {
+    const buyerStatusCode = statusCode ?? 503;
+    return {
+      kind: 'http_error',
+      source: 'transport',
+      retryable: false,
+      message: buildBuyerFaultMessage(normalized, buyerStatusCode),
+      statusCode: buyerStatusCode,
+      ...(errorCode ? { errorCode } : {}),
+    };
+  }
+
   if (typeof statusCode === 'number') {
     // 503 from the buyer proxy means the fault is on our side — empty deposits,
     // an unreachable chain RPC, bad config. Retrying, or worse failing over to
     // another peer, would walk the whole peer list while hiding the one thing
     // the user actually needs to fix.
-    const buyerFault = statusCode === 503 && isBuyerFaultBody(normalized);
-    const retryable = !buyerFault && (statusCode >= 500 || statusCode === 429);
+    const retryable = statusCode >= 500 || statusCode === 429;
     return {
       kind: 'http_error',
-      source: buyerFault ? 'transport' : 'upstream',
+      source: 'upstream',
       retryable,
-      message: buyerFault
-        ? buildBuyerFaultMessage(normalized, statusCode)
-        : buildHttpErrorMessage(statusCode, retryable),
+      message: buildHttpErrorMessage(statusCode, retryable),
       statusCode,
       ...(errorCode ? { errorCode } : {}),
     };

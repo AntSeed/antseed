@@ -7,6 +7,7 @@ export type ChatPeerSelectionRequest = {
       on the conversation so list refreshes don't revert it. */
   service?: string | null;
   provider?: string | null;
+  routeMode?: ChatRouteMode | null;
 };
 
 export type NormalizedChatPeerSelectionRequest = {
@@ -14,6 +15,7 @@ export type NormalizedChatPeerSelectionRequest = {
   peerId: string | null;
   service: string | null;
   provider: string | null;
+  routeMode: ChatRouteMode | null;
 };
 
 /**
@@ -52,6 +54,7 @@ export function normalizeChatPeerSelectionRequest(
       peerId: normalizeOptionalString(input),
       service: null,
       provider: null,
+      routeMode: null,
     };
   }
 
@@ -60,6 +63,7 @@ export function normalizeChatPeerSelectionRequest(
     peerId: normalizeOptionalString(input.peerId),
     service: normalizeOptionalString(input.service),
     provider: normalizeOptionalString(input.provider),
+    routeMode: input.routeMode === 'auto' || input.routeMode === 'pinned' ? input.routeMode : null,
   };
 }
 

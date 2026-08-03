@@ -11,12 +11,14 @@ const SEP = '\u0001';
 function installDomTimers(): void {
   const g = globalThis as unknown as {
     window?: unknown;
+    document?: unknown;
     requestAnimationFrame?: (cb: () => void) => unknown;
   };
   g.window = {
     setInterval: globalThis.setInterval,
     clearInterval: globalThis.clearInterval,
   };
+  g.document = { querySelector: () => null };
   g.requestAnimationFrame = (cb: () => void) => setTimeout(cb, 0);
 }
 
@@ -1514,11 +1516,15 @@ test('switching service mid-conversation routes the next send to the new model',
  * Discover row shaped for failover tests. Only the fields routing reads
  * matter; the rest are filled with inert defaults.
  */
-function failoverRow(peerId: string, overrides: Partial<DiscoverRow> = {}): DiscoverRow {
+function failoverRow(
+  peerId: string,
+  overrides: Partial<DiscoverRow> = {},
+  serviceId = 'model-a',
+): DiscoverRow {
   return {
-    rowKey: `${peerId}:model-a`,
-    serviceId: 'model-a',
-    serviceLabel: 'Model A',
+    rowKey: `${peerId}:${serviceId}`,
+    serviceId,
+    serviceLabel: serviceId === 'model-a' ? 'Model A' : 'Model B',
     categories: [],
     provider: 'openai',
     protocol: 'openai-chat-completions',
@@ -1555,19 +1561,19 @@ function failoverRow(peerId: string, overrides: Partial<DiscoverRow> = {}): Disc
     peerCooldownUntil: null,
     peerFailureStreak: 0,
     peerLastFailureReason: null,
-    selectionValue: `openai${SEP}model-a${SEP}${peerId}`,
+    selectionValue: `openai${SEP}${serviceId}${SEP}${peerId}`,
     ...overrides,
   };
 }
 
-function failoverOption(peerId: string) {
+function failoverOption(peerId: string, serviceId = 'model-a') {
   return {
-    id: 'model-a',
-    label: 'Model A',
+    id: serviceId,
+    label: serviceId === 'model-a' ? 'Model A' : 'Model B',
     provider: 'openai',
     protocol: 'openai-chat-completions' as const,
     count: 1,
-    value: `openai${SEP}model-a${SEP}${peerId}`,
+    value: `openai${SEP}${serviceId}${SEP}${peerId}`,
     peerId,
     peerDisplayName: `Peer ${peerId}`,
     peerLabel: `Peer ${peerId}`,
@@ -1612,6 +1618,9 @@ function setupFailoverHarness(routeMode: 'auto' | 'pinned' | undefined) {
 
   const sends: Array<{ conversationId: string; peerId?: string }> = [];
   const streamErrorHandlers: Array<NonNullable<Parameters<NonNullable<DesktopBridge['onChatAiStreamError']>>[0]>> = [];
+  const streamStartHandlers: Array<NonNullable<Parameters<NonNullable<DesktopBridge['onChatAiStreamStart']>>[0]>> = [];
+  const streamBlockStartHandlers: Array<NonNullable<Parameters<NonNullable<DesktopBridge['onChatAiStreamBlockStart']>>[0]>> = [];
+  const streamDeltaHandlers: Array<NonNullable<Parameters<NonNullable<DesktopBridge['onChatAiStreamDelta']>>[0]>> = [];
   const bridge: DesktopBridge = {
     chatAiListConversations: async () => ({ ok: true, data: [...conversations] }),
     chatAiGetConversation: async (id) => {
@@ -1629,10 +1638,30 @@ function setupFailoverHarness(routeMode: 'auto' | 'pinned' | undefined) {
       streamErrorHandlers.push(handler);
       return () => undefined;
     },
+    onChatAiStreamStart: (handler) => {
+      streamStartHandlers.push(handler);
+      return () => undefined;
+    },
+    onChatAiStreamBlockStart: (handler) => {
+      streamBlockStartHandlers.push(handler);
+      return () => undefined;
+    },
+    onChatAiStreamDelta: (handler) => {
+      streamDeltaHandlers.push(handler);
+      return () => undefined;
+    },
   };
 
   const api = initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
-  return { api, uiState, sends, streamErrorHandlers };
+  return {
+    api,
+    uiState,
+    sends,
+    streamErrorHandlers,
+    streamStartHandlers,
+    streamBlockStartHandlers,
+    streamDeltaHandlers,
+  };
 }
 
 const RETRYABLE_STREAM_FAILURE = {
@@ -1657,6 +1686,105 @@ test('a retryable failure moves an auto conversation to a different peer', async
   await waitFor(() => uiState.chatRoutingNotice !== null);
   assert.match(uiState.chatRoutingNotice ?? '', /Peer peer-a isn't responding/);
   assert.match(uiState.chatRoutingNotice ?? '', /Retrying on Peer peer-b/);
+});
+
+test('failover keeps the conversation model when the global model pill differs', async () => {
+  const { api, uiState, streamErrorHandlers } = setupFailoverHarness('auto');
+  uiState.chatServiceOptions = [
+    failoverOption('peer-a'),
+    failoverOption('peer-b'),
+    failoverOption('peer-c', 'model-b'),
+  ];
+  uiState.discoverRows = [
+    failoverRow('peer-a'),
+    failoverRow('peer-b'),
+    failoverRow('peer-c', {}, 'model-b'),
+  ];
+  uiState.vprRouteSelection = {
+    model: { provider: 'openai', serviceId: 'model-b', label: 'Model B', categories: [] },
+    mode: 'auto',
+    peerId: null,
+  };
+  await api.refreshChatConversations();
+  await api.openConversation('conv-a');
+
+  streamErrorHandlers[0]?.({
+    conversationId: 'conv-a',
+    error: 'Connection lost',
+    stopReason: RETRYABLE_STREAM_FAILURE,
+  });
+
+  await waitFor(() => uiState.chatRoutingNotice !== null);
+  const conversation = (uiState.chatConversations as Conversation[]).find((item) => item.id === 'conv-a');
+  assert.equal(conversation?.service, 'model-a');
+  assert.equal(conversation?.peerId, 'peer-b');
+});
+
+test('a model switch can persist an auto-resolved peer without pinning the chat', async () => {
+  installDomTimers();
+  const uiState = createInitialUiState();
+  uiState.chatServiceOptions = [failoverOption('peer-a'), failoverOption('peer-b')];
+  const conversation: Conversation = {
+    id: 'conv-a',
+    title: 'Conversation A',
+    service: 'model-a',
+    provider: 'openai',
+    peerId: 'peer-a',
+    routeMode: 'auto',
+    messages: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    usage: { inputTokens: 0, outputTokens: 0 },
+  };
+  const selections: Array<Record<string, unknown>> = [];
+  const bridge: DesktopBridge = {
+    chatAiListConversations: async () => ({ ok: true, data: [conversation] }),
+    chatAiGetConversation: async () => ({ ok: true, data: { ...conversation, messages: [] } }),
+    chatAiSelectPeer: async (payload) => {
+      selections.push(payload);
+      return { ok: true };
+    },
+  };
+  const api = initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+  await api.refreshChatConversations();
+  await api.openConversation('conv-a');
+
+  api.handleServiceChange(`openai${SEP}model-a${SEP}peer-b`, 'peer-b', false, 'auto');
+
+  await waitFor(() => selections.length === 1);
+  assert.equal(selections[0]?.routeMode, 'auto');
+  assert.equal((uiState.chatConversations[0] as Conversation).routeMode, 'auto');
+});
+
+test('a retryable mid-stream failure preserves partial output without resending', async () => {
+  const {
+    api,
+    uiState,
+    streamErrorHandlers,
+    streamStartHandlers,
+    streamBlockStartHandlers,
+    streamDeltaHandlers,
+  } = setupFailoverHarness('auto');
+  await api.refreshChatConversations();
+  await api.openConversation('conv-a');
+  streamStartHandlers[0]?.({ conversationId: 'conv-a', turn: 0 });
+  streamBlockStartHandlers[0]?.({ conversationId: 'conv-a', index: 0, blockType: 'text' });
+  streamDeltaHandlers[0]?.({
+    conversationId: 'conv-a',
+    index: 0,
+    blockType: 'text',
+    text: 'Partial answer',
+  });
+
+  streamErrorHandlers[0]?.({
+    conversationId: 'conv-a',
+    error: 'Connection lost',
+    stopReason: RETRYABLE_STREAM_FAILURE,
+  });
+
+  assert.equal(uiState.chatRoutingNotice, null);
+  assert.equal(uiState.chatError, 'Connection lost');
+  assert.equal(uiState.chatMessages.length, 1);
 });
 
 test('a retryable failure never moves a pinned conversation off its peer', async () => {

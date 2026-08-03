@@ -54,6 +54,8 @@ export function reasonEscalates(reason: PeerFailureReason): boolean {
 export type PeerHealthEntry = {
   failureStreak: number
   windowStartedAt: number
+  /** Start of the current coalesced failure episode. */
+  episodeStartedAt: number
   lastFailureAt: number
   lastReason: PeerFailureReason
   /** 0 when the peer is not cooling down. */
@@ -72,6 +74,7 @@ function emptyEntry(): PeerHealthEntry {
   return {
     failureStreak: 0,
     windowStartedAt: 0,
+    episodeStartedAt: 0,
     lastFailureAt: 0,
     lastReason: 'request-failed',
     cooldownUntil: 0,
@@ -99,7 +102,8 @@ export function recordPeerFailureEntry(
 
   // Two requests to the same dead peer failing together are one episode; without
   // this they would skip a doubling step each time concurrency rises.
-  if (prev.lastFailureAt > 0 && now - prev.lastFailureAt < PEER_HEALTH_COALESCE_MS && now >= prev.lastFailureAt) {
+  const episodeStartedAt = prev.episodeStartedAt || prev.lastFailureAt
+  if (episodeStartedAt > 0 && now - episodeStartedAt < PEER_HEALTH_COALESCE_MS && now >= prev.lastFailureAt) {
     return { ...prev, lastFailureAt: now, lastReason: reason }
   }
 
@@ -114,6 +118,7 @@ export function recordPeerFailureEntry(
   return {
     failureStreak,
     windowStartedAt: windowLapsed ? now : (prev.windowStartedAt || now),
+    episodeStartedAt: now,
     lastFailureAt: now,
     lastReason: reason,
     cooldownUntil: cooldownMs > 0 ? now + cooldownMs : 0,
@@ -133,6 +138,7 @@ export function clearPeerHealthEntry(
     ...(previous ?? emptyEntry()),
     failureStreak: 0,
     windowStartedAt: 0,
+    episodeStartedAt: 0,
     cooldownUntil: 0,
     lastSuccessAt: now,
   }
@@ -214,6 +220,10 @@ export function parsePersistedPeerHealth(
     const candidate: PeerHealthEntry = {
       failureStreak,
       windowStartedAt: Math.min(finiteNonNegative(entry.windowStartedAt), now),
+      episodeStartedAt: Math.min(
+        finiteNonNegative(entry.episodeStartedAt) || lastFailureAt,
+        now,
+      ),
       lastFailureAt,
       lastReason,
       cooldownUntil,
