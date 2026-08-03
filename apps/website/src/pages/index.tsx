@@ -30,8 +30,10 @@ import {
   XAI,
 } from '@lobehub/icons';
 
-type IconSize = (props: {size?: number}) => JSX.Element;
-const LOBE_ICONS: Record<string, {Combine?: IconSize; Text?: IconSize}> = {
+type IconSize = (props: {size?: number}) => ReactNode;
+type IconCombine = (props: {size?: number; textMultiple?: number}) => ReactNode;
+type LobeIcon = IconSize & {Combine?: IconCombine; Text?: IconSize};
+const LOBE_ICONS: Record<string, LobeIcon> = {
   Anthropic,
   OpenAI,
   Google,
