@@ -818,6 +818,110 @@ describe('BuyerPaymentNegotiator', () => {
       expect(mux1).not.toBe(mux2);
     });
   });
+
+  describe('requestChannelClose', () => {
+    const CHANNEL_ID = '0x' + 'ab'.repeat(32);
+
+    beforeEach(() => {
+      (bpm.getActiveSession as ReturnType<typeof vi.fn>).mockReturnValue(makeActiveSession(SELLER_PEER_ID));
+      (bpm as Record<string, unknown>).buildCloseChannelRequest = vi.fn().mockResolvedValue({
+        version: 1,
+        channelId: CHANNEL_ID,
+        cumulativeAmount: '750000',
+        metadataHash: '0x' + 'cc'.repeat(32),
+        metadata: '0x00',
+        spendingAuthSig: '0x' + 'ee'.repeat(65),
+      });
+    });
+
+    /** Feed a CloseChannelResult back through the buyer's mux, as the seller would. */
+    function replyWithResult(payload: Record<string, unknown>): void {
+      void negotiator.getOrCreatePaymentMux(SELLER_PEER_ID, conn).handleFrame({
+        type: 0x5A,
+        messageId: 1,
+        payload: enc.encode(JSON.stringify(payload)),
+      });
+    }
+
+    it('throws when there is no active session', async () => {
+      (bpm.getActiveSession as ReturnType<typeof vi.fn>).mockReturnValue(null);
+      await expect(negotiator.requestChannelClose(SELLER_PEER_ID, conn)).rejects.toThrow(/No active payment channel/);
+    });
+
+    it('sends the request and retires the session once the seller confirms', async () => {
+      const promise = negotiator.requestChannelClose(SELLER_PEER_ID, conn);
+      await vi.waitFor(() => expect(conn.send).toHaveBeenCalled());
+      replyWithResult({
+        version: 1,
+        channelId: CHANNEL_ID,
+        status: 'closed',
+        txHash: '0x' + 'bb'.repeat(32),
+        finalAmount: '750000',
+      });
+
+      const result = await promise;
+      expect(result.status).toBe('closed');
+      expect(result.txHash).toBe('0x' + 'bb'.repeat(32));
+      expect(bpm.retireSession).toHaveBeenCalledWith(SELLER_PEER_ID, CHANNEL_STATUS.SETTLED, 750_000n);
+      expect(emitter.emit).toHaveBeenCalledWith('payment:channel-closed', expect.objectContaining({
+        peerId: SELLER_PEER_ID,
+        channelId: CHANNEL_ID,
+      }));
+    });
+
+    it('resolves (not throws) on a rejection and leaves the session alone', async () => {
+      const promise = negotiator.requestChannelClose(SELLER_PEER_ID, conn);
+      await vi.waitFor(() => expect(conn.send).toHaveBeenCalled());
+      replyWithResult({
+        version: 1,
+        channelId: CHANNEL_ID,
+        status: 'rejected',
+        code: 'busy',
+        reason: 'still serving',
+        retryAfterMs: 2000,
+      });
+
+      const result = await promise;
+      expect(result.status).toBe('rejected');
+      expect(result.code).toBe('busy');
+      expect(bpm.retireSession).not.toHaveBeenCalled();
+    });
+
+    it('honours includeAuth: false', async () => {
+      const promise = negotiator.requestChannelClose(SELLER_PEER_ID, conn, { includeAuth: false });
+      await vi.waitFor(() => expect(conn.send).toHaveBeenCalled());
+      expect((bpm as Record<string, unknown>).buildCloseChannelRequest)
+        .toHaveBeenCalledWith(SELLER_PEER_ID, { includeAuth: false });
+
+      replyWithResult({ version: 1, channelId: CHANNEL_ID, status: 'closed', finalAmount: '0' });
+      await promise;
+    });
+
+    it('ignores a result naming a different channel', async () => {
+      const promise = negotiator.requestChannelClose(SELLER_PEER_ID, conn, { timeoutMs: 300 });
+      await vi.waitFor(() => expect(conn.send).toHaveBeenCalled());
+      replyWithResult({ version: 1, channelId: '0x' + 'ff'.repeat(32), status: 'closed' });
+
+      await expect(promise).rejects.toThrow(/did not answer/);
+      expect(bpm.retireSession).not.toHaveBeenCalled();
+    });
+
+    it('rejects the pending request when the peer disconnects', async () => {
+      const promise = negotiator.requestChannelClose(SELLER_PEER_ID, conn);
+      await vi.waitFor(() => expect(conn.send).toHaveBeenCalled());
+      negotiator.onPeerDisconnect(SELLER_PEER_ID);
+      await expect(promise).rejects.toThrow(/disconnected/);
+    });
+
+    it('refuses to start a second close while one is in flight', async () => {
+      const first = negotiator.requestChannelClose(SELLER_PEER_ID, conn);
+      await vi.waitFor(() => expect(conn.send).toHaveBeenCalled());
+      await expect(negotiator.requestChannelClose(SELLER_PEER_ID, conn)).rejects.toThrow(/already in flight/);
+
+      replyWithResult({ version: 1, channelId: CHANNEL_ID, status: 'closed', finalAmount: '750000' });
+      await first;
+    });
+  });
 });
 
 // ── Helpers ──────────────────────────────────────────────────────

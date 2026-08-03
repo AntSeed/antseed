@@ -6,6 +6,7 @@ import type {
   SpendingAuthPayload,
   AuthAckPayload,
   NeedAuthPayload,
+  CloseChannelRequestPayload,
 } from '../types/protocol.js';
 import { DepositsClient } from './evm/deposits-client.js';
 import {
@@ -351,6 +352,48 @@ export class BuyerPaymentManager {
     }
 
     return session.sessionId;
+  }
+
+  /**
+   * Build a CloseChannelRequest for an active session.
+   *
+   * With `includeAuth` (the default) the buyer signs its current cumulative so
+   * a seller that lost the last SpendingAuth can still close at the full
+   * amount owed. Signing costs nothing extra: the cumulative is unchanged, so
+   * this authorizes no more than the seller could already claim. Pass
+   * `includeAuth: false` to send a bare request and let the seller close using
+   * whatever auth it already holds.
+   */
+  async buildCloseChannelRequest(
+    sellerPeerId: string,
+    { includeAuth = true }: { includeAuth?: boolean } = {},
+  ): Promise<CloseChannelRequestPayload> {
+    const session = this.getActiveSession(sellerPeerId);
+    if (!session) {
+      throw new Error(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}...`);
+    }
+
+    const cumulativeAmount = this._cumulativeAmount.get(sellerPeerId) ?? BigInt(session.authMax);
+    if (!includeAuth || cumulativeAmount <= 0n) {
+      return { version: 1, channelId: session.sessionId };
+    }
+
+    const currentMeta = this._sanitizeMetadata(this._metadata.get(sellerPeerId));
+    const metadataHash = computeMetadataHash(currentMeta);
+    const metadataMsg: SpendingAuthMessage = {
+      channelId: session.sessionId,
+      cumulativeAmount,
+      metadataHash,
+    };
+
+    return {
+      version: 1,
+      channelId: session.sessionId,
+      cumulativeAmount: cumulativeAmount.toString(),
+      metadataHash,
+      metadata: encodeMetadata(currentMeta),
+      spendingAuthSig: await signSpendingAuth(this._signer, this._channelsDomain, metadataMsg),
+    };
   }
 
   async resendReserveAuth(

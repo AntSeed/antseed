@@ -494,6 +494,52 @@ test('loadConfig rejects invalid seller maxUploadBodyBytes setting', async () =>
   );
 });
 
+test('loadConfig preserves seller healthCheck setting', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        healthCheck: { enabled: false, intervalMs: 120_000, failureThreshold: 5 },
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.deepEqual(config.seller.healthCheck, { enabled: false, intervalMs: 120_000, failureThreshold: 5 });
+    }
+  );
+});
+
+test('loadConfig rejects invalid seller healthCheck intervalMs', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        healthCheck: { intervalMs: 5_000 },
+      },
+    }),
+    async (configPath) => {
+      await assert.rejects(
+        async () => loadConfig(configPath),
+        /seller\.healthCheck\.intervalMs/
+      );
+    }
+  );
+});
+
+test('loadConfig rejects invalid seller healthCheck failureThreshold', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        healthCheck: { failureThreshold: 0 },
+      },
+    }),
+    async (configPath) => {
+      await assert.rejects(
+        async () => loadConfig(configPath),
+        /seller\.healthCheck\.failureThreshold/
+      );
+    }
+  );
+});
+
 test('loadConfig preserves seller agentDir setting', async () => {
   await withTempConfig(
     JSON.stringify({

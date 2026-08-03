@@ -4,6 +4,37 @@ All notable user-facing changes to AntSeed packages are documented here.
 
 This project uses selective package publishing. Each release entry lists the published packages affected by that release.
 
+## Unreleased
+
+### Added
+
+- Sellers now run periodic model health self-checks (a 1-token probe per advertised service, every 5 minutes by default) and unadvertise services that keep failing, restoring them automatically when they recover. Configurable via `seller.healthCheck` (`enabled`, `intervalMs`, `failureThreshold`); sellers announcing this behavior advertise the `seller.model-health.v1` capability in discovery metadata. Exposed as `ModelHealthChecker` in `@antseed/node`, alongside `AntseedNode.refreshSellerMetadata()` for runtime service-list changes.
+- The buyer proxy now treats `model_not_found` responses as routing failures (instead of successes) and refreshes peer discovery metadata in the background, so a stale cached model list recovers quickly after a seller unadvertises a model.
+
+- Added buyer-initiated cooperative channel close (`CloseChannelRequest`/`CloseChannelResult`, message types 0x59/0x5A), so a buyer can get its reserved USDC released immediately instead of waiting out the on-chain `request-close` → 15-minute grace → `withdraw` flow. The seller closes on-chain and returns the transaction hash. It refuses while it is still mid-accumulation with that buyer — a billable request in flight (`busy`), or served work the buyer hasn't signed for yet (`pending_auth`, sent alongside a `NeedAuth` for the outstanding amount) — leaving the channel untouched so the buyer can retry or fall back to the timeout path.
+- The buyer attaches its latest SpendingAuth by default; the seller closes at whichever cumulative is higher (its own or the buyer's), so a seller that lost the last authorization can still be paid in full, and a buyer cannot use this path to settle below what it owes.
+- Added `antseed buyer channels close <channelId>` (with `--no-auth` and `--json`), which runs the request through a running `antseed buyer start` daemon's live seller connection via the new `/_antseed/channels/close` control-plane endpoint.
+- Added `AntseedNode.requestChannelClose(peerId, opts)` to `@antseed/node`, plus the `payments.cooperative-close.v1` capability advertised in discovery metadata and the connection handshake.
+- Added buyer peer health cooldowns, so a seller that stops responding is temporarily deprioritized by automatic routing instead of being selected again on every request. Cooldowns escalate from 30 seconds to a maximum of 8 minutes, are cleared by any response from the peer, and are advisory only — a pinned or explicitly named peer is always still dispatched to. Exposed over the buyer control plane as `GET /_antseed/peer-health` and `POST /_antseed/peer-health/clear`.
+- Added automatic peer failover for Desktop chats using automatic routing: when the bound peer stops responding, the retry moves to the next-best healthy peer and the chat reports which peer it switched to. Chats pinned to a peer by hand always keep that peer.
+- Added fault attribution to request failures (`AntseedRequestError`, `faultAttributionOf`) so buyer-side problems such as empty deposits, an unreachable chain RPC, or a closed local transport are reported as buyer faults with HTTP 503 instead of being reported as peer failures with HTTP 502.
+
+### Changed
+
+- Set generated model metadata for supported connected tools and CLI wrappers to a 280,000-token context window, with an 8,192-token output limit where the tool supports one.
+
+### Fixed
+
+- Fixed payment negotiation getting stuck when a buyer lost its local channel state while an older channel remained active on-chain. Sellers now close the superseded channel from durable seller state before accepting the buyer's replacement ReserveAuth.
+- Fixed the seller recording an inaccurate settled amount when two close paths raced on the same channel. Only one `close()` is submitted, and every path that joins it now persists the amount that transaction actually settled.
+- Fixed the seller persisting the initial ReserveAuth signature in the SpendingAuth column, so restart hydration restored it under the wrong EIP-712 type and every subsequent `close()` reverted with `InvalidSignature`.
+- Fixed sellers retrying a failing signed `close()` forever: once the retry limit is exhausted the channel is now persisted as timed out, so `checkTimeouts()` and restarts fall back to the timeout path instead of replaying the same doomed close.
+- Fixed seller crashes when sending `PaymentRequired` to a buyer that disconnected before the payment terms could be delivered.
+- Fixed the buyer's Responses→Chat Completions request adapter to group parallel tool calls into a single assistant `tool_calls` message. Previously each call became its own assistant message, so strict chat-completions upstreams rejected multi-tool turns with `an assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'`.
+- Fixed the Responses request normalizer to drop non-message input items with no renderable text (e.g. Codex `reasoning` items) instead of converting them into empty user messages mid-history.
+- Fixed buyer payment negotiation so an unreachable chain RPC is reported immediately as a buyer-side `chain_rpc_unavailable` error. Previously the failed deposit-balance read was swallowed, negotiation continued without it, and the request stalled for the full 30-second lock-confirmation timeout before failing with an error that blamed the seller.
+- Fixed `SellerAuthorizationError` so a peer that is not an authorized operator is distinguishable from a chain RPC that could not be reached; the two cases previously shared one error and could only be told apart by matching the message text.
+
 ## 2026-07-16 — Gasless deposit sweep live on Base mainnet
 
 ### Published
@@ -33,9 +64,6 @@ This project uses selective package publishing. Each release entry lists the pub
 - Added a buyer-side metadata v2 service attribution opt-out for CLI and Desktop. Buyers can disable per-service attribution while preserving aggregate usage metadata in paid SpendingAuth and free-usage records.
 - Added `antseed buyer emissions info` and `antseed buyer emissions claim` for buyer-side ANTS emissions.
 - Added generic API request, response, and streaming adapters that transform between Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses through internal canonical models.
-- Added buyer peer health cooldowns, so a seller that stops responding is temporarily deprioritized by automatic routing instead of being selected again on every request. Cooldowns escalate from 30 seconds to a maximum of 8 minutes, are cleared by any response from the peer, and are advisory only — a pinned or explicitly named peer is always still dispatched to. Exposed over the buyer control plane as `GET /_antseed/peer-health` and `POST /_antseed/peer-health/clear`.
-- Added automatic peer failover for Desktop chats using automatic routing: when the bound peer stops responding, the retry moves to the next-best healthy peer and the chat reports which peer it switched to. Chats pinned to a peer by hand always keep that peer.
-- Added fault attribution to request failures (`AntseedRequestError`, `faultAttributionOf`) so buyer-side problems such as empty deposits, an unreachable chain RPC, or a closed local transport are reported as buyer faults with HTTP 503 instead of being reported as peer failures with HTTP 502.
 
 ### Removed
 
@@ -43,7 +71,6 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
-- Set generated model metadata for supported connected tools and CLI wrappers to a 280,000-token context window, with an 8,192-token output limit where the tool supports one.
 - Changed API adapter streaming transforms to use canonical stream events with per-protocol normalizers and renderers, so new stream protocols can be added without pairwise routes.
 - Changed Desktop renderer navigation to load only the active view, preload likely next views, and show a lightweight loading state while lazily loaded pages resolve.
 - Reduced the default buyer response-auth evidence sample rate from 20% to 0.5% to limit local `verification_samples` growth during high-request sessions.
@@ -62,8 +89,6 @@ This project uses selective package publishing. Each release entry lists the pub
 - Fixed buyer proxy protocol transforms so requests routed to OpenAI Responses always set upstream `stream: true` without forcing non-stream clients to receive SSE.
 - Fixed API adapter cache-token accounting so Anthropic cache reads and OpenAI cached token details stay separate from fresh input tokens across response and streaming transforms.
 - Fixed API adapter request transforms to propagate a per-session `prompt_cache_key` (derived from Anthropic `metadata.user_id`) to OpenAI Responses upstreams, improving prompt cache hit rates for cross-protocol buyers.
-- Fixed buyer payment negotiation so an unreachable chain RPC is reported immediately as a buyer-side `chain_rpc_unavailable` error. Previously the failed deposit-balance read was swallowed, negotiation continued without it, and the request stalled for the full 30-second lock-confirmation timeout before failing with an error that blamed the seller.
-- Fixed `SellerAuthorizationError` so a peer that is not an authorized operator is distinguishable from a chain RPC that could not be reached; the two cases previously shared one error and could only be told apart by matching the message text.
 - Fixed buyer reserve replay after channel top-ups so reconnecting buyers resend the original first-reserve amount instead of an expanded top-up ceiling that can exceed the on-chain first-sign cap.
 - Fixed seller payment handling so temporary delegated-account transaction queue backpressure defers top-ups and retries closes instead of permanently rejecting active buyer sessions.
 

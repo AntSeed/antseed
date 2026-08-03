@@ -115,13 +115,16 @@ export function renderCanonicalRequestToOpenAIChatBody(
         type: 'function',
         function: { name: item.name, arguments: stringifyToolArguments(item.arguments) },
       };
-      // Parallel calls must share one assistant message: OpenAI requires the
-      // tool results to immediately follow the message that requested them.
       const previous = messages[messages.length - 1];
-      if (isAssistantMessage(previous)
-        && (options.groupAssistantToolCallsWithPreviousMessage || Array.isArray(previous.tool_calls))) {
-        const toolCalls = Array.isArray(previous.tool_calls) ? previous.tool_calls : [];
-        previous.tool_calls = [...toolCalls, toolCall];
+      // Parallel tool calls must share one assistant message: an assistant
+      // message with tool_calls must be immediately followed by its tool
+      // responses, so consecutive function_call items always merge.
+      if (isAssistantMessageWithToolCalls(previous)) {
+        previous.tool_calls = [...previous.tool_calls as unknown[], toolCall];
+        continue;
+      }
+      if (options.groupAssistantToolCallsWithPreviousMessage && isAssistantMessage(previous)) {
+        previous.tool_calls = [toolCall];
         continue;
       }
       messages.push({
@@ -497,7 +500,11 @@ export function normalizeOpenAIResponsesRequestBody(body: Record<string, unknown
       if (type !== 'message' && typeof msg.role !== 'string') continue;
 
       const role = msg.role === 'assistant' ? 'assistant' : 'user';
-      request.input.push({ type: 'message', role, text: textFromResponsesContent(msg.content) });
+      const text = textFromResponsesContent(msg.content);
+      // Non-message items (reasoning, web_search_call, ...) carry no renderable
+      // text — dropping them avoids injecting empty user messages mid-history.
+      if (type !== 'message' && text.length === 0) continue;
+      request.input.push({ type: 'message', role, text });
     }
   }
 

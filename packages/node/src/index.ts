@@ -10,6 +10,16 @@ export {
   type BuyerUsageChannelPoint,
 } from './node.js';
 export type { Provider, ProviderStreamCallbacks } from './interfaces/seller-provider.js';
+export {
+  ModelHealthChecker,
+  DEFAULT_HEALTH_CHECK_INTERVAL_MS,
+  DEFAULT_HEALTH_CHECK_FAILURE_THRESHOLD,
+  DEFAULT_HEALTH_CHECK_PROBE_TIMEOUT_MS,
+  type ModelHealthCheckerConfig,
+  type ModelHealthEvent,
+  type ModelHealthTarget,
+  type ServiceHealthSnapshot,
+} from './health/model-health-checker.js';
 export type { Router } from './interfaces/buyer-router.js';
 
 // Types (re-export everything)
@@ -209,7 +219,8 @@ export {
 } from './proxy/service-api-adapter.js';
 export { DefaultRouter, type DefaultRouterConfig } from './routing/default-router.js';
 
-export type { AntseedPlugin, AntseedProviderPlugin, AntseedRouterPlugin, PluginConfigKey, ConfigField } from './interfaces/plugin.js'
+export type { AntseedPlugin, AntseedProviderPlugin, AntseedRouterPlugin, AntseedVerifierPlugin, Prover, VerifyContext, VerifyResult, ClaimResult, SellerRequest, SellerResponse, PluginConfigKey, ConfigField } from './interfaces/plugin.js'
+export { ANTSEED_ATTEST_PATH } from './interfaces/plugin.js'
 
 // Reputation
 export { UptimeTracker } from './reputation/uptime-tracker.js';

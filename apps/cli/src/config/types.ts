@@ -96,6 +96,18 @@ export interface BuyerVerificationConfig {
 }
 
 /**
+ * Periodic model health self-check settings for the seller.
+ */
+export interface SellerHealthCheckCLIConfig {
+  /** Enable periodic 1-token probes of every advertised service. Default: true. */
+  enabled?: boolean;
+  /** Milliseconds between probe sweeps. Default: 300000 (5 minutes). */
+  intervalMs?: number;
+  /** Consecutive probe failures before a service is unadvertised. Default: 3. */
+  failureThreshold?: number;
+}
+
+/**
  * Seller-specific configuration within the Antseed config.
  */
 export interface SellerCLIConfig {
@@ -125,6 +137,17 @@ export interface SellerCLIConfig {
   verifications?: VerificationConfig;
   /** Maximum upload body size (bytes) accepted from buyers per request. Default: 64 MiB. */
   maxUploadBodyBytes?: number;
+  /**
+   * Verifier SDK ids this seller advertises and runs provers for (first is the
+   * default). Chosen in `antseed seller setup`; overridden at launch by
+   * `--verifiers` or the ANTSEED_VERIFIER_SDKS env var.
+   */
+  verifiers?: string[];
+  /**
+   * Periodic model health self-checks. Enabled by default; failing services
+   * are unadvertised until they recover. Set `enabled: false` to opt out.
+   */
+  healthCheck?: SellerHealthCheckCLIConfig;
 }
 
 /**

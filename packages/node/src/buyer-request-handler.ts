@@ -35,6 +35,8 @@ export interface RequestStreamCallbacks {
 
 export interface RequestExecutionOptions {
   signal?: AbortSignal;
+  /** Skip payment/free-usage machinery for internal control-plane requests. */
+  controlPlane?: boolean;
 }
 
 export interface BuyerRequestHandlerConfig {
@@ -92,7 +94,7 @@ export class BuyerRequestHandler {
     debugLog(`[BuyerRequest] Connection to ${peer.peerId.slice(0, 12)}... state=${conn.state}`);
     const mux = this._deps.getMux(peer.peerId, conn);
     const verificationMux = this._deps.getVerificationMux(peer.peerId, conn);
-    const negotiator = this._deps.negotiator;
+    const negotiator = options?.controlPlane ? null : this._deps.negotiator;
     if (negotiator) {
       this._deps.registerPaymentMux(peer.peerId, negotiator.getOrCreatePaymentMux(peer.peerId, conn));
     }
@@ -110,7 +112,7 @@ export class BuyerRequestHandler {
     }
 
     // Track which service the buyer requested so auth validation uses buyer's own pricing.
-    const requestedService = extractServiceFromBody(req.body);
+    const requestedService = options?.controlPlane ? undefined : extractServiceFromBody(req.body);
     const isFreeService = requestedService ? isPeerServiceFree(peer, requestedService) : false;
     if (negotiator && requestedService) {
       if (isFreeService) {

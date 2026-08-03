@@ -9,10 +9,13 @@ import {
   CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
   buyerFault,
   type PeerInfo,
+  type SerializedHttpResponse,
 } from '@antseed/node'
 import { DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from '../config/defaults.js'
 import {
   BuyerProxy,
+  isModelNotFoundResponse,
+  makeVerifierReach,
   parsePeerPinnedService,
   parsePersistedPeers,
   rewritePeerPinnedServiceInBody,
@@ -1810,4 +1813,57 @@ test('title request racing ahead of the first turn does not name the chat', asyn
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+test('makeVerifierReach: rejects non-attest paths, sends the attest route as a payment-free control-plane request', async () => {
+  const peer = makePeer('a', ['openai'])
+  const signal = new AbortController().signal
+
+  const rejectNode = { sendRequest: async () => ({ statusCode: 200, headers: {}, body: new Uint8Array() }) }
+  await assert.rejects(
+    makeVerifierReach(rejectNode as never, peer, 'antseed-verifier', signal)({ method: 'POST', path: '/v1/chat/completions' }),
+    /may only call its attestation route/,
+  )
+
+  let opts: Record<string, unknown> | undefined
+  const captureNode = {
+    sendRequest: async (_peer: unknown, _req: unknown, o: Record<string, unknown>) => {
+      opts = o
+      return { statusCode: 200, headers: {}, body: new Uint8Array() }
+    },
+  }
+  const resp = await makeVerifierReach(captureNode as never, peer, 'antseed-verifier', signal)(
+    { method: 'POST', path: '/_antseed/attest/antseed-verifier', body: new Uint8Array([1]) },
+  )
+  assert.equal(resp.statusCode, 200)
+  assert.equal(opts!.controlPlane, true)
+  assert.equal(opts!.signal, signal)
+})
+
+test('isModelNotFoundResponse: detects seller and upstream model_not_found rejections', () => {
+  const makeResponse = (statusCode: number, body: unknown): SerializedHttpResponse => ({
+    requestId: 'r1',
+    statusCode,
+    headers: { 'content-type': 'application/json' },
+    body: typeof body === 'string' ? new TextEncoder().encode(body) : new TextEncoder().encode(JSON.stringify(body)),
+  })
+
+  // Seller-side pre-payment rejection (seller-request-handler shape).
+  assert.equal(isModelNotFoundResponse(makeResponse(400, {
+    error: { message: 'Service "x" is not served by this peer.', type: 'invalid_request_error', code: 'model_not_found' },
+  })), true)
+  // Upstream 404 pass-through with the same code.
+  assert.equal(isModelNotFoundResponse(makeResponse(404, {
+    error: { message: 'The model does not exist', type: 'invalid_request_error', code: 'model_not_found' },
+  })), true)
+
+  // Other 400s must not be misclassified.
+  assert.equal(isModelNotFoundResponse(makeResponse(400, {
+    error: { message: 'Missing model field', type: 'invalid_request_error', code: 'model_required' },
+  })), false)
+  assert.equal(isModelNotFoundResponse(makeResponse(400, 'not json')), false)
+  assert.equal(isModelNotFoundResponse(makeResponse(200, { ok: true })), false)
+  assert.equal(isModelNotFoundResponse(makeResponse(500, {
+    error: { code: 'model_not_found' },
+  })), false)
 })

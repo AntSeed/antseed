@@ -1073,15 +1073,39 @@ describe('transformRequest responses to chat', () => {
     });
   });
 
-  it('keeps parallel tool calls in one assistant message followed by their results', () => {
+  it('groups parallel function calls into a single assistant tool_calls message', () => {
     const request = makeResponsesRequest({
       body: new TextEncoder().encode(JSON.stringify({
         model: 'gpt-4.1',
         input: [
-          { type: 'function_call', call_id: 'get_goal:0', name: 'get_goal', arguments: '{}' },
-          { type: 'function_call', call_id: 'search:1', name: 'search', arguments: '{"q":"antseed"}' },
-          { type: 'function_call_output', call_id: 'get_goal:0', output: 'ship it' },
-          { type: 'function_call_output', call_id: 'search:1', output: 'done' },
+          { role: 'user', content: 'run two things' },
+          { type: 'function_call', call_id: 'exec_command:0', name: 'exec_command', arguments: '{"cmd":"ls"}' },
+          { type: 'function_call', call_id: 'exec_command:1', name: 'exec_command', arguments: '{"cmd":"pwd"}' },
+          { type: 'function_call_output', call_id: 'exec_command:0', output: 'a b c' },
+          { type: 'function_call_output', call_id: 'exec_command:1', output: '/tmp' },
+        ],
+      })),
+    });
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+    const messages = body.messages as Array<Record<string, unknown>>;
+
+    expect(messages).toHaveLength(4);
+    expect(messages[1].role).toBe('assistant');
+    expect((messages[1].tool_calls as unknown[]).length).toBe(2);
+    expect(messages[2]).toEqual({ role: 'tool', tool_call_id: 'exec_command:0', content: 'a b c' });
+    expect(messages[3]).toEqual({ role: 'tool', tool_call_id: 'exec_command:1', content: '/tmp' });
+  });
+
+  it('drops reasoning items instead of emitting empty user messages', () => {
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        input: [
+          { role: 'user', content: 'hi' },
+          { type: 'reasoning', id: 'rs_1', summary: [] },
+          { type: 'function_call', call_id: 'exec_command:0', name: 'exec_command', arguments: '{}' },
+          { type: 'function_call_output', call_id: 'exec_command:0', output: 'ok' },
         ],
       })),
     });
@@ -1090,11 +1114,9 @@ describe('transformRequest responses to chat', () => {
     const messages = body.messages as Array<Record<string, unknown>>;
 
     expect(messages).toHaveLength(3);
-    expect(messages[0].role).toBe('assistant');
-    expect((messages[0].tool_calls as Array<Record<string, unknown>>).map((call) => call.id))
-      .toEqual(['get_goal:0', 'search:1']);
-    expect(messages[1]).toEqual({ role: 'tool', tool_call_id: 'get_goal:0', content: 'ship it' });
-    expect(messages[2]).toEqual({ role: 'tool', tool_call_id: 'search:1', content: 'done' });
+    expect(messages[0]).toEqual({ role: 'user', content: 'hi' });
+    expect(messages[1].role).toBe('assistant');
+    expect(messages[2].role).toBe('tool');
   });
 
   it('drops reasoning items so they cannot split a tool call from its result', () => {

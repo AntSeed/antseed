@@ -5,6 +5,7 @@ import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   ANTSEED_FAULT_ATTRIBUTION_HEADER,
+  ANTSEED_ATTEST_PATH,
   computeOnChainReputationScore,
   decodeSweepRequest,
   faultAttributionOf,
@@ -79,6 +80,7 @@ import {
 } from './peer-health.js'
 import { PeerAttributionTracker, HEARTBEAT_MS } from './peer-attribution.js'
 import { estimateAnthropicPromptTokens, isCountTokensPath } from './count-tokens.js'
+import { getCachedVerdict, runVerifier, verifierSupportFingerprint, type CachedVerdict, type VerifierPolicy, type SellerReach, type VerifyOutcome } from '../plugins/verifier.js'
 
 // Re-export for backward compatibility (used by tests and other consumers)
 export { selectCandidatePeersForRouting, type CandidatePeerRouteSelection } from './routing.js'
@@ -109,6 +111,8 @@ export interface BuyerProxyConfig {
    * failure spacing directly instead of sleeping past the coalesce window.
    */
   now?: () => number
+  /** Verifier-SDK policy: which verifier the buyer commits to + whether it is required. */
+  verifier?: VerifierPolicy
 }
 
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
@@ -119,6 +123,24 @@ function isControlPlaneServicesPath(path: string): boolean {
 
 function isRouterSuccess(statusCode: number, path: string, retryableStatusCodes: Set<number>): boolean {
   return isControlPlaneServicesPath(path) || !retryableStatusCodes.has(statusCode)
+}
+
+/**
+ * Detect a "model not served" rejection: the seller's own pre-payment 400
+ * (`error.code: 'model_not_found'`, sent when the requested model is not in
+ * its advertised services — e.g. its health checker just unadvertised it) or
+ * an upstream 404 with the same code. Routing treated these as successes,
+ * so a peer that stopped serving a model kept its healthy routing stats and
+ * the stale peer cache kept offering the model indefinitely.
+ */
+export function isModelNotFoundResponse(response: SerializedHttpResponse): boolean {
+  if (response.statusCode !== 400 && response.statusCode !== 404) return false
+  try {
+    const parsed = JSON.parse(Buffer.from(response.body).toString('utf-8')) as { error?: { code?: unknown } }
+    return parsed?.error?.code === 'model_not_found'
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -135,6 +157,10 @@ const CARRY_FORWARD_TTL_MS = 2 * 60 * 60_000
  * sized for in-flight plus recently-finished traffic, not for concurrency.
  */
 const MAX_TRACKED_REQUEST_CONVERSATIONS = 512
+/** Min gap between background peer refreshes triggered by model_not_found responses. */
+const MODEL_NOT_FOUND_REFRESH_THROTTLE_MS = 30_000
+/** Verification is expensive; bound how many verdicts we retain (TTL = peer-cache TTL). */
+const VERIFY_CACHE_MAX_ENTRIES = 1024
 
 /**
  * Statuses that prove the peer is alive and serving. Any response short of a
@@ -415,6 +441,29 @@ export function parsePersistedPeers(
  * and the proxy transparently routes their API calls through the
  * Antseed P2P network.
  */
+
+export function makeVerifierReach(
+  node: Pick<AntseedNode, 'sendRequest'>,
+  peer: PeerInfo,
+  chosenId: string,
+  signal: AbortSignal,
+): SellerReach {
+  const attestRoute = `${ANTSEED_ATTEST_PATH}/${encodeURIComponent(chosenId)}`
+  return async (r) => {
+    if (r.path !== attestRoute) {
+      throw new Error(`verifier may only call its attestation route (${attestRoute}), not ${r.path}`)
+    }
+    const resp = await node.sendRequest(peer, {
+      requestId: randomUUID(),
+      method: r.method,
+      path: r.path,
+      headers: r.headers ?? {},
+      body: r.body ?? new Uint8Array(),
+    }, { signal, controlPlane: true })
+    return { statusCode: resp.statusCode, headers: resp.headers, body: resp.body }
+  }
+}
+
 export class BuyerProxy {
   private readonly _server: Server
   private readonly _node: AntseedNode
@@ -439,6 +488,8 @@ export class BuyerProxy {
    * write per frame — negligible next to the routing/payment/stream work.
    */
   private _lastModelActivityAt = 0
+  private readonly _verifier?: VerifierPolicy
+  private readonly _verifyCache = new Map<string, CachedVerdict>()
   private _stateWatchDebounce: ReturnType<typeof setTimeout> | null = null
 
   private _stateWriteChain: Promise<void> = Promise.resolve()
@@ -448,6 +499,7 @@ export class BuyerProxy {
   private _cacheMutationEpoch = 0
   private _peerRefreshPromise: Promise<PeerInfo[]> | null = null
   private _lastStaleCacheLogAtMs = 0
+  private _lastModelNotFoundRefreshAtMs = 0
   private _bgRefreshHandle: ReturnType<typeof setInterval> | null = null
   /**
    * Per-peer failure streaks and cooldowns. Advisory only: a cooling-down peer
@@ -474,6 +526,7 @@ export class BuyerProxy {
 
   constructor(config: BuyerProxyConfig) {
     this._node = config.node
+    this._verifier = config.verifier
     this._port = config.port
     this._bgRefreshIntervalMs = Math.max(1, config.backgroundRefreshIntervalMs ?? DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS)
     this._peerCacheTtlMs = Math.max(0, config.peerCacheTtlMs ?? Math.max(6 * 60_000, this._bgRefreshIntervalMs + 60_000))
@@ -938,6 +991,32 @@ export class BuyerProxy {
       log(`Cleared peer cooldowns for ${peerIds.length} peer(s): ${why}.`)
       void this._persistPeerHealthToState()
     }
+  }
+
+  /**
+   * A peer told us it does not serve the requested model. Our cached
+   * metadata for it is stale (the seller may have just unadvertised the
+   * model after failing its own health checks), so refresh discovery
+   * metadata in the background — throttled, since one broken model can
+   * produce a burst of these.
+   *
+   * Deliberately does NOT touch peer health: the response itself is proof of
+   * life (`_recordPeerResponseHealth` treats any sub-500 answer as such), and
+   * a peer that is healthy for its other models must not cool down over one
+   * stale catalog entry. The router still learns via `onResult(success:false)`
+   * so scoring reflects the miss.
+   */
+  private _onModelNotFound(peerId: string, requestedService: string | null): void {
+    const now = this._now()
+    if (now - this._lastModelNotFoundRefreshAtMs < MODEL_NOT_FOUND_REFRESH_THROTTLE_MS) {
+      return
+    }
+    this._lastModelNotFoundRefreshAtMs = now
+    log(
+      `Peer ${peerId.slice(0, 12)}... does not serve ${requestedService ?? 'the requested model'}; `
+      + 'refreshing peer metadata in background.',
+    )
+    void this._refreshPeersNow().catch(() => {})
   }
 
   /**
@@ -1407,6 +1486,53 @@ export class BuyerProxy {
       return
     }
 
+    // Ask a seller to cooperatively close a payment channel, skipping the
+    // on-chain request-close → grace → withdraw flow. Needs the daemon's live
+    // seller connection, so it can only run here.
+    if (path === '/_antseed/channels/close' && method === 'POST') {
+      const chunks: Buffer[] = []
+      let totalSize = 0
+      for await (const chunk of req) {
+        totalSize += (chunk as Buffer).length
+        if (totalSize > 8192) {
+          res.writeHead(413, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: 'Request body too large' }))
+          return
+        }
+        chunks.push(chunk as Buffer)
+      }
+      let peerId: string
+      let includeAuth = true
+      try {
+        const body = JSON.parse(Buffer.concat(chunks).toString())
+        peerId = String(body.peerId ?? '')
+        if (body.includeAuth === false) includeAuth = false
+      } catch {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'Invalid JSON body' }))
+        return
+      }
+      if (!peerId) {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'Missing peerId' }))
+        return
+      }
+      try {
+        const result = await this._node.requestChannelClose(peerId, { includeAuth })
+        log(
+          `Cooperative close of ${result.channelId.slice(0, 18)}... with ${peerId.slice(0, 12)}...: ` +
+          `${result.status}${result.code ? ` (${result.code})` : ''}`,
+        )
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: true, result }))
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        res.writeHead(502, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: message }))
+      }
+      return
+    }
+
     const sweepReceiptMatch = path.match(/^\/_antseed\/sweep\/(0x[0-9a-fA-F]{64})$/)
     if (sweepReceiptMatch && method === 'GET') {
       const receipt = this._sweepReceipts.get(sweepReceiptMatch[1]!.toLowerCase()) ?? null
@@ -1806,6 +1932,26 @@ export class BuyerProxy {
       return
     }
 
+    if (this._verifier) {
+      const makeReach = (chosenId: string): SellerReach =>
+        makeVerifierReach(this._node, selectedPeer, chosenId, clientAbortController.signal)
+      const outcome = await this._verifyPeer(selectedPeer, makeReach, clientAbortController.signal)
+      const short = selectedPeer.peerId.slice(0, 12)
+      if (outcome.verified) {
+        log(`Verified ${short}... via ${outcome.sdk}`)
+      } else if (outcome.sdk || outcome.reason) {
+        log(`Verification ${outcome.sdk ? `(${outcome.sdk}) ` : ''}did not pass for ${short}...: ${outcome.reason ?? 'failed'}${outcome.ok ? ' (optional — routing anyway)' : ''}`)
+      }
+      if (!outcome.ok) {
+        res.writeHead(502, { 'content-type': 'text/plain' })
+        res.end(
+          `Pinned peer ${short}... failed required verification (${outcome.reason ?? 'failed'}). `
+          + 'Pick a different peer, or run without --require-verifier.',
+        )
+        return
+      }
+    }
+
     log(`Using pinned peer ${selectedPeer.peerId.slice(0, 12)}...`)
     const result = await this._dispatchToPeer(
       res,
@@ -1825,6 +1971,24 @@ export class BuyerProxy {
       res.writeHead(result.statusCode, result.responseHeaders)
       res.end(result.responseBody)
     }
+  }
+
+  private async _verifyPeer(
+    peer: PeerInfo,
+    makeReach: (chosenId: string) => SellerReach,
+    signal: AbortSignal,
+  ): Promise<VerifyOutcome> {
+    const policy = this._verifier
+    if (!policy) return { ok: true, verified: false }
+    const key = `${peer.peerId}|${verifierSupportFingerprint(peer.capabilities)}`
+    return getCachedVerdict(
+      this._verifyCache,
+      key,
+      Date.now(),
+      this._peerCacheTtlMs,
+      VERIFY_CACHE_MAX_ENTRIES,
+      () => runVerifier(policy, peer.peerId, peer.capabilities, makeReach, signal),
+    )
   }
 
   private _parseMaxUploadBodyBytes(headers: Record<string, string>): number | null {
@@ -2055,9 +2219,16 @@ export class BuyerProxy {
           selectedPeer,
         )
         const responseFault = responseFaultAttribution(responseForClient)
+        const modelNotFound = !streamed
+          && !isControlPlaneServicesPath(requestForPeer.path)
+          && isModelNotFoundResponse(responseForClient)
+        if (modelNotFound) {
+          this._onModelNotFound(selectedPeer.peerId, requestedService)
+        }
         if (router && responseFault !== 'buyer') {
           router.onResult(selectedPeer, {
-            success: isRouterSuccess(responseForClient.statusCode, requestForPeer.path, retryableStatusCodes),
+            success: !modelNotFound
+              && isRouterSuccess(responseForClient.statusCode, requestForPeer.path, retryableStatusCodes),
             latencyMs,
             tokens: telemetry.usage.totalTokens,
           })
@@ -2134,9 +2305,16 @@ export class BuyerProxy {
         )
 
         const responseFault = responseFaultAttribution(response)
+        const modelNotFound = !isControlPlaneServicesPath(requestForPeer.path)
+          && isModelNotFoundResponse(response)
+        if (modelNotFound) {
+          this._onModelNotFound(selectedPeer.peerId, requestedService)
+        }
+        // Report result to router for learning
         if (router && responseFault !== 'buyer') {
           router.onResult(selectedPeer, {
-            success: isRouterSuccess(response.statusCode, requestForPeer.path, retryableStatusCodes),
+            success: !modelNotFound
+              && isRouterSuccess(response.statusCode, requestForPeer.path, retryableStatusCodes),
             latencyMs,
             tokens: telemetry.usage.totalTokens,
           })

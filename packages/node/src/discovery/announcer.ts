@@ -32,6 +32,7 @@ import type { DHTHealthMonitor } from "./dht-health.js";
 import {
   CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
   CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
+  CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
 } from "../types/protocol.js";
 
 export interface SellerContractConfig {
@@ -78,6 +79,8 @@ export interface AnnouncerConfig {
   stakingClient?: StakingClient;
   reannounceIntervalMs: number;
   signalingPort: number;
+  /** Extra peer capability strings to advertise (merged with the built-in set). */
+  capabilities?: string[];
   /** Optional health monitor — if supplied, announce outcomes are recorded. */
   healthMonitor?: DHTHealthMonitor;
   /**
@@ -276,9 +279,15 @@ export class PeerAnnouncer {
       return providerAnnouncement;
     });
 
-    const capabilities: string[] = [CONNECTION_CAPABILITY_RESPONSE_AUTH_V1];
+    const capabilities: string[] = [
+      CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
+      CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
+    ];
     if (this.config.relaysSweeps) {
       capabilities.push(CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1);
+    }
+    if (this.config.capabilities && this.config.capabilities.length > 0) {
+      capabilities.push(...this.config.capabilities);
     }
 
     const metadata: PeerMetadata = {

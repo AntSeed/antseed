@@ -1,11 +1,13 @@
 export interface TrustedPlugin {
   name: string
-  type: 'provider' | 'router'
+  type: 'provider' | 'router' | 'verifier'
   description: string
   package: string
+  /** Exact npm version for trusted verifier packages. */
+  version?: string
 }
 
-export const TRUSTED_PLUGINS: TrustedPlugin[] = [
+export const TRUSTED_PROVIDER_PLUGINS: TrustedPlugin[] = [
   {
     name: 'anthropic',
     type: 'provider',
@@ -42,12 +44,31 @@ export const TRUSTED_PLUGINS: TrustedPlugin[] = [
     description: 'Local LLM provider (Ollama, llama.cpp)',
     package: '@antseed/provider-local-llm',
   },
+]
+
+export const TRUSTED_ROUTER_PLUGINS: TrustedPlugin[] = [
   {
     name: 'local',
     type: 'router',
     description: 'Local router for Claude Code, Codex',
     package: '@antseed/router-local',
   },
+]
+
+export const TRUSTED_VERIFIER_PLUGINS: TrustedPlugin[] = [
+  {
+    name: 'antseed-verifier',
+    type: 'verifier',
+    description: 'TEE attestation verifier + prover (Intel TDX, DCAP)',
+    package: '@antseed/antseed-verifier',
+    version: '0.1.0',
+  },
+]
+
+export const TRUSTED_PLUGINS: TrustedPlugin[] = [
+  ...TRUSTED_PROVIDER_PLUGINS,
+  ...TRUSTED_ROUTER_PLUGINS,
+  ...TRUSTED_VERIFIER_PLUGINS,
 ]
 
 export function resolvePluginPackage(nameOrPackage: string): string {

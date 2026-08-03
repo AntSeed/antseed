@@ -365,6 +365,25 @@ export function validateConfig(config: AntseedConfig): string[] {
     }
   }
 
+  if (config.seller.healthCheck !== undefined) {
+    const healthCheck = config.seller.healthCheck;
+    if (healthCheck.enabled !== undefined && typeof healthCheck.enabled !== 'boolean') {
+      errors.push('seller.healthCheck.enabled must be a boolean');
+    }
+    if (
+      healthCheck.intervalMs !== undefined &&
+      (!Number.isInteger(healthCheck.intervalMs) || healthCheck.intervalMs < 60_000)
+    ) {
+      errors.push('seller.healthCheck.intervalMs must be an integer >= 60000 (1 minute)');
+    }
+    if (
+      healthCheck.failureThreshold !== undefined &&
+      (!Number.isInteger(healthCheck.failureThreshold) || healthCheck.failureThreshold < 1)
+    ) {
+      errors.push('seller.healthCheck.failureThreshold must be an integer >= 1');
+    }
+  }
+
   validateVerifications('seller.verifications', config.seller.verifications, errors);
 
   if (config.relayer !== undefined) {
