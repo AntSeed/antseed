@@ -24,7 +24,62 @@ export type DashboardNetworkPeer = {
   lastReachedAt: number | null;
   source: 'dht' | 'daemon';
   online: boolean;
+  /**
+   * Buyer-proxy cooldown: peers that recently failed are deprioritized by auto
+   * routing until this passes. Null when the peer has no cooldown. Advisory —
+   * a cooling-down peer is still reachable if a request names it.
+   */
+  cooldownUntil: number | null;
+  failureStreak: number;
+  lastFailureReason: string | null;
 };
+
+/** Shape of one entry in buyer.state.json's `peerHealth` map. */
+export type RawPeerHealth = {
+  cooldownUntil?: unknown;
+  failureStreak?: unknown;
+  lastReason?: unknown;
+};
+
+export type PeerHealthView = {
+  cooldownUntil: number | null;
+  failureStreak: number;
+  lastFailureReason: string | null;
+};
+
+/**
+ * Normalize one raw health entry.
+ *
+ * An expired cooldown is surfaced as null rather than left for consumers to
+ * compare against the clock, so a stale timestamp can never read as "still
+ * cooling down".
+ */
+export function readPeerHealth(raw: RawPeerHealth | undefined, now: number): PeerHealthView {
+  if (!raw || typeof raw !== 'object') {
+    return { cooldownUntil: null, failureStreak: 0, lastFailureReason: null };
+  }
+  const cooldownUntil = typeof raw.cooldownUntil === 'number' && Number.isFinite(raw.cooldownUntil)
+    && raw.cooldownUntil > now
+    ? raw.cooldownUntil
+    : null;
+  const failureStreak = typeof raw.failureStreak === 'number' && Number.isFinite(raw.failureStreak)
+    ? Math.max(0, Math.trunc(raw.failureStreak))
+    : 0;
+  return {
+    cooldownUntil,
+    failureStreak,
+    lastFailureReason: typeof raw.lastReason === 'string' ? raw.lastReason : null,
+  };
+}
+
+/** Join a peer with its health entry. */
+export function mergePeerHealthIntoPeer(
+  peer: DashboardNetworkPeer,
+  raw: RawPeerHealth | undefined,
+  now: number,
+): DashboardNetworkPeer {
+  return { ...peer, ...readPeerHealth(raw, now) };
+}
 
 export type DashboardNetworkStats = {
   totalPeers: number;
@@ -124,7 +179,12 @@ function computePeerSignature(): string {
   // Fast hash: sorted peer IDs + their service lists.
   const parts: string[] = [];
   for (const [id, peer] of peerCache) {
-    parts.push(`${id}:${peer.services.join(',')}:${peer.onChainReputationScore ?? ''}`);
+    // `cooldownUntil` is a fixed timestamp, not a computed remaining-ms — a
+    // countdown here would make the signature change on every refresh and fire
+    // the change listener continuously.
+    parts.push(
+      `${id}:${peer.services.join(',')}:${peer.onChainReputationScore ?? ''}:${peer.cooldownUntil ?? ''}`,
+    );
   }
   parts.sort();
   return parts.join('|');
@@ -196,6 +256,9 @@ export function parsePeerFromRaw(pr: Record<string, unknown>): DashboardNetworkP
     lastReachedAt: Number(pr.lastReachedAt) || null,
     source: 'dht',
     online: true,
+    cooldownUntil: null,
+    failureStreak: 0,
+    lastFailureReason: null,
   };
 }
 
@@ -219,11 +282,15 @@ export async function refreshPeerCache(): Promise<void> {
     const raw = await readFile(DEFAULT_BUYER_STATE_PATH, 'utf-8');
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const rawPeers = Array.isArray(parsed.discoveredPeers) ? parsed.discoveredPeers : [];
+    const rawHealth = parsed.peerHealth && typeof parsed.peerHealth === 'object' && !Array.isArray(parsed.peerHealth)
+      ? parsed.peerHealth as Record<string, RawPeerHealth>
+      : {};
 
     for (const p of rawPeers) {
       if (!p || typeof p !== 'object') continue;
-      const peer = parsePeerFromRaw(p as Record<string, unknown>);
-      if (!peer) continue;
+      const parsedPeer = parsePeerFromRaw(p as Record<string, unknown>);
+      if (!parsedPeer) continue;
+      const peer = mergePeerHealthIntoPeer(parsedPeer, rawHealth[parsedPeer.peerId], now);
       // Skip legacy (non-EVM) peer IDs — EVM addresses are 40 hex chars
       if (peer.peerId.length !== 40) continue;
 

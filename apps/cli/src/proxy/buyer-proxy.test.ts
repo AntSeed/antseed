@@ -4,7 +4,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import test from 'node:test'
-import { CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1, type PeerInfo, type SerializedHttpResponse } from '@antseed/node'
+import {
+  ANTSEED_FAULT_ATTRIBUTION_HEADER,
+  CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
+  buyerFault,
+  type PeerInfo,
+  type SerializedHttpResponse,
+} from '@antseed/node'
 import { DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from '../config/defaults.js'
 import {
   BuyerProxy,
@@ -90,18 +96,62 @@ function makeProxyResponse(): {
   }
 }
 
-function makeBuyerProxyWithPeers(initialPeers: PeerInfo[], refreshedPeers = initialPeers, router: unknown = null): BuyerProxy {
+function makeBuyerProxyWithPeers(
+  initialPeers: PeerInfo[],
+  refreshedPeers = initialPeers,
+  router: unknown = null,
+  now?: () => number,
+): BuyerProxy {
   const proxy = new BuyerProxy({
     port: 0,
     dataDir: '/tmp/antseed-test',
     node: {
       router,
     } as any,
+    ...(now ? { now } : {}),
   })
   ;(proxy as any)._getPeers = async (options?: { forceRefresh?: boolean }) =>
     options?.forceRefresh ? refreshedPeers : initialPeers
   ;(proxy as any)._cacheLastUpdatedAtMs = Date.now()
   return proxy
+}
+
+/**
+ * A hand-cranked clock for peer-health tests.
+ *
+ * Health bookkeeping coalesces failures landing within a second of each other,
+ * so back-to-back in-process requests would otherwise register as one episode.
+ * Real failures are spaced by connect/request timeouts; these tests advance the
+ * clock explicitly to model that without sleeping.
+ */
+function makeTestClock(start = 1_700_000_000_000) {
+  let current = start
+  return {
+    now: () => current,
+    advance(ms: number) { current += ms },
+  }
+}
+
+/** Router stub that permits every peer and ignores result telemetry. */
+function permissiveRouter() {
+  return { allowsPeerForPolicy: () => true, onResult: () => {} }
+}
+
+/** Drive `times` failed requests at a pinned peer, spaced past the coalesce window. */
+async function failRepeatedly(
+  proxy: BuyerProxy,
+  peer: PeerInfo,
+  clock: ReturnType<typeof makeTestClock>,
+  times = 3,
+): Promise<void> {
+  for (let i = 0; i < times; i += 1) {
+    await invokeProxy(proxy, makeProxyRequest({ headers: { 'x-antseed-pin-peer': peer.peerId } }))
+    clock.advance(5_000)
+  }
+}
+
+function healthOf(proxy: BuyerProxy, peer: PeerInfo) {
+  return (proxy as any)._peerHealth.get(peer.peerId)
 }
 
 async function invokeProxy(proxy: BuyerProxy, req: Readable): Promise<ReturnType<typeof makeProxyResponse>> {
@@ -456,7 +506,7 @@ test('pinned proxy request enforces buyer routing policy', async () => {
   assert.match(res.body, /pricing\/reputation limits/)
 })
 
-test('local buyer payment failures only update diagnostic failure state', async () => {
+test('a buyer-attributed failure returns 503 and never blames the peer', async () => {
   const peer = makePeer('a', ['openai'])
   const routerResults: unknown[] = []
   const router = {
@@ -468,7 +518,10 @@ test('local buyer payment failures only update diagnostic failure state', async 
   const proxy = makeBuyerProxyWithPeers([peer], [peer], router)
   ;(proxy as any)._cachedPeers = [peer]
   ;(proxy as any)._node.sendRequest = async () => {
-    throw new Error('Insufficient buyer deposits for reserve top-up: available=0 required=1000')
+    throw buyerFault(
+      'Insufficient buyer deposits for reserve top-up: available=0 required=1000',
+      'buyer-deposits-insufficient',
+    )
   }
 
   const res = await invokeProxy(proxy, makeProxyRequest({
@@ -477,15 +530,55 @@ test('local buyer payment failures only update diagnostic failure state', async 
     },
   }))
 
-  assert.equal(res.statusCode, 502)
-  assert.match(res.body, /Insufficient buyer deposits/)
+  // 503, not 502: our empty deposit is not the seller's fault, and the user
+  // should be pointed at the deposit rather than at a different peer.
+  assert.equal(res.statusCode, 503)
+  assert.equal(JSON.parse(res.body).error.code, 'buyer-deposits-insufficient')
   assert.equal(routerResults.length, 0)
-  assert.equal((proxy as any)._peerFailures.get(peer.peerId)?.count, 1)
-  assert.equal((proxy as any)._peerFailures.get(peer.peerId)?.lastReason, 'request-failed')
+
+  const health = (proxy as any)._peerHealth.get(peer.peerId)
+  assert.equal(health?.lastReason, 'buyer-local')
+  assert.equal(health?.failureStreak, 0, 'a buyer fault must never build a peer streak')
+  assert.equal(health?.cooldownUntil, 0)
   assert.equal((proxy as any)._cachedPeers[0]?.peerId, peer.peerId)
 })
 
-test('transport failures only update diagnostic failure state', async () => {
+test('a buyer-authored 503 does not affect router metrics or peer health', async () => {
+  const peer = makePeer('a', ['openai'])
+  const routerResults: Array<{ success: boolean }> = []
+  const router = {
+    allowsPeerForPolicy: () => true,
+    onResult: (_peer: PeerInfo, result: { success: boolean }) => {
+      routerResults.push(result)
+    },
+  }
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], router)
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: { requestId: string }) => ({
+    requestId: request.requestId,
+    statusCode: 503,
+    headers: {
+      'content-type': 'application/json',
+      [ANTSEED_FAULT_ATTRIBUTION_HEADER]: 'buyer',
+    },
+    body: Buffer.from(JSON.stringify({
+      error: 'payment_negotiation_failed',
+      reason: 'chain_rpc_unavailable',
+    })),
+  })
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-antseed-pin-peer': peer.peerId },
+  }))
+
+  assert.equal(res.statusCode, 503)
+  assert.equal(routerResults.length, 0)
+  const health = healthOf(proxy, peer)
+  assert.equal(health?.lastReason, 'buyer-local')
+  assert.equal(health?.failureStreak, 0)
+  assert.equal(health?.cooldownUntil, 0)
+})
+
+test('an untagged transport failure records a streak without evicting the peer', async () => {
   const peer = makePeer('a', ['openai'])
   const routerResults: Array<{ success: boolean }> = []
   const router = {
@@ -509,9 +602,215 @@ test('transport failures only update diagnostic failure state', async () => {
   assert.equal(res.statusCode, 502)
   assert.match(res.body, /Request abc123 timed out/)
   assert.equal(routerResults.length, 0)
-  assert.equal((proxy as any)._peerFailures.get(peer.peerId)?.count, 1)
-  assert.equal((proxy as any)._peerFailures.get(peer.peerId)?.lastReason, 'request-failed')
+  assert.equal((proxy as any)._peerHealth.get(peer.peerId)?.lastReason, 'request-failed')
+  // Cooldown never evicts discovery metadata — the peer stays routable.
   assert.equal((proxy as any)._cachedPeers[0]?.peerId, peer.peerId)
+})
+
+test('a timeout does not cool a peer down until another peer proves the buyer is healthy', async () => {
+  const clock = makeTestClock()
+  const peer = makePeer('a', ['openai'])
+  const other = makePeer('b', ['openai'])
+  const proxy = makeBuyerProxyWithPeers([peer, other], [peer, other], permissiveRouter(), clock.now)
+  ;(proxy as any)._cachedPeers = [peer, other]
+  ;(proxy as any)._node.sendRequest = async () => {
+    throw new Error('Request abc123 timed out')
+  }
+
+  // No success anywhere yet: the buyer itself might be the broken party, so
+  // even three failures must not exile the peer.
+  await failRepeatedly(proxy, peer, clock)
+  assert.equal(healthOf(proxy, peer)?.cooldownUntil, 0)
+
+  // A different peer answering proves our network, RPC and wallet are fine.
+  ;(proxy as any)._rememberSuccessfulPeer(other.peerId)
+  await failRepeatedly(proxy, peer, clock)
+  assert.ok(
+    healthOf(proxy, peer)?.cooldownUntil > clock.now(),
+    'with corroboration the peer should now be cooling down',
+  )
+})
+
+test('a cooling-down peer is still dispatched to when a request names it', async () => {
+  const clock = makeTestClock()
+  const peer = makePeer('a', ['openai'])
+  const other = makePeer('b', ['openai'])
+  const proxy = makeBuyerProxyWithPeers([peer, other], [peer, other], permissiveRouter(), clock.now)
+  ;(proxy as any)._cachedPeers = [peer, other]
+  ;(proxy as any)._rememberSuccessfulPeer(other.peerId)
+  ;(proxy as any)._node.sendRequest = async () => {
+    throw new Error('Request abc123 timed out')
+  }
+  await failRepeatedly(proxy, peer, clock)
+  assert.ok(healthOf(proxy, peer)?.cooldownUntil > clock.now())
+
+  let dispatched = false
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: { requestId: string }) => {
+    dispatched = true
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{}'),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({ headers: { 'x-antseed-pin-peer': peer.peerId } }))
+  assert.equal(dispatched, true, 'cooldown is advisory; a named peer must still be tried')
+  assert.equal(res.statusCode, 200)
+  // And the response clears the cooldown, because the peer plainly answered.
+  assert.equal(healthOf(proxy, peer)?.cooldownUntil, 0)
+})
+
+test('a 429 records capacity pressure without ever cooling the peer down', async () => {
+  const clock = makeTestClock()
+  const peer = makePeer('a', ['openai'])
+  const other = makePeer('b', ['openai'])
+  const proxy = makeBuyerProxyWithPeers([peer, other], [peer, other], permissiveRouter(), clock.now)
+  ;(proxy as any)._cachedPeers = [peer, other]
+  ;(proxy as any)._rememberSuccessfulPeer(other.peerId)
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: { requestId: string }) => ({
+    requestId: request.requestId,
+    statusCode: 429,
+    headers: { 'content-type': 'text/plain' },
+    body: Buffer.from('slow down'),
+  })
+
+  await failRepeatedly(proxy, peer, clock, 5)
+
+  const health = healthOf(proxy, peer)
+  assert.equal(health?.lastReason, 'seller-busy')
+  assert.equal(health?.failureStreak, 0)
+  assert.equal(health?.cooldownUntil, 0)
+})
+
+test('a seller 503 escalates once the buyer is corroborated as healthy', async () => {
+  const clock = makeTestClock()
+  const peer = makePeer('a', ['openai'])
+  const other = makePeer('b', ['openai'])
+  const proxy = makeBuyerProxyWithPeers([peer, other], [peer, other], permissiveRouter(), clock.now)
+  ;(proxy as any)._cachedPeers = [peer, other]
+  ;(proxy as any)._rememberSuccessfulPeer(other.peerId)
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: { requestId: string }) => ({
+    requestId: request.requestId,
+    statusCode: 503,
+    headers: { 'content-type': 'text/plain' },
+    body: Buffer.from('seller down'),
+  })
+
+  await failRepeatedly(proxy, peer, clock)
+
+  const health = healthOf(proxy, peer)
+  assert.equal(health?.lastReason, 'seller-5xx')
+  assert.ok(health?.cooldownUntil > clock.now())
+})
+
+test('a clean 4xx counts as proof of life and clears a cooldown', async () => {
+  const clock = makeTestClock()
+  const peer = makePeer('a', ['openai'])
+  const other = makePeer('b', ['openai'])
+  const proxy = makeBuyerProxyWithPeers([peer, other], [peer, other], permissiveRouter(), clock.now)
+  ;(proxy as any)._cachedPeers = [peer, other]
+  ;(proxy as any)._rememberSuccessfulPeer(other.peerId)
+  ;(proxy as any)._node.sendRequest = async () => {
+    throw new Error('Request abc123 timed out')
+  }
+  await failRepeatedly(proxy, peer, clock)
+  assert.ok(healthOf(proxy, peer)?.cooldownUntil > clock.now())
+
+  // A peer that answers 400 to everything is still reachable. Requiring 2xx
+  // here would strand a healthy peer in a cooldown it can never escape.
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: { requestId: string }) => ({
+    requestId: request.requestId,
+    statusCode: 400,
+    headers: { 'content-type': 'text/plain' },
+    body: Buffer.from('bad request'),
+  })
+  await invokeProxy(proxy, makeProxyRequest({ headers: { 'x-antseed-pin-peer': peer.peerId } }))
+
+  const health = healthOf(proxy, peer)
+  assert.equal(health?.cooldownUntil, 0)
+  assert.equal(health?.failureStreak, 0)
+})
+
+test('a buyer-side outage rolls back the cooldowns it caused', async () => {
+  const clock = makeTestClock()
+  const peers = ['a', 'b', 'c', 'd'].map((seed) => makePeer(seed, ['openai']))
+  const proxy = makeBuyerProxyWithPeers(peers, peers, permissiveRouter(), clock.now)
+  ;(proxy as any)._cachedPeers = peers
+  ;(proxy as any)._rememberSuccessfulPeer(peers[3]!.peerId)
+  ;(proxy as any)._node.sendRequest = async () => {
+    throw new Error('Connection to peer failed')
+  }
+
+  // Every peer failing at once is the signature of a dropped network, not of
+  // three sellers dying simultaneously.
+  for (const peer of peers.slice(0, 3)) {
+    await failRepeatedly(proxy, peer!, clock)
+  }
+
+  for (const peer of peers.slice(0, 3)) {
+    const health = healthOf(proxy, peer!)
+    assert.equal(health?.cooldownUntil, 0, `${peer!.peerId.slice(0, 4)} should not be cooling down`)
+    assert.equal(health?.failureStreak, 0, `${peer!.peerId.slice(0, 4)} streak should be rolled back`)
+  }
+})
+
+test('GET /_antseed/peer-health reports cooldowns and buyer health', async () => {
+  const clock = makeTestClock()
+  const peer = makePeer('a', ['openai'])
+  const other = makePeer('b', ['openai'])
+  const proxy = makeBuyerProxyWithPeers([peer, other], [peer, other], permissiveRouter(), clock.now)
+  ;(proxy as any)._cachedPeers = [peer, other]
+  ;(proxy as any)._rememberSuccessfulPeer(other.peerId)
+  ;(proxy as any)._node.sendRequest = async () => {
+    throw new Error('Request abc123 timed out')
+  }
+  await failRepeatedly(proxy, peer, clock)
+
+  const res = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/peer-health' }))
+  assert.equal(res.statusCode, 200)
+  const body = JSON.parse(res.body)
+  assert.equal(body.ok, true)
+  assert.equal(body.buyerHealthy, true)
+  const entry = body.peers.find((p: { peerId: string }) => p.peerId === peer.peerId)
+  assert.equal(entry.coolingDown, true)
+  assert.ok(entry.cooldownMsRemaining > 0)
+  assert.equal(entry.lastReason, 'request-failed')
+})
+
+test('POST /_antseed/peer-health/clear gives a peer another chance', async () => {
+  const clock = makeTestClock()
+  const peer = makePeer('a', ['openai'])
+  const other = makePeer('b', ['openai'])
+  const proxy = makeBuyerProxyWithPeers([peer, other], [peer, other], permissiveRouter(), clock.now)
+  ;(proxy as any)._cachedPeers = [peer, other]
+  ;(proxy as any)._rememberSuccessfulPeer(other.peerId)
+  ;(proxy as any)._node.sendRequest = async () => {
+    throw new Error('Request abc123 timed out')
+  }
+  await failRepeatedly(proxy, peer, clock)
+  assert.ok(healthOf(proxy, peer)?.cooldownUntil > clock.now())
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    method: 'POST',
+    path: '/_antseed/peer-health/clear',
+    body: { peerId: peer.peerId },
+  }))
+  assert.equal(res.statusCode, 200)
+  assert.equal(healthOf(proxy, peer)?.cooldownUntil, 0)
+})
+
+test('POST /_antseed/peer-health/clear rejects a malformed peer id', async () => {
+  const peer = makePeer('a', ['openai'])
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], { allowsPeerForPolicy: () => true })
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    method: 'POST',
+    path: '/_antseed/peer-health/clear',
+    body: { peerId: 'nope' },
+  }))
+  assert.equal(res.statusCode, 400)
 })
 
 test('/v1/models retryable response reports router success', async () => {

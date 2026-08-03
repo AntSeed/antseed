@@ -2,7 +2,7 @@ import type { Identity } from '../p2p/identity.js';
 import type { PeerConnection } from '../p2p/connection-manager.js';
 import { PaymentMux } from '../p2p/payment-mux.js';
 import type { PeerInfo, PeerId } from '../types/peer.js';
-import type { SerializedHttpRequest, SerializedHttpResponse } from '../types/http.js';
+import { ANTSEED_FAULT_ATTRIBUTION_HEADER, type SerializedHttpRequest, type SerializedHttpResponse } from '../types/http.js';
 import {
   PAYMENT_CODE_CHANNEL_EXHAUSTED,
   type PaymentRequiredPayload,
@@ -22,6 +22,7 @@ import { parseResponseUsage } from '../utils/response-usage.js';
 import { computeCostUsdc, type ServicePricing } from './pricing.js';
 import { formatUsdc } from './usdc-utils.js';
 import { parseJsonObject, tryParseJsonObject } from '../utils/json-codec.js';
+import { buyerFault, peerFault } from '../errors.js';
 
 export interface BuyerNegotiatorConfig {}
 
@@ -462,7 +463,11 @@ export class BuyerPaymentNegotiator {
         response: {
           ...response,
           statusCode,
-          headers: { ...response.headers, 'content-type': 'application/json' },
+          headers: {
+            ...response.headers,
+            'content-type': 'application/json',
+            [ANTSEED_FAULT_ATTRIBUTION_HEADER]: 'buyer',
+          },
           body: new TextEncoder().encode(JSON.stringify({
             error: 'payment_negotiation_failed',
             reason,
@@ -570,7 +575,18 @@ export class BuyerPaymentNegotiator {
         );
       }
     } catch (err) {
-      debugWarn(`[BuyerNegotiator] Failed to check buyer balance: ${err instanceof Error ? err.message : err}`);
+      // The balance read is the buyer's own chain RPC, so a failure here says
+      // nothing about the peer. Proceeding blind used to stall for the full
+      // 30s lock-confirmation timeout and then surface as a 502 that blamed the
+      // seller; report our own fault instead, immediately and accurately.
+      const detail = err instanceof Error ? err.message : String(err);
+      debugWarn(`[BuyerNegotiator] Failed to check buyer balance: ${detail}`);
+      return returnNegotiationFailure(
+        'chain_rpc_unavailable',
+        'Could not read your deposit balance because the chain RPC is unreachable. '
+        + 'Check your network and RPC URL in chain settings, then retry.',
+        503,
+      );
     }
 
     // Re-buffer the PaymentRequired so _doNegotiatePayment can consume it
@@ -669,7 +685,7 @@ export class BuyerPaymentNegotiator {
       const decoded = Buffer.from(headerValue, 'base64').toString('utf-8');
       payload = parseJsonObject(decoded) as typeof payload;
     } catch {
-      throw new Error('Invalid x-antseed-spending-auth header: failed to decode');
+      throw buyerFault('Invalid x-antseed-spending-auth header: failed to decode', 'invalid-spending-auth-header');
     }
 
     debugLog(`[BuyerNegotiator] External SpendingAuth: channel=${payload.channelId.slice(0, 18)}... amount=${payload.cumulativeAmount}`);
@@ -766,7 +782,7 @@ export class BuyerPaymentNegotiator {
 
     for (const [, pending] of this._pendingPaymentRequired) {
       clearTimeout(pending.timer);
-      pending.reject(new Error('Node stopped'));
+      pending.reject(buyerFault('Node stopped', 'node-stopped'));
     }
     this._pendingPaymentRequired.clear();
     this._bufferedPaymentRequired.clear();
@@ -855,8 +871,11 @@ export class BuyerPaymentNegotiator {
     // Validate seller's per-request minimum
     const minBudgetPerRequest = BigInt(requirements.minBudgetPerRequest);
     if (minBudgetPerRequest > this._bpm.maxPerRequestUsdc) {
-      throw new Error(
+      // Our configured ceiling is too low for this seller's floor. The seller
+      // is behaving correctly; this is a buyer policy mismatch.
+      throw buyerFault(
         `Seller ${peer.peerId.slice(0, 12)}... minBudgetPerRequest=${minBudgetPerRequest} exceeds buyer maxPerRequestUsdc=${this._bpm.maxPerRequestUsdc}`,
+        'buyer-budget-too-low',
       );
     }
 
@@ -865,13 +884,13 @@ export class BuyerPaymentNegotiator {
     try {
       amount = BigInt(requirements.suggestedAmount);
     } catch {
-      throw new Error(`Invalid suggestedAmount from seller ${peer.peerId.slice(0, 12)}...: "${requirements.suggestedAmount}"`);
+      throw peerFault(`Invalid suggestedAmount from seller ${peer.peerId.slice(0, 12)}...: "${requirements.suggestedAmount}"`, 'peer-protocol-violation');
     }
     if (amount > this._bpm.maxReserveAmountUsdc) {
       amount = this._bpm.maxReserveAmountUsdc;
     }
     if (amount <= 0n) {
-      throw new Error(`Invalid reserve amount for payment to ${peer.peerId.slice(0, 12)}...`);
+      throw buyerFault(`Invalid reserve amount for payment to ${peer.peerId.slice(0, 12)}...`, 'buyer-reserve-misconfigured');
     }
 
     const sellerEvmAddr = await this._resolveSellerAddr(peer);

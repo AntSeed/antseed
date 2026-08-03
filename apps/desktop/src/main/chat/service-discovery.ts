@@ -8,6 +8,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { DEFAULT_BUYER_STATE_PATH } from '../constants.js';
+import { readPeerHealth, type RawPeerHealth } from '../runtime/peer-cache.js';
 import {
   DESKTOP_DEFAULT_MAX_INPUT_USD_PER_MILLION,
   DESKTOP_DEFAULT_MAX_OUTPUT_USD_PER_MILLION,
@@ -73,6 +74,9 @@ export type DiscoverRowEntry = {
   networkRequests: string | null;
   networkInputTokens: string | null;
   networkOutputTokens: string | null;
+  peerCooldownUntil: number | null;
+  peerFailureStreak: number;
+  peerLastFailureReason: string | null;
   selectionValue: string;
 };
 
@@ -350,6 +354,7 @@ export async function buildDiscoverRows(
   }>,
   buyerStateDiscoveredPeers: Record<string, BuyerStateDiscoveredPeer>,
   networkStats: Map<number, { requests: bigint; inputTokens: bigint; outputTokens: bigint }>,
+  peerHealth: Record<string, RawPeerHealth> = {},
 ): Promise<DiscoverRowEntry[]> {
   const rows: DiscoverRowEntry[] = [];
   for (const entry of catalog) {
@@ -382,6 +387,7 @@ export async function buildDiscoverRows(
     const networkRequests = netForAgent ? netForAgent.requests.toString() : null;
     const networkInputTokens = netForAgent ? netForAgent.inputTokens.toString() : null;
     const networkOutputTokens = netForAgent ? netForAgent.outputTokens.toString() : null;
+    const health = readPeerHealth(peerHealth[peerId], Date.now());
 
     rows.push({
       rowKey: `${peerId}:${entry.id}`,
@@ -421,6 +427,9 @@ export async function buildDiscoverRows(
       networkRequests,
       networkInputTokens,
       networkOutputTokens,
+      peerCooldownUntil: health.cooldownUntil,
+      peerFailureStreak: health.failureStreak,
+      peerLastFailureReason: health.lastFailureReason,
       selectionValue: `${entry.provider}\u0001${entry.id}\u0001${peerId}`,
     });
   }

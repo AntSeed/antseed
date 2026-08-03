@@ -47,6 +47,11 @@ type ChatConversationSummary = {
   service?: string;
   provider?: string;
   peerId?: string;
+  /**
+   * How this thread's peer was chosen. Absent on threads created before route
+   * modes were recorded; those are treated as 'auto'.
+   */
+  routeMode?: 'auto' | 'pinned';
   workspacePath?: string;
   createdAt?: number;
   updatedAt?: number;
@@ -334,6 +339,82 @@ export function initChatModule({
     if (timer) clearTimeout(timer);
     chatRetryTimers.delete(convId);
     chatRetryAttempts.delete(convId);
+    uiState.chatRoutingNotice = null;
+  }
+
+  function findConversationSummary(convId: string): ChatConversationSummary | null {
+    if (activeConversation?.id === convId) return activeConversation;
+    return Array.isArray(uiState.chatConversations)
+      ? (uiState.chatConversations as ChatConversationSummary[]).find((c) => c.id === convId) ?? null
+      : null;
+  }
+
+  /**
+   * Pick a different healthy peer for a conversation whose current peer just
+   * failed.
+   *
+   * Returns null when failover must not happen: the thread is pinned (the user
+   * chose that peer), or no better alternative exists — retrying the same peer
+   * still beats refusing to send.
+   */
+  function resolveFailoverSelection(
+    convId: string,
+    failedPeerId: string | undefined,
+  ): { selection: ChatServiceSelection; fromLabel: string; toLabel: string } | null {
+    if (!failedPeerId) return null;
+
+    const conversation = findConversationSummary(convId);
+    // Threads with no recorded mode predate route-mode tracking; they are
+    // treated as auto, since failover only runs after a failure.
+    if (conversation?.routeMode === 'pinned') return null;
+
+    const serviceId = normalizeChatServiceId(conversation?.service);
+    if (serviceId.length === 0) return null;
+
+    const model = uiState.vprRouteSelection.model
+      ?? { provider: normalizeProviderId(conversation?.provider) ?? '', serviceId, label: serviceId, categories: [] };
+
+    const option = resolveVprChatOption(
+      uiState.chatServiceOptions,
+      uiState.discoverRows,
+      { model, mode: 'auto', peerId: null },
+      uiState.vprRoutingPreferences,
+      { excludePeerIds: [failedPeerId] },
+    );
+    if (!option || option.peerId === failedPeerId) return null;
+
+    const selection = decodeChatServiceSelection(option.value);
+    if (selection.id.length === 0 || !selection.peerId) return null;
+
+    const failedLabel = uiState.discoverRows.find((row) => row.peerId === failedPeerId)?.peerLabel
+      ?? `${failedPeerId.slice(0, 8)}...`;
+    return {
+      selection,
+      fromLabel: failedLabel,
+      toLabel: option.peerLabel || `${option.peerId?.slice(0, 8)}...`,
+    };
+  }
+
+  /**
+   * Rebind a conversation to a new peer in renderer state.
+   *
+   * Applied eagerly rather than threaded through the retry context so both
+   * retry entry points pick it up: the one that re-dispatches with an explicit
+   * selection, and the one that re-reads the conversation's own peer.
+   */
+  function applyFailoverSelection(convId: string, selection: ChatServiceSelection): void {
+    const patch = {
+      service: selection.id,
+      provider: selection.provider ?? undefined,
+      peerId: selection.peerId,
+      routeMode: 'auto' as const,
+    };
+    if (activeConversation?.id === convId) Object.assign(activeConversation, patch);
+    if (Array.isArray(uiState.chatConversations)) {
+      const row = (uiState.chatConversations as ChatConversationSummary[]).find((c) => c.id === convId);
+      if (row) Object.assign(row, patch);
+    }
+    notifyUiStateChanged();
   }
 
   function scheduleChatRetry(
@@ -357,17 +438,38 @@ export function initChatModule({
     const existing = chatRetryTimers.get(convId);
     if (existing) clearTimeout(existing);
     chatRetryAttempts.set(convId, nextAttempt);
-    appendSystemLog(
-      reason === 'payment'
-        ? `Payment negotiation is still settling. Retrying in ${PAYMENT_AUTO_RETRY_DELAY_MS / 1000}s...`
-        : `Chat request failed. Retrying in ${PAYMENT_AUTO_RETRY_DELAY_MS / 1000}s...`,
-    );
+
+    // Retrying the same dead peer is what made a failed conversation fail
+    // three times in a row. Move to a healthy peer before arming the timer, so
+    // both retry paths below dispatch to the new one.
+    let retryCtx = ctx;
+    if (reason === 'request') {
+      const failedPeerId = ctx?.selection?.peerId ?? findConversationSummary(convId)?.peerId;
+      const failover = resolveFailoverSelection(convId, failedPeerId);
+      if (failover) {
+        applyFailoverSelection(convId, failover.selection);
+        if (ctx) retryCtx = { ...ctx, selection: failover.selection };
+        const notice = `${failover.fromLabel} isn't responding. `
+          + `Retrying on ${failover.toLabel} in ${PAYMENT_AUTO_RETRY_DELAY_MS / 1000}s...`;
+        uiState.chatRoutingNotice = notice;
+        appendSystemLog(notice);
+      }
+    }
+
+    if (!uiState.chatRoutingNotice || reason === 'payment') {
+      appendSystemLog(
+        reason === 'payment'
+          ? `Payment negotiation is still settling. Retrying in ${PAYMENT_AUTO_RETRY_DELAY_MS / 1000}s...`
+          : `Chat request failed. Retrying in ${PAYMENT_AUTO_RETRY_DELAY_MS / 1000}s...`,
+      );
+    }
 
     const timer = setTimeout(() => {
       chatRetryTimers.delete(convId);
-      if (ctx?.content != null) {
+      const ctxForRetry = retryCtx;
+      if (ctxForRetry?.content != null) {
         setConversationSending(convId, true);
-        dispatchChatRequest(convId, ctx.content, ctx.attachments, ctx.selection);
+        dispatchChatRequest(convId, ctxForRetry.content, ctxForRetry.attachments, ctxForRetry.selection);
       } else if (convId === uiState.chatActiveConversation) {
         retryAfterPayment();
       } else {
@@ -1844,10 +1946,14 @@ export function initChatModule({
 
     try {
       const peerId = (selection.peerId ?? uiState.chatSelectedPeerId) || undefined;
+      // Record how this thread's peer was chosen: a pinned thread must keep its
+      // peer forever, while an auto thread may be re-routed if the peer dies.
+      const routeMode = uiState.vprRouteSelection.mode === 'pinned-peer' ? 'pinned' : 'auto';
       const result = await bridge.chatAiCreateConversation(
         selection.id,
         selection.provider ?? undefined,
         peerId,
+        routeMode,
       );
       if (result.ok && result.data) {
         const conversationId = getConversationId(result.data);

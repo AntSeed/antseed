@@ -144,3 +144,41 @@ test('formatChatStreamStopForLog includes kind, status, code, and retryability',
   assert.match(out, /retryable/);
   assert.match(out, /: nope$/);
 });
+
+test('a buyer-fault 503 is non-retryable so the user sees the real fix', () => {
+  // Blanket-retrying 5xx would fail this over across every peer in turn while
+  // hiding the one thing the user has to change.
+  const reason = classifyChatStreamFailure({
+    error: new Error(
+      'Upstream request failed with status 503: {"error":{"code":"buyer-deposits-insufficient"}}',
+    ),
+    stopReason: 'error',
+  });
+
+  assert.equal(reason.kind, 'http_error');
+  assert.equal(reason.statusCode, 503);
+  assert.equal(reason.retryable, false);
+  assert.match(reason.message, /deposit balance is too low/i);
+});
+
+test('an unreachable chain RPC names the RPC, not the peer', () => {
+  const reason = classifyChatStreamFailure({
+    error: new Error(
+      'Upstream request failed with status 503: {"reason":"chain_rpc_unavailable"}',
+    ),
+    stopReason: 'error',
+  });
+
+  assert.equal(reason.retryable, false);
+  assert.match(reason.message, /chain RPC/i);
+});
+
+test('a plain seller 503 stays retryable', () => {
+  const reason = classifyChatStreamFailure({
+    error: new Error('Upstream request failed with status 503 Service Unavailable'),
+    stopReason: 'error',
+  });
+
+  assert.equal(reason.statusCode, 503);
+  assert.equal(reason.retryable, true);
+});

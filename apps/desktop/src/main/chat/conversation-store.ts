@@ -63,6 +63,7 @@ function summarizeConversation(conversation: AiConversation): AiConversationSumm
     totalEstimatedCostUsd: deriveCost(conversation.messages),
     ...(conversation.peerId ? { peerId: conversation.peerId } : {}),
     ...(conversation.peerLabel ? { peerLabel: conversation.peerLabel } : {}),
+    ...(conversation.routeMode ? { routeMode: conversation.routeMode } : {}),
     ...(conversation.workspacePath ? { workspacePath: conversation.workspacePath } : {}),
   };
 }

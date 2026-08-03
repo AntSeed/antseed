@@ -109,6 +109,7 @@ import {
   computeOnChainTrust,
   type SybilContext,
 } from "./reputation/on-chain-reputation.js";
+import { buyerFault } from "./errors.js";
 
 export type { Provider, ProviderStreamCallbacks };
 export type { Router };
@@ -628,7 +629,7 @@ export class AntseedNode extends EventEmitter {
 
   async discoverPeers(service?: string): Promise<PeerInfo[]> {
     if (!this._peerLookup) {
-      throw new Error("Node not started or not in buyer mode");
+      throw buyerFault("Node not started or not in buyer mode", "node-not-started");
     }
 
     debugLog(`[Node] Discovering peers (service: "${service ?? "*"}")...`);
@@ -875,7 +876,7 @@ export class AntseedNode extends EventEmitter {
    */
   async findPeer(peerId: string): Promise<PeerInfo | null> {
     if (!this._peerLookup) {
-      throw new Error("Node not started or not in buyer mode");
+      throw buyerFault("Node not started or not in buyer mode", "node-not-started");
     }
     const normalized = peerId.trim().toLowerCase().replace(/^0x/, "");
     if (!/^[0-9a-f]{40}$/.test(normalized)) {
@@ -1308,7 +1309,7 @@ export class AntseedNode extends EventEmitter {
     req: SerializedHttpRequest,
     options?: RequestExecutionOptions,
   ): Promise<SerializedHttpResponse> {
-    if (!this._buyerHandler) throw new Error("Node not started or not in buyer mode");
+    if (!this._buyerHandler) throw buyerFault("Node not started or not in buyer mode", "node-not-started");
     return this._buyerHandler.sendRequest(peer, req, undefined, options);
   }
 
@@ -1318,7 +1319,7 @@ export class AntseedNode extends EventEmitter {
     callbacks: RequestStreamCallbacks,
     options?: RequestExecutionOptions,
   ): Promise<SerializedHttpResponse> {
-    if (!this._buyerHandler) throw new Error("Node not started or not in buyer mode");
+    if (!this._buyerHandler) throw buyerFault("Node not started or not in buyer mode", "node-not-started");
     return this._buyerHandler.sendRequest(peer, req, callbacks, options);
   }
 
@@ -2034,7 +2035,7 @@ export class AntseedNode extends EventEmitter {
 
   private async _getOrCreateConnection(peer: PeerInfo): Promise<PeerConnection> {
     if (!this._connectionManager || !this._identity) {
-      throw new Error("Node not started");
+      throw buyerFault("Node not started", "node-not-started");
     }
 
     const existing = this._connectionManager.getConnection(peer.peerId);
