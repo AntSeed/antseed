@@ -65,3 +65,15 @@
   from { transform: rotate(-1deg); }
   to   { transform: rotate(1deg); }
 }
+
+/* SVG part transforms repaint the ant every frame — the 0.18s leg swing
+   alone keeps that region painting at full frame rate, so honor the OS
+   motion preference. */
+@media (prefers-reduced-motion: reduce) {
+  .head,
+  .abdomen,
+  .leg-a,
+  .leg-b {
+    animation: none;
+  }
+}

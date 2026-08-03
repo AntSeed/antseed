@@ -27,8 +27,13 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .panel {
+  .panel,
+  .runningDot {
     animation: none;
+  }
+
+  .runningDot::after {
+    display: none;
   }
 }
 
@@ -202,41 +207,39 @@
 }
 
 .runningDot {
+  position: relative;
   flex-shrink: 0;
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: var(--accent-green, #4ade80);
-  box-shadow: 0 0 0 0 rgba(var(--accent-green-rgb, 74, 222, 128), 0.6);
   animation: running-pulse 1.4s ease-in-out infinite;
+}
+
+/* Expanding halo as a scaled pseudo-element instead of an animated
+   box-shadow — transform/opacity keyframes run on the compositor, while a
+   box-shadow animation repaints the row on every frame. */
+.runningDot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: inherit;
+  animation: running-ring 1.4s ease-in-out infinite;
 }
 
 .approvalDot {
   background: #f97316;
-  box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.6);
-  animation-name: approval-pulse;
 }
 
 @keyframes running-pulse {
-  0%, 100% {
-    opacity: 1;
-    box-shadow: 0 0 0 0 rgba(var(--accent-green-rgb, 74, 222, 128), 0.55);
-  }
-  50% {
-    opacity: 0.55;
-    box-shadow: 0 0 0 4px rgba(var(--accent-green-rgb, 74, 222, 128), 0);
-  }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 
-@keyframes approval-pulse {
-  0%, 100% {
-    opacity: 1;
-    box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.55);
-  }
-  50% {
-    opacity: 0.65;
-    box-shadow: 0 0 0 4px rgba(249, 115, 22, 0);
-  }
+@keyframes running-ring {
+  0% { transform: scale(1); opacity: 0.55; }
+  50%, 100% { transform: scale(2.15); opacity: 0; }
 }
 
 .convRight {

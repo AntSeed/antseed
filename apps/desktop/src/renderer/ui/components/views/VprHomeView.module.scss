@@ -76,12 +76,9 @@
   pointer-events: none;
 }
 
-/* Shimmer band that sweeps the banner every few seconds while connected.
-   Speckled by a noise mask and blended over the texture so it reads as the
-   grain dots lighting up in a wave. */
 /* Off: recolor the brand banner red — a color-blend overlay shifts the
    texture's green hues to red while keeping its luminance detail. The
-   parent's mask clips the overlay with it. */
+   parent's mask clips the overlay with it. (Static blend: paints once.) */
 .heroBannerOff::before {
   content: '';
   position: absolute;
@@ -90,6 +87,11 @@
   mix-blend-mode: color;
 }
 
+/* Shimmer band that sweeps the banner every few seconds while connected.
+   Speckled by a noise mask so it reads as the grain dots lighting up in a
+   wave. No blend mode here: blending an animated layer with its backdrop
+   forces the compositor to re-rasterize the banner on every frame, which
+   kept the GPU process busy for as long as the Home view was visible. */
 .heroBanner::after {
   content: '';
   position: absolute;
@@ -97,16 +99,16 @@
   bottom: 0;
   left: 0;
   width: 45%;
-  background: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.6) 50%, rgba(255, 255, 255, 0) 100%);
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.45) 50%, rgba(255, 255, 255, 0) 100%);
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  mix-blend-mode: overlay;
   transform: translateX(-120%) skewX(-12deg);
   opacity: 0;
 }
 
 .heroBannerLive::after {
   opacity: 1;
+  will-change: transform;
   animation: hero-wave 7s ease-in-out infinite;
 }
 

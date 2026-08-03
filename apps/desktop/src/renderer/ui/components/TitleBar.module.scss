@@ -231,3 +231,10 @@
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .title-bar-update-badge-ready .title-bar-update-dot,
+  .title-bar-update-badge-downloading .title-bar-update-dot {
+    animation: none;
+  }
+}

@@ -311,32 +311,49 @@
 }
 
 /* Green pulse on a chat row that is receiving traffic — same signal as the
-   chat list's running dot in the main window. */
+   chat list's running dot in the main window. The halo is a scaled
+   pseudo-element instead of an animated box-shadow — transform/opacity
+   keyframes run on the compositor, while a box-shadow animation repaints
+   the pill on every frame. */
 .runningDot {
+  position: relative;
   flex-shrink: 0;
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: var(--accent-green, #4ade80);
-  box-shadow: 0 0 0 0 rgba(var(--accent-green-rgb, 74, 222, 128), 0.6);
   animation: running-pulse 1.4s ease-in-out infinite;
 }
 
+.runningDot::after,
+.statusDot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: inherit;
+  animation: running-ring 1.4s ease-in-out infinite;
+}
+
 @keyframes running-pulse {
-  0%, 100% {
-    opacity: 1;
-    box-shadow: 0 0 0 0 rgba(var(--accent-green-rgb, 74, 222, 128), 0.55);
-  }
-  50% {
-    opacity: 0.55;
-    box-shadow: 0 0 0 4px rgba(var(--accent-green-rgb, 74, 222, 128), 0);
-  }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+@keyframes running-ring {
+  0% { transform: scale(1); opacity: 0.55; }
+  50%, 100% { transform: scale(2.15); opacity: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .runningDot,
   .statusDot {
     animation: none;
+  }
+
+  .runningDot::after,
+  .statusDot::after {
+    display: none;
   }
 }
 
@@ -593,6 +610,7 @@
 /* Pill-face status dot: steady orange while ready, pulsing green while
    traffic moves. */
 .statusDot {
+  position: relative;
   flex-shrink: 0;
   width: 7px;
   height: 7px;
@@ -609,6 +627,11 @@
 .statusDotStopped {
   background: var(--danger, #ef4444);
   animation: none;
+}
+
+.statusDotReady::after,
+.statusDotStopped::after {
+  display: none;
 }
 
 /* Empty balance + paid model: warning-toned label jumping to the deposit
