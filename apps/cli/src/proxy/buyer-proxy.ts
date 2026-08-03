@@ -89,6 +89,24 @@ function isRouterSuccess(statusCode: number, path: string, retryableStatusCodes:
 }
 
 /**
+ * Detect a "model not served" rejection: the seller's own pre-payment 400
+ * (`error.code: 'model_not_found'`, sent when the requested model is not in
+ * its advertised services — e.g. its health checker just unadvertised it) or
+ * an upstream 404 with the same code. Routing treated these as successes,
+ * so a peer that stopped serving a model kept its healthy routing stats and
+ * the stale peer cache kept offering the model indefinitely.
+ */
+export function isModelNotFoundResponse(response: SerializedHttpResponse): boolean {
+  if (response.statusCode !== 400 && response.statusCode !== 404) return false
+  try {
+    const parsed = JSON.parse(Buffer.from(response.body).toString('utf-8')) as { error?: { code?: unknown } }
+    return parsed?.error?.code === 'model_not_found'
+  } catch {
+    return false
+  }
+}
+
+/**
  * Max age for carrying forward peers not seen in the latest DHT scan.
  * Intentionally longer than `peer-lookup.ts` `maxAnnouncementAgeMs` (30 min) so
  * a peer that misses one reannounce cycle doesn't hit both cliffs at once.
@@ -97,6 +115,8 @@ function isRouterSuccess(statusCode: number, path: string, retryableStatusCodes:
  */
 const CARRY_FORWARD_TTL_MS = 2 * 60 * 60_000
 const PEER_FAILURE_WINDOW_MS = 5 * 60_000
+/** Min gap between background peer refreshes triggered by model_not_found responses. */
+const MODEL_NOT_FOUND_REFRESH_THROTTLE_MS = 30_000
 /** Verification is expensive; bound how many verdicts we retain (TTL = peer-cache TTL). */
 const VERIFY_CACHE_MAX_ENTRIES = 1024
 
@@ -401,6 +421,7 @@ export class BuyerProxy {
   private _cacheMutationEpoch = 0
   private _peerRefreshPromise: Promise<PeerInfo[]> | null = null
   private _lastStaleCacheLogAtMs = 0
+  private _lastModelNotFoundRefreshAtMs = 0
   private _bgRefreshHandle: ReturnType<typeof setInterval> | null = null
   private _peerFailures: Map<string, PeerFailureEntry> = new Map()
   /** Latest relayer receipt per sweep authNonce, for CLI progress polling. */
@@ -740,6 +761,27 @@ export class BuyerProxy {
       `Peer ${peerId.slice(0, 12)}... failure ${entry.count} within diagnostic window `
       + `(reason=${reason}); retaining cached discovery metadata.`,
     )
+  }
+
+  /**
+   * A peer told us it does not serve the requested model. Our cached
+   * metadata for it is stale (the seller may have just unadvertised the
+   * model after failing its own health checks), so record the failure for
+   * diagnostics and refresh discovery metadata in the background — throttled,
+   * since one broken model can produce a burst of these.
+   */
+  private _onModelNotFound(peerId: string, requestedService: string | null): void {
+    this._recordPeerFailure(peerId, `model-not-found:${requestedService ?? 'unknown'}`)
+    const now = Date.now()
+    if (now - this._lastModelNotFoundRefreshAtMs < MODEL_NOT_FOUND_REFRESH_THROTTLE_MS) {
+      return
+    }
+    this._lastModelNotFoundRefreshAtMs = now
+    log(
+      `Peer ${peerId.slice(0, 12)}... does not serve ${requestedService ?? 'the requested model'}; `
+      + 'refreshing peer metadata in background.',
+    )
+    void this._refreshPeersNow().catch(() => {})
   }
 
   /**
@@ -1618,9 +1660,16 @@ export class BuyerProxy {
           responseForClient.body,
           selectedPeer,
         )
+        const modelNotFound = !streamed
+          && !isControlPlaneServicesPath(requestForPeer.path)
+          && isModelNotFoundResponse(responseForClient)
+        if (modelNotFound) {
+          this._onModelNotFound(selectedPeer.peerId, requestedService)
+        }
         if (router) {
           router.onResult(selectedPeer, {
-            success: isRouterSuccess(responseForClient.statusCode, requestForPeer.path, retryableStatusCodes),
+            success: !modelNotFound
+              && isRouterSuccess(responseForClient.statusCode, requestForPeer.path, retryableStatusCodes),
             latencyMs,
             tokens: telemetry.usage.totalTokens,
           })
@@ -1693,10 +1742,16 @@ export class BuyerProxy {
           latencyMs,
         )
 
+        const modelNotFound = !isControlPlaneServicesPath(requestForPeer.path)
+          && isModelNotFoundResponse(response)
+        if (modelNotFound) {
+          this._onModelNotFound(selectedPeer.peerId, requestedService)
+        }
         // Report result to router for learning
         if (router) {
           router.onResult(selectedPeer, {
-            success: isRouterSuccess(response.statusCode, requestForPeer.path, retryableStatusCodes),
+            success: !modelNotFound
+              && isRouterSuccess(response.statusCode, requestForPeer.path, retryableStatusCodes),
             latencyMs,
             tokens: telemetry.usage.totalTokens,
           })
