@@ -183,9 +183,26 @@ function pulseFade(t: number) {
 
 const asset = (name: string) => `/img/demo/${name}`;
 
-/* mobile: show only the VPR card + power-on animation, cropped to its own box */
-const VPR_CARD_W = 524;
-const VPR_CARD_H = 648;
+/* ------------------------------------------------------------------
+   Mobile composition — one centred column instead of the wide scene.
+   The chat windows drop out; what is left is the story of a single
+   request, stacked top -> bottom in the order the timeline already
+   tells it: the VPR, the price it got, the network it got it from.
+
+   Hierarchy comes from nested widths — card 524 < routing pill 580 <
+   network bar 636, in even 56px steps — so the card stays the
+   dominant object and each outer layer frames the one inside it.
+   ------------------------------------------------------------------ */
+const M_W = 660;
+const M_H = 924;
+const M_CX = M_W / 2;
+
+/* Aux elements keep their artwork and are scaled to hit the widths
+   above. Their `left`/`top` is the *image* box, solved so the visible
+   ink lands centred on M_CX: left = cx - w/2 - (inkCx - w/2) * scale. */
+const M_ROUTING_S = 0.788; // 736 ink -> 580, still overhangs the card
+const M_TOKENS_S = 0.92; //   454 ink -> 418, the narrowest chip
+const M_NETWORK_S = 0.772; // 824 ink -> 636, the widest layer
 
 /* ============================================================
    Chat cards (desktop `i1` / web `i7`)
@@ -697,6 +714,64 @@ function SavingConnector() {
   );
 }
 
+/* ------------------------------------------------------------------
+   Mobile stack connector — the same ink as the desktop lines, but drawn
+   straight in scene units so the column can space its links freely.
+   (The desktop connectors render a fixed viewBox at 2x; here the stroke
+   widths are already doubled, which lands on the same on-screen weight.)
+   ------------------------------------------------------------------ */
+function StackConnector({
+  id,
+  x,
+  top,
+  len,
+  grow: growBeats,
+  flows,
+}: {
+  /** unique filter id — SVG filter ids are document-global */
+  id: string;
+  /** scene x the line runs down */
+  x: number;
+  top: number;
+  len: number;
+  grow: {start: number; end: number};
+  flows: {start: number; end: number; reverse: boolean}[];
+}) {
+  const frame = useFrame();
+  const grow = growth(frame, growBeats.start, growBeats.end);
+  const out = useOut();
+  if (grow <= 0 || out <= 0) return null;
+  const d = `M 20 0 L 20 ${len}`;
+  const dash = `${len * grow} ${len}`;
+  const active = flows
+    .map((f) => ({f, t: phaseT(frame, f.start, f.end)}))
+    .find((e) => e.t !== null);
+  return (
+    <svg
+      width={40}
+      height={len}
+      viewBox={`0 0 40 ${len}`}
+      style={{position: 'absolute', left: x - 20, top, overflow: 'visible', opacity: out}}>
+      <defs>
+        <filter id={`${id}-tight`} x={-20} y={-20} width={80} height={len + 40} filterUnits="userSpaceOnUse">
+          <feGaussianBlur stdDeviation={4} />
+        </filter>
+        <filter id={`${id}-flow`} x={-50} y={-30} width={140} height={len + 60} filterUnits="userSpaceOnUse">
+          <feGaussianBlur stdDeviation={7} />
+        </filter>
+      </defs>
+      <path d={d} fill="none" stroke="#059669" strokeWidth={3} strokeLinecap="round" strokeDasharray={dash} opacity={0.55} />
+      <path d={d} fill="none" stroke="#A7F3D0" strokeWidth={6} strokeLinecap="round" strokeDasharray={dash} opacity={0.75} filter={`url(#${id}-tight)`} />
+      {grow >= 1 && active && active.t !== null && (
+        <>
+          <path d={d} fill="none" stroke="#ECFDF5" strokeWidth={18} strokeLinecap="round" strokeDasharray={`44 ${len}`} strokeDashoffset={dashOffset(active.t, 44, len, active.f.reverse)} opacity={0.3 * pulseFade(active.t)} filter={`url(#${id}-flow)`} />
+          <path d={d} fill="none" stroke="#FFFFFF" strokeWidth={6} strokeLinecap="round" strokeDasharray={`22 ${len}`} strokeDashoffset={dashOffset(active.t, 22, len, active.f.reverse)} opacity={0.75 * pulseFade(active.t)} filter={`url(#${id}-tight)`} />
+        </>
+      )}
+    </svg>
+  );
+}
+
 /* ============================================================
    AntSeed network searching bar (`al`)
    ============================================================ */
@@ -899,19 +974,91 @@ function Pop({
 }
 
 /* ============================================================
+   Mobile scene — the stacked column, 660×924
+   ============================================================ */
+function MobileScene({onToggle}: {onToggle?: () => void}) {
+  const frame = useFrame();
+  const out = useOut();
+  const routing = popIn(frame, B.modelRevealStart, B.modelRevealEnd - B.modelRevealStart);
+  const tokens = popIn(frame, B.tokensRevealStart);
+  const network = popIn(frame, B.networkRevealStart);
+
+  return (
+    <div style={{position: 'absolute', inset: 0}}>
+      {/* 1 — the VPR itself: 524 wide, centred, the anchor of the column */}
+      <VprCard left={M_CX - 262} top={0} onToggle={onToggle} />
+
+      {/* 2 — routing + model roulette, sized to cover the card's baked-in
+             routing row (467×80 centred at 262,249 in card space) and to
+             overhang the card on both sides the way the desktop pill does */}
+      <div
+        style={{
+          position: 'absolute',
+          left: -100,
+          top: 142,
+          width: 860,
+          height: 252,
+          opacity: routing.opacity * out,
+          transform: `scale(${M_ROUTING_S * routing.scale})`,
+          transformOrigin: 'center center',
+          zIndex: 5,
+        }}>
+        <RoutingBar appName="Any Agentic App" />
+        <ModelRoulette />
+      </div>
+
+      {/* 3 — the price, hung straight off the model row and right-aligned to
+             the pill's edge: the receipt for the model that was just picked,
+             so adjacency does the linking and no connector is needed.
+             ink 312..433, right edge on the pill's 620 */}
+      <TokensSaving
+        left={122}
+        top={267}
+        opacity={tokens.opacity * out}
+        scale={M_TOKENS_S * tokens.scale}
+      />
+
+      {/* 4 — VPR -> network, with the anonymous relay sitting on the line.
+             The node stays small enough that the wire still reads either
+             side of it — it is a stop on the line, not a break in it. */}
+      <StackConnector
+        id="m-net"
+        x={M_CX}
+        top={656}
+        len={100}
+        grow={{start: B.lowerLineGrowStart, end: B.lowerLineGrowEnd}}
+        flows={[
+          {start: B.reqDownStart, end: B.reqDownEnd, reverse: false},
+          {start: B.respDownStart, end: B.respDownEnd, reverse: true},
+          {start: B.endFlowStart, end: B.endFlowEnd, reverse: true},
+        ]}
+      />
+      <Pop
+        start={B.anonNodeStart}
+        dur={B.anonNodeEnd - B.anonNodeStart}
+        style={{left: M_CX - 32, top: 674, width: 64, height: 64, zIndex: 6}}>
+        <img src={asset('anonymous-node.svg')} alt="" style={{width: 64, height: 64, display: 'block'}} />
+      </Pop>
+
+      {/* 5 — the network: widest layer, frames the whole column, ink 764..884 */}
+      <NetworkBar
+        left={-96}
+        top={731}
+        opacity={network.opacity * out}
+        scale={M_NETWORK_S * network.scale}
+      />
+    </div>
+  );
+}
+
+/* ============================================================
    Scene (`aE`) — 2048×1152
    ============================================================ */
 function Scene({mobile, onToggle}: {mobile?: boolean; onToggle?: () => void}) {
   const frame = useFrame();
   const out = useOut();
 
-  if (mobile) {
-    return (
-      <div style={{position: 'absolute', inset: 0}}>
-        <VprCard left={0} top={0} onToggle={onToggle} />
-      </div>
-    );
-  }
+  if (mobile) return <MobileScene onToggle={onToggle} />;
 
   const network = popIn(frame, B.networkRevealStart);
   const tokens = popIn(frame, B.tokensRevealStart);
@@ -1006,6 +1153,31 @@ function Scene({mobile, onToggle}: {mobile?: boolean; onToggle?: () => void}) {
    ============================================================ */
 const SHUTDOWN_FRAMES = B.fadeOutEnd - B.fadeOutStart;
 
+/**
+ * Mobile runs the same scene on a shorter clock. The chat beats are gone from
+ * the stacked composition, so the stretches that only served them (54→190 and
+ * 380→542) have nothing to show. The loop plays three segments of scene frames
+ * back to back instead — same curves, same components, ~11.6s instead of 19.4s.
+ * Segment one is identity-mapped, which keeps the power button's restart
+ * (`origin = now - powerOnStart`) correct on both layouts.
+ */
+const MOBILE_SEGMENTS: [number, number][] = [
+  [0, 60], // off hold -> power on -> card surface reveal
+  [185, 386], // routing + roulette -> price -> network -> response
+  [494, 582], // closing pulse -> hold -> fade out
+];
+const MOBILE_TOTAL_FRAMES = MOBILE_SEGMENTS.reduce((n, [a, b]) => n + (b - a), 0);
+
+/** timeline frame (0..MOBILE_TOTAL_FRAMES) -> scene frame */
+function mobileSceneFrame(t: number) {
+  let rest = t;
+  for (const [a, b] of MOBILE_SEGMENTS) {
+    if (rest < b - a) return a + rest;
+    rest -= b - a;
+  }
+  return B.total;
+}
+
 /** running = the loop plays; shuttingDown = the manual off beat; off = parked. */
 type PowerMode = 'running' | 'shuttingDown' | 'off';
 
@@ -1060,8 +1232,12 @@ export function HeroDemo({
     return () => mq.removeEventListener('change', update);
   }, []);
 
-  const sceneW = mobile ? VPR_CARD_W : 2048;
-  const sceneH = mobile ? VPR_CARD_H : 1152;
+  const sceneW = mobile ? M_W : 2048;
+  const sceneH = mobile ? M_H : 1152;
+
+  // read inside the rAF loop, which must not re-subscribe on a breakpoint flip
+  const mobileRef = useRef(mobile);
+  mobileRef.current = mobile;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -1087,7 +1263,9 @@ export function HeroDemo({
     originRef.current = performance.now();
     const loop = (now: number) => {
       if (modeRef.current === 'running') {
-        const f = (((now - originRef.current) / 1000) * DEMO_FPS) % DEMO_TOTAL_FRAMES;
+        const total = mobileRef.current ? MOBILE_TOTAL_FRAMES : DEMO_TOTAL_FRAMES;
+        const t = (((now - originRef.current) / 1000) * DEMO_FPS) % total;
+        const f = mobileRef.current ? mobileSceneFrame(t) : t;
         frozenRef.current = f;
         if (frameRef) frameRef.current = f;
         if (shutdownRef) shutdownRef.current = 0;
