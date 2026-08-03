@@ -61,7 +61,7 @@ export default function Footer(): JSX.Element {
               </svg>
             </a>
           </div>
-          <div className={styles.copyright}>&copy; 2026 AntSeed Protocol</div>
+          <div className={styles.copyright}>&copy; 2026 AntSeed Foundation</div>
         </div>
 
         <div className={styles.columns}>

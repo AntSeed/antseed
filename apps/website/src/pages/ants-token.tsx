@@ -218,7 +218,7 @@ export default function AntsToken(): JSX.Element {
             Tokens restricted
           </span>
         }
-        lead="ANTS is the native token of AntSeed and the trust and reputation layer of the network: real, payment-backed usage and locked ANTS behind seller identities turn open participation into reputation buyers can verify. Holding ANTS does not represent equity, ownership, debt, profit share, revenue share, claim on assets, or any right to receive payments.">
+        lead="ANTS is the native token of AntSeed and the trust and reputation layer of the network: real, payment-backed usage and locked ANTS behind seller identities turn open participation into reputation buyers can verify.">
         <Button href={download.href} variant="clay" arrow>Download VPR</Button>
         <Button to="/docs/lightpaper" variant="ghost">Lightpaper</Button>
       </PageHero>
