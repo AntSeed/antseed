@@ -277,6 +277,12 @@ const CARD_NOT_CONFIGURED_NOTICE =
  * provider's hosted checkout page.
  * Only pages that need an external wallet signature leave the app.
  */
+// The Fun checkout and the Stripe pay page are hidden until they're ready to
+// ship. While the primary CTA is gone, the option list replaces the "More
+// options" expander and always shows.
+const SHOW_FUN_DEPOSIT = false;
+const SHOW_STRIPE_OPTION = false;
+
 export function VprDepositView({ onSelectView }: Props) {
   const actions = useActions();
   const snap = useUiSelector((state) => ({
@@ -514,31 +520,35 @@ export function VprDepositView({ onSelectView }: Props) {
           {/* Primary path: deposit through Fun (fun.xyz). The Fun checkout
               only runs on the web; until our hosted integration is live this
               opens their site directly. */}
-          <button
-            type="button"
-            className={styles.funCta}
-            onClick={() => void window.antseedDesktop?.openExternalUrl?.('https://fun.xyz')}
-          >
-            Deposit
-          </button>
+          {SHOW_FUN_DEPOSIT && (
+            <button
+              type="button"
+              className={styles.funCta}
+              onClick={() => void window.antseedDesktop?.openExternalUrl?.('https://fun.xyz')}
+            >
+              Deposit
+            </button>
+          )}
           {payPageNotice && <div className={styles.cardNotice} role="alert">{payPageNotice}</div>}
 
-          <button
-            type="button"
-            className={styles.moreLink}
-            aria-expanded={moreOpen}
-            onClick={() => setMoreOpen((open) => !open)}
-          >
-            <span>More options</span>
-            <HugeiconsIcon
-              icon={ArrowDown01Icon}
-              size={16}
-              strokeWidth={2}
-              className={`${styles.moreLinkChevron}${moreOpen ? ` ${styles.moreLinkChevronOpen}` : ''}`}
-            />
-          </button>
+          {SHOW_FUN_DEPOSIT && (
+            <button
+              type="button"
+              className={styles.moreLink}
+              aria-expanded={moreOpen}
+              onClick={() => setMoreOpen((open) => !open)}
+            >
+              <span>More options</span>
+              <HugeiconsIcon
+                icon={ArrowDown01Icon}
+                size={16}
+                strokeWidth={2}
+                className={`${styles.moreLinkChevron}${moreOpen ? ` ${styles.moreLinkChevronOpen}` : ''}`}
+              />
+            </button>
+          )}
 
-          {moreOpen && (
+          {(moreOpen || !SHOW_FUN_DEPOSIT) && (
             <div className={styles.optionList}>
               <button type="button" className={styles.methodCta} onClick={() => goToStage('crypto')}>
                 <span className={styles.methodCtaIcon}>
@@ -575,19 +585,21 @@ export function VprDepositView({ onSelectView }: Props) {
                 <HugeiconsIcon icon={ArrowUpRight01Icon} size={18} strokeWidth={2} className={styles.methodCtaArrow} />
               </button>
 
-              <button type="button" className={styles.methodCta} onClick={() => openCardProvider('antseed-pay')}>
-                <span className={styles.methodCtaIcon}>
-                  <StripeMark />
-                </span>
-                <span className={styles.methodCtaText}>
-                  <span className={styles.methodCtaTitle}>Stripe</span>
-                </span>
-                <span className={styles.methodBadges} aria-hidden="true">
-                  <VisaMark />
-                  <MastercardMark />
-                </span>
-                <HugeiconsIcon icon={ArrowUpRight01Icon} size={18} strokeWidth={2} className={styles.methodCtaArrow} />
-              </button>
+              {SHOW_STRIPE_OPTION && (
+                <button type="button" className={styles.methodCta} onClick={() => openCardProvider('antseed-pay')}>
+                  <span className={styles.methodCtaIcon}>
+                    <StripeMark />
+                  </span>
+                  <span className={styles.methodCtaText}>
+                    <span className={styles.methodCtaTitle}>Stripe</span>
+                  </span>
+                  <span className={styles.methodBadges} aria-hidden="true">
+                    <VisaMark />
+                    <MastercardMark />
+                  </span>
+                  <HugeiconsIcon icon={ArrowUpRight01Icon} size={18} strokeWidth={2} className={styles.methodCtaArrow} />
+                </button>
+              )}
               {cardNotice && <div className={styles.cardNotice} role="alert">{cardNotice}</div>}
             </div>
           )}
