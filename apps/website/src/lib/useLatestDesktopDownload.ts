@@ -121,6 +121,20 @@ function matchAsset(
   return null;
 }
 
+// The hook is mounted by several CTAs at once (hero, pricing, footer CTA, and
+// the navbar item on every page), so the release lookup is memoized at module
+// level — one GitHub API request per full page load, shared by all instances.
+// A failed fetch caches `null` rather than retrying: if GitHub is down or
+// rate-limiting, hammering it on every SPA navigation only makes it worse.
+let latestReleasePromise: Promise<GitHubRelease | null> | null = null;
+
+function fetchLatestRelease(): Promise<GitHubRelease | null> {
+  latestReleasePromise ??= fetch(GH_API_LATEST)
+    .then(r => (r.ok ? (r.json() as Promise<GitHubRelease>) : null))
+    .catch(() => null);
+  return latestReleasePromise;
+}
+
 function labelFor(platform: DesktopPlatform): string {
   switch (platform) {
     case 'mac':
@@ -167,14 +181,11 @@ export function useLatestDesktopDownload(): DesktopDownload {
     // who will be sent to the releases page anyway.
     if (platform !== 'mac' && platform !== 'win') return;
     let cancelled = false;
-    fetch(GH_API_LATEST)
-      .then(r => (r.ok ? r.json() : null))
-      .then((data: GitHubRelease | null) => {
-        if (cancelled || !data) return;
-        if (data.tag_name) setTag(data.tag_name);
-        if (Array.isArray(data.assets)) setAssets(data.assets);
-      })
-      .catch(() => { /* network / rate-limit / offline — silently fall back */ });
+    fetchLatestRelease().then((data: GitHubRelease | null) => {
+      if (cancelled || !data) return;
+      if (data.tag_name) setTag(data.tag_name);
+      if (Array.isArray(data.assets)) setAssets(data.assets);
+    });
     return () => { cancelled = true; };
   }, [platform]);
 

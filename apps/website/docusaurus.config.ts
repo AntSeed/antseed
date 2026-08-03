@@ -254,7 +254,10 @@ const config: Config = {
           className: 'header-telegram-link',
         },
         {
-          href: 'https://github.com/AntSeed/antseed/releases/latest',
+          // Custom item (src/theme/NavbarItem/DownloadNavbarItem.tsx): links
+          // straight to the installer for the visitor's OS/arch, falling back
+          // to the releases page when detection fails.
+          type: 'custom-download',
           label: 'Download VPR',
           position: 'right',
           className: 'header-download-link',
