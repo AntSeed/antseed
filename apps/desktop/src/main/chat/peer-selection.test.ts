@@ -13,6 +13,7 @@ test('normalizeChatPeerSelectionRequest preserves legacy string payloads', () =>
     peerId: 'peer-123',
     service: null,
     provider: null,
+    routeMode: null,
   });
 
   assert.deepEqual(normalizeChatPeerSelectionRequest(null), {
@@ -20,17 +21,19 @@ test('normalizeChatPeerSelectionRequest preserves legacy string payloads', () =>
     peerId: null,
     service: null,
     provider: null,
+    routeMode: null,
   });
 });
 
 test('normalizeChatPeerSelectionRequest trims conversation-scoped payloads', () => {
   assert.deepEqual(
-    normalizeChatPeerSelectionRequest({ conversationId: ' conv-1 ', peerId: ' peer-1 ' }),
+    normalizeChatPeerSelectionRequest({ conversationId: ' conv-1 ', peerId: ' peer-1 ', routeMode: 'auto' }),
     {
       conversationId: 'conv-1',
       peerId: 'peer-1',
       service: null,
       provider: null,
+      routeMode: 'auto',
     },
   );
 });
@@ -42,12 +45,14 @@ test('normalizeChatPeerSelectionRequest carries the model rebinding through', ()
       peerId: null,
       service: ' glm-3.2 ',
       provider: ' openai ',
+      routeMode: 'pinned',
     }),
     {
       conversationId: 'conv-1',
       peerId: null,
       service: 'glm-3.2',
       provider: 'openai',
+      routeMode: 'pinned',
     },
   );
 });

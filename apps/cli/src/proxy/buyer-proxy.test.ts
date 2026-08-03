@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import test from 'node:test'
 import {
+  ANTSEED_BUYER_FAULT_ERROR_CODE,
   ANTSEED_FAULT_ATTRIBUTION_HEADER,
   CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
   buyerFault,
@@ -534,6 +535,8 @@ test('a buyer-attributed failure returns 503 and never blames the peer', async (
   // should be pointed at the deposit rather than at a different peer.
   assert.equal(res.statusCode, 503)
   assert.equal(JSON.parse(res.body).error.code, 'buyer-deposits-insufficient')
+  assert.match(JSON.parse(res.body).error.message, new RegExp(ANTSEED_BUYER_FAULT_ERROR_CODE))
+  assert.equal(res.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER], 'buyer')
   assert.equal(routerResults.length, 0)
 
   const health = (proxy as any)._peerHealth.get(peer.peerId)
@@ -571,6 +574,7 @@ test('a buyer-authored 503 does not affect router metrics or peer health', async
   }))
 
   assert.equal(res.statusCode, 503)
+  assert.match(JSON.parse(res.body).error.message, new RegExp(ANTSEED_BUYER_FAULT_ERROR_CODE))
   assert.equal(routerResults.length, 0)
   const health = healthOf(proxy, peer)
   assert.equal(health?.lastReason, 'buyer-local')

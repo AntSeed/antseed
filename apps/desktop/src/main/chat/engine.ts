@@ -723,13 +723,13 @@ export function registerPiChatHandlers({
   });
 
   const applyPeerSelection = async (payload: ChatPeerSelectionRequest | string | null): Promise<{ ok: boolean; error?: string }> => {
-    const { conversationId, peerId, service, provider } = normalizeChatPeerSelectionRequest(payload);
+    const { conversationId, peerId, service, provider, routeMode } = normalizeChatPeerSelectionRequest(payload);
 
     if (conversationId) {
       if (peerId) {
         preferredPeerByConversationId.set(conversationId, peerId);
         const peerLabel = lastServiceCatalogEntries.find((entry) => entry.peerId === peerId)?.peerLabel;
-        await store.setPeer(conversationId, peerId, peerLabel, 'pinned');
+        await store.setPeer(conversationId, peerId, peerLabel, routeMode ?? 'pinned');
       } else {
         preferredPeerByConversationId.delete(conversationId);
         await store.clearPeer(conversationId);

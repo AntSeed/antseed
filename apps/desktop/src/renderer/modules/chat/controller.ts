@@ -100,7 +100,12 @@ export type ChatModuleApi = {
   sendMessageToConversation: (convId: string, text: string, attachments?: RawChatAttachment[]) => void;
   retryAfterPayment: () => void;
   abortChat: () => Promise<void>;
-  handleServiceChange: (value: string, explicitPeerId?: string, rememberModelPin?: boolean) => void;
+  handleServiceChange: (
+    value: string,
+    explicitPeerId?: string,
+    rememberModelPin?: boolean,
+    routeMode?: 'auto' | 'pinned',
+  ) => void;
   handleServiceFocus: () => void;
   handleServiceBlur: () => void;
   clearPinnedPeer: () => void;
@@ -371,8 +376,18 @@ export function initChatModule({
     const serviceId = normalizeChatServiceId(conversation?.service);
     if (serviceId.length === 0) return null;
 
-    const model = uiState.vprRouteSelection.model
-      ?? { provider: normalizeProviderId(conversation?.provider) ?? '', serviceId, label: serviceId, categories: [] };
+    const provider = normalizeProviderId(conversation?.provider) ?? '';
+    const catalogEntry = provider
+      ? findCatalogEntry(uiState.vprModelCatalog, provider, serviceId)
+      : null;
+    const model = catalogEntry
+      ? {
+          provider: catalogEntry.provider,
+          serviceId: catalogEntry.serviceId,
+          label: catalogEntry.label,
+          categories: [...catalogEntry.categories],
+        }
+      : { provider, serviceId, label: serviceId, categories: [] };
 
     const option = resolveVprChatOption(
       uiState.chatServiceOptions,
@@ -2409,7 +2424,12 @@ export function initChatModule({
   // Service select handlers (called by ChatView)
   // ---------------------------------------------------------------------------
 
-  function handleServiceChange(value: string, explicitPeerId?: string, rememberModelPin = true): void {
+  function handleServiceChange(
+    value: string,
+    explicitPeerId?: string,
+    rememberModelPin = true,
+    routeMode?: 'auto' | 'pinned',
+  ): void {
     uiState.chatSelectedServiceValue = value;
     pendingServiceOptions = null;
     clearTransientChatNotices();
@@ -2427,6 +2447,7 @@ export function initChatModule({
     const decoded = decodeChatServiceSelection(value);
     const nextServiceId = normalizeChatServiceId(selectedOption?.id ?? decoded.id);
     const nextProvider = normalizeProviderId(selectedOption?.provider ?? decoded.provider);
+    const nextRouteMode = routeMode ?? (peerId ? 'pinned' : 'auto');
 
     // Write the explicit pick through to the VPR route selection so the two
     // never disagree about which model+peer a new conversation targets. The
@@ -2477,6 +2498,7 @@ export function initChatModule({
     if (activeConversation) {
       activeConversation.peerId = peerId || undefined;
       activeConversation.peerLabel = selectedOption?.peerDisplayName || selectedOption?.peerLabel || undefined;
+      activeConversation.routeMode = nextRouteMode;
 
       if (nextServiceId) {
         activeConversation.service = nextServiceId;
@@ -2490,6 +2512,7 @@ export function initChatModule({
         if (summary) {
           summary.peerId = peerId || '';
           summary.peerLabel = activeConversation.peerLabel ?? '';
+          summary.routeMode = nextRouteMode;
           if (nextServiceId) {
             summary.service = nextServiceId;
             summary.provider = nextProvider ?? '';
@@ -2504,6 +2527,7 @@ export function initChatModule({
         // Persist the model rebinding too — the in-memory summary update
         // above is otherwise reverted by the next conversation-list refresh.
         ...(nextServiceId ? { service: nextServiceId, provider: nextProvider ?? '' } : {}),
+        routeMode: nextRouteMode,
       }).catch(() => undefined);
     }
     void refreshChatPermissionModeForPeer(peerId);
@@ -3086,7 +3110,11 @@ export function initChatModule({
         const finalized = materializeStreamingMessage(
           getConversationStreamingMessage(data.conversationId),
         );
-        if (finalized) {
+        const outputAlreadyStarted = Boolean(
+          finalized
+          && (!Array.isArray(finalized.content) || finalized.content.length > 0),
+        );
+        if (finalized && outputAlreadyStarted) {
           if (data.conversationId === uiState.chatActiveConversation) {
             commitAssistantMessage(finalized);
           } else {
@@ -3114,9 +3142,9 @@ export function initChatModule({
             if (paymentMatch) {
               void handlePaymentRequired(paymentMatch[1], { convId: data.conversationId });
               if (bridge.chatAiAbort) void bridge.chatAiAbort(data.conversationId).catch(() => {});
-            } else if (stopReason?.retryable === false) {
+            } else if (stopReason?.retryable === false || outputAlreadyStarted) {
               clearPaymentRetry(data.conversationId);
-              reportChatError(stopReason.message || data.error, 'Request failed');
+              reportChatError(stopReason?.message || data.error, 'Request failed');
             } else {
               scheduleChatRetry(
                 { convId: data.conversationId },

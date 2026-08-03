@@ -149,9 +149,7 @@ test('a buyer-fault 503 is non-retryable so the user sees the real fix', () => {
   // Blanket-retrying 5xx would fail this over across every peer in turn while
   // hiding the one thing the user has to change.
   const reason = classifyChatStreamFailure({
-    error: new Error(
-      'Upstream request failed with status 503: {"error":{"code":"buyer-deposits-insufficient"}}',
-    ),
+    error: new Error('503 antseed_buyer_fault: Insufficient buyer deposits for reserve top-up'),
     stopReason: 'error',
   });
 
@@ -163,9 +161,7 @@ test('a buyer-fault 503 is non-retryable so the user sees the real fix', () => {
 
 test('an unreachable chain RPC names the RPC, not the peer', () => {
   const reason = classifyChatStreamFailure({
-    error: new Error(
-      'Upstream request failed with status 503: {"reason":"chain_rpc_unavailable"}',
-    ),
+    error: new Error('503 antseed_buyer_fault: Could not reach the chain RPC'),
     stopReason: 'error',
   });
 
