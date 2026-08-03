@@ -1545,6 +1545,7 @@ export class AntseedNode extends EventEmitter {
           ...(p.serviceCategories ? { serviceCategories: { ...p.serviceCategories } } : {}),
           ...(p.serviceApiProtocols ? { serviceApiProtocols: { ...p.serviceApiProtocols } } : {}),
           maxConcurrency: p.maxConcurrency,
+          isAvailable: () => p.healthCheckAvailable !== false,
           pricing: {
             defaults: {
               inputUsdPerMillion: p.pricing.defaults.inputUsdPerMillion,

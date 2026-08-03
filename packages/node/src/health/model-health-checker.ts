@@ -78,8 +78,9 @@ interface ServiceHealthState {
  *
  * Removal mutates `provider.services` in place — the same array reference the
  * announcer and the seller request handler read live — so it takes effect on
- * the next `/metadata` fetch and the next incoming request without extra
- * plumbing.
+ * the next `/metadata` fetch and the next incoming request. If every service
+ * is removed, `provider.healthCheckAvailable` becomes false so discovery omits
+ * the provider instead of treating its empty service list as a wildcard.
  */
 export class ModelHealthChecker {
   private readonly _targets: ModelHealthTarget[];
@@ -250,21 +251,17 @@ export class ModelHealthChecker {
     if (index < 0) {
       // Already gone (removed externally) — track it as removed so it can recover.
       state.removed = true;
-      return;
-    }
-    // Metadata semantics treat an empty services list as a wildcard ("serves
-    // anything"), so never unadvertise a provider's last service — that would
-    // advertise MORE, not less.
-    if (services.length <= 1) {
-      debugWarn(
-        `[ModelHealth] ${provider.name}/${state.service} keeps failing but is the provider's `
-        + 'last advertised service — leaving it advertised (empty services would mean wildcard)',
-      );
+      if (services.length === 0) {
+        provider.healthCheckAvailable = false;
+      }
       return;
     }
     services.splice(index, 1);
     state.removed = true;
     state.removedAtIndex = index;
+    if (services.length === 0) {
+      provider.healthCheckAvailable = false;
+    }
     this._emitChange({
       provider: provider.name,
       service: state.service,
@@ -280,6 +277,7 @@ export class ModelHealthChecker {
     if (!services.includes(state.service)) {
       services.splice(Math.min(state.removedAtIndex, services.length), 0, state.service);
     }
+    provider.healthCheckAvailable = true;
     this._emitChange({
       provider: provider.name,
       service: state.service,
@@ -362,15 +360,16 @@ export function buildHealthProbeRequest(service: string, protocol: ServiceApiPro
  * Classify a probe response status.
  *
  * - 2xx/3xx — the model answered: healthy.
- * - 401/403/404 and 5xx — credentials broken, model gone, or upstream down:
- *   unhealthy. (The relay collapses upstream network errors/timeouts to 502.)
- * - Everything else (400, 402, 422, 429, ...) — the endpoint is alive but the
- *   probe itself was rejected (unsupported parameter, rate limit, busy):
- *   inconclusive, so a working model is never unadvertised over a probe quirk.
+ * - 401/402/403/404 and 5xx — credentials broken, billing unavailable, model
+ *   gone, or upstream down: unhealthy. (The relay collapses upstream network
+ *   errors/timeouts to 502.)
+ * - Everything else (400, 422, 429, ...) — the endpoint is alive but the probe
+ *   itself was rejected (unsupported parameter, rate limit, busy): inconclusive,
+ *   so a working model is never unadvertised over a probe quirk.
  */
 export function classifyProbeStatus(statusCode: number): ProbeOutcome {
   if (statusCode >= 200 && statusCode < 400) return 'healthy';
-  if (statusCode === 401 || statusCode === 403 || statusCode === 404) return 'unhealthy';
+  if (statusCode === 401 || statusCode === 402 || statusCode === 403 || statusCode === 404) return 'unhealthy';
   if (statusCode >= 500) return 'unhealthy';
   return 'inconclusive';
 }

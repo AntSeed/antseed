@@ -81,9 +81,9 @@ describe('validateMetadata', () => {
     expect(errors.some((e) => e.field === 'timestamp')).toBe(true);
   });
 
-  it('should reject zero providers', () => {
+  it('should accept zero providers while a health-checked seller is unavailable', () => {
     const errors = validateMetadata(validMetadata({ providers: [] }));
-    expect(errors.some((e) => e.field === 'providers')).toBe(true);
+    expect(errors).toEqual([]);
   });
 
   it('should reject too many providers', () => {

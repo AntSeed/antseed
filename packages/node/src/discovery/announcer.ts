@@ -54,6 +54,8 @@ export interface AnnouncerConfig {
     serviceCategories?: Record<string, string[]>;
     serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
     maxConcurrency: number;
+    /** Runtime availability predicate. Unavailable providers are omitted. */
+    isAvailable?: () => boolean;
     /** Per-instance pricing. Takes precedence over the shared pricing Map. */
     pricing?: {
       defaults: { inputUsdPerMillion: number; outputUsdPerMillion: number };
@@ -251,33 +253,35 @@ export class PeerAnnouncer {
   }
 
   private async _buildSignedMetadata(includeOnChainReputation = true): Promise<PeerMetadata> {
-    const providers: ProviderAnnouncement[] = this.config.providers.map((p) => {
-      const pricing = p.pricing ?? this.config.pricing.get(p.provider) ?? {
-        defaults: {
-          inputUsdPerMillion: 0,
-          outputUsdPerMillion: 0,
-        },
-      };
-      const providerAnnouncement: ProviderAnnouncement = {
-        provider: p.provider,
-        services: p.services,
-        defaultPricing: pricing.defaults,
-        maxConcurrency: p.maxConcurrency,
-        currentLoad: this.loadMap.get(p.provider) ?? 0,
-      };
-      if (pricing.services) {
-        providerAnnouncement.servicePricing = pricing.services;
-      }
-      const normalizedServiceCategories = this._normalizeServiceCategories(p.serviceCategories, p.services);
-      if (normalizedServiceCategories) {
-        providerAnnouncement.serviceCategories = normalizedServiceCategories;
-      }
-      const normalizedServiceApiProtocols = this._normalizeServiceApiProtocols(p.serviceApiProtocols, p.services);
-      if (normalizedServiceApiProtocols) {
-        providerAnnouncement.serviceApiProtocols = normalizedServiceApiProtocols;
-      }
-      return providerAnnouncement;
-    });
+    const providers: ProviderAnnouncement[] = this.config.providers
+      .filter((provider) => provider.isAvailable?.() !== false)
+      .map((p) => {
+        const pricing = p.pricing ?? this.config.pricing.get(p.provider) ?? {
+          defaults: {
+            inputUsdPerMillion: 0,
+            outputUsdPerMillion: 0,
+          },
+        };
+        const providerAnnouncement: ProviderAnnouncement = {
+          provider: p.provider,
+          services: p.services,
+          defaultPricing: pricing.defaults,
+          maxConcurrency: p.maxConcurrency,
+          currentLoad: this.loadMap.get(p.provider) ?? 0,
+        };
+        if (pricing.services) {
+          providerAnnouncement.servicePricing = pricing.services;
+        }
+        const normalizedServiceCategories = this._normalizeServiceCategories(p.serviceCategories, p.services);
+        if (normalizedServiceCategories) {
+          providerAnnouncement.serviceCategories = normalizedServiceCategories;
+        }
+        const normalizedServiceApiProtocols = this._normalizeServiceApiProtocols(p.serviceApiProtocols, p.services);
+        if (normalizedServiceApiProtocols) {
+          providerAnnouncement.serviceApiProtocols = normalizedServiceApiProtocols;
+        }
+        return providerAnnouncement;
+      });
 
     const capabilities: string[] = [
       CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
