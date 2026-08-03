@@ -50,8 +50,13 @@ function useScrollState() {
 function useClickTracking() {
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
-      // Ignore synthetic clicks and modified clicks we can't attribute cleanly.
+      // Only real user input. Programmatic .click() calls are not user intent.
+      // Ctrl/Cmd-click still arrives here as a normal `click` and does count —
+      // it is a deliberate open-in-new-tab.
       if (!e.isTrusted) return;
+      // `auxclick` also fires on right-click (button 2), which opens a context
+      // menu rather than navigating. Only the middle button is a real open.
+      if (e.type === 'auxclick' && e.button !== 1) return;
       const target = e.target as Element | null;
       const anchor = target?.closest?.('a[href]') as HTMLAnchorElement | null;
       if (!anchor) return;
@@ -91,8 +96,15 @@ function useClickTracking() {
       }
     };
 
+    // `click` covers left and Ctrl/Cmd-click; `auxclick` covers the middle
+    // button, which opens a new tab and never fires `click`. A given gesture
+    // fires exactly one of the two, so nothing is double-counted.
     document.addEventListener('click', onClick, {capture: true, passive: true});
-    return () => document.removeEventListener('click', onClick, {capture: true});
+    document.addEventListener('auxclick', onClick, {capture: true, passive: true});
+    return () => {
+      document.removeEventListener('click', onClick, {capture: true});
+      document.removeEventListener('auxclick', onClick, {capture: true});
+    };
   }, []);
 }
 
