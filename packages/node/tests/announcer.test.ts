@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { Wallet } from 'ethers';
 import { PeerAnnouncer, type AnnouncerConfig } from '../src/discovery/announcer.js';
+import { validateMetadata } from '../src/discovery/metadata-validator.js';
 import { bytesToHex } from '../src/p2p/identity.js';
 import { toPeerId } from '../src/types/peer.js';
 import {
@@ -35,6 +36,34 @@ function makeBaseConfig(): AnnouncerConfig {
     signalingPort: 0,
   };
 }
+
+describe('PeerAnnouncer provider availability', () => {
+  it('omits unavailable providers and restores them when they recover', async () => {
+    let available = true;
+    const announcer = new PeerAnnouncer({
+      ...makeBaseConfig(),
+      providers: [{
+        provider: 'openai',
+        services: ['model-a'],
+        maxConcurrency: 4,
+        isAvailable: () => available,
+      }],
+    });
+
+    await announcer.announce();
+    expect(announcer.getLatestMetadata()?.providers.map((provider) => provider.provider)).toEqual(['openai']);
+
+    available = false;
+    await announcer.refreshMetadata();
+    const unavailableMetadata = announcer.getLatestMetadata();
+    expect(unavailableMetadata?.providers).toEqual([]);
+    expect(validateMetadata(unavailableMetadata!)).toEqual([]);
+
+    available = true;
+    await announcer.refreshMetadata();
+    expect(announcer.getLatestMetadata()?.providers.map((provider) => provider.provider)).toEqual(['openai']);
+  });
+});
 
 describe('PeerAnnouncer sellerContract', () => {
   it('publishes sellerContract in metadata as lowercase 40-hex', async () => {

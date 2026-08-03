@@ -46,13 +46,13 @@ describe('classifyProbeStatus', () => {
     expect(classifyProbeStatus(200)).toBe('healthy');
     expect(classifyProbeStatus(304)).toBe('healthy');
     expect(classifyProbeStatus(401)).toBe('unhealthy');
+    expect(classifyProbeStatus(402)).toBe('unhealthy');
     expect(classifyProbeStatus(403)).toBe('unhealthy');
     expect(classifyProbeStatus(404)).toBe('unhealthy');
     expect(classifyProbeStatus(500)).toBe('unhealthy');
     expect(classifyProbeStatus(502)).toBe('unhealthy');
     // Endpoint alive but probe rejected — must never unadvertise over these.
     expect(classifyProbeStatus(400)).toBe('inconclusive');
-    expect(classifyProbeStatus(402)).toBe('inconclusive');
     expect(classifyProbeStatus(422)).toBe('inconclusive');
     expect(classifyProbeStatus(429)).toBe('inconclusive');
   });
@@ -157,10 +157,10 @@ describe('ModelHealthChecker', () => {
     expect(provider.services).toEqual(['model-a', 'model-b']);
   });
 
-  it('never removes the last advertised service (empty list would mean wildcard)', async () => {
+  it('removes the final service, marks the provider unavailable, and restores both', async () => {
     const provider = makeProvider({
       services: ['only-model'],
-      onRequest: async (req) => jsonResponse(req.requestId, 500),
+      onRequest: statusSequence({ 'only-model': [402, 200] }),
     });
     const events: ModelHealthEvent[] = [];
     const checker = new ModelHealthChecker({
@@ -170,9 +170,31 @@ describe('ModelHealthChecker', () => {
     });
 
     await checker.runSweep();
+    expect(provider.services).toEqual([]);
+    expect(provider.healthCheckAvailable).toBe(false);
+
     await checker.runSweep();
     expect(provider.services).toEqual(['only-model']);
-    expect(events).toEqual([]);
+    expect(provider.healthCheckAvailable).toBe(true);
+    expect(events.map((event) => event.status)).toEqual(['removed', 'restored']);
+  });
+
+  it('removes every service when the whole upstream is unavailable', async () => {
+    const provider = makeProvider({
+      onRequest: async (req) => jsonResponse(req.requestId, 402),
+    });
+    const checker = new ModelHealthChecker({
+      targets: [{ provider }],
+      failureThreshold: 1,
+    });
+
+    await checker.runSweep();
+    expect(provider.services).toEqual([]);
+    expect(provider.healthCheckAvailable).toBe(false);
+    expect(checker.getSnapshot()).toEqual([
+      expect.objectContaining({ service: 'model-a', advertised: false, lastStatusCode: 402 }),
+      expect.objectContaining({ service: 'model-b', advertised: false, lastStatusCode: 402 }),
+    ]);
   });
 
   it('treats a thrown probe as unhealthy', async () => {
@@ -229,7 +251,7 @@ describe('ModelHealthChecker', () => {
     });
     const probeProvider = makeProvider({
       services,
-      onRequest: async (req) => jsonResponse(req.requestId, 500),
+      onRequest: statusSequence({ 'model-a': [500], 'model-b': [200] }),
     });
     const checker = new ModelHealthChecker({
       targets: [{ provider: advertised, probeProvider }],
