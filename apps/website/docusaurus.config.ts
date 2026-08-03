@@ -25,6 +25,9 @@ const statsProxyPlugin: PluginModule = () => ({
   },
 });
 
+/** Google Tag Manager container for antseed.com. See ANALYTICS.md. */
+const GTM_CONTAINER_ID = process.env.GTM_CONTAINER_ID ?? 'GTM-NHCLBQQK';
+
 const config: Config = {
   title: 'AntSeed',
   tagline: 'The open market for AI inference. No gatekeepers.',
@@ -79,12 +82,15 @@ const config: Config = {
     // double-counting pageviews. Adding Ads/LinkedIn/Meta pixels later is a
     // GTM change, not a code change.
     //
-    // The container id comes from the GTM_CONTAINER_ID build env var. When it
-    // is unset the plugin is skipped entirely — the official plugin throws on
-    // an empty id, which would break local builds and previews. Site code still
-    // pushes events to window.dataLayer either way; they simply go nowhere.
-    ...(process.env.GTM_CONTAINER_ID
-      ? [['@docusaurus/plugin-google-tag-manager', {containerId: process.env.GTM_CONTAINER_ID}] as const]
+    // A GTM container id is public — it ships in the page source — so it lives
+    // here rather than in deploy config, and the site works without anyone
+    // setting an env var. GTM_CONTAINER_ID still overrides it for staging or a
+    // throwaway test container. Set it to an empty string to disable GTM.
+    //
+    // GA4 (G-DF97Q4KV2X) is configured as a tag *inside* this container, not
+    // loaded here — see ANALYTICS.md.
+    ...(GTM_CONTAINER_ID
+      ? [['@docusaurus/plugin-google-tag-manager', {containerId: GTM_CONTAINER_ID}] as const]
       : []),
     [
       '@docusaurus/plugin-client-redirects',

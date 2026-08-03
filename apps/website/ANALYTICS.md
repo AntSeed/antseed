@@ -47,52 +47,37 @@ conversion event.
 
 ---
 
-## 1. Create the GA4 property
+## The IDs
 
-1. <https://analytics.google.com> → **Admin** (bottom left)
-2. **Create** → **Property**. Name it `AntSeed`, set timezone and currency.
-3. Business details → **Create**.
-4. Under **Data streams** → **Add stream** → **Web**.
-   - URL `https://antseed.com`, name `AntSeed website`.
-5. Copy the **Measurement ID** — looks like `G-XXXXXXXXXX`.
+| | |
+|---|---|
+| GTM container | `GTM-NHCLBQQK` — committed in `docusaurus.config.ts`, live on every page |
+| GA4 measurement ID | `G-DF97Q4KV2X` — configured **inside GTM**, not in code |
 
-Leave *Enhanced measurement* on. It gives scroll depth, site search and outbound
+The container id is public (it ships in the page source), so it lives in the
+config rather than in deploy settings and needs no environment variable.
+`GTM_CONTAINER_ID` still overrides it for a staging or throwaway container;
+setting it to an empty string disables GTM entirely.
+
+Leave GA4's *Enhanced measurement* on. It gives scroll depth, site search and outbound
 clicks for free. Our own `outbound_click` is richer (it adds section and label),
 so expect both; use ours in reports.
 
-## 2. Create the GTM container
+## 1. Deploy
 
-1. <https://tagmanager.google.com> → **Create Account**
-   - Account name `AntSeed`, country as appropriate.
-   - Container name `antseed.com`, target platform **Web**.
-2. Copy the **Container ID** — looks like `GTM-XXXXXXX`.
-
-## 3. Put the container ID into the build
-
-The site reads `GTM_CONTAINER_ID` at build time. Set it as an environment
-variable wherever the site is deployed (Vercel/Netlify/Cloudflare project
-settings → Environment Variables), then redeploy.
+Nothing to configure — merge and deploy. Verify:
 
 ```bash
-GTM_CONTAINER_ID=GTM-XXXXXXX
+curl -s https://antseed.com | grep -o 'GTM-NHCLBQQK'
 ```
 
-If the variable is unset the plugin is skipped and no GTM script is emitted —
-local builds and previews keep working, and the site never ships a broken tag.
-
-Verify after deploy:
-
-```bash
-curl -s https://antseed.com | grep -o 'googletagmanager.com/gtm.js'
-```
-
-## 4. Configure GA4 inside GTM
+## 2. Configure GA4 inside GTM
 
 In the GTM container:
 
 **a. Base GA4 tag**
 - **Tags** → **New** → *Google Tag*
-- Tag ID: your `G-XXXXXXXXXX`
+- Tag ID: `G-DF97Q4KV2X`
 - Trigger: **Initialization — All Pages**
 
 **b. Triggers for our events**
@@ -118,7 +103,7 @@ reports. Name each the same as its dataLayer key:
 
 **e. Publish** — GTM changes are not live until you hit **Submit**.
 
-## 5. Mark the conversion in GA4
+## 3. Mark the conversion in GA4
 
 1. GA4 → **Admin** → **Events**. `download_vpr` appears here **after the first
    one is recorded** — trigger one yourself first.
@@ -139,7 +124,7 @@ reports. Name each the same as its dataLayer key:
 
    Custom dimensions only apply going forward, so do this early.
 
-## 6. Search Console
+## 4. Search Console
 
 The verification meta tag is **already in the site**
 (`themeConfig.metadata` → `google-site-verification`), so verification should
