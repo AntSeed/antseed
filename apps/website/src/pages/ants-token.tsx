@@ -197,7 +197,7 @@ export default function AntsToken(): JSX.Element {
   return (
     <Layout
       title="ANTS Token"
-      description="ANTS is the native token of the AntSeed network and its trust and reputation layer. Holding ANTS does not represent equity, ownership, debt, or a right to payments."
+      description="ANTS is the native token of the AntSeed network and its trust and reputation layer."
     >
       <PageHero
         accent="clay"
