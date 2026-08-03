@@ -1805,6 +1805,20 @@
   }
 }
 
+/* Matches HeroDemo's own breakpoint: below it the demo swaps to the stacked
+   mobile composition (660×924), so give it the content width instead of the
+   desktop scene's, capped so the column never outgrows the copy above it. */
+@media (max-width: 768px) {
+  .demoFrame {
+    margin-top: 32px;
+    transform: none;
+    width: 100%;
+    max-width: 380px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+}
+
 @media (max-width: 640px) {
   .section,
   .stepsSection {
@@ -1837,15 +1851,6 @@
   .statValue {
     font-size: 28px;
     line-height: 36px;
-  }
-
-  .demoFrame {
-    margin-top: 32px;
-    transform: none;
-    width: 240px;
-    max-width: 100%;
-    margin-left: auto;
-    margin-right: auto;
   }
 
   .privacyPanel {
