@@ -1,440 +1,496 @@
-/* ANTS Token page — AntSeed brand plate. Clay is used here because this page is economics. */
-.heroKicker,
-.statusText,
-.supplyBarLabels,
-.statLabel,
-.emissionsCurrentTitle,
-.emissionsCurrentSub,
-.splitLabel,
-.flowBoxTitleMint,
-.flowBoxSubMint,
-.flowBoxSub,
-.flowBoxTitleLight,
-.flowBoxSubLight,
-.flowLineLabel,
-.flowLineLabelGreen,
-.flowLegendItem,
-.earnStep,
-.contractsLabel,
-.contractsLink,
-.halvingPillText,
-.halvingXLabel {
+/* ============================================================
+   $ANTS — page-specific pieces only. Rhythm and components come
+   from components/ui; clay is the accent here because this page
+   is economics (per the brand contract).
+   ============================================================ */
+
+/* ---------- hero extras ---------- */
+.heroKicker {
   font-family: var(--as-font-data);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  color: var(--as-clay) !important;
+  text-decoration: none !important;
 }
 
-.hero {
-  position: relative;
-  text-align: center;
-  padding: clamp(72px, 10vw, 118px) 20px 60px;
-  max-width: 900px;
-  margin: 0 auto;
+.heroKicker:hover {
+  opacity: 0.72;
 }
-.hero::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 430px;
-  background:
-    radial-gradient(circle at 50% 0%, rgba(232, 163, 61, 0.14), transparent 58%),
-    radial-gradient(circle at 72% 22%, rgba(31, 216, 122, 0.055), transparent 46%);
-  pointer-events: none;
-  z-index: -1;
-}
-.heroKicker {
-  display: inline-block;
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--as-clay) !important;
-  letter-spacing: 2px;
-  margin-bottom: 18px;
-  text-decoration: none !important;
-  transition: opacity .15s;
-}
-.heroKicker:hover { opacity: .72; }
-.heroTitle {
-  font-family: var(--as-font-display);
-  font-size: clamp(40px, 6vw, 74px);
-  font-weight: 550;
-  line-height: 1.02;
-  letter-spacing: -0.018em;
-  margin: 0 0 24px;
-  color: var(--as-text);
-  text-wrap: balance;
-}
-.heroTitle em {
-  font-style: italic;
-  font-weight: 480;
-  color: var(--as-clay);
-}
-.heroStatus {
+
+.statusPill {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 14px 6px 10px;
+  padding: 4px 12px 4px 8px;
   border-radius: 999px;
-  background: rgba(232, 163, 61, .08);
-  border: 1px solid rgba(232, 163, 61, .22);
-  margin-bottom: 24px;
+  background: var(--as-clay-dim);
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--as-clay);
 }
+
 .statusDot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--as-clay);
-  box-shadow: 0 0 0 3px rgba(232, 163, 61, .16);
   animation: pulseClay 2s ease-in-out infinite;
 }
+
 @keyframes pulseClay {
-  0%, 100% { box-shadow: 0 0 0 3px rgba(232, 163, 61, .16); }
-  50% { box-shadow: 0 0 0 7px rgba(232, 163, 61, .06); }
-}
-.statusText {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--as-clay);
-  letter-spacing: .7px;
-}
-.heroSub {
-  font-size: 16px;
-  color: var(--as-text-2);
-  line-height: 1.7;
-  max-width: 700px;
-  margin: 0 auto 34px;
-}
-.heroCtas,
-.bottomCtaBtns {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
-}
-.protocolNotice {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  margin: -10px auto 30px;
-  padding: 10px 16px;
-  border: 1px solid rgba(232, 163, 61, .28);
-  border-radius: 999px;
-  background: rgba(232, 163, 61, .07);
-  color: var(--as-clay) !important;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.4;
-  text-decoration: none !important;
-  transition: background .15s, border-color .15s, transform .15s;
-}
-.protocolNotice:hover {
-  background: rgba(232, 163, 61, .11);
-  border-color: rgba(232, 163, 61, .45);
-  transform: translateY(-1px);
-}
-.ctaPrimary,
-.ctaSecondary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 46px;
-  padding: 0 24px;
-  border-radius: var(--as-radius-pill);
-  font-size: 13px;
-  font-weight: 700;
-  text-decoration: none !important;
-  transition: transform .15s ease, background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease;
-}
-.ctaPrimary {
-  background: var(--as-clay);
-  border: 1px solid var(--as-clay);
-  color: #211305 !important;
-}
-.ctaPrimary:hover {
-  background: #f2b85b;
-  border-color: #f2b85b;
-  color: #211305 !important;
-  transform: translateY(-1px);
-  box-shadow: 0 10px 36px rgba(232, 163, 61, .26);
-}
-.ctaSecondary {
-  background: transparent;
-  border: 1px solid var(--as-line-strong);
-  color: var(--as-text) !important;
-}
-.ctaSecondary:hover {
-  border-color: rgba(232, 163, 61, .46);
-  color: var(--as-clay) !important;
-  transform: translateY(-1px);
+  0%, 100% { box-shadow: 0 0 0 0 rgba(161, 98, 7, 0.3); }
+  50% { box-shadow: 0 0 0 5px rgba(161, 98, 7, 0); }
 }
 
-.overview,
-.emissions,
-.activity,
-.earn,
-.contracts {
-  padding: clamp(54px, 7vw, 86px) 60px;
-  max-width: 1060px;
-  margin: 0 auto;
-}
-.overviewHeader,
-.emissionsHeader,
-.activityHeader,
-.earnHeader,
-.contractsHeader {
-  text-align: center;
-  margin-bottom: 38px;
-}
-.overviewHeader h2,
-.emissionsHeader h2,
-.activityHeader h2,
-.earnHeader h2,
-.contractsHeader h2,
-.bottomCta h2 {
-  font-family: var(--as-font-display);
-  font-size: clamp(28px, 3.4vw, 44px);
-  font-weight: 550;
-  letter-spacing: -0.012em;
-  color: var(--as-text);
-  margin: 0 0 12px;
-}
-.overviewHeader p,
-.emissionsHeader p,
-.activityHeader p,
-.earnHeader p,
-.bottomCta > p {
-  font-size: 15px;
-  color: var(--as-text-2);
-  line-height: 1.65;
-  margin: 0 auto;
-  max-width: 720px;
+@media (prefers-reduced-motion: reduce) {
+  .statusDot { animation: none; }
 }
 
-.supplyBar { margin-bottom: 30px; }
+/* ---------- supply bar ---------- */
+.supplyBar {
+  max-width: 840px;
+  margin: 0 auto 16px;
+}
+
 .supplyBarTrack {
   height: 12px;
-  background: rgba(232, 163, 61, .09);
-  border: 1px solid rgba(232, 163, 61, .16);
   border-radius: 999px;
+  background: var(--as-clay-dim);
   overflow: hidden;
 }
+
 .supplyBarFill {
   height: 100%;
-  background: linear-gradient(90deg, var(--as-clay), #f2c36d);
-  border-radius: 999px;
   min-width: 4px;
-  transition: width .6s ease;
+  border-radius: 999px;
+  background: var(--as-clay);
+  transition: width 0.6s var(--as-ease, ease);
 }
+
 .supplyBarLabels {
   display: flex;
   justify-content: space-between;
   margin-top: 8px;
+  font-family: var(--as-font-data);
   font-size: 12px;
+  line-height: 20px;
   color: var(--as-text-3);
 }
-.statsGrid,
-.splitGrid,
-.earnGrid {
+
+/* ---------- grids ---------- */
+.statsGrid {
   display: grid;
-  gap: 16px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
 }
-.statsGrid { grid-template-columns: repeat(4, 1fr); }
-.splitGrid { grid-template-columns: repeat(4, 1fr); }
-.earnGrid { grid-template-columns: repeat(3, 1fr); }
-.statCard,
-.splitCard,
-.halvingChart,
-.flowCard,
-.earnCard,
-.contractsTable,
-.emissionsCurrentCard,
-.duneBanner {
-  background: var(--as-soil-2);
-  border: 1px solid var(--as-line);
-  border-radius: var(--as-radius);
-  box-shadow: 0 24px 72px rgba(0,0,0,.22);
+
+/* ============================================================
+   SPLIT SECTIONS — seller pools (light) / verifications (ink).
+   Copy column follows the homepage's sell/localhost voice:
+   kicker, left display title, lead, marked points, CTA.
+   ============================================================ */
+.poolGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 464px;
+  gap: 56px;
+  align-items: center;
 }
-.statCard {
-  padding: 24px;
-  text-align: center;
+
+.verifyGrid {
+  display: grid;
+  grid-template-columns: 464px minmax(0, 1fr);
+  gap: 56px;
+  align-items: center;
 }
-.statValue,
-.splitPct,
-.emissionsCurrentValue {
-  font-family: var(--as-font-display);
-  font-size: 24px;
-  font-weight: 600;
-  color: var(--as-text);
-  letter-spacing: -0.01em;
-  margin-bottom: 6px;
+
+/* Receipt sits left on desktop, below the copy when stacked. */
+.verifyCopy { order: 2; }
+.verifyCardCol { order: 1; }
+
+.splitCopy {
+  max-width: 480px;
 }
-.statLabel,
-.splitLabel {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--as-text-3);
-  letter-spacing: .8px;
+
+.splitKicker {
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
+  color: var(--as-clay);
+  margin: 0 0 12px;
 }
-.halvingChart {
-  padding: 20px 24px 12px;
-  margin-bottom: 24px;
+
+.splitTitle {
+  font-family: var(--as-font-display);
+  font-size: clamp(32px, 3.4vw, 44px);
+  line-height: 1.125;
+  font-weight: 500;
+  letter-spacing: -1px;
+  color: var(--as-heading);
+  margin: 0 0 16px;
+}
+
+.splitTitle em {
+  font-style: normal;
+  color: var(--as-clay);
+}
+
+.splitLead {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+  margin: 0 0 20px;
+}
+
+.splitPoints {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.splitPoints li {
+  display: flex;
+  gap: 12px;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+}
+
+.splitPoints strong {
+  color: var(--as-heading);
+  font-weight: 600;
+}
+
+/* Clay dash marker — the greendots list line, in economics clay. */
+.splitMark {
+  flex-shrink: 0;
+  width: 30px;
+  height: 6px;
+  margin-top: 8px;
+  border-radius: 3px;
+  background: repeating-linear-gradient(90deg, var(--as-clay) 0 6px, transparent 6px 10px);
+}
+
+.splitCta {
+  display: flex;
+  margin-top: 24px;
+}
+
+/* ---------- pool weight card ---------- */
+.poolCard {
+  position: relative;
+  background: var(--as-soil-0);
+  border-radius: 24px;
+  padding: 24px;
   overflow: hidden;
 }
-.halvingSvg { width: 100%; height: auto; display: block; }
-.halvingAxis { stroke: rgba(151,255,199,.16); stroke-width: 1; }
-.halvingCliff { stroke: rgba(151,255,199,.12); stroke-width: 1; stroke-dasharray: 2 4; }
-.halvingTick { stroke: var(--as-text-3); stroke-width: 1.5; }
-.halvingNow { stroke: var(--as-clay); stroke-width: 1.5; stroke-dasharray: 3 3; opacity: .82; }
-.halvingPulse { fill: rgba(232, 163, 61, .3); animation: halvingPulse 2s ease-in-out infinite; }
-@keyframes halvingPulse { 0%, 100% { r: 8; opacity: .55; } 50% { r: 16; opacity: .1; } }
-.halvingPill { fill: #120d07; stroke: rgba(232, 163, 61, .28); }
-.halvingPillText { fill: var(--as-clay); font-size: 11px; font-weight: 700; letter-spacing: .5px; }
-.halvingXLabel { fill: var(--as-text-3); font-size: 11px; letter-spacing: .5px; }
-.emissionsCurrentCard { padding: 28px 32px; text-align: center; margin-bottom: 32px; }
-.emissionsCurrentTitle { font-size: 11px; font-weight: 700; color: var(--as-text-3); letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 8px; }
-.emissionsCurrentValue { color: var(--as-clay); font-size: clamp(28px, 3vw, 42px); }
-.emissionsCurrentSub { font-size: 13px; color: var(--as-text-3); }
-.splitCard { padding: 26px; }
-.splitCardAccent { border-color: rgba(232, 163, 61, .55); box-shadow: 0 22px 70px rgba(232, 163, 61, .08); }
-.splitCardAccent .splitPct { color: var(--as-clay); }
-.splitDesc,
-.earnCard p,
-.duneBannerSub {
-  font-size: 13px;
-  color: var(--as-text-2);
-  line-height: 1.62;
-  margin: 0;
+
+.poolAnt {
+  position: absolute;
+  right: -260px;
+  top: -170px;
+  width: 520px;
+  height: auto;
+  aspect-ratio: 854 / 964;
+  opacity: 0.1;
+  pointer-events: none;
 }
-.duneBanner {
+
+.poolHead {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-heading);
+}
+
+.poolTag {
+  font-family: var(--as-font-data);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--as-clay);
+  background: var(--as-clay-dim);
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+
+.poolEq {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 16px;
+}
+
+.poolOp {
+  align-self: center;
+  font-family: var(--as-font-display);
+  font-size: 22px;
+  line-height: 1;
+  color: var(--as-text-3);
+}
+
+.poolTerm {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--as-soil-2);
+  border: 1px solid var(--as-line);
+  border-radius: 16px;
+  padding: 16px;
+}
+
+.poolTerm strong {
+  font-family: var(--as-font-display);
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: 600;
+  color: var(--as-heading);
+}
+
+.poolTerm em {
+  font-family: var(--as-font-data);
+  font-style: normal;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--as-text-3);
+}
+
+.poolTermResult {
+  border-color: var(--as-clay);
+}
+
+.poolTermResult strong {
+  color: var(--as-clay);
+}
+
+/* ---------- verifications (ink band) ---------- */
+/* Clay dot grid on the void — the darkSection motif, in this
+   page's economics accent. */
+.verifySection::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(var(--as-clay) 1px, transparent 1px);
+  background-size: 11.34px 11.34px;
+  opacity: 0.12;
+  pointer-events: none;
+}
+
+.verifyTitle {
+  color: #FFFFFF;
+}
+
+.verifyLead {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.verifyPoints li {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.verifyPoints strong {
+  color: #FFFFFF;
+}
+
+.verifyMark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: rgba(36, 205, 149, 0.14);
+  color: var(--as-live-bright);
+  font-family: var(--as-font-data);
+  font-size: 11px;
+}
+
+/* ---------- ResponseAuth receipt ---------- */
+/* Same shell as the homepage terminal: void-deep, hairline, r16. */
+.receipt {
+  background: var(--as-void-deep);
+  border: 1px solid #676663;
+  border-radius: 16px;
+  padding: 8px 16px 20px;
+  font-family: var(--as-font-data);
+}
+
+.receiptBar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 12px;
+}
+
+.receiptDots {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.receiptDots i {
   display: block;
-  padding: 34px 38px;
-  text-decoration: none !important;
-  transition: background .15s, transform .15s, border-color .15s;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
 }
-.duneBanner:hover { background: var(--as-soil-3); border-color: rgba(31,216,122,.25); transform: translateY(-2px); }
-.duneBannerContent { display: flex; align-items: center; gap: 24px; }
-.duneBannerIcon { width: 56px; height: 56px; border-radius: 16px; background: rgba(31,216,122,.09); border: 1px solid rgba(31,216,122,.18); display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--as-green); }
-.duneBannerTitle { font-family: var(--as-font-display); font-size: 20px; font-weight: 550; color: var(--as-text); letter-spacing: -0.01em; margin-bottom: 6px; }
 
-.flowCard { padding: 30px 28px 22px; margin-bottom: 28px; overflow: hidden; }
-.flowSvg { width: 100%; height: auto; display: block; }
-.flowBox { fill: #0e141c; stroke: rgba(151,255,199,.12); stroke-width: 1; }
-.flowBoxDark { fill: #120d07; stroke: rgba(232,163,61,.34); }
-.flowBoxMint { fill: #120d07; stroke: var(--as-clay); stroke-width: 1.5; }
-.flowBoxTitleMint { fill: var(--as-clay); font-size: 18px; font-weight: 700; letter-spacing: -0.3px; }
-.flowBoxSubMint { fill: var(--as-text-3); font-size: 12px; }
-.flowBoxTitle { fill: var(--as-text); font-size: 18px; font-weight: 700; letter-spacing: -0.3px; }
-.flowBoxSub { fill: var(--as-text-3); font-size: 12px; }
-.flowBoxTitleLight { fill: #ffe5ad; font-size: 15px; font-weight: 700; }
-.flowBoxSubLight { fill: var(--as-text-3); font-size: 11px; }
-.flowLine { fill: none; stroke: rgba(151,255,199,.18); stroke-width: 1.5; stroke-dasharray: 3 4; }
-.flowLineGreen { fill: none; stroke: rgba(232,163,61,.42); stroke-width: 1.5; stroke-dasharray: 3 4; }
-.flowLineLabel { fill: var(--as-text-3); font-size: 11px; letter-spacing: .3px; }
-.flowLineLabelGreen { fill: var(--as-clay); font-size: 11px; font-weight: 700; letter-spacing: .3px; }
-.flowPellet { fill: var(--as-text-2); }
-.flowPelletGreen { fill: var(--as-clay); filter: drop-shadow(0 0 6px rgba(232,163,61,.65)); }
-.flowLegend { display: flex; justify-content: center; gap: 28px; margin-top: 16px; padding-top: 18px; border-top: 1px solid var(--as-line); }
-.flowLegendItem { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--as-text-3); }
-.flowLegendDot,
-.flowLegendDotGreen { width: 8px; height: 8px; border-radius: 50%; }
-.flowLegendDot { background: var(--as-text-2); }
-.flowLegendDotGreen { background: var(--as-clay); box-shadow: 0 0 6px rgba(232,163,61,.6); }
-.earnCard { padding: 32px; }
-.earnStep { font-size: 12px; font-weight: 700; color: var(--as-clay); margin-bottom: 14px; letter-spacing: 1px; }
-.earnCard h3 { font-family: var(--as-font-display); font-size: 22px; font-weight: 550; color: var(--as-text); letter-spacing: -0.01em; margin: 0 0 12px; }
-.contracts { max-width: 940px; }
-.contractsTable { overflow: hidden; }
-.contractsRow { display: flex; align-items: baseline; gap: 20px; padding: 16px 26px; border-bottom: 1px solid var(--as-line); }
-.contractsRow:last-child { border-bottom: none; }
-.contractsLabel { font-size: 11px; font-weight: 700; color: var(--as-clay); letter-spacing: .9px; white-space: nowrap; min-width: 160px; flex-shrink: 0; }
-.contractsValue { font-size: 14px; color: var(--as-text); line-height: 1.5; }
-.contractsLink { color: var(--as-clay) !important; text-decoration: none !important; font-size: 13px; font-weight: 700; border-bottom: 1px solid rgba(232,163,61,.34); padding-bottom: 1px; }
-.contractsLink:hover { border-color: var(--as-clay); }
-.bottomCta { text-align: center; padding: 72px 20px 96px; max-width: 680px; margin: 0 auto; }
-.bottomCta > p { margin-bottom: 30px; }
-.bottomLinks { display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; font-size: 13px; }
-.bottomLinks a { color: var(--as-clay) !important; text-decoration: none !important; border-bottom: 1px solid rgba(232,163,61,.32); }
-.bottomLinks a:hover { color: #f2b85b !important; }
-.bottomLinks span { color: var(--as-text-3); }
-
-:global(html[data-theme='light']) .heroTitle,
-:global(html[data-theme='light']) .overviewHeader h2,
-:global(html[data-theme='light']) .emissionsHeader h2,
-:global(html[data-theme='light']) .activityHeader h2,
-:global(html[data-theme='light']) .earnHeader h2,
-:global(html[data-theme='light']) .contractsHeader h2,
-:global(html[data-theme='light']) .bottomCta h2,
-:global(html[data-theme='light']) .statValue,
-:global(html[data-theme='light']) .splitPct,
-:global(html[data-theme='light']) .flowBoxTitle,
-:global(html[data-theme='light']) .duneBannerTitle,
-:global(html[data-theme='light']) .earnCard h3,
-:global(html[data-theme='light']) .contractsValue { color: #0a0e14; }
-:global(html[data-theme='light']) .heroSub,
-:global(html[data-theme='light']) .overviewHeader p,
-:global(html[data-theme='light']) .emissionsHeader p,
-:global(html[data-theme='light']) .activityHeader p,
-:global(html[data-theme='light']) .earnHeader p,
-:global(html[data-theme='light']) .bottomCta > p,
-:global(html[data-theme='light']) .splitDesc,
-:global(html[data-theme='light']) .earnCard p,
-:global(html[data-theme='light']) .duneBannerSub { color: #53635a; }
-:global(html[data-theme='light']) .statCard,
-:global(html[data-theme='light']) .splitCard,
-:global(html[data-theme='light']) .halvingChart,
-:global(html[data-theme='light']) .flowCard,
-:global(html[data-theme='light']) .earnCard,
-:global(html[data-theme='light']) .contractsTable,
-:global(html[data-theme='light']) .emissionsCurrentCard,
-:global(html[data-theme='light']) .duneBanner { background: rgba(255,255,255,.74); border-color: rgba(232,163,61,.18); box-shadow: 0 22px 70px rgba(10,14,20,.1); }
-:global(html[data-theme='light']) .ctaPrimary { color: #211305 !important; }
-:global(html[data-theme='light']) .ctaSecondary { color: #0a0e14 !important; border-color: rgba(10,14,20,.14); background: rgba(255,255,255,.58); }
-:global(html[data-theme='light']) .flowBox { fill: #fffaf0; stroke: rgba(232,163,61,.2); }
-:global(html[data-theme='light']) .flowBoxDark,
-:global(html[data-theme='light']) .flowBoxMint { fill: #120d07; }
-:global(html[data-theme='light']) .halvingAxis,
-:global(html[data-theme='light']) .contractsRow,
-:global(html[data-theme='light']) .flowLegend { border-color: rgba(10,14,20,.08); stroke: rgba(10,14,20,.12); }
-:global(html[data-theme='light']) .statLabel,
-:global(html[data-theme='light']) .splitLabel,
-:global(html[data-theme='light']) .supplyBarLabels,
-:global(html[data-theme='light']) .emissionsCurrentTitle,
-:global(html[data-theme='light']) .emissionsCurrentSub,
-:global(html[data-theme='light']) .halvingXLabel { color: #7d8b82; fill: #7d8b82; }
-
-@media (max-width: 960px) {
-  .overview,
-  .emissions,
-  .activity,
-  .earn,
-  .contracts { padding: 44px 20px 62px; }
-  .statsGrid,
-  .splitGrid { grid-template-columns: repeat(2, 1fr); }
-  .earnGrid { grid-template-columns: 1fr; }
-  .flowCard { padding: 20px 16px 16px; overflow-x: auto; }
-  .contractsRow { flex-direction: column; gap: 4px; }
-  .contractsLabel { min-width: 0; }
-  .duneBanner { padding: 28px 24px; }
-  .duneBannerContent { gap: 16px; }
+.receiptTitle {
+  font-size: 12px;
+  font-weight: 500;
+  color: #FFFFFF;
 }
-@media (max-width: 620px) {
-  .hero { padding: 62px 20px 42px; }
-  .heroTitle { font-size: clamp(34px, 11vw, 50px); }
-  .heroSub { font-size: 15px; }
-  .heroCtas,
-  .bottomCtaBtns { flex-direction: column; align-items: stretch; }
-  .ctaPrimary,
-  .ctaSecondary { width: 100%; }
-  .statsGrid { grid-template-columns: 1fr 1fr; }
-  .splitGrid { grid-template-columns: 1fr; }
-  .statCard,
-  .splitCard,
-  .earnCard { padding: 22px; }
-  .contractsRow { padding: 14px 18px; }
-  .duneBannerContent { flex-direction: column; text-align: center; }
-  .flowLegend { flex-direction: column; align-items: center; gap: 10px; }
-  .bottomLinks { flex-direction: column; gap: 8px; }
-  .bottomLinks span { display: none; }
+
+.receiptTagline {
+  margin-left: auto;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.receiptMeta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  line-height: 22px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.receiptMeta span:last-child {
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.receiptCheck {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) 20px;
+  gap: 12px;
+  align-items: center;
+  font-size: 12px;
+  line-height: 20px;
+  padding: 5px 0;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+
+.receiptCheck:first-of-type {
+  margin-top: 8px;
+}
+
+.receiptIn .receiptCheck {
+  opacity: 1;
+  transform: none;
+}
+
+.receiptLabel {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.receiptValue {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.receiptOk {
+  color: var(--as-live-bright);
+  text-align: right;
+}
+
+.receiptResult {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  padding-top: 12px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.16);
+  font-size: 12px;
+  line-height: 20px;
+  color: rgba(255, 255, 255, 0.4);
+  opacity: 0;
+  transition: opacity 0.6s ease;
+}
+
+.receiptIn .receiptResult {
+  opacity: 1;
+}
+
+.receiptResultValue {
+  color: var(--as-clay);
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .receiptCheck,
+  .receiptResult {
+    transition: none;
+  }
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 996px) {
+  .statsGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .poolGrid,
+  .verifyGrid {
+    grid-template-columns: 1fr;
+    gap: 40px;
+  }
+
+  .verifyCopy,
+  .verifyCardCol {
+    order: 0;
+  }
+
+  .splitCopy {
+    max-width: 560px;
+  }
+
+  .poolCard,
+  .receipt {
+    max-width: 560px;
+  }
+}
+
+@media (max-width: 640px) {
+  .statsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .poolCard {
+    padding: 20px;
+    border-radius: 20px;
+  }
+
+  .receiptTagline {
+    display: none;
+  }
+
+  .receiptCheck {
+    grid-template-columns: 96px minmax(0, 1fr) 20px;
+  }
 }

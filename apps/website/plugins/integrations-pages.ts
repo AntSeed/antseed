@@ -290,7 +290,7 @@ function renderSkillMarkdown(): string {
 
   out.push('## Universal setup (do this once)');
   out.push('');
-  out.push('### Option A — AntStation desktop app (easiest)');
+  out.push('### Option A — VPR desktop app (easiest)');
   out.push('');
   out.push('Download from https://antseed.com — it ships the buyer proxy, a wallet, and a');
   out.push('peer browser in a GUI. While the app is open the proxy is reachable at');

@@ -2,6 +2,7 @@ import Head from '@docusaurus/Head';
 import Link from '@docusaurus/Link';
 import Layout from '@theme/Layout';
 import styles from './openrouter.module.css';
+import {Button, FinalCta, PageHero, Reveal, Section} from '../../components/ui';
 
 const ROWS: Array<{dim: string; antseed: string; openrouter: string}> = [
   {
@@ -53,7 +54,7 @@ const ROWS: Array<{dim: string; antseed: string; openrouter: string}> = [
 
 const TITLE = 'OpenRouter Alternative: Permissionless P2P AI Inference | AntSeed';
 const DESCRIPTION =
-  'AntSeed is a permissionless, peer-to-peer alternative to OpenRouter. Any provider can join. Requests go direct. Pay per request in USDC — no central account.';
+  'AntSeed is a permissionless, peer-to-peer alternative to OpenRouter. Any provider can join. Requests go direct. Pay per request in USDC - no central account.';
 
 export default function VsOpenRouter(): JSX.Element {
   return (
@@ -110,23 +111,18 @@ export default function VsOpenRouter(): JSX.Element {
         </script>
       </Head>
 
-      <div className={styles.page}>
-        <div className={styles.header}>
-          <p className={styles.eyebrow}>OpenRouter Alternative</p>
-          <h1 className={styles.title}>A permissionless, peer-to-peer alternative to OpenRouter.</h1>
-          <p className={styles.subtitle}>
-            Same OpenAI-compatible API. Any provider can join. Pay per request in USDC.
-            No central account, independent providers, open peer-to-peer routing.
-          </p>
-          <div className={styles.ctaRow}>
-            <Link to="/docs/install" className={styles.ctaPrimary}>Install AntSeed</Link>
-            <a href="https://antseedstats.com/network" target="_blank" rel="noopener noreferrer" className={styles.ctaSecondary}>Live pricing →</a>
-          </div>
-        </div>
+      <PageHero
+        kicker="OpenRouter alternative"
+        title="A permissionless, peer-to-peer alternative to OpenRouter."
+        lead="Same OpenAI-compatible API. Any provider can join. Pay per request in USDC. No central account, independent providers, open peer-to-peer routing.">
+        <Button to="/docs/install" arrow>Install AntSeed</Button>
+        <Button href="https://antseedstats.com/network" variant="ghost">Live pricing</Button>
+      </PageHero>
 
-        <div className={styles.table}>
+      <Section tone="tinted">
+        <Reveal className={styles.table}>
           <div className={styles.tableHead}>
-            <div className={styles.colDim}></div>
+            <div className={styles.colDim} />
             <div className={styles.colAnt}>AntSeed</div>
             <div className={styles.colOr}>OpenRouter</div>
           </div>
@@ -137,36 +133,42 @@ export default function VsOpenRouter(): JSX.Element {
               <div className={styles.colOr}>{row.openrouter}</div>
             </div>
           ))}
+        </Reveal>
+      </Section>
+
+      <Section>
+        <div className={styles.listGrid}>
+          <Reveal className={styles.listCard}>
+            <h2 className={styles.listTitle}>When to pick AntSeed</h2>
+            <ul className={styles.list}>
+              <li>You want to run inference without creating another SaaS account.</li>
+              <li>You're building an agent that needs to pay for its own inference.</li>
+              <li>You want payments to settle per request, on-chain, with no platform holding funds.</li>
+              <li>You want to <Link to="/providers">serve</Link> a model and get paid without applying to a platform.</li>
+              <li>You need open peer-to-peer routing that does not rely on one hosted service.</li>
+            </ul>
+          </Reveal>
+          <Reveal className={styles.listCard} delay={100}>
+            <h2 className={styles.listTitle}>When OpenRouter might still fit</h2>
+            <ul className={`${styles.list} ${styles.listMuted}`}>
+              <li>You prefer a credit-card-funded account over an on-chain wallet.</li>
+              <li>You want a single vendor relationship with a support contact.</li>
+              <li>You're fine with the platform routing every request through their servers.</li>
+            </ul>
+          </Reveal>
         </div>
+      </Section>
 
-        <section className={styles.section}>
-          <h2 className={styles.sectionTitle}>When to pick AntSeed</h2>
-          <ul className={styles.list}>
-            <li>You want to run inference without creating another SaaS account.</li>
-            <li>You're building an agent that needs to pay for its own inference.</li>
-            <li>You want payments to settle per request, on-chain, with no platform holding funds.</li>
-            <li>You want to <Link to="/providers">serve</Link> a model and get paid without applying to a platform.</li>
-            <li>You need open peer-to-peer routing that does not rely on one hosted service.</li>
-          </ul>
-        </section>
-
-        <section className={styles.section}>
-          <h2 className={styles.sectionTitle}>When OpenRouter might still fit</h2>
-          <ul className={styles.list}>
-            <li>You prefer a credit-card-funded account over an on-chain wallet.</li>
-            <li>You want a single vendor relationship with a support contact.</li>
-            <li>You're fine with the platform routing every request through their servers.</li>
-          </ul>
-        </section>
-
-        <section className={styles.footerCta}>
-          <h2>Get started in one command.</h2>
-          <pre className={styles.code}>npm install -g @antseed/cli</pre>
-          <p className={styles.footerNote}>
-            Open source. Runs locally. <Link to="/docs/install">Full install guide →</Link>
-          </p>
-        </section>
-      </div>
+      <FinalCta
+        title="Get started in one command."
+        note={
+          <>
+            <span>Open source. Runs locally.</span>
+            <a href="/docs/install">Full install guide</a>
+          </>
+        }>
+        <code className={styles.installCode}>npm install -g @antseed/cli</code>
+      </FinalCta>
     </Layout>
   );
 }

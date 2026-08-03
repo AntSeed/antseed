@@ -146,11 +146,11 @@ export const integrations: Integration[] = [
     format: 'anthropic-messages',
     setupMinutes: 2,
     status: 'verified',
-    oneLiner: "Anthropic's official CLI agent — launch through AntSeed with `antseed claude`.",
+    oneLiner: "Anthropic's official CLI agent - launch through AntSeed with `antseed claude`.",
     description: [
       'Claude Code is the official CLI coding agent from Anthropic. It speaks the Anthropic Messages API natively, so it slots into AntSeed through the `antseed claude` wrapper or by pointing `ANTHROPIC_BASE_URL` at your local proxy.',
       '`antseed claude` resolves the active buyer proxy, sets the placeholder Anthropic API key for the child process, and forwards the rest of your Claude Code flags unchanged. Manual environment variables still work if you want to run `claude` directly.',
-      'No real Anthropic API key is needed — the AntSeed proxy authenticates each request with your local identity (`ANTSEED_IDENTITY_HEX`) and settles payments on-chain. The `ANTHROPIC_API_KEY` value is required by the Anthropic SDK only as a non-empty placeholder.',
+      'No real Anthropic API key is needed - the AntSeed proxy authenticates each request with your local identity (`ANTSEED_IDENTITY_HEX`) and settles payments on-chain. The `ANTHROPIC_API_KEY` value is required by the Anthropic SDK only as a non-empty placeholder.',
       'When Claude Code calls the Messages API, the proxy forwards the request to the peer you pinned in step 3 of the setup above. Whichever <em>service ids</em> that peer advertises (visible in <code>antseed network peer &lt;peerId&gt;</code>) become the valid <code>--model</code> values.',
     ],
     install: [
@@ -180,7 +180,7 @@ export const integrations: Integration[] = [
     ],
     modelHints: {
       suggested: ['claude-sonnet-4-6', 'claude-opus-4-7', 'deepseek-v4-flash'],
-      note: "`antseed claude --model <service-id>` passes the value to Claude Code unchanged. The valid set is whatever your pinned peer advertises — see the discovery commands below.",
+      note: "`antseed claude --model <service-id>` passes the value to Claude Code unchanged. The valid set is whatever your pinned peer advertises - see the discovery commands below.",
     },
     test: [
       {
@@ -215,7 +215,7 @@ export const integrations: Integration[] = [
       },
       {
         problem: 'Want to confirm a request actually went through AntSeed (not Anthropic direct)',
-        fix: 'After the request completes, run `antseed buyer metering` — you\'ll see the channel for the peer Claude Code routed to, with token counts and the USDC settled. `antseed buyer status` shows the snapshot (pinned peer, active-channel count, deposits).',
+        fix: 'After the request completes, run `antseed buyer metering` - you\'ll see the channel for the peer Claude Code routed to, with token counts and the USDC settled. `antseed buyer status` shows the snapshot (pinned peer, active-channel count, deposits).',
       },
     ],
     links: [
@@ -233,7 +233,7 @@ export const integrations: Integration[] = [
     format: 'openai-chat',
     setupMinutes: 2,
     status: 'verified',
-    oneLiner: "OpenAI's official CLI coding agent — use `antseed codex` for per-run proxy config.",
+    oneLiner: "OpenAI's official CLI coding agent - use `antseed codex` for per-run proxy config.",
     description: [
       "Codex is OpenAI's terminal coding agent. Recent versions ignore `OPENAI_BASE_URL` and instead read provider config from Codex settings.",
       '`antseed codex` supplies that provider config for one run with Codex `-c` overrides, points it at the active buyer proxy, sets the placeholder API key, and leaves your real `CODEX_HOME` untouched.',
@@ -302,7 +302,7 @@ wire_api = "responses"`,
         output: `Deposits available: 4.289391 USDC → 3.289391 USDC
 Deposits reserved:           0 USDC → 1 USDC`,
         note:
-          'The buyer dashboard at http://localhost:3118 is the authoritative real-time signal: a non-zero `Reserved` (channel opened) and/or a drop in `Available` (settled spend) after a real prompt confirms AntSeed served the request. The `antseed buyer status` CLI output is cached and may lag the dashboard — refresh the web view for confirmation. Do not rely on `lsof -i | grep codex` or `~/.codex/log/codex-tui.log`: Codex keeps persistent TCP connections to Cloudflare/ChatGPT IPs (e.g. 172.64.0.0/13) for non-inference purposes (the cause was not isolated during testing), and the `provider=OpenAI` lines in the TUI log are not a reliable indicator that inference went to OpenAI — the on-chain numbers can show AntSeed served the request despite that log line.',
+          'The buyer dashboard at http://localhost:3118 is the authoritative real-time signal: a non-zero `Reserved` (channel opened) and/or a drop in `Available` (settled spend) after a real prompt confirms AntSeed served the request. The `antseed buyer status` CLI output is cached and may lag the dashboard - refresh the web view for confirmation. Do not rely on `lsof -i | grep codex` or `~/.codex/log/codex-tui.log`: Codex keeps persistent TCP connections to Cloudflare/ChatGPT IPs (e.g. 172.64.0.0/13) for non-inference purposes (the cause was not isolated during testing), and the `provider=OpenAI` lines in the TUI log are not a reliable indicator that inference went to OpenAI - the on-chain numbers can show AntSeed served the request despite that log line.',
       },
     ],
     troubleshooting: [
@@ -312,7 +312,7 @@ Deposits reserved:           0 USDC → 1 USDC`,
       },
       {
         problem: 'How can I tell if Codex is actually routing through AntSeed?',
-        fix: 'Check the buyer dashboard at http://localhost:3118 (or `antseed buyer status`) after sending a test prompt. `Reserved` going from $0 to a non-zero value (a channel was opened) and/or `Available` dropping (spend settled) confirms AntSeed served the request. If both stay flat after a real prompt, the profile is not being applied. Do not trust `lsof` connections to Cloudflare IPs or `provider=OpenAI` lines in `~/.codex/log/codex-tui.log` — neither is a reliable routing signal.',
+        fix: 'Check the buyer dashboard at http://localhost:3118 (or `antseed buyer status`) after sending a test prompt. `Reserved` going from $0 to a non-zero value (a channel was opened) and/or `Available` dropping (spend settled) confirms AntSeed served the request. If both stay flat after a real prompt, the profile is not being applied. Do not trust `lsof` connections to Cloudflare IPs or `provider=OpenAI` lines in `~/.codex/log/codex-tui.log` - neither is a reliable routing signal.',
       },
       {
         problem: 'Codex prints `Ignored unsupported project-local config keys … model_provider, model_providers`',
@@ -350,12 +350,12 @@ Deposits reserved:           0 USDC → 1 USDC`,
     format: 'openai-chat',
     setupMinutes: 2,
     status: 'verified',
-    oneLiner: 'Open-source AI coding agent — launch through AntSeed with `antseed opencode`.',
+    oneLiner: 'Open-source AI coding agent - launch through AntSeed with `antseed opencode`.',
     description: [
       'OpenCode is an MIT-licensed terminal coding agent built on the Vercel AI SDK. It supports 75+ providers out of the box and lets you register custom ones via <code>opencode.json</code>.',
       '`antseed opencode` creates that custom provider config in a temporary <code>opencode.json</code>, points OpenCode at it for the child process, and deletes it when the session exits. Manual project or global config still works if you want OpenCode to remember AntSeed outside the wrapper.',
-      'AntSeed plugs in as a <strong>custom provider</strong> using the <code>@ai-sdk/openai-compatible</code> adapter — the same one OpenCode recommends for any OpenAI-compatible endpoint (LM Studio, llama.cpp, Atomic Chat, etc.). No <code>ANTHROPIC_BASE_URL</code>: OpenCode reads provider config from JSON.',
-      'Each model you want to use must be listed under <code>models</code>. The id has to match what the buyer proxy returns from <code>GET /v1/models</code> — i.e. a service id advertised by your currently-pinned peer.',
+      'AntSeed plugs in as a <strong>custom provider</strong> using the <code>@ai-sdk/openai-compatible</code> adapter - the same one OpenCode recommends for any OpenAI-compatible endpoint (LM Studio, llama.cpp, Atomic Chat, etc.). No <code>ANTHROPIC_BASE_URL</code>: OpenCode reads provider config from JSON.',
+      'Each model you want to use must be listed under <code>models</code>. The id has to match what the buyer proxy returns from <code>GET /v1/models</code> - i.e. a service id advertised by your currently-pinned peer.',
     ],
     install: [
       { label: 'Install OpenCode', command: 'npm install -g opencode-ai' },
@@ -423,7 +423,7 @@ Deposits reserved:           0 USDC → 1 USDC`,
     troubleshooting: [
       {
         problem: 'AntSeed doesn\'t appear in `/connect` or `/models`',
-        fix: 'With `antseed opencode`, pass the service id via `--model`; the wrapper supplies a temporary config. With manual config, make sure `opencode.json` is in your project root (or `~/.config/opencode/opencode.json`) and that the JSON is valid — a stray comma silently disables the whole provider.',
+        fix: 'With `antseed opencode`, pass the service id via `--model`; the wrapper supplies a temporary config. With manual config, make sure `opencode.json` is in your project root (or `~/.config/opencode/opencode.json`) and that the JSON is valid - a stray comma silently disables the whole provider.',
       },
       {
         problem: 'Model is listed but every call returns `model_not_found`',
@@ -451,16 +451,16 @@ Deposits reserved:           0 USDC → 1 USDC`,
     status: 'verified',
     oneLiner: 'Open-source terminal coding agent with a first-class AntSeed extension.',
     description: [
-      '<strong>What Pi is.</strong> Pi (<code>@mariozechner/pi-coding-agent</code>) is a minimal, hackable terminal coding agent by Mario Zechner — the same lineage as <a href="https://github.com/badlogic/pi-mono">pi-mono</a>. It ships with four default tools (<code>read</code>, <code>write</code>, <code>edit</code>, <code>bash</code>) and lets you extend everything else — commands, providers, themes, even the editor UI — through TypeScript <em>extensions</em>, <em>skills</em>, and <em>prompt templates</em>. No fork required.',
-      '<strong>What the AntSeed extension does.</strong> <a href="https://github.com/AntSeed/pi-antseed"><code>pi-antseed</code></a> is a Pi extension that registers the local buyer proxy as a Pi provider named <code>antseed</code>. Once installed, every service your pinned peer advertises shows up under <code>antseed/&lt;id&gt;</code> in Pi\'s model picker (Ctrl+L or <code>/model</code>) — you switch with <code>/model antseed/minimax-m2.7</code> just like any built-in.',
-      '<strong>Why an extension instead of env vars.</strong> Pi already speaks dozens of provider protocols natively. The extension calls <code>pi.registerProvider("antseed", { api: "openai-responses", authHeader: true, baseUrl: "http://localhost:8377/v1" })</code> — Pi then handles auth headers, streaming, retries, and tool-calling. The Responses API path preserves reasoning items across turns for reasoning-capable models, while the extension still auto-refreshes the model list from <code>GET /v1/models</code> so the menu reflects what your pinned peer can serve.',
+      '<strong>What Pi is.</strong> Pi (<code>@mariozechner/pi-coding-agent</code>) is a minimal, hackable terminal coding agent by Mario Zechner - the same lineage as <a href="https://github.com/badlogic/pi-mono">pi-mono</a>. It ships with four default tools (<code>read</code>, <code>write</code>, <code>edit</code>, <code>bash</code>) and lets you extend everything else - commands, providers, themes, even the editor UI - through TypeScript <em>extensions</em>, <em>skills</em>, and <em>prompt templates</em>. No fork required.',
+      '<strong>What the AntSeed extension does.</strong> <a href="https://github.com/AntSeed/pi-antseed"><code>pi-antseed</code></a> is a Pi extension that registers the local buyer proxy as a Pi provider named <code>antseed</code>. Once installed, every service your pinned peer advertises shows up under <code>antseed/&lt;id&gt;</code> in Pi\'s model picker (Ctrl+L or <code>/model</code>) - you switch with <code>/model antseed/minimax-m2.7</code> just like any built-in.',
+      '<strong>Why an extension instead of env vars.</strong> Pi already speaks dozens of provider protocols natively. The extension calls <code>pi.registerProvider("antseed", { api: "openai-responses", authHeader: true, baseUrl: "http://localhost:8377/v1" })</code> - Pi then handles auth headers, streaming, retries, and tool-calling. The Responses API path preserves reasoning items across turns for reasoning-capable models, while the extension still auto-refreshes the model list from <code>GET /v1/models</code> so the menu reflects what your pinned peer can serve.',
     ],
     install: [
       {
         label: 'Install Pi itself (the coding agent CLI)',
         command: 'npm install -g @mariozechner/pi-coding-agent',
         note:
-          'Pi requires Node.js 20+. The binary is `pi`. Verify with `pi --version`. Without any extensions, Pi can already talk to Claude / GPT / Gemini / Groq / etc. via API key or OAuth — the AntSeed extension below is what teaches it to route through your local buyer proxy.',
+          'Pi requires Node.js 20+. The binary is `pi`. Verify with `pi --version`. Without any extensions, Pi can already talk to Claude / GPT / Gemini / Groq / etc. via API key or OAuth - the AntSeed extension below is what teaches it to route through your local buyer proxy.',
       },
       {
         label: 'Install the AntSeed extension into Pi',
@@ -485,7 +485,7 @@ Deposits reserved:           0 USDC → 1 USDC`,
       {
         kind: 'gui',
         instructions:
-          'No GUI config needed in the common case — the extension reads `ANTSEED_BASE_URL` (default `http://localhost:8377/v1`) and discovers models from the pinned peer automatically. Only set `ANTSEED_API_KEY` if you front the buyer proxy with your own auth layer, or `ANTSEED_MODELS="id1,id2"` to skip discovery and register a fixed list.',
+          'No GUI config needed in the common case - the extension reads `ANTSEED_BASE_URL` (default `http://localhost:8377/v1`) and discovers models from the pinned peer automatically. Only set `ANTSEED_API_KEY` if you front the buyer proxy with your own auth layer, or `ANTSEED_MODELS="id1,id2"` to skip discovery and register a fixed list.',
       },
     ],
     modelHints: {
@@ -498,13 +498,13 @@ Deposits reserved:           0 USDC → 1 USDC`,
         label: 'Launch Pi',
         command: 'pi',
         note:
-          'You\'ll see Pi\'s startup header, which lists loaded extensions. Look for `antseed` (or `pi-antseed`) in that list — if it\'s there, the extension loaded successfully.',
+          'You\'ll see Pi\'s startup header, which lists loaded extensions. Look for `antseed` (or `pi-antseed`) in that list - if it\'s there, the extension loaded successfully.',
       },
       {
         label: 'Open the model picker and pick an AntSeed-routed model',
         command: '/model',
         note:
-          'Or press Ctrl+L. The picker is fuzzy-searchable; type "antseed" to filter. You should see entries like `antseed/claude-sonnet-4-6`, `antseed/deepseek-v4-flash`, etc. — one for each service your pinned peer advertises.',
+          'Or press Ctrl+L. The picker is fuzzy-searchable; type "antseed" to filter. You should see entries like `antseed/claude-sonnet-4-6`, `antseed/deepseek-v4-flash`, etc. - one for each service your pinned peer advertises.',
       },
       {
         label: 'Or switch directly via slash command',
@@ -522,7 +522,7 @@ Deposits reserved:           0 USDC → 1 USDC`,
       {
         problem: '`antseed` doesn\'t appear in the model picker (`/model` or Ctrl+L)',
         fix:
-          'The extension didn\'t load. Re-run `pi install git:github.com/AntSeed/pi-antseed`, restart Pi, and watch the startup header — it lists every loaded extension and surfaces load errors there.',
+          'The extension didn\'t load. Re-run `pi install git:github.com/AntSeed/pi-antseed`, restart Pi, and watch the startup header - it lists every loaded extension and surfaces load errors there.',
       },
       {
         problem: 'Picker only shows a few hard-coded `antseed/...` ids, not what my peer offers',
@@ -563,10 +563,10 @@ Deposits reserved:           0 USDC → 1 USDC`,
     format: 'anthropic-messages',
     setupMinutes: 3,
     status: 'verified',
-    oneLiner: 'Open-source autonomous agent runtime — register AntSeed as a custom provider in `openclaw.json`.',
+    oneLiner: 'Open-source autonomous agent runtime - register AntSeed as a custom provider in `openclaw.json`.',
     description: [
-      '<strong>What OpenClaw is.</strong> OpenClaw is an open-source agent runtime for autonomous, long-running tasks (research, coding, web automation). It loads its provider catalog from <code>~/.openclaw/openclaw.json</code> — each entry is an HTTP endpoint plus a wire protocol (<code>anthropic-messages</code>, <code>openai-chat</code>, etc.) and a list of models.',
-      '<strong>How AntSeed plugs in.</strong> Add a provider entry called <code>antseed</code> that points at <code>http://127.0.0.1:8377</code> with <code>api: "anthropic-messages"</code>. Each model id you list under that provider must be a service id your pinned peer advertises — OpenClaw will surface them in its model picker as <code>antseed/&lt;service-id&gt;</code>.',
+      '<strong>What OpenClaw is.</strong> OpenClaw is an open-source agent runtime for autonomous, long-running tasks (research, coding, web automation). It loads its provider catalog from <code>~/.openclaw/openclaw.json</code> - each entry is an HTTP endpoint plus a wire protocol (<code>anthropic-messages</code>, <code>openai-chat</code>, etc.) and a list of models.',
+      '<strong>How AntSeed plugs in.</strong> Add a provider entry called <code>antseed</code> that points at <code>http://127.0.0.1:8377</code> with <code>api: "anthropic-messages"</code>. Each model id you list under that provider must be a service id your pinned peer advertises - OpenClaw will surface them in its model picker as <code>antseed/&lt;service-id&gt;</code>.',
       '<strong>Why a config entry instead of env vars.</strong> OpenClaw runs many providers in parallel (one per task, sometimes one per agent). A single base-URL override would force every agent through AntSeed; a named provider lets you mix AntSeed with hosted Anthropic, OpenAI, or local models on a per-agent basis.',
     ],
     install: [
@@ -621,7 +621,7 @@ openclaw config set agents.defaults.model.primary "antseed/claude-sonnet-4-6"`,
     modelHints: {
       suggested: ['claude-sonnet-4-6', 'claude-opus-4-7', 'deepseek-v4-flash', 'gpt-oss-120b'],
       note:
-        'Each `id` under `models[]` must match a service id from `curl http://127.0.0.1:8377/v1/models`. `apiKey` is required by OpenClaw\'s validator but ignored by the proxy — any non-empty string works. The `"antseed-p2p"` value is just convention.',
+        'Each `id` under `models[]` must match a service id from `curl http://127.0.0.1:8377/v1/models`. `apiKey` is required by OpenClaw\'s validator but ignored by the proxy - any non-empty string works. The `"antseed-p2p"` value is just convention.',
     },
     test: [
       {
@@ -686,9 +686,9 @@ openclaw config set agents.defaults.model.primary "antseed/claude-sonnet-4-6"`,
     format: 'openai-chat',
     setupMinutes: 3,
     status: 'verified',
-    oneLiner: "Nous Research's agent framework — register AntSeed as a custom provider in `config.yaml`.",
+    oneLiner: "Nous Research's agent framework - register AntSeed as a custom provider in `config.yaml`.",
     description: [
-      '<strong>What Hermes is.</strong> Hermes is the agent framework from <a href="https://nousresearch.com/">Nous Research</a> (successor to OpenClaw\'s lineage). It\'s designed for autonomous, multi-step workflows — research agents, coding agents, swarms — and reads its model catalog from <code>~/.hermes/config.yaml</code>.',
+      '<strong>What Hermes is.</strong> Hermes is the agent framework from <a href="https://nousresearch.com/">Nous Research</a> (successor to OpenClaw\'s lineage). It\'s designed for autonomous, multi-step workflows - research agents, coding agents, swarms - and reads its model catalog from <code>~/.hermes/config.yaml</code>.',
       '<strong>How AntSeed plugs in.</strong> Add an entry under <code>custom_providers</code> with <code>base_url: http://127.0.0.1:8377/v1</code>, <code>api_mode: chat_completions</code>, and a list of <code>models</code>. Each model id must be a service id your pinned peer advertises. Then point <code>model.default</code> at the one you want as primary.',
       '<strong>One Hermes-specific gotcha.</strong> Some peers serve GPT-style models via the <code>openai-responses</code> protocol, which <em>requires</em> streaming. Hermes\' auxiliary calls (title generation, context compression) are non-streaming and will fail against those models with <code>HTTP 400: Stream must be set to true</code>. Pin auxiliary slots to a <code>chat_completions</code> model (config example below).',
     ],
@@ -697,7 +697,7 @@ openclaw config set agents.defaults.model.primary "antseed/claude-sonnet-4-6"`,
         label: 'Install or build Hermes',
         command: '# Follow Nous Research setup at https://github.com/NousResearch/hermes-agent',
         note:
-          'Hermes is typically run as a long-lived process (often under systemd on a server). The config file `~/.hermes/config.yaml` is read at startup — changes require a restart.',
+          'Hermes is typically run as a long-lived process (often under systemd on a server). The config file `~/.hermes/config.yaml` is read at startup - changes require a restart.',
       },
     ],
     configure: [
@@ -736,7 +736,7 @@ auxiliary:
     modelHints: {
       suggested: ['claude-sonnet-4-6', 'minimax-m2.7', 'deepseek-v4-flash', 'gpt-oss-120b'],
       note:
-        'Only ids listed under `models:` show up in Hermes\' picker — mirror it against `curl http://127.0.0.1:8377/v1/models` so you don\'t advertise models no peer serves. `model.provider: antseed` pins the default to this custom provider.',
+        'Only ids listed under `models:` show up in Hermes\' picker - mirror it against `curl http://127.0.0.1:8377/v1/models` so you don\'t advertise models no peer serves. `model.provider: antseed` pins the default to this custom provider.',
     },
     test: [
       {
@@ -758,24 +758,24 @@ auxiliary:
         label: 'After the first request, confirm a channel opened and is being metered',
         command: 'antseed buyer status\nantseed buyer metering',
         note:
-          '`status` shows `Active channels: 1` once the first request settles (~5–15s on Base — one on-chain tx to open the channel). `metering` shows the per-peer token + USDC totals for each channel. To poll: `watch -n 1 antseed buyer metering`.',
+          '`status` shows `Active channels: 1` once the first request settles (~5–15s on Base - one on-chain tx to open the channel). `metering` shows the per-peer token + USDC totals for each channel. To poll: `watch -n 1 antseed buyer metering`.',
       },
     ],
     troubleshooting: [
       {
         problem: '`HTTP 400: Stream must be set to true` from auxiliary calls',
         fix:
-          'You\'re routing through a peer that serves the model via `openai-responses` (which requires streaming), but Hermes\' auxiliaries are non-streaming. Pin the `auxiliary.*` slots to a `chat_completions` model (see the config block above). Confirm a model\'s protocol with `antseed network peer <peerId>` — look for `protocols: openai-chat-completions` vs `openai-responses`.',
+          'You\'re routing through a peer that serves the model via `openai-responses` (which requires streaming), but Hermes\' auxiliaries are non-streaming. Pin the `auxiliary.*` slots to a `chat_completions` model (see the config block above). Confirm a model\'s protocol with `antseed network peer <peerId>` - look for `protocols: openai-chat-completions` vs `openai-responses`.',
       },
       {
         problem: 'Hermes loads the provider but every call returns `no_peer_pinned`',
         fix:
-          'In the default manual flow AntSeed does not auto-select a peer — pin one with `antseed buyer connection set --peer <peerId>`, send `x-antseed-pin-peer` per request, or start the buyer with a router plugin. The session pin survives buyer-proxy restarts (it\'s persisted to `~/.antseed/buyer.state.json`).',
+          'In the default manual flow AntSeed does not auto-select a peer - pin one with `antseed buyer connection set --peer <peerId>`, send `x-antseed-pin-peer` per request, or start the buyer with a router plugin. The session pin survives buyer-proxy restarts (it\'s persisted to `~/.antseed/buyer.state.json`).',
       },
       {
         problem: 'Hermes runs on a remote host and can\'t reach `127.0.0.1:8377`',
         fix:
-          'Either run the buyer proxy on the same host as Hermes (recommended — keeps the hot signing key local), or expose the proxy via SSH tunnel: `ssh -N -L 127.0.0.1:8377:127.0.0.1:8377 user@hermes-host`. Do not bind the buyer proxy to a public interface.',
+          'Either run the buyer proxy on the same host as Hermes (recommended - keeps the hot signing key local), or expose the proxy via SSH tunnel: `ssh -N -L 127.0.0.1:8377:127.0.0.1:8377 user@hermes-host`. Do not bind the buyer proxy to a public interface.',
       },
       {
         problem: 'Want to swap the routed model without restarting AntSeed',
@@ -807,22 +807,22 @@ auxiliary:
     oneLiner: 'Use AntSeed as an inference provider inside GenLayer Studio validators.',
     description: [
       '<strong>What GenLayer Studio is.</strong> Studio runs <em>Intelligent Contract</em> validators that consult LLMs to reach consensus. Each validator is configured with a provider entry that has a <code>provider</code> name, a <code>plugin</code> (one of <code>openai-compatible</code> / <code>anthropic</code> / <code>google</code> / <code>ollama</code> / <code>custom</code>), a <code>model</code> id, and a <code>plugin_config</code> with <code>api_url</code> and <code>api_key_env_var</code>.',
-      '<strong>How AntSeed plugs in.</strong> Drop one JSON file per model into <code>backend/node/create_nodes/default_providers/</code> with <code>plugin: "openai-compatible"</code> and <code>api_url: "http://host.docker.internal:8377"</code>. Studio\'s openai-compatible plugin appends <code>/v1/chat/completions</code> automatically, so the buyer proxy receives a standard OpenAI Chat request and routes it to your pinned peer. Mirror the existing LibertAI entry (PR #1526) — it is the closest analogue: an openai-compatible host with a hosted base URL replaced by your local proxy.',
-      '<strong>Why <code>host.docker.internal</code>, not <code>localhost</code>.</strong> Studio\'s backend runs in Docker via <code>genlayer up</code>. From inside the container, <code>localhost</code> means the container itself, not your host machine — it cannot reach the AntSeed buyer proxy on the host. Mac/Windows Docker exposes the host as <code>host.docker.internal</code>; on Linux you must add <code>extra_hosts: ["host.docker.internal:host-gateway"]</code> to the backend service in <code>docker-compose.yml</code> or run with <code>--network=host</code>.',
+      '<strong>How AntSeed plugs in.</strong> Drop one JSON file per model into <code>backend/node/create_nodes/default_providers/</code> with <code>plugin: "openai-compatible"</code> and <code>api_url: "http://host.docker.internal:8377"</code>. Studio\'s openai-compatible plugin appends <code>/v1/chat/completions</code> automatically, so the buyer proxy receives a standard OpenAI Chat request and routes it to your pinned peer. Mirror the existing LibertAI entry (PR #1526) - it is the closest analogue: an openai-compatible host with a hosted base URL replaced by your local proxy.',
+      '<strong>Why <code>host.docker.internal</code>, not <code>localhost</code>.</strong> Studio\'s backend runs in Docker via <code>genlayer up</code>. From inside the container, <code>localhost</code> means the container itself, not your host machine - it cannot reach the AntSeed buyer proxy on the host. Mac/Windows Docker exposes the host as <code>host.docker.internal</code>; on Linux you must add <code>extra_hosts: ["host.docker.internal:host-gateway"]</code> to the backend service in <code>docker-compose.yml</code> or run with <code>--network=host</code>.',
     ],
     prereqs: [
       'GenLayer Studio cloned and running locally with `genlayer up` (see https://docs.genlayer.com/developers/intelligent-contracts/tools/genlayer-studio)',
     ],
     install: [
       {
-        label: 'On Linux only — make `host.docker.internal` resolve from inside the backend container',
+        label: 'On Linux only - make `host.docker.internal` resolve from inside the backend container',
         language: 'yaml',
-        command: `# docker-compose.yml — patch the backend (jsonrpc) service
+        command: `# docker-compose.yml - patch the backend (jsonrpc) service
 services:
   jsonrpc:
     extra_hosts:
       - "host.docker.internal:host-gateway"`,
-        note: 'Mac and Windows Docker Desktop already expose the host as `host.docker.internal` automatically — skip this step on those platforms. Restart with `genlayer up --reset` after editing.',
+        note: 'Mac and Windows Docker Desktop already expose the host as `host.docker.internal` automatically - skip this step on those platforms. Restart with `genlayer up --reset` after editing.',
       },
     ],
     configure: [
@@ -879,22 +879,22 @@ ANTSEED_API_KEY=antseed`,
   "if":   { "properties": { "provider": { "const": "antseed" } } },
   "then": { "properties": { "plugin":   { "const": "openai-compatible" } } }
 }`,
-        note: 'Both schema files must be kept in sync — the backend uses one for validation, the frontend uses the other for the UI dropdown. This is exactly what PR #1526 did for LibertAI.',
+        note: 'Both schema files must be kept in sync - the backend uses one for validation, the frontend uses the other for the UI dropdown. This is exactly what PR #1526 did for LibertAI.',
       },
     ],
     modelHints: {
       suggested: ['claude-sonnet-4-6', 'deepseek-v4-flash', 'gpt-oss-120b', 'qwen3-coder-480b'],
-      note: 'Each provider JSON file pins exactly one `model`. Studio enumerates these into the validator-creation UI; pick services you know your pinned peer offers (check `antseed network peer <peerId> --json | jq \'.matchingServices[].service\'`). To expose more models later, drop in more `antseed_<model>.json` files — no schema edit needed.',
+      note: 'Each provider JSON file pins exactly one `model`. Studio enumerates these into the validator-creation UI; pick services you know your pinned peer offers (check `antseed network peer <peerId> --json | jq \'.matchingServices[].service\'`). To expose more models later, drop in more `antseed_<model>.json` files - no schema edit needed.',
     },
     test: [
       {
         label: 'Restart Studio so it re-scans `default_providers/`',
         command: 'genlayer up --reset',
-        note: '`get_default_providers()` in `backend/node/create_nodes/providers.py` reads every `*.json` in that folder once on boot, validates against `providers_schema.json`, and caches the result. Schema-validation errors abort startup with the offending file path — watch the logs.',
+        note: '`get_default_providers()` in `backend/node/create_nodes/providers.py` reads every `*.json` in that folder once on boot, validates against `providers_schema.json`, and caches the result. Schema-validation errors abort startup with the offending file path - watch the logs.',
       },
       {
         label: 'In the Studio UI, create a new validator with provider "antseed"',
-        note: 'You should see your `antseed_*.json` model ids in the dropdown. Save and trigger a contract that calls `genlayer.eq_principle.prompt(…)` — the request hits `http://host.docker.internal:8377/v1/chat/completions` on the AntSeed proxy and is forwarded to your pinned peer.',
+        note: 'You should see your `antseed_*.json` model ids in the dropdown. Save and trigger a contract that calls `genlayer.eq_principle.prompt(…)` - the request hits `http://host.docker.internal:8377/v1/chat/completions` on the AntSeed proxy and is forwarded to your pinned peer.',
       },
       {
         label: 'Confirm the validator call hit AntSeed',
@@ -916,7 +916,7 @@ ANTSEED_API_KEY=antseed`,
       {
         problem: 'Validator returns `no_peer_pinned`',
         fix:
-          'No peer is pinned in the buyer proxy. Run `antseed network browse`, pick one, then `antseed buyer connection set --peer <peerId>`. Alternatively, send a per-request `x-antseed-pin-peer` header by extending the openai-compatible plugin — not currently exposed in the standard schema, so session pin is the path of least resistance.',
+          'No peer is pinned in the buyer proxy. Run `antseed network browse`, pick one, then `antseed buyer connection set --peer <peerId>`. Alternatively, send a per-request `x-antseed-pin-peer` header by extending the openai-compatible plugin - not currently exposed in the standard schema, so session pin is the path of least resistance.',
       },
       {
         problem: '`404 model_not_found` from a validator using e.g. `claude-sonnet-4-6`',
@@ -930,8 +930,8 @@ ANTSEED_API_KEY=antseed`,
       },
     ],
     caveats: [
-      'AntSeed is a local daemon, not a hosted endpoint. Every Studio operator must run AntStation or `antseed buyer start` on their own machine and fund their wallet — there is no central account.',
-      'Free services exist on the AntSeed network (`in: 0, out: 0`), but using paid ones requires a USDC deposit on Base. AntStation guides users through this on first launch; the CLI exposes it as `antseed payments`.',
+      'AntSeed is a local daemon, not a hosted endpoint. Every Studio operator must run the VPR or `antseed buyer start` on their own machine and fund their wallet - there is no central account.',
+      'Free services exist on the AntSeed network (`in: 0, out: 0`), but using paid ones requires a USDC deposit on Base. The VPR guides users through this on first launch; the CLI exposes it as `antseed payments`.',
     ],
     links: [
       { label: 'GenLayer Studio repo', href: 'https://github.com/genlayerlabs/genlayer-studio' },
@@ -940,7 +940,7 @@ ANTSEED_API_KEY=antseed`,
       { label: 'providers_schema.json (source of truth)', href: 'https://github.com/genlayerlabs/genlayer-studio/blob/main/backend/node/create_nodes/providers_schema.json' },
     ],
     agentSummary:
-      'In GenLayer Studio: drop one JSON file per model into `backend/node/create_nodes/default_providers/` with `provider: "antseed"`, `plugin: "openai-compatible"`, `model: "<service-id>"`, and `plugin_config.api_url: "http://host.docker.internal:8377"` (NO `/v1` suffix — the plugin appends it). Add `"antseed"` to the provider enum and an if/then rule to BOTH `backend/.../providers_schema.json` and `frontend/.../providers_schema.json`. Set `ANTSEED_API_KEY=antseed` in `.env`. Restart with `genlayer up --reset`. The user must run AntStation or `antseed buyer start` and pin a peer that serves the listed `model` ids.',
+      'In GenLayer Studio: drop one JSON file per model into `backend/node/create_nodes/default_providers/` with `provider: "antseed"`, `plugin: "openai-compatible"`, `model: "<service-id>"`, and `plugin_config.api_url: "http://host.docker.internal:8377"` (NO `/v1` suffix - the plugin appends it). Add `"antseed"` to the provider enum and an if/then rule to BOTH `backend/.../providers_schema.json` and `frontend/.../providers_schema.json`. Set `ANTSEED_API_KEY=antseed` in `.env`. Restart with `genlayer up --reset`. The user must run the VPR or `antseed buyer start` and pin a peer that serves the listed `model` ids.',
   },
 
   /* ---------------- Frameworks ---------------- */
@@ -955,8 +955,8 @@ ANTSEED_API_KEY=antseed`,
     oneLiner: "Use `@ai-sdk/openai-compatible` to call AntSeed from `generateText` / `streamText` / `generateObject`.",
     description: [
       '<strong>What the AI SDK is.</strong> Vercel\'s <code>ai</code> package is a provider-agnostic TypeScript toolkit for building LLM apps and agents. You pick a <em>provider</em> (a small adapter package), instantiate a model from it, and pass that model into one of the framework\'s primitives: <code>generateText</code>, <code>streamText</code>, <code>generateObject</code>, or <code>streamObject</code>. The AI SDK handles tool-calling, structured output, message history, and streaming for you.',
-      '<strong>How AntSeed plugs in.</strong> AntSeed is OpenAI-Chat-compatible at <code>http://localhost:8377/v1</code>, so the right adapter is <code>@ai-sdk/openai-compatible</code> (not <code>@ai-sdk/openai</code>). The official OpenAI provider is locked to OpenAI\'s API surface and quietly drops third-party fields; the openai-compatible provider is the one Vercel\'s own docs recommend for proxies, gateways, and any non-OpenAI server that speaks Chat Completions. You point it at the AntSeed proxy with <code>baseURL</code> and pass any non-empty <code>apiKey</code> placeholder — the proxy authenticates with your local identity key, not with this header.',
-      '<strong>Which model ids work.</strong> The first argument to the provider call is the AntSeed <em>service id</em> (e.g. <code>claude-sonnet-4-6</code>, <code>deepseek-v4-flash</code>). It must match a service your pinned peer advertises — confirm with <code>curl http://localhost:8377/v1/models</code>.',
+      '<strong>How AntSeed plugs in.</strong> AntSeed is OpenAI-Chat-compatible at <code>http://localhost:8377/v1</code>, so the right adapter is <code>@ai-sdk/openai-compatible</code> (not <code>@ai-sdk/openai</code>). The official OpenAI provider is locked to OpenAI\'s API surface and quietly drops third-party fields; the openai-compatible provider is the one Vercel\'s own docs recommend for proxies, gateways, and any non-OpenAI server that speaks Chat Completions. You point it at the AntSeed proxy with <code>baseURL</code> and pass any non-empty <code>apiKey</code> placeholder - the proxy authenticates with your local identity key, not with this header.',
+      '<strong>Which model ids work.</strong> The first argument to the provider call is the AntSeed <em>service id</em> (e.g. <code>claude-sonnet-4-6</code>, <code>deepseek-v4-flash</code>). It must match a service your pinned peer advertises - confirm with <code>curl http://localhost:8377/v1/models</code>.',
     ],
     prereqs: ['Node.js 18 or newer'],
     install: [
@@ -970,13 +970,13 @@ ANTSEED_API_KEY=antseed`,
       {
         kind: 'code',
         language: 'typescript',
-        snippet: `// antseed.ts — a single provider instance you can import everywhere
+        snippet: `// antseed.ts - a single provider instance you can import everywhere
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 
 export const antseed = createOpenAICompatible({
   name: 'antseed',
   baseURL: 'http://localhost:8377/v1',
-  apiKey: 'antseed', // any non-empty string — proxy ignores this header
+  apiKey: 'antseed', // any non-empty string - proxy ignores this header
   includeUsage: true, // surface token counts in streaming responses too
 });`,
       },
@@ -1001,7 +1001,7 @@ console.log('\\nusage:', await result.usage);`,
       {
         kind: 'code',
         language: 'typescript',
-        snippet: `// structured.ts — generateObject works the same way
+        snippet: `// structured.ts - generateObject works the same way
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import { antseed } from './antseed';
@@ -1032,7 +1032,7 @@ scatter much more than longer (red) wavelengths in Earth's atmosphere…
 
 usage: { promptTokens: 14, completionTokens: 78, totalTokens: 92 }`,
         note:
-          'If you see `404 model_not_found`, the pinned peer does not advertise the id you passed. If you see `no_peer_pinned`, run `antseed buyer connection set --peer <peerId>` first — or send the per-request header (next step).',
+          'If you see `404 model_not_found`, the pinned peer does not advertise the id you passed. If you see `no_peer_pinned`, run `antseed buyer connection set --peer <peerId>` first - or send the per-request header (next step).',
       },
       {
         label: 'Per-request peer override (no session pin needed)',
@@ -1053,12 +1053,12 @@ const result = streamText({
       {
         problem: 'TypeScript complains that `antseed` has no call signature',
         fix:
-          'You imported from `@ai-sdk/openai` instead of `@ai-sdk/openai-compatible`. Switch the package — the SDK\'s official OpenAI provider is locked to OpenAI\'s service ids and rejects unknown ones.',
+          'You imported from `@ai-sdk/openai` instead of `@ai-sdk/openai-compatible`. Switch the package - the SDK\'s official OpenAI provider is locked to OpenAI\'s service ids and rejects unknown ones.',
       },
       {
         problem: '`generateObject` returns malformed JSON',
         fix:
-          'The AI SDK is strict about JSON Schema support. Pass `supportsStructuredOutputs: true` to `createOpenAICompatible` only if your pinned peer\'s service supports OpenAI-style structured outputs natively. If unsure, leave it off — the SDK falls back to tool-call-based JSON which works everywhere.',
+          'The AI SDK is strict about JSON Schema support. Pass `supportsStructuredOutputs: true` to `createOpenAICompatible` only if your pinned peer\'s service supports OpenAI-style structured outputs natively. If unsure, leave it off - the SDK falls back to tool-call-based JSON which works everywhere.',
       },
       {
         problem: '`includeUsage` is set but `result.usage` is undefined',
@@ -1091,10 +1091,10 @@ const result = streamText({
     format: 'openai-chat',
     setupMinutes: 5,
     status: 'verified',
-    oneLiner: 'Drop-in `ChatOpenAI(base_url=…)` — works in chains, LCEL, and LangGraph agents.',
+    oneLiner: 'Drop-in `ChatOpenAI(base_url=…)` - works in chains, LCEL, and LangGraph agents.',
     description: [
       '<strong>What LangChain is.</strong> LangChain is the Python framework for composing LLMs with tools, retrievers, memory, and agents. The chat-model interface is <code>BaseChatModel</code>; <code>ChatOpenAI</code> from <code>langchain-openai</code> is a concrete subclass that talks the OpenAI Chat Completions wire format.',
-      '<strong>How AntSeed plugs in.</strong> Pass <code>base_url="http://localhost:8377/v1"</code> and any non-empty <code>api_key</code> to <code>ChatOpenAI</code>. Once you have an instance, every primitive that accepts a chat model — LCEL pipes (<code>prompt | llm | parser</code>), tool-calling agents, <code>create_react_agent</code>, LangGraph nodes, RAG chains, structured-output binding via <code>with_structured_output</code> — will route through AntSeed without any further changes.',
+      '<strong>How AntSeed plugs in.</strong> Pass <code>base_url="http://localhost:8377/v1"</code> and any non-empty <code>api_key</code> to <code>ChatOpenAI</code>. Once you have an instance, every primitive that accepts a chat model - LCEL pipes (<code>prompt | llm | parser</code>), tool-calling agents, <code>create_react_agent</code>, LangGraph nodes, RAG chains, structured-output binding via <code>with_structured_output</code> - will route through AntSeed without any further changes.',
       '<strong>One thing to know.</strong> LangChain\'s <code>ChatOpenAI</code> is OpenAI-strict by design: it will not preserve non-standard response fields like <code>reasoning_content</code>, <code>reasoning</code>, or <code>reasoning_details</code> that some third-party servers emit. For chat, tool-calling, and structured output this is fine. If you specifically need a model\'s reasoning traces, consider using the AntSeed buyer proxy with the OpenAI Responses endpoint (<code>/v1/responses</code>) via a different provider package, or use a model that returns reasoning inline.',
     ],
     prereqs: ['Python 3.10 or newer'],
@@ -1108,7 +1108,7 @@ const result = streamText({
       {
         kind: 'code',
         language: 'python',
-        snippet: `# antseed_llm.py — import this once, reuse everywhere.
+        snippet: `# antseed_llm.py - import this once, reuse everywhere.
 from langchain_openai import ChatOpenAI
 
 antseed = ChatOpenAI(
@@ -1124,7 +1124,7 @@ print(antseed.invoke("Hello").content)`,
       {
         kind: 'code',
         language: 'python',
-        snippet: `# pipeline.py — LCEL chain. Identical to OpenAI; the swap is invisible.
+        snippet: `# pipeline.py - LCEL chain. Identical to OpenAI; the swap is invisible.
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from antseed_llm import antseed
@@ -1140,7 +1140,7 @@ print(chain.invoke({"topic": "payment channels"}))`,
       {
         kind: 'code',
         language: 'python',
-        snippet: `# tools.py — tool-calling agent. Works because AntSeed forwards OpenAI tool calls verbatim.
+        snippet: `# tools.py - tool-calling agent. Works because AntSeed forwards OpenAI tool calls verbatim.
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 from antseed_llm import antseed
@@ -1160,7 +1160,7 @@ print(result["messages"][-1].content)`,
     modelHints: {
       suggested: ['claude-sonnet-4-6', 'deepseek-v4-flash', 'gpt-oss-120b', 'qwen3-coder-480b'],
       note:
-        'Pick services whose `protocols` array includes `openai-chat-completions` (most do natively; the rest are translated automatically by `@antseed/api-adapter`). Tool calling and structured output rely on the service supporting OpenAI-style function-call syntax — confirm with a quick smoke test before building large agents.',
+        'Pick services whose `protocols` array includes `openai-chat-completions` (most do natively; the rest are translated automatically by `@antseed/api-adapter`). Tool calling and structured output rely on the service supporting OpenAI-style function-call syntax - confirm with a quick smoke test before building large agents.',
     },
     test: [
       {
@@ -1189,7 +1189,7 @@ print(llm.invoke("hi").content)`,
       {
         label: 'Verify it actually went through AntSeed',
         command: 'antseed buyer metering',
-        note: '`buyer metering` reads the local SQLite log and prints per-channel token + USDC totals. After your `python` call, the channel for the peer you pinned should show non-zero input/output tokens. (`buyer status` is a snapshot view — it shows the active-channel count but not per-call usage.)',
+        note: '`buyer metering` reads the local SQLite log and prints per-channel token + USDC totals. After your `python` call, the channel for the peer you pinned should show non-zero input/output tokens. (`buyer status` is a snapshot view - it shows the active-channel count but not per-call usage.)',
       },
     ],
     troubleshooting: [
@@ -1201,7 +1201,7 @@ print(llm.invoke("hi").content)`,
       {
         problem: '`openai.APIConnectionError: Connection refused`',
         fix:
-          'The buyer proxy is not running. Start it with `antseed buyer start` (or open AntStation desktop). Confirm `curl http://localhost:8377/v1/models` works before retrying from Python.',
+          'The buyer proxy is not running. Start it with `antseed buyer start` (or open the VPR desktop app). Confirm `curl http://localhost:8377/v1/models` works before retrying from Python.',
       },
       {
         problem: '`with_structured_output` returns the right schema but empty fields',
@@ -1228,7 +1228,7 @@ print(llm.invoke("hi").content)`,
       { label: '`langchain-openai` on PyPI', href: 'https://pypi.org/project/langchain-openai/' },
     ],
     agentSummary:
-      "ChatOpenAI(model='<service-id>', base_url='http://localhost:8377/v1', api_key='antseed') from langchain-openai. Drops into LCEL, create_react_agent, RAG, with_structured_output. Per-request peer override: extra_headers={'x-antseed-pin-peer': '<peerId>'}. Service ids come from GET http://localhost:8377/v1/models. Reasoning traces (reasoning_content, etc.) are NOT preserved by ChatOpenAI — use the Responses endpoint for those.",
+      "ChatOpenAI(model='<service-id>', base_url='http://localhost:8377/v1', api_key='antseed') from langchain-openai. Drops into LCEL, create_react_agent, RAG, with_structured_output. Per-request peer override: extra_headers={'x-antseed-pin-peer': '<peerId>'}. Service ids come from GET http://localhost:8377/v1/models. Reasoning traces (reasoning_content, etc.) are NOT preserved by ChatOpenAI - use the Responses endpoint for those.",
   },
 
   /* ---------------- Raw HTTP ---------------- */
@@ -1240,10 +1240,10 @@ print(llm.invoke("hi").content)`,
     format: 'multi',
     setupMinutes: 1,
     status: 'verified',
-    oneLiner: 'Hit the proxy with plain HTTP — useful for scripts and debugging.',
+    oneLiner: 'Hit the proxy with plain HTTP - useful for scripts and debugging.',
     description: [
       'The buyer proxy is a vanilla HTTP server. Anything that can issue an HTTP POST works. Three endpoints are exposed:',
-      '• `POST /v1/messages` — Anthropic Messages format\n• `POST /v1/chat/completions` — OpenAI Chat Completions\n• `POST /v1/responses` — OpenAI Responses API',
+      '• `POST /v1/messages` - Anthropic Messages format\n• `POST /v1/chat/completions` - OpenAI Chat Completions\n• `POST /v1/responses` - OpenAI Responses API',
     ],
     install: [],
     configure: [
@@ -1288,7 +1288,7 @@ export const CATEGORY_TAGLINES: Record<IntegrationCategory, string> = {
   'coding-agent':
     "Drop-in for Claude Code, Codex, and friends. Set one env var, keep your existing workflow.",
   'agent-platform':
-    "Long-running, autonomous workloads. Agents pick providers by price, latency, and reputation — no API keys, no SaaS account.",
+    "Long-running, autonomous workloads. Agents pick providers by price, latency, and reputation - no API keys, no SaaS account.",
   framework:
     "LangChain, Vercel AI SDK, GenLayer Studio, and other multi-provider frameworks. Add AntSeed as one of the providers.",
   cli:
