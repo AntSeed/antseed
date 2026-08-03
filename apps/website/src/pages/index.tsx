@@ -1379,7 +1379,7 @@ export default function Home(): JSX.Element {
   return (
     <Layout
       title={siteConfig.tagline}
-      description="The open market for AI inference. Every model, no middleman, no account, no email. Providers compete on price and you keep your tools. Owned by no one."
+      description="The open market for AI inference. Every model, no middleman. Anonymous, best price, works with the tools you already use. Owned by no one."
       wrapperClassName="homepage-wrapper">
       <Head>
         {/*
@@ -1396,7 +1396,7 @@ export default function Home(): JSX.Element {
         <meta property="og:title" content="Every AI model, best price, no middleman" />
         <meta
           property="og:description"
-          content="AntSeed is the open market for AI inference. Every model, no middleman. No account, no email, no company reading your prompts or locking you out. Providers compete on price, you keep the tools you already use. Owned by no one. Available to everyone."
+          content="AntSeed is the open market for AI inference. Every model, no middleman. Anonymous. Best price. Works with the tools you already use. Owned by no one. Available to everyone."
         />
         <script type="application/ld+json">{JSON.stringify(orgLd)}</script>
         <script type="application/ld+json">{JSON.stringify(faqLd)}</script>
