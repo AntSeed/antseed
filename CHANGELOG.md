@@ -27,6 +27,18 @@ This project uses selective package publishing. Each release entry lists the pub
 - Fixed the buyer's Responses→Chat Completions request adapter to group parallel tool calls into a single assistant `tool_calls` message. Previously each call became its own assistant message, so strict chat-completions upstreams rejected multi-tool turns with `an assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'`.
 - Fixed the Responses request normalizer to drop non-message input items with no renderable text (e.g. Codex `reasoning` items) instead of converting them into empty user messages mid-history.
 
+## 2026-08-03 — Desktop beta
+
+### Desktop
+
+- `@antseed/desktop@0.2.0`
+
+### Changed
+
+- AntSeed VPR graduates from alpha to beta and becomes the recommended desktop build, replacing AntStation 0.1.114 as the latest release. Existing AntStation installs auto-update to it; alpha-channel installs graduate to it.
+- Highlights since 0.1.114: in-app deposit flow (QR → hot wallet → sponsored sweep, with live status), per-chat model routing with conversation pins and float-pill chat/model dropdowns, Telegram bridge over the local agent, network reachability diagnostics surfaced as a banner, opt-in update downloads with staged macOS installs, and large idle CPU reductions in the main process and compositor.
+- The Fun checkout CTA and the Stripe payment option are hidden for the beta; the deposit chooser lists the USDC options directly.
+
 ## 2026-08-01 — Desktop alpha: quiet update-check errors
 
 ### Desktop
