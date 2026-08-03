@@ -450,17 +450,6 @@ html[data-theme='dark'] .header-docs-link::before {
   opacity: 0.9;
 }
 
-/* Economics nav links — money speaks clay/amber. */
-.navbar__link.header-ants-link,
-.navbar__link.header-ants-link:hover,
-.navbar__link.header-ants-link:focus-visible,
-.navbar__link.header-ants-link.navbar__link--active {
-  color: var(--as-clay) !important;
-  font-family: var(--as-font-app);
-  font-size: 12px;
-  font-weight: 600;
-}
-
 .iconExternalLink,
 .header-pricing-link [class*='iconExternalLink'],
 .header-download-link [class*='iconExternalLink'],
@@ -609,14 +598,6 @@ html[data-theme='dark'] .header-telegram-link {
 
 .navbar-sidebar__items .menu__link:hover {
   color: var(--ifm-navbar-link-hover-color);
-}
-
-.navbar-sidebar__items .header-ants-link,
-.navbar-sidebar__items .header-diem-link,
-.navbar-sidebar__items .header-ants-link:hover,
-.navbar-sidebar__items .header-diem-link:hover {
-  color: var(--as-clay);
-  font-weight: 700;
 }
 
 .navbar-sidebar__back {

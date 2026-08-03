@@ -136,7 +136,7 @@ const config: Config = {
           'Reputation-based provider scoring',
           'TEE attestation for privacy-preserving inference',
           'AI agents with on-demand knowledge and custom tools',
-          'Desktop app (AntStation)',
+          'Desktop app (VPR)',
           'Agent-to-agent commerce support',
         ],
         downloadUrl: 'https://github.com/AntSeed/antseed/releases',
@@ -186,7 +186,6 @@ const config: Config = {
         {to: '/integrations', label: 'Integrations', position: 'left'},
         {to: '/providers', label: 'Providers', position: 'left'},
         {to: '/ecosystem', label: 'Ecosystem', position: 'left'},
-        {to: '/ants-token', label: '$ANTS', position: 'right', className: 'header-ants-link'},
         {
           type: 'docSidebar',
           sidebarId: 'docs',

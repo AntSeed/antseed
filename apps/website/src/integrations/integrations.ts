@@ -930,8 +930,8 @@ ANTSEED_API_KEY=antseed`,
       },
     ],
     caveats: [
-      'AntSeed is a local daemon, not a hosted endpoint. Every Studio operator must run AntStation or `antseed buyer start` on their own machine and fund their wallet - there is no central account.',
-      'Free services exist on the AntSeed network (`in: 0, out: 0`), but using paid ones requires a USDC deposit on Base. AntStation guides users through this on first launch; the CLI exposes it as `antseed payments`.',
+      'AntSeed is a local daemon, not a hosted endpoint. Every Studio operator must run the VPR or `antseed buyer start` on their own machine and fund their wallet - there is no central account.',
+      'Free services exist on the AntSeed network (`in: 0, out: 0`), but using paid ones requires a USDC deposit on Base. The VPR guides users through this on first launch; the CLI exposes it as `antseed payments`.',
     ],
     links: [
       { label: 'GenLayer Studio repo', href: 'https://github.com/genlayerlabs/genlayer-studio' },
@@ -940,7 +940,7 @@ ANTSEED_API_KEY=antseed`,
       { label: 'providers_schema.json (source of truth)', href: 'https://github.com/genlayerlabs/genlayer-studio/blob/main/backend/node/create_nodes/providers_schema.json' },
     ],
     agentSummary:
-      'In GenLayer Studio: drop one JSON file per model into `backend/node/create_nodes/default_providers/` with `provider: "antseed"`, `plugin: "openai-compatible"`, `model: "<service-id>"`, and `plugin_config.api_url: "http://host.docker.internal:8377"` (NO `/v1` suffix - the plugin appends it). Add `"antseed"` to the provider enum and an if/then rule to BOTH `backend/.../providers_schema.json` and `frontend/.../providers_schema.json`. Set `ANTSEED_API_KEY=antseed` in `.env`. Restart with `genlayer up --reset`. The user must run AntStation or `antseed buyer start` and pin a peer that serves the listed `model` ids.',
+      'In GenLayer Studio: drop one JSON file per model into `backend/node/create_nodes/default_providers/` with `provider: "antseed"`, `plugin: "openai-compatible"`, `model: "<service-id>"`, and `plugin_config.api_url: "http://host.docker.internal:8377"` (NO `/v1` suffix - the plugin appends it). Add `"antseed"` to the provider enum and an if/then rule to BOTH `backend/.../providers_schema.json` and `frontend/.../providers_schema.json`. Set `ANTSEED_API_KEY=antseed` in `.env`. Restart with `genlayer up --reset`. The user must run the VPR or `antseed buyer start` and pin a peer that serves the listed `model` ids.',
   },
 
   /* ---------------- Frameworks ---------------- */
@@ -1201,7 +1201,7 @@ print(llm.invoke("hi").content)`,
       {
         problem: '`openai.APIConnectionError: Connection refused`',
         fix:
-          'The buyer proxy is not running. Start it with `antseed buyer start` (or open AntStation desktop). Confirm `curl http://localhost:8377/v1/models` works before retrying from Python.',
+          'The buyer proxy is not running. Start it with `antseed buyer start` (or open the VPR desktop app). Confirm `curl http://localhost:8377/v1/models` works before retrying from Python.',
       },
       {
         problem: '`with_structured_output` returns the right schema but empty fields',

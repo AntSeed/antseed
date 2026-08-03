@@ -211,7 +211,7 @@ function RunFirstBanner() {
                 Install the CLI and start the buyer proxy.
               </p>
               <p className={styles.runFirstHint}>
-                Prefer a GUI? <Link to="/install">AntStation</Link> wraps everything below
+                Prefer a GUI? The <Link to="/install">VPR</Link> wraps everything below
                 in one app. CLI flow:
               </p>
               <CodeBlock

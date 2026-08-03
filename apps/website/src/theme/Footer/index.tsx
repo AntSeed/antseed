@@ -18,7 +18,6 @@ const COLUMNS: {title: string; links: {label: string; to?: string; href?: string
     links: [
       {label: '$ANTS Token', to: '/ants-token'},
       {label: 'vs OpenRouter', to: '/vs/openrouter'},
-      {label: 'Dune Analytics ↗', href: 'https://dune.com/antseed'},
       {label: 'AntSeedStats ↗', href: 'https://antseedstats.com'},
     ],
   },
@@ -69,7 +68,6 @@ export default function Footer(): JSX.Element {
           <div className={styles.column}>
             <Link to="/providers" className={styles.columnTitleLink}>Become a Provider</Link>
             <Link to="/ants-token" className={styles.columnTitleLink}>$ANTS Token</Link>
-            <a href="https://antseedstats.com" target="_blank" rel="noopener noreferrer" className={styles.columnTitleLink}>AntseedStats.com</a>
           </div>
           {COLUMNS.map((col) => (
             <div key={col.title} className={styles.column}>

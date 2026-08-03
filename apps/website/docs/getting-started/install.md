@@ -29,7 +29,7 @@ antseed --version
 
 ## Desktop App
 
-AntSeed Desktop (AntStation) is a standalone app that bundles the CLI, a
+AntSeed Desktop (the VPR) is a standalone app that bundles the CLI, a
 chat interface, and encrypted identity storage via the OS keychain.
 
 **Downloads:**
