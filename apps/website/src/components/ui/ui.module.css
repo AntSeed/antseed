@@ -6,21 +6,23 @@
 
 /* ---------- Reveal ---------- */
 /* Hidden state only under html[data-anim] (set on hydration) so SSR/no-JS
-   users always see content. */
+   users always see content. The hidden state targets .reveal:not(.revealShown)
+   rather than relying on a later .revealShown override: the two rules have
+   equal specificity, and the production CSS minifier can reorder them across
+   chunks, which left every Reveal permanently invisible. */
 :global(html[data-anim]) .reveal {
-  opacity: 0;
-  transform: translateY(26px);
   transition: opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1), transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
   will-change: opacity, transform;
 }
 
-:global(html[data-anim]) .revealShown {
-  opacity: 1;
-  transform: none;
+:global(html[data-anim]) .reveal:not(.revealShown) {
+  opacity: 0;
+  transform: translateY(26px);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :global(html[data-anim]) .reveal {
+  :global(html[data-anim]) .reveal,
+  :global(html[data-anim]) .reveal:not(.revealShown) {
     opacity: 1;
     transform: none;
     transition: none;
