@@ -8,6 +8,9 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Sellers now run periodic model health self-checks (a 1-token probe per advertised service, every 5 minutes by default) and unadvertise services that keep failing, restoring them automatically when they recover. Configurable via `seller.healthCheck` (`enabled`, `intervalMs`, `failureThreshold`); sellers announcing this behavior advertise the `seller.model-health.v1` capability in discovery metadata. Exposed as `ModelHealthChecker` in `@antseed/node`, alongside `AntseedNode.refreshSellerMetadata()` for runtime service-list changes.
+- The buyer proxy now treats `model_not_found` responses as routing failures (instead of successes) and refreshes peer discovery metadata in the background, so a stale cached model list recovers quickly after a seller unadvertises a model.
+
 - Added buyer-initiated cooperative channel close (`CloseChannelRequest`/`CloseChannelResult`, message types 0x59/0x5A), so a buyer can get its reserved USDC released immediately instead of waiting out the on-chain `request-close` → 15-minute grace → `withdraw` flow. The seller closes on-chain and returns the transaction hash. It refuses while it is still mid-accumulation with that buyer — a billable request in flight (`busy`), or served work the buyer hasn't signed for yet (`pending_auth`, sent alongside a `NeedAuth` for the outstanding amount) — leaving the channel untouched so the buyer can retry or fall back to the timeout path.
 - The buyer attaches its latest SpendingAuth by default; the seller closes at whichever cumulative is higher (its own or the buyer's), so a seller that lost the last authorization can still be paid in full, and a buyer cannot use this path to settle below what it owes.
 - Added `antseed buyer channels close <channelId>` (with `--no-auth` and `--json`), which runs the request through a running `antseed buyer start` daemon's live seller connection via the new `/_antseed/channels/close` control-plane endpoint.
@@ -15,6 +18,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Fixed OpenAI Responses model health probes using a scalar `input` value that strict providers rejected with HTTP 400, leaving every health result inconclusive and preventing automatic model unadvertising.
 - Fixed payment negotiation getting stuck when a buyer lost its local channel state while an older channel remained active on-chain. Sellers now close the superseded channel from durable seller state before accepting the buyer's replacement ReserveAuth.
 - Fixed the seller recording an inaccurate settled amount when two close paths raced on the same channel. Only one `close()` is submitted, and every path that joins it now persists the amount that transaction actually settled.
 - Fixed the seller persisting the initial ReserveAuth signature in the SpendingAuth column, so restart hydration restored it under the wrong EIP-712 type and every subsequent `close()` reverted with `InvalidSignature`.

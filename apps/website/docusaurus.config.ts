@@ -44,13 +44,6 @@ const config: Config = {
     locales: ['en'],
   },
 
-  stylesheets: [
-    {
-      href: 'https://fonts.googleapis.com/css2?family=Oxanium:wght@300;400;500;600;700;800&family=Share+Tech+Mono&display=swap',
-      type: 'text/css',
-    },
-  ],
-
   presets: [
     [
       'classic',
@@ -99,6 +92,14 @@ const config: Config = {
     integrationsPagesPlugin,
   ],
 
+  // General Sans — the design's display/body face (Geist stays for app-chrome/mono).
+  stylesheets: [
+    {
+      href: 'https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600,700&display=swap',
+      type: 'text/css',
+    },
+  ],
+
   headTags: [
     {
       tagName: 'script',
@@ -135,7 +136,7 @@ const config: Config = {
           'Reputation-based provider scoring',
           'TEE attestation for privacy-preserving inference',
           'AI agents with on-demand knowledge and custom tools',
-          'Desktop app (AntStation)',
+          'Desktop app (VPR)',
           'Agent-to-agent commerce support',
         ],
         downloadUrl: 'https://github.com/AntSeed/antseed/releases',
@@ -148,39 +149,45 @@ const config: Config = {
   themeConfig: {
     metadata: [
       {name: 'google-site-verification', content: '09pzs5Q9kHdpQSNSBpr0vNh9SMq-T8lzhBgH5Zgm6ug'},
-      {name: 'keywords', content: 'AI marketplace, OpenRouter alternative, serving AI inference, consuming AI inference, peer-to-peer AI, decentralized AI inference, anonymous AI, private AI, P2P AI, AI economy'},
-      {name: 'description', content: 'Permissionless peer-to-peer AI inference. Pay per request in USDC. Anonymous by design, with independent providers and no central account.'},
-      {property: 'og:title', content: 'AntSeed — The open market for AI inference'},
-      {property: 'og:description', content: 'Permissionless peer-to-peer AI inference. Pay per request in USDC. Anonymous by design, with independent providers and no central account.'},
+      {name: 'description', content: 'The open market for AI inference. Every model, no middleman, no account, no email. Providers compete on price and you keep your tools. Owned by no one.'},
+      {property: 'og:title', content: 'Every AI model, best price, no middleman'},
+      {property: 'og:description', content: 'AntSeed is the open market for AI inference. Every model, no middleman. No account, no email, no company reading your prompts or locking you out. Providers compete on price, you keep the tools you already use. Owned by no one. Available to everyone.'},
       {property: 'og:type', content: 'website'},
+      {property: 'og:site_name', content: 'AntSeed'},
       {name: 'twitter:card', content: 'summary_large_image'},
-      {name: 'twitter:image', content: 'https://antseed.com/og-image.jpg'},
-      {property: 'og:image', content: 'https://antseed.com/og-image.jpg'},
-      {name: 'twitter:title', content: 'AntSeed — The open market for AI inference'},
-      {name: 'twitter:description', content: 'Permissionless peer-to-peer AI inference. Pay per request in USDC. Anonymous by design, with independent providers and no central account.'},
+      {name: 'twitter:site', content: '@antseedai'},
+      {name: 'twitter:image', content: 'https://antseed.com/og-image.png'},
+      {property: 'og:image', content: 'https://antseed.com/og-image.png'},
+      {property: 'og:image:width', content: '1200'},
+      {property: 'og:image:height', content: '630'},
+      {property: 'og:image:alt', content: 'AntSeed, the open market for AI inference'},
     ],
     colorMode: {
-      defaultMode: 'dark',
-      disableSwitch: false,
+      defaultMode: 'light',
+      disableSwitch: true,
       respectPrefersColorScheme: false,
     },
     navbar: {
-      title: 'ANTSEED',
+      title: '',
       logo: {
         alt: 'AntSeed',
         src: 'logo-light.svg',
-        srcDark: 'logo.svg',
+        srcDark: 'logo-dark.svg',
+        width: 104,
+        height: 36,
       },
       items: [
         {
           href: 'https://antseedstats.com/network',
           label: 'Pricing',
-          position: 'right',
+          position: 'left',
           target: '_blank',
           rel: 'noopener noreferrer',
+          className: 'header-pricing-link',
         },
-        {to: '/integrations', label: 'Integrations', position: 'right'},
-        {to: '/providers', label: 'Providers', position: 'right'},
+        {to: '/integrations', label: 'Integrations', position: 'left'},
+        {to: '/providers', label: 'Providers', position: 'left'},
+        {to: '/ecosystem', label: 'Ecosystem', position: 'left'},
         {
           type: 'docSidebar',
           sidebarId: 'docs',
@@ -188,14 +195,7 @@ const config: Config = {
           position: 'right',
           className: 'header-docs-link',
         },
-        {to: '/blog', label: 'Blog', position: 'right'},
-        {to: '/ants-token', label: '$ANTS', position: 'right', className: 'header-ants-link'},
-        {
-          href: process.env.NODE_ENV === 'development' ? 'http://localhost:5180/' : 'https://diemantseed.com',
-          label: '$DIEM',
-          position: 'right',
-          className: 'header-diem-link',
-        },
+        {to: '/blog', label: 'Blog', position: 'right', className: 'header-blog-link'},
         {
           href: 'https://github.com/antseed',
           'aria-label': 'GitHub',
@@ -214,12 +214,17 @@ const config: Config = {
           position: 'right',
           className: 'header-telegram-link',
         },
-
+        {
+          href: 'https://github.com/AntSeed/antseed/releases/latest',
+          label: 'Download VPR',
+          position: 'right',
+          className: 'header-download-link',
+        },
       ],
     },
     prism: {
-      theme: prismThemes.github,
-      darkTheme: prismThemes.dracula,
+      theme: prismThemes.nightOwl,
+      darkTheme: prismThemes.nightOwl,
       additionalLanguages: ['bash', 'json', 'typescript'],
     },
   } satisfies Preset.ThemeConfig,

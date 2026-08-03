@@ -11,6 +11,16 @@ export {
   type BuyerUsageServicePoint,
 } from './node.js';
 export type { Provider, ProviderStreamCallbacks } from './interfaces/seller-provider.js';
+export {
+  ModelHealthChecker,
+  DEFAULT_HEALTH_CHECK_INTERVAL_MS,
+  DEFAULT_HEALTH_CHECK_FAILURE_THRESHOLD,
+  DEFAULT_HEALTH_CHECK_PROBE_TIMEOUT_MS,
+  type ModelHealthCheckerConfig,
+  type ModelHealthEvent,
+  type ModelHealthTarget,
+  type ServiceHealthSnapshot,
+} from './health/model-health-checker.js';
 export type { Router } from './interfaces/buyer-router.js';
 
 // Types (re-export everything)

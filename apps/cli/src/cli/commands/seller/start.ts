@@ -5,7 +5,17 @@ import { writeFile, unlink } from 'node:fs/promises'
 import { join, resolve, isAbsolute, dirname } from 'node:path'
 import { getGlobalOptions } from '../types.js'
 import { loadConfig } from '../../../config/loader.js'
-import { AntseedNode, type Provider, type Prover, resolveChainConfig, loadOrCreateIdentity } from '@antseed/node'
+import {
+  AntseedNode,
+  ModelHealthChecker,
+  CONNECTION_CAPABILITY_MODEL_HEALTH_V1,
+  DEFAULT_HEALTH_CHECK_INTERVAL_MS,
+  DEFAULT_HEALTH_CHECK_FAILURE_THRESHOLD,
+  type Provider,
+  type Prover,
+  resolveChainConfig,
+  loadOrCreateIdentity,
+} from '@antseed/node'
 import type { PaymentConfig } from '@antseed/node/payments'
 import { checkSellerReadiness, DEFAULT_MIN_SETTLE_DELTA_STR } from '@antseed/node/payments'
 import {
@@ -525,6 +535,9 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       if (versionsByPackage.size > 0) {
         console.log(chalk.dim(`Package versions: ${Array.from(versionsByPackage.entries()).map(([k, v]) => `${k}@${v}`).join(', ')}`))
       }
+      const healthCheckCfg = effectiveSellerConfig.healthCheck
+      const healthCheckEnabled = healthCheckCfg?.enabled !== false
+
       console.log(chalk.bold('Effective seller settings:'))
       console.log(chalk.dim(`  providers: ${selectedProviderNames.join(', ')}`))
       for (let index = 0; index < providers.length; index += 1) {
@@ -553,6 +566,13 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       console.log(chalk.dim(`  min settle delta: ${minSettleDelta} base units`))
       console.log(chalk.dim(`  reserve floor: ${effectiveSellerConfig.reserveFloor}`))
       console.log(chalk.dim(`  max concurrent buyers: ${effectiveSellerConfig.maxConcurrentBuyers}`))
+      if (healthCheckEnabled) {
+        const intervalMs = healthCheckCfg?.intervalMs ?? DEFAULT_HEALTH_CHECK_INTERVAL_MS
+        const failureThreshold = healthCheckCfg?.failureThreshold ?? DEFAULT_HEALTH_CHECK_FAILURE_THRESHOLD
+        console.log(chalk.dim(`  model health checks: every ${Math.round(intervalMs / 1000)}s, unadvertise after ${failureThreshold} consecutive failures`))
+      } else {
+        console.log(chalk.dim('  model health checks: disabled'))
+      }
       const maxUploadBodyBytes = parseOptionalPositiveIntegerEnv(process.env['ANTSEED_MAX_UPLOAD_BODY_BYTES'])
         ?? effectiveSellerConfig.maxUploadBodyBytes
       if (maxUploadBodyBytes !== undefined) {
@@ -606,12 +626,17 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       }
       const verifierCapabilities = buildVerifierCapabilities(requestedVerifierIds)
 
+      const announcedCapabilities = [
+        ...verifierCapabilities,
+        ...(healthCheckEnabled ? [CONNECTION_CAPABILITY_MODEL_HEALTH_V1] : []),
+      ]
+
       const node = new AntseedNode({
         role: 'seller',
         displayName: config.identity.displayName,
         ...(config.seller.publicAddress ? { publicAddress: config.seller.publicAddress } : {}),
         ...(effectiveSellerConfig.verifications ? { verifications: effectiveSellerConfig.verifications } : {}),
-        ...(verifierCapabilities.length > 0 ? { capabilities: verifierCapabilities } : {}),
+        ...(announcedCapabilities.length > 0 ? { capabilities: announcedCapabilities } : {}),
         bootstrapNodes,
         dataDir: globalOpts.dataDir,
         ...(dhtPort ? { dhtPort } : {}),
@@ -698,6 +723,32 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       } catch (err) {
         nodeSpinner.fail(chalk.red(`Failed to start seeding: ${(err as Error).message}`))
         process.exit(1)
+      }
+
+      // Periodic model health self-checks: probe every advertised service with
+      // a 1-token completion; unadvertise services that keep failing and
+      // restore them when they recover, refreshing signed metadata each time.
+      let healthChecker: ModelHealthChecker | null = null
+      if (healthCheckEnabled && registeredProviders.length > 0) {
+        healthChecker = new ModelHealthChecker({
+          targets: registeredProviders.map((provider, index) => ({
+            provider,
+            // Probe the unwrapped provider so an ant-agent wrapper doesn't
+            // run a full agent loop for every probe.
+            ...(providers[index] && providers[index] !== provider ? { probeProvider: providers[index]! } : {}),
+          })),
+          ...(healthCheckCfg?.intervalMs !== undefined ? { intervalMs: healthCheckCfg.intervalMs } : {}),
+          ...(healthCheckCfg?.failureThreshold !== undefined ? { failureThreshold: healthCheckCfg.failureThreshold } : {}),
+          onChange: (event) => {
+            if (event.status === 'removed') {
+              console.log(chalk.yellow(`Model ${event.provider}/${event.service} unadvertised — failing health checks (${event.detail})`))
+            } else {
+              console.log(chalk.green(`Model ${event.provider}/${event.service} re-advertised — health check recovered`))
+            }
+            void node.refreshSellerMetadata().catch(() => {})
+          },
+        })
+        healthChecker.start()
       }
 
       // Write daemon state so dashboard and connect can discover this seeder
@@ -855,6 +906,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       }, 1_000)
 
       setupShutdownHandler(async () => {
+        healthChecker?.stop()
         clearInterval(stateInterval)
         node.off('connection', scheduleDaemonStateWrite)
         node.off('session:updated', scheduleDaemonStateWrite)

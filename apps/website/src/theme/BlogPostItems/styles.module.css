@@ -1,0 +1,200 @@
+/* Blog card grid — every value lifted from the homepage styleguide:
+   card surface = .stepCard (index.module.css): 1px var(--as-line),
+   r24, var(--as-soil-2), 16px pad · headings = .stepHead h3 (display
+   20/28 semibold) · body = .stepCard p (14/22 medium, text-2) ·
+   meta/tags = mono kicker treatment (font-data, uppercase, 0.08em). */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.cellFeatured {
+  grid-column: 1 / -1;
+}
+
+/* .stepCard recipe */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  border: 1px solid var(--as-line);
+  border-radius: 24px;
+  background: var(--as-soil-2);
+  padding: 16px;
+  text-decoration: none;
+  transition: border-color 0.15s ease;
+}
+
+.card:hover {
+  border-color: var(--as-line-strong);
+  text-decoration: none;
+}
+
+/* Featured card: text left, illustration right (homepage split-card idiom) */
+.cardFeatured {
+  padding: 24px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 360px);
+  grid-template-areas:
+    'meta cover'
+    'title cover'
+    'desc cover'
+    'foot cover';
+  grid-template-rows: auto auto 1fr auto;
+  column-gap: 24px;
+}
+
+.cardFeatured .cover {
+  grid-area: cover;
+  height: 100%;
+  min-height: 180px;
+}
+
+.cardFeatured .meta {
+  grid-area: meta;
+}
+
+.cardFeatured .cardTitle {
+  grid-area: title;
+}
+
+.cardFeatured .cardDesc {
+  grid-area: desc;
+}
+
+.cardFeatured .cardFoot {
+  grid-area: foot;
+}
+
+/* Cover art — generated per-post SVGs, full bleed. Drawn on a light
+   field, so the well stays light in both themes (like screenshots). */
+.cover {
+  position: relative;
+  display: block;
+  height: 160px;
+  border-radius: 16px;
+  background: #F4F5F4;
+  border: 1px solid rgba(0, 30, 18, 0.04);
+  overflow: hidden;
+}
+
+.cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Category chip — first tag, editorial label on the artwork */
+.category {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  font-family: var(--as-font-data);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1;
+  padding: 6px 10px;
+  border-radius: var(--as-radius-pill);
+  background: #FFFFFF;
+  border: 1px solid #CCCDCC;
+  color: #676663;
+}
+
+.meta {
+  margin: 0;
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--as-text-3);
+}
+
+/* .stepHead h3 recipe */
+.cardTitle {
+  margin: 0;
+  font-family: var(--as-font-display);
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--as-heading);
+}
+
+.cardFeatured .cardTitle {
+  font-size: clamp(24px, 2.4vw, 32px);
+  line-height: 1.2;
+  max-width: 720px;
+}
+
+/* .stepCard p recipe */
+.cardDesc {
+  margin: 0;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
+.cardFeatured .cardDesc {
+  max-width: 720px;
+}
+
+.cardFoot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+/* .linkArrow voice — ink text + arrow glyph */
+.readMore {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--as-heading);
+  white-space: nowrap;
+}
+
+.card:hover .readMore {
+  color: var(--as-green-deep);
+}
+
+@media (max-width: 996px) {
+  .grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+  .cardFeatured {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+  }
+  .cardFeatured .cover {
+    min-height: 0;
+    height: 150px;
+    order: -1;
+  }
+  .cardFeatured .cardTitle {
+    font-size: 22px;
+  }
+}
