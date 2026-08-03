@@ -602,14 +602,79 @@ export default function IntegrationPage({integration}: {integration: Integration
     .filter((x) => x.category === i.category && x.slug !== i.slug)
     .slice(0, 4);
 
+  const pageUrl = `https://antseed.com/integrations/${i.slug}`;
+
+  // `oneLiner` is authored with markdown backticks for on-page code styling.
+  // Meta descriptions are plain text, so Google and social cards would print the
+  // backticks literally. Strip them for metadata only; page copy is untouched.
+  const metaOneLiner = i.oneLiner.replace(/`/g, '');
+
+  // Mirrors what Docusaurus renders into <title> (Layout title + site title), so
+  // og:title can't drift from the page title (X falls back to og:title).
+  const pageTitle = `${i.name} | AntSeed`;
+
+  // Marks up the breadcrumb rendered below so search engines read the hierarchy.
+  const breadcrumbLd = {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      {'@type': 'ListItem', position: 1, name: 'Home', item: 'https://antseed.com/'},
+      {'@type': 'ListItem', position: 2, name: 'Integrations', item: 'https://antseed.com/integrations'},
+      {'@type': 'ListItem', position: 3, name: i.name, item: pageUrl},
+    ],
+  };
+
+  // Mirrors the Step sections actually rendered below, in the same order, so the
+  // markup never claims a step the page doesn't show.
+  const howToLd = {
+    '@context': 'https://schema.org',
+    '@type': 'HowTo',
+    name: `Connect ${i.name} to AntSeed`,
+    description: `Route ${i.name} through the AntSeed peer-to-peer inference network.`,
+    step: [
+      ...(i.install.length > 0
+        ? [{
+            '@type': 'HowToStep',
+            name: `Install ${i.name}`,
+            text: i.install.map((s) => s.label).join(' '),
+            url: `${pageUrl}#install`,
+          }]
+        : []),
+      {
+        '@type': 'HowToStep',
+        name: `Point ${i.name} at AntSeed`,
+        text: `Configure ${i.name} to send requests to the local AntSeed proxy at http://localhost:8377.`,
+        url: `${pageUrl}#configure`,
+      },
+      ...(i.modelHints
+        ? [{
+            '@type': 'HowToStep',
+            name: 'Pick a model',
+            text: `Choose a model available on the network. Suggested: ${i.modelHints.suggested.join(', ')}.`,
+            url: `${pageUrl}#model`,
+          }]
+        : []),
+      ...(i.test && i.test.length > 0
+        ? [{
+            '@type': 'HowToStep',
+            name: 'Test it',
+            text: i.test.map((s) => s.label).join(' '),
+            url: `${pageUrl}#test`,
+          }]
+        : []),
+    ],
+  };
+
   return (
     <Layout
       title={i.name}
-      description={`Connect ${i.name} to the AntSeed peer-to-peer inference network. ${i.oneLiner}`}>
+      description={`Connect ${i.name} to the AntSeed peer-to-peer inference network. ${metaOneLiner}`}>
       <Head>
         <link rel="alternate" type="text/markdown" href="/skill.md" title="Agent-readable integration guide" />
-        <meta property="og:title" content={`${i.name} + AntSeed`} />
-        <meta property="og:description" content={i.oneLiner} />
+        <meta property="og:title" content={pageTitle} />
+        <meta property="og:description" content={metaOneLiner} />
+        <script type="application/ld+json">{JSON.stringify(breadcrumbLd)}</script>
+        <script type="application/ld+json">{JSON.stringify(howToLd)}</script>
       </Head>
 
       <article className={styles.detailWrap}>

@@ -1358,12 +1358,47 @@ export default function Home(): JSX.Element {
     })),
   };
 
+  // Standalone Organization entity. The SoftwareApplication block in
+  // docusaurus.config.ts references the org as `creator`; this declares it in
+  // its own right so the brand resolves as an entity.
+  const orgLd = {
+    '@context': 'https://schema.org',
+    '@type': 'Organization',
+    name: 'AntSeed',
+    url: 'https://antseed.com/',
+    logo: 'https://antseed.com/logo.svg',
+    description:
+      'AntSeed is a decentralized peer-to-peer marketplace for AI inference. Providers compete on price to run any AI model, with no central account.',
+    sameAs: [
+      'https://github.com/AntSeed/antseed',
+      'https://x.com/antseedai',
+      'https://t.me/antseed',
+    ],
+  };
+
   return (
     <Layout
       title={siteConfig.tagline}
-      description="The open market for AI inference. Every model, no middleman. Anonymous and always on. Pay per request - no account, no subscription."
+      description="The open market for AI inference. Every model, no middleman, no account, no email. Providers compete on price and you keep your tools. Owned by no one."
       wrapperClassName="homepage-wrapper">
       <Head>
+        {/*
+          Docusaurus derives og:title / og:description from the Layout title and
+          description props above, which override the sitewide values in
+          themeConfig.metadata. Declaring them here — after Layout's own tags —
+          is what makes the share card copy actually take effect. X falls back
+          to these when twitter:title / twitter:description are absent, which is
+          why those are not declared anywhere.
+
+          rel=canonical and og:url need no declaration — Docusaurus already
+          emits correct per-page values for both.
+        */}
+        <meta property="og:title" content="Every AI model, best price, no middleman" />
+        <meta
+          property="og:description"
+          content="AntSeed is the open market for AI inference. Every model, no middleman. No account, no email, no company reading your prompts or locking you out. Providers compete on price, you keep the tools you already use. Owned by no one. Available to everyone."
+        />
+        <script type="application/ld+json">{JSON.stringify(orgLd)}</script>
         <script type="application/ld+json">{JSON.stringify(faqLd)}</script>
       </Head>
 
