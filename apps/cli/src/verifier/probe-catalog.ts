@@ -1,4 +1,5 @@
 import {
+  KBF_MAX_PROBE_COUNT,
   canonicalHash,
   computeBinomialPower,
   computeReferenceId,
@@ -86,7 +87,7 @@ export function eligibleCatalogProbes(input: {
   now?: number
 }): StoredCertifiedKbfProbe[] {
   const exposed = input.storage.getProbeExposureCounts(input.agentId, input.service)
-  const reserved = new Set(input.storage.listActiveReservedProbeIds(
+  const reserved = new Set(input.storage.listActiveDirectProbeIds(
     input.agentId,
     input.service,
     input.auditId ?? '',
@@ -103,8 +104,8 @@ export function selectCatalogProbes(
   probes: readonly StoredCertifiedKbfProbe[],
   count: number,
 ): StoredCertifiedKbfProbe[] {
-  if (!Number.isInteger(count) || count < 10 || count > 500 || count % 10 !== 0) {
-    throw new Error('audit probe count must be a multiple of 10 from 10 through 500')
+  if (!Number.isInteger(count) || count < 10 || count > KBF_MAX_PROBE_COUNT || count % 10 !== 0) {
+    throw new Error(`audit probe count must be a multiple of 10 from 10 through ${KBF_MAX_PROBE_COUNT}`)
   }
   if (probes.length < count) throw new Error(`only ${probes.length} eligible certified probes are available`)
   return [...probes]
@@ -117,6 +118,8 @@ export async function certifyNewProbes(input: {
   service: string
   source: ResolvedReferenceSource
   requiredCount: number
+  generationProbeCount?: number
+  persistAllGenerated?: boolean
   minimumCertifiedCount?: number
   referencesDir: string
   excludedProbeIds?: ReadonlySet<string>
@@ -134,6 +137,10 @@ export async function certifyNewProbes(input: {
   const excludedIds = new Set([...existing.map((probe) => probe.probeId), ...(input.excludedProbeIds ?? [])])
   const excludedFacts = new Set(existing.map((probe) => kbfFactualIdentity(probe.probe as unknown as KbfProbe)))
   const requested = Math.max(10, Math.ceil(input.requiredCount / 10) * 10)
+  const generationProbeCount = Math.max(
+    requested,
+    Math.ceil((input.generationProbeCount ?? requested) / 10) * 10,
+  )
   const minimumCertifiedCount = input.minimumCertifiedCount ?? requested
   if (minimumCertifiedCount < 100 && input.source.upstream.trust !== 'smoke') {
     throw new Error('sub-100 probe certification is allowed only for smoke reference endpoints')
@@ -148,8 +155,8 @@ export async function certifyNewProbes(input: {
     service: input.service,
     aliases: [input.service.trim().toLowerCase()],
     contrastModels: input.source.contrastModels,
-    candidateCount: requested,
-    minProbes: requested,
+    candidateCount: generationProbeCount,
+    minProbes: generationProbeCount,
     minimumPower: input.source.policy.minimumStatisticalPower,
     minimumAcceptedProbes: minimumCertifiedCount,
     minimumMismatchDelta,
@@ -165,7 +172,7 @@ export async function certifyNewProbes(input: {
     checkpointPath: join(input.referencesDir, '.checkpoints', `catalog-${profileHash.replace(/^sha256:/, '').slice(0, 20)}.json`),
     generationCheckpointFallbackPaths: excludedIds.size === 0 && excludedFacts.size === 0
       ? [...new Set([
-          legacyReferenceCheckpointPath(input.referencesDir, input.service, input.source, requested),
+          legacyReferenceCheckpointPath(input.referencesDir, input.service, input.source, generationProbeCount),
           legacyReferenceCheckpointPath(input.referencesDir, input.service, input.source, 100),
         ])]
       : [],
@@ -173,7 +180,10 @@ export async function certifyNewProbes(input: {
     log: input.log,
   })
   const params = reference.generator.params as Record<string, unknown>
-  const rows = reference.probes.slice(0, input.requiredCount).map((probe): StoredCertifiedKbfProbe => ({
+  const probesToPersist = input.persistAllGenerated
+    ? reference.probes
+    : reference.probes.slice(0, input.requiredCount)
+  const rows = probesToPersist.map((probe): StoredCertifiedKbfProbe => ({
     service: input.service.trim().toLowerCase(),
     certificationHash: profileHash,
     probeId: probe.id,
@@ -332,6 +342,10 @@ export async function materializeAuditReference(input: {
   probes: readonly StoredCertifiedKbfProbe[]
   selfTestOutcomes: readonly { probeId: string; answer: number | null; match: 0 | 1 | null }[]
   referencesDir: string
+  minimumMismatchDelta?: number
+  alpha?: number
+  cpConfidence?: number
+  minimumPower?: number
   now?: number
 }): Promise<{ reference: KbfReferenceV1; outPath: string }> {
   const probes = input.probes.map((row) => row.probe as unknown as KbfProbe)
@@ -341,10 +355,20 @@ export async function materializeAuditReference(input: {
   const matched = outcomes.filter((outcome) => outcome.match === 1).length
   const parsed = outcomes.filter((outcome) => outcome.match !== null).length
   const hamming = total - matched
-  const minimumMismatchDelta = total < 100 && input.source.upstream.trust === 'smoke' ? 0.25 : 0.1
-  const power = computeBinomialPower({ selfHamming: hamming, selfTotal: total, minimumMismatchDelta })
-  if (power.power < input.source.policy.minimumStatisticalPower) {
-    throw new Error(`audit ${input.auditId} reference power ${power.power.toFixed(4)} is below ${input.source.policy.minimumStatisticalPower}`)
+  const minimumMismatchDelta = input.minimumMismatchDelta
+    ?? (total < 100 && input.source.upstream.trust === 'smoke' ? 0.25 : input.source.policy.minimumMismatchDelta)
+  const alpha = input.alpha ?? input.source.policy.familyWideAlpha
+  const cpConfidence = input.cpConfidence ?? input.source.policy.referenceConfidence
+  const minimumPower = input.minimumPower ?? input.source.policy.minimumStatisticalPower
+  const power = computeBinomialPower({
+    selfHamming: hamming,
+    selfTotal: total,
+    minimumMismatchDelta,
+    alpha,
+    cpConfidence,
+  })
+  if (power.power < minimumPower) {
+    throw new Error(`audit ${input.auditId} reference power ${power.power.toFixed(4)} is below ${minimumPower}`)
   }
   const queryProfile = input.probes[0]!.queryProfile as unknown as ReferenceQueryProfileV1
   const configHash = endpointConfigHash({
@@ -400,8 +424,8 @@ export async function materializeAuditReference(input: {
     statisticalPower: power.power,
     statisticalPowerEvidence: {
       test: 'one-sided-binomial',
-      alpha: 0.05,
-      clopperPearsonConfidence: 0.99,
+      alpha,
+      clopperPearsonConfidence: cpConfidence,
       selfHamming: hamming,
       selfTotal: total,
       p0UpperBound: power.p0,
@@ -418,7 +442,7 @@ export async function materializeAuditReference(input: {
     })),
   }
   reference.referenceId = computeReferenceId(reference)
-  const validated = validateKbfReferenceV1(reference)
+  const validated = validateKbfReferenceV1(reference, { minimumStatisticalPower: minimumPower })
   await mkdir(input.referencesDir, { recursive: true })
   const outPath = join(
     input.referencesDir,

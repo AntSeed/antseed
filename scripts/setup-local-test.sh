@@ -15,7 +15,6 @@ REFERENCE_API_KEY_VALUE="${!REFERENCE_API_KEY_ENV:-local-smoke}"
 SELLER_DIR="$LOCAL_ROOT/seller"
 BUYER_DIR="$LOCAL_ROOT/buyer"
 VERIFIER_DIR="$LOCAL_ROOT/verifier"
-RELAY_DIR="$LOCAL_ROOT/relay"
 BROADCAST_FILE="$CONTRACTS_DIR/broadcast/Deploy.s.sol/$CHAIN_ID/run-latest.json"
 ADDRESSES_FILE="$LOCAL_ROOT/contracts.json"
 
@@ -28,7 +27,7 @@ cast chain-id --rpc-url "$RPC_URL" >/dev/null 2>&1 || {
   exit 1
 }
 
-mkdir -p "$SELLER_DIR" "$BUYER_DIR" "$VERIFIER_DIR" "$RELAY_DIR"
+mkdir -p "$SELLER_DIR" "$BUYER_DIR" "$VERIFIER_DIR"
 
 printf '\n=== Build runtime dependencies ===\n'
 (cd "$REPO_ROOT" && pnpm --filter @antseed/node build >/dev/null)
@@ -49,7 +48,7 @@ const wanted = [
   'MockUSDC', 'MockERC8004Registry', 'ANTSToken', 'AntseedRegistry', 'AntseedStaking',
   'AntseedDeposits', 'AntseedChannels', 'AntseedStats', 'AntseedSellerPools',
   'AntseedSellerRegistry', 'AntseedEmissionsGate', 'AntseedUsageAccounting',
-  'AntseedVerifierRegistry', 'AntseedRelayTreasury', 'AntseedVerifierPointsPolicy',
+  'AntseedVerifierRegistry', 'AntseedVerifierRewards', 'AntseedVerifierPointsPolicy',
   'AntseedSellerPoolsRewards', 'AntseedUsageRewards',
 ]
 const result = {}
@@ -86,7 +85,7 @@ SELLER_REGISTRY="$(address AntseedSellerRegistry)"
 EMISSIONS_GATE="$(address AntseedEmissionsGate)"
 USAGE_ACCOUNTING="$(address AntseedUsageAccounting)"
 VERIFIER_REGISTRY="$(address AntseedVerifierRegistry)"
-RELAY_TREASURY="$(address AntseedRelayTreasury)"
+VERIFIER_REWARDS="$(address AntseedVerifierRewards)"
 VERIFIER_POINTS_POLICY="$(address AntseedVerifierPointsPolicy)"
 
 identity_json() {
@@ -105,24 +104,21 @@ NODE
 SELLER_IDENTITY="$(identity_json "$SELLER_DIR")"
 BUYER_IDENTITY="$(identity_json "$BUYER_DIR")"
 VERIFIER_IDENTITY="$(identity_json "$VERIFIER_DIR")"
-RELAY_IDENTITY="$(identity_json "$RELAY_DIR")"
 json_value() { node -e 'process.stdout.write(JSON.parse(process.argv[1])[process.argv[2]])' "$1" "$2"; }
 SELLER_ADDRESS="$(json_value "$SELLER_IDENTITY" address)"
 SELLER_KEY="$(json_value "$SELLER_IDENTITY" privateKey)"
 BUYER_ADDRESS="$(json_value "$BUYER_IDENTITY" address)"
 BUYER_KEY="$(json_value "$BUYER_IDENTITY" privateKey)"
 VERIFIER_ADDRESS="$(json_value "$VERIFIER_IDENTITY" address)"
-RELAY_ADDRESS="$(json_value "$RELAY_IDENTITY" address)"
-RELAY_KEY="$(json_value "$RELAY_IDENTITY" privateKey)"
+VERIFIER_KEY="$(json_value "$VERIFIER_IDENTITY" privateKey)"
 
 send() { cast send --rpc-url "$RPC_URL" --private-key "$1" "${@:2}" >/dev/null; }
-for wallet in "$SELLER_ADDRESS" "$BUYER_ADDRESS" "$VERIFIER_ADDRESS" "$RELAY_ADDRESS"; do
+for wallet in "$SELLER_ADDRESS" "$BUYER_ADDRESS" "$VERIFIER_ADDRESS"; do
   send "$DEPLOYER_PRIVATE_KEY" "$wallet" --value 2ether
 done
-for wallet in "$SELLER_ADDRESS" "$BUYER_ADDRESS" "$RELAY_ADDRESS"; do
+for wallet in "$SELLER_ADDRESS" "$BUYER_ADDRESS" "$VERIFIER_ADDRESS"; do
   send "$DEPLOYER_PRIVATE_KEY" "$USDC" 'mint(address,uint256)' "$wallet" 100000000
 done
-send "$DEPLOYER_PRIVATE_KEY" "$USDC" 'mint(address,uint256)' "$RELAY_TREASURY" 500000000
 send "$DEPLOYER_PRIVATE_KEY" "$VERIFIER_REGISTRY" 'setVerifier(address,bool)' "$VERIFIER_ADDRESS" true
 
 send "$SELLER_KEY" "$IDENTITY_REGISTRY" 'register()'
@@ -144,22 +140,22 @@ set_operator_and_deposit() {
   send "$private_key" "$DEPOSITS" 'deposit(address,uint256)' "$address" 10000000
 }
 set_operator_and_deposit "$BUYER_ADDRESS" "$BUYER_KEY"
-set_operator_and_deposit "$RELAY_ADDRESS" "$RELAY_KEY"
+set_operator_and_deposit "$VERIFIER_ADDRESS" "$VERIFIER_KEY"
 
 write_config() {
-  local path="$1" role="$2" proxy_port="$3" relay_enabled="$4"
-  node --input-type=module - "$path" "$role" "$proxy_port" "$relay_enabled" "$RPC_URL" \
+  local path="$1" role="$2" proxy_port="$3"
+  node --input-type=module - "$path" "$role" "$proxy_port" "$RPC_URL" \
     "$DEPOSITS" "$CHANNELS" "$SELLER_REGISTRY" "$USDC" "$IDENTITY_REGISTRY" "$USAGE_ACCOUNTING" \
-    "$VERIFIER_REGISTRY" "$RELAY_TREASURY" "$VERIFIER_POINTS_POLICY" "$VENICE_PEER_ID" "$REFERENCE_API_KEY_ENV" <<'NODE'
+    "$VERIFIER_REGISTRY" "$VERIFIER_REWARDS" "$VERIFIER_POINTS_POLICY" "$VENICE_PEER_ID" "$REFERENCE_API_KEY_ENV" <<'NODE'
 import { writeFileSync } from 'node:fs'
-const [path, role, proxyPort, relayEnabled, rpcUrl, deposits, channels, staking, usdc, identityRegistry,
-  emissions, verifierRegistry, relayTreasury, verifierPointsPolicy, peerId, apiKeyEnv] = process.argv.slice(2)
+const [path, role, proxyPort, rpcUrl, deposits, channels, staking, usdc, identityRegistry,
+  emissions, verifierRegistry, verifierRewards, verifierPointsPolicy, peerId, apiKeyEnv] = process.argv.slice(2)
 const chain = {
   chainId: 'base-local', rpcUrl,
   depositsContractAddress: deposits, channelsContractAddress: channels,
   stakingContractAddress: staking, usdcContractAddress: usdc,
   identityRegistryAddress: identityRegistry, emissionsContractAddress: emissions,
-  verifierRegistryAddress: verifierRegistry, relayTreasuryAddress: relayTreasury,
+  verifierRegistryAddress: verifierRegistry, verifierRewardsAddress: verifierRewards,
   verifierPointsPolicyAddress: verifierPointsPolicy,
 }
 const config = {
@@ -191,10 +187,6 @@ const config = {
     metadataFetchTimeoutMs: 5000,
     disableMetadataV2Services: false,
     verification: { sampleRate: 1, maxSampleBytes: 10485760 },
-    relay: {
-      enabled: relayEnabled === 'true', minimumPayoutPerJobUsdc: '1000',
-      maxConcurrentJobs: 2, maxJobsPerHour: 60, discoveryIntervalMs: 30000,
-    },
   },
   payments: { preferredMethod: 'crypto', platformFeeRate: 0.05, crypto: chain },
   network: { bootstrapNodes: [] },
@@ -202,6 +194,10 @@ const config = {
 if (role === 'verifier') {
   config.verifier = {
     services: ['gpt-5.6-sol'],
+    auditIntervalMs: 300000,
+    maxAuditsPerEpoch: 50,
+    probeRequestTimeoutMs: 120000,
+    maxConcurrentProbeRequests: 2,
     referenceEndpoint: {
       baseUrl: 'http://127.0.0.1:8377/v1', apiKeyEnv,
       sourceId: 'antseed-venice-sol-smoke-v1', trust: 'smoke', antseedPeerId: peerId,
@@ -213,9 +209,13 @@ if (role === 'verifier') {
       },
     },
     referencePolicy: {
-      certifiedProbeCount: 100, auditProbeCount: 100, maxProbeUsesPerTarget: 2,
-      maxReferenceAgeDays: 49, maxRequestsPerBuild: 2000,
+      minimumAuditProbeCount: 100, maximumAuditProbeCount: 750, auditProbeStep: 10,
+      minimumStatisticalPower: 0.9, minimumMismatchDelta: 0.1,
+      familyWideAlpha: 0.05, referenceConfidence: 0.99, minimumAuthenticatedCoverage: 1,
+      maxReferenceAgeDays: 49, maxRequestsPerRound: 2000,
       requestTimeoutMs: 120000, batchRetryCount: 3,
+      generationDomainConcurrency: 3, maxConcurrentReferenceRequests: 4,
+      maxConcurrentRequestsPerModel: 2,
     },
   }
 }
@@ -223,10 +223,9 @@ writeFileSync(path, JSON.stringify(config, null, 2) + '\n')
 NODE
 }
 
-write_config "$SELLER_DIR/config.json" seller 8379 false
-write_config "$BUYER_DIR/config.json" buyer 8377 false
-write_config "$VERIFIER_DIR/config.json" verifier 8380 false
-write_config "$RELAY_DIR/config.json" relay 8378 true
+write_config "$SELLER_DIR/config.json" seller 8379
+write_config "$BUYER_DIR/config.json" buyer 8377
+write_config "$VERIFIER_DIR/config.json" verifier 8380
 cat > "$SELLER_DIR/smoke.env" <<EOF_ENV
 export $REFERENCE_API_KEY_ENV='$REFERENCE_API_KEY_VALUE'
 export OPENAI_EXTRA_HEADERS_JSON='{"x-antseed-pin-peer":"$VENICE_PEER_ID"}'
@@ -245,17 +244,16 @@ assert_address 'registry.deposits' "$(cast call --rpc-url "$RPC_URL" "$REGISTRY"
 assert_address 'registry.channels' "$(cast call --rpc-url "$RPC_URL" "$REGISTRY" 'channels()(address)')" "$CHANNELS"
 assert_address 'registry.staking' "$(cast call --rpc-url "$RPC_URL" "$REGISTRY" 'staking()(address)')" "$SELLER_REGISTRY"
 assert_address 'registry.emissions' "$(cast call --rpc-url "$RPC_URL" "$REGISTRY" 'emissions()(address)')" "$USAGE_ACCOUNTING"
-assert_address 'verifier treasury' "$(cast call --rpc-url "$RPC_URL" "$VERIFIER_REGISTRY" 'relayTreasury()(address)')" "$RELAY_TREASURY"
+assert_address 'verifier rewards registry' "$(cast call --rpc-url "$RPC_URL" "$VERIFIER_REWARDS" 'verifierRegistry()(address)')" "$VERIFIER_REGISTRY"
 [[ "$(cast call --rpc-url "$RPC_URL" "$VERIFIER_REGISTRY" 'approvedVerifiers(address)(bool)' "$VERIFIER_ADDRESS")" == 'true' ]]
 assert_address 'seller agent owner' "$(cast call --rpc-url "$RPC_URL" "$IDENTITY_REGISTRY" 'ownerOf(uint256)(address)' "$AGENT_ID")" "$SELLER_ADDRESS"
 
 printf '\n=== Local verifier environment ready ===\n'
 printf 'Contracts: %s\n' "$ADDRESSES_FILE"
-printf 'Seller config: %s\nBuyer config: %s\nVerifier config: %s\nRelay config: %s\n' \
-  "$SELLER_DIR/config.json" "$BUYER_DIR/config.json" "$VERIFIER_DIR/config.json" "$RELAY_DIR/config.json"
+printf 'Seller config: %s\nBuyer config: %s\nVerifier config: %s\n' \
+  "$SELLER_DIR/config.json" "$BUYER_DIR/config.json" "$VERIFIER_DIR/config.json"
 printf '\nStart order (after pnpm run build):\n'
-printf '1. antseed --data-dir %q --config %q buyer start\n' "$BUYER_DIR" "$BUYER_DIR/config.json"
-printf '2. source %q && antseed --data-dir %q --config %q seller start\n' "$SELLER_DIR/smoke.env" "$SELLER_DIR" "$SELLER_DIR/config.json"
-printf '3. antseed --data-dir %q --config %q buyer start\n' "$RELAY_DIR" "$RELAY_DIR/config.json"
-printf '4. source %q && antseed --data-dir %q --config %q verifier start\n' "$VERIFIER_DIR/smoke.env" "$VERIFIER_DIR" "$VERIFIER_DIR/config.json"
+printf '1. source %q && antseed --data-dir %q --config %q seller start\n' "$SELLER_DIR/smoke.env" "$SELLER_DIR" "$SELLER_DIR/config.json"
+printf '2. source %q && antseed --data-dir %q --config %q verifier start\n' "$VERIFIER_DIR/smoke.env" "$VERIFIER_DIR" "$VERIFIER_DIR/config.json"
+printf '3. optional buyer: antseed --data-dir %q --config %q buyer start\n' "$BUYER_DIR" "$BUYER_DIR/config.json"
 printf '\nVenice is pinned only through configuration/header state; no peer ID is hard-coded in runtime code.\n'

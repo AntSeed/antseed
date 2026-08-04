@@ -717,6 +717,44 @@ describe('BuyerPaymentNegotiator', () => {
       // No third arg; latency is no longer included in payment metadata
       expect(call[2]).toBeUndefined();
     });
+
+    it('finalizes concurrent paid responses by request id without mixing evidence', async () => {
+      await simulateSuccessfulNegotiation(negotiator, bpm, peer, conn);
+      const responseA: SerializedHttpResponse = {
+        requestId: 'req-a',
+        statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        body: enc.encode(JSON.stringify({ usage: { prompt_tokens: 10, completion_tokens: 2 } })),
+      };
+      const responseB: SerializedHttpResponse = {
+        requestId: 'req-b',
+        statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        body: enc.encode(JSON.stringify({ usage: { prompt_tokens: 20, completion_tokens: 4 } })),
+      };
+      negotiator.estimateCostFromResponse(peer, responseA, 'service-a', responseA.requestId);
+      negotiator.estimateCostFromResponse(peer, responseB, 'service-b', responseB.requestId);
+      negotiator.recordResponseContent(peer.peerId, enc.encode('input-a'), responseA.body, 10, responseA.requestId);
+      negotiator.recordResponseContent(peer.peerId, enc.encode('input-b'), responseB.body, 20, responseB.requestId);
+
+      await Promise.all([
+        negotiator.sendPostResponseAuth(peer, conn, responseB.requestId),
+        negotiator.sendPostResponseAuth(peer, conn, responseA.requestId),
+      ]);
+
+      const calls = (bpm.signPerRequestAuth as ReturnType<typeof vi.fn>).mock.calls
+        .map((call) => call[1])
+        .sort((left, right) => String(left.requestId).localeCompare(String(right.requestId)));
+      expect(calls).toHaveLength(2);
+      expect(calls[0]).toMatchObject({ requestId: 'req-a', service: 'service-a' });
+      expect(calls[0].inputBytes).toEqual(enc.encode('input-a'));
+      expect(calls[0].outputBytes).toEqual(responseA.body);
+      expect(calls[1]).toMatchObject({ requestId: 'req-b', service: 'service-b' });
+      expect(calls[1].inputBytes).toEqual(enc.encode('input-b'));
+      expect(calls[1].outputBytes).toEqual(responseB.body);
+      expect(await negotiator.sendPostResponseAuth(peer, conn, responseA.requestId)).toBeNull();
+      expect(await negotiator.sendPostResponseAuth(peer, conn, responseB.requestId)).toBeNull();
+    });
   });
 
   describe('cleanup', () => {

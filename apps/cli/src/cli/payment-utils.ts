@@ -10,8 +10,8 @@ import {
   IdentityClient,
   EmissionsClient,
   ChannelStore,
-  RelayTreasuryClient,
   VerifierRegistryClient,
+  VerifierRewardsClient,
 } from '@antseed/node/payments';
 import type { Identity } from '@antseed/node';
 import type { AntseedConfig } from '../config/types.js';
@@ -108,7 +108,7 @@ type ResolvedCryptoConfig = NonNullable<AntseedConfig['payments']['crypto']> & {
   identityRegistryAddress?: string;
   emissionsContractAddress?: string;
   verifierRegistryAddress?: string;
-  relayTreasuryAddress?: string;
+  verifierRewardsAddress?: string;
   verifierPointsPolicyAddress?: string;
   evmChainId: number;
 };
@@ -158,7 +158,7 @@ export function requireCryptoConfig(
     emissionsContractAddress: crypto.emissionsContractAddress || resolved.emissionsContractAddress,
     identityRegistryAddress: crypto.identityRegistryAddress || resolved.identityRegistryAddress,
     verifierRegistryAddress: crypto.verifierRegistryAddress || resolved.verifierRegistryAddress,
-    relayTreasuryAddress: crypto.relayTreasuryAddress || resolved.relayTreasuryAddress,
+    verifierRewardsAddress: crypto.verifierRewardsAddress || resolved.verifierRewardsAddress,
     verifierPointsPolicyAddress: crypto.verifierPointsPolicyAddress || resolved.verifierPointsPolicyAddress,
     evmChainId: resolved.evmChainId,
   };
@@ -262,15 +262,15 @@ export function createVerifierRegistryClient(config: AntseedConfig, overrides?: 
   });
 }
 
-export function createRelayTreasuryClient(config: AntseedConfig, overrides?: CryptoConfigOverrides): RelayTreasuryClient {
+export function createVerifierRewardsClient(config: AntseedConfig, overrides?: CryptoConfigOverrides): VerifierRewardsClient {
   const crypto = requireCryptoConfig(config, overrides);
-  if (!crypto.relayTreasuryAddress) {
-    throw new Error('No relay treasury address configured. Set payments.crypto.relayTreasuryAddress in your config file.');
+  if (!crypto.verifierRewardsAddress) {
+    throw new Error('No verifier rewards address configured. Set payments.crypto.verifierRewardsAddress in your config file.');
   }
-  return new RelayTreasuryClient({
+  return new VerifierRewardsClient({
     rpcUrl: crypto.rpcUrl,
     ...fallbackClientOpts(crypto),
-    contractAddress: crypto.relayTreasuryAddress,
+    contractAddress: crypto.verifierRewardsAddress,
     evmChainId: crypto.evmChainId,
   });
 }

@@ -36,9 +36,10 @@ export type { IdentityClientConfig } from './evm/identity-client.js';
 export { StakingClient } from './evm/staking-client.js';
 export type { StakingClientConfig } from './evm/staking-client.js';
 
-// Verifier network clients (reference audits + fixed-price relay payouts)
+// Verifier network clients
 export {
   VerifierRegistryClient,
+  VerifierRewardsClient,
   serviceHash,
   VERIFIER_VERDICT_UNKNOWN,
   VERIFIER_VERDICT_SAME,
@@ -47,23 +48,15 @@ export {
 } from './evm/verifier-client.js';
 export type {
   VerifierRegistryClientConfig,
+  VerifierRewardsClientConfig,
   VerifierVerdict,
-  AuditJob,
-  RelayAssignment,
-  RelayClaim,
   MetricSnapshot,
-  AuditState,
   AttestationState,
-  ParsedResponseAuth,
-  CommitProbesInput,
-  SubmitAttestationInput,
+  ServiceVerificationStats,
+  SubmitVerificationResultInput,
   AttestationSubmittedEvent,
+  MetricSnapshotSubmittedEvent,
 } from './evm/verifier-client.js';
-export { RelayTreasuryClient } from './evm/relay-treasury-client.js';
-export type {
-  RelayTreasuryClientConfig,
-  RelayTreasuryReservation,
-} from './evm/relay-treasury-client.js';
 
 export {
   signSpendingAuth,

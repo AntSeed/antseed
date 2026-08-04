@@ -18,6 +18,22 @@ export function parsePositiveIntFlag(value: string): number {
   return parsed
 }
 
+export function parseBenchmarkProbeCountFlag(value: string): number | 'auto' {
+  if (value.trim().toLowerCase() === 'auto') return 'auto'
+  const parsed = parsePositiveIntFlag(value)
+  if (parsed < 10 || parsed > 750 || parsed % 10 !== 0) {
+    throw new InvalidArgumentError('must be auto or a multiple of 10 from 10 through 750')
+  }
+  return parsed
+}
+
+export function parseUsdcBaseUnitsFlag(value: string): bigint {
+  if (!/^\d+$/.test(value.trim())) {
+    throw new InvalidArgumentError('must be a non-negative integer in USDC base units')
+  }
+  return BigInt(value)
+}
+
 /**
  * Resolve the upstream API input for `verifier reference build`, giving CLI
  * flags strict precedence over config: `--api-key` must beat a configured

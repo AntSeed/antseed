@@ -1,10 +1,11 @@
 import {
+  KBF_MAX_PROBE_COUNT,
   computeBinomialPower,
   sha256Hex,
   subsetReferenceSelfTest,
   type KbfReferenceV1,
 } from '@antseed/fingerprints'
-import type { VerificationStorage } from '@antseed/node'
+import type { StoredDirectAuditProbe, VerificationStorage } from '@antseed/node'
 
 export function selectAndReserveReferenceSubset(input: {
   storage: VerificationStorage
@@ -18,7 +19,7 @@ export function selectAndReserveReferenceSubset(input: {
 }): KbfReferenceV1 {
   assertProbeCount(input.probeCount)
   const exposures = input.storage.getProbeExposureCounts(input.agentId, input.service)
-  const reserved = new Set(input.storage.listActiveReservedProbeIds(
+  const reserved = new Set(input.storage.listActiveDirectProbeIds(
     input.agentId,
     input.service,
     input.auditId,
@@ -35,7 +36,21 @@ export function selectAndReserveReferenceSubset(input: {
     )
   }
   const selectedIds = eligible.slice(0, input.probeCount).map((probe) => probe.id)
-  input.storage.reserveAuditProbes(input.auditId, selectedIds)
+  input.storage.saveDirectAuditProbes(selectedIds.map((probeId, ordinal): StoredDirectAuditProbe => ({
+    auditId: input.auditId,
+    ordinal,
+    probeId,
+    status: 'selected',
+    requestId: null,
+    requestHash: null,
+    responseHash: null,
+    responseAuth: null,
+    payment: null,
+    timing: null,
+    matched: null,
+    exposureCountedAt: null,
+    failureReason: null,
+  })))
   return subsetReference(input.reference, selectedIds)
 }
 
@@ -44,7 +59,7 @@ export function loadReservedReferenceSubset(
   auditId: string,
   reference: KbfReferenceV1,
 ): KbfReferenceV1 {
-  const selections = storage.listAuditProbeSelections(auditId)
+  const selections = storage.listDirectAuditProbes(auditId)
   if (selections.length === 0) return reference
   return subsetReference(reference, selections.map((selection) => selection.probeId))
 }
@@ -88,7 +103,7 @@ export function subsetReference(reference: KbfReferenceV1, probeIds: readonly st
 }
 
 function assertProbeCount(probeCount: number): void {
-  if (!Number.isInteger(probeCount) || probeCount < 10 || probeCount > 500 || probeCount % 10 !== 0) {
-    throw new Error('audit probe count must be a multiple of 10 from 10 through 500')
+  if (!Number.isInteger(probeCount) || probeCount < 10 || probeCount > KBF_MAX_PROBE_COUNT || probeCount % 10 !== 0) {
+    throw new Error(`audit probe count must be a multiple of 10 from 10 through ${KBF_MAX_PROBE_COUNT}`)
   }
 }

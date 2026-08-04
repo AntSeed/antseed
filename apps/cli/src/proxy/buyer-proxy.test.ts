@@ -4,8 +4,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import test from 'node:test'
-import type { PeerInfo } from '@antseed/node'
+import {
+  hashRequest,
+  hashResponse,
+  type PeerInfo,
+  type SerializedHttpRequest,
+  type SerializedHttpResponse,
+} from '@antseed/node'
 import { DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from '../config/defaults.js'
+import {
+  BUYER_AUDIT_EXECUTE_PATH,
+  encodeSerializedHttpRequest,
+} from './audit-protocol.js'
 import {
   BuyerProxy,
   MODEL_VERIFICATION_MAX_AGE_MS,
@@ -121,6 +131,98 @@ test('BuyerProxy accepts a custom background refresh interval', () => {
   })
 
   assert.equal((proxy as any)._bgRefreshIntervalMs, 15_000)
+})
+
+test('buyer audit endpoint requires its local bearer token', async () => {
+  const proxy = new BuyerProxy({
+    port: 0,
+    dataDir: '/tmp/antseed-test',
+    auditToken: 'audit-secret',
+    node: { router: null } as any,
+  })
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    path: BUYER_AUDIT_EXECUTE_PATH,
+    body: {},
+  }))
+  assert.equal(res.statusCode, 401)
+  assert.match(res.body, /Unauthorized/)
+})
+
+test('buyer audit endpoint returns verified auth, payment evidence, and proxy identity', async () => {
+  const target = makePeer('a', ['openai'])
+  const request: SerializedHttpRequest = {
+    requestId: 'audit-request-1',
+    method: 'POST',
+    path: '/v1/chat/completions',
+    headers: { 'content-type': 'application/json' },
+    body: new TextEncoder().encode(JSON.stringify({ model: 'gpt-5.6-sol', messages: [] })),
+  }
+  const response: SerializedHttpResponse = {
+    requestId: request.requestId,
+    statusCode: 200,
+    headers: { 'content-type': 'application/json' },
+    body: new TextEncoder().encode(JSON.stringify({ choices: [{ message: { content: '1' } }] })),
+  }
+  const responseAuth = {
+    version: 1 as const,
+    requestId: request.requestId,
+    buyerPeerId: 'b'.repeat(40),
+    sellerPeerId: target.peerId,
+    advertisedService: 'gpt-5.6-sol',
+    provider: 'openai',
+    statusCode: 200,
+    requestHash: hashRequest(request),
+    responseHash: hashResponse(response),
+    responseStartedAt: 1,
+    responseCompletedAt: 2,
+    signature: '0xsig',
+    receivedAt: 3,
+    verified: true,
+    verificationError: null,
+  }
+  const proxy = new BuyerProxy({
+    port: 0,
+    dataDir: '/tmp/antseed-test',
+    auditToken: 'audit-secret',
+    node: {
+      router: null,
+      identity: {
+        peerId: responseAuth.buyerPeerId,
+        wallet: { address: '0x1111111111111111111111111111111111111111' },
+      },
+      findPeer: async () => target,
+      sendRequest: async () => response,
+      waitForResponseAuth: async () => responseAuth,
+      finalizeResponsePayment: async () => ({
+        sellerChargeUsdc: 123n,
+        spendingAuth: {
+          channelId: '0xchannel',
+          cumulativeAmount: '123',
+          metadataHash: `0x${'11'.repeat(32)}`,
+          metadata: '0x',
+          spendingAuthSig: '0xsig',
+        },
+      }),
+    } as any,
+  })
+  ;(proxy as any)._getPeers = async () => [target]
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    path: BUYER_AUDIT_EXECUTE_PATH,
+    headers: { authorization: 'Bearer audit-secret' },
+    body: {
+      peerId: target.peerId,
+      request: encodeSerializedHttpRequest(request),
+      responseAuthTimeoutMs: 120_000,
+    },
+  }))
+  const body = JSON.parse(res.body)
+  assert.equal(res.statusCode, 200)
+  assert.equal(body.ok, true)
+  assert.equal(body.identity.address, '0x1111111111111111111111111111111111111111')
+  assert.equal(body.identity.peerId, responseAuth.buyerPeerId)
+  assert.equal(body.responseAuth.verified, true)
+  assert.equal(body.payment.sellerChargeUsdc, '123')
 })
 
 test('BuyerProxy starts incremental discovery on startup', async (t) => {

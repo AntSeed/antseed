@@ -1,385 +1,513 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { createReferenceQueryProfile, type KbfReferenceV1 } from '@antseed/fingerprints'
 import {
+  createReferenceQueryProfile,
+  type KbfReferenceV1,
+} from '@antseed/fingerprints'
+import {
+  VERIFIER_VERDICT_SAME,
+  VERIFIER_VERDICT_UNDETERMINED,
   VerificationStorage,
-  type ConnectedRelay,
-  type PeerId,
+  hashRequest,
+  hashResponse,
   type PeerInfo,
-  type StoredAuditJob,
-  type StoredAuditPlan,
+  type StoredResponseAuth,
+  type VerifierRegistryClient,
 } from '@antseed/node'
-import type { AuditState } from '@antseed/node/payments'
 import {
-  deterministicScheduledAt,
-  dispatchDueReferenceAuditJobs,
-  planAndCommitReferenceAudit,
-  resumeReferenceAuditCommit,
-  selectRelayForJob,
-  type AuditContext,
+  attestCompletedDirectAudit,
+  buildDirectAuditRequestBody,
+  executeDirectAuditObservation,
+  runDirectAudit,
+  type DirectAuditContext,
+  type DirectAuditNode,
 } from './audit-runner.js'
+import {
+  verifyDirectAuditEvidenceFile,
+  writeDirectAuditEvidence,
+} from './direct-evidence.js'
 
 const NOW = 1_800_000_100_000
-const AUDIT_ID = `0x${'11'.repeat(32)}`
 const SERVICE = 'gpt-test'
+const VERIFIER_ADDRESS = `0x${'11'.repeat(20)}`
+const VERIFIER_PEER_ID = '11'.repeat(20)
 const SELLER_PEER_ID = '22'.repeat(20)
-const RELAY_A = '33'.repeat(20)
-const RELAY_B = '44'.repeat(20)
+const TX_HASH = `0x${'33'.repeat(32)}`
 
-function plan(): StoredAuditPlan {
-  return {
-    auditId: AUDIT_ID,
-    state: 'committed',
-    source: 'manual',
-    epoch: '7',
-    durationMs: 86_400_000,
-    chainId: '31337',
-    registryAddress: `0x${'55'.repeat(20)}`,
-    treasuryAddress: `0x${'66'.repeat(20)}`,
-    verifierAddress: `0x${'77'.repeat(20)}`,
-    agentId: '9',
-    targetPeerId: SELLER_PEER_ID,
-    targetService: SERVICE,
-    targetServiceHash: `0x${'88'.repeat(32)}`,
-    targetSalt: `0x${'99'.repeat(32)}`,
-    targetCommitment: `0x${'aa'.repeat(32)}`,
-    probeRoot: `0x${'bb'.repeat(32)}`,
-    auditJobRoot: `0x${'cc'.repeat(32)}`,
-    referenceId: `0x${'dd'.repeat(32)}`,
-    queryProfileHash: `0x${'ee'.repeat(32)}`,
-    verifierConfigHash: `0x${'ff'.repeat(32)}`,
-    probeCount: 10,
-    jobCount: 1,
-    requiredRelayCount: 1,
-    jobTimeoutMs: 30_000,
-    payoutPerJobUsdc: 1_000n,
-    reservedBudgetUsdc: 1_000n,
-    commitTxHash: `0x${'12'.repeat(32)}`,
-    attestationTxHash: null,
-    evidenceHash: null,
-    evidenceUri: null,
-    evidenceState: 'none',
-    executeAfter: Math.floor(NOW / 1_000) - 10,
-    executeBefore: Math.floor(NOW / 1_000) + 600,
-    forceClaimAvailableAt: Math.floor(NOW / 1_000) + 22_200,
-    forceClaimDeadline: Math.floor(NOW / 1_000) + 2_614_200,
-    createdAt: NOW - 60_000,
-    updatedAt: NOW - 60_000,
-    failureReason: null,
-  }
-}
+type NodeBehavior = 'success' | 'mismatch' | 'malformed' | 'timeout' | 'unauthenticated' | 'payment-failure'
 
-function job(): StoredAuditJob {
-  return {
-    auditId: AUDIT_ID,
-    jobIndex: 0,
-    state: 'planned',
-    scheduledAt: NOW - 1,
-    relayPeerId: null,
-    relayBuyerAddress: null,
-    assignmentAttempt: 0,
-    assignmentSignature: null,
-    assignmentState: 'unassigned',
-    assignedAt: null,
-    lastDispatchAt: null,
-    sellerPeerId: SELLER_PEER_ID,
-    service: SERVICE,
-    serviceHash: `0x${'88'.repeat(32)}`,
-    requestHash: `0x${'13'.repeat(32)}`,
-    jobSalt: `0x${'14'.repeat(32)}`,
-    executeAfter: Math.floor(NOW / 1_000) - 10,
-    executeBefore: Math.floor(NOW / 1_000) + 300,
-    requestBytes: new Uint8Array([1, 2, 3]),
-    positionalProof: [`0x${'15'.repeat(32)}`],
-    responseBytes: null,
-    responseAuthPayload: null,
-    sellerChargeUsdc: null,
-    paymentMetadata: null,
-    dispatchedAt: null,
-    completedAt: null,
-    failureKind: null,
-    failureMessage: null,
-    entitlementPersistedAt: null,
-  }
-}
-
-function relay(peerId: string, overrides: Partial<ConnectedRelay> = {}): ConnectedRelay {
-  return {
-    peerId: peerId as PeerId,
-    chainId: '31337',
-    registryAddress: `0x${'55'.repeat(20)}`,
-    treasuryAddress: `0x${'66'.repeat(20)}`,
-    minPayoutPerJobUsdc: 0n,
-    maxConcurrentJobs: 2,
-    activeJobs: 0,
-    connectedAt: NOW,
-    ...overrides,
-  }
-}
-
-function auditState(): AuditState {
-  const stored = plan()
-  return {
-    committer: stored.verifierAddress!,
-    targetCommitment: stored.targetCommitment!,
-    probeRoot: stored.probeRoot!,
-    auditJobRoot: stored.auditJobRoot!,
-    referenceId: stored.referenceId!,
-    verifierConfigHash: stored.verifierConfigHash!,
-    commitSequence: 1n,
-    probeCount: stored.probeCount!,
-    jobCount: stored.jobCount!,
-    payoutPerJobUsdc: stored.payoutPerJobUsdc!,
-    reservedRelayBudgetUsdc: stored.reservedBudgetUsdc!,
-    totalRelayPaidUsdc: 0n,
-    committedAt: stored.executeAfter! - 1,
-    executeAfter: stored.executeAfter!,
-    executeBefore: stored.executeBefore!,
-    forceClaimAvailableAt: stored.forceClaimAvailableAt!,
-    forceClaimDeadline: stored.forceClaimDeadline!,
-    attestedAt: 0,
-    attested: false,
-    evidenceHash: `0x${'00'.repeat(32)}`,
-    evidenceUri: '',
-  }
-}
-
-function context(
-  storage: VerificationStorage,
-  runRelayJob: AuditContext['runRelayJob'],
-): AuditContext {
-  return {
-    registryClient: {
-      getAudit: async () => auditState(),
-      signRelayAssignment: async (_signer: unknown, assignment: { attempt: number }) =>
-        `0x${assignment.attempt.toString(16).padStart(2, '0')}${'ab'.repeat(64)}`,
-    } as unknown as AuditContext['registryClient'],
-    treasuryClient: {} as AuditContext['treasuryClient'],
-    storage,
-    signer: { getAddress: async () => plan().verifierAddress! } as AuditContext['signer'],
-    chainId: '31337',
-    registryAddress: plan().registryAddress!,
-    treasuryAddress: plan().treasuryAddress!,
-    runRelayJob,
-    now: () => NOW,
-  }
-}
-
-function successfulResult() {
-  return {
-    status: 'ok' as const,
-    responseBytesBase64: Buffer.from([4, 5]).toString('base64'),
-    responseAuthPayloadBase64: Buffer.from([6, 7]).toString('base64'),
-    sellerChargeUsdc: '400',
-    paymentMetadata: {
-      spendingAuth: {
-        channelId: `0x${'16'.repeat(32)}`,
-        cumulativeAmount: '400',
-      },
+test('direct audit requests preserve the frozen reference query profile', () => {
+  const input = reference()
+  input.queryProfile = {
+    ...input.queryProfile,
+    maxTokensPerRequest: 1600,
+    generationSettings: {
+      ...input.queryProfile.generationSettings,
+      topP: 1,
     },
+    requestOverrides: { reasoning_effort: 'none' },
+  }
+  const body = buildDirectAuditRequestBody(input, SERVICE, input.probes)
+  assert.equal(body.max_tokens, 1600)
+  assert.equal(body.top_p, 1)
+  assert.equal(body.stream, false)
+  assert.equal(body.n, 1)
+  assert.equal(body.reasoning_effort, 'none')
+})
+
+interface Harness {
+  dir: string
+  storage: VerificationStorage
+  context: DirectAuditContext
+  target: PeerInfo
+  submissions: Array<Record<string, unknown>>
+  publications: Array<{ auditId: string; evidenceUri: string }>
+  warnings: string[]
+  close(): void
+}
+
+function reference(probeCount = 10): KbfReferenceV1 {
+  const probes = Array.from({ length: probeCount }, (_unused, index) => ({
+    id: `probe-${String(index).padStart(3, '0')}`,
+    name: `probe-${index}`,
+    domain: 'test',
+    template: `Probe ${index} is ___.`,
+    consensus: index,
+    range: [0, 1_000] as [number, number],
+    tolerance: { mode: 'absolute' as const, value: 0 },
+    advisoryConsensus: false,
+  }))
+  return {
+    version: 1,
+    kind: 'kbf',
+    referenceId: `reference-${probeCount}`,
+    referenceModel: SERVICE,
+    serviceAliases: [SERVICE],
+    createdAt: '2026-08-03T00:00:00.000Z',
+    source: 'generated',
+    generator: { name: 'test', version: '1', verifierKind: 'kbf', params: {} },
+    queryProfile: createReferenceQueryProfile({ upstreamModel: SERVICE }),
+    selfTest: {
+      hamming: 0,
+      total: probes.length,
+      coverage: 1,
+      errorRate: 0,
+      outcomes: probes.map((probe) => ({ probeId: probe.id, answer: probe.consensus, match: 1 })),
+    },
+    probes,
+    selectedProbeCount: probes.length,
+    minimumMismatchDelta: 0.1,
+    statisticalPower: 0.99,
+    statisticalPowerEvidence: {
+      test: 'one-sided-binomial',
+      alpha: 0.05,
+      clopperPearsonConfidence: 0.99,
+      selfHamming: 0,
+      selfTotal: probes.length,
+      p0UpperBound: 0.1,
+      alternativeMismatchRate: 0.2,
+      criticalMismatchCount: 3,
+      power: 0.99,
+    },
+    contrasts: [],
   }
 }
 
-function withStorage(run: (storage: VerificationStorage, dbPath: string) => Promise<void> | void): Promise<void> {
-  const directory = mkdtempSync(join(tmpdir(), 'audit-runner-'))
-  const dbPath = join(directory, 'verification.db')
-  const storage = new VerificationStorage(dbPath)
-  return Promise.resolve(run(storage, dbPath)).finally(() => {
-    try { storage.close() } catch {}
-    rmSync(directory, { recursive: true, force: true })
-  })
-}
-
-test('deterministic scheduling is stable and bounded across the audit duration', () => {
-  const values = Array.from({ length: 50 }, (_unused, index) =>
-    deterministicScheduledAt(AUDIT_ID, index, NOW, 86_400_000, 30_000))
-  assert.deepEqual(values, Array.from({ length: 50 }, (_unused, index) =>
-    deterministicScheduledAt(AUDIT_ID, index, NOW, 86_400_000, 30_000)))
-  assert.ok(values.every((value) => value >= NOW && value <= NOW + 86_400_000 - 30_000))
-  assert.ok(new Set(values).size > 45)
-})
-
-test('relay selection enforces payout, capacity, diversity, and least-used balancing', () => {
-  const jobs = [{ ...job(), relayPeerId: RELAY_A }]
-  const relays = [
-    relay(RELAY_A),
-    relay(RELAY_B),
-    relay('55'.repeat(20), { minPayoutPerJobUsdc: 1_001n }),
-    relay('66'.repeat(20), { activeJobs: 2 }),
-  ]
-  assert.equal(selectRelayForJob(jobs, relays, 1_000n, 2)?.peerId, RELAY_B)
-  assert.equal(selectRelayForJob(jobs, [relay(RELAY_A)], 1_000n, 2), null)
-})
-
-test('late relay assignment is persisted before dispatch and successful evidence is durable', async () => {
-  await withStorage(async (storage) => {
-    storage.saveAuditPlan(plan(), [job()])
-    let sawPersistedAssignment = false
-    await dispatchDueReferenceAuditJobs(context(storage, async () => {
-      const persisted = storage.listAuditJobs(AUDIT_ID)[0]!
-      sawPersistedAssignment = persisted.state === 'assigned'
-        && persisted.assignmentSignature !== null
-        && persisted.lastDispatchAt === NOW
-      return successfulResult()
-    }), plan(), [relay(RELAY_A)])
-
-    assert.equal(sawPersistedAssignment, true)
-    assert.deepEqual(storage.listAuditJobs(AUDIT_ID)[0], {
-      ...storage.listAuditJobs(AUDIT_ID)[0],
-      state: 'succeeded',
-      relayPeerId: RELAY_A,
-      assignmentState: 'accepted',
-      sellerChargeUsdc: 400n,
-    })
-  })
-})
-
-test('one dispatch pass balances multiple due jobs across independent relays', async () => {
-  await withStorage(async (storage) => {
-    const multiPlan = {
-      ...plan(),
-      probeCount: 20,
-      jobCount: 2,
-      requiredRelayCount: 2,
-      reservedBudgetUsdc: 2_000n,
-    }
-    const jobs = [
-      job(),
-      {
-        ...job(),
-        jobIndex: 1,
-        requestHash: `0x${'19'.repeat(32)}`,
-        jobSalt: `0x${'1a'.repeat(32)}`,
-      },
-    ]
-    storage.saveAuditPlan(multiPlan, jobs)
-    const multiAudit = { ...auditState(), probeCount: 20, jobCount: 2, reservedRelayBudgetUsdc: 2_000n }
-    const multiContext = context(storage, async () => ({ status: 'error', error: 'seller_timeout' }))
-    multiContext.registryClient = {
-      getAudit: async () => multiAudit,
-      signRelayAssignment: async (_signer: unknown, assignment: { attempt: number }) =>
-        `0x${assignment.attempt.toString(16).padStart(2, '0')}${'ab'.repeat(64)}`,
-    } as unknown as AuditContext['registryClient']
-
-    await dispatchDueReferenceAuditJobs(multiContext, multiPlan, [relay(RELAY_A), relay(RELAY_B)])
-    assert.deepEqual(storage.listAuditJobs(AUDIT_ID).map((stored) => stored.relayPeerId), [RELAY_A, RELAY_B])
-  })
-})
-
-test('explicit pre-execution rejection permits a new relay assignment with the next attempt', async () => {
-  await withStorage(async (storage) => {
-    storage.saveAuditPlan(plan(), [job()])
-    await dispatchDueReferenceAuditJobs(context(storage, async () => ({ status: 'error', error: 'busy' })), plan(), [relay(RELAY_A)])
-    assert.match(JSON.stringify(storage.listAuditJobs(AUDIT_ID)[0]), /"state":"due"/)
-    assert.equal(storage.listAuditJobs(AUDIT_ID)[0]?.assignmentAttempt, 1)
-
-    await dispatchDueReferenceAuditJobs(context(storage, async () => successfulResult()), plan(), [relay(RELAY_B)])
-    const completed = storage.listAuditJobs(AUDIT_ID)[0]!
-    assert.equal(completed.state, 'succeeded')
-    assert.equal(completed.relayPeerId, RELAY_B)
-    assert.equal(completed.assignmentAttempt, 1)
-  })
-})
-
-test('uncertain delivery survives restart and never reassigns to a different relay', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'audit-restart-'))
-  const dbPath = join(directory, 'verification.db')
-  let storage = new VerificationStorage(dbPath)
-  try {
-    storage.saveAuditPlan(plan(), [job()])
-    let firstSignature = ''
-    await dispatchDueReferenceAuditJobs(context(storage, async (_peerId, offer) => {
-      firstSignature = offer.verifierSignature
-      throw new Error('network timeout')
-    }), plan(), [relay(RELAY_A)])
-    storage.close()
-    storage = new VerificationStorage(dbPath)
-
-    let alternateCalled = false
-    await dispatchDueReferenceAuditJobs(context(storage, async () => {
-      alternateCalled = true
-      return successfulResult()
-    }), plan(), [relay(RELAY_B)])
-    assert.equal(alternateCalled, false)
-    assert.equal(storage.listAuditJobs(AUDIT_ID)[0]?.relayPeerId, RELAY_A)
-
-    let retriedSignature = ''
-    await dispatchDueReferenceAuditJobs(context(storage, async (_peerId, offer) => {
-      retriedSignature = offer.verifierSignature
-      return successfulResult()
-    }), plan(), [relay(RELAY_A)])
-    assert.equal(retriedSignature, firstSignature)
-    assert.equal(storage.listAuditJobs(AUDIT_ID)[0]?.state, 'succeeded')
-  } finally {
-    storage.close()
-    rmSync(directory, { recursive: true, force: true })
-  }
-})
-
-test('restart recovery accepts an already-mined commit without recommitting', async () => {
-  await withStorage(async (storage) => {
-    const committingPlan = { ...plan(), state: 'committing' as const, commitTxHash: null }
-    storage.saveAuditPlan(committingPlan, [job()])
-    let commitCalls = 0
-    const recoveryContext = context(storage, async () => ({ status: 'error' }))
-    recoveryContext.registryClient = {
-      getAudit: async () => auditState(),
-      commitProbes: async () => {
-        commitCalls += 1
-        return `0x${'18'.repeat(32)}`
-      },
-    } as unknown as AuditContext['registryClient']
-
-    const recovered = await resumeReferenceAuditCommit(recoveryContext, committingPlan)
-    assert.equal(recovered.state, 'committed')
-    assert.equal(commitCalls, 0)
-    assert.equal(storage.getAuditPlan(AUDIT_ID)?.state, 'committed')
-  })
-})
-
-test('planning defers when the epoch cannot fit the complete duration and safety margin', async () => {
-  const profile = createReferenceQueryProfile({ upstreamModel: 'trusted-model' })
-  const reference = {
-    referenceId: `0x${'17'.repeat(32)}`,
-    queryProfile: profile,
-    probes: Array.from({ length: 10 }, (_unused, index) => ({ id: `p-${index}` })),
-  } as unknown as KbfReferenceV1
-  const target: PeerInfo = {
-    peerId: SELLER_PEER_ID as PeerId,
+function target(): PeerInfo {
+  return {
+    peerId: SELLER_PEER_ID as PeerInfo['peerId'],
     lastSeen: NOW,
     providers: ['test'],
-    onChainAgentId: 9,
-    providerPricing: {
-      test: {
-        defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 1 },
-        services: { [SERVICE]: { inputUsdPerMillion: 1, outputUsdPerMillion: 1 } },
-      },
+    onChainAgentId: 7,
+    onChainSellerAddress: `0x${SELLER_PEER_ID}`,
+  }
+}
+
+function spendingAuth(): {
+  channelId: string
+  cumulativeAmount: string
+  metadataHash: string
+  metadata: string
+  spendingAuthSig: string
+} {
+  return {
+    channelId: `0x${'44'.repeat(32)}`,
+    cumulativeAmount: '25',
+    metadataHash: `0x${'55'.repeat(32)}`,
+    metadata: '0x',
+    spendingAuthSig: `0x${'66'.repeat(65)}`,
+  }
+}
+
+function createNode(behavior: NodeBehavior): DirectAuditNode {
+  const requests = new Map<string, Parameters<DirectAuditNode['sendRequest']>[1]>()
+  const responses = new Map<string, Awaited<ReturnType<DirectAuditNode['sendRequest']>>>()
+  return {
+    async sendRequest(_target, request, options) {
+      requests.set(request.requestId, request)
+      if (behavior === 'timeout') {
+        return new Promise((resolve, reject) => {
+          const signal = options?.signal
+          if (signal?.aborted) {
+            reject(new Error('aborted'))
+            return
+          }
+          signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+          void resolve
+        })
+      }
+      const answerText = Array.from({ length: 10 }, (_unused, index) =>
+        `(${index + 1}) ${behavior === 'mismatch' ? index + 100 : index}`).join('\n')
+      const response = {
+        requestId: request.requestId,
+        statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        body: new TextEncoder().encode(behavior === 'malformed'
+          ? JSON.stringify({ choices: [{ message: { content: { invalid: true } } }] })
+          : JSON.stringify({
+              choices: [{ message: { content: answerText } }],
+              usage: { completion_tokens: 10 },
+            })),
+      }
+      responses.set(request.requestId, response)
+      return response
+    },
+    async waitForResponseAuth(requestId) {
+      const request = requests.get(requestId)
+      const response = responses.get(requestId)
+      if (!request || !response) throw new Error(`missing exchange ${requestId}`)
+      const auth: StoredResponseAuth = {
+        version: 1,
+        requestId,
+        buyerPeerId: VERIFIER_PEER_ID,
+        sellerPeerId: SELLER_PEER_ID,
+        advertisedService: SERVICE,
+        provider: 'test',
+        statusCode: response.statusCode,
+        requestHash: hashRequest(request),
+        responseHash: hashResponse(response),
+        responseStartedAt: NOW,
+        responseCompletedAt: NOW + 5,
+        signature: `0x${'77'.repeat(65)}`,
+        receivedAt: NOW + 6,
+        verified: behavior !== 'unauthenticated',
+        verificationError: behavior === 'unauthenticated' ? 'bad signature' : null,
+      }
+      return auth
+    },
+    async finalizeResponsePayment() {
+      if (behavior === 'payment-failure') throw new Error('payment finalization failed')
+      return { sellerChargeUsdc: 25n, spendingAuth: spendingAuth() }
     },
   }
-  const insufficientContext = {
-    registryClient: {
-      currentEpochWindow: async () => ({ epoch: 7n, startsAt: Math.floor(NOW / 1_000) - 100, endsAt: Math.floor(NOW / 1_000) + 3_600 }),
-    },
-    treasuryClient: {},
-    storage: {},
-    signer: { getAddress: async () => plan().verifierAddress! },
-    chainId: '31337',
-    registryAddress: plan().registryAddress!,
-    treasuryAddress: plan().treasuryAddress!,
-    runRelayJob: async () => ({ status: 'error' as const }),
-    now: () => NOW,
-  } as unknown as AuditContext
+}
 
-  await assert.rejects(planAndCommitReferenceAudit(insufficientContext, {
-    target,
+function createHarness(
+  behavior: NodeBehavior,
+  options: {
+    evidenceUri?: string
+    failPublication?: boolean
+    onSubmit?: () => void
+    resolveTrafficShare?: DirectAuditContext['resolveTrafficShare']
+    epochWindows?: Array<{ epoch: bigint; startedAt: number; endsAt: number }>
+  } = {},
+): Harness {
+  const dir = mkdtempSync(join(tmpdir(), 'antseed-direct-audit-'))
+  const storage = new VerificationStorage(join(dir, 'verification.db'))
+  const submissions: Array<Record<string, unknown>> = []
+  const publications: Array<{ auditId: string; evidenceUri: string }> = []
+  const warnings: string[] = []
+  const epochWindows = options.epochWindows ?? [{ epoch: 7n, startedAt: 1_800_000_000, endsAt: 1_800_604_800 }]
+  let epochWindowIndex = 0
+  const registryClient = {
+    async currentEpoch() {
+      return epochWindows[Math.min(epochWindowIndex, epochWindows.length - 1)]!.epoch
+    },
+    async currentEpochWindow() {
+      const value = epochWindows[Math.min(epochWindowIndex, epochWindows.length - 1)]!
+      epochWindowIndex += 1
+      return value
+    },
+    async submitVerificationResult(_signer: unknown, input: Record<string, unknown>) {
+      options.onSubmit?.()
+      submissions.push(input)
+      return TX_HASH
+    },
+    async publishEvidence(_signer: unknown, auditId: string, evidenceUri: string) {
+      publications.push({ auditId, evidenceUri })
+      if (options.failPublication) throw new Error('publisher offline')
+      return `0x${'88'.repeat(32)}`
+    },
+  } as unknown as VerifierRegistryClient
+  return {
+    dir,
+    storage,
+    target: target(),
+    submissions,
+    publications,
+    warnings,
+    context: {
+      node: createNode(behavior),
+      registryClient,
+      storage,
+      signer: {} as DirectAuditContext['signer'],
+      verifierAddress: VERIFIER_ADDRESS,
+      verifierPeerId: VERIFIER_PEER_ID,
+      evidenceDir: join(dir, 'evidence'),
+      minAuthenticatedProbeCount: 10,
+      minimumStatisticalPower: 0.9,
+      probeRequestTimeoutMs: 20,
+      maxConcurrentProbeRequests: 2,
+      now: () => NOW,
+      warn: (message) => warnings.push(message),
+      ...(options.resolveTrafficShare ? { resolveTrafficShare: options.resolveTrafficShare } : {}),
+      resolveSubmittedEvent: async () => ({ credited: true, epoch: 7n }),
+    },
+    close() {
+      storage.close()
+      rmSync(dir, { recursive: true, force: true })
+    },
+  }
+}
+
+async function execute(harness: Harness, evidenceUri?: string) {
+  return runDirectAudit(harness.context, {
+    runId: `run-${Math.random()}`,
+    source: 'manual',
+    epoch: 7n,
+    target: harness.target,
     service: SERVICE,
-    reference,
-    executionProfile: profile,
-    flatRelayFeeUsdc: 100n,
-    jobTimeoutMs: 30_000,
-    durationMs: 86_400_000,
-  }), /insufficient epoch time/)
+    reference: reference(),
+    evidenceUri,
+  })
+}
+
+test('writes canonical evidence before submitting exactly one final attestation', async () => {
+  let evidenceWritten = false
+  const harness = createHarness('success', {
+    onSubmit: () => assert.equal(evidenceWritten, true),
+  })
+  harness.context.writeEvidence = async (...args) => {
+    const written = await writeDirectAuditEvidence(...args)
+    evidenceWritten = true
+    return written
+  }
+  try {
+    const result = await execute(harness)
+    assert.equal(result.verdict, VERIFIER_VERDICT_SAME)
+    assert.equal(result.authenticatedProbeCount, 10)
+    assert.equal(result.credited, true)
+    assert.equal(harness.submissions.length, 1)
+    assert.equal(existsSync(result.evidencePath), true)
+    const evidence = await verifyDirectAuditEvidenceFile(result.evidencePath, result.evidenceHash)
+    assert.equal(evidence.result.verdict, 'SAME')
+    assert.equal(evidence.exchanges.length, 1)
+    assert.equal(harness.storage.getDirectAudit(result.runId), null)
+    assert.equal(harness.storage.getDirectAudit(result.auditId)?.state, 'attested')
+    assert.equal(harness.storage.listDirectAuditProbes(result.auditId).every((probe) => probe.status === 'succeeded'), true)
+  } finally {
+    harness.close()
+  }
+})
+
+test('observation writes evidence without attesting, then explicit attestation submits once', async () => {
+  const harness = createHarness('success')
+  try {
+    const observed = await executeDirectAuditObservation(harness.context, {
+      runId: 'observation-only-run',
+      source: 'automatic',
+      epoch: 7n,
+      target: harness.target,
+      service: SERVICE,
+      reference: reference(),
+    })
+    assert.equal(harness.submissions.length, 0)
+    assert.equal(harness.storage.getDirectAudit(observed.auditId)?.state, 'completed')
+
+    const attested = await attestCompletedDirectAudit(harness.context, observed.auditId)
+    assert.equal(harness.submissions.length, 1)
+    assert.equal(attested.auditId, observed.auditId)
+    assert.equal(harness.storage.getDirectAudit(observed.auditId)?.state, 'attested')
+  } finally {
+    harness.close()
+  }
+})
+
+test('observation resume reuses a succeeded stored batch after evidence writing is interrupted', async () => {
+  const harness = createHarness('success')
+  const originalSendRequest = harness.context.node.sendRequest.bind(harness.context.node)
+  let sendCount = 0
+  harness.context.node.sendRequest = async (...args) => {
+    sendCount += 1
+    return originalSendRequest(...args)
+  }
+  const input = {
+    runId: 'resumable-observation',
+    source: 'automatic' as const,
+    epoch: 7n,
+    target: harness.target,
+    service: SERVICE,
+    reference: reference(),
+  }
+  harness.context.writeEvidence = async () => {
+    throw new Error('simulated evidence interruption')
+  }
+  try {
+    await assert.rejects(executeDirectAuditObservation(harness.context, input), /simulated evidence interruption/)
+    assert.equal(sendCount, 1)
+    assert.equal(harness.storage.listDirectAuditExchanges(input.runId)[0]?.state, 'succeeded')
+
+    harness.context.writeEvidence = writeDirectAuditEvidence
+    const observed = await executeDirectAuditObservation(harness.context, input)
+    assert.equal(sendCount, 1)
+    assert.equal(harness.storage.getDirectAudit(observed.auditId)?.state, 'completed')
+  } finally {
+    harness.close()
+  }
+})
+
+test('submits UNDETERMINED for authenticated but malformed responses', async () => {
+  const harness = createHarness('malformed', {
+    resolveTrafficShare: async () => { throw new Error('traffic share should not be requested') },
+  })
+  try {
+    const result = await execute(harness)
+    assert.equal(result.verdict, VERIFIER_VERDICT_UNDETERMINED)
+    assert.equal(result.authenticatedProbeCount, 10)
+    assert.equal(result.parsedProbeCount, 0)
+    assert.equal(result.exchanges[0]?.failureReason, 'malformed completion response')
+    assert.equal(harness.submissions.length, 1)
+  } finally {
+    harness.close()
+  }
+})
+
+test('submits DIFF with the current-epoch Antscan share and stores its snapshot', async () => {
+  let shareCalls = 0
+  const harness = createHarness('mismatch', {
+    resolveTrafficShare: async ({ sellerAddress, serviceHash, epochWindow }) => {
+      shareCalls += 1
+      return {
+        source: 'test-antscan',
+        epoch: epochWindow.epoch,
+        windowStartedAt: epochWindow.startedAt,
+        windowEndedAt: epochWindow.endsAt,
+        indexedBlock: 123,
+        sellerAddress,
+        serviceHash,
+        serviceVolumeUsdc: 25n,
+        sellerVolumeUsdc: 100n,
+        modelShareBps: 2_500,
+      }
+    },
+  })
+  try {
+    const result = await execute(harness)
+    assert.equal(shareCalls, 1)
+    assert.equal(result.modelShareBps, 2_500)
+    assert.equal(harness.submissions[0]?.expectedEpoch, 7n)
+    assert.equal(harness.submissions[0]?.modelShareBps, 2_500)
+    assert.deepEqual(harness.storage.getTrafficShareSnapshot(result.auditId), {
+      auditId: result.auditId,
+      source: 'test-antscan',
+      epoch: '7',
+      windowStartedAt: 1_800_000_000,
+      windowEndedAt: 1_800_604_800,
+      indexedBlock: 123,
+      sellerAddress: `0x${SELLER_PEER_ID}`,
+      serviceHash: harness.submissions[0]?.serviceHash,
+      serviceVolumeUsdc: '25',
+      sellerVolumeUsdc: '100',
+      modelShareBps: 2_500,
+      createdAt: harness.storage.getTrafficShareSnapshot(result.auditId)?.createdAt,
+    })
+  } finally {
+    harness.close()
+  }
+})
+
+test('fails closed without submission when DIFF traffic share resolution fails', async () => {
+  const harness = createHarness('mismatch', {
+    resolveTrafficShare: async () => { throw new Error('Antscan unavailable') },
+  })
+  try {
+    await assert.rejects(execute(harness), /Antscan unavailable/)
+    assert.equal(harness.submissions.length, 0)
+    assert.match(
+      harness.storage.listDirectAudits('completed')[0]?.failureReason ?? '',
+      /verification result preparation failed: Antscan unavailable/,
+    )
+  } finally {
+    harness.close()
+  }
+})
+
+test('fails closed when the verification epoch changes during DIFF share calculation', async () => {
+  const firstWindow = { epoch: 7n, startedAt: 1_800_000_000, endsAt: 1_800_604_800 }
+  const harness = createHarness('mismatch', {
+    epochWindows: [firstWindow, { epoch: 8n, startedAt: firstWindow.endsAt, endsAt: firstWindow.endsAt + 604_800 }],
+    resolveTrafficShare: async ({ sellerAddress, serviceHash }) => ({
+      source: 'test-antscan',
+      epoch: firstWindow.epoch,
+      windowStartedAt: firstWindow.startedAt,
+      windowEndedAt: firstWindow.endsAt,
+      indexedBlock: 123,
+      sellerAddress,
+      serviceHash,
+      serviceVolumeUsdc: 1n,
+      sellerVolumeUsdc: 10n,
+      modelShareBps: 1_000,
+    }),
+  })
+  try {
+    await assert.rejects(execute(harness), /epoch changed/)
+    assert.equal(harness.submissions.length, 0)
+  } finally {
+    harness.close()
+  }
+})
+
+for (const scenario of [
+  ['timeout', /only 0 authenticated paid probes/, /request timed out/] as const,
+  ['unauthenticated', /only 0 authenticated paid probes/, /ResponseAuth verification failed/] as const,
+  ['payment-failure', /only 0 authenticated paid probes/, /payment finalization failed/] as const,
+]) {
+  test(`does not attest after ${scenario[0]} probe execution`, async () => {
+    const harness = createHarness(scenario[0])
+    const runId = `run-${scenario[0]}`
+    try {
+      await assert.rejects(runDirectAudit(harness.context, {
+        runId,
+        source: 'manual',
+        epoch: 7n,
+        target: harness.target,
+        service: SERVICE,
+        reference: reference(),
+      }), scenario[1])
+      assert.equal(harness.submissions.length, 0)
+      assert.equal(harness.storage.getDirectAudit(runId)?.state, 'failed')
+      assert.match(harness.storage.listDirectAuditProbes(runId)[0]?.failureReason ?? '', scenario[2])
+    } finally {
+      harness.close()
+    }
+  })
+}
+
+test('keeps a successful attestation when later evidence publication fails', async () => {
+  const evidenceUri = 'ipfs://direct-audit'
+  const harness = createHarness('success', { failPublication: true })
+  try {
+    const result = await execute(harness, evidenceUri)
+    assert.equal(harness.submissions.length, 1)
+    assert.deepEqual(harness.publications, [{ auditId: result.auditId, evidenceUri }])
+    assert.match(harness.warnings[0] ?? '', /evidence publication failed/)
+    const stored = harness.storage.getDirectAudit(result.auditId)
+    assert.equal(stored?.state, 'attested')
+    assert.equal(stored?.evidenceUri, null)
+  } finally {
+    harness.close()
+  }
 })

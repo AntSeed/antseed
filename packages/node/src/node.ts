@@ -50,16 +50,9 @@ import { PaymentMux } from "./p2p/payment-mux.js";
 import { VerificationMux } from "./verification/verification-mux.js";
 import { VerificationStorage, type StoredResponseAuth } from "./verification/storage.js";
 import { VerificationSampler } from "./verification/samples.js";
-import { RelayManager, type ConnectedRelay } from "./verification/relay-manager.js";
 import { FrameDecoder, encodeFrame } from "./p2p/message-protocol.js";
 import { KeepaliveManager, buildPongPayload } from "./p2p/keepalive.js";
-import {
-  MessageType,
-  CONNECTION_CAPABILITY_AUDIT_RELAY_V1,
-  type AuditRelayJobPayload,
-  type AuditRelayResultPayload,
-  type RelayHelloPayload,
-} from "./types/protocol.js";
+import { MessageType } from "./types/protocol.js";
 import type {
   Provider,
   ProviderStreamCallbacks,
@@ -152,8 +145,6 @@ export interface NodePaymentsConfig {
   stakingAddress?: string;
   /** Optional AntseedVerifierRegistry address. Enables per-(peer, model) verification reputation on discovered peers. */
   verifierRegistryAddress?: string;
-  /** Optional AntseedRelayTreasury address used by verifier/relay tooling. */
-  relayTreasuryAddress?: string;
   /** Optional AntseedVerifierPointsPolicy address used for penalty reads. */
   verifierPointsPolicyAddress?: string;
   /** Chain ID for EIP-712 domain. Default: 8453 (Base) */
@@ -226,19 +217,7 @@ export interface NodeConfig {
    * `sellerContract.isOperator(peerAddress)`.
    */
   sellerContract?: SellerContractConfig;
-  /**
-   * Host atomic audit relays (buyer role only): listen for inbound relay
-   * buyers and announce the audit-relay capability on the DHT.
-   */
-  relayHost?: {
-    /** TCP port for the relay signaling listener. Default: 6882. */
-    signalingPort?: number;
-    /** Maximum relays registered at once. */
-    maxRelays?: number;
-  };
 }
-
-export type { ConnectedRelay } from "./verification/relay-manager.js";
 
 export interface BuyerUsageChannelPoint {
   reservedAt: number;
@@ -298,8 +277,6 @@ export class AntseedNode extends EventEmitter {
   private _verifierRegistryClient: VerifierRegistryClient | null = null;
   private _paymentMuxes = new Map<PeerId, PaymentMux>();
   private _verificationMuxes = new Map<PeerId, VerificationMux>();
-  /** Atomic audit-relay state (buyer role only). */
-  private _relay: RelayManager | null = null;
   /** Seller-side request handler (provider matching, execution, load tracking). */
   private _sellerHandler: SellerRequestHandler | null = null;
   /** Buyer-side payment manager (initialized when buyer has payment config). */
@@ -508,8 +485,6 @@ export class AntseedNode extends EventEmitter {
       verificationMux.close();
     }
     this._verificationMuxes.clear();
-    this._relay?.close();
-    this._relay = null;
     this._decoders.clear();
 
     // Close all connections
@@ -913,6 +888,7 @@ export class AntseedNode extends EventEmitter {
       if (
         typeof p.onChainStatsFetchedAt === 'number'
         && nowMs - p.onChainStatsFetchedAt < ON_CHAIN_STATS_TTL_MS
+        && p.onChainSellerAddress !== undefined
       ) {
         return;
       }
@@ -927,6 +903,7 @@ export class AntseedNode extends EventEmitter {
         ]);
         const stats = await channelsClient.getAgentStats(agentId);
         p.onChainAgentId = agentId;
+        p.onChainSellerAddress = evmAddress;
         p.onChainStakeUsdcMicros = stake <= BigInt(Number.MAX_SAFE_INTEGER)
           ? Number(stake)
           : Number.MAX_SAFE_INTEGER;
@@ -1289,10 +1266,10 @@ export class AntseedNode extends EventEmitter {
     }
   }
 
-  async finalizeResponsePayment(peer: PeerInfo): Promise<BuyerResponsePaymentEvidence> {
+  async finalizeResponsePayment(peer: PeerInfo, requestId?: string): Promise<BuyerResponsePaymentEvidence> {
     if (!this._buyerNegotiator) throw new Error('Buyer payment negotiator is not configured');
     const connection = await this._getOrCreateConnection(peer);
-    const evidence = await this._buyerNegotiator.sendPostResponseAuth(peer, connection);
+    const evidence = await this._buyerNegotiator.sendPostResponseAuth(peer, connection, requestId);
     if (!evidence) throw new Error('No paid response is available to finalize');
     return evidence;
   }
@@ -1349,8 +1326,6 @@ export class AntseedNode extends EventEmitter {
             const message = err instanceof Error ? err.message : String(err);
             debugWarn(`[Node] Failed to handle verification frame from ${peerId.slice(0, 12)}...: ${message}`);
           });
-        } else if (this._relay?.tryDispatchFrame(peerId, frame)) {
-          // Audit relay frame — routed inside the manager.
         } else if (proxyMux) {
           proxyMux.handleFrame(frame).catch((err) => {
             const message = err instanceof Error ? err.message : String(err);
@@ -1378,7 +1353,6 @@ export class AntseedNode extends EventEmitter {
         this._paymentMuxes.delete(peerId);
         this._verificationMuxes.get(peerId)?.close();
         this._verificationMuxes.delete(peerId);
-        this._relay?.onPeerDisconnect(peerId);
         this._decoders.delete(peerId);
         // Clean up buyer-side payment state on disconnect
         this._buyerNegotiator?.onPeerDisconnect(peerId);
@@ -1682,98 +1656,7 @@ export class AntseedNode extends EventEmitter {
       },
     );
 
-    this._relay = new RelayManager({
-      emit: (event, ...args) => this.emit(event, ...args),
-      ...(this._config.relayHost?.maxRelays !== undefined
-        ? { maxRelays: this._config.relayHost.maxRelays }
-        : {}),
-      ...(payments?.chainId !== undefined ? { expectedChainId: String(payments.chainId) } : {}),
-      ...(payments?.verifierRegistryAddress ? { expectedRegistryAddress: payments.verifierRegistryAddress } : {}),
-      ...(payments?.relayTreasuryAddress ? { expectedTreasuryAddress: payments.relayTreasuryAddress } : {}),
-    });
-
     debugLog(`[Node] Buyer ready — DHT running on port ${this._dht!.getPort()}`);
-
-    if (this._config.relayHost) {
-      await this._startRelayHost();
-    }
-  }
-
-  private async _startRelayHost(): Promise<void> {
-    const identity = this._identity!;
-    const signalingPort = this._config.relayHost?.signalingPort ?? 6882;
-
-    await this._connectionManager!.startListening({
-      peerId: identity.peerId,
-      port: signalingPort,
-      host: "0.0.0.0",
-    });
-    const actualSignalingPort = this._connectionManager!.getListeningPort() ?? signalingPort;
-
-    this._nat = new NatTraversal();
-    const natResult = await this._nat.mapPorts([{ port: actualSignalingPort, protocol: "TCP" }]);
-    if (natResult.success) {
-      this.emit("nat:mapped", natResult);
-    } else {
-      debugWarn("[NAT] UPnP/NAT-PMP mapping failed — relay host may not be reachable from the internet");
-      this.emit("nat:failed");
-    }
-
-    this._announcer = new PeerAnnouncer({
-      identity,
-      dht: this._dht!,
-      providers: [],
-      extraCapabilities: [CONNECTION_CAPABILITY_AUDIT_RELAY_V1],
-      ...(this._config.displayName ? { displayName: this._config.displayName } : {}),
-      ...(this._config.publicAddress ? { publicAddress: this._config.publicAddress } : {}),
-      region: "unknown",
-      pricing: new Map(),
-      reannounceIntervalMs: DEFAULT_DHT_CONFIG.reannounceIntervalMs,
-      signalingPort: actualSignalingPort,
-    });
-    this._announcer.startPeriodicAnnounce();
-    this._connectionManager!.setMetadataProvider(
-      () => this._announcer?.getLatestMetadata() ?? null,
-    );
-
-    this._connectionManager!.on("connection", (conn: PeerConnection) => {
-      this._handleIncomingRelayConnection(conn);
-    });
-
-    debugLog(`[Node] Relay host ready — signaling port ${actualSignalingPort}`);
-  }
-
-  private _handleIncomingRelayConnection(conn: PeerConnection): void {
-    this._relay!.registerInboundRelay(conn);
-    this._wireConnection(conn, conn.remotePeerId);
-    this.emit("connection", conn);
-  }
-
-  getConnectedRelays(): ConnectedRelay[] {
-    return this._relay?.getConnectedRelays() ?? [];
-  }
-
-  async runRelayJob(
-    relayPeerId: PeerId,
-    job: Omit<AuditRelayJobPayload, "version">,
-    timeoutMs?: number,
-  ): Promise<AuditRelayResultPayload> {
-    if (!this._relay) {
-      throw new Error("Node not started or not in buyer mode");
-    }
-    return this._relay.runRelayJob(relayPeerId, job, timeoutMs);
-  }
-
-  async serveRelayJobs(
-    verifierPeer: PeerInfo,
-    hello: Omit<RelayHelloPayload, "version">,
-    handler: (job: AuditRelayJobPayload) => Promise<Omit<AuditRelayResultPayload, "version" | "jobId">>,
-  ): Promise<{ accepted: boolean; reason?: string }> {
-    if (!this._relay) {
-      throw new Error("Node not started or not in buyer mode");
-    }
-    const conn = await this._getOrCreateConnection(verifierPeer);
-    return this._relay.serveRelayJobs(verifierPeer, conn, hello, handler);
   }
 
   private _handleIncomingConnection(conn: PeerConnection): void {

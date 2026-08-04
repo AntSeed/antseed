@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { createReferenceQueryProfile, type KbfProbe } from '@antseed/fingerprints'
-import { VerificationStorage, type StoredAuditPlan, type StoredCertifiedKbfProbe } from '@antseed/node'
+import {
+  VerificationStorage,
+  type StoredCertifiedKbfProbe,
+  type StoredDirectAudit,
+  type StoredDirectAuditProbe,
+} from '@antseed/node'
 import {
   certificationProfileHash,
   eligibleCatalogProbes,
@@ -24,6 +29,10 @@ const source: ResolvedReferenceSource = {
     maximumAuditProbeCount: 500,
     auditProbeStep: 10,
     minimumStatisticalPower: 0.9,
+    minimumMismatchDelta: 0.1,
+    familyWideAlpha: 0.05,
+    referenceConfidence: 0.99,
+    minimumAuthenticatedCoverage: 1,
     maxReferenceAgeDays: 49,
     maxRequestsPerRound: 2000,
     requestTimeoutMs: 120_000,
@@ -34,45 +43,54 @@ const source: ResolvedReferenceSource = {
   },
 }
 
-function plan(auditId: string, agentId: string): StoredAuditPlan {
+function directAudit(auditId: string, agentId: string): StoredDirectAudit {
+  const now = Date.now()
   return {
     auditId,
-    state: 'planned',
+    state: 'pending',
     source: 'automatic',
     epoch: '1',
-    durationMs: 86_400_000,
-    chainId: null,
-    registryAddress: null,
-    treasuryAddress: null,
     verifierAddress: null,
     agentId,
+    sellerAddress: null,
     targetPeerId: agentId.padStart(40, '0'),
     targetService: SERVICE,
     targetServiceHash: null,
-    targetSalt: null,
-    targetCommitment: null,
-    probeRoot: null,
-    auditJobRoot: null,
     referenceId: `reference-${auditId}`,
     queryProfileHash: null,
-    verifierConfigHash: null,
     probeCount: 10,
-    jobCount: 1,
-    requiredRelayCount: null,
-    jobTimeoutMs: 120_000,
-    payoutPerJobUsdc: null,
-    reservedBudgetUsdc: null,
-    commitTxHash: null,
-    attestationTxHash: null,
+    authenticatedProbeCount: 0,
+    statisticalPower: null,
+    verdict: null,
+    modelShareBps: null,
+    metrics: null,
+    evidencePath: null,
     evidenceHash: null,
     evidenceUri: null,
-    evidenceState: 'none',
-    executeAfter: null,
-    executeBefore: null,
-    forceClaimAvailableAt: null,
-    forceClaimDeadline: null,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
+    attestationTxHash: null,
+    credited: null,
+    startedAt: null,
+    completedAt: null,
+    createdAt: now,
+    updatedAt: now,
+    failureReason: null,
+  }
+}
+
+function selectedProbe(auditId: string, ordinal: number): StoredDirectAuditProbe {
+  return {
+    auditId,
+    ordinal,
+    probeId: `probe-${String(ordinal).padStart(3, '0')}`,
+    status: 'selected',
+    requestId: null,
+    requestHash: null,
+    responseHash: null,
+    responseAuth: null,
+    payment: null,
+    timing: null,
+    matched: null,
+    exposureCountedAt: null,
     failureReason: null,
   }
 }
@@ -122,9 +140,11 @@ test('exposure is permanent for one agent while another agent can reuse the prob
   try {
     const now = Date.now()
     storage.upsertCertifiedKbfProbes(Array.from({ length: 110 }, (_, index) => catalogProbe(index, now)))
-    storage.saveAuditPlan(plan('audit-a', '7'))
-    storage.reserveAuditProbes('audit-a', Array.from({ length: 10 }, (_, index) => `probe-${String(index).padStart(3, '0')}`))
-    storage.markAuditJobProbeExposure('audit-a', 0, now)
+    storage.saveDirectAudit(directAudit('audit-a', '7'))
+    storage.saveDirectAuditProbes(Array.from({ length: 10 }, (_, ordinal) => selectedProbe('audit-a', ordinal)))
+    for (let ordinal = 0; ordinal < 10; ordinal += 1) {
+      storage.markDirectAuditProbeExposure('audit-a', ordinal, now)
+    }
 
     const sameAgent = eligibleCatalogProbes({ storage, agentId: '7', service: SERVICE, source, now })
     const otherAgent = eligibleCatalogProbes({ storage, agentId: '8', service: SERVICE, source, now })

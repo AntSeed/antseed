@@ -1,32 +1,48 @@
 import {
-  RelayJobValidator,
-  RelayTreasuryClient,
   VerifierRegistryClient,
+  VerifierRewardsClient,
   resolveChainConfig,
-  type AntseedNode,
   type ChainConfig,
 } from '@antseed/node'
 import type { AntseedConfig } from '../../config/types.js'
 import { resolveBaseRpcUrlOverride } from '../payment-utils.js'
 
+const UNAVAILABLE_CONTRACT_ADDRESS = '0x0000000000000000000000000000000000000000'
+
 export interface VerificationChainContext {
   chain: ChainConfig
   registryClient: VerifierRegistryClient
-  treasuryClient: RelayTreasuryClient
+  rewardsClient: VerifierRewardsClient
 }
 
 export function resolveVerificationChain(config: AntseedConfig, rpcUrlFlag?: string): VerificationChainContext {
-  const rpcUrl = resolveBaseRpcUrlOverride({ flagValue: rpcUrlFlag })
-  const chain = resolveChainConfig({
-    ...(config.payments.crypto ?? {}),
-    ...(rpcUrl ? { rpcUrl } : {}),
-  })
+  const chain = resolveChain(config, rpcUrlFlag)
   if (!chain.verifierRegistryAddress) {
     throw new Error('No verifier registry address configured. Set payments.crypto.verifierRegistryAddress.')
   }
-  if (!chain.relayTreasuryAddress) {
-    throw new Error('No relay treasury address configured. Set payments.crypto.relayTreasuryAddress.')
+  if (!chain.verifierRewardsAddress) {
+    throw new Error('No verifier rewards address configured. Set payments.crypto.verifierRewardsAddress.')
   }
+  return createVerificationChainContext(chain)
+}
+
+export function resolveObservationVerificationChain(
+  config: AntseedConfig,
+  rpcUrlFlag?: string,
+): VerificationChainContext {
+  const chain = resolveChain(config, rpcUrlFlag)
+  return createVerificationChainContext(chain)
+}
+
+function resolveChain(config: AntseedConfig, rpcUrlFlag?: string): ChainConfig {
+  const rpcUrl = resolveBaseRpcUrlOverride({ flagValue: rpcUrlFlag })
+  return resolveChainConfig({
+    ...(config.payments.crypto ?? {}),
+    ...(rpcUrl ? { rpcUrl } : {}),
+  })
+}
+
+function createVerificationChainContext(chain: ChainConfig): VerificationChainContext {
   const common = {
     rpcUrl: chain.rpcUrl,
     ...(chain.fallbackRpcUrls ? { fallbackRpcUrls: chain.fallbackRpcUrls } : {}),
@@ -34,25 +50,13 @@ export function resolveVerificationChain(config: AntseedConfig, rpcUrlFlag?: str
   }
   return {
     chain,
-    registryClient: new VerifierRegistryClient({ ...common, contractAddress: chain.verifierRegistryAddress }),
-    treasuryClient: new RelayTreasuryClient({ ...common, contractAddress: chain.relayTreasuryAddress }),
+    registryClient: new VerifierRegistryClient({
+      ...common,
+      contractAddress: chain.verifierRegistryAddress ?? UNAVAILABLE_CONTRACT_ADDRESS,
+    }),
+    rewardsClient: new VerifierRewardsClient({
+      ...common,
+      contractAddress: chain.verifierRewardsAddress ?? UNAVAILABLE_CONTRACT_ADDRESS,
+    }),
   }
-}
-
-export function createRelayValidator(
-  node: AntseedNode,
-  context: VerificationChainContext,
-  minimumPayoutPerJobUsdc: bigint,
-): RelayJobValidator {
-  const identity = node.identity
-  if (!identity) throw new Error('relay node identity is unavailable')
-  return new RelayJobValidator({
-    chainId: String(context.chain.evmChainId),
-    registryAddress: context.chain.verifierRegistryAddress!,
-    treasuryAddress: context.chain.relayTreasuryAddress!,
-    relayBuyerAddress: identity.wallet.address,
-    minimumPayoutPerJobUsdc,
-    verifierRegistryClient: context.registryClient,
-    relayTreasuryClient: context.treasuryClient,
-  })
 }

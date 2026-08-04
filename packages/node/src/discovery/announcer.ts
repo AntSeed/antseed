@@ -69,10 +69,7 @@ export interface AnnouncerConfig {
     }
   >;
   offerings?: PeerOffering[];
-  /**
-   * Extra protocol capabilities announced in signed metadata beyond the
-   * default response-auth capability (e.g. atomic audit-relay hosting).
-   */
+  /** Extra protocol capabilities announced beyond response-auth. */
   extraCapabilities?: string[];
   stakeAmountUSDC?: number;
   paymentsEnabled?: boolean;
@@ -400,9 +397,7 @@ export class PeerAnnouncer {
       }
     }
 
-    // Extra protocol capabilities (e.g. atomic audit-relay hosting) get their
-    // own capability topics too — announcing them only inside signed metadata
-    // would leave `findByCapability()` blind to peers that have no offerings.
+    // Extra protocol capabilities get their own capability topics too.
     for (const capability of this._normalizedExtraCapabilities()) {
       topics.add(capabilityTopic(capability));
     }

@@ -35,12 +35,9 @@ function assertKnownKeys(value: Record<string, unknown>, path: string, knownKeys
 
 const BUYER_KEYS = new Set([
   'maxPricing', 'minPeerReputation', 'proxyPort', 'peerRefreshIntervalMs',
-  'metadataFetchTimeoutMs', 'disableMetadataV2Services', 'verification', 'relay',
+  'metadataFetchTimeoutMs', 'disableMetadataV2Services', 'verification',
 ]);
 const BUYER_VERIFICATION_KEYS = new Set(['sampleRate', 'maxSampleBytes']);
-const BUYER_RELAY_KEYS = new Set([
-  'enabled', 'minimumPayoutPerJobUsdc', 'maxConcurrentJobs', 'maxJobsPerHour', 'discoveryIntervalMs',
-]);
 
 function toFiniteOrNaN(value: unknown): number {
   return typeof value === 'number' ? value : Number.NaN;
@@ -365,7 +362,6 @@ function mergeBuyerConfig(
       metadataFetchTimeoutMs: defaults.metadataFetchTimeoutMs,
       disableMetadataV2Services: defaults.disableMetadataV2Services,
       ...(normalizeBuyerVerification(undefined, defaults.verification)),
-      relay: { ...defaults.relay },
     };
   }
   assertKnownKeys(value, 'buyer', BUYER_KEYS);
@@ -387,24 +383,6 @@ function mergeBuyerConfig(
       'buyer.disableMetadataV2Services',
     ),
     ...(normalizeBuyerVerification(value['verification'], defaults.verification)),
-    relay: normalizeBuyerRelay(value['relay'], defaults.relay),
-  };
-}
-
-function normalizeBuyerRelay(value: unknown, fallback: AntseedConfig['buyer']['relay']): AntseedConfig['buyer']['relay'] {
-  if (value === undefined) return { ...fallback };
-  if (!isRecord(value)) return value as AntseedConfig['buyer']['relay'];
-  assertKnownKeys(value, 'buyer.relay', BUYER_RELAY_KEYS);
-  return {
-    enabled: normalizeBooleanConfigValue(value['enabled'], fallback.enabled, 'buyer.relay.enabled'),
-    minimumPayoutPerJobUsdc: typeof value['minimumPayoutPerJobUsdc'] === 'string'
-      ? value['minimumPayoutPerJobUsdc']
-      : fallback.minimumPayoutPerJobUsdc,
-    maxConcurrentJobs: typeof value['maxConcurrentJobs'] === 'number' ? value['maxConcurrentJobs'] : fallback.maxConcurrentJobs,
-    maxJobsPerHour: typeof value['maxJobsPerHour'] === 'number' ? value['maxJobsPerHour'] : fallback.maxJobsPerHour,
-    discoveryIntervalMs: typeof value['discoveryIntervalMs'] === 'number'
-      ? value['discoveryIntervalMs']
-      : fallback.discoveryIntervalMs,
   };
 }
 
@@ -452,8 +430,9 @@ export async function loadConfig(configPath: string): Promise<AntseedConfig> {
 
   const defaults = createDefaultConfig();
   const parsed = isRecord(parsedRaw) ? parsedRaw : {};
-  if ('relay' in parsed) throw new Error('relay is no longer supported; use buyer.relay');
-
+  if (parsed['relay'] !== undefined) {
+    throw new Error('relay is no longer supported');
+  }
   const merged: AntseedConfig = {
     ...defaults,
     ...(parsed as Partial<AntseedConfig>),

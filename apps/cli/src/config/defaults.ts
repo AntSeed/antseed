@@ -1,5 +1,4 @@
 import type { AntseedConfig } from './types.js';
-import { DEFAULT_AUDIT_DURATION_MS } from '../verifier/audit-duration.js';
 
 export const DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS = 5 * 60_000;
 export const DEFAULT_BUYER_METADATA_FETCH_TIMEOUT_MS = 1500;
@@ -32,13 +31,6 @@ export function createDefaultConfig(): AntseedConfig {
       peerRefreshIntervalMs: DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS,
       metadataFetchTimeoutMs: DEFAULT_BUYER_METADATA_FETCH_TIMEOUT_MS,
       disableMetadataV2Services: false,
-      relay: {
-        enabled: true,
-        minimumPayoutPerJobUsdc: '1000',
-        maxConcurrentJobs: 2,
-        maxJobsPerHour: 60,
-        discoveryIntervalMs: 300_000,
-      },
     },
     payments: {
       preferredMethod: 'crypto',
@@ -52,12 +44,19 @@ export function createDefaultConfig(): AntseedConfig {
     },
     verifier: {
       services: [],
-      auditDurationMs: DEFAULT_AUDIT_DURATION_MS,
+      auditIntervalMs: 300_000,
+      maxAuditsPerEpoch: 50,
+      probeRequestTimeoutMs: 120_000,
+      maxConcurrentProbeRequests: 2,
       referencePolicy: {
         minimumAuditProbeCount: 100,
-        maximumAuditProbeCount: 500,
+        maximumAuditProbeCount: 750,
         auditProbeStep: 10,
         minimumStatisticalPower: 0.9,
+        minimumMismatchDelta: 0.1,
+        familyWideAlpha: 0.05,
+        referenceConfidence: 0.99,
+        minimumAuthenticatedCoverage: 1,
         maxReferenceAgeDays: 49,
         maxRequestsPerRound: 2000,
         requestTimeoutMs: 120_000,

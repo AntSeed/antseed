@@ -1,225 +1,129 @@
-import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import chalk from 'chalk'
 import type { Command } from 'commander'
-import { VerificationStorage, type StoredAuditPlan } from '@antseed/node'
-import type { CanonicalAuditEvidenceV2 } from '../../../verifier/evidence-v2.js'
+import { VerificationStorage, type StoredDirectAudit } from '@antseed/node'
 import { loadConfig } from '../../../config/loader.js'
-import { certificationProfileHash } from '../../../verifier/probe-catalog.js'
-import { resolveReferenceSource } from '../../../verifier/reference-config.js'
+import {
+  firstScanEpoch,
+  verifierRewardWindow,
+} from '../../../verifier/epoch-rewards.js'
+import {
+  createVerifierRegistryClient,
+  createVerifierRewardsClient,
+  formatAnts,
+  loadCryptoContext,
+} from '../../payment-utils.js'
 import { getGlobalOptions } from '../types.js'
-
-interface VerifierStatusRow {
-  auditId: string
-  state: StoredAuditPlan['state']
-  source: StoredAuditPlan['source']
-  target: { agentId: string | null; peerId: string; service: string }
-  reference: { referenceId: string | null; sourceId: string | null; provider: string | null; trust: string | null }
-  round: {
-    roundId: string | null
-    state: string | null
-    cachedProbeCount: number | null
-    generatedProbeCount: number | null
-    finalProbeCount: number | null
-    statisticalPower: number | null
-    deficit: number | null
-    catalogSize: number | null
-  }
-  result: {
-    verdict: string | null
-    validProbeCount: number | null
-    probeCount: number | null
-    coverage: number | null
-    targetHammingErrors: number | null
-    observedErrorRate: number | null
-    referenceSelfTestErrors: number | null
-    referenceSelfTestTotal: number | null
-    referenceErrorUpperBound99: number | null
-    oneSidedBinomialPValue: number | null
-  }
-  relay: { jobCount: number; succeeded: number; failed: number; valid: number; coverage: number }
-  timestamps: {
-    createdAt: string
-    updatedAt: string
-    executeAfter: string | null
-    executeBefore: string | null
-    attestedAt: string | null
-  }
-  transactions: { commit: string | null; attestation: string | null }
-  evidence: { hash: string | null; uri: string | null; state: StoredAuditPlan['evidenceState'] }
-  failureReason: string | null
-}
 
 export function registerVerifierStatusCommand(verifierCmd: Command): void {
   verifierCmd
     .command('status')
-    .description('Show durable verifier audit workflow state and final KBF statistics')
-    .option('--audit-id <id>', 'show one audit')
-    .option('--json', 'emit stable machine-readable JSON')
+    .description('Show verifier approval, epoch credits, rewards, and direct audits')
+    .option('--rpc-url <url>', 'Base JSON-RPC URL override')
+    .option('--audit-id <id>', 'show one direct audit')
+    .option('--json', 'emit machine-readable JSON')
     .action(async (options, command: Command) => {
       const globalOptions = getGlobalOptions(command)
       const config = await loadConfig(globalOptions.config)
+      const { address } = await loadCryptoContext(globalOptions.dataDir)
+      const rpcOverrides = options.rpcUrl ? { rpcUrl: String(options.rpcUrl) } : {}
+      const registryClient = createVerifierRegistryClient(config, rpcOverrides)
+      const rewardsClient = createVerifierRewardsClient(config, rpcOverrides)
       const storage = new VerificationStorage(join(globalOptions.dataDir, 'verification.db'))
       try {
-        const plans = options.auditId
-          ? [storage.getAuditPlan(String(options.auditId))].filter((plan): plan is StoredAuditPlan => plan !== null)
-          : storage.listAuditPlans()
-        const rows = await Promise.all(plans.map(async (plan) => {
-          const source = resolveReferenceSource(config.verifier, plan.targetService, plan.targetService)
-          return buildStatusRow(globalOptions.dataDir, storage, plan, source)
-        }))
+        const [approved, auditCooldown, maxCredits, minProbeCount, epoch] = await Promise.all([
+          registryClient.approvedVerifier(address),
+          registryClient.auditCooldown(),
+          registryClient.maxCreditsPerVerifierPerEpoch(),
+          registryClient.minProbeCount(),
+          registryClient.currentEpoch(),
+        ])
+        const [credits, totalCredits] = await Promise.all([
+          registryClient.epochCredits(epoch, address),
+          registryClient.epochTotalCredits(epoch),
+        ])
+        const rewards = await listPendingRewards(registryClient, rewardsClient, address)
+        const audits = options.auditId
+          ? [storage.getDirectAudit(String(options.auditId))].filter((audit): audit is StoredDirectAudit => audit !== null)
+          : storage.listDirectAudits().slice(0, 25)
+        const output = {
+          wallet: address,
+          approved,
+          policy: { auditCooldown, maxCreditsPerVerifierPerEpoch: maxCredits, minProbeCount },
+          epoch: {
+            number: epoch.toString(),
+            verifierCredits: credits.toString(),
+            totalCredits: totalCredits.toString(),
+          },
+          rewards,
+          audits,
+        }
         if (options.json) {
-          console.log(JSON.stringify(rows, null, 2))
+          console.log(JSON.stringify(output, null, 2))
           return
         }
-        if (rows.length === 0) {
-          console.log(chalk.dim('No verifier audits found.'))
-          return
+        console.log(chalk.bold('Verifier status'))
+        console.log(`  wallet:     ${address}`)
+        console.log(`  approved:   ${approved ? chalk.green('yes') : chalk.red('no')}`)
+        console.log(`  epoch:      ${epoch}`)
+        console.log(`  credits:    ${credits}/${maxCredits} (network total ${totalCredits})`)
+        console.log(`  cooldown:   ${auditCooldown}s per seller/service`)
+        console.log(`  min probes: ${minProbeCount}`)
+        if (rewards.length === 0) console.log(chalk.dim('  no unclaimed finalized rewards'))
+        for (const reward of rewards) {
+          console.log(`  reward ${reward.epoch}: ${reward.claimed ? chalk.dim('claimed') : `${formatAnts(BigInt(reward.pending))} ANTS claimable`}`)
         }
-        printStatusTable(rows)
+        console.log('')
+        printAudits(audits)
       } finally {
         storage.close()
       }
     })
 }
 
-async function buildStatusRow(
-  dataDir: string,
-  storage: VerificationStorage,
-  plan: StoredAuditPlan,
-  source: ReturnType<typeof resolveReferenceSource>,
-): Promise<VerifierStatusRow> {
-  const jobs = storage.listAuditJobs(plan.auditId)
-  const succeeded = jobs.filter((job) => job.state === 'succeeded').length
-  const failed = jobs.filter((job) => job.state === 'failed').length
-  const evidence = await readLocalEvidence(dataDir, plan.auditId)
-  const validJobs = evidence?.validation.validJobCount ?? succeeded
-  const jobCount = jobs.length
-  const selfErrors = evidence?.exactSubsetBaseline.hamming ?? evidence?.kbf.stats.selfHamming ?? null
-  const selfTotal = evidence?.exactSubsetBaseline.total ?? evidence?.kbf.stats.selfTotal ?? null
-  const targetErrors = evidence?.kbf.stats.targetHamming ?? null
-  const targetTotal = evidence?.kbf.stats.targetTotal ?? null
-  const generatorParams = evidence?.reference.generator.params as Record<string, unknown> | undefined
-  const provenance = evidence?.reference.provenance as Record<string, unknown> | undefined
-  const member = storage.getAuditRoundMemberByAuditId(plan.auditId)
-  const round = member ? storage.getAuditRound(member.roundId) : null
-  const catalogSize = source
-    ? storage.countCertifiedKbfProbes(plan.targetService, certificationProfileHash(source))
-    : null
-
-  return {
-    auditId: plan.auditId,
-    state: plan.state,
-    source: plan.source,
-    target: { agentId: plan.agentId, peerId: plan.targetPeerId, service: plan.targetService },
-    reference: {
-      referenceId: plan.referenceId,
-      sourceId: stringValue(generatorParams?.['sourceId'] ?? provenance?.['sourceId']),
-      provider: stringValue(provenance?.['referenceProvider']),
-      trust: stringValue(generatorParams?.['trust'] ?? provenance?.['trust']),
-    },
-    round: {
-      roundId: round?.roundId ?? null,
-      state: round?.state ?? null,
-      cachedProbeCount: member?.cachedProbeCount ?? null,
-      generatedProbeCount: member?.generatedProbeCount ?? null,
-      finalProbeCount: member?.probeCount ?? plan.probeCount,
-      statisticalPower: evidence?.reference.statisticalPower ?? null,
-      deficit: source ? Math.max(0, source.policy.minimumAuditProbeCount - (member?.probeCount ?? 0)) : null,
-      catalogSize,
-    },
-    result: {
-      verdict: evidence?.kbf.verdict ?? null,
-      validProbeCount: evidence?.kbf.parsedProbeCount ?? null,
-      probeCount: evidence?.kbf.probeCount ?? plan.probeCount,
-      coverage: evidence?.kbf.stats.targetCoverage ?? null,
-      targetHammingErrors: targetErrors,
-      observedErrorRate: targetErrors !== null && targetTotal !== null && targetTotal > 0 ? targetErrors / targetTotal : null,
-      referenceSelfTestErrors: selfErrors,
-      referenceSelfTestTotal: selfTotal,
-      referenceErrorUpperBound99: evidence?.kbf.stats.p0Cp99 ?? evidence?.reference.statisticalPowerEvidence.p0UpperBound ?? null,
-      oneSidedBinomialPValue: evidence?.kbf.stats.pValueBinomial ?? null,
-    },
-    relay: {
-      jobCount,
-      succeeded,
-      failed,
-      valid: validJobs,
-      coverage: jobCount === 0 ? 0 : validJobs / jobCount,
-    },
-    timestamps: {
-      createdAt: new Date(plan.createdAt).toISOString(),
-      updatedAt: new Date(plan.updatedAt).toISOString(),
-      executeAfter: unixTimestamp(plan.executeAfter),
-      executeBefore: unixTimestamp(plan.executeBefore),
-      attestedAt: evidence?.createdAt ?? null,
-    },
-    transactions: { commit: plan.commitTxHash, attestation: plan.attestationTxHash },
-    evidence: { hash: plan.evidenceHash, uri: plan.evidenceUri, state: plan.evidenceState },
-    failureReason: plan.failureReason,
+async function listPendingRewards(
+  registryClient: ReturnType<typeof createVerifierRegistryClient>,
+  rewardsClient: ReturnType<typeof createVerifierRewardsClient>,
+  address: string,
+): Promise<Array<{ epoch: string; credits: string; pending: string; claimed: boolean }>> {
+  const window = await verifierRewardWindow(registryClient, rewardsClient)
+  const rewards: Array<{ epoch: string; credits: string; pending: string; claimed: boolean }> = []
+  for (let epoch = firstScanEpoch(window); epoch < window.currentEpoch; epoch += 1n) {
+    const [credits, claimed] = await Promise.all([
+      registryClient.epochCredits(epoch, address),
+      rewardsClient.epochRewardClaimed(epoch, address),
+    ])
+    if (credits === 0n) continue
+    const pending = claimed ? 0n : await rewardsClient.pendingVerifierReward(epoch, address)
+    rewards.push({ epoch: epoch.toString(), credits: credits.toString(), pending: pending.toString(), claimed })
   }
+  return rewards
 }
 
-async function readLocalEvidence(dataDir: string, auditId: string): Promise<CanonicalAuditEvidenceV2 | null> {
-  try {
-    const raw = await readFile(join(dataDir, 'verifier', 'evidence', `${auditId}.json`), 'utf8')
-    const parsed = JSON.parse(raw) as CanonicalAuditEvidenceV2
-    return parsed.version === 2 ? parsed : null
-  } catch {
-    return null
+function printAudits(audits: readonly StoredDirectAudit[]): void {
+  if (audits.length === 0) {
+    console.log(chalk.dim('No direct audits recorded.'))
+    return
   }
-}
-
-function printStatusTable(rows: VerifierStatusRow[]): void {
-  console.log('STATE'.padEnd(22), 'VERDICT'.padEnd(13), 'PROBES'.padEnd(12), 'JOBS'.padEnd(10), 'AGENT'.padEnd(10), 'SERVICE')
-  for (const row of rows) {
-    const probes = row.result.validProbeCount === null || row.result.probeCount === null
-      ? '-'
-      : `${row.result.validProbeCount}/${row.result.probeCount}`
-    const jobs = `${row.relay.valid}/${row.relay.jobCount}`
+  console.log('STATE'.padEnd(11), 'VERDICT'.padEnd(15), 'AUTH PROBES'.padEnd(13), 'AGENT'.padEnd(10), 'SERVICE')
+  for (const audit of audits) {
     console.log(
-      row.state.padEnd(22),
-      (row.result.verdict ?? '-').padEnd(13),
-      probes.padEnd(12),
-      jobs.padEnd(10),
-      (row.target.agentId ?? '-').padEnd(10),
-      row.target.service,
+      audit.state.padEnd(11),
+      verdictName(audit.verdict).padEnd(15),
+      `${audit.authenticatedProbeCount}/${audit.probeCount}`.padEnd(13),
+      (audit.agentId ?? '-').padEnd(10),
+      audit.targetService,
     )
-    console.log(chalk.dim(`  audit=${row.auditId} peer=${row.target.peerId}`))
-    console.log(chalk.dim(
-      `  reference=${row.reference.referenceId ?? '-'} source=${row.reference.sourceId ?? '-'} provider=${row.reference.provider ?? '-'} trust=${row.reference.trust ?? '-'}`,
-    ))
-    console.log(chalk.dim(
-      `  round=${row.round.roundId ?? '-'} state=${row.round.state ?? '-'} catalog=${row.round.catalogSize ?? '-'} cached=${row.round.cachedProbeCount ?? '-'} generated=${row.round.generatedProbeCount ?? '-'} final=${row.round.finalProbeCount ?? '-'} power=${formatNumber(row.round.statisticalPower)} deficit=${row.round.deficit ?? '-'}`,
-    ))
-    if (row.result.verdict !== null) {
-      console.log(chalk.dim(
-        `  errors=${formatRatio(row.result.targetHammingErrors, row.result.validProbeCount)} rate=${formatPercent(row.result.observedErrorRate)} self=${formatRatio(row.result.referenceSelfTestErrors, row.result.referenceSelfTestTotal)} cp99=${formatNumber(row.result.referenceErrorUpperBound99)} p=${formatNumber(row.result.oneSidedBinomialPValue)}`,
-      ))
-    }
-    console.log(chalk.dim(
-      `  relay=${row.relay.succeeded} succeeded/${row.relay.failed} failed coverage=${formatPercent(row.relay.coverage)} updated=${row.timestamps.updatedAt}`,
-    ))
-    if (row.failureReason) console.log(chalk.yellow(`  failure: ${row.failureReason}`))
+    console.log(chalk.dim(`  audit=${audit.auditId} peer=${audit.targetPeerId}`))
+    console.log(chalk.dim(`  reference=${audit.referenceId ?? '-'} power=${audit.statisticalPower ?? '-'} credited=${audit.credited ?? '-'}`))
+    console.log(chalk.dim(`  evidence=${audit.evidencePath ?? '-'} tx=${audit.attestationTxHash ?? '-'}`))
+    if (audit.failureReason) console.log(chalk.yellow(`  failure: ${audit.failureReason}`))
   }
 }
 
-function stringValue(value: unknown): string | null {
-  return typeof value === 'string' && value.length > 0 ? value : null
-}
-
-function unixTimestamp(value: number | null): string | null {
-  return value === null ? null : new Date(value * 1_000).toISOString()
-}
-
-function formatRatio(numerator: number | null, denominator: number | null): string {
-  return numerator === null || denominator === null ? '-' : `${numerator}/${denominator}`
-}
-
-function formatPercent(value: number | null): string {
-  return value === null ? '-' : `${(value * 100).toFixed(1)}%`
-}
-
-function formatNumber(value: number | null): string {
-  return value === null ? '-' : value.toPrecision(4)
+function verdictName(verdict: number | null): string {
+  if (verdict === 1) return 'SAME'
+  if (verdict === 2) return 'DIFF'
+  if (verdict === 3) return 'UNDETERMINED'
+  return '-'
 }

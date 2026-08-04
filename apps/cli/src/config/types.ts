@@ -145,8 +145,6 @@ export interface BuyerCLIConfig {
   disableMetadataV2Services: boolean;
   /** Buyer-side response-auth evidence sampling settings. */
   verification?: BuyerVerificationConfig;
-  /** Paid verifier relay worker settings. */
-  relay: RelayCLIConfig;
 }
 
 /**
@@ -212,8 +210,8 @@ export interface PaymentsCLIConfig {
     emissionsContractAddress?: string;
     /** Deployed AntseedVerifierRegistry contract address */
     verifierRegistryAddress?: string;
-    /** Deployed AntseedRelayTreasury contract address */
-    relayTreasuryAddress?: string;
+    /** Deployed AntseedVerifierRewards contract address */
+    verifierRewardsAddress?: string;
     /** Deployed AntseedVerifierPointsPolicy contract address */
     verifierPointsPolicyAddress?: string;
     /** Default lock amount per session in human-readable USDC (e.g. "1" = 1 USDC) */
@@ -227,6 +225,16 @@ export interface VerifierCLIConfig {
   services?: string[];
   /** Directory of trusted KBF reference files. */
   referencesDir?: string;
+  /** Directory for canonical direct-audit evidence files. */
+  evidenceDir?: string;
+  /** Seller/service discovery cadence. Default: 300000. */
+  auditIntervalMs?: number;
+  /** Local scheduling cap per epoch. Default: 50. */
+  maxAuditsPerEpoch?: number;
+  /** Timeout for each paid probe request. Default: 120000. */
+  probeRequestTimeoutMs?: number;
+  /** Maximum concurrent paid probe requests. Default: 2. */
+  maxConcurrentProbeRequests?: number;
   /**
    * Trusted OpenAI-compatible upstream used to enroll certified KBF references
    * (`antseed verifier reference build`). Point it at the canonical provider,
@@ -239,29 +247,6 @@ export interface VerifierCLIConfig {
   referencePolicy?: VerifierReferencePolicyConfig;
   /** Explicitly trusted imported reference ids. */
   trustedImportedReferenceIds?: string[];
-  /** Relay job timeout. Default: 120000. */
-  jobTimeoutMs?: number;
-  /** Flat relay fee in USDC base units. Default: "1000". */
-  flatRelayFeeUsdc?: string;
-  /** Verifier relay-host signaling port. Default: 6882. */
-  relaySignalingPort?: number;
-  /** Maximum connected relays. Default: 64. */
-  maxRelays?: number;
-  /** Duration over which audit jobs are scheduled. Must be 24-48 hours. Default: 24 hours. */
-  auditDurationMs?: number;
-}
-
-export interface RelayCLIConfig {
-  /** Participate in paid audit relaying. Default: true. */
-  enabled: boolean;
-  /** Minimum accepted payout per job in USDC base units. Default: "1000". */
-  minimumPayoutPerJobUsdc?: string;
-  /** Maximum concurrently executed relay jobs. Default: 2. */
-  maxConcurrentJobs?: number;
-  /** Maximum jobs accepted per rolling hour. Default: 60. */
-  maxJobsPerHour?: number;
-  /** Verifier discovery cadence. Default: 300000. */
-  discoveryIntervalMs?: number;
 }
 
 export interface VerifierUpstreamConfig {
@@ -313,12 +298,20 @@ export interface VerifierReferencePolicyConfig {
   maxProbeUsesPerTarget?: number;
   /** Initial probes selected for each audit. Default: 100. */
   minimumAuditProbeCount?: number;
-  /** Maximum probes selected for an adaptive audit. Default: 500. */
+  /** Maximum probes selected for an adaptive audit. Default: 750. */
   maximumAuditProbeCount?: number;
   /** Adaptive growth increment. Default: 10. */
   auditProbeStep?: number;
   /** Required one-sided binomial statistical power. Default: 0.9. */
   minimumStatisticalPower?: number;
+  /** Smallest excess target mismatch rate the audit is powered to detect. Default: 0.1. */
+  minimumMismatchDelta?: number;
+  /** Family-wide false-positive rate divided across the discovered cohort. Default: 0.05. */
+  familyWideAlpha?: number;
+  /** Confidence used for the reference Clopper-Pearson upper bound. Default: 0.99. */
+  referenceConfidence?: number;
+  /** Required parsed and authenticated target coverage for benchmark verdicts. Default: 1. */
+  minimumAuthenticatedCoverage?: number;
   /** Maximum reference age in days. Default: 49. */
   maxReferenceAgeDays?: number;
   /** @deprecated Alias for maxRequestsPerRound. */

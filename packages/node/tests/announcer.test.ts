@@ -6,10 +6,9 @@ import { capabilityTopic, topicToInfoHash } from '../src/discovery/dht-node.js';
 import { validateMetadata } from '../src/discovery/metadata-validator.js';
 import { bytesToHex } from '../src/p2p/identity.js';
 import { toPeerId } from '../src/types/peer.js';
-import {
-  CONNECTION_CAPABILITY_AUDIT_RELAY_V1,
-  CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
-} from '../src/types/protocol.js';
+import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 } from '../src/types/protocol.js';
+
+const EXTRA_CAPABILITY = 'tools.streaming.v1';
 
 function makeBaseConfig(): AnnouncerConfig {
   const privateKey = randomBytes(32);
@@ -71,7 +70,7 @@ describe('PeerAnnouncer capabilities', () => {
     const base = makeBaseConfig();
     const announcer = new PeerAnnouncer({
       ...base,
-      extraCapabilities: [CONNECTION_CAPABILITY_AUDIT_RELAY_V1],
+      extraCapabilities: [EXTRA_CAPABILITY],
     });
 
     await announcer.announce();
@@ -82,7 +81,7 @@ describe('PeerAnnouncer capabilities', () => {
     );
     // This is the exact infohash PeerLookup.findByCapability() queries.
     expect(announcedInfoHashes).toContain(
-      Buffer.from(topicToInfoHash(capabilityTopic(CONNECTION_CAPABILITY_AUDIT_RELAY_V1))).toString('hex'),
+      Buffer.from(topicToInfoHash(capabilityTopic(EXTRA_CAPABILITY))).toString('hex'),
     );
   });
 
@@ -94,8 +93,8 @@ describe('PeerAnnouncer capabilities', () => {
         // Mandatory capability restated, mixed case, duplicates, whitespace,
         // and empties must all collapse to a validator-clean list.
         CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
-        ` ${CONNECTION_CAPABILITY_AUDIT_RELAY_V1.toUpperCase()} `,
-        CONNECTION_CAPABILITY_AUDIT_RELAY_V1,
+        ` ${EXTRA_CAPABILITY.toUpperCase()} `,
+        EXTRA_CAPABILITY,
         '  ',
       ],
     });
@@ -104,7 +103,7 @@ describe('PeerAnnouncer capabilities', () => {
     const meta = announcer.getLatestMetadata();
     expect(meta?.capabilities).toEqual([
       CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
-      CONNECTION_CAPABILITY_AUDIT_RELAY_V1,
+      EXTRA_CAPABILITY,
     ]);
     expect(validateMetadata(meta!).filter((e) => e.field.startsWith('capabilities'))).toEqual([]);
   });

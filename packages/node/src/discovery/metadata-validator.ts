@@ -1,6 +1,5 @@
 import type { DomainVerificationMethod, PeerMetadata } from "./peer-metadata.js";
 import { METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS } from "./peer-metadata.js";
-import { CONNECTION_CAPABILITY_AUDIT_RELAY_V1 } from "../types/protocol.js";
 import { encodeMetadata } from "./metadata-codec.js";
 import { MAX_PUBLIC_ADDRESS_LENGTH, parsePublicAddress } from "./public-address.js";
 
@@ -316,12 +315,7 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
     });
   }
 
-  // Relay hosts announce without providers; relay buyers discover them by capability.
-  const isRelayHost = Array.isArray(metadata.capabilities)
-    && metadata.capabilities.some(
-      (c) => typeof c === "string" && c.trim().toLowerCase() === CONNECTION_CAPABILITY_AUDIT_RELAY_V1,
-    );
-  if (metadata.providers.length === 0 && !isRelayHost) {
+  if (metadata.providers.length === 0) {
     errors.push({
       field: "providers",
       message: "Must have at least one provider",

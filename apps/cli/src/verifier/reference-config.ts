@@ -20,6 +20,10 @@ export interface ResolvedReferencePolicy {
   maximumAuditProbeCount: number
   auditProbeStep: number
   minimumStatisticalPower: number
+  minimumMismatchDelta: number
+  familyWideAlpha: number
+  referenceConfidence: number
+  minimumAuthenticatedCoverage: number
   maxReferenceAgeDays: number
   maxRequestsPerRound: number
   requestTimeoutMs: number
@@ -38,9 +42,13 @@ export interface ResolvedReferenceSource {
 
 export const DEFAULT_REFERENCE_POLICY: ResolvedReferencePolicy = {
   minimumAuditProbeCount: 100,
-  maximumAuditProbeCount: 500,
+  maximumAuditProbeCount: 750,
   auditProbeStep: 10,
   minimumStatisticalPower: 0.9,
+  minimumMismatchDelta: 0.1,
+  familyWideAlpha: 0.05,
+  referenceConfidence: 0.99,
+  minimumAuthenticatedCoverage: 1,
   maxReferenceAgeDays: 49,
   maxRequestsPerRound: 2000,
   requestTimeoutMs: 120_000,
@@ -58,6 +66,11 @@ export function resolveReferencePolicy(policy: VerifierReferencePolicyConfig | u
     maximumAuditProbeCount: policy.maximumAuditProbeCount ?? DEFAULT_REFERENCE_POLICY.maximumAuditProbeCount,
     auditProbeStep: policy.auditProbeStep ?? DEFAULT_REFERENCE_POLICY.auditProbeStep,
     minimumStatisticalPower: policy.minimumStatisticalPower ?? DEFAULT_REFERENCE_POLICY.minimumStatisticalPower,
+    minimumMismatchDelta: policy.minimumMismatchDelta ?? DEFAULT_REFERENCE_POLICY.minimumMismatchDelta,
+    familyWideAlpha: policy.familyWideAlpha ?? DEFAULT_REFERENCE_POLICY.familyWideAlpha,
+    referenceConfidence: policy.referenceConfidence ?? DEFAULT_REFERENCE_POLICY.referenceConfidence,
+    minimumAuthenticatedCoverage: policy.minimumAuthenticatedCoverage
+      ?? DEFAULT_REFERENCE_POLICY.minimumAuthenticatedCoverage,
     maxReferenceAgeDays: policy.maxReferenceAgeDays ?? DEFAULT_REFERENCE_POLICY.maxReferenceAgeDays,
     maxRequestsPerRound: policy.maxRequestsPerRound ?? policy.maxRequestsPerBuild
       ?? DEFAULT_REFERENCE_POLICY.maxRequestsPerRound,

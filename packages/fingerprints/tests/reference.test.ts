@@ -142,8 +142,8 @@ describe('validateKbfReferenceV1', () => {
     expect(() => validateKbfReferenceV1(wrongId)).toThrow(/referenceId mismatch/);
   });
 
-  it('accepts every ten-probe multiple through 500 and rejects invalid counts', () => {
-    for (let count = 10; count <= 500; count += 10) {
+  it('accepts every ten-probe multiple through 750 and rejects invalid counts', () => {
+    for (let count = 10; count <= 750; count += 10) {
       const value = reference();
       value.probes = value.probes.slice(0, count);
       if (count > 100) {
@@ -166,12 +166,90 @@ describe('validateKbfReferenceV1', () => {
       value.referenceId = computeReferenceId(value);
       if (power.power >= 0.9) expect(() => validateKbfReferenceV1(value)).not.toThrow();
     }
-    for (const count of [0, 15, 510]) {
+    for (const count of [0, 15, 760]) {
       const value = reference();
       value.selectedProbeCount = count;
       value.referenceId = computeReferenceId(value);
-      expect(() => validateKbfReferenceV1(value)).toThrow(/multiple of 10 from 10 through 500/);
+      expect(() => validateKbfReferenceV1(value)).toThrow(/multiple of 10 from 10 through 750/);
     }
+  });
+
+  it('validates power using the alpha and confidence persisted in the reference', () => {
+    const value = reference();
+    const alpha = 0.02;
+    const cpConfidence = 0.985;
+    const power = computeBinomialPower({
+      selfHamming: value.selfTest.hamming,
+      selfTotal: value.selfTest.total,
+      minimumMismatchDelta: value.minimumMismatchDelta,
+      alpha,
+      cpConfidence,
+    });
+    value.statisticalPower = power.power;
+    value.statisticalPowerEvidence = {
+      test: 'one-sided-binomial',
+      alpha,
+      clopperPearsonConfidence: cpConfidence,
+      selfHamming: value.selfTest.hamming,
+      selfTotal: value.selfTest.total,
+      p0UpperBound: power.p0,
+      alternativeMismatchRate: power.p1,
+      criticalMismatchCount: power.criticalMismatchCount,
+      power: power.power,
+    };
+    value.referenceId = computeReferenceId(value);
+    expect(() => validateKbfReferenceV1(value)).not.toThrow();
+  });
+
+  it('supports an explicit lower analytics-only power threshold', () => {
+    const value = reference();
+    const alpha = 0.005;
+    const cpConfidence = 0.99;
+    value.probes = Array.from({ length: 150 }, (_unused, index) => ({
+      ...value.probes[index % value.probes.length]!,
+      id: `analytics-${index}`,
+      name: `analytics-${index}`,
+      consensus: index,
+    }));
+    value.selectedProbeCount = value.probes.length;
+    value.selfTest.outcomes = value.probes.map((probe, index) => ({
+      probeId: probe.id,
+      answer: probe.consensus,
+      match: index < 5 ? 0 as const : 1 as const,
+    }));
+    value.selfTest = {
+      ...value.selfTest,
+      hamming: 5,
+      total: 150,
+      coverage: 1,
+      errorRate: 5 / 150,
+    };
+    const power = computeBinomialPower({
+      selfHamming: 5,
+      selfTotal: 150,
+      minimumMismatchDelta: value.minimumMismatchDelta,
+      alpha,
+      cpConfidence,
+    });
+    value.statisticalPower = power.power;
+    value.statisticalPowerEvidence = {
+      test: 'one-sided-binomial',
+      alpha,
+      clopperPearsonConfidence: cpConfidence,
+      selfHamming: 5,
+      selfTotal: 150,
+      p0UpperBound: power.p0,
+      alternativeMismatchRate: power.p1,
+      criticalMismatchCount: power.criticalMismatchCount,
+      power: power.power,
+    };
+    value.contrasts = [];
+    value.referenceId = computeReferenceId(value);
+
+    expect(power.power).toBeGreaterThanOrEqual(0.85);
+    expect(power.power).toBeLessThan(0.9);
+    expect(() => validateKbfReferenceV1(value)).toThrow(/statisticalPower/);
+    expect(() => validateKbfReferenceV1(value, { minimumStatisticalPower: 0.85 })).not.toThrow();
   });
 
   it('rejects missing or duplicate per-probe self-test outcomes', () => {

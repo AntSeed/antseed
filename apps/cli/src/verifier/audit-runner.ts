@@ -1,624 +1,955 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import type { AbstractSigner } from 'ethers'
 import {
-  assertMatchingQueryProfile,
-  buildKbfChatRequestBody,
-  canonicalHash,
-  canonicalHashBytes32,
   KBF_PROBES_PER_REQUEST,
+  KbfVerifier,
+  buildKbfChatRequestBody,
+  canonicalHashBytes32,
+  computeMatchVector,
+  parseKbfAnswers,
+  queryProfileHash,
+  type KbfProbe,
   type KbfReferenceV1,
-  type ReferenceQueryProfileV1,
+  type MatchVector,
 } from '@antseed/fingerprints'
-import type {
-  AuditRelayJobPayload,
-  ConnectedRelay,
-  PeerInfo,
-  StoredAuditJob,
-  StoredAuditPlan,
-  VerificationAuditStore,
+import {
+  VERIFIER_VERDICT_DIFF,
+  VERIFIER_VERDICT_SAME,
+  VERIFIER_VERDICT_UNDETERMINED,
+  hashRequest,
+  hashResponse,
+  serviceHash,
+  toResponseAuthPayload,
+  type AntseedNode,
+  type AttestationSubmittedEvent,
+  type BuyerResponsePaymentEvidence,
+  type MetricSnapshot,
+  type PeerInfo,
+  type StoredDirectAudit,
+  type StoredDirectAuditProbe,
+  type StoredResponseAuth,
+  type VerificationStorage,
+  type VerifierRegistryClient,
+  type VerifierVerdict,
 } from '@antseed/node'
 import {
-  buildPositionalMerkleTree,
-  encodeHttpRequest,
-  estimateFrozenRelayPayout,
-  hashRequest,
-  peerIdToAddress,
-  preflightRelayBudget,
-} from '@antseed/node'
-import type {
-  AuditJob,
-  RelayAssignment,
-  RelayTreasuryClient,
-  VerifierRegistryClient,
-} from '@antseed/node/payments'
-import { computeCostUsdc, estimateTokensFromBytes } from '@antseed/node/payments'
-import { assertAuditDurationMs, DEFAULT_AUDIT_DURATION_MS } from './audit-duration.js'
-import { requireCommittedAuditPlan } from './audit-state.js'
+  deriveDirectAuditId,
+  directAuditEvidenceHash,
+  writeDirectAuditEvidence,
+  verifyDirectAuditEvidenceFile,
+  type DirectAuditEvidenceExchange,
+  type DirectAuditEvidenceV1,
+} from './direct-evidence.js'
+import {
+  calculateTrafficShareBps,
+  resolveAntscanTrafficShare,
+  type ResolveTrafficShareInput,
+  type TrafficShareSnapshot,
+} from './traffic-share.js'
 
-export const AUDIT_COMMIT_BUFFER_SECS = 2 * 60
-export const AUDIT_SAFETY_MARGIN_SECS = 10 * 60
-export const FORCE_CLAIM_DELAY_SECS = 6 * 60 * 60
-export const FORCE_CLAIM_WINDOW_SECS = 30 * 24 * 60 * 60
-
-export interface AuditContext {
-  registryClient: VerifierRegistryClient
-  treasuryClient: RelayTreasuryClient
-  storage: VerificationAuditStore
-  signer: AbstractSigner
-  chainId: string
-  registryAddress: string
-  treasuryAddress: string
-  runRelayJob: (
-    relayPeerId: string,
-    offer: Omit<AuditRelayJobPayload, 'version'>,
-    timeoutMs: number,
-  ) => Promise<{
-    status: 'ok' | 'error'
-    error?: string
-    responseBytesBase64?: string
-    responseAuthPayloadBase64?: string
-    sellerChargeUsdc?: string
-    paymentMetadata?: Record<string, unknown>
-  }>
-  now?: () => number
-  sleep?: (milliseconds: number) => Promise<void>
+export interface DirectAuditNode {
+  sendRequest: AntseedNode['sendRequest']
+  waitForResponseAuth: AntseedNode['waitForResponseAuth']
+  finalizeResponsePayment: AntseedNode['finalizeResponsePayment']
 }
 
-export interface PlanReferenceAuditInput {
-  auditId?: string
-  source?: 'manual' | 'automatic'
+export interface DirectAuditBudget {
+  reserve(maximumRequestCharge: bigint): number
+  commit(ticket: number, actualCharge: bigint): bigint
+  release(ticket: number): void
+}
+
+export interface DirectAuditExecutionContext {
+  node: DirectAuditNode
+  storage: VerificationStorage
+  verifierAddress: string
+  verifierPeerId: string
+  evidenceDir: string
+  minAuthenticatedProbeCount: number
+  minimumStatisticalPower: number
+  verdictAlpha?: number
+  verdictCpConfidence?: number
+  verdictMinCoverage?: number
+  probeRequestTimeoutMs: number
+  maxConcurrentProbeRequests: number
+  maxPerRequestUsdc?: bigint
+  budget?: DirectAuditBudget
+  onSpend?: (totalSpent: bigint) => void
+  now?: () => number
+  warn?: (message: string) => void
+  writeEvidence?: typeof writeDirectAuditEvidence
+}
+
+export interface DirectAuditAttestationContext {
+  registryClient: VerifierRegistryClient
+  storage: VerificationStorage
+  signer: AbstractSigner
+  warn?: (message: string) => void
+  resolveTrafficShare?: (input: ResolveTrafficShareInput) => Promise<TrafficShareSnapshot>
+  resolveSubmittedEvent?: (input: {
+    txHash: string
+    auditId: string
+    agentId: number
+    serviceHash: string
+  }) => Promise<Pick<AttestationSubmittedEvent, 'credited' | 'epoch'> | null>
+}
+
+export interface DirectAuditContext extends DirectAuditExecutionContext, DirectAuditAttestationContext {}
+
+export interface RunDirectAuditInput {
+  runId: string
+  source: 'manual' | 'automatic'
+  epoch: bigint
   target: PeerInfo
   service: string
   reference: KbfReferenceV1
-  executionProfile: ReferenceQueryProfileV1
-  flatRelayFeeUsdc: bigint
-  jobTimeoutMs: number
-  durationMs?: number
-  commitBufferSecs?: number
-  safetyMarginSecs?: number
+  evidenceUri?: string
 }
 
-export interface PlannedReferenceAudit {
-  plan: StoredAuditPlan
-  jobs: StoredAuditJob[]
-  jobTimeoutMs: number
+export interface DirectAuditResult {
+  runId: string
+  auditId: string
+  evidencePath: string
+  evidenceHash: string
+  attestationTxHash: string
+  credited: boolean | null
+  epoch: bigint
+  verdict: Exclude<VerifierVerdict, 0>
+  modelShareBps: number
+  probeCount: number
+  authenticatedProbeCount: number
+  parsedProbeCount: number
+  exchanges: DirectAuditEvidenceExchange[]
 }
 
-export interface DispatchedReferenceAudit extends PlannedReferenceAudit {
-  succeededJobs: number
-  failedJobs: number
+export interface DirectAuditObservationResult {
+  runId: string
+  auditId: string
+  evidencePath: string
+  evidenceHash: string
+  epoch: bigint
+  verdict: Exclude<VerifierVerdict, 0>
+  verdictReason: string | null
+  probeCount: number
+  authenticatedProbeCount: number
+  parsedProbeCount: number
+  sellerChargeUsdc: bigint
+  exchanges: DirectAuditEvidenceExchange[]
 }
 
-export async function planReferenceAudit(
-  context: AuditContext,
-  input: PlanReferenceAuditInput,
-): Promise<PlannedReferenceAudit> {
-  assertMatchingQueryProfile(input.reference.queryProfile, input.executionProfile)
+interface BatchExecution {
+  batchIndex: number
+  ordinalStart: number
+  probes: KbfProbe[]
+  exchange: DirectAuditEvidenceExchange
+  authenticated: boolean
+}
+
+export function createDirectAuditRunId(input: {
+  verifierAddress: string
+  targetPeerId: string
+  agentId: number
+  service: string
+  now?: number
+  nonce?: string
+}): string {
+  return canonicalHashBytes32({
+    domain: 'antseed-direct-audit-run-v1',
+    verifierAddress: input.verifierAddress.toLowerCase(),
+    targetPeerId: input.targetPeerId.toLowerCase(),
+    agentId: input.agentId,
+    service: input.service.trim().toLowerCase(),
+    createdAt: input.now ?? Date.now(),
+    nonce: input.nonce ?? randomUUID(),
+  })
+}
+
+export function buildDirectAuditRequestBody(
+  reference: KbfReferenceV1,
+  service: string,
+  probes: readonly KbfProbe[],
+): Record<string, unknown> {
+  return {
+    ...buildKbfChatRequestBody(service, probes, {
+      maxTokens: reference.queryProfile.maxTokensPerRequest,
+    }),
+    top_p: reference.queryProfile.generationSettings.topP,
+    stream: false,
+    n: 1,
+    ...(reference.queryProfile.requestOverrides ?? {}),
+  }
+}
+
+export function initializeDirectAudit(input: {
+  storage: VerificationStorage
+  runId: string
+  source: 'manual' | 'automatic'
+  epoch: bigint
+  verifierAddress: string
+  target: PeerInfo
+  service: string
+  now?: number
+}): StoredDirectAudit {
   if (!input.target.onChainAgentId) throw new Error('target has no on-chain agent id')
-  if (!peerAdvertisesService(input.target, input.service)) throw new Error(`target does not advertise service ${input.service}`)
-  if (input.reference.probes.length % KBF_PROBES_PER_REQUEST !== 0) {
-    throw new Error('reference probe count must divide into exact ten-probe jobs')
-  }
-  const jobCount = input.reference.probes.length / KBF_PROBES_PER_REQUEST
-  if (!Number.isInteger(jobCount) || jobCount < 1 || jobCount > 50) throw new Error('audit job count must be from 1 through 50')
-  if (!Number.isInteger(input.jobTimeoutMs) || input.jobTimeoutMs <= 0) throw new Error('jobTimeoutMs must be positive')
-  const durationMs = assertAuditDurationMs(input.durationMs ?? DEFAULT_AUDIT_DURATION_MS)
-  if (durationMs < input.jobTimeoutMs) throw new Error('audit duration must cover at least one job timeout')
-
-  const nowMs = context.now?.() ?? Date.now()
-  const nowSecs = Math.floor(nowMs / 1_000)
-  const commitBufferSecs = input.commitBufferSecs ?? AUDIT_COMMIT_BUFFER_SECS
-  const safetyMarginSecs = input.safetyMarginSecs ?? AUDIT_SAFETY_MARGIN_SECS
-  const epochWindow = await context.registryClient.currentEpochWindow()
-  const executeAfter = nowSecs + commitBufferSecs
-  const schedulingEndSecs = executeAfter + Math.ceil(durationMs / 1_000)
-  if (schedulingEndSecs + safetyMarginSecs > epochWindow.endsAt) {
-    throw new Error(`insufficient epoch time for ${durationMs}ms audit duration`)
-  }
-  const executeBefore = epochWindow.endsAt
-  const requiredRelayCount = await context.registryClient.requiredRelayCount(jobCount)
-  const auditId = input.auditId ?? randomBytes32()
-  const targetServiceHash = await context.registryClient.hashNormalizedService(input.service)
-  const targetSalt = randomBytes32()
-  const targetCommitment = await context.registryClient.hashAuditTarget(input.target.onChainAgentId, targetServiceHash, targetSalt)
-  const forceClaimAvailableAt = executeBefore + FORCE_CLAIM_DELAY_SECS
-  const forceClaimDeadline = forceClaimAvailableAt + FORCE_CLAIM_WINDOW_SECS
-
-  const requestBytes = input.reference.probes.reduce<Uint8Array[]>((requests, _probe, index) => {
-    if (index % KBF_PROBES_PER_REQUEST !== 0) return requests
-    const probes = input.reference.probes.slice(index, index + KBF_PROBES_PER_REQUEST)
-    const body = buildKbfChatRequestBody(input.service, probes, {
-      batchIndexOffset: index,
-      maxTokens: input.executionProfile.maxTokensPerRequest,
-    })
-    Object.assign(body, input.executionProfile.requestOverrides ?? {})
-    requests.push(encodeHttpRequest({
-      requestId: randomUUID(),
-      method: 'POST',
-      path: '/v1/chat/completions',
-      headers: { 'content-type': 'application/json' },
-      body: new TextEncoder().encode(JSON.stringify(body)),
-    }))
-    return requests
-  }, [])
-  const sellerQuotes = requestBytes.map((bytes) => estimateWorstCaseSellerQuote(input.target, input.service, bytes))
-  const payoutPerJobUsdc = estimateFrozenRelayPayout(sellerQuotes, input.flatRelayFeeUsdc)
-  const { requiredBudgetUsdc } = await preflightRelayBudget({
-    treasury: context.treasuryClient,
-    epoch: epochWindow.epoch,
-    jobCount,
-    payoutPerJobUsdc,
-  })
-
-  const jobWindowSecs = Math.max(1, Math.ceil(input.jobTimeoutMs / 1_000))
-  const jobsWithoutProof = requestBytes.map((bytes, jobIndex): AuditJob => {
-    const scheduledAt = deterministicScheduledAt(auditId, jobIndex, executeAfter * 1_000, durationMs, input.jobTimeoutMs)
-    const jobExecuteAfter = Math.floor(scheduledAt / 1_000)
-    return {
-      auditId,
-      jobIndex,
-      sellerPeerId: peerIdToAddress(input.target.peerId),
-      serviceHash: targetServiceHash,
-      requestHash: hashRequest(decodeRequest(bytes)),
-      jobSalt: randomBytes32(),
-      executeAfter: jobExecuteAfter,
-      executeBefore: Math.min(jobExecuteAfter + jobWindowSecs, executeBefore - safetyMarginSecs),
-    }
-  })
-  const leaves = await Promise.all(jobsWithoutProof.map((job) => context.registryClient.hashAuditJob(job)))
-  const tree = buildPositionalMerkleTree(leaves)
-  const probeRoot = canonicalHashBytes32(input.reference.probes)
-  const queryHash = canonicalHash(input.executionProfile)
-  const verifierConfigHash = canonicalHashBytes32({
-    version: 2,
-    queryProfileHash: queryHash,
-    jobTimeoutMs: input.jobTimeoutMs,
-    durationMs,
-    commitBufferSecs,
-    safetyMarginSecs,
-    flatRelayFeeUsdc: input.flatRelayFeeUsdc.toString(),
-    requiredRelayCount,
-  })
-  const verifierAddress = await context.signer.getAddress()
-  const createdAt = nowMs
-  const jobs: StoredAuditJob[] = jobsWithoutProof.map((job, jobIndex) => ({
-    auditId,
-    jobIndex,
-    state: 'planned',
-    scheduledAt: job.executeAfter * 1_000,
-    relayPeerId: null,
-    relayBuyerAddress: null,
-    assignmentAttempt: 0,
-    assignmentSignature: null,
-    assignmentState: 'unassigned',
-    assignedAt: null,
-    lastDispatchAt: null,
-    sellerPeerId: input.target.peerId,
-    service: input.service,
-    serviceHash: targetServiceHash,
-    requestHash: job.requestHash,
-    jobSalt: job.jobSalt,
-    executeAfter: job.executeAfter,
-    executeBefore: job.executeBefore,
-    requestBytes: requestBytes[jobIndex]!,
-    positionalProof: tree.proofs[jobIndex]!,
-    responseBytes: null,
-    responseAuthPayload: null,
-    sellerChargeUsdc: null,
-    paymentMetadata: null,
-    dispatchedAt: null,
-    completedAt: null,
-    failureKind: null,
-    failureMessage: null,
-    entitlementPersistedAt: null,
-  }))
-  const plan: StoredAuditPlan = {
-    auditId,
-    state: 'planned',
-    source: input.source ?? 'manual',
-    epoch: epochWindow.epoch.toString(),
-    durationMs,
-    chainId: context.chainId,
-    registryAddress: context.registryAddress,
-    treasuryAddress: context.treasuryAddress,
-    verifierAddress,
+  if (!input.target.onChainSellerAddress) throw new Error('target has no verified on-chain seller address')
+  const now = input.now ?? Date.now()
+  const existing = input.storage.getDirectAudit(input.runId)
+  if (existing) return existing
+  const audit: StoredDirectAudit = {
+    auditId: input.runId,
+    state: 'pending',
+    source: input.source,
+    epoch: input.epoch.toString(),
+    verifierAddress: input.verifierAddress,
     agentId: String(input.target.onChainAgentId),
+    sellerAddress: input.target.onChainSellerAddress,
     targetPeerId: input.target.peerId,
     targetService: input.service,
-    targetServiceHash,
-    targetSalt,
-    targetCommitment,
-    probeRoot,
-    auditJobRoot: tree.root,
-    referenceId: input.reference.referenceId,
-    queryProfileHash: queryHash,
-    verifierConfigHash,
-    probeCount: input.reference.probes.length,
-    jobCount,
-    requiredRelayCount,
-    jobTimeoutMs: input.jobTimeoutMs,
-    payoutPerJobUsdc,
-    reservedBudgetUsdc: requiredBudgetUsdc,
-    commitTxHash: null,
-    attestationTxHash: null,
+    targetServiceHash: serviceHash(input.service),
+    referenceId: null,
+    queryProfileHash: null,
+    probeCount: 0,
+    authenticatedProbeCount: 0,
+    statisticalPower: null,
+    verdict: null,
+    modelShareBps: null,
+    metrics: null,
+    evidencePath: null,
     evidenceHash: null,
     evidenceUri: null,
-    evidenceState: 'none',
-    executeAfter,
-    executeBefore,
-    forceClaimAvailableAt,
-    forceClaimDeadline,
-    createdAt,
-    updatedAt: createdAt,
+    attestationTxHash: null,
+    credited: null,
+    startedAt: null,
+    completedAt: null,
+    createdAt: now,
+    updatedAt: now,
     failureReason: null,
   }
-  context.storage.saveAuditPlan(plan, jobs, { replaceJobs: true })
-  return { plan, jobs, jobTimeoutMs: input.jobTimeoutMs }
+  input.storage.saveDirectAudit(audit)
+  return audit
 }
 
-export async function planAndCommitReferenceAudit(
-  context: AuditContext,
-  input: PlanReferenceAuditInput,
-): Promise<PlannedReferenceAudit> {
-  const planned = await planReferenceAudit(context, input)
-  const committed = await resumeReferenceAuditCommit(context, planned.plan)
-  return { ...planned, plan: committed }
-}
-
-export async function dispatchDueReferenceAuditJobs(
-  context: AuditContext,
-  plan: StoredAuditPlan,
-  connectedRelays: readonly ConnectedRelay[],
-): Promise<DispatchedReferenceAudit> {
-  if (plan.payoutPerJobUsdc === null || plan.chainId === null || plan.registryAddress === null || plan.treasuryAddress === null) {
-    throw new Error('audit plan is not committed')
+export async function executeDirectAuditObservation(
+  context: DirectAuditExecutionContext,
+  input: RunDirectAuditInput,
+): Promise<DirectAuditObservationResult> {
+  if (!input.target.onChainAgentId) throw new Error('target has no on-chain agent id')
+  if (!input.target.onChainSellerAddress) throw new Error('target has no verified on-chain seller address')
+  const sellerAddress = input.target.onChainSellerAddress
+  if (!Number.isInteger(context.minAuthenticatedProbeCount) || context.minAuthenticatedProbeCount < 1) {
+    throw new Error('minAuthenticatedProbeCount must be a positive integer')
   }
-  const audit = await context.registryClient.getAudit(plan.auditId)
-  const now = context.now?.() ?? Date.now()
-  const allJobs = context.storage.listAuditJobs(plan.auditId)
-  const dueJobs = allJobs.filter((job) => ['planned', 'due', 'assigned'].includes(job.state) && job.scheduledAt <= now)
-  if (dueJobs.length > 0) context.storage.updateAuditState(plan.auditId, 'executing')
-  for (const storedJob of dueJobs) {
-    let job = storedJob
-    let relay = job.relayPeerId ? connectedRelays.find((candidate) => candidate.peerId === job.relayPeerId) : undefined
-    if (!relay) {
-      if (job.assignmentSignature) continue
-      relay = selectRelayForJob(
-        allJobs,
-        connectedRelays,
-        plan.payoutPerJobUsdc,
-        plan.requiredRelayCount ?? 1,
-      ) ?? undefined
-      if (!relay) continue
-      const assignment = buildRelayAssignment(plan, job, relay)
-      const assignmentSignature = await context.registryClient.signRelayAssignment(context.signer, assignment)
-      context.storage.assignAuditJob({
-        auditId: job.auditId,
-        jobIndex: job.jobIndex,
-        relayPeerId: relay.peerId,
-        relayBuyerAddress: assignment.relayBuyer,
-        assignmentAttempt: assignment.attempt,
-        assignmentSignature,
-      })
-      job = context.storage.listAuditJobs(plan.auditId).find((candidate) => candidate.jobIndex === job.jobIndex)!
-      const jobPosition = allJobs.findIndex((candidate) => candidate.jobIndex === job.jobIndex)
-      if (jobPosition >= 0) allJobs[jobPosition] = job
+  if (!Number.isInteger(context.maxConcurrentProbeRequests) || context.maxConcurrentProbeRequests < 1) {
+    throw new Error('maxConcurrentProbeRequests must be a positive integer')
+  }
+  if (!Number.isInteger(context.probeRequestTimeoutMs) || context.probeRequestTimeoutMs < 1) {
+    throw new Error('probeRequestTimeoutMs must be a positive integer')
+  }
+  if (input.reference.probes.length < context.minAuthenticatedProbeCount) {
+    throw new Error(`reference has ${input.reference.probes.length} probes; ${context.minAuthenticatedProbeCount} required`)
+  }
+  if (input.reference.probes.length % KBF_PROBES_PER_REQUEST !== 0) {
+    throw new Error(`reference probe count must be divisible by ${KBF_PROBES_PER_REQUEST}`)
+  }
+  if (input.reference.statisticalPower < context.minimumStatisticalPower) {
+    throw new Error(
+      `reference power ${input.reference.statisticalPower.toFixed(4)} is below ${context.minimumStatisticalPower}`,
+    )
+  }
+
+  const now = context.now ?? Date.now
+  const startedAt = now()
+  initializeDirectAudit({
+    storage: context.storage,
+    runId: input.runId,
+    source: input.source,
+    epoch: input.epoch,
+    verifierAddress: context.verifierAddress,
+    target: input.target,
+    service: input.service,
+    now: startedAt,
+  })
+  const existingProbes = context.storage.listDirectAuditProbes(input.runId)
+  if (existingProbes.length === 0) {
+    const selectedProbes = input.reference.probes.map((probe, ordinal): StoredDirectAuditProbe => ({
+      auditId: input.runId,
+      ordinal,
+      probeId: probe.id,
+      status: 'selected',
+      requestId: null,
+      requestHash: null,
+      responseHash: null,
+      responseAuth: null,
+      payment: null,
+      timing: null,
+      matched: null,
+      exposureCountedAt: null,
+      failureReason: null,
+    }))
+    context.storage.saveDirectAuditProbes(selectedProbes)
+  } else {
+    const expectedProbeIds = input.reference.probes.map((probe) => probe.id)
+    const storedProbeIds = existingProbes.map((probe) => probe.probeId)
+    if (JSON.stringify(storedProbeIds) !== JSON.stringify(expectedProbeIds)) {
+      throw new Error(`stored probe selection for ${input.runId} does not match the supplied reference`)
     }
-    const offer = buildRelayOffer(plan, audit, job, plan.jobTimeoutMs)
-    context.storage.markAuditJobDispatchAttempt(job.auditId, job.jobIndex, now)
-    // Count conservatively before handing the private prompt to a relay. The
-    // seller may receive it even when the relay later times out or returns an
-    // ambiguous execution error. Storage makes this idempotent across retries.
-    context.storage.markAuditJobProbeExposure(job.auditId, job.jobIndex, now)
-    try {
-      const result = await context.runRelayJob(relay.peerId, offer, offer.timeoutMs)
-      if (result.status !== 'ok') {
-        if (isExplicitPreExecutionRejection(result.error ?? '')) {
-          context.storage.markAuditJobRejected(job.auditId, job.jobIndex, result.error ?? 'relay rejected job')
-        } else {
-          context.storage.markAuditJobDispatched(job.auditId, job.jobIndex, now)
-          context.storage.markAuditJobFailed(
-            job.auditId,
-            job.jobIndex,
-            'relay-execution',
-            result.error ?? 'relay execution failed',
-            now,
-          )
-        }
-        continue
-      }
-      if (!result.responseBytesBase64 || !result.responseAuthPayloadBase64
-        || result.sellerChargeUsdc === undefined || !result.paymentMetadata) {
-        context.storage.markAuditJobDispatched(job.auditId, job.jobIndex, now)
-        context.storage.markAuditJobFailed(job.auditId, job.jobIndex, 'invalid-relay-result', 'relay result is incomplete', now)
-        continue
-      }
-      context.storage.markAuditJobDispatched(job.auditId, job.jobIndex, now)
-      context.storage.persistAuditJobSuccess({
-        auditId: job.auditId,
-        jobIndex: job.jobIndex,
-        responseBytes: Buffer.from(result.responseBytesBase64, 'base64'),
-        responseAuthPayload: Buffer.from(result.responseAuthPayloadBase64, 'base64'),
-        sellerChargeUsdc: BigInt(result.sellerChargeUsdc),
-        paymentMetadata: result.paymentMetadata,
-      })
-    } catch {}
   }
-  const refreshedJobs = context.storage.listAuditJobs(plan.auditId)
-  const succeededJobs = refreshedJobs.filter((job) => job.state === 'succeeded').length
-  const failedJobs = refreshedJobs.filter((job) => job.state === 'failed').length
-  if (plan.executeBefore !== null && Math.floor(now / 1_000) >= plan.executeBefore) {
-    for (const job of refreshedJobs.filter((candidate) => !['succeeded', 'failed'].includes(candidate.state))) {
-      context.storage.markAuditJobFailed(job.auditId, job.jobIndex, 'execution-window-expired', 'audit execution window expired')
-    }
-    context.storage.updateAuditState(plan.auditId, 'awaiting-attestation')
-  }
-  return { plan, jobs: context.storage.listAuditJobs(plan.auditId), jobTimeoutMs: plan.jobTimeoutMs, succeededJobs, failedJobs }
-}
+  context.storage.updateDirectAudit(input.runId, 'running', {
+    referenceId: input.reference.referenceId,
+    queryProfileHash: queryProfileHash(input.reference.queryProfile),
+    probeCount: input.reference.probes.length,
+    statisticalPower: input.reference.statisticalPower,
+    startedAt,
+    failureReason: null,
+  })
 
-export async function resumeReferenceAuditCommit(
-  context: AuditContext,
-  storedPlan: StoredAuditPlan,
-): Promise<StoredAuditPlan> {
-  const plan = requireCommittedAuditPlan(storedPlan)
-  const existing = await context.registryClient.getAudit(plan.auditId)
-  if (!isZeroAddress(existing.committer)) {
-    assertPersistedCommitMatches(plan, existing)
-    context.storage.updateAuditState(plan.auditId, 'committed', {
-      ...(plan.commitTxHash ? { commitTxHash: plan.commitTxHash } : {}),
-    })
-    return { ...plan, state: 'committed', failureReason: null }
-  }
-
-  context.storage.updateAuditState(plan.auditId, 'committing')
+  let executions: BatchExecution[]
   try {
-    const commitTxHash = await context.registryClient.commitProbes(context.signer, {
-      auditId: plan.auditId,
-      targetCommitment: plan.targetCommitment,
-      probeRoot: plan.probeRoot,
-      auditJobRoot: plan.auditJobRoot,
-      referenceId: contentIdToBytes32(plan.referenceId),
-      verifierConfigHash: plan.verifierConfigHash,
-      probeCount: plan.probeCount,
-      jobCount: plan.jobCount,
-      payoutPerJobUsdc: plan.payoutPerJobUsdc,
-    })
-    const committed = await context.registryClient.getAudit(plan.auditId)
-    assertPersistedCommitMatches(plan, committed)
-    context.storage.updateAuditState(plan.auditId, 'committed', { commitTxHash })
-    return { ...plan, state: 'committed', commitTxHash, failureReason: null }
+    executions = await executeProbeBatches(context, input)
   } catch (error) {
-    const committed = await context.registryClient.getAudit(plan.auditId).catch(() => null)
-    if (committed && !isZeroAddress(committed.committer)) {
-      assertPersistedCommitMatches(plan, committed)
-      context.storage.updateAuditState(plan.auditId, 'committed')
-      return { ...plan, state: 'committed', failureReason: null }
-    }
-    context.storage.updateAuditState(plan.auditId, 'committing', { failureReason: (error as Error).message })
+    context.storage.updateDirectAudit(input.runId, 'failed', {
+      failureReason: asError(error).message,
+      completedAt: now(),
+    })
     throw error
   }
-}
 
-export async function dispatchReferenceAudit(
-  context: AuditContext,
-  planned: PlannedReferenceAudit,
-  connectedRelays: readonly ConnectedRelay[],
-): Promise<DispatchedReferenceAudit> {
-  const sleep = context.sleep ?? ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)))
-  let result = await dispatchDueReferenceAuditJobs(context, planned.plan, connectedRelays)
-  while (result.jobs.some((job) => !['succeeded', 'failed'].includes(job.state))) {
-    await sleep(1_000)
-    result = await dispatchDueReferenceAuditJobs(context, planned.plan, connectedRelays)
+  const exchanges = executions.sort((left, right) => left.batchIndex - right.batchIndex).map((item) => item.exchange)
+  const answers = exchanges.flatMap((exchange) => exchange.answers)
+  const matchVector = computeMatchVector(answers, input.reference.probes)
+  const authenticatedProbeCount = executions
+    .filter((execution) => execution.authenticated)
+    .reduce((sum, execution) => sum + execution.probes.length, 0)
+  if (authenticatedProbeCount < context.minAuthenticatedProbeCount) {
+    const message = `only ${authenticatedProbeCount} authenticated paid probes; ${context.minAuthenticatedProbeCount} required`
+    context.storage.updateDirectAudit(input.runId, 'failed', {
+      authenticatedProbeCount,
+      completedAt: now(),
+      failureReason: message,
+    })
+    throw new Error(message)
   }
-  return result
-}
 
-export async function runReferenceAudit(
-  context: AuditContext,
-  input: PlanReferenceAuditInput,
-  connectedRelays: readonly ConnectedRelay[],
-): Promise<DispatchedReferenceAudit> {
-  const planned = await planAndCommitReferenceAudit(context, input)
-  return dispatchReferenceAudit(context, planned, connectedRelays)
-}
+  const fragment = new KbfVerifier().verify(input.reference, {
+    sellerPeerId: input.target.peerId,
+    agentId: input.target.onChainAgentId,
+    answers,
+    matchVector,
+    requestIds: exchanges.map((exchange) => exchange.requestId),
+    responseAuthHashes: exchanges.flatMap((exchange) => exchange.responseAuth
+      ? [{ requestHash: exchange.responseAuth.requestHash, responseHash: exchange.responseAuth.responseHash }]
+      : []),
+  }, {
+    alpha: context.verdictAlpha ?? input.reference.statisticalPowerEvidence.alpha,
+    cpConfidence: context.verdictCpConfidence
+      ?? input.reference.statisticalPowerEvidence.clopperPearsonConfidence,
+    minCoverage: context.verdictMinCoverage,
+  })
+  if (fragment.verdict === 'UNKNOWN') {
+    const message = fragment.verdictReason ?? 'KBF result is UNKNOWN'
+    context.storage.updateDirectAudit(input.runId, 'failed', {
+      authenticatedProbeCount,
+      completedAt: now(),
+      failureReason: message,
+    })
+    throw new Error(message)
+  }
 
-export function buildRelayOffer(
-  plan: StoredAuditPlan,
-  audit: Awaited<ReturnType<VerifierRegistryClient['getAudit']>>,
-  job: StoredAuditJob,
-  jobTimeoutMs: number,
-): Omit<AuditRelayJobPayload, 'version'> {
-  if (!plan.chainId || !plan.registryAddress || !plan.treasuryAddress || plan.payoutPerJobUsdc === null
-    || !job.relayBuyerAddress || !job.assignmentSignature) throw new Error('audit job has no relay assignment')
-  const assignment = buildRelayAssignment(plan, job, { peerId: job.relayPeerId! } as ConnectedRelay)
-  return {
-    jobId: `${job.auditId}:${job.jobIndex}`,
-    chainId: plan.chainId,
-    registryAddress: plan.registryAddress,
-    treasuryAddress: plan.treasuryAddress,
-    auditSnapshot: {
-      committer: audit.committer,
-      auditJobRoot: audit.auditJobRoot,
-      jobCount: audit.jobCount,
-      payoutPerJobUsdc: audit.payoutPerJobUsdc.toString(),
-      reservedRelayBudgetUsdc: audit.reservedRelayBudgetUsdc.toString(),
-      executeAfter: audit.executeAfter,
-      executeBefore: audit.executeBefore,
-      forceClaimAvailableAt: audit.forceClaimAvailableAt,
-      forceClaimDeadline: audit.forceClaimDeadline,
-      attested: audit.attested,
+  const verdict = verdictCode(fragment.verdict)
+  const completedAt = now()
+  const metrics = buildMetricSnapshot(exchanges, startedAt, completedAt)
+  const evidence: DirectAuditEvidenceV1 = {
+    version: 1,
+    kind: 'antseed-direct-kbf-audit',
+    createdAt: new Date(completedAt).toISOString(),
+    verifier: {
+      peerId: context.verifierPeerId,
+      address: context.verifierAddress,
     },
-    job: {
-      auditId: job.auditId,
-      jobIndex: job.jobIndex,
-      sellerPeerId: peerIdToAddress(job.sellerPeerId),
-      serviceHash: job.serviceHash,
-      requestHash: job.requestHash,
-      jobSalt: job.jobSalt,
-      executeAfter: job.executeAfter,
-      executeBefore: job.executeBefore,
+    target: {
+      peerId: input.target.peerId,
+      agentId: String(input.target.onChainAgentId),
+      sellerAddress,
+      service: input.service,
+      serviceHash: serviceHash(input.service),
     },
-    jobProof: job.positionalProof,
-    assignment: { ...assignment, payoutPerJobUsdc: assignment.payoutPerJobUsdc.toString() },
-    verifierSignature: job.assignmentSignature,
-    targetPeerId: job.sellerPeerId,
-    service: job.service,
-    requestBytesBase64: Buffer.from(job.requestBytes).toString('base64'),
-    payoutPerJobUsdc: plan.payoutPerJobUsdc.toString(),
-    timeoutMs: Math.max(1, Math.min(jobTimeoutMs, (assignment.executeBefore - assignment.executeAfter) * 1_000)),
+    reference: {
+      referenceId: input.reference.referenceId,
+      referenceModel: input.reference.referenceModel,
+      queryProfileHash: queryProfileHash(input.reference.queryProfile),
+      queryProfile: input.reference.queryProfile,
+      statisticalPower: input.reference.statisticalPower,
+      statisticalPowerEvidence: input.reference.statisticalPowerEvidence as unknown as Record<string, unknown>,
+      selfTest: {
+        hamming: input.reference.selfTest.hamming,
+        total: input.reference.selfTest.total,
+        coverage: input.reference.selfTest.coverage,
+        errorRate: input.reference.selfTest.errorRate,
+      },
+      probes: input.reference.probes,
+    },
+    exchanges,
+    result: {
+      selectedProbeCount: input.reference.probes.length,
+      authenticatedProbeCount,
+      parsedProbeCount: fragment.parsedProbeCount,
+      matchVector: fragment.matchVector,
+      matchVectorHash: fragment.matchVectorHash,
+      stats: fragment.stats,
+      verdict: fragment.verdict,
+      verdictReason: fragment.verdictReason,
+    },
+    metrics,
   }
-}
+  const evidenceHash = directAuditEvidenceHash(evidence)
+  const auditId = deriveDirectAuditId({
+    verifierAddress: context.verifierAddress,
+    targetPeerId: input.target.peerId,
+    agentId: String(input.target.onChainAgentId),
+    serviceHash: serviceHash(input.service),
+    completedAt,
+    evidenceHash,
+  })
 
-export function buildRelayAssignment(plan: StoredAuditPlan, job: StoredAuditJob, relay: ConnectedRelay): RelayAssignment {
-  if (plan.payoutPerJobUsdc === null) throw new Error('audit payout is unavailable')
+  const writer = context.writeEvidence ?? writeDirectAuditEvidence
+  let evidencePath: string
+  try {
+    const written = await writer(context.evidenceDir, auditId, evidence)
+    if (written.evidenceHash.toLowerCase() !== evidenceHash.toLowerCase()) {
+      throw new Error('evidence writer returned a different content hash')
+    }
+    evidencePath = written.path
+    context.storage.finalizeDirectAuditId(input.runId, auditId)
+    context.storage.updateDirectAudit(auditId, 'completed', {
+      authenticatedProbeCount,
+      verdict,
+      modelShareBps: null,
+      metrics: metrics as unknown as Record<string, unknown>,
+      evidencePath,
+      evidenceHash,
+      completedAt,
+      failureReason: null,
+    })
+  } catch (error) {
+    if (context.storage.getDirectAudit(input.runId)) {
+      context.storage.updateDirectAudit(input.runId, 'failed', {
+        authenticatedProbeCount,
+        completedAt,
+        failureReason: asError(error).message,
+      })
+    }
+    throw error
+  }
+
   return {
-    auditId: job.auditId,
-    jobIndex: job.jobIndex,
-    attempt: job.assignmentAttempt,
-    relayBuyer: job.relayBuyerAddress ?? peerIdToAddress(relay.peerId),
-    payoutPerJobUsdc: plan.payoutPerJobUsdc,
-    executeAfter: job.executeAfter,
-    executeBefore: job.executeBefore,
+    runId: input.runId,
+    auditId,
+    evidencePath,
+    evidenceHash,
+    epoch: input.epoch,
+    verdict,
+    verdictReason: fragment.verdictReason,
+    probeCount: input.reference.probes.length,
+    authenticatedProbeCount,
+    parsedProbeCount: fragment.parsedProbeCount,
+    sellerChargeUsdc: exchanges.reduce(
+      (total, exchange) => total + BigInt(exchange.payment?.sellerChargeUsdc ?? '0'),
+      0n,
+    ),
+    exchanges,
   }
 }
 
-export function deterministicScheduledAt(
+export async function attestCompletedDirectAudit(
+  context: DirectAuditAttestationContext,
   auditId: string,
-  jobIndex: number,
-  startMs: number,
-  durationMs: number,
-  jobTimeoutMs: number,
-): number {
-  const availableMs = Math.max(0, durationMs - jobTimeoutMs)
-  if (availableMs === 0) return startMs
-  const digest = createHash('sha256').update(`${auditId}:${jobIndex}`).digest()
-  const offset = Number(digest.readBigUInt64BE(0) % BigInt(availableMs + 1))
-  return startMs + offset
-}
+  evidenceUri?: string,
+): Promise<DirectAuditResult> {
+  const stored = context.storage.getDirectAudit(auditId)
+  if (!stored || stored.state !== 'completed') {
+    throw new Error(`audit ${auditId} is not ready for attestation`)
+  }
+  if (!stored.evidencePath || !stored.evidenceHash) {
+    throw new Error(`audit ${auditId} has no canonical evidence`)
+  }
 
-export function selectRelayForJob(
-  auditJobs: readonly StoredAuditJob[],
-  connectedRelays: readonly ConnectedRelay[],
-  payoutPerJobUsdc: bigint,
-  requiredRelayCount = 1,
-): ConnectedRelay | null {
-  const counts = new Map<string, number>()
-  for (const job of auditJobs) if (job.relayPeerId) counts.set(job.relayPeerId, (counts.get(job.relayPeerId) ?? 0) + 1)
-  const eligible = connectedRelays.filter((relay) => relay.minPayoutPerJobUsdc <= payoutPerJobUsdc)
-  if (eligible.length < requiredRelayCount) return null
-  return eligible
-    .filter((relay) => relay.activeJobs < relay.maxConcurrentJobs)
-    .sort((left, right) => {
-      const usageDifference = (counts.get(left.peerId) ?? 0) - (counts.get(right.peerId) ?? 0)
-      return usageDifference || left.peerId.localeCompare(right.peerId)
-    })[0] ?? null
-}
+  const evidence = await verifyDirectAuditEvidenceFile(stored.evidencePath, stored.evidenceHash)
+  const verdict = verdictCode(evidence.result.verdict)
+  let modelShareBps = 0
+  let expectedEpoch: bigint
+  try {
+    if (verdict === VERIFIER_VERDICT_DIFF) {
+      if (!stored.sellerAddress || stored.sellerAddress.toLowerCase() !== evidence.target.sellerAddress.toLowerCase()) {
+        throw new Error(`audit ${auditId} has no consistent verified seller address`)
+      }
+      const epochWindow = await context.registryClient.currentEpochWindow()
+      const resolveTrafficShare = context.resolveTrafficShare ?? resolveAntscanTrafficShare
+      const snapshot = await resolveTrafficShare({
+        sellerAddress: stored.sellerAddress,
+        serviceHash: evidence.target.serviceHash,
+        epochWindow,
+      })
+      assertTrafficShareSnapshot(snapshot, stored.sellerAddress, evidence.target.serviceHash, epochWindow)
+      const currentWindow = await context.registryClient.currentEpochWindow()
+      if (
+        currentWindow.epoch !== epochWindow.epoch
+        || currentWindow.startedAt !== epochWindow.startedAt
+        || currentWindow.endsAt !== epochWindow.endsAt
+      ) {
+        throw new Error('verification epoch changed while calculating seller traffic share')
+      }
+      expectedEpoch = epochWindow.epoch
+      modelShareBps = snapshot.modelShareBps
+      context.storage.saveTrafficShareSnapshot({
+        auditId,
+        source: snapshot.source,
+        epoch: snapshot.epoch.toString(),
+        windowStartedAt: snapshot.windowStartedAt,
+        windowEndedAt: snapshot.windowEndedAt,
+        indexedBlock: snapshot.indexedBlock,
+        sellerAddress: snapshot.sellerAddress,
+        serviceHash: snapshot.serviceHash,
+        serviceVolumeUsdc: snapshot.serviceVolumeUsdc.toString(),
+        sellerVolumeUsdc: snapshot.sellerVolumeUsdc.toString(),
+        modelShareBps,
+        createdAt: Date.now(),
+      })
+      context.storage.updateDirectAudit(auditId, 'completed', {
+        epoch: expectedEpoch.toString(),
+        modelShareBps,
+        failureReason: null,
+      })
+    } else {
+      expectedEpoch = await context.registryClient.currentEpoch()
+    }
+  } catch (error) {
+    context.storage.updateDirectAudit(auditId, 'completed', {
+      failureReason: `verification result preparation failed: ${asError(error).message}`,
+    })
+    throw error
+  }
+  let attestationTxHash: string
+  try {
+    attestationTxHash = await context.registryClient.submitVerificationResult(context.signer, {
+      auditId,
+      agentId: BigInt(evidence.target.agentId),
+      serviceHash: evidence.target.serviceHash,
+      verdict,
+      expectedEpoch,
+      modelShareBps,
+      probeCount: evidence.result.authenticatedProbeCount,
+      metrics: evidence.metrics,
+      evidenceHash: stored.evidenceHash,
+    })
+  } catch (error) {
+    context.storage.updateDirectAudit(auditId, 'completed', {
+      failureReason: `verification result failed: ${asError(error).message}`,
+    })
+    throw error
+  }
 
-export function estimateWorstCaseSellerQuote(peer: PeerInfo, service: string, requestBytes: Uint8Array): bigint {
-  const request = decodeRequest(requestBytes)
-  const pricing = servicePricing(peer, service)
-  const body = JSON.parse(new TextDecoder().decode(request.body)) as { max_tokens?: unknown; max_completion_tokens?: unknown }
-  const maxOutputTokens = positiveInteger(body.max_tokens ?? body.max_completion_tokens)
-  if (maxOutputTokens === null) throw new Error('audit request has no bounded output token count')
-  return computeCostUsdc(estimateTokensFromBytes(request.body), maxOutputTokens, pricing)
-}
+  const submittedEvent = await resolveSubmittedEvent(context, {
+    txHash: attestationTxHash,
+    auditId,
+    agentId: Number(evidence.target.agentId),
+    serviceHash: evidence.target.serviceHash,
+  }).catch((error) => {
+    context.warn?.(`could not read attestation credit result for ${auditId}: ${asError(error).message}`)
+    return null
+  })
+  const credited = submittedEvent?.credited ?? null
+  const fallbackEpoch = stored.epoch === null ? await context.registryClient.currentEpoch() : BigInt(stored.epoch)
+  const creditedEpoch = submittedEvent?.epoch ?? fallbackEpoch
+  context.storage.updateDirectAudit(auditId, 'attested', {
+    epoch: creditedEpoch.toString(),
+    attestationTxHash,
+    credited,
+    failureReason: null,
+  })
 
-export function shouldBackoffSeller(failureKind: string): boolean {
-  return ['dispatch-timeout', 'seller-transport', 'invalid-response-auth', 'seller-http'].includes(failureKind)
-}
-
-function isExplicitPreExecutionRejection(message: string): boolean {
-  return ['busy', 'rate_limited', 'relay_at_capacity', 'verifier_not_approved', 'relay payout below configured minimum']
-    .some((value) => message.toLowerCase().includes(value))
-}
-
-function servicePricing(peer: PeerInfo, service: string): {
-  inputUsdPerMillion: number
-  outputUsdPerMillion: number
-  cachedInputUsdPerMillion?: number
-} {
-  const normalized = service.trim().toLowerCase()
-  for (const entry of Object.values(peer.providerPricing ?? {})) {
-    for (const [advertised, pricing] of Object.entries(entry.services ?? {})) {
-      if (advertised.trim().toLowerCase() === normalized) return pricing
+  if (evidenceUri) {
+    try {
+      await context.registryClient.publishEvidence(context.signer, auditId, evidenceUri)
+      context.storage.updateDirectAudit(auditId, 'attested', { evidenceUri })
+    } catch (error) {
+      context.warn?.(`evidence publication failed for ${auditId}: ${asError(error).message}`)
     }
   }
-  if (peer.defaultInputUsdPerMillion === undefined || peer.defaultOutputUsdPerMillion === undefined) {
-    throw new Error(`target has no pricing for ${service}`)
-  }
+
   return {
-    inputUsdPerMillion: peer.defaultInputUsdPerMillion,
-    outputUsdPerMillion: peer.defaultOutputUsdPerMillion,
-    ...(peer.defaultCachedInputUsdPerMillion !== undefined
-      ? { cachedInputUsdPerMillion: peer.defaultCachedInputUsdPerMillion }
-      : {}),
+    runId: auditId,
+    auditId,
+    evidencePath: stored.evidencePath,
+    evidenceHash: stored.evidenceHash,
+    attestationTxHash,
+    credited,
+    epoch: creditedEpoch,
+    verdict,
+    modelShareBps,
+    probeCount: evidence.result.selectedProbeCount,
+    authenticatedProbeCount: evidence.result.authenticatedProbeCount,
+    parsedProbeCount: evidence.result.parsedProbeCount,
+    exchanges: evidence.exchanges,
   }
 }
 
-function peerAdvertisesService(peer: PeerInfo, service: string): boolean {
-  const normalized = service.trim().toLowerCase()
-  for (const provider of peer.metadata?.providers ?? []) {
-    if ((provider.services ?? []).some((candidate) => candidate.trim().toLowerCase() === normalized)) return true
-  }
-  return Object.values(peer.providerPricing ?? {}).some((entry) =>
-    Object.keys(entry.services ?? {}).some((candidate) => candidate.trim().toLowerCase() === normalized),
-  )
-}
-
-function decodeRequest(bytes: Uint8Array) {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  let offset = 0
-  const decoder = new TextDecoder()
-  const requestIdLength = view.getUint16(offset); offset += 2
-  const requestId = decoder.decode(bytes.subarray(offset, offset + requestIdLength)); offset += requestIdLength
-  const methodLength = view.getUint8(offset); offset += 1
-  const method = decoder.decode(bytes.subarray(offset, offset + methodLength)); offset += methodLength
-  const pathLength = view.getUint16(offset); offset += 2
-  const path = decoder.decode(bytes.subarray(offset, offset + pathLength)); offset += pathLength
-  const headerCount = view.getUint16(offset); offset += 2
-  const headers: Record<string, string> = {}
-  for (let index = 0; index < headerCount; index += 1) {
-    const keyLength = view.getUint16(offset); offset += 2
-    const key = decoder.decode(bytes.subarray(offset, offset + keyLength)); offset += keyLength
-    const valueLength = view.getUint16(offset); offset += 2
-    const value = decoder.decode(bytes.subarray(offset, offset + valueLength)); offset += valueLength
-    headers[key] = value
-  }
-  const bodyLength = view.getUint32(offset); offset += 4
-  const body = bytes.subarray(offset, offset + bodyLength)
-  if (offset + bodyLength !== bytes.length) throw new Error('invalid encoded audit request')
-  return { requestId, method, path, headers, body }
-}
-
-function positiveInteger(value: unknown): number | null {
-  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null
-}
-
-function randomBytes32(): string {
-  return `0x${randomBytes(32).toString('hex')}`
-}
-
-function contentIdToBytes32(contentId: string): string {
-  if (/^0x[0-9a-fA-F]{64}$/.test(contentId)) return contentId
-  const match = /^sha256:([0-9a-fA-F]{64})$/.exec(contentId)
-  if (!match) throw new Error(`content id is not bytes32-compatible: ${contentId}`)
-  return `0x${match[1]}`
-}
-
-function isZeroAddress(value: string): boolean {
-  return /^0x0{40}$/i.test(value)
-}
-
-function assertPersistedCommitMatches(
-  plan: ReturnType<typeof requireCommittedAuditPlan>,
-  committed: Awaited<ReturnType<VerifierRegistryClient['getAudit']>>,
+function assertTrafficShareSnapshot(
+  snapshot: TrafficShareSnapshot,
+  sellerAddress: string,
+  targetServiceHash: string,
+  epochWindow: { epoch: bigint; startedAt: number; endsAt: number },
 ): void {
-  if (committed.auditJobRoot.toLowerCase() !== plan.auditJobRoot.toLowerCase()
-    || committed.targetCommitment.toLowerCase() !== plan.targetCommitment.toLowerCase()
-    || committed.probeRoot.toLowerCase() !== plan.probeRoot.toLowerCase()
-    || committed.jobCount !== plan.jobCount
-    || committed.probeCount !== plan.probeCount
-    || committed.payoutPerJobUsdc !== plan.payoutPerJobUsdc) {
-    throw new Error('on-chain audit does not match the persisted relay-neutral plan')
+  if (snapshot.source.trim().length === 0) throw new Error('traffic-share source is missing')
+  if (
+    snapshot.epoch !== epochWindow.epoch
+    || snapshot.windowStartedAt !== epochWindow.startedAt
+    || snapshot.windowEndedAt !== epochWindow.endsAt
+  ) {
+    throw new Error('traffic-share snapshot does not match the requested epoch')
   }
+  if (snapshot.sellerAddress.toLowerCase() !== sellerAddress.toLowerCase()) {
+    throw new Error('traffic-share snapshot seller mismatch')
+  }
+  if (snapshot.serviceHash.toLowerCase() !== targetServiceHash.toLowerCase()) {
+    throw new Error('traffic-share snapshot service mismatch')
+  }
+  if (!Number.isSafeInteger(snapshot.indexedBlock) || snapshot.indexedBlock < 0) {
+    throw new Error('traffic-share snapshot has an invalid indexed block')
+  }
+  const expectedShare = calculateTrafficShareBps(snapshot.serviceVolumeUsdc, snapshot.sellerVolumeUsdc)
+  if (snapshot.modelShareBps !== expectedShare) throw new Error('traffic-share snapshot basis points are inconsistent')
+}
+
+export async function runDirectAudit(
+  context: DirectAuditContext,
+  input: RunDirectAuditInput,
+): Promise<DirectAuditResult> {
+  const observed = await executeDirectAuditObservation(context, input)
+  const attested = await attestCompletedDirectAudit(context, observed.auditId, input.evidenceUri)
+  return { ...attested, runId: observed.runId }
+}
+
+async function executeProbeBatches(
+  context: DirectAuditExecutionContext,
+  input: RunDirectAuditInput,
+): Promise<BatchExecution[]> {
+  const batches = chunk(input.reference.probes, KBF_PROBES_PER_REQUEST).map((probes, batchIndex) => ({
+    batchIndex,
+    ordinalStart: batchIndex * KBF_PROBES_PER_REQUEST,
+    probes,
+  }))
+  return runConcurrently(batches, context.maxConcurrentProbeRequests, async (batch) => {
+    return executeProbeBatch(context, input, batch)
+  })
+}
+
+async function executeProbeBatch(
+  context: DirectAuditExecutionContext,
+  input: RunDirectAuditInput,
+  batch: { batchIndex: number; ordinalStart: number; probes: KbfProbe[] },
+): Promise<BatchExecution> {
+  const existing = context.storage.listDirectAuditExchanges(input.runId)
+    .find((exchange) => exchange.batchIndex === batch.batchIndex)
+  if (existing?.state === 'succeeded' && existing.exchange) {
+    const exchange = existing.exchange as unknown as DirectAuditEvidenceExchange
+    const expectedProbeIds = batch.probes.map((probe) => probe.id)
+    if (JSON.stringify(exchange.probeIds) !== JSON.stringify(expectedProbeIds)) {
+      throw new Error(`stored exchange ${input.runId}:${batch.batchIndex} has different probes`)
+    }
+    return {
+      batchIndex: batch.batchIndex,
+      ordinalStart: batch.ordinalStart,
+      probes: batch.probes,
+      exchange,
+      authenticated: Boolean(exchange.response && exchange.responseAuth && exchange.payment && exchange.response.statusCode === 200),
+    }
+  }
+
+  const requestId = randomUUID()
+  const requestBody = new TextEncoder().encode(JSON.stringify(
+    buildDirectAuditRequestBody(input.reference, input.service, batch.probes),
+  ))
+  const request = {
+    requestId,
+    method: 'POST',
+    path: '/v1/chat/completions',
+    headers: { 'content-type': 'application/json' },
+    body: requestBody,
+  }
+  const requestHash = hashRequest(request)
+  const startedAt = (context.now ?? Date.now)()
+  context.storage.saveDirectAuditExchange({
+    auditId: input.runId,
+    batchIndex: batch.batchIndex,
+    state: 'running',
+    requestId,
+    exchange: null,
+    sellerChargeUsdc: '0',
+    startedAt,
+    completedAt: null,
+    failureReason: null,
+  })
+  for (let offset = 0; offset < batch.probes.length; offset += 1) {
+    const ordinal = batch.ordinalStart + offset
+    context.storage.markDirectAuditProbeExposure(input.runId, ordinal, startedAt)
+    context.storage.saveDirectAuditProbe({
+      ...context.storage.listDirectAuditProbes(input.runId)[ordinal]!,
+      requestId,
+      requestHash,
+      timing: { startedAt },
+    })
+  }
+
+  let response: Awaited<ReturnType<DirectAuditNode['sendRequest']>> | null = null
+  let responseAuth: StoredResponseAuth | null = null
+  let payment: BuyerResponsePaymentEvidence | null = null
+  let budgetTicket: number | null = null
+  let budgetCommitted = false
+  let failureReason: string | null = null
+  let answers: Array<number | null> = new Array(batch.probes.length).fill(null)
+  let matches: MatchVector = new Array(batch.probes.length).fill(null)
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), context.probeRequestTimeoutMs)
+  try {
+    if (context.budget) {
+      if (context.maxPerRequestUsdc === undefined) {
+        throw new Error('maxPerRequestUsdc is required when a direct-audit budget is configured')
+      }
+      budgetTicket = context.budget.reserve(context.maxPerRequestUsdc)
+    }
+    response = await context.node.sendRequest(input.target, request, { signal: controller.signal })
+    const remaining = Math.max(1, startedAt + context.probeRequestTimeoutMs - (context.now ?? Date.now)())
+    responseAuth = await context.node.waitForResponseAuth(requestId, remaining)
+    if (!responseAuth.verified) throw new Error(`ResponseAuth verification failed: ${responseAuth.verificationError ?? 'unknown'}`)
+    if (responseAuth.requestHash.toLowerCase() !== requestHash.toLowerCase()) {
+      throw new Error('ResponseAuth request hash mismatch')
+    }
+    const expectedResponseHash = hashResponse(response)
+    if (responseAuth.responseHash.toLowerCase() !== expectedResponseHash.toLowerCase()) {
+      throw new Error('ResponseAuth response hash mismatch')
+    }
+    payment = await context.node.finalizeResponsePayment(input.target, requestId)
+    if (context.budget && budgetTicket !== null) {
+      const totalSpent = context.budget.commit(budgetTicket, payment.sellerChargeUsdc)
+      budgetCommitted = true
+      context.onSpend?.(totalSpent)
+    }
+    if (response.statusCode !== 200) throw new Error(`HTTP ${response.statusCode}`)
+    const completion = extractCompletionText(response.body)
+    if (completion === null) {
+      failureReason = 'malformed completion response'
+    } else {
+      answers = parseKbfAnswers(completion, batch.probes.length)
+      matches = computeMatchVector(answers, batch.probes)
+      if (answers.every((answer) => answer === null)) failureReason = 'completion contained no parseable answers'
+    }
+  } catch (error) {
+    failureReason = controller.signal.aborted
+      ? `request timed out after ${context.probeRequestTimeoutMs}ms`
+      : asError(error).message
+  } finally {
+    clearTimeout(timer)
+    if (context.budget && budgetTicket !== null && !budgetCommitted) {
+      context.budget.release(budgetTicket)
+    }
+  }
+
+  const completedAt = (context.now ?? Date.now)()
+  const responseLatencyMs = Math.max(0, completedAt - startedAt)
+  const outputTokens = response ? parseOutputTokens(response.body) : 0
+  const outputTokensPerSecondMilli = responseLatencyMs > 0
+    ? clampUint32(Math.round((outputTokens * 1_000_000) / responseLatencyMs))
+    : 0
+  const authenticated = Boolean(response && responseAuth?.verified && payment && response.statusCode === 200)
+  const exchange: DirectAuditEvidenceExchange = {
+    requestId,
+    probeIds: batch.probes.map((probe) => probe.id),
+    request: {
+      method: request.method,
+      path: request.path,
+      headers: request.headers,
+      bodyBase64: Buffer.from(request.body).toString('base64'),
+      hash: requestHash,
+    },
+    response: response ? {
+      statusCode: response.statusCode,
+      headers: response.headers,
+      bodyBase64: Buffer.from(response.body).toString('base64'),
+      hash: hashResponse(response),
+    } : null,
+    responseAuth: responseAuth ? toResponseAuthPayload(responseAuth) : null,
+    payment: payment ? {
+      sellerChargeUsdc: payment.sellerChargeUsdc.toString(),
+      spendingAuth: payment.spendingAuth as unknown as Record<string, unknown>,
+    } : null,
+    timing: {
+      startedAt,
+      completedAt,
+      responseLatencyMs,
+      outputTokens,
+      outputTokensPerSecondMilli,
+    },
+    answers,
+    matches,
+    status: authenticated && failureReason === null ? 'succeeded' : 'failed',
+    failureReason,
+  }
+  context.storage.saveDirectAuditExchange({
+    auditId: input.runId,
+    batchIndex: batch.batchIndex,
+    state: authenticated ? 'succeeded' : 'failed',
+    requestId,
+    exchange: exchange as unknown as Record<string, unknown>,
+    sellerChargeUsdc: payment?.sellerChargeUsdc.toString() ?? '0',
+    startedAt,
+    completedAt,
+    failureReason,
+  })
+
+  const persisted = context.storage.listDirectAuditProbes(input.runId)
+  for (let offset = 0; offset < batch.probes.length; offset += 1) {
+    const ordinal = batch.ordinalStart + offset
+    const existing = persisted[ordinal]
+    if (!existing) throw new Error(`direct audit probe ${ordinal} is missing`)
+    context.storage.saveDirectAuditProbe({
+      ...existing,
+      status: exchange.status,
+      requestId,
+      requestHash,
+      responseHash: exchange.response?.hash ?? null,
+      responseAuth: exchange.responseAuth as unknown as Record<string, unknown> | null,
+      payment: exchange.payment,
+      timing: exchange.timing,
+      matched: matches[offset] === null ? null : matches[offset] === 1,
+      failureReason,
+    })
+  }
+  return { ...batch, exchange, authenticated }
+}
+
+function buildMetricSnapshot(
+  exchanges: readonly DirectAuditEvidenceExchange[],
+  startedAtMs: number,
+  completedAtMs: number,
+): MetricSnapshot {
+  const successful = exchanges.filter((exchange) => exchange.responseAuth !== null && exchange.payment !== null)
+  const latencies = successful.map((exchange) => exchange.timing.responseLatencyMs)
+  const throughputs = successful.map((exchange) => exchange.timing.outputTokensPerSecondMilli)
+  return {
+    windowStartedAt: Math.floor(startedAtMs / 1_000),
+    windowEndedAt: Math.floor(completedAtMs / 1_000),
+    eligibleAttempts: clampUint16(exchanges.length),
+    successfulAttempts: clampUint16(successful.length),
+    p50TtftMs: clampUint32(percentile(latencies, 0.5)),
+    p95TtftMs: clampUint32(percentile(latencies, 0.95)),
+    p50OutputTokensPerSecondMilli: clampUint32(percentile(throughputs, 0.5)),
+    schemaVersion: 1,
+    observationsRoot: canonicalHashBytes32(exchanges.map((exchange) => ({
+      requestId: exchange.requestId,
+      requestHash: exchange.request.hash,
+      responseHash: exchange.response?.hash ?? null,
+      responseStartedAt: exchange.responseAuth?.responseStartedAt ?? null,
+      responseCompletedAt: exchange.responseAuth?.responseCompletedAt ?? null,
+      sellerChargeUsdc: exchange.payment?.sellerChargeUsdc ?? null,
+      timing: exchange.timing,
+    }))),
+  }
+}
+
+async function resolveSubmittedEvent(
+  context: DirectAuditAttestationContext,
+  input: { txHash: string; auditId: string; agentId: number; serviceHash: string },
+): Promise<Pick<AttestationSubmittedEvent, 'credited' | 'epoch'> | null> {
+  if (context.resolveSubmittedEvent) return context.resolveSubmittedEvent(input)
+  const receipt = await context.registryClient.provider.getTransactionReceipt(input.txHash)
+  if (!receipt) return null
+  const events = await context.registryClient.queryAttestations(
+    input.agentId,
+    receipt.blockNumber,
+    receipt.blockNumber,
+  )
+  return events.find((event) =>
+    event.auditId.toLowerCase() === input.auditId.toLowerCase()
+    && event.serviceHash.toLowerCase() === input.serviceHash.toLowerCase()
+  ) ?? null
+}
+
+function verdictCode(verdict: 'SAME' | 'DIFF' | 'UNDETERMINED'): Exclude<VerifierVerdict, 0> {
+  if (verdict === 'SAME') return VERIFIER_VERDICT_SAME
+  if (verdict === 'DIFF') return VERIFIER_VERDICT_DIFF
+  return VERIFIER_VERDICT_UNDETERMINED
+}
+
+export function extractCompletionText(body: Uint8Array): string | null {
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(body)) as {
+      choices?: Array<{ message?: { content?: unknown }; text?: unknown }>
+      content?: Array<{ type?: string; text?: unknown }>
+      output_text?: unknown
+    }
+    const chatContent = parsed.choices?.[0]?.message?.content
+    if (typeof chatContent === 'string') return chatContent
+    const text = parsed.choices?.[0]?.text
+    if (typeof text === 'string') return text
+    const anthropicText = parsed.content?.find((block) => block?.type === 'text')?.text
+    if (typeof anthropicText === 'string') return anthropicText
+    return typeof parsed.output_text === 'string' ? parsed.output_text : null
+  } catch {
+    return null
+  }
+}
+
+function parseOutputTokens(body: Uint8Array): number {
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(body)) as {
+      usage?: { completion_tokens?: unknown; output_tokens?: unknown }
+    }
+    const value = parsed.usage?.completion_tokens ?? parsed.usage?.output_tokens
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+  } catch {
+    return 0
+  }
+}
+
+async function runConcurrently<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let nextIndex = 0
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    for (;;) {
+      const index = nextIndex
+      nextIndex += 1
+      if (index >= items.length) return
+      results[index] = await worker(items[index]!)
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
+function chunk<T>(items: readonly T[], size: number): T[][] {
+  const chunks: T[][] = []
+  for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size))
+  return chunks
+}
+
+function percentile(values: readonly number[], quantile: number): number {
+  if (values.length === 0) return 0
+  const sorted = [...values].sort((left, right) => left - right)
+  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * quantile) - 1))] ?? 0
+}
+
+function clampUint16(value: number): number {
+  return Math.max(0, Math.min(65_535, Math.round(value)))
+}
+
+function clampUint32(value: number): number {
+  return Math.max(0, Math.min(4_294_967_295, Math.round(value)))
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error))
 }

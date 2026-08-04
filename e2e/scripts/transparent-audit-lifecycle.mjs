@@ -1,3 +1,3 @@
 #!/usr/bin/env node
 
-import './reference-relay-lifecycle.mjs'
+import './direct-verifier-lifecycle.mjs'

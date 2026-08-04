@@ -3,419 +3,439 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { getServiceMetadataId } from '../src/payments/evm/signatures.js';
 import { runMigrations } from '../src/storage/migrate.js';
-import { migration as verificationMigration001 } from '../src/storage/migrations/verification/001_create_tables.js';
-import { migration as verificationMigration002 } from '../src/storage/migrations/verification/002_create_audit_relay_tables.js';
-import { migration as verificationMigration003 } from '../src/storage/migrations/verification/003_create_reference_rotation_tables.js';
+import { migration as m001 } from '../src/storage/migrations/verification/001_create_tables.js';
+import { migration as m002 } from '../src/storage/migrations/verification/002_create_audit_relay_tables.js';
+import { migration as m003 } from '../src/storage/migrations/verification/003_create_reference_rotation_tables.js';
+import { migration as m004 } from '../src/storage/migrations/verification/004_create_dynamic_reference_catalog.js';
+import { migration as m005 } from '../src/storage/migrations/verification/005_replace_audit_relay_tables_with_direct_audits.js';
+import { migration as m006 } from '../src/storage/migrations/verification/006_create_benchmark_runs.js';
+import { migration as m007 } from '../src/storage/migrations/verification/007_add_benchmark_sizing_policy.js';
+import { migration as m008 } from '../src/storage/migrations/verification/008_create_traffic_share_snapshots.js';
 import {
   VerificationStorage,
-  type StoredAuditJob,
-  type StoredAuditPlan,
+  type StoredBenchmarkRun,
+  type StoredBenchmarkTarget,
   type StoredCertifiedKbfProbe,
-  type StoredRelayEntitlement,
+  type StoredDirectAudit,
+  type StoredDirectAuditProbe,
 } from '../src/verification/storage.js';
 
 const AUDIT_ID = '0x' + '11'.repeat(32);
-const CHANNEL_ID = '0x' + '22'.repeat(32);
 const SERVICE = 'gpt-5.6-sol';
-const SERVICE_HASH = getServiceMetadataId(SERVICE);
+const SERVICE_HASH = '0x' + '22'.repeat(32);
 
-function plan(jobCount = 1): StoredAuditPlan {
+function audit(): StoredDirectAudit {
   return {
     auditId: AUDIT_ID,
-    state: 'planned',
+    state: 'pending',
     source: 'manual',
-    epoch: '1',
-    durationMs: 86_400_000,
-    chainId: 'base-local',
-    registryAddress: '0x' + '33'.repeat(20),
-    treasuryAddress: '0x' + '44'.repeat(20),
-    verifierAddress: '0x' + '55'.repeat(20),
-    agentId: '7',
-    targetPeerId: '66'.repeat(20),
+    epoch: '7',
+    verifierAddress: '0x' + '33'.repeat(20),
+    agentId: '9',
+    sellerAddress: '0x' + '44'.repeat(20),
+    targetPeerId: '44'.repeat(20),
     targetService: SERVICE,
     targetServiceHash: SERVICE_HASH,
-    targetSalt: '0x' + '77'.repeat(32),
-    targetCommitment: '0x' + '88'.repeat(32),
-    probeRoot: '0x' + '99'.repeat(32),
-    auditJobRoot: '0x' + 'aa'.repeat(32),
-    referenceId: '0x' + 'bb'.repeat(32),
-    queryProfileHash: '0x' + 'cc'.repeat(32),
-    verifierConfigHash: '0x' + 'dd'.repeat(32),
-    probeCount: jobCount * 10,
-    jobCount,
-    requiredRelayCount: 1,
-    jobTimeoutMs: 45_000,
-    payoutPerJobUsdc: 2500n,
-    reservedBudgetUsdc: 2500n * BigInt(jobCount),
-    commitTxHash: null,
-    attestationTxHash: null,
+    referenceId: 'sha256:reference',
+    queryProfileHash: 'sha256:profile',
+    probeCount: 2,
+    authenticatedProbeCount: 0,
+    statisticalPower: null,
+    verdict: null,
+    modelShareBps: null,
+    metrics: null,
+    evidencePath: null,
     evidenceHash: null,
     evidenceUri: null,
-    evidenceState: 'none',
-    executeAfter: 1_800_000_000,
-    executeBefore: 1_800_000_600,
-    forceClaimAvailableAt: 1_800_022_200,
-    forceClaimDeadline: 1_802_614_200,
+    attestationTxHash: null,
+    credited: null,
+    startedAt: null,
+    completedAt: null,
     createdAt: 1_800_000_000_000,
     updatedAt: 1_800_000_000_000,
     failureReason: null,
   };
 }
 
-function job(jobIndex = 0): StoredAuditJob {
+function probe(ordinal: number): StoredDirectAuditProbe {
   return {
     auditId: AUDIT_ID,
-    jobIndex,
-    state: 'assigned',
-    scheduledAt: 1_800_000_000_000,
-    relayPeerId: 'ee'.repeat(20),
-    relayBuyerAddress: '0x' + 'ee'.repeat(20),
-    assignmentAttempt: 0,
-    assignmentSignature: '0x' + 'ab'.repeat(65),
-    assignmentState: 'assigned',
-    assignedAt: 1_800_000_000_000,
-    lastDispatchAt: null,
-    sellerPeerId: '66'.repeat(20),
-    service: SERVICE,
-    serviceHash: SERVICE_HASH,
-    requestHash: `0x${(jobIndex + 1).toString(16).padStart(64, '0')}`,
-    jobSalt: `0x${(jobIndex + 100).toString(16).padStart(64, '0')}`,
-    executeAfter: 1_800_000_000,
-    executeBefore: 1_800_000_600,
-    requestBytes: new TextEncoder().encode(`request-${jobIndex}`),
-    positionalProof: ['0x' + 'ff'.repeat(32)],
-    responseBytes: null,
-    responseAuthPayload: null,
-    sellerChargeUsdc: null,
-    paymentMetadata: null,
-    dispatchedAt: null,
-    completedAt: null,
-    failureKind: null,
-    failureMessage: null,
-    entitlementPersistedAt: null,
+    ordinal,
+    probeId: `probe-${ordinal}`,
+    status: 'selected',
+    requestId: null,
+    requestHash: null,
+    responseHash: null,
+    responseAuth: null,
+    payment: null,
+    timing: null,
+    matched: null,
+    exposureCountedAt: null,
+    failureReason: null,
   };
 }
 
-function paymentMetadata(cumulativeAmount = '2500'): Record<string, unknown> {
-  return {
-    spendingAuth: {
-      channelId: CHANNEL_ID,
-      cumulativeAmount,
-      metadataHash: '0x' + '12'.repeat(32),
-    },
-  };
-}
-
-function entitlement(): StoredRelayEntitlement {
-  return {
-    auditId: AUDIT_ID,
-    jobIndex: 0,
-    relayPeerId: 'ee'.repeat(20),
-    relayBuyerAddress: '0x' + 'ee'.repeat(20),
-    registryAddress: '0x' + '33'.repeat(20),
-    treasuryAddress: '0x' + '44'.repeat(20),
-    job: {
-      auditId: AUDIT_ID,
-      jobIndex: 0,
-      sellerPeerId: '0x' + '66'.repeat(20),
-      serviceHash: SERVICE_HASH,
-      requestHash: job().requestHash,
-      jobSalt: job().jobSalt,
-      executeAfter: 1_800_000_000,
-      executeBefore: 1_800_000_600,
-    },
-    positionalProof: ['0x' + 'ff'.repeat(32)],
-    assignment: {
-      auditId: AUDIT_ID,
-      jobIndex: 0,
-      attempt: 0,
-      relayBuyer: '0x' + 'ee'.repeat(20),
-      payoutPerJobUsdc: '2500',
-      executeAfter: 1_800_000_000,
-      executeBefore: 1_800_000_600,
-    },
-    verifierSignature: '0x' + 'ab'.repeat(65),
-    responseBytes: new Uint8Array([4, 5, 6]),
-    responseAuthPayload: new Uint8Array([1, 2, 3]),
-    payoutUsdc: 2500n,
-    sellerChargeUsdc: 2000n,
-    paymentMetadata: paymentMetadata(),
-    forceClaimAvailableAt: 1_800_022_200,
-    forceClaimDeadline: 1_802_614_200,
-    state: 'awaiting-attestation',
-    claimTxHash: null,
-    createdAt: 1_800_000_100_000,
-    updatedAt: 1_800_000_100_000,
-  };
-}
-
-describe('VerificationStorage audit and relay durability', () => {
-  let tempDir: string;
-  let dbPath: string;
+describe('VerificationStorage direct audits', () => {
+  let directory: string;
   let storage: VerificationStorage;
 
   beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), 'verification-storage-'));
-    dbPath = join(tempDir, 'verification.db');
-    storage = new VerificationStorage(dbPath);
+    directory = mkdtempSync(join(tmpdir(), 'antseed-verification-storage-'));
+    storage = new VerificationStorage(join(directory, 'verification.db'));
   });
 
   afterEach(() => {
     storage.close();
-    rmSync(tempDir, { recursive: true, force: true });
+    rmSync(directory, { recursive: true, force: true });
   });
 
-  it('applies consolidated migration 002 and persists the audit runtime timeout', () => {
-    storage.saveAuditPlan(plan(), [job()]);
-    expect(storage.getAuditPlan(AUDIT_ID)?.jobTimeoutMs).toBe(45_000);
-    const db = (storage as unknown as { _db: { prepare: (sql: string) => { all: () => Array<{ name: string }> } } })._db;
-    const columns = db.prepare('PRAGMA table_info(audit_plans)').all().map((column) => column.name);
-    expect(columns).toContain('job_timeout_ms');
-    const chargeTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='audit_job_charges'").all();
-    expect(chargeTable).toHaveLength(1);
-    const versions = (storage as unknown as {
-      _db: { prepare: (sql: string) => { all: () => Array<{ version: number }> } };
-    })._db.prepare('SELECT version FROM schema_version ORDER BY version').all();
-    expect(versions.map((row) => row.version)).toEqual([1, 2, 3, 4]);
-    for (const table of [
-      'reference_builds', 'audit_probe_selections', 'probe_exposures',
-      'certified_kbf_probes', 'certified_kbf_imports', 'audit_rounds', 'audit_round_members',
-    ]) {
-      expect(db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='${table}'`).all()).toEqual([
-        { name: table },
-      ]);
-    }
+  it('stores direct audit state, probe evidence, and exposure reservations', () => {
+    storage.saveDirectAudit(audit(), [probe(0), probe(1)]);
+    expect(storage.getDirectAudit(AUDIT_ID)?.state).toBe('pending');
+    expect(storage.listActiveDirectProbeIds('9', SERVICE)).toEqual(['probe-0', 'probe-1']);
+
+    storage.markDirectAuditProbeExposure(AUDIT_ID, 0, 1_800_000_000_100);
+    storage.saveDirectAuditProbe({
+      ...probe(0),
+      status: 'succeeded',
+      requestId: 'request-0',
+      requestHash: '0x' + '55'.repeat(32),
+      responseHash: '0x' + '66'.repeat(32),
+      responseAuth: { verified: true },
+      payment: { chargedUsdc: '1200' },
+      timing: { ttftMs: 80, outputTokensPerSecondMilli: 20_000 },
+      matched: true,
+      exposureCountedAt: 1_800_000_000_100,
+    });
+    const updated = storage.updateDirectAudit(AUDIT_ID, 'attested', {
+      authenticatedProbeCount: 1,
+      statisticalPower: 0.95,
+      verdict: 1,
+      modelShareBps: 0,
+      metrics: { p50TtftMs: 80 },
+      evidencePath: '/tmp/evidence.json',
+      evidenceHash: '0x' + '77'.repeat(32),
+      attestationTxHash: '0x' + '88'.repeat(32),
+      credited: true,
+      completedAt: 1_800_000_001_000,
+    });
+
+    expect(updated.state).toBe('attested');
+    expect(storage.listDirectAuditProbes(AUDIT_ID)[0]).toMatchObject({
+      status: 'succeeded',
+      matched: true,
+      responseAuth: { verified: true },
+    });
+    expect(storage.getProbeExposureCounts('9', SERVICE).get('probe-0')).toBe(1);
   });
 
-  it('upgrades a version-1 verification database through consolidated migration 002', () => {
-    storage.close();
-    const legacyPath = join(tempDir, 'legacy-verification.db');
-    const legacyDb = new Database(legacyPath);
-    runMigrations(legacyDb, [verificationMigration001]);
-    legacyDb.close();
+  it('stores a traffic-share snapshot for a direct audit', () => {
+    storage.saveDirectAudit(audit());
+    storage.saveTrafficShareSnapshot({
+      auditId: AUDIT_ID,
+      source: 'antscan-ponder-settlement-services-v1',
+      epoch: '7',
+      windowStartedAt: 1_800_000_000,
+      windowEndedAt: 1_800_604_800,
+      indexedBlock: 12_345,
+      sellerAddress: '0x' + '44'.repeat(20),
+      serviceHash: SERVICE_HASH,
+      serviceVolumeUsdc: '25',
+      sellerVolumeUsdc: '100',
+      modelShareBps: 2_500,
+      createdAt: 1_800_000_100_000,
+    });
 
-    storage = new VerificationStorage(legacyPath);
-    const db = (storage as unknown as {
-      _db: { prepare: (sql: string) => { all: () => Array<Record<string, unknown>> } };
-    })._db;
-    expect(db.prepare('SELECT version FROM schema_version ORDER BY version').all()).toEqual([
-      { version: 1 },
-      { version: 2 },
-      { version: 3 },
-      { version: 4 },
-    ]);
-    expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='audit_plans'").all()).toEqual([
-      { name: 'audit_plans' },
-    ]);
+    expect(storage.getTrafficShareSnapshot(AUDIT_ID)).toMatchObject({
+      epoch: '7',
+      indexedBlock: 12_345,
+      serviceVolumeUsdc: '25',
+      sellerVolumeUsdc: '100',
+      modelShareBps: 2_500,
+    });
   });
 
-  it('persists reference build state and normalizes service identity', () => {
+  it('preserves response auth storage', () => {
+    storage.insertResponseAuth({
+      version: 1,
+      requestId: 'request-1',
+      channelId: '0x' + '99'.repeat(32),
+      buyerPeerId: 'aa'.repeat(20),
+      sellerPeerId: 'bb'.repeat(20),
+      advertisedService: SERVICE,
+      provider: 'openai-responses',
+      statusCode: 200,
+      requestHash: '0x' + 'cc'.repeat(32),
+      responseHash: '0x' + 'dd'.repeat(32),
+      responseStartedAt: 100,
+      responseCompletedAt: 200,
+      signature: '0x1234',
+      receivedAt: 210,
+      verified: true,
+      verificationError: null,
+    });
+
+    expect(storage.getResponseAuth('request-1')).toMatchObject({ verified: true, advertisedService: SERVICE });
+  });
+
+  it('preserves reference builds and certified probe catalogs', () => {
     storage.upsertReferenceBuild({
-      service: ' GPT-5.6-SOL ',
-      endpointHash: '0x' + '12'.repeat(32),
-      state: 'backoff',
-      attempts: 2,
-      nextRetryAt: 1_800_000_060_000,
-      requestCount: 73,
-      referenceId: null,
-      failureReason: 'temporary upstream failure',
-      createdAt: 1_800_000_000_000,
-      updatedAt: 1_800_000_001_000,
-    });
-    expect(storage.getReferenceBuild(SERVICE, '0x' + '12'.repeat(32))).toMatchObject({
       service: SERVICE,
-      state: 'backoff',
-      attempts: 2,
-      requestCount: 73,
+      endpointHash: 'endpoint',
+      state: 'ready',
+      attempts: 1,
+      nextRetryAt: null,
+      requestCount: 12,
+      referenceId: 'sha256:reference',
+      failureReason: null,
+      createdAt: 10,
+      updatedAt: 20,
     });
-  });
-
-  it('reserves probes and counts each dispatched job exposure idempotently', () => {
-    const probes = Array.from({ length: 20 }, (_, index) => `probe-${String(index).padStart(2, '0')}`);
-    storage.saveAuditPlan(plan(2), [job(0), job(1)]);
-    storage.reserveAuditProbes(AUDIT_ID, probes);
-
-    expect(storage.listActiveReservedProbeIds('7', SERVICE)).toEqual(probes);
-    storage.markAuditJobProbeExposure(AUDIT_ID, 0, 1_800_000_100_000);
-    storage.markAuditJobProbeExposure(AUDIT_ID, 0, 1_800_000_101_000);
-
-    const counts = storage.getProbeExposureCounts('7', SERVICE);
-    expect(Array.from(counts.entries())).toEqual(probes.slice(0, 10).map((probeId) => [probeId, 1]));
-    expect(storage.listAuditProbeSelections(AUDIT_ID).filter((selection) => selection.exposureCountedAt !== null))
-      .toHaveLength(10);
-
-    storage.releaseUnexposedAuditProbeReservations(AUDIT_ID);
-    expect(storage.listAuditProbeSelections(AUDIT_ID).map((selection) => selection.probeId)).toEqual(probes.slice(0, 10));
-  });
-
-  it('collapses historical exposure across reference ids and isolates other agents', () => {
-    storage.close();
-    const legacyPath = join(tempDir, 'rotation-v3.db');
-    const legacyDb = new Database(legacyPath);
-    runMigrations(legacyDb, [verificationMigration001, verificationMigration002, verificationMigration003]);
-    const insert = legacyDb.prepare(`
-      INSERT INTO probe_exposures (
-        agent_id, service, reference_id, probe_id, exposure_count, last_audit_id, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-    insert.run('7', SERVICE, 'ref-a', 'shared-probe', 2, 'audit-a', 100);
-    insert.run('7', SERVICE, 'ref-b', 'shared-probe', 1, 'audit-b', 200);
-    legacyDb.close();
-
-    storage = new VerificationStorage(legacyPath);
-    expect(Array.from(storage.getProbeExposureCounts('7', SERVICE))).toEqual([['shared-probe', 1]]);
-    expect(storage.getProbeExposureCounts('8', SERVICE).size).toBe(0);
-  });
-
-  it('persists certified probes and durable round membership', () => {
-    const now = 1_800_000_000_000;
-    const probe: StoredCertifiedKbfProbe = {
+    const certified: StoredCertifiedKbfProbe = {
       service: SERVICE,
-      certificationHash: 'sha256:profile',
+      certificationHash: 'certification',
       probeId: 'probe-1',
-      probe: { id: 'probe-1', consensus: 42 },
-      certification: { stable: true },
-      queryProfile: { version: 1 },
-      sourceId: 'venice-smoke',
-      trust: 'smoke',
-      certifiedAt: now,
-      expiresAt: now + 60_000,
+      probe: { id: 'probe-1' },
+      certification: { version: 1 },
+      queryProfile: { maxTokens: 16 },
+      sourceId: 'trusted',
+      trust: 'trusted',
+      certifiedAt: 10,
+      expiresAt: Date.now() + 60_000,
       healthy: true,
       failureReason: null,
-      createdAt: now,
-      updatedAt: now,
+      createdAt: 10,
+      updatedAt: 10,
     };
-    expect(storage.upsertCertifiedKbfProbes([probe])).toEqual({ inserted: 1, known: 0 });
-    expect(storage.upsertCertifiedKbfProbes([probe])).toEqual({ inserted: 0, known: 1 });
-    expect(storage.countCertifiedKbfProbes(SERVICE, probe.certificationHash, now)).toBe(1);
+    expect(storage.upsertCertifiedKbfProbes([certified])).toEqual({ inserted: 1, known: 0 });
+    expect(storage.getReferenceBuild(SERVICE, 'endpoint')?.referenceId).toBe('sha256:reference');
+    expect(storage.listCertifiedKbfProbes(SERVICE, 'certification')).toHaveLength(1);
+  });
 
-    storage.saveAuditPlan(plan());
-    storage.saveAuditRound({
-      roundId: 'round-1',
+  it('stores benchmark runs, targets, and resumable direct exchanges', () => {
+    const run: StoredBenchmarkRun = {
+      runId: 'benchmark-1',
+      state: 'planned',
+      mode: 'observe',
       service: SERVICE,
-      endpointHash: 'sha256:endpoint',
-      epoch: '1',
-      state: 'preparing',
-      attempts: 0,
-      nextRetryAt: null,
-      targetCount: 1,
-      generatedProbeCount: 1,
-      requestCount: 4,
-      failureReason: null,
-      createdAt: now,
-      updatedAt: now,
-    }, [{
-      roundId: 'round-1',
-      auditId: AUDIT_ID,
-      state: 'prepared',
-      referenceId: 'sha256:reference',
+      epoch: '7',
+      referenceId: null,
+      certificationHash: null,
+      queryProfileHash: null,
+      probeSizingMode: 'auto',
       probeCount: 100,
-      cachedProbeCount: 90,
-      generatedProbeCount: 10,
-      createdAt: now,
-      updatedAt: now,
-    }]);
-    expect(storage.getAuditRound('round-1')).toMatchObject({ state: 'preparing', requestCount: 4 });
-    expect(storage.getAuditRoundMemberByAuditId(AUDIT_ID)).toMatchObject({ probeCount: 100, cachedProbeCount: 90 });
-  });
-
-  it('replaces stale planned jobs when an uncommitted audit is re-prepared', () => {
-    storage.saveAuditPlan(plan(2), [job(0), job(1)]);
-    storage.saveAuditPlan(plan(1), [job(0)], { replaceJobs: true });
-    expect(storage.listAuditJobs(AUDIT_ID).map((stored) => stored.jobIndex)).toEqual([0]);
-  });
-
-  it('rolls back a torn verifier write when normalized payment metadata is invalid', () => {
-    storage.saveAuditPlan(plan(), [job()]);
-    expect(() => storage.persistAuditJobSuccess({
-      auditId: AUDIT_ID,
-      jobIndex: 0,
-      responseBytes: new Uint8Array([1]),
-      responseAuthPayload: new Uint8Array([2]),
-      sellerChargeUsdc: 2000n,
-      paymentMetadata: {},
-    })).toThrow(/no SpendingAuth/);
-    expect(storage.listAuditJobs(AUDIT_ID)[0]).toMatchObject({
-      state: 'assigned',
-      responseBytes: null,
-      sellerChargeUsdc: null,
-    });
-  });
-
-  it('atomically rolls back the job update when entitlement insertion conflicts', () => {
-    storage.saveAuditPlan(plan(), [job()]);
-    storage.persistRelayEntitlement(entitlement());
-    expect(() => storage.persistRelaySuccess({
-      auditId: AUDIT_ID,
-      jobIndex: 0,
-      responseBytes: new Uint8Array([9]),
-      entitlement: entitlement(),
-    })).toThrow();
-    expect(storage.listAuditJobs(AUDIT_ID)[0]).toMatchObject({
-      state: 'assigned',
-      responseBytes: null,
-      entitlementPersistedAt: null,
-    });
-  });
-
-  it('recovers persisted entitlements and audit charges after restart', () => {
-    storage.saveAuditPlan(plan(), [job()]);
-    storage.persistAuditJobSuccess({
-      auditId: AUDIT_ID,
-      jobIndex: 0,
-      responseBytes: new Uint8Array([1]),
-      responseAuthPayload: new Uint8Array([2]),
-      sellerChargeUsdc: 2000n,
-      paymentMetadata: paymentMetadata(),
-    });
-    storage.persistRelayEntitlement(entitlement());
-    storage.close();
-    storage = new VerificationStorage(dbPath);
-
-    expect(storage.getRelayEntitlement(AUDIT_ID, 0)).toMatchObject({
-      payoutUsdc: 2500n,
-      sellerChargeUsdc: 2000n,
-      state: 'awaiting-attestation',
-    });
-    expect(storage.auditChargeForSettlement(CHANNEL_ID, SERVICE_HASH, 0n, 2500n)).toBe(2000n);
-    expect(() => storage.persistRelayEntitlement(entitlement())).toThrow();
-  });
-
-  it('deduplicates finalized logs and computes modelShareBps from organic usage', () => {
-    const channelsAddress = '0x' + 'ab'.repeat(20);
-    const baseEvent = {
-      chainId: '31337',
-      channelsAddress,
-      txHash: '0x' + 'cd'.repeat(32),
-      logIndex: 0,
-      blockNumber: 10,
-      blockHash: '0x' + 'de'.repeat(32),
-      settledAt: 1_800_000_000_000,
-      channelId: CHANNEL_ID,
-      agentId: '7',
-      sellerPeerId: '66'.repeat(20),
-      cumulativeServiceUsdc: 60n,
-      serviceDeltaUsdc: 60n,
-      cumulativeChannelUsdc: 60n,
-      channelDeltaUsdc: 60n,
-      auditChargeUsdc: 10n,
-      organicServiceDeltaUsdc: 50n,
+      minimumProbeCount: 100,
+      maximumProbeCount: 750,
+      probeStep: 10,
+      familyWideAlpha: 0.05,
+      perPeerAlpha: 0.00625,
+      minimumMismatchDelta: 0.1,
+      referenceConfidence: 0.99,
+      minimumStatisticalPower: 0.9,
+      achievedStatisticalPower: null,
+      referenceErrorUpperBound: null,
+      criticalMismatchCount: null,
+      minimumTargetCoverage: 1,
+      maxTotalUsdc: '5000000',
+      spentUsdc: '0',
+      discoveredCount: 1,
+      eligibleCount: 1,
+      completedCount: 0,
+      failedCount: 0,
+      referencePath: null,
+      failureReason: null,
+      createdAt: 100,
+      updatedAt: 100,
+      completedAt: null,
     };
-    expect(storage.recordFinalizedSettlement({ ...baseEvent, service: SERVICE_HASH })).toBe(true);
-    expect(storage.recordFinalizedSettlement({ ...baseEvent, service: SERVICE_HASH })).toBe(false);
-    expect(storage.recordFinalizedSettlement({
-      ...baseEvent,
-      txHash: '0x' + 'ef'.repeat(32),
-      logIndex: 1,
-      service: getServiceMetadataId('other-service'),
-      cumulativeServiceUsdc: 50n,
-      serviceDeltaUsdc: 50n,
-      auditChargeUsdc: 0n,
-      organicServiceDeltaUsdc: 50n,
-    })).toBe(true);
-    expect(storage.computeModelShareBps('7', SERVICE, 1_799_999_999_000, 1_800_000_001_000)).toBe(5000);
-    expect(storage.computeModelShareBps('8', SERVICE, 1_799_999_999_000, 1_800_000_001_000)).toBe(0);
+    const target: StoredBenchmarkTarget = {
+      runId: run.runId,
+      ordinal: 1,
+      peerId: '44'.repeat(20),
+      agentId: '9',
+      displayName: 'seller',
+      publicAddress: 'seller.example:6882',
+      advertisedService: SERVICE,
+      eligibility: 'eligible',
+      state: 'pending',
+      eligibilityReason: null,
+      auditId: null,
+      sellerChargeUsdc: '0',
+      failureReason: null,
+      createdAt: 100,
+      updatedAt: 100,
+    };
+
+    storage.saveBenchmarkRun(run);
+    storage.saveBenchmarkTargets([target]);
+    storage.updateBenchmarkRun(run.runId, { state: 'running', spentUsdc: '25' });
+    storage.updateBenchmarkTarget(run.runId, target.peerId, { state: 'running', auditId: AUDIT_ID });
+    storage.saveDirectAudit(audit(), [probe(0)]);
+    storage.saveDirectAuditExchange({
+      auditId: AUDIT_ID,
+      batchIndex: 0,
+      state: 'succeeded',
+      requestId: 'request-0',
+      exchange: { requestId: 'request-0', probeIds: ['probe-0'] },
+      sellerChargeUsdc: '25',
+      startedAt: 100,
+      completedAt: 200,
+      failureReason: null,
+    });
+
+    expect(storage.getBenchmarkRun(run.runId)).toMatchObject({ state: 'running', spentUsdc: '25' });
+    expect(storage.listBenchmarkTargets(run.runId)[0]).toMatchObject({ state: 'running', auditId: AUDIT_ID });
+    expect(storage.listDirectAuditExchanges(AUDIT_ID)[0]).toMatchObject({
+      state: 'succeeded',
+      exchange: { requestId: 'request-0', probeIds: ['probe-0'] },
+    });
+
+    const finalAuditId = '0x' + '99'.repeat(32);
+    storage.finalizeDirectAuditId(AUDIT_ID, finalAuditId);
+    expect(storage.listDirectAuditExchanges(finalAuditId)).toHaveLength(1);
+    expect(storage.listBenchmarkTargets(run.runId)[0]?.auditId).toBe(finalAuditId);
+  });
+});
+
+describe('verification migration 005', () => {
+  it('copies reusable selections, preserves catalogs, and drops relay tables', () => {
+    const db = new Database(':memory:');
+    db.pragma('foreign_keys = ON');
+    runMigrations(db, [m001, m002, m003, m004]);
+    db.prepare(`
+      INSERT INTO audit_plans (
+        audit_id, state, source, duration_ms, verifier_address, agent_id,
+        target_peer_id, target_service, target_service_hash, reference_id,
+        query_profile_hash, probe_count, job_timeout_ms, evidence_state,
+        created_at, updated_at
+      ) VALUES (?, 'planned', 'manual', 86400000, ?, ?, ?, ?, ?, ?, ?, 10, 120000, 'none', ?, ?)
+    `).run(
+      AUDIT_ID,
+      '0x' + '33'.repeat(20),
+      '9',
+      '44'.repeat(20),
+      SERVICE,
+      SERVICE_HASH,
+      'sha256:reference',
+      'sha256:profile',
+      100,
+      100,
+    );
+    db.prepare(`
+      INSERT INTO audit_probe_selections (audit_id, ordinal, job_index, probe_id)
+      VALUES (?, 0, 0, 'probe-0')
+    `).run(AUDIT_ID);
+
+    runMigrations(db, [m005]);
+
+    expect(db.prepare('SELECT state, reference_id FROM direct_audits WHERE audit_id = ?').get(AUDIT_ID)).toEqual({
+      state: 'pending',
+      reference_id: 'sha256:reference',
+    });
+    expect(db.prepare('SELECT probe_id FROM direct_audit_probes WHERE audit_id = ?').get(AUDIT_ID)).toEqual({
+      probe_id: 'probe-0',
+    });
+    const tables = new Set(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map((row) => row.name),
+    );
+    expect(tables.has('direct_audits')).toBe(true);
+    expect(tables.has('direct_audit_probes')).toBe(true);
+    expect(tables.has('response_auths')).toBe(true);
+    expect(tables.has('reference_builds')).toBe(true);
+    expect(tables.has('certified_kbf_probes')).toBe(true);
+    expect(tables.has('certified_kbf_imports')).toBe(true);
+    expect(tables.has('probe_exposures')).toBe(true);
+    expect(tables.has('audit_plans')).toBe(false);
+    expect(tables.has('audit_jobs')).toBe(false);
+    expect(tables.has('relay_entitlements')).toBe(false);
+    expect(tables.has('audit_rounds')).toBe(false);
+    db.close();
+  });
+});
+
+describe('verification migration 006', () => {
+  it('adds benchmark tables without changing existing direct audits or catalogs', () => {
+    const db = new Database(':memory:');
+    db.pragma('foreign_keys = ON');
+    runMigrations(db, [m001, m002, m003, m004, m005]);
+    db.prepare(`
+      INSERT INTO direct_audits (
+        audit_id, state, source, target_peer_id, target_service,
+        probe_count, authenticated_probe_count, created_at, updated_at
+      ) VALUES (?, 'pending', 'manual', ?, ?, 10, 0, 100, 100)
+    `).run(AUDIT_ID, '44'.repeat(20), SERVICE);
+    db.prepare(`
+      INSERT INTO certified_kbf_probes (
+        service, certification_hash, probe_id, probe_json, certification_json,
+        query_profile_json, source_id, trust, certified_at, expires_at,
+        healthy, created_at, updated_at
+      ) VALUES (?, 'cert', 'probe-1', '{}', '{}', '{}', 'source', 'smoke', 1, 999999, 1, 1, 1)
+    `).run(SERVICE);
+
+    runMigrations(db, [m006]);
+
+    const tables = new Set(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map((row) => row.name),
+    );
+    expect(tables.has('benchmark_runs')).toBe(true);
+    expect(tables.has('benchmark_targets')).toBe(true);
+    expect(tables.has('direct_audit_exchanges')).toBe(true);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM direct_audits').get()).toEqual({ count: 1 });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM certified_kbf_probes').get()).toEqual({ count: 1 });
+    db.close();
+  });
+});
+
+describe('verification migration 007', () => {
+  it('adds benchmark sizing columns without changing existing runs', () => {
+    const db = new Database(':memory:');
+    db.pragma('foreign_keys = ON');
+    runMigrations(db, [m001, m002, m003, m004, m005, m006]);
+    db.prepare(`
+      INSERT INTO benchmark_runs (
+        run_id, state, mode, service, probe_count, max_total_usdc,
+        created_at, updated_at
+      ) VALUES ('run-1', 'planned', 'observe', ?, 100, '1000', 1, 1)
+    `).run(SERVICE);
+
+    runMigrations(db, [m007]);
+
+    const row = db.prepare(`
+      SELECT probe_sizing_mode, minimum_probe_count, family_wide_alpha
+      FROM benchmark_runs WHERE run_id = 'run-1'
+    `).get();
+    expect(row).toEqual({
+      probe_sizing_mode: 'fixed',
+      minimum_probe_count: null,
+      family_wide_alpha: null,
+    });
+    db.close();
+  });
+});
+
+describe('verification migration 008', () => {
+  it('adds seller attribution and traffic-share snapshots without changing audits', () => {
+    const db = new Database(':memory:');
+    db.pragma('foreign_keys = ON');
+    runMigrations(db, [m001, m002, m003, m004, m005, m006, m007]);
+    db.prepare(`
+      INSERT INTO direct_audits (
+        audit_id, state, source, target_peer_id, target_service,
+        probe_count, authenticated_probe_count, created_at, updated_at
+      ) VALUES (?, 'pending', 'manual', ?, ?, 10, 0, 100, 100)
+    `).run(AUDIT_ID, '44'.repeat(20), SERVICE);
+
+    runMigrations(db, [m008]);
+
+    const columns = new Set(
+      (db.pragma('table_info(direct_audits)') as Array<{ name: string }>).map((column) => column.name),
+    );
+    expect(columns.has('seller_address')).toBe(true);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM direct_audits').get()).toEqual({ count: 1 });
+    expect(db.prepare(`
+      SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'traffic_share_snapshots'
+    `).get()).toEqual({ name: 'traffic_share_snapshots' });
+    db.close();
   });
 });

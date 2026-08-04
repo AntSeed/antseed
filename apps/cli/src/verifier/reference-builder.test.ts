@@ -269,6 +269,20 @@ test('postChatCompletion pins every Venice request explicitly', async () => {
   assert.equal(headers.authorization, 'Bearer local-key')
 })
 
+test('postChatCompletion accepts reasoning_content when final content is empty', async () => {
+  const content = await postChatCompletion(
+    { baseUrl: 'https://upstream.test/v1' },
+    { model: 'gpt-5.6-sol', messages: [] },
+    (async () => ({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: '', reasoning_content: '(1) 42' } }],
+      }),
+    } as Response)) as typeof fetch,
+  )
+  assert.equal(content, '(1) 42')
+})
+
 test('strict parser failures advance to the next reasoning suppression strategy', async () => {
   const source = probes(100)
   let malformedReturned = false
@@ -308,6 +322,102 @@ test('strict parser failures advance to the next reasoning suppression strategy'
   )
   assert.equal(reference.queryProfile.reasoningStrategy, 'disable-thinking')
   assert.deepEqual(reference.queryProfile.requestOverrides, { enable_thinking: false })
+})
+
+test('contrast parser retries do not poison a supported reasoning strategy', async () => {
+  const source = probes(100)
+  let malformedContrastReturned = false
+  let disableThinkingRequests = 0
+  const fetchFn = (async (_url, init) => {
+    const body = JSON.parse(String(init?.body)) as {
+      model: string
+      reasoning_effort?: string
+      enable_thinking?: boolean
+      messages: Array<{ role: string; content: string }>
+    }
+    if (body.enable_thinking === false) disableThinkingRequests += 1
+    if (body.model === 'contrast-model' && !malformedContrastReturned) {
+      malformedContrastReturned = true
+      return {
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: '<think>temporary malformed output</think>' } }] }),
+      } as Response
+    }
+    const userContent = body.messages.find((message) => message.role === 'user')?.content ?? ''
+    const lines = userContent.split('\n').flatMap((line) => {
+      const match = /^\((\d+)\) The test value of (.+?) is/.exec(line)
+      if (!match) return []
+      const value = probeValue(match[2]!) + (body.model === 'contrast-model' ? 10_000 : 0)
+      return [`(${match[1]}) ${value}`]
+    })
+    return {
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: lines.join('\n') } }] }),
+    } as Response
+  }) as typeof fetch
+
+  const reference = await buildKbfReference(
+    { baseUrl: 'https://upstream.test/v1' },
+    {
+      model: 'reference-model',
+      contrastModels: ['contrast-model'],
+      probeSource: staticProbeSource('test/v1', source),
+      candidateCount: 100,
+      batchRetryCount: 1,
+      fetchFn,
+    },
+  )
+
+  assert.equal(reference.probes.length, 100)
+  assert.equal(malformedContrastReturned, true)
+  assert.equal(disableThinkingRequests, 0)
+})
+
+test('exhausted empty contrast responses become unavailable outcomes instead of aborting enrollment', async () => {
+  const source = probes(100)
+  const fetchFn = (async (_url, init) => {
+    const body = JSON.parse(String(init?.body)) as {
+      model: string
+      messages: Array<{ role: string; content: string }>
+    }
+    if (body.model === 'empty-contrast') {
+      return {
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: '' } }] }),
+      } as Response
+    }
+    const userContent = body.messages.find((message) => message.role === 'user')?.content ?? ''
+    const lines = userContent.split('\n').flatMap((line) => {
+      const match = /^\((\d+)\) The test value of (.+?) is/.exec(line)
+      if (!match) return []
+      const value = probeValue(match[2]!) + (body.model === 'reliable-contrast' ? 10_000 : 0)
+      return [`(${match[1]}) ${value}`]
+    })
+    return {
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: lines.join('\n') } }] }),
+    } as Response
+  }) as typeof fetch
+
+  const reference = await buildKbfReference(
+    { baseUrl: 'https://upstream.test/v1' },
+    {
+      model: 'reference-model',
+      contrastModels: ['empty-contrast', 'reliable-contrast'],
+      probeSource: staticProbeSource('test/v1', source),
+      candidateCount: 100,
+      batchRetryCount: 0,
+      fetchFn,
+    },
+  )
+
+  assert.equal(reference.probes.length, 100)
+  assert.ok(reference.probes.every((probe) => {
+    const contrast = probe.contrast as {
+      outcomes?: Array<{ model: string; match: 0 | 1 | null }>
+    } | undefined
+    return contrast?.outcomes?.find((outcome) => outcome.model === 'empty-contrast')?.match === null
+  }))
 })
 
 test('failed builds expose consumed request counts without leaking secrets', async () => {

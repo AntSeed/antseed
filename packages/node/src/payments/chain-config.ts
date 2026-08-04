@@ -31,8 +31,8 @@ export interface ChainConfig {
   networkStatsUrl?: string;
   /** AntseedVerifierRegistry contract address (model-verification attestations). */
   verifierRegistryAddress?: string;
-  /** AntseedRelayTreasury contract address (fixed-price audit relay payouts). */
-  relayTreasuryAddress?: string;
+  /** AntseedVerifierRewards contract address (verifier-only epoch rewards). */
+  verifierRewardsAddress?: string;
   /** AntseedVerifierPointsPolicy contract address (prospective seller-points penalties). */
   verifierPointsPolicyAddress?: string;
 }
@@ -121,7 +121,7 @@ export function resolveChainConfig(overrides?: {
   legacyEmissionsContractAddress?: string;
   antsTokenAddress?: string;
   verifierRegistryAddress?: string;
-  relayTreasuryAddress?: string;
+  verifierRewardsAddress?: string;
   verifierPointsPolicyAddress?: string;
 }): ChainConfig {
   const base = getChainConfig(overrides?.chainId);
@@ -145,7 +145,7 @@ export function resolveChainConfig(overrides?: {
     ...(overrides?.legacyEmissionsContractAddress ? { legacyEmissionsContractAddress: overrides.legacyEmissionsContractAddress } : {}),
     ...(overrides?.antsTokenAddress ? { antsTokenAddress: overrides.antsTokenAddress } : {}),
     ...(overrides?.verifierRegistryAddress ? { verifierRegistryAddress: overrides.verifierRegistryAddress } : {}),
-    ...(overrides?.relayTreasuryAddress ? { relayTreasuryAddress: overrides.relayTreasuryAddress } : {}),
+    ...(overrides?.verifierRewardsAddress ? { verifierRewardsAddress: overrides.verifierRewardsAddress } : {}),
     ...(overrides?.verifierPointsPolicyAddress ? { verifierPointsPolicyAddress: overrides.verifierPointsPolicyAddress } : {}),
   };
 }

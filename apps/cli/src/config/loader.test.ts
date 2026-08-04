@@ -330,12 +330,12 @@ test('loadConfig preserves a valid verifier section end-to-end', async () => {
       verifier: {
         services: ['Kimi-K2'],
         referencesDir: './refs',
+        evidenceDir: './evidence',
         trustedImportedReferenceIds: [`0x${'1'.repeat(64)}`],
-        jobTimeoutMs: 45_000,
-        flatRelayFeeUsdc: '1500',
-        relaySignalingPort: 6883,
-        maxRelays: 20,
-        auditDurationMs: 36 * 60 * 60 * 1_000,
+        auditIntervalMs: 45_000,
+        maxAuditsPerEpoch: 20,
+        probeRequestTimeoutMs: 90_000,
+        maxConcurrentProbeRequests: 2,
         upstream: {
           baseUrl: 'https://openrouter.ai/api/v1',
           apiKeyEnv: 'OPENROUTER_KEY',
@@ -347,12 +347,12 @@ test('loadConfig preserves a valid verifier section end-to-end', async () => {
       const config = await loadConfig(configPath);
       assert.deepEqual(config.verifier?.services, ['Kimi-K2']);
       assert.equal(config.verifier?.referencesDir, './refs');
+      assert.equal(config.verifier?.evidenceDir, './evidence');
       assert.deepEqual(config.verifier?.trustedImportedReferenceIds, [`0x${'1'.repeat(64)}`]);
-      assert.equal(config.verifier?.jobTimeoutMs, 45_000);
-      assert.equal(config.verifier?.flatRelayFeeUsdc, '1500');
-      assert.equal(config.verifier?.relaySignalingPort, 6883);
-      assert.equal(config.verifier?.maxRelays, 20);
-      assert.equal(config.verifier?.auditDurationMs, 36 * 60 * 60 * 1_000);
+      assert.equal(config.verifier?.auditIntervalMs, 45_000);
+      assert.equal(config.verifier?.maxAuditsPerEpoch, 20);
+      assert.equal(config.verifier?.probeRequestTimeoutMs, 90_000);
+      assert.equal(config.verifier?.maxConcurrentProbeRequests, 2);
       assert.deepEqual(config.verifier?.upstream, {
         baseUrl: 'https://openrouter.ai/api/v1',
         apiKeyEnv: 'OPENROUTER_KEY',
@@ -387,9 +387,13 @@ test('loadConfig preserves Venice reference endpoint settings and merges partial
     assert.equal(config.verifier?.referenceEndpoint?.antseedPeerId, peerId);
     assert.equal(config.verifier?.referencePolicy?.certifiedProbeCount, 100);
     assert.equal(config.verifier?.referencePolicy?.minimumAuditProbeCount, 100);
-    assert.equal(config.verifier?.referencePolicy?.maximumAuditProbeCount, 500);
+    assert.equal(config.verifier?.referencePolicy?.maximumAuditProbeCount, 750);
     assert.equal(config.verifier?.referencePolicy?.auditProbeStep, 10);
     assert.equal(config.verifier?.referencePolicy?.minimumStatisticalPower, 0.9);
+    assert.equal(config.verifier?.referencePolicy?.minimumMismatchDelta, 0.1);
+    assert.equal(config.verifier?.referencePolicy?.familyWideAlpha, 0.05);
+    assert.equal(config.verifier?.referencePolicy?.referenceConfidence, 0.99);
+    assert.equal(config.verifier?.referencePolicy?.minimumAuthenticatedCoverage, 1);
     assert.equal(config.verifier?.referencePolicy?.generationDomainConcurrency, 3);
     assert.equal(config.verifier?.referencePolicy?.maxConcurrentReferenceRequests, 4);
     assert.equal(config.verifier?.referencePolicy?.maxConcurrentRequestsPerModel, 2);
@@ -436,50 +440,26 @@ test('loadConfig validates reference concurrency limits', async () => {
   });
 });
 
-test('loadConfig restricts verifier audit duration to 24 through 48 hours', async () => {
-  await withTempConfig(
-    JSON.stringify({ verifier: { auditDurationMs: 24 * 60 * 60 * 1_000 - 1 } }),
-    async (configPath) => {
-      await assert.rejects(async () => loadConfig(configPath), /verifier\.auditDurationMs/);
-    }
-  );
-  await withTempConfig(
-    JSON.stringify({ verifier: { auditDurationMs: 48 * 60 * 60 * 1_000 + 1 } }),
-    async (configPath) => {
-      await assert.rejects(async () => loadConfig(configPath), /verifier\.auditDurationMs/);
-    }
-  );
+test('loadConfig rejects removed relay-oriented verifier settings', async () => {
+  for (const key of ['jobTimeoutMs', 'flatRelayFeeUsdc', 'relaySignalingPort', 'maxRelays', 'auditDurationMs']) {
+    await withTempConfig(
+      JSON.stringify({ verifier: { [key]: 1 } }),
+      async (configPath) => {
+        await assert.rejects(async () => loadConfig(configPath), new RegExp(`verifier\\.${key}`));
+      },
+    );
+  }
 });
 
-test('loadConfig preserves valid nested buyer relay settings', async () => {
-  await withTempConfig(
-    JSON.stringify({
-      buyer: {
-        relay: {
-          enabled: false,
-          minimumPayoutPerJobUsdc: '2500',
-          maxConcurrentJobs: 3,
-          maxJobsPerHour: 80,
-          discoveryIntervalMs: 10_000,
-        },
-      },
-    }),
-    async (configPath) => {
-      const config = await loadConfig(configPath);
-      assert.deepEqual(config.buyer.relay, {
-        enabled: false,
-        minimumPayoutPerJobUsdc: '2500',
-        maxConcurrentJobs: 3,
-        maxJobsPerHour: 80,
-        discoveryIntervalMs: 10_000,
-      });
-    },
-  );
+test('loadConfig rejects removed buyer relay settings', async () => {
+  await withTempConfig(JSON.stringify({ buyer: { relay: { enabled: true } } }), async (configPath) => {
+    await assert.rejects(async () => loadConfig(configPath), /buyer\.relay is not a supported buyer option/);
+  });
 });
 
 test('loadConfig rejects the removed top-level relay section', async () => {
   await withTempConfig(JSON.stringify({ relay: { enabled: true } }), async (configPath) => {
-    await assert.rejects(loadConfig(configPath), /relay is no longer supported; use buyer\.relay/);
+    await assert.rejects(loadConfig(configPath), /relay is no longer supported/);
   });
 });
 
@@ -504,22 +484,12 @@ test('loadConfig rejects unknown verifier keys so typos fail loudly instead of b
   );
 });
 
-test('loadConfig rejects invalid relay settings', async () => {
-  await withTempConfig(
-    JSON.stringify({
-      buyer: {
-        relay: {
-          maxConcurrentJobs: 0,
-        },
-      },
-    }),
-    async (configPath) => {
-      await assert.rejects(
-        async () => loadConfig(configPath),
-        /buyer\.relay\.maxConcurrentJobs/
-      );
-    }
-  );
+test('loadConfig rejects invalid direct-verifier scheduling settings', async () => {
+  for (const key of ['auditIntervalMs', 'maxAuditsPerEpoch', 'probeRequestTimeoutMs', 'maxConcurrentProbeRequests']) {
+    await withTempConfig(JSON.stringify({ verifier: { [key]: 0 } }), async (configPath) => {
+      await assert.rejects(async () => loadConfig(configPath), new RegExp(`verifier\\.${key}`));
+    });
+  }
 });
 
 test('loadConfig rejects invalid buyer peerRefreshIntervalMs', async () => {

@@ -7,7 +7,6 @@ import type {
   SellerProviderConfig,
   TokenPricingUsdPerMillion,
 } from './types.js';
-import { MAX_AUDIT_DURATION_MS, MIN_AUDIT_DURATION_MS } from '../verifier/audit-duration.js';
 
 const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const MAX_PUBLIC_ADDRESS_LENGTH = 255;
@@ -299,8 +298,9 @@ function validateBuyerVerification(
 // unfiltered (see mergeVerifierConfig), so a typo'd key must fail here loudly
 // instead of being silently ignored.
 const VERIFIER_KEYS = new Set([
-  'services', 'referencesDir', 'upstream', 'referenceEndpoint', 'referencePolicy', 'trustedImportedReferenceIds',
-  'jobTimeoutMs', 'flatRelayFeeUsdc', 'relaySignalingPort', 'maxRelays', 'auditDurationMs',
+  'services', 'referencesDir', 'evidenceDir', 'auditIntervalMs', 'maxAuditsPerEpoch',
+  'probeRequestTimeoutMs', 'maxConcurrentProbeRequests', 'upstream', 'referenceEndpoint',
+  'referencePolicy', 'trustedImportedReferenceIds',
 ]);
 const VERIFIER_UPSTREAM_KEYS = new Set(['baseUrl', 'apiKey', 'apiKeyEnv', 'modelMap']);
 const VERIFIER_REFERENCE_ENDPOINT_KEYS = new Set([
@@ -312,9 +312,7 @@ const VERIFIER_REFERENCE_POLICY_KEYS = new Set([
   'maxRequestsPerBuild', 'minimumAuditProbeCount', 'maximumAuditProbeCount', 'auditProbeStep',
   'minimumStatisticalPower', 'maxRequestsPerRound', 'requestTimeoutMs', 'batchRetryCount',
   'generationDomainConcurrency', 'maxConcurrentReferenceRequests', 'maxConcurrentRequestsPerModel',
-]);
-const RELAY_KEYS = new Set([
-  'enabled', 'minimumPayoutPerJobUsdc', 'maxConcurrentJobs', 'maxJobsPerHour', 'discoveryIntervalMs',
+  'minimumMismatchDelta', 'familyWideAlpha', 'referenceConfidence', 'minimumAuthenticatedCoverage',
 ]);
 
 function validateVerifierConfig(
@@ -344,27 +342,19 @@ function validateVerifierConfig(
     }
   }
   const positiveInts: Array<[string, number | undefined]> = [
-    ['jobTimeoutMs', verifier.jobTimeoutMs],
-    ['relaySignalingPort', verifier.relaySignalingPort],
-    ['maxRelays', verifier.maxRelays],
+    ['auditIntervalMs', verifier.auditIntervalMs],
+    ['maxAuditsPerEpoch', verifier.maxAuditsPerEpoch],
+    ['probeRequestTimeoutMs', verifier.probeRequestTimeoutMs],
+    ['maxConcurrentProbeRequests', verifier.maxConcurrentProbeRequests],
   ];
   for (const [key, value] of positiveInts) {
     if (value !== undefined && (!Number.isInteger(value) || value < 1)) {
       errors.push(`${path}.${key} must be an integer >= 1`);
     }
   }
-  if (
-    verifier.auditDurationMs !== undefined
-    && (
-      !Number.isSafeInteger(verifier.auditDurationMs)
-      || verifier.auditDurationMs < MIN_AUDIT_DURATION_MS
-      || verifier.auditDurationMs > MAX_AUDIT_DURATION_MS
-    )
-  ) {
-    errors.push(`${path}.auditDurationMs must be an integer between 86400000 and 172800000`);
-  }
   const dirKeys: Array<[string, unknown]> = [
     ['referencesDir', verifier.referencesDir],
+    ['evidenceDir', verifier.evidenceDir],
   ];
   for (const [key, value] of dirKeys) {
     if (value !== undefined && (typeof value !== 'string' || value.trim().length === 0)) {
@@ -403,12 +393,6 @@ function validateVerifierConfig(
         }
       }
     }
-  }
-  if (verifier.relaySignalingPort !== undefined && verifier.relaySignalingPort > 65535) {
-    errors.push(`${path}.relaySignalingPort must be <= 65535`);
-  }
-  if (verifier.flatRelayFeeUsdc !== undefined && !/^\d+$/.test(verifier.flatRelayFeeUsdc)) {
-    errors.push(`${path}.flatRelayFeeUsdc must be a non-negative integer string`);
   }
   if (verifier.trustedImportedReferenceIds !== undefined) {
     if (!Array.isArray(verifier.trustedImportedReferenceIds)
@@ -487,8 +471,8 @@ function validateReferencePolicy(path: string, policy: unknown, errors: string[]
   ] as const;
   for (const key of multiplesOfTen) {
     const candidate = value[key];
-    if (candidate !== undefined && (!Number.isInteger(candidate) || Number(candidate) < 10 || Number(candidate) > 500 || Number(candidate) % 10 !== 0)) {
-      errors.push(`${path}.${key} must be a multiple of 10 from 10 through 500`);
+    if (candidate !== undefined && (!Number.isInteger(candidate) || Number(candidate) < 10 || Number(candidate) > 750 || Number(candidate) % 10 !== 0)) {
+      errors.push(`${path}.${key} must be a multiple of 10 from 10 through 750`);
     }
   }
   for (const key of ['maxProbeUsesPerTarget', 'maxReferenceAgeDays', 'maxRequestsPerBuild', 'maxRequestsPerRound', 'requestTimeoutMs'] as const) {
@@ -521,7 +505,7 @@ function validateReferencePolicy(path: string, policy: unknown, errors: string[]
     errors.push(`${path}.maxConcurrentRequestsPerModel must not exceed maxConcurrentReferenceRequests`);
   }
   const minimum = Number(value.minimumAuditProbeCount ?? value.auditProbeCount ?? 100);
-  const maximum = Number(value.maximumAuditProbeCount ?? 500);
+  const maximum = Number(value.maximumAuditProbeCount ?? 750);
   if (minimum > maximum) {
     errors.push(`${path}.minimumAuditProbeCount must not exceed maximumAuditProbeCount`);
   }
@@ -530,34 +514,15 @@ function validateReferencePolicy(path: string, policy: unknown, errors: string[]
       || value.minimumStatisticalPower < 0.9 || value.minimumStatisticalPower > 1)) {
     errors.push(`${path}.minimumStatisticalPower must be a number from 0.9 through 1`);
   }
-}
-
-function validateRelayConfig(
-  path: string,
-  relay: AntseedConfig['buyer']['relay'],
-  errors: string[],
-): void {
-  if (relay === undefined) return;
-  if (!relay || typeof relay !== 'object' || Array.isArray(relay)) {
-    errors.push(`${path} must be an object when provided`);
-    return;
-  }
-  for (const key of Object.keys(relay).filter((candidate) => !RELAY_KEYS.has(candidate))) {
-    errors.push(`${path}.${key} is not a supported relay option`);
-  }
-  if (typeof relay.enabled !== 'boolean') errors.push(`${path}.enabled must be a boolean`);
-  if (relay.minimumPayoutPerJobUsdc !== undefined && !/^\d+$/.test(relay.minimumPayoutPerJobUsdc)) {
-    errors.push(`${path}.minimumPayoutPerJobUsdc must be a non-negative integer string`);
-  }
-  const positiveInts: Array<[string, number | undefined]> = [
-    ['maxConcurrentJobs', relay.maxConcurrentJobs],
-    ['maxJobsPerHour', relay.maxJobsPerHour],
-    ['discoveryIntervalMs', relay.discoveryIntervalMs],
-  ];
-  for (const [key, value] of positiveInts) {
-    if (value !== undefined && (!Number.isInteger(value) || value < 1)) {
-      errors.push(`${path}.${key} must be an integer >= 1`);
+  for (const key of ['minimumMismatchDelta', 'familyWideAlpha', 'referenceConfidence', 'minimumAuthenticatedCoverage'] as const) {
+    const candidate = value[key];
+    if (candidate !== undefined
+      && (typeof candidate !== 'number' || !Number.isFinite(candidate) || candidate <= 0 || candidate > 1)) {
+      errors.push(`${path}.${key} must be a number in (0, 1]`);
     }
+  }
+  if (value.referenceConfidence === 1) {
+    errors.push(`${path}.referenceConfidence must be less than 1`);
   }
 }
 
@@ -591,7 +556,6 @@ export function validateConfig(config: AntseedConfig): string[] {
   }
 
   validateBuyerVerification('buyer.verification', config.buyer.verification, errors);
-  validateRelayConfig('buyer.relay', config.buyer.relay, errors);
 
   if (!Number.isInteger(config.seller.maxConcurrentBuyers) || config.seller.maxConcurrentBuyers < 1) {
     errors.push('seller.maxConcurrentBuyers must be an integer >= 1');

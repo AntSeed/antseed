@@ -18,9 +18,6 @@ import { resolvePluginPackage } from '../../../plugins/registry.js'
 import { BuyerProxy } from '../../../proxy/buyer-proxy.js'
 import { resolveEffectiveBuyerConfig, type BuyerRuntimeOverrides } from '../../../config/effective.js'
 import type { BuyerCLIConfig } from '../../../config/types.js'
-import { RelayWorker } from '../../../relay/worker.js'
-import { createRelayValidator, resolveVerificationChain } from '../verification-chain.js'
-import { ZeroAddress } from 'ethers'
 
 interface LocalSeederInfo {
   dhtPort: number
@@ -407,47 +404,6 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         }
       }
 
-      let relayWorker: RelayWorker | null = null
-      if (effectiveBuyerConfig.relay.enabled) {
-        try {
-          if (!paymentsConfig?.enabled) throw new Error('payments are disabled')
-          const context = resolveVerificationChain(config)
-          const identity = node.identity
-          const storage = node.verificationStorage
-          if (!identity || !storage) throw new Error('buyer identity or verification storage is unavailable')
-          const deposits = new DepositsClient({
-            rpcUrl: context.chain.rpcUrl,
-            ...(context.chain.fallbackRpcUrls ? { fallbackRpcUrls: context.chain.fallbackRpcUrls } : {}),
-            contractAddress: context.chain.depositsContractAddress,
-            usdcAddress: context.chain.usdcContractAddress,
-            evmChainId: context.chain.evmChainId,
-          })
-          const operator = await deposits.getOperator(identity.wallet.address)
-          if (!operator || operator === ZeroAddress) throw new Error('buyer has no AntseedDeposits operator')
-          const minimumPayout = BigInt(effectiveBuyerConfig.relay.minimumPayoutPerJobUsdc ?? '1000')
-          relayWorker = new RelayWorker({
-            node,
-            validator: createRelayValidator(node, context, minimumPayout),
-            storage,
-            chainId: String(context.chain.evmChainId),
-            registryAddress: context.chain.verifierRegistryAddress!,
-            treasuryAddress: context.chain.relayTreasuryAddress!,
-            relayBuyerAddress: identity.wallet.address,
-            minimumPayoutPerJobUsdc: minimumPayout,
-            isApprovedVerifier: (address) => context.registryClient.isApprovedVerifier(address),
-            maxConcurrentJobs: effectiveBuyerConfig.relay.maxConcurrentJobs,
-            maxJobsPerHour: effectiveBuyerConfig.relay.maxJobsPerHour,
-            discoveryIntervalMs: effectiveBuyerConfig.relay.discoveryIntervalMs,
-            log: (message) => console.log(chalk.dim(message)),
-            warn: (message) => console.warn(chalk.yellow(message)),
-          })
-          relayWorker.start()
-          console.log(chalk.green(`Relay worker enabled (${minimumPayout} minimum USDC base units/job)`))
-        } catch (error) {
-          console.warn(chalk.yellow(`Relay worker skipped: ${(error as Error).message}`))
-        }
-      }
-
       const proxyPort = effectiveBuyerConfig.proxyPort
       const proxySpinner = ora(`Starting local proxy on port ${proxyPort}...`).start()
       const proxy = new BuyerProxy({
@@ -469,7 +425,6 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           console.log(chalk.yellow('Proxy request logs will be emitted by the process that already owns this port.'))
         } else {
           proxySpinner.fail(chalk.red(`Failed to start proxy: ${(err as Error).message}`))
-          relayWorker?.stop()
           await node.stop()
           process.exit(1)
         }
@@ -494,7 +449,6 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
 
       setupShutdownHandler(async () => {
         nodeSpinner.start('Shutting down...')
-        relayWorker?.stop()
         if (ownsProxyListener) await proxy.stop()
         await node.stop()
         nodeSpinner.succeed('Disconnected. All channels finalized.')

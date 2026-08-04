@@ -1,7 +1,21 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parsePositiveIntFlag, resolveReferenceUpstreamInput } from './flags.js'
+import {
+  parseBenchmarkProbeCountFlag,
+  parsePositiveIntFlag,
+  parseUsdcBaseUnitsFlag,
+  resolveReferenceUpstreamInput,
+} from './flags.js'
 import { resolveUpstream } from '../../../verifier/reference-builder.js'
+
+test('parseBenchmarkProbeCountFlag accepts auto and supported fixed counts', () => {
+  assert.equal(parseBenchmarkProbeCountFlag('auto'), 'auto')
+  assert.equal(parseBenchmarkProbeCountFlag(' AUTO '), 'auto')
+  assert.equal(parseBenchmarkProbeCountFlag('100'), 100)
+  assert.equal(parseBenchmarkProbeCountFlag('750'), 750)
+  assert.throws(() => parseBenchmarkProbeCountFlag('95'), /multiple of 10/)
+  assert.throws(() => parseBenchmarkProbeCountFlag('760'), /multiple of 10/)
+})
 
 test('parsePositiveIntFlag accepts positive integers', () => {
   assert.equal(parsePositiveIntFlag('1'), 1)
@@ -17,6 +31,14 @@ test('parsePositiveIntFlag rejects garbage that parseInt silently accepted', () 
   assert.throws(() => parsePositiveIntFlag('0'), /positive integer/)
   assert.throws(() => parsePositiveIntFlag('-5'), /positive integer/)
   assert.throws(() => parsePositiveIntFlag('1.5'), /positive integer/)
+})
+
+test('parseUsdcBaseUnitsFlag accepts exact base units and rejects decimals', () => {
+  assert.equal(parseUsdcBaseUnitsFlag('0'), 0n)
+  assert.equal(parseUsdcBaseUnitsFlag('5000000'), 5_000_000n)
+  assert.equal(parseUsdcBaseUnitsFlag(' 42 '), 42n)
+  assert.throws(() => parseUsdcBaseUnitsFlag('5.0'), /non-negative integer/)
+  assert.throws(() => parseUsdcBaseUnitsFlag('-1'), /non-negative integer/)
 })
 
 test('--api-key beats a configured apiKeyEnv end-to-end', () => {

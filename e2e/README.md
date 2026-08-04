@@ -40,6 +40,55 @@ Optional environment overrides:
 
 On success, the script prints a JSON summary with deployed contract addresses, peer IDs, session status, balances, and reputation.
 
+## Direct Verifier Lifecycle
+
+Run the hermetic verifier lifecycle against Anvil. The flow uses the production
+direct-audit runner and current KBF verifier. One buyer-role verifier wallet pays
+the seller through `AntseedChannels`/`AntseedDeposits`, verifies every
+`ResponseAuth`, writes canonical evidence, proves the observation created zero
+registry attestations, explicitly submits one selected completed audit, and
+claims its verifier-only ANTS reward.
+
+```bash
+npm run flow:direct-verifier
+```
+
+It deploys the simplified contracts, approves and funds the verifier, registers
+and stakes a seller, runs 100 paid probes, verifies the local evidence file,
+checks routing visibility and the DIFF seller penalty, settles the seller payout,
+and finalizes the epoch for a reward claim. All wallets, databases, contracts,
+and evidence files live under a temporary directory.
+
+## Venice-Anchored Local Smoke
+
+Use the repository setup script when testing the full fresh-chain verifier topology with the existing AntSeed buyer proxy as the temporary Venice reference endpoint:
+
+```bash
+anvil
+./scripts/setup-local-test.sh
+pnpm run build
+```
+
+The script deploys the current fresh-chain contracts from `packages/contracts/script/Deploy.s.sol`, reads addresses from Foundry's broadcast output, approves the local verifier, registers and stakes the local seller, funds the verifier wallet and buyer deposit, writes seller/buyer/verifier configs under `${ANTSEED_LOCAL_DATA_ROOT:-~/.antseed-local}`, and asserts the required registry/controller relationships. It prints the seller → buyer/reference endpoint → verifier start order.
+
+The generated verifier config uses a 100-probe smoke reference for `gpt-5.6-sol`, pins every primary and contrast request to the configured Venice peer, and screens candidates with `kimi-k3`, `gpt-5.6-luna`, and `sonnet-4.6`. Export the key named by `ANTSEED_REFERENCE_API_KEY_ENV` before starting the processes; the default generated environment files use `ANTSEED_REFERENCE_API_KEY`.
+
+The generated default reference endpoint is:
+
+```json
+{
+  "baseUrl": "http://127.0.0.1:8377/v1",
+  "apiKeyEnv": "ANTSEED_REFERENCE_API_KEY",
+  "sourceId": "antseed-venice-sol-smoke-v1",
+  "trust": "smoke",
+  "antseedPeerId": "9e8f9aaee684298b7f2af2ae008e3692f0e9f4f7"
+}
+```
+
+For a trusted production run, omit `antseedPeerId`, point `baseUrl` and `apiKeyEnv` at the trusted direct endpoint, and set `trust` to `trusted`. The changed certification-profile hash creates a separate probe catalog. Audits start at 100 unseen probes and grow by ten only when the fresh self-test remains below 90% statistical power, up to 500.
+
+Use `npm run flow:direct-verifier` for the hermetic paid-audit, attestation, routing, and reward regression. A live Venice-backed smoke additionally requires the buyer proxy and model access, so it is intentionally not part of the default offline E2E suite.
+
 ## Test Suites
 
 ### Discovery (`tests/discovery.test.ts`)

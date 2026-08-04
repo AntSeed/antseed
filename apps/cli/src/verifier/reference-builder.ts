@@ -220,7 +220,7 @@ const MIN_SELF_TEST_COVERAGE = 0.8
 const MAX_SELF_TEST_ERROR_RATE = 0.35
 
 interface ChatCompletionResponse {
-  choices?: Array<{ message?: { content?: unknown } }>
+  choices?: Array<{ message?: { content?: unknown; reasoning_content?: unknown } }>
   error?: { message?: string }
 }
 
@@ -502,12 +502,14 @@ export async function postChatCompletion(
     }
     const parsed = (await response.json()) as ChatCompletionResponse
     const content = parsed.choices?.[0]?.message?.content
-    if (typeof content !== 'string') {
+    if (typeof content === 'string' && content.trim().length > 0) return content
+    const reasoning = parsed.choices?.[0]?.message?.reasoning_content
+    if (typeof reasoning === 'string' && reasoning.trim().length > 0) return reasoning
+    {
       throw new Error(
         `${errorContext} returned no text content${parsed.error?.message ? `: ${parsed.error.message}` : ''}`,
       )
     }
-    return content
   } finally {
     if (timeout) clearTimeout(timeout)
   }
@@ -533,6 +535,7 @@ async function queryBatch(
   temperature: number,
   maxTokensPerRequest: number,
   runtime: RequestRuntime,
+  options: { rejectStrategyOnIncomplete?: boolean } = {},
 ): Promise<number[]> {
   const baseBody = {
     ...buildKbfChatRequestBody(model, batch, { maxTokens: maxTokensPerRequest }),
@@ -543,7 +546,7 @@ async function queryBatch(
     const { content, strategy } = await queryText(upstream, model, baseBody, runtime)
     const parsed = parseKbfAnswers(content, batch.length)
     if (parsed.length !== batch.length || parsed.some((answer) => answer === null || !Number.isFinite(answer))) {
-      rejectReasoningStrategy(runtime, model, strategy)
+      if (options.rejectStrategyOnIncomplete ?? true) rejectReasoningStrategy(runtime, model, strategy)
       throw new IncompleteAlignedAnswerBatchError(parsed)
     }
     return parsed as number[]
@@ -611,10 +614,14 @@ async function samplePass(
     const batchIndex = Math.floor(start / batchSize) + 1
     let parsed: Array<number | null>
     try {
-      parsed = await queryBatch(upstream, model, batch, temperature, maxTokensPerRequest, runtime)
+      parsed = await queryBatch(upstream, model, batch, temperature, maxTokensPerRequest, runtime, {
+        rejectStrategyOnIncomplete: !progress.allowIncomplete,
+      })
     } catch (error) {
-      if (!progress.allowIncomplete || !(error instanceof IncompleteAlignedAnswerBatchError)) throw error
-      parsed = error.answers
+      if (!progress.allowIncomplete || !isRecoverableContrastFailure(error)) throw error
+      parsed = error instanceof IncompleteAlignedAnswerBatchError
+        ? error.answers
+        : new Array(batch.length).fill(null)
       runtime.log(`${progress.label ?? model}: batch ${batchIndex}/${totalBatches} accepted with ${parsed.filter((answer) => answer !== null).length}/${batch.length} parsed contrast answers`)
     }
     for (let i = 0; i < batch.length; i++) answers[start + i] = parsed[i]!
@@ -625,6 +632,13 @@ async function samplePass(
     throw new Error(`${progress.label ?? model}: checkpoint contains incomplete answers`)
   }
   return answers
+}
+
+function isRecoverableContrastFailure(error: unknown): boolean {
+  if (error instanceof IncompleteAlignedAnswerBatchError) return true
+  if (error instanceof UpstreamHttpError) return error.status >= 500
+  if (!(error instanceof Error)) return false
+  return error.name === 'AbortError' || error.message.includes('returned no text content')
 }
 
 async function queryText(
@@ -1071,6 +1085,7 @@ export async function buildKbfReference(
     strategyByModel: new Map(Object.entries(resumedCheckpoint?.reasoningStrategies ?? {}) as Array<[string, ReasoningStrategy]>),
     rejectedStrategiesByModel: new Map(
       Object.entries(resumedCheckpoint?.rejectedReasoningStrategies ?? {})
+        .filter(([entryModel]) => !normalizedContrasts.includes(entryModel))
         .map(([entryModel, strategies]) => [entryModel, new Set(strategies)]),
     ),
     strategyLocksByModel: new Map(),

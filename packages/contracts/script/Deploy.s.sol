@@ -17,9 +17,9 @@ import { AntseedStaking } from "../staking/AntseedStaking.sol";
 import { AntseedStats } from "../stats/AntseedStats.sol";
 import { MockERC8004Registry } from "../test/mocks/MockERC8004Registry.sol";
 import { MockUSDC } from "../test/mocks/MockUSDC.sol";
-import { AntseedRelayTreasury } from "../verification/AntseedRelayTreasury.sol";
 import { AntseedVerifierPointsPolicy } from "../verification/AntseedVerifierPointsPolicy.sol";
 import { AntseedVerifierRegistry } from "../verification/AntseedVerifierRegistry.sol";
+import { AntseedVerifierRewards } from "../verification/AntseedVerifierRewards.sol";
 
 /**
  * @title Deploy
@@ -33,6 +33,7 @@ import { AntseedVerifierRegistry } from "../verification/AntseedVerifierRegistry
 contract Deploy is Script {
     bytes32 public constant SELLER_POOLS_MINTER_ID = keccak256("antseed.emissions.seller-pools.v1");
     bytes32 public constant USAGE_MINTER_ID = keccak256("antseed.emissions.usage.v1");
+    bytes32 public constant VERIFICATION_MINTER_ID = keccak256("antseed.emissions.verification.v1");
 
     struct Deployment {
         MockUSDC usdc;
@@ -47,7 +48,7 @@ contract Deploy is Script {
         AntseedSellerRegistry sellerRegistry;
         AntseedEmissionsGate emissionsGate;
         AntseedVerifierRegistry verifierRegistry;
-        AntseedRelayTreasury relayTreasury;
+        AntseedVerifierRewards verifierRewards;
         AntseedUsageAccounting usageAccounting;
         AntseedVerifierPointsPolicy verifierPointsPolicy;
         AntseedSellerPoolsRewards sellerPoolsRewards;
@@ -62,13 +63,6 @@ contract Deploy is Script {
         address protocolReserve = vm.envOr("PROTOCOL_RESERVE", deployer);
         address teamWallet = vm.envOr("TEAM_WALLET", address(0xA11CE));
         require(teamWallet != protocolReserve, "team and reserve controllers must differ");
-        uint256 maxRelayPayoutPerJob = vm.envOr("RELAY_MAX_PAYOUT_PER_JOB_USDC", uint256(1e6));
-        uint256 maxRelayPayoutPerAudit = vm.envOr("RELAY_MAX_PAYOUT_PER_AUDIT_USDC", uint256(50e6));
-        uint256 maxCommittedBudgetPerEpoch = vm.envOr("RELAY_MAX_COMMITTED_BUDGET_PER_EPOCH_USDC", uint256(500e6));
-        require(maxRelayPayoutPerJob <= type(uint96).max, "relay job cap too large");
-        require(maxRelayPayoutPerAudit <= type(uint96).max, "relay audit cap too large");
-        require(maxCommittedBudgetPerEpoch <= type(uint96).max, "relay epoch cap too large");
-
         vm.startBroadcast(deployerPrivateKey);
 
         deployment.usdc = new MockUSDC();
@@ -97,18 +91,12 @@ contract Deploy is Script {
         deployment.sellerRegistry = new AntseedSellerRegistry(
             address(deployment.registry), address(deployment.sellerPools), address(deployment.legacyStaking)
         );
-        deployment.emissionsGate = new AntseedEmissionsGate(address(deployment.registry), 15_000, 25_000);
+        deployment.emissionsGate = new AntseedEmissionsGate(address(deployment.registry), 15_000, 15_000);
 
         deployment.verifierRegistry =
             new AntseedVerifierRegistry(address(deployment.registry), address(deployment.emissionsGate));
-        deployment.relayTreasury = new AntseedRelayTreasury(
-            address(deployment.usdc),
-            address(deployment.verifierRegistry),
-            uint96(maxRelayPayoutPerJob),
-            uint96(maxRelayPayoutPerAudit),
-            uint96(maxCommittedBudgetPerEpoch)
-        );
-        deployment.verifierRegistry.setRelayTreasury(address(deployment.relayTreasury));
+        deployment.verifierRewards =
+            new AntseedVerifierRewards(address(deployment.emissionsGate), address(deployment.verifierRegistry));
 
         deployment.usageAccounting = new AntseedUsageAccounting(
             address(deployment.sellerPools), address(deployment.channels), address(deployment.emissionsGate)
@@ -133,8 +121,10 @@ contract Deploy is Script {
         deployment.sellerPools.setRewardStaker(address(deployment.sellerPoolsRewards), true);
         deployment.emissionsGate.setMinter(SELLER_POOLS_MINTER_ID, address(deployment.sellerPoolsRewards), 40_000, true);
         deployment.emissionsGate.setMinter(USAGE_MINTER_ID, address(deployment.usageRewards), 20_000, true);
+        deployment.emissionsGate.setMinter(VERIFICATION_MINTER_ID, address(deployment.verifierRewards), 10_000, true);
 
         deployment.antsToken.setRegistry(address(deployment.emissionsGate));
+        deployment.emissionsGate.fundLegacyEscrow(protocolReserve);
         deployment.registry.setEmissions(address(deployment.usageAccounting));
         deployment.registry.setStaking(address(deployment.sellerRegistry));
 
@@ -167,7 +157,8 @@ contract Deploy is Script {
             "verifier gate mismatch"
         );
         require(
-            deployment.verifierRegistry.relayTreasury() == address(deployment.relayTreasury), "relay treasury mismatch"
+            address(deployment.verifierRewards.verifierRegistry()) == address(deployment.verifierRegistry),
+            "verifier rewards registry mismatch"
         );
         require(
             address(deployment.usageAccounting.pointsPolicy()) == address(deployment.verifierPointsPolicy),
@@ -196,6 +187,7 @@ contract Deploy is Script {
             deployment.sellerPools.rewardStakers(address(deployment.sellerPoolsRewards)), "reward staker not approved"
         );
         require(address(deployment.emissionsGate.registry()) == address(deployment.registry), "gate registry mismatch");
+        require(deployment.emissionsGate.legacyEscrow() == protocolReserve, "legacy escrow mismatch");
     }
 
     function _logDeployment(Deployment memory deployment, address deployer) internal pure {
@@ -214,7 +206,7 @@ contract Deploy is Script {
         console.log("EmissionsGate:            ", address(deployment.emissionsGate));
         console.log("UsageAccounting:          ", address(deployment.usageAccounting));
         console.log("VerifierRegistry:         ", address(deployment.verifierRegistry));
-        console.log("RelayTreasury:            ", address(deployment.relayTreasury));
+        console.log("VerifierRewards:          ", address(deployment.verifierRewards));
         console.log("VerifierPointsPolicy:     ", address(deployment.verifierPointsPolicy));
         console.log("SellerPoolsRewards:       ", address(deployment.sellerPoolsRewards));
         console.log("UsageRewards:             ", address(deployment.usageRewards));

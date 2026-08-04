@@ -12,35 +12,6 @@ interface IAntseedVerifierRegistry {
         UNDETERMINED
     }
 
-    struct AuditJob {
-        bytes32 auditId;
-        uint16 jobIndex;
-        address sellerPeerId;
-        bytes32 serviceHash;
-        bytes32 requestHash;
-        bytes32 jobSalt;
-        uint64 executeAfter;
-        uint64 executeBefore;
-    }
-
-    struct RelayAssignment {
-        bytes32 auditId;
-        uint16 jobIndex;
-        uint8 attempt;
-        address relayBuyer;
-        uint96 payoutPerJobUsdc;
-        uint64 executeAfter;
-        uint64 executeBefore;
-    }
-
-    struct RelayClaim {
-        AuditJob job;
-        bytes32[] jobProof;
-        RelayAssignment assignment;
-        bytes verifierSignature;
-        bytes responseAuthPayload;
-    }
-
     struct MetricSnapshot {
         uint64 windowStartedAt;
         uint64 windowEndedAt;
@@ -53,30 +24,6 @@ interface IAntseedVerifierRegistry {
         bytes32 observationsRoot;
     }
 
-    struct Audit {
-        address committer;
-        bytes32 targetCommitment;
-        bytes32 probeRoot;
-        bytes32 auditJobRoot;
-        bytes32 referenceId;
-        bytes32 verifierConfigHash;
-        uint256 commitSequence;
-        uint32 probeCount;
-        uint16 jobCount;
-        uint96 payoutPerJobUsdc;
-        uint96 reservedRelayBudgetUsdc;
-        uint96 totalRelayPaidUsdc;
-        uint64 committedAt;
-        uint64 executeAfter;
-        uint64 executeBefore;
-        uint64 forceClaimAvailableAt;
-        uint64 forceClaimDeadline;
-        uint64 attestedAt;
-        bool attested;
-        bytes32 evidenceHash;
-        string evidenceUri;
-    }
-
     struct Attestation {
         bytes32 auditId;
         address verifier;
@@ -84,79 +31,60 @@ interface IAntseedVerifierRegistry {
         bytes32 serviceHash;
         Verdict verdict;
         uint16 modelShareBps;
+        uint32 probeCount;
         uint64 attestedAt;
         bytes32 evidenceHash;
     }
 
+    struct ServiceVerificationStats {
+        uint32 sameCount;
+        uint32 diffCount;
+        uint32 undeterminedCount;
+        uint32 distinctVerifierCount;
+        uint32 activeDiffVerifierCount;
+        Verdict lastVerdict;
+        address lastVerifier;
+    }
+
     function registry() external view returns (IAntseedRegistry);
     function emissionsGate() external view returns (IAntseedEmissionsGate);
-    function relayTreasury() external view returns (address);
     function approvedVerifiers(address verifier) external view returns (bool);
-    function relayJobPaidBitmap(bytes32 auditId) external view returns (uint256);
-    function paidRequestHashes(bytes32 requestHash) external view returns (bytes32);
+    function auditCooldown() external view returns (uint64);
+    function maxCreditsPerVerifierPerEpoch() external view returns (uint32);
+    function minProbeCount() external view returns (uint32);
 
     function setVerifier(address verifier, bool approved) external;
-    function setRelayTreasury(address treasury) external;
+    function setAuditCooldown(uint64 cooldown) external;
+    function setMaxCreditsPerVerifierPerEpoch(uint32 maximum) external;
+    function setMinProbeCount(uint32 minimum) external;
+    function clearVerifierStanding(address verifier, uint256 agentId, bytes32 serviceHash) external;
 
-    function commitProbes(
-        bytes32 auditId,
-        bytes32 targetCommitment,
-        bytes32 probeRoot,
-        bytes32 auditJobRoot,
-        bytes32 referenceId,
-        bytes32 verifierConfigHash,
-        uint32 probeCount,
-        uint16 jobCount,
-        uint96 payoutPerJobUsdc
-    ) external;
-
-    function submitAttestation(
+    function submitVerificationResult(
         bytes32 auditId,
         uint256 agentId,
         bytes32 serviceHash,
-        bytes32 targetSalt,
         Verdict verdict,
+        uint256 expectedEpoch,
         uint16 modelShareBps,
+        uint32 probeCount,
         MetricSnapshot calldata metrics,
-        bytes32 evidenceHash,
-        string calldata evidenceUri,
-        RelayClaim[] calldata relayClaims
+        bytes32 evidenceHash
     ) external;
 
-    function forceClaimRelayJob(bytes32 auditId, RelayClaim calldata relayClaim) external;
     function publishEvidence(bytes32 auditId, string calldata evidenceUri) external;
 
-    function getAudit(bytes32 auditId) external view returns (Audit memory);
     function getAttestation(bytes32 auditId) external view returns (Attestation memory);
     function latestAttestation(uint256 agentId, bytes32 serviceHash) external view returns (Attestation memory);
-    function lastAcceptedAuditSequence(uint256 agentId, bytes32 serviceHash) external view returns (uint256);
-    function agentPointsPenaltyBps(uint256 agentId) external view returns (uint16);
-
-    function hashAuditTarget(uint256 agentId, bytes32 serviceHash, bytes32 targetSalt)
+    function evidenceUris(bytes32 auditId) external view returns (string memory);
+    function verificationStats(uint256 agentId, bytes32 serviceHash)
         external
         view
-        returns (bytes32);
-    function hashAuditJob(AuditJob memory job) external view returns (bytes32);
-    function hashRelayAssignment(RelayAssignment memory assignment) external view returns (bytes32);
-    function verifyAuditJobProof(bytes32 root, bytes32 leaf, uint16 jobIndex, uint16 jobCount, bytes32[] calldata proof)
-        external
-        pure
-        returns (bool);
-    function hashNormalizedService(string calldata advertisedService) external pure returns (bytes32);
-    function responseAuthDigest(bytes calldata signingPayload) external pure returns (bytes32);
-    function parseResponseAuthPayload(bytes calldata payload)
-        external
-        pure
-        returns (
-            address buyer,
-            address seller,
-            bytes32 advertisedServiceHash,
-            uint16 statusCode,
-            bytes32 requestHash,
-            bytes32 responseHash,
-            uint64 responseStartedAt,
-            uint64 responseCompletedAt
-        );
-    function isRelayJobPaid(bytes32 auditId, uint16 jobIndex) external view returns (bool);
-    function requiredRelayCount(uint16 jobCount) external pure returns (uint16);
+        returns (ServiceVerificationStats memory);
+    function agentVerificationStats(uint256 agentId) external view returns (ServiceVerificationStats memory);
+    function lastCreditedAt(uint256 agentId, bytes32 serviceHash) external view returns (uint64);
+    function epochCredits(uint256 epoch, address verifier) external view returns (uint256);
+    function epochTotalCredits(uint256 epoch) external view returns (uint256);
+    function currentEpoch() external view returns (uint256);
+    function servicePointsPenaltyBps(uint256 agentId, bytes32 serviceHash) external view returns (uint16);
+    function agentPointsPenaltyBps(uint256 agentId) external view returns (uint256);
 }

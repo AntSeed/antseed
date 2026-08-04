@@ -100,6 +100,8 @@ export interface PeerInfo {
    * Read by the buyer directly from the chain.
    */
   onChainAgentId?: number;
+  /** Effective on-chain seller address resolved and verified for payment flows. */
+  onChainSellerAddress?: string;
   /**
    * On-chain seller stake in micro-USDC from `AntseedStaking.getStake`.
    * Read by the buyer directly from the chain.

@@ -8,7 +8,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "flow:local-chain": "node ./scripts/local-chain-full-flow.mjs",
-    "flow:transparent-audit": "node ./scripts/transparent-audit-lifecycle.mjs"
+    "flow:transparent-audit": "node ./scripts/transparent-audit-lifecycle.mjs",
+    "flow:direct-verifier": "node ./scripts/direct-verifier-lifecycle.mjs"
   },
   "dependencies": {
     "@antseed/fingerprints": "workspace:*",

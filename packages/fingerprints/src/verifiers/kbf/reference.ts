@@ -12,7 +12,7 @@ export const KBF_REFERENCE_VERSION = 1;
 export const KBF_PARSER_VERSION = 'kbf-numeric-lines-v1';
 export const KBF_PROBES_PER_REQUEST = 10;
 export const KBF_MIN_PROBE_COUNT = 10;
-export const KBF_MAX_PROBE_COUNT = 500;
+export const KBF_MAX_PROBE_COUNT = 750;
 export const KBF_SUPPORTED_PROBE_COUNTS = Object.freeze(
   Array.from(
     { length: KBF_MAX_PROBE_COUNT / KBF_PROBES_PER_REQUEST },
@@ -196,8 +196,12 @@ export function subsetReferenceSelfTest(
 
 export function validateKbfReferenceV1(
   value: unknown,
-  options: { trustImported?: boolean } = {},
+  options: { trustImported?: boolean; minimumStatisticalPower?: number } = {},
 ): KbfReferenceV1 {
+  const minimumStatisticalPower = options.minimumStatisticalPower ?? 0.9;
+  if (!(minimumStatisticalPower > 0 && minimumStatisticalPower <= 1)) {
+    throw new Error('minimumStatisticalPower must be in (0, 1]');
+  }
   const reference = object(value, 'reference') as unknown as KbfReferenceV1;
   if (reference.version !== KBF_REFERENCE_VERSION || reference.kind !== 'kbf') {
     throw new Error('reference must be KBF schema version 1');
@@ -218,7 +222,7 @@ export function validateKbfReferenceV1(
     || reference.selectedProbeCount > KBF_MAX_PROBE_COUNT
     || reference.selectedProbeCount % KBF_PROBES_PER_REQUEST !== 0
   ) {
-    throw new Error('selectedProbeCount must be a multiple of 10 from 10 through 500');
+    throw new Error(`selectedProbeCount must be a multiple of 10 from 10 through ${KBF_MAX_PROBE_COUNT}`);
   }
   if (!Array.isArray(reference.probes) || reference.probes.length !== reference.selectedProbeCount) {
     throw new Error('probes length must equal selectedProbeCount');
@@ -228,8 +232,8 @@ export function validateKbfReferenceV1(
   if (!(reference.minimumMismatchDelta > 0 && reference.minimumMismatchDelta <= 1)) {
     throw new Error('minimumMismatchDelta must be in (0, 1]');
   }
-  if (!(reference.statisticalPower >= 0.9 && reference.statisticalPower <= 1)) {
-    throw new Error('statisticalPower must be in [0.9, 1]');
+  if (!(reference.statisticalPower >= minimumStatisticalPower && reference.statisticalPower <= 1)) {
+    throw new Error(`statisticalPower must be in [${minimumStatisticalPower}, 1]`);
   }
   const selfTest = object(reference.selfTest, 'selfTest') as unknown as KbfReferenceSelfTestV1;
   if (!Array.isArray(selfTest.outcomes) || selfTest.outcomes.length !== reference.probes.length) {
@@ -263,17 +267,25 @@ export function validateKbfReferenceV1(
     if (new Set(distinguishing).size !== distinguishing.length) throw new Error('duplicate contrast probe id');
     if (distinguishing.some((probeId) => !probeIds.has(probeId))) throw new Error('contrast references unknown probe');
   }
+  const evidence = object(reference.statisticalPowerEvidence, 'statisticalPowerEvidence') as unknown as StatisticalPowerEvidenceV1;
+  if (!(evidence.alpha > 0 && evidence.alpha < 1)) {
+    throw new Error('statisticalPowerEvidence.alpha must be in (0, 1)');
+  }
+  if (!(evidence.clopperPearsonConfidence > 0 && evidence.clopperPearsonConfidence < 1)) {
+    throw new Error('statisticalPowerEvidence.clopperPearsonConfidence must be in (0, 1)');
+  }
   const powerInput = {
     selfHamming: selfTest.hamming,
     selfTotal: selfTest.total,
     minimumMismatchDelta: reference.minimumMismatchDelta,
+    alpha: evidence.alpha,
+    cpConfidence: evidence.clopperPearsonConfidence,
   };
   const recomputedPower = computeBinomialPower(powerInput);
-  const evidence = object(reference.statisticalPowerEvidence, 'statisticalPowerEvidence') as unknown as StatisticalPowerEvidenceV1;
   const expectedEvidence: StatisticalPowerEvidenceV1 = {
     test: 'one-sided-binomial',
-    alpha: 0.05,
-    clopperPearsonConfidence: 0.99,
+    alpha: evidence.alpha,
+    clopperPearsonConfidence: evidence.clopperPearsonConfidence,
     selfHamming: selfTest.hamming,
     selfTotal: selfTest.total,
     p0UpperBound: recomputedPower.p0,
@@ -288,7 +300,8 @@ export function validateKbfReferenceV1(
       : actual === expected;
   });
   if (!evidenceMatches) throw new Error('statisticalPowerEvidence is inconsistent with the selected self-test baseline');
-  if (Math.abs(recomputedPower.power - reference.statisticalPower) > 1e-12 || recomputedPower.power < 0.9) {
+  if (Math.abs(recomputedPower.power - reference.statisticalPower) > 1e-12
+    || recomputedPower.power < minimumStatisticalPower) {
     throw new Error('statisticalPower is inconsistent with the selected self-test baseline');
   }
   const expectedReferenceId = computeReferenceId(reference);

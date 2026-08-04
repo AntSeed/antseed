@@ -34,24 +34,11 @@ export enum MessageType {
   // Verification / attestation protocol (0x80-0x8F)
   VerificationResponseAuth = 0x80,
 
-  // Atomic audit-relay protocol (0x90-0x9F).
-  RelayHello = 0x90,
-  RelayWelcome = 0x91,
-  AuditRelayJob = 0x92,
-  AuditRelayResult = 0x93,
-  // 0x94-0x96 are retired and remain reserved.
-
   Disconnect = 0xF0,
   Error = 0xFF,
 }
 
 export const CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 = 'verification.response-auth.v1' as const;
-/**
- * Announced by verifier nodes that accept atomic audit-relay registrations.
- * Eligible relay buyers discover the verifier, execute committed jobs through
- * paid seller channels, and claim their frozen Treasury payout.
- */
-export const CONNECTION_CAPABILITY_AUDIT_RELAY_V1 = 'verification.audit-relay.v1' as const;
 
 export interface FramedMessage {
   type: MessageType;
@@ -227,78 +214,4 @@ export interface ResponseAuthPayload {
   responseStartedAt: number;
   responseCompletedAt: number;
   signature: string;
-}
-
-// ─── Atomic Audit Relay Messages ───────────────────────────────
-
-export interface RelayHelloPayload {
-  version: 1;
-  chainId: string;
-  registryAddress: string;
-  treasuryAddress: string;
-  minPayoutPerJobUsdc: string;
-  maxConcurrentJobs?: number;
-}
-
-export interface RelayWelcomePayload {
-  version: 1;
-  accepted: boolean;
-  reason?: string;
-}
-
-export interface AuditRelayJobPayload {
-  version: 1;
-  jobId: string;
-  chainId: string;
-  registryAddress: string;
-  treasuryAddress: string;
-  auditSnapshot: {
-    committer: string;
-    auditJobRoot: string;
-    jobCount: number;
-    payoutPerJobUsdc: string;
-    reservedRelayBudgetUsdc: string;
-    executeAfter: number;
-    executeBefore: number;
-    forceClaimAvailableAt: number;
-    forceClaimDeadline: number;
-    attested: boolean;
-  };
-  job: {
-    auditId: string;
-    jobIndex: number;
-    sellerPeerId: string;
-    serviceHash: string;
-    requestHash: string;
-    jobSalt: string;
-    executeAfter: number;
-    executeBefore: number;
-  };
-  jobProof: string[];
-  assignment: {
-    auditId: string;
-    jobIndex: number;
-    attempt: number;
-    relayBuyer: string;
-    payoutPerJobUsdc: string;
-    executeAfter: number;
-    executeBefore: number;
-  };
-  verifierSignature: string;
-  targetPeerId: string;
-  service: string;
-  requestBytesBase64: string;
-  payoutPerJobUsdc: string;
-  timeoutMs: number;
-}
-
-export interface AuditRelayResultPayload {
-  version: 1;
-  jobId: string;
-  status: 'ok' | 'error';
-  error?: string;
-  responseBytesBase64?: string;
-  responseAuthPayloadBase64?: string;
-  sellerChargeUsdc?: string;
-  paymentMetadata?: Record<string, unknown>;
 }

@@ -10,7 +10,7 @@ import {
   validateKbfReferenceV1,
   type KbfReferenceV1,
 } from '@antseed/fingerprints'
-import { VerificationStorage, type StoredAuditPlan } from '@antseed/node'
+import { VerificationStorage, type StoredDirectAudit } from '@antseed/node'
 import { selectAndReserveReferenceSubset } from './reference-subset.js'
 
 const SERVICE = 'gpt-5.6-sol'
@@ -65,45 +65,36 @@ function reference(): KbfReferenceV1 {
   return value
 }
 
-function plan(auditId: string, agentId: string, referenceId: string): StoredAuditPlan {
+function directAudit(auditId: string, agentId: string, referenceId: string): StoredDirectAudit {
+  const now = Date.now()
   return {
     auditId,
-    state: 'planned',
+    state: 'pending',
     source: 'automatic',
     epoch: '1',
-    durationMs: 86_400_000,
-    chainId: null,
-    registryAddress: null,
-    treasuryAddress: null,
     verifierAddress: null,
     agentId,
+    sellerAddress: null,
     targetPeerId: agentId.padStart(40, '0'),
     targetService: SERVICE,
     targetServiceHash: null,
-    targetSalt: null,
-    targetCommitment: null,
-    probeRoot: null,
-    auditJobRoot: null,
     referenceId,
     queryProfileHash: null,
-    verifierConfigHash: null,
     probeCount: 100,
-    jobCount: 10,
-    requiredRelayCount: null,
-    jobTimeoutMs: 120_000,
-    payoutPerJobUsdc: null,
-    reservedBudgetUsdc: null,
-    commitTxHash: null,
-    attestationTxHash: null,
+    authenticatedProbeCount: 0,
+    statisticalPower: null,
+    verdict: null,
+    modelShareBps: null,
+    metrics: null,
+    evidencePath: null,
     evidenceHash: null,
     evidenceUri: null,
-    evidenceState: 'none',
-    executeAfter: null,
-    executeBefore: null,
-    forceClaimAvailableAt: null,
-    forceClaimDeadline: null,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
+    attestationTxHash: null,
+    credited: null,
+    startedAt: null,
+    completedAt: null,
+    createdAt: now,
+    updatedAt: now,
     failureReason: null,
   }
 }
@@ -114,7 +105,7 @@ test('selection isolates targets and permanently prevents same-agent probe reuse
   try {
     const full = validateKbfReferenceV1(reference())
     const select = (auditId: string, agentId: string) => {
-      storage.saveAuditPlan(plan(auditId, agentId, full.referenceId))
+      storage.saveDirectAudit(directAudit(auditId, agentId, full.referenceId))
       return selectAndReserveReferenceSubset({
         storage,
         auditId,
@@ -132,8 +123,8 @@ test('selection isolates targets and permanently prevents same-agent probe reuse
     assert.equal(new Set(first.probes.map((probe) => probe.id)).size, 100)
     assert.equal(first.probes.some((probe) => concurrent.probes.some((other) => other.id === probe.id)), false)
 
-    for (let jobIndex = 0; jobIndex < 10; jobIndex += 1) {
-      storage.markAuditJobProbeExposure('audit-1', jobIndex)
+    for (let ordinal = 0; ordinal < 100; ordinal += 1) {
+      storage.markDirectAuditProbeExposure('audit-1', ordinal)
     }
     assert.throws(() => select('audit-3', '7'), /rebuild required/)
 
