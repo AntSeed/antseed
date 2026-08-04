@@ -35,7 +35,8 @@
     "release:mac": "npm run build && node scripts/release-mac.mjs",
     "dist:win": "npm run build && npm run prepare-dist && electron-builder --win",
     "release:win": "npm run build && npm run prepare-dist && node scripts/release-win.mjs",
-    "dist:linux": "npm run build && npm run prepare-dist && electron-builder --linux"
+    "dist:linux": "npm run build && npm run prepare-dist && electron-builder --linux",
+    "release:linux": "npm run build && npm run prepare-dist && electron-builder --linux --publish always"
   },
   "dependencies": {
     "@antseed/node": "workspace:*",
