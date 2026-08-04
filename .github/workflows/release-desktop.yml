@@ -221,6 +221,13 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev
 
+      # electron-builder's bundled fpm (used for the deb target) is an x86
+      # binary and can't run on the arm64 runner — install fpm from RubyGems
+      # and point electron-builder at it via USE_SYSTEM_FPM below.
+      - name: Install fpm (arm64)
+        if: matrix.arch == 'arm64'
+        run: sudo gem install fpm --no-document
+
       - uses: pnpm/action-setup@v4
         with:
           version: 9.15.4
@@ -244,6 +251,7 @@ jobs:
         working-directory: apps/desktop
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          USE_SYSTEM_FPM: ${{ matrix.arch == 'arm64' }}
         run: |
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             npm run dist:linux
