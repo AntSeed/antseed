@@ -11,8 +11,15 @@ set -euo pipefail
 #   T+      run CutoverFlip.s.sol: claim the DiemStakingProxy's pre-effective
 #           reward epochs from legacy V2 (paid by the escrow), pin the seller
 #           rewards pool registry facade, flip registry emissions/staking
-#   always  unpause AntseedChannels (trap — runs even if the flip fails, so a
-#           failed run never leaves network payments stuck)
+#   then    VERIFY on-chain that registry.emissions() == USAGE_ACCOUNTING and
+#           registry.staking() == SELLER_REGISTRY, and only then unpause
+#           AntseedChannels. Tx ordering inside CutoverFlip guarantees the
+#           proxy pots were funded before either pointer could move, so the
+#           two pointer checks imply the pots as well.
+#   on fail Channels REMAIN PAUSED. Rerun this script once the cause is fixed
+#           (CutoverFlip is idempotent — it finishes whatever is left, e.g.
+#           setStaking after a run that died past setEmissions), or recover
+#           manually. A trap prints the recovery instructions on exit.
 #
 # Env (read from packages/contracts/.env plus the environment):
 #   BASE_MAINNET_RPC_URL         RPC endpoint
@@ -57,7 +64,10 @@ echo "gate:            $GATE"
 echo "channels:        $CHANNELS"
 echo "effective epoch: $EFFECTIVE (starts at unix $TARGET)"
 
+lower() { tr '[:upper:]' '[:lower:]'; }
+
 PAUSED_BY_US=0
+FLIP_VERIFIED=0
 unpause_channels() {
   if (( PAUSED_BY_US )); then
     echo "unpausing channels..."
@@ -66,7 +76,23 @@ unpause_channels() {
     echo "channels unpaused"
   fi
 }
-trap unpause_channels EXIT
+
+# Channels only unpause after the flip's end state is verified on-chain. On
+# any other exit they stay paused — an unfinished flip with live settlements
+# would let usage land on a ledger that can no longer pay it.
+on_exit() {
+  if (( PAUSED_BY_US )) && (( ! FLIP_VERIFIED )); then
+    {
+      echo ""
+      echo "!! AntseedChannels REMAIN PAUSED: the flip did not reach its verified end state."
+      echo "!! Fix the failure and rerun this script - CutoverFlip is idempotent and"
+      echo "!! finishes whatever is left (e.g. setStaking after setEmissions landed)."
+      echo "!! To force-unpause manually instead:"
+      echo "!!   cast send $CHANNELS 'unpause()' --private-key \$CHANNELS_OWNER_PRIVATE_KEY --rpc-url $RPC"
+    } >&2
+  fi
+}
+trap on_exit EXIT
 
 pause_channels() {
   [[ "$DRY" == "1" ]] && { echo "DRY_RUN: skipping channels pause"; return; }
@@ -116,5 +142,28 @@ echo "epoch $EFFECTIVE started — running CutoverFlip"
 ARGS=(--rpc-url "$RPC" --via-ir)
 [[ "$DRY" == "1" ]] || ARGS+=(--broadcast)
 forge script script/CutoverFlip.s.sol "${ARGS[@]}"
+
+if [[ "$DRY" == "1" ]]; then
+  echo "DRY_RUN complete (no broadcast; pointers unchanged, nothing to verify)"
+  exit 0
+fi
+
+# Verify the end state on-chain before unpausing. The pointer flips are the
+# LAST transactions CutoverFlip broadcasts, so both pointers at their targets
+# implies every earlier tx (proxy pot claims, facade pin) landed too.
+echo "verifying registry pointers..."
+EMISSIONS_NOW=$(cast call "$ANTSEED_REGISTRY" 'emissions()(address)' --rpc-url "$RPC" | lower)
+STAKING_NOW=$(cast call "$ANTSEED_REGISTRY" 'staking()(address)' --rpc-url "$RPC" | lower)
+if [[ "$EMISSIONS_NOW" != "$(echo "$USAGE_ACCOUNTING" | lower)" ]]; then
+  echo "verification FAILED: registry.emissions() is $EMISSIONS_NOW, expected $USAGE_ACCOUNTING" >&2
+  exit 1
+fi
+if [[ "$STAKING_NOW" != "$(echo "$SELLER_REGISTRY" | lower)" ]]; then
+  echo "verification FAILED: registry.staking() is $STAKING_NOW, expected $SELLER_REGISTRY" >&2
+  exit 1
+fi
+echo "registry pointers verified: emissions and staking are on the new stack"
+FLIP_VERIFIED=1
+unpause_channels
 
 echo "flip complete"

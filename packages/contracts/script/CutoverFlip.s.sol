@@ -62,6 +62,13 @@ interface IDiemStakingProxyFlip {
  *         The whole run simulates before anything broadcasts, so every guard
  *         below aborts the flip with nothing sent.
  *
+ *         The script is idempotent: each step checks on-chain state and skips
+ *         what already landed. If a previous run flipped setEmissions but
+ *         failed before setStaking, rerunning skips the (no longer possible)
+ *         claim phase, re-verifies the proxy pots are funded, and finishes
+ *         setStaking. When both pointers are already at their targets it
+ *         exits with nothing to do.
+ *
  * Required env:
  *   REGISTRY_OWNER_PRIVATE_KEY   AntseedRegistry owner (signs the flips).
  *   ANTSEED_REGISTRY             Legacy AntseedRegistry address.
@@ -98,8 +105,9 @@ contract CutoverFlip is Script {
         address proxyAddress = vm.envOr("DIEM_STAKING_PROXY", address(0));
 
         require(registry.owner() == registryOwner, "REGISTRY_OWNER_PRIVATE_KEY is not the registry owner");
-        address legacyEmissions = registry.emissions();
-        require(legacyEmissions != usageAccounting, "registry emissions already flipped");
+        address currentEmissions = registry.emissions();
+        bool emissionsDone = currentEmissions == usageAccounting;
+        bool stakingDone = registry.staking() == sellerRegistry;
 
         IEmissionsGateClock gate = IEmissionsGateClock(IUsageAccountingLike(usageAccounting).emissionsGate());
         uint256 effectiveEpoch = gate.effectiveEpoch();
@@ -110,27 +118,47 @@ contract CutoverFlip is Script {
 
         console.log("=== AntSeed Recognized Usage Cutover Flip ===");
         console.log("Registry:               ", address(registry));
-        console.log("Legacy emissions (from):", legacyEmissions);
+        console.log("Registry emissions:     ", currentEmissions);
         console.log("UsageAccounting (to):   ", usageAccounting);
         console.log("SellerRegistry (to):    ", sellerRegistry);
         console.log("Effective epoch:        ", effectiveEpoch);
         console.log("Current epoch:          ", gate.currentEpoch());
 
-        if (proxyAddress != address(0)) {
-            _fundProxyRewardEpochs(IDiemStakingProxyFlip(proxyAddress), uint32(effectiveEpoch - 1));
-        } else {
+        if (emissionsDone && stakingDone) {
             console.log("");
-            console.log("WARNING: DIEM_STAKING_PROXY unset - skipping the pre-flip claim.");
-            console.log("Any deployed delegation proxy with unfunded pre-effective epochs");
-            console.log("will permanently freeze them at a zero pot after this flip.");
+            console.log("Nothing to do: both registry pointers already point at the new stack.");
+            return;
         }
 
-        _pinRewardsPoolRegistry(registry, legacyEmissions);
+        if (!emissionsDone) {
+            if (proxyAddress != address(0)) {
+                _fundProxyRewardEpochs(IDiemStakingProxyFlip(proxyAddress), uint32(effectiveEpoch - 1));
+            } else {
+                console.log("");
+                console.log("WARNING: DIEM_STAKING_PROXY unset - skipping the pre-flip claim.");
+                console.log("Any deployed delegation proxy with unfunded pre-effective epochs");
+                console.log("will permanently freeze them at a zero pot after this flip.");
+            }
+            _pinRewardsPoolRegistry(registry, currentEmissions);
+        } else {
+            // Resume path: setEmissions landed in a previous run, so every tx
+            // broadcast before it (proxy claims, facade pin) landed too. The
+            // claim phase cannot run anymore (legacy V2 no longer resolves);
+            // re-verify the pots instead and finish setStaking below.
+            console.log("");
+            console.log("registry.emissions() already flipped - resuming to finish setStaking().");
+            if (proxyAddress != address(0)) {
+                _verifyProxyPotsFunded(IDiemStakingProxyFlip(proxyAddress), uint32(effectiveEpoch - 1));
+            }
+        }
 
         vm.startBroadcast(ownerPrivateKey);
-        registry.setEmissions(usageAccounting);
-        registry.setStaking(sellerRegistry);
+        if (!emissionsDone) registry.setEmissions(usageAccounting);
+        if (!stakingDone) registry.setStaking(sellerRegistry);
         vm.stopBroadcast();
+
+        require(registry.emissions() == usageAccounting, "post-check failed: emissions pointer not at UsageAccounting");
+        require(registry.staking() == sellerRegistry, "post-check failed: staking pointer not at SellerRegistry");
 
         console.log("");
         console.log("=== Cutover flip complete ===");
@@ -238,11 +266,23 @@ contract CutoverFlip is Script {
 
         // The flip is unsafe while any pre-effective epoch with points is
         // unfunded: the first post-flip claim would freeze it at a zero pot.
+        _verifyProxyPotsFunded(proxy, cutoverEpoch);
+    }
+
+    /// @dev View-only gate shared by the fresh and resume paths: every
+    ///      pre-effective epoch with points must have a funded pot before the
+    ///      registry pointers may reach (or stay at) the new stack. On the
+    ///      fresh path a failure means the staker had no points in that epoch
+    ///      (fund it from another staker, then rerun); on the resume path it
+    ///      means a pot slipped through before the earlier flip and needs
+    ///      manual recovery.
+    function _verifyProxyPotsFunded(IDiemStakingProxyFlip proxy, uint32 cutoverEpoch) internal view {
+        uint32 firstEpoch = proxy.firstRewardEpoch();
         for (uint32 epoch = firstEpoch; epoch <= cutoverEpoch; epoch++) {
             (, uint256 totalPoints,, bool funded) = proxy.rewardEpochs(epoch);
             require(
                 funded || totalPoints == 0,
-                "a pre-effective epoch with points is still unfunded (staker had no points in it); fund it from another staker, then rerun"
+                "a pre-effective epoch with points is unfunded; fund it (another staker) or recover manually, then rerun"
             );
         }
     }
