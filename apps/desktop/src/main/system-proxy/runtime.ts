@@ -45,7 +45,10 @@ import {
   systemProxyDesktopStatePath,
   systemProxyPidPath,
   systemProxyStatePath,
+  systemProxyWslTargetsPath,
 } from './paths.js';
+import { readWslTargets } from './wsl.js';
+import { stopWslRelays, syncWslRelays } from './wsl-relay.js';
 
 /** What this module needs from the app around it — injected once at startup. */
 export type SystemProxyDeps = {
@@ -454,6 +457,7 @@ export async function stopManagedRuntimes(): Promise<void> {
     await clearSystemProxyTransportSettings();
     await unlink(systemProxyPidPath()).catch(() => undefined);
     removeAllConfigPatches();
+    await stopWslRelays();
     traySystemProxyProfiles = new Set();
   }
 }
@@ -523,7 +527,7 @@ export async function startSystemProxyRuntimeInner(opts: SystemProxyStartRequest
     if (allProfiles.includes(name) || !isConfigPatchProfileName(name)) continue;
     const profile = SYSTEM_PROXY_PROFILES.find((p) => p.name === name);
     if (profile?.configPatch) {
-      removeConfigPatch(profile.configPatch);
+      removeConfigPatch(profile.configPatch, systemProxyWslTargetsPath());
       deps().appendLog('system-proxy', 'system', `${profile.label}: removed AntSeed provider from config`);
     }
   }
@@ -547,10 +551,23 @@ export async function startSystemProxyRuntimeInner(opts: SystemProxyStartRequest
       // The patched config carries only the routed-model alias; the buyer
       // resolves it to the default route posted above, so the model picked in
       // the floating pill / VPR applies to running tool sessions.
-      applyConfigPatch(profile.configPatch, defaultRoute.peerId, buyerProxyPort);
+      applyConfigPatch(profile.configPatch, defaultRoute.peerId, buyerProxyPort, systemProxyWslTargetsPath());
       deps().appendLog('system-proxy', 'system', `${profile.label}: connected by config patch (peer=${shortTrayPeerId(defaultRoute.peerId)}, model=${defaultRoute.model || 'auto'} via selection)`);
     }
   }
+  // WSL distros patched above (if any) reach the loopback-only buyer proxy
+  // through a relay on their NAT gateway address; reconcile the relays with
+  // what the config patches actually wrote — including down to zero when the
+  // last WSL-carrying tool was just disconnected.
+  const wslTargets = readWslTargets(systemProxyWslTargetsPath());
+  for (const target of wslTargets) {
+    deps().appendLog('system-proxy', 'system', `WSL ${target.distro}: ${target.tool} config patched at ${target.configPath} (buyer proxy via ${target.host}:${buyerProxyPort})`);
+  }
+  await syncWslRelays(
+    wslTargets.filter((target) => target.needsRelay).map((target) => target.host),
+    buyerProxyPort,
+    (line) => deps().appendLog('system-proxy', 'system', line),
+  );
 
   let state: RuntimeProcessState | null = null;
   if (proxyProfiles.length > 0) {
@@ -652,6 +669,7 @@ export async function stopSystemProxyRuntime(clearSettings: boolean): Promise<Ru
       running: false,
     }), 'utf8').catch(() => undefined);
     removeAllConfigPatches();
+    await stopWslRelays();
     traySystemProxyProfiles = new Set();
     activeSystemProxyState = null;
   }
