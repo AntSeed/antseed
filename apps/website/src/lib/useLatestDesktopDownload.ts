@@ -16,8 +16,10 @@ import ExecutionEnvironment from '@docusaurus/ExecutionEnvironment';
  *     relied on.
  *   - Windows arm64 / Windows x64: same high-entropy API. Windows UA also
  *     lies about arch by default.
- *   - Linux / unknown: no installer is matched; the CTA links to the
- *     releases page where the user picks.
+ *   - Linux arm64 / x64: same high-entropy API; matches the AppImage
+ *     (distro-agnostic — deb users can pick theirs on the releases page).
+ *   - Unknown (mobile, etc.): no installer is matched; the CTA links to
+ *     the releases page where the user picks.
  *
  * Asset matching is done by regex against `asset.name` rather than URL
  * construction so the hook self-corrects when electron-builder changes its
@@ -118,6 +120,15 @@ function matchAsset(
     }) ?? null;
   }
 
+  if (platform === 'linux') {
+    // AppImage runs on any distro; .deb stays a releases-page choice.
+    return assets.find(a => {
+      if (isBlockmap(a.name)) return false;
+      if (!/\.AppImage$/i.test(a.name)) return false;
+      return arch === 'arm64' ? hasArm64(a.name) : !hasArm64(a.name);
+    }) ?? null;
+  }
+
   return null;
 }
 
@@ -177,9 +188,9 @@ export function useLatestDesktopDownload(): DesktopDownload {
 
   useEffect(() => {
     // Only fetch on platforms we actually ship installers for. Avoids burning
-    // GitHub's unauthenticated API rate limit for Linux / unknown visitors
-    // who will be sent to the releases page anyway.
-    if (platform !== 'mac' && platform !== 'win') return;
+    // GitHub's unauthenticated API rate limit for unknown (mobile, etc.)
+    // visitors who will be sent to the releases page anyway.
+    if (platform === 'unknown') return;
     let cancelled = false;
     fetchLatestRelease().then((data: GitHubRelease | null) => {
       if (cancelled || !data) return;
