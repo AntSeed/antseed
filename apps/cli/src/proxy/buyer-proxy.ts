@@ -1,7 +1,7 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { watchFile, unwatchFile } from 'node:fs'
-import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
+import { readFile, writeFile, rename, mkdir, readdir, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   ANTSEED_ATTEST_PATH,
@@ -422,6 +422,78 @@ export function makeVerifierReach(
   }
 }
 
+const STATE_TMP_PATTERN = /^\.buyer\.state\..+\.json\.tmp$/
+const STATE_TMP_SWEEP_MIN_AGE_MS = 60_000
+const STATE_RENAME_RETRY_DELAYS_MS = [25, 50, 100, 200]
+
+/**
+ * Rename with a short bounded retry. On Windows, renaming over a file a
+ * reader briefly holds open fails with EPERM/EACCES/EBUSY; those clear within
+ * milliseconds, so retrying recovers the write instead of dropping it.
+ */
+export async function renameWithRetry(from: string, to: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await rename(from, to)
+      return
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code
+      const retryable = code === 'EPERM' || code === 'EACCES' || code === 'EBUSY'
+      if (!retryable || attempt >= STATE_RENAME_RETRY_DELAYS_MS.length) throw err
+      await new Promise((resolve) => setTimeout(resolve, STATE_RENAME_RETRY_DELAYS_MS[attempt]))
+    }
+  }
+}
+
+/**
+ * Delete leftover `.buyer.state.<uuid>.json.tmp` files from state writes whose
+ * rename failed in an earlier run. The age floor protects a temp file another
+ * process (e.g. `antseed buyer connection set`) is writing right now.
+ */
+export async function sweepStaleStateTmpFiles(dir: string, minAgeMs = STATE_TMP_SWEEP_MIN_AGE_MS): Promise<void> {
+  let names: string[]
+  try {
+    names = await readdir(dir)
+  } catch {
+    return
+  }
+  const now = Date.now()
+  for (const name of names) {
+    if (!STATE_TMP_PATTERN.test(name)) continue
+    const filePath = join(dir, name)
+    try {
+      const info = await stat(filePath)
+      if (now - info.mtimeMs >= minAgeMs) await unlink(filePath)
+    } catch {
+      // already gone or unreadable; nothing to clean
+    }
+  }
+}
+
+/**
+ * Atomic read-merge-write of a JSON state file via a sibling temp file. The
+ * temp file never survives: a failed rename unlinks it before rethrowing.
+ */
+export async function mergeJsonStateFile(stateDir: string, stateFile: string, patch: Record<string, unknown>): Promise<void> {
+  await mkdir(stateDir, { recursive: true })
+  let existing: Record<string, unknown> = {}
+  try {
+    const raw = await readFile(stateFile, 'utf-8')
+    existing = JSON.parse(raw) as Record<string, unknown>
+  } catch {
+    // file doesn't exist yet
+  }
+  const data = { ...existing, ...patch }
+  const tmp = join(stateDir, `.buyer.state.${randomUUID()}.json.tmp`)
+  await writeFile(tmp, JSON.stringify(data, null, 2))
+  try {
+    await renameWithRetry(tmp, stateFile)
+  } catch (err) {
+    await unlink(tmp).catch(() => {})
+    throw err
+  }
+}
+
 export class BuyerProxy {
   private readonly _server: Server
   private readonly _node: AntseedNode
@@ -565,6 +637,10 @@ export class BuyerProxy {
 
   async start(): Promise<void> {
     this._startedAtMs = Date.now()
+    // Clean up temp files orphaned by state writes whose rename failed in a
+    // previous run — each carries a full discovered-peers snapshot, so left
+    // alone they accumulate into real disk usage.
+    await sweepStaleStateTmpFiles(this._stateDir)
     // Hydrate the in-memory peer cache from the persisted state file BEFORE
     // the server starts accepting requests. This lets the first request after
     // startup route from the warm cache without blocking on DHT discovery.
@@ -683,20 +759,12 @@ export class BuyerProxy {
   private _mergeStateFile(patch: Record<string, unknown>): Promise<void> {
     this._stateWriteChain = this._stateWriteChain.then(async () => {
       try {
-        await mkdir(this._stateDir, { recursive: true })
-        let existing: Record<string, unknown> = {}
-        try {
-          const raw = await readFile(this._stateFile, 'utf-8')
-          existing = JSON.parse(raw) as Record<string, unknown>
-        } catch {
-          // file doesn't exist yet
-        }
-        const data = { ...existing, ...patch }
-        const tmp = join(this._stateDir, `.buyer.state.${randomUUID()}.json.tmp`)
-        await writeFile(tmp, JSON.stringify(data, null, 2))
-        await rename(tmp, this._stateFile)
-      } catch {
-        // non-fatal
+        await mergeJsonStateFile(this._stateDir, this._stateFile, patch)
+      } catch (err) {
+        // Non-fatal for the proxy, but the write itself is lost — session
+        // pin, default route, and peer-cache updates in this patch were not
+        // persisted. Always audible: state writes are minutes apart.
+        console.error('[proxy] buyer.state.json write failed:', err instanceof Error ? err.message : String(err))
       }
     }).catch(() => {})
     return this._stateWriteChain
