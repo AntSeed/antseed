@@ -1,21 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { createVerifierRegistry } from '../src/registry.js';
 import {
   buildKbfChatRequestBody,
   buildKbfPrompt,
-  KbfVerifier,
   parseKbfAnswers,
+  verifyKbf,
 } from '../src/verifiers/kbf/index.js';
 import { canonicalHash } from '../src/canonical-json.js';
-import { generateProbeSet } from '../src/probe-bank.js';
-import type { FingerprintReference, SellerObservation } from '../src/types.js';
+import type { FingerprintObservation, FingerprintReference, KbfProbe } from '../src/types.js';
 
-const PROBES = generateProbeSet({
-  service: 'gpt-5.4',
-  count: 20,
-  seed: 'kbf-verifier-test',
-  createdAt: '2026-07-03T00:00:00.000Z',
-}).probes;
+const PROBES: KbfProbe[] = Array.from({ length: 20 }, (_, index) => ({
+  id: `probe-${index + 1}`,
+  name: `Probe ${index + 1}`,
+  domain: 'test',
+  template: `The test value is ___.`,
+  consensus: index + 10,
+  range: [0, 100],
+  tolerance: { mode: 'absolute', value: 0.1 },
+}));
 
 function makeReference(overrides: Partial<FingerprintReference> = {}): FingerprintReference {
   const outcomes = PROBES.map((probe) => ({
@@ -43,13 +44,8 @@ function makeReference(overrides: Partial<FingerprintReference> = {}): Fingerpri
   };
 }
 
-function makeObservation(answers: Array<number | null>): SellerObservation {
-  return {
-    sellerPeerId: '0xseller',
-    agentId: 7,
-    answers,
-    requestIds: ['req-1'],
-  };
+function makeObservation(answers: Array<number | null>): FingerprintObservation {
+  return { answers };
 }
 
 describe('buildKbfPrompt', () => {
@@ -86,14 +82,12 @@ describe('buildKbfChatRequestBody', () => {
   });
 });
 
-describe('KbfVerifier', () => {
-  const verifier = new KbfVerifier();
-
+describe('verifyKbf', () => {
   it('round-trips: prompt -> simulated response -> parse -> SAME', () => {
     const reference = makeReference();
     const responseText = PROBES.map((p, i) => `(${i + 1}) ${p.consensus}`).join('\n');
     const answers = parseKbfAnswers(responseText, PROBES.length);
-    const fragment = verifier.verify(reference, makeObservation(answers));
+    const fragment = verifyKbf(reference, makeObservation(answers));
     expect(fragment.verdict).toBe('SAME');
     expect(fragment.parsedProbeCount).toBe(PROBES.length);
     expect(fragment.stats.targetHamming).toBe(0);
@@ -108,7 +102,7 @@ describe('KbfVerifier', () => {
       const wrong = p.consensus + Math.max((hi - lo) * 0.2, p.tolerance.value * 50 + 1);
       return Math.min(wrong, hi);
     });
-    const fragment = verifier.verify(reference, makeObservation(answers));
+    const fragment = verifyKbf(reference, makeObservation(answers));
     expect(fragment.verdict).toBe('DIFF');
     expect(fragment.stats.pValueBinomial!).toBeLessThan(0.05);
   });
@@ -116,13 +110,13 @@ describe('KbfVerifier', () => {
   it('returns UNDETERMINED below coverage', () => {
     const reference = makeReference();
     const answers = PROBES.map((p, i) => (i < 5 ? p.consensus : null));
-    const fragment = verifier.verify(reference, makeObservation(answers));
+    const fragment = verifyKbf(reference, makeObservation(answers));
     expect(fragment.verdict).toBe('UNDETERMINED');
   });
 
   it('returns UNKNOWN for a non-kbf reference', () => {
     const reference = makeReference({ kind: 'behavioral-classifier' });
-    const fragment = verifier.verify(reference, makeObservation(PROBES.map((p) => p.consensus)));
+    const fragment = verifyKbf(reference, makeObservation(PROBES.map((p) => p.consensus)));
     expect(fragment.verdict).toBe('UNKNOWN');
     expect(fragment.verdictReason).toMatch(/kind/);
   });
@@ -131,24 +125,24 @@ describe('KbfVerifier', () => {
     const reference = makeReference({
       selfTest: { hamming: 0, total: 0, coverage: 0, errorRate: 0, outcomes: [] },
     });
-    const fragment = verifier.verify(reference, makeObservation(PROBES.map((p) => p.consensus)));
+    const fragment = verifyKbf(reference, makeObservation(PROBES.map((p) => p.consensus)));
     expect(fragment.verdict).toBe('UNKNOWN');
   });
 
   it('returns UNKNOWN on answer-count mismatch', () => {
     const reference = makeReference();
-    const fragment = verifier.verify(reference, makeObservation([1, 2, 3]));
+    const fragment = verifyKbf(reference, makeObservation([1, 2, 3]));
     expect(fragment.verdict).toBe('UNKNOWN');
     expect(fragment.verdictReason).toMatch(/length/);
   });
 
   it('uses a precomputed matchVector when provided', () => {
     const reference = makeReference();
-    const observation: SellerObservation = {
+    const observation: FingerprintObservation = {
       ...makeObservation([]),
       matchVector: PROBES.map(() => 1 as const),
     };
-    const fragment = verifier.verify(reference, observation);
+    const fragment = verifyKbf(reference, observation);
     expect(fragment.verdict).toBe('SAME');
     expect(fragment.stats.targetHamming).toBe(0);
   });
@@ -165,32 +159,10 @@ describe('KbfVerifier', () => {
       const observation = {
         ...makeObservation([]),
         matchVector,
-      } as unknown as SellerObservation;
-      const fragment = verifier.verify(reference, observation);
+      } as unknown as FingerprintObservation;
+      const fragment = verifyKbf(reference, observation);
       expect(fragment.verdict).toBe('UNKNOWN');
       expect(fragment.verdictReason).toMatch(/exactly 0, 1, or null/);
     }
-  });
-});
-
-describe('createVerifierRegistry', () => {
-  it('pre-registers the kbf verifier', () => {
-    const registry = createVerifierRegistry();
-    expect(registry.list()).toContain('kbf');
-    expect(registry.get('kbf')).toBeInstanceOf(KbfVerifier);
-    expect(registry.get('missing')).toBeUndefined();
-  });
-
-  it('registers and dispatches custom verifiers by kind', () => {
-    const registry = createVerifierRegistry();
-    const fake = {
-      kind: 'behavioral-classifier',
-      verify: () => {
-        throw new Error('not implemented');
-      },
-    };
-    registry.register(fake);
-    expect(registry.get('behavioral-classifier')).toBe(fake);
-    expect(registry.list().sort()).toEqual(['behavioral-classifier', 'kbf']);
   });
 });

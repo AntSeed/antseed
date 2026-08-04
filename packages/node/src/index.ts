@@ -188,8 +188,7 @@ export {
 } from './proxy/request-codec.js';
 export {
   VerificationMux,
-  VerificationSampler,
-  VerificationStorage,
+  ResponseAuthStorage,
   buildResponseAuthSigningBytes,
   decodeContractResponseAuthPayload,
   encodeContractResponseAuthPayload,
@@ -201,23 +200,7 @@ export {
   hashRequest,
   hashResponse,
   type ResponseAuthExecutionWindow,
-  type ResponseAuthSampleInput,
   type StoredResponseAuth,
-  type DirectAuditState,
-  type DirectAuditSource,
-  type DirectAuditProbeStatus,
-  type StoredDirectAudit,
-  type StoredDirectAuditProbe,
-  type StoredDirectAuditExchange,
-  type BenchmarkRunState,
-  type StoredBenchmarkRun,
-  type BenchmarkTargetState,
-  type StoredBenchmarkTarget,
-  type ReferenceBuildState,
-  type StoredReferenceBuild,
-  type StoredCertifiedKbfProbe,
-  type StoredVerificationSample,
-  type VerificationSampleConfig,
 } from './verification/index.js';
 export { resolveProvider } from './proxy/provider-detection.js';
 export {

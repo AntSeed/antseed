@@ -13,7 +13,7 @@ import {
   extractContractResponseAuthSigningPayload,
   verifyResponseAuth,
   verifyResponseAuthExecutionWindow,
-  VerificationStorage,
+  ResponseAuthStorage,
 } from '../src/verification/index.js';
 
 function makeRequest(): SerializedHttpRequest {
@@ -190,7 +190,7 @@ describe('ResponseAuth', () => {
 
   it('stores lightweight response auth records locally', () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'verification-store-test-'));
-    const storage = new VerificationStorage(join(tempDir, 'verification.db'));
+    const storage = new ResponseAuthStorage(join(tempDir, 'verification.db'));
     try {
       const seller = identityFromPrivateKeyHex('11'.repeat(32));
       const buyer = identityFromPrivateKeyHex('22'.repeat(32));

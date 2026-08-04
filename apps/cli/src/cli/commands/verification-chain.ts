@@ -20,9 +20,6 @@ export function resolveVerificationChain(config: AntseedConfig, rpcUrlFlag?: str
   if (!chain.verifierRegistryAddress) {
     throw new Error('No verifier registry address configured. Set payments.crypto.verifierRegistryAddress.')
   }
-  if (!chain.verifierRewardsAddress) {
-    throw new Error('No verifier rewards address configured. Set payments.crypto.verifierRewardsAddress.')
-  }
   return createVerificationChainContext(chain)
 }
 

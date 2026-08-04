@@ -2,9 +2,8 @@ import type { PeerInfo } from '@antseed/node'
 
 /**
  * Enumerate the model/service catalog advertised by discovered peers, so
- * `antseed verifier start` can run with zero service configuration: one
- * wildcard discovery per round, then audit every service the network is
- * actually claiming to serve.
+ * Group peer advertisements while preserving the original model spelling used
+ * for outgoing verifier requests.
  *
  * A service id is a model id announced in the peer's signed metadata
  * (`metadata.providers[].services`) or priced in `providerPricing[*].services`.

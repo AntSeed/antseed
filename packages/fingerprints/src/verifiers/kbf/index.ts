@@ -9,14 +9,13 @@ import {
   FINGERPRINTS_PACKAGE_NAME,
   FINGERPRINTS_PACKAGE_VERSION,
   isMatchVector,
-  type AuditResultFragment,
-  type AuditStats,
+  type FingerprintEvaluation,
+  type FingerprintObservation,
+  type FingerprintStats,
   type FingerprintReference,
   type MatchVector,
-  type SellerObservation,
 } from '../../types.js';
 import { canonicalHash } from '../../canonical-json.js';
-import type { FingerprintVerifier, VerifyOptions } from '../../registry.js';
 import { computeMatchVector } from './scoring.js';
 import { computeKbfVerdict } from './verdict.js';
 import { subsetReferenceSelfTest, type KbfReferenceV1 } from './reference.js';
@@ -25,23 +24,25 @@ export * from './prompts.js';
 export * from './parser.js';
 export * from './scoring.js';
 export * from './stats.js';
-export * from './stealth.js';
 export * from './verdict.js';
 export * from './reference.js';
 
 export const KBF_KIND = 'kbf';
 
-export class KbfVerifier implements FingerprintVerifier {
-  readonly kind = KBF_KIND;
+export interface VerifyKbfOptions {
+  minCoverage?: number;
+  cpConfidence?: number;
+  alpha?: number;
+}
 
-  verify(
-    reference: FingerprintReference,
-    observation: SellerObservation,
-    options: VerifyOptions = {},
-  ): AuditResultFragment {
+export function verifyKbf(
+  reference: FingerprintReference,
+  observation: FingerprintObservation,
+  options: VerifyKbfOptions = {},
+): FingerprintEvaluation {
     const base = {
       verifier: {
-        kind: this.kind,
+        kind: KBF_KIND,
         package: FINGERPRINTS_PACKAGE_NAME,
         version: FINGERPRINTS_PACKAGE_VERSION,
       },
@@ -50,7 +51,7 @@ export class KbfVerifier implements FingerprintVerifier {
       probeCount: reference.probes.length,
     };
 
-    const unknown = (reason: string): AuditResultFragment => ({
+    const unknown = (reason: string): FingerprintEvaluation => ({
       ...base,
       parsedProbeCount: 0,
       matchVector: [],
@@ -60,8 +61,8 @@ export class KbfVerifier implements FingerprintVerifier {
       verdictReason: reason,
     });
 
-    if (reference.kind !== this.kind) {
-      return unknown(`reference kind "${reference.kind}" is not "${this.kind}"`);
+    if (reference.kind !== KBF_KIND) {
+      return unknown(`reference kind "${reference.kind}" is not "${KBF_KIND}"`);
     }
 
     let matchVector: MatchVector;
@@ -106,7 +107,7 @@ export class KbfVerifier implements FingerprintVerifier {
 
     const parsedProbeCount = matchVector.filter((entry) => entry !== null).length;
 
-    const auditStats: AuditStats = {
+    const fingerprintStats: FingerprintStats = {
       selfHamming: stats.selfHamming,
       selfTotal: stats.selfTotal,
       targetHamming: stats.targetHamming,
@@ -122,14 +123,13 @@ export class KbfVerifier implements FingerprintVerifier {
       parsedProbeCount,
       matchVector,
       matchVectorHash: canonicalHash(matchVector),
-      stats: auditStats,
+      stats: fingerprintStats,
       verdict,
       verdictReason,
     };
-  }
 }
 
-function emptyStats(reference: FingerprintReference): AuditStats {
+function emptyStats(reference: FingerprintReference): FingerprintStats {
   return {
     selfHamming: reference.selfTest.hamming,
     selfTotal: reference.selfTest.total,

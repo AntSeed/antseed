@@ -35,9 +35,8 @@ function assertKnownKeys(value: Record<string, unknown>, path: string, knownKeys
 
 const BUYER_KEYS = new Set([
   'maxPricing', 'minPeerReputation', 'proxyPort', 'peerRefreshIntervalMs',
-  'metadataFetchTimeoutMs', 'disableMetadataV2Services', 'verification',
+  'metadataFetchTimeoutMs', 'disableMetadataV2Services',
 ]);
-const BUYER_VERIFICATION_KEYS = new Set(['sampleRate', 'maxSampleBytes']);
 
 function toFiniteOrNaN(value: unknown): number {
   return typeof value === 'number' ? value : Number.NaN;
@@ -322,33 +321,6 @@ function normalizeMinPeerReputation(value: unknown, fallback: number): number {
   return value === 50 ? fallback : value;
 }
 
-function cloneBuyerVerification(
-  value: AntseedConfig['buyer']['verification'],
-): AntseedConfig['buyer']['verification'] {
-  if (!value) return undefined;
-  return {
-    ...(value.sampleRate !== undefined ? { sampleRate: value.sampleRate } : {}),
-    ...(value.maxSampleBytes !== undefined ? { maxSampleBytes: value.maxSampleBytes } : {}),
-  };
-}
-
-function normalizeBuyerVerification(
-  value: unknown,
-  fallback?: AntseedConfig['buyer']['verification'],
-): { verification: NonNullable<AntseedConfig['buyer']['verification']> } | Record<string, never> {
-  if (!isRecord(value)) {
-    const cloned = cloneBuyerVerification(fallback);
-    return cloned ? { verification: cloned } : {};
-  }
-  assertKnownKeys(value, 'buyer.verification', BUYER_VERIFICATION_KEYS);
-  return {
-    verification: {
-      ...(value['sampleRate'] !== undefined ? { sampleRate: toFiniteOrNaN(value['sampleRate']) } : {}),
-      ...(value['maxSampleBytes'] !== undefined ? { maxSampleBytes: toFiniteOrNaN(value['maxSampleBytes']) } : {}),
-    },
-  };
-}
-
 function mergeBuyerConfig(
   defaults: AntseedConfig['buyer'],
   value: unknown
@@ -361,7 +333,6 @@ function mergeBuyerConfig(
       peerRefreshIntervalMs: defaults.peerRefreshIntervalMs,
       metadataFetchTimeoutMs: defaults.metadataFetchTimeoutMs,
       disableMetadataV2Services: defaults.disableMetadataV2Services,
-      ...(normalizeBuyerVerification(undefined, defaults.verification)),
     };
   }
   assertKnownKeys(value, 'buyer', BUYER_KEYS);
@@ -382,7 +353,6 @@ function mergeBuyerConfig(
       defaults.disableMetadataV2Services,
       'buyer.disableMetadataV2Services',
     ),
-    ...(normalizeBuyerVerification(value['verification'], defaults.verification)),
   };
 }
 
@@ -400,7 +370,7 @@ function normalizeBooleanConfigValue(value: unknown, defaultValue: boolean, path
 function mergeVerifierConfig(value: unknown): AntseedConfig['verifier'] {
   if (value === undefined) return undefined;
   if (!isRecord(value)) throw new Error('verifier must be an object');
-  return { services: [], ...(value as NonNullable<AntseedConfig['verifier']>) };
+  return value as NonNullable<AntseedConfig['verifier']>;
 }
 
 /**
@@ -453,29 +423,9 @@ export async function loadConfig(configPath: string): Promise<AntseedConfig> {
   };
 
   const verifier = mergeVerifierConfig(parsed['verifier']);
-  const rawReferencePolicy = verifier?.referencePolicy;
-  const referencePolicy = {
-    ...defaults.verifier?.referencePolicy,
-    ...rawReferencePolicy,
-  };
-  if (rawReferencePolicy?.auditProbeCount !== undefined && rawReferencePolicy.minimumAuditProbeCount === undefined) {
-    referencePolicy.minimumAuditProbeCount = rawReferencePolicy.auditProbeCount;
-    console.warn('Warning: verifier.referencePolicy.auditProbeCount is deprecated; use minimumAuditProbeCount.');
-  }
-  if (rawReferencePolicy?.maxRequestsPerBuild !== undefined && rawReferencePolicy.maxRequestsPerRound === undefined) {
-    referencePolicy.maxRequestsPerRound = rawReferencePolicy.maxRequestsPerBuild;
-    console.warn('Warning: verifier.referencePolicy.maxRequestsPerBuild is deprecated; use maxRequestsPerRound.');
-  }
-  if (rawReferencePolicy?.certifiedProbeCount !== undefined) {
-    console.warn('Warning: verifier.referencePolicy.certifiedProbeCount is deprecated; the verifier now uses a certified probe catalog.');
-  }
-  if (rawReferencePolicy?.maxProbeUsesPerTarget !== undefined) {
-    console.warn('Warning: verifier.referencePolicy.maxProbeUsesPerTarget is deprecated; same-agent probe reuse is disabled.');
-  }
   merged.verifier = {
     ...defaults.verifier,
     ...verifier,
-    referencePolicy,
   };
 
   assertValidConfig(merged);

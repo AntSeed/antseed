@@ -58,17 +58,6 @@ function evidence(): DirectAuditEvidenceV1 {
       verdict: 'SAME',
       verdictReason: null,
     },
-    metrics: {
-      windowStartedAt: 1,
-      windowEndedAt: 2,
-      eligibleAttempts: 1,
-      successfulAttempts: 1,
-      p50TtftMs: 10,
-      p95TtftMs: 10,
-      p50OutputTokensPerSecondMilli: 1_000,
-      schemaVersion: 1,
-      observationsRoot: `0x${'66'.repeat(32)}`,
-    },
   }
 }
 

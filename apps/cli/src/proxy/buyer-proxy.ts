@@ -1,12 +1,10 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
-import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { watchFile, unwatchFile } from 'node:fs'
-import { chmod, readFile, writeFile, rename, mkdir } from 'node:fs/promises'
+import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   computeOnChainReputationScore,
-  hashRequest,
-  hashResponse,
   peerHasActiveSubstitutionFlag,
   type AntseedNode,
   type PeerInfo,
@@ -17,17 +15,6 @@ import {
   type SerializedHttpResponse,
   type SerializedHttpResponseChunk,
 } from '@antseed/node'
-import {
-  BUYER_AUDIT_EXECUTE_PATH,
-  BUYER_AUDIT_IDENTITY_PATH,
-  BUYER_AUDIT_TOKEN_FILENAME,
-  decodeSerializedHttpRequest,
-  encodeSerializedHttpResponse,
-  type BuyerAuditExecuteRequest,
-  type BuyerAuditExecuteResponse,
-  type BuyerAuditFailureStage,
-  type BuyerAuditIdentity,
-} from './audit-protocol.js'
 import {
   createStreamingAdapter,
   detectRequestServiceApiProtocol,
@@ -82,50 +69,11 @@ export interface BuyerProxyConfig {
    * Pin all requests to a specific peer ID for this session.
    * The named peer is used directly if it is available, protocol-compatible,
    * and allowed by the buyer's pricing policy. A 502 is returned if the peer cannot be reached.
-   */
+  */
   pinnedPeerId?: string
-  /** Fixed audit bearer token for tests/embedded callers. Production creates a mode-0600 token file. */
-  auditToken?: string
 }
 
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
-const MAX_BUYER_AUDIT_BODY_BYTES = 8 * 1024 * 1024
-const MAX_BUYER_AUDIT_TIMEOUT_MS = 5 * 60_000
-
-async function readBuyerAuditExecuteRequest(req: IncomingMessage): Promise<BuyerAuditExecuteRequest> {
-  const chunks: Buffer[] = []
-  let totalSize = 0
-  for await (const chunk of req) {
-    const bytes = chunk as Buffer
-    totalSize += bytes.length
-    if (totalSize > MAX_BUYER_AUDIT_BODY_BYTES) throw new Error('Request body too large')
-    chunks.push(bytes)
-  }
-  let value: unknown
-  try {
-    value = JSON.parse(Buffer.concat(chunks).toString('utf8'))
-  } catch {
-    throw new Error('Invalid JSON body')
-  }
-  if (!value || typeof value !== 'object') throw new Error('Invalid audit request')
-  const input = value as Partial<BuyerAuditExecuteRequest>
-  if (typeof input.peerId !== 'string' || input.peerId.length === 0) throw new Error('Missing peerId')
-  if (!input.request || typeof input.request !== 'object') throw new Error('Missing request')
-  if (typeof input.request.requestId !== 'string' || input.request.requestId.length === 0) {
-    throw new Error('Missing requestId')
-  }
-  if (input.request.method !== 'POST' || input.request.path !== '/v1/chat/completions') {
-    throw new Error('Audit transport only supports POST /v1/chat/completions')
-  }
-  if (!input.request.headers || typeof input.request.headers !== 'object') throw new Error('Missing request headers')
-  if (typeof input.request.bodyBase64 !== 'string') throw new Error('Missing request body')
-  if (!Number.isInteger(input.responseAuthTimeoutMs)
-    || input.responseAuthTimeoutMs! < 1
-    || input.responseAuthTimeoutMs! > MAX_BUYER_AUDIT_TIMEOUT_MS) {
-    throw new Error(`responseAuthTimeoutMs must be between 1 and ${MAX_BUYER_AUDIT_TIMEOUT_MS}`)
-  }
-  return input as BuyerAuditExecuteRequest
-}
 
 /**
  * True only for the read-only model-listing control-plane surface: a `GET` to
@@ -477,8 +425,6 @@ export class BuyerProxy {
   private readonly _peerCacheTtlMs: number
   private readonly _stateDir: string
   private readonly _stateFile: string
-  private readonly _auditTokenFile: string
-  private _auditToken: string | null
   private _stateFileWatching = false
   private _pinnedPeer: string | null
   private _stateWatchDebounce: ReturnType<typeof setTimeout> | null = null
@@ -501,8 +447,6 @@ export class BuyerProxy {
     this._peerCacheTtlMs = Math.max(0, config.peerCacheTtlMs ?? Math.max(6 * 60_000, this._bgRefreshIntervalMs + 60_000))
     this._stateDir = config.dataDir
     this._stateFile = join(config.dataDir, 'buyer.state.json')
-    this._auditTokenFile = join(config.dataDir, BUYER_AUDIT_TOKEN_FILENAME)
-    this._auditToken = config.auditToken ?? null
     this._pinnedPeer = config.pinnedPeerId?.toLowerCase() ?? null
     this._server = createServer((req, res) => {
       this._handleRequest(req, res).catch((err) => {
@@ -527,7 +471,6 @@ export class BuyerProxy {
   }
 
   async start(): Promise<void> {
-    await this._ensureAuditToken()
     // Hydrate the in-memory peer cache from the persisted state file BEFORE
     // the server starts accepting requests. This lets the first request after
     // startup route from the warm cache without blocking on DHT discovery.
@@ -983,27 +926,6 @@ export class BuyerProxy {
     method: string,
     path: string,
   ): Promise<void> {
-    if (path === BUYER_AUDIT_IDENTITY_PATH || path === BUYER_AUDIT_EXECUTE_PATH) {
-      if (!this._isAuditAuthorized(req)) {
-        res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer' })
-        res.end(JSON.stringify({ ok: false, error: 'Unauthorized' }))
-        return
-      }
-      if (path === BUYER_AUDIT_IDENTITY_PATH && method === 'GET') {
-        const identity = this._getAuditIdentity()
-        res.writeHead(200, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ ok: true, identity }))
-        return
-      }
-      if (path === BUYER_AUDIT_EXECUTE_PATH && method === 'POST') {
-        await this._handleAuditExecute(req, res)
-        return
-      }
-      res.writeHead(405, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ ok: false, error: 'Method not allowed' }))
-      return
-    }
-
     const origin = req.headers.origin ?? '';
     const isLocal = origin.startsWith('http://127.0.0.1') || origin.startsWith('http://localhost') || origin === 'file://';
     if (isLocal) res.setHeader('Access-Control-Allow-Origin', origin);
@@ -1122,130 +1044,6 @@ export class BuyerProxy {
 
     res.writeHead(404, { 'content-type': 'application/json' })
     res.end(JSON.stringify({ ok: false, error: 'Unknown control-plane endpoint' }))
-  }
-
-  private async _ensureAuditToken(): Promise<void> {
-    if (this._auditToken) return
-    await mkdir(this._stateDir, { recursive: true })
-    try {
-      const existing = (await readFile(this._auditTokenFile, 'utf8')).trim()
-      if (/^[a-f0-9]{64}$/i.test(existing)) {
-        this._auditToken = existing
-        await chmod(this._auditTokenFile, 0o600)
-        return
-      }
-    } catch {
-      // Create a fresh token below.
-    }
-    const token = randomBytes(32).toString('hex')
-    await writeFile(this._auditTokenFile, `${token}\n`, { mode: 0o600 })
-    await chmod(this._auditTokenFile, 0o600)
-    this._auditToken = token
-  }
-
-  private _isAuditAuthorized(req: IncomingMessage): boolean {
-    if (!this._auditToken) return false
-    const authorization = req.headers.authorization
-    if (typeof authorization !== 'string' || !authorization.startsWith('Bearer ')) return false
-    const supplied = authorization.slice('Bearer '.length).trim()
-    const suppliedBytes = Buffer.from(supplied)
-    const expectedBytes = Buffer.from(this._auditToken)
-    return suppliedBytes.length === expectedBytes.length && timingSafeEqual(suppliedBytes, expectedBytes)
-  }
-
-  private _getAuditIdentity(): BuyerAuditIdentity {
-    const identity = this._node.identity
-    if (!identity) throw new Error('buyer proxy identity is not available')
-    return {
-      address: identity.wallet.address,
-      peerId: identity.peerId,
-    }
-  }
-
-  private async _handleAuditExecute(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    let input: BuyerAuditExecuteRequest
-    try {
-      input = await readBuyerAuditExecuteRequest(req)
-    } catch (error) {
-      res.writeHead(400, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }))
-      return
-    }
-
-    const identity = this._getAuditIdentity()
-    const peers = await this._getPeers()
-    const peer = peers.find((candidate) => candidate.peerId === input.peerId)
-      ?? await this._node.findPeer(input.peerId)
-    if (!peer || peer.peerId !== input.peerId) {
-      res.writeHead(404, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ ok: false, error: 'Peer not found' }))
-      return
-    }
-
-    const request = decodeSerializedHttpRequest(input.request)
-    const abortController = new AbortController()
-    req.once('aborted', () => abortController.abort())
-    let response: SerializedHttpResponse | null = null
-    let responseAuth: Awaited<ReturnType<AntseedNode['waitForResponseAuth']>> | null = null
-
-    try {
-      response = await this._node.sendRequest(peer, request, { signal: abortController.signal })
-    } catch (error) {
-      this._writeAuditExecutionResponse(res, identity, peer.peerId, null, null, null, 'request', error)
-      return
-    }
-
-    try {
-      responseAuth = await this._node.waitForResponseAuth(request.requestId, input.responseAuthTimeoutMs)
-      if (!responseAuth.verified) {
-        throw new Error(`ResponseAuth verification failed: ${responseAuth.verificationError ?? 'unknown'}`)
-      }
-      if (responseAuth.requestHash.toLowerCase() !== hashRequest(request).toLowerCase()) {
-        throw new Error('ResponseAuth request hash mismatch')
-      }
-      if (responseAuth.responseHash.toLowerCase() !== hashResponse(response).toLowerCase()) {
-        throw new Error('ResponseAuth response hash mismatch')
-      }
-    } catch (error) {
-      this._writeAuditExecutionResponse(res, identity, peer.peerId, response, responseAuth, null, 'response-auth', error)
-      return
-    }
-
-    try {
-      const payment = await this._node.finalizeResponsePayment(peer, request.requestId)
-      this._writeAuditExecutionResponse(res, identity, peer.peerId, response, responseAuth, payment, null, null)
-    } catch (error) {
-      this._writeAuditExecutionResponse(res, identity, peer.peerId, response, responseAuth, null, 'payment', error)
-    }
-  }
-
-  private _writeAuditExecutionResponse(
-    res: ServerResponse,
-    identity: BuyerAuditIdentity,
-    peerId: string,
-    response: SerializedHttpResponse | null,
-    responseAuth: Awaited<ReturnType<AntseedNode['waitForResponseAuth']>> | null,
-    payment: Awaited<ReturnType<AntseedNode['finalizeResponsePayment']>> | null,
-    failureStage: BuyerAuditFailureStage | null,
-    error: unknown,
-  ): void {
-    const payload: BuyerAuditExecuteResponse = {
-      ok: failureStage === null,
-      identity,
-      peerId,
-      response: response ? encodeSerializedHttpResponse(response) : null,
-      responseAuth,
-      payment: payment ? {
-        sellerChargeUsdc: payment.sellerChargeUsdc.toString(),
-        spendingAuth: payment.spendingAuth,
-      } : null,
-      failure: failureStage ? {
-        stage: failureStage,
-        message: error instanceof Error ? error.message : String(error),
-      } : null,
-    }
-    res.writeHead(200, { 'content-type': 'application/json' })
-    res.end(JSON.stringify(payload))
   }
 
   private async _handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {

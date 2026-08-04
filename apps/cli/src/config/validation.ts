@@ -270,50 +270,16 @@ function validateVerifications(
   }
 }
 
-function validateBuyerVerification(
-  path: string,
-  verification: AntseedConfig['buyer']['verification'],
-  errors: string[],
-): void {
-  if (verification === undefined) return;
-  if (!verification || typeof verification !== 'object' || Array.isArray(verification)) {
-    errors.push(`${path} must be an object when provided`);
-    return;
-  }
-  if (
-    verification.sampleRate !== undefined &&
-    (!Number.isFinite(verification.sampleRate) || verification.sampleRate < 0 || verification.sampleRate > 1)
-  ) {
-    errors.push(`${path}.sampleRate must be a number in range 0-1`);
-  }
-  if (
-    verification.maxSampleBytes !== undefined &&
-    (!Number.isInteger(verification.maxSampleBytes) || verification.maxSampleBytes < 1)
-  ) {
-    errors.push(`${path}.maxSampleBytes must be an integer >= 1`);
-  }
-}
-
 // Known keys per verifier section. The loader passes the raw section through
 // unfiltered (see mergeVerifierConfig), so a typo'd key must fail here loudly
 // instead of being silently ignored.
 const VERIFIER_KEYS = new Set([
-  'services', 'referencesDir', 'evidenceDir', 'auditIntervalMs', 'maxAuditsPerEpoch',
-  'probeRequestTimeoutMs', 'maxConcurrentProbeRequests', 'upstream', 'referenceEndpoint',
-  'referencePolicy', 'trustedImportedReferenceIds',
+  'referencesDir', 'evidenceDir', 'probeRequestTimeoutMs', 'maxTotalSpendUSDC', 'referenceEndpoint',
 ]);
-const VERIFIER_UPSTREAM_KEYS = new Set(['baseUrl', 'apiKey', 'apiKeyEnv', 'modelMap']);
 const VERIFIER_REFERENCE_ENDPOINT_KEYS = new Set([
   'baseUrl', 'apiKey', 'apiKeyEnv', 'sourceId', 'trust', 'antseedPeerId', 'models',
 ]);
 const VERIFIER_REFERENCE_MODEL_KEYS = new Set(['upstreamModel', 'contrastModels']);
-const VERIFIER_REFERENCE_POLICY_KEYS = new Set([
-  'certifiedProbeCount', 'auditProbeCount', 'maxProbeUsesPerTarget', 'maxReferenceAgeDays',
-  'maxRequestsPerBuild', 'minimumAuditProbeCount', 'maximumAuditProbeCount', 'auditProbeStep',
-  'minimumStatisticalPower', 'maxRequestsPerRound', 'requestTimeoutMs', 'batchRetryCount',
-  'generationDomainConcurrency', 'maxConcurrentReferenceRequests', 'maxConcurrentRequestsPerModel',
-  'minimumMismatchDelta', 'familyWideAlpha', 'referenceConfidence', 'minimumAuthenticatedCoverage',
-]);
 
 function validateVerifierConfig(
   path: string,
@@ -328,25 +294,7 @@ function validateVerifierConfig(
   for (const key of Object.keys(verifier).filter((k) => !VERIFIER_KEYS.has(k))) {
     errors.push(`${path}.${key} is not a supported verifier option`);
   }
-  // Empty/omitted services = auto-discover mode; entries just have to be strings.
-  if (verifier.services !== undefined) {
-    if (!Array.isArray(verifier.services)) {
-      errors.push(`${path}.services must be a string array when provided`);
-    } else {
-      for (let i = 0; i < verifier.services.length; i += 1) {
-        const service = verifier.services[i];
-        if (typeof service !== 'string' || service.trim().length === 0) {
-          errors.push(`${path}.services[${i}] must be a non-empty string`);
-        }
-      }
-    }
-  }
-  const positiveInts: Array<[string, number | undefined]> = [
-    ['auditIntervalMs', verifier.auditIntervalMs],
-    ['maxAuditsPerEpoch', verifier.maxAuditsPerEpoch],
-    ['probeRequestTimeoutMs', verifier.probeRequestTimeoutMs],
-    ['maxConcurrentProbeRequests', verifier.maxConcurrentProbeRequests],
-  ];
+  const positiveInts: Array<[string, number | undefined]> = [['probeRequestTimeoutMs', verifier.probeRequestTimeoutMs]];
   for (const [key, value] of positiveInts) {
     if (value !== undefined && (!Number.isInteger(value) || value < 1)) {
       errors.push(`${path}.${key} must be an integer >= 1`);
@@ -361,50 +309,13 @@ function validateVerifierConfig(
       errors.push(`${path}.${key} must be a non-empty string when provided`);
     }
   }
-  if (verifier.upstream !== undefined && verifier.referenceEndpoint !== undefined) {
-    errors.push(`${path}.upstream and ${path}.referenceEndpoint cannot both be configured`);
-  }
-  if (verifier.upstream !== undefined) {
-    const upstream = verifier.upstream;
-    if (!upstream || typeof upstream !== 'object' || Array.isArray(upstream)) {
-      errors.push(`${path}.upstream must be an object when provided`);
-    } else {
-      for (const key of Object.keys(upstream).filter((k) => !VERIFIER_UPSTREAM_KEYS.has(k))) {
-        errors.push(`${path}.upstream.${key} is not a supported upstream option`);
-      }
-      if (typeof upstream.baseUrl !== 'string' || upstream.baseUrl.trim().length === 0) {
-        errors.push(`${path}.upstream.baseUrl must be a non-empty string`);
-      }
-      if (upstream.apiKey !== undefined && typeof upstream.apiKey !== 'string') {
-        errors.push(`${path}.upstream.apiKey must be a string when provided`);
-      }
-      if (upstream.apiKeyEnv !== undefined && typeof upstream.apiKeyEnv !== 'string') {
-        errors.push(`${path}.upstream.apiKeyEnv must be a string when provided`);
-      }
-      if (upstream.modelMap !== undefined) {
-        if (!upstream.modelMap || typeof upstream.modelMap !== 'object' || Array.isArray(upstream.modelMap)) {
-          errors.push(`${path}.upstream.modelMap must be an object when provided`);
-        } else {
-          for (const [service, model] of Object.entries(upstream.modelMap)) {
-            if (typeof model !== 'string' || model.trim().length === 0) {
-              errors.push(`${path}.upstream.modelMap["${service}"] must be a non-empty string`);
-            }
-          }
-        }
-      }
-    }
-  }
-  if (verifier.trustedImportedReferenceIds !== undefined) {
-    if (!Array.isArray(verifier.trustedImportedReferenceIds)
-      || verifier.trustedImportedReferenceIds.some((value) => typeof value !== 'string' || value.length === 0)) {
-      errors.push(`${path}.trustedImportedReferenceIds must be a string array`);
-    }
+  if (verifier.maxTotalSpendUSDC !== undefined
+    && (typeof verifier.maxTotalSpendUSDC !== 'string' || !/^\d+(?:\.\d{1,6})?$/.test(verifier.maxTotalSpendUSDC)
+      || Number(verifier.maxTotalSpendUSDC) <= 0)) {
+    errors.push(`${path}.maxTotalSpendUSDC must be a positive USDC amount with at most 6 decimals`);
   }
   if (verifier.referenceEndpoint !== undefined) {
     validateReferenceEndpoint(`${path}.referenceEndpoint`, verifier.referenceEndpoint, errors);
-  }
-  if (verifier.referencePolicy !== undefined) {
-    validateReferencePolicy(`${path}.referencePolicy`, verifier.referencePolicy, errors);
   }
 }
 
@@ -456,76 +367,6 @@ function validateReferenceEndpoint(path: string, endpoint: unknown, errors: stri
   }
 }
 
-function validateReferencePolicy(path: string, policy: unknown, errors: string[]): void {
-  if (!policy || typeof policy !== 'object' || Array.isArray(policy)) {
-    errors.push(`${path} must be an object when provided`);
-    return;
-  }
-  const value = policy as Record<string, unknown>;
-  for (const key of Object.keys(value).filter((key) => !VERIFIER_REFERENCE_POLICY_KEYS.has(key))) {
-    errors.push(`${path}.${key} is not a supported reference policy option`);
-  }
-  const multiplesOfTen = [
-    'certifiedProbeCount', 'auditProbeCount', 'minimumAuditProbeCount',
-    'maximumAuditProbeCount', 'auditProbeStep',
-  ] as const;
-  for (const key of multiplesOfTen) {
-    const candidate = value[key];
-    if (candidate !== undefined && (!Number.isInteger(candidate) || Number(candidate) < 10 || Number(candidate) > 750 || Number(candidate) % 10 !== 0)) {
-      errors.push(`${path}.${key} must be a multiple of 10 from 10 through 750`);
-    }
-  }
-  for (const key of ['maxProbeUsesPerTarget', 'maxReferenceAgeDays', 'maxRequestsPerBuild', 'maxRequestsPerRound', 'requestTimeoutMs'] as const) {
-    const candidate = value[key];
-    if (candidate !== undefined && (!Number.isInteger(candidate) || Number(candidate) < 1)) {
-      errors.push(`${path}.${key} must be an integer >= 1`);
-    }
-  }
-  if (value.batchRetryCount !== undefined && (!Number.isInteger(value.batchRetryCount) || Number(value.batchRetryCount) < 0)) {
-    errors.push(`${path}.batchRetryCount must be an integer >= 0`);
-  }
-  for (const key of ['generationDomainConcurrency', 'maxConcurrentReferenceRequests', 'maxConcurrentRequestsPerModel'] as const) {
-    const candidate = value[key];
-    if (candidate !== undefined && (!Number.isInteger(candidate) || Number(candidate) < 1)) {
-      errors.push(`${path}.${key} must be an integer >= 1`);
-    }
-  }
-  if (value.generationDomainConcurrency !== undefined && Number(value.generationDomainConcurrency) > 15) {
-    errors.push(`${path}.generationDomainConcurrency must not exceed 15`);
-  }
-  if (value.maxConcurrentReferenceRequests !== undefined && Number(value.maxConcurrentReferenceRequests) > 64) {
-    errors.push(`${path}.maxConcurrentReferenceRequests must not exceed 64`);
-  }
-  if (value.maxConcurrentRequestsPerModel !== undefined && Number(value.maxConcurrentRequestsPerModel) > 16) {
-    errors.push(`${path}.maxConcurrentRequestsPerModel must not exceed 16`);
-  }
-  if (value.maxConcurrentReferenceRequests !== undefined
-    && value.maxConcurrentRequestsPerModel !== undefined
-    && Number(value.maxConcurrentRequestsPerModel) > Number(value.maxConcurrentReferenceRequests)) {
-    errors.push(`${path}.maxConcurrentRequestsPerModel must not exceed maxConcurrentReferenceRequests`);
-  }
-  const minimum = Number(value.minimumAuditProbeCount ?? value.auditProbeCount ?? 100);
-  const maximum = Number(value.maximumAuditProbeCount ?? 750);
-  if (minimum > maximum) {
-    errors.push(`${path}.minimumAuditProbeCount must not exceed maximumAuditProbeCount`);
-  }
-  if (value.minimumStatisticalPower !== undefined
-    && (typeof value.minimumStatisticalPower !== 'number'
-      || value.minimumStatisticalPower < 0.9 || value.minimumStatisticalPower > 1)) {
-    errors.push(`${path}.minimumStatisticalPower must be a number from 0.9 through 1`);
-  }
-  for (const key of ['minimumMismatchDelta', 'familyWideAlpha', 'referenceConfidence', 'minimumAuthenticatedCoverage'] as const) {
-    const candidate = value[key];
-    if (candidate !== undefined
-      && (typeof candidate !== 'number' || !Number.isFinite(candidate) || candidate <= 0 || candidate > 1)) {
-      errors.push(`${path}.${key} must be a number in (0, 1]`);
-    }
-  }
-  if (value.referenceConfidence === 1) {
-    errors.push(`${path}.referenceConfidence must be less than 1`);
-  }
-}
-
 /**
  * Validate the full config and return all issues.
  */
@@ -554,8 +395,6 @@ export function validateConfig(config: AntseedConfig): string[] {
   if (typeof config.buyer.disableMetadataV2Services !== 'boolean') {
     errors.push('buyer.disableMetadataV2Services must be a boolean');
   }
-
-  validateBuyerVerification('buyer.verification', config.buyer.verification, errors);
 
   if (!Number.isInteger(config.seller.maxConcurrentBuyers) || config.seller.maxConcurrentBuyers < 1) {
     errors.push('seller.maxConcurrentBuyers must be an integer >= 1');

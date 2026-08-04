@@ -43,28 +43,7 @@ export function createDefaultConfig(): AntseedConfig {
       bootstrapNodes: [],
     },
     verifier: {
-      services: [],
-      auditIntervalMs: 300_000,
-      maxAuditsPerEpoch: 50,
       probeRequestTimeoutMs: 120_000,
-      maxConcurrentProbeRequests: 2,
-      referencePolicy: {
-        minimumAuditProbeCount: 100,
-        maximumAuditProbeCount: 750,
-        auditProbeStep: 10,
-        minimumStatisticalPower: 0.9,
-        minimumMismatchDelta: 0.1,
-        familyWideAlpha: 0.05,
-        referenceConfidence: 0.99,
-        minimumAuthenticatedCoverage: 1,
-        maxReferenceAgeDays: 49,
-        maxRequestsPerRound: 2000,
-        requestTimeoutMs: 120_000,
-        batchRetryCount: 3,
-        generationDomainConcurrency: 3,
-        maxConcurrentReferenceRequests: 4,
-        maxConcurrentRequestsPerModel: 2,
-      },
     },
   };
 }

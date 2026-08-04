@@ -3,13 +3,13 @@ import { join } from 'node:path'
 import {
   canonicalHashBytes32,
   canonicalJsonStringify,
-  type AuditStats,
+  type FingerprintStats,
   type FingerprintVerdict,
   type KbfProbe,
   type MatchVector,
   type ReferenceQueryProfileV1,
 } from '@antseed/fingerprints'
-import type { MetricSnapshot, ResponseAuthPayload } from '@antseed/node'
+import type { ResponseAuthPayload } from '@antseed/node'
 
 export interface DirectAuditEvidenceExchange {
   requestId: string
@@ -36,8 +36,6 @@ export interface DirectAuditEvidenceExchange {
     startedAt: number
     completedAt: number
     responseLatencyMs: number
-    outputTokens: number
-    outputTokensPerSecondMilli: number
   }
   answers: Array<number | null>
   matches: Array<0 | 1 | null>
@@ -82,11 +80,10 @@ export interface DirectAuditEvidenceV1 {
     parsedProbeCount: number
     matchVector: MatchVector
     matchVectorHash: string
-    stats: AuditStats
+    stats: FingerprintStats
     verdict: Exclude<FingerprintVerdict, 'UNKNOWN'>
     verdictReason: string | null
   }
-  metrics: MetricSnapshot
 }
 
 export function directAuditEvidenceHash(evidence: DirectAuditEvidenceV1): string {

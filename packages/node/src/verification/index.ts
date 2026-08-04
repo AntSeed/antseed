@@ -17,26 +17,6 @@ export {
   type ResponseAuthVerificationResult,
 } from './response-auth.js';
 export {
-  VerificationSampler,
-  type ResponseAuthSampleInput,
-  type StoredVerificationSample,
-  type VerificationSampleConfig,
-} from './samples.js';
-export {
-  VerificationStorage,
+  ResponseAuthStorage,
   type StoredResponseAuth,
-  type DirectAuditState,
-  type DirectAuditSource,
-  type DirectAuditProbeStatus,
-  type StoredDirectAudit,
-  type StoredDirectAuditProbe,
-  type StoredDirectAuditExchange,
-  type StoredTrafficShareSnapshot,
-  type BenchmarkRunState,
-  type StoredBenchmarkRun,
-  type BenchmarkTargetState,
-  type StoredBenchmarkTarget,
-  type ReferenceBuildState,
-  type StoredReferenceBuild,
-  type StoredCertifiedKbfProbe,
 } from './storage.js';

@@ -88,13 +88,6 @@ export interface VerificationConfig {
   github?: GithubVerificationConfig[];
 }
 
-export interface BuyerVerificationConfig {
-  /** Random sample rate for storing full response-auth evidence, from 0 to 1. */
-  sampleRate?: number;
-  /** Maximum combined encoded request + response bytes per sample. */
-  maxSampleBytes?: number;
-}
-
 /**
  * Seller-specific configuration within the Antseed config.
  */
@@ -143,8 +136,6 @@ export interface BuyerCLIConfig {
   metadataFetchTimeoutMs: number;
   /** Disable per-service attribution in buyer-signed metadata v2. */
   disableMetadataV2Services: boolean;
-  /** Buyer-side response-auth evidence sampling settings. */
-  verification?: BuyerVerificationConfig;
 }
 
 /**
@@ -219,50 +210,18 @@ export interface PaymentsCLIConfig {
   };
 }
 
-/** Verifier-specific configuration for reference-only KBF audits. */
+/** Verifier configuration for model-wide paid verification runs. */
 export interface VerifierCLIConfig {
-  /** Optional allowlist used by operator tooling. */
-  services?: string[];
-  /** Directory of trusted KBF reference files. */
+  /** Directory containing one reusable 100-probe reference per model. */
   referencesDir?: string;
-  /** Directory for canonical direct-audit evidence files. */
+  /** Directory for per-peer evidence packs and run summaries. */
   evidenceDir?: string;
-  /** Seller/service discovery cadence. Default: 300000. */
-  auditIntervalMs?: number;
-  /** Local scheduling cap per epoch. Default: 50. */
-  maxAuditsPerEpoch?: number;
   /** Timeout for each paid probe request. Default: 120000. */
   probeRequestTimeoutMs?: number;
-  /** Maximum concurrent paid probe requests. Default: 2. */
-  maxConcurrentProbeRequests?: number;
-  /**
-   * Trusted OpenAI-compatible upstream used to enroll certified KBF references
-   * (`antseed verifier reference build`). Point it at the canonical provider,
-   * OpenRouter, or a local deployment of the open weights.
-   */
-  upstream?: VerifierUpstreamConfig;
-  /** Preferred reference endpoint configuration. Replaces `upstream`. */
+  /** Hard total spend cap for one run, in human-readable USDC. */
+  maxTotalSpendUSDC?: string;
+  /** Trusted endpoint used only when a model's fixed reference is missing. */
   referenceEndpoint?: VerifierReferenceEndpointConfig;
-  /** Reference enrollment, rotation, and expiry policy. */
-  referencePolicy?: VerifierReferencePolicyConfig;
-  /** Explicitly trusted imported reference ids. */
-  trustedImportedReferenceIds?: string[];
-}
-
-export interface VerifierUpstreamConfig {
-  /** OpenAI-compatible base URL, e.g. "https://openrouter.ai/api/v1". */
-  baseUrl: string;
-  /** API key sent as a Bearer token. Prefer apiKeyEnv over inlining secrets. */
-  apiKey?: string;
-  /** Environment variable to read the API key from (wins over apiKey). */
-  apiKeyEnv?: string;
-  /**
-   * Map network service id → upstream model id when the names differ. Keys
-   * are matched case-insensitively, so both the normalized service id
-   * ("qwen/qwen3-32b") and the advertised spelling ("Qwen/Qwen3-32B") work.
-   * Without an entry, the advertised spelling is sent to the upstream as-is.
-   */
-  modelMap?: Record<string, string>;
 }
 
 export interface VerifierReferenceModelConfig {

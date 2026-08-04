@@ -186,18 +186,14 @@ const config = {
     peerRefreshIntervalMs: 30000,
     metadataFetchTimeoutMs: 5000,
     disableMetadataV2Services: false,
-    verification: { sampleRate: 1, maxSampleBytes: 10485760 },
   },
   payments: { preferredMethod: 'crypto', platformFeeRate: 0.05, crypto: chain },
   network: { bootstrapNodes: [] },
 }
 if (role === 'verifier') {
   config.verifier = {
-    services: ['gpt-5.6-sol'],
-    auditIntervalMs: 300000,
-    maxAuditsPerEpoch: 50,
     probeRequestTimeoutMs: 120000,
-    maxConcurrentProbeRequests: 2,
+    maxTotalSpendUSDC: '10',
     referenceEndpoint: {
       baseUrl: 'http://127.0.0.1:8377/v1', apiKeyEnv,
       sourceId: 'antseed-venice-sol-smoke-v1', trust: 'smoke', antseedPeerId: peerId,
@@ -207,15 +203,6 @@ if (role === 'verifier') {
           contrastModels: ['kimi-k3', 'gpt-5.6-luna', 'sonnet-4.8'],
         },
       },
-    },
-    referencePolicy: {
-      minimumAuditProbeCount: 100, maximumAuditProbeCount: 750, auditProbeStep: 10,
-      minimumStatisticalPower: 0.9, minimumMismatchDelta: 0.1,
-      familyWideAlpha: 0.05, referenceConfidence: 0.99, minimumAuthenticatedCoverage: 1,
-      maxReferenceAgeDays: 49, maxRequestsPerRound: 2000,
-      requestTimeoutMs: 120000, batchRetryCount: 3,
-      generationDomainConcurrency: 3, maxConcurrentReferenceRequests: 4,
-      maxConcurrentRequestsPerModel: 2,
     },
   }
 }
@@ -254,6 +241,6 @@ printf 'Seller config: %s\nBuyer config: %s\nVerifier config: %s\n' \
   "$SELLER_DIR/config.json" "$BUYER_DIR/config.json" "$VERIFIER_DIR/config.json"
 printf '\nStart order (after pnpm run build):\n'
 printf '1. source %q && antseed --data-dir %q --config %q seller start\n' "$SELLER_DIR/smoke.env" "$SELLER_DIR" "$SELLER_DIR/config.json"
-printf '2. source %q && antseed --data-dir %q --config %q verifier start\n' "$VERIFIER_DIR/smoke.env" "$VERIFIER_DIR" "$VERIFIER_DIR/config.json"
+printf '2. source %q && antseed --data-dir %q --config %q verifier run gpt-5.6-sol --benchmark\n' "$VERIFIER_DIR/smoke.env" "$VERIFIER_DIR" "$VERIFIER_DIR/config.json"
 printf '3. optional buyer: antseed --data-dir %q --config %q buyer start\n' "$BUYER_DIR" "$BUYER_DIR/config.json"
 printf '\nVenice is pinned only through configuration/header state; no peer ID is hard-coded in runtime code.\n'
