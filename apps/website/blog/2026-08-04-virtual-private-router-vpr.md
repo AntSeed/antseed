@@ -1,10 +1,10 @@
 ---
 slug: virtual-private-router-vpr
-title: "You Don't Need a VPN for AI. You Need a VPR."
+title: "What Is a VPR? The Private Alternative to a VPN for AI"
 authors: [antseed]
-tags: [privacy, VPN for AI, VPR, private AI, P2P, AI infrastructure]
-description: "A VPN for AI hides your traffic from your ISP, not your prompt from the AI provider. A VPR routes the request itself so no single company sees you."
-keywords: [private AI, VPN for AI, AI VPN alternative, virtual private router, anonymous AI routing, private AI without a provider]
+tags: [VPR, virtual private router, VPN for AI, private AI, privacy, AI infrastructure]
+description: "A VPR (Virtual Private Router) does for your AI what a VPN does for browsing, and more. It routes each prompt so no single AI provider ever sees you."
+keywords: [virtual private router for AI, VPR, what is a VPR, VPN for AI, AI VPN alternative, private AI without a provider]
 image: /og-image.jpg
 date: 2026-08-04
 ---
