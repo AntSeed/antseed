@@ -215,6 +215,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # keytar links against libsecret-1.so.0 at load time, and the runner
+      # images don't ship it. The -dev package also covers a from-source
+      # rebuild if the prebuild is ever unavailable.
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev
+
       - uses: pnpm/action-setup@v4
         with:
           version: 9.15.4
