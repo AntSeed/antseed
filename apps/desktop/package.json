@@ -5,6 +5,7 @@
   "private": true,
   "description": "Desktop app for AntSeed",
   "author": "AntSeed <hello@antseed.com>",
+  "homepage": "https://antseed.com",
   "type": "module",
   "main": "dist/main/main.js",
   "scripts": {
