@@ -6,8 +6,8 @@ name: Release Desktop
 #
 # macOS: DMG + zip, arm64 + x64, code-signed with Developer ID and
 #        notarized via Apple App Store Connect API key.
-# Windows: NSIS installer, x64 + arm64. Optional code signing if the
-#          WIN_CSC_* secrets are set.
+# Windows: NSIS installer, x64 + arm64. Optional code signing via
+#          SSL.com eSigner cloud signing if the ES_* secrets are set.
 #
 # Triggers:
 #   - Manual dispatch from the Actions tab (or `gh workflow run`). Choose
@@ -27,9 +27,13 @@ name: Release Desktop
 #     APPLE_API_KEY_ID          e.g. 6JDM29LC2C
 #     APPLE_API_ISSUER          issuer UUID from App Store Connect
 #     APPLE_TEAM_ID             e.g. H3M5BXXQR2
-#   Windows (optional, for signed installers):
-#     WIN_CSC_LINK              base64 of a .pfx
-#     WIN_CSC_KEY_PASSWORD      password for the .pfx
+#   Windows (optional, for signed installers — SSL.com eSigner cloud
+#   signing; the private key lives in SSL.com's HSM, there is no .pfx):
+#     ES_USERNAME               SSL.com account username
+#     ES_PASSWORD               SSL.com account password
+#     ES_CREDENTIAL_ID          eSigner signing credential id
+#     ES_TOTP_SECRET            base64 TOTP secret from eSigner enrollment
+#                               ("show secret code" next to the QR code)
 #
 # Publishing auth uses the built-in GITHUB_TOKEN (contents: write).
 
@@ -136,6 +140,10 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || inputs.platforms != 'mac'
     runs-on: windows-latest
     timeout-minutes: 45
+    env:
+      # Exposed at job level so steps can gate on `env.ES_USERNAME != ''`
+      # (the secrets context can't be used directly in step `if`s reliably).
+      ES_USERNAME: ${{ secrets.ES_USERNAME }}
 
     steps:
       - uses: actions/checkout@v4
@@ -163,12 +171,29 @@ jobs:
           pnpm run build:tier3
         shell: pwsh
 
+      - name: Set up CodeSignTool (SSL.com eSigner)
+        # Only when signing secrets are configured. Downloads and extracts
+        # CodeSignTool, then exports CODE_SIGN_TOOL_PATH for the sign hook
+        # (apps/desktop/scripts/esigner-sign.js). Java is preinstalled on
+        # windows-latest.
+        if: env.ES_USERNAME != ''
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'CodeSignTool.zip'
+          $dest = Join-Path $env:RUNNER_TEMP 'codesigntool'
+          Invoke-WebRequest -Uri 'https://www.ssl.com/download/codesigntool-for-windows/' -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $dest -Force
+          $bat = Get-ChildItem -Path $dest -Recurse -Filter 'CodeSignTool.bat' | Select-Object -First 1
+          if (-not $bat) { throw 'CodeSignTool.bat not found in the downloaded archive' }
+          "CODE_SIGN_TOOL_PATH=$($bat.DirectoryName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Build & publish desktop (Windows)
         working-directory: apps/desktop
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
+          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
         run: |
           if ("${{ inputs.dry_run }}" -eq "true") {
             npm run dist:win
