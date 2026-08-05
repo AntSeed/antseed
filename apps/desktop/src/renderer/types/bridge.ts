@@ -448,7 +448,7 @@ export type DesktopBridge = {
   vprFloatSetExpanded?: (expanded: boolean) => void;
   /** null while the buyer is unreachable (e.g. still starting up). */
   buyerConversationsList?: () => Promise<BuyerConversationSummary[] | null>;
-  buyerConversationsUpdate?: (opts: { id: string; label?: string | null; pinnedModel?: string; delete?: boolean }) => Promise<{ ok: boolean; conversation?: BuyerConversationSummary; error?: string }>;
+  buyerConversationsUpdate?: (opts: { id: string; label?: string | null; pinnedModel?: string; peerSource?: 'auto' | 'user'; delete?: boolean }) => Promise<{ ok: boolean; conversation?: BuyerConversationSummary; error?: string }>;
   vprFloatOpen?: (data: VprFloatData) => Promise<{ ok: boolean }>;
   vprFloatClose?: () => Promise<{ ok: boolean }>;
   vprFloatIsOpen?: () => Promise<boolean>;
@@ -476,6 +476,10 @@ export type BuyerConversationSummary = {
       the first model that serves it, so this is null only until the chat's
       first resolved request; the default route applies to new chats only. */
   pinnedModel: string | null;
+  /** How the pin's peer was chosen: 'user' = the user picked this seller for
+      this chat (sweeps never move it), 'auto' = routing picked it. Absent on
+      rows from buyers that predate the field — treat as 'auto'. */
+  peerSource?: 'auto' | 'user';
   /** Model that served the most recent request (`<peerId>@<service>`). */
   lastModel: string | null;
   /** USDC base units this chat has cost (bigint string), subagents included.

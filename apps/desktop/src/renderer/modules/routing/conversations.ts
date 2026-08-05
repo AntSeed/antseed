@@ -21,6 +21,11 @@ export function conversationPinnedServiceId(record: BuyerConversationSummary): s
   return record.pinnedModel?.split('@').slice(1).join('@') || null;
 }
 
+/** Peer id of the chat's pinned route, or null while unpinned. */
+export function conversationPinnedPeerId(record: BuyerConversationSummary): string | null {
+  return record.pinnedModel?.split('@')[0]?.toLowerCase() || null;
+}
+
 /** Slugs are single tokens ('codex', 'opencode') while the wire-derived
     tool slug may carry a variant suffix ('codex-exec', 'codex-cli-rs'), so
     either side may extend the other by a `-` segment. */

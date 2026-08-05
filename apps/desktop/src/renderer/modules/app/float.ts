@@ -18,6 +18,7 @@ import {
   shortSessionId,
 } from '../routing/conversations';
 import { loadFavoriteModels } from '../catalog/favorites';
+import { sameCanonicalModel } from '../catalog/model-identity';
 import { loadFloatAutoOpen } from './float-settings';
 import {
   catalogEntryKey,
@@ -25,8 +26,7 @@ import {
   selectFavoriteVprCatalog,
   selectRecommendedVprCatalog,
 } from '../catalog/recommended';
-import { chooseBestVprRoute } from '../routing/select';
-import { pinnedSellerLabels, routesForSelectedModel } from '../catalog/view-models';
+import { pinnedSellerLabels, resolvePeerForModel } from '../catalog/view-models';
 import { activeProfilesFromRuntimeState } from '../routing/tools';
 
 const FLOAT_UPDATE_INTERVAL_MS = 3_000;
@@ -266,10 +266,15 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
     }
   }
 
-  /** Best route peer for a model, mirroring how the global selection routes. */
+  /** Peer for a chat pinned to this model: the model's own seller pin when
+      one exists, else the best auto route — same as the global selection. */
   function resolvePinRoute(provider: string, serviceId: string): string | null {
-    const routes = routesForSelectedModel(uiState.vprRoutableRows, { provider, serviceId });
-    const peerId = chooseBestVprRoute(routes, uiState.vprRoutingPreferences)?.peerId ?? null;
+    const peerId = resolvePeerForModel(
+      uiState.vprRoutableRows,
+      uiState.vprModelPins,
+      uiState.vprRoutingPreferences,
+      { provider, serviceId },
+    );
     return peerId ? `${peerId}@${serviceId}` : null;
   }
 
@@ -407,16 +412,23 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
       }
       return;
     }
-    // Pin one chat to a model: resolve the best peer for that model the same
-    // way the global selection does, then hand the pin to the buyer.
+    // Pin one chat to a model: resolve the peer for that model the same way
+    // the global selection does, then hand the pin to the buyer.
     if (type === 'pin-chat-model') {
       const { conversationId, provider, serviceId } = action as { conversationId?: unknown; provider?: unknown; serviceId?: unknown };
       if (typeof conversationId !== 'string' || typeof provider !== 'string' || typeof serviceId !== 'string') return;
-      const pin = resolvePinRoute(provider, serviceId);
-      if (!pin) return;
-      void bridge?.buyerConversationsUpdate?.({ id: conversationId, pinnedModel: pin })
-        .then(() => buildData())
-        .then((data) => bridge?.vprFloatUpdate?.(data));
+      void (async () => {
+        // Re-picking the chat's current model is a no-op — re-pinning would
+        // re-resolve the peer, wiping a per-chat seller pin back to auto.
+        const records = (await bridge?.buyerConversationsList?.()) ?? [];
+        const record = records.find((row) => row.id === conversationId);
+        const current = record ? conversationPinnedServiceId(record) : null;
+        if (current && sameCanonicalModel(current, serviceId)) return;
+        const pin = resolvePinRoute(provider, serviceId);
+        if (!pin) return;
+        await bridge?.buyerConversationsUpdate?.({ id: conversationId, pinnedModel: pin });
+        bridge?.vprFloatUpdate?.(await buildData());
+      })();
       return;
     }
     // Open the app a chat belongs to (chat header shortcut): the tool's

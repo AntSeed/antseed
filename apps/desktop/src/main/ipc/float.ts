@@ -90,6 +90,7 @@ export function registerFloatIpc(): void {
     if (record.delete === true) payload.delete = true;
     if ('label' in record) payload.label = typeof record.label === 'string' ? record.label : null;
     if ('pinnedModel' in record) payload.pinnedModel = typeof record.pinnedModel === 'string' ? record.pinnedModel : '';
+    if (record.peerSource === 'user' || record.peerSource === 'auto') payload.peerSource = record.peerSource;
     try {
       const buyerPort = await resolveBuyerProxyPort();
       const response = await fetch(`http://127.0.0.1:${buyerPort}/_antseed/conversations/update`, {

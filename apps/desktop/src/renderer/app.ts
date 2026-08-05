@@ -34,6 +34,8 @@ import {
   vprModelPinFor,
 } from './modules/routing/model-pins';
 import { isPeerRoutable } from './modules/routing/select';
+import { sweepAutoChatsToSeller } from './modules/routing/chat-peer-sweep';
+import { buyerConversationsResource } from './modules/app/vpr-resources';
 import { routesForSelectedModel } from './modules/catalog/view-models';
 import { mountAppShell } from './ui/mount';
 import { initThemeMode } from './ui/lib/theme';
@@ -276,6 +278,9 @@ function actionSelectVprModel(provider: string, serviceId: string, peerId: strin
   // time, and the buyer is now pinned to the new model's peer — stale
   // profiles would forward models that peer doesn't serve.
   void applyVprRouteToConnectedProxy(bridge, uiState);
+  // An explicit seller choice re-points the model's existing auto-routed
+  // chats too; a bare model switch (remembered-pin restore) moves nothing.
+  if (peerId) sweepChatsForSellerPin(entry.provider, entry.serviceId, peerId);
 }
 
 const vprFloatApi = initVprFloatModule({
@@ -284,6 +289,18 @@ const vprFloatApi = initVprFloatModule({
   onSelectModel: (provider, serviceId) => actionSelectVprModel(provider, serviceId),
   refreshUsage: (force?: boolean) => creditsApi.refreshPaymentSummary(force),
 });
+
+/** Deliberate seller pin for a model: re-point that model's auto-affine chats
+    to the chosen seller (chats whose seller the user picked stay put), then
+    refresh the surfaces that show chat routes. */
+function sweepChatsForSellerPin(provider: string, serviceId: string, peerId: string): void {
+  void sweepAutoChatsToSeller(bridge, uiState.vprRoutableRows, { provider, serviceId }, peerId)
+    .then((changed) => {
+      if (!changed) return;
+      void buyerConversationsResource.refresh();
+      void vprFloatApi.refresh();
+    });
+}
 
 // Keep the main process fed with the curated model list (favorites +
 // recommended) so the Telegram /model picker matches the app's dropdown.
@@ -577,6 +594,9 @@ registerActions({
       ? setVprModelPin(uiState.vprModelPins, provider, serviceId, peerId)
       : clearVprModelPin(uiState.vprModelPins, provider, serviceId);
     saveVprModelPins(uiState.vprModelPins);
+    // Pinning re-points the model's auto-affine chats; clearing moves
+    // nothing — chats keep their current peer as affinity.
+    if (peerId) sweepChatsForSellerPin(provider, serviceId, peerId);
     notifyUiStateChanged();
   },
   updateVprRoutingPreferences: (patch) => {
