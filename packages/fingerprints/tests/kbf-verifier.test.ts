@@ -107,10 +107,21 @@ describe('verifyKbf', () => {
     expect(fragment.stats.pValueBinomial!).toBeLessThan(0.05);
   });
 
-  it('returns UNDETERMINED below coverage', () => {
+  it('counts missing answers from a completed response as discrepancies', () => {
     const reference = makeReference();
     const answers = PROBES.map((p, i) => (i < 5 ? p.consensus : null));
     const fragment = verifyKbf(reference, makeObservation(answers));
+    expect(fragment.verdict).toBe('DIFF');
+    expect(fragment.parsedProbeCount).toBe(PROBES.length);
+    expect(fragment.stats.targetTotal).toBe(PROBES.length);
+  });
+
+  it('returns UNDETERMINED for transport-unavailable probes', () => {
+    const reference = makeReference();
+    const fragment = verifyKbf(reference, {
+      answers: PROBES.map(() => null),
+      matchVector: PROBES.map((_, i) => (i < 5 ? 1 : null)),
+    });
     expect(fragment.verdict).toBe('UNDETERMINED');
   });
 

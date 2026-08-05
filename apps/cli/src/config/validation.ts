@@ -297,7 +297,7 @@ function validateBuyerVerification(
 // The loader preserves this section as-is, so reject unknown keys here rather
 // than silently accepting verifier typos.
 const VERIFIER_KEYS = new Set([
-  'referencesDir', 'evidenceDir', 'probeRequestTimeoutMs', 'maxTotalSpendUSDC', 'referenceEndpoint',
+  'referencesDir', 'evidenceDir', 'probeRequestTimeoutMs', 'referenceEndpoint',
   'referenceMaxRequestsPerBuild', 'referenceBatchRetryCount', 'referenceRetryBaseDelayMs',
   'referenceMaxNoProgressRounds', 'referenceMaxConcurrentRequests', 'referenceMaxConcurrentRequestsPerModel',
   'referenceMinimumProbeCount', 'referenceMaximumProbeCount', 'referenceProbeStep',
@@ -370,11 +370,6 @@ function validateVerifierConfig(
     if (value !== undefined && (typeof value !== 'string' || value.trim().length === 0)) {
       errors.push(`${path}.${key} must be a non-empty string when provided`);
     }
-  }
-  if (verifier.maxTotalSpendUSDC !== undefined
-    && (typeof verifier.maxTotalSpendUSDC !== 'string' || !/^\d+(?:\.\d{1,6})?$/.test(verifier.maxTotalSpendUSDC)
-      || Number(verifier.maxTotalSpendUSDC) <= 0)) {
-    errors.push(`${path}.maxTotalSpendUSDC must be a positive USDC amount with at most 6 decimals`);
   }
   if (verifier.referenceEndpoint !== undefined) {
     validateReferenceEndpoint(`${path}.referenceEndpoint`, verifier.referenceEndpoint, errors);

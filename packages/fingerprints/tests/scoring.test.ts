@@ -62,12 +62,12 @@ describe('computeMatchVector', () => {
     expect(computeMatchVector([1002, 48, 302], probes)).toEqual([1, 0, 1]);
   });
 
-  it('treats null answers as unparseable (null), not mismatches', () => {
-    expect(computeMatchVector([null, 46, null], probes)).toEqual([null, 1, null]);
+  it('counts missing answers as discrepancies', () => {
+    expect(computeMatchVector([null, 46, null], probes)).toEqual([0, 1, 0]);
   });
 
-  it('treats out-of-range answers as unparseable (null)', () => {
-    expect(computeMatchVector([9999, 1, 300], probes)).toEqual([null, null, 1]);
+  it('counts finite out-of-range answers as discrepancies', () => {
+    expect(computeMatchVector([9999, 1, 300], probes)).toEqual([0, 0, 1]);
   });
 
   it('accepts range-boundary values as parseable', () => {

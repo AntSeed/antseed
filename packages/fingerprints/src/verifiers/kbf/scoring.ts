@@ -19,9 +19,10 @@ export function matchesTolerance(answer: number, probe: KbfProbe): boolean {
 }
 
 /**
- * Score answers against probes: 1 within tolerance of consensus, 0 mismatch,
- * null for missing / non-finite / out-of-range answers (treated as
- * unparseable, not as mismatches).
+ * Score a completed probe response using the paper's fixed-denominator rule:
+ * 1 within tolerance of consensus, otherwise 0. Missing, non-finite, and
+ * out-of-range answers are discrepancies. Null match-vector entries are
+ * reserved for probes that could not be attempted because transport failed.
  */
 export function computeMatchVector(
   answers: ReadonlyArray<number | null>,
@@ -34,13 +35,7 @@ export function computeMatchVector(
   }
   return probes.map((probe, i): MatchEntry => {
     const answer = answers[i];
-    if (answer === null || answer === undefined || !Number.isFinite(answer)) {
-      return null;
-    }
-    const [lo, hi] = probe.range;
-    if (answer < lo || answer > hi) {
-      return null;
-    }
+    if (answer === null || answer === undefined || !Number.isFinite(answer)) return 0;
     return matchesTolerance(answer, probe) ? 1 : 0;
   });
 }

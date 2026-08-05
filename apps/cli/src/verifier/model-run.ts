@@ -1,81 +1,64 @@
-import { randomUUID } from 'node:crypto'
-import { mkdir, open, readFile, rename } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { AbstractSigner } from 'ethers'
 import {
   KBF_PROBES_PER_REQUEST,
-  verifyKbf,
   buildKbfChatRequestBody,
   canonicalHashBytes32,
   canonicalJsonStringify,
   computeMatchVector,
   parseKbfAnswers,
   queryProfileHash,
+  verifyKbf,
   type KbfProbe,
   type KbfReferenceV1,
-  type MatchVector,
 } from '@antseed/fingerprints'
+import type { PeerInfo } from '@antseed/node'
+import { parsePersistedPeers } from '../proxy/buyer-proxy.js'
 import {
-  CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
-  VERIFIER_VERDICT_DIFF,
-  VERIFIER_VERDICT_SAME,
-  VERIFIER_VERDICT_UNDETERMINED,
-  hashRequest,
-  hashResponse,
-  peerIdToAddress,
-  serviceHash,
-  toResponseAuthPayload,
-  type AntseedNode,
-  type BuyerResponsePaymentEvidence,
-  type PeerInfo,
-  type StoredResponseAuth,
-  type VerifierRegistryClient,
-  type VerifierVerdict,
-} from '@antseed/node'
-import {
-  deriveDirectAuditId,
-  writeDirectAuditEvidence,
-  type DirectAuditEvidenceExchange,
-  type DirectAuditEvidenceV1,
-} from './direct-evidence.js'
+  deriveProxyAuditId,
+  writeProxyAuditEvidence,
+  type ProxyAuditEvidenceExchange,
+  type ProxyAuditEvidenceV1,
+} from './proxy-evidence.js'
 import { advertisedServices } from './service-discovery.js'
 
 const PROBE_REQUEST_CONCURRENCY = 2
+const PROBE_REQUEST_ATTEMPTS = 5
+const PROBE_RETRY_BASE_DELAY_MS = 500
 
-export interface VerificationSpendLimit {
-  maximumUsdc: bigint
-  spentUsdc: bigint
-  maximumPerRequestUsdc: bigint
+export interface BuyerProxySnapshot {
+  baseUrl: string
+  statePath: string
+  pid: number
+  peers: PeerInfo[]
 }
 
-export interface ModelVerificationContext {
-  node: Pick<AntseedNode, 'sendRequest' | 'waitForResponseAuth' | 'finalizeResponsePayment'>
-  verifierAddress: string
-  verifierPeerId: string
+export interface ProxyVerificationContext {
+  proxy: BuyerProxySnapshot
   evidenceDir: string
   requestTimeoutMs: number
-  spend: VerificationSpendLimit
+  fetchFn?: typeof fetch
+  sleepFn?: (delayMs: number) => Promise<void>
 }
 
 export interface ModelVerificationTargetResult {
   peerId: string
-  agentId: string
+  agentId: string | null
   service: string
   status: 'SAME' | 'DIFF' | 'UNDETERMINED'
   auditId: string
-  authenticatedProbeCount: number
+  parsedProbeCount: number
   probeCount: number
-  sellerChargeUsdc: string
+  requestCount: number
   evidencePath: string
   evidenceHash: string
-  attestationTxHash: string | null
 }
 
 export interface ModelVerificationFailure {
   peerId: string
   agentId: string | null
   service: string
-  status: 'FAILED' | 'INELIGIBLE'
+  status: 'FAILED'
   reason: string
 }
 
@@ -84,84 +67,88 @@ export interface ModelVerificationRunSummary {
   kind: 'antseed-model-verification-run'
   runId: string
   model: string
-  mode: 'evidence' | 'attest'
+  mode: 'buyer-proxy'
+  proxyBaseUrl: string
   referenceId: string
   probeCount: number
   startedAt: string
   completedAt: string
-  maximumSpendUsdc: string
-  spentUsdc: string
   results: ModelVerificationTargetResult[]
   failures: ModelVerificationFailure[]
 }
 
+export async function loadBuyerProxySnapshot(dataDir: string): Promise<BuyerProxySnapshot> {
+  const statePath = join(dataDir, 'buyer.state.json')
+  let parsed: {
+    state?: unknown
+    pid?: unknown
+    port?: unknown
+    discoveredPeers?: unknown
+  }
+  try {
+    parsed = JSON.parse(await readFile(statePath, 'utf8')) as typeof parsed
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new Error(`buyer proxy state not found at ${statePath}; start antseed buyer first`)
+    }
+    throw new Error(`invalid buyer proxy state at ${statePath}: ${asError(error).message}`)
+  }
+  if (parsed.state !== 'connected') throw new Error('buyer proxy is not connected; start antseed buyer first')
+  if (!Number.isInteger(parsed.pid) || Number(parsed.pid) <= 0 || !isProcessAlive(Number(parsed.pid))) {
+    throw new Error('buyer proxy state is stale; start antseed buyer first')
+  }
+  if (!Number.isInteger(parsed.port) || Number(parsed.port) < 1 || Number(parsed.port) > 65_535) {
+    throw new Error('buyer proxy state has an invalid port')
+  }
+  const peers = parsePersistedPeers(parsed)
+  if (peers.length === 0) throw new Error('buyer proxy has no live discovered peers')
+  return {
+    baseUrl: `http://127.0.0.1:${String(parsed.port)}`,
+    statePath,
+    pid: Number(parsed.pid),
+    peers,
+  }
+}
+
 export function classifyVerificationTarget(
   peer: PeerInfo,
-  verifierAddress: string,
   normalizedModel: string,
 ): { eligible: true; service: string } | { eligible: false; reason: string } {
-  if (!peer.onChainAgentId) return { eligible: false, reason: 'missing on-chain agent id' }
-  if (!peer.onChainSellerAddress) return { eligible: false, reason: 'missing verified on-chain seller address' }
-  if (peerIdToAddress(peer.peerId).toLowerCase() === verifierAddress.toLowerCase()) {
-    return { eligible: false, reason: 'self peer' }
-  }
-  if (!peer.capabilities?.includes(CONNECTION_CAPABILITY_RESPONSE_AUTH_V1)) {
-    return { eligible: false, reason: 'missing verification.response-auth.v1' }
-  }
   const service = advertisedServices(peer).get(normalizedModel)
   return service ? { eligible: true, service } : { eligible: false, reason: 'model no longer advertised' }
 }
 
 export async function verifyModelTarget(input: {
-  context: ModelVerificationContext
+  context: ProxyVerificationContext
   target: PeerInfo
   service: string
   reference: KbfReferenceV1
-  registryClient?: VerifierRegistryClient
-  signer?: AbstractSigner
-  epoch?: bigint
 }): Promise<ModelVerificationTargetResult> {
-  if (!input.target.onChainAgentId || !input.target.onChainSellerAddress) {
-    throw new Error('target lacks on-chain seller identity')
-  }
-  const startedAt = Date.now()
-  const probeCount = input.reference.probes.length
   const batches = chunk(input.reference.probes, KBF_PROBES_PER_REQUEST)
-  const maximumTargetSpend = BigInt(batches.length) * input.context.spend.maximumPerRequestUsdc
-  if (input.context.spend.spentUsdc + maximumTargetSpend > input.context.spend.maximumUsdc) {
-    throw new Error('configured verifier.maxTotalSpendUSDC cannot cover this target')
-  }
-
-  const exchanges = await runConcurrently(batches, PROBE_REQUEST_CONCURRENCY, (probes) => {
-    return executeProbeBatch(input.context, input.target, input.service, input.reference, probes)
+  const exchanges = await runConcurrently(batches, PROBE_REQUEST_CONCURRENCY, (probes, batchIndex) => {
+    return executeProxyProbeBatch(input.context, input.target, input.service, input.reference, probes, batchIndex)
   })
-
   const answers = exchanges.flatMap((exchange) => exchange.answers)
-  const matchVector = computeMatchVector(answers, input.reference.probes)
-  const authenticatedProbeCount = exchanges
-    .filter((exchange) => exchange.status === 'succeeded')
-    .reduce((total, exchange) => total + exchange.probeIds.length, 0)
-  if (authenticatedProbeCount !== probeCount) {
-    throw new Error(`only ${authenticatedProbeCount}/${probeCount} probes were authenticated`)
-  }
-
-  const fragment = verifyKbf(input.reference, {
-    answers,
-    matchVector,
-  }, { minCoverage: 1 })
+  const matchVector = exchanges.flatMap((exchange) => exchange.matches)
+  const fragment = verifyKbf(input.reference, { answers, matchVector }, { minCoverage: 1 })
   if (fragment.verdict === 'UNKNOWN') throw new Error(fragment.verdictReason ?? 'verification returned UNKNOWN')
+
   const completedAt = Date.now()
-  const evidence: DirectAuditEvidenceV1 = {
+  const evidence: ProxyAuditEvidenceV1 = {
     version: 1,
-    kind: 'antseed-direct-kbf-audit',
+    kind: 'antseed-buyer-proxy-kbf-audit',
+    evidenceLevel: 'proxy-observation-no-response-auth-or-payment-evidence',
     createdAt: new Date(completedAt).toISOString(),
-    verifier: { peerId: input.context.verifierPeerId, address: input.context.verifierAddress },
+    buyerProxy: {
+      baseUrl: input.context.proxy.baseUrl,
+      statePath: input.context.proxy.statePath,
+      pid: input.context.proxy.pid,
+    },
     target: {
       peerId: input.target.peerId,
-      agentId: String(input.target.onChainAgentId),
-      sellerAddress: input.target.onChainSellerAddress,
+      displayName: input.target.displayName ?? null,
+      agentId: input.target.onChainAgentId ? String(input.target.onChainAgentId) : null,
       service: input.service,
-      serviceHash: serviceHash(input.service),
     },
     reference: {
       referenceId: input.reference.referenceId,
@@ -176,7 +163,6 @@ export async function verifyModelTarget(input: {
     exchanges,
     result: {
       selectedProbeCount: input.reference.probes.length,
-      authenticatedProbeCount,
       parsedProbeCount: matchVector.filter((entry) => entry !== null).length,
       matchVector,
       matchVectorHash: fragment.matchVectorHash,
@@ -186,137 +172,135 @@ export async function verifyModelTarget(input: {
     },
   }
   const evidenceHash = canonicalHashBytes32(evidence)
-  const auditId = deriveDirectAuditId({
-    verifierAddress: input.context.verifierAddress,
+  const auditId = deriveProxyAuditId({
     targetPeerId: input.target.peerId,
-    agentId: String(input.target.onChainAgentId),
-    serviceHash: evidence.target.serviceHash,
+    referenceId: input.reference.referenceId,
     completedAt,
     evidenceHash,
   })
-  const written = await writeDirectAuditEvidence(input.context.evidenceDir, auditId, evidence)
-
-  let attestationTxHash: string | null = null
-  if (input.registryClient && input.signer) {
-    const expectedEpoch = input.epoch ?? await input.registryClient.currentEpoch()
-    attestationTxHash = await input.registryClient.submitVerificationResult(input.signer, {
-      auditId,
-      agentId: input.target.onChainAgentId,
-      serviceHash: evidence.target.serviceHash,
-      verdict: verdictCode(fragment.verdict),
-      expectedEpoch,
-      modelShareBps: 0,
-      probeCount: authenticatedProbeCount,
-      metrics: emptyMetrics(startedAt, completedAt),
-      evidenceHash: written.evidenceHash,
-    })
-  }
-
+  const written = await writeProxyAuditEvidence(input.context.evidenceDir, auditId, evidence)
   return {
     peerId: input.target.peerId,
-    agentId: String(input.target.onChainAgentId),
+    agentId: input.target.onChainAgentId ? String(input.target.onChainAgentId) : null,
     service: input.service,
     status: fragment.verdict,
     auditId,
-    authenticatedProbeCount,
+    parsedProbeCount: evidence.result.parsedProbeCount,
     probeCount: input.reference.probes.length,
-    sellerChargeUsdc: exchanges.reduce((total, exchange) => total + BigInt(exchange.payment?.sellerChargeUsdc ?? '0'), 0n).toString(),
+    requestCount: exchanges.length,
     evidencePath: written.path,
     evidenceHash: written.evidenceHash,
-    attestationTxHash,
   }
 }
 
-async function executeProbeBatch(
-  context: ModelVerificationContext,
+async function executeProxyProbeBatch(
+  context: ProxyVerificationContext,
   target: PeerInfo,
   service: string,
   reference: KbfReferenceV1,
   probes: KbfProbe[],
-): Promise<DirectAuditEvidenceExchange> {
-  if (context.spend.spentUsdc + context.spend.maximumPerRequestUsdc > context.spend.maximumUsdc) {
-    throw new Error('configured verifier.maxTotalSpendUSDC exhausted')
+  batchIndex: number,
+): Promise<ProxyAuditEvidenceExchange> {
+  const url = `${context.proxy.baseUrl}/v1/chat/completions`
+  const headers = {
+    'content-type': 'application/json',
+    'x-antseed-pin-peer': target.peerId,
   }
-  const requestId = randomUUID()
+  const body = new TextEncoder().encode(JSON.stringify({
+    ...buildKbfChatRequestBody(service, probes, { maxTokens: reference.queryProfile.maxTokensPerRequest }),
+    top_p: reference.queryProfile.generationSettings.topP,
+    stream: false,
+    n: 1,
+    ...(reference.queryProfile.requestOverrides ?? {}),
+  }))
   const request = {
-    requestId,
-    method: 'POST',
-    path: '/v1/chat/completions',
-    headers: { 'content-type': 'application/json' },
-    body: new TextEncoder().encode(JSON.stringify({
-      ...buildKbfChatRequestBody(service, probes, { maxTokens: reference.queryProfile.maxTokensPerRequest }),
-      top_p: reference.queryProfile.generationSettings.topP,
-      stream: false,
-      n: 1,
-      ...(reference.queryProfile.requestOverrides ?? {}),
-    })),
+    method: 'POST' as const,
+    url,
+    headers,
+    bodyBase64: Buffer.from(body).toString('base64'),
+    hash: canonicalHashBytes32({ method: 'POST', url, headers, bodyBase64: Buffer.from(body).toString('base64') }),
   }
-  const requestHash = hashRequest(request)
   const startedAt = Date.now()
-  let response: Awaited<ReturnType<ModelVerificationContext['node']['sendRequest']>> | null = null
-  let responseAuth: StoredResponseAuth | null = null
-  let payment: BuyerResponsePaymentEvidence | null = null
-  let failureReason: string | null = null
-  let answers: Array<number | null> = new Array(probes.length).fill(null)
-  let matches: MatchVector = new Array(probes.length).fill(null)
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), context.requestTimeoutMs)
-  try {
-    response = await context.node.sendRequest(target, request, { signal: controller.signal })
-    const remaining = Math.max(1, startedAt + context.requestTimeoutMs - Date.now())
-    responseAuth = await context.node.waitForResponseAuth(requestId, remaining)
-    if (!responseAuth.verified) throw new Error(`ResponseAuth verification failed: ${responseAuth.verificationError ?? 'unknown'}`)
-    if (responseAuth.requestHash.toLowerCase() !== requestHash.toLowerCase()) throw new Error('ResponseAuth request hash mismatch')
-    if (responseAuth.responseHash.toLowerCase() !== hashResponse(response).toLowerCase()) {
-      throw new Error('ResponseAuth response hash mismatch')
+  let attemptCount = 0
+  let lastFailure = 'proxy request failed'
+  let lastResponse: ProxyAuditEvidenceExchange['response'] = null
+  const fetchFn = context.fetchFn ?? fetch
+  const sleepFn = context.sleepFn ?? sleep
+
+  while (attemptCount < PROBE_REQUEST_ATTEMPTS) {
+    attemptCount += 1
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), context.requestTimeoutMs)
+    try {
+      const response = await fetchFn(url, {
+        method: 'POST',
+        headers,
+        body,
+        signal: controller.signal,
+      })
+      const responseBody = new Uint8Array(await response.arrayBuffer())
+      const responseHeaders = Object.fromEntries(response.headers.entries())
+      lastResponse = {
+        statusCode: response.status,
+        headers: responseHeaders,
+        bodyBase64: Buffer.from(responseBody).toString('base64'),
+        hash: canonicalHashBytes32({
+          statusCode: response.status,
+          headers: responseHeaders,
+          bodyBase64: Buffer.from(responseBody).toString('base64'),
+        }),
+      }
+      if (!response.ok) {
+        lastFailure = `buyer proxy HTTP ${response.status}: ${responseText(responseBody).slice(0, 500)}`
+        if (!isRetryableStatus(response.status)) break
+        throw new Error(lastFailure)
+      }
+      const completion = extractCompletionText(responseBody)
+      const answers = completion === null
+        ? new Array<number | null>(probes.length).fill(null)
+        : parseKbfAnswers(completion, probes.length)
+      const matches = computeMatchVector(answers, probes)
+      const completedAt = Date.now()
+      return {
+        batchIndex,
+        attemptCount,
+        probeIds: probes.map((probe) => probe.id),
+        request,
+        response: lastResponse,
+        timing: { startedAt, completedAt, responseLatencyMs: Math.max(0, completedAt - startedAt) },
+        answers,
+        matches,
+        status: 'succeeded',
+        failureReason: null,
+      }
+    } catch (error) {
+      lastFailure = controller.signal.aborted
+        ? `buyer proxy request timed out after ${context.requestTimeoutMs}ms`
+        : asError(error).message
+      if (attemptCount < PROBE_REQUEST_ATTEMPTS) {
+        await sleepFn(PROBE_RETRY_BASE_DELAY_MS * 2 ** (attemptCount - 1))
+      }
+    } finally {
+      clearTimeout(timer)
     }
-    payment = await context.node.finalizeResponsePayment(target, requestId)
-    context.spend.spentUsdc += payment.sellerChargeUsdc
-    if (response.statusCode !== 200) throw new Error(`HTTP ${response.statusCode}`)
-    const completion = extractCompletionText(response.body)
-    answers = completion === null
-      ? new Array<number | null>(probes.length).fill(null)
-      : parseKbfAnswers(completion, probes.length)
-    matches = computeMatchVector(answers, probes)
-  } catch (error) {
-    failureReason = controller.signal.aborted
-      ? `request timed out after ${context.requestTimeoutMs}ms`
-      : asError(error).message
-  } finally {
-    clearTimeout(timer)
   }
   const completedAt = Date.now()
-  const authenticated = Boolean(response && responseAuth?.verified && payment && response.statusCode === 200 && !failureReason)
   return {
-    requestId,
+    batchIndex,
+    attemptCount,
     probeIds: probes.map((probe) => probe.id),
-    request: {
-      method: request.method,
-      path: request.path,
-      headers: request.headers,
-      bodyBase64: Buffer.from(request.body).toString('base64'),
-      hash: requestHash,
-    },
-    response: response ? {
-      statusCode: response.statusCode,
-      headers: response.headers,
-      bodyBase64: Buffer.from(response.body).toString('base64'),
-      hash: hashResponse(response),
-    } : null,
-    responseAuth: responseAuth ? toResponseAuthPayload(responseAuth) : null,
-    payment: payment ? {
-      sellerChargeUsdc: payment.sellerChargeUsdc.toString(),
-      spendingAuth: payment.spendingAuth as unknown as Record<string, unknown>,
-    } : null,
+    request,
+    response: lastResponse,
     timing: { startedAt, completedAt, responseLatencyMs: Math.max(0, completedAt - startedAt) },
-    answers,
-    matches,
-    status: authenticated ? 'succeeded' : 'failed',
-    failureReason,
+    answers: new Array<number | null>(probes.length).fill(null),
+    matches: new Array<null>(probes.length).fill(null),
+    status: 'failed',
+    failureReason: lastFailure,
   }
 }
 
 export async function writeRunSummary(evidenceDir: string, summary: ModelVerificationRunSummary): Promise<string> {
+  const { mkdir, open, rename } = await import('node:fs/promises')
   const directory = join(evidenceDir, 'runs')
   await mkdir(directory, { recursive: true })
   const path = join(directory, `${summary.runId}.json`)
@@ -336,43 +320,77 @@ export async function readRunSummary(path: string): Promise<ModelVerificationRun
   return JSON.parse(await readFile(path, 'utf8')) as ModelVerificationRunSummary
 }
 
-function emptyMetrics(startedAt: number, completedAt: number) {
-  return {
-    windowStartedAt: Math.floor(startedAt / 1_000),
-    windowEndedAt: Math.floor(completedAt / 1_000),
-    eligibleAttempts: 0,
-    successfulAttempts: 0,
-    p50TtftMs: 0,
-    p95TtftMs: 0,
-    p50OutputTokensPerSecondMilli: 0,
-    schemaVersion: 0,
-    observationsRoot: `0x${'0'.repeat(64)}`,
-  }
-}
-
-function verdictCode(verdict: 'SAME' | 'DIFF' | 'UNDETERMINED'): Exclude<VerifierVerdict, 0> {
-  if (verdict === 'SAME') return VERIFIER_VERDICT_SAME
-  if (verdict === 'DIFF') return VERIFIER_VERDICT_DIFF
-  return VERIFIER_VERDICT_UNDETERMINED
-}
-
 function extractCompletionText(body: Uint8Array): string | null {
+  const text = responseText(body)
   try {
-    const parsed = JSON.parse(new TextDecoder().decode(body)) as {
-      choices?: Array<{ message?: { content?: unknown }; text?: unknown }>
-      content?: Array<{ type?: string; text?: unknown }>
-      output_text?: unknown
-    }
-    const chatContent = parsed.choices?.[0]?.message?.content
-    if (typeof chatContent === 'string') return chatContent
-    const text = parsed.choices?.[0]?.text
-    if (typeof text === 'string') return text
-    const anthropicText = parsed.content?.find((block) => block?.type === 'text')?.text
-    if (typeof anthropicText === 'string') return anthropicText
-    return typeof parsed.output_text === 'string' ? parsed.output_text : null
+    return extractCompletionFromJson(JSON.parse(text) as Record<string, unknown>)
   } catch {
-    return null
+    return extractCompletionFromSse(text)
   }
+}
+
+function extractCompletionFromJson(parsed: Record<string, unknown>): string | null {
+  const response = parsed as {
+    choices?: Array<{ message?: { content?: unknown }; text?: unknown }>
+    content?: Array<{ type?: string; text?: unknown }>
+    output?: Array<{ content?: Array<{ type?: string; text?: unknown }> }>
+    output_text?: unknown
+  }
+  const chatContent = response.choices?.[0]?.message?.content
+  if (typeof chatContent === 'string') return chatContent
+  const completionText = response.choices?.[0]?.text
+  if (typeof completionText === 'string') return completionText
+  const anthropicText = response.content?.find((block) => block?.type === 'text')?.text
+  if (typeof anthropicText === 'string') return anthropicText
+  if (typeof response.output_text === 'string') return response.output_text
+  const outputText = response.output
+    ?.flatMap((item) => item.content ?? [])
+    .filter((part) => part.type === 'output_text' && typeof part.text === 'string')
+    .map((part) => part.text as string)
+    .join('')
+  return outputText || null
+}
+
+function extractCompletionFromSse(text: string): string | null {
+  const deltas: string[] = []
+  let completed: string | null = null
+  let done: string | null = null
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.startsWith('data:')) continue
+    const data = line.slice('data:'.length).trim()
+    if (!data || data === '[DONE]') continue
+    try {
+      const event = JSON.parse(data) as Record<string, unknown>
+      if (event.type === 'response.output_text.delta' && typeof event.delta === 'string') {
+        deltas.push(event.delta)
+      } else if (event.type === 'response.output_text.done' && typeof event.text === 'string') {
+        done = event.text
+      } else if (event.type === 'response.completed' && event.response && typeof event.response === 'object') {
+        completed = extractCompletionFromJson(event.response as Record<string, unknown>)
+      }
+    } catch {
+      continue
+    }
+  }
+  if (deltas.length > 0) return deltas.join('')
+  return completed ?? done
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500
+}
+
+function responseText(body: Uint8Array): string {
+  return new TextDecoder().decode(body)
 }
 
 function chunk<T>(items: readonly T[], size: number): T[][] {
@@ -384,7 +402,7 @@ function chunk<T>(items: readonly T[], size: number): T[][] {
 async function runConcurrently<T, R>(
   items: readonly T[],
   concurrency: number,
-  execute: (item: T) => Promise<R>,
+  execute: (item: T, index: number) => Promise<R>,
 ): Promise<R[]> {
   const results = new Array<R>(items.length)
   let nextIndex = 0
@@ -393,10 +411,14 @@ async function runConcurrently<T, R>(
       const index = nextIndex
       nextIndex += 1
       if (index >= items.length) return
-      results[index] = await execute(items[index]!)
+      results[index] = await execute(items[index]!, index)
     }
   }))
   return results
+}
+
+function sleep(delayMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, delayMs))
 }
 
 function asError(error: unknown): Error {

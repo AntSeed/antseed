@@ -1,77 +1,69 @@
 # Model Verification
 
-AntSeed model verification sends ordinary paid buyer requests to every live peer
-advertising a requested model, authenticates each seller response, computes a
-KBF fingerprint verdict, writes local evidence, and optionally submits the
-result on-chain.
+AntSeed model verification uses the already-running local buyer proxy to send a
+powered KBF reference to every live peer advertising a requested model. It pins
+each request to one peer, computes `SAME`, `DIFF`, or `UNDETERMINED`, and writes
+local proxy-observation evidence.
 
-Approved verifier operators remain the v1 trust boundary. The contract stores
-attestations but does not recompute KBF verdicts.
+The current command does not start a separate verifier node, load a verifier
+identity, check deposits, request `ResponseAuth`, collect payment evidence, or
+submit on-chain attestations. Starting a standalone local verifier for this
+workflow is not supported.
 
 ## Commands
 
 ```text
 antseed verifier reference build <model>
-antseed verifier run <model> [--no-attest]
+antseed verifier run <model>
 antseed verifier claim
 ```
 
-`verifier reference build` explicitly creates and validates one fixed 100-probe
-reference JSON file. `verifier run` never calls the reference endpoint; a
-missing or invalid reference fails with the build command required.
+`verifier reference build` creates and validates one adaptively sized reference
+JSON file. It starts at 100 probes and grows by 10 until the reference self-test
+reaches at least 90% statistical power, capped at 500. `verifier run` never calls
+the reference endpoint; a missing or invalid reference fails with the explicit
+build command required.
 
-`verifier run` discovers every peer advertising `<model>` and uses the exact
-advertised spelling for its requests. Every eligible peer receives the same 100
-certified KBF probes in ten ordinary paid chat-completion requests.
+`verifier run` requires the normal buyer process to be running under the same
+`--data-dir`. It reads the connected buyer's `buyer.state.json`, selects every
+fresh peer advertising `<model>`, preserves each peer's advertised model
+spelling, and sends the complete selected reference through the loopback buyer
+proxy. Every request carries `x-antseed-pin-peer` for its target.
 
-The default mode writes evidence and immediately submits each successful result
-to `AntseedVerifierRegistry`. It requires buyer payment readiness, gas, verifier
-approval, and a configured verifier registry before probing. The rewards contract
-is only required by `verifier claim`.
+Peers are processed sequentially. Probe batches contain ten probes and run with
+concurrency two. Transient proxy failures retry with bounded exponential backoff.
+A peer with an exhausted batch retry is recorded as `FAILED`; other peers still
+run. The command exits non-zero when no peer completes or any peer fails.
 
-`--no-attest` runs the same paid requests, `ResponseAuth` checks, scoring, and
-evidence generation but performs no verifier-registry transaction. It requires a
-funded buyer deposit but does not require verifier approval, verifier contracts,
-or gas for attestation.
-
-Both modes continue after a peer failure. The run summary records completed,
-failed, and ineligible peers. The process exits non-zero when no peer completed
-or any eligible peer failed.
-
-`verifier claim` remains a separate command and claims pending ANTS rewards for
-finalized credited epochs.
+`verifier claim` remains a separate legacy reward command. `verifier run` does
+not create new attestations or credits.
 
 ## Configuration
 
 ```yaml
-payments:
-  preferredMethod: crypto
-  maxPerRequestUsdc: "300000"
-  crypto:
-    chainId: base-mainnet
-    rpcUrl: https://mainnet.base.org
-    depositsContractAddress: "0x..."
-    channelsContractAddress: "0x..."
-    usdcContractAddress: "0x..."
-    verifierRegistryAddress: "0x..."
-    verifierRewardsAddress: "0x..."
+buyer:
+  proxyPort: 8377
 
 verifier:
   referencesDir: ~/.antseed/verifier/references
   evidenceDir: ~/.antseed/verifier/evidence
   probeRequestTimeoutMs: 120000
-  maxTotalSpendUSDC: "10"
   referenceMaxRequestsPerBuild: 2000
   referenceBatchRetryCount: 3
   referenceRetryBaseDelayMs: 500
   referenceMaxNoProgressRounds: 3
-  referenceMaxConcurrentRequests: 2
-  referenceMaxConcurrentRequestsPerModel: 1
+  referenceMaxConcurrentRequests: 4
+  referenceMaxConcurrentRequestsPerModel: 3
+  referenceMinimumProbeCount: 100
+  referenceMaximumProbeCount: 500
+  referenceProbeStep: 10
+  referenceMinimumStatisticalPower: 0.90
   referenceEndpoint:
-    baseUrl: https://reference.example/v1
+    baseUrl: http://127.0.0.1:8377/v1
     apiKeyEnv: ANTSEED_REFERENCE_API_KEY
     sourceId: trusted-reference-v1
     trust: trusted
+    antseedPeerId: 9e8f9aaee684298b7f2af2ae008e3692f0e9f4f7
     models:
       gpt-5.6-sol:
         upstreamModel: gpt-5.6-sol
@@ -81,16 +73,17 @@ verifier:
           - sonnet-4.6
 ```
 
-`maxTotalSpendUSDC` is required and is a human-readable USDC amount. It caps the
-sum of finalized seller charges for one model-wide run. Before starting a peer,
-the verifier also checks that the remaining cap can cover all ten requests at
-the configured `payments.maxPerRequestUsdc` limit.
+The run command obtains the effective proxy port from the live
+`buyer.state.json`; it does not start a buyer or use verifier payment settings.
+The configured probe timeout applies to each proxy attempt.
 
-Probe count is fixed at 100, probe-request concurrency is fixed at two, and
-peers are processed sequentially. These values and adaptive sizing are not
-configurable.
+Reference sizing defaults to 100 through 500 in increments of 10 with a minimum
+power of 0.90. Counts must be multiples of 10, the step must divide the configured
+range, and power must be in `(0, 1]`. Production statistical assumptions remain
+fixed at a 0.10 minimum detectable mismatch increase, one-sided alpha 0.05, and
+99% Clopper-Pearson confidence.
 
-## Fixed References
+## Powered References
 
 The verifier stores one reusable reference at:
 
@@ -99,92 +92,68 @@ The verifier stores one reusable reference at:
 ```
 
 The reference must validate as KBF v1, include the requested model as a service
-alias, and contain exactly 100 probes. The same questions are intentionally
-reused across peers and later runs.
+alias, follow the configured sizing sequence, use the fixed statistical
+assumptions, and meet the configured power threshold. The same selected probes
+are reused across peers and later runs.
 
-`verifier reference build` repeatedly generates candidate rounds until exactly
-100 stable probes distinguish the reference model from at least one configured
-contrast model. A probe need not distinguish every contrast. The reference
-records the exact selected probe IDs that distinguished each individual contrast.
-Candidates are deduplicated across rounds by their content-derived IDs.
+Candidate probes must be stable on the reference model and distinguish it from
+at least one configured contrast model. A probe need not distinguish every
+contrast. Self-testing starts at the configured minimum and evaluates ascending
+step-sized prefixes. Only new probes are queried at each step; the first prefix
+meeting the power threshold is persisted. If the next prefix is unavailable,
+generation continues. If the maximum remains underpowered, the build fails
+without replacing an existing reference.
 
-Physical endpoint responses are checkpointed under
-`<referencesDir>/.checkpoints/<safe-model-slug>.json`. Restarting a compatible
-build reuses completed generation, enrollment, contrast, preflight, and self-test
-responses instead of paying for them again. The checkpoint is invalidated when
-the endpoint identity, model mapping, target count, or frozen query settings
-change, and is removed after the final reference is written successfully.
+Physical reference-endpoint responses are checkpointed under:
 
-Transient `429`, `5xx`, timeout, and connection failures retry with exponential
-backoff. The build has a hard physical-request budget, global and per-model
-concurrency limits, and adaptive concurrency reduction after throttling. Three
-consecutive rounds with no newly accepted probes fail the build rather than
-spending indefinitely. `verifier run` never generates or replaces references.
-There is no probe catalog, rotation policy, exposure tracking, daemon, relay
-workflow, or adaptive audit probe sizing.
+```text
+<referencesDir>/.checkpoints/<safe-model-slug>.json
+```
 
-## Response Authentication
+Compatible restarts reuse completed generation, enrollment, contrast, preflight,
+and self-test responses. The checkpoint is invalidated when endpoint identity,
+model mapping, sizing policy, sizing algorithm, fixed mismatch delta, or frozen
+query settings change. Transient `429`, `5xx`, timeout, and connection failures
+retry with exponential backoff. The build retains hard request budgets,
+concurrency limits, adaptive throttle reduction, and bounded no-progress failure.
 
-A seller supporting `verification.response-auth.v1` sends a signed
-`ResponseAuth` after a normal response. The payload binds:
+## Coverage and Verdicts
 
-- buyer and seller peer IDs;
-- advertised service;
-- request ID and exact request hash;
-- response status and exact response hash;
-- payment channel when present; and
-- response start and completion timestamps.
+The runtime always evaluates the complete selected reference and calls KBF with
+`minCoverage: 1`.
 
-The verifier requires a valid seller signature, matching identities, service,
-request, response, and successful response-scoped payment evidence. A missing or
-invalid `ResponseAuth` makes that probe batch fail and prevents an attestation.
+- Every successfully completed probe is scored over the fixed reference
+  denominator. Missing, malformed, non-finite, out-of-range, and
+  valid-but-nonmatching answers count as discrepancies.
+- Any probe batch that cannot obtain a successful proxy response after retries
+  remains unattempted and produces `UNDETERMINED`.
+- All batches completed: compute `SAME` or `DIFF` normally.
 
-`ResponseAuth` proves that the seller produced the recorded response. KBF
-scoring, not `ResponseAuth`, determines whether the response matches the model
-reference.
+A planned 100-probe audit is never silently reduced to 99 or 49 observations for
+`SAME` or `DIFF`.
 
-## Evidence and Local State
+## Evidence
 
-Verification workflow state is not stored in SQLite. SQLite remains an internal
-node inbox for received `ResponseAuth` messages only.
+Each completed peer writes one canonical evidence JSON file with kind
+`antseed-buyer-proxy-kbf-audit`. It contains:
 
-Each completed peer writes one canonical evidence JSON file containing:
-
-- verifier and target identities;
-- service and reference metadata;
-- all 100 probes and expected answers;
-- exact request and response bytes and hashes;
-- seller-signed `ResponseAuth` payloads;
-- response-scoped payment evidence;
-- parsed answers and match vector; and
+- buyer proxy URL, state path, and PID;
+- target peer, advertised service, and optional display/agent metadata;
+- complete powered reference metadata and probes;
+- exact pinned request and response bytes and hashes;
+- per-batch attempts, timing, parsed answers, and match vectors; and
 - final KBF verdict and statistics.
 
-Each invocation also writes one canonical summary under
-`<evidenceDir>/runs/<run-id>.json`. The summary records mode, model, reference,
-configured and actual spend, successful peer results, failure reasons, evidence
-paths, and attestation transaction hashes.
+Every file explicitly declares evidence level
+`proxy-observation-no-response-auth-or-payment-evidence`. It must not be treated
+as seller-signed response authentication or authenticated payment evidence.
 
-There is no benchmark database, resumable peer-audit workflow state, report
-command, performance metric snapshot, traffic-share lookup, or evidence URI
-publication. Only reference-build endpoint responses are checkpointed.
+Each invocation also writes a canonical summary under:
 
-## On-Chain Attestation
+```text
+<evidenceDir>/runs/<run-id>.json
+```
 
-The default mode submits one result per successfully verified peer. The current
-registry compatibility call includes:
-
-- audit ID;
-- seller agent ID and service hash;
-- `SAME`, `DIFF`, or `UNDETERMINED` verdict;
-- current epoch;
-- authenticated probe count;
-- evidence hash; and
-- zero-valued model-share and metric compatibility fields.
-
-The verifier does not calculate traffic share or performance metrics. Benchmark
-mode never calls the registry.
-
-The registry continues to award credits and the rewards controller continues to
-support explicit `verifier claim` operations. Automatic scheduling, retry
-backoff, automatic claiming, routing integration, and seller-penalty calculation
-are outside this command.
+The summary records the buyer proxy, model, reference, selected probe count,
+completed peer results, failures, evidence paths, and hashes. Run state is not
+stored in SQLite and target probing is not resumable.

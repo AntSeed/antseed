@@ -223,7 +223,6 @@ test('loadConfig preserves and validates verifier settings', async () => {
       referencesDir: './refs',
       evidenceDir: './evidence',
       probeRequestTimeoutMs: 90_000,
-      maxTotalSpendUSDC: '12.5',
       referenceEndpoint,
       referenceMaxRequestsPerBuild: 500,
       referenceBatchRetryCount: 2,

@@ -14,6 +14,7 @@ import { MockERC8004Registry } from "../mocks/MockERC8004Registry.sol";
 contract AntseedVerifierRewardsTest is Test {
     uint256 private constant GENESIS = 1_775_728_461;
     uint256 private constant EPOCH_DURATION = 7 days;
+    address private constant ANTS_TOKEN = 0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263;
     bytes32 private constant VERIFICATION_MINTER_ID = keccak256("antseed.emissions.verification.v1");
     bytes32 private constant SERVICE_HASH = keccak256("gpt-5.6-sol");
 
@@ -28,8 +29,9 @@ contract AntseedVerifierRewardsTest is Test {
     function setUp() public {
         vm.warp(GENESIS + 8 days);
         AntseedRegistry core = new AntseedRegistry();
-        token = new ANTSToken();
-        core.setAntsToken(address(token));
+        deployCodeTo("ANTSToken.sol:ANTSToken", ANTS_TOKEN);
+        token = ANTSToken(ANTS_TOKEN);
+        core.setAntsToken(ANTS_TOKEN);
         core.setTeamWallet(address(0x1111));
         core.setProtocolReserve(address(0x2222));
         identity = new MockERC8004Registry();

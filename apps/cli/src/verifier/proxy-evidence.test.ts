@@ -1,0 +1,98 @@
+import assert from 'node:assert/strict'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import test from 'node:test'
+import { createReferenceQueryProfile } from '@antseed/fingerprints'
+import {
+  deriveProxyAuditId,
+  proxyAuditEvidenceHash,
+  verifyProxyAuditEvidenceFile,
+  writeProxyAuditEvidence,
+  type ProxyAuditEvidenceV1,
+} from './proxy-evidence.js'
+
+function evidence(): ProxyAuditEvidenceV1 {
+  return {
+    version: 1,
+    kind: 'antseed-buyer-proxy-kbf-audit',
+    evidenceLevel: 'proxy-observation-no-response-auth-or-payment-evidence',
+    createdAt: '2026-08-05T12:00:00.000Z',
+    buyerProxy: {
+      baseUrl: 'http://127.0.0.1:8377',
+      statePath: '/tmp/buyer.state.json',
+      pid: 123,
+    },
+    target: {
+      peerId: '22'.repeat(20),
+      displayName: 'test',
+      agentId: '7',
+      service: 'gpt-test',
+    },
+    reference: {
+      referenceId: 'reference-1',
+      referenceModel: 'gpt-test',
+      queryProfileHash: `0x${'44'.repeat(32)}`,
+      queryProfile: createReferenceQueryProfile({ upstreamModel: 'gpt-test' }),
+      statisticalPower: 0.99,
+      statisticalPowerEvidence: { power: 0.99 },
+      selfTest: { hamming: 0, total: 1, coverage: 1, errorRate: 0 },
+      probes: [{
+        id: 'probe-1', name: 'probe', domain: 'test', template: 'Value is ___.',
+        consensus: 1, range: [0, 2], tolerance: { mode: 'absolute', value: 0 },
+      }],
+    },
+    exchanges: [],
+    result: {
+      selectedProbeCount: 1,
+      parsedProbeCount: 1,
+      matchVector: [1],
+      matchVectorHash: `0x${'55'.repeat(32)}`,
+      stats: {
+        selfHamming: 0,
+        selfTotal: 1,
+        targetHamming: 0,
+        targetTotal: 1,
+        selfCoverage: 1,
+        targetCoverage: 1,
+        p0Cp99: 0.1,
+        pValueBinomial: 1,
+      },
+      verdict: 'SAME',
+      verdictReason: null,
+    },
+  }
+}
+
+test('canonical proxy evidence round-trips and derives a stable audit id', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-proxy-evidence-'))
+  try {
+    const value = evidence()
+    const hash = proxyAuditEvidenceHash(value)
+    const auditId = deriveProxyAuditId({
+      targetPeerId: value.target.peerId,
+      referenceId: value.reference.referenceId,
+      completedAt: Date.parse(value.createdAt),
+      evidenceHash: hash,
+    })
+    const written = await writeProxyAuditEvidence(directory, auditId, value)
+    assert.equal(written.evidenceHash, hash)
+    assert.equal((await readFile(written.path, 'utf8')).endsWith('\n'), false)
+    assert.deepEqual(await verifyProxyAuditEvidenceFile(written.path, hash), value)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('proxy evidence verification rejects non-canonical files', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-proxy-evidence-'))
+  try {
+    const value = evidence()
+    const hash = proxyAuditEvidenceHash(value)
+    const written = await writeProxyAuditEvidence(directory, 'audit', value)
+    await writeFile(written.path, `${await readFile(written.path, 'utf8')}\n`)
+    await assert.rejects(verifyProxyAuditEvidenceFile(written.path, hash), /not canonical/)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})

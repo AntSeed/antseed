@@ -219,16 +219,14 @@ export interface PaymentsCLIConfig {
   };
 }
 
-/** Verifier configuration for model-wide paid verification runs. */
+/** Verifier configuration for model-wide buyer-proxy verification runs. */
 export interface VerifierCLIConfig {
   /** Directory containing one reusable powered reference per model. */
   referencesDir?: string;
   /** Directory for per-peer evidence packs and run summaries. */
   evidenceDir?: string;
-  /** Timeout for each paid probe request. Default: 120000. */
+  /** Timeout for each buyer-proxy probe request. Default: 120000. */
   probeRequestTimeoutMs?: number;
-  /** Hard total spend cap for one run, in human-readable USDC. */
-  maxTotalSpendUSDC?: string;
   /** Trusted endpoint used only by the explicit reference-build command. */
   referenceEndpoint?: VerifierReferenceEndpointConfig;
   /** Maximum physical reference-endpoint requests, including retries. Default: 2000. */

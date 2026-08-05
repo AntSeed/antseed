@@ -421,6 +421,7 @@ async function certifyStableProbes(
     const values = passes.map((pass) => pass[index] ?? null).filter((value): value is number => value !== null)
     if (values.length !== passes.length) return []
     const consensus = median(values)
+    if (consensus < probe.range[0] || consensus > probe.range[1]) return []
     const certified = { ...probe, consensus }
     return values.every((value) => matchesTolerance(value, certified)) ? [certified] : []
   })

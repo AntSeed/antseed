@@ -1,253 +1,142 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/bash
+set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-CONTRACTS_DIR="$REPO_ROOT/packages/contracts"
-RPC_URL="${ANTSEED_LOCAL_RPC_URL:-http://127.0.0.1:8545}"
-CHAIN_ID="${ANTSEED_LOCAL_CHAIN_ID:-31337}"
-DEPLOYER_PRIVATE_KEY="${DEPLOYER_PRIVATE_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
-LOCAL_ROOT="${ANTSEED_LOCAL_DATA_ROOT:-$HOME/.antseed-local}"
-VENICE_PEER_ID="${ANTSEED_REFERENCE_PEER_ID:-9e8f9aaee684298b7f2af2ae008e3692f0e9f4f7}"
-REFERENCE_API_KEY_ENV="${ANTSEED_REFERENCE_API_KEY_ENV:-ANTSEED_REFERENCE_API_KEY}"
-REFERENCE_API_KEY_VALUE="${!REFERENCE_API_KEY_ENV:-local-smoke}"
+DEPLOYER=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+RPC=http://127.0.0.1:8545
 
-SELLER_DIR="$LOCAL_ROOT/seller"
-BUYER_DIR="$LOCAL_ROOT/buyer"
-VERIFIER_DIR="$LOCAL_ROOT/verifier"
-BROADCAST_FILE="$CONTRACTS_DIR/broadcast/Deploy.s.sol/$CHAIN_ID/run-latest.json"
-ADDRESSES_FILE="$LOCAL_ROOT/contracts.json"
+# Contract addresses (deterministic from anvil nonce sequence)
+USDC=0x5FbDB2315678afecb367f032d93F642f64180aa3          # nonce 0
+REGISTRY=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512      # nonce 1 — MockERC8004Registry
+# ANTSToken = nonce 2, AntseedRegistry = nonce 3
+STAKING=0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9       # nonce 4
+DEPOSITS=0x5FC8d32690cc91D4c39d9d3abcBD16989F875707      # nonce 5
+CHANNELS=0x0165878A594ca255338adfa4d48449f69242Eb8F      # nonce 6
+# Stats = nonce 7, Emissions = nonce 8
 
-for command in forge cast node pnpm; do
-  command -v "$command" >/dev/null || { echo "missing required command: $command" >&2; exit 1; }
-done
+cd /Users/shahafan/Development/antseed
 
-cast chain-id --rpc-url "$RPC_URL" >/dev/null 2>&1 || {
-  echo "Anvil is not reachable at $RPC_URL. Start it with: anvil" >&2
-  exit 1
+echo "=== Step 1: Deploy contracts ==="
+echo "Make sure anvil is running: anvil"
+echo ""
+
+cd packages/contracts
+forge script script/Deploy.s.sol --rpc-url $RPC --broadcast
+cd ../..
+
+echo ""
+echo "=== Step 2: Setup seller ==="
+
+# Ensure seller data dir and config exist
+mkdir -p ~/.antseed-seller
+cat > ~/.antseed-seller/config.json << EOF
+{
+  "identity": { "displayName": "Local Test Seller" },
+  "seller": {
+    "publicAddress": "127.0.0.1:6882",
+    "pricing": { "defaults": { "inputUsdPerMillion": 3, "outputUsdPerMillion": 15 } }
+  },
+  "payments": {
+    "preferredMethod": "crypto",
+    "crypto": {
+      "chainId": "base-local",
+      "rpcUrl": "$RPC",
+      "depositsContractAddress": "$DEPOSITS",
+      "channelsContractAddress": "$CHANNELS",
+      "stakingContractAddress": "$STAKING",
+      "usdcContractAddress": "$USDC",
+      "identityRegistryAddress": "$REGISTRY"
+    }
+  },
+  "providers": [
+    { "name": "openai-responses", "services": ["codex"] }
+  ]
 }
+EOF
+echo "Created seller config at ~/.antseed-seller/config.json"
 
-mkdir -p "$SELLER_DIR" "$BUYER_DIR" "$VERIFIER_DIR"
+# Ensure plugin is linked
+mkdir -p ~/.antseed/plugins/node_modules/@antseed
+ln -sf "$(pwd)/plugins/provider-openai-responses" ~/.antseed/plugins/node_modules/@antseed/provider-openai-responses 2>/dev/null || true
 
-printf '\n=== Build runtime dependencies ===\n'
-(cd "$REPO_ROOT" && pnpm --filter @antseed/node build >/dev/null)
+echo ""
+echo "=== Step 3: Get wallet addresses ==="
+SELLER_ADDR=$(node -e "const{loadOrCreateIdentity}=require('./packages/node/dist/p2p/identity.js');(async()=>{const i=await loadOrCreateIdentity('/Users/shahafan/.antseed-seller');console.log(i.wallet.address)})()")
+SELLER_KEY=$(node -e "const{loadOrCreateIdentity}=require('./packages/node/dist/p2p/identity.js');(async()=>{const i=await loadOrCreateIdentity('/Users/shahafan/.antseed-seller');console.log(i.wallet.privateKey)})()")
+BUYER_ADDR=$(node -e "const{loadOrCreateIdentity}=require('./packages/node/dist/p2p/identity.js');(async()=>{const i=await loadOrCreateIdentity('/Users/shahafan/.antseed');console.log(i.wallet.address)})()")
+BUYER_KEY=$(node -e "const{loadOrCreateIdentity}=require('./packages/node/dist/p2p/identity.js');(async()=>{const i=await loadOrCreateIdentity('/Users/shahafan/.antseed');console.log(i.wallet.privateKey)})()")
+SELLER_PEER=$(cat ~/.antseed-seller/identity.key)
 
-printf '\n=== Deploy fresh local contracts ===\n'
-(
-  cd "$CONTRACTS_DIR"
-  DEPLOYER_PRIVATE_KEY="$DEPLOYER_PRIVATE_KEY" forge script script/Deploy.s.sol \
-    --rpc-url "$RPC_URL" --broadcast
-)
+echo "Seller EVM: $SELLER_ADDR"
+echo "Buyer EVM:  $BUYER_ADDR"
+echo "Seller PeerId: ${SELLER_PEER:0:16}..."
 
-[[ -f "$BROADCAST_FILE" ]] || { echo "missing Foundry broadcast output: $BROADCAST_FILE" >&2; exit 1; }
-node --input-type=module - "$BROADCAST_FILE" "$ADDRESSES_FILE" <<'NODE'
-import { readFileSync, writeFileSync } from 'node:fs'
-const [input, output] = process.argv.slice(2)
-const broadcast = JSON.parse(readFileSync(input, 'utf8'))
-const wanted = [
-  'MockUSDC', 'MockERC8004Registry', 'ANTSToken', 'AntseedRegistry', 'AntseedStaking',
-  'AntseedDeposits', 'AntseedChannels', 'AntseedStats', 'AntseedSellerPools',
-  'AntseedSellerRegistry', 'AntseedEmissionsGate', 'AntseedUsageAccounting',
-  'AntseedVerifierRegistry', 'AntseedVerifierRewards', 'AntseedVerifierPointsPolicy',
-  'AntseedSellerPoolsRewards', 'AntseedUsageRewards',
-]
-const result = {}
-for (const transaction of broadcast.transactions ?? []) {
-  if (transaction.transactionType === 'CREATE' && wanted.includes(transaction.contractName)) {
-    result[transaction.contractName] = transaction.contractAddress
-  }
-}
-const missing = wanted.filter((name) => !result[name])
-if (missing.length > 0) throw new Error(`broadcast missing deployments: ${missing.join(', ')}`)
-writeFileSync(output, JSON.stringify(result, null, 2) + '\n')
-NODE
+echo ""
+echo "=== Step 4: Fund ETH ==="
+cast send --rpc-url $RPC --private-key $DEPLOYER $SELLER_ADDR --value 1ether > /dev/null
+cast send --rpc-url $RPC --private-key $DEPLOYER $BUYER_ADDR --value 1ether > /dev/null
+echo "Done"
 
-address() {
-  node --input-type=module - "$ADDRESSES_FILE" "$1" <<'NODE'
-import { readFileSync } from 'node:fs'
-const [path, key] = process.argv.slice(2)
-const value = JSON.parse(readFileSync(path, 'utf8'))[key]
-if (!value) throw new Error(`missing address ${key}`)
-process.stdout.write(value)
-NODE
-}
+echo ""
+echo "=== Step 5: Mint USDC ==="
+cast send --rpc-url $RPC --private-key $DEPLOYER $USDC "mint(address,uint256)" $SELLER_ADDR 100000000 > /dev/null
+cast send --rpc-url $RPC --private-key $DEPLOYER $USDC "mint(address,uint256)" $BUYER_ADDR 100000000 > /dev/null
+echo "Done"
 
-USDC="$(address MockUSDC)"
-IDENTITY_REGISTRY="$(address MockERC8004Registry)"
-ANTS_TOKEN="$(address ANTSToken)"
-REGISTRY="$(address AntseedRegistry)"
-LEGACY_STAKING="$(address AntseedStaking)"
-DEPOSITS="$(address AntseedDeposits)"
-CHANNELS="$(address AntseedChannels)"
-STATS="$(address AntseedStats)"
-SELLER_POOLS="$(address AntseedSellerPools)"
-SELLER_REGISTRY="$(address AntseedSellerRegistry)"
-EMISSIONS_GATE="$(address AntseedEmissionsGate)"
-USAGE_ACCOUNTING="$(address AntseedUsageAccounting)"
-VERIFIER_REGISTRY="$(address AntseedVerifierRegistry)"
-VERIFIER_REWARDS="$(address AntseedVerifierRewards)"
-VERIFIER_POINTS_POLICY="$(address AntseedVerifierPointsPolicy)"
-
-identity_json() {
-  node --input-type=module - "$1" "$REPO_ROOT" <<'NODE'
-const [dataDir, root] = process.argv.slice(2)
-const { loadOrCreateIdentity } = await import(`${root}/packages/node/dist/index.js`)
-const identity = await loadOrCreateIdentity(dataDir)
-process.stdout.write(JSON.stringify({
-  address: identity.wallet.address,
-  privateKey: identity.wallet.privateKey,
-  peerId: identity.peerId,
-}))
-NODE
-}
-
-SELLER_IDENTITY="$(identity_json "$SELLER_DIR")"
-BUYER_IDENTITY="$(identity_json "$BUYER_DIR")"
-VERIFIER_IDENTITY="$(identity_json "$VERIFIER_DIR")"
-json_value() { node -e 'process.stdout.write(JSON.parse(process.argv[1])[process.argv[2]])' "$1" "$2"; }
-SELLER_ADDRESS="$(json_value "$SELLER_IDENTITY" address)"
-SELLER_KEY="$(json_value "$SELLER_IDENTITY" privateKey)"
-BUYER_ADDRESS="$(json_value "$BUYER_IDENTITY" address)"
-BUYER_KEY="$(json_value "$BUYER_IDENTITY" privateKey)"
-VERIFIER_ADDRESS="$(json_value "$VERIFIER_IDENTITY" address)"
-VERIFIER_KEY="$(json_value "$VERIFIER_IDENTITY" privateKey)"
-
-send() { cast send --rpc-url "$RPC_URL" --private-key "$1" "${@:2}" >/dev/null; }
-for wallet in "$SELLER_ADDRESS" "$BUYER_ADDRESS" "$VERIFIER_ADDRESS"; do
-  send "$DEPLOYER_PRIVATE_KEY" "$wallet" --value 2ether
-done
-for wallet in "$SELLER_ADDRESS" "$BUYER_ADDRESS" "$VERIFIER_ADDRESS"; do
-  send "$DEPLOYER_PRIVATE_KEY" "$USDC" 'mint(address,uint256)' "$wallet" 100000000
-done
-send "$DEPLOYER_PRIVATE_KEY" "$VERIFIER_REGISTRY" 'setVerifier(address,bool)' "$VERIFIER_ADDRESS" true
-
-send "$SELLER_KEY" "$IDENTITY_REGISTRY" 'register()'
+echo ""
+echo "=== Step 6: Register seller identity (ERC-8004) ==="
+cast send --rpc-url $RPC --private-key $SELLER_KEY $REGISTRY "register()" > /dev/null
+# agentId=1 for first registration on fresh chain
 AGENT_ID=1
-send "$SELLER_KEY" "$USDC" 'approve(address,uint256)' "$LEGACY_STAKING" 50000000
-send "$SELLER_KEY" "$LEGACY_STAKING" 'stake(uint256,uint256)' "$AGENT_ID" 50000000
-send "$SELLER_KEY" "$SELLER_REGISTRY" 'registerSeller(uint256)' "$AGENT_ID"
+echo "Done"
 
-set_operator_and_deposit() {
-  local address="$1" private_key="$2"
-  local domain typehash struct_hash digest signature
-  domain="$(cast call --rpc-url "$RPC_URL" "$DEPOSITS" 'domainSeparator()(bytes32)')"
-  typehash="$(cast keccak 'SetOperator(address operator,uint256 nonce)')"
-  struct_hash="$(cast keccak "$(cast abi-encode 'f(bytes32,address,uint256)' "$typehash" "$address" 0)")"
-  digest="$(cast keccak "$(cast concat-hex 0x1901 "$domain" "$struct_hash")")"
-  signature="$(cast wallet sign --no-hash --private-key "$private_key" "$digest")"
-  send "$private_key" "$DEPOSITS" 'setOperator(address,address,uint256,bytes)' "$address" "$address" 0 "$signature"
-  send "$private_key" "$USDC" 'approve(address,uint256)' "$DEPOSITS" 10000000
-  send "$private_key" "$DEPOSITS" 'deposit(address,uint256)' "$address" 10000000
-}
-set_operator_and_deposit "$BUYER_ADDRESS" "$BUYER_KEY"
-set_operator_and_deposit "$VERIFIER_ADDRESS" "$VERIFIER_KEY"
+echo ""
+echo "=== Step 7: Seller stake 50 USDC ==="
+cast send --rpc-url $RPC --private-key $SELLER_KEY $USDC "approve(address,uint256)" $STAKING 50000000 > /dev/null
+cast send --rpc-url $RPC --private-key $SELLER_KEY $STAKING "stake(uint256,uint256)" $AGENT_ID 50000000 > /dev/null
+echo "Done"
 
-write_config() {
-  local path="$1" role="$2" proxy_port="$3"
-  node --input-type=module - "$path" "$role" "$proxy_port" "$RPC_URL" \
-    "$DEPOSITS" "$CHANNELS" "$SELLER_REGISTRY" "$USDC" "$IDENTITY_REGISTRY" "$USAGE_ACCOUNTING" \
-    "$VERIFIER_REGISTRY" "$VERIFIER_REWARDS" "$VERIFIER_POINTS_POLICY" "$VENICE_PEER_ID" "$REFERENCE_API_KEY_ENV" <<'NODE'
-import { writeFileSync } from 'node:fs'
-const [path, role, proxyPort, rpcUrl, deposits, channels, staking, usdc, identityRegistry,
-  emissions, verifierRegistry, verifierRewards, verifierPointsPolicy, peerId, apiKeyEnv] = process.argv.slice(2)
-const chain = {
-  chainId: 'base-local', rpcUrl,
-  depositsContractAddress: deposits, channelsContractAddress: channels,
-  stakingContractAddress: staking, usdcContractAddress: usdc,
-  identityRegistryAddress: identityRegistry, emissionsContractAddress: emissions,
-  verifierRegistryAddress: verifierRegistry, verifierRewardsAddress: verifierRewards,
-  verifierPointsPolicyAddress: verifierPointsPolicy,
-}
-const config = {
-  identity: { displayName: `Local ${role}` },
-  seller: {
-    reserveFloor: 0,
-    maxConcurrentBuyers: 8,
-    publicAddress: role === 'seller' ? '127.0.0.1:6882' : undefined,
-    providers: role === 'seller' ? {
-      'venice-proxy': {
-        plugin: 'openai',
-        baseUrl: 'http://127.0.0.1:8377',
-        apiKeyEnv,
-        defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 1 },
-        services: {
-          'gpt-5.6-sol': {
-            upstreamModel: 'gpt-5.6-sol', categories: ['coding'],
-            pricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 1 },
-          },
-        },
-      },
-    } : {},
-  },
-  buyer: {
-    maxPricing: { defaults: { inputUsdPerMillion: 100, outputUsdPerMillion: 100 } },
-    minPeerReputation: 0,
-    proxyPort: Number(proxyPort),
-    peerRefreshIntervalMs: 30000,
-    metadataFetchTimeoutMs: 5000,
-    disableMetadataV2Services: false,
-  },
-  payments: { preferredMethod: 'crypto', platformFeeRate: 0.05, crypto: chain },
-  network: { bootstrapNodes: [] },
-}
-if (role === 'verifier') {
-  config.verifier = {
-    probeRequestTimeoutMs: 120000,
-    maxTotalSpendUSDC: '10',
-    referenceMaxRequestsPerBuild: 2000,
-    referenceBatchRetryCount: 3,
-    referenceRetryBaseDelayMs: 500,
-    referenceMaxNoProgressRounds: 3,
-    referenceMaxConcurrentRequests: 2,
-    referenceMaxConcurrentRequestsPerModel: 1,
-    referenceEndpoint: {
-      baseUrl: 'http://127.0.0.1:8377/v1', apiKeyEnv,
-      sourceId: 'antseed-venice-sol-smoke-v1', trust: 'smoke', antseedPeerId: peerId,
-      models: {
-        'gpt-5.6-sol': {
-          upstreamModel: 'gpt-5.6-sol',
-          contrastModels: ['kimi-k3', 'gpt-5.6-luna', 'sonnet-4.6'],
-        },
-      },
-    },
-  }
-}
-writeFileSync(path, JSON.stringify(config, null, 2) + '\n')
-NODE
-}
+echo ""
+echo "=== Step 8: Set buyer operator (self) ==="
+DOMAIN_SEP=$(cast call --rpc-url $RPC $DEPOSITS "domainSeparator()(bytes32)")
+TYPEHASH=$(cast keccak "SetOperator(address operator,uint256 nonce)")
+STRUCT_HASH=$(cast keccak $(cast abi-encode "f(bytes32,address,uint256)" $TYPEHASH $BUYER_ADDR 0))
+DIGEST=$(cast keccak $(cast concat-hex 0x1901 $DOMAIN_SEP $STRUCT_HASH))
+SIG=$(cast wallet sign --no-hash --private-key $BUYER_KEY $DIGEST)
+cast send --rpc-url $RPC --private-key $BUYER_KEY $DEPOSITS "setOperator(address,address,uint256,bytes)" $BUYER_ADDR $BUYER_ADDR 0 $SIG > /dev/null
+echo "Done"
 
-write_config "$SELLER_DIR/config.json" seller 8379
-write_config "$BUYER_DIR/config.json" buyer 8377
-write_config "$VERIFIER_DIR/config.json" verifier 8380
-cat > "$SELLER_DIR/smoke.env" <<EOF_ENV
-export $REFERENCE_API_KEY_ENV='$REFERENCE_API_KEY_VALUE'
-export OPENAI_EXTRA_HEADERS_JSON='{"x-antseed-pin-peer":"$VENICE_PEER_ID"}'
-EOF_ENV
-cat > "$VERIFIER_DIR/smoke.env" <<EOF_ENV
-export $REFERENCE_API_KEY_ENV='$REFERENCE_API_KEY_VALUE'
-EOF_ENV
+echo ""
+echo "=== Step 9: Buyer deposit 10 USDC ==="
+cast send --rpc-url $RPC --private-key $BUYER_KEY $USDC "approve(address,uint256)" $DEPOSITS 10000000 > /dev/null
+cast send --rpc-url $RPC --private-key $BUYER_KEY $DEPOSITS "deposit(address,uint256)" $BUYER_ADDR 10000000 > /dev/null
+echo "Done"
 
-assert_address() {
-  local label="$1" actual="$2" expected="$3"
-  actual="$(printf '%s' "$actual" | tr '[:upper:]' '[:lower:]')"
-  expected="$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')"
-  [[ "$actual" == "$expected" ]] || { echo "$label mismatch: $actual != $expected" >&2; exit 1; }
-}
-assert_address 'registry.deposits' "$(cast call --rpc-url "$RPC_URL" "$REGISTRY" 'deposits()(address)')" "$DEPOSITS"
-assert_address 'registry.channels' "$(cast call --rpc-url "$RPC_URL" "$REGISTRY" 'channels()(address)')" "$CHANNELS"
-assert_address 'registry.staking' "$(cast call --rpc-url "$RPC_URL" "$REGISTRY" 'staking()(address)')" "$SELLER_REGISTRY"
-assert_address 'registry.emissions' "$(cast call --rpc-url "$RPC_URL" "$REGISTRY" 'emissions()(address)')" "$USAGE_ACCOUNTING"
-assert_address 'verifier rewards registry' "$(cast call --rpc-url "$RPC_URL" "$VERIFIER_REWARDS" 'verifierRegistry()(address)')" "$VERIFIER_REGISTRY"
-[[ "$(cast call --rpc-url "$RPC_URL" "$VERIFIER_REGISTRY" 'approvedVerifiers(address)(bool)' "$VERIFIER_ADDRESS")" == 'true' ]]
-assert_address 'seller agent owner' "$(cast call --rpc-url "$RPC_URL" "$IDENTITY_REGISTRY" 'ownerOf(uint256)(address)' "$AGENT_ID")" "$SELLER_ADDRESS"
+echo ""
+echo "=== Verify ==="
+echo "Seller stake:"
+cast call --rpc-url $RPC $STAKING "getStake(address)(uint256)" $SELLER_ADDR
+echo ""
+echo "Buyer balance (available, reserved, lastActivityAt):"
+cast call --rpc-url $RPC $DEPOSITS "getBuyerBalance(address)(uint256,uint256,uint256)" $BUYER_ADDR
 
-printf '\n=== Local verifier environment ready ===\n'
-printf 'Contracts: %s\n' "$ADDRESSES_FILE"
-printf 'Seller config: %s\nBuyer config: %s\nVerifier config: %s\n' \
-  "$SELLER_DIR/config.json" "$BUYER_DIR/config.json" "$VERIFIER_DIR/config.json"
-printf '\nStart order (after pnpm run build):\n'
-printf '1. antseed --data-dir %q --config %q buyer start\n' "$BUYER_DIR" "$BUYER_DIR/config.json"
-printf '2. source %q && antseed --data-dir %q --config %q seller start\n' "$SELLER_DIR/smoke.env" "$SELLER_DIR" "$SELLER_DIR/config.json"
-printf '3. source %q && antseed --data-dir %q --config %q verifier reference build gpt-5.6-sol\n' "$VERIFIER_DIR/smoke.env" "$VERIFIER_DIR" "$VERIFIER_DIR/config.json"
-printf '4. antseed --data-dir %q --config %q verifier run gpt-5.6-sol --no-attest\n' "$VERIFIER_DIR" "$VERIFIER_DIR/config.json"
-printf '\nVenice is pinned only through configuration/header state; no peer ID is hard-coded in runtime code.\n'
+echo ""
+echo "=== All set! ==="
+echo ""
+echo "Contract addresses:"
+echo "  USDC:      $USDC"
+echo "  Registry:  $REGISTRY"
+echo "  Staking:   $STAKING"
+echo "  Deposits:  $DEPOSITS"
+echo "  Channels:  $CHANNELS"
+echo ""
+echo "Desktop config (Settings > Chain Config):"
+echo "  Chain ID:    base-local"
+echo "  RPC URL:     $RPC"
+echo "  Deposits:    $DEPOSITS"
+echo "  Channels:    $CHANNELS"
+echo ""
+echo "Start seller:"
+echo "  node apps/cli/dist/cli/index.js --data-dir ~/.antseed-seller seller start --provider openai-responses --verbose --config ~/.antseed-seller/config.json"
+echo ""
+echo "Start desktop:"
+echo "  cd apps/desktop && npm run dev"

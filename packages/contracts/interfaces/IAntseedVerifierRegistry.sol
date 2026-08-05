@@ -40,8 +40,6 @@ interface IAntseedVerifierRegistry {
         uint32 sameCount;
         uint32 diffCount;
         uint32 undeterminedCount;
-        uint32 distinctVerifierCount;
-        uint32 activeDiffVerifierCount;
         Verdict lastVerdict;
         address lastVerifier;
     }
@@ -49,15 +47,10 @@ interface IAntseedVerifierRegistry {
     function registry() external view returns (IAntseedRegistry);
     function emissionsGate() external view returns (IAntseedEmissionsGate);
     function approvedVerifiers(address verifier) external view returns (bool);
-    function auditCooldown() external view returns (uint64);
     function maxCreditsPerVerifierPerEpoch() external view returns (uint32);
-    function minProbeCount() external view returns (uint32);
 
     function setVerifier(address verifier, bool approved) external;
-    function setAuditCooldown(uint64 cooldown) external;
     function setMaxCreditsPerVerifierPerEpoch(uint32 maximum) external;
-    function setMinProbeCount(uint32 minimum) external;
-    function clearVerifierStanding(address verifier, uint256 agentId, bytes32 serviceHash) external;
 
     function submitVerificationResult(
         bytes32 auditId,
@@ -71,17 +64,13 @@ interface IAntseedVerifierRegistry {
         bytes32 evidenceHash
     ) external;
 
-    function publishEvidence(bytes32 auditId, string calldata evidenceUri) external;
-
     function getAttestation(bytes32 auditId) external view returns (Attestation memory);
     function latestAttestation(uint256 agentId, bytes32 serviceHash) external view returns (Attestation memory);
-    function evidenceUris(bytes32 auditId) external view returns (string memory);
     function verificationStats(uint256 agentId, bytes32 serviceHash)
         external
         view
         returns (ServiceVerificationStats memory);
     function agentVerificationStats(uint256 agentId) external view returns (ServiceVerificationStats memory);
-    function lastCreditedAt(uint256 agentId, bytes32 serviceHash) external view returns (uint64);
     function epochCredits(uint256 epoch, address verifier) external view returns (uint256);
     function epochTotalCredits(uint256 epoch) external view returns (uint256);
     function currentEpoch() external view returns (uint256);

@@ -203,7 +203,7 @@ export function canonicalProbeSetJson(
 // Match vectors and observations
 // ---------------------------------------------------------------------------
 
-/** Per-probe outcome: 1 match, 0 mismatch, null unparseable. */
+/** Per-probe outcome: 1 match, 0 discrepancy, null not attempted due to transport failure. */
 export type MatchEntry = 1 | 0 | null;
 export type MatchVector = MatchEntry[];
 

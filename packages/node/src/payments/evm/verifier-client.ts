@@ -56,8 +56,6 @@ export interface ServiceVerificationStats {
   sameCount: number;
   diffCount: number;
   undeterminedCount: number;
-  distinctVerifierCount: number;
-  activeDiffVerifierCount: number;
   lastVerdict: VerifierVerdict;
   lastVerifier: string;
 }
@@ -101,24 +99,16 @@ export interface MetricSnapshotSubmittedEvent extends MetricSnapshot {
 
 export const VERIFIER_REGISTRY_ABI = [
   'function setVerifier(address verifier, bool approved) external',
-  'function setAuditCooldown(uint64 cooldown) external',
   'function setMaxCreditsPerVerifierPerEpoch(uint32 maximum) external',
-  'function setMinProbeCount(uint32 minimum) external',
-  'function clearVerifierStanding(address verifier, uint256 agentId, bytes32 serviceHash) external',
   'function submitVerificationResult(bytes32 auditId, uint256 agentId, bytes32 serviceHash, uint8 verdict, uint256 expectedEpoch, uint16 modelShareBps, uint32 probeCount, (uint64 windowStartedAt,uint64 windowEndedAt,uint16 eligibleAttempts,uint16 successfulAttempts,uint32 p50TtftMs,uint32 p95TtftMs,uint32 p50OutputTokensPerSecondMilli,uint16 schemaVersion,bytes32 observationsRoot) metrics, bytes32 evidenceHash) external',
-  'function publishEvidence(bytes32 auditId, string evidenceUri) external',
   'function registry() external view returns (address)',
   'function emissionsGate() external view returns (address)',
   'function approvedVerifiers(address verifier) external view returns (bool)',
-  'function auditCooldown() external view returns (uint64)',
   'function maxCreditsPerVerifierPerEpoch() external view returns (uint32)',
-  'function minProbeCount() external view returns (uint32)',
   'function getAttestation(bytes32 auditId) external view returns ((bytes32 auditId,address verifier,uint256 agentId,bytes32 serviceHash,uint8 verdict,uint16 modelShareBps,uint32 probeCount,uint64 attestedAt,bytes32 evidenceHash))',
   'function latestAttestation(uint256 agentId, bytes32 serviceHash) external view returns ((bytes32 auditId,address verifier,uint256 agentId,bytes32 serviceHash,uint8 verdict,uint16 modelShareBps,uint32 probeCount,uint64 attestedAt,bytes32 evidenceHash))',
-  'function evidenceUris(bytes32 auditId) external view returns (string)',
-  'function verificationStats(uint256 agentId, bytes32 serviceHash) external view returns ((uint32 sameCount,uint32 diffCount,uint32 undeterminedCount,uint32 distinctVerifierCount,uint32 activeDiffVerifierCount,uint8 lastVerdict,address lastVerifier))',
-  'function agentVerificationStats(uint256 agentId) external view returns ((uint32 sameCount,uint32 diffCount,uint32 undeterminedCount,uint32 distinctVerifierCount,uint32 activeDiffVerifierCount,uint8 lastVerdict,address lastVerifier))',
-  'function lastCreditedAt(uint256 agentId, bytes32 serviceHash) external view returns (uint64)',
+  'function verificationStats(uint256 agentId, bytes32 serviceHash) external view returns ((uint32 sameCount,uint32 diffCount,uint32 undeterminedCount,uint8 lastVerdict,address lastVerifier))',
+  'function agentVerificationStats(uint256 agentId) external view returns ((uint32 sameCount,uint32 diffCount,uint32 undeterminedCount,uint8 lastVerdict,address lastVerifier))',
   'function epochCredits(uint256 epoch, address verifier) external view returns (uint256)',
   'function epochTotalCredits(uint256 epoch) external view returns (uint256)',
   'function currentEpoch() external view returns (uint256)',
@@ -126,7 +116,6 @@ export const VERIFIER_REGISTRY_ABI = [
   'function agentPointsPenaltyBps(uint256 agentId) external view returns (uint256)',
   'event AttestationSubmitted(bytes32 indexed auditId,address indexed verifier,uint256 indexed agentId,bytes32 serviceHash,uint8 verdict,uint16 modelShareBps,bytes32 evidenceHash,uint32 probeCount,bool credited,uint256 epoch)',
   'event MetricSnapshotSubmitted(bytes32 indexed auditId,uint256 indexed agentId,bytes32 indexed serviceHash,uint64 windowStartedAt,uint64 windowEndedAt,uint16 eligibleAttempts,uint16 successfulAttempts,uint32 p50TtftMs,uint32 p95TtftMs,uint32 p50OutputTokensPerSecondMilli,uint16 schemaVersion,bytes32 observationsRoot)',
-  'event EvidencePublished(bytes32 indexed auditId,string evidenceUri)',
 ] as const;
 
 export const VERIFIER_REWARDS_ABI = [
@@ -168,32 +157,8 @@ export class VerifierRegistryClient extends BaseEvmClient {
     return this._execWrite(signer, VERIFIER_REGISTRY_ABI, 'setVerifier', getAddress(verifier), approved);
   }
 
-  async setAuditCooldown(signer: AbstractSigner, cooldownSeconds: number): Promise<string> {
-    return this._execWrite(signer, VERIFIER_REGISTRY_ABI, 'setAuditCooldown', cooldownSeconds);
-  }
-
   async setMaxCreditsPerVerifierPerEpoch(signer: AbstractSigner, maximum: number): Promise<string> {
     return this._execWrite(signer, VERIFIER_REGISTRY_ABI, 'setMaxCreditsPerVerifierPerEpoch', maximum);
-  }
-
-  async setMinProbeCount(signer: AbstractSigner, minimum: number): Promise<string> {
-    return this._execWrite(signer, VERIFIER_REGISTRY_ABI, 'setMinProbeCount', minimum);
-  }
-
-  async clearVerifierStanding(
-    signer: AbstractSigner,
-    verifier: string,
-    agentId: number | bigint,
-    targetServiceHash: string,
-  ): Promise<string> {
-    return this._execWrite(
-      signer,
-      VERIFIER_REGISTRY_ABI,
-      'clearVerifierStanding',
-      getAddress(verifier),
-      BigInt(agentId),
-      targetServiceHash,
-    );
   }
 
   async submitVerificationResult(signer: AbstractSigner, input: SubmitVerificationResultInput): Promise<string> {
@@ -213,10 +178,6 @@ export class VerifierRegistryClient extends BaseEvmClient {
     );
   }
 
-  async publishEvidence(signer: AbstractSigner, auditId: string, evidenceUri: string): Promise<string> {
-    return this._execWrite(signer, VERIFIER_REGISTRY_ABI, 'publishEvidence', auditId, evidenceUri);
-  }
-
   async registry(): Promise<string> {
     return getAddress(String(await this._contract().getFunction('registry')()));
   }
@@ -229,16 +190,8 @@ export class VerifierRegistryClient extends BaseEvmClient {
     return Boolean(await this._contract().getFunction('approvedVerifiers')(getAddress(verifier)));
   }
 
-  async auditCooldown(): Promise<number> {
-    return Number(await this._contract().getFunction('auditCooldown')());
-  }
-
   async maxCreditsPerVerifierPerEpoch(): Promise<number> {
     return Number(await this._contract().getFunction('maxCreditsPerVerifierPerEpoch')());
-  }
-
-  async minProbeCount(): Promise<number> {
-    return Number(await this._contract().getFunction('minProbeCount')());
   }
 
   async currentEpoch(): Promise<bigint> {
@@ -274,10 +227,6 @@ export class VerifierRegistryClient extends BaseEvmClient {
     );
   }
 
-  async evidenceUri(auditId: string): Promise<string> {
-    return String(await this._contract().getFunction('evidenceUris')(auditId));
-  }
-
   async verificationStats(agentId: number | bigint, targetServiceHash: string): Promise<ServiceVerificationStats> {
     return decodeStats(
       await this._contract().getFunction('verificationStats')(BigInt(agentId), targetServiceHash),
@@ -286,10 +235,6 @@ export class VerifierRegistryClient extends BaseEvmClient {
 
   async agentVerificationStats(agentId: number | bigint): Promise<ServiceVerificationStats> {
     return decodeStats(await this._contract().getFunction('agentVerificationStats')(BigInt(agentId)));
-  }
-
-  async lastCreditedAt(agentId: number | bigint, targetServiceHash: string): Promise<number> {
-    return Number(await this._contract().getFunction('lastCreditedAt')(BigInt(agentId), targetServiceHash));
   }
 
   async epochCredits(epoch: number | bigint, verifier: string): Promise<bigint> {
@@ -466,9 +411,7 @@ function decodeStats(raw: Record<string | number, unknown> & unknown[]): Service
     sameCount: Number(raw.sameCount ?? raw[0]),
     diffCount: Number(raw.diffCount ?? raw[1]),
     undeterminedCount: Number(raw.undeterminedCount ?? raw[2]),
-    distinctVerifierCount: Number(raw.distinctVerifierCount ?? raw[3]),
-    activeDiffVerifierCount: Number(raw.activeDiffVerifierCount ?? raw[4]),
-    lastVerdict: Number(raw.lastVerdict ?? raw[5]) as VerifierVerdict,
-    lastVerifier: getAddress(String(raw.lastVerifier ?? raw[6])),
+    lastVerdict: Number(raw.lastVerdict ?? raw[3]) as VerifierVerdict,
+    lastVerifier: getAddress(String(raw.lastVerifier ?? raw[4])),
   };
 }

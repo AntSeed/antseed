@@ -1,4 +1,4 @@
-import { open, readFile, rename, mkdir } from 'node:fs/promises'
+import { mkdir, open, readFile, rename } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   canonicalHashBytes32,
@@ -9,14 +9,14 @@ import {
   type MatchVector,
   type ReferenceQueryProfileV1,
 } from '@antseed/fingerprints'
-import type { ResponseAuthPayload } from '@antseed/node'
 
-export interface DirectAuditEvidenceExchange {
-  requestId: string
+export interface ProxyAuditEvidenceExchange {
+  batchIndex: number
+  attemptCount: number
   probeIds: string[]
   request: {
-    method: string
-    path: string
+    method: 'POST'
+    url: string
     headers: Record<string, string>
     bodyBase64: string
     hash: string
@@ -27,36 +27,32 @@ export interface DirectAuditEvidenceExchange {
     bodyBase64: string
     hash: string
   } | null
-  responseAuth: ResponseAuthPayload | null
-  payment: {
-    sellerChargeUsdc: string
-    spendingAuth: Record<string, unknown>
-  } | null
   timing: {
     startedAt: number
     completedAt: number
     responseLatencyMs: number
   }
   answers: Array<number | null>
-  matches: Array<0 | 1 | null>
+  matches: MatchVector
   status: 'succeeded' | 'failed'
   failureReason: string | null
 }
 
-export interface DirectAuditEvidenceV1 {
+export interface ProxyAuditEvidenceV1 {
   version: 1
-  kind: 'antseed-direct-kbf-audit'
+  kind: 'antseed-buyer-proxy-kbf-audit'
+  evidenceLevel: 'proxy-observation-no-response-auth-or-payment-evidence'
   createdAt: string
-  verifier: {
-    peerId: string
-    address: string
+  buyerProxy: {
+    baseUrl: string
+    statePath: string
+    pid: number
   }
   target: {
     peerId: string
-    agentId: string
-    sellerAddress: string
+    displayName: string | null
+    agentId: string | null
     service: string
-    serviceHash: string
   }
   reference: {
     referenceId: string
@@ -73,10 +69,9 @@ export interface DirectAuditEvidenceV1 {
     }
     probes: KbfProbe[]
   }
-  exchanges: DirectAuditEvidenceExchange[]
+  exchanges: ProxyAuditEvidenceExchange[]
   result: {
     selectedProbeCount: number
-    authenticatedProbeCount: number
     parsedProbeCount: number
     matchVector: MatchVector
     matchVectorHash: string
@@ -86,35 +81,31 @@ export interface DirectAuditEvidenceV1 {
   }
 }
 
-export function directAuditEvidenceHash(evidence: DirectAuditEvidenceV1): string {
+export function proxyAuditEvidenceHash(evidence: ProxyAuditEvidenceV1): string {
   return canonicalHashBytes32(evidence)
 }
 
-export function deriveDirectAuditId(input: {
-  verifierAddress: string
+export function deriveProxyAuditId(input: {
   targetPeerId: string
-  agentId: string
-  serviceHash: string
+  referenceId: string
   completedAt: number
   evidenceHash: string
 }): string {
   return canonicalHashBytes32({
-    domain: 'antseed-direct-audit-id-v1',
-    verifierAddress: input.verifierAddress.toLowerCase(),
+    domain: 'antseed-buyer-proxy-audit-id-v1',
     targetPeerId: input.targetPeerId.toLowerCase(),
-    agentId: input.agentId,
-    serviceHash: input.serviceHash.toLowerCase(),
+    referenceId: input.referenceId,
     completedAt: input.completedAt,
     evidenceHash: input.evidenceHash.toLowerCase(),
   })
 }
 
-export async function writeDirectAuditEvidence(
+export async function writeProxyAuditEvidence(
   evidenceDir: string,
   auditId: string,
-  evidence: DirectAuditEvidenceV1,
+  evidence: ProxyAuditEvidenceV1,
 ): Promise<{ path: string; evidenceHash: string }> {
-  const evidenceHash = directAuditEvidenceHash(evidence)
+  const evidenceHash = proxyAuditEvidenceHash(evidence)
   const bytes = new TextEncoder().encode(canonicalJsonStringify(evidence))
   await mkdir(evidenceDir, { recursive: true })
   const path = join(evidenceDir, `${auditId}.json`)
@@ -130,12 +121,15 @@ export async function writeDirectAuditEvidence(
   return { path, evidenceHash }
 }
 
-export async function verifyDirectAuditEvidenceFile(path: string, expectedHash: string): Promise<DirectAuditEvidenceV1> {
+export async function verifyProxyAuditEvidenceFile(
+  path: string,
+  expectedHash: string,
+): Promise<ProxyAuditEvidenceV1> {
   const bytes = await readFile(path)
-  const parsed = JSON.parse(bytes.toString('utf8')) as DirectAuditEvidenceV1
+  const parsed = JSON.parse(bytes.toString('utf8')) as ProxyAuditEvidenceV1
   const canonical = new TextEncoder().encode(canonicalJsonStringify(parsed))
   if (!Buffer.from(bytes).equals(Buffer.from(canonical))) throw new Error('evidence file is not canonical JSON')
-  if (directAuditEvidenceHash(parsed).toLowerCase() !== expectedHash.toLowerCase()) {
+  if (proxyAuditEvidenceHash(parsed).toLowerCase() !== expectedHash.toLowerCase()) {
     throw new Error('evidence file hash mismatch')
   }
   return parsed

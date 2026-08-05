@@ -3,7 +3,6 @@ pragma solidity ^0.8.24;
 
 import { Test } from "forge-std/Test.sol";
 
-import { ANTSToken } from "../../core/ANTSToken.sol";
 import { AntseedRegistry } from "../../core/AntseedRegistry.sol";
 import { AntseedEmissionsGate } from "../../emissions/AntseedEmissionsGate.sol";
 import { IAntseedVerifierRegistry } from "../../interfaces/IAntseedVerifierRegistry.sol";
@@ -12,6 +11,7 @@ import { MockERC8004Registry } from "../mocks/MockERC8004Registry.sol";
 
 contract AntseedVerifierRegistryTest is Test {
     uint256 private constant GENESIS = 1_775_728_461;
+    address private constant ANTS_TOKEN = 0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263;
     bytes32 private constant SERVICE_HASH = keccak256("gpt-5.6-sol");
     bytes32 private constant OTHER_SERVICE_HASH = keccak256("gpt-5.6-luna");
 
@@ -28,7 +28,8 @@ contract AntseedVerifierRegistryTest is Test {
     function setUp() public {
         vm.warp(GENESIS + 8 days);
         registry = new AntseedRegistry();
-        registry.setAntsToken(address(new ANTSToken()));
+        deployCodeTo("ANTSToken.sol:ANTSToken", ANTS_TOKEN);
+        registry.setAntsToken(ANTS_TOKEN);
         registry.setTeamWallet(address(0x1111));
         registry.setProtocolReserve(address(0x2222));
         identityRegistry = new MockERC8004Registry();
@@ -67,14 +68,30 @@ contract AntseedVerifierRegistryTest is Test {
         assertEq(verifierRegistry.epochTotalCredits(verifierRegistry.currentEpoch()), 1);
     }
 
-    function test_attestationInsideCooldownIsStoredButNotCredited() public {
+    function test_repeatedAuditsEarnCreditsUntilConfiguredEpochCap() public {
+        verifierRegistry.setMaxCreditsPerVerifierPerEpoch(2);
         _submit(verifier, keccak256("audit-a"), agentId, SERVICE_HASH, IAntseedVerifierRegistry.Verdict.SAME, 0);
-        _submit(verifier, keccak256("audit-b"), agentId, SERVICE_HASH, IAntseedVerifierRegistry.Verdict.UNDETERMINED, 0);
+        _submit(verifier, keccak256("audit-b"), agentId, SERVICE_HASH, IAntseedVerifierRegistry.Verdict.DIFF, 2_500);
+        _submit(verifier, keccak256("audit-c"), agentId, SERVICE_HASH, IAntseedVerifierRegistry.Verdict.SAME, 0);
 
         IAntseedVerifierRegistry.Attestation memory latest = verifierRegistry.latestAttestation(agentId, SERVICE_HASH);
-        assertEq(latest.auditId, keccak256("audit-b"));
-        assertEq(uint8(latest.verdict), uint8(IAntseedVerifierRegistry.Verdict.UNDETERMINED));
-        assertEq(verifierRegistry.epochCredits(verifierRegistry.currentEpoch(), verifier), 1);
+        IAntseedVerifierRegistry.ServiceVerificationStats memory stats =
+            verifierRegistry.verificationStats(agentId, SERVICE_HASH);
+        assertEq(latest.auditId, keccak256("audit-c"));
+        assertEq(uint8(latest.verdict), uint8(IAntseedVerifierRegistry.Verdict.SAME));
+        assertEq(stats.sameCount, 2);
+        assertEq(stats.diffCount, 1);
+        assertEq(verifierRegistry.servicePointsPenaltyBps(agentId, SERVICE_HASH), 0);
+        assertEq(verifierRegistry.epochCredits(verifierRegistry.currentEpoch(), verifier), 2);
+        assertEq(verifierRegistry.epochTotalCredits(verifierRegistry.currentEpoch()), 2);
+    }
+
+    function test_epochCreditCapIsOwnerConfigurableAndMustBeNonzero() public {
+        verifierRegistry.setMaxCreditsPerVerifierPerEpoch(7);
+        assertEq(verifierRegistry.maxCreditsPerVerifierPerEpoch(), 7);
+
+        vm.expectRevert(AntseedVerifierRegistry.InvalidValue.selector);
+        verifierRegistry.setMaxCreditsPerVerifierPerEpoch(0);
     }
 
     function test_allFinalVerdictsCanEarnCredits() public {
@@ -89,33 +106,33 @@ contract AntseedVerifierRegistryTest is Test {
         assertEq(verifierRegistry.epochCredits(verifierRegistry.currentEpoch(), verifier), 3);
     }
 
-    function test_penaltyFollowsLatestConclusiveAttestation() public {
+    function test_latestConclusiveAuditFromAnyVerifierControlsPenalty() public {
         _submit(verifier, keccak256("diff-a"), agentId, SERVICE_HASH, IAntseedVerifierRegistry.Verdict.DIFF, 2_500);
-        vm.warp(block.timestamp + 1);
-        _submit(
-            secondVerifier, keccak256("diff-b"), agentId, SERVICE_HASH, IAntseedVerifierRegistry.Verdict.DIFF, 4_000
-        );
-        assertEq(verifierRegistry.servicePointsPenaltyBps(agentId, SERVICE_HASH), 4_000);
-        assertEq(verifierRegistry.agentPointsPenaltyBps(agentId), 4_000);
+        assertEq(verifierRegistry.servicePointsPenaltyBps(agentId, SERVICE_HASH), 2_500);
+        assertEq(verifierRegistry.agentPointsPenaltyBps(agentId), 2_500);
 
         vm.warp(block.timestamp + 1);
-        _submit(verifier, keccak256("same-a"), agentId, SERVICE_HASH, IAntseedVerifierRegistry.Verdict.SAME, 0);
+        _submit(secondVerifier, keccak256("same-b"), agentId, SERVICE_HASH, IAntseedVerifierRegistry.Verdict.SAME, 0);
         assertEq(verifierRegistry.servicePointsPenaltyBps(agentId, SERVICE_HASH), 0);
         assertEq(verifierRegistry.agentPointsPenaltyBps(agentId), 0);
+    }
 
-        vm.warp(block.timestamp + 1);
-        _submit(
-            secondVerifier,
-            keccak256("diff-b-latest"),
+    function test_zeroProbeCountIsAcceptedAndStored() public {
+        bytes32 auditId = keccak256("zero-probes");
+        vm.prank(verifier);
+        verifierRegistry.submitVerificationResult(
+            auditId,
             agentId,
             SERVICE_HASH,
-            IAntseedVerifierRegistry.Verdict.DIFF,
-            3_000
+            IAntseedVerifierRegistry.Verdict.SAME,
+            _currentEpoch(),
+            0,
+            0,
+            _metrics(0, 0),
+            keccak256("zero-probe-evidence")
         );
-        assertEq(verifierRegistry.servicePointsPenaltyBps(agentId, SERVICE_HASH), 3_000);
-        verifierRegistry.clearVerifierStanding(secondVerifier, agentId, SERVICE_HASH);
-        assertEq(verifierRegistry.servicePointsPenaltyBps(agentId, SERVICE_HASH), 0);
-        assertEq(verifierRegistry.agentPointsPenaltyBps(agentId), 0);
+
+        assertEq(verifierRegistry.getAttestation(auditId).probeCount, 0);
     }
 
     function test_zeroShareDiffIsStoredWithoutPenalty() public {
@@ -148,7 +165,7 @@ contract AntseedVerifierRegistryTest is Test {
         );
     }
 
-    function test_undeterminedLeavesStandingDiffPenaltyUnchanged() public {
+    function test_undeterminedUpdatesHistoryButLeavesPenaltyUnchanged() public {
         _submit(verifier, keccak256("diff"), agentId, SERVICE_HASH, IAntseedVerifierRegistry.Verdict.DIFF, 2_500);
 
         vm.warp(block.timestamp + 1);
@@ -158,7 +175,11 @@ contract AntseedVerifierRegistryTest is Test {
 
         IAntseedVerifierRegistry.ServiceVerificationStats memory stats =
             verifierRegistry.verificationStats(agentId, SERVICE_HASH);
-        assertEq(stats.activeDiffVerifierCount, 1);
+        IAntseedVerifierRegistry.Attestation memory latest = verifierRegistry.latestAttestation(agentId, SERVICE_HASH);
+        assertEq(stats.diffCount, 1);
+        assertEq(stats.undeterminedCount, 1);
+        assertEq(uint8(stats.lastVerdict), uint8(IAntseedVerifierRegistry.Verdict.UNDETERMINED));
+        assertEq(latest.auditId, keccak256("undetermined"));
         assertEq(verifierRegistry.servicePointsPenaltyBps(agentId, SERVICE_HASH), 2_500);
         assertEq(verifierRegistry.agentPointsPenaltyBps(agentId), 2_500);
     }
@@ -176,7 +197,7 @@ contract AntseedVerifierRegistryTest is Test {
         assertEq(verifierRegistry.agentPointsPenaltyBps(agentId), 5_000);
     }
 
-    function test_agentActiveDiffCountTracksDistinctVerifierAcrossServices() public {
+    function test_agentStatsAggregateVerdictHistoryAcrossServices() public {
         _submit(verifier, keccak256("diff-one"), agentId, SERVICE_HASH, IAntseedVerifierRegistry.Verdict.DIFF, 2_000);
         _submit(
             verifier, keccak256("diff-two"), agentId, OTHER_SERVICE_HASH, IAntseedVerifierRegistry.Verdict.DIFF, 3_000
@@ -184,33 +205,15 @@ contract AntseedVerifierRegistryTest is Test {
 
         IAntseedVerifierRegistry.ServiceVerificationStats memory agentStats =
             verifierRegistry.agentVerificationStats(agentId);
-        assertEq(agentStats.activeDiffVerifierCount, 1);
+        assertEq(agentStats.diffCount, 2);
 
         vm.warp(block.timestamp + 1);
         _submit(verifier, keccak256("same-one"), agentId, SERVICE_HASH, IAntseedVerifierRegistry.Verdict.SAME, 0);
         agentStats = verifierRegistry.agentVerificationStats(agentId);
-        assertEq(agentStats.activeDiffVerifierCount, 1);
-
-        verifierRegistry.clearVerifierStanding(verifier, agentId, OTHER_SERVICE_HASH);
-        agentStats = verifierRegistry.agentVerificationStats(agentId);
-        assertEq(agentStats.activeDiffVerifierCount, 0);
-    }
-
-    function test_publishEvidenceIsOptionalOwnedAndOneTime() public {
-        bytes32 auditId = keccak256("publish");
-        _submit(verifier, auditId, agentId, SERVICE_HASH, IAntseedVerifierRegistry.Verdict.SAME, 0);
-
-        vm.prank(verifier);
-        verifierRegistry.publishEvidence(auditId, "ipfs://evidence");
-        assertEq(verifierRegistry.evidenceUris(auditId), "ipfs://evidence");
-
-        vm.prank(secondVerifier);
-        vm.expectRevert(AntseedVerifierRegistry.NotApprovedVerifier.selector);
-        verifierRegistry.publishEvidence(auditId, "ipfs://other");
-
-        vm.prank(verifier);
-        vm.expectRevert(AntseedVerifierRegistry.EvidenceAlreadyPublished.selector);
-        verifierRegistry.publishEvidence(auditId, "ipfs://again");
+        assertEq(agentStats.sameCount, 1);
+        assertEq(agentStats.diffCount, 2);
+        assertEq(uint8(agentStats.lastVerdict), uint8(IAntseedVerifierRegistry.Verdict.SAME));
+        assertEq(agentStats.lastVerifier, verifier);
     }
 
     function test_rejectsDuplicateUnknownSelfAndInvalidInputs() public {
@@ -274,19 +277,6 @@ contract AntseedVerifierRegistryTest is Test {
             keccak256("bad-share-evidence")
         );
 
-        vm.prank(verifier);
-        vm.expectRevert(AntseedVerifierRegistry.ProbeCountTooLow.selector);
-        verifierRegistry.submitVerificationResult(
-            keccak256("few-probes"),
-            agentId,
-            SERVICE_HASH,
-            IAntseedVerifierRegistry.Verdict.SAME,
-            _currentEpoch(),
-            0,
-            9,
-            _metrics(9, 9),
-            keccak256("few-probe-evidence")
-        );
     }
 
     function _submit(

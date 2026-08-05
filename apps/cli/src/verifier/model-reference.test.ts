@@ -17,7 +17,6 @@ const MODEL = 'gpt-test'
 function config(overrides: Partial<VerifierCLIConfig> = {}): VerifierCLIConfig {
   return {
     probeRequestTimeoutMs: 120_000,
-    maxTotalSpendUSDC: '1',
     referenceRetryBaseDelayMs: 1,
     referenceEndpoint: {
       baseUrl: 'https://reference.test/v1',
@@ -361,6 +360,37 @@ test('collector stops after repeated rounds without progress', async () => {
     query,
   }), /made no progress for 2 rounds/)
   assert.equal(generationRequests, 3)
+})
+
+test('collector rejects certified consensus values outside the declared range', async () => {
+  let generationRound = 0
+  const query = async (_model: string, body: Record<string, unknown>): Promise<string> => {
+    const messages = body.messages as Array<{ content: string }>
+    const prompt = messages.at(-1)?.content ?? ''
+    if (prompt.startsWith('Generate ')) {
+      generationRound += 1
+      return JSON.stringify([{
+        name: `range fact ${generationRound}`,
+        domain: 'test',
+        template: `The range collector value ${generationRound} is ___.`,
+        consensus: 5,
+        range: [0, 10],
+        tolerance: { mode: 'absolute', value: 20 },
+      }])
+    }
+    const value = Number(prompt.match(/range collector value (\d+) is ___/)?.[1])
+    return `(1) ${value === 1 ? 15 : 5}`
+  }
+
+  const collected = await collectReferenceProbes({
+    model: 'reference-model',
+    contrastModels: [],
+    targetCount: 1,
+    candidateCountPerRound: 1,
+    query,
+  })
+  assert.equal(generationRound, 2)
+  assert.equal(collected.probes[0]?.consensus, 5)
 })
 
 test('reference requests retry transient failures', async () => {

@@ -29,12 +29,6 @@ export function tryParseJsonObject(
   }
 }
 
-/**
- * Extract the requested service name from a JSON request body — `service`
- * falling back to `model`. Returns undefined when the body is not a JSON
- * object or carries neither field as a non-empty string. No normalization is
- * applied; callers trim/lowercase per their own key conventions.
- */
 export function extractServiceFromBody(body: Uint8Array | string): string | undefined {
   const parsed = tryParseJsonObject(body);
   const service = parsed?.['service'] ?? parsed?.['model'];

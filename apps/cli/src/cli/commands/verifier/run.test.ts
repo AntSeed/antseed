@@ -9,7 +9,7 @@ function command(): Command {
   return program
 }
 
-test('verifier exposes run, reference, and claim workflows', () => {
+test('verifier exposes proxy run, reference, and claim workflows', () => {
   const verifier = command().commands.find((entry) => entry.name() === 'verifier')
   assert.ok(verifier)
   assert.deepEqual(verifier.commands.map((entry) => entry.name()).sort(), ['claim', 'reference', 'run'])
@@ -22,9 +22,9 @@ test('verifier reference exposes only the explicit build workflow', () => {
   assert.deepEqual(reference.commands[0]!.registeredArguments.map((argument) => argument.name()), ['model'])
 })
 
-test('verifier run takes one model and one no-attest switch', () => {
+test('verifier run takes one model and no direct-runtime switches', () => {
   const verifier = command().commands.find((entry) => entry.name() === 'verifier')!
   const run = verifier.commands.find((entry) => entry.name() === 'run')!
-  assert.deepEqual(run.options.map((option) => option.long), ['--no-attest'])
+  assert.deepEqual(run.options, [])
   assert.deepEqual(run.registeredArguments.map((argument) => argument.name()), ['model'])
 })

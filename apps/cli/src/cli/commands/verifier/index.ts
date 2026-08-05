@@ -6,7 +6,7 @@ import { registerVerifierRunCommand } from './run.js'
 export function registerVerifierCommands(program: Command): void {
   const verifier = program
     .command('verifier')
-    .description('Run paid model verification and claim verifier rewards')
+    .description('Run buyer-proxy model verification and manage verifier references')
   registerVerifierRunCommand(verifier)
   registerVerifierReferenceCommand(verifier)
   registerVerifierClaimCommand(verifier)

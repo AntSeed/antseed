@@ -16,7 +16,7 @@
 
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -44,11 +44,14 @@ const CHAIN_ID = 31337;
 const DEPLOYER_PRIVATE_KEY =
   "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
-let USDC_ADDRESS;
-let REGISTRY_ADDRESS;
-let STAKING_ADDRESS;
-let DEPOSITS_ADDRESS;
-let CHANNELS_ADDRESS;
+// Deterministic addresses from Deploy.s.sol nonce sequence on fresh anvil
+const USDC_ADDRESS     = "0x5FbDB2315678afecb367f032d93F642f64180aa3"; // nonce 0
+const REGISTRY_ADDRESS = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"; // nonce 1 — MockERC8004Registry
+// nonce 2 = ANTSToken, nonce 3 = AntseedRegistry
+const STAKING_ADDRESS  = "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9"; // nonce 4
+const DEPOSITS_ADDRESS = "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707"; // nonce 5
+const CHANNELS_ADDRESS = "0x0165878A594ca255338adfa4d48449f69242Eb8F"; // nonce 6
+// nonce 7 = Stats, nonce 8 = Emissions
 
 const FUND_ETH = "2ether";
 const USDC_MINT_AMOUNT = "100000000"; // 100 USDC (6 decimals)
@@ -58,13 +61,6 @@ const USDC_DEPOSIT_AMOUNT = 10_000_000n; // 10 USDC
 const scriptDir = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(scriptDir, "..", "..");
 const contractsDir = resolve(repoRoot, "packages", "contracts");
-const deploymentBroadcastPath = resolve(
-  contractsDir,
-  "broadcast",
-  "Deploy.s.sol",
-  String(CHAIN_ID),
-  "run-latest.json"
-);
 
 // ---------------------------------------------------------------------------
 // Colored output helpers
@@ -131,34 +127,6 @@ function castCall(args) {
 /** Parse cast output like "50000000 [5e7]" to a clean number string. */
 function parseCastUint(raw) {
   return raw.trim().split(/\s/)[0];
-}
-
-async function loadDeploymentAddresses() {
-  const broadcast = JSON.parse(await readFile(deploymentBroadcastPath, "utf8"));
-  const deployments = new Map();
-  for (const transaction of broadcast.transactions ?? []) {
-    if (transaction.transactionType === "CREATE" && transaction.contractName && transaction.contractAddress) {
-      deployments.set(transaction.contractName, transaction.contractAddress);
-    }
-  }
-
-  const required = {
-    MockUSDC: "USDC_ADDRESS",
-    MockERC8004Registry: "REGISTRY_ADDRESS",
-    AntseedStaking: "STAKING_ADDRESS",
-    AntseedDeposits: "DEPOSITS_ADDRESS",
-    AntseedChannels: "CHANNELS_ADDRESS",
-  };
-  const missing = Object.keys(required).filter((name) => !deployments.has(name));
-  if (missing.length > 0) {
-    throw new Error(`Foundry broadcast missing deployments: ${missing.join(", ")}`);
-  }
-
-  USDC_ADDRESS = deployments.get("MockUSDC");
-  REGISTRY_ADDRESS = deployments.get("MockERC8004Registry");
-  STAKING_ADDRESS = deployments.get("AntseedStaking");
-  DEPOSITS_ADDRESS = deployments.get("AntseedDeposits");
-  CHANNELS_ADDRESS = deployments.get("AntseedChannels");
 }
 
 // ---------------------------------------------------------------------------
@@ -319,8 +287,6 @@ async function main() {
       ],
       { cwd: contractsDir }
     );
-
-    await loadDeploymentAddresses();
 
     info(`MockUSDC:      ${USDC_ADDRESS}`);
     info(`Registry:      ${REGISTRY_ADDRESS}`);
