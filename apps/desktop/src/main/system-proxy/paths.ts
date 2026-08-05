@@ -37,3 +37,12 @@ export function systemProxyDesktopStatePath(): string {
 export function systemProxySnapshotPath(): string {
   return path.join(systemProxyDataDir(), 'system-proxy.snapshot.json');
 }
+
+/**
+ * Which WSL distros the last connect patched a tool config in (see wsl.ts) —
+ * kept so disconnect/quit can unpatch them and stop the relay without
+ * re-running WSL discovery, which would cold-start distros.
+ */
+export function systemProxyWslTargetsPath(): string {
+  return path.join(systemProxyDataDir(), 'system-proxy.wsl-targets.json');
+}
