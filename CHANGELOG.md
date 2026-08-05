@@ -8,6 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- The desktop app's deposit screen now has a "View deposit history" link showing every past USDC deposit (amount, date, and a link to the transaction on Basescan), read directly from the Deposits contract's `Deposited` events. Previously the only deposit-related record in the app was a live in-flight status while a deposit was being swept — there was no way to see past deposits. Exposed as `DepositsClient.getDepositHistory()` in `@antseed/node`, which scans `eth_getLogs` in adaptively-sized chunks so it works regardless of a given RPC provider's block-range cap.
 - Sellers now run periodic model health self-checks (a 1-token probe per advertised service, every 5 minutes by default) and unadvertise services that keep failing, restoring them automatically when they recover. Configurable via `seller.healthCheck` (`enabled`, `intervalMs`, `failureThreshold`); sellers announcing this behavior advertise the `seller.model-health.v1` capability in discovery metadata. Exposed as `ModelHealthChecker` in `@antseed/node`, alongside `AntseedNode.refreshSellerMetadata()` for runtime service-list changes.
 - The buyer proxy now treats `model_not_found` responses as routing failures (instead of successes) and refreshes peer discovery metadata in the background, so a stale cached model list recovers quickly after a seller unadvertises a model.
 

@@ -65,6 +65,7 @@ let cachedCryptoConfig: {
   emissionsAddress?: string;
   antsTokenAddress?: string;
   depositRelayAddress?: string;
+  depositsDeployBlock?: number;
 } | null = null;
 
 // Cached on-chain clients for the rewards summary — invalidated together with
@@ -98,6 +99,7 @@ export async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfi
     ...(cc.emissionsContractAddress ? { emissionsAddress: cc.emissionsContractAddress } : {}),
     ...(cc.antsTokenAddress ? { antsTokenAddress: cc.antsTokenAddress } : {}),
     ...(cc.depositRelayAddress ? { depositRelayAddress: cc.depositRelayAddress } : {}),
+    ...(cc.depositsDeployBlock !== undefined ? { depositsDeployBlock: cc.depositsDeployBlock } : {}),
   };
   return cachedCryptoConfig;
 }

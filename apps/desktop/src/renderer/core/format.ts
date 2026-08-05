@@ -213,6 +213,13 @@ export function formatCompactUsd(value: number): string {
   return `$${trimmed}`;
 }
 
+/** Block-explorer transaction URL for a chain we know about, or null. */
+export function explorerTxUrl(chainId: number | undefined, txHash: string): string | null {
+  if (chainId === 8453) return `https://basescan.org/tx/${txHash}`;
+  if (chainId === 84532) return `https://sepolia.basescan.org/tx/${txHash}`;
+  return null;
+}
+
 export function shortAddress(value: string | null): string {
   if (!value) return 'Not configured';
   return value.length > 14 ? `${value.slice(0, 6)}...${value.slice(-4)}` : value;

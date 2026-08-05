@@ -15,6 +15,7 @@ export const VIEW_WINDOW_PRESETS = {
   preferences: 'compact',
   credits: 'compact',
   deposit: 'compact',
+  'deposit-history': 'compact',
   activity: 'compact',
   rewards: 'compact',
   help: 'compact',

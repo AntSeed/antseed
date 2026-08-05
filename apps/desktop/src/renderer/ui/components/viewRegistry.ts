@@ -134,6 +134,12 @@ export const VIEW_REGISTRY = {
     async () => (await import('./views/VprDepositView')).VprDepositView as ComponentType<RoutedViewProps>,
     { receivesOnSelectView: true, slideIndex: 6, preloadPriority: 'idle' },
   ),
+  'deposit-history': createViewEntry(
+    async () => (await import('./views/VprDepositHistoryView')).VprDepositHistoryView as ComponentType<RoutedViewProps>,
+    // Drill-in from the deposit chooser — slides in from its right, same
+    // idiom as `chats` (3.5) between `tools` (3) and `preferences` (4).
+    { receivesOnSelectView: true, slideIndex: 6.5, preloadPriority: 'none' },
+  ),
   activity: createViewEntry(
     async () => (await import('./views/VprActivityView')).VprActivityView as ComponentType<RoutedViewProps>,
     { receivesOnSelectView: true, slideIndex: 7, preloadPriority: 'idle' },

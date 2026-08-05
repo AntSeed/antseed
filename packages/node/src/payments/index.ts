@@ -18,7 +18,7 @@ export { BaseEvmClient } from './evm/base-evm-client.js';
 
 // Deposits client (buyer deposits + seller payouts)
 export { DepositsClient } from './evm/deposits-client.js';
-export type { DepositsClientConfig, BuyerBalanceInfo } from './evm/deposits-client.js';
+export type { DepositsClientConfig, BuyerBalanceInfo, DecodedDeposited } from './evm/deposits-client.js';
 
 // Channels client (reserve, settle, timeout)
 export { ChannelsClient } from './evm/channels-client.js';

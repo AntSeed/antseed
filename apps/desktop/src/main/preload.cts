@@ -549,6 +549,7 @@ const api = {
   },
   depositsWatchStart: () => ipcRenderer.invoke('deposits:watch-start'),
   depositsWatchStop: () => ipcRenderer.invoke('deposits:watch-stop'),
+  depositsGetHistory: () => ipcRenderer.invoke('deposits:get-history'),
   onDepositsWatchStatus(handler: (data: unknown) => void): () => void {
     const listener = (_: unknown, data: unknown) => handler(data);
     ipcRenderer.on('deposits:watch-status', listener);

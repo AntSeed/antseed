@@ -45,6 +45,10 @@ import {
   sweepIncomingUsdc,
 } from '../payments/deposit-sweep.js';
 import {
+  type DepositHistoryEntry,
+  loadDepositHistory,
+} from '../payments/deposit-history.js';
+import {
   DEFAULT_CARD_PROVIDERS,
   PAYMENTS_PORT,
   PAY_PAGE_KINDS,
@@ -250,6 +254,12 @@ export function registerPaymentsIpc(): void {
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
+  });
+
+  ipcMain.handle('deposits:get-history', async (): Promise<{ ok: boolean; data: DepositHistoryEntry[] | null; chainId: number | null; error: string | null }> => {
+    const result = await loadDepositHistory();
+    if (!result.ok) return { ok: false, data: null, chainId: null, error: result.error ?? 'Unknown error' };
+    return { ok: true, data: result.data ?? [], chainId: result.chainId ?? null, error: null };
   });
 
   ipcMain.handle('deposits:watch-stop', () => {

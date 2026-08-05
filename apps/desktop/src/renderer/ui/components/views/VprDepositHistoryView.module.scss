@@ -1,0 +1,121 @@
+.view {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: clip;
+  padding: 8px 16px 24px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 392px;
+  margin: 0 auto;
+  min-width: 0;
+}
+
+/* ---------- Empty / error states ---------- */
+
+.emptyCard {
+  display: grid;
+  gap: 4px;
+  padding: 20px 16px;
+  text-align: center;
+}
+
+.emptyTitle {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.emptyHint {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.errorCard {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent-red, #d64545) 12%, transparent);
+  color: var(--accent-red, #d64545);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/* ---------- Deposit list ---------- */
+
+.listCard {
+  display: grid;
+  padding: 4px 16px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+}
+
+.row + .row {
+  border-top: 1px solid var(--border);
+}
+
+.rowMain {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rowAmount {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 17px;
+}
+
+.rowMeta {
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.rowSide {
+  display: grid;
+  gap: 2px;
+  justify-items: end;
+  flex: 0 0 auto;
+}
+
+.txLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent-green);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 15px;
+  cursor: pointer;
+}
+
+.txLink:hover {
+  color: var(--brand);
+}
+
+/* ---------- Footnote ---------- */
+
+.footnote {
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 15px;
+  text-align: center;
+  padding: 0 8px;
+}

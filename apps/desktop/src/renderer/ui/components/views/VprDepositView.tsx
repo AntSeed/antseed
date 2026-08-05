@@ -13,7 +13,7 @@ import {
 } from '@hugeicons/core-free-icons';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
-import { formatCredits, shortAddress } from '../../../core/format';
+import { explorerTxUrl, formatCredits, shortAddress } from '../../../core/format';
 import { VprCard, VprPage } from '../vpr/VprKit';
 import { takeDepositIntent, type DepositMethod } from '../../lib/depositIntent';
 import type { DepositWatchStatus } from '../../../types/bridge';
@@ -254,12 +254,6 @@ function StripeMark({ size = 22 }: { size?: number }) {
       <path fillRule="evenodd" clipRule="evenodd" d="M120 392L392 334.317V120L120 178.357V392Z" fill="#fff" />
     </svg>
   );
-}
-
-function explorerTxUrl(chainId: number | undefined, txHash: string): string | null {
-  if (chainId === 8453) return `https://basescan.org/tx/${txHash}`;
-  if (chainId === 84532) return `https://sepolia.basescan.org/tx/${txHash}`;
-  return null;
 }
 
 /** A selectable card option: hosted URL providers (Coinbase, etc.) plus the
@@ -516,6 +510,15 @@ export function VprDepositView({ onSelectView }: Props) {
               what you use, and unused credits can be withdrawn anytime.
             </span>
           </VprCard>
+
+          <button
+            type="button"
+            className={styles.historyLink}
+            onClick={() => onSelectView?.('deposit-history')}
+          >
+            <span>View deposit history</span>
+            <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} />
+          </button>
 
           {/* Primary path: deposit through Fun (fun.xyz). The Fun checkout
               only runs on the web; until our hosted integration is live this

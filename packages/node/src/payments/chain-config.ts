@@ -23,6 +23,8 @@ export interface ChainConfig {
   antsTokenAddress?: string;
   /** Block when Channels contract was deployed. Floor for event log scans. */
   channelsDeployBlock?: number;
+  /** Block when Deposits contract was deployed. Floor for deposit-history event log scans. */
+  depositsDeployBlock?: number;
   /** AntseedStats contract address. Populated only where an indexer aggregates it. */
   statsContractAddress?: string;
   /** Deployment block of AntseedStats for cold-start indexer backfill. */
@@ -58,6 +60,7 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     antsTokenAddress: '0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263',
     identityRegistryAddress: '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432',
     channelsDeployBlock: 44469557,
+    depositsDeployBlock: 44469557,
     statsContractAddress: '0x15649ff076bfa5e37e24ee3154a00503149954fd',
     statsDeployBlock: 44469557,
     networkStatsUrl: 'https://network.antseed.com',

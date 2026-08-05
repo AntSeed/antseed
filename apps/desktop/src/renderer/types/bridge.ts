@@ -86,6 +86,15 @@ export type DesktopRewardsSummary = {
   error: string | null;
 };
 
+export type DepositHistoryEntry = {
+  blockNumber: number;
+  txHash: string;
+  /** USDC base units (6 decimals), bigint string. */
+  amountBaseUnits: string;
+  /** Block timestamp, unix seconds. */
+  timestamp: number;
+};
+
 export type DepositWatchStatus = {
   phase: 'received' | 'sweeping' | 'credited' | 'error';
   /** USDC base units (6 decimals), bigint string. */
@@ -411,6 +420,7 @@ export type DesktopBridge = {
   depositsWatchStart?: () => Promise<{ ok: boolean; data?: { address: string; walletUsdcBaseUnits: string; usdcAddress: string; chainId: number }; error?: string }>;
   depositsWatchStop?: () => Promise<{ ok: boolean }>;
   onDepositsWatchStatus?: (handler: (data: DepositWatchStatus) => void) => () => void;
+  depositsGetHistory?: () => Promise<{ ok: boolean; data: DepositHistoryEntry[] | null; chainId: number | null; error: string | null }>;
 
   systemProxyStart?: (opts: { peerId: string; port?: number; profiles?: string[]; defaultModel?: string; servedModels?: string[]; toolRoutes?: Record<string, { peerId: string; model: string }>; profileSwitch?: boolean }) => Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }>;
   systemProxyListProfiles?: () => Promise<SystemProxyProfileSummary[]>;

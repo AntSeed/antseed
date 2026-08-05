@@ -485,6 +485,25 @@
   color: var(--brand);
 }
 
+.historyLink {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.historyLink:hover {
+  color: var(--text-primary);
+}
+
 .cardPayButton {
   width: 100%;
   min-height: 44px;
