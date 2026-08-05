@@ -33,6 +33,7 @@ import { OverlayScrollArea } from '../OverlayScrollArea';
 import { BrandIcon } from '../brand/BrandIcon';
 import { VprModelRowList } from '../vpr/VprModelRows';
 import { hasSeenChats, rememberSeenChats, VprRecentChatsCard } from '../vpr/VprRecentChats';
+import { conversationRoutedPeerName } from '../../../modules/routing/conversations';
 import { formatCompactTokens, VprStatRow, VprStatTile } from '../vpr/VprKit';
 import styles from './VprHomeView.module.scss';
 
@@ -61,6 +62,9 @@ export function VprHomeView({ onSelectView }: Props) {
     floatOpen: state.vprFloatOpen,
     creditsSpendable: state.creditsSpendableUsdc,
     networkAlert: state.networkAlert,
+    // Unfiltered discover list, for routed-peer name resolution.
+    allRows: state.discoverRows,
+    showRoutedPeer: state.vprFloatShowRoutedPeer,
   }), shallowEqual);
   const proxyResource = useCachedResource(systemProxyResource);
   const conversationsResource = useCachedResource(buyerConversationsResource);
@@ -252,6 +256,9 @@ export function VprHomeView({ onSelectView }: Props) {
       conversations={conversations ?? []}
       catalog={snap.catalog}
       defaultModelLabel={defaultModelLabel}
+      routedPeerNameFor={snap.showRoutedPeer
+        ? (chat) => conversationRoutedPeerName(chat, snap.allRows)
+        : undefined}
       profiles={profiles}
       loading={conversations === null && expectChats}
       onOpen={() => onSelectView?.('chats')}

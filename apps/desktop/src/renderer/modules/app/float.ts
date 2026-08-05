@@ -13,6 +13,7 @@ import {
   conversationCost,
   conversationMatchesApp,
   conversationPinnedServiceId,
+  conversationRoutedPeerName,
   conversationTitle,
   isConversationActive,
   shortSessionId,
@@ -254,6 +255,7 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
       lastActiveAt: record.lastActiveAt,
       active: isConversationActive(record.lastActiveAt),
       cost: conversationCost(record),
+      routedPeerName: conversationRoutedPeerName(record, uiState.discoverRows),
     };
   }
 
@@ -325,6 +327,7 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
       needsFunds: needsFunds(),
       runtimeOn,
       ...(identity ? { identityLabel: identity } : {}),
+      ...(uiState.vprFloatShowRoutedPeer ? { showRoutedPeer: true } : {}),
       trafficActive: logTrafficActive() || buyerDeltaActive,
     };
   }

@@ -5,6 +5,7 @@ import {
   conversationMatchesApp,
   conversationPinnedPeerId,
   conversationPinnedServiceId,
+  conversationRoutedPeerName,
   conversationTitle,
   shortSessionId,
 } from '../../../modules/routing/conversations';
@@ -44,6 +45,9 @@ export function VprChatsView({ onSelectView: _onSelectView }: Props) {
     discoverRows: state.vprRoutableRows,
     preferences: state.vprRoutingPreferences,
     pins: state.vprModelPins,
+    // Unfiltered discover list, for routed-peer name resolution.
+    allRows: state.discoverRows,
+    showRoutedPeer: state.vprFloatShowRoutedPeer,
   }), shallowEqual);
   const conversationsResource = useCachedResource(buyerConversationsResource);
   const proxyResource = useCachedResource(systemProxyResource);
@@ -362,6 +366,7 @@ export function VprChatsView({ onSelectView: _onSelectView }: Props) {
                   key={chat.id}
                   chat={chat}
                   modelLabel={chatModelLabel(chat, snap.catalog, defaultModelLabel)}
+                  routedPeerName={snap.showRoutedPeer ? conversationRoutedPeerName(chat, snap.allRows) : null}
                   profiles={profiles}
                   onClick={() => drillIn(chat.id)}
                 />

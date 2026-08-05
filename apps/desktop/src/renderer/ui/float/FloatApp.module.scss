@@ -443,6 +443,14 @@
   white-space: nowrap;
 }
 
+/* Seller a chat's requests actually route to, appended after the model name
+   on its row (the "Show routed peer" debug preference) — same accent as the
+   default route's seller so both read as routing. */
+.menuRowPeer {
+  color: var(--accent-green);
+  font-weight: 500;
+}
+
 /* Seller the default route is pinned to, under the model name — accented so
    it reads as routing, not as more muted metadata. */
 .menuRowSeller {

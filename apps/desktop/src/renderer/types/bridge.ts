@@ -528,6 +528,10 @@ export type VprFloatConversation = {
   /** Formatted spend for this chat ("$0.42", "<$0.01"), or null when nothing
       has been attributed to it yet. */
   cost: string | null;
+  /** Display name of the seller that served the chat's most recent request,
+      or null while no request has resolved. Rendered only when the
+      "Show routed peer" debug preference is on. */
+  routedPeerName: string | null;
 };
 
 /** Display payload the main window pushes to the floating pill. */
@@ -560,6 +564,8 @@ export type VprFloatData = {
   runtimeOn?: boolean;
   /** Shortened buyer identity (signer address), e.g. "0x1234...abcd". */
   identityLabel?: string;
+  /** Debug preference: chat rows name the routed seller next to the model. */
+  showRoutedPeer?: boolean;
   /**
    * True when traffic moved through the system proxy or the buyer proxy
    * since the previous payload — drives the pulse on the app icon.

@@ -12,7 +12,12 @@ import {
 import { initAppSetupModule } from './modules/app/setup';
 import { initCreditsModule } from './modules/app/credits';
 import { initVprFloatModule } from './modules/app/float';
-import { loadFloatAutoOpen, saveFloatAutoOpen } from './modules/app/float-settings';
+import {
+  loadFloatAutoOpen,
+  loadFloatShowRoutedPeer,
+  saveFloatAutoOpen,
+  saveFloatShowRoutedPeer,
+} from './modules/app/float-settings';
 import { initModelPickerSync } from './modules/catalog/picker-sync';
 import { applyVprRouteToConnectedProxy } from './modules/routing/proxy-sync';
 import { findCatalogEntry } from './modules/catalog/model-catalog';
@@ -109,6 +114,7 @@ uiState.vprRoutingPreferences = loadVprRoutingPreferences(uiState.vprRoutingPref
 uiState.vprRouteSelection = loadVprRouteSelection(uiState.vprRouteSelection);
 uiState.vprModelPins = loadVprModelPins();
 uiState.vprFloatAutoOpen = loadFloatAutoOpen();
+uiState.vprFloatShowRoutedPeer = loadFloatShowRoutedPeer();
 // Sessions that pinned a seller before pins were stored per model carry the
 // pin only on the selection — seed the store from it so the first model
 // switch doesn't silently drop it.
@@ -663,6 +669,14 @@ registerActions({
     uiState.vprFloatAutoOpen = enabled;
     saveFloatAutoOpen(enabled);
     vprFloatApi.setAutoOpen(enabled);
+    notifyUiStateChanged();
+  },
+  setVprFloatShowRoutedPeer: (enabled: boolean) => {
+    uiState.vprFloatShowRoutedPeer = enabled;
+    saveFloatShowRoutedPeer(enabled);
+    // The pill reads the flag from its data payload — push it right away so
+    // an open pill reflects the toggle without waiting out the poll tick.
+    void vprFloatApi.refresh();
     notifyUiStateChanged();
   },
 });

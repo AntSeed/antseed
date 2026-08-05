@@ -22,6 +22,7 @@ export function VprPreferencesView({ onSelectView }: Props) {
     discoverRows: state.discoverRows,
     lastPeers: state.lastPeers,
     floatAutoOpen: state.vprFloatAutoOpen,
+    floatShowRoutedPeer: state.vprFloatShowRoutedPeer,
   }), shallowEqual);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => activeThemeMode());
   const [accessOpen, setAccessOpen] = useState(false);
@@ -166,6 +167,17 @@ export function VprPreferencesView({ onSelectView }: Props) {
                   checked={snap.floatAutoOpen}
                   onChange={(next) => actions.setVprFloatAutoOpen?.(next)}
                   ariaLabel="Show floating window on traffic"
+                />
+              )}
+            />
+            <VprSettingRow
+              title="Show routed peer"
+              hint="Name the seller each chat's requests actually went to next to its model — for checking where routing really lands."
+              control={(
+                <VprToggle
+                  checked={snap.floatShowRoutedPeer}
+                  onChange={(next) => actions.setVprFloatShowRoutedPeer?.(next)}
+                  ariaLabel="Show routed peer"
                 />
               )}
             />

@@ -352,6 +352,8 @@ export type RendererUiState = {
   vprFloatOpen: boolean;
   /** Opt-in: pop the pill open on its own when routed traffic starts. */
   vprFloatAutoOpen: boolean;
+  /** Debug aid: the pill's chat rows name the routed seller next to the model. */
+  vprFloatShowRoutedPeer: boolean;
   chatDiscoverRowsLoaded: boolean;
   chatSelectedServiceValue: string;
   chatSelectedPeerId: string;
@@ -509,6 +511,7 @@ export function createInitialUiState(): RendererUiState {
     },
     vprFloatOpen: false,
     vprFloatAutoOpen: false,
+    vprFloatShowRoutedPeer: false,
     chatDiscoverRowsLoaded: false,
     chatSelectedServiceValue: '',
     chatSelectedPeerId: '',
