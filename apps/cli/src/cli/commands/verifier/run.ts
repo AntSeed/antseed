@@ -11,7 +11,7 @@ import {
   type ModelVerificationFailure,
   type ModelVerificationTargetResult,
 } from '../../../verifier/model-run.js'
-import { loadOrCreateModelReference } from '../../../verifier/model-reference.js'
+import { loadModelReference } from '../../../verifier/model-reference.js'
 import { startVerifierRuntime } from '../../../verifier/runtime.js'
 import { getGlobalOptions } from '../types.js'
 
@@ -19,11 +19,11 @@ export function registerVerifierRunCommand(verifier: Command): void {
   verifier
     .command('run <model>')
     .description('Verify every live peer advertising a model')
-    .option('--benchmark', 'write paid off-chain verification evidence without registry transactions')
-    .action(async (modelValue: string, options: { benchmark?: boolean }, command: Command) => {
+    .option('--no-attest', 'write paid verification evidence without registry transactions')
+    .action(async (modelValue: string, options: { attest?: boolean }, command: Command) => {
       const globalOptions = getGlobalOptions(command)
       const config = await loadConfig(globalOptions.config)
-      const benchmark = options.benchmark ?? false
+      const noAttest = options.attest === false
       const model = modelValue.trim()
       if (!model) throw new Error('model must not be empty')
       const maximumSpendUsdc = parseMaximumSpend(config.verifier?.maxTotalSpendUSDC)
@@ -31,13 +31,13 @@ export function registerVerifierRunCommand(verifier: Command): void {
         config,
         dataDir: globalOptions.dataDir,
         configPath: globalOptions.config,
-        benchmark,
+        noAttest,
       })
       const startedAt = Date.now()
       const runId = canonicalHashBytes32({
         domain: 'antseed-model-verification-run-v1',
         model: model.toLowerCase(),
-        benchmark,
+        noAttest,
         startedAt,
       })
       const results: ModelVerificationTargetResult[] = []
@@ -49,13 +49,11 @@ export function registerVerifierRunCommand(verifier: Command): void {
       }
       let summaryPath: string | null = null
       try {
-        const prepared = await loadOrCreateModelReference({
+        const prepared = await loadModelReference({
           model,
           referencesDir: runtime.referencesDir,
-          config: config.verifier,
-          log: (message) => console.log(chalk.dim(`[reference] ${message}`)),
         })
-        console.log(chalk.dim(`Reference: ${prepared.path}${prepared.generated ? ' (generated)' : ''}`))
+        console.log(chalk.dim(`Reference: ${prepared.path}`))
 
         const normalizedModel = model.toLowerCase()
         const peers = await runtime.node.discoverPeers(model)
@@ -88,7 +86,7 @@ export function registerVerifierRunCommand(verifier: Command): void {
               target: target.peer,
               service: target.eligibility.service,
               reference: prepared.reference,
-              ...(!benchmark ? {
+              ...(!noAttest ? {
                 registryClient: runtime.chain.registryClient,
                 signer: runtime.identity.wallet,
               } : {}),
@@ -116,7 +114,7 @@ export function registerVerifierRunCommand(verifier: Command): void {
           kind: 'antseed-model-verification-run',
           runId,
           model,
-          mode: benchmark ? 'benchmark' : 'attest',
+          mode: noAttest ? 'evidence' : 'attest',
           referenceId: prepared.reference.referenceId,
           probeCount: VERIFICATION_PROBE_COUNT,
           startedAt: new Date(startedAt).toISOString(),

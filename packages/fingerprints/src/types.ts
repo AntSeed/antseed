@@ -61,7 +61,7 @@ export interface ProbeTolerance {
 
 /**
  * A single KBF numeric cloze probe. `consensus` is the expected answer;
- * in cohort mode it is advisory only (ground truth comes from the cohort).
+ * during candidate generation it is advisory until the reference is certified.
  * Unknown extension fields (e.g. `contrast`, `consensusRaw`) are preserved.
  */
 export interface KbfProbe {

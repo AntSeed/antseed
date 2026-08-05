@@ -315,6 +315,7 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
     });
   }
 
+  // providers count
   if (metadata.providers.length === 0) {
     errors.push({
       field: "providers",

@@ -88,6 +88,13 @@ export interface VerificationConfig {
   github?: GithubVerificationConfig[];
 }
 
+export interface BuyerVerificationConfig {
+  /** Random sample rate for storing full response-auth evidence, from 0 to 1. */
+  sampleRate?: number;
+  /** Maximum combined encoded request + response bytes per sample. */
+  maxSampleBytes?: number;
+}
+
 /**
  * Seller-specific configuration within the Antseed config.
  */
@@ -136,6 +143,8 @@ export interface BuyerCLIConfig {
   metadataFetchTimeoutMs: number;
   /** Disable per-service attribution in buyer-signed metadata v2. */
   disableMetadataV2Services: boolean;
+  /** Buyer-side response-auth evidence sampling settings. */
+  verification?: BuyerVerificationConfig;
 }
 
 /**
@@ -220,8 +229,20 @@ export interface VerifierCLIConfig {
   probeRequestTimeoutMs?: number;
   /** Hard total spend cap for one run, in human-readable USDC. */
   maxTotalSpendUSDC?: string;
-  /** Trusted endpoint used only when a model's fixed reference is missing. */
+  /** Trusted endpoint used only by the explicit reference-build command. */
   referenceEndpoint?: VerifierReferenceEndpointConfig;
+  /** Maximum physical reference-endpoint requests, including retries. Default: 2000. */
+  referenceMaxRequestsPerBuild?: number;
+  /** Retries after the initial transiently failed reference request. Default: 3. */
+  referenceBatchRetryCount?: number;
+  /** Initial exponential retry delay in milliseconds. Default: 500. */
+  referenceRetryBaseDelayMs?: number;
+  /** Consecutive candidate rounds with zero accepted probes before failure. Default: 3. */
+  referenceMaxNoProgressRounds?: number;
+  /** Maximum concurrent reference requests across models. Default: 2. */
+  referenceMaxConcurrentRequests?: number;
+  /** Maximum concurrent reference requests to one model. Default: 1. */
+  referenceMaxConcurrentRequestsPerModel?: number;
 }
 
 export interface VerifierReferenceModelConfig {
@@ -246,47 +267,6 @@ export interface VerifierReferenceEndpointConfig {
   antseedPeerId?: string;
   /** Network service id to upstream reference/contrast model configuration. */
   models: Record<string, VerifierReferenceModelConfig>;
-}
-
-export interface VerifierReferencePolicyConfig {
-  /** @deprecated Catalog warm-up compatibility option. */
-  certifiedProbeCount?: number;
-  /** @deprecated Alias for minimumAuditProbeCount. */
-  auditProbeCount?: number;
-  /** @deprecated Probes are never reused for the same agent/service. */
-  maxProbeUsesPerTarget?: number;
-  /** Initial probes selected for each audit. Default: 100. */
-  minimumAuditProbeCount?: number;
-  /** Maximum probes selected for an adaptive audit. Default: 750. */
-  maximumAuditProbeCount?: number;
-  /** Adaptive growth increment. Default: 10. */
-  auditProbeStep?: number;
-  /** Required one-sided binomial statistical power. Default: 0.9. */
-  minimumStatisticalPower?: number;
-  /** Smallest excess target mismatch rate the audit is powered to detect. Default: 0.1. */
-  minimumMismatchDelta?: number;
-  /** Family-wide false-positive rate divided across the discovered cohort. Default: 0.05. */
-  familyWideAlpha?: number;
-  /** Confidence used for the reference Clopper-Pearson upper bound. Default: 0.99. */
-  referenceConfidence?: number;
-  /** Required parsed and authenticated target coverage for benchmark verdicts. Default: 1. */
-  minimumAuthenticatedCoverage?: number;
-  /** Maximum reference age in days. Default: 49. */
-  maxReferenceAgeDays?: number;
-  /** @deprecated Alias for maxRequestsPerRound. */
-  maxRequestsPerBuild?: number;
-  /** Maximum upstream calls while preparing one service round. Default: 2000. */
-  maxRequestsPerRound?: number;
-  /** Timeout for one reference request. Default: 120000. */
-  requestTimeoutMs?: number;
-  /** Retry count after the initial batch attempt. Default: 3. */
-  batchRetryCount?: number;
-  /** Adaptive generation domains processed concurrently. Default: 3. */
-  generationDomainConcurrency?: number;
-  /** Maximum concurrent upstream reference requests. Default: 4. */
-  maxConcurrentReferenceRequests?: number;
-  /** Maximum concurrent upstream requests for one model. Default: 2. */
-  maxConcurrentRequestsPerModel?: number;
 }
 
 /**

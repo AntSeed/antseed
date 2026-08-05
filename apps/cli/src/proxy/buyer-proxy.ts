@@ -5,6 +5,7 @@ import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   computeOnChainReputationScore,
+  MODEL_VERIFICATION_MAX_AGE_MS,
   peerHasActiveSubstitutionFlag,
   type AntseedNode,
   type PeerInfo,
@@ -69,30 +70,18 @@ export interface BuyerProxyConfig {
    * Pin all requests to a specific peer ID for this session.
    * The named peer is used directly if it is available, protocol-compatible,
    * and allowed by the buyer's pricing policy. A 502 is returned if the peer cannot be reached.
-  */
+   */
   pinnedPeerId?: string
 }
 
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
 
-/**
- * True only for the read-only model-listing control-plane surface: a `GET` to
- * exactly `/v1/models` or `/v1/models/<id>`. Scoped to `GET` and these exact
- * shapes — not any path merely starting `/v1/models` — so a non-GET method or
- * an unexpected `/v1/models…` subpath is never silently exempted from the
- * substitution-flag gate (nor counted as a router success). A POST to
- * `/v1/models` is not billable today (it forwards and 404s upstream with no
- * tokens), so this is defense-in-depth keeping the exemption as narrow as its
- * intent rather than a live exploit fix.
- */
-function isControlPlaneServicesPath(method: string, path: string): boolean {
-  if (method.toUpperCase() !== 'GET') return false
-  const normalized = (path.split('?')[0] ?? '').trim().toLowerCase().replace(/\/+$/, '')
-  return normalized === '/v1/models' || /^\/v1\/models\/[^/]+$/.test(normalized)
+function isControlPlaneServicesPath(path: string): boolean {
+  return path.toLowerCase().startsWith('/v1/models')
 }
 
-function isRouterSuccess(method: string, statusCode: number, path: string, retryableStatusCodes: Set<number>): boolean {
-  return isControlPlaneServicesPath(method, path) || !retryableStatusCodes.has(statusCode)
+function isRouterSuccess(statusCode: number, path: string, retryableStatusCodes: Set<number>): boolean {
+  return isControlPlaneServicesPath(path) || !retryableStatusCodes.has(statusCode)
 }
 
 /**
@@ -104,44 +93,6 @@ function isRouterSuccess(method: string, statusCode: number, path: string, retry
  */
 const CARRY_FORWARD_TTL_MS = 2 * 60 * 60_000
 const PEER_FAILURE_WINDOW_MS = 5 * 60_000
-
-/**
- * Max age of a persisted/cached per-(peer, model) verification flag before it
- * is treated as absent by the substitution-flag routing gate.
- *
- * Enrichment (`_enrichPeersWithVerification` in packages/node) only OVERWRITES
- * `modelVerification` on a SUCCESSFUL verifier-registry read, and the buyer
- * gate fails safe by blocking on a standing DIFF. Together that means a flag
- * can get stuck: if the verifier registry is later unconfigured (enrichment
- * early-returns and never touches the field) or its RPC permanently fails, a
- * stale DIFF flag — rehydrated from `buyer.state.json` on restart, or carried
- * in-memory across refresh cycles — would block a peer forever, even after
- * every accusing verifier retracts. Unlike the other on-chain stats this flag
- * carried no freshness timestamp, so nothing could ever age it out.
- *
- * A healthy proxy re-stamps the flag every discovery/refresh pass (background
- * refresh runs every {@link DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS} = 5 min;
- * the node throttles the underlying reads to 60s), so this ceiling never trips
- * in normal operation and a genuinely-flagged seller stays blocked. It only
- * bounds the liveness gap when enrichment is degraded. 30 min matches
- * `peer-lookup.ts` `maxAnnouncementAgeMs` — the DHT-announcement staleness the
- * code already trusts elsewhere — and sits comfortably above the refresh
- * cadence.
- *
- * The value is the shared bound from packages/node (the SDK's DefaultRouter
- * ages flags out at the same ceiling), re-exported so the two exclusion paths
- * cannot drift.
- */
-export { MODEL_VERIFICATION_MAX_AGE_MS } from '@antseed/node'
-import { MODEL_VERIFICATION_MAX_AGE_MS } from '@antseed/node'
-
-/**
- * Debounce for persisting `lastReachedAt` stamps to buyer.state.json. Every
- * successful proxied request stamps its peer; an immediate write per request
- * is a whole-state-file serialize + rename on the hot path. The stamp lands
- * in memory immediately — only the disk write is coalesced (flushed on stop).
- */
-const PEER_PERSIST_DEBOUNCE_MS = 5_000
 
 type PeerFailureEntry = {
   count: number
@@ -388,23 +339,6 @@ export function parsePersistedPeers(
     if (entry.verificationResults && typeof entry.verificationResults === 'object') {
       peer.verificationResults = entry.verificationResults as PeerInfo['verificationResults']
     }
-    // Rehydrate per-(peer, model) verification stats so the substitution-flag
-    // routing gate works from the warm cache after a restart, before the first
-    // on-chain enrichment pass completes — but ONLY while the persisted flag is
-    // fresh. Enrichment overwrites this field only on a successful chain read,
-    // so a flag from a since-unconfigured or permanently-RPC-failing verifier
-    // registry would otherwise linger forever and block the peer. Drop a flag
-    // that carries no freshness stamp (pre-upgrade rows) or one past the max
-    // age; a later enrichment pass repopulates it if the registry is reachable.
-    if (entry.modelVerification && typeof entry.modelVerification === 'object' && !Array.isArray(entry.modelVerification)) {
-      const fetchedAt = typeof entry.modelVerificationFetchedAt === 'number' && Number.isFinite(entry.modelVerificationFetchedAt)
-        ? entry.modelVerificationFetchedAt
-        : 0
-      if (fetchedAt > 0 && nowMs - fetchedAt < MODEL_VERIFICATION_MAX_AGE_MS) {
-        peer.modelVerification = entry.modelVerification as PeerInfo['modelVerification']
-        peer.modelVerificationFetchedAt = fetchedAt
-      }
-    }
     peers.push(peer)
   }
   return peers
@@ -428,7 +362,6 @@ export class BuyerProxy {
   private _stateFileWatching = false
   private _pinnedPeer: string | null
   private _stateWatchDebounce: ReturnType<typeof setTimeout> | null = null
-  private _peerPersistDebounce: ReturnType<typeof setTimeout> | null = null
 
   private _stateWriteChain: Promise<void> = Promise.resolve()
 
@@ -436,6 +369,7 @@ export class BuyerProxy {
   private _cacheLastUpdatedAtMs = 0
   private _cacheMutationEpoch = 0
   private _peerRefreshPromise: Promise<PeerInfo[]> | null = null
+  private _verificationRefreshAt = new Map<string, number>()
   private _lastStaleCacheLogAtMs = 0
   private _bgRefreshHandle: ReturnType<typeof setInterval> | null = null
   private _peerFailures: Map<string, PeerFailureEntry> = new Map()
@@ -526,12 +460,6 @@ export class BuyerProxy {
     if (this._stateWatchDebounce) {
       clearTimeout(this._stateWatchDebounce)
       this._stateWatchDebounce = null
-    }
-    if (this._peerPersistDebounce) {
-      // Flush the coalesced lastReachedAt stamps before recording the stop.
-      clearTimeout(this._peerPersistDebounce)
-      this._peerPersistDebounce = null
-      this._persistPeersToState()
     }
     if (this._stateFileWatching) {
       unwatchFile(this._stateFile)
@@ -643,11 +571,7 @@ export class BuyerProxy {
     // and losing it on each refresh would defeat the carry-forward tracking.
     const merged: PeerInfo[] = incoming.map((peer) => {
       const prev = prevById.get(peer.peerId)
-      if (!prev) {
-        const stamp = this._verificationFreshnessStamp(peer, undefined, now)
-        if (stamp !== undefined) peer.modelVerificationFetchedAt = stamp
-        return peer
-      }
+      if (!prev) return peer
       const metadata = peer.metadata || prev.metadata
         ? { ...(prev.metadata ?? {}), ...(peer.metadata ?? {}) } as PeerMetadata
         : undefined
@@ -659,8 +583,6 @@ export class BuyerProxy {
       if (prev.lastReachedAt && (!peer.lastReachedAt || prev.lastReachedAt > peer.lastReachedAt)) {
         mergedPeer.lastReachedAt = prev.lastReachedAt
       }
-      const stamp = this._verificationFreshnessStamp(peer, prev, now)
-      if (stamp !== undefined) mergedPeer.modelVerificationFetchedAt = stamp
       return mergedPeer
     })
 
@@ -681,26 +603,6 @@ export class BuyerProxy {
     this._cacheLastUpdatedAtMs = Date.now()
     this._cacheMutationEpoch += 1
     this._persistPeersToState()
-  }
-
-  /**
-   * When did this peer's `modelVerification` flag last come from a live
-   * registry read? A peer emitted by node enrichment carries the flag but no
-   * buyer-local stamp — that is a fresh read, so it is stamped `now`. A peer we
-   * recycled from our own cache (the discovery-returned-0 fallback, or a
-   * carry-forward entry) already carries a stamp; it is preserved so a stale
-   * flag ages out via `MODEL_VERIFICATION_MAX_AGE_MS` instead of being
-   * perpetually refreshed. Returns `undefined` when there is nothing to stamp.
-   */
-  private _verificationFreshnessStamp(
-    incoming: PeerInfo,
-    prev: PeerInfo | undefined,
-    now: number,
-  ): number | undefined {
-    if (incoming.modelVerification && incoming.modelVerificationFetchedAt === undefined) {
-      return now
-    }
-    return incoming.modelVerificationFetchedAt ?? prev?.modelVerificationFetchedAt
   }
 
   private _persistPeersToState(): void {
@@ -755,13 +657,6 @@ export class BuyerProxy {
         // null on first sighting and filled by a later peers:discovered update.
         verifications: p.metadata?.verifications ?? null,
         verificationResults: p.verificationResults ?? null,
-        // Per-(peer, model) on-chain verification stats + buyer-local
-        // authenticity score. Persisted so the substitution-flag routing gate
-        // keeps working from the warm cache across restarts, together with the
-        // freshness stamp so a stale flag can age out (see parsePersistedPeers
-        // and MODEL_VERIFICATION_MAX_AGE_MS) instead of blocking a peer forever.
-        modelVerification: p.modelVerification ?? null,
-        modelVerificationFetchedAt: p.modelVerificationFetchedAt ?? null,
         lastSeen: p.lastSeen,
         lastReachedAt: p.lastReachedAt ?? null,
       }
@@ -812,35 +707,20 @@ export class BuyerProxy {
     const cached = this._cachedPeers.find((p) => p.peerId === peerId)
     if (cached) {
       cached.lastReachedAt = Date.now()
-      this._schedulePersistPeersToState()
+      this._persistPeersToState()
     }
   }
 
-  /** Coalesce hot-path `lastReachedAt` persists into one write per debounce window. */
-  private _schedulePersistPeersToState(): void {
-    if (this._peerPersistDebounce) return
-    this._peerPersistDebounce = setTimeout(() => {
-      this._peerPersistDebounce = null
-      this._persistPeersToState()
-    }, PEER_PERSIST_DEBOUNCE_MS)
-    this._peerPersistDebounce.unref?.()
-  }
-
-  private async _discoverPeersFromNetwork(service?: string): Promise<PeerInfo[]> {
-    log(`Discovering peers via DHT${service ? ` (service: ${service})` : ''}...`)
-    // Passing the requested service lets the node load per-model verification
-    // stats (verifier-registry substitution flags) instead of only the
-    // agent-wide '*' aggregate. The service-filtered result does not evict
-    // other cached peers: _replacePeers carries forward recently-seen entries
-    // missing from a scan.
-    const peers = await this._node.discoverPeers(service)
+  private async _discoverPeersFromNetwork(): Promise<PeerInfo[]> {
+    log('Discovering peers via DHT...')
+    const peers = await this._node.discoverPeers()
     if (peers.length > 0) {
       log(`Found ${peers.length} peer(s)`)
     }
     return peers
   }
 
-  private async _refreshPeersNow(service?: string): Promise<PeerInfo[]> {
+  private async _refreshPeersNow(): Promise<PeerInfo[]> {
     if (this._peerRefreshPromise) {
       return this._peerRefreshPromise
     }
@@ -848,7 +728,7 @@ export class BuyerProxy {
     const previousCachedPeers = [...this._cachedPeers]
     const mutationEpochAtStart = this._cacheMutationEpoch
     this._peerRefreshPromise = (async () => {
-      const peers = await this._discoverPeersFromNetwork(service)
+      const peers = await this._discoverPeersFromNetwork()
       if (peers.length > 0) {
         this._replacePeers(peers)
         return peers
@@ -871,14 +751,14 @@ export class BuyerProxy {
     return this._peerRefreshPromise
   }
 
-  private async _getPeers(options?: { forceRefresh?: boolean; service?: string }): Promise<PeerInfo[]> {
+  private async _getPeers(options?: { forceRefresh?: boolean }): Promise<PeerInfo[]> {
     const forceRefresh = options?.forceRefresh === true
     const cacheAgeMs = Date.now() - this._cacheLastUpdatedAtMs
     const cacheFresh = this._cacheLastUpdatedAtMs > 0 && cacheAgeMs <= this._peerCacheTtlMs
 
     if (forceRefresh) {
       log('Forcing peer refresh before routing.')
-      return this._refreshPeersNow(options?.service)
+      return this._refreshPeersNow()
     }
 
     if (this._cachedPeers.length > 0) {
@@ -895,7 +775,29 @@ export class BuyerProxy {
     }
 
     // No cached peers yet — block on initial discovery.
-    return this._refreshPeersNow(options?.service)
+    return this._refreshPeersNow()
+  }
+
+  private async _refreshVerification(peerId: string, service: string): Promise<void> {
+    const key = `${peerId.toLowerCase()}:${service.toLowerCase()}`
+    const lastRefresh = this._verificationRefreshAt.get(key) ?? 0
+    if (Date.now() - lastRefresh < MODEL_VERIFICATION_MAX_AGE_MS) return
+
+    try {
+      const peers = await this._node.discoverPeers(service)
+      const refreshedPeer = peers.find((peer) => peer.peerId.toLowerCase() === peerId.toLowerCase())
+      const cachedPeer = this._cachedPeers.find((peer) => peer.peerId.toLowerCase() === peerId.toLowerCase())
+      if (refreshedPeer?.modelVerificationFetchedAt) {
+        this._verificationRefreshAt.set(key, refreshedPeer.modelVerificationFetchedAt)
+      }
+      if (refreshedPeer?.modelVerificationFetchedAt && cachedPeer && !refreshedPeer.modelVerification?.[service.toLowerCase()]) {
+        const { [service.toLowerCase()]: _removed, ...remaining } = cachedPeer.modelVerification ?? {}
+        cachedPeer.modelVerification = remaining
+      }
+      if (peers.length > 0) this._replacePeers(peers)
+    } catch {
+      // Verification enrichment is best-effort; normal cached routing remains available.
+    }
   }
 
   private _formatPeerSelectionDiagnostics(peers: PeerInfo[]): string {
@@ -1177,7 +1079,7 @@ export class BuyerProxy {
     }
 
     // Discover peers
-    const peers = await this._getPeers({ service: requestedService ?? undefined })
+    const peers = await this._getPeers()
     if (peers.length === 0) {
       log('No sellers available')
       res.writeHead(502, { 'content-type': 'text/plain' })
@@ -1211,7 +1113,7 @@ export class BuyerProxy {
       }
       hasForcedRefresh = true
       log(`Forcing peer refresh before routing after ${reason}.`)
-      discoveredPeers = await this._getPeers({ forceRefresh: true, service: requestedService ?? undefined })
+      discoveredPeers = await this._getPeers({ forceRefresh: true })
       ;({
         candidatePeers: routingPeers,
         routePlanByPeerId: routingPlans,
@@ -1236,6 +1138,13 @@ export class BuyerProxy {
     let pinnedDiscovered = isPinnedDiscovered()
     if (!pinnedDiscovered || routingPeers.length === 0 || cacheAgeMs > this._peerCacheTtlMs) {
       await refreshPeerSelection('pinned-peer routing preflight')
+      pinnedDiscovered = isPinnedDiscovered()
+    }
+
+    if (pinnedDiscovered && requestedService) {
+      await this._refreshVerification(explicitPeerId, requestedService)
+      discoveredPeers = this._cachedPeers
+      ;({ candidatePeers: routingPeers, routePlanByPeerId: routingPlans } = selectPeers(discoveredPeers))
       pinnedDiscovered = isPinnedDiscovered()
     }
 
@@ -1307,17 +1216,9 @@ export class BuyerProxy {
       res.end(`Pinned peer ${explicitPeerId.slice(0, 12)}... is currently unreachable. Try again in a moment.`)
       return
     }
-    // Substitution-flag gate. The CLI buyer path is pinned-peer-only (auto
-    // selection is disabled), so DefaultRouter's flag exclusion never runs
-    // here — enforce the same gate on the pin itself. An active flag means at
-    // least one approved verifier currently stands by signed on-chain evidence
-    // that this seller served a different model than advertised; the block
-    // lifts as soon as every accusing verifier retracts (attests SAME again).
-    // Pins are deliberately gated too: an explicit pin means "I want this
-    // peer", not "I accept a substituted model". /v1/models service listing
-    // is exempt so a flagged peer stays inspectable without being paid for
-    // inference.
-    if (!isControlPlaneServicesPath(method, normalizedPath) && peerHasActiveSubstitutionFlag(selectedPeer, requestedService?.toLowerCase() ?? null)) {
+    // Auto-selection is disabled, so enforce the router's substitution gate on
+    // the explicitly pinned peer before dispatch.
+    if (peerHasActiveSubstitutionFlag(selectedPeer, requestedService?.toLowerCase() ?? null)) {
       log(`Pinned peer ${selectedPeer.peerId.slice(0, 12)}... blocked: active model-substitution flag (service=${requestedService ?? '*'})`)
       res.writeHead(502, { 'content-type': 'text/plain' })
       res.end(
@@ -1588,7 +1489,7 @@ export class BuyerProxy {
         )
         if (router) {
           router.onResult(selectedPeer, {
-            success: isRouterSuccess(requestForPeer.method, responseForClient.statusCode, requestForPeer.path, retryableStatusCodes),
+            success: isRouterSuccess(responseForClient.statusCode, requestForPeer.path, retryableStatusCodes),
             latencyMs,
             tokens: telemetry.usage.totalTokens,
           })
@@ -1664,7 +1565,7 @@ export class BuyerProxy {
         // Report result to router for learning
         if (router) {
           router.onResult(selectedPeer, {
-            success: isRouterSuccess(requestForPeer.method, response.statusCode, requestForPeer.path, retryableStatusCodes),
+            success: isRouterSuccess(response.statusCode, requestForPeer.path, retryableStatusCodes),
             latencyMs,
             tokens: telemetry.usage.totalTokens,
           })

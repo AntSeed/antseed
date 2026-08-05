@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import { concat, getBytes, toUtf8Bytes, verifyMessage } from 'ethers';
 import { identityFromPrivateKeyHex } from '../src/p2p/identity.js';
 import type { SerializedHttpRequest, SerializedHttpResponse } from '../src/types/http.js';
@@ -190,7 +191,8 @@ describe('ResponseAuth', () => {
 
   it('stores lightweight response auth records locally', () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'verification-store-test-'));
-    const storage = new ResponseAuthStorage(join(tempDir, 'verification.db'));
+    const databasePath = join(tempDir, 'verification.db');
+    const storage = new ResponseAuthStorage(databasePath);
     try {
       const seller = identityFromPrivateKeyHex('11'.repeat(32));
       const buyer = identityFromPrivateKeyHex('22'.repeat(32));
@@ -218,9 +220,9 @@ describe('ResponseAuth', () => {
       expect(loaded!.verified).toBe(true);
       expect(loaded!.verificationError).toBeNull();
 
-      (storage as unknown as { _db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } } })
-        ._db.prepare('UPDATE response_auths SET version = ? WHERE request_id = ?')
-        .run(7, payload.requestId);
+      const database = new Database(databasePath);
+      database.prepare('UPDATE response_auths SET version = ? WHERE request_id = ?').run(7, payload.requestId);
+      database.close();
       expect(storage.getResponseAuth(payload.requestId)!.version).toBe(7);
     } finally {
       storage.close();

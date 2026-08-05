@@ -28,16 +28,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function assertKnownKeys(value: Record<string, unknown>, path: string, knownKeys: ReadonlySet<string>): void {
-  const unknownKey = Object.keys(value).find((key) => !knownKeys.has(key));
-  if (unknownKey) throw new Error(`${path}.${unknownKey} is not a supported ${path} option`);
-}
-
-const BUYER_KEYS = new Set([
-  'maxPricing', 'minPeerReputation', 'proxyPort', 'peerRefreshIntervalMs',
-  'metadataFetchTimeoutMs', 'disableMetadataV2Services',
-]);
-
 function toFiniteOrNaN(value: unknown): number {
   return typeof value === 'number' ? value : Number.NaN;
 }
@@ -321,6 +311,32 @@ function normalizeMinPeerReputation(value: unknown, fallback: number): number {
   return value === 50 ? fallback : value;
 }
 
+function cloneBuyerVerification(
+  value: AntseedConfig['buyer']['verification'],
+): AntseedConfig['buyer']['verification'] {
+  if (!value) return undefined;
+  return {
+    ...(value.sampleRate !== undefined ? { sampleRate: value.sampleRate } : {}),
+    ...(value.maxSampleBytes !== undefined ? { maxSampleBytes: value.maxSampleBytes } : {}),
+  };
+}
+
+function normalizeBuyerVerification(
+  value: unknown,
+  fallback?: AntseedConfig['buyer']['verification'],
+): { verification: NonNullable<AntseedConfig['buyer']['verification']> } | Record<string, never> {
+  if (!isRecord(value)) {
+    const cloned = cloneBuyerVerification(fallback);
+    return cloned ? { verification: cloned } : {};
+  }
+  return {
+    verification: {
+      ...(value['sampleRate'] !== undefined ? { sampleRate: toFiniteOrNaN(value['sampleRate']) } : {}),
+      ...(value['maxSampleBytes'] !== undefined ? { maxSampleBytes: toFiniteOrNaN(value['maxSampleBytes']) } : {}),
+    },
+  };
+}
+
 function mergeBuyerConfig(
   defaults: AntseedConfig['buyer'],
   value: unknown
@@ -333,9 +349,9 @@ function mergeBuyerConfig(
       peerRefreshIntervalMs: defaults.peerRefreshIntervalMs,
       metadataFetchTimeoutMs: defaults.metadataFetchTimeoutMs,
       disableMetadataV2Services: defaults.disableMetadataV2Services,
+      ...(normalizeBuyerVerification(undefined, defaults.verification)),
     };
   }
-  assertKnownKeys(value, 'buyer', BUYER_KEYS);
   return {
     maxPricing: mergeHierarchicalPricing(defaults.maxPricing, value['maxPricing']),
     minPeerReputation: normalizeMinPeerReputation(value['minPeerReputation'], defaults.minPeerReputation),
@@ -353,6 +369,7 @@ function mergeBuyerConfig(
       defaults.disableMetadataV2Services,
       'buyer.disableMetadataV2Services',
     ),
+    ...(normalizeBuyerVerification(value['verification'], defaults.verification)),
   };
 }
 
@@ -360,17 +377,6 @@ function normalizeBooleanConfigValue(value: unknown, defaultValue: boolean, path
   if (value === undefined) return defaultValue;
   if (typeof value === 'boolean') return value;
   throw new Error(`${path} must be a boolean`);
-}
-
-// Raw pass-through: every value (including nested upstream and unknown keys) reaches
-// assertValidConfig unchanged, which rejects mistyped or unknown entries
-// loudly. Filtering here would silently widen the config — e.g.
-// `services: [123]` collapsing to `[]` means "audit EVERYTHING", and a typo'd
-// upstream would silently disable reference enrollment.
-function mergeVerifierConfig(value: unknown): AntseedConfig['verifier'] {
-  if (value === undefined) return undefined;
-  if (!isRecord(value)) throw new Error('verifier must be an object');
-  return value as NonNullable<AntseedConfig['verifier']>;
 }
 
 /**
@@ -400,9 +406,7 @@ export async function loadConfig(configPath: string): Promise<AntseedConfig> {
 
   const defaults = createDefaultConfig();
   const parsed = isRecord(parsedRaw) ? parsedRaw : {};
-  if (parsed['relay'] !== undefined) {
-    throw new Error('relay is no longer supported');
-  }
+
   const merged: AntseedConfig = {
     ...defaults,
     ...(parsed as Partial<AntseedConfig>),
@@ -420,12 +424,6 @@ export async function loadConfig(configPath: string): Promise<AntseedConfig> {
       ...defaults.network,
       ...(isRecord(parsed['network']) ? parsed['network'] : {}),
     },
-  };
-
-  const verifier = mergeVerifierConfig(parsed['verifier']);
-  merged.verifier = {
-    ...defaults.verifier,
-    ...verifier,
   };
 
   assertValidConfig(merged);

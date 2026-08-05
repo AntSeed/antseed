@@ -85,7 +85,7 @@ export interface ModelVerificationRunSummary {
   kind: 'antseed-model-verification-run'
   runId: string
   model: string
-  mode: 'benchmark' | 'attest'
+  mode: 'evidence' | 'attest'
   referenceId: string
   probeCount: 100
   startedAt: string

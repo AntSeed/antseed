@@ -42,8 +42,5 @@ export function createDefaultConfig(): AntseedConfig {
     network: {
       bootstrapNodes: [],
     },
-    verifier: {
-      probeRequestTimeoutMs: 120_000,
-    },
   };
 }

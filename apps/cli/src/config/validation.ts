@@ -270,11 +270,36 @@ function validateVerifications(
   }
 }
 
-// Known keys per verifier section. The loader passes the raw section through
-// unfiltered (see mergeVerifierConfig), so a typo'd key must fail here loudly
-// instead of being silently ignored.
+function validateBuyerVerification(
+  path: string,
+  verification: AntseedConfig['buyer']['verification'],
+  errors: string[],
+): void {
+  if (verification === undefined) return;
+  if (!verification || typeof verification !== 'object' || Array.isArray(verification)) {
+    errors.push(`${path} must be an object when provided`);
+    return;
+  }
+  if (
+    verification.sampleRate !== undefined &&
+    (!Number.isFinite(verification.sampleRate) || verification.sampleRate < 0 || verification.sampleRate > 1)
+  ) {
+    errors.push(`${path}.sampleRate must be a number in range 0-1`);
+  }
+  if (
+    verification.maxSampleBytes !== undefined &&
+    (!Number.isInteger(verification.maxSampleBytes) || verification.maxSampleBytes < 1)
+  ) {
+    errors.push(`${path}.maxSampleBytes must be an integer >= 1`);
+  }
+}
+
+// The loader preserves this section as-is, so reject unknown keys here rather
+// than silently accepting verifier typos.
 const VERIFIER_KEYS = new Set([
   'referencesDir', 'evidenceDir', 'probeRequestTimeoutMs', 'maxTotalSpendUSDC', 'referenceEndpoint',
+  'referenceMaxRequestsPerBuild', 'referenceBatchRetryCount', 'referenceRetryBaseDelayMs',
+  'referenceMaxNoProgressRounds', 'referenceMaxConcurrentRequests', 'referenceMaxConcurrentRequestsPerModel',
 ]);
 const VERIFIER_REFERENCE_ENDPOINT_KEYS = new Set([
   'baseUrl', 'apiKey', 'apiKeyEnv', 'sourceId', 'trust', 'antseedPeerId', 'models',
@@ -294,11 +319,22 @@ function validateVerifierConfig(
   for (const key of Object.keys(verifier).filter((k) => !VERIFIER_KEYS.has(k))) {
     errors.push(`${path}.${key} is not a supported verifier option`);
   }
-  const positiveInts: Array<[string, number | undefined]> = [['probeRequestTimeoutMs', verifier.probeRequestTimeoutMs]];
+  const positiveInts: Array<[string, number | undefined]> = [
+    ['probeRequestTimeoutMs', verifier.probeRequestTimeoutMs],
+    ['referenceMaxRequestsPerBuild', verifier.referenceMaxRequestsPerBuild],
+    ['referenceRetryBaseDelayMs', verifier.referenceRetryBaseDelayMs],
+    ['referenceMaxNoProgressRounds', verifier.referenceMaxNoProgressRounds],
+    ['referenceMaxConcurrentRequests', verifier.referenceMaxConcurrentRequests],
+    ['referenceMaxConcurrentRequestsPerModel', verifier.referenceMaxConcurrentRequestsPerModel],
+  ];
   for (const [key, value] of positiveInts) {
     if (value !== undefined && (!Number.isInteger(value) || value < 1)) {
       errors.push(`${path}.${key} must be an integer >= 1`);
     }
+  }
+  if (verifier.referenceBatchRetryCount !== undefined
+    && (!Number.isInteger(verifier.referenceBatchRetryCount) || verifier.referenceBatchRetryCount < 0)) {
+    errors.push(`${path}.referenceBatchRetryCount must be an integer >= 0`);
   }
   const dirKeys: Array<[string, unknown]> = [
     ['referencesDir', verifier.referencesDir],
@@ -395,6 +431,8 @@ export function validateConfig(config: AntseedConfig): string[] {
   if (typeof config.buyer.disableMetadataV2Services !== 'boolean') {
     errors.push('buyer.disableMetadataV2Services must be a boolean');
   }
+
+  validateBuyerVerification('buyer.verification', config.buyer.verification, errors);
 
   if (!Number.isInteger(config.seller.maxConcurrentBuyers) || config.seller.maxConcurrentBuyers < 1) {
     errors.push('seller.maxConcurrentBuyers must be an integer >= 1');

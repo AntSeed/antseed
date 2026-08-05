@@ -15,7 +15,7 @@ const failedDeposit: ReadinessCheck = {
   message: 'No USDC deposited',
 }
 
-test('observe readiness ignores gas but still requires a buyer deposit', () => {
+test('evidence-only readiness ignores gas but still requires a buyer deposit', () => {
   assert.deepEqual(
     failedBuyerReadinessChecks([failedGas, failedDeposit], false),
     [failedDeposit],

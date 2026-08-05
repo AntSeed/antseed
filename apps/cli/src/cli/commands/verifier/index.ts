@@ -1,5 +1,6 @@
 import type { Command } from 'commander'
 import { registerVerifierClaimCommand } from './claim.js'
+import { registerVerifierReferenceCommand } from './reference.js'
 import { registerVerifierRunCommand } from './run.js'
 
 export function registerVerifierCommands(program: Command): void {
@@ -7,5 +8,6 @@ export function registerVerifierCommands(program: Command): void {
     .command('verifier')
     .description('Run paid model verification and claim verifier rewards')
   registerVerifierRunCommand(verifier)
+  registerVerifierReferenceCommand(verifier)
   registerVerifierClaimCommand(verifier)
 }

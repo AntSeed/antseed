@@ -162,176 +162,48 @@ test('loadConfig rejects invalid buyer disableMetadataV2Services', async () => {
   );
 });
 
-test('loadConfig rejects retired buyer delegate settings', async () => {
+test('loadConfig preserves buyer verification sampling settings', async () => {
   await withTempConfig(
     JSON.stringify({
       buyer: {
-        delegate: {
-          enabled: true,
-          maxConcurrentJobs: 4,
-          maxJobsPerHour: 120,
-          discoveryIntervalMs: 60_000,
+        verification: {
+          sampleRate: 1,
+          maxSampleBytes: 1048576,
         },
-      },
-    }),
-    async (configPath) => {
-      await assert.rejects(async () => loadConfig(configPath), /buyer\.delegate/);
-    }
-  );
-});
-
-test('loadConfig rejects retired verifier delegation settings', async () => {
-  await withTempConfig(
-    JSON.stringify({
-      verifier: {
-        services: ['kimi-k2'],
-        delegation: {
-          enabled: true,
-          signalingPort: 6883,
-          jobTimeoutMs: 45_000,
-          minDelegates: 2,
-          requireDelegates: true,
-        },
-      },
-    }),
-    async (configPath) => {
-      await assert.rejects(async () => loadConfig(configPath), /verifier\.delegation/);
-    }
-  );
-});
-
-test('loadConfig rejects the removed verifier.services setting', async () => {
-  await withTempConfig(
-    JSON.stringify({ verifier: { services: [123] } }),
-    async (configPath) => {
-      await assert.rejects(async () => loadConfig(configPath), /verifier\.services is not a supported verifier option/);
-    }
-  );
-});
-
-test('loadConfig rejects a non-object verifier section', async () => {
-  await withTempConfig(
-    JSON.stringify({ verifier: 'yes please' }),
-    async (configPath) => {
-      await assert.rejects(async () => loadConfig(configPath), /verifier must be an object/);
-    }
-  );
-});
-
-test('loadConfig rejects mistyped verifier numeric fields', async () => {
-  await withTempConfig(
-    JSON.stringify({ verifier: { probesPerAudit: '24' } }),
-    async (configPath) => {
-      await assert.rejects(async () => loadConfig(configPath), /verifier\.probesPerAudit/);
-    }
-  );
-});
-
-test('loadConfig rejects maxProbesPerRequest above the contract limit', async () => {
-  await withTempConfig(
-    JSON.stringify({ verifier: { maxProbesPerRequest: 4 } }),
-    async (configPath) => {
-      await assert.rejects(async () => loadConfig(configPath), /verifier\.maxProbesPerRequest is not a supported verifier option/);
-    }
-  );
-});
-
-test('loadConfig rejects an invalid verifier probeSource', async () => {
-  await withTempConfig(
-    JSON.stringify({ verifier: { probeSource: 'compositoinal' } }),
-    async (configPath) => {
-      await assert.rejects(async () => loadConfig(configPath), /verifier\.probeSource/);
-    }
-  );
-});
-
-test('loadConfig rejects the removed legacy verifier upstream', async () => {
-  await withTempConfig(
-    JSON.stringify({ verifier: { upstream: { baseUrl: 123 } } }),
-    async (configPath) => {
-      await assert.rejects(async () => loadConfig(configPath), /verifier\.upstream is not a supported verifier option/);
-    }
-  );
-  await withTempConfig(
-    JSON.stringify({ verifier: { upstream: ['https://u/v1'] } }),
-    async (configPath) => {
-      await assert.rejects(async () => loadConfig(configPath), /verifier\.upstream is not a supported verifier option/);
-    }
-  );
-  await withTempConfig(
-    JSON.stringify({ verifier: { upstream: { baseUrl: 'https://u/v1', modelMap: { 'kimi-k2': 7 } } } }),
-    async (configPath) => {
-      await assert.rejects(async () => loadConfig(configPath), /verifier\.upstream is not a supported verifier option/);
-    }
-  );
-});
-
-test('loadConfig rejects retired verifier publication settings', async () => {
-  await withTempConfig(
-    JSON.stringify({ verifier: { publishDir: 42 } }),
-    async (configPath) => {
-      await assert.rejects(async () => loadConfig(configPath), /verifier\.publishDir/);
-    }
-  );
-});
-
-test('loadConfig rejects retired verifier reveal settings', async () => {
-  await withTempConfig(
-    JSON.stringify({ verifier: { revealDelayMs: -1 } }),
-    async (configPath) => {
-      await assert.rejects(async () => loadConfig(configPath), /verifier\.revealDelayMs/);
-    }
-  );
-});
-
-test('loadConfig preserves a valid verifier section end-to-end', async () => {
-  await withTempConfig(
-    JSON.stringify({
-      verifier: {
-        referencesDir: './refs',
-        evidenceDir: './evidence',
-        probeRequestTimeoutMs: 90_000,
-        maxTotalSpendUSDC: '12.5',
       },
     }),
     async (configPath) => {
       const config = await loadConfig(configPath);
-      assert.equal(config.verifier?.referencesDir, './refs');
-      assert.equal(config.verifier?.evidenceDir, './evidence');
-      assert.equal(config.verifier?.probeRequestTimeoutMs, 90_000);
-      assert.equal(config.verifier?.maxTotalSpendUSDC, '12.5');
+      assert.deepEqual(config.buyer.verification, {
+        sampleRate: 1,
+        maxSampleBytes: 1048576,
+      });
     }
   );
 });
 
-test('loadConfig preserves the fixed-reference endpoint settings', async () => {
-  const peerId = '9e8f9aaee684298b7f2af2ae008e3692f0e9f4f7';
-  await withTempConfig(JSON.stringify({
-    verifier: {
-      referenceEndpoint: {
-        baseUrl: 'http://127.0.0.1:8377/v1',
-        apiKeyEnv: 'ANTSEED_REFERENCE_API_KEY',
-        sourceId: 'antseed-venice-sol-smoke-v1',
-        trust: 'smoke',
-        antseedPeerId: peerId,
-        models: {
-          'gpt-5.6-sol': {
-            upstreamModel: 'gpt-5.6-sol',
-            contrastModels: ['kimi-k3', 'gpt-5.6-luna', 'sonnet-4.8'],
-          },
+test('loadConfig rejects invalid buyer verification sampleRate', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      buyer: {
+        verification: {
+          sampleRate: 1.1,
         },
       },
-    },
-  }), async (configPath) => {
-    const config = await loadConfig(configPath);
-    assert.equal(config.verifier?.referenceEndpoint?.antseedPeerId, peerId);
-  });
+    }),
+    async (configPath) => {
+      await assert.rejects(
+        async () => loadConfig(configPath),
+        /buyer\.verification\.sampleRate/
+      );
+    }
+  );
 });
 
-test('loadConfig accepts a direct trusted endpoint and rejects the removed legacy upstream', async () => {
+test('loadConfig preserves and validates verifier settings', async () => {
   const referenceEndpoint = {
     baseUrl: 'https://reference.example/v1',
-    sourceId: 'trusted-sol-v1',
+    sourceId: 'trusted-reference-v1',
     trust: 'trusted',
     models: {
       'gpt-5.6-sol': {
@@ -340,72 +212,34 @@ test('loadConfig accepts a direct trusted endpoint and rejects the removed legac
       },
     },
   };
-  await withTempConfig(JSON.stringify({ verifier: { referenceEndpoint } }), async (configPath) => {
-    const config = await loadConfig(configPath);
-    assert.equal(config.verifier?.referenceEndpoint?.antseedPeerId, undefined);
-  });
   await withTempConfig(JSON.stringify({
-    verifier: { upstream: { baseUrl: 'https://legacy.example/v1' }, referenceEndpoint },
+    verifier: {
+      referencesDir: './refs',
+      evidenceDir: './evidence',
+      probeRequestTimeoutMs: 90_000,
+      maxTotalSpendUSDC: '12.5',
+      referenceEndpoint,
+      referenceMaxRequestsPerBuild: 500,
+      referenceBatchRetryCount: 2,
+      referenceRetryBaseDelayMs: 250,
+      referenceMaxNoProgressRounds: 2,
+      referenceMaxConcurrentRequests: 2,
+      referenceMaxConcurrentRequestsPerModel: 1,
+    },
   }), async (configPath) => {
-    await assert.rejects(() => loadConfig(configPath), /verifier\.upstream is not a supported verifier option/);
+    const config = await loadConfig(configPath);
+    assert.equal(config.verifier?.referencesDir, './refs');
+    assert.equal(config.verifier?.referenceEndpoint?.sourceId, 'trusted-reference-v1');
+    assert.equal(config.verifier?.referenceMaxRequestsPerBuild, 500);
   });
 });
 
-test('loadConfig validates the total verifier spend cap', async () => {
-  await withTempConfig(JSON.stringify({ verifier: { maxTotalSpendUSDC: '0' } }), async (configPath) => {
-    await assert.rejects(() => loadConfig(configPath), /maxTotalSpendUSDC/);
+test('loadConfig rejects invalid verifier settings', async () => {
+  await withTempConfig(JSON.stringify({ verifier: { referenceBatchRetryCount: -1 } }), async (configPath) => {
+    await assert.rejects(loadConfig(configPath), /referenceBatchRetryCount/);
   });
-});
-
-test('loadConfig rejects removed relay-oriented verifier settings', async () => {
-  for (const key of ['jobTimeoutMs', 'flatRelayFeeUsdc', 'relaySignalingPort', 'maxRelays', 'auditDurationMs']) {
-    await withTempConfig(
-      JSON.stringify({ verifier: { [key]: 1 } }),
-      async (configPath) => {
-        await assert.rejects(async () => loadConfig(configPath), new RegExp(`verifier\\.${key}`));
-      },
-    );
-  }
-});
-
-test('loadConfig rejects removed buyer relay settings', async () => {
-  await withTempConfig(JSON.stringify({ buyer: { relay: { enabled: true } } }), async (configPath) => {
-    await assert.rejects(async () => loadConfig(configPath), /buyer\.relay is not a supported buyer option/);
-  });
-});
-
-test('loadConfig rejects the removed top-level relay section', async () => {
-  await withTempConfig(JSON.stringify({ relay: { enabled: true } }), async (configPath) => {
-    await assert.rejects(loadConfig(configPath), /relay is no longer supported/);
-  });
-});
-
-test('loadConfig rejects unknown verifier keys so typos fail loudly instead of being silently dropped', async () => {
-  await withTempConfig(
-    JSON.stringify({ verifier: { probesPerAudti: 24 } }),
-    async (configPath) => {
-      await assert.rejects(async () => loadConfig(configPath), /verifier\.probesPerAudti is not a supported verifier option/);
-    }
-  );
-  await withTempConfig(JSON.stringify({ verifier: { upstream: {} } }), async (configPath) => {
-    await assert.rejects(async () => loadConfig(configPath), /verifier\.upstream is not a supported verifier option/);
-  });
-  await withTempConfig(
-    JSON.stringify({ verifier: { delegation: { enabled: true, minDelegate: 2 } } }),
-    async (configPath) => {
-      await assert.rejects(async () => loadConfig(configPath), /verifier\.delegation is not a supported verifier option/);
-    }
-  );
-});
-
-test('loadConfig rejects removed verifier scheduling settings and invalid timeout', async () => {
-  for (const key of ['auditIntervalMs', 'maxAuditsPerEpoch', 'maxConcurrentProbeRequests']) {
-    await withTempConfig(JSON.stringify({ verifier: { [key]: 0 } }), async (configPath) => {
-      await assert.rejects(async () => loadConfig(configPath), new RegExp(`verifier\\.${key}`));
-    });
-  }
-  await withTempConfig(JSON.stringify({ verifier: { probeRequestTimeoutMs: 0 } }), async (configPath) => {
-    await assert.rejects(async () => loadConfig(configPath), /probeRequestTimeoutMs/);
+  await withTempConfig(JSON.stringify({ verifier: { probesPerAudti: 24 } }), async (configPath) => {
+    await assert.rejects(loadConfig(configPath), /verifier\.probesPerAudti/);
   });
 });
 

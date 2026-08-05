@@ -44,7 +44,7 @@ test('run summaries are canonical local JSON artifacts', async () => {
       kind: 'antseed-model-verification-run',
       runId: 'run-1',
       model: 'gpt-5.6-sol',
-      mode: 'benchmark',
+      mode: 'evidence',
       referenceId: 'reference-1',
       probeCount: 100,
       startedAt: '2026-08-04T10:00:00.000Z',
@@ -56,7 +56,7 @@ test('run summaries are canonical local JSON artifacts', async () => {
     })
     const bytes = await readFile(path, 'utf8')
     assert.equal(bytes.endsWith('\n'), false)
-    assert.equal(JSON.parse(bytes).mode, 'benchmark')
+    assert.equal(JSON.parse(bytes).mode, 'evidence')
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

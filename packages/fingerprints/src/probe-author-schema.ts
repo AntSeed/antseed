@@ -1,5 +1,5 @@
 /**
- * Validation for LLM-authored probe candidates (Transparent Audits v2).
+ * Validation for LLM-authored KBF probe candidates.
  *
  * The CLI's probe author asks an upstream frontier model for candidate KBF
  * probes as a JSON array. Nothing an LLM emits is trusted: every candidate is
@@ -21,7 +21,7 @@ import type { KbfProbe } from './types.js';
 
 /**
  * Case-insensitive patterns for time-sensitive facts that make bad probes:
- * their true answers drift, so cohort disagreement would reflect data
+ * their true answers drift, so fingerprint disagreement would reflect data
  * freshness rather than model identity. Deliberately conservative — a false
  * positive costs one candidate out of an oversampled batch, a false negative
  * poisons an audit. Word-bounded so e.g. "Stockholm" does not trip "stock".

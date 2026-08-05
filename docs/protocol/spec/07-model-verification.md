@@ -11,9 +11,14 @@ attestations but does not recompute KBF verdicts.
 ## Commands
 
 ```text
-antseed verifier run <model> [--benchmark]
+antseed verifier reference build <model>
+antseed verifier run <model> [--no-attest]
 antseed verifier claim
 ```
+
+`verifier reference build` explicitly creates and validates one fixed 100-probe
+reference JSON file. `verifier run` never calls the reference endpoint; a
+missing or invalid reference fails with the build command required.
 
 `verifier run` discovers every peer advertising `<model>` and uses the exact
 advertised spelling for its requests. Every eligible peer receives the same 100
@@ -24,7 +29,7 @@ to `AntseedVerifierRegistry`. It requires buyer payment readiness, gas, verifier
 approval, and a configured verifier registry before probing. The rewards contract
 is only required by `verifier claim`.
 
-`--benchmark` runs the same paid requests, `ResponseAuth` checks, scoring, and
+`--no-attest` runs the same paid requests, `ResponseAuth` checks, scoring, and
 evidence generation but performs no verifier-registry transaction. It requires a
 funded buyer deposit but does not require verifier approval, verifier contracts,
 or gas for attestation.
@@ -56,6 +61,12 @@ verifier:
   evidenceDir: ~/.antseed/verifier/evidence
   probeRequestTimeoutMs: 120000
   maxTotalSpendUSDC: "10"
+  referenceMaxRequestsPerBuild: 2000
+  referenceBatchRetryCount: 3
+  referenceRetryBaseDelayMs: 500
+  referenceMaxNoProgressRounds: 3
+  referenceMaxConcurrentRequests: 2
+  referenceMaxConcurrentRequestsPerModel: 1
   referenceEndpoint:
     baseUrl: https://reference.example/v1
     apiKeyEnv: ANTSEED_REFERENCE_API_KEY
@@ -67,7 +78,7 @@ verifier:
         contrastModels:
           - kimi-k3
           - gpt-5.6-luna
-          - sonnet-4.8
+          - sonnet-4.6
 ```
 
 `maxTotalSpendUSDC` is required and is a human-readable USDC amount. It caps the
@@ -91,12 +102,26 @@ The reference must validate as KBF v1, include the requested model as a service
 alias, and contain exactly 100 probes. The same questions are intentionally
 reused across peers and later runs.
 
-When the file is missing or invalid, `verifier run` uses the configured trusted
-reference endpoint and model mapping to generate and certify a replacement. It
-keeps exactly the first 100 certified probes, recalculates the corresponding
-self-test and statistical-power evidence, assigns a new reference ID, and writes
-the file atomically. There is no separate reference-build command, probe catalog,
-rotation policy, exposure tracking, or adaptive probe sizing.
+`verifier reference build` repeatedly generates candidate rounds until exactly
+100 stable probes distinguish the reference model from at least one configured
+contrast model. A probe need not distinguish every contrast. The reference
+records the exact selected probe IDs that distinguished each individual contrast.
+Candidates are deduplicated across rounds by their content-derived IDs.
+
+Physical endpoint responses are checkpointed under
+`<referencesDir>/.checkpoints/<safe-model-slug>.json`. Restarting a compatible
+build reuses completed generation, enrollment, contrast, preflight, and self-test
+responses instead of paying for them again. The checkpoint is invalidated when
+the endpoint identity, model mapping, target count, or frozen query settings
+change, and is removed after the final reference is written successfully.
+
+Transient `429`, `5xx`, timeout, and connection failures retry with exponential
+backoff. The build has a hard physical-request budget, global and per-model
+concurrency limits, and adaptive concurrency reduction after throttling. Three
+consecutive rounds with no newly accepted probes fail the build rather than
+spending indefinitely. `verifier run` never generates or replaces references.
+There is no probe catalog, rotation policy, exposure tracking, daemon, relay
+workflow, or adaptive audit probe sizing.
 
 ## Response Authentication
 
@@ -139,8 +164,9 @@ Each invocation also writes one canonical summary under
 configured and actual spend, successful peer results, failure reasons, evidence
 paths, and attestation transaction hashes.
 
-There is no benchmark database, resumable workflow state, report command,
-performance metric snapshot, traffic-share lookup, or evidence URI publication.
+There is no benchmark database, resumable peer-audit workflow state, report
+command, performance metric snapshot, traffic-share lookup, or evidence URI
+publication. Only reference-build endpoint responses are checkpointed.
 
 ## On-Chain Attestation
 

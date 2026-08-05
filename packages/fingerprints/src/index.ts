@@ -6,7 +6,6 @@
  */
 
 export * from './canonical-json.js';
-export * from './prng.js';
 export * from './types.js';
 export * from './probe-author-schema.js';
 export * from './verifiers/kbf/index.js';

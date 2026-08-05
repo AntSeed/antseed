@@ -29,9 +29,9 @@ export async function startVerifierRuntime(input: {
   config: AntseedConfig
   dataDir: string
   configPath?: string
-  benchmark: boolean
+  noAttest: boolean
 }): Promise<VerifierRuntime> {
-  const chain = input.benchmark
+  const chain = input.noAttest
     ? resolveObservationVerificationChain(input.config)
     : resolveVerificationChain(input.config)
   const bootstrapNodes = input.config.network.bootstrapNodes.length > 0
@@ -63,8 +63,8 @@ export async function startVerifierRuntime(input: {
     throw new Error('verifier identity is unavailable')
   }
   try {
-    await assertBuyerPaymentReady(chain, identity, { requireGas: !input.benchmark })
-    if (!input.benchmark) await assertApprovedVerifier(chain, identity)
+    await assertBuyerPaymentReady(chain, identity, { requireGas: !input.noAttest })
+    if (!input.noAttest) await assertApprovedVerifier(chain, identity)
   } catch (error) {
     await node.stop()
     throw error

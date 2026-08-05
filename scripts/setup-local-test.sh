@@ -194,13 +194,19 @@ if (role === 'verifier') {
   config.verifier = {
     probeRequestTimeoutMs: 120000,
     maxTotalSpendUSDC: '10',
+    referenceMaxRequestsPerBuild: 2000,
+    referenceBatchRetryCount: 3,
+    referenceRetryBaseDelayMs: 500,
+    referenceMaxNoProgressRounds: 3,
+    referenceMaxConcurrentRequests: 2,
+    referenceMaxConcurrentRequestsPerModel: 1,
     referenceEndpoint: {
       baseUrl: 'http://127.0.0.1:8377/v1', apiKeyEnv,
       sourceId: 'antseed-venice-sol-smoke-v1', trust: 'smoke', antseedPeerId: peerId,
       models: {
         'gpt-5.6-sol': {
           upstreamModel: 'gpt-5.6-sol',
-          contrastModels: ['kimi-k3', 'gpt-5.6-luna', 'sonnet-4.8'],
+          contrastModels: ['kimi-k3', 'gpt-5.6-luna', 'sonnet-4.6'],
         },
       },
     },
@@ -240,7 +246,8 @@ printf 'Contracts: %s\n' "$ADDRESSES_FILE"
 printf 'Seller config: %s\nBuyer config: %s\nVerifier config: %s\n' \
   "$SELLER_DIR/config.json" "$BUYER_DIR/config.json" "$VERIFIER_DIR/config.json"
 printf '\nStart order (after pnpm run build):\n'
-printf '1. source %q && antseed --data-dir %q --config %q seller start\n' "$SELLER_DIR/smoke.env" "$SELLER_DIR" "$SELLER_DIR/config.json"
-printf '2. source %q && antseed --data-dir %q --config %q verifier run gpt-5.6-sol --benchmark\n' "$VERIFIER_DIR/smoke.env" "$VERIFIER_DIR" "$VERIFIER_DIR/config.json"
-printf '3. optional buyer: antseed --data-dir %q --config %q buyer start\n' "$BUYER_DIR" "$BUYER_DIR/config.json"
+printf '1. antseed --data-dir %q --config %q buyer start\n' "$BUYER_DIR" "$BUYER_DIR/config.json"
+printf '2. source %q && antseed --data-dir %q --config %q seller start\n' "$SELLER_DIR/smoke.env" "$SELLER_DIR" "$SELLER_DIR/config.json"
+printf '3. source %q && antseed --data-dir %q --config %q verifier reference build gpt-5.6-sol\n' "$VERIFIER_DIR/smoke.env" "$VERIFIER_DIR" "$VERIFIER_DIR/config.json"
+printf '4. antseed --data-dir %q --config %q verifier run gpt-5.6-sol --no-attest\n' "$VERIFIER_DIR" "$VERIFIER_DIR/config.json"
 printf '\nVenice is pinned only through configuration/header state; no peer ID is hard-coded in runtime code.\n'
