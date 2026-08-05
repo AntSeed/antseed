@@ -11,7 +11,6 @@ import {
   createReferenceQueryProfile,
   matchesTolerance,
   parseKbfAnswers,
-  validateCandidateProbes,
   validateKbfReferenceV1,
   type KbfProbe,
   type KbfReferenceV1,
@@ -25,6 +24,12 @@ import {
   resolveReferenceSizingPolicy,
 } from './reference-sizing.js'
 import { safeServiceSlug } from './slug.js'
+import {
+  CANONICAL_KBF_DOMAINS,
+  CANONICAL_KBF_DOMAIN_POLICY_VERSION,
+  canonicalKbfTolerance,
+  createCanonicalKbfProbe,
+} from './canonical-kbf-domains.js'
 
 const CANDIDATE_COUNT = 300
 const CANDIDATE_BATCH_SIZE = 20
@@ -35,27 +40,9 @@ const DEFAULT_MAX_NO_PROGRESS_ROUNDS = 3
 const DEFAULT_MAX_CONCURRENT_REQUESTS = 4
 const DEFAULT_MAX_CONCURRENT_REQUESTS_PER_MODEL = 3
 const MAX_TOKENS = 1600
-const REFERENCE_SIZING_ALGORITHM_VERSION = 1
+const REFERENCE_SIZING_ALGORITHM_VERSION = 2
 const REFERENCE_REASONING_STRATEGY = 'reasoning-effort-none' as const
 const REFERENCE_REQUEST_OVERRIDES = { reasoning_effort: 'none' }
-
-const CANDIDATE_DOMAINS = [
-  'obscure chemistry boiling points and melting points',
-  'specialist physical constants and material properties',
-  'irregular moons, minor planets, dim stellar systems, and unusual galaxies',
-  'specialist biology, genome, enzyme, microbiology, and comparative physiology measurements',
-  'named mathematics constants, sequence terms, combinatorics, and exact finite counts',
-  'programming language, virtual machine, binary format, and protocol constants',
-  'rare-disease, diagnostic, pharmacokinetic, and anatomical measurements',
-  'less-famous film, television, music, game, and book numeric facts',
-  'early internet services, protocol history, online communities, and open-source history',
-  'regional Chinese dynastic events, reforms, scientific history, and diplomatic history',
-  'Chinese county, river, lake, mountain, basin, and transport measurements',
-  'Chinese internet platforms, communities, games, livestreaming, and technology companies',
-  'Chinese classical collections, regional literature, publishing, poetry, and drama',
-  'elliptic curves, signatures, hashes, proof systems, consensus, and encoding parameters',
-  'frontier-obscure specialist numeric facts from mixed scientific and technical fields',
-] as const
 
 interface CollectedReferenceProbes {
   probes: KbfProbe[]
@@ -101,6 +88,9 @@ export async function loadModelReference(input: {
     })
     if (!reference.serviceAliases.some((alias) => normalized(alias) === normalized(input.model))) {
       throw new Error(`reference does not include service alias ${input.model}`)
+    }
+    if (reference.generator.params.domainPolicyVersion !== CANONICAL_KBF_DOMAIN_POLICY_VERSION) {
+      throw new Error(`reference domain policy must be ${CANONICAL_KBF_DOMAIN_POLICY_VERSION}`)
     }
     if (!isReferenceProbeCountAllowed(reference.probes.length, sizing)) {
       throw new Error(
@@ -161,9 +151,10 @@ export async function buildModelReference(input: {
     sizing,
     minimumMismatchDelta: REFERENCE_MINIMUM_MISMATCH_DELTA,
     sizingAlgorithmVersion: REFERENCE_SIZING_ALGORITHM_VERSION,
+    domainPolicyVersion: CANONICAL_KBF_DOMAIN_POLICY_VERSION,
     candidateCountPerRound: CANDIDATE_COUNT,
     candidateBatchSize: CANDIDATE_BATCH_SIZE,
-    candidatePromptVersion: 2,
+    candidatePromptVersion: 3,
     timeoutMs,
     reasoningStrategy: REFERENCE_REASONING_STRATEGY,
     requestOverrides: REFERENCE_REQUEST_OVERRIDES,
@@ -286,7 +277,7 @@ export async function buildModelReference(input: {
     source: 'generated',
     generator: {
       name: 'antseed-simple-reference-builder',
-      version: '1',
+      version: '2',
       verifierKind: 'kbf',
       params: {
         sourceId: endpoint.sourceId,
@@ -294,6 +285,7 @@ export async function buildModelReference(input: {
         candidateCount: collected.candidateCount,
         sizing,
         sizingAlgorithmVersion: REFERENCE_SIZING_ALGORITHM_VERSION,
+        domainPolicyVersion: CANONICAL_KBF_DOMAIN_POLICY_VERSION,
       },
     },
     provenance: { sourceId: endpoint.sourceId, trust: endpoint.trust },
@@ -422,7 +414,7 @@ async function certifyStableProbes(
     if (values.length !== passes.length) return []
     const consensus = median(values)
     if (consensus < probe.range[0] || consensus > probe.range[1]) return []
-    const certified = { ...probe, consensus }
+    const certified = { ...probe, consensus, tolerance: canonicalKbfTolerance(probe.domain, consensus) }
     return values.every((value) => matchesTolerance(value, certified)) ? [certified] : []
   })
 }
@@ -461,52 +453,118 @@ async function generateCandidates(
   round: number,
   query: ReferenceQuery,
 ): Promise<KbfProbe[]> {
-  const probes: KbfProbe[] = []
-  const seen = new Set<string>()
-  for (let offset = 0; offset < count; offset += CANDIDATE_BATCH_SIZE) {
-    const batchSize = Math.min(CANDIDATE_BATCH_SIZE, count - offset)
-    const body = {
-      model,
-      temperature: 0.7,
-      max_tokens: 6000,
-      messages: [
-        { role: 'system', content: 'Create stable numeric factual-recall probes. Output only valid JSON.' },
-        { role: 'user', content: candidatePrompt(batchSize, round, offset / CANDIDATE_BATCH_SIZE) },
-      ],
-    }
-    const content = await query(model, body)
-    let parsed: unknown
-    try {
-      parsed = parseJsonArray(content)
-    } catch (error) {
-      await query.invalidate?.(model, body)
-      throw error
-    }
-    const validated = validateCandidateProbes(parsed)
-    for (const probe of validated.probes) {
-      if (!seen.has(probe.id)) {
-        seen.add(probe.id)
-        probes.push(probe)
+  const baseCount = Math.floor(count / CANONICAL_KBF_DOMAINS.length)
+  const remainder = count % CANONICAL_KBF_DOMAINS.length
+  const generatedByDomain = await Promise.all(CANONICAL_KBF_DOMAINS.map(async (definition, domainIndex) => {
+    const countPerDomain = baseCount + (domainIndex < remainder ? 1 : 0)
+    if (countPerDomain === 0) return []
+    const probes: KbfProbe[] = []
+    const seen = new Set<string>()
+    for (let offset = 0; offset < countPerDomain; offset += CANDIDATE_BATCH_SIZE) {
+      const batchSize = Math.min(CANDIDATE_BATCH_SIZE, countPerDomain - offset)
+      const theme = definition.themes[(round + domainIndex - 1) % definition.themes.length]!
+      const batch = offset / CANDIDATE_BATCH_SIZE + 1
+      const prompt = canonicalCandidatePrompt(definition, batchSize, round, batch, theme)
+      const body = {
+        model,
+        temperature: 0.7,
+        max_tokens: 6000,
+        messages: [
+          { role: 'system', content: 'Create stable numeric factual-recall probes. Output only the requested list.' },
+          { role: 'user', content: prompt },
+        ],
+      }
+      const content = await query(model, body)
+      for (const fact of parseCanonicalFacts(content, definition.range)) {
+        const probe = createCanonicalKbfProbe({
+          domainKey: definition.key,
+          name: fact.name,
+          consensus: fact.value,
+          generationRound: round,
+          generationTheme: theme,
+        })
+        if (!seen.has(probe.id)) {
+          seen.add(probe.id)
+          probes.push(probe)
+        }
       }
     }
+    return probes
+  }))
+  const probes: KbfProbe[] = []
+  for (let index = 0; probes.length < count; index += 1) {
+    let added = false
+    for (const domainProbes of generatedByDomain) {
+      const probe = domainProbes[index]
+      if (!probe) continue
+      probes.push(probe)
+      added = true
+      if (probes.length >= count) break
+    }
+    if (!added) break
   }
   return probes
 }
 
-function candidatePrompt(count: number, round: number, batch: number): string {
-  const focus = CANDIDATE_DOMAINS[batch % CANDIDATE_DOMAINS.length]!
+function canonicalCandidatePrompt(
+  definition: (typeof CANONICAL_KBF_DOMAINS)[number],
+  count: number,
+  round: number,
+  batch: number,
+  theme: string,
+): string {
   return [
-    `Generate exactly ${count} diverse specialist numeric facts for generation round ${round}, batch ${batch + 1}.`,
-    `Focus on ${focus}.`,
-    'Prefer obscure, niche facts likely to separate nearby frontier models; avoid textbook examples.',
-    'Return only one valid JSON array with no Markdown or explanation.',
-    'Each object must contain name, domain, template with exactly one ___ marker, consensus, range, and tolerance.',
-    'consensus MUST be a finite JSON number literal, never a quoted string, expression, fraction, null, NaN, or Infinity.',
-    'range MUST be two distinct finite JSON number literals [lo,hi] with lo < consensus < hi.',
-    'tolerance MUST be {"mode":"absolute"|"relative","value":<finite JSON number>} and relative values must be <= 1.',
-    'Put units and scale in name and template so the answer is only one plain number.',
-    'Avoid current, volatile, ambiguous, approximate-range, disputed, or previously repeated facts.',
-  ].join(' ')
+    `Generate exactly ${count} facts in canonical KBF domain ${definition.key} for generation round ${round}, batch ${batch}.`,
+    `List ${definition.generationSubject}.`,
+    `Focus on: ${theme}.`,
+    difficultyInstruction(round),
+    'Use only facts with one stable, defensible, finite numeric answer.',
+    'Put units and scale in the fact name so the answer is only the number.',
+    'Format every line exactly as: fact_name | numeric_value',
+    'Output only the list. Do not choose a range or tolerance.',
+  ].join('\n')
+}
+
+function difficultyInstruction(round: number): string {
+  if (round <= 1) return 'Choose specialist-level facts and avoid textbook examples.'
+  if (round === 2) return 'Choose very obscure facts unlikely to appear in general references.'
+  return 'Choose frontier-obscure facts from specialist reference material.'
+}
+
+function parseCanonicalFacts(text: string, range: readonly [number, number]): Array<{ name: string; value: number }> {
+  const trimmed = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
+  if (trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed) as Array<{ name?: unknown; consensus?: unknown; value?: unknown }>
+      return parsed.flatMap((entry) => {
+        const value = typeof entry.consensus === 'number' ? entry.consensus : entry.value
+        return typeof entry.name === 'string'
+          && entry.name.trim().length > 0
+          && entry.name.length <= 240
+          && typeof value === 'number'
+          && Number.isFinite(value)
+          && value >= range[0]
+          && value <= range[1]
+          ? [{ name: entry.name.trim(), value }]
+          : []
+      })
+    } catch {
+      return []
+    }
+  }
+  const facts: Array<{ name: string; value: number }> = []
+  for (const rawLine of text.replace(/<think>[\s\S]*?<\/think>/gi, '').split('\n')) {
+    const line = rawLine.trim().replace(/^\d+[.)]\s*/, '').replace(/^[-*]\s*/, '')
+    const separator = line.lastIndexOf('|')
+    if (separator <= 0) continue
+    const name = line.slice(0, separator).trim().replaceAll('**', '')
+    const numeric = line.slice(separator + 1).trim().replace(/[,_\s]/g, '').replace(/[−–]/g, '-')
+    if (!name || name.length > 240 || !/^-?\d+(?:\.\d+)?(?:e[+-]?\d+)?$/i.test(numeric)) continue
+    const value = Number(numeric)
+    if (!Number.isFinite(value) || value < range[0] || value > range[1]) continue
+    facts.push({ name, value })
+  }
+  return facts
 }
 
 function createReferenceQuery(input: {
@@ -788,11 +846,6 @@ class EmptyReferenceResponseError extends Error {
   constructor(detail = '') {
     super(`reference endpoint returned no text content${detail ? `: ${detail}` : ''}`)
   }
-}
-
-function parseJsonArray(content: string): unknown {
-  const trimmed = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
-  return JSON.parse(trimmed)
 }
 
 function median(values: number[]): number {

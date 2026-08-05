@@ -49,6 +49,7 @@ import { ProxyMux } from "./proxy/proxy-mux.js";
 import { PaymentMux } from "./p2p/payment-mux.js";
 import { VerificationMux } from "./verification/verification-mux.js";
 import { ResponseAuthStorage, type StoredResponseAuth } from "./verification/storage.js";
+import { VerificationSampler } from "./verification/samples.js";
 import { FrameDecoder, encodeFrame } from "./p2p/message-protocol.js";
 import { KeepaliveManager, buildPongPayload } from "./p2p/keepalive.js";
 import { MessageType } from "./types/protocol.js";
@@ -169,6 +170,15 @@ export interface NodePaymentsConfig {
   disableMetadataV2Services?: boolean;
 }
 
+export interface NodeVerificationConfig {
+  /** Random sample rate for storing full buyer request/response evidence. Default: 0.005. */
+  sampleRate?: number;
+  /** Maximum combined encoded request + response bytes per sample. Default: 16 MiB. */
+  maxSampleBytes?: number;
+  /** Optional directory for verification samples. Default: <dataDir>/verification_samples. */
+  samplesDir?: string;
+}
+
 export interface NodeConfig {
   role: 'seller' | 'buyer';
   displayName?: string;
@@ -198,6 +208,8 @@ export interface NodeConfig {
   dhtOperationTimeoutMs?: number;
   /** Optional seller-side payment runtime wiring. */
   payments?: NodePaymentsConfig;
+  /** Optional buyer-side verification storage and sampling settings. */
+  verification?: NodeVerificationConfig;
   /** Pluggable identity storage backend. When set, takes precedence over dataDir for identity loading. */
   identityStore?: IdentityStore;
   /** Optional explicit config.json path for runtime config reloads. */
@@ -282,6 +294,8 @@ export class AntseedNode extends EventEmitter {
   private _channelStore: ChannelStore | null = null;
   /** Buyer-side response authentication storage. */
   private _responseAuthStorage: ResponseAuthStorage | null = null;
+  /** Buyer-side plaintext evidence sampler for verified response auths. */
+  private _verificationSampler: VerificationSampler | null = null;
   /** Periodic timeout checker interval. */
   private _timeoutCheckerInterval: ReturnType<typeof setInterval> | null = null;
   /** Block cursor for CloseRequested event polling. */
@@ -518,6 +532,7 @@ export class AntseedNode extends EventEmitter {
       }
       this._responseAuthStorage = null;
     }
+    this._verificationSampler = null;
 
     if (this._timeoutCheckerInterval) {
       clearInterval(this._timeoutCheckerInterval);
@@ -1662,6 +1677,7 @@ export class AntseedNode extends EventEmitter {
         negotiator: this._buyerNegotiator,
         freeUsageManager: this._buyerFreeUsageManager,
         responseAuthStorage: this._responseAuthStorage,
+        verificationSampler: this._verificationSampler,
         getConnection: (peer) => this._getOrCreateConnection(peer),
         getMux: (peerId, conn) => this._getOrCreateMux(peerId, conn),
         getVerificationMux: (peerId, conn) => this._getOrCreateVerificationMux(peerId, conn),
@@ -1916,6 +1932,13 @@ export class AntseedNode extends EventEmitter {
     if (this._responseAuthStorage) return;
     try {
       this._responseAuthStorage = new ResponseAuthStorage(join(dataDir, "verification.db"));
+      this._verificationSampler = new VerificationSampler(
+        this._config.verification?.samplesDir ?? join(dataDir, "verification_samples"),
+        {
+          sampleRate: this._config.verification?.sampleRate,
+          maxSampleBytes: this._config.verification?.maxSampleBytes,
+        },
+      );
       debugLog("[Node] ResponseAuth storage initialized");
     } catch (err) {
       debugWarn(`[Node] Verification storage unavailable: ${err instanceof Error ? err.message : err}`);

@@ -3,6 +3,7 @@ export {
   AntseedNode,
   type NodeConfig,
   type NodePaymentsConfig,
+  type NodeVerificationConfig,
   type RequestStreamCallbacks,
   type RequestStreamResponseMetadata,
   type BuyerUsageTotals,
@@ -188,6 +189,7 @@ export {
 } from './proxy/request-codec.js';
 export {
   VerificationMux,
+  VerificationSampler,
   ResponseAuthStorage,
   buildResponseAuthSigningBytes,
   decodeContractResponseAuthPayload,
@@ -200,7 +202,10 @@ export {
   hashRequest,
   hashResponse,
   type ResponseAuthExecutionWindow,
+  type ResponseAuthSampleInput,
   type StoredResponseAuth,
+  type StoredVerificationSample,
+  type VerificationSampleConfig,
 } from './verification/index.js';
 export { resolveProvider } from './proxy/provider-detection.js';
 export {

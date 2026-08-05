@@ -117,6 +117,15 @@ query settings change. Transient `429`, `5xx`, timeout, and connection failures
 retry with exponential backoff. The build retains hard request budgets,
 concurrency limits, adaptive throttle reduction, and bounded no-progress failure.
 
+Candidate generation follows the canonical KBF domain registry. Code owns each
+domain's cloze template, broad validity range, tolerance mode, and tolerance;
+the reference model proposes only a fact name and provisional numeric value.
+AntSeed's model-identity policy keeps integer mathematics exact but compares
+non-integer mathematical constants at approximately ten significant digits. This is
+the only deliberate deviation from the public KBF domain policy, where all
+mathematics is exact. The policy version is bound into checkpoints and reference
+metadata, so policy changes require a fresh reference build.
+
 ## Coverage and Verdicts
 
 The runtime always evaluates the complete selected reference and calls KBF with

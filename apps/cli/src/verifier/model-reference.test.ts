@@ -11,6 +11,7 @@ import {
 } from '@antseed/fingerprints'
 import type { VerifierCLIConfig } from '../config/types.js'
 import { buildModelReference, collectReferenceProbes, loadModelReference } from './model-reference.js'
+import { CANONICAL_KBF_DOMAIN_POLICY_VERSION } from './canonical-kbf-domains.js'
 
 const MODEL = 'gpt-test'
 
@@ -55,7 +56,12 @@ function reference(count: number, hamming = 0, alpha = 0.05, confidence = 0.99):
     serviceAliases: [MODEL],
     createdAt: '2026-08-05T00:00:00.000Z',
     source: 'generated',
-    generator: { name: 'test', version: '1', verifierKind: 'kbf', params: {} },
+    generator: {
+      name: 'test',
+      version: '1',
+      verifierKind: 'kbf',
+      params: { domainPolicyVersion: CANONICAL_KBF_DOMAIN_POLICY_VERSION },
+    },
     queryProfile: createReferenceQueryProfile({ upstreamModel: 'upstream-test' }),
     selfTest: {
       hamming,
@@ -109,8 +115,13 @@ function generatedCandidates(prompt: string): string {
 
 function successfulContent(model: string, prompt: string): string {
   if (prompt.startsWith('Generate ')) return generatedCandidates(prompt)
-  const values = [...prompt.matchAll(/test value (\d+) is ___/g)].map((match) => Number(match[1]))
+  const values = testPromptValues(prompt)
   return values.map((value, index) => `(${index + 1}) ${model.startsWith('contrast-') ? value + 100_000 : value}`).join('\n')
+}
+
+function testPromptValues(prompt: string): number[] {
+  return [...prompt.matchAll(/(?:stable fact|collector fact|range fact) (\d+)/g)]
+    .map((match) => Number(match[1]))
 }
 
 function response(content: string, status = 200): Response {
@@ -175,7 +186,7 @@ test('loader rejects references outside the configured adaptive sizing policy', 
 test('adaptive builder selects the first powered prefix', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'antseed-reference-adaptive-'))
   const zeroTemperatureCalls = new Map<string, number>()
-  const mismatches = new Set([1, 2, 101, 102])
+  let selfTestMismatchesRemaining = 4
   const fetchFn: typeof fetch = async (_url, init) => {
     const body = JSON.parse(String(init?.body)) as {
       model: string
@@ -185,13 +196,15 @@ test('adaptive builder selects the first powered prefix', async () => {
     const prompt = body.messages.at(-1)?.content ?? ''
     if (prompt.includes('Reply with only the number 7')) return response('7')
     if (prompt.startsWith('Generate ')) return response(generatedCandidates(prompt))
-    const values = [...prompt.matchAll(/test value (\d+) is ___/g)].map((match) => Number(match[1]))
+    const values = testPromptValues(prompt)
     const zeroCall = body.temperature === 0 ? (zeroTemperatureCalls.get(prompt) ?? 0) + 1 : 0
     if (body.temperature === 0) zeroTemperatureCalls.set(prompt, zeroCall)
     const selfTest = body.temperature === 0 && zeroCall === 2
-    return response(values.map((value, index) => (
-      `(${index + 1}) ${selfTest && mismatches.has(value) ? value + 0.5 : value}`
-    )).join('\n'))
+    return response(values.map((value, index) => {
+      const mismatch = selfTest && selfTestMismatchesRemaining > 0
+      if (mismatch) selfTestMismatchesRemaining -= 1
+      return `(${index + 1}) ${mismatch ? value + Math.max(10, Math.abs(value) * 0.2) : value}`
+    }).join('\n'))
   }
   try {
     const built = await buildModelReference({ model: MODEL, referencesDir: directory, config: config(), fetchFn })
@@ -228,19 +241,16 @@ test('adaptive builder generates more candidates when the next step is unavailab
         }
       })))
     }
-    const values = [...prompt.matchAll(/test value (\d+) is ___/g)].map((match) => Number(match[1]))
+    const values = testPromptValues(prompt)
     const zeroCall = body.temperature === 0 ? (zeroTemperatureCalls.get(prompt) ?? 0) + 1 : 0
     if (body.temperature === 0) zeroTemperatureCalls.set(prompt, zeroCall)
-    const selfTest = body.temperature === 0 && zeroCall === 2
-    return response(values.map((value, index) => (
-      `(${index + 1}) ${selfTest && [1, 2].includes(value) ? value + 0.5 : value}`
-    )).join('\n'))
+    return response(values.map((value, index) => `(${index + 1}) ${value}`).join('\n'))
   }
   try {
     const built = await buildModelReference({
       model: MODEL,
       referencesDir: directory,
-      config: config({ referenceMaximumProbeCount: 110 }),
+      config: config({ referenceMinimumProbeCount: 110, referenceMaximumProbeCount: 110 }),
       fetchFn,
     })
     assert.equal(built.reference.probes.length, 110)
@@ -265,7 +275,7 @@ test('underpowered 500-probe maximum preserves the previous reference', async ()
     const prompt = body.messages.at(-1)?.content ?? ''
     if (prompt.includes('Reply with only the number 7')) return response('7')
     if (prompt.startsWith('Generate ')) return response(generatedCandidates(prompt))
-    const values = [...prompt.matchAll(/test value (\d+) is ___/g)].map((match) => Number(match[1]))
+    const values = testPromptValues(prompt)
     const zeroCall = body.temperature === 0 ? (zeroTemperatureCalls.get(prompt) ?? 0) + 1 : 0
     if (body.temperature === 0) zeroTemperatureCalls.set(prompt, zeroCall)
     const selfTest = body.temperature === 0 && zeroCall === 2
@@ -305,7 +315,7 @@ test('collector generates until target and accepts probes distinguishing any con
         }
       }))
     }
-    const values = [...prompt.matchAll(/collector test value (\d+) is ___/g)].map((match) => Number(match[1]))
+    const values = testPromptValues(prompt)
     return values.map((value, index) => {
       const differs = model === 'contrast-a' ? value % 2 === 1 : model === 'contrast-b' && value % 2 === 0
       return `(${index + 1}) ${differs ? value + 100 : value}`
@@ -378,8 +388,8 @@ test('collector rejects certified consensus values outside the declared range', 
         tolerance: { mode: 'absolute', value: 20 },
       }])
     }
-    const value = Number(prompt.match(/range collector value (\d+) is ___/)?.[1])
-    return `(1) ${value === 1 ? 15 : 5}`
+    const value = Number(prompt.match(/range fact (\d+)/)?.[1])
+    return `(1) ${value === 1 ? 700 : 5}`
   }
 
   const collected = await collectReferenceProbes({
@@ -399,7 +409,9 @@ test('reference requests retry transient failures', async () => {
   const fetchFn: typeof fetch = async (_url, init) => {
     const body = JSON.parse(String(init?.body)) as { model: string; messages: Array<{ content: string }> }
     const prompt = body.messages.at(-1)?.content ?? ''
-    if (prompt.includes('generation round 1, batch 1.') && firstCandidateBatchAttempts++ === 0) {
+    if (prompt.includes('domain chemistry_bp')
+      && prompt.includes('generation round 1, batch 1.')
+      && firstCandidateBatchAttempts++ === 0) {
       return response('throttled', 429)
     }
     return response(successfulContent(body.model, prompt))
@@ -439,7 +451,7 @@ test('failed builds resume cached reference responses', async () => {
     const body = JSON.parse(String(init?.body)) as { model: string; messages: Array<{ content: string }> }
     const prompt = body.messages.at(-1)?.content ?? ''
     promptCalls.set(prompt, (promptCalls.get(prompt) ?? 0) + 1)
-    if (failSecondCandidateBatch && prompt.includes('generation round 1, batch 2')) {
+    if (failSecondCandidateBatch && prompt.includes('domain chemistry_mp') && prompt.includes('batch 1')) {
       failSecondCandidateBatch = false
       return response('invalid request', 400)
     }
@@ -463,7 +475,7 @@ test('checkpoint compatibility invalidates changed sizing policies', async () =>
     const body = JSON.parse(String(init?.body)) as { model: string; messages: Array<{ content: string }> }
     const prompt = body.messages.at(-1)?.content ?? ''
     promptCalls.set(prompt, (promptCalls.get(prompt) ?? 0) + 1)
-    if (failSecondCandidateBatch && prompt.includes('generation round 1, batch 2')) {
+    if (failSecondCandidateBatch && prompt.includes('domain chemistry_mp') && prompt.includes('batch 1')) {
       failSecondCandidateBatch = false
       return response('invalid request', 400)
     }

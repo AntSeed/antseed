@@ -2,7 +2,7 @@ declare module "bittorrent-dht" {
   import { EventEmitter } from "node:events";
 
   interface DHTOptions {
-    bootstrap?: string[] | false;
+    bootstrap?: string[];
   }
 
   class DHT extends EventEmitter {

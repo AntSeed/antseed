@@ -17,6 +17,12 @@ export {
   type ResponseAuthVerificationResult,
 } from './response-auth.js';
 export {
+  VerificationSampler,
+  type ResponseAuthSampleInput,
+  type StoredVerificationSample,
+  type VerificationSampleConfig,
+} from './samples.js';
+export {
   ResponseAuthStorage,
   type StoredResponseAuth,
 } from './storage.js';
