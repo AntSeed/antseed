@@ -7,6 +7,11 @@ import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { IAntseedEmissionsGate } from "../interfaces/IAntseedEmissionsGate.sol";
 import { IAntseedVerifierRegistry } from "../interfaces/IAntseedVerifierRegistry.sol";
 import { IAntseedVerifierRewards } from "../interfaces/IAntseedVerifierRewards.sol";
+import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
+
+interface IRegistryBoundVerifierEmissionsGate {
+    function registry() external view returns (IAntseedRegistry);
+}
 
 contract AntseedVerifierRewards is IAntseedVerifierRewards, ReentrancyGuard {
     IAntseedEmissionsGate public immutable override gate;
@@ -35,7 +40,9 @@ contract AntseedVerifierRewards is IAntseedVerifierRewards, ReentrancyGuard {
         if (gate_.code.length == 0 || verifierRegistry_.code.length == 0) revert InvalidAddress();
         gate = IAntseedEmissionsGate(gate_);
         verifierRegistry = IAntseedVerifierRegistry(verifierRegistry_);
-        if (address(gate.registry()) != address(verifierRegistry.registry())) revert GateRegistryMismatch();
+        if (address(IRegistryBoundVerifierEmissionsGate(gate_).registry()) != address(verifierRegistry.registry())) {
+            revert GateRegistryMismatch();
+        }
         firstRewardedEpoch = gate.effectiveEpoch();
     }
 

@@ -19,14 +19,13 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
-- Added `antseed verifier reference build <model>` and `antseed verifier run <model> [--no-attest]`. Reference creation is explicit; runs only load fixed 100-probe files. Evidence-only mode requires buyer payment readiness but no verifier approval, verifier contracts, or attestation gas.
-- Added a direct final-attestation `AntseedVerifierRegistry` API with compact metric events, latest and historical routing state, per-service and per-agent verdict counters, standing-DIFF remediation, seller points penalties, one-day target/service cooldowns, a 100-credit verifier epoch cap, and a ten-probe contract minimum. Valid uncredited attestations still update verification history.
-- Changed verifier penalties to weight a mismatching service by its share of the seller's current-epoch settled USDC, computed off-chain from complete cursor-paginated Antscan Ponder data. `submitVerificationResult` replaces `submitAttestation`, rejects epoch rollover, permits zero-share `DIFF` records without a points penalty, and keeps existing Attestation storage and events.
+- Added `antseed verifier reference build <model>` and buyer-proxy-only `antseed verifier run <model>`. Reference creation is explicit; runs load powered references selected adaptively from 100 through 500 probes, read peers from the running buyer, pin every probe request through its local proxy, and write proxy-observation evidence without requiring a separate verifier identity or deposit.
+- Added a direct final-attestation `AntseedVerifierRegistry` API with compact metric events, hash-committed evidence, latest and historical routing state, per-service and per-agent verdict counters, seller points penalties controlled by the latest conclusive audit, and an owner-configurable 100-credit verifier epoch cap. Valid attestations beyond the cap still update verification history and penalties.
+- Added service-weighted verifier penalties: `submitVerificationResult` accepts the audited model's seller-volume share, rejects epoch rollover, and permits zero-share `DIFF` records without a points penalty.
 - Added verifier-only `AntseedVerifierRewards`, allocating the entire verification emissions bucket pro rata by epoch credits and freezing the epoch budget and credit denominator on first claim or zero-credit remainder settlement.
-- Added canonical local verification evidence containing fixed-reference data, paid request/response hashes, verified `ResponseAuth` payloads, payment records, match vectors, statistical power, and verdicts. Workflow state uses JSON artifacts rather than verification database tables.
-- Added a target-driven KBF reference builder that generates candidate rounds until exactly 100 stable probes distinguish the reference from at least one configured contrast, records accurate per-contrast subsets, deduplicates candidates, self-tests the fixed set, and atomically replaces one JSON reference file.
+- Added canonical local proxy-observation evidence containing reference data, pinned request/response hashes, match vectors, statistical power, and verdicts. It explicitly contains no `ResponseAuth` or payment evidence, and workflow state uses JSON artifacts rather than verification database tables.
+- Added a target-driven KBF reference builder that generates candidate rounds until enough stable probes distinguish the reference from at least one configured contrast, records accurate per-contrast subsets, deduplicates candidates, grows self-tested prefixes by ten until statistical power reaches 90%, and atomically replaces one JSON reference file.
 - Added lightweight reference-build resilience: endpoint/model preflight, cached request checkpoints with compatibility invalidation and restart reuse, transient retry/backoff, a hard physical-request budget, global and per-model concurrency limits, adaptive throttling after `429`, and bounded no-progress termination.
-- Modernized the fresh Anvil deployment and `scripts/setup-local-test.sh` to deploy and wire the direct verifier registry, verifier rewards controller, and points policy; parse Foundry broadcast addresses; approve and fund the verifier wallet and buyer deposit; generate seller/buyer/verifier configs; and assert contract relationships without nonce-derived addresses.
 - Added per-(peer, model) verification reputation so buyers can incorporate on-chain verification history into local routing and authenticity scoring.
 - Added a macOS menu bar icon for Desktop with quick actions to show or quit AntSeed.
 - Added System Proxy commands to the CLI and a Desktop System Proxy view/tray controls for connecting supported local tools through AntSeed.
@@ -43,13 +42,18 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
-- Hardened the verifier network's commit-reveal and evidence trail: probe-set commitments now bind the complete probe definitions (templates, expected answers, ranges, tolerances) instead of probe ids only, so scoring criteria cannot be altered after observing seller responses, and the published response packs embed the full signed ResponseAuth payloads plus exact request/response bytes so any third party can re-verify every observation offline (pre-release wire-format change: probeSetId, commitments, nonces, and evidence hashes all change).
-- Hardened verifier daemon cost control: hard per-epoch caps on attempted audits (independent of credited attestations), exponential per-seller backoff for sellers that repeatedly fail to produce credited audits, enforcement of the on-chain `minProbeCount` before any commit or probe spend, rotation-pool recycling instead of permanent audit failure, per-round policy refresh, bounded-backoff retry on transient RPC outages, and probe requests that preserve the seller's advertised model spelling.
-- Hardened buyer-delegated probing: delegate workers re-check the verifier whitelist on a TTL (revoked verifiers are dropped mid-session), abort abandoned jobs end-to-end, enforce a strict probe-job schema (model must match the audited service, streaming refused, response caps), fail closed on stop, and discover credit accruals from a persisted block cursor so log scans are incremental across restarts; delegation hosts cap connected delegates and delegates reject jobs until a welcome is accepted.
-- Changed buyer routing to exclude sellers carrying an active (unretracted) model-substitution flag for the requested service, falling back to the agent-wide aggregate: the CLI/Desktop buyer proxy — which routes pinned-peer-only — now refuses to dispatch to a flagged peer, including an explicitly pinned one, until every accusing verifier retracts (`/v1/models` listing stays exempt so flagged peers remain inspectable), and `DefaultRouter` drops flagged peers from selection. Retracted DIFFs downgrade to a history signal, per-(peer, model) verification stats persist in `buyer.state.json` so the gate keeps working from the warm cache across restarts, `findPeer` and incremental background discovery carry the same verification enrichment as full discovery, and delegation hosts are discoverable via their capability DHT topic.
-- Changed verifier configuration to accept evidence/reference directories, request timeout, a required total-run USDC cap, the trusted reference endpoint/model mapping, and bounded reference-build retry, request-budget, progress, and concurrency controls. Removed daemon scheduling, adaptive audit sizing, catalog rotation, benchmark persistence, and legacy upstream options.
-- Verifier and delegate reward claiming is fault-isolated per epoch, so one reverting epoch no longer blocks every later one.
-- Added `AntseedVerifierRegistry.clearVerifierStanding`, an owner-only remediation that retracts a specific verifier's standing DIFF for an (agent, service) — de-whitelisting alone could not clear standing accusations, so two rogue verifiers could otherwise zero a seller's recognized-usage emissions permanently.
+- Changed reference generation to use the canonical KBF domain registry with
+  deterministic code-owned ranges and tolerances instead of LLM-authored
+  scoring policy. Mathematics uses the public KBF domain's exact-match
+  tolerance; existing references and checkpoints must be rebuilt.
+- Changed KBF audits to use the paper's fixed reference denominator: missing,
+  malformed, non-finite, out-of-range, and valid-but-nonmatching answers from
+  completed responses count as discrepancies. Only exhausted transport retries
+  produce `UNDETERMINED`, and OpenAI Responses SSE bodies are decoded even when
+  a peer streams despite `stream: false`.
+- Changed buyer discovery to load each seller's verifier attestations once and derive verification lifecycles for every advertised service. `DefaultRouter` excludes suspended services and deprioritizes flagged services during automatic selection, while explicit peer pins remain authoritative. `findPeer` and incremental background discovery use the same enrichment as full discovery.
+- Changed verifier configuration to accept evidence/reference directories, request timeout, trusted reference endpoint/model mapping, and bounded reference-build retry, request-budget, progress, concurrency, and adaptive-sizing controls.
+- Verifier reward claiming is fault-isolated per epoch, so one reverting epoch no longer blocks every later one.
 - Changed API adapter streaming transforms to use canonical stream events with per-protocol normalizers and renderers, so new stream protocols can be added without pairwise routes.
 - Changed Desktop renderer navigation to load only the active view, preload likely next views, and show a lightweight loading state while lazily loaded pages resolve.
 - Increased the default free-usage on-chain record flush interval from 10 seconds to 5 minutes to reduce background transaction frequency while preserving batch, disconnect, and shutdown flushes.
@@ -97,10 +101,7 @@ This project uses selective package publishing. Each release entry lists the pub
 - Added verified seller links to `antseed network browse`, including domain and GitHub indicators for claims that the buyer has independently verified.
 - Added verified domain and GitHub badges to Desktop Discover seller cards, with the verified links included in discover search/filter data.
 - Added shared verification-link formatting in `@antseed/node` so CLI and Desktop render the same verified external claims safely.
-
-### Changed
-
-- Removed the verification relay treasury, buyer audit-relay worker, relay discovery/hosting, assignments, entitlements, positional proofs, force claims, commit/reveal scheduling, delayed audit windows, and the separate `verifier attest` stage. Ordinary buyer payments, the gasless deposit relay, provider response relaying, trusted fingerprints, and seller `ResponseAuth` transport remain unchanged.
+- Added buyer response-auth evidence sampling configuration via `buyer.verification.sampleRate` and `buyer.verification.maxSampleBytes`, allowing deployments to tune how often verified request/response samples are retained and how large a sample may be.
 
 ## 2026-05-18 — Seller setup, payment recovery, and peer refresh
 

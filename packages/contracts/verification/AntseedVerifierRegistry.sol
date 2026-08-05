@@ -9,6 +9,10 @@ import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
 import { IAntseedVerifierRegistry } from "../interfaces/IAntseedVerifierRegistry.sol";
 import { IERC8004Registry } from "../interfaces/IERC8004Registry.sol";
 
+interface IRegistryBoundEmissionsGate {
+    function registry() external view returns (IAntseedRegistry);
+}
+
 contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
     uint256 public constant BPS_DENOMINATOR = 10_000;
 
@@ -81,7 +85,9 @@ contract AntseedVerifierRegistry is IAntseedVerifierRegistry, Ownable2Step {
         if (registry_.code.length == 0 || emissionsGate_.code.length == 0) revert InvalidAddress();
         registry = IAntseedRegistry(registry_);
         emissionsGate = IAntseedEmissionsGate(emissionsGate_);
-        if (address(emissionsGate.registry()) != registry_) revert EmissionsGateMismatch();
+        if (address(IRegistryBoundEmissionsGate(emissionsGate_).registry()) != registry_) {
+            revert EmissionsGateMismatch();
+        }
     }
 
     function setVerifier(address verifier, bool approved) external override onlyOwner {

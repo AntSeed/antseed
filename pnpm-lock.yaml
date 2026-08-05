@@ -397,9 +397,6 @@ importers:
 
   e2e:
     dependencies:
-      '@antseed/fingerprints':
-        specifier: workspace:*
-        version: link:../packages/fingerprints
       '@antseed/node':
         specifier: workspace:*
         version: link:../packages/node
@@ -412,9 +409,6 @@ importers:
       '@antseed/router-local':
         specifier: workspace:*
         version: link:../plugins/router-local
-      ethers:
-        specifier: ^6.13.5
-        version: 6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
     devDependencies:
       '@types/node':
         specifier: ^20.11.0
