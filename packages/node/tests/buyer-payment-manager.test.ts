@@ -1141,6 +1141,34 @@ describe('BuyerPaymentManager', () => {
     expect(manager.getReserveCeiling(sellerPeerId)).toBe(20_000_000n);
   });
 
+  it('resendReserveAuth replays the original reserve amount after top-up', async () => {
+    store.close();
+    store = new ChannelStore(tempDir);
+    manager = new BuyerPaymentManager(
+      identity,
+      makeConfig(tempDir, { maxReserveAmountUsdc: 100_000n }),
+      store,
+    );
+    manager.setSigner(Wallet.createRandom());
+    mux = createMockPaymentMux();
+
+    const sellerPeerId = fakePeerId('seller-replay-rsv');
+    await manager.authorizeSpending(sellerPeerId, mux, 10_000n, 50_000n, TEST_PRICING);
+    mux.sentSpendingAuths.length = 0;
+
+    await manager.topUpReserve(sellerPeerId, mux);
+    expect((mux.sentSpendingAuths[0] as Record<string, unknown>).reserveMaxAmount).toBe('150000');
+    expect(manager.getReserveCeiling(sellerPeerId)).toBe(150_000n);
+
+    mux.sentSpendingAuths.length = 0;
+    await manager.resendReserveAuth(sellerPeerId, mux);
+
+    expect(mux.sentSpendingAuths).toHaveLength(1);
+    const replay = mux.sentSpendingAuths[0] as Record<string, unknown>;
+    expect(replay.reserveMaxAmount).toBe('50000');
+    expect(manager.getReserveCeiling(sellerPeerId)).toBe(150_000n);
+  });
+
   // parseResponseCost tests removed — method removed (cost flows through NeedAuth now)
 
   // ── Session persistence ────────────────────────────────────────

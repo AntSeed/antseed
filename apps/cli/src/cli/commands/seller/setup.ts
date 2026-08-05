@@ -215,6 +215,31 @@ export function registerSellerSetupCommand(sellerCmd: Command): void {
         });
 
         config.seller.providers[providerName] = providerEntry;
+
+        // Optional verifier SDK — advertised in metadata so buyers can attest this node.
+        const verifiers = TRUSTED_PLUGINS.filter((plugin) => plugin.type === 'verifier');
+        if (verifiers.length > 0) {
+          console.log(chalk.bold('\nVerifier SDK (optional — lets buyers cryptographically attest your node):\n'));
+          verifiers.forEach((plugin, index) => {
+            console.log(`  ${chalk.cyan(String(index + 1))}. ${plugin.name.padEnd(28)} ${chalk.dim(plugin.description)}`);
+          });
+          console.log(`  ${chalk.cyan('0')}. ${chalk.dim('None')}`);
+          console.log('');
+          const verifierChoice = await rl.question('Choose a verifier SDK (number, blank for none): ');
+          const verifierNum = parseInt(verifierChoice.trim(), 10);
+          if (verifierNum > 0 && verifierNum <= verifiers.length) {
+            const selectedVerifier = verifiers[verifierNum - 1]!;
+            const verifierSpinner = ora(`Installing ${selectedVerifier.package}...`).start();
+            try {
+              await installPlugin(selectedVerifier.package);
+              verifierSpinner.succeed(chalk.green(`Installed ${selectedVerifier.package}`));
+              config.seller.verifiers = [selectedVerifier.name];
+            } catch (err) {
+              verifierSpinner.fail(chalk.red(`Failed: ${(err as Error).message} — add it later with 'antseed seller start --verifiers ${selectedVerifier.name}'`));
+            }
+          }
+        }
+
         assertValidConfig(config);
         await saveConfig(globalOpts.config, config);
         console.log(chalk.green(`\nProvider "${providerName}" saved to config.`));

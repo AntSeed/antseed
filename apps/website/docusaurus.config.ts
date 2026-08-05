@@ -191,7 +191,7 @@ const config: Config = {
         {to: '/blog', label: 'Blog', position: 'right'},
         {to: '/ants-token', label: '$ANTS', position: 'right', className: 'header-ants-link'},
         {
-          href: process.env.NODE_ENV === 'development' ? 'http://localhost:5180/' : 'https://diem.antseed.com',
+          href: process.env.NODE_ENV === 'development' ? 'http://localhost:5180/' : 'https://diemantseed.com',
           label: '$DIEM',
           position: 'right',
           className: 'header-diem-link',

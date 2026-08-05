@@ -4,10 +4,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import test from 'node:test'
-import type { PeerInfo } from '@antseed/node'
+import { CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1, type PeerInfo } from '@antseed/node'
 import { DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from '../config/defaults.js'
 import {
   BuyerProxy,
+  makeVerifierReach,
   parsePeerPinnedService,
   parsePersistedPeers,
   rewritePeerPinnedServiceInBody,
@@ -53,6 +54,7 @@ function makeProxyResponse(): {
   headersSent: boolean
   writableEnded: boolean
   writeHead: (statusCode: number, headers: Record<string, string>) => unknown
+  write: (chunk: string | Buffer | Uint8Array) => unknown
   end: (chunk?: string | Buffer | Uint8Array) => unknown
   once: () => unknown
 } {
@@ -67,6 +69,10 @@ function makeProxyResponse(): {
       this.headers = headers
       this.headersSent = true
       return this
+    },
+    write(chunk: string | Buffer | Uint8Array) {
+      this.body += Buffer.from(chunk).toString('utf8')
+      return true
     },
     end(chunk?: string | Buffer | Uint8Array) {
       if (chunk !== undefined) {
@@ -179,6 +185,63 @@ test('selectCandidatePeersForRouting keeps all peers when no protocol or provide
   assert.equal(result.routePlanByPeerId.size, 0)
 })
 
+test('sweep control endpoint validates and broadcasts via the running node', async () => {
+  const validSweep = {
+    version: 1,
+    evmChainId: 31337,
+    relayAddress: '0x' + '8a'.repeat(20),
+    from: '0x' + '11'.repeat(20),
+    amount: '5000000',
+    validAfter: 0,
+    validBefore: 2_000_000_000,
+    nonce: '0x' + 'aa'.repeat(32),
+    sig3009: '0x' + 'ab'.repeat(65),
+  }
+
+  const broadcasts: unknown[] = []
+  const listeners = new Map<string, (event: unknown) => void>()
+  const proxy = new BuyerProxy({
+    port: 0,
+    dataDir: '/tmp/antseed-test',
+    node: {
+      router: null,
+      on: (event: string, listener: (event: unknown) => void) => listeners.set(event, listener),
+      broadcastSweepRequest: (payload: unknown) => {
+        broadcasts.push(payload)
+        return 3
+      },
+    } as any,
+  })
+
+  const res = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/sweep', body: validSweep }))
+  assert.equal(res.statusCode, 200)
+  assert.deepEqual(JSON.parse(res.body), { ok: true, sent: 3 })
+  assert.equal(broadcasts.length, 1)
+
+  // Malformed payloads are rejected by the wire codec, not broadcast.
+  const bad = await invokeProxy(proxy, makeProxyRequest({
+    path: '/_antseed/sweep',
+    body: { ...validSweep, sig3009: 'garbage' },
+  }))
+  assert.equal(bad.statusCode, 400)
+  assert.equal(broadcasts.length, 1)
+
+  // Receipts surfaced via node events are readable per-nonce.
+  const emit = listeners.get('sweep:receipt')
+  assert.ok(emit, 'proxy subscribes to sweep:receipt')
+  emit!({ peerId: 'p1', payload: { version: 1, authNonce: validSweep.nonce, status: 'confirmed', txHash: '0x' + '77'.repeat(32) } })
+
+  const receiptRes = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: `/_antseed/sweep/${validSweep.nonce}` }))
+  assert.equal(receiptRes.statusCode, 200)
+  const receiptBody = JSON.parse(receiptRes.body) as { ok: boolean; receipt: { status: string; txHash: string } }
+  assert.equal(receiptBody.receipt.status, 'confirmed')
+  assert.equal(receiptBody.receipt.txHash, '0x' + '77'.repeat(32))
+
+  // Unknown nonce returns null receipt.
+  const missing = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: `/_antseed/sweep/0x${'bb'.repeat(32)}` }))
+  assert.deepEqual(JSON.parse(missing.body), { ok: true, receipt: null })
+})
+
 test('peer refresh control endpoint triggers immediate refresh', async () => {
   const refreshedPeer = makePeer('a', ['anthropic'])
   const proxy = makeBuyerProxyWithPeers([], [refreshedPeer])
@@ -194,6 +257,18 @@ test('peer refresh control endpoint triggers immediate refresh', async () => {
   assert.equal(refreshCalled, true)
   assert.equal(res.statusCode, 200)
   assert.deepEqual(body, { ok: true, total: 1 })
+})
+
+test('peers control endpoint exposes relay capability metadata', async () => {
+  const peer = makePeer('a', ['openai'])
+  peer.capabilities = [CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1]
+  const proxy = makeBuyerProxyWithPeers([peer])
+
+  const res = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/peers' }))
+  const body = JSON.parse(res.body) as { peers: Array<{ capabilities: string[] }> }
+
+  assert.equal(res.statusCode, 200)
+  assert.deepEqual(body.peers[0]?.capabilities, [CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1])
 })
 
 test('selectCandidatePeersForRouting excludes peers when requested service is not in provider metadata', () => {
@@ -465,6 +540,149 @@ test('/v1/models retryable response reports router success', async () => {
   assert.match(res.body, /model probe failed/)
   assert.equal(routerResults.length, 1)
   assert.equal(routerResults[0]?.success, true)
+})
+
+test('non-stream transformed responses requests force upstream stream without streaming to client', async () => {
+  const peer = makePeer('a', ['openai-responses'])
+  peer.providerServiceApiProtocols = {
+    'openai-responses': {
+      services: {
+        'gpt-5.6-sol': ['openai-responses'],
+      },
+    },
+  }
+  let sendRequestCalls = 0
+  let sendRequestStreamCalls = 0
+  let capturedRequestBody: Record<string, unknown> | null = null
+  let capturedRequestHeaders: Record<string, string> | null = null
+  const proxy = makeBuyerProxyWithPeers([peer], [peer])
+  ;(proxy as any)._node.sendRequest = async (
+    _peer: PeerInfo,
+    request: { requestId: string; body: Uint8Array; headers: Record<string, string> },
+  ) => {
+    sendRequestCalls += 1
+    capturedRequestBody = parseJsonBody(request.body)
+    capturedRequestHeaders = request.headers
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({
+        id: 'resp_1',
+        object: 'response',
+        model: 'gpt-5.6-sol',
+        output: [{
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'hi' }],
+        }],
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      })),
+    }
+  }
+  ;(proxy as any)._node.sendRequestStream = async () => {
+    sendRequestStreamCalls += 1
+    throw new Error('sendRequestStream should not be used')
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    path: '/v1/messages',
+    headers: {
+      'x-antseed-pin-peer': peer.peerId,
+    },
+    body: {
+      model: 'gpt-5.6-sol',
+      max_tokens: 128,
+      messages: [{ role: 'user', content: 'hello' }],
+    },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(sendRequestCalls, 1)
+  assert.equal(sendRequestStreamCalls, 0)
+  assert.equal(capturedRequestBody?.['stream'], true)
+  assert.equal(capturedRequestHeaders?.['x-antseed-client-stream-requested'], 'false')
+  const body = JSON.parse(res.body) as { content?: Array<{ type: string; text: string }> }
+  assert.equal(body.content?.[0]?.text, 'hi')
+})
+
+test('accept-sse transformed responses requests stream adapted client events without body stream flag', async () => {
+  const peer = makePeer('a', ['openai-responses'])
+  peer.providerServiceApiProtocols = {
+    'openai-responses': {
+      services: {
+        'gpt-5.6-sol': ['openai-responses'],
+      },
+    },
+  }
+  let sendRequestCalls = 0
+  let sendRequestStreamCalls = 0
+  let capturedRequestBody: Record<string, unknown> | null = null
+  let capturedRequestHeaders: Record<string, string> | null = null
+  const proxy = makeBuyerProxyWithPeers([peer], [peer])
+  ;(proxy as any)._node.sendRequest = async () => {
+    sendRequestCalls += 1
+    throw new Error('sendRequest should not be used')
+  }
+  ;(proxy as any)._node.sendRequestStream = async (
+    _peer: PeerInfo,
+    request: { requestId: string; body: Uint8Array; headers: Record<string, string> },
+    callbacks: {
+      onResponseStart: (response: { requestId: string; statusCode: number; headers: Record<string, string>; body: Uint8Array }, metadata: { streaming: boolean }) => void
+      onResponseChunk: (chunk: { requestId: string; data: Uint8Array; done: boolean }) => void
+    },
+  ) => {
+    sendRequestStreamCalls += 1
+    capturedRequestBody = parseJsonBody(request.body)
+    capturedRequestHeaders = request.headers
+    callbacks.onResponseStart({
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body: new Uint8Array(),
+    }, { streaming: true })
+    callbacks.onResponseChunk({
+      requestId: request.requestId,
+      data: Buffer.from(
+        'event: response.created\n'
+        + 'data: {"type":"response.created","response":{"id":"resp_1","object":"response","model":"gpt-5.6-sol","status":"in_progress","output":[],"output_text":"","usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}\n\n'
+        + 'event: response.output_text.delta\n'
+        + 'data: {"type":"response.output_text.delta","output_index":0,"item_id":"msg_1","content_index":0,"delta":"hi","logprobs":[]}\n\n'
+        + 'event: response.completed\n'
+        + 'data: {"type":"response.completed","response":{"id":"resp_1","object":"response","model":"gpt-5.6-sol","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n',
+      ),
+      done: false,
+    })
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body: Buffer.from(''),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    path: '/v1/messages',
+    headers: {
+      'accept': 'text/event-stream',
+      'x-antseed-pin-peer': peer.peerId,
+    },
+    body: {
+      model: 'gpt-5.6-sol',
+      max_tokens: 128,
+      messages: [{ role: 'user', content: 'hello' }],
+    },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(sendRequestCalls, 0)
+  assert.equal(sendRequestStreamCalls, 1)
+  assert.equal(capturedRequestBody?.['stream'], true)
+  assert.equal(capturedRequestHeaders?.['x-antseed-client-stream-requested'], 'true')
+  assert.match(res.body, /event: message_start/)
+  assert.match(res.body, /event: content_block_delta/)
+  assert.match(res.body, /"text":"hi"/)
+  assert.doesNotMatch(res.body, /event: response\.completed/)
 })
 
 test('model peer prefix pins the request peer and strips the routed model', async () => {
@@ -879,4 +1097,29 @@ test('rewritePeerPinnedServiceInBody returns original when body is not a JSON ob
   const result = rewritePeerPinnedServiceInBody(body, jsonHeaders)
   assert.equal(result.body, body)
   assert.equal(result.pinnedPeerId, null)
+})
+
+test('makeVerifierReach: rejects non-attest paths, sends the attest route as a payment-free control-plane request', async () => {
+  const peer = makePeer('a', ['openai'])
+  const signal = new AbortController().signal
+
+  const rejectNode = { sendRequest: async () => ({ statusCode: 200, headers: {}, body: new Uint8Array() }) }
+  await assert.rejects(
+    makeVerifierReach(rejectNode as never, peer, 'antseed-verifier', signal)({ method: 'POST', path: '/v1/chat/completions' }),
+    /may only call its attestation route/,
+  )
+
+  let opts: Record<string, unknown> | undefined
+  const captureNode = {
+    sendRequest: async (_peer: unknown, _req: unknown, o: Record<string, unknown>) => {
+      opts = o
+      return { statusCode: 200, headers: {}, body: new Uint8Array() }
+    },
+  }
+  const resp = await makeVerifierReach(captureNode as never, peer, 'antseed-verifier', signal)(
+    { method: 'POST', path: '/_antseed/attest/antseed-verifier', body: new Uint8Array([1]) },
+  )
+  assert.equal(resp.statusCode, 200)
+  assert.equal(opts!.controlPlane, true)
+  assert.equal(opts!.signal, signal)
 })

@@ -3,6 +3,7 @@ import {
   DepositsClient,
   ChannelsClient,
   StakingClient,
+  DepositRelayClient,
   loadOrCreateIdentity,
   resolveChainConfig,
 } from '@antseed/node';
@@ -109,6 +110,7 @@ type ResolvedCryptoConfig = NonNullable<AntseedConfig['payments']['crypto']> & {
   emissionsContractAddress?: string;
   verifierRegistryAddress?: string;
   verifierRewardsAddress?: string;
+  depositRelayAddress?: string;
   evmChainId: number;
 };
 
@@ -158,6 +160,7 @@ export function requireCryptoConfig(
     identityRegistryAddress: crypto.identityRegistryAddress || resolved.identityRegistryAddress,
     verifierRegistryAddress: crypto.verifierRegistryAddress || resolved.verifierRegistryAddress,
     verifierRewardsAddress: crypto.verifierRewardsAddress || resolved.verifierRewardsAddress,
+    depositRelayAddress: crypto.depositRelayAddress || resolved.depositRelayAddress,
     evmChainId: resolved.evmChainId,
   };
 }
@@ -269,6 +272,22 @@ export function createVerifierRewardsClient(config: AntseedConfig, overrides?: C
     rpcUrl: crypto.rpcUrl,
     ...fallbackClientOpts(crypto),
     contractAddress: crypto.verifierRewardsAddress,
+    evmChainId: crypto.evmChainId,
+  });
+}
+
+/**
+ * Create a DepositRelayClient from the CLI config.
+ */
+export function createDepositRelayClient(config: AntseedConfig, overrides?: CryptoConfigOverrides): DepositRelayClient {
+  const crypto = requireCryptoConfig(config, overrides);
+  if (!crypto.depositRelayAddress) {
+    throw new Error('No deposit relay address configured for this chain. Set payments.crypto.depositRelayAddress in your config file.');
+  }
+  return new DepositRelayClient({
+    rpcUrl: crypto.rpcUrl,
+    ...fallbackClientOpts(crypto),
+    contractAddress: crypto.depositRelayAddress,
     evmChainId: crypto.evmChainId,
   });
 }

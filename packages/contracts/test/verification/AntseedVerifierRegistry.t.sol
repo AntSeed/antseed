@@ -34,7 +34,7 @@ contract AntseedVerifierRegistryTest is Test {
         registry.setProtocolReserve(address(0x2222));
         identityRegistry = new MockERC8004Registry();
         registry.setIdentityRegistry(address(identityRegistry));
-        gate = new AntseedEmissionsGate(address(registry), 15_000, 15_000);
+        gate = new AntseedEmissionsGate(address(0x1111), address(0x2222), 15_000, 15_000);
         verifierRegistry = new AntseedVerifierRegistry(address(registry), address(gate));
         verifierRegistry.setVerifier(verifier, true);
         verifierRegistry.setVerifier(secondVerifier, true);

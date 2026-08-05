@@ -5,7 +5,7 @@ import { writeFile, unlink } from 'node:fs/promises'
 import { join, resolve, isAbsolute, dirname } from 'node:path'
 import { getGlobalOptions } from '../types.js'
 import { loadConfig } from '../../../config/loader.js'
-import { AntseedNode, type Provider, resolveChainConfig, loadOrCreateIdentity } from '@antseed/node'
+import { AntseedNode, type Provider, type Prover, resolveChainConfig, loadOrCreateIdentity } from '@antseed/node'
 import type { PaymentConfig } from '@antseed/node/payments'
 import { checkSellerReadiness, DEFAULT_MIN_SETTLE_DELTA_STR } from '@antseed/node/payments'
 import {
@@ -15,9 +15,10 @@ import {
   resolveBaseRpcUrlOverride,
 } from '../../payment-utils.js'
 import type { AntseedConfig } from '../../../config/types.js'
+import { ANTSEED_VERIFIER_SDKS_ENV, buildVerifierCapabilities, normalizeVerifierIds } from '../../../plugins/verifier.js'
 import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
-import { loadProviderPlugin, buildPluginConfig, getPackageVersions } from '../../../plugins/loader.js'
+import { loadProviderPlugin, loadProverPlugin, buildPluginConfig, getPackageVersions } from '../../../plugins/loader.js'
 import { ensurePluginsUpToDate } from '../../../plugins/drift.js'
 import { resolveEffectiveSellerConfig, type SellerRuntimeOverrides } from '../../../config/effective.js'
 import { ensureDerivedIdentityDisplayName } from '../../../config/identity-display-name.js'
@@ -330,6 +331,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
     .option('--min-settle-delta <usdc>', 'minimum unsettled delta (USDC decimal, e.g. 0.002) before idle settle submits a tx')
     .option('--base-rpc-url <url>', `runtime-only Base JSON-RPC URL override (also ${ANTSEED_BASE_RPC_URL_ENV})`)
     .option('--skip-prereq-check', 'skip pre-flight checks (services configured, on-chain registration + stake). Use only for local testing.')
+    .option('--verifiers <ids>', `comma-separated verifier SDK ids this seller supports (first is default; also ${ANTSEED_VERIFIER_SDKS_ENV})`)
     .action(async (options) => {
       const globalOpts = getGlobalOptions(sellerCmd)
       const config = await loadConfig(globalOpts.config)
@@ -425,6 +427,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       const sellerWalletAddress = process.env['ANTSEED_SELLER_WALLET_ADDRESS']
 
       let paymentConfig: PaymentConfig | null = null
+      let depositRelayAddress: string | undefined
       if (preferredMethod === 'crypto') {
         const cc = resolveChainConfig({
           chainId: config.payments.crypto?.chainId,
@@ -437,7 +440,9 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
           usdcContractAddress: config.payments.crypto?.usdcContractAddress,
           identityRegistryAddress: config.payments.crypto?.identityRegistryAddress,
           emissionsContractAddress: config.payments.crypto?.emissionsContractAddress,
+          depositRelayAddress: config.payments.crypto?.depositRelayAddress,
         })
+        depositRelayAddress = cc.depositRelayAddress
         const defaultLockAmountUSDCBaseUnits = toUSDCBaseUnits(
           config.payments.crypto?.defaultLockAmountUSDC ?? defaultDepositAmountUSDC,
           defaultDepositAmountUSDCBaseUnits,
@@ -546,6 +551,9 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         ? toUSDCBaseUnits(minSettleDeltaFlag, DEFAULT_MIN_SETTLE_DELTA_STR)
         : (config.payments.minSettleDelta ?? DEFAULT_MIN_SETTLE_DELTA_STR)
       console.log(chalk.dim(`  min settle delta: ${minSettleDelta} base units`))
+      if (config.payments.serveWhileClosePending) {
+        console.log(chalk.yellow('  Warning: serveWhileClosePending is enabled. Channels whose buyer already requested close on-chain will still be served, and their withdraw timer may already have matured — work served on them can become uncollectible.'))
+      }
       console.log(chalk.dim(`  reserve floor: ${effectiveSellerConfig.reserveFloor}`))
       console.log(chalk.dim(`  max concurrent buyers: ${effectiveSellerConfig.maxConcurrentBuyers}`))
       const maxUploadBodyBytes = parseOptionalPositiveIntegerEnv(process.env['ANTSEED_MAX_UPLOAD_BODY_BYTES'])
@@ -573,11 +581,40 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         ? { sellerContract: sellerContractCfg.address }
         : undefined
 
+      // Load provers before advertising verifier capabilities.
+      let requestedVerifierIds: string[]
+      try {
+        requestedVerifierIds = normalizeVerifierIds(
+          (options.verifiers as string | undefined)
+            ?? process.env[ANTSEED_VERIFIER_SDKS_ENV]
+            ?? config.seller.verifiers?.join(',')
+            ?? '',
+        )
+      } catch (err) {
+        console.error(chalk.red((err as Error).message))
+        process.exit(1)
+      }
+      const loadedProvers: Prover[] = []
+      for (const id of requestedVerifierIds) {
+        try {
+          const prover = await loadProverPlugin(id)
+          if (prover.name !== id) {
+            throw new Error(`its package exported a prover named "${prover.name}" — advertised id and prover name must match`)
+          }
+          loadedProvers.push(prover)
+        } catch (err) {
+          console.error(chalk.red(`Cannot advertise verifier "${id}": ${(err as Error).message.split('\n')[0]}`))
+          process.exit(1)
+        }
+      }
+      const verifierCapabilities = buildVerifierCapabilities(requestedVerifierIds)
+
       const node = new AntseedNode({
         role: 'seller',
         displayName: config.identity.displayName,
         ...(config.seller.publicAddress ? { publicAddress: config.seller.publicAddress } : {}),
         ...(effectiveSellerConfig.verifications ? { verifications: effectiveSellerConfig.verifications } : {}),
+        ...(verifierCapabilities.length > 0 ? { capabilities: verifierCapabilities } : {}),
         bootstrapNodes,
         dataDir: globalOpts.dataDir,
         ...(dhtPort ? { dhtPort } : {}),
@@ -593,6 +630,9 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
           paymentConfig,
           minBudgetPerRequest: config.payments.minBudgetPerRequest ?? '10000',
           minSettleDelta,
+          ...(config.payments.serveWhileClosePending !== undefined
+            ? { serveWhileClosePending: config.payments.serveWhileClosePending }
+            : {}),
           // Top-level fields required by the node for contract clients + EIP-712 domain
           ...(paymentConfig?.crypto ? {
             rpcUrl: paymentConfig.crypto.rpcUrl,
@@ -604,8 +644,10 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
             identityRegistryAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).identityRegistryAddress,
             stakingAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).stakingContractAddress,
             chainId: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).evmChainId,
+            ...(depositRelayAddress ? { depositRelayAddress } : {}),
           } : {}),
         },
+        ...(config.relayer ? { relayer: config.relayer } : {}),
         ...(announcerSellerContract ? { sellerContract: announcerSellerContract } : {}),
       })
 
@@ -645,12 +687,20 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         node.registerProvider(provider)
       }
 
+      for (const prover of loadedProvers) {
+        node.registerProver(prover)
+        console.log(chalk.dim(`  Verifier prover embedded: ${prover.name}`))
+      }
+
       try {
         await node.start()
         nodeSpinner.succeed(chalk.green('Seeding active'))
         console.log(chalk.dim(`  Peer ID: ${node.peerId ?? 'unknown'}`))
         console.log(chalk.dim(`  DHT port: ${node.dhtPort}`))
         console.log(chalk.dim(`  Signaling port: ${node.signalingPort}`))
+        if (requestedVerifierIds.length > 0) {
+          console.log(chalk.dim(`  Verifiers advertised: ${requestedVerifierIds.join(', ')}`))
+        }
       } catch (err) {
         nodeSpinner.fail(chalk.red(`Failed to start seeding: ${(err as Error).message}`))
         process.exit(1)

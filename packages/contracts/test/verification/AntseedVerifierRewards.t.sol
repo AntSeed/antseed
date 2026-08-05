@@ -36,7 +36,7 @@ contract AntseedVerifierRewardsTest is Test {
         core.setProtocolReserve(address(0x2222));
         identity = new MockERC8004Registry();
         core.setIdentityRegistry(address(identity));
-        gate = new AntseedEmissionsGate(address(core), 15_000, 15_000);
+        gate = new AntseedEmissionsGate(address(0x1111), address(0x2222), 15_000, 15_000);
         registry = new AntseedVerifierRegistry(address(core), address(gate));
         rewards = new AntseedVerifierRewards(address(gate), address(registry));
         gate.setMinter(VERIFICATION_MINTER_ID, address(rewards), 10_000, true);

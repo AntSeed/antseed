@@ -125,6 +125,12 @@ export interface SellerCLIConfig {
   verifications?: VerificationConfig;
   /** Maximum upload body size (bytes) accepted from buyers per request. Default: 64 MiB. */
   maxUploadBodyBytes?: number;
+  /**
+   * Verifier SDK ids this seller advertises and runs provers for (first is the
+   * default). Chosen in `antseed seller setup`; overridden at launch by
+   * `--verifiers` or the ANTSEED_VERIFIER_SDKS env var.
+   */
+  verifiers?: string[];
 }
 
 /**
@@ -164,6 +170,8 @@ export interface PaymentsCLIConfig {
    * amount. Default: "2000" (~$0.002).
    */
   minSettleDelta?: string;
+  /** Serve channels whose buyer already requested close on-chain, risking uncollectible work. Default: false. */
+  serveWhileClosePending?: boolean;
   /** Optional seller-side slack for estimate-only reserve preflight checks. Unset disables estimate-only rejection. */
   reserveEstimateOverdraftUsdc?: string;
   /**
@@ -212,6 +220,8 @@ export interface PaymentsCLIConfig {
     verifierRegistryAddress?: string;
     /** Deployed AntseedVerifierRewards contract address */
     verifierRewardsAddress?: string;
+    /** Deployed AntseedDepositRelay contract address (gasless deposit sweeps) */
+    depositRelayAddress?: string;
     /** Default lock amount per session in human-readable USDC (e.g. "1" = 1 USDC) */
     defaultLockAmountUSDC?: string;
   };
@@ -274,6 +284,21 @@ export interface VerifierReferenceEndpointConfig {
 }
 
 /**
+ * Seller-side deposit-sweep relayer configuration. ON by default (opt-out).
+ */
+export interface RelayerCLIConfig {
+  /** Relay buyer deposit sweeps with the seller wallet. Default: true. */
+  enabled?: boolean;
+  /** Minimum acceptable profit (FEE - estimated gas cost) in USDC base units.
+   *  May be negative to relay at a loss (local testing). Default: "0". */
+  minProfitBaseUnits?: string;
+  /** Max concurrent sweep submissions. Default: 2. */
+  maxInFlight?: number;
+  /** Max sweep requests accepted per peer per minute. Default: 6. */
+  maxPerPeerPerMinute?: number;
+}
+
+/**
  * Network configuration within the Antseed config.
  */
 export interface NetworkCLIConfig {
@@ -298,6 +323,8 @@ export interface AntseedConfig {
   payments: PaymentsCLIConfig;
   /** Verifier mode settings (model-verification network) */
   verifier?: VerifierCLIConfig;
+  /** Seller-side deposit-sweep relayer settings (opt-out, ON by default) */
+  relayer?: RelayerCLIConfig;
   /** Network / DHT settings */
   network: NetworkCLIConfig;
   /** Installed plugins */

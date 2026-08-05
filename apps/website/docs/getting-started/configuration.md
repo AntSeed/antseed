@@ -152,7 +152,7 @@ Everything a seller announces lives under `seller.providers[name]`. The key unde
 {
   "seller": {
     "reserveFloor": 10,
-    "maxConcurrentBuyers": 5,
+    "maxConcurrentBuyers": 50,
     "providers": {
       "together": {
         "plugin": "openai",

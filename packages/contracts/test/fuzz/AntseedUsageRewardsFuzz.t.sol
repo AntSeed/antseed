@@ -99,19 +99,19 @@ contract AntseedUsageRewardsFuzzTest is Test {
         token.enableTransfers();
 
         vm.warp(GATE_GENESIS + GATE_EPOCH_DURATION * 4 + 1);
-        gate = new AntseedEmissionsGate(address(registry), 15_000, 15_000);
+        gate = new AntseedEmissionsGate(teamWallet, reserve, 15_000, 15_000);
         token.setRegistry(address(gate));
         // No bucket mints until the legacy escrow is settled; any recipient
         // address marks the pot funded.
         gate.fundLegacyEscrow(address(0xE5C0));
 
-        pools = new AntseedSellerPools(address(registry));
+        pools = new AntseedSellerPools(address(token), address(gate), address(identity), address(agentLookup));
         token.setTransferWhitelist(address(pools), true);
 
         usageAccounting = new AntseedUsageAccounting(address(pools), address(this), address(gate));
         registry.setEmissions(address(usageAccounting));
 
-        usageRewards = new AntseedUsageRewards(address(gate), address(registry), address(usageAccounting));
+        usageRewards = new AntseedUsageRewards(address(gate), address(usageAccounting), address(identity), address(depositsMock));
         gate.setMinter(USAGE_MINTER_ID, address(usageRewards), USAGE_SHARE_BPS, true);
 
         // Register agent and seed pool power.

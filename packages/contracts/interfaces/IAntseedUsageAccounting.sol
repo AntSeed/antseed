@@ -10,7 +10,6 @@ interface IAntseedUsageAccounting {
     struct SellerUsage {
         uint256 points;
         uint256 weightedPoints;
-        uint256 poolPoints;
     }
 
     struct UsageTotals {
@@ -44,7 +43,6 @@ interface IAntseedUsageAccounting {
 
     error InvalidAddress();
     error InvalidValue();
-    error NotUsageRecorder();
     error NoPendingSellerAccrual();
     error UsageRewardsNotSet();
 
@@ -81,7 +79,6 @@ interface IAntseedUsageAccounting {
     function totalPoolPointsByEpoch(uint256 epoch) external view returns (uint256);
     function totalWeightedPoolPointsByEpoch(uint256 epoch) external view returns (uint256);
     function totalWeightedBuyerPointsByEpoch(uint256 epoch) external view returns (uint256);
-    function totalWeightedSellerPointsByEpoch(uint256 epoch) external view returns (uint256);
     function sellerAgentIdByEpoch(uint256 epoch, address seller) external view returns (uint256);
     function buyerPointsByEpoch(uint256 epoch, address buyer) external view returns (uint256);
     function sellerPointsByEpoch(uint256 epoch, address seller) external view returns (uint256);
@@ -89,7 +86,5 @@ interface IAntseedUsageAccounting {
     function poolPointsByEpoch(uint256 epoch, address seller) external view returns (uint256);
     function weightedPoolPointsByEpoch(uint256 epoch, uint256 agentId) external view returns (uint256);
     function weightedPoolPointsByEpoch(uint256 epoch, address seller) external view returns (uint256);
-    function weightedAgentSellerPointsByEpoch(uint256 epoch, uint256 agentId) external view returns (uint256);
-    function weightedSellerPointsByEpoch(uint256 epoch, address seller) external view returns (uint256);
     function weightedBuyerPointsByEpoch(uint256 epoch, address buyer) external view returns (uint256);
 }

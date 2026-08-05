@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { IAntseedRegistry } from "./IAntseedRegistry.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 interface IAntseedSellerPools {
-    event RegistrySet(address indexed registry);
+    event StakingSourceSet(address indexed stakingSource);
     event StakeCreated(
         uint256 indexed positionId,
         address indexed staker,
@@ -59,9 +59,9 @@ interface IAntseedSellerPools {
     error NotPositionOwner();
     error StakeDurationOutOfBounds();
     error PositionClosed();
+    error PositionChangePending();
     error AlreadyWithdrawn();
     error NotRewardStaker();
-    error EmissionsNotConfigured();
 
     function stake(uint256 agentId, uint256 amount, uint256 stakeEpochs) external returns (uint256 positionId);
     function stakeFor(address staker, uint256 agentId, uint256 amount, uint256 stakeEpochs)
@@ -91,7 +91,9 @@ interface IAntseedSellerPools {
         uint256 maxSlashBps,
         uint256 minEarlyExitSlashBps
     ) external;
-    function registry() external view returns (IAntseedRegistry);
+    function stakingSource() external view returns (address);
+
+    function antsToken() external view returns (IERC20);
     function currentEpoch() external view returns (uint256);
     function agentIdForSeller(address seller) external view returns (uint256);
 
@@ -105,8 +107,6 @@ interface IAntseedSellerPools {
         external
         view
         returns (uint256 normalEndEpoch, uint256 maxLockPower, uint256 nextChangeEpoch);
-    function poolPowerWeightAtEpoch(uint256 agentId, uint256 epoch) external view returns (uint256 weight);
-    function poolPowerWeightAtEpoch(address seller, uint256 epoch) external view returns (uint256 weight);
     function totalPowerWeightAtEpoch(uint256 epoch) external view returns (uint256 weight);
     function currentPoolSecurityWeight(uint256 agentId) external returns (uint256 weight);
     function currentPoolSecurityWeight(address seller) external returns (uint256 weight);

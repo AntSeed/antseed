@@ -86,6 +86,7 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
     event ChannelClosed(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 settledAmount, uint128 refund);
     event ChannelTopUp(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 additionalAmount, uint128 newDeposit);
     event CloseRequested(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint256 gracePeriodEnd);
+    event CloseRequestCancelled(bytes32 indexed channelId, address indexed buyer, address indexed seller);
     event ChannelWithdrawn(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint128 refund);
 
     // ─── Custom Errors ──────────────────────────────────────────────
@@ -140,11 +141,12 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
      * @notice Open a payment channel. Seller calls this.
      *         USDC is pulled from buyer's Deposits balance into this contract.
      *
-     * @param buyer        The buyer's address (signs SpendingAuth off-chain)
+     * @param buyer        The buyer's address (signs ReserveAuth off-chain)
      * @param salt         Random salt for deterministic channel ID
      * @param maxAmount    USDC amount to lock
      * @param deadline     Channel deadline (for timeout protection)
-     * @param buyerSig     Buyer's SpendingAuth signature (cumAmount=0) as reserve proof
+     * @param buyerSig     Buyer's EIP-712 ReserveAuth signature over
+     *                     (bytes32 channelId, uint128 maxAmount, uint256 deadline)
      */
     function reserve(
         address buyer,
@@ -241,6 +243,13 @@ contract AntseedChannels is EIP712, Pausable, Ownable, ReentrancyGuard {
         channel.deadline = deadline;
 
         emit ChannelTopUp(channelId, channel.buyer, channel.seller, additionalAmount, newMaxAmount);
+
+        // A buyer-signed ReserveAuth re-commits funds, so it cancels a pending
+        // close rather than leaving a stale timer over the added reserve.
+        if (channel.closeRequestedAt != 0) {
+            channel.closeRequestedAt = 0;
+            emit CloseRequestCancelled(channelId, channel.buyer, channel.seller);
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════

@@ -23,7 +23,8 @@ contract VerifierDeploymentIntegrationTest is Test {
         registry.setIdentityRegistry(address(new MockERC8004Registry()));
         registry.setTeamWallet(address(0xA11CE));
         registry.setProtocolReserve(address(0xB0B));
-        AntseedEmissionsGate gate = new AntseedEmissionsGate(address(registry), 15_000, 15_000);
+        AntseedEmissionsGate gate =
+            new AntseedEmissionsGate(address(0xA11CE), address(0xB0B), 15_000, 15_000);
         AntseedVerifierRegistry verifierRegistry = new AntseedVerifierRegistry(address(registry), address(gate));
         AntseedVerifierRewards verifierRewards = new AntseedVerifierRewards(address(gate), address(verifierRegistry));
         AntseedVerifierPointsPolicy pointsPolicy =

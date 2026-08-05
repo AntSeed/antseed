@@ -8,10 +8,9 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/structs/Checkpoints.sol";
 
-import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
+import { IAntseedEmissionsGate } from "../interfaces/IAntseedEmissionsGate.sol";
 import { IAntseedSellerPools } from "../interfaces/IAntseedSellerPools.sol";
 import { IAntseedStaking } from "../interfaces/IAntseedStaking.sol";
-import { IAntseedUsageAccounting } from "../interfaces/IAntseedUsageAccounting.sol";
 import { IERC8004Registry } from "../interfaces/IERC8004Registry.sol";
 
 /**
@@ -52,7 +51,9 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
     address public constant DEAD_ADDRESS = 0x000000000000000000000000000000000000dEaD;
 
     // ─── External Contracts ──────────────────────────────────────────
-    IAntseedRegistry public registry;
+    IAntseedEmissionsGate public immutable emissionsGate;
+    address public immutable identityRegistry;
+    address public stakingSource;
     IERC20 public immutable antsToken;
 
     // ─── Configurable Parameters ─────────────────────────────────────
@@ -108,19 +109,22 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
     }
 
     // ─── Constructor ─────────────────────────────────────────────────
-    constructor(address _registry) ERC721("Locked Antseed Stake", "lANTS") Ownable(msg.sender) {
-        if (_registry == address(0)) revert InvalidAddress();
-        registry = IAntseedRegistry(_registry);
-        address token = registry.antsToken();
-        if (token == address(0)) revert InvalidAddress();
-        antsToken = IERC20(token);
+    constructor(address _antsToken, address _emissionsGate, address _identityRegistry, address _stakingSource)
+        ERC721("Locked Antseed Stake", "lANTS")
+        Ownable(msg.sender)
+    {
+        if (_antsToken == address(0) || _emissionsGate == address(0) || _identityRegistry == address(0)) {
+            revert InvalidAddress();
+        }
+        antsToken = IERC20(_antsToken);
+        emissionsGate = IAntseedEmissionsGate(_emissionsGate);
+        identityRegistry = _identityRegistry;
+        stakingSource = _stakingSource;
     }
 
     // ─── Epoch Helpers ────────────────────────────────────────────────
     function currentEpoch() public view returns (uint256) {
-        address emissions = registry.emissions();
-        if (emissions == address(0)) revert EmissionsNotConfigured();
-        return IAntseedUsageAccounting(emissions).currentEpoch();
+        return emissionsGate.currentEpoch();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -389,25 +393,29 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         if (position.withdrawn) revert AlreadyWithdrawn();
         if (position.closedAtEpoch != 0) revert PositionClosed();
 
-        uint256 effectiveCloseEpoch = epoch < position.stakeEndEpoch ? epoch + 1 : epoch;
-        // A position that has not activated yet (stakeActivationDelay > 1) added
-        // power only from stakeStartEpoch onward; never remove before that.
-        if (effectiveCloseEpoch < position.stakeStartEpoch) effectiveCloseEpoch = position.stakeStartEpoch;
-        if (_positionMaxLockPower[positionId].upperLookupRecent(effectiveCloseEpoch) != 0) revert PositionClosed();
+        // Power ends in the epoch of the withdrawal: the principal leaves now, so
+        // it must not keep earning this epoch. A position that has not activated
+        // yet added power only from stakeStartEpoch onward; never remove before that.
+        uint256 closeEpoch = epoch < position.stakeStartEpoch ? position.stakeStartEpoch : epoch;
+        if (_positionMaxLockPower[positionId].upperLookupRecent(closeEpoch) != 0) revert PositionClosed();
+        if (_positionMaxLockPower[positionId].upperLookupRecent(closeEpoch + 1) != 0) revert PositionChangePending();
         returnedAmount = position.amount;
 
         position.withdrawn = true;
-        position.closedAtEpoch = uint64(effectiveCloseEpoch);
-        uint256 normalEndEpoch = _positionNormalEndEpoch[positionId].upperLookupRecent(effectiveCloseEpoch);
+        position.closedAtEpoch = uint64(closeEpoch);
+        uint256 normalEndEpoch = _positionNormalEndEpoch[positionId].upperLookupRecent(closeEpoch);
         if (normalEndEpoch == 0) revert StakeDurationOutOfBounds();
+        if (_positionNormalEndEpoch[positionId].upperLookupRecent(closeEpoch + 1) != normalEndEpoch) revert PositionChangePending();
 
-        if (effectiveCloseEpoch < normalEndEpoch) {
-            _removePowerRange(position.agentId, effectiveCloseEpoch, normalEndEpoch, position.weightAmount);
+        if (closeEpoch < normalEndEpoch) {
+            _removePowerRange(position.agentId, closeEpoch, normalEndEpoch, position.weightAmount);
         }
         _decreaseActiveStake(staker, position.agentId, position.amount);
 
-        if (effectiveCloseEpoch < normalEndEpoch) {
-            uint256 slashBps = _earlyExitSlashBps(positionId, effectiveCloseEpoch);
+        // The position stops serving at closeEpoch, so the unserved term — and
+        // the slash — is measured from there.
+        if (closeEpoch < normalEndEpoch) {
+            uint256 slashBps = _earlyExitSlashBps(positionId, closeEpoch);
             slashedAmount = (position.amount * slashBps) / BPS_DENOMINATOR;
             returnedAmount = position.amount - slashedAmount;
         }
@@ -424,10 +432,10 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         Position memory position = positions[positionId];
         if (position.owner == address(0)) revert InvalidPosition();
         uint256 epoch = currentEpoch();
-        if (_positionMaxLockPower[positionId].upperLookupRecent(epoch + 1) != 0) return maxSlashBps;
-        uint256 effectiveCloseEpoch = epoch < position.stakeEndEpoch ? epoch + 1 : epoch;
-        if (effectiveCloseEpoch >= position.stakeEndEpoch) return 0;
-        return _earlyExitSlashBps(positionId, effectiveCloseEpoch);
+        uint256 closeEpoch = epoch < position.stakeStartEpoch ? position.stakeStartEpoch : epoch;
+        if (_positionMaxLockPower[positionId].upperLookupRecent(closeEpoch) != 0) return maxSlashBps;
+        if (closeEpoch >= position.stakeEndEpoch) return 0;
+        return _earlyExitSlashBps(positionId, closeEpoch);
     }
 
     function ownerOf(uint256 positionId) public view override(ERC721, IAntseedSellerPools) returns (address) {
@@ -436,7 +444,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
 
     function agentIdForSeller(address seller) public view returns (uint256) {
         if (seller == address(0)) return 0;
-        address staking = registry.staking();
+        address staking = stakingSource;
         if (staking == address(0)) return 0;
         return IAntseedStaking(staking).getAgentId(seller);
     }
@@ -518,24 +526,16 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         activeStake += _totalMaxLockWeightAmount.upperLookupRecent(epoch);
     }
 
-    function poolPowerWeightAtEpoch(uint256 agentId, uint256 epoch) public view returns (uint256) {
-        return poolWeightAtEpoch(agentId, epoch);
-    }
-
-    function poolPowerWeightAtEpoch(address seller, uint256 epoch) public view returns (uint256) {
-        return poolWeightAtEpoch(seller, epoch);
-    }
-
     function totalPowerWeightAtEpoch(uint256 epoch) external view returns (uint256) {
         return _powerAtEpoch(_totalPowerTree, epoch) + _totalMaxLockPowerAtEpoch(epoch);
     }
 
     function currentPoolSecurityWeight(uint256 agentId) external view returns (uint256) {
-        return poolPowerWeightAtEpoch(agentId, currentEpoch());
+        return poolWeightAtEpoch(agentId, currentEpoch());
     }
 
     function currentPoolSecurityWeight(address seller) external view returns (uint256) {
-        return poolPowerWeightAtEpoch(seller, currentEpoch());
+        return poolWeightAtEpoch(seller, currentEpoch());
     }
 
     function currentTotalSecurityWeight() external view returns (uint256) {
@@ -543,9 +543,9 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         return _powerAtEpoch(_totalPowerTree, epoch) + _totalMaxLockPowerAtEpoch(epoch);
     }
 
-    function currentPoolSecurityShareBps(uint256 agentId) external view returns (uint256 shareBps) {
+    function currentPoolSecurityShareBps(uint256 agentId) public view returns (uint256 shareBps) {
         uint256 epoch = currentEpoch();
-        uint256 poolWeight = poolPowerWeightAtEpoch(agentId, epoch);
+        uint256 poolWeight = poolWeightAtEpoch(agentId, epoch);
         uint256 totalWeight = _powerAtEpoch(_totalPowerTree, epoch) + _totalMaxLockPowerAtEpoch(epoch);
         if (poolWeight == 0 || totalWeight == 0) return 0;
         return (poolWeight * BPS_DENOMINATOR) / totalWeight;
@@ -554,11 +554,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
     function currentPoolSecurityShareBps(address seller) external view returns (uint256 shareBps) {
         uint256 agentId = agentIdForSeller(seller);
         if (agentId == 0) return 0;
-        uint256 epoch = currentEpoch();
-        uint256 poolWeight = poolPowerWeightAtEpoch(agentId, epoch);
-        uint256 totalWeight = _powerAtEpoch(_totalPowerTree, epoch) + _totalMaxLockPowerAtEpoch(epoch);
-        if (poolWeight == 0 || totalWeight == 0) return 0;
-        return (poolWeight * BPS_DENOMINATOR) / totalWeight;
+        return currentPoolSecurityShareBps(agentId);
     }
 
     function stakerPositionCount(address staker) public view returns (uint256) {
@@ -589,10 +585,10 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
     //                        ADMIN FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════
 
-    function setRegistry(address _registry) external onlyOwner {
-        if (_registry == address(0)) revert InvalidAddress();
-        registry = IAntseedRegistry(_registry);
-        emit RegistrySet(_registry);
+    function setStakingSource(address _stakingSource) external onlyOwner {
+        if (_stakingSource == address(0)) revert InvalidAddress();
+        stakingSource = _stakingSource;
+        emit StakingSourceSet(_stakingSource);
     }
 
     function setPoolConfig(
@@ -659,15 +655,12 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         _positionNormalEndEpoch[positionId].push(startEpoch, stakeEndEpoch);
         _addPowerRange(agentId, startEpoch, stakeEndEpoch, weightAmount);
         _increaseActiveStake(owner, agentId, amount);
-        _mint(owner, positionId);
+        _safeMint(owner, positionId);
         emit StakeCreated(positionId, owner, agentId, amount, weightAmount, startEpoch, stakeEndEpoch);
     }
 
     function _requireRegisteredSellerAgent(uint256 agentId) internal view {
         if (agentId == 0) revert InvalidValue();
-
-        address identityRegistry = registry.identityRegistry();
-        if (identityRegistry == address(0)) revert InvalidAddress();
 
         address owner;
         try IERC8004Registry(identityRegistry).ownerOf(agentId) returns (address agentOwner) {
@@ -677,7 +670,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         }
         if (owner == address(0)) revert InvalidValue();
 
-        address staking = registry.staking();
+        address staking = stakingSource;
         if (staking == address(0)) revert InvalidAddress();
 
         try IAntseedStaking(staking).getAgentId(owner) returns (uint256 registeredAgentId) {
@@ -726,19 +719,19 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
     }
 
     function _increaseActiveStake(address staker, uint256 agentId, uint256 amount) internal {
-        stakerTotalActiveStake[staker] += amount;
-        stakerAgentActiveStake[staker][agentId] += amount;
-        emit StakerActiveStakeUpdated(
-            staker, agentId, stakerTotalActiveStake[staker], stakerAgentActiveStake[staker][agentId]
-        );
+        uint256 newTotalStake = stakerTotalActiveStake[staker] + amount;
+        uint256 newAgentStake = stakerAgentActiveStake[staker][agentId] + amount;
+        stakerTotalActiveStake[staker] = newTotalStake;
+        stakerAgentActiveStake[staker][agentId] = newAgentStake;
+        emit StakerActiveStakeUpdated(staker, agentId, newTotalStake, newAgentStake);
     }
 
     function _decreaseActiveStake(address staker, uint256 agentId, uint256 amount) internal {
-        stakerTotalActiveStake[staker] -= amount;
-        stakerAgentActiveStake[staker][agentId] -= amount;
-        emit StakerActiveStakeUpdated(
-            staker, agentId, stakerTotalActiveStake[staker], stakerAgentActiveStake[staker][agentId]
-        );
+        uint256 newTotalStake = stakerTotalActiveStake[staker] - amount;
+        uint256 newAgentStake = stakerAgentActiveStake[staker][agentId] - amount;
+        stakerTotalActiveStake[staker] = newTotalStake;
+        stakerAgentActiveStake[staker][agentId] = newAgentStake;
+        emit StakerActiveStakeUpdated(staker, agentId, newTotalStake, newAgentStake);
     }
 
     function _earlyExitSlashBps(uint256 positionId, uint256 effectiveCloseEpoch) internal view returns (uint256) {

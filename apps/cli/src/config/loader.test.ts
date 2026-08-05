@@ -41,6 +41,12 @@ test('createDefaultConfig includes a Base mainnet crypto payment default', () =>
   assert.equal(config.verifier?.referenceMinimumStatisticalPower, 0.9);
 });
 
+test('createDefaultConfig uses a higher seller concurrency default', () => {
+  const config = createDefaultConfig();
+
+  assert.equal(config.seller.maxConcurrentBuyers, 50);
+});
+
 test('loadConfig reads nested seller.providers[name].services[id] shape', async () => {
   await withTempConfig(
     JSON.stringify({
