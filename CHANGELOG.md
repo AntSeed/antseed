@@ -16,16 +16,8 @@ This project uses selective package publishing. Each release entry lists the pub
 - Added `antseed buyer channels close <channelId>` (with `--no-auth` and `--json`), which runs the request through a running `antseed buyer start` daemon's live seller connection via the new `/_antseed/channels/close` control-plane endpoint.
 - Added `AntseedNode.requestChannelClose(peerId, opts)` to `@antseed/node`, plus the `payments.cooperative-close.v1` capability advertised in discovery metadata and the connection handshake.
 
-- The desktop release workflow now builds and publishes Linux installers (AppImage + deb, x64 + arm64, each arch on a native runner) alongside macOS and Windows, mirrors them to the rolling alpha release, and the website download CTAs now offer Linux visitors a direct AppImage download for their CPU arch instead of only linking to the releases page.
-
-- The desktop app can now pin a specific seller to an individual chat: each model row in a chat's detail page carries a settings button opening a per-chat seller picker with an auto toggle, and the buyer's conversation records track whether a chat's peer was chosen by the user (`peerSource`) so deliberate picks are never overridden. Pinning a seller for a model (Models page) now also re-points that model's existing auto-routed chats to the chosen seller, and re-pinning a chat to a model respects the model's seller pin instead of always auto-selecting.
-- Added a "Show routed peer" preference to the desktop (Preferences → Floating window, default off) that names the seller each chat's requests actually went to next to its model — on the floating pill's chat rows, the Chats page list, and the Home recent-chats card — for verifying where routing really lands.
-
 ### Fixed
 
-- Fixed the Linux desktop AppImage aborting at startup with `FATAL:setuid_sandbox_host.cc` on kernels that restrict unprivileged user namespaces (Ubuntu 23.10+, hardened Debian). The app now detects that the Chromium sandbox cannot work in that combination and disables it itself, instead of requiring a manual `--no-sandbox` flag. The `.deb` install is unaffected and keeps the sandbox on.
-- The website download buttons now show a Linux (Tux) icon alongside the Apple and Windows glyphs.
-- Fixed the desktop's config-patch connect buttons (OpenCode, Codex, Crush, Goose, pi) silently doing nothing for tools installed under WSL. On Windows, connecting one of these tools now detects WSL distros that carry an install, patches the config inside each distro (via `\\wsl.localhost\`), points it at a host the distro can actually reach (the NAT gateway, or `localhost` under mirrored networking), and runs a relay so the loopback-only buyer proxy is reachable from inside WSL. When the tool is found neither natively nor in any WSL distro, the connect now fails with a clear error instead of creating a config directory for a program that isn't installed and reporting success.
 - Fixed the buyer proxy leaking `.buyer.state.*.json.tmp` files (each a full discovered-peers snapshot, ~1 MB) when the atomic state-file rename failed — common on Windows while a reader briefly holds `buyer.state.json` open. The rename is now retried, a failed write cleans up its temp file and logs the error instead of dropping the state update silently, and leftover temp files from earlier runs are swept at startup.
 - Fixed bursty buyer startups causing initial payment-channel reserves to fail when delegated seller accounts reject excess in-flight transactions. Sellers now retry transient transaction backpressure before acknowledging the channel.
 - Fixed seller health checks leaving unavailable upstreams advertised: HTTP 402 responses now count as failures, every failing service can be removed, and a provider with no healthy services is omitted from signed discovery metadata until a probe succeeds.
@@ -37,6 +29,24 @@ This project uses selective package publishing. Each release entry lists the pub
 - Fixed seller crashes when sending `PaymentRequired` to a buyer that disconnected before the payment terms could be delivered.
 - Fixed the buyer's Responses→Chat Completions request adapter to group parallel tool calls into a single assistant `tool_calls` message. Previously each call became its own assistant message, so strict chat-completions upstreams rejected multi-tool turns with `an assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'`.
 - Fixed the Responses request normalizer to drop non-message input items with no renderable text (e.g. Codex `reasoning` items) instead of converting them into empty user messages mid-history.
+
+## 2026-08-05 — Desktop 0.2.1
+
+### Desktop
+
+- `@antseed/desktop@0.2.1`
+
+### Added
+
+- The desktop release workflow now builds and publishes Linux installers (AppImage + deb, x64 + arm64, each arch on a native runner) alongside macOS and Windows, mirrors them to the rolling alpha release, and the website download CTAs now offer Linux visitors a direct AppImage download for their CPU arch instead of only linking to the releases page.
+- The desktop app can now pin a specific seller to an individual chat: each model row in a chat's detail page carries a settings button opening a per-chat seller picker with an auto toggle, and the buyer's conversation records track whether a chat's peer was chosen by the user (`peerSource`) so deliberate picks are never overridden. Pinning a seller for a model (Models page) now also re-points that model's existing auto-routed chats to the chosen seller, and re-pinning a chat to a model respects the model's seller pin instead of always auto-selecting.
+- Added a "Show routed peer" preference to the desktop (Preferences → Floating window, default off) that names the seller each chat's requests actually went to next to its model — on the floating pill's chat rows, the Chats page list, and the Home recent-chats card — for verifying where routing really lands.
+
+### Fixed
+
+- Fixed the Linux desktop AppImage aborting at startup with `FATAL:setuid_sandbox_host.cc` on kernels that restrict unprivileged user namespaces (Ubuntu 23.10+, hardened Debian). The app now detects that the Chromium sandbox cannot work in that combination and disables it itself, instead of requiring a manual `--no-sandbox` flag. The `.deb` install is unaffected and keeps the sandbox on.
+- The website download buttons now show a Linux (Tux) icon alongside the Apple and Windows glyphs.
+- Fixed the desktop's config-patch connect buttons (OpenCode, Codex, Crush, Goose, pi) silently doing nothing for tools installed under WSL. On Windows, connecting one of these tools now detects WSL distros that carry an install, patches the config inside each distro (via `\\wsl.localhost\`), points it at a host the distro can actually reach (the NAT gateway, or `localhost` under mirrored networking), and runs a relay so the loopback-only buyer proxy is reachable from inside WSL. When the tool is found neither natively nor in any WSL distro, the connect now fails with a clear error instead of creating a config directory for a program that isn't installed and reporting success.
 
 ## 2026-08-03 — Desktop beta
 
