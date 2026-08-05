@@ -1147,7 +1147,9 @@ function LocalhostSection() {
 /* ============================================================
    3 STEPS
    ============================================================ */
-const STEPS = [
+/* The provider count streams from Antscan via useNetworkStats, same source as
+   the hero stat, so step 2 tracks the network instead of drifting. */
+const buildSteps = (providers: string) => [
   {
     num: '1',
     title: 'Pick your model',
@@ -1156,7 +1158,7 @@ const STEPS = [
   {
     num: '2',
     title: 'Set your route',
-    body: '158+ independent providers, routed automatically by reputation and price, so you can pick the one that works for you.',
+    body: `${providers} independent providers, routed automatically by reputation and price, so you can pick the one that works for you.`,
   },
   {
     num: '3',
@@ -1166,6 +1168,8 @@ const STEPS = [
 ];
 
 function StepsSection() {
+  const stats = useNetworkStats();
+  const steps = buildSteps(stats.providers);
   return (
     <section className={styles.stepsSection}>
       <div className={styles.sectionInner}>
@@ -1175,7 +1179,7 @@ function StepsSection() {
           </h2>
         </Reveal>
         <div className={styles.stepsGrid}>
-          {STEPS.map((step, i) => (
+          {steps.map((step, i) => (
             <Reveal key={step.num} className={styles.stepCard} delay={i * 100}>
               <div className={styles.stepHead}>
                 <span className={styles.stepNum}>{step.num}</span>
