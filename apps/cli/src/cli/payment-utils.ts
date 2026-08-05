@@ -109,7 +109,6 @@ type ResolvedCryptoConfig = NonNullable<AntseedConfig['payments']['crypto']> & {
   emissionsContractAddress?: string;
   verifierRegistryAddress?: string;
   verifierRewardsAddress?: string;
-  verifierPointsPolicyAddress?: string;
   evmChainId: number;
 };
 
@@ -159,7 +158,6 @@ export function requireCryptoConfig(
     identityRegistryAddress: crypto.identityRegistryAddress || resolved.identityRegistryAddress,
     verifierRegistryAddress: crypto.verifierRegistryAddress || resolved.verifierRegistryAddress,
     verifierRewardsAddress: crypto.verifierRewardsAddress || resolved.verifierRewardsAddress,
-    verifierPointsPolicyAddress: crypto.verifierPointsPolicyAddress || resolved.verifierPointsPolicyAddress,
     evmChainId: resolved.evmChainId,
   };
 }

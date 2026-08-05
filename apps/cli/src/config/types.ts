@@ -212,8 +212,6 @@ export interface PaymentsCLIConfig {
     verifierRegistryAddress?: string;
     /** Deployed AntseedVerifierRewards contract address */
     verifierRewardsAddress?: string;
-    /** Deployed AntseedVerifierPointsPolicy contract address */
-    verifierPointsPolicyAddress?: string;
     /** Default lock amount per session in human-readable USDC (e.g. "1" = 1 USDC) */
     defaultLockAmountUSDC?: string;
   };

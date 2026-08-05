@@ -11,7 +11,6 @@ import {
 } from '@antseed/fingerprints'
 import type { VerifierCLIConfig } from '../config/types.js'
 import { buildModelReference, collectReferenceProbes, loadModelReference } from './model-reference.js'
-import { CANONICAL_KBF_DOMAIN_POLICY_VERSION } from './canonical-kbf-domains.js'
 
 const MODEL = 'gpt-test'
 
@@ -60,7 +59,7 @@ function reference(count: number, hamming = 0, alpha = 0.05, confidence = 0.99):
       name: 'test',
       version: '1',
       verifierKind: 'kbf',
-      params: { domainPolicyVersion: CANONICAL_KBF_DOMAIN_POLICY_VERSION },
+      params: {},
     },
     queryProfile: createReferenceQueryProfile({ upstreamModel: 'upstream-test' }),
     selfTest: {

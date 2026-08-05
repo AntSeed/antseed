@@ -23,5 +23,4 @@ export function registerBuyerCommands(program: Command): void {
   registerBuyerChannelsCommand(buyerCmd);
   registerBuyerMeteringCommand(buyerCmd);
   registerBuyerEmissionsCommand(buyerCmd);
-
 }

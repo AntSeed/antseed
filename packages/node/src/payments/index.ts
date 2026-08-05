@@ -21,7 +21,7 @@ export { DepositsClient } from './evm/deposits-client.js';
 export type { DepositsClientConfig, BuyerBalanceInfo } from './evm/deposits-client.js';
 
 // Channels client (reserve, settle, timeout)
-export { ChannelsClient, type ChannelSettledEvent } from './evm/channels-client.js';
+export { ChannelsClient } from './evm/channels-client.js';
 export type { ChannelsClientConfig, ChannelInfo, AgentStats, CloseRequestedEvent } from './evm/channels-client.js';
 
 // Free usage client (zero-price signed usage)
@@ -73,7 +73,6 @@ export {
   FREE_USAGE_AUTH_TYPES,
   SET_OPERATOR_TYPES,
   computeMetadataHash,
-  decodeMetadata,
   encodeMetadata,
   computeFreeUsageMetadataHash,
   encodeFreeUsageMetadata,

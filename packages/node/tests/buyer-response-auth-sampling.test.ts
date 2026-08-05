@@ -44,7 +44,7 @@ describe('BuyerRequestHandler response auth sampling', () => {
       {
         localPeerId: buyer.peerId as PeerId,
         negotiator: null,
-        responseAuthStorage: null,
+        verificationStorage: null,
         verificationSampler: { maybeStoreResponseAuthSample } as any,
         getConnection: vi.fn(async () => ({ state: 'open' })) as any,
         getMux: vi.fn(() => ({
@@ -99,7 +99,7 @@ describe('BuyerRequestHandler response auth sampling', () => {
       {
         localPeerId: 'a'.repeat(40) as PeerId,
         negotiator: null,
-        responseAuthStorage: null,
+        verificationStorage: null,
         verificationSampler: null,
         getConnection: vi.fn(async () => ({ state: 'open' })) as any,
         getMux: vi.fn(() => ({
@@ -146,7 +146,7 @@ describe('BuyerRequestHandler response auth sampling', () => {
       {
         localPeerId: 'a'.repeat(40) as PeerId,
         negotiator: null,
-        responseAuthStorage: null,
+        verificationStorage: null,
         verificationSampler: null,
         getConnection: vi.fn(async () => ({ state: 'open' })) as any,
         getMux: vi.fn(() => ({

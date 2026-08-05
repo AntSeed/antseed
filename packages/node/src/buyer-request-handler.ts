@@ -13,8 +13,8 @@ import { ConnectionState } from "./types/connection.js";
 import type { BuyerPaymentNegotiator } from "./payments/buyer-payment-negotiator.js";
 import { debugLog, debugWarn } from "./utils/debug.js";
 import type { VerificationMux } from "./verification/verification-mux.js";
+import type { VerificationStorage } from "./verification/storage.js";
 import type { VerificationSampler } from "./verification/samples.js";
-import type { ResponseAuthStorage } from "./verification/storage.js";
 import type { BuyerFreeUsageManager } from "./payments/buyer-free-usage-manager.js";
 import { verifyResponseAuth } from "./verification/response-auth.js";
 import { extractServiceFromBody } from "./utils/json-codec.js";
@@ -50,7 +50,7 @@ export interface BuyerRequestHandlerDeps {
   localPeerId: PeerId;
   negotiator: BuyerPaymentNegotiator | null;
   freeUsageManager?: BuyerFreeUsageManager | null;
-  responseAuthStorage: ResponseAuthStorage | null;
+  verificationStorage: VerificationStorage | null;
   verificationSampler: VerificationSampler | null;
   getConnection: (peer: PeerInfo) => Promise<PeerConnection>;
   getMux: (peerId: PeerId, conn: PeerConnection) => ProxyMux;
@@ -359,7 +359,7 @@ export class BuyerRequestHandler {
       return;
     }
 
-    const storage = this._deps.responseAuthStorage;
+    const storage = this._deps.verificationStorage;
     const advertisedService = requestedService ?? 'unknown';
     const expectedChannelId = this._deps.negotiator?.bpm?.getActiveSession(peer.peerId)?.sessionId ?? null;
     const responseAuthPromise = verificationMux.waitForResponseAuth(

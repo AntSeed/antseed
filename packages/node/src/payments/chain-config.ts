@@ -33,8 +33,6 @@ export interface ChainConfig {
   verifierRegistryAddress?: string;
   /** AntseedVerifierRewards contract address (verifier-only epoch rewards). */
   verifierRewardsAddress?: string;
-  /** AntseedVerifierPointsPolicy contract address (prospective seller-points penalties). */
-  verifierPointsPolicyAddress?: string;
 }
 
 /**
@@ -122,7 +120,6 @@ export function resolveChainConfig(overrides?: {
   antsTokenAddress?: string;
   verifierRegistryAddress?: string;
   verifierRewardsAddress?: string;
-  verifierPointsPolicyAddress?: string;
 }): ChainConfig {
   const base = getChainConfig(overrides?.chainId);
   // If the caller overrode the primary rpcUrl without providing their own
@@ -146,7 +143,6 @@ export function resolveChainConfig(overrides?: {
     ...(overrides?.antsTokenAddress ? { antsTokenAddress: overrides.antsTokenAddress } : {}),
     ...(overrides?.verifierRegistryAddress ? { verifierRegistryAddress: overrides.verifierRegistryAddress } : {}),
     ...(overrides?.verifierRewardsAddress ? { verifierRewardsAddress: overrides.verifierRewardsAddress } : {}),
-    ...(overrides?.verifierPointsPolicyAddress ? { verifierPointsPolicyAddress: overrides.verifierPointsPolicyAddress } : {}),
   };
 }
 

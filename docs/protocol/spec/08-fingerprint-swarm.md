@@ -87,6 +87,13 @@ separation data for one or more verifier families.
   "createdAt": "2026-06-14T00:00:00.000Z",
   "expiresAt": "2026-09-14T00:00:00.000Z",
   "license": "Apache-2.0",
+  "provenance": [
+    {
+      "url": "https://github.com/Ooo0ption/KBF",
+      "commit": "<optional>",
+      "license": "Apache-2.0"
+    }
+  ],
   "references": [
     {
       "version": 1,

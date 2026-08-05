@@ -1,7 +1,4 @@
-import { computeLlmProbeId, type KbfProbe, type ProbeTolerance } from '@antseed/fingerprints'
-
-export const CANONICAL_KBF_DOMAIN_POLICY_VERSION = 'antseed-kbf-canonical-domains-model-identity-v1'
-export const MODEL_IDENTITY_MATH_DECIMAL_RELATIVE_TOLERANCE = 5e-10
+import { canonicalJsonStringify, sha256Hex, type KbfProbe, type ProbeTolerance } from '@antseed/fingerprints'
 
 export interface CanonicalKbfDomain {
   key: string
@@ -45,18 +42,23 @@ export const CANONICAL_KBF_DOMAINS: readonly CanonicalKbfDomain[] = [
 
 const DOMAINS_BY_KEY = new Map(CANONICAL_KBF_DOMAINS.map((entry) => [entry.key, entry]))
 
+function slugifyDomain(domain: string): string {
+  return domain.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+}
+
+function computeCanonicalProbeId(domainKey: string, template: string): string {
+  const digest = sha256Hex(canonicalJsonStringify(template)).slice(0, 12)
+  return `llm:${slugifyDomain(domainKey)}:${digest}`
+}
+
 export function canonicalKbfDomain(key: string): CanonicalKbfDomain {
   const definition = DOMAINS_BY_KEY.get(key)
   if (!definition) throw new Error(`unknown canonical KBF domain ${key}`)
   return definition
 }
 
-export function canonicalKbfTolerance(domainKey: string, consensus: number): ProbeTolerance {
-  const definition = canonicalKbfDomain(domainKey)
-  if (domainKey === 'math' && !Number.isInteger(consensus)) {
-    return { mode: 'relative', value: MODEL_IDENTITY_MATH_DECIMAL_RELATIVE_TOLERANCE }
-  }
-  return { ...definition.tolerance }
+export function canonicalKbfTolerance(domainKey: string): ProbeTolerance {
+  return { ...canonicalKbfDomain(domainKey).tolerance }
 }
 
 export function createCanonicalKbfProbe(input: {
@@ -72,14 +74,13 @@ export function createCanonicalKbfProbe(input: {
   }
   const template = definition.template.replace('{name}', input.name)
   return {
-    id: computeLlmProbeId(input.domainKey, template),
+    id: computeCanonicalProbeId(input.domainKey, template),
     name: input.name,
     domain: input.domainKey,
     template,
     consensus: input.consensus,
     range: [...definition.range],
-    tolerance: canonicalKbfTolerance(input.domainKey, input.consensus),
-    domainPolicyVersion: CANONICAL_KBF_DOMAIN_POLICY_VERSION,
+    tolerance: canonicalKbfTolerance(input.domainKey),
     canonicalDomainName: definition.name,
     generationRound: input.generationRound,
     generationTheme: input.generationTheme,

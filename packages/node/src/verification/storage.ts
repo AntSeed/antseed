@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
+import type { ResponseAuthPayload } from '../types/protocol.js';
 import { runMigrations } from '../storage/migrate.js';
 import { verificationMigrations } from '../storage/migrations/verification/index.js';
-import type { ResponseAuthPayload } from '../types/protocol.js';
 
 export interface StoredResponseAuth extends ResponseAuthPayload {
   receivedAt: number;
@@ -9,16 +9,35 @@ export interface StoredResponseAuth extends ResponseAuthPayload {
   verificationError: string | null;
 }
 
-export class ResponseAuthStorage {
-  private readonly db: Database.Database;
-  private readonly insertStatement: Database.Statement;
-  private readonly getStatement: Database.Statement;
+export class VerificationStorage {
+  private readonly _db: Database.Database;
+  private readonly _insertResponseAuth: Database.Statement;
+  private readonly _getResponseAuth: Database.Statement;
+  private readonly _listResponseAuthsBySeller: Database.Statement;
 
   constructor(dbPath: string) {
-    this.db = new Database(dbPath);
-    this.db.pragma('journal_mode = WAL');
-    runMigrations(this.db, verificationMigrations);
-    this.insertStatement = this.db.prepare(`
+    this._db = new Database(dbPath);
+    this._db.pragma('journal_mode = WAL');
+    runMigrations(this._db, verificationMigrations);
+
+    const statements = this._prepareStatements();
+    this._insertResponseAuth = statements.insertResponseAuth;
+    this._getResponseAuth = statements.getResponseAuth;
+    this._listResponseAuthsBySeller = statements.listResponseAuthsBySeller;
+  }
+
+  private _prepareStatements(): VerificationStorageStatements {
+    return {
+      insertResponseAuth: this._prepareInsertResponseAuthStatement(),
+      getResponseAuth: this._db.prepare('SELECT * FROM response_auths WHERE request_id = ?'),
+      listResponseAuthsBySeller: this._db.prepare(
+        'SELECT * FROM response_auths WHERE seller_peer_id = ? ORDER BY received_at DESC LIMIT ?',
+      ),
+    };
+  }
+
+  private _prepareInsertResponseAuthStatement(): Database.Statement {
+    return this._db.prepare(`
       INSERT INTO response_auths (
         request_id, version, channel_id, buyer_peer_id, seller_peer_id,
         advertised_service, provider, status_code, request_hash, response_hash,
@@ -47,21 +66,48 @@ export class ResponseAuthStorage {
         verified = excluded.verified,
         verification_error = excluded.verification_error
     `);
-    this.getStatement = this.db.prepare('SELECT * FROM response_auths WHERE request_id = ?');
   }
 
   insertResponseAuth(record: StoredResponseAuth): void {
-    this.insertStatement.run({ ...record, channelId: record.channelId ?? null, verified: record.verified ? 1 : 0 });
+    this._insertResponseAuth.run({
+      requestId: record.requestId,
+      version: record.version,
+      channelId: record.channelId ?? null,
+      buyerPeerId: record.buyerPeerId,
+      sellerPeerId: record.sellerPeerId,
+      advertisedService: record.advertisedService,
+      provider: record.provider,
+      statusCode: record.statusCode,
+      requestHash: record.requestHash,
+      responseHash: record.responseHash,
+      responseStartedAt: record.responseStartedAt,
+      responseCompletedAt: record.responseCompletedAt,
+      signature: record.signature,
+      receivedAt: record.receivedAt,
+      verified: record.verified ? 1 : 0,
+      verificationError: record.verificationError,
+    });
   }
 
   getResponseAuth(requestId: string): StoredResponseAuth | null {
-    const row = this.getStatement.get(requestId) as ResponseAuthRow | undefined;
+    const row = this._getResponseAuth.get(requestId) as ResponseAuthRow | undefined;
     return row ? rowToResponseAuth(row) : null;
   }
 
-  close(): void {
-    this.db.close();
+  listResponseAuthsBySeller(sellerPeerId: string, limit = 100): StoredResponseAuth[] {
+    const rows = this._listResponseAuthsBySeller.all(sellerPeerId, Math.max(1, limit)) as ResponseAuthRow[];
+    return rows.map(rowToResponseAuth);
   }
+
+  close(): void {
+    this._db.close();
+  }
+}
+
+interface VerificationStorageStatements {
+  insertResponseAuth: Database.Statement;
+  getResponseAuth: Database.Statement;
+  listResponseAuthsBySeller: Database.Statement;
 }
 
 interface ResponseAuthRow {

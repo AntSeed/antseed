@@ -47,7 +47,7 @@ function createHandler(config: BuyerRequestHandlerConfig): { handler: BuyerReque
   const handler = new BuyerRequestHandler(config, {
     localPeerId: 'a'.repeat(40),
     negotiator: null,
-    responseAuthStorage: null,
+    verificationStorage: null,
     verificationSampler: null,
     getConnection: vi.fn(async () => ({ state: 'open' })) as any,
     getMux: vi.fn(() => mux) as any,

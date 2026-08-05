@@ -3,7 +3,6 @@ export {
   AntseedNode,
   type NodeConfig,
   type NodePaymentsConfig,
-  type NodeVerificationConfig,
   type RequestStreamCallbacks,
   type RequestStreamResponseMetadata,
   type BuyerUsageTotals,
@@ -72,13 +71,7 @@ export { parsePublicAddress, MAX_PUBLIC_ADDRESS_LENGTH, type ParsedPublicAddress
 export { MeteringStorage } from './metering/storage.js';
 export { BalanceManager } from './payments/balance-manager.js';
 export { DepositsClient, type DepositsClientConfig, type BuyerBalanceInfo } from './payments/evm/deposits-client.js';
-export {
-  ChannelsClient,
-  type ChannelsClientConfig,
-  type ChannelInfo,
-  type AgentStats,
-  type ChannelSettledEvent,
-} from './payments/evm/channels-client.js';
+export { ChannelsClient, type ChannelsClientConfig, type ChannelInfo, type AgentStats } from './payments/evm/channels-client.js';
 export {
   FreeUsageClient,
   type FreeUsageClientConfig,
@@ -88,33 +81,6 @@ export {
 export { IdentityClient, type IdentityClientConfig } from './payments/evm/identity-client.js';
 export { StakingClient, type StakingClientConfig } from './payments/evm/staking-client.js';
 export { EmissionsClient, type EmissionsClientConfig, type EmissionsEpochParams } from './payments/evm/emissions-client.js';
-export {
-  VerifierRegistryClient,
-  VerifierRewardsClient,
-  serviceHash,
-  VERIFIER_VERDICT_UNKNOWN,
-  VERIFIER_VERDICT_SAME,
-  VERIFIER_VERDICT_DIFF,
-  VERIFIER_VERDICT_UNDETERMINED,
-  type VerifierRegistryClientConfig,
-  type VerifierRewardsClientConfig,
-  type VerifierVerdict,
-  type MetricSnapshot,
-  type AttestationState,
-  type ServiceVerificationStats,
-  type SubmitVerificationResultInput,
-  type AttestationSubmittedEvent,
-  type MetricSnapshotSubmittedEvent,
-} from './payments/evm/verifier-client.js';
-export {
-  derivePeerModelVerification,
-  hasModelSubstitutionFlag,
-  hasModelVerificationWarning,
-  peerHasActiveSubstitutionFlag,
-  peerHasModelVerificationWarning,
-  normalizedServiceHash,
-  MODEL_VERIFICATION_MAX_AGE_MS,
-} from './routing/verification-score.js';
 export { ANTSTokenClient, type ANTSTokenClientConfig } from './payments/evm/ants-token-client.js';
 export {
   StatsClient,
@@ -141,7 +107,6 @@ export {
   FREE_USAGE_AUTH_TYPES,
   SET_OPERATOR_TYPES,
   computeMetadataHash,
-  decodeMetadata,
   encodeMetadata,
   computeFreeUsageMetadataHash,
   encodeFreeUsageMetadata,
@@ -168,7 +133,6 @@ export type {
 export { NatTraversal, type NatMapping, type NatTraversalResult } from './p2p/nat-traversal.js';
 export { BuyerPaymentManager } from './payments/buyer-payment-manager.js';
 export type { BuyerPaymentConfig } from './payments/buyer-payment-manager.js';
-export type { BuyerResponsePaymentEvidence } from './payments/buyer-payment-negotiator.js';
 export { BuyerFreeUsageManager } from './payments/buyer-free-usage-manager.js';
 export type { BuyerFreeUsageConfig } from './payments/buyer-free-usage-manager.js';
 export { SellerFreeUsageManager } from './payments/seller-free-usage-manager.js';
@@ -182,26 +146,13 @@ export type { ChainConfig } from './payments/chain-config.js';
 export { formatUsdc, parseUsdc } from './payments/usdc-utils.js';
 export { ProxyMux } from './proxy/proxy-mux.js';
 export {
-  decodeHttpRequest,
-  decodeHttpResponse,
-  encodeHttpRequest,
-  encodeHttpResponse,
-} from './proxy/request-codec.js';
-export {
   VerificationMux,
   VerificationSampler,
-  ResponseAuthStorage,
-  buildResponseAuthSigningBytes,
-  decodeContractResponseAuthPayload,
-  encodeContractResponseAuthPayload,
-  extractContractResponseAuthSigningPayload,
+  VerificationStorage,
   createResponseAuthPayload,
-  toResponseAuthPayload,
   verifyResponseAuth,
-  verifyResponseAuthExecutionWindow,
   hashRequest,
   hashResponse,
-  type ResponseAuthExecutionWindow,
   type ResponseAuthSampleInput,
   type StoredResponseAuth,
   type StoredVerificationSample,

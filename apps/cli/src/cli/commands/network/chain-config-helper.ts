@@ -1,6 +1,5 @@
 import {
   resolveChainConfig,
-  type ChainConfig,
   type NodePaymentsConfig,
 } from '@antseed/node';
 
@@ -20,8 +19,6 @@ export interface ChainCryptoOverrides {
   stakingContractAddress?: string;
   identityRegistryAddress?: string;
   verifierRegistryAddress?: string;
-  verifierRewardsAddress?: string;
-  verifierPointsPolicyAddress?: string;
 }
 
 /**
@@ -45,43 +42,30 @@ export function buildPaymentsConfig(
   cryptoOverrides: ChainCryptoOverrides | undefined,
 ): NodePaymentsConfig | undefined {
   try {
-    return paymentsConfigFromChain(resolveChainConfig({
+    const resolved = resolveChainConfig({
       chainId: cryptoOverrides?.chainId,
       rpcUrl: cryptoOverrides?.rpcUrl,
       depositsContractAddress: cryptoOverrides?.depositsContractAddress,
       channelsContractAddress: cryptoOverrides?.channelsContractAddress,
       freeUsageContractAddress: cryptoOverrides?.freeUsageContractAddress,
       usdcContractAddress: cryptoOverrides?.usdcContractAddress,
-    }));
+      verifierRegistryAddress: cryptoOverrides?.verifierRegistryAddress,
+    });
+    const paymentsConfig: NodePaymentsConfig = {
+      enabled: true,
+      rpcUrl: resolved.rpcUrl,
+      ...(resolved.fallbackRpcUrls ? { fallbackRpcUrls: resolved.fallbackRpcUrls } : {}),
+      depositsAddress: resolved.depositsContractAddress,
+      channelsAddress: resolved.channelsContractAddress,
+      ...(resolved.freeUsageContractAddress ? { freeUsageAddress: resolved.freeUsageContractAddress } : {}),
+      usdcAddress: resolved.usdcContractAddress,
+      chainId: resolved.evmChainId,
+      ...(resolved.stakingContractAddress ? { stakingAddress: resolved.stakingContractAddress } : {}),
+      ...(resolved.identityRegistryAddress ? { identityRegistryAddress: resolved.identityRegistryAddress } : {}),
+      ...(resolved.verifierRegistryAddress ? { verifierRegistryAddress: resolved.verifierRegistryAddress } : {}),
+    };
+    return paymentsConfig;
   } catch {
     return undefined;
   }
-}
-
-/**
- * Core `NodePaymentsConfig` projection of a resolved chain config — the
- * fields every payments-enabled CLI node shares. Callers (buyer/verifier
- * daemons) layer role-specific extras (fee caps, verifier registry, deposit
- * defaults) on top with a spread.
- *
- * The `stakingAddress` + `identityRegistryAddress` wiring is critical: without
- * them `AntseedNode._initializePayments` never creates a `StakingClient` /
- * `IdentityClient`, which gates the on-chain verification loop in
- * `discoverPeers()` (e.g. `onChainTotalVolumeUsdcMicros` never populates).
- */
-export function paymentsConfigFromChain(resolved: ChainConfig): NodePaymentsConfig {
-  return {
-    enabled: true,
-    rpcUrl: resolved.rpcUrl,
-    ...(resolved.fallbackRpcUrls ? { fallbackRpcUrls: resolved.fallbackRpcUrls } : {}),
-    depositsAddress: resolved.depositsContractAddress,
-    channelsAddress: resolved.channelsContractAddress,
-    ...(resolved.freeUsageContractAddress ? { freeUsageAddress: resolved.freeUsageContractAddress } : {}),
-    usdcAddress: resolved.usdcContractAddress,
-    chainId: resolved.evmChainId,
-    ...(resolved.stakingContractAddress ? { stakingAddress: resolved.stakingContractAddress } : {}),
-    ...(resolved.identityRegistryAddress ? { identityRegistryAddress: resolved.identityRegistryAddress } : {}),
-    ...(resolved.verifierRegistryAddress ? { verifierRegistryAddress: resolved.verifierRegistryAddress } : {}),
-    ...(resolved.verifierPointsPolicyAddress ? { verifierPointsPolicyAddress: resolved.verifierPointsPolicyAddress } : {}),
-  };
 }

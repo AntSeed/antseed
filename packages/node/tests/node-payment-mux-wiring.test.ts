@@ -54,7 +54,7 @@ describe('BuyerRequestHandler payment mux wiring', () => {
           parseCostHeaders: vi.fn(),
           recordResponseContent: vi.fn(),
         } as any,
-        responseAuthStorage: null,
+        verificationStorage: null,
         verificationSampler: null,
         getConnection: vi.fn(async () => conn) as any,
         getMux: vi.fn(() => ({
@@ -135,7 +135,7 @@ describe('BuyerRequestHandler payment mux wiring', () => {
           parseCostHeaders: vi.fn(),
           recordResponseContent: vi.fn(),
         } as any,
-        responseAuthStorage: null,
+        verificationStorage: null,
         verificationSampler: null,
         getConnection: vi.fn(async () => conn) as any,
         getMux: vi.fn(() => ({
@@ -205,7 +205,7 @@ describe('BuyerRequestHandler payment mux wiring', () => {
           parseCostHeaders: vi.fn(),
           recordResponseContent: vi.fn(),
         } as any,
-        responseAuthStorage: null,
+        verificationStorage: null,
         verificationSampler: null,
         getConnection: vi.fn(async () => conn) as any,
         getMux: vi.fn(() => ({
@@ -269,7 +269,7 @@ describe('BuyerRequestHandler payment mux wiring', () => {
         localPeerId: 'a'.repeat(40) as PeerId,
         negotiator: null,
         freeUsageManager: freeUsageManager as any,
-        responseAuthStorage: null,
+        verificationStorage: null,
         verificationSampler: null,
         getConnection: vi.fn(async () => conn) as any,
         getMux: vi.fn(() => ({
@@ -341,7 +341,7 @@ describe('BuyerRequestHandler payment mux wiring', () => {
           parseCostHeaders: vi.fn(),
           recordResponseContent: vi.fn(),
         } as any,
-        responseAuthStorage: null,
+        verificationStorage: null,
         verificationSampler: null,
         getConnection: vi.fn(async () => conn) as any,
         getMux: vi.fn(() => ({

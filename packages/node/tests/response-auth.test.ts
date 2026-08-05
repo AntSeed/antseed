@@ -2,19 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import Database from 'better-sqlite3';
-import { concat, getBytes, toUtf8Bytes, verifyMessage } from 'ethers';
 import { identityFromPrivateKeyHex } from '../src/p2p/identity.js';
 import type { SerializedHttpRequest, SerializedHttpResponse } from '../src/types/http.js';
 import {
-  buildResponseAuthSigningBytes,
   createResponseAuthPayload,
-  decodeContractResponseAuthPayload,
-  encodeContractResponseAuthPayload,
-  extractContractResponseAuthSigningPayload,
   verifyResponseAuth,
-  verifyResponseAuthExecutionWindow,
-  ResponseAuthStorage,
+  VerificationStorage,
 } from '../src/verification/index.js';
 
 function makeRequest(): SerializedHttpRequest {
@@ -134,65 +127,9 @@ describe('ResponseAuth', () => {
     })).toEqual({ valid: true });
   });
 
-  it('round-trips the contract payload and recovers the seller signer', () => {
-    const seller = identityFromPrivateKeyHex('11'.repeat(32));
-    const buyer = identityFromPrivateKeyHex('22'.repeat(32));
-    const payload = createResponseAuthPayload({
-      request: makeRequest(),
-      response: makeResponse(),
-      buyerPeerId: buyer.peerId,
-      sellerPeerId: seller.peerId,
-      advertisedService: 'claude-sonnet-test',
-      provider: 'anthropic',
-      responseStartedAt: 1_800_000_120_000,
-      responseCompletedAt: 1_800_000_121_500,
-      channelId: '0x' + 'aa'.repeat(32),
-    }, seller.wallet);
-
-    const encoded = encodeContractResponseAuthPayload(payload);
-    expect(decodeContractResponseAuthPayload(encoded)).toEqual(payload);
-    const { signature, ...unsigned } = payload;
-    const signingBytes = buildResponseAuthSigningBytes(unsigned);
-    expect(extractContractResponseAuthSigningPayload(encoded)).toEqual(signingBytes);
-    const recovered = verifyMessage(
-      getBytes(concat([toUtf8Bytes('antseed-data-v1:'), signingBytes])),
-      `0x${signature}`,
-    );
-    expect(recovered.toLowerCase()).toBe(seller.wallet.address.toLowerCase());
-  });
-
-  it('enforces the contract millisecond execution-window bounds', () => {
-    expect(verifyResponseAuthExecutionWindow({
-      responseStartedAt: 1_800_000_000_000,
-      responseCompletedAt: 1_800_000_600_000,
-    }, 1_800_000_000, 1_800_000_600)).toEqual({ valid: true });
-    expect(verifyResponseAuthExecutionWindow({
-      responseStartedAt: 1_799_999_999_999,
-      responseCompletedAt: 1_800_000_000_001,
-    }, 1_800_000_000, 1_800_000_600)).toMatchObject({
-      valid: false,
-      reason: 'response_started_before_window',
-    });
-    expect(verifyResponseAuthExecutionWindow({
-      responseStartedAt: 1_800_000_600_000,
-      responseCompletedAt: 1_800_000_600_001,
-    }, 1_800_000_000, 1_800_000_600)).toMatchObject({
-      valid: false,
-      reason: 'response_completed_after_window',
-    });
-    expect(verifyResponseAuthExecutionWindow({
-      responseStartedAt: 1_800_000_001_000,
-      responseCompletedAt: 1_800_000_000_000,
-    }, 1_800_000_000, 1_800_000_600)).toMatchObject({
-      valid: false,
-      reason: 'response_time_reversed',
-    });
-  });
-
   it('stores lightweight response auth records locally', () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'verification-store-test-'));
-    const databasePath = join(tempDir, 'verification.db');
-    const storage = new ResponseAuthStorage(databasePath);
+    const storage = new VerificationStorage(join(tempDir, 'verification.db'));
     try {
       const seller = identityFromPrivateKeyHex('11'.repeat(32));
       const buyer = identityFromPrivateKeyHex('22'.repeat(32));
@@ -220,9 +157,9 @@ describe('ResponseAuth', () => {
       expect(loaded!.verified).toBe(true);
       expect(loaded!.verificationError).toBeNull();
 
-      const database = new Database(databasePath);
-      database.prepare('UPDATE response_auths SET version = ? WHERE request_id = ?').run(7, payload.requestId);
-      database.close();
+      (storage as unknown as { _db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } } })
+        ._db.prepare('UPDATE response_auths SET version = ? WHERE request_id = ?')
+        .run(7, payload.requestId);
       expect(storage.getResponseAuth(payload.requestId)!.version).toBe(7);
     } finally {
       storage.close();

@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { IAntseedEmissionsGate } from "./IAntseedEmissionsGate.sol";
-
 interface IAntseedUsageAccounting {
     struct BuyerUsage {
         uint256 points;
@@ -40,9 +38,7 @@ interface IAntseedUsageAccounting {
         uint256 weightedSellerPoints
     );
     event AccrualSkippedWhilePaused(address indexed seller, address indexed buyer, uint256 pointsDelta);
-    event PointsPolicyFailed(
-        bytes32 indexed channelId, address indexed buyer, address indexed seller, uint256 rawPoints
-    );
+    event PointsPolicyFailed(bytes32 indexed channelId, address indexed buyer, address indexed seller, uint256 rawPoints);
     event PoolWeightPolicyFailed(uint256 indexed agentId, uint256 indexed epoch, uint256 poolPower);
     event UsageRewardsSet(address indexed usageRewards);
 
@@ -52,7 +48,6 @@ interface IAntseedUsageAccounting {
     error NoPendingSellerAccrual();
     error UsageRewardsNotSet();
 
-    function emissionsGate() external view returns (IAntseedEmissionsGate);
     function currentEpoch() external view returns (uint256);
     function pendingSellerAccrual() external view returns (address seller);
 

@@ -26,7 +26,6 @@ import {
 import { safeServiceSlug } from './slug.js'
 import {
   CANONICAL_KBF_DOMAINS,
-  CANONICAL_KBF_DOMAIN_POLICY_VERSION,
   canonicalKbfTolerance,
   createCanonicalKbfProbe,
 } from './canonical-kbf-domains.js'
@@ -89,9 +88,6 @@ export async function loadModelReference(input: {
     if (!reference.serviceAliases.some((alias) => normalized(alias) === normalized(input.model))) {
       throw new Error(`reference does not include service alias ${input.model}`)
     }
-    if (reference.generator.params.domainPolicyVersion !== CANONICAL_KBF_DOMAIN_POLICY_VERSION) {
-      throw new Error(`reference domain policy must be ${CANONICAL_KBF_DOMAIN_POLICY_VERSION}`)
-    }
     if (!isReferenceProbeCountAllowed(reference.probes.length, sizing)) {
       throw new Error(
         `reference probe count ${reference.probes.length} is outside the configured adaptive sizing sequence`,
@@ -151,7 +147,6 @@ export async function buildModelReference(input: {
     sizing,
     minimumMismatchDelta: REFERENCE_MINIMUM_MISMATCH_DELTA,
     sizingAlgorithmVersion: REFERENCE_SIZING_ALGORITHM_VERSION,
-    domainPolicyVersion: CANONICAL_KBF_DOMAIN_POLICY_VERSION,
     candidateCountPerRound: CANDIDATE_COUNT,
     candidateBatchSize: CANDIDATE_BATCH_SIZE,
     candidatePromptVersion: 3,
@@ -285,7 +280,6 @@ export async function buildModelReference(input: {
         candidateCount: collected.candidateCount,
         sizing,
         sizingAlgorithmVersion: REFERENCE_SIZING_ALGORITHM_VERSION,
-        domainPolicyVersion: CANONICAL_KBF_DOMAIN_POLICY_VERSION,
       },
     },
     provenance: { sourceId: endpoint.sourceId, trust: endpoint.trust },
@@ -414,7 +408,7 @@ async function certifyStableProbes(
     if (values.length !== passes.length) return []
     const consensus = median(values)
     if (consensus < probe.range[0] || consensus > probe.range[1]) return []
-    const certified = { ...probe, consensus, tolerance: canonicalKbfTolerance(probe.domain, consensus) }
+    const certified = { ...probe, consensus, tolerance: canonicalKbfTolerance(probe.domain) }
     return values.every((value) => matchesTolerance(value, certified)) ? [certified] : []
   })
 }

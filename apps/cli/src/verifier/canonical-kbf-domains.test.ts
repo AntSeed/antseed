@@ -2,8 +2,6 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   CANONICAL_KBF_DOMAINS,
-  CANONICAL_KBF_DOMAIN_POLICY_VERSION,
-  MODEL_IDENTITY_MATH_DECIMAL_RELATIVE_TOLERANCE,
   canonicalKbfDomain,
   canonicalKbfTolerance,
   createCanonicalKbfProbe,
@@ -32,15 +30,8 @@ test('canonical registry freezes the fifteen public KBF domains', () => {
   assert.deepEqual(canonicalKbfDomain('medical').tolerance, { mode: 'relative', value: 0.1 })
 })
 
-test('integer mathematics remains exact', () => {
-  assert.deepEqual(canonicalKbfTolerance('math', 326240), { mode: 'absolute', value: 0 })
-})
-
-test('decimal mathematics uses the documented ten-significant-digit model-identity tolerance', () => {
-  assert.deepEqual(canonicalKbfTolerance('math', 2.955765285651995), {
-    mode: 'relative',
-    value: MODEL_IDENTITY_MATH_DECIMAL_RELATIVE_TOLERANCE,
-  })
+test('mathematics uses the canonical exact tolerance', () => {
+  assert.deepEqual(canonicalKbfTolerance('math'), { mode: 'absolute', value: 0 })
 })
 
 test('probe policy is derived from the canonical domain rather than authored fields', () => {
@@ -53,8 +44,8 @@ test('probe policy is derived from the canonical domain rather than authored fie
   })
   assert.deepEqual(probe.range, [-300, 4000])
   assert.deepEqual(probe.tolerance, { mode: 'absolute', value: 3 })
-  assert.equal(probe.domainPolicyVersion, CANONICAL_KBF_DOMAIN_POLICY_VERSION)
   assert.equal(probe.template, 'The melting point of test compound is ___°C.')
+  assert.match(probe.id, /^llm:chemistry-mp:[0-9a-f]{12}$/)
 })
 
 test('canonical probe creation rejects out-of-domain values and unknown domains', () => {

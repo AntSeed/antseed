@@ -11,8 +11,6 @@ interface IAntseedEmissionsGate {
     }
 
     function registry() external view returns (IAntseedRegistry);
-    function GENESIS() external view returns (uint256);
-    function EPOCH_DURATION() external view returns (uint256);
     function currentEpoch() external view returns (uint256);
     function effectiveEpoch() external view returns (uint256);
     function getEpochEmission(uint256 epoch) external view returns (uint256);

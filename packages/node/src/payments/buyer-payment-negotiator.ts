@@ -3,11 +3,7 @@ import type { PeerConnection } from '../p2p/connection-manager.js';
 import { PaymentMux } from '../p2p/payment-mux.js';
 import type { PeerInfo, PeerId } from '../types/peer.js';
 import type { SerializedHttpRequest, SerializedHttpResponse } from '../types/http.js';
-import {
-  PAYMENT_CODE_CHANNEL_EXHAUSTED,
-  type PaymentRequiredPayload,
-  type SpendingAuthPayload,
-} from '../types/protocol.js';
+import { PAYMENT_CODE_CHANNEL_EXHAUSTED, type PaymentRequiredPayload } from '../types/protocol.js';
 import type { BuyerPaymentManager } from './buyer-payment-manager.js';
 import type { BuyerFreeUsageManager } from './buyer-free-usage-manager.js';
 import type { DepositsClient } from './evm/deposits-client.js';
@@ -47,11 +43,6 @@ interface LastResponseCost {
   latencyMs: number;
   service?: string;
   requestId?: string;
-}
-
-export interface BuyerResponsePaymentEvidence {
-  sellerChargeUsdc: bigint;
-  spendingAuth: SpendingAuthPayload;
 }
 
 function parsePaymentRequiredBody(body: Uint8Array): Record<string, unknown> | null {
@@ -97,8 +88,8 @@ export class BuyerPaymentNegotiator {
   private readonly _negotiationLocks = new Map<string, Promise<void>>();
   /** Peers that have sent their first request after session establishment. */
   private readonly _firstRequestSent = new Set<string>();
-  /** Pending response costs keyed by peer then request id. */
-  private readonly _responseCosts = new Map<string, Map<string, LastResponseCost>>();
+  /** Per-peer last response cost, raw content, and latency from the seller. */
+  private readonly _lastResponseCost = new Map<string, LastResponseCost>();
   /** Buyer-side payment muxes keyed by seller peerId. */
   private readonly _muxes = new Map<PeerId, PaymentMux>();
   /** In-flight NeedAuth handlers keyed by seller peerId. */
@@ -221,7 +212,7 @@ export class BuyerPaymentNegotiator {
       return;
     }
     // Skip if cost data was already consumed by post-response auth
-    if (!this._hasResponseCost(peer.peerId)) return;
+    if (!this._lastResponseCost.has(peer.peerId)) return;
     await this._sendPerRequestAuth(peer, conn);
   }
 
@@ -230,25 +221,16 @@ export class BuyerPaymentNegotiator {
    * This ensures the seller always has a valid SpendingAuth for close(),
    * even if the buyer disconnects before the next request.
    */
-  async sendPostResponseAuth(
-    peer: PeerInfo,
-    conn: PeerConnection,
-    requestId?: string,
-  ): Promise<BuyerResponsePaymentEvidence | null> {
-    if (!this._lockedPeers.has(peer.peerId)) return null;
-    if (!this._hasResponseCost(peer.peerId, requestId)) return null;
-    return this._sendPerRequestAuth(peer, conn, requestId);
+  async sendPostResponseAuth(peer: PeerInfo, conn: PeerConnection): Promise<void> {
+    if (!this._lockedPeers.has(peer.peerId)) return;
+    if (!this._lastResponseCost.has(peer.peerId)) return;
+    await this._sendPerRequestAuth(peer, conn);
   }
 
-  private async _sendPerRequestAuth(
-    peer: PeerInfo,
-    conn: PeerConnection,
-    requestId?: string,
-  ): Promise<BuyerResponsePaymentEvidence> {
+  private async _sendPerRequestAuth(peer: PeerInfo, conn: PeerConnection): Promise<void> {
     const pmux = this.getOrCreatePaymentMux(peer.peerId, conn);
 
-    const selected = this._takeResponseCost(peer.peerId, requestId);
-    const lastCost = selected?.cost;
+    const lastCost = this._lastResponseCost.get(peer.peerId);
     const inputBytes = lastCost?.inputContent ?? new Uint8Array(0);
     const outputBytes = lastCost?.outputContent ?? new Uint8Array(0);
     const sellerClaimedCost = lastCost?.costUsdc;
@@ -256,32 +238,22 @@ export class BuyerPaymentNegotiator {
     const reportedOutputTokens = lastCost?.outputTokens;
     const reportedCachedInputTokens = lastCost?.cachedInputTokens;
     const service = lastCost?.service;
-    const responseRequestId = lastCost?.requestId;
+    const requestId = lastCost?.requestId;
     try {
       const { payload, topUpNeeded } = await this._bpm.signPerRequestAuth(
         peer.peerId,
-        {
-          inputBytes,
-          outputBytes,
-          sellerClaimedCost,
-          reportedInputTokens,
-          reportedOutputTokens,
-          reportedCachedInputTokens,
-          service,
-          requestId: responseRequestId,
-        },
+        { inputBytes, outputBytes, sellerClaimedCost, reportedInputTokens, reportedOutputTokens, reportedCachedInputTokens, service, requestId },
       );
       pmux.sendSpendingAuth(payload);
       // Release held content to free memory — no longer needed after signing
+      this._lastResponseCost.delete(peer.peerId);
       debugLog(`[BuyerNegotiator] Per-request SpendingAuth sent to ${peer.peerId.slice(0, 12)}... cumulative=${payload.cumulativeAmount}`);
 
       if (topUpNeeded) {
         debugLog(`[BuyerNegotiator] Reserve top-up needed for ${peer.peerId.slice(0, 12)}...`);
         await this._bpm.topUpReserve(peer.peerId, pmux);
       }
-      return { sellerChargeUsdc: sellerClaimedCost ?? 0n, spendingAuth: payload };
     } catch (err) {
-      if (selected) this._restoreResponseCost(peer.peerId, selected.key, selected.cost);
       debugWarn(`[BuyerNegotiator] Failed to send per-request SpendingAuth: ${err instanceof Error ? err.message : err}`);
       throw err;
     }
@@ -518,9 +490,7 @@ export class BuyerPaymentNegotiator {
     };
     const costUsdc = computeCostUsdc(usage.freshInputTokens, usage.outputTokens, pricing, usage.cachedInputTokens);
 
-    const key = requestId ?? `legacy:${Date.now()}`;
-    const costs = this._responseCosts.get(peer.peerId) ?? new Map<string, LastResponseCost>();
-    costs.set(key, {
+    this._lastResponseCost.set(peer.peerId, {
       costUsdc,
       inputTokens: BigInt(usage.inputTokens),
       outputTokens: BigInt(usage.outputTokens),
@@ -532,7 +502,6 @@ export class BuyerPaymentNegotiator {
       service,
       requestId,
     });
-    this._responseCosts.set(peer.peerId, costs);
 
     debugLog(
       `[BuyerNegotiator] Estimated cost for ${peer.peerId.slice(0, 12)}...: ` +
@@ -544,21 +513,13 @@ export class BuyerPaymentNegotiator {
 
   // parseCostHeaders removed — cost data now flows through NeedAuth on PaymentMux.
 
-  recordResponseContent(
-    peerId: string,
-    reqBody: Uint8Array,
-    resBody: Uint8Array,
-    latencyMs: number,
-    requestId?: string,
-  ): void {
+  recordResponseContent(peerId: string, reqBody: Uint8Array, resBody: Uint8Array, latencyMs: number): void {
     debugLog(
       `[BuyerNegotiator] recordResponseContent: reqBody=${reqBody.length}B resBody=${resBody.length}B latency=${latencyMs}ms`,
     );
-    const costs = this._responseCosts.get(peerId);
-    const key = requestId ?? (costs ? [...costs.keys()].at(-1) : undefined);
-    const existing = key ? costs?.get(key) : undefined;
+    const existing = this._lastResponseCost.get(peerId);
     if (existing) {
-      costs!.set(key!, {
+      this._lastResponseCost.set(peerId, {
         ...existing,
         inputContent: reqBody,
         outputContent: resBody,
@@ -659,7 +620,7 @@ export class BuyerPaymentNegotiator {
 
     this._lockedPeers.delete(peerId);
     this._firstRequestSent.delete(peerId);
-    this._responseCosts.delete(peerId);
+    this._lastResponseCost.delete(peerId);
   }
 
   /** Wait for in-flight NeedAuth handlers to complete (settlement safety). */
@@ -673,7 +634,7 @@ export class BuyerPaymentNegotiator {
   cleanup(): void {
     this._lockedPeers.clear();
     this._firstRequestSent.clear();
-    this._responseCosts.clear();
+    this._lastResponseCost.clear();
     this._muxes.clear();
 
     for (const [, pending] of this._pendingPaymentRequired) {
@@ -683,33 +644,6 @@ export class BuyerPaymentNegotiator {
     this._pendingPaymentRequired.clear();
     this._bufferedPaymentRequired.clear();
     this._negotiationLocks.clear();
-  }
-
-  private _hasResponseCost(peerId: string, requestId?: string): boolean {
-    const costs = this._responseCosts.get(peerId);
-    if (!costs || costs.size === 0) return false;
-    return requestId === undefined || costs.has(requestId);
-  }
-
-  private _takeResponseCost(
-    peerId: string,
-    requestId?: string,
-  ): { key: string; cost: LastResponseCost } | null {
-    const costs = this._responseCosts.get(peerId);
-    if (!costs || costs.size === 0) return null;
-    const key = requestId ?? costs.keys().next().value as string | undefined;
-    if (!key) return null;
-    const cost = costs.get(key);
-    if (!cost) return null;
-    costs.delete(key);
-    if (costs.size === 0) this._responseCosts.delete(peerId);
-    return { key, cost };
-  }
-
-  private _restoreResponseCost(peerId: string, key: string, cost: LastResponseCost): void {
-    const costs = this._responseCosts.get(peerId) ?? new Map<string, LastResponseCost>();
-    costs.set(key, cost);
-    this._responseCosts.set(peerId, costs);
   }
 
   /**

@@ -8,7 +8,6 @@ import {
   type AntseedNode,
   type PeerInfo,
   type PeerMetadata,
-  type PeerVerificationLifecycle,
   type RequestStreamResponseMetadata,
   type Router,
   type SerializedHttpRequest,
@@ -98,59 +97,6 @@ type PeerFailureEntry = {
   firstFailureAt: number
   lastFailureAt: number
   lastReason: string
-}
-
-export type PersistedModelVerificationSummary = {
-  fetchedAt: number
-  services: Record<string, PeerVerificationLifecycle>
-}
-
-const PEER_VERIFICATION_LIFECYCLES = new Set<PeerVerificationLifecycle>([
-  'bootstrap',
-  'provisional',
-  'verified',
-  'flagged',
-  'suspended',
-])
-
-function parseModelVerificationSummary(value: unknown): PersistedModelVerificationSummary | null {
-  if (!value || typeof value !== 'object') return null
-  const summary = value as Record<string, unknown>
-  if (typeof summary.fetchedAt !== 'number' || !Number.isFinite(summary.fetchedAt) || summary.fetchedAt <= 0) {
-    return null
-  }
-  if (!summary.services || typeof summary.services !== 'object' || Array.isArray(summary.services)) {
-    return null
-  }
-
-  const services: Record<string, PeerVerificationLifecycle> = {}
-  for (const [service, lifecycle] of Object.entries(summary.services as Record<string, unknown>)) {
-    const normalized = service.trim().toLowerCase()
-    if (normalized.length === 0 || !PEER_VERIFICATION_LIFECYCLES.has(lifecycle as PeerVerificationLifecycle)) {
-      return null
-    }
-    services[normalized] = lifecycle as PeerVerificationLifecycle
-  }
-  return { fetchedAt: summary.fetchedAt, services }
-}
-
-export function parsePersistedModelVerificationSummaries(
-  parsed: unknown,
-): Map<string, PersistedModelVerificationSummary> {
-  const summaries = new Map<string, PersistedModelVerificationSummary>()
-  if (!parsed || typeof parsed !== 'object') return summaries
-  const discovered = (parsed as { discoveredPeers?: unknown }).discoveredPeers
-  if (!Array.isArray(discovered)) return summaries
-
-  for (const raw of discovered) {
-    if (!raw || typeof raw !== 'object') continue
-    const entry = raw as Record<string, unknown>
-    const peerId = typeof entry.peerId === 'string' ? entry.peerId.toLowerCase() : ''
-    if (!/^[0-9a-f]{40}$/.test(peerId)) continue
-    const summary = parseModelVerificationSummary(entry.modelVerificationSummary)
-    if (summary) summaries.set(peerId, summary)
-  }
-  return summaries
 }
 
 type BuyerPolicyRouter = Router & {
@@ -418,7 +364,6 @@ export class BuyerProxy {
   private _stateWriteChain: Promise<void> = Promise.resolve()
 
   private _cachedPeers: PeerInfo[] = []
-  private _modelVerificationSummaries = new Map<string, PersistedModelVerificationSummary>()
   private _cacheLastUpdatedAtMs = 0
   private _cacheMutationEpoch = 0
   private _peerRefreshPromise: Promise<PeerInfo[]> | null = null
@@ -490,11 +435,6 @@ export class BuyerProxy {
       const raw = await readFile(this._stateFile, 'utf-8')
       const parsed = JSON.parse(raw) as unknown
       const peers = parsePersistedPeers(parsed)
-      const peerIds = new Set(peers.map((peer) => peer.peerId.toLowerCase()))
-      this._modelVerificationSummaries = new Map(
-        [...parsePersistedModelVerificationSummaries(parsed)]
-          .filter(([peerId]) => peerIds.has(peerId)),
-      )
       if (peers.length === 0) {
         return
       }
@@ -657,24 +597,6 @@ export class BuyerProxy {
     }
 
     this._cachedPeers = merged
-    const mergedPeerIds = new Set(merged.map((peer) => peer.peerId.toLowerCase()))
-    for (const peerId of this._modelVerificationSummaries.keys()) {
-      if (!mergedPeerIds.has(peerId)) this._modelVerificationSummaries.delete(peerId)
-    }
-    for (const peer of merged) {
-      if (typeof peer.modelVerificationFetchedAt !== 'number' || !Number.isFinite(peer.modelVerificationFetchedAt)) {
-        continue
-      }
-      const services: Record<string, PeerVerificationLifecycle> = {}
-      for (const [service, verification] of Object.entries(peer.modelVerification ?? {})) {
-        const normalized = service.trim().toLowerCase()
-        if (normalized.length > 0) services[normalized] = verification.lifecycle
-      }
-      this._modelVerificationSummaries.set(peer.peerId.toLowerCase(), {
-        fetchedAt: peer.modelVerificationFetchedAt,
-        services,
-      })
-    }
     this._cacheLastUpdatedAtMs = Date.now()
     this._cacheMutationEpoch += 1
     this._persistPeersToState()
@@ -732,7 +654,6 @@ export class BuyerProxy {
         // null on first sighting and filled by a later peers:discovered update.
         verifications: p.metadata?.verifications ?? null,
         verificationResults: p.verificationResults ?? null,
-        modelVerificationSummary: this._modelVerificationSummaries.get(p.peerId.toLowerCase()) ?? null,
         lastSeen: p.lastSeen,
         lastReachedAt: p.lastReachedAt ?? null,
       }

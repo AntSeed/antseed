@@ -40,39 +40,6 @@ Optional environment overrides:
 
 On success, the script prints a JSON summary with deployed contract addresses, peer IDs, session status, balances, and reputation.
 
-## Direct Verifier Lifecycle
-
-Run the hermetic verifier lifecycle against Anvil. The flow uses the production
-direct-audit runner and current KBF verifier. One buyer-role verifier wallet pays
-the seller through `AntseedChannels`/`AntseedDeposits`, verifies every
-`ResponseAuth`, writes canonical evidence, proves the observation created zero
-registry attestations, explicitly submits one selected completed audit, and
-claims its verifier-only ANTS reward.
-
-```bash
-npm run flow:direct-verifier
-```
-
-It deploys the simplified contracts, approves and funds the verifier, registers
-and stakes a seller, runs 100 paid probes, verifies the local evidence file,
-checks routing visibility and the DIFF seller penalty, settles the seller payout,
-and finalizes the epoch for a reward claim. All wallets, databases, contracts,
-and evidence files live under a temporary directory.
-
-## External-Reference Local Smoke
-
-Use the repository setup script when testing the full fresh-chain verifier topology with a trusted external reference endpoint:
-
-```bash
-anvil
-./scripts/setup-local-test.sh
-pnpm run build
-```
-
-The script deploys the current fresh-chain contracts from `packages/contracts/script/Deploy.s.sol`, reads addresses from Foundry's broadcast output, approves the local verifier, registers and stakes the local seller, funds the verifier wallet and buyer deposit, writes seller/buyer/verifier configs under `${ANTSEED_LOCAL_DATA_ROOT:-~/.antseed-local}`, and asserts the required registry/controller relationships.
-
-Configure `verifier.referenceEndpoint`, its per-model mapping, and `verifier.maxTotalSpendUSDC`. The verifier's funded buyer identity sends the same fixed 100 paid probes directly to every peer advertising the selected model. Run `antseed verifier run gpt-5.6-sol --benchmark` for paid off-chain evidence or omit `--benchmark` to submit successful attestations. Live external-reference smoke tests require model access and are intentionally not part of the default offline E2E suite.
-
 ## Test Suites
 
 ### Discovery (`tests/discovery.test.ts`)
