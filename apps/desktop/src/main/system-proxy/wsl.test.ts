@@ -8,6 +8,8 @@ import path from 'node:path';
 import {
   clearWslTargetsForTool,
   decodeWslOutput,
+  discoverWslToolTargets,
+  isMappablePosixPath,
   parseDefaultRouteGateway,
   parseWslDistroList,
   readWslTargets,
@@ -90,4 +92,16 @@ test('WSL targets file keeps per-tool rows independent and clears when empty', a
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('isMappablePosixPath rejects Windows known-folder paths', () => {
+  assert.equal(isMappablePosixPath('~/.config/crush/crush.json'), true);
+  assert.equal(isMappablePosixPath('/root/.config/goose/config.yaml'), true);
+  assert.equal(isMappablePosixPath('C:\\Users\\u\\AppData\\Local\\crush\\crush.json'), false);
+  // A profile with installProbe but no wslConfigPath falls back to its
+  // Windows-resolved configPath; discovery must refuse to map that.
+  assert.deepEqual(
+    discoverWslToolTargets('crush', { configPath: 'C:\\Users\\u\\AppData\\Local\\crush\\crush.json' }),
+    [],
+  );
 });

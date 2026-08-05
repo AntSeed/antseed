@@ -145,10 +145,19 @@ function wslHasTool(distro: string, tool: WslTool): boolean {
  * for tools whose native `configPath` was resolved to a Windows known folder
  * (crush, goose), the caller passes the POSIX variant kept on the profile.
  */
+/** True for paths that can be mapped into a distro: `~/`-rooted or absolute
+    POSIX. A Windows known-folder path here means the profile set installProbe
+    without a wslConfigPath — nothing sane can be written inside a distro. */
+export function isMappablePosixPath(value: string): boolean {
+  return value.startsWith('~/') || value.startsWith('/');
+}
+
 export function discoverWslToolTargets(
   tool: WslTool,
   posix: { configPath: string; settingsPath?: string },
 ): WslConfigTarget[] {
+  if (!isMappablePosixPath(posix.configPath)) return [];
+  if (posix.settingsPath !== undefined && !isMappablePosixPath(posix.settingsPath)) return [];
   if (process.platform !== 'win32') return [];
   const targets: WslConfigTarget[] = [];
   for (const distro of listWslDistros()) {
