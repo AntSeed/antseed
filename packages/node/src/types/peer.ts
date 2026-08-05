@@ -135,13 +135,13 @@ export interface PeerInfo {
   /** Buyer-computed results for external ownership claims announced in metadata. */
   verificationResults?: PeerVerificationResults;
   /**
-   * Model-verification reputation from the AntseedVerifierRegistry, keyed by
+   * Model-verification reputation from AntseedVerification, keyed by
    * normalized service/model id. Populated only when the node is configured
-   * with a verifier registry address and the peer has an on-chain agent id.
+   * with a verification contract address and the peer has an on-chain agent id.
    */
   modelVerification?: Record<string, PeerModelVerification>;
   /**
-   * When `modelVerification` was last read from the registry (epoch ms).
+   * When `modelVerification` was last read from the verification contract (epoch ms).
    * Stamped by enrichment; consumers age a substitution flag out past
    * `MODEL_VERIFICATION_MAX_AGE_MS` so a peer retained after enrichment
    * stops updating (registry unconfigured, RPC down) is not blocked forever

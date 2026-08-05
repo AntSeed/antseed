@@ -6,9 +6,8 @@ import { Test } from "forge-std/Test.sol";
 import { ANTSToken } from "../../core/ANTSToken.sol";
 import { AntseedRegistry } from "../../core/AntseedRegistry.sol";
 import { AntseedEmissionsGate } from "../../emissions/AntseedEmissionsGate.sol";
-import { IAntseedVerifierRegistry } from "../../interfaces/IAntseedVerifierRegistry.sol";
-import { AntseedVerifierRegistry } from "../../verification/AntseedVerifierRegistry.sol";
-import { AntseedVerifierRewards } from "../../verification/AntseedVerifierRewards.sol";
+import { IAntseedVerification } from "../../interfaces/IAntseedVerification.sol";
+import { AntseedVerification } from "../../verification/AntseedVerification.sol";
 import { MockERC8004Registry } from "../mocks/MockERC8004Registry.sol";
 
 contract AntseedVerifierRewardsTest is Test {
@@ -22,8 +21,7 @@ contract AntseedVerifierRewardsTest is Test {
     address private verifierB = address(0xB0B);
     ANTSToken private token;
     AntseedEmissionsGate private gate;
-    AntseedVerifierRegistry private registry;
-    AntseedVerifierRewards private rewards;
+    AntseedVerification private verification;
     MockERC8004Registry private identity;
 
     function setUp() public {
@@ -37,48 +35,61 @@ contract AntseedVerifierRewardsTest is Test {
         identity = new MockERC8004Registry();
         core.setIdentityRegistry(address(identity));
         gate = new AntseedEmissionsGate(address(0x1111), address(0x2222), 15_000, 15_000);
-        registry = new AntseedVerifierRegistry(address(core), address(gate));
-        rewards = new AntseedVerifierRewards(address(gate), address(registry));
-        gate.setMinter(VERIFICATION_MINTER_ID, address(rewards), 10_000, true);
+        verification = new AntseedVerification(address(core), address(gate));
+        gate.setMinter(VERIFICATION_MINTER_ID, address(verification), 10_000, true);
         token.setRegistry(address(gate));
         gate.fundLegacyEscrow(address(0xE5C0));
-        registry.setVerifier(verifierA, true);
-        registry.setVerifier(verifierB, true);
+        verification.setVerifier(verifierA, true);
+        verification.setVerifier(verifierB, true);
     }
 
     function test_claimsProRataVerifierOnlyPool() public {
-        uint256 rewardedEpoch = rewards.firstRewardedEpoch();
+        uint256 rewardedEpoch = verification.firstRewardedEpoch();
         _warpToEpoch(rewardedEpoch);
-        uint256 agentA = _register(address(0xCAFE));
-        uint256 agentB = _register(address(0xD00D));
-        uint256 agentC = _register(address(0xF00D));
-        _submit(verifierA, agentA, keccak256("a"));
-        _submit(verifierB, agentB, keccak256("b"));
-        _submit(verifierB, agentC, keccak256("c"));
+        _submit(verifierA, _register(address(0xCAFE)), keccak256("a"));
+        _submit(verifierB, _register(address(0xD00D)), keccak256("b"));
+        _submit(verifierB, _register(address(0xF00D)), keccak256("c"));
 
-        uint256 budget = rewards.verifierEpochBudget(rewardedEpoch);
+        uint256 budget = verification.verifierEpochBudget(rewardedEpoch);
         _warpToEpoch(rewardedEpoch + 1);
-        assertEq(rewards.pendingVerifierReward(rewardedEpoch, verifierA), budget / 3);
-        assertEq(rewards.pendingVerifierReward(rewardedEpoch, verifierB), (budget * 2) / 3);
+        assertEq(verification.pendingVerifierReward(rewardedEpoch, verifierA), budget / 3);
+        assertEq(verification.pendingVerifierReward(rewardedEpoch, verifierB), (budget * 2) / 3);
 
         vm.prank(verifierA);
-        rewards.claimVerifierReward(rewardedEpoch);
+        verification.claimVerifierReward(rewardedEpoch);
         vm.prank(verifierB);
-        rewards.claimVerifierReward(rewardedEpoch);
+        verification.claimVerifierReward(rewardedEpoch);
         assertEq(token.balanceOf(verifierA), budget / 3);
         assertEq(token.balanceOf(verifierB), (budget * 2) / 3);
 
         vm.prank(verifierA);
-        vm.expectRevert(AntseedVerifierRewards.AlreadyClaimed.selector);
-        rewards.claimVerifierReward(rewardedEpoch);
+        vm.expectRevert(AntseedVerification.NothingToClaim.selector);
+        verification.claimVerifierReward(rewardedEpoch);
+        assertEq(verification.epochCredits(rewardedEpoch, verifierA), 0);
     }
 
     function test_zeroCreditEpochCanSettleRemainder() public {
-        uint256 rewardedEpoch = rewards.firstRewardedEpoch();
+        uint256 rewardedEpoch = verification.firstRewardedEpoch();
         _warpToEpoch(rewardedEpoch + 1);
-        (uint256 burned, uint256 reserved) = rewards.settleEpochRemainder(rewardedEpoch);
+        (uint256 burned, uint256 reserved) = verification.settleEpochRemainder(rewardedEpoch);
         assertGt(burned + reserved, 0);
-        assertTrue(rewards.epochRemainderSettled(rewardedEpoch));
+        assertTrue(verification.epochRemainderSettled(rewardedEpoch));
+    }
+
+    function test_outstandingRewardRemainsClaimableInLaterEpoch() public {
+        uint256 rewardedEpoch = verification.firstRewardedEpoch();
+        _warpToEpoch(rewardedEpoch);
+        _submit(verifierA, _register(address(0xCAFE)), keccak256("delayed"));
+
+        uint256 budget = verification.verifierEpochBudget(rewardedEpoch);
+        _warpToEpoch(rewardedEpoch + 10);
+
+        assertEq(verification.pendingVerifierReward(rewardedEpoch, verifierA), budget);
+        vm.prank(verifierA);
+        verification.claimVerifierReward(rewardedEpoch);
+        assertEq(token.balanceOf(verifierA), budget);
+        assertEq(verification.epochCredits(rewardedEpoch, verifierA), 0);
+        assertEq(verification.pendingVerifierReward(rewardedEpoch, verifierA), 0);
     }
 
     function _register(address seller) private returns (uint256 agentId) {
@@ -88,25 +99,14 @@ contract AntseedVerifierRewardsTest is Test {
 
     function _submit(address verifier, uint256 agentId, bytes32 auditId) private {
         vm.prank(verifier);
-        registry.submitVerificationResult(
+        verification.submitVerificationResult(
             auditId,
             agentId,
             SERVICE_HASH,
-            IAntseedVerifierRegistry.Verdict.SAME,
+            IAntseedVerification.Verdict.SAME,
             _currentEpoch(),
             0,
             100,
-            IAntseedVerifierRegistry.MetricSnapshot({
-                windowStartedAt: uint64(block.timestamp - 1),
-                windowEndedAt: uint64(block.timestamp),
-                eligibleAttempts: 100,
-                successfulAttempts: 100,
-                p50TtftMs: 100,
-                p95TtftMs: 200,
-                p50OutputTokensPerSecondMilli: 10_000,
-                schemaVersion: 1,
-                observationsRoot: keccak256(abi.encode(auditId))
-            }),
             keccak256(abi.encode("evidence", auditId))
         );
     }

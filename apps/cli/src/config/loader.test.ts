@@ -41,6 +41,24 @@ test('createDefaultConfig includes a Base mainnet crypto payment default', () =>
   assert.equal(config.verifier?.referenceMinimumStatisticalPower, 0.9);
 });
 
+test('loadConfig preserves the consolidated verification contract address', async () => {
+  const verificationContractAddress = '0x' + '12'.repeat(20);
+  await withTempConfig(
+    JSON.stringify({
+      payments: {
+        crypto: {
+          chainId: 'base-mainnet',
+          verificationContractAddress,
+        },
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.equal(config.payments.crypto?.verificationContractAddress, verificationContractAddress);
+    },
+  );
+});
+
 test('createDefaultConfig uses a higher seller concurrency default', () => {
   const config = createDefaultConfig();
 

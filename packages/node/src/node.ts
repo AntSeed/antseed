@@ -94,7 +94,7 @@ import { Contract as EthersContract } from "ethers";
 import { SellerPaymentManager, type SellerPaymentConfig } from "./payments/seller-payment-manager.js";
 import { IdentityClient } from "./payments/evm/identity-client.js";
 import {
-  VerifierRegistryClient,
+  VerifierClient,
   serviceHash,
   type AttestationSubmittedEvent,
 } from "./payments/evm/verifier-client.js";
@@ -154,8 +154,8 @@ export interface NodePaymentsConfig {
   identityRegistryAddress?: string;
   /** AntseedStaking contract address */
   stakingAddress?: string;
-  /** Optional AntseedVerifierRegistry address. Enables per-(peer, model) verification reputation on discovered peers. */
-  verifierRegistryAddress?: string;
+  /** Optional AntseedVerification address. Enables model verification reputation and verifier rewards. */
+  verificationContractAddress?: string;
   /** Chain ID for EIP-712 domain. Default: 8453 (Base) */
   chainId?: number;
   /** Default maximum USDC per spending auth. Default: 500000 ($0.50) */
@@ -304,7 +304,7 @@ export class AntseedNode extends EventEmitter {
   private _stakingClient: StakingClient | null = null;
   private _sellerAddressResolver: SellerAddressResolver | null = null;
   private _identityClient: IdentityClient | null = null;
-  private _verifierRegistryClient: VerifierRegistryClient | null = null;
+  private _verifierClient: VerifierClient | null = null;
   private _paymentMuxes = new Map<PeerId, PaymentMux>();
   private _verificationMuxes = new Map<PeerId, VerificationMux>();
   private _sweepMuxes = new Map<PeerId, SweepMux>();
@@ -595,7 +595,7 @@ export class AntseedNode extends EventEmitter {
     this._sellerFreeUsageManager = null;
     this._stakingClient = null;
     this._identityClient = null;
-    this._verifierRegistryClient = null;
+    this._verifierClient = null;
     this._sellerAddressResolver = null;
     this._buyerPaymentManager = null;
     this._buyerNegotiator = null;
@@ -986,7 +986,7 @@ export class AntseedNode extends EventEmitter {
 
   /** Attach per-service model-verification reputation to discovered peers. */
   private async _enrichPeersWithVerification(peers: PeerInfo[], service?: string): Promise<void> {
-    const client = this._verifierRegistryClient;
+    const client = this._verifierClient;
     if (!client || peers.length === 0) return;
 
     const VERIFICATION_RPC_CONCURRENCY = 8;
@@ -1993,16 +1993,16 @@ export class AntseedNode extends EventEmitter {
       debugLog(`[Node] IdentityClient initialized (contract=${payments.identityRegistryAddress.slice(0, 10)}...)`);
     }
 
-    // Initialize VerifierRegistryClient (model-verification reputation). Read
+    // Initialize VerifierClient (model-verification reputation). Read
     // only — the buyer never writes attestations, it just scores sellers.
-    if (payments.rpcUrl && payments.verifierRegistryAddress) {
-      this._verifierRegistryClient = new VerifierRegistryClient({
+    if (payments.rpcUrl && payments.verificationContractAddress) {
+      this._verifierClient = new VerifierClient({
         rpcUrl: payments.rpcUrl,
         ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
-        contractAddress: payments.verifierRegistryAddress,
+        contractAddress: payments.verificationContractAddress,
         ...(payments.chainId ? { evmChainId: payments.chainId } : {}),
       });
-      debugLog(`[Node] VerifierRegistryClient initialized (contract=${payments.verifierRegistryAddress.slice(0, 10)}...)`);
+      debugLog(`[Node] VerifierClient initialized (contract=${payments.verificationContractAddress.slice(0, 10)}...)`);
     }
 
     // Initialize SellerPaymentManager for seller role

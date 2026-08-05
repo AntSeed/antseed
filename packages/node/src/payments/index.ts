@@ -36,10 +36,9 @@ export type { IdentityClientConfig } from './evm/identity-client.js';
 export { StakingClient } from './evm/staking-client.js';
 export type { StakingClientConfig } from './evm/staking-client.js';
 
-// Verifier network clients
+// Verifier network client
 export {
-  VerifierRegistryClient,
-  VerifierRewardsClient,
+  VerifierClient,
   serviceHash,
   VERIFIER_VERDICT_UNKNOWN,
   VERIFIER_VERDICT_SAME,
@@ -47,15 +46,10 @@ export {
   VERIFIER_VERDICT_UNDETERMINED,
 } from './evm/verifier-client.js';
 export type {
-  VerifierRegistryClientConfig,
-  VerifierRewardsClientConfig,
+  VerifierClientConfig,
   VerifierVerdict,
-  MetricSnapshot,
-  AttestationState,
-  ServiceVerificationStats,
   SubmitVerificationResultInput,
   AttestationSubmittedEvent,
-  MetricSnapshotSubmittedEvent,
 } from './evm/verifier-client.js';
 
 export {

@@ -18,7 +18,7 @@ export interface ChainCryptoOverrides {
   usdcContractAddress?: string;
   stakingContractAddress?: string;
   identityRegistryAddress?: string;
-  verifierRegistryAddress?: string;
+  verificationContractAddress?: string;
 }
 
 /**
@@ -49,7 +49,7 @@ export function buildPaymentsConfig(
       channelsContractAddress: cryptoOverrides?.channelsContractAddress,
       freeUsageContractAddress: cryptoOverrides?.freeUsageContractAddress,
       usdcContractAddress: cryptoOverrides?.usdcContractAddress,
-      verifierRegistryAddress: cryptoOverrides?.verifierRegistryAddress,
+      verificationContractAddress: cryptoOverrides?.verificationContractAddress,
     });
     const paymentsConfig: NodePaymentsConfig = {
       enabled: true,
@@ -62,7 +62,9 @@ export function buildPaymentsConfig(
       chainId: resolved.evmChainId,
       ...(resolved.stakingContractAddress ? { stakingAddress: resolved.stakingContractAddress } : {}),
       ...(resolved.identityRegistryAddress ? { identityRegistryAddress: resolved.identityRegistryAddress } : {}),
-      ...(resolved.verifierRegistryAddress ? { verifierRegistryAddress: resolved.verifierRegistryAddress } : {}),
+      ...(resolved.verificationContractAddress
+        ? { verificationContractAddress: resolved.verificationContractAddress }
+        : {}),
     };
     return paymentsConfig;
   } catch {

@@ -12,15 +12,13 @@ export function firstScanEpoch(window: EpochWindow, floor?: bigint): bigint {
 
 export interface EpochRewardSource {
   credits(epoch: bigint): Promise<bigint>
-  claimed(epoch: bigint): Promise<boolean>
   pending(epoch: bigint): Promise<bigint>
   claim(epoch: bigint): Promise<string>
 }
 
 export function verifierRewardSource(
-  registry: { epochCredits(epoch: bigint, verifier: string): Promise<bigint> },
-  rewards: {
-    epochRewardClaimed(epoch: bigint, verifier: string): Promise<boolean>
+  verification: {
+    epochCredits(epoch: bigint, verifier: string): Promise<bigint>
     pendingVerifierReward(epoch: bigint, verifier: string): Promise<bigint>
     claimVerifierReward(signer: AbstractSigner, epoch: bigint): Promise<string>
   },
@@ -28,20 +26,18 @@ export function verifierRewardSource(
   signer: AbstractSigner,
 ): EpochRewardSource {
   return {
-    credits: (epoch) => registry.epochCredits(epoch, address),
-    claimed: (epoch) => rewards.epochRewardClaimed(epoch, address),
-    pending: (epoch) => rewards.pendingVerifierReward(epoch, address),
-    claim: (epoch) => rewards.claimVerifierReward(signer, epoch),
+    credits: (epoch) => verification.epochCredits(epoch, address),
+    pending: (epoch) => verification.pendingVerifierReward(epoch, address),
+    claim: (epoch) => verification.claimVerifierReward(signer, epoch),
   }
 }
 
 export async function verifierRewardWindow(
-  registry: { currentEpoch(): Promise<bigint> },
-  rewards: { firstRewardedEpoch(): Promise<bigint> },
+  verification: { currentEpoch(): Promise<bigint>; firstRewardedEpoch(): Promise<bigint> },
 ): Promise<EpochWindow> {
   const [currentEpoch, effectiveEpoch] = await Promise.all([
-    registry.currentEpoch(),
-    rewards.firstRewardedEpoch(),
+    verification.currentEpoch(),
+    verification.firstRewardedEpoch(),
   ])
   return { currentEpoch, effectiveEpoch }
 }
@@ -74,8 +70,8 @@ export async function claimRewardEpochs(
   for (let epoch = first; epoch < window.currentEpoch; epoch += 1n) {
     let settled = false
     try {
-      const [credits, claimed] = await Promise.all([source.credits(epoch), source.claimed(epoch)])
-      if (claimed || credits === 0n) {
+      const credits = await source.credits(epoch)
+      if (credits === 0n) {
         settled = true
       } else {
         const pending = await source.pending(epoch)

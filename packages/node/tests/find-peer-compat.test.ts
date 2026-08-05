@@ -82,7 +82,7 @@ describe('AntseedNode.findPeer compatibility', () => {
         lastSettledAt: nowSec,
       }),
     };
-    (node as any)._verifierRegistryClient = {
+    (node as any)._verifierClient = {
       queryAttestations: vi.fn().mockResolvedValue([]),
     };
 
@@ -91,7 +91,7 @@ describe('AntseedNode.findPeer compatibility', () => {
     expect(peer?.onChainAgentId).toBe(55);
     expect(peer?.modelVerification).toEqual({});
     expect(peer?.modelVerificationFetchedAt).toEqual(expect.any(Number));
-    expect((node as any)._verifierRegistryClient.queryAttestations).toHaveBeenCalledWith(55);
+    expect((node as any)._verifierClient.queryAttestations).toHaveBeenCalledWith(55);
   });
 
   it('does not scan wildcard when the per-peer topic returns a match', async () => {

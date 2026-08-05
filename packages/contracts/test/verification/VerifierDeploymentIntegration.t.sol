@@ -5,9 +5,7 @@ import { Test } from "forge-std/Test.sol";
 
 import { AntseedRegistry } from "../../core/AntseedRegistry.sol";
 import { AntseedEmissionsGate } from "../../emissions/AntseedEmissionsGate.sol";
-import { AntseedVerifierPointsPolicy } from "../../verification/AntseedVerifierPointsPolicy.sol";
-import { AntseedVerifierRegistry } from "../../verification/AntseedVerifierRegistry.sol";
-import { AntseedVerifierRewards } from "../../verification/AntseedVerifierRewards.sol";
+import { AntseedVerification } from "../../verification/AntseedVerification.sol";
 import { MockERC8004Registry } from "../mocks/MockERC8004Registry.sol";
 
 contract VerifierDeploymentIntegrationTest is Test {
@@ -23,21 +21,14 @@ contract VerifierDeploymentIntegrationTest is Test {
         registry.setIdentityRegistry(address(new MockERC8004Registry()));
         registry.setTeamWallet(address(0xA11CE));
         registry.setProtocolReserve(address(0xB0B));
-        AntseedEmissionsGate gate =
-            new AntseedEmissionsGate(address(0xA11CE), address(0xB0B), 15_000, 15_000);
-        AntseedVerifierRegistry verifierRegistry = new AntseedVerifierRegistry(address(registry), address(gate));
-        AntseedVerifierRewards verifierRewards = new AntseedVerifierRewards(address(gate), address(verifierRegistry));
-        AntseedVerifierPointsPolicy pointsPolicy =
-            new AntseedVerifierPointsPolicy(address(registry), address(verifierRegistry));
-        gate.setMinter(VERIFICATION_MINTER_ID, address(verifierRewards), 10_000, true);
+        AntseedEmissionsGate gate = new AntseedEmissionsGate(address(0xA11CE), address(0xB0B), 15_000, 15_000);
+        AntseedVerification verification = new AntseedVerification(address(registry), address(gate));
+        gate.setMinter(VERIFICATION_MINTER_ID, address(verification), 10_000, true);
 
-        assertEq(address(verifierRegistry.registry()), address(registry));
-        assertEq(address(verifierRegistry.emissionsGate()), address(gate));
-        assertEq(address(verifierRewards.verifierRegistry()), address(verifierRegistry));
-        assertEq(address(verifierRewards.gate()), address(gate));
-        assertEq(address(pointsPolicy.verifierRegistry()), address(verifierRegistry));
+        assertEq(address(verification.registry()), address(registry));
+        assertEq(address(verification.emissionsGate()), address(gate));
         (address controller, uint32 shareBps,) = gate.minters(VERIFICATION_MINTER_ID);
-        assertEq(controller, address(verifierRewards));
+        assertEq(controller, address(verification));
         assertEq(shareBps, 10_000);
     }
 }

@@ -109,7 +109,7 @@ describe('AntseedNode incremental discovery enrichment', () => {
         lastSettledAt: nowSec,
       }),
     };
-    (node as any)._verifierRegistryClient = {
+    (node as any)._verifierClient = {
       queryAttestations: vi.fn().mockResolvedValue([
         attestation(VERIFIER_VERDICT_DIFF, 10, { agentId: 123n }),
         attestation(VERIFIER_VERDICT_DIFF, 11, { agentId: 123n }),
@@ -123,8 +123,8 @@ describe('AntseedNode incremental discovery enrichment', () => {
     const [[peers]] = discovered.mock.calls as [[PeerInfo[]]];
     expect(peers[0]?.modelVerification?.['kimi-k2']?.lifecycle).toBe('suspended');
     expect(peers[0]?.modelVerificationFetchedAt).toEqual(expect.any(Number));
-    expect((node as any)._verifierRegistryClient.queryAttestations).toHaveBeenCalledOnce();
-    expect((node as any)._verifierRegistryClient.queryAttestations).toHaveBeenCalledWith(123);
+    expect((node as any)._verifierClient.queryAttestations).toHaveBeenCalledOnce();
+    expect((node as any)._verifierClient.queryAttestations).toHaveBeenCalledWith(123);
   });
 
   it('derives all advertised service lifecycles from one wildcard attestation read', async () => {
@@ -148,7 +148,7 @@ describe('AntseedNode incremental discovery enrichment', () => {
       attestation(VERIFIER_VERDICT_SAME, 10),
       attestation(VERIFIER_VERDICT_DIFF, 11, { serviceHash: serviceHash('qwen/qwen3-32b') }),
     ]);
-    (node as any)._verifierRegistryClient = { queryAttestations };
+    (node as any)._verifierClient = { queryAttestations };
 
     await (node as any)._enrichPeersWithVerification([peer]);
 
@@ -160,7 +160,7 @@ describe('AntseedNode incremental discovery enrichment', () => {
   it('records a successful empty verification check', async () => {
     const node = new AntseedNode({ role: 'buyer' });
     const peer = advertiseServices({ ...makePeer(), onChainAgentId: 7 }, 'Kimi-K2');
-    (node as any)._verifierRegistryClient = { queryAttestations: vi.fn().mockResolvedValue([]) };
+    (node as any)._verifierClient = { queryAttestations: vi.fn().mockResolvedValue([]) };
 
     await (node as any)._enrichPeersWithVerification([peer]);
 
@@ -177,7 +177,7 @@ describe('AntseedNode incremental discovery enrichment', () => {
     const withoutAgent = advertiseServices(makePeer(), 'Kimi-K2');
     const queryAttestations = vi.fn();
     const nodeWithoutAgent = new AntseedNode({ role: 'buyer' });
-    (nodeWithoutAgent as any)._verifierRegistryClient = { queryAttestations };
+    (nodeWithoutAgent as any)._verifierClient = { queryAttestations };
     await (nodeWithoutAgent as any)._enrichPeersWithVerification([withoutAgent]);
     expect(queryAttestations).not.toHaveBeenCalled();
     expect(withoutAgent.modelVerificationFetchedAt).toBeUndefined();
@@ -188,7 +188,7 @@ describe('AntseedNode incremental discovery enrichment', () => {
     const first = advertiseServices({ ...makePeer('a'.repeat(40)), onChainAgentId: 7 }, 'Kimi-K2');
     const second = advertiseServices({ ...makePeer('b'.repeat(40)), onChainAgentId: 7 }, 'Kimi-K2');
     const queryAttestations = vi.fn().mockResolvedValue([attestation(VERIFIER_VERDICT_SAME, 10)]);
-    (node as any)._verifierRegistryClient = { queryAttestations };
+    (node as any)._verifierClient = { queryAttestations };
 
     await (node as any)._enrichPeersWithVerification([first]);
     await (node as any)._enrichPeersWithVerification([second]);
@@ -205,7 +205,7 @@ describe('AntseedNode incremental discovery enrichment', () => {
     const queryAttestations = vi.fn()
       .mockResolvedValueOnce([attestation(VERIFIER_VERDICT_SAME, 10)])
       .mockRejectedValueOnce(new Error('rpc down'));
-    (node as any)._verifierRegistryClient = { queryAttestations };
+    (node as any)._verifierClient = { queryAttestations };
 
     await (node as any)._enrichPeersWithVerification([first]);
     const cache = (node as any)._modelVerificationAttestationCache.get(7);
@@ -220,7 +220,7 @@ describe('AntseedNode incremental discovery enrichment', () => {
   it('derives service lifecycle from ordered attestation events', async () => {
     const node = new AntseedNode({ role: 'buyer' });
     const peer = { ...makePeer('a'.repeat(40)), onChainAgentId: 7 };
-    (node as any)._verifierRegistryClient = {
+    (node as any)._verifierClient = {
       queryAttestations: vi.fn().mockResolvedValue([
         attestation(VERIFIER_VERDICT_DIFF, 10),
         attestation(VERIFIER_VERDICT_DIFF, 11),
@@ -229,7 +229,7 @@ describe('AntseedNode incremental discovery enrichment', () => {
     await (node as any)._enrichPeersWithVerification([peer], 'Kimi-K2');
     expect(peer.modelVerification?.['kimi-k2']?.lifecycle).toBe('suspended');
     expect(peer.modelVerification?.['kimi-k2']?.consecutiveDiffCount).toBe(2);
-    expect((node as any)._verifierRegistryClient.queryAttestations).toHaveBeenCalledWith(7);
+    expect((node as any)._verifierClient.queryAttestations).toHaveBeenCalledWith(7);
   });
 
   it('keeps a previous lifecycle when the registry read fails', async () => {
@@ -250,7 +250,7 @@ describe('AntseedNode incremental discovery enrichment', () => {
       modelShareBps: 0,
     };
     const peer = { ...makePeer(), onChainAgentId: 9, modelVerification: { 'kimi-k2': existing } };
-    (node as any)._verifierRegistryClient = {
+    (node as any)._verifierClient = {
       queryAttestations: vi.fn().mockRejectedValue(new Error('rpc down')),
     };
     await (node as any)._enrichPeersWithVerification([peer], 'kimi-k2');
@@ -265,7 +265,7 @@ describe('AntseedNode incremental discovery enrichment', () => {
     ];
     const started: number[] = [];
     const resolvers = new Map<number, (value: AttestationSubmittedEvent[]) => void>();
-    (node as any)._verifierRegistryClient = {
+    (node as any)._verifierClient = {
       queryAttestations: vi.fn((agentId: number) => {
         started.push(agentId);
         return new Promise<AttestationSubmittedEvent[]>((resolve) => resolvers.set(agentId, resolve));

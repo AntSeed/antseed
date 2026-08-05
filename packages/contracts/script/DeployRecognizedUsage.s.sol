@@ -11,9 +11,7 @@ import { AntseedUsageAccounting } from "../emissions/AntseedUsageAccounting.sol"
 import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
 import { AntseedSellerPools } from "../sellers/AntseedSellerPools.sol";
 import { AntseedSellerRegistry } from "../sellers/AntseedSellerRegistry.sol";
-import { AntseedVerifierPointsPolicy } from "../verification/AntseedVerifierPointsPolicy.sol";
-import { AntseedVerifierRegistry } from "../verification/AntseedVerifierRegistry.sol";
-import { AntseedVerifierRewards } from "../verification/AntseedVerifierRewards.sol";
+import { AntseedVerification } from "../verification/AntseedVerification.sol";
 
 interface IANTSTokenAdmin {
     function owner() external view returns (address);
@@ -113,7 +111,9 @@ contract DeployRecognizedUsage is Script {
             uint256 legacyEpochDuration = IAntseedLegacyEmissionsClock(existingEmissions).EPOCH_DURATION();
             uint256 legacyCurrentEpoch = IAntseedLegacyEmissionsClock(existingEmissions).currentEpoch();
             uint256 nextBoundary = legacyGenesis + (legacyCurrentEpoch + 1) * legacyEpochDuration;
-            require(nextBoundary - block.timestamp > 1 hours, "too close to epoch boundary; deploy earlier in the epoch");
+            require(
+                nextBoundary - block.timestamp > 1 hours, "too close to epoch boundary; deploy earlier in the epoch"
+            );
         }
 
         vm.startBroadcast(deployerPrivateKey);
@@ -171,20 +171,14 @@ contract DeployRecognizedUsage is Script {
 
         // Verifier network: allowlisted validators run paid buyer probes and
         // submit the final result directly after completing an audit.
-        AntseedVerifierRegistry verifierRegistry = new AntseedVerifierRegistry(registryAddress, address(gate));
-        console.log("VerifierRegistry:       ", address(verifierRegistry));
-        AntseedVerifierRewards verifierRewards = new AntseedVerifierRewards(address(gate), address(verifierRegistry));
-        console.log("VerifierRewards:        ", address(verifierRewards));
+        AntseedVerification verification = new AntseedVerification(registryAddress, address(gate));
+        console.log("Verification:           ", address(verification));
 
         AntseedUsageAccounting usageAccounting =
             new AntseedUsageAccounting(address(sellerPools), existingChannels, address(gate));
         console.log("UsageAccounting:        ", address(usageAccounting));
 
-        // This policy reduces seller points while the verifier reports a DIFF discount.
-        AntseedVerifierPointsPolicy verifierPointsPolicy =
-            new AntseedVerifierPointsPolicy(registryAddress, address(verifierRegistry));
-        usageAccounting.setPointsPolicy(address(verifierPointsPolicy));
-        console.log("VerifierPointsPolicy:   ", address(verifierPointsPolicy));
+        usageAccounting.setPointsPolicy(address(verification));
 
         AntseedSellerPoolsRewards sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
@@ -223,7 +217,7 @@ contract DeployRecognizedUsage is Script {
         sellerPools.setRewardStaker(address(sellerPoolsRewards), true);
         gate.setMinter(SELLER_POOLS_MINTER_ID, address(sellerPoolsRewards), 40_000, true);
         gate.setMinter(USAGE_MINTER_ID, address(usageRewards), 20_000, true);
-        gate.setMinter(VERIFICATION_MINTER_ID, address(verifierRewards), 10_000, true);
+        gate.setMinter(VERIFICATION_MINTER_ID, address(verification), 10_000, true);
 
         // Mint authority moves only after every bucket minter is configured: a
         // broadcast that fails before this line leaves the legacy emissions
@@ -262,9 +256,7 @@ contract DeployRecognizedUsage is Script {
         console.log("Legacy claims deposits:   ", existingDeposits);
         console.log("Team recipient:           ", teamWallet);
         console.log("Reserve recipient:        ", gate.emissionsReserve());
-        console.log("Verifier registry:        ", address(verifierRegistry));
-        console.log("Verifier rewards:         ", address(verifierRewards));
-        console.log("Verifier points policy:   ", address(verifierPointsPolicy));
+        console.log("Verification contract:    ", address(verification));
         console.log("");
         console.log("NEXT STEP (broadcast 2 of 2):");
         console.log("- Run scripts/cutover-flip.sh: it pauses AntseedChannels 60s");
@@ -302,7 +294,7 @@ contract DeployRecognizedUsage is Script {
         console.log("  minters/deposits/escrow are final call gate.renounceOwnership()");
         console.log("  to freeze the emission plan.");
         console.log("- No verifier is whitelisted yet: for each approved verifier peer");
-        console.log("  call verifierRegistry.setVerifier(<verifier>, true). Verifier");
+        console.log("  call verification.setVerifier(<verifier>, true). Verifier");
         console.log("  addresses are a post-deploy decision. Each verifier funds its own");
         console.log("  buyer deposit and pays seller probe traffic directly.");
         console.log("- KEEP AntseedRegistry ownership: it is the only key that can open");

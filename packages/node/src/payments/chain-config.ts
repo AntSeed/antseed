@@ -29,10 +29,8 @@ export interface ChainConfig {
   statsDeployBlock?: number;
   /** Public URL of the @antseed/network-stats aggregator that indexes the stats contract for this chain. */
   networkStatsUrl?: string;
-  /** AntseedVerifierRegistry contract address (model-verification attestations). */
-  verifierRegistryAddress?: string;
-  /** AntseedVerifierRewards contract address (verifier-only epoch rewards). */
-  verifierRewardsAddress?: string;
+  /** AntseedVerification contract address (attestations, penalties, and verifier rewards). */
+  verificationContractAddress?: string;
   /** AntseedDepositRelay contract for gasless USDC sweeps from buyer hot wallets. */
   depositRelayAddress?: string;
 }
@@ -123,8 +121,7 @@ export function resolveChainConfig(overrides?: {
   emissionsContractAddress?: string;
   legacyEmissionsContractAddress?: string;
   antsTokenAddress?: string;
-  verifierRegistryAddress?: string;
-  verifierRewardsAddress?: string;
+  verificationContractAddress?: string;
   depositRelayAddress?: string;
 }): ChainConfig {
   const base = getChainConfig(overrides?.chainId);
@@ -147,8 +144,9 @@ export function resolveChainConfig(overrides?: {
     ...(overrides?.emissionsContractAddress ? { emissionsContractAddress: overrides.emissionsContractAddress } : {}),
     ...(overrides?.legacyEmissionsContractAddress ? { legacyEmissionsContractAddress: overrides.legacyEmissionsContractAddress } : {}),
     ...(overrides?.antsTokenAddress ? { antsTokenAddress: overrides.antsTokenAddress } : {}),
-    ...(overrides?.verifierRegistryAddress ? { verifierRegistryAddress: overrides.verifierRegistryAddress } : {}),
-    ...(overrides?.verifierRewardsAddress ? { verifierRewardsAddress: overrides.verifierRewardsAddress } : {}),
+    ...(overrides?.verificationContractAddress
+      ? { verificationContractAddress: overrides.verificationContractAddress }
+      : {}),
     ...(overrides?.depositRelayAddress ? { depositRelayAddress: overrides.depositRelayAddress } : {}),
   };
 }

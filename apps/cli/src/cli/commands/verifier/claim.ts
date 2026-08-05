@@ -7,8 +7,7 @@ import {
   verifierRewardWindow,
 } from '../../../verifier/epoch-rewards.js'
 import {
-  createVerifierRegistryClient,
-  createVerifierRewardsClient,
+  createVerifierClient,
   formatAnts,
   loadCryptoContext,
 } from '../../payment-utils.js'
@@ -24,12 +23,11 @@ export function registerVerifierClaimCommand(verifierCmd: Command): void {
       const config = await loadConfig(globalOptions.config)
       const { identity, address } = await loadCryptoContext(globalOptions.dataDir)
       const rpcOverrides = options.rpcUrl ? { rpcUrl: String(options.rpcUrl) } : {}
-      const registryClient = createVerifierRegistryClient(config, rpcOverrides)
-      const rewardsClient = createVerifierRewardsClient(config, rpcOverrides)
-      const window = await verifierRewardWindow(registryClient, rewardsClient)
+      const verifierClient = createVerifierClient(config, rpcOverrides)
+      const window = await verifierRewardWindow(verifierClient)
       const result = await claimRewardEpochs(
         window,
-        verifierRewardSource(registryClient, rewardsClient, address, identity.wallet),
+        verifierRewardSource(verifierClient, address, identity.wallet),
         {
           onClaim: (epoch, pending, tx) => {
             console.log(chalk.green(`Epoch ${epoch}: claimed ${formatAnts(pending)} ANTS (tx ${tx.slice(0, 10)}…)`))
