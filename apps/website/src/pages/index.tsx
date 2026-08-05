@@ -1151,17 +1151,17 @@ const STEPS = [
   {
     num: '1',
     title: 'Pick your model',
-    body: 'Set by open market competition between providers, not a rate one company decided to charge.',
+    body: "Top tier names, fresh releases, and unique models you won't find anywhere else, all routed on the AntSeed P2P network.",
   },
   {
     num: '2',
     title: 'Set your route',
-    body: 'No account, no email, nothing tying your requests back to you. Choose TEE verified providers for hardware level privacy.',
+    body: '158+ independent providers, routed automatically by reputation and price, so you can pick the one that works for you.',
   },
   {
     num: '3',
     title: 'Keep your favorite app',
-    body: "The routing layer that can't go down, can't lock your account, and can't read your prompts.",
+    body: "Point any tool you already use at one local address. Same projects, same chats, same context you've built up.",
   },
 ];
 
