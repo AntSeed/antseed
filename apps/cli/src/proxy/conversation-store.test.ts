@@ -98,6 +98,35 @@ test('label can be cleared and pin can be cleared', async () => {
   }
 })
 
+test('peerSource marks user-chosen pins, resets on clear, survives reload', async () => {
+  const dir = await makeDir()
+  try {
+    const store = new ConversationStore(dir)
+    const id = conversationId('codex', 's1')
+
+    // Auto-pinned on first request: source is 'auto'.
+    const pinned = store.touch({ tool: 'codex', sessionKey: 's1', lastModel: 'a'.repeat(40) + '@gpt-5.4' })
+    assert.equal(pinned.peerSource, 'auto')
+
+    // Default: a re-pin without an explicit source stays 'auto'.
+    assert.equal(store.setPinnedModel(id, 'b'.repeat(40) + '@gpt-5.4')?.peerSource, 'auto')
+
+    // An explicit per-chat seller choice is marked 'user' and persists.
+    assert.equal(store.setPinnedModel(id, 'c'.repeat(40) + '@gpt-5.4', 'user')?.peerSource, 'user')
+    await store.flush()
+    assert.equal(new ConversationStore(dir).get(id)?.peerSource, 'user')
+
+    // Later activity keeps the user's choice.
+    assert.equal(store.touch({ tool: 'codex', sessionKey: 's1', lastModel: 'd'.repeat(40) + '@gpt-5.4' }).peerSource, 'user')
+
+    // Clearing the pin has no peer left to attribute — source resets.
+    assert.equal(store.setPinnedModel(id, null, 'user')?.peerSource, 'auto')
+    await store.flush()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('remove deletes the record; a later touch recreates it fresh', async () => {
   const dir = await makeDir()
   try {
