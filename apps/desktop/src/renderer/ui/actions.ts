@@ -46,6 +46,8 @@ export type AppActions = {
   openVprFloat?: (profileName?: string) => Promise<void>;
   closeVprFloat?: () => Promise<void>;
   setVprFloatAutoOpen?: (enabled: boolean) => void;
+  /** Debug aid: name the routed seller next to the model on the pill's chat rows. */
+  setVprFloatShowRoutedPeer?: (enabled: boolean) => void;
 };
 
 let _actions: AppActions | null = null;

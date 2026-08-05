@@ -1,4 +1,6 @@
+import type { DiscoverRow } from '../../core/state';
 import type { BuyerConversationSummary } from '../../types/bridge';
+import { shortPeerId } from './tools';
 
 /**
  * Shared helpers for buyer conversation rows (per-chat routing) — the same
@@ -19,6 +21,37 @@ export function conversationTitle(record: BuyerConversationSummary): string {
 /** Service id of the pinned model, or null when following the default route. */
 export function conversationPinnedServiceId(record: BuyerConversationSummary): string | null {
   return record.pinnedModel?.split('@').slice(1).join('@') || null;
+}
+
+/** Peer id of the chat's pinned route, or null while unpinned. */
+export function conversationPinnedPeerId(record: BuyerConversationSummary): string | null {
+  return record.pinnedModel?.split('@')[0]?.toLowerCase() || null;
+}
+
+/** Peer id of the seller that served the chat's most recent request — ground
+    truth of where requests actually went, which can diverge from the pin when
+    routing misbehaves. Falls back to the pinned route for chats whose buyer
+    predates `lastModel`. Both fields are `<peerId>@<service>` strings. */
+export function conversationRoutedPeerId(record: BuyerConversationSummary): string | null {
+  const model = record.lastModel || record.pinnedModel;
+  return model?.split('@')[0]?.toLowerCase() || null;
+}
+
+/**
+ * Display name of the seller that served the chat's last request — resolved
+ * against the full discover list, not the preference-filtered routable rows:
+ * a request landing on an excluded peer is exactly what the "Show routed
+ * peer" debug preference exists to reveal. Falls back to a short peer id for
+ * peers missing from discovery (offline).
+ */
+export function conversationRoutedPeerName(
+  record: BuyerConversationSummary,
+  rows: DiscoverRow[],
+): string | null {
+  const peerId = conversationRoutedPeerId(record);
+  if (!peerId) return null;
+  const row = rows.find((candidate) => candidate.peerId.toLowerCase() === peerId);
+  return row?.peerDisplayName?.trim() || row?.peerLabel?.trim() || shortPeerId(peerId);
 }
 
 /** Slugs are single tokens ('codex', 'opencode') while the wire-derived

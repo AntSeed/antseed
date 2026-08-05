@@ -41,9 +41,12 @@ function appForConversation(
   return profiles.find((profile) => conversationMatchesApp(chat.tool, profile)) ?? null;
 }
 
-export function VprChatRow({ chat, modelLabel, profiles = [], onClick }: {
+export function VprChatRow({ chat, modelLabel, routedPeerName, profiles = [], onClick }: {
   chat: BuyerConversationSummary;
   modelLabel: string;
+  /** Seller that served the chat's last request, appended after the model
+      (the "Show routed peer" debug preference) — pass only while it's on. */
+  routedPeerName?: string | null;
   profiles?: SystemProxyProfileSummary[];
   onClick: () => void;
 }): JSX.Element {
@@ -68,7 +71,12 @@ export function VprChatRow({ chat, modelLabel, profiles = [], onClick }: {
           <span className={styles.chatMetaText}>
             {app?.displayName ?? displayToolName(chat.tool)} · {conversationAge(chat.lastActiveAt)}
           </span>
-          {modelLabel ? <span className={styles.chatModel}>{modelLabel}</span> : null}
+          {modelLabel || routedPeerName ? (
+            <span className={styles.chatModel}>
+              {modelLabel}
+              {routedPeerName ? <span className={styles.chatPeer}>{modelLabel ? ' · ' : ''}{routedPeerName}</span> : null}
+            </span>
+          ) : null}
         </span>
       </span>
       <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.chatChevron} />
@@ -118,10 +126,13 @@ export function VprChatRowsSkeleton({ rows = 2 }: { rows?: number }): JSX.Elemen
     dedicated Chats page (via onOpen), where chats are managed. Shows
     skeleton rows while the chat list is still loading, and renders nothing
     once it's known that no tool chat has been seen. */
-export function VprRecentChatsCard({ conversations, catalog, defaultModelLabel, profiles = [], loading, onOpen }: {
+export function VprRecentChatsCard({ conversations, catalog, defaultModelLabel, routedPeerNameFor, profiles = [], loading, onOpen }: {
   conversations: BuyerConversationSummary[];
   catalog: VprModelCatalogEntry[];
   defaultModelLabel: string | null;
+  /** Resolves a chat's routed seller name (the "Show routed peer" debug
+      preference) — pass only while it's on. */
+  routedPeerNameFor?: (chat: BuyerConversationSummary) => string | null;
   profiles?: SystemProxyProfileSummary[];
   loading?: boolean;
   onOpen: () => void;
@@ -151,6 +162,7 @@ export function VprRecentChatsCard({ conversations, catalog, defaultModelLabel, 
           key={chat.id}
           chat={chat}
           modelLabel={chatModelLabel(chat, catalog, defaultModelLabel)}
+          routedPeerName={routedPeerNameFor?.(chat)}
           profiles={profiles}
           onClick={onOpen}
         />

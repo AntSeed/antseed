@@ -1216,8 +1216,11 @@ export class BuyerProxy {
           res.end(JSON.stringify({ ok: false, error: 'pinnedModel must be "<peerId>@<service>" (or empty to clear)' }))
           return
         }
-        conversation = this._conversations.setPinnedModel(id, pin.length > 0 ? pin : null)
-        log(`Conversation ${id.slice(0, 40)} pin: ${pin || 'cleared'}`)
+        // 'user' marks a seller the user chose for this specific chat — the
+        // desktop's re-point sweep skips those; everything else stays 'auto'.
+        const peerSource = parsed.peerSource === 'user' ? 'user' : 'auto'
+        conversation = this._conversations.setPinnedModel(id, pin.length > 0 ? pin : null, peerSource)
+        log(`Conversation ${id.slice(0, 40)} pin: ${pin || 'cleared'}${pin ? ` (${peerSource})` : ''}`)
       }
       if ('label' in parsed) {
         const label = typeof parsed.label === 'string' ? parsed.label : null

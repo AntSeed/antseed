@@ -1,6 +1,7 @@
-import type { DiscoverRow, VprModelCatalogEntry, VprRouteSelection } from '../../core/state';
+import type { DiscoverRow, VprModelCatalogEntry, VprRouteSelection, VprRoutingPreferences } from '../../core/state';
 import { sameCanonicalModel } from './model-identity';
-import { modelPinKey, type VprModelPins } from '../routing/model-pins';
+import { modelPinKey, vprModelPinFor, type VprModelPins } from '../routing/model-pins';
+import { chooseBestVprRoute } from '../routing/select';
 import { shortPeerId } from '../routing/tools';
 
 export type VprCatalogSort = 'Popular' | 'Price' | 'Savings' | 'Name';
@@ -101,6 +102,25 @@ export function routesForSelectedModel(
   // serviceIds and different provider strings — all of them are routes for
   // the selected model. Dispatch must carry the chosen row's own serviceId.
   return rows.filter((row) => sameCanonicalModel(row.serviceId, serviceId));
+}
+
+/**
+ * The peer a chat pinned to this model should route to: the model's own
+ * seller pin when that seller still serves it, else the preference-scored
+ * best route. Chat pinning must resolve through here — resolving straight to
+ * the best route would silently override a seller the user pinned for the
+ * model.
+ */
+export function resolvePeerForModel(
+  rows: DiscoverRow[],
+  pins: VprModelPins,
+  preferences: VprRoutingPreferences,
+  model: { provider: string; serviceId: string },
+): string | null {
+  const routes = routesForSelectedModel(rows, model);
+  const pinned = vprModelPinFor(pins, model.provider, model.serviceId);
+  if (pinned && routes.some((route) => route.peerId === pinned)) return pinned;
+  return chooseBestVprRoute(routes, preferences)?.peerId ?? null;
 }
 
 /** The seller a model is pinned to, so model lists can say which peer serves

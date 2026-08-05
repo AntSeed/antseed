@@ -12,7 +12,12 @@ import {
 import { initAppSetupModule } from './modules/app/setup';
 import { initCreditsModule } from './modules/app/credits';
 import { initVprFloatModule } from './modules/app/float';
-import { loadFloatAutoOpen, saveFloatAutoOpen } from './modules/app/float-settings';
+import {
+  loadFloatAutoOpen,
+  loadFloatShowRoutedPeer,
+  saveFloatAutoOpen,
+  saveFloatShowRoutedPeer,
+} from './modules/app/float-settings';
 import { initModelPickerSync } from './modules/catalog/picker-sync';
 import { applyVprRouteToConnectedProxy } from './modules/routing/proxy-sync';
 import { findCatalogEntry } from './modules/catalog/model-catalog';
@@ -34,6 +39,8 @@ import {
   vprModelPinFor,
 } from './modules/routing/model-pins';
 import { isPeerRoutable } from './modules/routing/select';
+import { sweepAutoChatsToSeller } from './modules/routing/chat-peer-sweep';
+import { buyerConversationsResource } from './modules/app/vpr-resources';
 import { routesForSelectedModel } from './modules/catalog/view-models';
 import { mountAppShell } from './ui/mount';
 import { initThemeMode } from './ui/lib/theme';
@@ -107,6 +114,7 @@ uiState.vprRoutingPreferences = loadVprRoutingPreferences(uiState.vprRoutingPref
 uiState.vprRouteSelection = loadVprRouteSelection(uiState.vprRouteSelection);
 uiState.vprModelPins = loadVprModelPins();
 uiState.vprFloatAutoOpen = loadFloatAutoOpen();
+uiState.vprFloatShowRoutedPeer = loadFloatShowRoutedPeer();
 // Sessions that pinned a seller before pins were stored per model carry the
 // pin only on the selection — seed the store from it so the first model
 // switch doesn't silently drop it.
@@ -276,6 +284,9 @@ function actionSelectVprModel(provider: string, serviceId: string, peerId: strin
   // time, and the buyer is now pinned to the new model's peer — stale
   // profiles would forward models that peer doesn't serve.
   void applyVprRouteToConnectedProxy(bridge, uiState);
+  // An explicit seller choice re-points the model's existing auto-routed
+  // chats too; a bare model switch (remembered-pin restore) moves nothing.
+  if (peerId) sweepChatsForSellerPin(entry.provider, entry.serviceId, peerId);
 }
 
 const vprFloatApi = initVprFloatModule({
@@ -284,6 +295,18 @@ const vprFloatApi = initVprFloatModule({
   onSelectModel: (provider, serviceId) => actionSelectVprModel(provider, serviceId),
   refreshUsage: (force?: boolean) => creditsApi.refreshPaymentSummary(force),
 });
+
+/** Deliberate seller pin for a model: re-point that model's auto-affine chats
+    to the chosen seller (chats whose seller the user picked stay put), then
+    refresh the surfaces that show chat routes. */
+function sweepChatsForSellerPin(provider: string, serviceId: string, peerId: string): void {
+  void sweepAutoChatsToSeller(bridge, uiState.vprRoutableRows, { provider, serviceId }, peerId)
+    .then((changed) => {
+      if (!changed) return;
+      void buyerConversationsResource.refresh();
+      void vprFloatApi.refresh();
+    });
+}
 
 // Keep the main process fed with the curated model list (favorites +
 // recommended) so the Telegram /model picker matches the app's dropdown.
@@ -577,6 +600,9 @@ registerActions({
       ? setVprModelPin(uiState.vprModelPins, provider, serviceId, peerId)
       : clearVprModelPin(uiState.vprModelPins, provider, serviceId);
     saveVprModelPins(uiState.vprModelPins);
+    // Pinning re-points the model's auto-affine chats; clearing moves
+    // nothing — chats keep their current peer as affinity.
+    if (peerId) sweepChatsForSellerPin(provider, serviceId, peerId);
     notifyUiStateChanged();
   },
   updateVprRoutingPreferences: (patch) => {
@@ -643,6 +669,14 @@ registerActions({
     uiState.vprFloatAutoOpen = enabled;
     saveFloatAutoOpen(enabled);
     vprFloatApi.setAutoOpen(enabled);
+    notifyUiStateChanged();
+  },
+  setVprFloatShowRoutedPeer: (enabled: boolean) => {
+    uiState.vprFloatShowRoutedPeer = enabled;
+    saveFloatShowRoutedPeer(enabled);
+    // The pill reads the flag from its data payload — push it right away so
+    // an open pill reflects the toggle without waiting out the poll tick.
+    void vprFloatApi.refresh();
     notifyUiStateChanged();
   },
 });
