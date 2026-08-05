@@ -11,7 +11,6 @@ import { AntseedNode, DepositsClient, getInstance, resolveChainConfig } from '@a
 import type { NodePaymentsConfig } from '@antseed/node'
 import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
-import { paymentsConfigFromChain } from '../network/chain-config-helper.js'
 import { loadRouterPlugin, buildPluginConfig, getPackageVersions } from '../../../plugins/loader.js'
 import { ensurePluginsUpToDate } from '../../../plugins/drift.js'
 import { resolvePluginPackage } from '../../../plugins/registry.js'
@@ -275,10 +274,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       }
 
       const seederInfo = await getLocalSeederInfo(globalOpts.dataDir)
-      const configuredBootstrapNodes = config.network?.bootstrapNodes ?? []
-      const allBootstrapEntries = config.payments?.crypto?.chainId === 'base-local' && configuredBootstrapNodes.length > 0
-        ? configuredBootstrapNodes
-        : buildBuyerBootstrapEntries(configuredBootstrapNodes, seederInfo?.dhtPort)
+      const allBootstrapEntries = buildBuyerBootstrapEntries(config.network?.bootstrapNodes, seederInfo?.dhtPort)
       const bootstrapNodes = toBootstrapConfig(parseBootstrapList(allBootstrapEntries))
 
       const nodeSpinner = ora('Connecting to P2P network...').start()
@@ -308,13 +304,23 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
 
       if (settlementEnabled) {
         paymentsConfig = {
-          // Shared chain projection (incl. the staking + identity registry
-          // wiring that gates the on-chain verification loop in
-          // AntseedNode.discoverPeers()) — see paymentsConfigFromChain.
-          ...paymentsConfigFromChain(chainConfig),
-          // Enables per-(peer, model) verification reputation on discovered
-          // peers so routers can avoid substitution-flagged sellers.
+          enabled: true,
+          rpcUrl: chainConfig.rpcUrl,
+          ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
+          depositsAddress: chainConfig.depositsContractAddress,
+          channelsAddress: chainConfig.channelsContractAddress,
+          ...(chainConfig.freeUsageContractAddress ? { freeUsageAddress: chainConfig.freeUsageContractAddress } : {}),
+          usdcAddress: chainConfig.usdcContractAddress,
+          // Staking + identity registry addresses let the buyer-side node wire
+          // a StakingClient and IdentityClient. Without stakingAddress, the
+          // on-chain verification loop in AntseedNode.discoverPeers() is
+          // skipped entirely, so `onChainTotalVolumeUsdcMicros` and
+          // `onChainLastSettledAtSec` never populate on PeerInfo (and end up
+          // as `null` in buyer.state.json).
+          ...(chainConfig.stakingContractAddress ? { stakingAddress: chainConfig.stakingContractAddress } : {}),
+          ...(chainConfig.identityRegistryAddress ? { identityRegistryAddress: chainConfig.identityRegistryAddress } : {}),
           ...(chainConfig.verifierRegistryAddress ? { verifierRegistryAddress: chainConfig.verifierRegistryAddress } : {}),
+          chainId: chainConfig.evmChainId,
           defaultDepositAmountUSDC: cryptoOverrides?.defaultLockAmountUSDC
             ? String(Math.round(parseFloat(cryptoOverrides.defaultLockAmountUSDC) * 1_000_000))
             : '1000000',
@@ -365,7 +371,6 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       const node = new AntseedNode({
         role: 'buyer',
         bootstrapNodes,
-        noOfficialBootstrap: config.payments?.crypto?.chainId === 'base-local' && configuredBootstrapNodes.length > 0,
         allowPrivateIPs: true,
         dataDir: globalOpts.dataDir,
         configPath: globalOpts.config,

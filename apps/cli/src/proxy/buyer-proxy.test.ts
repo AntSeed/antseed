@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -9,6 +9,7 @@ import { DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from '../config/defaults.js'
 import {
   BuyerProxy,
   parsePeerPinnedService,
+  parsePersistedModelVerificationSummaries,
   parsePersistedPeers,
   rewritePeerPinnedServiceInBody,
   selectCandidatePeersForRouting,
@@ -785,6 +786,130 @@ test('parsePersistedPeers filters non-string entries out of providers', () => {
   assert.deepEqual(result[0]?.providers, ['openai', 'claude-oauth'])
 })
 
+test('parsePersistedModelVerificationSummaries normalizes compact lifecycle data', () => {
+  const summaries = parsePersistedModelVerificationSummaries({
+    discoveredPeers: [
+      {
+        peerId: validPeerId.toUpperCase(),
+        modelVerificationSummary: {
+          fetchedAt: NOW,
+          services: {
+            ' Kimi-K2 ': 'suspended',
+            'Qwen/Qwen3-32B': 'verified',
+          },
+        },
+      },
+    ],
+  })
+
+  assert.deepEqual(summaries.get(validPeerId), {
+    fetchedAt: NOW,
+    services: {
+      'kimi-k2': 'suspended',
+      'qwen/qwen3-32b': 'verified',
+    },
+  })
+})
+
+test('parsePersistedModelVerificationSummaries accepts checked summaries without attestations', () => {
+  const summaries = parsePersistedModelVerificationSummaries({
+    discoveredPeers: [{
+      peerId: validPeerId,
+      modelVerificationSummary: { fetchedAt: NOW, services: {} },
+    }],
+  })
+
+  assert.deepEqual(summaries.get(validPeerId), { fetchedAt: NOW, services: {} })
+})
+
+test('parsePersistedModelVerificationSummaries rejects malformed summaries', () => {
+  const invalidValues = [
+    null,
+    { fetchedAt: 0, services: {} },
+    { fetchedAt: NOW, services: [] },
+    { fetchedAt: NOW, services: { 'kimi-k2': 'unknown' } },
+    { fetchedAt: NOW, services: { ' ': 'verified' } },
+  ]
+  for (const modelVerificationSummary of invalidValues) {
+    const summaries = parsePersistedModelVerificationSummaries({
+      discoveredPeers: [{ peerId: validPeerId, modelVerificationSummary }],
+    })
+    assert.equal(summaries.size, 0)
+  }
+})
+
+test('buyer state persists compact verification summaries and hydrates them separately from PeerInfo', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'antseed-verification-summary-'))
+  const stateFile = join(dataDir, 'buyer.state.json')
+  const peer = makePeer('a', ['openai'])
+  peer.providerPricing = {
+    openai: {
+      defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 1 },
+      services: { 'Kimi-K2': { inputUsdPerMillion: 1, outputUsdPerMillion: 1 } },
+    },
+  }
+  peer.modelVerification = { ' Kimi-K2 ': FLAGGED_MODEL_VERIFICATION }
+  peer.modelVerificationFetchedAt = NOW
+
+  try {
+    const writer = new BuyerProxy({ port: 0, dataDir, node: { router: null } as any })
+    ;(writer as any)._replacePeers([peer])
+    await (writer as any)._stateWriteChain
+
+    const persisted = JSON.parse(await readFile(stateFile, 'utf8')) as {
+      discoveredPeers: Array<Record<string, unknown>>
+    }
+    assert.deepEqual(persisted.discoveredPeers[0]?.modelVerificationSummary, {
+      fetchedAt: NOW,
+      services: { 'kimi-k2': 'suspended' },
+    })
+    assert.equal('modelVerification' in (persisted.discoveredPeers[0] ?? {}), false)
+
+    const reader = new BuyerProxy({ port: 0, dataDir, node: { router: null } as any })
+    await (reader as any)._hydratePeersFromStateFile()
+    assert.equal((reader as any)._cachedPeers[0]?.modelVerification, undefined)
+    assert.deepEqual((reader as any)._modelVerificationSummaries.get(peer.peerId), {
+      fetchedAt: NOW,
+      services: { 'kimi-k2': 'suspended' },
+    })
+
+    await writeFile(stateFile, JSON.stringify(persisted))
+    ;(reader as any)._persistPeersToState()
+    await (reader as any)._stateWriteChain
+    const rewritten = JSON.parse(await readFile(stateFile, 'utf8')) as {
+      discoveredPeers: Array<Record<string, unknown>>
+    }
+    assert.deepEqual(rewritten.discoveredPeers[0]?.modelVerificationSummary, {
+      fetchedAt: NOW,
+      services: { 'kimi-k2': 'suspended' },
+    })
+  } finally {
+    await rm(dataDir, { recursive: true, force: true })
+  }
+})
+
+test('buyer state persists an empty service summary after a successful verification check', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'antseed-empty-verification-summary-'))
+  const peer = makePeer('a', ['openai'])
+  peer.modelVerification = {}
+  peer.modelVerificationFetchedAt = NOW
+
+  try {
+    const proxy = new BuyerProxy({ port: 0, dataDir, node: { router: null } as any })
+    ;(proxy as any)._replacePeers([peer])
+    await (proxy as any)._stateWriteChain
+    const persisted = JSON.parse(await readFile(join(dataDir, 'buyer.state.json'), 'utf8')) as {
+      discoveredPeers: Array<Record<string, unknown>>
+    }
+    assert.deepEqual(persisted.discoveredPeers[0]?.modelVerificationSummary, {
+      fetchedAt: NOW,
+      services: {},
+    })
+  } finally {
+    await rm(dataDir, { recursive: true, force: true })
+  }
+})
+
 // peer-pinned model syntax tests
 
 function makeJsonBody(obj: Record<string, unknown>): Uint8Array {
@@ -913,44 +1038,23 @@ function makeDispatchCountingProxy(peer: PeerInfo): { proxy: BuyerProxy; dispatc
   return { proxy, dispatched: () => dispatchCount }
 }
 
-test('pinned peer with an active substitution flag for the requested service is blocked', async () => {
+test('pinned peer with an active substitution flag is still dispatched without request-time discovery', async () => {
   const peer = makePeer('a', ['openai'])
   peer.modelVerification = { 'gpt-4o': FLAGGED_MODEL_VERIFICATION }
   peer.modelVerificationFetchedAt = Date.now()
   const { proxy, dispatched } = makeDispatchCountingProxy(peer)
+  let discoveryCount = 0
+  ;(proxy as any)._node.discoverPeers = async () => {
+    discoveryCount += 1
+    return [peer]
+  }
 
   const response = await invokeProxy(proxy, makeProxyRequest({
     headers: { 'x-antseed-pin-peer': peer.peerId },
     body: { model: 'gpt-4o', messages: [] },
   }))
 
-  assert.equal(response.statusCode, 502)
-  assert.match(response.body, /model-substitution flag/)
-  assert.equal(dispatched(), 0)
-})
-
-test('a refreshed retraction clears a cached substitution flag', async () => {
-  const cachedPeer = makePeer('a', ['openai'])
-  cachedPeer.modelVerification = { 'gpt-4o': FLAGGED_MODEL_VERIFICATION }
-  const refreshedPeer = makePeer('a', ['openai'])
-  refreshedPeer.modelVerificationFetchedAt = Date.now()
-  const proxy = makeBuyerProxyWithPeers([cachedPeer], [refreshedPeer], { allowsPeerForPolicy: () => true, onResult: () => undefined })
-  let dispatchCount = 0
-  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: { requestId: string }) => {
-    dispatchCount += 1
-    return {
-      requestId: request.requestId,
-      statusCode: 200,
-      headers: { 'content-type': 'application/json' },
-      body: Buffer.from('{"ok":true}'),
-    }
-  }
-
-  const response = await invokeProxy(proxy, makeProxyRequest({
-    headers: { 'x-antseed-pin-peer': cachedPeer.peerId },
-    body: { model: 'gpt-4o', messages: [] },
-  }))
-
   assert.equal(response.statusCode, 200)
-  assert.equal(dispatchCount, 1)
+  assert.equal(dispatched(), 1)
+  assert.equal(discoveryCount, 0)
 })

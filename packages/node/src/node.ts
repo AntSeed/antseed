@@ -84,9 +84,12 @@ import { SellerAddressResolver } from "./discovery/seller-address-resolver.js";
 import { Contract as EthersContract } from "ethers";
 import { SellerPaymentManager, type SellerPaymentConfig } from "./payments/seller-payment-manager.js";
 import { IdentityClient } from "./payments/evm/identity-client.js";
-import { VerifierRegistryClient } from "./payments/evm/verifier-client.js";
+import {
+  VerifierRegistryClient,
+  serviceHash,
+  type AttestationSubmittedEvent,
+} from "./payments/evm/verifier-client.js";
 import { derivePeerModelVerification } from "./routing/verification-score.js";
-import { serviceHash } from "./payments/evm/verifier-client.js";
 import { SellerRequestHandler } from "./seller-request-handler.js";
 import {
   BuyerRequestHandler,
@@ -297,6 +300,14 @@ export class AntseedNode extends EventEmitter {
     results: PeerVerificationResults;
   }>();
   private _externalVerificationInFlight = new Set<string>();
+  private _modelVerificationAttestationCache = new Map<number, {
+    attestations: AttestationSubmittedEvent[];
+    fetchedAt: number;
+  }>();
+  private _modelVerificationAttestationInFlight = new Map<number, Promise<{
+    attestations: AttestationSubmittedEvent[];
+    fetchedAt: number;
+  } | null>>();
 
   constructor(config: NodeConfig) {
     super();
@@ -538,6 +549,8 @@ export class AntseedNode extends EventEmitter {
     this._buyerNegotiator = null;
     this._buyerHandler = null;
     this._backgroundPeerDiscoveryPromise = null;
+    this._modelVerificationAttestationCache.clear();
+    this._modelVerificationAttestationInFlight.clear();
     this._sellerPaymentManager = null;
     this._sessionTracker = null;
     this._started = false;
@@ -832,9 +845,8 @@ export class AntseedNode extends EventEmitter {
     this._attachCachedExternalVerificationResults([peer]);
     this._queueExternalVerification([peer]);
     await this._enrichPeersWithOnChainStats([peer]);
-    // Same verification enrichment as discoverPeers(): findPeer has no service
-    // hint, so this loads (at minimum) the agent-wide '*' aggregate, which is
-    // what substitution-flag routing gates on for service-less lookups.
+    // Same verification enrichment as wildcard discoverPeers(): derive every
+    // service advertised by this peer from one cached agent-attestation read.
     await this._enrichPeersWithVerification([peer]);
     return peer;
   }
@@ -920,54 +932,75 @@ export class AntseedNode extends EventEmitter {
     this._applyTrustAndSybil(peers);
   }
 
-  /**
-   * Attach model-verification reputation to discovered peers. For each peer
-   * with an on-chain agent id, read ordered attestation events for the requested
-   * service and derive its buyer-local lifecycle. No-op without a requested
-   * service or verifier registry. Failures are per-peer and non-fatal.
-   */
+  /** Attach per-service model-verification reputation to discovered peers. */
   private async _enrichPeersWithVerification(peers: PeerInfo[], service?: string): Promise<void> {
     const client = this._verifierRegistryClient;
-    if (!client || peers.length === 0 || !service?.trim()) return;
+    if (!client || peers.length === 0) return;
 
     const VERIFICATION_RPC_CONCURRENCY = 8;
-    // Throttle verifier-registry reads across rapid discovery cycles — the
-    // sibling of ON_CHAIN_STATS_TTL_MS in _enrichPeersWithOnChainStats (two
-    // eth_calls per peer would otherwise repeat on every enrichment pass).
-    // A fresh read is only reusable when it already covers the service this
-    // discovery filtered on; otherwise re-read to pick up per-service stats.
     const MODEL_VERIFICATION_TTL_MS = 60_000;
-    const nowMs = Date.now();
-    const serviceKey = service.trim().toLowerCase();
-    const queue = peers.filter((p) =>
-      typeof p.onChainAgentId === 'number' && p.onChainAgentId > 0
-      && !(
-        typeof p.modelVerificationFetchedAt === 'number'
-        && nowMs - p.modelVerificationFetchedAt < MODEL_VERIFICATION_TTL_MS
-        && p.modelVerification?.[serviceKey] !== undefined
-      ));
+    const requestedService = service?.trim().toLowerCase() || null;
+    const serviceKeysByPeer = new Map<PeerInfo, string[]>();
+    const queue = peers.filter((p) => {
+      if (typeof p.onChainAgentId !== 'number' || p.onChainAgentId <= 0) return false;
+      const serviceKeys = advertisedServiceKeys(p);
+      if (requestedService) serviceKeys.add(requestedService);
+      if (serviceKeys.size === 0) return false;
+      serviceKeysByPeer.set(p, [...serviceKeys]);
+      return true;
+    });
     if (queue.length === 0) return;
+
+    const loadAttestations = async (agentId: number): Promise<{
+      attestations: AttestationSubmittedEvent[];
+      fetchedAt: number;
+    } | null> => {
+      const cached = this._modelVerificationAttestationCache.get(agentId);
+      if (cached && Date.now() - cached.fetchedAt < MODEL_VERIFICATION_TTL_MS) {
+        return cached;
+      }
+
+      const inFlight = this._modelVerificationAttestationInFlight.get(agentId);
+      if (inFlight) return inFlight;
+
+      const request = (async () => {
+        try {
+          const entry = {
+            attestations: await client.queryAttestations(agentId),
+            fetchedAt: Date.now(),
+          };
+          this._modelVerificationAttestationCache.set(agentId, entry);
+          return entry;
+        } catch {
+          return cached ?? null;
+        }
+      })().finally(() => {
+        this._modelVerificationAttestationInFlight.delete(agentId);
+      });
+      this._modelVerificationAttestationInFlight.set(agentId, request);
+      return request;
+    };
+
     const enrichOne = async (p: PeerInfo): Promise<void> => {
       const agentId = p.onChainAgentId!;
-      try {
-        const attestations = await client.queryAttestations(agentId);
+      const cached = await loadAttestations(agentId);
+      if (!cached) return;
+
+      const serviceKeys = serviceKeysByPeer.get(p) ?? [];
+      const next: NonNullable<PeerInfo['modelVerification']> = {};
+      for (const serviceKey of serviceKeys) {
         const targetServiceHash = serviceHash(serviceKey);
-        const matching = attestations.filter(
+        const matching = cached.attestations.filter(
           (event) => event.serviceHash.toLowerCase() === targetServiceHash.toLowerCase(),
         );
         if (matching.length > 0) {
-          p.modelVerification = {
-            ...(p.modelVerification ?? {}),
-            [serviceKey]: derivePeerModelVerification(targetServiceHash, matching),
-          };
-        } else if (p.modelVerification?.[serviceKey]) {
-          const { [serviceKey]: _removed, ...remaining } = p.modelVerification;
-          p.modelVerification = remaining;
+          next[serviceKey] = derivePeerModelVerification(targetServiceHash, matching);
+        } else {
+          delete next[serviceKey];
         }
-        p.modelVerificationFetchedAt = Date.now();
-      } catch {
-        // Per-peer registry failures leave the previous lifecycle untouched.
       }
+      p.modelVerification = next;
+      p.modelVerificationFetchedAt = cached.fetchedAt;
     };
 
     const workers: Array<Promise<void>> = [];
@@ -2159,4 +2192,19 @@ function peerOffersService(peer: PeerInfo, service: string): boolean {
     }
   }
   return false;
+}
+
+function advertisedServiceKeys(peer: PeerInfo): Set<string> {
+  const services = new Set<string>();
+  const add = (service: string): void => {
+    const normalized = service.trim().toLowerCase();
+    if (normalized.length > 0) services.add(normalized);
+  };
+  for (const provider of peer.metadata?.providers ?? []) {
+    for (const service of provider.services ?? []) add(service);
+  }
+  for (const pricing of Object.values(peer.providerPricing ?? {})) {
+    for (const service of Object.keys(pricing.services ?? {})) add(service);
+  }
+  return services;
 }

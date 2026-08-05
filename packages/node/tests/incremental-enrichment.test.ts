@@ -16,6 +16,19 @@ function makePeer(peerId = 'a'.repeat(40)): PeerInfo {
   };
 }
 
+function advertiseServices(peer: PeerInfo, ...services: string[]): PeerInfo {
+  peer.providerPricing = {
+    openai: {
+      defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 1 },
+      services: Object.fromEntries(services.map((service) => [
+        service,
+        { inputUsdPerMillion: 1, outputUsdPerMillion: 1 },
+      ])),
+    },
+  };
+  return peer;
+}
+
 function attestation(
   verdict: number,
   blockNumber: number,
@@ -75,9 +88,9 @@ describe('AntseedNode incremental discovery enrichment', () => {
     expect(peers[0]?.onChainReputationScore).toEqual(expect.any(Number));
   });
 
-  it('does not query verifier attestations in a metadata-only partial update without a service', async () => {
+  it('emits model verification for advertised services during partial discovery enrichment', async () => {
     const node = new AntseedNode({ role: 'buyer' });
-    const peer = makePeer();
+    const peer = advertiseServices(makePeer(), 'Kimi-K2');
     const nowSec = Math.floor(Date.now() / 1000);
     const discovered = vi.fn();
 
@@ -97,7 +110,10 @@ describe('AntseedNode incremental discovery enrichment', () => {
       }),
     };
     (node as any)._verifierRegistryClient = {
-      queryAttestations: vi.fn(),
+      queryAttestations: vi.fn().mockResolvedValue([
+        attestation(VERIFIER_VERDICT_DIFF, 10, { agentId: 123n }),
+        attestation(VERIFIER_VERDICT_DIFF, 11, { agentId: 123n }),
+      ]),
     };
 
     (node as any)._queuePartialPeerEnrichment([peer]);
@@ -105,8 +121,100 @@ describe('AntseedNode incremental discovery enrichment', () => {
 
     expect(discovered).toHaveBeenCalledTimes(1);
     const [[peers]] = discovered.mock.calls as [[PeerInfo[]]];
-    expect(peers[0]?.modelVerification).toBeUndefined();
-    expect((node as any)._verifierRegistryClient.queryAttestations).not.toHaveBeenCalled();
+    expect(peers[0]?.modelVerification?.['kimi-k2']?.lifecycle).toBe('suspended');
+    expect(peers[0]?.modelVerificationFetchedAt).toEqual(expect.any(Number));
+    expect((node as any)._verifierRegistryClient.queryAttestations).toHaveBeenCalledOnce();
+    expect((node as any)._verifierRegistryClient.queryAttestations).toHaveBeenCalledWith(123);
+  });
+
+  it('derives all advertised service lifecycles from one wildcard attestation read', async () => {
+    const node = new AntseedNode({ role: 'buyer' });
+    const peer = advertiseServices({ ...makePeer(), onChainAgentId: 7 }, 'Qwen/Qwen3-32B');
+    peer.metadata = {
+      peerId: peer.peerId,
+      version: 10,
+      providers: [{
+        provider: 'openai',
+        services: ['Kimi-K2'],
+        defaultPricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 1 },
+        maxConcurrency: 1,
+        currentLoad: 0,
+      }],
+      region: 'unknown',
+      timestamp: Date.now(),
+      signature: '00'.repeat(65),
+    };
+    const queryAttestations = vi.fn().mockResolvedValue([
+      attestation(VERIFIER_VERDICT_SAME, 10),
+      attestation(VERIFIER_VERDICT_DIFF, 11, { serviceHash: serviceHash('qwen/qwen3-32b') }),
+    ]);
+    (node as any)._verifierRegistryClient = { queryAttestations };
+
+    await (node as any)._enrichPeersWithVerification([peer]);
+
+    expect(queryAttestations).toHaveBeenCalledTimes(1);
+    expect(peer.modelVerification?.['kimi-k2']?.lifecycle).toBe('verified');
+    expect(peer.modelVerification?.['qwen/qwen3-32b']?.lifecycle).toBe('flagged');
+  });
+
+  it('records a successful empty verification check', async () => {
+    const node = new AntseedNode({ role: 'buyer' });
+    const peer = advertiseServices({ ...makePeer(), onChainAgentId: 7 }, 'Kimi-K2');
+    (node as any)._verifierRegistryClient = { queryAttestations: vi.fn().mockResolvedValue([]) };
+
+    await (node as any)._enrichPeersWithVerification([peer]);
+
+    expect(peer.modelVerification).toEqual({});
+    expect(peer.modelVerificationFetchedAt).toEqual(expect.any(Number));
+  });
+
+  it('skips verification without a registry client or on-chain agent id', async () => {
+    const withoutRegistry = advertiseServices({ ...makePeer(), onChainAgentId: 7 }, 'Kimi-K2');
+    const nodeWithoutRegistry = new AntseedNode({ role: 'buyer' });
+    await (nodeWithoutRegistry as any)._enrichPeersWithVerification([withoutRegistry]);
+    expect(withoutRegistry.modelVerificationFetchedAt).toBeUndefined();
+
+    const withoutAgent = advertiseServices(makePeer(), 'Kimi-K2');
+    const queryAttestations = vi.fn();
+    const nodeWithoutAgent = new AntseedNode({ role: 'buyer' });
+    (nodeWithoutAgent as any)._verifierRegistryClient = { queryAttestations };
+    await (nodeWithoutAgent as any)._enrichPeersWithVerification([withoutAgent]);
+    expect(queryAttestations).not.toHaveBeenCalled();
+    expect(withoutAgent.modelVerificationFetchedAt).toBeUndefined();
+  });
+
+  it('reuses fresh attestation cache entries for the same agent', async () => {
+    const node = new AntseedNode({ role: 'buyer' });
+    const first = advertiseServices({ ...makePeer('a'.repeat(40)), onChainAgentId: 7 }, 'Kimi-K2');
+    const second = advertiseServices({ ...makePeer('b'.repeat(40)), onChainAgentId: 7 }, 'Kimi-K2');
+    const queryAttestations = vi.fn().mockResolvedValue([attestation(VERIFIER_VERDICT_SAME, 10)]);
+    (node as any)._verifierRegistryClient = { queryAttestations };
+
+    await (node as any)._enrichPeersWithVerification([first]);
+    await (node as any)._enrichPeersWithVerification([second]);
+
+    expect(queryAttestations).toHaveBeenCalledTimes(1);
+    expect(second.modelVerification?.['kimi-k2']?.lifecycle).toBe('verified');
+    expect(second.modelVerificationFetchedAt).toBe(first.modelVerificationFetchedAt);
+  });
+
+  it('retains stale cached attestations when registry refresh fails', async () => {
+    const node = new AntseedNode({ role: 'buyer' });
+    const first = advertiseServices({ ...makePeer('a'.repeat(40)), onChainAgentId: 7 }, 'Kimi-K2');
+    const second = advertiseServices({ ...makePeer('b'.repeat(40)), onChainAgentId: 7 }, 'Kimi-K2');
+    const queryAttestations = vi.fn()
+      .mockResolvedValueOnce([attestation(VERIFIER_VERDICT_SAME, 10)])
+      .mockRejectedValueOnce(new Error('rpc down'));
+    (node as any)._verifierRegistryClient = { queryAttestations };
+
+    await (node as any)._enrichPeersWithVerification([first]);
+    const cache = (node as any)._modelVerificationAttestationCache.get(7);
+    cache.fetchedAt = Date.now() - 61_000;
+    await (node as any)._enrichPeersWithVerification([second]);
+
+    expect(queryAttestations).toHaveBeenCalledTimes(2);
+    expect(second.modelVerification?.['kimi-k2']?.lifecycle).toBe('verified');
+    expect(second.modelVerificationFetchedAt).toBe(cache.fetchedAt);
   });
 
   it('derives service lifecycle from ordered attestation events', async () => {

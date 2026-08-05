@@ -54,7 +54,7 @@ describe('AntseedNode.findPeer compatibility', () => {
     expect((node as any)._peerLookup.findAll).toHaveBeenCalledTimes(1);
   });
 
-  it('does not invent aggregate verification state when no service is requested', async () => {
+  it('checks advertised services without inventing verification entries', async () => {
     const targetId = 'a'.repeat(40);
     const nowSec = Math.floor(Date.now() / 1000);
     const node = new AntseedNode({ role: 'buyer' });
@@ -83,14 +83,15 @@ describe('AntseedNode.findPeer compatibility', () => {
       }),
     };
     (node as any)._verifierRegistryClient = {
-      queryAttestations: vi.fn(),
+      queryAttestations: vi.fn().mockResolvedValue([]),
     };
 
     const peer = await node.findPeer(targetId);
 
     expect(peer?.onChainAgentId).toBe(55);
-    expect(peer?.modelVerification).toBeUndefined();
-    expect((node as any)._verifierRegistryClient.queryAttestations).not.toHaveBeenCalled();
+    expect(peer?.modelVerification).toEqual({});
+    expect(peer?.modelVerificationFetchedAt).toEqual(expect.any(Number));
+    expect((node as any)._verifierRegistryClient.queryAttestations).toHaveBeenCalledWith(55);
   });
 
   it('does not scan wildcard when the per-peer topic returns a match', async () => {

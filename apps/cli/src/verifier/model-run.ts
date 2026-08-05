@@ -40,7 +40,6 @@ import {
 } from './direct-evidence.js'
 import { advertisedServices } from './service-discovery.js'
 
-export const VERIFICATION_PROBE_COUNT = 100
 const PROBE_REQUEST_CONCURRENCY = 2
 
 export interface VerificationSpendLimit {
@@ -87,7 +86,7 @@ export interface ModelVerificationRunSummary {
   model: string
   mode: 'evidence' | 'attest'
   referenceId: string
-  probeCount: 100
+  probeCount: number
   startedAt: string
   completedAt: string
   maximumSpendUsdc: string
@@ -125,11 +124,8 @@ export async function verifyModelTarget(input: {
   if (!input.target.onChainAgentId || !input.target.onChainSellerAddress) {
     throw new Error('target lacks on-chain seller identity')
   }
-  if (input.reference.probes.length !== VERIFICATION_PROBE_COUNT) {
-    throw new Error(`reference must contain exactly ${VERIFICATION_PROBE_COUNT} probes`)
-  }
-
   const startedAt = Date.now()
+  const probeCount = input.reference.probes.length
   const batches = chunk(input.reference.probes, KBF_PROBES_PER_REQUEST)
   const maximumTargetSpend = BigInt(batches.length) * input.context.spend.maximumPerRequestUsdc
   if (input.context.spend.spentUsdc + maximumTargetSpend > input.context.spend.maximumUsdc) {
@@ -145,14 +141,14 @@ export async function verifyModelTarget(input: {
   const authenticatedProbeCount = exchanges
     .filter((exchange) => exchange.status === 'succeeded')
     .reduce((total, exchange) => total + exchange.probeIds.length, 0)
-  if (authenticatedProbeCount !== VERIFICATION_PROBE_COUNT) {
-    throw new Error(`only ${authenticatedProbeCount}/${VERIFICATION_PROBE_COUNT} probes were authenticated`)
+  if (authenticatedProbeCount !== probeCount) {
+    throw new Error(`only ${authenticatedProbeCount}/${probeCount} probes were authenticated`)
   }
 
   const fragment = verifyKbf(input.reference, {
     answers,
     matchVector,
-  })
+  }, { minCoverage: 1 })
   if (fragment.verdict === 'UNKNOWN') throw new Error(fragment.verdictReason ?? 'verification returned UNKNOWN')
   const completedAt = Date.now()
   const evidence: DirectAuditEvidenceV1 = {
@@ -278,10 +274,10 @@ async function executeProbeBatch(
     context.spend.spentUsdc += payment.sellerChargeUsdc
     if (response.statusCode !== 200) throw new Error(`HTTP ${response.statusCode}`)
     const completion = extractCompletionText(response.body)
-    if (completion === null) throw new Error('malformed completion response')
-    answers = parseKbfAnswers(completion, probes.length)
+    answers = completion === null
+      ? new Array<number | null>(probes.length).fill(null)
+      : parseKbfAnswers(completion, probes.length)
     matches = computeMatchVector(answers, probes)
-    if (answers.every((answer) => answer === null)) throw new Error('completion contained no parseable answers')
   } catch (error) {
     failureReason = controller.signal.aborted
       ? `request timed out after ${context.requestTimeoutMs}ms`

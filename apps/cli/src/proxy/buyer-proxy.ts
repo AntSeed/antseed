@@ -5,11 +5,10 @@ import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   computeOnChainReputationScore,
-  MODEL_VERIFICATION_MAX_AGE_MS,
-  peerHasActiveSubstitutionFlag,
   type AntseedNode,
   type PeerInfo,
   type PeerMetadata,
+  type PeerVerificationLifecycle,
   type RequestStreamResponseMetadata,
   type Router,
   type SerializedHttpRequest,
@@ -99,6 +98,59 @@ type PeerFailureEntry = {
   firstFailureAt: number
   lastFailureAt: number
   lastReason: string
+}
+
+export type PersistedModelVerificationSummary = {
+  fetchedAt: number
+  services: Record<string, PeerVerificationLifecycle>
+}
+
+const PEER_VERIFICATION_LIFECYCLES = new Set<PeerVerificationLifecycle>([
+  'bootstrap',
+  'provisional',
+  'verified',
+  'flagged',
+  'suspended',
+])
+
+function parseModelVerificationSummary(value: unknown): PersistedModelVerificationSummary | null {
+  if (!value || typeof value !== 'object') return null
+  const summary = value as Record<string, unknown>
+  if (typeof summary.fetchedAt !== 'number' || !Number.isFinite(summary.fetchedAt) || summary.fetchedAt <= 0) {
+    return null
+  }
+  if (!summary.services || typeof summary.services !== 'object' || Array.isArray(summary.services)) {
+    return null
+  }
+
+  const services: Record<string, PeerVerificationLifecycle> = {}
+  for (const [service, lifecycle] of Object.entries(summary.services as Record<string, unknown>)) {
+    const normalized = service.trim().toLowerCase()
+    if (normalized.length === 0 || !PEER_VERIFICATION_LIFECYCLES.has(lifecycle as PeerVerificationLifecycle)) {
+      return null
+    }
+    services[normalized] = lifecycle as PeerVerificationLifecycle
+  }
+  return { fetchedAt: summary.fetchedAt, services }
+}
+
+export function parsePersistedModelVerificationSummaries(
+  parsed: unknown,
+): Map<string, PersistedModelVerificationSummary> {
+  const summaries = new Map<string, PersistedModelVerificationSummary>()
+  if (!parsed || typeof parsed !== 'object') return summaries
+  const discovered = (parsed as { discoveredPeers?: unknown }).discoveredPeers
+  if (!Array.isArray(discovered)) return summaries
+
+  for (const raw of discovered) {
+    if (!raw || typeof raw !== 'object') continue
+    const entry = raw as Record<string, unknown>
+    const peerId = typeof entry.peerId === 'string' ? entry.peerId.toLowerCase() : ''
+    if (!/^[0-9a-f]{40}$/.test(peerId)) continue
+    const summary = parseModelVerificationSummary(entry.modelVerificationSummary)
+    if (summary) summaries.set(peerId, summary)
+  }
+  return summaries
 }
 
 type BuyerPolicyRouter = Router & {
@@ -366,10 +418,10 @@ export class BuyerProxy {
   private _stateWriteChain: Promise<void> = Promise.resolve()
 
   private _cachedPeers: PeerInfo[] = []
+  private _modelVerificationSummaries = new Map<string, PersistedModelVerificationSummary>()
   private _cacheLastUpdatedAtMs = 0
   private _cacheMutationEpoch = 0
   private _peerRefreshPromise: Promise<PeerInfo[]> | null = null
-  private _verificationRefreshAt = new Map<string, number>()
   private _lastStaleCacheLogAtMs = 0
   private _bgRefreshHandle: ReturnType<typeof setInterval> | null = null
   private _peerFailures: Map<string, PeerFailureEntry> = new Map()
@@ -438,6 +490,11 @@ export class BuyerProxy {
       const raw = await readFile(this._stateFile, 'utf-8')
       const parsed = JSON.parse(raw) as unknown
       const peers = parsePersistedPeers(parsed)
+      const peerIds = new Set(peers.map((peer) => peer.peerId.toLowerCase()))
+      this._modelVerificationSummaries = new Map(
+        [...parsePersistedModelVerificationSummaries(parsed)]
+          .filter(([peerId]) => peerIds.has(peerId)),
+      )
       if (peers.length === 0) {
         return
       }
@@ -600,6 +657,24 @@ export class BuyerProxy {
     }
 
     this._cachedPeers = merged
+    const mergedPeerIds = new Set(merged.map((peer) => peer.peerId.toLowerCase()))
+    for (const peerId of this._modelVerificationSummaries.keys()) {
+      if (!mergedPeerIds.has(peerId)) this._modelVerificationSummaries.delete(peerId)
+    }
+    for (const peer of merged) {
+      if (typeof peer.modelVerificationFetchedAt !== 'number' || !Number.isFinite(peer.modelVerificationFetchedAt)) {
+        continue
+      }
+      const services: Record<string, PeerVerificationLifecycle> = {}
+      for (const [service, verification] of Object.entries(peer.modelVerification ?? {})) {
+        const normalized = service.trim().toLowerCase()
+        if (normalized.length > 0) services[normalized] = verification.lifecycle
+      }
+      this._modelVerificationSummaries.set(peer.peerId.toLowerCase(), {
+        fetchedAt: peer.modelVerificationFetchedAt,
+        services,
+      })
+    }
     this._cacheLastUpdatedAtMs = Date.now()
     this._cacheMutationEpoch += 1
     this._persistPeersToState()
@@ -657,6 +732,7 @@ export class BuyerProxy {
         // null on first sighting and filled by a later peers:discovered update.
         verifications: p.metadata?.verifications ?? null,
         verificationResults: p.verificationResults ?? null,
+        modelVerificationSummary: this._modelVerificationSummaries.get(p.peerId.toLowerCase()) ?? null,
         lastSeen: p.lastSeen,
         lastReachedAt: p.lastReachedAt ?? null,
       }
@@ -776,28 +852,6 @@ export class BuyerProxy {
 
     // No cached peers yet — block on initial discovery.
     return this._refreshPeersNow()
-  }
-
-  private async _refreshVerification(peerId: string, service: string): Promise<void> {
-    const key = `${peerId.toLowerCase()}:${service.toLowerCase()}`
-    const lastRefresh = this._verificationRefreshAt.get(key) ?? 0
-    if (Date.now() - lastRefresh < MODEL_VERIFICATION_MAX_AGE_MS) return
-
-    try {
-      const peers = await this._node.discoverPeers(service)
-      const refreshedPeer = peers.find((peer) => peer.peerId.toLowerCase() === peerId.toLowerCase())
-      const cachedPeer = this._cachedPeers.find((peer) => peer.peerId.toLowerCase() === peerId.toLowerCase())
-      if (refreshedPeer?.modelVerificationFetchedAt) {
-        this._verificationRefreshAt.set(key, refreshedPeer.modelVerificationFetchedAt)
-      }
-      if (refreshedPeer?.modelVerificationFetchedAt && cachedPeer && !refreshedPeer.modelVerification?.[service.toLowerCase()]) {
-        const { [service.toLowerCase()]: _removed, ...remaining } = cachedPeer.modelVerification ?? {}
-        cachedPeer.modelVerification = remaining
-      }
-      if (peers.length > 0) this._replacePeers(peers)
-    } catch {
-      // Verification enrichment is best-effort; normal cached routing remains available.
-    }
   }
 
   private _formatPeerSelectionDiagnostics(peers: PeerInfo[]): string {
@@ -1141,13 +1195,6 @@ export class BuyerProxy {
       pinnedDiscovered = isPinnedDiscovered()
     }
 
-    if (pinnedDiscovered && requestedService) {
-      await this._refreshVerification(explicitPeerId, requestedService)
-      discoveredPeers = this._cachedPeers
-      ;({ candidatePeers: routingPeers, routePlanByPeerId: routingPlans } = selectPeers(discoveredPeers))
-      pinnedDiscovered = isPinnedDiscovered()
-    }
-
     if (!pinnedDiscovered) {
       const logSource = serializedReq.headers['x-antseed-pin-peer']
         ? 'x-antseed-pin-peer header'
@@ -1214,20 +1261,6 @@ export class BuyerProxy {
       log(`Invariant: pinned peer ${explicitPeerId.slice(0, 12)}... present in DHT but missing from narrowed candidate list`)
       res.writeHead(502, { 'content-type': 'text/plain' })
       res.end(`Pinned peer ${explicitPeerId.slice(0, 12)}... is currently unreachable. Try again in a moment.`)
-      return
-    }
-    // Auto-selection is disabled, so enforce the router's substitution gate on
-    // the explicitly pinned peer before dispatch.
-    if (peerHasActiveSubstitutionFlag(selectedPeer, requestedService?.toLowerCase() ?? null)) {
-      log(`Pinned peer ${selectedPeer.peerId.slice(0, 12)}... blocked: active model-substitution flag (service=${requestedService ?? '*'})`)
-      res.writeHead(502, { 'content-type': 'text/plain' })
-      res.end(
-        `Pinned peer ${selectedPeer.peerId.slice(0, 12)}... carries an active model-substitution flag`
-        + (requestedService ? ` for ${requestedService}` : '')
-        + ': an approved verifier currently stands by on-chain evidence that it served a different model '
-        + 'than advertised. Requests to it are blocked until the accusing verifier(s) retract. '
-        + 'Pick a different peer in Discover.',
-      )
       return
     }
     const policyRouter = router as BuyerPolicyRouter | null | undefined

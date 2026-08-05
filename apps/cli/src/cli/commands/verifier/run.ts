@@ -7,7 +7,6 @@ import {
   classifyVerificationTarget,
   verifyModelTarget,
   writeRunSummary,
-  VERIFICATION_PROBE_COUNT,
   type ModelVerificationFailure,
   type ModelVerificationTargetResult,
 } from '../../../verifier/model-run.js'
@@ -52,8 +51,10 @@ export function registerVerifierRunCommand(verifier: Command): void {
         const prepared = await loadModelReference({
           model,
           referencesDir: runtime.referencesDir,
+          config: config.verifier,
         })
         console.log(chalk.dim(`Reference: ${prepared.path}`))
+        console.log(chalk.dim(`Probes: ${prepared.reference.probes.length}`))
 
         const normalizedModel = model.toLowerCase()
         const peers = await runtime.node.discoverPeers(model)
@@ -94,7 +95,7 @@ export function registerVerifierRunCommand(verifier: Command): void {
             results.push(result)
             console.log(chalk.green(
               `${result.status} ${target.peer.peerId.slice(0, 12)}… `
-              + `(${result.authenticatedProbeCount}/${VERIFICATION_PROBE_COUNT} authenticated)`,
+              + `(${result.authenticatedProbeCount}/${result.probeCount} authenticated)`,
             ))
           } catch (error) {
             const reason = asError(error).message
@@ -116,7 +117,7 @@ export function registerVerifierRunCommand(verifier: Command): void {
           model,
           mode: noAttest ? 'evidence' : 'attest',
           referenceId: prepared.reference.referenceId,
-          probeCount: VERIFICATION_PROBE_COUNT,
+          probeCount: prepared.reference.probes.length,
           startedAt: new Date(startedAt).toISOString(),
           completedAt: new Date(completedAt).toISOString(),
           maximumSpendUsdc: maximumSpendUsdc.toString(),

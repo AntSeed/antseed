@@ -17,8 +17,14 @@ import {
   type KbfReferenceV1,
 } from '@antseed/fingerprints'
 import type { VerifierCLIConfig, VerifierReferenceEndpointConfig } from '../config/types.js'
+import {
+  REFERENCE_MINIMUM_MISMATCH_DELTA,
+  REFERENCE_POWER_ALPHA,
+  REFERENCE_POWER_CONFIDENCE,
+  isReferenceProbeCountAllowed,
+  resolveReferenceSizingPolicy,
+} from './reference-sizing.js'
 import { safeServiceSlug } from './slug.js'
-import { VERIFICATION_PROBE_COUNT } from './model-run.js'
 
 const CANDIDATE_COUNT = 300
 const CANDIDATE_BATCH_SIZE = 20
@@ -26,10 +32,10 @@ const DEFAULT_MAX_REQUESTS_PER_BUILD = 2_000
 const DEFAULT_BATCH_RETRY_COUNT = 3
 const DEFAULT_RETRY_BASE_DELAY_MS = 500
 const DEFAULT_MAX_NO_PROGRESS_ROUNDS = 3
-const DEFAULT_MAX_CONCURRENT_REQUESTS = 2
-const DEFAULT_MAX_CONCURRENT_REQUESTS_PER_MODEL = 1
+const DEFAULT_MAX_CONCURRENT_REQUESTS = 4
+const DEFAULT_MAX_CONCURRENT_REQUESTS_PER_MODEL = 3
 const MAX_TOKENS = 1600
-const MINIMUM_MISMATCH_DELTA = 0.1
+const REFERENCE_SIZING_ALGORITHM_VERSION = 1
 const REFERENCE_REASONING_STRATEGY = 'reasoning-effort-none' as const
 const REFERENCE_REQUEST_OVERRIDES = { reasoning_effort: 'none' }
 
@@ -55,6 +61,9 @@ interface CollectedReferenceProbes {
   probes: KbfProbe[]
   candidateCount: number
   distinguishingProbeIdsByModel: Map<string, string[]>
+  generatedProbeIds: Set<string>
+  reserveProbes: KbfProbe[]
+  generationRound: number
 }
 
 interface ReferenceBuildCheckpointV1 {
@@ -72,6 +81,7 @@ type ReferenceQuery = ((model: string, body: Record<string, unknown>) => Promise
 export async function loadModelReference(input: {
   model: string
   referencesDir: string
+  config?: VerifierCLIConfig
 }): Promise<{ reference: KbfReferenceV1; path: string }> {
   const path = referencePath(input.referencesDir, input.model)
   let raw: string
@@ -84,12 +94,37 @@ export async function loadModelReference(input: {
     throw error
   }
   try {
-    const reference = validateKbfReferenceV1(JSON.parse(raw), { trustImported: true })
+    const sizing = resolveReferenceSizingPolicy(input.config)
+    const reference = validateKbfReferenceV1(JSON.parse(raw), {
+      trustImported: true,
+      minimumStatisticalPower: Number.EPSILON,
+    })
     if (!reference.serviceAliases.some((alias) => normalized(alias) === normalized(input.model))) {
       throw new Error(`reference does not include service alias ${input.model}`)
     }
-    if (reference.probes.length !== VERIFICATION_PROBE_COUNT) {
-      throw new Error(`reference must contain exactly ${VERIFICATION_PROBE_COUNT} probes`)
+    if (!isReferenceProbeCountAllowed(reference.probes.length, sizing)) {
+      throw new Error(
+        `reference probe count ${reference.probes.length} is outside the configured adaptive sizing sequence`,
+      )
+    }
+    if (Math.abs(reference.minimumMismatchDelta - REFERENCE_MINIMUM_MISMATCH_DELTA) > 1e-12) {
+      throw new Error(`reference minimumMismatchDelta must be ${REFERENCE_MINIMUM_MISMATCH_DELTA}`)
+    }
+    if (Math.abs(reference.statisticalPowerEvidence.alpha - REFERENCE_POWER_ALPHA) > 1e-12) {
+      throw new Error(`reference statistical power alpha must be ${REFERENCE_POWER_ALPHA}`)
+    }
+    if (Math.abs(
+      reference.statisticalPowerEvidence.clopperPearsonConfidence - REFERENCE_POWER_CONFIDENCE,
+    ) > 1e-12) {
+      throw new Error(
+        `reference Clopper-Pearson confidence must be ${REFERENCE_POWER_CONFIDENCE}`,
+      )
+    }
+    if (reference.statisticalPower < sizing.minimumStatisticalPower) {
+      throw new Error(
+        `reference statistical power ${reference.statisticalPower.toFixed(3)} is below `
+        + sizing.minimumStatisticalPower.toFixed(3),
+      )
     }
     return { reference, path }
   } catch (error) {
@@ -111,6 +146,7 @@ export async function buildModelReference(input: {
   }
   const apiKey = (endpoint.apiKeyEnv ? process.env[endpoint.apiKeyEnv] : undefined) ?? endpoint.apiKey
   const timeoutMs = input.config?.probeRequestTimeoutMs ?? 120_000
+  const sizing = resolveReferenceSizingPolicy(input.config)
   const checkpointPath = join(input.referencesDir, '.checkpoints', `${safeServiceSlug(input.model)}.json`)
   const compatibilityHash = canonicalHashBytes32({
     version: 1,
@@ -122,7 +158,9 @@ export async function buildModelReference(input: {
       antseedPeerId: endpoint.antseedPeerId ?? null,
     },
     modelConfig,
-    targetCount: VERIFICATION_PROBE_COUNT,
+    sizing,
+    minimumMismatchDelta: REFERENCE_MINIMUM_MISMATCH_DELTA,
+    sizingAlgorithmVersion: REFERENCE_SIZING_ALGORITHM_VERSION,
     candidateCountPerRound: CANDIDATE_COUNT,
     candidateBatchSize: CANDIDATE_BATCH_SIZE,
     candidatePromptVersion: 2,
@@ -147,26 +185,73 @@ export async function buildModelReference(input: {
     retryBaseDelayMs: input.config?.referenceRetryBaseDelayMs ?? DEFAULT_RETRY_BASE_DELAY_MS,
     log: input.log,
   })
-  await preflightModels([modelConfig.upstreamModel, ...modelConfig.contrastModels], query, input.log)
-  let collected: CollectedReferenceProbes
+  let collected: CollectedReferenceProbes | undefined
+  const selfAnswers: Array<number | null> = []
+  let selected: {
+    probes: KbfProbe[]
+    matches: Array<0 | 1 | null>
+    answers: Array<number | null>
+    power: ReturnType<typeof computeBinomialPower>
+  } | null = null
   try {
-    collected = await collectReferenceProbes({
-      model: modelConfig.upstreamModel,
-      contrastModels: modelConfig.contrastModels,
-      targetCount: VERIFICATION_PROBE_COUNT,
-      candidateCountPerRound: CANDIDATE_COUNT,
-      maxNoProgressRounds: input.config?.referenceMaxNoProgressRounds ?? DEFAULT_MAX_NO_PROGRESS_ROUNDS,
-      query,
-      log: input.log,
-    })
+    for (let targetCount = sizing.minimumProbeCount;
+      targetCount <= sizing.maximumProbeCount;
+      targetCount += sizing.probeStep) {
+      collected = await collectReferenceProbes({
+        model: modelConfig.upstreamModel,
+        contrastModels: modelConfig.contrastModels,
+        targetCount,
+        candidateCountPerRound: CANDIDATE_COUNT,
+        maxNoProgressRounds: input.config?.referenceMaxNoProgressRounds ?? DEFAULT_MAX_NO_PROGRESS_ROUNDS,
+        query,
+        log: input.log,
+        initial: collected,
+      })
+      const additions = collected.probes.slice(selfAnswers.length, targetCount)
+      if (additions.length > 0) {
+        input.log?.(`self-testing ${selfAnswers.length + 1}-${targetCount} of ${targetCount} probes`)
+        selfAnswers.push(...await queryProbeAnswers(
+          modelConfig.upstreamModel,
+          additions,
+          0,
+          'self-test',
+          query,
+        ))
+      }
+      const probes = collected.probes.slice(0, targetCount)
+      const answers = selfAnswers.slice(0, targetCount)
+      const matches = computeMatchVector(answers, probes)
+      const parsed = matches.filter((match) => match !== null).length
+      const hamming = matches.filter((match) => match !== 1).length
+      const coverage = parsed / targetCount
+      const errorRate = hamming / targetCount
+      const power = computeBinomialPower({
+        selfHamming: hamming,
+        selfTotal: targetCount,
+        minimumMismatchDelta: REFERENCE_MINIMUM_MISMATCH_DELTA,
+        alpha: REFERENCE_POWER_ALPHA,
+        cpConfidence: REFERENCE_POWER_CONFIDENCE,
+      })
+      input.log?.(
+        `reference size ${targetCount}: power ${power.power.toFixed(3)}, `
+        + `self-test ${hamming}/${targetCount}, coverage ${coverage.toFixed(3)}`,
+      )
+      if (coverage >= 0.8 && errorRate <= 0.35 && power.power >= sizing.minimumStatisticalPower) {
+        selected = { probes, matches, answers, power }
+        break
+      }
+    }
   } catch (error) {
     if (asError(error).message.includes('reference generation made no progress')) await checkpoint.remove()
     throw error
   }
-  const probes = collected.probes
-  input.log?.(`self-testing ${probes.length} selected probes`)
-  const selfAnswers = await queryProbeAnswers(modelConfig.upstreamModel, probes, 0, 'self-test', query)
-  const matches = computeMatchVector(selfAnswers, probes)
+  if (!collected || !selected) {
+    throw new Error(
+      `reference remains underpowered at ${sizing.maximumProbeCount} probes; `
+      + `required power ${sizing.minimumStatisticalPower.toFixed(3)}`,
+    )
+  }
+  const { probes, matches, answers, power } = selected
   const parsed = matches.filter((match) => match !== null).length
   const hamming = matches.filter((match) => match !== 1).length
   const selfTest = {
@@ -174,7 +259,7 @@ export async function buildModelReference(input: {
     total: probes.length,
     coverage: parsed / probes.length,
     errorRate: hamming / probes.length,
-    outcomes: probes.map((probe, index) => ({ probeId: probe.id, answer: selfAnswers[index] ?? null, match: matches[index]! })),
+    outcomes: probes.map((probe, index) => ({ probeId: probe.id, answer: answers[index] ?? null, match: matches[index]! })),
   }
   if (selfTest.coverage < 0.8) {
     await checkpoint.remove()
@@ -183,11 +268,6 @@ export async function buildModelReference(input: {
   if (selfTest.errorRate > 0.35) {
     await checkpoint.remove()
     throw new Error(`self-test error rate ${selfTest.errorRate.toFixed(3)} exceeds 0.35`)
-  }
-  const power = computeBinomialPower({ selfHamming: hamming, selfTotal: probes.length, minimumMismatchDelta: MINIMUM_MISMATCH_DELTA })
-  if (power.power < 0.9) {
-    await checkpoint.remove()
-    throw new Error(`reference statistical power ${power.power.toFixed(3)} is below 0.9`)
   }
   const queryProfile = createReferenceQueryProfile({
     upstreamModel: modelConfig.upstreamModel,
@@ -208,19 +288,25 @@ export async function buildModelReference(input: {
       name: 'antseed-simple-reference-builder',
       version: '1',
       verifierKind: 'kbf',
-      params: { sourceId: endpoint.sourceId, upstreamModel: modelConfig.upstreamModel, candidateCount: collected.candidateCount },
+      params: {
+        sourceId: endpoint.sourceId,
+        upstreamModel: modelConfig.upstreamModel,
+        candidateCount: collected.candidateCount,
+        sizing,
+        sizingAlgorithmVersion: REFERENCE_SIZING_ALGORITHM_VERSION,
+      },
     },
     provenance: { sourceId: endpoint.sourceId, trust: endpoint.trust },
     queryProfile,
     selfTest,
     probes,
     selectedProbeCount: probes.length,
-    minimumMismatchDelta: MINIMUM_MISMATCH_DELTA,
+    minimumMismatchDelta: REFERENCE_MINIMUM_MISMATCH_DELTA,
     statisticalPower: power.power,
     statisticalPowerEvidence: {
       test: 'one-sided-binomial',
-      alpha: 0.05,
-      clopperPearsonConfidence: 0.99,
+      alpha: REFERENCE_POWER_ALPHA,
+      clopperPearsonConfidence: REFERENCE_POWER_CONFIDENCE,
       selfHamming: hamming,
       selfTotal: probes.length,
       p0UpperBound: power.p0,
@@ -230,11 +316,14 @@ export async function buildModelReference(input: {
     },
     contrasts: modelConfig.contrastModels.map((model) => ({
       model,
-      distinguishingProbeIds: collected.distinguishingProbeIdsByModel.get(model) ?? [],
+      distinguishingProbeIds: (collected.distinguishingProbeIdsByModel.get(model) ?? [])
+        .filter((probeId) => probes.some((probe) => probe.id === probeId)),
     })),
   }
   reference.referenceId = computeReferenceId(reference)
-  const validated = validateKbfReferenceV1(reference)
+  const validated = validateKbfReferenceV1(reference, {
+    minimumStatisticalPower: sizing.minimumStatisticalPower,
+  })
   const path = referencePath(input.referencesDir, input.model)
   await writeReference(path, validated)
   await checkpoint.remove()
@@ -249,6 +338,7 @@ export async function collectReferenceProbes(input: {
   candidateCountPerRound?: number
   maxNoProgressRounds?: number
   log?: (message: string) => void
+  initial?: CollectedReferenceProbes
 }): Promise<CollectedReferenceProbes> {
   assertPositiveInteger(input.targetCount, 'targetCount')
   const candidateCountPerRound = input.candidateCountPerRound ?? Math.max(CANDIDATE_COUNT, input.targetCount * 3)
@@ -256,45 +346,58 @@ export async function collectReferenceProbes(input: {
   assertPositiveInteger(candidateCountPerRound, 'candidateCountPerRound')
   assertPositiveInteger(maxNoProgressRounds, 'maxNoProgressRounds')
 
-  const probes: KbfProbe[] = []
-  const generatedProbeIds = new Set<string>()
-  const distinguishingProbeIdsByModel = new Map(input.contrastModels.map((model) => [model, [] as string[]]))
-  let round = 0
+  const state = input.initial ?? {
+    probes: [],
+    candidateCount: 0,
+    distinguishingProbeIdsByModel: new Map(input.contrastModels.map((model) => [model, [] as string[]])),
+    generatedProbeIds: new Set<string>(),
+    reserveProbes: [],
+    generationRound: 0,
+  }
+  const promote = (probe: KbfProbe): void => {
+    state.probes.push(probe)
+    const distinguishingModels = (probe.contrast as { distinguishingModels?: string[] } | undefined)
+      ?.distinguishingModels ?? []
+    for (const model of distinguishingModels) state.distinguishingProbeIdsByModel.get(model)?.push(probe.id)
+  }
+  while (state.probes.length < input.targetCount && state.reserveProbes.length > 0) promote(state.reserveProbes.shift()!)
   let noProgressRounds = 0
 
-  while (probes.length < input.targetCount) {
-    round += 1
-    input.log?.(`generation round ${round}: collecting ${probes.length}/${input.targetCount} probes`)
-    const generated = await generateCandidates(input.model, candidateCountPerRound, round, input.query)
+  while (state.probes.length < input.targetCount) {
+    state.generationRound += 1
+    input.log?.(`generation round ${state.generationRound}: collecting ${state.probes.length}/${input.targetCount} probes`)
+    const generated = await generateCandidates(input.model, candidateCountPerRound, state.generationRound, input.query)
     const candidates = generated.filter((probe) => {
-      if (generatedProbeIds.has(probe.id)) return false
-      generatedProbeIds.add(probe.id)
+      if (state.generatedProbeIds.has(probe.id)) return false
+      state.generatedProbeIds.add(probe.id)
       return true
     })
-    input.log?.(`generation round ${round}: testing ${candidates.length} new candidates for stability`)
+    state.candidateCount = state.generatedProbeIds.size
+    input.log?.(`generation round ${state.generationRound}: testing ${candidates.length} new candidates for stability`)
     const stable = await certifyStableProbes(input.model, candidates, input.query)
     const contrastOutcomes = await queryContrastOutcomes(stable, input.contrastModels, input.query, input.log)
     const accepted = stable.filter((probe) => input.contrastModels.length === 0
       || (contrastOutcomes.get(probe.id)?.length ?? 0) > 0)
-    const selected = accepted.slice(0, input.targetCount - probes.length)
-    for (const probe of selected) {
+    const prepared = accepted.map((probe) => {
       const distinguishingModels = contrastOutcomes.get(probe.id) ?? []
-      probes.push({
+      return {
         ...probe,
         ...(distinguishingModels.length > 0 ? { contrast: { distinguishingModels } } : {}),
-      })
-      for (const model of distinguishingModels) distinguishingProbeIdsByModel.get(model)!.push(probe.id)
-    }
+      }
+    })
+    const selected = prepared.slice(0, input.targetCount - state.probes.length)
+    for (const probe of selected) promote(probe)
+    state.reserveProbes.push(...prepared.slice(selected.length))
     input.log?.(
-      `generation round ${round}: ${stable.length} stable, ${accepted.length} distinguish at least one contrast, `
-      + `${probes.length}/${input.targetCount} selected`,
+      `generation round ${state.generationRound}: ${stable.length} stable, ${accepted.length} distinguish at least one contrast, `
+      + `${state.probes.length}/${input.targetCount} selected`,
     )
     if (selected.length === 0) {
       noProgressRounds += 1
       if (noProgressRounds >= maxNoProgressRounds) {
         throw new Error(
           `reference generation made no progress for ${noProgressRounds} rounds; `
-          + `collected ${probes.length}/${input.targetCount} probes from ${generatedProbeIds.size} unique candidates`,
+          + `collected ${state.probes.length}/${input.targetCount} probes from ${state.generatedProbeIds.size} unique candidates`,
         )
       }
     } else {
@@ -302,7 +405,7 @@ export async function collectReferenceProbes(input: {
     }
   }
 
-  return { probes, candidateCount: generatedProbeIds.size, distinguishingProbeIdsByModel }
+  return state
 }
 
 async function certifyStableProbes(
@@ -457,32 +560,6 @@ function createReferenceQuery(input: {
     await input.checkpoint.delete(cacheKey)
   }
   return query
-}
-
-async function preflightModels(
-  models: readonly string[],
-  query: ReferenceQuery,
-  log?: (message: string) => void,
-): Promise<void> {
-  for (const model of [...new Set(models)]) {
-    log?.(`preflighting reference model ${model}`)
-    const content = await query(model, {
-      model,
-      temperature: 0,
-      max_tokens: 8,
-      messages: [{ role: 'user', content: 'Reply with only the number 7.' }],
-    })
-    if (!/\b7\b/.test(content)) {
-      const body = {
-        model,
-        temperature: 0,
-        max_tokens: 8,
-        messages: [{ role: 'user', content: 'Reply with only the number 7.' }],
-      }
-      await query.invalidate?.(model, body)
-      throw new Error(`reference model preflight returned an unexpected response for ${model}`)
-    }
-  }
 }
 
 class ReferenceBuildCheckpoint {

@@ -42,5 +42,14 @@ export function createDefaultConfig(): AntseedConfig {
     network: {
       bootstrapNodes: [],
     },
+    verifier: {
+      probeRequestTimeoutMs: 120_000,
+      referenceMaxConcurrentRequests: 4,
+      referenceMaxConcurrentRequestsPerModel: 3,
+      referenceMinimumProbeCount: 100,
+      referenceMaximumProbeCount: 500,
+      referenceProbeStep: 10,
+      referenceMinimumStatisticalPower: 0.9,
+    },
   };
 }

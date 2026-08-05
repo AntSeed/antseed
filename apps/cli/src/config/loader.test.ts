@@ -33,6 +33,12 @@ test('createDefaultConfig includes a Base mainnet crypto payment default', () =>
   const config = createDefaultConfig();
 
   assert.deepEqual(config.payments.crypto, { chainId: 'base-mainnet' });
+  assert.equal(config.verifier?.referenceMaxConcurrentRequests, 4);
+  assert.equal(config.verifier?.referenceMaxConcurrentRequestsPerModel, 3);
+  assert.equal(config.verifier?.referenceMinimumProbeCount, 100);
+  assert.equal(config.verifier?.referenceMaximumProbeCount, 500);
+  assert.equal(config.verifier?.referenceProbeStep, 10);
+  assert.equal(config.verifier?.referenceMinimumStatisticalPower, 0.9);
 });
 
 test('loadConfig reads nested seller.providers[name].services[id] shape', async () => {
@@ -225,12 +231,20 @@ test('loadConfig preserves and validates verifier settings', async () => {
       referenceMaxNoProgressRounds: 2,
       referenceMaxConcurrentRequests: 2,
       referenceMaxConcurrentRequestsPerModel: 1,
+      referenceMinimumProbeCount: 120,
+      referenceMaximumProbeCount: 240,
+      referenceProbeStep: 20,
+      referenceMinimumStatisticalPower: 0.95,
     },
   }), async (configPath) => {
     const config = await loadConfig(configPath);
     assert.equal(config.verifier?.referencesDir, './refs');
     assert.equal(config.verifier?.referenceEndpoint?.sourceId, 'trusted-reference-v1');
     assert.equal(config.verifier?.referenceMaxRequestsPerBuild, 500);
+    assert.equal(config.verifier?.referenceMinimumProbeCount, 120);
+    assert.equal(config.verifier?.referenceMaximumProbeCount, 240);
+    assert.equal(config.verifier?.referenceProbeStep, 20);
+    assert.equal(config.verifier?.referenceMinimumStatisticalPower, 0.95);
   });
 });
 
@@ -241,6 +255,27 @@ test('loadConfig rejects invalid verifier settings', async () => {
   await withTempConfig(JSON.stringify({ verifier: { probesPerAudti: 24 } }), async (configPath) => {
     await assert.rejects(loadConfig(configPath), /verifier\.probesPerAudti/);
   });
+  await withTempConfig(JSON.stringify({ verifier: { referenceMinimumProbeCount: 105 } }), async (configPath) => {
+    await assert.rejects(loadConfig(configPath), /referenceMinimumProbeCount/);
+  });
+  await withTempConfig(JSON.stringify({ verifier: {
+    referenceMinimumProbeCount: 120,
+    referenceMaximumProbeCount: 100,
+  } }), async (configPath) => {
+    await assert.rejects(loadConfig(configPath), /must not exceed/);
+  });
+  await withTempConfig(JSON.stringify({ verifier: {
+    referenceMinimumProbeCount: 100,
+    referenceMaximumProbeCount: 150,
+    referenceProbeStep: 20,
+  } }), async (configPath) => {
+    await assert.rejects(loadConfig(configPath), /must divide/);
+  });
+  for (const power of [0, 1.01]) {
+    await withTempConfig(JSON.stringify({ verifier: { referenceMinimumStatisticalPower: power } }), async (configPath) => {
+      await assert.rejects(loadConfig(configPath), /referenceMinimumStatisticalPower/);
+    });
+  }
 });
 
 test('loadConfig rejects invalid buyer peerRefreshIntervalMs', async () => {

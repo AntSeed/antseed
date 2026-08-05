@@ -6,10 +6,10 @@ import { buildModelReference } from '../../../verifier/model-reference.js'
 import { getGlobalOptions } from '../types.js'
 
 export function registerVerifierReferenceCommand(verifier: Command): void {
-  const reference = verifier.command('reference').description('Manage fixed model references')
+  const reference = verifier.command('reference').description('Manage powered model references')
   reference
     .command('build <model>')
-    .description('Build and save one fixed 100-probe model reference')
+    .description('Build and save an adaptively powered model reference')
     .action(async (modelValue: string, _options: unknown, command: Command) => {
       const model = modelValue.trim()
       if (!model) throw new Error('model must not be empty')

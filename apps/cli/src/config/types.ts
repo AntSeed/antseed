@@ -221,7 +221,7 @@ export interface PaymentsCLIConfig {
 
 /** Verifier configuration for model-wide paid verification runs. */
 export interface VerifierCLIConfig {
-  /** Directory containing one reusable 100-probe reference per model. */
+  /** Directory containing one reusable powered reference per model. */
   referencesDir?: string;
   /** Directory for per-peer evidence packs and run summaries. */
   evidenceDir?: string;
@@ -239,10 +239,18 @@ export interface VerifierCLIConfig {
   referenceRetryBaseDelayMs?: number;
   /** Consecutive candidate rounds with zero accepted probes before failure. Default: 3. */
   referenceMaxNoProgressRounds?: number;
-  /** Maximum concurrent reference requests across models. Default: 2. */
+  /** Maximum concurrent reference requests across models. Default: 4. */
   referenceMaxConcurrentRequests?: number;
-  /** Maximum concurrent reference requests to one model. Default: 1. */
+  /** Maximum concurrent reference requests to one model. Default: 3. */
   referenceMaxConcurrentRequestsPerModel?: number;
+  /** Initial reference size. Default: 100. */
+  referenceMinimumProbeCount?: number;
+  /** Maximum adaptive reference size. Default: 500. */
+  referenceMaximumProbeCount?: number;
+  /** Adaptive reference growth increment. Default: 10. */
+  referenceProbeStep?: number;
+  /** Required one-sided binomial power. Default: 0.9. */
+  referenceMinimumStatisticalPower?: number;
 }
 
 export interface VerifierReferenceModelConfig {

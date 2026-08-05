@@ -572,20 +572,6 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       const announcerSellerContract = sellerContractCfg
         ? { sellerContract: sellerContractCfg.address }
         : undefined
-      const runtimeChainConfig = paymentConfig?.crypto
-        ? resolveChainConfig({
-            chainId: config.payments.crypto?.chainId,
-            rpcUrl: config.payments.crypto?.rpcUrl,
-            fallbackRpcUrls: config.payments.crypto?.fallbackRpcUrls,
-            depositsContractAddress: config.payments.crypto?.depositsContractAddress,
-            channelsContractAddress: config.payments.crypto?.channelsContractAddress,
-            freeUsageContractAddress: config.payments.crypto?.freeUsageContractAddress,
-            stakingContractAddress: config.payments.crypto?.stakingContractAddress,
-            usdcContractAddress: config.payments.crypto?.usdcContractAddress,
-            identityRegistryAddress: config.payments.crypto?.identityRegistryAddress,
-            emissionsContractAddress: config.payments.crypto?.emissionsContractAddress,
-          })
-        : null
 
       const node = new AntseedNode({
         role: 'seller',
@@ -593,8 +579,6 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         ...(config.seller.publicAddress ? { publicAddress: config.seller.publicAddress } : {}),
         ...(effectiveSellerConfig.verifications ? { verifications: effectiveSellerConfig.verifications } : {}),
         bootstrapNodes,
-        allowPrivateIPs: runtimeChainConfig?.chainId === 'base-local',
-        noOfficialBootstrap: runtimeChainConfig?.chainId === 'base-local' && config.network.bootstrapNodes.length > 0,
         dataDir: globalOpts.dataDir,
         ...(dhtPort ? { dhtPort } : {}),
         ...(signalingPort ? { signalingPort } : {}),
@@ -610,16 +594,16 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
           minBudgetPerRequest: config.payments.minBudgetPerRequest ?? '10000',
           minSettleDelta,
           // Top-level fields required by the node for contract clients + EIP-712 domain
-          ...(paymentConfig?.crypto && runtimeChainConfig ? {
+          ...(paymentConfig?.crypto ? {
             rpcUrl: paymentConfig.crypto.rpcUrl,
             ...(paymentConfig.crypto.fallbackRpcUrls ? { fallbackRpcUrls: paymentConfig.crypto.fallbackRpcUrls } : {}),
             depositsAddress: paymentConfig.crypto.depositsContractAddress,
             channelsAddress: paymentConfig.crypto.channelsContractAddress,
             ...(paymentConfig.crypto.freeUsageContractAddress ? { freeUsageAddress: paymentConfig.crypto.freeUsageContractAddress } : {}),
             usdcAddress: paymentConfig.crypto.usdcAddress,
-            identityRegistryAddress: runtimeChainConfig.identityRegistryAddress,
-            stakingAddress: runtimeChainConfig.stakingContractAddress,
-            chainId: runtimeChainConfig.evmChainId,
+            identityRegistryAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).identityRegistryAddress,
+            stakingAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).stakingContractAddress,
+            chainId: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).evmChainId,
           } : {}),
         },
         ...(announcerSellerContract ? { sellerContract: announcerSellerContract } : {}),

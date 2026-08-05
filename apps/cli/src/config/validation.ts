@@ -300,6 +300,8 @@ const VERIFIER_KEYS = new Set([
   'referencesDir', 'evidenceDir', 'probeRequestTimeoutMs', 'maxTotalSpendUSDC', 'referenceEndpoint',
   'referenceMaxRequestsPerBuild', 'referenceBatchRetryCount', 'referenceRetryBaseDelayMs',
   'referenceMaxNoProgressRounds', 'referenceMaxConcurrentRequests', 'referenceMaxConcurrentRequestsPerModel',
+  'referenceMinimumProbeCount', 'referenceMaximumProbeCount', 'referenceProbeStep',
+  'referenceMinimumStatisticalPower',
 ]);
 const VERIFIER_REFERENCE_ENDPOINT_KEYS = new Set([
   'baseUrl', 'apiKey', 'apiKeyEnv', 'sourceId', 'trust', 'antseedPeerId', 'models',
@@ -326,6 +328,9 @@ function validateVerifierConfig(
     ['referenceMaxNoProgressRounds', verifier.referenceMaxNoProgressRounds],
     ['referenceMaxConcurrentRequests', verifier.referenceMaxConcurrentRequests],
     ['referenceMaxConcurrentRequestsPerModel', verifier.referenceMaxConcurrentRequestsPerModel],
+    ['referenceMinimumProbeCount', verifier.referenceMinimumProbeCount],
+    ['referenceMaximumProbeCount', verifier.referenceMaximumProbeCount],
+    ['referenceProbeStep', verifier.referenceProbeStep],
   ];
   for (const [key, value] of positiveInts) {
     if (value !== undefined && (!Number.isInteger(value) || value < 1)) {
@@ -335,6 +340,27 @@ function validateVerifierConfig(
   if (verifier.referenceBatchRetryCount !== undefined
     && (!Number.isInteger(verifier.referenceBatchRetryCount) || verifier.referenceBatchRetryCount < 0)) {
     errors.push(`${path}.referenceBatchRetryCount must be an integer >= 0`);
+  }
+  const minimumProbeCount = verifier.referenceMinimumProbeCount ?? 100;
+  const maximumProbeCount = verifier.referenceMaximumProbeCount ?? 500;
+  const probeStep = verifier.referenceProbeStep ?? 10;
+  for (const [key, value] of [
+    ['referenceMinimumProbeCount', minimumProbeCount],
+    ['referenceMaximumProbeCount', maximumProbeCount],
+    ['referenceProbeStep', probeStep],
+  ] as const) {
+    if (value < 10 || value > 500 || value % 10 !== 0) {
+      errors.push(`${path}.${key} must be a multiple of 10 from 10 through 500`);
+    }
+  }
+  if (minimumProbeCount > maximumProbeCount) {
+    errors.push(`${path}.referenceMinimumProbeCount must not exceed referenceMaximumProbeCount`);
+  } else if ((maximumProbeCount - minimumProbeCount) % probeStep !== 0) {
+    errors.push(`${path}.referenceProbeStep must divide the configured probe-count range`);
+  }
+  if (verifier.referenceMinimumStatisticalPower !== undefined
+    && (!(verifier.referenceMinimumStatisticalPower > 0) || verifier.referenceMinimumStatisticalPower > 1)) {
+    errors.push(`${path}.referenceMinimumStatisticalPower must be in (0, 1]`);
   }
   const dirKeys: Array<[string, unknown]> = [
     ['referencesDir', verifier.referencesDir],

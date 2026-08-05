@@ -54,13 +54,18 @@ For supported buyer-seller connections, the seller signs a `ResponseAuthPayload`
 - timing;
 - optional payment channel id.
 
-The buyer verifies the signature against the seller peer identity and stores the result in a small local SQLite inbox:
+The buyer verifies the signature against the seller peer identity and stores the result in local verification storage. A random sample of verified exchanges can also be written to disk as full evidence:
 
 ```text
-<dataDir>/verification.db
+<dataDir>/verification_samples/
+  <sellerPeerId>/
+    <sampleId>/
+      manifest.json
+      request.bin
+      response.bin
 ```
 
-Explicit verifier runs write complete canonical evidence files. Ordinary buyer traffic is not copied into request/response sample directories. `ResponseAuth` does not tell us whether the response came from the claimed model; it tells us that the seller cannot later deny serving those exact bytes.
+This does not tell us whether the response came from the claimed model. It tells us that the seller cannot later deny serving those exact bytes. That is the difference between a complaint and evidence.
 
 ## What Comes Next: Fingerprint Verifiers
 
