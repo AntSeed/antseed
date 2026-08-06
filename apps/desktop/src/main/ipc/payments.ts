@@ -54,6 +54,7 @@ import {
   openPaymentsPopup,
   readCardProviders,
   readCrossmintClientKey,
+  readFunkitApiKey,
   startPaymentsPortal,
 } from '../payments/portal.js';
 import {
@@ -201,6 +202,16 @@ export function registerPaymentsIpc(): void {
       const clientKey = await readCrossmintClientKey();
       if (!clientKey) return { ok: true, data: null };
       return { ok: true, data: { clientKey, apiBase: crossmintApiBase(clientKey) } };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('payments:funkit-config', async () => {
+    try {
+      const apiKey = await readFunkitApiKey();
+      if (!apiKey) return { ok: true, data: null };
+      return { ok: true, data: { apiKey } };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }

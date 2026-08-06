@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
@@ -19,6 +19,10 @@ import { takeDepositIntent, type DepositMethod } from '../../lib/depositIntent';
 import type { DepositWatchStatus } from '../../../types/bridge';
 import { CrossmintCheckout, crossmintChain } from './CrossmintCheckout';
 import styles from './VprDepositView.module.scss';
+
+// The Fun (fun.xyz) checkout SDK is heavy (it bundles wagmi/viem), so it loads
+// as its own chunk the first time the deposit chooser renders the CTA.
+const FunkitDeposit = lazy(() => import('./FunkitDeposit'));
 
 const AMOUNT_PRESETS = ['5', '10', '25'];
 
@@ -277,10 +281,7 @@ const CARD_NOT_CONFIGURED_NOTICE =
  * provider's hosted checkout page.
  * Only pages that need an external wallet signature leave the app.
  */
-// The Fun checkout and the Stripe pay page are hidden until they're ready to
-// ship. While the primary CTA is gone, the option list replaces the "More
-// options" expander and always shows.
-const SHOW_FUN_DEPOSIT = false;
+// The Stripe pay page is hidden until it's ready to ship.
 const SHOW_STRIPE_OPTION = false;
 
 export function VprDepositView({ onSelectView }: Props) {
@@ -428,6 +429,32 @@ export function VprDepositView({ onSelectView }: Props) {
       : urlOptions;
   }, [cardProviders, crossmintAvailable]);
 
+  // The Fun API key is resolved by the main process (config or environment)
+  // and is never in the source tree. null = still fetching, '' = not
+  // configured (CTA hidden).
+  const [funkitApiKey, setFunkitApiKey] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    // Fetch the Fun chunk in parallel with the config/watcher round-trips so
+    // the CTA is live, not just visible, by the time they resolve.
+    void import('./FunkitDeposit');
+    void window.antseedDesktop?.paymentsFunkitConfig?.().then((result) => {
+      if (!cancelled) setFunkitApiKey((result.ok && result.data?.apiKey) || '');
+    }).catch(() => {
+      if (!cancelled) setFunkitApiKey('');
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Fun checkout preconditions: an API key, watcher info (it supplies the
+  // recipient wallet), and the app on Base mainnet — the only chain Fun
+  // delivers to. Otherwise (local/testnet) the option list shows directly.
+  // While the config/watcher fetches are in flight the CTA renders disabled
+  // instead of popping in a beat after the view.
+  const funWatchInfo = funkitApiKey && watchInfo && watchInfo.chainId === 8453 ? watchInfo : null;
+  const funPending = funkitApiKey !== '' && (funkitApiKey === null || (!watchInfo && !watchError));
+  const funAvailable = funWatchInfo !== null || funPending;
+
   const statusLine = (() => {
     if (watchError) return { tone: 'error' as const, text: watchError };
     if (!watchStatus) return { tone: 'idle' as const, text: 'Waiting for USDC on Base…' };
@@ -517,21 +544,26 @@ export function VprDepositView({ onSelectView }: Props) {
             </span>
           </VprCard>
 
-          {/* Primary path: deposit through Fun (fun.xyz). The Fun checkout
-              only runs on the web; until our hosted integration is live this
-              opens their site directly. */}
-          {SHOW_FUN_DEPOSIT && (
-            <button
-              type="button"
-              className={styles.funCta}
-              onClick={() => void window.antseedDesktop?.openExternalUrl?.('https://fun.xyz')}
-            >
-              Deposit
-            </button>
-          )}
+          {/* Primary path: the in-app Fun (fun.xyz) checkout — card/cash or a
+              crypto transfer, delivered to the hot wallet the deposit watcher
+              sweeps. Fun delivers on Base mainnet only, so the CTA waits for
+              the watcher info and hides on other chains. */}
+          {funAvailable && (funWatchInfo && funkitApiKey ? (
+            <Suspense fallback={<button type="button" className={styles.funCta} disabled>Deposit</button>}>
+              <FunkitDeposit
+                apiKey={funkitApiKey}
+                recipient={funWatchInfo.address}
+                usdcAddress={funWatchInfo.usdcAddress}
+                className={styles.funCta}
+                onError={(message) => setPayPageNotice(message || null)}
+              />
+            </Suspense>
+          ) : (
+            <button type="button" className={styles.funCta} disabled>Deposit</button>
+          ))}
           {payPageNotice && <div className={styles.cardNotice} role="alert">{payPageNotice}</div>}
 
-          {SHOW_FUN_DEPOSIT && (
+          {funAvailable && (
             <button
               type="button"
               className={styles.moreLink}
@@ -548,7 +580,7 @@ export function VprDepositView({ onSelectView }: Props) {
             </button>
           )}
 
-          {(moreOpen || !SHOW_FUN_DEPOSIT) && (
+          {(moreOpen || !funAvailable) && (
             <div className={styles.optionList}>
               <button type="button" className={styles.methodCta} onClick={() => goToStage('crypto')}>
                 <span className={styles.methodCtaIcon}>

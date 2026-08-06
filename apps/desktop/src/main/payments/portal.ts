@@ -165,6 +165,23 @@ export async function readCrossmintClientKey(): Promise<string> {
   }
 }
 
+// Fun (fun.xyz) checkout — the primary in-app deposit flow: card/cash or a
+// crypto transfer, with the bought USDC delivered on Base to the buyer hot
+// wallet (then swept into deposits by the same watcher as QR/card transfers).
+// The API key is deliberately NOT in the source tree: it comes from
+// config.payments.funkit.apiKey, or the ANTSEED_FUNKIT_API_KEY environment
+// variable. An empty key hides the Fun deposit CTA entirely.
+export async function readFunkitApiKey(): Promise<string> {
+  try {
+    const config = await readConfig(ACTIVE_CONFIG_PATH);
+    const key = asString(asRecord(asRecord(config.payments).funkit).apiKey as string, '');
+    if (key) return key;
+  } catch {
+    // fall through to the environment
+  }
+  return process.env.ANTSEED_FUNKIT_API_KEY ?? '';
+}
+
 
 /**
  * Bearer token the portal server expects on its pages. Empty until
