@@ -24,11 +24,16 @@ interface IAntseedVerification is IAntseedPointsPolicy {
     function emissionsGate() external view returns (IAntseedEmissionsGate);
     function firstRewardedEpoch() external view returns (uint256);
     function approvedVerifiers(address verifier) external view returns (bool);
+
+    /// @notice Maximum verifier credit weight per epoch, stored in six-decimal USD micros.
+    /// @dev One credit equals $1 = 1_000_000 units; for example, $1.20 = 1_200_000 units.
     function maxCreditUsdMicrosPerVerifierPerEpoch() external view returns (uint64);
 
     function setVerifier(address verifier, bool approved) external;
     function setMaxCreditUsdMicrosPerVerifierPerEpoch(uint64 maximum) external;
 
+    /// @notice Submits audit cost directly as the verifier credit weight before applying the epoch cap.
+    /// @dev `totalAuditCostUsdMicros` preserves fractional credits exactly; no whole-dollar rounding occurs.
     function submitVerificationBundle(
         bytes32 bundleId,
         uint256 expectedEpoch,

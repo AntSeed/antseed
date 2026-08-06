@@ -36,6 +36,7 @@ export interface VerificationResultInput {
 export interface SubmitVerificationBundleInput {
   bundleId: string;
   expectedEpoch: number | bigint;
+  /** Exact audit cost and credit weight in USD micros: $1 = 1_000_000, $1.20 = 1_200_000. */
   totalAuditCostUsdMicros: number | bigint;
   evidenceHash: string;
   results: VerificationResultInput[];

@@ -21,6 +21,9 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
     uint256 public immutable override firstRewardedEpoch;
 
     mapping(address verifier => bool approved) public override approvedVerifiers;
+
+    /// @notice Credit weights use six-decimal USD micros: 1 credit = $1 = 1_000_000 units.
+    /// @dev The default cap is 100 credits. Fractional credits remain exact, so $1.20 is 1_200_000 units.
     uint64 public override maxCreditUsdMicrosPerVerifierPerEpoch = 100_000_000;
 
     mapping(bytes32 bundleId => bool submitted) private _submittedBundles;
