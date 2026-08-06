@@ -16,6 +16,10 @@ This project uses selective package publishing. Each release entry lists the pub
 - Added `antseed buyer channels close <channelId>` (with `--no-auth` and `--json`), which runs the request through a running `antseed buyer start` daemon's live seller connection via the new `/_antseed/channels/close` control-plane endpoint.
 - Added `AntseedNode.requestChannelClose(peerId, opts)` to `@antseed/node`, plus the `payments.cooperative-close.v1` capability advertised in discovery metadata and the connection handshake.
 
+### Changed
+
+- Desktop: redesigned the Add Credits chooser. The Fun checkout is now a "Deposit with fun.xyz" row showing the accepted card networks (Mastercard, Apple Pay, Google Pay, Visa) and an email-required note, the USDC-on-Base quick deposit is always visible with a note that the AntSeed relayer network credits it, and the Meridian option moved behind "More options" as "Deposit using Meridian". Payment and chain badges now use the official brand logos, and the primary CTA follows the app theme (dark surface in light mode, light surface in dark mode).
+
 ### Fixed
 
 - Fixed the buyer proxy leaking `.buyer.state.*.json.tmp` files (each a full discovered-peers snapshot, ~1 MB) when the atomic state-file rename failed — common on Windows while a reader briefly holds `buyer.state.json` open. The rename is now retried, a failed write cleans up its temp file and logs the error instead of dropping the state update silently, and leftover temp files from earlier runs are swept at startup.
