@@ -29,6 +29,12 @@ type DepositWatchStatus = {
 };
 
 export const DEPOSIT_WATCH_INTERVAL_MS = 2_000;
+// Cadence after the deposit view closes: card/Fun deliveries can land minutes
+// later, so the watcher lingers at a slow poll instead of stopping outright.
+export const DEPOSIT_WATCH_BACKGROUND_INTERVAL_MS = 15_000;
+// How long the background watch keeps polling an empty wallet before
+// stopping. Any activity (funds present, sweep in flight) re-arms it.
+const DEPOSIT_WATCH_LINGER_MS = 30 * 60_000;
 const SWEEP_AUTH_VALIDITY_SECS = 3_600;
 const SWEEP_CONFIRM_TIMEOUT_MS = 120_000;
 const SWEEP_POLL_INTERVAL_MS = 1_000;
@@ -44,6 +50,8 @@ const MIN_FIRST_DEPOSIT_BASE_UNITS = 1_000_000n;
 const MIN_TOPUP_BASE_UNITS = 1_000_000n;
 
 let depositWatchTimer: NodeJS.Timeout | null = null;
+let depositWatchMode: 'active' | 'background' = 'active';
+let depositWatchLingerDeadline = 0;
 let depositWatchBalance = 0n;
 let depositSweepInFlight = false;
 let depositSweepLastAttemptAt = 0;
@@ -341,6 +349,14 @@ export async function pollDepositWatch(): Promise<void> {
   } catch {
     return; // transient RPC failure — try again next tick
   }
+  if (depositWatchMode === 'background') {
+    if (balance > 0n || depositSweepInFlight) {
+      depositWatchLingerDeadline = Date.now() + DEPOSIT_WATCH_LINGER_MS;
+    } else if (Date.now() > depositWatchLingerDeadline) {
+      stopDepositWatchTimer();
+      return;
+    }
+  }
   if (balance > depositWatchBalance) {
     const delta = balance - depositWatchBalance;
     depositWatchBalance = balance;
@@ -356,12 +372,32 @@ export async function pollDepositWatch(): Promise<void> {
 }
 
 
-export function getDepositWatchTimer(): NodeJS.Timeout | null {
-  return depositWatchTimer;
+/** The deposit view is open: poll fast, no linger deadline. */
+export function startDepositWatchTimer(): void {
+  if (depositWatchTimer) clearInterval(depositWatchTimer);
+  depositWatchMode = 'active';
+  depositWatchTimer = setInterval(() => { void pollDepositWatch(); }, DEPOSIT_WATCH_INTERVAL_MS);
 }
 
-export function setDepositWatchTimer(timer: NodeJS.Timeout | null): void {
-  depositWatchTimer = timer;
+/**
+ * The deposit view closed: don't stop — deliveries (card/Fun purchases) can
+ * land minutes later. Keep polling at the background cadence so they are
+ * still swept and surfaced by the global progress banner; the poll loop
+ * stops itself once the linger window passes with an empty wallet.
+ */
+export function demoteDepositWatchTimer(): void {
+  if (!depositWatchTimer) return;
+  clearInterval(depositWatchTimer);
+  depositWatchMode = 'background';
+  depositWatchLingerDeadline = Date.now() + DEPOSIT_WATCH_LINGER_MS;
+  depositWatchTimer = setInterval(() => { void pollDepositWatch(); }, DEPOSIT_WATCH_BACKGROUND_INTERVAL_MS);
+}
+
+export function stopDepositWatchTimer(): void {
+  if (depositWatchTimer) {
+    clearInterval(depositWatchTimer);
+    depositWatchTimer = null;
+  }
 }
 
 export function setDepositWatchBalance(balance: bigint): void {

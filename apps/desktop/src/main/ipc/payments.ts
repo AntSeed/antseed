@@ -36,12 +36,10 @@ import {
   setCachedEmissionsClient,
 } from '../payments/credits.js';
 import {
-  DEPOSIT_WATCH_INTERVAL_MS,
-  getDepositWatchTimer,
+  demoteDepositWatchTimer,
   makeDepositsClient,
-  pollDepositWatch,
   setDepositWatchBalance,
-  setDepositWatchTimer,
+  startDepositWatchTimer,
   sweepIncomingUsdc,
 } from '../payments/deposit-sweep.js';
 import {
@@ -243,9 +241,7 @@ export function registerPaymentsIpc(): void {
         // RPC hiccup — the poll loop picks it up
       }
       setDepositWatchBalance(balance);
-      if (!getDepositWatchTimer()) {
-        setDepositWatchTimer(setInterval(() => { void pollDepositWatch(); }, DEPOSIT_WATCH_INTERVAL_MS));
-      }
+      startDepositWatchTimer();
       // USDC already sitting in the wallet (sent before the panel opened, or a
       // card purchase that landed while the app was closed) — sweep it now.
       if (balance > 0n) void sweepIncomingUsdc(client, address);
@@ -264,11 +260,9 @@ export function registerPaymentsIpc(): void {
   });
 
   ipcMain.handle('deposits:watch-stop', () => {
-    const timer = getDepositWatchTimer();
-    if (timer) {
-      clearInterval(timer);
-      setDepositWatchTimer(null);
-    }
+    // Not a hard stop: deliveries can land after the deposit view closes, so
+    // the watcher lingers at a slow cadence (and stops itself later).
+    demoteDepositWatchTimer();
     return { ok: true };
   });
 
