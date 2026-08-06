@@ -32,7 +32,7 @@ afterEach(() => {
 });
 
 describe('HttpMetadataResolver', () => {
-  it('fetches v11 metadata from the versioned endpoint', async () => {
+  it('fetches metadata from the single endpoint regardless of announced version', async () => {
     const metadata = buildMetadata({ version: 11 });
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify(metadata), {
@@ -47,46 +47,10 @@ describe('HttpMetadataResolver', () => {
       failureCooldownMs: 0,
     });
 
-    const resolved = await resolver.resolve({ host: '1.1.1.1', port: 6882 }, 11);
+    const resolved = await resolver.resolve({ host: '1.1.1.1', port: 6882 });
 
     expect(resolved).toEqual(expect.objectContaining({ version: 11 }));
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://1.1.1.1:6882/metadata/v11',
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
-  });
-
-  it('does not cooldown an endpoint when v11 is absent before v10 fallback', async () => {
-    const metadata = buildMetadata();
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'not found' }), { status: 404 }))
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify(metadata), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }),
-      );
-    vi.stubGlobal('fetch', fetchMock);
-
-    const resolver = new HttpMetadataResolver({
-      timeoutMs: 100,
-      failureCooldownMs: 60_000,
-    });
-    const peer = { host: '1.1.1.1', port: 6882 };
-
-    const missingV11 = await resolver.resolve(peer, 11);
-    const fallbackV10 = await resolver.resolve(peer, 10);
-
-    expect(missingV11).toBeNull();
-    expect(fallbackV10).toEqual(expect.objectContaining({ peerId: metadata.peerId }));
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      1,
-      'http://1.1.1.1:6882/metadata/v11',
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
       'http://1.1.1.1:6882/metadata',
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );

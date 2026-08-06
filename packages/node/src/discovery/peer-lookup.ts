@@ -10,7 +10,7 @@ import {
 } from "./dht-node.js";
 import type { PeerMetadata } from "./peer-metadata.js";
 import { encodeMetadataForSigning } from "./metadata-codec.js";
-import type { MetadataResolver, MetadataVersion, PeerEndpoint } from "./metadata-resolver.js";
+import type { MetadataResolver, PeerEndpoint } from "./metadata-resolver.js";
 import { validateMetadata } from "./metadata-validator.js";
 import { debugLog, debugWarn } from "../utils/debug.js";
 
@@ -336,28 +336,20 @@ export class PeerLookup {
   }
 
   private async _resolveSinglePeer(peer: PeerEndpoint): Promise<LookupResult | null> {
-    const metadataV11 = await this.config.metadataResolver.resolve(peer, 11);
-    if (metadataV11 !== null) {
-      const result = await this._validateResolvedMetadata(peer, metadataV11, 11);
-      if (result !== null) {
-        return result;
-      }
-    }
-
-    const metadataV10 = await this.config.metadataResolver.resolve(peer, 10);
-    if (metadataV10 === null) {
+    const metadata = await this.config.metadataResolver.resolve(peer);
+    if (metadata === null) {
       return null;
     }
 
-    return this._validateResolvedMetadata(peer, metadataV10, 10);
+    return this._validateResolvedMetadata(peer, metadata);
   }
 
   private async _validateResolvedMetadata(
     peer: PeerEndpoint,
     metadata: PeerMetadata,
-    version: MetadataVersion,
   ): Promise<LookupResult | null> {
     const endpoint = `${peer.host}:${peer.port}`;
+    const version = metadata.version;
 
     try {
       const schemaErrors = validateMetadata(metadata);

@@ -4,7 +4,7 @@ import type { PeerMetadata } from './peer-metadata.js';
 export interface MetadataServerConfig {
   port: number;
   host?: string;
-  getMetadata: (version?: 10 | 11) => PeerMetadata | null;
+  getMetadata: () => PeerMetadata | null;
 }
 
 /** @deprecated Standalone MetadataServer is unused; ConnectionManager._serveHttpMetadata is preferred. */
@@ -25,19 +25,16 @@ export class MetadataServer {
           return;
         }
 
-        if (req.url !== '/metadata' && req.url !== '/metadata/v10' && req.url !== '/metadata/v11') {
+        if (req.url !== '/metadata') {
           res.writeHead(404, { 'content-type': 'application/json' });
           res.end(JSON.stringify({ error: 'not found' }));
           return;
         }
 
-        const metadataVersion = req.url === '/metadata/v11' ? 11 : 10;
-        const metadata = this._config.getMetadata(metadataVersion);
+        const metadata = this._config.getMetadata();
         if (!metadata) {
-          res.writeHead(req.url === '/metadata/v11' ? 404 : 503, { 'content-type': 'application/json' });
-          res.end(JSON.stringify({
-            error: req.url === '/metadata/v11' ? 'metadata version not available' : 'metadata not available',
-          }));
+          res.writeHead(503, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: 'metadata not available' }));
           return;
         }
 

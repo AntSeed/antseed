@@ -364,17 +364,12 @@ describe('PeerLookup', () => {
     expect(lookup).not.toHaveBeenCalled();
   });
 
-  it('falls back to v10 metadata when v11 metadata is invalid', async () => {
+  it('accepts still-supported v10 metadata from older sellers', async () => {
     const targetId = 'a'.repeat(40);
     const endpoint: PeerEndpoint = { host: '34.10.10.10', port: 6882 };
     const lookup = vi.fn(async () => [endpoint]);
     const dht = { lookup } as unknown as DHTNode;
-    const resolve = vi.fn(async (_peer: PeerEndpoint, version?: 10 | 11) => {
-      if (version === 11) {
-        return buildMetadata({ peerId: targetId as any, version: 99 });
-      }
-      return buildMetadata({ peerId: targetId as any });
-    });
+    const resolve = vi.fn(async () => buildMetadata({ peerId: targetId as any, version: 10 }));
     const metadataResolver: MetadataResolver = { resolve };
     const peerLookup = new PeerLookup({
       dht,
@@ -388,9 +383,28 @@ describe('PeerLookup', () => {
     const results = await peerLookup.findByPeerId(targetId);
 
     expect(results).toHaveLength(1);
-    expect(results[0]?.metadata.version).toBe(METADATA_VERSION);
-    expect(resolve).toHaveBeenNthCalledWith(1, endpoint, 11);
-    expect(resolve).toHaveBeenNthCalledWith(2, endpoint, 10);
+    expect(results[0]?.metadata.version).toBe(10);
+  });
+
+  it('drops metadata announcing an unsupported version', async () => {
+    const targetId = 'a'.repeat(40);
+    const endpoint: PeerEndpoint = { host: '34.10.10.10', port: 6882 };
+    const lookup = vi.fn(async () => [endpoint]);
+    const dht = { lookup } as unknown as DHTNode;
+    const resolve = vi.fn(async () => buildMetadata({ peerId: targetId as any, version: 99 }));
+    const metadataResolver: MetadataResolver = { resolve };
+    const peerLookup = new PeerLookup({
+      dht,
+      metadataResolver,
+      requireValidSignature: false,
+      allowStaleMetadata: true,
+      maxAnnouncementAgeMs: 60_000,
+      maxResults: 50,
+    });
+
+    const results = await peerLookup.findByPeerId(targetId);
+
+    expect(results).toHaveLength(0);
   });
 
   it('preserves metadata publicAddress so callers can prefer it over the DHT source host', async () => {

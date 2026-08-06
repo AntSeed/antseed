@@ -11,7 +11,7 @@ import {
 } from "./dht-node.js";
 import type { PeerOffering } from "../types/capability.js";
 import type { DomainVerificationClaim, DomainVerificationMethod, GithubVerificationClaim, PeerMetadata, PeerVerifications, ProviderAnnouncement } from "./peer-metadata.js";
-import { METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION } from "./peer-metadata.js";
+import { METADATA_VERSION } from "./peer-metadata.js";
 import {
   MAX_DOMAIN_LENGTH,
   MAX_DOMAIN_VERIFICATION_CLAIMS,
@@ -112,19 +112,14 @@ export class PeerAnnouncer {
   private retryAttempt = 0;
   private stopped = false;
   private readonly loadMap: Map<string, number> = new Map();
-  // v11 uses the same structural PeerMetadata type as v10; the version value
-  // controls whether optional serviceUnitBillingModels are encoded and announced.
-  private _latestMetadataV10: PeerMetadata | null = null;
-  private _latestMetadataV11: PeerMetadata | null = null;
+  private _latestMetadata: PeerMetadata | null = null;
 
   constructor(config: AnnouncerConfig) {
     this.config = config;
   }
 
   async announce(): Promise<void> {
-    const metadata = await this._buildSignedMetadataSnapshots(true);
-    this._latestMetadataV10 = metadata.v10;
-    this._latestMetadataV11 = metadata.v11 ?? null;
+    this._latestMetadata = await this._buildSignedMetadata(true);
 
     const failures = await this._announceTopics();
     if (failures > 0) {
@@ -140,9 +135,7 @@ export class PeerAnnouncer {
    * Useful for high-frequency fields like current provider load.
    */
   async refreshMetadata(): Promise<void> {
-    const metadata = await this._buildSignedMetadataSnapshots(false);
-    this._latestMetadataV10 = metadata.v10;
-    this._latestMetadataV11 = metadata.v11 ?? null;
+    this._latestMetadata = await this._buildSignedMetadata(false);
   }
 
   startPeriodicAnnounce(): void {
@@ -205,11 +198,8 @@ export class PeerAnnouncer {
     this.loadMap.set(providerName, currentLoad);
   }
 
-  getLatestMetadata(version?: 10 | 11): PeerMetadata | null {
-    if (version === 11) {
-      return this._latestMetadataV11;
-    }
-    return this._latestMetadataV10;
+  getLatestMetadata(): PeerMetadata | null {
+    return this._latestMetadata;
   }
 
   /** Return the configured seller contract as lowercase 40-hex (no 0x). */
@@ -264,11 +254,8 @@ export class PeerAnnouncer {
     };
   }
 
-  private async _buildSignedMetadataSnapshots(includeOnChainReputation = true): Promise<{
-    v10: PeerMetadata;
-    v11?: PeerMetadata;
-  }> {
-    const providersWithUnitBilling: ProviderAnnouncement[] = this.config.providers
+  private async _buildSignedMetadata(includeOnChainReputation = true): Promise<PeerMetadata> {
+    const providers: ProviderAnnouncement[] = this.config.providers
       .filter((provider) => provider.isAvailable?.() !== false)
       .map((p) => {
         const pricing = p.pricing ?? this.config.pricing.get(p.provider) ?? {
@@ -301,12 +288,6 @@ export class PeerAnnouncer {
         }
         return providerAnnouncement;
       });
-    const providersV10: ProviderAnnouncement[] = providersWithUnitBilling.map((provider) => {
-      const legacyProvider = { ...provider };
-      delete legacyProvider.serviceUnitBillingModels;
-      return legacyProvider;
-    });
-    const hasServiceUnitBillingModels = providersWithUnitBilling.some((provider) => provider.serviceUnitBillingModels !== undefined);
 
     const capabilities: string[] = [
       CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
@@ -343,17 +324,16 @@ export class PeerAnnouncer {
           // Channels/staking contract lookup failed — skip on-chain stats for this cycle
         }
       } else {
-        const previousMetadata = this._latestMetadataV10 ?? this._latestMetadataV11;
-        onChainChannelCount = previousMetadata?.onChainChannelCount;
-        onChainGhostCount = previousMetadata?.onChainGhostCount;
+        onChainChannelCount = this._latestMetadata?.onChainChannelCount;
+        onChainGhostCount = this._latestMetadata?.onChainGhostCount;
       }
     }
 
     const sellerContract = this._normalizedSellerContract();
 
-    const buildMetadata = (version: 10 | 11, providers: ProviderAnnouncement[]): PeerMetadata => ({
+    return this._signAndValidateMetadata({
       peerId: this.config.identity.peerId,
-      version,
+      version: METADATA_VERSION,
       ...(this.config.displayName ? { displayName: this.config.displayName } : {}),
       ...(this.config.publicAddress ? { publicAddress: this.config.publicAddress } : {}),
       providers,
@@ -368,13 +348,6 @@ export class PeerAnnouncer {
       ...(sellerContract ? { sellerContract } : {}),
       signature: "",
     });
-
-    return {
-      v10: this._signAndValidateMetadata(buildMetadata(METADATA_VERSION, providersV10)),
-      ...(hasServiceUnitBillingModels
-        ? { v11: this._signAndValidateMetadata(buildMetadata(SERVICE_UNIT_BILLING_METADATA_VERSION, providersWithUnitBilling)) }
-        : {}),
-    };
   }
 
   private _signAndValidateMetadata(metadata: PeerMetadata): PeerMetadata {

@@ -1,4 +1,4 @@
-import type { MetadataVersion, PeerEndpoint, MetadataResolver } from './metadata-resolver.js';
+import type { PeerEndpoint, MetadataResolver } from './metadata-resolver.js';
 import type { PeerMetadata } from './peer-metadata.js';
 import { debugLog, debugWarn } from '../utils/debug.js';
 
@@ -51,11 +51,10 @@ export class HttpMetadataResolver implements MetadataResolver {
     this.failedEndpoints = new Map<string, FailedEndpointState>();
   }
 
-  async resolve(peer: PeerEndpoint, version?: MetadataVersion): Promise<PeerMetadata | null> {
+  async resolve(peer: PeerEndpoint): Promise<PeerMetadata | null> {
     const metadataPort = peer.port + this.metadataPortOffset;
     const host = peer.host.toLowerCase();
     const endpointKey = this.getEndpointKey(host, metadataPort);
-    const isV11Probe = version === 11;
     const now = Date.now();
 
     const failedState = this.failedEndpoints.get(endpointKey);
@@ -78,8 +77,7 @@ export class HttpMetadataResolver implements MetadataResolver {
       }
     }
 
-    const path = version === 11 ? '/metadata/v11' : '/metadata';
-    const url = `http://${peer.host}:${metadataPort}${path}`;
+    const url = `http://${peer.host}:${metadataPort}/metadata`;
 
     await this.acquireSlot();
     const controller = new AbortController();
@@ -87,14 +85,8 @@ export class HttpMetadataResolver implements MetadataResolver {
     try {
       const response = await fetch(url, { signal: controller.signal });
 
-      if (response.status === 204) {
-        return null;
-      }
-
       if (!response.ok) {
-        if (!isV11Probe) {
-          this.markEndpointFailure(endpointKey);
-        }
+        this.markEndpointFailure(endpointKey);
         debugWarn(`[MetadataResolver] Failed to resolve ${url}: HTTP ${response.status}`);
         return null;
       }
@@ -118,9 +110,7 @@ export class HttpMetadataResolver implements MetadataResolver {
       );
       return metadata;
     } catch (err) {
-      if (!isV11Probe) {
-        this.markEndpointFailure(endpointKey);
-      }
+      this.markEndpointFailure(endpointKey);
       const reason = err instanceof DOMException && err.name === 'AbortError'
         ? 'timeout'
         : err instanceof SyntaxError

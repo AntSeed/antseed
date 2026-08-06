@@ -122,7 +122,7 @@ describe('PeerAnnouncer capabilities', () => {
 });
 
 describe('PeerAnnouncer metadata versions', () => {
-  it('keeps v10 metadata free of billing models and exposes v11 only when configured', async () => {
+  it('announces current-version metadata carrying configured billing models', async () => {
     const base = makeBaseConfig();
     const announcer = new PeerAnnouncer({
       ...base,
@@ -146,26 +146,20 @@ describe('PeerAnnouncer metadata versions', () => {
 
     await announcer.announce();
 
-    const defaultMetadata = announcer.getLatestMetadata();
-    const v10 = announcer.getLatestMetadata(10);
-    const v11 = announcer.getLatestMetadata(11);
-
-    expect(defaultMetadata).toBe(v10);
-    expect(v10?.version).toBe(10);
-    expect(v10?.providers[0]?.serviceUnitBillingModels).toBeUndefined();
-    expect(v11?.version).toBe(11);
-    expect(v11?.providers[0]?.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']).toEqual({
+    const metadata = announcer.getLatestMetadata();
+    expect(metadata?.version).toBe(11);
+    expect(metadata?.providers[0]?.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']).toEqual({
       version: 1,
       components: [{ unit: 'output_images', priceUsd: 0.04 }],
     });
-    expect(v11?.signature).not.toBe(v10?.signature);
   });
 
-  it('does not synthesize v11 metadata without configured billing models', async () => {
+  it('announces current-version metadata without billing models when none are configured', async () => {
     const announcer = new PeerAnnouncer(makeBaseConfig());
     await announcer.announce();
 
-    expect(announcer.getLatestMetadata()?.version).toBe(10);
-    expect(announcer.getLatestMetadata(11)).toBeNull();
+    const metadata = announcer.getLatestMetadata();
+    expect(metadata?.version).toBe(11);
+    expect(metadata?.providers[0]?.serviceUnitBillingModels).toBeUndefined();
   });
 });

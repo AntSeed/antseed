@@ -39,8 +39,7 @@ export interface PeerEndpoint {
 }
 
 type TransportMode = "webrtc" | "tcp";
-type MetadataVersion = 10 | 11;
-type MetadataProvider = (version?: MetadataVersion) => object | null;
+type MetadataProvider = () => object | null;
 type InitialWireMessage =
   | {
       type: "intro";
@@ -700,21 +699,17 @@ export class ConnectionManager extends EventEmitter {
     let statusLine: string;
     let body: string;
 
-    const metadataVersion = url === "/metadata/v11" ? 11 : 10;
-
-    if (url !== "/metadata" && url !== "/metadata/v10" && url !== "/metadata/v11") {
+    if (url !== "/metadata") {
       statusLine = "404 Not Found";
       body = JSON.stringify({ error: "not found" });
     } else if (!this._metadataProvider) {
       statusLine = "503 Service Unavailable";
       body = JSON.stringify({ error: "metadata not available" });
     } else {
-      const metadata = this._metadataProvider(metadataVersion);
+      const metadata = this._metadataProvider();
       if (!metadata) {
-        statusLine = url === "/metadata/v11" ? "404 Not Found" : "503 Service Unavailable";
-        body = JSON.stringify({
-          error: url === "/metadata/v11" ? "metadata version not available" : "metadata not available",
-        });
+        statusLine = "503 Service Unavailable";
+        body = JSON.stringify({ error: "metadata not available" });
       } else {
         statusLine = "200 OK";
         body = JSON.stringify(metadata);

@@ -199,7 +199,7 @@ describe('encodeMetadata / decodeMetadata', () => {
 
   it('excludes service unit billing models from v10 metadata bytes', () => {
     const original = makeMetadata({
-      version: METADATA_VERSION,
+      version: 10,
       providers: [
         {
           provider: 'openai',
@@ -222,7 +222,7 @@ describe('encodeMetadata / decodeMetadata', () => {
 
     const decoded = decodeMetadata(encodeMetadata(original));
 
-    expect(decoded.version).toBe(METADATA_VERSION);
+    expect(decoded.version).toBe(10);
     expect(decoded.providers[0]?.serviceApiProtocols?.['gpt-image-1']).toEqual(['openai-images']);
     expect(decoded.providers[0]?.serviceUnitBillingModels).toBeUndefined();
   });

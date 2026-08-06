@@ -1585,7 +1585,7 @@ export class AntseedNode extends EventEmitter {
 
       // Serve metadata on the signaling port (HTTP requests are auto-detected)
       this._connectionManager!.setMetadataProvider(
-        (version) => this._announcer?.getLatestMetadata(version) ?? null,
+        () => this._announcer?.getLatestMetadata() ?? null,
       );
     }
 

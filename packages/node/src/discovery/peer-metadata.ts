@@ -4,7 +4,9 @@ import type { ServiceApiProtocol } from "../types/service-api.js";
 import type { ServiceUnitBillingModelsV1 } from "../types/billing.js";
 import { WELL_KNOWN_SERVICE_API_PROTOCOLS } from "../types/service-api.js";
 
-export const METADATA_VERSION = 10;
+export const METADATA_VERSION = 11;
+/** Oldest announced metadata version buyers still accept from sellers. */
+export const MIN_SUPPORTED_METADATA_VERSION = 10;
 export const SERVICE_UNIT_BILLING_METADATA_VERSION = 11;
 export const WELL_KNOWN_SERVICE_CATEGORIES = [
   "privacy",

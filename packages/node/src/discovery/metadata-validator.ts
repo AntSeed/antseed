@@ -1,5 +1,5 @@
 import type { DomainVerificationMethod, PeerMetadata } from "./peer-metadata.js";
-import { METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS } from "./peer-metadata.js";
+import { METADATA_VERSION, MIN_SUPPORTED_METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS } from "./peer-metadata.js";
 import { encodeMetadata } from "./metadata-codec.js";
 import { MAX_PUBLIC_ADDRESS_LENGTH, parsePublicAddress } from "./public-address.js";
 import { validateUnitBillingModelV1 } from "../billing/unit.js";
@@ -66,10 +66,10 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
   const errors: ValidationError[] = [];
 
   // version
-  if (metadata.version !== METADATA_VERSION && metadata.version !== SERVICE_UNIT_BILLING_METADATA_VERSION) {
+  if (metadata.version < MIN_SUPPORTED_METADATA_VERSION || metadata.version > METADATA_VERSION) {
     errors.push({
       field: "version",
-      message: `Expected version ${METADATA_VERSION} or ${SERVICE_UNIT_BILLING_METADATA_VERSION}, got ${metadata.version}`,
+      message: `Expected version ${MIN_SUPPORTED_METADATA_VERSION}..${METADATA_VERSION}, got ${metadata.version}`,
     });
   }
 
