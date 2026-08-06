@@ -1,1077 +1,1147 @@
-/* Connect hub + per-integration page styles */
+/* ============================================================
+   INTEGRATIONS — hub + per-integration detail page.
+   Page rhythm, hero, buttons and closing band come from
+   components/ui; everything here is page-specific and built
+   only from design tokens.
+   ============================================================ */
 
-/* ====== HUB: Hero ====== */
-.hero {
-  text-align: center;
-  padding: 80px 20px 32px;
-  max-width: 880px;
-  margin: 0 auto;
-}
-.kicker {
-  display: inline-block;
-  font-size: 12px;
-  letter-spacing: 3px;
-  text-transform: uppercase;
-  color: var(--as-green);
-  font-weight: 600;
-  font-family: 'Share Tech Mono', monospace;
-  margin-bottom: 18px;
-}
-.heroTitle {
-  font-size: clamp(36px, 5vw, 60px);
-  font-weight: 700;
-  letter-spacing: -2px;
-  line-height: 1.1;
-  margin: 0 0 16px;
-  color: #1a1a1a;
-}
-.heroSub {
-  font-size: 17px;
-  line-height: 1.6;
-  color: #555;
-  margin: 0 auto 28px;
-  max-width: 680px;
-}
-.heroSub code {
-  background: #f4f4ef;
-  border: 1px solid #e8e8e3;
-  padding: 2px 6px;
-  border-radius: 6px;
-  font-size: 14px;
-  color: #1a1a1a;
-}
-.heroCtaRow {
-  display: flex;
-  gap: 12px;
-  justify-content: center;
-  flex-wrap: wrap;
-}
-.heroCta {
-  background: var(--as-green);
-  color: #ffffff;
-  padding: 12px 24px;
-  border-radius: 100px;
-  font-weight: 600;
-  font-size: 14px;
-  text-decoration: none;
-  transition: transform 0.15s, background 0.15s;
-}
-.heroCta:hover {
-  text-decoration: none;
-  color: #ffffff;
-  background: var(--as-green-bright);
-  transform: translateY(-1px);
-}
-.heroCtaGhost {
-  background: transparent;
-  color: #555;
-  padding: 12px 24px;
-  border-radius: 100px;
-  font-weight: 500;
-  font-size: 14px;
-  text-decoration: none;
-  border: 1px solid #e8e8e3;
-}
-.heroCtaGhost:hover { color: #1a1a1a; text-decoration: none; }
-
-/* ====== HUB: Jump nav ====== */
+/* ============================================================
+   HUB — jump nav + search
+   ============================================================ */
 .jumpNav {
-  max-width: 1200px;
-  margin: 8px auto 0;
-  padding: 0 20px;
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
   justify-content: center;
+  margin: 0 auto;
+  max-width: 840px;
 }
+
 .jumpLink {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  padding: 6px 16px 6px 12px;
+  border-radius: 999px;
+  background: var(--as-soil-2);
+  border: 1px solid var(--as-line);
+  font-size: 14px;
+  line-height: 22px;
   font-weight: 500;
-  padding: 7px 14px 7px 11px;
-  border-radius: 100px;
-  background: #fff;
-  border: 1px solid #e8e8e3;
-  color: #1a1a1a;
-  text-decoration: none;
-  transition: border-color 0.15s, transform 0.15s, background 0.15s;
+  color: var(--as-heading) !important;
+  text-decoration: none !important;
+  transition: border-color 0.15s ease, transform 0.15s ease;
 }
+
 .jumpLink:hover {
   border-color: var(--as-green);
-  text-decoration: none;
-  color: #1a1a1a;
   transform: translateY(-1px);
 }
+
 .jumpIcon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 16px;
   height: 16px;
-  color: var(--as-green);
   flex-shrink: 0;
-}
-.jumpIcon svg { width: 16px; height: 16px; }
-.jumpLabel { white-space: nowrap; }
-.jumpCount {
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 11px;
-  background: #f4f4ef;
-  border: 1px solid #e8e8e3;
-  padding: 1px 8px;
-  border-radius: 100px;
-  color: #888;
-}
-.jumpLink:hover .jumpCount {
-  background: rgba(31, 216, 122, 0.1);
-  border-color: rgba(31, 216, 122, 0.3);
-  color: var(--as-green);
+  color: var(--as-green-deep);
 }
 
-/* ====== HUB: Search ====== */
+.jumpIcon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.jumpLabel {
+  white-space: nowrap;
+}
+
+.jumpCount {
+  font-family: var(--as-font-data);
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--as-text-3);
+}
+
 .searchRow {
-  max-width: 720px;
-  margin: 28px auto 8px;
-  padding: 0 20px;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
+  max-width: 480px;
+  margin: 20px auto 0;
 }
+
 .search {
   width: 100%;
-  font-family: inherit;
+  font-family: var(--as-font-ui);
   font-size: 14px;
-  padding: 12px 18px;
-  border: 1px solid #e8e8e3;
-  border-radius: 100px;
-  background: #fff;
-  color: #1a1a1a;
+  line-height: 22px;
+  padding: 10px 20px;
+  border: 1px solid var(--as-line);
+  border-radius: 999px;
+  background: var(--as-soil-2);
+  color: var(--as-heading);
   outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
+
+.search::placeholder {
+  color: var(--as-text-3);
+}
+
 .search:focus {
   border-color: var(--as-green);
-  box-shadow: 0 0 0 3px rgba(31, 216, 122, 0.12);
+  box-shadow: 0 0 0 3px var(--as-green-dim);
 }
+
 .resultCount {
+  font-family: var(--as-font-data);
   font-size: 12px;
-  color: #888;
-  font-family: 'Share Tech Mono', monospace;
+  color: var(--as-text-3);
 }
+
 .noResults {
   text-align: center;
-  font-size: 15px;
-  color: #555;
-  padding: 60px 20px;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 500;
+  color: var(--as-text-2);
+  padding: 48px 16px;
 }
-.noResults a { color: var(--as-green); font-weight: 500; }
 
-/* ====== HUB: Category sections ====== */
+.noResults a {
+  color: var(--as-green-deep);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ============================================================
+   HUB — category sections
+   ============================================================ */
 .sections {
-  max-width: 1200px;
-  margin: 24px auto 0;
-  padding: 0 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 48px;
 }
+
 .catSection {
-  margin: 0 0 56px;
-  scroll-margin-top: 80px;
+  scroll-margin-top: 92px;
 }
+
 .catHeader {
   display: flex;
   align-items: flex-start;
-  gap: 14px;
-  margin-bottom: 18px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid #e8e8e3;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--as-line);
 }
+
 .catGlyph {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  background: linear-gradient(180deg, #f0fbf5 0%, #ffffff 100%);
-  border: 1px solid rgba(31, 216, 122, 0.3);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--as-green);
+  width: 48px;
+  height: 48px;
   flex-shrink: 0;
-  margin-top: 2px;
+  border-radius: 12px;
+  background: var(--as-green-dim);
+  color: var(--as-green-deep);
 }
-.catGlyph svg { width: 20px; height: 20px; }
-.catHeaderText { flex: 1; min-width: 0; }
+
+.catHeaderText {
+  flex: 1;
+  min-width: 0;
+}
+
 .catTitleRow {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: 0 0 4px;
+  flex-wrap: wrap;
+  margin-bottom: 2px;
 }
+
 .catTitle {
+  font-family: var(--as-font-display);
   font-size: 24px;
-  font-weight: 700;
-  letter-spacing: -0.6px;
+  line-height: 31px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--as-heading);
   margin: 0;
-  color: #1a1a1a;
-  line-height: 1.2;
 }
+
+.catCount {
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--as-text-3);
+  flex-shrink: 0;
+}
+
 .catTagline {
   font-size: 14px;
-  line-height: 1.5;
-  color: #555;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
   margin: 0;
   max-width: 720px;
 }
-.catCount {
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 10px;
-  letter-spacing: 1.5px;
-  text-transform: uppercase;
-  color: #888;
-  background: #f4f4ef;
-  border: 1px solid #e8e8e3;
-  padding: 3px 10px;
-  border-radius: 100px;
-  flex-shrink: 0;
-}
+
 .catGrid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 14px;
+  gap: 12px;
 }
-@media (max-width: 720px) { .catTitle { font-size: 20px; } }
 
-/* ====== HUB: Card ====== */
+/* ============================================================
+   HUB — integration card
+   ============================================================ */
 .card {
-  background: #fff;
-  border: 1px solid #e8e8e3;
-  border-radius: 16px;
-  padding: 18px 18px 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  text-decoration: none;
+  gap: 12px;
+  min-height: 176px;
+  padding: 20px;
+  background: var(--as-soil-2);
+  border: 1px solid var(--as-line);
+  border-radius: 24px;
   color: inherit;
-  transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
-  position: relative;
-  min-height: 168px;
+  text-decoration: none !important;
+  transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
 }
+
 .card:hover {
-  text-decoration: none;
   color: inherit;
   border-color: var(--as-green);
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(31, 216, 122, 0.08);
+  box-shadow: 0 8px 24px rgba(0, 30, 18, 0.06);
 }
+
 .card:hover .cardArrow {
+  color: var(--as-green-deep);
   transform: translateX(3px);
-  color: var(--as-green);
 }
+
 .cardHead {
   display: flex;
   align-items: center;
   gap: 12px;
 }
+
 .logoWrap {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  background: #f4f4ef;
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 40px;
+  height: 40px;
   flex-shrink: 0;
+  border-radius: 10px;
+  background: var(--as-soil-0);
   overflow: hidden;
 }
-.logoImg { max-width: 28px; max-height: 28px; }
-.logoGlyph {
-  font-family: 'Share Tech Mono', monospace;
-  font-weight: 700;
-  font-size: 16px;
-  color: #1a1a1a;
+
+.logoImg {
+  max-width: 24px;
+  max-height: 24px;
+  object-fit: contain;
 }
-.cardMeta { flex: 1; min-width: 0; }
+
+.mutedLogoImg {
+  filter: grayscale(1) brightness(0.56) contrast(0.9);
+  opacity: 0.74;
+}
+
+.logoGlyph {
+  font-family: var(--as-font-data);
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--as-green-deep);
+}
+
+.cardMeta {
+  flex: 1;
+  min-width: 0;
+}
+
 .cardTitle {
-  font-size: 16px;
+  font-family: var(--as-font-display);
+  font-size: 18px;
+  line-height: 26px;
   font-weight: 600;
+  letter-spacing: 0;
+  color: var(--as-heading);
   margin: 0;
-  color: #1a1a1a;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  line-height: 1.3;
 }
-.cardCategory {
-  font-size: 10px;
-  color: #888;
-  text-transform: uppercase;
-  letter-spacing: 1.5px;
-  font-family: 'Share Tech Mono', monospace;
-  white-space: nowrap;
-}
+
 .cardLine {
-  font-size: 13.5px;
-  line-height: 1.5;
-  color: #555;
-  margin: 0;
   flex: 1;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+  margin: 0;
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
   overflow: hidden;
 }
+
 .cardFooter {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 2px;
-}
-.cardSetup {
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 11px;
-  font-weight: 500;
-  color: #888;
-  background: #f4f4ef;
-  border: 1px solid #e8e8e3;
-  padding: 3px 9px;
-  border-radius: 100px;
-}
-.cardArrow {
-  margin-left: auto;
-  font-size: 16px;
-  color: #bbb;
-  transition: transform 0.15s, color 0.15s;
-  align-self: center;
+  gap: 8px;
+  margin-top: auto;
 }
 
-/* ====== HUB: Bottom block ====== */
+.cardSetup {
+  font-family: var(--as-font-data);
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--as-text-3);
+  background: var(--as-soil-0);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+.cardArrow {
+  display: inline-flex;
+  margin-left: auto;
+  color: var(--as-text-3);
+  transition: transform 0.15s ease, color 0.15s ease;
+}
+
+/* ============================================================
+   HUB — closing info cards
+   ============================================================ */
 .bottomBlock {
-  max-width: 1200px;
-  margin: 40px auto 80px;
-  padding: 40px 20px;
-  border-top: 1px solid #e8e8e3;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 40px;
+  gap: 12px;
 }
+
+.bottomBlock > div {
+  background: var(--as-soil-2);
+  border: 1px solid var(--as-line);
+  border-radius: 24px;
+  padding: 24px;
+  min-width: 0;
+}
+
 .bottomBlock h3 {
-  font-size: 18px;
+  font-family: var(--as-font-display);
+  font-size: 20px;
+  line-height: 28px;
   font-weight: 600;
+  letter-spacing: 0;
+  color: var(--as-heading);
   margin: 0 0 8px;
-  color: #1a1a1a;
 }
+
 .bottomBlock p {
   font-size: 14px;
-  line-height: 1.6;
-  color: #555;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
   margin: 0;
+  overflow-wrap: anywhere;
 }
-.bottomBlock a { color: var(--as-green); font-weight: 500; }
-@media (max-width: 720px) { .bottomBlock { grid-template-columns: 1fr; } }
 
-/* ========== PER-INTEGRATION PAGE ========== */
+.bottomBlock a {
+  color: var(--as-green-deep);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 
+/* ============================================================
+   DETAIL — shell
+   ============================================================ */
 .detailWrap {
-  max-width: 1080px;
+  max-width: 840px;
+  width: 100%;
+  /* flex item inside .main-wrapper — without this, a long unbreakable code
+     line sets min-content width and pushes the whole page sideways */
+  min-width: 0;
   margin: 0 auto;
-  padding: 40px 24px 80px;
+  padding: 32px 16px 96px;
 }
+
 .breadcrumb {
-  font-size: 13px;
-  color: var(--as-text-3);
-  margin-bottom: 24px;
-  font-family: 'Share Tech Mono', monospace;
   display: flex;
   align-items: center;
   gap: 8px;
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--as-text-3);
+  margin-bottom: 32px;
 }
-.breadcrumb a { color: var(--as-text-2); text-decoration: none; }
-.breadcrumb a:hover { color: var(--as-green); }
-.breadcrumb span { color: var(--as-text-3); }
-.breadcrumbSep { color: var(--as-text-3) !important; }
+
+.breadcrumb a {
+  color: var(--as-text-2);
+  text-decoration: none;
+}
+
+.breadcrumb a:hover {
+  color: var(--as-green-deep);
+}
+
+.breadcrumbSep {
+  color: var(--as-line-strong) !important;
+}
 
 .detailHeader {
   display: flex;
   align-items: center;
   gap: 20px;
   margin-bottom: 24px;
-  flex-wrap: wrap;
 }
+
 .detailLogo {
-  width: 64px;
-  height: 64px;
-  border-radius: 16px;
-  background: #f4f4ef;
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 64px;
+  height: 64px;
   flex-shrink: 0;
+  border-radius: 16px;
+  background: var(--as-soil-0);
+  border: 1px solid var(--as-line);
+  overflow: hidden;
 }
-.detailLogo img { max-width: 44px; max-height: 44px; }
+
+.detailLogo img {
+  max-width: 36px;
+  max-height: 36px;
+  object-fit: contain;
+}
+
 .detailLogo span {
-  font-family: 'Share Tech Mono', monospace;
-  font-weight: 700;
-  font-size: 28px;
-  color: #1a1a1a;
+  font-family: var(--as-font-data);
+  font-size: 24px;
+  font-weight: 500;
+  color: var(--as-green-deep);
 }
-.detailHeaderText { flex: 1; min-width: 240px; }
+
+.detailHeaderText {
+  flex: 1;
+  min-width: 0;
+}
+
 .detailHeaderText h1 {
-  font-size: 36px;
-  font-weight: 700;
-  margin: 0 0 4px;
+  font-family: var(--as-font-display);
+  font-size: clamp(32px, 4vw, 48px);
+  line-height: 1.1;
+  font-weight: 600;
   letter-spacing: -1px;
-  color: #1a1a1a;
+  color: var(--as-heading);
+  margin: 0 0 8px;
 }
+
 .detailOneLiner {
-  font-size: 15px;
-  color: #555;
-  margin: 0 0 10px;
+  font-size: 18px;
+  line-height: 26px;
+  font-weight: 500;
+  color: var(--as-text-2);
+  margin: 0 0 12px;
 }
+
 .detailBadgeRow {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
 }
+
 .detailBadge {
   display: inline-block;
+  font-family: var(--as-font-data);
   font-size: 11px;
-  font-family: 'Share Tech Mono', monospace;
+  line-height: 18px;
   font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   padding: 3px 10px;
-  border-radius: 100px;
-  background: #f4f4ef;
-  color: #555;
-  border: 1px solid #e8e8e3;
+  border-radius: 999px;
+  background: var(--as-soil-0);
+  color: var(--as-text-3);
 }
+
 .detailBadgeGreen {
-  background: rgba(31, 216, 122, 0.1);
-  color: var(--as-green);
-  border-color: rgba(31, 216, 122, 0.3);
+  background: var(--as-badge-green-bg);
+  color: var(--as-live-text);
 }
 
 .description {
-  font-size: 15px;
-  line-height: 1.65;
-  color: #333;
-  margin: 0 0 32px;
-  /* Long inline tokens (ANTHROPIC_BASE_URL, ~/.antseed/buyer.state.json) must
-   * be allowed to break mid-word so prose wraps inside narrow columns. */
+  font-size: 16px;
+  line-height: 26px;
+  font-weight: 500;
+  color: var(--as-text-2);
+  margin: 0 0 24px;
   overflow-wrap: anywhere;
-  word-break: break-word;
-}
-.description p { margin: 0 0 12px; }
-.description p:last-child { margin-bottom: 0; }
-.description code {
-  background: #f4f4ef;
-  border: 1px solid #e8e8e3;
-  padding: 1px 6px;
-  border-radius: 5px;
-  font-size: 13px;
-  color: #1a1a1a;
-  /* Allow long monospace tokens to break inside the inline code pill. */
-  overflow-wrap: anywhere;
-  word-break: break-all;
 }
 
-/* ====== "Run AntSeed first" banner ====== *
- * Vertical timeline / rail. The numbered circles are connected by a thin green
- * line so users see the four steps as one ordered flow rather than four
- * disconnected blocks. Step 4 (deposit) is visually demoted via opacity so
- * users without paid providers know they can stop at 3.
- */
-.runFirst {
-  background: linear-gradient(180deg, #f5fcf8 0%, #ffffff 100%);
-  border: 1px solid rgba(31, 216, 122, 0.3);
-  border-radius: 14px;
-  padding: 18px 22px 22px;
-  margin-bottom: 36px;
+.description p {
+  margin: 0 0 12px;
 }
-.runFirstCollapsed { padding-bottom: 18px; }
+
+.description p:last-child {
+  margin-bottom: 0;
+}
+
+/* ---------- inline code, one treatment everywhere ---------- */
+.description code,
+.runFirstSub code,
+.glossaryList code,
+.runFirstHint code,
+.runFirstFieldList code,
+.stepNote code,
+.modelNote code,
+.wireFormatBody code,
+.wireFormatFacts code,
+.wireFormatHint code,
+.wireFormatNative code,
+.troubleshootList code,
+.agentBox code,
+.cardLine code,
+.detailOneLiner code,
+.bulletList code {
+  font-family: var(--as-font-data);
+  font-size: 0.85em;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--as-inline-code-bg);
+  color: var(--as-inline-code-text);
+  overflow-wrap: anywhere;
+}
+
+/* ============================================================
+   DETAIL — "run AntSeed first" banner
+   ============================================================ */
+.runFirst {
+  background: var(--as-soil-2);
+  border: 1px solid var(--as-line);
+  border-radius: 24px;
+  padding: 24px;
+  margin: 0 0 32px;
+}
+
+.runFirstCollapsed {
+  padding-bottom: 24px;
+}
 
 .runFirstHeader {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 18px;
   flex-wrap: wrap;
+  margin-bottom: 20px;
 }
-.runFirstCollapsed .runFirstHeader { margin-bottom: 0; }
+
+.runFirstCollapsed .runFirstHeader {
+  margin-bottom: 0;
+}
 
 .runFirstKicker {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--as-green);
-  margin: 0 0 4px;
-  text-transform: uppercase;
-  letter-spacing: 1.6px;
-  font-family: 'Share Tech Mono', monospace;
   display: flex;
   align-items: center;
   gap: 8px;
-}
-.runFirstDot {
-  display: inline-block;
-  flex-shrink: 0;
-  width: 7px;
-  height: 7px;
-  background: var(--as-green);
-  border-radius: 50%;
-  box-shadow: 0 0 0 0 rgba(31, 216, 122, 0.6);
-  animation: runFirstDotPulse 1.4s ease-in-out infinite;
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--as-live-text);
+  margin: 0 0 4px;
 }
 
-/* Same animation as the desktop chat-list "running" indicator:
- * opacity dips to 0.55 and a halo ripples out to 4px before fading. */
+.runFirstDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--as-green);
+  animation: runFirstDotPulse 1.6s ease-in-out infinite;
+}
+
 @keyframes runFirstDotPulse {
-  0%, 100% {
-    opacity: 1;
-    box-shadow: 0 0 0 0 rgba(31, 216, 122, 0.55);
-  }
-  50% {
-    opacity: 0.55;
-    box-shadow: 0 0 0 4px rgba(31, 216, 122, 0);
-  }
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 var(--as-green-glow); }
+  50% { opacity: 0.55; box-shadow: 0 0 0 4px rgba(16, 185, 129, 0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .runFirstDot { animation: none; }
 }
+
 .runFirstSub {
-  font-size: 13px;
-  line-height: 1.55;
-  color: #555;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
   margin: 0;
 }
-.runFirstSub code {
-  background: #fff;
-  border: 1px solid rgba(31, 216, 122, 0.25);
-  border-radius: 5px;
-  padding: 1px 6px;
-  font-size: 12px;
-  color: var(--as-green);
-  font-weight: 500;
-}
+
 .runFirstToggle {
   flex-shrink: 0;
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--as-green);
-  background: #fff;
-  border: 1px solid rgba(31, 216, 122, 0.3);
-  border-radius: 100px;
-  padding: 5px 12px;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-}
-.runFirstToggle:hover {
-  background: rgba(31, 216, 122, 0.08);
-  border-color: rgba(31, 216, 122, 0.5);
-}
-
-/* Wire-format panel — explains exactly what protocol the tool sends, which
- * peers are a native fit, and what happens when they aren't. Sits between the
- * description and the run-AntSeed-first banner on every detail page. */
-.wireFormat {
-  background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-left: 3px solid var(--as-green);
-  border-radius: 10px;
-  padding: 18px 22px;
-  margin: 24px 0 0;
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
-}
-.wireFormatTitle {
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 11px;
-  letter-spacing: 1.5px;
-  text-transform: uppercase;
-  color: var(--as-green);
-  margin: 0 0 12px;
-  font-weight: 600;
-}
-.wireFormatBody {
-  font-size: 13.5px;
-  line-height: 1.6;
-  color: var(--as-text-2);
-  margin: 0 0 12px;
-}
-.wireFormatFacts {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.wireFormatFacts > li {
-  font-size: 13.5px;
-  line-height: 1.6;
-  color: var(--as-text-2);
-  padding-left: 14px;
-  position: relative;
-}
-.wireFormatFacts > li::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 9px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: rgba(31, 216, 122, 0.45);
-}
-.wireFormatFacts strong { color: var(--as-text); font-weight: 600; }
-.wireFormatFacts code,
-.wireFormatBody code,
-.wireFormatHint code {
-  background: var(--as-green-dim);
-  border: 1px solid var(--as-line-strong);
-  border-radius: 4px;
-  padding: 1px 5px;
-  font-size: 12px;
-  color: var(--as-inline-code-text);
-}
-.wireFormatFacts a { color: var(--as-green); text-decoration: underline; }
-.wireFormatDim { color: var(--as-text-3); }
-.wireFormatWarn::before {
-  display: none !important;
-}
-.wireFormatWarn {
-  background: rgba(245, 158, 11, 0.05);
-  border-left: 2px solid #f59e0b;
-  border-radius: 6px;
-  margin-top: 8px;
-  padding: 10px 12px 10px 12px !important;
-}
-.wireFormatWarn strong { color: #92400e !important; }
-.wireFormatHint {
-  font-size: 12.5px;
-  line-height: 1.55;
-  color: var(--as-text-2);
-  margin: 14px 0 0;
-  padding-top: 12px;
-  border-top: 1px solid var(--as-line);
-}
-
-/* Multi-protocol variant: a small endpoint table. */
-.wireFormatGrid {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.wireFormatRow {
-  display: grid;
-  grid-template-columns: 200px 1fr auto;
-  gap: 14px;
+  display: inline-flex;
   align-items: center;
-  font-size: 13px;
-  padding: 8px 10px;
-  background: #f9fbfa;
-  border: 1px solid rgba(0, 0, 0, 0.04);
-  border-radius: 6px;
-}
-.wireFormatCode {
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 12px;
-  color: var(--as-inline-code-text);
-}
-.wireFormatLabel { color: var(--as-text); font-weight: 500; }
-.wireFormatNative { color: var(--as-text-2); font-size: 12.5px; }
-.wireFormatNative code {
-  background: var(--as-green-dim);
-  border: 1px solid var(--as-line-strong);
-  border-radius: 3px;
-  padding: 0 4px;
-  font-size: 11.5px;
-  color: var(--as-inline-code-text);
-}
-@media (max-width: 720px) {
-  .wireFormatRow { grid-template-columns: 1fr; gap: 4px; }
+  font-family: var(--as-font-ui);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--as-heading);
+  background: var(--as-soil-2);
+  border: 1px solid var(--as-line);
+  border-radius: 32px;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
 }
 
-/* Glossary block above the rail — sets up the mental model.
- * Visually distinct from steps (no numbered rail), green-tinted background. */
+.runFirstToggle:hover {
+  border-color: var(--as-line-strong);
+}
+
+/* ---------- glossary ---------- */
 .glossary {
-  background: linear-gradient(180deg, rgba(31, 216, 122, 0.04), rgba(31, 216, 122, 0.02));
-  border: 1px solid rgba(31, 216, 122, 0.18);
-  border-radius: 10px;
-  padding: 16px 20px;
-  margin-bottom: 24px;
+  background: var(--as-soil-0);
+  border-radius: 16px;
+  padding: 20px;
+  margin-bottom: 20px;
 }
+
 .glossaryTitle {
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 11px;
-  letter-spacing: 1.5px;
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--as-green);
+  color: var(--as-text-3);
   margin: 0 0 12px;
-  font-weight: 600;
 }
+
 .glossaryList {
   margin: 0;
-  padding: 0 0 0 18px;
+  padding: 0 0 0 20px;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
+
 .glossaryList li {
-  font-size: 13px;
-  line-height: 1.6;
-  color: #2a2a2a;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+  overflow-wrap: anywhere;
 }
-.glossaryList code {
-  background: #fff;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 4px;
-  padding: 1px 5px;
-  font-size: 12px;
-  color: var(--as-green);
-}
+
 .glossaryList strong {
+  color: var(--as-heading);
   font-weight: 600;
-  color: var(--as-green);
 }
 
-/* Field-list under a step — explains JSON keys returned by a command. */
-.runFirstFieldList {
-  margin: 4px 0 0;
-  padding: 0 0 0 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  font-size: 12.5px;
-  line-height: 1.55;
-  color: #555;
-}
-.runFirstFieldList code {
-  background: #fff;
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  border-radius: 4px;
-  padding: 1px 5px;
-  font-size: 11.5px;
-  color: var(--as-green);
-}
-.runFirstFieldList strong {
-  font-weight: 600;
-  color: #1a1a1a;
-}
-
-/* The rail itself: numbered circles connected by a vertical line. */
+/* ---------- numbered rail ---------- */
 .runFirstRail {
   list-style: none;
   padding: 0;
   margin: 0;
   position: relative;
 }
+
 .runFirstRail::before {
-  /* The connecting line behind the numbered circles. */
   content: '';
   position: absolute;
-  left: 12px;
-  top: 12px;
-  bottom: 12px;
-  width: 1.5px;
-  background: linear-gradient(
-    180deg,
-    rgba(31, 216, 122, 0.45) 0%,
-    rgba(31, 216, 122, 0.45) 70%,
-    rgba(31, 216, 122, 0.15) 100%
-  );
-  border-radius: 1px;
+  left: 15px;
+  top: 16px;
+  bottom: 16px;
+  width: 1px;
+  background: var(--as-line);
 }
+
 .runFirstItem {
   position: relative;
   display: grid;
-  grid-template-columns: 24px 1fr;
-  gap: 14px;
-  padding-bottom: 18px;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 16px;
+  padding-bottom: 20px;
 }
-.runFirstItem:last-child { padding-bottom: 0; }
+
+.runFirstItem:last-child {
+  padding-bottom: 0;
+}
 
 .runFirstNum {
   position: relative;
   z-index: 1;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: #fff;
-  border: 1.5px solid var(--as-green);
-  color: var(--as-green);
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 11px;
-  font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-top: 1px;
-  box-shadow: 0 0 0 4px #f5fcf8;
-}
-.runFirstBody { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
-
-.runFirstStepTitle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--as-soil-2);
+  border: 1px solid var(--as-heading);
+  color: var(--as-heading);
+  font-family: var(--as-font-display);
   font-size: 14px;
-  line-height: 1.55;
-  color: #1a1a1a;
-  margin: 2px 0 0;
-  font-weight: 500;
-}
-.runFirstHint {
-  font-size: 12.5px;
-  line-height: 1.55;
-  color: #666;
-  margin: 2px 0 0;
-}
-.runFirstHint code {
-  background: #fff;
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  border-radius: 4px;
-  padding: 1px 5px;
-  font-size: 11.5px;
-  color: var(--as-green);
-}
-.runFirstHint strong {
   font-weight: 600;
-  color: #1a1a1a;
 }
-.runFirstHint + .runFirstHint { margin-top: 6px; }
 
-/* The optional last step is visually softened. */
 .runFirstItemOptional .runFirstNum {
-  border-color: rgba(31, 216, 122, 0.5);
+  border-color: var(--as-line-strong);
   border-style: dashed;
-  color: var(--as-green);
+  color: var(--as-text-3);
 }
-.runFirstItemOptional .runFirstStepTitle { color: #444; }
+
 .runFirstOptionalTag {
   display: inline-block;
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 1px;
+  font-family: var(--as-font-data);
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: #888;
-  background: #fff;
-  border: 1px solid #e8e8e3;
-  border-radius: 100px;
+  color: var(--as-text-3);
+  background: var(--as-soil-0);
+  border-radius: 999px;
   padding: 2px 8px;
   margin-right: 8px;
-  vertical-align: 2px;
+  vertical-align: 1px;
 }
 
-.runFirst a { color: var(--as-green); font-weight: 500; }
-.runFirst a:hover { color: var(--as-green); }
-
-/* ====== Section ====== */
-.section {
-  margin: 36px 0;
-  padding-top: 28px;
-  border-top: 1px solid #e8e8e3;
+.runFirstBody {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
-.section:first-of-type { padding-top: 0; border-top: none; margin-top: 0; }
-.sectionEyebrow {
-  font-size: 11px;
-  letter-spacing: 2px;
+
+.runFirstStepTitle {
+  font-family: var(--as-font-display);
+  font-size: 18px;
+  line-height: 26px;
+  font-weight: 600;
+  color: var(--as-heading);
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.runFirstItemOptional .runFirstStepTitle {
+  color: var(--as-text-2);
+}
+
+.runFirstHint {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.runFirstHint strong {
+  color: var(--as-heading);
+  font-weight: 600;
+}
+
+.runFirstFieldList {
+  margin: 0;
+  padding: 0 0 0 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+  overflow-wrap: anywhere;
+}
+
+.runFirstFieldList strong {
+  color: var(--as-heading);
+  font-weight: 600;
+}
+
+.runFirst a {
+  color: var(--as-green-deep);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ============================================================
+   DETAIL — wire-format panel
+   ============================================================ */
+.wireFormat {
+  background: var(--as-soil-2);
+  border: 1px solid var(--as-line);
+  border-left: 3px solid var(--as-green);
+  border-radius: 24px;
+  padding: 24px;
+  margin: 24px 0;
+}
+
+.wireFormatTitle {
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--as-green);
-  font-weight: 600;
-  font-family: 'Share Tech Mono', monospace;
-  margin: 0 0 6px;
-}
-.sectionTitle {
-  font-size: 22px;
-  font-weight: 600;
-  margin: 0 0 18px;
-  color: #1a1a1a;
-  letter-spacing: -0.4px;
+  color: var(--as-live-text);
+  margin: 0 0 12px;
 }
 
-/* ====== Steps ====== */
+.wireFormatBody {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+  margin: 0 0 12px;
+}
+
+.wireFormatBody strong {
+  color: var(--as-heading);
+  font-weight: 600;
+}
+
+.wireFormatFacts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.wireFormatFacts > li {
+  position: relative;
+  padding-left: 20px;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+}
+
+.wireFormatFacts > li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--as-green);
+}
+
+.wireFormatFacts strong {
+  color: var(--as-heading);
+  font-weight: 600;
+}
+
+.wireFormatFacts a {
+  color: var(--as-green-deep);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.wireFormatDim {
+  color: var(--as-text-3);
+}
+
+.wireFormatWarn {
+  padding: 12px 12px 12px 16px !important;
+  border-left: 2px solid var(--as-risk);
+  border-radius: 8px;
+  background: var(--as-risk-dim);
+  margin-top: 4px;
+}
+
+.wireFormatWarn::before {
+  display: none !important;
+}
+
+.wireFormatWarn strong {
+  color: var(--as-risk-deep) !important;
+}
+
+.wireFormatHint {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+  margin: 16px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--as-line);
+}
+
+.wireFormatGrid {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.wireFormatRow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 16px;
+  background: var(--as-soil-0);
+  border-radius: 12px;
+  min-width: 0;
+}
+
+.wireFormatCode {
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--as-green-deep);
+  overflow-wrap: anywhere;
+}
+
+.wireFormatLabel {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-heading);
+}
+
+.wireFormatNative {
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--as-text-3);
+}
+
+/* ============================================================
+   DETAIL — sections & steps
+   ============================================================ */
+.section {
+  margin: 40px 0 0;
+  padding-top: 32px;
+  border-top: 1px solid var(--as-line);
+  min-width: 0;
+}
+
+.section:first-of-type {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.sectionEyebrow {
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--as-text-3);
+  margin: 0 0 8px;
+}
+
+.sectionTitle {
+  font-family: var(--as-font-display);
+  font-size: clamp(24px, 2.6vw, 32px);
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+  color: var(--as-heading);
+  margin: 0 0 20px;
+}
+
 .stepList {
   list-style: none;
   padding: 0;
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 24px;
+  min-width: 0;
 }
+
 .step {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
 }
+
 .stepLabel {
-  font-size: 14px;
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  line-height: 20px;
   font-weight: 500;
-  color: #1a1a1a;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--as-text-3);
 }
+
 .stepNote {
-  font-size: 13px;
-  color: #666;
-  line-height: 1.55;
-  margin: 4px 0 0;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+  margin: 0;
+  overflow-wrap: anywhere;
 }
+
 .bulletList {
   list-style: disc;
   padding-left: 20px;
   margin: 0;
-  color: #333;
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
 }
-.bulletList li { margin-bottom: 6px; }
 
-/* ====== Code blocks ======
- * We use a <div> (not <pre>) because Docusaurus' custom.css ships a global
- * `pre { background: #f6f8fa !important }` rule that we cannot override with
- * scoped CSS-module selectors. <div> sidesteps that entirely.
- */
-.codeBlockWrap {
+.bulletList li {
+  margin-bottom: 8px;
+}
+
+/* ============================================================
+   DETAIL — code blocks
+   ============================================================ */
+.codeBlockWrap,
+.exampleOutputWrap {
   display: block;
-  /* Flex/grid items default to min-width: auto = content's intrinsic min-width.
-   * Without this, a long-line code block can push its parent (and the page)
-   * wider than the viewport, causing horizontal scroll on mobile. */
   min-width: 0;
   max-width: 100%;
 }
-.codeBlockPath {
-  font-size: 11px;
-  color: var(--as-green);
-  font-family: 'Share Tech Mono', monospace;
-  margin-bottom: 6px;
+
+.codeBlockPath,
+.exampleOutputLabel {
   display: block;
-}
-.codeBlock {
-  position: relative;
-  background: #0e1116 !important;
-  color: #e6e6e3 !important;
-  border-radius: 10px;
-  padding: 14px 56px 14px 16px;
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 13px;
-  line-height: 1.55;
-  /* Critical: clip + scroll long shell lines INSIDE this element.
-   * `width: 100%` + `box-sizing: border-box` means the padding (incl.
-   * the 56px right gutter for the copy button) eats from this width
-   * rather than expanding the box past the parent. Without these two
-   * lines the intrinsic width of `<span class=codeBlockText>` (which
-   * has `white-space: pre`) bubbles up through the `<li>`/`<ul>`/
-   * `<section>` chain and stretches the page. */
-  width: 100%;
-  max-width: 100%;
-  box-sizing: border-box;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  white-space: pre;
-  margin: 0;
-  border: 1px solid rgba(255, 255, 255, 0.04);
-}
-.codeBlockText {
-  color: #e6e6e3;
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 13px;
-  line-height: 1.55;
-  white-space: pre;
-  background: transparent;
-  padding: 0;
-  border: 0;
-  display: inline;
+  font-family: var(--as-font-data);
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--as-text-3);
+  margin: 0 0 8px;
 }
 
-/* Example output — rendered like a code block, but lighter and not copyable.
- * Used to show the user what an `antseed network browse` (etc.) call returns,
- * so the docs feel grounded in real artifacts. */
-.exampleOutputWrap { display: block; margin-top: 8px; }
-.exampleOutputLabel {
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 10px;
-  letter-spacing: 1.5px;
-  text-transform: uppercase;
-  color: #888;
-  margin-bottom: 6px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.exampleOutputLabel::before {
-  content: '';
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #cbd5e1;
-  display: inline-block;
-}
+.codeBlock,
 .exampleOutput {
   position: relative;
-  background: #1a1f26;
-  color: #cbd5e1;
-  border-radius: 10px;
-  padding: 14px 16px;
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 12px;
-  line-height: 1.55;
-  /* Same width guard as .codeBlock — keep horizontal scroll inside
-   * the dark box, never on the page. */
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;
+  padding: 16px;
+  background: var(--as-void-deep);
+  border: 1px solid var(--as-line-on-void);
+  border-radius: 16px;
   overflow-x: auto;
   overscroll-behavior-x: contain;
   white-space: pre;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  opacity: 0.94;
 }
+
+.codeBlock {
+  padding-right: 16px;
+}
+
+.exampleOutput {
+  background: var(--as-void);
+}
+
+.codeBlockText {
+  display: block;
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--as-code-text);
+  white-space: pre;
+  padding-right: 72px;
+}
+
+.exampleOutput .codeBlockText {
+  color: var(--as-on-void-soft);
+  padding-right: 0;
+}
+
 .copyBtn {
   position: absolute;
   top: 10px;
   right: 10px;
-  background: rgba(255, 255, 255, 0.08);
-  color: #d8d8d3;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 6px;
-  padding: 4px 10px;
+  font-family: var(--as-font-data);
   font-size: 11px;
-  font-family: 'Share Tech Mono', monospace;
+  line-height: 18px;
   font-weight: 500;
+  color: #FFFFFF;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--as-line-on-void);
+  border-radius: 999px;
+  padding: 4px 12px;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-}
-.copyBtn:hover { background: rgba(255, 255, 255, 0.16); color: #fff; }
-.copyBtn.copied {
-  color: var(--as-green);
-  border-color: rgba(31, 216, 122, 0.4);
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
-/* ====== Env table (for env-var config blocks) ====== */
-.envBlock { display: flex; flex-direction: column; gap: 10px; }
+.copyBtn:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.copied {
+  color: var(--as-ink);
+  background: var(--as-green);
+  border-color: var(--as-green);
+}
+
+/* ============================================================
+   DETAIL — env table, GUI block, models
+   ============================================================ */
+.envBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
 .envTable {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 13px;
-  background: #0e1116;
-  color: #e6e6e3;
-  border-radius: 10px;
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  background: var(--as-void-deep);
+  border: 1px solid var(--as-line-on-void);
+  border-radius: 16px;
   overflow: hidden;
 }
+
 .envTable td {
-  padding: 9px 14px;
-  border-bottom: 1px solid rgba(255,255,255,0.06);
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--as-line-on-void);
   background: transparent;
-  color: inherit;
+  color: var(--as-code-text);
+  overflow-wrap: anywhere;
 }
-.envTable tr:last-child td { border-bottom: none; }
+
+.envTable tr:last-child td {
+  border-bottom: none;
+}
+
 .envTable td:first-child {
-  color: var(--as-green);
+  color: var(--as-live-bright);
   white-space: nowrap;
-  font-weight: 500;
 }
+
 .envTable td code,
 .envTable code {
   background: transparent !important;
@@ -1081,791 +1151,281 @@
   font-size: inherit !important;
   font-family: inherit !important;
 }
+
 .envDetails {
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 12px;
-  color: #888;
+  color: var(--as-text-3);
 }
+
 .envDetails summary {
   cursor: pointer;
   padding: 4px 0;
   user-select: none;
   list-style: none;
+  color: var(--as-green-deep);
 }
-.envDetails summary::-webkit-details-marker { display: none; }
-.envDetails summary::before {
-  content: '▸ ';
-  display: inline-block;
-  transition: transform 0.15s;
-}
-.envDetails[open] summary::before { content: '▾ '; }
-.envDetails > .codeBlockWrap { margin-top: 6px; }
 
-/* ====== GUI block (for GUI-only configurations) ====== */
+.envDetails summary::-webkit-details-marker {
+  display: none;
+}
+
+.envDetails summary::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 6px;
+}
+
+.envDetails[open] summary::before {
+  content: '▾';
+}
+
+.envDetails > .codeBlockWrap {
+  margin-top: 8px;
+}
+
 .guiBlock {
-  background: #f4f4ef;
-  border: 1px solid #e8e8e3;
-  border-radius: 10px;
-  padding: 14px 16px;
+  background: var(--as-soil-0);
+  border-radius: 16px;
+  padding: 16px 20px;
   font-size: 14px;
-  line-height: 1.6;
-  color: #333;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
   white-space: pre-wrap;
 }
 
-.configList { display: flex; flex-direction: column; gap: 14px; }
+.configList {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
 
-/* ====== Models ====== */
 .modelChips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 4px;
+  gap: 8px;
 }
+
 .modelChip {
-  background: #f4f4ef;
-  border: 1px solid #e8e8e3;
-  color: #1a1a1a;
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--as-font-data);
   font-size: 12px;
-  padding: 4px 10px;
-  border-radius: 100px;
+  line-height: 20px;
+  color: var(--as-heading);
+  background: var(--as-soil-0);
+  border-radius: 999px;
+  padding: 4px 12px;
 }
+
 .modelNote {
-  font-size: 13px;
-  color: #666;
-  line-height: 1.55;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
   margin: 12px 0 0;
 }
-.modelNote code {
-  background: #f4f4ef;
-  border: 1px solid #e8e8e3;
-  padding: 1px 6px;
-  border-radius: 5px;
-  font-size: 12px;
-  color: #1a1a1a;
-}
-.modelNote a { color: var(--as-green); font-weight: 500; }
 
-/* ====== Troubleshooting ====== */
+.modelNote a {
+  color: var(--as-green-deep);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ============================================================
+   DETAIL — troubleshooting, links, agents, related
+   ============================================================ */
 .troubleshootList {
   list-style: none;
   padding: 0;
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-}
-.troubleshootList li {
-  background: #fffaf0;
-  border: 1px solid #f0e2c2;
-  border-radius: 10px;
-  padding: 12px 14px;
-  font-size: 14px;
-  line-height: 1.55;
-  color: #333;
-}
-.troubleshootList strong {
-  display: block;
-  color: #8a6d1a;
-  font-weight: 600;
-  margin-bottom: 4px;
-  font-size: 13px;
-}
-.troubleshootList code {
-  background: rgba(0,0,0,0.05);
-  border: 1px solid rgba(0,0,0,0.06);
-  padding: 1px 5px;
-  border-radius: 4px;
-  font-size: 12px;
+  gap: 8px;
 }
 
-/* ====== Links ====== */
-.linkRow {
+.troubleshootList li {
+  background: var(--as-soil-0);
+  border-radius: 16px;
+  padding: 16px 20px;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--as-text-2);
+}
+
+.troubleshootList strong {
+  display: block;
+  color: var(--as-heading);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.linkRow,
+.relatedRow {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
 }
-.linkRow a {
+
+.linkRow a,
+.relatedRow a {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
-  color: #1a1a1a;
-  background: #f4f4ef;
-  border: 1px solid #e8e8e3;
-  border-radius: 100px;
-  padding: 6px 14px;
-  text-decoration: none;
-  transition: border-color 0.15s;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--as-heading) !important;
+  background: var(--as-soil-2);
+  border: 1px solid var(--as-line);
+  border-radius: 32px;
+  padding: 10px 16px;
+  text-decoration: none !important;
+  transition: border-color 0.15s ease;
 }
-.linkRow a:hover { border-color: var(--as-green); text-decoration: none; }
+
+.linkRow a:hover,
+.relatedRow a:hover {
+  border-color: var(--as-line-strong);
+}
+
 .linkRow a::after {
   content: '↗';
   font-size: 11px;
-  opacity: 0.6;
+  color: var(--as-text-3);
 }
 
-/* ====== Agent box ====== */
 .agentBox {
-  background: linear-gradient(180deg, #f0fbf5 0%, #ffffff 100%);
-  border: 1px solid rgba(31, 216, 122, 0.3);
-  border-radius: 14px;
-  padding: 18px 20px;
-  margin: 32px 0 0;
+  background: var(--as-soil-0);
+  border-radius: 24px;
+  padding: 24px;
+  margin: 40px 0 0;
 }
+
 .agentBox h3 {
+  font-family: var(--as-font-data);
   font-size: 12px;
-  font-weight: 600;
-  margin: 0 0 8px;
-  color: var(--as-green);
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  line-height: 20px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  letter-spacing: 1.5px;
-  font-family: 'Share Tech Mono', monospace;
+  color: var(--as-text-3);
+  margin: 0 0 8px;
 }
-.agentBox h3::before {
-  content: '⚙';
-  font-size: 14px;
-}
+
 .agentBox p {
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 22px;
+  font-weight: 500;
   color: var(--as-text-2);
   margin: 0 0 8px;
 }
-.agentBox p:last-child { margin-bottom: 0; }
-.agentBox code {
-  background: var(--as-green-dim);
-  border: 1px solid var(--as-line-strong);
-  color: var(--as-inline-code-text);
-  padding: 1px 6px;
-  border-radius: 5px;
-  font-size: 13px;
+
+.agentBox p:last-child {
+  margin-bottom: 0;
 }
+
 .agentBox a {
-  color: var(--as-green);
-  font-weight: 500;
-  font-family: 'Share Tech Mono', monospace;
-}
-
-/* ====== Related row ====== */
-.relatedRow {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.relatedRow a {
-  font-size: 12px;
-  font-family: 'Share Tech Mono', monospace;
-  color: #1a1a1a;
-  background: #fff;
-  border: 1px solid #e8e8e3;
-  border-radius: 100px;
-  padding: 5px 12px;
-  text-decoration: none;
-}
-.relatedRow a:hover { border-color: var(--as-green); text-decoration: none; }
-
-/* ============================================================
- * Narrow viewports
- *
- * The page is content-dense and uses a lot of inline `<code>` for
- * env-var names, file paths, and CLI commands. Long unbroken tokens
- * (ANTHROPIC_BASE_URL, ~/.antseed/buyer.state.json) push the column
- * past the viewport on phones if we don't tell them to wrap.
- *
- * The wrap rules for inline code (.description code, .runFirstHint code,
- * .glossaryList code, etc.) are applied at *all* sizes — no media query —
- * because they're correct at every viewport. The blocks below scale
- * padding/font-size at two breakpoints:
- *   - 996px: matches Docusaurus' navbar-collapse breakpoint. Without this,
- *            a tablet-width window has a hamburger menu but a desktop-sized
- *            content column.
- *   - 720px: phone-shaped viewports. Tighter still.
- * ============================================================ */
-
-/* Universal wrapping (every viewport) — long tokens must be breakable. */
-.runFirstHint,
-.runFirstStepTitle,
-.glossaryList li,
-.runFirstFieldList li,
-.relatedRow a {
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  min-width: 0;
-}
-.runFirstHint code,
-.glossaryList code,
-.runFirstFieldList code,
-.runFirstFieldList strong code {
-  overflow-wrap: anywhere;
-  word-break: break-all;
-}
-/* Flex/grid children that contain code or wide content: let them shrink. */
-.runFirstBody,
-.runFirstItem,
-.step,
-.stepList,
-.section {
-  min-width: 0;
-}
-
-/* Tablet — navbar is collapsed but viewport isn't phone-narrow. */
-@media (max-width: 996px) {
-  .detailWrap { padding: 32px 20px 64px; max-width: 100%; }
-  .detailHeaderText h1 { font-size: 32px; }
-  /* Stop the wireFormat row from blowing past 100% width. */
-  .wireFormatRow { grid-template-columns: minmax(0, 200px) minmax(0, 1fr) auto; }
-}
-
-/* Phone. */
-@media (max-width: 720px) {
-  /* Detail page wrapper: cut horizontal padding so content has room. */
-  .detailWrap { padding: 28px 16px 56px; }
-
-  /* Header: let text shrink below 240px and scale the H1. */
-  .detailHeader { gap: 14px; margin-bottom: 18px; }
-  .detailHeaderText { min-width: 0; flex: 1 1 100%; }
-  .detailHeaderText h1 {
-    font-size: 26px;
-    letter-spacing: -0.5px;
-    line-height: 1.15;
-  }
-  .detailLogo { width: 48px; height: 48px; border-radius: 12px; }
-  .detailLogo img { max-width: 32px; max-height: 32px; }
-  .detailLogo span { font-size: 22px; }
-  .detailOneLiner { font-size: 14px; }
-
-  /* Run-first banner: tighter padding, header stacks. */
-  .runFirst { padding: 14px 16px 16px; }
-  .runFirstHeader { gap: 10px; }
-  .runFirstSub { font-size: 13px; }
-
-  /* Glossary: lighter padding so the green box doesn't crowd the text. */
-  .glossary { padding: 14px 16px; }
-
-  /* Hub hero: trim vertical padding on small screens. */
-  .hero { padding: 48px 16px 24px; }
-  .heroSub { font-size: 15px; }
-
-  /* Hub card grid: align with detailWrap padding. */
-  .sections { padding: 0 16px; }
-  .jumpNav { padding: 0 16px; }
-  .searchRow { padding: 0 16px; }
-}
-
-
-/* ============================================================
-   ANTSEED BRAND PLATE OVERRIDE — integrations hub + detail pages
-   Content is unchanged; this layer only updates the visual system.
-   ============================================================ */
-.hero,
-.detailHeader {
-  position: relative;
-  text-align: center;
-  padding: clamp(72px, 10vw, 118px) 20px 36px;
-  max-width: 920px;
-  margin: 0 auto;
-}
-.hero::before,
-.detailHeader::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 430px;
-  background: radial-gradient(circle at 50% 0%, rgba(31, 216, 122, .12), transparent 58%);
-  pointer-events: none;
-  z-index: -1;
-}
-.kicker,
-.catCount,
-.cardSetup,
-.breadcrumb,
-.detailBadge,
-.runFirstKicker,
-.wireFormatTitle,
-.wireFormatLabel,
-.glossaryTitle,
-.runFirstNum,
-.sectionEyebrow,
-.stepLabel,
-.codeBlockPath,
-.exampleOutputLabel,
-.copyBtn,
-.envTable,
-.modelChip {
   font-family: var(--as-font-data);
+  color: var(--as-green-deep);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
-.kicker,
-.sectionEyebrow {
-  display: inline-block;
-  font-size: 11px;
-  letter-spacing: 3px;
-  text-transform: uppercase;
-  color: var(--as-green);
-  font-weight: 700;
-  margin-bottom: 18px;
-}
-.heroTitle,
-.detailHeaderText h1,
-.catTitle,
-.sectionTitle,
-.runFirstStepTitle,
-.bottomBlock h3 {
-  font-family: var(--as-font-display);
-  color: var(--as-text);
-  font-weight: 550;
-  letter-spacing: -0.014em;
-}
-.heroTitle,
-.detailHeaderText h1 {
-  font-size: clamp(40px, 5.6vw, 72px);
-  line-height: 1.03;
-  margin: 0 0 18px;
-  text-wrap: balance;
-}
-.heroSub,
-.noResults,
-.catTagline,
-.cardLine,
-.detailOneLiner,
-.description,
-.runFirstSub,
-.wireFormatBody,
-.wireFormatHint,
-.glossaryList,
-.runFirstHint,
-.stepNote,
-.bulletList,
-.modelNote,
-.guiBlock,
-.troubleshootList,
-.agentBox {
-  color: var(--as-text-2);
-  line-height: 1.65;
-}
-.heroSub { font-size: 16px; max-width: 760px; }
-.heroSub code,
-.runFirstSub code,
-.glossaryList code,
-.runFirstHint code,
-.stepNote code,
-.wireFormatCode,
-.description code {
-  color: #8fffc4;
-  background: rgba(31, 216, 122, .08);
-  border: 1px solid rgba(31, 216, 122, .18);
-  border-radius: 6px;
-  padding: 2px 6px;
-}
-.heroCta,
-.heroCtaGhost,
-.runFirstToggle,
-.copyBtn,
-.linkRow a,
-.relatedRow a {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 42px;
-  border-radius: var(--as-radius-pill);
-  font-size: 13px;
-  font-weight: 700;
-  text-decoration: none !important;
-  transition: transform .15s ease, background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease;
-}
-.heroCta {
-  background: var(--as-green);
-  border: 1px solid var(--as-green);
-  color: #052012 !important;
-  padding: 0 22px;
-}
-.heroCta:hover { background: var(--as-green-bright); border-color: var(--as-green-bright); color: #052012 !important; transform: translateY(-1px); box-shadow: 0 10px 36px rgba(31,216,122,.25); }
-.heroCtaGhost,
-.runFirstToggle,
-.linkRow a,
-.relatedRow a {
-  background: transparent;
-  border: 1px solid var(--as-line-strong);
-  color: var(--as-text) !important;
-  padding: 0 20px;
-}
-.heroCtaGhost:hover,
-.runFirstToggle:hover,
-.linkRow a:hover,
-.relatedRow a:hover { border-color: rgba(31,216,122,.46); color: var(--as-green) !important; transform: translateY(-1px); }
-.heroCtaRow,
-.linkRow,
-.relatedRow { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
 
-.jumpNav,
-.searchRow,
-.sections,
-.detailWrap,
-.bottomBlock {
-  max-width: 1200px;
-}
-.jumpNav { margin: 14px auto 0; padding: 0 20px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
-.jumpLink,
-.card,
-.runFirst,
-.wireFormat,
-.glossary,
-.step,
-.envBlock,
-.guiBlock,
-.configList,
-.agentBox,
-.bottomBlock,
-.detailLogo,
-.logoWrap {
-  background: var(--as-soil-2);
-  border: 1px solid var(--as-line);
-  box-shadow: 0 18px 55px rgba(0,0,0,.18);
-}
-.jumpLink {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  padding: 8px 14px 8px 11px;
-  border-radius: 999px;
-  color: var(--as-text) !important;
-  text-decoration: none !important;
-  box-shadow: none;
-}
-.jumpLink:hover { border-color: rgba(31,216,122,.34); color: var(--as-green) !important; transform: translateY(-1px); }
-.jumpIcon,
-.catGlyph,
-.cardArrow { color: var(--as-green); }
-.jumpCount,
-.catCount,
-.cardSetup,
-.detailBadge,
-.modelChip {
-  color: var(--as-text-3);
-  background: rgba(255,255,255,.025);
-  border: 1px solid var(--as-line);
-  border-radius: 999px;
-}
-.searchRow { margin: 28px auto 8px; padding: 0 20px; }
-.search {
-  width: 100%;
-  font-family: var(--as-font-ui);
-  font-size: 14px;
-  padding: 13px 18px;
-  border: 1px solid var(--as-line-strong);
-  border-radius: 999px;
-  background: #070b09;
-  color: var(--as-text);
-  outline: none;
-}
-.search:focus { border-color: var(--as-green); box-shadow: 0 0 0 3px rgba(31,216,122,.12); }
-.search::placeholder { color: var(--as-text-3); }
-.resultCount { color: var(--as-text-3); font-family: var(--as-font-data); }
-.sections { margin: 30px auto 0; padding: 0 20px; }
-.catSection { margin: 0 0 58px; scroll-margin-top: 90px; }
-.catHeader { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--as-line); }
-.catGlyph { width: 42px; height: 42px; border-radius: 12px; background: rgba(31,216,122,.08); border: 1px solid rgba(31,216,122,.18); display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 2px; }
-.catTitleRow { display: flex; align-items: center; gap: 12px; margin: 0 0 4px; flex-wrap: wrap; }
-.catTitle { font-size: 25px; margin: 0; line-height: 1.2; }
-.catCount { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; padding: 3px 10px; flex-shrink: 0; }
-.catGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
-.card {
-  border-radius: var(--as-radius);
-  padding: 18px 18px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  text-decoration: none !important;
-  color: inherit;
-  transition: transform .15s, border-color .15s, box-shadow .15s, background .15s;
-  min-height: 168px;
-}
-.card:hover { transform: translateY(-2px); border-color: rgba(31,216,122,.32); background: var(--as-soil-3); }
-.cardHead { display: flex; align-items: center; gap: 12px; }
-.logoWrap { width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; background: rgba(151,170,159,.08); box-shadow: none; flex-shrink: 0; }
-.logoImg { max-width: 28px; max-height: 28px; object-fit: contain; }
-.mutedLogoImg { filter: grayscale(1) invert(.72) brightness(1.08) contrast(.78); opacity: .84; }
-.logoGlyph { color: var(--as-green); font-weight: 700; }
-.cardTitle { color: var(--as-text); margin: 0; font-size: 18px; font-weight: 600; }
-.cardCategory { color: var(--as-text-3); }
-.cardFooter { margin-top: auto; display: flex; align-items: center; gap: 8px; }
-.cardSetup { font-size: 10px; padding: 3px 9px; }
-.cardArrow { margin-left: auto; }
-.bottomBlock { margin: 24px auto 80px; padding: 32px; border-radius: 18px; text-align: center; }
-
-.detailWrap { margin: 0 auto; padding: 0 20px 90px; }
-.breadcrumb { display: flex; gap: 8px; align-items: center; color: var(--as-text-3); font-size: 12px; margin: 30px 0; }
-.breadcrumb a { color: var(--as-text-2); text-decoration: none; }
-.breadcrumb a:hover { color: var(--as-green); }
-.detailHeader { display: flex; text-align: left; gap: 22px; align-items: center; padding-top: 52px; }
-.detailLogo { width: 72px; height: 72px; border-radius: 18px; display: flex; align-items: center; justify-content: center; background: #070b09; flex-shrink: 0; }
-.detailOneLiner { font-size: 17px; }
-.detailBadgeRow { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
-.detailBadge { font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px; padding: 5px 10px; }
-.detailBadgeGreen { color: var(--as-green); border-color: rgba(31,216,122,.25); }
-.description { max-width: 780px; margin: 0 auto 28px; font-size: 15px; }
-.runFirst,
-.wireFormat,
-.glossary,
-.agentBox,
-.bottomBlock { border-radius: 18px; }
-.runFirst { margin: 26px 0; padding: 22px; }
-.runFirstHeader { display: flex; justify-content: space-between; gap: 18px; align-items: center; }
-.runFirstKicker { color: var(--as-green); font-size: 11px; text-transform: uppercase; letter-spacing: 1.8px; margin: 0 0 4px; }
-.runFirstDot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--as-green); margin-right: 8px; box-shadow: 0 0 12px rgba(31,216,122,.65); }
-.runFirstRail,
-.stepList { list-style: none; padding: 0; margin: 24px 0 0; display: grid; gap: 14px; }
-.runFirstItem,
-.step { border-radius: var(--as-radius); padding: 18px; }
-.runFirstItem { display: grid; grid-template-columns: 34px minmax(0,1fr); gap: 14px; border: 1px solid var(--as-line); background: rgba(255,255,255,.015); }
-.runFirstNum { color: var(--as-green); font-weight: 700; }
-.runFirstStepTitle { margin: 0 0 6px; font-size: 18px; }
-.runFirstItemOptional { border-color: rgba(232,163,61,.2); }
-.runFirstOptionalTag { color: var(--as-clay); }
-.glossary,
-.wireFormat { padding: 22px; margin: 22px 0; }
-.glossaryTitle,
-.wireFormatTitle { color: var(--as-green); letter-spacing: 1.5px; text-transform: uppercase; font-size: 11px; }
-.wireFormatGrid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin-top: 16px; }
-.wireFormatRow { border: 1px solid var(--as-line); border-radius: 12px; padding: 12px; background: rgba(255,255,255,.014); }
-.wireFormatBody strong,
-.wireFormatLabel { color: var(--as-text); }
-.wireFormatNative,
-.wireFormatDim,
-.agentBox p { color: var(--as-text-2); }
-.wireFormatCode,
-.wireFormatBody code,
-.wireFormatFacts code,
-.wireFormatHint code,
-.wireFormatNative code,
-.agentBox code {
-  color: #b7ffd5;
-  background: rgba(31, 216, 122, 0.075);
-  border: 1px solid rgba(31, 216, 122, 0.18);
-  text-shadow: none;
-}
-.wireFormatNative code {
-  font-size: 11.5px;
-}
-.wireFormatWarn { color: var(--as-clay); }
-.section { margin: 52px 0; }
-.sectionTitle { font-size: clamp(28px, 3vw, 40px); margin: 0 0 20px; }
-.step { border: 1px solid var(--as-line); }
-.stepLabel { color: var(--as-green); font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; display: block; margin-bottom: 10px; }
-.bulletList { padding-left: 20px; }
-.codeBlockWrap,
-.exampleOutputWrap { margin: 12px 0; min-width: 0; }
-.codeBlockPath,
-.exampleOutputLabel { display: block; color: var(--as-text-3); font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase; margin: 0 0 6px; }
-.codeBlock,
-.exampleOutput {
-  position: relative;
-  background: #070b09;
-  border: 1px solid var(--as-line-strong);
-  border-radius: 12px;
-  padding: 16px;
-  overflow-x: auto;
-}
-.codeBlockText { white-space: pre; color: #dff6e9; font-family: var(--as-font-data); font-size: 12px; line-height: 1.7; display: block; padding-right: 72px; }
-.copyBtn { position: absolute; top: 10px; right: 10px; min-height: 30px; padding: 0 12px; border: 1px solid rgba(31,216,122,.25); color: var(--as-green); background: rgba(31,216,122,.08); cursor: pointer; }
-.copied { color: #052012; background: var(--as-green); }
-.envBlock { border-radius: 14px; padding: 16px; }
-.envTable { width: 100%; font-size: 12px; }
-.envTable td { border-bottom: 1px solid var(--as-line); padding: 8px; color: var(--as-text-2); }
-.envDetails summary { color: var(--as-green); cursor: pointer; }
-.configList,
-.troubleshootList { border-radius: 14px; padding: 18px 22px; }
-.modelChips { display: flex; flex-wrap: wrap; gap: 8px; }
-.modelChip { padding: 5px 10px; font-size: 11px; }
-
-:global(html[data-theme='light']) .heroTitle,
-:global(html[data-theme='light']) .detailHeaderText h1,
-:global(html[data-theme='light']) .catTitle,
-:global(html[data-theme='light']) .cardTitle,
-:global(html[data-theme='light']) .sectionTitle,
-:global(html[data-theme='light']) .runFirstStepTitle { color: #0a0e14; }
-:global(html[data-theme='light']) .heroSub,
-:global(html[data-theme='light']) .catTagline,
-:global(html[data-theme='light']) .cardLine,
-:global(html[data-theme='light']) .detailOneLiner,
-:global(html[data-theme='light']) .description,
-:global(html[data-theme='light']) .runFirstSub,
-:global(html[data-theme='light']) .wireFormatBody,
-:global(html[data-theme='light']) .wireFormatHint,
-:global(html[data-theme='light']) .glossaryList,
-:global(html[data-theme='light']) .runFirstHint,
-:global(html[data-theme='light']) .stepNote,
-:global(html[data-theme='light']) .bulletList,
-:global(html[data-theme='light']) .modelNote,
-:global(html[data-theme='light']) .guiBlock,
-:global(html[data-theme='light']) .troubleshootList,
-:global(html[data-theme='light']) .agentBox { color: #53635a; }
-:global(html[data-theme='light']) .jumpLink,
-:global(html[data-theme='light']) .card,
-:global(html[data-theme='light']) .runFirst,
-:global(html[data-theme='light']) .wireFormat,
-:global(html[data-theme='light']) .glossary,
-:global(html[data-theme='light']) .step,
-:global(html[data-theme='light']) .envBlock,
-:global(html[data-theme='light']) .guiBlock,
-:global(html[data-theme='light']) .configList,
-:global(html[data-theme='light']) .agentBox,
-:global(html[data-theme='light']) .bottomBlock,
-:global(html[data-theme='light']) .detailLogo,
-:global(html[data-theme='light']) .logoWrap { background: rgba(255,255,255,.74); border-color: rgba(19,146,86,.16); box-shadow: 0 18px 55px rgba(10,14,20,.08); }
-:global(html[data-theme='light']) .mutedLogoImg { filter: grayscale(1) brightness(.56) contrast(.9); opacity: .74; }
-:global(html[data-theme='light']) .card:hover { background: #fff; }
-:global(html[data-theme='light']) .search { background: #fff; color: #0a0e14; border-color: rgba(10,14,20,.12); }
-:global(html[data-theme='light']) .heroCta { background: var(--as-green-deep); border-color: var(--as-green-deep); color: #f7fff9 !important; }
-:global(html[data-theme='light']) .heroCtaGhost,
-:global(html[data-theme='light']) .runFirstToggle,
-:global(html[data-theme='light']) .linkRow a,
-:global(html[data-theme='light']) .relatedRow a { color: #0a0e14 !important; border-color: rgba(10,14,20,.14); background: rgba(255,255,255,.58); }
-:global(html[data-theme='light']) .codeBlock,
-:global(html[data-theme='light']) .exampleOutput { background: #0a0e14; border-color: rgba(10,14,20,.12); }
-:global(html[data-theme='light']) .codeBlockText { color: #dff6e9; }
-:global(html[data-theme='light']) .catHeader,
-:global(html[data-theme='light']) .envTable td { border-color: rgba(10,14,20,.08); }
-
-@media (max-width: 760px) {
-  .hero,
-  .detailHeader { padding: 48px 16px 28px; }
-  .heroTitle,
-  .detailHeaderText h1 { font-size: clamp(34px, 11vw, 50px); }
-  .heroCtaRow,
-  .linkRow,
-  .relatedRow { flex-direction: column; align-items: stretch; }
-  .heroCta,
-  .heroCtaGhost,
-  .linkRow a,
-  .relatedRow a { width: 100%; }
-  .catHeader,
-  .detailHeader,
-  .runFirstHeader { flex-direction: column; text-align: left; align-items: stretch; }
-  .catGrid { grid-template-columns: 1fr; }
-  .wireFormatGrid { grid-template-columns: 1fr; }
-  .runFirstItem { grid-template-columns: 1fr; }
-  .codeBlockText { font-size: 11px; padding-right: 0; }
-  .copyBtn { top: 8px; right: 8px; }
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 996px) {
   .bottomBlock {
-    width: 100%;
-    max-width: none;
-    min-width: 0;
-    padding: 24px 16px;
-    gap: 24px;
+    grid-template-columns: 1fr;
   }
-  .bottomBlock > div,
-  .bottomBlock p,
-  .bottomBlock a {
-    min-width: 0;
-    max-width: 100%;
-    overflow-wrap: anywhere;
-    word-break: break-word;
+
+  .wireFormatGrid {
+    grid-template-columns: 1fr;
   }
-  .jumpNav,
-  .searchRow,
-  .sections {
-    width: 100%;
-    max-width: none;
-    padding-left: 16px;
-    padding-right: 16px;
-  }
+}
+
+@media (max-width: 720px) {
   .catGrid {
-    width: 100%;
+    grid-template-columns: 1fr;
   }
-  .card {
-    width: 100%;
-    min-width: 0;
+
+  .catHeader {
+    gap: 12px;
   }
-}
 
+  .detailWrap {
+    padding: 24px 16px 64px;
+  }
 
-/* Light-mode contrast pass — no pale mint text on cream. */
-:global(html[data-theme='light']) .heroSub code,
-:global(html[data-theme='light']) .runFirstSub code,
-:global(html[data-theme='light']) .glossaryList code,
-:global(html[data-theme='light']) .runFirstHint code,
-:global(html[data-theme='light']) .stepNote code,
-:global(html[data-theme='light']) .wireFormatCode,
-:global(html[data-theme='light']) .wireFormatBody code,
-:global(html[data-theme='light']) .wireFormatFacts code,
-:global(html[data-theme='light']) .wireFormatHint code,
-:global(html[data-theme='light']) .wireFormatNative code,
-:global(html[data-theme='light']) .agentBox code,
-:global(html[data-theme='light']) .description code {
-  color: #0b5c38;
-  background: rgba(19, 146, 86, 0.08);
-  border-color: rgba(19, 146, 86, 0.2);
-  text-shadow: none;
-}
-:global(html[data-theme='light']) .jumpLink {
-  color: #0a0e14 !important;
-  background: rgba(255, 255, 255, 0.92);
-  border-color: rgba(19, 146, 86, 0.22);
-  box-shadow: 0 14px 38px rgba(10, 14, 20, 0.08);
-}
-:global(html[data-theme='light']) .jumpLink:hover {
-  color: #0b5c38 !important;
-  border-color: rgba(19, 146, 86, 0.42);
-  background: #ffffff;
-}
-:global(html[data-theme='light']) .jumpIcon,
-:global(html[data-theme='light']) .catGlyph,
-:global(html[data-theme='light']) .cardArrow {
-  color: var(--as-green);
-}
-:global(html[data-theme='light']) .jumpLabel {
-  color: #0a0e14;
-  opacity: 1;
-}
-:global(html[data-theme='light']) .jumpCount,
-:global(html[data-theme='light']) .catCount,
-:global(html[data-theme='light']) .cardSetup,
-:global(html[data-theme='light']) .detailBadge,
-:global(html[data-theme='light']) .modelChip {
-  color: #53635a;
-  background: #ffffff;
-  border-color: rgba(10, 14, 20, 0.1);
-}
-:global(html[data-theme='light']) .kicker,
-:global(html[data-theme='light']) .sectionEyebrow,
-:global(html[data-theme='light']) .runFirstKicker,
-:global(html[data-theme='light']) .glossaryTitle,
-:global(html[data-theme='light']) .wireFormatTitle,
-:global(html[data-theme='light']) .stepLabel,
-:global(html[data-theme='light']) .runFirstNum {
-  color: var(--as-green);
-}
-:global(html[data-theme='light']) .search {
-  color: #0a0e14;
-  background: #ffffff;
-  border-color: rgba(10, 14, 20, 0.14);
-  box-shadow: 0 12px 32px rgba(10, 14, 20, 0.07);
-}
-:global(html[data-theme='light']) .search::placeholder {
-  color: #53635a;
-  opacity: 1;
-}
-:global(html[data-theme='light']) .heroCtaGhost,
-:global(html[data-theme='light']) .runFirstToggle,
-:global(html[data-theme='light']) .linkRow a,
-:global(html[data-theme='light']) .relatedRow a {
-  color: #0a0e14 !important;
-  border-color: rgba(10, 14, 20, 0.16);
-  background: #ffffff;
-}
-:global(html[data-theme='light']) .heroCtaGhost:hover,
-:global(html[data-theme='light']) .runFirstToggle:hover,
-:global(html[data-theme='light']) .linkRow a:hover,
-:global(html[data-theme='light']) .relatedRow a:hover {
-  color: #0b5c38 !important;
-  border-color: rgba(19, 146, 86, 0.42);
+  .detailHeader {
+    gap: 16px;
+  }
+
+  .detailLogo {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+  }
+
+  .detailLogo img {
+    max-width: 28px;
+    max-height: 28px;
+  }
+
+  .detailOneLiner {
+    font-size: 16px;
+    line-height: 24px;
+  }
+
+  .card,
+  .bottomBlock > div,
+  .step,
+  .runFirst,
+  .wireFormat,
+  .agentBox {
+    border-radius: 20px;
+  }
+
+  .runFirst,
+  .wireFormat,
+  .agentBox {
+    padding: 20px;
+  }
+
+  .runFirstItem {
+    grid-template-columns: 24px minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .runFirstNum {
+    width: 24px;
+    height: 24px;
+    font-size: 12px;
+  }
+
+  .runFirstRail::before {
+    left: 11px;
+  }
+
+  .codeBlockText {
+    font-size: 11px;
+    padding-right: 0;
+  }
+
+  .codeBlock {
+    padding-top: 44px;
+  }
+
+  .copyBtn {
+    top: 8px;
+    right: 8px;
+  }
+
+  .linkRow a,
+  .relatedRow a {
+    width: 100%;
+    justify-content: center;
+  }
 }

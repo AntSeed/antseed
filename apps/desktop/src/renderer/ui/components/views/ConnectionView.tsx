@@ -1,44 +1,44 @@
-import { useUiSnapshot } from '../../hooks/useUiSnapshot';
+import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
+import { VprBackTitle, VprCard } from '../vpr/VprKit';
+import styles from './DiagnosticsView.module.scss';
 
 type ConnectionViewProps = {
-  active: boolean;
+  onSelectView?: (view: import('../../types').ViewName) => void;
 };
 
-export function ConnectionView({ active }: ConnectionViewProps) {
+export function ConnectionView({ onSelectView }: ConnectionViewProps) {
   const { connectionMeta, connectionStatus, connectionNetwork, connectionSources, connectionNotes } =
-    useUiSnapshot();
+    useUiSelector((state) => ({
+      connectionMeta: state.connectionMeta,
+      connectionStatus: state.connectionStatus,
+      connectionNetwork: state.connectionNetwork,
+      connectionSources: state.connectionSources,
+      connectionNotes: state.connectionNotes,
+    }), shallowEqual);
+
+  const badgeTone = styles[`badge_${connectionMeta.tone}`] ?? '';
+
+  const sections: Array<{ title: string; body: string }> = [
+    { title: 'Node status', body: connectionStatus },
+    { title: 'Network stats', body: connectionNetwork },
+    { title: 'Data sources', body: connectionSources },
+    { title: 'Connection notes', body: connectionNotes },
+  ];
 
   return (
-    <section className={`view${active ? ' active' : ''}`} role="tabpanel">
-      <div className="page-header">
-        <h2>Connection</h2>
-        <div className={`connection-badge badge-${connectionMeta.tone}`}>{connectionMeta.label}</div>
-      </div>
-      <div className="panel-grid two-col">
-        <article className="panel">
-          <div className="panel-head">
-            <h3>Node Status</h3>
-          </div>
-          <pre>{connectionStatus}</pre>
-        </article>
-        <article className="panel">
-          <div className="panel-head">
-            <h3>Network Stats</h3>
-          </div>
-          <pre>{connectionNetwork}</pre>
-        </article>
-        <article className="panel">
-          <div className="panel-head">
-            <h3>Data Sources</h3>
-          </div>
-          <pre>{connectionSources}</pre>
-        </article>
-        <article className="panel">
-          <div className="panel-head">
-            <h3>Connection Notes</h3>
-          </div>
-          <pre>{connectionNotes}</pre>
-        </article>
+    <section className={`view view-connection ${styles.view}`} role="tabpanel">
+      <div className={styles.stack}>
+        <div className={styles.headRow}>
+          <VprBackTitle title="Connection" fallback="help" />
+          <span className={`${styles.badge} ${badgeTone}`}>{connectionMeta.label}</span>
+        </div>
+
+        {sections.map((section) => (
+          <VprCard key={section.title} className={styles.card}>
+            <span className={styles.cardTitle}>{section.title}</span>
+            <pre className={styles.pre}>{section.body}</pre>
+          </VprCard>
+        ))}
       </div>
     </section>
   );

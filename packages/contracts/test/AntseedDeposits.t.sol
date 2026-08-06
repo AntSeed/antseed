@@ -2,9 +2,9 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
-import "../AntseedDeposits.sol";
-import "../AntseedRegistry.sol";
-import "../MockUSDC.sol";
+import "../payments/AntseedDeposits.sol";
+import "../core/AntseedRegistry.sol";
+import "./mocks/MockUSDC.sol";
 
 contract AntseedDepositsTest is Test {
     AntseedDeposits public deposits;

@@ -101,7 +101,8 @@ export function extractUsage(parsed: Record<string, unknown>): TokenUsage {
   }
 
   const hasPromptTokens = usage.prompt_tokens !== undefined && usage.prompt_tokens !== null;
-  const rawInput = toNonNegativeInt(usage.prompt_tokens ?? usage.input_tokens);
+  const baseInput = toNonNegativeInt(usage.prompt_tokens ?? usage.input_tokens);
+  const cacheCreationInputTokens = toNonNegativeInt(usage.cache_creation_input_tokens);
   const outputTokens = toNonNegativeInt(usage.completion_tokens ?? usage.output_tokens);
 
   // Cache hits arrive in two competing shapes:
@@ -125,6 +126,7 @@ export function extractUsage(parsed: Record<string, unknown>): TokenUsage {
 
   const isSubsetShape = hasPromptTokens || inputDetails.cached_tokens !== undefined;
   const cachedInputTokens = Math.max(subsetCached, separateCached);
+  const rawInput = isSubsetShape ? baseInput : baseInput + cacheCreationInputTokens;
   const freshInputTokens = isSubsetShape
     ? Math.max(0, rawInput - cachedInputTokens)
     : rawInput;
@@ -397,8 +399,7 @@ export function parseChatCompletionResponse(
 export interface ChatStreamFinishInfo {
   id: string;
   model: string;
-  inputTokens: number;
-  outputTokens: number;
+  usage: TokenUsage;
   finishReason: string | null;
   toolCalls: Array<{ index: number; id: string; name: string; arguments: string }>;
 }
@@ -424,8 +425,7 @@ export function createChatStreamParser(
   const streamDecoder = new TextDecoder();
   let id = fallbacks?.id ?? '';
   let model = fallbacks?.model ?? 'unknown';
-  let inputTokens = 0;
-  let outputTokens = 0;
+  let usage: TokenUsage = { inputTokens: 0, outputTokens: 0, freshInputTokens: 0, cachedInputTokens: 0 };
   let finishReason: string | null = null;
   const toolCalls = new Map<number, { id: string; name: string; arguments: string }>();
 
@@ -448,11 +448,8 @@ export function createChatStreamParser(
         if (typeof p.id === 'string' && p.id.length > 0) id = p.id;
         if (typeof p.model === 'string' && p.model.length > 0) model = p.model;
 
-        const usage = p.usage && typeof p.usage === 'object'
-          ? p.usage as Record<string, unknown> : null;
-        if (usage) {
-          inputTokens = toNonNegativeInt(usage.prompt_tokens ?? usage.input_tokens);
-          outputTokens = toNonNegativeInt(usage.completion_tokens ?? usage.output_tokens);
+        if (p.usage && typeof p.usage === 'object') {
+          usage = extractUsage(p);
         }
 
         const choices = Array.isArray(p.choices) ? p.choices : [];
@@ -505,7 +502,7 @@ export function createChatStreamParser(
         const sorted = [...toolCalls.entries()]
           .sort((a, b) => a[0] - b[0])
           .map(([index, tc]) => ({ index, ...tc }));
-        callbacks.onFinish({ id, model, inputTokens, outputTokens, finishReason, toolCalls: sorted });
+        callbacks.onFinish({ id, model, usage, finishReason, toolCalls: sorted });
       }
     },
   };

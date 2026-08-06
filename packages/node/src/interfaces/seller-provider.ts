@@ -28,6 +28,14 @@ export interface Provider {
   /** Service IDs this provider supports (e.g., ['claude-sonnet-4-5-20250929', 'claude-opus-4-0-20250514']) */
   services: string[];
 
+  /**
+   * Runtime health availability. The model health checker sets this to false
+   * when every configured service has been removed, allowing discovery to
+   * omit the provider instead of interpreting an empty service list as a
+   * wildcard. Undefined means available for providers without health checks.
+   */
+  healthCheckAvailable?: boolean;
+
   /** Seller pricing in USD per 1M tokens (defaults + optional per-service overrides). */
   pricing: ProviderPricing;
 

@@ -47,7 +47,10 @@ function isWorkspaceSymlink(fullPath) {
 
 function copyWorkspacePackage(linkPath, sourcePath, label) {
   console.log(`[prepare-dist] Copying workspace package: ${label} -> ${sourcePath}`);
-  rmSync(linkPath, { recursive: true });
+  // force: the link may not pre-exist — @antseed/api-adapter is not a direct
+  // desktop dependency, so a fresh CI install creates no node_modules entry
+  // for it; the copy below materializes it for the bundled-runtime walk.
+  rmSync(linkPath, { recursive: true, force: true });
   cpSync(sourcePath, linkPath, { recursive: true });
 
   // Remove inner node_modules — the copied package's deps are already

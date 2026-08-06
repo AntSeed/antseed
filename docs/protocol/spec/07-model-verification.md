@@ -83,7 +83,7 @@ Implemented in the `@antseed/node` package:
   - SQLite table `response_auths`;
   - indexed by seller, advertised service, and received timestamp.
 - Buyer-side full evidence sampling:
-  - random sample rate default `0.01`;
+  - random sample rate default `0.005`;
   - max encoded request + response bytes default `16 MiB`;
   - default directory `<dataDir>/verification_samples`;
   - stores `manifest.json`, `request.bin`, and `response.bin`;
@@ -1080,7 +1080,7 @@ step 9, which does not depend on the Buyer's samples at all.
 | Parameter | Symbol | Default | Notes |
 |---|---|---|---|
 | ResponseAuth wait grace | — | 30s | Implemented Buyer wait after response before logging missing auth |
-| Verification sample rate | — | 0.01 | Implemented random full evidence sample rate for verified auths |
+| Verification sample rate | — | 0.005 | Implemented random full evidence sample rate for verified auths |
 | Verification sample byte cap | — | 16 MiB | Implemented max encoded request + response bytes per sample |
 | Sample rate | `p` | 0.02 | Fraction of real requests duplicated to reference (M2) |
 | Min samples per verdict | `N` | 30 | Below this, no M2 verdict is emitted |

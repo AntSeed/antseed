@@ -35,7 +35,7 @@ export function ChatCopyButton({
   copiedTooltipLabel = 'Copied!',
 }: ChatCopyButtonProps) {
   const [copied, setCopied] = useState(false);
-  const timerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const timerRef = useRef<number | null>(null);
 
   useEffect(() => {
     return () => {

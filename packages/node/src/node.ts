@@ -48,7 +48,17 @@ import {
 import { HttpMetadataResolver } from "./discovery/http-metadata-resolver.js";
 import { ProxyMux } from "./proxy/proxy-mux.js";
 import { PaymentMux } from "./p2p/payment-mux.js";
+import { SweepMux } from "./p2p/sweep-mux.js";
 import { VerificationMux } from "./verification/verification-mux.js";
+import { DepositRelayer } from "./payments/deposit-relayer.js";
+import {
+  CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
+  CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
+  peerSupportsCooperativeClose,
+  type SweepRequestPayload,
+  type SweepReceiptPayload,
+  type CloseChannelResultPayload,
+} from "./types/protocol.js";
 import { VerificationStorage } from "./verification/storage.js";
 import { VerificationSampler } from "./verification/samples.js";
 import { FrameDecoder, encodeFrame } from "./p2p/message-protocol.js";
@@ -59,6 +69,7 @@ import type {
   ProviderStreamCallbacks,
 } from "./interfaces/seller-provider.js";
 import type { Router } from "./interfaces/buyer-router.js";
+import type { Prover } from "./interfaces/plugin.js";
 import { NatTraversal } from "./p2p/nat-traversal.js";
 import { signUtf8 } from "./p2p/identity.js";
 import {
@@ -67,8 +78,13 @@ import {
   type PaymentMethod,
   DepositsClient,
   ChannelsClient,
+  FreeUsageClient,
+  BuyerFreeUsageManager,
+  SellerFreeUsageManager,
   StakingClient,
   ChannelStore,
+  CHANNEL_KIND,
+  CHANNEL_ROLE,
   CHANNEL_STATUS,
 } from "./payments/index.js";
 import { debugLog, debugWarn } from "./utils/debug.js";
@@ -126,6 +142,8 @@ export interface NodePaymentsConfig {
   depositsAddress?: string;
   /** Deployed AntseedChannels contract address */
   channelsAddress?: string;
+  /** Optional deployed AntseedFreeUsage contract address */
+  freeUsageAddress?: string;
   /** USDC token contract address */
   usdcAddress?: string;
   /** ERC-8004 IdentityRegistry contract address */
@@ -148,10 +166,26 @@ export interface NodePaymentsConfig {
   maxPerRequestUsdc?: string;
   /** Maximum total USDC the buyer will reserve in a single SpendingAuth (base units). Default: "10000000" ($10.00). */
   maxReserveAmountUsdc?: string;
+  /** Disable per-service buyer attribution in metadata v2. Default: false. */
+  disableMetadataV2Services?: boolean;
+  /** Deployed AntseedDepositRelay contract address (gasless deposit sweeps). */
+  depositRelayAddress?: string;
+}
+
+export interface NodeRelayerConfig {
+  /** Relay buyer deposit sweeps with the seller wallet. Default: true (opt-out). */
+  enabled?: boolean;
+  /** Minimum acceptable profit (FEE - estimated gas cost) in USDC base units.
+   *  May be negative to relay at a loss (local testing). Default: "0". */
+  minProfitBaseUnits?: string;
+  /** Max concurrent sweep submissions. Default: 2. */
+  maxInFlight?: number;
+  /** Max sweep requests accepted per peer per minute. Default: 6. */
+  maxPerPeerPerMinute?: number;
 }
 
 export interface NodeVerificationConfig {
-  /** Random sample rate for storing full buyer request/response evidence. Default: 0.01. */
+  /** Random sample rate for storing full buyer request/response evidence. Default: 0.005. */
   sampleRate?: number;
   /** Maximum combined encoded request + response bytes per sample. Default: 16 MiB. */
   maxSampleBytes?: number;
@@ -166,6 +200,8 @@ export interface NodeConfig {
   publicAddress?: string;
   /** External ownership claims announced in signed peer metadata. */
   verifications?: PeerVerifications;
+  /** Extra peer capability strings to advertise (e.g. supported verifier SDKs). */
+  capabilities?: string[];
   dataDir?: string;           // Default: ~/.antseed
   dhtPort?: number;           // Default: 6881 for seller, 0 for buyer
   signalingPort?: number;     // Default: 6882 for seller
@@ -188,6 +224,8 @@ export interface NodeConfig {
   dhtOperationTimeoutMs?: number;
   /** Optional seller-side payment runtime wiring. */
   payments?: NodePaymentsConfig;
+  /** Seller-side deposit-sweep relayer settings (opt-out, ON by default). */
+  relayer?: NodeRelayerConfig;
   /** Optional buyer-side verification storage and sampling settings. */
   verification?: NodeVerificationConfig;
   /** Pluggable identity storage backend. When set, takes precedence over dataDir for identity loading. */
@@ -210,6 +248,17 @@ export interface BuyerUsageChannelPoint {
   outputTokens: string;
 }
 
+/** Per-service usage summed across all buyer channels (paid + free).
+    `serviceIdHash` is keccak256(serviceName) — see getServiceMetadataId. */
+export interface BuyerUsageServicePoint {
+  serviceIdHash: string;
+  amountUsdc: string;
+  inputTokens: string;
+  cachedInputTokens: string;
+  outputTokens: string;
+  requestCount: number;
+}
+
 export interface BuyerUsageTotals {
   totalRequests: number;
   totalInputTokens: string;
@@ -218,6 +267,7 @@ export interface BuyerUsageTotals {
   uniqueSellers: number;
   activeChannels: number;
   channels: BuyerUsageChannelPoint[];
+  services: BuyerUsageServicePoint[];
 }
 
 const EMPTY_BUYER_USAGE: BuyerUsageTotals = {
@@ -228,9 +278,20 @@ const EMPTY_BUYER_USAGE: BuyerUsageTotals = {
   uniqueSellers: 0,
   activeChannels: 0,
   channels: [],
+  services: [],
 };
 
 const EXTERNAL_VERIFICATION_RESULT_TTL_MS = 15 * 60_000;
+
+/** How long one relayer gets exclusive first refusal on a sweep offer before
+ *  it passes to the next candidate. The relayer replies 'submitted' right
+ *  after its local checks + one Base RPC simulation (~1-2s on healthy RPCs),
+ *  so a peer that hasn't answered in 3s isn't going to win the deposit —
+ *  move on. */
+const DEFAULT_SWEEP_OFFER_TIMEOUT_MS = 3_000;
+/** Don't offer a sweep whose authorization expires too soon to safely land —
+ *  mirrors MIN_REMAINING_VALIDITY_SECS in the seller-side relayer. */
+const MIN_SWEEP_DISPATCH_VALIDITY_SECS = 30;
 
 export class AntseedNode extends EventEmitter {
   private _config: NodeConfig;
@@ -238,6 +299,7 @@ export class AntseedNode extends EventEmitter {
   private _dht: DHTNode | null = null;
   private _connectionManager: ConnectionManager | null = null;
   private _providers: Provider[] = [];
+  private _provers: Prover[] = [];
   private _router: Router | null = null;
   private _started = false;
   private _announcer: PeerAnnouncer | null = null;
@@ -251,11 +313,18 @@ export class AntseedNode extends EventEmitter {
   private _balanceManager: BalanceManager | null = null;
   private _depositsClient: DepositsClient | null = null;
   private _channelsClient: ChannelsClient | null = null;
+  private _freeUsageClient: FreeUsageClient | null = null;
+  private _buyerFreeUsageManager: BuyerFreeUsageManager | null = null;
+  private _sellerFreeUsageManager: SellerFreeUsageManager | null = null;
   private _stakingClient: StakingClient | null = null;
   private _sellerAddressResolver: SellerAddressResolver | null = null;
   private _identityClient: IdentityClient | null = null;
   private _paymentMuxes = new Map<PeerId, PaymentMux>();
   private _verificationMuxes = new Map<PeerId, VerificationMux>();
+  private _sweepMuxes = new Map<PeerId, SweepMux>();
+  private _peerCapabilities = new Map<PeerId, Set<string>>();
+  /** Seller-side deposit-sweep relayer (initialized when configured + enabled). */
+  private _depositRelayer: DepositRelayer | null = null;
   /** Seller-side request handler (provider matching, execution, load tracking). */
   private _sellerHandler: SellerRequestHandler | null = null;
   /** Buyer-side payment manager (initialized when buyer has payment config). */
@@ -308,6 +377,21 @@ export class AntseedNode extends EventEmitter {
     this._providers.push(provider);
   }
 
+  /**
+   * Re-sign the advertised seller metadata snapshot without a DHT announce.
+   * Call after mutating a provider's `services` at runtime (e.g. when the
+   * model health checker unadvertises or restores a service) so the next
+   * `GET /metadata` fetch reflects the change immediately.
+   */
+  async refreshSellerMetadata(): Promise<void> {
+    await this._announcer?.refreshMetadata();
+  }
+
+  /** Register an embedded verifier prover (serves reserved attestation requests). */
+  registerProver(prover: Prover): void {
+    this._provers.push(prover);
+  }
+
   setRouter(router: Router): void {
     this._router = router;
   }
@@ -331,6 +415,11 @@ export class AntseedNode extends EventEmitter {
     return this._dht?.getPort() ?? 0;
   }
 
+  /** DHT routing-table size — stays 0 when UDP is blocked or there is no internet. */
+  get dhtNodeCount(): number {
+    return this._dht?.getNodeCount() ?? 0;
+  }
+
   /** Actual signaling/connection port after binding (0 means not started). */
   get signalingPort(): number {
     return this._connectionManager?.getListeningPort() ?? 0;
@@ -341,6 +430,20 @@ export class AntseedNode extends EventEmitter {
     return this._identityClient;
   }
 
+  /** AntseedFreeUsage client (null if not configured). */
+  get freeUsageClient(): FreeUsageClient | null {
+    return this._freeUsageClient;
+  }
+
+  /** Buyer-side free usage manager (null if free usage is not configured). */
+  get buyerFreeUsageManager(): BuyerFreeUsageManager | null {
+    return this._buyerFreeUsageManager;
+  }
+
+  /** Seller-side free usage manager (null if free usage is not configured). */
+  get sellerFreeUsageManager(): SellerFreeUsageManager | null {
+    return this._sellerFreeUsageManager;
+  }
 
   /** Current connection state for a peer if a connection exists, otherwise null. */
   getPeerConnectionState(peerId: PeerId): ConnectionState | null {
@@ -408,6 +511,9 @@ export class AntseedNode extends EventEmitter {
     if (this._buyerNegotiator) {
       this._buyerNegotiator.cleanup();
     }
+    if (this._sellerFreeUsageManager) {
+      await this._sellerFreeUsageManager.flushAllPendingRecords();
+    }
 
     if (this._sessionTracker) {
       await this._sessionTracker.finalizeAllSessions("node-stop");
@@ -439,6 +545,7 @@ export class AntseedNode extends EventEmitter {
     // Close all proxy muxes
     this._muxes.clear();
     this._paymentMuxes.clear();
+    this._peerCapabilities.clear();
     for (const verificationMux of this._verificationMuxes.values()) {
       verificationMux.close();
     }
@@ -504,6 +611,9 @@ export class AntseedNode extends EventEmitter {
     this._balanceManager = null;
     this._depositsClient = null;
     this._channelsClient = null;
+    this._freeUsageClient = null;
+    this._buyerFreeUsageManager = null;
+    this._sellerFreeUsageManager = null;
     this._stakingClient = null;
     this._identityClient = null;
     this._sellerAddressResolver = null;
@@ -909,6 +1019,69 @@ export class AntseedNode extends EventEmitter {
   }
 
   /**
+   * Ask a seller to close our payment channel with it right now, releasing the
+   * reserved deposit without the on-chain `requestClose()` → 15-minute grace →
+   * `withdraw()` round trip.
+   *
+   * The seller refuses while it is still serving (or still owed for) requests
+   * on that channel; those refusals come back as `{ status: 'rejected', code }`
+   * rather than as exceptions. Only a missing session, a peer we can't reach,
+   * or an unanswered request throws.
+   *
+   * By default the buyer attaches its latest SpendingAuth so a seller that lost
+   * the last one can still close at the full amount owed; the seller settles at
+   * whichever cumulative is higher.
+   */
+  async requestChannelClose(
+    sellerPeerId: string,
+    opts: { includeAuth?: boolean; timeoutMs?: number } = {},
+  ): Promise<CloseChannelResultPayload> {
+    const negotiator = this._buyerNegotiator;
+    if (!negotiator) {
+      throw new Error('Buyer payments are not configured on this node');
+    }
+    if (!this._connectionManager) {
+      throw new Error('Node not started');
+    }
+
+    const peerId = sellerPeerId as PeerId;
+    let conn = this._connectionManager.getConnection(peerId);
+    if (!conn || (conn.state !== ConnectionState.Open && conn.state !== ConnectionState.Authenticated)) {
+      const peer = await this.findPeer(sellerPeerId);
+      if (!peer) {
+        throw new Error(
+          `Seller ${sellerPeerId.slice(0, 12)}... is not connected and could not be found on the network. ` +
+          `A cooperative close needs the seller online — otherwise use the on-chain request-close flow.`,
+        );
+      }
+      await this.connectToPeer(peer);
+      conn = this._connectionManager.getConnection(peer.peerId);
+      if (!conn) {
+        throw new Error(`Failed to establish a connection to seller ${sellerPeerId.slice(0, 12)}...`);
+      }
+    }
+
+    // A seller that predates this feature drops the 0x59 frame silently, so
+    // without this the buyer would wait out the full 60s response timeout and
+    // get a vague "did not answer". Note the capability must come from the
+    // peer's discovery metadata (`_peerCapabilities`), not
+    // `conn.hasRemoteCapability` — the latter is only populated for *inbound*
+    // connections, so on the buyer's own outbound connection it is always
+    // empty and would reject every close.
+    const capabilities = this._peerCapabilities.get(peerId);
+    if (capabilities && capabilities.size > 0
+      && !peerSupportsCooperativeClose({ capabilities: [...capabilities] })) {
+      throw new Error(
+        `Seller ${sellerPeerId.slice(0, 12)}... does not support cooperative close ` +
+        `(missing ${CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1}). ` +
+        `Use the on-chain request-close flow instead.`,
+      );
+    }
+
+    return negotiator.requestChannelClose(peerId, conn, opts);
+  }
+
+  /**
    * Query session stats for a specific seller peer.
    * Combines channel store data (authoritative payment/session info) with
    * metering events when available.
@@ -936,18 +1109,18 @@ export class AntseedNode extends EventEmitter {
     const buyerAddress = this._identity?.wallet.address ?? null;
     const channel = (buyerAddress != null)
       ? (
-        this._channelStore?.getActiveChannelByPeerAndBuyer(sellerPeerId, 'buyer', buyerAddress)
-        ?? this._channelStore?.getLatestChannelByPeerAndBuyer(sellerPeerId, 'buyer', buyerAddress)
+        this._channelStore?.getActiveChannelByPeerAndBuyer(sellerPeerId, CHANNEL_ROLE.BUYER, buyerAddress)
+        ?? this._channelStore?.getLatestChannelByPeerAndBuyer(sellerPeerId, CHANNEL_ROLE.BUYER, buyerAddress)
       )
       : (
-        this._channelStore?.getActiveChannelByPeer(sellerPeerId, 'buyer')
-        ?? this._channelStore?.getLatestChannel(sellerPeerId, 'buyer')
+        this._channelStore?.getActiveChannelByPeer(sellerPeerId, CHANNEL_ROLE.BUYER)
+        ?? this._channelStore?.getLatestChannel(sellerPeerId, CHANNEL_ROLE.BUYER)
       )
       ?? null;
 
     const lifetime = (buyerAddress != null)
-      ? this._channelStore?.getTotalsByPeerAndBuyer(sellerPeerId, 'buyer', buyerAddress)
-      : this._channelStore?.getTotalsByPeer(sellerPeerId, 'buyer')
+      ? this._channelStore?.getTotalsByPeerAndBuyer(sellerPeerId, CHANNEL_ROLE.BUYER, buyerAddress)
+      : this._channelStore?.getTotalsByPeer(sellerPeerId, CHANNEL_ROLE.BUYER)
       ?? null;
 
     const liveTotals = this._buyerPaymentManager?.getResponseTokenTotals(sellerPeerId);
@@ -1002,10 +1175,11 @@ export class AntseedNode extends EventEmitter {
     status: string;
     requestCount: number;
     tokensDelivered: string;
+    outputTokens: string;
   }> {
     const buyerAddress = this._identity?.wallet.address ?? null;
     if (!buyerAddress || !this._channelStore) return [];
-    const stored = this._channelStore.getActiveChannelsByBuyer('buyer', buyerAddress);
+    const stored = this._channelStore.getActiveChannelsByBuyer(CHANNEL_ROLE.BUYER, buyerAddress);
     return stored.map((c) => {
       const liveReserve = this._buyerPaymentManager?.getReserveCeiling(c.peerId);
       const reserveMax = (liveReserve != null && liveReserve > 0n)
@@ -1023,6 +1197,9 @@ export class AntseedNode extends EventEmitter {
         status: c.status,
         requestCount: c.requestCount,
         tokensDelivered: c.tokensDelivered,
+        // Buyer rows overload previousConsumption as cumulative output tokens
+        // (see getBuyerUsageTotals).
+        outputTokens: c.previousConsumption,
       };
     });
   }
@@ -1040,6 +1217,7 @@ export class AntseedNode extends EventEmitter {
     status: string;
     requestCount: number;
     tokensDelivered: string;
+    outputTokens: string;
   }> {
     const buyerAddress = this._identity?.wallet.address ?? null;
     if (!buyerAddress || !this._channelStore) return [];
@@ -1056,6 +1234,9 @@ export class AntseedNode extends EventEmitter {
       status: c.status,
       requestCount: c.requestCount,
       tokensDelivered: c.tokensDelivered,
+      // Buyer rows overload previousConsumption as cumulative output tokens
+      // (see getBuyerUsageTotals).
+      outputTokens: c.previousConsumption,
     }));
   }
 
@@ -1068,7 +1249,12 @@ export class AntseedNode extends EventEmitter {
   getBuyerUsageTotals(): BuyerUsageTotals {
     const buyerAddress = this._identity?.wallet.address ?? null;
     if (!buyerAddress || !this._channelStore) return EMPTY_BUYER_USAGE;
-    const stored = this._channelStore.getAllChannelsByBuyer('buyer', buyerAddress);
+    // Paid channels plus free-usage sessions — both carry real traffic and
+    // the desktop usage tiles/float must reflect the sum.
+    const stored = [
+      ...this._channelStore.getAllChannelsByBuyer('buyer', buyerAddress),
+      ...this._channelStore.getAllChannelsByBuyer('buyer', buyerAddress, CHANNEL_KIND.FREE),
+    ];
     let totalRequests = 0;
     let totalInput = 0n;
     let totalOutput = 0n;
@@ -1080,8 +1266,12 @@ export class AntseedNode extends EventEmitter {
       totalRequests += c.requestCount;
       try { totalInput += BigInt(c.tokensDelivered || '0'); } catch { /* skip */ }
       try { totalOutput += BigInt(c.previousConsumption || '0'); } catch { /* skip */ }
-      if (c.status === CHANNEL_STATUS.SETTLED) totalSettlements += 1;
-      if (c.status === CHANNEL_STATUS.ACTIVE) activeChannels += 1;
+      // Settlement/active-channel counters describe paid channels only —
+      // free sessions never settle and can't be closed from the UI.
+      if (c.channelKind !== CHANNEL_KIND.FREE) {
+        if (c.status === CHANNEL_STATUS.SETTLED) totalSettlements += 1;
+        if (c.status === CHANNEL_STATUS.ACTIVE) activeChannels += 1;
+      }
       if (c.peerId) sellers.add(c.peerId);
       channels.push({
         reservedAt: c.reservedAt,
@@ -1091,6 +1281,17 @@ export class AntseedNode extends EventEmitter {
         outputTokens: c.previousConsumption || '0',
       });
     }
+    // Per-service usage (model attribution for the desktop savings tile).
+    // Documented as lower bounds — requests that raced NeedAuth may lack
+    // service attribution, so Σ services ≤ channel totals.
+    const services = this._channelStore.getBuyerServiceUsageTotals(buyerAddress).map((s) => ({
+      serviceIdHash: s.serviceId,
+      amountUsdc: s.amountUsdc,
+      inputTokens: s.inputTokens,
+      cachedInputTokens: s.cachedInputTokens,
+      outputTokens: s.outputTokens,
+      requestCount: s.requestCount,
+    }));
     return {
       totalRequests,
       totalInputTokens: totalInput.toString(),
@@ -1099,6 +1300,7 @@ export class AntseedNode extends EventEmitter {
       uniqueSellers: sellers.size,
       activeChannels,
       channels,
+      services,
     };
   }
 
@@ -1147,6 +1349,7 @@ export class AntseedNode extends EventEmitter {
       const proxyMux = this._muxes.get(peerId);
       const paymentMux = this._paymentMuxes.get(peerId);
       const verificationMux = this._verificationMuxes.get(peerId);
+      const sweepMux = this._sweepMuxes.get(peerId);
       for (const frame of frames) {
         // Keepalive: respond to Ping, dispatch Pong to manager
         if (frame.type === MessageType.Ping) {
@@ -1173,6 +1376,11 @@ export class AntseedNode extends EventEmitter {
             const message = err instanceof Error ? err.message : String(err);
             debugWarn(`[Node] Failed to handle verification frame from ${peerId.slice(0, 12)}...: ${message}`);
           });
+        } else if (sweepMux && SweepMux.isSweepMessage(frame.type)) {
+          sweepMux.handleFrame(frame).catch((err) => {
+            const message = err instanceof Error ? err.message : String(err);
+            debugWarn(`[Node] Failed to handle sweep frame from ${peerId.slice(0, 12)}...: ${message}`);
+          });
         } else if (proxyMux) {
           proxyMux.handleFrame(frame).catch((err) => {
             const message = err instanceof Error ? err.message : String(err);
@@ -1198,11 +1406,15 @@ export class AntseedNode extends EventEmitter {
         this._muxes.get(peerId)?.abortPendingUploads();
         this._muxes.delete(peerId);
         this._paymentMuxes.delete(peerId);
+        this._peerCapabilities.delete(peerId);
         this._verificationMuxes.get(peerId)?.close();
         this._verificationMuxes.delete(peerId);
+        this._sweepMuxes.delete(peerId);
         this._decoders.delete(peerId);
         // Clean up buyer-side payment state on disconnect
         this._buyerNegotiator?.onPeerDisconnect(peerId);
+        this._buyerFreeUsageManager?.onPeerDisconnect(peerId);
+        this._sellerFreeUsageManager?.onPeerDisconnect(peerId);
         // Handle buyer disconnect (seller side)
         if (this._sellerPaymentManager) {
           this._sellerPaymentManager.onBuyerDisconnect(peerId);
@@ -1272,6 +1484,7 @@ export class AntseedNode extends EventEmitter {
     );
 
     await this._initializePayments(dataDir);
+    this._warnIfFreeUsageMeteringUnavailable();
 
     // Wire idle session events to on-chain settlement
     if (this._sellerPaymentManager) {
@@ -1334,6 +1547,7 @@ export class AntseedNode extends EventEmitter {
           ...(p.serviceApiProtocols ? { serviceApiProtocols: { ...p.serviceApiProtocols } } : {}),
           ...(p.serviceUnitBillingModels ? { serviceUnitBillingModels: { ...p.serviceUnitBillingModels } } : {}),
           maxConcurrency: p.maxConcurrency,
+          isAvailable: () => p.healthCheckAvailable !== false,
           pricing: {
             defaults: {
               inputUsdPerMillion: p.pricing.defaults.inputUsdPerMillion,
@@ -1345,6 +1559,7 @@ export class AntseedNode extends EventEmitter {
         ...(this._config.displayName ? { displayName: this._config.displayName } : {}),
         ...(this._config.publicAddress ? { publicAddress: this._config.publicAddress } : {}),
         ...(this._config.verifications ? { verifications: this._config.verifications } : {}),
+        ...(this._config.capabilities ? { capabilities: this._config.capabilities } : {}),
         region: "unknown",
         pricing: new Map(
           this._providers.map((p) => [
@@ -1363,6 +1578,7 @@ export class AntseedNode extends EventEmitter {
         ...(this._channelsClient ? { channelsClient: this._channelsClient } : {}),
         ...(this._stakingClient ? { stakingClient: this._stakingClient, paymentsEnabled: true } : {}),
         ...(this._config.sellerContract ? { sellerContract: this._config.sellerContract } : {}),
+        ...(this._depositRelayer ? { relaysSweeps: true } : {}),
       };
       this._announcer = new PeerAnnouncer(announcerConfig);
       this._announcer.startPeriodicAnnounce();
@@ -1377,7 +1593,9 @@ export class AntseedNode extends EventEmitter {
     this._sellerHandler = new SellerRequestHandler({
       identity,
       providers: this._providers,
+      provers: this._provers,
       sellerPaymentManager: this._sellerPaymentManager,
+      sellerFreeUsageManager: this._sellerFreeUsageManager,
       sessionTracker: this._sessionTracker,
       channelsClient: this._channelsClient,
       announcer: this._announcer,
@@ -1458,9 +1676,13 @@ export class AntseedNode extends EventEmitter {
           defaultAuthDurationSecs: payments.defaultAuthDurationSecs ?? 900, // 15 min — seller must call reserve() promptly
           maxPerRequestUsdc: BigInt(payments.maxPerRequestUsdc ?? "500000"),  // $0.50 default — covers most LLM requests
           maxReserveAmountUsdc: BigInt(payments.maxReserveAmountUsdc ?? "1000000"),  // $1.00 default per session (matches FIRST_SIGN_CAP)
+          disableMetadataV2Services: payments.disableMetadataV2Services ?? false,
           dataDir: paymentsDir,
         };
         this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig, this._channelStore, this._sellerAddressResolver ?? undefined);
+        // Re-emit per-request spend so callers can attribute it to whatever
+        // issued the request — the node only knows the seller and requestId.
+        this._buyerPaymentManager.setSpendListener((event) => this.emit('payment:spend', event));
         debugLog(`[Node] Buyer payment manager initialized (wallet=${identity.wallet.address.slice(0, 10)}... chainId=${buyerPaymentConfig.chainId} deposits=${buyerPaymentConfig.depositsContractAddress.slice(0, 10)}...)`);
 
         // Create negotiator that wraps the BPM with 402 handling and per-request auth
@@ -1473,6 +1695,7 @@ export class AntseedNode extends EventEmitter {
           {},
           this,
           this._sellerAddressResolver ?? undefined,
+          this._buyerFreeUsageManager,
         );
         debugLog(`[Node] Buyer payment negotiator initialized`);
       }
@@ -1488,6 +1711,7 @@ export class AntseedNode extends EventEmitter {
       {
         localPeerId: identity.peerId,
         negotiator: this._buyerNegotiator,
+        freeUsageManager: this._buyerFreeUsageManager,
         verificationStorage: this._verificationStorage,
         verificationSampler: this._verificationSampler,
         getConnection: (peer) => this._getOrCreateConnection(peer),
@@ -1521,13 +1745,75 @@ export class AntseedNode extends EventEmitter {
             debugWarn(`[Node] SpendingAuth handler error for ${buyerPeerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
           });
       });
+      paymentMux.onCloseChannelRequest((payload) => {
+        void spm.handleCloseChannelRequest(buyerPeerId, payload, paymentMux)
+          .then((result) => {
+            paymentMux.sendCloseChannelResult(result);
+            if (result.status === 'closed') {
+              this.emit('payment:channel-closed', {
+                buyerPeerId,
+                channelId: result.channelId,
+                txHash: result.txHash,
+                finalAmount: result.finalAmount,
+              });
+            }
+          })
+          .catch((err) => {
+            const message = err instanceof Error ? err.message : String(err);
+            debugWarn(`[Node] CloseChannelRequest handler error for ${buyerPeerId.slice(0, 12)}...: ${message}`);
+            paymentMux.sendCloseChannelResult({
+              version: 1,
+              channelId: payload.channelId,
+              status: 'rejected',
+              code: 'close_failed',
+              reason: message,
+            });
+          });
+      });
     } else {
       paymentMux.onSpendingAuth(() => {
         debugWarn(`[Node] SpendingAuth rejected — SellerPaymentManager not configured`);
       });
+      paymentMux.onCloseChannelRequest((payload) => {
+        paymentMux.sendCloseChannelResult({
+          version: 1,
+          channelId: payload.channelId,
+          status: 'rejected',
+          code: 'unsupported',
+          reason: 'This peer has no payment manager configured',
+        });
+      });
+    }
+    if (this._sellerFreeUsageManager) {
+      const freeUsage = this._sellerFreeUsageManager;
+      paymentMux.onFreeUsageOpen((payload) => {
+        freeUsage.handleOpen(buyerPeerId, payload, paymentMux);
+      });
+      paymentMux.onFreeUsageAuth((payload) => {
+        freeUsage.handleAuth(buyerPeerId, payload, paymentMux);
+      });
+    } else {
+      paymentMux.onFreeUsageOpen(() => {
+        debugWarn(`[Node] FreeUsageOpen ignored — SellerFreeUsageManager not configured`);
+      });
+      paymentMux.onFreeUsageAuth(() => {
+        debugWarn(`[Node] FreeUsageAuth ignored — SellerFreeUsageManager not configured`);
+      });
     }
     this._paymentMuxes.set(buyerPeerId, paymentMux);
     this._verificationMuxes.set(buyerPeerId, verificationMux);
+
+    // Deposit-sweep relaying (seller side, opt-out)
+    const sweepMux = new SweepMux(conn);
+    if (this._depositRelayer) {
+      const relayer = this._depositRelayer;
+      sweepMux.onSweepRequest((payload) => {
+        void relayer.handleSweepRequest(buyerPeerId, payload, sweepMux).catch((err) => {
+          debugWarn(`[Node] Sweep relay handler error for ${buyerPeerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
+        });
+      });
+    }
+    this._sweepMuxes.set(buyerPeerId, sweepMux);
 
     const { mux } = this._sellerHandler!.handleConnection(conn, buyerPeerId, paymentMux, verificationMux);
 
@@ -1543,6 +1829,17 @@ export class AntseedNode extends EventEmitter {
     }
 
     const fallbackRpcUrls = payments.fallbackRpcUrls;
+    const paymentsDir = join(dataDir, "payments");
+
+    // Shared store for paid and free channel accounting.
+    if (!this._channelStore) {
+      try {
+        this._channelStore = new ChannelStore(paymentsDir);
+        debugLog("[Node] ChannelStore initialized");
+      } catch (err) {
+        debugWarn(`[Node] ChannelStore unavailable: ${err instanceof Error ? err.message : err}`);
+      }
+    }
 
     // Initialize DepositsClient
     if (payments.rpcUrl && payments.depositsAddress && payments.usdcAddress) {
@@ -1590,6 +1887,40 @@ export class AntseedNode extends EventEmitter {
       debugLog(`[Node] SellerAddressResolver initialized`);
     }
 
+    // Initialize FreeUsageClient
+    if (payments.rpcUrl && payments.freeUsageAddress) {
+      this._freeUsageClient = new FreeUsageClient({
+        rpcUrl: payments.rpcUrl,
+        ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
+        contractAddress: payments.freeUsageAddress,
+        ...(payments.chainId ? { evmChainId: payments.chainId } : {}),
+      });
+      debugLog(`[Node] FreeUsageClient initialized (contract=${payments.freeUsageAddress.slice(0, 10)}...)`);
+
+      if (this._identity) {
+        const freeUsageConfig = {
+          rpcUrl: payments.rpcUrl,
+          ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
+          freeUsageContractAddress: payments.freeUsageAddress,
+          chainId: payments.chainId ?? 8453,
+        };
+        this._buyerFreeUsageManager = new BuyerFreeUsageManager(
+          this._identity,
+          {
+            chainId: freeUsageConfig.chainId,
+            freeUsageContractAddress: freeUsageConfig.freeUsageContractAddress,
+            defaultAuthDurationSecs: payments.defaultAuthDurationSecs ?? 900,
+            disableMetadataV2Services: payments.disableMetadataV2Services ?? false,
+          },
+          this._sellerAddressResolver ?? undefined,
+          this._channelStore ?? undefined,
+        );
+        if (this._config.role === 'seller') {
+          this._sellerFreeUsageManager = new SellerFreeUsageManager(this._identity, freeUsageConfig);
+        }
+      }
+    }
+
     // Initialize StakingClient
     if (payments.rpcUrl && payments.stakingAddress && payments.usdcAddress) {
       this._stakingClient = new StakingClient({
@@ -1613,17 +1944,6 @@ export class AntseedNode extends EventEmitter {
       debugLog(`[Node] IdentityClient initialized (contract=${payments.identityRegistryAddress.slice(0, 10)}...)`);
     }
 
-    // Initialize ChannelStore for persistent payment channels (shared instance)
-    const paymentsDir = join(dataDir, "payments");
-    if (!this._channelStore) {
-      try {
-        this._channelStore = new ChannelStore(paymentsDir);
-        debugLog("[Node] ChannelStore initialized");
-      } catch (err) {
-        debugWarn(`[Node] ChannelStore unavailable: ${err instanceof Error ? err.message : err}`);
-      }
-    }
-
     // Initialize SellerPaymentManager for seller role
     if (this._config.role === 'seller' && this._identity && this._channelStore &&
         payments.rpcUrl && payments.channelsAddress) {
@@ -1638,6 +1958,26 @@ export class AntseedNode extends EventEmitter {
       };
       this._sellerPaymentManager = new SellerPaymentManager(this._identity, sellerConfig, this._channelStore);
       debugLog(`[Node] SellerPaymentManager initialized`);
+
+      // Deposit-sweep relayer (opt-out — ON by default when the chain has a relay)
+      const relayerConfig = this._config.relayer;
+      if (relayerConfig?.enabled !== false && payments.depositRelayAddress && payments.usdcAddress) {
+        this._depositRelayer = new DepositRelayer(this._identity, {
+          rpcUrl: payments.rpcUrl,
+          ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
+          relayAddress: payments.depositRelayAddress,
+          usdcAddress: payments.usdcAddress,
+          evmChainId: payments.chainId ?? 8453,
+          ...(relayerConfig?.minProfitBaseUnits !== undefined
+            ? { minProfitBaseUnits: BigInt(relayerConfig.minProfitBaseUnits) }
+            : {}),
+          ...(relayerConfig?.maxInFlight !== undefined ? { maxInFlight: relayerConfig.maxInFlight } : {}),
+          ...(relayerConfig?.maxPerPeerPerMinute !== undefined
+            ? { maxPerPeerPerMinute: relayerConfig.maxPerPeerPerMinute }
+            : {}),
+        });
+        debugLog(`[Node] DepositRelayer initialized (relay=${payments.depositRelayAddress.slice(0, 10)}...)`);
+      }
 
       // Startup recovery: validate hydrated channels against on-chain state, then check timeouts
       await this._sellerPaymentManager.validateHydratedChannels();
@@ -1701,6 +2041,8 @@ export class AntseedNode extends EventEmitter {
     }
 
     const existing = this._connectionManager.getConnection(peer.peerId);
+    const peerCapabilities = new Set(peer.capabilities ?? peer.metadata?.capabilities ?? []);
+    this._peerCapabilities.set(peer.peerId, peerCapabilities);
     let endpointChanged = false;
 
     // Check if the peer's endpoint has changed (e.g. IP rotation).
@@ -1713,6 +2055,7 @@ export class AntseedNode extends EventEmitter {
       if (currentEndpoint && (currentEndpoint.host !== newHost || currentEndpoint.port !== newPort)) {
         debugLog(`[Node] Peer ${peer.peerId.slice(0, 12)}... endpoint changed from ${currentEndpoint.host}:${currentEndpoint.port} to ${newHost}:${newPort}, reconnecting`);
         existing.close();
+        this._peerCapabilities.set(peer.peerId, peerCapabilities);
         endpointChanged = true;
       }
     }
@@ -1774,6 +2117,7 @@ export class AntseedNode extends EventEmitter {
     });
 
     debugLog(`[Node] Connected to ${peer.peerId.slice(0, 12)}...`);
+    this._peerCapabilities.set(peer.peerId, peerCapabilities);
     this._wireConnection(conn, peer.peerId);
     return conn;
   }
@@ -1800,6 +2144,131 @@ export class AntseedNode extends EventEmitter {
     const mux = new VerificationMux(conn);
     this._verificationMuxes.set(peerId, mux);
     return mux;
+  }
+
+  private _getOrCreateSweepMux(peerId: PeerId, conn: PeerConnection): SweepMux {
+    const existing = this._sweepMuxes.get(peerId);
+    if (existing) {
+      return existing;
+    }
+
+    const mux = new SweepMux(conn);
+    // Buyer side: surface relayer progress reports as node events.
+    mux.onSweepReceipt((payload: SweepReceiptPayload) => {
+      this.emit('sweep:receipt', { peerId, payload });
+    });
+    this._sweepMuxes.set(peerId, mux);
+    return mux;
+  }
+
+  /**
+   * Offer a signed deposit-sweep request to connected relayers ONE AT A TIME.
+   * Broadcasting to everyone makes relayers race the same EIP-3009 nonce and
+   * the losers burn gas on reverted transactions; offering sequentially gives
+   * each relayer an uncontested window. Candidates are shuffled so no single
+   * relayer always gets first refusal. A relayer that reports 'rejected' (or
+   * stays silent past `perPeerTimeoutMs`) forfeits its turn; 'submitted' or
+   * 'confirmed' ends the round. Progress still arrives as 'sweep:receipt'
+   * events, and the wire protocol is unchanged — relayers need no upgrade.
+   */
+  async dispatchSweepRequest(
+    payload: SweepRequestPayload,
+    opts?: { perPeerTimeoutMs?: number },
+  ): Promise<{ offered: number; accepted: boolean }> {
+    if (!this._connectionManager) {
+      throw new Error('Node not started');
+    }
+    const perPeerTimeoutMs = opts?.perPeerTimeoutMs ?? DEFAULT_SWEEP_OFFER_TIMEOUT_MS;
+
+    const candidates: Array<{ peerId: PeerId; conn: PeerConnection }> = [];
+    for (const peerId of this._muxes.keys()) {
+      const capabilities = this._peerCapabilities.get(peerId);
+      if (!capabilities?.has(CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1)) continue;
+      const conn = this._connectionManager.getConnection(peerId);
+      if (!conn) continue;
+      if (conn.state !== ConnectionState.Open && conn.state !== ConnectionState.Authenticated) continue;
+      candidates.push({ peerId, conn });
+    }
+    for (let i = candidates.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [candidates[i], candidates[j]] = [candidates[j]!, candidates[i]!];
+    }
+
+    const wantNonce = payload.nonce.toLowerCase();
+    let offered = 0;
+    for (const { peerId, conn } of candidates) {
+      // Stop offering when the authorization is too close to expiry for a
+      // relayer to safely land it (mirrors the relayer's own guard).
+      const nowSecs = Math.floor(Date.now() / 1000);
+      if (nowSecs >= payload.validBefore - MIN_SWEEP_DISPATCH_VALIDITY_SECS) break;
+      try {
+        this._getOrCreateSweepMux(peerId, conn).sendSweepRequest(payload);
+      } catch (err) {
+        debugWarn(`[Node] Failed to offer sweep request to ${peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
+        continue;
+      }
+      offered++;
+      const receipt = await this._waitForSweepReceipt(peerId, wantNonce, perPeerTimeoutMs);
+      if (receipt && (receipt.status === 'submitted' || receipt.status === 'confirmed')) {
+        return { offered, accepted: true };
+      }
+      // 'rejected' or silence — pass the opportunity to the next relayer.
+    }
+    return { offered, accepted: false };
+  }
+
+  /** Resolve with the first 'sweep:receipt' from `peerId` for `authNonce`
+   *  (lowercased), or null after `timeoutMs`. */
+  private _waitForSweepReceipt(
+    peerId: PeerId,
+    authNonce: string,
+    timeoutMs: number,
+  ): Promise<SweepReceiptPayload | null> {
+    return new Promise((resolve) => {
+      const listener = (event: { peerId: string; payload: SweepReceiptPayload }): void => {
+        if (event.peerId !== peerId) return;
+        if (event.payload.authNonce.toLowerCase() !== authNonce) return;
+        cleanup();
+        resolve(event.payload);
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve(null);
+      }, timeoutMs);
+      const cleanup = (): void => {
+        clearTimeout(timer);
+        this.off('sweep:receipt', listener);
+      };
+      this.on('sweep:receipt', listener);
+    });
+  }
+
+  /**
+   * Broadcast a signed deposit-sweep request to all currently connected peers.
+   * Relayers submit it on-chain permissionlessly; progress reports arrive as
+   * 'sweep:receipt' events. Returns the number of peers the request was sent to.
+   * Prefer {@link dispatchSweepRequest} — simultaneous broadcast makes relayers
+   * race each other and losers burn gas on reverted transactions.
+   */
+  broadcastSweepRequest(payload: SweepRequestPayload): number {
+    if (!this._connectionManager) {
+      throw new Error('Node not started');
+    }
+    let sent = 0;
+    for (const peerId of this._muxes.keys()) {
+      const capabilities = this._peerCapabilities.get(peerId);
+      if (!capabilities?.has(CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1)) continue;
+      const conn = this._connectionManager.getConnection(peerId);
+      if (!conn) continue;
+      if (conn.state !== ConnectionState.Open && conn.state !== ConnectionState.Authenticated) continue;
+      try {
+        this._getOrCreateSweepMux(peerId, conn).sendSweepRequest(payload);
+        sent++;
+      } catch (err) {
+        debugWarn(`[Node] Failed to send sweep request to ${peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+    return sent;
   }
 
   private _resolvePublicAddress(result: LookupResult): string {
@@ -1922,6 +2391,33 @@ export class AntseedNode extends EventEmitter {
     };
   }
 
+  private _warnIfFreeUsageMeteringUnavailable(): void {
+    if (this._sellerFreeUsageManager || !this._hasFreePricedService()) return;
+    const missingAddress = !this._config.payments?.freeUsageAddress;
+    debugWarn(
+      `[Node] Zero-priced service advertised but AntseedFreeUsage is not configured` +
+      `${missingAddress ? ' (payments.freeUsageAddress missing)' : ''}. ` +
+      `Free requests will be served without on-chain usage proofs.`,
+    );
+  }
+
+  private _hasFreePricedService(): boolean {
+    for (const provider of this._providers) {
+      if (provider.services.length === 0 && this._isZeroPricing(provider.pricing.defaults)) return true;
+      for (const service of provider.services) {
+        const servicePricing = provider.pricing.services?.[service] ?? provider.pricing.defaults;
+        if (this._isZeroPricing(servicePricing)) return true;
+      }
+    }
+    return false;
+  }
+
+  private _isZeroPricing(pricing: { inputUsdPerMillion: number; outputUsdPerMillion: number; cachedInputUsdPerMillion?: number }): boolean {
+    const cachedPrice = pricing.cachedInputUsdPerMillion ?? pricing.inputUsdPerMillion;
+    return pricing.inputUsdPerMillion === 0
+      && pricing.outputUsdPerMillion === 0
+      && cachedPrice === 0;
+  }
 }
 
 function parsePeerAddress(address: string): { host: string; port: number } {

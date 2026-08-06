@@ -1,6 +1,6 @@
-import { useState, useMemo, useCallback } from 'react';
-import { useUiSnapshot } from '../../hooks/useUiSnapshot';
-import { useActions } from '../../hooks/useActions';
+import { useMemo, useCallback } from 'react';
+import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
+import { useRetainedState } from '../../hooks/useRetainedState';
 import { formatShortId, formatInt, formatEndpoint } from '../../../core/format';
 import {
   buildPeerReputationScoreMap,
@@ -9,9 +9,11 @@ import {
 } from '../../../core/peer-utils';
 import { safeString } from '../../../core/safe';
 import type { PeerEntry, SortDirection } from '../../../core/state';
+import { VprBackTitle, VprCard, VprSearch } from '../vpr/VprKit';
+import styles from './DiagnosticsView.module.scss';
 
 type PeersViewProps = {
-  active: boolean;
+  onSelectView?: (view: import('../../types').ViewName) => void;
 };
 
 type SortKey = string;
@@ -81,24 +83,34 @@ const COLUMNS: { key: string; label: string; sortable: boolean }[] = [
   { key: 'endpoint', label: 'Endpoint', sortable: false },
 ];
 
-export function PeersView({ active }: PeersViewProps) {
-  const { lastPeers, peersMeta, peersMessage, discoverRows } = useUiSnapshot();
-  const actions = useActions();
+// Renderer-lifetime cache: table controls survive lazy page unmounts.
+const peersViewCache = {
+  sortKey: 'reputation',
+  sortDir: 'desc' as SortDirection,
+  filter: '',
+};
 
-  const [sortKey, setSortKey] = useState('reputation');
-  const [sortDir, setSortDir] = useState<SortDirection>('desc');
-  const [filter, setFilter] = useState('');
+export function PeersView({ onSelectView }: PeersViewProps) {
+  const { lastPeers, peersMessage, discoverRows } = useUiSelector((state) => ({
+    lastPeers: state.lastPeers,
+    peersMessage: state.peersMessage,
+    discoverRows: state.discoverRows,
+  }), shallowEqual);
+
+  const [sortKey, setSortKey] = useRetainedState(peersViewCache, 'sortKey');
+  const [sortDir, setSortDir] = useRetainedState(peersViewCache, 'sortDir');
+  const [filter, setFilter] = useRetainedState(peersViewCache, 'filter');
 
   const handleSort = useCallback(
     (key: string) => {
       if (sortKey === key) {
-        setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+        setSortDir((dir) => dir === 'asc' ? 'desc' : 'asc');
       } else {
         setSortKey(key);
         setSortDir('asc');
       }
     },
-    [sortKey],
+    [setSortDir, setSortKey, sortKey],
   );
 
   const reputationScoresByPeerId = useMemo(
@@ -112,41 +124,30 @@ export function PeersView({ active }: PeersViewProps) {
   }, [lastPeers, filter, sortKey, sortDir, reputationScoresByPeerId]);
 
   return (
-    <section className={`view${active ? ' active' : ''}`} role="tabpanel">
-      <div className="page-header">
-        <h2>Peers</h2>
-        <div className="page-header-right">
-          <input
-            type="text"
-            className="filter-input"
-            placeholder="Filter peers..."
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-          />
-          <button className="secondary" onClick={() => void actions.scanDht()}>
-            Scan DHT
-          </button>
-          {/* <div className={`connection-badge badge-${peersMeta.tone}`}>{peersMeta.label}</div> */}
-        </div>
-      </div>
-      <div className="panel-grid">
-        <div className="panel">
-          <div className="table-wrap">
-            <table className="table">
+    <section className={`view view-peers ${styles.view} ${styles.viewFill}`} role="tabpanel">
+      <div className={`${styles.stack} ${styles.stackFill}`}>
+        <VprBackTitle title="Available peers" fallback="help" />
+
+        <VprSearch
+          value={filter}
+          onChange={setFilter}
+          placeholder="Filter peers..."
+          ariaLabel="Filter peers"
+        />
+
+        <VprCard className={`${styles.card} ${styles.cardFill}`}>
+          <div className={`${styles.tableWrap} ${styles.tableScroll}`}>
+            <table className={styles.table}>
               <thead>
                 <tr>
                   {COLUMNS.map((col) => (
                     <th
                       key={col.key}
-                      className={
-                        col.sortable
-                          ? `sortable${sortKey === col.key ? (sortDir === 'asc' ? ' sort-asc' : ' sort-desc') : ''}`
-                          : undefined
-                      }
-                      data-sort={col.sortable ? col.key : undefined}
+                      className={col.sortable ? styles.sortable : undefined}
                       onClick={col.sortable ? () => handleSort(col.key) : undefined}
                     >
                       {col.label}
+                      {sortKey === col.key ? (sortDir === 'asc' ? ' ▴' : ' ▾') : ''}
                     </th>
                   ))}
                 </tr>
@@ -154,7 +155,7 @@ export function PeersView({ active }: PeersViewProps) {
               <tbody>
                 {displayPeers.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="empty">
+                    <td colSpan={10} className={styles.empty}>
                       {lastPeers.length > 0 ? 'No peers match filter.' : 'No peers discovered yet.'}
                     </td>
                   </tr>
@@ -162,7 +163,7 @@ export function PeersView({ active }: PeersViewProps) {
                   displayPeers.map((peer) => (
                     <tr key={peer.peerId}>
                       <td>
-                        <span className={`peer-status ${peer.online ? 'online' : 'offline'}`}>
+                        <span className={peer.online ? styles.online : styles.offline}>
                           {peer.online ? 'Online' : 'Offline'}
                         </span>
                       </td>
@@ -185,8 +186,9 @@ export function PeersView({ active }: PeersViewProps) {
               </tbody>
             </table>
           </div>
-        </div>
-        <p className="message">{peersMessage}</p>
+        </VprCard>
+
+        {peersMessage ? <p className={styles.message}>{peersMessage}</p> : null}
       </div>
     </section>
   );

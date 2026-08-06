@@ -49,6 +49,8 @@ export interface CryptoPaymentConfig {
   depositsContractAddress: string;
   /** Deployed AntseedChannels contract address */
   channelsContractAddress: string;
+  /** Optional deployed AntseedFreeUsage contract address */
+  freeUsageContractAddress?: string;
   /** USDC token contract address */
   usdcAddress: string;
   /** Default lock amount for new sessions (USDC base units as string, e.g. "1000000" = 1 USDC) */

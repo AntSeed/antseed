@@ -1,7 +1,7 @@
 # @antseed/diem-staking
 
 Static web app for the DIEM Provider Capacity Program portal at
-[`diem.antseed.com`](https://diem.antseed.com).
+[`diemantseed.com`](https://diemantseed.com).
 
 Users lock Venice's DIEM token (on Base) into the `DiemStakingProxy` contract
 to participate in provider capacity. If connected provider infrastructure
@@ -104,7 +104,7 @@ For ABI consumers migrating from the earlier proxy surface:
 - `<title>`, `og:title`, and `twitter:title`: `DIEM Provider Capacity Program | AntSeed`.
 - `description`, `og:description`, and `twitter:description` describe DIEM locking,
   variable USDC allocations, and variable $ANTS incentives without APY/yield phrasing.
-- `canonical` is `https://diem.antseed.com/`.
+- `canonical` is `https://diemantseed.com/`.
 
 Everything else — keywords, `og:type`, `og:image` / `twitter:image`,
 `twitter:card`, favicon, fonts — is byte-for-byte what antseed.com emits.
@@ -126,7 +126,7 @@ The website also ships `google-site-verification` and a JSON-LD
 `SoftwareApplication` schema. Neither is copied:
 
 - `google-site-verification` is per-host; Search Console wants a separate
-  token for the `diem.antseed.com` subdomain. Add one to `index.html` when
+  token for the `diemantseed.com` subdomain. Add one to `index.html` when
   the subdomain is verified.
 - The `SoftwareApplication` JSON-LD describes the AntStation desktop app —
   wrong schema for this page. Avoid adding financial-product structured data

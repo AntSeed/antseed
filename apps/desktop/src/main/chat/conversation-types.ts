@@ -1,0 +1,97 @@
+/**
+ * Shapes the chat engine persists and ships to the renderer.
+ *
+ * The block union mirrors what the renderer's message list knows how to draw;
+ * `message-projection.ts` is the only thing that builds it, from the pi-ai
+ * message format.
+ */
+
+export type TextBlock = { type: 'text'; text: string };
+export type FileBlock = {
+  type: 'file';
+  fileName: string;
+  mimeType: string;
+  size?: number;
+  status?: 'ready' | 'error';
+  truncated?: boolean;
+  /**
+   * Stable ID under which the raw bytes live in the attachment store.
+   * When present the renderer can build an `antseed-attachment://` URL
+   * and preview the file natively.
+   */
+  attachmentId?: string;
+};
+export type ImageBlock = { type: 'image'; source: { type: 'base64'; media_type?: string; data?: string } };
+export type ThinkingBlock = { type: 'thinking'; thinking: string };
+export type ToolUseBlock = { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> };
+export type ToolResultBlock = {
+  type: 'tool_result';
+  tool_use_id: string;
+  content: string;
+  is_error?: boolean;
+  details?: Record<string, unknown>;
+};
+export type ContentBlock = TextBlock | FileBlock | ImageBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock;
+
+export type AiMessageMeta = {
+  peerId?: string;
+  peerAddress?: string;
+  peerProviders?: string[];
+  peerReputation?: number;
+  peerCurrentLoad?: number;
+  peerMaxConcurrency?: number;
+  provider?: string;
+  service?: string;
+  requestId?: string;
+  routeRequestId?: string;
+  latencyMs?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  tokenSource?: 'usage' | 'estimated' | 'unknown';
+  inputUsdPerMillion?: number;
+  outputUsdPerMillion?: number;
+  estimatedCostUsd?: number;
+};
+
+export type AiChatMessage = {
+  role: 'user' | 'assistant';
+  content: string | ContentBlock[];
+  createdAt?: number;
+  meta?: AiMessageMeta;
+};
+
+export type AiUsageTotals = {
+  inputTokens: number;
+  outputTokens: number;
+};
+
+export type AiConversation = {
+  id: string;
+  title: string;
+  service: string;
+  provider?: string;
+  peerId?: string;
+  peerLabel?: string;
+  messages: AiChatMessage[];
+  createdAt: number;
+  updatedAt: number;
+  usage: AiUsageTotals;
+  workspacePath?: string;
+};
+
+export type AiConversationSummary = {
+  id: string;
+  title: string;
+  service: string;
+  provider?: string;
+  peerId?: string;
+  peerLabel?: string;
+  messageCount: number;
+  createdAt: number;
+  updatedAt: number;
+  usage: AiUsageTotals;
+  totalTokens: number;
+  totalEstimatedCostUsd: number;
+  workspacePath?: string;
+};

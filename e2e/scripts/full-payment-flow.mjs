@@ -51,7 +51,7 @@ const REGISTRY_ADDRESS = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"; // nonce 
 const STAKING_ADDRESS  = "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9"; // nonce 4
 const DEPOSITS_ADDRESS = "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707"; // nonce 5
 const CHANNELS_ADDRESS = "0x0165878A594ca255338adfa4d48449f69242Eb8F"; // nonce 6
-// nonce 7 = Emissions, nonce 8 = SubPool
+// nonce 7 = Stats, nonce 8 = Emissions
 
 const FUND_ETH = "2ether";
 const USDC_MINT_AMOUNT = "100000000"; // 100 USDC (6 decimals)
@@ -285,7 +285,12 @@ async function main() {
         "--rpc-url", RPC_URL,
         "--broadcast",
       ],
-      { cwd: contractsDir }
+      {
+        cwd: contractsDir,
+        env: {
+          DEPLOYER_PRIVATE_KEY,
+        },
+      }
     );
 
     info(`MockUSDC:      ${USDC_ADDRESS}`);

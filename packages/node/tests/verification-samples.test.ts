@@ -27,9 +27,9 @@ function makeResponse(body = JSON.stringify({ content: [{ type: 'text', text: 's
 }
 
 describe('VerificationSampler', () => {
-  it('defaults to a 20 percent sample rate', () => {
-    const samplerHit = new VerificationSampler('/tmp/unused', { random: () => 0.199 });
-    const samplerMiss = new VerificationSampler('/tmp/unused', { random: () => 0.2 });
+  it('defaults to a 0.5 percent sample rate', () => {
+    const samplerHit = new VerificationSampler('/tmp/unused', { random: () => 0.0049 });
+    const samplerMiss = new VerificationSampler('/tmp/unused', { random: () => 0.005 });
 
     expect(samplerHit.shouldSample()).toBe(true);
     expect(samplerMiss.shouldSample()).toBe(false);

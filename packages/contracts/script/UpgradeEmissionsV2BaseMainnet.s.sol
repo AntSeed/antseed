@@ -3,9 +3,9 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Script.sol";
 
-import { AntseedEmissionsV2 } from "../AntseedEmissionsV2.sol";
-import { AntseedSellerRewardsPool } from "../AntseedSellerRewardsPool.sol";
-import { AntseedSellerUnlockPolicy } from "../AntseedSellerUnlockPolicy.sol";
+import { AntseedEmissionsV2 } from "../legacy/AntseedEmissionsV2.sol";
+import { AntseedSellerRewardsPool } from "../rewards/AntseedSellerRewardsPool.sol";
+import { AntseedSellerUnlockPolicy } from "../policies/AntseedSellerUnlockPolicy.sol";
 import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
 import { ISetRegistry } from "../interfaces/IAntseedWiring.sol";
 

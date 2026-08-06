@@ -1,4 +1,4 @@
-export type RuntimeMode = 'connect';
+export type RuntimeMode = 'connect' | 'system-proxy';
 
 export type RuntimeProcessState = {
   mode: RuntimeMode;
@@ -8,6 +8,90 @@ export type RuntimeProcessState = {
   lastExitCode?: number | null;
   lastError?: string | null;
   [key: string]: unknown;
+};
+
+/** One installed application ("Open with" picker): display name plus the
+    launchable path (.app bundle on macOS, Start Menu .lnk on Windows) and
+    the OS-provided icon when one could be extracted. */
+export type InstalledAppEntry = { name: string; path: string; iconDataUri?: string };
+
+export type SystemProxyProfileSummary = {
+  name: string;
+  displayName: string;
+  kind: 'proxy' | 'config-patch';
+  method: string;
+  domains: string[];
+  appAction?: 'none' | 'open-url' | 'open-tool' | 'restart-app';
+  openUrl?: string;
+  toolName?: string;
+  canRestart?: boolean;
+  needsRestart?: boolean;
+  /** True for user-added custom apps (removable, favicon-based icon). */
+  custom?: boolean;
+  iconDataUri?: string;
+  /** Installed application the user picked as this profile's "Open with"
+      target — wins over the packaged open action when launching. */
+  launchAppName?: string;
+  /** Client names identifying this app's requests on the wire (User-Agent
+      product / session-header slugs, e.g. 'opencode', 'tool-cli') — used
+      to attribute conversations to the app. User-editable per app. */
+  toolSlugs?: string[];
+};
+
+/** Per-service usage from the buyer daemon. `serviceName` is resolved by
+    the main process from the buyer peer cache; null when unresolvable. */
+export type DesktopBuyerServiceUsage = {
+  serviceIdHash: string;
+  serviceName: string | null;
+  amountUsdc: string;
+  inputTokens: string;
+  cachedInputTokens: string;
+  outputTokens: string;
+  requestCount: number;
+};
+
+export type DesktopBuyerUsageTotals = {
+  totalRequests: number;
+  totalInputTokens: string;
+  totalOutputTokens: string;
+  totalSettlements: number;
+  uniqueSellers: number;
+  activeChannels: number;
+  services?: DesktopBuyerServiceUsage[];
+};
+
+export type DesktopPaymentChannelSummary = {
+  channelId: string;
+  peerId: string;
+  seller: string;
+  reserveMax: string;
+  cumulativeSigned: string;
+  /** Already settled on-chain (bigint string). cumulativeSigned - settledUsdc
+      is what the seller can still claim against this channel. */
+  settledUsdc: string;
+  reservedAt: number;
+  status: string;
+  requestCount: number;
+  /** Cumulative input tokens delivered over this channel (bigint string). */
+  inputTokens: string;
+  /** Cumulative output tokens over this channel (bigint string). */
+  outputTokens: string;
+};
+
+export type DesktopRewardsSummary = {
+  available: boolean;
+  pendingAnts: string;
+  currentEpoch: number | null;
+  transfersEnabled: boolean;
+  error: string | null;
+};
+
+export type DepositWatchStatus = {
+  phase: 'received' | 'sweeping' | 'credited' | 'error';
+  /** USDC base units (6 decimals), bigint string. */
+  amountBaseUnits?: string;
+  txHash?: string;
+  error?: string;
 };
 
 export type LogEvent = {
@@ -73,6 +157,17 @@ export type PluginInstallResult = {
   error: string | null;
 };
 
+export type UpdateStatus =
+  | { status: 'available'; version: string }
+  | { status: 'downloading'; version: string; percent: number }
+  | { status: 'ready'; version: string }
+  | { status: 'installing'; version: string | null }
+  | { status: 'error'; version: string | null; message: string; details: string; hint?: string };
+
+export type InstallUpdateResult =
+  | { ok: true }
+  | { ok: false; error: string; details: string; hint?: string };
+
 export type ChatWorkspaceGitStatus = {
   available: boolean;
   rootPath: string | null;
@@ -86,7 +181,7 @@ export type ChatWorkspaceGitStatus = {
   error: string | null;
 };
 
-// NOTE: Source of truth lives in apps/desktop/src/main/chat-stream-stop.ts
+// NOTE: Source of truth lives in apps/desktop/src/main/chat/stream-stop.ts
 // (`ChatStreamStopReason`). The renderer cannot import from main, so the
 // shape is mirrored here for IPC. Keep in sync with that file and with
 // apps/desktop/src/main/preload.cts when fields change.
@@ -109,6 +204,18 @@ export type RawChatAttachment = {
 
 export type ChatPermissionMode = 'manual' | 'full';
 export type ToolApprovalDecision = 'allow_once' | 'always_allow_peer' | 'deny';
+// Mirrors TelegramBridgeStatus in apps/desktop/src/main/telegram/bridge.ts;
+// keep in sync with the preload copy in apps/desktop/src/main/preload.cts.
+export type TelegramBridgeStatus = {
+  configured: boolean;
+  running: boolean;
+  botUsername: string | null;
+  paired: boolean;
+  ownerName: string | null;
+  pairingLink: string | null;
+  lastError: string | null;
+};
+
 export type ToolApprovalRequest = {
   id: string;
   conversationId: string;
@@ -159,6 +266,14 @@ export type DesktopBridge = {
   getSystemLocale?: () => Promise<string>;
   /** Current app version from Electron `app.getVersion()`. */
   getAppVersion?: () => Promise<string>;
+  /**
+   * OpenRouter reference/retail prices keyed by normalized model id/name
+   * (USD per million tokens). Used to render the struck-through baseline on
+   * the VPR Home "Popular" list. Empty map when OpenRouter is unreachable.
+   */
+  getOpenRouterReferencePrices?: () => Promise<
+    Record<string, { input: number | null; output: number | null }>
+  >;
   getState?: () => Promise<RuntimeSnapshot>;
   start?: (options: StartOptions) => Promise<unknown>;
   stop?: (mode: RuntimeMode) => Promise<unknown>;
@@ -196,8 +311,15 @@ export type DesktopBridge = {
   chatPeerPermissionModeGet?: (peerId: string) => Promise<{ ok: boolean; mode?: ChatPermissionMode; error?: string }>;
   chatPeerPermissionModeSet?: (peerId: string, mode: ChatPermissionMode) => Promise<{ ok: boolean; mode?: ChatPermissionMode; error?: string }>;
   chatToolApprovalDecision?: (id: string, decision: ToolApprovalDecision) => Promise<{ ok: boolean; error?: string }>;
+  telegramGetStatus?: () => Promise<{ ok: boolean; data?: TelegramBridgeStatus; error?: string }>;
+  telegramConnect?: (botToken: string) => Promise<{ ok: boolean; data?: TelegramBridgeStatus; error?: string }>;
+  telegramDisconnect?: () => Promise<{ ok: boolean; data?: TelegramBridgeStatus; error?: string }>;
+  onTelegramStatusChanged?: (handler: (data: TelegramBridgeStatus) => void) => () => void;
   chatAiAbort?: (conversationId?: string) => Promise<{ ok: boolean }>;
-  chatAiSelectPeer?: (payload: { conversationId?: string | null; peerId?: string | null }) => Promise<{ ok: boolean; error?: string }>;
+  chatAiSelectPeer?: (payload: { conversationId?: string | null; peerId?: string | null; service?: string | null; provider?: string | null }) => Promise<{ ok: boolean; error?: string }>;
+  chatSetBuyerDefaultRoute?: (payload: { peerId: string; service: string }) => Promise<{ ok: boolean; error?: string }>;
+  chatSyncModelPicker?: (payload: import('../../shared/model-picker.js').ModelPickerSnapshot) => Promise<{ ok: boolean }>;
+  onChatDefaultRouteChanged?: (handler: (data: { peerId: string; service: string; provider: string | null }) => void) => () => void;
   chatAiGetProxyStatus?: () => Promise<{ ok: boolean; data: { running: boolean; port: number } }>;
   apiTryProxyRequest?: (params: {
     port: number;
@@ -210,6 +332,14 @@ export type DesktopBridge = {
   chatAiGetWorkspaceGitStatus?: () => Promise<{ ok: boolean; data?: ChatWorkspaceGitStatus; error?: string }>;
   chatAiSetWorkspace?: (workspacePath: string) => Promise<{ ok: boolean; data?: { current: string; default: string }; error?: string }>;
   pickDirectory?: () => Promise<{ ok: boolean; path: string | null }>;
+  openExternalUrl?: (url: string) => Promise<{ ok: boolean; error?: string }>;
+  openTool?: (toolName: string) => Promise<{ ok: boolean; error?: string; fallback?: string }>;
+  /** Reopen a tool chat session: 'terminal' runs the tool's resume command
+      (`codex resume <id>`, ...); 'app' launches the tool's desktop app. */
+  openToolSession?: (tool: string, sessionKey: string, target?: 'terminal' | 'app') => Promise<{ ok: boolean; command?: string; error?: string }>;
+  applyWindowView?: (viewName: string) => Promise<{ ok: true; skipped?: string }>;
+  applyWindowPreset?: (presetName: string) => Promise<{ ok: true; skipped?: string }>;
+  onNavigateView?: (handler: (viewName: string) => void) => () => void;
   voiceTranscribe?: (audio: ArrayBuffer) => Promise<{ ok: boolean; text?: string; error?: string }>;
   voiceGetStatus?: () => Promise<unknown>;
   voiceSetModel?: (modelId: string) => Promise<unknown>;
@@ -236,8 +366,16 @@ export type DesktopBridge = {
   getAppSetupStatus?: () => Promise<{ needed: boolean; complete: boolean }>;
   onAppSetupStep?: (handler: (data: { step: string; label: string }) => void) => () => void;
   onAppSetupComplete?: (handler: () => void) => () => void;
+  onUpdateStatus?: (handler: (data: UpdateStatus) => void) => () => void;
+  installUpdate?: () => Promise<InstallUpdateResult>;
+  downloadUpdate?: () => Promise<InstallUpdateResult>;
+  getUpdateStatus?: () => Promise<UpdateStatus | null>;
   setDebugLogs?: (enabled: boolean) => Promise<{ ok: true }>;
-  creditsGetInfo?: () => Promise<{ ok: boolean; data: { evmAddress: string | null; operatorAddress: string | null; balanceUsdc: string; reservedUsdc: string; availableUsdc: string; creditLimitUsdc: string } | null; error: string | null }>;
+  creditsGetInfo?: () => Promise<{ ok: boolean; data: { evmAddress: string | null; operatorAddress: string | null; balanceUsdc: string; reservedUsdc: string; availableUsdc: string; pendingUsdc: string; spendableUsdc: string; creditLimitUsdc: string } | null; error: string | null }>;
+  /** Prompts a native save dialog and writes the signer private key to the chosen file. */
+  identityExportKey?: () => Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string | null }>;
+  /** Replaces the signer private key (the current one is backed up on disk first). */
+  identityImportKey?: (privateKeyHex: string) => Promise<{ ok: boolean; address?: string; backupPath?: string | null; error?: string }>;
 
   paymentsSignSpendingAuth?: (params: {
     channelId: string;
@@ -261,5 +399,191 @@ export type DesktopBridge = {
     error?: string;
   }>;
 
-  paymentsOpenPortal?: (tab?: string) => Promise<{ ok: boolean; url?: string; error?: string }>;
+  paymentsOpenPayPage?: (opts: { kind?: 'deposit' | 'withdraw' | 'authorize' | 'claim' | 'diem' | 'close-channel'; amountUsdc?: string; channelId?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
+  paymentsCardProviders?: () => Promise<{ ok: boolean; data?: Array<{ id: string; label: string }>; error?: string }>;
+  paymentsOpenCardProvider?: (opts?: { providerId?: string; amountUsdc?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
+  paymentsCrossmintConfig?: () => Promise<{ ok: boolean; data?: { clientKey: string; apiBase: string } | null; error?: string }>;
+  paymentsFunkitConfig?: () => Promise<{ ok: boolean; data?: { apiKey: string } | null; error?: string }>;
+  paymentsGetBuyerUsage?: () => Promise<{ ok: boolean; data: DesktopBuyerUsageTotals | null; error: string | null; lastActivityAt?: number | null }>;
+  paymentsGetChannels?: () => Promise<{ ok: boolean; data: DesktopPaymentChannelSummary[]; error: string | null }>;
+  paymentsGetRewardsSummary?: () => Promise<{ ok: boolean; data: DesktopRewardsSummary | null; error: string | null }>;
+  /** Fired when a browser pay page reports a completed payment action. */
+  onPaymentsCompleted?: (handler: () => void) => () => void;
+  depositsWatchStart?: () => Promise<{ ok: boolean; data?: { address: string; walletUsdcBaseUnits: string; usdcAddress: string; chainId: number }; error?: string }>;
+  depositsWatchStop?: () => Promise<{ ok: boolean }>;
+  onDepositsWatchStatus?: (handler: (data: DepositWatchStatus) => void) => () => void;
+
+  systemProxyStart?: (opts: { peerId: string; port?: number; profiles?: string[]; defaultModel?: string; servedModels?: string[]; toolRoutes?: Record<string, { peerId: string; model: string }>; profileSwitch?: boolean }) => Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }>;
+  systemProxyListProfiles?: () => Promise<SystemProxyProfileSummary[]>;
+  /** Installed applications for the "Open with" picker (macOS .app bundles,
+      Windows Start Menu shortcuts). */
+  listInstalledApps?: () => Promise<{ ok: boolean; apps: InstalledAppEntry[]; error?: string }>;
+  systemProxySetAppLaunch?: (opts: { name: string; app: InstalledAppEntry | null }) => Promise<{ ok: boolean; error?: string }>;
+  /** Override the client names that attribute requests to an app profile;
+      null resets to the profile's defaults. */
+  systemProxySetAppIdentity?: (opts: { name: string; toolSlugs: string[] | null }) => Promise<{ ok: boolean; error?: string }>;
+  systemProxyAddCustomApp?: (opts: { apiUrl: string; app?: { name: string; path: string } | null; force?: boolean }) => Promise<{ ok: boolean; name?: string; unverified?: boolean; error?: string }>;
+  systemProxyRemoveCustomApp?: (name: string) => Promise<{ ok: boolean; error?: string }>;
+  systemProxyStop?: () => Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }>;
+  systemProxyGetState?: () => Promise<RuntimeProcessState | null>;
+  systemProxyInstallCa?: () => Promise<{ ok: boolean; warning?: string; error?: string }>;
+  systemProxyCaExists?: () => Promise<boolean>;
+  systemProxyCaInfo?: () => Promise<{ path: string; exists: boolean }>;
+  systemProxyRevealCa?: () => Promise<{ ok: boolean; error?: string }>;
+  systemProxyCaTrustState?: () => Promise<{ ok: boolean; exists: boolean; trust: 'trusted' | 'stale' | 'absent' | 'unknown'; error?: string }>;
+  systemProxyTestGui?: (opts?: { port?: number }) => Promise<{
+    ok: boolean;
+    proxyConfigured: boolean;
+    proxyReachable: boolean;
+    guiTrustOk: boolean;
+    certTrustError: boolean;
+    appRunning: boolean;
+    needsAppRestart: boolean;
+    appPid?: number;
+    statusCode?: number;
+    error?: string;
+  }>;
+  systemProxyRestartApp?: (app: string) => Promise<{ ok: boolean; error?: string }>;
+
+  /* Floating always-on-top pill window */
+  vprFloatSetExpanded?: (expanded: boolean) => void;
+  /** null while the buyer is unreachable (e.g. still starting up). */
+  buyerConversationsList?: () => Promise<BuyerConversationSummary[] | null>;
+  buyerConversationsUpdate?: (opts: { id: string; label?: string | null; pinnedModel?: string; peerSource?: 'auto' | 'user'; delete?: boolean }) => Promise<{ ok: boolean; conversation?: BuyerConversationSummary; error?: string }>;
+  vprFloatOpen?: (data: VprFloatData) => Promise<{ ok: boolean }>;
+  vprFloatClose?: () => Promise<{ ok: boolean }>;
+  vprFloatIsOpen?: () => Promise<boolean>;
+  vprFloatGetCompact?: () => Promise<boolean>;
+  vprFloatMoveBy?: (dx: number, dy: number) => void;
+  vprFloatUpdate?: (data: VprFloatData) => void;
+  vprFloatAction?: (action: VprFloatAction) => void;
+  onVprFloatData?: (handler: (data: VprFloatData) => void) => () => void;
+  onVprFloatCompact?: (handler: (compact: boolean) => void) => () => void;
+  onVprFloatClosed?: (handler: () => void) => () => void;
+  onVprFloatAction?: (handler: (action: unknown) => void) => () => void;
+  onDesktopOpenFloatingWindow?: (handler: () => void) => () => void;
+  onDesktopConnectMain?: (handler: () => void) => () => void;
+  onDesktopDisconnectMain?: (handler: () => void) => () => void;
 };
+
+/** One tool chat session seen by the buyer proxy (per-chat routing). */
+export type BuyerConversationSummary = {
+  id: string;
+  tool: string;
+  sessionKey: string;
+  snippet: string;
+  label: string | null;
+  /** Per-chat route pin as `<peerId>@<service>`. The buyer pins a chat to
+      the first model that serves it, so this is null only until the chat's
+      first resolved request; the default route applies to new chats only. */
+  pinnedModel: string | null;
+  /** How the pin's peer was chosen: 'user' = the user picked this seller for
+      this chat (sweeps never move it), 'auto' = routing picked it. Absent on
+      rows from buyers that predate the field — treat as 'auto'. */
+  peerSource?: 'auto' | 'user';
+  /** Model that served the most recent request (`<peerId>@<service>`). */
+  lastModel: string | null;
+  /** USDC base units this chat has cost (bigint string), subagents included.
+      Rows written before spend tracking shipped report '0'. */
+  spentUsdc?: string;
+  /** `cachedInputTokens` is the cached subset of `inputTokens`, not a separate
+      bucket — fresh input is the difference between the two. */
+  inputTokens?: string;
+  cachedInputTokens?: string;
+  outputTokens?: string;
+  requestCount?: number;
+  createdAt: number;
+  lastActiveAt: number;
+};
+
+export type VprFloatApp = {
+  name: string;
+  displayName: string;
+  /** Client names that attribute conversations to this app (see
+      SystemProxyProfileSummary.toolSlugs). */
+  toolSlugs?: string[];
+  /** The associated application's real icon, same as the main window's app
+      rows use; without one the pill falls back to a drawn brand mark. */
+  iconDataUri?: string;
+};
+
+/** Full catalog entries flow to the pill so its model list renders exactly
+    like the Home dropdown (brand icon, discounted price, badges). Type-only
+    import — no runtime cycle with core/state. */
+export type VprFloatModel = import('../core/state').VprModelCatalogEntry;
+
+/** One chat row in the pill's chat dropdown. */
+export type VprFloatConversation = {
+  id: string;
+  tool: string;
+  /** Display name: user label, else prompt snippet, else the session key. */
+  title: string;
+  /** Compact session identifier for the meta line ("019f83b7"). */
+  sessionShort: string;
+  /** Service id of the pinned model, or null when following the default route. */
+  pinnedServiceId: string | null;
+  lastActiveAt: number;
+  /** True while the chat is receiving traffic (recent request activity) —
+      drives the green pulse on its row. */
+  active: boolean;
+  /** Formatted spend for this chat ("$0.42", "<$0.01"), or null when nothing
+      has been attributed to it yet. */
+  cost: string | null;
+  /** Display name of the seller that served the chat's most recent request,
+      or null while no request has resolved. Rendered only when the
+      "Show routed peer" debug preference is on. */
+  routedPeerName: string | null;
+};
+
+/** Display payload the main window pushes to the floating pill. */
+export type VprFloatData = {
+  /** Connected app profiles the pill's app dropdown can switch between. */
+  apps: VprFloatApp[];
+  /** Which app the pill should track (profile name). */
+  selectedApp: string;
+  /** Models available in the pill's model dropdown: the same curated list as
+      the Home dropdown (favorites, then the recommended lineup). */
+  models: VprFloatModel[];
+  /** `provider:serviceId` keys of user-starred models — matching rows get a
+      star, same as the Home dropdown. */
+  favoriteKeys?: string[];
+  selectedModel: { provider: string; serviceId: string } | null;
+  /** Seller names for pinned models, keyed `provider:serviceId` — pins are per
+      model, so a model keeps its seller while another one is selected. */
+  pinnedSellers?: Record<string, string>;
+  /** Recent tool chats, newest first (per-chat routing scope picker). */
+  conversations: VprFloatConversation[];
+  /** Usage line: buyer-wide total tokens ("1.2M tok"). */
+  usageLabel: string;
+  /** Current available balance ("$12.34") — remaining, not spent. */
+  balanceLabel?: string;
+  /** True when the balance is effectively empty but the selected default
+      model is paid — the pill shows an "Add balance" shortcut. */
+  needsFunds?: boolean;
+  /** True while the buyer (connect) runtime is running. When false the pill
+      shows a "Not connected" state and hides recent chats. */
+  runtimeOn?: boolean;
+  /** Shortened buyer identity (signer address), e.g. "0x1234...abcd". */
+  identityLabel?: string;
+  /** Debug preference: chat rows name the routed seller next to the model. */
+  showRoutedPeer?: boolean;
+  /**
+   * True when traffic moved through the system proxy or the buyer proxy
+   * since the previous payload — drives the pulse on the app icon.
+   */
+  trafficActive: boolean;
+  /**
+   * One-shot: set only on the payload that opens the pill right after an app
+   * connects — the pill expands out of compact mode and opens its dropdown so
+   * the "start a new session" guidance is visible without a click.
+   */
+  openMenu?: boolean;
+};
+
+export type VprFloatAction =
+  | 'open-main'
+  | { type: 'open-deposit' }
+  | { type: 'select-model'; provider: string; serviceId: string }
+  | { type: 'pin-chat-model'; conversationId: string; provider: string; serviceId: string }
+  | { type: 'open-chat-app'; conversationId: string }
+  | { type: 'set-compact'; compact: boolean };

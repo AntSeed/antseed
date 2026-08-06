@@ -16,7 +16,11 @@
   line-height: 1.4;
 }
 
-.add-credits-link {
+// Scoped under the container so it outranks the @antseed/ui `.as-button--ghost`
+// variant classes (which tie on specificity and would otherwise win on source order).
+.low-balance-warning .add-credits-link {
+  min-height: 0;
+  padding: 0;
   border: none;
   background: none;
   color: #fbbf24;
@@ -26,9 +30,9 @@
   cursor: pointer;
   text-decoration: underline;
   white-space: nowrap;
-  padding: 0;
 
-  &:hover {
+  &:hover:not(:disabled) {
+    background: none;
     color: #f59e0b;
   }
 }

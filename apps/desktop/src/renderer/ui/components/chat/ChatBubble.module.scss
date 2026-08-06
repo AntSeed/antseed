@@ -379,14 +379,6 @@
       color: inherit;
     }
 
-    .chat-external-link-gated .chat-sensitive-action {
-      color: var(--accent-blue);
-    }
-
-    .chat-external-link-gated .chat-sensitive-action:hover {
-      background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
-    }
-
     .chat-payment-link-hidden {
       font-weight: 600;
     }

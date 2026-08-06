@@ -6,7 +6,7 @@ import type { ResponseAuthPayload } from '../types/protocol.js';
 import { encodeHttpRequest, encodeHttpResponse } from '../proxy/request-codec.js';
 
 const SAMPLE_RANDOM_SCALE = 1_000_000;
-const DEFAULT_SAMPLE_RATE = 0.2;
+const DEFAULT_SAMPLE_RATE = 0.005;
 const DEFAULT_MAX_SAMPLE_BYTES = 16 * 1024 * 1024;
 
 export interface VerificationSampleConfig {

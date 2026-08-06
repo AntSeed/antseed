@@ -6,12 +6,23 @@
 
 .page-header {
   background: var(--chat-header-bg);
-  padding: 6px 16px;
+  /* Extra right padding clears the shell's floating credits pill. */
+  padding: 6px 110px 0px 16px;
+  /* Constant height regardless of which controls are shown (6px padding +
+     36px model-dropdown trigger + 6px + border) — the search-only mode swaps
+     in a shorter bar and must not shrink the header. */
+  min-height: 49px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 10px;
   border-bottom: 1px solid var(--border-light);
+}
+
+/* The header sits inside the shell's title-bar drag strip — keep its
+   controls clickable by punching no-drag holes in the drag region. */
+.page-header :is(button, input, select, a, [role='button']) {
+  -webkit-app-region: no-drag;
 }
 
 .page-header-left {
@@ -21,11 +32,33 @@
   min-width: 0;
 }
 
+/* Bare icon button — the expand/collapse toggle carries no chrome of its
+   own, just the arrow glyph. */
+.panel-toggle {
+  appearance: none;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    color: var(--text-primary);
+    outline: none;
+  }
+}
+
 .service-switcher-anchor {
   position: relative;
   display: flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
 }
 
 .preview-toggle {
@@ -62,6 +95,21 @@
   justify-content: flex-end;
   gap: 8px;
   min-width: 0;
+}
+
+/* Thin layout with the message search open: search is the only header
+   control, stretched across the full bar. */
+.page-header-right-search-only {
+  flex: 1 1 auto;
+
+  .message-search-bar {
+    flex: 1 1 auto;
+  }
+
+  .message-search-input {
+    width: auto;
+    flex: 1 1 auto;
+  }
 }
 
 .message-search-trigger,
@@ -241,6 +289,14 @@
   }
 }
 
+/* Thin layout: no room for the label next to the model dropdown — the
+   New chat button collapses to just the plus glyph. */
+.header-action-button-icon-only {
+  width: 24px;
+  padding: 0;
+  justify-content: center;
+}
+
 .header-action-button-copy {
   border: none;
   border-color: var(--border-light);
@@ -273,133 +329,6 @@
 .service-label {
   font-size: 13px;
   color: var(--text-muted);
-}
-
-.session-stats {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  border-radius: 6px;
-  font-size: 11px;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  cursor: default;
-  transition: background 0.12s, color 0.12s;
-  outline: none;
-
-  &:hover,
-  &:focus-visible {
-    background: var(--bg-hover);
-    color: var(--text-secondary);
-
-    .session-stats-popover {
-      opacity: 1;
-      visibility: visible;
-      transform: translateY(0);
-    }
-  }
-}
-
-.session-stats-icon {
-  flex-shrink: 0;
-  opacity: 0.7;
-}
-
-.session-stats-summary {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.session-stats-dot {
-  width: 2px;
-  height: 2px;
-  border-radius: 50%;
-  background: currentColor;
-  opacity: 0.5;
-  flex-shrink: 0;
-}
-
-.session-stats-popover {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: 6px;
-  min-width: 220px;
-  padding: 10px 12px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.08));
-  border-radius: 8px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-  color: var(--text-secondary);
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(-4px);
-  transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s;
-  z-index: 20;
-
-  &::before {
-    content: '';
-    position: absolute;
-    top: -10px;
-    left: 0;
-    right: 0;
-    height: 10px;
-  }
-}
-
-.session-stats-group {
-  &:not(:last-child) {
-    padding-bottom: 8px;
-    margin-bottom: 8px;
-    border-bottom: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.06));
-  }
-}
-
-.session-stats-group-label {
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-  margin-bottom: 4px;
-}
-
-.session-stats-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 2px 0;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-
-  > span:first-child {
-    color: var(--text-muted);
-  }
-
-  > span:last-child {
-    color: var(--text-primary);
-    font-weight: 500;
-  }
-}
-
-.session-stats-footer {
-  padding-top: 0;
-}
-
-:global(.dark-theme) {
-  .session-stats-popover {
-    border-color: rgba(255, 255, 255, 0.08);
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
-  }
-
-  .session-stats-group:not(:last-child) {
-    border-color: rgba(255, 255, 255, 0.06);
-  }
 }
 
 /* ===================================================================
@@ -997,13 +926,6 @@
 
   &:disabled {
     opacity: 0.3;
-  }
-}
-
-@media (max-width: 720px) {
-  .chat-input-meta {
-    flex-direction: column;
-    gap: 4px;
   }
 }
 

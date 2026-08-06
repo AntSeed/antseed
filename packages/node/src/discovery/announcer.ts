@@ -31,7 +31,11 @@ import { bytesToHex } from "../utils/hex.js";
 import type { StakingClient } from "../payments/evm/staking-client.js";
 import type { ChannelsClient } from "../payments/evm/channels-client.js";
 import type { DHTHealthMonitor } from "./dht-health.js";
-import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 } from "../types/protocol.js";
+import {
+  CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
+  CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
+  CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
+} from "../types/protocol.js";
 
 export interface SellerContractConfig {
   /**
@@ -53,6 +57,8 @@ export interface AnnouncerConfig {
     serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
     serviceUnitBillingModels?: ServiceUnitBillingModelsV1;
     maxConcurrency: number;
+    /** Runtime availability predicate. Unavailable providers are omitted. */
+    isAvailable?: () => boolean;
     /** Per-instance pricing. Takes precedence over the shared pricing Map. */
     pricing?: {
       defaults: { inputUsdPerMillion: number; outputUsdPerMillion: number };
@@ -78,6 +84,8 @@ export interface AnnouncerConfig {
   stakingClient?: StakingClient;
   reannounceIntervalMs: number;
   signalingPort: number;
+  /** Extra peer capability strings to advertise (merged with the built-in set). */
+  capabilities?: string[];
   /** Optional health monitor — if supplied, announce outcomes are recorded. */
   healthMonitor?: DHTHealthMonitor;
   /**
@@ -86,6 +94,8 @@ export interface AnnouncerConfig {
    * `sellerContract.isOperator(peerAddress)`.
    */
   sellerContract?: SellerContractConfig;
+  /** Whether this seller currently supports buyer deposit sweep relaying. */
+  relaysSweeps?: boolean;
 }
 
 /**
@@ -258,43 +268,56 @@ export class PeerAnnouncer {
     v10: PeerMetadata;
     v11?: PeerMetadata;
   }> {
-    const providersWithUnitBilling: ProviderAnnouncement[] = this.config.providers.map((p) => {
-      const pricing = p.pricing ?? this.config.pricing.get(p.provider) ?? {
-        defaults: {
-          inputUsdPerMillion: 0,
-          outputUsdPerMillion: 0,
-        },
-      };
-      const providerAnnouncement: ProviderAnnouncement = {
-        provider: p.provider,
-        services: p.services,
-        defaultPricing: pricing.defaults,
-        maxConcurrency: p.maxConcurrency,
-        currentLoad: this.loadMap.get(p.provider) ?? 0,
-      };
-      if (pricing.services) {
-        providerAnnouncement.servicePricing = pricing.services;
-      }
-      const normalizedServiceCategories = this._normalizeServiceCategories(p.serviceCategories, p.services);
-      if (normalizedServiceCategories) {
-        providerAnnouncement.serviceCategories = normalizedServiceCategories;
-      }
-      const normalizedServiceApiProtocols = this._normalizeServiceApiProtocols(p.serviceApiProtocols, p.services);
-      if (normalizedServiceApiProtocols) {
-        providerAnnouncement.serviceApiProtocols = normalizedServiceApiProtocols;
-      }
-      const normalizedServiceUnitBillingModels = this._normalizeServiceUnitBillingModels(p.serviceUnitBillingModels, p.services);
-      if (normalizedServiceUnitBillingModels) {
-        providerAnnouncement.serviceUnitBillingModels = normalizedServiceUnitBillingModels;
-      }
-      return providerAnnouncement;
-    });
+    const providersWithUnitBilling: ProviderAnnouncement[] = this.config.providers
+      .filter((provider) => provider.isAvailable?.() !== false)
+      .map((p) => {
+        const pricing = p.pricing ?? this.config.pricing.get(p.provider) ?? {
+          defaults: {
+            inputUsdPerMillion: 0,
+            outputUsdPerMillion: 0,
+          },
+        };
+        const providerAnnouncement: ProviderAnnouncement = {
+          provider: p.provider,
+          services: p.services,
+          defaultPricing: pricing.defaults,
+          maxConcurrency: p.maxConcurrency,
+          currentLoad: this.loadMap.get(p.provider) ?? 0,
+        };
+        if (pricing.services) {
+          providerAnnouncement.servicePricing = pricing.services;
+        }
+        const normalizedServiceCategories = this._normalizeServiceCategories(p.serviceCategories, p.services);
+        if (normalizedServiceCategories) {
+          providerAnnouncement.serviceCategories = normalizedServiceCategories;
+        }
+        const normalizedServiceApiProtocols = this._normalizeServiceApiProtocols(p.serviceApiProtocols, p.services);
+        if (normalizedServiceApiProtocols) {
+          providerAnnouncement.serviceApiProtocols = normalizedServiceApiProtocols;
+        }
+        const normalizedServiceUnitBillingModels = this._normalizeServiceUnitBillingModels(p.serviceUnitBillingModels, p.services);
+        if (normalizedServiceUnitBillingModels) {
+          providerAnnouncement.serviceUnitBillingModels = normalizedServiceUnitBillingModels;
+        }
+        return providerAnnouncement;
+      });
     const providersV10: ProviderAnnouncement[] = providersWithUnitBilling.map((provider) => {
       const legacyProvider = { ...provider };
       delete legacyProvider.serviceUnitBillingModels;
       return legacyProvider;
     });
     const hasServiceUnitBillingModels = providersWithUnitBilling.some((provider) => provider.serviceUnitBillingModels !== undefined);
+
+    const capabilities: string[] = [
+      CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
+      CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
+    ];
+    if (this.config.relaysSweeps) {
+      capabilities.push(CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1);
+    }
+    if (this.config.capabilities && this.config.capabilities.length > 0) {
+      capabilities.push(...this.config.capabilities);
+    }
 
     const timestamp = Date.now();
     let onChainChannelCount: number | undefined;
@@ -334,7 +357,7 @@ export class PeerAnnouncer {
       ...(this.config.displayName ? { displayName: this.config.displayName } : {}),
       ...(this.config.publicAddress ? { publicAddress: this.config.publicAddress } : {}),
       providers,
-      capabilities: [CONNECTION_CAPABILITY_RESPONSE_AUTH_V1],
+      capabilities,
       region: this.config.region,
       timestamp,
       ...(this.config.offerings && this.config.offerings.length > 0 ? { offerings: this.config.offerings } : {}),

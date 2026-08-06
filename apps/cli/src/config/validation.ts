@@ -319,6 +319,10 @@ export function validateConfig(config: AntseedConfig): string[] {
     errors.push('buyer.metadataFetchTimeoutMs must be an integer >= 100');
   }
 
+  if (typeof config.buyer.disableMetadataV2Services !== 'boolean') {
+    errors.push('buyer.disableMetadataV2Services must be a boolean');
+  }
+
   validateBuyerVerification('buyer.verification', config.buyer.verification, errors);
 
   if (!Number.isInteger(config.seller.maxConcurrentBuyers) || config.seller.maxConcurrentBuyers < 1) {
@@ -361,7 +365,41 @@ export function validateConfig(config: AntseedConfig): string[] {
     }
   }
 
+  if (config.seller.healthCheck !== undefined) {
+    const healthCheck = config.seller.healthCheck;
+    if (healthCheck.enabled !== undefined && typeof healthCheck.enabled !== 'boolean') {
+      errors.push('seller.healthCheck.enabled must be a boolean');
+    }
+    if (
+      healthCheck.intervalMs !== undefined &&
+      (!Number.isInteger(healthCheck.intervalMs) || healthCheck.intervalMs < 60_000)
+    ) {
+      errors.push('seller.healthCheck.intervalMs must be an integer >= 60000 (1 minute)');
+    }
+    if (
+      healthCheck.failureThreshold !== undefined &&
+      (!Number.isInteger(healthCheck.failureThreshold) || healthCheck.failureThreshold < 1)
+    ) {
+      errors.push('seller.healthCheck.failureThreshold must be an integer >= 1');
+    }
+  }
+
   validateVerifications('seller.verifications', config.seller.verifications, errors);
+
+  if (config.relayer !== undefined) {
+    if (config.relayer.enabled !== undefined && typeof config.relayer.enabled !== 'boolean') {
+      errors.push('relayer.enabled must be a boolean');
+    }
+    if (config.relayer.minProfitBaseUnits !== undefined && !/^-?[0-9]+$/.test(config.relayer.minProfitBaseUnits)) {
+      errors.push('relayer.minProfitBaseUnits must be an integer string (USDC base units, may be negative)');
+    }
+    if (config.relayer.maxInFlight !== undefined && (!Number.isInteger(config.relayer.maxInFlight) || config.relayer.maxInFlight < 1)) {
+      errors.push('relayer.maxInFlight must be an integer >= 1');
+    }
+    if (config.relayer.maxPerPeerPerMinute !== undefined && (!Number.isInteger(config.relayer.maxPerPeerPerMinute) || config.relayer.maxPerPeerPerMinute < 1)) {
+      errors.push('relayer.maxPerPeerPerMinute must be an integer >= 1');
+    }
+  }
 
   return errors;
 }

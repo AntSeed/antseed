@@ -4,13 +4,13 @@ pragma solidity ^0.8.24;
 import "forge-std/Script.sol";
 
 import {ISetRegistry, ISetWriter} from "../interfaces/IAntseedWiring.sol";
-import {AntseedRegistry} from "../AntseedRegistry.sol";
+import {AntseedRegistry} from "../core/AntseedRegistry.sol";
 
 /**
  * @title DeployBaseMainnet
  * @notice Deploys AntSeed protocol to Base mainnet.
  *         Uses real USDC (Circle) and real ERC-8004 IdentityRegistry.
- *         Skips AntseedSlashing and AntseedSubPool (not needed for v1).
+ *         Skips AntseedSlashing (not needed for v1).
  *
  * Usage:
  *   cd packages/contracts

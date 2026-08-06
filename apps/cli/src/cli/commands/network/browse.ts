@@ -2,6 +2,7 @@ import type { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
 import Table from 'cli-table3';
+import { parseVerifierCapabilities } from '../../../plugins/verifier.js';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getGlobalOptions } from '../types.js';
@@ -419,6 +420,7 @@ function renderCompactTable(peers: PeerInfo[], hasChainData: boolean): void {
   // that differs from its peerId (i.e. a delegated/proxy seller).
   const anyDelegatedSeller = peers.some((peer) => delegatedSellerAddress(peer) !== null);
   const anyVerificationLinks = peers.some((peer) => collectPeerVerificationLinks(peer).length > 0);
+  const anyVerifiers = peers.some((peer) => parseVerifierCapabilities(peer.capabilities).supported.length > 0);
 
   const head: string[] = [
     chalk.bold('Peer'),
@@ -428,6 +430,7 @@ function renderCompactTable(peers: PeerInfo[], hasChainData: boolean): void {
     chalk.bold('Name'),
   );
   if (anyVerificationLinks) head.push(chalk.bold('Verified'));
+  if (anyVerifiers) head.push(chalk.bold('Verifier'));
   head.push(
     chalk.bold('Providers'),
     chalk.bold('Services'),
@@ -483,6 +486,14 @@ function renderCompactTable(peers: PeerInfo[], hasChainData: boolean): void {
       peer.displayName ?? chalk.dim('—'),
     );
     if (anyVerificationLinks) row.push(formatVerificationLinks(peer));
+    if (anyVerifiers) {
+      const v = parseVerifierCapabilities(peer.capabilities);
+      row.push(
+        v.supported.length === 0
+          ? chalk.dim('—')
+          : (v.default ?? v.supported[0]!) + (v.supported.length > 1 ? chalk.dim(` +${v.supported.length - 1}`) : ''),
+      );
+    }
     row.push(
       peer.providers.join(', ') || chalk.dim('—'),
       servicesCell,

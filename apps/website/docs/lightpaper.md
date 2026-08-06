@@ -111,7 +111,7 @@ The buyer never needs gas. All on-chain actions are either seller-initiated (res
 
 **Developers and agents seeking better output.** Specialized providers, improved prompting, domain-specific workflows, capabilities that commodity inference alone cannot deliver.
 
-**Everyday users.** AntStation brings the open market to non-technical users through chat and co-work interfaces, powered by the same P2P network underneath.
+**Everyday users.** The VPR brings the open market to non-technical users through chat and co-work interfaces, powered by the same P2P network underneath.
 
 **Privacy-sensitive organizations.** Law firms, healthcare, finance, and journalists who cannot use conventional cloud AI may prefer routes with no central account and TEE-verified providers. TEE can improve confidentiality against a provider operator, but users remain responsible for selecting suitable providers and should not assume all prompts, outputs, metadata, wallet activity, or network information are private.
 

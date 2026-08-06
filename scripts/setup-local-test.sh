@@ -11,7 +11,8 @@ REGISTRY=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512      # nonce 1 — MockERC80
 STAKING=0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9       # nonce 4
 DEPOSITS=0x5FC8d32690cc91D4c39d9d3abcBD16989F875707      # nonce 5
 CHANNELS=0x0165878A594ca255338adfa4d48449f69242Eb8F      # nonce 6
-# Stats = nonce 7, Emissions = nonce 8, SubPool = nonce 9
+# Stats = nonce 7, Emissions = nonce 8
+DEPOSIT_RELAY=0x8A791620dd6260079BF849Dc5567aDC3F2FdC318 # nonce 9
 
 cd /Users/shahafan/Development/antseed
 
@@ -44,8 +45,13 @@ cat > ~/.antseed-seller/config.json << EOF
       "channelsContractAddress": "$CHANNELS",
       "stakingContractAddress": "$STAKING",
       "usdcContractAddress": "$USDC",
-      "identityRegistryAddress": "$REGISTRY"
+      "identityRegistryAddress": "$REGISTRY",
+      "depositRelayAddress": "$DEPOSIT_RELAY"
     }
+  },
+  "relayer": {
+    "enabled": true,
+    "minProfitBaseUnits": "-100000000"
   },
   "providers": [
     { "name": "openai-responses", "services": ["codex"] }
@@ -128,12 +134,14 @@ echo "  Registry:  $REGISTRY"
 echo "  Staking:   $STAKING"
 echo "  Deposits:  $DEPOSITS"
 echo "  Channels:  $CHANNELS"
+echo "  DepositRelay: $DEPOSIT_RELAY"
 echo ""
 echo "Desktop config (Settings > Chain Config):"
 echo "  Chain ID:    base-local"
 echo "  RPC URL:     $RPC"
 echo "  Deposits:    $DEPOSITS"
 echo "  Channels:    $CHANNELS"
+echo "  DepositRelay: $DEPOSIT_RELAY"
 echo ""
 echo "Start seller:"
 echo "  node apps/cli/dist/cli/index.js --data-dir ~/.antseed-seller seller start --provider openai-responses --verbose --config ~/.antseed-seller/config.json"

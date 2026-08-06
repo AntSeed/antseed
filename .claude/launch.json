@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "website",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@antseed/website", "run", "dev"],
+      "port": 3000,
+      "autoPort": true
+    }
+  ]
+}

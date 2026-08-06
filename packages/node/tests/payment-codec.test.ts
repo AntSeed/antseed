@@ -2,8 +2,14 @@ import { describe, it, expect } from 'vitest';
 import {
   encodeSpendingAuth, decodeSpendingAuth,
   encodeAuthAck, decodeAuthAck,
+  encodeFreeUsageOpen, decodeFreeUsageOpen,
+  encodeFreeUsageAuth, decodeFreeUsageAuth,
+  encodeFreeUsageAck, decodeFreeUsageAck,
+  encodeNeedFreeUsageAuth, decodeNeedFreeUsageAuth,
   encodePaymentRequired, decodePaymentRequired,
   encodeNeedAuth, decodeNeedAuth,
+  encodeCloseChannelRequest, decodeCloseChannelRequest,
+  encodeCloseChannelResult, decodeCloseChannelResult,
 } from '../src/p2p/payment-codec.js';
 
 describe('payment codec round-trips', () => {
@@ -23,6 +29,75 @@ describe('payment codec round-trips', () => {
   it('AuthAck', () => {
     const payload = { channelId: '0x' + 'aa'.repeat(32) };
     expect(decodeAuthAck(encodeAuthAck(payload))).toEqual(payload);
+  });
+
+  it('FreeUsageOpen', () => {
+    const payload = {
+      channelId: '0x' + 'ab'.repeat(32),
+      salt: '0x' + '01'.repeat(32),
+      deadline: 123456,
+      openSig: '0x' + 'ef'.repeat(65),
+    };
+    expect(decodeFreeUsageOpen(encodeFreeUsageOpen(payload))).toEqual(payload);
+  });
+
+  it('rejects FreeUsageOpen with a non-finite deadline', () => {
+    const encoded = new TextEncoder().encode(JSON.stringify({
+      channelId: '0x' + 'ab'.repeat(32),
+      salt: '0x' + '01'.repeat(32),
+      deadline: 'NaN',
+      openSig: '0x' + 'ef'.repeat(65),
+    }));
+    expect(() => decodeFreeUsageOpen(encoded)).toThrow(/finite number/);
+  });
+
+  it('FreeUsageAuth', () => {
+    const payload = {
+      channelId: '0x' + 'ab'.repeat(32),
+      cumulativeInputTokens: '100',
+      cumulativeOutputTokens: '40',
+      sequence: '2',
+      metadataHash: '0x' + 'cd'.repeat(32),
+      metadata: '0x' + '12'.repeat(128),
+      deadline: 123456,
+      usageSig: '0x' + 'ef'.repeat(65),
+    };
+    expect(decodeFreeUsageAuth(encodeFreeUsageAuth(payload))).toEqual(payload);
+  });
+
+  it('rejects FreeUsageAuth with a non-finite deadline', () => {
+    const encoded = new TextEncoder().encode(JSON.stringify({
+      channelId: '0x' + 'ab'.repeat(32),
+      cumulativeInputTokens: '100',
+      cumulativeOutputTokens: '40',
+      sequence: '2',
+      metadataHash: '0x' + 'cd'.repeat(32),
+      metadata: '0x' + '12'.repeat(128),
+      deadline: 'NaN',
+      usageSig: '0x' + 'ef'.repeat(65),
+    }));
+    expect(() => decodeFreeUsageAuth(encoded)).toThrow(/finite number/);
+  });
+
+  it('FreeUsageAck', () => {
+    const payload = {
+      channelId: '0x' + 'ab'.repeat(32),
+      acceptedSequence: '2',
+    };
+    expect(decodeFreeUsageAck(encodeFreeUsageAck(payload))).toEqual(payload);
+  });
+
+  it('NeedFreeUsageAuth', () => {
+    const payload = {
+      channelId: '0x' + 'ab'.repeat(32),
+      requiredSequence: '3',
+      currentAcceptedSequence: '2',
+      requestId: 'req-free',
+      inputTokens: '100',
+      outputTokens: '40',
+      service: 'gpt-free',
+    };
+    expect(decodeNeedFreeUsageAuth(encodeNeedFreeUsageAuth(payload))).toEqual(payload);
   });
 
   it('PaymentRequired', () => {
@@ -126,5 +201,78 @@ describe('payment codec round-trips', () => {
       },
     }));
     expect(() => decodeNeedAuth(encoded)).toThrow(/billingUsage/);
+  });
+
+  it('CloseChannelRequest without an attached auth', () => {
+    const payload = { version: 1 as const, channelId: '0x' + 'aa'.repeat(32) };
+    expect(decodeCloseChannelRequest(encodeCloseChannelRequest(payload))).toEqual(payload);
+  });
+
+  it('CloseChannelRequest with an attached auth', () => {
+    const payload = {
+      version: 1 as const,
+      channelId: '0x' + 'aa'.repeat(32),
+      cumulativeAmount: '750000',
+      metadataHash: '0x' + 'cc'.repeat(32),
+      metadata: '0x' + 'dd'.repeat(128),
+      spendingAuthSig: '0x' + 'ee'.repeat(65),
+    };
+    expect(decodeCloseChannelRequest(encodeCloseChannelRequest(payload))).toEqual(payload);
+  });
+
+  it('CloseChannelRequest drops a partial auth rather than passing it on unverifiable', () => {
+    const wire = new TextEncoder().encode(JSON.stringify({
+      version: 1,
+      channelId: '0x' + 'aa'.repeat(32),
+      cumulativeAmount: '750000',
+      spendingAuthSig: '0x' + 'ee'.repeat(65),
+      // metadata / metadataHash missing
+    }));
+    const decoded = decodeCloseChannelRequest(wire);
+    expect(decoded.cumulativeAmount).toBeUndefined();
+    expect(decoded.spendingAuthSig).toBeUndefined();
+  });
+
+  it('CloseChannelResult success', () => {
+    const payload = {
+      version: 1 as const,
+      channelId: '0x' + 'aa'.repeat(32),
+      status: 'closed' as const,
+      txHash: '0x' + 'bb'.repeat(32),
+      finalAmount: '750000',
+    };
+    expect(decodeCloseChannelResult(encodeCloseChannelResult(payload))).toEqual(payload);
+  });
+
+  it('CloseChannelResult rejection', () => {
+    const payload = {
+      version: 1 as const,
+      channelId: '0x' + 'aa'.repeat(32),
+      status: 'rejected' as const,
+      code: 'pending_auth' as const,
+      reason: 'unsigned spend outstanding',
+      retryAfterMs: 2000,
+      requiredCumulativeAmount: '750000',
+    };
+    expect(decodeCloseChannelResult(encodeCloseChannelResult(payload))).toEqual(payload);
+  });
+
+  it('CloseChannelResult drops an unrecognized reject code', () => {
+    const wire = new TextEncoder().encode(JSON.stringify({
+      version: 1,
+      channelId: '0x' + 'aa'.repeat(32),
+      status: 'rejected',
+      code: 'not_a_real_code',
+    }));
+    expect(decodeCloseChannelResult(wire).code).toBeUndefined();
+  });
+
+  it('CloseChannelResult rejects an unknown status', () => {
+    const wire = new TextEncoder().encode(JSON.stringify({
+      version: 1,
+      channelId: '0x' + 'aa'.repeat(32),
+      status: 'maybe',
+    }));
+    expect(() => decodeCloseChannelResult(wire)).toThrow(/status/);
   });
 });

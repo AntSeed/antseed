@@ -1,16 +1,20 @@
-import type { ConnectionState, PeerInfo, SerializedHttpRequest, SerializedHttpResponse } from '@antseed/node'
+import { shouldEmitDebugLine, type PeerInfo, type SerializedHttpRequest, type SerializedHttpResponse } from '@antseed/node'
 import { parseJsonObject } from '@antseed/api-adapter'
 
-const debugEnabled = ['1', 'true', 'yes', 'on'].includes(
-  (process.env['ANTSEED_DEBUG'] ?? '').trim().toLowerCase(),
-)
+function isTruthyDebugValue(value: string | undefined): boolean {
+  return ['1', 'true', 'yes', 'on'].includes((value ?? '').trim().toLowerCase())
+}
+
+function shouldEmitProxyLog(args: unknown[]): boolean {
+  return shouldEmitDebugLine(`[proxy] ${args.map((arg) => typeof arg === 'string' ? arg : String(arg)).join(' ')}`)
+}
 
 export function DEBUG(): boolean {
-  return debugEnabled
+  return isTruthyDebugValue(process.env['ANTSEED_DEBUG'])
 }
 
 export function log(...args: unknown[]): void {
-  if (debugEnabled) console.log('[proxy]', ...args)
+  if (DEBUG() && shouldEmitProxyLog(args)) console.log('[proxy]', ...args)
 }
 
 function getHeader(headers: Record<string, string>, name: string): string {
@@ -228,18 +232,6 @@ export function requestWantsStreaming(headers: Record<string, string>, body: Uin
   return parsed?.stream === true
 }
 
-export function isConnectionChurnError(message: string): boolean {
-  return /connection .*?\b(closed|failed)\s+during request\b/i.test(message)
-}
-
-export function isConnectionHealthy(state: ConnectionState | null): boolean {
-  if (!state) {
-    return false
-  }
-  const normalized = String(state).toLowerCase()
-  return normalized === 'open' || normalized === 'authenticated' || normalized === 'connecting'
-}
-
 function extractHostFromAddress(address: string): string {
   const trimmed = address.trim()
   if (trimmed.length === 0) return ''
@@ -266,6 +258,105 @@ export function isLoopbackPeer(peer: PeerInfo): boolean {
   }
   const host = extractHostFromAddress(peer.publicAddress)
   return isLoopbackHost(host)
+}
+
+/**
+ * Model alias that tool configs can carry instead of a concrete
+ * `<peerId>@<service>` key. The buyer substitutes the session's default
+ * routed model at request time, so the route selected in the desktop
+ * (floating pill / VPR) applies to already-running tool sessions without
+ * rewriting their configs.
+ */
+export const ROUTED_MODEL_ALIAS = 'antseed'
+
+export function substituteRoutedModelAlias(
+  body: Uint8Array,
+  headers: Record<string, string>,
+  defaultRoutedModel: string | null,
+): { body: Uint8Array; headers: Record<string, string>; aliasRequested: boolean; substituted: boolean } {
+  if (!getHeader(headers, 'content-type').toLowerCase().includes('application/json') || body.length === 0) {
+    return { body, headers, aliasRequested: false, substituted: false }
+  }
+  const obj = parseJsonObject(body)
+  if (!obj) {
+    return { body, headers, aliasRequested: false, substituted: false }
+  }
+
+  const rawModel = typeof obj['model'] === 'string' ? obj['model'].trim() : ''
+  const rawService = typeof obj['service'] === 'string' ? obj['service'].trim() : ''
+  const modelIsAlias = rawModel.toLowerCase() === ROUTED_MODEL_ALIAS
+  const serviceIsAlias = rawService.toLowerCase() === ROUTED_MODEL_ALIAS
+  if (!modelIsAlias && !serviceIsAlias) {
+    return { body, headers, aliasRequested: false, substituted: false }
+  }
+
+  const target = defaultRoutedModel?.trim()
+  if (!target) {
+    return { body, headers, aliasRequested: true, substituted: false }
+  }
+  if (modelIsAlias) obj['model'] = target
+  if (serviceIsAlias) obj['service'] = target
+  const { body: rewritten, headers: updatedHeaders } = encodeRewrittenJsonBody(obj, headers)
+  return { body: rewritten, headers: updatedHeaders, aliasRequested: true, substituted: true }
+}
+
+/**
+ * Marker header the system proxy stamps on requests whose `model` field IT
+ * rewrote from the connect-time route — intercepted tools (Claude Code
+ * talking to api.anthropic.com through the MITM proxy) send upstream model
+ * names, not an AntSeed route, so the model on such requests is AntSeed
+ * plumbing rather than a client choice. The buyer treats those models like
+ * the routed-model alias for per-chat routing: a chat's pinned model
+ * overrides the proxy-resolved route. Internal — stripped before dispatch.
+ */
+export const SYSTEM_ROUTED_MODEL_HEADER = 'x-antseed-system-routed'
+
+/** Internal profile marker stamped by the system proxy so intercepted app
+    traffic is attributed to the Connected App profile that captured it,
+    rather than to a generic SDK User-Agent. Stripped before dispatch. */
+export const SYSTEM_PROXY_SOURCE_HEADER = 'x-antseed-system-proxy-source'
+
+/**
+ * Replace a proxy-assigned model with the chat's pinned route. Only used for
+ * requests carrying SYSTEM_ROUTED_MODEL_HEADER — client-chosen models are
+ * never overridden.
+ */
+export function overrideRoutedModelInBody(
+  body: Uint8Array,
+  headers: Record<string, string>,
+  pinnedModel: string,
+): { body: Uint8Array; headers: Record<string, string>; overridden: boolean } {
+  if (!getHeader(headers, 'content-type').toLowerCase().includes('application/json') || body.length === 0) {
+    return { body, headers, overridden: false }
+  }
+  const obj = parseJsonObject(body)
+  if (!obj) {
+    return { body, headers, overridden: false }
+  }
+  const rawModel = typeof obj['model'] === 'string' ? obj['model'].trim() : ''
+  if (!rawModel || rawModel === pinnedModel) {
+    return { body, headers, overridden: false }
+  }
+  obj['model'] = pinnedModel
+  if (typeof obj['service'] === 'string' && obj['service'].trim() === rawModel) {
+    obj['service'] = pinnedModel
+  }
+  const { body: rewritten, headers: updatedHeaders } = encodeRewrittenJsonBody(obj, headers)
+  return { body: rewritten, headers: updatedHeaders, overridden: true }
+}
+
+function encodeRewrittenJsonBody(
+  obj: Record<string, unknown>,
+  headers: Record<string, string>,
+): { body: Uint8Array; headers: Record<string, string> } {
+  const rewritten = new TextEncoder().encode(JSON.stringify(obj))
+  const updatedHeaders = { ...headers }
+  if ('content-length' in updatedHeaders) {
+    updatedHeaders['content-length'] = String(rewritten.length)
+  } else if ('Content-Length' in updatedHeaders) {
+    updatedHeaders['Content-Length'] = String(rewritten.length)
+  }
+  return { body: rewritten, headers: updatedHeaders }
 }
 
 export function rewritePeerPinnedServiceInBody(
@@ -301,12 +392,6 @@ export function rewritePeerPinnedServiceInBody(
     }
   }
 
-  const rewritten = new TextEncoder().encode(JSON.stringify(obj))
-  const updatedHeaders = { ...headers }
-  if ('content-length' in updatedHeaders) {
-    updatedHeaders['content-length'] = String(rewritten.length)
-  } else if ('Content-Length' in updatedHeaders) {
-    updatedHeaders['Content-Length'] = String(rewritten.length)
-  }
+  const { body: rewritten, headers: updatedHeaders } = encodeRewrittenJsonBody(obj, headers)
   return { body: rewritten, headers: updatedHeaders, pinnedPeerId: parsed.peerId }
 }

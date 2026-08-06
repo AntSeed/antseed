@@ -5,7 +5,7 @@ import { Copy01Icon, Tick02Icon, ContractsIcon, GithubIcon, Globe02Icon } from '
 import Skeleton from 'react-loading-skeleton';
 import 'react-loading-skeleton/dist/skeleton.css';
 import type { ChatServiceOptionEntry, DiscoverRow, DiscoverVerificationLink } from '../../../core/state';
-import { useUiSnapshot } from '../../hooks/useUiSnapshot';
+import { useUiSelector } from '../../hooks/useUiSelector';
 import { useDiscoverFilters } from '../../hooks/useDiscoverFilters';
 import {
   type DiscoverSortKey,
@@ -15,6 +15,7 @@ import {
   formatCategoryLabel,
 } from './discover-filter-util';
 import { DiscoverFilters } from './DiscoverFilters';
+import { displayModelLabel } from '../../../modules/catalog/model-identity';
 import {
   getPeerGradient,
   getPeerDisplayName,
@@ -55,6 +56,7 @@ type CardItem = {
   displayName: string;
   peerLabel: string;
   peerId: string;
+  peerIconUrl: string | null;
   value: string;
   provider: string;
   providerCount: number;
@@ -136,13 +138,14 @@ function buildCards(options: ChatServiceOptionEntry[]): CardItem[] {
     const tags = baseTags.some((t) => t.toLowerCase() === 'anon')
       ? baseTags
       : ['anon', ...baseTags];
-    const rawName = opt.label || opt.id;
+    const rawName = displayModelLabel(opt.id, opt.label);
     return {
       name: rawName,
       canonicalName: opt.id,
       displayName: normalizeServiceName(rawName),
       peerLabel: opt.peerLabel || '',
       peerId: opt.peerId || '',
+      peerIconUrl: opt.peerIconUrl ?? null,
       value: opt.value,
       provider: opt.provider,
       providerCount: opt.count,
@@ -199,7 +202,7 @@ function buildCardsFromRows(rows: DiscoverRow[]): CardItem[] {
     const tags = baseTags.some((t) => t.toLowerCase() === 'anon')
       ? baseTags
       : ['anon', ...baseTags];
-    const rawName = row.serviceLabel || row.serviceId;
+    const rawName = displayModelLabel(row.serviceId, row.serviceLabel);
     const peerLabel = row.peerLabel || '';
     out.push({
       name: rawName,
@@ -207,6 +210,7 @@ function buildCardsFromRows(rows: DiscoverRow[]): CardItem[] {
       displayName: normalizeServiceName(rawName),
       peerLabel,
       peerId: row.peerId,
+      peerIconUrl: row.peerIconUrl,
       value: row.selectionValue,
       provider: row.provider,
       providerCount: 1,
@@ -300,11 +304,25 @@ function SkeletonCard() {
 
 /* ── Provider avatar ─────────────────────────────────────────────────── */
 
-function ProviderAvatar({ name, gradient }: { name: string; gradient: string }) {
+function ProviderAvatar({ name, gradient, iconUrl }: { name: string; gradient: string; iconUrl?: string | null }) {
+  const [iconFailed, setIconFailed] = useState(false);
   const letter = (name || '?').charAt(0).toUpperCase();
+  const showIcon = Boolean(iconUrl) && !iconFailed;
   return (
-    <span className={styles.providerAvatar} style={{ background: gradient }}>
-      {letter}
+    <span
+      className={`${styles.providerAvatar}${showIcon ? ` ${styles.providerAvatarIcon}` : ''}`}
+      style={showIcon ? undefined : { background: gradient }}
+    >
+      {showIcon ? (
+        <img
+          className={styles.providerAvatarImage}
+          src={iconUrl ?? undefined}
+          alt=""
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          onError={() => setIconFailed(true)}
+        />
+      ) : letter}
     </span>
   );
 }
@@ -317,12 +335,16 @@ function verificationTitle(link: DiscoverVerificationLink): string {
 
 function VerificationLinkBadge({ link }: { link: DiscoverVerificationLink }) {
   const title = verificationTitle(link);
+  const hasDomainPreview = link.kind === 'domain' && (link.title || link.description);
   return (
     <InfoTooltip
       align="left"
       content={(
         <>
-          <strong>{title}</strong>
+          <strong>{hasDomainPreview ? (link.title ?? title) : title}</strong>
+          {link.kind === 'domain' && link.description && (
+            <span className={styles.verificationDescription}>{link.description}</span>
+          )}
           <span>{link.href}</span>
         </>
       )}
@@ -444,8 +466,7 @@ function buildPaginationTokens(page: number, totalPages: number): PaginationToke
 }
 
 export function DiscoverWelcome({ serviceOptions, onStartChatting }: DiscoverWelcomeProps) {
-  const snap = useUiSnapshot();
-  const rows = snap.discoverRows;
+  const rows = useUiSelector((state) => state.vprRoutableRows);
 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(() => estimatePageSize());
@@ -731,6 +752,8 @@ function Card({
     && (!hasCachedInput || item.cachedInputUsdPerMillion === 0);
   const lowReputation = isLowReputation(item.reputationScore);
   const reputationTooltip = formatReputationTooltip(item);
+  const hiddenTags = item.tags.slice(MAX_VISIBLE_CARD_TAGS);
+  const hiddenTagLabels = hiddenTags.map(formatCategoryLabel).join(', ');
 
   useEffect(() => {
     if (!copied) return undefined;
@@ -765,20 +788,26 @@ function Card({
           {item.tags.slice(0, MAX_VISIBLE_CARD_TAGS).map((t) => (
             <span key={t} className={styles.tag} style={getTagTint(t)}>{formatCategoryLabel(t)}</span>
           ))}
-          {item.tags.length > MAX_VISIBLE_CARD_TAGS && (
-            <span
-              className={`${styles.tag} ${styles.tagMore}`}
-              tabIndex={0}
-              aria-label={`${item.tags.length - MAX_VISIBLE_CARD_TAGS} more categories: `
-                + item.tags.slice(MAX_VISIBLE_CARD_TAGS).map(formatCategoryLabel).join(', ')}
-              onClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => e.stopPropagation()}
+          {hiddenTags.length > 0 && (
+            <InfoTooltip
+              align="left"
+              content={(
+                <>
+                  <strong>More categories</strong>
+                  <span>{hiddenTagLabels}</span>
+                </>
+              )}
             >
-              +{item.tags.length - MAX_VISIBLE_CARD_TAGS}
-              <span role="tooltip" className={styles.tagMoreTooltip}>
-                {item.tags.slice(MAX_VISIBLE_CARD_TAGS).map(formatCategoryLabel).join(', ')}
+              <span
+                className={`${styles.tag} ${styles.tagMore}`}
+                tabIndex={0}
+                aria-label={`${hiddenTags.length} more categories: ${hiddenTagLabels}`}
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
+              >
+                +{hiddenTags.length}
               </span>
-            </span>
+            </InfoTooltip>
           )}
         </div>
         <div className={styles.cardNameRow}>
@@ -820,7 +849,7 @@ function Card({
       <div className={styles.cardFooter}>
         <div className={styles.cardFooterTop}>
           <div className={styles.cardProvider}>
-            <ProviderAvatar name={providerName} gradient={item.gradient} />
+            <ProviderAvatar name={providerName} gradient={item.gradient} iconUrl={item.peerIconUrl} />
             <span className={styles.cardProviderName}>{providerName}</span>
             <CardBadges item={item} />
           </div>

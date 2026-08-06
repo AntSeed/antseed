@@ -5,7 +5,7 @@ import "forge-std/Script.sol";
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-import { DiemStakingProxy } from "../DiemStakingProxy.sol";
+import { DiemStakingProxy } from "../staking/DiemStakingProxy.sol";
 import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
 
 interface IERC8004RegisterAndTransfer {

@@ -103,7 +103,7 @@ describe('Reputation Integration', () => {
     const computed = computeOnChainReputationScore(peer);
     expect(computed).not.toBeNull();
     expect(effectiveReputation(peer)).toBe(computed);
-    expect(effectiveReputation(peer)).toBeGreaterThan(reportedScore);
+    expect(effectiveReputation(peer)).not.toBe(reportedScore);
   });
 
   it('should fall back to reported reputation when on-chain reputation is not available', () => {

@@ -1,6 +1,6 @@
 // Smart AntStation download URL — mirrors the hook at
 // `apps/website/src/lib/useLatestDesktopDownload.ts` so the "Download
-// AntStation" links on diem.antseed.com behave exactly like the ones on
+// AntStation" links on diemantseed.com behave exactly like the ones on
 // antseed.com: when the visitor is on a Mac or Windows machine, resolve a
 // direct installer URL matching their CPU arch from the real release asset
 // list. On other platforms — or while the GitHub API lookup is in-flight —

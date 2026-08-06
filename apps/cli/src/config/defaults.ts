@@ -15,7 +15,7 @@ export function createDefaultConfig(): AntseedConfig {
     },
     seller: {
       reserveFloor: 10,
-      maxConcurrentBuyers: 5,
+      maxConcurrentBuyers: 50,
       providers: {},
       publicAddress: '',
     },
@@ -30,6 +30,7 @@ export function createDefaultConfig(): AntseedConfig {
       proxyPort: 8377,
       peerRefreshIntervalMs: DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS,
       metadataFetchTimeoutMs: DEFAULT_BUYER_METADATA_FETCH_TIMEOUT_MS,
+      disableMetadataV2Services: false,
     },
     payments: {
       preferredMethod: 'crypto',
@@ -37,6 +38,9 @@ export function createDefaultConfig(): AntseedConfig {
       crypto: {
         chainId: 'base-mainnet',
       },
+    },
+    relayer: {
+      enabled: true,
     },
     network: {
       bootstrapNodes: [],

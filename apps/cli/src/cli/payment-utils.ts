@@ -3,13 +3,13 @@ import {
   DepositsClient,
   ChannelsClient,
   StakingClient,
+  DepositRelayClient,
   loadOrCreateIdentity,
   resolveChainConfig,
 } from '@antseed/node';
 import {
   IdentityClient,
   EmissionsClient,
-  SubPoolClient,
   ChannelStore,
 } from '@antseed/node/payments';
 import type { Identity } from '@antseed/node';
@@ -79,6 +79,10 @@ export function formatUsdc(baseUnits: bigint): string {
   return `${whole}.${fracStr}`;
 }
 
+export function shortId(value: string, len = 10): string {
+  return value.length > len ? `${value.slice(0, len)}...` : value;
+}
+
 /** Parse human-readable USDC to base units (6 decimals). */
 export function parseUsdcToBaseUnits(amount: string): bigint {
   const amountFloat = parseFloat(amount);
@@ -102,7 +106,7 @@ type ResolvedCryptoConfig = NonNullable<AntseedConfig['payments']['crypto']> & {
   stakingContractAddress?: string;
   identityRegistryAddress?: string;
   emissionsContractAddress?: string;
-  subPoolContractAddress?: string;
+  depositRelayAddress?: string;
   evmChainId: number;
 };
 
@@ -150,6 +154,7 @@ export function requireCryptoConfig(
     stakingContractAddress: crypto.stakingContractAddress || resolved.stakingContractAddress,
     emissionsContractAddress: crypto.emissionsContractAddress || resolved.emissionsContractAddress,
     identityRegistryAddress: crypto.identityRegistryAddress || resolved.identityRegistryAddress,
+    depositRelayAddress: crypto.depositRelayAddress || resolved.depositRelayAddress,
     evmChainId: resolved.evmChainId,
   };
 }
@@ -237,18 +242,17 @@ export function createEmissionsClient(config: AntseedConfig, overrides?: CryptoC
 }
 
 /**
- * Create a SubPoolClient from the CLI config.
+ * Create a DepositRelayClient from the CLI config.
  */
-export function createSubPoolClient(config: AntseedConfig, overrides?: CryptoConfigOverrides): SubPoolClient {
+export function createDepositRelayClient(config: AntseedConfig, overrides?: CryptoConfigOverrides): DepositRelayClient {
   const crypto = requireCryptoConfig(config, overrides);
-  if (!crypto.subPoolContractAddress) {
-    throw new Error('No subscription pool contract address configured. Set payments.crypto.subPoolContractAddress in your config file.');
+  if (!crypto.depositRelayAddress) {
+    throw new Error('No deposit relay address configured for this chain. Set payments.crypto.depositRelayAddress in your config file.');
   }
-  return new SubPoolClient({
+  return new DepositRelayClient({
     rpcUrl: crypto.rpcUrl,
     ...fallbackClientOpts(crypto),
-    contractAddress: crypto.subPoolContractAddress,
-    usdcAddress: crypto.usdcContractAddress,
+    contractAddress: crypto.depositRelayAddress,
     evmChainId: crypto.evmChainId,
   });
 }

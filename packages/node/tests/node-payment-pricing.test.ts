@@ -5,6 +5,10 @@ import type { Provider } from '../src/interfaces/seller-provider.js';
 import { decodeHttpResponse, encodeHttpRequest } from '../src/proxy/request-codec.js';
 import { decodeFrame } from '../src/p2p/message-protocol.js';
 import { MessageType, PAYMENT_CODE_CHANNEL_EXHAUSTED } from '../src/types/protocol.js';
+import { ANTSEED_ATTEST_PATH, type Prover, type SellerRequest } from '../src/interfaces/plugin.js';
+
+const ATTEST_ID = 'antseed-verifier';
+const ATTEST_ROUTE = `${ANTSEED_ATTEST_PATH}/${ATTEST_ID}`;
 
 function makeProvider(inputUsdPerMillion: number, outputUsdPerMillion: number, opts: {
   name: string;
@@ -53,6 +57,9 @@ function makeSpmMock(overrides: Record<string, unknown> = {}): any {
     waitForPendingAuths: async () => {},
     awaitAcceptedAtLeast: async () => false,
     settleSession: vi.fn(async () => {}),
+    beginBillableRequest: vi.fn(),
+    endBillableRequest: vi.fn(),
+    hasInFlightRequests: () => false,
     ...overrides,
   };
 }
@@ -73,6 +80,57 @@ function makeSellerRequestHandler(
     identity: { peerId: 's'.repeat(40) } as any,
     ...deps,
   });
+}
+
+function makeAttestHarness() {
+  const provider = makeProvider(1, 1, { name: 'openai', services: ['gpt-5.5'] });
+  provider.handleRequest = vi.fn(provider.handleRequest);
+  const prove = vi.fn(async (req: SellerRequest) => ({
+    statusCode: 200,
+    headers: { 'content-type': 'application/json' },
+    body: new TextEncoder().encode(JSON.stringify({ ok: true, path: req.path })),
+  }));
+  const prover: Prover = {
+    type: 'prover',
+    name: ATTEST_ID,
+    displayName: 'Refound verifier',
+    version: '0.1.0',
+    description: 'test prover',
+    prove,
+  };
+  const sendPaymentRequired = vi.fn();
+  const handler = makeSellerRequestHandler({
+    providers: [provider],
+    provers: [prover],
+    sellerPaymentManager: makeSpmMock({ hasSession: () => false }),
+    sessionTracker: null,
+    channelsClient: {} as any,
+    announcer: null,
+    emit: () => false,
+  });
+  const sentFrames: Uint8Array[] = [];
+  const { mux } = handler.handleConnection(
+    makeConn(sentFrames),
+    'b'.repeat(40),
+    { sendNeedAuth: vi.fn(), sendPaymentRequired } as any,
+  );
+  return {
+    provider,
+    prove,
+    sendPaymentRequired,
+    sendAttest: (i = 0, body = new Uint8Array([1])) => mux.handleFrame({
+      type: MessageType.HttpRequest,
+      messageId: i + 1,
+      payload: encodeHttpRequest({
+        requestId: `req-attest-${i}`,
+        method: 'POST',
+        path: ATTEST_ROUTE,
+        headers: {},
+        body,
+      }),
+    }),
+    responses: () => sentFrames.map((f) => decodeHttpResponse(decodeFrame(f)!.message.payload)),
+  };
 }
 
 describe('SellerRequestHandler payment pricing selection', () => {
@@ -154,6 +212,50 @@ describe('SellerRequestHandler payment pricing selection', () => {
     expect(body.id).toBe('gpt-5.5');
   });
 
+  it('dispatches attestation requests before provider and payment logic', async () => {
+    const { provider, prove, sendPaymentRequired, sendAttest, responses } = makeAttestHarness();
+    await sendAttest(0, new Uint8Array([1, 2, 3]));
+
+    expect(responses()[0]!.statusCode).toBe(200);
+    expect(prove).toHaveBeenCalledOnce();
+    expect(provider.handleRequest).not.toHaveBeenCalled();
+    expect(sendPaymentRequired).not.toHaveBeenCalled();
+  });
+
+  it('rate-limits the free attestation route per buyer', async () => {
+    const { prove, sendAttest, responses } = makeAttestHarness();
+
+    for (let i = 0; i < 11; i++) {
+      await sendAttest(i);
+    }
+
+    const statuses = responses().map((r) => r.statusCode);
+    expect(statuses.filter((s) => s === 200)).toHaveLength(10);
+    expect(statuses[10]).toBe(429);
+    expect(prove).toHaveBeenCalledTimes(10);
+  });
+
+  it('hard-bounds tracked attestation rate-limit peers', () => {
+    const handler = makeSellerRequestHandler({
+      providers: [],
+      sellerPaymentManager: null,
+      sessionTracker: null,
+      channelsClient: null,
+      announcer: null,
+      emit: () => false,
+    }) as unknown as {
+      _allowAttest(peerId: string): boolean;
+      _attestRateWindows: Map<string, unknown>;
+    };
+
+    for (let i = 0; i < 1024; i++) {
+      expect(handler._allowAttest(`peer-${i}`)).toBe(true);
+    }
+    expect(handler._attestRateWindows.size).toBe(1024);
+    expect(handler._allowAttest('peer-overflow')).toBe(false);
+    expect(handler._attestRateWindows.size).toBe(1024);
+  });
+
   it('matches the requested provider and service pricing instead of using the first provider defaults', () => {
     const anthropic = makeProvider(3, 15, {
       name: 'anthropic',
@@ -214,9 +316,11 @@ describe('SellerRequestHandler payment pricing selection', () => {
 
     const sendNeedAuth = vi.fn();
     const recordSpend = vi.fn();
+    const reportUsageRequest = vi.fn();
     const handler = makeSellerRequestHandler({
       providers: [provider],
       sellerPaymentManager: makeSpmMock({ recordSpend, getPaymentRequirements: () => ({ minBudgetPerRequest: '0', suggestedAmount: '0' }) }),
+      sellerFreeUsageManager: { reportUsageRequest } as any,
       sessionTracker: null,
       channelsClient: {} as any,
       announcer: null,
@@ -234,6 +338,13 @@ describe('SellerRequestHandler payment pricing selection', () => {
     expect(sentFrames.length).toBeGreaterThan(0);
     expect(recordSpend).not.toHaveBeenCalled();
     expect(sendNeedAuth).not.toHaveBeenCalled();
+    expect(reportUsageRequest).toHaveBeenCalledOnce();
+    expect(reportUsageRequest).toHaveBeenCalledWith('b'.repeat(40), paymentMux, {
+      requestId: 'req-zero-cost',
+      inputTokens: 0,
+      outputTokens: 0,
+      service: 'local-test',
+    });
   });
 
   it('uses cumulative spend as NeedAuth required amount without double-counting the latest request', async () => {
@@ -402,6 +513,35 @@ describe('SellerRequestHandler payment pricing selection', () => {
     expect(cumulativeAfterRequest).toBeLessThan(reserveMax);
     expect(sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({ lastRequestCost: costUsdc.toString(), requiredCumulativeAmount: cumulativeAfterRequest.toString() }));
     expect(BigInt(sendNeedAuth.mock.calls[0]![0].requiredCumulativeAmount)).toBeLessThanOrEqual(reserveMax);
+  });
+
+  it('does not crash when PaymentRequired cannot be sent to a disconnected first-time buyer', async () => {
+    const provider = makeProvider(10, 20, { name: 'paid-tier', services: ['local-test'] });
+    provider.handleRequest = vi.fn(async (req) => ({ requestId: req.requestId, statusCode: 200, headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({ ok: true })) }));
+
+    const sendPaymentRequired = vi.fn(() => {
+      throw new Error('Cannot send to buyer: no writable transport');
+    });
+    const handler = makeSellerRequestHandler({
+      providers: [provider],
+      sellerPaymentManager: makeSpmMock({ hasSession: () => false, getChannelByPeer: () => undefined }),
+      sessionTracker: null,
+      channelsClient: {} as any,
+      announcer: null,
+      emit: () => false,
+    });
+
+    const sentFrames: Uint8Array[] = [];
+    const conn = makeConn(sentFrames);
+    const paymentMux = { sendNeedAuth: vi.fn(), sendPaymentRequired } as any;
+    const { mux } = handler.handleConnection(conn, 'b'.repeat(40), paymentMux);
+
+    await expect(mux.handleFrame({ type: MessageType.HttpRequest, messageId: 1, payload: encodeHttpRequest({ requestId: 'req-closed-payment-required', method: 'POST', path: '/v1/chat/completions', headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({ model: 'local-test' })) }) })).resolves.toBeUndefined();
+
+    expect(provider.handleRequest).not.toHaveBeenCalled();
+    expect(sendPaymentRequired).toHaveBeenCalledOnce();
+    const response = decodeHttpResponse(decodeFrame(sentFrames[0]!)!.message.payload);
+    expect(response.statusCode).toBe(402);
   });
 
   it('skips the 402 / ReserveAuth handshake when a first-time buyer requests a free service', async () => {

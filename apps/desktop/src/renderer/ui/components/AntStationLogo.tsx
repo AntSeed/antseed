@@ -50,6 +50,23 @@ function AntStationWordmark() {
   );
 }
 
+/** Just the ant mark, no wordmark — square icon contexts (the floating pill
+ * badge). The viewBox is shifted so the mark sits optically centered. */
+export function AntStationMark({ size = 28, className }: { size?: number; className?: string }) {
+  return (
+    <svg
+      className={className}
+      width={size}
+      height={size}
+      viewBox="0 -1.5 28 28"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <AntIconPaths />
+    </svg>
+  );
+}
+
 export function AntStationLogo({ height = 28, className }: AntStationLogoProps) {
   const width = Math.round(height * (117 / 28));
 

@@ -3,8 +3,14 @@ import { MessageType } from '../types/protocol.js';
 import type {
   SpendingAuthPayload,
   AuthAckPayload,
+  FreeUsageOpenPayload,
+  FreeUsageAuthPayload,
+  FreeUsageAckPayload,
+  NeedFreeUsageAuthPayload,
   PaymentRequiredPayload,
   NeedAuthPayload,
+  CloseChannelRequestPayload,
+  CloseChannelResultPayload,
 } from '../types/protocol.js';
 import { encodeFrame } from './message-protocol.js';
 import type { FramedMessage } from '../types/protocol.js';
@@ -14,8 +20,14 @@ import { debugLog } from '../utils/debug.js';
 const MESSAGE_TYPE_NAME: Record<number, string> = {
   [MessageType.SpendingAuth]: 'SpendingAuth',
   [MessageType.AuthAck]: 'AuthAck',
+  [MessageType.FreeUsageOpen]: 'FreeUsageOpen',
+  [MessageType.FreeUsageAuth]: 'FreeUsageAuth',
+  [MessageType.FreeUsageAck]: 'FreeUsageAck',
+  [MessageType.NeedFreeUsageAuth]: 'NeedFreeUsageAuth',
   [MessageType.PaymentRequired]: 'PaymentRequired',
   [MessageType.NeedAuth]: 'NeedAuth',
+  [MessageType.CloseChannelRequest]: 'CloseChannelRequest',
+  [MessageType.CloseChannelResult]: 'CloseChannelResult',
 };
 
 export type PaymentMessageHandler<T> = (payload: T) => void | Promise<void>;
@@ -32,8 +44,14 @@ export class PaymentMux {
   // Handler registrations
   private _onSpendingAuth?: PaymentMessageHandler<SpendingAuthPayload>;
   private _onAuthAck?: PaymentMessageHandler<AuthAckPayload>;
+  private _onFreeUsageOpen?: PaymentMessageHandler<FreeUsageOpenPayload>;
+  private _onFreeUsageAuth?: PaymentMessageHandler<FreeUsageAuthPayload>;
+  private _onFreeUsageAck?: PaymentMessageHandler<FreeUsageAckPayload>;
+  private _onNeedFreeUsageAuth?: PaymentMessageHandler<NeedFreeUsageAuthPayload>;
   private _onPaymentRequired?: PaymentMessageHandler<PaymentRequiredPayload>;
   private _onNeedAuth?: PaymentMessageHandler<NeedAuthPayload>;
+  private _onCloseChannelRequest?: PaymentMessageHandler<CloseChannelRequestPayload>;
+  private _onCloseChannelResult?: PaymentMessageHandler<CloseChannelResultPayload>;
 
   constructor(connection: PeerConnection) {
     this._connection = connection;
@@ -46,11 +64,29 @@ export class PaymentMux {
   onAuthAck(handler: PaymentMessageHandler<AuthAckPayload>): void {
     this._onAuthAck = handler;
   }
+  onFreeUsageOpen(handler: PaymentMessageHandler<FreeUsageOpenPayload>): void {
+    this._onFreeUsageOpen = handler;
+  }
+  onFreeUsageAuth(handler: PaymentMessageHandler<FreeUsageAuthPayload>): void {
+    this._onFreeUsageAuth = handler;
+  }
+  onFreeUsageAck(handler: PaymentMessageHandler<FreeUsageAckPayload>): void {
+    this._onFreeUsageAck = handler;
+  }
+  onNeedFreeUsageAuth(handler: PaymentMessageHandler<NeedFreeUsageAuthPayload>): void {
+    this._onNeedFreeUsageAuth = handler;
+  }
   onPaymentRequired(handler: PaymentMessageHandler<PaymentRequiredPayload>): void {
     this._onPaymentRequired = handler;
   }
   onNeedAuth(handler: PaymentMessageHandler<NeedAuthPayload>): void {
     this._onNeedAuth = handler;
+  }
+  onCloseChannelRequest(handler: PaymentMessageHandler<CloseChannelRequestPayload>): void {
+    this._onCloseChannelRequest = handler;
+  }
+  onCloseChannelResult(handler: PaymentMessageHandler<CloseChannelResultPayload>): void {
+    this._onCloseChannelResult = handler;
   }
 
   // --- Sending ---
@@ -60,11 +96,29 @@ export class PaymentMux {
   sendAuthAck(payload: AuthAckPayload): void {
     this._send(MessageType.AuthAck, codec.encodeAuthAck(payload));
   }
+  sendFreeUsageOpen(payload: FreeUsageOpenPayload): void {
+    this._send(MessageType.FreeUsageOpen, codec.encodeFreeUsageOpen(payload));
+  }
+  sendFreeUsageAuth(payload: FreeUsageAuthPayload): void {
+    this._send(MessageType.FreeUsageAuth, codec.encodeFreeUsageAuth(payload));
+  }
+  sendFreeUsageAck(payload: FreeUsageAckPayload): void {
+    this._send(MessageType.FreeUsageAck, codec.encodeFreeUsageAck(payload));
+  }
+  sendNeedFreeUsageAuth(payload: NeedFreeUsageAuthPayload): void {
+    this._send(MessageType.NeedFreeUsageAuth, codec.encodeNeedFreeUsageAuth(payload));
+  }
   sendPaymentRequired(payload: PaymentRequiredPayload): void {
     this._send(MessageType.PaymentRequired, codec.encodePaymentRequired(payload));
   }
   sendNeedAuth(payload: NeedAuthPayload): void {
     this._send(MessageType.NeedAuth, codec.encodeNeedAuth(payload));
+  }
+  sendCloseChannelRequest(payload: CloseChannelRequestPayload): void {
+    this._send(MessageType.CloseChannelRequest, codec.encodeCloseChannelRequest(payload));
+  }
+  sendCloseChannelResult(payload: CloseChannelResultPayload): void {
+    this._send(MessageType.CloseChannelResult, codec.encodeCloseChannelResult(payload));
   }
 
   // --- Receiving ---
@@ -82,11 +136,29 @@ export class PaymentMux {
       case MessageType.AuthAck:
         await this._onAuthAck?.(codec.decodeAuthAck(frame.payload));
         return true;
+      case MessageType.FreeUsageOpen:
+        await this._onFreeUsageOpen?.(codec.decodeFreeUsageOpen(frame.payload));
+        return true;
+      case MessageType.FreeUsageAuth:
+        await this._onFreeUsageAuth?.(codec.decodeFreeUsageAuth(frame.payload));
+        return true;
+      case MessageType.FreeUsageAck:
+        await this._onFreeUsageAck?.(codec.decodeFreeUsageAck(frame.payload));
+        return true;
+      case MessageType.NeedFreeUsageAuth:
+        await this._onNeedFreeUsageAuth?.(codec.decodeNeedFreeUsageAuth(frame.payload));
+        return true;
       case MessageType.PaymentRequired:
         await this._onPaymentRequired?.(codec.decodePaymentRequired(frame.payload));
         return true;
       case MessageType.NeedAuth:
         await this._onNeedAuth?.(codec.decodeNeedAuth(frame.payload));
+        return true;
+      case MessageType.CloseChannelRequest:
+        await this._onCloseChannelRequest?.(codec.decodeCloseChannelRequest(frame.payload));
+        return true;
+      case MessageType.CloseChannelResult:
+        await this._onCloseChannelResult?.(codec.decodeCloseChannelResult(frame.payload));
         return true;
       default:
         return false;
@@ -99,7 +171,8 @@ export class PaymentMux {
   }
 
   private _send(type: MessageType, payload: Uint8Array): void {
-    debugLog(`[PaymentMux] → send ${MESSAGE_TYPE_NAME[type] ?? `0x${type.toString(16)}`} (${payload.length}b)`);
+    const name = MESSAGE_TYPE_NAME[type] ?? `0x${type.toString(16)}`;
+    debugLog(`[PaymentMux] → send ${name} (${payload.length}b)`);
     const frame = encodeFrame({
       type,
       messageId: this._messageIdCounter++ & 0xffffffff,

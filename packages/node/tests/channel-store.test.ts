@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { ChannelStore, type StoredChannel, type StoredReceipt } from '../src/payments/channel-store.js';
+import { ChannelStore, CHANNEL_KIND, CHANNEL_ROLE, CHANNEL_STATUS, type StoredChannel, type StoredReceipt } from '../src/payments/channel-store.js';
 
 function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), 'channel-store-test-'));
@@ -13,7 +13,7 @@ function makeChannel(overrides: Partial<StoredChannel> = {}): StoredChannel {
   return {
     sessionId: '0x' + 'aa'.repeat(32),
     peerId: 'peer-abc123',
-    role: 'buyer',
+    role: CHANNEL_ROLE.BUYER,
     sellerEvmAddr: '0x' + 'bb'.repeat(20),
     buyerEvmAddr: '0x' + 'cc'.repeat(20),
     nonce: 1,
@@ -26,7 +26,7 @@ function makeChannel(overrides: Partial<StoredChannel> = {}): StoredChannel {
     reservedAt: now,
     settledAt: null,
     settledAmount: null,
-    status: 'active',
+    status: CHANNEL_STATUS.ACTIVE,
     createdAt: now,
     updatedAt: now,
     ...overrides,
@@ -65,7 +65,7 @@ describe('ChannelStore', () => {
     expect(loaded!.previousConsumption).toBe(channel.previousConsumption);
     expect(loaded!.tokensDelivered).toBe(channel.tokensDelivered);
     expect(loaded!.requestCount).toBe(channel.requestCount);
-    expect(loaded!.status).toBe('active');
+    expect(loaded!.status).toBe(CHANNEL_STATUS.ACTIVE);
     expect(loaded!.settledAt).toBeNull();
     expect(loaded!.settledAmount).toBeNull();
   });
@@ -74,10 +74,10 @@ describe('ChannelStore', () => {
     const channel = makeChannel();
     store.upsertChannel(channel);
 
-    store.updateChannelStatus(channel.sessionId, 'settled', '500000');
+    store.updateChannelStatus(channel.sessionId, CHANNEL_STATUS.SETTLED, '500000');
 
     const loaded = store.getChannel(channel.sessionId);
-    expect(loaded!.status).toBe('settled');
+    expect(loaded!.status).toBe(CHANNEL_STATUS.SETTLED);
     expect(loaded!.settledAmount).toBe('500000');
     expect(loaded!.settledAt).toBeTypeOf('number');
   });
@@ -94,33 +94,54 @@ describe('ChannelStore', () => {
   });
 
   it('test_getActiveByPeer: returns correct active channel', () => {
-    const s1 = makeChannel({ sessionId: '0x' + '01'.repeat(32), status: 'settled', createdAt: Date.now() - 1000 });
-    const s2 = makeChannel({ sessionId: '0x' + '02'.repeat(32), status: 'active', createdAt: Date.now() });
+    const s1 = makeChannel({ sessionId: '0x' + '01'.repeat(32), status: CHANNEL_STATUS.SETTLED, createdAt: Date.now() - 1000 });
+    const s2 = makeChannel({ sessionId: '0x' + '02'.repeat(32), status: CHANNEL_STATUS.ACTIVE, createdAt: Date.now() });
     store.upsertChannel(s1);
     store.upsertChannel(s2);
 
-    const active = store.getActiveChannelByPeer('peer-abc123', 'buyer');
+    const active = store.getActiveChannelByPeer('peer-abc123', CHANNEL_ROLE.BUYER);
     expect(active).not.toBeNull();
     expect(active!.sessionId).toBe(s2.sessionId);
   });
 
+  it('keeps active paid and free channels separate for the same peer', () => {
+    const paid = makeChannel({
+      sessionId: '0x' + '10'.repeat(32),
+      channelKind: CHANNEL_KIND.PAID,
+      createdAt: Date.now() - 1000,
+    });
+    const free = makeChannel({
+      sessionId: '0x' + '20'.repeat(32),
+      channelKind: CHANNEL_KIND.FREE,
+      authMax: '0',
+      createdAt: Date.now(),
+    });
+    store.upsertChannel(paid);
+    store.upsertChannel(free);
+
+    expect(store.getActiveChannelByPeer('peer-abc123', CHANNEL_ROLE.BUYER)!.sessionId).toBe(paid.sessionId);
+    expect(store.getActiveChannelByPeer('peer-abc123', CHANNEL_ROLE.BUYER, CHANNEL_KIND.FREE)!.sessionId).toBe(free.sessionId);
+    expect(store.listAllChannels()).toHaveLength(1);
+    expect(store.listAllChannels(100, CHANNEL_KIND.FREE)).toHaveLength(1);
+  });
+
   it('test_getActiveByPeer: returns null when no active channel', () => {
-    const s1 = makeChannel({ status: 'settled' });
+    const s1 = makeChannel({ status: CHANNEL_STATUS.SETTLED });
     store.upsertChannel(s1);
 
-    const active = store.getActiveChannelByPeer('peer-abc123', 'buyer');
+    const active = store.getActiveChannelByPeer('peer-abc123', CHANNEL_ROLE.BUYER);
     expect(active).toBeNull();
   });
 
   it('test_getLatestByPeer: returns most recent (any status)', () => {
-    const s1 = makeChannel({ sessionId: '0x' + '01'.repeat(32), status: 'settled', createdAt: Date.now() - 2000 });
-    const s2 = makeChannel({ sessionId: '0x' + '02'.repeat(32), status: 'settled', createdAt: Date.now() - 1000 });
-    const s3 = makeChannel({ sessionId: '0x' + '03'.repeat(32), status: 'active', createdAt: Date.now() });
+    const s1 = makeChannel({ sessionId: '0x' + '01'.repeat(32), status: CHANNEL_STATUS.SETTLED, createdAt: Date.now() - 2000 });
+    const s2 = makeChannel({ sessionId: '0x' + '02'.repeat(32), status: CHANNEL_STATUS.SETTLED, createdAt: Date.now() - 1000 });
+    const s3 = makeChannel({ sessionId: '0x' + '03'.repeat(32), status: CHANNEL_STATUS.ACTIVE, createdAt: Date.now() });
     store.upsertChannel(s1);
     store.upsertChannel(s2);
     store.upsertChannel(s3);
 
-    const latest = store.getLatestChannel('peer-abc123', 'buyer');
+    const latest = store.getLatestChannel('peer-abc123', CHANNEL_ROLE.BUYER);
     expect(latest).not.toBeNull();
     expect(latest!.sessionId).toBe(s3.sessionId);
   });
@@ -210,5 +231,83 @@ describe('ChannelStore', () => {
     store2.close();
     // Prevent double-close in afterEach
     store = new ChannelStore(tempDir);
+  });
+
+  describe('getBuyerServiceUsageTotals', () => {
+    const buyerAddr = '0x' + 'cc'.repeat(20);
+
+    it('sums the same service across paid and free channels', () => {
+      const paid = makeChannel({ sessionId: '0x' + 'a1'.repeat(32) });
+      const free = makeChannel({ sessionId: '0x' + 'a2'.repeat(32), channelKind: CHANNEL_KIND.FREE });
+      store.upsertChannel(paid);
+      store.upsertChannel(free);
+      store.replaceServiceTotals(paid.sessionId, [{
+        serviceId: '0x' + '11'.repeat(32),
+        cumulativeAmount: '1000',
+        cumulativeInputTokens: '500',
+        cumulativeCachedInputTokens: '100',
+        cumulativeOutputTokens: '200',
+        cumulativeRequestCount: '3',
+      }]);
+      store.replaceServiceTotals(free.sessionId, [{
+        serviceId: '0x' + '11'.repeat(32),
+        cumulativeAmount: '0',
+        cumulativeInputTokens: '400',
+        cumulativeCachedInputTokens: '0',
+        cumulativeOutputTokens: '300',
+        cumulativeRequestCount: '2',
+      }]);
+
+      const totals = store.getBuyerServiceUsageTotals(buyerAddr);
+      expect(totals.length).toBe(1);
+      expect(totals[0].serviceId).toBe('0x' + '11'.repeat(32));
+      expect(totals[0].amountUsdc).toBe('1000');
+      expect(totals[0].inputTokens).toBe('900');
+      expect(totals[0].cachedInputTokens).toBe('100');
+      expect(totals[0].outputTokens).toBe('500');
+      expect(totals[0].requestCount).toBe(5);
+    });
+
+    it('keeps distinct services separate and excludes other buyers', () => {
+      const mine = makeChannel({ sessionId: '0x' + 'b1'.repeat(32) });
+      const theirs = makeChannel({ sessionId: '0x' + 'b2'.repeat(32), buyerEvmAddr: '0x' + 'dd'.repeat(20) });
+      store.upsertChannel(mine);
+      store.upsertChannel(theirs);
+      store.replaceServiceTotals(mine.sessionId, [
+        {
+          serviceId: '0x' + '11'.repeat(32),
+          cumulativeAmount: '10',
+          cumulativeInputTokens: '1',
+          cumulativeCachedInputTokens: '0',
+          cumulativeOutputTokens: '1',
+          cumulativeRequestCount: '1',
+        },
+        {
+          serviceId: '0x' + '22'.repeat(32),
+          cumulativeAmount: '20',
+          cumulativeInputTokens: '2',
+          cumulativeCachedInputTokens: '0',
+          cumulativeOutputTokens: '2',
+          cumulativeRequestCount: '1',
+        },
+      ]);
+      store.replaceServiceTotals(theirs.sessionId, [{
+        serviceId: '0x' + '11'.repeat(32),
+        cumulativeAmount: '999',
+        cumulativeInputTokens: '999',
+        cumulativeCachedInputTokens: '0',
+        cumulativeOutputTokens: '999',
+        cumulativeRequestCount: '9',
+      }]);
+
+      const totals = store.getBuyerServiceUsageTotals(buyerAddr);
+      expect(totals.length).toBe(2);
+      const first = totals.find((t) => t.serviceId === '0x' + '11'.repeat(32));
+      expect(first?.amountUsdc).toBe('10');
+    });
+
+    it('returns empty for a buyer with no channels', () => {
+      expect(store.getBuyerServiceUsageTotals('0x' + 'ee'.repeat(20))).toEqual([]);
+    });
   });
 });

@@ -3,12 +3,24 @@ export {
   AntseedNode,
   type NodeConfig,
   type NodePaymentsConfig,
+  type NodeRelayerConfig,
   type RequestStreamCallbacks,
   type RequestStreamResponseMetadata,
   type BuyerUsageTotals,
   type BuyerUsageChannelPoint,
+  type BuyerUsageServicePoint,
 } from './node.js';
 export type { Provider, ProviderStreamCallbacks } from './interfaces/seller-provider.js';
+export {
+  ModelHealthChecker,
+  DEFAULT_HEALTH_CHECK_INTERVAL_MS,
+  DEFAULT_HEALTH_CHECK_FAILURE_THRESHOLD,
+  DEFAULT_HEALTH_CHECK_PROBE_TIMEOUT_MS,
+  type ModelHealthCheckerConfig,
+  type ModelHealthEvent,
+  type ModelHealthTarget,
+  type ServiceHealthSnapshot,
+} from './health/model-health-checker.js';
 export type { Router } from './interfaces/buyer-router.js';
 
 // Types (re-export everything)
@@ -71,8 +83,28 @@ export { MetadataServer, type MetadataServerConfig } from './discovery/metadata-
 export { parsePublicAddress, MAX_PUBLIC_ADDRESS_LENGTH, type ParsedPublicAddress } from './discovery/public-address.js';
 export { MeteringStorage } from './metering/storage.js';
 export { BalanceManager } from './payments/balance-manager.js';
+export {
+  computeCostUsdc,
+  estimateTokensFromBytes,
+  estimateTokensFromText,
+  type ServicePricing,
+} from './payments/pricing.js';
 export { DepositsClient, type DepositsClientConfig, type BuyerBalanceInfo } from './payments/evm/deposits-client.js';
+export {
+  DepositRelayClient,
+  type DepositRelayClientConfig,
+  type SweepParams,
+  type SweepProfitEstimate,
+  type SweepEventConfirmation,
+} from './payments/evm/deposit-relay-client.js';
+export { DepositRelayer, type DepositRelayerConfig, type SweepHandleResult } from './payments/deposit-relayer.js';
 export { ChannelsClient, type ChannelsClientConfig, type ChannelInfo, type AgentStats } from './payments/evm/channels-client.js';
+export {
+  FreeUsageClient,
+  type FreeUsageClientConfig,
+  type FreeUsageChannelInfo,
+  type FreeUsageAgentStats,
+} from './payments/evm/free-usage-client.js';
 export { IdentityClient, type IdentityClientConfig } from './payments/evm/identity-client.js';
 export { StakingClient, type StakingClientConfig } from './payments/evm/staking-client.js';
 export { EmissionsClient, type EmissionsClientConfig, type EmissionsEpochParams } from './payments/evm/emissions-client.js';
@@ -84,25 +116,60 @@ export {
 } from './payments/evm/stats-client.js';
 export { signData, verifySignature, signUtf8, verifyUtf8 } from './p2p/identity.js';
 export {
+  getDebugFilters,
+  shouldEmitDebugLine,
+} from './utils/debug.js';
+export {
   signSpendingAuth,
   signReserveAuth,
+  signFreeUsageOpen,
+  signFreeUsageAuth,
   signSetOperator,
+  buildReceiveAuthorization,
   makeChannelsDomain,
   makeDepositsDomain,
+  makeFreeUsageDomain,
+  makeUsdcDomain,
   SPENDING_AUTH_TYPES,
   RESERVE_AUTH_TYPES,
+  FREE_USAGE_OPEN_TYPES,
+  FREE_USAGE_AUTH_TYPES,
   SET_OPERATOR_TYPES,
+  RECEIVE_WITH_AUTHORIZATION_TYPES,
   computeMetadataHash,
   encodeMetadata,
+  computeFreeUsageMetadataHash,
+  encodeFreeUsageMetadata,
   getServiceMetadataId,
   computeChannelId,
+  computeFreeUsageChannelId,
+  FREE_USAGE_CHANNEL_DOMAIN,
   ZERO_METADATA,
   ZERO_METADATA_HASH,
+  ZERO_FREE_USAGE_METADATA,
+  ZERO_FREE_USAGE_METADATA_HASH,
 } from './payments/evm/signatures.js';
-export type { SpendingAuthMessage, ReserveAuthMessage, SetOperatorMessage, SpendingAuthMetadata, SpendingAuthServiceMetadata } from './payments/evm/signatures.js';
+export type {
+  SpendingAuthMessage,
+  ReserveAuthMessage,
+  SetOperatorMessage,
+  FreeUsageOpenMessage,
+  FreeUsageAuthMessage,
+  ReceiveAuthorizationMessage,
+  SignedReceiveAuthorization,
+  SpendingAuthMetadata,
+  SpendingAuthServiceMetadata,
+  FreeUsageMetadata,
+  FreeUsageServiceMetadata,
+} from './payments/evm/signatures.js';
 export { NatTraversal, type NatMapping, type NatTraversalResult } from './p2p/nat-traversal.js';
 export { BuyerPaymentManager } from './payments/buyer-payment-manager.js';
+export type { BuyerSpendEvent, BuyerSpendListener } from './payments/buyer-payment-manager.js';
 export type { BuyerPaymentConfig } from './payments/buyer-payment-manager.js';
+export { BuyerFreeUsageManager } from './payments/buyer-free-usage-manager.js';
+export type { BuyerFreeUsageConfig } from './payments/buyer-free-usage-manager.js';
+export { SellerFreeUsageManager } from './payments/seller-free-usage-manager.js';
+export type { SellerFreeUsageConfig } from './payments/seller-free-usage-manager.js';
 export { SellerPaymentManager } from './payments/seller-payment-manager.js';
 export type { SellerPaymentConfig } from './payments/seller-payment-manager.js';
 export { ChannelStore } from './payments/channel-store.js';
@@ -111,6 +178,8 @@ export { getChainConfig, resolveChainConfig, DEFAULT_CHAIN_ID, CHAIN_CONFIGS } f
 export type { ChainConfig } from './payments/chain-config.js';
 export { formatUsdc, parseUsdc } from './payments/usdc-utils.js';
 export { ProxyMux } from './proxy/proxy-mux.js';
+export { SweepMux, type SweepMessageHandler } from './p2p/sweep-mux.js';
+export { encodeSweepRequest, decodeSweepRequest, encodeSweepReceipt, decodeSweepReceipt } from './p2p/sweep-codec.js';
 export {
   VerificationMux,
   VerificationSampler,
@@ -127,22 +196,22 @@ export {
 export { resolveProvider } from './proxy/provider-detection.js';
 export {
   detectRequestServiceApiProtocol,
-  createOpenAIChatToAnthropicStreamingAdapter,
-  createOpenAIChatToResponsesStreamingAdapter,
+  createStreamingAdapter,
   inferProviderDefaultServiceApiProtocols,
   selectTargetProtocolForRequest,
-  transformAnthropicMessagesRequestToOpenAIChat,
-  transformOpenAIChatResponseToAnthropicMessage,
-  transformOpenAIResponsesRequestToOpenAIChat,
-  transformOpenAIChatResponseToOpenAIResponses,
+  transformRequest,
+  transformResponse,
   type TargetProtocolSelection,
-  type AnthropicToOpenAIRequestTransformResult,
-  type ResponsesToOpenAIRequestTransformResult,
+  type ServiceApiRequestTransformOptions,
+  type ServiceApiRequestTransformResult,
+  type ServiceApiResponseTransformOptions,
+  type ServiceApiStreamTransformOptions,
   type StreamingResponseAdapter,
 } from './proxy/service-api-adapter.js';
 export { DefaultRouter, type DefaultRouterConfig } from './routing/default-router.js';
 
-export type { AntseedPlugin, AntseedProviderPlugin, AntseedRouterPlugin, PluginConfigKey, ConfigField } from './interfaces/plugin.js'
+export type { AntseedPlugin, AntseedProviderPlugin, AntseedRouterPlugin, AntseedVerifierPlugin, Prover, VerifyContext, VerifyResult, ClaimResult, SellerRequest, SellerResponse, PluginConfigKey, ConfigField } from './interfaces/plugin.js'
+export { ANTSEED_ATTEST_PATH } from './interfaces/plugin.js'
 
 // Reputation
 export { UptimeTracker } from './reputation/uptime-tracker.js';

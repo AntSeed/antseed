@@ -96,6 +96,18 @@ export interface BuyerVerificationConfig {
 }
 
 /**
+ * Periodic model health self-check settings for the seller.
+ */
+export interface SellerHealthCheckCLIConfig {
+  /** Enable periodic 1-token probes of every advertised service. Default: true. */
+  enabled?: boolean;
+  /** Milliseconds between probe sweeps. Default: 300000 (5 minutes). */
+  intervalMs?: number;
+  /** Consecutive probe failures before a service is unadvertised. Default: 3. */
+  failureThreshold?: number;
+}
+
+/**
  * Seller-specific configuration within the Antseed config.
  */
 export interface SellerCLIConfig {
@@ -125,6 +137,17 @@ export interface SellerCLIConfig {
   verifications?: VerificationConfig;
   /** Maximum upload body size (bytes) accepted from buyers per request. Default: 64 MiB. */
   maxUploadBodyBytes?: number;
+  /**
+   * Verifier SDK ids this seller advertises and runs provers for (first is the
+   * default). Chosen in `antseed seller setup`; overridden at launch by
+   * `--verifiers` or the ANTSEED_VERIFIER_SDKS env var.
+   */
+  verifiers?: string[];
+  /**
+   * Periodic model health self-checks. Enabled by default; failing services
+   * are unadvertised until they recover. Set `enabled: false` to opt out.
+   */
+  healthCheck?: SellerHealthCheckCLIConfig;
 }
 
 /**
@@ -141,6 +164,8 @@ export interface BuyerCLIConfig {
   peerRefreshIntervalMs: number;
   /** Timeout in ms for each HTTP metadata fetch during peer discovery */
   metadataFetchTimeoutMs: number;
+  /** Disable per-service attribution in buyer-signed metadata v2. */
+  disableMetadataV2Services: boolean;
   /** Buyer-side response-auth evidence sampling settings. */
   verification?: BuyerVerificationConfig;
 }
@@ -196,6 +221,8 @@ export interface PaymentsCLIConfig {
     depositsContractAddress?: string;
     /** Deployed AntseedChannels contract address override */
     channelsContractAddress?: string;
+    /** Deployed AntseedFreeUsage contract address override */
+    freeUsageContractAddress?: string;
     /** Deployed AntseedStaking contract address */
     stakingContractAddress?: string;
     /** USDC token contract address override */
@@ -204,11 +231,26 @@ export interface PaymentsCLIConfig {
     identityRegistryAddress?: string;
     /** Deployed AntseedEmissions contract address */
     emissionsContractAddress?: string;
-    /** Deployed AntseedSubPool contract address */
-    subPoolContractAddress?: string;
+    /** Deployed AntseedDepositRelay contract address (gasless deposit sweeps) */
+    depositRelayAddress?: string;
     /** Default lock amount per session in human-readable USDC (e.g. "1" = 1 USDC) */
     defaultLockAmountUSDC?: string;
   };
+}
+
+/**
+ * Seller-side deposit-sweep relayer configuration. ON by default (opt-out).
+ */
+export interface RelayerCLIConfig {
+  /** Relay buyer deposit sweeps with the seller wallet. Default: true. */
+  enabled?: boolean;
+  /** Minimum acceptable profit (FEE - estimated gas cost) in USDC base units.
+   *  May be negative to relay at a loss (local testing). Default: "0". */
+  minProfitBaseUnits?: string;
+  /** Max concurrent sweep submissions. Default: 2. */
+  maxInFlight?: number;
+  /** Max sweep requests accepted per peer per minute. Default: 6. */
+  maxPerPeerPerMinute?: number;
 }
 
 /**
@@ -234,6 +276,8 @@ export interface AntseedConfig {
   buyer: BuyerCLIConfig;
   /** Payment settings */
   payments: PaymentsCLIConfig;
+  /** Seller-side deposit-sweep relayer settings (opt-out, ON by default) */
+  relayer?: RelayerCLIConfig;
   /** Network / DHT settings */
   network: NetworkCLIConfig;
   /** Installed plugins */

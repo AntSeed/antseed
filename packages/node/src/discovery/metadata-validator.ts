@@ -319,13 +319,10 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
     });
   }
 
-  // providers count
-  if (metadata.providers.length === 0) {
-    errors.push({
-      field: "providers",
-      message: "Must have at least one provider",
-    });
-  } else if (metadata.providers.length > MAX_PROVIDERS) {
+  // A health-checked seller may temporarily have zero available providers.
+  // It remains discoverable so buyers can observe recovery, but advertises no
+  // inference route until at least one service becomes healthy again.
+  if (metadata.providers.length > MAX_PROVIDERS) {
     errors.push({
       field: "providers",
       message: `Provider count ${metadata.providers.length} exceeds max ${MAX_PROVIDERS}`,

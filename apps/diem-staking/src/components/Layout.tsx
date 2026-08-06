@@ -13,7 +13,7 @@ import { fmtPct, fmtPrice } from '../lib/format';
 import { useAntstationDownload, ANTSTATION_RELEASES_URL, type Platform } from '../lib/antstation';
 
 const ANTSEED_URL = 'https://antseed.com';
-const DIEM_TERMS_URL = 'https://diem.antseed.com/terms-of-service.html';
+const DIEM_TERMS_URL = 'https://diemantseed.com/terms-of-service.html';
 const ZOKYO_URL = 'https://www.zokyo.io';
 const AUDIT_REPORT_URL = '/antseed-zokyo-audit-report-may-14-2026.pdf';
 const CONTRACT_URL_BASE = 'https://basescan.org/address';

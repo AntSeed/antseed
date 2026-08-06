@@ -5,7 +5,17 @@ import { writeFile, unlink } from 'node:fs/promises'
 import { join, resolve, isAbsolute, dirname } from 'node:path'
 import { getGlobalOptions } from '../types.js'
 import { loadConfig } from '../../../config/loader.js'
-import { AntseedNode, type Provider, resolveChainConfig, loadOrCreateIdentity } from '@antseed/node'
+import {
+  AntseedNode,
+  ModelHealthChecker,
+  CONNECTION_CAPABILITY_MODEL_HEALTH_V1,
+  DEFAULT_HEALTH_CHECK_INTERVAL_MS,
+  DEFAULT_HEALTH_CHECK_FAILURE_THRESHOLD,
+  type Provider,
+  type Prover,
+  resolveChainConfig,
+  loadOrCreateIdentity,
+} from '@antseed/node'
 import type { PaymentConfig } from '@antseed/node/payments'
 import { checkSellerReadiness, DEFAULT_MIN_SETTLE_DELTA_STR } from '@antseed/node/payments'
 import {
@@ -15,9 +25,10 @@ import {
   resolveBaseRpcUrlOverride,
 } from '../../payment-utils.js'
 import type { AntseedConfig } from '../../../config/types.js'
+import { ANTSEED_VERIFIER_SDKS_ENV, buildVerifierCapabilities, normalizeVerifierIds } from '../../../plugins/verifier.js'
 import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
-import { loadProviderPlugin, buildPluginConfig, getPackageVersions } from '../../../plugins/loader.js'
+import { loadProviderPlugin, loadProverPlugin, buildPluginConfig, getPackageVersions } from '../../../plugins/loader.js'
 import { ensurePluginsUpToDate } from '../../../plugins/drift.js'
 import { resolveEffectiveSellerConfig, type SellerRuntimeOverrides } from '../../../config/effective.js'
 import { ensureDerivedIdentityDisplayName } from '../../../config/identity-display-name.js'
@@ -330,6 +341,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
     .option('--min-settle-delta <usdc>', 'minimum unsettled delta (USDC decimal, e.g. 0.002) before idle settle submits a tx')
     .option('--base-rpc-url <url>', `runtime-only Base JSON-RPC URL override (also ${ANTSEED_BASE_RPC_URL_ENV})`)
     .option('--skip-prereq-check', 'skip pre-flight checks (services configured, on-chain registration + stake). Use only for local testing.')
+    .option('--verifiers <ids>', `comma-separated verifier SDK ids this seller supports (first is default; also ${ANTSEED_VERIFIER_SDKS_ENV})`)
     .action(async (options) => {
       const globalOpts = getGlobalOptions(sellerCmd)
       const config = await loadConfig(globalOpts.config)
@@ -425,6 +437,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       const sellerWalletAddress = process.env['ANTSEED_SELLER_WALLET_ADDRESS']
 
       let paymentConfig: PaymentConfig | null = null
+      let depositRelayAddress: string | undefined
       if (preferredMethod === 'crypto') {
         const cc = resolveChainConfig({
           chainId: config.payments.crypto?.chainId,
@@ -432,12 +445,14 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
           fallbackRpcUrls: config.payments.crypto?.fallbackRpcUrls,
           depositsContractAddress: config.payments.crypto?.depositsContractAddress,
           channelsContractAddress: config.payments.crypto?.channelsContractAddress,
+          freeUsageContractAddress: config.payments.crypto?.freeUsageContractAddress,
           stakingContractAddress: config.payments.crypto?.stakingContractAddress,
           usdcContractAddress: config.payments.crypto?.usdcContractAddress,
           identityRegistryAddress: config.payments.crypto?.identityRegistryAddress,
           emissionsContractAddress: config.payments.crypto?.emissionsContractAddress,
-          subPoolContractAddress: config.payments.crypto?.subPoolContractAddress,
+          depositRelayAddress: config.payments.crypto?.depositRelayAddress,
         })
+        depositRelayAddress = cc.depositRelayAddress
         const defaultLockAmountUSDCBaseUnits = toUSDCBaseUnits(
           config.payments.crypto?.defaultLockAmountUSDC ?? defaultDepositAmountUSDC,
           defaultDepositAmountUSDCBaseUnits,
@@ -448,6 +463,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
           ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}),
           depositsContractAddress: cc.depositsContractAddress,
           channelsContractAddress: cc.channelsContractAddress,
+          ...(cc.freeUsageContractAddress ? { freeUsageContractAddress: cc.freeUsageContractAddress } : {}),
           usdcAddress: cc.usdcContractAddress,
           defaultLockAmountUSDC: defaultLockAmountUSDCBaseUnits,
         }
@@ -519,6 +535,9 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       if (versionsByPackage.size > 0) {
         console.log(chalk.dim(`Package versions: ${Array.from(versionsByPackage.entries()).map(([k, v]) => `${k}@${v}`).join(', ')}`))
       }
+      const healthCheckCfg = effectiveSellerConfig.healthCheck
+      const healthCheckEnabled = healthCheckCfg?.enabled !== false
+
       console.log(chalk.bold('Effective seller settings:'))
       console.log(chalk.dim(`  providers: ${selectedProviderNames.join(', ')}`))
       for (let index = 0; index < providers.length; index += 1) {
@@ -547,6 +566,13 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       console.log(chalk.dim(`  min settle delta: ${minSettleDelta} base units`))
       console.log(chalk.dim(`  reserve floor: ${effectiveSellerConfig.reserveFloor}`))
       console.log(chalk.dim(`  max concurrent buyers: ${effectiveSellerConfig.maxConcurrentBuyers}`))
+      if (healthCheckEnabled) {
+        const intervalMs = healthCheckCfg?.intervalMs ?? DEFAULT_HEALTH_CHECK_INTERVAL_MS
+        const failureThreshold = healthCheckCfg?.failureThreshold ?? DEFAULT_HEALTH_CHECK_FAILURE_THRESHOLD
+        console.log(chalk.dim(`  model health checks: every ${Math.round(intervalMs / 1000)}s, unadvertise after ${failureThreshold} consecutive failures`))
+      } else {
+        console.log(chalk.dim('  model health checks: disabled'))
+      }
       const maxUploadBodyBytes = parseOptionalPositiveIntegerEnv(process.env['ANTSEED_MAX_UPLOAD_BODY_BYTES'])
         ?? effectiveSellerConfig.maxUploadBodyBytes
       if (maxUploadBodyBytes !== undefined) {
@@ -572,11 +598,45 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         ? { sellerContract: sellerContractCfg.address }
         : undefined
 
+      // Load provers before advertising verifier capabilities.
+      let requestedVerifierIds: string[]
+      try {
+        requestedVerifierIds = normalizeVerifierIds(
+          (options.verifiers as string | undefined)
+            ?? process.env[ANTSEED_VERIFIER_SDKS_ENV]
+            ?? config.seller.verifiers?.join(',')
+            ?? '',
+        )
+      } catch (err) {
+        console.error(chalk.red((err as Error).message))
+        process.exit(1)
+      }
+      const loadedProvers: Prover[] = []
+      for (const id of requestedVerifierIds) {
+        try {
+          const prover = await loadProverPlugin(id)
+          if (prover.name !== id) {
+            throw new Error(`its package exported a prover named "${prover.name}" — advertised id and prover name must match`)
+          }
+          loadedProvers.push(prover)
+        } catch (err) {
+          console.error(chalk.red(`Cannot advertise verifier "${id}": ${(err as Error).message.split('\n')[0]}`))
+          process.exit(1)
+        }
+      }
+      const verifierCapabilities = buildVerifierCapabilities(requestedVerifierIds)
+
+      const announcedCapabilities = [
+        ...verifierCapabilities,
+        ...(healthCheckEnabled ? [CONNECTION_CAPABILITY_MODEL_HEALTH_V1] : []),
+      ]
+
       const node = new AntseedNode({
         role: 'seller',
         displayName: config.identity.displayName,
         ...(config.seller.publicAddress ? { publicAddress: config.seller.publicAddress } : {}),
         ...(effectiveSellerConfig.verifications ? { verifications: effectiveSellerConfig.verifications } : {}),
+        ...(announcedCapabilities.length > 0 ? { capabilities: announcedCapabilities } : {}),
         bootstrapNodes,
         dataDir: globalOpts.dataDir,
         ...(dhtPort ? { dhtPort } : {}),
@@ -598,12 +658,15 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
             ...(paymentConfig.crypto.fallbackRpcUrls ? { fallbackRpcUrls: paymentConfig.crypto.fallbackRpcUrls } : {}),
             depositsAddress: paymentConfig.crypto.depositsContractAddress,
             channelsAddress: paymentConfig.crypto.channelsContractAddress,
+            ...(paymentConfig.crypto.freeUsageContractAddress ? { freeUsageAddress: paymentConfig.crypto.freeUsageContractAddress } : {}),
             usdcAddress: paymentConfig.crypto.usdcAddress,
             identityRegistryAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).identityRegistryAddress,
             stakingAddress: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).stakingContractAddress,
             chainId: resolveChainConfig({ chainId: paymentConfig.crypto.chainId }).evmChainId,
+            ...(depositRelayAddress ? { depositRelayAddress } : {}),
           } : {}),
         },
+        ...(config.relayer ? { relayer: config.relayer } : {}),
         ...(announcerSellerContract ? { sellerContract: announcerSellerContract } : {}),
       })
 
@@ -643,15 +706,49 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         node.registerProvider(provider)
       }
 
+      for (const prover of loadedProvers) {
+        node.registerProver(prover)
+        console.log(chalk.dim(`  Verifier prover embedded: ${prover.name}`))
+      }
+
       try {
         await node.start()
         nodeSpinner.succeed(chalk.green('Seeding active'))
         console.log(chalk.dim(`  Peer ID: ${node.peerId ?? 'unknown'}`))
         console.log(chalk.dim(`  DHT port: ${node.dhtPort}`))
         console.log(chalk.dim(`  Signaling port: ${node.signalingPort}`))
+        if (requestedVerifierIds.length > 0) {
+          console.log(chalk.dim(`  Verifiers advertised: ${requestedVerifierIds.join(', ')}`))
+        }
       } catch (err) {
         nodeSpinner.fail(chalk.red(`Failed to start seeding: ${(err as Error).message}`))
         process.exit(1)
+      }
+
+      // Periodic model health self-checks: probe every advertised service with
+      // a 1-token completion; unadvertise services that keep failing and
+      // restore them when they recover, refreshing signed metadata each time.
+      let healthChecker: ModelHealthChecker | null = null
+      if (healthCheckEnabled && registeredProviders.length > 0) {
+        healthChecker = new ModelHealthChecker({
+          targets: registeredProviders.map((provider, index) => ({
+            provider,
+            // Probe the unwrapped provider so an ant-agent wrapper doesn't
+            // run a full agent loop for every probe.
+            ...(providers[index] && providers[index] !== provider ? { probeProvider: providers[index]! } : {}),
+          })),
+          ...(healthCheckCfg?.intervalMs !== undefined ? { intervalMs: healthCheckCfg.intervalMs } : {}),
+          ...(healthCheckCfg?.failureThreshold !== undefined ? { failureThreshold: healthCheckCfg.failureThreshold } : {}),
+          onChange: (event) => {
+            if (event.status === 'removed') {
+              console.log(chalk.yellow(`Model ${event.provider}/${event.service} unadvertised — failing health checks (${event.detail})`))
+            } else {
+              console.log(chalk.green(`Model ${event.provider}/${event.service} re-advertised — health check recovered`))
+            }
+            void node.refreshSellerMetadata().catch(() => {})
+          },
+        })
+        healthChecker.start()
       }
 
       // Write daemon state so dashboard and connect can discover this seeder
@@ -809,6 +906,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       }, 1_000)
 
       setupShutdownHandler(async () => {
+        healthChecker?.stop()
         clearInterval(stateInterval)
         node.off('connection', scheduleDaemonStateWrite)
         node.off('session:updated', scheduleDaemonStateWrite)

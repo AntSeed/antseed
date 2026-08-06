@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import "forge-std/Script.sol";
 
 import {ISetRegistry, ISetWriter} from "../interfaces/IAntseedWiring.sol";
-import {AntseedRegistry} from "../AntseedRegistry.sol";
+import {AntseedRegistry} from "../core/AntseedRegistry.sol";
 
 /**
  * @title Deploy
@@ -100,15 +100,18 @@ contract Deploy is Script {
         require(emissions != address(0), "Emissions deploy failed");
         console.log("AntseedEmissions:     ", emissions);
 
-        // 10. AntseedSubPool(usdc, registry)
-        bytes memory subPoolBytecode = abi.encodePacked(
-            vm.getCode("AntseedSubPool.sol:AntseedSubPool"),
-            abi.encode(usdc, address(antseedRegistry))
+        // 10. AntseedDepositRelay(usdc, deposits, FEE)
+        //     Keep this LAST among contract creations — the deterministic anvil
+        //     addresses of everything above (nonces 0-8) are hardcoded in
+        //     scripts/setup-local-test.sh and chain-config base-local.
+        bytes memory relayBytecode = abi.encodePacked(
+            vm.getCode("AntseedDepositRelay.sol:AntseedDepositRelay"),
+            abi.encode(usdc, deposits, uint256(50_000)) // fixed fee: $0.05
         );
-        address subPool;
-        assembly { subPool := create(0, add(subPoolBytecode, 0x20), mload(subPoolBytecode)) }
-        require(subPool != address(0), "SubPool deploy failed");
-        console.log("AntseedSubPool:       ", subPool);
+        address depositRelay;
+        assembly { depositRelay := create(0, add(relayBytecode, 0x20), mload(relayBytecode)) }
+        require(depositRelay != address(0), "DepositRelay deploy failed");
+        console.log("AntseedDepositRelay:  ", depositRelay);
 
         // ---- Wire registry ----
         antseedRegistry.setChannels(channels);
@@ -128,7 +131,6 @@ contract Deploy is Script {
         ISetRegistry(staking).setRegistry(address(antseedRegistry));
         ISetRegistry(emissions).setRegistry(address(antseedRegistry));
         ISetRegistry(antsToken).setRegistry(address(antseedRegistry));
-        ISetRegistry(subPool).setRegistry(address(antseedRegistry));
 
         // ---- Authorize Channels as Stats writer ----
         ISetWriter(stats).setWriter(channels, true);

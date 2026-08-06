@@ -1,23 +1,68 @@
-import { useEffect, useState, useCallback } from 'react';
-import { Sidebar } from './components/Sidebar';
-import { StreamingIndicator } from './components/StreamingIndicator';
-import { TitleBar } from './components/TitleBar';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ViewHost } from './components/ViewHost';
-import { DiscoverWelcome } from './components/chat/DiscoverWelcome';
 import { SetupScreen } from './components/SetupScreen';
-import { useUiSnapshot } from './hooks/useUiSnapshot';
-import { useActions } from './hooks/useActions';
-import type { ViewName } from './types';
+import { preloadViews, viewsForPreload } from './components/viewRegistry';
+import { shallowEqual, useUiSelector } from './hooks/useUiSelector';
+import { VIEW_NAMES, type ViewName } from './types';
+import { VprShell } from './components/VprShell';
+
+type IdleCallbackHandle = ReturnType<typeof setTimeout> | number;
+
+function scheduleRoutePreload(callback: () => void): () => void {
+  const win = window as unknown as {
+    requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+    cancelIdleCallback?: (handle: number) => void;
+  };
+
+  if (win.requestIdleCallback) {
+    const handle = win.requestIdleCallback(callback, { timeout: 1_500 });
+    return () => win.cancelIdleCallback?.(handle);
+  }
+
+  const handle: IdleCallbackHandle = window.setTimeout(callback, 250);
+  return () => window.clearTimeout(handle);
+}
 
 export function AppShell() {
-  const snap = useUiSnapshot();
-  const actions = useActions();
-  const [activeView, setActiveView] = useState<ViewName>('discover');
-  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  const snap = useUiSelector((state) => ({
+    appSetupStatusKnown: state.appSetupStatusKnown,
+    appSetupNeeded: state.appSetupNeeded,
+    appSetupComplete: state.appSetupComplete,
+    chatServiceCount: state.chatServiceOptions.length,
+    chatPanelExpanded: state.chatPanelExpanded,
+  }), shallowEqual);
+  const [activeView, setActiveView] = useState<ViewName>('home');
   const [setupVisible, setSetupVisible] = useState(false);
   const [setupDismissed, setSetupDismissed] = useState(false);
 
-  const hasServices = snap.chatServiceOptions.length > 0;
+  // Screens visited before the current one, most recent last. Header back
+  // buttons pop this so "back" returns to where the user actually came from;
+  // the per-view fallback target only applies when the stack is empty.
+  const viewHistoryRef = useRef<ViewName[]>([]);
+  const activeViewRef = useRef<ViewName>(activeView);
+
+  const handleSelectView = useCallback((view: ViewName) => {
+    const current = activeViewRef.current;
+    if (view === current) return;
+    const stack = viewHistoryRef.current;
+    stack.push(current);
+    if (stack.length > 32) stack.shift();
+    activeViewRef.current = view;
+    setActiveView(view);
+  }, []);
+
+  const handleNavigateBack = useCallback((fallback: ViewName) => {
+    const current = activeViewRef.current;
+    const stack = viewHistoryRef.current;
+    let target = stack.pop();
+    while (target === current) target = stack.pop();
+    const next = target ?? fallback;
+    if (next === current) return;
+    activeViewRef.current = next;
+    setActiveView(next);
+  }, []);
+
+  const hasServices = snap.chatServiceCount > 0;
 
   // Show setup during first-run plugin/runtime bootstrapping, but never re-open it
   // just because the service catalog is temporarily empty. Service discovery is
@@ -62,66 +107,41 @@ export function AppShell() {
 
   const showSetup = setupVisible;
 
-  const hasConversations = Array.isArray(snap.chatConversations) && snap.chatConversations.length > 0;
-  const showOnboarding =
-    !onboardingDismissed &&
-    !hasConversations &&
-    !snap.chatActiveConversation &&
-    !snap.chatStreamingMessage &&
-    !snap.chatSending;
+  useEffect(() => {
+    return window.antseedDesktop?.onNavigateView?.((viewName) => {
+      if (!(VIEW_NAMES as readonly string[]).includes(viewName)) return;
+      handleSelectView(viewName as ViewName);
+    });
+  }, [handleSelectView]);
 
   useEffect(() => {
-    if (!snap.devMode && (activeView === 'connection' || activeView === 'peers' || activeView === 'desktop')) {
-      setActiveView('overview');
+    if (showSetup) return undefined;
+
+    void preloadViews(viewsForPreload('eager'));
+
+    return scheduleRoutePreload(() => {
+      void preloadViews(viewsForPreload('idle'));
+    });
+  }, [showSetup]);
+
+  useEffect(() => {
+    if (showSetup) return;
+    // Chat supports both window sizes: thin by default, expanded to the
+    // standard preset when the user opens the conversation-list panel.
+    if (activeView === 'chat' && snap.chatPanelExpanded) {
+      void window.antseedDesktop?.applyWindowPreset?.('standard');
+      return;
     }
-  }, [activeView, snap.devMode]);
-
-  // Re-show onboarding if user deletes all conversations
-  useEffect(() => {
-    if (hasConversations) setOnboardingDismissed(false);
-  }, [hasConversations]);
-
-  const handleStartChatting = useCallback(
-    (serviceValue: string, peerId?: string) => {
-      actions.startNewChat();
-      actions.handleServiceChange(serviceValue, peerId);
-      setOnboardingDismissed(true);
-      setActiveView('chat');
-    },
-    [actions],
-  );
+    void window.antseedDesktop?.applyWindowView?.(activeView);
+  }, [activeView, showSetup, snap.chatPanelExpanded]);
 
   if (showSetup) {
     return <SetupScreen />;
   }
 
-  /* if (showOnboarding) {
-    return (
-      <>
-        <TitleBar />
-        <div className="app-container">
-          <main className="main-content">
-            <DiscoverWelcome
-              serviceOptions={snap.chatServiceOptions}
-              onStartChatting={handleStartChatting}
-            />
-          </main>
-        </div>
-        <StreamingIndicator />
-      </>
-    );
-  } */
-
   return (
-    <>
-      <TitleBar />
-      <div className="app-container">
-        <Sidebar activeView={activeView} onSelectView={setActiveView} />
-        <main className="main-content">
-          <ViewHost activeView={activeView} onSelectView={setActiveView} />
-        </main>
-      </div>
-      <StreamingIndicator />
-    </>
+    <VprShell activeView={activeView} onSelectView={handleSelectView} onNavigateBack={handleNavigateBack}>
+      <ViewHost activeView={activeView} onSelectView={handleSelectView} />
+    </VprShell>
   );
 }

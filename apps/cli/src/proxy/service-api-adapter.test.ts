@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  transformAnthropicMessagesRequestToOpenAIChat,
-  transformOpenAIChatResponseToAnthropicMessage,
+  transformRequest,
+  transformResponse,
 } from './service-api-adapter.js'
-import type { SerializedHttpRequest, SerializedHttpResponse } from '@antseed/node'
+import type { SerializedHttpRequest, SerializedHttpResponse, ServiceApiProtocol } from '@antseed/node'
 
 const enc = new TextEncoder()
 const dec = new TextDecoder()
@@ -19,8 +19,23 @@ function makeRequest(body: unknown, path = '/v1/messages'): SerializedHttpReques
   }
 }
 
+function transformAnthropicToChat(request: SerializedHttpRequest) {
+  return transformRequest(request, { from: 'anthropic-messages', to: 'openai-chat-completions' })
+}
+
+function adaptResponseForTest(
+  from: ServiceApiProtocol,
+  to: ServiceApiProtocol,
+  response: SerializedHttpResponse,
+  options: { fallbackModel?: string | null; streamRequested?: boolean } = {},
+) {
+  const transformed = transformResponse(response, { from, to, ...options })
+  assert.notEqual(transformed, null)
+  return transformed!
+}
+
 test('preserves plain string message content', () => {
-  const result = transformAnthropicMessagesRequestToOpenAIChat(
+  const result = transformAnthropicToChat(
     makeRequest({ model: 'claude-3-5-haiku-20241022', messages: [{ role: 'user', content: 'Hello' }], max_tokens: 100 }),
   )
   assert.notEqual(result, null)
@@ -30,7 +45,7 @@ test('preserves plain string message content', () => {
 
 test('does NOT produce [object Object] for array content blocks', () => {
   // Regression: Claude Code sends content as [{type:'text', text:'...'}]
-  const result = transformAnthropicMessagesRequestToOpenAIChat(
+  const result = transformAnthropicToChat(
     makeRequest({
       model: 'claude-3-5-haiku-20241022',
       messages: [
@@ -47,7 +62,7 @@ test('does NOT produce [object Object] for array content blocks', () => {
 })
 
 test('does NOT produce [object Object] for multi-block user messages', () => {
-  const result = transformAnthropicMessagesRequestToOpenAIChat(
+  const result = transformAnthropicToChat(
     makeRequest({
       model: 'claude-3-5-haiku-20241022',
       messages: [
@@ -70,7 +85,7 @@ test('does NOT produce [object Object] for multi-block user messages', () => {
 })
 
 test('does NOT produce [object Object] for assistant array content blocks', () => {
-  const result = transformAnthropicMessagesRequestToOpenAIChat(
+  const result = transformAnthropicToChat(
     makeRequest({
       model: 'claude-3-5-haiku-20241022',
       messages: [
@@ -89,7 +104,7 @@ test('does NOT produce [object Object] for assistant array content blocks', () =
 })
 
 test('removes anthropic-version header', () => {
-  const result = transformAnthropicMessagesRequestToOpenAIChat(
+  const result = transformAnthropicToChat(
     makeRequest({ messages: [{ role: 'user', content: 'hi' }], max_tokens: 10 }),
   )
   assert.notEqual(result, null)
@@ -97,15 +112,16 @@ test('removes anthropic-version header', () => {
 })
 
 test('rewrites path to /v1/chat/completions', () => {
-  const result = transformAnthropicMessagesRequestToOpenAIChat(
+  const result = transformAnthropicToChat(
     makeRequest({ messages: [{ role: 'user', content: 'hi' }], max_tokens: 10 }),
   )
   assert.equal(result!.request.path, '/v1/chat/completions')
 })
 
-test('returns null for non-messages paths', () => {
-  const req = makeRequest({ messages: [] }, '/v1/embeddings')
-  assert.equal(transformAnthropicMessagesRequestToOpenAIChat(req), null)
+test('returns null for invalid request bodies', () => {
+  const req = makeRequest({ messages: [] }, '/v1/messages')
+  req.body = enc.encode('{')
+  assert.equal(transformAnthropicToChat(req), null)
 })
 
 test('converts a basic OpenAI response to Anthropic format', () => {
@@ -121,7 +137,7 @@ test('converts a basic OpenAI response to Anthropic format', () => {
     headers: { 'content-type': 'application/json' },
     body: enc.encode(JSON.stringify(oaiBody)),
   }
-  const result = transformOpenAIChatResponseToAnthropicMessage(resp, { streamRequested: false })
+  const result = adaptResponseForTest('openai-chat-completions', 'anthropic-messages', resp, { streamRequested: false })
   const body = JSON.parse(dec.decode(result.body)) as {
     type: string
     content: Array<{ type: string; text: string }>
@@ -144,7 +160,7 @@ test('maps finish_reason stop → end_turn', () => {
     headers: { 'content-type': 'application/json' },
     body: enc.encode(JSON.stringify(oaiBody)),
   }
-  const result = transformOpenAIChatResponseToAnthropicMessage(resp, { streamRequested: false })
+  const result = adaptResponseForTest('openai-chat-completions', 'anthropic-messages', resp, { streamRequested: false })
   const body = JSON.parse(dec.decode(result.body)) as { stop_reason: string }
   assert.equal(body.stop_reason, 'end_turn')
 })

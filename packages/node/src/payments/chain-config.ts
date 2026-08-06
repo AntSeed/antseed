@@ -13,13 +13,14 @@ export interface ChainConfig {
   fallbackRpcUrls?: string[];
   depositsContractAddress: string;
   channelsContractAddress: string;
+  /** Optional AntseedFreeUsage contract address for zero-price signed usage. */
+  freeUsageContractAddress?: string;
   stakingContractAddress?: string;
   usdcContractAddress: string;
   identityRegistryAddress?: string;
   emissionsContractAddress?: string;
   legacyEmissionsContractAddress?: string;
   antsTokenAddress?: string;
-  subPoolContractAddress?: string;
   /** Block when Channels contract was deployed. Floor for event log scans. */
   channelsDeployBlock?: number;
   /** AntseedStats contract address. Populated only where an indexer aggregates it. */
@@ -28,6 +29,8 @@ export interface ChainConfig {
   statsDeployBlock?: number;
   /** Public URL of the @antseed/network-stats aggregator that indexes the stats contract for this chain. */
   networkStatsUrl?: string;
+  /** AntseedDepositRelay contract for gasless USDC sweeps from buyer hot wallets. */
+  depositRelayAddress?: string;
 }
 
 /**
@@ -48,6 +51,7 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     usdcContractAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     depositsContractAddress: '0x0F7a3a8f4Da01637d1202bb5443fcF7F88F99fD2',
     channelsContractAddress: '0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d',
+    freeUsageContractAddress: '0xB24DcDE777C4ad9AC385Ec9500b3Dc527a4F91Ad',
     stakingContractAddress: '0x3652E6B22919bd322A25723B94BB207602E5c8e6',
     emissionsContractAddress: '0xF13bE52c4A3afC6AE29536f073588d01A0564088',
     legacyEmissionsContractAddress: '0x36877fBa8Fa333aa46a1c57b66D132E4995C86b5',
@@ -57,6 +61,7 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     statsContractAddress: '0x15649ff076bfa5e37e24ee3154a00503149954fd',
     statsDeployBlock: 44469557,
     networkStatsUrl: 'https://network.antseed.com',
+    depositRelayAddress: '0x34a44542e76f9b4cff3a31902eDF14AbF2C3B3DD',
   },
   'base-sepolia': {
     chainId: 'base-sepolia',
@@ -68,19 +73,20 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     stakingContractAddress: '0x1CB76B197a20E41f9AA01806B41C59e16Cad46a7',
     emissionsContractAddress: '0x9B30DAcfC20F0927fFD49fB0B84cf3EB83976a33',
     identityRegistryAddress: '0x8004A818BFB912233c491871b3d84c89A494BD9e',
+    // depositRelayAddress: TODO — set after AntseedDepositRelay sepolia deployment
   },
   'base-local': {
     chainId: 'base-local',
     evmChainId: 31337,
     rpcUrl: 'http://127.0.0.1:8545',
-    // Nonce sequence: 0=USDC, 1=Registry, 2=ANTSToken, 3=AntseedRegistry, 4=Staking, 5=Deposits, 6=Channels, 7=Emissions, 8=SubPool
+    // Nonce sequence: 0=USDC, 1=Registry, 2=ANTSToken, 3=AntseedRegistry, 4=Staking, 5=Deposits, 6=Channels, 7=Stats, 8=Emissions, 9=DepositRelay
     usdcContractAddress: '0x5FbDB2315678afecb367f032d93F642f64180aa3',
     identityRegistryAddress: '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512',
     stakingContractAddress: '0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9',
     depositsContractAddress: '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707',
     channelsContractAddress: '0x0165878A594ca255338adfa4d48449f69242Eb8F',
-    emissionsContractAddress: '0xa513E6E4b8f2a923D98304ec87F64353C4D5C853',
-    subPoolContractAddress: '0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6',
+    emissionsContractAddress: '0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6',
+    depositRelayAddress: '0x8A791620dd6260079BF849Dc5567aDC3F2FdC318',
   },
 };
 
@@ -106,13 +112,14 @@ export function resolveChainConfig(overrides?: {
   fallbackRpcUrls?: string[];
   depositsContractAddress?: string;
   channelsContractAddress?: string;
+  freeUsageContractAddress?: string;
   stakingContractAddress?: string;
   usdcContractAddress?: string;
   identityRegistryAddress?: string;
   emissionsContractAddress?: string;
   legacyEmissionsContractAddress?: string;
   antsTokenAddress?: string;
-  subPoolContractAddress?: string;
+  depositRelayAddress?: string;
 }): ChainConfig {
   const base = getChainConfig(overrides?.chainId);
   // If the caller overrode the primary rpcUrl without providing their own
@@ -127,13 +134,14 @@ export function resolveChainConfig(overrides?: {
     ...(resolvedFallbacks !== undefined ? { fallbackRpcUrls: resolvedFallbacks } : {}),
     ...(overrides?.depositsContractAddress ? { depositsContractAddress: overrides.depositsContractAddress } : {}),
     ...(overrides?.channelsContractAddress ? { channelsContractAddress: overrides.channelsContractAddress } : {}),
+    ...(overrides?.freeUsageContractAddress ? { freeUsageContractAddress: overrides.freeUsageContractAddress } : {}),
     ...(overrides?.stakingContractAddress ? { stakingContractAddress: overrides.stakingContractAddress } : {}),
     ...(overrides?.usdcContractAddress ? { usdcContractAddress: overrides.usdcContractAddress } : {}),
     ...(overrides?.identityRegistryAddress ? { identityRegistryAddress: overrides.identityRegistryAddress } : {}),
     ...(overrides?.emissionsContractAddress ? { emissionsContractAddress: overrides.emissionsContractAddress } : {}),
     ...(overrides?.legacyEmissionsContractAddress ? { legacyEmissionsContractAddress: overrides.legacyEmissionsContractAddress } : {}),
     ...(overrides?.antsTokenAddress ? { antsTokenAddress: overrides.antsTokenAddress } : {}),
-    ...(overrides?.subPoolContractAddress ? { subPoolContractAddress: overrides.subPoolContractAddress } : {}),
+    ...(overrides?.depositRelayAddress ? { depositRelayAddress: overrides.depositRelayAddress } : {}),
   };
 }
 

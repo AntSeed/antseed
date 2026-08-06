@@ -11,7 +11,7 @@ import type { SerializedHttpRequest, SerializedHttpResponse } from '../src/types
 import { SellerPaymentManager, type SellerPaymentConfig } from '../src/payments/seller-payment-manager.js';
 import { BuyerPaymentManager } from '../src/payments/buyer-payment-manager.js';
 import { BuyerPaymentNegotiator } from '../src/payments/buyer-payment-negotiator.js';
-import { ChannelStore } from '../src/payments/channel-store.js';
+import { ChannelStore, CHANNEL_ROLE, CHANNEL_STATUS } from '../src/payments/channel-store.js';
 import type { Identity } from '../src/p2p/identity.js';
 import { bytesToHex } from '../src/utils/hex.js';
 import { toPeerId } from '../src/types/peer.js';
@@ -279,7 +279,7 @@ describe('SellerPaymentManager suggested amount', () => {
     store.upsertChannel({
       sessionId: '0x' + 'aa'.repeat(32),
       peerId: 'returning-buyer',
-      role: 'seller',
+      role: CHANNEL_ROLE.SELLER,
       sellerEvmAddr: sellerIdentity.wallet.address,
       buyerEvmAddr: '0x' + 'bb'.repeat(20),
       nonce: 1,
@@ -292,7 +292,7 @@ describe('SellerPaymentManager suggested amount', () => {
       reservedAt: Date.now(),
       settledAt: null,
       settledAmount: null,
-      status: 'settled',
+      status: CHANNEL_STATUS.SETTLED,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     });

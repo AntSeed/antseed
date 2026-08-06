@@ -23,6 +23,12 @@ export interface PaymentsServerOptions {
    * RPC the rest of the app is already using for on-chain reads.
    */
   defaultRpcUrl?: string;
+  /**
+   * Called when a pay page reports a completed payment action (deposit,
+   * withdraw, claim, channel close). Lets the host app refocus its window
+   * and refresh balances immediately instead of waiting for a poll.
+   */
+  onPaymentCompleted?: () => void;
 }
 
 export async function createServer(options: PaymentsServerOptions) {
@@ -116,6 +122,17 @@ export async function createServer(options: PaymentsServerOptions) {
   };
 
   registerRoutes(fastify, { cryptoCtx, cryptoConfig, chainConfig, proxyPort });
+
+  // Pay pages report completion here (bearer-protected like all /api routes)
+  // so the host app can refocus its window and refresh balances right away.
+  fastify.post('/api/pay/completed', async () => {
+    try {
+      options.onPaymentCompleted?.();
+    } catch {
+      // Host callback failures must not fail the pay page.
+    }
+    return { ok: true };
+  });
 
   // SPA fallback — only if static files are available
   if (staticRegistered) {

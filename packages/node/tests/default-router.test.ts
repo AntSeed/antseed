@@ -67,24 +67,22 @@ describe('DefaultRouter', () => {
 
     it('should enforce minReputation for explicit on-chain reputation', () => {
       const router = new DefaultRouter({ minReputation: 50 });
-      const matureStakeAtSec = Math.floor(Date.now() / 1000) - 31 * 24 * 60 * 60;
+      const nowSec = Math.floor(Date.now() / 1000);
       const lowOnChain = makePeer({
         peerId: 'a'.repeat(40) as any,
         reputationScore: undefined,
         onChainChannelCount: 25,
         onChainTotalVolumeUsdcMicros: 10_000_000,
-        onChainStakeUsdcMicros: 10_000_000,
-        onChainStakedAtSec: matureStakeAtSec,
-        onChainLastSettledAtSec: Math.floor(Date.now() / 1000),
+        onChainLastSettledAtSec: nowSec,
       });
       const highOnChain = makePeer({
         peerId: 'b'.repeat(40) as any,
         reputationScore: undefined,
-        onChainChannelCount: 90,
+        onChainChannelCount: 120,
         onChainTotalVolumeUsdcMicros: 1_000_000_000,
         onChainStakeUsdcMicros: 10_000_000,
-        onChainStakedAtSec: matureStakeAtSec,
-        onChainLastSettledAtSec: Math.floor(Date.now() / 1000),
+        onChainStakedAtSec: nowSec - 90 * 86_400,
+        onChainLastSettledAtSec: nowSec,
       });
 
       const selected = router.selectPeer(dummyReq, [lowOnChain, highOnChain]);

@@ -11,12 +11,19 @@ export interface HttpMetadataResolverConfig {
   failureCooldownMs?: number;
   /** Upper bound for failure cooldown backoff. Default: 1800000 (30 minutes) */
   maxFailureCooldownMs?: number;
+  /**
+   * Upper bound on how long an announcing endpoint is skipped before a recovery
+   * probe. Default: 120000 (2 minutes). Set to 0 to only use exponential
+   * cooldowns.
+   */
+  recoveryProbeIntervalMs?: number;
   /** Maximum concurrent metadata fetches. Default: 24 */
   maxConcurrent?: number;
 }
 
 type FailedEndpointState = {
   nextRetryAt: number;
+  nextProbeAt: number;
   consecutiveFailures: number;
 }
 
@@ -25,6 +32,7 @@ export class HttpMetadataResolver implements MetadataResolver {
   private readonly metadataPortOffset: number;
   private readonly failureCooldownMs: number;
   private readonly maxFailureCooldownMs: number;
+  private readonly recoveryProbeIntervalMs: number;
   private readonly maxConcurrent: number;
   private readonly failedEndpoints: Map<string, FailedEndpointState>;
   private activeCount = 0;
@@ -38,6 +46,7 @@ export class HttpMetadataResolver implements MetadataResolver {
       this.failureCooldownMs,
       config?.maxFailureCooldownMs ?? 30 * 60_000,
     );
+    this.recoveryProbeIntervalMs = Math.max(0, config?.recoveryProbeIntervalMs ?? 2 * 60_000);
     this.maxConcurrent = Math.max(1, config?.maxConcurrent ?? 24);
     this.failedEndpoints = new Map<string, FailedEndpointState>();
   }
@@ -52,12 +61,20 @@ export class HttpMetadataResolver implements MetadataResolver {
     const failedState = this.failedEndpoints.get(endpointKey);
     if (failedState !== undefined) {
       if (failedState.nextRetryAt > now) {
+        if (failedState.nextProbeAt > now) {
+          debugLog(
+            `[MetadataResolver] Skipping ${endpointKey}: failure cooldown `
+            + `${failedState.nextRetryAt - now}ms remaining after `
+            + `${failedState.consecutiveFailures} failure(s); recovery probe in `
+            + `${failedState.nextProbeAt - now}ms`,
+          );
+          return null;
+        }
         debugLog(
-          `[MetadataResolver] Skipping ${endpointKey}: failure cooldown `
+          `[MetadataResolver] Probing ${endpointKey} during failure cooldown `
           + `${failedState.nextRetryAt - now}ms remaining after `
           + `${failedState.consecutiveFailures} failure(s)`,
         );
-        return null;
       }
     }
 
@@ -146,8 +163,13 @@ export class HttpMetadataResolver implements MetadataResolver {
     const consecutiveFailures = Math.max(1, (previous?.consecutiveFailures ?? 0) + 1);
     const multiplier = 2 ** Math.max(0, consecutiveFailures - 1);
     const backoffMs = Math.min(this.maxFailureCooldownMs, this.failureCooldownMs * multiplier);
+    const probeMs = this.recoveryProbeIntervalMs > 0
+      ? Math.min(backoffMs, this.recoveryProbeIntervalMs)
+      : backoffMs;
+    const now = Date.now();
     this.failedEndpoints.set(endpointKey, {
-      nextRetryAt: Date.now() + backoffMs,
+      nextRetryAt: now + backoffMs,
+      nextProbeAt: now + probeMs,
       consecutiveFailures,
     });
   }

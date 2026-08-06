@@ -269,6 +269,35 @@ function normalizeVerifications(
   };
 }
 
+function cloneSellerHealthCheck(
+  value: AntseedConfig['seller']['healthCheck'],
+): AntseedConfig['seller']['healthCheck'] {
+  if (!value) return undefined;
+  return {
+    ...(value.enabled !== undefined ? { enabled: value.enabled } : {}),
+    ...(value.intervalMs !== undefined ? { intervalMs: value.intervalMs } : {}),
+    ...(value.failureThreshold !== undefined ? { failureThreshold: value.failureThreshold } : {}),
+  };
+}
+
+function normalizeSellerHealthCheck(
+  value: unknown,
+  fallback?: AntseedConfig['seller']['healthCheck'],
+): { healthCheck: NonNullable<AntseedConfig['seller']['healthCheck']> } | Record<string, never> {
+  if (!isRecord(value)) {
+    const cloned = cloneSellerHealthCheck(fallback);
+    return cloned ? { healthCheck: cloned } : {};
+  }
+  // Keep user-supplied values (even malformed) so validateConfig reports them.
+  return {
+    healthCheck: {
+      ...(value['enabled'] !== undefined ? { enabled: value['enabled'] as boolean } : {}),
+      ...(value['intervalMs'] !== undefined ? { intervalMs: toFiniteOrNaN(value['intervalMs']) } : {}),
+      ...(value['failureThreshold'] !== undefined ? { failureThreshold: toFiniteOrNaN(value['failureThreshold']) } : {}),
+    },
+  };
+}
+
 function mergeSellerConfig(
   defaults: AntseedConfig['seller'],
   value: unknown
@@ -282,6 +311,7 @@ function mergeSellerConfig(
       ...(typeof defaults.maxUploadBodyBytes === 'number' ? { maxUploadBodyBytes: defaults.maxUploadBodyBytes } : {}),
       ...(defaults.agentDir ? { agentDir: defaults.agentDir } : {}),
       ...(normalizeVerifications(undefined, defaults.verifications)),
+      ...(normalizeSellerHealthCheck(undefined, defaults.healthCheck)),
     };
   }
 
@@ -303,6 +333,7 @@ function mergeSellerConfig(
         ? { maxUploadBodyBytes: defaults.maxUploadBodyBytes }
         : {}),
     ...(normalizeAgentDir(value['agentDir'], defaults.agentDir)),
+    ...(normalizeSellerHealthCheck(value['healthCheck'], defaults.healthCheck)),
   };
 }
 
@@ -348,6 +379,7 @@ function mergeBuyerConfig(
       proxyPort: defaults.proxyPort,
       peerRefreshIntervalMs: defaults.peerRefreshIntervalMs,
       metadataFetchTimeoutMs: defaults.metadataFetchTimeoutMs,
+      disableMetadataV2Services: defaults.disableMetadataV2Services,
       ...(normalizeBuyerVerification(undefined, defaults.verification)),
     };
   }
@@ -363,8 +395,19 @@ function mergeBuyerConfig(
     metadataFetchTimeoutMs: typeof value['metadataFetchTimeoutMs'] === 'number'
       ? value['metadataFetchTimeoutMs']
       : defaults.metadataFetchTimeoutMs,
+    disableMetadataV2Services: normalizeBooleanConfigValue(
+      value['disableMetadataV2Services'],
+      defaults.disableMetadataV2Services,
+      'buyer.disableMetadataV2Services',
+    ),
     ...(normalizeBuyerVerification(value['verification'], defaults.verification)),
   };
+}
+
+function normalizeBooleanConfigValue(value: unknown, defaultValue: boolean, path: string): boolean {
+  if (value === undefined) return defaultValue;
+  if (typeof value === 'boolean') return value;
+  throw new Error(`${path} must be a boolean`);
 }
 
 /**

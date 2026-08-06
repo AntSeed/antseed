@@ -245,4 +245,42 @@ describe('HttpMetadataResolver', () => {
     expect(third).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
+
+  it('probes a failed endpoint before a long cooldown expires', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+
+    const metadata = buildMetadata();
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(metadata), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const resolver = new HttpMetadataResolver({
+      timeoutMs: 100,
+      failureCooldownMs: 10_000,
+      maxFailureCooldownMs: 10_000,
+      recoveryProbeIntervalMs: 2_000,
+    });
+    const peer = { host: '147.236.231.105', port: 6882 };
+
+    const first = await resolver.resolve(peer);
+    const skipped = await resolver.resolve(peer);
+    vi.setSystemTime(new Date('2026-01-01T00:00:02.001Z'));
+    const probed = await resolver.resolve(peer);
+
+    expect(first).toBeNull();
+    expect(skipped).toBeNull();
+    expect(probed).toEqual(expect.objectContaining({
+      ...metadata,
+      resolvedAtMs: new Date('2026-01-01T00:00:02.001Z').getTime(),
+    }));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

@@ -1,147 +1,119 @@
 import {
   app,
+  autoUpdater as nativeAutoUpdater,
   BrowserWindow,
   ipcMain,
-  dialog,
-  type OpenDialogOptions,
 } from 'electron';
-import { copyFile } from 'node:fs/promises';
+import { execFileSync, spawn } from 'node:child_process';
+import path from 'node:path';
 import electronUpdater from 'electron-updater';
 const { autoUpdater } = electronUpdater;
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { isIP } from 'node:net';
-import { existsSync } from 'node:fs';
 import {
   ProcessManager,
   type RuntimeMode,
   type RuntimeProcessState,
   type StartOptions,
-} from './process-manager.js';
-import { registerPiChatHandlers, invalidateOnChainEnrichmentCache } from './pi-chat-engine.js';
-import { ensureSecureIdentity, secureIdentityEnv, getSecureIdentity } from './identity.js';
-import { DepositsClient, signSpendingAuth, makeChannelsDomain, resolveChainConfig, formatUsdc, peerIdToAddress } from '@antseed/node';
-import { createServer as createPaymentsServer } from '@antseed/payments';
-import type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
-import { parseRuntimeActivityFromLog } from './log-parser.js';
+} from './runtime/process-manager.js';
+import { registerPiChatHandlers } from './chat/engine.js';
+import { emitChatEvent } from './chat/event-bus.js';
+import { createTelegramBridge } from './telegram/bridge.js';
+import { ensureSecureIdentity, secureIdentityEnv } from './identity.js';
+import type { LogEvent, RuntimeActivityEvent } from './runtime/log-parser.js';
+import { parseRuntimeActivityFromLog } from './runtime/log-parser.js';
 import {
   setPluginAppendLog,
   ensureDefaultPlugin,
-  listInstalledPlugins,
-  installPluginDependency,
-  normalizePluginPackageName,
-  isSafePluginPackageName,
-  resolveLegacyPluginPackage,
-  toNpmAliasInstallSpec,
-  toFileInstallSpec,
-  resolveLocalPluginSource,
-  type InstalledPlugin,
-} from './plugins.js';
-type ApiResult = {
-  ok: boolean;
-  data: unknown | null;
-  error: string | null;
-  status: number | null;
-};
+} from './runtime/plugins.js';
 import {
   refreshPeerCache,
   getNetworkSnapshot,
-  touchPeer,
-  lookupPeer,
   onPeersChanged,
   type DashboardNetworkPeer,
-} from './peer-cache.js';
-import { createWindow, createApplicationMenu, getMainWindow } from './window.js';
-import { ensureConfig, readConfig, mergeConfig, readNodeStatus } from './config-io.js';
-import { registerAttachmentScheme, installAttachmentProtocol } from './attachment-protocol.js';
-import { resolveAttachmentPath } from './attachment-store.js';
-import { getWorkspacePickerDefaultDir } from './chat-workspace.js';
+} from './runtime/peer-cache.js';
 import {
-  getVoiceTranscriptionStatus,
-  installVoiceTranscriptionModel,
-  setVoiceTranscriptionModel,
-  transcribeVoiceAudio,
-} from './voice-transcription.js';
+  createWindow,
+  createApplicationMenu,
+  getMainWindow,
+} from './ui/window.js';
+import { createDesktopTray } from './ui/tray.js';
+import { ensureConfig } from './runtime/config-io.js';
+import { registerAttachmentScheme, installAttachmentProtocol } from './chat/attachments/protocol.js';
+import { disableSandboxIfAppImageCannotSandbox } from './linux-sandbox.js';
+import {
+  APP_ICON_PATH,
+  APP_NAME,
+  INTERNAL_APP_NAME,
+  TRAY_ICON_PATH,
+  errorDetails,
+  errorMessage,
+  getAppSetupStatus,
+  getMacUpdateInstallHint,
+  isDesktopDebugEnabled,
+  isDev,
+  rendererUrl,
+  setAppSetupStatus,
+  type InstallUpdateResult,
+  type UpdateStatus,
+} from './app-context.js';
+import {
+  buildSystemProxyTrayMenu,
+  clearSystemProxySettings,
+  clearSystemProxyTransportSettings,
+  getActiveSystemProxyState,
+  initSystemProxyRuntime,
+  loadPersistedSystemProxyState,
+  refreshTrayMenu,
+  restoreSystemProxyProfilesAtLaunch,
+  startSystemProxyWatchdog,
+  stopManagedRuntimes,
+} from './system-proxy/runtime.js';
+import { LOCALHOST_URL } from './constants.js';
+import { registerAppIpc } from './ipc/app.js';
+import { registerDesktopIpc } from './ipc/desktop.js';
+import { registerFloatIpc } from './ipc/float.js';
+import { registerPaymentsIpc } from './ipc/payments.js';
+import { registerRuntimeIpc } from './ipc/runtime.js';
+import { registerSystemProxyIpc } from './ipc/system-proxy.js';
+import { registerTelegramIpc } from './ipc/telegram.js';
+import {
+  effectiveLaunchTarget,
+} from './connected-apps/profile-targets.js';
+import {
+  stopPaymentsPortal,
+} from './payments/portal.js';
+import { ACTIVE_CONFIG_PATH } from './runtime/active-config.js';
+import {
+  restoreOsSystemProxySync,
+} from './system-proxy/os-settings.js';
+import {
+  DEFAULT_SYSTEM_PROXY_PORT,
+} from './system-proxy/profiles.js';
+import { resolveBuyerProxyPort } from './runtime/active-config.js';
 
 // Re-export types that may be used by other main-process modules
-export type { LogEvent, RuntimeActivityEvent } from './log-parser.js';
-export type { DashboardNetworkPeer, DashboardNetworkStats, DashboardNetworkResult } from './peer-cache.js';
-export type { InstalledPlugin } from './plugins.js';
+export type { LogEvent, RuntimeActivityEvent } from './runtime/log-parser.js';
+export type { DashboardNetworkPeer, DashboardNetworkStats, DashboardNetworkResult } from './runtime/peer-cache.js';
+export type { InstalledPlugin } from './runtime/plugins.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Internal runtime name — NEVER change this value. On macOS the safeStorage
+// encryption key lives in the "<app.setName value> Safe Storage" keychain
+// entry, and the default userData path derives from it too. Renaming it
+// rotates the key and orphans every existing identity.enc. User-visible
+// surfaces use APP_NAME below instead.
 
-const isDev = Boolean(process.env['VITE_DEV_SERVER_URL']);
-const rendererUrl = process.env['VITE_DEV_SERVER_URL'] ?? `file://${path.join(__dirname, '../renderer/index.html')}`;
-const APP_NAME = 'AntStation Desktop';
-const DESKTOP_DEBUG_ENV = 'ANTSEED_DESKTOP_DEBUG';
-const DESKTOP_DEBUG_FLAGS = new Set(['--debug-runtime', '--desktop-debug']);
-const DEFAULT_BUYER_PROXY_PORT = 8377;
-
-function isTruthyEnv(value: string | undefined): boolean {
-  if (!value) {
-    return false;
-  }
-  const normalized = value.trim().toLowerCase();
-  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
-}
-
-function hasDesktopDebugFlag(argv: string[]): boolean {
-  for (const arg of argv) {
-    if (DESKTOP_DEBUG_FLAGS.has(arg.trim().toLowerCase())) {
-      return true;
-    }
-  }
-  return false;
-}
-
-let desktopDebugEnabled = isTruthyEnv(process.env[DESKTOP_DEBUG_ENV]) || hasDesktopDebugFlag(process.argv);
+let isQuitting = false;
+let isInstallingUpdate = false;
 
 // The `antseed-attachment://` scheme must be registered as privileged
 // *before* `app.whenReady()` fires. The actual request handler is wired
 // inside whenReady() once Electron's protocol module is usable.
 registerAttachmentScheme();
 
-function resolveAppIconPath(): string | undefined {
-  const candidates = [
-    path.resolve(__dirname, '../../assets/antseed-dock-icon.png'),
-    path.resolve(process.cwd(), 'assets/antseed-dock-icon.png'),
-    path.resolve(__dirname, '../../assets/antseed-mark.png'),
-    path.resolve(process.cwd(), 'assets/antseed-mark.png'),
-  ];
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-  return undefined;
-}
-
-const APP_ICON_PATH = resolveAppIconPath();
-
-// Set app name as early as possible; on macOS dev runs may still show "Electron"
-// in some surfaces because the underlying bundle is Electron.app.
-app.setName(APP_NAME);
-
-import { DEFAULT_CONFIG_PATH, LOCALHOST, LOCALHOST_URL } from './constants.js';
-import { asRecord, asString } from './utils.js';
-
-function resolveActiveConfigPath(): string {
-  const explicit = process.env['ANTSEED_CONFIG_PATH']?.trim();
-  if (explicit && explicit.length > 0) {
-    return explicit;
-  }
-
-  return DEFAULT_CONFIG_PATH;
-}
-
-const ACTIVE_CONFIG_PATH = resolveActiveConfigPath();
+disableSandboxIfAppImageCannotSandbox();
 
 const logBuffer: LogEvent[] = [];
 let lastRuntimeActivityHash = '';
-
-let appSetupNeeded = false;
-let appSetupComplete = false;
 
 function isPublicMetadataHost(rawHost: string): boolean {
   const host = rawHost.trim();
@@ -202,18 +174,46 @@ function isPublicMetadataHost(rawHost: string): boolean {
   return true;
 }
 
-async function resolveBuyerProxyPort(): Promise<number> {
+/**
+ * Kill any leftover process still listening on the buyer proxy port after the
+ * desktop's own runtime child was stopped. The CLI reuses a compatible
+ * listener instead of failing on EADDRINUSE, so an orphaned runtime from an
+ * earlier session can keep the proxy alive — chats keep working and the UI
+ * reads as connected even though Stop was pressed. Only processes from our
+ * own runtime family (node/antseed/electron) are reaped.
+ */
+async function killOrphanBuyerProxy(): Promise<void> {
+  if (process.platform === 'win32') return;
   try {
-    const config = await readConfig(ACTIVE_CONFIG_PATH);
-    const buyer = asRecord(config['buyer']);
-    const port = Number(buyer['proxyPort']);
-    if (Number.isInteger(port) && port > 0 && port <= 65535) {
-      return port;
+    const port = await resolveBuyerProxyPort();
+    const out = execFileSync('lsof', ['-ti', `tcp:${port}`, '-sTCP:LISTEN'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const pids = out
+      .split(/\s+/)
+      .map((raw) => Number(raw))
+      .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
+    for (const pid of pids) {
+      let command = '';
+      try {
+        command = execFileSync('ps', ['-o', 'comm=', '-p', String(pid)], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim();
+      } catch {
+        continue; // Already gone.
+      }
+      if (!/node|antseed|electron/i.test(command)) continue;
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {
+        // Already gone.
+      }
     }
   } catch {
-    // Fall back to the default proxy port when config is unavailable.
+    // lsof unavailable or nothing listening — nothing to reap.
   }
-  return DEFAULT_BUYER_PROXY_PORT;
 }
 
 async function requestBuyerPeerRefresh(): Promise<void> {
@@ -272,6 +272,7 @@ function emitRuntimeActivity(activity: RuntimeActivityEvent): void {
 
 function emitRuntimeState(): void {
   getMainWindow()?.webContents.send('runtime:state', getCombinedProcessState());
+  refreshTrayMenu();
 }
 
 function appendLog(mode: RuntimeMode, stream: 'stdout' | 'stderr' | 'system', line: string): void {
@@ -287,6 +288,9 @@ function appendLog(mode: RuntimeMode, stream: 'stdout' | 'stderr' | 'system', li
     emitRuntimeActivity(activity);
   }
   emitRuntimeState();
+  if (mode === 'system-proxy' && stream === 'system' && /^Process exited|^Started system-proxy/.test(line)) {
+    refreshTrayMenu();
+  }
 }
 
 // Wire up callbacks for extracted modules
@@ -295,622 +299,72 @@ setPluginAppendLog(appendLog);
 // When the peer set changes, tell the renderer to refresh the service catalog.
 onPeersChanged(() => {
   getMainWindow()?.webContents.send('peers:changed');
+  refreshTrayMenu();
 });
 const processManager = new ProcessManager((mode, stream, line) => {
   appendLog(mode, stream, line);
 });
 
+initSystemProxyRuntime({
+  appName: APP_NAME,
+  appendLog,
+  processManager,
+  effectiveLaunchTarget: (profileName) => effectiveLaunchTarget(profileName),
+});
+
 // ── Payments Portal ──
 
-let paymentsServer: Awaited<ReturnType<typeof createPaymentsServer>> | null = null;
-const PAYMENTS_PORT = Number(process.env['ANTSEED_PAYMENTS_PORT']) || 3118;
-
-async function startPaymentsPortal(): Promise<void> {
-  if (paymentsServer) return;
-  try {
-    await ensureSecureIdentity();
-    const identityHex = secureIdentityEnv().ANTSEED_IDENTITY_HEX;
-    paymentsServer = await createPaymentsServer({
-      port: PAYMENTS_PORT,
-      identityHex,
-    });
-    await paymentsServer.listen({ port: PAYMENTS_PORT, host: LOCALHOST });
-    console.log(`[desktop] Payments portal running at ${LOCALHOST_URL}:${PAYMENTS_PORT}`);
-  } catch (err) {
-    console.error('[desktop] Failed to start payments portal:', err instanceof Error ? err.message : String(err));
-    paymentsServer = null;
-  }
+async function stopDesktopServices(): Promise<void> {
+  await Promise.all([telegramBridge.stop(), stopManagedRuntimes(), stopPaymentsPortal()]);
 }
-
-async function stopPaymentsPortal(): Promise<void> {
-  if (!paymentsServer) return;
-  try {
-    await paymentsServer.close();
-  } catch {
-    // Already closed
-  }
-  paymentsServer = null;
-}
-
-ipcMain.handle('payments:open-portal', async (_event, tab?: string) => {
-  try {
-    await startPaymentsPortal();
-    const token = paymentsServer ? (paymentsServer as unknown as { bearerToken?: string }).bearerToken : '';
-    const params = new URLSearchParams();
-    if (token) params.set('token', token);
-    if (tab === 'deposit' || tab === 'deposits') {
-      params.set('action', 'deposit');
-    } else if (tab) {
-      params.set('tab', tab);
-    }
-    const qs = params.toString();
-    // In dev mode, open the Vite HMR dev server (which proxies /api to the Fastify port) when configured.
-    // Set ANTSEED_PAYMENTS_DEV_URL to override (default: the Fastify URL).
-    // When dev mode is detected but no dev server URL is configured, we still fall back to the Fastify URL.
-    const devUrl = isDev ? process.env['ANTSEED_PAYMENTS_DEV_URL']?.trim() : undefined;
-    const base = devUrl || `${LOCALHOST_URL}:${PAYMENTS_PORT}`;
-    const url = qs ? `${base}?${qs}` : base;
-    const { default: open } = await import('open');
-    await open(url);
-    return { ok: true, url };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-});
 
 function getCombinedProcessState(): RuntimeProcessState[] {
   return processManager.getState();
 }
 
-// ── IPC Handlers ──
-// ── IPC Handlers ──
-
-ipcMain.handle('runtime:get-state', async () => {
-  return {
-    processes: getCombinedProcessState(),
-    daemonState: processManager.getDaemonStateSnapshot(),
-    logs: [...logBuffer],
-  };
+// ── IPC handlers ──
+// Each group lives in ipc/<domain>.ts; anything they need from this file is
+// passed in rather than reached for.
+registerPaymentsIpc();
+registerDesktopIpc();
+registerAppIpc();
+registerFloatIpc();
+registerSystemProxyIpc({ processManager });
+registerRuntimeIpc({
+  processManager,
+  logBuffer,
+  appendLog,
+  getCombinedProcessState,
+  killOrphanBuyerProxy,
+  requestBuyerPeerRefresh,
 });
-
-ipcMain.handle('runtime:start', async (_event, options: StartOptions) => {
-  await ensureSecureIdentity();
-
-  const startOptions: StartOptions = {
-    ...options,
-    ...(desktopDebugEnabled ? { verbose: true } : {}),
-    env: {
-      ...(options.env ?? {}),
-      ...(desktopDebugEnabled ? { ANTSEED_DEBUG: '1' } : {}),
-      ...secureIdentityEnv(),
-    },
-  };
-  if (desktopDebugEnabled) {
-    appendLog(startOptions.mode, 'system', 'Desktop debug mode enabled (ANTSEED_DEBUG=1, --verbose).');
-  }
-
-  const state = await processManager.start(startOptions);
-  return {
-    state,
-    processes: getCombinedProcessState(),
-    daemonState: processManager.getDaemonStateSnapshot(),
-  };
-});
-
-ipcMain.handle('runtime:stop', async (_event, mode: RuntimeMode) => {
-  const state = await processManager.stop(mode);
-  return {
-    state,
-    processes: getCombinedProcessState(),
-    daemonState: processManager.getDaemonStateSnapshot(),
-  };
-});
-
-ipcMain.handle('desktop:set-debug-logs', (_event, enabled: boolean) => {
-  desktopDebugEnabled = Boolean(enabled);
-  return { ok: true };
-});
-
-ipcMain.handle('runtime:clear-logs', async () => {
-  logBuffer.length = 0;
-  return { ok: true };
-});
-
-ipcMain.handle(
-  'attachment:download',
-  async (
-    _event,
-    conversationId: string,
-    attachmentId: string,
-    suggestedName: string,
-  ): Promise<{ ok: boolean; path?: string; error?: string }> => {
-    // Download flow via dialog.showSaveDialog + copyFile. More reliable
-    // cross-platform than relying on <a download> with a custom
-    // Electron protocol URL — Chromium's save-to-disk path is only
-    // guaranteed for http(s)/data/blob.
-    try {
-      const resolved = await resolveAttachmentPath(conversationId, attachmentId);
-      if (!resolved) {
-        return { ok: false, error: 'Attachment not found' };
-      }
-      const win = getMainWindow();
-      const safeSuggested = typeof suggestedName === 'string' && suggestedName.trim().length > 0
-        ? suggestedName.trim()
-        : 'attachment';
-      const result = win
-        ? await dialog.showSaveDialog(win, { defaultPath: safeSuggested })
-        : await dialog.showSaveDialog({ defaultPath: safeSuggested });
-      if (result.canceled || !result.filePath) {
-        return { ok: false, error: 'cancelled' };
-      }
-      await copyFile(resolved, result.filePath);
-      return { ok: true, path: result.filePath };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  },
-);
-
-ipcMain.handle('desktop:pick-directory', async () => {
-  const currentWorkspaceDir = await getWorkspacePickerDefaultDir();
-  const dialogOptions: OpenDialogOptions = {
-    properties: ['openDirectory'],
-    title: 'Select Workspace Folder',
-    buttonLabel: 'Use Folder',
-    defaultPath: currentWorkspaceDir,
-  };
-  const win = getMainWindow();
-  const result = win
-    ? await dialog.showOpenDialog(win, dialogOptions)
-    : await dialog.showOpenDialog(dialogOptions);
-
-  return {
-    ok: !result.canceled,
-    path: result.canceled ? null : (result.filePaths[0] ?? null),
-  };
-});
-
-ipcMain.handle('voice:transcribe', async (_event, audio: ArrayBuffer | Uint8Array) => {
-  return transcribeVoiceAudio(audio);
-});
-ipcMain.handle('voice:get-status', () => getVoiceTranscriptionStatus());
-ipcMain.handle('voice:set-model', (_event, modelId: string) => setVoiceTranscriptionModel(modelId));
-ipcMain.handle('voice:install-model', (_event, modelId: string) => installVoiceTranscriptionModel(modelId));
-
-ipcMain.handle('app:get-setup-status', () => ({
-  needed: appSetupNeeded,
-  complete: appSetupComplete,
-}));
-
-// Returns the macOS UI language (e.g. 'he', 'ar-EG', 'en-US') as Electron sees
-// it. This is the same locale that drives the system window-chrome direction,
-// so it's the authoritative signal for whether the traffic-light buttons are
-// mirrored to the top-right. Prefer this over `navigator.language` /
-// `navigator.languages` in the renderer — those reflect the *web* preferred
-// language list, not the OS UI language, and can disagree on multilingual
-// systems.
-ipcMain.handle('app:get-system-locale', () => app.getLocale());
-ipcMain.handle('app:get-version', () => app.getVersion());
-
-ipcMain.handle('identity:get', async () => {
-  try {
-    await ensureSecureIdentity();
-    const identity = getSecureIdentity();
-    if (!identity) {
-      return { ok: false, data: null, error: 'Identity not available (safeStorage may not be ready)' };
-    }
-    return {
-      ok: true,
-      data: { peerId: identity.peerId },
-      error: null,
-    };
-  } catch (err) {
-    return { ok: false, data: null, error: err instanceof Error ? err.message : String(err) };
-  }
-});
-
-ipcMain.handle('plugins:list', async () => {
-  try {
-    const plugins = await listInstalledPlugins();
-    return { ok: true, plugins, error: null };
-  } catch (err) {
-    return {
-      ok: false,
-      plugins: [] as InstalledPlugin[],
-      error: err instanceof Error ? err.message : String(err),
-    };
-  }
-});
-
-ipcMain.handle('plugins:install', async (_event, packageName: string) => {
-  const normalized = typeof packageName === 'string' ? normalizePluginPackageName(packageName) : '';
-  if (!normalized || !isSafePluginPackageName(normalized)) {
-    return {
-      ok: false,
-      package: normalized,
-      plugins: [] as InstalledPlugin[],
-      error: `Invalid plugin package name: ${packageName}`,
-    };
-  }
-
-  try {
-    appendLog('connect', 'system', `Installing plugin "${normalized}"...`);
-    await installPluginDependency(normalized);
-    const plugins = await listInstalledPlugins();
-    appendLog('connect', 'system', `Installed plugin "${normalized}".`);
-    return { ok: true, package: normalized, plugins, error: null };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const legacyPackageName = resolveLegacyPluginPackage(normalized);
-
-    if (legacyPackageName) {
-      try {
-        const aliasSpec = toNpmAliasInstallSpec(normalized, legacyPackageName);
-        appendLog('connect', 'system', `Registry install failed; retrying via legacy alias: ${aliasSpec}`);
-        await installPluginDependency(aliasSpec);
-        const plugins = await listInstalledPlugins();
-        appendLog('connect', 'system', `Installed plugin "${normalized}" using legacy package alias "${legacyPackageName}".`);
-        return { ok: true, package: normalized, plugins, error: null };
-      } catch (legacyErr) {
-        const legacyMessage = legacyErr instanceof Error ? legacyErr.message : String(legacyErr);
-        appendLog('connect', 'system', `Legacy alias install failed for "${normalized}": ${legacyMessage}`);
-      }
-    }
-
-    const localSource = await resolveLocalPluginSource(normalized);
-
-    if (localSource) {
-      try {
-        appendLog('connect', 'system', `Registry install failed; retrying from local source: ${localSource}`);
-        await installPluginDependency(toFileInstallSpec(normalized, localSource));
-        const plugins = await listInstalledPlugins();
-        appendLog('connect', 'system', `Installed plugin "${normalized}" from local source.`);
-        return { ok: true, package: normalized, plugins, error: null };
-      } catch (localErr) {
-        const localMessage = localErr instanceof Error ? localErr.message : String(localErr);
-        appendLog('connect', 'system', `Local plugin install failed for "${normalized}": ${localMessage}`);
-        return {
-          ok: false,
-          package: normalized,
-          plugins: await listInstalledPlugins(),
-          error: `Registry install failed: ${message}\nLocal fallback failed: ${localMessage}`,
-        };
-      }
-    }
-
-    appendLog('connect', 'system', `Plugin install failed for "${normalized}": ${message}`);
-    return {
-      ok: false,
-      package: normalized,
-      plugins: await listInstalledPlugins(),
-      error: message,
-    };
-  }
-});
-
-ipcMain.handle('runtime:get-network', async () => {
-  await refreshPeerCache();
-  return getNetworkSnapshot();
-});
-
-ipcMain.handle('runtime:lookup-peer', async (_event, peerId: string) => {
-  if (typeof peerId !== 'string' || peerId.trim().length === 0) {
-    return { ok: false, peer: null, error: 'Invalid peerId' };
-  }
-  await refreshPeerCache();
-  const peer = lookupPeer(peerId.trim());
-  return { ok: Boolean(peer), peer, error: peer ? null : 'Peer not found' };
-});
-
-ipcMain.handle('runtime:touch-peer', (_event, peerId: string) => {
-  if (typeof peerId !== 'string' || peerId.trim().length === 0) return { ok: false };
-  return { ok: touchPeer(peerId.trim()) };
-});
-
-ipcMain.handle(
-  'runtime:get-data',
-  async (
-    _event,
-    endpoint: string,
-    _options?: { port?: number; query?: Record<string, unknown> },
-  ) => {
-    // Serve status, config, and network directly from files — no dashboard needed.
-    if (endpoint === 'status') {
-      try {
-        const data = await readNodeStatus(ACTIVE_CONFIG_PATH);
-        return { ok: true, data, error: null, status: 200 } satisfies ApiResult;
-      } catch (err) {
-        return { ok: false, data: null, error: err instanceof Error ? err.message : String(err), status: null } satisfies ApiResult;
-      }
-    }
-
-    if (endpoint === 'config') {
-      try {
-        const config = await readConfig(ACTIVE_CONFIG_PATH);
-        return { ok: true, data: { config }, error: null, status: 200 } satisfies ApiResult;
-      } catch (err) {
-        return { ok: false, data: null, error: err instanceof Error ? err.message : String(err), status: null } satisfies ApiResult;
-      }
-    }
-
-    if (endpoint === 'network' || endpoint === 'peers') {
-      try {
-        await refreshPeerCache();
-        const snapshot = getNetworkSnapshot();
-        if (endpoint === 'peers') {
-          return { ok: true, data: { peers: snapshot.peers, total: snapshot.peers.length, degraded: false }, error: null, status: 200 } satisfies ApiResult;
-        }
-      return { ok: true, data: snapshot, error: null, status: 200 } satisfies ApiResult;
-      } catch (err) {
-        return { ok: false, data: null, error: err instanceof Error ? err.message : String(err), status: null } satisfies ApiResult;
-      }
-    }
-
-    if (endpoint === 'data-sources') {
-      return { ok: true, data: { configPath: ACTIVE_CONFIG_PATH }, error: null, status: 200 } satisfies ApiResult;
-    }
-
-    // Channels/earnings are seller-only — not needed in the desktop (buyer) app.
-    return {
-      ok: false,
-      data: null,
-      error: `Endpoint "${endpoint}" is not available in the desktop app`,
-      status: null,
-    } satisfies ApiResult;
-  },
-);
 
 // Allowlisted top-level keys that the renderer is permitted to update via IPC.
 // Any key not in this set is stripped before the request is forwarded to the
 // dashboard API, preventing a compromised renderer from overwriting arbitrary
 // config fields.
-const DASHBOARD_CONFIG_ALLOWED_KEYS = new Set([
-  'seller',
-  'buyer',
-  'identity',
-  'network',
-  'payments',
-]);
-
-function sanitizeDashboardConfigPayload(raw: unknown): Record<string, unknown> {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
-  const safe: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (DASHBOARD_CONFIG_ALLOWED_KEYS.has(key)) {
-      safe[key] = value;
-    }
-  }
-  return safe;
-}
-
-ipcMain.handle(
-  'runtime:update-config',
-  async (_event, config: Record<string, unknown>): Promise<ApiResult> => {
-    const safeConfig = sanitizeDashboardConfigPayload(config);
-    if (Object.keys(safeConfig).length === 0) {
-      return { ok: false, data: null, error: 'No valid config keys provided', status: null };
-    }
-    try {
-      const merged = await mergeConfig(safeConfig, ACTIVE_CONFIG_PATH);
-      cachedCryptoConfig = null; // Invalidate cached crypto config
-      invalidateOnChainEnrichmentCache();
-      creditsRpcFailCount = 0; // Reset backoff so new config is tried immediately
-      // Restart payments portal if running so it picks up new contract/chain config
-      void stopPaymentsPortal().catch(() => {});
-      return { ok: true, data: { config: merged }, error: null, status: 200 };
-    } catch (err) {
-      return { ok: false, data: null, error: err instanceof Error ? err.message : String(err), status: null };
-    }
-  },
-);
 
 // ── Credits / Deposits Balance ──
 
-type CreditsInfo = {
-  evmAddress: string | null;
-  operatorAddress: string | null;
-  balanceUsdc: string;
-  reservedUsdc: string;
-  availableUsdc: string;
-  creditLimitUsdc: string;
-};
-
-// Use shared formatUsdc from @antseed/node
-const formatUsdc6 = formatUsdc;
-
-let cachedCreditsInfo: CreditsInfo | null = null;
-
-// Cached crypto config — invalidated on config update. Uses protocol defaults
-// from resolveChainConfig with optional user overrides from config.json.
-let cachedCryptoConfig: { rpcUrl: string; fallbackRpcUrls?: string[]; depositsAddress: string; channelsAddress: string; usdcAddress: string; chainId: number } | null = null;
-
-async function loadCachedCryptoConfig(): Promise<typeof cachedCryptoConfig> {
-  if (cachedCryptoConfig) return cachedCryptoConfig;
-  let overrides: Record<string, unknown> = {};
-  try {
-    const config = await readConfig(ACTIVE_CONFIG_PATH);
-    const payments = asRecord(config.payments);
-    overrides = asRecord(payments.crypto);
-  } catch {
-    // No config — no crypto config available
-  }
-  // Resolve chain config from the selected chain ID (default: base-mainnet).
-  // All contract addresses come from the preset in chain-config.ts.
-  const selectedChain = asString(overrides.chainId as string, '') || 'base-mainnet';
-  const userRpcUrl = asString(overrides.rpcUrl as string, '');
-  const cc = resolveChainConfig({ chainId: selectedChain, ...(userRpcUrl ? { rpcUrl: userRpcUrl } : {}) });
-  cachedCryptoConfig = { rpcUrl: cc.rpcUrl, ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}), depositsAddress: cc.depositsContractAddress, channelsAddress: cc.channelsContractAddress, usdcAddress: cc.usdcContractAddress, chainId: cc.evmChainId };
-  return cachedCryptoConfig;
-}
-
-let creditsRpcFailCount = 0;
-let creditsRpcLastFailAt = 0;
-const CREDITS_RPC_BACKOFF_THRESHOLD = 3;
-const CREDITS_RPC_RETRY_COOLDOWN_MS = 60_000;
-
-async function refreshCreditsInfo(): Promise<CreditsInfo> {
-  const identity = getSecureIdentity();
-  if (!identity) {
-    return { evmAddress: null, operatorAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', creditLimitUsdc: '0' };
-  }
-
-  const evmAddress = identity.wallet.address;
-  const cc = await loadCachedCryptoConfig();
-  if (!cc) {
-    return { evmAddress, operatorAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', creditLimitUsdc: '0' };
-  }
-
-  // Back off after repeated RPC failures; retry after cooldown so transient
-  // outages don't permanently disable balance display for the session.
-  if (creditsRpcFailCount >= CREDITS_RPC_BACKOFF_THRESHOLD) {
-    if (Date.now() - creditsRpcLastFailAt < CREDITS_RPC_RETRY_COOLDOWN_MS) {
-      if (cachedCreditsInfo) return cachedCreditsInfo;
-      return { evmAddress, operatorAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', creditLimitUsdc: '0' };
-    }
-    // Cooldown elapsed — allow a retry attempt
-    creditsRpcFailCount = 0;
-  }
-
-  const depositsClient = new DepositsClient({ rpcUrl: cc.rpcUrl, ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}), contractAddress: cc.depositsAddress, usdcAddress: cc.usdcAddress, ...(cc.chainId ? { evmChainId: cc.chainId } : {}) });
-
-  try {
-    const [balance, creditLimit, operatorAddress] = await Promise.all([
-      depositsClient.getBuyerBalance(evmAddress),
-      depositsClient.getBuyerCreditLimit(evmAddress),
-      (async (): Promise<string | null> => {
-        try {
-          const addr = await depositsClient.getOperator(evmAddress);
-          return addr && addr !== '0x0000000000000000000000000000000000000000' ? addr : null;
-        } catch { return null; }
-      })(),
-    ]);
-    creditsRpcFailCount = 0;
-
-    const info: CreditsInfo = {
-      evmAddress,
-      operatorAddress,
-      balanceUsdc: formatUsdc6(balance.available + balance.reserved),
-      reservedUsdc: formatUsdc6(balance.reserved),
-      availableUsdc: formatUsdc6(balance.available),
-      creditLimitUsdc: formatUsdc6(creditLimit),
-    };
-    cachedCreditsInfo = info;
-    return info;
-  } catch (err) {
-    creditsRpcFailCount++;
-    creditsRpcLastFailAt = Date.now();
-    if (creditsRpcFailCount <= 1) {
-      try { console.warn('[credits] Deposits RPC unavailable:', err instanceof Error ? err.message : String(err)); }
-      catch { /* EPIPE — ignore */ }
-    }
-    if (cachedCreditsInfo) return cachedCreditsInfo;
-    return { evmAddress, operatorAddress: null, balanceUsdc: '0', reservedUsdc: '0', availableUsdc: '0', creditLimitUsdc: '0' };
-  }
-}
-
-ipcMain.handle('credits:get-info', async (): Promise<{ ok: boolean; data: CreditsInfo | null; error: string | null }> => {
-  try {
-    await ensureSecureIdentity();
-    const info = await refreshCreditsInfo();
-    return { ok: true, data: info, error: null };
-  } catch (err) {
-    return { ok: false, data: null, error: err instanceof Error ? err.message : String(err) };
-  }
-});
-
-// Max spending per session: $5 USDC = 5,000,000 base units. Main process enforces
-// this cap to prevent a compromised renderer from signing unbounded authorizations.
-const MAX_SPENDING_AUTH_BASE_UNITS = 5_000_000n;
-const BYTES32_RE = /^0x[0-9a-fA-F]{64}$/;
-
-ipcMain.handle('payments:sign-spending-auth', async (_event, params: {
-  channelId: string;
-  cumulativeAmountBaseUnits: string;
-  metadataHash: string;
-}) => {
-  try {
-    // Validate renderer-supplied parameters at the trust boundary
-    if (!BYTES32_RE.test(params.channelId)) {
-      return { ok: false, error: 'Invalid channel ID format' };
-    }
-    const cumulativeAmount = BigInt(params.cumulativeAmountBaseUnits);
-    if (cumulativeAmount <= 0n || cumulativeAmount > MAX_SPENDING_AUTH_BASE_UNITS) {
-      return { ok: false, error: `cumulativeAmount exceeds cap (${MAX_SPENDING_AUTH_BASE_UNITS} base units)` };
-    }
-    if (!BYTES32_RE.test(params.metadataHash)) {
-      return { ok: false, error: 'Invalid metadataHash format' };
-    }
-
-    await ensureSecureIdentity();
-    const identity = getSecureIdentity();
-    if (!identity) {
-      return { ok: false, error: 'Identity not available' };
-    }
-
-    const cc = await loadCachedCryptoConfig();
-    if (!cc) {
-      return { ok: false, error: 'No channels contract configured' };
-    }
-
-    const wallet = identity.wallet;
-
-    // Sign SpendingAuth (AntSeed Channels domain)
-    const channelsDomain = makeChannelsDomain(cc.chainId, cc.channelsAddress);
-    const spendingAuthSig = await signSpendingAuth(wallet, channelsDomain, {
-      channelId: params.channelId,
-      cumulativeAmount,
-      metadataHash: params.metadataHash,
-    });
-
-    const buyerEvmAddress = identity.wallet.address;
-
-    return {
-      ok: true,
-      data: {
-        spendingAuthSig,
-        buyerEvmAddress,
-      },
-    };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-});
-
-ipcMain.handle('payments:get-peer-info', async (_event, peerId: string) => {
-  try {
-    if (typeof peerId !== 'string' || peerId.trim().length === 0) {
-      return { ok: false, error: 'Invalid peerId' };
-    }
-    await refreshPeerCache();
-    const peer = lookupPeer(peerId.trim());
-    if (!peer) {
-      return { ok: false, error: 'Peer not found' };
-    }
-
-    return {
-      ok: true,
-      data: {
-        peerId: peer.peerId,
-        displayName: peer.displayName ?? null,
-        reputation: peer.reputation ?? 0,
-        onChainChannelCount: (peer as Record<string, unknown>).onChainChannelCount ?? null,
-        onChainGhostCount: (peer as Record<string, unknown>).onChainGhostCount ?? null,
-        evmAddress: peer.peerId ? peerIdToAddress(peer.peerId) : null,
-        timestamp: (peer as Record<string, unknown>).timestamp ?? null,
-        providers: peer.providers ?? [],
-        services: peer.services ?? [],
-      },
-    };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-});
+// ── Incoming USDC watcher + P2P relay sweep ──
+//
+// While the in-app deposit panel is open, the renderer starts this watcher.
+// It polls the hot wallet's USDC balance; any increase is treated as an
+// incoming deposit (QR transfer or Coinbase Onramp delivery). The funds are
+// then swept into AntseedDeposits gaslessly: the hot wallet signs an EIP-3009
+// authorization addressed to the AntseedDepositRelay contract and the buyer
+// daemon broadcasts a SweepRequest to connected peers; a permissionless
+// relayer submits it on-chain and earns the contract's fixed USDC fee
+// (docs/protocol/spec/09-deposit-sweep.md). The hot wallet never needs ETH.
 
 // ── AI Chat IPC Handlers ──
-registerPiChatHandlers({
+const piChatEngine = registerPiChatHandlers({
   ipcMain,
   sendToRenderer: (channel, payload) => {
     getMainWindow()?.webContents.send(channel, payload);
+    // Tee every chat event into the bus so the Telegram bridge can follow
+    // stream deltas, completions, and tool-approval requests.
+    emitChatEvent(channel, payload);
   },
   configPath: ACTIVE_CONFIG_PATH,
   isBuyerRuntimeRunning: () => getCombinedProcessState().some((state) => state.mode === "connect" && state.running),
@@ -925,9 +379,9 @@ registerPiChatHandlers({
     const startOptions: StartOptions = {
       mode: 'connect',
       router: 'local',
-      ...(desktopDebugEnabled ? { verbose: true } : {}),
+      ...(isDesktopDebugEnabled() ? { verbose: true } : {}),
       env: {
-        ...(desktopDebugEnabled ? { ANTSEED_DEBUG: '1' } : {}),
+        ...(isDesktopDebugEnabled() ? { ANTSEED_DEBUG: '1' } : {}),
         ...secureIdentityEnv(),
       },
     };
@@ -969,27 +423,27 @@ registerPiChatHandlers({
   },
 });
 
-ipcMain.handle('runtime:scan-network', async () => {
-  try {
-    await requestBuyerPeerRefresh();
-    await refreshPeerCache();
-    const snapshot = getNetworkSnapshot();
-    return { ok: snapshot.ok, data: snapshot, error: snapshot.error, status: 200 };
-  } catch (err) {
-    await refreshPeerCache();
-    const snapshot = getNetworkSnapshot();
-    return {
-      ok: false,
-      data: snapshot,
-      error: err instanceof Error ? err.message : String(err),
-      status: null,
-    };
-  }
+// ── Telegram bridge ──
+const telegramBridge = createTelegramBridge({
+  engine: piChatEngine,
+  appendLog: (line) => { appendLog('connect', 'system', line); },
+  onStatusChanged: (status) => {
+    getMainWindow()?.webContents.send('telegram:status-changed', status);
+  },
 });
+
+registerTelegramIpc({ telegramBridge });
+
+/* ------------------------------------------------------------------ */
+/*  Floating always-on-top pill window                                  */
+/* ------------------------------------------------------------------ */
+
+// Cache the latest display payload so a freshly opened float window can be
+// primed before the main window's next periodic update.
 
 app.whenReady().then(async () => {
   installAttachmentProtocol();
-  app.setName(APP_NAME);
+  app.setName(INTERNAL_APP_NAME);
   app.setAboutPanelOptions({
     applicationName: APP_NAME,
     applicationVersion: app.getVersion(),
@@ -1005,21 +459,110 @@ app.whenReady().then(async () => {
   // Must complete before creating the window — the renderer auto-starts the
   // buyer runtime which needs config.json to find the router plugin.
   await ensureConfig(ACTIVE_CONFIG_PATH).catch(() => {});
+  loadPersistedSystemProxyState();
 
-  createWindow({ appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl });
+  const showMainWindow = () => {
+    const existingWindow = getMainWindow();
+    if (existingWindow) {
+      existingWindow.show();
+      existingWindow.focus();
+      return;
+    }
+    createWindow({ appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl });
+    // Windows only, and the reason this is here rather than on `app`:
+    // 'before-quit' is NOT emitted when the app goes down with an OS shutdown,
+    // restart or logout, so this is the last chance to hand the proxy setting
+    // back — and there is only time for the synchronous restore. Without it
+    // the machine reboots into a system proxy pointing at nothing.
+    getMainWindow()?.on('session-end', () => {
+      restoreOsSystemProxySync();
+    });
+  };
+
+  showMainWindow();
+
+  // Fail open before anything else. Whatever the OS proxy is set to right now
+  // was left behind by the previous run — and if that run ended in a crash,
+  // a force-quit or an OS shutdown, it still points at a proxy that is not
+  // running, which is the whole machine offline. Restore it unconditionally
+  // and let the reconnect below re-arm it only once a proxy really listens.
+  // Fire-and-forget so clean launches don't block window creation on
+  // networksetup/reg calls; only the state files differ between the two cases
+  // (persisted state is the reconnect memory and must survive).
+  const systemProxyFailOpen = (getActiveSystemProxyState()
+    ? clearSystemProxyTransportSettings()
+    : clearSystemProxySettings()
+  ).catch((err) => {
+    appendLog('system-proxy', 'system', `System Proxy cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+  });
+  startSystemProxyWatchdog();
+
+  const showFloatingWindow = () => {
+    const win = getMainWindow();
+    if (win) {
+      win.webContents.send('desktop:open-floating-window');
+      return;
+    }
+    showMainWindow();
+    getMainWindow()?.webContents.once('did-finish-load', () => {
+      getMainWindow()?.webContents.send('desktop:open-floating-window');
+    });
+  };
+
+  const toggleMainConnection = () => {
+    const running = getCombinedProcessState().some((state) => state.mode === 'connect' && state.running);
+    getMainWindow()?.webContents.send(running ? 'desktop:disconnect-main' : 'desktop:connect-main');
+  };
+
+  createDesktopTray({
+    appName: APP_NAME,
+    iconPath: TRAY_ICON_PATH,
+    onShow: showMainWindow,
+    buildMenu: () => buildSystemProxyTrayMenu(showMainWindow, showFloatingWindow, toggleMainConnection),
+  });
+  refreshTrayMenu();
+
+  const restoredState = getActiveSystemProxyState();
+  const restoredProfiles = Array.isArray(restoredState?.['activeProfileNames'])
+    ? restoredState['activeProfileNames'].filter((name: unknown): name is string => typeof name === 'string')
+    : [];
+  if (restoredProfiles.length > 0 && typeof restoredState?.['peerId'] === 'string') {
+    const restorePeerId = restoredState['peerId'];
+    const restoreDefaultModel = typeof restoredState['defaultModel'] === 'string'
+      ? restoredState['defaultModel'] as string
+      : undefined;
+    // Sequenced after the fail-open above, or the clear could land after the
+    // child has already re-armed the setting and silently disconnect it.
+    void systemProxyFailOpen.then(() => restoreSystemProxyProfilesAtLaunch({
+      peerId: restorePeerId,
+      port: DEFAULT_SYSTEM_PROXY_PORT,
+      profiles: restoredProfiles,
+      defaultModel: restoreDefaultModel,
+      servedModels: [],
+      profileSwitch: true,
+    })).catch((err) => {
+      appendLog('system-proxy', 'system', `System Proxy auto-start failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  }
 
   // Pre-load identity from encrypted store so it's ready before the first CLI spawn.
   void ensureSecureIdentity().catch(() => {
     // Failure is logged inside ensureSecureIdentity; CLI falls back to file-based identity.
   });
 
+  // Resume the Telegram bridge if a bot was connected in a previous session.
+  // Needs app-ready because the token store decrypts via safeStorage.
+  void telegramBridge.start().catch((err) => {
+    appendLog('connect', 'system', `[telegram] Bridge resume failed: ${err instanceof Error ? err.message : String(err)}`);
+  });
+
   // Payments portal starts lazily on first open (via payments:open-portal IPC)
 
   void ensureDefaultPlugin('@antseed/router-local', {
-    getAppSetupNeeded: () => appSetupNeeded,
-    setAppSetupNeeded: (v) => { appSetupNeeded = v; },
-    getAppSetupComplete: () => appSetupComplete,
-    setAppSetupComplete: (v) => { appSetupComplete = v; },
+    getAppSetupNeeded: () => getAppSetupStatus().needed,
+    setAppSetupNeeded: (v) => { setAppSetupStatus({ needed: v }); },
+    getAppSetupComplete: () => getAppSetupStatus().complete,
+    setAppSetupComplete: (v) => { setAppSetupStatus({ complete: v }); },
     getMainWindow,
     appendLog,
   }).catch(() => {
@@ -1031,7 +574,9 @@ app.whenReady().then(async () => {
   // minutes (network drop, stuck CDN connection, etc.) we re-trigger the
   // update check so electron-updater resumes/restarts the download instead
   // of sitting idle forever.
-  autoUpdater.autoDownload = true;
+  // Downloads are opt-in: detection only surfaces an "Update available"
+  // banner, and the (hundreds of MB) download starts when the user clicks it.
+  autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
 
   const UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000;
@@ -1042,6 +587,18 @@ app.whenReady().then(async () => {
   let downloadStallInterval: ReturnType<typeof setInterval> | null = null;
   let lastDownloadProgressAt: number | null = null;
   let lastDownloadPercent = 0;
+  let updateVersion: string | null = null;
+
+  // Kept for replay: the renderer can mount after update-downloaded fired
+  // (window reopened, dev reload), and electron-updater never re-emits it.
+  let lastUpdateStatus: UpdateStatus | null = null;
+
+  const sendUpdateStatus = (status: UpdateStatus) => {
+    lastUpdateStatus = status;
+    getMainWindow()?.webContents.send('app:update-status', status);
+  };
+
+  ipcMain.handle('app:get-update-status', () => lastUpdateStatus);
 
   const clearStallWatchdog = () => {
     if (downloadStallInterval) {
@@ -1052,11 +609,27 @@ app.whenReady().then(async () => {
     lastDownloadPercent = 0;
   };
 
+  const reportUpdateError = (error: unknown, context: string): InstallUpdateResult => {
+    const message = errorMessage(error);
+    const details = errorDetails(error);
+    const hint = getMacUpdateInstallHint();
+    console.error(`[auto-update] ${context}:`, details);
+    appendLog('connect', 'system', `Auto-update ${context}: ${message}`);
+    clearStallWatchdog();
+    if (isInstallingUpdate) {
+      isQuitting = false;
+    }
+    isInstallingUpdate = false;
+    sendUpdateStatus({ status: 'error', version: updateVersion, message, details, hint });
+    updateVersion = null;
+    return { ok: false, error: message, details, hint };
+  };
+
   const startStallWatchdog = () => {
     clearStallWatchdog();
     lastDownloadProgressAt = Date.now();
     downloadStallInterval = setInterval(() => {
-      if (!pendingUpdateVersion || lastDownloadProgressAt === null) return;
+      if (!updateVersion || lastDownloadProgressAt === null) return;
       // Once bytes are done electron-updater still spends time verifying the
       // file (sha512 / code-sign) and emits no progress — don't treat that as
       // a stall, just wait for update-downloaded.
@@ -1064,44 +637,150 @@ app.whenReady().then(async () => {
       const idleMs = Date.now() - lastDownloadProgressAt;
       if (idleMs < DOWNLOAD_STALL_TIMEOUT_MS) return;
       console.warn(`[auto-update] download stalled (${Math.round(idleMs / 1000)}s with no progress) — retrying`);
-      clearStallWatchdog();
-      pendingUpdateVersion = null;
-      void autoUpdater.checkForUpdates().catch((err) => {
-        console.error('[auto-update] stall-retry failed:', err?.message ?? err);
+      startStallWatchdog();
+      void autoUpdater.downloadUpdate().catch((err) => {
+        reportUpdateError(err, 'stall-retry failed');
       });
     }, DOWNLOAD_STALL_POLL_MS);
   };
 
-  let pendingUpdateVersion: string | null = null;
+  // idle → available → downloading → ready; periodic re-checks re-announce
+  // "available" but must not regress an in-flight or finished download.
+  let updatePhase: 'idle' | 'available' | 'downloading' | 'ready' = 'idle';
+
+  const TRANSIENT_UPDATE_ERROR = /net::ERR_|ETIMEDOUT|ESOCKETTIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket hang up/i;
+  const MAX_DOWNLOAD_RETRIES = 5;
+  let downloadRetries = 0;
+  let downloadRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const clearDownloadRetry = () => {
+    if (downloadRetryTimer) {
+      clearTimeout(downloadRetryTimer);
+      downloadRetryTimer = null;
+    }
+    downloadRetries = 0;
+  };
+
   autoUpdater.on('update-available', (info) => {
-    pendingUpdateVersion = info.version;
+    if (updatePhase === 'downloading' || updatePhase === 'ready') return;
+    updatePhase = 'available';
+    updateVersion = info.version;
+    sendUpdateStatus({ status: 'available', version: info.version });
+  });
+
+  ipcMain.handle('app:download-update', async (): Promise<InstallUpdateResult> => {
+    if (updatePhase === 'downloading' || updatePhase === 'ready') {
+      return { ok: true };
+    }
+    updatePhase = 'downloading';
+    clearDownloadRetry();
     startStallWatchdog();
-    getMainWindow()?.webContents.send('app:update-status', { status: 'downloading', version: info.version, percent: 0 });
+    sendUpdateStatus({ status: 'downloading', version: updateVersion ?? '', percent: 0 });
+    void autoUpdater.downloadUpdate().catch(() => {
+      // Failures surface through the 'error' event, where transient network
+      // errors are retried before anything is shown.
+    });
+    return { ok: true };
   });
   autoUpdater.on('download-progress', (progress) => {
-    if (!pendingUpdateVersion) return;
+    if (!updateVersion) return;
+    // Bytes are flowing again — a past interruption no longer counts.
+    downloadRetries = 0;
     lastDownloadProgressAt = Date.now();
     const percent = Math.max(0, Math.min(100, Math.round(progress.percent ?? 0)));
     lastDownloadPercent = percent;
-    getMainWindow()?.webContents.send('app:update-status', {
+    sendUpdateStatus({
       status: 'downloading',
-      version: pendingUpdateVersion,
+      version: updateVersion,
       percent,
     });
   });
+  // macOS: electron-updater's update-downloaded fires when ITS download
+  // completes, but Squirrel still has to unpack the zip and deep-verify the
+  // bundle's code signature — tens of seconds for an app this size. A
+  // Restart & update click during that window silently stalls until Squirrel
+  // catches up. Hold the "ready" banner until the native side confirms, so
+  // the click goes straight to the final bundle swap.
+  let nativeSquirrelReady = process.platform !== 'darwin';
+  let pendingReadyVersion: string | null = null;
+  let nativeReadyFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const announceReady = (version: string) => {
+    if (nativeReadyFallbackTimer) {
+      clearTimeout(nativeReadyFallbackTimer);
+      nativeReadyFallbackTimer = null;
+    }
+    pendingReadyVersion = null;
+    sendUpdateStatus({ status: 'ready', version });
+  };
+
+  if (process.platform === 'darwin') {
+    nativeAutoUpdater.on('update-downloaded', () => {
+      nativeSquirrelReady = true;
+      if (pendingReadyVersion) {
+        announceReady(pendingReadyVersion);
+      }
+    });
+  }
+
   autoUpdater.on('update-downloaded', (info) => {
-    pendingUpdateVersion = null;
+    updatePhase = 'ready';
+    updateVersion = info.version;
     clearStallWatchdog();
-    getMainWindow()?.webContents.send('app:update-status', { status: 'ready', version: info.version });
+    clearDownloadRetry();
     if (updateCheckInterval) {
       clearInterval(updateCheckInterval);
       updateCheckInterval = null;
     }
+    if (nativeSquirrelReady) {
+      announceReady(info.version);
+      return;
+    }
+    // Never strand the banner if the native confirmation doesn't arrive —
+    // the install path still works, it just stalls like before.
+    pendingReadyVersion = info.version;
+    nativeReadyFallbackTimer = setTimeout(() => {
+      if (pendingReadyVersion) announceReady(pendingReadyVersion);
+    }, 3 * 60_000);
   });
   autoUpdater.on('error', (err) => {
-    console.error('[auto-update] error:', err?.message ?? err);
-    clearStallWatchdog();
-    pendingUpdateVersion = null;
+    const message = errorMessage(err);
+
+    // Background check failures (no download in flight, nothing being
+    // installed) are routine on network changes — a VPN toggling or WiFi
+    // switching mid-check must not raise an "Update failed" banner. The
+    // periodic re-check retries on its own.
+    if (!isInstallingUpdate && updatePhase !== 'downloading') {
+      appendLog('connect', 'system', `Auto-update check failed (will retry): ${message}`);
+      return;
+    }
+
+    // A download interrupted by a transient network error rides it out:
+    // retry quietly a few times before surfacing a failure.
+    if (
+      !isInstallingUpdate
+      && updatePhase === 'downloading'
+      && TRANSIENT_UPDATE_ERROR.test(message)
+      && downloadRetries < MAX_DOWNLOAD_RETRIES
+    ) {
+      if (downloadRetryTimer) return; // a retry is already scheduled
+      downloadRetries += 1;
+      appendLog('connect', 'system', `Auto-update download interrupted (${message}) — retry ${downloadRetries}/${MAX_DOWNLOAD_RETRIES} in 15s`);
+      downloadRetryTimer = setTimeout(() => {
+        downloadRetryTimer = null;
+        startStallWatchdog();
+        void autoUpdater.downloadUpdate().catch(() => {
+          // Failure re-enters through the 'error' event.
+        });
+      }, 15_000);
+      return;
+    }
+
+    if (!isInstallingUpdate && updatePhase === 'downloading') {
+      // Let the next periodic check re-announce the update after the banner.
+      updatePhase = 'available';
+    }
+    reportUpdateError(err, 'error');
   });
 
   void autoUpdater.checkForUpdates().catch(() => {});
@@ -1110,24 +789,79 @@ app.whenReady().then(async () => {
     void autoUpdater.checkForUpdates().catch(() => {});
   }, UPDATE_CHECK_INTERVAL_MS);
 
-  ipcMain.handle('app:install-update', () => {
-    autoUpdater.quitAndInstall(false, true);
+  // Squirrel installs updates by registering its ShipIt helper as a launchd
+  // job and quitting; it treats "submitted" as "done". On this machine's
+  // macOS, Background Task Management declines to auto-start the helper
+  // (registration accepted but the job never runs, or the fresh submission
+  // is rejected outright), so the app quits and the update silently never
+  // installs. Running the very same helper manually works every time, so:
+  // spawn a detached watchdog before quitting that waits for the app to
+  // exit and starts ShipIt itself if launchd didn't.
+  const SHIPIT_LABEL = 'com.antseed.desktop.ShipIt';
+  const spawnMacUpdateWatchdog = (): void => {
+    if (process.platform !== 'darwin') return;
+    const contentsDir = path.resolve(path.dirname(process.execPath), '..');
+    const shipIt = path.join(contentsDir, 'Frameworks', 'Squirrel.framework', 'Resources', 'ShipIt');
+    const statePath = path.join(app.getPath('home'), 'Library', 'Caches', SHIPIT_LABEL, 'ShipItState.plist');
+    const appProcessName = path.basename(process.execPath);
+    const script = [
+      'APP_PID="$1"; SHIPIT="$2"; LABEL="$3"; STATE="$4"; APP_NAME="$5"',
+      // Wait for the app process to exit (Squirrel quits it), then give a
+      // launchd-started ShipIt a short window to appear — checking every 2s
+      // so a healthy native install ends the watchdog immediately instead of
+      // padding the user-visible gap before the relaunch.
+      'i=0; while kill -0 "$APP_PID" 2>/dev/null && [ "$i" -lt 180 ]; do sleep 1; i=$((i+1)); done',
+      // The install gap has no UI at all — reassure via a system notification.
+      'osascript -e \'display notification "Installing the update — the app will reopen shortly." with title "AntSeed VPR"\' >/dev/null 2>&1 || true',
+      'j=0; while [ "$j" -lt 3 ]; do',
+      '  sleep 2',
+      '  launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null | grep -q "state = running" && exit 0',
+      '  pgrep -x "$APP_NAME" >/dev/null 2>&1 && exit 0',
+      '  j=$((j+1))',
+      'done',
+      '[ -f "$STATE" ] || exit 0',
+      'if launchctl kickstart "gui/$(id -u)/$LABEL" 2>/dev/null; then exit 0; fi',
+      'exec "$SHIPIT" "$LABEL" "$STATE"',
+    ].join('\n');
+    const child = spawn('/bin/sh', ['-c', script, 'antseed-update-watchdog', String(process.pid), shipIt, SHIPIT_LABEL, statePath, appProcessName], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+  };
+
+  ipcMain.handle('app:install-update', async (): Promise<InstallUpdateResult> => {
+    if (isInstallingUpdate) {
+      return { ok: true };
+    }
+
+    isInstallingUpdate = true;
+    sendUpdateStatus({ status: 'installing', version: updateVersion });
+
+    try {
+      spawnMacUpdateWatchdog();
+      await stopDesktopServices();
+      isQuitting = true;
+      autoUpdater.quitAndInstall(false, true);
+      return { ok: true };
+    } catch (err) {
+      isQuitting = false;
+      return reportUpdateError(err, 'install failed');
+    }
   });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow({ appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl });
+      showMainWindow();
     }
   });
 });
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
-    void processManager.stopAll().finally(() => app.quit());
+    app.quit();
   }
 });
-
-let isQuitting = false;
 
 app.on('before-quit', (event) => {
   if (isQuitting) {
@@ -1137,17 +871,28 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   isQuitting = true;
 
-  void processManager.stopAll()
-    .then(() => stopPaymentsPortal())
-    .finally(() => {
-      app.quit();
-    });
+  // First, and synchronously: the async teardown below waits on child
+  // processes and can be cut short (Windows gives an app only a few seconds
+  // to quit at logout/shutdown before killing it). An OS proxy left pointing
+  // at the dead port breaks networking machine-wide, so it must not be
+  // downstream of anything that can block.
+  restoreOsSystemProxySync();
+
+  void stopDesktopServices().finally(() => {
+    app.exit(0);
+  });
 });
 
-// Ensure child processes are cleaned up if the main process receives SIGTERM
-// (e.g. dev runner Ctrl+C kills Electron before before-quit fires).
+// Ensure child processes are cleaned up if the main process receives a terminal
+// stop signal before before-quit fires.
+process.on('SIGINT', () => {
+  restoreOsSystemProxySync();
+  void stopDesktopServices().finally(() => process.exit(0));
+});
+
 process.on('SIGTERM', () => {
-  void Promise.all([processManager.stopAll(), stopPaymentsPortal()]).finally(() => process.exit(0));
+  restoreOsSystemProxySync();
+  void stopDesktopServices().finally(() => process.exit(0));
 });
 
 // Suppress EPIPE errors from console.error/console.warn when the dev terminal

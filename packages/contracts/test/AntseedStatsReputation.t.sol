@@ -2,12 +2,12 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
-import "../AntseedChannels.sol";
-import "../AntseedStaking.sol";
-import "../AntseedRegistry.sol";
-import "../AntseedDeposits.sol";
-import "../MockERC8004Registry.sol";
-import "../MockUSDC.sol";
+import "../payments/AntseedChannels.sol";
+import "../staking/AntseedStaking.sol";
+import "../core/AntseedRegistry.sol";
+import "../payments/AntseedDeposits.sol";
+import "./mocks/MockERC8004Registry.sol";
+import "./mocks/MockUSDC.sol";
 
 /// @dev Tests for AgentStats tracking within AntseedChannels.
 ///      Uses the Channels contract directly (stats are now inline).

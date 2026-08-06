@@ -35,6 +35,12 @@ test('createDefaultConfig includes a Base mainnet crypto payment default', () =>
   assert.deepEqual(config.payments.crypto, { chainId: 'base-mainnet' });
 });
 
+test('createDefaultConfig uses a higher seller concurrency default', () => {
+  const config = createDefaultConfig();
+
+  assert.equal(config.seller.maxConcurrentBuyers, 50);
+});
+
 test('loadConfig reads nested seller.providers[name].services[id] shape', async () => {
   await withTempConfig(
     JSON.stringify({
@@ -116,6 +122,48 @@ test('loadConfig preserves explicit buyer peerRefreshIntervalMs and metadataFetc
       const config = await loadConfig(configPath);
       assert.equal(config.buyer.peerRefreshIntervalMs, 15_000);
       assert.equal(config.buyer.metadataFetchTimeoutMs, 2_500);
+    }
+  );
+});
+
+test('loadConfig defaults and preserves buyer metadata v2 service opt-out setting', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      buyer: {
+        proxyPort: 9123,
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.equal(config.buyer.disableMetadataV2Services, false);
+    }
+  );
+
+  await withTempConfig(
+    JSON.stringify({
+      buyer: {
+        disableMetadataV2Services: true,
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.equal(config.buyer.disableMetadataV2Services, true);
+    }
+  );
+});
+
+test('loadConfig rejects invalid buyer disableMetadataV2Services', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      buyer: {
+        disableMetadataV2Services: 'false',
+      },
+    }),
+    async (configPath) => {
+      await assert.rejects(
+        async () => loadConfig(configPath),
+        /buyer\.disableMetadataV2Services/
+      );
     }
   );
 });
@@ -441,6 +489,52 @@ test('loadConfig rejects invalid seller maxUploadBodyBytes setting', async () =>
       await assert.rejects(
         async () => loadConfig(configPath),
         /seller\.maxUploadBodyBytes/
+      );
+    }
+  );
+});
+
+test('loadConfig preserves seller healthCheck setting', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        healthCheck: { enabled: false, intervalMs: 120_000, failureThreshold: 5 },
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.deepEqual(config.seller.healthCheck, { enabled: false, intervalMs: 120_000, failureThreshold: 5 });
+    }
+  );
+});
+
+test('loadConfig rejects invalid seller healthCheck intervalMs', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        healthCheck: { intervalMs: 5_000 },
+      },
+    }),
+    async (configPath) => {
+      await assert.rejects(
+        async () => loadConfig(configPath),
+        /seller\.healthCheck\.intervalMs/
+      );
+    }
+  );
+});
+
+test('loadConfig rejects invalid seller healthCheck failureThreshold', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        healthCheck: { failureThreshold: 0 },
+      },
+    }),
+    async (configPath) => {
+      await assert.rejects(
+        async () => loadConfig(configPath),
+        /seller\.healthCheck\.failureThreshold/
       );
     }
   );

@@ -3,12 +3,12 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 
-import { ANTSToken } from "../ANTSToken.sol";
-import { AntseedEmissions } from "../AntseedEmissions.sol";
-import { AntseedEmissionsV2 } from "../AntseedEmissionsV2.sol";
-import { AntseedRegistry } from "../AntseedRegistry.sol";
-import { AntseedSellerRewardsPool } from "../AntseedSellerRewardsPool.sol";
-import { AntseedSellerUnlockPolicy } from "../AntseedSellerUnlockPolicy.sol";
+import { ANTSToken } from "../core/ANTSToken.sol";
+import { AntseedEmissions } from "../legacy/AntseedEmissions.sol";
+import { AntseedEmissionsV2 } from "../legacy/AntseedEmissionsV2.sol";
+import { AntseedRegistry } from "../core/AntseedRegistry.sol";
+import { AntseedSellerRewardsPool } from "../rewards/AntseedSellerRewardsPool.sol";
+import { AntseedSellerUnlockPolicy } from "../policies/AntseedSellerUnlockPolicy.sol";
 import { IAntseedPointsPolicy } from "../interfaces/IAntseedPointsPolicy.sol";
 import { IAntseedSellerClaimPolicy } from "../interfaces/IAntseedSellerClaimPolicy.sol";
 

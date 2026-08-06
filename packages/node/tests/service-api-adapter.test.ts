@@ -1,15 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import type { SerializedHttpRequest, SerializedHttpResponse } from '../src/types/http.js';
+import type { ServiceApiProtocol } from '../src/discovery/peer-metadata.js';
 import {
-  createOpenAIChatToAnthropicStreamingAdapter,
-  createOpenAIChatToResponsesStreamingAdapter,
+  createStreamingAdapter,
   detectRequestServiceApiProtocol,
   inferProviderDefaultServiceApiProtocols,
   selectTargetProtocolForRequest,
-  transformAnthropicMessagesRequestToOpenAIChat,
-  transformOpenAIChatResponseToAnthropicMessage,
-  transformOpenAIResponsesRequestToOpenAIChat,
-  transformOpenAIChatResponseToOpenAIResponses,
+  transformRequest,
+  transformResponse,
 } from '../src/proxy/service-api-adapter.js';
 
 function makeRequest(overrides?: Partial<SerializedHttpRequest>): SerializedHttpRequest {
@@ -87,6 +85,27 @@ function makeOpenAIResponse(overrides?: Partial<SerializedHttpResponse>): Serial
   };
 }
 
+function adaptResponseForTest(
+  from: ServiceApiProtocol,
+  to: ServiceApiProtocol,
+  response: SerializedHttpResponse,
+  options: { fallbackModel?: string | null; streamRequested?: boolean } = {},
+): SerializedHttpResponse {
+  const transformed = transformResponse(response, { from, to, ...options });
+  expect(transformed).not.toBeNull();
+  return transformed!;
+}
+
+function createStreamAdapterForTest(
+  from: ServiceApiProtocol,
+  to: ServiceApiProtocol,
+  fallbackModel: string | null,
+) {
+  const adapter = createStreamingAdapter({ from, to, fallbackModel });
+  expect(adapter).not.toBeNull();
+  return adapter!;
+}
+
 function parseSseEvents(sseText: string): Array<{ event: string | null; data: string }> {
   return sseText
     .trim()
@@ -143,9 +162,9 @@ describe('inferProviderDefaultServiceApiProtocols', () => {
   });
 });
 
-describe('transformAnthropicMessagesRequestToOpenAIChat', () => {
+describe('transformRequest anthropic to chat', () => {
   it('rewrites request path/body and strips anthropic-only headers', () => {
-    const transformed = transformAnthropicMessagesRequestToOpenAIChat(makeRequest());
+    const transformed = transformRequest(makeRequest(), { from: 'anthropic-messages', to: 'openai-chat-completions' });
     expect(transformed).not.toBeNull();
     expect(transformed!.request.path).toBe('/v1/chat/completions');
     expect(transformed!.streamRequested).toBe(true);
@@ -166,9 +185,9 @@ describe('transformAnthropicMessagesRequestToOpenAIChat', () => {
   });
 });
 
-describe('transformOpenAIChatResponseToAnthropicMessage', () => {
+describe('transformResponse chat to anthropic', () => {
   it('maps non-stream openai chat response to anthropic message payload', () => {
-    const transformed = transformOpenAIChatResponseToAnthropicMessage(makeOpenAIResponse(), {
+    const transformed = adaptResponseForTest('openai-chat-completions', 'anthropic-messages', makeOpenAIResponse(), {
       streamRequested: false,
       fallbackModel: 'fallback-model',
     });
@@ -184,7 +203,7 @@ describe('transformOpenAIChatResponseToAnthropicMessage', () => {
   });
 
   it('maps to anthropic SSE when stream is requested', () => {
-    const transformed = transformOpenAIChatResponseToAnthropicMessage(makeOpenAIResponse(), {
+    const transformed = adaptResponseForTest('openai-chat-completions', 'anthropic-messages', makeOpenAIResponse(), {
       streamRequested: true,
       fallbackModel: 'fallback-model',
     });
@@ -196,7 +215,7 @@ describe('transformOpenAIChatResponseToAnthropicMessage', () => {
   });
 
   it('emits input_json_delta for tool_use blocks in SSE stream', () => {
-    const transformed = transformOpenAIChatResponseToAnthropicMessage(makeOpenAIResponse(), {
+    const transformed = adaptResponseForTest('openai-chat-completions', 'anthropic-messages', makeOpenAIResponse(), {
       streamRequested: true,
       fallbackModel: 'fallback-model',
     });
@@ -234,9 +253,9 @@ describe('transformOpenAIChatResponseToAnthropicMessage', () => {
   });
 });
 
-describe('createOpenAIChatToAnthropicStreamingAdapter', () => {
+describe('createStreamingAdapter chat to anthropic', () => {
   it('converts openai chat deltas into anthropic SSE frames incrementally', () => {
-    const adapter = createOpenAIChatToAnthropicStreamingAdapter({ fallbackModel: 'claude-sonnet' });
+    const adapter = createStreamAdapterForTest('openai-chat-completions', 'anthropic-messages', '');
     const start = adapter.adaptStart(makeOpenAIResponse({
       headers: { 'content-type': 'text/event-stream' },
       body: new Uint8Array(0),
@@ -261,7 +280,7 @@ describe('createOpenAIChatToAnthropicStreamingAdapter', () => {
   });
 
   it('converts streamed tool call deltas into anthropic tool_use events', () => {
-    const adapter = createOpenAIChatToAnthropicStreamingAdapter({ fallbackModel: 'claude-sonnet' });
+    const adapter = createStreamAdapterForTest('openai-chat-completions', 'anthropic-messages', '');
     const chunks = adapter.adaptChunk({
       requestId: 'req-tool',
       data: new TextEncoder().encode(
@@ -283,7 +302,7 @@ describe('createOpenAIChatToAnthropicStreamingAdapter', () => {
   });
 
   it('uses block index 0 for tool-only anthropic streams', () => {
-    const adapter = createOpenAIChatToAnthropicStreamingAdapter({ fallbackModel: 'claude-sonnet' });
+    const adapter = createStreamAdapterForTest('openai-chat-completions', 'anthropic-messages', '');
     const chunks = adapter.adaptChunk({
       requestId: 'req-tool-only-index',
       data: new TextEncoder().encode(
@@ -310,7 +329,7 @@ describe('createOpenAIChatToAnthropicStreamingAdapter', () => {
   });
 
   it('closes the text block before opening a tool block', () => {
-    const adapter = createOpenAIChatToAnthropicStreamingAdapter({ fallbackModel: 'claude-sonnet' });
+    const adapter = createStreamAdapterForTest('openai-chat-completions', 'anthropic-messages', '');
     const chunks = adapter.adaptChunk({
       requestId: 'req-mixed',
       data: new TextEncoder().encode(
@@ -333,7 +352,7 @@ describe('createOpenAIChatToAnthropicStreamingAdapter', () => {
   });
 
   it('closes the previous tool block before opening the next tool block', () => {
-    const adapter = createOpenAIChatToAnthropicStreamingAdapter({ fallbackModel: 'claude-sonnet' });
+    const adapter = createStreamAdapterForTest('openai-chat-completions', 'anthropic-messages', '');
     const chunks = adapter.adaptChunk({
       requestId: 'req-multi-tool',
       data: new TextEncoder().encode(
@@ -405,15 +424,15 @@ describe('selectTargetProtocolForRequest – responses', () => {
     expect(selected).toEqual({ targetProtocol: 'openai-chat-completions', requiresTransform: true });
   });
 
-  it('returns null when no compatible protocol exists', () => {
+  it('falls back to anthropic messages when responses and chat are unsupported', () => {
     const selected = selectTargetProtocolForRequest('openai-responses', ['anthropic-messages']);
-    expect(selected).toBeNull();
+    expect(selected).toEqual({ targetProtocol: 'anthropic-messages', requiresTransform: true });
   });
 });
 
-describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
+describe('transformRequest responses to chat', () => {
   it('converts string input to chat completions request', () => {
-    const result = transformOpenAIResponsesRequestToOpenAIChat(makeResponsesRequest());
+    const result = transformRequest(makeResponsesRequest(), { from: 'openai-responses', to: 'openai-chat-completions' });
     expect(result).not.toBeNull();
     expect(result!.request.path).toBe('/v1/chat/completions');
     expect(result!.requestedModel).toBe('gpt-4.1');
@@ -441,7 +460,7 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
         ],
       })),
     });
-    const result = transformOpenAIResponsesRequestToOpenAIChat(request);
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
     expect(result).not.toBeNull();
 
     const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
@@ -461,7 +480,7 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
         ],
       })),
     });
-    const result = transformOpenAIResponsesRequestToOpenAIChat(request);
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
     const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
     const messages = body.messages as Array<Record<string, unknown>>;
     expect(messages[0]).toEqual({ role: 'user', content: 'Hello from input_text' });
@@ -475,7 +494,7 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
         stream: true,
       })),
     });
-    const result = transformOpenAIResponsesRequestToOpenAIChat(request);
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
     expect(result!.streamRequested).toBe(true);
 
     const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
@@ -493,7 +512,7 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
         tool_choice: 'auto',
       })),
     });
-    const result = transformOpenAIResponsesRequestToOpenAIChat(request);
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
     const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
     expect(body.tools).toEqual([{
       type: 'function',
@@ -510,7 +529,7 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
         tools: [{ type: 'web_search' }],
       })),
     });
-    const result = transformOpenAIResponsesRequestToOpenAIChat(request);
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
     const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
     expect(body.tools).toBeUndefined();
   });
@@ -524,7 +543,7 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
         tool_choice: { type: 'function', name: 'search' },
       })),
     });
-    const result = transformOpenAIResponsesRequestToOpenAIChat(request);
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
     const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
     expect(body.tool_choice).toEqual({ type: 'function', function: { name: 'search' } });
   });
@@ -549,7 +568,7 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
         ],
       })),
     });
-    const result = transformOpenAIResponsesRequestToOpenAIChat(request);
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
     const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
     const messages = body.messages as Array<Record<string, unknown>>;
 
@@ -572,13 +591,13 @@ describe('transformOpenAIResponsesRequestToOpenAIChat', () => {
     });
   });
 
-  it('returns null for non-responses path', () => {
-    const request = makeResponsesRequest({ path: '/v1/chat/completions' });
-    expect(transformOpenAIResponsesRequestToOpenAIChat(request)).toBeNull();
+  it('returns null for unsupported request protocols', () => {
+    const request = makeResponsesRequest();
+    expect(transformRequest(request, { from: 'openai-completions', to: 'openai-chat-completions' })).toBeNull();
   });
 });
 
-describe('transformOpenAIChatResponseToOpenAIResponses', () => {
+describe('transformResponse chat to responses', () => {
   it('maps text response to responses format', () => {
     const chatResponse = makeOpenAIResponse({
       body: new TextEncoder().encode(JSON.stringify({
@@ -593,7 +612,7 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
       })),
     });
 
-    const result = transformOpenAIChatResponseToOpenAIResponses(chatResponse, { fallbackModel: 'fallback' });
+    const result = adaptResponseForTest('openai-chat-completions', 'openai-responses', chatResponse, { fallbackModel: 'fallback' });
     const body = JSON.parse(new TextDecoder().decode(result.body)) as Record<string, unknown>;
 
     expect(body.id).toBe('chatcmpl-abc');
@@ -622,7 +641,7 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
   });
 
   it('maps tool calls to function_call items', () => {
-    const result = transformOpenAIChatResponseToOpenAIResponses(makeOpenAIResponse(), {
+    const result = adaptResponseForTest('openai-chat-completions', 'openai-responses', makeOpenAIResponse(), {
       fallbackModel: 'fallback',
     });
     const body = JSON.parse(new TextDecoder().decode(result.body)) as Record<string, unknown>;
@@ -649,7 +668,7 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
         usage: { prompt_tokens: 1, completion_tokens: 1 },
       })),
     });
-    const result = transformOpenAIChatResponseToOpenAIResponses(chatResponse, {
+    const result = adaptResponseForTest('openai-chat-completions', 'openai-responses', chatResponse, {
       fallbackModel: 'my-model',
     });
     const body = JSON.parse(new TextDecoder().decode(result.body)) as Record<string, unknown>;
@@ -669,7 +688,7 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
         usage: { prompt_tokens: 5, completion_tokens: 3 },
       })),
     });
-    const result = transformOpenAIChatResponseToOpenAIResponses(chatResponse, {
+    const result = adaptResponseForTest('openai-chat-completions', 'openai-responses', chatResponse, {
       fallbackModel: 'fallback',
       streamRequested: true,
     });
@@ -729,7 +748,7 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
   });
 
   it('emits correlated function call SSE events', () => {
-    const result = transformOpenAIChatResponseToOpenAIResponses(makeOpenAIResponse(), {
+    const result = adaptResponseForTest('openai-chat-completions', 'openai-responses', makeOpenAIResponse(), {
       fallbackModel: 'fallback',
       streamRequested: true,
     });
@@ -780,7 +799,7 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
         error: { message: 'Rate limit exceeded', type: 'rate_limit_error' },
       })),
     });
-    const result = transformOpenAIChatResponseToOpenAIResponses(errorResponse, {});
+    const result = adaptResponseForTest('openai-chat-completions', 'openai-responses', errorResponse, {});
     expect(result.statusCode).toBe(429);
     expect(result.headers['content-type']).toBe('application/json');
     const body = JSON.parse(new TextDecoder().decode(result.body)) as Record<string, unknown>;
@@ -799,7 +818,7 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
         error: { message: 'Rate limit exceeded', type: 'rate_limit_error' },
       })),
     });
-    const result = transformOpenAIChatResponseToOpenAIResponses(errorResponse, {
+    const result = adaptResponseForTest('openai-chat-completions', 'openai-responses', errorResponse, {
       streamRequested: true,
     });
     expect(result.statusCode).toBe(429);
@@ -812,9 +831,9 @@ describe('transformOpenAIChatResponseToOpenAIResponses', () => {
   });
 });
 
-describe('createOpenAIChatToResponsesStreamingAdapter', () => {
+describe('createStreamingAdapter chat to responses', () => {
   it('converts openai chat deltas into responses SSE frames incrementally', () => {
-    const adapter = createOpenAIChatToResponsesStreamingAdapter({ fallbackModel: 'gpt-4.1' });
+    const adapter = createStreamAdapterForTest('openai-chat-completions', 'openai-responses', '');
     const start = adapter.adaptStart(makeOpenAIResponse({
       headers: { 'content-type': 'text/event-stream' },
       body: new Uint8Array(0),
@@ -841,7 +860,7 @@ describe('createOpenAIChatToResponsesStreamingAdapter', () => {
   });
 
   it('converts streamed tool call deltas into responses function_call events', () => {
-    const adapter = createOpenAIChatToResponsesStreamingAdapter({ fallbackModel: 'gpt-4.1' });
+    const adapter = createStreamAdapterForTest('openai-chat-completions', 'openai-responses', '');
     const chunks = adapter.adaptChunk({
       requestId: 'req-tool',
       data: new TextEncoder().encode(
@@ -862,7 +881,7 @@ describe('createOpenAIChatToResponsesStreamingAdapter', () => {
   });
 
   it('emits response.created first and avoids phantom text items for tool-only streams', () => {
-    const adapter = createOpenAIChatToResponsesStreamingAdapter({ fallbackModel: 'gpt-4.1' });
+    const adapter = createStreamAdapterForTest('openai-chat-completions', 'openai-responses', '');
     const chunks = adapter.adaptChunk({
       requestId: 'req-tool-only',
       data: new TextEncoder().encode(

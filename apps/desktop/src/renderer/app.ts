@@ -1,17 +1,49 @@
 import '@antseed/ui/styles';
-import { initChatModule } from './modules/chat';
-import { initSettingsModule } from './modules/settings';
-import { initRuntimeModule } from './modules/runtime';
-import { initDashboardRenderModule } from './modules/dashboard-render';
-import { initDashboardApiModule } from './modules/dashboard-api';
+import { initChatModule } from './modules/chat/controller';
+import { initSettingsModule } from './modules/app/settings';
+import { initRuntimeModule } from './modules/app/runtime';
+import { initDashboardRenderModule } from './modules/dashboard/render';
+import { initDashboardApiModule } from './modules/dashboard/api';
 import {
   initPluginSetupModule,
   normalizeRouterRuntime,
   resolveRouterPackageName,
-} from './modules/plugin-setup';
-import { initAppSetupModule } from './modules/app-setup';
-import { initCreditsModule } from './modules/credits';
+} from './modules/app/plugin-setup';
+import { initAppSetupModule } from './modules/app/setup';
+import { initCreditsModule } from './modules/app/credits';
+import { initVprFloatModule } from './modules/app/float';
+import {
+  loadFloatAutoOpen,
+  loadFloatShowRoutedPeer,
+  saveFloatAutoOpen,
+  saveFloatShowRoutedPeer,
+} from './modules/app/float-settings';
+import { initModelPickerSync } from './modules/catalog/picker-sync';
+import { applyVprRouteToConnectedProxy } from './modules/routing/proxy-sync';
+import { findCatalogEntry } from './modules/catalog/model-catalog';
+import { resolveVprChatOption } from './modules/chat/projection';
+import type { VprRouteSelection } from './core/state';
+import {
+  applyPeerListing,
+  loadVprRouteSelection,
+  loadVprRoutingPreferences,
+  saveVprRouteSelection,
+  saveVprRoutingPreferences,
+} from './modules/routing/preferences';
+import {
+  clearVprModelPin,
+  filterVprModelPins,
+  loadVprModelPins,
+  saveVprModelPins,
+  setVprModelPin,
+  vprModelPinFor,
+} from './modules/routing/model-pins';
+import { isPeerRoutable } from './modules/routing/select';
+import { sweepAutoChatsToSeller } from './modules/routing/chat-peer-sweep';
+import { buyerConversationsResource } from './modules/app/vpr-resources';
+import { routesForSelectedModel } from './modules/catalog/view-models';
 import { mountAppShell } from './ui/mount';
+import { initThemeMode } from './ui/lib/theme';
 import { registerActions } from './ui/actions';
 import {
   DEFAULT_DASHBOARD_PORT,
@@ -46,6 +78,9 @@ const isMacPlatform = bridge?.platform
   : detectApplePlatformFromNavigator();
 document.body.classList.toggle('platform-macos', isMacPlatform);
 
+// Paint the persisted light/dark mode before anything renders.
+initThemeMode();
+
 // On macOS, when the system UI language is RTL (Hebrew, Arabic, Persian, Urdu),
 // the window traffic-light buttons are mirrored to the top-right and would
 // cover the title-bar right-side controls. Flip the padding in that case.
@@ -75,6 +110,26 @@ async function applyMacOsRtlClass(): Promise<void> {
 void applyMacOsRtlClass();
 
 const uiState = createInitialUiState();
+uiState.vprRoutingPreferences = loadVprRoutingPreferences(uiState.vprRoutingPreferences);
+uiState.vprRouteSelection = loadVprRouteSelection(uiState.vprRouteSelection);
+uiState.vprModelPins = loadVprModelPins();
+uiState.vprFloatAutoOpen = loadFloatAutoOpen();
+uiState.vprFloatShowRoutedPeer = loadFloatShowRoutedPeer();
+// Sessions that pinned a seller before pins were stored per model carry the
+// pin only on the selection — seed the store from it so the first model
+// switch doesn't silently drop it.
+{
+  const restored = uiState.vprRouteSelection;
+  if (restored.mode === 'pinned-peer' && restored.peerId && restored.model) {
+    uiState.vprModelPins = setVprModelPin(
+      uiState.vprModelPins,
+      restored.model.provider,
+      restored.model.serviceId,
+      restored.peerId,
+    );
+    saveVprModelPins(uiState.vprModelPins);
+  }
+}
 initStore(uiState);
 
 bridge?.onFullscreenChange?.((isFullscreen) => {
@@ -163,15 +218,103 @@ creditsApi = initCreditsModule({
 });
 creditsApi.startPeriodicRefresh();
 
+// A browser pay page finished (deposit/withdraw/claim/channel close) —
+// refresh balances and the payment summary right away, bypassing throttles.
+bridge?.onPaymentsCompleted?.(() => {
+  void creditsApi.refreshCredits();
+  void creditsApi.refreshPaymentSummary(true);
+});
+
+/**
+ * The seller a model should route to when it is selected without an explicit
+ * peer: its remembered pin, as long as that seller is still serving the model
+ * and still passes the peer rules. Anything else means auto.
+ */
+function rememberedPinFor(provider: string, serviceId: string): string | null {
+  const peerId = vprModelPinFor(uiState.vprModelPins, provider, serviceId);
+  if (!peerId || !isPeerRoutable(peerId, uiState.vprRoutingPreferences)) return null;
+  const serves = routesForSelectedModel(uiState.vprRoutableRows, { provider, serviceId })
+    .some((route) => route.peerId === peerId);
+  return serves ? peerId : null;
+}
+
+function actionSelectVprModel(provider: string, serviceId: string, peerId: string | null = null): void {
+  const entry = findCatalogEntry(uiState.vprModelCatalog, provider, serviceId);
+  if (!entry) return;
+  // A bare model switch restores that model's own pin instead of dropping to
+  // auto — pinning one model then browsing others must not unpin it. Only
+  // clearVprPinnedPeer (the "Auto select seller" toggle) forgets a pin.
+  const pinnedPeerId = peerId ?? rememberedPinFor(entry.provider, entry.serviceId);
+  if (pinnedPeerId) {
+    uiState.vprModelPins = setVprModelPin(uiState.vprModelPins, entry.provider, entry.serviceId, pinnedPeerId);
+    saveVprModelPins(uiState.vprModelPins);
+  }
+  const selection: VprRouteSelection = {
+    model: {
+      provider: entry.provider,
+      serviceId: entry.serviceId,
+      label: entry.label,
+      categories: [...entry.categories],
+    },
+    mode: pinnedPeerId ? 'pinned-peer' : 'auto',
+    peerId: pinnedPeerId,
+  };
+  // Auto mode resolves the peer through the routing-preferences scorer, not
+  // whichever chat option happens to sort first.
+  const option = resolveVprChatOption(
+    uiState.chatServiceOptions,
+    uiState.vprRoutableRows,
+    selection,
+    uiState.vprRoutingPreferences,
+  );
+  if (option) {
+    chatApi.handleServiceChange(option.value, pinnedPeerId ?? option.peerId, false);
+  }
+  // handleServiceChange writes a pinned selection through; restore the
+  // requested mode so auto keeps re-resolving the best route on future
+  // sends instead of staying pinned to today's winner.
+  uiState.vprRouteSelection = selection;
+  saveVprRouteSelection(selection);
+  notifyUiStateChanged();
+  // The floating pill mirrors the selection — push it now instead of
+  // letting it lag behind on its poll tick.
+  void vprFloatApi?.refresh();
+  // Keep connected app profiles in step with the new route: the system
+  // proxy captured its default model and served-models list at connect
+  // time, and the buyer is now pinned to the new model's peer — stale
+  // profiles would forward models that peer doesn't serve.
+  void applyVprRouteToConnectedProxy(bridge, uiState);
+  // An explicit seller choice re-points the model's existing auto-routed
+  // chats too; a bare model switch (remembered-pin restore) moves nothing.
+  if (peerId) sweepChatsForSellerPin(entry.provider, entry.serviceId, peerId);
+}
+
+const vprFloatApi = initVprFloatModule({
+  bridge,
+  uiState,
+  onSelectModel: (provider, serviceId) => actionSelectVprModel(provider, serviceId),
+  refreshUsage: (force?: boolean) => creditsApi.refreshPaymentSummary(force),
+});
+
+/** Deliberate seller pin for a model: re-point that model's auto-affine chats
+    to the chosen seller (chats whose seller the user picked stay put), then
+    refresh the surfaces that show chat routes. */
+function sweepChatsForSellerPin(provider: string, serviceId: string, peerId: string): void {
+  void sweepAutoChatsToSeller(bridge, uiState.vprRoutableRows, { provider, serviceId }, peerId)
+    .then((changed) => {
+      if (!changed) return;
+      void buyerConversationsResource.refresh();
+      void vprFloatApi.refresh();
+    });
+}
+
+// Keep the main process fed with the curated model list (favorites +
+// recommended) so the Telegram /model picker matches the app's dropdown.
+initModelPickerSync({ bridge, uiState });
+
 /* ------------------------------------------------------------------ */
 /*  Runtime activity helpers                                           */
 /* ------------------------------------------------------------------ */
-
-function isProxyPortOccupiedMessage(value: unknown): boolean {
-  const message = safeString(value, '').toLowerCase();
-  if (!message) return false;
-  return message.includes('eaddrinuse') || message.includes('address already in use');
-}
 
 let runtimeActivityHoldUntil = 0;
 
@@ -325,17 +468,11 @@ async function ensureConnectRuntimeStarted(): Promise<void> {
       mode: 'connect',
       router: normalizeRouterRuntime(uiState.connectRouterValue),
     });
-    uiState.connectWarning = null;
-    notifyUiStateChanged();
     appendSystemLog(UI_MESSAGES.buyerAutoStarted);
     setRuntimeActivity('active', 'Buyer runtime auto-started.', 4_000);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message.toLowerCase().includes('already running')) return;
-    if (isProxyPortOccupiedMessage(message)) {
-      uiState.connectWarning = UI_MESSAGES.proxyPortInUse;
-      notifyUiStateChanged();
-    }
     appendSystemLog(`Buyer auto-start failed: ${message}`);
     setRuntimeActivity('bad', `Buyer auto-start failed: ${message}`, 10_000);
   }
@@ -344,7 +481,6 @@ async function ensureConnectRuntimeStarted(): Promise<void> {
 async function actionStartConnect(): Promise<void> {
   const start = requireBridgeMethod('start', 'Runtime start is unavailable in this build');
   clearRouterPluginHint();
-  uiState.connectState = 'Starting buyer runtime...';
   uiState.connectBadge = { tone: 'idle', label: 'Starting...' };
   notifyUiStateChanged();
   setRuntimeActivity('warn', 'Starting buyer runtime...', 8_000);
@@ -356,10 +492,6 @@ async function actionStartConnect(): Promise<void> {
     await refreshAll('manual');
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (isProxyPortOccupiedMessage(message)) {
-      uiState.connectWarning = UI_MESSAGES.proxyPortInUse;
-      notifyUiStateChanged();
-    }
     appendSystemLog(`Action failed: ${message}`);
     setRuntimeActivity('bad', `Action failed: ${message}`, 8_000);
   }
@@ -367,11 +499,14 @@ async function actionStartConnect(): Promise<void> {
 
 async function actionStopConnect(): Promise<void> {
   const stop = requireBridgeMethod('stop', 'Runtime stop is unavailable in this build');
-  uiState.connectState = 'Stopping buyer runtime...';
   uiState.connectBadge = { tone: 'idle', label: 'Stopping...' };
   notifyUiStateChanged();
   setRuntimeActivity('warn', 'Stopping buyer runtime...', 8_000);
   try {
+    // Stopping routing also disconnects connected apps — their configs are
+    // restored so requests go direct again instead of failing against a
+    // stopped runtime while the UI still says "Connected".
+    await bridge?.systemProxyStop?.().catch(() => undefined);
     await stop('connect');
     await refreshAll('manual');
   } catch (err) {
@@ -384,8 +519,6 @@ async function actionStopConnect(): Promise<void> {
 async function actionStartAll(): Promise<void> {
   if (isModeRunning('connect')) return;
   await actionStartConnect();
-  uiState.connectWarning = null;
-  notifyUiStateChanged();
 }
 
 async function actionStopAll(): Promise<void> {
@@ -395,7 +528,6 @@ async function actionStopAll(): Promise<void> {
 
 async function actionScanDht(): Promise<void> {
   uiState.peersMessage = 'Scanning DHT for peers...';
-  uiState.peersMeta = { tone: 'warn', label: 'Scanning...' };
   uiState.overviewBadge = { tone: 'warn', label: 'Scanning DHT for peers...' };
   notifyUiStateChanged();
   setRuntimeActivity('warn', 'Scanning DHT for peers...', 12_000);
@@ -450,11 +582,69 @@ registerActions({
   handleServiceFocus: chatApi.handleServiceFocus,
   handleServiceBlur: chatApi.handleServiceBlur,
   clearPinnedPeer: chatApi.clearPinnedPeer,
+  selectVprModel: actionSelectVprModel,
+  clearVprPinnedPeer: () => {
+    // Forgetting the pin has to reach the per-model store too, or selecting
+    // the model again would restore the pin the user just cleared.
+    const model = uiState.vprRouteSelection.model;
+    if (model) {
+      uiState.vprModelPins = clearVprModelPin(uiState.vprModelPins, model.provider, model.serviceId);
+      saveVprModelPins(uiState.vprModelPins);
+    }
+    uiState.vprRouteSelection = { ...uiState.vprRouteSelection, mode: 'auto', peerId: null };
+    saveVprRouteSelection(uiState.vprRouteSelection);
+    notifyUiStateChanged();
+  },
+  setVprModelSellerPin: (provider, serviceId, peerId) => {
+    uiState.vprModelPins = peerId
+      ? setVprModelPin(uiState.vprModelPins, provider, serviceId, peerId)
+      : clearVprModelPin(uiState.vprModelPins, provider, serviceId);
+    saveVprModelPins(uiState.vprModelPins);
+    // Pinning re-points the model's auto-affine chats; clearing moves
+    // nothing — chats keep their current peer as affinity.
+    if (peerId) sweepChatsForSellerPin(provider, serviceId, peerId);
+    notifyUiStateChanged();
+  },
+  updateVprRoutingPreferences: (patch) => {
+    uiState.vprRoutingPreferences = { ...uiState.vprRoutingPreferences, ...patch };
+    saveVprRoutingPreferences(uiState.vprRoutingPreferences);
+    // Peer rules gate which sellers and models are visible at all, so a patch
+    // touching them has to re-derive the catalog, not just repaint.
+    if (patch.allowedPeerIds || patch.blockedPeerIds) {
+      chatApi.applyPeerAccessRules();
+    }
+    notifyUiStateChanged();
+  },
+  setVprPeerListing: (peerId, listing) => {
+    uiState.vprRoutingPreferences = applyPeerListing(uiState.vprRoutingPreferences, peerId, listing);
+    saveVprRoutingPreferences(uiState.vprRoutingPreferences);
+    chatApi.applyPeerAccessRules();
+
+    // A pin the new lists rule out would keep routing to a peer the user just
+    // blocked (the pinned path bypasses scoring), so drop it back to auto —
+    // for every model that remembers this peer, not only the active one.
+    uiState.vprModelPins = filterVprModelPins(
+      uiState.vprModelPins,
+      (pinnedPeerId) => isPeerRoutable(pinnedPeerId, uiState.vprRoutingPreferences),
+    );
+    saveVprModelPins(uiState.vprModelPins);
+    const pinned = uiState.vprRouteSelection.peerId;
+    if (
+      uiState.vprRouteSelection.mode === 'pinned-peer'
+      && pinned
+      && !isPeerRoutable(pinned, uiState.vprRoutingPreferences)
+    ) {
+      uiState.vprRouteSelection = { ...uiState.vprRouteSelection, mode: 'auto', peerId: null };
+      saveVprRouteSelection(uiState.vprRouteSelection);
+    }
+
+    notifyUiStateChanged();
+    void applyVprRouteToConnectedProxy(bridge, uiState);
+  },
   setChatPermissionMode: chatApi.setChatPermissionMode,
   decideToolApproval: chatApi.decideToolApproval,
   rejectPaymentSession: () => {
     uiState.chatPaymentApprovalVisible = false;
-    uiState.chatPaymentApprovalPeerId = null;
     uiState.chatPaymentApprovalPeerName = null;
     uiState.chatPaymentApprovalPeerInfo = null;
     uiState.chatPaymentApprovalLoading = false;
@@ -462,12 +652,9 @@ registerActions({
     notifyUiStateChanged();
   },
   retryAfterPayment: () => chatApi.retryAfterPayment(),
-  requestChannelClose: () => {
-    void bridge?.paymentsOpenPortal?.('channels');
-  },
-  refreshCredits: () => void creditsApi.refreshCredits(),
+  refreshCredits: () => creditsApi.refreshCredits(),
+  refreshPaymentSummary: (force?: boolean) => creditsApi.refreshPaymentSummary(force),
   refreshWorkspace: chatApi.refreshWorkspace,
-  refreshWorkspaceGitStatus: chatApi.refreshWorkspaceGitStatus,
   chooseWorkspace: chatApi.chooseWorkspace,
   refreshPlugins: refreshPluginInventory,
   installPlugin: () => {
@@ -476,10 +663,27 @@ registerActions({
     );
     return installPluginPackage(packageName);
   },
-  openPaymentsPortal: (tab?: string) => {
-    void bridge?.paymentsOpenPortal?.(tab);
+  openVprFloat: (profileName?: string) => vprFloatApi.openFloat(profileName),
+  closeVprFloat: () => vprFloatApi.closeFloat(),
+  setVprFloatAutoOpen: (enabled: boolean) => {
+    uiState.vprFloatAutoOpen = enabled;
+    saveFloatAutoOpen(enabled);
+    vprFloatApi.setAutoOpen(enabled);
+    notifyUiStateChanged();
+  },
+  setVprFloatShowRoutedPeer: (enabled: boolean) => {
+    uiState.vprFloatShowRoutedPeer = enabled;
+    saveFloatShowRoutedPeer(enabled);
+    // The pill reads the flag from its data payload — push it right away so
+    // an open pill reflects the toggle without waiting out the poll tick.
+    void vprFloatApi.refresh();
+    notifyUiStateChanged();
   },
 });
+
+bridge?.onDesktopOpenFloatingWindow?.(() => { void vprFloatApi.openFloat(); });
+bridge?.onDesktopConnectMain?.(() => { void actionStartAll(); });
+bridge?.onDesktopDisconnectMain?.(() => { void actionStopAll(); });
 
 /* ------------------------------------------------------------------ */
 /*  Mount React (store + actions both ready)                           */
@@ -495,7 +699,6 @@ setRefreshHooks({
   setDashboardRefreshState: (busy: boolean, stage: string) => {
     if (busy) {
       uiState.peersMessage = stage;
-      uiState.peersMeta = { tone: 'warn', label: 'Refreshing...' };
       uiState.overviewBadge = { tone: 'active', label: stage };
       notifyUiStateChanged();
       return;
@@ -530,11 +733,6 @@ function initializeBridge(): void {
 
   bridge.onLog?.((event) => {
     updatePluginHintFromLog(event);
-    if (event.mode === 'connect' && isProxyPortOccupiedMessage(event.line)) {
-      uiState.connectWarning = UI_MESSAGES.proxyPortInUse;
-      notifyUiStateChanged();
-    }
-
     appendLog(event);
     if (event.mode === 'connect') {
       chatApi.handleLogLineForThinkingPhase(event.line);
@@ -555,8 +753,6 @@ function initializeBridge(): void {
     syncRuntimeActivityFromProcesses(processes);
 
     if (isModeRunning('connect', processes)) {
-      uiState.connectWarning = null;
-      notifyUiStateChanged();
       clearRouterPluginHint();
     }
 

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { RuntimeMode, RuntimeProcessState, StartOptions } from './process-manager.js';
+import type { RuntimeMode, RuntimeProcessState, StartOptions } from './runtime/process-manager.js';
 
 type LogEvent = {
   mode: RuntimeMode;
@@ -111,6 +111,17 @@ type PluginInstallResult = {
   error: string | null;
 };
 
+type UpdateStatus =
+  | { status: 'available'; version: string }
+  | { status: 'downloading'; version: string; percent: number }
+  | { status: 'ready'; version: string }
+  | { status: 'installing'; version: string | null }
+  | { status: 'error'; version: string | null; message: string; details: string; hint?: string };
+
+type InstallUpdateResult =
+  | { ok: true }
+  | { ok: false; error: string; details: string; hint?: string };
+
 type ChatPermissionMode = 'manual' | 'full';
 type ToolApprovalDecision = 'allow_once' | 'always_allow_peer' | 'deny';
 type ToolApprovalRequest = {
@@ -131,7 +142,20 @@ type ToolApprovalRequest = {
   canAlwaysAllow: boolean;
 };
 
-// NOTE: Source of truth lives in apps/desktop/src/main/chat-stream-stop.ts
+// Mirrors TelegramBridgeStatus in apps/desktop/src/main/telegram/bridge.ts
+// (sandboxed preload cannot import from main). Keep in sync — and with the
+// renderer copy in apps/desktop/src/renderer/types/bridge.ts.
+type TelegramBridgeStatus = {
+  configured: boolean;
+  running: boolean;
+  botUsername: string | null;
+  paired: boolean;
+  ownerName: string | null;
+  pairingLink: string | null;
+  lastError: string | null;
+};
+
+// NOTE: Source of truth lives in apps/desktop/src/main/chat/stream-stop.ts
 // (`ChatStreamStopReason`). This preload runs in a sandboxed context and
 // cannot import from main, so the shape is mirrored here for IPC. Keep the
 // `kind`, `source`, and field set in sync with the source-of-truth type —
@@ -159,6 +183,11 @@ const api = {
   },
   getAppVersion(): Promise<string> {
     return ipcRenderer.invoke('app:get-version') as Promise<string>;
+  },
+  getOpenRouterReferencePrices(): Promise<Record<string, { input: number | null; output: number | null }>> {
+    return ipcRenderer.invoke('openrouter:reference-prices') as Promise<
+      Record<string, { input: number | null; output: number | null }>
+    >;
   },
   getState(): Promise<RuntimeSnapshot> {
     return ipcRenderer.invoke('runtime:get-state') as Promise<RuntimeSnapshot>;
@@ -268,8 +297,14 @@ const api = {
   chatAiAbort(conversationId?: string): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:ai-abort', conversationId);
   },
-  chatAiSelectPeer(payload: { conversationId?: string | null; peerId?: string | null }): Promise<{ ok: boolean; error?: string }> {
+  chatAiSelectPeer(payload: { conversationId?: string | null; peerId?: string | null; service?: string | null; provider?: string | null }): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:ai-select-peer', payload);
+  },
+  chatSetBuyerDefaultRoute(payload: { peerId: string; service: string }): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('chat:set-buyer-default-route', payload);
+  },
+  chatSyncModelPicker(payload: unknown): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('chat:sync-model-picker', payload);
   },
   chatAiGetProxyStatus(): Promise<{ ok: boolean; data: { running: boolean; port: number } }> {
     return ipcRenderer.invoke('chat:ai-get-proxy-status');
@@ -310,6 +345,32 @@ const api = {
   pickDirectory(): Promise<{ ok: boolean; path: string | null }> {
     return ipcRenderer.invoke('desktop:pick-directory');
   },
+  openExternalUrl(url: string): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('desktop:open-external-url', url) as Promise<{ ok: boolean; error?: string }>;
+  },
+  openTool(toolName: string): Promise<{ ok: boolean; error?: string; fallback?: string }> {
+    return ipcRenderer.invoke('desktop:open-tool', toolName) as Promise<{ ok: boolean; error?: string; fallback?: string }>;
+  },
+  openToolSession(tool: string, sessionKey: string, target?: 'terminal' | 'app'): Promise<{ ok: boolean; command?: string; error?: string }> {
+    return ipcRenderer.invoke('desktop:open-tool-session', tool, sessionKey, target ?? 'terminal') as Promise<{ ok: boolean; command?: string; error?: string }>;
+  },
+  listInstalledApps(): Promise<{ ok: boolean; apps: Array<{ name: string; path: string; iconDataUri?: string }>; error?: string }> {
+    return ipcRenderer.invoke('desktop:list-installed-apps') as Promise<{ ok: boolean; apps: Array<{ name: string; path: string; iconDataUri?: string }>; error?: string }>;
+  },
+  systemProxySetAppLaunch(opts: { name: string; app: { name: string; path: string } | null }): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:set-app-launch', opts) as Promise<{ ok: boolean; error?: string }>;
+  },
+  applyWindowView(viewName: string): Promise<{ ok: true; skipped?: string }> {
+    return ipcRenderer.invoke('window:apply-view', viewName) as Promise<{ ok: true; skipped?: string }>;
+  },
+  applyWindowPreset(presetName: string): Promise<{ ok: true; skipped?: string }> {
+    return ipcRenderer.invoke('window:apply-preset', presetName) as Promise<{ ok: true; skipped?: string }>;
+  },
+  onNavigateView(handler: (viewName: string) => void): () => void {
+    const listener = (_: unknown, viewName: string) => handler(viewName);
+    ipcRenderer.on('desktop:navigate-view', listener);
+    return () => ipcRenderer.off('desktop:navigate-view', listener);
+  },
   voiceTranscribe(audio: ArrayBuffer): Promise<{ ok: boolean; text?: string; error?: string }> {
     return ipcRenderer.invoke('voice:transcribe', audio) as Promise<{ ok: boolean; text?: string; error?: string }>;
   },
@@ -341,6 +402,11 @@ const api = {
     const listener = (_: unknown, data: { conversationId: string; title: string }) => handler(data);
     ipcRenderer.on('chat:conversation-title-updated', listener);
     return () => ipcRenderer.off('chat:conversation-title-updated', listener);
+  },
+  onChatDefaultRouteChanged(handler: (data: { peerId: string; service: string; provider: string | null }) => void): () => void {
+    const listener = (_: unknown, data: { peerId: string; service: string; provider: string | null }) => handler(data);
+    ipcRenderer.on('chat:default-route-changed', listener);
+    return () => ipcRenderer.off('chat:default-route-changed', listener);
   },
   // Streaming events
   onChatAiStreamStart(handler: (data: { conversationId: string; turn: number }) => void): () => void {
@@ -388,6 +454,20 @@ const api = {
     ipcRenderer.on('chat:ai-tool-result', listener);
     return () => ipcRenderer.off('chat:ai-tool-result', listener);
   },
+  telegramGetStatus(): Promise<{ ok: boolean; data?: TelegramBridgeStatus; error?: string }> {
+    return ipcRenderer.invoke('telegram:get-status');
+  },
+  telegramConnect(botToken: string): Promise<{ ok: boolean; data?: TelegramBridgeStatus; error?: string }> {
+    return ipcRenderer.invoke('telegram:connect', botToken);
+  },
+  telegramDisconnect(): Promise<{ ok: boolean; data?: TelegramBridgeStatus; error?: string }> {
+    return ipcRenderer.invoke('telegram:disconnect');
+  },
+  onTelegramStatusChanged(handler: (data: TelegramBridgeStatus) => void): () => void {
+    const listener = (_: unknown, data: TelegramBridgeStatus) => handler(data);
+    ipcRenderer.on('telegram:status-changed', listener);
+    return () => ipcRenderer.off('telegram:status-changed', listener);
+  },
   onChatToolApprovalRequested(handler: (data: ToolApprovalRequest) => void): () => void {
     const listener = (_: unknown, data: ToolApprovalRequest) => handler(data);
     ipcRenderer.on('chat:tool-approval-requested', listener);
@@ -431,13 +511,19 @@ const api = {
   },
 
   // Auto-update
-  onUpdateStatus(handler: (data: { status: string; version: string }) => void): () => void {
-    const listener = (_: unknown, data: { status: string; version: string }) => handler(data);
+  onUpdateStatus(handler: (data: UpdateStatus) => void): () => void {
+    const listener = (_: unknown, data: UpdateStatus) => handler(data);
     ipcRenderer.on('app:update-status', listener);
     return () => ipcRenderer.off('app:update-status', listener);
   },
-  installUpdate(): Promise<void> {
-    return ipcRenderer.invoke('app:install-update') as Promise<void>;
+  installUpdate(): Promise<InstallUpdateResult> {
+    return ipcRenderer.invoke('app:install-update') as Promise<InstallUpdateResult>;
+  },
+  downloadUpdate(): Promise<InstallUpdateResult> {
+    return ipcRenderer.invoke('app:download-update') as Promise<InstallUpdateResult>;
+  },
+  getUpdateStatus(): Promise<UpdateStatus | null> {
+    return ipcRenderer.invoke('app:get-update-status') as Promise<UpdateStatus | null>;
   },
   setDebugLogs(enabled: boolean): Promise<{ ok: true }> {
     return ipcRenderer.invoke('desktop:set-debug-logs', enabled) as Promise<{ ok: true }>;
@@ -445,9 +531,139 @@ const api = {
   creditsGetInfo() {
     return ipcRenderer.invoke('credits:get-info');
   },
+  identityExportKey: () => ipcRenderer.invoke('identity:export-key'),
+  identityImportKey: (privateKeyHex: string) => ipcRenderer.invoke('identity:import-key', privateKeyHex),
   paymentsSignSpendingAuth: (params: unknown) => ipcRenderer.invoke('payments:sign-spending-auth', params),
   paymentsGetPeerInfo: (peerId: string) => ipcRenderer.invoke('payments:get-peer-info', peerId),
-  paymentsOpenPortal: (tab?: string) => ipcRenderer.invoke('payments:open-portal', tab),
+  paymentsOpenPayPage: (opts: { kind?: string; amountUsdc?: string; channelId?: string }) => ipcRenderer.invoke('payments:open-pay-page', opts),
+  paymentsCardProviders: () => ipcRenderer.invoke('payments:card-providers'),
+  paymentsOpenCardProvider: (opts?: { providerId?: string; amountUsdc?: string }) => ipcRenderer.invoke('payments:open-card-provider', opts),
+  paymentsCrossmintConfig: () => ipcRenderer.invoke('payments:crossmint-config'),
+  paymentsFunkitConfig: () => ipcRenderer.invoke('payments:funkit-config'),
+  paymentsGetBuyerUsage: () => ipcRenderer.invoke('payments:get-buyer-usage'),
+  paymentsGetChannels: () => ipcRenderer.invoke('payments:get-channels'),
+  paymentsGetRewardsSummary: () => ipcRenderer.invoke('payments:get-rewards-summary'),
+  onPaymentsCompleted(handler: () => void): () => void {
+    const listener = () => handler();
+    ipcRenderer.on('payments:completed', listener);
+    return () => ipcRenderer.off('payments:completed', listener);
+  },
+  depositsWatchStart: () => ipcRenderer.invoke('deposits:watch-start'),
+  depositsWatchStop: () => ipcRenderer.invoke('deposits:watch-stop'),
+  onDepositsWatchStatus(handler: (data: unknown) => void): () => void {
+    const listener = (_: unknown, data: unknown) => handler(data);
+    ipcRenderer.on('deposits:watch-status', listener);
+    return () => ipcRenderer.off('deposits:watch-status', listener);
+  },
+  systemProxyStart(opts: { peerId: string; port?: number; profiles?: string[]; defaultModel?: string; servedModels?: string[]; toolRoutes?: Record<string, { peerId: string; model: string }>; profileSwitch?: boolean }): Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:start', opts) as Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }>;
+  },
+  systemProxyListProfiles() {
+    return ipcRenderer.invoke('system-proxy:list-profiles');
+  },
+  systemProxyAddCustomApp(opts: { apiUrl: string; app?: { name: string; path: string } | null; force?: boolean }): Promise<{ ok: boolean; name?: string; unverified?: boolean; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:add-custom-app', opts) as Promise<{ ok: boolean; name?: string; unverified?: boolean; error?: string }>;
+  },
+  systemProxySetAppIdentity(opts: { name: string; toolSlugs: string[] | null }): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:set-app-identity', opts) as Promise<{ ok: boolean; error?: string }>;
+  },
+  systemProxyRemoveCustomApp(name: string): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:remove-custom-app', { name }) as Promise<{ ok: boolean; error?: string }>;
+  },
+  systemProxyStop(): Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:stop') as Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }>;
+  },
+  systemProxyGetState(): Promise<RuntimeProcessState | null> {
+    return ipcRenderer.invoke('system-proxy:get-state') as Promise<RuntimeProcessState | null>;
+  },
+  systemProxyInstallCa(): Promise<{ ok: boolean; warning?: string; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:install-ca') as Promise<{ ok: boolean; warning?: string; error?: string }>;
+  },
+  systemProxyCaExists(): Promise<boolean> {
+    return ipcRenderer.invoke('system-proxy:ca-exists') as Promise<boolean>;
+  },
+  systemProxyCaInfo(): Promise<{ path: string; exists: boolean }> {
+    return ipcRenderer.invoke('system-proxy:ca-info') as Promise<{ path: string; exists: boolean }>;
+  },
+  systemProxyRevealCa(): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:reveal-ca') as Promise<{ ok: boolean; error?: string }>;
+  },
+  systemProxyCaTrustState(): Promise<{ ok: boolean; exists: boolean; trust: 'trusted' | 'stale' | 'absent' | 'unknown'; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:ca-trust-state') as Promise<{ ok: boolean; exists: boolean; trust: 'trusted' | 'stale' | 'absent' | 'unknown'; error?: string }>;
+  },
+  systemProxyTestGui(opts?: { port?: number }) {
+    return ipcRenderer.invoke('system-proxy:test-gui', opts);
+  },
+  systemProxyRestartApp(app: string): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:restart-app', { app }) as Promise<{ ok: boolean; error?: string }>;
+  },
+
+  /* Floating always-on-top pill window */
+  vprFloatOpen(data: unknown): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('vpr-float:open', data) as Promise<{ ok: boolean }>;
+  },
+  vprFloatClose(): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('vpr-float:close') as Promise<{ ok: boolean }>;
+  },
+  vprFloatIsOpen(): Promise<boolean> {
+    return ipcRenderer.invoke('vpr-float:is-open') as Promise<boolean>;
+  },
+  vprFloatGetCompact(): Promise<boolean> {
+    return ipcRenderer.invoke('vpr-float:get-compact') as Promise<boolean>;
+  },
+  vprFloatMoveBy(dx: number, dy: number): void {
+    ipcRenderer.send('vpr-float:move-by', dx, dy);
+  },
+  vprFloatUpdate(data: unknown): void {
+    ipcRenderer.send('vpr-float:update', data);
+  },
+  vprFloatAction(action: unknown): void {
+    ipcRenderer.send('vpr-float:action', action);
+  },
+  vprFloatSetExpanded(expanded: boolean): void {
+    ipcRenderer.send('vpr-float:set-expanded', expanded);
+  },
+  buyerConversationsList(): Promise<unknown[] | null> {
+    return ipcRenderer.invoke('buyer:conversations-list') as Promise<unknown[] | null>;
+  },
+  buyerConversationsUpdate(opts: { id: string; label?: string | null; pinnedModel?: string; peerSource?: 'auto' | 'user'; delete?: boolean }): Promise<{ ok: boolean; conversation?: unknown; error?: string }> {
+    return ipcRenderer.invoke('buyer:conversations-update', opts) as Promise<{ ok: boolean; conversation?: unknown; error?: string }>;
+  },
+  onVprFloatData(handler: (data: unknown) => void): () => void {
+    const listener = (_: unknown, data: unknown) => handler(data);
+    ipcRenderer.on('vpr-float:data', listener);
+    return () => ipcRenderer.off('vpr-float:data', listener);
+  },
+  onVprFloatCompact(handler: (compact: boolean) => void): () => void {
+    const listener = (_: unknown, compact: boolean) => handler(Boolean(compact));
+    ipcRenderer.on('vpr-float:compact', listener);
+    return () => ipcRenderer.off('vpr-float:compact', listener);
+  },
+  onVprFloatClosed(handler: () => void): () => void {
+    const listener = () => handler();
+    ipcRenderer.on('vpr-float:closed', listener);
+    return () => ipcRenderer.off('vpr-float:closed', listener);
+  },
+  onVprFloatAction(handler: (action: unknown) => void): () => void {
+    const listener = (_: unknown, action: unknown) => handler(action);
+    ipcRenderer.on('vpr-float:action', listener);
+    return () => ipcRenderer.off('vpr-float:action', listener);
+  },
+  onDesktopOpenFloatingWindow(handler: () => void): () => void {
+    const listener = () => handler();
+    ipcRenderer.on('desktop:open-floating-window', listener);
+    return () => ipcRenderer.off('desktop:open-floating-window', listener);
+  },
+  onDesktopConnectMain(handler: () => void): () => void {
+    const listener = () => handler();
+    ipcRenderer.on('desktop:connect-main', listener);
+    return () => ipcRenderer.off('desktop:connect-main', listener);
+  },
+  onDesktopDisconnectMain(handler: () => void): () => void {
+    const listener = () => handler();
+    ipcRenderer.on('desktop:disconnect-main', listener);
+    return () => ipcRenderer.off('desktop:disconnect-main', listener);
+  },
 };
 
 contextBridge.exposeInMainWorld('antseedDesktop', api);

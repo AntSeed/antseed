@@ -2,13 +2,13 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
-import "../AntseedChannels.sol";
-import "../AntseedDeposits.sol";
-import "../AntseedStaking.sol";
-import "../MockERC8004Registry.sol";
-import "../MockUSDC.sol";
-import "../AntseedRegistry.sol";
-import "../AntseedStats.sol";
+import "../payments/AntseedChannels.sol";
+import "../payments/AntseedDeposits.sol";
+import "../staking/AntseedStaking.sol";
+import "./mocks/MockERC8004Registry.sol";
+import "./mocks/MockUSDC.sol";
+import "../core/AntseedRegistry.sol";
+import "../stats/AntseedStats.sol";
 
 contract AntseedChannelsTest is Test {
     MockUSDC public usdc;

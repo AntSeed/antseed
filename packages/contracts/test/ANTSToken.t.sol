@@ -2,8 +2,8 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
-import "../ANTSToken.sol";
-import "../AntseedRegistry.sol";
+import "../core/ANTSToken.sol";
+import "../core/AntseedRegistry.sol";
 
 contract ANTSTokenTest is Test {
     ANTSToken public token;

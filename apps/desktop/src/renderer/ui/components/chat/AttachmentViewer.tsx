@@ -107,7 +107,7 @@ function buildDownloadHref(att: ViewerAttachment): string | null {
 export function AttachmentViewer({ attachment, onClose }: AttachmentViewerProps) {
   const [closing, setClosing] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const closeTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const closeTimerRef = useRef<number | null>(null);
 
   const close = useCallback(() => {
     setClosing(true);

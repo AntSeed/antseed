@@ -14,6 +14,7 @@ export interface ChainCryptoOverrides {
   fallbackRpcUrls?: string[];
   depositsContractAddress?: string;
   channelsContractAddress?: string;
+  freeUsageContractAddress?: string;
   usdcContractAddress?: string;
   stakingContractAddress?: string;
   identityRegistryAddress?: string;
@@ -45,6 +46,7 @@ export function buildPaymentsConfig(
       rpcUrl: cryptoOverrides?.rpcUrl,
       depositsContractAddress: cryptoOverrides?.depositsContractAddress,
       channelsContractAddress: cryptoOverrides?.channelsContractAddress,
+      freeUsageContractAddress: cryptoOverrides?.freeUsageContractAddress,
       usdcContractAddress: cryptoOverrides?.usdcContractAddress,
     });
     const paymentsConfig: NodePaymentsConfig = {
@@ -53,6 +55,7 @@ export function buildPaymentsConfig(
       ...(resolved.fallbackRpcUrls ? { fallbackRpcUrls: resolved.fallbackRpcUrls } : {}),
       depositsAddress: resolved.depositsContractAddress,
       channelsAddress: resolved.channelsContractAddress,
+      ...(resolved.freeUsageContractAddress ? { freeUsageAddress: resolved.freeUsageContractAddress } : {}),
       usdcAddress: resolved.usdcContractAddress,
       chainId: resolved.evmChainId,
       ...(resolved.stakingContractAddress ? { stakingAddress: resolved.stakingContractAddress } : {}),
