@@ -257,6 +257,16 @@ reward pool. The per-verifier epoch allowance is 100 credits, represented as
 `100_000_000` credit USD micros. Zero-cost bundles receive zero credit and are
 valid; bundles above the remaining allowance still apply their seller results.
 
+Verifier reward accounting starts no earlier than the epoch after deployment,
+matching the emissions gate's next-epoch minter activation. Bundles submitted
+before that epoch still publish and apply their seller results, but award zero
+credit. A bundle also awards zero credit whenever the gate exposes no verifier
+budget for the current epoch, so delayed or temporarily unavailable minter
+wiring cannot create dead credits. On the first claim or zero-credit remainder
+settlement for a finalized epoch, the contract freezes that epoch's reward
+budget and credit denominator. A temporarily unavailable minter budget cannot
+consume a verifier's existing credits.
+
 Reference costs move through `unclaimed → reserved → claimed`. Submission
 reserves them atomically against the content-addressed bundle ID before
 broadcast, keeps the reservation after a failed transaction for an idempotent

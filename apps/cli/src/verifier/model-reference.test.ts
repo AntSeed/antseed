@@ -434,6 +434,56 @@ test('collector rejects certified consensus values outside the declared range', 
   assert.equal(collected.probes[0]?.consensus, 5)
 })
 
+test('collector applies the canonical absolute tolerance during stability certification', async () => {
+  const stabilityAnswers = new Map([
+    ['stability-0', 100],
+    ['stability-1', 102],
+    ['stability-2', 98],
+  ])
+  const query = async (_model: string, body: Record<string, unknown>): Promise<string> => {
+    const messages = body.messages as Array<{ content: string }>
+    const prompt = messages.at(-1)?.content ?? ''
+    if (prompt.startsWith('Generate ')) return 'test compound | 100'
+    const cacheDomain = String(body.__antseedReferenceCacheDomain ?? '')
+    return `(1) ${String(stabilityAnswers.get(cacheDomain) ?? 100)}`
+  }
+
+  const collected = await collectReferenceProbes({
+    model: 'reference-model',
+    contrastModels: [],
+    targetCount: 1,
+    candidateCountPerRound: 1,
+    query,
+  })
+
+  assert.equal(collected.probes.length, 1)
+  assert.equal(collected.probes[0]?.domain, 'chemistry_bp')
+  assert.equal(collected.probes[0]?.consensus, 100)
+})
+
+test('collector rejects decimal disagreement in exact-match domains', async () => {
+  const query = async (_model: string, body: Record<string, unknown>): Promise<string> => {
+    const messages = body.messages as Array<{ content: string }>
+    const prompt = messages.at(-1)?.content ?? ''
+    if (prompt.startsWith('Generate ')) {
+      return prompt.includes('domain biology') ? 'test organism | 100' : ''
+    }
+    const cacheDomain = String(body.__antseedReferenceCacheDomain ?? '')
+    if (cacheDomain === 'stability-1') return '(1) 100.4'
+    if (cacheDomain === 'stability-2') return '(1) 99.6'
+    return '(1) 100'
+  }
+
+  await assert.rejects(collectReferenceProbes({
+    model: 'reference-model',
+    contrastModels: [],
+    targetCount: 1,
+    candidateCountPerRound: 5,
+    maxNoProgressRounds: 1,
+    query,
+  }), /made no progress for 1 rounds/)
+})
+
 test('reference requests retry transient failures', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'antseed-reference-retry-'))
   let firstCandidateBatchAttempts = 0

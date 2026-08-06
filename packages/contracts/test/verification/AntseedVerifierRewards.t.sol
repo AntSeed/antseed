@@ -67,6 +67,76 @@ contract AntseedVerifierRewardsTest is Test {
         assertEq(verification.epochCreditUsdMicros(rewardedEpoch, verifierA), 0);
     }
 
+    function test_preRewardedEpochAppliesResultsWithoutRecordingDeadCredits() public {
+        uint256 agentId = _register(address(0xCAFE));
+        bytes32 bundleId = keccak256("pre-rewarded");
+        IAntseedVerification.VerificationResult[] memory results = new IAntseedVerification.VerificationResult[](1);
+        results[0] = IAntseedVerification.VerificationResult({
+            agentId: agentId,
+            serviceHash: SERVICE_HASH,
+            verdict: IAntseedVerification.Verdict.DIFF,
+            modelShareBps: 2_500
+        });
+        vm.prank(verifierA);
+        verification.submitVerificationBundle(
+            bundleId, _currentEpoch(), 1_000_000, keccak256(abi.encode("evidence", bundleId)), results
+        );
+
+        assertTrue(verification.isBundleSubmitted(bundleId));
+        assertEq(verification.agentPointsPenaltyBps(agentId), 2_500);
+        assertEq(verification.epochCreditUsdMicros(_currentEpoch(), verifierA), 0);
+        assertEq(verification.epochTotalCreditUsdMicros(_currentEpoch()), 0);
+    }
+
+    function test_missingCurrentEpochBudgetAppliesResultsWithoutRecordingDeadCredits() public {
+        uint256 rewardedEpoch = verification.firstRewardedEpoch();
+        _warpToEpoch(rewardedEpoch);
+        gate.setMinterController(VERIFICATION_MINTER_ID, address(0xD00D));
+
+        uint256 agentId = _register(address(0xCAFE));
+        _submit(verifierA, agentId, keccak256("no-live-budget"), 1_000_000);
+
+        assertTrue(verification.isBundleSubmitted(keccak256("no-live-budget")));
+        assertEq(verification.epochCreditUsdMicros(rewardedEpoch, verifierA), 0);
+        assertEq(verification.epochTotalCreditUsdMicros(rewardedEpoch), 0);
+    }
+
+    function test_zeroBudgetClaimRevertsWithoutErasingCredits() public {
+        uint256 rewardedEpoch = verification.firstRewardedEpoch();
+        _warpToEpoch(rewardedEpoch);
+        _submit(verifierA, _register(address(0xCAFE)), keccak256("rotation"), 1_000_000);
+        _warpToEpoch(rewardedEpoch + 1);
+
+        gate.setMinterController(VERIFICATION_MINTER_ID, address(0xD00D));
+        vm.prank(verifierA);
+        vm.expectRevert(AntseedVerification.NothingToClaim.selector);
+        verification.claimVerifierReward(rewardedEpoch);
+        assertEq(verification.epochCreditUsdMicros(rewardedEpoch, verifierA), 1_000_000);
+
+        gate.setMinterController(VERIFICATION_MINTER_ID, address(verification));
+        vm.prank(verifierA);
+        verification.claimVerifierReward(rewardedEpoch);
+        assertGt(token.balanceOf(verifierA), 0);
+    }
+
+    function test_firstClaimFreezesBudgetAndCreditDenominator() public {
+        uint256 rewardedEpoch = verification.firstRewardedEpoch();
+        _warpToEpoch(rewardedEpoch);
+        _submit(verifierA, _register(address(0xCAFE)), keccak256("freeze-a"), 1_000_000);
+        _submit(verifierB, _register(address(0xD00D)), keccak256("freeze-b"), 1_000_000);
+
+        uint256 budget = verification.verifierEpochBudget(rewardedEpoch);
+        _warpToEpoch(rewardedEpoch + 1);
+        vm.prank(verifierA);
+        verification.claimVerifierReward(rewardedEpoch);
+
+        gate.setMinterController(VERIFICATION_MINTER_ID, address(0xF00D));
+        assertEq(gate.controllerEpochBudget(address(verification), rewardedEpoch), 0);
+        assertEq(verification.verifierEpochBudget(rewardedEpoch), budget);
+        assertEq(verification.verifierEpochTotalCreditUsdMicros(rewardedEpoch), 2_000_000);
+        assertEq(verification.pendingVerifierReward(rewardedEpoch, verifierB), budget / 2);
+    }
+
     function test_zeroCreditEpochCanSettleRemainder() public {
         uint256 rewardedEpoch = verification.firstRewardedEpoch();
         _warpToEpoch(rewardedEpoch + 1);
@@ -89,6 +159,29 @@ contract AntseedVerifierRewardsTest is Test {
         assertEq(token.balanceOf(verifierA), budget);
         assertEq(verification.epochCreditUsdMicros(rewardedEpoch, verifierA), 0);
         assertEq(verification.pendingVerifierReward(rewardedEpoch, verifierA), 0);
+    }
+
+    function testFuzz_claimedRewardsNeverExceedFrozenBudget(uint64 creditA, uint64 creditB) public {
+        creditA = uint64(bound(creditA, 1, verification.maxCreditUsdMicrosPerVerifierPerEpoch()));
+        creditB = uint64(bound(creditB, 1, verification.maxCreditUsdMicrosPerVerifierPerEpoch()));
+
+        uint256 rewardedEpoch = verification.firstRewardedEpoch();
+        _warpToEpoch(rewardedEpoch);
+        _submit(verifierA, _register(address(0xCAFE)), keccak256(abi.encode("fuzz-a", creditA)), creditA);
+        _submit(verifierB, _register(address(0xD00D)), keccak256(abi.encode("fuzz-b", creditB)), creditB);
+        _warpToEpoch(rewardedEpoch + 1);
+
+        uint256 budget = verification.verifierEpochBudget(rewardedEpoch);
+        uint256 pendingA = verification.pendingVerifierReward(rewardedEpoch, verifierA);
+        uint256 pendingB = verification.pendingVerifierReward(rewardedEpoch, verifierB);
+        vm.prank(verifierA);
+        verification.claimVerifierReward(rewardedEpoch);
+        vm.prank(verifierB);
+        verification.claimVerifierReward(rewardedEpoch);
+
+        assertEq(token.balanceOf(verifierA), pendingA);
+        assertEq(token.balanceOf(verifierB), pendingB);
+        assertLe(pendingA + pendingB, budget);
     }
 
     function _register(address seller) private returns (uint256 agentId) {

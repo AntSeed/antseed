@@ -113,7 +113,34 @@ describe('verifyKbf', () => {
     const fragment = verifyKbf(reference, makeObservation(answers));
     expect(fragment.verdict).toBe('DIFF');
     expect(fragment.parsedProbeCount).toBe(PROBES.length);
+    expect(fragment.stats.targetHamming).toBe(15);
     expect(fragment.stats.targetTotal).toBe(PROBES.length);
+  });
+
+  it('uses the full denominator when a completed response omits 49 of 100 answers', () => {
+    const probes: KbfProbe[] = Array.from({ length: 100 }, (_, index) => ({
+      ...PROBES[index % PROBES.length]!,
+      id: `fixed-denominator-${index + 1}`,
+      consensus: index + 1,
+    }));
+    const outcomes = probes.map((probe) => ({
+      probeId: probe.id,
+      answer: probe.consensus,
+      match: 1 as const,
+    }));
+    const reference = makeReference({
+      probes,
+      selfTest: { hamming: 0, total: probes.length, coverage: 1, errorRate: 0, outcomes },
+    });
+    const answers = probes.map((probe, index) => (index < 51 ? probe.consensus : null));
+
+    const fragment = verifyKbf(reference, makeObservation(answers));
+
+    expect(fragment.verdict).toBe('DIFF');
+    expect(fragment.parsedProbeCount).toBe(100);
+    expect(fragment.stats.targetHamming).toBe(49);
+    expect(fragment.stats.targetTotal).toBe(100);
+    expect(fragment.stats.pValueBinomial).toBeLessThan(0.05);
   });
 
   it('returns UNDETERMINED for transport-unavailable probes', () => {

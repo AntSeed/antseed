@@ -154,6 +154,13 @@ describe('binomialOneSidedPValue', () => {
     expect(p).toBeLessThan(1e-100);
   });
 
+  it('uses an exact CP bound above 0.99 without clamping it', () => {
+    const p0 = clopperPearsonUpper(99, 100, 0.99);
+    expect(p0).toBeGreaterThan(0.99);
+    expect(p0).toBeCloseTo(0.9998995016917583, 12);
+    expect(binomialOneSidedPValue(317, 317, p0)).toBeCloseTo(0.9686426041855408, 12);
+  });
+
   it('rejects invalid input', () => {
     expect(() => binomialOneSidedPValue(1, 10, -0.1)).toThrow();
     expect(() => binomialOneSidedPValue(1, 10, 1.1)).toThrow();

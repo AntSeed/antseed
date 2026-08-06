@@ -31,4 +31,19 @@ contract VerifierDeploymentIntegrationTest is Test {
         assertEq(controller, address(verification));
         assertEq(shareBps, 10_000);
     }
+
+    function test_lateVerifierDeploymentStartsRewardsNextEpoch() public {
+        vm.warp(GENESIS + 8 days);
+        AntseedRegistry registry = new AntseedRegistry();
+        registry.setIdentityRegistry(address(new MockERC8004Registry()));
+        registry.setTeamWallet(address(0xA11CE));
+        registry.setProtocolReserve(address(0xB0B));
+        AntseedEmissionsGate gate = new AntseedEmissionsGate(address(0xA11CE), address(0xB0B), 15_000, 15_000);
+
+        vm.warp(GENESIS + 5 * gate.EPOCH_DURATION() + 1);
+        AntseedVerification verification = new AntseedVerification(address(registry), address(gate));
+
+        assertEq(verification.currentEpoch(), 5);
+        assertEq(verification.firstRewardedEpoch(), 6);
+    }
 }

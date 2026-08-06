@@ -29,10 +29,11 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
     mapping(bytes32 bundleId => bool submitted) private _submittedBundles;
     mapping(uint256 agentId => uint16 penaltyBps) private _agentPointsPenaltyBps;
 
-    mapping(uint256 epoch => mapping(address verifier => uint256 creditUsdMicros))
-        public override epochCreditUsdMicros;
+    mapping(uint256 epoch => mapping(address verifier => uint256 creditUsdMicros)) public override epochCreditUsdMicros;
     mapping(uint256 epoch => uint256 creditUsdMicros) public override epochTotalCreditUsdMicros;
 
+    mapping(uint256 epoch => uint256 budgetPlusOne) private _frozenEpochBudgets;
+    mapping(uint256 epoch => uint256 totalCreditUsdMicrosPlusOne) private _frozenEpochTotalCreditUsdMicros;
     mapping(uint256 epoch => bool settled) public override epochRemainderSettled;
 
     event VerifierApprovalSet(address indexed verifier, bool approved);
@@ -85,7 +86,7 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
         if (registry_.code.length == 0 || emissionsGate_.code.length == 0) revert InvalidAddress();
         registry = IAntseedRegistry(registry_);
         emissionsGate = IAntseedEmissionsGate(emissionsGate_);
-        firstRewardedEpoch = emissionsGate.effectiveEpoch();
+        firstRewardedEpoch = Math.max(emissionsGate.effectiveEpoch(), emissionsGate.currentEpoch() + 1);
     }
 
     function setVerifier(address verifier, bool approved) external override onlyOwner {
@@ -112,6 +113,9 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
         if (results.length == 0) revert EmptyBundle();
         if (results.length > MAX_RESULTS_PER_BUNDLE) revert TooManyResults();
 
+        uint256 epoch = currentEpoch();
+        if (epoch != expectedEpoch) revert EpochChanged();
+
         for (uint256 i = 0; i < results.length; i++) {
             VerificationResult calldata result = results[i];
             _validateResult(result);
@@ -124,20 +128,21 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
             }
         }
 
-        uint256 epoch = currentEpoch();
-        if (epoch != expectedEpoch) revert EpochChanged();
         _submittedBundles[bundleId] = true;
 
-        uint256 currentCreditUsdMicros = epochCreditUsdMicros[epoch][msg.sender];
-        uint256 remainingCreditUsdMicros = currentCreditUsdMicros < maxCreditUsdMicrosPerVerifierPerEpoch
-            ? uint256(maxCreditUsdMicrosPerVerifierPerEpoch) - currentCreditUsdMicros
-            : 0;
-        uint64 awardedCreditUsdMicros = totalAuditCostUsdMicros < remainingCreditUsdMicros
-            ? totalAuditCostUsdMicros
-            : uint64(remainingCreditUsdMicros);
-        if (awardedCreditUsdMicros != 0) {
-            epochCreditUsdMicros[epoch][msg.sender] = currentCreditUsdMicros + awardedCreditUsdMicros;
-            epochTotalCreditUsdMicros[epoch] += awardedCreditUsdMicros;
+        uint64 awardedCreditUsdMicros;
+        if (epoch >= firstRewardedEpoch && emissionsGate.controllerEpochBudget(address(this), epoch) != 0) {
+            uint256 currentCreditUsdMicros = epochCreditUsdMicros[epoch][msg.sender];
+            uint256 remainingCreditUsdMicros = currentCreditUsdMicros < maxCreditUsdMicrosPerVerifierPerEpoch
+                ? uint256(maxCreditUsdMicrosPerVerifierPerEpoch) - currentCreditUsdMicros
+                : 0;
+            awardedCreditUsdMicros = totalAuditCostUsdMicros < remainingCreditUsdMicros
+                ? totalAuditCostUsdMicros
+                : uint64(remainingCreditUsdMicros);
+            if (awardedCreditUsdMicros != 0) {
+                epochCreditUsdMicros[epoch][msg.sender] = currentCreditUsdMicros + awardedCreditUsdMicros;
+                epochTotalCreditUsdMicros[epoch] += awardedCreditUsdMicros;
+            }
         }
 
         emit VerificationBundleSubmitted(
@@ -193,9 +198,8 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
         if (epoch >= currentEpoch()) revert EpochNotFinalized();
         uint256 creditUsdMicros = epochCreditUsdMicros[epoch][msg.sender];
         if (creditUsdMicros == 0) revert NothingToClaim();
-        uint256 budget = emissionsGate.controllerEpochBudget(address(this), epoch);
-        uint256 totalCreditUsdMicros = epochTotalCreditUsdMicros[epoch];
-        if (totalCreditUsdMicros == 0) revert NothingToClaim();
+        (uint256 budget, uint256 totalCreditUsdMicros) = _freezeEpochRewardState(epoch);
+        if (budget == 0 || totalCreditUsdMicros == 0) revert NothingToClaim();
 
         uint256 amount = Math.mulDiv(budget, creditUsdMicros, totalCreditUsdMicros);
         epochCreditUsdMicros[epoch][msg.sender] = 0;
@@ -212,8 +216,7 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
         if (epoch < firstRewardedEpoch) revert PreEffectiveEpoch();
         if (epoch >= currentEpoch()) revert EpochNotFinalized();
         if (epochRemainderSettled[epoch]) revert AlreadyClaimed();
-        uint256 budget = emissionsGate.controllerEpochBudget(address(this), epoch);
-        uint256 totalCreditUsdMicros = epochTotalCreditUsdMicros[epoch];
+        (uint256 budget, uint256 totalCreditUsdMicros) = _freezeEpochRewardState(epoch);
         if (totalCreditUsdMicros != 0 || budget == 0) revert NothingToSettle();
 
         epochRemainderSettled[epoch] = true;
@@ -231,11 +234,27 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
     }
 
     function verifierEpochBudget(uint256 epoch) public view override returns (uint256) {
+        uint256 frozenBudget = _frozenEpochBudgets[epoch];
+        if (frozenBudget != 0) return frozenBudget - 1;
         return emissionsGate.controllerEpochBudget(address(this), epoch);
     }
 
     function verifierEpochTotalCreditUsdMicros(uint256 epoch) public view override returns (uint256) {
+        uint256 frozenTotalCreditUsdMicros = _frozenEpochTotalCreditUsdMicros[epoch];
+        if (frozenTotalCreditUsdMicros != 0) return frozenTotalCreditUsdMicros - 1;
         return epochTotalCreditUsdMicros[epoch];
+    }
+
+    function _freezeEpochRewardState(uint256 epoch) private returns (uint256 budget, uint256 totalCreditUsdMicros) {
+        uint256 frozenBudget = _frozenEpochBudgets[epoch];
+        if (frozenBudget != 0) {
+            return (frozenBudget - 1, _frozenEpochTotalCreditUsdMicros[epoch] - 1);
+        }
+
+        budget = emissionsGate.controllerEpochBudget(address(this), epoch);
+        totalCreditUsdMicros = epochTotalCreditUsdMicros[epoch];
+        _frozenEpochBudgets[epoch] = budget + 1;
+        _frozenEpochTotalCreditUsdMicros[epoch] = totalCreditUsdMicros + 1;
     }
 
     function _resolveAgentOwner(uint256 agentId) private view returns (address) {
@@ -288,6 +307,6 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
     }
 
     function _applyKeepBps(uint256 amount, uint256 keepBps) private pure returns (uint256) {
-        return (amount / BPS_DENOMINATOR) * keepBps + ((amount % BPS_DENOMINATOR) * keepBps) / BPS_DENOMINATOR;
+        return Math.mulDiv(amount, keepBps, BPS_DENOMINATOR);
     }
 }

@@ -13,6 +13,7 @@ import { MockERC8004Registry } from "../mocks/MockERC8004Registry.sol";
 contract AntseedVerifierRegistryTest is Test {
     uint256 private constant GENESIS = 1_775_728_461;
     address private constant ANTS_TOKEN = 0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263;
+    bytes32 private constant VERIFICATION_MINTER_ID = keccak256("antseed.emissions.verification.v1");
     bytes32 private constant SERVICE_HASH = keccak256("gpt-5.6-sol");
     bytes32 private constant OTHER_SERVICE_HASH = keccak256("gpt-5.6-luna");
 
@@ -35,10 +36,12 @@ contract AntseedVerifierRegistryTest is Test {
         registry.setIdentityRegistry(address(identityRegistry));
         AntseedEmissionsGate gate = new AntseedEmissionsGate(address(0x1111), address(0x2222), 15_000, 15_000);
         verification = new AntseedVerification(address(registry), address(gate));
+        gate.setMinter(VERIFICATION_MINTER_ID, address(verification), 10_000, true);
         verification.setVerifier(verifier, true);
         verification.setVerifier(secondVerifier, true);
         vm.prank(seller);
         agentId = identityRegistry.register();
+        vm.warp(GENESIS + verification.firstRewardedEpoch() * 7 days + 1);
     }
 
     function test_submitBundleCreditsVerifierByExactUsdCost() public {
@@ -88,6 +91,24 @@ contract AntseedVerifierRegistryTest is Test {
 
         vm.expectRevert(AntseedVerification.InvalidValue.selector);
         verification.setMaxCreditUsdMicrosPerVerifierPerEpoch(0);
+    }
+
+    function test_onlyOwnerCanConfigureAndOnlyApprovedVerifiersCanSubmit() public {
+        address unauthorized = address(0xBAD);
+        vm.startPrank(unauthorized);
+        vm.expectRevert();
+        verification.setVerifier(unauthorized, true);
+        vm.expectRevert();
+        verification.setMaxCreditUsdMicrosPerVerifierPerEpoch(1_000_000);
+        vm.expectRevert(AntseedVerification.NotApprovedVerifier.selector);
+        verification.submitVerificationBundle(
+            keccak256("unauthorized"),
+            _currentEpoch(),
+            1_000_000,
+            keccak256("unauthorized-evidence"),
+            _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.SAME, 0)
+        );
+        vm.stopPrank();
     }
 
     function test_allFinalVerdictsCanEarnCredits() public {
@@ -191,6 +212,21 @@ contract AntseedVerifierRegistryTest is Test {
         verification.submitVerificationBundle(
             keccak256("oversized"), _currentEpoch(), 0, keccak256("oversized-evidence"), oversized
         );
+    }
+
+    function test_acceptsMaximumBundleSize() public {
+        uint256 resultCount = verification.MAX_RESULTS_PER_BUNDLE();
+        IAntseedVerification.VerificationResult[] memory results =
+            new IAntseedVerification.VerificationResult[](resultCount);
+        for (uint256 i = 0; i < resultCount; i++) {
+            uint256 targetAgentId = 1_000 + i;
+            identityRegistry.setOwner(targetAgentId, address(uint160(10_000 + i)));
+            results[i] = _result(targetAgentId, SERVICE_HASH, IAntseedVerification.Verdict.SAME, 0);
+        }
+
+        bytes32 bundleId = keccak256("maximum-size");
+        _submit(verifier, bundleId, results, 0);
+        assertTrue(verification.isBundleSubmitted(bundleId));
     }
 
     function _submit(
