@@ -8,8 +8,6 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
-- The desktop deposit screen now leads with an in-app Fun (fun.xyz) checkout: pay with card/cash or transfer crypto, and the purchased USDC is delivered on Base to the buyer wallet and auto-deposited to credits like any other transfer. Requires a Fun API key (`payments.funkit.apiKey` in the desktop config, or the `ANTSEED_FUNKIT_API_KEY` environment variable) and Base mainnet; otherwise the existing deposit options show unchanged.
-
 - Sellers now run periodic model health self-checks (a 1-token probe per advertised service, every 5 minutes by default) and unadvertise services that keep failing, restoring them automatically when they recover. Configurable via `seller.healthCheck` (`enabled`, `intervalMs`, `failureThreshold`); sellers announcing this behavior advertise the `seller.model-health.v1` capability in discovery metadata. Exposed as `ModelHealthChecker` in `@antseed/node`, alongside `AntseedNode.refreshSellerMetadata()` for runtime service-list changes.
 - The buyer proxy now treats `model_not_found` responses as routing failures (instead of successes) and refreshes peer discovery metadata in the background, so a stale cached model list recovers quickly after a seller unadvertises a model.
 
@@ -31,6 +29,20 @@ This project uses selective package publishing. Each release entry lists the pub
 - Fixed seller crashes when sending `PaymentRequired` to a buyer that disconnected before the payment terms could be delivered.
 - Fixed the buyer's Responses→Chat Completions request adapter to group parallel tool calls into a single assistant `tool_calls` message. Previously each call became its own assistant message, so strict chat-completions upstreams rejected multi-tool turns with `an assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'`.
 - Fixed the Responses request normalizer to drop non-message input items with no renderable text (e.g. Codex `reasoning` items) instead of converting them into empty user messages mid-history.
+
+## 2026-08-06 — Desktop 0.2.2
+
+### Desktop
+
+- `@antseed/desktop@0.2.2`
+
+### Added
+
+- The desktop deposit screen now leads with an in-app Fun (fun.xyz) checkout: pay with card/cash or transfer crypto, and the purchased USDC is delivered on Base to the buyer wallet and auto-deposited to credits like any other transfer. Requires a Fun API key (`payments.funkit.apiKey` in the desktop config, or the `ANTSEED_FUNKIT_API_KEY` environment variable) and Base mainnet; otherwise the existing deposit options show unchanged.
+
+### Changed
+
+- The desktop renderer runs on React 19.
 
 ## 2026-08-05 — Desktop 0.2.1
 
