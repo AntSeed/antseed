@@ -21,6 +21,9 @@ import styles from './VprDepositView.module.scss';
 // as its own chunk the first time the deposit chooser renders the CTA.
 const FunkitDeposit = lazy(() => import('./FunkitDeposit'));
 
+/** Build-time Fun API key (empty when the build had none) — vite.config.ts. */
+declare const __FUNKIT_API_KEY__: string;
+
 const AMOUNT_PRESETS = ['5', '10', '25'];
 
 type Props = { onSelectView?: (view: import('../../types').ViewName) => void };
@@ -379,8 +382,10 @@ export function VprDepositView({ onSelectView }: Props) {
     });
   }, [amount]);
 
-  // The Fun API key is resolved by the main process (config or environment)
-  // and is never in the source tree. null = still fetching, '' = not
+  // The Fun API key: the main process resolves overrides (user config, then
+  // runtime environment); release builds fall back to the key baked in at
+  // build time (see vite.config.ts) so packaged installs work out of the
+  // box. Never in the source tree. null = still fetching, '' = not
   // configured (CTA hidden).
   const [funkitApiKey, setFunkitApiKey] = useState<string | null>(null);
   useEffect(() => {
@@ -389,9 +394,9 @@ export function VprDepositView({ onSelectView }: Props) {
     // the CTA is live, not just visible, by the time they resolve.
     void import('./FunkitDeposit');
     void window.antseedDesktop?.paymentsFunkitConfig?.().then((result) => {
-      if (!cancelled) setFunkitApiKey((result.ok && result.data?.apiKey) || '');
+      if (!cancelled) setFunkitApiKey((result.ok && result.data?.apiKey) || __FUNKIT_API_KEY__);
     }).catch(() => {
-      if (!cancelled) setFunkitApiKey('');
+      if (!cancelled) setFunkitApiKey(__FUNKIT_API_KEY__);
     });
     return () => { cancelled = true; };
   }, []);
