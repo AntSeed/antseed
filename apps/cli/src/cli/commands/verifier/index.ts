@@ -2,6 +2,7 @@ import type { Command } from 'commander'
 import { registerVerifierClaimCommand } from './claim.js'
 import { registerVerifierReferenceCommand } from './reference.js'
 import { registerVerifierRunCommand } from './run.js'
+import { registerVerifierStatusCommand } from './status.js'
 
 export function registerVerifierCommands(program: Command): void {
   const verifier = program
@@ -9,5 +10,6 @@ export function registerVerifierCommands(program: Command): void {
     .description('Run buyer-proxy model verification and manage verifier references')
   registerVerifierRunCommand(verifier)
   registerVerifierReferenceCommand(verifier)
+  registerVerifierStatusCommand(verifier)
   registerVerifierClaimCommand(verifier)
 }

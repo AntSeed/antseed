@@ -1,164 +1,172 @@
 # Model Verification
 
-AntSeed model verification uses the already-running local buyer proxy to send a
-powered KBF reference to every live peer advertising a requested model. It pins
-each request to one peer, computes `SAME`, `DIFF`, or `UNDETERMINED`, and writes
-local proxy-observation evidence.
+AntSeed model verification is integrated into the existing `antseed verifier`
+CLI and the already-running buyer proxy. It does not start a second verifier
+daemon or expose a new buyer-proxy endpoint.
 
-The current command does not start a separate verifier node, load a verifier
-identity, check deposits, request `ResponseAuth`, collect payment evidence, or
-submit on-chain attestations. Starting a standalone local verifier for this
-workflow is not supported.
+The verifier builds append-only KBF probe banks from a trusted reference
+endpoint, reserves a fresh powered subset for each seller, sends two probe
+batches concurrently through the buyer proxy, and records the buyer node's
+verified `ResponseAuth` for every successful batch.
 
 ## Commands
 
 ```text
 antseed verifier reference build <model>
+antseed verifier reference build --all
 antseed verifier run <model>
+antseed verifier run --all
+antseed verifier status [--json]
 antseed verifier claim
 ```
 
-`verifier reference build` creates and validates one adaptively sized reference
-JSON file. It starts at 100 probes and grows by 10 until the reference self-test
-reaches at least 90% statistical power, capped at 500. `verifier run` never calls
-the reference endpoint; a missing or invalid reference fails with the explicit
-build command required.
+`<model>` and `--all` are mutually exclusive and exactly one is required for
+`reference build` and `run`. All-model commands continue after per-model
+failures and exit nonzero if any model or peer fails. Reference builds run
+independent models concurrently; audit runs process models sequentially.
 
-`verifier run` requires the normal buyer process to be running under the same
-`--data-dir`. It reads the connected buyer's `buyer.state.json`, selects every
-fresh peer advertising `<model>`, preserves each peer's advertised model
-spelling, and sends the complete selected reference through the loopback buyer
-proxy. Every request carries `x-antseed-pin-peer` for its target.
-
-Peers are processed sequentially. Probe batches contain ten probes and run with
-concurrency two. Transient proxy failures retry with bounded exponential backoff.
-A peer with an exhausted batch retry is recorded as `FAILED`; other peers still
-run. The command exits non-zero when no peer completes or any peer fails.
-
-`verifier claim` remains a separate legacy reward command. `verifier run` does
-not create new attestations or credits.
+`reference build` creates a powered reference and appends its probes and
+per-probe self-test outcomes to the model's bank. `run` never calls the trusted
+reference endpoint. It resolves the current on-chain epoch, buyer snapshot, and
+ResponseAuth database once, then processes models and peers sequentially.
 
 ## Configuration
 
 ```yaml
-buyer:
-  proxyPort: 8377
-
 verifier:
-  referencesDir: ~/.antseed/verifier/references
-  evidenceDir: ~/.antseed/verifier/evidence
+  responseAuthWaitTimeoutMs: 35000
   probeRequestTimeoutMs: 120000
-  referenceMaxRequestsPerBuild: 2000
-  referenceBatchRetryCount: 3
-  referenceRetryBaseDelayMs: 500
-  referenceMaxNoProgressRounds: 3
-  referenceMaxConcurrentRequests: 4
-  referenceMaxConcurrentRequestsPerModel: 3
+
+  contrastSelection:
+    catalogSource: openrouter
+    inputWeight: 0.90
+    maxPriceRatio: 0.30
+    maxModels: 3
+    minimumIntelligenceIndex: 30
+
   referenceMinimumProbeCount: 100
   referenceMaximumProbeCount: 500
   referenceProbeStep: 10
   referenceMinimumStatisticalPower: 0.90
+
   referenceEndpoint:
-    baseUrl: http://127.0.0.1:8377/v1
-    apiKeyEnv: ANTSEED_REFERENCE_API_KEY
-    sourceId: trusted-reference-v1
+    baseUrl: https://openrouter.ai/api/v1
+    apiKeyEnv: OPENROUTER_API_KEY
+    sourceId: openrouter-v1
     trust: trusted
-    antseedPeerId: 9e8f9aaee684298b7f2af2ae008e3692f0e9f4f7
+
     models:
-      gpt-5.6-sol:
-        upstreamModel: gpt-5.6-sol
-        contrastModels:
-          - kimi-k3
-          - gpt-5.6-luna
-          - sonnet-4.6
+      gpt-large:
+        enabled: true
+        upstreamModel: provider/gpt-large
 ```
 
-The run command obtains the effective proxy port from the live
-`buyer.state.json`; it does not start a buyer or use verifier payment settings.
-The configured probe timeout applies to each proxy attempt.
+`banksDir` and `evidenceDir` are optional. When omitted, they default to
+`<dataDir>/verifier/banks` and `<dataDir>/verifier/evidence`, so the normal
+`~/.antseed` data directory needs no reusable-path configuration.
 
-Reference sizing defaults to 100 through 500 in increments of 10 with a minimum
-power of 0.90. Counts must be multiples of 10, the step must divide the configured
-range, and power must be in `(0, 1]`. Production statistical assumptions remain
-fixed at a 0.10 minimum detectable mismatch increase, one-sided alpha 0.05, and
-99% Clopper-Pearson confidence.
+With `catalogSource: openrouter`, the verifier fetches `/api/v1/models` once at
+command startup. Audited-model and candidate prices come from each model's
+`pricing.prompt` and `pricing.completion`. Candidate capability comes from
+`benchmarks.artificial_analysis.intelligence_index`; models without that score
+are not automatic contrast candidates. Manual model pricing and
+`contrastModelBank` must be omitted in this mode.
 
-## Powered References
-
-The verifier stores one reusable reference at:
+The audited model's `upstreamModel` remains the trusted source of ground-truth
+answers. Cheap models are contrasts only. Automatic selection computes:
 
 ```text
-<referencesDir>/<safe-model-slug>.json
+blended cost = input price × inputWeight + output price × (1 - inputWeight)
 ```
 
-The reference must validate as KBF v1, include the requested model as a service
-alias, follow the configured sizing sequence, use the fixed statistical
-assumptions, and meet the configured power threshold. The same selected probes
-are reused across peers and later runs.
+Candidates must cost at most the audited model's blended cost multiplied by
+`maxPriceRatio`. Disabled candidates and the target upstream model are excluded.
+Candidates below `minimumIntelligenceIndex` are excluded. Eligible candidates
+sort by Artificial Analysis Intelligence Index descending, blended cost
+ascending, then OpenRouter model ID. The verifier selects up to `maxModels` and
+fails when none qualify. A non-empty explicit `contrastModels` list overrides
+automatic selection and may contain at most three entries.
 
-Candidate probes must be stable on the reference model and distinguish it from
-at least one configured contrast model. A probe need not distinguish every
-contrast. Self-testing starts at the configured minimum and evaluates ascending
-step-sized prefixes. Only new probes are queried at each step; the first prefix
-meeting the power threshold is persisted. If the next prefix is unavailable,
-generation continues. If the maximum remains underpowered, the build fails
-without replacing an existing reference.
+The default policy is 90% input weighting, a 30% maximum price ratio, and three
+contrast models. `reference build` stores the selected contrasts in the probe
+bank. Audit runs use that stored selection and do not refresh the OpenRouter
+catalog or create billable reference traffic implicitly.
 
-Physical reference-endpoint responses are checkpointed under:
+## Probe Banks
+
+Probe banks and per-seller ledgers are stored at:
 
 ```text
-<referencesDir>/.checkpoints/<safe-model-slug>.json
+<banksDir>/<model-slug>/
+├── bank.json
+└── sellers/<peer-id-hash>.json
 ```
 
-Compatible restarts reuse completed generation, enrollment, contrast, preflight,
-and self-test responses. The checkpoint is invalidated when endpoint identity,
-model mapping, sizing policy, sizing algorithm, fixed mismatch delta, or frozen
-query settings change. Transient `429`, `5xx`, timeout, and connection failures
-retry with exponential backoff. The build retains hard request budgets,
-concurrency limits, adaptive throttle reduction, and bounded no-progress failure.
+Successful reference builds append probes and self-test outcomes. Repeated probe
+IDs are deduplicated only when their canonical probe content and self-test
+evidence match. The append is rejected when an ID conflicts or when model,
+query-profile, provenance, or statistical assumptions are incompatible.
 
-Candidate generation follows the canonical KBF domain registry. Code owns each
-domain's cloze template, broad validity range, tolerance mode, and tolerance;
-the reference model proposes only a fact name and provisional numeric value.
-Mathematics uses the public KBF domain's exact-match tolerance.
+Before dispatch, the verifier cryptographically shuffles unused probes for the
+seller. It evaluates configured 10-probe sizing steps and reserves the first
+subset meeting coverage, self-test error, and statistical-power requirements.
+The subset receives a new content-addressed KBF reference ID. Reservation is an
+atomic ledger write performed before network dispatch and is never released,
+including after failed audits. Different sellers may receive the same probes;
+one seller never receives the same probe twice. Exhaustion returns
+`BANK_EXHAUSTED` rather than reusing probes.
 
-## Coverage and Verdicts
+## ResponseAuth
 
-The runtime always evaluates the complete selected reference and calls KBF with
-`minCoverage: 1`.
+`verifier run` opens `<dataDir>/verification.db` once using the exported
+`VerificationStorage`. Only peers advertising
+`verification.response-auth.v1` are scheduled; other peers are recorded as
+skipped.
 
-- Every successfully completed probe is scored over the fixed reference
-  denominator. Missing, malformed, non-finite, out-of-range, and
-  valid-but-nonmatching answers count as discrepancies.
-- Any probe batch that cannot obtain a successful proxy response after retries
-  remains unattempted and produces `UNDETERMINED`.
-- All batches completed: compute `SAME` or `DIFF` normally.
+After each successful proxy response, the verifier reads
+`x-antseed-request-id` and polls `getResponseAuth(requestId)` every 100 ms for up
+to `responseAuthWaitTimeoutMs`. The stored record must be verified and match the
+request ID, seller peer ID, and advertised service.
 
-A planned 100-probe audit is never silently reduced to 99 or 49 observations for
-`SAME` or `DIFF`.
+Evidence schema v1 includes the stored ResponseAuth record and its local
+verification status for every exchange. If any successful batch lacks valid
+authenticated evidence, observations are preserved but the audit verdict is
+forced to `UNDETERMINED`. This evidence includes local proxy request/response
+observations and signed hashes; it is not claimed to be an independently
+reproducible wire transcript or payment-evidence pack.
 
-## Evidence
+Each successful exchange also records the buyer proxy's token counts, selected
+seller prices, token-count source, and estimated USD cost. Audit, model, epoch,
+and status summaries aggregate these values. Missing or partial telemetry is
+not treated as zero-cost work: summaries retain a `missingCostExchangeCount` so
+operators can distinguish a complete estimate from a partial one.
 
-Each completed peer writes one canonical evidence JSON file with kind
-`antseed-buyer-proxy-kbf-audit`. It contains:
+## Runtime and Artifacts
 
-- buyer proxy URL, state path, and PID;
-- target peer, advertised service, and optional display/agent metadata;
-- complete powered reference metadata and probes;
-- exact pinned request and response bytes and hashes;
-- per-batch attempts, timing, parsed answers, and match vectors; and
-- final KBF verdict and statistics.
+Peers are processed sequentially within each model. Probe batches contain ten
+probes and retain concurrency two. Transient proxy failures use bounded retries.
 
-Every file explicitly declares evidence level
-`proxy-observation-no-response-auth-or-payment-evidence`. It must not be treated
-as seller-signed response authentication or authenticated payment evidence.
-
-Each invocation also writes a canonical summary under:
+One PID-aware run lock prevents concurrent verifier runs from reserving the same
+seller probes. Stale locks are recovered when their owner PID is no longer
+alive. Status, summaries, banks, ledgers, and evidence files use temporary-file
+plus rename writes.
 
 ```text
-<evidenceDir>/runs/<run-id>.json
+<evidenceDir>/
+├── status.json
+└── epochs/<epoch>/
+    ├── summary.json
+    ├── events.jsonl
+    └── <model-slug>/
+        ├── summary.json
+        └── audits/<audit-id>.json
 ```
 
-The summary records the buyer proxy, model, reference, selected probe count,
-completed peer results, failures, evidence paths, and hashes. Run state is not
-stored in SQLite and target probing is not resumable.
+`status.json` is a readable snapshot of the active or most recent run. The epoch
+summary records the on-chain epoch window and each model summary. `events.jsonl`
+is append-only progress history. Each audit file is canonical JSON and includes
+the selected reference, proxy observations, ResponseAuth evidence, cost
+estimate, and verdict.
+
+On-chain attestation submission, payment evidence, distributed workers,
+automatic epoch scheduling, and daemon operation remain out of scope.

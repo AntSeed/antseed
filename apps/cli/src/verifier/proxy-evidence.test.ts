@@ -5,7 +5,10 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { createReferenceQueryProfile } from '@antseed/fingerprints'
 import {
+  addAuditCostSummaries,
   deriveProxyAuditId,
+  emptyAuditCostSummary,
+  parseProxyAuditExchangeCost,
   proxyAuditEvidenceHash,
   verifyProxyAuditEvidenceFile,
   writeProxyAuditEvidence,
@@ -16,7 +19,7 @@ function evidence(): ProxyAuditEvidenceV1 {
   return {
     version: 1,
     kind: 'antseed-buyer-proxy-kbf-audit',
-    evidenceLevel: 'proxy-observation-no-response-auth-or-payment-evidence',
+    evidenceLevel: 'proxy-observation-with-verified-response-auth-no-payment-evidence',
     createdAt: '2026-08-05T12:00:00.000Z',
     buyerProxy: {
       baseUrl: 'http://127.0.0.1:8377',
@@ -60,6 +63,7 @@ function evidence(): ProxyAuditEvidenceV1 {
       },
       verdict: 'SAME',
       verdictReason: null,
+      cost: emptyAuditCostSummary(),
     },
   }
 }
@@ -82,6 +86,56 @@ test('canonical proxy evidence round-trips and derives a stable audit id', async
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+test('proxy telemetry headers produce additive audit costs', () => {
+  const cost = parseProxyAuditExchangeCost({
+    'x-antseed-input-tokens': '100',
+    'x-antseed-output-tokens': '20',
+    'x-antseed-total-tokens': '120',
+    'x-antseed-input-usd-per-million': '1',
+    'x-antseed-output-usd-per-million': '2',
+    'x-antseed-estimated-cost-usd': '0.00014',
+    'x-antseed-token-source': 'usage',
+    'x-antseed-provider': 'test',
+    'x-antseed-service': 'gpt-test',
+  })
+  assert.deepEqual(cost, {
+    inputTokens: 100,
+    outputTokens: 20,
+    totalTokens: 120,
+    inputUsdPerMillion: 1,
+    outputUsdPerMillion: 2,
+    estimatedCostUsd: 0.00014,
+    tokenSource: 'usage',
+    provider: 'test',
+    service: 'gpt-test',
+  })
+  const total = addAuditCostSummaries({
+    inputTokens: 100,
+    outputTokens: 20,
+    totalTokens: 120,
+    estimatedCostUsd: 0.00014,
+    pricedExchangeCount: 1,
+    missingCostExchangeCount: 0,
+  }, {
+    inputTokens: 50,
+    outputTokens: 10,
+    totalTokens: 60,
+    estimatedCostUsd: 0.00007,
+    pricedExchangeCount: 1,
+    missingCostExchangeCount: 1,
+  })
+  assert.deepEqual({ ...total, estimatedCostUsd: 0 }, {
+    inputTokens: 150,
+    outputTokens: 30,
+    totalTokens: 180,
+    estimatedCostUsd: 0,
+    pricedExchangeCount: 2,
+    missingCostExchangeCount: 1,
+  })
+  assert.ok(Math.abs(total.estimatedCostUsd - 0.00021) < 1e-12)
+  assert.equal(parseProxyAuditExchangeCost({ 'x-antseed-input-tokens': '100' }), null)
 })
 
 test('proxy evidence verification rejects non-canonical files', async () => {

@@ -39,6 +39,12 @@ test('createDefaultConfig includes a Base mainnet crypto payment default', () =>
   assert.equal(config.verifier?.referenceMaximumProbeCount, 500);
   assert.equal(config.verifier?.referenceProbeStep, 10);
   assert.equal(config.verifier?.referenceMinimumStatisticalPower, 0.9);
+  assert.equal(config.verifier?.responseAuthWaitTimeoutMs, 35_000);
+  assert.deepEqual(config.verifier?.contrastSelection, {
+    inputWeight: 0.9,
+    maxPriceRatio: 0.3,
+    maxModels: 3,
+  });
 });
 
 test('loadConfig preserves the consolidated verification contract address', async () => {
@@ -245,8 +251,11 @@ test('loadConfig preserves and validates verifier settings', async () => {
   await withTempConfig(JSON.stringify({
     verifier: {
       referencesDir: './refs',
+      banksDir: './banks',
       evidenceDir: './evidence',
       probeRequestTimeoutMs: 90_000,
+      responseAuthWaitTimeoutMs: 35_000,
+      contrastSelection: { inputWeight: 0.9, maxPriceRatio: 0.3, maxModels: 3 },
       referenceEndpoint,
       referenceMaxRequestsPerBuild: 500,
       referenceBatchRetryCount: 2,
@@ -262,12 +271,35 @@ test('loadConfig preserves and validates verifier settings', async () => {
   }), async (configPath) => {
     const config = await loadConfig(configPath);
     assert.equal(config.verifier?.referencesDir, './refs');
+    assert.equal(config.verifier?.banksDir, './banks');
+    assert.equal(config.verifier?.responseAuthWaitTimeoutMs, 35_000);
+    assert.equal(config.verifier?.contrastSelection?.inputWeight, 0.9);
     assert.equal(config.verifier?.referenceEndpoint?.sourceId, 'trusted-reference-v1');
     assert.equal(config.verifier?.referenceMaxRequestsPerBuild, 500);
     assert.equal(config.verifier?.referenceMinimumProbeCount, 120);
     assert.equal(config.verifier?.referenceMaximumProbeCount, 240);
     assert.equal(config.verifier?.referenceProbeStep, 20);
     assert.equal(config.verifier?.referenceMinimumStatisticalPower, 0.95);
+  });
+});
+
+test('loadConfig accepts OpenRouter-sourced prices and intelligence scores', async () => {
+  await withTempConfig(JSON.stringify({
+    verifier: {
+      contrastSelection: {
+        catalogSource: 'openrouter', inputWeight: 0.9, maxPriceRatio: 0.3,
+        maxModels: 3, minimumIntelligenceIndex: 30,
+      },
+      referenceEndpoint: {
+        baseUrl: 'https://openrouter.ai/api/v1', sourceId: 'openrouter', trust: 'trusted',
+        models: { target: { upstreamModel: 'provider/target' } },
+      },
+    },
+  }), async (configPath) => {
+    const config = await loadConfig(configPath);
+    assert.equal(config.verifier?.contrastSelection?.catalogSource, 'openrouter');
+    assert.equal(config.verifier?.contrastSelection?.minimumIntelligenceIndex, 30);
+    assert.equal(config.verifier?.referenceEndpoint?.models.target?.pricing, undefined);
   });
 });
 
@@ -299,6 +331,46 @@ test('loadConfig rejects invalid verifier settings', async () => {
       await assert.rejects(loadConfig(configPath), /referenceMinimumStatisticalPower/);
     });
   }
+  await withTempConfig(JSON.stringify({ verifier: { contrastSelection: { inputWeight: 1.1 } } }), async (configPath) => {
+    await assert.rejects(loadConfig(configPath), /contrastSelection\.inputWeight/);
+  });
+  await withTempConfig(JSON.stringify({ verifier: {
+    contrastSelection: { catalogSource: 'openrouter' },
+    referenceEndpoint: {
+      baseUrl: 'https://openrouter.ai/api/v1', sourceId: 'openrouter', trust: 'trusted',
+      models: { target: {
+        upstreamModel: 'provider/target',
+        pricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
+      } },
+      contrastModelBank: { manual: {
+        upstreamModel: 'provider/manual',
+        pricing: { inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.2 },
+        capabilityRank: 10,
+      } },
+    },
+  } }), async (configPath) => {
+    await assert.rejects(loadConfig(configPath), /must be omitted/);
+  });
+  await withTempConfig(JSON.stringify({ verifier: {
+    referenceEndpoint: {
+      baseUrl: 'https://reference.example/v1', sourceId: 'test', trust: 'trusted',
+      models: { automatic: { upstreamModel: 'automatic' } },
+    },
+  } }), async (configPath) => {
+    await assert.rejects(loadConfig(configPath), /pricing is required/);
+  });
+  await withTempConfig(JSON.stringify({ verifier: {
+    referenceEndpoint: {
+      baseUrl: 'https://reference.example/v1', sourceId: 'test', trust: 'trusted',
+      models: { automatic: {
+        upstreamModel: 'automatic',
+        pricing: { inputUsdPerMillion: 10, outputUsdPerMillion: 20 },
+        contrastModels: [],
+      } },
+    },
+  } }), async (configPath) => {
+    await assert.rejects(loadConfig(configPath), /contrastModelBank is required/);
+  });
 });
 
 test('loadConfig rejects invalid buyer peerRefreshIntervalMs', async () => {

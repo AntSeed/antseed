@@ -8,7 +8,7 @@ import {
   createReferenceQueryProfile,
   type KbfReferenceV1,
 } from '@antseed/fingerprints'
-import type { PeerId, PeerInfo } from '@antseed/node'
+import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1, type PeerId, type PeerInfo } from '@antseed/node'
 import {
   classifyVerificationTarget,
   loadBuyerProxySnapshot,
@@ -16,6 +16,7 @@ import {
   writeRunSummary,
 } from './model-run.js'
 import type { ProxyAuditEvidenceV1 } from './proxy-evidence.js'
+import type { ResponseAuthReader } from './response-auth-reader.js'
 
 function peer(overrides: Partial<PeerInfo> = {}): PeerInfo {
   return {
@@ -23,6 +24,7 @@ function peer(overrides: Partial<PeerInfo> = {}): PeerInfo {
     displayName: 'Test peer',
     lastSeen: Date.now(),
     providers: ['test'],
+    capabilities: [CONNECTION_CAPABILITY_RESPONSE_AUTH_V1],
     onChainAgentId: 7,
     providerPricing: { test: {
       defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 1 },
@@ -89,6 +91,8 @@ async function runTarget(
   count: number,
   answerMode: 'valid' | 'out-of-range' | 'malformed' | 'sse' | 'transport-failure' = 'valid',
   transientFailures = 0,
+  authMode: 'verified' | 'missing' | 'unverified' | 'wrong-request' | 'wrong-seller' | 'wrong-service' = 'verified',
+  includeCost = true,
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'antseed-verifier-target-'))
   let requestCount = 0
@@ -116,6 +120,17 @@ async function runTarget(
       }
       return `(${index + 1}) ${value}`
     }).join('\n')
+    const telemetryHeaders: Record<string, string> = includeCost ? {
+      'x-antseed-input-tokens': '100',
+      'x-antseed-output-tokens': '20',
+      'x-antseed-total-tokens': '120',
+      'x-antseed-input-usd-per-million': '1',
+      'x-antseed-output-usd-per-million': '2',
+      'x-antseed-estimated-cost-usd': '0.00014',
+      'x-antseed-token-source': 'usage',
+      'x-antseed-provider': 'test',
+      'x-antseed-service': 'GPT-5.6-SOL',
+    } : {}
     if (answerMode === 'sse') {
       return new Response([
         'event: response.output_text.delta',
@@ -126,11 +141,49 @@ async function runTarget(
         '',
         'data: [DONE]',
         '',
-      ].join('\n'), { headers: { 'content-type': 'text/event-stream' } })
+      ].join('\n'), { headers: {
+        'content-type': 'text/event-stream',
+        'x-antseed-request-id': `request-${requestCount}`,
+        ...telemetryHeaders,
+      } })
     }
     return Response.json(answerMode === 'malformed'
       ? { choices: [{ message: {} }] }
-      : { choices: [{ message: { content } }] })
+      : { choices: [{ message: { content } }] }, {
+      headers: { 'x-antseed-request-id': `request-${requestCount}`, ...telemetryHeaders },
+    })
+  }
+  const responseAuthReader: ResponseAuthReader = {
+    async waitForVerified(input) {
+      if (authMode === 'missing') {
+        return { requestId: input.requestId, status: 'missing', responseAuth: null, failureReason: 'missing' }
+      }
+      const record = {
+        version: 1 as const,
+        requestId: authMode === 'wrong-request' ? 'wrong-request' : input.requestId,
+        buyerPeerId: '22'.repeat(20),
+        sellerPeerId: authMode === 'wrong-seller' ? '33'.repeat(20) : input.sellerPeerId,
+        advertisedService: authMode === 'wrong-service' ? 'wrong-service' : input.advertisedService,
+        provider: 'test',
+        statusCode: 200,
+        requestHash: `0x${'44'.repeat(32)}`,
+        responseHash: `0x${'55'.repeat(32)}`,
+        responseStartedAt: Date.now(),
+        responseCompletedAt: Date.now(),
+        signature: `0x${'66'.repeat(65)}`,
+        receivedAt: Date.now(),
+        verified: authMode !== 'unverified',
+        verificationError: authMode === 'unverified' ? 'bad signature' : null,
+      }
+      const valid = authMode === 'verified'
+      return {
+        requestId: input.requestId,
+        status: valid ? 'verified' : 'invalid',
+        responseAuth: record,
+        failureReason: valid ? null : authMode,
+      }
+    },
+    close() {},
   }
   try {
     const result = await verifyModelTarget({
@@ -143,6 +196,7 @@ async function runTarget(
         },
         evidenceDir: directory,
         requestTimeoutMs: 10_000,
+        responseAuthReader,
         fetchFn,
         sleepFn: async () => undefined,
       },
@@ -157,8 +211,12 @@ async function runTarget(
   }
 }
 
-test('target eligibility preserves advertised model spelling without ResponseAuth requirements', () => {
+test('target eligibility requires ResponseAuth and preserves advertised model spelling', () => {
   assert.deepEqual(classifyVerificationTarget(peer({ capabilities: [] }), 'gpt-5.6-sol'), {
+    eligible: false,
+    reason: `missing ${CONNECTION_CAPABILITY_RESPONSE_AUTH_V1}`,
+  })
+  assert.deepEqual(classifyVerificationTarget(peer(), 'gpt-5.6-sol'), {
     eligible: true,
     service: 'GPT-5.6-SOL',
   })
@@ -217,7 +275,18 @@ test('proxy runtime uses dynamic reference sizes and pins every batch', async ()
     assert.equal(run.requestCount, count / 10)
     assert.equal(run.evidence.result.selectedProbeCount, count)
     assert.equal(run.evidence.result.parsedProbeCount, count)
-    assert.equal(run.evidence.evidenceLevel, 'proxy-observation-no-response-auth-or-payment-evidence')
+    assert.equal(run.evidence.evidenceLevel, 'proxy-observation-with-verified-response-auth-no-payment-evidence')
+    assert.equal(run.evidence.exchanges.every((exchange) => exchange.responseAuth.status === 'verified'), true)
+    assert.deepEqual({ ...run.result.cost, estimatedCostUsd: 0 }, {
+      inputTokens: count * 10,
+      outputTokens: count * 2,
+      totalTokens: count * 12,
+      estimatedCostUsd: 0,
+      pricedExchangeCount: count / 10,
+      missingCostExchangeCount: 0,
+    })
+    assert.ok(Math.abs(run.result.cost.estimatedCostUsd - (count / 10) * 0.00014) < 1e-12)
+    assert.deepEqual(run.evidence.result.cost, run.result.cost)
     for (const request of run.requests) {
       assert.equal((request.headers as Record<string, string>)['x-antseed-pin-peer'], '11'.repeat(20))
     }
@@ -261,4 +330,22 @@ test('exhausted transport retries produce UNDETERMINED evidence', async () => {
   assert.equal(run.evidence.result.stats.targetTotal, 0)
   assert.equal(run.requestCount, 50)
   assert.equal(run.evidence.exchanges.every((exchange) => exchange.status === 'failed'), true)
+  assert.equal(run.result.cost.pricedExchangeCount, 0)
+  assert.equal(run.result.cost.missingCostExchangeCount, 10)
 })
+
+test('successful exchanges without telemetry remain explicitly unpriced', async () => {
+  const run = await runTarget(100, 'valid', 0, 'verified', false)
+  assert.equal(run.result.cost.estimatedCostUsd, 0)
+  assert.equal(run.result.cost.pricedExchangeCount, 0)
+  assert.equal(run.result.cost.missingCostExchangeCount, 10)
+  assert.equal(run.evidence.exchanges.every((exchange) => exchange.cost === null), true)
+})
+
+for (const authMode of ['missing', 'unverified', 'wrong-request', 'wrong-seller', 'wrong-service'] as const) {
+  test(`${authMode} ResponseAuth forces an UNDETERMINED verdict`, async () => {
+    const run = await runTarget(100, 'valid', 0, authMode)
+    assert.equal(run.result.status, 'UNDETERMINED')
+    assert.match(run.evidence.result.verdictReason ?? '', /lacked valid verified ResponseAuth/)
+  })
+}

@@ -229,10 +229,16 @@ export interface PaymentsCLIConfig {
 export interface VerifierCLIConfig {
   /** Directory containing one reusable powered reference per model. */
   referencesDir?: string;
+  /** Directory containing accumulated per-model probe banks. */
+  banksDir?: string;
   /** Directory for per-peer evidence packs and run summaries. */
   evidenceDir?: string;
   /** Timeout for each buyer-proxy probe request. Default: 120000. */
   probeRequestTimeoutMs?: number;
+  /** Time to wait for the buyer node to persist ResponseAuth. Default: 35000. */
+  responseAuthWaitTimeoutMs?: number;
+  /** Automatic cheap contrast-model selection policy. */
+  contrastSelection?: VerifierContrastSelectionConfig;
   /** Trusted endpoint used only by the explicit reference-build command. */
   referenceEndpoint?: VerifierReferenceEndpointConfig;
   /** Maximum physical reference-endpoint requests, including retries. Default: 2000. */
@@ -257,11 +263,44 @@ export interface VerifierCLIConfig {
   referenceMinimumStatisticalPower?: number;
 }
 
+export interface VerifierContrastSelectionConfig {
+  /** Dynamic model catalog used for prices and capability scores. */
+  catalogSource?: 'openrouter';
+  /** Input-token share used for blended price comparison. Default: 0.9. */
+  inputWeight?: number;
+  /** Maximum contrast blended price relative to the audited model. Default: 0.3. */
+  maxPriceRatio?: number;
+  /** Maximum selected contrast models. Default: 3; maximum: 3. */
+  maxModels?: number;
+  /** Minimum Artificial Analysis Intelligence Index accepted from OpenRouter. */
+  minimumIntelligenceIndex?: number;
+}
+
+export interface VerifierModelPricingConfig {
+  inputUsdPerMillion: number;
+  outputUsdPerMillion: number;
+}
+
 export interface VerifierReferenceModelConfig {
+  /** Whether all-model commands include this audited service. Default: true. */
+  enabled?: boolean;
   /** Model id sent to the reference endpoint. */
   upstreamModel: string;
-  /** Models used to reject non-distinguishing candidate probes. */
-  contrastModels: string[];
+  /** Trusted upstream pricing used for automatic contrast selection. */
+  pricing?: VerifierModelPricingConfig;
+  /** Explicit contrast models. Overrides automatic selection. */
+  contrastModels?: string[];
+}
+
+export interface VerifierContrastModelConfig {
+  /** Whether automatic selection may use this model. Default: true. */
+  enabled?: boolean;
+  /** Model id sent to the reference endpoint. */
+  upstreamModel: string;
+  /** Candidate pricing used for blended cost comparison. */
+  pricing: VerifierModelPricingConfig;
+  /** Operator-maintained capability rank; higher values are preferred. */
+  capabilityRank: number;
 }
 
 export interface VerifierReferenceEndpointConfig {
@@ -279,6 +318,8 @@ export interface VerifierReferenceEndpointConfig {
   antseedPeerId?: string;
   /** Network service id to upstream reference/contrast model configuration. */
   models: Record<string, VerifierReferenceModelConfig>;
+  /** Cheap capable models eligible for automatic contrast selection. */
+  contrastModelBank?: Record<string, VerifierContrastModelConfig>;
 }
 
 /**

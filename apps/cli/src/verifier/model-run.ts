@@ -12,14 +12,18 @@ import {
   type KbfProbe,
   type KbfReferenceV1,
 } from '@antseed/fingerprints'
-import type { PeerInfo } from '@antseed/node'
+import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1, type PeerInfo } from '@antseed/node'
 import { parsePersistedPeers } from '../proxy/buyer-proxy.js'
 import {
   deriveProxyAuditId,
+  parseProxyAuditExchangeCost,
+  summarizeAuditExchangeCosts,
   writeProxyAuditEvidence,
-  type ProxyAuditEvidenceExchange,
+  type AuditCostSummaryV1,
+  type ProxyAuditEvidenceExchangeV1,
   type ProxyAuditEvidenceV1,
 } from './proxy-evidence.js'
+import type { ResponseAuthReader } from './response-auth-reader.js'
 import { advertisedServices } from './service-discovery.js'
 
 const PROBE_REQUEST_CONCURRENCY = 2
@@ -37,6 +41,7 @@ export interface ProxyVerificationContext {
   proxy: BuyerProxySnapshot
   evidenceDir: string
   requestTimeoutMs: number
+  responseAuthReader: ResponseAuthReader
   fetchFn?: typeof fetch
   sleepFn?: (delayMs: number) => Promise<void>
 }
@@ -50,6 +55,7 @@ export interface ModelVerificationTargetResult {
   parsedProbeCount: number
   probeCount: number
   requestCount: number
+  cost: AuditCostSummaryV1
   evidencePath: string
   evidenceHash: string
 }
@@ -115,7 +121,11 @@ export function classifyVerificationTarget(
   normalizedModel: string,
 ): { eligible: true; service: string } | { eligible: false; reason: string } {
   const service = advertisedServices(peer).get(normalizedModel)
-  return service ? { eligible: true, service } : { eligible: false, reason: 'model no longer advertised' }
+  if (!service) return { eligible: false, reason: 'model no longer advertised' }
+  if (!peer.capabilities?.includes(CONNECTION_CAPABILITY_RESPONSE_AUTH_V1)) {
+    return { eligible: false, reason: `missing ${CONNECTION_CAPABILITY_RESPONSE_AUTH_V1}` }
+  }
+  return { eligible: true, service }
 }
 
 export async function verifyModelTarget(input: {
@@ -123,6 +133,7 @@ export async function verifyModelTarget(input: {
   target: PeerInfo
   service: string
   reference: KbfReferenceV1
+  auditId?: string
 }): Promise<ModelVerificationTargetResult> {
   const batches = chunk(input.reference.probes, KBF_PROBES_PER_REQUEST)
   const exchanges = await runConcurrently(batches, PROBE_REQUEST_CONCURRENCY, (probes, batchIndex) => {
@@ -134,10 +145,17 @@ export async function verifyModelTarget(input: {
   if (fragment.verdict === 'UNKNOWN') throw new Error(fragment.verdictReason ?? 'verification returned UNKNOWN')
 
   const completedAt = Date.now()
+  const authenticated = exchanges.every((exchange) => exchange.status !== 'succeeded'
+    || exchange.responseAuth.status === 'verified')
+  const verdict = authenticated ? fragment.verdict : 'UNDETERMINED'
+  const verdictReason = authenticated
+    ? fragment.verdictReason
+    : 'one or more successful proxy batches lacked valid verified ResponseAuth'
+  const cost = summarizeAuditExchangeCosts(exchanges)
   const evidence: ProxyAuditEvidenceV1 = {
     version: 1,
     kind: 'antseed-buyer-proxy-kbf-audit',
-    evidenceLevel: 'proxy-observation-no-response-auth-or-payment-evidence',
+    evidenceLevel: 'proxy-observation-with-verified-response-auth-no-payment-evidence',
     createdAt: new Date(completedAt).toISOString(),
     buyerProxy: {
       baseUrl: input.context.proxy.baseUrl,
@@ -167,12 +185,13 @@ export async function verifyModelTarget(input: {
       matchVector,
       matchVectorHash: fragment.matchVectorHash,
       stats: fragment.stats,
-      verdict: fragment.verdict,
-      verdictReason: fragment.verdictReason,
+      verdict,
+      verdictReason,
+      cost,
     },
   }
   const evidenceHash = canonicalHashBytes32(evidence)
-  const auditId = deriveProxyAuditId({
+  const auditId = input.auditId ?? deriveProxyAuditId({
     targetPeerId: input.target.peerId,
     referenceId: input.reference.referenceId,
     completedAt,
@@ -183,11 +202,12 @@ export async function verifyModelTarget(input: {
     peerId: input.target.peerId,
     agentId: input.target.onChainAgentId ? String(input.target.onChainAgentId) : null,
     service: input.service,
-    status: fragment.verdict,
+    status: verdict,
     auditId,
     parsedProbeCount: evidence.result.parsedProbeCount,
     probeCount: input.reference.probes.length,
     requestCount: exchanges.length,
+    cost,
     evidencePath: written.path,
     evidenceHash: written.evidenceHash,
   }
@@ -200,7 +220,7 @@ async function executeProxyProbeBatch(
   reference: KbfReferenceV1,
   probes: KbfProbe[],
   batchIndex: number,
-): Promise<ProxyAuditEvidenceExchange> {
+): Promise<ProxyAuditEvidenceExchangeV1> {
   const url = `${context.proxy.baseUrl}/v1/chat/completions`
   const headers = {
     'content-type': 'application/json',
@@ -223,7 +243,7 @@ async function executeProxyProbeBatch(
   const startedAt = Date.now()
   let attemptCount = 0
   let lastFailure = 'proxy request failed'
-  let lastResponse: ProxyAuditEvidenceExchange['response'] = null
+  let lastResponse: ProxyAuditEvidenceExchangeV1['response'] = null
   const fetchFn = context.fetchFn ?? fetch
   const sleepFn = context.sleepFn ?? sleep
 
@@ -261,6 +281,19 @@ async function executeProxyProbeBatch(
         : parseKbfAnswers(completion, probes.length)
       const matches = computeMatchVector(answers, probes)
       const completedAt = Date.now()
+      const requestId = response.headers.get('x-antseed-request-id')
+      const responseAuth = requestId
+        ? await context.responseAuthReader.waitForVerified({
+          requestId,
+          sellerPeerId: target.peerId,
+          advertisedService: service,
+        })
+        : {
+          requestId: null,
+          status: 'missing' as const,
+          responseAuth: null,
+          failureReason: 'successful buyer proxy response omitted x-antseed-request-id',
+        }
       return {
         batchIndex,
         attemptCount,
@@ -272,6 +305,13 @@ async function executeProxyProbeBatch(
         matches,
         status: 'succeeded',
         failureReason: null,
+        cost: parseProxyAuditExchangeCost(responseHeaders),
+        responseAuth: {
+          requestId: responseAuth.requestId,
+          status: responseAuth.status,
+          record: responseAuth.responseAuth,
+          failureReason: responseAuth.failureReason,
+        },
       }
     } catch (error) {
       lastFailure = controller.signal.aborted
@@ -296,6 +336,13 @@ async function executeProxyProbeBatch(
     matches: new Array<null>(probes.length).fill(null),
     status: 'failed',
     failureReason: lastFailure,
+    cost: null,
+    responseAuth: {
+      requestId: null,
+      status: 'missing',
+      record: null,
+      failureReason: 'proxy batch did not complete successfully',
+    },
   }
 }
 

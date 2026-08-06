@@ -47,6 +47,12 @@ export function createDefaultConfig(): AntseedConfig {
     },
     verifier: {
       probeRequestTimeoutMs: 120_000,
+      responseAuthWaitTimeoutMs: 35_000,
+      contrastSelection: {
+        inputWeight: 0.9,
+        maxPriceRatio: 0.3,
+        maxModels: 3,
+      },
       referenceMaxConcurrentRequests: 4,
       referenceMaxConcurrentRequestsPerModel: 3,
       referenceMinimumProbeCount: 100,

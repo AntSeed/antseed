@@ -23,7 +23,7 @@ function config(overrides: Partial<VerifierCLIConfig> = {}): VerifierCLIConfig {
       sourceId: 'test-source',
       trust: 'trusted' as const,
       models: {
-        [MODEL]: { upstreamModel: 'upstream-test', contrastModels: [] },
+        [MODEL]: { upstreamModel: 'upstream-test', contrastModels: ['contrast-test'] },
       },
     },
     ...overrides,
@@ -196,6 +196,9 @@ test('adaptive builder selects the first powered prefix', async () => {
     if (prompt.includes('Reply with only the number 7')) return response('7')
     if (prompt.startsWith('Generate ')) return response(generatedCandidates(prompt))
     const values = testPromptValues(prompt)
+    if (body.model === 'contrast-test') {
+      return response(values.map((value, index) => `(${index + 1}) ${value + 100_000}`).join('\n'))
+    }
     const zeroCall = body.temperature === 0 ? (zeroTemperatureCalls.get(prompt) ?? 0) + 1 : 0
     if (body.temperature === 0) zeroTemperatureCalls.set(prompt, zeroCall)
     const selfTest = body.temperature === 0 && zeroCall === 2
@@ -220,7 +223,11 @@ test('adaptive builder generates more candidates when the next step is unavailab
   const generationRounds = new Set<number>()
   const zeroTemperatureCalls = new Map<string, number>()
   const fetchFn: typeof fetch = async (_url, init) => {
-    const body = JSON.parse(String(init?.body)) as { temperature: number; messages: Array<{ content: string }> }
+    const body = JSON.parse(String(init?.body)) as {
+      model: string
+      temperature: number
+      messages: Array<{ content: string }>
+    }
     const prompt = body.messages.at(-1)?.content ?? ''
     if (prompt.includes('Reply with only the number 7')) return response('7')
     if (prompt.startsWith('Generate ')) {
@@ -241,6 +248,9 @@ test('adaptive builder generates more candidates when the next step is unavailab
       })))
     }
     const values = testPromptValues(prompt)
+    if (body.model === 'contrast-test') {
+      return response(values.map((value, index) => `(${index + 1}) ${value + 100_000}`).join('\n'))
+    }
     const zeroCall = body.temperature === 0 ? (zeroTemperatureCalls.get(prompt) ?? 0) + 1 : 0
     if (body.temperature === 0) zeroTemperatureCalls.set(prompt, zeroCall)
     return response(values.map((value, index) => `(${index + 1}) ${value}`).join('\n'))
@@ -275,6 +285,9 @@ test('underpowered 500-probe maximum preserves the previous reference', async ()
     if (prompt.includes('Reply with only the number 7')) return response('7')
     if (prompt.startsWith('Generate ')) return response(generatedCandidates(prompt))
     const values = testPromptValues(prompt)
+    if (body.model === 'contrast-test') {
+      return response(values.map((value, index) => `(${index + 1}) ${value + 100_000}`).join('\n'))
+    }
     const zeroCall = body.temperature === 0 ? (zeroTemperatureCalls.get(prompt) ?? 0) + 1 : 0
     if (body.temperature === 0) zeroTemperatureCalls.set(prompt, zeroCall)
     const selfTest = body.temperature === 0 && zeroCall === 2

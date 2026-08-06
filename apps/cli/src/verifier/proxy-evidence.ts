@@ -9,6 +9,7 @@ import {
   type MatchVector,
   type ReferenceQueryProfileV1,
 } from '@antseed/fingerprints'
+import type { StoredResponseAuth } from '@antseed/node'
 
 export interface ProxyAuditEvidenceExchange {
   batchIndex: number
@@ -38,10 +39,41 @@ export interface ProxyAuditEvidenceExchange {
   failureReason: string | null
 }
 
+export interface ProxyAuditEvidenceExchangeV1 extends ProxyAuditEvidenceExchange {
+  cost: ProxyAuditExchangeCostV1 | null
+  responseAuth: {
+    requestId: string | null
+    status: 'verified' | 'missing' | 'invalid'
+    record: StoredResponseAuth | null
+    failureReason: string | null
+  }
+}
+
+export interface ProxyAuditExchangeCostV1 {
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  inputUsdPerMillion: number
+  outputUsdPerMillion: number
+  estimatedCostUsd: number
+  tokenSource: string | null
+  provider: string | null
+  service: string | null
+}
+
+export interface AuditCostSummaryV1 {
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  estimatedCostUsd: number
+  pricedExchangeCount: number
+  missingCostExchangeCount: number
+}
+
 export interface ProxyAuditEvidenceV1 {
   version: 1
   kind: 'antseed-buyer-proxy-kbf-audit'
-  evidenceLevel: 'proxy-observation-no-response-auth-or-payment-evidence'
+  evidenceLevel: 'proxy-observation-with-verified-response-auth-no-payment-evidence'
   createdAt: string
   buyerProxy: {
     baseUrl: string
@@ -69,7 +101,7 @@ export interface ProxyAuditEvidenceV1 {
     }
     probes: KbfProbe[]
   }
-  exchanges: ProxyAuditEvidenceExchange[]
+  exchanges: ProxyAuditEvidenceExchangeV1[]
   result: {
     selectedProbeCount: number
     parsedProbeCount: number
@@ -78,6 +110,73 @@ export interface ProxyAuditEvidenceV1 {
     stats: FingerprintStats
     verdict: Exclude<FingerprintVerdict, 'UNKNOWN'>
     verdictReason: string | null
+    cost: AuditCostSummaryV1
+  }
+}
+
+export function emptyAuditCostSummary(): AuditCostSummaryV1 {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    estimatedCostUsd: 0,
+    pricedExchangeCount: 0,
+    missingCostExchangeCount: 0,
+  }
+}
+
+export function addAuditCostSummaries(...summaries: AuditCostSummaryV1[]): AuditCostSummaryV1 {
+  return summaries.reduce((total, summary) => ({
+    inputTokens: total.inputTokens + summary.inputTokens,
+    outputTokens: total.outputTokens + summary.outputTokens,
+    totalTokens: total.totalTokens + summary.totalTokens,
+    estimatedCostUsd: total.estimatedCostUsd + summary.estimatedCostUsd,
+    pricedExchangeCount: total.pricedExchangeCount + summary.pricedExchangeCount,
+    missingCostExchangeCount: total.missingCostExchangeCount + summary.missingCostExchangeCount,
+  }), emptyAuditCostSummary())
+}
+
+export function summarizeAuditExchangeCosts(
+  exchanges: ProxyAuditEvidenceExchangeV1[],
+): AuditCostSummaryV1 {
+  const priced = exchanges.flatMap((exchange) => exchange.cost ? [exchange.cost] : [])
+  return {
+    inputTokens: priced.reduce((total, cost) => total + cost.inputTokens, 0),
+    outputTokens: priced.reduce((total, cost) => total + cost.outputTokens, 0),
+    totalTokens: priced.reduce((total, cost) => total + cost.totalTokens, 0),
+    estimatedCostUsd: priced.reduce((total, cost) => total + cost.estimatedCostUsd, 0),
+    pricedExchangeCount: priced.length,
+    missingCostExchangeCount: exchanges.length - priced.length,
+  }
+}
+
+export function parseProxyAuditExchangeCost(
+  headers: Record<string, string>,
+): ProxyAuditExchangeCostV1 | null {
+  const inputTokens = parseNonNegativeInteger(headers['x-antseed-input-tokens'])
+  const outputTokens = parseNonNegativeInteger(headers['x-antseed-output-tokens'])
+  const totalTokens = parseNonNegativeInteger(headers['x-antseed-total-tokens'])
+  const inputUsdPerMillion = parseNonNegativeNumber(headers['x-antseed-input-usd-per-million'])
+  const outputUsdPerMillion = parseNonNegativeNumber(headers['x-antseed-output-usd-per-million'])
+  const estimatedCostUsd = parseNonNegativeNumber(headers['x-antseed-estimated-cost-usd'])
+  if (
+    inputTokens === null
+    || outputTokens === null
+    || totalTokens === null
+    || inputUsdPerMillion === null
+    || outputUsdPerMillion === null
+    || estimatedCostUsd === null
+  ) return null
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    inputUsdPerMillion,
+    outputUsdPerMillion,
+    estimatedCostUsd,
+    tokenSource: nonEmptyHeader(headers['x-antseed-token-source']),
+    provider: nonEmptyHeader(headers['x-antseed-provider']),
+    service: nonEmptyHeader(headers['x-antseed-service']),
   }
 }
 
@@ -127,10 +226,33 @@ export async function verifyProxyAuditEvidenceFile(
 ): Promise<ProxyAuditEvidenceV1> {
   const bytes = await readFile(path)
   const parsed = JSON.parse(bytes.toString('utf8')) as ProxyAuditEvidenceV1
+  if (parsed.kind !== 'antseed-buyer-proxy-kbf-audit' || parsed.version !== 1) {
+    throw new Error('unsupported proxy audit evidence schema')
+  }
+  if (parsed.evidenceLevel !== 'proxy-observation-with-verified-response-auth-no-payment-evidence') {
+    throw new Error('invalid proxy audit evidence v1 level')
+  }
   const canonical = new TextEncoder().encode(canonicalJsonStringify(parsed))
   if (!Buffer.from(bytes).equals(Buffer.from(canonical))) throw new Error('evidence file is not canonical JSON')
   if (proxyAuditEvidenceHash(parsed).toLowerCase() !== expectedHash.toLowerCase()) {
     throw new Error('evidence file hash mismatch')
   }
   return parsed
+}
+
+function parseNonNegativeInteger(value: string | undefined): number | null {
+  if (value === undefined || value.trim() === '') return null
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null
+}
+
+function parseNonNegativeNumber(value: string | undefined): number | null {
+  if (value === undefined || value.trim() === '') return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+}
+
+function nonEmptyHeader(value: string | undefined): string | null {
+  const normalized = value?.trim()
+  return normalized ? normalized : null
 }

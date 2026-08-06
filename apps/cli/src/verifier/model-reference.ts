@@ -24,6 +24,8 @@ import {
   resolveReferenceSizingPolicy,
 } from './reference-sizing.js'
 import { safeServiceSlug } from './slug.js'
+import { resolveVerifierModelConfig } from './model-config.js'
+import type { VerifierModelCatalog } from './openrouter-catalog.js'
 import {
   CANONICAL_KBF_DOMAINS,
   canonicalKbfTolerance,
@@ -122,14 +124,13 @@ export async function buildModelReference(input: {
   model: string
   referencesDir: string
   config: VerifierCLIConfig | undefined
+  catalog?: VerifierModelCatalog | null
   fetchFn?: typeof fetch
   log?: (message: string) => void
 }): Promise<{ reference: KbfReferenceV1; path: string }> {
   const endpoint = input.config?.referenceEndpoint
-  const modelConfig = endpoint && findModelConfig(endpoint, input.model)
-  if (!endpoint || !modelConfig) {
-    throw new Error(`verifier.referenceEndpoint.models has no mapping for ${input.model}`)
-  }
+  if (!endpoint) throw new Error('verifier.referenceEndpoint is required')
+  const modelConfig = resolveVerifierModelConfig(input.config, input.model, input.catalog)
   const apiKey = (endpoint.apiKeyEnv ? process.env[endpoint.apiKeyEnv] : undefined) ?? endpoint.apiKey
   const timeoutMs = input.config?.probeRequestTimeoutMs ?? 120_000
   const sizing = resolveReferenceSizingPolicy(input.config)
@@ -143,7 +144,11 @@ export async function buildModelReference(input: {
       trust: endpoint.trust,
       antseedPeerId: endpoint.antseedPeerId ?? null,
     },
-    modelConfig,
+    modelConfig: {
+      service: modelConfig.service,
+      upstreamModel: modelConfig.upstreamModel,
+      contrastModels: modelConfig.contrastModels,
+    },
     sizing,
     minimumMismatchDelta: REFERENCE_MINIMUM_MISMATCH_DELTA,
     sizingAlgorithmVersion: REFERENCE_SIZING_ALGORITHM_VERSION,
@@ -435,10 +440,6 @@ async function queryContrastOutcomes(
     }
   }
   return outcomes
-}
-
-function findModelConfig(endpoint: VerifierReferenceEndpointConfig, model: string) {
-  return Object.entries(endpoint.models).find(([service]) => normalized(service) === normalized(model))?.[1]
 }
 
 async function generateCandidates(
