@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import '@funkit/connect/styles.css';
 import './FunkitDeposit.scss';
 import {
@@ -36,6 +36,8 @@ type Props = {
   usdcAddress: string;
   /** Styling for the CTA button (the parent owns the look). */
   className?: string;
+  /** CTA button content (the parent owns the label/logo too). */
+  children?: ReactNode;
   onError?: (message: string) => void;
 };
 
@@ -78,7 +80,7 @@ function ThemeSync({ mode }: { mode: ThemeMode }) {
   return null;
 }
 
-function DepositButton({ recipient, usdcAddress, className, onError }: Props) {
+function DepositButton({ recipient, usdcAddress, className, children, onError }: Props) {
   const checkoutConfig = useMemo<FunkitCheckoutConfig>(() => ({
     modalTitle: 'Deposit',
     targetChain: '8453',
@@ -100,7 +102,7 @@ function DepositButton({ recipient, usdcAddress, className, onError }: Props) {
 
   return (
     <button type="button" className={className} onClick={() => { onError?.(''); void beginCheckout(); }}>
-      Deposit
+      {children ?? 'Deposit'}
     </button>
   );
 }
