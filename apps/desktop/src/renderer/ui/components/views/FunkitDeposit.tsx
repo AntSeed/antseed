@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import '@funkit/connect/styles.css';
 import './FunkitDeposit.scss';
 import {
   FunkitProvider,
+  useConnectionStatus,
   useFunkitCheckout,
   useActiveTheme,
   darkTheme,
@@ -80,6 +81,24 @@ function ThemeSync({ mode }: { mode: ThemeMode }) {
   return null;
 }
 
+/**
+ * Sign-in popups (main/payments/checkout-window.ts) don't produce a deposit,
+ * so the deposit watcher's close-on-arrival never fires for them — the SDK's
+ * connection status flipping to `connected` is that flow's success signal.
+ * Payment popups are covered by the watcher when the USDC lands.
+ */
+function CloseCheckoutWindowsOnLogin() {
+  const status = useConnectionStatus();
+  const previous = useRef(status);
+  useEffect(() => {
+    if (status === 'connected' && previous.current !== 'connected') {
+      void window.antseedDesktop?.paymentsCloseCheckoutWindows?.();
+    }
+    previous.current = status;
+  }, [status]);
+  return null;
+}
+
 function DepositButton({ recipient, usdcAddress, className, children, onError }: Props) {
   const checkoutConfig = useMemo<FunkitCheckoutConfig>(() => ({
     modalTitle: 'Deposit',
@@ -139,6 +158,7 @@ export default function FunkitDeposit(props: Props) {
           initialChain={8453}
         >
           <ThemeSync mode={mode} />
+          <CloseCheckoutWindowsOnLogin />
           <DepositButton {...props} />
         </FunkitProvider>
       </QueryClientProvider>

@@ -404,6 +404,8 @@ export type DesktopBridge = {
   paymentsOpenCardProvider?: (opts?: { providerId?: string; amountUsdc?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
   paymentsCrossmintConfig?: () => Promise<{ ok: boolean; data?: { clientKey: string; apiBase: string } | null; error?: string }>;
   paymentsFunkitConfig?: () => Promise<{ ok: boolean; data?: { apiKey: string } | null; error?: string }>;
+  /** Closes any app-owned Fun checkout/sign-in popup windows (login-only flows produce no deposit, so the deposit watcher can't close them). */
+  paymentsCloseCheckoutWindows?: () => Promise<{ ok: boolean }>;
   paymentsGetBuyerUsage?: () => Promise<{ ok: boolean; data: DesktopBuyerUsageTotals | null; error: string | null; lastActivityAt?: number | null }>;
   paymentsGetChannels?: () => Promise<{ ok: boolean; data: DesktopPaymentChannelSummary[]; error: string | null }>;
   paymentsGetRewardsSummary?: () => Promise<{ ok: boolean; data: DesktopRewardsSummary | null; error: string | null }>;

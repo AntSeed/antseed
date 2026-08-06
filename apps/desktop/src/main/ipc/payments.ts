@@ -48,6 +48,7 @@ import {
   PAY_PAGE_KINDS,
   type PayPageKind,
   crossmintApiBase,
+  focusMainWindow,
   getPaymentsPortalToken,
   openPaymentsPopup,
   readCardProviders,
@@ -55,6 +56,7 @@ import {
   readFunkitApiKey,
   startPaymentsPortal,
 } from '../payments/portal.js';
+import { closeCheckoutWindows } from '../payments/checkout-window.js';
 import {
   lookupPeer,
   refreshPeerCache,
@@ -213,6 +215,14 @@ export function registerPaymentsIpc(): void {
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
+  });
+
+  // The renderer closes the Fun checkout/sign-in popup windows on flows that
+  // never produce a deposit — e.g. a Google login, where "success" is the
+  // SDK's connection status flipping to connected, not funds arriving.
+  ipcMain.handle('payments:close-checkout-windows', () => {
+    if (closeCheckoutWindows()) focusMainWindow();
+    return { ok: true };
   });
 
   ipcMain.handle('credits:get-info', async (): Promise<{ ok: boolean; data: CreditsInfo | null; error: string | null }> => {
