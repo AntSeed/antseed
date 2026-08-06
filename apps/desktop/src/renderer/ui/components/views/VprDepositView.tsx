@@ -503,8 +503,8 @@ export function VprDepositView({ onSelectView }: Props) {
         <FunMark size={18} />
       </span>
       <span className={styles.funCtaText}>
-        <span className={styles.funCtaTitle}>Deposit with fun.xyz</span>
-        <span className={styles.funCtaCaption}>Email address required</span>
+        <span className={styles.funCtaTitle}>Deposit</span>
+        <span className={styles.funCtaCaption}>Powered by fun.xyz</span>
       </span>
       <span className={styles.methodBadges} aria-hidden="true">
         <MastercardRoundMark />

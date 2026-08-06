@@ -1,0 +1,90 @@
+/**
+ * Fun (fun.xyz) checkout popup windows.
+ *
+ * The Fun SDK opens its external payment flows — Meld/Swapped card pages,
+ * brokerage sign-ins ("continue with Google", Coinbase, …) — via window.open
+ * with explicit popup dimensions, then writes a loading spinner into the
+ * about:blank document before pointing it at the real URL. Punting those to
+ * the system browser (the old blanket deny + shell.openExternal) breaks that
+ * dance and leaves an orphaned browser tab the app can never close.
+ *
+ * Instead, sized popups open as plain Electron child windows: no browser
+ * chrome (the `--app` look), window.opener intact for the OAuth postMessage
+ * flows, and the app owns the handle — the deposit watcher closes every
+ * checkout window the moment the bought USDC lands at the hot wallet.
+ *
+ * Plain `_blank` links (terms, explorers) still go to the system browser.
+ */
+import { app, shell, type BrowserWindow, type BrowserWindowConstructorOptions, type HandlerDetails } from 'electron';
+
+type WindowOpenResponse =
+  | { action: 'deny' }
+  | { action: 'allow'; overrideBrowserWindowOptions?: BrowserWindowConstructorOptions };
+
+const checkoutWindows = new Set<BrowserWindow>();
+
+/** The SDK's checkout/sign-in popups always pass centered dimensions;
+ *  ordinary link-outs pass "noopener" or nothing. */
+function isSizedPopup(features: string): boolean {
+  return /(?:^|,)\s*(?:width|height)\s*=/.test(features);
+}
+
+/** Chrome-equivalent UA. Google sign-in refuses agents that identify as an
+ *  embedded shell (`disallowed_useragent`); dropping the app and Electron
+ *  tokens leaves the stock Chrome UA, which it accepts. */
+function browserUserAgent(): string {
+  return app.userAgentFallback
+    .split(`${app.getName()}/${app.getVersion()}`)
+    .join('')
+    .replace(/\sElectron\/\S+/, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+/**
+ * Window-open handler for any webContents that can host the Fun widget or
+ * its checkout pages: sized popups become child windows, links leave for the
+ * system browser.
+ */
+export function checkoutWindowOpenHandler(details: HandlerDetails): WindowOpenResponse {
+  if (isSizedPopup(details.features)) {
+    return {
+      action: 'allow',
+      overrideBrowserWindowOptions: {
+        title: 'AntSeed — Secure checkout',
+        autoHideMenuBar: true,
+        // webPreferences stay inherited on purpose: the SDK's spinner
+        // injection needs the about:blank child in the opener's renderer
+        // process, and the inherited preload refuses to expose the IPC
+        // bridge to any document that isn't the app's own.
+      },
+    };
+  }
+  void shell.openExternal(details.url);
+  return { action: 'deny' };
+}
+
+/**
+ * Track a child window created by the handler above. Sign-in flows inside a
+ * checkout page open popups of their own (Google OAuth needs window.opener),
+ * so children get the same handler recursively.
+ */
+export function adoptCheckoutWindow(win: BrowserWindow): void {
+  checkoutWindows.add(win);
+  win.webContents.setUserAgent(browserUserAgent());
+  win.webContents.setWindowOpenHandler(checkoutWindowOpenHandler);
+  win.webContents.on('did-create-window', adoptCheckoutWindow);
+  win.on('closed', () => {
+    checkoutWindows.delete(win);
+  });
+}
+
+/** Close every open checkout window. Returns whether any were open. */
+export function closeCheckoutWindows(): boolean {
+  const hadWindows = checkoutWindows.size > 0;
+  for (const win of [...checkoutWindows]) {
+    if (!win.isDestroyed()) win.close();
+  }
+  checkoutWindows.clear();
+  return hadWindows;
+}
