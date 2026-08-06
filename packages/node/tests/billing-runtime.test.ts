@@ -276,4 +276,58 @@ describe("unit billing runtime", () => {
       requestedImages: 1,
     });
   });
+
+  it("captures unit context from a multipart image edits request", () => {
+    const boundary = "----antseedEditBoundary";
+    const request: SerializedHttpRequest = {
+      requestId: "req-image-edit",
+      method: "POST",
+      path: "/v1/images/edits",
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      body: new TextEncoder().encode([
+        `--${boundary}`,
+        'Content-Disposition: form-data; name="model"',
+        "",
+        "gpt-image-2",
+        `--${boundary}`,
+        'Content-Disposition: form-data; name="prompt"',
+        "",
+        "make the cube red",
+        `--${boundary}`,
+        'Content-Disposition: form-data; name="n"',
+        "",
+        "2",
+        `--${boundary}`,
+        'Content-Disposition: form-data; name="size"',
+        "",
+        "1024x1024",
+        `--${boundary}`,
+        'Content-Disposition: form-data; name="image"; filename="in.png"',
+        "Content-Type: image/png",
+        "",
+        "\x89PNG-binary",
+        `--${boundary}--`,
+        "",
+      ].join("\r\n")),
+    };
+
+    const captured = captureUnitBillingContext({
+      sellerPeerId: "a".repeat(40),
+      provider: "openai",
+      service: "gpt-image-2",
+      serviceApiProtocol: "openai-images",
+      request,
+    });
+
+    expect(captured.context).toMatchObject({
+      serviceApiProtocol: "openai-images",
+      attributes: { model: "gpt-image-2", size: "1024x1024" },
+      unitLimits: { output_images: 2 },
+    });
+    expect(captured.requestFacts).toEqual({
+      model: "gpt-image-2",
+      size: "1024x1024",
+      requestedImages: 2,
+    });
+  });
 });

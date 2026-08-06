@@ -117,6 +117,15 @@ describe('detectRequestServiceApiProtocol', () => {
       detectRequestServiceApiProtocol(makeRequest({ path: '/v1/chat/completions' })),
     ).toBe('openai-chat-completions');
   });
+
+  it('detects openai images from the generations and edits paths', () => {
+    expect(
+      detectRequestServiceApiProtocol(makeRequest({ path: '/v1/images/generations' })),
+    ).toBe('openai-images');
+    expect(
+      detectRequestServiceApiProtocol(makeRequest({ path: '/v1/images/edits' })),
+    ).toBe('openai-images');
+  });
 });
 
 describe('selectTargetProtocolForRequest', () => {

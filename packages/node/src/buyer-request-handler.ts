@@ -16,10 +16,10 @@ import type { VerificationMux } from "./verification/verification-mux.js";
 import type { VerificationStorage } from "./verification/storage.js";
 import type { VerificationSampler } from "./verification/samples.js";
 import { verifyResponseAuth } from "./verification/response-auth.js";
-import { tryParseJsonObject } from "./utils/json-codec.js";
 import type { ServiceApiProtocol } from "./types/service-api.js";
 import {
   detectRequestServiceApiProtocol,
+  extractRequestBodyFields,
   selectTargetProtocolForRequest,
 } from "@antseed/api-adapter";
 
@@ -111,7 +111,7 @@ export class BuyerRequestHandler {
     }
 
     // Track which service the buyer requested so NeedAuth validation uses buyer's own pricing
-    const requestedService = extractServiceFromBody(req.body);
+    const requestedService = extractServiceFromBody(req);
     if (negotiator && requestedService) {
       const billingRoute = selectBillingRoute(peer, req, requestedService);
       const requestProtocol = detectRequestServiceApiProtocol(req);
@@ -378,9 +378,9 @@ export class BuyerRequestHandler {
   }
 }
 
-/** Extract the service/model name from a JSON request body, or undefined if not found. */
-function extractServiceFromBody(body: Uint8Array): string | undefined {
-  const parsed = tryParseJsonObject(body);
+/** Extract the service/model name from a JSON or multipart request body, or undefined if not found. */
+function extractServiceFromBody(request: SerializedHttpRequest): string | undefined {
+  const parsed = extractRequestBodyFields(request.headers, request.body);
   const service = parsed?.service ?? parsed?.model;
   if (typeof service === 'string' && service.length > 0) return service;
   return undefined;

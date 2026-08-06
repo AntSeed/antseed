@@ -6,6 +6,7 @@ import type {
 import {
   extractImageRequestFacts,
   extractProviderResponseFacts,
+  extractRequestBodyFields,
   parseJsonObject,
 } from "@antseed/api-adapter";
 import type {
@@ -123,7 +124,7 @@ export function captureUnitBillingContext(args: {
   serviceApiProtocol: ServiceApiProtocol;
   request: SerializedHttpRequest;
 }): CapturedUnitBillingContext {
-  const parsed = parseJsonObject(args.request.body);
+  const parsed = extractRequestBodyFields(args.request.headers, args.request.body);
   const requestFacts = extractImageRequestFacts({
     path: args.request.path,
     method: args.request.method,

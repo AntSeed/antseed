@@ -29,6 +29,7 @@ import type { ImageRequestFacts } from '@antseed/api-adapter';
 import type { ServiceApiProtocol } from './types/service-api.js';
 import {
   detectRequestServiceApiProtocol,
+  extractRequestBodyFields,
   selectTargetProtocolForRequest,
 } from '@antseed/api-adapter';
 import { parseResponseUsage } from './utils/response-usage.js';
@@ -660,10 +661,7 @@ export class SellerRequestHandler {
   }
 
   private _extractRequestedService(request: SerializedHttpRequest): string | null {
-    if (!this._isJsonRequest(request)) {
-      return null;
-    }
-    const body = tryParseJsonObject(request.body);
+    const body = extractRequestBodyFields(request.headers, request.body);
     const service = body?.["service"] ?? body?.["model"];
     if (typeof service !== "string" || service.trim().length === 0) {
       return null;

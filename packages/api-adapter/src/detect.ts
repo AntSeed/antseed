@@ -25,7 +25,10 @@ export function detectRequestServiceApiProtocol(
   if (normalizedPath.startsWith('/v1/responses')) {
     return 'openai-responses';
   }
-  if (normalizedPath.startsWith('/v1/images/generations')) {
+  if (
+    normalizedPath.startsWith('/v1/images/generations')
+    || normalizedPath.startsWith('/v1/images/edits')
+  ) {
     return 'openai-images';
   }
 

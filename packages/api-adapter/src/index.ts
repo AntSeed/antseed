@@ -30,7 +30,9 @@ export {
   type ImageRequestFacts,
   type ProviderResponseFacts,
   type TokenUsage,
+  extractRequestBodyFields,
   parseJsonObject,
+  parseMultipartFormFields,
   toNonNegativeInt,
   type StreamingResponseAdapter,
 } from './utils.js';
