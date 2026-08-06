@@ -539,6 +539,7 @@ const api = {
   paymentsCardProviders: () => ipcRenderer.invoke('payments:card-providers'),
   paymentsOpenCardProvider: (opts?: { providerId?: string; amountUsdc?: string }) => ipcRenderer.invoke('payments:open-card-provider', opts),
   paymentsCrossmintConfig: () => ipcRenderer.invoke('payments:crossmint-config'),
+  paymentsFunkitConfig: () => ipcRenderer.invoke('payments:funkit-config'),
   paymentsGetBuyerUsage: () => ipcRenderer.invoke('payments:get-buyer-usage'),
   paymentsGetChannels: () => ipcRenderer.invoke('payments:get-channels'),
   paymentsGetRewardsSummary: () => ipcRenderer.invoke('payments:get-rewards-summary'),
