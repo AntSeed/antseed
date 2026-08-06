@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
 import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 
 const rendererRoot = path.resolve(__dirname, 'src/renderer');
 const pkg = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8'));
@@ -22,7 +22,17 @@ const stubbedWalletSdks = [
   'porto',
 ];
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  // Fun (fun.xyz) API key baked into the renderer at build time so packaged
+  // installs ship with the deposit CTA enabled. Deliberately NOT in the
+  // source tree: release builds get it from the ANTSEED_FUNKIT_API_KEY
+  // environment variable (CI: repo secret; local: apps/desktop/.env, which
+  // loadEnv reads). Empty when absent — the CTA then hides, and a runtime
+  // key in config.payments.funkit.apiKey still overrides the baked one.
+  const fileEnv = loadEnv(mode, __dirname, '');
+  const funkitApiKey = process.env.ANTSEED_FUNKIT_API_KEY ?? fileEnv.ANTSEED_FUNKIT_API_KEY ?? '';
+
+  return {
   plugins: [react()],
   base: './',
   root: rendererRoot,
@@ -51,10 +61,12 @@ export default defineConfig({
   },
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
+    __FUNKIT_API_KEY__: JSON.stringify(funkitApiKey),
   },
   server: {
     host: '127.0.0.1',
     port: 5174,
     strictPort: true,
   },
+  };
 });

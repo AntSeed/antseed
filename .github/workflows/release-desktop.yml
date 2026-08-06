@@ -108,6 +108,8 @@ jobs:
         working-directory: apps/desktop
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Baked into the renderer bundle by vite.config.ts (Fun deposit CTA).
+          ANTSEED_FUNKIT_API_KEY: ${{ secrets.ANTSEED_FUNKIT_API_KEY }}
           # electron-builder accepts base64-encoded content directly in CSC_LINK.
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
@@ -171,6 +173,8 @@ jobs:
         working-directory: apps/desktop
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Baked into the renderer bundle by vite.config.ts (Fun deposit CTA).
+          ANTSEED_FUNKIT_API_KEY: ${{ secrets.ANTSEED_FUNKIT_API_KEY }}
           CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
         run: |
@@ -251,6 +255,8 @@ jobs:
         working-directory: apps/desktop
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Baked into the renderer bundle by vite.config.ts (Fun deposit CTA).
+          ANTSEED_FUNKIT_API_KEY: ${{ secrets.ANTSEED_FUNKIT_API_KEY }}
           USE_SYSTEM_FPM: ${{ matrix.arch == 'arm64' }}
         run: |
           if [ "${{ inputs.dry_run }}" = "true" ]; then

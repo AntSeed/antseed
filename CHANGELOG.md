@@ -8,8 +8,6 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
-- The desktop now shows deposit progress as a fixed banner from any view — received → depositing → credited (with a transaction link), on top of every overlay including the Fun checkout modal — instead of only inside the deposit page. The main-process deposit watcher also keeps running for a while after the deposit page closes (slow background polling, ~30 min, re-armed by activity), so a card/Fun delivery landing after you navigate away is still swept into credits automatically.
-
 - Sellers now run periodic model health self-checks (a 1-token probe per advertised service, every 5 minutes by default) and unadvertise services that keep failing, restoring them automatically when they recover. Configurable via `seller.healthCheck` (`enabled`, `intervalMs`, `failureThreshold`); sellers announcing this behavior advertise the `seller.model-health.v1` capability in discovery metadata. Exposed as `ModelHealthChecker` in `@antseed/node`, alongside `AntseedNode.refreshSellerMetadata()` for runtime service-list changes.
 - The buyer proxy now treats `model_not_found` responses as routing failures (instead of successes) and refreshes peer discovery metadata in the background, so a stale cached model list recovers quickly after a seller unadvertises a model.
 
@@ -17,10 +15,6 @@ This project uses selective package publishing. Each release entry lists the pub
 - The buyer attaches its latest SpendingAuth by default; the seller closes at whichever cumulative is higher (its own or the buyer's), so a seller that lost the last authorization can still be paid in full, and a buyer cannot use this path to settle below what it owes.
 - Added `antseed buyer channels close <channelId>` (with `--no-auth` and `--json`), which runs the request through a running `antseed buyer start` daemon's live seller connection via the new `/_antseed/channels/close` control-plane endpoint.
 - Added `AntseedNode.requestChannelClose(peerId, opts)` to `@antseed/node`, plus the `payments.cooperative-close.v1` capability advertised in discovery metadata and the connection handshake.
-
-### Changed
-
-- The desktop Balance page's two deposit buttons (Credit Card / USDC on Base) are now a single full-width "Add Credits" button opening the Add-credits chooser, and the separate "Pay with card" options page (including the embedded Crossmint checkout) is removed — the Fun-led chooser is the deposit flow. Dropping Crossmint also cuts the renderer bundle roughly in half.
 
 ### Fixed
 
@@ -35,6 +29,24 @@ This project uses selective package publishing. Each release entry lists the pub
 - Fixed seller crashes when sending `PaymentRequired` to a buyer that disconnected before the payment terms could be delivered.
 - Fixed the buyer's Responses→Chat Completions request adapter to group parallel tool calls into a single assistant `tool_calls` message. Previously each call became its own assistant message, so strict chat-completions upstreams rejected multi-tool turns with `an assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'`.
 - Fixed the Responses request normalizer to drop non-message input items with no renderable text (e.g. Codex `reasoning` items) instead of converting them into empty user messages mid-history.
+
+## 2026-08-06 — Desktop 0.2.3
+
+### Desktop
+
+- `@antseed/desktop@0.2.3`
+
+### Added
+
+- The desktop now shows deposit progress as a fixed banner from any view — received → depositing → credited (with a transaction link), on top of every overlay including the Fun checkout modal — instead of only inside the deposit page. The main-process deposit watcher also keeps running for a while after the deposit page closes (slow background polling, ~30 min, re-armed by activity), so a card/Fun delivery landing after you navigate away is still swept into credits automatically.
+
+### Changed
+
+- The desktop Balance page's two deposit buttons (Credit Card / USDC on Base) are now a single full-width "Add Credits" button opening the Add-credits chooser, and the separate "Pay with card" options page (including the embedded Crossmint checkout) is removed — the Fun-led chooser is the deposit flow. Dropping Crossmint also cuts the renderer bundle roughly in half.
+
+### Fixed
+
+- Packaged desktop builds now ship with the Fun deposit checkout enabled — 0.2.2 resolved the Fun API key only from user config or a runtime environment variable, so the primary Deposit button never appeared for end users.
 
 ## 2026-08-06 — Desktop 0.2.2
 
