@@ -60,10 +60,40 @@ permissions:
   contents: write  # needed for electron-builder to publish to Releases
 
 jobs:
+  # electron-builder creates the draft release when it doesn't exist yet.
+  # With several platform jobs publishing in parallel, two can pass that
+  # existence check at the same moment and each create their own draft,
+  # splitting the assets across duplicate v<version> drafts. Pre-create
+  # the draft here so every platform job finds it and only uploads assets.
+  create-draft:
+    name: Create draft release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create the draft release if missing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "Dry run — nothing will be published, skipping draft creation"
+            exit 0
+          fi
+          version=$(node -p "require('./apps/desktop/package.json').version")
+          if gh release view "v${version}" >/dev/null 2>&1; then
+            echo "Release v${version} already exists"
+          else
+            gh release create "v${version}" --draft --title "${version}" --notes ""
+          fi
+
   mac:
     name: Build & publish macOS
     # Tag-push always runs every platform.
     if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all' || inputs.platforms == 'mac'
+    needs: create-draft
     runs-on: macos-14  # Apple Silicon; electron-builder cross-builds x64
     timeout-minutes: 60
 
@@ -140,6 +170,7 @@ jobs:
   win:
     name: Build & publish Windows
     if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all' || inputs.platforms == 'win'
+    needs: create-draft
     runs-on: windows-latest
     timeout-minutes: 45
 
@@ -200,6 +231,7 @@ jobs:
   linux:
     name: Build & publish Linux (${{ matrix.arch }})
     if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all' || inputs.platforms == 'linux'
+    needs: create-draft
     strategy:
       fail-fast: false
       matrix:
@@ -276,68 +308,3 @@ jobs:
             apps/desktop/release/latest*.yml
           if-no-files-found: warn
           retention-days: 14
-
-  # Keep the rolling `alpha` release pointing at the newest prerelease build,
-  # under fixed asset names, so a single shareable link
-  # (releases/download/alpha/AntSeed-VPR-alpha-arm64.dmg) always serves the
-  # latest alpha. Prerelease + non-semver tag, so electron-updater and stable
-  # users never see it. Runs after the platform jobs and pulls the installers
-  # from the just-published versioned release (drafts included) — the local
-  # build outputs are not reliable by the end of a job (the mac x64 files
-  # disappear from disk), the release assets are.
-  mirror-alpha:
-    name: Mirror to rolling alpha release
-    needs: [mac, win, linux]
-    # Run when nothing failed, at least one platform published, and this is a
-    # real publish (not a dry run). A platform skipped via the `platforms`
-    # input must not block the mirror.
-    if: >-
-      !cancelled() &&
-      inputs.dry_run != true &&
-      needs.mac.result != 'failure' &&
-      needs.win.result != 'failure' &&
-      needs.linux.result != 'failure' &&
-      (needs.mac.result == 'success' || needs.win.result == 'success' || needs.linux.result == 'success')
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Mirror installers to the rolling alpha release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          version=$(node -p "require('./apps/desktop/package.json').version")
-          case "$version" in
-            *-*) ;;
-            *) echo "Stable version $version — skipping alpha mirror"; exit 0 ;;
-          esac
-          mkdir -p alpha
-          for pair in \
-            "AntSeed-VPR-${version}-arm64.dmg:AntSeed-VPR-alpha-arm64.dmg" \
-            "AntSeed-VPR-${version}.dmg:AntSeed-VPR-alpha.dmg" \
-            "AntSeed-VPR-Setup-${version}.exe:AntSeed-VPR-Setup-alpha.exe" \
-            "AntSeed-VPR-${version}-x64.AppImage:AntSeed-VPR-alpha-x64.AppImage" \
-            "AntSeed-VPR-${version}-arm64.AppImage:AntSeed-VPR-alpha-arm64.AppImage" \
-            "AntSeed-VPR-${version}-x64.deb:AntSeed-VPR-alpha-x64.deb" \
-            "AntSeed-VPR-${version}-arm64.deb:AntSeed-VPR-alpha-arm64.deb"; do
-            src="${pair%%:*}"; dst="${pair##*:}"
-            if gh release download "v${version}" -p "$src" --dir alpha --clobber; then
-              mv "alpha/$src" "alpha/$dst"
-            else
-              echo "Asset $src not on v${version} (platform skipped this run) — keeping the previous alpha copy"
-            fi
-          done
-          if [ -z "$(ls -A alpha)" ]; then
-            echo "No installers to mirror"; exit 0
-          fi
-          if ! gh release view alpha >/dev/null 2>&1; then
-            gh release create alpha --prerelease --title "AntSeed VPR alpha (rolling)" \
-              --notes "Rolling prerelease — always the latest alpha build."
-          fi
-          gh release upload alpha alpha/* --clobber
-          gh release edit alpha --prerelease --draft=false \
-            --notes "Rolling prerelease — always the latest alpha build. Currently mirrors v${version}."
