@@ -496,6 +496,9 @@ export class BuyerPaymentNegotiator {
     const unitBilling = unitModel && billingEntry
       ? computeFinalUnitBilling(unitModel, billingEntry.context, response, requestFacts)
       : null;
+    if (unitBilling && requestId) {
+      this._bpm.recordObservedUnitUsage(requestId, unitBilling.usage);
+    }
     const usage = unitBilling?.tokenUsage ?? parseResponseUsage(response.body);
     const pricing = billingEntry?.tokenPricing
       ?? this._bpm.getSessionPricing(peer.peerId, service)

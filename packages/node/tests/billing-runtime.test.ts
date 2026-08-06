@@ -118,6 +118,75 @@ describe("unit billing runtime", () => {
     ).toThrow(/request allowed 1/);
   });
 
+  it("rejects seller unit usage above what the response actually delivered", () => {
+    const context: UnitBillingContext = {
+      ...imageContext,
+      unitLimits: { output_images: 4 },
+    };
+
+    expect(() =>
+      validateUnitBillingUsage(
+        imageModel,
+        context,
+        {
+          version: 1,
+          units: { output_images: "4" },
+        },
+        160_000n,
+        1.4,
+        { units: { output_images: 1 } },
+      ),
+    ).toThrow(/response delivered 1/);
+  });
+
+  it("rejects positive seller unit usage when the observed response delivered nothing", () => {
+    expect(() =>
+      validateUnitBillingUsage(
+        imageModel,
+        imageContext,
+        {
+          version: 1,
+          units: { output_images: "1" },
+        },
+        40_000n,
+        1.4,
+        { units: {} },
+      ),
+    ).toThrow(/response delivered 0/);
+  });
+
+  it("accepts seller unit usage matching the observed response", () => {
+    expect(
+      validateUnitBillingUsage(
+        imageModel,
+        imageContext,
+        {
+          version: 1,
+          units: { output_images: "1" },
+        },
+        40_000n,
+        1.4,
+        { units: { output_images: 1 } },
+      ),
+    ).toBe(40_000n);
+  });
+
+  it("falls back to request limits when no observed usage is recorded yet", () => {
+    expect(
+      validateUnitBillingUsage(
+        imageModel,
+        imageContext,
+        {
+          version: 1,
+          units: { output_images: "1" },
+        },
+        40_000n,
+        1.4,
+        undefined,
+      ),
+    ).toBe(40_000n);
+  });
+
   it("rejects non-canonical and unsafe unit count strings", () => {
     expect(
       validateUnitBillingUsageReportV1({

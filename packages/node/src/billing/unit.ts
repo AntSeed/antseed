@@ -224,6 +224,7 @@ export function validateUnitBillingUsage(
   report: UnitBillingUsageReportV1,
   sellerCost: bigint,
   costToleranceMultiplier: number,
+  observedUsage?: UnitBillingUsage,
 ): bigint {
   const errors = validateUnitBillingUsageReportV1(report);
   if (errors.length > 0) {
@@ -232,6 +233,9 @@ export function validateUnitBillingUsage(
 
   const usage = unitUsageFromReport(report);
   validateUsageWithinRequestLimits(usage, context);
+  if (observedUsage) {
+    validateUsageWithinObservedUsage(usage, observedUsage);
+  }
   const buyerEstimate = evaluateUnitBilling(model, context, usage);
   if (sellerCost > 0n && buyerEstimate <= 0n) {
     throw new Error("Positive unit billing cost recomputed to zero");
@@ -325,5 +329,25 @@ function validateUsageWithinRequestLimits(
     throw new Error(
       `Seller reported output_images=${outputImages} but request allowed ${outputImageLimit}`,
     );
+  }
+}
+
+/**
+ * Reject claims for more units than the buyer observed in the response it
+ * actually received. A unit absent from the observed usage counts as zero, so
+ * a positive claim against a response that delivered nothing is refused.
+ */
+function validateUsageWithinObservedUsage(
+  usage: UnitBillingUsage,
+  observed: UnitBillingUsage,
+): void {
+  for (const [unit, claimed] of Object.entries(usage.units)) {
+    if (!isUnitBillingUnitV1(unit) || claimed === undefined || claimed <= 0) continue;
+    const observedCount = observed.units[unit] ?? 0;
+    if (claimed > observedCount) {
+      throw new Error(
+        `Seller reported ${unit}=${claimed} but response delivered ${observedCount}`,
+      );
+    }
   }
 }

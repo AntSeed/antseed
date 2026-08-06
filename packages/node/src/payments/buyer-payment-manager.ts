@@ -85,6 +85,7 @@ export interface BuyerRequestBillingEntry {
   requestFacts: ImageRequestFacts;
   unitModel?: UnitBillingModelV1;
   tokenPricing?: ServicePricing;
+  observedUnitUsage?: UnitBillingUsage;
 }
 
 interface StoredBuyerRequestBillingEntry extends BuyerRequestBillingEntry {
@@ -1072,6 +1073,7 @@ export class BuyerPaymentManager {
             payload.billingUsage,
             sellerTotalCost,
             this._costTolerance,
+            requestBilling.observedUnitUsage,
           );
         }
 
@@ -1415,6 +1417,13 @@ export class BuyerPaymentManager {
       createdAtMs: Date.now(),
     });
     this._trimRequestBillingCache();
+  }
+
+  /** Record unit usage extracted from the response the buyer received, so
+   *  NeedAuth validation can cap seller claims at what was actually delivered. */
+  recordObservedUnitUsage(requestId: string, usage: UnitBillingUsage): void {
+    const entry = this._requestBillingEntries.get(requestId);
+    if (entry) entry.observedUnitUsage = usage;
   }
 
   getRequestBilling(requestId: string): BuyerRequestBillingEntry | undefined {
