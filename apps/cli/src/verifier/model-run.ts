@@ -25,8 +25,8 @@ import {
 } from './proxy-evidence.js'
 import type { ResponseAuthReader } from './response-auth-reader.js'
 import { advertisedServices } from './service-discovery.js'
+import { mapConcurrently, type AuditTaskLimiter } from './audit-concurrency.js'
 
-const PROBE_REQUEST_CONCURRENCY = 2
 const PROBE_REQUEST_ATTEMPTS = 5
 const PROBE_RETRY_BASE_DELAY_MS = 500
 
@@ -41,7 +41,10 @@ export interface ProxyVerificationContext {
   proxy: BuyerProxySnapshot
   evidenceDir: string
   requestTimeoutMs: number
+  auditTimeoutMs: number
   responseAuthReader: ResponseAuthReader
+  batchConcurrency: number
+  batchLimiter: AuditTaskLimiter
   fetchFn?: typeof fetch
   sleepFn?: (delayMs: number) => Promise<void>
 }
@@ -136,9 +139,23 @@ export async function verifyModelTarget(input: {
   auditId?: string
 }): Promise<ModelVerificationTargetResult> {
   const batches = chunk(input.reference.probes, KBF_PROBES_PER_REQUEST)
-  const exchanges = await runConcurrently(batches, PROBE_REQUEST_CONCURRENCY, (probes, batchIndex) => {
-    return executeProxyProbeBatch(input.context, input.target, input.service, input.reference, probes, batchIndex)
-  })
+  const auditController = new AbortController()
+  const auditTimer = setTimeout(() => auditController.abort(), input.context.auditTimeoutMs)
+  let exchanges: ProxyAuditEvidenceExchangeV1[]
+  try {
+    exchanges = await mapConcurrently(batches, input.context.batchConcurrency, (probes, batchIndex) => {
+      return input.context.batchLimiter.run(() => executeProxyProbeBatch(
+        { ...input.context, signal: auditController.signal },
+        input.target,
+        input.service,
+        input.reference,
+        probes,
+        batchIndex,
+      ))
+    })
+  } finally {
+    clearTimeout(auditTimer)
+  }
   const answers = exchanges.flatMap((exchange) => exchange.answers)
   const matchVector = exchanges.flatMap((exchange) => exchange.matches)
   const fragment = verifyKbf(input.reference, { answers, matchVector }, { minCoverage: 1 })
@@ -214,7 +231,7 @@ export async function verifyModelTarget(input: {
 }
 
 async function executeProxyProbeBatch(
-  context: ProxyVerificationContext,
+  context: ProxyVerificationContext & { signal: AbortSignal },
   target: PeerInfo,
   service: string,
   reference: KbfReferenceV1,
@@ -247,9 +264,11 @@ async function executeProxyProbeBatch(
   const fetchFn = context.fetchFn ?? fetch
   const sleepFn = context.sleepFn ?? sleep
 
-  while (attemptCount < PROBE_REQUEST_ATTEMPTS) {
+  while (attemptCount < PROBE_REQUEST_ATTEMPTS && !context.signal.aborted) {
     attemptCount += 1
     const controller = new AbortController()
+    const abortRequest = () => controller.abort()
+    context.signal.addEventListener('abort', abortRequest, { once: true })
     const timer = setTimeout(() => controller.abort(), context.requestTimeoutMs)
     try {
       const response = await fetchFn(url, {
@@ -287,6 +306,7 @@ async function executeProxyProbeBatch(
           requestId,
           sellerPeerId: target.peerId,
           advertisedService: service,
+          signal: context.signal,
         })
         : {
           requestId: null,
@@ -314,16 +334,20 @@ async function executeProxyProbeBatch(
         },
       }
     } catch (error) {
-      lastFailure = controller.signal.aborted
-        ? `buyer proxy request timed out after ${context.requestTimeoutMs}ms`
+      lastFailure = context.signal.aborted
+        ? `seller audit deadline exceeded after ${context.auditTimeoutMs}ms`
+        : controller.signal.aborted
+          ? `buyer proxy request timed out after ${context.requestTimeoutMs}ms`
         : asError(error).message
-      if (attemptCount < PROBE_REQUEST_ATTEMPTS) {
-        await sleepFn(PROBE_RETRY_BASE_DELAY_MS * 2 ** (attemptCount - 1))
+      if (!context.signal.aborted && attemptCount < PROBE_REQUEST_ATTEMPTS) {
+        await sleepWithSignal(PROBE_RETRY_BASE_DELAY_MS * 2 ** (attemptCount - 1), context.signal, sleepFn)
       }
     } finally {
       clearTimeout(timer)
+      context.signal.removeEventListener('abort', abortRequest)
     }
   }
+  if (context.signal.aborted) lastFailure = `seller audit deadline exceeded after ${context.auditTimeoutMs}ms`
   const completedAt = Date.now()
   return {
     batchIndex,
@@ -446,26 +470,24 @@ function chunk<T>(items: readonly T[], size: number): T[][] {
   return chunks
 }
 
-async function runConcurrently<T, R>(
-  items: readonly T[],
-  concurrency: number,
-  execute: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results = new Array<R>(items.length)
-  let nextIndex = 0
-  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    for (;;) {
-      const index = nextIndex
-      nextIndex += 1
-      if (index >= items.length) return
-      results[index] = await execute(items[index]!, index)
-    }
-  }))
-  return results
-}
-
 function sleep(delayMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, delayMs))
+}
+
+async function sleepWithSignal(
+  delayMs: number,
+  signal: AbortSignal,
+  sleepFn: (delayMs: number) => Promise<void>,
+): Promise<void> {
+  if (signal.aborted) return
+  let abort!: () => void
+  const aborted = new Promise<void>((resolve) => { abort = resolve })
+  signal.addEventListener('abort', abort, { once: true })
+  try {
+    await Promise.race([sleepFn(delayMs), aborted])
+  } finally {
+    signal.removeEventListener('abort', abort)
+  }
 }
 
 function asError(error: unknown): Error {

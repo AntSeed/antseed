@@ -100,18 +100,18 @@ test('probe banks reject incompatible query profiles', async () => {
   }
 })
 
-test('seller ledgers prevent reuse while allowing cross-seller reuse', async () => {
+test('seller ledgers prevent same-run reuse and allow later-run reuse', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'antseed-probe-bank-'))
   const identityShuffle = <T>(values: readonly T[]) => [...values]
   try {
     await appendModelReferenceToBank({ banksDir: directory, model: 'model-a', reference: reference() })
     const first = await reserveModelAuditReference({
       banksDir: directory, model: 'model-a', sellerPeerId: '11'.repeat(20),
-      service: 'model-a', epoch: '4', shuffle: identityShuffle,
+      service: 'model-a', runId: 'run-a', epoch: '4', shuffle: identityShuffle,
     })
     const second = await reserveModelAuditReference({
       banksDir: directory, model: 'model-a', sellerPeerId: '11'.repeat(20),
-      service: 'model-a', epoch: '4', shuffle: identityShuffle,
+      service: 'model-a', runId: 'run-a', epoch: '4', shuffle: identityShuffle,
     })
     assert.equal(first.reference.probes.length, 100)
     assert.equal(second.reference.probes.length, 100)
@@ -119,22 +119,52 @@ test('seller ledgers prevent reuse while allowing cross-seller reuse', async () 
     await assert.rejects(
       reserveModelAuditReference({
         banksDir: directory, model: 'model-a', sellerPeerId: '11'.repeat(20),
-        service: 'model-a', epoch: '4', shuffle: identityShuffle,
+        service: 'model-a', runId: 'run-b', epoch: '4', shuffle: identityShuffle,
       }),
       new RegExp(BANK_EXHAUSTED),
     )
 
     const otherSeller = await reserveModelAuditReference({
       banksDir: directory, model: 'model-a', sellerPeerId: '22'.repeat(20),
-      service: 'model-a', epoch: '4', shuffle: identityShuffle,
+      service: 'model-a', runId: 'run-a', epoch: '4', shuffle: identityShuffle,
     })
     assert.deepEqual(
       otherSeller.reference.probes.map((probe) => probe.id),
       first.reference.probes.map((probe) => probe.id),
     )
+    const nextRun = await reserveModelAuditReference({
+      banksDir: directory, model: 'model-a', sellerPeerId: '11'.repeat(20),
+      service: 'model-a', runId: 'run-b', epoch: '4', allowProbeReuse: true,
+      shuffle: identityShuffle,
+    })
+    assert.deepEqual(
+      nextRun.reference.probes.map((probe) => probe.id),
+      first.reference.probes.map((probe) => probe.id),
+    )
     const ledger = JSON.parse(await readFile(sellerLedgerPath(directory, 'model-a', '11'.repeat(20)), 'utf8'))
-    assert.equal(ledger.usedProbeIds.length, 200)
-    assert.equal(ledger.assignments.length, 2)
+    assert.equal(ledger.usedProbeIds, undefined)
+    assert.equal(ledger.assignments.length, 3)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('different sellers reserve concurrently without sharing a lock', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-probe-bank-'))
+  const identityShuffle = <T>(values: readonly T[]) => [...values]
+  try {
+    await appendModelReferenceToBank({ banksDir: directory, model: 'model-a', reference: reference() })
+    const reservations = await Promise.all(['11', '22', '33', '44'].map((prefix) => reserveModelAuditReference({
+      banksDir: directory,
+      model: 'model-a',
+      sellerPeerId: prefix.repeat(20),
+      service: 'model-a',
+      runId: 'run-a',
+      epoch: '4',
+      shuffle: identityShuffle,
+    })))
+    assert.equal(reservations.length, 4)
+    assert.equal(new Set(reservations.map((reservation) => reservation.ledgerPath)).size, 4)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

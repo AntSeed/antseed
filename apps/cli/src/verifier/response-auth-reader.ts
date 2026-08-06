@@ -22,6 +22,7 @@ export interface ResponseAuthReader {
     sellerPeerId: string
     advertisedService: string
     timeoutMs?: number
+    signal?: AbortSignal
   }): Promise<ResponseAuthEvidenceStatus>
   close(): void
 }
@@ -51,6 +52,14 @@ export function createResponseAuthReader(
       const timeoutMs = input.timeoutMs ?? defaultTimeoutMs
       const deadline = Date.now() + timeoutMs
       for (;;) {
+        if (input.signal?.aborted) {
+          return {
+            requestId: input.requestId,
+            status: 'missing',
+            responseAuth: null,
+            failureReason: 'seller audit deadline exceeded while waiting for ResponseAuth',
+          }
+        }
         const record = storage.getResponseAuth(input.requestId)
         if (record) return validateStoredResponseAuth(record, input)
         if (Date.now() >= deadline) {

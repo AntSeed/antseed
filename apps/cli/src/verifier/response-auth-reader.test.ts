@@ -47,6 +47,18 @@ test('ResponseAuth reader reports a missing record at timeout', async () => {
   assert.equal(result.status, 'missing')
 })
 
+test('ResponseAuth reader stops when the seller audit is aborted', async () => {
+  const controller = new AbortController()
+  controller.abort()
+  const reader = createResponseAuthReader({ getResponseAuth: () => null }, 10_000)
+  const result = await reader.waitForVerified({
+    requestId: 'request-1', sellerPeerId: '22'.repeat(20), advertisedService: 'model-a',
+    signal: controller.signal,
+  })
+  assert.equal(result.status, 'missing')
+  assert.match(result.failureReason ?? '', /deadline exceeded/)
+})
+
 for (const [name, record] of [
   ['unverified', responseAuth({ verified: false, verificationError: 'bad signature' })],
   ['wrong-request', responseAuth({ requestId: 'request-2' })],

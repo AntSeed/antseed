@@ -26,6 +26,6 @@ test('verifier reference exposes only the explicit build workflow', () => {
 test('verifier run accepts one model or all configured models', () => {
   const verifier = command().commands.find((entry) => entry.name() === 'verifier')!
   const run = verifier.commands.find((entry) => entry.name() === 'run')!
-  assert.deepEqual(run.options.map((option) => option.long), ['--all'])
+  assert.deepEqual(run.options.map((option) => option.long), ['--all', '--allow-probe-reuse'])
   assert.deepEqual(run.registeredArguments.map((argument) => argument.name()), ['model'])
 })

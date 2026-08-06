@@ -9,6 +9,7 @@ import {
   type KbfReferenceV1,
 } from '@antseed/fingerprints'
 import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1, type PeerId, type PeerInfo } from '@antseed/node'
+import { ConcurrencyLimiter } from './audit-concurrency.js'
 import {
   classifyVerificationTarget,
   loadBuyerProxySnapshot,
@@ -89,10 +90,11 @@ function reference(count: number): KbfReferenceV1 {
 
 async function runTarget(
   count: number,
-  answerMode: 'valid' | 'out-of-range' | 'malformed' | 'sse' | 'transport-failure' = 'valid',
+  answerMode: 'valid' | 'out-of-range' | 'malformed' | 'sse' | 'transport-failure' | 'hanging' = 'valid',
   transientFailures = 0,
   authMode: 'verified' | 'missing' | 'unverified' | 'wrong-request' | 'wrong-seller' | 'wrong-service' = 'verified',
   includeCost = true,
+  auditTimeoutMs = 10_000,
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'antseed-verifier-target-'))
   let requestCount = 0
@@ -105,6 +107,13 @@ async function runTarget(
       ? new TextDecoder().decode(init.body)
       : String(init?.body ?? '')
     requests.push({ headers: init?.headers ?? {}, body: requestBody })
+    if (answerMode === 'hanging') {
+      return await new Promise<Response>((_resolve, reject) => {
+        const abort = () => reject(new DOMException('aborted', 'AbortError'))
+        if (init?.signal?.aborted) abort()
+        else init?.signal?.addEventListener('abort', abort, { once: true })
+      })
+    }
     const body = JSON.parse(requestBody) as { messages: Array<{ content: string }> }
     const prompt = body.messages.at(-1)?.content ?? ''
     if (prompt.includes('test probe 1 value') && failureCount < transientFailures) {
@@ -196,7 +205,10 @@ async function runTarget(
         },
         evidenceDir: directory,
         requestTimeoutMs: 10_000,
+        auditTimeoutMs,
         responseAuthReader,
+        batchConcurrency: 2,
+        batchLimiter: new ConcurrencyLimiter(2),
         fetchFn,
         sleepFn: async () => undefined,
       },
@@ -332,6 +344,17 @@ test('exhausted transport retries produce UNDETERMINED evidence', async () => {
   assert.equal(run.evidence.exchanges.every((exchange) => exchange.status === 'failed'), true)
   assert.equal(run.result.cost.pricedExchangeCount, 0)
   assert.equal(run.result.cost.missingCostExchangeCount, 10)
+})
+
+test('seller audit deadline aborts all remaining batches', async () => {
+  const startedAt = Date.now()
+  const run = await runTarget(100, 'hanging', 0, 'verified', true, 25)
+  assert.equal(run.result.status, 'UNDETERMINED')
+  assert.equal(run.result.parsedProbeCount, 0)
+  assert.equal(Date.now() - startedAt < 1_000, true)
+  assert.equal(run.evidence.exchanges.every((exchange) => (
+    exchange.failureReason?.includes('seller audit deadline exceeded')
+  )), true)
 })
 
 test('successful exchanges without telemetry remain explicitly unpriced', async () => {

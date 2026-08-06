@@ -17,6 +17,8 @@ export interface VerifierStatusV1 {
   epochEndsAt: string
   currentModel: string | null
   currentPeerId: string | null
+  activeAudits: Array<{ model: string; peerId: string; startedAt: string }>
+  queuedAudits: number
   modelsCompleted: number
   modelsTotal: number
   auditsCompleted: number

@@ -20,7 +20,8 @@ test('verifier artifacts use epoch and model directories', async () => {
       version: 1 as const, kind: 'antseed-verifier-status' as const, state: 'running' as const,
       runId: 'run', epoch: '7', startedAt: '2026-08-06T00:00:00.000Z', completedAt: null,
       epochStartedAt: '2026-08-06T00:00:00.000Z', epochEndsAt: '2026-08-07T00:00:00.000Z',
-      currentModel: 'Model A', currentPeerId: null, modelsCompleted: 0, modelsTotal: 1,
+      currentModel: 'Model A', currentPeerId: null, activeAudits: [], queuedAudits: 1,
+      modelsCompleted: 0, modelsTotal: 1,
       auditsCompleted: 0, failures: 0, cost: emptyAuditCostSummary(), message: 'running',
     }
     await writeVerifierStatus(directory, status)

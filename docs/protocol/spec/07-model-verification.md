@@ -16,6 +16,7 @@ antseed verifier reference build <model>
 antseed verifier reference build --all
 antseed verifier run <model>
 antseed verifier run --all
+antseed verifier run --all --allow-probe-reuse
 antseed verifier status [--json]
 antseed verifier claim
 ```
@@ -27,8 +28,10 @@ independent models concurrently; audit runs process models sequentially.
 
 `reference build` creates a powered reference and appends its probes and
 per-probe self-test outcomes to the model's bank. `run` never calls the trusted
-reference endpoint. It resolves the current on-chain epoch, buyer snapshot, and
-ResponseAuth database once, then processes models and peers sequentially.
+reference endpoint. It uses the verification contract's epoch when an address
+is configured; otherwise it uses UTC calendar days (`YYYY-MM-DD`). It resolves
+the buyer snapshot and ResponseAuth database once, then processes models and
+peers sequentially.
 
 ## Configuration
 
@@ -36,6 +39,11 @@ ResponseAuth database once, then processes models and peers sequentially.
 verifier:
   responseAuthWaitTimeoutMs: 35000
   probeRequestTimeoutMs: 120000
+  auditMaxConcurrentModels: 3
+  auditMaxConcurrentPeersPerModel: 4
+  auditMaxConcurrentBatches: 12
+  auditMaxConcurrentBatchesPerPeer: 2
+  auditPeerTimeoutMs: 180000
 
   contrastSelection:
     catalogSource: openrouter
@@ -56,21 +64,28 @@ verifier:
     trust: trusted
 
     models:
-      gpt-large:
+      claude-opus-5:
         enabled: true
-        upstreamModel: provider/gpt-large
+        upstreamModel: anthropic/claude-opus-5
+      claude-sonnet-5:
+        enabled: true
+        upstreamModel: anthropic/claude-sonnet-5
+      gpt-5.6-sol:
+        enabled: true
+        upstreamModel: openai/gpt-5.6-sol
 ```
 
 `banksDir` and `evidenceDir` are optional. When omitted, they default to
 `<dataDir>/verifier/banks` and `<dataDir>/verifier/evidence`, so the normal
 `~/.antseed` data directory needs no reusable-path configuration.
 
-With `catalogSource: openrouter`, the verifier fetches `/api/v1/models` once at
-command startup. Audited-model and candidate prices come from each model's
-`pricing.prompt` and `pricing.completion`. Candidate capability comes from
-`benchmarks.artificial_analysis.intelligence_index`; models without that score
-are not automatic contrast candidates. Manual model pricing and
-`contrastModelBank` must be omitted in this mode.
+With `catalogSource: openrouter`, `reference build` fetches `/api/v1/models`
+once at command startup. Audited-model and candidate prices come from each
+model's `pricing.prompt` and `pricing.completion`. Candidate capability comes
+from `benchmarks.artificial_analysis.intelligence_index`; models without that
+score are not automatic contrast candidates. Manual model pricing,
+`contrastModels`, and `contrastModelBank` should be omitted when automatic
+selection is desired.
 
 The audited model's `upstreamModel` remains the trusted source of ground-truth
 answers. Cheap models are contrasts only. Automatic selection computes:
@@ -107,14 +122,16 @@ IDs are deduplicated only when their canonical probe content and self-test
 evidence match. The append is rejected when an ID conflicts or when model,
 query-profile, provenance, or statistical assumptions are incompatible.
 
-Before dispatch, the verifier cryptographically shuffles unused probes for the
-seller. It evaluates configured 10-probe sizing steps and reserves the first
-subset meeting coverage, self-test error, and statistical-power requirements.
-The subset receives a new content-addressed KBF reference ID. Reservation is an
-atomic ledger write performed before network dispatch and is never released,
-including after failed audits. Different sellers may receive the same probes;
-one seller never receives the same probe twice. Exhaustion returns
-`BANK_EXHAUSTED` rather than reusing probes.
+Before dispatch, the verifier cryptographically shuffles probes not yet assigned
+to that seller during the current run. It evaluates configured 10-probe sizing
+steps and reserves the first subset meeting coverage, self-test error, and
+statistical-power requirements. The subset receives a new content-addressed KBF
+reference ID. Reservation is an atomic ledger write performed before network
+dispatch and is never released during that run, including after failed audits.
+Different sellers may share probes. By default, a seller does not receive a
+probe assigned in any earlier run. `--allow-probe-reuse` permits earlier-run
+assignments to be selected again while still preventing duplicate assignment
+inside the current run.
 
 ## ResponseAuth
 
@@ -143,8 +160,13 @@ operators can distinguish a complete estimate from a partial one.
 
 ## Runtime and Artifacts
 
-Peers are processed sequentially within each model. Probe batches contain ten
-probes and retain concurrency two. Transient proxy failures use bounded retries.
+Models and their eligible peers are processed through bounded worker pools.
+Defaults allow three models, four peers per model, twelve total buyer-proxy
+batches, and two batches per seller audit concurrently. A shared seller lock
+prevents one seller from being audited for multiple models simultaneously.
+Transient proxy failures use bounded retries. Each seller audit has a hard
+three-minute wall-clock deadline that aborts every remaining batch and finalizes
+the seller as `UNDETERMINED`.
 
 One PID-aware run lock prevents concurrent verifier runs from reserving the same
 seller probes. Stale locks are recovered when their owner PID is no longer
@@ -163,7 +185,7 @@ plus rename writes.
 ```
 
 `status.json` is a readable snapshot of the active or most recent run. The epoch
-summary records the on-chain epoch window and each model summary. `events.jsonl`
+summary records the audit epoch window and each model summary. `events.jsonl`
 is append-only progress history. Each audit file is canonical JSON and includes
 the selected reference, proxy observations, ResponseAuth evidence, cost
 estimate, and verdict.

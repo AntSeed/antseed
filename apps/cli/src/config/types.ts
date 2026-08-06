@@ -237,6 +237,16 @@ export interface VerifierCLIConfig {
   probeRequestTimeoutMs?: number;
   /** Time to wait for the buyer node to persist ResponseAuth. Default: 35000. */
   responseAuthWaitTimeoutMs?: number;
+  /** Maximum audited models processed concurrently. Default: 3. */
+  auditMaxConcurrentModels?: number;
+  /** Maximum seller audits processed concurrently per model. Default: 4. */
+  auditMaxConcurrentPeersPerModel?: number;
+  /** Maximum buyer-proxy probe batches across the entire verifier run. Default: 12. */
+  auditMaxConcurrentBatches?: number;
+  /** Maximum probe batches sent concurrently to one seller audit. Default: 2. */
+  auditMaxConcurrentBatchesPerPeer?: number;
+  /** Hard wall-clock deadline for one seller audit. Default: 180000. */
+  auditPeerTimeoutMs?: number;
   /** Automatic cheap contrast-model selection policy. */
   contrastSelection?: VerifierContrastSelectionConfig;
   /** Trusted endpoint used only by the explicit reference-build command. */

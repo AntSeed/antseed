@@ -15,7 +15,10 @@ This project uses selective package publishing. Each release entry lists the pub
 ### Added
 
 - Extended the existing `antseed verifier` workflow with concurrent `reference build --all`, `run --all`, and `status [--json]`; configured audited models now select up to three cheap capable contrast models using 90/10 blended pricing and a 30% price cap.
-- Added append-only per-model probe banks, atomic per-seller probe reservations with permanent non-reuse, epoch/model audit directories, progress events and status summaries, plus PID-aware run locking.
+- Added append-only per-model probe banks, atomic per-seller probe reservations, epoch/model audit directories, progress events and status summaries, plus PID-aware run locking. `--allow-probe-reuse` explicitly permits later runs to reuse prior seller assignments while preserving same-run uniqueness.
+- Verifier audits now process models and sellers through bounded concurrent worker pools, with a global buyer-proxy batch limit and a cross-model seller lock.
+- Seller audits now enforce a configurable three-minute wall-clock deadline that cancels remaining proxy requests and produces `UNDETERMINED` evidence instead of multiplying per-batch retry timeouts.
+- Verifier runs now use UTC-day audit epochs when no verification contract is deployed, while retaining on-chain epoch resolution whenever a real contract address is configured.
 - Verifier proxy audits now require peers advertising `verification.response-auth.v1`, read verified ResponseAuth records directly from the buyer's `verification.db`, and force `UNDETERMINED` when a successful batch lacks matching authenticated evidence.
 - Verifier audit evidence and status/model/epoch summaries now retain per-exchange token usage and seller pricing from buyer-proxy telemetry, aggregate estimated USD cost, and count exchanges whose cost telemetry is missing.
 - Added OpenRouter catalog-backed contrast selection: reference builds fetch current per-token prices and Artificial Analysis Intelligence Index scores from `/api/v1/models` and select the highest-scoring models under the configured blended-price cap; audit runs use the contrast selection stored in the probe bank.
@@ -36,7 +39,7 @@ This project uses selective package publishing. Each release entry lists the pub
 - Changed reference generation to use the canonical KBF domain registry with deterministic code-owned ranges and tolerances instead of LLM-authored scoring policy. Mathematics uses the public KBF domain's exact-match tolerance; existing references and checkpoints must be rebuilt.
 - Changed KBF audits to use the paper's fixed reference denominator: missing, malformed, non-finite, out-of-range, and valid-but-nonmatching answers from completed responses count as discrepancies. Only exhausted transport retries produce `UNDETERMINED`, and OpenAI Responses SSE bodies are decoded even when a peer streams despite `stream: false`.
 - Changed buyer discovery to load each seller's verifier attestations once and derive verification lifecycles for every advertised service. `DefaultRouter` excludes suspended services and deprioritizes flagged services during automatic selection, while explicit peer pins remain authoritative. `findPeer` and incremental background discovery use the same enrichment as full discovery.
-- Changed verifier configuration to accept evidence/reference directories, request timeout, trusted reference endpoint/model mapping, and bounded reference-build retry, request-budget, progress, concurrency, and adaptive-sizing controls.
+- Changed verifier configuration to accept evidence/reference directories, request timeout, trusted reference endpoint/model mapping, bounded audit concurrency, and bounded reference-build retry, request-budget, progress, concurrency, and adaptive-sizing controls.
 - Verifier reward claiming is fault-isolated per epoch, so one reverting epoch no longer blocks every later one.
 
 ### Fixed

@@ -255,6 +255,11 @@ test('loadConfig preserves and validates verifier settings', async () => {
       evidenceDir: './evidence',
       probeRequestTimeoutMs: 90_000,
       responseAuthWaitTimeoutMs: 35_000,
+      auditMaxConcurrentModels: 3,
+      auditMaxConcurrentPeersPerModel: 4,
+      auditMaxConcurrentBatches: 12,
+      auditMaxConcurrentBatchesPerPeer: 2,
+      auditPeerTimeoutMs: 180_000,
       contrastSelection: { inputWeight: 0.9, maxPriceRatio: 0.3, maxModels: 3 },
       referenceEndpoint,
       referenceMaxRequestsPerBuild: 500,
@@ -273,6 +278,11 @@ test('loadConfig preserves and validates verifier settings', async () => {
     assert.equal(config.verifier?.referencesDir, './refs');
     assert.equal(config.verifier?.banksDir, './banks');
     assert.equal(config.verifier?.responseAuthWaitTimeoutMs, 35_000);
+    assert.equal(config.verifier?.auditMaxConcurrentModels, 3);
+    assert.equal(config.verifier?.auditMaxConcurrentPeersPerModel, 4);
+    assert.equal(config.verifier?.auditMaxConcurrentBatches, 12);
+    assert.equal(config.verifier?.auditMaxConcurrentBatchesPerPeer, 2);
+    assert.equal(config.verifier?.auditPeerTimeoutMs, 180_000);
     assert.equal(config.verifier?.contrastSelection?.inputWeight, 0.9);
     assert.equal(config.verifier?.referenceEndpoint?.sourceId, 'trusted-reference-v1');
     assert.equal(config.verifier?.referenceMaxRequestsPerBuild, 500);

@@ -27,13 +27,15 @@ export function registerVerifierStatusCommand(verifier: Command): void {
       console.log(chalk.bold(`${status.state.toUpperCase()} — epoch ${status.epoch}`))
       console.log(`Run: ${status.runId}`)
       console.log(`Progress: ${status.modelsCompleted}/${status.modelsTotal} models, ${status.auditsCompleted} audits`)
+      console.log(`Active audits: ${status.activeAudits.length}; queued: ${status.queuedAudits}`)
       console.log(`Failures: ${status.failures}`)
       console.log(
         `Estimated cost: $${status.cost.estimatedCostUsd.toFixed(6)} `
         + `(${status.cost.totalTokens} tokens, ${status.cost.missingCostExchangeCount} unpriced exchanges)`,
       )
-      if (status.currentModel) console.log(`Current model: ${status.currentModel}`)
-      if (status.currentPeerId) console.log(`Current peer: ${status.currentPeerId}`)
+      for (const audit of status.activeAudits) {
+        console.log(`Active: ${audit.model} on ${audit.peerId}`)
+      }
       console.log(`Message: ${status.message}`)
     })
 }

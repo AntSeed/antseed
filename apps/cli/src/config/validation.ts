@@ -298,6 +298,8 @@ function validateBuyerVerification(
 // than silently accepting verifier typos.
 const VERIFIER_KEYS = new Set([
   'referencesDir', 'banksDir', 'evidenceDir', 'probeRequestTimeoutMs', 'responseAuthWaitTimeoutMs',
+  'auditMaxConcurrentModels', 'auditMaxConcurrentPeersPerModel',
+  'auditMaxConcurrentBatches', 'auditMaxConcurrentBatchesPerPeer', 'auditPeerTimeoutMs',
   'contrastSelection', 'referenceEndpoint',
   'referenceMaxRequestsPerBuild', 'referenceBatchRetryCount', 'referenceRetryBaseDelayMs',
   'referenceMaxNoProgressRounds', 'referenceMaxConcurrentRequests', 'referenceMaxConcurrentRequestsPerModel',
@@ -330,6 +332,11 @@ function validateVerifierConfig(
   const positiveInts: Array<[string, number | undefined]> = [
     ['probeRequestTimeoutMs', verifier.probeRequestTimeoutMs],
     ['responseAuthWaitTimeoutMs', verifier.responseAuthWaitTimeoutMs],
+    ['auditMaxConcurrentModels', verifier.auditMaxConcurrentModels],
+    ['auditMaxConcurrentPeersPerModel', verifier.auditMaxConcurrentPeersPerModel],
+    ['auditMaxConcurrentBatches', verifier.auditMaxConcurrentBatches],
+    ['auditMaxConcurrentBatchesPerPeer', verifier.auditMaxConcurrentBatchesPerPeer],
+    ['auditPeerTimeoutMs', verifier.auditPeerTimeoutMs],
     ['referenceMaxRequestsPerBuild', verifier.referenceMaxRequestsPerBuild],
     ['referenceRetryBaseDelayMs', verifier.referenceRetryBaseDelayMs],
     ['referenceMaxNoProgressRounds', verifier.referenceMaxNoProgressRounds],

@@ -50,9 +50,9 @@ export interface SellerProbeLedgerV1 {
   kind: 'antseed-kbf-seller-probe-ledger'
   model: string
   sellerPeerId: string
-  usedProbeIds: string[]
   assignments: Array<{
     auditId: string
+    runId: string
     epoch: string
     service: string
     referenceId: string
@@ -119,29 +119,32 @@ export async function reserveModelAuditReference(input: {
   model: string
   sellerPeerId: string
   service: string
+  runId: string
   epoch: string
+  allowProbeReuse?: boolean
   config?: VerifierCLIConfig
   now?: () => number
   shuffle?: <T>(values: readonly T[]) => T[]
 }): Promise<{ reference: KbfReferenceV1; auditId: string; ledgerPath: string }> {
   const path = bankPath(input.banksDir, input.model)
-  const lock = await acquirePidFileLock(join(dirname(path), '.reserve.lock'))
+  const ledgerPath = sellerLedgerPath(input.banksDir, input.model, input.sellerPeerId)
+  const lock = await acquirePidFileLock(`${ledgerPath}.lock`)
   try {
     const bank = await readRequiredBank(path, input.model)
-    const ledgerPath = sellerLedgerPath(input.banksDir, input.model, input.sellerPeerId)
     const ledger = await readJsonIfExists<SellerProbeLedgerV1>(ledgerPath) ?? {
       version: 1,
       kind: 'antseed-kbf-seller-probe-ledger',
       model: input.model,
       sellerPeerId: input.sellerPeerId,
-      usedProbeIds: [],
       assignments: [],
     }
     if (normalized(ledger.model) !== normalized(input.model)
       || normalized(ledger.sellerPeerId) !== normalized(input.sellerPeerId)) {
       throw new Error(`invalid seller probe ledger at ${ledgerPath}`)
     }
-    const used = new Set(ledger.usedProbeIds)
+    const used = new Set(ledger.assignments
+      .filter((assignment) => !input.allowProbeReuse || assignment.runId === input.runId)
+      .flatMap((assignment) => assignment.probeIds))
     const activeContrasts = new Set(bank.contrastModels.map(normalized))
     const available = bank.probes.filter((entry) => !used.has(entry.probe.id)
       && entry.distinguishingContrastModels.some((model) => activeContrasts.has(normalized(model))))
@@ -154,6 +157,7 @@ export async function reserveModelAuditReference(input: {
     const reservedAt = new Date(now).toISOString()
     const auditId = canonicalHashBytes32({
       domain: 'antseed-verifier-audit-reservation-v1',
+      runId: input.runId,
       epoch: input.epoch,
       model: normalized(input.model),
       sellerPeerId: normalized(input.sellerPeerId),
@@ -162,9 +166,9 @@ export async function reserveModelAuditReference(input: {
       reservedAt,
     })
     const probeIds = reference.probes.map((probe) => probe.id)
-    ledger.usedProbeIds.push(...probeIds)
     ledger.assignments.push({
       auditId,
+      runId: input.runId,
       epoch: input.epoch,
       service: input.service,
       referenceId: reference.referenceId,
