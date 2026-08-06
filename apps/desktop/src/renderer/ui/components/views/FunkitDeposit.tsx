@@ -5,15 +5,14 @@ import {
   FunkitProvider,
   useFunkitCheckout,
   useActiveTheme,
-  getDefaultChains,
-  getDefaultTransports,
   darkTheme,
   lightTheme,
   type FunkitConfig,
   type FunkitCheckoutConfig,
-  type FunkitWagmiConfig,
 } from '@funkit/connect';
-import { QueryClient } from '@tanstack/react-query';
+import { WagmiProvider, createConfig, http } from 'wagmi';
+import { base } from 'wagmi/chains';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { activeThemeMode, type ThemeMode } from '../../lib/theme';
 
 /**
@@ -40,20 +39,18 @@ type Props = {
   onError?: (message: string) => void;
 };
 
-// FunkitProvider only mounts its internal WagmiProvider + QueryClientProvider
-// when handed both a wagmi config and a query client (plus an initialChain to
-// resolve the chain id) — without them the SDK's hooks throw
-// WagmiProviderNotFoundError. Module-level singletons: one config/client for
-// the lifetime of the renderer, regardless of view remounts.
+// The SDK's hooks need a WagmiProvider above them (its own is only mounted
+// when handed a full FunkitWagmiConfig, which wires up the whole wallet
+// connector stack — WalletConnect, MetaMask SDK, …). The desktop app never
+// connects a wallet (showWalletConnect is off, no extensions exist), so we
+// mount our own minimal wagmi provider instead: Base + http transport, zero
+// connectors, keeping the connector code out of the bundle. Module-level
+// singletons: one config/client for the renderer's lifetime.
 const funkitQueryClient = new QueryClient();
-const funkitWagmiConfig: FunkitWagmiConfig = {
-  chains: getDefaultChains() as FunkitWagmiConfig['chains'],
-  transports: getDefaultTransports(),
-  // WalletConnect is never offered (showWalletConnect is off and no extension
-  // wallets exist in the desktop app), so no real WalletConnect Cloud project
-  // is registered — the config just requires a non-empty id.
-  projectId: 'antseed-desktop',
-};
+const funkitWagmiConfig = createConfig({
+  chains: [base],
+  transports: { [base.id]: http() },
+});
 
 // Both schemes must be handed over as a set: with a single theme object the
 // SDK derives light/dark for its icon assets from the OS scheme, which can
@@ -129,18 +126,20 @@ export default function FunkitDeposit(props: Props) {
   }), [props.apiKey, props.recipient]);
 
   return (
-    <FunkitProvider
-      funkitConfig={funkitConfig}
-      theme={funkitTheme}
-      modalSize="medium"
-      locale="en"
-      debug={import.meta.env.DEV}
-      initialChain={8453}
-      wagmiConfig={funkitWagmiConfig}
-      queryClient={funkitQueryClient}
-    >
-      <ThemeSync mode={mode} />
-      <DepositButton {...props} />
-    </FunkitProvider>
+    <WagmiProvider config={funkitWagmiConfig}>
+      <QueryClientProvider client={funkitQueryClient}>
+        <FunkitProvider
+          funkitConfig={funkitConfig}
+          theme={funkitTheme}
+          modalSize="medium"
+          locale="en"
+          debug={import.meta.env.DEV}
+          initialChain={8453}
+        >
+          <ThemeSync mode={mode} />
+          <DepositButton {...props} />
+        </FunkitProvider>
+      </QueryClientProvider>
+    </WagmiProvider>
   );
 }
