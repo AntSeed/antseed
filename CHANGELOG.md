@@ -15,6 +15,7 @@ This project uses selective package publishing. Each release entry lists the pub
 - The buyer attaches its latest SpendingAuth by default; the seller closes at whichever cumulative is higher (its own or the buyer's), so a seller that lost the last authorization can still be paid in full, and a buyer cannot use this path to settle below what it owes.
 - Added `antseed buyer channels close <channelId>` (with `--no-auth` and `--json`), which runs the request through a running `antseed buyer start` daemon's live seller connection via the new `/_antseed/channels/close` control-plane endpoint.
 - Added `AntseedNode.requestChannelClose(peerId, opts)` to `@antseed/node`, plus the `payments.cooperative-close.v1` capability advertised in discovery metadata and the connection handshake.
+- Desktop: new "Deposit with GoodDollar" option under More options in the Add Credits chooser. It opens GoodDollar's hosted AI-credits page in the browser with the buyer address and an EIP-712 `SetOperator` signature (authorizing GoodDollar's operator wallet at the buyer's current on-chain nonce), so their side can submit `setOperator()` and run the $G deposit without the buyer paying gas. URL and operator are overridable via `payments.gooddollar.{url,operator}` in the desktop config.
 
 ### Changed
 
