@@ -10,7 +10,7 @@ import {
   topicToInfoHash,
 } from "./dht-node.js";
 import type { PeerOffering } from "../types/capability.js";
-import type { DomainVerificationClaim, DomainVerificationMethod, GithubVerificationClaim, PeerMetadata, PeerVerifications, ProviderAnnouncement } from "./peer-metadata.js";
+import type { DomainVerificationClaim, DomainVerificationMethod, GithubVerificationClaim, PeerMetadata, PeerVerifications, ProviderAnnouncement, ServiceCapabilities } from "./peer-metadata.js";
 import { METADATA_VERSION } from "./peer-metadata.js";
 import {
   MAX_DOMAIN_LENGTH,
@@ -56,6 +56,7 @@ export interface AnnouncerConfig {
     serviceCategories?: Record<string, string[]>;
     serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
     serviceUnitBillingModels?: ServiceUnitBillingModelsV1;
+    serviceCapabilities?: Record<string, ServiceCapabilities>;
     maxConcurrency: number;
     /** Runtime availability predicate. Unavailable providers are omitted. */
     isAvailable?: () => boolean;
@@ -285,6 +286,10 @@ export class PeerAnnouncer {
         const normalizedServiceUnitBillingModels = this._normalizeServiceUnitBillingModels(p.serviceUnitBillingModels, p.services);
         if (normalizedServiceUnitBillingModels) {
           providerAnnouncement.serviceUnitBillingModels = normalizedServiceUnitBillingModels;
+        }
+        const normalizedServiceCapabilities = this._normalizeServiceCapabilities(p.serviceCapabilities, p.services);
+        if (normalizedServiceCapabilities) {
+          providerAnnouncement.serviceCapabilities = normalizedServiceCapabilities;
         }
         return providerAnnouncement;
       });
@@ -519,6 +524,30 @@ export class PeerAnnouncer {
         continue;
       }
       normalized[service] = Object.fromEntries(entries) as ServiceUnitBillingModelsV1[string];
+    }
+
+    return Object.keys(normalized).length > 0 ? normalized : undefined;
+  }
+
+  private _normalizeServiceCapabilities(
+    serviceCapabilities: Record<string, ServiceCapabilities> | undefined,
+    supportedServices: string[],
+  ): Record<string, ServiceCapabilities> | undefined {
+    if (!serviceCapabilities) {
+      return undefined;
+    }
+
+    const hasWildcardServices = supportedServices.length === 0;
+    const supportedServiceSet = new Set(supportedServices);
+    const normalized: Record<string, ServiceCapabilities> = {};
+    for (const [service, caps] of Object.entries(serviceCapabilities)) {
+      if (!hasWildcardServices && !supportedServiceSet.has(service)) {
+        continue;
+      }
+      if (!caps || typeof caps !== "object" || Object.keys(caps).length === 0) {
+        continue;
+      }
+      normalized[service] = caps;
     }
 
     return Object.keys(normalized).length > 0 ? normalized : undefined;

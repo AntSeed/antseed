@@ -197,6 +197,75 @@ describe('encodeMetadata / decodeMetadata', () => {
     expect(encodeMetadataForSigning(changed)).not.toEqual(encodeMetadataForSigning(original));
   });
 
+  it('round-trips v11 service capabilities and signs capability bytes', () => {
+    const original = makeMetadata({
+      version: SERVICE_UNIT_BILLING_METADATA_VERSION,
+      providers: [
+        {
+          provider: 'openai',
+          services: ['gpt-5.5', 'gpt-image-1'],
+          defaultPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+          serviceCapabilities: {
+            'gpt-5.5': {
+              contextWindow: 200_000,
+              maxOutputTokens: 16_384,
+              inputs: ['text', 'image'],
+              reasoning: true,
+              toolUse: false,
+            },
+            'gpt-image-1': {
+              inputs: ['text'],
+            },
+          },
+          maxConcurrency: 3,
+          currentLoad: 0,
+        },
+      ],
+    });
+    const decoded = decodeMetadata(encodeMetadata(original));
+    expect(decoded.providers[0]!.serviceCapabilities?.['gpt-5.5']).toEqual({
+      contextWindow: 200_000,
+      maxOutputTokens: 16_384,
+      inputs: ['text', 'image'],
+      reasoning: true,
+      toolUse: false,
+    });
+    expect(decoded.providers[0]!.serviceCapabilities?.['gpt-5.5']?.structuredOutput).toBeUndefined();
+    expect(decoded.providers[0]!.serviceCapabilities?.['gpt-image-1']).toEqual({ inputs: ['text'] });
+
+    const changed = makeMetadata({
+      ...original,
+      providers: [{
+        ...original.providers[0]!,
+        serviceCapabilities: {
+          ...original.providers[0]!.serviceCapabilities,
+          'gpt-5.5': { contextWindow: 128_000 },
+        },
+      }],
+    });
+    expect(encodeMetadataForSigning(changed)).not.toEqual(encodeMetadataForSigning(original));
+  });
+
+  it('excludes service capabilities from v10 metadata bytes', () => {
+    const original = makeMetadata({
+      version: 10,
+      providers: [
+        {
+          provider: 'openai',
+          services: ['gpt-5.5'],
+          defaultPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+          serviceCapabilities: { 'gpt-5.5': { contextWindow: 200_000 } },
+          maxConcurrency: 3,
+          currentLoad: 0,
+        },
+      ],
+    });
+
+    const decoded = decodeMetadata(encodeMetadata(original));
+    expect(decoded.version).toBe(10);
+    expect(decoded.providers[0]?.serviceCapabilities).toBeUndefined();
+  });
+
   it('excludes service unit billing models from v10 metadata bytes', () => {
     const original = makeMetadata({
       version: 10,

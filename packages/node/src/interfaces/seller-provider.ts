@@ -1,6 +1,7 @@
 import type { SerializedHttpRequest, SerializedHttpResponse, SerializedHttpResponseChunk } from '../types/http.js';
 import type { ServiceApiProtocol } from '../types/service-api.js';
 import type { ServiceUnitBillingModelsV1 } from '../types/billing.js';
+import type { ServiceCapabilities } from '../discovery/peer-metadata.js';
 
 export interface ProviderTokenPricingUsdPerMillion {
   inputUsdPerMillion: number;
@@ -47,6 +48,9 @@ export interface Provider {
 
   /** Optional per-service/protocol unit billing model support advertised via discovery metadata. */
   serviceUnitBillingModels?: ServiceUnitBillingModelsV1;
+
+  /** Optional per-service model capability hints advertised via discovery metadata. */
+  serviceCapabilities?: Record<string, ServiceCapabilities>;
 
   /** Maximum concurrent requests this provider can handle */
   maxConcurrency: number;

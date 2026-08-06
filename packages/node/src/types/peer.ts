@@ -1,6 +1,6 @@
 import type { ServiceApiProtocol } from "./service-api.js";
 import type { ServiceUnitBillingModelsV1 } from "./billing.js";
-import type { PeerMetadata } from "../discovery/peer-metadata.js";
+import type { PeerMetadata, ServiceCapabilities } from "../discovery/peer-metadata.js";
 import type { DomainVerificationResult } from "../discovery/domain-verification.js";
 import type { GithubVerificationResult } from "../discovery/github-verification.js";
 
@@ -50,6 +50,10 @@ export interface ProviderServiceUnitBillingModelMatrixEntry {
   services: ServiceUnitBillingModelsV1;
 }
 
+export interface ProviderServiceCapabilityMatrixEntry {
+  services: Record<string, ServiceCapabilities>;
+}
+
 export interface PeerVerificationResults {
   /** True when every announced external claim verified successfully. */
   verified: boolean;
@@ -92,6 +96,8 @@ export interface PeerInfo {
   providerServiceApiProtocols?: Record<string, ProviderServiceApiProtocolMatrixEntry>;
   /** Provider/service/protocol unit billing models announced by seller. */
   providerServiceUnitBillingModels?: Record<string, ProviderServiceUnitBillingModelMatrixEntry>;
+  /** Provider/service model capability hints announced by seller. */
+  providerServiceCapabilities?: Record<string, ProviderServiceCapabilityMatrixEntry>;
   /** Deterministic fallback default input price (USD per 1M tokens). */
   defaultInputUsdPerMillion?: number;
   /** Deterministic fallback default output price (USD per 1M tokens). */
