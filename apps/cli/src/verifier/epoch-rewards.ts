@@ -18,7 +18,7 @@ export interface EpochRewardSource {
 
 export function verifierRewardSource(
   verification: {
-    epochCredits(epoch: bigint, verifier: string): Promise<bigint>
+    epochCreditUsdMicros(epoch: bigint, verifier: string): Promise<bigint>
     pendingVerifierReward(epoch: bigint, verifier: string): Promise<bigint>
     claimVerifierReward(signer: AbstractSigner, epoch: bigint): Promise<string>
   },
@@ -26,7 +26,7 @@ export function verifierRewardSource(
   signer: AbstractSigner,
 ): EpochRewardSource {
   return {
-    credits: (epoch) => verification.epochCredits(epoch, address),
+    credits: (epoch) => verification.epochCreditUsdMicros(epoch, address),
     pending: (epoch) => verification.pendingVerifierReward(epoch, address),
     claim: (epoch) => verification.claimVerifierReward(signer, epoch),
   }

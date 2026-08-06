@@ -221,10 +221,10 @@ the run timestamps fall outside the recorded epoch window.
 Submission groups valid seller audits by model and sends one
 `submitVerificationBundle` transaction per model. Each transaction commits the
 expected epoch, total model-audit cost, one canonical bundle evidence hash, one
-requested-credit value, and an ordered list of seller agent IDs, service hashes,
-verdicts, and model-share BPS. Probe counts are not part of the contract ABI or
-events. Invalid or tampered seller artifacts are excluded before broadcast and
-listed with their reason in the bundle evidence.
+ordered list of seller agent IDs, service hashes, verdicts, and model-share BPS.
+Probe counts and a separate requested-credit value are not part of the contract
+ABI or events. Invalid or tampered seller artifacts are excluded before
+broadcast and listed with their reason in the bundle evidence.
 
 Verdicts map to `SAME = 1`, `DIFF = 2`, and `UNDETERMINED = 3`. All model shares
 currently submit as zero. In particular, a zero-share `DIFF` clears the existing
@@ -241,17 +241,21 @@ cost in `verification.db`; successful payment-disabled requests fall back to
 response telemetry, while failed requests without an accepted receipt add zero.
 USDC base units and USD micro-units are both six-decimal dollar values.
 
-One verifier credit represents one rounded-up whole dollar of accounted audit
-cost:
+One verifier credit represents exactly one dollar of accounted audit cost. The
+contract stores the credit weight in USD micro-units so fractional-dollar costs
+remain exact:
 
 ```text
-requestedCredits = ceil(totalAuditCostUsdMicros / 1_000_000)
+1 credit = 1 USD = 1_000_000 credit USD micros
+awardedCreditUsdMicros = min(totalAuditCostUsdMicros, remainingEpochAllowanceUsdMicros)
 ```
 
-Credits are accounting weights, not guaranteed dollar payouts. ANTS rewards
-remain pro-rata through the existing verifier reward pool, and the contract
-awards at most the remaining portion of the 100-credit verifier/epoch allowance.
-Zero-cost bundles request zero credits and are valid.
+For example, an audit costing `$1.20` contributes `1.20` credits, represented as
+`1_200_000` credit USD micros. Credits are accounting weights, not guaranteed
+dollar payouts. ANTS rewards remain pro-rata through the existing verifier
+reward pool. The per-verifier epoch allowance is 100 credits, represented as
+`100_000_000` credit USD micros. Zero-cost bundles receive zero credit and are
+valid; bundles above the remaining allowance still apply their seller results.
 
 Reference costs move through `unclaimed → reserved → claimed`. Submission
 reserves them atomically against the content-addressed bundle ID before

@@ -38,7 +38,6 @@ export interface SubmitVerificationBundleInput {
   expectedEpoch: number | bigint;
   totalAuditCostUsdMicros: number | bigint;
   evidenceHash: string;
-  requestedCredits: number;
   results: VerificationResultInput[];
 }
 
@@ -47,9 +46,8 @@ export interface VerificationBundleSubmittedEvent {
   verifier: string;
   epoch: bigint;
   totalAuditCostUsdMicros: bigint;
+  awardedCreditUsdMicros: bigint;
   evidenceHash: string;
-  requestedCredits: number;
-  awardedCredits: number;
   resultCount: number;
   blockNumber: number;
   logIndex: number;
@@ -72,25 +70,25 @@ export interface AttestationSubmittedEvent {
 
 export const VERIFICATION_ABI = [
   'function setVerifier(address verifier, bool approved) external',
-  'function setMaxCreditsPerVerifierPerEpoch(uint32 maximum) external',
-  'function submitVerificationBundle(bytes32 bundleId,uint256 expectedEpoch,uint64 totalAuditCostUsdMicros,bytes32 evidenceHash,uint32 requestedCredits,(uint256 agentId,bytes32 serviceHash,uint8 verdict,uint16 modelShareBps)[] results) external',
+  'function setMaxCreditUsdMicrosPerVerifierPerEpoch(uint64 maximum) external',
+  'function submitVerificationBundle(bytes32 bundleId,uint256 expectedEpoch,uint64 totalAuditCostUsdMicros,bytes32 evidenceHash,(uint256 agentId,bytes32 serviceHash,uint8 verdict,uint16 modelShareBps)[] results) external',
   'function isBundleSubmitted(bytes32 bundleId) external view returns (bool)',
   'function registry() external view returns (address)',
   'function emissionsGate() external view returns (address)',
   'function firstRewardedEpoch() external view returns (uint256)',
   'function approvedVerifiers(address verifier) external view returns (bool)',
-  'function maxCreditsPerVerifierPerEpoch() external view returns (uint32)',
-  'function epochCredits(uint256 epoch, address verifier) external view returns (uint256)',
-  'function epochTotalCredits(uint256 epoch) external view returns (uint256)',
+  'function maxCreditUsdMicrosPerVerifierPerEpoch() external view returns (uint64)',
+  'function epochCreditUsdMicros(uint256 epoch, address verifier) external view returns (uint256)',
+  'function epochTotalCreditUsdMicros(uint256 epoch) external view returns (uint256)',
   'function currentEpoch() external view returns (uint256)',
   'function agentPointsPenaltyBps(uint256 agentId) external view returns (uint16)',
   'function claimVerifierReward(uint256 epoch) external',
   'function settleEpochRemainder(uint256 epoch) external returns (uint256 burnedAmount,uint256 reserveAmount)',
   'function pendingVerifierReward(uint256 epoch,address verifier) external view returns (uint256)',
   'function verifierEpochBudget(uint256 epoch) external view returns (uint256)',
-  'function verifierEpochTotalCredits(uint256 epoch) external view returns (uint256)',
+  'function verifierEpochTotalCreditUsdMicros(uint256 epoch) external view returns (uint256)',
   'function epochRemainderSettled(uint256 epoch) external view returns (bool)',
-  'event VerificationBundleSubmitted(bytes32 indexed bundleId,address indexed verifier,uint256 indexed epoch,uint64 totalAuditCostUsdMicros,bytes32 evidenceHash,uint32 requestedCredits,uint32 awardedCredits,uint32 resultCount)',
+  'event VerificationBundleSubmitted(bytes32 indexed bundleId,address indexed verifier,uint256 indexed epoch,uint64 totalAuditCostUsdMicros,uint64 awardedCreditUsdMicros,bytes32 evidenceHash,uint32 resultCount)',
   'event VerificationResultSubmitted(bytes32 indexed bundleId,uint256 indexed agentId,bytes32 indexed serviceHash,uint8 verdict,uint16 modelShareBps)',
 ] as const;
 
@@ -128,8 +126,11 @@ export class VerifierClient extends BaseEvmClient {
     return this._execWrite(signer, VERIFICATION_ABI, 'setVerifier', getAddress(verifier), approved);
   }
 
-  async setMaxCreditsPerVerifierPerEpoch(signer: AbstractSigner, maximum: number): Promise<string> {
-    return this._execWrite(signer, VERIFICATION_ABI, 'setMaxCreditsPerVerifierPerEpoch', maximum);
+  async setMaxCreditUsdMicrosPerVerifierPerEpoch(
+    signer: AbstractSigner,
+    maximum: number | bigint,
+  ): Promise<string> {
+    return this._execWrite(signer, VERIFICATION_ABI, 'setMaxCreditUsdMicrosPerVerifierPerEpoch', BigInt(maximum));
   }
 
   async submitVerificationBundle(signer: AbstractSigner, input: SubmitVerificationBundleInput): Promise<string> {
@@ -141,7 +142,6 @@ export class VerifierClient extends BaseEvmClient {
       BigInt(input.expectedEpoch),
       BigInt(input.totalAuditCostUsdMicros),
       input.evidenceHash,
-      input.requestedCredits,
       input.results.map((result) => ({
         agentId: BigInt(result.agentId),
         serviceHash: result.serviceHash,
@@ -177,8 +177,8 @@ export class VerifierClient extends BaseEvmClient {
     return Boolean(await this._contract().getFunction('approvedVerifiers')(getAddress(verifier)));
   }
 
-  async maxCreditsPerVerifierPerEpoch(): Promise<number> {
-    return Number(await this._contract().getFunction('maxCreditsPerVerifierPerEpoch')());
+  async maxCreditUsdMicrosPerVerifierPerEpoch(): Promise<bigint> {
+    return BigInt(await this._contract().getFunction('maxCreditUsdMicrosPerVerifierPerEpoch')());
   }
 
   async currentEpoch(): Promise<bigint> {
@@ -204,12 +204,12 @@ export class VerifierClient extends BaseEvmClient {
     return { epoch, startedAt: Number(startedAt), endsAt: Number(endsAt) };
   }
 
-  async epochCredits(epoch: number | bigint, verifier: string): Promise<bigint> {
-    return BigInt(await this._contract().getFunction('epochCredits')(BigInt(epoch), getAddress(verifier)));
+  async epochCreditUsdMicros(epoch: number | bigint, verifier: string): Promise<bigint> {
+    return BigInt(await this._contract().getFunction('epochCreditUsdMicros')(BigInt(epoch), getAddress(verifier)));
   }
 
-  async epochTotalCredits(epoch: number | bigint): Promise<bigint> {
-    return BigInt(await this._contract().getFunction('epochTotalCredits')(BigInt(epoch)));
+  async epochTotalCreditUsdMicros(epoch: number | bigint): Promise<bigint> {
+    return BigInt(await this._contract().getFunction('epochTotalCreditUsdMicros')(BigInt(epoch)));
   }
 
   async agentPointsPenaltyBps(agentId: number | bigint): Promise<number> {
@@ -238,8 +238,8 @@ export class VerifierClient extends BaseEvmClient {
     return BigInt(await this._contract().getFunction('verifierEpochBudget')(BigInt(epoch)));
   }
 
-  async verifierEpochTotalCredits(epoch: number | bigint): Promise<bigint> {
-    return BigInt(await this._contract().getFunction('verifierEpochTotalCredits')(BigInt(epoch)));
+  async verifierEpochTotalCreditUsdMicros(epoch: number | bigint): Promise<bigint> {
+    return BigInt(await this._contract().getFunction('verifierEpochTotalCreditUsdMicros')(BigInt(epoch)));
   }
 
   async epochRemainderSettled(epoch: number | bigint): Promise<boolean> {
@@ -302,10 +302,9 @@ export class VerifierClient extends BaseEvmClient {
         verifier: getAddress(String(log.args.verifier ?? log.args[1])),
         epoch: BigInt(log.args.epoch ?? log.args[2]),
         totalAuditCostUsdMicros: BigInt(log.args.totalAuditCostUsdMicros ?? log.args[3]),
-        evidenceHash: String(log.args.evidenceHash ?? log.args[4]),
-        requestedCredits: Number(log.args.requestedCredits ?? log.args[5]),
-        awardedCredits: Number(log.args.awardedCredits ?? log.args[6]),
-        resultCount: Number(log.args.resultCount ?? log.args[7]),
+        awardedCreditUsdMicros: BigInt(log.args.awardedCreditUsdMicros ?? log.args[4]),
+        evidenceHash: String(log.args.evidenceHash ?? log.args[5]),
+        resultCount: Number(log.args.resultCount ?? log.args[6]),
         blockNumber: log.blockNumber,
         logIndex: log.index,
         transactionHash: log.transactionHash,

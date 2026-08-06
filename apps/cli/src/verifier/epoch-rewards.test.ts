@@ -45,7 +45,7 @@ test('verifierRewardSource binds verifier address and signer to the verification
   const signer = { label: 'signer' }
   const source = verifierRewardSource(
     {
-      epochCredits: async (...args: unknown[]) => { calls.push(['credits', ...args]); return 3n },
+      epochCreditUsdMicros: async (...args: unknown[]) => { calls.push(['credits', ...args]); return 3n },
       pendingVerifierReward: async (...args: unknown[]) => { calls.push(['pending', ...args]); return 9n },
       claimVerifierReward: async (...args: unknown[]) => { calls.push(['claim', ...args]); return '0xtx' },
     },

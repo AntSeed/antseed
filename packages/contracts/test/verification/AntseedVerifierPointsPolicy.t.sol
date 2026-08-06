@@ -110,7 +110,6 @@ contract AntseedVerifierPointsPolicyTest is Test {
             epoch,
             1_000_000,
             keccak256(abi.encode("evidence", auditId)),
-            1,
             results
         );
     }

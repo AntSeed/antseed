@@ -86,7 +86,6 @@ export interface ModelVerificationBundleEvidenceV1 {
   inferenceCostUsdMicros: string
   referenceCostUsdMicros: string
   totalAuditCostUsdMicros: string
-  requestedCredits: number
 }
 
 export interface PreparedModelVerificationBundle {
@@ -97,7 +96,6 @@ export interface PreparedModelVerificationBundle {
   evidence: ModelVerificationBundleEvidenceV1
   expectedEpoch: bigint
   totalAuditCostUsdMicros: bigint
-  requestedCredits: number
   results: VerificationResultInput[]
   referenceCostIds: string[]
 }
@@ -236,11 +234,6 @@ export async function prepareModelVerificationBundle(input: {
   if (totalAuditCostUsdMicros > 18_446_744_073_709_551_615n) {
     throw new Error(`model bundle cost exceeds uint64: ${totalAuditCostUsdMicros}`)
   }
-  const requestedCreditsBigInt = ceilDiv(totalAuditCostUsdMicros, 1_000_000n)
-  if (requestedCreditsBigInt > 4_294_967_295n) {
-    throw new Error(`requested credits exceed uint32: ${requestedCreditsBigInt}`)
-  }
-  const requestedCredits = Number(requestedCreditsBigInt)
   const evidence: ModelVerificationBundleEvidenceV1 = {
     version: 1,
     kind: 'antseed-model-verification-bundle',
@@ -261,7 +254,6 @@ export async function prepareModelVerificationBundle(input: {
     inferenceCostUsdMicros: inferenceCostUsdMicros.toString(),
     referenceCostUsdMicros: referenceCostUsdMicros.toString(),
     totalAuditCostUsdMicros: totalAuditCostUsdMicros.toString(),
-    requestedCredits,
   }
   if (contractResults.length > 64) {
     throw new Error(`model bundle has ${contractResults.length} results; maximum is 64`)
@@ -288,7 +280,6 @@ export async function prepareModelVerificationBundle(input: {
     evidence,
     expectedEpoch: BigInt(input.manifest.epoch),
     totalAuditCostUsdMicros,
-    requestedCredits,
     results: contractResults,
     referenceCostIds: input.referenceCosts.map((entry) => entry.costId),
   }
@@ -348,7 +339,6 @@ export async function readPreparedModelVerificationBundle(input: {
     evidence,
     expectedEpoch: BigInt(evidence.expectedEpoch),
     totalAuditCostUsdMicros: BigInt(evidence.totalAuditCostUsdMicros),
-    requestedCredits: evidence.requestedCredits,
     results,
     referenceCostIds: evidence.referenceCosts.map((entry) => entry.costId),
   }
@@ -449,10 +439,6 @@ function sumMicros(values: readonly string[]): bigint {
     if (parsed < 0n) throw new Error(`negative USD micro-cost: ${value}`)
     return total + parsed
   }, 0n)
-}
-
-function ceilDiv(value: bigint, divisor: bigint): bigint {
-  return value === 0n ? 0n : (value + divisor - 1n) / divisor
 }
 
 function normalized(value: string): string {

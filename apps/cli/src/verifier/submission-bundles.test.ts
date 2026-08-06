@@ -218,7 +218,7 @@ test('model bundles account costs once and derive deterministic IDs', async () =
     assert.equal(first.evidence.inferenceCostUsdMicros, '1450000')
     assert.equal(first.evidence.referenceCostUsdMicros, '600000')
     assert.equal(first.evidence.totalAuditCostUsdMicros, '2050000')
-    assert.equal(first.requestedCredits, 3)
+    assert.equal(first.totalAuditCostUsdMicros, 2_050_000n)
     assert.equal(first.evidence.results[0]!.costSources[0]!.source, 'buyer-validated-request-cost')
     assert.equal(first.evidence.results[1]!.costSources[0]!.source, 'response-telemetry')
     assert.match(first.evidence.excludedAudits[0]!.reason, /self-audit/)

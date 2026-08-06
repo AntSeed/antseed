@@ -24,24 +24,23 @@ interface IAntseedVerification is IAntseedPointsPolicy {
     function emissionsGate() external view returns (IAntseedEmissionsGate);
     function firstRewardedEpoch() external view returns (uint256);
     function approvedVerifiers(address verifier) external view returns (bool);
-    function maxCreditsPerVerifierPerEpoch() external view returns (uint32);
+    function maxCreditUsdMicrosPerVerifierPerEpoch() external view returns (uint64);
 
     function setVerifier(address verifier, bool approved) external;
-    function setMaxCreditsPerVerifierPerEpoch(uint32 maximum) external;
+    function setMaxCreditUsdMicrosPerVerifierPerEpoch(uint64 maximum) external;
 
     function submitVerificationBundle(
         bytes32 bundleId,
         uint256 expectedEpoch,
         uint64 totalAuditCostUsdMicros,
         bytes32 evidenceHash,
-        uint32 requestedCredits,
         VerificationResult[] calldata results
     ) external;
 
     function isBundleSubmitted(bytes32 bundleId) external view returns (bool);
 
-    function epochCredits(uint256 epoch, address verifier) external view returns (uint256);
-    function epochTotalCredits(uint256 epoch) external view returns (uint256);
+    function epochCreditUsdMicros(uint256 epoch, address verifier) external view returns (uint256);
+    function epochTotalCreditUsdMicros(uint256 epoch) external view returns (uint256);
     function currentEpoch() external view returns (uint256);
     function agentPointsPenaltyBps(uint256 agentId) external view returns (uint16);
 
@@ -49,6 +48,6 @@ interface IAntseedVerification is IAntseedPointsPolicy {
     function settleEpochRemainder(uint256 epoch) external returns (uint256 burnedAmount, uint256 reserveAmount);
     function pendingVerifierReward(uint256 epoch, address verifier) external view returns (uint256);
     function verifierEpochBudget(uint256 epoch) external view returns (uint256);
-    function verifierEpochTotalCredits(uint256 epoch) external view returns (uint256);
+    function verifierEpochTotalCreditUsdMicros(uint256 epoch) external view returns (uint256);
     function epochRemainderSettled(uint256 epoch) external view returns (bool);
 }

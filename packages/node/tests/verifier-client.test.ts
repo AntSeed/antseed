@@ -30,7 +30,6 @@ describe('VerifierClient combined ABI', () => {
       expectedEpoch: 7,
       totalAuditCostUsdMicros: 1_500_000,
       evidenceHash: '0x' + '99'.repeat(32),
-      requestedCredits: 2,
       results: [{
         agentId: 9,
         serviceHash: SERVICE_HASH,
@@ -48,7 +47,6 @@ describe('VerifierClient combined ABI', () => {
       7n,
       1_500_000n,
       input.evidenceHash,
-      2,
       [{ agentId: 9n, serviceHash: SERVICE_HASH, verdict: VERIFIER_VERDICT_DIFF, modelShareBps: 2500 }],
     );
   });
@@ -91,9 +89,8 @@ describe('VerifierClient combined ABI', () => {
       'verifier',
       'epoch',
       'totalAuditCostUsdMicros',
+      'awardedCreditUsdMicros',
       'evidenceHash',
-      'requestedCredits',
-      'awardedCredits',
       'resultCount',
     ]);
     const result = iface.getEvent('VerificationResultSubmitted');

@@ -195,8 +195,9 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
     assert.match(partialSubmit.output, /Submitted: 2; skipped: 0; failed: 1/)
     assert.equal((await createVerifierClient(rpcUrl, verificationAddress).queryBundles()).length, 2)
     assert.equal(
-      await createVerifierClient(rpcUrl, verificationAddress).epochCredits(epochWindow.epoch, VERIFIER_ADDRESS),
-      3n,
+      await createVerifierClient(rpcUrl, verificationAddress)
+        .epochCreditUsdMicros(epochWindow.epoch, VERIFIER_ADDRESS),
+      1_400_000n,
     )
 
     await writeFile(modelB.audits[0]!.path, originalModelBEvidence)
@@ -210,14 +211,11 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
     const bundles = await readClient.queryBundles()
     assert.equal(bundles.length, 3)
     const costs = new Map(bundles.map((event) => [event.totalAuditCostUsdMicros.toString(), event]))
-    assert.equal(costs.get('1200000')?.requestedCredits, 2)
-    assert.equal(costs.get('1200000')?.awardedCredits, 2)
-    assert.equal(costs.get('200000')?.requestedCredits, 1)
-    assert.equal(costs.get('200000')?.awardedCredits, 1)
-    assert.equal(costs.get('100400000')?.requestedCredits, 101)
-    assert.equal(costs.get('100400000')?.awardedCredits, 97)
-    assert.equal(await readClient.epochCredits(epochWindow.epoch, VERIFIER_ADDRESS), 100n)
-    assert.equal(await readClient.epochTotalCredits(epochWindow.epoch), 100n)
+    assert.equal(costs.get('1200000')?.awardedCreditUsdMicros, 1_200_000n)
+    assert.equal(costs.get('200000')?.awardedCreditUsdMicros, 200_000n)
+    assert.equal(costs.get('100400000')?.awardedCreditUsdMicros, 98_600_000n)
+    assert.equal(await readClient.epochCreditUsdMicros(epochWindow.epoch, VERIFIER_ADDRESS), 100_000_000n)
+    assert.equal(await readClient.epochTotalCreditUsdMicros(epochWindow.epoch), 100_000_000n)
 
     const diff = await readClient.queryAttestations(2n)
     assert.equal(diff.length, 1)

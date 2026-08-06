@@ -14,7 +14,6 @@ import { IERC8004Registry } from "../interfaces/IERC8004Registry.sol";
 
 contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGuard {
     uint256 public constant BPS_DENOMINATOR = 10_000;
-    uint256 public constant USD_MICROS_PER_CREDIT = 1_000_000;
     uint256 public constant MAX_RESULTS_PER_BUNDLE = 64;
 
     IAntseedRegistry public immutable override registry;
@@ -22,26 +21,26 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
     uint256 public immutable override firstRewardedEpoch;
 
     mapping(address verifier => bool approved) public override approvedVerifiers;
-    uint32 public override maxCreditsPerVerifierPerEpoch = 100;
+    uint64 public override maxCreditUsdMicrosPerVerifierPerEpoch = 100_000_000;
 
     mapping(bytes32 bundleId => bool submitted) private _submittedBundles;
     mapping(uint256 agentId => uint16 penaltyBps) private _agentPointsPenaltyBps;
 
-    mapping(uint256 epoch => mapping(address verifier => uint256 credits)) public override epochCredits;
-    mapping(uint256 epoch => uint256 credits) public override epochTotalCredits;
+    mapping(uint256 epoch => mapping(address verifier => uint256 creditUsdMicros))
+        public override epochCreditUsdMicros;
+    mapping(uint256 epoch => uint256 creditUsdMicros) public override epochTotalCreditUsdMicros;
 
     mapping(uint256 epoch => bool settled) public override epochRemainderSettled;
 
     event VerifierApprovalSet(address indexed verifier, bool approved);
-    event MaxCreditsPerVerifierPerEpochSet(uint32 maximum);
+    event MaxCreditUsdMicrosPerVerifierPerEpochSet(uint64 maximum);
     event VerificationBundleSubmitted(
         bytes32 indexed bundleId,
         address indexed verifier,
         uint256 indexed epoch,
         uint64 totalAuditCostUsdMicros,
+        uint64 awardedCreditUsdMicros,
         bytes32 evidenceHash,
-        uint32 requestedCredits,
-        uint32 awardedCredits,
         uint32 resultCount
     );
     event VerificationResultSubmitted(
@@ -65,7 +64,6 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
     error EmptyBundle();
     error TooManyResults();
     error DuplicateResult();
-    error InvalidCredits();
     error UnknownAgent();
     error SelfAudit();
     error PreEffectiveEpoch();
@@ -93,10 +91,10 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
         emit VerifierApprovalSet(verifier, approved);
     }
 
-    function setMaxCreditsPerVerifierPerEpoch(uint32 maximum) external override onlyOwner {
+    function setMaxCreditUsdMicrosPerVerifierPerEpoch(uint64 maximum) external override onlyOwner {
         if (maximum == 0) revert InvalidValue();
-        maxCreditsPerVerifierPerEpoch = maximum;
-        emit MaxCreditsPerVerifierPerEpochSet(maximum);
+        maxCreditUsdMicrosPerVerifierPerEpoch = maximum;
+        emit MaxCreditUsdMicrosPerVerifierPerEpochSet(maximum);
     }
 
     function submitVerificationBundle(
@@ -104,17 +102,12 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
         uint256 expectedEpoch,
         uint64 totalAuditCostUsdMicros,
         bytes32 evidenceHash,
-        uint32 requestedCredits,
         VerificationResult[] calldata results
     ) external override onlyApprovedVerifier nonReentrant {
         if (bundleId == bytes32(0) || evidenceHash == bytes32(0)) revert InvalidValue();
         if (_submittedBundles[bundleId]) revert BundleAlreadyExists();
         if (results.length == 0) revert EmptyBundle();
         if (results.length > MAX_RESULTS_PER_BUNDLE) revert TooManyResults();
-
-        uint256 expectedCredits =
-            (uint256(totalAuditCostUsdMicros) + USD_MICROS_PER_CREDIT - 1) / USD_MICROS_PER_CREDIT;
-        if (expectedCredits > type(uint32).max || requestedCredits != expectedCredits) revert InvalidCredits();
 
         for (uint256 i = 0; i < results.length; i++) {
             VerificationResult calldata result = results[i];
@@ -132,16 +125,16 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
         if (epoch != expectedEpoch) revert EpochChanged();
         _submittedBundles[bundleId] = true;
 
-        uint256 currentCredits = epochCredits[epoch][msg.sender];
-        uint256 remainingCredits = currentCredits < maxCreditsPerVerifierPerEpoch
-            ? uint256(maxCreditsPerVerifierPerEpoch) - currentCredits
+        uint256 currentCreditUsdMicros = epochCreditUsdMicros[epoch][msg.sender];
+        uint256 remainingCreditUsdMicros = currentCreditUsdMicros < maxCreditUsdMicrosPerVerifierPerEpoch
+            ? uint256(maxCreditUsdMicrosPerVerifierPerEpoch) - currentCreditUsdMicros
             : 0;
-        uint32 awardedCredits = requestedCredits < remainingCredits
-            ? requestedCredits
-            : uint32(remainingCredits);
-        if (awardedCredits != 0) {
-            epochCredits[epoch][msg.sender] = currentCredits + awardedCredits;
-            epochTotalCredits[epoch] += awardedCredits;
+        uint64 awardedCreditUsdMicros = totalAuditCostUsdMicros < remainingCreditUsdMicros
+            ? totalAuditCostUsdMicros
+            : uint64(remainingCreditUsdMicros);
+        if (awardedCreditUsdMicros != 0) {
+            epochCreditUsdMicros[epoch][msg.sender] = currentCreditUsdMicros + awardedCreditUsdMicros;
+            epochTotalCreditUsdMicros[epoch] += awardedCreditUsdMicros;
         }
 
         emit VerificationBundleSubmitted(
@@ -149,9 +142,8 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
             msg.sender,
             epoch,
             totalAuditCostUsdMicros,
+            awardedCreditUsdMicros,
             evidenceHash,
-            requestedCredits,
-            awardedCredits,
             uint32(results.length)
         );
         for (uint256 i = 0; i < results.length; i++) {
@@ -196,14 +188,14 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
     function claimVerifierReward(uint256 epoch) external override nonReentrant {
         if (epoch < firstRewardedEpoch) revert PreEffectiveEpoch();
         if (epoch >= currentEpoch()) revert EpochNotFinalized();
-        uint256 credits = epochCredits[epoch][msg.sender];
-        if (credits == 0) revert NothingToClaim();
+        uint256 creditUsdMicros = epochCreditUsdMicros[epoch][msg.sender];
+        if (creditUsdMicros == 0) revert NothingToClaim();
         uint256 budget = emissionsGate.controllerEpochBudget(address(this), epoch);
-        uint256 totalCredits = epochTotalCredits[epoch];
-        if (totalCredits == 0) revert NothingToClaim();
+        uint256 totalCreditUsdMicros = epochTotalCreditUsdMicros[epoch];
+        if (totalCreditUsdMicros == 0) revert NothingToClaim();
 
-        uint256 amount = Math.mulDiv(budget, credits, totalCredits);
-        epochCredits[epoch][msg.sender] = 0;
+        uint256 amount = Math.mulDiv(budget, creditUsdMicros, totalCreditUsdMicros);
+        epochCreditUsdMicros[epoch][msg.sender] = 0;
         if (amount != 0) emissionsGate.claim(epoch, msg.sender, amount);
         emit VerifierRewardClaimed(epoch, msg.sender, amount);
     }
@@ -218,8 +210,8 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
         if (epoch >= currentEpoch()) revert EpochNotFinalized();
         if (epochRemainderSettled[epoch]) revert AlreadyClaimed();
         uint256 budget = emissionsGate.controllerEpochBudget(address(this), epoch);
-        uint256 totalCredits = epochTotalCredits[epoch];
-        if (totalCredits != 0 || budget == 0) revert NothingToSettle();
+        uint256 totalCreditUsdMicros = epochTotalCreditUsdMicros[epoch];
+        if (totalCreditUsdMicros != 0 || budget == 0) revert NothingToSettle();
 
         epochRemainderSettled[epoch] = true;
         (burnedAmount, reserveAmount) = emissionsGate.claimRemainder(epoch, emissionsGate.emissionsReserve(), budget);
@@ -228,19 +220,19 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
 
     function pendingVerifierReward(uint256 epoch, address verifier) external view override returns (uint256) {
         if (epoch < firstRewardedEpoch || epoch >= currentEpoch()) return 0;
-        uint256 credits = epochCredits[epoch][verifier];
-        if (credits == 0) return 0;
-        uint256 totalCredits = verifierEpochTotalCredits(epoch);
-        if (totalCredits == 0) return 0;
-        return Math.mulDiv(verifierEpochBudget(epoch), credits, totalCredits);
+        uint256 creditUsdMicros = epochCreditUsdMicros[epoch][verifier];
+        if (creditUsdMicros == 0) return 0;
+        uint256 totalCreditUsdMicros = verifierEpochTotalCreditUsdMicros(epoch);
+        if (totalCreditUsdMicros == 0) return 0;
+        return Math.mulDiv(verifierEpochBudget(epoch), creditUsdMicros, totalCreditUsdMicros);
     }
 
     function verifierEpochBudget(uint256 epoch) public view override returns (uint256) {
         return emissionsGate.controllerEpochBudget(address(this), epoch);
     }
 
-    function verifierEpochTotalCredits(uint256 epoch) public view override returns (uint256) {
-        return epochTotalCredits[epoch];
+    function verifierEpochTotalCreditUsdMicros(uint256 epoch) public view override returns (uint256) {
+        return epochTotalCreditUsdMicros[epoch];
     }
 
     function _resolveAgentOwner(uint256 agentId) private view returns (address) {

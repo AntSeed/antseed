@@ -37,7 +37,7 @@ interface SubmitOptions {
 interface PreparedSubmission {
   bundle: PreparedModelVerificationBundle
   alreadySubmitted: boolean
-  expectedAwardedCredits: number
+  expectedAwardedCreditUsdMicros: bigint
 }
 
 interface PreparationFailure {
@@ -66,12 +66,12 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
       const rpcOverrides = options.rpcUrl ? { rpcUrl: String(options.rpcUrl) } : {}
       const verifierClient = createVerifierClient(config, rpcOverrides)
       const { identity, address } = await loadCryptoContext(globalOptions.dataDir)
-      const [window, network, approved, maxCredits, creditsBefore] = await Promise.all([
+      const [window, network, approved, maxCreditUsdMicros, creditUsdMicrosBefore] = await Promise.all([
         verifierClient.currentEpochWindow(),
         verifierClient.provider.getNetwork(),
         verifierClient.approvedVerifier(address),
-        verifierClient.maxCreditsPerVerifierPerEpoch(),
-        verifierClient.epochCredits(BigInt(manifest.epoch), address),
+        verifierClient.maxCreditUsdMicrosPerVerifierPerEpoch(),
+        verifierClient.epochCreditUsdMicros(BigInt(manifest.epoch), address),
       ])
       validateRunEpoch(manifest, window)
       if (!approved) throw new Error(`verifier wallet ${address} is not approved by the verification contract`)
@@ -94,7 +94,9 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
       try {
         const prepared: PreparedSubmission[] = []
         const preparationFailures: PreparationFailure[] = []
-        let remainingPreviewCredits = Math.max(0, maxCredits - safeNumber(creditsBefore, 'epoch credits'))
+        let remainingPreviewCreditUsdMicros = maxCreditUsdMicros > creditUsdMicrosBefore
+          ? maxCreditUsdMicros - creditUsdMicrosBefore
+          : 0n
         for (const model of manifest.modelOrder) {
           const modelManifest = manifest.models.find((entry) => normalized(entry.model) === normalized(model))
           if (!modelManifest) {
@@ -121,11 +123,11 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
               })
             if (bundle.results.length === 0) throw new Error('no valid seller results remain after preflight validation')
             const alreadySubmitted = await verifierClient.isBundleSubmitted(bundle.bundleId)
-            const expectedAwardedCredits = alreadySubmitted
-              ? 0
-              : Math.min(bundle.requestedCredits, remainingPreviewCredits)
-            if (!alreadySubmitted) remainingPreviewCredits -= expectedAwardedCredits
-            prepared.push({ bundle, alreadySubmitted, expectedAwardedCredits })
+            const expectedAwardedCreditUsdMicros = alreadySubmitted
+              ? 0n
+              : minBigInt(bundle.totalAuditCostUsdMicros, remainingPreviewCreditUsdMicros)
+            if (!alreadySubmitted) remainingPreviewCreditUsdMicros -= expectedAwardedCreditUsdMicros
+            prepared.push({ bundle, alreadySubmitted, expectedAwardedCreditUsdMicros })
           } catch (error) {
             preparationFailures.push({ model, error: asError(error) })
           }
@@ -147,13 +149,11 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
         let skippedBundles = 0
         let submittedSellerResults = 0
         let totalAuditCostUsdMicros = 0n
-        let requestedCredits = 0
-        let awardedCredits = 0
+        let awardedCreditUsdMicros = 0n
 
         for (const item of prepared) {
           const { bundle } = item
           totalAuditCostUsdMicros += bundle.totalAuditCostUsdMicros
-          requestedCredits += bundle.requestedCredits
           const now = new Date().toISOString()
           try {
             if (item.alreadySubmitted) {
@@ -166,7 +166,7 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
               })
               ledger.models[bundle.model] = ledgerEntry(bundle, {
                 status: 'skipped',
-                awardedCredits: event.awardedCredits,
+                awardedCreditUsdMicros: event.awardedCreditUsdMicros.toString(),
                 transactionHash: event.transactionHash,
                 blockNumber: event.blockNumber,
                 error: null,
@@ -174,7 +174,7 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
               })
               await writeSubmissionLedger(ledgerPath, ledger)
               skippedBundles += 1
-              awardedCredits += event.awardedCredits
+              awardedCreditUsdMicros += event.awardedCreditUsdMicros
               submittedSellerResults += bundle.results.length
               console.log(chalk.dim(`${bundle.model}: bundle already submitted; skipping broadcast`))
               continue
@@ -183,7 +183,7 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
             await writeModelVerificationBundleEvidence(bundle)
             ledger.models[bundle.model] = ledgerEntry(bundle, {
               status: 'pending',
-              awardedCredits: null,
+              awardedCreditUsdMicros: null,
               transactionHash: null,
               blockNumber: null,
               error: null,
@@ -202,7 +202,6 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
               expectedEpoch: bundle.expectedEpoch,
               totalAuditCostUsdMicros: bundle.totalAuditCostUsdMicros,
               evidenceHash: bundle.evidenceHash,
-              requestedCredits: bundle.requestedCredits,
               results: bundle.results,
             })
             const event = await requireBundleEvent(verifierClient, bundle.bundleId)
@@ -214,7 +213,7 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
             })
             ledger.models[bundle.model] = ledgerEntry(bundle, {
               status: 'submitted',
-              awardedCredits: event.awardedCredits,
+              awardedCreditUsdMicros: event.awardedCreditUsdMicros.toString(),
               transactionHash,
               blockNumber: event.blockNumber,
               error: null,
@@ -223,16 +222,17 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
             await writeSubmissionLedger(ledgerPath, ledger)
             successfulBundles += 1
             submittedSellerResults += bundle.results.length
-            awardedCredits += event.awardedCredits
+            awardedCreditUsdMicros += event.awardedCreditUsdMicros
             console.log(chalk.green(
               `${bundle.model}: submitted ${bundle.results.length} seller result(s), `
-              + `${event.awardedCredits}/${bundle.requestedCredits} credit(s) awarded (${transactionHash})`,
+              + `${formatCredits(event.awardedCreditUsdMicros)}/${formatCredits(bundle.totalAuditCostUsdMicros)} `
+              + `credit(s) awarded (${transactionHash})`,
             ))
           } catch (error) {
             const failure = asError(error)
             ledger.models[bundle.model] = ledgerEntry(bundle, {
               status: 'failed',
-              awardedCredits: null,
+              awardedCreditUsdMicros: null,
               transactionHash: ledger.models[bundle.model]?.transactionHash ?? null,
               blockNumber: null,
               error: failure.message,
@@ -247,21 +247,28 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
         for (const failure of preparationFailures) {
           console.warn(chalk.yellow(`${failure.model}: preflight failed: ${failure.error.message}`))
         }
-        const creditsAfter = await verifierClient.epochCredits(BigInt(manifest.epoch), address)
-        const remainingAllowance = Math.max(0, maxCredits - safeNumber(creditsAfter, 'epoch credits'))
-        const costNotCredited = prepared.reduce((total, item) => {
+        const creditUsdMicrosAfter = await verifierClient.epochCreditUsdMicros(BigInt(manifest.epoch), address)
+        const remainingAllowanceUsdMicros = maxCreditUsdMicros > creditUsdMicrosAfter
+          ? maxCreditUsdMicros - creditUsdMicrosAfter
+          : 0n
+        const costNotCreditedUsdMicros = prepared.reduce((total, item) => {
           const entry = ledger.models[item.bundle.model]
-          const awarded = entry?.awardedCredits ?? 0
-          return total + Math.max(0, item.bundle.requestedCredits - awarded)
-        }, 0)
+          const awarded = entry?.awardedCreditUsdMicros == null ? 0n : BigInt(entry.awardedCreditUsdMicros)
+          return total + (item.bundle.totalAuditCostUsdMicros > awarded
+            ? item.bundle.totalAuditCostUsdMicros - awarded
+            : 0n)
+        }, 0n)
         console.log(chalk.bold('Verification bundle submission summary'))
         console.log(`  Model bundles: ${prepared.length + preparationFailures.length}`)
         console.log(`  Submitted: ${successfulBundles}; skipped: ${skippedBundles}; failed: ${failedBundles}`)
         console.log(`  Seller results submitted: ${submittedSellerResults}`)
-        console.log(`  Total audit cost: ${formatUsdMicros(totalAuditCostUsdMicros)}`)
-        console.log(`  Requested credits: ${requestedCredits}; awarded credits: ${awardedCredits}`)
-        console.log(`  Epoch credits: ${creditsBefore} before, ${creditsAfter} after; ${remainingAllowance} remaining`)
-        console.log(`  Cost not credited because of epoch cap: ${costNotCredited} credit(s)`)
+        console.log(`  Total audit cost: ${formatUsdMicros(totalAuditCostUsdMicros)} (${formatCredits(totalAuditCostUsdMicros)} credits)`)
+        console.log(`  Awarded credit after epoch cap: ${formatCredits(awardedCreditUsdMicros)}`)
+        console.log(
+          `  Epoch credit balance: ${formatCredits(creditUsdMicrosBefore)} before, `
+          + `${formatCredits(creditUsdMicrosAfter)} after; ${formatCredits(remainingAllowanceUsdMicros)} remaining`,
+        )
+        console.log(`  Audit cost not credited because of epoch cap: ${formatUsdMicros(costNotCreditedUsdMicros)}`)
         console.log(chalk.dim(`Submission ledger: ${ledgerPath}`))
         if (failedBundles > 0) process.exitCode = 1
       } finally {
@@ -272,7 +279,7 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
 
 function printPreview(prepared: PreparedSubmission[], failures: PreparationFailure[]): void {
   const table = new Table({
-    head: ['Model', 'Results', 'SAME', 'DIFF', 'UNDET', 'Inference', 'Reference', 'Total', 'Credits', 'Award'],
+    head: ['Model', 'Results', 'SAME', 'DIFF', 'UNDET', 'Inference', 'Reference', 'Audit Cost', 'Expected Award'],
   })
   for (const item of prepared) {
     const verdictCounts = item.bundle.evidence.results.reduce((counts, result) => {
@@ -288,12 +295,11 @@ function printPreview(prepared: PreparedSubmission[], failures: PreparationFailu
       formatUsdMicros(BigInt(item.bundle.evidence.inferenceCostUsdMicros)),
       formatUsdMicros(BigInt(item.bundle.evidence.referenceCostUsdMicros)),
       formatUsdMicros(item.bundle.totalAuditCostUsdMicros),
-      item.bundle.requestedCredits,
-      item.alreadySubmitted ? 'already submitted' : item.expectedAwardedCredits,
+      item.alreadySubmitted ? 'already submitted' : formatCredits(item.expectedAwardedCreditUsdMicros),
     ])
   }
   for (const failure of failures) {
-    table.push([failure.model, 'BLOCKED', '—', '—', '—', '—', '—', '—', '—', failure.error.message])
+    table.push([failure.model, 'BLOCKED', '—', '—', '—', '—', '—', '—', failure.error.message])
   }
   console.log(table.toString())
 }
@@ -325,7 +331,7 @@ async function requireBundleEvent(
 function ledgerEntry(
   bundle: PreparedModelVerificationBundle,
   state: Pick<ModelSubmissionLedgerEntryV1,
-    'status' | 'awardedCredits' | 'transactionHash' | 'blockNumber' | 'error' | 'lastAttemptAt'>,
+    'status' | 'awardedCreditUsdMicros' | 'transactionHash' | 'blockNumber' | 'error' | 'lastAttemptAt'>,
 ): ModelSubmissionLedgerEntryV1 {
   return {
     model: bundle.model,
@@ -337,7 +343,6 @@ function ledgerEntry(
     inferenceCostUsdMicros: bundle.evidence.inferenceCostUsdMicros,
     referenceCostUsdMicros: bundle.evidence.referenceCostUsdMicros,
     totalAuditCostUsdMicros: bundle.totalAuditCostUsdMicros.toString(),
-    requestedCredits: bundle.requestedCredits,
     referenceCostIds: bundle.referenceCostIds,
     ...state,
   }
@@ -395,15 +400,20 @@ function validateRunEpoch(
   }
 }
 
-function safeNumber(value: bigint, label: string): number {
-  if (value > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error(`${label} exceeds safe integer range`)
-  return Number(value)
-}
-
 function formatUsdMicros(value: bigint): string {
   const whole = value / 1_000_000n
   const fraction = (value % 1_000_000n).toString().padStart(6, '0')
   return `$${whole}.${fraction}`
+}
+
+function formatCredits(value: bigint): string {
+  const whole = value / 1_000_000n
+  const fraction = (value % 1_000_000n).toString().padStart(6, '0')
+  return `${whole}.${fraction}`
+}
+
+function minBigInt(left: bigint, right: bigint): bigint {
+  return left < right ? left : right
 }
 
 function normalized(value: string): string {

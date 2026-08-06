@@ -46,8 +46,8 @@ contract AntseedVerifierRewardsTest is Test {
     function test_claimsProRataVerifierOnlyPool() public {
         uint256 rewardedEpoch = verification.firstRewardedEpoch();
         _warpToEpoch(rewardedEpoch);
-        _submit(verifierA, _register(address(0xCAFE)), keccak256("a"), 1);
-        _submit(verifierB, _register(address(0xD00D)), keccak256("b"), 2);
+        _submit(verifierA, _register(address(0xCAFE)), keccak256("a"), 1_000_000);
+        _submit(verifierB, _register(address(0xD00D)), keccak256("b"), 2_000_000);
 
         uint256 budget = verification.verifierEpochBudget(rewardedEpoch);
         _warpToEpoch(rewardedEpoch + 1);
@@ -64,7 +64,7 @@ contract AntseedVerifierRewardsTest is Test {
         vm.prank(verifierA);
         vm.expectRevert(AntseedVerification.NothingToClaim.selector);
         verification.claimVerifierReward(rewardedEpoch);
-        assertEq(verification.epochCredits(rewardedEpoch, verifierA), 0);
+        assertEq(verification.epochCreditUsdMicros(rewardedEpoch, verifierA), 0);
     }
 
     function test_zeroCreditEpochCanSettleRemainder() public {
@@ -78,7 +78,7 @@ contract AntseedVerifierRewardsTest is Test {
     function test_outstandingRewardRemainsClaimableInLaterEpoch() public {
         uint256 rewardedEpoch = verification.firstRewardedEpoch();
         _warpToEpoch(rewardedEpoch);
-        _submit(verifierA, _register(address(0xCAFE)), keccak256("delayed"), 1);
+        _submit(verifierA, _register(address(0xCAFE)), keccak256("delayed"), 1_000_000);
 
         uint256 budget = verification.verifierEpochBudget(rewardedEpoch);
         _warpToEpoch(rewardedEpoch + 10);
@@ -87,7 +87,7 @@ contract AntseedVerifierRewardsTest is Test {
         vm.prank(verifierA);
         verification.claimVerifierReward(rewardedEpoch);
         assertEq(token.balanceOf(verifierA), budget);
-        assertEq(verification.epochCredits(rewardedEpoch, verifierA), 0);
+        assertEq(verification.epochCreditUsdMicros(rewardedEpoch, verifierA), 0);
         assertEq(verification.pendingVerifierReward(rewardedEpoch, verifierA), 0);
     }
 
@@ -96,7 +96,7 @@ contract AntseedVerifierRewardsTest is Test {
         agentId = identity.register();
     }
 
-    function _submit(address verifier, uint256 agentId, bytes32 auditId, uint32 credits) private {
+    function _submit(address verifier, uint256 agentId, bytes32 auditId, uint64 creditUsdMicros) private {
         IAntseedVerification.VerificationResult[] memory results = new IAntseedVerification.VerificationResult[](1);
         results[0] = IAntseedVerification.VerificationResult({
             agentId: agentId,
@@ -108,9 +108,8 @@ contract AntseedVerifierRewardsTest is Test {
         verification.submitVerificationBundle(
             auditId,
             _currentEpoch(),
-            uint64(credits) * 1_000_000,
+            creditUsdMicros,
             keccak256(abi.encode("evidence", auditId)),
-            credits,
             results
         );
     }
