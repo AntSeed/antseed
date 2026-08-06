@@ -5,6 +5,7 @@ import { shallowEqual, useUiSelector } from '../hooks/useUiSelector';
 import { formatCredits } from '../../core/format';
 import { navViews } from './viewRegistry';
 import { ChatListPanel } from './ChatListPanel';
+import { DepositProgressBanner } from './DepositProgressBanner';
 import { NetworkAlertBanner } from './NetworkAlertBanner';
 import { UpdateBanner } from './UpdateBanner';
 import { VprNavContext } from './vpr/VprNavContext';
@@ -135,6 +136,7 @@ export function VprShell({ activeView, onSelectView, onNavigateBack, children }:
         )}
         <NetworkAlertBanner />
         <UpdateBanner />
+        <DepositProgressBanner />
       </main>
       <footer className={styles.statusStrip}>
         <span
