@@ -259,6 +259,7 @@ test('loadConfig preserves and validates verifier settings', async () => {
       auditMaxConcurrentPeersPerModel: 4,
       auditMaxConcurrentBatches: 12,
       auditMaxConcurrentBatchesPerPeer: 2,
+      auditConcurrencyPromotionLatencyMs: 30_000,
       auditPeerTimeoutMs: 180_000,
       contrastSelection: { inputWeight: 0.9, maxPriceRatio: 0.3, maxModels: 3 },
       referenceEndpoint,
@@ -282,6 +283,7 @@ test('loadConfig preserves and validates verifier settings', async () => {
     assert.equal(config.verifier?.auditMaxConcurrentPeersPerModel, 4);
     assert.equal(config.verifier?.auditMaxConcurrentBatches, 12);
     assert.equal(config.verifier?.auditMaxConcurrentBatchesPerPeer, 2);
+    assert.equal(config.verifier?.auditConcurrencyPromotionLatencyMs, 30_000);
     assert.equal(config.verifier?.auditPeerTimeoutMs, 180_000);
     assert.equal(config.verifier?.contrastSelection?.inputWeight, 0.9);
     assert.equal(config.verifier?.referenceEndpoint?.sourceId, 'trusted-reference-v1');

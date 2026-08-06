@@ -46,9 +46,8 @@ contract AntseedVerifierRewardsTest is Test {
     function test_claimsProRataVerifierOnlyPool() public {
         uint256 rewardedEpoch = verification.firstRewardedEpoch();
         _warpToEpoch(rewardedEpoch);
-        _submit(verifierA, _register(address(0xCAFE)), keccak256("a"));
-        _submit(verifierB, _register(address(0xD00D)), keccak256("b"));
-        _submit(verifierB, _register(address(0xF00D)), keccak256("c"));
+        _submit(verifierA, _register(address(0xCAFE)), keccak256("a"), 1);
+        _submit(verifierB, _register(address(0xD00D)), keccak256("b"), 2);
 
         uint256 budget = verification.verifierEpochBudget(rewardedEpoch);
         _warpToEpoch(rewardedEpoch + 1);
@@ -79,7 +78,7 @@ contract AntseedVerifierRewardsTest is Test {
     function test_outstandingRewardRemainsClaimableInLaterEpoch() public {
         uint256 rewardedEpoch = verification.firstRewardedEpoch();
         _warpToEpoch(rewardedEpoch);
-        _submit(verifierA, _register(address(0xCAFE)), keccak256("delayed"));
+        _submit(verifierA, _register(address(0xCAFE)), keccak256("delayed"), 1);
 
         uint256 budget = verification.verifierEpochBudget(rewardedEpoch);
         _warpToEpoch(rewardedEpoch + 10);
@@ -97,17 +96,22 @@ contract AntseedVerifierRewardsTest is Test {
         agentId = identity.register();
     }
 
-    function _submit(address verifier, uint256 agentId, bytes32 auditId) private {
+    function _submit(address verifier, uint256 agentId, bytes32 auditId, uint32 credits) private {
+        IAntseedVerification.VerificationResult[] memory results = new IAntseedVerification.VerificationResult[](1);
+        results[0] = IAntseedVerification.VerificationResult({
+            agentId: agentId,
+            serviceHash: SERVICE_HASH,
+            verdict: IAntseedVerification.Verdict.SAME,
+            modelShareBps: 0
+        });
         vm.prank(verifier);
-        verification.submitVerificationResult(
+        verification.submitVerificationBundle(
             auditId,
-            agentId,
-            SERVICE_HASH,
-            IAntseedVerification.Verdict.SAME,
             _currentEpoch(),
-            0,
-            100,
-            keccak256(abi.encode("evidence", auditId))
+            uint64(credits) * 1_000_000,
+            keccak256(abi.encode("evidence", auditId)),
+            credits,
+            results
         );
     }
 

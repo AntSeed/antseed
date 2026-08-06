@@ -12,9 +12,30 @@ import {
 import {
   appendModelReferenceToBank,
   BANK_EXHAUSTED,
+  listClaimableReferenceCosts,
+  markReferenceCostsClaimed,
+  reserveReferenceCosts,
   reserveModelAuditReference,
   sellerLedgerPath,
 } from './probe-bank.js'
+
+const referenceCost = {
+  totalUsdMicros: '1250000',
+  requestCount: 2,
+  models: [{
+    model: 'model-a', requestCount: 2, inputTokens: 100, outputTokens: 50,
+    inputUsdPerMillion: 1, outputUsdPerMillion: 2, costUsdMicros: '1250000',
+  }],
+  purposes: [{
+    purpose: 'target-model' as const,
+    model: 'model-a', requestCount: 2, inputTokens: 100, outputTokens: 50,
+    inputUsdPerMillion: 1, outputUsdPerMillion: 2, costUsdMicros: '1250000',
+  }],
+}
+
+function appendReference(banksDir: string, value = reference()) {
+  return appendModelReferenceToBank({ banksDir, model: 'model-a', reference: value, cost: referenceCost })
+}
 
 function reference(count = 200): KbfReferenceV1 {
   const probes = Array.from({ length: count }, (_, index) => ({
@@ -66,9 +87,9 @@ function reference(count = 200): KbfReferenceV1 {
 test('probe banks append, deduplicate, and reject conflicting probe IDs', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'antseed-probe-bank-'))
   try {
-    const first = await appendModelReferenceToBank({ banksDir: directory, model: 'model-a', reference: reference() })
+    const first = await appendReference(directory)
     assert.equal(first.addedProbeCount, 200)
-    const second = await appendModelReferenceToBank({ banksDir: directory, model: 'model-a', reference: reference() })
+    const second = await appendReference(directory)
     assert.equal(second.addedProbeCount, 0)
     assert.equal(second.totalProbeCount, 200)
 
@@ -76,7 +97,7 @@ test('probe banks append, deduplicate, and reject conflicting probe IDs', async 
     conflicting.probes[0]!.template = 'Conflicting value is ___.'
     conflicting.referenceId = computeReferenceId(conflicting)
     await assert.rejects(
-      appendModelReferenceToBank({ banksDir: directory, model: 'model-a', reference: conflicting }),
+      appendReference(directory, conflicting),
       /conflicts with existing canonical content/,
     )
   } finally {
@@ -87,12 +108,12 @@ test('probe banks append, deduplicate, and reject conflicting probe IDs', async 
 test('probe banks reject incompatible query profiles', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'antseed-probe-bank-'))
   try {
-    await appendModelReferenceToBank({ banksDir: directory, model: 'model-a', reference: reference() })
+    await appendReference(directory)
     const incompatible = reference()
     incompatible.queryProfile = createReferenceQueryProfile({ upstreamModel: 'different-upstream' })
     incompatible.referenceId = computeReferenceId(incompatible)
     await assert.rejects(
-      appendModelReferenceToBank({ banksDir: directory, model: 'model-a', reference: incompatible }),
+      appendReference(directory, incompatible),
       /incompatible/,
     )
   } finally {
@@ -104,7 +125,7 @@ test('seller ledgers prevent same-run reuse and allow later-run reuse', async ()
   const directory = await mkdtemp(join(tmpdir(), 'antseed-probe-bank-'))
   const identityShuffle = <T>(values: readonly T[]) => [...values]
   try {
-    await appendModelReferenceToBank({ banksDir: directory, model: 'model-a', reference: reference() })
+    await appendReference(directory)
     const first = await reserveModelAuditReference({
       banksDir: directory, model: 'model-a', sellerPeerId: '11'.repeat(20),
       service: 'model-a', runId: 'run-a', epoch: '4', shuffle: identityShuffle,
@@ -153,7 +174,7 @@ test('different sellers reserve concurrently without sharing a lock', async () =
   const directory = await mkdtemp(join(tmpdir(), 'antseed-probe-bank-'))
   const identityShuffle = <T>(values: readonly T[]) => [...values]
   try {
-    await appendModelReferenceToBank({ banksDir: directory, model: 'model-a', reference: reference() })
+    await appendReference(directory)
     const reservations = await Promise.all(['11', '22', '33', '44'].map((prefix) => reserveModelAuditReference({
       banksDir: directory,
       model: 'model-a',
@@ -165,6 +186,34 @@ test('different sellers reserve concurrently without sharing a lock', async () =
     })))
     assert.equal(reservations.length, 4)
     assert.equal(new Set(reservations.map((reservation) => reservation.ledgerPath)).size, 4)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('reference costs reserve and claim exactly once for a bundle', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-probe-bank-'))
+  try {
+    await appendReference(directory)
+    const claimable = await listClaimableReferenceCosts(directory, 'model-a')
+    assert.equal(claimable.length, 1)
+    const bundleId = `0x${'77'.repeat(32)}`
+    const reserved = await reserveReferenceCosts({
+      banksDir: directory,
+      model: 'model-a',
+      bundleId,
+      costIds: claimable.map((entry) => entry.costId),
+    })
+    assert.equal(reserved[0]!.status, 'reserved')
+    assert.equal((await listClaimableReferenceCosts(directory, 'model-a')).length, 0)
+    assert.equal((await listClaimableReferenceCosts(directory, 'model-a', bundleId)).length, 1)
+    await markReferenceCostsClaimed({
+      banksDir: directory,
+      model: 'model-a',
+      bundleId,
+      transactionHash: `0x${'88'.repeat(32)}`,
+    })
+    assert.equal((await listClaimableReferenceCosts(directory, 'model-a', bundleId)).length, 0)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

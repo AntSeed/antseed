@@ -15,7 +15,11 @@ import {
   type KbfProbe,
   type KbfReferenceV1,
 } from '@antseed/fingerprints'
-import type { VerifierCLIConfig, VerifierReferenceEndpointConfig } from '../config/types.js'
+import type {
+  VerifierCLIConfig,
+  VerifierModelPricingConfig,
+  VerifierReferenceEndpointConfig,
+} from '../config/types.js'
 import {
   REFERENCE_MINIMUM_MISMATCH_DELTA,
   REFERENCE_POWER_ALPHA,
@@ -24,7 +28,7 @@ import {
   resolveReferenceSizingPolicy,
 } from './reference-sizing.js'
 import { safeServiceSlug } from './slug.js'
-import { resolveVerifierModelConfig } from './model-config.js'
+import { resolveVerifierModelConfig, type ResolvedVerifierModelConfig } from './model-config.js'
 import type { VerifierModelCatalog } from './openrouter-catalog.js'
 import {
   CANONICAL_KBF_DOMAINS,
@@ -59,11 +63,44 @@ interface ReferenceBuildCheckpointV1 {
   kind: 'antseed-reference-build-checkpoint'
   compatibilityHash: string
   requestsUsed: number
-  responses: Record<string, string>
+  responses: Record<string, ReferenceCachedResponseV1>
+}
+
+interface ReferenceCachedResponseV1 {
+  content: string
+  model: string
+  purpose: ReferenceBuildCostPurposeV1['purpose']
+  inputTokens: number
+  outputTokens: number
+  inputUsdPerMillion: number
+  outputUsdPerMillion: number
+  costUsdMicros: string
+}
+
+export interface ReferenceBuildCostModelV1 {
+  model: string
+  requestCount: number
+  inputTokens: number
+  outputTokens: number
+  inputUsdPerMillion: number
+  outputUsdPerMillion: number
+  costUsdMicros: string
+}
+
+export interface ReferenceBuildCostPurposeV1 extends ReferenceBuildCostModelV1 {
+  purpose: 'candidate-generation' | 'target-model' | 'contrast-model' | 'self-test'
+}
+
+export interface ReferenceBuildCostV1 {
+  totalUsdMicros: string
+  requestCount: number
+  models: ReferenceBuildCostModelV1[]
+  purposes: ReferenceBuildCostPurposeV1[]
 }
 
 type ReferenceQuery = ((model: string, body: Record<string, unknown>) => Promise<string>) & {
   invalidate?: (model: string, body: Record<string, unknown>) => Promise<void>
+  costSummary?: () => ReferenceBuildCostV1
 }
 
 export async function loadModelReference(input: {
@@ -127,10 +164,11 @@ export async function buildModelReference(input: {
   catalog?: VerifierModelCatalog | null
   fetchFn?: typeof fetch
   log?: (message: string) => void
-}): Promise<{ reference: KbfReferenceV1; path: string }> {
+}): Promise<{ reference: KbfReferenceV1; path: string; cost: ReferenceBuildCostV1 }> {
   const endpoint = input.config?.referenceEndpoint
   if (!endpoint) throw new Error('verifier.referenceEndpoint is required')
   const modelConfig = resolveVerifierModelConfig(input.config, input.model, input.catalog)
+  const pricingByModel = referencePricingByModel(input.config, modelConfig, input.catalog ?? null)
   const apiKey = (endpoint.apiKeyEnv ? process.env[endpoint.apiKeyEnv] : undefined) ?? endpoint.apiKey
   const timeoutMs = input.config?.probeRequestTimeoutMs ?? 120_000
   const sizing = resolveReferenceSizingPolicy(input.config)
@@ -174,6 +212,11 @@ export async function buildModelReference(input: {
     maxRequests: input.config?.referenceMaxRequestsPerBuild ?? DEFAULT_MAX_REQUESTS_PER_BUILD,
     retryCount: input.config?.referenceBatchRetryCount ?? DEFAULT_BATCH_RETRY_COUNT,
     retryBaseDelayMs: input.config?.referenceRetryBaseDelayMs ?? DEFAULT_RETRY_BASE_DELAY_MS,
+    pricingForModel: (model) => {
+      const pricing = pricingByModel.get(normalized(model))
+      if (!pricing) throw new Error(`no reference pricing is available for ${model}`)
+      return pricing
+    },
     log: input.log,
   })
   let collected: CollectedReferenceProbes | undefined
@@ -317,8 +360,9 @@ export async function buildModelReference(input: {
   })
   const path = referencePath(input.referencesDir, input.model)
   await writeReference(path, validated)
+  const cost = query.costSummary?.() ?? summarizeReferenceCosts([])
   await checkpoint.remove()
-  return { reference: validated, path }
+  return { reference: validated, path, cost }
 }
 
 export async function collectReferenceProbes(input: {
@@ -572,22 +616,27 @@ function createReferenceQuery(input: {
   maxRequests: number
   retryCount: number
   retryBaseDelayMs: number
+  pricingForModel: (model: string) => VerifierModelPricingConfig
   log?: (message: string) => void
 }): ReferenceQuery {
   assertPositiveInteger(input.maxRequests, 'referenceMaxRequestsPerBuild')
   assertNonNegativeInteger(input.retryCount, 'referenceBatchRetryCount')
   assertPositiveInteger(input.retryBaseDelayMs, 'referenceRetryBaseDelayMs')
-  const query: ReferenceQuery = async (model, body) => {
+  const consumed = new Map<string, ReferenceCachedResponseV1>()
+  const query = (async (model: string, body: Record<string, unknown>) => {
     const { __antseedReferenceCacheDomain, ...requestBody } = body
     const cacheKey = canonicalHashBytes32({ model, cacheDomain: __antseedReferenceCacheDomain ?? null, body: requestBody })
     const cached = input.checkpoint.get(cacheKey)
-    if (cached !== undefined) return cached
+    if (cached !== undefined) {
+      consumed.set(cacheKey, cached)
+      return cached.content
+    }
     let attempt = 0
     for (;;) {
       attempt += 1
       await input.checkpoint.reserveRequest(input.maxRequests)
       try {
-        const content = await input.limiter.run(model, () => postChatCompletion(
+        const response = await input.limiter.run(model, () => postChatCompletion(
           input.endpoint,
           input.apiKey,
           model,
@@ -595,9 +644,24 @@ function createReferenceQuery(input: {
           input.timeoutMs,
           input.fetchFn,
         ))
-        await input.checkpoint.set(cacheKey, content)
+        const pricing = input.pricingForModel(model)
+        const cachedResponse: ReferenceCachedResponseV1 = {
+          content: response.content,
+          model,
+          purpose: referenceRequestPurpose(__antseedReferenceCacheDomain),
+          inputTokens: response.inputTokens,
+          outputTokens: response.outputTokens,
+          inputUsdPerMillion: pricing.inputUsdPerMillion,
+          outputUsdPerMillion: pricing.outputUsdPerMillion,
+          costUsdMicros: String(Math.ceil(
+            response.inputTokens * pricing.inputUsdPerMillion
+            + response.outputTokens * pricing.outputUsdPerMillion,
+          )),
+        }
+        await input.checkpoint.set(cacheKey, cachedResponse)
+        consumed.set(cacheKey, cachedResponse)
         input.limiter.recordSuccess()
-        return content
+        return response.content
       } catch (error) {
         const retryable = isRetryableReferenceError(error)
         if (!retryable || attempt >= input.retryCount + 1) throw error
@@ -607,12 +671,14 @@ function createReferenceQuery(input: {
         await sleep(delayMs)
       }
     }
-  }
+  }) as ReferenceQuery
   query.invalidate = async (model, body) => {
     const { __antseedReferenceCacheDomain, ...requestBody } = body
     const cacheKey = canonicalHashBytes32({ model, cacheDomain: __antseedReferenceCacheDomain ?? null, body: requestBody })
+    consumed.delete(cacheKey)
     await input.checkpoint.delete(cacheKey)
   }
+  query.costSummary = () => summarizeReferenceCosts([...consumed.values()])
   return query
 }
 
@@ -633,7 +699,8 @@ class ReferenceBuildCheckpoint {
         && Number.isInteger(parsed.requestsUsed)
         && parsed.requestsUsed! >= 0
         && parsed.responses
-        && typeof parsed.responses === 'object') {
+        && typeof parsed.responses === 'object'
+        && Object.values(parsed.responses).every(isReferenceCachedResponse)) {
         return new ReferenceBuildCheckpoint(path, parsed as ReferenceBuildCheckpointV1)
       }
     } catch (error) {
@@ -650,7 +717,7 @@ class ReferenceBuildCheckpoint {
     return checkpoint
   }
 
-  get(key: string): string | undefined {
+  get(key: string): ReferenceCachedResponseV1 | undefined {
     return this.value.responses[key]
   }
 
@@ -668,8 +735,8 @@ class ReferenceBuildCheckpoint {
     if (budgetError) throw budgetError
   }
 
-  async set(key: string, content: string): Promise<void> {
-    this.value.responses[key] = content
+  async set(key: string, response: ReferenceCachedResponseV1): Promise<void> {
+    this.value.responses[key] = response
     await this.save()
   }
 
@@ -797,7 +864,7 @@ async function postChatCompletion(
   body: Record<string, unknown>,
   timeoutMs: number,
   fetchFn: typeof fetch,
-): Promise<string> {
+): Promise<{ content: string; inputTokens: number; outputTokens: number }> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
   try {
@@ -818,10 +885,18 @@ async function postChatCompletion(
         (await response.text()).slice(0, 200),
       )
     }
-    const parsed = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> }
+    const parsed = await response.json() as {
+      choices?: Array<{ message?: { content?: unknown } }>
+      usage?: { prompt_tokens?: unknown; completion_tokens?: unknown }
+    }
     const content = parsed.choices?.[0]?.message?.content
     if (typeof content !== 'string' || content.trim() === '') throw new EmptyReferenceResponseError()
-    return content
+    const inputTokens = nonNegativeInteger(parsed.usage?.prompt_tokens)
+    const outputTokens = nonNegativeInteger(parsed.usage?.completion_tokens)
+    if (inputTokens === null || outputTokens === null) {
+      throw new Error(`reference endpoint omitted token usage for ${model}`)
+    }
+    return { content, inputTokens, outputTokens }
   } finally {
     clearTimeout(timeout)
   }
@@ -847,6 +922,105 @@ function median(values: number[]): number {
   const sorted = [...values].sort((left, right) => left - right)
   const middle = Math.floor(sorted.length / 2)
   return sorted.length % 2 === 1 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2
+}
+
+function summarizeReferenceCosts(responses: ReferenceCachedResponseV1[]): ReferenceBuildCostV1 {
+  const byModel = new Map<string, ReferenceBuildCostModelV1>()
+  const byPurpose = new Map<string, ReferenceBuildCostPurposeV1>()
+  let totalUsdMicros = 0n
+  for (const response of responses) {
+    totalUsdMicros += BigInt(response.costUsdMicros)
+    const key = normalized(response.model)
+    const current = byModel.get(key) ?? {
+      model: response.model,
+      requestCount: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      inputUsdPerMillion: response.inputUsdPerMillion,
+      outputUsdPerMillion: response.outputUsdPerMillion,
+      costUsdMicros: '0',
+    }
+    current.requestCount += 1
+    current.inputTokens += response.inputTokens
+    current.outputTokens += response.outputTokens
+    current.costUsdMicros = String(BigInt(current.costUsdMicros) + BigInt(response.costUsdMicros))
+    byModel.set(key, current)
+    const purposeKey = `${response.purpose}:${key}`
+    const purpose = byPurpose.get(purposeKey) ?? {
+      purpose: response.purpose,
+      model: response.model,
+      requestCount: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      inputUsdPerMillion: response.inputUsdPerMillion,
+      outputUsdPerMillion: response.outputUsdPerMillion,
+      costUsdMicros: '0',
+    }
+    purpose.requestCount += 1
+    purpose.inputTokens += response.inputTokens
+    purpose.outputTokens += response.outputTokens
+    purpose.costUsdMicros = String(BigInt(purpose.costUsdMicros) + BigInt(response.costUsdMicros))
+    byPurpose.set(purposeKey, purpose)
+  }
+  return {
+    totalUsdMicros: totalUsdMicros.toString(),
+    requestCount: responses.length,
+    models: [...byModel.values()].sort((left, right) => left.model.localeCompare(right.model)),
+    purposes: [...byPurpose.values()].sort((left, right) => (
+      left.purpose.localeCompare(right.purpose) || left.model.localeCompare(right.model)
+    )),
+  }
+}
+
+function referenceRequestPurpose(value: unknown): ReferenceBuildCostPurposeV1['purpose'] {
+  if (value === 'self-test') return 'self-test'
+  if (typeof value === 'string' && value.startsWith('contrast-')) return 'contrast-model'
+  if (typeof value === 'string' && value.startsWith('stability-')) return 'target-model'
+  return 'candidate-generation'
+}
+
+function referencePricingByModel(
+  config: VerifierCLIConfig | undefined,
+  resolved: ResolvedVerifierModelConfig,
+  catalog: VerifierModelCatalog | null,
+): Map<string, VerifierModelPricingConfig> {
+  const prices = new Map<string, VerifierModelPricingConfig>()
+  const targetPricing = resolved.pricing ?? catalog?.get(normalized(resolved.upstreamModel))?.pricing
+  if (!targetPricing) throw new Error(`no reference pricing is available for ${resolved.upstreamModel}`)
+  prices.set(normalized(resolved.upstreamModel), targetPricing)
+  for (const contrastModel of resolved.contrastModels) {
+    const catalogPricing = catalog?.get(normalized(contrastModel))?.pricing
+    const configuredPricing = Object.values(config?.referenceEndpoint?.contrastModelBank ?? {})
+      .find((candidate) => normalized(candidate.upstreamModel) === normalized(contrastModel))?.pricing
+    const auditedPricing = Object.values(config?.referenceEndpoint?.models ?? {})
+      .find((candidate) => normalized(candidate.upstreamModel) === normalized(contrastModel))?.pricing
+    const pricing = catalogPricing ?? configuredPricing ?? auditedPricing
+    if (!pricing) throw new Error(`no reference pricing is available for ${contrastModel}`)
+    prices.set(normalized(contrastModel), pricing)
+  }
+  return prices
+}
+
+function isReferenceCachedResponse(value: unknown): value is ReferenceCachedResponseV1 {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const response = value as Partial<ReferenceCachedResponseV1>
+  return typeof response.content === 'string'
+    && typeof response.model === 'string'
+    && ['candidate-generation', 'target-model', 'contrast-model', 'self-test'].includes(response.purpose ?? '')
+    && nonNegativeInteger(response.inputTokens) !== null
+    && nonNegativeInteger(response.outputTokens) !== null
+    && typeof response.inputUsdPerMillion === 'number'
+    && Number.isFinite(response.inputUsdPerMillion)
+    && response.inputUsdPerMillion >= 0
+    && typeof response.outputUsdPerMillion === 'number'
+    && Number.isFinite(response.outputUsdPerMillion)
+    && response.outputUsdPerMillion >= 0
+    && typeof response.costUsdMicros === 'string'
+    && /^\d+$/.test(response.costUsdMicros)
+}
+
+function nonNegativeInteger(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null
 }
 
 function isRetryableReferenceError(error: unknown): boolean {

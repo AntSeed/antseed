@@ -6,6 +6,13 @@ import { IAntseedPointsPolicy } from "./IAntseedPointsPolicy.sol";
 import { IAntseedRegistry } from "./IAntseedRegistry.sol";
 
 interface IAntseedVerification is IAntseedPointsPolicy {
+    struct VerificationResult {
+        uint256 agentId;
+        bytes32 serviceHash;
+        Verdict verdict;
+        uint16 modelShareBps;
+    }
+
     enum Verdict {
         UNKNOWN,
         SAME,
@@ -22,16 +29,16 @@ interface IAntseedVerification is IAntseedPointsPolicy {
     function setVerifier(address verifier, bool approved) external;
     function setMaxCreditsPerVerifierPerEpoch(uint32 maximum) external;
 
-    function submitVerificationResult(
-        bytes32 auditId,
-        uint256 agentId,
-        bytes32 serviceHash,
-        Verdict verdict,
+    function submitVerificationBundle(
+        bytes32 bundleId,
         uint256 expectedEpoch,
-        uint16 modelShareBps,
-        uint32 probeCount,
-        bytes32 evidenceHash
+        uint64 totalAuditCostUsdMicros,
+        bytes32 evidenceHash,
+        uint32 requestedCredits,
+        VerificationResult[] calldata results
     ) external;
+
+    function isBundleSubmitted(bytes32 bundleId) external view returns (bool);
 
     function epochCredits(uint256 epoch, address verifier) external view returns (uint256);
     function epochTotalCredits(uint256 epoch) external view returns (uint256);

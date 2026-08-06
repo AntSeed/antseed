@@ -299,7 +299,8 @@ function validateBuyerVerification(
 const VERIFIER_KEYS = new Set([
   'referencesDir', 'banksDir', 'evidenceDir', 'probeRequestTimeoutMs', 'responseAuthWaitTimeoutMs',
   'auditMaxConcurrentModels', 'auditMaxConcurrentPeersPerModel',
-  'auditMaxConcurrentBatches', 'auditMaxConcurrentBatchesPerPeer', 'auditPeerTimeoutMs',
+  'auditMaxConcurrentBatches', 'auditMaxConcurrentBatchesPerPeer',
+  'auditConcurrencyPromotionLatencyMs', 'auditPeerTimeoutMs',
   'contrastSelection', 'referenceEndpoint',
   'referenceMaxRequestsPerBuild', 'referenceBatchRetryCount', 'referenceRetryBaseDelayMs',
   'referenceMaxNoProgressRounds', 'referenceMaxConcurrentRequests', 'referenceMaxConcurrentRequestsPerModel',
@@ -336,6 +337,7 @@ function validateVerifierConfig(
     ['auditMaxConcurrentPeersPerModel', verifier.auditMaxConcurrentPeersPerModel],
     ['auditMaxConcurrentBatches', verifier.auditMaxConcurrentBatches],
     ['auditMaxConcurrentBatchesPerPeer', verifier.auditMaxConcurrentBatchesPerPeer],
+    ['auditConcurrencyPromotionLatencyMs', verifier.auditConcurrencyPromotionLatencyMs],
     ['auditPeerTimeoutMs', verifier.auditPeerTimeoutMs],
     ['referenceMaxRequestsPerBuild', verifier.referenceMaxRequestsPerBuild],
     ['referenceRetryBaseDelayMs', verifier.referenceRetryBaseDelayMs],

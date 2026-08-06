@@ -97,16 +97,21 @@ contract AntseedVerifierPointsPolicyTest is Test {
 
     function _submit(IAntseedVerification.Verdict verdict, uint16 modelShareBps, bytes32 auditId) private {
         uint256 epoch = verification.currentEpoch();
+        IAntseedVerification.VerificationResult[] memory results = new IAntseedVerification.VerificationResult[](1);
+        results[0] = IAntseedVerification.VerificationResult({
+            agentId: AGENT_ID,
+            serviceHash: SERVICE_HASH,
+            verdict: verdict,
+            modelShareBps: modelShareBps
+        });
         vm.prank(verifier);
-        verification.submitVerificationResult(
+        verification.submitVerificationBundle(
             auditId,
-            AGENT_ID,
-            SERVICE_HASH,
-            verdict,
             epoch,
-            modelShareBps,
-            100,
-            keccak256(abi.encode("evidence", auditId))
+            1_000_000,
+            keccak256(abi.encode("evidence", auditId)),
+            1,
+            results
         );
     }
 

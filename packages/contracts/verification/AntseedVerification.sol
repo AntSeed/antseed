@@ -14,6 +14,8 @@ import { IERC8004Registry } from "../interfaces/IERC8004Registry.sol";
 
 contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGuard {
     uint256 public constant BPS_DENOMINATOR = 10_000;
+    uint256 public constant USD_MICROS_PER_CREDIT = 1_000_000;
+    uint256 public constant MAX_RESULTS_PER_BUNDLE = 64;
 
     IAntseedRegistry public immutable override registry;
     IAntseedEmissionsGate public immutable override emissionsGate;
@@ -22,7 +24,7 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
     mapping(address verifier => bool approved) public override approvedVerifiers;
     uint32 public override maxCreditsPerVerifierPerEpoch = 100;
 
-    mapping(bytes32 auditId => bool submitted) private _submittedAudits;
+    mapping(bytes32 bundleId => bool submitted) private _submittedBundles;
     mapping(uint256 agentId => uint16 penaltyBps) private _agentPointsPenaltyBps;
 
     mapping(uint256 epoch => mapping(address verifier => uint256 credits)) public override epochCredits;
@@ -32,17 +34,22 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
 
     event VerifierApprovalSet(address indexed verifier, bool approved);
     event MaxCreditsPerVerifierPerEpochSet(uint32 maximum);
-    event AttestationSubmitted(
-        bytes32 indexed auditId,
+    event VerificationBundleSubmitted(
+        bytes32 indexed bundleId,
         address indexed verifier,
-        uint256 indexed agentId,
-        bytes32 serviceHash,
-        Verdict verdict,
-        uint16 modelShareBps,
+        uint256 indexed epoch,
+        uint64 totalAuditCostUsdMicros,
         bytes32 evidenceHash,
-        uint32 probeCount,
-        bool credited,
-        uint256 epoch
+        uint32 requestedCredits,
+        uint32 awardedCredits,
+        uint32 resultCount
+    );
+    event VerificationResultSubmitted(
+        bytes32 indexed bundleId,
+        uint256 indexed agentId,
+        bytes32 indexed serviceHash,
+        Verdict verdict,
+        uint16 modelShareBps
     );
     event AgentPointsPenaltySet(uint256 indexed agentId, uint16 penaltyBps);
     event VerifierRewardClaimed(uint256 indexed epoch, address indexed verifier, uint256 amount);
@@ -54,7 +61,11 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
     error InvalidVerdict();
     error InvalidModelShare();
     error EpochChanged();
-    error AuditAlreadyExists();
+    error BundleAlreadyExists();
+    error EmptyBundle();
+    error TooManyResults();
+    error DuplicateResult();
+    error InvalidCredits();
     error UnknownAgent();
     error SelfAudit();
     error PreEffectiveEpoch();
@@ -88,40 +99,72 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
         emit MaxCreditsPerVerifierPerEpochSet(maximum);
     }
 
-    function submitVerificationResult(
-        bytes32 auditId,
-        uint256 agentId,
-        bytes32 serviceHash,
-        Verdict verdict,
+    function submitVerificationBundle(
+        bytes32 bundleId,
         uint256 expectedEpoch,
-        uint16 modelShareBps,
-        uint32 probeCount,
-        bytes32 evidenceHash
-    ) external override onlyApprovedVerifier {
-        if (auditId == bytes32(0) || agentId == 0 || serviceHash == bytes32(0) || evidenceHash == bytes32(0)) {
-            revert InvalidValue();
+        uint64 totalAuditCostUsdMicros,
+        bytes32 evidenceHash,
+        uint32 requestedCredits,
+        VerificationResult[] calldata results
+    ) external override onlyApprovedVerifier nonReentrant {
+        if (bundleId == bytes32(0) || evidenceHash == bytes32(0)) revert InvalidValue();
+        if (_submittedBundles[bundleId]) revert BundleAlreadyExists();
+        if (results.length == 0) revert EmptyBundle();
+        if (results.length > MAX_RESULTS_PER_BUNDLE) revert TooManyResults();
+
+        uint256 expectedCredits =
+            (uint256(totalAuditCostUsdMicros) + USD_MICROS_PER_CREDIT - 1) / USD_MICROS_PER_CREDIT;
+        if (expectedCredits > type(uint32).max || requestedCredits != expectedCredits) revert InvalidCredits();
+
+        for (uint256 i = 0; i < results.length; i++) {
+            VerificationResult calldata result = results[i];
+            _validateResult(result);
+            if (_resolveAgentOwner(result.agentId) == msg.sender) revert SelfAudit();
+            for (uint256 j = 0; j < i; j++) {
+                VerificationResult calldata previous = results[j];
+                if (previous.agentId == result.agentId && previous.serviceHash == result.serviceHash) {
+                    revert DuplicateResult();
+                }
+            }
         }
-        if (_submittedAudits[auditId]) revert AuditAlreadyExists();
-        if (verdict == Verdict.UNKNOWN || uint8(verdict) > uint8(Verdict.UNDETERMINED)) revert InvalidVerdict();
-        if (modelShareBps > BPS_DENOMINATOR) revert InvalidModelShare();
-        if (verdict != Verdict.DIFF && modelShareBps != 0) revert InvalidModelShare();
-        address seller = _resolveAgentOwner(agentId);
-        if (seller == msg.sender) revert SelfAudit();
 
         uint256 epoch = currentEpoch();
         if (epoch != expectedEpoch) revert EpochChanged();
-        _submittedAudits[auditId] = true;
-        _applyAttestationPenalty(agentId, verdict, modelShareBps);
+        _submittedBundles[bundleId] = true;
 
-        bool credited = epochCredits[epoch][msg.sender] < maxCreditsPerVerifierPerEpoch;
-        if (credited) {
-            epochCredits[epoch][msg.sender]++;
-            epochTotalCredits[epoch]++;
+        uint256 currentCredits = epochCredits[epoch][msg.sender];
+        uint256 remainingCredits = currentCredits < maxCreditsPerVerifierPerEpoch
+            ? uint256(maxCreditsPerVerifierPerEpoch) - currentCredits
+            : 0;
+        uint32 awardedCredits = requestedCredits < remainingCredits
+            ? requestedCredits
+            : uint32(remainingCredits);
+        if (awardedCredits != 0) {
+            epochCredits[epoch][msg.sender] = currentCredits + awardedCredits;
+            epochTotalCredits[epoch] += awardedCredits;
         }
 
-        emit AttestationSubmitted(
-            auditId, msg.sender, agentId, serviceHash, verdict, modelShareBps, evidenceHash, probeCount, credited, epoch
+        emit VerificationBundleSubmitted(
+            bundleId,
+            msg.sender,
+            epoch,
+            totalAuditCostUsdMicros,
+            evidenceHash,
+            requestedCredits,
+            awardedCredits,
+            uint32(results.length)
         );
+        for (uint256 i = 0; i < results.length; i++) {
+            VerificationResult calldata result = results[i];
+            _applyAttestationPenalty(result.agentId, result.verdict, result.modelShareBps);
+            emit VerificationResultSubmitted(
+                bundleId, result.agentId, result.serviceHash, result.verdict, result.modelShareBps
+            );
+        }
+    }
+
+    function isBundleSubmitted(bytes32 bundleId) external view override returns (bool) {
+        return _submittedBundles[bundleId];
     }
 
     function currentEpoch() public view override returns (uint256) {
@@ -238,6 +281,15 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
         if (_agentPointsPenaltyBps[agentId] == nextPenalty) return;
         _agentPointsPenaltyBps[agentId] = nextPenalty;
         emit AgentPointsPenaltySet(agentId, nextPenalty);
+    }
+
+    function _validateResult(VerificationResult calldata result) private pure {
+        if (result.agentId == 0 || result.serviceHash == bytes32(0)) revert InvalidValue();
+        if (result.verdict == Verdict.UNKNOWN || uint8(result.verdict) > uint8(Verdict.UNDETERMINED)) {
+            revert InvalidVerdict();
+        }
+        if (result.modelShareBps > BPS_DENOMINATOR) revert InvalidModelShare();
+        if (result.verdict != Verdict.DIFF && result.modelShareBps != 0) revert InvalidModelShare();
     }
 
     function _applyKeepBps(uint256 amount, uint256 keepBps) private pure returns (uint256) {

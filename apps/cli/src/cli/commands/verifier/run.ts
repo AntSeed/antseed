@@ -5,9 +5,12 @@ import { canonicalHashBytes32 } from '@antseed/fingerprints'
 import { loadConfig } from '../../../config/loader.js'
 import {
   appendVerifierEvent,
+  epochAuditReportPath,
   modelAuditsDirectory,
+  writeEpochAuditReport,
   writeEpochAuditSummary,
   writeModelAuditSummary,
+  writeVerifierRunManifest,
   writeVerifierStatus,
   type EpochAuditSummaryV1,
   type VerifierStatusV1,
@@ -188,6 +191,8 @@ export function registerVerifierRunCommand(verifier: Command): void {
                     auditTimeoutMs: config.verifier?.auditPeerTimeoutMs ?? 180_000,
                     responseAuthReader: responseAuthReader!,
                     batchConcurrency: Math.min(maxConcurrentBatchesPerPeer, advertisedConcurrency),
+                    batchConcurrencyPromotionLatencyMs:
+                      config.verifier?.auditConcurrencyPromotionLatencyMs ?? 30_000,
                     batchLimiter,
                   },
                   target: target.peer,
@@ -275,7 +280,7 @@ export function registerVerifierRunCommand(verifier: Command): void {
         })
 
         const completedAt = new Date().toISOString()
-        const epochSummaryPath = await writeEpochAuditSummary(evidenceDir, epoch, {
+        const epochSummary = {
           version: 1,
           kind: 'antseed-verifier-epoch-summary',
           runId,
@@ -284,9 +289,28 @@ export function registerVerifierRunCommand(verifier: Command): void {
           epochEndsAt: status.epochEndsAt,
           startedAt: status.startedAt,
           completedAt,
+          reportPath: epochAuditReportPath(evidenceDir, epoch),
           models: epochModels,
           failureCount: status.failures,
           cost: status.cost,
+        } satisfies EpochAuditSummaryV1
+        const epochSummaryPath = await writeEpochAuditSummary(evidenceDir, epoch, epochSummary)
+        const reportPath = await writeEpochAuditReport(evidenceDir, epoch, epochSummary)
+        const manifestPath = await writeVerifierRunManifest(evidenceDir, {
+          version: 1,
+          kind: 'antseed-verifier-run-manifest',
+          runId,
+          state: status.failures > 0 ? 'completed-with-failures' : 'completed',
+          epoch,
+          epochSource: epochWindow.source,
+          epochStartedAt: status.epochStartedAt,
+          epochEndsAt: status.epochEndsAt,
+          startedAt: status.startedAt,
+          completedAt,
+          summaryPath: epochSummaryPath,
+          modelOrder: models,
+          models: epochModels,
+          failureCount: status.failures,
         })
         status.state = status.failures > 0 ? 'failed' : 'completed'
         status.completedAt = completedAt
@@ -301,6 +325,8 @@ export function registerVerifierRunCommand(verifier: Command): void {
           failures: status.failures, cost: status.cost, at: completedAt,
         })
         console.log(chalk.dim(`Summary: ${epochSummaryPath}`))
+        console.log(chalk.dim(`Run manifest: ${manifestPath}`))
+        console.log(chalk.dim(`Seller report: ${reportPath}`))
         console.log(chalk.dim(`Estimated audit cost: $${status.cost.estimatedCostUsd.toFixed(6)}`))
         if (status.failures > 0) process.exitCode = 1
       } catch (error) {

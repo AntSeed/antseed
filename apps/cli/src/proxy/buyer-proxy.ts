@@ -1100,8 +1100,10 @@ export class BuyerProxy {
     // Remove host header (points to localhost, not the seller)
     delete headers['host']
 
+    const requestedRequestId = headers['x-antseed-request-id']?.trim()
+    delete headers['x-antseed-request-id']
     let serializedReq: SerializedHttpRequest = {
-      requestId: randomUUID(),
+      requestId: requestedRequestId && isUuid(requestedRequestId) ? requestedRequestId : randomUUID(),
       method,
       path,
       headers,
@@ -1764,4 +1766,8 @@ export class BuyerProxy {
       return { done: false, statusCode: 502, responseBody: Buffer.from(`P2P request failed: ${message}`), responseHeaders: { 'content-type': 'text/plain' }, errorMessage: message }
     }
   }
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
 }

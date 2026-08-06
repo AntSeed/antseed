@@ -76,3 +76,66 @@ export async function mapConcurrently<T, R>(
   }))
   return results
 }
+
+export interface AdaptiveConcurrencyControl {
+  reduceToOne(): void
+}
+
+export async function mapWithAdaptiveConcurrency<T, R>(
+  items: readonly T[],
+  maximumConcurrency: number,
+  execute: (item: T, index: number, control: AdaptiveConcurrencyControl) => Promise<R>,
+  shouldPromote: (result: R, index: number) => boolean,
+): Promise<R[]> {
+  if (!Number.isInteger(maximumConcurrency) || maximumConcurrency < 1) {
+    throw new Error('maximum concurrency must be an integer >= 1')
+  }
+  if (items.length === 0) return []
+
+  const results = new Array<R>(items.length)
+  let active = 0
+  let nextIndex = 0
+  let desiredConcurrency = 1
+  let permanentlyReduced = false
+  let firstFailure: unknown = null
+
+  return await new Promise<R[]>((resolve, reject) => {
+    const control: AdaptiveConcurrencyControl = {
+      reduceToOne() {
+        permanentlyReduced = true
+        desiredConcurrency = 1
+      },
+    }
+
+    const finishOrLaunch = (): void => {
+      if (active === 0 && (firstFailure !== null || nextIndex >= items.length)) {
+        if (firstFailure !== null) reject(firstFailure)
+        else resolve(results)
+        return
+      }
+      if (firstFailure !== null) return
+
+      while (active < desiredConcurrency && nextIndex < items.length) {
+        const index = nextIndex
+        nextIndex += 1
+        active += 1
+        void execute(items[index]!, index, control)
+          .then((result) => {
+            results[index] = result
+            if (index === 0 && !permanentlyReduced && shouldPromote(result, index)) {
+              desiredConcurrency = maximumConcurrency
+            }
+          })
+          .catch((error: unknown) => {
+            firstFailure ??= error
+          })
+          .finally(() => {
+            active -= 1
+            finishOrLaunch()
+          })
+      }
+    }
+
+    finishOrLaunch()
+  })
+}

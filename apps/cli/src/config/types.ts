@@ -245,6 +245,8 @@ export interface VerifierCLIConfig {
   auditMaxConcurrentBatches?: number;
   /** Maximum probe batches sent concurrently to one seller audit. Default: 2. */
   auditMaxConcurrentBatchesPerPeer?: number;
+  /** Maximum first-batch latency that permits raising seller concurrency above one. Default: 30000. */
+  auditConcurrencyPromotionLatencyMs?: number;
   /** Hard wall-clock deadline for one seller audit. Default: 180000. */
   auditPeerTimeoutMs?: number;
   /** Automatic cheap contrast-model selection policy. */

@@ -23,7 +23,18 @@ function config(overrides: Partial<VerifierCLIConfig> = {}): VerifierCLIConfig {
       sourceId: 'test-source',
       trust: 'trusted' as const,
       models: {
-        [MODEL]: { upstreamModel: 'upstream-test', contrastModels: ['contrast-test'] },
+        [MODEL]: {
+          upstreamModel: 'upstream-test',
+          contrastModels: ['contrast-test'],
+          pricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
+        },
+      },
+      contrastModelBank: {
+        'contrast-test': {
+          upstreamModel: 'contrast-test',
+          pricing: { inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.2 },
+          capabilityRank: 1,
+        },
       },
     },
     ...overrides,
@@ -124,7 +135,10 @@ function testPromptValues(prompt: string): number[] {
 }
 
 function response(content: string, status = 200): Response {
-  return new Response(JSON.stringify(status === 200 ? { choices: [{ message: { content } }] } : { error: content }), {
+  return new Response(JSON.stringify(status === 200 ? {
+    choices: [{ message: { content } }],
+    usage: { prompt_tokens: 100, completion_tokens: 20 },
+  } : { error: content }), {
     status,
     headers: { 'content-type': 'application/json' },
   })
@@ -152,6 +166,11 @@ test('reference build writes one valid file that the run loader reuses', async (
   try {
     const built = await buildModelReference({ model: MODEL, referencesDir: directory, config: config(), fetchFn })
     assert.equal(built.reference.probes.length, 100)
+    assert.equal(BigInt(built.cost.totalUsdMicros) > 0n, true)
+    assert.deepEqual(
+      new Set(built.cost.purposes.map((entry) => entry.purpose)),
+      new Set(['candidate-generation', 'target-model', 'contrast-model', 'self-test']),
+    )
     const loaded = await loadModelReference({ model: MODEL, referencesDir: directory })
     assert.equal(loaded.reference.referenceId, built.reference.referenceId)
   } finally {

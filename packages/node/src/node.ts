@@ -1731,7 +1731,13 @@ export class AntseedNode extends EventEmitter {
           disableMetadataV2Services: payments.disableMetadataV2Services ?? false,
           dataDir: paymentsDir,
         };
-        this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig, this._channelStore, this._sellerAddressResolver ?? undefined);
+        this._buyerPaymentManager = new BuyerPaymentManager(
+          identity,
+          buyerPaymentConfig,
+          this._channelStore,
+          this._sellerAddressResolver ?? undefined,
+          this._verificationStorage ?? undefined,
+        );
         debugLog(`[Node] Buyer payment manager initialized (wallet=${identity.wallet.address.slice(0, 10)}... chainId=${buyerPaymentConfig.chainId} deposits=${buyerPaymentConfig.depositsContractAddress.slice(0, 10)}...)`);
 
         // Create negotiator that wraps the BPM with 402 handling and per-request auth

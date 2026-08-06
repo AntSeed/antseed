@@ -21,7 +21,8 @@
     "start:seed": "node dist/cli/index.js seed",
     "start:connect": "node dist/cli/index.js connect",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node --test dist/config/*.test.js dist/cli/commands/**/*.test.js dist/proxy/*.test.js dist/plugins/*.test.js dist/system-proxy/*.test.js dist/verifier/*.test.js"
+    "test": "npm run build && node --test dist/config/*.test.js dist/cli/commands/**/*.test.js dist/proxy/*.test.js dist/plugins/*.test.js dist/system-proxy/*.test.js dist/verifier/*.test.js",
+    "test:e2e:verifier-submit": "npm run build && ANTSEED_RUN_VERIFIER_ANVIL_E2E=1 node --test dist/verifier/submission-anvil.e2e.test.js"
   },
   "dependencies": {
     "@antseed/ant-agent": "workspace:*",

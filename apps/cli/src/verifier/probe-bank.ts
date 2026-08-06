@@ -14,6 +14,7 @@ import {
 } from '@antseed/fingerprints'
 import type { VerifierCLIConfig } from '../config/types.js'
 import { acquirePidFileLock, writeJsonAtomic } from './atomic-files.js'
+import type { ReferenceBuildCostV1 } from './model-reference.js'
 import { resolveReferenceSizingPolicy } from './reference-sizing.js'
 import { safeServiceSlug } from './slug.js'
 
@@ -41,8 +42,18 @@ export interface ProbeBankV1 {
   contrastModels: string[]
   probes: BankProbeV1[]
   sourceReferenceIds: string[]
+  referenceCosts: ReferenceCostEntryV1[]
   createdAt: string
   updatedAt: string
+}
+
+export interface ReferenceCostEntryV1 {
+  costId: string
+  referenceId: string
+  cost: ReferenceBuildCostV1
+  status: 'unclaimed' | 'reserved' | 'claimed'
+  reservedBundleId: string | null
+  claimedTransactionHash: string | null
 }
 
 export interface SellerProbeLedgerV1 {
@@ -65,6 +76,7 @@ export async function appendModelReferenceToBank(input: {
   banksDir: string
   model: string
   reference: KbfReferenceV1
+  cost: ReferenceBuildCostV1
 }): Promise<{ path: string; addedProbeCount: number; totalProbeCount: number }> {
   const path = bankPath(input.banksDir, input.model)
   const lock = await acquirePidFileLock(join(dirname(path), '.bank.lock'))
@@ -74,12 +86,15 @@ export async function appendModelReferenceToBank(input: {
       minimumStatisticalPower: Number.EPSILON,
     })
     const existing = await readJsonIfExists<ProbeBankV1>(path)
-    const incoming = bankFromReference(input.model, validatedReference)
+    const incoming = bankFromReference(input.model, validatedReference, input.cost)
     if (!existing) {
       await writeJsonAtomic(path, incoming)
       return { path, addedProbeCount: incoming.probes.length, totalProbeCount: incoming.probes.length }
     }
     const bank = existing
+    if (!Array.isArray(bank.referenceCosts)) {
+      throw new Error(`probe bank for ${input.model} has no reference cost metadata; rebuild it`)
+    }
     if (existing && existing.compatibilityHash !== incoming.compatibilityHash) {
       throw new Error(`probe bank for ${input.model} is incompatible with the new reference`)
     }
@@ -105,6 +120,7 @@ export async function appendModelReferenceToBank(input: {
     bank.contrastModels = [...incoming.contrastModels].sort()
     if (!bank.sourceReferenceIds.includes(validatedReference.referenceId)) {
       bank.sourceReferenceIds.push(validatedReference.referenceId)
+      bank.referenceCosts.push(...incoming.referenceCosts)
     }
     bank.updatedAt = new Date().toISOString()
     await writeJsonAtomic(path, bank)
@@ -192,7 +208,73 @@ export function sellerLedgerPath(banksDir: string, model: string, sellerPeerId: 
   return join(banksDir, safeServiceSlug(model), 'sellers', `${hash}.json`)
 }
 
-function bankFromReference(model: string, reference: KbfReferenceV1): ProbeBankV1 {
+export async function listClaimableReferenceCosts(
+  banksDir: string,
+  model: string,
+  bundleId?: string,
+): Promise<ReferenceCostEntryV1[]> {
+  const bank = await readRequiredBank(bankPath(banksDir, model), model)
+  return bank.referenceCosts
+    .filter((entry) => entry.status === 'unclaimed'
+      || (entry.status === 'reserved' && entry.reservedBundleId === bundleId))
+    .map((entry) => structuredClone(entry))
+}
+
+export async function reserveReferenceCosts(input: {
+  banksDir: string
+  model: string
+  bundleId: string
+  costIds: string[]
+}): Promise<ReferenceCostEntryV1[]> {
+  const path = bankPath(input.banksDir, input.model)
+  const lock = await acquirePidFileLock(join(dirname(path), '.bank.lock'))
+  try {
+    const bank = await readRequiredBank(path, input.model)
+    const requested = new Set(input.costIds)
+    const reserved: ReferenceCostEntryV1[] = []
+    for (const entry of bank.referenceCosts) {
+      if (!requested.has(entry.costId)) continue
+      if (entry.status === 'claimed') throw new Error(`reference cost ${entry.costId} is already claimed`)
+      if (entry.status === 'reserved' && entry.reservedBundleId !== input.bundleId) {
+        throw new Error(`reference cost ${entry.costId} is reserved by another bundle`)
+      }
+      entry.status = 'reserved'
+      entry.reservedBundleId = input.bundleId
+      reserved.push(structuredClone(entry))
+      requested.delete(entry.costId)
+    }
+    if (requested.size > 0) throw new Error(`unknown reference cost IDs: ${[...requested].join(', ')}`)
+    bank.updatedAt = new Date().toISOString()
+    await writeJsonAtomic(path, bank)
+    return reserved
+  } finally {
+    await lock.release()
+  }
+}
+
+export async function markReferenceCostsClaimed(input: {
+  banksDir: string
+  model: string
+  bundleId: string
+  transactionHash: string
+}): Promise<void> {
+  const path = bankPath(input.banksDir, input.model)
+  const lock = await acquirePidFileLock(join(dirname(path), '.bank.lock'))
+  try {
+    const bank = await readRequiredBank(path, input.model)
+    for (const entry of bank.referenceCosts) {
+      if (entry.status !== 'reserved' || entry.reservedBundleId !== input.bundleId) continue
+      entry.status = 'claimed'
+      entry.claimedTransactionHash = input.transactionHash
+    }
+    bank.updatedAt = new Date().toISOString()
+    await writeJsonAtomic(path, bank)
+  } finally {
+    await lock.release()
+  }
+}
+
+function bankFromReference(model: string, reference: KbfReferenceV1, cost: ReferenceBuildCostV1): ProbeBankV1 {
   const assumptions = {
     alpha: reference.statisticalPowerEvidence.alpha,
     clopperPearsonConfidence: reference.statisticalPowerEvidence.clopperPearsonConfidence,
@@ -238,6 +320,18 @@ function bankFromReference(model: string, reference: KbfReferenceV1): ProbeBankV
       distinguishingContrastModels: (contrastByProbe.get(probe.id) ?? []).sort(),
     })),
     sourceReferenceIds: [reference.referenceId],
+    referenceCosts: [{
+      costId: canonicalHashBytes32({
+        domain: 'antseed-reference-cost-v1',
+        referenceId: reference.referenceId,
+        cost,
+      }),
+      referenceId: reference.referenceId,
+      cost,
+      status: 'unclaimed',
+      reservedBundleId: null,
+      claimedTransactionHash: null,
+    }],
     createdAt: now,
     updatedAt: now,
   }
@@ -324,6 +418,9 @@ function cryptoShuffle<T>(values: readonly T[]): T[] {
 async function readRequiredBank(path: string, model: string): Promise<ProbeBankV1> {
   const bank = await readJsonIfExists<ProbeBankV1>(path)
   if (!bank) throw new Error(`no probe bank exists for ${model}; run antseed verifier reference build ${model}`)
+  if (!Array.isArray(bank.referenceCosts)) {
+    throw new Error(`probe bank for ${model} has no reference cost metadata; rebuild it`)
+  }
   return bank
 }
 

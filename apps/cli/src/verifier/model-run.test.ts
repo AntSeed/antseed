@@ -90,7 +90,8 @@ function reference(count: number): KbfReferenceV1 {
 
 async function runTarget(
   count: number,
-  answerMode: 'valid' | 'out-of-range' | 'malformed' | 'sse' | 'transport-failure' | 'hanging' = 'valid',
+  answerMode: 'valid' | 'out-of-range' | 'malformed' | 'sse' | 'transport-failure' | 'hanging'
+    | 'rate-limited' = 'valid',
   transientFailures = 0,
   authMode: 'verified' | 'missing' | 'unverified' | 'wrong-request' | 'wrong-seller' | 'wrong-service' = 'verified',
   includeCost = true,
@@ -100,6 +101,8 @@ async function runTarget(
   let requestCount = 0
   let failureCount = 0
   let changedAnswer = false
+  let slowBatchCompleted = false
+  let finalBatchStartedAfterSlow = false
   const requests: Array<{ headers: RequestInit['headers']; body: string }> = []
   const fetchFn: typeof fetch = async (_url, init) => {
     requestCount += 1
@@ -107,6 +110,7 @@ async function runTarget(
       ? new TextDecoder().decode(init.body)
       : String(init?.body ?? '')
     requests.push({ headers: init?.headers ?? {}, body: requestBody })
+    const requestId = new Headers(init?.headers).get('x-antseed-request-id')!
     if (answerMode === 'hanging') {
       return await new Promise<Response>((_resolve, reject) => {
         const abort = () => reject(new DOMException('aborted', 'AbortError'))
@@ -116,6 +120,17 @@ async function runTarget(
     }
     const body = JSON.parse(requestBody) as { messages: Array<{ content: string }> }
     const prompt = body.messages.at(-1)?.content ?? ''
+    const firstProbe = Number(prompt.match(/test probe (\d+) value is ___/)?.[1] ?? 0)
+    if (answerMode === 'rate-limited' && firstProbe === 11) {
+      return new Response('max concurrency reached', { status: 429 })
+    }
+    if (answerMode === 'rate-limited' && firstProbe === 21) {
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      slowBatchCompleted = true
+    }
+    if (answerMode === 'rate-limited' && firstProbe === 31) {
+      finalBatchStartedAfterSlow = slowBatchCompleted
+    }
     if (prompt.includes('test probe 1 value') && failureCount < transientFailures) {
       failureCount += 1
       return new Response('temporarily unavailable', { status: 502 })
@@ -152,17 +167,18 @@ async function runTarget(
         '',
       ].join('\n'), { headers: {
         'content-type': 'text/event-stream',
-        'x-antseed-request-id': `request-${requestCount}`,
+        'x-antseed-request-id': requestId,
         ...telemetryHeaders,
       } })
     }
     return Response.json(answerMode === 'malformed'
       ? { choices: [{ message: {} }] }
       : { choices: [{ message: { content } }] }, {
-      headers: { 'x-antseed-request-id': `request-${requestCount}`, ...telemetryHeaders },
+      headers: { 'x-antseed-request-id': requestId, ...telemetryHeaders },
     })
   }
   const responseAuthReader: ResponseAuthReader = {
+    getRequestCost() { return null },
     async waitForVerified(input) {
       if (authMode === 'missing') {
         return { requestId: input.requestId, status: 'missing', responseAuth: null, failureReason: 'missing' }
@@ -208,6 +224,7 @@ async function runTarget(
         auditTimeoutMs,
         responseAuthReader,
         batchConcurrency: 2,
+        batchConcurrencyPromotionLatencyMs: 30_000,
         batchLimiter: new ConcurrencyLimiter(2),
         fetchFn,
         sleepFn: async () => undefined,
@@ -217,7 +234,7 @@ async function runTarget(
       reference: reference(count),
     })
     const evidence = JSON.parse(await readFile(result.evidencePath, 'utf8')) as ProxyAuditEvidenceV1
-    return { result, evidence, requestCount, requests }
+    return { result, evidence, requestCount, requests, finalBatchStartedAfterSlow }
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
@@ -283,6 +300,9 @@ test('proxy runtime uses dynamic reference sizes and pins every batch', async ()
     assert.equal(run.result.status, 'SAME')
     assert.equal(run.result.probeCount, count)
     assert.equal(run.result.parsedProbeCount, count)
+    assert.equal(run.result.correctProbeCount, count)
+    assert.equal(run.result.incorrectProbeCount, 0)
+    assert.equal(run.result.correctRate, 1)
     assert.equal(run.result.requestCount, count / 10)
     assert.equal(run.requestCount, count / 10)
     assert.equal(run.evidence.result.selectedProbeCount, count)
@@ -310,6 +330,14 @@ test('proxy runtime retries transient failures', async () => {
   assert.equal(run.result.status, 'SAME')
   assert.equal(run.requestCount, 12)
   assert.equal(run.evidence.exchanges[0]?.attemptCount, 3)
+})
+
+test('proxy runtime reduces seller concurrency after HTTP 429', async () => {
+  const run = await runTarget(40, 'rate-limited')
+  assert.equal(run.result.status, 'UNDETERMINED')
+  assert.equal(run.evidence.exchanges[1]?.response?.statusCode, 429)
+  assert.equal(run.evidence.exchanges[1]?.attemptCount, 5)
+  assert.equal(run.finalBatchStartedAfterSlow, true)
 })
 
 test('one out-of-range answer remains in the fixed discrepancy denominator', async () => {

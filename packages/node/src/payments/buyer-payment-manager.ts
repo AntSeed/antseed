@@ -27,6 +27,7 @@ import type { PeerMetadata } from '../discovery/peer-metadata.js';
 import { ChannelStore, CHANNEL_ROLE, CHANNEL_STATUS, type StoredChannel } from './channel-store.js';
 import { advanceUsageMetadata, CountedRequestTracker, RequestServiceTracker } from './channel-usage-accounting.js';
 import { estimateCostFromBytes, computeCostUsdc, type ServicePricing } from './pricing.js';
+import type { VerificationStorage } from '../verification/storage.js';
 
 /** Default tolerance: accept seller claims up to 1.4x buyer's estimate. */
 const DEFAULT_COST_TOLERANCE = 1.4;
@@ -76,6 +77,7 @@ export class BuyerPaymentManager {
   private readonly _depositsClient: DepositsClient;
   private readonly _config: BuyerPaymentConfig;
   private readonly _channelStore: ChannelStore;
+  private readonly _verificationStorage?: VerificationStorage;
   /** In-memory map of active confirmed sessions by seller peerId for fast lookups. */
   private readonly _confirmedPeers = new Set<string>();
   /** Peers that explicitly rejected our spending auth. */
@@ -115,7 +117,13 @@ export class BuyerPaymentManager {
   /** Cached EIP-712 domain — static for the lifetime of this manager. */
   private readonly _channelsDomain: ReturnType<typeof makeChannelsDomain>;
 
-  constructor(identity: Identity, config: BuyerPaymentConfig, channelStore: ChannelStore, sellerAddressResolver?: SellerAddressResolver) {
+  constructor(
+    identity: Identity,
+    config: BuyerPaymentConfig,
+    channelStore: ChannelStore,
+    sellerAddressResolver?: SellerAddressResolver,
+    verificationStorage?: VerificationStorage,
+  ) {
     this._identity = identity;
     this._config = config;
     this._sellerAddressResolver = sellerAddressResolver;
@@ -128,6 +136,7 @@ export class BuyerPaymentManager {
       evmChainId: config.chainId,
     });
     this._channelStore = channelStore;
+    this._verificationStorage = verificationStorage;
     this._channelsDomain = makeChannelsDomain(config.chainId, config.channelsContractAddress);
 
     // Hydrate cumulative maps from persisted active sessions
@@ -880,6 +889,19 @@ export class BuyerPaymentManager {
     if (!alreadyCounted) this._serviceTokensCounted.mark(responseStats.requestId);
     this._metadata.set(sellerPeerId, newMeta);
     this._persistServiceMetadata(session.sessionId, newMeta);
+    if (!alreadyCounted && responseStats.requestId) {
+      this._verificationStorage?.insertRequestCost({
+        requestId: responseStats.requestId,
+        sellerPeerId,
+        service: responseStats.service ?? '',
+        channelId: session.sessionId,
+        authorizedCostUsdc: signedDelta,
+        inputTokens: estimatedInputTokens,
+        outputTokens: estimatedOutputTokens,
+        source: 'response',
+        recordedAt: Date.now(),
+      });
+    }
 
     debugLog(
       `[BuyerPayment] signPerRequestAuth #${newMeta.cumulativeRequestCount}: ` +
@@ -1068,6 +1090,19 @@ export class BuyerPaymentManager {
     );
     if (!alreadyCounted) this._serviceTokensCounted.mark(payload.requestId);
     this._metadata.set(sellerPeerId, newMeta);
+    if (!alreadyCounted && payload.requestId) {
+      this._verificationStorage?.insertRequestCost({
+        requestId: payload.requestId,
+        sellerPeerId,
+        service: buyerService ?? payload.service ?? '',
+        channelId: session.sessionId,
+        authorizedCostUsdc: serviceAmountDelta,
+        inputTokens: reportedInputTokens,
+        outputTokens: reportedOutputTokens,
+        source: 'need-auth',
+        recordedAt: Date.now(),
+      });
+    }
 
     // Send via PaymentMux
     try {

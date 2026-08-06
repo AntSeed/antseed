@@ -1,12 +1,13 @@
 import { access } from 'node:fs/promises'
 import { join } from 'node:path'
-import { VerificationStorage, type StoredResponseAuth } from '@antseed/node'
+import { VerificationStorage, type StoredRequestCost, type StoredResponseAuth } from '@antseed/node'
 
 export const DEFAULT_RESPONSE_AUTH_WAIT_TIMEOUT_MS = 35_000
 export const RESPONSE_AUTH_POLL_INTERVAL_MS = 100
 
 export interface ResponseAuthLookup {
   getResponseAuth(requestId: string): StoredResponseAuth | null
+  getRequestCost(requestId: string): StoredRequestCost | null
 }
 
 export interface ResponseAuthEvidenceStatus {
@@ -24,6 +25,7 @@ export interface ResponseAuthReader {
     timeoutMs?: number
     signal?: AbortSignal
   }): Promise<ResponseAuthEvidenceStatus>
+  getRequestCost(requestId: string): StoredRequestCost | null
   close(): void
 }
 
@@ -72,6 +74,9 @@ export function createResponseAuthReader(
         }
         await sleepFn(Math.min(RESPONSE_AUTH_POLL_INTERVAL_MS, Math.max(1, deadline - Date.now())))
       }
+    },
+    getRequestCost(requestId) {
+      return storage.getRequestCost(requestId)
     },
     close() {
       storage.close?.()

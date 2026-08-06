@@ -14,6 +14,7 @@ import type { StoredResponseAuth } from '@antseed/node'
 export interface ProxyAuditEvidenceExchange {
   batchIndex: number
   attemptCount: number
+  requestIds: string[]
   probeIds: string[]
   request: {
     method: 'POST'

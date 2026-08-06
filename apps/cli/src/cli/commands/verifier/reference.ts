@@ -33,6 +33,7 @@ export function registerVerifierReferenceCommand(verifier: Command): void {
         addedProbeCount?: number
         totalProbeCount?: number
         contrastModels?: string[]
+        costUsdMicros?: string
         reason?: string
       }
 
@@ -47,7 +48,12 @@ export function registerVerifierReferenceCommand(verifier: Command): void {
             catalog,
             log: (message) => console.log(chalk.dim(`[reference:${model}] ${message}`)),
           })
-          const appended = await appendModelReferenceToBank({ banksDir, model, reference: built.reference })
+          const appended = await appendModelReferenceToBank({
+            banksDir,
+            model,
+            reference: built.reference,
+            cost: built.cost,
+          })
           const result: ReferenceBuildResult = {
             model,
             status: 'BUILT',
@@ -57,9 +63,11 @@ export function registerVerifierReferenceCommand(verifier: Command): void {
             addedProbeCount: appended.addedProbeCount,
             totalProbeCount: appended.totalProbeCount,
             contrastModels: built.reference.contrasts.map((contrast) => contrast.model),
+            costUsdMicros: built.cost.totalUsdMicros,
           }
           console.log(chalk.green(
-            `Built ${model}: +${appended.addedProbeCount} probes (${appended.totalProbeCount} banked)`,
+            `Built ${model}: +${appended.addedProbeCount} probes (${appended.totalProbeCount} banked), `
+            + `$${(Number(built.cost.totalUsdMicros) / 1_000_000).toFixed(6)}`,
           ))
           return result
         } catch (error) {

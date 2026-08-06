@@ -5,7 +5,7 @@ import {
   VERIFIER_VERDICT_DIFF,
   VerifierClient,
   serviceHash,
-  type SubmitVerificationResultInput,
+  type SubmitVerificationBundleInput,
 } from '../src/payments/evm/verifier-client.js';
 
 const VERIFICATION_ADDRESS = '0x' + '10'.repeat(20);
@@ -17,7 +17,7 @@ describe('VerifierClient combined ABI', () => {
     expect(serviceHash('  GPT-5.6-SOL ')).toBe(serviceHash('gpt-5.6-sol'));
   });
 
-  it('encodes one final attestation without commitments or relay claims', async () => {
+  it('encodes one per-model verification bundle', async () => {
     const client = new VerifierClient({
       rpcUrl: 'http://127.0.0.1:1',
       contractAddress: VERIFICATION_ADDRESS,
@@ -25,30 +25,31 @@ describe('VerifierClient combined ABI', () => {
     const signer = Wallet.createRandom();
     const execWrite = vi.fn().mockResolvedValue('0xattest');
     (client as unknown as { _execWrite: typeof execWrite })._execWrite = execWrite;
-    const input: SubmitVerificationResultInput = {
-      auditId: AUDIT_ID,
-      agentId: 9,
-      serviceHash: SERVICE_HASH,
-      verdict: VERIFIER_VERDICT_DIFF,
+    const input: SubmitVerificationBundleInput = {
+      bundleId: AUDIT_ID,
       expectedEpoch: 7,
-      modelShareBps: 2500,
-      probeCount: 100,
+      totalAuditCostUsdMicros: 1_500_000,
       evidenceHash: '0x' + '99'.repeat(32),
+      requestedCredits: 2,
+      results: [{
+        agentId: 9,
+        serviceHash: SERVICE_HASH,
+        verdict: VERIFIER_VERDICT_DIFF,
+        modelShareBps: 2500,
+      }],
     };
 
-    await expect(client.submitVerificationResult(signer, input)).resolves.toBe('0xattest');
+    await expect(client.submitVerificationBundle(signer, input)).resolves.toBe('0xattest');
     expect(execWrite).toHaveBeenCalledWith(
       signer,
       VERIFICATION_ABI,
-      'submitVerificationResult',
+      'submitVerificationBundle',
       AUDIT_ID,
-      9n,
-      SERVICE_HASH,
-      VERIFIER_VERDICT_DIFF,
       7n,
-      2500,
-      100,
+      1_500_000n,
       input.evidenceHash,
+      2,
+      [{ agentId: 9n, serviceHash: SERVICE_HASH, verdict: VERIFIER_VERDICT_DIFF, modelShareBps: 2500 }],
     );
   });
 
@@ -67,7 +68,8 @@ describe('VerifierClient combined ABI', () => {
 
   it('exposes one compact verification and reward ABI', () => {
     const iface = new Interface(VERIFICATION_ABI);
-    expect(iface.getFunction('submitVerificationResult')).not.toBeNull();
+    expect(iface.getFunction('submitVerificationBundle')).not.toBeNull();
+    expect(iface.getFunction('isBundleSubmitted')).not.toBeNull();
     expect(iface.getFunction('claimVerifierReward')).not.toBeNull();
     expect(iface.getFunction('latestAttestation')).toBeNull();
     expect(iface.getFunction('servicePointsPenaltyBps')).toBeNull();
@@ -81,20 +83,26 @@ describe('VerifierClient combined ABI', () => {
     expect(iface.getFunction('claimDelegateReward')).toBeNull();
   });
 
-  it('preserves the direct attestation event shape', () => {
+  it('exposes shared bundle and compact result event shapes', () => {
     const iface = new Interface(VERIFICATION_ABI);
-    const event = iface.getEvent('AttestationSubmitted');
-    expect(event?.inputs.map((input) => input.name)).toEqual([
-      'auditId',
+    const bundle = iface.getEvent('VerificationBundleSubmitted');
+    expect(bundle?.inputs.map((input) => input.name)).toEqual([
+      'bundleId',
       'verifier',
+      'epoch',
+      'totalAuditCostUsdMicros',
+      'evidenceHash',
+      'requestedCredits',
+      'awardedCredits',
+      'resultCount',
+    ]);
+    const result = iface.getEvent('VerificationResultSubmitted');
+    expect(result?.inputs.map((input) => input.name)).toEqual([
+      'bundleId',
       'agentId',
       'serviceHash',
       'verdict',
       'modelShareBps',
-      'evidenceHash',
-      'probeCount',
-      'credited',
-      'epoch',
     ]);
   });
 });

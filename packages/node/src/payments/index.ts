@@ -48,7 +48,9 @@ export {
 export type {
   VerifierClientConfig,
   VerifierVerdict,
-  SubmitVerificationResultInput,
+  VerificationResultInput,
+  SubmitVerificationBundleInput,
+  VerificationBundleSubmittedEvent,
   AttestationSubmittedEvent,
 } from './evm/verifier-client.js';
 
