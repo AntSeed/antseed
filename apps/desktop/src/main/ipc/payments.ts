@@ -48,6 +48,7 @@ import {
   PAY_PAGE_KINDS,
   type PayPageKind,
   crossmintApiBase,
+  fetchOnrampAvailability,
   focusMainWindow,
   getPaymentsPortalToken,
   openPaymentsPopup,
@@ -56,7 +57,8 @@ import {
   readFunkitApiKey,
   startPaymentsPortal,
 } from '../payments/portal.js';
-import { closeCheckoutWindows } from '../payments/checkout-window.js';
+import { closeCheckoutWindows, openCheckoutPopup } from '../payments/checkout-window.js';
+import { getMainWindow } from '../ui/window.js';
 import {
   lookupPeer,
   refreshPeerCache,
@@ -180,8 +182,24 @@ export function registerPaymentsIpc(): void {
         parsed.searchParams.set('cur', cur);
         if (amountStr) parsed.searchParams.set('amount', amountStr);
         parsed.searchParams.set('sig', await identity.wallet.signMessage(message));
+        // The chooser's Stripe row is the only path here — open the page on
+        // exactly that integration (no provider tab strip). Unsigned, UX-only.
+        parsed.searchParams.set('provider', 'stripe');
       }
       const url = parsed.toString();
+
+      // AntSeed Pay needs no wallet extension (the link is pre-signed), so it
+      // opens as an app-owned checkout popup: the deposit watcher closes it
+      // the moment the bought USDC lands, instead of stranding a browser tab.
+      if (provider.id === 'antseed-pay') {
+        // The full signed funding link — nothing secret in it (the sig is in
+        // the URL by design), and having it in the dev log makes testing the
+        // hosted page outside the popup trivial. Dev only: production output
+        // shouldn't carry the buyer's address.
+        if (isDev) console.log('[payments] antseed-pay funding link:', url);
+        openCheckoutPopup(url, getMainWindow());
+        return { ok: true, url };
+      }
 
       try {
         await shell.openExternal(url);
@@ -192,6 +210,18 @@ export function registerPaymentsIpc(): void {
       console.log('[payments] no system browser available — using Electron popup');
       openPaymentsPopup(url);
       return { ok: true, url };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // Region-gated deposit options: the hosted pay page reports which providers
+  // it would offer this machine's region (Stripe = US only). Fail-closed —
+  // an unreachable page just hides the gated rows.
+  ipcMain.handle('payments:onramp-availability', async () => {
+    try {
+      const availability = await fetchOnrampAvailability();
+      return { ok: true, data: availability };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }

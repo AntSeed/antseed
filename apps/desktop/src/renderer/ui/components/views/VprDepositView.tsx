@@ -170,15 +170,6 @@ function BaseMark({ size = 18 }: { size?: number }) {
   );
 }
 
-function MastercardMark({ size = 18 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="9" cy="12" r="7.5" fill="#EB001B" />
-      <circle cx="15" cy="12" r="7.5" fill="#F79E1B" fillOpacity="0.9" />
-    </svg>
-  );
-}
-
 /** Apple logo silhouette (the classic bitten-apple path, 814×1000 box). */
 const APPLE_LOGO_PATH =
   'M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 ' +
@@ -236,12 +227,11 @@ function VisaRoundMark({ size = 18 }: { size?: number }) {
   );
 }
 
-function VisaMark({ size = 18 }: { size?: number }) {
-  const width = Math.round(size * (34 / 24));
+function AmexRoundMark({ size = 18 }: { size?: number }) {
   return (
-    <svg width={width} height={size} viewBox="0 0 34 24" aria-hidden="true">
-      <rect width="34" height="24" rx="5" fill="#1434CB" />
-      <text x="17" y="15.8" textAnchor="middle" fontSize="9" fontWeight="800" fontStyle="italic" fill="#fff">VISA</text>
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="12" fill="#016FD0" />
+      <text x="12" y="14.6" textAnchor="middle" fontSize="6" fontWeight="800" fill="#fff">AMEX</text>
     </svg>
   );
 }
@@ -350,15 +340,14 @@ function explorerTxUrl(chainId: number | undefined, txHash: string): string | nu
 }
 
 /**
- * Deposit flow: the chooser leads with the Fun (fun.xyz) checkout (card/cash
- * or crypto transfer, in-app), followed by the quick USDC-on-Base transfer
+ * Deposit flow: for US users (per the pay page's region gating) the chooser
+ * leads with the antseed-pay card checkout (hosted Stripe page in a narrow
+ * app popup) and Fun moves under "More options"; elsewhere the Fun (fun.xyz)
+ * checkout leads as before. Then the quick USDC-on-Base transfer
  * (scan-to-pay QR), with hosted providers (Meridian) behind "More options".
  * Everything lands in the hot wallet the main-process sweeper watches. Only
  * pages that need an external wallet signature leave the app.
  */
-// The Stripe pay page is hidden until it's ready to ship.
-const SHOW_STRIPE_OPTION = false;
-
 export function VprDepositView({ onSelectView }: Props) {
   const actions = useActions();
   const snap = useUiSelector((state) => ({
@@ -484,6 +473,23 @@ export function VprDepositView({ onSelectView }: Props) {
     return () => { cancelled = true; };
   }, []);
 
+  // Region-gated card checkout (Stripe via the hosted antseed-pay page):
+  // the main process asks the pay page which providers serve this machine's
+  // region — Stripe sells USDC-on-Base in the US only. Fail-closed: until a
+  // positive answer arrives, the checkout leads nowhere useful, so the row
+  // demotes to "More options" (the pay page itself explains region
+  // unavailability with a proper dead-end screen).
+  const [stripeAvailable, setStripeAvailable] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void window.antseedDesktop?.paymentsOnrampAvailability?.().then((result) => {
+      if (!cancelled && result.ok && result.data?.stripe) setStripeAvailable(true);
+    }).catch(() => {
+      // Unreachable pay page — leave the row hidden.
+    });
+    return () => { cancelled = true; };
+  }, []);
+
   // Fun checkout preconditions: an API key, watcher info (it supplies the
   // recipient wallet), and the app on Base mainnet — the only chain Fun
   // delivers to. Otherwise (local/testnet) the option list shows directly.
@@ -505,6 +511,26 @@ export function VprDepositView({ onSelectView }: Props) {
       <span className={styles.funCtaText}>
         <span className={styles.funCtaTitle}>Deposit</span>
         <span className={styles.funCtaCaption}>Powered by fun.xyz</span>
+      </span>
+      <span className={styles.methodBadges} aria-hidden="true">
+        <MastercardRoundMark />
+        <ApplePayRoundMark />
+        <GooglePayRoundMark />
+        <VisaRoundMark />
+      </span>
+    </>
+  );
+
+  // Fun as a "More options" row — used when the antseed-pay checkout takes
+  // the primary slot (US users). Same Fun wiring, method-row anatomy.
+  const funMethodRowContent = (
+    <>
+      <span className={styles.methodCtaIcon}>
+        <FunMark size={20} />
+      </span>
+      <span className={styles.methodCtaText}>
+        <span className={styles.methodCtaTitle}>Deposit using Fun</span>
+        <span className={styles.methodCtaCaption}>Card or crypto · fun.xyz</span>
       </span>
       <span className={styles.methodBadges} aria-hidden="true">
         <MastercardRoundMark />
@@ -604,11 +630,29 @@ export function VprDepositView({ onSelectView }: Props) {
             </span>
           </VprCard>
 
-          {/* Primary path: the in-app Fun (fun.xyz) checkout — card/cash or a
-              crypto transfer, delivered to the hot wallet the deposit watcher
-              sweeps. Fun delivers on Base mainnet only, so the CTA waits for
-              the watcher info and hides on other chains. */}
-          {funAvailable && (funWatchInfo && funkitApiKey ? (
+          {/* Primary path — for US users (the pay page's region gating
+              decides) the antseed-pay card checkout leads and Fun moves under
+              "More options"; elsewhere the Fun (fun.xyz) checkout leads as
+              before. Both deliver to the hot wallet the deposit watcher
+              sweeps. */}
+          {stripeAvailable ? (
+            <button type="button" className={styles.funCta} onClick={() => openCardProvider('antseed-pay')}>
+              <span className={styles.funCtaIcon}>
+                <StripeMark size={18} />
+              </span>
+              <span className={styles.funCtaText}>
+                <span className={styles.funCtaTitle}>Deposit</span>
+                <span className={styles.funCtaCaption}>Powered by Outerfound</span>
+              </span>
+              {/* Stripe's onramp takes cards + US bank (Link) — no
+                  Apple/Google Pay, so no wallet badges here. */}
+              <span className={styles.methodBadges} aria-hidden="true">
+                <VisaRoundMark />
+                <MastercardRoundMark />
+                <AmexRoundMark />
+              </span>
+            </button>
+          ) : funAvailable && (funWatchInfo && funkitApiKey ? (
             <Suspense fallback={<button type="button" className={styles.funCta} disabled>{funCtaContent}</button>}>
               <FunkitDeposit
                 apiKey={funkitApiKey}
@@ -643,6 +687,7 @@ export function VprDepositView({ onSelectView }: Props) {
             </button>
             <span className={styles.methodFootnote}>* Deposited to your credits by the AntSeed relayer network</span>
           </div>
+          {cardNotice && <div className={styles.cardNotice} role="alert">{cardNotice}</div>}
 
           <button
             type="button"
@@ -664,6 +709,40 @@ export function VprDepositView({ onSelectView }: Props) {
               {/* Fixed lineup — deliberately NOT the configurable card
                   provider list, which may carry legacy entries. These ids
                   always resolve in the main process. */}
+              {stripeAvailable && funAvailable && (funWatchInfo && funkitApiKey ? (
+                <Suspense fallback={<button type="button" className={styles.methodCta} disabled>{funMethodRowContent}</button>}>
+                  <FunkitDeposit
+                    apiKey={funkitApiKey}
+                    recipient={funWatchInfo.address}
+                    usdcAddress={funWatchInfo.usdcAddress}
+                    className={styles.methodCta}
+                    onError={(message) => setPayPageNotice(message || null)}
+                  >
+                    {funMethodRowContent}
+                  </FunkitDeposit>
+                </Suspense>
+              ) : (
+                <button type="button" className={styles.methodCta} disabled>{funMethodRowContent}</button>
+              ))}
+              {/* Outerfound demoted here when the region probe said no (or
+                  failed): still reachable, and the pay page itself shows the
+                  "not available in your region" screen. */}
+              {!stripeAvailable && (
+                <button type="button" className={styles.methodCta} onClick={() => openCardProvider('antseed-pay')}>
+                  <span className={styles.methodCtaIcon}>
+                    <StripeMark size={20} />
+                  </span>
+                  <span className={styles.methodCtaText}>
+                    <span className={styles.methodCtaTitle}>Deposit using Outerfound</span>
+                    <span className={styles.methodCtaCaption}>Card · US only</span>
+                  </span>
+                  <span className={styles.methodBadges} aria-hidden="true">
+                    <VisaRoundMark />
+                    <MastercardRoundMark />
+                    <AmexRoundMark />
+                  </span>
+                </button>
+              )}
               <button type="button" className={styles.methodCta} onClick={() => openCardProvider('meridian')}>
                 <span className={styles.methodCtaIcon}>
                   <MeridianMark />
@@ -680,21 +759,6 @@ export function VprDepositView({ onSelectView }: Props) {
                 </span>
               </button>
 
-              {SHOW_STRIPE_OPTION && (
-                <button type="button" className={styles.methodCta} onClick={() => openCardProvider('antseed-pay')}>
-                  <span className={styles.methodCtaIcon}>
-                    <StripeMark />
-                  </span>
-                  <span className={styles.methodCtaText}>
-                    <span className={styles.methodCtaTitle}>Stripe</span>
-                  </span>
-                  <span className={styles.methodBadges} aria-hidden="true">
-                    <VisaMark />
-                    <MastercardMark />
-                  </span>
-                </button>
-              )}
-              {cardNotice && <div className={styles.cardNotice} role="alert">{cardNotice}</div>}
             </div>
           )}
 

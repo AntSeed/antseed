@@ -15,7 +15,7 @@
  *
  * Plain `_blank` links (terms, explorers) still go to the system browser.
  */
-import { app, shell, type BrowserWindow, type BrowserWindowConstructorOptions, type HandlerDetails } from 'electron';
+import { app, shell, BrowserWindow, type BrowserWindowConstructorOptions, type HandlerDetails } from 'electron';
 
 type WindowOpenResponse =
   | { action: 'deny' }
@@ -77,6 +77,40 @@ export function adoptCheckoutWindow(win: BrowserWindow): void {
   win.on('closed', () => {
     checkoutWindows.delete(win);
   });
+}
+
+/**
+ * Open a hosted checkout page (e.g. the antseed-pay.com Stripe flow) as an
+ * app-owned popup rather than a system-browser tab. These pages carry a
+ * pre-signed funding link, so no wallet extension is needed — and adopting
+ * the window means the deposit watcher closes it the moment the bought USDC
+ * lands at the hot wallet, same as the Fun checkout windows.
+ *
+ * `parent` comes from the caller (ui/window.js imports this module, so
+ * importing getMainWindow here would be a cycle).
+ */
+export function openCheckoutPopup(url: string, parent?: BrowserWindow | null): BrowserWindow {
+  // Narrow, like the Fun SDK's sign-in popups — the page renders its bare
+  // one-column checkout at this width.
+  const win = new BrowserWindow({
+    width: 420,
+    height: 700,
+    minWidth: 360,
+    minHeight: 560,
+    ...(parent && !parent.isDestroyed() ? { parent } : {}),
+    title: 'AntSeed — Secure checkout',
+    autoHideMenuBar: true,
+    backgroundColor: '#ffffff',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  win.setMenuBarVisibility(false);
+  adoptCheckoutWindow(win);
+  void win.loadURL(url);
+  return win;
 }
 
 /** Close every open checkout window. Returns whether any were open. */

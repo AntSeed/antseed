@@ -224,6 +224,9 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  /* Explicit: the Fun SDK wraps its button in a provider div, so the row
+     can't rely on grid-item stretch like the plain buttons do. */
+  width: 100%;
   padding: 10px 14px;
   border: 1px solid var(--border);
   border-radius: 14px;
