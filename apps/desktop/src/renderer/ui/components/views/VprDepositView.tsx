@@ -3,6 +3,7 @@ import QRCode from 'qrcode';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
   ArrowDown01Icon,
+  ArrowRight01Icon,
   ArrowUpRight01Icon,
   Copy01Icon,
   QrCodeIcon,
@@ -323,6 +324,25 @@ function EthMark({ size = 18 }: { size?: number }) {
   );
 }
 
+/** Official Link logo (icon + wordmark) — link.com's header SVG, with the
+    arrow mark in white inside the dark disc (as on Link's own pay button). */
+function LinkWordmark({ height = 20 }: { height?: number }) {
+  const width = Math.round((height * 78) / 26);
+  return (
+    <svg width={width} height={height} viewBox="0 0 78 26" fill="none" aria-hidden="true">
+      <path
+        fill="#011e0f"
+        d="M39.321 3.983c0-1.222 1.035-2.215 2.252-2.215 1.218 0 2.253.998 2.253 2.215a2.254 2.254 0 0 1-2.253 2.241 2.234 2.234 0 0 1-2.252-2.241M32.638 2.08h3.919v21.84h-3.92zM43.554 8.32h-3.95v15.6h3.95zM71.954 15.59c2.973-1.82 4.996-4.53 5.795-7.276H73.8c-1.03 2.621-3.392 4.592-5.989 5.43V2.073h-3.95v21.84h3.95V17.42c3.015.748 5.398 3.343 6.213 6.494H78c-.606-3.307-2.88-6.4-6.046-8.325M50.556 10.067c1.035-1.368 3.052-2.163 4.687-2.163 3.052 0 5.576 2.22 5.58 5.574v10.436h-3.95v-9.568c0-1.378-.616-2.969-2.617-2.969-2.352 0-3.705 2.075-3.705 4.503v8.045H46.6V8.33h3.955z"
+      />
+      <circle cx="13" cy="13" r="13" fill="#011e0f" />
+      <path
+        fill="#ffffff"
+        d="M12.462 5.2H8.434c.783 3.26 3.072 6.048 5.936 7.8-2.87 1.753-5.153 4.54-5.936 7.8h4.028c.998-3.016 3.763-5.637 7.16-6.172v-3.26c-3.402-.531-6.167-3.152-7.16-6.168"
+      />
+    </svg>
+  );
+}
+
 /** Official Stripe mark — from stripe.com's SVG favicon. */
 function StripeMark({ size = 22 }: { size?: number }) {
   return (
@@ -636,22 +656,28 @@ export function VprDepositView({ onSelectView }: Props) {
               before. Both deliver to the hot wallet the deposit watcher
               sweeps. */}
           {stripeAvailable ? (
-            <button type="button" className={styles.funCta} onClick={() => openCardProvider('antseed-pay')}>
-              <span className={styles.funCtaIcon}>
-                <StripeMark size={18} />
+            <div className={styles.methodGroup}>
+              {/* Link-branded primary (Stripe's card + US-bank checkout): the
+                  green "Pay with link" pill, with the processor + accepted
+                  cards on a quiet line underneath. */}
+              <button
+                type="button"
+                className={styles.linkCta}
+                aria-label="Pay with Link"
+                onClick={() => openCardProvider('antseed-pay')}
+              >
+                <span>Pay with</span>
+                <LinkWordmark />
+              </button>
+              <span className={styles.linkCtaSub}>
+                <span>Powered by Outerfound</span>
+                <span className={styles.methodBadges} aria-hidden="true">
+                  <VisaRoundMark />
+                  <MastercardRoundMark />
+                  <AmexRoundMark />
+                </span>
               </span>
-              <span className={styles.funCtaText}>
-                <span className={styles.funCtaTitle}>Deposit with Stripe</span>
-                <span className={styles.funCtaCaption}>Powered by Outerfound</span>
-              </span>
-              {/* Stripe's onramp takes cards + US bank (Link) — no
-                  Apple/Google Pay, so no wallet badges here. */}
-              <span className={styles.methodBadges} aria-hidden="true">
-                <VisaRoundMark />
-                <MastercardRoundMark />
-                <AmexRoundMark />
-              </span>
-            </button>
+            </div>
           ) : funAvailable && (funWatchInfo && funkitApiKey ? (
             <Suspense fallback={<button type="button" className={styles.funCta} disabled>{funCtaContent}</button>}>
               <FunkitDeposit
@@ -683,6 +709,9 @@ export function VprDepositView({ onSelectView }: Props) {
                 <span className={styles.badgeChip}>
                   <HugeiconsIcon icon={QrCodeIcon} size={12} strokeWidth={2} />
                 </span>
+              </span>
+              <span className={styles.methodArrow} aria-hidden="true">
+                <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} />
               </span>
             </button>
             <span className={styles.methodFootnote}>* Deposited to your credits by the AntSeed relayer network</span>
