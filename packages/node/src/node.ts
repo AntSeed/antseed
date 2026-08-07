@@ -1712,9 +1712,9 @@ export class AntseedNode extends EventEmitter {
         freeUsageManager: this._buyerFreeUsageManager,
         verificationStorage: this._verificationStorage,
         verificationSampler: this._verificationSampler,
-        getConnection: (peer) => this._getOrCreateConnection(peer),
-        getMux: (peerId, conn) => this._getOrCreateMux(peerId, conn),
-        getVerificationMux: (peerId, conn) => this._getOrCreateVerificationMux(peerId, conn),
+        getConnection: (peer) => this._getOrCreateConnection(peer as PeerInfo),
+        getMux: (peerId, conn) => this._getOrCreateMux(peerId, conn as PeerConnection),
+        getVerificationMux: (peerId, conn) => this._getOrCreateVerificationMux(peerId, conn as PeerConnection),
         registerPaymentMux: (peerId, pmux) => this._paymentMuxes.set(peerId, pmux),
       },
     );
