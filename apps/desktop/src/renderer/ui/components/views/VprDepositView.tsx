@@ -476,7 +476,9 @@ export function VprDepositView({ onSelectView }: Props) {
   // Region-gated card checkout (Stripe via the hosted antseed-pay page):
   // the main process asks the pay page which providers serve this machine's
   // region — Stripe sells USDC-on-Base in the US only. Fail-closed: until a
-  // positive answer arrives, the row simply isn't there.
+  // positive answer arrives, the checkout leads nowhere useful, so the row
+  // demotes to "More options" (the pay page itself explains region
+  // unavailability with a proper dead-end screen).
   const [stripeAvailable, setStripeAvailable] = useState(false);
   useEffect(() => {
     let cancelled = false;
@@ -722,6 +724,25 @@ export function VprDepositView({ onSelectView }: Props) {
               ) : (
                 <button type="button" className={styles.methodCta} disabled>{funMethodRowContent}</button>
               ))}
+              {/* Outerfound demoted here when the region probe said no (or
+                  failed): still reachable, and the pay page itself shows the
+                  "not available in your region" screen. */}
+              {!stripeAvailable && (
+                <button type="button" className={styles.methodCta} onClick={() => openCardProvider('antseed-pay')}>
+                  <span className={styles.methodCtaIcon}>
+                    <StripeMark size={20} />
+                  </span>
+                  <span className={styles.methodCtaText}>
+                    <span className={styles.methodCtaTitle}>Deposit using Outerfound</span>
+                    <span className={styles.methodCtaCaption}>Card · US only</span>
+                  </span>
+                  <span className={styles.methodBadges} aria-hidden="true">
+                    <VisaRoundMark />
+                    <MastercardRoundMark />
+                    <AmexRoundMark />
+                  </span>
+                </button>
+              )}
               <button type="button" className={styles.methodCta} onClick={() => openCardProvider('meridian')}>
                 <span className={styles.methodCtaIcon}>
                   <MeridianMark />
