@@ -194,8 +194,9 @@ export function registerPaymentsIpc(): void {
       if (provider.id === 'antseed-pay') {
         // The full signed funding link — nothing secret in it (the sig is in
         // the URL by design), and having it in the dev log makes testing the
-        // hosted page outside the popup trivial.
-        console.log('[payments] antseed-pay funding link:', url);
+        // hosted page outside the popup trivial. Dev only: production output
+        // shouldn't carry the buyer's address.
+        if (isDev) console.log('[payments] antseed-pay funding link:', url);
         openCheckoutPopup(url, getMainWindow());
         return { ok: true, url };
       }
