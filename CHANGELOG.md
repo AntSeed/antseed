@@ -8,6 +8,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Desktop: added a card deposit path powered by AntSeed Pay (antseed-pay.com) with Stripe checkout for US users. The app asks the hosted pay page which providers serve the user's region (its public `/api/options` endpoint, geo-resolved at Cloudflare's edge) and, when Stripe is available, leads the Add Credits chooser with a "Deposit — Powered by Outerfound" CTA (Visa, Mastercard, Amex); the Fun checkout moves under "More options" as "Deposit using Fun". Selecting it opens a narrow app-owned checkout window (420×700) on the signed funding link pinned to the Stripe integration (`provider=stripe`); the existing deposit watcher sweeps the purchased USDC into credits and closes the window when funds arrive. The region check fails closed — if the pay page is unreachable or the region unsupported, the chooser is unchanged.
+
 - Sellers now run periodic model health self-checks (a 1-token probe per advertised service, every 5 minutes by default) and unadvertise services that keep failing, restoring them automatically when they recover. Configurable via `seller.healthCheck` (`enabled`, `intervalMs`, `failureThreshold`); sellers announcing this behavior advertise the `seller.model-health.v1` capability in discovery metadata. Exposed as `ModelHealthChecker` in `@antseed/node`, alongside `AntseedNode.refreshSellerMetadata()` for runtime service-list changes.
 - The buyer proxy now treats `model_not_found` responses as routing failures (instead of successes) and refreshes peer discovery metadata in the background, so a stale cached model list recovers quickly after a seller unadvertises a model.
 

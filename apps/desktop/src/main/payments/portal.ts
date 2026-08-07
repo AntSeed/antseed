@@ -143,6 +143,46 @@ export async function readCardProviders(): Promise<CardProvider[]> {
 
 
 
+// Onramp availability — asks the hosted pay page (antseed-pay.com/api/options)
+// which providers it would offer this machine's region. The page owns the
+// gating rules (Stripe sells USDC-on-Base in the US only) and reads geo from
+// Cloudflare, so the app never guesses from locale. The deposit chooser uses
+// this to decide whether region-gated options (the Stripe row) appear at all.
+// Fail closed: any error, timeout, or unexpected payload hides them — every
+// other deposit path is unaffected.
+export type OnrampAvailability = { country: string | null; stripe: boolean };
+
+const ONRAMP_AVAILABILITY_TIMEOUT_MS = 5000;
+let onrampAvailabilityCache: OnrampAvailability | null = null;
+
+export async function fetchOnrampAvailability(): Promise<OnrampAvailability> {
+  // Geo doesn't change within an app run — one successful probe is enough.
+  // Failures are not cached so a flaky network retries on the next open.
+  if (onrampAvailabilityCache) return onrampAvailabilityCache;
+  const closed: OnrampAvailability = { country: null, stripe: false };
+  try {
+    const providers = await readCardProviders();
+    const entry = providers.find((p) => p.id === 'antseed-pay')
+      ?? DEFAULT_CARD_PROVIDERS.find((p) => p.id === 'antseed-pay');
+    if (!entry) return closed;
+    const res = await fetch(new URL('/api/options', entry.url), {
+      signal: AbortSignal.timeout(ONRAMP_AVAILABILITY_TIMEOUT_MS),
+    });
+    if (!res.ok) return closed;
+    const body = asRecord(await res.json());
+    const list = Array.isArray(body.providers) ? body.providers : [];
+    const stripeEntry = asRecord(list.find((p) => asRecord(p).id === 'stripe'));
+    const country = asString(asRecord(body.geo).country as string, '');
+    onrampAvailabilityCache = {
+      country: country || null,
+      stripe: stripeEntry.available === true,
+    };
+    return onrampAvailabilityCache;
+  } catch {
+    return closed;
+  }
+}
+
 // Crossmint Stablecoin Onramp — in-app embedded checkout for buying USDC on
 // Base with a card, delivered to the buyer hot wallet (then swept into
 // deposits by the same watcher as QR/card transfers). The client-side key is
