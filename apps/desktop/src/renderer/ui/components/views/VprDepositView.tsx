@@ -641,7 +641,7 @@ export function VprDepositView({ onSelectView }: Props) {
                 <StripeMark size={18} />
               </span>
               <span className={styles.funCtaText}>
-                <span className={styles.funCtaTitle}>Deposit</span>
+                <span className={styles.funCtaTitle}>Deposit with Stripe</span>
                 <span className={styles.funCtaCaption}>Powered by Outerfound</span>
               </span>
               {/* Stripe's onramp takes cards + US bank (Link) — no
