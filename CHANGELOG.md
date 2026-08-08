@@ -25,6 +25,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Fixed seller health checks leaving rate-limited services advertised indefinitely. HTTP 429 responses now count toward the failure threshold, and a successful probe automatically restores the service.
 - Fixed the buyer proxy leaking `.buyer.state.*.json.tmp` files (each a full discovered-peers snapshot, ~1 MB) when the atomic state-file rename failed — common on Windows while a reader briefly holds `buyer.state.json` open. The rename is now retried, a failed write cleans up its temp file and logs the error instead of dropping the state update silently, and leftover temp files from earlier runs are swept at startup.
 - Fixed bursty buyer startups causing initial payment-channel reserves to fail when delegated seller accounts reject excess in-flight transactions. Sellers now retry transient transaction backpressure before acknowledging the channel.
 - Fixed seller health checks leaving unavailable upstreams advertised: HTTP 402 responses now count as failures, every failing service can be removed, and a provider with no healthy services is omitted from signed discovery metadata until a probe succeeds.

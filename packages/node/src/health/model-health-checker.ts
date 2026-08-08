@@ -221,8 +221,8 @@ export class ModelHealthChecker {
 
     if (outcome === 'inconclusive') {
       // The endpoint answered but the probe result proves nothing either way
-      // (e.g. 429 while busy, 400 for an unsupported probe parameter). Leave
-      // failure counters and advertisement untouched.
+      // (for example, 400 for an unsupported probe parameter). Leave failure
+      // counters and advertisement untouched.
       debugLog(`[ModelHealth] ${provider.name}/${service}: inconclusive (${state.lastDetail})`);
       return;
     }
@@ -360,16 +360,18 @@ export function buildHealthProbeRequest(service: string, protocol: ServiceApiPro
  * Classify a probe response status.
  *
  * - 2xx/3xx — the model answered: healthy.
- * - 401/402/403/404 and 5xx — credentials broken, billing unavailable, model
- *   gone, or upstream down: unhealthy. (The relay collapses upstream network
- *   errors/timeouts to 502.)
- * - Everything else (400, 422, 429, ...) — the endpoint is alive but the probe
- *   itself was rejected (unsupported parameter, rate limit, busy): inconclusive,
+ * - 401/402/403/404, 429, and 5xx — credentials broken, billing unavailable,
+ *   rate or usage limited, model gone, or upstream down: unhealthy. (The relay
+ *   collapses upstream network errors/timeouts to 502.)
+ * - Everything else (400, 422, ...) — the endpoint is alive but the probe
+ *   itself was rejected (for example, an unsupported parameter): inconclusive,
  *   so a working model is never unadvertised over a probe quirk.
  */
 export function classifyProbeStatus(statusCode: number): ProbeOutcome {
   if (statusCode >= 200 && statusCode < 400) return 'healthy';
-  if (statusCode === 401 || statusCode === 402 || statusCode === 403 || statusCode === 404) return 'unhealthy';
+  if (statusCode === 401 || statusCode === 402 || statusCode === 403 || statusCode === 404 || statusCode === 429) {
+    return 'unhealthy';
+  }
   if (statusCode >= 500) return 'unhealthy';
   return 'inconclusive';
 }
