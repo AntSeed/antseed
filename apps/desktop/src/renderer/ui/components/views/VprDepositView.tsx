@@ -15,6 +15,7 @@ import { useActions } from '../../hooks/useActions';
 import { formatCredits, shortAddress } from '../../../core/format';
 import { VprCard, VprPage } from '../vpr/VprKit';
 import type { DepositWatchStatus } from '../../../types/bridge';
+import { BalanceInfoPopover, BalanceWarning } from './BalanceBreakdown';
 import styles from './VprDepositView.module.scss';
 
 // The Fun (fun.xyz) checkout SDK is heavy (it bundles wagmi/viem), so it loads
@@ -371,8 +372,13 @@ function explorerTxUrl(chainId: number | undefined, txHash: string): string | nu
 export function VprDepositView({ onSelectView }: Props) {
   const actions = useActions();
   const snap = useUiSelector((state) => ({
-    spendable: state.creditsSpendableUsdc,
     total: state.creditsTotalUsdc,
+    available: state.creditsAvailableUsdc,
+    reserved: state.creditsReservedUsdc,
+    pending: state.creditsPendingUsdc,
+    wallet: state.creditsWalletUsdc,
+    totalOwned: state.creditsTotalOwnedUsdc,
+    creditLimit: state.creditsCreditLimitUsdc,
   }), shallowEqual);
 
   const [slide, setSlide] = useState<StageSlide>(() => ({
@@ -391,6 +397,15 @@ export function VprDepositView({ onSelectView }: Props) {
   // else (QR transfer, hosted provider pages) sits behind this link.
   const [moreOpen, setMoreOpen] = useState(false);
   const copyTimer = useRef<number | null>(null);
+  const balanceValues = {
+    available: snap.available,
+    reserved: snap.reserved,
+    pending: snap.pending,
+    wallet: snap.wallet,
+    totalOwned: snap.totalOwned,
+    creditLimit: snap.creditLimit,
+    deposited: snap.total,
+  };
 
   const goToStage = useCallback((next: Stage) => {
     setSlide((current) => current.stage === next ? current : {
@@ -638,15 +653,17 @@ export function VprDepositView({ onSelectView }: Props) {
   function renderStage(current: Stage): JSX.Element {
     if (current === 'choose') {
       return (
-        <VprPage title="Add credits" backFallback="credits">
+        <VprPage title="Add credits" backToDepositSource>
         <div className={styles.stack}>
 
           <VprCard className={styles.balanceCard}>
-            <span className={styles.balanceLabel}>Your balance</span>
-            <span className={styles.balanceValue}>${formatCredits(snap.spendable)}</span>
-            <span className={styles.balanceHint}>
-              Credits are USDC held for you in AntSeed's on-chain escrow. You only pay for
-              what you use, and unused credits can be withdrawn anytime.
+            <span className={styles.balanceLabelRow}>
+              <span className={styles.balanceLabel}>Your balance</span>
+              <BalanceInfoPopover values={balanceValues} />
+            </span>
+            <span className={styles.balanceValueRow}>
+              <span className={styles.balanceValue}>${formatCredits(snap.totalOwned)}</span>
+              <BalanceWarning values={balanceValues} />
             </span>
           </VprCard>
 

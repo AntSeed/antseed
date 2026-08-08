@@ -149,7 +149,7 @@ export function DesktopView({ onSelectView }: DesktopViewProps) {
     <section className={`view view-desktop ${styles.view}`} role="tabpanel">
       <div className={styles.stack}>
         <div className={styles.headRow}>
-          <VprBackTitle title="Logs" fallback="help" />
+          <VprBackTitle title="Logs" onBack={() => onSelectView?.('help')} />
           <div className={`${styles.headActions} ${styles.headActionsLeft}`}>
             <button
               type="button"

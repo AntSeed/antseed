@@ -501,15 +501,15 @@ export function FloatApp() {
             </div>
           ) : null}
           </OverlayScrollArea>
-          {/* Setting, not a chat: a quiet one-liner naming the model the next
-              app session starts on — pinned above the footer, list level only. */}
+          {/* Setting, not a chat: a quiet one-liner naming the model new chats
+              start on — pinned above the footer, list level only. */}
           {chatTarget === null ? (
             <button
               type="button"
               className={`${styles.menuRow} ${styles.menuRowDefault}`}
               onClick={() => drillIn('default')}
             >
-              <span className={styles.menuRowDefaultTitle}>New session model</span>
+              <span className={styles.menuRowDefaultTitle}>Model for new chats</span>
               <span className={styles.menuRowValue}>
                 <span className={styles.menuRowValueModel}>{modelLabel}</span>
                 {/* Pinned routing names its seller here — the pill has no

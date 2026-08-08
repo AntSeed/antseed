@@ -5,6 +5,7 @@ import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { formatCredits, shortAddress } from '../../../core/format';
 import { formatCompactTokens, VprCard, VprPage, VprStatRow, VprStatTile } from '../vpr/VprKit';
+import { BalanceBreakdown, BalanceWarning } from './BalanceBreakdown';
 import { ExportSignerKeyDialog, ImportSignerKeyDialog } from './SignerKeyDialogs';
 import styles from './VprCreditsView.module.scss';
 
@@ -19,7 +20,9 @@ export function VprCreditsView({ onSelectView }: Props) {
     reserved: state.creditsReservedUsdc,
     total: state.creditsTotalUsdc,
     pending: state.creditsPendingUsdc,
-    spendable: state.creditsSpendableUsdc,
+    wallet: state.creditsWalletUsdc,
+    totalOwned: state.creditsTotalOwnedUsdc,
+    creditLimit: state.creditsCreditLimitUsdc,
     evmAddress: state.creditsEvmAddress,
     operatorAddress: state.creditsOperatorAddress,
     usage: state.creditsBuyerUsage,
@@ -51,18 +54,31 @@ export function VprCreditsView({ onSelectView }: Props) {
   }, [actions]);
 
 
+  const balanceValues = {
+    available: snap.available,
+    reserved: snap.reserved,
+    pending: snap.pending,
+    wallet: snap.wallet,
+    totalOwned: snap.totalOwned,
+    creditLimit: snap.creditLimit,
+    deposited: snap.total,
+  };
+
   return (
     <section className={`view view-vpr-credits view-pinned-header ${styles.view}`} role="tabpanel">
-      <VprPage title="Balance" backFallback="home">
+      <VprPage title="Profile">
       <div className={styles.stack}>
 
         <div className={styles.balanceGroup}>
           <VprCard className={styles.balanceCard}>
             <div className={styles.balanceText}>
               <span className={styles.balanceLabel}>Your balance</span>
-              <span className={styles.balanceValue}>${formatCredits(snap.spendable)}</span>
+              <span className={styles.balanceValueRow}>
+                <span className={styles.balanceValue}>${formatCredits(snap.totalOwned)}</span>
+                <BalanceWarning values={balanceValues} />
+              </span>
               <span className={styles.balanceHint}>
-                Everything you have on deposit, less the spend you have already authorized.
+                Everything you own across on-chain credits and your deposit wallet.
               </span>
             </div>
             <div className={styles.payButtons}>
@@ -88,24 +104,8 @@ export function VprCreditsView({ onSelectView }: Props) {
           </button>
         </div>
 
-        {/* Where the money sits. Reserving a channel moves deposits into the
-            "held" bucket without spending them, and a signed SpendingAuth
-            spends without moving anything until the seller settles — so
-            neither number alone answers "how much do I have left?". */}
         <VprCard className={styles.detailsCard}>
-          <div className={styles.detailRow}>
-            <span>Ready to use</span><span>${formatCredits(snap.available)}</span>
-          </div>
-          <div className={styles.detailRow}>
-            <span>Held in open sessions</span><span>${formatCredits(snap.reserved)}</span>
-          </div>
-          <div className={styles.detailRow}>
-            <span>Authorized, not yet charged</span>
-            <span>{Number(snap.pending) > 0 ? '-' : ''}${formatCredits(snap.pending)}</span>
-          </div>
-          <div className={`${styles.detailRow} ${styles.detailRowTotal}`}>
-            <span>Total deposited</span><span>${formatCredits(snap.total)}</span>
-          </div>
+          <BalanceBreakdown values={balanceValues} />
         </VprCard>
 
         <VprStatRow>

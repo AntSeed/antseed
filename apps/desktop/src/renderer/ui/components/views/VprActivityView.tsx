@@ -114,7 +114,7 @@ export function VprActivityView({ onSelectView }: Props) {
 
   return (
     <section className={`view view-vpr-activity view-pinned-header ${styles.view}`} role="tabpanel">
-      <VprPage title="Activity" backFallback="credits">
+      <VprPage title="Activity" backTo="credits">
       <div className={styles.stack}>
 
         <VprStatRow>

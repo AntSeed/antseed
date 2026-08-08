@@ -4,7 +4,7 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowLeft01Icon, Search01Icon } from '@hugeicons/core-free-icons';
 import { formatCredits } from '../../../core/format';
 import { useUiSelector } from '../../hooks/useUiSelector';
-import { VprNavContext, useVprNavBack } from './VprNavContext';
+import { VprNavContext } from './VprNavContext';
 import type { ViewName } from '../../types';
 import styles from './VprKit.module.scss';
 
@@ -15,18 +15,13 @@ import styles from './VprKit.module.scss';
 
 export { formatCompactTokens, formatUsdShort } from '../../../core/format';
 
-/** Inner-screen page header: back chevron + screen title. Without an explicit
- * onBack it pops the shell's nav history — returning to whichever screen the
- * user actually came from — and lands on `fallback` when there is none.
- * Passing onBack keeps full control (in-view stages, wizards). */
-export function VprBackTitle({ title, onBack, fallback = 'home' }: {
+/** Drill-down page header: back chevron + screen title. */
+export function VprBackTitle({ title, onBack }: {
   title: string;
-  onBack?: () => void;
-  fallback?: ViewName;
+  onBack: () => void;
 }): JSX.Element {
-  const historyBack = useVprNavBack(fallback);
   return (
-    <button type="button" className={styles.backTitle} onClick={onBack ?? historyBack} title="Back">
+    <button type="button" className={styles.backTitle} onClick={onBack} title="Back">
       <HugeiconsIcon icon={ArrowLeft01Icon} size={16} strokeWidth={2} />
       <span>{title}</span>
     </button>
@@ -41,26 +36,33 @@ export function VprBackTitle({ title, onBack, fallback = 'home' }: {
  * section must add the global `view-pinned-header` class, which turns it
  * into a non-scrolling flex column.
  */
-export function VprPage({ title, onBack, backFallback, header, children }: {
+export function VprPage({ title, onBack, backTo, backToDepositSource = false, header, children }: {
   title: string;
-  /** Explicit back handler (in-view stages); omit to pop the nav history. */
+  /** Explicit back handler for in-view stages and wizards. */
   onBack?: () => void;
-  /** History-empty fallback when onBack is omitted; defaults to 'home'. */
-  backFallback?: ViewName;
+  /** Fixed parent view for cross-view drill-downs. Omit on top-level pages. */
+  backTo?: ViewName;
+  /** Return Add Credits to the page that opened it. */
+  backToDepositSource?: boolean;
   /** Extra rows pinned with the header (e.g. search, tabs). */
   header?: ReactNode;
   children: ReactNode;
 }): JSX.Element {
   const nav = useContext(VprNavContext);
-  // Spendable, not available: this pill sits directly above the headline
-  // balance on the Balance page, so it has to be the same number.
-  const credits = useUiSelector((state) => state.creditsSpendableUsdc);
+  const credits = useUiSelector((state) => state.creditsTotalOwnedUsdc);
+  const backHandler = onBack
+    ?? (backToDepositSource ? () => nav?.leaveDeposit() : undefined)
+    ?? (backTo ? () => nav?.navigate(backTo) : undefined);
   return (
     <>
       <div className={styles.pageTop}>
         <div className={styles.pageTopInner}>
           <div className={styles.pageHeaderRow}>
-            <VprBackTitle title={title} onBack={onBack} fallback={backFallback} />
+            {backHandler ? (
+              <VprBackTitle title={title} onBack={backHandler} />
+            ) : (
+              <span className={styles.pageTitle}>{title}</span>
+            )}
             <button
               type="button"
               className={styles.headerCredits}

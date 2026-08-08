@@ -8,6 +8,7 @@ import {
     Cancel01Icon,
     PowerIcon,
     ArrowReloadHorizontalIcon,
+    Tick02Icon,
 } from '@hugeicons/core-free-icons';
 import type { VprModelCatalogEntry } from '../../../core/state';
 import { getUiStateRef } from '../../../core/store';
@@ -40,6 +41,7 @@ import styles from './VprHomeView.module.scss';
 type Props = { onSelectView?: (view: ViewName) => void };
 
 const ADD_BALANCE_DISMISSED_KEY = 'antseed.desktop.vpr.addBalanceDismissed';
+const MODEL_CHANGE_NOTICE_MS = 4_000;
 /* Rows in the model dropdown (Figma) — the full catalog lives on Models. */
 const DROPDOWN_MODEL_COUNT = 5;
 
@@ -152,8 +154,27 @@ export function VprHomeView({ onSelectView }: Props) {
 
   const [connectingProfile, setConnectingProfile] = useState<string | null>(null);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [modelChangeNotice, setModelChangeNotice] = useState<string | null>(null);
   const [favorites, setFavorites] = useState(loadFavoriteModels);
   const modelMenuRef = useRef<HTMLDivElement>(null);
+  const modelChangeNoticeTimer = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (modelChangeNoticeTimer.current !== null) window.clearTimeout(modelChangeNoticeTimer.current);
+  }, []);
+
+  function selectModelForNewChats(provider: string, serviceId: string): void {
+    const entry = findCatalogEntry(snap.catalog, provider, serviceId);
+    const label = entry?.label ?? displayModelLabel(serviceId);
+    setModelMenuOpen(false);
+    actions.selectVprModel(provider, serviceId);
+    setModelChangeNotice(`${label} selected for new chats.\nExisting chats are unchanged.`);
+    if (modelChangeNoticeTimer.current !== null) window.clearTimeout(modelChangeNoticeTimer.current);
+    modelChangeNoticeTimer.current = window.setTimeout(() => {
+      setModelChangeNotice(null);
+      modelChangeNoticeTimer.current = null;
+    }, MODEL_CHANGE_NOTICE_MS);
+  }
 
   // Favorites are starred on the model pages (localStorage); re-read on each
   // open so stars toggled elsewhere show up without a remount.
@@ -311,7 +332,7 @@ export function VprHomeView({ onSelectView }: Props) {
               onClick={() => setModelMenuOpen((open) => !open)}
               aria-haspopup="listbox"
               aria-expanded={modelMenuOpen}
-              title="Change new session model"
+              title="Change model for new chats"
             >
               <span className={styles.modelCardBody}>
                 <span className={styles.modelCardTitle}>
@@ -325,9 +346,7 @@ export function VprHomeView({ onSelectView }: Props) {
                   {modelIsFree && <span className={styles.freeTag}>Free</span>}
                 </span>
                 <span className={styles.modelCardCaption}>
-                  {/* Same wording as the pill: this picks the model the next
-                      app session starts on, not a global default. */}
-                  <span>New session model</span>
+                  <span>Model for new chats</span>
                   {/* Where the model routes: the pinned seller by name, or
                       how many peers are serving it while on auto. */}
                   {(pinnedSeller || selectedEntry) && (
@@ -354,8 +373,7 @@ export function VprHomeView({ onSelectView }: Props) {
                   selectOnly
                   pinnedPeerLabels={dropdownPins}
                   onSelect={(provider, serviceId) => {
-                    setModelMenuOpen(false);
-                    actions.selectVprModel(provider, serviceId);
+                    selectModelForNewChats(provider, serviceId);
                   }}
                   emptyLabel="No models discovered yet"
                   frameless
@@ -542,6 +560,22 @@ export function VprHomeView({ onSelectView }: Props) {
         )}
       </div>
       </OverlayScrollArea>
+      {modelChangeNotice ? (
+        <div className={styles.modelChangeBanner} role="status" aria-live="polite">
+          <span className={styles.modelChangeBannerIcon} aria-hidden="true">
+            <HugeiconsIcon icon={Tick02Icon} size={16} strokeWidth={2.2} />
+          </span>
+          <span className={styles.modelChangeBannerText}>{modelChangeNotice}</span>
+          <button
+            type="button"
+            className={styles.modelChangeBannerClose}
+            aria-label="Dismiss model change confirmation"
+            onClick={() => setModelChangeNotice(null)}
+          >
+            <HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={2} />
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }

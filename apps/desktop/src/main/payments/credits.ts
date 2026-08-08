@@ -15,7 +15,7 @@ import {
   formatUsdc,
   resolveChainConfig,
 } from '@antseed/node';
-import { spendableBalance } from '../billing/credits-balance.js';
+import { spendableBalance, totalOwnedBalance } from '../billing/credits-balance.js';
 import { getSecureIdentity } from '../identity.js';
 import { readConfig } from '../runtime/config-io.js';
 import { ACTIVE_CONFIG_PATH } from '../runtime/active-config.js';
@@ -35,6 +35,10 @@ export type CreditsInfo = {
   pendingUsdc: string;
   /** balanceUsdc - pendingUsdc — what the buyer actually still owns. */
   spendableUsdc: string;
+  /** USDC received by the buyer wallet but not yet swept into deposits. */
+  walletUsdc: string;
+  /** spendableUsdc + walletUsdc — the complete balance the buyer owns. */
+  totalOwnedUsdc: string;
   creditLimitUsdc: string;
 };
 
@@ -45,6 +49,8 @@ const EMPTY_CREDITS: Omit<CreditsInfo, 'evmAddress'> = {
   availableUsdc: '0',
   pendingUsdc: '0',
   spendableUsdc: '0',
+  walletUsdc: '0',
+  totalOwnedUsdc: '0',
   creditLimitUsdc: '0',
 };
 
@@ -133,7 +139,7 @@ export async function refreshCreditsInfo(): Promise<CreditsInfo> {
   const depositsClient = new DepositsClient({ rpcUrl: cc.rpcUrl, ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}), contractAddress: cc.depositsAddress, usdcAddress: cc.usdcAddress, ...(cc.chainId ? { evmChainId: cc.chainId } : {}) });
 
   try {
-    const [balance, creditLimit, operatorAddress, pending] = await Promise.all([
+    const [balance, creditLimit, operatorAddress, pending, walletBalance] = await Promise.all([
       depositsClient.getBuyerBalance(evmAddress),
       depositsClient.getBuyerCreditLimit(evmAddress),
       (async (): Promise<string | null> => {
@@ -143,11 +149,13 @@ export async function refreshCreditsInfo(): Promise<CreditsInfo> {
         } catch { return null; }
       })(),
       getPendingSpendUsdc().catch(() => 0n),
+      depositsClient.getUSDCBalance(evmAddress).catch(() => 0n),
     ]);
     creditsRpcFailCount = 0;
 
     const deposited = balance.available + balance.reserved;
     const spendable = spendableBalance(deposited, pending);
+    const totalOwned = totalOwnedBalance(spendable, walletBalance);
 
     const info: CreditsInfo = {
       evmAddress,
@@ -157,6 +165,8 @@ export async function refreshCreditsInfo(): Promise<CreditsInfo> {
       availableUsdc: formatUsdc6(balance.available),
       pendingUsdc: formatUsdc6(pending),
       spendableUsdc: formatUsdc6(spendable),
+      walletUsdc: formatUsdc6(walletBalance),
+      totalOwnedUsdc: formatUsdc6(totalOwned),
       creditLimitUsdc: formatUsdc6(creditLimit),
     };
     cachedCreditsInfo = info;

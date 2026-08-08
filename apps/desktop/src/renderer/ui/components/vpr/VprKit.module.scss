@@ -83,6 +83,16 @@
   box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
 }
 
+.pageTitle {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
 /* ---------- Toggle - Switch (48x24) ---------- */
 
 .toggle {

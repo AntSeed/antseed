@@ -127,7 +127,7 @@ export function ConfigView({ onSelectView }: ConfigViewProps) {
   return (
     <section className={`view view-config ${styles.view}`} role="tabpanel">
       <div className={styles.stack}>
-        <VprBackTitle title="Configuration" fallback="help" />
+        <VprBackTitle title="Configuration" onBack={() => onSelectView?.('help')} />
 
         <VprCard className={styles.card}>
           <span className={styles.cardTitle}>Buyer</span>

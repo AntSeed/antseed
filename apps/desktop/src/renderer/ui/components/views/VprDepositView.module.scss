@@ -30,6 +30,13 @@
   line-height: 16px;
 }
 
+.balanceLabelRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+}
+
 .balanceValue {
   color: var(--text-primary);
   font-size: 24px;
@@ -37,11 +44,11 @@
   line-height: 28px;
 }
 
-.balanceHint {
-  margin-top: 2px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 16px;
+.balanceValueRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
 }
 
 /* ---------- Method chooser (CTAs) ---------- */
