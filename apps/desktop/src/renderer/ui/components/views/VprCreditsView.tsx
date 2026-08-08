@@ -5,7 +5,7 @@ import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { formatCredits, shortAddress } from '../../../core/format';
 import { formatCompactTokens, VprCard, VprPage, VprStatRow, VprStatTile } from '../vpr/VprKit';
-import { BalanceBreakdown, BalanceWarning } from './BalanceBreakdown';
+import { BalanceSummaryCard } from './BalanceSummaryCard';
 import { ExportSignerKeyDialog, ImportSignerKeyDialog } from './SignerKeyDialogs';
 import styles from './VprCreditsView.module.scss';
 
@@ -70,25 +70,18 @@ export function VprCreditsView({ onSelectView }: Props) {
       <div className={styles.stack}>
 
         <div className={styles.balanceGroup}>
-          <VprCard className={styles.balanceCard}>
-            <div className={styles.balanceText}>
-              <span className={styles.balanceLabel}>Your balance</span>
-              <span className={styles.balanceValueRow}>
-                <span className={styles.balanceValue}>${formatCredits(snap.totalOwned)}</span>
-                <BalanceWarning values={balanceValues} />
-              </span>
-              <span className={styles.balanceHint}>
-                Everything you own across on-chain credits and your deposit wallet.
-              </span>
-            </div>
-            <div className={styles.payButtons}>
-              <button type="button" onClick={() => onSelectView?.('deposit')}>
-                <HugeiconsIcon icon={CreditCardIcon} size={16} strokeWidth={2} />
-                <HugeiconsIcon icon={Wallet01Icon} size={16} strokeWidth={2} />
-                <span>Add Credits</span>
-              </button>
-            </div>
-          </VprCard>
+          <BalanceSummaryCard
+            values={balanceValues}
+            actions={(
+              <div className={styles.payButtons}>
+                <button type="button" onClick={() => onSelectView?.('deposit')}>
+                  <HugeiconsIcon icon={CreditCardIcon} size={16} strokeWidth={2} />
+                  <HugeiconsIcon icon={Wallet01Icon} size={16} strokeWidth={2} />
+                  <span>Add Credits</span>
+                </button>
+              </div>
+            )}
+          />
 
           <div className={styles.secureNote}>
             <HugeiconsIcon icon={SquareLock01Icon} size={12} strokeWidth={2} />
@@ -103,10 +96,6 @@ export function VprCreditsView({ onSelectView }: Props) {
             Withdraw unused credits
           </button>
         </div>
-
-        <VprCard className={styles.detailsCard}>
-          <BalanceBreakdown values={balanceValues} />
-        </VprCard>
 
         <VprStatRow>
           <VprStatTile label="Requests" value={(snap.usage?.totalRequests ?? 0).toLocaleString('en-US')} />

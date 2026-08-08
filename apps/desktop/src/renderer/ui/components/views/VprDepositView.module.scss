@@ -16,41 +16,6 @@
   min-width: 0;
 }
 
-/* ---------- Balance header ---------- */
-
-.balanceCard {
-  display: grid;
-  gap: 2px;
-  padding: 12px 16px;
-}
-
-.balanceLabel {
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 16px;
-}
-
-.balanceLabelRow {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  width: fit-content;
-}
-
-.balanceValue {
-  color: var(--text-primary);
-  font-size: 24px;
-  font-weight: 650;
-  line-height: 28px;
-}
-
-.balanceValueRow {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  width: fit-content;
-}
-
 /* ---------- Method chooser (CTAs) ---------- */
 
 /* Primary Fun CTA: same row anatomy as .methodCta (icon chip · title +
