@@ -67,7 +67,7 @@ function BackArrow() {
 const INTRO_CARDS = [
   {icon: <ComputerIcon />, text: 'For now, AntSeed can only run on a server or local computer.'},
   {icon: <TelegramIcon />, text: "To use it from your mobile, you'll go through Telegram instead."},
-  {icon: <ClockIcon />, text: "1 minute now. 60 seconds later on a laptop. Then you're on the network."},
+  {icon: <ClockIcon />, text: "1 minute now. 30 seconds later on a laptop. Then you're on the network."},
 ];
 
 function IntroScreen({onContinue}: {onContinue: () => void}) {
