@@ -13,6 +13,7 @@ import {
   DEFAULT_HEALTH_CHECK_FAILURE_THRESHOLD,
   type Provider,
   type Prover,
+  type ConfigField,
   resolveChainConfig,
   loadOrCreateIdentity,
 } from '@antseed/node'
@@ -24,7 +25,7 @@ import {
   createStakingClient,
   resolveBaseRpcUrlOverride,
 } from '../../payment-utils.js'
-import type { AntseedConfig } from '../../../config/types.js'
+import type { AntseedConfig, SellerCLIConfig, SellerProviderConfig } from '../../../config/types.js'
 import { ANTSEED_VERIFIER_SDKS_ENV, buildVerifierCapabilities, normalizeVerifierIds } from '../../../plugins/verifier.js'
 import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
@@ -32,7 +33,6 @@ import { loadProviderPlugin, loadProverPlugin, buildPluginConfig, getPackageVers
 import { ensurePluginsUpToDate } from '../../../plugins/drift.js'
 import { resolveEffectiveSellerConfig, type SellerRuntimeOverrides } from '../../../config/effective.js'
 import { ensureDerivedIdentityDisplayName } from '../../../config/identity-display-name.js'
-import type { SellerCLIConfig } from '../../../config/types.js'
 import { AntAgentProvider, loadAntAgent, type AntAgentDefinition } from '@antseed/ant-agent'
 import { resolvePluginPackage } from '../../../plugins/registry.js'
 
@@ -318,6 +318,21 @@ export function buildSellerPluginRuntimeEnv(
   return runtimeEnv
 }
 
+export function getUnsupportedUnitBillingWarning(
+  providerName: string,
+  providerConfig: SellerProviderConfig,
+  configFields: ConfigField[],
+): string | undefined {
+  const configuredServices = Object.entries(providerConfig.services)
+    .filter(([, service]) => service.unitBillingModels !== undefined)
+    .map(([serviceId]) => serviceId)
+  if (configuredServices.length === 0) return undefined
+  if (configFields.some((field) => field.key === 'ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON')) {
+    return undefined
+  }
+  return `Provider "${providerName}" (${providerConfig.plugin}) ignores unitBillingModels for service(s): ${configuredServices.join(', ')} because its plugin does not support unit billing.`
+}
+
 export function mergeSellerRuntimeEnv(
   baseConfig: Record<string, string>,
   runtimeEnv: Record<string, string>,
@@ -423,8 +438,14 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         const spinner = ora(`Loading provider plugin "${packageName}" for "${providerName}"...`).start()
         try {
           const plugin = await loadProviderPlugin(packageName)
+          const configFields = plugin.configSchema ?? plugin.configKeys ?? []
+          const unitBillingWarning = getUnsupportedUnitBillingWarning(providerName, providerCfg, configFields)
+          if (unitBillingWarning) {
+            spinner.warn(chalk.yellow(unitBillingWarning))
+            spinner.start(`Loading provider plugin "${packageName}" for "${providerName}"...`)
+          }
           const runtimeEnv = buildSellerPluginRuntimeEnv(effectiveSellerConfig, providerName)
-          const basePluginConfig = buildPluginConfig(plugin.configSchema ?? plugin.configKeys ?? [])
+          const basePluginConfig = buildPluginConfig(configFields)
           const pluginConfig = mergeSellerRuntimeEnv(basePluginConfig, runtimeEnv, { forcePricingOverride })
           const provider = await plugin.createProvider(pluginConfig)
           if (provider.init) {

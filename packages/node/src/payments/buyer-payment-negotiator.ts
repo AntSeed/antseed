@@ -27,7 +27,7 @@ import { formatUsdc } from './usdc-utils.js';
 import { parseJsonObject, tryParseJsonObject } from '../utils/json-codec.js';
 import type { UnitBillingModelV1, UnitBillingUsage } from '../types/billing.js';
 import type { ServiceApiProtocol } from '../types/service-api.js';
-import { captureUnitBillingContext, computeFinalUnitBilling, extractUnitResponseUsage } from '../billing/unit.js';
+import { captureUnitBillingContext, computeFinalUnitBilling, extractUnitResponseUsage, type FinalUnitBillingResult } from '../billing/unit.js';
 
 export interface BuyerNegotiatorConfig {}
 
@@ -645,7 +645,7 @@ export class BuyerPaymentNegotiator {
     // Prefer session pricing (from PaymentRequired negotiation, includes service-specific rates)
     // over peer-level defaults which may be different from the actual service pricing.
     const unitModel = billingEntry?.unitModel;
-    let unitBilling = null;
+    let unitBilling: FinalUnitBillingResult | null = null;
     if (unitModel && billingEntry) {
       try {
         unitBilling = computeFinalUnitBilling(unitModel, billingEntry.context, response, requestFacts);

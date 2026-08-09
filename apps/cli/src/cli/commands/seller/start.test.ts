@@ -7,6 +7,7 @@ import {
   assertSellerPrerequisites,
   buildSellerRuntimeOverridesFromFlags,
   buildSellerPluginRuntimeEnv,
+  getUnsupportedUnitBillingWarning,
   isPublicRpcUrl,
   mergeSellerRuntimeEnv,
   parseOptionalPositiveIntegerEnv,
@@ -139,6 +140,35 @@ test('buildSellerPluginRuntimeEnv returns bare env when no provider is configure
   assert.equal(runtimeEnv['ANTSEED_OUTPUT_USD_PER_MILLION'], undefined);
   assert.equal(runtimeEnv['ANTSEED_ALLOWED_SERVICES'], undefined);
   assert.equal(runtimeEnv['ANTSEED_MAX_CONCURRENCY'], '7');
+});
+
+test('getUnsupportedUnitBillingWarning identifies plugins that ignore configured models', () => {
+  const provider = {
+    plugin: 'anthropic',
+    services: {
+      'claude-sonnet': {
+        unitBillingModels: {
+          'openai-images': {
+            version: 1 as const,
+            components: [{ unit: 'output_images' as const, priceUsd: 0.04 }],
+          },
+        },
+      },
+    },
+  };
+
+  assert.match(
+    getUnsupportedUnitBillingWarning('anthropic', provider, []) ?? '',
+    /Provider "anthropic".*ignores unitBillingModels.*claude-sonnet/,
+  );
+  assert.equal(
+    getUnsupportedUnitBillingWarning('openai', provider, [{
+      key: 'ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON',
+      label: 'Unit billing',
+      type: 'string',
+    }]),
+    undefined,
+  );
 });
 
 test('buildSellerPluginRuntimeEnv sets OPENAI_BASE_URL from provider baseUrl', () => {
