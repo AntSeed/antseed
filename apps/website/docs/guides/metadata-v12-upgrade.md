@@ -26,7 +26,7 @@ Updated buyers remain backward-compatible with existing sellers. Updated sellers
 - 512 services per provider
 - 512 entries in service pricing, categories, API protocols, capabilities, and expanded billing models
 - 64 categories per service
-- 3 API protocols per service
+- 4 API protocols per service
 - 128 KiB maximum signed binary metadata
 - 256 KiB maximum HTTP metadata response
 

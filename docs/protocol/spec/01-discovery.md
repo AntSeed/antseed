@@ -234,7 +234,7 @@ The body (everything except the trailing 65-byte signature) is the data that is 
 | MAX_GITHUB_REPOSITORY_LENGTH | 100 | Maximum GitHub repository name length       |
 | MAX_SERVICE_CATEGORIES_PER_SERVICE | 64 | Maximum categories per service          |
 | MAX_SERVICE_CATEGORY_LENGTH | 32  | Maximum category length in characters       |
-| MAX_SERVICE_API_PROTOCOLS_PER_SERVICE | 3 | Maximum protocol entries per service |
+| MAX_SERVICE_API_PROTOCOLS_PER_SERVICE | 4 | Maximum protocol entries per service |
 | MAX_PEER_CAPABILITIES     | 16    | Maximum peer-level capability entries       |
 | MAX_PEER_CAPABILITY_LENGTH | 64   | Maximum peer-level capability length        |
 

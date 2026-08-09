@@ -838,6 +838,6 @@ describe('constants', () => {
     expect(MAX_SERVICE_NAME_LENGTH).toBe(64);
     expect(MAX_REGION_LENGTH).toBe(32);
     expect(MAX_SERVICE_CATEGORIES_PER_SERVICE).toBe(64);
-    expect(MAX_SERVICE_API_PROTOCOLS_PER_SERVICE).toBe(3);
+    expect(MAX_SERVICE_API_PROTOCOLS_PER_SERVICE).toBe(4);
   });
 });

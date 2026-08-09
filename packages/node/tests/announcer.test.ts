@@ -216,6 +216,7 @@ describe('PeerAnnouncer metadata limits', () => {
           'openai-chat-completions',
           'openai-completions',
           'openai-responses',
+          'openai-images',
         ],
       },
       maxConcurrency: 5,
