@@ -274,6 +274,8 @@ export function buildSellerPluginRuntimeEnv(
   // the plugin env avoids dead noise in process.env.
   const servicePricing: Record<string, unknown> = {}
   const serviceAliasMap: Record<string, string> = {}
+  const serviceCapabilities: Record<string, unknown> = {}
+  const serviceUnitBillingModels: Record<string, unknown> = {}
   for (const [serviceId, serviceCfg] of Object.entries(providerCfg.services)) {
     if (serviceCfg.pricing) {
       servicePricing[serviceId] = serviceCfg.pricing
@@ -281,12 +283,24 @@ export function buildSellerPluginRuntimeEnv(
     if (serviceCfg.upstreamModel && serviceCfg.upstreamModel !== serviceId) {
       serviceAliasMap[serviceId] = serviceCfg.upstreamModel
     }
+    if (serviceCfg.capabilities) {
+      serviceCapabilities[serviceId] = serviceCfg.capabilities
+    }
+    if (serviceCfg.unitBillingModels) {
+      serviceUnitBillingModels[serviceId] = serviceCfg.unitBillingModels
+    }
   }
   if (Object.keys(servicePricing).length > 0) {
     runtimeEnv['ANTSEED_SERVICE_PRICING_JSON'] = JSON.stringify(servicePricing)
   }
   if (Object.keys(serviceAliasMap).length > 0) {
     runtimeEnv['ANTSEED_SERVICE_ALIAS_MAP_JSON'] = JSON.stringify(serviceAliasMap)
+  }
+  if (Object.keys(serviceCapabilities).length > 0) {
+    runtimeEnv['ANTSEED_SERVICE_CAPABILITIES_JSON'] = JSON.stringify(serviceCapabilities)
+  }
+  if (Object.keys(serviceUnitBillingModels).length > 0) {
+    runtimeEnv['ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON'] = JSON.stringify(serviceUnitBillingModels)
   }
   if (providerCfg.baseUrl) {
     runtimeEnv['OPENAI_BASE_URL'] = providerCfg.baseUrl

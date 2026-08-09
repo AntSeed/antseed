@@ -27,7 +27,7 @@ import { formatUsdc } from './usdc-utils.js';
 import { parseJsonObject, tryParseJsonObject } from '../utils/json-codec.js';
 import type { UnitBillingModelV1, UnitBillingUsage } from '../types/billing.js';
 import type { ServiceApiProtocol } from '../types/service-api.js';
-import { captureUnitBillingContext, computeFinalUnitBilling } from '../billing/unit.js';
+import { captureUnitBillingContext, computeFinalUnitBilling, extractUnitResponseUsage } from '../billing/unit.js';
 
 export interface BuyerNegotiatorConfig {}
 
@@ -645,9 +645,26 @@ export class BuyerPaymentNegotiator {
     // Prefer session pricing (from PaymentRequired negotiation, includes service-specific rates)
     // over peer-level defaults which may be different from the actual service pricing.
     const unitModel = billingEntry?.unitModel;
-    const unitBilling = unitModel && billingEntry
-      ? computeFinalUnitBilling(unitModel, billingEntry.context, response, requestFacts)
-      : null;
+    let unitBilling = null;
+    if (unitModel && billingEntry) {
+      try {
+        unitBilling = computeFinalUnitBilling(unitModel, billingEntry.context, response, requestFacts);
+      } catch (err) {
+        const observed = extractUnitResponseUsage(response, requestFacts);
+        if (requestId) {
+          this._bpm.recordObservedUnitUsage(requestId, observed.usage);
+        }
+        this._bpm.recordAndPersistTokens(
+          peer.peerId,
+          observed.tokenUsage.inputTokens,
+          observed.tokenUsage.outputTokens,
+        );
+        debugWarn(
+          `[BuyerNegotiator] Refusing payment authorization for unpriceable response from ${peer.peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`,
+        );
+        return;
+      }
+    }
     if (unitBilling && requestId) {
       this._bpm.recordObservedUnitUsage(requestId, unitBilling.usage);
     }
