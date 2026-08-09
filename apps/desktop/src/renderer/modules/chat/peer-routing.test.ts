@@ -1,4 +1,4 @@
-import { test } from 'vitest';
+import { test, vi } from 'vitest';
 import assert from 'node:assert/strict';
 
 import { createInitialUiState } from '../../core/state.js';
@@ -1617,6 +1617,7 @@ function setupFailoverHarness(routeMode: 'auto' | 'pinned' | undefined) {
   ];
 
   const sends: Array<{ conversationId: string; peerId?: string }> = [];
+  const persistedSelections: Array<Parameters<NonNullable<DesktopBridge['chatAiSelectPeer']>>[0]> = [];
   const streamErrorHandlers: Array<NonNullable<Parameters<NonNullable<DesktopBridge['onChatAiStreamError']>>[0]>> = [];
   const streamStartHandlers: Array<NonNullable<Parameters<NonNullable<DesktopBridge['onChatAiStreamStart']>>[0]>> = [];
   const streamBlockStartHandlers: Array<NonNullable<Parameters<NonNullable<DesktopBridge['onChatAiStreamBlockStart']>>[0]>> = [];
@@ -1632,6 +1633,10 @@ function setupFailoverHarness(routeMode: 'auto' | 'pinned' | undefined) {
     chatPrepareAttachments: async () => ({ ok: true, data: [] }),
     chatAiSendStream: async (conversationId, _message, _service, _provider, _attachments, peerId) => {
       sends.push({ conversationId, peerId });
+      return { ok: true };
+    },
+    chatAiSelectPeer: async (payload) => {
+      persistedSelections.push(payload);
       return { ok: true };
     },
     onChatAiStreamError: (handler) => {
@@ -1657,6 +1662,7 @@ function setupFailoverHarness(routeMode: 'auto' | 'pinned' | undefined) {
     api,
     uiState,
     sends,
+    persistedSelections,
     streamErrorHandlers,
     streamStartHandlers,
     streamBlockStartHandlers,
@@ -1672,7 +1678,7 @@ const RETRYABLE_STREAM_FAILURE = {
 };
 
 test('a retryable failure moves an auto conversation to a different peer', async () => {
-  const { api, uiState, streamErrorHandlers } = setupFailoverHarness('auto');
+  const { api, uiState, persistedSelections, streamErrorHandlers } = setupFailoverHarness('auto');
   await api.refreshChatConversations();
   await api.openConversation('conv-a');
 
@@ -1686,6 +1692,41 @@ test('a retryable failure moves an auto conversation to a different peer', async
   await waitFor(() => uiState.chatRoutingNotice !== null);
   assert.match(uiState.chatRoutingNotice ?? '', /Peer peer-a isn't responding/);
   assert.match(uiState.chatRoutingNotice ?? '', /Retrying on Peer peer-b/);
+  await waitFor(() => persistedSelections.length === 1);
+  assert.deepEqual(persistedSelections[0], {
+    conversationId: 'conv-a',
+    peerId: 'peer-b',
+    service: 'model-a',
+    provider: 'openai',
+    routeMode: 'auto',
+  });
+});
+
+test('a scheduled failover still retries after the user switches conversations', async () => {
+  vi.useFakeTimers();
+  try {
+    const { api, uiState, sends, streamErrorHandlers } = setupFailoverHarness('auto');
+    await api.refreshChatConversations();
+    await api.openConversation('conv-a');
+    api.sendMessage('hello');
+    await vi.runAllTicks();
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(sends.length, 1);
+
+    streamErrorHandlers[0]?.({
+      conversationId: 'conv-a',
+      error: 'Connection lost',
+      stopReason: RETRYABLE_STREAM_FAILURE,
+    });
+    uiState.chatActiveConversation = 'conv-other';
+
+    await vi.advanceTimersByTimeAsync(7_000);
+    assert.deepEqual(sends[1], { conversationId: 'conv-a', peerId: 'peer-b' });
+    assert.equal(uiState.chatRoutingNotice, null);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test('failover keeps the conversation model when the global model pill differs', async () => {

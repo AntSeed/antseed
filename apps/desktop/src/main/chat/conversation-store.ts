@@ -45,6 +45,17 @@ type CachedSummary = {
 
 export type AntseedPeerData = { peerId: string; peerLabel?: string; routeMode?: ChatRouteMode };
 
+export function projectPeerBinding(peerData: AntseedPeerData | null): Pick<
+  AiConversation,
+  'peerId' | 'peerLabel' | 'routeMode'
+> {
+  return {
+    ...(peerData?.peerId ? { peerId: peerData.peerId } : {}),
+    ...(peerData?.peerLabel ? { peerLabel: peerData.peerLabel } : {}),
+    ...(peerData?.routeMode ? { routeMode: peerData.routeMode } : {}),
+  };
+}
+
 export function extractPeerFromEntries(manager: SessionManager): AntseedPeerData | null {
   return resolveLatestPeerBinding(
     manager.getEntries() as Array<{ type?: string; customType?: string; data?: unknown }>,
@@ -201,8 +212,7 @@ export class PiConversationStore {
       createdAt,
       updatedAt,
       usage,
-      ...(peerData?.peerId ? { peerId: peerData.peerId } : {}),
-      ...(peerData?.peerLabel ? { peerLabel: peerData.peerLabel } : {}),
+      ...projectPeerBinding(peerData),
       ...(sessionCwd ? { workspacePath: sessionCwd } : {}),
     };
   }

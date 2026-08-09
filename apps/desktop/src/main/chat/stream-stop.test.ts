@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { classifyChatStreamFailure, formatChatStreamStopForLog } from './stream-stop.js';
+import { ANTSEED_BUYER_FAULT_ERROR_CODE } from '@antseed/node/types';
 
 test('classifyChatStreamFailure detects retryable upstream 502 failures', () => {
   const reason = classifyChatStreamFailure({
@@ -91,6 +92,16 @@ test('parseStatusCodeFromText does not treat bare leading digits as HTTP status 
   assert.equal(reason.statusCode, undefined);
 });
 
+test('parseStatusCodeFromText does not treat request counts as HTTP status codes', () => {
+  const reason = classifyChatStreamFailure({
+    error: new Error('429 requests remaining in the current quota window'),
+    stopReason: 'error',
+  });
+
+  assert.notEqual(reason.kind, 'http_error');
+  assert.equal(reason.statusCode, undefined);
+});
+
 test('classifyChatStreamFailure falls back to stream_error when stopReason is error', () => {
   const reason = classifyChatStreamFailure({
     error: new Error('Something weird happened upstream'),
@@ -149,7 +160,11 @@ test('a buyer-fault 503 is non-retryable so the user sees the real fix', () => {
   // Blanket-retrying 5xx would fail this over across every peer in turn while
   // hiding the one thing the user has to change.
   const reason = classifyChatStreamFailure({
-    error: new Error('503 antseed_buyer_fault: Insufficient buyer deposits for reserve top-up'),
+    error: {
+      message: 'Insufficient buyer deposits for reserve top-up',
+      status: 503,
+      code: ANTSEED_BUYER_FAULT_ERROR_CODE,
+    },
     stopReason: 'error',
   });
 
@@ -161,12 +176,30 @@ test('a buyer-fault 503 is non-retryable so the user sees the real fix', () => {
 
 test('an unreachable chain RPC names the RPC, not the peer', () => {
   const reason = classifyChatStreamFailure({
-    error: new Error('503 antseed_buyer_fault: Could not reach the chain RPC'),
+    error: {
+      message: 'Could not reach the chain RPC',
+      status: 503,
+      code: ANTSEED_BUYER_FAULT_ERROR_CODE,
+    },
     stopReason: 'error',
   });
 
   assert.equal(reason.retryable, false);
   assert.match(reason.message, /chain RPC/i);
+});
+
+test('a seller mentioning the buyer-fault marker in display text stays retryable', () => {
+  const reason = classifyChatStreamFailure({
+    error: {
+      message: `Upstream rejected the literal text ${ANTSEED_BUYER_FAULT_ERROR_CODE}`,
+      status: 503,
+      code: 'upstream_error',
+    },
+    stopReason: 'error',
+  });
+
+  assert.equal(reason.statusCode, 503);
+  assert.equal(reason.retryable, true);
 });
 
 test('a plain seller 503 stays retryable', () => {

@@ -75,6 +75,14 @@ test('a non-escalating failure updates diagnostics but never the streak or coold
   assert.equal(suppressed.lastFailureAt, NOW + 10_000)
 })
 
+test('a diagnostic-only failure does not coalesce away the next escalating failure', () => {
+  const diagnostic = recordPeerFailureEntry(undefined, 'seller-busy', NOW, false)
+  const escalated = recordPeerFailureEntry(diagnostic, 'request-failed', NOW + 100, true)
+
+  assert.equal(escalated.failureStreak, 1)
+  assert.equal(escalated.episodeStartedAt, NOW + 100)
+})
+
 test('failures inside the coalesce window count as a single episode', () => {
   let entry = recordPeerFailureEntry(undefined, 'request-failed', NOW, true)
   entry = recordPeerFailureEntry(entry, 'request-failed', NOW + 100, true)

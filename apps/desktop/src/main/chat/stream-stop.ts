@@ -105,7 +105,7 @@ function collectErrorSignals(
     }
   }
 
-  for (const key of ['code', 'errorCode', 'name']) {
+  for (const key of ['code', 'errorCode', 'name', 'type']) {
     const field = record[key];
     if (typeof field === 'string' && field.trim().length > 0) {
       state.errorCodes.push(field.trim());
@@ -143,7 +143,6 @@ function parseStatusCodeFromText(text: string): number | undefined {
     /\bstatus(?:\s+code)?\s*(?:=|:)?\s*(\d{3})\b/i,
     /\bhttp\s*(\d{3})\b/i,
     /\bresponse failed:\s*(\d{3})\b/i,
-    /^\s*([45]\d{2})\b/,
     /\b(\d{3})\s+(?:bad gateway|gateway timeout|service unavailable|too many requests|request timeout|internal server error)\b/i,
   ];
 
@@ -174,8 +173,8 @@ function describeHttpStatus(statusCode: number): string {
  * Buyer-side faults the proxy reports as a structured 503 rather than a
  * peer-blaming 502. Matched on the codes the proxy and negotiator emit.
  */
-function isBuyerFault(normalized: string): boolean {
-  return normalized.includes(ANTSEED_BUYER_FAULT_ERROR_CODE);
+function isBuyerFault(errorCodes: string[]): boolean {
+  return errorCodes.some((code) => code.toLowerCase() === ANTSEED_BUYER_FAULT_ERROR_CODE);
 }
 
 function buildBuyerFaultMessage(normalized: string, statusCode: number): string {
@@ -212,7 +211,7 @@ export function classifyChatStreamFailure({
   const normalized = rawMessage.toLowerCase();
   const statusCode = signals.statusCodes[0] ?? parseStatusCodeFromText(rawMessage);
   const errorCode = signals.errorCodes.find(Boolean) ?? parseErrorCodeFromText(rawMessage);
-  const buyerFault = isBuyerFault(normalized);
+  const buyerFault = isBuyerFault(signals.errorCodes);
 
   // Keep the text-based abort match narrow so transport-side aborts (e.g.
   // "connection aborted by remote") aren't misclassified as user-initiated.

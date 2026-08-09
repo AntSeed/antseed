@@ -729,7 +729,7 @@ export function registerPiChatHandlers({
       if (peerId) {
         preferredPeerByConversationId.set(conversationId, peerId);
         const peerLabel = lastServiceCatalogEntries.find((entry) => entry.peerId === peerId)?.peerLabel;
-        await store.setPeer(conversationId, peerId, peerLabel, routeMode ?? 'pinned');
+        await store.setPeer(conversationId, peerId, peerLabel, routeMode ?? undefined);
       } else {
         preferredPeerByConversationId.delete(conversationId);
         await store.clearPeer(conversationId);

@@ -11,7 +11,8 @@ describe('buyer request response sanitization', () => {
       statusCode: 503,
       headers: {
         'content-type': 'application/json',
-        'X-Antseed-Fault-Attribution': 'buyer',
+        'X-Antseed-Fault-Attribution': 'peer',
+        'x-antseed-fault-attribution': 'buyer',
       },
       body: new Uint8Array(),
     };
@@ -19,7 +20,8 @@ describe('buyer request response sanitization', () => {
     const sanitized = stripPeerControlledResponseHeaders(response);
 
     expect(sanitized.headers).toEqual({ 'content-type': 'application/json' });
-    expect(response.headers['X-Antseed-Fault-Attribution']).toBe('buyer');
+    expect(response.headers['X-Antseed-Fault-Attribution']).toBe('peer');
+    expect(response.headers['x-antseed-fault-attribution']).toBe('buyer');
   });
 });
 

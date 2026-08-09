@@ -429,6 +429,13 @@ export function initChatModule({
       const row = (uiState.chatConversations as ChatConversationSummary[]).find((c) => c.id === convId);
       if (row) Object.assign(row, patch);
     }
+    void bridge?.chatAiSelectPeer?.({
+      conversationId: convId,
+      peerId: selection.peerId,
+      service: selection.id,
+      provider: selection.provider,
+      routeMode: 'auto',
+    }).catch(() => undefined);
     notifyUiStateChanged();
   }
 
@@ -466,7 +473,9 @@ export function initChatModule({
         if (ctx) retryCtx = { ...ctx, selection: failover.selection };
         const notice = `${failover.fromLabel} isn't responding. `
           + `Retrying on ${failover.toLabel} in ${PAYMENT_AUTO_RETRY_DELAY_MS / 1000}s...`;
-        uiState.chatRoutingNotice = notice;
+        if (convId === uiState.chatActiveConversation) {
+          uiState.chatRoutingNotice = notice;
+        }
         appendSystemLog(notice);
       }
     }
@@ -481,14 +490,16 @@ export function initChatModule({
 
     const timer = setTimeout(() => {
       chatRetryTimers.delete(convId);
+      if (convId !== uiState.chatActiveConversation && uiState.chatRoutingNotice) {
+        uiState.chatRoutingNotice = null;
+        notifyUiStateChanged();
+      }
       const ctxForRetry = retryCtx;
       if (ctxForRetry?.content != null) {
         setConversationSending(convId, true);
         dispatchChatRequest(convId, ctxForRetry.content, ctxForRetry.attachments, ctxForRetry.selection);
-      } else if (convId === uiState.chatActiveConversation) {
-        retryAfterPayment();
       } else {
-        notifyUiStateChanged();
+        retryAfterPayment(convId);
       }
     }, PAYMENT_AUTO_RETRY_DELAY_MS);
     chatRetryTimers.set(convId, timer);
@@ -2376,13 +2387,17 @@ export function initChatModule({
    * payment-approval card visible while the user stays in the same chat;
    * context switches are responsible for dismissing transient notices.
    */
-  function retryAfterPayment(): void {
+  function retryAfterPayment(convId = uiState.chatActiveConversation): void {
     if (!bridge) return;
+    if (!convId) return;
 
     // Find the last user message to resend
     type MsgShape = { role?: string; content?: unknown };
-    const lastUserMsg = ([...uiState.chatMessages] as MsgShape[]).reverse().find(m => m.role === 'user');
-    if (!lastUserMsg || !uiState.chatActiveConversation) return;
+    const messages = getLocalConversationMessages(convId) ?? (
+      convId === uiState.chatActiveConversation ? uiState.chatMessages : []
+    );
+    const lastUserMsg = ([...messages] as MsgShape[]).reverse().find(m => m.role === 'user');
+    if (!lastUserMsg) return;
 
     const content = typeof lastUserMsg.content === 'string'
       ? lastUserMsg.content
@@ -2403,7 +2418,6 @@ export function initChatModule({
       }
     }
 
-    const convId = uiState.chatActiveConversation;
     setConversationSending(convId, true);
     dispatchChatRequest(convId, content, attachments.length > 0 ? attachments : undefined);
   }

@@ -102,7 +102,7 @@ export function recordPeerFailureEntry(
 
   // Two requests to the same dead peer failing together are one episode; without
   // this they would skip a doubling step each time concurrency rises.
-  const episodeStartedAt = prev.episodeStartedAt || prev.lastFailureAt
+  const episodeStartedAt = prev.episodeStartedAt
   if (episodeStartedAt > 0 && now - episodeStartedAt < PEER_HEALTH_COALESCE_MS && now >= prev.lastFailureAt) {
     return { ...prev, lastFailureAt: now, lastReason: reason }
   }

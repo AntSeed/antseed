@@ -182,7 +182,7 @@ function failureReasonForStatus(statusCode: number): PeerFailureReason | null {
   if (statusCode === 408) return 'seller-timeout'
   // Rate limiting is capacity pressure, not death — recorded, never escalated.
   if (statusCode === 429) return 'seller-busy'
-  if (statusCode >= 500 && statusCode <= 504) return 'seller-5xx'
+  if (statusCode >= 500 && statusCode <= 599) return 'seller-5xx'
   return null
 }
 
@@ -258,7 +258,7 @@ function adaptBuyerFaultErrorResponse(
     response.statusCode < 400
     || response.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER]?.toLowerCase() !== 'buyer'
   ) {
-    return response
+    return sanitizePeerBuyerFaultMarker(response)
   }
 
   let parsed: Record<string, unknown> = {}
@@ -277,21 +277,20 @@ function adaptBuyerFaultErrorResponse(
   const message = [nestedError?.message, parsed.message, parsed.error]
     .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
     ?? 'The request failed on the buyer.'
-  const markedMessage = `${ANTSEED_BUYER_FAULT_ERROR_CODE}: ${message}`
-
   const body = requestProtocol === 'anthropic-messages'
     ? {
         type: 'error',
         error: {
-          type: 'api_error',
-          message: reason ? `${markedMessage} (${reason})` : markedMessage,
+          type: ANTSEED_BUYER_FAULT_ERROR_CODE,
+          message: reason ? `${message} (${reason})` : message,
         },
       }
     : {
         error: {
           type: 'api_error',
-          code: reason ?? ANTSEED_BUYER_FAULT_ERROR_CODE,
-          message: markedMessage,
+          code: ANTSEED_BUYER_FAULT_ERROR_CODE,
+          message,
+          ...(reason ? { param: reason } : {}),
         },
       }
 
@@ -300,6 +299,36 @@ function adaptBuyerFaultErrorResponse(
     headers: { ...response.headers, 'content-type': 'application/json' },
     body: Buffer.from(JSON.stringify(body)),
   }
+}
+
+function sanitizePeerBuyerFaultMarker(response: SerializedHttpResponse): SerializedHttpResponse {
+  if (response.statusCode < 400) return response
+
+  let parsed: Record<string, unknown>
+  try {
+    parsed = JSON.parse(Buffer.from(response.body).toString('utf-8')) as Record<string, unknown>
+  } catch {
+    return response
+  }
+
+  let changed = false
+  const scrub = (record: Record<string, unknown>): void => {
+    for (const key of ['code', 'type', 'errorCode']) {
+      if (record[key] === ANTSEED_BUYER_FAULT_ERROR_CODE) {
+        record[key] = 'upstream_error'
+        changed = true
+      }
+    }
+  }
+
+  scrub(parsed)
+  if (parsed.error && typeof parsed.error === 'object' && !Array.isArray(parsed.error)) {
+    scrub(parsed.error as Record<string, unknown>)
+  }
+
+  return changed
+    ? { ...response, body: Buffer.from(JSON.stringify(parsed)) }
+    : response
 }
 
 /**
@@ -1082,9 +1111,21 @@ export class BuyerProxy {
    * to serve inference.
    */
   private _recordPeerResponseHealth(peerId: string, statusCode: number, path: string): void {
-    if (isControlPlaneServicesPath(path)) return
+    if (isControlPlaneServicesPath(path)) {
+      if (isProofOfLife(statusCode)) this._rememberSuccessfulPeer(peerId)
+      return
+    }
 
     const reason = failureReasonForStatus(statusCode)
+
+    if (reason && statusCode >= 500) {
+      const now = this._now()
+      if (isCoolingDown(this._peerHealth.get(peerId), now)) {
+        this._rememberSuccessfulPeer(peerId)
+      }
+      this._recordPeerFailure(peerId, reason, 'peer')
+      return
+    }
 
     if (isProofOfLife(statusCode)) {
       // A 402, a 400, even a 429 — the peer answered, so it is alive and any

@@ -3,6 +3,7 @@ import { net } from 'electron';
 import { DEFAULT_BUYER_STATE_PATH } from '../constants.js';
 import { resolveBuyerProxyPort } from './active-config.js';
 import { readPeerHealth, type RawPeerHealth } from './peer-health.js';
+import { computePeerSignature } from './peer-signature.js';
 
 export { readPeerHealth } from './peer-health.js';
 export type { RawPeerHealth } from './peer-health.js';
@@ -141,23 +142,8 @@ export function onPeersChanged(listener: () => void): () => void {
   };
 }
 
-function computePeerSignature(): string {
-  // Fast hash: sorted peer IDs + their service lists.
-  const parts: string[] = [];
-  for (const [id, peer] of peerCache) {
-    // `cooldownUntil` is a fixed timestamp, not a computed remaining-ms — a
-    // countdown here would make the signature change on every refresh and fire
-    // the change listener continuously.
-    parts.push(
-      `${id}:${peer.services.join(',')}:${peer.onChainReputationScore ?? ''}:${peer.cooldownUntil ?? ''}`,
-    );
-  }
-  parts.sort();
-  return parts.join('|');
-}
-
 function emitIfChanged(): void {
-  const sig = computePeerSignature();
+  const sig = computePeerSignature(peerCache);
   if (sig !== peerCacheLastSignature) {
     peerCacheLastSignature = sig;
     for (const listener of peersChangedListeners) {

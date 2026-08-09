@@ -26,7 +26,7 @@ This project uses selective package publishing. Each release entry lists the pub
 - Added `AntseedNode.requestChannelClose(peerId, opts)` to `@antseed/node`, plus the `payments.cooperative-close.v1` capability advertised in discovery metadata and the connection handshake.
 - Added buyer peer health cooldowns, so a seller that stops responding is temporarily deprioritized by automatic routing instead of being selected again on every request. Cooldowns escalate from 30 seconds to a maximum of 8 minutes, are cleared by any response from the peer, and are advisory only — a pinned or explicitly named peer is always still dispatched to. Exposed over the buyer control plane as `GET /_antseed/peer-health` and `POST /_antseed/peer-health/clear`.
 - Added automatic peer failover for Desktop chats using automatic routing: when the bound peer stops responding, the retry moves to the next-best healthy peer and the chat reports which peer it switched to. Chats pinned to a peer by hand always keep that peer.
-- Added fault attribution to request failures (`AntseedRequestError`, `faultAttributionOf`) so buyer-side problems such as empty deposits, an unreachable chain RPC, or a closed local transport are reported as buyer faults with HTTP 503 instead of being reported as peer failures with HTTP 502.
+- Added fault attribution to request failures (`AntseedRequestError`, `faultAttributionOf`) so proven buyer-side problems such as empty deposits, chain authorization RPC failures, or a closed local transport are reported as buyer faults with HTTP 503 instead of being reported as peer failures with HTTP 502.
 
 ### Changed
 
@@ -57,7 +57,7 @@ This project uses selective package publishing. Each release entry lists the pub
 - Fixed seller crashes when sending `PaymentRequired` to a buyer that disconnected before the payment terms could be delivered.
 - Fixed the buyer's Responses→Chat Completions request adapter to group parallel tool calls into a single assistant `tool_calls` message. Previously each call became its own assistant message, so strict chat-completions upstreams rejected multi-tool turns with `an assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'`.
 - Fixed the Responses request normalizer to drop non-message input items with no renderable text (e.g. Codex `reasoning` items) instead of converting them into empty user messages mid-history.
-- Fixed buyer payment negotiation so an unreachable chain RPC is reported immediately as a buyer-side `chain_rpc_unavailable` error. Previously the failed deposit-balance read was swallowed, negotiation continued without it, and the request stalled for the full 30-second lock-confirmation timeout before failing with an error that blamed the seller.
+- Fixed buyer payment negotiation so the preflight deposit-balance read remains advisory: a transient RPC failure no longer aborts an otherwise valid negotiation, while failures from required buyer-side chain operations retain structured buyer-fault attribution.
 - Fixed `SellerAuthorizationError` so a peer that is not an authorized operator is distinguishable from a chain RPC that could not be reached; the two cases previously shared one error and could only be told apart by matching the message text.
 
 ## 2026-08-06 — Desktop 0.2.3
