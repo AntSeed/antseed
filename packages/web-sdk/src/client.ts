@@ -227,8 +227,7 @@ export class AntseedWebClient {
     const existing = this.sessions.get(peerId);
     if (existing) {
       if (existing.conn.isOpen) return existing;
-      // Not open but still lingering (e.g. mid-connect): close it before we
-      // overwrite the map entry, or its RTCPeerConnection leaks.
+      // Close a lingering (e.g. mid-connect) session before overwriting it.
       existing.conn.close();
     }
 

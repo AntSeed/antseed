@@ -49,21 +49,19 @@ function embeddedV4s(lower: string): string[] {
   const out: string[] = [];
   const groups = lower.split(':');
 
-  // Dotted tail, e.g. ::ffff:127.0.0.1 or ::127.0.0.1
   const tail = groups[groups.length - 1];
   if (tail && tail.includes('.') && net.isIP(tail) === 4) out.push(tail);
 
   const h = expandHextets(lower);
   if (h) {
-    // Mapped ::ffff:x:x / deprecated compat ::x:x — first 5 hextets zero,
-    // 6th is 0x0000 (compat) or 0xffff (mapped).
+    // mapped ::ffff:x:x / compat ::x:x
     if (h[0] === 0 && h[1] === 0 && h[2] === 0 && h[3] === 0 && h[4] === 0 &&
         (h[5] === 0 || h[5] === 0xffff)) {
       out.push(hextetsToV4(h[6]!, h[7]!));
     }
-    // 6to4 (2002::/16): v4 is hextets 1-2.
+    // 6to4 2002::/16
     if (h[0] === 0x2002) out.push(hextetsToV4(h[1]!, h[2]!));
-    // Teredo (2001:0::/32): client v4 is the last two hextets, XOR 0xffff.
+    // Teredo 2001:0::/32 — client v4 is the trailing hextets XOR 0xffff
     if (h[0] === 0x2001 && h[1] === 0x0000) {
       out.push(hextetsToV4(h[6]! ^ 0xffff, h[7]! ^ 0xffff));
     }
