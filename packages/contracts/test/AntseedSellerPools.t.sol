@@ -869,6 +869,179 @@ contract AntseedSellerPoolsTest is Test {
         assertEq(pools.positionWeightAtEpoch(positionId, exitEpoch), 0);
     }
 
+    function test_splitStakeDividesPrincipalAndWeightWithoutChangingPoolPower() public {
+        uint256 positionId = _stake(staker, agentId, 100 ether, 4);
+        vm.warp(block.timestamp + EPOCH_DURATION);
+
+        vm.prank(staker);
+        (uint256 firstId, uint256 secondId) = pools.splitStake(positionId, 30 ether);
+
+        // Source keeps its power through the split epoch and closes after.
+        assertEq(pools.positionWeightAtEpoch(positionId, 1), 400 ether);
+        assertEq(pools.positionWeightAtEpoch(positionId, 2), 0);
+        vm.expectRevert(abi.encodeWithSelector(IERC721Errors.ERC721NonexistentToken.selector, positionId));
+        pools.ownerOf(positionId);
+
+        // Parts carry the remaining window (end epoch 5) pro-rata.
+        assertEq(pools.positionWeightAtEpoch(firstId, 2), 70 ether * 3);
+        assertEq(pools.positionWeightAtEpoch(secondId, 2), 30 ether * 3);
+        assertEq(pools.poolWeightAtEpoch(agentId, 2), 100 ether * 3);
+        assertEq(pools.poolActiveStakeAtEpoch(agentId, 2), 100 ether);
+        assertEq(pools.stakerTotalActiveStake(staker), 100 ether);
+
+        (,, uint256 firstAmount,,,,,) = pools.positions(firstId);
+        (,, uint256 secondAmount,,,,,) = pools.positions(secondId);
+        assertEq(firstAmount, 70 ether);
+        assertEq(secondAmount, 30 ether);
+
+        // Full principal comes back at term.
+        vm.warp(block.timestamp + 5 * EPOCH_DURATION);
+        uint256 balanceBefore = token.balanceOf(staker);
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = firstId;
+        ids[1] = secondId;
+        vm.prank(staker);
+        (uint256 returned, uint256 slashed) = pools.withdrawStakes(ids);
+        assertEq(returned, 100 ether);
+        assertEq(slashed, 0);
+        assertEq(token.balanceOf(staker), balanceBefore + 100 ether);
+    }
+
+    function test_splitStakeRequiresDisablingMaxLockFirst() public {
+        uint256 positionId = _stake(staker, agentId, 100 ether, 4);
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        vm.prank(staker);
+        pools.enableMaxLock(positionId);
+        vm.warp(block.timestamp + EPOCH_DURATION);
+
+        vm.prank(staker);
+        vm.expectRevert(IAntseedSellerPools.PositionClosed.selector);
+        pools.splitStake(positionId, 40 ether);
+
+        // Disable, split, and re-enable the parts within one epoch: max power
+        // stays seamless because all of it takes effect at the same next epoch.
+        vm.startPrank(staker);
+        pools.disableMaxLock(positionId);
+        (uint256 firstId, uint256 secondId) = pools.splitStake(positionId, 40 ether);
+        pools.enableMaxLock(firstId);
+        pools.enableMaxLock(secondId);
+        vm.stopPrank();
+
+        uint256 maxLockPower = 100 ether * pools.MAX_STAKE_EPOCHS();
+        assertEq(pools.poolWeightAtEpoch(agentId, 2), maxLockPower);
+        assertEq(pools.poolWeightAtEpoch(agentId, 3), maxLockPower);
+        assertEq(pools.positionMaxLockPowerAtEpoch(firstId, 3), 60 ether * pools.MAX_STAKE_EPOCHS());
+        assertEq(pools.positionMaxLockPowerAtEpoch(secondId, 3), 40 ether * pools.MAX_STAKE_EPOCHS());
+        assertEq(pools.positionWeightAtEpoch(positionId, 3), 0);
+        assertEq(pools.stakerTotalActiveStake(staker), 100 ether);
+    }
+
+    function test_mergeStakesCombinesSameTermPositions() public {
+        uint256 firstId = _stake(staker, agentId, 60 ether, 4);
+        uint256 secondId = _stake(staker, agentId, 40 ether, 4);
+        vm.warp(block.timestamp + EPOCH_DURATION);
+
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = firstId;
+        ids[1] = secondId;
+        vm.prank(staker);
+        uint256 mergedId = pools.mergeStakes(ids);
+
+        // Sources keep the merge epoch, the merged position takes over after.
+        assertEq(pools.positionWeightAtEpoch(firstId, 1), 60 ether * 4);
+        assertEq(pools.positionWeightAtEpoch(firstId, 2), 0);
+        assertEq(pools.positionWeightAtEpoch(mergedId, 2), 100 ether * 3);
+        assertEq(pools.poolWeightAtEpoch(agentId, 2), 100 ether * 3);
+        assertEq(pools.stakerTotalActiveStake(staker), 100 ether);
+
+        vm.warp(block.timestamp + 5 * EPOCH_DURATION);
+        uint256 balanceBefore = token.balanceOf(staker);
+        vm.prank(staker);
+        pools.withdrawStake(mergedId);
+        assertEq(token.balanceOf(staker), balanceBefore + 100 ether);
+    }
+
+    function test_mergeStakesRequiresDisablingMaxLockFirst() public {
+        uint256 firstId = _stake(staker, agentId, 60 ether, 4);
+        uint256 secondId = _stake(staker, agentId, 40 ether, 8);
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        vm.startPrank(staker);
+        pools.enableMaxLock(firstId);
+        pools.enableMaxLock(secondId);
+        vm.stopPrank();
+        vm.warp(block.timestamp + EPOCH_DURATION);
+
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = firstId;
+        ids[1] = secondId;
+        vm.prank(staker);
+        vm.expectRevert(IAntseedSellerPools.PositionClosed.selector);
+        pools.mergeStakes(ids);
+
+        // Disabling both in the same epoch aligns their end epochs, so sources
+        // with different original terms become mergeable.
+        vm.startPrank(staker);
+        pools.disableMaxLock(firstId);
+        pools.disableMaxLock(secondId);
+        uint256 mergedId = pools.mergeStakes(ids);
+        pools.enableMaxLock(mergedId);
+        vm.stopPrank();
+
+        uint256 maxLockPower = 100 ether * pools.MAX_STAKE_EPOCHS();
+        assertEq(pools.poolWeightAtEpoch(agentId, 3), maxLockPower);
+        assertEq(pools.positionMaxLockPowerAtEpoch(mergedId, 3), maxLockPower);
+        assertEq(pools.stakerTotalActiveStake(staker), 100 ether);
+    }
+
+    function test_splitAndMergeRejectInvalidRequests() public {
+        uint256 firstId = _stake(staker, agentId, 60 ether, 4);
+        uint256 shorterId = _stake(staker, agentId, 40 ether, 2);
+        uint256 otherPoolId = _stake(staker, otherAgentId, 40 ether, 4);
+        vm.warp(block.timestamp + EPOCH_DURATION);
+
+        // Split: bad amounts and wrong owner.
+        vm.startPrank(staker);
+        vm.expectRevert(IAntseedSellerPools.InvalidValue.selector);
+        pools.splitStake(firstId, 0);
+        vm.expectRevert(IAntseedSellerPools.InvalidValue.selector);
+        pools.splitStake(firstId, 60 ether);
+        vm.stopPrank();
+        vm.prank(recipient);
+        vm.expectRevert(IAntseedSellerPools.NotPositionOwner.selector);
+        pools.splitStake(firstId, 30 ether);
+
+        // Merge: mismatched end epochs, mismatched pools, max-locked sources,
+        // duplicates, and single-element arrays.
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = firstId;
+        ids[1] = shorterId;
+        vm.prank(staker);
+        vm.expectRevert(IAntseedSellerPools.InvalidValue.selector);
+        pools.mergeStakes(ids);
+
+        ids[1] = otherPoolId;
+        vm.prank(staker);
+        vm.expectRevert(IAntseedSellerPools.InvalidValue.selector);
+        pools.mergeStakes(ids);
+
+        uint256 sameTermId = _stake(staker, agentId, 40 ether, 3);
+        vm.startPrank(staker);
+        pools.enableMaxLock(sameTermId);
+        ids[1] = sameTermId;
+        vm.expectRevert(IAntseedSellerPools.PositionClosed.selector);
+        pools.mergeStakes(ids);
+
+        ids[1] = firstId;
+        vm.expectRevert(IAntseedSellerPools.PositionClosed.selector);
+        pools.mergeStakes(ids);
+
+        uint256[] memory single = new uint256[](1);
+        single[0] = firstId;
+        vm.expectRevert(IAntseedSellerPools.InvalidValue.selector);
+        pools.mergeStakes(single);
+        vm.stopPrank();
+    }
+
     function _stake(address staker_, uint256 agentId_, uint256 amount, uint256 stakeEpochs)
         internal
         returns (uint256 positionId)

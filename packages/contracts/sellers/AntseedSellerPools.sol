@@ -281,6 +281,94 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         emit MaxLockDisabled(positionId, msg.sender, effectiveEpoch, newStakeEndEpoch);
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    //                        CORE — SPLIT / MERGE
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * @notice Split a position into two positions with the same lock terms.
+     *         Principal is divided exactly and weight pro-rata to principal, so
+     *         pool power is unchanged. The source position closes next epoch
+     *         and its rewards accrued until then stay claimable on it.
+     *         Max-locked positions must disable max lock first; disabling,
+     *         splitting, and re-enabling on the parts within one epoch keeps
+     *         max power seamless since all take effect at the next epoch.
+     */
+    function splitStake(uint256 positionId, uint256 splitAmount)
+        external
+        nonReentrant
+        returns (uint256 firstPositionId, uint256 secondPositionId)
+    {
+        Position storage position = positions[positionId];
+        if (position.owner == address(0)) revert InvalidPosition();
+        if (ownerOf(positionId) != msg.sender) revert NotPositionOwner();
+        if (splitAmount == 0 || splitAmount >= position.amount) revert InvalidValue();
+
+        uint256 effectiveEpoch = currentEpoch() + 1;
+        if (effectiveEpoch < position.stakeStartEpoch) effectiveEpoch = position.stakeStartEpoch;
+
+        uint256 agentId = position.agentId;
+        uint256 firstAmount = position.amount - splitAmount;
+        uint256 secondWeight = (position.weightAmount * splitAmount) / position.amount;
+        uint256 firstWeight = position.weightAmount - secondWeight;
+        // A zero-weight part would be a pointless dust position.
+        if (firstWeight == 0 || secondWeight == 0) revert InvalidValue();
+
+        uint256 normalEndEpoch = _closePositionForRestructure(positionId, effectiveEpoch);
+
+        firstPositionId =
+            _createWeightedPosition(msg.sender, agentId, firstAmount, firstWeight, effectiveEpoch, normalEndEpoch);
+        secondPositionId =
+            _createWeightedPosition(msg.sender, agentId, splitAmount, secondWeight, effectiveEpoch, normalEndEpoch);
+        emit StakeSplit(positionId, firstPositionId, secondPositionId, msg.sender, firstAmount, splitAmount);
+    }
+
+    /**
+     * @notice Merge positions in the same agent pool into one position.
+     *         All positions must share the same end epoch, so merging never
+     *         changes pool power. The sources close next epoch and their
+     *         rewards accrued until then stay claimable on them.
+     *         Max-locked positions must disable max lock first; disabling the
+     *         sources in the same epoch aligns their end epochs, making them
+     *         mergeable even if their original terms differed.
+     */
+    function mergeStakes(uint256[] calldata positionIds) external nonReentrant returns (uint256 newPositionId) {
+        if (positionIds.length < 2) revert InvalidValue();
+
+        // The merged position starts when the latest source would have; sources
+        // that are already active keep earning until then.
+        uint256 effectiveEpoch = currentEpoch() + 1;
+        for (uint256 i = 0; i < positionIds.length; i++) {
+            Position storage position = positions[positionIds[i]];
+            if (position.owner == address(0)) revert InvalidPosition();
+            if (ownerOf(positionIds[i]) != msg.sender) revert NotPositionOwner();
+            if (position.stakeStartEpoch > effectiveEpoch) effectiveEpoch = position.stakeStartEpoch;
+        }
+
+        uint256 agentId = positions[positionIds[0]].agentId;
+        uint256 mergedAmount;
+        uint256 mergedWeight;
+        uint256 sharedEndEpoch;
+        for (uint256 i = 0; i < positionIds.length; i++) {
+            Position storage position = positions[positionIds[i]];
+            if (position.agentId != agentId) revert InvalidValue();
+            mergedAmount += position.amount;
+            mergedWeight += position.weightAmount;
+
+            // Duplicate ids revert here: the first close stamps closedAtEpoch.
+            uint256 normalEndEpoch = _closePositionForRestructure(positionIds[i], effectiveEpoch);
+            if (i == 0) {
+                sharedEndEpoch = normalEndEpoch;
+            } else if (normalEndEpoch != sharedEndEpoch) {
+                revert InvalidValue();
+            }
+        }
+
+        newPositionId =
+            _createWeightedPosition(msg.sender, agentId, mergedAmount, mergedWeight, effectiveEpoch, sharedEndEpoch);
+        emit StakesMerged(positionIds, newPositionId, msg.sender, mergedAmount, mergedWeight);
+    }
+
     // ─── Internal Move Helper ─────────────────────────────────────────
     function _movePosition(uint256 positionId, uint256 toAgentId, address staker, uint256 effectiveEpoch)
         internal
@@ -289,20 +377,12 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         Position storage position = positions[positionId];
         if (position.owner == address(0)) revert InvalidPosition();
         if (ownerOf(positionId) != staker) revert NotPositionOwner();
-        if (position.withdrawn) revert AlreadyWithdrawn();
-        if (position.closedAtEpoch != 0) revert PositionClosed();
-        if (_positionMaxLockPower[positionId].upperLookupRecent(effectiveEpoch) != 0) revert PositionClosed();
 
         // A position that has not activated yet (stakeActivationDelay > 1) added
         // power only from stakeStartEpoch onward; never remove before that, and
         // keep the original activation epoch instead of activating earlier.
         if (effectiveEpoch < position.stakeStartEpoch) effectiveEpoch = position.stakeStartEpoch;
-        uint256 normalEndEpoch = _positionNormalEndEpoch[positionId].upperLookupRecent(effectiveEpoch);
-        if (normalEndEpoch == 0 || effectiveEpoch >= normalEndEpoch) revert StakeDurationOutOfBounds();
-
-        position.closedAtEpoch = uint64(effectiveEpoch);
-        _removePowerRange(position.agentId, effectiveEpoch, normalEndEpoch, position.weightAmount);
-        _decreaseActiveStake(staker, position.agentId, position.amount);
+        uint256 normalEndEpoch = _closePositionForRestructure(positionId, effectiveEpoch);
 
         uint256 movedWeightAmount = position.weightAmount;
         uint256 penaltyBps = moveWeightPenaltyBps;
@@ -313,8 +393,33 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         newPositionId = _createWeightedPosition(
             staker, toAgentId, position.amount, movedWeightAmount, effectiveEpoch, normalEndEpoch
         );
-        _burn(positionId);
         emit StakeMoved(positionId, newPositionId, staker, position.agentId, toAgentId);
+    }
+
+    // ─── Internal Restructure Helper ──────────────────────────────────
+
+    /**
+     * @dev Close a position at `effectiveEpoch` for move/split/merge, removing
+     *      its remaining power range. Max-locked positions must be disabled
+     *      first, as for withdrawals. Rewards accrued through effectiveEpoch
+     *      stay claimable on the closed position.
+     */
+    function _closePositionForRestructure(uint256 positionId, uint256 effectiveEpoch)
+        internal
+        returns (uint256 normalEndEpoch)
+    {
+        Position storage position = positions[positionId];
+        if (position.withdrawn) revert AlreadyWithdrawn();
+        if (position.closedAtEpoch != 0) revert PositionClosed();
+        if (_positionMaxLockPower[positionId].upperLookupRecent(effectiveEpoch) != 0) revert PositionClosed();
+
+        normalEndEpoch = _positionNormalEndEpoch[positionId].upperLookupRecent(effectiveEpoch);
+        if (normalEndEpoch == 0 || effectiveEpoch >= normalEndEpoch) revert StakeDurationOutOfBounds();
+        _removePowerRange(position.agentId, effectiveEpoch, normalEndEpoch, position.weightAmount);
+
+        position.closedAtEpoch = uint64(effectiveEpoch);
+        _decreaseActiveStake(position.owner, position.agentId, position.amount);
+        _burn(positionId);
     }
 
     // ═══════════════════════════════════════════════════════════════════

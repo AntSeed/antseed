@@ -21,6 +21,17 @@ interface IAntseedSellerPools {
         uint256 fromAgentId,
         uint256 toAgentId
     );
+    event StakeSplit(
+        uint256 indexed positionId,
+        uint256 indexed firstPositionId,
+        uint256 indexed secondPositionId,
+        address staker,
+        uint256 firstAmount,
+        uint256 secondAmount
+    );
+    event StakesMerged(
+        uint256[] positionIds, uint256 indexed newPositionId, address indexed staker, uint256 amount, uint256 weightAmount
+    );
     event StakeWithdrawn(
         uint256 indexed positionId, address indexed staker, uint256 returnedAmount, uint256 slashedAmount
     );
@@ -71,6 +82,10 @@ interface IAntseedSellerPools {
     function moveStakes(uint256[] calldata positionIds, uint256 toAgentId)
         external
         returns (uint256[] memory newPositionIds);
+    function splitStake(uint256 positionId, uint256 splitAmount)
+        external
+        returns (uint256 firstPositionId, uint256 secondPositionId);
+    function mergeStakes(uint256[] calldata positionIds) external returns (uint256 newPositionId);
     function extendLock(uint256 positionId, uint256 additionalEpochs) external;
     function enableMaxLock(uint256 positionId) external;
     function disableMaxLock(uint256 positionId) external;
