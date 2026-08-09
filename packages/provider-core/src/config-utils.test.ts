@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { MAX_SERVICES_PER_PROVIDER } from '@antseed/node';
 import { parseServiceCapabilitiesJson, parseServiceUnitBillingModelsJson } from './config-utils.js';
 
 describe('parseServiceUnitBillingModelsJson', () => {
@@ -104,10 +105,10 @@ describe('parseServiceCapabilitiesJson', () => {
 
   it('rejects more services than the metadata validator allows', () => {
     const many = Object.fromEntries(
-      Array.from({ length: 21 }, (_, i) => [`svc-${i}`, { contextWindow: 1000 }]),
+      Array.from({ length: MAX_SERVICES_PER_PROVIDER + 1 }, (_, i) => [`svc-${i}`, { contextWindow: 1000 }]),
     );
     expect(() => parseServiceCapabilitiesJson(JSON.stringify(many)))
-      .toThrow(/must not define more than 20 services/);
+      .toThrow(`must not define more than ${MAX_SERVICES_PER_PROVIDER} services`);
   });
 
   it('rejects non-integer token counts', () => {

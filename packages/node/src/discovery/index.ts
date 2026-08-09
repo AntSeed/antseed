@@ -58,5 +58,5 @@ export {
 } from './verification-links.js';
 export { parsePublicAddress, MAX_PUBLIC_ADDRESS_LENGTH, type ParsedPublicAddress } from './public-address.js';
 export { type MetadataResolver, type PeerEndpoint } from './metadata-resolver.js';
-export { HttpMetadataResolver, type HttpMetadataResolverConfig } from './http-metadata-resolver.js';
+export { HttpMetadataResolver, MAX_METADATA_HTTP_RESPONSE_SIZE, type HttpMetadataResolverConfig } from './http-metadata-resolver.js';
 export { DHTHealthMonitor, DEFAULT_HEALTH_THRESHOLDS, type DHTHealthSnapshot, type HealthThresholds } from './dht-health.js';

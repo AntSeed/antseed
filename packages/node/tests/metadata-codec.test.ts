@@ -32,6 +32,52 @@ function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
 }
 
 describe('encodeMetadata / decodeMetadata', () => {
+  it('round-trips v12 catalogs with more than 255 service entries', () => {
+    const services = Array.from({ length: 300 }, (_, index) => `service-${index}`);
+    const servicePricing = Object.fromEntries(
+      services.map((service) => [service, { inputUsdPerMillion: 1, outputUsdPerMillion: 2 }]),
+    );
+    const serviceCategories = Object.fromEntries(services.map((service) => [service, ['chat']]));
+    const serviceApiProtocols = Object.fromEntries(
+      services.map((service) => [service, ['openai-images'] as const]),
+    );
+    const serviceUnitBillingModels = Object.fromEntries(
+      services.map((service) => [service, {
+        'openai-images': {
+          version: 1 as const,
+          components: [{ unit: 'output_images' as const, priceUsd: 0.04 }],
+        },
+      }]),
+    );
+    const serviceCapabilities = Object.fromEntries(
+      services.map((service) => [service, { inputs: ['text'] as const }]),
+    );
+    const original = makeMetadata({
+      providers: [{
+        provider: 'openai',
+        services,
+        defaultPricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
+        servicePricing,
+        serviceCategories,
+        serviceApiProtocols,
+        serviceUnitBillingModels,
+        serviceCapabilities,
+        maxConcurrency: 10,
+        currentLoad: 0,
+      }],
+    });
+
+    const decoded = decodeMetadata(encodeMetadata(original));
+
+    expect(decoded.version).toBe(METADATA_VERSION);
+    expect(decoded.providers[0]?.services).toHaveLength(300);
+    expect(Object.keys(decoded.providers[0]?.servicePricing ?? {})).toHaveLength(300);
+    expect(Object.keys(decoded.providers[0]?.serviceCategories ?? {})).toHaveLength(300);
+    expect(Object.keys(decoded.providers[0]?.serviceApiProtocols ?? {})).toHaveLength(300);
+    expect(Object.keys(decoded.providers[0]?.serviceUnitBillingModels ?? {})).toHaveLength(300);
+    expect(Object.keys(decoded.providers[0]?.serviceCapabilities ?? {})).toHaveLength(300);
+  });
+
   it('should round-trip a basic metadata object', () => {
     const original = makeMetadata();
     const encoded = encodeMetadata(original);

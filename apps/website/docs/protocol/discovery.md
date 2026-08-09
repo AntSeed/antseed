@@ -108,7 +108,7 @@ By default, metadata is fetched from `http://{host}:{port}/metadata` (`metadataP
 
 Recommended category tags: `privacy`, `legal`, `uncensored`, `coding`, `finance`, `tee` (custom tags are allowed).
 
-Metadata v11 added `serviceUnitBillingModels`; v12 added `serviceCapabilities`. Image providers advertise `openai-images` and may attach an `output_images` billing model:
+Metadata v11 added `serviceUnitBillingModels`; v12 adds `serviceCapabilities` and widens service catalog and service-map counts to support up to 512 entries. Image providers advertise `openai-images` and may attach an `output_images` billing model:
 
 ```json
 {
