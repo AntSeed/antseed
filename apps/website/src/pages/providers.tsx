@@ -204,7 +204,7 @@ export default function Providers(): JSX.Element {
             <em>No permission needed.</em>
           </>
         }
-        lead="Set your price. Announce to the network. Receive USDC for settled deliveries, depending on demand, availability, successful settlement, and your configuration - whether you run a model, a routing service, or a specialized agent."
+        lead="Set your price. Announce to the network. Receive USDC for settled deliveries - whether you run a model, a routing service, or a specialized agent."
       >
         <Button to="/docs/guides/become-a-provider" arrow>Become a provider</Button>
         <Button to="/docs/install" variant="ghost">Install AntSeed</Button>

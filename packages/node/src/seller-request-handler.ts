@@ -16,13 +16,33 @@ import type {
   SerializedHttpRequest,
   SerializedHttpResponse,
 } from './types/http.js';
-import { parseResponseUsage } from './utils/response-usage.js';
-import { computeCostUsdc, estimateTokensFromBytes, type ServicePricing } from './payments/pricing.js';
+import {
+  computeCostUsdc,
+  estimateTokensFromBytes,
+} from './payments/pricing.js';
 import { debugLog, debugWarn } from './utils/debug.js';
 import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1, PAYMENT_CODE_CHANNEL_EXHAUSTED } from './types/protocol.js';
 import { VerificationMux } from './verification/verification-mux.js';
 import { createResponseAuthPayload } from './verification/response-auth.js';
 import { hasJsonContentType, tryParseJsonObject } from './utils/json-codec.js';
+import type { UnitBillingContext, UnitBillingModelV1, UnitBillingUsage, UnitBillingUsageReportV1 } from './types/billing.js';
+import { captureUnitBillingContext, computeFinalUnitBilling, evaluateUnitBilling, isFreeUnitBillingModel } from './billing/unit.js';
+import type { ImageRequestFacts } from '@antseed/api-adapter';
+import type { ServiceApiProtocol } from './types/service-api.js';
+import {
+  detectRequestServiceApiProtocol,
+  extractRequestBodyFields,
+  selectTargetProtocolForRequest,
+} from '@antseed/api-adapter';
+import { parseResponseUsage } from './utils/response-usage.js';
+
+type ProviderTokenPricing = import('./interfaces/seller-provider.js').ProviderTokenPricingUsdPerMillion;
+
+function isZeroTokenPricing(pricing: ProviderTokenPricing): boolean {
+  return pricing.inputUsdPerMillion === 0
+    && pricing.outputUsdPerMillion === 0
+    && (pricing.cachedInputUsdPerMillion == null || pricing.cachedInputUsdPerMillion === 0);
+}
 
 export interface SellerRequestHandlerDeps {
   identity: Identity;
@@ -36,6 +56,12 @@ export interface SellerRequestHandlerDeps {
   maxUploadBodyBytes?: number;
   reserveEstimateOverdraftUsdc?: bigint;
   emit: (event: string, ...args: unknown[]) => boolean;
+}
+
+interface SellerBillingContext {
+  context: UnitBillingContext;
+  requestUsage: UnitBillingUsage;
+  requestFacts: ImageRequestFacts;
 }
 
 /** Debounce interval for metadata refresh after load changes. */
@@ -205,7 +231,12 @@ export class SellerRequestHandler {
       }
 
       const requestPricing = this.resolveProviderPricing(provider, request);
-      const isFreeService = this._isFreePricing(requestPricing);
+      const requestBilling = this._captureSellerBillingContext(provider, request);
+      const unitBillingModel = requestBilling
+        ? this.resolveProviderUnitBillingModel(provider, requestBilling.context)
+        : undefined;
+      const isFreeService = isZeroTokenPricing(requestPricing)
+        && (!unitBillingModel || isFreeUnitBillingModel(unitBillingModel));
 
       // Reject with 402 if no active payment session and channels client is configured.
       const spm = this._deps.sellerPaymentManager;
@@ -306,7 +337,28 @@ export class SellerRequestHandler {
               debugLog(`[SellerHandler] Caught up before 402 for ${buyerPeerId.slice(0, 12)}... (spent=${spent} accepted=${accepted})`);
             }
           }
-          const requestCostEstimate = this._estimateMaxRequestCostUsdc(request, requestPricing);
+          let requestCostEstimate: ReturnType<SellerRequestHandler['_estimateRequestCostUsdc']> = null;
+          try {
+            requestCostEstimate = requestBilling
+              ? this._estimateRequestCostUsdc(request, requestBilling, requestPricing, unitBillingModel)
+              : null;
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            debugWarn(`[SellerHandler] Rejecting unbillable request: ${message}`);
+            mux.sendProxyResponse({
+              requestId: request.requestId,
+              statusCode: 503,
+              headers: { 'content-type': 'application/json' },
+              body: new TextEncoder().encode(JSON.stringify({
+                error: {
+                  message: `Seller billing configuration cannot price this request: ${message}`,
+                  type: 'billing_configuration_error',
+                  code: 'billing_tier_unmatched',
+                },
+              })),
+            });
+            return;
+          }
           const estimatedRequestCost = requestCostEstimate?.cost ?? 0n;
           const remainingLockedReserve = reserveMax > spent ? reserveMax - spent : 0n;
           const reserveEstimateOverdraft = this._deps.reserveEstimateOverdraftUsdc;
@@ -424,6 +476,8 @@ export class SellerRequestHandler {
       let streamAuthStatusCode = 0;
       let streamAuthHeaders: Record<string, string> | null = null;
       let responseUsage: import('./utils/response-usage.js').ResponseUsage = { inputTokens: 0, outputTokens: 0, freshInputTokens: 0, cachedInputTokens: 0 };
+      let billingUsageReport: UnitBillingUsageReportV1 | null = null;
+      let unitCostUsdc = 0n;
       // Hold the channel open for the whole billable span — provider call,
       // spend recording, and NeedAuth — so a buyer-requested close can't land
       // between serving the request and claiming its cost.
@@ -460,7 +514,14 @@ export class SellerRequestHandler {
           } else {
             debugLog(`[SellerHandler] Provider responded: status=${statusCode} (${Date.now() - startTime}ms, ${responseBody.length}b)`);
           }
-          responseUsage = parseResponseUsage(responseBody);
+          if (requestBilling && unitBillingModel) {
+            const unitBilling = computeFinalUnitBilling(unitBillingModel, requestBilling.context, response, requestBilling.requestFacts);
+            responseUsage = unitBilling.tokenUsage;
+            billingUsageReport = unitBilling.billingUsage;
+            unitCostUsdc = unitBilling.costUsdc;
+          } else {
+            responseUsage = parseResponseUsage(response.body);
+          }
           debugLog(`[SellerHandler] Raw provider usage: in=${responseUsage.inputTokens} fresh=${responseUsage.freshInputTokens} cached=${responseUsage.cachedInputTokens} out=${responseUsage.outputTokens}`);
           if (!streamedResponseStarted) {
             mux.sendProxyResponse(response);
@@ -510,6 +571,18 @@ export class SellerRequestHandler {
           }
         }
 
+          if (requestBilling && unitBillingModel && responseForAuth && billingUsageReport === null) {
+            const finalBilling = computeFinalUnitBilling(
+              unitBillingModel,
+              requestBilling.context,
+              responseForAuth,
+              requestBilling.requestFacts,
+            );
+            responseUsage = finalBilling.tokenUsage;
+            billingUsageReport = finalBilling.billingUsage;
+            unitCostUsdc = finalBilling.costUsdc;
+          }
+
         // Record metering
         const latencyMs = Date.now() - startTime;
         if (this._deps.sessionTracker) {
@@ -531,7 +604,13 @@ export class SellerRequestHandler {
         // The buyer validates the cost independently and responds with SpendingAuth.
         if (!isFreeService && spm?.hasSession(buyerPeerId)) {
           const usage = responseUsage;
-          const costUsdc = computeCostUsdc(usage.freshInputTokens, usage.outputTokens, requestPricing, usage.cachedInputTokens);
+          const tokenCostUsdc = computeCostUsdc(
+            usage.freshInputTokens,
+            usage.outputTokens,
+            requestPricing,
+            usage.cachedInputTokens,
+          );
+          const costUsdc = tokenCostUsdc + unitCostUsdc;
           const session = spm.getChannelByPeer(buyerPeerId);
           if (session) {
             spm.recordSpend(session.sessionId, costUsdc);
@@ -553,6 +632,7 @@ export class SellerRequestHandler {
               cachedInputTokens: String(usage.cachedInputTokens),
               freshInputTokens: String(usage.freshInputTokens),
               service: this._extractRequestedService(request) ?? undefined,
+              billingUsage: billingUsageReport ?? undefined,
             }, buyerPeerId, 'post-response');
           }
         } else if (isFreeService) {
@@ -662,7 +742,7 @@ export class SellerRequestHandler {
   resolveProviderPricing(
     provider: Provider,
     request: SerializedHttpRequest,
-  ): import('./interfaces/seller-provider.js').ProviderTokenPricingUsdPerMillion {
+  ): ProviderTokenPricing {
     const requestedService = this._extractRequestedService(request);
     if (requestedService) {
       const servicePricing = provider.pricing.services?.[requestedService];
@@ -671,6 +751,13 @@ export class SellerRequestHandler {
       }
     }
     return provider.pricing.defaults;
+  }
+
+  resolveProviderUnitBillingModel(
+    provider: Provider,
+    context: UnitBillingContext,
+  ): UnitBillingModelV1 | undefined {
+    return provider.serviceUnitBillingModels?.[context.service]?.[context.serviceApiProtocol];
   }
 
   // -- Load tracking --
@@ -697,22 +784,12 @@ export class SellerRequestHandler {
 
   // -- Private helpers --
 
-  private _isFreePricing(pricing: import('./interfaces/seller-provider.js').ProviderTokenPricingUsdPerMillion): boolean {
-    const cachedPrice = pricing.cachedInputUsdPerMillion ?? pricing.inputUsdPerMillion;
-    return pricing.inputUsdPerMillion === 0
-      && pricing.outputUsdPerMillion === 0
-      && cachedPrice === 0;
-  }
-
   private _isJsonRequest(request: SerializedHttpRequest): boolean {
     return hasJsonContentType(request.headers);
   }
 
   private _extractRequestedService(request: SerializedHttpRequest): string | null {
-    if (!this._isJsonRequest(request)) {
-      return null;
-    }
-    const body = tryParseJsonObject(request.body);
+    const body = extractRequestBodyFields(request.headers, request.body);
     const service = body?.["service"] ?? body?.["model"];
     if (typeof service !== "string" || service.trim().length === 0) {
       return null;
@@ -729,9 +806,71 @@ export class SellerRequestHandler {
     return providers[0] ?? null;
   }
 
-  private _estimateMaxRequestCostUsdc(
+  private _captureSellerBillingContext(provider: Provider, request: SerializedHttpRequest): SellerBillingContext | null {
+    const service = this._extractRequestedService(request);
+    if (!service) return null;
+    return captureUnitBillingContext({
+      sellerPeerId: this._deps.identity.peerId,
+      provider: provider.name,
+      service,
+      serviceApiProtocol: this._selectSellerProtocolForService(provider, service, request),
+      request,
+    });
+  }
+
+  private _selectSellerProtocolForService(
+    provider: Provider,
+    service: string,
     request: SerializedHttpRequest,
-    pricing: ServicePricing,
+  ): ServiceApiProtocol {
+    const protocols = provider.serviceApiProtocols?.[service];
+    const billingProtocols = Object.keys(provider.serviceUnitBillingModels?.[service] ?? {}) as ServiceApiProtocol[];
+    const candidates = protocols ?? billingProtocols;
+    const requestProtocol = detectRequestServiceApiProtocol(request);
+    const selected = selectTargetProtocolForRequest(requestProtocol, candidates);
+    if (selected) return selected.targetProtocol;
+    if (protocols?.[0]) return protocols[0];
+    return billingProtocols[0] ?? "openai-chat-completions";
+  }
+
+  private _estimateUnitRequestCostUsdc(
+    requestBilling: SellerBillingContext,
+    model: UnitBillingModelV1,
+  ): { cost: bigint; inputTokens: number; maxOutputTokens: number } {
+    const usage: UnitBillingUsage = {
+      units: {
+        output_images: Math.floor(requestBilling.requestUsage.units.output_images ?? 0),
+      },
+    };
+    return {
+      cost: evaluateUnitBilling(model, requestBilling.context, usage),
+      inputTokens: 0,
+      maxOutputTokens: 0,
+    };
+  }
+
+  private _estimateRequestCostUsdc(
+    request: SerializedHttpRequest,
+    requestBilling: SellerBillingContext,
+    pricing: ProviderTokenPricing,
+    unitModel: UnitBillingModelV1 | undefined,
+  ): { cost: bigint; inputTokens: number; maxOutputTokens: number } | null {
+    const tokenEstimate = this._estimateMaxTokenRequestCostUsdc(request, pricing);
+    const unitEstimate = unitModel
+      ? this._estimateUnitRequestCostUsdc(requestBilling, unitModel)
+      : null;
+
+    if (!tokenEstimate && !unitEstimate) return null;
+    return {
+      cost: (tokenEstimate?.cost ?? 0n) + (unitEstimate?.cost ?? 0n),
+      inputTokens: tokenEstimate?.inputTokens ?? unitEstimate?.inputTokens ?? 0,
+      maxOutputTokens: tokenEstimate?.maxOutputTokens ?? unitEstimate?.maxOutputTokens ?? 0,
+    };
+  }
+
+  private _estimateMaxTokenRequestCostUsdc(
+    request: SerializedHttpRequest,
+    pricing: ProviderTokenPricing,
   ): { cost: bigint; inputTokens: number; maxOutputTokens: number } | null {
     if (!this._isJsonRequest(request)) {
       return null;

@@ -5,7 +5,6 @@ import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { formatCredits, shortAddress } from '../../../core/format';
 import { formatCompactTokens, VprCard, VprPage, VprStatRow, VprStatTile } from '../vpr/VprKit';
-import { setDepositIntent, type DepositMethod } from '../../lib/depositIntent';
 import { ExportSignerKeyDialog, ImportSignerKeyDialog } from './SignerKeyDialogs';
 import styles from './VprCreditsView.module.scss';
 
@@ -51,10 +50,6 @@ export function VprCreditsView({ onSelectView }: Props) {
     return () => window.clearInterval(timer);
   }, [actions]);
 
-  const openDeposit = (method: DepositMethod) => {
-    setDepositIntent(method);
-    onSelectView?.('deposit');
-  };
 
   return (
     <section className={`view view-vpr-credits view-pinned-header ${styles.view}`} role="tabpanel">
@@ -71,13 +66,10 @@ export function VprCreditsView({ onSelectView }: Props) {
               </span>
             </div>
             <div className={styles.payButtons}>
-              <button type="button" onClick={() => openDeposit('card')}>
+              <button type="button" onClick={() => onSelectView?.('deposit')}>
                 <HugeiconsIcon icon={CreditCardIcon} size={16} strokeWidth={2} />
-                <span>Credit Card</span>
-              </button>
-              <button type="button" onClick={() => openDeposit('crypto')}>
                 <HugeiconsIcon icon={Wallet01Icon} size={16} strokeWidth={2} />
-                <span>USDC on Base</span>
+                <span>Add Credits</span>
               </button>
             </div>
           </VprCard>

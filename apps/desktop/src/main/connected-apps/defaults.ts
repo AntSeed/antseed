@@ -52,6 +52,11 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
       npm: '@ai-sdk/openai-compatible',
       providerName: 'AntSeed',
       baseURL: 'http://localhost:{buyerPort}/v1',
+      // Patch actual installations (native and, on Windows, WSL distros)
+      // instead of blindly writing the one path above; fail the connect when
+      // the tool is found nowhere. Set on every built-in CLI tool below;
+      // see applyWithInstallProbe.
+      installProbe: 'opencode',
     },
   },
   {
@@ -68,6 +73,7 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
       providerKey: 'antseed',
       providerName: 'AntSeed',
       baseURL: 'http://localhost:{buyerPort}/v1',
+      installProbe: 'codex',
     },
   },
   {
@@ -104,6 +110,7 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
       // Pi session id. The buyer proxy uses that as the conversation key so
       // Pi chats show up in AntStation/VPR Recent Chats.
       api: 'openai-responses',
+      installProbe: 'pi',
     },
   },
   {
@@ -121,9 +128,12 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
         base: 'LOCALAPPDATA',
         segments: ['crush', 'crush.json'],
       }),
+      // WSL installs read the XDG path regardless of the Windows resolution.
+      wslConfigPath: '~/.config/crush/crush.json',
       providerKey: 'antseed',
       providerName: 'AntSeed',
       baseURL: 'http://localhost:{buyerPort}/v1',
+      installProbe: 'crush',
     },
   },
   {
@@ -141,9 +151,12 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
         base: 'APPDATA',
         segments: ['Block', 'goose', 'config', 'config.yaml'],
       }),
+      // WSL installs read the XDG path regardless of the Windows resolution.
+      wslConfigPath: '~/.config/goose/config.yaml',
       // goose provider engine; the host root is patched to the buyer proxy.
       providerKey: 'openai',
       baseURL: 'http://localhost:{buyerPort}',
+      installProbe: 'goose',
     },
   },
   {

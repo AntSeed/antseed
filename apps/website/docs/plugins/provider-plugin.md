@@ -47,6 +47,7 @@ Your node is now discoverable on the network. Buyers can find you via DHT, conne
 interface Provider {
   name: string
   services: string[]
+  healthCheckAvailable?: boolean
   serviceApiProtocols?: Record<string, string[]>
   pricing: {
     defaults: {
@@ -61,8 +62,9 @@ interface Provider {
     }>
   }
   serviceCategories?: Record<string, string[]>
+  serviceUnitBillingModels?: Record<string, Partial<Record<string, UnitBillingModelV1>>>
+  serviceCapabilities?: Record<string, ServiceCapabilities>
   maxConcurrency: number
-  capabilities?: ProviderCapability[]
 
   handleRequest(req: SerializedHttpRequest):
     Promise<SerializedHttpResponse>
@@ -114,12 +116,18 @@ export default {
 } satisfies Provider
 ```
 
-`serviceCategories` is optional and is announced in peer metadata for discovery filtering. Recommended normie-friendly tags include `chat`, `coding`, `math`, `study`, `creative`, `writing`, `tasks`, `fast`, `free`, `translate` (custom tags are allowed).
+`serviceCategories`, `serviceCapabilities`, and `serviceUnitBillingModels` are optional and are announced in peer metadata. Capabilities describe model limits and supported modalities. Unit billing describes non-token outputs such as generated images.
+
+`healthCheckAvailable` is managed by the node's model health checker. Text services that repeatedly fail are removed from `services`; image services are skipped because probing them would generate a billable image.
+
+Built-in provider plugins should declare `ANTSEED_SERVICE_CAPABILITIES_JSON` in `configSchema` and parse it with `parseServiceCapabilitiesJson`. Plugins supporting unit billing must also declare `ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON` and parse it with `parseServiceUnitBillingModelsJson`. The built-in `openai` provider currently supports image unit billing.
 
 `services` should represent the service IDs buyers will request on the network. A provider can still rewrite to different upstream model IDs internally (for example, announce `kimi2.5` and forward upstream as `together/kimi2.5`).
 
 :::note How the CLI fills these in
-End users don't set `services`, `pricing.services`, `serviceCategories`, or upstream model mapping directly on the plugin object. They set them once in `~/.antseed/config.json` under `seller.providers[name].services[id]`, and the CLI translates that into the flat `ANTSEED_*` keys (`ANTSEED_ALLOWED_SERVICES`, `ANTSEED_SERVICE_PRICING_JSON`, `ANTSEED_SERVICE_ALIAS_MAP_JSON`) that your plugin's `configSchema` consumes. See [Configuration](/docs/config) for the user-facing shape.
+End users don't set `services`, `pricing.services`, `serviceCategories`, capabilities, unit billing, or upstream model mapping directly on the plugin object. They set them once in `~/.antseed/config.json` under `seller.providers[name].services[id]`, and the CLI translates that into flat plugin keys such as `ANTSEED_ALLOWED_SERVICES`, `ANTSEED_SERVICE_PRICING_JSON`, `ANTSEED_SERVICE_ALIAS_MAP_JSON`, `ANTSEED_SERVICE_CAPABILITIES_JSON`, and `ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON`. See [Configuration](/docs/config) for the user-facing shape.
+
+If a seller configures unit billing but the loaded plugin does not declare the corresponding schema key, the CLI warns that the setting is ignored. Custom plugins can opt in by declaring and consuming the key.
 :::
 
 ## Ant Agent

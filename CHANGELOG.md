@@ -8,6 +8,15 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Added end-to-end OpenAI image generation support: buyers can route `/v1/images/generations` and `/v1/images/edits` requests through the proxy to image sellers, with per-unit billing (`output_images` components with size/quality matching) announced in discovery metadata and verified on both sides of the payment flow.
+- Sellers can announce per-service model capability hints — context window, max output tokens, input modalities, reasoning / tool-use / structured-output support — via `seller.providers.<provider>.services.<service>.capabilities`, the `antseed config seller add-service --capabilities` option, the seller setup wizard, or `ANTSEED_SERVICE_CAPABILITIES_JSON`. Built-in OpenAI, OpenAI Responses, Anthropic, Claude OAuth/Code, and local-LLM providers now announce them in discovery metadata version 12, with invalid values rejected before startup.
+- Seller service config now supports per-protocol unit billing models at `seller.providers.<provider>.services.<service>.unitBillingModels`, with matching `antseed config seller add-service --unit-billing-models` and setup-wizard inputs; the CLI serializes them to `ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON` for providers that support non-token billing.
+- Seller startup now warns when `unitBillingModels` are configured for a provider plugin that does not declare unit-billing support, instead of silently ignoring the setting.
+- Model health checks now skip `openai-images` services instead of incorrectly falling back to a Chat Completions probe; image services remain advertised until a non-billable image-specific health check is available.
+
+- Desktop: added a card deposit path powered by AntSeed Pay (antseed-pay.com) with Stripe checkout for US users. The app asks the hosted pay page which providers serve the user's region (its public `/api/options` endpoint, geo-resolved at Cloudflare's edge) and, when Stripe is available, leads the Add Credits chooser with a green Link-branded "Pay with link" button (official Link logo; "Powered by Outerfound" and the accepted card brands — Visa, Mastercard, Amex — on a caption line beneath it); the Fun checkout moves under "More options" as "Deposit using Fun". When Stripe isn't available (non-US region, or the check fails — it fails closed), the chooser stays Fun-led and the card checkout appears under "More options" as "Deposit using Outerfound" (Card · US only), which opens the pay page's own "not available in your region" screen. Selecting the card path opens a narrow app-owned checkout window (420×700) on the signed funding link pinned to the Stripe integration (`provider=stripe`); the existing deposit watcher sweeps the purchased USDC into credits and closes the window when funds arrive. The USDC-on-Base quick deposit row now ends with a chevron indicating it opens its own screen.
+- The desktop now shows deposit progress as a fixed banner from any view — received → depositing → credited (with a transaction link), on top of every overlay including the Fun checkout modal — instead of only inside the deposit page. The main-process deposit watcher also keeps running for a while after the deposit page closes (slow background polling, ~30 min, re-armed by activity), so a card/Fun delivery landing after you navigate away is still swept into credits automatically.
+
 - Sellers now run periodic model health self-checks (a 1-token probe per advertised service, every 5 minutes by default) and unadvertise services that keep failing, restoring them automatically when they recover. Configurable via `seller.healthCheck` (`enabled`, `intervalMs`, `failureThreshold`); sellers announcing this behavior advertise the `seller.model-health.v1` capability in discovery metadata. Exposed as `ModelHealthChecker` in `@antseed/node`, alongside `AntseedNode.refreshSellerMetadata()` for runtime service-list changes.
 - The buyer proxy now treats `model_not_found` responses as routing failures (instead of successes) and refreshes peer discovery metadata in the background, so a stale cached model list recovers quickly after a seller unadvertises a model.
 
@@ -23,8 +32,23 @@ This project uses selective package publishing. Each release entry lists the pub
 
 - Set generated model metadata for supported connected tools and CLI wrappers to a 280,000-token context window, with an 8,192-token output limit where the tool supports one.
 
+### Changed
+
+- Desktop: redesigned the Add Credits chooser. The Fun checkout is now a "Deposit" row ("Powered by fun.xyz") showing the accepted card networks (Mastercard, Apple Pay, Google Pay, Visa), the USDC-on-Base quick deposit is always visible with a note that the AntSeed relayer network credits it, and the Meridian option moved behind "More options" as "Deposit using Meridian". Payment and chain badges now use the official brand logos, and the primary CTA follows the app theme (dark surface in light mode, light surface in dark mode).
+- Desktop: the Fun checkout's sign-in and payment popups (Google sign-in, card checkout pages) now open as app-owned windows instead of tabs in the default browser, and close automatically once the sign-in completes or the purchased USDC arrives at the wallet. Popups from those pages carry a standard browser user agent so Google no longer rejects the embedded sign-in, and the desktop IPC bridge is only exposed to the app's own pages, never to third-party checkout content.
+
 ### Fixed
 
+- Fixed buyers classifying unit-billed services (e.g. image generation) as free because their token pricing is zero: the free-usage gate now resolves the same provider + protocol billing route the seller uses, so paid image requests negotiate payment and record verified cost instead of rejecting the seller's usage claims.
+- Fixed a payment-integrity hole where a seller could claim image delivery (`NeedAuth` with positive unit billing cost) before the buyer received any response and get paid for undelivered images. Positive unit-billing claims are now rejected until the buyer has observed the delivered response; the buyer's own post-response authorization covers honest sellers.
+- Fixed image billing counting placeholder `data` entries as delivered images. Only response items containing a non-empty image URL or base64 payload are billable now.
+- Fixed image requests with zero, fractional, or unsafe `n` values suppressing the delivered-image charge; invalid counts now use the Images API default of one, and omitted size/quality values normalize to `auto` for deterministic tier matching.
+- Fixed unmatched image billing tiers silently evaluating to zero. Sellers now reject requests they cannot price before forwarding them upstream, and buyers refuse payment authorization without failing the delivered response path if an older or misconfigured seller still returns an unpriceable image response.
+- Fixed hybrid token-plus-image `NeedAuth` validation comparing the seller's total request cost against the image-only estimate. Token and unit costs are now recomputed and validated separately before checking the total.
+- Fixed seller health checks leaving rate-limited services advertised indefinitely. HTTP 429 responses now count toward the failure threshold, and a successful probe automatically restores the service.
+- Fixed the buyer proxy leaking `.buyer.state.*.json.tmp` files (each a full discovered-peers snapshot, ~1 MB) when the atomic state-file rename failed — common on Windows while a reader briefly holds `buyer.state.json` open. The rename is now retried, a failed write cleans up its temp file and logs the error instead of dropping the state update silently, and leftover temp files from earlier runs are swept at startup.
+- Fixed bursty buyer startups causing initial payment-channel reserves to fail when delegated seller accounts reject excess in-flight transactions. Sellers now retry transient transaction backpressure before acknowledging the channel.
+- Fixed seller health checks leaving unavailable upstreams advertised: HTTP 402 responses now count as failures, every failing service can be removed, and a provider with no healthy services is omitted from signed discovery metadata until a probe succeeds.
 - Fixed OpenAI Responses model health probes using a scalar `input` value that strict providers rejected with HTTP 400, leaving every health result inconclusive and preventing automatic model unadvertising.
 - Fixed payment negotiation getting stuck when a buyer lost its local channel state while an older channel remained active on-chain. Sellers now close the superseded channel from durable seller state before accepting the buyer's replacement ReserveAuth.
 - Fixed the seller recording an inaccurate settled amount when two close paths raced on the same channel. Only one `close()` is submitted, and every path that joins it now persists the amount that transaction actually settled.
@@ -35,6 +59,56 @@ This project uses selective package publishing. Each release entry lists the pub
 - Fixed the Responses request normalizer to drop non-message input items with no renderable text (e.g. Codex `reasoning` items) instead of converting them into empty user messages mid-history.
 - Fixed buyer payment negotiation so an unreachable chain RPC is reported immediately as a buyer-side `chain_rpc_unavailable` error. Previously the failed deposit-balance read was swallowed, negotiation continued without it, and the request stalled for the full 30-second lock-confirmation timeout before failing with an error that blamed the seller.
 - Fixed `SellerAuthorizationError` so a peer that is not an authorized operator is distinguishable from a chain RPC that could not be reached; the two cases previously shared one error and could only be told apart by matching the message text.
+
+## 2026-08-06 — Desktop 0.2.3
+
+### Desktop
+
+- `@antseed/desktop@0.2.3`
+
+### Added
+
+- The desktop now shows deposit progress as a fixed banner from any view — received → depositing → credited (with a transaction link), on top of every overlay including the Fun checkout modal — instead of only inside the deposit page. The main-process deposit watcher also keeps running for a while after the deposit page closes (slow background polling, ~30 min, re-armed by activity), so a card/Fun delivery landing after you navigate away is still swept into credits automatically.
+
+### Changed
+
+- The desktop Balance page's two deposit buttons (Credit Card / USDC on Base) are now a single full-width "Add Credits" button opening the Add-credits chooser, and the separate "Pay with card" options page (including the embedded Crossmint checkout) is removed — the Fun-led chooser is the deposit flow. Dropping Crossmint also cuts the renderer bundle roughly in half.
+
+### Fixed
+
+- Packaged desktop builds now ship with the Fun deposit checkout enabled — 0.2.2 resolved the Fun API key only from user config or a runtime environment variable, so the primary Deposit button never appeared for end users.
+
+## 2026-08-06 — Desktop 0.2.2
+
+### Desktop
+
+- `@antseed/desktop@0.2.2`
+
+### Added
+
+- The desktop deposit screen now leads with an in-app Fun (fun.xyz) checkout: pay with card/cash or transfer crypto, and the purchased USDC is delivered on Base to the buyer wallet and auto-deposited to credits like any other transfer. Requires a Fun API key (`payments.funkit.apiKey` in the desktop config, or the `ANTSEED_FUNKIT_API_KEY` environment variable) and Base mainnet; otherwise the existing deposit options show unchanged.
+
+### Changed
+
+- The desktop renderer runs on React 19.
+
+## 2026-08-05 — Desktop 0.2.1
+
+### Desktop
+
+- `@antseed/desktop@0.2.1`
+
+### Added
+
+- The desktop release workflow now builds and publishes Linux installers (AppImage + deb, x64 + arm64, each arch on a native runner) alongside macOS and Windows, mirrors them to the rolling alpha release, and the website download CTAs now offer Linux visitors a direct AppImage download for their CPU arch instead of only linking to the releases page.
+- The desktop app can now pin a specific seller to an individual chat: each model row in a chat's detail page carries a settings button opening a per-chat seller picker with an auto toggle, and the buyer's conversation records track whether a chat's peer was chosen by the user (`peerSource`) so deliberate picks are never overridden. Pinning a seller for a model (Models page) now also re-points that model's existing auto-routed chats to the chosen seller, and re-pinning a chat to a model respects the model's seller pin instead of always auto-selecting.
+- Added a "Show routed peer" preference to the desktop (Preferences → Floating window, default off) that names the seller each chat's requests actually went to next to its model — on the floating pill's chat rows, the Chats page list, and the Home recent-chats card — for verifying where routing really lands.
+
+### Fixed
+
+- Fixed the Linux desktop AppImage aborting at startup with `FATAL:setuid_sandbox_host.cc` on kernels that restrict unprivileged user namespaces (Ubuntu 23.10+, hardened Debian). The app now detects that the Chromium sandbox cannot work in that combination and disables it itself, instead of requiring a manual `--no-sandbox` flag. The `.deb` install is unaffected and keeps the sandbox on.
+- The website download buttons now show a Linux (Tux) icon alongside the Apple and Windows glyphs.
+- Fixed the desktop's config-patch connect buttons (OpenCode, Codex, Crush, Goose, pi) silently doing nothing for tools installed under WSL. On Windows, connecting one of these tools now detects WSL distros that carry an install, patches the config inside each distro (via `\\wsl.localhost\`), points it at a host the distro can actually reach (the NAT gateway, or `localhost` under mirrored networking), and runs a relay so the loopback-only buyer proxy is reachable from inside WSL. When the tool is found neither natively nor in any WSL distro, the connect now fails with a clear error instead of creating a config directory for a program that isn't installed and reporting success.
 
 ## 2026-08-03 — Desktop beta
 

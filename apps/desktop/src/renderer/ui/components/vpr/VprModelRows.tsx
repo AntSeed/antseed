@@ -1,6 +1,6 @@
 import type { JSX } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { ArrowRight01Icon, StarIcon, Tick02Icon } from '@hugeicons/core-free-icons';
+import { ArrowRight01Icon, Settings02Icon, StarIcon, Tick02Icon } from '@hugeicons/core-free-icons';
 import type { VprModelCatalogEntry } from '../../../core/state';
 import { favoriteModelKey } from '../../../modules/catalog/favorites';
 import { sameCanonicalModel } from '../../../modules/catalog/model-identity';
@@ -33,6 +33,10 @@ export type VprModelRowListProps = {
    * A matching row swaps its peer count for the seller, so a non-auto route is
    * visible without opening the model page. */
   pinnedPeerLabels?: ReadonlyMap<string, string>;
+  /** Rows get a trailing config button opening per-context settings for that
+   * model (the chat detail's seller picker). Hosts without one (Home
+   * dropdown, floating pill) omit this and render no button. */
+  onConfigure?: (provider: string, serviceId: string) => void;
 };
 
 function entryMinTotalPrice(entry: VprModelCatalogEntry): number | null {
@@ -61,7 +65,7 @@ function formatPrice(price: number | null): string {
   return price === null ? '—' : formatUsdShort(price);
 }
 
-function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pinnedPeerLabel, onClick }: {
+function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pinnedPeerLabel, onClick, onConfigure }: {
   entry: VprModelCatalogEntry;
   /** Leading checkmark for the currently selected model (Figma "model list" checked state). */
   checked?: boolean;
@@ -73,10 +77,15 @@ function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pi
   /** Seller this model is pinned to; replaces the peer count on the meta line. */
   pinnedPeerLabel?: string | null;
   onClick: () => void;
+  /** Trailing config button (per-context model settings). */
+  onConfigure?: () => void;
 }): JSX.Element {
   const free = isFreeEntry(entry);
   const hasPrice = entry.minInputUsdPerMillion !== null || entry.minOutputUsdPerMillion !== null;
-  const discount = discountLabel(entry);
+  // Config-bearing rows (the chat detail's model list) trade the discount
+  // column for meta-line width: the gear moves up onto the title line and
+  // the second line runs the full row.
+  const discount = onConfigure ? null : discountLabel(entry);
 
   const priceParts = free ? (
     <span className={styles.perTok}>Free</span>
@@ -115,6 +124,30 @@ function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pi
             <HugeiconsIcon icon={StarIcon} size={13} strokeWidth={2} className={styles.favStar} />
           )}
           {badge}
+          {/* A span with the button role — the row itself is already a
+              button, and a real nested button would be invalid markup (same
+              pattern as the pill's Add balance shortcut). */}
+          {onConfigure && (
+            <span
+              role="button"
+              tabIndex={0}
+              className={styles.configButton}
+              title="Model settings for this chat"
+              aria-label={`Settings for ${entry.label}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onConfigure();
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.stopPropagation();
+                event.preventDefault();
+                onConfigure();
+              }}
+            >
+              <HugeiconsIcon icon={Settings02Icon} size={15} strokeWidth={1.8} />
+            </span>
+          )}
         </span>
         <span className={styles.metaLine}>
           {/* A pinned seller is the whole story of where the model routes —
@@ -174,6 +207,7 @@ export function VprModelRowList({
   compact,
   selectOnly,
   pinnedPeerLabels,
+  onConfigure,
 }: VprModelRowListProps): JSX.Element {
   if (entries.length === 0) {
     return (
@@ -226,6 +260,7 @@ export function VprModelRowList({
               <VprBadge tone="green">Cheapest</VprBadge>
             ) : null}
             onClick={() => onSelect(entry.provider, entry.serviceId)}
+            onConfigure={onConfigure ? () => onConfigure(entry.provider, entry.serviceId) : undefined}
           />
         );
       })}

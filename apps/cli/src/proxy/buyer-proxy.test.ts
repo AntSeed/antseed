@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -17,11 +18,13 @@ import {
   BuyerProxy,
   isModelNotFoundResponse,
   makeVerifierReach,
+  mergeJsonStateFile,
   parsePeerPinnedService,
   parsePersistedPeers,
   rewritePeerPinnedServiceInBody,
   selectCandidatePeersForRouting,
   substituteRoutedModelAlias,
+  sweepStaleStateTmpFiles,
 } from './buyer-proxy.js'
 import { overrideRoutedModelInBody, SYSTEM_ROUTED_MODEL_HEADER } from './request-utils.js'
 
@@ -1871,4 +1874,62 @@ test('isModelNotFoundResponse: detects seller and upstream model_not_found rejec
   assert.equal(isModelNotFoundResponse(makeResponse(500, {
     error: { code: 'model_not_found' },
   })), false)
+})
+
+test('mergeJsonStateFile: merges into existing state and leaves no temp files', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'antseed-buyer-state-'))
+  try {
+    const stateFile = join(dir, 'buyer.state.json')
+    await mergeJsonStateFile(dir, stateFile, { a: 1, pinnedPeerId: 'old' })
+    await mergeJsonStateFile(dir, stateFile, { pinnedPeerId: 'new', b: 2 })
+    const state = JSON.parse(await readFile(stateFile, 'utf-8')) as Record<string, unknown>
+    assert.deepEqual(state, { a: 1, pinnedPeerId: 'new', b: 2 })
+    const tmpLeftovers = (await readdir(dir)).filter((name) => name.endsWith('.json.tmp'))
+    assert.deepEqual(tmpLeftovers, [])
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('mergeJsonStateFile: unlinks the temp file when the rename fails', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'antseed-buyer-state-'))
+  try {
+    // A directory at the state-file path makes rename() fail on every platform
+    // with a non-retryable code, exercising the cleanup path.
+    const stateFile = join(dir, 'buyer.state.json')
+    await mkdir(stateFile)
+    await assert.rejects(mergeJsonStateFile(dir, stateFile, { a: 1 }))
+    const tmpLeftovers = (await readdir(dir)).filter((name) => name.endsWith('.json.tmp'))
+    assert.deepEqual(tmpLeftovers, [])
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('sweepStaleStateTmpFiles: removes aged temp files, keeps fresh and unrelated ones', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'antseed-buyer-state-'))
+  try {
+    const stale = join(dir, '.buyer.state.11111111-1111-1111-1111-111111111111.json.tmp')
+    const fresh = join(dir, '.buyer.state.22222222-2222-2222-2222-222222222222.json.tmp')
+    const unrelated = join(dir, 'buyer.state.json')
+    await writeFile(stale, '{}')
+    await writeFile(fresh, '{}')
+    await writeFile(unrelated, '{}')
+    const past = new Date(Date.now() - 5 * 60_000)
+    await utimes(stale, past, past)
+
+    await sweepStaleStateTmpFiles(dir)
+
+    const remaining = (await readdir(dir)).sort()
+    assert.deepEqual(remaining, [
+      '.buyer.state.22222222-2222-2222-2222-222222222222.json.tmp',
+      'buyer.state.json',
+    ])
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('sweepStaleStateTmpFiles: tolerates a missing directory', async () => {
+  await sweepStaleStateTmpFiles(join(tmpdir(), 'antseed-does-not-exist', randomUUID()))
 })

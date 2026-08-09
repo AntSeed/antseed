@@ -1,0 +1,101 @@
+import { describe, expect, it } from 'vitest';
+import { parseServiceCapabilitiesJson, parseServiceUnitBillingModelsJson } from './config-utils.js';
+
+describe('parseServiceUnitBillingModelsJson', () => {
+  it('rejects unknown service API protocol keys', () => {
+    expect(() => parseServiceUnitBillingModelsJson(JSON.stringify({
+      'gpt-image-1': {
+        'not-a-protocol': {
+          version: 1,
+          components: [],
+        },
+      },
+    }))).toThrow(/known service API protocol/);
+  });
+
+  it('accepts known service API protocol keys', () => {
+    expect(parseServiceUnitBillingModelsJson(JSON.stringify({
+      'gpt-image-1': {
+        'openai-images': {
+          version: 1,
+          components: [],
+        },
+      },
+    }))).toEqual({
+      'gpt-image-1': {
+        'openai-images': {
+          version: 1,
+          components: [],
+        },
+      },
+    });
+  });
+});
+
+describe('parseServiceCapabilitiesJson', () => {
+  it('returns undefined for empty input', () => {
+    expect(parseServiceCapabilitiesJson(undefined)).toBeUndefined();
+    expect(parseServiceCapabilitiesJson('{}')).toBeUndefined();
+  });
+
+  it('parses a full capabilities map', () => {
+    expect(parseServiceCapabilitiesJson(JSON.stringify({
+      'gpt-5.5': {
+        contextWindow: 200000,
+        maxOutputTokens: 16384,
+        inputs: ['text', 'image'],
+        reasoning: true,
+        toolUse: false,
+      },
+    }))).toEqual({
+      'gpt-5.5': {
+        contextWindow: 200000,
+        maxOutputTokens: 16384,
+        inputs: ['text', 'image'],
+        reasoning: true,
+        toolUse: false,
+      },
+    });
+  });
+
+  it('rejects duplicate input modalities (same as the metadata validator)', () => {
+    expect(() => parseServiceCapabilitiesJson(JSON.stringify({
+      'gpt-5.5': { inputs: ['text', 'image', 'text'] },
+    }))).toThrow(/Duplicate input modality/);
+  });
+
+  it('rejects unknown input modalities', () => {
+    expect(() => parseServiceCapabilitiesJson(JSON.stringify({
+      'gpt-5.5': { inputs: ['text', 'hologram'] },
+    }))).toThrow(/Unsupported input modality "hologram"/);
+  });
+
+  it('rejects token counts above the announce-time wire ceiling', () => {
+    expect(() => parseServiceCapabilitiesJson(JSON.stringify({
+      'gpt-5.5': { contextWindow: 2_000_000_000 },
+    }))).toThrow(/positive integer <= 1000000000/);
+  });
+
+  it('rejects more services than the metadata validator allows', () => {
+    const many = Object.fromEntries(
+      Array.from({ length: 21 }, (_, i) => [`svc-${i}`, { contextWindow: 1000 }]),
+    );
+    expect(() => parseServiceCapabilitiesJson(JSON.stringify(many)))
+      .toThrow(/must not define more than 20 services/);
+  });
+
+  it('rejects non-integer token counts', () => {
+    expect(() => parseServiceCapabilitiesJson(JSON.stringify({
+      'gpt-5.5': { contextWindow: -1 },
+    }))).toThrow(/positive integer/);
+    expect(() => parseServiceCapabilitiesJson(JSON.stringify({
+      'gpt-5.5': { maxOutputTokens: 1.5 },
+    }))).toThrow(/positive integer/);
+  });
+
+  it('rejects non-boolean flags', () => {
+    expect(() => parseServiceCapabilitiesJson(JSON.stringify({
+      'gpt-5.5': { reasoning: 'yes' },
+    }))).toThrow(/must be a boolean/);
+  });
+});

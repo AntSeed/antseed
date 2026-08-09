@@ -158,6 +158,15 @@ describe('detectRequestServiceApiProtocol', () => {
       detectRequestServiceApiProtocol(makeRequest({ path: '/v1/chat/completions' })),
     ).toBe('openai-chat-completions');
   });
+
+  it('detects openai images from the generations and edits paths', () => {
+    expect(
+      detectRequestServiceApiProtocol(makeRequest({ path: '/v1/images/generations' })),
+    ).toBe('openai-images');
+    expect(
+      detectRequestServiceApiProtocol(makeRequest({ path: '/v1/images/edits' })),
+    ).toBe('openai-images');
+  });
 });
 
 describe('selectTargetProtocolForRequest', () => {
@@ -187,8 +196,14 @@ describe('inferProviderDefaultServiceApiProtocols', () => {
     expect(inferProviderDefaultServiceApiProtocols('claude-oauth')).toEqual(['anthropic-messages']);
   });
 
-  it('infers openai-style providers', () => {
-    expect(inferProviderDefaultServiceApiProtocols('openai')).toEqual(['openai-chat-completions']);
+  it('keeps generic openai fallback chat-only', () => {
+    expect(inferProviderDefaultServiceApiProtocols('openai')).toEqual([
+      'openai-chat-completions',
+    ]);
+  });
+
+  it('keeps local-llm fallback chat-only', () => {
+    expect(inferProviderDefaultServiceApiProtocols('local-llm')).toEqual(['openai-chat-completions']);
   });
 });
 

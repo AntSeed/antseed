@@ -403,6 +403,10 @@ export type DesktopBridge = {
   paymentsCardProviders?: () => Promise<{ ok: boolean; data?: Array<{ id: string; label: string }>; error?: string }>;
   paymentsOpenCardProvider?: (opts?: { providerId?: string; amountUsdc?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
   paymentsCrossmintConfig?: () => Promise<{ ok: boolean; data?: { clientKey: string; apiBase: string } | null; error?: string }>;
+  paymentsFunkitConfig?: () => Promise<{ ok: boolean; data?: { apiKey: string } | null; error?: string }>;
+  paymentsOnrampAvailability?: () => Promise<{ ok: boolean; data?: { country: string | null; stripe: boolean }; error?: string }>;
+  /** Closes any app-owned Fun checkout/sign-in popup windows (login-only flows produce no deposit, so the deposit watcher can't close them). */
+  paymentsCloseCheckoutWindows?: () => Promise<{ ok: boolean }>;
   paymentsGetBuyerUsage?: () => Promise<{ ok: boolean; data: DesktopBuyerUsageTotals | null; error: string | null; lastActivityAt?: number | null }>;
   paymentsGetChannels?: () => Promise<{ ok: boolean; data: DesktopPaymentChannelSummary[]; error: string | null }>;
   paymentsGetRewardsSummary?: () => Promise<{ ok: boolean; data: DesktopRewardsSummary | null; error: string | null }>;
@@ -448,7 +452,7 @@ export type DesktopBridge = {
   vprFloatSetExpanded?: (expanded: boolean) => void;
   /** null while the buyer is unreachable (e.g. still starting up). */
   buyerConversationsList?: () => Promise<BuyerConversationSummary[] | null>;
-  buyerConversationsUpdate?: (opts: { id: string; label?: string | null; pinnedModel?: string; delete?: boolean }) => Promise<{ ok: boolean; conversation?: BuyerConversationSummary; error?: string }>;
+  buyerConversationsUpdate?: (opts: { id: string; label?: string | null; pinnedModel?: string; peerSource?: 'auto' | 'user'; delete?: boolean }) => Promise<{ ok: boolean; conversation?: BuyerConversationSummary; error?: string }>;
   vprFloatOpen?: (data: VprFloatData) => Promise<{ ok: boolean }>;
   vprFloatClose?: () => Promise<{ ok: boolean }>;
   vprFloatIsOpen?: () => Promise<boolean>;
@@ -476,6 +480,10 @@ export type BuyerConversationSummary = {
       the first model that serves it, so this is null only until the chat's
       first resolved request; the default route applies to new chats only. */
   pinnedModel: string | null;
+  /** How the pin's peer was chosen: 'user' = the user picked this seller for
+      this chat (sweeps never move it), 'auto' = routing picked it. Absent on
+      rows from buyers that predate the field — treat as 'auto'. */
+  peerSource?: 'auto' | 'user';
   /** Model that served the most recent request (`<peerId>@<service>`). */
   lastModel: string | null;
   /** USDC base units this chat has cost (bigint string), subagents included.
@@ -524,6 +532,10 @@ export type VprFloatConversation = {
   /** Formatted spend for this chat ("$0.42", "<$0.01"), or null when nothing
       has been attributed to it yet. */
   cost: string | null;
+  /** Display name of the seller that served the chat's most recent request,
+      or null while no request has resolved. Rendered only when the
+      "Show routed peer" debug preference is on. */
+  routedPeerName: string | null;
 };
 
 /** Display payload the main window pushes to the floating pill. */
@@ -556,6 +568,8 @@ export type VprFloatData = {
   runtimeOn?: boolean;
   /** Shortened buyer identity (signer address), e.g. "0x1234...abcd". */
   identityLabel?: string;
+  /** Debug preference: chat rows name the routed seller next to the model. */
+  showRoutedPeer?: boolean;
   /**
    * True when traffic moved through the system proxy or the buyer proxy
    * since the previous payload — drives the pulse on the app icon.

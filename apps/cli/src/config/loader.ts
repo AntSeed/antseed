@@ -106,6 +106,12 @@ function normalizeSellerService(value: unknown): SellerServiceConfig | null {
   if (pricing) {
     out.pricing = pricing;
   }
+  if (value['capabilities'] !== undefined) {
+    out.capabilities = value['capabilities'] as SellerServiceConfig['capabilities'];
+  }
+  if (value['unitBillingModels'] !== undefined) {
+    out.unitBillingModels = value['unitBillingModels'] as SellerServiceConfig['unitBillingModels'];
+  }
   return out;
 }
 

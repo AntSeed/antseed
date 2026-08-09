@@ -539,6 +539,9 @@ const api = {
   paymentsCardProviders: () => ipcRenderer.invoke('payments:card-providers'),
   paymentsOpenCardProvider: (opts?: { providerId?: string; amountUsdc?: string }) => ipcRenderer.invoke('payments:open-card-provider', opts),
   paymentsCrossmintConfig: () => ipcRenderer.invoke('payments:crossmint-config'),
+  paymentsFunkitConfig: () => ipcRenderer.invoke('payments:funkit-config'),
+  paymentsOnrampAvailability: () => ipcRenderer.invoke('payments:onramp-availability'),
+  paymentsCloseCheckoutWindows: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('payments:close-checkout-windows') as Promise<{ ok: boolean }>,
   paymentsGetBuyerUsage: () => ipcRenderer.invoke('payments:get-buyer-usage'),
   paymentsGetChannels: () => ipcRenderer.invoke('payments:get-channels'),
   paymentsGetRewardsSummary: () => ipcRenderer.invoke('payments:get-rewards-summary'),
@@ -625,7 +628,7 @@ const api = {
   buyerConversationsList(): Promise<unknown[] | null> {
     return ipcRenderer.invoke('buyer:conversations-list') as Promise<unknown[] | null>;
   },
-  buyerConversationsUpdate(opts: { id: string; label?: string | null; pinnedModel?: string; delete?: boolean }): Promise<{ ok: boolean; conversation?: unknown; error?: string }> {
+  buyerConversationsUpdate(opts: { id: string; label?: string | null; pinnedModel?: string; peerSource?: 'auto' | 'user'; delete?: boolean }): Promise<{ ok: boolean; conversation?: unknown; error?: string }> {
     return ipcRenderer.invoke('buyer:conversations-update', opts) as Promise<{ ok: boolean; conversation?: unknown; error?: string }>;
   },
   onVprFloatData(handler: (data: unknown) => void): () => void {
@@ -665,6 +668,22 @@ const api = {
   },
 };
 
-contextBridge.exposeInMainWorld('antseedDesktop', api);
+// The preload runs in the renderer, where `location` exists — this file is
+// compiled with the main-process tsconfig (node libs only), which doesn't
+// know the DOM globals.
+declare const location: { protocol: string; hostname: string };
+
+// Child windows opened via window.open (the Fun checkout popups —
+// payments/checkout-window.ts) inherit this preload from the main window but
+// load third-party payment pages. The IPC bridge must never reach those
+// documents: expose it only on the app's own origins (file:// in packaged
+// builds, the localhost dev server / payments portal in dev).
+const isAppDocument =
+  location.protocol === 'file:' ||
+  location.hostname === 'localhost' ||
+  location.hostname === '127.0.0.1';
+if (isAppDocument) {
+  contextBridge.exposeInMainWorld('antseedDesktop', api);
+}
 
 export type DesktopBridge = typeof api;

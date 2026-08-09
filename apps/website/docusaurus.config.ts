@@ -1,5 +1,5 @@
 import {themes as prismThemes} from 'prism-react-renderer';
-import type {Config, Plugin, PluginModule} from '@docusaurus/types';
+import type {Config, Plugin, PluginConfig, PluginModule} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 import integrationsPagesPlugin from './plugins/integrations-pages';
 import {integrations as integrationEntries} from './src/integrations/integrations';
@@ -24,6 +24,17 @@ const statsProxyPlugin: PluginModule = () => ({
     } as unknown as ReturnType<NonNullable<Plugin['configureWebpack']>>;
   },
 });
+
+/** Google Tag Manager container for antseed.com. */
+const GTM_CONTAINER_ID = process.env.GTM_CONTAINER_ID ?? 'GTM-NHCLBQQK';
+
+/**
+ * Typed explicitly: an inline array literal widens to `string | object`, which
+ * does not satisfy PluginConfig's [name, options] tuple.
+ */
+const gtmPlugin: PluginConfig[] = GTM_CONTAINER_ID
+  ? [['@docusaurus/plugin-google-tag-manager', {containerId: GTM_CONTAINER_ID}]]
+  : [];
 
 const config: Config = {
   title: 'AntSeed',
@@ -74,6 +85,19 @@ const config: Config = {
   ],
 
   plugins: [
+    // Google Tag Manager. GA4 is configured as a tag *inside* GTM rather than
+    // loaded separately, so there is one script on the page and no risk of
+    // double-counting pageviews. Adding Ads/LinkedIn/Meta pixels later is a
+    // GTM change, not a code change.
+    //
+    // A GTM container id is public — it ships in the page source — so it lives
+    // here rather than in deploy config, and the site works without anyone
+    // setting an env var. GTM_CONTAINER_ID still overrides it for staging or a
+    // throwaway test container. Set it to an empty string to disable GTM.
+    //
+    // GA4 (G-DF97Q4KV2X) is configured as a tag *inside* this container, not
+    // loaded here, so there is one tag on the page and no double-counting.
+    ...gtmPlugin,
     [
       '@docusaurus/plugin-client-redirects',
       {
@@ -101,6 +125,21 @@ const config: Config = {
   ],
 
   headTags: [
+    // Second Search Console owner. A site can carry several verification tags,
+    // one per Google account, and removing one un-verifies that account — so
+    // this is additive, not a replacement for the token in themeConfig.metadata.
+    //
+    // It lives here rather than alongside the other one because themeConfig
+    // metadata is rendered through react-helmet, which dedupes <meta> by name:
+    // two google-site-verification entries there would collapse into one and
+    // this token would silently never ship. headTags is injected verbatim.
+    {
+      tagName: 'meta',
+      attributes: {
+        name: 'google-site-verification',
+        content: 'wiMhtNPC3UWtvOKXeJBto55Y8F6-7ORyA1aAI_DkZ-A',
+      },
+    },
     {
       tagName: 'script',
       attributes: {type: 'application/ld+json'},
@@ -149,9 +188,9 @@ const config: Config = {
   themeConfig: {
     metadata: [
       {name: 'google-site-verification', content: '09pzs5Q9kHdpQSNSBpr0vNh9SMq-T8lzhBgH5Zgm6ug'},
-      {name: 'description', content: 'The open market for AI inference. Every model, no middleman, no account, no email. Providers compete on price and you keep your tools. Owned by no one.'},
+      {name: 'description', content: 'The open market for AI inference. Every model, no middleman. Anonymous, best price, works with the tools you already use. Owned by no one.'},
       {property: 'og:title', content: 'Every AI model, best price, no middleman'},
-      {property: 'og:description', content: 'AntSeed is the open market for AI inference. Every model, no middleman. No account, no email, no company reading your prompts or locking you out. Providers compete on price, you keep the tools you already use. Owned by no one. Available to everyone.'},
+      {property: 'og:description', content: 'AntSeed is the open market for AI inference. Every model, no middleman. Anonymous. Best price. Works with the tools you already use. Owned by no one. Available to everyone.'},
       {property: 'og:type', content: 'website'},
       {property: 'og:site_name', content: 'AntSeed'},
       {name: 'twitter:card', content: 'summary_large_image'},
@@ -215,7 +254,10 @@ const config: Config = {
           className: 'header-telegram-link',
         },
         {
-          href: 'https://github.com/AntSeed/antseed/releases/latest',
+          // Custom item (src/theme/NavbarItem/DownloadNavbarItem.tsx): links
+          // straight to the installer for the visitor's OS/arch, falling back
+          // to the releases page when detection fails.
+          type: 'custom-download',
           label: 'Download VPR',
           position: 'right',
           className: 'header-download-link',

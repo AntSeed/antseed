@@ -78,8 +78,9 @@ interface ServiceHealthState {
  *
  * Removal mutates `provider.services` in place — the same array reference the
  * announcer and the seller request handler read live — so it takes effect on
- * the next `/metadata` fetch and the next incoming request without extra
- * plumbing.
+ * the next `/metadata` fetch and the next incoming request. If every service
+ * is removed, `provider.healthCheckAvailable` becomes false so discovery omits
+ * the provider instead of treating its empty service list as a wildcard.
  */
 export class ModelHealthChecker {
   private readonly _targets: ModelHealthTarget[];
@@ -201,7 +202,14 @@ export class ModelHealthChecker {
 
     let outcome: ProbeOutcome;
     try {
-      const request = buildHealthProbeRequest(service, resolveProbeProtocol(provider, service));
+      const protocol = resolveProbeProtocol(provider, service);
+      if (!supportsHealthProbe(protocol)) {
+        state.lastStatusCode = null;
+        state.lastDetail = `Skipped health probe for unsupported protocol ${protocol}`;
+        debugLog(`[ModelHealth] ${provider.name}/${service}: ${state.lastDetail}`);
+        return;
+      }
+      const request = buildHealthProbeRequest(service, protocol);
       const response = await withTimeout(
         probeProvider.handleRequest(request),
         this._probeTimeoutMs,
@@ -220,8 +228,8 @@ export class ModelHealthChecker {
 
     if (outcome === 'inconclusive') {
       // The endpoint answered but the probe result proves nothing either way
-      // (e.g. 429 while busy, 400 for an unsupported probe parameter). Leave
-      // failure counters and advertisement untouched.
+      // (for example, 400 for an unsupported probe parameter). Leave failure
+      // counters and advertisement untouched.
       debugLog(`[ModelHealth] ${provider.name}/${service}: inconclusive (${state.lastDetail})`);
       return;
     }
@@ -250,21 +258,17 @@ export class ModelHealthChecker {
     if (index < 0) {
       // Already gone (removed externally) — track it as removed so it can recover.
       state.removed = true;
-      return;
-    }
-    // Metadata semantics treat an empty services list as a wildcard ("serves
-    // anything"), so never unadvertise a provider's last service — that would
-    // advertise MORE, not less.
-    if (services.length <= 1) {
-      debugWarn(
-        `[ModelHealth] ${provider.name}/${state.service} keeps failing but is the provider's `
-        + 'last advertised service — leaving it advertised (empty services would mean wildcard)',
-      );
+      if (services.length === 0) {
+        provider.healthCheckAvailable = false;
+      }
       return;
     }
     services.splice(index, 1);
     state.removed = true;
     state.removedAtIndex = index;
+    if (services.length === 0) {
+      provider.healthCheckAvailable = false;
+    }
     this._emitChange({
       provider: provider.name,
       service: state.service,
@@ -280,6 +284,7 @@ export class ModelHealthChecker {
     if (!services.includes(state.service)) {
       services.splice(Math.min(state.removedAtIndex, services.length), 0, state.service);
     }
+    provider.healthCheckAvailable = true;
     this._emitChange({
       provider: provider.name,
       service: state.service,
@@ -309,6 +314,10 @@ export class ModelHealthChecker {
 /** Pick the probe request shape from the service's advertised API protocol. */
 function resolveProbeProtocol(provider: Provider, service: string): ServiceApiProtocol {
   return provider.serviceApiProtocols?.[service]?.[0] ?? 'openai-chat-completions';
+}
+
+export function supportsHealthProbe(protocol: ServiceApiProtocol): boolean {
+  return protocol !== 'openai-images';
 }
 
 /**
@@ -344,10 +353,11 @@ export function buildHealthProbeRequest(service: string, protocol: ServiceApiPro
       body = { model: service, prompt: 'ping', max_tokens: 1 };
       break;
     case 'openai-chat-completions':
-    default:
       path = '/v1/chat/completions';
       body = { model: service, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] };
       break;
+    case 'openai-images':
+      throw new Error('Health probes are not supported for openai-images services');
   }
   return {
     requestId: `health-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`,
@@ -362,15 +372,18 @@ export function buildHealthProbeRequest(service: string, protocol: ServiceApiPro
  * Classify a probe response status.
  *
  * - 2xx/3xx — the model answered: healthy.
- * - 401/403/404 and 5xx — credentials broken, model gone, or upstream down:
- *   unhealthy. (The relay collapses upstream network errors/timeouts to 502.)
- * - Everything else (400, 402, 422, 429, ...) — the endpoint is alive but the
- *   probe itself was rejected (unsupported parameter, rate limit, busy):
- *   inconclusive, so a working model is never unadvertised over a probe quirk.
+ * - 401/402/403/404, 429, and 5xx — credentials broken, billing unavailable,
+ *   rate or usage limited, model gone, or upstream down: unhealthy. (The relay
+ *   collapses upstream network errors/timeouts to 502.)
+ * - Everything else (400, 422, ...) — the endpoint is alive but the probe
+ *   itself was rejected (for example, an unsupported parameter): inconclusive,
+ *   so a working model is never unadvertised over a probe quirk.
  */
 export function classifyProbeStatus(statusCode: number): ProbeOutcome {
   if (statusCode >= 200 && statusCode < 400) return 'healthy';
-  if (statusCode === 401 || statusCode === 403 || statusCode === 404) return 'unhealthy';
+  if (statusCode === 401 || statusCode === 402 || statusCode === 403 || statusCode === 404 || statusCode === 429) {
+    return 'unhealthy';
+  }
   if (statusCode >= 500) return 'unhealthy';
   return 'inconclusive';
 }

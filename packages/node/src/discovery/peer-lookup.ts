@@ -11,6 +11,7 @@ import {
 import type { PeerMetadata } from "./peer-metadata.js";
 import { encodeMetadataForSigning } from "./metadata-codec.js";
 import type { MetadataResolver, PeerEndpoint } from "./metadata-resolver.js";
+import { validateMetadata } from "./metadata-validator.js";
 import { debugLog, debugWarn } from "../utils/debug.js";
 
 function shuffle<T>(arr: T[]): T[] {
@@ -335,9 +336,35 @@ export class PeerLookup {
   }
 
   private async _resolveSinglePeer(peer: PeerEndpoint): Promise<LookupResult | null> {
-    const endpoint = `${peer.host}:${peer.port}`;
     const metadata = await this.config.metadataResolver.resolve(peer);
     if (metadata === null) {
+      return null;
+    }
+
+    return this._validateResolvedMetadata(peer, metadata);
+  }
+
+  private async _validateResolvedMetadata(
+    peer: PeerEndpoint,
+    metadata: PeerMetadata,
+  ): Promise<LookupResult | null> {
+    const endpoint = `${peer.host}:${peer.port}`;
+    const version = metadata.version;
+
+    try {
+      const schemaErrors = validateMetadata(metadata);
+      if (schemaErrors.length > 0) {
+        debugWarn(
+          `[PeerLookup] Dropping ${version} metadata from ${endpoint}: invalid schema `
+          + schemaErrors.map((error) => `${error.field}=${error.message}`).join("; "),
+        );
+        return null;
+      }
+    } catch (err) {
+      debugWarn(
+        `[PeerLookup] Dropping ${version} metadata from ${endpoint}: invalid schema `
+        + `${err instanceof Error ? err.message : String(err)}`,
+      );
       return null;
     }
 
@@ -345,7 +372,7 @@ export class PeerLookup {
       const valid = await this.verifyMetadataSignature(metadata);
       if (!valid) {
         debugWarn(
-          `[PeerLookup] Dropping metadata from ${endpoint}: invalid signature `
+          `[PeerLookup] Dropping ${version} metadata from ${endpoint}: invalid signature `
           + `peerId=${metadata.peerId?.slice(0, 12) ?? 'unknown'}...`,
         );
         return null;
@@ -356,7 +383,7 @@ export class PeerLookup {
       const freshness = this.getMetadataFreshness(metadata);
       if (freshness.stale) {
         debugWarn(
-          `[PeerLookup] Dropping metadata from ${endpoint}: stale `
+          `[PeerLookup] Dropping ${version} metadata from ${endpoint}: stale `
           + `ageMs=${freshness.ageMs} maxAgeMs=${this.config.maxAnnouncementAgeMs} `
           + `reference=${freshness.reference} `
           + `clientServerSkewMs=${freshness.clientServerSkewMs ?? 'unknown'} `
@@ -366,7 +393,7 @@ export class PeerLookup {
       }
       if (freshness.clockSkewSuspected) {
         debugWarn(
-          `[PeerLookup] Accepting metadata from ${endpoint} using seller HTTP Date; `
+          `[PeerLookup] Accepting ${version} metadata from ${endpoint} using seller HTTP Date; `
           + `client clock skew suspected clientAgeMs=${freshness.clientAgeMs} `
           + `serverAgeMs=${freshness.ageMs} `
           + `clientServerSkewMs=${freshness.clientServerSkewMs ?? 'unknown'} `
@@ -377,7 +404,7 @@ export class PeerLookup {
     }
 
     debugLog(
-      `[PeerLookup] Accepted metadata from ${endpoint}: peerId=${metadata.peerId.slice(0, 12)}... `
+      `[PeerLookup] Accepted ${version} metadata from ${endpoint}: peerId=${metadata.peerId.slice(0, 12)}... `
       + `displayName=${JSON.stringify(metadata.displayName ?? null)} `
       + `providers=${metadata.providers.length}`,
     );

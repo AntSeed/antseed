@@ -26,8 +26,15 @@ import type { SellerAddressResolver } from '../discovery/seller-address-resolver
 import type { PeerMetadata } from '../discovery/peer-metadata.js';
 import { ChannelStore, CHANNEL_ROLE, CHANNEL_STATUS, type StoredChannel } from './channel-store.js';
 import { advanceUsageMetadata, CountedRequestTracker, RequestServiceTracker } from './channel-usage-accounting.js';
-import { estimateCostFromBytes, computeCostUsdc, type ServicePricing } from './pricing.js';
+import {
+  estimateCostFromBytes,
+  computeCostUsdc,
+  type ServicePricing,
+} from './pricing.js';
 import { buyerFault, faultCodeOf } from '../errors.js';
+import type { UnitBillingContext, UnitBillingModelV1, UnitBillingUsage } from '../types/billing.js';
+import type { ImageRequestFacts } from '@antseed/api-adapter';
+import { evaluateUnitBilling, validateUnitBillingUsage } from '../billing/unit.js';
 
 /** Default tolerance: accept seller claims up to 1.4x buyer's estimate. */
 const DEFAULT_COST_TOLERANCE = 1.4;
@@ -36,6 +43,19 @@ const DEFAULT_COST_TOLERANCE = 1.4;
  *  so that by the time the seller calls topUp() on-chain, enough has been
  *  settled to pass the threshold check. */
 const DEFAULT_TOPUP_THRESHOLD = 0.65;
+const REQUEST_BILLING_TTL_MS = 5 * 60_000;
+const MAX_REQUEST_BILLING_ENTRIES = 512;
+/** How long NeedAuth validation waits for the buyer's own response processing
+ *  to record delivered unit usage before rejecting a positive claim. */
+const OBSERVED_UNIT_USAGE_WAIT_MS = 5_000;
+
+function validateUnitNormalizedCost(
+  model: UnitBillingModelV1,
+  context: UnitBillingContext,
+  usage: UnitBillingUsage,
+): bigint {
+  return evaluateUnitBilling(model, context, usage);
+}
 
 export interface BuyerPaymentConfig {
   rpcUrl: string;
@@ -65,6 +85,18 @@ export interface BuyerPaymentConfig {
 export interface PerRequestAuthResult {
   payload: SpendingAuthPayload;
   topUpNeeded: boolean;
+}
+
+export interface BuyerRequestBillingEntry {
+  context: UnitBillingContext;
+  requestFacts: ImageRequestFacts;
+  unitModel?: UnitBillingModelV1;
+  tokenPricing?: ServicePricing;
+  observedUnitUsage?: UnitBillingUsage;
+}
+
+interface StoredBuyerRequestBillingEntry extends BuyerRequestBillingEntry {
+  createdAtMs: number;
 }
 
 /**
@@ -120,6 +152,15 @@ export class BuyerPaymentManager {
    *  Used in handleNeedAuth to validate cost with the correct pricing tier
    *  without trusting the seller's claim of which service was used. */
   private readonly _requestService = new RequestServiceTracker();
+  /**
+   * requestId -> trusted buyer-owned billing identity, request facts, and mode.
+   *
+   * Used by NeedAuth validation so seller-reported billingUsage cannot choose
+   * the provider, protocol, service, billing model, or size/quality tier after
+   * the fact.
+   */
+  private readonly _requestBillingEntries = new Map<string, StoredBuyerRequestBillingEntry>();
+  private readonly _observedUsageWaiters = new Map<string, Array<(usage: UnitBillingUsage) => void>>();
 
   /** sellerPeerId -> full pricing map (defaults + per-service overrides from peer metadata / 402) */
   private readonly _sessionPricing = new Map<string, { defaults: ServicePricing; services: Record<string, ServicePricing> }>();
@@ -241,6 +282,7 @@ export class BuyerPaymentManager {
     this._confirmedPeers.delete(sellerPeerId);
     this._rejectedPeers.delete(sellerPeerId);
     this._responseTokenTotals.delete(sellerPeerId);
+    this._clearRequestBillingForSeller(sellerPeerId);
   }
 
   getActiveSession(sellerPeerId: string): StoredChannel | null {
@@ -502,6 +544,30 @@ export class BuyerPaymentManager {
     } catch (err) {
       // Accounting is a bystander here — never let it break the payment path.
       debugWarn(`[BuyerPayment] spend listener threw: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  private _cleanupRequestBillingCache(now = Date.now()): void {
+    for (const [requestId, entry] of this._requestBillingEntries) {
+      if (now - entry.createdAtMs > REQUEST_BILLING_TTL_MS) {
+        this.clearRequestBilling(requestId);
+      }
+    }
+  }
+
+  private _trimRequestBillingCache(): void {
+    while (this._requestBillingEntries.size > MAX_REQUEST_BILLING_ENTRIES) {
+      const oldest = this._requestBillingEntries.keys().next().value;
+      if (oldest === undefined) break;
+      this.clearRequestBilling(oldest);
+    }
+  }
+
+  private _clearRequestBillingForSeller(sellerPeerId: string): void {
+    for (const [requestId, entry] of this._requestBillingEntries) {
+      if (entry.context.sellerPeerId === sellerPeerId) {
+        this.clearRequestBilling(requestId);
+      }
     }
   }
 
@@ -806,6 +872,7 @@ export class BuyerPaymentManager {
       reportedInputTokens?: bigint;
       reportedOutputTokens?: bigint;
       reportedCachedInputTokens?: bigint;
+      unitUsage?: UnitBillingUsage;
       service?: string;
       requestId?: string;
     },
@@ -827,7 +894,35 @@ export class BuyerPaymentManager {
     let estimatedCachedInputTokens = 0n;
     let buyerEstimatedRequestCost: bigint;
 
-    if (hasReportedTokens) {
+    const requestBilling = responseStats.requestId != null
+      ? this.getRequestBilling(responseStats.requestId)
+      : undefined;
+
+    const unitBillingModel = requestBilling?.unitModel;
+    if (responseStats.unitUsage && unitBillingModel && requestBilling) {
+      // Hybrid image path: token cost is still computed from the token
+      // counts; unit billing only validates non-token unit cost.
+      estimatedInputTokens = responseStats.reportedInputTokens ?? 0n;
+      estimatedCachedInputTokens = responseStats.reportedCachedInputTokens ?? 0n;
+      estimatedOutputTokens = responseStats.reportedOutputTokens ?? 0n;
+      const freshInputTokens = estimatedCachedInputTokens > 0n
+        ? BigInt(Math.max(0, Number(estimatedInputTokens) - Number(estimatedCachedInputTokens)))
+        : estimatedInputTokens;
+      const pricing = requestBilling.tokenPricing ?? this.getSessionPricing(sellerPeerId, responseStats.service);
+      const tokenCost = pricing
+        ? computeCostUsdc(Number(freshInputTokens), Number(estimatedOutputTokens), pricing, Number(estimatedCachedInputTokens))
+        : 0n;
+      const unitCost = validateUnitNormalizedCost(unitBillingModel, requestBilling.context, responseStats.unitUsage);
+      buyerEstimatedRequestCost = tokenCost + unitCost;
+      this._accumulateVerifiedCost(sellerPeerId, {
+        cost: buyerEstimatedRequestCost,
+        inputTokens: Number(estimatedInputTokens),
+        outputTokens: Number(estimatedOutputTokens),
+      });
+      debugLog(
+        `[BuyerPayment] Hybrid billing-estimated cost=${buyerEstimatedRequestCost} service=${responseStats.service ?? 'unknown'}`,
+      );
+    } else if (hasReportedTokens) {
       estimatedInputTokens = responseStats.reportedInputTokens ?? 0n;
       estimatedOutputTokens = responseStats.reportedOutputTokens ?? 0n;
       const cachedInputTokens = responseStats.reportedCachedInputTokens ?? 0n;
@@ -995,7 +1090,10 @@ export class BuyerPaymentManager {
       return;
     }
 
-    const buyerService = this._requestService.get(payload.requestId);
+    const requestBilling = payload.requestId ? this.getRequestBilling(payload.requestId) : undefined;
+    const buyerService = requestBilling?.context.service
+      ?? this._requestService.get(payload.requestId);
+    const buyerBillingContext = requestBilling?.context;
 
     const requiredCumulativeAmount = BigInt(payload.requiredCumulativeAmount);
     const currentCumulative = this._cumulativeAmount.get(sellerPeerId) ?? 0n;
@@ -1007,15 +1105,89 @@ export class BuyerPaymentManager {
       );
       return;
     }
-    this._requestService.take(payload.requestId);
     let acceptedServiceCost = 0n;
     const reportedInputTokens = BigInt(payload.inputTokens ?? '0');
     const reportedCachedInputTokens = BigInt(payload.cachedInputTokens ?? '0');
     const reportedOutputTokens = BigInt(payload.outputTokens ?? '0');
 
+    const unitBillingModel = requestBilling?.unitModel;
+
     // Validate the seller's claimed cost if reported
-    if (payload.lastRequestCost) {
+    if (payload.billingUsage) {
+      // Image billingUsage is surcharge evidence only. Token cost is still
+      // recomputed from the token fields and service pricing below.
+      try {
+        const sellerTotalCost = BigInt(payload.lastRequestCost ?? '0');
+        const sellerFreshExplicit = payload.freshInputTokens != null
+          ? BigInt(payload.freshInputTokens)
+          : null;
+        const freshIn = sellerFreshExplicit ?? (reportedCachedInputTokens > 0n
+          ? BigInt(Math.max(0, Number(reportedInputTokens) - Number(reportedCachedInputTokens)))
+          : reportedInputTokens);
+        const pricing = requestBilling?.tokenPricing ?? this.getSessionPricing(sellerPeerId, buyerService);
+        const tokenEstimate = pricing
+          ? computeCostUsdc(Number(freshIn), Number(reportedOutputTokens), pricing, Number(reportedCachedInputTokens))
+          : 0n;
+        let acceptedUnitCost = 0n;
+        if (!requestBilling || !unitBillingModel) {
+          if (sellerTotalCost > 0n) {
+            throw new Error(
+              "Positive unit billing cost is unverifiable without a unit billing model",
+            );
+          }
+          debugLog(`[BuyerPayment] NeedAuth zero unit billing accepted without unit model`);
+        } else {
+          // The seller's NeedAuth can legitimately race ahead of the buyer's
+          // own response processing (different muxes). Give the response path
+          // a moment to record what was actually delivered before judging the
+          // claim; a seller claiming delivery that never happens still gets
+          // rejected once the wait expires.
+          const observedUnitUsage = requestBilling.observedUnitUsage
+            ?? (sellerTotalCost > 0n && payload.requestId
+              ? await this._waitForObservedUnitUsage(payload.requestId, OBSERVED_UNIT_USAGE_WAIT_MS)
+              : undefined);
+          const claimedUnitCost = sellerTotalCost > tokenEstimate
+            ? sellerTotalCost - tokenEstimate
+            : 0n;
+          acceptedUnitCost = validateUnitBillingUsage(
+            unitBillingModel,
+            requestBilling.context,
+            payload.billingUsage,
+            claimedUnitCost,
+            this._costTolerance,
+            observedUnitUsage,
+          );
+        }
+
+        const buyerEstimate = tokenEstimate + acceptedUnitCost;
+        if (sellerTotalCost > 0n && buyerEstimate <= 0n) {
+          throw new Error("Positive NeedAuth total cost recomputed to zero");
+        }
+        const maxAcceptable = BigInt(Math.ceil(Number(buyerEstimate) * this._costTolerance));
+        if (sellerTotalCost > maxAcceptable) {
+          throw new Error(`Seller total cost ${sellerTotalCost} exceeds buyer estimate ${buyerEstimate}`);
+        }
+        acceptedServiceCost = sellerTotalCost;
+        this._accumulateVerifiedCost(sellerPeerId, {
+          cost: acceptedServiceCost,
+          inputTokens: Number(reportedInputTokens),
+          outputTokens: Number(reportedOutputTokens),
+        });
+        debugLog(
+          `[BuyerPayment] NeedAuth hybrid billing: token=${tokenEstimate} unit=${acceptedUnitCost} sellerTotal=${sellerTotalCost} — validated`,
+        );
+      } catch (err) {
+        debugWarn(`[BuyerPayment] NeedAuth billingUsage rejected: ${err instanceof Error ? err.message : err}`);
+        return;
+      }
+    } else if (payload.lastRequestCost) {
       const sellerCost = BigInt(payload.lastRequestCost);
+      if (sellerCost > 0n && unitBillingModel && buyerBillingContext?.serviceApiProtocol === 'openai-images') {
+        debugWarn(
+          `[BuyerPayment] NeedAuth rejected: positive unit cost omitted verifiable billingUsage`,
+        );
+        return;
+      }
       const sellerIn = reportedInputTokens;
       const sellerOut = reportedOutputTokens;
       const sellerCached = reportedCachedInputTokens;
@@ -1030,13 +1202,19 @@ export class BuyerPaymentManager {
 
       // Use the buyer's own knowledge of which service it requested, not the seller's claim.
       // A malicious seller could set service to a more expensive model to inflate the ceiling.
-      const pricing = this.getSessionPricing(sellerPeerId, buyerService);
+      const pricing = requestBilling?.tokenPricing ?? this.getSessionPricing(sellerPeerId, buyerService);
       if (pricing && sellerCost > 0n) {
         const freshIn = sellerFreshExplicit ?? (sellerCached > 0n
           ? BigInt(Math.max(0, Number(sellerIn) - Number(sellerCached)))
           : sellerIn);
         const buyerEstimate = computeCostUsdc(Number(freshIn), Number(sellerOut), pricing, Number(sellerCached));
         const maxAcceptable = BigInt(Math.ceil(Number(buyerEstimate) * this._costTolerance));
+        if (buyerEstimate <= 0n && sellerCost > 0n && buyerBillingContext?.serviceApiProtocol === 'openai-images') {
+          debugWarn(
+            `[BuyerPayment] NeedAuth rejected: positive unit cost recomputed to zero`,
+          );
+          return;
+        }
         if (buyerEstimate > 0n && sellerCost > maxAcceptable) {
           debugWarn(
             `[BuyerPayment] NeedAuth: seller claimed cost ${sellerCost} exceeds ${this._costTolerance}x buyer estimate ${buyerEstimate} — rejecting`,
@@ -1147,6 +1325,9 @@ export class BuyerPaymentManager {
     // may defer the on-chain topUp until the contract's 85% gate is satisfied.
     if (needsTopUp || this._needsTopUp(sellerPeerId)) {
       await this._topUpAfterSpendAuthBestEffort(sellerPeerId, paymentMux, 'handleNeedAuth');
+    }
+    if (payload.requestId) {
+      this.clearRequestBilling(payload.requestId);
     }
   }
 
@@ -1301,6 +1482,76 @@ export class BuyerPaymentManager {
   /** Register which service the buyer requested for a given requestId. */
   trackRequestService(requestId: string, service: string): void {
     this._requestService.track(requestId, service);
+  }
+
+  trackRequestBilling(requestId: string, entry: BuyerRequestBillingEntry): void {
+    this._cleanupRequestBillingCache();
+    this._requestService.track(requestId, entry.context.service);
+    this._requestBillingEntries.set(requestId, {
+      ...entry,
+      createdAtMs: Date.now(),
+    });
+    this._trimRequestBillingCache();
+  }
+
+  /** Record unit usage extracted from the response the buyer received, so
+   *  NeedAuth validation can cap seller claims at what was actually delivered. */
+  recordObservedUnitUsage(requestId: string, usage: UnitBillingUsage): void {
+    const entry = this._requestBillingEntries.get(requestId);
+    if (entry) entry.observedUnitUsage = usage;
+    const waiters = this._observedUsageWaiters.get(requestId);
+    if (waiters) {
+      this._observedUsageWaiters.delete(requestId);
+      for (const waiter of waiters) waiter(usage);
+    }
+  }
+
+  /** Wait for observed unit usage while the buyer's response path catches up. */
+  private _waitForObservedUnitUsage(
+    requestId: string,
+    timeoutMs: number,
+  ): Promise<UnitBillingUsage | undefined> {
+    const existing = this._requestBillingEntries.get(requestId)?.observedUnitUsage;
+    if (existing) return Promise.resolve(existing);
+    return new Promise((resolve) => {
+      const onUsage = (usage: UnitBillingUsage): void => {
+        clearTimeout(timer);
+        resolve(usage);
+      };
+      const timer = setTimeout(() => {
+        const waiters = this._observedUsageWaiters.get(requestId);
+        if (waiters) {
+          const index = waiters.indexOf(onUsage);
+          if (index >= 0) waiters.splice(index, 1);
+          if (waiters.length === 0) this._observedUsageWaiters.delete(requestId);
+        }
+        resolve(this._requestBillingEntries.get(requestId)?.observedUnitUsage);
+      }, timeoutMs);
+      timer.unref?.();
+      const waiters = this._observedUsageWaiters.get(requestId) ?? [];
+      waiters.push(onUsage);
+      this._observedUsageWaiters.set(requestId, waiters);
+    });
+  }
+
+  getRequestBilling(requestId: string): BuyerRequestBillingEntry | undefined {
+    this._cleanupRequestBillingCache();
+    const entry = this._requestBillingEntries.get(requestId);
+    if (!entry) return undefined;
+    const { createdAtMs: _createdAtMs, ...publicEntry } = entry;
+    return publicEntry;
+  }
+
+  clearRequestBilling(requestId: string): void {
+    this._requestBillingEntries.delete(requestId);
+    this._requestService.take(requestId);
+  }
+
+  trackRequestBillingContext(requestId: string, context: UnitBillingContext): void {
+    this.trackRequestBilling(requestId, {
+      context,
+      requestFacts: {},
+    });
   }
 
   /** Get the live response token totals for a seller, or null if none recorded this session. */

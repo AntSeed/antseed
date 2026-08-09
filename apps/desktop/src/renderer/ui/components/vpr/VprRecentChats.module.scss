@@ -126,6 +126,14 @@
   white-space: nowrap;
 }
 
+/* Seller the chat's requests actually route to, appended after the model
+   (the "Show routed peer" debug preference) — same accent as the floating
+   pill's peer name so both read as routing. */
+.chatPeer {
+  color: var(--accent-green);
+  font-weight: 500;
+}
+
 /* What the chat has cost, parked at the end of the title row: a column of
    right-aligned figures scans for the expensive chat far better than a number
    buried mid-sentence. `margin-left: auto` claims the slack the truncating

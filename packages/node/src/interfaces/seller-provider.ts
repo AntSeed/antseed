@@ -1,5 +1,7 @@
 import type { SerializedHttpRequest, SerializedHttpResponse, SerializedHttpResponseChunk } from '../types/http.js';
 import type { ServiceApiProtocol } from '../types/service-api.js';
+import type { ServiceUnitBillingModelsV1 } from '../types/billing.js';
+import type { ServiceCapabilities } from '../discovery/peer-metadata.js';
 
 export interface ProviderTokenPricingUsdPerMillion {
   inputUsdPerMillion: number;
@@ -27,6 +29,14 @@ export interface Provider {
   /** Service IDs this provider supports (e.g., ['claude-sonnet-4-5-20250929', 'claude-opus-4-0-20250514']) */
   services: string[];
 
+  /**
+   * Runtime health availability. The model health checker sets this to false
+   * when every configured service has been removed, allowing discovery to
+   * omit the provider instead of interpreting an empty service list as a
+   * wildcard. Undefined means available for providers without health checks.
+   */
+  healthCheckAvailable?: boolean;
+
   /** Seller pricing in USD per 1M tokens (defaults + optional per-service overrides). */
   pricing: ProviderPricing;
 
@@ -35,6 +45,12 @@ export interface Provider {
 
   /** Optional per-service API protocol support advertised via discovery metadata. */
   serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
+
+  /** Optional per-service/protocol unit billing model support advertised via discovery metadata. */
+  serviceUnitBillingModels?: ServiceUnitBillingModelsV1;
+
+  /** Optional per-service model capability hints advertised via discovery metadata. */
+  serviceCapabilities?: Record<string, ServiceCapabilities>;
 
   /** Maximum concurrent requests this provider can handle */
   maxConcurrency: number;

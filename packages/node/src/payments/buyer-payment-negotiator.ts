@@ -19,10 +19,16 @@ import { debugLog, debugWarn } from '../utils/debug.js';
 import type { SellerAddressResolver } from '../discovery/seller-address-resolver.js';
 import { SellerAuthorizationError } from '../discovery/seller-address-resolver.js';
 import { parseResponseUsage } from '../utils/response-usage.js';
-import { computeCostUsdc, type ServicePricing } from './pricing.js';
+import {
+  computeCostUsdc,
+  type ServicePricing,
+} from './pricing.js';
 import { formatUsdc } from './usdc-utils.js';
 import { parseJsonObject, tryParseJsonObject } from '../utils/json-codec.js';
 import { buyerFault, peerFault } from '../errors.js';
+import type { UnitBillingModelV1, UnitBillingUsage } from '../types/billing.js';
+import type { ServiceApiProtocol } from '../types/service-api.js';
+import { captureUnitBillingContext, computeFinalUnitBilling, extractUnitResponseUsage, type FinalUnitBillingResult } from '../billing/unit.js';
 
 export interface BuyerNegotiatorConfig {}
 
@@ -45,12 +51,22 @@ interface LastResponseCost {
   inputTokens: bigint;
   outputTokens: bigint;
   cachedInputTokens: bigint;
+  unitUsage?: UnitBillingUsage;
   cumulativeCost: bigint;
   inputContent: Uint8Array;
   outputContent: Uint8Array;
   latencyMs: number;
   service?: string;
   requestId?: string;
+}
+
+export interface SelectedBillingRoute {
+  sellerPeerId: string;
+  provider: string;
+  service: string;
+  serviceApiProtocol: ServiceApiProtocol;
+  unitModel?: UnitBillingModelV1;
+  tokenPricing?: ServicePricing;
 }
 
 function parsePaymentRequiredBody(body: Uint8Array): Record<string, unknown> | null {
@@ -217,6 +233,30 @@ export class BuyerPaymentNegotiator {
     return this._muxes.get(peerId);
   }
 
+  trackRequestBillingContext(
+    request: SerializedHttpRequest,
+    service: string,
+    route: SelectedBillingRoute | null,
+  ): void {
+    if (route) {
+      const captured = captureUnitBillingContext({
+        sellerPeerId: route.sellerPeerId,
+        provider: route.provider,
+        service: route.service,
+        serviceApiProtocol: route.serviceApiProtocol,
+        request,
+      });
+      this._bpm.trackRequestBilling(request.requestId, {
+        context: captured.context,
+        requestFacts: captured.requestFacts,
+        ...(route.unitModel ? { unitModel: route.unitModel } : {}),
+        ...(route.tokenPricing ? { tokenPricing: route.tokenPricing } : {}),
+      });
+    } else {
+      this._bpm.trackRequestService(request.requestId, service);
+    }
+  }
+
   trackFreeUsageRequestService(requestId: string, service: string): void {
     this._freeUsageManager?.trackRequestService(requestId, service);
   }
@@ -276,12 +316,13 @@ export class BuyerPaymentNegotiator {
     const reportedInputTokens = lastCost?.inputTokens;
     const reportedOutputTokens = lastCost?.outputTokens;
     const reportedCachedInputTokens = lastCost?.cachedInputTokens;
+    const unitUsage = lastCost?.unitUsage;
     const service = lastCost?.service;
     const requestId = lastCost?.requestId;
     try {
       const { payload, topUpNeeded } = await this._bpm.signPerRequestAuth(
         peer.peerId,
-        { inputBytes, outputBytes, sellerClaimedCost, reportedInputTokens, reportedOutputTokens, reportedCachedInputTokens, service, requestId },
+        { inputBytes, outputBytes, sellerClaimedCost, reportedInputTokens, reportedOutputTokens, reportedCachedInputTokens, unitUsage, service, requestId },
       );
       pmux.sendSpendingAuth(payload);
       // Release held content to free memory — no longer needed after signing
@@ -607,30 +648,59 @@ export class BuyerPaymentNegotiator {
     }
   }
 
-  estimateCostFromResponse(peer: PeerInfo, response: SerializedHttpResponse, service?: string, requestId?: string): void {
+  estimateCostFromResponse(
+    peer: PeerInfo,
+    response: SerializedHttpResponse,
+    service?: string,
+    requestId?: string,
+  ): void {
+    // Post-response cost estimation feeds the next SpendingAuth. Token pricing
+    // stays on computeCostUsdc; image unit billing is an optional surcharge.
+    const billingEntry = requestId ? this._bpm.getRequestBilling(requestId) : undefined;
+    const requestFacts = billingEntry?.requestFacts;
     // Prefer session pricing (from PaymentRequired negotiation, includes service-specific rates)
     // over peer-level defaults which may be different from the actual service pricing.
-    const sessionPricing = this._bpm.getSessionPricing(peer.peerId, service);
-    const inputPricePerM = sessionPricing?.inputUsdPerMillion ?? peer.defaultInputUsdPerMillion;
-    const outputPricePerM = sessionPricing?.outputUsdPerMillion ?? peer.defaultOutputUsdPerMillion;
-    if (inputPricePerM == null && outputPricePerM == null) return;
-
-    const usage = parseResponseUsage(response.body);
-    // Don't estimate from body bytes — seller cost headers are authoritative.
-    // The old body.length/4 fallback wildly inflated costs for SSE streaming responses.
-
-    const pricing = {
-      inputUsdPerMillion: inputPricePerM ?? 0,
-      outputUsdPerMillion: outputPricePerM ?? 0,
-      cachedInputUsdPerMillion: sessionPricing?.cachedInputUsdPerMillion,
-    };
-    const costUsdc = computeCostUsdc(usage.freshInputTokens, usage.outputTokens, pricing, usage.cachedInputTokens);
+    const unitModel = billingEntry?.unitModel;
+    let unitBilling: FinalUnitBillingResult | null = null;
+    if (unitModel && billingEntry) {
+      try {
+        unitBilling = computeFinalUnitBilling(unitModel, billingEntry.context, response, requestFacts);
+      } catch (err) {
+        const observed = extractUnitResponseUsage(response, requestFacts);
+        if (requestId) {
+          this._bpm.recordObservedUnitUsage(requestId, observed.usage);
+        }
+        this._bpm.recordAndPersistTokens(
+          peer.peerId,
+          observed.tokenUsage.inputTokens,
+          observed.tokenUsage.outputTokens,
+        );
+        debugWarn(
+          `[BuyerNegotiator] Refusing payment authorization for unpriceable response from ${peer.peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`,
+        );
+        return;
+      }
+    }
+    if (unitBilling && requestId) {
+      this._bpm.recordObservedUnitUsage(requestId, unitBilling.usage);
+    }
+    const usage = unitBilling?.tokenUsage ?? parseResponseUsage(response.body);
+    const pricing = billingEntry?.tokenPricing
+      ?? this._bpm.getSessionPricing(peer.peerId, service)
+        ?? this._peerDefaultPricing(peer);
+    const tokenCostUsdc = pricing
+      ? computeCostUsdc(usage.freshInputTokens, usage.outputTokens, pricing, usage.cachedInputTokens)
+      : 0n;
+    const unitCostUsdc = unitBilling?.costUsdc ?? 0n;
+    const costUsdc = tokenCostUsdc + unitCostUsdc;
+    if (costUsdc <= 0n && !pricing && !unitBilling) return;
 
     this._lastResponseCost.set(peer.peerId, {
       costUsdc,
       inputTokens: BigInt(usage.inputTokens),
       outputTokens: BigInt(usage.outputTokens),
       cachedInputTokens: BigInt(usage.cachedInputTokens),
+      ...(unitBilling ? { unitUsage: unitBilling.usage } : {}),
       cumulativeCost: 0n,
       inputContent: new Uint8Array(0),
       outputContent: response.body,
@@ -641,7 +711,7 @@ export class BuyerPaymentNegotiator {
 
     debugLog(
       `[BuyerNegotiator] Estimated cost for ${peer.peerId.slice(0, 12)}...: ` +
-      `cost=${costUsdc} (in=${usage.freshInputTokens} cached=${usage.cachedInputTokens} out=${usage.outputTokens})`,
+      `cost=${costUsdc} token=${tokenCostUsdc} unit=${unitCostUsdc} (in=${usage.freshInputTokens} cached=${usage.cachedInputTokens} out=${usage.outputTokens})`,
     );
 
     this._bpm.recordAndPersistTokens(peer.peerId, usage.inputTokens, usage.outputTokens);
@@ -795,11 +865,17 @@ export class BuyerPaymentNegotiator {
     this._pendingCloseRequests.clear();
   }
 
-  /**
-   * Build the full pricing map from peer metadata (defaults + all per-service overrides).
-   * This ensures the buyer knows pricing for every service the seller offers,
-   * not just the one that triggered the 402.
-   */
+  private _peerDefaultPricing(peer: PeerInfo): ServicePricing | undefined {
+    if (peer.defaultInputUsdPerMillion == null && peer.defaultOutputUsdPerMillion == null) {
+      return undefined;
+    }
+    return {
+      inputUsdPerMillion: peer.defaultInputUsdPerMillion ?? 0,
+      outputUsdPerMillion: peer.defaultOutputUsdPerMillion ?? 0,
+      cachedInputUsdPerMillion: peer.defaultCachedInputUsdPerMillion,
+    };
+  }
+
   private _buildPricingMap(peer: PeerInfo): { defaults: ServicePricing; services: Record<string, ServicePricing> } | undefined {
     const defaults: ServicePricing = {
       inputUsdPerMillion: peer.defaultInputUsdPerMillion ?? 0,

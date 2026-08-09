@@ -1,9 +1,20 @@
-import type { DomainVerificationClaim, DomainVerificationMethod, GithubVerificationClaim, PeerMetadata } from "./peer-metadata.js";
+import type { DomainVerificationClaim, DomainVerificationMethod, GithubVerificationClaim, PeerMetadata, ServiceCapabilities, ServiceCapabilityInput } from "./peer-metadata.js";
+import { SERVICE_CAPABILITY_INPUTS } from "./peer-metadata.js";
 import type { PeerOffering } from "../types/capability.js";
 import { hexToBytes, bytesToHex } from "../utils/hex.js";
 import { toPeerId } from "../types/peer.js";
 import type { ServiceApiProtocol } from "../types/service-api.js";
-import { isKnownServiceApiProtocol } from "../types/service-api.js";
+import { WELL_KNOWN_SERVICE_API_PROTOCOLS, isKnownServiceApiProtocol } from "../types/service-api.js";
+import type {
+  UnitBillingComponentV1,
+  UnitBillingMatchKeyV1,
+  UnitBillingModelV1,
+  UnitBillingUnitV1,
+} from "../types/billing.js";
+import {
+  UNIT_BILLING_MATCH_KEYS_V1,
+  UNIT_BILLING_UNITS_V1,
+} from "../types/billing.js";
 
 const SERVICE_CATEGORIES_METADATA_VERSION = 3;
 const SERVICE_API_PROTOCOLS_METADATA_VERSION = 4;
@@ -16,6 +27,12 @@ const DOMAIN_VERIFICATION_METHOD_IDS: Record<DomainVerificationMethod, number> =
   "https-well-known": 1,
 };
 const DOMAIN_VERIFICATION_METHODS_BY_ID: DomainVerificationMethod[] = ["dns-txt", "https-well-known"];
+const SERVICE_UNIT_BILLING_METADATA_VERSION = 11;
+const SERVICE_CAPABILITIES_METADATA_VERSION = 12;
+const UNIT_BILLING_UNITS_BY_ID: UnitBillingUnitV1[] = [...UNIT_BILLING_UNITS_V1];
+const UNIT_BILLING_UNIT_IDS = new Map<UnitBillingUnitV1, number>(UNIT_BILLING_UNITS_BY_ID.map((unit, index) => [unit, index]));
+const UNIT_BILLING_MATCH_KEYS_BY_ID: UnitBillingMatchKeyV1[] = [...UNIT_BILLING_MATCH_KEYS_V1];
+const UNIT_BILLING_MATCH_KEY_IDS = new Map<UnitBillingMatchKeyV1, number>(UNIT_BILLING_MATCH_KEYS_BY_ID.map((key, index) => [key, index]));
 
 /**
  * Encode metadata into binary format:
@@ -198,6 +215,13 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
           parts.push(protocolBytes);
         }
       }
+    }
+
+    if (metadata.version >= SERVICE_UNIT_BILLING_METADATA_VERSION) {
+      encodeServiceUnitBillingModels(parts, p.serviceUnitBillingModels);
+    }
+    if (metadata.version >= SERVICE_CAPABILITIES_METADATA_VERSION) {
+      encodeServiceCapabilities(parts, p.serviceCapabilities);
     }
 
     // maxConcurrency: 2 bytes (uint16)
@@ -389,6 +413,258 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
     offset += part.length;
   }
   return result;
+}
+
+function encodeServiceUnitBillingModels(
+  parts: Uint8Array[],
+  serviceUnitBillingModels: PeerMetadata["providers"][number]["serviceUnitBillingModels"],
+): void {
+  const entries: Array<[string, ServiceApiProtocol, UnitBillingModelV1]> = [];
+  for (const [serviceName, protocolModels] of Object.entries(serviceUnitBillingModels ?? {})) {
+    for (const protocol of WELL_KNOWN_SERVICE_API_PROTOCOLS) {
+      const model = protocolModels?.[protocol];
+      if (model) entries.push([serviceName, protocol, model]);
+    }
+  }
+  entries.sort(([serviceA, protocolA], [serviceB, protocolB]) =>
+    serviceA === serviceB
+      ? WELL_KNOWN_SERVICE_API_PROTOCOLS.indexOf(protocolA) - WELL_KNOWN_SERVICE_API_PROTOCOLS.indexOf(protocolB)
+      : serviceA.localeCompare(serviceB),
+  );
+  parts.push(new Uint8Array([entries.length]));
+  for (const [serviceName, protocol, model] of entries) {
+    pushUtf8(parts, serviceName);
+    parts.push(new Uint8Array([WELL_KNOWN_SERVICE_API_PROTOCOLS.indexOf(protocol)]));
+    parts.push(new Uint8Array([model.version]));
+    parts.push(new Uint8Array([model.components.length]));
+    for (const component of model.components) {
+      parts.push(new Uint8Array([UNIT_BILLING_UNIT_IDS.get(component.unit) ?? 255]));
+      const priceBuf = new ArrayBuffer(4);
+      new DataView(priceBuf).setFloat32(0, component.priceUsd, false);
+      parts.push(new Uint8Array(priceBuf));
+      const matchEntries = Object.entries(component.match ?? {})
+        .filter((entry): entry is [UnitBillingMatchKeyV1, string] => UNIT_BILLING_MATCH_KEY_IDS.has(entry[0] as UnitBillingMatchKeyV1))
+        .sort(([a], [b]) => (UNIT_BILLING_MATCH_KEY_IDS.get(a) ?? 0) - (UNIT_BILLING_MATCH_KEY_IDS.get(b) ?? 0));
+      parts.push(new Uint8Array([matchEntries.length]));
+      for (const [key, value] of matchEntries) {
+        parts.push(new Uint8Array([UNIT_BILLING_MATCH_KEY_IDS.get(key) ?? 255]));
+        pushUtf8(parts, value);
+      }
+    }
+  }
+}
+
+// Presence bits for the per-service capability entry. A set bit means the
+// field was announced (booleans distinguish "known false" from "unknown").
+const CAP_HAS_CONTEXT_WINDOW = 1 << 0;
+const CAP_HAS_MAX_OUTPUT_TOKENS = 1 << 1;
+const CAP_HAS_INPUTS = 1 << 2;
+const CAP_HAS_REASONING = 1 << 3;
+const CAP_HAS_TOOL_USE = 1 << 4;
+const CAP_HAS_STRUCTURED_OUTPUT = 1 << 5;
+const CAP_PRESENCE_MASK = CAP_HAS_CONTEXT_WINDOW | CAP_HAS_MAX_OUTPUT_TOKENS | CAP_HAS_INPUTS
+  | CAP_HAS_REASONING | CAP_HAS_TOOL_USE | CAP_HAS_STRUCTURED_OUTPUT;
+// Value bits for the boolean-values byte. Deliberately a separate namespace
+// from the presence bits: presence says "announced", value says "true".
+const CAP_VAL_REASONING = 1 << 0;
+const CAP_VAL_TOOL_USE = 1 << 1;
+const CAP_VAL_STRUCTURED_OUTPUT = 1 << 2;
+const CAP_VALUE_MASK = CAP_VAL_REASONING | CAP_VAL_TOOL_USE | CAP_VAL_STRUCTURED_OUTPUT;
+const CAP_INPUTS_MASK = (1 << SERVICE_CAPABILITY_INPUTS.length) - 1;
+
+function encodeServiceCapabilities(
+  parts: Uint8Array[],
+  serviceCapabilities: PeerMetadata["providers"][number]["serviceCapabilities"],
+): void {
+  // Code-unit sort, not localeCompare: buyers verify signatures by re-encoding
+  // decoded metadata, so entry order must not depend on the verifier's locale.
+  const entries = Object.entries(serviceCapabilities ?? {})
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  if (entries.length > 255) {
+    throw new Error(`Too many service capability entries (${entries.length})`);
+  }
+  parts.push(new Uint8Array([entries.length]));
+  for (const [serviceName, caps] of entries) {
+    pushUtf8(parts, serviceName);
+    let presence = 0;
+    if (caps.contextWindow !== undefined) presence |= CAP_HAS_CONTEXT_WINDOW;
+    if (caps.maxOutputTokens !== undefined) presence |= CAP_HAS_MAX_OUTPUT_TOKENS;
+    if (caps.inputs !== undefined) presence |= CAP_HAS_INPUTS;
+    if (caps.reasoning !== undefined) presence |= CAP_HAS_REASONING;
+    if (caps.toolUse !== undefined) presence |= CAP_HAS_TOOL_USE;
+    if (caps.structuredOutput !== undefined) presence |= CAP_HAS_STRUCTURED_OUTPUT;
+    parts.push(new Uint8Array([presence]));
+    if (caps.contextWindow !== undefined) {
+      const buf = new ArrayBuffer(4);
+      new DataView(buf).setUint32(0, caps.contextWindow, false);
+      parts.push(new Uint8Array(buf));
+    }
+    if (caps.maxOutputTokens !== undefined) {
+      const buf = new ArrayBuffer(4);
+      new DataView(buf).setUint32(0, caps.maxOutputTokens, false);
+      parts.push(new Uint8Array(buf));
+    }
+    if (caps.inputs !== undefined) {
+      let inputBits = 0;
+      for (const input of caps.inputs) {
+        const id = SERVICE_CAPABILITY_INPUTS.indexOf(input);
+        if (id >= 0) inputBits |= 1 << id;
+      }
+      parts.push(new Uint8Array([inputBits]));
+    }
+    let boolBits = 0;
+    if (caps.reasoning === true) boolBits |= CAP_VAL_REASONING;
+    if (caps.toolUse === true) boolBits |= CAP_VAL_TOOL_USE;
+    if (caps.structuredOutput === true) boolBits |= CAP_VAL_STRUCTURED_OUTPUT;
+    parts.push(new Uint8Array([boolBits]));
+  }
+}
+
+function decodeServiceCapabilities(
+  data: Uint8Array,
+  getOffset: () => number,
+  setOffset: (offset: number) => void,
+  checkBounds: (offset: number, needed: number, total: number) => void,
+): PeerMetadata["providers"][number]["serviceCapabilities"] | undefined {
+  let offset = getOffset();
+  checkBounds(offset, 1, data.length);
+  const entryCount = data[offset]!;
+  offset += 1;
+  const serviceCapabilities: NonNullable<PeerMetadata["providers"][number]["serviceCapabilities"]> = {};
+  for (let i = 0; i < entryCount; i += 1) {
+    const [serviceName, serviceOffset] = readUtf8(data, offset, checkBounds);
+    offset = serviceOffset;
+    checkBounds(offset, 1, data.length);
+    const presence = data[offset]!;
+    offset += 1;
+    if (presence & ~CAP_PRESENCE_MASK) {
+      // Unknown bits would decode into a struct that re-encodes to different
+      // bytes and fails signature verification anyway — reject explicitly so
+      // additive extensions are forced through a metadata version bump.
+      throw new Error(`Unknown service capability presence bits 0x${presence.toString(16)}`);
+    }
+    const caps: ServiceCapabilities = {};
+    if (presence & CAP_HAS_CONTEXT_WINDOW) {
+      checkBounds(offset, 4, data.length);
+      caps.contextWindow = new DataView(data.buffer, data.byteOffset + offset, 4).getUint32(0, false);
+      offset += 4;
+    }
+    if (presence & CAP_HAS_MAX_OUTPUT_TOKENS) {
+      checkBounds(offset, 4, data.length);
+      caps.maxOutputTokens = new DataView(data.buffer, data.byteOffset + offset, 4).getUint32(0, false);
+      offset += 4;
+    }
+    if (presence & CAP_HAS_INPUTS) {
+      checkBounds(offset, 1, data.length);
+      const inputBits = data[offset]!;
+      offset += 1;
+      if (inputBits & ~CAP_INPUTS_MASK) {
+        throw new Error(`Unknown service capability input bits 0x${inputBits.toString(16)}`);
+      }
+      const inputs: ServiceCapabilityInput[] = [];
+      for (let id = 0; id < SERVICE_CAPABILITY_INPUTS.length; id += 1) {
+        if (inputBits & (1 << id)) inputs.push(SERVICE_CAPABILITY_INPUTS[id]!);
+      }
+      caps.inputs = inputs;
+    }
+    checkBounds(offset, 1, data.length);
+    const boolBits = data[offset]!;
+    offset += 1;
+    if (boolBits & ~CAP_VALUE_MASK) {
+      throw new Error(`Unknown service capability value bits 0x${boolBits.toString(16)}`);
+    }
+    if (presence & CAP_HAS_REASONING) caps.reasoning = (boolBits & CAP_VAL_REASONING) !== 0;
+    if (presence & CAP_HAS_TOOL_USE) caps.toolUse = (boolBits & CAP_VAL_TOOL_USE) !== 0;
+    if (presence & CAP_HAS_STRUCTURED_OUTPUT) caps.structuredOutput = (boolBits & CAP_VAL_STRUCTURED_OUTPUT) !== 0;
+    serviceCapabilities[serviceName] = caps;
+  }
+  setOffset(offset);
+  return Object.keys(serviceCapabilities).length > 0 ? serviceCapabilities : undefined;
+}
+
+function pushUtf8(parts: Uint8Array[], value: string): void {
+  const bytes = new TextEncoder().encode(value);
+  if (bytes.length > 255) {
+    throw new Error(`Metadata string too long (${bytes.length} bytes)`);
+  }
+  parts.push(new Uint8Array([bytes.length]));
+  parts.push(bytes);
+}
+
+function decodeServiceUnitBillingModels(
+  data: Uint8Array,
+  getOffset: () => number,
+  setOffset: (offset: number) => void,
+  checkBounds: (offset: number, needed: number, total: number) => void,
+): PeerMetadata["providers"][number]["serviceUnitBillingModels"] | undefined {
+  let offset = getOffset();
+  checkBounds(offset, 1, data.length);
+  const entryCount = data[offset]!;
+  offset += 1;
+  const serviceUnitBillingModels: NonNullable<PeerMetadata["providers"][number]["serviceUnitBillingModels"]> = {};
+  for (let i = 0; i < entryCount; i += 1) {
+    const [serviceName, serviceOffset] = readUtf8(data, offset, checkBounds);
+    offset = serviceOffset;
+    checkBounds(offset, 1, data.length);
+    const protocol = WELL_KNOWN_SERVICE_API_PROTOCOLS[data[offset]!];
+    offset += 1;
+    if (!protocol) {
+      throw new Error("Unsupported service unit billing protocol id");
+    }
+    checkBounds(offset, 2, data.length);
+    const version = data[offset]!;
+    offset += 1;
+    if (version !== 1) {
+      throw new Error(`Unsupported service unit billing model version ${version}`);
+    }
+    const componentCount = data[offset]!;
+    offset += 1;
+    const components: UnitBillingComponentV1[] = [];
+    for (let j = 0; j < componentCount; j += 1) {
+      checkBounds(offset, 6, data.length);
+      const unit = UNIT_BILLING_UNITS_BY_ID[data[offset]!];
+      offset += 1;
+      if (!unit) {
+        throw new Error("Unsupported service unit billing component unit");
+      }
+      const priceUsd = new DataView(data.buffer, data.byteOffset + offset, 4).getFloat32(0, false);
+      offset += 4;
+      const matchCount = data[offset]!;
+      offset += 1;
+      const match: Partial<Record<UnitBillingMatchKeyV1, string>> = {};
+      for (let k = 0; k < matchCount; k += 1) {
+        checkBounds(offset, 1, data.length);
+        const key = UNIT_BILLING_MATCH_KEYS_BY_ID[data[offset]!];
+        offset += 1;
+        if (!key) {
+          throw new Error("Unsupported service unit billing match key");
+        }
+        const [value, valueOffset] = readUtf8(data, offset, checkBounds);
+        offset = valueOffset;
+        match[key] = value;
+      }
+      const base = { unit, priceUsd, ...(Object.keys(match).length > 0 ? { match } : {}) };
+      components.push(base as UnitBillingComponentV1);
+    }
+    serviceUnitBillingModels[serviceName] = {
+      ...(serviceUnitBillingModels[serviceName] ?? {}),
+      [protocol]: { version: 1, components },
+    };
+  }
+  setOffset(offset);
+  return Object.keys(serviceUnitBillingModels).length > 0 ? serviceUnitBillingModels : undefined;
+}
+
+function readUtf8(
+  data: Uint8Array,
+  offset: number,
+  checkBounds: (offset: number, needed: number, total: number) => void,
+): [string, number] {
+  checkBounds(offset, 1, data.length);
+  const length = data[offset]!;
+  const valueOffset = offset + 1;
+  checkBounds(valueOffset, length, data.length);
+  return [new TextDecoder().decode(data.slice(valueOffset, valueOffset + length)), valueOffset + length];
 }
 
 /**
@@ -584,6 +860,13 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
       }
     }
 
+    const serviceUnitBillingModels = version >= SERVICE_UNIT_BILLING_METADATA_VERSION
+      ? decodeServiceUnitBillingModels(data, () => offset, (next) => { offset = next; }, checkBounds)
+      : undefined;
+    const serviceCapabilities = version >= SERVICE_CAPABILITIES_METADATA_VERSION
+      ? decodeServiceCapabilities(data, () => offset, (next) => { offset = next; }, checkBounds)
+      : undefined;
+
     // maxConcurrency: 2 bytes uint16
     checkBounds(offset, 2, data.length);
     const maxConcView = new DataView(data.buffer, data.byteOffset + offset, 2);
@@ -607,6 +890,8 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
       ...(servicePricingCount > 0 ? { servicePricing } : {}),
       ...(serviceCategories && Object.keys(serviceCategories).length > 0 ? { serviceCategories } : {}),
       ...(serviceApiProtocols && Object.keys(serviceApiProtocols).length > 0 ? { serviceApiProtocols } : {}),
+      ...(serviceUnitBillingModels && Object.keys(serviceUnitBillingModels).length > 0 ? { serviceUnitBillingModels } : {}),
+      ...(serviceCapabilities && Object.keys(serviceCapabilities).length > 0 ? { serviceCapabilities } : {}),
       maxConcurrency,
       currentLoad,
     });

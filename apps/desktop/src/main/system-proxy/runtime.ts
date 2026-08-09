@@ -45,7 +45,10 @@ import {
   systemProxyDesktopStatePath,
   systemProxyPidPath,
   systemProxyStatePath,
+  systemProxyWslTargetsPath,
 } from './paths.js';
+import { clearWslTargetsForTool, isWslTool, readWslTargets } from './wsl.js';
+import { stopWslRelays, syncWslRelays } from './wsl-relay.js';
 
 /** What this module needs from the app around it — injected once at startup. */
 export type SystemProxyDeps = {
@@ -454,6 +457,7 @@ export async function stopManagedRuntimes(): Promise<void> {
     await clearSystemProxyTransportSettings();
     await unlink(systemProxyPidPath()).catch(() => undefined);
     removeAllConfigPatches();
+    await stopWslRelays();
     traySystemProxyProfiles = new Set();
   }
 }
@@ -523,7 +527,7 @@ export async function startSystemProxyRuntimeInner(opts: SystemProxyStartRequest
     if (allProfiles.includes(name) || !isConfigPatchProfileName(name)) continue;
     const profile = SYSTEM_PROXY_PROFILES.find((p) => p.name === name);
     if (profile?.configPatch) {
-      removeConfigPatch(profile.configPatch);
+      removeConfigPatch(profile.configPatch, systemProxyWslTargetsPath());
       deps().appendLog('system-proxy', 'system', `${profile.label}: removed AntSeed provider from config`);
     }
   }
@@ -541,16 +545,50 @@ export async function startSystemProxyRuntimeInner(opts: SystemProxyStartRequest
   // carry the routed-model alias follow route changes without a rewrite.
   const defaultRoute = routeForTool(opts, '');
   await postBuyerDefaultRoute(buyerProxyPort, defaultRoute.peerId, defaultRoute.model);
+  // One profile failing its install probe must not take down the rest of the
+  // batch: launch restore re-applies every previously-connected profile in a
+  // single call, and a connect click sends the union of the already-connected
+  // profiles plus the new one. A failed profile is dropped from the active
+  // set (its row must not claim Connected); only a failure of a profile this
+  // call was asked to *add* is rethrown, after the survivors are fully wired.
+  const failedConfigPatchProfiles = new Set<string>();
+  let newProfileConnectError: Error | null = null;
   for (const name of configPatchProfiles) {
     const profile = SYSTEM_PROXY_PROFILES.find((p) => p.name === name);
-    if (profile?.configPatch) {
+    if (!profile?.configPatch) continue;
+    try {
       // The patched config carries only the routed-model alias; the buyer
       // resolves it to the default route posted above, so the model picked in
       // the floating pill / VPR applies to running tool sessions.
-      applyConfigPatch(profile.configPatch, defaultRoute.peerId, buyerProxyPort);
+      applyConfigPatch(profile.configPatch, defaultRoute.peerId, buyerProxyPort, systemProxyWslTargetsPath());
       deps().appendLog('system-proxy', 'system', `${profile.label}: connected by config patch (peer=${shortTrayPeerId(defaultRoute.peerId)}, model=${defaultRoute.model || 'auto'} via selection)`);
+    } catch (err) {
+      failedConfigPatchProfiles.add(name);
+      const message = err instanceof Error ? err.message : String(err);
+      deps().appendLog('system-proxy', 'system', `${profile.label}: connect failed — ${message}`);
+      // Applied-target rows from an earlier session must not outlive the
+      // failed re-apply — they would keep the relay up and claim a
+      // connection the tool no longer has.
+      const installProbe = (profile.configPatch as { installProbe?: unknown }).installProbe;
+      if (isWslTool(installProbe)) clearWslTargetsForTool(systemProxyWslTargetsPath(), installProbe);
+      if (newlyConnectedProfiles.includes(name) && !newProfileConnectError) {
+        newProfileConnectError = err instanceof Error ? err : new Error(message);
+      }
     }
   }
+  // WSL distros patched above (if any) reach the loopback-only buyer proxy
+  // through a relay on their NAT gateway address; reconcile the relays with
+  // what the config patches actually wrote — including down to zero when the
+  // last WSL-carrying tool was just disconnected.
+  const wslTargets = readWslTargets(systemProxyWslTargetsPath());
+  for (const target of wslTargets) {
+    deps().appendLog('system-proxy', 'system', `WSL ${target.distro}: ${target.tool} config patched at ${target.configPath} (buyer proxy via ${target.host}:${buyerProxyPort})`);
+  }
+  await syncWslRelays(
+    wslTargets.filter((target) => target.needsRelay).map((target) => target.host),
+    buyerProxyPort,
+    (line) => deps().appendLog('system-proxy', 'system', line),
+  );
 
   let state: RuntimeProcessState | null = null;
   if (proxyProfiles.length > 0) {
@@ -577,25 +615,32 @@ export async function startSystemProxyRuntimeInner(opts: SystemProxyStartRequest
     }
   }
 
+  const appliedProfiles = allProfiles.filter((name) => !failedConfigPatchProfiles.has(name));
+  const appliedConfigPatchProfiles = configPatchProfiles.filter((name) => !failedConfigPatchProfiles.has(name));
   traySystemProxyPeerId = opts.peerId;
   traySystemProxyModel = opts.defaultModel ?? '';
-  traySystemProxyProfiles = new Set(allProfiles);
+  traySystemProxyProfiles = new Set(appliedProfiles);
   refreshTrayMenu();
   const nextState = {
-    ...(state ?? { mode: 'system-proxy' as const, running: configPatchProfiles.length > 0, pid: null, startedAt: Date.now(), lastExitCode: null, lastError: null }),
+    ...(state ?? { mode: 'system-proxy' as const, running: appliedConfigPatchProfiles.length > 0, pid: null, startedAt: Date.now(), lastExitCode: null, lastError: null }),
     port,
     peerId: opts.peerId,
     defaultModel: opts.defaultModel,
     toolRoutes: opts.toolRoutes,
-    activeProfileNames: allProfiles,
-    running: proxyProfiles.length > 0 ? state?.running === true : configPatchProfiles.length > 0,
+    activeProfileNames: appliedProfiles,
+    running: proxyProfiles.length > 0 ? state?.running === true : appliedConfigPatchProfiles.length > 0,
   } as RuntimeProcessState & Record<string, unknown>;
   await setActiveSystemProxyState(nextState);
   // Last, so the relaunched app reads config patches already on disk and a
   // proxy already listening.
-  await restartConnectedApps(newlyConnectedProfiles);
+  await restartConnectedApps(newlyConnectedProfiles.filter((name) => !failedConfigPatchProfiles.has(name)));
   const disconnectedProfiles = [...previousProfiles].filter((name) => !allProfiles.includes(name));
   await restartConnectedApps(disconnectedProfiles);
+  if (newProfileConnectError) {
+    // The survivors are connected and persisted; the profile this call was
+    // asked to add still failed, and that must reach the caller's UI.
+    throw newProfileConnectError;
+  }
   return getSystemProxyProcessState();
 }
 
@@ -652,6 +697,7 @@ export async function stopSystemProxyRuntime(clearSettings: boolean): Promise<Ru
       running: false,
     }), 'utf8').catch(() => undefined);
     removeAllConfigPatches();
+    await stopWslRelays();
     traySystemProxyProfiles = new Set();
     activeSystemProxyState = null;
   }

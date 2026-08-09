@@ -441,7 +441,14 @@ export function FloatApp() {
                         <span className={styles.menuRowMetaText}>
                           {appLabel} · {conversationAge(chat.lastActiveAt)}
                         </span>
-                        <span className={styles.menuRowModel}>{pinnedLabel ?? modelLabel}</span>
+                        <span className={styles.menuRowModel}>
+                          {pinnedLabel ?? modelLabel}
+                          {/* Seller that served the chat's last request
+                              ("Show routed peer" preference). */}
+                          {data?.showRoutedPeer && chat.routedPeerName ? (
+                            <span className={styles.menuRowPeer}> · {chat.routedPeerName}</span>
+                          ) : null}
+                        </span>
                       </span>
                     </span>
                     <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.menuRowChevron} />

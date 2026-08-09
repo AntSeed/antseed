@@ -1,4 +1,5 @@
-import type { Provider, ServiceApiProtocol } from '@antseed/node';
+import type { Provider, ServiceApiProtocol, ServiceCapabilities, ServiceUnitBillingModelsV1, UnitBillingComponentV1, UnitBillingModelV1 } from '@antseed/node';
+import { MAX_SERVICES_PER_PROVIDER, MAX_SERVICE_NAME_LENGTH, isKnownServiceApiProtocol, validateServiceCapabilityFields, validateUnitBillingModelV1 } from '@antseed/node';
 
 export function parseNonNegativeNumber(raw: string | undefined, key: string, fallback: number): number {
   const parsed = raw === undefined ? fallback : Number.parseFloat(raw);
@@ -49,6 +50,69 @@ export function parseServicePricingJson(raw: string | undefined): Provider['pric
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+export function parseServiceUnitBillingModelsJson(raw: string | undefined, key = 'ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON'): ServiceUnitBillingModelsV1 | undefined {
+  if (!raw) return undefined;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    throw new Error(`${key} must be valid JSON`);
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${key} must be an object map of service -> protocol -> unit billing model`);
+  }
+
+  const out: ServiceUnitBillingModelsV1 = {};
+  for (const [service, protocols] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!protocols || typeof protocols !== 'object' || Array.isArray(protocols)) {
+      throw new Error(`${key}.${service} must be an object map of protocol -> unit billing model`);
+    }
+    for (const [protocol, model] of Object.entries(protocols as Record<string, unknown>)) {
+      if (!isKnownServiceApiProtocol(protocol)) {
+        throw new Error(`${key}.${service}.${protocol} must be a known service API protocol`);
+      }
+      if (!model || typeof model !== 'object' || Array.isArray(model)) {
+        throw new Error(`${key}.${service}.${protocol} must be a unit billing model object`);
+      }
+      const normalized = normalizeUnitBillingModel(model as Record<string, unknown>, `${key}.${service}.${protocol}`);
+      const errors = validateUnitBillingModelV1(normalized);
+      if (errors.length > 0) {
+        throw new Error(`${key}.${service}.${protocol}: ${errors.join('; ')}`);
+      }
+      out[service] = {
+        ...(out[service] ?? {}),
+        [protocol]: normalized,
+      } as ServiceUnitBillingModelsV1[string];
+    }
+  }
+
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function normalizeUnitBillingModel(raw: Record<string, unknown>, field: string): UnitBillingModelV1 {
+  if (raw.version !== 1 || !Array.isArray(raw.components)) {
+    throw new Error(`${field} must have version=1 and a components array`);
+  }
+  const components = raw.components.map((component, index): UnitBillingComponentV1 => {
+    if (!component || typeof component !== 'object' || Array.isArray(component)) {
+      throw new Error(`${field}.components[${index}] must be an object`);
+    }
+    const c = component as Record<string, unknown>;
+    if (typeof c.unit !== 'string' || typeof c.priceUsd !== 'number') {
+      throw new Error(`${field}.components[${index}] requires unit and numeric priceUsd`);
+    }
+    const match = c.match;
+    return {
+      unit: c.unit,
+      priceUsd: c.priceUsd,
+      ...(match && typeof match === 'object' && !Array.isArray(match) ? { match: match as Record<string, string> } : {}),
+    } as UnitBillingComponentV1;
+  });
+  return { version: 1, components };
+}
+
 export function parseCsv(raw: string | undefined): string[] {
   if (!raw) return [];
   return Array.from(
@@ -59,6 +123,55 @@ export function parseCsv(raw: string | undefined): string[] {
         .filter((entry) => entry.length > 0),
     ),
   );
+}
+
+export function parseServiceCapabilitiesJson(raw: string | undefined, key = 'ANTSEED_SERVICE_CAPABILITIES_JSON'): Record<string, ServiceCapabilities> | undefined {
+  if (!raw) return undefined;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    throw new Error(`${key} must be valid JSON`);
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${key} must be an object map of service -> capabilities`);
+  }
+
+  const entries = Object.entries(parsed as Record<string, unknown>);
+  if (entries.length > MAX_SERVICES_PER_PROVIDER) {
+    throw new Error(`${key} must not define more than ${MAX_SERVICES_PER_PROVIDER} services`);
+  }
+  const out: Record<string, ServiceCapabilities> = {};
+  for (const [service, rawCaps] of entries) {
+    if (service.length > MAX_SERVICE_NAME_LENGTH) {
+      throw new Error(`${key} service name "${service}" exceeds ${MAX_SERVICE_NAME_LENGTH} characters`);
+    }
+    if (!rawCaps || typeof rawCaps !== 'object' || Array.isArray(rawCaps)) {
+      throw new Error(`${key}.${service} must be a capabilities object`);
+    }
+    const caps = rawCaps as Record<string, unknown>;
+    const normalized: ServiceCapabilities = {};
+    for (const field of ['contextWindow', 'maxOutputTokens'] as const) {
+      if (caps[field] !== undefined) normalized[field] = caps[field] as number;
+    }
+    if (caps.inputs !== undefined) normalized.inputs = caps.inputs as ServiceCapabilities['inputs'];
+    for (const field of ['reasoning', 'toolUse', 'structuredOutput'] as const) {
+      if (caps[field] !== undefined) normalized[field] = caps[field] as boolean;
+    }
+    // Same validator the announce path uses, so anything accepted here is
+    // guaranteed to announce instead of failing silently at announce time.
+    const fieldErrors = validateServiceCapabilityFields(normalized);
+    if (fieldErrors.length > 0) {
+      throw new Error(`${key}.${service}: ${fieldErrors.join('; ')}`);
+    }
+    if (Object.keys(normalized).length > 0) {
+      out[service] = normalized;
+    }
+  }
+
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 export function parseJsonObject(raw: string | undefined, key: string): Record<string, unknown> | undefined {

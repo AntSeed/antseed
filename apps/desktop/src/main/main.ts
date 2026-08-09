@@ -39,6 +39,7 @@ import {
 import { createDesktopTray } from './ui/tray.js';
 import { ensureConfig } from './runtime/config-io.js';
 import { registerAttachmentScheme, installAttachmentProtocol } from './chat/attachments/protocol.js';
+import { disableSandboxIfAppImageCannotSandbox } from './linux-sandbox.js';
 import {
   APP_ICON_PATH,
   APP_NAME,
@@ -108,6 +109,8 @@ let isInstallingUpdate = false;
 // *before* `app.whenReady()` fires. The actual request handler is wired
 // inside whenReady() once Electron's protocol module is usable.
 registerAttachmentScheme();
+
+disableSandboxIfAppImageCannotSandbox();
 
 const logBuffer: LogEvent[] = [];
 let lastRuntimeActivityHash = '';

@@ -11,7 +11,10 @@ import {
   parseJsoncObject,
   readConfigPatch,
   removeConfigPatch,
+  substituteBaseUrlHost,
+  type CodexConfigPatchDef,
   type ConfigPatchDef,
+  type OpencodeConfigPatchDef,
 } from './config-patch.js';
 import { DEFAULT_APP_PROFILES } from '../connected-apps/defaults.js';
 
@@ -604,4 +607,93 @@ test('readConfigPatch parses every default app profile under its declared format
     assert.ok(parsed, `default profile ${name} must define a configPatch`);
     assert.equal(parsed.format, rawPatch['format'] ?? 'opencode', `profile ${name} fell through to another format`);
   }
+});
+
+test('substituteBaseUrlHost swaps only the host', () => {
+  assert.equal(
+    substituteBaseUrlHost('http://localhost:{buyerPort}/v1', '172.29.32.1'),
+    'http://172.29.32.1:{buyerPort}/v1',
+  );
+  assert.equal(
+    substituteBaseUrlHost('http://localhost:9411/v1', 'localhost'),
+    'http://localhost:9411/v1',
+  );
+});
+
+test('applyConfigPatch with installProbe patches an existing native config dir', { skip: process.platform === 'win32' }, async () => {
+  // Skipped on Windows: there the probe would invoke real WSL discovery.
+  await withTempConfig(async (_dir, configPath) => {
+    const patch: ConfigPatchDef = { ...(makePatch(configPath) as OpencodeConfigPatchDef), installProbe: 'opencode' };
+    applyConfigPatch(patch, PEER_ID, 9456);
+    const config = JSON.parse(await readFile(configPath, 'utf8')) as {
+      provider: Record<string, { options: { baseURL: string } }>;
+    };
+    assert.equal(config.provider['antseed']!.options.baseURL, 'http://127.0.0.1:9456/v1');
+  });
+});
+
+test('removeConfigPatch with a WSL targets file unpatches the recorded targets and clears the file', async () => {
+  await withTempConfig(async (dir, configPath) => {
+    const wslConfigPath = path.join(dir, 'wsl-opencode.jsonc');
+    const wslTargetsFile = path.join(dir, 'system-proxy.wsl-targets.json');
+    const patch: ConfigPatchDef = { ...(makePatch(configPath) as OpencodeConfigPatchDef), installProbe: 'opencode' };
+
+    applyConfigPatch(patch, PEER_ID, 9456);
+    // Simulate a target the Windows-side apply would have recorded, pointing
+    // at a config file this test can inspect in place of a real UNC path.
+    applyConfigPatch(makePatch(wslConfigPath), PEER_ID, 9456);
+    await writeFile(wslTargetsFile, JSON.stringify([
+      { tool: 'opencode', distro: 'Ubuntu', configPath: wslConfigPath, host: '172.29.32.1', needsRelay: true },
+    ]), 'utf8');
+
+    assert.equal(removeConfigPatch(patch, wslTargetsFile), true);
+
+    const wslConfig = JSON.parse(await readFile(wslConfigPath, 'utf8')) as { provider?: Record<string, unknown> };
+    assert.equal(wslConfig.provider?.['antseed'], undefined);
+    assert.equal(existsSync(wslTargetsFile), false);
+  });
+});
+
+test('applyConfigPatch (codex) with installProbe patches an existing native config dir', { skip: process.platform === 'win32' }, async () => {
+  // Skipped on Windows: there the probe would invoke real WSL discovery.
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'config.toml');
+    const patch: ConfigPatchDef = { ...(makeCodexPatch(configPath) as CodexConfigPatchDef), installProbe: 'codex' };
+    applyConfigPatch(patch, PEER_ID, 9456);
+    const raw = await readFile(configPath, 'utf8');
+    assert.ok(raw.includes('base_url = "http://127.0.0.1:9456/v1"'));
+    assert.ok(raw.includes('model_provider = "antseed"'));
+  });
+});
+
+test('removeConfigPatch (goose) unpatches WSL configs carrying the gateway host', async () => {
+  await withTempConfig(async (dir) => {
+    const nativePath = path.join(dir, 'native-config.yaml');
+    const wslPath = path.join(dir, 'wsl-config.yaml');
+    const wslTargetsFile = path.join(dir, 'targets.json');
+    // Simulate the WSL-side config the Windows apply would have written: the
+    // base URL carries the NAT gateway host, not a loopback address.
+    applyConfigPatch(
+      { format: 'goose', configPath: wslPath, providerKey: 'openai', baseURL: 'http://172.29.32.1:{buyerPort}' },
+      PEER_ID,
+      9456,
+    );
+    await writeFile(wslTargetsFile, JSON.stringify([
+      { tool: 'goose', distro: 'Ubuntu', configPath: wslPath, host: '172.29.32.1', needsRelay: true },
+    ]), 'utf8');
+
+    const patch: ConfigPatchDef = {
+      format: 'goose',
+      configPath: nativePath,
+      providerKey: 'openai',
+      baseURL: 'http://localhost:{buyerPort}',
+      installProbe: 'goose',
+    };
+    assert.equal(removeConfigPatch(patch, wslTargetsFile), true);
+
+    const raw = await readFile(wslPath, 'utf8');
+    assert.ok(!raw.includes('OPENAI_HOST'));
+    assert.ok(!raw.includes('GOOSE_PROVIDER'));
+    assert.equal(existsSync(wslTargetsFile), false);
+  });
 });
