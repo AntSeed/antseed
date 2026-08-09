@@ -225,7 +225,12 @@ export class AntseedWebClient {
   /** @internal */
   async requireSession(peerId: PeerId): Promise<SessionWiring> {
     const existing = this.sessions.get(peerId);
-    if (existing && existing.conn.isOpen) return existing;
+    if (existing) {
+      if (existing.conn.isOpen) return existing;
+      // Not open but still lingering (e.g. mid-connect): close it before we
+      // overwrite the map entry, or its RTCPeerConnection leaks.
+      existing.conn.close();
+    }
 
     const bridgeUrl = `${this.options.relayUrl.replace(/\/$/, '').replace(/^http/, 'ws')}/bridge/${peerId}`;
     const conn = await SellerConnection.connect(bridgeUrl, this.identity.wallet, this.env, this.options.connection);
@@ -265,9 +270,10 @@ export class AntseedWebClient {
   }
 
   disconnect(sellerPeerId: string): void {
-    const session = this.sessions.get(sellerPeerId.toLowerCase());
+    const peerId = toPeerId(sellerPeerId.toLowerCase());
+    const session = this.sessions.get(peerId);
     session?.conn.close();
-    this.sessions.delete(sellerPeerId.toLowerCase());
+    this.sessions.delete(peerId);
   }
 
   closeAll(): void {

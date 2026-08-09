@@ -32,13 +32,66 @@ function isForbiddenV4(ip: string): boolean {
 
 function isForbiddenV6(ip: string): boolean {
   const lower = ip.toLowerCase();
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(lower);
-  if (mapped) return isForbiddenV4(mapped[1]!);
   if (lower === '::' || lower === '::1') return true; // unspecified / loopback
+
+  for (const embedded of embeddedV4s(lower)) {
+    if (isForbiddenV4(embedded)) return true;
+  }
+
   const firstHextet = lower.split(':', 1)[0] ?? '';
   if (firstHextet.startsWith('fc') || firstHextet.startsWith('fd')) return true; // ULA fc00::/7
   if (/^fe[89ab]/.test(firstHextet)) return true; // link-local fe80::/10
   return false;
+}
+
+/** Extracts candidate IPv4 addresses embedded in an IPv6 string. */
+function embeddedV4s(lower: string): string[] {
+  const out: string[] = [];
+  const groups = lower.split(':');
+
+  // Dotted tail, e.g. ::ffff:127.0.0.1 or ::127.0.0.1
+  const tail = groups[groups.length - 1];
+  if (tail && tail.includes('.') && net.isIP(tail) === 4) out.push(tail);
+
+  const h = expandHextets(lower);
+  if (h) {
+    // Mapped ::ffff:x:x / deprecated compat ::x:x — first 5 hextets zero,
+    // 6th is 0x0000 (compat) or 0xffff (mapped).
+    if (h[0] === 0 && h[1] === 0 && h[2] === 0 && h[3] === 0 && h[4] === 0 &&
+        (h[5] === 0 || h[5] === 0xffff)) {
+      out.push(hextetsToV4(h[6]!, h[7]!));
+    }
+    // 6to4 (2002::/16): v4 is hextets 1-2.
+    if (h[0] === 0x2002) out.push(hextetsToV4(h[1]!, h[2]!));
+    // Teredo (2001:0::/32): client v4 is the last two hextets, XOR 0xffff.
+    if (h[0] === 0x2001 && h[1] === 0x0000) {
+      out.push(hextetsToV4(h[6]! ^ 0xffff, h[7]! ^ 0xffff));
+    }
+  }
+  return out;
+}
+
+/** Expands an IPv6 string (incl. `::` and dotted tail) to eight 16-bit words. */
+function expandHextets(lower: string): number[] | null {
+  let str = lower;
+  const dotted = /(\d+\.\d+\.\d+\.\d+)$/.exec(str);
+  if (dotted && net.isIP(dotted[1]!) === 4) {
+    const [a, b, c, d] = dotted[1]!.split('.').map(Number) as [number, number, number, number];
+    str = str.slice(0, dotted.index) + ((a << 8) | b).toString(16) + ':' + ((c << 8) | d).toString(16);
+  }
+  const halves = str.split('::');
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(':') : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  const fill = 8 - head.length - tail.length;
+  if (halves.length === 1 ? head.length !== 8 : fill < 0) return null;
+  const words = [...head, ...Array(halves.length === 2 ? fill : 0).fill('0'), ...tail];
+  const nums = words.map((w) => parseInt(w || '0', 16));
+  return nums.length === 8 && nums.every((n) => Number.isInteger(n) && n >= 0 && n <= 0xffff) ? nums : null;
+}
+
+function hextetsToV4(hi: number, lo: number): string {
+  return `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
 }
 
 /**

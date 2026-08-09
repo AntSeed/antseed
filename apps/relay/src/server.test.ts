@@ -186,8 +186,23 @@ describe('isForbiddenIp', () => {
     }
   });
 
+  it('blocks IPv4-in-IPv6 embeddings in non-dotted forms', () => {
+    for (const ip of [
+      '::ffff:7f00:1',            // hex-mapped 127.0.0.1
+      '::ffff:a00:1',             // hex-mapped 10.0.0.1
+      '2002:7f00:1::',            // 6to4 wrapping 127.0.0.1
+      '2002:a9fe:a9fe::',         // 6to4 wrapping 169.254.169.254
+      '2001:0:0:0:0:0:80ff:fffe', // Teredo wrapping 127.0.0.1 (client ^0xffff)
+    ]) {
+      expect(isForbiddenIp(ip), ip).toBe(true);
+    }
+  });
+
   it('allows public addresses and rejects non-IPs', () => {
-    for (const ip of ['8.8.8.8', '1.2.3.4', '172.32.0.1', '2001:4860:4860::8888', '::ffff:8.8.8.8']) {
+    for (const ip of [
+      '8.8.8.8', '1.2.3.4', '172.32.0.1', '2001:4860:4860::8888',
+      '::ffff:8.8.8.8', '::ffff:808:808', '2002:808:808::',
+    ]) {
       expect(isForbiddenIp(ip), ip).toBe(false);
     }
     expect(isForbiddenIp('example.com')).toBe(true);
