@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import { encodeBase64, toUtf8Bytes } from 'ethers';
 import { BuyerPaymentNegotiator } from './buyer-payment-negotiator.js';
 import type { BuyerConnection, BuyerPeerView } from './interfaces.js';
 import { ConnectionState, toPeerId } from '@antseed/protocol';
@@ -13,7 +12,8 @@ describe('BuyerPaymentNegotiator', () => {
       metadata: '0x00',
       spendingAuthSig: '0x1234',
     };
-    const headerValue = encodeBase64(toUtf8Bytes(JSON.stringify(payload)));
+    const payloadBytes = new TextEncoder().encode(JSON.stringify(payload));
+    const headerValue = btoa(Array.from(payloadBytes, (byte) => String.fromCharCode(byte)).join(''));
     const sendSpendingAuth = vi.fn();
     const emit = vi.fn();
     const negotiator = Object.create(BuyerPaymentNegotiator.prototype) as BuyerPaymentNegotiator;

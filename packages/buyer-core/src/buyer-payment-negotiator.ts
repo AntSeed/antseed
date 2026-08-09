@@ -23,7 +23,6 @@ import { parseResponseUsage } from './response-usage.js';
 import { computeCostUsdc, type ServicePricing } from './pricing.js';
 import { formatUsdc } from './usdc-utils.js';
 import { parseJsonObject, tryParseJsonObject } from '@antseed/protocol/json-codec';
-import { decodeBase64, toUtf8String } from 'ethers';
 
 export interface BuyerNegotiatorConfig {}
 
@@ -668,7 +667,8 @@ export class BuyerPaymentNegotiator {
       reserveDeadline?: number;
     };
     try {
-      const decoded = toUtf8String(decodeBase64(headerValue));
+      const decodedBytes = Uint8Array.from(atob(headerValue), (character) => character.charCodeAt(0));
+      const decoded = new TextDecoder().decode(decodedBytes);
       payload = parseJsonObject(decoded) as typeof payload;
     } catch {
       throw new Error('Invalid x-antseed-spending-auth header: failed to decode');
