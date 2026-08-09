@@ -10,6 +10,7 @@ import {
   MAX_DOMAIN_VERIFICATION_CLAIMS,
   MAX_GITHUB_VERIFICATION_CLAIMS,
   MAX_PUBLIC_ADDRESS_LENGTH,
+  MAX_SERVICE_CATEGORIES_PER_SERVICE,
   MAX_SERVICE_CATEGORY_LENGTH,
   MAX_SERVICE_API_PROTOCOLS_PER_SERVICE,
   MAX_PEER_CAPABILITIES,
@@ -831,10 +832,12 @@ describe('validateMetadata', () => {
 
 describe('constants', () => {
   it('should export reasonable constant values', () => {
-    expect(MAX_METADATA_SIZE).toBe(1400);
+    expect(MAX_METADATA_SIZE).toBe(128 * 1024);
     expect(MAX_PROVIDERS).toBe(10);
-    expect(MAX_SERVICES_PER_PROVIDER).toBe(20);
+    expect(MAX_SERVICES_PER_PROVIDER).toBe(512);
     expect(MAX_SERVICE_NAME_LENGTH).toBe(64);
     expect(MAX_REGION_LENGTH).toBe(32);
+    expect(MAX_SERVICE_CATEGORIES_PER_SERVICE).toBe(64);
+    expect(MAX_SERVICE_API_PROTOCOLS_PER_SERVICE).toBe(3);
   });
 });

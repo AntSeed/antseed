@@ -2,12 +2,12 @@
 sidebar_position: 8
 slug: /guides/metadata-v12-upgrade
 title: Metadata v12 Upgrade
-description: Safe rollout order for AntSeed metadata v12, service capabilities, and image unit billing.
+description: Safe rollout order for AntSeed metadata v12, large service catalogs, capabilities, and image unit billing.
 ---
 
 # Metadata v12 Upgrade
 
-Metadata v12 adds per-service capability hints. It builds on metadata v11, which added per-service unit billing for image outputs.
+Metadata v12 adds per-service capability hints and widens service catalog and per-service map counts from `uint8` to `uint16`. It builds on metadata v11, which added per-service unit billing for image outputs.
 
 This is a **buyer-first migration**. An older buyer rejects metadata versions newer than it understands and drops that seller from discovery.
 
@@ -20,6 +20,17 @@ This is a **buyer-first migration**. An older buyer rejects metadata versions ne
 | v12 | Visible | Visible | Visible |
 
 Updated buyers remain backward-compatible with existing sellers. Updated sellers are not visible to older buyers.
+
+## New Metadata Limits
+
+- 512 services per provider
+- 512 entries in service pricing, categories, API protocols, capabilities, and expanded billing models
+- 64 categories per service
+- 3 API protocols per service
+- 128 KiB maximum signed binary metadata
+- 256 KiB maximum HTTP metadata response
+
+The seller validates these limits before announcing. Buyers apply the same signed-metadata validation after downloading a bounded HTTP response.
 
 ## What Requires an Upgrade
 
@@ -53,7 +64,7 @@ antseed --version
 antseed network browse --json
 ```
 
-In JSON output, upgraded sellers report `"version": 12`. Confirm their provider entry includes the expected `serviceCapabilities` and, for image services, `serviceApiProtocols` plus `serviceUnitBillingModels`.
+In JSON output, upgraded sellers report `"version": 12`. Confirm large providers expose their complete service catalog and that capability/image entries appear where configured.
 
 Test image routing through an updated buyer:
 
