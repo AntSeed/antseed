@@ -19,6 +19,8 @@ import { LOCALHOST_URL } from '../constants.js';
 import { getSecureIdentity } from '../identity.js';
 import { resolveBuyerProxyPort } from '../runtime/active-config.js';
 import { getMainWindow } from '../ui/window.js';
+import { closeCheckoutWindows } from './checkout-window.js';
+import { focusMainWindow } from './portal.js';
 import { invalidateCreditsCache, loadCachedCryptoConfig } from './credits.js';
 
 type DepositWatchStatus = {
@@ -67,6 +69,12 @@ export function makeDepositsClient(cc: NonNullable<Awaited<ReturnType<typeof loa
 }
 
 function sendDepositWatchStatus(status: DepositWatchStatus): void {
+  // Funds arriving at the hot wallet means an in-flight checkout (Fun card /
+  // sign-in popup) succeeded — close its windows and bring the app back up
+  // so the user lands on the deposit progress banner.
+  if (status.phase === 'received' || status.phase === 'credited') {
+    if (closeCheckoutWindows()) focusMainWindow();
+  }
   getMainWindow()?.webContents.send('deposits:watch-status', status);
 }
 
