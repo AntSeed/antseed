@@ -8,6 +8,9 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Added end-to-end OpenAI image generation support: buyers can route `/v1/images/generations` and `/v1/images/edits` requests through the proxy to image sellers, with per-unit billing (`output_images` components with size/quality matching) announced in discovery metadata and verified on both sides of the payment flow.
+- Sellers can announce per-service model capability hints — context window, max output tokens, input modalities, reasoning / tool-use / structured-output support — via the new `ANTSEED_SERVICE_CAPABILITIES_JSON` provider config (openai provider). Capabilities ride in discovery metadata version 12 (`serviceCapabilities` on `PeerInfo`), and invalid values are rejected at config load with the same rules the announce-time validator enforces.
+
 - The desktop now shows deposit progress as a fixed banner from any view — received → depositing → credited (with a transaction link), on top of every overlay including the Fun checkout modal — instead of only inside the deposit page. The main-process deposit watcher also keeps running for a while after the deposit page closes (slow background polling, ~30 min, re-armed by activity), so a card/Fun delivery landing after you navigate away is still swept into credits automatically.
 
 - Sellers now run periodic model health self-checks (a 1-token probe per advertised service, every 5 minutes by default) and unadvertise services that keep failing, restoring them automatically when they recover. Configurable via `seller.healthCheck` (`enabled`, `intervalMs`, `failureThreshold`); sellers announcing this behavior advertise the `seller.model-health.v1` capability in discovery metadata. Exposed as `ModelHealthChecker` in `@antseed/node`, alongside `AntseedNode.refreshSellerMetadata()` for runtime service-list changes.
@@ -24,6 +27,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Fixed buyers classifying unit-billed services (e.g. image generation) as free because their token pricing is zero: the free-usage gate now resolves the same provider + protocol billing route the seller uses, so paid image requests negotiate payment and record verified cost instead of rejecting the seller's usage claims.
+- Fixed a payment-integrity hole where a seller could claim image delivery (`NeedAuth` with positive unit billing cost) before the buyer received any response and get paid for undelivered images. Positive unit-billing claims are now rejected until the buyer has observed the delivered response; the buyer's own post-response authorization covers honest sellers.
 - Fixed the buyer proxy leaking `.buyer.state.*.json.tmp` files (each a full discovered-peers snapshot, ~1 MB) when the atomic state-file rename failed — common on Windows while a reader briefly holds `buyer.state.json` open. The rename is now retried, a failed write cleans up its temp file and logs the error instead of dropping the state update silently, and leftover temp files from earlier runs are swept at startup.
 - Fixed bursty buyer startups causing initial payment-channel reserves to fail when delegated seller accounts reject excess in-flight transactions. Sellers now retry transient transaction backpressure before acknowledging the channel.
 - Fixed seller health checks leaving unavailable upstreams advertised: HTTP 402 responses now count as failures, every failing service can be removed, and a provider with no healthy services is omitted from signed discovery metadata until a probe succeeds.

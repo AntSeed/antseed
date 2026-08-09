@@ -38,11 +38,14 @@ export {
   bytesToHex,
 } from './p2p/identity.js';
 export { DHTNode, DEFAULT_DHT_CONFIG } from './discovery/dht-node.js';
+export { MAX_SERVICES_PER_PROVIDER, MAX_SERVICE_NAME_LENGTH } from './discovery/metadata-validator.js';
 export { OFFICIAL_BOOTSTRAP_NODES, mergeBootstrapNodes, toBootstrapConfig } from './discovery/bootstrap.js';
 export {
   WELL_KNOWN_SERVICE_CATEGORIES,
   WELL_KNOWN_SERVICE_API_PROTOCOLS,
   SERVICE_CAPABILITY_INPUTS,
+  MAX_CAPABILITY_TOKEN_COUNT,
+  validateServiceCapabilityFields,
   type DomainVerificationClaim,
   type DomainVerificationMethod,
   type GithubVerificationClaim,

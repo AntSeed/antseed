@@ -1,5 +1,5 @@
 import type { Provider, ServiceApiProtocol, ServiceCapabilities, ServiceUnitBillingModelsV1, UnitBillingComponentV1, UnitBillingModelV1 } from '@antseed/node';
-import { SERVICE_CAPABILITY_INPUTS, isKnownServiceApiProtocol, validateUnitBillingModelV1 } from '@antseed/node';
+import { MAX_SERVICES_PER_PROVIDER, MAX_SERVICE_NAME_LENGTH, isKnownServiceApiProtocol, validateServiceCapabilityFields, validateUnitBillingModelV1 } from '@antseed/node';
 
 export function parseNonNegativeNumber(raw: string | undefined, key: string, fallback: number): number {
   const parsed = raw === undefined ? fallback : Number.parseFloat(raw);
@@ -139,35 +139,32 @@ export function parseServiceCapabilitiesJson(raw: string | undefined, key = 'ANT
     throw new Error(`${key} must be an object map of service -> capabilities`);
   }
 
-  const knownInputs = new Set<string>(SERVICE_CAPABILITY_INPUTS);
+  const entries = Object.entries(parsed as Record<string, unknown>);
+  if (entries.length > MAX_SERVICES_PER_PROVIDER) {
+    throw new Error(`${key} must not define more than ${MAX_SERVICES_PER_PROVIDER} services`);
+  }
   const out: Record<string, ServiceCapabilities> = {};
-  for (const [service, rawCaps] of Object.entries(parsed as Record<string, unknown>)) {
+  for (const [service, rawCaps] of entries) {
+    if (service.length > MAX_SERVICE_NAME_LENGTH) {
+      throw new Error(`${key} service name "${service}" exceeds ${MAX_SERVICE_NAME_LENGTH} characters`);
+    }
     if (!rawCaps || typeof rawCaps !== 'object' || Array.isArray(rawCaps)) {
       throw new Error(`${key}.${service} must be a capabilities object`);
     }
     const caps = rawCaps as Record<string, unknown>;
     const normalized: ServiceCapabilities = {};
     for (const field of ['contextWindow', 'maxOutputTokens'] as const) {
-      const value = caps[field];
-      if (value === undefined) continue;
-      if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
-        throw new Error(`${key}.${service}.${field} must be a positive integer`);
-      }
-      normalized[field] = value;
+      if (caps[field] !== undefined) normalized[field] = caps[field] as number;
     }
-    if (caps.inputs !== undefined) {
-      if (!Array.isArray(caps.inputs) || caps.inputs.some((input) => typeof input !== 'string' || !knownInputs.has(input))) {
-        throw new Error(`${key}.${service}.inputs must be an array of: ${SERVICE_CAPABILITY_INPUTS.join(', ')}`);
-      }
-      normalized.inputs = [...new Set(caps.inputs)] as ServiceCapabilities['inputs'];
-    }
+    if (caps.inputs !== undefined) normalized.inputs = caps.inputs as ServiceCapabilities['inputs'];
     for (const field of ['reasoning', 'toolUse', 'structuredOutput'] as const) {
-      const value = caps[field];
-      if (value === undefined) continue;
-      if (typeof value !== 'boolean') {
-        throw new Error(`${key}.${service}.${field} must be a boolean`);
-      }
-      normalized[field] = value;
+      if (caps[field] !== undefined) normalized[field] = caps[field] as boolean;
+    }
+    // Same validator the announce path uses, so anything accepted here is
+    // guaranteed to announce instead of failing silently at announce time.
+    const fieldErrors = validateServiceCapabilityFields(normalized);
+    if (fieldErrors.length > 0) {
+      throw new Error(`${key}.${service}: ${fieldErrors.join('; ')}`);
     }
     if (Object.keys(normalized).length > 0) {
       out[service] = normalized;

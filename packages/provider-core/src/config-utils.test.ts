@@ -38,12 +38,12 @@ describe('parseServiceCapabilitiesJson', () => {
     expect(parseServiceCapabilitiesJson('{}')).toBeUndefined();
   });
 
-  it('parses and normalizes a full capabilities map', () => {
+  it('parses a full capabilities map', () => {
     expect(parseServiceCapabilitiesJson(JSON.stringify({
       'gpt-5.5': {
         contextWindow: 200000,
         maxOutputTokens: 16384,
-        inputs: ['text', 'image', 'text'],
+        inputs: ['text', 'image'],
         reasoning: true,
         toolUse: false,
       },
@@ -58,10 +58,30 @@ describe('parseServiceCapabilitiesJson', () => {
     });
   });
 
+  it('rejects duplicate input modalities (same as the metadata validator)', () => {
+    expect(() => parseServiceCapabilitiesJson(JSON.stringify({
+      'gpt-5.5': { inputs: ['text', 'image', 'text'] },
+    }))).toThrow(/Duplicate input modality/);
+  });
+
   it('rejects unknown input modalities', () => {
     expect(() => parseServiceCapabilitiesJson(JSON.stringify({
       'gpt-5.5': { inputs: ['text', 'hologram'] },
-    }))).toThrow(/inputs must be an array of/);
+    }))).toThrow(/Unsupported input modality "hologram"/);
+  });
+
+  it('rejects token counts above the announce-time wire ceiling', () => {
+    expect(() => parseServiceCapabilitiesJson(JSON.stringify({
+      'gpt-5.5': { contextWindow: 2_000_000_000 },
+    }))).toThrow(/positive integer <= 1000000000/);
+  });
+
+  it('rejects more services than the metadata validator allows', () => {
+    const many = Object.fromEntries(
+      Array.from({ length: 21 }, (_, i) => [`svc-${i}`, { contextWindow: 1000 }]),
+    );
+    expect(() => parseServiceCapabilitiesJson(JSON.stringify(many)))
+      .toThrow(/must not define more than 20 services/);
   });
 
   it('rejects non-integer token counts', () => {
