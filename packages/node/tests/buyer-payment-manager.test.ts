@@ -851,6 +851,7 @@ describe('BuyerPaymentManager', () => {
         ],
       },
     });
+    manager.recordObservedUnitUsage('req-image-tier-mismatch', { units: { output_images: 2 } });
     mux.sentSpendingAuths.length = 0;
 
     await manager.handleNeedAuth(sellerPeerId, {
@@ -898,6 +899,7 @@ describe('BuyerPaymentManager', () => {
       tokenPricing: TEST_PRICING,
       unitModel: imageModel,
     });
+    manager.recordObservedUnitUsage('req-image-hybrid', { units: { output_images: 2 } });
     mux.sentSpendingAuths.length = 0;
 
     const tokenCost = 3_750n; // 1000 input at $3/M + 50 output at $15/M

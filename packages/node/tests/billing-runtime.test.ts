@@ -51,6 +51,7 @@ describe("unit billing runtime", () => {
         },
         40_000n,
         1.4,
+        { units: { output_images: 1 } },
       ),
     ).toThrow(/recomputed to zero/);
   });
@@ -171,8 +172,8 @@ describe("unit billing runtime", () => {
     ).toBe(40_000n);
   });
 
-  it("falls back to request limits when no observed usage is recorded yet", () => {
-    expect(
+  it("rejects positive cost claims before the buyer observed the delivered response", () => {
+    expect(() =>
       validateUnitBillingUsage(
         imageModel,
         imageContext,
@@ -184,7 +185,23 @@ describe("unit billing runtime", () => {
         1.4,
         undefined,
       ),
-    ).toBe(40_000n);
+    ).toThrow(/before the buyer observed/);
+  });
+
+  it("accepts zero-cost claims without observed usage", () => {
+    expect(
+      validateUnitBillingUsage(
+        imageModel,
+        imageContext,
+        {
+          version: 1,
+          units: { output_images: "0" },
+        },
+        0n,
+        1.4,
+        undefined,
+      ),
+    ).toBe(0n);
   });
 
   it("rejects non-canonical and unsafe unit count strings", () => {

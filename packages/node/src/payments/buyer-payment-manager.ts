@@ -44,6 +44,9 @@ const DEFAULT_COST_TOLERANCE = 1.4;
 const DEFAULT_TOPUP_THRESHOLD = 0.65;
 const REQUEST_BILLING_TTL_MS = 5 * 60_000;
 const MAX_REQUEST_BILLING_ENTRIES = 512;
+/** How long NeedAuth validation waits for the buyer's own response processing
+ *  to record delivered unit usage before rejecting a positive claim. */
+const OBSERVED_UNIT_USAGE_WAIT_MS = 5_000;
 
 function validateUnitNormalizedCost(
   model: UnitBillingModelV1,
@@ -156,6 +159,7 @@ export class BuyerPaymentManager {
    * the fact.
    */
   private readonly _requestBillingEntries = new Map<string, StoredBuyerRequestBillingEntry>();
+  private readonly _observedUsageWaiters = new Map<string, Array<(usage: UnitBillingUsage) => void>>();
 
   /** sellerPeerId -> full pricing map (defaults + per-service overrides from peer metadata / 402) */
   private readonly _sessionPricing = new Map<string, { defaults: ServicePricing; services: Record<string, ServicePricing> }>();
@@ -1122,13 +1126,22 @@ export class BuyerPaymentManager {
           }
           debugLog(`[BuyerPayment] NeedAuth zero unit billing accepted without unit model`);
         } else {
+          // The seller's NeedAuth can legitimately race ahead of the buyer's
+          // own response processing (different muxes). Give the response path
+          // a moment to record what was actually delivered before judging the
+          // claim; a seller claiming delivery that never happens still gets
+          // rejected once the wait expires.
+          const observedUnitUsage = requestBilling.observedUnitUsage
+            ?? (sellerTotalCost > 0n && payload.requestId
+              ? await this._waitForObservedUnitUsage(payload.requestId, OBSERVED_UNIT_USAGE_WAIT_MS)
+              : undefined);
           acceptedUnitCost = validateUnitBillingUsage(
             unitBillingModel,
             requestBilling.context,
             payload.billingUsage,
             sellerTotalCost,
             this._costTolerance,
-            requestBilling.observedUnitUsage,
+            observedUnitUsage,
           );
         }
 
@@ -1479,6 +1492,39 @@ export class BuyerPaymentManager {
   recordObservedUnitUsage(requestId: string, usage: UnitBillingUsage): void {
     const entry = this._requestBillingEntries.get(requestId);
     if (entry) entry.observedUnitUsage = usage;
+    const waiters = this._observedUsageWaiters.get(requestId);
+    if (waiters) {
+      this._observedUsageWaiters.delete(requestId);
+      for (const waiter of waiters) waiter(usage);
+    }
+  }
+
+  /** Wait for observed unit usage while the buyer's response path catches up. */
+  private _waitForObservedUnitUsage(
+    requestId: string,
+    timeoutMs: number,
+  ): Promise<UnitBillingUsage | undefined> {
+    const existing = this._requestBillingEntries.get(requestId)?.observedUnitUsage;
+    if (existing) return Promise.resolve(existing);
+    return new Promise((resolve) => {
+      const onUsage = (usage: UnitBillingUsage): void => {
+        clearTimeout(timer);
+        resolve(usage);
+      };
+      const timer = setTimeout(() => {
+        const waiters = this._observedUsageWaiters.get(requestId);
+        if (waiters) {
+          const index = waiters.indexOf(onUsage);
+          if (index >= 0) waiters.splice(index, 1);
+          if (waiters.length === 0) this._observedUsageWaiters.delete(requestId);
+        }
+        resolve(this._requestBillingEntries.get(requestId)?.observedUnitUsage);
+      }, timeoutMs);
+      timer.unref?.();
+      const waiters = this._observedUsageWaiters.get(requestId) ?? [];
+      waiters.push(onUsage);
+      this._observedUsageWaiters.set(requestId, waiters);
+    });
   }
 
   getRequestBilling(requestId: string): BuyerRequestBillingEntry | undefined {

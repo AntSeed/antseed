@@ -236,6 +236,12 @@ export function validateUnitBillingUsage(
   validateUsageWithinRequestLimits(usage, context);
   if (observedUsage) {
     validateUsageWithinObservedUsage(usage, observedUsage);
+  } else if (sellerCost > 0n) {
+    // Fail closed: without observed usage a seller could claim delivery before
+    // the buyer received anything and get paid for undelivered units. The buyer
+    // signs a post-response SpendingAuth once the response arrives, so a
+    // legitimate seller loses nothing by this rejection.
+    throw new Error("Positive unit billing cost claimed before the buyer observed the delivered response");
   }
   const buyerEstimate = evaluateUnitBilling(model, context, usage);
   if (sellerCost > 0n && buyerEstimate <= 0n) {
