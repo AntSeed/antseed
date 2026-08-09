@@ -101,6 +101,17 @@ antseed config seller add-service anthropic claude-sonnet-4-5-20250929 \
 antseed seller start
 ```
 
+Per-service capability hints and non-token billing are durable config fields:
+
+```bash
+antseed config seller add-service openai gpt-image-1 \
+  --input 0 --output 0 \
+  --capabilities '{"inputs":["text","image"]}' \
+  --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.04}]}}'
+```
+
+`--unit-billing-models` is currently consumed by the `openai` provider for `openai-images`. Seller startup warns when the selected plugin ignores it. Image services are skipped by periodic model health checks to avoid generating billable probe images.
+
 **Routers** select peers and proxy requests (consumer mode):
 
 ```bash
@@ -228,6 +239,7 @@ antseed config seller remove-service anthropic claude-sonnet-4-5-20250929
 antseed config seller set providers.anthropic.defaults.inputUsdPerMillion 12
 antseed config seller set providers.anthropic.services.claude-sonnet-4-5-20250929.pricing.outputUsdPerMillion 20
 antseed config seller set providers.anthropic.services.claude-sonnet-4-5-20250929.categories '["coding","legal"]'
+antseed config seller set providers.anthropic.services.claude-sonnet-4-5-20250929.capabilities '{"contextWindow":200000,"inputs":["text","image"],"toolUse":true}'
 
 # Seller public address override for load-balanced deployments
 antseed config seller set publicAddress "peer.example.com:6882"
@@ -255,6 +267,10 @@ antseed buyer start --disable-metadata-v2-services
 ```
 
 For production sellers, prefer a dedicated Base JSON-RPC endpoint over public defaults. You can set it durably with `payments.crypto.rpcUrl`, at runtime with `ANTSEED_BASE_RPC_URL`, or for one run with `antseed seller start --base-rpc-url <url>`.
+
+### Metadata v12 rollout
+
+This release announces metadata v12. Buyers supporting only older metadata versions drop v12 sellers from discovery, while updated buyers continue accepting older v10/v11 sellers. Upgrade buyer CLIs and desktop apps before upgrading sellers. Removing capability or unit-billing fields does not downgrade the metadata version; rollback requires running the older seller binary.
 
 ### Peer pinning (live, while proxy is running)
 

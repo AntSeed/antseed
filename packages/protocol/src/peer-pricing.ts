@@ -1,4 +1,5 @@
-import type { TokenPricingUsdPerMillion } from './peer-metadata.js';
+import type { ServiceUnitBillingModelsV1 } from './billing.js';
+import type { ServiceCapabilities, TokenPricingUsdPerMillion } from './peer-metadata.js';
 import type { ServiceApiProtocol } from './service-api.js';
 
 export interface ProviderPricingMatrixEntry {
@@ -12,4 +13,12 @@ export interface ProviderServiceCategoryMatrixEntry {
 
 export interface ProviderServiceApiProtocolMatrixEntry {
   services: Record<string, ServiceApiProtocol[]>;
+}
+
+export interface ProviderServiceUnitBillingModelMatrixEntry {
+  services: ServiceUnitBillingModelsV1;
+}
+
+export interface ProviderServiceCapabilityMatrixEntry {
+  services: Record<string, ServiceCapabilities>;
 }

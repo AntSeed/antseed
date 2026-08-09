@@ -85,6 +85,10 @@
       "import": "./dist/pricing.js",
       "types": "./dist/pricing.d.ts"
     },
+    "./unit-billing": {
+      "import": "./dist/unit-billing.js",
+      "types": "./dist/unit-billing.d.ts"
+    },
     "./proxy-mux": {
       "import": "./dist/proxy-mux.js",
       "types": "./dist/proxy-mux.d.ts"

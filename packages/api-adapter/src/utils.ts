@@ -59,6 +59,21 @@ export interface TokenUsage {
   cachedInputTokens: number;
 }
 
+/** Plain API-shape facts parsed from image generation requests. */
+export interface ImageRequestFacts {
+  model?: string;
+  size?: string;
+  quality?: string;
+  resolution?: string;
+  requestedImages?: number;
+}
+
+/** Plain API-shape usage facts parsed from provider responses. */
+export interface ProviderResponseFacts {
+  tokenUsage: TokenUsage;
+  outputImages?: number;
+}
+
 export function extractUsage(parsed: Record<string, unknown>): TokenUsage {
   // Direct shape: { usage: {...} } (OpenAI Chat, Anthropic Messages non-streaming)
   // Nested shapes:
@@ -120,6 +135,143 @@ export function extractUsage(parsed: Record<string, unknown>): TokenUsage {
     : rawInput + cachedInputTokens;
 
   return { inputTokens, outputTokens, freshInputTokens, cachedInputTokens };
+}
+
+export function extractProviderResponseFacts(parsed: Record<string, unknown>): ProviderResponseFacts {
+  const tokenUsage = extractUsage(parsed);
+  const data = Array.isArray(parsed.data) ? parsed.data : undefined;
+  const outputImages = data?.filter(isDeliveredImageOutput).length;
+
+  return {
+    tokenUsage,
+    ...(outputImages !== undefined ? { outputImages } : {}),
+  };
+}
+
+export function extractImageRequestFacts(input: {
+  path?: string;
+  method?: string;
+  body?: Record<string, unknown>;
+}): ImageRequestFacts {
+  const body = input.body ?? {};
+  const facts: ImageRequestFacts = {};
+  const normalizedPath = input.path?.split('?')[0];
+  const isOpenAiImageEndpoint = normalizedPath === '/v1/images/generations'
+    || normalizedPath === '/v1/images/edits';
+
+  setStringAttr(facts, 'model', body.model ?? body.service);
+  for (const key of ['size', 'quality', 'resolution'] as const) {
+    setStringAttr(facts, key, body[key] ?? body[toCamelCase(key)]);
+  }
+  if (isOpenAiImageEndpoint) {
+    facts.size ??= 'auto';
+    facts.quality ??= 'auto';
+  }
+  // OpenAI image generation/edits default to one output image when `n` is omitted.
+  const looksLikeOpenAiImageGeneration = isOpenAiImageEndpoint
+    || hasImageOutputAttributes(facts);
+  const requestedImages = toOptionalPositiveInt(body.n) ?? (looksLikeOpenAiImageGeneration ? 1 : undefined);
+
+  if (requestedImages !== undefined) {
+    facts.requestedImages = requestedImages;
+  }
+  return facts;
+}
+
+/** Text fields larger than this are dropped — billing fields are all short. */
+const MAX_MULTIPART_TEXT_FIELD_BYTES = 4096;
+
+/**
+ * Extract the text (non-file) fields from a multipart/form-data body, e.g. the
+ * model/prompt/n/size fields of an OpenAI `/v1/images/edits` request. File
+ * parts (any part with a filename) are skipped, so image payloads are never
+ * decoded. Returns null when the content type is not multipart or the boundary
+ * is missing/malformed.
+ */
+export function parseMultipartFormFields(
+  body: Uint8Array,
+  contentType: string | undefined,
+): Record<string, string> | null {
+  if (!contentType) return null;
+  const boundaryMatch = /^multipart\/form-data\s*;.*?boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(contentType.trim());
+  const boundary = (boundaryMatch?.[1] ?? boundaryMatch?.[2] ?? '').trim();
+  if (!boundary) return null;
+
+  // latin1 keeps a 1:1 byte-to-char mapping so offsets stay byte-accurate
+  // even through binary file parts; text field values are re-decoded as UTF-8.
+  const text = new TextDecoder('latin1').decode(body);
+  const delimiter = `--${boundary}`;
+  const fields: Record<string, string> = {};
+  let index = text.indexOf(delimiter);
+  while (index !== -1) {
+    index += delimiter.length;
+    if (text.startsWith('--', index)) break;
+    const headerEnd = text.indexOf('\r\n\r\n', index);
+    if (headerEnd === -1) break;
+    const next = text.indexOf(`\r\n${delimiter}`, headerEnd + 4);
+    if (next === -1) break;
+    const headerBlock = text.slice(index, headerEnd);
+    const dispositionParams = /content-disposition:\s*form-data\s*;([^\r\n]*)/i.exec(headerBlock)?.[1];
+    if (dispositionParams !== undefined && !/filename\s*=/i.test(dispositionParams)) {
+      const name = /name="([^"]*)"/.exec(dispositionParams)?.[1];
+      const value = text.slice(headerEnd + 4, next);
+      if (name && !(name in fields) && value.length <= MAX_MULTIPART_TEXT_FIELD_BYTES) {
+        fields[name] = decoder.decode(Uint8Array.from(value, (c) => c.charCodeAt(0)));
+      }
+    }
+    index = next + 2;
+  }
+  return fields;
+}
+
+/**
+ * Parse the billing-relevant fields of a request body: JSON objects verbatim,
+ * multipart/form-data reduced to its text fields. Returns null for anything
+ * else (unparseable JSON, binary, unknown content types).
+ */
+export function extractRequestBodyFields(
+  headers: Record<string, string>,
+  body: Uint8Array,
+): Record<string, unknown> | null {
+  const contentType = Object.entries(headers)
+    .find(([key]) => key.toLowerCase() === 'content-type')?.[1];
+  if (contentType && /^multipart\/form-data/i.test(contentType.trim())) {
+    return parseMultipartFormFields(body, contentType);
+  }
+  return parseJsonObject(body);
+}
+
+function toOptionalPositiveInt(value: unknown): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) return undefined;
+  return parsed;
+}
+
+function setStringAttr(target: ImageRequestFacts, key: keyof Omit<ImageRequestFacts, 'requestedImages'>, value: unknown): void {
+  if (typeof value === 'string' && value.trim().length > 0) {
+    target[key] = value.trim();
+  }
+}
+
+function toCamelCase(key: string): string {
+  return key.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
+}
+
+function hasImageOutputAttributes(attrs: ImageRequestFacts): boolean {
+  return attrs.size !== undefined
+    || attrs.quality !== undefined
+    || attrs.resolution !== undefined;
+}
+
+function isDeliveredImageOutput(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  return isNonEmptyString(item.b64_json) || isNonEmptyString(item.url);
+}
+
+function isNonEmptyString(value: unknown): boolean {
+  return typeof value === 'string' && value.trim().length > 0;
 }
 
 function toStringContentBlock(block: Record<string, unknown>): string {

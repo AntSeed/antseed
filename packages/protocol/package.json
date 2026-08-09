@@ -57,6 +57,10 @@
       "import": "./dist/service-api.js",
       "types": "./dist/service-api.d.ts"
     },
+    "./billing": {
+      "import": "./dist/billing.js",
+      "types": "./dist/billing.d.ts"
+    },
     "./capability": {
       "import": "./dist/capability.js",
       "types": "./dist/capability.d.ts"

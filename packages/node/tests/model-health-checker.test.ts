@@ -3,6 +3,7 @@ import {
   ModelHealthChecker,
   buildHealthProbeRequest,
   classifyProbeStatus,
+  supportsHealthProbe,
   type ModelHealthEvent,
 } from '../src/health/model-health-checker.js';
 import type { Provider } from '../src/interfaces/seller-provider.js';
@@ -51,10 +52,10 @@ describe('classifyProbeStatus', () => {
     expect(classifyProbeStatus(404)).toBe('unhealthy');
     expect(classifyProbeStatus(500)).toBe('unhealthy');
     expect(classifyProbeStatus(502)).toBe('unhealthy');
+    expect(classifyProbeStatus(429)).toBe('unhealthy');
     // Endpoint alive but probe rejected — must never unadvertise over these.
     expect(classifyProbeStatus(400)).toBe('inconclusive');
     expect(classifyProbeStatus(422)).toBe('inconclusive');
-    expect(classifyProbeStatus(429)).toBe('inconclusive');
   });
 });
 
@@ -87,6 +88,13 @@ describe('buildHealthProbeRequest', () => {
       }],
       max_output_tokens: 16,
     });
+  });
+
+  it('does not fall back to a chat probe for image services', () => {
+    expect(supportsHealthProbe('openai-images')).toBe(false);
+    expect(() => buildHealthProbeRequest('gpt-image-1', 'openai-images')).toThrow(
+      'Health probes are not supported for openai-images services',
+    );
   });
 });
 
@@ -145,15 +153,35 @@ describe('ModelHealthChecker', () => {
     expect(provider.services).toContain('model-a');
   });
 
-  it('does not count inconclusive probes (429, 400) as failures', async () => {
+  it('does not count inconclusive probes (400, 422) as failures', async () => {
     const provider = makeProvider({
-      onRequest: statusSequence({ 'model-a': [429, 400, 429, 400, 429] }),
+      onRequest: statusSequence({ 'model-a': [400, 422, 400, 422, 400] }),
     });
     const checker = new ModelHealthChecker({ targets: [{ provider }], failureThreshold: 2 });
 
     for (let i = 0; i < 5; i += 1) {
       await checker.runSweep();
     }
+    expect(provider.services).toEqual(['model-a', 'model-b']);
+  });
+
+  it('unadvertises after three 429 responses and restores after a 200', async () => {
+    const provider = makeProvider({
+      onRequest: statusSequence({
+        'model-a': [429, 429, 429, 200],
+        'model-b': [200, 200, 200, 200],
+      }),
+    });
+    const checker = new ModelHealthChecker({ targets: [{ provider }], failureThreshold: 3 });
+
+    await checker.runSweep();
+    await checker.runSweep();
+    expect(provider.services).toEqual(['model-a', 'model-b']);
+
+    await checker.runSweep();
+    expect(provider.services).toEqual(['model-b']);
+
+    await checker.runSweep();
     expect(provider.services).toEqual(['model-a', 'model-b']);
   });
 
@@ -279,6 +307,30 @@ describe('ModelHealthChecker', () => {
 
     await checker.runSweep();
     expect(paths.sort()).toEqual(['/v1/chat/completions', '/v1/messages']);
+  });
+
+  it('skips image services without calling the provider or changing availability', async () => {
+    const handleRequest = vi.fn(async (req: SerializedHttpRequest) => jsonResponse(req.requestId, 500));
+    const provider = makeProvider({
+      services: ['gpt-image-1'],
+      serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
+      onRequest: handleRequest,
+    });
+    const checker = new ModelHealthChecker({ targets: [{ provider }], failureThreshold: 1 });
+
+    await checker.runSweep();
+
+    expect(handleRequest).not.toHaveBeenCalled();
+    expect(provider.services).toEqual(['gpt-image-1']);
+    expect(checker.getSnapshot()).toEqual([
+      expect.objectContaining({
+        service: 'gpt-image-1',
+        advertised: true,
+        consecutiveFailures: 0,
+        lastStatusCode: null,
+        lastDetail: 'Skipped health probe for unsupported protocol openai-images',
+      }),
+    ]);
   });
 
   it('reports state via getSnapshot', async () => {

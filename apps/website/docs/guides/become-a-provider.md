@@ -62,7 +62,7 @@ antseed config seller add-service together deepseek-v3.1 \
 ```
 
 :::tip You're editing `~/.antseed/config.json`
-Every `antseed seller setup` / `antseed config seller ...` command is just a safe way to edit a single file: `~/.antseed/config.json`. You can open it in any editor at any time and change providers, services, pricing, categories, or `baseUrl` by hand — the CLI and the JSON file are interchangeable.
+Every `antseed seller setup` / `antseed config seller ...` command is just a safe way to edit a single file: `~/.antseed/config.json`. You can open it in any editor at any time and change providers, services, pricing, capabilities, unit billing, categories, or `baseUrl` by hand — the CLI and the JSON file are interchangeable.
 
 After running the commands above, your file will look something like this:
 
@@ -251,10 +251,22 @@ antseed config seller add-service together deepseek-v3.1 \
 # Local model (Ollama) — one announced service per local model
 antseed config seller add-service local-llm llama3.2:3b \
   --input 0 --output 0 \
+  --capabilities '{"contextWindow":131072,"inputs":["text"],"toolUse":true}' \
   --categories chat,fast,free
 ```
 
+```bash
+# OpenAI Images: announce image inputs and charge per delivered image
+antseed config seller add-service openai gpt-image-1 \
+  --input 0 --output 0 \
+  --categories image,creative \
+  --capabilities '{"inputs":["text","image"]}' \
+  --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.04}]}}'
+```
+
 The `--upstream` flag maps the buyer-facing service name to the upstream model id. Omit it when they're the same.
+
+Capability fields are optional discovery hints. Unit billing is currently supported by the `openai` provider for `openai-images`; startup warns if a different plugin ignores the setting. Image services remain advertised but are skipped by periodic health checks to avoid generating paid probe images.
 
 You only have to do this once per service. To see what you've configured:
 
@@ -299,6 +311,10 @@ antseed network browse
 ```
 
 For production monitoring, expose seller metrics with `antseed metrics serve --role seller`. See [Metrics](/docs/guides/metrics).
+
+:::warning Upgrade buyers before sellers
+This release emits discovery metadata v12. Older buyers reject newer metadata and will not see upgraded sellers. Follow the [metadata v12 upgrade guide](/docs/guides/metadata-v12-upgrade) when rolling out a mixed buyer/seller fleet.
+:::
 
 ## How Payments Work
 

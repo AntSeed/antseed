@@ -2,6 +2,7 @@ export * from './interfaces.js';
 export * from './channel-store-types.js';
 export * from './debug.js';
 export * from './pricing.js';
+export * from './unit-billing.js';
 export * from './usdc-utils.js';
 export * from './response-usage.js';
 export * from './channel-usage-accounting.js';

@@ -13,6 +13,8 @@ import {
   type CloseChannelResultPayload,
   type CloseChannelRejectCode,
 } from './messages.js';
+import type { UnitBillingUsageReportV1 } from './billing.js';
+import { validateUnitBillingUsageReportV1 } from './billing.js';
 import { parseJsonObject, requireStringField } from './json-codec.js';
 
 const encoder = new TextEncoder();
@@ -184,6 +186,17 @@ export function decodeNeedAuth(data: Uint8Array): NeedAuthPayload {
   if (typeof obj.cachedInputTokens === 'string') result.cachedInputTokens = obj.cachedInputTokens;
   if (typeof obj.freshInputTokens === 'string') result.freshInputTokens = obj.freshInputTokens;
   if (typeof obj.service === 'string') result.service = obj.service;
+  if (obj.billingUsage !== undefined) {
+    if (!obj.billingUsage || typeof obj.billingUsage !== 'object' || Array.isArray(obj.billingUsage)) {
+      throw new Error('NeedAuth billingUsage must be an object');
+    }
+    const billingUsage = obj.billingUsage as UnitBillingUsageReportV1;
+    const errors = validateUnitBillingUsageReportV1(billingUsage);
+    if (errors.length > 0) {
+      throw new Error(`Invalid NeedAuth billingUsage: ${errors.join('; ')}`);
+    }
+    result.billingUsage = billingUsage;
+  }
   return result;
 }
 

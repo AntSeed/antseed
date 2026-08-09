@@ -108,6 +108,17 @@ totalCostUSDC   = sum(requestCosts) * 1_000_000  (6-decimal USDC)
 
 `cachedInputUsdPerMillion` defaults to `inputUsdPerMillion` when not set by the seller.
 
+### Image Unit-to-USDC Conversion
+
+Image services can publish a versioned `output_images` billing model per service and API protocol. The request context captures matching fields such as model, size, quality, and resolution. Final cost uses the number of non-empty images actually delivered:
+
+```text title="image cost calculation"
+unitCostUSD   = deliveredOutputImages * matchedComponent.priceUsd
+totalCostUSDC = (tokenCostUSD + unitCostUSD) * 1_000_000
+```
+
+The buyer independently recomputes token and unit costs before signing the next cumulative SpendingAuth. A positive delivered unit count with no matching component is never silently priced at zero; payment authorization is refused.
+
 ## Wallet
 
 Each node's identity is a secp256k1 private key. The EVM address derived from this key serves as both the PeerId on the network and the on-chain wallet address. Set it via `ANTSEED_IDENTITY_HEX` env var (recommended for production) rather than the plaintext `identity.key` file.

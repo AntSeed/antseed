@@ -18,6 +18,7 @@ Contents, one module per concern (each also available as a subpath export):
 | `connection-auth` | Signed `intro`/`hello` envelope wire format |
 | `signing` | EIP-191 domain-tagged signing (`signData`, `signUtf8`, …) and hex utils |
 | `peer-id` | `PeerId` branded type and helpers |
+| `billing` | Portable unit-billing metadata, usage reports, validation, and cost evaluation |
 | `peer-metadata`, `capability`, `service-api`, `peer-pricing` | Signed discovery metadata types |
 | `connection-state` | `ConnectionState` and connection config types |
 

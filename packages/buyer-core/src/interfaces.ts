@@ -11,6 +11,10 @@ import type {
   PeerId,
   PeerMetadata,
   ProviderPricingMatrixEntry,
+  ProviderServiceCategoryMatrixEntry,
+  ProviderServiceApiProtocolMatrixEntry,
+  ProviderServiceCapabilityMatrixEntry,
+  ProviderServiceUnitBillingModelMatrixEntry,
   ResponseAuthPayload,
   SerializedHttpRequest,
   SerializedHttpResponse,
@@ -42,6 +46,11 @@ export interface BuyerPeerView {
   peerId: PeerId;
   capabilities?: string[];
   providerPricing?: Record<string, ProviderPricingMatrixEntry>;
+  providers?: string[];
+  providerServiceCategories?: Record<string, ProviderServiceCategoryMatrixEntry>;
+  providerServiceApiProtocols?: Record<string, ProviderServiceApiProtocolMatrixEntry>;
+  providerServiceUnitBillingModels?: Record<string, ProviderServiceUnitBillingModelMatrixEntry>;
+  providerServiceCapabilities?: Record<string, ProviderServiceCapabilityMatrixEntry>;
   defaultInputUsdPerMillion?: number;
   defaultOutputUsdPerMillion?: number;
   defaultCachedInputUsdPerMillion?: number;

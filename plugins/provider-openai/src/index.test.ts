@@ -22,8 +22,8 @@ describe('provider-openai plugin', () => {
     expect(keys).toContain('ANTSEED_ALLOWED_SERVICES');
   });
 
-  it('creates provider with valid config', () => {
-    const provider = plugin.createProvider({
+  it('creates provider with valid config', async () => {
+    const provider = await plugin.createProvider({
       OPENAI_API_KEY: 'sk-test-key',
     });
     expect(provider.name).toBe('openai');
@@ -32,8 +32,8 @@ describe('provider-openai plugin', () => {
     expect(provider.maxConcurrency).toBe(10);
   });
 
-  it('supports openrouter flavor-specific behavior', () => {
-    const provider = plugin.createProvider({
+  it('supports openrouter flavor-specific behavior', async () => {
+    const provider = await plugin.createProvider({
       OPENAI_API_KEY: 'sk-test-key',
       OPENAI_PROVIDER_FLAVOR: 'openrouter',
       OPENAI_UPSTREAM_PROVIDER: 'together',
@@ -46,8 +46,8 @@ describe('provider-openai plugin', () => {
     expect(() => plugin.createProvider({})).toThrow('OPENAI_API_KEY is required');
   });
 
-  it('applies custom pricing and concurrency', () => {
-    const provider = plugin.createProvider({
+  it('applies custom pricing and concurrency', async () => {
+    const provider = await plugin.createProvider({
       OPENAI_API_KEY: 'sk-test-key',
       ANTSEED_INPUT_USD_PER_MILLION: '3',
       ANTSEED_OUTPUT_USD_PER_MILLION: '7',
@@ -56,6 +56,123 @@ describe('provider-openai plugin', () => {
     expect(provider.pricing.defaults.inputUsdPerMillion).toBe(3);
     expect(provider.pricing.defaults.outputUsdPerMillion).toBe(7);
     expect(provider.maxConcurrency).toBe(5);
+  });
+
+  it('advertises and rewrites aliased image services correctly', async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('{}', {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    try {
+      const provider = await plugin.createProvider({
+        OPENAI_API_KEY: 'sk-test-key',
+        ANTSEED_ALLOWED_SERVICES: 'cover-art',
+        ANTSEED_SERVICE_ALIAS_MAP_JSON: '{"cover-art":"gpt-image-1"}',
+        ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON: JSON.stringify({
+          'cover-art': {
+            'openai-images': {
+              version: 1,
+              components: [],
+            },
+          },
+        }),
+      });
+
+      expect(provider.serviceApiProtocols?.['cover-art']).toEqual(['openai-images']);
+      expect(provider.serviceUnitBillingModels?.['cover-art']?.['openai-images']).toEqual({
+        version: 1,
+        components: [],
+      });
+
+      const response = await provider.handleRequest({
+        requestId: 'req-image-1',
+        method: 'POST',
+        path: '/v1/images/generations',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: new TextEncoder().encode(JSON.stringify({ model: 'cover-art', prompt: 'tiny purple cube' })),
+      });
+
+      expect(response.statusCode).toBe(200);
+      const [, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const parsedBody = JSON.parse(
+        new TextDecoder().decode((requestInit.body as Uint8Array) ?? new Uint8Array(0)),
+      ) as { model?: string };
+      expect(parsedBody.model).toBe('gpt-image-1');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('allows image services without explicit billing as free/default', async () => {
+    const provider = await plugin.createProvider({
+      OPENAI_API_KEY: 'sk-test-key',
+      ANTSEED_ALLOWED_SERVICES: 'cover-art',
+      ANTSEED_SERVICE_ALIAS_MAP_JSON: '{"cover-art":"gpt-image-1"}',
+    });
+
+    expect(provider.serviceApiProtocols?.['cover-art']).toEqual(['openai-images']);
+    expect(provider.serviceUnitBillingModels).toBeUndefined();
+  });
+
+  it('advertises image billing only when explicitly configured', async () => {
+    const provider = await plugin.createProvider({
+      OPENAI_API_KEY: 'sk-test-key',
+      ANTSEED_ALLOWED_SERVICES: 'cover-art',
+      ANTSEED_SERVICE_ALIAS_MAP_JSON: '{"cover-art":"gpt-image-1"}',
+      ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON: JSON.stringify({
+        'cover-art': {
+          'openai-images': {
+            version: 1,
+            components: [
+              {
+                unit: 'output_images',
+                priceUsd: 0.00816,
+                match: { size: '1024x1024', quality: 'low' },
+              },
+            ],
+          },
+        },
+      }),
+    });
+
+    expect(provider.serviceUnitBillingModels?.['cover-art']?.['openai-images']).toEqual({
+      version: 1,
+      components: [
+        {
+          unit: 'output_images',
+          priceUsd: 0.00816,
+          match: { size: '1024x1024', quality: 'low' },
+        },
+      ],
+    });
+  });
+
+  it('advertises grok imagine services as openai-images', async () => {
+    const provider = await plugin.createProvider({
+      OPENAI_API_KEY: 'sk-test-key',
+      OPENAI_BASE_URL: 'https://api.x.ai',
+      ANTSEED_ALLOWED_SERVICES: 'grok-imagine-image,grok-imagine-image-quality',
+    });
+
+    expect(provider.serviceApiProtocols?.['grok-imagine-image']).toEqual(['openai-images']);
+    expect(provider.serviceApiProtocols?.['grok-imagine-image-quality']).toEqual(['openai-images']);
+  });
+
+  it('does not advertise image services for openrouter flavor yet', async () => {
+    const provider = await plugin.createProvider({
+      OPENAI_API_KEY: 'sk-test-key',
+      OPENAI_PROVIDER_FLAVOR: 'openrouter',
+      ANTSEED_ALLOWED_SERVICES: 'cover-art',
+      ANTSEED_SERVICE_ALIAS_MAP_JSON: '{"cover-art":"openai/gpt-image-1"}',
+    });
+
+    expect(provider.serviceApiProtocols?.['cover-art']).toBeUndefined();
   });
 
   it('rewrites announced service names via ANTSEED_SERVICE_ALIAS_MAP_JSON', async () => {
@@ -68,7 +185,7 @@ describe('provider-openai plugin', () => {
     );
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     try {
-      const provider = plugin.createProvider({
+      const provider = await plugin.createProvider({
         OPENAI_API_KEY: 'sk-test-key',
         ANTSEED_ALLOWED_SERVICES: 'kimi2.5',
         ANTSEED_SERVICE_ALIAS_MAP_JSON: '{"kimi2.5":"together/kimi2.5"}',

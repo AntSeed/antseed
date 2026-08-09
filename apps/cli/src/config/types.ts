@@ -1,3 +1,9 @@
+import type {
+  ServiceApiProtocol,
+  ServiceCapabilities,
+  UnitBillingModelV1,
+} from '@antseed/node';
+
 /**
  * Dual token pricing in USD per 1M tokens.
  */
@@ -32,6 +38,10 @@ export interface SellerServiceConfig {
    * defaults are used.
    */
   pricing?: TokenPricingUsdPerMillion;
+  /** Model capability hints announced to buyers for this service. */
+  capabilities?: ServiceCapabilities;
+  /** Per-protocol non-token billing models for this service. */
+  unitBillingModels?: Partial<Record<ServiceApiProtocol, UnitBillingModelV1>>;
 }
 
 /**

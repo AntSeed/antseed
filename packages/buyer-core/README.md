@@ -5,7 +5,8 @@ re-exports everything from its original paths, so existing consumers are
 unaffected): `BuyerRequestHandler`, `BuyerPaymentManager`,
 `BuyerPaymentNegotiator`, `BuyerFreeUsageManager`, the
 `ProxyMux`/`PaymentMux`/`VerificationMux` frame multiplexers, pricing and
-channel accounting, and the read-only Deposits/Channels EVM clients.
+channel accounting, unit-billing request/response normalization, and the
+read-only Deposits/Channels EVM clients.
 
 Depends only on `@antseed/protocol`, `@antseed/api-adapter`, `ethers`, and
 `tokenx` — no sqlite, no sockets, no Node-specific APIs.

@@ -11,11 +11,15 @@ export type {
   ProviderPricingMatrixEntry,
   ProviderServiceCategoryMatrixEntry,
   ProviderServiceApiProtocolMatrixEntry,
+  ProviderServiceUnitBillingModelMatrixEntry,
+  ProviderServiceCapabilityMatrixEntry,
 } from '@antseed/protocol/peer-pricing';
 import type {
   ProviderPricingMatrixEntry,
   ProviderServiceCategoryMatrixEntry,
   ProviderServiceApiProtocolMatrixEntry,
+  ProviderServiceUnitBillingModelMatrixEntry,
+  ProviderServiceCapabilityMatrixEntry,
 } from '@antseed/protocol/peer-pricing';
 
 export interface PeerVerificationResults {
@@ -58,6 +62,10 @@ export interface PeerInfo {
   providerServiceCategories?: Record<string, ProviderServiceCategoryMatrixEntry>;
   /** Provider/service API protocols announced by seller. */
   providerServiceApiProtocols?: Record<string, ProviderServiceApiProtocolMatrixEntry>;
+  /** Provider/service/protocol unit billing models announced by seller. */
+  providerServiceUnitBillingModels?: Record<string, ProviderServiceUnitBillingModelMatrixEntry>;
+  /** Provider/service model capability hints announced by seller. */
+  providerServiceCapabilities?: Record<string, ProviderServiceCapabilityMatrixEntry>;
   /** Deterministic fallback default input price (USD per 1M tokens). */
   defaultInputUsdPerMillion?: number;
   /** Deterministic fallback default output price (USD per 1M tokens). */
