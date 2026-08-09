@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import '@funkit/connect/styles.css';
 import './FunkitDeposit.scss';
 import {
   FunkitProvider,
+  useConnectionStatus,
   useFunkitCheckout,
   useActiveTheme,
   darkTheme,
@@ -36,6 +37,8 @@ type Props = {
   usdcAddress: string;
   /** Styling for the CTA button (the parent owns the look). */
   className?: string;
+  /** CTA button content (the parent owns the label/logo too). */
+  children?: ReactNode;
   onError?: (message: string) => void;
 };
 
@@ -78,7 +81,25 @@ function ThemeSync({ mode }: { mode: ThemeMode }) {
   return null;
 }
 
-function DepositButton({ recipient, usdcAddress, className, onError }: Props) {
+/**
+ * Sign-in popups (main/payments/checkout-window.ts) don't produce a deposit,
+ * so the deposit watcher's close-on-arrival never fires for them — the SDK's
+ * connection status flipping to `connected` is that flow's success signal.
+ * Payment popups are covered by the watcher when the USDC lands.
+ */
+function CloseCheckoutWindowsOnLogin() {
+  const status = useConnectionStatus();
+  const previous = useRef(status);
+  useEffect(() => {
+    if (status === 'connected' && previous.current !== 'connected') {
+      void window.antseedDesktop?.paymentsCloseCheckoutWindows?.();
+    }
+    previous.current = status;
+  }, [status]);
+  return null;
+}
+
+function DepositButton({ recipient, usdcAddress, className, children, onError }: Props) {
   const checkoutConfig = useMemo<FunkitCheckoutConfig>(() => ({
     modalTitle: 'Deposit',
     targetChain: '8453',
@@ -100,7 +121,7 @@ function DepositButton({ recipient, usdcAddress, className, onError }: Props) {
 
   return (
     <button type="button" className={className} onClick={() => { onError?.(''); void beginCheckout(); }}>
-      Deposit
+      {children ?? 'Deposit'}
     </button>
   );
 }
@@ -137,6 +158,7 @@ export default function FunkitDeposit(props: Props) {
           initialChain={8453}
         >
           <ThemeSync mode={mode} />
+          <CloseCheckoutWindowsOnLogin />
           <DepositButton {...props} />
         </FunkitProvider>
       </QueryClientProvider>

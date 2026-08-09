@@ -51,10 +51,10 @@ describe('classifyProbeStatus', () => {
     expect(classifyProbeStatus(404)).toBe('unhealthy');
     expect(classifyProbeStatus(500)).toBe('unhealthy');
     expect(classifyProbeStatus(502)).toBe('unhealthy');
+    expect(classifyProbeStatus(429)).toBe('unhealthy');
     // Endpoint alive but probe rejected — must never unadvertise over these.
     expect(classifyProbeStatus(400)).toBe('inconclusive');
     expect(classifyProbeStatus(422)).toBe('inconclusive');
-    expect(classifyProbeStatus(429)).toBe('inconclusive');
   });
 });
 
@@ -145,15 +145,35 @@ describe('ModelHealthChecker', () => {
     expect(provider.services).toContain('model-a');
   });
 
-  it('does not count inconclusive probes (429, 400) as failures', async () => {
+  it('does not count inconclusive probes (400, 422) as failures', async () => {
     const provider = makeProvider({
-      onRequest: statusSequence({ 'model-a': [429, 400, 429, 400, 429] }),
+      onRequest: statusSequence({ 'model-a': [400, 422, 400, 422, 400] }),
     });
     const checker = new ModelHealthChecker({ targets: [{ provider }], failureThreshold: 2 });
 
     for (let i = 0; i < 5; i += 1) {
       await checker.runSweep();
     }
+    expect(provider.services).toEqual(['model-a', 'model-b']);
+  });
+
+  it('unadvertises after three 429 responses and restores after a 200', async () => {
+    const provider = makeProvider({
+      onRequest: statusSequence({
+        'model-a': [429, 429, 429, 200],
+        'model-b': [200, 200, 200, 200],
+      }),
+    });
+    const checker = new ModelHealthChecker({ targets: [{ provider }], failureThreshold: 3 });
+
+    await checker.runSweep();
+    await checker.runSweep();
+    expect(provider.services).toEqual(['model-a', 'model-b']);
+
+    await checker.runSweep();
+    expect(provider.services).toEqual(['model-b']);
+
+    await checker.runSweep();
     expect(provider.services).toEqual(['model-a', 'model-b']);
   });
 

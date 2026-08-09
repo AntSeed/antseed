@@ -11,6 +11,7 @@ This project uses selective package publishing. Each release entry lists the pub
 - Added end-to-end OpenAI image generation support: buyers can route `/v1/images/generations` and `/v1/images/edits` requests through the proxy to image sellers, with per-unit billing (`output_images` components with size/quality matching) announced in discovery metadata and verified on both sides of the payment flow.
 - Sellers can announce per-service model capability hints — context window, max output tokens, input modalities, reasoning / tool-use / structured-output support — via the new `ANTSEED_SERVICE_CAPABILITIES_JSON` provider config (openai provider). Capabilities ride in discovery metadata version 12 (`serviceCapabilities` on `PeerInfo`), and invalid values are rejected at config load with the same rules the announce-time validator enforces.
 
+- Desktop: added a card deposit path powered by AntSeed Pay (antseed-pay.com) with Stripe checkout for US users. The app asks the hosted pay page which providers serve the user's region (its public `/api/options` endpoint, geo-resolved at Cloudflare's edge) and, when Stripe is available, leads the Add Credits chooser with a green Link-branded "Pay with link" button (official Link logo; "Powered by Outerfound" and the accepted card brands — Visa, Mastercard, Amex — on a caption line beneath it); the Fun checkout moves under "More options" as "Deposit using Fun". When Stripe isn't available (non-US region, or the check fails — it fails closed), the chooser stays Fun-led and the card checkout appears under "More options" as "Deposit using Outerfound" (Card · US only), which opens the pay page's own "not available in your region" screen. Selecting the card path opens a narrow app-owned checkout window (420×700) on the signed funding link pinned to the Stripe integration (`provider=stripe`); the existing deposit watcher sweeps the purchased USDC into credits and closes the window when funds arrive. The USDC-on-Base quick deposit row now ends with a chevron indicating it opens its own screen.
 - The desktop now shows deposit progress as a fixed banner from any view — received → depositing → credited (with a transaction link), on top of every overlay including the Fun checkout modal — instead of only inside the deposit page. The main-process deposit watcher also keeps running for a while after the deposit page closes (slow background polling, ~30 min, re-armed by activity), so a card/Fun delivery landing after you navigate away is still swept into credits automatically.
 
 - Sellers now run periodic model health self-checks (a 1-token probe per advertised service, every 5 minutes by default) and unadvertise services that keep failing, restoring them automatically when they recover. Configurable via `seller.healthCheck` (`enabled`, `intervalMs`, `failureThreshold`); sellers announcing this behavior advertise the `seller.model-health.v1` capability in discovery metadata. Exposed as `ModelHealthChecker` in `@antseed/node`, alongside `AntseedNode.refreshSellerMetadata()` for runtime service-list changes.
@@ -23,12 +24,14 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
-- The desktop Balance page's two deposit buttons (Credit Card / USDC on Base) are now a single full-width "Add Credits" button opening the Add-credits chooser, and the separate "Pay with card" options page (including the embedded Crossmint checkout) is removed — the Fun-led chooser is the deposit flow. Dropping Crossmint also cuts the renderer bundle roughly in half.
+- Desktop: redesigned the Add Credits chooser. The Fun checkout is now a "Deposit" row ("Powered by fun.xyz") showing the accepted card networks (Mastercard, Apple Pay, Google Pay, Visa), the USDC-on-Base quick deposit is always visible with a note that the AntSeed relayer network credits it, and the Meridian option moved behind "More options" as "Deposit using Meridian". Payment and chain badges now use the official brand logos, and the primary CTA follows the app theme (dark surface in light mode, light surface in dark mode).
+- Desktop: the Fun checkout's sign-in and payment popups (Google sign-in, card checkout pages) now open as app-owned windows instead of tabs in the default browser, and close automatically once the sign-in completes or the purchased USDC arrives at the wallet. Popups from those pages carry a standard browser user agent so Google no longer rejects the embedded sign-in, and the desktop IPC bridge is only exposed to the app's own pages, never to third-party checkout content.
 
 ### Fixed
 
 - Fixed buyers classifying unit-billed services (e.g. image generation) as free because their token pricing is zero: the free-usage gate now resolves the same provider + protocol billing route the seller uses, so paid image requests negotiate payment and record verified cost instead of rejecting the seller's usage claims.
 - Fixed a payment-integrity hole where a seller could claim image delivery (`NeedAuth` with positive unit billing cost) before the buyer received any response and get paid for undelivered images. Positive unit-billing claims are now rejected until the buyer has observed the delivered response; the buyer's own post-response authorization covers honest sellers.
+- Fixed seller health checks leaving rate-limited services advertised indefinitely. HTTP 429 responses now count toward the failure threshold, and a successful probe automatically restores the service.
 - Fixed the buyer proxy leaking `.buyer.state.*.json.tmp` files (each a full discovered-peers snapshot, ~1 MB) when the atomic state-file rename failed — common on Windows while a reader briefly holds `buyer.state.json` open. The rename is now retried, a failed write cleans up its temp file and logs the error instead of dropping the state update silently, and leftover temp files from earlier runs are swept at startup.
 - Fixed bursty buyer startups causing initial payment-channel reserves to fail when delegated seller accounts reject excess in-flight transactions. Sellers now retry transient transaction backpressure before acknowledging the channel.
 - Fixed seller health checks leaving unavailable upstreams advertised: HTTP 402 responses now count as failures, every failing service can be removed, and a provider with no healthy services is omitted from signed discovery metadata until a probe succeeds.
@@ -40,6 +43,24 @@ This project uses selective package publishing. Each release entry lists the pub
 - Fixed seller crashes when sending `PaymentRequired` to a buyer that disconnected before the payment terms could be delivered.
 - Fixed the buyer's Responses→Chat Completions request adapter to group parallel tool calls into a single assistant `tool_calls` message. Previously each call became its own assistant message, so strict chat-completions upstreams rejected multi-tool turns with `an assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'`.
 - Fixed the Responses request normalizer to drop non-message input items with no renderable text (e.g. Codex `reasoning` items) instead of converting them into empty user messages mid-history.
+
+## 2026-08-06 — Desktop 0.2.3
+
+### Desktop
+
+- `@antseed/desktop@0.2.3`
+
+### Added
+
+- The desktop now shows deposit progress as a fixed banner from any view — received → depositing → credited (with a transaction link), on top of every overlay including the Fun checkout modal — instead of only inside the deposit page. The main-process deposit watcher also keeps running for a while after the deposit page closes (slow background polling, ~30 min, re-armed by activity), so a card/Fun delivery landing after you navigate away is still swept into credits automatically.
+
+### Changed
+
+- The desktop Balance page's two deposit buttons (Credit Card / USDC on Base) are now a single full-width "Add Credits" button opening the Add-credits chooser, and the separate "Pay with card" options page (including the embedded Crossmint checkout) is removed — the Fun-led chooser is the deposit flow. Dropping Crossmint also cuts the renderer bundle roughly in half.
+
+### Fixed
+
+- Packaged desktop builds now ship with the Fun deposit checkout enabled — 0.2.2 resolved the Fun API key only from user config or a runtime environment variable, so the primary Deposit button never appeared for end users.
 
 ## 2026-08-06 — Desktop 0.2.2
 
