@@ -40,7 +40,7 @@ export function DepositProgressBanner() {
         window.clearTimeout(hideTimer.current);
         hideTimer.current = null;
       }
-      if (data.phase === 'waiting') {
+      if (data.phase === 'deferred') {
         setStatus((current) => current?.phase === 'credited' ? current : null);
         return;
       }
