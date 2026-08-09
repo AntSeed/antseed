@@ -56,7 +56,7 @@ By default, metadata is fetched from `http://{host}:{port}/metadata` (`metadataP
 ```json title="metadata structure"
 {
   "peerId": "a1b2c3d4...40 hex chars (EVM address)",
-  "version": 10,
+  "version": 12,
   "displayName": "Acme Inference - us-east-1",
   "publicAddress": "peer.example.com:6882",
   "providers": [{
@@ -76,6 +76,16 @@ By default, metadata is fetched from `http://{host}:{port}/metadata` (`metadataP
     },
     "serviceApiProtocols": {
       "claude-sonnet-4-6": ["anthropic-messages"]
+    },
+    "serviceCapabilities": {
+      "claude-sonnet-4-6": {
+        "contextWindow": 200000,
+        "maxOutputTokens": 64000,
+        "inputs": ["text", "image"],
+        "reasoning": true,
+        "toolUse": true,
+        "structuredOutput": true
+      }
     },
     "maxConcurrency": 5,
     "currentLoad": 2
@@ -97,6 +107,33 @@ By default, metadata is fetched from `http://{host}:{port}/metadata` (`metadataP
 ```
 
 Recommended category tags: `privacy`, `legal`, `uncensored`, `coding`, `finance`, `tee` (custom tags are allowed).
+
+Metadata v11 added `serviceUnitBillingModels`; v12 added `serviceCapabilities`. Image providers advertise `openai-images` and may attach an `output_images` billing model:
+
+```json
+{
+  "serviceApiProtocols": { "gpt-image-1": ["openai-images"] },
+  "serviceUnitBillingModels": {
+    "gpt-image-1": {
+      "openai-images": {
+        "version": 1,
+        "components": [
+          { "unit": "output_images", "priceUsd": 0.04 }
+        ]
+      }
+    }
+  },
+  "serviceCapabilities": {
+    "gpt-image-1": { "inputs": ["text", "image"] }
+  }
+}
+```
+
+Capability fields are optional; absence means unknown. Unit-billing components may match `model`, `size`, `quality`, or `resolution`. Discovery only includes capability and billing entries for services currently advertised by the provider.
+
+:::warning Metadata version compatibility
+Buyers reject metadata versions newer than they understand. A v10/v11 buyer therefore drops a v12 seller, while a v12 buyer continues to accept v10 and v11 sellers. Upgrade buyers before sellers using the [metadata v12 migration guide](/docs/guides/metadata-v12-upgrade).
+:::
 
 `publicAddress` is optional. When present, buyers should prefer it over the raw host learned from the DHT announcement. This is intended for deployments where DHT traffic exits from one IP but buyers must connect to another address, such as a Kubernetes load balancer.
 

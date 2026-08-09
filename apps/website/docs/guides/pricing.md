@@ -31,7 +31,7 @@ GET https://network.antseed.com/stats
 - No authentication. Returns `application/json`.
 - Refreshed as peers re-announce (typically every few minutes).
 - Same data that drives [`antseed.com/network`](https://antseed.com/network).
-- Schema version is exposed per peer as `version`. This page documents version `8`.
+- Schema version is exposed per peer as `version`. This page documents metadata v12.
 
 ```bash
 curl -s https://network.antseed.com/stats | jq '.peers[0]'
@@ -65,7 +65,7 @@ interface StatsResponse {
 ```ts
 interface PeerMetadata {
   peerId: string;             // 40-char lowercase hex
-  version: number;            // metadata schema version (currently 8)
+  version: number;            // metadata schema version (currently 12)
   displayName?: string;
   providers: ProviderAnnouncement[];
   region: string;             // e.g. "us-east", "unknown"
@@ -89,6 +89,8 @@ interface ProviderAnnouncement {
   servicePricing?: Record<string, TokenPricing>;           // per-model price overrides
   serviceCategories?: Record<string, string[]>;            // tags like "chat", "code", "reasoning"
   serviceApiProtocols?: Record<string, ApiProtocol[]>;     // e.g. ["openai-chat-completions"]
+  serviceUnitBillingModels?: Record<string, Record<string, UnitBillingModelV1>>;
+  serviceCapabilities?: Record<string, ServiceCapabilities>;
   maxConcurrency: number;
   currentLoad: number;                                     // active requests right now
 }
@@ -106,6 +108,34 @@ interface TokenPricing {
 }
 ```
 
+## Image unit pricing
+
+Token pricing does not describe image-generation cost. Image sellers may announce `serviceUnitBillingModels` keyed by service and API protocol:
+
+```json
+{
+  "serviceApiProtocols": {
+    "gpt-image-1": ["openai-images"]
+  },
+  "serviceUnitBillingModels": {
+    "gpt-image-1": {
+      "openai-images": {
+        "version": 1,
+        "components": [
+          {
+            "unit": "output_images",
+            "priceUsd": 0.04,
+            "match": { "size": "1024x1024", "quality": "medium" }
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+The final charge is based on delivered image outputs, not merely the requested `n`. Buyers recompute the charge from the signed billing model and observed response. A positive output count that matches no component is rejected rather than treated as free.
+
 ## Example response (truncated)
 
 ```json
@@ -113,7 +143,7 @@ interface TokenPricing {
   "peers": [
     {
       "peerId": "4668854ba3e8b094e6f48fbeb59cec1cfde162f2",
-      "version": 8,
+      "version": 12,
       "displayName": "Dark Signal",
       "region": "unknown",
       "timestamp": 1777194949071,
@@ -183,7 +213,7 @@ If a user asks for AntSeed prices:
 ## Stability
 
 - The `/stats` URL is stable. Breaking schema changes will ship under a new path (e.g. `/v9/stats`); the `version` field on each peer record signals the schema in use.
-- New optional fields may appear without a version bump. Treat unknown fields as opaque.
+- New optional fields may appear in the HTTP indexer envelope without a path change. Signed peer-metadata binary extensions require a metadata version bump; buyers reject versions newer than they understand.
 - Field semantics will not change in place — if a unit or meaning changes, the field is renamed.
 
 ## See also

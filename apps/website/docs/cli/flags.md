@@ -38,6 +38,16 @@ The same value can be supplied with `ANTSEED_BUYER_METADATA_FETCH_TIMEOUT_MS`. P
 
 The same value can be supplied with `ANTSEED_BASE_RPC_URL`. Precedence is: flag, environment variable, `payments.crypto.rpcUrl`, built-in default.
 
+Service capabilities and image unit pricing are durable service configuration rather than `seller start` flags. Set them with:
+
+```bash
+antseed config seller add-service <provider> <service> \
+  --capabilities '<json>' \
+  --unit-billing-models '<json>'
+```
+
+They can also be entered in `antseed seller setup` or written directly under `seller.providers.<provider>.services.<service>` in `config.json`.
+
 ## Metrics Flags
 
 `antseed metrics serve` also supports:

@@ -15,7 +15,7 @@ antseed seller setup                  Initialize seller onboarding
 antseed buyer start                   Start the buyer proxy
 ```
 
-In normal use, you configure the node once with `antseed seller setup` or `antseed config ...`, then start it later with `antseed seller start` or `antseed buyer start` without repeating flags every time. Secrets such as API keys stay in env vars; provider definitions, services, pricing, and `baseUrl` live in `~/.antseed/config.json`.
+In normal use, you configure the node once with `antseed seller setup` or `antseed config ...`, then start it later with `antseed seller start` or `antseed buyer start` without repeating flags every time. Secrets such as API keys stay in env vars; provider definitions, services, pricing, capabilities, unit billing, and `baseUrl` live in `~/.antseed/config.json`.
 
 ### Providing (selling)
 
@@ -56,3 +56,27 @@ antseed network bootstrap             Run a dedicated DHT bootstrap node
 antseed buyer connection              Manage connection settings
 antseed dev                           Run seller + buyer locally for testing
 ```
+
+### Service configuration
+
+`antseed config seller add-service <provider> <serviceId>` supports:
+
+| Option | Purpose |
+|---|---|
+| `--upstream <model>` | Map the public service ID to an upstream model ID |
+| `--input`, `--cached`, `--output` | Token prices in USD per million tokens |
+| `--categories <csv>` | Discovery tags |
+| `--capabilities <json>` | Model hints such as context window, input modalities, reasoning, and tool use |
+| `--unit-billing-models <json>` | Per-protocol non-token billing, currently used by `openai-images` |
+| `--base-url <url>` | Set the provider-wide upstream base URL |
+
+```bash
+antseed config seller add-service openai gpt-image-1 \
+  --input 0 --output 0 \
+  --capabilities '{"inputs":["text","image"]}' \
+  --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.04}]}}'
+```
+
+`antseed seller setup` exposes the same capability and unit-billing fields interactively. `antseed seller start` warns if unit billing is configured for a plugin that does not support it. Image services are not health-probed because a meaningful probe would incur an upstream generation charge.
+
+Before deploying this CLI version to sellers, follow the [metadata v12 upgrade order](/docs/guides/metadata-v12-upgrade): upgrade buyers first, then sellers.
