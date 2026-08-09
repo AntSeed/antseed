@@ -17,6 +17,7 @@ import type { VerificationStorage } from "./verification/storage.js";
 import type { VerificationSampler } from "./verification/samples.js";
 import type { BuyerFreeUsageManager } from "./payments/buyer-free-usage-manager.js";
 import { verifyResponseAuth } from "./verification/response-auth.js";
+import { isFreeUnitBillingModel } from "./billing/unit.js";
 import type { ServiceApiProtocol } from "./types/service-api.js";
 import {
   detectRequestServiceApiProtocol,
@@ -565,6 +566,15 @@ function shouldExpectResponseAuth(
 }
 
 function isPeerServiceFree(peer: PeerInfo, service: string): boolean {
+  // Unit-billed services (e.g. images) can have zero token pricing but still
+  // charge per unit — mirror the seller's isFreeService gate.
+  for (const providerModels of Object.values(peer.providerServiceUnitBillingModels ?? {})) {
+    const serviceModels = providerModels.services[service];
+    if (!serviceModels) continue;
+    for (const model of Object.values(serviceModels)) {
+      if (model && !isFreeUnitBillingModel(model)) return false;
+    }
+  }
   const servicePricing = findPeerServicePricing(peer, service);
   if (!servicePricing) return false;
   return (servicePricing.inputUsdPerMillion ?? 0) === 0
