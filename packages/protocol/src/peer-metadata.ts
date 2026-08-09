@@ -28,8 +28,8 @@ export interface TokenPricingUsdPerMillion {
   cachedInputUsdPerMillion?: number;
 }
 
-export const SERVICE_CAPABILITY_INPUTS = ["text", "image", "audio", "video", "pdf"] as const;
-export type ServiceCapabilityInput = (typeof SERVICE_CAPABILITY_INPUTS)[number];
+export const SERVICE_CAPABILITY_MODALITIES = ["text", "image", "audio", "video", "pdf"] as const;
+export type ServiceCapabilityModality = (typeof SERVICE_CAPABILITY_MODALITIES)[number];
 
 /**
  * Per-service model capability hints announced by sellers. Every field is
@@ -41,18 +41,30 @@ export interface ServiceCapabilities {
   /** Maximum output tokens per response. */
   maxOutputTokens?: number;
   /** Supported input modalities. */
-  inputs?: ServiceCapabilityInput[];
+  inputs?: ServiceCapabilityModality[];
+  /** Produced output modalities (e.g. `["image"]` for image services). */
+  outputs?: ServiceCapabilityModality[];
   /** Supports extended thinking / reasoning effort. */
   reasoning?: boolean;
   /** Supports tool use / function calling. */
   toolUse?: boolean;
   /** Supports structured output / JSON schema responses. */
   structuredOutput?: boolean;
+  /**
+   * Request-body parameter names the service accepts beyond the protocol's
+   * required fields, e.g. `["background", "output_format", "seed"]` for an
+   * image service. A hint for buyers, not an enforced contract.
+   */
+  supportedParameters?: string[];
 }
 
 /** Ceiling for announced contextWindow / maxOutputTokens (fits the u32 wire field). */
 export const MAX_CAPABILITY_TOKEN_COUNT = 1_000_000_000;
-const SERVICE_CAPABILITY_INPUT_SET = new Set<string>(SERVICE_CAPABILITY_INPUTS);
+export const MAX_CAPABILITY_SUPPORTED_PARAMETERS = 32;
+export const MAX_CAPABILITY_PARAMETER_LENGTH = 32;
+/** Lowercase snake_case, matching OpenAI-style request body field names. */
+const CAPABILITY_PARAMETER_PATTERN = /^[a-z][a-z0-9_]*$/;
+const SERVICE_CAPABILITY_MODALITY_SET = new Set<string>(SERVICE_CAPABILITY_MODALITIES);
 
 /**
  * Field-level validation for one service's capability entry. Shared by the
@@ -68,25 +80,48 @@ export function validateServiceCapabilityFields(caps: ServiceCapabilities): stri
       errors.push(`${key} must be a positive integer <= ${MAX_CAPABILITY_TOKEN_COUNT}`);
     }
   }
-  if (caps.inputs !== undefined) {
-    if (!Array.isArray(caps.inputs)) {
-      errors.push("inputs must be an array");
-    } else {
-      const seen = new Set<string>();
-      for (const input of caps.inputs) {
-        if (!SERVICE_CAPABILITY_INPUT_SET.has(input)) {
-          errors.push(`Unsupported input modality "${input}"`);
-        } else if (seen.has(input)) {
-          errors.push(`Duplicate input modality "${input}"`);
-        }
-        seen.add(input);
+  for (const key of ["inputs", "outputs"] as const) {
+    const modalities = caps[key];
+    if (modalities === undefined) continue;
+    const label = key === "inputs" ? "input" : "output";
+    if (!Array.isArray(modalities)) {
+      errors.push(`${key} must be an array`);
+      continue;
+    }
+    const seen = new Set<string>();
+    for (const modality of modalities) {
+      if (!SERVICE_CAPABILITY_MODALITY_SET.has(modality)) {
+        errors.push(`Unsupported ${label} modality "${modality}"`);
+      } else if (seen.has(modality)) {
+        errors.push(`Duplicate ${label} modality "${modality}"`);
       }
+      seen.add(modality);
     }
   }
   for (const key of ["reasoning", "toolUse", "structuredOutput"] as const) {
     const value = caps[key];
     if (value !== undefined && typeof value !== "boolean") {
       errors.push(`${key} must be a boolean`);
+    }
+  }
+  if (caps.supportedParameters !== undefined) {
+    if (!Array.isArray(caps.supportedParameters)) {
+      errors.push("supportedParameters must be an array");
+    } else {
+      if (caps.supportedParameters.length > MAX_CAPABILITY_SUPPORTED_PARAMETERS) {
+        errors.push(`supportedParameters count ${caps.supportedParameters.length} exceeds max ${MAX_CAPABILITY_SUPPORTED_PARAMETERS}`);
+      }
+      const seen = new Set<string>();
+      for (const parameter of caps.supportedParameters) {
+        if (typeof parameter !== "string" || !CAPABILITY_PARAMETER_PATTERN.test(parameter)) {
+          errors.push(`Supported parameter ${JSON.stringify(parameter)} must be lowercase snake_case`);
+        } else if (parameter.length > MAX_CAPABILITY_PARAMETER_LENGTH) {
+          errors.push(`Supported parameter "${parameter}" exceeds ${MAX_CAPABILITY_PARAMETER_LENGTH} characters`);
+        } else if (seen.has(parameter)) {
+          errors.push(`Duplicate supported parameter "${parameter}"`);
+        }
+        seen.add(parameter);
+      }
     }
   }
   return errors;

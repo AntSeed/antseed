@@ -199,10 +199,10 @@ Each service entry supports five optional fields:
 | `upstreamModel` | string | The model id the provider plugin will forward requests to. Defaults to the service id itself. |
 | `categories` | string[] | Normie-friendly tags announced in peer metadata (e.g. `chat`, `coding`, `math`, `study`, `fast`, `free`). |
 | `pricing` | object | Per-service pricing in USD per million tokens. If omitted, the provider's `defaults` are used. |
-| `capabilities` | object | Optional discovery hints: `contextWindow`, `maxOutputTokens`, `inputs`, `reasoning`, `toolUse`, and `structuredOutput`. |
+| `capabilities` | object | Optional discovery hints: `contextWindow`, `maxOutputTokens`, `inputs`, `outputs`, `reasoning`, `toolUse`, `structuredOutput`, and `supportedParameters`. |
 | `unitBillingModels` | object | Optional per-protocol non-token pricing. Currently consumed by the `openai` provider for `openai-images` services. |
 
-Capabilities are hints, not enforced limits. Omitted fields mean “unknown.” Supported input values are `text`, `image`, `audio`, `video`, and `pdf`.
+Capabilities are hints, not enforced limits. Omitted fields mean “unknown.” Supported modality values for `inputs` and `outputs` are `text`, `image`, `audio`, `video`, and `pdf`. `supportedParameters` lists extra request-body parameter names the service accepts (lowercase snake_case, e.g. `background`, `output_format`, `seed`) — useful for image services where clients otherwise have to guess. The `openai` provider automatically advertises `outputs: ["image"]` for `openai-images` services; explicit config extends or overrides that default per field.
 
 For image services, a flat per-image price looks like this:
 
@@ -273,7 +273,7 @@ Capabilities and image unit pricing are JSON options:
 antseed config seller add-service openai gpt-image-1 \
   --input 0 --output 0 \
   --categories image,creative \
-  --capabilities '{"inputs":["text","image"],"structuredOutput":false}' \
+  --capabilities '{"inputs":["text","image"],"outputs":["image"],"supportedParameters":["background","output_format","quality","size"]}' \
   --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.04}]}}'
 ```
 

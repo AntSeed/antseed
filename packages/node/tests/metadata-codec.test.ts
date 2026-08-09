@@ -215,6 +215,9 @@ describe('encodeMetadata / decodeMetadata', () => {
             },
             'gpt-image-1': {
               inputs: ['text'],
+              outputs: ['image'],
+              // Deliberately unsorted: the codec canonicalizes to code-unit order.
+              supportedParameters: ['size', 'background', 'quality', 'output_format'],
             },
           },
           maxConcurrency: 3,
@@ -231,7 +234,14 @@ describe('encodeMetadata / decodeMetadata', () => {
       toolUse: false,
     });
     expect(decoded.providers[0]!.serviceCapabilities?.['gpt-5.5']?.structuredOutput).toBeUndefined();
-    expect(decoded.providers[0]!.serviceCapabilities?.['gpt-image-1']).toEqual({ inputs: ['text'] });
+    expect(decoded.providers[0]!.serviceCapabilities?.['gpt-image-1']).toEqual({
+      inputs: ['text'],
+      outputs: ['image'],
+      supportedParameters: ['background', 'output_format', 'quality', 'size'],
+    });
+    // Decoded metadata re-encodes to the same bytes, so signatures verify.
+    expect(encodeMetadataForSigning({ ...decoded, signature: original.signature }))
+      .toEqual(encodeMetadataForSigning(original));
 
     const changed = makeMetadata({
       ...original,

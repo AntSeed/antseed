@@ -157,8 +157,12 @@ export function parseServiceCapabilitiesJson(raw: string | undefined, key = 'ANT
       if (caps[field] !== undefined) normalized[field] = caps[field] as number;
     }
     if (caps.inputs !== undefined) normalized.inputs = caps.inputs as ServiceCapabilities['inputs'];
+    if (caps.outputs !== undefined) normalized.outputs = caps.outputs as ServiceCapabilities['outputs'];
     for (const field of ['reasoning', 'toolUse', 'structuredOutput'] as const) {
       if (caps[field] !== undefined) normalized[field] = caps[field] as boolean;
+    }
+    if (caps.supportedParameters !== undefined) {
+      normalized.supportedParameters = caps.supportedParameters as ServiceCapabilities['supportedParameters'];
     }
     // Same validator the announce path uses, so anything accepted here is
     // guaranteed to announce instead of failing silently at announce time.

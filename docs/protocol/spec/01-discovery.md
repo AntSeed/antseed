@@ -104,7 +104,7 @@ MIN_SUPPORTED_METADATA_VERSION = 10
 | serviceCategories  | object   | Optional per-service map `{ [service]: string[] }` with lowercase tags |
 | serviceApiProtocols| object   | Optional per-service map `{ [service]: string[] }` of supported service API protocols |
 | serviceUnitBillingModels | object | v11+. Optional map `{ [service]: { [protocol]: UnitBillingModelV1 } }` for non-token usage such as `output_images` |
-| serviceCapabilities | object | v12+. Optional map `{ [service]: ServiceCapabilities }` with context/output limits, input modalities, reasoning, tool-use, and structured-output hints |
+| serviceCapabilities | object | v12+. Optional map `{ [service]: ServiceCapabilities }` with context/output limits, input/output modalities, reasoning, tool-use, structured-output, and supported-parameter hints |
 | maxConcurrency   | number   | Maximum concurrent requests (>= 1)                           |
 | currentLoad      | number   | Current number of active requests                            |
 
@@ -162,7 +162,12 @@ Per provider (repeated providerCount times):
     Components encode unit id, float32 USD price, and optional match key/value pairs.
   [serviceCapabilityEntryCount : 1 byte uint8 ]    // v12+
   Per capability entry:
-    [service][presenceBits:1][optional uint32 token limits][optional input bitset:1][boolean value bits:1]
+    [service][presenceBits:1][optional uint32 token limits][optional input bitset:1][optional output bitset:1][boolean value bits:1][optional supported parameters]
+    Presence bits: contextWindow(0), maxOutputTokens(1), inputs(2), reasoning(3),
+    toolUse(4), structuredOutput(5), outputs(6), supportedParameters(7).
+    Input/output bitsets index into ["text","image","audio","video","pdf"].
+    Supported parameters encode as [count:1] then per parameter [len:1][utf8],
+    in code-unit sorted order so re-encoding decoded metadata is byte-stable.
   [maxConcurrency: 2 bytes  uint16  big-endian ]
   [currentLoad   : 2 bytes  uint16  big-endian ]
 

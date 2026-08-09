@@ -72,7 +72,9 @@ No mandatory config-file migration is required. Existing seller services continu
   "capabilities": {
     "contextWindow": 200000,
     "inputs": ["text", "image"],
-    "toolUse": true
+    "outputs": ["image"],
+    "toolUse": true,
+    "supportedParameters": ["background", "output_format", "quality", "size"]
   },
   "unitBillingModels": {
     "openai-images": {

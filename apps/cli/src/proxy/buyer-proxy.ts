@@ -42,6 +42,7 @@ import {
   SYSTEM_ROUTED_MODEL_HEADER,
 } from './request-utils.js'
 import {
+  findUnannouncedRequestParameters,
   getExplicitProviderOverride,
   getExplicitPeerIdOverride,
   resolvePeerRoutePlan,
@@ -1945,6 +1946,24 @@ export class BuyerProxy {
 
     if (!selectedRoutePlan) {
       return { done: false, statusCode: 502, responseBody: Buffer.from('No compatible provider route'), responseHeaders: { 'content-type': 'text/plain' }, errorMessage: null }
+    }
+
+    // Soft supportedParameters check — only for direct routes, since a
+    // protocol transform rebuilds the body for the target protocol anyway.
+    if (!selectedRoutePlan.selection?.requiresTransform) {
+      const unannounced = findUnannouncedRequestParameters(
+        selectedPeer,
+        selectedRoutePlan.provider,
+        requestedService,
+        requestProtocol,
+        serializedReq,
+      )
+      if (unannounced.length > 0) {
+        log(
+          `Warning: request to "${requestedService}" carries parameters peer ${selectedPeer.peerId.slice(0, 12)} `
+          + `did not announce for this service: ${unannounced.join(', ')} — the upstream may ignore or reject them`,
+        )
+      }
     }
 
     const {
