@@ -1,5 +1,5 @@
-import type { DomainVerificationClaim, DomainVerificationMethod, GithubVerificationClaim, PeerMetadata, ServiceCapabilities, ServiceCapabilityInput } from "./peer-metadata.js";
-import { SERVICE_CAPABILITY_INPUTS } from "./peer-metadata.js";
+import type { DomainVerificationClaim, DomainVerificationMethod, GithubVerificationClaim, PeerMetadata, ServiceCapabilities, ServiceCapabilityModality } from "./peer-metadata.js";
+import { SERVICE_CAPABILITY_MODALITIES } from "./peer-metadata.js";
 import type { PeerOffering } from "../types/capability.js";
 import { hexToBytes, bytesToHex } from "../utils/hex.js";
 import { toPeerId } from "../types/peer.js";
@@ -462,15 +462,38 @@ const CAP_HAS_INPUTS = 1 << 2;
 const CAP_HAS_REASONING = 1 << 3;
 const CAP_HAS_TOOL_USE = 1 << 4;
 const CAP_HAS_STRUCTURED_OUTPUT = 1 << 5;
+const CAP_HAS_OUTPUTS = 1 << 6;
+const CAP_HAS_SUPPORTED_PARAMETERS = 1 << 7;
 const CAP_PRESENCE_MASK = CAP_HAS_CONTEXT_WINDOW | CAP_HAS_MAX_OUTPUT_TOKENS | CAP_HAS_INPUTS
-  | CAP_HAS_REASONING | CAP_HAS_TOOL_USE | CAP_HAS_STRUCTURED_OUTPUT;
+  | CAP_HAS_REASONING | CAP_HAS_TOOL_USE | CAP_HAS_STRUCTURED_OUTPUT
+  | CAP_HAS_OUTPUTS | CAP_HAS_SUPPORTED_PARAMETERS;
 // Value bits for the boolean-values byte. Deliberately a separate namespace
 // from the presence bits: presence says "announced", value says "true".
 const CAP_VAL_REASONING = 1 << 0;
 const CAP_VAL_TOOL_USE = 1 << 1;
 const CAP_VAL_STRUCTURED_OUTPUT = 1 << 2;
 const CAP_VALUE_MASK = CAP_VAL_REASONING | CAP_VAL_TOOL_USE | CAP_VAL_STRUCTURED_OUTPUT;
-const CAP_INPUTS_MASK = (1 << SERVICE_CAPABILITY_INPUTS.length) - 1;
+const CAP_MODALITY_MASK = (1 << SERVICE_CAPABILITY_MODALITIES.length) - 1;
+
+function encodeModalityBits(modalities: ServiceCapabilityModality[]): number {
+  let bits = 0;
+  for (const modality of modalities) {
+    const id = SERVICE_CAPABILITY_MODALITIES.indexOf(modality);
+    if (id >= 0) bits |= 1 << id;
+  }
+  return bits;
+}
+
+function decodeModalityBits(bits: number, label: string): ServiceCapabilityModality[] {
+  if (bits & ~CAP_MODALITY_MASK) {
+    throw new Error(`Unknown service capability ${label} bits 0x${bits.toString(16)}`);
+  }
+  const modalities: ServiceCapabilityModality[] = [];
+  for (let id = 0; id < SERVICE_CAPABILITY_MODALITIES.length; id += 1) {
+    if (bits & (1 << id)) modalities.push(SERVICE_CAPABILITY_MODALITIES[id]!);
+  }
+  return modalities;
+}
 
 function encodeServiceCapabilities(
   parts: Uint8Array[],
@@ -490,9 +513,11 @@ function encodeServiceCapabilities(
     if (caps.contextWindow !== undefined) presence |= CAP_HAS_CONTEXT_WINDOW;
     if (caps.maxOutputTokens !== undefined) presence |= CAP_HAS_MAX_OUTPUT_TOKENS;
     if (caps.inputs !== undefined) presence |= CAP_HAS_INPUTS;
+    if (caps.outputs !== undefined) presence |= CAP_HAS_OUTPUTS;
     if (caps.reasoning !== undefined) presence |= CAP_HAS_REASONING;
     if (caps.toolUse !== undefined) presence |= CAP_HAS_TOOL_USE;
     if (caps.structuredOutput !== undefined) presence |= CAP_HAS_STRUCTURED_OUTPUT;
+    if (caps.supportedParameters !== undefined) presence |= CAP_HAS_SUPPORTED_PARAMETERS;
     parts.push(new Uint8Array([presence]));
     if (caps.contextWindow !== undefined) {
       const buf = new ArrayBuffer(4);
@@ -505,18 +530,28 @@ function encodeServiceCapabilities(
       parts.push(new Uint8Array(buf));
     }
     if (caps.inputs !== undefined) {
-      let inputBits = 0;
-      for (const input of caps.inputs) {
-        const id = SERVICE_CAPABILITY_INPUTS.indexOf(input);
-        if (id >= 0) inputBits |= 1 << id;
-      }
-      parts.push(new Uint8Array([inputBits]));
+      parts.push(new Uint8Array([encodeModalityBits(caps.inputs)]));
+    }
+    if (caps.outputs !== undefined) {
+      parts.push(new Uint8Array([encodeModalityBits(caps.outputs)]));
     }
     let boolBits = 0;
     if (caps.reasoning === true) boolBits |= CAP_VAL_REASONING;
     if (caps.toolUse === true) boolBits |= CAP_VAL_TOOL_USE;
     if (caps.structuredOutput === true) boolBits |= CAP_VAL_STRUCTURED_OUTPUT;
     parts.push(new Uint8Array([boolBits]));
+    if (caps.supportedParameters !== undefined) {
+      // Code-unit sort for the same reason as the entry sort above: buyers
+      // verify signatures by re-encoding decoded metadata.
+      const parameters = [...caps.supportedParameters].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+      if (parameters.length > 255) {
+        throw new Error(`Too many supported parameters (${parameters.length})`);
+      }
+      parts.push(new Uint8Array([parameters.length]));
+      for (const parameter of parameters) {
+        pushUtf8(parts, parameter);
+      }
+    }
   }
 }
 
@@ -556,16 +591,13 @@ function decodeServiceCapabilities(
     }
     if (presence & CAP_HAS_INPUTS) {
       checkBounds(offset, 1, data.length);
-      const inputBits = data[offset]!;
+      caps.inputs = decodeModalityBits(data[offset]!, "input");
       offset += 1;
-      if (inputBits & ~CAP_INPUTS_MASK) {
-        throw new Error(`Unknown service capability input bits 0x${inputBits.toString(16)}`);
-      }
-      const inputs: ServiceCapabilityInput[] = [];
-      for (let id = 0; id < SERVICE_CAPABILITY_INPUTS.length; id += 1) {
-        if (inputBits & (1 << id)) inputs.push(SERVICE_CAPABILITY_INPUTS[id]!);
-      }
-      caps.inputs = inputs;
+    }
+    if (presence & CAP_HAS_OUTPUTS) {
+      checkBounds(offset, 1, data.length);
+      caps.outputs = decodeModalityBits(data[offset]!, "output");
+      offset += 1;
     }
     checkBounds(offset, 1, data.length);
     const boolBits = data[offset]!;
@@ -576,6 +608,18 @@ function decodeServiceCapabilities(
     if (presence & CAP_HAS_REASONING) caps.reasoning = (boolBits & CAP_VAL_REASONING) !== 0;
     if (presence & CAP_HAS_TOOL_USE) caps.toolUse = (boolBits & CAP_VAL_TOOL_USE) !== 0;
     if (presence & CAP_HAS_STRUCTURED_OUTPUT) caps.structuredOutput = (boolBits & CAP_VAL_STRUCTURED_OUTPUT) !== 0;
+    if (presence & CAP_HAS_SUPPORTED_PARAMETERS) {
+      checkBounds(offset, 1, data.length);
+      const parameterCount = data[offset]!;
+      offset += 1;
+      const parameters: string[] = [];
+      for (let p = 0; p < parameterCount; p += 1) {
+        const [parameter, parameterOffset] = readUtf8(data, offset, checkBounds);
+        offset = parameterOffset;
+        parameters.push(parameter);
+      }
+      caps.supportedParameters = parameters;
+    }
     serviceCapabilities[serviceName] = caps;
   }
   setOffset(offset);

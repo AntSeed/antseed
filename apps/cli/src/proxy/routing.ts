@@ -1,5 +1,6 @@
 import type { PeerInfo, SerializedHttpRequest } from '@antseed/node'
 import {
+  extractRequestBodyFields,
   inferProviderDefaultServiceApiProtocols,
   selectTargetProtocolForRequest,
   type ServiceApiProtocol,
@@ -202,6 +203,47 @@ export function selectCandidatePeersForRouting(
     candidatePeers,
     routePlanByPeerId,
   }
+}
+
+// Protocol-core request fields that are never flagged against a peer's
+// announced supportedParameters: the announced list describes optional
+// extras, not the fields every request on that protocol carries.
+const PROTOCOL_BASELINE_FIELDS: Partial<Record<ServiceApiProtocol, readonly string[]>> = {
+  'openai-images': ['model', 'prompt', 'image', 'mask', 'n', 'stream'],
+  'openai-chat-completions': ['model', 'messages', 'stream'],
+  'openai-responses': ['model', 'input', 'stream'],
+  'anthropic-messages': ['model', 'messages', 'max_tokens', 'stream'],
+}
+
+/**
+ * Soft pre-flight check against the peer's announced `supportedParameters`
+ * capability: returns request-body parameter names the peer did not announce
+ * for the routed service. Empty when the peer announces no list (absence
+ * means unknown, not unsupported) or the body is not parseable. Callers log
+ * a warning — never reject — since the list is a hint, not a contract.
+ */
+export function findUnannouncedRequestParameters(
+  peer: PeerInfo,
+  provider: string,
+  requestedService: string | null,
+  requestProtocol: ServiceApiProtocol | null,
+  request: SerializedHttpRequest,
+): string[] {
+  const normalizedService = requestedService?.trim().toLowerCase()
+  if (!requestProtocol || !normalizedService) return []
+
+  const providerKey = Object.keys(peer.providerServiceCapabilities ?? {})
+    .find((key) => key.toLowerCase() === provider.toLowerCase())
+  const services = providerKey ? peer.providerServiceCapabilities?.[providerKey]?.services : undefined
+  if (!services) return []
+  const serviceKey = Object.keys(services).find((key) => key.toLowerCase() === normalizedService)
+  const announced = serviceKey ? services[serviceKey]?.supportedParameters : undefined
+  if (!announced || announced.length === 0) return []
+
+  const fields = extractRequestBodyFields(request.headers, request.body)
+  if (!fields) return []
+  const allowed = new Set<string>([...announced, ...(PROTOCOL_BASELINE_FIELDS[requestProtocol] ?? [])])
+  return Object.keys(fields).filter((key) => !allowed.has(key))
 }
 
 export function pickProviderForPeer(peer: PeerInfo, request: SerializedHttpRequest): string {

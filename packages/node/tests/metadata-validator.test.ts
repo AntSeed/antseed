@@ -358,7 +358,9 @@ describe('validateMetadata', () => {
           contextWindow: 200_000,
           maxOutputTokens: 16_384,
           inputs: ['text', 'image'],
+          outputs: ['text'],
           reasoning: true,
+          supportedParameters: ['seed', 'temperature'],
         },
       },
       maxConcurrency: 1,
@@ -379,6 +381,8 @@ describe('validateMetadata', () => {
             'gpt-5.5': {
               contextWindow: -5,
               inputs: ['text', 'hologram' as any, 'text'],
+              outputs: ['hologram' as any],
+              supportedParameters: ['Output_Format' as any, 'seed', 'seed'],
             },
             'not-announced': { contextWindow: 1000 },
           },
@@ -398,6 +402,18 @@ describe('validateMetadata', () => {
         expect.objectContaining({
           field: 'providers[0].serviceCapabilities.gpt-5.5',
           message: expect.stringContaining('Duplicate'),
+        }),
+        expect.objectContaining({
+          field: 'providers[0].serviceCapabilities.gpt-5.5',
+          message: expect.stringContaining('output modality "hologram"'),
+        }),
+        expect.objectContaining({
+          field: 'providers[0].serviceCapabilities.gpt-5.5',
+          message: expect.stringContaining('"Output_Format" must be lowercase snake_case'),
+        }),
+        expect.objectContaining({
+          field: 'providers[0].serviceCapabilities.gpt-5.5',
+          message: expect.stringContaining('Duplicate supported parameter "seed"'),
         }),
         expect.objectContaining({
           field: 'providers[0].serviceCapabilities.not-announced',

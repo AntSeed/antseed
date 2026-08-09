@@ -153,6 +153,37 @@ describe('provider-openai plugin', () => {
     });
   });
 
+  it('defaults image services to outputs: ["image"] capabilities', async () => {
+    const provider = await plugin.createProvider({
+      OPENAI_API_KEY: 'sk-test-key',
+      ANTSEED_ALLOWED_SERVICES: 'cover-art,gpt-5.5',
+      ANTSEED_SERVICE_ALIAS_MAP_JSON: '{"cover-art":"gpt-image-1"}',
+    });
+
+    expect(provider.serviceCapabilities?.['cover-art']).toEqual({ outputs: ['image'] });
+    expect(provider.serviceCapabilities?.['gpt-5.5']).toBeUndefined();
+  });
+
+  it('lets explicit capability config override the image-service default', async () => {
+    const provider = await plugin.createProvider({
+      OPENAI_API_KEY: 'sk-test-key',
+      ANTSEED_ALLOWED_SERVICES: 'cover-art',
+      ANTSEED_SERVICE_ALIAS_MAP_JSON: '{"cover-art":"gpt-image-1"}',
+      ANTSEED_SERVICE_CAPABILITIES_JSON: JSON.stringify({
+        'cover-art': {
+          inputs: ['text', 'image'],
+          supportedParameters: ['background', 'output_format', 'quality', 'size'],
+        },
+      }),
+    });
+
+    expect(provider.serviceCapabilities?.['cover-art']).toEqual({
+      outputs: ['image'],
+      inputs: ['text', 'image'],
+      supportedParameters: ['background', 'output_format', 'quality', 'size'],
+    });
+  });
+
   it('advertises grok imagine services as openai-images', async () => {
     const provider = await plugin.createProvider({
       OPENAI_API_KEY: 'sk-test-key',
