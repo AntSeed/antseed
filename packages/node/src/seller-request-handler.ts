@@ -337,9 +337,28 @@ export class SellerRequestHandler {
               debugLog(`[SellerHandler] Caught up before 402 for ${buyerPeerId.slice(0, 12)}... (spent=${spent} accepted=${accepted})`);
             }
           }
-          const requestCostEstimate = requestBilling
-            ? this._estimateRequestCostUsdc(request, requestBilling, requestPricing, unitBillingModel)
-            : null;
+          let requestCostEstimate: ReturnType<SellerRequestHandler['_estimateRequestCostUsdc']> = null;
+          try {
+            requestCostEstimate = requestBilling
+              ? this._estimateRequestCostUsdc(request, requestBilling, requestPricing, unitBillingModel)
+              : null;
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            debugWarn(`[SellerHandler] Rejecting unbillable request: ${message}`);
+            mux.sendProxyResponse({
+              requestId: request.requestId,
+              statusCode: 503,
+              headers: { 'content-type': 'application/json' },
+              body: new TextEncoder().encode(JSON.stringify({
+                error: {
+                  message: `Seller billing configuration cannot price this request: ${message}`,
+                  type: 'billing_configuration_error',
+                  code: 'billing_tier_unmatched',
+                },
+              })),
+            });
+            return;
+          }
           const estimatedRequestCost = requestCostEstimate?.cost ?? 0n;
           const remainingLockedReserve = reserveMax > spent ? reserveMax - spent : 0n;
           const reserveEstimateOverdraft = this._deps.reserveEstimateOverdraftUsdc;

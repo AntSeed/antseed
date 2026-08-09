@@ -884,7 +884,7 @@ describe('BuyerPaymentManager', () => {
     const imageModel = {
       version: 1 as const,
       components: [
-        { unit: 'output_images' as const, priceUsd: 0.04, match: { size: '1024x1024' } },
+        { unit: 'output_images' as const, priceUsd: 0.004, match: { size: '1024x1024' } },
       ],
     };
     manager.trackRequestBilling('req-image-hybrid', {
@@ -903,7 +903,7 @@ describe('BuyerPaymentManager', () => {
     mux.sentSpendingAuths.length = 0;
 
     const tokenCost = 3_750n; // 1000 input at $3/M + 50 output at $15/M
-    const imageCost = 80_000n;
+    const imageCost = 8_000n;
     const totalCost = tokenCost + imageCost;
     await manager.handleNeedAuth(sellerPeerId, {
       channelId,
@@ -919,7 +919,6 @@ describe('BuyerPaymentManager', () => {
       billingUsage: {
         version: 1,
         units: { output_images: '2' },
-        costUsdc: imageCost.toString(),
       },
     }, mux);
 

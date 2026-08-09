@@ -53,10 +53,10 @@ describe("unit billing runtime", () => {
         1.4,
         { units: { output_images: 1 } },
       ),
-    ).toThrow(/recomputed to zero/);
+    ).toThrow(/No billing component matched/);
   });
 
-  it("computes final output image cost from response data length", () => {
+  it("computes final output image cost from delivered response images", () => {
     const result = computeFinalUnitBilling(
       imageModel,
       imageContext,
@@ -64,7 +64,9 @@ describe("unit billing runtime", () => {
         requestId: "req-1",
         statusCode: 200,
         headers: { "content-type": "application/json" },
-        body: new TextEncoder().encode(JSON.stringify({ data: [{}, {}] })),
+        body: new TextEncoder().encode(JSON.stringify({
+          data: [{ b64_json: "first" }, { url: "https://example.test/second.png" }],
+        })),
       },
       {
         requestedImages: 4,
@@ -90,7 +92,9 @@ describe("unit billing runtime", () => {
         requestId: "req-1",
         statusCode: 200,
         headers: { "content-type": "application/json" },
-        body: new TextEncoder().encode(JSON.stringify({ data: [{}, {}] })),
+        body: new TextEncoder().encode(JSON.stringify({
+          data: [{ b64_json: "first" }, { b64_json: "second" }],
+        })),
       },
       {
         requestedImages: 1,
@@ -102,6 +106,28 @@ describe("unit billing runtime", () => {
 
     expect(result.usage.units.output_images).toBe(1);
     expect(result.costUsdc).toBe(40_000n);
+  });
+
+  it("does not bill placeholder response entries as delivered images", () => {
+    const result = computeFinalUnitBilling(
+      imageModel,
+      imageContext,
+      {
+        requestId: "req-placeholder",
+        statusCode: 200,
+        headers: { "content-type": "application/json" },
+        body: new TextEncoder().encode(JSON.stringify({ data: [{}, { b64_json: "" }] })),
+      },
+      {
+        requestedImages: 2,
+        model: "gpt-image-2",
+        size: "1024x1024",
+        quality: "low",
+      },
+    );
+
+    expect(result.usage.units.output_images).toBe(0);
+    expect(result.costUsdc).toBe(0n);
   });
 
   it("rejects seller unit usage above the requested output image count", () => {
@@ -338,13 +364,42 @@ describe("unit billing runtime", () => {
 
     expect(captured.context).toMatchObject({
       serviceApiProtocol: "openai-images",
-      attributes: { model: "gpt-image-2", size: "1024x1024" },
+      attributes: { model: "gpt-image-2", size: "1024x1024", quality: "auto" },
       unitLimits: { output_images: 2 },
     });
     expect(captured.requestFacts).toEqual({
       model: "gpt-image-2",
       size: "1024x1024",
+      quality: "auto",
       requestedImages: 2,
     });
+  });
+
+  it("normalizes omitted image tiers and invalid counts before billing", () => {
+    const request: SerializedHttpRequest = {
+      requestId: "req-image-defaults",
+      method: "POST",
+      path: "/v1/images/generations",
+      headers: { "content-type": "application/json" },
+      body: new TextEncoder().encode(JSON.stringify({
+        model: "gpt-image-2",
+        n: 0,
+      })),
+    };
+
+    const captured = captureUnitBillingContext({
+      sellerPeerId: "a".repeat(40),
+      provider: "openai",
+      service: "gpt-image-2",
+      serviceApiProtocol: "openai-images",
+      request,
+    });
+
+    expect(captured.context.attributes).toEqual({
+      model: "gpt-image-2",
+      size: "auto",
+      quality: "auto",
+    });
+    expect(captured.context.unitLimits).toEqual({ output_images: 1 });
   });
 });

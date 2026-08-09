@@ -23,6 +23,7 @@ import type {
   UnitBillingUsageReportV1,
 } from "../types/billing.js";
 import {
+  UNIT_BILLING_UNITS_V1,
   isUnitBillingMatchKeyV1,
   isUnitBillingUnitV1,
   isValidUnitBillingComponentV1,
@@ -106,12 +107,22 @@ export function evaluateUnitBilling(
   }
 
   let totalUsd = 0;
+  const matchedUnits = new Set<UnitBillingUnitV1>();
   for (const component of model.components) {
     const unitCount = normalizedUnitCount(usage, component.unit);
     if (unitCount <= 0) continue;
     if (!componentMatchesContext(component, context)) continue;
 
+    matchedUnits.add(component.unit);
     totalUsd += unitCount * component.priceUsd;
+  }
+
+  if (model.components.length > 0) {
+    for (const unit of UNIT_BILLING_UNITS_V1) {
+      if (normalizedUnitCount(usage, unit) > 0 && !matchedUnits.has(unit)) {
+        throw new Error(`No billing component matched ${unit} for the request context`);
+      }
+    }
   }
 
   return usdToMicroUsdc(totalUsd);
@@ -256,7 +267,7 @@ export function validateUnitBillingUsage(
       `Seller unit billing cost ${sellerCost} exceeds buyer estimate ${buyerEstimate}`,
     );
   }
-  return sellerCost;
+  return buyerEstimate;
 }
 
 export function usdToMicroUsdc(value: number): bigint {

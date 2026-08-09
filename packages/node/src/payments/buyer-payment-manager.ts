@@ -1117,6 +1117,16 @@ export class BuyerPaymentManager {
       // recomputed from the token fields and service pricing below.
       try {
         const sellerTotalCost = BigInt(payload.lastRequestCost ?? '0');
+        const sellerFreshExplicit = payload.freshInputTokens != null
+          ? BigInt(payload.freshInputTokens)
+          : null;
+        const freshIn = sellerFreshExplicit ?? (reportedCachedInputTokens > 0n
+          ? BigInt(Math.max(0, Number(reportedInputTokens) - Number(reportedCachedInputTokens)))
+          : reportedInputTokens);
+        const pricing = requestBilling?.tokenPricing ?? this.getSessionPricing(sellerPeerId, buyerService);
+        const tokenEstimate = pricing
+          ? computeCostUsdc(Number(freshIn), Number(reportedOutputTokens), pricing, Number(reportedCachedInputTokens))
+          : 0n;
         let acceptedUnitCost = 0n;
         if (!requestBilling || !unitBillingModel) {
           if (sellerTotalCost > 0n) {
@@ -1135,26 +1145,19 @@ export class BuyerPaymentManager {
             ?? (sellerTotalCost > 0n && payload.requestId
               ? await this._waitForObservedUnitUsage(payload.requestId, OBSERVED_UNIT_USAGE_WAIT_MS)
               : undefined);
+          const claimedUnitCost = sellerTotalCost > tokenEstimate
+            ? sellerTotalCost - tokenEstimate
+            : 0n;
           acceptedUnitCost = validateUnitBillingUsage(
             unitBillingModel,
             requestBilling.context,
             payload.billingUsage,
-            sellerTotalCost,
+            claimedUnitCost,
             this._costTolerance,
             observedUnitUsage,
           );
         }
 
-        const sellerFreshExplicit = payload.freshInputTokens != null
-          ? BigInt(payload.freshInputTokens)
-          : null;
-        const freshIn = sellerFreshExplicit ?? (reportedCachedInputTokens > 0n
-          ? BigInt(Math.max(0, Number(reportedInputTokens) - Number(reportedCachedInputTokens)))
-          : reportedInputTokens);
-        const pricing = requestBilling?.tokenPricing ?? this.getSessionPricing(sellerPeerId, buyerService);
-        const tokenEstimate = pricing
-          ? computeCostUsdc(Number(freshIn), Number(reportedOutputTokens), pricing, Number(reportedCachedInputTokens))
-          : 0n;
         const buyerEstimate = tokenEstimate + acceptedUnitCost;
         if (sellerTotalCost > 0n && buyerEstimate <= 0n) {
           throw new Error("Positive NeedAuth total cost recomputed to zero");

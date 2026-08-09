@@ -140,10 +140,11 @@ export function extractUsage(parsed: Record<string, unknown>): TokenUsage {
 export function extractProviderResponseFacts(parsed: Record<string, unknown>): ProviderResponseFacts {
   const tokenUsage = extractUsage(parsed);
   const data = Array.isArray(parsed.data) ? parsed.data : undefined;
+  const outputImages = data?.filter(isDeliveredImageOutput).length;
 
   return {
     tokenUsage,
-    ...(data !== undefined ? { outputImages: data.length } : {}),
+    ...(outputImages !== undefined ? { outputImages } : {}),
   };
 }
 
@@ -154,17 +155,22 @@ export function extractImageRequestFacts(input: {
 }): ImageRequestFacts {
   const body = input.body ?? {};
   const facts: ImageRequestFacts = {};
+  const normalizedPath = input.path?.split('?')[0];
+  const isOpenAiImageEndpoint = normalizedPath === '/v1/images/generations'
+    || normalizedPath === '/v1/images/edits';
 
   setStringAttr(facts, 'model', body.model ?? body.service);
   for (const key of ['size', 'quality', 'resolution'] as const) {
     setStringAttr(facts, key, body[key] ?? body[toCamelCase(key)]);
   }
+  if (isOpenAiImageEndpoint) {
+    facts.size ??= 'auto';
+    facts.quality ??= 'auto';
+  }
   // OpenAI image generation/edits default to one output image when `n` is omitted.
-  const normalizedPath = input.path?.split('?')[0];
-  const looksLikeOpenAiImageGeneration = normalizedPath === '/v1/images/generations'
-    || normalizedPath === '/v1/images/edits'
+  const looksLikeOpenAiImageGeneration = isOpenAiImageEndpoint
     || hasImageOutputAttributes(facts);
-  const requestedImages = toOptionalNonNegativeInt(body.n) ?? (looksLikeOpenAiImageGeneration ? 1 : undefined);
+  const requestedImages = toOptionalPositiveInt(body.n) ?? (looksLikeOpenAiImageGeneration ? 1 : undefined);
 
   if (requestedImages !== undefined) {
     facts.requestedImages = requestedImages;
@@ -235,11 +241,11 @@ export function extractRequestBodyFields(
   return parseJsonObject(body);
 }
 
-function toOptionalNonNegativeInt(value: unknown): number | undefined {
+function toOptionalPositiveInt(value: unknown): number | undefined {
   if (value === undefined || value === null) return undefined;
   const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) return undefined;
-  return Math.floor(parsed);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) return undefined;
+  return parsed;
 }
 
 function setStringAttr(target: ImageRequestFacts, key: keyof Omit<ImageRequestFacts, 'requestedImages'>, value: unknown): void {
@@ -256,6 +262,16 @@ function hasImageOutputAttributes(attrs: ImageRequestFacts): boolean {
   return attrs.size !== undefined
     || attrs.quality !== undefined
     || attrs.resolution !== undefined;
+}
+
+function isDeliveredImageOutput(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  return isNonEmptyString(item.b64_json) || isNonEmptyString(item.url);
+}
+
+function isNonEmptyString(value: unknown): boolean {
+  return typeof value === 'string' && value.trim().length > 0;
 }
 
 function toStringContentBlock(block: Record<string, unknown>): string {

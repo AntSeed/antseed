@@ -239,7 +239,23 @@ describe('image/provider fact extraction', () => {
       method: 'POST',
       body: { model: 'gpt-image-1' },
     });
-    expect(facts).toEqual({ model: 'gpt-image-1', requestedImages: 1 });
+    expect(facts).toEqual({
+      model: 'gpt-image-1',
+      size: 'auto',
+      quality: 'auto',
+      requestedImages: 1,
+    });
+  });
+
+  it('normalizes invalid image counts to the endpoint default', () => {
+    for (const n of [0, -1, 1.5, '0', Number.MAX_SAFE_INTEGER + 1]) {
+      const facts = extractImageRequestFacts({
+        path: '/v1/images/generations',
+        method: 'POST',
+        body: { model: 'gpt-image-1', n },
+      });
+      expect(facts.requestedImages).toBe(1);
+    }
   });
 
   it('extracts billing fields from a multipart image edits body, skipping file parts', () => {
@@ -280,6 +296,7 @@ describe('image/provider fact extraction', () => {
     expect(facts).toEqual({
       model: 'gpt-image-1',
       size: '1024x1024',
+      quality: 'auto',
       requestedImages: 2,
     });
   });
@@ -320,6 +337,20 @@ describe('image/provider fact extraction', () => {
     });
     expect(facts.tokenUsage.inputTokens).toBe(120);
     expect(facts.tokenUsage.cachedInputTokens).toBe(10);
+    expect(facts.outputImages).toBe(2);
+  });
+
+  it('counts only response entries that contain delivered image data', () => {
+    const facts = extractProviderResponseFacts({
+      data: [
+        {},
+        null,
+        { b64_json: '' },
+        { url: '   ' },
+        { b64_json: 'encoded-image' },
+        { url: 'https://example.test/image.png' },
+      ],
+    });
     expect(facts.outputImages).toBe(2);
   });
 });
