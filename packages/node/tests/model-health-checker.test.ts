@@ -3,6 +3,7 @@ import {
   ModelHealthChecker,
   buildHealthProbeRequest,
   classifyProbeStatus,
+  supportsHealthProbe,
   type ModelHealthEvent,
 } from '../src/health/model-health-checker.js';
 import type { Provider } from '../src/interfaces/seller-provider.js';
@@ -87,6 +88,13 @@ describe('buildHealthProbeRequest', () => {
       }],
       max_output_tokens: 16,
     });
+  });
+
+  it('does not fall back to a chat probe for image services', () => {
+    expect(supportsHealthProbe('openai-images')).toBe(false);
+    expect(() => buildHealthProbeRequest('gpt-image-1', 'openai-images')).toThrow(
+      'Health probes are not supported for openai-images services',
+    );
   });
 });
 
@@ -299,6 +307,30 @@ describe('ModelHealthChecker', () => {
 
     await checker.runSweep();
     expect(paths.sort()).toEqual(['/v1/chat/completions', '/v1/messages']);
+  });
+
+  it('skips image services without calling the provider or changing availability', async () => {
+    const handleRequest = vi.fn(async (req: SerializedHttpRequest) => jsonResponse(req.requestId, 500));
+    const provider = makeProvider({
+      services: ['gpt-image-1'],
+      serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
+      onRequest: handleRequest,
+    });
+    const checker = new ModelHealthChecker({ targets: [{ provider }], failureThreshold: 1 });
+
+    await checker.runSweep();
+
+    expect(handleRequest).not.toHaveBeenCalled();
+    expect(provider.services).toEqual(['gpt-image-1']);
+    expect(checker.getSnapshot()).toEqual([
+      expect.objectContaining({
+        service: 'gpt-image-1',
+        advertised: true,
+        consecutiveFailures: 0,
+        lastStatusCode: null,
+        lastDetail: 'Skipped health probe for unsupported protocol openai-images',
+      }),
+    ]);
   });
 
   it('reports state via getSnapshot', async () => {

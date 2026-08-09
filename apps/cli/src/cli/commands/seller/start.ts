@@ -760,9 +760,11 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         process.exit(1)
       }
 
-      // Periodic model health self-checks: probe every advertised service with
-      // a 1-token completion; unadvertise services that keep failing and
+      // Periodic model health self-checks: probe supported text services with
+      // a minimal completion; unadvertise services that keep failing and
       // restore them when they recover, refreshing signed metadata each time.
+      // Image services are skipped because a meaningful probe would generate
+      // and charge for an image.
       let healthChecker: ModelHealthChecker | null = null
       if (healthCheckEnabled && registeredProviders.length > 0) {
         healthChecker = new ModelHealthChecker({
