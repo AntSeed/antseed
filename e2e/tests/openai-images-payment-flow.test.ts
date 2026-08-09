@@ -334,8 +334,8 @@ describe('OpenAI SDK integration: Images API payment flow over buyer proxy', () 
     expect(provider.requestCount).toBe(1);
     expect(provider.lastRequest?.path).toBe('/v1/images/generations');
 
-    // Discovery should carry the signed v11 billing model all the way into buyer peer info.
-    expect(discoveredSeller.metadata?.version).toBe(11);
+    // Discovery should carry the signed v12 billing model all the way into buyer peer info.
+    expect(discoveredSeller.metadata?.version).toBe(12);
     const billingComponent = discoveredSeller
       .providerServiceUnitBillingModels?.openai?.services['gpt-image-2']?.['openai-images']?.components[0];
     expect(billingComponent).toMatchObject({

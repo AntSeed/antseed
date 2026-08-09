@@ -1,5 +1,5 @@
 import type { DomainVerificationMethod, PeerMetadata } from "./peer-metadata.js";
-import { METADATA_VERSION, MIN_SUPPORTED_METADATA_VERSION, SERVICE_CAPABILITY_INPUTS, SERVICE_UNIT_BILLING_METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS } from "./peer-metadata.js";
+import { METADATA_VERSION, MIN_SUPPORTED_METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS, validateServiceCapabilityFields } from "./peer-metadata.js";
 import { encodeMetadata } from "./metadata-codec.js";
 import { MAX_PUBLIC_ADDRESS_LENGTH, parsePublicAddress } from "./public-address.js";
 import { validateUnitBillingModelV1 } from "../billing/unit.js";
@@ -25,9 +25,7 @@ export const MAX_BILLING_MATCH_ENTRIES_PER_COMPONENT = 3;
 export const MAX_BILLING_MATCH_VALUE_BYTES = 32;
 export const MAX_PEER_CAPABILITIES = 16;
 export const MAX_PEER_CAPABILITY_LENGTH = 64;
-/** Ceiling for announced contextWindow / maxOutputTokens (fits the u32 wire field). */
-export const MAX_CAPABILITY_TOKEN_COUNT = 1_000_000_000;
-const SERVICE_CAPABILITY_INPUT_SET = new Set<string>(SERVICE_CAPABILITY_INPUTS);
+export { MAX_CAPABILITY_TOKEN_COUNT } from "./peer-metadata.js";
 const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const DOMAIN_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const DOMAIN_VERIFICATION_METHODS = new Set<DomainVerificationMethod>(["dns-txt", "https-well-known"]);
@@ -599,10 +597,10 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
     }
 
     if (p.serviceCapabilities !== undefined) {
-      if (metadata.version < SERVICE_UNIT_BILLING_METADATA_VERSION) {
+      if (metadata.version < SERVICE_CAPABILITIES_METADATA_VERSION) {
         errors.push({
           field: `providers[${i}].serviceCapabilities`,
-          message: `Service capabilities require metadata version ${SERVICE_UNIT_BILLING_METADATA_VERSION}`,
+          message: `Service capabilities require metadata version ${SERVICE_CAPABILITIES_METADATA_VERSION}`,
         });
       }
       const capabilityEntries = Object.entries(p.serviceCapabilities);
@@ -630,36 +628,8 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
           errors.push({ field, message: "Service capability entry must be an object" });
           continue;
         }
-        for (const key of ["contextWindow", "maxOutputTokens"] as const) {
-          const value = caps[key];
-          if (value === undefined) continue;
-          if (!Number.isSafeInteger(value) || value <= 0 || value > MAX_CAPABILITY_TOKEN_COUNT) {
-            errors.push({
-              field: `${field}.${key}`,
-              message: `${key} must be a positive integer <= ${MAX_CAPABILITY_TOKEN_COUNT}`,
-            });
-          }
-        }
-        if (caps.inputs !== undefined) {
-          if (!Array.isArray(caps.inputs)) {
-            errors.push({ field: `${field}.inputs`, message: "inputs must be an array" });
-          } else {
-            const seen = new Set<string>();
-            for (const input of caps.inputs) {
-              if (!SERVICE_CAPABILITY_INPUT_SET.has(input)) {
-                errors.push({ field: `${field}.inputs`, message: `Unsupported input modality "${input}"` });
-              } else if (seen.has(input)) {
-                errors.push({ field: `${field}.inputs`, message: `Duplicate input modality "${input}"` });
-              }
-              seen.add(input);
-            }
-          }
-        }
-        for (const key of ["reasoning", "toolUse", "structuredOutput"] as const) {
-          const value = caps[key];
-          if (value !== undefined && typeof value !== "boolean") {
-            errors.push({ field: `${field}.${key}`, message: `${key} must be a boolean` });
-          }
+        for (const message of validateServiceCapabilityFields(caps)) {
+          errors.push({ field, message });
         }
       }
     }

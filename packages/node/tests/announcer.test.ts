@@ -151,7 +151,7 @@ describe('PeerAnnouncer metadata versions', () => {
     await announcer.announce();
 
     const metadata = announcer.getLatestMetadata();
-    expect(metadata?.version).toBe(11);
+    expect(metadata?.version).toBe(12);
     expect(metadata?.providers[0]?.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']).toEqual({
       version: 1,
       components: [{ unit: 'output_images', priceUsd: 0.04 }],
@@ -167,7 +167,7 @@ describe('PeerAnnouncer metadata versions', () => {
     await announcer.announce();
 
     const metadata = announcer.getLatestMetadata();
-    expect(metadata?.version).toBe(11);
+    expect(metadata?.version).toBe(12);
     expect(metadata?.providers[0]?.serviceUnitBillingModels).toBeUndefined();
   });
 });

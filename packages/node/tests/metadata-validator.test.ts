@@ -14,7 +14,7 @@ import {
   MAX_SERVICE_API_PROTOCOLS_PER_SERVICE,
   MAX_PEER_CAPABILITIES,
 } from '../src/discovery/metadata-validator.js';
-import { METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
+import { METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
 
 function validMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   return {
@@ -366,12 +366,12 @@ describe('validateMetadata', () => {
     } satisfies PeerMetadata['providers'][number];
 
     expect(validateMetadata(validMetadata({
-      version: SERVICE_UNIT_BILLING_METADATA_VERSION,
+      version: SERVICE_CAPABILITIES_METADATA_VERSION,
       providers: [capsProvider],
     }))).toEqual([]);
 
     const badErrors = validateMetadata(validMetadata({
-      version: SERVICE_UNIT_BILLING_METADATA_VERSION,
+      version: SERVICE_CAPABILITIES_METADATA_VERSION,
       providers: [
         {
           ...capsProvider,
@@ -388,14 +388,15 @@ describe('validateMetadata', () => {
     expect(badErrors).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          field: 'providers[0].serviceCapabilities.gpt-5.5.contextWindow',
+          field: 'providers[0].serviceCapabilities.gpt-5.5',
+          message: expect.stringContaining('contextWindow'),
         }),
         expect.objectContaining({
-          field: 'providers[0].serviceCapabilities.gpt-5.5.inputs',
+          field: 'providers[0].serviceCapabilities.gpt-5.5',
           message: expect.stringContaining('hologram'),
         }),
         expect.objectContaining({
-          field: 'providers[0].serviceCapabilities.gpt-5.5.inputs',
+          field: 'providers[0].serviceCapabilities.gpt-5.5',
           message: expect.stringContaining('Duplicate'),
         }),
         expect.objectContaining({
@@ -406,9 +407,9 @@ describe('validateMetadata', () => {
     );
   });
 
-  it('rejects service capabilities on pre-v11 metadata', () => {
+  it('rejects service capabilities on pre-v12 metadata', () => {
     const errors = validateMetadata(validMetadata({
-      version: 10,
+      version: SERVICE_UNIT_BILLING_METADATA_VERSION,
       providers: [
         {
           provider: 'openai',
@@ -424,7 +425,7 @@ describe('validateMetadata', () => {
       expect.arrayContaining([
         expect.objectContaining({
           field: 'providers[0].serviceCapabilities',
-          message: expect.stringContaining('require metadata version 11'),
+          message: expect.stringContaining('require metadata version 12'),
         }),
       ]),
     );

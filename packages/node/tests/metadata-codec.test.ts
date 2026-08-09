@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { encodeMetadata, decodeMetadata, encodeMetadataForSigning } from '../src/discovery/metadata-codec.js';
-import { METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
+import { METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
 
 function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   return {
@@ -197,9 +197,9 @@ describe('encodeMetadata / decodeMetadata', () => {
     expect(encodeMetadataForSigning(changed)).not.toEqual(encodeMetadataForSigning(original));
   });
 
-  it('round-trips v11 service capabilities and signs capability bytes', () => {
+  it('round-trips v12 service capabilities and signs capability bytes', () => {
     const original = makeMetadata({
-      version: SERVICE_UNIT_BILLING_METADATA_VERSION,
+      version: SERVICE_CAPABILITIES_METADATA_VERSION,
       providers: [
         {
           provider: 'openai',

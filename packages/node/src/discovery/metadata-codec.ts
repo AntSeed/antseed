@@ -28,6 +28,7 @@ const DOMAIN_VERIFICATION_METHOD_IDS: Record<DomainVerificationMethod, number> =
 };
 const DOMAIN_VERIFICATION_METHODS_BY_ID: DomainVerificationMethod[] = ["dns-txt", "https-well-known"];
 const SERVICE_UNIT_BILLING_METADATA_VERSION = 11;
+const SERVICE_CAPABILITIES_METADATA_VERSION = 12;
 const UNIT_BILLING_UNITS_BY_ID: UnitBillingUnitV1[] = [...UNIT_BILLING_UNITS_V1];
 const UNIT_BILLING_UNIT_IDS = new Map<UnitBillingUnitV1, number>(UNIT_BILLING_UNITS_BY_ID.map((unit, index) => [unit, index]));
 const UNIT_BILLING_MATCH_KEYS_BY_ID: UnitBillingMatchKeyV1[] = [...UNIT_BILLING_MATCH_KEYS_V1];
@@ -218,6 +219,8 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
 
     if (metadata.version >= SERVICE_UNIT_BILLING_METADATA_VERSION) {
       encodeServiceUnitBillingModels(parts, p.serviceUnitBillingModels);
+    }
+    if (metadata.version >= SERVICE_CAPABILITIES_METADATA_VERSION) {
       encodeServiceCapabilities(parts, p.serviceCapabilities);
     }
 
@@ -459,13 +462,27 @@ const CAP_HAS_INPUTS = 1 << 2;
 const CAP_HAS_REASONING = 1 << 3;
 const CAP_HAS_TOOL_USE = 1 << 4;
 const CAP_HAS_STRUCTURED_OUTPUT = 1 << 5;
+const CAP_PRESENCE_MASK = CAP_HAS_CONTEXT_WINDOW | CAP_HAS_MAX_OUTPUT_TOKENS | CAP_HAS_INPUTS
+  | CAP_HAS_REASONING | CAP_HAS_TOOL_USE | CAP_HAS_STRUCTURED_OUTPUT;
+// Value bits for the boolean-values byte. Deliberately a separate namespace
+// from the presence bits: presence says "announced", value says "true".
+const CAP_VAL_REASONING = 1 << 0;
+const CAP_VAL_TOOL_USE = 1 << 1;
+const CAP_VAL_STRUCTURED_OUTPUT = 1 << 2;
+const CAP_VALUE_MASK = CAP_VAL_REASONING | CAP_VAL_TOOL_USE | CAP_VAL_STRUCTURED_OUTPUT;
+const CAP_INPUTS_MASK = (1 << SERVICE_CAPABILITY_INPUTS.length) - 1;
 
 function encodeServiceCapabilities(
   parts: Uint8Array[],
   serviceCapabilities: PeerMetadata["providers"][number]["serviceCapabilities"],
 ): void {
+  // Code-unit sort, not localeCompare: buyers verify signatures by re-encoding
+  // decoded metadata, so entry order must not depend on the verifier's locale.
   const entries = Object.entries(serviceCapabilities ?? {})
-    .sort(([a], [b]) => a.localeCompare(b));
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  if (entries.length > 255) {
+    throw new Error(`Too many service capability entries (${entries.length})`);
+  }
   parts.push(new Uint8Array([entries.length]));
   for (const [serviceName, caps] of entries) {
     pushUtf8(parts, serviceName);
@@ -496,9 +513,9 @@ function encodeServiceCapabilities(
       parts.push(new Uint8Array([inputBits]));
     }
     let boolBits = 0;
-    if (caps.reasoning === true) boolBits |= CAP_HAS_REASONING;
-    if (caps.toolUse === true) boolBits |= CAP_HAS_TOOL_USE;
-    if (caps.structuredOutput === true) boolBits |= CAP_HAS_STRUCTURED_OUTPUT;
+    if (caps.reasoning === true) boolBits |= CAP_VAL_REASONING;
+    if (caps.toolUse === true) boolBits |= CAP_VAL_TOOL_USE;
+    if (caps.structuredOutput === true) boolBits |= CAP_VAL_STRUCTURED_OUTPUT;
     parts.push(new Uint8Array([boolBits]));
   }
 }
@@ -520,6 +537,12 @@ function decodeServiceCapabilities(
     checkBounds(offset, 1, data.length);
     const presence = data[offset]!;
     offset += 1;
+    if (presence & ~CAP_PRESENCE_MASK) {
+      // Unknown bits would decode into a struct that re-encodes to different
+      // bytes and fails signature verification anyway — reject explicitly so
+      // additive extensions are forced through a metadata version bump.
+      throw new Error(`Unknown service capability presence bits 0x${presence.toString(16)}`);
+    }
     const caps: ServiceCapabilities = {};
     if (presence & CAP_HAS_CONTEXT_WINDOW) {
       checkBounds(offset, 4, data.length);
@@ -535,6 +558,9 @@ function decodeServiceCapabilities(
       checkBounds(offset, 1, data.length);
       const inputBits = data[offset]!;
       offset += 1;
+      if (inputBits & ~CAP_INPUTS_MASK) {
+        throw new Error(`Unknown service capability input bits 0x${inputBits.toString(16)}`);
+      }
       const inputs: ServiceCapabilityInput[] = [];
       for (let id = 0; id < SERVICE_CAPABILITY_INPUTS.length; id += 1) {
         if (inputBits & (1 << id)) inputs.push(SERVICE_CAPABILITY_INPUTS[id]!);
@@ -544,9 +570,12 @@ function decodeServiceCapabilities(
     checkBounds(offset, 1, data.length);
     const boolBits = data[offset]!;
     offset += 1;
-    if (presence & CAP_HAS_REASONING) caps.reasoning = (boolBits & CAP_HAS_REASONING) !== 0;
-    if (presence & CAP_HAS_TOOL_USE) caps.toolUse = (boolBits & CAP_HAS_TOOL_USE) !== 0;
-    if (presence & CAP_HAS_STRUCTURED_OUTPUT) caps.structuredOutput = (boolBits & CAP_HAS_STRUCTURED_OUTPUT) !== 0;
+    if (boolBits & ~CAP_VALUE_MASK) {
+      throw new Error(`Unknown service capability value bits 0x${boolBits.toString(16)}`);
+    }
+    if (presence & CAP_HAS_REASONING) caps.reasoning = (boolBits & CAP_VAL_REASONING) !== 0;
+    if (presence & CAP_HAS_TOOL_USE) caps.toolUse = (boolBits & CAP_VAL_TOOL_USE) !== 0;
+    if (presence & CAP_HAS_STRUCTURED_OUTPUT) caps.structuredOutput = (boolBits & CAP_VAL_STRUCTURED_OUTPUT) !== 0;
     serviceCapabilities[serviceName] = caps;
   }
   setOffset(offset);
@@ -834,7 +863,7 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     const serviceUnitBillingModels = version >= SERVICE_UNIT_BILLING_METADATA_VERSION
       ? decodeServiceUnitBillingModels(data, () => offset, (next) => { offset = next; }, checkBounds)
       : undefined;
-    const serviceCapabilities = version >= SERVICE_UNIT_BILLING_METADATA_VERSION
+    const serviceCapabilities = version >= SERVICE_CAPABILITIES_METADATA_VERSION
       ? decodeServiceCapabilities(data, () => offset, (next) => { offset = next; }, checkBounds)
       : undefined;
 
