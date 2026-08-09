@@ -10,14 +10,20 @@ import type { PeerConnection } from "./p2p/connection-manager.js";
 import type { ProxyMux } from "./proxy/proxy-mux.js";
 import { PaymentMux } from "./p2p/payment-mux.js";
 import { ConnectionState } from "./types/connection.js";
-import type { BuyerPaymentNegotiator } from "./payments/buyer-payment-negotiator.js";
+import type { BuyerPaymentNegotiator, SelectedBillingRoute } from "./payments/buyer-payment-negotiator.js";
 import { debugLog, debugWarn } from "./utils/debug.js";
 import type { VerificationMux } from "./verification/verification-mux.js";
 import type { VerificationStorage } from "./verification/storage.js";
 import type { VerificationSampler } from "./verification/samples.js";
 import type { BuyerFreeUsageManager } from "./payments/buyer-free-usage-manager.js";
 import { verifyResponseAuth } from "./verification/response-auth.js";
-import { tryParseJsonObject } from "./utils/json-codec.js";
+import { isFreeUnitBillingModel } from "./billing/unit.js";
+import type { ServiceApiProtocol } from "./types/service-api.js";
+import {
+  detectRequestServiceApiProtocol,
+  extractRequestBodyFields,
+  selectTargetProtocolForRequest,
+} from "@antseed/api-adapter";
 import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 } from "./types/protocol.js";
 
 export interface RequestStreamResponseMetadata {
@@ -111,8 +117,13 @@ export class BuyerRequestHandler {
     }
 
     // Track which service the buyer requested so auth validation uses buyer's own pricing.
-    const requestedService = options?.controlPlane ? undefined : extractServiceFromBody(req.body);
-    const isFreeService = requestedService ? isPeerServiceFree(peer, requestedService) : false;
+    const requestedService = options?.controlPlane ? undefined : extractServiceFromBody(req);
+    const billingRoute = requestedService ? selectBillingRoute(peer, req, requestedService) : null;
+    // Decide free vs paid from the resolved route (provider + protocol), mirroring
+    // the seller's per-request gate so both sides classify the request the same way.
+    const isFreeService = requestedService
+      ? (billingRoute ? isBillingRouteFree(billingRoute) : isPeerServiceFree(peer, requestedService))
+      : false;
     if (negotiator && requestedService) {
       if (isFreeService) {
         negotiator.trackFreeUsageRequestService(req.requestId, requestedService);
@@ -122,7 +133,20 @@ export class BuyerRequestHandler {
           debugWarn(`[BuyerRequest] Failed to prepare free usage channel for ${peer.peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
         }
       } else {
-        negotiator.bpm.trackRequestService(req.requestId, requestedService);
+        const requestProtocol = detectRequestServiceApiProtocol(req);
+        if (
+          requestProtocol === "openai-images"
+          && (
+            !billingRoute
+            || billingRoute.serviceApiProtocol !== "openai-images"
+            || (!billingRoute.unitModel && !isZeroTokenPricing(billingRoute.tokenPricing))
+          )
+        ) {
+          throw new Error(
+            `Cannot send paid openai-images request for service "${requestedService}" without service unit billing metadata`,
+          );
+        }
+        negotiator.trackRequestBillingContext(req, requestedService, billingRoute);
       }
     } else if (requestedService && isFreeService && this._deps.freeUsageManager) {
       this._deps.freeUsageManager.trackRequestService(req.requestId, requestedService);
@@ -409,12 +433,122 @@ export class BuyerRequestHandler {
   }
 }
 
-/** Extract the service/model name from a JSON request body, or undefined if not found. */
-function extractServiceFromBody(body: Uint8Array): string | undefined {
-  const parsed = tryParseJsonObject(body);
+/** Extract the service/model name from a JSON or multipart request body, or undefined if not found. */
+function extractServiceFromBody(request: SerializedHttpRequest): string | undefined {
+  const parsed = extractRequestBodyFields(request.headers, request.body);
   const service = parsed?.service ?? parsed?.model;
   if (typeof service === 'string' && service.length > 0) return service;
   return undefined;
+}
+
+function selectBillingRoute(
+  peer: PeerInfo,
+  request: SerializedHttpRequest,
+  service: string,
+): SelectedBillingRoute | null {
+  const provider = selectProviderForService(peer, service, extractRequestedProvider(request));
+  if (!provider) return null;
+  const serviceApiProtocol = selectProtocolForService(peer, provider, service, request);
+  const unitModel = peer.providerServiceUnitBillingModels?.[provider]?.services[service]?.[serviceApiProtocol];
+  const tokenPricing = selectTokenPricing(peer, provider, service);
+  return {
+    sellerPeerId: peer.peerId,
+    provider,
+    service,
+    serviceApiProtocol,
+    ...(unitModel ? { unitModel } : {}),
+    ...(tokenPricing ? { tokenPricing } : {}),
+  };
+}
+
+function selectProviderForService(
+  peer: PeerInfo,
+  service: string,
+  requestedProvider: string | null,
+): string | null {
+  const providers = peer.providers ?? [];
+  if (requestedProvider) {
+    const provider = providers.find(
+      (candidate) => candidate.toLowerCase() === requestedProvider,
+    );
+    if (provider && providerOffersService(peer, provider, service)) {
+      return provider;
+    }
+    return null;
+  }
+
+  const match = providers.find((provider) =>
+    providerOffersService(peer, provider, service),
+  );
+  return match ?? providers[0] ?? null;
+}
+
+function providerOffersService(peer: PeerInfo, provider: string, service: string): boolean {
+  return Boolean(
+    peer.providerPricing?.[provider]?.services?.[service]
+    || peer.providerServiceUnitBillingModels?.[provider]?.services[service]
+    || peer.providerServiceApiProtocols?.[provider]?.services[service]
+    || peer.providerServiceCategories?.[provider]?.services[service],
+  );
+}
+
+function selectProtocolForService(
+  peer: PeerInfo,
+  provider: string,
+  service: string,
+  request: SerializedHttpRequest,
+): ServiceApiProtocol {
+  const protocols =
+    peer.providerServiceApiProtocols?.[provider]?.services[service];
+  const billingProtocols = Object.keys(
+    peer.providerServiceUnitBillingModels?.[provider]?.services[service] ?? {},
+  ) as ServiceApiProtocol[];
+  const candidates = protocols ?? billingProtocols;
+  const requestProtocol = detectRequestServiceApiProtocol(request);
+  const selected = selectTargetProtocolForRequest(requestProtocol, candidates);
+  if (selected) return selected.targetProtocol;
+  if (protocols?.[0]) return protocols[0];
+  return billingProtocols[0] ?? "openai-chat-completions";
+}
+
+function selectTokenPricing(
+  peer: PeerInfo,
+  provider: string,
+  service: string,
+): SelectedBillingRoute["tokenPricing"] {
+  const providerPricing = peer.providerPricing?.[provider];
+  const pricing = providerPricing?.services?.[service] ?? providerPricing?.defaults;
+  if (pricing) return pricing;
+  return peerDefaultPricing(peer);
+}
+
+function peerDefaultPricing(peer: PeerInfo): SelectedBillingRoute["tokenPricing"] {
+  if (peer.defaultInputUsdPerMillion == null && peer.defaultOutputUsdPerMillion == null) {
+    return undefined;
+  }
+  return {
+    inputUsdPerMillion: peer.defaultInputUsdPerMillion ?? 0,
+    outputUsdPerMillion: peer.defaultOutputUsdPerMillion ?? 0,
+    cachedInputUsdPerMillion: peer.defaultCachedInputUsdPerMillion,
+  };
+}
+
+function isZeroTokenPricing(pricing: SelectedBillingRoute["tokenPricing"]): boolean {
+  return Boolean(
+    pricing
+    && pricing.inputUsdPerMillion === 0
+    && pricing.outputUsdPerMillion === 0
+    && (pricing.cachedInputUsdPerMillion == null || pricing.cachedInputUsdPerMillion === 0),
+  );
+}
+
+function extractRequestedProvider(request: SerializedHttpRequest): string | null {
+  const providers = Object.entries(request.headers)
+    .filter(([header]) => header.toLowerCase() === "x-antseed-provider")
+    .map(([, value]) => value.trim().toLowerCase())
+    .filter((value) => value.length > 0);
+
+  return providers[0] ?? null;
 }
 
 function stripStreamingHeader(response: SerializedHttpResponse): SerializedHttpResponse {
@@ -436,7 +570,28 @@ function shouldExpectResponseAuth(
   return peer.capabilities?.includes(CONNECTION_CAPABILITY_RESPONSE_AUTH_V1) === true;
 }
 
+/**
+ * Free/paid gate for a resolved billing route. Mirrors the seller's
+ * per-request gate (seller-request-handler isFreeService): free iff the
+ * resolved token pricing is zero AND the unit model resolved for the selected
+ * protocol is absent or free.
+ */
+function isBillingRouteFree(route: SelectedBillingRoute): boolean {
+  return isZeroTokenPricing(route.tokenPricing)
+    && (!route.unitModel || isFreeUnitBillingModel(route.unitModel));
+}
+
+/** Fallback gate when no billing route could be resolved for the service. */
 function isPeerServiceFree(peer: PeerInfo, service: string): boolean {
+  // Unit-billed services (e.g. images) can have zero token pricing but still
+  // charge per unit — stay conservative when any announced model is paid.
+  for (const providerModels of Object.values(peer.providerServiceUnitBillingModels ?? {})) {
+    const serviceModels = providerModels.services[service];
+    if (!serviceModels) continue;
+    for (const model of Object.values(serviceModels)) {
+      if (model && !isFreeUnitBillingModel(model)) return false;
+    }
+  }
   const servicePricing = findPeerServicePricing(peer, service);
   if (!servicePricing) return false;
   return (servicePricing.inputUsdPerMillion ?? 0) === 0

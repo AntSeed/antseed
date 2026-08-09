@@ -29,9 +29,17 @@ function makeBaseConfig(): AnnouncerConfig {
   return {
     identity: mockIdentity,
     dht: mockDht as unknown as AnnouncerConfig['dht'],
-    providers: [],
+    providers: [
+      {
+        provider: 'openai',
+        services: ['gpt-4.1'],
+        maxConcurrency: 5,
+      },
+    ],
     region: 'us',
-    pricing: new Map(),
+    pricing: new Map([
+      ['openai', { defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 1 } }],
+    ]),
     reannounceIntervalMs: 60_000,
     signalingPort: 0,
   };
@@ -110,5 +118,56 @@ describe('PeerAnnouncer capabilities', () => {
       CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
       CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
     ]);
+  });
+});
+
+describe('PeerAnnouncer metadata versions', () => {
+  it('announces current-version metadata carrying configured billing models', async () => {
+    const base = makeBaseConfig();
+    const announcer = new PeerAnnouncer({
+      ...base,
+      providers: [
+        {
+          provider: 'openai',
+          services: ['gpt-image-1'],
+          serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
+          serviceUnitBillingModels: {
+            'gpt-image-1': {
+              'openai-images': {
+                version: 1,
+                components: [{ unit: 'output_images', priceUsd: 0.04 }],
+              },
+            },
+          },
+          serviceCapabilities: {
+            'gpt-image-1': { inputs: ['text'] },
+            'unlisted-service': { contextWindow: 1000 },
+          },
+          maxConcurrency: 5,
+        },
+      ],
+    });
+
+    await announcer.announce();
+
+    const metadata = announcer.getLatestMetadata();
+    expect(metadata?.version).toBe(12);
+    expect(metadata?.providers[0]?.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']).toEqual({
+      version: 1,
+      components: [{ unit: 'output_images', priceUsd: 0.04 }],
+    });
+    // Capabilities for services outside providers[].services are dropped.
+    expect(metadata?.providers[0]?.serviceCapabilities).toEqual({
+      'gpt-image-1': { inputs: ['text'] },
+    });
+  });
+
+  it('announces current-version metadata without billing models when none are configured', async () => {
+    const announcer = new PeerAnnouncer(makeBaseConfig());
+    await announcer.announce();
+
+    const metadata = announcer.getLatestMetadata();
+    expect(metadata?.version).toBe(12);
+    expect(metadata?.providers[0]?.serviceUnitBillingModels).toBeUndefined();
   });
 });

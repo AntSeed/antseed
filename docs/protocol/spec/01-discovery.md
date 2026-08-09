@@ -67,7 +67,8 @@ Custom bootstrap nodes can be supplied and are merged (deduplicated by `host:por
 **Source:** `node/src/discovery/peer-metadata.ts`
 
 ```
-METADATA_VERSION = 10
+METADATA_VERSION = 12
+MIN_SUPPORTED_METADATA_VERSION = 10
 ```
 
 ### Data Structures
@@ -77,7 +78,7 @@ METADATA_VERSION = 10
 | Field       | Type                    | Description                             |
 |-------------|-------------------------|-----------------------------------------|
 | peerId      | PeerId (string)         | 40 hex chars (20-byte EVM address)      |
-| version     | number                  | Must equal `METADATA_VERSION` (10)      |
+| version     | number                  | Supported range is 10 through `METADATA_VERSION` (12) |
 | displayName | string                  | Optional human-readable node label      |
 | publicAddress | string                | Optional public `host:port` buyers should dial instead of the raw DHT source address |
 | providers   | ProviderAnnouncement[]  | List of provider offerings              |
@@ -102,6 +103,8 @@ METADATA_VERSION = 10
 | servicePricing     | object   | Optional per-service map `{ [service]: { inputUsdPerMillion, cachedInputUsdPerMillion?, outputUsdPerMillion } }` |
 | serviceCategories  | object   | Optional per-service map `{ [service]: string[] }` with lowercase tags |
 | serviceApiProtocols| object   | Optional per-service map `{ [service]: string[] }` of supported service API protocols |
+| serviceUnitBillingModels | object | v11+. Optional map `{ [service]: { [protocol]: UnitBillingModelV1 } }` for non-token usage such as `output_images` |
+| serviceCapabilities | object | v12+. Optional map `{ [service]: ServiceCapabilities }` with context/output limits, input modalities, reasoning, tool-use, and structured-output hints |
 | maxConcurrency   | number   | Maximum concurrent requests (>= 1)                           |
 | currentLoad      | number   | Current number of active requests                            |
 
@@ -153,6 +156,13 @@ Per provider (repeated providerCount times):
     Per protocol (repeated protocolCount times):
       [protocolLen : 1 byte uint8 ]
       [protocol    : N bytes UTF-8 ]
+  [serviceUnitBillingEntryCount : 1 byte uint8 ]   // v11+
+  Per unit billing entry:
+    [service][protocolId:1][modelVersion:1][componentCount:1][components...]
+    Components encode unit id, float32 USD price, and optional match key/value pairs.
+  [serviceCapabilityEntryCount : 1 byte uint8 ]    // v12+
+  Per capability entry:
+    [service][presenceBits:1][optional uint32 token limits][optional input bitset:1][boolean value bits:1]
   [maxConcurrency: 2 bytes  uint16  big-endian ]
   [currentLoad   : 2 bytes  uint16  big-endian ]
 
@@ -184,6 +194,18 @@ Post-provider sections:
 Trailer:
   [signature     : 65 bytes        ]   // secp256k1 signature
 ```
+
+### Version Compatibility and Rollout
+
+Metadata validation is intentionally bounded: buyers accept versions from `MIN_SUPPORTED_METADATA_VERSION` through their own `METADATA_VERSION`. Consequently:
+
+| Buyer | Seller v10 | Seller v11 | Seller v12 |
+|---|---:|---:|---:|
+| v10 | accepted | rejected | rejected |
+| v11 | accepted | accepted | rejected |
+| v12 | accepted | accepted | accepted |
+
+The decoder cannot safely ignore unknown newer versions because provider extensions are embedded in the signed binary layout. Deploy buyer support first, then seller binaries. Removing v11/v12 fields from config does not lower the version emitted by a v12 seller.
 
 The body (everything except the trailing 65-byte signature) is the data that is signed. `encodeMetadataForSigning()` produces this body without the signature for signing and verification purposes.
 

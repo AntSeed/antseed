@@ -46,6 +46,8 @@ export enum MessageType {
   Error = 0xFF,
 }
 
+import type { UnitBillingUsageReportV1 } from "./billing.js";
+
 export const CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 = 'verification.response-auth.v1' as const;
 export const CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1 = 'payments.relays-sweeps.v1' as const;
 /** Seller honours buyer-initiated cooperative channel close (0x59 / 0x5A). */
@@ -227,6 +229,8 @@ export interface NeedAuthPayload {
   freshInputTokens?: string;
   /** Service/model name for service-specific pricing validation. */
   service?: string;
+  /** Compact v1 unit billing evidence for cost validation. */
+  billingUsage?: UnitBillingUsageReportV1;
 }
 
 // ─── Cooperative Channel Close Messages ─────────────────────────

@@ -202,7 +202,14 @@ export class ModelHealthChecker {
 
     let outcome: ProbeOutcome;
     try {
-      const request = buildHealthProbeRequest(service, resolveProbeProtocol(provider, service));
+      const protocol = resolveProbeProtocol(provider, service);
+      if (!supportsHealthProbe(protocol)) {
+        state.lastStatusCode = null;
+        state.lastDetail = `Skipped health probe for unsupported protocol ${protocol}`;
+        debugLog(`[ModelHealth] ${provider.name}/${service}: ${state.lastDetail}`);
+        return;
+      }
+      const request = buildHealthProbeRequest(service, protocol);
       const response = await withTimeout(
         probeProvider.handleRequest(request),
         this._probeTimeoutMs,
@@ -309,6 +316,10 @@ function resolveProbeProtocol(provider: Provider, service: string): ServiceApiPr
   return provider.serviceApiProtocols?.[service]?.[0] ?? 'openai-chat-completions';
 }
 
+export function supportsHealthProbe(protocol: ServiceApiProtocol): boolean {
+  return protocol !== 'openai-images';
+}
+
 /**
  * Build the cheapest request that proves the upstream model responds: a
  * single-token completion. Sent through `Provider.handleRequest`, so the
@@ -342,10 +353,11 @@ export function buildHealthProbeRequest(service: string, protocol: ServiceApiPro
       body = { model: service, prompt: 'ping', max_tokens: 1 };
       break;
     case 'openai-chat-completions':
-    default:
       path = '/v1/chat/completions';
       body = { model: service, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] };
       break;
+    case 'openai-images':
+      throw new Error('Health probes are not supported for openai-images services');
   }
   return {
     requestId: `health-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`,

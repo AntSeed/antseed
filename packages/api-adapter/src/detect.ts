@@ -30,6 +30,13 @@ export function detectRequestServiceApiProtocol(
   if (normalizedPath.startsWith('/v1/responses')) {
     return 'openai-responses';
   }
+  if (
+    normalizedPath.startsWith('/v1/images/generations')
+    || normalizedPath.startsWith('/v1/images/edits')
+  ) {
+    return 'openai-images';
+  }
+
   const hasAnthropicVersionHeader = Object.keys(request.headers)
     .some((key) => key.toLowerCase() === 'anthropic-version');
   if (hasAnthropicVersionHeader) {
@@ -42,6 +49,9 @@ export function inferProviderDefaultServiceApiProtocols(providerName: string): S
   const normalized = providerName.trim().toLowerCase();
   if (normalized.length === 0) return [];
   if (ANTHROPIC_PROVIDER_NAMES.has(normalized)) return ['anthropic-messages'];
+  // Do not infer image support from the provider name alone. Sellers must
+  // advertise `openai-images` explicitly per service when they actually
+  // support the Images API.
   if (OPENAI_CHAT_PROVIDER_NAMES.has(normalized)) return ['openai-chat-completions'];
   if (OPENAI_RESPONSES_PROVIDER_NAMES.has(normalized)) return ['openai-responses'];
   return [];

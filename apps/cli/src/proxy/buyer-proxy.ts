@@ -166,7 +166,11 @@ function adaptOpenAICompatibleErrorResponse(
   if (response.statusCode !== 402) {
     return response;
   }
-  if (requestProtocol !== 'openai-responses' && requestProtocol !== 'openai-chat-completions') {
+  if (
+    requestProtocol !== 'openai-responses'
+    && requestProtocol !== 'openai-chat-completions'
+    && requestProtocol !== 'openai-images'
+  ) {
     return response;
   }
 
@@ -1412,6 +1416,8 @@ export class BuyerProxy {
       normalizedPath.startsWith('/v1/messages') ||
       normalizedPath.startsWith('/v1/chat/completions') ||
       normalizedPath.startsWith('/v1/responses') ||
+      normalizedPath.startsWith('/v1/images/generations') ||
+      normalizedPath.startsWith('/v1/images/edits') ||
       normalizedPath.startsWith('/v1/models')
     if (!isKnownApiPath) {
       res.writeHead(404, { 'content-type': 'application/json' })
