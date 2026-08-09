@@ -76,6 +76,19 @@ export type DesktopPaymentChannelSummary = {
   inputTokens: string;
   /** Cumulative output tokens over this channel (bigint string). */
   outputTokens: string;
+  cooperativeCloseSupported: boolean;
+};
+
+export type CooperativeCloseResult = {
+  version: 1;
+  channelId: string;
+  status: 'closed' | 'rejected';
+  txHash?: string;
+  finalAmount?: string;
+  code?: 'busy' | 'pending_auth' | 'no_channel' | 'invalid_auth' | 'close_failed' | 'unsupported';
+  reason?: string;
+  retryAfterMs?: number;
+  requiredCumulativeAmount?: string;
 };
 
 export type DesktopRewardsSummary = {
@@ -409,6 +422,11 @@ export type DesktopBridge = {
   paymentsCloseCheckoutWindows?: () => Promise<{ ok: boolean }>;
   paymentsGetBuyerUsage?: () => Promise<{ ok: boolean; data: DesktopBuyerUsageTotals | null; error: string | null; lastActivityAt?: number | null }>;
   paymentsGetChannels?: () => Promise<{ ok: boolean; data: DesktopPaymentChannelSummary[]; error: string | null }>;
+  paymentsRequestCooperativeClose?: (opts: { peerId: string }) => Promise<{
+    ok: boolean;
+    result: CooperativeCloseResult | null;
+    error: string | null;
+  }>;
   paymentsGetRewardsSummary?: () => Promise<{ ok: boolean; data: DesktopRewardsSummary | null; error: string | null }>;
   /** Fired when a browser pay page reports a completed payment action. */
   onPaymentsCompleted?: (handler: () => void) => () => void;

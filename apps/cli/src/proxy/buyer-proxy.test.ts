@@ -5,7 +5,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import test from 'node:test'
-import { CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1, type PeerInfo, type SerializedHttpResponse } from '@antseed/node'
+import {
+  CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
+  CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
+  type PeerInfo,
+  type SerializedHttpResponse,
+} from '@antseed/node'
 import { DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from '../config/defaults.js'
 import {
   BuyerProxy,
@@ -275,6 +280,33 @@ test('peers control endpoint exposes relay capability metadata', async () => {
 
   assert.equal(res.statusCode, 200)
   assert.deepEqual(body.peers[0]?.capabilities, [CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1])
+})
+
+test('channels endpoint exposes cooperative-close support from peer capabilities', async () => {
+  const supportedPeer = makePeer('a', ['openai'])
+  supportedPeer.capabilities = [CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1]
+  const unsupportedPeer = makePeer('b', ['openai'])
+  const proxy = makeBuyerProxyWithPeers([supportedPeer, unsupportedPeer])
+  ;(proxy as any)._node.getAllBuyerChannels = () => [
+    { sessionId: 'supported', peerId: supportedPeer.peerId },
+    { sessionId: 'unsupported', peerId: unsupportedPeer.peerId },
+    { sessionId: 'unknown', peerId: 'c'.repeat(40) },
+  ]
+
+  const res = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/channels?all=1' }))
+  const body = JSON.parse(res.body) as {
+    channels: Array<{ sessionId: string; cooperativeCloseSupported: boolean }>
+  }
+
+  assert.equal(res.statusCode, 200)
+  assert.deepEqual(
+    body.channels.map((channel) => [channel.sessionId, channel.cooperativeCloseSupported]),
+    [
+      ['supported', true],
+      ['unsupported', false],
+      ['unknown', false],
+    ],
+  )
 })
 
 test('selectCandidatePeersForRouting excludes peers when requested service is not in provider metadata', () => {
