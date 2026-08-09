@@ -25,6 +25,28 @@ export interface TokenPricingUsdPerMillion {
   cachedInputUsdPerMillion?: number;
 }
 
+export const SERVICE_CAPABILITY_INPUTS = ["text", "image", "audio", "video", "pdf"] as const;
+export type ServiceCapabilityInput = (typeof SERVICE_CAPABILITY_INPUTS)[number];
+
+/**
+ * Per-service model capability hints announced by sellers. Every field is
+ * optional: absent means unknown, so buyers fall back to their own defaults.
+ */
+export interface ServiceCapabilities {
+  /** Total context window in tokens. */
+  contextWindow?: number;
+  /** Maximum output tokens per response. */
+  maxOutputTokens?: number;
+  /** Supported input modalities. */
+  inputs?: ServiceCapabilityInput[];
+  /** Supports extended thinking / reasoning effort. */
+  reasoning?: boolean;
+  /** Supports tool use / function calling. */
+  toolUse?: boolean;
+  /** Supports structured output / JSON schema responses. */
+  structuredOutput?: boolean;
+}
+
 export interface ProviderAnnouncement {
   provider: string;
   services: string[];
@@ -33,6 +55,7 @@ export interface ProviderAnnouncement {
   serviceCategories?: Record<string, string[]>;
   serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
   serviceUnitBillingModels?: ServiceUnitBillingModelsV1;
+  serviceCapabilities?: Record<string, ServiceCapabilities>;
   maxConcurrency: number;
   currentLoad: number;
 }

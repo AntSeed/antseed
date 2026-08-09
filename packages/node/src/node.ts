@@ -1546,6 +1546,7 @@ export class AntseedNode extends EventEmitter {
           ...(p.serviceCategories ? { serviceCategories: { ...p.serviceCategories } } : {}),
           ...(p.serviceApiProtocols ? { serviceApiProtocols: { ...p.serviceApiProtocols } } : {}),
           ...(p.serviceUnitBillingModels ? { serviceUnitBillingModels: { ...p.serviceUnitBillingModels } } : {}),
+          ...(p.serviceCapabilities ? { serviceCapabilities: { ...p.serviceCapabilities } } : {}),
           maxConcurrency: p.maxConcurrency,
           isAvailable: () => p.healthCheckAvailable !== false,
           pricing: {
@@ -2286,6 +2287,7 @@ export class AntseedNode extends EventEmitter {
     const providerServiceCategoryEntries: NonNullable<PeerInfo["providerServiceCategories"]> = {};
     const providerServiceApiProtocolEntries: NonNullable<PeerInfo["providerServiceApiProtocols"]> = {};
     const providerServiceUnitBillingModelEntries: NonNullable<PeerInfo["providerServiceUnitBillingModels"]> = {};
+    const providerServiceCapabilityEntries: NonNullable<PeerInfo["providerServiceCapabilities"]> = {};
 
     for (const providerAnnouncement of result.metadata.providers) {
       const provName = providerAnnouncement.provider;
@@ -2350,12 +2352,23 @@ export class AntseedNode extends EventEmitter {
           providerServiceUnitBillingModelEntries[provName] = { services: newEntries };
         }
       }
+
+      if (providerAnnouncement.serviceCapabilities && Object.keys(providerAnnouncement.serviceCapabilities).length > 0) {
+        const existingCapabilities = providerServiceCapabilityEntries[provName];
+        const newEntries = { ...providerAnnouncement.serviceCapabilities };
+        if (existingCapabilities) {
+          Object.assign(existingCapabilities.services, newEntries);
+        } else {
+          providerServiceCapabilityEntries[provName] = { services: newEntries };
+        }
+      }
     }
 
     const hasProviderPricing = Object.keys(providerPricingEntries).length > 0;
     const hasProviderServiceCategories = Object.keys(providerServiceCategoryEntries).length > 0;
     const hasProviderServiceApiProtocols = Object.keys(providerServiceApiProtocolEntries).length > 0;
     const hasProviderServiceUnitBillingModels = Object.keys(providerServiceUnitBillingModelEntries).length > 0;
+    const hasProviderServiceCapabilities = Object.keys(providerServiceCapabilityEntries).length > 0;
 
     return {
       peerId: result.metadata.peerId,
@@ -2377,6 +2390,7 @@ export class AntseedNode extends EventEmitter {
       ...(hasProviderServiceCategories ? { providerServiceCategories: providerServiceCategoryEntries } : {}),
       ...(hasProviderServiceApiProtocols ? { providerServiceApiProtocols: providerServiceApiProtocolEntries } : {}),
       ...(hasProviderServiceUnitBillingModels ? { providerServiceUnitBillingModels: providerServiceUnitBillingModelEntries } : {}),
+      ...(hasProviderServiceCapabilities ? { providerServiceCapabilities: providerServiceCapabilityEntries } : {}),
       defaultInputUsdPerMillion: firstProvider?.defaultPricing.inputUsdPerMillion,
       defaultOutputUsdPerMillion: firstProvider?.defaultPricing.outputUsdPerMillion,
       defaultCachedInputUsdPerMillion: firstProvider?.defaultPricing.cachedInputUsdPerMillion,

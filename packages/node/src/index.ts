@@ -42,10 +42,13 @@ export { OFFICIAL_BOOTSTRAP_NODES, mergeBootstrapNodes, toBootstrapConfig } from
 export {
   WELL_KNOWN_SERVICE_CATEGORIES,
   WELL_KNOWN_SERVICE_API_PROTOCOLS,
+  SERVICE_CAPABILITY_INPUTS,
   type DomainVerificationClaim,
   type DomainVerificationMethod,
   type GithubVerificationClaim,
   type ServiceApiProtocol,
+  type ServiceCapabilities,
+  type ServiceCapabilityInput,
   type PeerMetadata,
   type PeerVerifications,
   type ProviderAnnouncement,

@@ -1,5 +1,5 @@
-import type { Provider, ServiceApiProtocol, ServiceUnitBillingModelsV1, UnitBillingComponentV1, UnitBillingModelV1 } from '@antseed/node';
-import { isKnownServiceApiProtocol, validateUnitBillingModelV1 } from '@antseed/node';
+import type { Provider, ServiceApiProtocol, ServiceCapabilities, ServiceUnitBillingModelsV1, UnitBillingComponentV1, UnitBillingModelV1 } from '@antseed/node';
+import { SERVICE_CAPABILITY_INPUTS, isKnownServiceApiProtocol, validateUnitBillingModelV1 } from '@antseed/node';
 
 export function parseNonNegativeNumber(raw: string | undefined, key: string, fallback: number): number {
   const parsed = raw === undefined ? fallback : Number.parseFloat(raw);
@@ -123,6 +123,58 @@ export function parseCsv(raw: string | undefined): string[] {
         .filter((entry) => entry.length > 0),
     ),
   );
+}
+
+export function parseServiceCapabilitiesJson(raw: string | undefined, key = 'ANTSEED_SERVICE_CAPABILITIES_JSON'): Record<string, ServiceCapabilities> | undefined {
+  if (!raw) return undefined;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    throw new Error(`${key} must be valid JSON`);
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${key} must be an object map of service -> capabilities`);
+  }
+
+  const knownInputs = new Set<string>(SERVICE_CAPABILITY_INPUTS);
+  const out: Record<string, ServiceCapabilities> = {};
+  for (const [service, rawCaps] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!rawCaps || typeof rawCaps !== 'object' || Array.isArray(rawCaps)) {
+      throw new Error(`${key}.${service} must be a capabilities object`);
+    }
+    const caps = rawCaps as Record<string, unknown>;
+    const normalized: ServiceCapabilities = {};
+    for (const field of ['contextWindow', 'maxOutputTokens'] as const) {
+      const value = caps[field];
+      if (value === undefined) continue;
+      if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+        throw new Error(`${key}.${service}.${field} must be a positive integer`);
+      }
+      normalized[field] = value;
+    }
+    if (caps.inputs !== undefined) {
+      if (!Array.isArray(caps.inputs) || caps.inputs.some((input) => typeof input !== 'string' || !knownInputs.has(input))) {
+        throw new Error(`${key}.${service}.inputs must be an array of: ${SERVICE_CAPABILITY_INPUTS.join(', ')}`);
+      }
+      normalized.inputs = [...new Set(caps.inputs)] as ServiceCapabilities['inputs'];
+    }
+    for (const field of ['reasoning', 'toolUse', 'structuredOutput'] as const) {
+      const value = caps[field];
+      if (value === undefined) continue;
+      if (typeof value !== 'boolean') {
+        throw new Error(`${key}.${service}.${field} must be a boolean`);
+      }
+      normalized[field] = value;
+    }
+    if (Object.keys(normalized).length > 0) {
+      out[service] = normalized;
+    }
+  }
+
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 export function parseJsonObject(raw: string | undefined, key: string): Record<string, unknown> | undefined {

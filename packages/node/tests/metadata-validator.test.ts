@@ -348,6 +348,88 @@ describe('validateMetadata', () => {
     );
   });
 
+  it('accepts valid service capabilities and rejects malformed ones', () => {
+    const capsProvider = {
+      provider: 'openai',
+      services: ['gpt-5.5'],
+      defaultPricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 1 },
+      serviceCapabilities: {
+        'gpt-5.5': {
+          contextWindow: 200_000,
+          maxOutputTokens: 16_384,
+          inputs: ['text', 'image'],
+          reasoning: true,
+        },
+      },
+      maxConcurrency: 1,
+      currentLoad: 0,
+    } satisfies PeerMetadata['providers'][number];
+
+    expect(validateMetadata(validMetadata({
+      version: SERVICE_UNIT_BILLING_METADATA_VERSION,
+      providers: [capsProvider],
+    }))).toEqual([]);
+
+    const badErrors = validateMetadata(validMetadata({
+      version: SERVICE_UNIT_BILLING_METADATA_VERSION,
+      providers: [
+        {
+          ...capsProvider,
+          serviceCapabilities: {
+            'gpt-5.5': {
+              contextWindow: -5,
+              inputs: ['text', 'hologram' as any, 'text'],
+            },
+            'not-announced': { contextWindow: 1000 },
+          },
+        },
+      ],
+    }));
+    expect(badErrors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: 'providers[0].serviceCapabilities.gpt-5.5.contextWindow',
+        }),
+        expect.objectContaining({
+          field: 'providers[0].serviceCapabilities.gpt-5.5.inputs',
+          message: expect.stringContaining('hologram'),
+        }),
+        expect.objectContaining({
+          field: 'providers[0].serviceCapabilities.gpt-5.5.inputs',
+          message: expect.stringContaining('Duplicate'),
+        }),
+        expect.objectContaining({
+          field: 'providers[0].serviceCapabilities.not-announced',
+          message: expect.stringContaining('must reference a service'),
+        }),
+      ]),
+    );
+  });
+
+  it('rejects service capabilities on pre-v11 metadata', () => {
+    const errors = validateMetadata(validMetadata({
+      version: 10,
+      providers: [
+        {
+          provider: 'openai',
+          services: ['gpt-5.5'],
+          defaultPricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 1 },
+          serviceCapabilities: { 'gpt-5.5': { contextWindow: 1000 } },
+          maxConcurrency: 1,
+          currentLoad: 0,
+        },
+      ],
+    }));
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: 'providers[0].serviceCapabilities',
+          message: expect.stringContaining('require metadata version 11'),
+        }),
+      ]),
+    );
+  });
+
   it('should reject maxConcurrency < 1', () => {
     const errors = validateMetadata(
       validMetadata({

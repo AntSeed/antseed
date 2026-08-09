@@ -1,4 +1,5 @@
-import type { DomainVerificationClaim, DomainVerificationMethod, GithubVerificationClaim, PeerMetadata } from "./peer-metadata.js";
+import type { DomainVerificationClaim, DomainVerificationMethod, GithubVerificationClaim, PeerMetadata, ServiceCapabilities, ServiceCapabilityInput } from "./peer-metadata.js";
+import { SERVICE_CAPABILITY_INPUTS } from "./peer-metadata.js";
 import type { PeerOffering } from "../types/capability.js";
 import { hexToBytes, bytesToHex } from "../utils/hex.js";
 import { toPeerId } from "../types/peer.js";
@@ -217,6 +218,7 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
 
     if (metadata.version >= SERVICE_UNIT_BILLING_METADATA_VERSION) {
       encodeServiceUnitBillingModels(parts, p.serviceUnitBillingModels);
+      encodeServiceCapabilities(parts, p.serviceCapabilities);
     }
 
     // maxConcurrency: 2 bytes (uint16)
@@ -447,6 +449,108 @@ function encodeServiceUnitBillingModels(
       }
     }
   }
+}
+
+// Presence bits for the per-service capability entry. A set bit means the
+// field was announced (booleans distinguish "known false" from "unknown").
+const CAP_HAS_CONTEXT_WINDOW = 1 << 0;
+const CAP_HAS_MAX_OUTPUT_TOKENS = 1 << 1;
+const CAP_HAS_INPUTS = 1 << 2;
+const CAP_HAS_REASONING = 1 << 3;
+const CAP_HAS_TOOL_USE = 1 << 4;
+const CAP_HAS_STRUCTURED_OUTPUT = 1 << 5;
+
+function encodeServiceCapabilities(
+  parts: Uint8Array[],
+  serviceCapabilities: PeerMetadata["providers"][number]["serviceCapabilities"],
+): void {
+  const entries = Object.entries(serviceCapabilities ?? {})
+    .sort(([a], [b]) => a.localeCompare(b));
+  parts.push(new Uint8Array([entries.length]));
+  for (const [serviceName, caps] of entries) {
+    pushUtf8(parts, serviceName);
+    let presence = 0;
+    if (caps.contextWindow !== undefined) presence |= CAP_HAS_CONTEXT_WINDOW;
+    if (caps.maxOutputTokens !== undefined) presence |= CAP_HAS_MAX_OUTPUT_TOKENS;
+    if (caps.inputs !== undefined) presence |= CAP_HAS_INPUTS;
+    if (caps.reasoning !== undefined) presence |= CAP_HAS_REASONING;
+    if (caps.toolUse !== undefined) presence |= CAP_HAS_TOOL_USE;
+    if (caps.structuredOutput !== undefined) presence |= CAP_HAS_STRUCTURED_OUTPUT;
+    parts.push(new Uint8Array([presence]));
+    if (caps.contextWindow !== undefined) {
+      const buf = new ArrayBuffer(4);
+      new DataView(buf).setUint32(0, caps.contextWindow, false);
+      parts.push(new Uint8Array(buf));
+    }
+    if (caps.maxOutputTokens !== undefined) {
+      const buf = new ArrayBuffer(4);
+      new DataView(buf).setUint32(0, caps.maxOutputTokens, false);
+      parts.push(new Uint8Array(buf));
+    }
+    if (caps.inputs !== undefined) {
+      let inputBits = 0;
+      for (const input of caps.inputs) {
+        const id = SERVICE_CAPABILITY_INPUTS.indexOf(input);
+        if (id >= 0) inputBits |= 1 << id;
+      }
+      parts.push(new Uint8Array([inputBits]));
+    }
+    let boolBits = 0;
+    if (caps.reasoning === true) boolBits |= CAP_HAS_REASONING;
+    if (caps.toolUse === true) boolBits |= CAP_HAS_TOOL_USE;
+    if (caps.structuredOutput === true) boolBits |= CAP_HAS_STRUCTURED_OUTPUT;
+    parts.push(new Uint8Array([boolBits]));
+  }
+}
+
+function decodeServiceCapabilities(
+  data: Uint8Array,
+  getOffset: () => number,
+  setOffset: (offset: number) => void,
+  checkBounds: (offset: number, needed: number, total: number) => void,
+): PeerMetadata["providers"][number]["serviceCapabilities"] | undefined {
+  let offset = getOffset();
+  checkBounds(offset, 1, data.length);
+  const entryCount = data[offset]!;
+  offset += 1;
+  const serviceCapabilities: NonNullable<PeerMetadata["providers"][number]["serviceCapabilities"]> = {};
+  for (let i = 0; i < entryCount; i += 1) {
+    const [serviceName, serviceOffset] = readUtf8(data, offset, checkBounds);
+    offset = serviceOffset;
+    checkBounds(offset, 1, data.length);
+    const presence = data[offset]!;
+    offset += 1;
+    const caps: ServiceCapabilities = {};
+    if (presence & CAP_HAS_CONTEXT_WINDOW) {
+      checkBounds(offset, 4, data.length);
+      caps.contextWindow = new DataView(data.buffer, data.byteOffset + offset, 4).getUint32(0, false);
+      offset += 4;
+    }
+    if (presence & CAP_HAS_MAX_OUTPUT_TOKENS) {
+      checkBounds(offset, 4, data.length);
+      caps.maxOutputTokens = new DataView(data.buffer, data.byteOffset + offset, 4).getUint32(0, false);
+      offset += 4;
+    }
+    if (presence & CAP_HAS_INPUTS) {
+      checkBounds(offset, 1, data.length);
+      const inputBits = data[offset]!;
+      offset += 1;
+      const inputs: ServiceCapabilityInput[] = [];
+      for (let id = 0; id < SERVICE_CAPABILITY_INPUTS.length; id += 1) {
+        if (inputBits & (1 << id)) inputs.push(SERVICE_CAPABILITY_INPUTS[id]!);
+      }
+      caps.inputs = inputs;
+    }
+    checkBounds(offset, 1, data.length);
+    const boolBits = data[offset]!;
+    offset += 1;
+    if (presence & CAP_HAS_REASONING) caps.reasoning = (boolBits & CAP_HAS_REASONING) !== 0;
+    if (presence & CAP_HAS_TOOL_USE) caps.toolUse = (boolBits & CAP_HAS_TOOL_USE) !== 0;
+    if (presence & CAP_HAS_STRUCTURED_OUTPUT) caps.structuredOutput = (boolBits & CAP_HAS_STRUCTURED_OUTPUT) !== 0;
+    serviceCapabilities[serviceName] = caps;
+  }
+  setOffset(offset);
+  return Object.keys(serviceCapabilities).length > 0 ? serviceCapabilities : undefined;
 }
 
 function pushUtf8(parts: Uint8Array[], value: string): void {
@@ -730,6 +834,9 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     const serviceUnitBillingModels = version >= SERVICE_UNIT_BILLING_METADATA_VERSION
       ? decodeServiceUnitBillingModels(data, () => offset, (next) => { offset = next; }, checkBounds)
       : undefined;
+    const serviceCapabilities = version >= SERVICE_UNIT_BILLING_METADATA_VERSION
+      ? decodeServiceCapabilities(data, () => offset, (next) => { offset = next; }, checkBounds)
+      : undefined;
 
     // maxConcurrency: 2 bytes uint16
     checkBounds(offset, 2, data.length);
@@ -755,6 +862,7 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
       ...(serviceCategories && Object.keys(serviceCategories).length > 0 ? { serviceCategories } : {}),
       ...(serviceApiProtocols && Object.keys(serviceApiProtocols).length > 0 ? { serviceApiProtocols } : {}),
       ...(serviceUnitBillingModels && Object.keys(serviceUnitBillingModels).length > 0 ? { serviceUnitBillingModels } : {}),
+      ...(serviceCapabilities && Object.keys(serviceCapabilities).length > 0 ? { serviceCapabilities } : {}),
       maxConcurrency,
       currentLoad,
     });

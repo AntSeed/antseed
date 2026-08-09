@@ -139,6 +139,10 @@ describe('PeerAnnouncer metadata versions', () => {
               },
             },
           },
+          serviceCapabilities: {
+            'gpt-image-1': { inputs: ['text'] },
+            'unlisted-service': { contextWindow: 1000 },
+          },
           maxConcurrency: 5,
         },
       ],
@@ -151,6 +155,10 @@ describe('PeerAnnouncer metadata versions', () => {
     expect(metadata?.providers[0]?.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']).toEqual({
       version: 1,
       components: [{ unit: 'output_images', priceUsd: 0.04 }],
+    });
+    // Capabilities for services outside providers[].services are dropped.
+    expect(metadata?.providers[0]?.serviceCapabilities).toEqual({
+      'gpt-image-1': { inputs: ['text'] },
     });
   });
 
