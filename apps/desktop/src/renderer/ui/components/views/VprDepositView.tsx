@@ -580,6 +580,8 @@ export function VprDepositView({ onSelectView }: Props) {
     if (watchError) return { tone: 'error' as const, text: watchError };
     if (!watchStatus) return { tone: 'idle' as const, text: 'Waiting for USDC on Base…' };
     switch (watchStatus.phase) {
+      case 'waiting':
+        return { tone: 'idle' as const, text: 'Waiting for USDC on Base…' };
       case 'received':
         return { tone: 'busy' as const, text: `Received $${baseUnitsToUsd(watchStatus.amountBaseUnits)} — preparing deposit…` };
       case 'sweeping':

@@ -87,7 +87,7 @@ export type DesktopRewardsSummary = {
 };
 
 export type DepositWatchStatus = {
-  phase: 'received' | 'sweeping' | 'credited' | 'error';
+  phase: 'waiting' | 'received' | 'sweeping' | 'credited' | 'error';
   /** USDC base units (6 decimals), bigint string. */
   amountBaseUnits?: string;
   txHash?: string;

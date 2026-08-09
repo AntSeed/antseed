@@ -64,8 +64,27 @@
   color: var(--accent-orange, #d98b2b);
 }
 
+.manageButton {
+  flex: 0 0 auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-weight: 600;
+  line-height: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.manageButton:hover {
+  color: var(--text-primary);
+}
+
 .infoButton:focus-visible,
-.warningButton:focus-visible {
+.warningButton:focus-visible,
+.manageButton:focus-visible {
   outline: none;
   border-radius: 4px;
   box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
@@ -82,13 +101,6 @@
   color: var(--text-secondary);
   font-size: 11px;
   line-height: 15px;
-}
-
-.popoverRoot {
-  position: relative;
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
 }
 
 .popoverButton {
@@ -114,23 +126,4 @@
 .popoverButton:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
-}
-
-.popoverPanel {
-  position: fixed;
-  z-index: 210;
-  max-height: calc(100vh - 24px);
-  overflow-y: auto;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--bg-card);
-  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.18);
-}
-
-.popoverTitle {
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 650;
-  line-height: 16px;
 }
