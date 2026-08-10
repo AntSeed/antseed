@@ -1,6 +1,6 @@
-// Smart AntStation download URL — mirrors the hook at
+// Smart VPR download URL — mirrors the hook at
 // `apps/website/src/lib/useLatestDesktopDownload.ts` so the "Download
-// AntStation" links on diemantseed.com behave exactly like the ones on
+// VPR" links on diemantseed.com behave exactly like the ones on
 // antseed.com: when the visitor is on a Mac or Windows machine, resolve a
 // direct installer URL matching their CPU arch from the real release asset
 // list. On other platforms — or while the GitHub API lookup is in-flight —
@@ -18,7 +18,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
-export const ANTSTATION_RELEASES_URL = 'https://github.com/AntSeed/antseed/releases/latest';
+export const VPR_RELEASES_URL = 'https://github.com/AntSeed/antseed/releases/latest';
 const GH_API_LATEST = 'https://api.github.com/repos/AntSeed/antseed/releases/latest';
 
 export type Platform = 'mac' | 'win' | 'linux' | 'unknown';
@@ -105,7 +105,7 @@ function matchAsset(assets: GitHubAsset[], platform: Platform, arch: Arch): GitH
   return null;
 }
 
-export interface AntstationDownload {
+export interface VprDownload {
   /** URL to put on the `href`. Direct installer when resolvable, releases page otherwise. */
   href: string;
   /** True when the resolved href points at a direct installer (click = real download). */
@@ -114,7 +114,7 @@ export interface AntstationDownload {
   platform: Platform;
   /** OS-specific CTA label: "Download for Mac" / "Download for Windows" /
    *  "Download for Linux" / "Download". Call-sites that use a branded
-   *  "Download AntStation →" label are free to ignore this. */
+   *  "Download VPR →" label are free to ignore this. */
   label: string;
 }
 
@@ -132,20 +132,20 @@ function labelFor(platform: Platform): string {
 }
 
 /**
- * Returns the best AntStation download target for the current visitor.
+ * Returns the best VPR download target for the current visitor.
  * All call-sites on this page should use this in place of hardcoding
- * `ANTSTATION_RELEASES_URL` so the primary CTA always downloads the right
+ * `VPR_RELEASES_URL` so the primary CTA always downloads the right
  * installer and gracefully falls back on unsupported platforms.
  *
  * Uses react-query so multiple call-sites share a single cached GitHub API
  * response (the QueryClient is already set up in `main.tsx`).
  */
-export function useAntstationDownload(): AntstationDownload {
+export function useVprDownload(): VprDownload {
   const platform = useMemo<Platform>(detectPlatform, []);
   const arch = useArch(platform);
 
   const { data: release } = useQuery<GitHubRelease | null>({
-    queryKey: ['antstation-latest-release'],
+    queryKey: ['vpr-latest-release'],
     // GitHub releases change on a ~weekly cadence at most; an hour of
     // staleness is plenty and keeps us well under the unauthenticated API
     // rate limit (60/hr per IP) even if the user opens many tabs.
@@ -168,7 +168,7 @@ export function useAntstationDownload(): AntstationDownload {
     return matchAsset(assets, platform, arch);
   }, [release, platform, arch]);
 
-  const href = matched?.browser_download_url ?? ANTSTATION_RELEASES_URL;
+  const href = matched?.browser_download_url ?? VPR_RELEASES_URL;
   return {
     href,
     isDirectDownload: !!matched,
