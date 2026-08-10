@@ -614,9 +614,6 @@ const api = {
   vprFloatGetCompact(): Promise<boolean> {
     return ipcRenderer.invoke('vpr-float:get-compact') as Promise<boolean>;
   },
-  vprFloatMoveBy(dx: number, dy: number): void {
-    ipcRenderer.send('vpr-float:move-by', dx, dy);
-  },
   vprFloatUpdate(data: unknown): void {
     ipcRenderer.send('vpr-float:update', data);
   },

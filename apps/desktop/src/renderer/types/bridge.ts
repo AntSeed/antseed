@@ -475,7 +475,6 @@ export type DesktopBridge = {
   vprFloatClose?: () => Promise<{ ok: boolean }>;
   vprFloatIsOpen?: () => Promise<boolean>;
   vprFloatGetCompact?: () => Promise<boolean>;
-  vprFloatMoveBy?: (dx: number, dy: number) => void;
   vprFloatUpdate?: (data: VprFloatData) => void;
   vprFloatAction?: (action: VprFloatAction) => void;
   onVprFloatData?: (handler: (data: VprFloatData) => void) => () => void;
