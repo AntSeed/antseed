@@ -5,14 +5,13 @@ import { PayCheckoutDeposit } from '../components/PayCheckoutDeposit';
 import { PayCheckoutWithdraw } from '../components/PayCheckoutWithdraw';
 import { PayChannelClose } from '../components/PayChannelClose';
 import { PayClaimRewards } from '../components/PayClaimRewards';
-import { PayDiemClaim } from '../components/PayDiemClaim';
 import { Button } from '../components/Button';
 import { notifyPaymentCompleted } from '../api';
 import { truncateAddress } from '../utils/format';
 import { getExplorerTxUrl } from '../utils/txLink';
 import './PayPage.scss';
 
-export type PayPageAction = 'deposit' | 'withdraw' | 'authorize' | 'claim' | 'diem' | 'close-channel';
+export type PayPageAction = 'deposit' | 'withdraw' | 'authorize' | 'claim' | 'close-channel';
 
 /**
  * 'app' — user's real browser launched chromeless (`--app=`): extension
@@ -52,11 +51,6 @@ const COPY: Record<PayPageAction, { eyebrow: string; title: string; subtitle: st
     eyebrow: 'Network rewards',
     title: 'Claim $ANTS',
     subtitle: 'Claim the $ANTS you earned from network usage.',
-  },
-  diem: {
-    eyebrow: 'DIEM staking',
-    title: 'Claim DIEM rewards',
-    subtitle: 'Claim $ANTS earned by staking DIEM through the AntSeed proxy.',
   },
   'close-channel': {
     eyebrow: 'Payment channel',
@@ -226,7 +220,7 @@ export function PayPage({ action, amount: amountParam, channelId, popup, config,
                 <h2>
                   {action === 'deposit' ? 'Payment complete'
                     : action === 'withdraw' ? 'Withdrawal sent'
-                      : action === 'claim' || action === 'diem' ? 'Rewards claimed'
+                      : action === 'claim' ? 'Rewards claimed'
                         : action === 'close-channel' ? 'Channel updated'
                           : 'Wallet authorized'}
                 </h2>
@@ -271,12 +265,6 @@ export function PayPage({ action, amount: amountParam, channelId, popup, config,
                   <>
                     <p className="pay-checkout-subtitle">{copy.subtitle}</p>
                     <PayClaimRewards config={config} onDone={handleDeposited} />
-                  </>
-                )}
-                {action === 'diem' && (
-                  <>
-                    <p className="pay-checkout-subtitle">{copy.subtitle}</p>
-                    <PayDiemClaim config={config} onDone={handleDeposited} />
                   </>
                 )}
                 {action === 'close-channel' && (
