@@ -1,10 +1,18 @@
-import {useState, useEffect} from 'react';
-import Link from '@docusaurus/Link';
+import {useState, useEffect, useRef} from 'react';
 import Layout from '@theme/Layout';
 import styles from './ants-token.module.css';
 import {useLatestDesktopDownload} from '../lib/useLatestDesktopDownload';
+import {
+  Button,
+  FinalCta,
+  PageHero,
+  Reveal,
+  Section,
+  SectionHeader,
+  StatTile,
+} from '../components/ui';
 
-const DUNE_URL = 'https://dune.com/antseed_com/antseed';
+const STATS_URL = 'https://antseedstats.com/network';
 const ANTS_TOKEN_ADDRESS = '0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263';
 const ANTS_BASESCAN_URL = `https://basescan.org/token/${ANTS_TOKEN_ADDRESS}`;
 
@@ -28,7 +36,7 @@ function useEpochCountdown() {
 
   if (now === null) {
     // Pre-hydration / SSR: render a stable placeholder identical on server and client.
-    return { epoch: 0, timeLeft: '—', started: false };
+    return { epoch: 0, timeLeft: '-', started: false };
   }
 
   if (GENESIS === 0) {
@@ -57,7 +65,6 @@ function useEpochCountdown() {
 /* ── Token constants ───────────────────────────────────────────── */
 const MAX_SUPPLY = 1_040_000_000;
 const INITIAL_EMISSION = 5_000_000;
-const HALVING_INTERVAL = 104;
 
 /* ── SUPPLY BAR ────────────────────────────────────────────────── */
 function SupplyBar({totalSupply}: {totalSupply: number}) {
@@ -75,226 +82,106 @@ function SupplyBar({totalSupply}: {totalSupply: number}) {
   );
 }
 
-/* ── HALVING TIMELINE ──────────────────────────────────────────── */
-const TOTAL_EPOCHS = 624;
-const YEARS_TOTAL = 12;
+/* ── in-view trigger for the section visuals ───────────────────── */
+function useInView(threshold = 0.35) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [inView, setInView] = useState(false);
 
-function HalvingCurve({currentEpoch, currentBudget}: {currentEpoch: number; currentBudget: number}) {
-  const W = 800;
-  const H = 210;
-  const padL = 16;
-  const padR = 16;
-  const padT = 56;
-  const padB = 44;
-  const plotW = W - padL - padR;
-  const plotH = H - padT - padB;
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduced || typeof IntersectionObserver === 'undefined') {
+      setInView(true);
+      return undefined;
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          observer.disconnect();
+          setInView(true);
+        }
+      },
+      {threshold}
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [threshold]);
 
-  const xFor = (e: number) => padL + (e / TOTAL_EPOCHS) * plotW;
-  const yFor = (em: number) => padT + plotH - (em / INITIAL_EMISSION) * plotH;
+  return {ref, inView};
+}
 
-  // Build step-style curve (sharp halving drops)
-  const segs: string[] = [];
-  let em = INITIAL_EMISSION;
-  segs.push(`M${xFor(0)},${yFor(em)}`);
-  for (let i = 1; i <= 6; i++) {
-    const epochAtHalving = i * HALVING_INTERVAL;
-    segs.push(`L${xFor(epochAtHalving)},${yFor(em)}`);
-    em = em / 2;
-    segs.push(`L${xFor(epochAtHalving)},${yFor(em)}`);
-  }
-  segs.push(`L${xFor(TOTAL_EPOCHS)},${yFor(em)}`);
-  const pathD = segs.join(' ');
-  const areaD = `${pathD} L${xFor(TOTAL_EPOCHS)},${padT + plotH} L${xFor(0)},${padT + plotH} Z`;
-
-  // Clamp current position visually so the marker is always visible
-  const visibleEpoch = Math.max(currentEpoch, 1);
-  const curX = xFor(visibleEpoch);
-  const curY = yFor(Math.max(currentBudget, INITIAL_EMISSION * 0.03));
-
-  const cliffs = [1, 2, 3, 4, 5].map(i => i * HALVING_INTERVAL);
-  const yearTicks = [0, 2, 4, 6, 8, 10, 12];
-
-  // Label pill position (keep within chart horizontally)
-  const pillW = 96;
-  const pillX = Math.min(Math.max(curX - pillW / 2, padL), W - padR - pillW);
-  const pillY = curY - 38;
-
+/* ── SELLER POOLS — how recognition is weighted ────────────────── */
+function PoolWeightCard() {
   return (
-    <div className={styles.halvingChart}>
-      <svg viewBox={`0 0 ${W} ${H}`} className={styles.halvingSvg}>
-        <defs>
-          <linearGradient id="curveFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="var(--as-green)" stopOpacity="0.18" />
-            <stop offset="100%" stopColor="var(--as-green)" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-
-        {/* Baseline axis */}
-        <line
-          x1={padL}
-          y1={padT + plotH}
-          x2={padL + plotW}
-          y2={padT + plotH}
-          className={styles.halvingAxis}
-        />
-
-        {/* Halving cliff markers */}
-        {cliffs.map(e => (
-          <g key={e}>
-            <line
-              x1={xFor(e)}
-              y1={padT}
-              x2={xFor(e)}
-              y2={padT + plotH}
-              className={styles.halvingCliff}
-            />
-            <line
-              x1={xFor(e)}
-              y1={padT + plotH}
-              x2={xFor(e)}
-              y2={padT + plotH + 5}
-              className={styles.halvingTick}
-            />
-          </g>
-        ))}
-
-        {/* Area under curve */}
-        <path d={areaD} fill="url(#curveFill)" />
-
-        {/* Main curve */}
-        <path d={pathD} fill="none" stroke="var(--as-green)" strokeWidth="2" strokeLinejoin="round" />
-
-        {/* Vertical "now" line */}
-        <line
-          x1={curX}
-          y1={curY}
-          x2={curX}
-          y2={padT + plotH}
-          className={styles.halvingNow}
-        />
-
-        {/* Pulse + core dot */}
-        <circle cx={curX} cy={curY} r="10" className={styles.halvingPulse} />
-        <circle cx={curX} cy={curY} r="5" fill="var(--as-green)" stroke="#fff" strokeWidth="2" />
-
-        {/* "You are here" pill */}
-        <g>
-          <rect x={pillX} y={pillY} width={pillW} height="26" rx="13" className={styles.halvingPill} />
-          <text
-            x={pillX + pillW / 2}
-            y={pillY + 17}
-            textAnchor="middle"
-            className={styles.halvingPillText}
-          >
-            You · Epoch {currentEpoch}
-          </text>
-          <path
-            d={`M${curX - 4},${pillY + 26} L${curX + 4},${pillY + 26} L${curX},${pillY + 32} Z`}
-            fill="#1a1a1a"
-          />
-        </g>
-
-        {/* X-axis year labels */}
-        {yearTicks.map(yr => {
-          const epoch = (yr / YEARS_TOTAL) * TOTAL_EPOCHS;
-          return (
-            <text
-              key={yr}
-              x={xFor(epoch)}
-              y={padT + plotH + 22}
-              textAnchor={yr === 0 ? 'start' : yr === YEARS_TOTAL ? 'end' : 'middle'}
-              className={styles.halvingXLabel}
-            >
-              {yr === 0 ? 'Genesis' : `Yr ${yr}`}
-            </text>
-          );
-        })}
-      </svg>
+    <div className={styles.poolCard}>
+      <img className={styles.poolAnt} src="/img/home/antdots-b.png" alt="" aria-hidden="true" />
+      <div className={styles.poolHead}>
+        <span>Recognized usage</span>
+        <span className={styles.poolTag}>Stake-weighted</span>
+      </div>
+      <div className={styles.poolEq}>
+        <div className={styles.poolTerm}>
+          <strong>Settled volume</strong>
+          <em>buyer-authorized payments through channels</em>
+        </div>
+        <span className={styles.poolOp} aria-hidden="true">×</span>
+        <div className={styles.poolTerm}>
+          <strong>Stake weight</strong>
+          <em>ANTS locked behind the seller&apos;s identity</em>
+        </div>
+        <span className={styles.poolOp} aria-hidden="true">=</span>
+        <div className={`${styles.poolTerm} ${styles.poolTermResult}`}>
+          <strong>Recognized usage</strong>
+          <em>what reputation and rewards follow</em>
+        </div>
+      </div>
     </div>
   );
 }
 
-/* ── EARN FLOW (animated) ──────────────────────────────────────── */
-function EarnFlow(): JSX.Element {
+/* ── VERIFICATIONS — ResponseAuth receipt visual ───────────────── */
+const RECEIPT_CHECKS = [
+  {label: 'signature', value: 'seller key'},
+  {label: 'request hash', value: 'committed'},
+  {label: 'response hash', value: 'committed'},
+  {label: 'fingerprint', value: 'matches label'},
+];
+
+function VerifyReceipt() {
+  const {ref, inView} = useInView();
   return (
-    <div className={styles.flowCard}>
-      <svg
-        viewBox="0 0 800 220"
-        preserveAspectRatio="xMidYMid meet"
-        className={styles.flowSvg}
-        aria-hidden="true"
-      >
-        <defs>
-          <path id="pBuyerSeller" d="M200,70 L320,70" />
-          <path id="pSellerMint"  d="M480,70 L600,70" />
-          <path id="pMintSeller"  d="M680,110 Q680,170 540,170 Q400,170 400,110" />
-          <path id="pMintBuyer"   d="M680,110 Q680,200 400,200 Q120,200 120,110" />
-        </defs>
-
-        {/* Paths (dashed guides) */}
-        <use href="#pBuyerSeller" className={styles.flowLine} />
-        <use href="#pSellerMint"  className={styles.flowLine} />
-        <use href="#pMintSeller"  className={styles.flowLineGreen} fill="none" />
-        <use href="#pMintBuyer"   className={styles.flowLineGreen} fill="none" />
-
-        {/* Buyer */}
-        <g>
-          <rect x="40" y="30" width="160" height="80" rx="14" className={styles.flowBox} />
-          <text x="120" y="63" textAnchor="middle" className={styles.flowBoxTitle}>Buyer</text>
-          <text x="120" y="88" textAnchor="middle" className={styles.flowBoxSub}>deposits USDC</text>
-        </g>
-
-        {/* Seller */}
-        <g>
-          <rect x="320" y="30" width="160" height="80" rx="14" className={styles.flowBox} />
-          <text x="400" y="63" textAnchor="middle" className={styles.flowBoxTitle}>Seller</text>
-          <text x="400" y="88" textAnchor="middle" className={styles.flowBoxSub}>stakes · serves</text>
-        </g>
-
-        {/* $ANTS Emissions */}
-        <g>
-          <rect x="600" y="30" width="160" height="80" rx="14" className={styles.flowBoxMint} />
-          <text x="680" y="63" textAnchor="middle" className={styles.flowBoxTitleMint}>$ANTS Emissions</text>
-          <text x="680" y="88" textAnchor="middle" className={styles.flowBoxSubMint}>epoch tracking</text>
-        </g>
-
-        {/* Forward labels */}
-        <text x="260" y="58" textAnchor="middle" className={styles.flowLineLabel}>USDC</text>
-        <text x="540" y="58" textAnchor="middle" className={styles.flowLineLabel}>volume reported</text>
-        <text x="400" y="216" textAnchor="middle" className={styles.flowLineLabelGreen}>ANTS emissions tracked</text>
-
-        {/* USDC pellets: Buyer → Seller */}
-        <circle r="5" className={styles.flowPellet}>
-          <animateMotion dur="2.4s" repeatCount="indefinite">
-            <mpath href="#pBuyerSeller" />
-          </animateMotion>
-        </circle>
-        <circle r="5" className={styles.flowPellet}>
-          <animateMotion dur="2.4s" repeatCount="indefinite" begin="1.2s">
-            <mpath href="#pBuyerSeller" />
-          </animateMotion>
-        </circle>
-
-        {/* ANTS emissions: tracked for sellers and buyers */}
-        <circle r="6" className={styles.flowPelletGreen}>
-          <animateMotion dur="4.8s" repeatCount="indefinite" begin="1.5s">
-            <mpath href="#pMintSeller" />
-          </animateMotion>
-        </circle>
-        <circle r="6" className={styles.flowPelletGreen}>
-          <animateMotion dur="4.8s" repeatCount="indefinite" begin="2s">
-            <mpath href="#pMintBuyer" />
-          </animateMotion>
-        </circle>
-      </svg>
-
-      <div className={styles.flowLegend}>
-        <span className={styles.flowLegendItem}>
-          <span className={styles.flowLegendDot} /> USDC payment
+    <div className={`${styles.receipt} ${inView ? styles.receiptIn : ''}`} ref={ref}>
+      <div className={styles.receiptBar}>
+        <span className={styles.receiptDots}>
+          <i style={{background: '#EF4444'}} />
+          <i style={{background: '#F59E0B'}} />
+          <i style={{background: '#676663'}} />
         </span>
-        <span className={styles.flowLegendItem}>
-          <span className={styles.flowLegendDotGreen} /> ANTS emission
-        </span>
+        <span className={styles.receiptTitle}>ResponseAuth</span>
+        <span className={styles.receiptTagline}>EVIDENCE · PER RESPONSE</span>
+      </div>
+      <div className={styles.receiptMeta}>
+        <span>seller</span>
+        <span>0x3fA4…9c2b</span>
+      </div>
+      <div className={styles.receiptMeta}>
+        <span>response</span>
+        <span>#48219 · deepseek-v3</span>
+      </div>
+      {RECEIPT_CHECKS.map((row, i) => (
+        <div
+          key={row.label}
+          className={styles.receiptCheck}
+          style={{transitionDelay: `${250 + i * 180}ms`}}>
+          <span className={styles.receiptLabel}>{row.label}</span>
+          <span className={styles.receiptValue}>{row.value}</span>
+          <span className={styles.receiptOk} aria-hidden="true">✓</span>
+        </div>
+      ))}
+      <div className={styles.receiptResult} style={{transitionDelay: '1000ms'}}>
+        <span>recognized usage</span>
+        <span className={styles.receiptResultValue}>weighted by verification</span>
       </div>
     </div>
   );
@@ -303,239 +190,155 @@ function EarnFlow(): JSX.Element {
 /* ── MAIN PAGE ─────────────────────────────────────────────────── */
 export default function AntsToken(): JSX.Element {
   const download = useLatestDesktopDownload();
-  const {epoch, timeLeft, started} = useEpochCountdown();
+  const {epoch, timeLeft} = useEpochCountdown();
 
   const totalSupply = epoch * INITIAL_EMISSION;
 
-  const epochBudget = started
-    ? INITIAL_EMISSION / Math.pow(2, Math.floor(epoch / HALVING_INTERVAL))
-    : INITIAL_EMISSION;
-
-  const emissionRate = started ? epochBudget / EPOCH_DURATION : 0;
-  const nextHalvingIn = HALVING_INTERVAL - (epoch % HALVING_INTERVAL);
-
   return (
     <Layout
-      title="ANTS Token | AntSeed"
-      description="ANTS is intended as a utility and coordination token for the AntSeed ecosystem. Holding ANTS does not represent equity, ownership, debt, or a right to payments."
+      title="ANTS Token"
+      description="ANTS is the native token of the AntSeed network and its trust and reputation layer."
     >
-
-      {/* ── HERO ── */}
-      <section className={styles.hero}>
-        <a href={ANTS_BASESCAN_URL} target="_blank" rel="noopener noreferrer" className={styles.heroKicker}>$ANTS</a>
-        <h1 className={styles.heroTitle}>
-          A utility token for<br />
-          <em>open AI coordination.</em>
-        </h1>
-        <div className={styles.heroStatus}>
-          <span className={styles.statusDot} />
-          <span className={styles.statusText}>Tokens Restricted</span>
-        </div>
-        <p className={styles.heroSub}>
-          ANTS is intended as a utility and coordination token for the AntSeed ecosystem.
-          Holding ANTS does not represent equity, ownership, debt, profit share, revenue share,
-          claim on assets, or any right to receive payments. ANTS distribution is meant for eligible
-          users and providers who help the network grow.
-        </p>
-        <a
-          href="https://x.com/AntSeedAI/status/2053924623935218044"
-          target="_blank"
-          rel="noopener noreferrer"
-          className={styles.protocolNotice}
-        >
-          Token economics are evolving →
-        </a>
-        <div className={styles.heroCtas}>
-          <a href={download.href} target="_blank" rel="noopener noreferrer" className={styles.ctaPrimary}>
-            Download AntStation →
+      <PageHero
+        accent="clay"
+        kicker={
+          <a href={ANTS_BASESCAN_URL} target="_blank" rel="noopener noreferrer" className={styles.heroKicker}>
+            $ANTS
           </a>
-          <Link to="/docs/lightpaper" className={styles.ctaSecondary}>Lightpaper</Link>
-        </div>
-      </section>
+        }
+        title={
+          <>
+            The native token of<br />
+            <em>the AntSeed network.</em>
+          </>
+        }
+        badge={
+          <span className={styles.statusPill}>
+            <span className={styles.statusDot} aria-hidden="true" />
+            Tokens restricted
+          </span>
+        }
+        lead="ANTS is the native token of AntSeed and the trust and reputation layer of the network: real, payment-backed usage and locked ANTS behind seller identities turn open participation into reputation buyers can verify.">
+        <Button href={download.href} variant="clay" arrow>Download VPR</Button>
+        <Button to="/docs/lightpaper" variant="ghost">Lightpaper</Button>
+      </PageHero>
 
       {/* ── TOKEN OVERVIEW ── */}
-      <section className={styles.overview}>
-        <div className={styles.overviewHeader}>
-          <h2>Token supply</h2>
-          <p>1.04 billion hard cap. No minting beyond emissions. No admin mint function.</p>
-        </div>
+      <Section tone="tinted">
+        <Reveal>
+          <SectionHeader
+            title="Token supply"
+            lead="1.04 billion hard cap. No minting beyond emissions. No admin mint function."
+          />
+        </Reveal>
 
-        <SupplyBar totalSupply={totalSupply} />
+        <Reveal>
+          <SupplyBar totalSupply={totalSupply} />
+        </Reveal>
 
-        <div className={styles.statsGrid}>
-          <div className={styles.statCard}>
-            <div className={styles.statValue}>{totalSupply / 1e6}M</div>
-            <div className={styles.statLabel}>Current Supply</div>
-          </div>
-          <div className={styles.statCard}>
-            <div className={styles.statValue}>{Math.round(totalSupply / MAX_SUPPLY * 10000) / 100}%</div>
-            <div className={styles.statLabel}>Available</div>
-          </div>
-          <div className={styles.statCard}>
-            <div className={styles.statValue}>Epoch {epoch}</div>
-            <div className={styles.statLabel}>Current Epoch</div>
-          </div>
-          <div className={styles.statCard}>
-            <div className={styles.statValue}>{timeLeft}</div>
-            <div className={styles.statLabel}>Until Next Epoch</div>
-          </div>
-        </div>
-      </section>
+        <Reveal className={styles.statsGrid} delay={80}>
+          <StatTile value={`${totalSupply / 1e6}M`} label="Current supply" />
+          <StatTile
+            value={`${Math.round((totalSupply / MAX_SUPPLY) * 10000) / 100}%`}
+            label="Available"
+          />
+          <StatTile value={`Epoch ${epoch}`} label="Current epoch" />
+          <StatTile value={timeLeft} label="Until next epoch" />
+        </Reveal>
+      </Section>
 
-      {/* ── HOW TO EARN ── */}
-      <section className={styles.earn}>
-        <div className={styles.earnHeader}>
-          <h2>ANTS incentives</h2>
-          <p>
-            ANTS emissions track eligible real activity on the network. Claimability and distribution may be subject to caps, validation, locking, and anti-abuse checks.
-          </p>
-        </div>
-
-        <EarnFlow />
-
-        <div className={styles.earnGrid}>
-          <div className={styles.earnCard}>
-            <div className={styles.earnStep}>01</div>
-            <h3>As a seller</h3>
-            <p>Serve real requests and settle on-chain. Seller ANTS emissions come from the 50% Provider Pool and are capped at 50% of that seller bucket per seller per epoch; rewards are currently routed into a locked Provider Pool while stronger validation and proof systems are introduced.</p>
-          </div>
-          <div className={styles.earnCard}>
-            <div className={styles.earnStep}>02</div>
-            <h3>As a buyer</h3>
-            <p>Deposit USDC, use the network, and pay for AI services. Buyer emissions come from the 20% buyer pool and are capped at 5% of that buyer bucket per buyer per epoch, with quality filters and anti-abuse checks for real demand.</p>
-          </div>
-          <div className={styles.earnCard}>
-            <div className={styles.earnStep}>03</div>
-            <h3>Claimability</h3>
-            <p>Eligible buyer emissions may be claimable after epoch finalization. Seller emissions remain locked in the Provider Pool for now and may be subject to future verification or slashing before becoming claimable.</p>
-          </div>
-        </div>
-      </section>
-
-      {/* ── EMISSIONS ── */}
-      <section className={styles.emissions}>
-        <div className={styles.emissionsHeader}>
-          <h2>Emission schedule</h2>
-          <p>
-            Each epoch (1 week) distributes a fixed ANTS budget. Every 104 epochs (~2 years),
-            the budget halves. Six halvings reduce emissions to near-zero.
-          </p>
-        </div>
-
-        <HalvingCurve currentEpoch={epoch} currentBudget={epochBudget} />
-
-        <div className={styles.emissionsCurrentCard}>
-          <div className={styles.emissionsCurrentTitle}>
-            {started ? 'Current epoch budget' : 'First epoch budget'}
-          </div>
-          <div className={styles.emissionsCurrentValue}>
-            {(epochBudget / 1e6).toFixed(0)}M ANTS
-          </div>
-          <div className={styles.emissionsCurrentSub}>
-            {started
-              ? `${emissionRate.toFixed(3)} ANTS/sec · next halving in ${nextHalvingIn} epochs`
-              : 'Emissions begin when the contract is deployed on Base'
-            }
-          </div>
-        </div>
-
-        <div className={styles.splitGrid}>
-          {[
-            {pct: '50%', label: 'Provider Pool', desc: 'Seller emissions are tracked and routed into a locked Provider Pool. Capped at 50% of the seller bucket per seller per epoch; cap overages flow to the reserve.', accent: true},
-            {pct: '20%', label: 'Buyers', desc: 'For eligible real usage. Capped at 5% of the buyer bucket per buyer per epoch; cap overages flow to the reserve.', accent: false},
-            {pct: '15%', label: 'Ecosystem Reserve', desc: 'May support long-term network sustainability, trust, utility, grants, incentives, and alignment. Receives seller and buyer cap overages. Tokenholders do not own the reserve.', accent: false},
-            {pct: '15%', label: 'Contributors', desc: 'Vested contributor allocation intended to align long-term development and ecosystem health.', accent: false},
-          ].map(s => (
-            <div key={s.label} className={`${styles.splitCard} ${s.accent ? styles.splitCardAccent : ''}`}>
-              <div className={styles.splitPct}>{s.pct}</div>
-              <div className={styles.splitLabel}>{s.label}</div>
-              <p className={styles.splitDesc}>{s.desc}</p>
+      {/* ── SELLER POOLS ── */}
+      <Section>
+        <div className={styles.poolGrid}>
+          <Reveal className={styles.splitCopy}>
+            <p className={styles.splitKicker}>Seller pools</p>
+            <h2 className={styles.splitTitle}>
+              Not all volume<br />
+              <em>counts the same.</em>
+            </h2>
+            <p className={styles.splitLead}>
+              Seller pools are the reputation layer of the network. Settled, buyer-authorized
+              volume becomes recognized usage - and how much of it is recognized depends on the
+              ANTS locked behind the seller&apos;s identity.
+            </p>
+            <ul className={styles.splitPoints}>
+              <li>
+                <span className={styles.splitMark} aria-hidden="true" />
+                <span><strong>Payment-backed.</strong> Only settled, buyer-authorized volume counts, never self-reported claims.</span>
+              </li>
+              <li>
+                <span className={styles.splitMark} aria-hidden="true" />
+                <span><strong>Stake-weighted.</strong> Locked ANTS is durable backing that routers and buyers can inspect.</span>
+              </li>
+              <li>
+                <span className={styles.splitMark} aria-hidden="true" />
+                <span><strong>Capped rewards.</strong> Emissions follow recognized usage inside capped ranges; unused budget can be burned.</span>
+              </li>
+            </ul>
+            <div className={styles.splitCta}>
+              <Button to="/blog/seller-pools-reputation-tokenomics" variant="ghost" arrow>
+                How seller pools work
+              </Button>
             </div>
-          ))}
+          </Reveal>
+          <Reveal delay={140}>
+            <PoolWeightCard />
+          </Reveal>
         </div>
-      </section>
+      </Section>
 
-      {/* ── NETWORK ACTIVITY (Dune) ── */}
-      <section className={styles.activity}>
-        <div className={styles.activityHeader}>
-          <h2>Network activity</h2>
-          <p>Network usage and settlement data from Base. No token value, burn, distribution, or return is promised.</p>
-        </div>
-
-        <a href={DUNE_URL} target="_blank" rel="noopener noreferrer" className={styles.duneBanner}>
-          <div className={styles.duneBannerContent}>
-            <div className={styles.duneBannerIcon}>
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 3v18h18"/>
-                <path d="M7 16l4-8 4 4 5-9"/>
-              </svg>
+      {/* ── VERIFICATIONS ── */}
+      <Section tone="ink" className={styles.verifySection}>
+        <div className={styles.verifyGrid}>
+          <Reveal className={`${styles.splitCopy} ${styles.verifyCopy}`}>
+            <p className={styles.splitKicker}>Verifications</p>
+            <h2 className={`${styles.splitTitle} ${styles.verifyTitle}`}>
+              Evidence,<br />not labels.
+            </h2>
+            <p className={`${styles.splitLead} ${styles.verifyLead}`}>
+              A model name on an endpoint proves nothing. On AntSeed, evidence travels with every
+              response - and verification decides how much a seller&apos;s usage is worth.
+            </p>
+            <ul className={`${styles.splitPoints} ${styles.verifyPoints}`}>
+              <li>
+                <span className={styles.verifyMark} aria-hidden="true">✓</span>
+                <span><strong>Signed responses</strong> prove who served which bytes - no trust in a brand required.</span>
+              </li>
+              <li>
+                <span className={styles.verifyMark} aria-hidden="true">✓</span>
+                <span><strong>Model fingerprints</strong>, shared in a public torrent-style swarm, check the model behind an endpoint against its label.</span>
+              </li>
+              <li>
+                <span className={styles.verifyMark} aria-hidden="true">✓</span>
+                <span><strong>Verification feeds policy:</strong> how much of a seller&apos;s settled volume is recognized can depend on how it verifies.</span>
+              </li>
+            </ul>
+            <div className={styles.splitCta}>
+              <Button to="/blog/model-verification-fingerprint-swarm" variant="light" arrow>
+                How verification works
+              </Button>
             </div>
-            <div className={styles.duneBannerText}>
-              <div className={styles.duneBannerTitle}>Live on Dune Analytics</div>
-              <div className={styles.duneBannerSub}>
-                Volume, channels, fees, deposits, and protocol activity, all from on-chain data.
-                Open dashboard →
-              </div>
-            </div>
-          </div>
-        </a>
-      </section>
+          </Reveal>
+          <Reveal className={styles.verifyCardCol} delay={140}>
+            <VerifyReceipt />
+          </Reveal>
+        </div>
+      </Section>
 
-      {/* ── CONTRACT DETAILS ── */}
-      <section className={styles.contracts}>
-        <div className={styles.contractsHeader}>
-          <h2>On-chain details</h2>
-        </div>
-        <div className={styles.contractsTable}>
-          <div className={styles.contractsRow}>
-            <span className={styles.contractsLabel}>Token contract</span>
-            <span className={styles.contractsValue}>
-              <a href={ANTS_BASESCAN_URL} target="_blank" rel="noopener noreferrer" className={styles.contractsLink}>
-                {ANTS_TOKEN_ADDRESS.slice(0, 6)}...{ANTS_TOKEN_ADDRESS.slice(-4)} on Base
-              </a>
-            </span>
-          </div>
-          {[
-            {label: 'Token standard', value: 'ERC-20'},
-            {label: 'Max supply', value: '1,040,000,000 ANTS'},
-            {label: 'Epoch duration', value: '1 week (604,800 seconds)'},
-            {label: 'Halving interval', value: 'Every 104 epochs (~2 years)'},
-            {label: 'Network fee', value: '4% of settlement may be directed to ecosystem mechanisms such as reserves, grants, incentives, buy-and-burn, or other community-approved uses'},
-            {label: 'DIEM program fee', value: '10% program/operator fee may be directed according to applicable DIEM Provider Capacity Program rules'},
-            {label: 'Token rights', value: 'ANTS does not represent equity, ownership, debt, profit share, revenue share, claim on assets, or any right to receive payments'},
-            {label: 'Provider Pool', value: 'Seller ANTS emissions are tracked but locked pending stronger validation; per-seller rewards are capped at 50% of the seller bucket per epoch'},
-            {label: 'Buyer cap', value: 'Per-buyer rewards are capped at 5% of the buyer bucket per epoch'},
-            {label: 'Cap overages', value: 'Seller and buyer cap overages are redirected to the Ecosystem Reserve'},
-            {label: 'Anti-abuse policy', value: 'Farming, fake volume, sybil behavior, spam, or value extraction may be capped, excluded, delayed, locked, or subject to future slashing'},
-            {label: 'Transfers', value: 'Currently restricted'},
-          ].map(r => (
-            <div key={r.label} className={styles.contractsRow}>
-              <span className={styles.contractsLabel}>{r.label}</span>
-              <span className={styles.contractsValue}>{r.value}</span>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* ── BOTTOM CTA ── */}
-      <section className={styles.bottomCta}>
-        <h2>Help build the network</h2>
-        <p>Download AntStation, use the network for real AI work, run a provider, and help improve the open-source protocol.</p>
-        <div className={styles.bottomCtaBtns}>
-          <a href={download.href} target="_blank" rel="noopener noreferrer" className={styles.ctaPrimary}>
-            Download AntStation →
-          </a>
-          <Link to="/providers" className={styles.ctaSecondary}>Become a provider</Link>
-        </div>
-        <div className={styles.bottomLinks}>
-          <Link to="/docs/lightpaper">Lightpaper</Link>
-          <span>·</span>
-          <Link to="/docs/payments">Payment protocol</Link>
-          <span>·</span>
-          <a href={DUNE_URL} target="_blank" rel="noopener noreferrer">Network dashboard</a>
-        </div>
-      </section>
-
+      {/* ── CLOSING CTA ── */}
+      <FinalCta
+        title="Help build the network"
+        sub="Download the VPR, use the network for real AI work, run a provider, and help improve the open-source protocol."
+        note={
+          <>
+            <a href="/docs/lightpaper">Lightpaper</a>
+            <a href="/docs/payments">Payment protocol</a>
+            <a href={STATS_URL} target="_blank" rel="noopener noreferrer">Network dashboard</a>
+          </>
+        }>
+        <Button href={download.href} variant="white" size="lg" arrow>Download VPR</Button>
+        <Button to="/providers" variant="light" size="lg">Become a provider</Button>
+      </FinalCta>
     </Layout>
   );
 }

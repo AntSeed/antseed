@@ -106,6 +106,12 @@ function normalizeSellerService(value: unknown): SellerServiceConfig | null {
   if (pricing) {
     out.pricing = pricing;
   }
+  if (value['capabilities'] !== undefined) {
+    out.capabilities = value['capabilities'] as SellerServiceConfig['capabilities'];
+  }
+  if (value['unitBillingModels'] !== undefined) {
+    out.unitBillingModels = value['unitBillingModels'] as SellerServiceConfig['unitBillingModels'];
+  }
   return out;
 }
 
@@ -269,6 +275,35 @@ function normalizeVerifications(
   };
 }
 
+function cloneSellerHealthCheck(
+  value: AntseedConfig['seller']['healthCheck'],
+): AntseedConfig['seller']['healthCheck'] {
+  if (!value) return undefined;
+  return {
+    ...(value.enabled !== undefined ? { enabled: value.enabled } : {}),
+    ...(value.intervalMs !== undefined ? { intervalMs: value.intervalMs } : {}),
+    ...(value.failureThreshold !== undefined ? { failureThreshold: value.failureThreshold } : {}),
+  };
+}
+
+function normalizeSellerHealthCheck(
+  value: unknown,
+  fallback?: AntseedConfig['seller']['healthCheck'],
+): { healthCheck: NonNullable<AntseedConfig['seller']['healthCheck']> } | Record<string, never> {
+  if (!isRecord(value)) {
+    const cloned = cloneSellerHealthCheck(fallback);
+    return cloned ? { healthCheck: cloned } : {};
+  }
+  // Keep user-supplied values (even malformed) so validateConfig reports them.
+  return {
+    healthCheck: {
+      ...(value['enabled'] !== undefined ? { enabled: value['enabled'] as boolean } : {}),
+      ...(value['intervalMs'] !== undefined ? { intervalMs: toFiniteOrNaN(value['intervalMs']) } : {}),
+      ...(value['failureThreshold'] !== undefined ? { failureThreshold: toFiniteOrNaN(value['failureThreshold']) } : {}),
+    },
+  };
+}
+
 function mergeSellerConfig(
   defaults: AntseedConfig['seller'],
   value: unknown
@@ -282,6 +317,7 @@ function mergeSellerConfig(
       ...(typeof defaults.maxUploadBodyBytes === 'number' ? { maxUploadBodyBytes: defaults.maxUploadBodyBytes } : {}),
       ...(defaults.agentDir ? { agentDir: defaults.agentDir } : {}),
       ...(normalizeVerifications(undefined, defaults.verifications)),
+      ...(normalizeSellerHealthCheck(undefined, defaults.healthCheck)),
     };
   }
 
@@ -303,6 +339,7 @@ function mergeSellerConfig(
         ? { maxUploadBodyBytes: defaults.maxUploadBodyBytes }
         : {}),
     ...(normalizeAgentDir(value['agentDir'], defaults.agentDir)),
+    ...(normalizeSellerHealthCheck(value['healthCheck'], defaults.healthCheck)),
   };
 }
 

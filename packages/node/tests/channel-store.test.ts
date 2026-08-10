@@ -232,4 +232,82 @@ describe('ChannelStore', () => {
     // Prevent double-close in afterEach
     store = new ChannelStore(tempDir);
   });
+
+  describe('getBuyerServiceUsageTotals', () => {
+    const buyerAddr = '0x' + 'cc'.repeat(20);
+
+    it('sums the same service across paid and free channels', () => {
+      const paid = makeChannel({ sessionId: '0x' + 'a1'.repeat(32) });
+      const free = makeChannel({ sessionId: '0x' + 'a2'.repeat(32), channelKind: CHANNEL_KIND.FREE });
+      store.upsertChannel(paid);
+      store.upsertChannel(free);
+      store.replaceServiceTotals(paid.sessionId, [{
+        serviceId: '0x' + '11'.repeat(32),
+        cumulativeAmount: '1000',
+        cumulativeInputTokens: '500',
+        cumulativeCachedInputTokens: '100',
+        cumulativeOutputTokens: '200',
+        cumulativeRequestCount: '3',
+      }]);
+      store.replaceServiceTotals(free.sessionId, [{
+        serviceId: '0x' + '11'.repeat(32),
+        cumulativeAmount: '0',
+        cumulativeInputTokens: '400',
+        cumulativeCachedInputTokens: '0',
+        cumulativeOutputTokens: '300',
+        cumulativeRequestCount: '2',
+      }]);
+
+      const totals = store.getBuyerServiceUsageTotals(buyerAddr);
+      expect(totals.length).toBe(1);
+      expect(totals[0].serviceId).toBe('0x' + '11'.repeat(32));
+      expect(totals[0].amountUsdc).toBe('1000');
+      expect(totals[0].inputTokens).toBe('900');
+      expect(totals[0].cachedInputTokens).toBe('100');
+      expect(totals[0].outputTokens).toBe('500');
+      expect(totals[0].requestCount).toBe(5);
+    });
+
+    it('keeps distinct services separate and excludes other buyers', () => {
+      const mine = makeChannel({ sessionId: '0x' + 'b1'.repeat(32) });
+      const theirs = makeChannel({ sessionId: '0x' + 'b2'.repeat(32), buyerEvmAddr: '0x' + 'dd'.repeat(20) });
+      store.upsertChannel(mine);
+      store.upsertChannel(theirs);
+      store.replaceServiceTotals(mine.sessionId, [
+        {
+          serviceId: '0x' + '11'.repeat(32),
+          cumulativeAmount: '10',
+          cumulativeInputTokens: '1',
+          cumulativeCachedInputTokens: '0',
+          cumulativeOutputTokens: '1',
+          cumulativeRequestCount: '1',
+        },
+        {
+          serviceId: '0x' + '22'.repeat(32),
+          cumulativeAmount: '20',
+          cumulativeInputTokens: '2',
+          cumulativeCachedInputTokens: '0',
+          cumulativeOutputTokens: '2',
+          cumulativeRequestCount: '1',
+        },
+      ]);
+      store.replaceServiceTotals(theirs.sessionId, [{
+        serviceId: '0x' + '11'.repeat(32),
+        cumulativeAmount: '999',
+        cumulativeInputTokens: '999',
+        cumulativeCachedInputTokens: '0',
+        cumulativeOutputTokens: '999',
+        cumulativeRequestCount: '9',
+      }]);
+
+      const totals = store.getBuyerServiceUsageTotals(buyerAddr);
+      expect(totals.length).toBe(2);
+      const first = totals.find((t) => t.serviceId === '0x' + '11'.repeat(32));
+      expect(first?.amountUsdc).toBe('10');
+    });
+
+    it('returns empty for a buyer with no channels', () => {
+      expect(store.getBuyerServiceUsageTotals('0x' + 'ee'.repeat(20))).toEqual([]);
+    });
+  });
 });

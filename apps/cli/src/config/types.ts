@@ -1,3 +1,9 @@
+import type {
+  ServiceApiProtocol,
+  ServiceCapabilities,
+  UnitBillingModelV1,
+} from '@antseed/node';
+
 /**
  * Dual token pricing in USD per 1M tokens.
  */
@@ -32,6 +38,10 @@ export interface SellerServiceConfig {
    * defaults are used.
    */
   pricing?: TokenPricingUsdPerMillion;
+  /** Model capability hints announced to buyers for this service. */
+  capabilities?: ServiceCapabilities;
+  /** Per-protocol non-token billing models for this service. */
+  unitBillingModels?: Partial<Record<ServiceApiProtocol, UnitBillingModelV1>>;
 }
 
 /**
@@ -96,6 +106,18 @@ export interface BuyerVerificationConfig {
 }
 
 /**
+ * Periodic model health self-check settings for the seller.
+ */
+export interface SellerHealthCheckCLIConfig {
+  /** Enable periodic 1-token probes of every advertised service. Default: true. */
+  enabled?: boolean;
+  /** Milliseconds between probe sweeps. Default: 300000 (5 minutes). */
+  intervalMs?: number;
+  /** Consecutive probe failures before a service is unadvertised. Default: 3. */
+  failureThreshold?: number;
+}
+
+/**
  * Seller-specific configuration within the Antseed config.
  */
 export interface SellerCLIConfig {
@@ -131,6 +153,11 @@ export interface SellerCLIConfig {
    * `--verifiers` or the ANTSEED_VERIFIER_SDKS env var.
    */
   verifiers?: string[];
+  /**
+   * Periodic model health self-checks. Enabled by default; failing services
+   * are unadvertised until they recover. Set `enabled: false` to opt out.
+   */
+  healthCheck?: SellerHealthCheckCLIConfig;
 }
 
 /**

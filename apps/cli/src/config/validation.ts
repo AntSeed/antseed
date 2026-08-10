@@ -7,6 +7,7 @@ import type {
   SellerProviderConfig,
   TokenPricingUsdPerMillion,
 } from './types.js';
+import { validateServiceMetadata } from './service-metadata.js';
 
 const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const MAX_PUBLIC_ADDRESS_LENGTH = 255;
@@ -110,6 +111,7 @@ function validateSellerProviders(
         validatePricingLeaf(`${servicePath}.pricing`, serviceCfg.pricing, errors);
       }
       validateCategoryList(`${servicePath}.categories`, serviceCfg.categories, errors);
+      errors.push(...validateServiceMetadata(servicePath, serviceCfg));
     }
   }
 }
@@ -362,6 +364,25 @@ export function validateConfig(config: AntseedConfig): string[] {
     const raw = config.seller.publicAddress.trim();
     if (parsePublicAddress(raw) === null) {
       errors.push('seller.publicAddress must be in the form "host:port" with a valid port');
+    }
+  }
+
+  if (config.seller.healthCheck !== undefined) {
+    const healthCheck = config.seller.healthCheck;
+    if (healthCheck.enabled !== undefined && typeof healthCheck.enabled !== 'boolean') {
+      errors.push('seller.healthCheck.enabled must be a boolean');
+    }
+    if (
+      healthCheck.intervalMs !== undefined &&
+      (!Number.isInteger(healthCheck.intervalMs) || healthCheck.intervalMs < 60_000)
+    ) {
+      errors.push('seller.healthCheck.intervalMs must be an integer >= 60000 (1 minute)');
+    }
+    if (
+      healthCheck.failureThreshold !== undefined &&
+      (!Number.isInteger(healthCheck.failureThreshold) || healthCheck.failureThreshold < 1)
+    ) {
+      errors.push('seller.healthCheck.failureThreshold must be an integer >= 1');
     }
   }
 

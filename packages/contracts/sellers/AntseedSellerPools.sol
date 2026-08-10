@@ -557,6 +557,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         Position memory position = positions[positionId];
         if (position.owner == address(0)) revert InvalidPosition();
         uint256 epoch = currentEpoch();
+        if (epoch < positionWithdrawableEpoch[positionId]) revert PositionChangePending();
         uint256 closeEpoch = epoch < position.stakeStartEpoch ? position.stakeStartEpoch : epoch;
         if (_positionMaxLockPower[positionId].upperLookupRecent(closeEpoch) != 0) return maxSlashBps;
         if (closeEpoch >= position.stakeEndEpoch) return 0;

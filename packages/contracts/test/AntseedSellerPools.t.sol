@@ -917,8 +917,11 @@ contract AntseedSellerPoolsTest is Test {
         vm.prank(staker);
         vm.expectRevert(IAntseedSellerPools.PositionChangePending.selector);
         pools.withdrawStake(firstId);
+        vm.expectRevert(IAntseedSellerPools.PositionChangePending.selector);
+        pools.earlyExitSlashBps(firstId);
 
         vm.warp(block.timestamp + EPOCH_DURATION);
+        assertEq(pools.earlyExitSlashBps(firstId), 2500);
         uint256 balanceBefore = token.balanceOf(staker);
         vm.prank(staker);
         pools.withdrawStake(firstId);

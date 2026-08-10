@@ -7,10 +7,13 @@ export { BaseProvider, type BaseProviderConfig } from './base-provider.js';
 export { parseServiceAliasMap } from './service-alias.js';
 export {
   parseNonNegativeNumber,
+  parseServiceCapabilitiesJson,
+  parseServiceUnitBillingModelsJson,
   parseServicePricingJson,
   parseCsv,
   parseJsonObject,
   buildServiceApiProtocols,
+  isImageModelId,
 } from './config-utils.js';
 export {
   stripRelayRequestHeaders,

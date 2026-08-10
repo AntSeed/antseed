@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AntStationStackedLogo } from './AntStationLogo';
-import { TitleBar } from './TitleBar';
+import { AntStationMark } from './AntStationLogo';
 import { shallowEqual, useUiSelector } from '../hooks/useUiSelector';
 import styles from './SetupScreen.module.scss';
 
@@ -50,6 +49,7 @@ export function SetupScreen() {
     appSetupStep: state.appSetupStep,
     chatServiceCount: state.chatServiceOptions.length,
     runtimeActivityMessage: state.runtimeActivity.message,
+    networkAlert: state.networkAlert,
   }), shallowEqual);
   const [level, setLevel] = useState<ProgressLevel>(0);
 
@@ -75,11 +75,16 @@ export function SetupScreen() {
 
   return (
     <>
-      <TitleBar />
+      {/* Frameless window: keep the top strip draggable but visually empty —
+          the setup screen carries its branding in the body. */}
+      <div className={styles.dragStrip} />
       <div className={styles.container}>
         <div className={styles.content}>
-          <AntStationStackedLogo height={60} className={styles.logo} />
-          <h1 className={styles.title}>Setting up AntStation</h1>
+          <div className={styles.brand}>
+            <AntStationMark size={64} />
+            <span className={styles.brandName}>VPR</span>
+          </div>
+          <h1 className={styles.title}>Setting up your VPR</h1>
           <p className={styles.subtitle}>This only takes a moment on first launch</p>
 
           <div className={styles.steps}>
@@ -99,6 +104,16 @@ export function SetupScreen() {
               <span className={styles.readyDot} />
               Ready
             </div>
+          )}
+
+          {/* networkAlert carries a startup grace period, so this only appears
+              once the network — not slow bootstrap — is the problem. */}
+          {!hasServices && snap.networkAlert !== 'none' && (
+            <p className={styles.networkHint} role="alert">
+              {snap.networkAlert === 'no-internet'
+                ? 'No internet connection detected. Connect to the internet to finish setup.'
+                : 'Having trouble reaching the peer-to-peer network. A firewall or VPN on this network may be blocking it — try disconnecting the VPN or switching networks.'}
+            </p>
           )}
         </div>
       </div>

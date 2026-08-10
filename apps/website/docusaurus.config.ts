@@ -1,5 +1,5 @@
 import {themes as prismThemes} from 'prism-react-renderer';
-import type {Config, Plugin, PluginModule} from '@docusaurus/types';
+import type {Config, Plugin, PluginConfig, PluginModule} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 import integrationsPagesPlugin from './plugins/integrations-pages';
 import {integrations as integrationEntries} from './src/integrations/integrations';
@@ -25,6 +25,17 @@ const statsProxyPlugin: PluginModule = () => ({
   },
 });
 
+/** Google Tag Manager container for antseed.com. */
+const GTM_CONTAINER_ID = process.env.GTM_CONTAINER_ID ?? 'GTM-NHCLBQQK';
+
+/**
+ * Typed explicitly: an inline array literal widens to `string | object`, which
+ * does not satisfy PluginConfig's [name, options] tuple.
+ */
+const gtmPlugin: PluginConfig[] = GTM_CONTAINER_ID
+  ? [['@docusaurus/plugin-google-tag-manager', {containerId: GTM_CONTAINER_ID}]]
+  : [];
+
 const config: Config = {
   title: 'AntSeed',
   tagline: 'The open market for AI inference. No gatekeepers.',
@@ -43,13 +54,6 @@ const config: Config = {
     defaultLocale: 'en',
     locales: ['en'],
   },
-
-  stylesheets: [
-    {
-      href: 'https://fonts.googleapis.com/css2?family=Oxanium:wght@300;400;500;600;700;800&family=Share+Tech+Mono&display=swap',
-      type: 'text/css',
-    },
-  ],
 
   presets: [
     [
@@ -81,6 +85,19 @@ const config: Config = {
   ],
 
   plugins: [
+    // Google Tag Manager. GA4 is configured as a tag *inside* GTM rather than
+    // loaded separately, so there is one script on the page and no risk of
+    // double-counting pageviews. Adding Ads/LinkedIn/Meta pixels later is a
+    // GTM change, not a code change.
+    //
+    // A GTM container id is public — it ships in the page source — so it lives
+    // here rather than in deploy config, and the site works without anyone
+    // setting an env var. GTM_CONTAINER_ID still overrides it for staging or a
+    // throwaway test container. Set it to an empty string to disable GTM.
+    //
+    // GA4 (G-DF97Q4KV2X) is configured as a tag *inside* this container, not
+    // loaded here, so there is one tag on the page and no double-counting.
+    ...gtmPlugin,
     [
       '@docusaurus/plugin-client-redirects',
       {
@@ -99,7 +116,30 @@ const config: Config = {
     integrationsPagesPlugin,
   ],
 
+  // General Sans — the design's display/body face (Geist stays for app-chrome/mono).
+  stylesheets: [
+    {
+      href: 'https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600,700&display=swap',
+      type: 'text/css',
+    },
+  ],
+
   headTags: [
+    // Second Search Console owner. A site can carry several verification tags,
+    // one per Google account, and removing one un-verifies that account — so
+    // this is additive, not a replacement for the token in themeConfig.metadata.
+    //
+    // It lives here rather than alongside the other one because themeConfig
+    // metadata is rendered through react-helmet, which dedupes <meta> by name:
+    // two google-site-verification entries there would collapse into one and
+    // this token would silently never ship. headTags is injected verbatim.
+    {
+      tagName: 'meta',
+      attributes: {
+        name: 'google-site-verification',
+        content: 'wiMhtNPC3UWtvOKXeJBto55Y8F6-7ORyA1aAI_DkZ-A',
+      },
+    },
     {
       tagName: 'script',
       attributes: {type: 'application/ld+json'},
@@ -135,7 +175,7 @@ const config: Config = {
           'Reputation-based provider scoring',
           'TEE attestation for privacy-preserving inference',
           'AI agents with on-demand knowledge and custom tools',
-          'Desktop app (AntStation)',
+          'Desktop app (VPR)',
           'Agent-to-agent commerce support',
         ],
         downloadUrl: 'https://github.com/AntSeed/antseed/releases',
@@ -148,39 +188,45 @@ const config: Config = {
   themeConfig: {
     metadata: [
       {name: 'google-site-verification', content: '09pzs5Q9kHdpQSNSBpr0vNh9SMq-T8lzhBgH5Zgm6ug'},
-      {name: 'keywords', content: 'AI marketplace, OpenRouter alternative, serving AI inference, consuming AI inference, peer-to-peer AI, decentralized AI inference, anonymous AI, private AI, P2P AI, AI economy'},
-      {name: 'description', content: 'Permissionless peer-to-peer AI inference. Pay per request in USDC. Anonymous by design, with independent providers and no central account.'},
-      {property: 'og:title', content: 'AntSeed — The open market for AI inference'},
-      {property: 'og:description', content: 'Permissionless peer-to-peer AI inference. Pay per request in USDC. Anonymous by design, with independent providers and no central account.'},
+      {name: 'description', content: 'The open market for AI inference. Every model, no middleman. Anonymous, best price, works with the tools you already use. Owned by no one.'},
+      {property: 'og:title', content: 'Every AI model, best price, no middleman'},
+      {property: 'og:description', content: 'AntSeed is the open market for AI inference. Every model, no middleman. Anonymous. Best price. Works with the tools you already use. Owned by no one. Available to everyone.'},
       {property: 'og:type', content: 'website'},
+      {property: 'og:site_name', content: 'AntSeed'},
       {name: 'twitter:card', content: 'summary_large_image'},
-      {name: 'twitter:image', content: 'https://antseed.com/og-image.jpg'},
-      {property: 'og:image', content: 'https://antseed.com/og-image.jpg'},
-      {name: 'twitter:title', content: 'AntSeed — The open market for AI inference'},
-      {name: 'twitter:description', content: 'Permissionless peer-to-peer AI inference. Pay per request in USDC. Anonymous by design, with independent providers and no central account.'},
+      {name: 'twitter:site', content: '@antseedai'},
+      {name: 'twitter:image', content: 'https://antseed.com/og-image.png'},
+      {property: 'og:image', content: 'https://antseed.com/og-image.png'},
+      {property: 'og:image:width', content: '1200'},
+      {property: 'og:image:height', content: '630'},
+      {property: 'og:image:alt', content: 'AntSeed, the open market for AI inference'},
     ],
     colorMode: {
-      defaultMode: 'dark',
-      disableSwitch: false,
+      defaultMode: 'light',
+      disableSwitch: true,
       respectPrefersColorScheme: false,
     },
     navbar: {
-      title: 'ANTSEED',
+      title: '',
       logo: {
         alt: 'AntSeed',
         src: 'logo-light.svg',
-        srcDark: 'logo.svg',
+        srcDark: 'logo-dark.svg',
+        width: 104,
+        height: 36,
       },
       items: [
         {
           href: 'https://antseedstats.com/network',
           label: 'Pricing',
-          position: 'right',
+          position: 'left',
           target: '_blank',
           rel: 'noopener noreferrer',
+          className: 'header-pricing-link',
         },
-        {to: '/integrations', label: 'Integrations', position: 'right'},
-        {to: '/providers', label: 'Providers', position: 'right'},
+        {to: '/integrations', label: 'Integrations', position: 'left'},
+        {to: '/providers', label: 'Providers', position: 'left'},
+        {to: '/ecosystem', label: 'Ecosystem', position: 'left'},
         {
           type: 'docSidebar',
           sidebarId: 'docs',
@@ -188,14 +234,7 @@ const config: Config = {
           position: 'right',
           className: 'header-docs-link',
         },
-        {to: '/blog', label: 'Blog', position: 'right'},
-        {to: '/ants-token', label: '$ANTS', position: 'right', className: 'header-ants-link'},
-        {
-          href: process.env.NODE_ENV === 'development' ? 'http://localhost:5180/' : 'https://diemantseed.com',
-          label: '$DIEM',
-          position: 'right',
-          className: 'header-diem-link',
-        },
+        {to: '/blog', label: 'Blog', position: 'right', className: 'header-blog-link'},
         {
           href: 'https://github.com/antseed',
           'aria-label': 'GitHub',
@@ -214,12 +253,20 @@ const config: Config = {
           position: 'right',
           className: 'header-telegram-link',
         },
-
+        {
+          // Custom item (src/theme/NavbarItem/DownloadNavbarItem.tsx): links
+          // straight to the installer for the visitor's OS/arch, falling back
+          // to the releases page when detection fails.
+          type: 'custom-download',
+          label: 'Download VPR',
+          position: 'right',
+          className: 'header-download-link',
+        },
       ],
     },
     prism: {
-      theme: prismThemes.github,
-      darkTheme: prismThemes.dracula,
+      theme: prismThemes.nightOwl,
+      darkTheme: prismThemes.nightOwl,
       additionalLanguages: ['bash', 'json', 'typescript'],
     },
   } satisfies Preset.ThemeConfig,

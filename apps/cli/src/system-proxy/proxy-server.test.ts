@@ -61,14 +61,15 @@ const WORKFLOW_FORWARD_RULE: SystemProxyForwardRule = {
 test('rewriteRequestBody: injects peerId into model field', () => {
   const body = Buffer.from(JSON.stringify({ model: 'model-default', messages: [] }))
   const result = rewriteRequestBody(body, 'peer123')
-  const parsed = JSON.parse(result.toString('utf8')) as { model: string }
+  const parsed = JSON.parse(result.body.toString('utf8')) as { model: string }
   assert.equal(parsed.model, 'peer123@model-default')
+  assert.equal(result.modelRouted, true)
 })
 
 test('rewriteRequestBody: leaves other fields intact', () => {
   const input = { model: 'model-legacy', messages: [{ role: 'user', content: 'hi' }], max_tokens: 100 }
   const result = rewriteRequestBody(Buffer.from(JSON.stringify(input)), 'peer')
-  const parsed = JSON.parse(result.toString('utf8')) as typeof input
+  const parsed = JSON.parse(result.body.toString('utf8')) as typeof input
   assert.deepEqual(parsed.messages, input.messages)
   assert.equal(parsed.max_tokens, 100)
 })
@@ -76,34 +77,39 @@ test('rewriteRequestBody: leaves other fields intact', () => {
 test('rewriteRequestBody: no-op when model field is absent', () => {
   const body = Buffer.from(JSON.stringify({ input: 'hello', stream: true }))
   const result = rewriteRequestBody(body, 'peer123')
-  const parsed = JSON.parse(result.toString('utf8')) as { input: string; model?: string }
+  const parsed = JSON.parse(result.body.toString('utf8')) as { input: string; model?: string }
   assert.equal(parsed.model, undefined)
   assert.equal(parsed.input, 'hello')
+  assert.equal(result.modelRouted, false)
 })
 
 test('rewriteRequestBody: no-op for empty peerId', () => {
   const body = Buffer.from(JSON.stringify({ model: 'model-default' }))
   const result = rewriteRequestBody(body, '')
-  const parsed = JSON.parse(result.toString('utf8')) as { model: string }
+  const parsed = JSON.parse(result.body.toString('utf8')) as { model: string }
   assert.equal(parsed.model, 'model-default')
+  assert.equal(result.modelRouted, false)
 })
 
 test('rewriteRequestBody: passes through non-JSON unchanged', () => {
   const raw = Buffer.from('not json at all')
   const result = rewriteRequestBody(raw, 'peer')
-  assert.deepEqual(result, raw)
+  assert.deepEqual(result.body, raw)
+  assert.equal(result.modelRouted, false)
 })
 
 test('rewriteRequestBody: passes through empty buffer unchanged', () => {
   const result = rewriteRequestBody(Buffer.alloc(0), 'peer')
-  assert.equal(result.length, 0)
+  assert.equal(result.body.length, 0)
+  assert.equal(result.modelRouted, false)
 })
 
 test('rewriteRequestBody: handles model as non-string (leaves unchanged)', () => {
   const body = Buffer.from(JSON.stringify({ model: 42 }))
   const result = rewriteRequestBody(body, 'peer')
-  const parsed = JSON.parse(result.toString('utf8')) as { model: unknown }
+  const parsed = JSON.parse(result.body.toString('utf8')) as { model: unknown }
   assert.equal(parsed.model, 42)
+  assert.equal(result.modelRouted, false)
 })
 
 test('rewriteRequestBody: uses default model when requested model is not served by the peer', () => {
@@ -112,18 +118,20 @@ test('rewriteRequestBody: uses default model when requested model is not served 
     defaultModel: 'model-large',
     servedModels: new Set(['model-large']),
   })
-  const parsed = JSON.parse(result.toString('utf8')) as { model: string }
+  const parsed = JSON.parse(result.body.toString('utf8')) as { model: string }
   assert.equal(parsed.model, 'peer@model-large')
+  assert.equal(result.modelRouted, true)
 })
 
-test('rewriteRequestBody: keeps requested model when selected peer serves it', () => {
+test('rewriteRequestBody: selected default overrides a client model served by the peer', () => {
   const body = Buffer.from(JSON.stringify({ model: 'model-large', messages: [] }))
   const result = rewriteRequestBody(body, 'peer', {
     defaultModel: 'model-small',
     servedModels: new Set(['model-large', 'model-small']),
   })
-  const parsed = JSON.parse(result.toString('utf8')) as { model: string }
-  assert.equal(parsed.model, 'peer@model-large')
+  const parsed = JSON.parse(result.body.toString('utf8')) as { model: string }
+  assert.equal(parsed.model, 'peer@model-small')
+  assert.equal(result.modelRouted, true)
 })
 
 test('shouldSystemProxyRequest: only matches configured model API routes', () => {
@@ -227,6 +235,7 @@ test('buildBuyerForwardRequest: routes conversation message requests to chat com
   assert.ok(result)
   assert.equal(result.path, '/v1/chat/completions')
   assert.equal(result.source, 'conversation')
+  assert.equal(result.modelRouted, true)
   assert.ok(result.conversation)
   assert.equal(result.conversation.conversationId.length > 0, true)
   assert.equal(result.conversation.modelSlug, 'auto')
@@ -250,6 +259,26 @@ test('buildBuyerForwardRequest: passes conversation prepare requests through whe
   })
 
   assert.equal(result, null)
+})
+
+test('buildBuyerForwardRequest: attributes standard proxy routes to the matched profile source', () => {
+  const routes = new Map<string, Set<string>>([
+    ['api.anthropic.com', new Set(['/v1/messages'])],
+  ])
+  const result = buildBuyerForwardRequest({
+    host: 'api.anthropic.com',
+    path: '/v1/messages',
+    rawBody: Buffer.from(JSON.stringify({ model: 'claude', messages: [] })),
+    isJson: true,
+    peerId: 'peer123',
+    prefixesByHost: routes,
+    sourcesByHost: new Map([
+      ['api.anthropic.com', new Map([['/v1/messages', 'custom-api-anthropic-com']])],
+    ]),
+  })
+
+  assert.ok(result)
+  assert.equal(result.source, 'custom-api-anthropic-com')
 })
 
 test('transformRequestBody: converts configured nested message body to responses', () => {
@@ -455,7 +484,10 @@ test('ResponsesSseNormalizer: removes duplicate terminal text payloads', () => {
 // CONNECT tunnel. This keeps tests reliable while covering the critical
 // handleDecrypted logic: body rewriting, header stripping, response forwarding.
 
-async function startFakeBuyerProxy(): Promise<{
+async function startFakeBuyerProxy(
+  /** Optional pre-handler; return true when the response was written. */
+  respond?: (req: http.IncomingMessage, res: http.ServerResponse, body: Buffer) => boolean,
+): Promise<{
   port: number
   captured: { method: string; path: string; headers: http.IncomingHttpHeaders; body: Buffer }[]
   close: () => Promise<void>
@@ -465,12 +497,14 @@ async function startFakeBuyerProxy(): Promise<{
     const chunks: Buffer[] = []
     req.on('data', (c: Buffer) => chunks.push(c))
     req.on('end', () => {
+      const body = Buffer.concat(chunks)
       captured.push({
         method: req.method ?? 'GET',
         path: req.url ?? '/',
         headers: req.headers,
-        body: Buffer.concat(chunks),
+        body,
       })
+      if (respond?.(req, res, body)) return
       if (req.url === '/v1/responses') {
         const responseBody = [
           'event: response.created',
@@ -587,6 +621,18 @@ async function makeProxy(tmpDir: string, buyerPort: number) {
       ['conversation.com', new Set(['/profile-api/conversation', '/profile-api/conversation/prepare'])],
       ['workflow.example.test', new Set(['/profile-api/workflow'])],
     ]),
+    proxiedSources: new Map([
+      ['api-b.example.test', new Map([
+        ['/v1/audio/transcriptions', 'api-b-profile'],
+        ['/v1/chat/completions', 'api-b-profile'],
+      ])],
+      ['api-a.example.test', new Map([['/v1/messages', 'api-a-profile']])],
+      ['conversation.com', new Map([
+        ['/profile-api/conversation', 'conversation'],
+        ['/profile-api/conversation/prepare', 'conversation'],
+      ])],
+      ['workflow.example.test', new Map([['/profile-api/workflow', 'workflow']])],
+    ]),
     systemProxyForwardRules: new Map([
       ['conversation.com', CONVERSATION_FORWARD_RULE],
       ['workflow.example.test', WORKFLOW_FORWARD_RULE],
@@ -684,6 +730,7 @@ test('Proxy: forwards correct path to buyer proxy', { timeout: 15_000 }, async (
 
       assert.equal(buyer.captured[0]?.path, '/v1/messages', 'path should be preserved')
       assert.equal(buyer.captured[0]?.headers['profile-version'], '2023-06-01', 'non-hop-by-hop headers preserved')
+      assert.equal(buyer.captured[0]?.headers['x-antseed-system-proxy-source'], 'api-a-profile')
     } finally {
       await proxy.stop()
       await buyer.close()
@@ -862,6 +909,95 @@ test('Proxy: handles profile CORS preflight without forwarding', { timeout: 15_0
       assert.equal(result.headers['access-control-allow-headers'], 'content-type,x-workflow-version,x-workflow-distinct-id')
       assert.equal(result.headers['access-control-max-age'], '600')
       assert.equal(buyer.captured.length, 0, 'preflight should not hit buyer proxy')
+    } finally {
+      await proxy.stop()
+      await buyer.close()
+    }
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true })
+  }
+})
+
+// ── 402 → plain-text out-of-credits notice ───────────────────────────────────
+
+function respond402PaymentRequired(
+  _req: http.IncomingMessage,
+  res: http.ServerResponse,
+): boolean {
+  const body = JSON.stringify({
+    error: 'payment_required',
+    code: 'insufficient_deposits',
+    peerId: 'testPeer',
+    message: 'You are out of AntSeed credits for this request.',
+  })
+  res.writeHead(402, {
+    'content-type': 'application/json',
+    'content-length': String(Buffer.byteLength(body)),
+    'connection': 'close',
+  })
+  res.end(body)
+  return true
+}
+
+test('Proxy: rewrites a 402 body into a plain-text out-of-credits notice', { timeout: 15_000 }, async () => {
+  const tmpDir = await mkdtemp(join(tmpdir(), 'antseed-proxy-test-'))
+  try {
+    const buyer = await startFakeBuyerProxy(respond402PaymentRequired)
+    const { proxy, caKeys } = await makeProxy(tmpDir, buyer.port)
+    try {
+      const requestBody = Buffer.from(JSON.stringify({
+        model: 'model-default',
+        stream: true,
+        max_tokens: 128,
+        messages: [{ role: 'user', content: 'hi' }],
+      }))
+      const result = await tlsHttpRequest({
+        host: '127.0.0.1',
+        port: proxy.innerTlsPort,
+        servername: 'api-a.example.test',
+        caCert: caKeys.certPem,
+        method: 'POST',
+        path: '/v1/messages',
+        headers: { 'content-type': 'application/json' },
+        body: requestBody,
+      })
+
+      assert.equal(result.statusCode, 402, 'payment failures keep their 402 status')
+      assert.ok(result.headers['content-type']?.includes('text/plain'), 'body is plain text, not JSON')
+      const text = result.body.toString('utf8')
+      assert.ok(text.includes('out of credits'), 'notice tells the user what happened')
+      assert.ok(text.includes('AntSeed app'), 'notice tells the user where to fix it')
+      assert.ok(!text.includes('payment_required'), 'raw error JSON never reaches the client')
+      assert.ok(!text.includes('{'), 'no JSON syntax leaks into the notice')
+    } finally {
+      await proxy.stop()
+      await buyer.close()
+    }
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test('Proxy: rewrites non-chat 402s with the same plain-text notice', { timeout: 15_000 }, async () => {
+  const tmpDir = await mkdtemp(join(tmpdir(), 'antseed-proxy-test-'))
+  try {
+    const buyer = await startFakeBuyerProxy(respond402PaymentRequired)
+    const { proxy, caKeys } = await makeProxy(tmpDir, buyer.port)
+    try {
+      const result = await tlsHttpRequest({
+        host: '127.0.0.1',
+        port: proxy.innerTlsPort,
+        servername: 'api-b.example.test',
+        caCert: caKeys.certPem,
+        method: 'POST',
+        path: '/v1/audio/transcriptions',
+        headers: { 'content-type': 'application/octet-stream' },
+        body: Buffer.from('raw audio'),
+      })
+
+      assert.equal(result.statusCode, 402)
+      assert.ok(result.headers['content-type']?.includes('text/plain'))
+      assert.ok(result.body.toString('utf8').includes('out of credits'))
     } finally {
       await proxy.stop()
       await buyer.close()

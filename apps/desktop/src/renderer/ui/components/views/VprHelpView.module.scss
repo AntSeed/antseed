@@ -1,0 +1,354 @@
+/* ---------- Internal page slide ----------
+   Help hosts its own page stack (root -> topic -> article) and mirrors the
+   top-level ViewHost transition: incoming page slides in fully while the
+   outgoing one drifts and dims. The panes carry the global `.view` class so
+   the active page's scroll keeps driving the credits pill timeline. */
+
+.host {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.pane {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+  background: var(--bg-primary);
+}
+
+.hostSliding .pane {
+  animation-duration: var(--motion-duration);
+  animation-timing-function: var(--motion-ease);
+  animation-fill-mode: both;
+  will-change: transform;
+}
+
+.hostSliding .paneOut {
+  pointer-events: none;
+}
+
+.hostForward .paneIn {
+  z-index: 2;
+  animation-name: help-slide-in-from-right;
+}
+
+.hostForward .paneOut {
+  z-index: 1;
+  animation-name: help-slide-drift-left;
+}
+
+.hostBack .paneIn {
+  z-index: 1;
+  animation-name: help-slide-drift-in-from-left;
+}
+
+.hostBack .paneOut {
+  z-index: 2;
+  animation-name: help-slide-out-to-right;
+}
+
+@keyframes help-slide-in-from-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes help-slide-drift-left {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(-28%);
+    opacity: 0.4;
+  }
+}
+
+@keyframes help-slide-drift-in-from-left {
+  from {
+    transform: translateX(-28%);
+    opacity: 0.4;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes help-slide-out-to-right {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hostSliding .pane {
+    animation: none;
+  }
+
+  .hostSliding .paneOut {
+    display: none;
+  }
+}
+
+.view {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: clip;
+  padding: 8px 16px 24px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 392px;
+  margin: 0 auto;
+  min-width: 0;
+}
+
+.title {
+  color: var(--text-primary);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.section {
+  display: grid;
+  gap: 8px;
+}
+
+.sectionLabel {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.sectionHint {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/* ---------- Rows ---------- */
+
+.row {
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border: none;
+  /* The legacy global button rule adds a border-radius, which makes the
+     hairline dividers curve at their ends — menu rows must stay square and
+     let the card's overflow clipping round the outer corners only. */
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+}
+
+button.row {
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+button.row:hover:not(:disabled) {
+  background: var(--bg-hover);
+  opacity: 1;
+}
+
+button.row:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+button.row:disabled .rowLabel,
+button.row:disabled .rowIcon,
+button.row:disabled .rowGlyph {
+  color: var(--text-muted);
+}
+
+button.row:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+}
+
+.row + .row {
+  border-top: 1px solid var(--border);
+}
+
+.rowIcon {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+
+.rowText {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.rowLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.rowText .rowLabel {
+  flex: none;
+}
+
+.rowHint {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.rowGlyph {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+
+.rowValue {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+/* ---------- Internal article ---------- */
+
+.articleCard {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.articleSection {
+  display: grid;
+  gap: 4px;
+}
+
+.articleHeading {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.paragraph {
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.docsLink {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent-green);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.docsLink:hover {
+  text-decoration: underline;
+}
+
+.docsLink:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+  border-radius: 4px;
+}
+
+/* "Read next" footer link under the article card. */
+
+.nextRow {
+  display: grid;
+  gap: 2px;
+  padding: 12px 16px;
+  border: none;
+  border-radius: 16px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.nextRow:hover {
+  background: var(--bg-hover);
+}
+
+.nextRow:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+}
+
+.nextKicker {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.nextLabel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.nextLabelText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+/* The diagnostics card mixes a padded setting row with flush rows. */
+
+.settingCard {
+  display: flex;
+  flex-direction: column;
+  padding-top: 12px;
+}
+
+.settingCard > :first-child {
+  padding: 0 16px 12px;
+}
+
+.rowFlush {
+  border-top: 1px solid var(--border);
+}

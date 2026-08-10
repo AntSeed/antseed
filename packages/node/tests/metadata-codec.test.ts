@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { encodeMetadata, decodeMetadata, encodeMetadataForSigning } from '../src/discovery/metadata-codec.js';
-import { METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
+import { METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
 
 function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   return {
@@ -32,6 +32,52 @@ function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
 }
 
 describe('encodeMetadata / decodeMetadata', () => {
+  it('round-trips v12 catalogs with more than 255 service entries', () => {
+    const services = Array.from({ length: 300 }, (_, index) => `service-${index}`);
+    const servicePricing = Object.fromEntries(
+      services.map((service) => [service, { inputUsdPerMillion: 1, outputUsdPerMillion: 2 }]),
+    );
+    const serviceCategories = Object.fromEntries(services.map((service) => [service, ['chat']]));
+    const serviceApiProtocols = Object.fromEntries(
+      services.map((service) => [service, ['openai-images'] as const]),
+    );
+    const serviceUnitBillingModels = Object.fromEntries(
+      services.map((service) => [service, {
+        'openai-images': {
+          version: 1 as const,
+          components: [{ unit: 'output_images' as const, priceUsd: 0.04 }],
+        },
+      }]),
+    );
+    const serviceCapabilities = Object.fromEntries(
+      services.map((service) => [service, { inputs: ['text'] as const }]),
+    );
+    const original = makeMetadata({
+      providers: [{
+        provider: 'openai',
+        services,
+        defaultPricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
+        servicePricing,
+        serviceCategories,
+        serviceApiProtocols,
+        serviceUnitBillingModels,
+        serviceCapabilities,
+        maxConcurrency: 10,
+        currentLoad: 0,
+      }],
+    });
+
+    const decoded = decodeMetadata(encodeMetadata(original));
+
+    expect(decoded.version).toBe(METADATA_VERSION);
+    expect(decoded.providers[0]?.services).toHaveLength(300);
+    expect(Object.keys(decoded.providers[0]?.servicePricing ?? {})).toHaveLength(300);
+    expect(Object.keys(decoded.providers[0]?.serviceCategories ?? {})).toHaveLength(300);
+    expect(Object.keys(decoded.providers[0]?.serviceApiProtocols ?? {})).toHaveLength(300);
+    expect(Object.keys(decoded.providers[0]?.serviceUnitBillingModels ?? {})).toHaveLength(300);
+    expect(Object.keys(decoded.providers[0]?.serviceCapabilities ?? {})).toHaveLength(300);
+  });
+
   it('should round-trip a basic metadata object', () => {
     const original = makeMetadata();
     const encoded = encodeMetadata(original);
@@ -150,6 +196,160 @@ describe('encodeMetadata / decodeMetadata', () => {
     expect(decoded.publicAddress).toBe('peer.example.com:6882');
     expect(decoded.providers[0]!.serviceCategories?.['claude-3-opus']).toEqual(['coding', 'privacy']);
     expect(decoded.providers[0]!.serviceApiProtocols?.['claude-3-opus']).toEqual(['anthropic-messages', 'openai-chat-completions']);
+  });
+
+  it('round-trips v11 service unit billing models and signs billing bytes', () => {
+    const original = makeMetadata({
+      version: SERVICE_UNIT_BILLING_METADATA_VERSION,
+      providers: [
+        {
+          provider: 'openai',
+          services: ['gpt-image-1'],
+          defaultPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+          serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
+          serviceUnitBillingModels: {
+            'gpt-image-1': {
+              'openai-images': {
+                version: 1,
+                components: [
+                  { unit: 'output_images', priceUsd: 0.04, match: { size: '1024x1024' } },
+                ],
+              },
+            },
+          },
+          maxConcurrency: 3,
+          currentLoad: 0,
+        },
+      ],
+    });
+    const decoded = decodeMetadata(encodeMetadata(original));
+    expect(decoded.providers[0]!.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']?.components).toHaveLength(1);
+    expect(decoded.providers[0]!.serviceUnitBillingModels?.['gpt-image-1']?.['openai-images']?.components[0]?.priceUsd).toBeCloseTo(0.04, 5);
+
+    const changed = makeMetadata({
+      ...original,
+      providers: [{
+        ...original.providers[0]!,
+        serviceUnitBillingModels: {
+          'gpt-image-1': {
+            'openai-images': {
+              version: 1,
+              components: [{ unit: 'output_images', priceUsd: 0.05 }],
+            },
+          },
+        },
+      }],
+    });
+    expect(encodeMetadataForSigning(changed)).not.toEqual(encodeMetadataForSigning(original));
+  });
+
+  it('round-trips v12 service capabilities and signs capability bytes', () => {
+    const original = makeMetadata({
+      version: SERVICE_CAPABILITIES_METADATA_VERSION,
+      providers: [
+        {
+          provider: 'openai',
+          services: ['gpt-5.5', 'gpt-image-1'],
+          defaultPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+          serviceCapabilities: {
+            'gpt-5.5': {
+              contextWindow: 200_000,
+              maxOutputTokens: 16_384,
+              inputs: ['text', 'image'],
+              reasoning: true,
+              toolUse: false,
+            },
+            'gpt-image-1': {
+              inputs: ['text'],
+              outputs: ['image'],
+              // Deliberately unsorted: the codec canonicalizes to code-unit order.
+              supportedParameters: ['size', 'background', 'quality', 'output_format'],
+            },
+          },
+          maxConcurrency: 3,
+          currentLoad: 0,
+        },
+      ],
+    });
+    const decoded = decodeMetadata(encodeMetadata(original));
+    expect(decoded.providers[0]!.serviceCapabilities?.['gpt-5.5']).toEqual({
+      contextWindow: 200_000,
+      maxOutputTokens: 16_384,
+      inputs: ['text', 'image'],
+      reasoning: true,
+      toolUse: false,
+    });
+    expect(decoded.providers[0]!.serviceCapabilities?.['gpt-5.5']?.structuredOutput).toBeUndefined();
+    expect(decoded.providers[0]!.serviceCapabilities?.['gpt-image-1']).toEqual({
+      inputs: ['text'],
+      outputs: ['image'],
+      supportedParameters: ['background', 'output_format', 'quality', 'size'],
+    });
+    // Decoded metadata re-encodes to the same bytes, so signatures verify.
+    expect(encodeMetadataForSigning({ ...decoded, signature: original.signature }))
+      .toEqual(encodeMetadataForSigning(original));
+
+    const changed = makeMetadata({
+      ...original,
+      providers: [{
+        ...original.providers[0]!,
+        serviceCapabilities: {
+          ...original.providers[0]!.serviceCapabilities,
+          'gpt-5.5': { contextWindow: 128_000 },
+        },
+      }],
+    });
+    expect(encodeMetadataForSigning(changed)).not.toEqual(encodeMetadataForSigning(original));
+  });
+
+  it('excludes service capabilities from v10 metadata bytes', () => {
+    const original = makeMetadata({
+      version: 10,
+      providers: [
+        {
+          provider: 'openai',
+          services: ['gpt-5.5'],
+          defaultPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+          serviceCapabilities: { 'gpt-5.5': { contextWindow: 200_000 } },
+          maxConcurrency: 3,
+          currentLoad: 0,
+        },
+      ],
+    });
+
+    const decoded = decodeMetadata(encodeMetadata(original));
+    expect(decoded.version).toBe(10);
+    expect(decoded.providers[0]?.serviceCapabilities).toBeUndefined();
+  });
+
+  it('excludes service unit billing models from v10 metadata bytes', () => {
+    const original = makeMetadata({
+      version: 10,
+      providers: [
+        {
+          provider: 'openai',
+          services: ['gpt-image-1'],
+          defaultPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+          serviceApiProtocols: { 'gpt-image-1': ['openai-images'] },
+          serviceUnitBillingModels: {
+            'gpt-image-1': {
+              'openai-images': {
+                version: 1,
+                components: [{ unit: 'output_images', priceUsd: 0.04 }],
+              },
+            },
+          },
+          maxConcurrency: 3,
+          currentLoad: 0,
+        },
+      ],
+    });
+
+    const decoded = decodeMetadata(encodeMetadata(original));
+
+    expect(decoded.version).toBe(10);
+    expect(decoded.providers[0]?.serviceApiProtocols?.['gpt-image-1']).toEqual(['openai-images']);
+    expect(decoded.providers[0]?.serviceUnitBillingModels).toBeUndefined();
   });
 
   it('should decode offerings and optional trailer fields after v2 provider pricing payload', () => {

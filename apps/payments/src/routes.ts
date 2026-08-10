@@ -19,6 +19,7 @@ const EMPTY_BUYER_USAGE: BuyerUsageTotals = {
   uniqueSellers: 0,
   activeChannels: 0,
   channels: [],
+  services: [],
 };
 
 interface RouteContext {

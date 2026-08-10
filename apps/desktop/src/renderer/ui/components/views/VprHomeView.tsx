@@ -1,0 +1,581 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import {
+  ArrowDown01Icon,
+  ArrowRight02Icon,
+  ArrowUp02Icon,
+    ArrowUpRight01Icon,
+    Cancel01Icon,
+    PowerIcon,
+    ArrowReloadHorizontalIcon,
+    Tick02Icon,
+} from '@hugeicons/core-free-icons';
+import type { VprModelCatalogEntry } from '../../../core/state';
+import { getUiStateRef } from '../../../core/store';
+import { activeProfilesFromRuntimeState } from '../../../modules/routing/tools';
+import { pinnedSellerLabel, pinnedSellerLabels } from '../../../modules/catalog/view-models';
+import { findCatalogEntry } from '../../../modules/catalog/model-catalog';
+import { computeMeasuredSavings, formatSavedUsd } from '../../../modules/catalog/measured-savings';
+import { ensureOpenRouterPrices, getCachedOpenRouterPrices } from '../../../modules/catalog/openrouter-baseline';
+import { displayModelLabel } from '../../../modules/catalog/model-identity';
+import { loadFavoriteModels } from '../../../modules/catalog/favorites';
+import {
+  catalogEntryKey,
+  selectFavoriteVprCatalog,
+  selectRecommendedVprCatalog,
+} from '../../../modules/catalog/recommended';
+import { connectVprProfile } from '../../../modules/routing/proxy-sync';
+import { buyerConversationsResource, systemProxyResource } from '../../../modules/app/vpr-resources';
+import { useCachedResource } from '../../../modules/app/cached-resource';
+import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
+import { useActions } from '../../hooks/useActions';
+import type { ViewName } from '../../types';
+import { OverlayScrollArea } from '../OverlayScrollArea';
+import { BrandIcon } from '../brand/BrandIcon';
+import { VprModelRowList } from '../vpr/VprModelRows';
+import { hasSeenChats, rememberSeenChats, VprRecentChatsCard } from '../vpr/VprRecentChats';
+import { conversationRoutedPeerName } from '../../../modules/routing/conversations';
+import { formatCompactTokens, VprStatRow, VprStatTile } from '../vpr/VprKit';
+import styles from './VprHomeView.module.scss';
+
+type Props = { onSelectView?: (view: ViewName) => void };
+
+const ADD_BALANCE_DISMISSED_KEY = 'antseed.desktop.vpr.addBalanceDismissed';
+const MODEL_CHANGE_NOTICE_MS = 4_000;
+/* Rows in the model dropdown (Figma) — the full catalog lives on Models. */
+const DROPDOWN_MODEL_COUNT = 5;
+
+function isFreeEntry(entry: VprModelCatalogEntry | undefined): boolean {
+  if (!entry) return false;
+  const { minInputUsdPerMillion: i, minOutputUsdPerMillion: o } = entry;
+  return i !== null && o !== null && i <= 0 && o <= 0;
+}
+
+export function VprHomeView({ onSelectView }: Props) {
+  const actions = useActions();
+  const snap = useUiSelector((state) => ({
+    catalog: state.vprModelCatalog,
+    selection: state.vprRouteSelection,
+    modelPins: state.vprModelPins,
+    discoverRows: state.vprRoutableRows,
+    processes: state.processes,
+    connectBadge: state.connectBadge,
+    usage: state.creditsBuyerUsage,
+    floatOpen: state.vprFloatOpen,
+    creditsSpendable: state.creditsSpendableUsdc,
+    networkAlert: state.networkAlert,
+    // Unfiltered discover list, for routed-peer name resolution.
+    allRows: state.discoverRows,
+    showRoutedPeer: state.vprFloatShowRoutedPeer,
+  }), shallowEqual);
+  const proxyResource = useCachedResource(systemProxyResource);
+  const conversationsResource = useCachedResource(buyerConversationsResource);
+  const profiles = proxyResource.data?.profiles ?? [];
+  const proxyState = proxyResource.data?.state ?? null;
+  const conversations = conversationsResource.data;
+  const [expectChats] = useState(hasSeenChats);
+  const [draft, setDraft] = useState('');
+  const [addBalanceDismissed, setAddBalanceDismissed] = useState(() => {
+    try {
+      return localStorage.getItem(ADD_BALANCE_DISMISSED_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  const runtimeOn = snap.processes.some((process) => process.mode === 'connect' && process.running === true);
+
+  const selectedModel = snap.selection.model;
+  const selectedEntry = useMemo(
+    () => (selectedModel
+      ? findCatalogEntry(snap.catalog, selectedModel.provider, selectedModel.serviceId) ?? undefined
+      : undefined),
+    [snap.catalog, selectedModel],
+  );
+  const modelIsFree = isFreeEntry(selectedEntry);
+  // Non-auto routing: the model row names the seller it is pinned to.
+  const pinnedSeller = useMemo(
+    () => pinnedSellerLabel(snap.discoverRows, snap.selection),
+    [snap.discoverRows, snap.selection],
+  );
+  useEffect(() => {
+    if (conversations) rememberSeenChats(conversations.length);
+  }, [conversations]);
+
+  useEffect(() => {
+    void actions.refreshPaymentSummary();
+    const timer = window.setInterval(() => { void actions.refreshPaymentSummary(); }, 3_000);
+    return () => window.clearInterval(timer);
+  }, [actions]);
+
+  const activeProfiles = useMemo(() => activeProfilesFromRuntimeState(proxyState), [proxyState]);
+  const connectedProfiles = useMemo(
+    () => profiles.filter((profile) => activeProfiles?.has(profile.name) ?? false),
+    [activeProfiles, profiles],
+  );
+  // Match the Apps tab ordering in the first-run home preview: Telegram is
+  // the special built-in app row, followed by the first catalog profiles.
+  const homePreviewProfiles = useMemo(() => profiles.slice(0, 2), [profiles]);
+  const restartProfiles = useMemo(
+    () => connectedProfiles.filter((profile) => profile.needsRestart),
+    [connectedProfiles],
+  );
+  // Measured savings: actual USDC paid vs OpenRouter retail for the same
+  // tokens, usage-weighted per model. Falls back to the catalog projection
+  // (average best-vs-worst peer spread) until priced usage exists.
+  const [referencePrices, setReferencePrices] = useState(getCachedOpenRouterPrices);
+  useEffect(() => {
+    if (referencePrices) return;
+    let cancelled = false;
+    void ensureOpenRouterPrices().then((map) => {
+      if (!cancelled && map) setReferencePrices(map);
+    });
+    return () => { cancelled = true; };
+  }, [referencePrices]);
+  const measuredSavings = useMemo(
+    () => computeMeasuredSavings(snap.usage?.services, referencePrices),
+    [snap.usage?.services, referencePrices],
+  );
+  const projectedSavingsPct = useMemo(() => {
+    const values = snap.catalog
+      .map((entry) => entry.expectedSavingsPct)
+      .filter((value): value is number => value !== null);
+    if (values.length === 0) return null;
+    return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+  }, [snap.catalog]);
+  const expectedSavingsPct = measuredSavings?.pct ?? projectedSavingsPct;
+
+  // The usage tiles come from the payments summary; nudge a refresh when the
+  // connected variant becomes visible (module-level throttle absorbs bursts).
+  const hasConnectedApps = connectedProfiles.length > 0;
+  useEffect(() => {
+    if (hasConnectedApps) actions.refreshPaymentSummary();
+  }, [actions, hasConnectedApps]);
+
+  const [connectingProfile, setConnectingProfile] = useState<string | null>(null);
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [modelChangeNotice, setModelChangeNotice] = useState<string | null>(null);
+  const [favorites, setFavorites] = useState(loadFavoriteModels);
+  const modelMenuRef = useRef<HTMLDivElement>(null);
+  const modelChangeNoticeTimer = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (modelChangeNoticeTimer.current !== null) window.clearTimeout(modelChangeNoticeTimer.current);
+  }, []);
+
+  function selectModelForNewChats(provider: string, serviceId: string): void {
+    const entry = findCatalogEntry(snap.catalog, provider, serviceId);
+    const label = entry?.label ?? displayModelLabel(serviceId);
+    setModelMenuOpen(false);
+    actions.selectVprModel(provider, serviceId);
+    setModelChangeNotice(`${label} selected for new chats.\nExisting chats are unchanged.`);
+    if (modelChangeNoticeTimer.current !== null) window.clearTimeout(modelChangeNoticeTimer.current);
+    modelChangeNoticeTimer.current = window.setTimeout(() => {
+      setModelChangeNotice(null);
+      modelChangeNoticeTimer.current = null;
+    }, MODEL_CHANGE_NOTICE_MS);
+  }
+
+  // Favorites are starred on the model pages (localStorage); re-read on each
+  // open so stars toggled elsewhere show up without a remount.
+  useEffect(() => {
+    if (modelMenuOpen) setFavorites(loadFavoriteModels());
+  }, [modelMenuOpen]);
+
+  // Close the model dropdown on any outside click.
+  useEffect(() => {
+    if (!modelMenuOpen) return;
+    function handleClick(event: MouseEvent): void {
+      if (modelMenuRef.current && !modelMenuRef.current.contains(event.target as Node)) {
+        setModelMenuOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [modelMenuOpen]);
+
+  // The dropdown lists starred favorites first (marked with a star), then the
+  // curated recommended lineup, with the current selection always present. The
+  // whole list is capped — favorites included — so the menu can't outgrow the
+  // hero; everything past the cap lives behind "All models".
+  const dropdownEntries = useMemo(() => {
+    const favoriteEntries = selectFavoriteVprCatalog(snap.catalog, favorites);
+    const recommended = selectRecommendedVprCatalog(snap.catalog)
+      .filter((entry) => !favorites.has(catalogEntryKey(entry)));
+    const top = [...favoriteEntries, ...recommended].slice(0, DROPDOWN_MODEL_COUNT);
+    if (selectedEntry && !top.includes(selectedEntry)) {
+      return [selectedEntry, ...top.slice(0, DROPDOWN_MODEL_COUNT - 1)];
+    }
+    return top;
+  }, [favorites, selectedEntry, snap.catalog]);
+
+  // Every listed model that remembers a pin names its seller, not just the
+  // selected one — pins survive switching models.
+  const dropdownPins = useMemo(
+    () => pinnedSellerLabels(snap.discoverRows, snap.modelPins, dropdownEntries),
+    [dropdownEntries, snap.discoverRows, snap.modelPins],
+  );
+
+  // One-click connect from the app buttons; falls back to the Apps page when
+  // the profile can't be connected automatically (e.g. no route yet).
+  async function connectApp(profileName: string): Promise<void> {
+    if (connectingProfile !== null) return;
+    setConnectingProfile(profileName);
+    try {
+      const result = await connectVprProfile(window.antseedDesktop, getUiStateRef(), profileName);
+      if (result.ok) {
+        if (result.state !== undefined) {
+          systemProxyResource.setData({ profiles, state: result.state });
+        }
+        // Surface the pill right away — it opens with the chat dropdown
+        // expanded, so the "start a new session" guidance is in view while
+        // the user switches to the tool.
+        void actions.openVprFloat?.(profileName);
+        return;
+      }
+      onSelectView?.('tools');
+    } finally {
+      setConnectingProfile(null);
+    }
+  }
+
+  function dismissAddBalance(): void {
+    setAddBalanceDismissed(true);
+    try {
+      localStorage.setItem(ADD_BALANCE_DISMISSED_KEY, '1');
+    } catch { /* private mode */ }
+  }
+
+  // Visual-only: with the network unreachable the runtime is still running,
+  // but showing the hero lit would promise routing that can't happen.
+  const networkDown = snap.networkAlert !== 'none';
+  const connected = (snap.connectBadge.tone === 'active' || runtimeOn) && !networkDown;
+  const powerLit = runtimeOn && !networkDown;
+
+  // The Add Balance banner is a nudge for low balances only — with more than
+  // $5 left it's just noise. Keyed off spendable, not the unreserved slice: an
+  // open session holds funds that still buy requests.
+  const creditsSpendableNum = Number(snap.creditsSpendable);
+  const showAddBalance = !addBalanceDismissed
+    && !(Number.isFinite(creditsSpendableNum) && creditsSpendableNum > 5);
+
+  function submitDraft(): void {
+    const text = draft.trim();
+    if (!text) return;
+    actions.sendMessage(text);
+    setDraft('');
+    onSelectView?.('chat');
+  }
+
+  const defaultModelLabel = selectedEntry?.label
+    ?? (selectedModel ? displayModelLabel(selectedModel.serviceId, selectedModel.label) : 'No model');
+
+  /* Recent chats sample — full width, same rows as the floating pill; every
+     interaction leads to the dedicated Chats page where chats are managed. */
+  const recentChats = (
+    <VprRecentChatsCard
+      conversations={conversations ?? []}
+      catalog={snap.catalog}
+      defaultModelLabel={defaultModelLabel}
+      routedPeerNameFor={snap.showRoutedPeer
+        ? (chat) => conversationRoutedPeerName(chat, snap.allRows)
+        : undefined}
+      profiles={profiles}
+      loading={conversations === null && expectChats}
+      onOpen={() => onSelectView?.('chats')}
+    />
+  );
+
+  return (
+    <section className={`view view-vpr-home ${styles.view}`} role="tabpanel">
+      {/* The hero is pinned outside the scroller — only the content below it
+          scrolls, like a fixed app header. */}
+      <div className={styles.heroPane}>
+      <div className={styles.stack}>
+        {/* Power / status hero over the brand gradient banner */}
+        <div className={styles.hero}>
+          <div
+            className={`${styles.heroBanner}${connected ? ` ${styles.heroBannerLive}` : ` ${styles.heroBannerOff}`}`}
+            aria-hidden="true"
+          />
+          <button
+            type="button"
+            className={styles.heroPop}
+            onClick={() => { void actions.openVprFloat?.(); }}
+            disabled={snap.floatOpen}
+            aria-label="Pop out floating window"
+            title={snap.floatOpen ? 'Floating window is open' : 'Pop out floating window'}
+          >
+            <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} />
+          </button>
+          <button
+            type="button"
+            className={`${styles.power}${powerLit ? ` ${styles.powerOn}` : ` ${styles.powerOff}`}`}
+            onClick={() => { void (runtimeOn ? actions.stopAll() : actions.startAll()); }}
+            aria-pressed={runtimeOn}
+            aria-label={runtimeOn ? 'Stop routing' : 'Start routing'}
+            title={runtimeOn ? 'Stop routing' : 'Start routing'}
+          >
+            <HugeiconsIcon icon={PowerIcon} size={48} strokeWidth={2} />
+          </button>
+
+          <div className={`${styles.statusLine}${connected ? ` ${styles.statusOnline}` : ''}`}>
+            {networkDown
+              ? (snap.networkAlert === 'no-internet' ? 'No internet connection' : 'Network unreachable')
+              : snap.connectBadge.label}
+          </div>
+
+          <div className={styles.modelDropdown} ref={modelMenuRef}>
+            <button
+              type="button"
+              className={styles.modelCard}
+              onClick={() => setModelMenuOpen((open) => !open)}
+              aria-haspopup="listbox"
+              aria-expanded={modelMenuOpen}
+              title="Change model for new chats"
+            >
+              <span className={styles.modelCardBody}>
+                <span className={styles.modelCardTitle}>
+                  {selectedModel && (
+                    <BrandIcon name={selectedModel.provider} hints={[selectedModel.label]} size={20} />
+                  )}
+                  <span className={styles.modelName}>
+                    {selectedEntry?.label
+                      ?? (selectedModel ? displayModelLabel(selectedModel.serviceId, selectedModel.label) : 'None selected')}
+                  </span>
+                  {modelIsFree && <span className={styles.freeTag}>Free</span>}
+                </span>
+                <span className={styles.modelCardCaption}>
+                  <span>Model for new chats</span>
+                  {/* Where the model routes: the pinned seller by name, or
+                      how many peers are serving it while on auto. */}
+                  {(pinnedSeller || selectedEntry) && (
+                    <span className={styles.modelCardDivider} aria-hidden="true">|</span>
+                  )}
+                  {pinnedSeller ? (
+                    <span className={styles.modelCardSeller}>{pinnedSeller}</span>
+                  ) : selectedEntry ? (
+                    <span className={styles.modelCardMeta}>
+                      {selectedEntry.peerCount} {selectedEntry.peerCount === 1 ? 'peer' : 'peers'}
+                    </span>
+                  ) : null}
+                </span>
+              </span>
+              <HugeiconsIcon icon={ArrowDown01Icon} size={24} strokeWidth={2} className={styles.modelCardChevron} />
+            </button>
+            {modelMenuOpen && (
+              <div className={styles.modelMenu} role="listbox">
+                <VprModelRowList
+                  entries={dropdownEntries}
+                  selectedProvider={selectedModel?.provider}
+                  selectedServiceId={selectedModel?.serviceId}
+                  favoriteKeys={favorites}
+                  selectOnly
+                  pinnedPeerLabels={dropdownPins}
+                  onSelect={(provider, serviceId) => {
+                    selectModelForNewChats(provider, serviceId);
+                  }}
+                  emptyLabel="No models discovered yet"
+                  frameless
+                />
+                <button
+                  type="button"
+                  className={styles.modelMenuFooter}
+                  onClick={() => {
+                    setModelMenuOpen(false);
+                    onSelectView?.('explore');
+                  }}
+                >
+                  <span>All models</span>
+                  <HugeiconsIcon icon={ArrowRight02Icon} size={16} strokeWidth={2} />
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      </div>
+
+      <OverlayScrollArea
+        className={styles.scroller}
+        viewportClassName={styles.scrollerViewport}
+        dataViewScroll
+      >
+      <div className={styles.stack}>
+        {hasConnectedApps ? (
+          /* Connected variant: recent chats instead of the ask input */
+          <div className={styles.connectedGroup}>
+            {/* Connected apps live on the Apps page — home leads with the
+                chats themselves. */}
+            {restartProfiles.length > 0 ? (
+              <button type="button" className={styles.restartBanner} onClick={() => onSelectView?.('tools')}>
+                <HugeiconsIcon icon={ArrowReloadHorizontalIcon} size={18} strokeWidth={2} />
+                <span>
+                  <strong>{restartProfiles.length === 1 ? restartProfiles[0]!.displayName : `${restartProfiles.length} apps`} need a restart</strong>
+                  <small>Restart to apply the VPR connection.</small>
+                </span>
+                <HugeiconsIcon icon={ArrowRight02Icon} size={16} strokeWidth={2} />
+              </button>
+            ) : null}
+
+            {recentChats}
+
+            <button type="button" className={styles.moreApps} onClick={() => onSelectView?.('tools')}>
+              <span>Connect more apps</span>
+              <HugeiconsIcon icon={ArrowRight02Icon} size={16} strokeWidth={2} />
+            </button>
+
+            {showAddBalance && (
+              <div className={styles.balanceBanner}>
+                <button
+                  type="button"
+                  className={styles.balanceBody}
+                  onClick={() => onSelectView?.('deposit')}
+                >
+                  <span className={styles.balanceTitle}>Add Balance</span>
+                  <span className={styles.balanceText}>
+                    Pay only for what you use - no subscriptions, no lock-in. Card or USDC, your choice.
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={styles.balanceClose}
+                  onClick={dismissAddBalance}
+                  aria-label="Dismiss add balance"
+                >
+                  <HugeiconsIcon icon={Cancel01Icon} size={16} strokeWidth={2} />
+                </button>
+              </div>
+            )}
+
+            <div className={styles.usageGroup}>
+              <p className={styles.usageLabel}>Usage</p>
+              <VprStatRow>
+                <VprStatTile label="Requests" value={(snap.usage?.totalRequests ?? 0).toLocaleString('en-US')} />
+                <VprStatTile
+                  label="Tokens"
+                  value={formatCompactTokens(snap.usage?.totalInputTokens, snap.usage?.totalOutputTokens)}
+                />
+                <VprStatTile
+                  label="Saving"
+                  value={expectedSavingsPct !== null && (snap.usage?.totalRequests ?? 0) > 0
+                    ? (
+                      <span
+                        className={styles.savingValue}
+                        title={measuredSavings
+                          ? `Measured vs retail: paid $${measuredSavings.actualUsd.toFixed(2)} for usage worth $${measuredSavings.baselineUsd.toFixed(2)} at OpenRouter prices`
+                          : 'Estimated from current network price spread'}
+                      >
+                        {measuredSavings
+                          ? `${formatSavedUsd(measuredSavings.baselineUsd - measuredSavings.actualUsd)}`
+                          : `${expectedSavingsPct}%`}
+                      </span>
+                    )
+                    : '-'}
+                />
+              </VprStatRow>
+            </div>
+          </div>
+        ) : (
+        /* Ask + routed apps */
+        <div className={styles.connectGroup}>
+          <h2 className={styles.connectHeading}>Routing to your existing apps or start chatting here</h2>
+
+          <form
+            className={styles.askForm}
+            onSubmit={(event) => { event.preventDefault(); submitDraft(); }}
+          >
+            <input
+              className={styles.askInput}
+              type="text"
+              value={draft}
+              placeholder="Ask anything. On any model..."
+              aria-label="Ask anything. On any model"
+              onChange={(event) => setDraft(event.target.value)}
+            />
+            <button
+              type="submit"
+              className={styles.askSend}
+              aria-label="Send message"
+              title="Send message"
+              disabled={draft.trim().length === 0}
+            >
+              <HugeiconsIcon icon={ArrowUp02Icon} size={24} strokeWidth={2} />
+            </button>
+          </form>
+
+          {/* The connect pitch is for first-timers — once chats exist the
+              user knows the flow, so only the "More apps" link (below the
+              chats) remains. */}
+          {(conversations === null ? !expectChats : conversations.length === 0) && (
+          <div className={styles.appsGroup}>
+            <p className={styles.appsLabel}>Use it on your favorite app</p>
+
+            <div className={styles.toolList}>
+              {/* Same lead item as the Apps tab, then the top of the catalog —
+                  the full list lives on the Apps page behind "More apps". */}
+              <button
+                type="button"
+                className={styles.toolRow}
+                onClick={() => onSelectView?.('tools')}
+                title="Set up Telegram Bot"
+              >
+                <span className={styles.toolIdentity}>
+                  <BrandIcon name="telegram" hints={['Telegram Bot']} size={20} />
+                  <span className={styles.toolLabel}>Telegram Bot</span>
+                </span>
+                <span className={styles.toolConnect}>Set up</span>
+              </button>
+              {homePreviewProfiles.map((profile) => (
+                <button
+                  key={profile.name}
+                  type="button"
+                  className={styles.toolRow}
+                  disabled={connectingProfile !== null}
+                  onClick={() => { void connectApp(profile.name); }}
+                  title={`Connect ${profile.displayName}`}
+                >
+                  <span className={styles.toolIdentity}>
+                    {profile.iconDataUri
+                      ? <img src={profile.iconDataUri} alt="" className={styles.appIcon} />
+                      : <BrandIcon name={profile.name} hints={[profile.displayName]} size={20} />}
+                    <span className={styles.toolLabel}>{profile.displayName}</span>
+                  </span>
+                  <span className={styles.toolConnect}>
+                    {connectingProfile === profile.name ? 'Connecting...' : 'Connect'}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+          )}
+
+          {recentChats}
+
+          <button type="button" className={styles.moreApps} onClick={() => onSelectView?.('tools')}>
+            <span>More apps</span>
+            <HugeiconsIcon icon={ArrowRight02Icon} size={16} strokeWidth={2} />
+          </button>
+        </div>
+        )}
+      </div>
+      </OverlayScrollArea>
+      {modelChangeNotice ? (
+        <div className={styles.modelChangeBanner} role="status" aria-live="polite">
+          <span className={styles.modelChangeBannerIcon} aria-hidden="true">
+            <HugeiconsIcon icon={Tick02Icon} size={16} strokeWidth={2.2} />
+          </span>
+          <span className={styles.modelChangeBannerText}>{modelChangeNotice}</span>
+          <button
+            type="button"
+            className={styles.modelChangeBannerClose}
+            aria-label="Dismiss model change confirmation"
+            onClick={() => setModelChangeNotice(null)}
+          >
+            <HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={2} />
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}

@@ -8,7 +8,7 @@ import { setupShutdownHandler } from '../../shutdown.js'
 import { CAManager } from '../../../system-proxy/ca-manager.js'
 import { CertCache } from '../../../system-proxy/cert-cache.js'
 import { SystemProxyServer } from '../../../system-proxy/proxy-server.js'
-import { resolveProxiedDomains, resolveProxiedPathPrefixes, resolveSystemProxyForwardRules, CONFIGURED_PROFILES } from '../../../system-proxy/profiles.js'
+import { resolveProxiedDomains, resolveProxiedPathPrefixes, resolveSystemProxyForwardRules, resolveSystemProxySources, CONFIGURED_PROFILES } from '../../../system-proxy/profiles.js'
 import { writeNodeProxyHook } from '../../../system-proxy/node-hook.js'
 import type { SystemProxySnapshot } from '../../../system-proxy/system-proxy.js'
 
@@ -85,6 +85,7 @@ export function registerSystemProxyStartCommand(cmd: Command): void {
       const certCache = new CertCache(caKeys)
       const proxiedDomains = resolveProxiedDomains(profileNames)
       const proxiedPathPrefixes = resolveProxiedPathPrefixes(profileNames)
+      const proxiedSources = resolveSystemProxySources(profileNames)
       const systemProxyForwardRules = resolveSystemProxyForwardRules(profileNames)
 
       if (proxiedDomains.size === 0) {
@@ -107,6 +108,7 @@ export function registerSystemProxyStartCommand(cmd: Command): void {
         certCache,
         proxiedDomains,
         proxiedPathPrefixes,
+        proxiedSources,
         systemProxyForwardRules,
         defaultPeerId: peerId,
         defaultModel,

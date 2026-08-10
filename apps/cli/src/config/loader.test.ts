@@ -58,6 +58,17 @@ test('loadConfig reads nested seller.providers[name].services[id] shape', async 
                   outputUsdPerMillion: 18,
                   cachedInputUsdPerMillion: 1.5,
                 },
+                capabilities: {
+                  contextWindow: 200000,
+                  inputs: ['text', 'image'],
+                  toolUse: true,
+                },
+                unitBillingModels: {
+                  'openai-images': {
+                    version: 1,
+                    components: [{ unit: 'output_images', priceUsd: 0.04 }],
+                  },
+                },
               },
             },
           },
@@ -77,7 +88,33 @@ test('loadConfig reads nested seller.providers[name].services[id] shape', async 
       assert.equal(service.pricing?.inputUsdPerMillion, 12);
       assert.equal(service.pricing?.outputUsdPerMillion, 18);
       assert.equal(service.pricing?.cachedInputUsdPerMillion, 1.5);
+      assert.deepEqual(service.capabilities, {
+        contextWindow: 200000,
+        inputs: ['text', 'image'],
+        toolUse: true,
+      });
+      assert.equal(service.unitBillingModels?.['openai-images']?.components[0]?.priceUsd, 0.04);
     }
+  );
+});
+
+test('loadConfig rejects invalid per-service capabilities', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        providers: {
+          openai: {
+            plugin: 'openai',
+            services: {
+              'gpt-invalid': { capabilities: { contextWindow: -1 } },
+            },
+          },
+        },
+      },
+    }),
+    async (configPath) => {
+      await assert.rejects(() => loadConfig(configPath), /capabilities.*contextWindow must be a positive integer/);
+    },
   );
 });
 
@@ -489,6 +526,52 @@ test('loadConfig rejects invalid seller maxUploadBodyBytes setting', async () =>
       await assert.rejects(
         async () => loadConfig(configPath),
         /seller\.maxUploadBodyBytes/
+      );
+    }
+  );
+});
+
+test('loadConfig preserves seller healthCheck setting', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        healthCheck: { enabled: false, intervalMs: 120_000, failureThreshold: 5 },
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.deepEqual(config.seller.healthCheck, { enabled: false, intervalMs: 120_000, failureThreshold: 5 });
+    }
+  );
+});
+
+test('loadConfig rejects invalid seller healthCheck intervalMs', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        healthCheck: { intervalMs: 5_000 },
+      },
+    }),
+    async (configPath) => {
+      await assert.rejects(
+        async () => loadConfig(configPath),
+        /seller\.healthCheck\.intervalMs/
+      );
+    }
+  );
+});
+
+test('loadConfig rejects invalid seller healthCheck failureThreshold', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        healthCheck: { failureThreshold: 0 },
+      },
+    }),
+    async (configPath) => {
+      await assert.rejects(
+        async () => loadConfig(configPath),
+        /seller\.healthCheck\.failureThreshold/
       );
     }
   );

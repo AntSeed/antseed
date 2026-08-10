@@ -1,4 +1,3 @@
-import { Alert, Button, Card } from '@antseed/ui';
 import { useUiSelector } from '../../hooks/useUiSelector';
 import styles from './SessionApprovalCard.module.scss';
 
@@ -38,7 +37,7 @@ export function SessionApprovalCard({
   const displayName = peerName || 'this service';
 
   return (
-    <Card className={styles.approval}>
+    <div className={styles.approval}>
       <div className={styles.approvalText}>
         {hasCredits
           ? <>Payment setup failed even though your available deposit balance covers <strong>${amount} USDC</strong> for <strong>{displayName}</strong>. Retry the chat, or manage credits if the problem persists.</>
@@ -54,20 +53,16 @@ export function SessionApprovalCard({
         </div>
       )}
 
-      {error && (
-        <Alert className={styles.approvalError} tone="danger">
-          {error}
-        </Alert>
-      )}
+      {error && <div className={styles.approvalError}>{error}</div>}
 
       <div className={styles.approvalActions}>
-        <Button className={styles.approveBtn} onClick={hasCredits ? onRetry : onAddCredits}>
+        <button type="button" className={styles.approveBtn} onClick={hasCredits ? onRetry : onAddCredits}>
           {hasCredits ? 'Retry' : 'Add Credits'}
-        </Button>
-        <Button className={styles.cancelBtn} variant="outline" onClick={onCancel}>
+        </button>
+        <button type="button" className={styles.cancelBtn} onClick={onCancel}>
           Cancel
-        </Button>
+        </button>
       </div>
-    </Card>
+    </div>
   );
 }

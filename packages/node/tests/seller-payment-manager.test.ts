@@ -189,6 +189,75 @@ describe('SellerPaymentManager', () => {
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(true);
   });
 
+  it('retries overlapping initial reserves after delegated account transaction backpressure', async () => {
+    vi.useFakeTimers();
+    try {
+      const otherBuyer = createTestIdentity();
+      const channelId = makeChannelId(123);
+      const otherChannelId = makeChannelId(124);
+      const [payload, otherPayload] = await Promise.all([
+        buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true }),
+        buildSpendingAuth(otherBuyer, sellerIdentity, otherChannelId, { isReserve: true }),
+      ]);
+      const attemptsByBuyer = new Map<string, number>();
+      vi.mocked(manager.channelsClient.reserve).mockImplementation(async (_signer, buyerAddress) => {
+        const attempts = (attemptsByBuyer.get(buyerAddress) ?? 0) + 1;
+        attemptsByBuyer.set(buyerAddress, attempts);
+        if (attempts === 1) throw makeInFlightTxLimitError();
+        return '0xreserve-hash';
+      });
+
+      const resultsPromise = Promise.all([
+        manager.handleSpendingAuth(buyerIdentity.peerId, payload, mux),
+        manager.handleSpendingAuth(otherBuyer.peerId, otherPayload, mux),
+      ]);
+      await vi.waitFor(() => expect(manager.channelsClient.reserve).toHaveBeenCalledTimes(2));
+      expect(mux.sentAuthAcks).toHaveLength(0);
+
+      await vi.advanceTimersByTimeAsync(250);
+      await expect(resultsPromise).resolves.toEqual(['reserved', 'reserved']);
+
+      expect(manager.channelsClient.reserve).toHaveBeenCalledTimes(4);
+      expect(mux.sentAuthAcks).toHaveLength(2);
+      expect(store.getChannel(channelId)?.status).toBe(CHANNEL_STATUS.ACTIVE);
+      expect(store.getChannel(otherChannelId)?.status).toBe(CHANNEL_STATUS.ACTIVE);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects an initial reserve after transaction backpressure retries are exhausted', async () => {
+    vi.useFakeTimers();
+    try {
+      const channelId = makeChannelId(125);
+      const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
+      vi.mocked(manager.channelsClient.reserve).mockRejectedValue(makeInFlightTxLimitError());
+
+      const resultPromise = manager.handleSpendingAuth(buyerIdentity.peerId, payload, mux);
+      await vi.waitFor(() => expect(manager.channelsClient.reserve).toHaveBeenCalledOnce());
+      await vi.runAllTimersAsync();
+
+      await expect(resultPromise).resolves.toBe('rejected');
+      expect(manager.channelsClient.reserve).toHaveBeenCalledTimes(6);
+      expect(mux.sentAuthAcks).toHaveLength(0);
+      expect(store.getChannel(channelId)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not retry a permanent initial reserve failure', async () => {
+    const channelId = makeChannelId(124);
+    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
+    vi.mocked(manager.channelsClient.reserve).mockRejectedValueOnce(new Error('execution reverted: InsufficientBalance'));
+
+    await expect(manager.handleSpendingAuth(buyerIdentity.peerId, payload, mux)).resolves.toBe('rejected');
+
+    expect(manager.channelsClient.reserve).toHaveBeenCalledOnce();
+    expect(mux.sentAuthAcks).toHaveLength(0);
+    expect(store.getChannel(channelId)).toBeNull();
+  });
+
   it('closes a prior signed channel before reserving a replacement channel', async () => {
     const priorChannelId = makeChannelId(110);
     const replacementChannelId = makeChannelId(111);

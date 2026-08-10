@@ -3,6 +3,7 @@ import * as https from 'node:https'
 import * as net from 'node:net'
 import * as tls from 'node:tls'
 import { randomUUID } from 'node:crypto'
+import { SYSTEM_PROXY_SOURCE_HEADER, SYSTEM_ROUTED_MODEL_HEADER } from '../proxy/request-utils.js'
 import type { CertCache } from './cert-cache.js'
 import type {
   SystemProxyCorsRule,
@@ -23,12 +24,25 @@ const ROUTED_SENSITIVE_HEADERS = new Set([
   'x-csrf-token',
 ])
 
+/** Body sent to connected apps when the buyer rejects a request with 402 —
+    the user's balance can't cover the payment channel for this request.
+    Plain text, not JSON: apps surface the error body verbatim in their
+    "something went wrong" UI, so it must read as a sentence for the person
+    in front of the app, not as a machine payload. */
+const OUT_OF_CREDITS_MESSAGE =
+  'AntSeed is out of credits, so this request was not sent to a provider. '
+  + 'Open the AntSeed app and add funds to your balance, then send your message again.'
+
 export interface BuyerForwardRequest {
   path: string
   body: Buffer
   source: SystemProxySource
   response?: SystemProxyResponseTransform
   conversation?: ConversationForwardContext
+  /** True when the proxy assigned the body's `model` from its configured
+      route (vs forwarding a client-chosen AntSeed route untouched). Marked
+      on the forward so the buyer can let a per-chat pin override it. */
+  modelRouted?: boolean
 }
 
 export interface ConversationForwardContext {
@@ -47,6 +61,7 @@ export interface SystemProxyConfig {
   certCache: CertCache
   proxiedDomains: Set<string>
   proxiedPathPrefixes: Map<string, Set<string>>
+  proxiedSources?: Map<string, Map<string, SystemProxySource>>
   systemProxyForwardRules?: Map<string, SystemProxyForwardRule>
   defaultPeerId: string
   defaultModel?: string
@@ -232,6 +247,7 @@ export class SystemProxyServer {
         defaultModel: this.config.defaultModel,
         servedModels: this.config.servedModels,
         prefixesByHost: this.config.proxiedPathPrefixes,
+        sourcesByHost: this.config.proxiedSources,
         forwardRulesByHost: this.config.systemProxyForwardRules,
       })
       const body = buyerRequest?.body ?? rawBody
@@ -283,6 +299,12 @@ export class SystemProxyServer {
       }
       forwardHeaders['host'] = `127.0.0.1:${this.config.buyerProxyPort}`
       forwardHeaders['connection'] = 'close'
+      forwardHeaders[SYSTEM_PROXY_SOURCE_HEADER] = buyerRequest.source
+      if (buyerRequest.modelRouted) {
+        // The model in this body is ours, not the tool's — let the buyer
+        // swap it for the chat's pinned route when one exists.
+        forwardHeaders[SYSTEM_ROUTED_MODEL_HEADER] = '1'
+      }
       if (body.length > 0) {
         forwardHeaders['content-length'] = String(body.length)
       }
@@ -305,6 +327,10 @@ export class SystemProxyServer {
             this.forwardResponsesSse(proxyRes, res, req, buyerRequest.response, forwardRule)
             return
           }
+          if (proxyRes.statusCode === 402) {
+            this.respondOutOfCredits(proxyRes, res, req, buyerRequest, forwardRule)
+            return
+          }
           const resHeaders = buildResponseHeaders(proxyRes, req, forwardRule)
           res.writeHead(proxyRes.statusCode ?? 200, resHeaders)
           proxyRes.pipe(res)
@@ -324,6 +350,36 @@ export class SystemProxyServer {
         proxyReq.end()
       }
     })
+  }
+
+  /**
+   * A 402 from the buyer proxy means the user can't pay for this request.
+   * Connected apps surface that JSON error blob raw ("API Error: 402
+   * {\"type\":\"api_error\",...}"), which gives the user no idea what
+   * happened or what to do — so keep the 402 status but replace the body
+   * with a plain-text sentence telling them to top up in the AntSeed app.
+   */
+  private respondOutOfCredits(
+    proxyRes: http.IncomingMessage,
+    res: http.ServerResponse,
+    req: http.IncomingMessage,
+    buyerRequest: BuyerForwardRequest,
+    forwardRule: SystemProxyForwardRule | undefined,
+  ): void {
+    // The buyer's error body is replaced, not forwarded — drain it.
+    proxyRes.resume()
+    log(`← 402 body rewritten as plain-text out-of-credits notice | source:${buyerRequest.source}`)
+    const body = Buffer.from(OUT_OF_CREDITS_MESSAGE, 'utf8')
+    const resHeaders: http.OutgoingHttpHeaders = {
+      'content-type': 'text/plain; charset=utf-8',
+      'content-length': String(body.length),
+      'connection': 'close',
+    }
+    if (forwardRule?.cors) {
+      Object.assign(resHeaders, buildCorsHeaders(req, forwardRule.cors, false))
+    }
+    res.writeHead(402, resHeaders)
+    res.end(body)
   }
 
   private forwardConversationResponse(
@@ -539,12 +595,14 @@ export function buildBuyerForwardRequest(opts: {
   defaultModel?: string
   servedModels?: Set<string>
   prefixesByHost: Map<string, Set<string>>
+  sourcesByHost?: Map<string, Map<string, SystemProxySource>>
   forwardRulesByHost?: Map<string, SystemProxyForwardRule>
 }): BuyerForwardRequest | null {
   if (!shouldSystemProxyRequest(opts.host, opts.path, opts.prefixesByHost)) {
     return null
   }
   const forwardRule = opts.forwardRulesByHost?.get(opts.host)
+  const source = forwardRule?.source ?? resolveSystemProxySource(opts.host, opts.path, opts.prefixesByHost, opts.sourcesByHost)
   if (forwardRule?.request) {
     if (!opts.isJson) return null
     const body = transformRequestBody(opts.rawBody, opts.peerId, forwardRule.request, {
@@ -555,54 +613,83 @@ export function buildBuyerForwardRequest(opts: {
     return {
       path: forwardRule?.targetPath ?? opts.path,
       body,
-      source: forwardRule.source,
+      source,
       response: forwardRule.response,
       conversation: forwardRule.response?.kind === 'conversation-sse'
         ? extractConversationForwardContext(opts.rawBody, body, forwardRule.response)
         : undefined,
+      modelRouted: Boolean(opts.peerId),
     }
   }
   if (forwardRule) {
-    return {
-      path: forwardRule.targetPath ?? opts.path,
-      body: opts.isJson
-        ? rewriteRequestBody(opts.rawBody, opts.peerId, {
-          defaultModel: opts.defaultModel,
-          servedModels: opts.servedModels,
-        })
-        : opts.rawBody,
-      source: forwardRule.source,
-      response: forwardRule.response,
-    }
-  }
-  return {
-    path: opts.path,
-    body: opts.isJson
+    const rewritten = opts.isJson
       ? rewriteRequestBody(opts.rawBody, opts.peerId, {
         defaultModel: opts.defaultModel,
         servedModels: opts.servedModels,
       })
-      : opts.rawBody,
-    source: 'standard',
+      : null
+    return {
+      path: forwardRule.targetPath ?? opts.path,
+      body: rewritten?.body ?? opts.rawBody,
+      source,
+      response: forwardRule.response,
+      modelRouted: rewritten?.modelRouted ?? false,
+    }
   }
+  const rewritten = opts.isJson
+    ? rewriteRequestBody(opts.rawBody, opts.peerId, {
+      defaultModel: opts.defaultModel,
+      servedModels: opts.servedModels,
+    })
+    : null
+  return {
+    path: opts.path,
+    body: rewritten?.body ?? opts.rawBody,
+    source,
+    modelRouted: rewritten?.modelRouted ?? false,
+  }
+}
+
+function resolveSystemProxySource(
+  host: string,
+  path: string,
+  prefixesByHost: Map<string, Set<string>>,
+  sourcesByHost?: Map<string, Map<string, SystemProxySource>>,
+): SystemProxySource {
+  const sources = sourcesByHost?.get(host)
+  if (!sources || sources.size === 0) return 'standard'
+  const pathname = normalizeRequestPath(path)
+  let best: { prefix: string; source: SystemProxySource } | null = null
+  for (const [prefix, source] of sources.entries()) {
+    if (pathname !== prefix && !pathname.startsWith(`${prefix}/`)) continue
+    if (!best || prefix.length > best.prefix.length) best = { prefix, source }
+  }
+  if (best) return best.source
+
+  // A source map should mirror prefixesByHost, but keep a deterministic
+  // fallback if a caller constructs the maps by hand in tests or integrations.
+  const prefixes = prefixesByHost.get(host)
+  if (!prefixes || prefixes.size === 0) return 'standard'
+  return 'standard'
 }
 
 export function rewriteRequestBody(
   raw: Buffer,
   peerId: string,
   modelDefaults: ModelDefaultOptions = {},
-): Buffer {
-  if (raw.length === 0) return raw
+): { body: Buffer; modelRouted: boolean } {
+  if (raw.length === 0) return { body: raw, modelRouted: false }
   try {
     const json = JSON.parse(raw.toString('utf8')) as Record<string, unknown>
     const rawModel = typeof json['model'] === 'string' ? json['model'] : ''
     const model = resolveSystemProxyModel(rawModel, modelDefaults)
+    const modelRouted = Boolean(model && peerId)
     if (model && peerId) {
       json['model'] = `${peerId}@${model}`
     }
-    return Buffer.from(JSON.stringify(json), 'utf8')
+    return { body: Buffer.from(JSON.stringify(json), 'utf8'), modelRouted }
   } catch {
-    return raw
+    return { body: raw, modelRouted: false }
   }
 }
 
@@ -898,31 +985,11 @@ type ModelDefaultOptions = {
 }
 
 function resolveSystemProxyModel(rawModel: string, opts: ModelDefaultOptions): string | null {
-  const requested = rawModel.trim()
   const fallback = opts.defaultModel?.trim()
-  if (!fallback) {
-    return requested.length > 0 ? requested : null
-  }
+  if (fallback) return fallback
 
-  if (requested.length === 0 || requested.toLowerCase() === 'auto') {
-    return fallback
-  }
-
-  const served = opts.servedModels ? normalizeServedModels(opts.servedModels) : new Set<string>()
-  if (served.size > 0 && !served.has(requested.toLowerCase())) {
-    return fallback
-  }
-
-  return requested
-}
-
-function normalizeServedModels(models: Set<string>): Set<string> {
-  const normalized = new Set<string>()
-  for (const model of models) {
-    const value = model.trim().toLowerCase()
-    if (value.length > 0) normalized.add(value)
-  }
-  return normalized
+  const requested = rawModel.trim()
+  return requested.length > 0 ? requested : null
 }
 
 function extractConversationForwardContext(

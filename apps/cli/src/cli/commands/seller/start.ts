@@ -5,7 +5,18 @@ import { writeFile, unlink } from 'node:fs/promises'
 import { join, resolve, isAbsolute, dirname } from 'node:path'
 import { getGlobalOptions } from '../types.js'
 import { loadConfig } from '../../../config/loader.js'
-import { AntseedNode, type Provider, type Prover, resolveChainConfig, loadOrCreateIdentity } from '@antseed/node'
+import {
+  AntseedNode,
+  ModelHealthChecker,
+  CONNECTION_CAPABILITY_MODEL_HEALTH_V1,
+  DEFAULT_HEALTH_CHECK_INTERVAL_MS,
+  DEFAULT_HEALTH_CHECK_FAILURE_THRESHOLD,
+  type Provider,
+  type Prover,
+  type ConfigField,
+  resolveChainConfig,
+  loadOrCreateIdentity,
+} from '@antseed/node'
 import type { PaymentConfig } from '@antseed/node/payments'
 import { checkSellerReadiness, DEFAULT_MIN_SETTLE_DELTA_STR } from '@antseed/node/payments'
 import {
@@ -14,7 +25,7 @@ import {
   createStakingClient,
   resolveBaseRpcUrlOverride,
 } from '../../payment-utils.js'
-import type { AntseedConfig } from '../../../config/types.js'
+import type { AntseedConfig, SellerCLIConfig, SellerProviderConfig } from '../../../config/types.js'
 import { ANTSEED_VERIFIER_SDKS_ENV, buildVerifierCapabilities, normalizeVerifierIds } from '../../../plugins/verifier.js'
 import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
@@ -22,7 +33,6 @@ import { loadProviderPlugin, loadProverPlugin, buildPluginConfig, getPackageVers
 import { ensurePluginsUpToDate } from '../../../plugins/drift.js'
 import { resolveEffectiveSellerConfig, type SellerRuntimeOverrides } from '../../../config/effective.js'
 import { ensureDerivedIdentityDisplayName } from '../../../config/identity-display-name.js'
-import type { SellerCLIConfig } from '../../../config/types.js'
 import { AntAgentProvider, loadAntAgent, type AntAgentDefinition } from '@antseed/ant-agent'
 import { resolvePluginPackage } from '../../../plugins/registry.js'
 
@@ -264,6 +274,8 @@ export function buildSellerPluginRuntimeEnv(
   // the plugin env avoids dead noise in process.env.
   const servicePricing: Record<string, unknown> = {}
   const serviceAliasMap: Record<string, string> = {}
+  const serviceCapabilities: Record<string, unknown> = {}
+  const serviceUnitBillingModels: Record<string, unknown> = {}
   for (const [serviceId, serviceCfg] of Object.entries(providerCfg.services)) {
     if (serviceCfg.pricing) {
       servicePricing[serviceId] = serviceCfg.pricing
@@ -271,12 +283,24 @@ export function buildSellerPluginRuntimeEnv(
     if (serviceCfg.upstreamModel && serviceCfg.upstreamModel !== serviceId) {
       serviceAliasMap[serviceId] = serviceCfg.upstreamModel
     }
+    if (serviceCfg.capabilities) {
+      serviceCapabilities[serviceId] = serviceCfg.capabilities
+    }
+    if (serviceCfg.unitBillingModels) {
+      serviceUnitBillingModels[serviceId] = serviceCfg.unitBillingModels
+    }
   }
   if (Object.keys(servicePricing).length > 0) {
     runtimeEnv['ANTSEED_SERVICE_PRICING_JSON'] = JSON.stringify(servicePricing)
   }
   if (Object.keys(serviceAliasMap).length > 0) {
     runtimeEnv['ANTSEED_SERVICE_ALIAS_MAP_JSON'] = JSON.stringify(serviceAliasMap)
+  }
+  if (Object.keys(serviceCapabilities).length > 0) {
+    runtimeEnv['ANTSEED_SERVICE_CAPABILITIES_JSON'] = JSON.stringify(serviceCapabilities)
+  }
+  if (Object.keys(serviceUnitBillingModels).length > 0) {
+    runtimeEnv['ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON'] = JSON.stringify(serviceUnitBillingModels)
   }
   if (providerCfg.baseUrl) {
     runtimeEnv['OPENAI_BASE_URL'] = providerCfg.baseUrl
@@ -292,6 +316,21 @@ export function buildSellerPluginRuntimeEnv(
   }
 
   return runtimeEnv
+}
+
+export function getUnsupportedUnitBillingWarning(
+  providerName: string,
+  providerConfig: SellerProviderConfig,
+  configFields: ConfigField[],
+): string | undefined {
+  const configuredServices = Object.entries(providerConfig.services)
+    .filter(([, service]) => service.unitBillingModels !== undefined)
+    .map(([serviceId]) => serviceId)
+  if (configuredServices.length === 0) return undefined
+  if (configFields.some((field) => field.key === 'ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON')) {
+    return undefined
+  }
+  return `Provider "${providerName}" (${providerConfig.plugin}) ignores unitBillingModels for service(s): ${configuredServices.join(', ')} because its plugin does not support unit billing.`
 }
 
 export function mergeSellerRuntimeEnv(
@@ -399,8 +438,14 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         const spinner = ora(`Loading provider plugin "${packageName}" for "${providerName}"...`).start()
         try {
           const plugin = await loadProviderPlugin(packageName)
+          const configFields = plugin.configSchema ?? plugin.configKeys ?? []
+          const unitBillingWarning = getUnsupportedUnitBillingWarning(providerName, providerCfg, configFields)
+          if (unitBillingWarning) {
+            spinner.warn(chalk.yellow(unitBillingWarning))
+            spinner.start(`Loading provider plugin "${packageName}" for "${providerName}"...`)
+          }
           const runtimeEnv = buildSellerPluginRuntimeEnv(effectiveSellerConfig, providerName)
-          const basePluginConfig = buildPluginConfig(plugin.configSchema ?? plugin.configKeys ?? [])
+          const basePluginConfig = buildPluginConfig(configFields)
           const pluginConfig = mergeSellerRuntimeEnv(basePluginConfig, runtimeEnv, { forcePricingOverride })
           const provider = await plugin.createProvider(pluginConfig)
           if (provider.init) {
@@ -525,6 +570,9 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       if (versionsByPackage.size > 0) {
         console.log(chalk.dim(`Package versions: ${Array.from(versionsByPackage.entries()).map(([k, v]) => `${k}@${v}`).join(', ')}`))
       }
+      const healthCheckCfg = effectiveSellerConfig.healthCheck
+      const healthCheckEnabled = healthCheckCfg?.enabled !== false
+
       console.log(chalk.bold('Effective seller settings:'))
       console.log(chalk.dim(`  providers: ${selectedProviderNames.join(', ')}`))
       for (let index = 0; index < providers.length; index += 1) {
@@ -556,6 +604,13 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       }
       console.log(chalk.dim(`  reserve floor: ${effectiveSellerConfig.reserveFloor}`))
       console.log(chalk.dim(`  max concurrent buyers: ${effectiveSellerConfig.maxConcurrentBuyers}`))
+      if (healthCheckEnabled) {
+        const intervalMs = healthCheckCfg?.intervalMs ?? DEFAULT_HEALTH_CHECK_INTERVAL_MS
+        const failureThreshold = healthCheckCfg?.failureThreshold ?? DEFAULT_HEALTH_CHECK_FAILURE_THRESHOLD
+        console.log(chalk.dim(`  model health checks: every ${Math.round(intervalMs / 1000)}s, unadvertise after ${failureThreshold} consecutive failures`))
+      } else {
+        console.log(chalk.dim('  model health checks: disabled'))
+      }
       const maxUploadBodyBytes = parseOptionalPositiveIntegerEnv(process.env['ANTSEED_MAX_UPLOAD_BODY_BYTES'])
         ?? effectiveSellerConfig.maxUploadBodyBytes
       if (maxUploadBodyBytes !== undefined) {
@@ -609,12 +664,17 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       }
       const verifierCapabilities = buildVerifierCapabilities(requestedVerifierIds)
 
+      const announcedCapabilities = [
+        ...verifierCapabilities,
+        ...(healthCheckEnabled ? [CONNECTION_CAPABILITY_MODEL_HEALTH_V1] : []),
+      ]
+
       const node = new AntseedNode({
         role: 'seller',
         displayName: config.identity.displayName,
         ...(config.seller.publicAddress ? { publicAddress: config.seller.publicAddress } : {}),
         ...(effectiveSellerConfig.verifications ? { verifications: effectiveSellerConfig.verifications } : {}),
-        ...(verifierCapabilities.length > 0 ? { capabilities: verifierCapabilities } : {}),
+        ...(announcedCapabilities.length > 0 ? { capabilities: announcedCapabilities } : {}),
         bootstrapNodes,
         dataDir: globalOpts.dataDir,
         ...(dhtPort ? { dhtPort } : {}),
@@ -704,6 +764,34 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       } catch (err) {
         nodeSpinner.fail(chalk.red(`Failed to start seeding: ${(err as Error).message}`))
         process.exit(1)
+      }
+
+      // Periodic model health self-checks: probe supported text services with
+      // a minimal completion; unadvertise services that keep failing and
+      // restore them when they recover, refreshing signed metadata each time.
+      // Image services are skipped because a meaningful probe would generate
+      // and charge for an image.
+      let healthChecker: ModelHealthChecker | null = null
+      if (healthCheckEnabled && registeredProviders.length > 0) {
+        healthChecker = new ModelHealthChecker({
+          targets: registeredProviders.map((provider, index) => ({
+            provider,
+            // Probe the unwrapped provider so an ant-agent wrapper doesn't
+            // run a full agent loop for every probe.
+            ...(providers[index] && providers[index] !== provider ? { probeProvider: providers[index]! } : {}),
+          })),
+          ...(healthCheckCfg?.intervalMs !== undefined ? { intervalMs: healthCheckCfg.intervalMs } : {}),
+          ...(healthCheckCfg?.failureThreshold !== undefined ? { failureThreshold: healthCheckCfg.failureThreshold } : {}),
+          onChange: (event) => {
+            if (event.status === 'removed') {
+              console.log(chalk.yellow(`Model ${event.provider}/${event.service} unadvertised — failing health checks (${event.detail})`))
+            } else {
+              console.log(chalk.green(`Model ${event.provider}/${event.service} re-advertised — health check recovered`))
+            }
+            void node.refreshSellerMetadata().catch(() => {})
+          },
+        })
+        healthChecker.start()
       }
 
       // Write daemon state so dashboard and connect can discover this seeder
@@ -861,6 +949,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       }, 1_000)
 
       setupShutdownHandler(async () => {
+        healthChecker?.stop()
         clearInterval(stateInterval)
         node.off('connection', scheduleDaemonStateWrite)
         node.off('session:updated', scheduleDaemonStateWrite)

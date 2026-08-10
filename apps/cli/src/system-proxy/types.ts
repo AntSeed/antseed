@@ -52,13 +52,26 @@ export interface SystemProxyForwardRule {
   readonly cors?: SystemProxyCorsRule
 }
 
+/**
+ * Config patches are applied by the desktop app, not the CLI child — the CLI
+ * only needs to know a profile is config-patch kind. The patch payload is
+ * format-specific (opencode JSONC, codex TOML, pi models.json), so beyond the
+ * common keys it is passed through untouched.
+ */
 export interface SystemProxyConfigPatch {
   readonly configPath: string
   readonly providerKey: string
-  readonly npm: string
-  readonly providerName: string
-  readonly baseURL: string
-  readonly modelFormat: 'peer-routed'
+  readonly [key: string]: unknown
+}
+
+export interface SystemProxyProfileMetadata {
+  readonly icon?: string
+  readonly displayLabel?: string
+  readonly methodLabel?: string
+  readonly appAction?: 'none' | 'open-url' | 'open-tool' | 'restart-app'
+  readonly openUrl?: string
+  readonly toolName?: string
+  readonly restartAppName?: string
 }
 
 export interface SystemProxyProfile {
@@ -69,6 +82,7 @@ export interface SystemProxyProfile {
   readonly pathPrefixes: readonly string[]
   readonly forward?: SystemProxyForwardRule
   readonly configPatch?: SystemProxyConfigPatch
+  readonly metadata?: SystemProxyProfileMetadata
 }
 
 export interface SystemProxyState {

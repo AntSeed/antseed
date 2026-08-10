@@ -1,13 +1,14 @@
 import type { DomainVerificationMethod, PeerMetadata } from "./peer-metadata.js";
-import { METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS } from "./peer-metadata.js";
+import { METADATA_VERSION, MIN_SUPPORTED_METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, WELL_KNOWN_SERVICE_API_PROTOCOLS, validateServiceCapabilityFields } from "./peer-metadata.js";
 import { encodeMetadata } from "./metadata-codec.js";
 import { MAX_PUBLIC_ADDRESS_LENGTH, parsePublicAddress } from "./public-address.js";
+import { validateUnitBillingModelV1 } from "../billing/unit.js";
 
-// v9 adds signed verification claims and v10 adds peer capabilities. Keep
-// enough room for several normal claims while bounding DHT-served metadata.
-export const MAX_METADATA_SIZE = 1400;
+// Metadata is fetched from an untrusted HTTP endpoint. Keep the signed binary
+// snapshot bounded while allowing large aggregator catalogs.
+export const MAX_METADATA_SIZE = 128 * 1024;
 export const MAX_PROVIDERS = 10;
-export const MAX_SERVICES_PER_PROVIDER = 20;
+export const MAX_SERVICES_PER_PROVIDER = 512;
 export const MAX_SERVICE_NAME_LENGTH = 64;
 export const MAX_REGION_LENGTH = 32;
 export const MAX_DISPLAY_NAME_LENGTH = 64;
@@ -16,11 +17,15 @@ export const MAX_DOMAIN_LENGTH = 253;
 export const MAX_GITHUB_VERIFICATION_CLAIMS = 5;
 export const MAX_GITHUB_USERNAME_LENGTH = 39;
 export const MAX_GITHUB_REPOSITORY_LENGTH = 100;
-export const MAX_SERVICE_CATEGORIES_PER_SERVICE = 8;
+export const MAX_SERVICE_CATEGORIES_PER_SERVICE = 64;
 export const MAX_SERVICE_CATEGORY_LENGTH = 32;
 export const MAX_SERVICE_API_PROTOCOLS_PER_SERVICE = 4;
+export const MAX_BILLING_COMPONENTS_PER_MODEL = 8;
+export const MAX_BILLING_MATCH_ENTRIES_PER_COMPONENT = 3;
+export const MAX_BILLING_MATCH_VALUE_BYTES = 32;
 export const MAX_PEER_CAPABILITIES = 16;
 export const MAX_PEER_CAPABILITY_LENGTH = 64;
+export { MAX_CAPABILITY_TOKEN_COUNT } from "./peer-metadata.js";
 const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const DOMAIN_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const DOMAIN_VERIFICATION_METHODS = new Set<DomainVerificationMethod>(["dns-txt", "https-well-known"]);
@@ -62,10 +67,10 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
   const errors: ValidationError[] = [];
 
   // version
-  if (metadata.version !== METADATA_VERSION) {
+  if (metadata.version < MIN_SUPPORTED_METADATA_VERSION || metadata.version > METADATA_VERSION) {
     errors.push({
       field: "version",
-      message: `Expected version ${METADATA_VERSION}, got ${metadata.version}`,
+      message: `Expected version ${MIN_SUPPORTED_METADATA_VERSION}..${METADATA_VERSION}, got ${metadata.version}`,
     });
   }
 
@@ -315,13 +320,10 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
     });
   }
 
-  // providers count
-  if (metadata.providers.length === 0) {
-    errors.push({
-      field: "providers",
-      message: "Must have at least one provider",
-    });
-  } else if (metadata.providers.length > MAX_PROVIDERS) {
+  // A health-checked seller may temporarily have zero available providers.
+  // It remains discoverable so buyers can observe recovery, but advertises no
+  // inference route until at least one service becomes healthy again.
+  if (metadata.providers.length > MAX_PROVIDERS) {
     errors.push({
       field: "providers",
       message: `Provider count ${metadata.providers.length} exceeds max ${MAX_PROVIDERS}`,
@@ -502,6 +504,132 @@ export function validateMetadata(metadata: PeerMetadata): ValidationError[] {
             });
           }
           deduped.add(normalized);
+        }
+      }
+    }
+
+    if (p.serviceUnitBillingModels !== undefined) {
+      if (metadata.version < SERVICE_UNIT_BILLING_METADATA_VERSION) {
+        errors.push({
+          field: `providers[${i}].serviceUnitBillingModels`,
+          message: `Service unit billing models require metadata version ${SERVICE_UNIT_BILLING_METADATA_VERSION}`,
+        });
+      }
+      let expandedBillingModelCount = 0;
+      for (const [serviceName, protocolModels] of Object.entries(p.serviceUnitBillingModels)) {
+        if (serviceName.length > MAX_SERVICE_NAME_LENGTH) {
+          errors.push({
+            field: `providers[${i}].serviceUnitBillingModels.${serviceName}`,
+            message: `Service name length ${serviceName.length} exceeds max ${MAX_SERVICE_NAME_LENGTH}`,
+          });
+        }
+        if (!hasWildcardServices && !p.services.includes(serviceName)) {
+          errors.push({
+            field: `providers[${i}].serviceUnitBillingModels.${serviceName}`,
+            message: "Service unit billing models must reference a service listed in providers[].services",
+          });
+        }
+        if (!protocolModels || typeof protocolModels !== "object" || Array.isArray(protocolModels)) {
+          errors.push({
+            field: `providers[${i}].serviceUnitBillingModels.${serviceName}`,
+            message: "Service unit billing model entry must be an object keyed by service API protocol",
+          });
+          continue;
+        }
+        for (const [protocol, model] of Object.entries(protocolModels)) {
+          expandedBillingModelCount += 1;
+          const serviceProtocols = p.serviceApiProtocols?.[serviceName];
+          if (!SERVICE_API_PROTOCOL_SET.has(protocol)) {
+            errors.push({
+              field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}`,
+              message: `Unsupported service API protocol "${protocol}"`,
+            });
+          } else if (protocol !== "openai-images") {
+            errors.push({
+              field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}`,
+              message: "Service unit billing models currently support openai-images only",
+            });
+          } else if (serviceProtocols && !serviceProtocols.includes(protocol as typeof serviceProtocols[number])) {
+            errors.push({
+              field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}`,
+              message: "Billing model protocol must be announced for the service",
+            });
+          }
+          const modelErrors = validateUnitBillingModelV1(model);
+          for (const message of modelErrors) {
+            errors.push({
+              field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}`,
+              message,
+            });
+          }
+          if (model.components.length > MAX_BILLING_COMPONENTS_PER_MODEL) {
+            errors.push({
+              field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}.components`,
+              message: `Billing component count ${model.components.length} exceeds max ${MAX_BILLING_COMPONENTS_PER_MODEL}`,
+            });
+          }
+          model.components.forEach((component, componentIndex) => {
+            const matchEntries = Object.entries(component.match ?? {});
+            if (matchEntries.length > MAX_BILLING_MATCH_ENTRIES_PER_COMPONENT) {
+              errors.push({
+                field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}.components[${componentIndex}].match`,
+                message: `Billing match entry count ${matchEntries.length} exceeds max ${MAX_BILLING_MATCH_ENTRIES_PER_COMPONENT}`,
+              });
+            }
+            for (const [key, value] of matchEntries) {
+              const byteLength = new TextEncoder().encode(value).length;
+              if (byteLength > MAX_BILLING_MATCH_VALUE_BYTES) {
+                errors.push({
+                  field: `providers[${i}].serviceUnitBillingModels.${serviceName}.${protocol}.components[${componentIndex}].match.${key}`,
+                  message: `Billing match value length ${byteLength} exceeds max ${MAX_BILLING_MATCH_VALUE_BYTES} bytes`,
+                });
+              }
+            }
+          });
+        }
+      }
+      if (expandedBillingModelCount > MAX_SERVICES_PER_PROVIDER) {
+        errors.push({
+          field: `providers[${i}].serviceUnitBillingModels`,
+          message: `Expanded billing model count ${expandedBillingModelCount} exceeds max ${MAX_SERVICES_PER_PROVIDER}`,
+        });
+      }
+    }
+
+    if (p.serviceCapabilities !== undefined) {
+      if (metadata.version < SERVICE_CAPABILITIES_METADATA_VERSION) {
+        errors.push({
+          field: `providers[${i}].serviceCapabilities`,
+          message: `Service capabilities require metadata version ${SERVICE_CAPABILITIES_METADATA_VERSION}`,
+        });
+      }
+      const capabilityEntries = Object.entries(p.serviceCapabilities);
+      if (capabilityEntries.length > MAX_SERVICES_PER_PROVIDER) {
+        errors.push({
+          field: `providers[${i}].serviceCapabilities`,
+          message: `Service capability entry count ${capabilityEntries.length} exceeds max ${MAX_SERVICES_PER_PROVIDER}`,
+        });
+      }
+      for (const [serviceName, caps] of capabilityEntries) {
+        const field = `providers[${i}].serviceCapabilities.${serviceName}`;
+        if (serviceName.length > MAX_SERVICE_NAME_LENGTH) {
+          errors.push({
+            field,
+            message: `Service name length ${serviceName.length} exceeds max ${MAX_SERVICE_NAME_LENGTH}`,
+          });
+        }
+        if (!hasWildcardServices && !p.services.includes(serviceName)) {
+          errors.push({
+            field,
+            message: "Service capabilities must reference a service listed in providers[].services",
+          });
+        }
+        if (!caps || typeof caps !== "object" || Array.isArray(caps)) {
+          errors.push({ field, message: "Service capability entry must be an object" });
+          continue;
+        }
+        for (const message of validateServiceCapabilityFields(caps)) {
+          errors.push({ field, message });
         }
       }
     }

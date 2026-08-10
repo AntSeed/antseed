@@ -1,11 +1,12 @@
 import { useEffect, useCallback } from 'react';
-import { Button } from '@antseed/ui';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { useRetainedState } from '../../hooks/useRetainedState';
+import { VprBackTitle, VprCard, VprSettingRow, VprToggle } from '../vpr/VprKit';
+import styles from './ConfigView.module.scss';
 
 type ConfigViewProps = {
-  active: boolean;
+  onSelectView?: (view: import('../../types').ViewName) => void;
 };
 
 type VoiceModelStatus = {
@@ -34,11 +35,10 @@ function isVoiceModelStatus(value: unknown): value is VoiceModelStatus {
   return Boolean(record && Array.isArray(record.models));
 }
 
-export function ConfigView({ active }: ConfigViewProps) {
-  const { configFormData, configSaving, devMode, configMessage } = useUiSelector((state) => ({
+export function ConfigView({ onSelectView }: ConfigViewProps) {
+  const { configFormData, configSaving, configMessage } = useUiSelector((state) => ({
     configFormData: state.configFormData,
     configSaving: state.configSaving,
-    devMode: state.devMode,
     configMessage: state.configMessage,
   }), shallowEqual);
   const actions = useActions();
@@ -73,8 +73,8 @@ export function ConfigView({ active }: ConfigViewProps) {
   }, []);
 
   useEffect(() => {
-    if (active) void refreshVoiceStatus();
-  }, [active, refreshVoiceStatus]);
+    void refreshVoiceStatus();
+  }, [refreshVoiceStatus]);
 
   async function handleVoiceModelChange(modelId: string) {
     setVoiceMessage(null);
@@ -101,12 +101,6 @@ export function ConfigView({ active }: ConfigViewProps) {
     }
   }
 
-  // Toggles that auto-save (no restart needed)
-  function toggleDevMode() {
-    if (!configFormData) return;
-    void actions.saveConfig({ ...configFormData, devMode: !devMode });
-  }
-
   // Save all config and restart the buyer runtime
   async function handleSaveAndRestart() {
     if (!configFormData) return;
@@ -128,80 +122,63 @@ export function ConfigView({ active }: ConfigViewProps) {
     } catch { /* will auto-start on next request */ }
   }
 
-  return (
-    <section className={`view${active ? ' active' : ''}`} role="tabpanel">
-      <div className="page-header">
-        <h2>Settings</h2>
-      </div>
+  const baseInstalled = voiceStatus?.models.some((model) => model.id === 'base' && model.installed) ?? false;
 
-      <div className="settings-sections">
-        <article className="panel settings-panel">
-          <div className="panel-head">
-            <h3>Buyer Settings</h3>
-          </div>
-          <div className="settings-stack">
-            <label className="settings-item">
-              <div className="settings-copy">
-                <h4>Proxy Port</h4>
-                <p>Local port for service routing and chat requests.</p>
-              </div>
+  return (
+    <section className={`view view-config ${styles.view}`} role="tabpanel">
+      <div className={styles.stack}>
+        <VprBackTitle title="Configuration" fallback="help" />
+
+        <VprCard className={styles.card}>
+          <span className={styles.cardTitle}>Buyer</span>
+          <VprSettingRow
+            title="Proxy port"
+            hint="Local port for service routing and chat requests"
+            control={(
               <input
                 type="number"
-                className="form-input settings-control"
+                className={styles.input}
                 value={proxyPort}
                 onChange={(e) => { setProxyPort(e.target.value); markDirty(); }}
               />
-            </label>
-            <label className="settings-item">
-              <div className="settings-copy">
-                <h4>Minimum Peer Reputation</h4>
-                <p>Peers below this score are excluded from routing.</p>
-              </div>
+            )}
+          />
+          <VprSettingRow
+            title="Minimum peer reputation"
+            hint="Peers below this score are excluded from routing"
+            control={(
               <input
                 type="number"
-                className="form-input settings-control"
+                className={styles.input}
                 min="0"
                 max="100"
                 value={minRep}
                 onChange={(e) => { setMinRep(e.target.value); markDirty(); }}
               />
-            </label>
-            <div className="settings-item">
-              <div className="settings-copy">
-                <h4>Disable Service Metadata Attribution</h4>
-                <p>Omit per-service usage details from paid and free usage metadata.</p>
-              </div>
-              <button
-                type="button"
-                className={`settings-switch${disableMetadataV2Services ? ' is-on' : ''}`}
-                aria-pressed={disableMetadataV2Services}
-                onClick={() => {
-                  setDisableMetadataV2Services((value) => !value);
-                  markDirty();
-                }}
+            )}
+          />
+          <VprSettingRow
+            title="Disable metadata attribution"
+            hint="Omit per-service usage details from paid and free usage metadata"
+            control={(
+              <VprToggle
+                checked={disableMetadataV2Services}
+                onChange={() => { setDisableMetadataV2Services((value) => !value); markDirty(); }}
+                ariaLabel="Disable service metadata attribution"
                 disabled={configSaving}
-              >
-                <span className="settings-switch-track">
-                  <span className="settings-switch-thumb" />
-                </span>
-                <span className="settings-switch-label">{disableMetadataV2Services ? 'Enabled' : 'Disabled'}</span>
-              </button>
-            </div>
-          </div>
+              />
+            )}
+          />
+        </VprCard>
 
-        <div className="settings-footer" />
-
-          <div className="panel-head">
-            <h3>Payment Settings</h3>
-          </div>
-          <div className="settings-stack">
-            <label className="settings-item">
-              <div className="settings-copy">
-                <h4>Chain Environment</h4>
-                <p>Settlement chain for payments. Contract addresses are resolved automatically.</p>
-              </div>
+        <VprCard className={styles.card}>
+          <span className={styles.cardTitle}>Payments</span>
+          <VprSettingRow
+            title="Chain environment"
+            hint="Settlement chain for payments — contract addresses resolve automatically"
+            control={(
               <select
-                className="form-input settings-control"
+                className={styles.select}
                 value={chainId}
                 onChange={(e) => { setChainId(e.target.value); markDirty(); }}
               >
@@ -209,60 +186,31 @@ export function ConfigView({ active }: ConfigViewProps) {
                 <option value="base-sepolia">Base Sepolia (testnet)</option>
                 <option value="base-local">Base Local (development)</option>
               </select>
-            </label>
-          </div>
+            )}
+          />
+        </VprCard>
 
-          <div className="settings-footer">
-          {dirty && (
-            <Button
-              className="settings-save-btn"
+        {dirty && (
+          <div className={styles.saveRow}>
+            <button
+              type="button"
+              className={styles.saveButton}
               onClick={() => void handleSaveAndRestart()}
               disabled={configSaving}
             >
               {configSaving ? 'Saving...' : 'Save & Restart'}
-            </Button>
-          )}
+            </button>
           </div>
-        </article>
+        )}
 
-        <article className="panel settings-panel">
-          <div className="panel-head">
-            <h3>Desktop Preferences</h3>
-          </div>
-          <div className="settings-stack">
-            <div className="settings-item">
-              <div className="settings-copy">
-                <h4>Developer Mode</h4>
-                <p>Shows Connection, Peers, and Logs in the sidebar.</p>
-              </div>
-              <button
-                type="button"
-                className={`settings-switch${devMode ? ' is-on' : ''}`}
-                aria-pressed={devMode}
-                onClick={toggleDevMode}
-                disabled={configSaving}
-              >
-                <span className="settings-switch-track">
-                  <span className="settings-switch-thumb" />
-                </span>
-                <span className="settings-switch-label">{devMode ? 'On' : 'Off'}</span>
-              </button>
-            </div>
-          </div>
-        </article>
-
-        <article className="panel settings-panel">
-          <div className="panel-head">
-            <h3>Voice Transcription</h3>
-          </div>
-          <div className="settings-stack">
-            <label className="settings-item">
-              <div className="settings-copy">
-                <h4>Local Whisper model</h4>
-                <p>Voice messages are transcribed locally. Tiny is bundled; Base is more accurate and downloads to this device.</p>
-              </div>
+        <VprCard className={styles.card}>
+          <span className={styles.cardTitle}>Voice transcription</span>
+          <VprSettingRow
+            title="Local Whisper model"
+            hint="Voice messages are transcribed locally — Tiny is bundled, Base is more accurate"
+            control={(
               <select
-                className="form-input settings-control"
+                className={styles.select}
                 value={voiceStatus?.activeModel || 'tiny'}
                 onChange={(e) => void handleVoiceModelChange(e.target.value)}
                 disabled={!voiceStatus}
@@ -273,31 +221,31 @@ export function ConfigView({ active }: ConfigViewProps) {
                   </option>
                 ))}
               </select>
-            </label>
-            <div className="settings-item">
-              <div className="settings-copy">
-                <h4>Better accuracy</h4>
-                <p>Install Base multilingual for improved transcription quality. It is about 142 MB.</p>
-              </div>
-              <Button
-                className="settings-save-btn"
+            )}
+          />
+          <VprSettingRow
+            title="Better accuracy"
+            hint="Install Base multilingual (~142 MB) for improved transcription quality"
+            control={(
+              <button
+                type="button"
+                className={styles.saveButton}
                 onClick={() => void handleInstallBaseModel()}
-                disabled={voiceInstalling || voiceStatus?.models.some((model) => model.id === 'base' && model.installed)}
+                disabled={voiceInstalling || baseInstalled}
               >
-                {voiceInstalling ? 'Installing…' : voiceStatus?.models.some((model) => model.id === 'base' && model.installed) ? 'Installed' : 'Install Base'}
-              </Button>
-            </div>
-            {voiceMessage ? <p className="settings-note">{voiceMessage}</p> : null}
-            {voiceStatus?.error ? <p className="settings-message error">{voiceStatus.error}</p> : null}
-          </div>
-        </article>
+                {voiceInstalling ? 'Installing…' : baseInstalled ? 'Installed' : 'Install Base'}
+              </button>
+            )}
+          />
+          {voiceMessage ? <p className={styles.note}>{voiceMessage}</p> : null}
+          {voiceStatus?.error ? <p className={`${styles.note} ${styles.noteError}`}>{voiceStatus.error}</p> : null}
+        </VprCard>
 
         {configMessage ? (
-            <p className={`settings-message ${configMessage.type}`}>
-              {configMessage.text}
-            </p>
-          ) : null}
-
+          <p className={`${styles.note}${configMessage.type === 'error' ? ` ${styles.noteError}` : ''}`}>
+            {configMessage.text}
+          </p>
+        ) : null}
       </div>
     </section>
   );

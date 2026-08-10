@@ -52,6 +52,14 @@ For SSE streams, a factor of `0.82` is applied to account for framing overhead. 
 
 `cachedInputUsdPerMillion` defaults to `inputUsdPerMillion` when not set by the seller. Non-zero usage always costs at least 1 cent. Zero tokens = zero cost.
 
+## Non-Token Unit Billing
+
+Some protocols deliver billable units that are not tokens. Metadata v11 defines unit billing models; the first supported unit is `output_images` for `openai-images` services.
+
+The seller announces one or more components with `priceUsd` and optional matching attributes such as `size` or `quality`. After the response arrives, both sides count non-empty delivered outputs and recompute the unit charge from the same model. Requested outputs that were not delivered are not charged.
+
+If delivered positive usage matches no billing component, the seller rejects before forwarding when possible, and the buyer refuses payment authorization if it still receives an unpriceable response. Unit cost is added to any token cost for hybrid protocols.
+
 ## Receipt Verification
 
 Buyers verify the EIP-191 signature (recovering the seller's address via `ecrecover`) and compare token estimates. A dispute is flagged when the difference exceeds **15%** or the signature is invalid. If their measurements diverge significantly, the transaction is disputed and the buyer is protected.

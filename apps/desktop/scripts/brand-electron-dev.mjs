@@ -5,7 +5,9 @@ import { createRequire } from 'node:module';
 import { existsSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-const APP_NAME = 'AntSeed Desktop';
+const APP_NAME = 'AntSeed VPR';
+// Earlier branded names — migrated to APP_NAME if found.
+const LEGACY_APP_NAMES = ['AntSeed Desktop'];
 const APP_BUNDLE_ID = 'com.antseed.desktop-dev';
 const require = createRequire(import.meta.url);
 
@@ -41,11 +43,15 @@ function main() {
 
   const electronPackageDir = path.dirname(electronPackageJson);
   const distDir = path.join(electronPackageDir, 'dist');
-  const originalApp = path.join(distDir, 'Electron.app');
   const brandedApp = path.join(distDir, `${APP_NAME}.app`);
+  const candidates = [
+    brandedApp,
+    ...LEGACY_APP_NAMES.map((name) => path.join(distDir, `${name}.app`)),
+    path.join(distDir, 'Electron.app'),
+  ];
 
   // Determine which .app bundle currently exists
-  const appDir = existsSync(brandedApp) ? brandedApp : existsSync(originalApp) ? originalApp : null;
+  const appDir = candidates.find((candidate) => existsSync(candidate)) ?? null;
   if (!appDir) {
     process.exit(0);
   }
@@ -57,8 +63,8 @@ function main() {
   setOrAddPlistKey(plistPath, 'CFBundleIdentifier', APP_BUNDLE_ID);
 
   // Rename the .app bundle so macOS picks up the new name in dock / Cmd+Tab
-  if (appDir === originalApp) {
-    renameSync(originalApp, brandedApp);
+  if (appDir !== brandedApp) {
+    renameSync(appDir, brandedApp);
   }
 
   // Update electron's path.txt so the `electron` CLI can find the renamed binary

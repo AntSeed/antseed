@@ -1,0 +1,648 @@
+.view {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: clip;
+  padding: 8px 16px 24px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 392px;
+  margin: 0 auto;
+  min-width: 0;
+}
+
+.primaryMethods {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+}
+
+/* ---------- Method chooser (CTAs) ---------- */
+
+/* Primary Fun CTA: same row anatomy as .methodCta (icon chip · title +
+   caption · badge cluster · arrow) but on Fun's near-black brand surface. */
+.funCta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin-top: 4px;
+  /* Same padding + two-line text block as .methodCta, so the primary CTA and
+     the method rows all land on the same height. */
+  padding: 10px 14px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #0e0e12;
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 20px;
+  cursor: pointer;
+  transition: filter 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.funCta:hover {
+  filter: brightness(1.25);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+/* Dark mode inverts the CTA: light surface, near-black content — the
+   high-contrast primary in both themes. */
+:global(body.dark-theme) .funCta {
+  background: #f4f4f6;
+  color: #0e0e12;
+}
+
+:global(body.dark-theme) .funCta:hover {
+  filter: brightness(0.96);
+}
+
+.funCta:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+}
+
+.funCta:disabled {
+  cursor: default;
+  opacity: 0.65;
+  transform: none;
+  filter: none;
+  box-shadow: none;
+}
+
+/* Stripe Link-branded primary: the green "Pay with link" pill, content
+   centered, same radius/height family as the other CTAs. Brand green holds
+   in both themes. */
+.linkCta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 4px;
+  padding: 15px 14px;
+  border: none;
+  border-radius: 14px;
+  background: #00d632;
+  color: #011e0f;
+  font-size: 15.5px;
+  font-weight: 600;
+  line-height: 22px;
+  cursor: pointer;
+  transition: filter 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.linkCta:hover {
+  filter: brightness(1.06);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+.linkCta:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+}
+
+/* Quiet trust line under the pill: processor name + accepted-card badges. */
+.linkCtaSub {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/* One deposit option: its CTA plus the supporting icon row / footnote. */
+.methodGroup {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+}
+
+.methodGroup > button {
+  justify-self: stretch;
+}
+
+/* Leading Fun-logo chip — .methodCtaIcon's geometry, tinted from the CTA's
+   own text color so it holds up in both themes. */
+.funCtaIcon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+/* Text block takes the middle so the badge cluster hugs the right edge,
+   matching the method rows below. */
+.funCtaText {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.funCtaTitle {
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 20px;
+}
+
+.funCtaCaption {
+  color: color-mix(in srgb, currentColor 65%, transparent);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+}
+
+/* Small-print qualifier under an option ("* Email required…"). */
+.methodFootnote {
+  color: var(--text-faint, var(--text-secondary));
+  font-size: 11px;
+  line-height: 14px;
+  text-align: center;
+}
+
+/* Expander for the secondary deposit methods. */
+.moreLink {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  cursor: pointer;
+  transition: color 0.12s ease;
+}
+
+.moreLink:hover {
+  color: var(--text-primary);
+}
+
+.moreLink:focus-visible {
+  outline: none;
+  border-radius: 4px;
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+}
+
+.moreLinkChevron {
+  transition: transform 0.12s ease;
+}
+
+.moreLinkChevronOpen {
+  transform: rotate(180deg);
+}
+
+.optionList {
+  display: grid;
+  gap: 8px;
+}
+
+/* Trailing brand-mark cluster on an option row (USDC/Base, Visa/MC, …). */
+.methodBadges {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.methodBadges svg {
+  display: block;
+}
+
+/* Trailing chevron on a method row — quiet "this opens a screen" affordance. */
+.methodArrow {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-secondary);
+}
+
+/* Round filler chip in a badge cluster ("+", QR glyph, …). */
+.badgeChip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.methodCta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  /* Explicit: the Fun SDK wraps its button in a provider div, so the row
+     can't rely on grid-item stretch like the plain buttons do. */
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
+}
+
+.methodCta:hover {
+  border-color: var(--brand);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+.methodCtaIcon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
+  color: var(--brand);
+}
+
+.methodCtaText {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.methodCtaTitle {
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 20px;
+}
+
+.methodCtaCaption {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/* ---------- Amount card ---------- */
+
+.amountCard {
+  display: grid;
+  gap: 8px;
+  padding: 12px 16px;
+}
+
+.amountLabel {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.amountHint {
+  color: var(--text-faint, var(--text-secondary));
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.amountRow {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.amountPreset {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.amountPreset:hover {
+  border-color: var(--border-strong);
+}
+
+.amountPresetActive {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.amountInputWrap {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.amountInputWrap input {
+  width: 100%;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  outline: none;
+}
+
+/* ---------- Payment card (QR / Coinbase) ---------- */
+
+.payCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px;
+}
+
+.qr,
+.qrPlaceholder {
+  width: 176px;
+  height: 176px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  padding: 8px;
+}
+
+/* Dots follow the theme (dark-on-light / light-on-dark, Polymarket-style). */
+.qr {
+  color: var(--text-primary);
+}
+
+/* Backing ring behind the Base badge — blends the punched-out hole into the
+   QR tile so the logo floats with a quiet zone around it. */
+.qrBadgeBg {
+  fill: var(--bg-card);
+}
+
+.qrMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--text-secondary);
+}
+
+.methodHint {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+  text-align: center;
+}
+
+.methodHint strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.addressRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.addressRow:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.addressRow code {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+/* Deposit progress as a quiet status line — the leading mark carries the
+   state: orange pulse (waiting), green pulse (funds detected / depositing),
+   green check (credited), red dot (error). */
+.watchStatus {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.watchStatus_busy {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.watchStatus_done {
+  color: var(--accent-green);
+  font-weight: 600;
+}
+
+.watchStatus_error {
+  color: var(--accent-red, #d64545);
+}
+
+/* Live dot: solid core plus an expanding halo ring (pseudo-element inherits
+   the core color; transform/opacity only, so it renders everywhere). */
+.watchPulse {
+  position: relative;
+  display: block;
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #f59e0b; /* waiting = orange */
+}
+
+.watchStatus_busy .watchPulse {
+  background: var(--accent-green);
+}
+
+.watchStatus_error .watchPulse {
+  background: var(--accent-red, #d64545);
+}
+
+.watchPulse::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: inherit;
+  animation: watch-dot-ring 1.8s ease-out infinite;
+}
+
+.watchPulseStatic::after {
+  animation: none;
+  display: none;
+}
+
+.watchCheck {
+  flex-shrink: 0;
+  color: var(--accent-green);
+}
+
+/* NOTE: must not be named `watch-pulse` — CSS modules export keyframe names
+   alongside classes, and camelized it collides with (and clobbers) the
+   `.watchPulse` class in the styles object, leaving the dot unstyled. */
+@keyframes watch-dot-ring {
+  0% { transform: scale(1); opacity: 0.55; }
+  70%, 100% { transform: scale(2.7); opacity: 0; }
+}
+
+.networkWarn {
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--bg-secondary, rgba(0, 0, 0, 0.04));
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 15px;
+  text-align: center;
+}
+
+.networkWarn strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.txLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent-green);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.txLink:hover {
+  color: var(--brand);
+}
+
+.browserWalletLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent-green);
+  font-size: 12px;
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.browserWalletLink:hover {
+  color: var(--brand);
+}
+
+.cardPayButton {
+  width: 100%;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 999px;
+  background: var(--brand);
+  color: var(--bg-card, #fff);
+  font-size: 15px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: filter 0.12s ease, box-shadow 0.12s ease;
+}
+
+.cardPayButton:hover {
+  filter: brightness(1.05);
+  box-shadow: var(--shadow-sm);
+}
+
+.cardNotice {
+  color: var(--accent-red, #d64545);
+  font-size: 12px;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* ---------- Trust footer ---------- */
+
+/* Compact trust strip: short reassurance lines (the payment marks now sit
+   under the primary CTA). */
+.trustStrip {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.trustLine {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+  text-align: center;
+}
+
+.trustLine svg {
+  flex: 0 0 auto;
+}
+
+.secureNote {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}

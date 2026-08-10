@@ -8,12 +8,24 @@ export {
   type RequestStreamResponseMetadata,
   type BuyerUsageTotals,
   type BuyerUsageChannelPoint,
+  type BuyerUsageServicePoint,
 } from './node.js';
 export type { Provider, ProviderStreamCallbacks } from './interfaces/seller-provider.js';
+export {
+  ModelHealthChecker,
+  DEFAULT_HEALTH_CHECK_INTERVAL_MS,
+  DEFAULT_HEALTH_CHECK_FAILURE_THRESHOLD,
+  DEFAULT_HEALTH_CHECK_PROBE_TIMEOUT_MS,
+  type ModelHealthCheckerConfig,
+  type ModelHealthEvent,
+  type ModelHealthTarget,
+  type ServiceHealthSnapshot,
+} from './health/model-health-checker.js';
 export type { Router } from './interfaces/buyer-router.js';
 
 // Types (re-export everything)
 export * from './types/index.js';
+export * from './billing/index.js';
 
 // Submodule re-exports (commonly used)
 export {
@@ -26,14 +38,22 @@ export {
   bytesToHex,
 } from './p2p/identity.js';
 export { DHTNode, DEFAULT_DHT_CONFIG } from './discovery/dht-node.js';
+export { MAX_SERVICES_PER_PROVIDER, MAX_SERVICE_NAME_LENGTH } from './discovery/metadata-validator.js';
 export { OFFICIAL_BOOTSTRAP_NODES, mergeBootstrapNodes, toBootstrapConfig } from './discovery/bootstrap.js';
 export {
   WELL_KNOWN_SERVICE_CATEGORIES,
   WELL_KNOWN_SERVICE_API_PROTOCOLS,
+  SERVICE_CAPABILITY_MODALITIES,
+  MAX_CAPABILITY_TOKEN_COUNT,
+  MAX_CAPABILITY_SUPPORTED_PARAMETERS,
+  MAX_CAPABILITY_PARAMETER_LENGTH,
+  validateServiceCapabilityFields,
   type DomainVerificationClaim,
   type DomainVerificationMethod,
   type GithubVerificationClaim,
   type ServiceApiProtocol,
+  type ServiceCapabilities,
+  type ServiceCapabilityModality,
   type PeerMetadata,
   type PeerVerifications,
   type ProviderAnnouncement,
@@ -71,6 +91,12 @@ export { MetadataServer, type MetadataServerConfig } from './discovery/metadata-
 export { parsePublicAddress, MAX_PUBLIC_ADDRESS_LENGTH, type ParsedPublicAddress } from './discovery/public-address.js';
 export { MeteringStorage } from './metering/storage.js';
 export { BalanceManager } from './payments/balance-manager.js';
+export {
+  computeCostUsdc,
+  estimateTokensFromBytes,
+  estimateTokensFromText,
+  type ServicePricing,
+} from './payments/pricing.js';
 export { DepositsClient, type DepositsClientConfig, type BuyerBalanceInfo } from './payments/evm/deposits-client.js';
 export {
   DepositRelayClient,
@@ -146,6 +172,7 @@ export type {
 } from './payments/evm/signatures.js';
 export { NatTraversal, type NatMapping, type NatTraversalResult } from './p2p/nat-traversal.js';
 export { BuyerPaymentManager } from './payments/buyer-payment-manager.js';
+export type { BuyerSpendEvent, BuyerSpendListener } from './payments/buyer-payment-manager.js';
 export type { BuyerPaymentConfig } from './payments/buyer-payment-manager.js';
 export { BuyerFreeUsageManager } from './payments/buyer-free-usage-manager.js';
 export type { BuyerFreeUsageConfig } from './payments/buyer-free-usage-manager.js';

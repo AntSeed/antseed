@@ -17,6 +17,7 @@ describe('provider-local-llm plugin', () => {
     expect(keys).toContain('ANTSEED_OUTPUT_USD_PER_MILLION');
     expect(keys).toContain('ANTSEED_MAX_CONCURRENCY');
     expect(keys).toContain('ANTSEED_ALLOWED_SERVICES');
+    expect(keys).toContain('ANTSEED_SERVICE_CAPABILITIES_JSON');
   });
 
   it('creates provider with default config', () => {
@@ -41,5 +42,23 @@ describe('provider-local-llm plugin', () => {
       ANTSEED_MAX_CONCURRENCY: '4',
     });
     expect(provider.maxConcurrency).toBe(4);
+  });
+
+  it('announces configured service capabilities', () => {
+    const provider = plugin.createProvider({
+      ANTSEED_ALLOWED_SERVICES: 'llama3.2-vision',
+      ANTSEED_SERVICE_CAPABILITIES_JSON: JSON.stringify({
+        'llama3.2-vision': {
+          contextWindow: 131072,
+          inputs: ['text', 'image'],
+          toolUse: true,
+        },
+      }),
+    });
+    expect(provider.serviceCapabilities?.['llama3.2-vision']).toEqual({
+      contextWindow: 131072,
+      inputs: ['text', 'image'],
+      toolUse: true,
+    });
   });
 });

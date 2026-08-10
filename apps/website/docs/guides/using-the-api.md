@@ -85,15 +85,30 @@ antseed buyer start
 
 ## Supported API Formats
 
-The proxy accepts three API formats. Use whichever matches your tool:
+The proxy accepts these API formats. Use whichever matches your tool:
 
 | Endpoint | Format | Compatible Tools |
 |---|---|---|
 | `/v1/messages` | Anthropic Messages API | Claude Code, Claude SDK |
 | `/v1/chat/completions` | OpenAI Chat Completions | Codex, any OpenAI-compatible client |
 | `/v1/responses` | OpenAI Responses API | Codex |
+| `/v1/images/generations` | OpenAI Images generation | OpenAI-compatible image clients |
+| `/v1/images/edits` | OpenAI Images edits | OpenAI-compatible multipart image clients |
 
 The `model` field in your request determines which service to route to. The proxy finds the best available provider for that service on the network.
+
+Image services advertise the `openai-images` protocol and may publish per-output pricing. Buyers validate the seller's announced unit-billing model before authorizing payment. Image requests are not included in periodic model health probes because a meaningful probe would create a billable upstream image.
+
+```bash
+curl http://localhost:8377/v1/images/generations \
+  -H 'content-type: application/json' \
+  -d '{
+    "model": "gpt-image-1",
+    "prompt": "A tiny ant carrying a seed",
+    "n": 1,
+    "size": "1024x1024"
+  }'
+```
 
 ## Claude Code
 

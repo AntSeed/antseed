@@ -21,12 +21,22 @@ export function registerSystemProxyInstallCaCommand(cmd: Command): void {
         console.log(chalk.dim('CA certificate already exists, using existing.'))
       }
 
+      if (caManager.trustState() === 'trusted') {
+        console.log(chalk.green('CA certificate is already trusted — nothing to install.'))
+        return
+      }
+
       const installSpinner = ora('Installing CA into system trust store...').start()
       try {
         const result = await caManager.installToSystemKeychain()
         installSpinner.succeed(chalk.green(`CA certificate installed (${result.target})`))
         if (result.warning) {
           console.log(chalk.yellow(`Warning: ${result.warning}`))
+        }
+        if (result.detail) {
+          // Raw command output for debugging — deliberately not on the
+          // Warning: line, which the desktop surfaces to users verbatim.
+          console.log(chalk.dim(result.detail))
         }
       } catch (err) {
         installSpinner.fail(chalk.red(`Install failed: ${(err as Error).message}`))

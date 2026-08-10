@@ -13,12 +13,18 @@
   "dependencies": {
     "@docusaurus/core": "^3.7.0",
     "@docusaurus/plugin-client-redirects": "^3.7.0",
+    "@docusaurus/plugin-google-tag-manager": "^3.7.0",
     "@docusaurus/preset-classic": "^3.7.0",
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
+    "@hugeicons/core-free-icons": "^4.0.0",
+    "@hugeicons/react": "^1.1.5",
+    "@lobehub/icons": "^5.15.0",
     "@mdx-js/react": "^3.0.0",
     "clsx": "^2.1.0",
     "prism-react-renderer": "^2.3.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "three": "^0.183.1"
   },
   "devDependencies": {

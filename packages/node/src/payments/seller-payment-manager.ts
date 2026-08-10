@@ -62,6 +62,8 @@ const CLOSE_RETRY_AFTER_MS = 2_000;
 const TOP_UP_THRESHOLD_NOT_MET_SELECTOR = '0x1ea4506b';
 const INSUFFICIENT_BALANCE_SELECTOR = '0xf4d678b8';
 const IN_FLIGHT_TX_LIMIT_PHRASE = 'in-flight transaction limit';
+/** Backoff stays well inside the buyer's 30-second AuthAck timeout. */
+const RESERVE_BACKPRESSURE_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000] as const;
 
 type TopUpFailureKind = 'retryable-threshold' | 'retryable-tx-backpressure' | 'insufficient-balance' | 'non-retryable';
 /** `amount`/`txHash` describe the close actually submitted on-chain, which may
@@ -545,16 +547,15 @@ export class SellerPaymentManager {
           }
         }
 
-        debugLog(`[SellerPayment] Reserving channel ${channelId.slice(0, 18)}... on-chain`);
         const reserveSalt = payload.reserveSalt ?? channelId;
-        await this._channelsClient.reserve(
+        await this._reserveWithBackpressureRetry(channelId, () => this._channelsClient.reserve(
           this._signer,
           buyerEvmAddr,
           reserveSalt,
           reserveMaxAmount,
           BigInt(reserveDeadline),
           payload.spendingAuthSig,
-        );
+        ));
 
         // Store new session (sessionId field stores channelId for backward compat)
         const now = Date.now();
@@ -779,6 +780,37 @@ export class SellerPaymentManager {
     } catch (err) {
       debugWarn(`[SellerPayment] Failed to process SpendingAuth: ${err instanceof Error ? err.message : err}`);
       return 'rejected';
+    }
+  }
+
+  /**
+   * Retry initial reserves rejected by delegated-account transaction
+   * backpressure. BaseEvmClient already assigns distinct nonces across buyers;
+   * retries let a rejected submission land as soon as the provider's account
+   * queue has room, without holding unrelated buyers until a receipt is mined.
+   */
+  private async _reserveWithBackpressureRetry(
+    channelId: string,
+    submit: () => Promise<string>,
+  ): Promise<string> {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        debugLog(
+          `[SellerPayment] Reserving channel ${channelId.slice(0, 18)}... on-chain` +
+          `${attempt > 0 ? ` (retry ${attempt}/${RESERVE_BACKPRESSURE_RETRY_DELAYS_MS.length})` : ''}`,
+        );
+        return await submit();
+      } catch (err) {
+        const delayMs = RESERVE_BACKPRESSURE_RETRY_DELAYS_MS[attempt];
+        if (!this._isRetryableTxSubmissionFailure(err) || delayMs === undefined) {
+          throw err;
+        }
+        debugWarn(
+          `[SellerPayment] Reserve hit transaction backpressure for ${channelId.slice(0, 18)}... ` +
+          `— retrying in ${delayMs}ms: ${this._formatError(err)}`,
+        );
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      }
     }
   }
 

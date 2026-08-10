@@ -15,6 +15,10 @@ export {
 } from './stream-transform.js';
 
 export {
+  DEFAULT_ANTHROPIC_MAX_TOKENS,
+} from './canonical.js';
+
+export {
   detectRequestServiceApiProtocol,
   inferProviderDefaultServiceApiProtocols,
   selectTargetProtocolForRequest,
@@ -22,9 +26,15 @@ export {
 } from './detect.js';
 
 export {
+  extractImageRequestFacts,
+  extractProviderResponseFacts,
   extractUsage,
+  type ImageRequestFacts,
+  type ProviderResponseFacts,
   type TokenUsage,
+  extractRequestBodyFields,
   parseJsonObject,
+  parseMultipartFormFields,
   toNonNegativeInt,
   type StreamingResponseAdapter,
 } from './utils.js';

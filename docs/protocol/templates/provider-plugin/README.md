@@ -54,6 +54,9 @@ export class MyProvider implements Provider {
     },
   };
   readonly serviceCategories = { 'my-model-v1': ['coding'] };
+  readonly serviceCapabilities = {
+    'my-model-v1': { contextWindow: 128000, inputs: ['text'], toolUse: true },
+  };
   readonly maxConcurrency = 10;
 
   private _current = 0;
@@ -83,10 +86,13 @@ Then declare config keys in `src/index.ts`:
 ```ts
 configSchema: [
   { key: 'MY_API_KEY', label: 'API Key', type: 'secret', required: true, description: 'API key' },
+  { key: 'ANTSEED_SERVICE_CAPABILITIES_JSON', label: 'Service Capabilities JSON', type: 'string' },
 ],
 ```
 
-The CLI reads matching environment variables and passes them to `createProvider(config)`. Non-secret runtime shape such as services, pricing, categories, and provider `baseUrl` should live in `~/.antseed/config.json`.
+The CLI reads matching environment variables and passes them to `createProvider(config)`. Non-secret runtime shape such as services, pricing, categories, capabilities, unit billing, and provider `baseUrl` should live in `~/.antseed/config.json`.
+
+Use `parseServiceCapabilitiesJson()` from `@antseed/provider-core` to consume `ANTSEED_SERVICE_CAPABILITIES_JSON`. If your plugin supports non-token billing, also declare `ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON` and parse it with `parseServiceUnitBillingModelsJson()`. Plugins that omit the unit-billing key cause seller startup to warn when an operator configures `unitBillingModels` for them.
 
 ## Adding an Ant Agent
 
@@ -170,6 +176,9 @@ npm run verify
 | `pricing.defaults.cachedInputUsdPerMillion?` | `number` | Default cached input pricing in USD per 1M tokens (defaults to input price) |
 | `pricing.defaults.outputUsdPerMillion` | `number` | Default output pricing in USD per 1M tokens |
 | `pricing.services?` | `Record<string, { inputUsdPerMillion; cachedInputUsdPerMillion?; outputUsdPerMillion }>` | Optional per-service pricing overrides |
+| `serviceCategories?` | `Record<string, string[]>` | Optional discovery tags by service |
+| `serviceCapabilities?` | `Record<string, ServiceCapabilities>` | Optional context, modality, reasoning, tool-use, and structured-output hints |
+| `serviceUnitBillingModels?` | `ServiceUnitBillingModelsV1` | Optional per-service/protocol non-token billing models |
 | `serviceCategories?` | `Record<string, string[]>` | Optional per-service discovery tags (e.g. `coding`, `privacy`) |
 | `maxConcurrency` | `number` | Max concurrent requests |
 | `handleRequest(req)` | `Promise<SerializedHttpResponse>` | Handle an inference request |

@@ -1,8 +1,14 @@
 import { readFileSync } from 'node:fs'
-import type { SystemProxyConfigPatch, SystemProxyForwardRule, SystemProxyProfile } from './types.js'
+import type { SystemProxyConfigPatch, SystemProxyForwardRule, SystemProxyProfile, SystemProxyProfileMetadata, SystemProxySource } from './types.js'
 
 const PROFILES_JSON_ENV = 'ANTSEED_SYSTEM_PROXY_PROFILES_JSON'
 const PROFILES_FILE_ENV = 'ANTSEED_SYSTEM_PROXY_PROFILES_FILE'
+const APP_ACTIONS = new Set<NonNullable<SystemProxyProfileMetadata['appAction']>>([
+  'none',
+  'open-url',
+  'open-tool',
+  'restart-app',
+])
 
 export function loadSystemProxyProfiles(env: NodeJS.ProcessEnv = process.env): readonly SystemProxyProfile[] {
   const raw = env[PROFILES_JSON_ENV]?.trim()
@@ -32,6 +38,7 @@ function normalizeProfile(value: unknown, index: number): SystemProxyProfile {
   const pathPrefixes = stringArray(raw['pathPrefixes'])
   const forward = normalizeForward(raw['forward'], name)
   const configPatch = normalizeConfigPatch(raw['configPatch'], name)
+  const metadata = normalizeMetadata(raw['metadata'], name)
 
   return {
     name,
@@ -41,6 +48,7 @@ function normalizeProfile(value: unknown, index: number): SystemProxyProfile {
     pathPrefixes,
     ...(forward ? { forward } : {}),
     ...(configPatch ? { configPatch } : {}),
+    ...(metadata ? { metadata } : {}),
   }
 }
 
@@ -69,13 +77,40 @@ function normalizeConfigPatch(value: unknown, profileName: string): SystemProxyC
   }
   const raw = value as Record<string, unknown>
   return {
+    ...raw,
     configPath: requiredString(raw, 'configPath', profileName),
     providerKey: requiredString(raw, 'providerKey', profileName),
-    npm: requiredString(raw, 'npm', profileName),
-    providerName: requiredString(raw, 'providerName', profileName),
-    baseURL: requiredString(raw, 'baseURL', profileName),
-    modelFormat: 'peer-routed',
   }
+}
+
+function normalizeMetadata(value: unknown, profileName: string): SystemProxyProfileMetadata | undefined {
+  if (value === undefined) return undefined
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`metadata for ${profileName} must be an object`)
+  }
+  const raw = value as Record<string, unknown>
+  const icon = optionalString(raw, 'icon')
+  const displayLabel = optionalString(raw, 'displayLabel')
+  const methodLabel = optionalString(raw, 'methodLabel')
+  const appActionValue = raw['appAction']
+  const appAction = isAppAction(appActionValue) ? appActionValue : undefined
+  const openUrl = optionalString(raw, 'openUrl')
+  const toolName = optionalString(raw, 'toolName')
+  const restartAppName = optionalString(raw, 'restartAppName')
+  const metadata: SystemProxyProfileMetadata = {
+    ...(icon ? { icon } : {}),
+    ...(displayLabel ? { displayLabel } : {}),
+    ...(methodLabel ? { methodLabel } : {}),
+    ...(appAction ? { appAction } : {}),
+    ...(openUrl ? { openUrl } : {}),
+    ...(toolName ? { toolName } : {}),
+    ...(restartAppName ? { restartAppName } : {}),
+  }
+  return Object.keys(metadata).length > 0 ? metadata : undefined
+}
+
+function isAppAction(value: unknown): value is NonNullable<SystemProxyProfileMetadata['appAction']> {
+  return typeof value === 'string' && APP_ACTIONS.has(value as NonNullable<SystemProxyProfileMetadata['appAction']>)
 }
 
 function requiredString(raw: Record<string, unknown>, key: string, context: string | number): string {
@@ -143,6 +178,23 @@ export function resolveProxiedPathPrefixes(profileNames: string[]): Map<string, 
     }
   }
   return prefixesByDomain
+}
+
+export function resolveSystemProxySources(profileNames: string[]): Map<string, Map<string, SystemProxySource>> {
+  const sourcesByDomain = new Map<string, Map<string, SystemProxySource>>()
+  for (const name of profileNames) {
+    const profile = findProfile(name)
+    if (!profile || profile.kind === 'config-patch') continue
+    const source = profile.forward?.source ?? profile.name
+    for (const domain of profile.domains) {
+      const sources = sourcesByDomain.get(domain) ?? new Map<string, SystemProxySource>()
+      for (const prefix of profile.pathPrefixes) {
+        sources.set(prefix, source)
+      }
+      sourcesByDomain.set(domain, sources)
+    }
+  }
+  return sourcesByDomain
 }
 
 export function resolveSystemProxyForwardRules(profileNames: string[]): Map<string, SystemProxyForwardRule> {

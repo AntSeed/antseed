@@ -345,7 +345,7 @@ function DiffStatsButton({ item, onOpen, compact = false }: { item: ToolRenderIt
 
 function ToolModal({ item, onClose }: { item: ToolRenderItem; onClose: () => void }) {
   const [closing, setClosing] = useState(false);
-  const closingTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const closingTimerRef = useRef<number | null>(null);
 
   const close = (): void => {
     setClosing(true);
