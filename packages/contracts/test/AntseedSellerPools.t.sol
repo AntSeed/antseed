@@ -650,9 +650,7 @@ contract AntseedSellerPoolsTest is Test {
         token.setTransferWhitelist(staker, true);
         vm.startPrank(staker);
         token.approve(address(pools), 100 ether);
-        vm.expectRevert(
-            abi.encodeWithSelector(IERC721Errors.ERC721InvalidReceiver.selector, address(token))
-        );
+        vm.expectRevert(abi.encodeWithSelector(IERC721Errors.ERC721InvalidReceiver.selector, address(token)));
         pools.stakeFor(address(token), agentId, 100 ether, 4);
         vm.stopPrank();
     }
@@ -773,7 +771,8 @@ contract AntseedSellerPoolsTest is Test {
 
     function test_sellerRegistryLegacyStakeFallbackKeepsSellersEligible() public {
         MockLegacyStaking legacy = new MockLegacyStaking();
-        AntseedSellerRegistry adapter = new AntseedSellerRegistry(address(identityRegistry), address(pools), address(legacy));
+        AntseedSellerRegistry adapter =
+            new AntseedSellerRegistry(address(identityRegistry), address(pools), address(legacy));
 
         legacy.setAgent(seller, agentId);
         legacy.setStaked(seller, true);
@@ -795,7 +794,8 @@ contract AntseedSellerPoolsTest is Test {
 
     function test_sellerRegistryAgentHandoverSupersedesLegacyBinding() public {
         MockLegacyStaking legacy = new MockLegacyStaking();
-        AntseedSellerRegistry adapter = new AntseedSellerRegistry(address(identityRegistry), address(pools), address(legacy));
+        AntseedSellerRegistry adapter =
+            new AntseedSellerRegistry(address(identityRegistry), address(pools), address(legacy));
 
         address oldSeller = address(0x600);
         vm.prank(oldSeller);
@@ -907,6 +907,82 @@ contract AntseedSellerPoolsTest is Test {
         assertEq(token.balanceOf(staker), balanceBefore + 100 ether);
     }
 
+    function test_splitStakeCannotWithdrawBeforeEffectiveEpochAndPreservesSlashBasis() public {
+        uint256 positionId = _stake(staker, agentId, 100 ether, 104);
+        vm.warp(block.timestamp + 52 * EPOCH_DURATION);
+
+        vm.prank(staker);
+        (uint256 firstId,) = pools.splitStake(positionId, 40 ether);
+
+        vm.prank(staker);
+        vm.expectRevert(IAntseedSellerPools.PositionChangePending.selector);
+        pools.withdrawStake(firstId);
+
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        uint256 balanceBefore = token.balanceOf(staker);
+        vm.prank(staker);
+        pools.withdrawStake(firstId);
+
+        assertEq(token.balanceOf(staker) - balanceBefore, 45 ether);
+        assertEq(pools.positionWeightAtEpoch(positionId, 52), 100 ether * 53);
+        assertEq(pools.positionWeightAtEpoch(firstId, 53), 0);
+    }
+
+    function test_moveStakeCannotWithdrawBeforeEffectiveEpochAndPreservesSlashBasis() public {
+        uint256 positionId = _stake(staker, agentId, 100 ether, 104);
+        vm.warp(block.timestamp + 52 * EPOCH_DURATION);
+
+        vm.prank(staker);
+        uint256 movedId = pools.moveStake(positionId, otherAgentId);
+
+        vm.prank(staker);
+        vm.expectRevert(IAntseedSellerPools.PositionChangePending.selector);
+        pools.withdrawStake(movedId);
+
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        uint256 balanceBefore = token.balanceOf(staker);
+        vm.prank(staker);
+        pools.withdrawStake(movedId);
+
+        assertEq(token.balanceOf(staker) - balanceBefore, 75 ether);
+        assertEq(pools.positionWeightAtEpoch(positionId, 52), 100 ether * 53);
+        assertEq(pools.positionWeightAtEpoch(movedId, 53), 0);
+    }
+
+    function test_chainedSameEpochSplitPreservesPowerSlashBasisAndWithdrawalEpoch() public {
+        uint256 positionId = _stake(staker, agentId, 100 ether, 104);
+        assertEq(pools.positionWithdrawableEpoch(positionId), 0);
+        vm.warp(block.timestamp + 52 * EPOCH_DURATION);
+
+        vm.startPrank(staker);
+        (uint256 firstId, uint256 untouchedId) = pools.splitStake(positionId, 40 ether);
+        (uint256 chainedFirstId, uint256 chainedSecondId) = pools.splitStake(firstId, 20 ether);
+        vm.stopPrank();
+
+        assertEq(pools.positionWithdrawableEpoch(firstId), 53);
+        assertEq(pools.positionWithdrawableEpoch(untouchedId), 53);
+        assertEq(pools.positionWithdrawableEpoch(chainedFirstId), 53);
+        assertEq(pools.positionWithdrawableEpoch(chainedSecondId), 53);
+        assertEq(pools.positionWeightAtEpoch(positionId, 52), 100 ether * 53);
+        assertEq(pools.positionWeightAtEpoch(firstId, 53), 0);
+        assertEq(pools.positionWeightAtEpoch(untouchedId, 53), 40 ether * 52);
+        assertEq(pools.positionWeightAtEpoch(chainedFirstId, 53), 40 ether * 52);
+        assertEq(pools.positionWeightAtEpoch(chainedSecondId, 53), 20 ether * 52);
+        assertEq(pools.poolWeightAtEpoch(agentId, 53), 100 ether * 52);
+
+        vm.prank(staker);
+        vm.expectRevert(IAntseedSellerPools.PositionChangePending.selector);
+        pools.withdrawStake(chainedFirstId);
+
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        uint256 balanceBefore = token.balanceOf(staker);
+        vm.prank(staker);
+        pools.withdrawStake(chainedFirstId);
+
+        assertEq(token.balanceOf(staker) - balanceBefore, 30 ether);
+        assertEq(pools.poolWeightAtEpoch(agentId, 53), 60 ether * 52);
+    }
+
     function test_splitStakeRequiresDisablingMaxLockFirst() public {
         uint256 positionId = _stake(staker, agentId, 100 ether, 4);
         vm.warp(block.timestamp + EPOCH_DURATION);
@@ -959,6 +1035,46 @@ contract AntseedSellerPoolsTest is Test {
         vm.prank(staker);
         pools.withdrawStake(mergedId);
         assertEq(token.balanceOf(staker), balanceBefore + 100 ether);
+    }
+
+    function test_mergeStakesCannotWithdrawBeforeEffectiveEpochAndPreservesSlashBasis() public {
+        uint256 firstId = _stake(staker, agentId, 60 ether, 104);
+        uint256 secondId = _stake(staker, agentId, 40 ether, 104);
+        vm.warp(block.timestamp + 52 * EPOCH_DURATION);
+
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = firstId;
+        ids[1] = secondId;
+        vm.prank(staker);
+        uint256 mergedId = pools.mergeStakes(ids);
+
+        vm.prank(staker);
+        vm.expectRevert(IAntseedSellerPools.PositionChangePending.selector);
+        pools.withdrawStake(mergedId);
+
+        vm.warp(block.timestamp + EPOCH_DURATION);
+        uint256 balanceBefore = token.balanceOf(staker);
+        vm.prank(staker);
+        pools.withdrawStake(mergedId);
+
+        assertEq(token.balanceOf(staker) - balanceBefore, 75 ether);
+        assertEq(pools.positionWeightAtEpoch(firstId, 52), 60 ether * 53);
+        assertEq(pools.positionWeightAtEpoch(secondId, 52), 40 ether * 53);
+        assertEq(pools.positionWeightAtEpoch(mergedId, 53), 0);
+    }
+
+    function test_mergeStakesRejectsDifferentSlashBases() public {
+        uint256 firstId = _stake(staker, agentId, 60 ether, 104);
+        vm.warp(block.timestamp + 52 * EPOCH_DURATION);
+        uint256 secondId = _stake(staker, agentId, 40 ether, 52);
+        vm.warp(block.timestamp + EPOCH_DURATION);
+
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = firstId;
+        ids[1] = secondId;
+        vm.prank(staker);
+        vm.expectRevert(IAntseedSellerPools.InvalidValue.selector);
+        pools.mergeStakes(ids);
     }
 
     function test_mergeStakesRequiresDisablingMaxLockFirst() public {
@@ -1058,6 +1174,7 @@ contract AntseedSellerPoolsTest is Test {
         epochs = new uint256[](1);
         epochs[0] = epoch;
     }
+
     function test_agentTransferEndsSellerBindingWithoutNewOwnerRegistering() public {
         _stake(staker, agentId, 100 ether, 4);
         vm.warp(block.timestamp + EPOCH_DURATION);
@@ -1084,7 +1201,8 @@ contract AntseedSellerPoolsTest is Test {
 
     function test_agentTransferEndsLegacyBindingWithoutNewOwnerRegistering() public {
         MockLegacyStaking legacy = new MockLegacyStaking();
-        AntseedSellerRegistry adapter = new AntseedSellerRegistry(address(identityRegistry), address(pools), address(legacy));
+        AntseedSellerRegistry adapter =
+            new AntseedSellerRegistry(address(identityRegistry), address(pools), address(legacy));
 
         address oldSeller = address(0x600);
         vm.prank(oldSeller);
@@ -1118,5 +1236,4 @@ contract AntseedSellerPoolsTest is Test {
         vm.expectRevert(AntseedSellerRegistry.AgentIdMismatch.selector);
         sellerRegistry.registerSeller(secondAgentId);
     }
-
 }

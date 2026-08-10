@@ -1003,6 +1003,38 @@ contract AntseedEmissionsGateTest is Test {
         assertEq(token.balanceOf(staker), 900 ether + expectedStakerClaim);
     }
 
+    function test_burnedLantsPositionKeepsRestructureEpochRewardClaimRightsAfterSplit() public {
+        _deployGate(4);
+
+        sellerPools = new AntseedSellerPools(address(token), address(gate), address(identityRegistry), address(sellerAgentLookup));
+        usageAccounting.setSellerPools(address(sellerPools));
+        sellerPoolsRewards =
+            new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
+        _setSellerPoolsMinter(address(sellerPoolsRewards));
+
+        address poolSeller = _createSellerPool(sellerPools, seller, 5_000, keccak256("terms"));
+
+        vm.startPrank(staker);
+        token.approve(address(sellerPools), 100 ether);
+        uint256 positionId = sellerPools.stake(_agentId(poolSeller), 100 ether, 4);
+        vm.stopPrank();
+
+        _warpGateEpoch(6);
+        vm.prank(staker);
+        sellerPools.splitStake(positionId, 40 ether);
+        usageAccounting.accrueSellerPoints(seller, 100);
+        usageAccounting.accrueBuyerPoints(buyer, 100);
+
+        _warpGateEpoch(7);
+        uint256 expectedStakerClaim = (sellerPoolsRewards.stakerEpochBudget(6) * 300 ether) / 303 ether;
+
+        sellerPoolsRewards.indexPoolRewards(_agentId(poolSeller), 10);
+        vm.prank(staker);
+        sellerPoolsRewards.claimStakerRewards(positionId, staker);
+
+        assertEq(token.balanceOf(staker), 900 ether + expectedStakerClaim);
+    }
+
     function test_sellerPoolMaxLockKeepsPowerAtMaxUntilDisabled() public {
         _deployGate(4);
 

@@ -91,6 +91,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
     mapping(uint256 => Checkpoints.Trace256) private _positionMaxLockPower;
     mapping(uint256 => Checkpoints.Trace256) private _positionNormalStartEpoch;
     mapping(uint256 => Checkpoints.Trace256) private _positionNormalEndEpoch;
+    mapping(uint256 => uint64) public positionWithdrawableEpoch;
 
     // ─── Reward-Staker Permissions ───────────────────────────────────
     mapping(address => bool) public rewardStakers;
@@ -155,7 +156,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
 
         uint256 startEpoch = currentEpoch() + stakeActivationDelay;
         uint256 stakeEndEpoch = startEpoch + stakeEpochs;
-        positionId = _createWeightedPosition(staker, agentId, amount, amount, startEpoch, stakeEndEpoch);
+        positionId = _createWeightedPosition(staker, agentId, amount, amount, startEpoch, startEpoch, stakeEndEpoch);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -167,7 +168,9 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
      *         This closes the old pool exposure next epoch and opens a new
      *         position with the same principal and end epoch. Any configured
      *         move penalty reduces only future weight, not withdrawable
-     *         principal.
+     *         principal. The replacement preserves the source's early-exit
+     *         slash basis and cannot be withdrawn before it takes over the
+     *         source's power.
      */
     function moveStake(uint256 positionId, uint256 toAgentId) external nonReentrant returns (uint256 newPositionId) {
         _requireRegisteredSellerAgent(toAgentId);
@@ -290,6 +293,8 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
      *         Principal is divided exactly and weight pro-rata to principal, so
      *         pool power is unchanged. The source position closes next epoch
      *         and its rewards accrued until then stay claimable on it.
+     *         The replacements preserve the source's early-exit slash basis
+     *         and cannot be withdrawn before they take over its power.
      *         Max-locked positions must disable max lock first; disabling,
      *         splitting, and re-enabling on the parts within one epoch keeps
      *         max power seamless since all take effect at the next epoch.
@@ -314,20 +319,24 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         // A zero-weight part would be a pointless dust position.
         if (firstWeight == 0 || secondWeight == 0) revert InvalidValue();
 
-        uint256 normalEndEpoch = _closePositionForRestructure(positionId, effectiveEpoch);
+        (uint256 normalStartEpoch, uint256 normalEndEpoch) = _closePositionForRestructure(positionId, effectiveEpoch);
 
-        firstPositionId =
-            _createWeightedPosition(msg.sender, agentId, firstAmount, firstWeight, effectiveEpoch, normalEndEpoch);
-        secondPositionId =
-            _createWeightedPosition(msg.sender, agentId, splitAmount, secondWeight, effectiveEpoch, normalEndEpoch);
+        firstPositionId = _createRestructuredPosition(
+            msg.sender, agentId, firstAmount, firstWeight, effectiveEpoch, normalStartEpoch, normalEndEpoch
+        );
+        secondPositionId = _createRestructuredPosition(
+            msg.sender, agentId, splitAmount, secondWeight, effectiveEpoch, normalStartEpoch, normalEndEpoch
+        );
         emit StakeSplit(positionId, firstPositionId, secondPositionId, msg.sender, firstAmount, splitAmount);
     }
 
     /**
      * @notice Merge positions in the same agent pool into one position.
-     *         All positions must share the same end epoch, so merging never
-     *         changes pool power. The sources close next epoch and their
-     *         rewards accrued until then stay claimable on them.
+     *         All positions must share the same end epoch and early-exit slash
+     *         start, so merging preserves both pool power and slash terms. The
+     *         sources close next epoch and their rewards accrued until then
+     *         stay claimable on them. The replacement cannot be withdrawn
+     *         before it takes over the sources' power.
      *         Max-locked positions must disable max lock first; disabling the
      *         sources in the same epoch aligns their end epochs, making them
      *         mergeable even if their original terms differed.
@@ -348,6 +357,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         uint256 agentId = positions[positionIds[0]].agentId;
         uint256 mergedAmount;
         uint256 mergedWeight;
+        uint256 sharedStartEpoch;
         uint256 sharedEndEpoch;
         for (uint256 i = 0; i < positionIds.length; i++) {
             Position storage position = positions[positionIds[i]];
@@ -356,16 +366,19 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
             mergedWeight += position.weightAmount;
 
             // Duplicate ids revert here: the first close stamps closedAtEpoch.
-            uint256 normalEndEpoch = _closePositionForRestructure(positionIds[i], effectiveEpoch);
+            (uint256 normalStartEpoch, uint256 normalEndEpoch) =
+                _closePositionForRestructure(positionIds[i], effectiveEpoch);
             if (i == 0) {
+                sharedStartEpoch = normalStartEpoch;
                 sharedEndEpoch = normalEndEpoch;
-            } else if (normalEndEpoch != sharedEndEpoch) {
+            } else if (normalStartEpoch != sharedStartEpoch || normalEndEpoch != sharedEndEpoch) {
                 revert InvalidValue();
             }
         }
 
-        newPositionId =
-            _createWeightedPosition(msg.sender, agentId, mergedAmount, mergedWeight, effectiveEpoch, sharedEndEpoch);
+        newPositionId = _createRestructuredPosition(
+            msg.sender, agentId, mergedAmount, mergedWeight, effectiveEpoch, sharedStartEpoch, sharedEndEpoch
+        );
         emit StakesMerged(positionIds, newPositionId, msg.sender, mergedAmount, mergedWeight);
     }
 
@@ -382,7 +395,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         // power only from stakeStartEpoch onward; never remove before that, and
         // keep the original activation epoch instead of activating earlier.
         if (effectiveEpoch < position.stakeStartEpoch) effectiveEpoch = position.stakeStartEpoch;
-        uint256 normalEndEpoch = _closePositionForRestructure(positionId, effectiveEpoch);
+        (uint256 normalStartEpoch, uint256 normalEndEpoch) = _closePositionForRestructure(positionId, effectiveEpoch);
 
         uint256 movedWeightAmount = position.weightAmount;
         uint256 penaltyBps = moveWeightPenaltyBps;
@@ -390,8 +403,8 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
             movedWeightAmount = (movedWeightAmount * (BPS_DENOMINATOR - penaltyBps)) / BPS_DENOMINATOR;
         }
 
-        newPositionId = _createWeightedPosition(
-            staker, toAgentId, position.amount, movedWeightAmount, effectiveEpoch, normalEndEpoch
+        newPositionId = _createRestructuredPosition(
+            staker, toAgentId, position.amount, movedWeightAmount, effectiveEpoch, normalStartEpoch, normalEndEpoch
         );
         emit StakeMoved(positionId, newPositionId, staker, position.agentId, toAgentId);
     }
@@ -406,15 +419,18 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
      */
     function _closePositionForRestructure(uint256 positionId, uint256 effectiveEpoch)
         internal
-        returns (uint256 normalEndEpoch)
+        returns (uint256 normalStartEpoch, uint256 normalEndEpoch)
     {
         Position storage position = positions[positionId];
         if (position.withdrawn) revert AlreadyWithdrawn();
         if (position.closedAtEpoch != 0) revert PositionClosed();
         if (_positionMaxLockPower[positionId].upperLookupRecent(effectiveEpoch) != 0) revert PositionClosed();
 
+        normalStartEpoch = _positionNormalStartEpoch[positionId].upperLookupRecent(effectiveEpoch);
         normalEndEpoch = _positionNormalEndEpoch[positionId].upperLookupRecent(effectiveEpoch);
-        if (normalEndEpoch == 0 || effectiveEpoch >= normalEndEpoch) revert StakeDurationOutOfBounds();
+        if (normalEndEpoch == 0 || effectiveEpoch >= normalEndEpoch) {
+            revert StakeDurationOutOfBounds();
+        }
         _removePowerRange(position.agentId, effectiveEpoch, normalEndEpoch, position.weightAmount);
 
         position.closedAtEpoch = uint64(effectiveEpoch);
@@ -449,8 +465,9 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         uint256 stakeEndEpoch = startEpoch + stakeEpochs;
         uint256 bonusBps = (restakedRewardWeightBonusBps * stakeEpochs) / MAX_STAKE_EPOCHS;
         uint256 weightAmount = (amount * (BPS_DENOMINATOR + bonusBps)) / BPS_DENOMINATOR;
-        newPositionId =
-            _createWeightedPosition(staker, sourcePosition.agentId, amount, weightAmount, startEpoch, stakeEndEpoch);
+        newPositionId = _createWeightedPosition(
+            staker, sourcePosition.agentId, amount, weightAmount, startEpoch, startEpoch, stakeEndEpoch
+        );
         emit StakerRewardsRestaked(
             staker, sourcePositionId, newPositionId, amount, weightAmount, startEpoch, stakeEndEpoch
         );
@@ -497,6 +514,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         if (ownerOf(positionId) != staker) revert NotPositionOwner();
         if (position.withdrawn) revert AlreadyWithdrawn();
         if (position.closedAtEpoch != 0) revert PositionClosed();
+        if (epoch < positionWithdrawableEpoch[positionId]) revert PositionChangePending();
 
         // Power ends in the epoch of the withdrawal: the principal leaves now, so
         // it must not keep earning this epoch. A position that has not activated
@@ -510,7 +528,9 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         position.closedAtEpoch = uint64(closeEpoch);
         uint256 normalEndEpoch = _positionNormalEndEpoch[positionId].upperLookupRecent(closeEpoch);
         if (normalEndEpoch == 0) revert StakeDurationOutOfBounds();
-        if (_positionNormalEndEpoch[positionId].upperLookupRecent(closeEpoch + 1) != normalEndEpoch) revert PositionChangePending();
+        if (_positionNormalEndEpoch[positionId].upperLookupRecent(closeEpoch + 1) != normalEndEpoch) {
+            revert PositionChangePending();
+        }
 
         if (closeEpoch < normalEndEpoch) {
             _removePowerRange(position.agentId, closeEpoch, normalEndEpoch, position.weightAmount);
@@ -742,6 +762,7 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
         uint256 amount,
         uint256 weightAmount,
         uint256 startEpoch,
+        uint256 normalStartEpoch,
         uint256 stakeEndEpoch
     ) internal returns (uint256 positionId) {
         positionId = nextPositionId++;
@@ -756,12 +777,26 @@ contract AntseedSellerPools is IAntseedSellerPools, ERC721, Ownable2Step, Reentr
             withdrawn: false
         });
 
-        _positionNormalStartEpoch[positionId].push(startEpoch, startEpoch);
+        _positionNormalStartEpoch[positionId].push(startEpoch, normalStartEpoch);
         _positionNormalEndEpoch[positionId].push(startEpoch, stakeEndEpoch);
         _addPowerRange(agentId, startEpoch, stakeEndEpoch, weightAmount);
         _increaseActiveStake(owner, agentId, amount);
         _safeMint(owner, positionId);
         emit StakeCreated(positionId, owner, agentId, amount, weightAmount, startEpoch, stakeEndEpoch);
+    }
+
+    function _createRestructuredPosition(
+        address owner,
+        uint256 agentId,
+        uint256 amount,
+        uint256 weightAmount,
+        uint256 startEpoch,
+        uint256 normalStartEpoch,
+        uint256 stakeEndEpoch
+    ) internal returns (uint256 positionId) {
+        positionId =
+            _createWeightedPosition(owner, agentId, amount, weightAmount, startEpoch, normalStartEpoch, stakeEndEpoch);
+        positionWithdrawableEpoch[positionId] = uint64(startEpoch);
     }
 
     function _requireRegisteredSellerAgent(uint256 agentId) internal view {
