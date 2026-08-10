@@ -40,6 +40,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Fixed the desktop app crashing on launch with `ERR_MODULE_NOT_FOUND: Cannot find package '@antseed/protocol'`: the packaged app was missing the `@antseed/protocol` and `@antseed/buyer-core` workspace packages (split out of `@antseed/node` by the protocol extraction), so the main process could not resolve them from the app bundle. Desktop packaging now bundles both packages and builds them as part of the pre-dist pipeline.
 - Fixed buyers classifying unit-billed services (e.g. image generation) as free because their token pricing is zero: the free-usage gate now resolves the same provider + protocol billing route the seller uses, so paid image requests negotiate payment and record verified cost instead of rejecting the seller's usage claims.
 - Fixed a payment-integrity hole where a seller could claim image delivery (`NeedAuth` with positive unit billing cost) before the buyer received any response and get paid for undelivered images. Positive unit-billing claims are now rejected until the buyer has observed the delivered response; the buyer's own post-response authorization covers honest sellers.
 - Fixed image billing counting placeholder `data` entries as delivered images. Only response items containing a non-empty image URL or base64 payload are billable now.
