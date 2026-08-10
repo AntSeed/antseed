@@ -655,7 +655,7 @@ export function VprDepositView({ onSelectView }: Props) {
   function renderStage(current: Stage): JSX.Element {
     if (current === 'choose') {
       return (
-        <VprPage title="Add credits" backToDepositSource>
+        <VprPage title="Add credits" backFallback="credits">
         <div className={styles.stack}>
 
           <BalanceSummaryCard values={balanceValues} />

@@ -47,7 +47,7 @@ export function VprPreferencesView({ onSelectView }: Props) {
 
   return (
     <section className={`view view-vpr-preferences view-pinned-header ${styles.view}`} role="tabpanel">
-      <VprPage title="Preferences">
+      <VprPage title="Preferences" backFallback="home">
       <div className={styles.stack}>
         <p className={styles.lede}>These preferences apply to every model with Auto select turned on</p>
 

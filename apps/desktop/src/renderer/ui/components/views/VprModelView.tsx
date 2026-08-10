@@ -95,7 +95,7 @@ export function VprModelView({ onSelectView }: Props) {
 
   return (
     <section className={`view view-vpr-model view-pinned-header ${styles.view}`} role="tabpanel">
-      <VprPage title="Models" backTo="explore">
+      <VprPage title="Models" backFallback="explore">
       <div className={styles.stack}>
 
         <div className={styles.headRow}>

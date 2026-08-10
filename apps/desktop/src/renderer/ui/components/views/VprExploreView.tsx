@@ -102,6 +102,7 @@ export function VprExploreView({ onSelectView }: Props) {
     <section className={`view view-vpr-explore view-pinned-header ${styles.view}`} role="tabpanel">
       <VprPage
         title="Models"
+        backFallback="home"
         header={(
           <>
             <VprSearch

@@ -11,12 +11,13 @@ import { getCachedChannelsClient, loadCachedCryptoConfig, setCachedChannelsClien
 import {
   normalizePaymentChannelSummary,
   requestCooperativeChannelCloseAtPort,
-} from './channel-control.js';
+  runInBatches,
+} from './buyer-channel-control.js';
 
 export {
   normalizePaymentChannelSummary,
   requestCooperativeChannelCloseAtPort,
-} from './channel-control.js';
+} from './buyer-channel-control.js';
 
 /** Per-service usage from the buyer daemon. `serviceIdHash` is
     keccak256(serviceName); `serviceName` is resolved by the main process from
@@ -164,8 +165,8 @@ export function formatAnts(value: bigint): string {
 
 // AntseedChannels grace period between requestClose() and withdraw().
 const CHANNEL_CLOSE_GRACE_SECS = 900;
-// Bound the on-chain enrichment fan-out per refresh.
-const CHANNEL_ENRICH_MAX = 12;
+// Bound concurrent on-chain reads without skipping older active-looking rows.
+const CHANNEL_ENRICH_CONCURRENCY = 12;
 
 // The local ChannelStore can lag the chain (a seller-side settle/close is not
 // always observed), so rows that look active are re-checked on-chain before
@@ -184,9 +185,8 @@ async function enrichChannelStatuses(channels: DesktopPaymentChannelSummary[]): 
     setCachedChannelsClient(client);
   }
   const candidates = channels
-    .filter((row) => row.status === 'active' || row.status === 'open')
-    .slice(0, CHANNEL_ENRICH_MAX);
-  await Promise.allSettled(candidates.map(async (row) => {
+    .filter((row) => row.status === 'active' || row.status === 'open');
+  await runInBatches(candidates, CHANNEL_ENRICH_CONCURRENCY, async (row) => {
     const info = await client.getSession(row.channelId);
     const closeRequestedAt = Number(info.closeRequestedAt);
     row.settledUsdc = info.settled.toString();
@@ -198,7 +198,7 @@ async function enrichChannelStatuses(channels: DesktopPaymentChannelSummary[]): 
     }
     // status 0 (no on-chain record) is ambiguous — a channel may exist
     // locally before its on-chain reserve lands. Keep the local status.
-  }));
+  });
 }
 
 /** Fetch buyer channels from the local proxy and re-check them on-chain. */

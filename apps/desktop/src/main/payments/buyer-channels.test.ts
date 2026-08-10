@@ -3,7 +3,8 @@ import test from 'node:test';
 import {
   normalizePaymentChannelSummary,
   requestCooperativeChannelCloseAtPort,
-} from './channel-control.js';
+  runInBatches,
+} from './buyer-channel-control.js';
 
 function closeResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -22,6 +23,15 @@ test('normalizePaymentChannelSummary defaults missing cooperative-close support 
 
   assert.equal(unsupported?.cooperativeCloseSupported, false);
   assert.equal(supported?.cooperativeCloseSupported, true);
+});
+
+test('runInBatches processes active-looking channels beyond the first batch', async () => {
+  const processed: number[] = [];
+  await runInBatches(Array.from({ length: 14 }, (_, index) => index), 12, async (index) => {
+    processed.push(index);
+  });
+
+  assert.deepEqual(processed.sort((left, right) => left - right), Array.from({ length: 14 }, (_, index) => index));
 });
 
 test('requestCooperativeChannelCloseAtPort returns a closed result', async () => {

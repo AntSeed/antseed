@@ -1,4 +1,5 @@
 import type { RendererUiState } from '../../core/state';
+import { selectHeadlineBalanceUsdc } from '../../core/balance';
 import { formatCompactTokens, formatCredits, shortAddress } from '../../core/format';
 import { notifyUiStateChanged } from '../../core/store';
 import type {
@@ -123,9 +124,9 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
     return `${formatCompactTokens(usage?.totalInputTokens, usage?.totalOutputTokens)} tok`;
   }
 
-  /** What the user still owns: deposits minus spend already authorized. */
+  /** Complete owned balance, including USDC awaiting deposit sweep. */
   function balanceLabel(): string {
-    return `$${formatCredits(uiState.creditsSpendableUsdc)}`;
+    return `$${formatCredits(selectHeadlineBalanceUsdc(uiState))}`;
   }
 
   /** The buyer identity (signer address), shortened. */
