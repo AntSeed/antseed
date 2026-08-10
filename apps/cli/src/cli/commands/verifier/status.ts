@@ -28,6 +28,7 @@ export function registerVerifierStatusCommand(verifier: Command): void {
       console.log(`Run: ${status.runId}`)
       console.log(`Progress: ${status.modelsCompleted}/${status.modelsTotal} models, ${status.auditsCompleted} audits`)
       console.log(`Active audits: ${status.activeAudits.length}; queued: ${status.queuedAudits}`)
+      console.log(`Skipped: ${status.skipped ?? 0}`)
       console.log(`Failures: ${status.failures}`)
       console.log(
         `Estimated cost: $${status.cost.estimatedCostUsd.toFixed(6)} `

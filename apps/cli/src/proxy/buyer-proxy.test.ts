@@ -450,7 +450,30 @@ test('pinned proxy request enforces buyer routing policy', async () => {
 
   assert.equal(res.statusCode, 502)
   assert.match(res.body, /outside your buyer routing policy/)
-  assert.match(res.body, /pricing\/reputation limits/)
+  assert.match(res.body, /pricing or reputation policy/)
+  assert.equal(JSON.parse(res.body).error.code, 'policy_rejected')
+})
+
+test('pinned proxy request returns diagnostic buyer routing policy reasons', async () => {
+  const pinnedPeer = makePeer('a', ['openai'])
+  const router = {
+    evaluatePeerForPolicy: () => ({
+      allowed: false as const,
+      code: 'price_above_maximum',
+      reason: 'peer pricing exceeds the buyer maximum for this service',
+    }),
+  }
+  const proxy = makeBuyerProxyWithPeers([pinnedPeer], [pinnedPeer], router)
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-antseed-pin-peer': pinnedPeer.peerId },
+  }))
+
+  assert.equal(res.statusCode, 502)
+  assert.deepEqual(JSON.parse(res.body).error, {
+    type: 'buyer_policy_rejected',
+    code: 'price_above_maximum',
+    message: `Pinned peer ${pinnedPeer.peerId.slice(0, 12)}... is outside your buyer routing policy: peer pricing exceeds the buyer maximum for this service.`,
+  })
 })
 
 test('local buyer payment failures only update diagnostic failure state', async () => {

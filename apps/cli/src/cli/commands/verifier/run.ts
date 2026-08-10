@@ -29,12 +29,14 @@ import {
   loadBuyerProxySnapshot,
   verifyModelTarget,
   type ModelVerificationFailure,
+  type ModelVerificationSkip,
 } from '../../../verifier/model-run.js'
-import { reserveModelAuditReference } from '../../../verifier/probe-bank.js'
+import { reserveModelAuditReference, voidModelAuditReference } from '../../../verifier/probe-bank.js'
 import { addAuditCostSummaries, emptyAuditCostSummary } from '../../../verifier/proxy-evidence.js'
 import { openResponseAuthReader } from '../../../verifier/response-auth-reader.js'
 import { createVerifierClient } from '../../payment-utils.js'
 import { getGlobalOptions } from '../types.js'
+import { VerifierRunProgress } from './run-progress.js'
 
 interface RunOptions {
   all?: boolean
@@ -56,6 +58,7 @@ export function registerVerifierRunCommand(verifier: Command): void {
       const runLock = await acquirePidFileLock(join(evidenceDir, '.run.lock'))
       let responseAuthReader: Awaited<ReturnType<typeof openResponseAuthReader>> | null = null
       let status: VerifierStatusV1 | null = null
+      let runProgress: VerifierRunProgress | null = null
       try {
         const configuredVerificationAddress = config.payments.crypto?.verificationContractAddress?.trim()
         const epochWindow = configuredVerificationAddress
@@ -81,12 +84,26 @@ export function registerVerifierRunCommand(verifier: Command): void {
           startedAt: startedAtMs,
         })
         const preparedModels = models.map((model) => {
-          const skipped: Array<{ peerId: string; reason: string }> = []
+          const skipped: ModelVerificationSkip[] = []
           const normalizedModel = model.trim().toLowerCase()
           const targets = proxy.peers.flatMap((peer) => {
             const eligibility = classifyVerificationTarget(peer, normalizedModel)
             if (eligibility.eligible) return [{ peer, service: eligibility.service }]
-            skipped.push({ peerId: peer.peerId, reason: eligibility.reason })
+            if (eligibility.code === 'missing_response_auth') {
+              skipped.push({
+                peerId: peer.peerId,
+                displayName: peer.displayName ?? null,
+                agentId: peer.onChainAgentId ? String(peer.onChainAgentId) : null,
+                service: eligibility.service,
+                status: 'SKIPPED',
+                code: eligibility.code,
+                reason: eligibility.reason,
+                source: 'preflight',
+                auditId: null,
+                evidencePath: null,
+                evidenceHash: null,
+              })
+            }
             return []
           })
           return { model, skipped, targets }
@@ -108,6 +125,7 @@ export function registerVerifierRunCommand(verifier: Command): void {
           modelsCompleted: 0,
           modelsTotal: models.length,
           auditsCompleted: 0,
+          skipped: preparedModels.reduce((total, model) => total + model.skipped.length, 0),
           failures: 0,
           cost: emptyAuditCostSummary(),
           message: 'starting verifier run',
@@ -150,6 +168,12 @@ export function registerVerifierRunCommand(verifier: Command): void {
           `Concurrency: ${maxConcurrentModels} models, ${maxConcurrentPeersPerModel} peers/model, `
           + `${maxConcurrentBatches} total batches, ${maxConcurrentBatchesPerPeer} batches/audit`,
         ))
+        runProgress = new VerifierRunProgress(preparedModels.map(({ model, targets, skipped }) => ({
+          model,
+          providerCount: targets.length + skipped.length,
+          skippedCount: skipped.length,
+        })))
+        runProgress.start()
 
         const epochModels = await mapConcurrently(
           preparedModels,
@@ -159,7 +183,16 @@ export function registerVerifierRunCommand(verifier: Command): void {
           await appendEvent({
             type: 'model-started', runId, epoch, model, at: modelStartedAt,
           })
-          console.log(chalk.dim(`${model}: ${targets.length} eligible target(s), ${skipped.length} skipped`))
+          for (const entry of skipped) {
+            await appendEvent({
+              type: 'audit-skipped', runId, epoch, model, peerId: entry.peerId,
+              code: entry.code, reason: entry.reason, source: entry.source, at: modelStartedAt,
+            })
+          }
+          runProgress!.activate(model)
+          if (!runProgress!.interactive) {
+            console.log(chalk.dim(`${model}: ${targets.length} eligible target(s), ${skipped.length} skipped`))
+          }
 
           const outcomes = await mapConcurrently(targets, maxConcurrentPeersPerModel, async (target) => {
             return sellerLimiter.run(target.peer.peerId, async () => {
@@ -168,7 +201,9 @@ export function registerVerifierRunCommand(verifier: Command): void {
                 value.queuedAudits -= 1
                 value.activeAudits.push({ model, peerId: target.peer.peerId, startedAt })
               })
-              console.log(chalk.dim(`Verifying ${model} on ${target.peer.peerId.slice(0, 12)}… (${target.service})`))
+              if (!runProgress!.interactive) {
+                console.log(chalk.dim(`Verifying ${model} on ${target.peer.peerId.slice(0, 12)}… (${target.service})`))
+              }
               try {
                 const reserved = await reserveModelAuditReference({
                   banksDir,
@@ -188,7 +223,7 @@ export function registerVerifierRunCommand(verifier: Command): void {
                     proxy,
                     evidenceDir: modelAuditsDirectory(evidenceDir, epoch, model),
                     requestTimeoutMs: config.verifier?.probeRequestTimeoutMs ?? 120_000,
-                    auditTimeoutMs: config.verifier?.auditPeerTimeoutMs ?? 180_000,
+                    auditTimeoutMs: config.verifier?.auditPeerTimeoutMs ?? 600_000,
                     responseAuthReader: responseAuthReader!,
                     batchConcurrency: Math.min(maxConcurrentBatchesPerPeer, advertisedConcurrency),
                     batchConcurrencyPromotionLatencyMs:
@@ -200,11 +235,26 @@ export function registerVerifierRunCommand(verifier: Command): void {
                   reference: reserved.reference,
                   auditId: reserved.auditId,
                 })
-                console.log(chalk.green(
-                  `${result.status} ${target.peer.peerId.slice(0, 12)}… `
-                  + `(${result.parsedProbeCount}/${result.probeCount} scoreable, `
-                  + `$${result.cost.estimatedCostUsd.toFixed(6)})`,
-                ))
+                if (result.status === 'SKIPPED') {
+                  await voidModelAuditReference({
+                    banksDir,
+                    model,
+                    sellerPeerId: target.peer.peerId,
+                    auditId: reserved.auditId,
+                    reason: `${result.code}: ${result.reason}`,
+                  })
+                  await appendEvent({
+                    type: 'audit-skipped', runId, epoch, model, peerId: result.peerId,
+                    auditId: result.auditId, code: result.code, reason: result.reason,
+                    source: result.source, evidencePath: result.evidencePath, at: new Date().toISOString(),
+                  })
+                  await updateStatus((value) => { value.skipped += 1 })
+                  runProgress!.recordSkip(model)
+                  if (!runProgress!.interactive) {
+                    console.log(chalk.yellow(`SKIPPED ${target.peer.peerId.slice(0, 12)}…: ${result.reason}`))
+                  }
+                  return { result: null, failure: null, skipped: result }
+                }
                 await appendEvent({
                   type: 'audit-completed', runId, epoch, model, peerId: result.peerId,
                   auditId: result.auditId, verdict: result.status, cost: result.cost,
@@ -214,7 +264,15 @@ export function registerVerifierRunCommand(verifier: Command): void {
                   value.auditsCompleted += 1
                   value.cost = addAuditCostSummaries(value.cost, result.cost)
                 })
-                return { result, failure: null }
+                runProgress!.recordVerdict(model, result.status)
+                if (!runProgress!.interactive) {
+                  console.log(chalk.green(
+                    `${result.status} ${target.peer.peerId.slice(0, 12)}… `
+                    + `(${result.parsedProbeCount}/${result.probeCount} scoreable, `
+                    + `$${result.cost.estimatedCostUsd.toFixed(6)})`,
+                  ))
+                }
+                return { result, failure: null, skipped: null }
               } catch (error) {
                 const reason = asError(error).message
                 const failure: ModelVerificationFailure = {
@@ -224,13 +282,16 @@ export function registerVerifierRunCommand(verifier: Command): void {
                   status: 'FAILED',
                   reason,
                 }
-                console.warn(chalk.yellow(`FAILED ${target.peer.peerId.slice(0, 12)}…: ${reason}`))
+                runProgress!.recordFailure(model)
+                if (!runProgress!.interactive) {
+                  console.warn(chalk.yellow(`FAILED ${target.peer.peerId.slice(0, 12)}…: ${reason}`))
+                }
                 await appendEvent({
                   type: 'audit-failed', runId, epoch, model, peerId: target.peer.peerId,
                   reason, at: new Date().toISOString(),
                 })
                 await updateStatus((value) => { value.failures += 1 })
-                return { result: null, failure }
+                return { result: null, failure, skipped: null }
               } finally {
                 await updateStatus((value) => {
                   value.activeAudits = value.activeAudits.filter((audit) => !(
@@ -242,8 +303,13 @@ export function registerVerifierRunCommand(verifier: Command): void {
           })
           const results = outcomes.flatMap((outcome) => outcome.result ? [outcome.result] : [])
           const failures = outcomes.flatMap((outcome) => outcome.failure ? [outcome.failure] : [])
+          const allSkipped = [
+            ...skipped,
+            ...outcomes.flatMap((outcome) => outcome.skipped ? [outcome.skipped] : []),
+          ].sort((left, right) => left.peerId.localeCompare(right.peerId))
 
-          if (targets.length === 0) {
+          const noAuditableProviders = targets.length === 0 && allSkipped.length === 0
+          if (noAuditableProviders) {
             console.warn(chalk.yellow(`${model}: no peers advertise the model with ResponseAuth support`))
             await updateStatus((value) => { value.failures += 1 })
           }
@@ -259,25 +325,28 @@ export function registerVerifierRunCommand(verifier: Command): void {
             completedAt: modelCompletedAt,
             results,
             failures,
-            skipped,
+            skipped: allSkipped,
             cost: modelCost,
           })
           const modelSummary = {
             model,
             summaryPath,
             resultCount: results.length,
-            failureCount: failures.length + (targets.length === 0 ? 1 : 0),
-            skippedCount: skipped.length,
+            failureCount: failures.length + (noAuditableProviders ? 1 : 0),
+            skippedCount: allSkipped.length,
             cost: modelCost,
           }
           await updateStatus((value) => { value.modelsCompleted += 1 })
           await appendEvent({
             type: 'model-completed', runId, epoch, model, summaryPath,
-            resultCount: results.length, failureCount: failures.length, cost: modelCost,
+            resultCount: results.length, failureCount: failures.length,
+            skippedCount: allSkipped.length, cost: modelCost,
             at: modelCompletedAt,
           })
+          runProgress!.complete(model)
           return modelSummary
         })
+        runProgress.finish()
 
         const completedAt = new Date().toISOString()
         const epochSummary = {
@@ -338,6 +407,7 @@ export function registerVerifierRunCommand(verifier: Command): void {
         }
         throw error
       } finally {
+        runProgress?.finish()
         responseAuthReader?.close()
         await runLock.release()
       }

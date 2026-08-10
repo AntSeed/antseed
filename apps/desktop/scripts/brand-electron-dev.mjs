@@ -27,6 +27,19 @@ function setOrAddPlistKey(plistPath, key, value) {
   }
 }
 
+// Editing Info.plist and renaming the bundle invalidate Electron's ad-hoc
+// signature. macOS then reports the app as malware and moves it to the Bin,
+// so re-sign the bundle in place to keep it launchable.
+function resign(appDir) {
+  try {
+    execFileSync('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', appDir], {
+      stdio: 'ignore',
+    });
+  } catch {
+    console.warn(`[brand-electron-dev] could not re-sign ${appDir}; macOS may quarantine it`);
+  }
+}
+
 function main() {
   if (process.platform !== 'darwin') {
     process.exit(0);
@@ -60,6 +73,8 @@ function main() {
   if (appDir === originalApp) {
     renameSync(originalApp, brandedApp);
   }
+
+  resign(brandedApp);
 
   // Update electron's path.txt so the `electron` CLI can find the renamed binary
   const pathTxt = path.join(electronPackageDir, 'path.txt');

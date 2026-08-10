@@ -3,7 +3,11 @@ import { dirname, join } from 'node:path'
 import { canonicalJsonStringify } from '@antseed/fingerprints'
 import { writeJsonAtomic, writeTextAtomic } from './atomic-files.js'
 import type { AuditCostSummaryV1 } from './proxy-evidence.js'
-import type { ModelVerificationFailure, ModelVerificationTargetResult } from './model-run.js'
+import type {
+  ModelVerificationFailure,
+  ModelVerificationSkip,
+  ModelVerificationTargetResult,
+} from './model-run.js'
 import { safeServiceSlug } from './slug.js'
 
 export interface VerifierStatusV1 {
@@ -23,6 +27,7 @@ export interface VerifierStatusV1 {
   modelsCompleted: number
   modelsTotal: number
   auditsCompleted: number
+  skipped: number
   failures: number
   cost: AuditCostSummaryV1
   message: string
@@ -38,7 +43,7 @@ export interface ModelAuditSummaryV1 {
   completedAt: string
   results: ModelVerificationTargetResult[]
   failures: ModelVerificationFailure[]
-  skipped: unknown[]
+  skipped: ModelVerificationSkip[]
   cost: AuditCostSummaryV1
 }
 
@@ -97,6 +102,8 @@ interface SellerAuditReportFailure {
   status: 'FAILED'
   reason: string
 }
+
+type SellerAuditReportSkip = ModelVerificationSkip
 
 export function verifierStatusPath(evidenceDir: string): string {
   return join(evidenceDir, 'status.json')
@@ -207,6 +214,7 @@ export async function writeEpochAuditReport(
     const modelSummary = JSON.parse(await readFile(model.summaryPath, 'utf8')) as {
       results?: SellerAuditReportResult[]
       failures?: SellerAuditReportFailure[]
+      skipped?: SellerAuditReportSkip[]
     }
     const results = [...(modelSummary.results ?? [])].sort((left, right) => {
       if (left.correctRate === null && right.correctRate !== null) return 1
@@ -226,6 +234,11 @@ export async function writeEpochAuditReport(
     ])
     for (const failure of modelSummary.failures ?? []) {
       rows.push([sellerLabel(failure), '—', '—', '—', 'N/A', `FAILED: ${failure.reason}`])
+    }
+    const skippedResults = [...(modelSummary.skipped ?? [])]
+      .sort((left, right) => sellerLabel(left).localeCompare(sellerLabel(right)))
+    for (const skipped of skippedResults) {
+      rows.push([sellerLabel(skipped), '—', '—', '—', 'N/A', `SKIPPED: ${skipped.reason}`])
     }
     return [
       `## ${escapeMarkdownCell(model.model)}`,

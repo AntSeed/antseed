@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -12,11 +12,13 @@ import {
 import {
   appendModelReferenceToBank,
   BANK_EXHAUSTED,
+  inspectModelProbeBankPower,
   listClaimableReferenceCosts,
   markReferenceCostsClaimed,
   reserveReferenceCosts,
   reserveModelAuditReference,
   sellerLedgerPath,
+  voidModelAuditReference,
 } from './probe-bank.js'
 
 const referenceCost = {
@@ -84,7 +86,7 @@ function reference(count = 200): KbfReferenceV1 {
   return value
 }
 
-test('probe banks append, deduplicate, and reject conflicting probe IDs', async () => {
+test('probe banks append, deduplicate, and discard conflicting canonical variants', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'antseed-probe-bank-'))
   try {
     const first = await appendReference(directory)
@@ -96,10 +98,80 @@ test('probe banks append, deduplicate, and reject conflicting probe IDs', async 
     const conflicting = reference()
     conflicting.probes[0]!.template = 'Conflicting value is ___.'
     conflicting.referenceId = computeReferenceId(conflicting)
-    await assert.rejects(
-      appendReference(directory, conflicting),
-      /conflicts with existing canonical content/,
-    )
+    const discarded = await appendReference(directory, conflicting)
+    assert.equal(discarded.addedProbeCount, 0)
+    assert.equal(discarded.canonicalConflictProbeCount, 1)
+    const bank = JSON.parse(await readFile(discarded.path, 'utf8')) as {
+      probes: Array<{ probe: KbfReferenceV1['probes'][number] }>
+    }
+    assert.equal(bank.probes[0]!.probe.template, 'The test value 1 is ___.')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('probe bank power inspection recognizes a reusable powered reference', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-probe-bank-power-'))
+  try {
+    const missing = await inspectModelProbeBankPower({ banksDir: directory, model: 'model-a' })
+    assert.deepEqual(missing, {
+      totalProbeCount: 0,
+      eligibleProbeCount: 0,
+      selectedProbeCount: null,
+      statisticalPower: null,
+    })
+
+    const appended = await appendReference(directory)
+    const powered = await inspectModelProbeBankPower({ banksDir: directory, model: 'model-a' })
+    assert.equal(powered.totalProbeCount, 200)
+    assert.equal(powered.eligibleProbeCount, 200)
+    assert.equal(powered.selectedProbeCount, 100)
+    assert.ok((powered.statisticalPower ?? 0) >= 0.9)
+
+    const legacy = JSON.parse(await readFile(appended.path, 'utf8')) as Record<string, unknown>
+    delete legacy.referenceCosts
+    await writeFile(appended.path, JSON.stringify(legacy), 'utf8')
+    const withoutCosts = await inspectModelProbeBankPower({ banksDir: directory, model: 'model-a' })
+    assert.equal(withoutCosts.selectedProbeCount, null)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('appending a rebuilt reference migrates legacy banks without cost metadata', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-probe-bank-legacy-cost-'))
+  try {
+    const first = await appendReference(directory)
+    const legacy = JSON.parse(await readFile(first.path, 'utf8')) as Record<string, unknown>
+    delete legacy.referenceCosts
+    await writeFile(first.path, JSON.stringify(legacy), 'utf8')
+
+    const migrated = await appendReference(directory)
+    const bank = JSON.parse(await readFile(migrated.path, 'utf8')) as { referenceCosts: unknown[] }
+    assert.equal(migrated.addedProbeCount, 0)
+    assert.equal(bank.referenceCosts.length, 1)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('repeated canonical probes merge refreshed contrast and self-test evidence', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-probe-bank-repeated-'))
+  try {
+    const first = await appendReference(directory)
+    const existing = JSON.parse(await readFile(first.path, 'utf8')) as {
+      probes: Array<{
+        probe: KbfReferenceV1['probes'][number]
+        selfTest: { answer: number | null; match: 0 | 1 | null }
+      }>
+    }
+    existing.probes[0]!.probe.contrast = { distinguishingModels: ['older-contrast'] }
+    existing.probes[0]!.selfTest = { answer: null, match: null }
+    await writeFile(first.path, JSON.stringify(existing), 'utf8')
+
+    const repeated = await appendReference(directory)
+    assert.equal(repeated.addedProbeCount, 0)
+    assert.equal(repeated.totalProbeCount, 200)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
@@ -165,6 +237,49 @@ test('seller ledgers prevent same-run reuse and allow later-run reuse', async ()
     const ledger = JSON.parse(await readFile(sellerLedgerPath(directory, 'model-a', '11'.repeat(20)), 'utf8'))
     assert.equal(ledger.usedProbeIds, undefined)
     assert.equal(ledger.assignments.length, 3)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('voided seller assignments are reusable and voiding is idempotent', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-probe-bank-'))
+  const identityShuffle = <T>(values: readonly T[]) => [...values]
+  try {
+    await appendReference(directory)
+    const first = await reserveModelAuditReference({
+      banksDir: directory, model: 'model-a', sellerPeerId: '11'.repeat(20),
+      service: 'model-a', runId: 'run-a', epoch: '4', shuffle: identityShuffle,
+    })
+    const voided = await voidModelAuditReference({
+      banksDir: directory,
+      model: 'model-a',
+      sellerPeerId: '11'.repeat(20),
+      auditId: first.auditId,
+      reason: 'stale model advertisement',
+      now: () => Date.parse('2026-08-10T00:00:00.000Z'),
+    })
+    const repeated = await voidModelAuditReference({
+      banksDir: directory,
+      model: 'model-a',
+      sellerPeerId: '11'.repeat(20),
+      auditId: first.auditId,
+      reason: 'ignored replacement reason',
+      now: () => Date.parse('2026-08-11T00:00:00.000Z'),
+    })
+    assert.equal(repeated.voidedAt, voided.voidedAt)
+
+    const second = await reserveModelAuditReference({
+      banksDir: directory, model: 'model-a', sellerPeerId: '11'.repeat(20),
+      service: 'model-a', runId: 'run-a', epoch: '4', shuffle: identityShuffle,
+    })
+    assert.deepEqual(
+      second.reference.probes.map((probe) => probe.id),
+      first.reference.probes.map((probe) => probe.id),
+    )
+    const ledger = JSON.parse(await readFile(sellerLedgerPath(directory, 'model-a', '11'.repeat(20)), 'utf8'))
+    assert.equal(ledger.assignments[0].voidReason, 'stale model advertisement')
+    assert.equal(ledger.assignments[0].voidedAt, '2026-08-10T00:00:00.000Z')
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

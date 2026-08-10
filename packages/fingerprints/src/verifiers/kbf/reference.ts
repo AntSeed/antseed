@@ -40,8 +40,8 @@ export interface ReferenceQueryProfileV1 {
     seed: null;
     responseFormat: 'text';
   };
-  /** Endpoint-specific method used to suppress hidden reasoning output. */
-  reasoningStrategy?: 'reasoning-effort-none' | 'disable-thinking' | 'bare';
+  /** Endpoint-specific method used to minimize hidden reasoning output. */
+  reasoningStrategy?: 'reasoning-effort-none' | 'reasoning-effort-minimum-supported' | 'disable-thinking' | 'bare';
   /** Exact additional request fields applied to reference and target queries. */
   requestOverrides?: Record<string, unknown>;
 }
@@ -331,7 +331,8 @@ function validateQueryProfile(profile: ReferenceQueryProfileV1): void {
     throw new Error('unsupported generation settings');
   }
   if (profile.reasoningStrategy !== undefined
-    && !['reasoning-effort-none', 'disable-thinking', 'bare'].includes(profile.reasoningStrategy)) {
+    && !['reasoning-effort-none', 'reasoning-effort-minimum-supported', 'disable-thinking', 'bare']
+      .includes(profile.reasoningStrategy)) {
     throw new Error('unsupported reasoning strategy');
   }
   if (profile.requestOverrides !== undefined) object(profile.requestOverrides, 'requestOverrides');

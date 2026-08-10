@@ -40,6 +40,7 @@ test('createDefaultConfig includes a Base mainnet crypto payment default', () =>
   assert.equal(config.verifier?.referenceProbeStep, 10);
   assert.equal(config.verifier?.referenceMinimumStatisticalPower, 0.9);
   assert.equal(config.verifier?.responseAuthWaitTimeoutMs, 35_000);
+  assert.equal(config.verifier?.auditPeerTimeoutMs, 600_000);
   assert.deepEqual(config.verifier?.contrastSelection, {
     inputWeight: 0.9,
     maxPriceRatio: 0.3,
@@ -260,7 +261,7 @@ test('loadConfig preserves and validates verifier settings', async () => {
       auditMaxConcurrentBatches: 12,
       auditMaxConcurrentBatchesPerPeer: 2,
       auditConcurrencyPromotionLatencyMs: 30_000,
-      auditPeerTimeoutMs: 180_000,
+      auditPeerTimeoutMs: 123_456,
       contrastSelection: { inputWeight: 0.9, maxPriceRatio: 0.3, maxModels: 3 },
       referenceEndpoint,
       referenceMaxRequestsPerBuild: 500,
@@ -284,7 +285,7 @@ test('loadConfig preserves and validates verifier settings', async () => {
     assert.equal(config.verifier?.auditMaxConcurrentBatches, 12);
     assert.equal(config.verifier?.auditMaxConcurrentBatchesPerPeer, 2);
     assert.equal(config.verifier?.auditConcurrencyPromotionLatencyMs, 30_000);
-    assert.equal(config.verifier?.auditPeerTimeoutMs, 180_000);
+    assert.equal(config.verifier?.auditPeerTimeoutMs, 123_456);
     assert.equal(config.verifier?.contrastSelection?.inputWeight, 0.9);
     assert.equal(config.verifier?.referenceEndpoint?.sourceId, 'trusted-reference-v1');
     assert.equal(config.verifier?.referenceMaxRequestsPerBuild, 500);

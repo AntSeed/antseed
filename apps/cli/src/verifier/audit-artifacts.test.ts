@@ -26,7 +26,7 @@ test('verifier artifacts use epoch and model directories', async () => {
       epochStartedAt: '2026-08-06T00:00:00.000Z', epochEndsAt: '2026-08-07T00:00:00.000Z',
       currentModel: 'Model A', currentPeerId: null, activeAudits: [], queuedAudits: 1,
       modelsCompleted: 0, modelsTotal: 1,
-      auditsCompleted: 0, failures: 0, cost: emptyAuditCostSummary(), message: 'running',
+      auditsCompleted: 0, skipped: 1, failures: 0, cost: emptyAuditCostSummary(), message: 'running',
     }
     await writeVerifierStatus(directory, status)
     assert.deepEqual(await readVerifierStatus(directory), status)
@@ -37,7 +37,12 @@ test('verifier artifacts use epoch and model directories', async () => {
         probeCount: 10, correctProbeCount: 9, incorrectProbeCount: 1, correctRate: 0.9,
         agentId: '1', service: 'Model A', auditId: `0x${'12'.repeat(32)}`, requestCount: 1,
         cost: emptyAuditCostSummary(), evidencePath: '/tmp/audit.json', evidenceHash: `0x${'34'.repeat(32)}`,
-      }], failures: [], skipped: [],
+      }], failures: [], skipped: [{
+        peerId: '22'.repeat(20), displayName: 'Skipped Seller', agentId: '2', service: 'Model A',
+        status: 'SKIPPED', code: 'price_above_maximum', reason: 'price exceeds buyer maximum',
+        source: 'runtime', auditId: `0x${'56'.repeat(32)}`, evidencePath: '/tmp/skip.json',
+        evidenceHash: `0x${'78'.repeat(32)}`,
+      }],
       cost: emptyAuditCostSummary(),
     })
     assert.match(modelPath, /epochs\/7\/Model_A\/summary\.json$/)
@@ -48,7 +53,7 @@ test('verifier artifacts use epoch and model directories', async () => {
       startedAt: status.startedAt, completedAt: status.startedAt,
       reportPath: epochAuditReportPath(directory, '7'),
       models: [{
-        model: 'Model A', summaryPath: modelPath, resultCount: 1, failureCount: 0, skippedCount: 0,
+        model: 'Model A', summaryPath: modelPath, resultCount: 1, failureCount: 0, skippedCount: 1,
         cost: emptyAuditCostSummary(),
       }], failureCount: 0,
       cost: emptyAuditCostSummary(),
@@ -58,6 +63,7 @@ test('verifier artifacts use epoch and model directories', async () => {
     const reportPath = await writeEpochAuditReport(directory, '7', epochSummary)
     const report = await readFile(reportPath, 'utf8')
     assert.match(report, /\| Seller A \(111111111111…\) \| 10\/10 \| 9 \| 1 \| \*\*90\.0%\*\* \| SAME \|/)
+    assert.match(report, /\| Skipped Seller \(222222222222…\) \| — \| — \| — \| N\/A \| SKIPPED: price exceeds buyer maximum \|/)
     await writeVerifierRunManifest(directory, {
       version: 1,
       kind: 'antseed-verifier-run-manifest',

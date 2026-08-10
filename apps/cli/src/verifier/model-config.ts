@@ -101,6 +101,7 @@ function selectAutomaticContrastModels(
     : Object.entries(endpoint.contrastModelBank ?? {}).map(([name, candidate]) => ({ name, candidate }))
   return candidates
     .filter(({ candidate }) => candidate.enabled !== false)
+    .filter(({ candidate }) => !normalized(candidate.upstreamModel).endsWith(':batch'))
     .filter(({ candidate }) => normalized(candidate.upstreamModel) !== normalized(model.upstreamModel))
     .filter(({ candidate }) => candidate.capabilityRank >= minimumIntelligenceIndex)
     .map(({ name, candidate }) => ({

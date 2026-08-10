@@ -27,6 +27,7 @@ test('OpenRouter catalog resolves per-million pricing and Artificial Analysis sc
         id: 'deepseek/deepseek-v4-flash-0731',
         pricing: { prompt: '0.00000009', completion: '0.00000018' },
         benchmarks: { artificial_analysis: { intelligence_index: 49.9 } },
+        reasoning: { mandatory: true, supported_efforts: ['high', 'medium', 'low'] },
       }, {
         id: 'provider/no-score',
         pricing: { prompt: '0.000001', completion: '0.000002' },
@@ -38,6 +39,7 @@ test('OpenRouter catalog resolves per-million pricing and Artificial Analysis sc
       upstreamModel: 'deepseek/deepseek-v4-flash-0731',
       pricing: { inputUsdPerMillion: 0.09, outputUsdPerMillion: 0.18 },
       capabilityRank: 49.9,
+      reasoning: { mandatory: true, supportedEfforts: ['high', 'medium', 'low'] },
     })
     assert.equal(catalog?.get('provider/no-score')?.capabilityRank, null)
   } finally {

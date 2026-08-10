@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { runMigrations, type Migration } from '../src/storage/migrate.js';
+import { verificationMigrations } from '../src/storage/migrations/verification/index.js';
 
 describe('runMigrations', () => {
   let db: Database.Database;
@@ -93,5 +94,24 @@ describe('runMigrations', () => {
     // Version 1 should be applied, version 2 should not
     const versions = db.prepare('SELECT version FROM schema_version').all() as { version: number }[];
     expect(versions.map(v => v.version)).toEqual([1]);
+  });
+
+  it('repairs request_costs when historical verification migrations occupy version 2', () => {
+    runMigrations(db, [verificationMigrations[0]!]);
+    db.prepare('INSERT INTO schema_version (version, name, applied_at) VALUES (?, ?, ?)')
+      .run(2, 'create_audit_relay_tables', Date.now());
+
+    runMigrations(db, verificationMigrations);
+
+    const table = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'request_costs'",
+    ).get();
+    expect(table).toEqual({ name: 'request_costs' });
+    const versions = db.prepare('SELECT version, name FROM schema_version ORDER BY version').all();
+    expect(versions).toEqual([
+      { version: 1, name: 'create_verification_tables' },
+      { version: 2, name: 'create_audit_relay_tables' },
+      { version: 9, name: 'create_request_costs_compat' },
+    ]);
   });
 });

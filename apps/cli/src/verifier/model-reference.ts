@@ -29,7 +29,7 @@ import {
 } from './reference-sizing.js'
 import { safeServiceSlug } from './slug.js'
 import { resolveVerifierModelConfig, type ResolvedVerifierModelConfig } from './model-config.js'
-import type { VerifierModelCatalog } from './openrouter-catalog.js'
+import type { VerifierModelCatalog, VerifierReasoningEffort } from './openrouter-catalog.js'
 import {
   CANONICAL_KBF_DOMAINS,
   canonicalKbfTolerance,
@@ -44,10 +44,22 @@ const DEFAULT_RETRY_BASE_DELAY_MS = 500
 const DEFAULT_MAX_NO_PROGRESS_ROUNDS = 3
 const DEFAULT_MAX_CONCURRENT_REQUESTS = 4
 const DEFAULT_MAX_CONCURRENT_REQUESTS_PER_MODEL = 3
+const NEW_ACCOUNT_MINIMUM_REQUEST_INTERVAL_MS = 6_500
+const NEW_ACCOUNT_RATE_LIMIT_COOLDOWN_MS = 65_000
 const MAX_TOKENS = 1600
 const REFERENCE_SIZING_ALGORITHM_VERSION = 2
-const REFERENCE_REASONING_STRATEGY = 'reasoning-effort-none' as const
-const REFERENCE_REQUEST_OVERRIDES = { reasoning_effort: 'none' }
+const MINIMUM_SUPPORTED_REASONING_STRATEGY = 'reasoning-effort-minimum-supported' as const
+const DISABLED_REASONING_STRATEGY = 'reasoning-effort-none' as const
+const DISABLED_REASONING_REQUEST_OVERRIDES = { reasoning_effort: 'none' } as const
+const TERMINAL_EMPTY_FINISH_REASONS = new Set(['content_filter', 'length', 'refusal'])
+const REASONING_EFFORT_ASCENDING: readonly VerifierReasoningEffort[] = [
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+]
 
 interface CollectedReferenceProbes {
   probes: KbfProbe[]
@@ -96,6 +108,26 @@ export interface ReferenceBuildCostV1 {
   requestCount: number
   models: ReferenceBuildCostModelV1[]
   purposes: ReferenceBuildCostPurposeV1[]
+}
+
+export interface ReferenceRequestLimiter {
+  run: <T>(model: string, execute: () => Promise<T>) => Promise<T>
+  recordSuccess: (model: string) => void
+}
+
+export function createReferenceRequestLimiter(
+  config: VerifierCLIConfig | undefined,
+  options: {
+    newAccountMinimumRequestIntervalMs?: number
+    newAccountRateLimitCooldownMs?: number
+  } = {},
+): ReferenceRequestLimiter {
+  return new AdaptiveRequestLimiter(
+    config?.referenceMaxConcurrentRequests ?? DEFAULT_MAX_CONCURRENT_REQUESTS,
+    config?.referenceMaxConcurrentRequestsPerModel ?? DEFAULT_MAX_CONCURRENT_REQUESTS_PER_MODEL,
+    options.newAccountMinimumRequestIntervalMs ?? NEW_ACCOUNT_MINIMUM_REQUEST_INTERVAL_MS,
+    options.newAccountRateLimitCooldownMs ?? NEW_ACCOUNT_RATE_LIMIT_COOLDOWN_MS,
+  )
 }
 
 type ReferenceQuery = ((model: string, body: Record<string, unknown>) => Promise<string>) & {
@@ -164,11 +196,27 @@ export async function buildModelReference(input: {
   catalog?: VerifierModelCatalog | null
   fetchFn?: typeof fetch
   log?: (message: string) => void
-}): Promise<{ reference: KbfReferenceV1; path: string; cost: ReferenceBuildCostV1 }> {
+  requestLimiter?: ReferenceRequestLimiter
+}): Promise<{
+  reference: KbfReferenceV1
+  path: string
+  cost: ReferenceBuildCostV1
+  finalize: () => Promise<void>
+}> {
   const endpoint = input.config?.referenceEndpoint
   if (!endpoint) throw new Error('verifier.referenceEndpoint is required')
   const modelConfig = resolveVerifierModelConfig(input.config, input.model, input.catalog)
   const pricingByModel = referencePricingByModel(input.config, modelConfig, input.catalog ?? null)
+  const requestOverridesByModel = new Map(
+    [modelConfig.upstreamModel, ...modelConfig.contrastModels].map((model) => [
+      normalized(model),
+      resolveReferenceRequestOverrides(model, input.catalog ?? null),
+    ]),
+  )
+  const targetRequestOverrides = requestOverridesByModel.get(normalized(modelConfig.upstreamModel))!
+  const targetReasoningStrategy = 'reasoning' in targetRequestOverrides
+    ? MINIMUM_SUPPORTED_REASONING_STRATEGY
+    : DISABLED_REASONING_STRATEGY
   const apiKey = (endpoint.apiKeyEnv ? process.env[endpoint.apiKeyEnv] : undefined) ?? endpoint.apiKey
   const timeoutMs = input.config?.probeRequestTimeoutMs ?? 120_000
   const sizing = resolveReferenceSizingPolicy(input.config)
@@ -194,14 +242,11 @@ export async function buildModelReference(input: {
     candidateBatchSize: CANDIDATE_BATCH_SIZE,
     candidatePromptVersion: 3,
     timeoutMs,
-    reasoningStrategy: REFERENCE_REASONING_STRATEGY,
-    requestOverrides: REFERENCE_REQUEST_OVERRIDES,
+    reasoningStrategy: targetReasoningStrategy,
+    requestOverridesByModel: [...requestOverridesByModel.entries()],
   })
   const checkpoint = await ReferenceBuildCheckpoint.open(checkpointPath, compatibilityHash)
-  const limiter = new AdaptiveRequestLimiter(
-    input.config?.referenceMaxConcurrentRequests ?? DEFAULT_MAX_CONCURRENT_REQUESTS,
-    input.config?.referenceMaxConcurrentRequestsPerModel ?? DEFAULT_MAX_CONCURRENT_REQUESTS_PER_MODEL,
-  )
+  const limiter = input.requestLimiter ?? createReferenceRequestLimiter(input.config)
   const query = createReferenceQuery({
     endpoint,
     apiKey,
@@ -217,6 +262,8 @@ export async function buildModelReference(input: {
       if (!pricing) throw new Error(`no reference pricing is available for ${model}`)
       return pricing
     },
+    requestOverridesForModel: (model) => requestOverridesByModel.get(normalized(model))
+      ?? resolveReferenceRequestOverrides(model, input.catalog ?? null),
     log: input.log,
   })
   let collected: CollectedReferenceProbes | undefined
@@ -308,8 +355,8 @@ export async function buildModelReference(input: {
     maxTokensPerRequest: MAX_TOKENS,
     requestTimeoutMs: timeoutMs,
   })
-  queryProfile.reasoningStrategy = REFERENCE_REASONING_STRATEGY
-  queryProfile.requestOverrides = REFERENCE_REQUEST_OVERRIDES
+  queryProfile.reasoningStrategy = targetReasoningStrategy
+  queryProfile.requestOverrides = targetRequestOverrides
   const reference: KbfReferenceV1 = {
     version: 1,
     kind: 'kbf',
@@ -361,8 +408,7 @@ export async function buildModelReference(input: {
   const path = referencePath(input.referencesDir, input.model)
   await writeReference(path, validated)
   const cost = query.costSummary?.() ?? summarizeReferenceCosts([])
-  await checkpoint.remove()
-  return { reference: validated, path, cost }
+  return { reference: validated, path, cost, finalize: () => checkpoint.remove() }
 }
 
 export async function collectReferenceProbes(input: {
@@ -401,7 +447,13 @@ export async function collectReferenceProbes(input: {
   while (state.probes.length < input.targetCount) {
     state.generationRound += 1
     input.log?.(`generation round ${state.generationRound}: collecting ${state.probes.length}/${input.targetCount} probes`)
-    const generated = await generateCandidates(input.model, candidateCountPerRound, state.generationRound, input.query)
+    const generated = await generateCandidates(
+      input.model,
+      candidateCountPerRound,
+      state.generationRound,
+      input.query,
+      input.log,
+    )
     const candidates = generated.filter((probe) => {
       if (state.generatedProbeIds.has(probe.id)) return false
       state.generatedProbeIds.add(probe.id)
@@ -409,7 +461,7 @@ export async function collectReferenceProbes(input: {
     })
     state.candidateCount = state.generatedProbeIds.size
     input.log?.(`generation round ${state.generationRound}: testing ${candidates.length} new candidates for stability`)
-    const stable = await certifyStableProbes(input.model, candidates, input.query)
+    const stable = await certifyStableProbes(input.model, candidates, input.query, input.log)
     const contrastOutcomes = await queryContrastOutcomes(stable, input.contrastModels, input.query, input.log)
     const accepted = stable.filter((probe) => input.contrastModels.length === 0
       || (contrastOutcomes.get(probe.id)?.length ?? 0) > 0)
@@ -447,10 +499,14 @@ async function certifyStableProbes(
   model: string,
   candidates: readonly KbfProbe[],
   query: ReferenceQuery,
+  log?: (message: string) => void,
 ): Promise<KbfProbe[]> {
   if (candidates.length === 0) return []
   const passes = await Promise.all(KBF_ENROLLMENT_TEMPERATURES.map((temperature, passIndex) => {
-    return queryProbeAnswers(model, candidates, temperature, `stability-${passIndex}`, query)
+    return queryProbeAnswers(model, candidates, temperature, `stability-${passIndex}`, query, {
+      recoverTerminalEmptyBatches: true,
+      log,
+    })
   }))
   return candidates.flatMap((probe, index) => {
     const values = passes.map((pass) => pass[index] ?? null).filter((value): value is number => value !== null)
@@ -491,6 +547,7 @@ async function generateCandidates(
   count: number,
   round: number,
   query: ReferenceQuery,
+  log?: (message: string) => void,
 ): Promise<KbfProbe[]> {
   const baseCount = Math.floor(count / CANONICAL_KBF_DOMAINS.length)
   const remainder = count % CANONICAL_KBF_DOMAINS.length
@@ -513,7 +570,14 @@ async function generateCandidates(
           { role: 'user', content: prompt },
         ],
       }
-      const content = await query(model, body)
+      let content: string
+      try {
+        content = await query(model, body)
+      } catch (error) {
+        if (!(error instanceof EmptyReferenceResponseError)) throw error
+        log?.(`skipping empty candidate batch for ${definition.key}: ${error.message}`)
+        continue
+      }
       for (const fact of parseCanonicalFacts(content, definition.range)) {
         const probe = createCanonicalKbfProbe({
           domainKey: definition.key,
@@ -612,11 +676,12 @@ function createReferenceQuery(input: {
   timeoutMs: number
   fetchFn: typeof fetch
   checkpoint: ReferenceBuildCheckpoint
-  limiter: AdaptiveRequestLimiter
+    limiter: ReferenceRequestLimiter
   maxRequests: number
   retryCount: number
   retryBaseDelayMs: number
   pricingForModel: (model: string) => VerifierModelPricingConfig
+  requestOverridesForModel: (model: string) => Record<string, unknown>
   log?: (message: string) => void
 }): ReferenceQuery {
   assertPositiveInteger(input.maxRequests, 'referenceMaxRequestsPerBuild')
@@ -625,7 +690,13 @@ function createReferenceQuery(input: {
   const consumed = new Map<string, ReferenceCachedResponseV1>()
   const query = (async (model: string, body: Record<string, unknown>) => {
     const { __antseedReferenceCacheDomain, ...requestBody } = body
-    const cacheKey = canonicalHashBytes32({ model, cacheDomain: __antseedReferenceCacheDomain ?? null, body: requestBody })
+    const requestOverrides = input.requestOverridesForModel(model)
+    const cacheKey = canonicalHashBytes32({
+      model,
+      cacheDomain: __antseedReferenceCacheDomain ?? null,
+      body: requestBody,
+      requestOverrides,
+    })
     const cached = input.checkpoint.get(cacheKey)
     if (cached !== undefined) {
       consumed.set(cacheKey, cached)
@@ -641,6 +712,7 @@ function createReferenceQuery(input: {
           input.apiKey,
           model,
           requestBody,
+          requestOverrides,
           input.timeoutMs,
           input.fetchFn,
         ))
@@ -660,12 +732,11 @@ function createReferenceQuery(input: {
         }
         await input.checkpoint.set(cacheKey, cachedResponse)
         consumed.set(cacheKey, cachedResponse)
-        input.limiter.recordSuccess()
+        input.limiter.recordSuccess(model)
         return response.content
       } catch (error) {
         const retryable = isRetryableReferenceError(error)
         if (!retryable || attempt >= input.retryCount + 1) throw error
-        input.limiter.recordThrottle(error)
         const delayMs = retryDelayMs(error, input.retryBaseDelayMs, attempt)
         input.log?.(`reference request retry ${attempt}/${input.retryCount + 1} for ${model} in ${delayMs}ms: ${asError(error).message}`)
         await sleep(delayMs)
@@ -674,7 +745,12 @@ function createReferenceQuery(input: {
   }) as ReferenceQuery
   query.invalidate = async (model, body) => {
     const { __antseedReferenceCacheDomain, ...requestBody } = body
-    const cacheKey = canonicalHashBytes32({ model, cacheDomain: __antseedReferenceCacheDomain ?? null, body: requestBody })
+    const cacheKey = canonicalHashBytes32({
+      model,
+      cacheDomain: __antseedReferenceCacheDomain ?? null,
+      body: requestBody,
+      requestOverrides: input.requestOverridesForModel(model),
+    })
     consumed.delete(cacheKey)
     await input.checkpoint.delete(cacheKey)
   }
@@ -758,19 +834,27 @@ class ReferenceBuildCheckpoint {
   }
 }
 
-class AdaptiveRequestLimiter {
+class AdaptiveRequestLimiter implements ReferenceRequestLimiter {
   private active = 0
   private limit: number
   private successesSinceThrottle = 0
   private readonly activeByModel = new Map<string, number>()
+  private readonly maximumByModelOverride = new Map<string, number>()
+  private readonly minimumIntervalMsByModel = new Map<string, number>()
+  private readonly nextAllowedAtByModel = new Map<string, number>()
   private readonly waiters: Array<{ model: string; resolve: () => void }> = []
+  private wakeTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(
     private readonly maximum: number,
     private readonly maximumPerModel: number,
+    private readonly newAccountMinimumRequestIntervalMs: number,
+    private readonly newAccountRateLimitCooldownMs: number,
   ) {
     assertPositiveInteger(maximum, 'referenceMaxConcurrentRequests')
     assertPositiveInteger(maximumPerModel, 'referenceMaxConcurrentRequestsPerModel')
+    assertPositiveInteger(newAccountMinimumRequestIntervalMs, 'newAccountMinimumRequestIntervalMs')
+    assertPositiveInteger(newAccountRateLimitCooldownMs, 'newAccountRateLimitCooldownMs')
     this.limit = maximum
   }
 
@@ -778,6 +862,8 @@ class AdaptiveRequestLimiter {
     await this.acquire(model)
     try {
       return await execute()
+    } catch (error) {
+      throw this.recordThrottle(error, model)
     } finally {
       this.active -= 1
       this.activeByModel.set(model, (this.activeByModel.get(model) ?? 1) - 1)
@@ -785,13 +871,24 @@ class AdaptiveRequestLimiter {
     }
   }
 
-  recordThrottle(error: unknown): void {
-    if (!isThrottleError(error)) return
+  private recordThrottle(error: unknown, model: string): unknown {
+    if (!isThrottleError(error)) return error
     this.limit = Math.max(1, Math.floor(this.limit / 2))
     this.successesSinceThrottle = 0
+    if (isNewAccountRateLimit(error)) {
+      const cooldownMs = Math.max(error.retryAfterMs ?? 0, this.newAccountRateLimitCooldownMs)
+      this.maximumByModelOverride.set(model, 1)
+      this.minimumIntervalMsByModel.set(model, this.newAccountMinimumRequestIntervalMs)
+      this.nextAllowedAtByModel.set(
+        model,
+        Math.max(this.nextAllowedAtByModel.get(model) ?? 0, Date.now() + cooldownMs),
+      )
+      return new ReferenceEndpointError(error.status, cooldownMs, error.detail)
+    }
+    return error
   }
 
-  recordSuccess(): void {
+  recordSuccess(_model: string): void {
     this.successesSinceThrottle += 1
     if (this.limit < this.maximum && this.successesSinceThrottle >= this.limit * 10) {
       this.limit += 1
@@ -805,26 +902,52 @@ class AdaptiveRequestLimiter {
       this.reserve(model)
       return
     }
-    await new Promise<void>((resolve) => this.waiters.push({ model, resolve }))
+    await new Promise<void>((resolve) => {
+      this.waiters.push({ model, resolve })
+      this.scheduleDrain()
+    })
   }
 
   private drain(): void {
     while (this.active < this.limit) {
       const index = this.waiters.findIndex(({ model }) => this.canRun(model))
-      if (index < 0) return
+      if (index < 0) {
+        this.scheduleDrain()
+        return
+      }
       const waiter = this.waiters.splice(index, 1)[0]!
       this.reserve(waiter.model)
       waiter.resolve()
     }
+    this.scheduleDrain()
   }
 
   private canRun(model: string): boolean {
-    return this.active < this.limit && (this.activeByModel.get(model) ?? 0) < this.maximumPerModel
+    const maximumPerModel = this.maximumByModelOverride.get(model) ?? this.maximumPerModel
+    return this.active < this.limit
+      && (this.activeByModel.get(model) ?? 0) < maximumPerModel
+      && Date.now() >= (this.nextAllowedAtByModel.get(model) ?? 0)
   }
 
   private reserve(model: string): void {
     this.active += 1
     this.activeByModel.set(model, (this.activeByModel.get(model) ?? 0) + 1)
+    const minimumIntervalMs = this.minimumIntervalMsByModel.get(model)
+    if (minimumIntervalMs !== undefined) this.nextAllowedAtByModel.set(model, Date.now() + minimumIntervalMs)
+  }
+
+  private scheduleDrain(): void {
+    if (this.wakeTimer !== null || this.waiters.length === 0) return
+    const now = Date.now()
+    const delayMs = Math.min(...this.waiters.map(({ model }) => Math.max(
+      0,
+      (this.nextAllowedAtByModel.get(model) ?? now) - now,
+    )))
+    if (delayMs <= 0) return
+    this.wakeTimer = setTimeout(() => {
+      this.wakeTimer = null
+      this.drain()
+    }, delayMs)
   }
 }
 
@@ -834,7 +957,11 @@ async function queryProbeAnswers(
   temperature: number,
   cacheDomain: string,
   query: (model: string, body: Record<string, unknown>) => Promise<string>,
-  options: { allowIncomplete?: boolean; log?: (message: string) => void } = {},
+  options: {
+    allowIncomplete?: boolean
+    recoverTerminalEmptyBatches?: boolean
+    log?: (message: string) => void
+  } = {},
 ): Promise<Array<number | null>> {
   const answers: Array<number | null> = []
   for (let offset = 0; offset < probes.length; offset += KBF_PROBES_PER_REQUEST) {
@@ -849,9 +976,18 @@ async function queryProbeAnswers(
       const content = await query(model, body)
       answers.push(...parseKbfAnswers(content, batch.length))
     } catch (error) {
+      if (options.recoverTerminalEmptyBatches && isTerminalEmptyReferenceError(error)) {
+        options.log?.(`skipping ${batch.length}-probe stability batch for ${model}: ${asError(error).message}`)
+        answers.push(...new Array<number | null>(batch.length).fill(null))
+        continue
+      }
       if (!options.allowIncomplete || !isRecoverableContrastError(error)) throw error
-      options.log?.(`contrast batch incomplete for ${model}: ${asError(error).message}`)
-      answers.push(...new Array<number | null>(batch.length).fill(null))
+      const remaining = probes.length - offset
+      options.log?.(
+        `contrast model ${model} unavailable; skipping ${remaining} probe answers: ${asError(error).message}`,
+      )
+      answers.push(...new Array<number | null>(remaining).fill(null))
+      break
     }
   }
   return answers
@@ -862,6 +998,7 @@ async function postChatCompletion(
   apiKey: string | undefined,
   model: string,
   body: Record<string, unknown>,
+  requestOverrides: Record<string, unknown>,
   timeoutMs: number,
   fetchFn: typeof fetch,
 ): Promise<{ content: string; inputTokens: number; outputTokens: number }> {
@@ -875,7 +1012,7 @@ async function postChatCompletion(
         ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
         ...(endpoint.antseedPeerId ? { 'x-antseed-pin-peer': endpoint.antseedPeerId } : {}),
       },
-      body: JSON.stringify({ ...body, ...REFERENCE_REQUEST_OVERRIDES, model }),
+      body: JSON.stringify({ ...body, ...requestOverrides, model }),
       signal: controller.signal,
     })
     if (!response.ok) {
@@ -886,11 +1023,25 @@ async function postChatCompletion(
       )
     }
     const parsed = await response.json() as {
-      choices?: Array<{ message?: { content?: unknown } }>
-      usage?: { prompt_tokens?: unknown; completion_tokens?: unknown }
+      choices?: Array<{ message?: { content?: unknown }; finish_reason?: unknown; native_finish_reason?: unknown }>
+      usage?: {
+        prompt_tokens?: unknown
+        completion_tokens?: unknown
+        completion_tokens_details?: { reasoning_tokens?: unknown }
+      }
     }
-    const content = parsed.choices?.[0]?.message?.content
-    if (typeof content !== 'string' || content.trim() === '') throw new EmptyReferenceResponseError()
+    const choice = parsed.choices?.[0]
+    const content = completionText(choice?.message?.content)
+    if (content === null) {
+      const finishReason = optionalString(choice?.finish_reason)
+      const nativeFinishReason = optionalString(choice?.native_finish_reason)
+      throw new EmptyReferenceResponseError(finishReason, nativeFinishReason, JSON.stringify({
+        finishReason,
+        nativeFinishReason,
+        completionTokens: parsed.usage?.completion_tokens ?? null,
+        reasoningTokens: parsed.usage?.completion_tokens_details?.reasoning_tokens ?? null,
+      }))
+    }
     const inputTokens = nonNegativeInteger(parsed.usage?.prompt_tokens)
     const outputTokens = nonNegativeInteger(parsed.usage?.completion_tokens)
     if (inputTokens === null || outputTokens === null) {
@@ -902,18 +1053,46 @@ async function postChatCompletion(
   }
 }
 
+function completionText(value: unknown): string | null {
+  if (typeof value === 'string') return value.trim() === '' ? null : value
+  if (!Array.isArray(value)) return null
+  const text = value.flatMap((part) => {
+    if (!part || typeof part !== 'object' || Array.isArray(part)) return []
+    const record = part as Record<string, unknown>
+    return typeof record.text === 'string' ? [record.text] : []
+  }).join('')
+  return text.trim() === '' ? null : text
+}
+
+export function resolveReferenceRequestOverrides(
+  model: string,
+  catalog: VerifierModelCatalog | null,
+): Record<string, unknown> {
+  const reasoning = catalog?.get(normalized(model))?.reasoning
+  if (reasoning?.mandatory !== true) return DISABLED_REASONING_REQUEST_OVERRIDES
+  const effort = reasoning.supportedEfforts === null
+    ? 'minimal'
+    : REASONING_EFFORT_ASCENDING.find((candidate) => reasoning.supportedEfforts!.includes(candidate))
+  if (!effort) throw new Error(`mandatory reasoning model ${model} exposes no supported reasoning effort`)
+  return { reasoning: { effort, exclude: true } }
+}
+
 class ReferenceEndpointError extends Error {
   constructor(
     readonly status: number,
     readonly retryAfterMs: number | null,
-    detail: string,
+    readonly detail: string,
   ) {
     super(`reference endpoint ${status}: ${detail}`)
   }
 }
 
 class EmptyReferenceResponseError extends Error {
-  constructor(detail = '') {
+  constructor(
+    readonly finishReason: string | null,
+    readonly nativeFinishReason: string | null,
+    detail = '',
+  ) {
     super(`reference endpoint returned no text content${detail ? `: ${detail}` : ''}`)
   }
 }
@@ -1025,22 +1204,35 @@ function nonNegativeInteger(value: unknown): number | null {
 
 function isRetryableReferenceError(error: unknown): boolean {
   if (error instanceof ReferenceEndpointError) return error.status === 429 || error.status >= 500
-  if (error instanceof EmptyReferenceResponseError) return true
+  if (error instanceof EmptyReferenceResponseError) return !isTerminalEmptyReferenceError(error)
   if (error instanceof Error && error.name === 'AbortError') return true
   const code = (error as NodeJS.ErrnoException).code
   return typeof code === 'string' && ['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT'].includes(code)
 }
 
-function isRecoverableContrastError(error: unknown): boolean {
-  return isRetryableReferenceError(error)
+function isTerminalEmptyReferenceError(error: unknown): error is EmptyReferenceResponseError {
+  return error instanceof EmptyReferenceResponseError
+    && [error.finishReason, error.nativeFinishReason]
+      .some((reason) => reason !== null && TERMINAL_EMPTY_FINISH_REASONS.has(normalized(reason)))
 }
 
-function isThrottleError(error: unknown): boolean {
+function isRecoverableContrastError(error: unknown): boolean {
+  return error instanceof ReferenceEndpointError || error instanceof EmptyReferenceResponseError
+}
+
+function isThrottleError(error: unknown): error is ReferenceEndpointError {
   return error instanceof ReferenceEndpointError && error.status === 429
+}
+
+function isNewAccountRateLimit(error: unknown): boolean {
+  return error instanceof ReferenceEndpointError
+    && error.status === 429
+    && normalized(error.detail).includes('new-account-rpm')
 }
 
 function retryDelayMs(error: unknown, baseDelayMs: number, attempt: number): number {
   if (error instanceof ReferenceEndpointError && error.retryAfterMs !== null) return error.retryAfterMs
+  if (isNewAccountRateLimit(error)) return NEW_ACCOUNT_MINIMUM_REQUEST_INTERVAL_MS
   return Math.min(30_000, baseDelayMs * 2 ** Math.max(0, attempt - 1))
 }
 
@@ -1050,6 +1242,10 @@ function parseRetryAfterMs(value: string | null): number | null {
   if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1_000)
   const date = Date.parse(value)
   return Number.isFinite(date) ? Math.max(0, date - Date.now()) : null
+}
+
+function optionalString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null
 }
 
 function assertPositiveInteger(value: number, name: string): void {

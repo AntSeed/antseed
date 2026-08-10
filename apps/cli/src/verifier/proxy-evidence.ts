@@ -71,6 +71,41 @@ export interface AuditCostSummaryV1 {
   missingCostExchangeCount: number
 }
 
+export type VerificationSkipCode =
+  | 'missing_response_auth'
+  | 'reputation_below_minimum'
+  | 'price_above_maximum'
+  | 'policy_rejected'
+  | 'stale_model_advertisement'
+
+export interface ProxyAuditSkipEvidenceV1 {
+  version: 1
+  kind: 'antseed-buyer-proxy-target-skip'
+  evidenceLevel: 'proxy-observation-no-payment-evidence'
+  createdAt: string
+  buyerProxy: {
+    baseUrl: string
+    statePath: string
+    pid: number
+  }
+  target: {
+    peerId: string
+    displayName: string | null
+    agentId: string | null
+    service: string
+  }
+  reference: {
+    referenceId: string
+    referenceModel: string
+  }
+  exchange: ProxyAuditEvidenceExchangeV1
+  result: {
+    status: 'SKIPPED'
+    code: VerificationSkipCode
+    reason: string
+  }
+}
+
 export interface ProxyAuditEvidenceV1 {
   version: 1
   kind: 'antseed-buyer-proxy-kbf-audit'
@@ -209,6 +244,27 @@ export async function writeProxyAuditEvidence(
   const bytes = new TextEncoder().encode(canonicalJsonStringify(evidence))
   await mkdir(evidenceDir, { recursive: true })
   const path = join(evidenceDir, `${auditId}.json`)
+  const temporaryPath = `${path}.tmp-${process.pid}-${Date.now()}`
+  const handle = await open(temporaryPath, 'wx')
+  try {
+    await handle.writeFile(bytes)
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+  await rename(temporaryPath, path)
+  return { path, evidenceHash }
+}
+
+export async function writeProxyAuditSkipEvidence(
+  evidenceDir: string,
+  auditId: string,
+  evidence: ProxyAuditSkipEvidenceV1,
+): Promise<{ path: string; evidenceHash: string }> {
+  const evidenceHash = canonicalHashBytes32(evidence)
+  const bytes = new TextEncoder().encode(canonicalJsonStringify(evidence))
+  await mkdir(evidenceDir, { recursive: true })
+  const path = join(evidenceDir, `${auditId}.skip.json`)
   const temporaryPath = `${path}.tmp-${process.pid}-${Date.now()}`
   const handle = await open(temporaryPath, 'wx')
   try {

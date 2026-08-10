@@ -150,6 +150,11 @@ test('OpenRouter catalog supplies target pricing and ranks eligible scored contr
       pricing: { inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.6 },
       capabilityRank: 51.2,
     }],
+    ['openai/luna:batch', {
+      upstreamModel: 'openai/luna:batch',
+      pricing: { inputUsdPerMillion: 0.05, outputUsdPerMillion: 0.3 },
+      capabilityRank: 99,
+    }],
     ['provider/low-score', {
       upstreamModel: 'provider/low-score',
       pricing: { inputUsdPerMillion: 0.01, outputUsdPerMillion: 0.01 },

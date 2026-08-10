@@ -69,7 +69,16 @@ export interface SellerProbeLedgerV1 {
     referenceId: string
     probeIds: string[]
     reservedAt: string
+    voidedAt?: string
+    voidReason?: string
   }>
+}
+
+export interface ProbeBankPowerStatus {
+  totalProbeCount: number
+  eligibleProbeCount: number
+  selectedProbeCount: number | null
+  statisticalPower: number | null
 }
 
 export async function appendModelReferenceToBank(input: {
@@ -77,7 +86,12 @@ export async function appendModelReferenceToBank(input: {
   model: string
   reference: KbfReferenceV1
   cost: ReferenceBuildCostV1
-}): Promise<{ path: string; addedProbeCount: number; totalProbeCount: number }> {
+}): Promise<{
+  path: string
+  addedProbeCount: number
+  canonicalConflictProbeCount: number
+  totalProbeCount: number
+}> {
   const path = bankPath(input.banksDir, input.model)
   const lock = await acquirePidFileLock(join(dirname(path), '.bank.lock'))
   try {
@@ -89,17 +103,21 @@ export async function appendModelReferenceToBank(input: {
     const incoming = bankFromReference(input.model, validatedReference, input.cost)
     if (!existing) {
       await writeJsonAtomic(path, incoming)
-      return { path, addedProbeCount: incoming.probes.length, totalProbeCount: incoming.probes.length }
+      return {
+        path,
+        addedProbeCount: incoming.probes.length,
+        canonicalConflictProbeCount: 0,
+        totalProbeCount: incoming.probes.length,
+      }
     }
     const bank = existing
-    if (!Array.isArray(bank.referenceCosts)) {
-      throw new Error(`probe bank for ${input.model} has no reference cost metadata; rebuild it`)
-    }
+    if (!Array.isArray(bank.referenceCosts)) bank.referenceCosts = []
     if (existing && existing.compatibilityHash !== incoming.compatibilityHash) {
       throw new Error(`probe bank for ${input.model} is incompatible with the new reference`)
     }
     const byId = new Map(bank.probes.map((entry) => [entry.probe.id, entry]))
     let addedProbeCount = 0
+    let canonicalConflictProbeCount = 0
     for (const entry of incoming.probes) {
       const previous = byId.get(entry.probe.id)
       if (!previous) {
@@ -108,9 +126,10 @@ export async function appendModelReferenceToBank(input: {
         addedProbeCount += 1
         continue
       }
-      if (canonicalHashBytes32(previous.probe) !== canonicalHashBytes32(entry.probe)
-        || canonicalHashBytes32(previous.selfTest) !== canonicalHashBytes32(entry.selfTest)) {
-        throw new Error(`probe ${entry.probe.id} conflicts with existing canonical content or self-test evidence`)
+      if (canonicalHashBytes32(canonicalBankProbe(previous.probe))
+        !== canonicalHashBytes32(canonicalBankProbe(entry.probe))) {
+        canonicalConflictProbeCount += 1
+        continue
       }
       previous.distinguishingContrastModels = [...new Set([
         ...previous.distinguishingContrastModels,
@@ -120,14 +139,24 @@ export async function appendModelReferenceToBank(input: {
     bank.contrastModels = [...incoming.contrastModels].sort()
     if (!bank.sourceReferenceIds.includes(validatedReference.referenceId)) {
       bank.sourceReferenceIds.push(validatedReference.referenceId)
+    }
+    if (!bank.referenceCosts.some((entry) => entry.referenceId === validatedReference.referenceId)) {
       bank.referenceCosts.push(...incoming.referenceCosts)
     }
     bank.updatedAt = new Date().toISOString()
     await writeJsonAtomic(path, bank)
-    return { path, addedProbeCount, totalProbeCount: bank.probes.length }
+    return { path, addedProbeCount, canonicalConflictProbeCount, totalProbeCount: bank.probes.length }
   } finally {
     await lock.release()
   }
+}
+
+function canonicalBankProbe(probe: KbfProbe): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(probe).filter(([key]) => ![
+    'contrast',
+    'generationRound',
+    'generationTheme',
+  ].includes(key)))
 }
 
 export async function reserveModelAuditReference(input: {
@@ -159,6 +188,7 @@ export async function reserveModelAuditReference(input: {
       throw new Error(`invalid seller probe ledger at ${ledgerPath}`)
     }
     const used = new Set(ledger.assignments
+      .filter((assignment) => !assignment.voidedAt)
       .filter((assignment) => !input.allowProbeReuse || assignment.runId === input.runId)
       .flatMap((assignment) => assignment.probeIds))
     const activeContrasts = new Set(bank.contrastModels.map(normalized))
@@ -199,8 +229,74 @@ export async function reserveModelAuditReference(input: {
   }
 }
 
+export async function voidModelAuditReference(input: {
+  banksDir: string
+  model: string
+  sellerPeerId: string
+  auditId: string
+  reason: string
+  now?: () => number
+}): Promise<{ ledgerPath: string; voidedAt: string }> {
+  const ledgerPath = sellerLedgerPath(input.banksDir, input.model, input.sellerPeerId)
+  const lock = await acquirePidFileLock(`${ledgerPath}.lock`)
+  try {
+    const ledger = await readJsonIfExists<SellerProbeLedgerV1>(ledgerPath)
+    if (!ledger
+      || normalized(ledger.model) !== normalized(input.model)
+      || normalized(ledger.sellerPeerId) !== normalized(input.sellerPeerId)) {
+      throw new Error(`invalid seller probe ledger at ${ledgerPath}`)
+    }
+    const assignment = ledger.assignments.find((entry) => entry.auditId === input.auditId)
+    if (!assignment) throw new Error(`audit reservation ${input.auditId} not found in ${ledgerPath}`)
+    if (assignment.voidedAt) return { ledgerPath, voidedAt: assignment.voidedAt }
+    assignment.voidedAt = new Date(input.now?.() ?? Date.now()).toISOString()
+    assignment.voidReason = input.reason
+    await writeJsonAtomic(ledgerPath, ledger)
+    return { ledgerPath, voidedAt: assignment.voidedAt }
+  } finally {
+    await lock.release()
+  }
+}
+
 export function bankPath(banksDir: string, model: string): string {
   return join(banksDir, safeServiceSlug(model), 'bank.json')
+}
+
+export async function inspectModelProbeBankPower(input: {
+  banksDir: string
+  model: string
+  config?: VerifierCLIConfig
+  now?: () => number
+}): Promise<ProbeBankPowerStatus> {
+  const path = bankPath(input.banksDir, input.model)
+  const bank = await readJsonIfExists<ProbeBankV1>(path)
+  if (!bank) {
+    return { totalProbeCount: 0, eligibleProbeCount: 0, selectedProbeCount: null, statisticalPower: null }
+  }
+  if (bank.kind !== 'antseed-kbf-probe-bank'
+    || normalized(bank.model) !== normalized(input.model)
+    || !Array.isArray(bank.probes)
+    || !Array.isArray(bank.contrastModels)) {
+    throw new Error(`invalid probe bank at ${path}`)
+  }
+  const activeContrasts = new Set(bank.contrastModels.map(normalized))
+  const eligible = bank.probes.filter((entry) => entry.distinguishingContrastModels
+    .some((model) => activeContrasts.has(normalized(model))))
+  if (!Array.isArray(bank.referenceCosts)) {
+    return {
+      totalProbeCount: bank.probes.length,
+      eligibleProbeCount: eligible.length,
+      selectedProbeCount: null,
+      statisticalPower: null,
+    }
+  }
+  const reference = selectPoweredReference(bank, eligible, input.config, input.now?.() ?? Date.now())
+  return {
+    totalProbeCount: bank.probes.length,
+    eligibleProbeCount: eligible.length,
+    selectedProbeCount: reference?.selectedProbeCount ?? null,
+    statisticalPower: reference?.statisticalPower ?? null,
+  }
 }
 
 export function sellerLedgerPath(banksDir: string, model: string, sellerPeerId: string): string {

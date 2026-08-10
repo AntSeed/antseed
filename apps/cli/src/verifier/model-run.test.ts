@@ -15,8 +15,9 @@ import {
   loadBuyerProxySnapshot,
   verifyModelTarget,
   writeRunSummary,
+  type ModelVerificationSkip,
 } from './model-run.js'
-import type { ProxyAuditEvidenceV1 } from './proxy-evidence.js'
+import type { ProxyAuditEvidenceV1, ProxyAuditSkipEvidenceV1 } from './proxy-evidence.js'
 import type { ResponseAuthReader } from './response-auth-reader.js'
 
 function peer(overrides: Partial<PeerInfo> = {}): PeerInfo {
@@ -233,8 +234,55 @@ async function runTarget(
       service: 'GPT-5.6-SOL',
       reference: reference(count),
     })
+    if (result.status === 'SKIPPED') throw new Error(`unexpected skipped target: ${result.reason}`)
     const evidence = JSON.parse(await readFile(result.evidencePath, 'utf8')) as ProxyAuditEvidenceV1
     return { result, evidence, requestCount, requests, finalBatchStartedAfterSlow }
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+}
+
+async function runSkippedTarget(response: Response): Promise<{
+  result: ModelVerificationSkip
+  evidence: ProxyAuditSkipEvidenceV1
+  requestCount: number
+}> {
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-verifier-skip-'))
+  let requestCount = 0
+  try {
+    const result = await verifyModelTarget({
+      context: {
+        proxy: {
+          baseUrl: 'http://127.0.0.1:8377',
+          statePath: join(directory, 'buyer.state.json'),
+          pid: process.pid,
+          peers: [peer()],
+        },
+        evidenceDir: directory,
+        requestTimeoutMs: 10_000,
+        auditTimeoutMs: 10_000,
+        responseAuthReader: {
+          getRequestCost() { return null },
+          async waitForVerified() { throw new Error('unexpected ResponseAuth wait') },
+          close() {},
+        },
+        batchConcurrency: 2,
+        batchConcurrencyPromotionLatencyMs: 30_000,
+        batchLimiter: new ConcurrencyLimiter(2),
+        fetchFn: async () => {
+          requestCount += 1
+          return response.clone()
+        },
+        sleepFn: async () => undefined,
+      },
+      target: peer(),
+      service: 'GPT-5.6-SOL',
+      reference: reference(100),
+      auditId: `0x${'77'.repeat(32)}`,
+    })
+    assert.equal(result.status, 'SKIPPED')
+    const evidence = JSON.parse(await readFile(result.evidencePath!, 'utf8')) as ProxyAuditSkipEvidenceV1
+    return { result, evidence, requestCount }
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
@@ -243,11 +291,19 @@ async function runTarget(
 test('target eligibility requires ResponseAuth and preserves advertised model spelling', () => {
   assert.deepEqual(classifyVerificationTarget(peer({ capabilities: [] }), 'gpt-5.6-sol'), {
     eligible: false,
+    code: 'missing_response_auth',
+    service: 'GPT-5.6-SOL',
     reason: `missing ${CONNECTION_CAPABILITY_RESPONSE_AUTH_V1}`,
   })
   assert.deepEqual(classifyVerificationTarget(peer(), 'gpt-5.6-sol'), {
     eligible: true,
     service: 'GPT-5.6-SOL',
+  })
+  assert.deepEqual(classifyVerificationTarget(peer(), 'missing-model'), {
+    eligible: false,
+    code: 'model_not_advertised',
+    service: null,
+    reason: 'model not advertised',
   })
 })
 
@@ -285,6 +341,7 @@ test('run summaries are canonical buyer-proxy artifacts', async () => {
       completedAt: '2026-08-04T10:01:00.000Z',
       results: [],
       failures: [],
+      skipped: [],
     })
     const bytes = await readFile(path, 'utf8')
     assert.equal(bytes.endsWith('\n'), false)
@@ -330,6 +387,35 @@ test('proxy runtime retries transient failures', async () => {
   assert.equal(run.result.status, 'SAME')
   assert.equal(run.requestCount, 12)
   assert.equal(run.evidence.exchanges[0]?.attemptCount, 3)
+})
+
+test('buyer policy rejection skips after the first batch with evidence', async () => {
+  const run = await runSkippedTarget(Response.json({
+    error: {
+      type: 'buyer_policy_rejected',
+      code: 'price_above_maximum',
+      message: 'peer pricing exceeds the buyer maximum for this service',
+    },
+  }, { status: 502 }))
+  assert.equal(run.requestCount, 1)
+  assert.equal(run.result.code, 'price_above_maximum')
+  assert.equal(run.result.source, 'runtime')
+  assert.equal(run.evidence.result.status, 'SKIPPED')
+  assert.equal(run.evidence.exchange.response?.statusCode, 502)
+})
+
+test('stale model advertisement skips after one model-not-found response', async () => {
+  const run = await runSkippedTarget(Response.json({
+    error: {
+      type: 'invalid_request_error',
+      code: 'model_not_found',
+      message: 'Service "GPT-5.6-SOL" is not served by this peer.',
+    },
+  }, { status: 400 }))
+  assert.equal(run.requestCount, 1)
+  assert.equal(run.result.code, 'stale_model_advertisement')
+  assert.match(run.result.reason, /advertised GPT-5\.6-SOL/)
+  assert.equal(run.evidence.exchange.attemptCount, 1)
 })
 
 test('proxy runtime reduces seller concurrency after HTTP 429', async () => {

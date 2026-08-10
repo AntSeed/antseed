@@ -28,6 +28,11 @@ antseed verifier claim
 failures and exit nonzero if any model or peer fails. Reference builds and
 audit runs use bounded concurrency across models and sellers.
 
+`reference build --all` skips a model when its existing bank can produce a
+reference that satisfies the configured sizing, coverage, self-test, and
+statistical-power requirements. Building an explicit `<model>` always runs and
+can be used to replenish or intentionally expand that model's bank.
+
 `reference build` creates a powered reference and appends its probes and
 per-probe self-test outcomes to the model's bank. `run` never calls the trusted
 reference endpoint. It uses the verification contract's epoch when an address
@@ -46,7 +51,7 @@ verifier:
   auditMaxConcurrentBatches: 12
   auditMaxConcurrentBatchesPerPeer: 2
   auditConcurrencyPromotionLatencyMs: 30000
-  auditPeerTimeoutMs: 180000
+  auditPeerTimeoutMs: 600000
 
   contrastSelection:
     catalogSource: openrouter
@@ -138,7 +143,8 @@ to that seller during the current run. It evaluates configured 10-probe sizing
 steps and reserves the first subset meeting coverage, self-test error, and
 statistical-power requirements. The subset receives a new content-addressed KBF
 reference ID. Reservation is an atomic ledger write performed before network
-dispatch and is never released during that run, including after failed audits.
+dispatch. Deterministic first-batch ineligibility responses void the assignment;
+all completed, failed, and transiently undetermined audits retain it.
 Different sellers may share probes. By default, a seller does not receive a
 probe assigned in any earlier run. `--allow-probe-reuse` permits earlier-run
 assignments to be selected again while still preventing duplicate assignment
@@ -148,8 +154,11 @@ inside the current run.
 
 `verifier run` opens `<dataDir>/verification.db` once using the exported
 `VerificationStorage`. Only peers advertising
-`verification.response-auth.v1` are scheduled; other peers are recorded as
-skipped.
+`verification.response-auth.v1` are scheduled; advertised peers without it are
+recorded as skipped. A first-batch buyer-policy rejection or structured
+`model_not_found` response also stops the audit, voids its probe reservation,
+and records a reasoned `SKIPPED` entry plus evidence. Peers that never advertised
+the model are not included in that model's report.
 
 After each successful proxy response, the verifier reads
 `x-antseed-request-id` and polls `getResponseAuth(requestId)` every 100 ms for up
@@ -179,8 +188,11 @@ starts with one batch. A successful authenticated first batch completing within
 per-audit maximum; any HTTP 429 permanently reduces the remainder of that audit
 to one batch at a time. A shared seller lock prevents one seller from being
 audited for multiple models simultaneously. Transient proxy failures use
-bounded retries. Each seller audit has a hard three-minute wall-clock deadline
+bounded retries. Each seller audit has a hard ten-minute wall-clock deadline
 that aborts every remaining batch and finalizes the seller as `UNDETERMINED`.
+Temporary unavailability, throttling, and request timeouts remain
+`UNDETERMINED`; only deterministic policy or stale-advertisement responses are
+classified as skipped.
 
 One PID-aware run lock prevents concurrent verifier runs from reserving the same
 seller probes. Stale locks are recovered when their owner PID is no longer

@@ -1,9 +1,17 @@
 import type { VerifierCLIConfig, VerifierModelPricingConfig } from '../config/types.js'
 
+export type VerifierReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
+export interface VerifierCatalogReasoning {
+  mandatory: boolean
+  supportedEfforts: VerifierReasoningEffort[] | null
+}
+
 export interface VerifierCatalogModel {
   upstreamModel: string
   pricing: VerifierModelPricingConfig
   capabilityRank: number | null
+  reasoning?: VerifierCatalogReasoning
 }
 
 export type VerifierModelCatalog = ReadonlyMap<string, VerifierCatalogModel>
@@ -32,10 +40,12 @@ export async function loadConfiguredVerifierModelCatalog(
     if (!id) continue
     const pricing = parsePricing(model.pricing)
     if (!pricing) continue
+    const reasoning = parseReasoning(model.reasoning)
     catalog.set(normalized(id), {
       upstreamModel: id,
       pricing,
       capabilityRank: parseIntelligenceIndex(model.benchmarks),
+      ...(reasoning ? { reasoning } : {}),
     })
   }
   if (catalog.size === 0) throw new Error('OpenRouter model catalog contained no priced models')
@@ -59,6 +69,23 @@ function parseIntelligenceIndex(value: unknown): number | null {
   const artificialAnalysis = (value as Record<string, unknown>).artificial_analysis
   if (!artificialAnalysis || typeof artificialAnalysis !== 'object' || Array.isArray(artificialAnalysis)) return null
   return parseNonNegativeNumber((artificialAnalysis as Record<string, unknown>).intelligence_index)
+}
+
+function parseReasoning(value: unknown): VerifierCatalogReasoning | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const reasoning = value as Record<string, unknown>
+  const mandatory = reasoning.mandatory === true
+  const rawEfforts = reasoning.supported_efforts
+  if (rawEfforts !== null && !Array.isArray(rawEfforts)) return mandatory ? { mandatory, supportedEfforts: null } : null
+  const supportedEfforts = rawEfforts === null
+    ? null
+    : rawEfforts.filter(isReasoningEffort)
+  return { mandatory, supportedEfforts }
+}
+
+function isReasoningEffort(value: unknown): value is VerifierReasoningEffort {
+  return typeof value === 'string'
+    && ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(value)
 }
 
 function parseNonNegativeNumber(value: unknown): number | null {

@@ -10,7 +10,14 @@ import {
   type KbfReferenceV1,
 } from '@antseed/fingerprints'
 import type { VerifierCLIConfig } from '../config/types.js'
-import { buildModelReference, collectReferenceProbes, loadModelReference } from './model-reference.js'
+import {
+  buildModelReference,
+  collectReferenceProbes,
+  createReferenceRequestLimiter,
+  loadModelReference,
+  resolveReferenceRequestOverrides,
+} from './model-reference.js'
+import type { VerifierModelCatalog } from './openrouter-catalog.js'
 
 const MODEL = 'gpt-test'
 
@@ -156,16 +163,49 @@ test('missing references fail with the explicit build command', async () => {
   }
 })
 
-test('reference build writes one valid file that the run loader reuses', async () => {
+test('reference build uses minimum mandatory reasoning and persists the target override', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'antseed-reference-build-'))
+  const requestBodies: Array<Record<string, unknown>> = []
   const fetchFn: typeof fetch = async (_url, init) => {
-    const body = JSON.parse(String(init?.body)) as { model: string; messages: Array<{ content: string }> }
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown> & {
+      model: string
+      messages: Array<{ content: string }>
+    }
+    requestBodies.push(body)
     const prompt = body.messages.at(-1)?.content ?? ''
     return response(successfulContent(body.model, prompt))
   }
+  const catalog: VerifierModelCatalog = new Map([
+    ['upstream-test', {
+      upstreamModel: 'upstream-test',
+      pricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
+      capabilityRank: 10,
+      reasoning: { mandatory: true, supportedEfforts: ['high', 'medium', 'low'] },
+    }],
+    ['contrast-test', {
+      upstreamModel: 'contrast-test',
+      pricing: { inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.2 },
+      capabilityRank: 1,
+      reasoning: { mandatory: false, supportedEfforts: ['high', 'low'] },
+    }],
+  ])
   try {
-    const built = await buildModelReference({ model: MODEL, referencesDir: directory, config: config(), fetchFn })
+    const built = await buildModelReference({ model: MODEL, referencesDir: directory, config: config(), catalog, fetchFn })
     assert.equal(built.reference.probes.length, 100)
+    assert.equal(built.reference.queryProfile.reasoningStrategy, 'reasoning-effort-minimum-supported')
+    assert.deepEqual(built.reference.queryProfile.requestOverrides, {
+      reasoning: { effort: 'low', exclude: true },
+    })
+    const targetBodies = requestBodies.filter((body) => body.model === 'upstream-test')
+    const contrastBodies = requestBodies.filter((body) => body.model === 'contrast-test')
+    assert.equal(targetBodies.length > 0, true)
+    assert.equal(contrastBodies.length > 0, true)
+    assert.equal(targetBodies.every((body) => body.reasoning_effort === undefined), true)
+    assert.equal(targetBodies.every((body) => JSON.stringify(body.reasoning) === JSON.stringify({
+      effort: 'low',
+      exclude: true,
+    })), true)
+    assert.equal(contrastBodies.every((body) => body.reasoning_effort === 'none'), true)
     assert.equal(BigInt(built.cost.totalUsdMicros) > 0n, true)
     assert.deepEqual(
       new Set(built.cost.purposes.map((entry) => entry.purpose)),
@@ -173,6 +213,186 @@ test('reference build writes one valid file that the run loader reuses', async (
     )
     const loaded = await loadModelReference({ model: MODEL, referencesDir: directory })
     assert.equal(loaded.reference.referenceId, built.reference.referenceId)
+    await readFile(join(directory, '.checkpoints', `${MODEL}.json`), 'utf8')
+    await built.finalize()
+    await assert.rejects(readFile(join(directory, '.checkpoints', `${MODEL}.json`), 'utf8'), { code: 'ENOENT' })
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('mandatory reasoning uses the lowest declared effort and rejects unusable metadata', () => {
+  const catalog: VerifierModelCatalog = new Map([
+    ['provider/minimal', {
+      upstreamModel: 'provider/minimal',
+      pricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
+      capabilityRank: 1,
+      reasoning: { mandatory: true, supportedEfforts: ['high', 'minimal', 'low'] },
+    }],
+    ['provider/unspecified', {
+      upstreamModel: 'provider/unspecified',
+      pricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
+      capabilityRank: 1,
+      reasoning: { mandatory: true, supportedEfforts: null },
+    }],
+    ['provider/broken', {
+      upstreamModel: 'provider/broken',
+      pricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
+      capabilityRank: 1,
+      reasoning: { mandatory: true, supportedEfforts: ['none'] },
+    }],
+  ])
+  assert.deepEqual(resolveReferenceRequestOverrides('provider/minimal', catalog), {
+    reasoning: { effort: 'minimal', exclude: true },
+  })
+  assert.deepEqual(resolveReferenceRequestOverrides('provider/unspecified', catalog), {
+    reasoning: { effort: 'minimal', exclude: true },
+  })
+  assert.throws(
+    () => resolveReferenceRequestOverrides('provider/broken', catalog),
+    /exposes no supported reasoning effort/,
+  )
+  assert.deepEqual(resolveReferenceRequestOverrides('provider/optional', catalog), { reasoning_effort: 'none' })
+})
+
+test('reference build skips one empty candidate domain and retains powered quality gates', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-reference-empty-domain-'))
+  let medicalAttempts = 0
+  const logs: string[] = []
+  const fetchFn: typeof fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body)) as { model: string; messages: Array<{ content: string }> }
+    const prompt = body.messages.at(-1)?.content ?? ''
+    if (prompt.includes('domain medical')) {
+      medicalAttempts += 1
+      return Response.json({
+        choices: [{ message: { content: null }, finish_reason: 'content_filter' }],
+        usage: {
+          prompt_tokens: 100,
+          completion_tokens: 40,
+          completion_tokens_details: { reasoning_tokens: 40 },
+        },
+      })
+    }
+    return response(successfulContent(body.model, prompt))
+  }
+  try {
+    const built = await buildModelReference({
+      model: MODEL,
+      referencesDir: directory,
+      config: config(),
+      fetchFn,
+      log: (message) => logs.push(message),
+    })
+    assert.equal(built.reference.probes.length, 100)
+    assert.equal(medicalAttempts, 1)
+    assert.equal(logs.some((message) => message.includes('skipping empty candidate batch for medical')), true)
+    assert.equal(logs.some((message) => message.includes('finishReason')), true)
+    assert.equal(logs.some((message) => message.includes('reference request retry')), false)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('reference build rejects a refused stability batch without aborting the target', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-reference-refused-stability-'))
+  let refusedStabilityAttempts = 0
+  let refused = false
+  const logs: string[] = []
+  const fetchFn: typeof fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body)) as {
+      model: string
+      temperature: number
+      messages: Array<{ content: string }>
+    }
+    const prompt = body.messages.at(-1)?.content ?? ''
+    if (!refused && body.model === 'upstream-test' && !prompt.startsWith('Generate ') && body.temperature === 0) {
+      refused = true
+      refusedStabilityAttempts += 1
+      return Response.json({
+        choices: [{ message: { content: null }, finish_reason: 'content_filter', native_finish_reason: 'refusal' }],
+        usage: { prompt_tokens: 100, completion_tokens: 1 },
+      })
+    }
+    return response(successfulContent(body.model, prompt))
+  }
+  try {
+    const built = await buildModelReference({
+      model: MODEL,
+      referencesDir: directory,
+      config: config(),
+      fetchFn,
+      log: (message) => logs.push(message),
+    })
+    assert.equal(built.reference.probes.length, 100)
+    assert.equal(refusedStabilityAttempts, 1)
+    assert.equal(logs.some((message) => message.includes('skipping 10-probe stability batch')), true)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('no-text length responses isolate a contrast without identical retries', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-reference-length-contrast-'))
+  let lengthAttempts = 0
+  const fetchFn: typeof fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body)) as { model: string; messages: Array<{ content: string }> }
+    const prompt = body.messages.at(-1)?.content ?? ''
+    if (body.model === 'contrast-test') {
+      lengthAttempts += 1
+      return Response.json({
+        choices: [{ message: { content: null }, finish_reason: 'length', native_finish_reason: 'length' }],
+        usage: { prompt_tokens: 100, completion_tokens: 1600 },
+      })
+    }
+    return response(successfulContent(body.model, prompt))
+  }
+  try {
+    await assert.rejects(
+      buildModelReference({
+        model: MODEL,
+        referencesDir: directory,
+        config: config({ referenceMaxNoProgressRounds: 1 }),
+        fetchFn,
+      }),
+      /made no progress/,
+    )
+    assert.equal(lengthAttempts, 1)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('reference build isolates an unavailable contrast after its first terminal failure', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-reference-gated-contrast-'))
+  let gatedAttempts = 0
+  const logs: string[] = []
+  const value = config()
+  value.referenceEndpoint!.models[MODEL]!.contrastModels = ['gated-contrast', 'contrast-test']
+  value.referenceEndpoint!.contrastModelBank!['gated-contrast'] = {
+    upstreamModel: 'gated-contrast',
+    pricing: { inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.2 },
+    capabilityRank: 2,
+  }
+  const fetchFn: typeof fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body)) as { model: string; messages: Array<{ content: string }> }
+    const prompt = body.messages.at(-1)?.content ?? ''
+    if (body.model === 'gated-contrast') {
+      gatedAttempts += 1
+      return response(JSON.stringify({ error: { message: 'age confirmation required' } }), 403)
+    }
+    return response(successfulContent(body.model, prompt))
+  }
+  try {
+    const built = await buildModelReference({
+      model: MODEL,
+      referencesDir: directory,
+      config: value,
+      fetchFn,
+      log: (message) => logs.push(message),
+    })
+    assert.equal(built.reference.probes.length, 100)
+    assert.equal(gatedAttempts, 1)
+    assert.equal(logs.some((message) => message.includes('contrast model gated-contrast unavailable')), true)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
@@ -232,6 +452,8 @@ test('adaptive builder selects the first powered prefix', async () => {
     assert.equal(built.reference.probes.length, 120)
     assert.equal(built.reference.selfTest.hamming, 4)
     assert.ok(built.reference.statisticalPower >= 0.9)
+    assert.equal(built.reference.queryProfile.reasoningStrategy, 'reasoning-effort-none')
+    assert.deepEqual(built.reference.queryProfile.requestOverrides, { reasoning_effort: 'none' })
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
@@ -484,23 +706,42 @@ test('collector rejects decimal disagreement in exact-match domains', async () =
   }), /made no progress for 1 rounds/)
 })
 
-test('reference requests retry transient failures', async () => {
+test('reference requests retry new-account throttles with queued same-model work', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'antseed-reference-retry-'))
-  let firstCandidateBatchAttempts = 0
+  const rateLimitedStabilityAttempts: number[] = []
   const fetchFn: typeof fetch = async (_url, init) => {
-    const body = JSON.parse(String(init?.body)) as { model: string; messages: Array<{ content: string }> }
+    const body = JSON.parse(String(init?.body)) as {
+      model: string
+      temperature: number
+      messages: Array<{ content: string }>
+    }
     const prompt = body.messages.at(-1)?.content ?? ''
-    if (prompt.includes('domain chemistry_bp')
-      && prompt.includes('generation round 1, batch 1.')
-      && firstCandidateBatchAttempts++ === 0) {
-      return response('throttled', 429)
+    if (body.model === 'upstream-test' && !prompt.startsWith('Generate ') && body.temperature === 0) {
+      rateLimitedStabilityAttempts.push(Date.now())
+      if (rateLimitedStabilityAttempts.length === 1) {
+        return new Response(JSON.stringify({ error: 'Rate limit exceeded: new-account-rpm/upstream-test' }), {
+          status: 429,
+          headers: { 'content-type': 'application/json', 'retry-after': '0.001' },
+        })
+      }
     }
     return response(successfulContent(body.model, prompt))
   }
   try {
-    const built = await buildModelReference({ model: MODEL, referencesDir: directory, config: config(), fetchFn })
+    const value = config()
+    const built = await buildModelReference({
+      model: MODEL,
+      referencesDir: directory,
+      config: value,
+      fetchFn,
+      requestLimiter: createReferenceRequestLimiter(value, {
+        newAccountMinimumRequestIntervalMs: 1,
+        newAccountRateLimitCooldownMs: 20,
+      }),
+    })
     assert.equal(built.reference.probes.length, 100)
-    assert.equal(firstCandidateBatchAttempts, 2)
+    assert.ok(rateLimitedStabilityAttempts.length >= 2)
+    assert.ok(rateLimitedStabilityAttempts[1]! - rateLimitedStabilityAttempts[0]! >= 15)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

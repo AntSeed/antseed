@@ -20,9 +20,12 @@ import {
   parseProxyAuditExchangeCost,
   summarizeAuditExchangeCosts,
   writeProxyAuditEvidence,
+  writeProxyAuditSkipEvidence,
   type AuditCostSummaryV1,
   type ProxyAuditEvidenceExchangeV1,
   type ProxyAuditEvidenceV1,
+  type ProxyAuditSkipEvidenceV1,
+  type VerificationSkipCode,
 } from './proxy-evidence.js'
 import type { ResponseAuthReader } from './response-auth-reader.js'
 import { advertisedServices } from './service-discovery.js'
@@ -30,6 +33,16 @@ import { mapWithAdaptiveConcurrency, type AuditTaskLimiter } from './audit-concu
 
 const PROBE_REQUEST_ATTEMPTS = 5
 const PROBE_RETRY_BASE_DELAY_MS = 500
+
+class VerificationSkipSignal extends Error {
+  constructor(
+    readonly code: VerificationSkipCode,
+    readonly reason: string,
+    readonly exchange: ProxyAuditEvidenceExchangeV1,
+  ) {
+    super(reason)
+  }
+}
 
 export interface BuyerProxySnapshot {
   baseUrl: string
@@ -77,6 +90,20 @@ export interface ModelVerificationFailure {
   reason: string
 }
 
+export interface ModelVerificationSkip {
+  peerId: string
+  displayName: string | null
+  agentId: string | null
+  service: string
+  status: 'SKIPPED'
+  code: VerificationSkipCode
+  reason: string
+  source: 'preflight' | 'runtime'
+  auditId: string | null
+  evidencePath: string | null
+  evidenceHash: string | null
+}
+
 export interface ModelVerificationRunSummary {
   version: 1
   kind: 'antseed-model-verification-run'
@@ -90,6 +117,7 @@ export interface ModelVerificationRunSummary {
   completedAt: string
   results: ModelVerificationTargetResult[]
   failures: ModelVerificationFailure[]
+  skipped: ModelVerificationSkip[]
 }
 
 export async function loadBuyerProxySnapshot(dataDir: string): Promise<BuyerProxySnapshot> {
@@ -128,11 +156,20 @@ export async function loadBuyerProxySnapshot(dataDir: string): Promise<BuyerProx
 export function classifyVerificationTarget(
   peer: PeerInfo,
   normalizedModel: string,
-): { eligible: true; service: string } | { eligible: false; reason: string } {
+): { eligible: true; service: string }
+  | { eligible: false; code: 'model_not_advertised'; service: null; reason: string }
+  | { eligible: false; code: 'missing_response_auth'; service: string; reason: string } {
   const service = advertisedServices(peer).get(normalizedModel)
-  if (!service) return { eligible: false, reason: 'model no longer advertised' }
+  if (!service) {
+    return { eligible: false, code: 'model_not_advertised', service: null, reason: 'model not advertised' }
+  }
   if (!peer.capabilities?.includes(CONNECTION_CAPABILITY_RESPONSE_AUTH_V1)) {
-    return { eligible: false, reason: `missing ${CONNECTION_CAPABILITY_RESPONSE_AUTH_V1}` }
+    return {
+      eligible: false,
+      code: 'missing_response_auth',
+      service,
+      reason: `missing ${CONNECTION_CAPABILITY_RESPONSE_AUTH_V1}`,
+    }
   }
   return { eligible: true, service }
 }
@@ -143,7 +180,7 @@ export async function verifyModelTarget(input: {
   service: string
   reference: KbfReferenceV1
   auditId?: string
-}): Promise<ModelVerificationTargetResult> {
+}): Promise<ModelVerificationTargetResult | ModelVerificationSkip> {
   const batches = chunk(input.reference.probes, KBF_PROBES_PER_REQUEST)
   const auditController = new AbortController()
   const auditTimer = setTimeout(() => auditController.abort(), input.context.auditTimeoutMs)
@@ -165,6 +202,53 @@ export async function verifyModelTarget(input: {
         && exchange.responseAuth.status === 'verified'
         && exchange.timing.responseLatencyMs <= input.context.batchConcurrencyPromotionLatencyMs,
     )
+  } catch (error) {
+    if (!(error instanceof VerificationSkipSignal)) throw error
+    const completedAt = Date.now()
+    const evidence: ProxyAuditSkipEvidenceV1 = {
+      version: 1,
+      kind: 'antseed-buyer-proxy-target-skip',
+      evidenceLevel: 'proxy-observation-no-payment-evidence',
+      createdAt: new Date(completedAt).toISOString(),
+      buyerProxy: {
+        baseUrl: input.context.proxy.baseUrl,
+        statePath: input.context.proxy.statePath,
+        pid: input.context.proxy.pid,
+      },
+      target: {
+        peerId: input.target.peerId,
+        displayName: input.target.displayName ?? null,
+        agentId: input.target.onChainAgentId ? String(input.target.onChainAgentId) : null,
+        service: input.service,
+      },
+      reference: {
+        referenceId: input.reference.referenceId,
+        referenceModel: input.reference.referenceModel,
+      },
+      exchange: error.exchange,
+      result: { status: 'SKIPPED', code: error.code, reason: error.reason },
+    }
+    const evidenceHash = canonicalHashBytes32(evidence)
+    const auditId = input.auditId ?? deriveProxyAuditId({
+      targetPeerId: input.target.peerId,
+      referenceId: input.reference.referenceId,
+      completedAt,
+      evidenceHash,
+    })
+    const written = await writeProxyAuditSkipEvidence(input.context.evidenceDir, auditId, evidence)
+    return {
+      peerId: input.target.peerId,
+      displayName: input.target.displayName ?? null,
+      agentId: input.target.onChainAgentId ? String(input.target.onChainAgentId) : null,
+      service: input.service,
+      status: 'SKIPPED',
+      code: error.code,
+      reason: error.reason,
+      source: 'runtime',
+      auditId,
+      evidencePath: written.path,
+      evidenceHash: written.evidenceHash,
+    }
   } finally {
     clearTimeout(auditTimer)
   }
@@ -316,6 +400,30 @@ async function executeProxyProbeBatch(
       }
       if (!response.ok) {
         lastFailure = `buyer proxy HTTP ${response.status}: ${responseText(responseBody).slice(0, 500)}`
+        const skip = batchIndex === 0 ? classifyVerificationSkip(response.status, responseBody) : null
+        if (skip) {
+          const completedAt = Date.now()
+          throw new VerificationSkipSignal(skip.code, skip.reason, {
+            batchIndex,
+            attemptCount,
+            requestIds,
+            probeIds: probes.map((probe) => probe.id),
+            request,
+            response: lastResponse,
+            timing: { startedAt, completedAt, responseLatencyMs: Math.max(0, completedAt - startedAt) },
+            answers: new Array<number | null>(probes.length).fill(null),
+            matches: new Array<null>(probes.length).fill(null),
+            status: 'failed',
+            failureReason: lastFailure,
+            cost: null,
+            responseAuth: {
+              requestId,
+              status: 'missing',
+              record: null,
+              failureReason: 'proxy batch was rejected before a successful authenticated response',
+            },
+          })
+        }
         if (response.status === 429) onRateLimited?.()
         if (!isRetryableStatus(response.status)) break
         throw new Error(lastFailure)
@@ -363,6 +471,7 @@ async function executeProxyProbeBatch(
         },
       }
     } catch (error) {
+      if (error instanceof VerificationSkipSignal) throw error
       lastFailure = context.signal.aborted
         ? `seller audit deadline exceeded after ${context.auditTimeoutMs}ms`
         : controller.signal.aborted
@@ -398,6 +507,47 @@ async function executeProxyProbeBatch(
       failureReason: 'proxy batch did not complete successfully',
     },
   }
+}
+
+function classifyVerificationSkip(
+  statusCode: number,
+  body: Uint8Array,
+): { code: VerificationSkipCode; reason: string } | null {
+  const text = responseText(body)
+  let code = ''
+  let message = text
+  try {
+    const parsed = JSON.parse(text) as { error?: unknown }
+    const error = parsed.error
+    if (error && typeof error === 'object') {
+      const record = error as Record<string, unknown>
+      code = typeof record.code === 'string' ? record.code : ''
+      message = typeof record.message === 'string' ? record.message : text
+    } else if (typeof error === 'string') {
+      message = error
+    }
+  } catch {
+    // Plain-text proxy errors are supported for compatibility with older buyers.
+  }
+
+  if (code === 'reputation_below_minimum' || code === 'price_above_maximum' || code === 'policy_rejected') {
+    return { code, reason: message }
+  }
+  if (message.includes('outside your buyer routing policy')) {
+    return { code: 'policy_rejected', reason: message }
+  }
+  if ((statusCode === 400 || statusCode === 404)
+    && (code === 'model_not_found' || message.includes('is not served by this peer'))) {
+    return {
+      code: 'stale_model_advertisement',
+      reason: `peer advertised ${extractQuotedService(message) ?? 'the requested model'} but rejected it as unavailable`,
+    }
+  }
+  return null
+}
+
+function extractQuotedService(message: string): string | null {
+  return message.match(/Service\s+"([^"]+)"\s+is not served by this peer/i)?.[1] ?? null
 }
 
 export async function writeRunSummary(evidenceDir: string, summary: ModelVerificationRunSummary): Promise<string> {

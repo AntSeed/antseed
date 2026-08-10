@@ -5,17 +5,26 @@ import { canonicalHashBytes32 } from '@antseed/fingerprints'
 import { loadConfig } from '../../../config/loader.js'
 import { writeJsonAtomic } from '../../../verifier/atomic-files.js'
 import { resolveVerifierCommandModels, resolveVerifierModelConfig } from '../../../verifier/model-config.js'
-import { buildModelReference } from '../../../verifier/model-reference.js'
+import { buildModelReference, createReferenceRequestLimiter } from '../../../verifier/model-reference.js'
 import { loadConfiguredVerifierModelCatalog } from '../../../verifier/openrouter-catalog.js'
-import { appendModelReferenceToBank } from '../../../verifier/probe-bank.js'
+import {
+  appendModelReferenceToBank,
+  inspectModelProbeBankPower,
+  type ProbeBankPowerStatus,
+} from '../../../verifier/probe-bank.js'
 import { getGlobalOptions } from '../types.js'
+import {
+  formatReferenceBuildPlan,
+  ReferenceBuildProgress,
+  type ReferenceProgressPlan,
+} from './reference-progress.js'
 
 export function registerVerifierReferenceCommand(verifier: Command): void {
   const reference = verifier.command('reference').description('Manage powered model references')
   reference
     .command('build [model]')
-    .description('Build and append references for one configured model or every enabled model')
-    .option('--all', 'build references for every enabled configured model')
+    .description('Build and append references for one configured model or every underpowered model')
+    .option('--all', 'build references for enabled models without a reusable powered bank')
     .action(async (modelValue: string | undefined, options: { all?: boolean }, command: Command) => {
       const globalOptions = getGlobalOptions(command)
       const config = await loadConfig(globalOptions.config)
@@ -24,29 +33,68 @@ export function registerVerifierReferenceCommand(verifier: Command): void {
       const banksDir = config.verifier?.banksDir ?? join(globalOptions.dataDir, 'verifier', 'banks')
       const catalog = await loadConfiguredVerifierModelCatalog(config.verifier)
       const startedAt = new Date().toISOString()
+      const plans: ReferenceProgressPlan[] = await Promise.all(models.map(async (model) => {
+        try {
+          const selected = resolveVerifierModelConfig(config.verifier, model, catalog)
+          const bankStatus = options.all === true
+            ? await inspectModelProbeBankPower({ banksDir, model, config: config.verifier })
+            : undefined
+          const skipReason = referenceBuildSkipReason(options.all === true, bankStatus)
+          return {
+            model,
+            contrastModels: selected.contrastModels,
+            bankedProbeCount: bankStatus?.totalProbeCount,
+            skipReason,
+          }
+        } catch (error) {
+          return { model, contrastModels: [], configurationError: asError(error).message }
+        }
+      }))
+      console.log(chalk.bold('Reference build plan:'))
+      for (const line of formatReferenceBuildPlan(plans)) console.log(chalk.dim(line))
+      const progress = new ReferenceBuildProgress(plans)
+      const requestLimiter = createReferenceRequestLimiter(config.verifier)
+      progress.start()
       type ReferenceBuildResult = {
         model: string
-        status: 'BUILT' | 'FAILED'
+        status: 'BUILT' | 'FAILED' | 'SKIPPED'
         referenceId?: string
         referencePath?: string
         bankPath?: string
         addedProbeCount?: number
+        canonicalConflictProbeCount?: number
         totalProbeCount?: number
         contrastModels?: string[]
         costUsdMicros?: string
         reason?: string
       }
 
-      const results: ReferenceBuildResult[] = await Promise.all(models.map(async (model) => {
+      const results: ReferenceBuildResult[] = await Promise.all(plans.map(async (plan) => {
+        const { model } = plan
         try {
-          const selected = resolveVerifierModelConfig(config.verifier, model, catalog)
-          console.log(chalk.dim(`[reference:${model}] selected contrasts: ${selected.contrastModels.join(', ')}`))
+          if (plan.configurationError) throw new Error(plan.configurationError)
+          if (plan.skipReason) {
+            const result: ReferenceBuildResult = {
+              model,
+              status: 'SKIPPED',
+              totalProbeCount: plan.bankedProbeCount,
+              contrastModels: [...plan.contrastModels],
+              reason: plan.skipReason,
+            }
+            progress.complete(model, `skipped: ${plan.skipReason}`)
+            if (!progress.interactive) console.log(chalk.cyan(`Skipped ${model}: ${plan.skipReason}`))
+            return result
+          }
           const built = await buildModelReference({
             model,
             referencesDir,
             config: config.verifier,
             catalog,
-            log: (message) => console.log(chalk.dim(`[reference:${model}] ${message}`)),
+            requestLimiter,
+            log: (message) => {
+              if (progress.interactive) progress.update(model, message)
+              else console.log(chalk.dim(`[reference:${model}] ${message}`))
+            },
           })
           const appended = await appendModelReferenceToBank({
             banksDir,
@@ -54,6 +102,7 @@ export function registerVerifierReferenceCommand(verifier: Command): void {
             reference: built.reference,
             cost: built.cost,
           })
+          await built.finalize()
           const result: ReferenceBuildResult = {
             model,
             status: 'BUILT',
@@ -61,21 +110,34 @@ export function registerVerifierReferenceCommand(verifier: Command): void {
             referencePath: built.path,
             bankPath: appended.path,
             addedProbeCount: appended.addedProbeCount,
+            canonicalConflictProbeCount: appended.canonicalConflictProbeCount,
             totalProbeCount: appended.totalProbeCount,
             contrastModels: built.reference.contrasts.map((contrast) => contrast.model),
             costUsdMicros: built.cost.totalUsdMicros,
           }
-          console.log(chalk.green(
-            `Built ${model}: +${appended.addedProbeCount} probes (${appended.totalProbeCount} banked), `
+          const conflictSuffix = appended.canonicalConflictProbeCount > 0
+            ? `, discarded ${appended.canonicalConflictProbeCount} conflicting canonical variants`
+            : ''
+          const successMessage = chalk.green(
+            `Built ${model}: +${appended.addedProbeCount} probes (${appended.totalProbeCount} banked)${conflictSuffix}, `
             + `$${(Number(built.cost.totalUsdMicros) / 1_000_000).toFixed(6)}`,
-          ))
+          )
+          progress.complete(
+            model,
+            `built: +${appended.addedProbeCount} probes (${appended.totalProbeCount} banked)${conflictSuffix}, `
+            + `$${(Number(built.cost.totalUsdMicros) / 1_000_000).toFixed(6)}`,
+          )
+          if (!progress.interactive) console.log(successMessage)
           return result
         } catch (error) {
           const reason = asError(error).message
-          console.warn(chalk.yellow(`FAILED ${model}: ${reason}`))
+          const failureMessage = chalk.yellow(`FAILED ${model}: ${reason}`)
+          progress.complete(model, `failed: ${reason}`)
+          if (!progress.interactive) console.warn(failureMessage)
           return { model, status: 'FAILED', reason }
         }
       }))
+      progress.finish()
 
       const completedAt = new Date().toISOString()
       const summary = {
@@ -97,4 +159,14 @@ export function registerVerifierReferenceCommand(verifier: Command): void {
 
 function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error))
+}
+
+export function referenceBuildSkipReason(
+  all: boolean,
+  bankStatus: ProbeBankPowerStatus | undefined,
+): string | undefined {
+  if (!all || bankStatus?.selectedProbeCount === null || bankStatus?.selectedProbeCount === undefined
+    || bankStatus.statisticalPower === null) return undefined
+  return `powered bank available: ${bankStatus.selectedProbeCount}/${bankStatus.totalProbeCount} probes, `
+    + `power ${bankStatus.statisticalPower.toFixed(3)}`
 }
