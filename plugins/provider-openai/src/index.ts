@@ -2,6 +2,7 @@ import type { AntseedProviderPlugin, Provider } from '@antseed/node';
 import {
   BaseProvider,
   StaticTokenProvider,
+  isImageModelId,
   parseCsv,
   parseJsonObject,
   parseNonNegativeNumber,
@@ -62,9 +63,7 @@ function getAdvertisedServiceProtocol(
   service: string,
   flavor: OpenAiCompatFlavor,
 ): ServiceApiProtocol | null {
-  const normalized = service.trim().toLowerCase();
-  const isImageModel = /(^|\/)(gpt-image-|dall-e|grok-imagine-image)/.test(normalized);
-  if (isImageModel) {
+  if (isImageModelId(service)) {
     if (flavor === 'openrouter') {
       return null;
     }
