@@ -107,15 +107,16 @@ function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pi
       type="button"
       className={[
         styles.row,
-        checked ? styles.rowChecked : '',
         compact ? styles.rowCompact : '',
       ].filter(Boolean).join(' ')}
       aria-pressed={checked}
       onClick={onClick}
     >
-      {checked && (
-        <HugeiconsIcon icon={Tick02Icon} size={16} strokeWidth={2} className={styles.check} />
-      )}
+      <span className={styles.checkSlot} aria-hidden="true">
+        {checked && (
+          <HugeiconsIcon icon={Tick02Icon} size={16} strokeWidth={2} className={styles.check} />
+        )}
+      </span>
       <span className={styles.rowMain}>
         <span className={styles.titleLine}>
           <BrandIcon name={entry.provider} hints={[entry.label]} size={16} className={styles.logo} />

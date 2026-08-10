@@ -31,6 +31,7 @@ import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import type { ViewName } from '../../types';
 import { OverlayScrollArea } from '../OverlayScrollArea';
+import { BottomNotice } from '../BottomNotice';
 import { BrandIcon } from '../brand/BrandIcon';
 import { VprModelRowList } from '../vpr/VprModelRows';
 import { hasSeenChats, rememberSeenChats, VprRecentChatsCard } from '../vpr/VprRecentChats';
@@ -561,20 +562,15 @@ export function VprHomeView({ onSelectView }: Props) {
       </div>
       </OverlayScrollArea>
       {modelChangeNotice ? (
-        <div className={styles.modelChangeBanner} role="status" aria-live="polite">
-          <span className={styles.modelChangeBannerIcon} aria-hidden="true">
-            <HugeiconsIcon icon={Tick02Icon} size={16} strokeWidth={2.2} />
-          </span>
-          <span className={styles.modelChangeBannerText}>{modelChangeNotice}</span>
-          <button
-            type="button"
-            className={styles.modelChangeBannerClose}
-            aria-label="Dismiss model change confirmation"
-            onClick={() => setModelChangeNotice(null)}
-          >
-            <HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={2} />
-          </button>
-        </div>
+        <BottomNotice
+          ariaLive="polite"
+          body={modelChangeNotice}
+          dismissIcon={<HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={2} />}
+          dismissLabel="Dismiss model change confirmation"
+          icon={<HugeiconsIcon icon={Tick02Icon} size={16} strokeWidth={2.2} />}
+          layout="toast"
+          onDismiss={() => setModelChangeNotice(null)}
+        />
       ) : null}
     </section>
   );
