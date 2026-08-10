@@ -25,6 +25,7 @@ export function normalizePaymentChannelSummary(value: unknown): DesktopPaymentCh
     channelId,
     peerId: readStringField(raw, 'peerId') || readStringField(raw, 'sellerPeerId'),
     seller: readStringField(raw, 'seller') || readStringField(raw, 'sellerAddress') || readStringField(raw, 'sellerEvmAddress'),
+    sellerDisplayName: null,
     reserveMax: readStringField(raw, 'reserveMax') || readStringField(raw, 'maxAmount') || readStringField(raw, 'reserveMaxBaseUnits') || '0',
     cumulativeSigned: readStringField(raw, 'cumulativeSigned') || readStringField(raw, 'latestCumulativeAmount') || readStringField(raw, 'cumulativeAmount') || '0',
     settledUsdc: readStringField(raw, 'settledAmount') || '0',
@@ -35,6 +36,16 @@ export function normalizePaymentChannelSummary(value: unknown): DesktopPaymentCh
     outputTokens: readStringField(raw, 'outputTokens') || '0',
     cooperativeCloseSupported: raw['cooperativeCloseSupported'] === true,
   };
+}
+
+export function enrichChannelSellerDisplayNames(
+  channels: readonly DesktopPaymentChannelSummary[],
+  resolveDisplayName: (peerId: string) => string | null,
+): DesktopPaymentChannelSummary[] {
+  return channels.map((channel) => ({
+    ...channel,
+    sellerDisplayName: resolveDisplayName(channel.peerId)?.trim() || null,
+  }));
 }
 
 export type CooperativeCloseRequestOptions = {

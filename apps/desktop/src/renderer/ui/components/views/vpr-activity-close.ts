@@ -7,9 +7,57 @@ export type ChannelCloseFeedback = {
   message: string;
 };
 
-export function channelCloseAction(status: string, cooperativeCloseSupported: boolean): ChannelCloseAction {
+export function isCurrentChannelStatus(status: string): boolean {
+  return status === 'active'
+    || status === 'open'
+    || status === 'closing'
+    || status === 'withdrawable';
+}
+
+export function isFundedCurrentChannel(row: {
+  status: string;
+  reserveMax: string;
+  settledUsdc: string;
+}): boolean {
+  return isCurrentChannelStatus(row.status) && channelLockedBaseUnits(row) > 0n;
+}
+
+export function channelLockedBaseUnits(row: { reserveMax: string; settledUsdc: string }): bigint {
+  try {
+    const reserved = BigInt(row.reserveMax || '0');
+    const settled = BigInt(row.settledUsdc || '0');
+    return reserved > settled ? reserved - settled : 0n;
+  } catch {
+    return 0n;
+  }
+}
+
+export function formatChannelLockedAmount(row: { reserveMax: string; settledUsdc: string }): string {
+  const locked = channelLockedBaseUnits(row);
+  if (locked === 0n) return 'No funds locked';
+  if (locked < 10_000n) return '<$0.01 locked';
+  const whole = locked / 1_000_000n;
+  const cents = (locked % 1_000_000n) / 10_000n;
+  return `$${whole}.${cents.toString().padStart(2, '0')} locked`;
+}
+
+export function compareChannelsByLockedAmount(
+  left: { reserveMax: string; settledUsdc: string; reservedAt: number },
+  right: { reserveMax: string; settledUsdc: string; reservedAt: number },
+): number {
+  const leftLocked = channelLockedBaseUnits(left);
+  const rightLocked = channelLockedBaseUnits(right);
+  if (leftLocked === rightLocked) return (right.reservedAt || 0) - (left.reservedAt || 0);
+  return rightLocked > leftLocked ? 1 : -1;
+}
+
+export function channelCloseAction(
+  status: string,
+  cooperativeCloseSupported: boolean,
+  cooperativeCloseFailed = false,
+): ChannelCloseAction {
   if (status === 'active' || status === 'open') {
-    return cooperativeCloseSupported ? 'seller-and-on-chain' : 'on-chain';
+    return cooperativeCloseSupported && !cooperativeCloseFailed ? 'seller-and-on-chain' : 'on-chain';
   }
   if (status === 'withdrawable') return 'withdraw';
   return 'none';

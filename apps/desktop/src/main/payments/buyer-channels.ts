@@ -46,6 +46,7 @@ export type DesktopPaymentChannelSummary = {
   channelId: string;
   peerId: string;
   seller: string;
+  sellerDisplayName: string | null;
   reserveMax: string;
   cumulativeSigned: string;
   /** Amount the seller has already settled on-chain (base units). Filled by
@@ -189,6 +190,7 @@ async function enrichChannelStatuses(channels: DesktopPaymentChannelSummary[]): 
   await runInBatches(candidates, CHANNEL_ENRICH_CONCURRENCY, async (row) => {
     const info = await client.getSession(row.channelId);
     const closeRequestedAt = Number(info.closeRequestedAt);
+    row.reserveMax = info.deposit.toString();
     row.settledUsdc = info.settled.toString();
     if (info.status === 2) row.status = 'settled';
     else if (info.status === 3) row.status = 'timedout';

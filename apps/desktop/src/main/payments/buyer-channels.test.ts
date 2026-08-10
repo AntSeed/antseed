@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  enrichChannelSellerDisplayNames,
   normalizePaymentChannelSummary,
   requestCooperativeChannelCloseAtPort,
   runInBatches,
@@ -23,6 +24,21 @@ test('normalizePaymentChannelSummary defaults missing cooperative-close support 
 
   assert.equal(unsupported?.cooperativeCloseSupported, false);
   assert.equal(supported?.cooperativeCloseSupported, true);
+});
+
+test('enrichChannelSellerDisplayNames resolves names and preserves null fallbacks', () => {
+  const named = normalizePaymentChannelSummary({ sessionId: 'channel-1', peerId: 'peer-1' });
+  const unnamed = normalizePaymentChannelSummary({ sessionId: 'channel-2', peerId: 'peer-2' });
+  assert.ok(named);
+  assert.ok(unnamed);
+
+  const channels = enrichChannelSellerDisplayNames(
+    [named, unnamed],
+    (peerId) => peerId === 'peer-1' ? '  Seller One  ' : null,
+  );
+
+  assert.equal(channels[0]?.sellerDisplayName, 'Seller One');
+  assert.equal(channels[1]?.sellerDisplayName, null);
 });
 
 test('runInBatches processes active-looking channels beyond the first batch', async () => {

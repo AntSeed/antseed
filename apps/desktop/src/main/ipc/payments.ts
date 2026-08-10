@@ -26,6 +26,7 @@ import {
   notePendingSpend,
   requestCooperativeChannelClose,
 } from '../payments/buyer-channels.js';
+import { enrichChannelSellerDisplayNames } from '../payments/buyer-channel-control.js';
 import { resolveServiceIdHashes } from '../payments/service-hash-resolver.js';
 import {
   type CreditsInfo,
@@ -36,6 +37,10 @@ import {
   setCachedAntsTokenClient,
   setCachedEmissionsClient,
 } from '../payments/credits.js';
+import {
+  type DesktopBuyerSpendHistory,
+  fetchBuyerSpendHistory,
+} from '../payments/buyer-spend-history.js';
 import {
   demoteDepositWatchTimer,
   makeDepositsClient,
@@ -416,13 +421,36 @@ export function registerPaymentsIpc(): void {
     };
   });
 
+  ipcMain.handle('payments:get-buyer-spend-history', async (): Promise<{ ok: boolean; data: DesktopBuyerSpendHistory | null; error: string | null }> => {
+    try {
+      const identity = getSecureIdentity();
+      const cryptoConfig = await loadCachedCryptoConfig();
+      const data = await fetchBuyerSpendHistory({
+        address: identity?.wallet.address ?? null,
+        chainId: cryptoConfig?.chainId ?? 8453,
+      });
+      return { ok: true, data, error: null };
+    } catch (err) {
+      return {
+        ok: false,
+        data: null,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  });
+
   ipcMain.handle('payments:get-channels', async (): Promise<{ ok: boolean; data: DesktopPaymentChannelSummary[] | null; error: string | null }> => {
     const channels = await loadBuyerChannels(true);
     if (!channels) {
       return { ok: false, data: null, error: 'buyer proxy unreachable' };
     }
     notePendingSpend(channels);
-    return { ok: true, data: channels, error: null };
+    await refreshPeerCache().catch(() => {});
+    const enrichedChannels = enrichChannelSellerDisplayNames(
+      channels,
+      (peerId) => lookupPeer(peerId)?.displayName ?? null,
+    );
+    return { ok: true, data: enrichedChannels, error: null };
   });
 
   ipcMain.handle('payments:request-cooperative-close', async (_event, opts?: { peerId?: string }) => {
