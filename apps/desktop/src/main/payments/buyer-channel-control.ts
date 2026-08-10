@@ -1,3 +1,4 @@
+/** Buyer-daemon client and response normalization for payment channels. */
 import type { CloseChannelResultPayload } from '@antseed/node';
 import { LOCALHOST_URL } from '../constants.js';
 import type { DesktopPaymentChannelSummary } from './buyer-channels.js';
@@ -40,6 +41,17 @@ export type CooperativeCloseRequestOptions = {
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
 };
+
+export async function runInBatches<T>(
+  items: readonly T[],
+  batchSize: number,
+  task: (item: T) => Promise<void>,
+): Promise<void> {
+  for (let offset = 0; offset < items.length; offset += batchSize) {
+    const batch = items.slice(offset, offset + batchSize);
+    await Promise.allSettled(batch.map(task));
+  }
+}
 
 function isCloseChannelResult(value: unknown): value is CloseChannelResultPayload {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;

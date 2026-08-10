@@ -1,4 +1,4 @@
-import { createContext } from 'react';
+import { createContext, useCallback, useContext } from 'react';
 import type { ViewName } from '../../types';
 
 /**
@@ -9,7 +9,17 @@ import type { ViewName } from '../../types';
  */
 export type VprNav = {
   navigate: (view: ViewName) => void;
-  leaveDeposit: () => void;
+  /** Return to the previously active screen; `fallback` when there is no
+      history left (fresh launch, history exhausted). */
+  back: (fallback: ViewName) => void;
 };
 
 export const VprNavContext = createContext<VprNav | null>(null);
+
+/** Back handler for a view's header: pops the nav history so the back button
+    returns to wherever the user actually came from, with the view's natural
+    parent screen as the empty-history fallback. */
+export function useVprNavBack(fallback: ViewName): () => void {
+  const nav = useContext(VprNavContext);
+  return useCallback(() => nav?.back(fallback), [nav, fallback]);
+}
