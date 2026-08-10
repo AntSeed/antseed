@@ -76,6 +76,19 @@ export type DesktopPaymentChannelSummary = {
   inputTokens: string;
   /** Cumulative output tokens over this channel (bigint string). */
   outputTokens: string;
+  cooperativeCloseSupported: boolean;
+};
+
+export type CooperativeCloseResult = {
+  version: 1;
+  channelId: string;
+  status: 'closed' | 'rejected';
+  txHash?: string;
+  finalAmount?: string;
+  code?: 'busy' | 'pending_auth' | 'no_channel' | 'invalid_auth' | 'close_failed' | 'unsupported';
+  reason?: string;
+  retryAfterMs?: number;
+  requiredCumulativeAmount?: string;
 };
 
 export type DesktopRewardsSummary = {
@@ -87,7 +100,7 @@ export type DesktopRewardsSummary = {
 };
 
 export type DepositWatchStatus = {
-  phase: 'received' | 'sweeping' | 'credited' | 'error';
+  phase: 'deferred' | 'received' | 'sweeping' | 'credited' | 'error';
   /** USDC base units (6 decimals), bigint string. */
   amountBaseUnits?: string;
   txHash?: string;
@@ -371,7 +384,7 @@ export type DesktopBridge = {
   downloadUpdate?: () => Promise<InstallUpdateResult>;
   getUpdateStatus?: () => Promise<UpdateStatus | null>;
   setDebugLogs?: (enabled: boolean) => Promise<{ ok: true }>;
-  creditsGetInfo?: () => Promise<{ ok: boolean; data: { evmAddress: string | null; operatorAddress: string | null; balanceUsdc: string; reservedUsdc: string; availableUsdc: string; pendingUsdc: string; spendableUsdc: string; creditLimitUsdc: string } | null; error: string | null }>;
+  creditsGetInfo?: () => Promise<{ ok: boolean; data: { evmAddress: string | null; operatorAddress: string | null; balanceUsdc: string; reservedUsdc: string; availableUsdc: string; pendingUsdc: string; spendableUsdc: string; walletUsdc: string; totalOwnedUsdc: string; creditLimitUsdc: string } | null; error: string | null }>;
   /** Prompts a native save dialog and writes the signer private key to the chosen file. */
   identityExportKey?: () => Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string | null }>;
   /** Replaces the signer private key (the current one is backed up on disk first). */
@@ -409,6 +422,11 @@ export type DesktopBridge = {
   paymentsCloseCheckoutWindows?: () => Promise<{ ok: boolean }>;
   paymentsGetBuyerUsage?: () => Promise<{ ok: boolean; data: DesktopBuyerUsageTotals | null; error: string | null; lastActivityAt?: number | null }>;
   paymentsGetChannels?: () => Promise<{ ok: boolean; data: DesktopPaymentChannelSummary[]; error: string | null }>;
+  paymentsRequestCooperativeClose?: (opts: { peerId: string }) => Promise<{
+    ok: boolean;
+    result: CooperativeCloseResult | null;
+    error: string | null;
+  }>;
   paymentsGetRewardsSummary?: () => Promise<{ ok: boolean; data: DesktopRewardsSummary | null; error: string | null }>;
   /** Fired when a browser pay page reports a completed payment action. */
   onPaymentsCompleted?: (handler: () => void) => () => void;

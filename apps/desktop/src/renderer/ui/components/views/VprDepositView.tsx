@@ -12,9 +12,10 @@ import {
 } from '@hugeicons/core-free-icons';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
-import { formatCredits, shortAddress } from '../../../core/format';
+import { shortAddress } from '../../../core/format';
 import { VprCard, VprPage } from '../vpr/VprKit';
 import type { DepositWatchStatus } from '../../../types/bridge';
+import { BalanceSummaryCard } from './BalanceSummaryCard';
 import styles from './VprDepositView.module.scss';
 
 // The Fun (fun.xyz) checkout SDK is heavy (it bundles wagmi/viem), so it loads
@@ -371,8 +372,13 @@ function explorerTxUrl(chainId: number | undefined, txHash: string): string | nu
 export function VprDepositView({ onSelectView }: Props) {
   const actions = useActions();
   const snap = useUiSelector((state) => ({
-    spendable: state.creditsSpendableUsdc,
     total: state.creditsTotalUsdc,
+    available: state.creditsAvailableUsdc,
+    reserved: state.creditsReservedUsdc,
+    pending: state.creditsPendingUsdc,
+    wallet: state.creditsWalletUsdc,
+    totalOwned: state.creditsTotalOwnedUsdc,
+    creditLimit: state.creditsCreditLimitUsdc,
   }), shallowEqual);
 
   const [slide, setSlide] = useState<StageSlide>(() => ({
@@ -391,6 +397,15 @@ export function VprDepositView({ onSelectView }: Props) {
   // else (QR transfer, hosted provider pages) sits behind this link.
   const [moreOpen, setMoreOpen] = useState(false);
   const copyTimer = useRef<number | null>(null);
+  const balanceValues = {
+    available: snap.available,
+    reserved: snap.reserved,
+    pending: snap.pending,
+    wallet: snap.wallet,
+    totalOwned: snap.totalOwned,
+    creditLimit: snap.creditLimit,
+    deposited: snap.total,
+  };
 
   const goToStage = useCallback((next: Stage) => {
     setSlide((current) => current.stage === next ? current : {
@@ -565,6 +580,8 @@ export function VprDepositView({ onSelectView }: Props) {
     if (watchError) return { tone: 'error' as const, text: watchError };
     if (!watchStatus) return { tone: 'idle' as const, text: 'Waiting for USDC on Base…' };
     switch (watchStatus.phase) {
+      case 'deferred':
+        return { tone: 'idle' as const, text: 'Waiting for USDC on Base…' };
       case 'received':
         return { tone: 'busy' as const, text: `Received $${baseUnitsToUsd(watchStatus.amountBaseUnits)} — preparing deposit…` };
       case 'sweeping':
@@ -638,85 +655,77 @@ export function VprDepositView({ onSelectView }: Props) {
   function renderStage(current: Stage): JSX.Element {
     if (current === 'choose') {
       return (
-        <VprPage title="Add credits" backFallback="credits">
+        <VprPage title="Add credits" backToDepositSource>
         <div className={styles.stack}>
 
-          <VprCard className={styles.balanceCard}>
-            <span className={styles.balanceLabel}>Your balance</span>
-            <span className={styles.balanceValue}>${formatCredits(snap.spendable)}</span>
-            <span className={styles.balanceHint}>
-              Credits are USDC held for you in AntSeed's on-chain escrow. You only pay for
-              what you use, and unused credits can be withdrawn anytime.
-            </span>
-          </VprCard>
+          <BalanceSummaryCard values={balanceValues} />
 
-          {/* Primary path — for US users (the pay page's region gating
-              decides) the antseed-pay card checkout leads and Fun moves under
-              "More options"; elsewhere the Fun (fun.xyz) checkout leads as
-              before. Both deliver to the hot wallet the deposit watcher
-              sweeps. */}
-          {stripeAvailable ? (
+          <div className={styles.primaryMethods}>
+            {/* Primary path — for US users (the pay page's region gating
+                decides) the antseed-pay card checkout leads and Fun moves under
+                "More options"; elsewhere the Fun (fun.xyz) checkout leads as
+                before. Both deliver to the hot wallet the deposit watcher
+                sweeps. */}
+            {stripeAvailable ? (
+              <div className={styles.methodGroup}>
+                <button
+                  type="button"
+                  className={styles.linkCta}
+                  aria-label="Pay with Link"
+                  onClick={() => openCardProvider('antseed-pay')}
+                >
+                  <span>Pay with</span>
+                  <LinkWordmark />
+                </button>
+                <span className={styles.linkCtaSub}>
+                  <span>Powered by Outerfound</span>
+                  <span className={styles.methodBadges} aria-hidden="true">
+                    <VisaRoundMark />
+                    <MastercardRoundMark />
+                    <AmexRoundMark />
+                  </span>
+                </span>
+              </div>
+            ) : funAvailable && (funWatchInfo && funkitApiKey ? (
+              <Suspense fallback={<button type="button" className={styles.funCta} disabled>{funCtaContent}</button>}>
+                <FunkitDeposit
+                  apiKey={funkitApiKey}
+                  recipient={funWatchInfo.address}
+                  usdcAddress={funWatchInfo.usdcAddress}
+                  className={styles.funCta}
+                  onError={(message) => setPayPageNotice(message || null)}
+                >
+                  {funCtaContent}
+                </FunkitDeposit>
+              </Suspense>
+            ) : (
+              <button type="button" className={styles.funCta} disabled>{funCtaContent}</button>
+            ))}
+            {payPageNotice && <div className={styles.cardNotice} role="alert">{payPageNotice}</div>}
+
             <div className={styles.methodGroup}>
-              {/* Link-branded primary (Stripe's card + US-bank checkout): the
-                  green "Pay with link" pill, with the processor + accepted
-                  cards on a quiet line underneath. */}
-              <button
-                type="button"
-                className={styles.linkCta}
-                aria-label="Pay with Link"
-                onClick={() => openCardProvider('antseed-pay')}
-              >
-                <span>Pay with</span>
-                <LinkWordmark />
-              </button>
-              <span className={styles.linkCtaSub}>
-                <span>Powered by Outerfound</span>
+              <button type="button" className={styles.methodCta} onClick={() => goToStage('crypto')}>
+                <span className={styles.methodCtaIcon}>
+                  <BaseMark size={22} />
+                </span>
+                <span className={styles.methodCtaText}>
+                  <span className={styles.methodCtaTitle}>Quick deposit</span>
+                  <span className={styles.methodCtaCaption}>USDC on Base</span>
+                </span>
                 <span className={styles.methodBadges} aria-hidden="true">
-                  <VisaRoundMark />
-                  <MastercardRoundMark />
-                  <AmexRoundMark />
+                  <UsdcMark />
+                  <span className={styles.badgeChip}>
+                    <HugeiconsIcon icon={QrCodeIcon} size={12} strokeWidth={2} />
+                  </span>
                 </span>
-              </span>
+                <span className={styles.methodArrow} aria-hidden="true">
+                  <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} />
+                </span>
+              </button>
+              <span className={styles.methodFootnote}>* Deposited to your credits by the AntSeed relayer network</span>
             </div>
-          ) : funAvailable && (funWatchInfo && funkitApiKey ? (
-            <Suspense fallback={<button type="button" className={styles.funCta} disabled>{funCtaContent}</button>}>
-              <FunkitDeposit
-                apiKey={funkitApiKey}
-                recipient={funWatchInfo.address}
-                usdcAddress={funWatchInfo.usdcAddress}
-                className={styles.funCta}
-                onError={(message) => setPayPageNotice(message || null)}
-              >
-                {funCtaContent}
-              </FunkitDeposit>
-            </Suspense>
-          ) : (
-            <button type="button" className={styles.funCta} disabled>{funCtaContent}</button>
-          ))}
-          {payPageNotice && <div className={styles.cardNotice} role="alert">{payPageNotice}</div>}
-
-          <div className={styles.methodGroup}>
-            <button type="button" className={styles.methodCta} onClick={() => goToStage('crypto')}>
-              <span className={styles.methodCtaIcon}>
-                <BaseMark size={22} />
-              </span>
-              <span className={styles.methodCtaText}>
-                <span className={styles.methodCtaTitle}>Quick deposit</span>
-                <span className={styles.methodCtaCaption}>USDC on Base</span>
-              </span>
-              <span className={styles.methodBadges} aria-hidden="true">
-                <UsdcMark />
-                <span className={styles.badgeChip}>
-                  <HugeiconsIcon icon={QrCodeIcon} size={12} strokeWidth={2} />
-                </span>
-              </span>
-              <span className={styles.methodArrow} aria-hidden="true">
-                <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} />
-              </span>
-            </button>
-            <span className={styles.methodFootnote}>* Deposited to your credits by the AntSeed relayer network</span>
+            {cardNotice && <div className={styles.cardNotice} role="alert">{cardNotice}</div>}
           </div>
-          {cardNotice && <div className={styles.cardNotice} role="alert">{cardNotice}</div>}
 
           <button
             type="button"

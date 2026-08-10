@@ -7,6 +7,7 @@ import {
   ANTSEED_ATTEST_PATH,
   computeOnChainReputationScore,
   decodeSweepRequest,
+  peerSupportsCooperativeClose,
   type AntseedNode,
   type BuyerSpendEvent,
   type PeerInfo,
@@ -1288,8 +1289,17 @@ export class BuyerProxy {
       const channels = all
         ? this._node.getAllBuyerChannels()
         : this._node.getActiveBuyerChannels()
+      const peers = await this._getPeers()
+      const peersById = new Map<string, PeerInfo>(peers.map((peer) => [peer.peerId, peer]))
+      const channelsWithCapabilities = channels.map((channel) => {
+        const peer = peersById.get(channel.peerId)
+        return {
+          ...channel,
+          cooperativeCloseSupported: peer ? peerSupportsCooperativeClose(peer) : false,
+        }
+      })
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ ok: true, channels }))
+      res.end(JSON.stringify({ ok: true, channels: channelsWithCapabilities }))
       return
     }
 

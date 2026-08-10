@@ -3,11 +3,20 @@
  * the on-chain enrichment the Credits view needs (channel status, and spend
  * authorized but not yet settled).
  */
-import { ChannelsClient } from '@antseed/node';
+import { ChannelsClient, type CloseChannelResultPayload } from '@antseed/node';
 import { LOCALHOST_URL } from '../constants.js';
 import { pendingSpendFromChannels } from '../billing/credits-balance.js';
 import { resolveBuyerProxyPort } from '../runtime/active-config.js';
 import { getCachedChannelsClient, loadCachedCryptoConfig, setCachedChannelsClient } from './credits.js';
+import {
+  normalizePaymentChannelSummary,
+  requestCooperativeChannelCloseAtPort,
+} from './channel-control.js';
+
+export {
+  normalizePaymentChannelSummary,
+  requestCooperativeChannelCloseAtPort,
+} from './channel-control.js';
 
 /** Per-service usage from the buyer daemon. `serviceIdHash` is
     keccak256(serviceName); `serviceName` is resolved by the main process from
@@ -46,6 +55,7 @@ export type DesktopPaymentChannelSummary = {
   requestCount: number;
   inputTokens: string;
   outputTokens: string;
+  cooperativeCloseSupported: boolean;
 };
 
 export type DesktopRewardsSummary = {
@@ -125,24 +135,9 @@ export function normalizeBuyerUsageTotals(value: unknown): DesktopBuyerUsageTota
   };
 }
 
-function normalizePaymentChannelSummary(value: unknown): DesktopPaymentChannelSummary | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const raw = value as Record<string, unknown>;
-  const channelId = readStringField(raw, 'channelId') || readStringField(raw, 'sessionId');
-  if (!channelId) return null;
-  return {
-    channelId,
-    peerId: readStringField(raw, 'peerId') || readStringField(raw, 'sellerPeerId'),
-    seller: readStringField(raw, 'seller') || readStringField(raw, 'sellerAddress') || readStringField(raw, 'sellerEvmAddress'),
-    reserveMax: readStringField(raw, 'reserveMax') || readStringField(raw, 'maxAmount') || readStringField(raw, 'reserveMaxBaseUnits') || '0',
-    cumulativeSigned: readStringField(raw, 'cumulativeSigned') || readStringField(raw, 'latestCumulativeAmount') || readStringField(raw, 'cumulativeAmount') || '0',
-    settledUsdc: readStringField(raw, 'settledAmount') || '0',
-    reservedAt: readNumberField(raw, 'reservedAt'),
-    status: readStringField(raw, 'status') || 'unknown',
-    requestCount: readNumberField(raw, 'requestCount'),
-    inputTokens: readStringField(raw, 'tokensDelivered') || '0',
-    outputTokens: readStringField(raw, 'outputTokens') || '0',
-  };
+export async function requestCooperativeChannelClose(peerId: string): Promise<CloseChannelResultPayload> {
+  const port = await resolveBuyerProxyPort();
+  return requestCooperativeChannelCloseAtPort(port, peerId);
 }
 
 export async function fetchBuyerProxyJson(pathname: string): Promise<Record<string, unknown> | null> {
@@ -243,4 +238,3 @@ export async function getPendingSpendUsdc(): Promise<bigint> {
   if (!channels) return cachedPendingSpend;
   return notePendingSpend(channels);
 }
-

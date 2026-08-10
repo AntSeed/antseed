@@ -34,32 +34,21 @@ export function AppShell() {
   const [activeView, setActiveView] = useState<ViewName>('home');
   const [setupVisible, setSetupVisible] = useState(false);
   const [setupDismissed, setSetupDismissed] = useState(false);
-
-  // Screens visited before the current one, most recent last. Header back
-  // buttons pop this so "back" returns to where the user actually came from;
-  // the per-view fallback target only applies when the stack is empty.
-  const viewHistoryRef = useRef<ViewName[]>([]);
-  const activeViewRef = useRef<ViewName>(activeView);
+  const activeViewRef = useRef<ViewName>('home');
+  const depositReturnViewRef = useRef<ViewName>('credits');
 
   const handleSelectView = useCallback((view: ViewName) => {
     const current = activeViewRef.current;
     if (view === current) return;
-    const stack = viewHistoryRef.current;
-    stack.push(current);
-    if (stack.length > 32) stack.shift();
+    if (view === 'deposit') depositReturnViewRef.current = current;
     activeViewRef.current = view;
     setActiveView(view);
   }, []);
 
-  const handleNavigateBack = useCallback((fallback: ViewName) => {
-    const current = activeViewRef.current;
-    const stack = viewHistoryRef.current;
-    let target = stack.pop();
-    while (target === current) target = stack.pop();
-    const next = target ?? fallback;
-    if (next === current) return;
-    activeViewRef.current = next;
-    setActiveView(next);
+  const handleLeaveDeposit = useCallback(() => {
+    const target = depositReturnViewRef.current;
+    activeViewRef.current = target;
+    setActiveView(target);
   }, []);
 
   const hasServices = snap.chatServiceCount > 0;
@@ -140,7 +129,11 @@ export function AppShell() {
   }
 
   return (
-    <VprShell activeView={activeView} onSelectView={handleSelectView} onNavigateBack={handleNavigateBack}>
+    <VprShell
+      activeView={activeView}
+      onSelectView={handleSelectView}
+      onLeaveDeposit={handleLeaveDeposit}
+    >
       <ViewHost activeView={activeView} onSelectView={handleSelectView} />
     </VprShell>
   );

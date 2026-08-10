@@ -10,7 +10,6 @@ import {
   DepositsClient,
   DepositRelayClient,
   buildReceiveAuthorization,
-  formatUsdc,
   makeUsdcDomain,
   peerRelaysSweeps,
 } from '@antseed/node';
@@ -24,7 +23,7 @@ import { focusMainWindow } from './portal.js';
 import { invalidateCreditsCache, loadCachedCryptoConfig } from './credits.js';
 
 type DepositWatchStatus = {
-  phase: 'received' | 'sweeping' | 'credited' | 'error';
+  phase: 'deferred' | 'received' | 'sweeping' | 'credited' | 'error';
   amountBaseUnits?: string;
   txHash?: string;
   error?: string;
@@ -235,19 +234,13 @@ export async function sweepIncomingUsdc(client: DepositsClient, buyer: string): 
     // rest in the wallet for a later sweep.
     const headroom = creditLimit > depositsBalance ? creditLimit - depositsBalance : 0n;
     if (headroom === 0n) {
-      sendDepositWatchStatus({
-        phase: 'error',
-        error: `Your credits are at the account limit (${formatUsdc(creditLimit)} USDC). Spend or withdraw before depositing more.`,
-      });
+      sendDepositWatchStatus({ phase: 'deferred' });
       return;
     }
     // Headroom-clamped top-up: wait until at least MIN_TOPUP_BASE_UNITS of
     // headroom is free instead of sweeping fee-heavy slivers repeatedly.
     if (usdcBalance - fee > headroom && headroom < MIN_TOPUP_BASE_UNITS) {
-      sendDepositWatchStatus({
-        phase: 'error',
-        error: `Your credits are near the account limit (${formatUsdc(creditLimit)} USDC). The USDC in your wallet tops up automatically as you spend.`,
-      });
+      sendDepositWatchStatus({ phase: 'deferred' });
       return;
     }
     let amount = usdcBalance;

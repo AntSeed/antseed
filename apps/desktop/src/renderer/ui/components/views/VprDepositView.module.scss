@@ -16,32 +16,10 @@
   min-width: 0;
 }
 
-/* ---------- Balance header ---------- */
-
-.balanceCard {
+.primaryMethods {
   display: grid;
-  gap: 2px;
-  padding: 12px 16px;
-}
-
-.balanceLabel {
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 16px;
-}
-
-.balanceValue {
-  color: var(--text-primary);
-  font-size: 24px;
-  font-weight: 650;
-  line-height: 28px;
-}
-
-.balanceHint {
-  margin-top: 2px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 16px;
+  gap: 12px;
+  width: 100%;
 }
 
 /* ---------- Method chooser (CTAs) ---------- */

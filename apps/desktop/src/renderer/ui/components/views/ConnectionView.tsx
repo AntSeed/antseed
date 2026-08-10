@@ -29,7 +29,7 @@ export function ConnectionView({ onSelectView }: ConnectionViewProps) {
     <section className={`view view-connection ${styles.view}`} role="tabpanel">
       <div className={styles.stack}>
         <div className={styles.headRow}>
-          <VprBackTitle title="Connection" fallback="help" />
+          <VprBackTitle title="Connection" onBack={() => onSelectView?.('help')} />
           <span className={`${styles.badge} ${badgeTone}`}>{connectionMeta.label}</span>
         </div>
 

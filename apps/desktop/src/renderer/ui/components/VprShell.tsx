@@ -32,16 +32,16 @@ declare const __APP_VERSION__: string;
 type VprShellProps = {
   activeView: ViewName;
   onSelectView: (view: ViewName) => void;
-  onNavigateBack: (fallback: ViewName) => void;
+  onLeaveDeposit: () => void;
   children: React.ReactNode;
 };
 
 const mainNavEntries = navViews('main');
 const bottomNavEntries = navViews('bottom');
 
-export function VprShell({ activeView, onSelectView, onNavigateBack, children }: VprShellProps) {
+export function VprShell({ activeView, onSelectView, onLeaveDeposit, children }: VprShellProps) {
   const snap = useUiSelector((state) => ({
-    creditsSpendableUsdc: state.creditsSpendableUsdc,
+    creditsTotalOwnedUsdc: state.creditsTotalOwnedUsdc,
     connectBadgeLabel: state.connectBadge.label,
     networkHealth: state.ovDhtHealth,
     proxyPort: state.ovProxyPort,
@@ -63,8 +63,8 @@ export function VprShell({ activeView, onSelectView, onNavigateBack, children }:
   const chatPanelVisible = activeView === 'chat' && snap.chatPanelExpanded;
 
   const navValue = useMemo(
-    () => ({ navigate: onSelectView, back: onNavigateBack }),
-    [onSelectView, onNavigateBack],
+    () => ({ navigate: onSelectView, leaveDeposit: onLeaveDeposit }),
+    [onLeaveDeposit, onSelectView],
   );
 
   return (
@@ -130,7 +130,7 @@ export function VprShell({ activeView, onSelectView, onNavigateBack, children }:
               title="Add credits"
               onClick={() => onSelectView('deposit')}
             >
-              ${formatCredits(snap.creditsSpendableUsdc)}
+              ${formatCredits(snap.creditsTotalOwnedUsdc)}
             </button>
           </div>
         )}
