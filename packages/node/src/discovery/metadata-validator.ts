@@ -4,11 +4,11 @@ import { encodeMetadata } from "./metadata-codec.js";
 import { MAX_PUBLIC_ADDRESS_LENGTH, parsePublicAddress } from "./public-address.js";
 import { validateUnitBillingModelV1 } from "../billing/unit.js";
 
-// v9 adds signed verification claims and v10 adds peer capabilities. Keep
-// enough room for several normal claims while bounding DHT-served metadata.
-export const MAX_METADATA_SIZE = 1400;
+// Metadata is fetched from an untrusted HTTP endpoint. Keep the signed binary
+// snapshot bounded while allowing large aggregator catalogs.
+export const MAX_METADATA_SIZE = 128 * 1024;
 export const MAX_PROVIDERS = 10;
-export const MAX_SERVICES_PER_PROVIDER = 20;
+export const MAX_SERVICES_PER_PROVIDER = 512;
 export const MAX_SERVICE_NAME_LENGTH = 64;
 export const MAX_REGION_LENGTH = 32;
 export const MAX_DISPLAY_NAME_LENGTH = 64;
@@ -17,7 +17,7 @@ export const MAX_DOMAIN_LENGTH = 253;
 export const MAX_GITHUB_VERIFICATION_CLAIMS = 5;
 export const MAX_GITHUB_USERNAME_LENGTH = 39;
 export const MAX_GITHUB_REPOSITORY_LENGTH = 100;
-export const MAX_SERVICE_CATEGORIES_PER_SERVICE = 8;
+export const MAX_SERVICE_CATEGORIES_PER_SERVICE = 64;
 export const MAX_SERVICE_CATEGORY_LENGTH = 32;
 export const MAX_SERVICE_API_PROTOCOLS_PER_SERVICE = 4;
 export const MAX_BILLING_COMPONENTS_PER_MODEL = 8;

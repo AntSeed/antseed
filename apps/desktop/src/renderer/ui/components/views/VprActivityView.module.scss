@@ -140,8 +140,52 @@
   cursor: pointer;
 }
 
-.rowAction:hover {
+.rowAction:hover:not(:disabled) {
   color: var(--brand);
+}
+
+.rowActions {
+  display: grid;
+  gap: 2px;
+  justify-items: end;
+}
+
+.rowAction:disabled,
+.rowActionSecondary:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.rowActionSecondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 15px;
+  cursor: pointer;
+}
+
+.rowActionSecondary:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.closeFeedback {
+  max-width: 220px;
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.closeFeedback_success {
+  color: var(--accent-green);
+}
+
+.closeFeedback_error {
+  color: var(--text-secondary);
 }
 
 /* ---------- Footnote ---------- */

@@ -544,6 +544,7 @@ const api = {
   paymentsCloseCheckoutWindows: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('payments:close-checkout-windows') as Promise<{ ok: boolean }>,
   paymentsGetBuyerUsage: () => ipcRenderer.invoke('payments:get-buyer-usage'),
   paymentsGetChannels: () => ipcRenderer.invoke('payments:get-channels'),
+  paymentsRequestCooperativeClose: (opts: { peerId: string }) => ipcRenderer.invoke('payments:request-cooperative-close', opts),
   paymentsGetRewardsSummary: () => ipcRenderer.invoke('payments:get-rewards-summary'),
   onPaymentsCompleted(handler: () => void): () => void {
     const listener = () => handler();
@@ -612,9 +613,6 @@ const api = {
   },
   vprFloatGetCompact(): Promise<boolean> {
     return ipcRenderer.invoke('vpr-float:get-compact') as Promise<boolean>;
-  },
-  vprFloatMoveBy(dx: number, dy: number): void {
-    ipcRenderer.send('vpr-float:move-by', dx, dy);
   },
   vprFloatUpdate(data: unknown): void {
     ipcRenderer.send('vpr-float:update', data);

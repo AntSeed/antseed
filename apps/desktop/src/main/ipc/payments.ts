@@ -24,6 +24,7 @@ import {
   loadBuyerChannels,
   normalizeBuyerUsageTotals,
   notePendingSpend,
+  requestCooperativeChannelClose,
 } from '../payments/buyer-channels.js';
 import { resolveServiceIdHashes } from '../payments/service-hash-resolver.js';
 import {
@@ -422,6 +423,23 @@ export function registerPaymentsIpc(): void {
     }
     notePendingSpend(channels);
     return { ok: true, data: channels, error: null };
+  });
+
+  ipcMain.handle('payments:request-cooperative-close', async (_event, opts?: { peerId?: string }) => {
+    const peerId = typeof opts?.peerId === 'string' ? opts.peerId.trim() : '';
+    if (!peerId) {
+      return { ok: false, result: null, error: 'Invalid peerId' };
+    }
+    try {
+      const result = await requestCooperativeChannelClose(peerId);
+      return { ok: true, result, error: null };
+    } catch (err) {
+      return {
+        ok: false,
+        result: null,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
   });
 
   ipcMain.handle('payments:get-rewards-summary', async (): Promise<{ ok: boolean; data: DesktopRewardsSummary | null; error: string | null }> => {

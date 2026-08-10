@@ -67,3 +67,8 @@ export function pendingSpendFromChannels(channels: readonly ChannelSpendRow[]): 
 export function spendableBalance(deposited: bigint, pending: bigint): bigint {
   return deposited > pending ? deposited - pending : 0n;
 }
+
+/** Everything the buyer still owns, including USDC waiting in its wallet. */
+export function totalOwnedBalance(spendable: bigint, wallet: bigint): bigint {
+  return spendable + wallet;
+}

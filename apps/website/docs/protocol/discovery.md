@@ -108,7 +108,7 @@ By default, metadata is fetched from `http://{host}:{port}/metadata` (`metadataP
 
 Recommended category tags: `privacy`, `legal`, `uncensored`, `coding`, `finance`, `tee` (custom tags are allowed).
 
-Metadata v11 added `serviceUnitBillingModels`; v12 added `serviceCapabilities`. Image providers advertise `openai-images` and may attach an `output_images` billing model:
+Metadata v11 added `serviceUnitBillingModels`; v12 adds `serviceCapabilities` and widens service catalog and service-map counts to support up to 512 entries. Image providers advertise `openai-images` and may attach an `output_images` billing model:
 
 ```json
 {
@@ -124,12 +124,18 @@ Metadata v11 added `serviceUnitBillingModels`; v12 added `serviceCapabilities`. 
     }
   },
   "serviceCapabilities": {
-    "gpt-image-1": { "inputs": ["text", "image"] }
+    "gpt-image-1": {
+      "inputs": ["text", "image"],
+      "outputs": ["image"],
+      "supportedParameters": ["background", "output_format", "quality", "size"]
+    }
   }
 }
 ```
 
-Capability fields are optional; absence means unknown. Unit-billing components may match `model`, `size`, `quality`, or `resolution`. Discovery only includes capability and billing entries for services currently advertised by the provider.
+Capability fields are optional; absence means unknown. `inputs` and `outputs` declare accepted and produced modalities (`text`, `image`, `audio`, `video`, `pdf`); `supportedParameters` lists extra request-body parameter names the service accepts (lowercase snake_case, announced in code-unit sorted order). Unit-billing components may match `model`, `size`, `quality`, or `resolution`. Discovery only includes capability and billing entries for services currently advertised by the provider.
+
+Capabilities are hints, not enforced contracts. The buyer proxy performs one advisory check: when a peer announces `supportedParameters` for the routed service and the request body carries parameters outside that list, the proxy logs a warning and forwards the request unchanged — the upstream provider remains the authority on which parameters it accepts.
 
 :::warning Metadata version compatibility
 Buyers reject metadata versions newer than they understand. A v10/v11 buyer therefore drops a v12 seller, while a v12 buyer continues to accept v10 and v11 sellers. Upgrade buyers before sellers using the [metadata v12 migration guide](/docs/guides/metadata-v12-upgrade).

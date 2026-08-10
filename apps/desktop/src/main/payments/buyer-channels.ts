@@ -3,11 +3,21 @@
  * the on-chain enrichment the Credits view needs (channel status, and spend
  * authorized but not yet settled).
  */
-import { ChannelsClient } from '@antseed/node';
+import { ChannelsClient, type CloseChannelResultPayload } from '@antseed/node';
 import { LOCALHOST_URL } from '../constants.js';
 import { pendingSpendFromChannels } from '../billing/credits-balance.js';
 import { resolveBuyerProxyPort } from '../runtime/active-config.js';
 import { getCachedChannelsClient, loadCachedCryptoConfig, setCachedChannelsClient } from './credits.js';
+import {
+  normalizePaymentChannelSummary,
+  requestCooperativeChannelCloseAtPort,
+  runInBatches,
+} from './buyer-channel-control.js';
+
+export {
+  normalizePaymentChannelSummary,
+  requestCooperativeChannelCloseAtPort,
+} from './buyer-channel-control.js';
 
 /** Per-service usage from the buyer daemon. `serviceIdHash` is
     keccak256(serviceName); `serviceName` is resolved by the main process from
@@ -46,6 +56,7 @@ export type DesktopPaymentChannelSummary = {
   requestCount: number;
   inputTokens: string;
   outputTokens: string;
+  cooperativeCloseSupported: boolean;
 };
 
 export type DesktopRewardsSummary = {
@@ -125,24 +136,9 @@ export function normalizeBuyerUsageTotals(value: unknown): DesktopBuyerUsageTota
   };
 }
 
-function normalizePaymentChannelSummary(value: unknown): DesktopPaymentChannelSummary | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const raw = value as Record<string, unknown>;
-  const channelId = readStringField(raw, 'channelId') || readStringField(raw, 'sessionId');
-  if (!channelId) return null;
-  return {
-    channelId,
-    peerId: readStringField(raw, 'peerId') || readStringField(raw, 'sellerPeerId'),
-    seller: readStringField(raw, 'seller') || readStringField(raw, 'sellerAddress') || readStringField(raw, 'sellerEvmAddress'),
-    reserveMax: readStringField(raw, 'reserveMax') || readStringField(raw, 'maxAmount') || readStringField(raw, 'reserveMaxBaseUnits') || '0',
-    cumulativeSigned: readStringField(raw, 'cumulativeSigned') || readStringField(raw, 'latestCumulativeAmount') || readStringField(raw, 'cumulativeAmount') || '0',
-    settledUsdc: readStringField(raw, 'settledAmount') || '0',
-    reservedAt: readNumberField(raw, 'reservedAt'),
-    status: readStringField(raw, 'status') || 'unknown',
-    requestCount: readNumberField(raw, 'requestCount'),
-    inputTokens: readStringField(raw, 'tokensDelivered') || '0',
-    outputTokens: readStringField(raw, 'outputTokens') || '0',
-  };
+export async function requestCooperativeChannelClose(peerId: string): Promise<CloseChannelResultPayload> {
+  const port = await resolveBuyerProxyPort();
+  return requestCooperativeChannelCloseAtPort(port, peerId);
 }
 
 export async function fetchBuyerProxyJson(pathname: string): Promise<Record<string, unknown> | null> {
@@ -169,8 +165,8 @@ export function formatAnts(value: bigint): string {
 
 // AntseedChannels grace period between requestClose() and withdraw().
 const CHANNEL_CLOSE_GRACE_SECS = 900;
-// Bound the on-chain enrichment fan-out per refresh.
-const CHANNEL_ENRICH_MAX = 12;
+// Bound concurrent on-chain reads without skipping older active-looking rows.
+const CHANNEL_ENRICH_CONCURRENCY = 12;
 
 // The local ChannelStore can lag the chain (a seller-side settle/close is not
 // always observed), so rows that look active are re-checked on-chain before
@@ -189,9 +185,8 @@ async function enrichChannelStatuses(channels: DesktopPaymentChannelSummary[]): 
     setCachedChannelsClient(client);
   }
   const candidates = channels
-    .filter((row) => row.status === 'active' || row.status === 'open')
-    .slice(0, CHANNEL_ENRICH_MAX);
-  await Promise.allSettled(candidates.map(async (row) => {
+    .filter((row) => row.status === 'active' || row.status === 'open');
+  await runInBatches(candidates, CHANNEL_ENRICH_CONCURRENCY, async (row) => {
     const info = await client.getSession(row.channelId);
     const closeRequestedAt = Number(info.closeRequestedAt);
     row.settledUsdc = info.settled.toString();
@@ -203,7 +198,7 @@ async function enrichChannelStatuses(channels: DesktopPaymentChannelSummary[]): 
     }
     // status 0 (no on-chain record) is ambiguous — a channel may exist
     // locally before its on-chain reserve lands. Keep the local status.
-  }));
+  });
 }
 
 /** Fetch buyer channels from the local proxy and re-check them on-chain. */
@@ -243,4 +238,3 @@ export async function getPendingSpendUsdc(): Promise<bigint> {
   if (!channels) return cachedPendingSpend;
   return notePendingSpend(channels);
 }
-

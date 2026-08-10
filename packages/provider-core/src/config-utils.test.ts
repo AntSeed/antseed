@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { MAX_SERVICES_PER_PROVIDER } from '@antseed/node';
 import { parseServiceCapabilitiesJson, parseServiceUnitBillingModelsJson } from './config-utils.js';
 
 describe('parseServiceUnitBillingModelsJson', () => {
@@ -47,6 +48,10 @@ describe('parseServiceCapabilitiesJson', () => {
         reasoning: true,
         toolUse: false,
       },
+      'gpt-image-1': {
+        outputs: ['image'],
+        supportedParameters: ['background', 'output_format', 'size'],
+      },
     }))).toEqual({
       'gpt-5.5': {
         contextWindow: 200000,
@@ -54,6 +59,10 @@ describe('parseServiceCapabilitiesJson', () => {
         inputs: ['text', 'image'],
         reasoning: true,
         toolUse: false,
+      },
+      'gpt-image-1': {
+        outputs: ['image'],
+        supportedParameters: ['background', 'output_format', 'size'],
       },
     });
   });
@@ -70,6 +79,24 @@ describe('parseServiceCapabilitiesJson', () => {
     }))).toThrow(/Unsupported input modality "hologram"/);
   });
 
+  it('rejects unknown output modalities', () => {
+    expect(() => parseServiceCapabilitiesJson(JSON.stringify({
+      'gpt-image-1': { outputs: ['hologram'] },
+    }))).toThrow(/Unsupported output modality "hologram"/);
+  });
+
+  it('rejects malformed supported parameters', () => {
+    expect(() => parseServiceCapabilitiesJson(JSON.stringify({
+      'gpt-image-1': { supportedParameters: ['Output-Format'] },
+    }))).toThrow(/must be lowercase snake_case/);
+    expect(() => parseServiceCapabilitiesJson(JSON.stringify({
+      'gpt-image-1': { supportedParameters: ['seed', 'seed'] },
+    }))).toThrow(/Duplicate supported parameter "seed"/);
+    expect(() => parseServiceCapabilitiesJson(JSON.stringify({
+      'gpt-image-1': { supportedParameters: Array.from({ length: 33 }, (_, i) => `param_${i}`) },
+    }))).toThrow(/exceeds max 32/);
+  });
+
   it('rejects token counts above the announce-time wire ceiling', () => {
     expect(() => parseServiceCapabilitiesJson(JSON.stringify({
       'gpt-5.5': { contextWindow: 2_000_000_000 },
@@ -78,10 +105,10 @@ describe('parseServiceCapabilitiesJson', () => {
 
   it('rejects more services than the metadata validator allows', () => {
     const many = Object.fromEntries(
-      Array.from({ length: 21 }, (_, i) => [`svc-${i}`, { contextWindow: 1000 }]),
+      Array.from({ length: MAX_SERVICES_PER_PROVIDER + 1 }, (_, i) => [`svc-${i}`, { contextWindow: 1000 }]),
     );
     expect(() => parseServiceCapabilitiesJson(JSON.stringify(many)))
-      .toThrow(/must not define more than 20 services/);
+      .toThrow(`must not define more than ${MAX_SERVICES_PER_PROVIDER} services`);
   });
 
   it('rejects non-integer token counts', () => {

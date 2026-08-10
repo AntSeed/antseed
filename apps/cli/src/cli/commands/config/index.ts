@@ -86,7 +86,7 @@ export function registerConfigCommand(program: Command): void {
     .option('--output <usd>', 'output price in USD per 1M tokens', parseFloat)
     .option('--cached <usd>', 'cached-input price in USD per 1M tokens', parseFloat)
     .option('--categories <list>', 'comma-separated normie tags (e.g., chat,coding,fast)')
-    .option('--capabilities <json>', 'capabilities JSON (contextWindow, inputs, toolUse, etc.)')
+    .option('--capabilities <json>', 'capabilities JSON (contextWindow, inputs, outputs, toolUse, supportedParameters, etc.)')
     .option('--unit-billing-models <json>', 'protocol-to-unit-billing-model JSON')
     .option('--base-url <url>', 'set the provider baseUrl (one-shot; applies to the whole provider)')
     .action(async (providerName: string, serviceId: string, options) => {

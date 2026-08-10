@@ -47,6 +47,8 @@ export function initCreditsModule({ bridge, uiState, onBalanceSufficientForPayme
           uiState.creditsTotalUsdc !== result.data.balanceUsdc ||
           uiState.creditsPendingUsdc !== result.data.pendingUsdc ||
           uiState.creditsSpendableUsdc !== result.data.spendableUsdc ||
+          uiState.creditsWalletUsdc !== result.data.walletUsdc ||
+          uiState.creditsTotalOwnedUsdc !== result.data.totalOwnedUsdc ||
           uiState.creditsEvmAddress !== result.data.evmAddress ||
           uiState.creditsOperatorAddress !== (result.data.operatorAddress ?? null);
 
@@ -55,6 +57,8 @@ export function initCreditsModule({ bridge, uiState, onBalanceSufficientForPayme
         uiState.creditsTotalUsdc = result.data.balanceUsdc;
         uiState.creditsPendingUsdc = result.data.pendingUsdc;
         uiState.creditsSpendableUsdc = result.data.spendableUsdc;
+        uiState.creditsWalletUsdc = result.data.walletUsdc;
+        uiState.creditsTotalOwnedUsdc = result.data.totalOwnedUsdc;
         uiState.creditsCreditLimitUsdc = result.data.creditLimitUsdc;
         uiState.creditsEvmAddress = result.data.evmAddress;
         uiState.creditsOperatorAddress = result.data.operatorAddress ?? null;

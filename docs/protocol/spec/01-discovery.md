@@ -104,7 +104,7 @@ MIN_SUPPORTED_METADATA_VERSION = 10
 | serviceCategories  | object   | Optional per-service map `{ [service]: string[] }` with lowercase tags |
 | serviceApiProtocols| object   | Optional per-service map `{ [service]: string[] }` of supported service API protocols |
 | serviceUnitBillingModels | object | v11+. Optional map `{ [service]: { [protocol]: UnitBillingModelV1 } }` for non-token usage such as `output_images` |
-| serviceCapabilities | object | v12+. Optional map `{ [service]: ServiceCapabilities }` with context/output limits, input modalities, reasoning, tool-use, and structured-output hints |
+| serviceCapabilities | object | v12+. Optional map `{ [service]: ServiceCapabilities }` with context/output limits, input/output modalities, reasoning, tool-use, structured-output, and supported-parameter hints |
 | maxConcurrency   | number   | Maximum concurrent requests (>= 1)                           |
 | currentLoad      | number   | Current number of active requests                            |
 
@@ -126,21 +126,21 @@ Header:
 Per provider (repeated providerCount times):
   [providerLen   : 1 byte   uint8 ]
   [provider      : N bytes  UTF-8  ]   // N = providerLen
-  [serviceCount  : 1 byte   uint8 ]
+  [serviceCount  : 1 byte uint8 through v11; 2 bytes uint16 in v12+ ]
   Per service (repeated serviceCount times):
     [serviceLen  : 1 byte   uint8 ]
     [service     : N bytes  UTF-8  ]   // N = serviceLen
   [defaultInputUsdPerMillion       : 4 bytes  float32 big-endian ]
   [defaultOutputUsdPerMillion      : 4 bytes  float32 big-endian ]
   [defaultCachedInputUsdPerMillion : 4 bytes  float32 big-endian ]   // v7+; defaults to defaultInputUsdPerMillion
-  [servicePricingCount          : 1 byte   uint8 ]
+  [servicePricingCount : 1 byte uint8 through v11; 2 bytes uint16 in v12+ ]
   Per service pricing entry (repeated servicePricingCount times):
     [serviceLen : 1 byte   uint8 ]
     [service    : N bytes  UTF-8  ]
     [inputUsdPerMillion       : 4 bytes  float32 big-endian ]
     [outputUsdPerMillion      : 4 bytes  float32 big-endian ]
     [cachedInputUsdPerMillion : 4 bytes  float32 big-endian ]   // v7+; defaults to inputUsdPerMillion
-  [serviceCategoryCount       : 1 byte   uint8 ]      // v3+
+  [serviceCategoryCount : 1 byte uint8 through v11; 2 bytes uint16 in v12+ ]
   Per service category entry (repeated serviceCategoryCount times):
     [serviceLen : 1 byte   uint8 ]
     [service    : N bytes  UTF-8  ]
@@ -148,7 +148,7 @@ Per provider (repeated providerCount times):
     Per category (repeated categoryCount times):
       [categoryLen : 1 byte uint8 ]
       [category    : N bytes UTF-8 ]
-  [serviceApiProtocolCount    : 1 byte   uint8 ]      // v4+
+  [serviceApiProtocolCount : 1 byte uint8 through v11; 2 bytes uint16 in v12+ ]
   Per service API protocol entry (repeated serviceApiProtocolCount times):
     [serviceLen : 1 byte   uint8 ]
     [service    : N bytes  UTF-8  ]
@@ -156,13 +156,18 @@ Per provider (repeated providerCount times):
     Per protocol (repeated protocolCount times):
       [protocolLen : 1 byte uint8 ]
       [protocol    : N bytes UTF-8 ]
-  [serviceUnitBillingEntryCount : 1 byte uint8 ]   // v11+
+  [serviceUnitBillingEntryCount : 1 byte uint8 through v11; 2 bytes uint16 in v12+ ]
   Per unit billing entry:
     [service][protocolId:1][modelVersion:1][componentCount:1][components...]
     Components encode unit id, float32 USD price, and optional match key/value pairs.
-  [serviceCapabilityEntryCount : 1 byte uint8 ]    // v12+
+  [serviceCapabilityEntryCount : 2 bytes uint16 ]    // v12+
   Per capability entry:
-    [service][presenceBits:1][optional uint32 token limits][optional input bitset:1][boolean value bits:1]
+    [service][presenceBits:1][optional uint32 token limits][optional input bitset:1][optional output bitset:1][boolean value bits:1][optional supported parameters]
+    Presence bits: contextWindow(0), maxOutputTokens(1), inputs(2), reasoning(3),
+    toolUse(4), structuredOutput(5), outputs(6), supportedParameters(7).
+    Input/output bitsets index into ["text","image","audio","video","pdf"].
+    Supported parameters encode as [count:1] then per parameter [len:1][utf8],
+    in code-unit sorted order so re-encoding decoded metadata is byte-stable.
   [maxConcurrency: 2 bytes  uint16  big-endian ]
   [currentLoad   : 2 bytes  uint16  big-endian ]
 
@@ -205,7 +210,7 @@ Metadata validation is intentionally bounded: buyers accept versions from `MIN_S
 | v11 | accepted | accepted | rejected |
 | v12 | accepted | accepted | accepted |
 
-The decoder cannot safely ignore unknown newer versions because provider extensions are embedded in the signed binary layout. Deploy buyer support first, then seller binaries. Removing v11/v12 fields from config does not lower the version emitted by a v12 seller.
+The decoder cannot safely ignore unknown newer versions because provider extensions are embedded in the signed binary layout. Deploy buyer support first, then seller binaries. Metadata v12 widens service and service-map counts from `uint8` to `uint16`; removing optional fields from config does not make a v12 seller emit an older version.
 
 The body (everything except the trailing 65-byte signature) is the data that is signed. `encodeMetadataForSigning()` produces this body without the signature for signing and verification purposes.
 
@@ -215,9 +220,9 @@ The body (everything except the trailing 65-byte signature) is the data that is 
 
 | Constant                  | Value | Description                                 |
 |---------------------------|-------|---------------------------------------------|
-| MAX_METADATA_SIZE         | 1400  | Maximum encoded size in bytes               |
+| MAX_METADATA_SIZE         | 131072 | Maximum encoded size in bytes              |
 | MAX_PROVIDERS             | 10    | Maximum provider entries per metadata       |
-| MAX_SERVICES_PER_PROVIDER | 20    | Maximum services per provider entry         |
+| MAX_SERVICES_PER_PROVIDER | 512   | Maximum services per provider entry         |
 | MAX_SERVICE_NAME_LENGTH   | 64    | Maximum service name length in characters   |
 | MAX_REGION_LENGTH         | 32    | Maximum region string length in characters  |
 | MAX_DISPLAY_NAME_LENGTH   | 64    | Maximum display name length in characters   |
@@ -227,7 +232,7 @@ The body (everything except the trailing 65-byte signature) is the data that is 
 | MAX_GITHUB_VERIFICATION_CLAIMS | 5 | Maximum GitHub verification claims          |
 | MAX_GITHUB_USERNAME_LENGTH | 39   | Maximum GitHub username length              |
 | MAX_GITHUB_REPOSITORY_LENGTH | 100 | Maximum GitHub repository name length       |
-| MAX_SERVICE_CATEGORIES_PER_SERVICE | 8 | Maximum categories per service           |
+| MAX_SERVICE_CATEGORIES_PER_SERVICE | 64 | Maximum categories per service          |
 | MAX_SERVICE_CATEGORY_LENGTH | 32  | Maximum category length in characters       |
 | MAX_SERVICE_API_PROTOCOLS_PER_SERVICE | 4 | Maximum protocol entries per service |
 | MAX_PEER_CAPABILITIES     | 16    | Maximum peer-level capability entries       |
@@ -235,7 +240,7 @@ The body (everything except the trailing 65-byte signature) is the data that is 
 
 Additional validation rules enforced by `validateMetadata()`:
 
-- `version` must equal `METADATA_VERSION` (10).
+- `version` must be between `MIN_SUPPORTED_METADATA_VERSION` (10) and `METADATA_VERSION` (12).
 - `peerId` must be exactly 40 lowercase hex characters.
 - `region` must not be empty.
 - `displayName` is optional, but when present it must be non-empty and <= 64 chars.

@@ -1,0 +1,42 @@
+.card {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px;
+}
+
+.labelRow,
+.valueRow {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+}
+
+.labelRow {
+  gap: 5px;
+}
+
+.label {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.valueRow {
+  gap: 6px;
+}
+
+.value {
+  color: var(--text-primary);
+  font-size: 28px;
+  font-weight: 650;
+  line-height: 32px;
+}
+
+.actions {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  margin-top: 8px;
+}

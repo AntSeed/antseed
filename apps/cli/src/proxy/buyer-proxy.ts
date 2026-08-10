@@ -11,6 +11,7 @@ import {
   decodeSweepRequest,
   faultAttributionOf,
   faultCodeOf,
+  peerSupportsCooperativeClose,
   type AntseedNode,
   type FaultAttribution,
   type BuyerSpendEvent,
@@ -48,6 +49,7 @@ import {
   normalizePeerId,
 } from './request-utils.js'
 import {
+  findUnannouncedRequestParameters,
   getExplicitProviderOverride,
   getExplicitPeerIdOverride,
   resolvePeerRoutePlan,
@@ -1631,8 +1633,17 @@ export class BuyerProxy {
       const channels = all
         ? this._node.getAllBuyerChannels()
         : this._node.getActiveBuyerChannels()
+      const peers = await this._getPeers()
+      const peersById = new Map<string, PeerInfo>(peers.map((peer) => [peer.peerId, peer]))
+      const channelsWithCapabilities = channels.map((channel) => {
+        const peer = peersById.get(channel.peerId)
+        return {
+          ...channel,
+          cooperativeCloseSupported: peer ? peerSupportsCooperativeClose(peer) : false,
+        }
+      })
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ ok: true, channels }))
+      res.end(JSON.stringify({ ok: true, channels: channelsWithCapabilities }))
       return
     }
 
@@ -2289,6 +2300,24 @@ export class BuyerProxy {
 
     if (!selectedRoutePlan) {
       return { done: false, statusCode: 502, responseBody: Buffer.from('No compatible provider route'), responseHeaders: { 'content-type': 'text/plain' }, errorMessage: null }
+    }
+
+    // Soft supportedParameters check — only for direct routes, since a
+    // protocol transform rebuilds the body for the target protocol anyway.
+    if (!selectedRoutePlan.selection?.requiresTransform) {
+      const unannounced = findUnannouncedRequestParameters(
+        selectedPeer,
+        selectedRoutePlan.provider,
+        requestedService,
+        requestProtocol,
+        serializedReq,
+      )
+      if (unannounced.length > 0) {
+        log(
+          `Warning: request to "${requestedService}" carries parameters peer ${selectedPeer.peerId.slice(0, 12)} `
+          + `did not announce for this service: ${unannounced.join(', ')} — the upstream may ignore or reject them`,
+        )
+      }
     }
 
     const {

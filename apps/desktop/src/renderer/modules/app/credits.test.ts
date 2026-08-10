@@ -15,6 +15,10 @@ test('refreshCredits updates balance fields from creditsGetInfo', async () => {
         balanceUsdc: '10',
         reservedUsdc: '2',
         availableUsdc: '8',
+        pendingUsdc: '1',
+        spendableUsdc: '9',
+        walletUsdc: '6',
+        totalOwnedUsdc: '15',
         creditLimitUsdc: '20',
       },
       error: null,
@@ -27,6 +31,10 @@ test('refreshCredits updates balance fields from creditsGetInfo', async () => {
   assert.equal(uiState.creditsAvailableUsdc, '8');
   assert.equal(uiState.creditsReservedUsdc, '2');
   assert.equal(uiState.creditsTotalUsdc, '10');
+  assert.equal(uiState.creditsPendingUsdc, '1');
+  assert.equal(uiState.creditsSpendableUsdc, '9');
+  assert.equal(uiState.creditsWalletUsdc, '6');
+  assert.equal(uiState.creditsTotalOwnedUsdc, '15');
   assert.equal(uiState.creditsCreditLimitUsdc, '20');
   assert.equal(uiState.creditsEvmAddress, '0xabc');
   assert.equal(uiState.creditsOperatorAddress, '0xdef');
@@ -58,6 +66,10 @@ test('refreshPaymentSummary updates usage, channels, and rewards when bridge met
         reservedAt: 1,
         status: 'active',
         requestCount: 3,
+        settledUsdc: '0',
+        inputTokens: '11',
+        outputTokens: '22',
+        cooperativeCloseSupported: true,
       }],
       error: null,
     }),

@@ -282,8 +282,12 @@ export type RendererUiState = {
   creditsTotalUsdc: string;
   /** Signed but not yet settled on-chain — spent in every sense but the ledger's. */
   creditsPendingUsdc: string;
-  /** Total minus pending: the balance the user actually still owns. Headline. */
+  /** Deposits minus pending spend; used for spending and low-funds decisions. */
   creditsSpendableUsdc: string;
+  /** USDC waiting in the buyer wallet before it can be swept into deposits. */
+  creditsWalletUsdc: string;
+  /** Spendable deposits plus wallet USDC. Used by balance headlines. */
+  creditsTotalOwnedUsdc: string;
   creditsCreditLimitUsdc: string;
   creditsEvmAddress: string | null;
   creditsOperatorAddress: string | null;
@@ -456,6 +460,8 @@ export function createInitialUiState(): RendererUiState {
     creditsTotalUsdc: '0',
     creditsPendingUsdc: '0',
     creditsSpendableUsdc: '0',
+    creditsWalletUsdc: '0',
+    creditsTotalOwnedUsdc: '0',
     creditsCreditLimitUsdc: '0',
     creditsEvmAddress: null,
     creditsOperatorAddress: null,

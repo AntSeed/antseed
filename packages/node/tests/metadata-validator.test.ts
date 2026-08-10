@@ -10,6 +10,7 @@ import {
   MAX_DOMAIN_VERIFICATION_CLAIMS,
   MAX_GITHUB_VERIFICATION_CLAIMS,
   MAX_PUBLIC_ADDRESS_LENGTH,
+  MAX_SERVICE_CATEGORIES_PER_SERVICE,
   MAX_SERVICE_CATEGORY_LENGTH,
   MAX_SERVICE_API_PROTOCOLS_PER_SERVICE,
   MAX_PEER_CAPABILITIES,
@@ -358,7 +359,9 @@ describe('validateMetadata', () => {
           contextWindow: 200_000,
           maxOutputTokens: 16_384,
           inputs: ['text', 'image'],
+          outputs: ['text'],
           reasoning: true,
+          supportedParameters: ['seed', 'temperature'],
         },
       },
       maxConcurrency: 1,
@@ -379,6 +382,8 @@ describe('validateMetadata', () => {
             'gpt-5.5': {
               contextWindow: -5,
               inputs: ['text', 'hologram' as any, 'text'],
+              outputs: ['hologram' as any],
+              supportedParameters: ['Output_Format' as any, 'seed', 'seed'],
             },
             'not-announced': { contextWindow: 1000 },
           },
@@ -398,6 +403,18 @@ describe('validateMetadata', () => {
         expect.objectContaining({
           field: 'providers[0].serviceCapabilities.gpt-5.5',
           message: expect.stringContaining('Duplicate'),
+        }),
+        expect.objectContaining({
+          field: 'providers[0].serviceCapabilities.gpt-5.5',
+          message: expect.stringContaining('output modality "hologram"'),
+        }),
+        expect.objectContaining({
+          field: 'providers[0].serviceCapabilities.gpt-5.5',
+          message: expect.stringContaining('"Output_Format" must be lowercase snake_case'),
+        }),
+        expect.objectContaining({
+          field: 'providers[0].serviceCapabilities.gpt-5.5',
+          message: expect.stringContaining('Duplicate supported parameter "seed"'),
         }),
         expect.objectContaining({
           field: 'providers[0].serviceCapabilities.not-announced',
@@ -815,10 +832,12 @@ describe('validateMetadata', () => {
 
 describe('constants', () => {
   it('should export reasonable constant values', () => {
-    expect(MAX_METADATA_SIZE).toBe(1400);
+    expect(MAX_METADATA_SIZE).toBe(128 * 1024);
     expect(MAX_PROVIDERS).toBe(10);
-    expect(MAX_SERVICES_PER_PROVIDER).toBe(20);
+    expect(MAX_SERVICES_PER_PROVIDER).toBe(512);
     expect(MAX_SERVICE_NAME_LENGTH).toBe(64);
     expect(MAX_REGION_LENGTH).toBe(32);
+    expect(MAX_SERVICE_CATEGORIES_PER_SERVICE).toBe(64);
+    expect(MAX_SERVICE_API_PROTOCOLS_PER_SERVICE).toBe(4);
   });
 });

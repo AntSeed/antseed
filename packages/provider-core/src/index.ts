@@ -13,6 +13,7 @@ export {
   parseCsv,
   parseJsonObject,
   buildServiceApiProtocols,
+  isImageModelId,
 } from './config-utils.js';
 export {
   stripRelayRequestHeaders,

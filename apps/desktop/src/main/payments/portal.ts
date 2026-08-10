@@ -61,8 +61,8 @@ export async function stopPaymentsPortal(): Promise<void> {
   paymentsServer = null;
 }
 
-export type PayPageKind = 'deposit' | 'withdraw' | 'authorize' | 'claim' | 'diem' | 'close-channel';
-export const PAY_PAGE_KINDS: readonly PayPageKind[] = ['deposit', 'withdraw', 'authorize', 'claim', 'diem', 'close-channel'];
+export type PayPageKind = 'deposit' | 'withdraw' | 'authorize' | 'claim' | 'close-channel';
+export const PAY_PAGE_KINDS: readonly PayPageKind[] = ['deposit', 'withdraw', 'authorize', 'claim', 'close-channel'];
 
 export let paymentsPopup: BrowserWindow | null = null;
 

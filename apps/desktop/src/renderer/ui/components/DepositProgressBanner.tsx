@@ -36,11 +36,15 @@ export function DepositProgressBanner() {
     const bridge = window.antseedDesktop;
     if (!bridge?.onDepositsWatchStatus) return undefined;
     const unsubscribe = bridge.onDepositsWatchStatus((data) => {
-      setStatus(data);
       if (hideTimer.current) {
         window.clearTimeout(hideTimer.current);
         hideTimer.current = null;
       }
+      if (data.phase === 'deferred') {
+        setStatus((current) => current?.phase === 'credited' ? current : null);
+        return;
+      }
+      setStatus(data);
       if (data.phase === 'credited') {
         actions.refreshCredits();
         hideTimer.current = window.setTimeout(() => setStatus(null), CREDITED_AUTO_HIDE_MS);

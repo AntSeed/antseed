@@ -157,8 +157,12 @@ export function parseServiceCapabilitiesJson(raw: string | undefined, key = 'ANT
       if (caps[field] !== undefined) normalized[field] = caps[field] as number;
     }
     if (caps.inputs !== undefined) normalized.inputs = caps.inputs as ServiceCapabilities['inputs'];
+    if (caps.outputs !== undefined) normalized.outputs = caps.outputs as ServiceCapabilities['outputs'];
     for (const field of ['reasoning', 'toolUse', 'structuredOutput'] as const) {
       if (caps[field] !== undefined) normalized[field] = caps[field] as boolean;
+    }
+    if (caps.supportedParameters !== undefined) {
+      normalized.supportedParameters = caps.supportedParameters as ServiceCapabilities['supportedParameters'];
     }
     // Same validator the announce path uses, so anything accepted here is
     // guaranteed to announce instead of failing silently at announce time.
@@ -197,4 +201,13 @@ export function buildServiceApiProtocols(
 ): Record<string, ServiceApiProtocol[]> | undefined {
   if (services.length === 0) return undefined;
   return Object.fromEntries(services.map((service) => [service, [protocol]]));
+}
+
+/**
+ * Well-known image-generation model families. Shared by the openai plugin's
+ * protocol classification and the seller setup wizard's capability prompts so
+ * "what counts as an image model" cannot drift between the two.
+ */
+export function isImageModelId(model: string): boolean {
+  return /(^|\/)(gpt-image-|dall-e|grok-imagine-image)/.test(model.trim().toLowerCase());
 }
