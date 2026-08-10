@@ -496,7 +496,7 @@ export function VprToolsView() {
 
   return (
     <section className={`view view-vpr-tools view-pinned-header ${styles.view}`} role="tabpanel">
-      <VprPage title="Connected apps">
+      <VprPage title="Connected apps" backFallback="home">
       <div className={styles.stack}>
 
         <VprSearch value={search} onChange={setSearch} placeholder="Search app" />

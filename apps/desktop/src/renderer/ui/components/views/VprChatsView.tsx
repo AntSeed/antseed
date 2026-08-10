@@ -215,6 +215,7 @@ export function VprChatsView({ onSelectView: _onSelectView }: Props) {
           ? (configEntry?.label ?? displayModelLabel(configModel.serviceId))
           : selected ? conversationTitle(selected) : 'Chats'}
         onBack={selected ? (configModel ? configBack : drillBack) : undefined}
+        backFallback="home"
       >
         <div className={styles.stack}>
           {message ? <p className={styles.note} role="status">{message}</p> : null}

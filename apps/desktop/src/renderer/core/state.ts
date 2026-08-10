@@ -276,7 +276,7 @@ export type RendererUiState = {
   creditsTotalUsdc: string;
   /** Signed but not yet settled on-chain — spent in every sense but the ledger's. */
   creditsPendingUsdc: string;
-  /** Total minus pending: the balance the user actually still owns. Headline. */
+  /** Deposits minus pending spend; used for spending and low-funds decisions. */
   creditsSpendableUsdc: string;
   /** USDC waiting in the buyer wallet before it can be swept into deposits. */
   creditsWalletUsdc: string;

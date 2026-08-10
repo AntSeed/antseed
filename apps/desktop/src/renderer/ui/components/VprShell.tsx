@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import type { ViewName } from '../types';
 import { shallowEqual, useUiSelector } from '../hooks/useUiSelector';
+import { selectHeadlineBalanceUsdc } from '../../core/balance';
 import { formatCredits } from '../../core/format';
 import { navViews } from './viewRegistry';
 import { ChatListPanel } from './ChatListPanel';
@@ -32,16 +33,16 @@ declare const __APP_VERSION__: string;
 type VprShellProps = {
   activeView: ViewName;
   onSelectView: (view: ViewName) => void;
-  onLeaveDeposit: () => void;
+  onNavigateBack: (fallback: ViewName) => void;
   children: React.ReactNode;
 };
 
 const mainNavEntries = navViews('main');
 const bottomNavEntries = navViews('bottom');
 
-export function VprShell({ activeView, onSelectView, onLeaveDeposit, children }: VprShellProps) {
+export function VprShell({ activeView, onSelectView, onNavigateBack, children }: VprShellProps) {
   const snap = useUiSelector((state) => ({
-    creditsTotalOwnedUsdc: state.creditsTotalOwnedUsdc,
+    headlineBalanceUsdc: selectHeadlineBalanceUsdc(state),
     connectBadgeLabel: state.connectBadge.label,
     networkHealth: state.ovDhtHealth,
     proxyPort: state.ovProxyPort,
@@ -63,8 +64,8 @@ export function VprShell({ activeView, onSelectView, onLeaveDeposit, children }:
   const chatPanelVisible = activeView === 'chat' && snap.chatPanelExpanded;
 
   const navValue = useMemo(
-    () => ({ navigate: onSelectView, leaveDeposit: onLeaveDeposit }),
-    [onLeaveDeposit, onSelectView],
+    () => ({ navigate: onSelectView, back: onNavigateBack }),
+    [onSelectView, onNavigateBack],
   );
 
   return (
@@ -130,7 +131,7 @@ export function VprShell({ activeView, onSelectView, onLeaveDeposit, children }:
               title="Add credits"
               onClick={() => onSelectView('deposit')}
             >
-              ${formatCredits(snap.creditsTotalOwnedUsdc)}
+              ${formatCredits(snap.headlineBalanceUsdc)}
             </button>
           </div>
         )}

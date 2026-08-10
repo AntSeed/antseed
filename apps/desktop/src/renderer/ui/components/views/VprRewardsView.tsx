@@ -50,7 +50,7 @@ export function VprRewardsView({ onSelectView }: Props) {
 
   return (
     <section className={`view view-vpr-rewards view-pinned-header ${styles.view}`} role="tabpanel">
-      <VprPage title="Rewards" backTo="credits">
+      <VprPage title="Rewards" backFallback="credits">
       <div className={styles.stack}>
 
         <VprCard className={styles.heroCard}>
