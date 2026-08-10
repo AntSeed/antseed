@@ -1,7 +1,7 @@
 /* Floating pill (Figma "flowing window"): 256x64 content (model + usage
    lines), radius 16. The window adds an 8px transparent margin so the drop
-   shadow isn't clipped. The whole pill is a drag region; interactive
-   children opt out. */
+   shadow isn't clipped. The full pill is a native Electron drag region;
+   explicit controls opt out. */
 
 .pill {
   position: fixed;
@@ -32,11 +32,10 @@
    transparency). Fixed size so it stays a circle even mid-resize; centered
    with a 16px margin for the drop shadow.
 
-   The whole window — chip AND the transparent margin around it — is one big
-   drag handle; only the small icon button in the middle opts out. Clicking
-   the icon flips the chip over to reveal the expand button (the flip makes
-   the intent explicit — no accidental expands while grabbing the chip to
-   move it). */
+   The whole window — chip AND the transparent margin around it — is a native
+   drag handle; only the small icon button in the middle opts out. Keeping the
+   button click-only avoids feeding renderer pointer movement back into a
+   window that is moving underneath the pointer. */
 .compactRoot {
   position: fixed;
   inset: 0;
@@ -138,7 +137,7 @@
   border: none;
   border-radius: 50%;
   background: var(--bg-surface);
-  cursor: pointer;
+  cursor: grab;
 }
 
 .appBadge:focus-visible {
@@ -146,7 +145,7 @@
   box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
 }
 
-/* Flex column (not grid): percentage max-widths on the trigger buttons
+/* Flex column (not grid): percentage max-widths on the pill content
    resolve against the container, so long labels reliably ellipsize instead
    of pushing past the pill edge. */
 .body {
@@ -158,33 +157,21 @@
   gap: 2px;
 }
 
-/* The whole pill face is the dropdown trigger: badge + model label + usage
-   in one button. It opens a custom DOM panel (not a native select) so the
-   rows can carry icons, pins and timestamps; the window grows while the
-   panel is open since DOM content can't escape the window bounds. Dragging
-   is manual (pointer deltas), so the button surface stays grabbable. */
-.pillTrigger {
+/* Passive pill content stays inside the native drag region. The dedicated
+   menu button below is the only control that opens the conversations panel. */
+.pillContent {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 0;
-  border: none;
-  background: transparent;
   text-align: left;
-  cursor: pointer;
-  outline: none;
+  cursor: grab;
 }
 
-/* The trigger covers the whole pill face, so any focus decoration reads as
-   the pill itself changing — including the global button focus tint
-   (`button:focus-visible` in global.scss, which outranks the transparent
-   background above). Keep the face completely unstyled on focus; the panel
-   opening is the affordance. */
-.pillTrigger:focus-visible {
-  background: transparent;
-  box-shadow: none;
+.menuToggle {
+  right: 52px;
 }
 
 .triggerLabel {
@@ -645,6 +632,7 @@
 /* Empty balance + paid model: warning-toned label jumping to the deposit
    screen. */
 .addBalance {
+  -webkit-app-region: no-drag;
   margin-left: 8px;
   padding: 1px 8px;
   border: 1px solid #edd191;
@@ -675,7 +663,8 @@
 }
 
 .close,
-.shrink {
+.shrink,
+.menuToggle {
   position: absolute;
   top: 10px;
   width: 20px;
@@ -699,7 +688,10 @@
 }
 
 .close:hover,
-.shrink:hover {
+.shrink:hover,
+.menuToggle:hover,
+.menuToggle:focus-visible,
+.menuToggleOpen {
   color: var(--text-primary);
 }
 
