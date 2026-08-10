@@ -7,6 +7,7 @@ import { loadOrCreateIdentity } from "./p2p/identity.js";
 import type { PeerId } from "./types/peer.js";
 import type { PeerInfo, PeerVerificationResults, TokenPricingUsdPerMillion } from "./types/peer.js";
 import { peerIdToAddress } from "./types/peer.js";
+import type { ServiceUnitBillingModelsV1 } from "./types/billing.js";
 import type {
   SerializedHttpRequest,
   SerializedHttpResponse,
@@ -1544,6 +1545,8 @@ export class AntseedNode extends EventEmitter {
           services: p.services,
           ...(p.serviceCategories ? { serviceCategories: { ...p.serviceCategories } } : {}),
           ...(p.serviceApiProtocols ? { serviceApiProtocols: { ...p.serviceApiProtocols } } : {}),
+          ...(p.serviceUnitBillingModels ? { serviceUnitBillingModels: { ...p.serviceUnitBillingModels } } : {}),
+          ...(p.serviceCapabilities ? { serviceCapabilities: { ...p.serviceCapabilities } } : {}),
           maxConcurrency: p.maxConcurrency,
           isAvailable: () => p.healthCheckAvailable !== false,
           pricing: {
@@ -1712,9 +1715,9 @@ export class AntseedNode extends EventEmitter {
         freeUsageManager: this._buyerFreeUsageManager,
         verificationStorage: this._verificationStorage,
         verificationSampler: this._verificationSampler,
-        getConnection: (peer) => this._getOrCreateConnection(peer),
-        getMux: (peerId, conn) => this._getOrCreateMux(peerId, conn),
-        getVerificationMux: (peerId, conn) => this._getOrCreateVerificationMux(peerId, conn),
+        getConnection: (peer) => this._getOrCreateConnection(peer as PeerInfo),
+        getMux: (peerId, conn) => this._getOrCreateMux(peerId, conn as PeerConnection),
+        getVerificationMux: (peerId, conn) => this._getOrCreateVerificationMux(peerId, conn as PeerConnection),
         registerPaymentMux: (peerId, pmux) => this._paymentMuxes.set(peerId, pmux),
       },
     );
@@ -2283,6 +2286,8 @@ export class AntseedNode extends EventEmitter {
     const providerPricingEntries: NonNullable<PeerInfo["providerPricing"]> = {};
     const providerServiceCategoryEntries: NonNullable<PeerInfo["providerServiceCategories"]> = {};
     const providerServiceApiProtocolEntries: NonNullable<PeerInfo["providerServiceApiProtocols"]> = {};
+    const providerServiceUnitBillingModelEntries: NonNullable<PeerInfo["providerServiceUnitBillingModels"]> = {};
+    const providerServiceCapabilityEntries: NonNullable<PeerInfo["providerServiceCapabilities"]> = {};
 
     for (const providerAnnouncement of result.metadata.providers) {
       const provName = providerAnnouncement.provider;
@@ -2337,11 +2342,33 @@ export class AntseedNode extends EventEmitter {
           providerServiceApiProtocolEntries[provName] = { services: newEntries };
         }
       }
+
+      if (providerAnnouncement.serviceUnitBillingModels && Object.keys(providerAnnouncement.serviceUnitBillingModels).length > 0) {
+        const existingBillingModels = providerServiceUnitBillingModelEntries[provName];
+        const newEntries: ServiceUnitBillingModelsV1 = { ...providerAnnouncement.serviceUnitBillingModels };
+        if (existingBillingModels) {
+          Object.assign(existingBillingModels.services, newEntries);
+        } else {
+          providerServiceUnitBillingModelEntries[provName] = { services: newEntries };
+        }
+      }
+
+      if (providerAnnouncement.serviceCapabilities && Object.keys(providerAnnouncement.serviceCapabilities).length > 0) {
+        const existingCapabilities = providerServiceCapabilityEntries[provName];
+        const newEntries = { ...providerAnnouncement.serviceCapabilities };
+        if (existingCapabilities) {
+          Object.assign(existingCapabilities.services, newEntries);
+        } else {
+          providerServiceCapabilityEntries[provName] = { services: newEntries };
+        }
+      }
     }
 
     const hasProviderPricing = Object.keys(providerPricingEntries).length > 0;
     const hasProviderServiceCategories = Object.keys(providerServiceCategoryEntries).length > 0;
     const hasProviderServiceApiProtocols = Object.keys(providerServiceApiProtocolEntries).length > 0;
+    const hasProviderServiceUnitBillingModels = Object.keys(providerServiceUnitBillingModelEntries).length > 0;
+    const hasProviderServiceCapabilities = Object.keys(providerServiceCapabilityEntries).length > 0;
 
     return {
       peerId: result.metadata.peerId,
@@ -2362,6 +2389,8 @@ export class AntseedNode extends EventEmitter {
       ...(hasProviderPricing ? { providerPricing: providerPricingEntries } : {}),
       ...(hasProviderServiceCategories ? { providerServiceCategories: providerServiceCategoryEntries } : {}),
       ...(hasProviderServiceApiProtocols ? { providerServiceApiProtocols: providerServiceApiProtocolEntries } : {}),
+      ...(hasProviderServiceUnitBillingModels ? { providerServiceUnitBillingModels: providerServiceUnitBillingModelEntries } : {}),
+      ...(hasProviderServiceCapabilities ? { providerServiceCapabilities: providerServiceCapabilityEntries } : {}),
       defaultInputUsdPerMillion: firstProvider?.defaultPricing.inputUsdPerMillion,
       defaultOutputUsdPerMillion: firstProvider?.defaultPricing.outputUsdPerMillion,
       defaultCachedInputUsdPerMillion: firstProvider?.defaultPricing.cachedInputUsdPerMillion,

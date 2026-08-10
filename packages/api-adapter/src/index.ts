@@ -26,9 +26,15 @@ export {
 } from './detect.js';
 
 export {
+  extractImageRequestFacts,
+  extractProviderResponseFacts,
   extractUsage,
+  type ImageRequestFacts,
+  type ProviderResponseFacts,
   type TokenUsage,
+  extractRequestBodyFields,
   parseJsonObject,
+  parseMultipartFormFields,
   toNonNegativeInt,
   type StreamingResponseAdapter,
 } from './utils.js';

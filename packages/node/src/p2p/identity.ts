@@ -2,18 +2,11 @@ import { randomBytes } from "node:crypto";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { Wallet, hashMessage, getBytes, hexlify, verifyMessage } from "ethers";
+import { Wallet } from "ethers";
 import { toPeerId, type PeerId } from "../types/peer.js";
 import { hexToBytes, bytesToHex } from "../utils/hex.js";
 
 export { hexToBytes, bytesToHex };
-
-/**
- * Domain prefixes for signing contexts.
- * Prevents cross-domain signature replay between different parts of the protocol.
- */
-const DOMAIN_DATA = new TextEncoder().encode("antseed-data-v1:");
-const DOMAIN_MSG = "antseed-msg-v1:";
 
 const CONFIG_DIR = join(homedir(), ".antseed");
 const PRIVATE_KEY_FILE = "identity.key";
@@ -114,70 +107,5 @@ export async function loadOrCreateIdentity(configDirOrStore?: string | IdentityS
   return identityFromPrivateKeyHex(hex);
 }
 
-/**
- * Sign arbitrary binary data with the identity's secp256k1 private key.
- * Domain-tagged with "antseed-data-v1:" prefix to prevent cross-domain replay.
- * Uses EIP-191 personal_sign. Returns a 65-byte signature (r + s + v).
- */
-export function signData(
-  wallet: Wallet,
-  data: Uint8Array
-): Uint8Array {
-  const tagged = new Uint8Array(DOMAIN_DATA.length + data.length);
-  tagged.set(DOMAIN_DATA, 0);
-  tagged.set(data, DOMAIN_DATA.length);
-  const digest = hashMessage(tagged);
-  const sig = wallet.signingKey.sign(digest);
-  return getBytes(sig.serialized);
-}
-
-/**
- * Verify a binary data signature from a remote peer using ecrecover.
- * The expectedAddress is the 40-char hex peerId (no 0x prefix).
- */
-export function verifySignature(
-  expectedAddress: string,
-  signature: Uint8Array,
-  data: Uint8Array
-): boolean {
-  try {
-    const tagged = new Uint8Array(DOMAIN_DATA.length + data.length);
-    tagged.set(DOMAIN_DATA, 0);
-    tagged.set(data, DOMAIN_DATA.length);
-    const recovered = verifyMessage(tagged, hexlify(signature));
-    return recovered.slice(2).toLowerCase() === expectedAddress.toLowerCase();
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Sign a UTF-8 message and return a hex-encoded secp256k1 signature (130 hex chars = 65 bytes).
- * Domain-tagged with "antseed-msg-v1:" prefix to prevent cross-domain replay.
- */
-export function signUtf8(wallet: Wallet, message: string): string {
-  const tagged = DOMAIN_MSG + message;
-  const msgBytes = new TextEncoder().encode(tagged);
-  const digest = hashMessage(msgBytes);
-  const sig = wallet.signingKey.sign(digest);
-  return sig.serialized.slice(2);
-}
-
-/**
- * Verify a UTF-8 message against a hex-encoded secp256k1 signature.
- * Returns true if the recovered address matches the expected address.
- */
-export function verifyUtf8(
-  address: string,
-  message: string,
-  signatureHex: string
-): boolean {
-  try {
-    const tagged = DOMAIN_MSG + message;
-    const msgBytes = new TextEncoder().encode(tagged);
-    const recovered = verifyMessage(msgBytes, '0x' + signatureHex);
-    return recovered.slice(2).toLowerCase() === address.toLowerCase();
-  } catch {
-    return false;
-  }
-}
+// Signing primitives moved to @antseed/protocol; re-exported for compatibility.
+export { signData, verifySignature, signUtf8, verifyUtf8 } from '@antseed/protocol/signing';

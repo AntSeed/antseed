@@ -14,6 +14,8 @@ function makeProvider(inputUsdPerMillion: number, outputUsdPerMillion: number, o
   name: string;
   services: string[];
   servicePricing?: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number; cachedInputUsdPerMillion?: number }>;
+  serviceApiProtocols?: Provider['serviceApiProtocols'];
+  serviceUnitBillingModels?: Provider['serviceUnitBillingModels'];
 }): Provider {
   return {
     name: opts.name,
@@ -22,6 +24,8 @@ function makeProvider(inputUsdPerMillion: number, outputUsdPerMillion: number, o
       defaults: { inputUsdPerMillion, outputUsdPerMillion },
       ...(opts.servicePricing ? { services: opts.servicePricing } : {}),
     },
+    ...(opts.serviceApiProtocols ? { serviceApiProtocols: opts.serviceApiProtocols } : {}),
+    ...(opts.serviceUnitBillingModels ? { serviceUnitBillingModels: opts.serviceUnitBillingModels } : {}),
     maxConcurrency: 1,
     async handleRequest(_req) {
       return {
@@ -69,6 +73,15 @@ function makeConn(sentFrames: Uint8Array[]): any {
   };
 }
 
+function makeSellerRequestHandler(
+  deps: Omit<ConstructorParameters<typeof SellerRequestHandler>[0], 'identity'>,
+): SellerRequestHandler {
+  return new SellerRequestHandler({
+    identity: { peerId: 's'.repeat(40) } as any,
+    ...deps,
+  });
+}
+
 function makeAttestHarness() {
   const provider = makeProvider(1, 1, { name: 'openai', services: ['gpt-5.5'] });
   provider.handleRequest = vi.fn(provider.handleRequest);
@@ -86,7 +99,7 @@ function makeAttestHarness() {
     prove,
   };
   const sendPaymentRequired = vi.fn();
-  const handler = new SellerRequestHandler({
+  const handler = makeSellerRequestHandler({
     providers: [provider],
     provers: [prover],
     sellerPaymentManager: makeSpmMock({ hasSession: () => false }),
@@ -126,7 +139,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
       name: 'openai',
       services: ['gpt-5.4', 'gpt-5.5'],
     });
-    const handler = new SellerRequestHandler({
+    const handler = makeSellerRequestHandler({
       providers: [provider],
       sellerPaymentManager: null,
       sessionTracker: null,
@@ -166,7 +179,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
       name: 'openai',
       services: ['gpt-5.5'],
     });
-    const handler = new SellerRequestHandler({
+    const handler = makeSellerRequestHandler({
       providers: [provider],
       sellerPaymentManager: null,
       sessionTracker: null,
@@ -223,7 +236,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
   });
 
   it('hard-bounds tracked attestation rate-limit peers', () => {
-    const handler = new SellerRequestHandler({
+    const handler = makeSellerRequestHandler({
       providers: [],
       sellerPaymentManager: null,
       sessionTracker: null,
@@ -259,7 +272,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
       },
     });
 
-    const handler = new SellerRequestHandler({
+    const handler = makeSellerRequestHandler({
       providers: [anthropic, openai],
       sellerPaymentManager: null,
       sessionTracker: null,
@@ -304,7 +317,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
     const sendNeedAuth = vi.fn();
     const recordSpend = vi.fn();
     const reportUsageRequest = vi.fn();
-    const handler = new SellerRequestHandler({
+    const handler = makeSellerRequestHandler({
       providers: [provider],
       sellerPaymentManager: makeSpmMock({ recordSpend, getPaymentRequirements: () => ({ minBudgetPerRequest: '0', suggestedAmount: '0' }) }),
       sellerFreeUsageManager: { reportUsageRequest } as any,
@@ -353,7 +366,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
     let cumulativeSpend = 0n;
     const sendNeedAuth = vi.fn();
     const recordSpend = vi.fn((_sessionId: string, cost: bigint) => { cumulativeSpend += cost; });
-    const handler = new SellerRequestHandler({
+    const handler = makeSellerRequestHandler({
       providers: [provider],
       sellerPaymentManager: makeSpmMock({ recordSpend, getCumulativeSpend: () => cumulativeSpend, awaitAcceptedAtLeast: async () => true }),
       sessionTracker: null,
@@ -373,6 +386,83 @@ describe('SellerRequestHandler payment pricing selection', () => {
     expect(recordSpend).toHaveBeenCalledWith('session-1', costUsdc);
     expect(sendNeedAuth).toHaveBeenCalledOnce();
     expect(sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'req-codex-cost', lastRequestCost: costUsdc.toString(), requiredCumulativeAmount: costUsdc.toString(), inputTokens: '30426', cachedInputTokens: '1920', freshInputTokens: '28506', outputTokens: '108' }));
+  });
+
+  it('adds image unit billing on top of existing token pricing', async () => {
+    const provider = makeProvider(1, 1, {
+      name: 'openai',
+      services: ['gpt-image-1'],
+      servicePricing: {
+        'gpt-image-1': { inputUsdPerMillion: 2, outputUsdPerMillion: 4 },
+      },
+      serviceApiProtocols: {
+        'gpt-image-1': ['openai-images'],
+      },
+      serviceUnitBillingModels: {
+        'gpt-image-1': {
+          'openai-images': {
+            version: 1,
+            components: [
+              { unit: 'output_images', priceUsd: 0.04, match: { size: '1024x1024' } },
+            ],
+          },
+        },
+      },
+    });
+    provider.handleRequest = vi.fn(async (req) => ({
+      requestId: req.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({
+        usage: { input_tokens: 1000, output_tokens: 500 },
+        data: [{ b64_json: 'a' }, { b64_json: 'b' }],
+      })),
+    }));
+
+    const tokenCostUsdc = 4_000n;
+    const unitCostUsdc = 80_000n;
+    const totalCostUsdc = tokenCostUsdc + unitCostUsdc;
+    let cumulativeSpend = 0n;
+    const sendNeedAuth = vi.fn();
+    const recordSpend = vi.fn((_sessionId: string, cost: bigint) => { cumulativeSpend += cost; });
+    const handler = makeSellerRequestHandler({
+      providers: [provider],
+      sellerPaymentManager: makeSpmMock({ recordSpend, getCumulativeSpend: () => cumulativeSpend, awaitAcceptedAtLeast: async () => true }),
+      sessionTracker: null,
+      channelsClient: {} as any,
+      announcer: null,
+      emit: () => false,
+    });
+
+    const sentFrames: Uint8Array[] = [];
+    const conn = makeConn(sentFrames);
+    const paymentMux = { sendNeedAuth, sendPaymentRequired: vi.fn() } as any;
+    const { mux } = handler.handleConnection(conn, 'b'.repeat(40), paymentMux);
+
+    await mux.handleFrame({
+      type: MessageType.HttpRequest,
+      messageId: 1,
+      payload: encodeHttpRequest({
+        requestId: 'req-image-hybrid',
+        method: 'POST',
+        path: '/v1/images/generations',
+        headers: { 'content-type': 'application/json' },
+        body: new TextEncoder().encode(JSON.stringify({ model: 'gpt-image-1', prompt: 'cube', size: '1024x1024', n: 2 })),
+      }),
+    });
+
+    expect(recordSpend).toHaveBeenCalledWith('session-1', totalCostUsdc);
+    expect(sendNeedAuth).toHaveBeenCalledWith(expect.objectContaining({
+      requestId: 'req-image-hybrid',
+      lastRequestCost: totalCostUsdc.toString(),
+      requiredCumulativeAmount: totalCostUsdc.toString(),
+      inputTokens: '1000',
+      outputTokens: '500',
+      freshInputTokens: '1000',
+      billingUsage: expect.objectContaining({
+        units: { output_images: '2' },
+      }),
+    }));
   });
 
   it('keeps post-response NeedAuth below the reserve ceiling when cumulative spend is still covered', async () => {
@@ -396,7 +486,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
     const reserveMax = 1_000_000n;
     let cumulativeSpend = existingSpend;
     const sendNeedAuth = vi.fn();
-    const handler = new SellerRequestHandler({
+    const handler = makeSellerRequestHandler({
       providers: [provider],
       sellerPaymentManager: makeSpmMock({
         getChannelByPeer: () => ({ sessionId: 'session-1', authMax: reserveMax.toString() }),
@@ -432,7 +522,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
     const sendPaymentRequired = vi.fn(() => {
       throw new Error('Cannot send to buyer: no writable transport');
     });
-    const handler = new SellerRequestHandler({
+    const handler = makeSellerRequestHandler({
       providers: [provider],
       sellerPaymentManager: makeSpmMock({ hasSession: () => false, getChannelByPeer: () => undefined }),
       sessionTracker: null,
@@ -460,7 +550,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
 
     const sendPaymentRequired = vi.fn();
     const sendNeedAuth = vi.fn();
-    const handler = new SellerRequestHandler({
+    const handler = makeSellerRequestHandler({
       providers: [provider],
       sellerPaymentManager: makeSpmMock({ hasSession: () => false, getChannelByPeer: () => undefined, getPaymentRequirements: () => ({ minBudgetPerRequest: '0', suggestedAmount: '0' }) }),
       sessionTracker: null,
@@ -494,7 +584,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
     provider.handleRequest = vi.fn(async (req) => ({ requestId: req.requestId, statusCode: 200, headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({ ok: true })) }));
 
     const sendPaymentRequired = vi.fn();
-    const handler = new SellerRequestHandler({
+    const handler = makeSellerRequestHandler({
       providers: [provider],
       sellerPaymentManager: makeSpmMock({ hasSession: () => false, getChannelByPeer: () => undefined }),
       sessionTracker: null,
@@ -523,7 +613,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
     const sendPaymentRequired = vi.fn();
     const sendNeedAuth = vi.fn();
     const settleSession = vi.fn(async () => {});
-    const handler = new SellerRequestHandler({
+    const handler = makeSellerRequestHandler({
       providers: [provider],
       sellerPaymentManager: makeSpmMock({
         getCumulativeSpend: () => 1_000_000n,
@@ -560,7 +650,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
 
     const sendPaymentRequired = vi.fn();
     const sendNeedAuth = vi.fn();
-    const handler = new SellerRequestHandler({
+    const handler = makeSellerRequestHandler({
       providers: [provider],
       sellerPaymentManager: makeSpmMock({ getCumulativeSpend: () => 2_184n, getAcceptedCumulative: () => 2_184n, getReserveMax: () => 1_000_000n }),
       sessionTracker: null,
@@ -592,7 +682,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
     const sendPaymentRequired = vi.fn();
     const sendNeedAuth = vi.fn();
     const settleSession = vi.fn(async () => {});
-    const handler = new SellerRequestHandler({
+    const handler = makeSellerRequestHandler({
       providers: [provider],
       sellerPaymentManager: makeSpmMock({
         getCumulativeSpend: () => 100_000n,
@@ -627,7 +717,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
     const sendPaymentRequired = vi.fn();
     const sendNeedAuth = vi.fn();
     const settleSession = vi.fn(async () => {});
-    const handler = new SellerRequestHandler({
+    const handler = makeSellerRequestHandler({
       providers: [provider],
       sellerPaymentManager: makeSpmMock({
         getCumulativeSpend: () => 500_000n,
@@ -673,7 +763,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
 
     const settleSession = vi.fn(async () => {});
     const sendPaymentRequired = vi.fn();
-    const handler = new SellerRequestHandler({
+    const handler = makeSellerRequestHandler({
       providers: [provider],
       sellerPaymentManager: makeSpmMock({ getCumulativeSpend: () => 1_000_000n, getAcceptedCumulative: () => 1_000_000n, settleSession }),
       sessionTracker: null,
@@ -703,7 +793,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
     provider.handleRequest = vi.fn(async (req) => ({ requestId: req.requestId, statusCode: 200, headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({ ok: true })) }));
 
     const sendPaymentRequired = vi.fn();
-    const handler = new SellerRequestHandler({
+    const handler = makeSellerRequestHandler({
       providers: [provider],
       sellerPaymentManager: makeSpmMock({ getCumulativeSpend: () => 2_184n, getAcceptedCumulative: () => 0n }),
       sessionTracker: null,
@@ -735,7 +825,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
     const sendPaymentRequired = vi.fn();
     const sendNeedAuth = vi.fn();
     const settleSession = vi.fn(async () => {});
-    const handler = new SellerRequestHandler({
+    const handler = makeSellerRequestHandler({
       providers: [provider],
       sellerPaymentManager: makeSpmMock({
         getChannelByPeer: () => ({ sessionId: 'session-1', authMax: '950001' }),
@@ -776,7 +866,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
 
     const sendPaymentRequired = vi.fn();
     const settleSession = vi.fn(async () => {});
-    const handler = new SellerRequestHandler({
+    const handler = makeSellerRequestHandler({
       providers: [provider],
       sellerPaymentManager: makeSpmMock({
         getCumulativeSpend: () => 900_000n,
@@ -812,7 +902,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
 
     const sendPaymentRequired = vi.fn();
     const sendNeedAuth = vi.fn();
-    const handler = new SellerRequestHandler({
+    const handler = makeSellerRequestHandler({
       providers: [provider],
       sellerPaymentManager: makeSpmMock({
         getCumulativeSpend: () => 1_000_000n,

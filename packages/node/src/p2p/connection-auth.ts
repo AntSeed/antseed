@@ -3,15 +3,15 @@ import type { Wallet } from 'ethers';
 import type { PeerId } from '../types/peer.js';
 import { toPeerId } from '../types/peer.js';
 import { signUtf8, verifyUtf8 } from './identity.js';
+import {
+  buildConnectionAuthPayload,
+  INTRO_AUTH_MAX_SKEW_MS,
+  type ConnectionAuthEnvelope,
+  type InitialWireType,
+} from '@antseed/protocol/connection-auth';
 
-export type InitialWireType = 'intro' | 'hello';
-
-export interface ConnectionAuthEnvelope {
-  peerId: string;
-  ts: number;
-  nonce: string;
-  sig: string;
-}
+export { INTRO_AUTH_MAX_SKEW_MS };
+export type { ConnectionAuthEnvelope, InitialWireType };
 
 export interface VerifyConnectionAuthOptions {
   type: InitialWireType;
@@ -27,21 +27,10 @@ export interface VerifyConnectionAuthResult {
   reason?: string;
 }
 
-export const INTRO_AUTH_MAX_SKEW_MS = 30_000;
-
 const NONCE_SIZE_BYTES = 16;
 const SIG_HEX_LEN = 130;
 const NONCE_HEX_REGEX = /^[0-9a-f]{32}$/;
 const SIG_HEX_REGEX = /^[0-9a-f]{130}$/;
-
-function buildSigningPayload(
-  type: InitialWireType,
-  peerId: string,
-  ts: number,
-  nonce: string,
-): string {
-  return `${type}|${peerId}|${ts}|${nonce}`;
-}
 
 function buildReplayKey(peerId: PeerId, nonce: string): string {
   return `${peerId}:${nonce}`;
@@ -97,7 +86,7 @@ export function buildConnectionAuthEnvelope(
   nowMs = Date.now(),
 ): ConnectionAuthEnvelope {
   const nonce = randomBytes(NONCE_SIZE_BYTES).toString('hex');
-  const payload = buildSigningPayload(type, peerId, nowMs, nonce);
+  const payload = buildConnectionAuthPayload(type, peerId, nowMs, nonce);
   const sig = signUtf8(wallet, payload);
 
   return {
@@ -143,7 +132,7 @@ export function verifyConnectionAuthEnvelope(
     return { ok: false, reason: 'replayed intro auth nonce' };
   }
 
-  const payload = buildSigningPayload(options.type, peerId, auth.ts, auth.nonce);
+  const payload = buildConnectionAuthPayload(options.type, peerId, auth.ts, auth.nonce);
   const valid = verifyUtf8(peerId, payload, auth.sig);
   if (!valid) {
     return { ok: false, reason: 'signature verification failed' };

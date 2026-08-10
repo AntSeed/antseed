@@ -5,6 +5,10 @@ import { getGlobalOptions } from '../types.js';
 import { loadConfig, saveConfig } from '../../../config/loader.js';
 import type { AntseedConfig, SellerProviderConfig } from '../../../config/types.js';
 import { assertValidConfig } from '../../../config/validation.js';
+import {
+  parseServiceCapabilitiesInput,
+  parseServiceUnitBillingModelsInput,
+} from '../../../config/service-metadata.js';
 import { installPlugin } from '../../../plugins/manager.js';
 import { resolvePluginPackage } from '../../../plugins/registry.js';
 
@@ -82,6 +86,8 @@ export function registerConfigCommand(program: Command): void {
     .option('--output <usd>', 'output price in USD per 1M tokens', parseFloat)
     .option('--cached <usd>', 'cached-input price in USD per 1M tokens', parseFloat)
     .option('--categories <list>', 'comma-separated normie tags (e.g., chat,coding,fast)')
+    .option('--capabilities <json>', 'capabilities JSON (contextWindow, inputs, outputs, toolUse, supportedParameters, etc.)')
+    .option('--unit-billing-models <json>', 'protocol-to-unit-billing-model JSON')
     .option('--base-url <url>', 'set the provider baseUrl (one-shot; applies to the whole provider)')
     .action(async (providerName: string, serviceId: string, options) => {
       try {
@@ -119,6 +125,12 @@ export function registerConfigCommand(program: Command): void {
             .split(',')
             .map((t: string) => t.trim().toLowerCase())
             .filter((t: string) => t.length > 0);
+        }
+        if (typeof options.capabilities === 'string') {
+          service.capabilities = parseServiceCapabilitiesInput(options.capabilities, '--capabilities');
+        }
+        if (typeof options.unitBillingModels === 'string') {
+          service.unitBillingModels = parseServiceUnitBillingModelsInput(options.unitBillingModels, '--unit-billing-models');
         }
         providerCfg.services[serviceId] = service;
         providers[providerName] = providerCfg;

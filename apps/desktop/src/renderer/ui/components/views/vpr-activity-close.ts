@@ -42,22 +42,26 @@ export async function requestSellerAssistedClose(
   if (!bridge?.paymentsRequestCooperativeClose) {
     return { tone: 'error', message: 'Seller-assisted close is unavailable. The channel is unchanged.' };
   }
+  let response: Awaited<ReturnType<NonNullable<DesktopBridge['paymentsRequestCooperativeClose']>>>;
   try {
-    const response = await bridge.paymentsRequestCooperativeClose({ peerId });
-    if (!response.ok || !response.result) {
-      return {
-        tone: 'error',
-        message: response.error
-          ? `${response.error} The channel is unchanged.`
-          : 'The close request failed. The channel is unchanged.',
-      };
-    }
-    if (response.result.status === 'rejected') {
-      return { tone: 'error', message: cooperativeCloseRejectionMessage(response.result) };
-    }
-    await Promise.all([refresh.credits(), refresh.summary()]);
-    return { tone: 'success', message: 'Seller closed the channel.' };
+    response = await bridge.paymentsRequestCooperativeClose({ peerId });
   } catch {
     return { tone: 'error', message: 'The seller could not be reached. The channel is unchanged.' };
   }
+  if (!response.ok || !response.result) {
+    return {
+      tone: 'error',
+      message: response.error
+        ? `${response.error} The channel is unchanged.`
+        : 'The close request failed. The channel is unchanged.',
+    };
+  }
+  if (response.result.status === 'rejected') {
+    return { tone: 'error', message: cooperativeCloseRejectionMessage(response.result) };
+  }
+  await Promise.allSettled([
+    Promise.resolve().then(refresh.credits),
+    Promise.resolve().then(refresh.summary),
+  ]);
+  return { tone: 'success', message: 'Seller closed the channel.' };
 }

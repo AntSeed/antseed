@@ -16,6 +16,12 @@
   min-width: 0;
 }
 
+.primaryMethods {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+}
+
 /* ---------- Method chooser (CTAs) ---------- */
 
 /* Primary Fun CTA: same row anatomy as .methodCta (icon chip · title +

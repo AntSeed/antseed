@@ -51,6 +51,8 @@ function createMockBpm(): BuyerPaymentManager & Record<string, unknown> {
     isLockConfirmed: vi.fn().mockReturnValue(false),
     isLockRejected: vi.fn().mockReturnValue(false),
     recordAndPersistTokens: vi.fn(),
+    recordObservedUnitUsage: vi.fn(),
+    getRequestBilling: vi.fn().mockReturnValue(undefined),
     getSessionPricing: vi.fn().mockReturnValue(null),
     maxPerRequestUsdc: 100_000n,
     maxReserveAmountUsdc: 10_000_000n,
@@ -685,6 +687,63 @@ describe('BuyerPaymentNegotiator', () => {
       expect(bpm.recordAndPersistTokens).toHaveBeenCalledWith(
         peer.peerId, 0, 0,
       );
+    });
+
+    it('does not throw or authorize when delivered image usage matches no billing tier', () => {
+      (bpm.getRequestBilling as ReturnType<typeof vi.fn>).mockReturnValue({
+        context: {
+          sellerPeerId: peer.peerId,
+          provider: 'openai',
+          service: 'gpt-image-1',
+          serviceApiProtocol: 'openai-images',
+          attributes: {
+            model: 'gpt-image-1',
+            size: 'auto',
+            quality: 'auto',
+          },
+          unitLimits: { output_images: 1 },
+        },
+        requestFacts: {
+          model: 'gpt-image-1',
+          size: 'auto',
+          quality: 'auto',
+          requestedImages: 1,
+        },
+        unitModel: {
+          version: 1,
+          components: [
+            {
+              unit: 'output_images',
+              priceUsd: 0.04,
+              match: { size: '1024x1024' },
+            },
+          ],
+        },
+      });
+      const response: SerializedHttpResponse = {
+        requestId: 'req-image-unmatched',
+        statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        body: enc.encode(JSON.stringify({
+          data: [{ b64_json: 'delivered-image' }],
+          usage: { input_tokens: 100, output_tokens: 200 },
+        })),
+      };
+
+      expect(() =>
+        negotiator.estimateCostFromResponse(
+          peer,
+          response,
+          'gpt-image-1',
+          'req-image-unmatched',
+        ),
+      ).not.toThrow();
+      expect(bpm.recordObservedUnitUsage).toHaveBeenCalledWith(
+        'req-image-unmatched',
+        { units: { output_images: 1 } },
+      );
+      expect(bpm.recordAndPersistTokens).toHaveBeenCalledWith(peer.peerId, 100, 200);
+      expect((negotiator as any)._lastResponseCost.has(peer.peerId)).toBe(false);
     });
 
     // parseCostHeaders tests removed — cost data now flows through NeedAuth

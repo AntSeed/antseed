@@ -1,6 +1,7 @@
 export {
   createStreamingAdapter,
   detectRequestServiceApiProtocol,
+  extractRequestBodyFields,
   inferProviderDefaultServiceApiProtocols,
   selectTargetProtocolForRequest,
   transformRequest,

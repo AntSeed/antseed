@@ -202,7 +202,14 @@ export class ModelHealthChecker {
 
     let outcome: ProbeOutcome;
     try {
-      const request = buildHealthProbeRequest(service, resolveProbeProtocol(provider, service));
+      const protocol = resolveProbeProtocol(provider, service);
+      if (!supportsHealthProbe(protocol)) {
+        state.lastStatusCode = null;
+        state.lastDetail = `Skipped health probe for unsupported protocol ${protocol}`;
+        debugLog(`[ModelHealth] ${provider.name}/${service}: ${state.lastDetail}`);
+        return;
+      }
+      const request = buildHealthProbeRequest(service, protocol);
       const response = await withTimeout(
         probeProvider.handleRequest(request),
         this._probeTimeoutMs,
@@ -221,8 +228,8 @@ export class ModelHealthChecker {
 
     if (outcome === 'inconclusive') {
       // The endpoint answered but the probe result proves nothing either way
-      // (e.g. 429 while busy, 400 for an unsupported probe parameter). Leave
-      // failure counters and advertisement untouched.
+      // (for example, 400 for an unsupported probe parameter). Leave failure
+      // counters and advertisement untouched.
       debugLog(`[ModelHealth] ${provider.name}/${service}: inconclusive (${state.lastDetail})`);
       return;
     }
@@ -309,6 +316,10 @@ function resolveProbeProtocol(provider: Provider, service: string): ServiceApiPr
   return provider.serviceApiProtocols?.[service]?.[0] ?? 'openai-chat-completions';
 }
 
+export function supportsHealthProbe(protocol: ServiceApiProtocol): boolean {
+  return protocol !== 'openai-images';
+}
+
 /**
  * Build the cheapest request that proves the upstream model responds: a
  * single-token completion. Sent through `Provider.handleRequest`, so the
@@ -342,10 +353,11 @@ export function buildHealthProbeRequest(service: string, protocol: ServiceApiPro
       body = { model: service, prompt: 'ping', max_tokens: 1 };
       break;
     case 'openai-chat-completions':
-    default:
       path = '/v1/chat/completions';
       body = { model: service, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] };
       break;
+    case 'openai-images':
+      throw new Error('Health probes are not supported for openai-images services');
   }
   return {
     requestId: `health-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`,
@@ -360,16 +372,18 @@ export function buildHealthProbeRequest(service: string, protocol: ServiceApiPro
  * Classify a probe response status.
  *
  * - 2xx/3xx — the model answered: healthy.
- * - 401/402/403/404 and 5xx — credentials broken, billing unavailable, model
- *   gone, or upstream down: unhealthy. (The relay collapses upstream network
- *   errors/timeouts to 502.)
- * - Everything else (400, 422, 429, ...) — the endpoint is alive but the probe
- *   itself was rejected (unsupported parameter, rate limit, busy): inconclusive,
+ * - 401/402/403/404, 429, and 5xx — credentials broken, billing unavailable,
+ *   rate or usage limited, model gone, or upstream down: unhealthy. (The relay
+ *   collapses upstream network errors/timeouts to 502.)
+ * - Everything else (400, 422, ...) — the endpoint is alive but the probe
+ *   itself was rejected (for example, an unsupported parameter): inconclusive,
  *   so a working model is never unadvertised over a probe quirk.
  */
 export function classifyProbeStatus(statusCode: number): ProbeOutcome {
   if (statusCode >= 200 && statusCode < 400) return 'healthy';
-  if (statusCode === 401 || statusCode === 402 || statusCode === 403 || statusCode === 404) return 'unhealthy';
+  if (statusCode === 401 || statusCode === 402 || statusCode === 403 || statusCode === 404 || statusCode === 429) {
+    return 'unhealthy';
+  }
   if (statusCode >= 500) return 'unhealthy';
   return 'inconclusive';
 }

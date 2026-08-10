@@ -658,77 +658,74 @@ export function VprDepositView({ onSelectView }: Props) {
         <VprPage title="Add credits" backToDepositSource>
         <div className={styles.stack}>
 
-          <BalanceSummaryCard
-            values={balanceValues}
-            actions={(
-              <>
-                {/* Primary path — for US users (the pay page's region gating
-                    decides) the antseed-pay card checkout leads and Fun moves under
-                    "More options"; elsewhere the Fun (fun.xyz) checkout leads as
-                    before. Both deliver to the hot wallet the deposit watcher
-                    sweeps. */}
-                {stripeAvailable ? (
-                  <div className={styles.methodGroup}>
-                    <button
-                      type="button"
-                      className={styles.linkCta}
-                      aria-label="Pay with Link"
-                      onClick={() => openCardProvider('antseed-pay')}
-                    >
-                      <span>Pay with</span>
-                      <LinkWordmark />
-                    </button>
-                    <span className={styles.linkCtaSub}>
-                      <span>Powered by Outerfound</span>
-                      <span className={styles.methodBadges} aria-hidden="true">
-                        <VisaRoundMark />
-                        <MastercardRoundMark />
-                        <AmexRoundMark />
-                      </span>
-                    </span>
-                  </div>
-                ) : funAvailable && (funWatchInfo && funkitApiKey ? (
-                  <Suspense fallback={<button type="button" className={styles.funCta} disabled>{funCtaContent}</button>}>
-                    <FunkitDeposit
-                      apiKey={funkitApiKey}
-                      recipient={funWatchInfo.address}
-                      usdcAddress={funWatchInfo.usdcAddress}
-                      className={styles.funCta}
-                      onError={(message) => setPayPageNotice(message || null)}
-                    >
-                      {funCtaContent}
-                    </FunkitDeposit>
-                  </Suspense>
-                ) : (
-                  <button type="button" className={styles.funCta} disabled>{funCtaContent}</button>
-                ))}
-                {payPageNotice && <div className={styles.cardNotice} role="alert">{payPageNotice}</div>}
+          <BalanceSummaryCard values={balanceValues} />
 
-                <div className={styles.methodGroup}>
-                  <button type="button" className={styles.methodCta} onClick={() => goToStage('crypto')}>
-                    <span className={styles.methodCtaIcon}>
-                      <BaseMark size={22} />
-                    </span>
-                    <span className={styles.methodCtaText}>
-                      <span className={styles.methodCtaTitle}>Quick deposit</span>
-                      <span className={styles.methodCtaCaption}>USDC on Base</span>
-                    </span>
-                    <span className={styles.methodBadges} aria-hidden="true">
-                      <UsdcMark />
-                      <span className={styles.badgeChip}>
-                        <HugeiconsIcon icon={QrCodeIcon} size={12} strokeWidth={2} />
-                      </span>
-                    </span>
-                    <span className={styles.methodArrow} aria-hidden="true">
-                      <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} />
-                    </span>
-                  </button>
-                  <span className={styles.methodFootnote}>* Deposited to your credits by the AntSeed relayer network</span>
-                </div>
-                {cardNotice && <div className={styles.cardNotice} role="alert">{cardNotice}</div>}
-              </>
-            )}
-          />
+          <div className={styles.primaryMethods}>
+            {/* Primary path — for US users (the pay page's region gating
+                decides) the antseed-pay card checkout leads and Fun moves under
+                "More options"; elsewhere the Fun (fun.xyz) checkout leads as
+                before. Both deliver to the hot wallet the deposit watcher
+                sweeps. */}
+            {stripeAvailable ? (
+              <div className={styles.methodGroup}>
+                <button
+                  type="button"
+                  className={styles.linkCta}
+                  aria-label="Pay with Link"
+                  onClick={() => openCardProvider('antseed-pay')}
+                >
+                  <span>Pay with</span>
+                  <LinkWordmark />
+                </button>
+                <span className={styles.linkCtaSub}>
+                  <span>Powered by Outerfound</span>
+                  <span className={styles.methodBadges} aria-hidden="true">
+                    <VisaRoundMark />
+                    <MastercardRoundMark />
+                    <AmexRoundMark />
+                  </span>
+                </span>
+              </div>
+            ) : funAvailable && (funWatchInfo && funkitApiKey ? (
+              <Suspense fallback={<button type="button" className={styles.funCta} disabled>{funCtaContent}</button>}>
+                <FunkitDeposit
+                  apiKey={funkitApiKey}
+                  recipient={funWatchInfo.address}
+                  usdcAddress={funWatchInfo.usdcAddress}
+                  className={styles.funCta}
+                  onError={(message) => setPayPageNotice(message || null)}
+                >
+                  {funCtaContent}
+                </FunkitDeposit>
+              </Suspense>
+            ) : (
+              <button type="button" className={styles.funCta} disabled>{funCtaContent}</button>
+            ))}
+            {payPageNotice && <div className={styles.cardNotice} role="alert">{payPageNotice}</div>}
+
+            <div className={styles.methodGroup}>
+              <button type="button" className={styles.methodCta} onClick={() => goToStage('crypto')}>
+                <span className={styles.methodCtaIcon}>
+                  <BaseMark size={22} />
+                </span>
+                <span className={styles.methodCtaText}>
+                  <span className={styles.methodCtaTitle}>Quick deposit</span>
+                  <span className={styles.methodCtaCaption}>USDC on Base</span>
+                </span>
+                <span className={styles.methodBadges} aria-hidden="true">
+                  <UsdcMark />
+                  <span className={styles.badgeChip}>
+                    <HugeiconsIcon icon={QrCodeIcon} size={12} strokeWidth={2} />
+                  </span>
+                </span>
+                <span className={styles.methodArrow} aria-hidden="true">
+                  <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} />
+                </span>
+              </button>
+              <span className={styles.methodFootnote}>* Deposited to your credits by the AntSeed relayer network</span>
+            </div>
+            {cardNotice && <div className={styles.cardNotice} role="alert">{cardNotice}</div>}
+          </div>
 
           <button
             type="button"

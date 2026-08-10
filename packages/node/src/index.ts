@@ -25,6 +25,7 @@ export type { Router } from './interfaces/buyer-router.js';
 
 // Types (re-export everything)
 export * from './types/index.js';
+export * from './billing/index.js';
 
 // Submodule re-exports (commonly used)
 export {
@@ -37,14 +38,22 @@ export {
   bytesToHex,
 } from './p2p/identity.js';
 export { DHTNode, DEFAULT_DHT_CONFIG } from './discovery/dht-node.js';
+export { MAX_SERVICES_PER_PROVIDER, MAX_SERVICE_NAME_LENGTH } from './discovery/metadata-validator.js';
 export { OFFICIAL_BOOTSTRAP_NODES, mergeBootstrapNodes, toBootstrapConfig } from './discovery/bootstrap.js';
 export {
   WELL_KNOWN_SERVICE_CATEGORIES,
   WELL_KNOWN_SERVICE_API_PROTOCOLS,
+  SERVICE_CAPABILITY_MODALITIES,
+  MAX_CAPABILITY_TOKEN_COUNT,
+  MAX_CAPABILITY_SUPPORTED_PARAMETERS,
+  MAX_CAPABILITY_PARAMETER_LENGTH,
+  validateServiceCapabilityFields,
   type DomainVerificationClaim,
   type DomainVerificationMethod,
   type GithubVerificationClaim,
   type ServiceApiProtocol,
+  type ServiceCapabilities,
+  type ServiceCapabilityModality,
   type PeerMetadata,
   type PeerVerifications,
   type ProviderAnnouncement,

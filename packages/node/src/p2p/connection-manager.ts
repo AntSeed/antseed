@@ -39,6 +39,7 @@ export interface PeerEndpoint {
 }
 
 type TransportMode = "webrtc" | "tcp";
+type MetadataProvider = () => object | null;
 type InitialWireMessage =
   | {
       type: "intro";
@@ -304,7 +305,7 @@ export class ConnectionManager extends EventEmitter {
   private _listenPort: number | null = null;
   private _server: net.Server | null = null;
   private _transportMode: TransportMode;
-  private _metadataProvider: (() => object | null) | null = null;
+  private _metadataProvider: MetadataProvider | null = null;
   private _ipConnectionCounts = new Map<string, number>();
   private readonly _introReplayGuard = new NonceReplayGuard();
   private static _knownEndpoints = new Map<PeerId, PeerEndpoint>();
@@ -337,7 +338,7 @@ export class ConnectionManager extends EventEmitter {
     return this._listenPort;
   }
 
-  setMetadataProvider(provider: () => object | null): void {
+  setMetadataProvider(provider: MetadataProvider): void {
     this._metadataProvider = provider;
   }
 

@@ -43,6 +43,25 @@ test('requestSellerAssistedClose refreshes balances and channels after success',
   assert.equal(summary.mock.calls.length, 1);
 });
 
+test('requestSellerAssistedClose preserves success when refreshes fail', async () => {
+  const credits = vi.fn(async () => { throw new Error('credits unavailable'); });
+  const summary = vi.fn(async () => { throw new Error('summary unavailable'); });
+  const bridge: DesktopBridge = {
+    paymentsRequestCooperativeClose: vi.fn(async () => ({
+      ok: true,
+      result: { version: 1, channelId: 'channel-1', status: 'closed' },
+      error: null,
+    })),
+  };
+
+  const feedback = await requestSellerAssistedClose('peer-1', bridge, { credits, summary });
+
+  assert.equal(feedback.tone, 'success');
+  assert.equal(feedback.message, 'Seller closed the channel.');
+  assert.equal(credits.mock.calls.length, 1);
+  assert.equal(summary.mock.calls.length, 1);
+});
+
 test('requestSellerAssistedClose keeps rejection local and does not refresh', async () => {
   const credits = vi.fn(async () => {});
   const summary = vi.fn(async () => {});
