@@ -44,9 +44,6 @@ export function VprRewardsView({ onSelectView }: Props) {
   const openClaim = () => {
     void window.antseedDesktop?.paymentsOpenPayPage?.({ kind: 'claim' });
   };
-  const openDiem = () => {
-    void window.antseedDesktop?.paymentsOpenPayPage?.({ kind: 'diem' });
-  };
 
   return (
     <section className={`view view-vpr-rewards view-pinned-header ${styles.view}`} role="tabpanel">
@@ -79,17 +76,6 @@ export function VprRewardsView({ onSelectView }: Props) {
               </VprBadge>
             )}
           </div>
-        </VprCard>
-
-        <VprCard className={styles.linkCard}>
-          <span className={styles.linkText}>
-            <strong>DIEM staking rewards</strong>{' '}
-            Claim $ANTS earned by staking DIEM with AntSeed. Loads with your staking wallet connected.
-          </span>
-          <button type="button" className={styles.linkAction} onClick={openDiem}>
-            <span>Open</span>
-            <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} />
-          </button>
         </VprCard>
 
         <VprCard className={styles.aboutCard}>

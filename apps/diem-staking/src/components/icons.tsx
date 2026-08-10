@@ -147,7 +147,7 @@ export function AntsTokenCoinInline() {
 }
 
 /** AntSeed-style ant drawing. `light = true` inside dark badges, `false`
- *  on light backgrounds. Used in AntStation marketing block + flow diagram. */
+ *  on light backgrounds. Used in the claim marketing block + flow diagram. */
 export function AntIcon({ size = 22, light = false }: { size?: number; light?: boolean }) {
   const body = light ? '#ffffff' : '#1a1a1a';
   const limb = light ? 'var(--green)' : '#8a8a8a';
