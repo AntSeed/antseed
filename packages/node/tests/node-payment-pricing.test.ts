@@ -403,7 +403,7 @@ describe('SellerRequestHandler payment pricing selection', () => {
 
     const recordSpend = vi.fn();
     const beginBillableRequest = vi.fn();
-    const handler = new SellerRequestHandler({
+    const handler = makeSellerRequestHandler({
       providers: [provider],
       sellerPaymentManager: makeSpmMock({ recordSpend, beginBillableRequest, hasClosingChannel: () => true }),
       sessionTracker: null,
