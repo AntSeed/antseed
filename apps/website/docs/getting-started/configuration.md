@@ -277,7 +277,7 @@ antseed config seller add-service openai gpt-image-1 \
   --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.04}]}}'
 ```
 
-The interactive `antseed seller setup` flow prompts for the same optional JSON objects. The CLI serializes them into plugin runtime config. Seller startup warns when unit billing is configured for a plugin that does not declare support.
+The interactive `antseed seller setup` flow builds the capabilities object for you with one question per field, tailored to the service's protocol: image models are asked about input modalities and supported request parameters (image output is announced automatically), text models about context window, modalities, reasoning, tool use, structured output, and supported parameters. Answer `y` at the capabilities prompt, or paste a JSON object there to skip the guided flow. Unit billing models are still entered as JSON. The CLI serializes both into plugin runtime config. Seller startup warns when unit billing is configured for a plugin that does not declare support.
 
 To remove one:
 

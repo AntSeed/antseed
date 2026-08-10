@@ -202,3 +202,12 @@ export function buildServiceApiProtocols(
   if (services.length === 0) return undefined;
   return Object.fromEntries(services.map((service) => [service, [protocol]]));
 }
+
+/**
+ * Well-known image-generation model families. Shared by the openai plugin's
+ * protocol classification and the seller setup wizard's capability prompts so
+ * "what counts as an image model" cannot drift between the two.
+ */
+export function isImageModelId(model: string): boolean {
+  return /(^|\/)(gpt-image-|dall-e|grok-imagine-image)/.test(model.trim().toLowerCase());
+}
