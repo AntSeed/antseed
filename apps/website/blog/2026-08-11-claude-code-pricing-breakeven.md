@@ -15,7 +15,7 @@ Below that, pay the $17 and stop reading. Above it, the arithmetic starts to mat
 
 <!-- truncate -->
 
-## What does Claude Code actually cost?
+## How does Claude Code pricing work?
 
 Claude Code is billed two ways. The Pro plan is $17 a month on an annual subscription and includes Claude Code alongside the chat product. The API route bills per million tokens, split into input and output, with a separate and much cheaper rate for cached input.
 
@@ -49,6 +49,10 @@ Run that shape through the published rates and you get cost per request:
 | Claude Fable 5 | $0.1139 | 149 |
 
 If you run Opus 5 for real work, ten requests a day puts you at the subscription price. A working session with a coding agent can burn that before lunch.
+
+![Line chart of Claude Code pricing: the flat $17 per month Pro subscription against per-token API cost, crossing at 298 requests per month without caching and at 545 requests with a 90% cache hit rate](/img/blog/claude-code-pricing-breakeven.svg)
+
+The chart is the whole argument. The flat line is what you pay Anthropic today. The steep line is what you pay per token. Where they cross is the only number in this post that matters, and caching moves it a long way to the right.
 
 ## Why input tokens are 56% of your bill
 
