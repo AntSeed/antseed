@@ -9,7 +9,7 @@ import { pendingSpendFromChannels } from '../billing/credits-balance.js';
 import { resolveBuyerProxyPort } from '../runtime/active-config.js';
 import { getCachedChannelsClient, loadCachedCryptoConfig, setCachedChannelsClient } from './credits.js';
 import {
-  ChannelOnChainStateCache,
+  applyChannelOnChainSnapshot,
   normalizePaymentChannelSummary,
   requestCooperativeChannelCloseAtPort,
   runInBatches,
@@ -169,11 +169,8 @@ export function formatAnts(value: bigint): string {
 
 
 
-// AntseedChannels grace period between requestClose() and withdraw().
-const CHANNEL_CLOSE_GRACE_SECS = 900;
 // Bound concurrent on-chain reads without skipping older active-looking rows.
 const CHANNEL_ENRICH_CONCURRENCY = 12;
-const channelOnChainStateCache = new ChannelOnChainStateCache(CHANNEL_CLOSE_GRACE_SECS);
 
 // The local ChannelStore can lag the chain (a seller-side settle/close is not
 // always observed), so rows that look active are re-checked on-chain before
@@ -194,11 +191,11 @@ async function enrichChannelStatuses(channels: DesktopPaymentChannelSummary[]): 
   const candidates = channels
     .filter((row) => row.status === 'active' || row.status === 'open');
   for (const row of candidates) {
-    channelOnChainStateCache.hydrate(row);
+    applyChannelOnChainSnapshot(row);
   }
   await runInBatches(candidates, CHANNEL_ENRICH_CONCURRENCY, async (row) => {
     const info = await client.getSession(row.channelId);
-    channelOnChainStateCache.record(row, {
+    applyChannelOnChainSnapshot(row, {
       status: info.status,
       deposit: info.deposit.toString(),
       settled: info.settled.toString(),

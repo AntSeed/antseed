@@ -16,49 +16,37 @@ function readStringField(raw: Record<string, unknown>, key: string): string {
   return '';
 }
 
-export type ChannelOnChainSnapshot = {
+type ChannelOnChainSnapshot = {
   status: number;
   deposit: string;
   settled: string;
   closeRequestedAt: number;
 };
 
-type ChannelOnChainStateRow = Pick<
-  DesktopPaymentChannelSummary,
-  'channelId' | 'onChainStateKnown' | 'onChainDeposit' | 'onChainSettled' | 'status'
->;
+const CHANNEL_CLOSE_GRACE_SECS = 900;
+const channelOnChainSnapshots = new Map<string, ChannelOnChainSnapshot>();
 
-export class ChannelOnChainStateCache {
-  private readonly snapshots = new Map<string, ChannelOnChainSnapshot>();
-
-  constructor(private readonly closeGraceSeconds: number) {}
-
-  hydrate(row: ChannelOnChainStateRow, nowSeconds = Math.floor(Date.now() / 1000)): boolean {
-    const snapshot = this.snapshots.get(row.channelId);
-    if (!snapshot) return false;
-
-    row.onChainStateKnown = true;
-    row.onChainDeposit = snapshot.deposit;
-    row.onChainSettled = snapshot.settled;
-    if (snapshot.status === 2) row.status = 'settled';
-    else if (snapshot.status === 3) row.status = 'timedout';
-    else if (snapshot.status === 1 && snapshot.closeRequestedAt > 0) {
-      row.status = nowSeconds < snapshot.closeRequestedAt + this.closeGraceSeconds
-        ? 'closing'
-        : 'withdrawable';
-    }
-    return true;
+export function applyChannelOnChainSnapshot(
+  row: DesktopPaymentChannelSummary,
+  snapshot?: ChannelOnChainSnapshot,
+  nowSeconds = Math.floor(Date.now() / 1000),
+): void {
+  if (snapshot && snapshot.status !== 0) {
+    channelOnChainSnapshots.set(row.channelId, snapshot);
   }
 
-  record(
-    row: ChannelOnChainStateRow,
-    snapshot: ChannelOnChainSnapshot,
-    nowSeconds = Math.floor(Date.now() / 1000),
-  ): boolean {
-    if (snapshot.status !== 0) {
-      this.snapshots.set(row.channelId, snapshot);
-    }
-    return this.hydrate(row, nowSeconds);
+  const knownSnapshot = channelOnChainSnapshots.get(row.channelId);
+  if (!knownSnapshot) return;
+
+  row.onChainStateKnown = true;
+  row.onChainDeposit = knownSnapshot.deposit;
+  row.onChainSettled = knownSnapshot.settled;
+  if (knownSnapshot.status === 2) row.status = 'settled';
+  else if (knownSnapshot.status === 3) row.status = 'timedout';
+  else if (knownSnapshot.status === 1 && knownSnapshot.closeRequestedAt > 0) {
+    row.status = nowSeconds < knownSnapshot.closeRequestedAt + CHANNEL_CLOSE_GRACE_SECS
+      ? 'closing'
+      : 'withdrawable';
   }
 }
 

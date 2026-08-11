@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  ChannelOnChainStateCache,
+  applyChannelOnChainSnapshot,
   normalizePaymentChannelSummary,
   requestCooperativeChannelCloseAtPort,
   runInBatches,
@@ -48,41 +48,39 @@ test('normalizePaymentChannelSummary accepts the legacy reserveMax field', () =>
   assert.equal(channel?.reserveCeiling, '5000000');
 });
 
-test('ChannelOnChainStateCache preserves the last verified state across failed or ambiguous polls', () => {
-  const cache = new ChannelOnChainStateCache(900);
+test('on-chain snapshots preserve the last verified state across failed or ambiguous polls', () => {
   const firstPoll = normalizePaymentChannelSummary({ sessionId: 'channel-1', status: 'active' });
   assert.ok(firstPoll);
-  assert.equal(cache.record(firstPoll, {
+  applyChannelOnChainSnapshot(firstPoll, {
     status: 1,
     deposit: '1000000',
     settled: '0',
     closeRequestedAt: 0,
-  }), true);
+  });
 
   const failedPoll = normalizePaymentChannelSummary({ sessionId: 'channel-1', status: 'active' });
   assert.ok(failedPoll);
-  assert.equal(cache.hydrate(failedPoll), true);
+  applyChannelOnChainSnapshot(failedPoll);
   assert.equal(failedPoll.onChainStateKnown, true);
   assert.equal(failedPoll.onChainDeposit, '1000000');
   assert.equal(failedPoll.onChainSettled, '0');
 
   const ambiguousPoll = normalizePaymentChannelSummary({ sessionId: 'channel-1', status: 'active' });
   assert.ok(ambiguousPoll);
-  assert.equal(cache.record(ambiguousPoll, {
+  applyChannelOnChainSnapshot(ambiguousPoll, {
     status: 0,
     deposit: '0',
     settled: '0',
     closeRequestedAt: 0,
-  }), true);
+  });
   assert.equal(ambiguousPoll.onChainStateKnown, true);
   assert.equal(ambiguousPoll.onChainDeposit, '1000000');
 });
 
-test('ChannelOnChainStateCache advances cached closing channels to withdrawable', () => {
-  const cache = new ChannelOnChainStateCache(900);
-  const row = normalizePaymentChannelSummary({ sessionId: 'channel-1', status: 'active' });
+test('on-chain snapshots advance cached closing channels to withdrawable', () => {
+  const row = normalizePaymentChannelSummary({ sessionId: 'channel-2', status: 'active' });
   assert.ok(row);
-  cache.record(row, {
+  applyChannelOnChainSnapshot(row, {
     status: 1,
     deposit: '1000000',
     settled: '250000',
@@ -90,9 +88,9 @@ test('ChannelOnChainStateCache advances cached closing channels to withdrawable'
   }, 1_100);
   assert.equal(row.status, 'closing');
 
-  const laterPoll = normalizePaymentChannelSummary({ sessionId: 'channel-1', status: 'active' });
+  const laterPoll = normalizePaymentChannelSummary({ sessionId: 'channel-2', status: 'active' });
   assert.ok(laterPoll);
-  cache.hydrate(laterPoll, 1_901);
+  applyChannelOnChainSnapshot(laterPoll, undefined, 1_901);
   assert.equal(laterPoll.status, 'withdrawable');
 });
 
