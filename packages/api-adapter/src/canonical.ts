@@ -65,6 +65,16 @@ export interface CanonicalLlmRequest {
   cacheBreakpoints?: CanonicalCacheBreakpoints;
 }
 
+function assignToolsAndToolChoice(
+  body: Record<string, unknown>,
+  tools: unknown[] | undefined,
+  toolChoice: unknown,
+): void {
+  if (!tools || tools.length === 0) return;
+  body.tools = tools;
+  if (toolChoice !== undefined) body.tool_choice = toolChoice;
+}
+
 export type CanonicalOutputItem =
   | { type: 'text'; text: string }
   | { type: 'function_call'; id: string; name: string; arguments: Record<string, unknown> | string };
@@ -150,9 +160,8 @@ export function renderCanonicalRequestToOpenAIChatBody(
   if (typeof request.topP === 'number') body.top_p = request.topP;
   if (request.stop !== undefined) body.stop = request.stop;
   const tools = renderCanonicalToolsToOpenAIChat(request.tools);
-  if (tools) body.tools = tools;
   const toolChoice = renderCanonicalToolChoiceToOpenAIChat(request.toolChoice);
-  if (toolChoice !== undefined) body.tool_choice = toolChoice;
+  assignToolsAndToolChoice(body, tools, toolChoice);
   if (request.metadata) body.metadata = request.metadata;
   if (request.user) body.user = request.user;
   // Routes the request to the cache that holds this conversation's prefix.
@@ -206,9 +215,8 @@ export function renderCanonicalRequestToOpenAIResponsesBody(
   if (typeof request.topP === 'number') body.top_p = request.topP;
   if (request.stop !== undefined) body.stop = request.stop;
   const tools = renderCanonicalToolsToOpenAIResponses(request.tools);
-  if (tools) body.tools = tools;
   const toolChoice = renderCanonicalToolChoiceToOpenAIResponses(request.toolChoice);
-  if (toolChoice !== undefined) body.tool_choice = toolChoice;
+  assignToolsAndToolChoice(body, tools, toolChoice);
   if (options.includeMetadata !== false && request.metadata) body.metadata = request.metadata;
   if (options.includeUser !== false && request.user) body.user = request.user;
   if (request.promptCacheKey) body.prompt_cache_key = request.promptCacheKey;
@@ -318,10 +326,9 @@ export function renderCanonicalRequestToAnthropicMessagesBody(request: Canonical
       const lastTool = tools[tools.length - 1];
       if (lastTool) lastTool.cache_control = EPHEMERAL_CACHE_CONTROL;
     }
-    body.tools = tools;
   }
   const toolChoice = renderCanonicalToolChoiceToAnthropic(request.toolChoice);
-  if (toolChoice !== undefined) body.tool_choice = toolChoice;
+  assignToolsAndToolChoice(body, tools, toolChoice);
   if (request.metadata || request.user) {
     body.metadata = {
       ...(request.metadata ?? {}),
