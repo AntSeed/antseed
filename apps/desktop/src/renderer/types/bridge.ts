@@ -80,11 +80,14 @@ export type DesktopPaymentChannelSummary = {
   peerId: string;
   seller: string;
   sellerDisplayName: string | null;
-  reserveMax: string;
+  onChainStateKnown: boolean;
+  reserveCeiling: string | null;
   cumulativeSigned: string;
-  /** Already settled on-chain (bigint string). cumulativeSigned - settledUsdc
+  /** Amount locked for this channel on-chain (bigint string). */
+  onChainDeposit: string;
+  /** Already settled on-chain (bigint string). cumulativeSigned - onChainSettled
       is what the seller can still claim against this channel. */
-  settledUsdc: string;
+  onChainSettled: string;
   reservedAt: number;
   status: string;
   requestCount: number;

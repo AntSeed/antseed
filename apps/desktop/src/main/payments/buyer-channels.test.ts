@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  enrichChannelSellerDisplayNames,
   normalizePaymentChannelSummary,
   requestCooperativeChannelCloseAtPort,
   runInBatches,
@@ -26,19 +25,26 @@ test('normalizePaymentChannelSummary defaults missing cooperative-close support 
   assert.equal(supported?.cooperativeCloseSupported, true);
 });
 
-test('enrichChannelSellerDisplayNames resolves names and preserves null fallbacks', () => {
-  const named = normalizePaymentChannelSummary({ sessionId: 'channel-1', peerId: 'peer-1' });
-  const unnamed = normalizePaymentChannelSummary({ sessionId: 'channel-2', peerId: 'peer-2' });
-  assert.ok(named);
-  assert.ok(unnamed);
+test('normalizePaymentChannelSummary preserves proxy seller metadata and separates channel amounts', () => {
+  const channel = normalizePaymentChannelSummary({
+    sessionId: 'channel-1',
+    peerId: 'peer-1',
+    sellerDisplayName: 'Seller One',
+    reserveCeiling: '5000000',
+    cumulativeSigned: '700000',
+  });
 
-  const channels = enrichChannelSellerDisplayNames(
-    [named, unnamed],
-    (peerId) => peerId === 'peer-1' ? '  Seller One  ' : null,
-  );
+  assert.equal(channel?.sellerDisplayName, 'Seller One');
+  assert.equal(channel?.onChainStateKnown, false);
+  assert.equal(channel?.reserveCeiling, '5000000');
+  assert.equal(channel?.cumulativeSigned, '700000');
+  assert.equal(channel?.onChainDeposit, '0');
+  assert.equal(channel?.onChainSettled, '0');
+});
 
-  assert.equal(channels[0]?.sellerDisplayName, 'Seller One');
-  assert.equal(channels[1]?.sellerDisplayName, null);
+test('normalizePaymentChannelSummary accepts the legacy reserveMax field', () => {
+  const channel = normalizePaymentChannelSummary({ sessionId: 'channel-1', reserveMax: '5000000' });
+  assert.equal(channel?.reserveCeiling, '5000000');
 });
 
 test('runInBatches processes active-looking channels beyond the first batch', async () => {

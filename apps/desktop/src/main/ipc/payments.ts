@@ -26,7 +26,6 @@ import {
   notePendingSpend,
   requestCooperativeChannelClose,
 } from '../payments/buyer-channels.js';
-import { enrichChannelSellerDisplayNames } from '../payments/buyer-channel-control.js';
 import { resolveServiceIdHashes } from '../payments/service-hash-resolver.js';
 import {
   type CreditsInfo,
@@ -445,12 +444,7 @@ export function registerPaymentsIpc(): void {
       return { ok: false, data: null, error: 'buyer proxy unreachable' };
     }
     notePendingSpend(channels);
-    await refreshPeerCache().catch(() => {});
-    const enrichedChannels = enrichChannelSellerDisplayNames(
-      channels,
-      (peerId) => lookupPeer(peerId)?.displayName ?? null,
-    );
-    return { ok: true, data: enrichedChannels, error: null };
+    return { ok: true, data: channels, error: null };
   });
 
   ipcMain.handle('payments:request-cooperative-close', async (_event, opts?: { peerId?: string }) => {

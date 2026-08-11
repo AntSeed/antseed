@@ -20,7 +20,7 @@ export type ChannelSpendRow = {
   /** Cumulative amount the buyer has signed for on this channel (base units). */
   cumulativeSigned: string;
   /** Amount already settled on-chain for this channel (base units). */
-  settledUsdc: string;
+  onChainSettled: string;
 };
 
 /** Statuses where the seller can still settle against the buyer's signatures. */
@@ -33,7 +33,7 @@ export function isOpenChannelStatus(status: string): boolean {
 export function unsettledSpend(row: ChannelSpendRow): bigint {
   try {
     const signed = BigInt(row.cumulativeSigned || '0');
-    const settled = BigInt(row.settledUsdc || '0');
+    const settled = BigInt(row.onChainSettled || '0');
     return signed > settled ? signed - settled : 0n;
   } catch {
     // Malformed row — skip it rather than poison the total.

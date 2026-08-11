@@ -16,23 +16,30 @@ export function isCurrentChannelStatus(status: string): boolean {
 
 export function isFundedCurrentChannel(row: {
   status: string;
-  reserveMax: string;
-  settledUsdc: string;
+  onChainStateKnown: boolean;
+  onChainDeposit: string;
+  onChainSettled: string;
 }): boolean {
-  return isCurrentChannelStatus(row.status) && channelLockedBaseUnits(row) > 0n;
+  if (!isCurrentChannelStatus(row.status)) return false;
+  return !row.onChainStateKnown || channelLockedBaseUnits(row) > 0n;
 }
 
-export function channelLockedBaseUnits(row: { reserveMax: string; settledUsdc: string }): bigint {
+export function channelLockedBaseUnits(row: { onChainDeposit: string; onChainSettled: string }): bigint {
   try {
-    const reserved = BigInt(row.reserveMax || '0');
-    const settled = BigInt(row.settledUsdc || '0');
+    const reserved = BigInt(row.onChainDeposit || '0');
+    const settled = BigInt(row.onChainSettled || '0');
     return reserved > settled ? reserved - settled : 0n;
   } catch {
     return 0n;
   }
 }
 
-export function formatChannelLockedAmount(row: { reserveMax: string; settledUsdc: string }): string {
+export function formatChannelLockedAmount(row: {
+  onChainStateKnown: boolean;
+  onChainDeposit: string;
+  onChainSettled: string;
+}): string {
+  if (!row.onChainStateKnown) return 'Locked amount unavailable';
   const locked = channelLockedBaseUnits(row);
   if (locked === 0n) return 'No funds locked';
   if (locked < 10_000n) return '<$0.01 locked';
@@ -42,8 +49,8 @@ export function formatChannelLockedAmount(row: { reserveMax: string; settledUsdc
 }
 
 export function compareChannelsByLockedAmount(
-  left: { reserveMax: string; settledUsdc: string; reservedAt: number },
-  right: { reserveMax: string; settledUsdc: string; reservedAt: number },
+  left: { onChainDeposit: string; onChainSettled: string; reservedAt: number },
+  right: { onChainDeposit: string; onChainSettled: string; reservedAt: number },
 ): number {
   const leftLocked = channelLockedBaseUnits(left);
   const rightLocked = channelLockedBaseUnits(right);

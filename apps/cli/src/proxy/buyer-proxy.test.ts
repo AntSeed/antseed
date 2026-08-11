@@ -284,6 +284,7 @@ test('peers control endpoint exposes relay capability metadata', async () => {
 
 test('channels endpoint exposes cooperative-close support from peer capabilities', async () => {
   const supportedPeer = makePeer('a', ['openai'])
+  supportedPeer.displayName = '  Seller One  '
   supportedPeer.capabilities = [CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1]
   const unsupportedPeer = makePeer('b', ['openai'])
   const proxy = makeBuyerProxyWithPeers([supportedPeer, unsupportedPeer])
@@ -295,16 +296,16 @@ test('channels endpoint exposes cooperative-close support from peer capabilities
 
   const res = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/channels?all=1' }))
   const body = JSON.parse(res.body) as {
-    channels: Array<{ sessionId: string; cooperativeCloseSupported: boolean }>
+    channels: Array<{ sessionId: string; sellerDisplayName: string | null; cooperativeCloseSupported: boolean }>
   }
 
   assert.equal(res.statusCode, 200)
   assert.deepEqual(
-    body.channels.map((channel) => [channel.sessionId, channel.cooperativeCloseSupported]),
+    body.channels.map((channel) => [channel.sessionId, channel.sellerDisplayName, channel.cooperativeCloseSupported]),
     [
-      ['supported', true],
-      ['unsupported', false],
-      ['unknown', false],
+      ['supported', 'Seller One', true],
+      ['unsupported', null, false],
+      ['unknown', null, false],
     ],
   )
 })

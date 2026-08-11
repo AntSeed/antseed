@@ -47,11 +47,15 @@ export type DesktopPaymentChannelSummary = {
   peerId: string;
   seller: string;
   sellerDisplayName: string | null;
-  reserveMax: string;
+  /** True only when the on-chain deposit and settled amounts were read successfully. */
+  onChainStateKnown: boolean;
+  /** Latest in-memory ReserveAuth ceiling, when the buyer daemon has it. */
+  reserveCeiling: string | null;
   cumulativeSigned: string;
-  /** Amount the seller has already settled on-chain (base units). Filled by
-      enrichChannelStatuses; '0' until the channel is checked against chain. */
-  settledUsdc: string;
+  /** Authoritative amount currently locked for the channel on-chain. */
+  onChainDeposit: string;
+  /** Authoritative amount already settled to the seller on-chain. */
+  onChainSettled: string;
   reservedAt: number;
   status: string;
   requestCount: number;
@@ -190,8 +194,9 @@ async function enrichChannelStatuses(channels: DesktopPaymentChannelSummary[]): 
   await runInBatches(candidates, CHANNEL_ENRICH_CONCURRENCY, async (row) => {
     const info = await client.getSession(row.channelId);
     const closeRequestedAt = Number(info.closeRequestedAt);
-    row.reserveMax = info.deposit.toString();
-    row.settledUsdc = info.settled.toString();
+    row.onChainDeposit = info.deposit.toString();
+    row.onChainSettled = info.settled.toString();
+    row.onChainStateKnown = info.status !== 0;
     if (info.status === 2) row.status = 'settled';
     else if (info.status === 3) row.status = 'timedout';
     else if (info.status === 1 && closeRequestedAt > 0) {

@@ -3,7 +3,7 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowUpRight01Icon } from '@hugeicons/core-free-icons';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
-import { formatCredits } from '../../../core/format';
+import { formatCredits, shortAddress } from '../../../core/format';
 import { computeMeasuredSavings, formatSavedUsd } from '../../../modules/catalog/measured-savings';
 import { ensureOpenRouterPrices, getCachedOpenRouterPrices } from '../../../modules/catalog/openrouter-baseline';
 import { formatCompactTokens, VprCard, VprPage, VprStatRow, VprStatTile } from '../vpr/VprKit';
@@ -193,7 +193,7 @@ export function VprActivityView({ onSelectView }: Props) {
                   <div className={styles.rowMain}>
                     <div className={styles.rowTitle}>
                       <span className={styles.rowSellerGroup}>
-                        <span className={styles.rowSeller}>{row.sellerDisplayName || 'Unknown seller'}</span>
+                        <span className={styles.rowSeller}>{row.sellerDisplayName || shortAddress(row.seller || row.peerId || null)}</span>
                       </span>
                       {!isActiveStatus(row.status) && (
                         <span className={`${styles.statusPill} ${styles[`status_${statusTone(row.status)}`]}`}>
