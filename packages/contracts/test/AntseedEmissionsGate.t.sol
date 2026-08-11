@@ -649,6 +649,23 @@ contract AntseedEmissionsGateTest is Test {
         assertEq(sellerPoolsRewards.dynamicStakerConfigAt(gate.currentEpoch() + 1).stakeShareTarget, 1);
     }
 
+    function test_stakerShareTargetScalesWithEmissionHalving() public {
+        _setupStakerRewardsFixture();
+
+        // 1 ether staked vs a 3-ether target: share = 2000 + 38000/4 = 11_500.
+        sellerPoolsRewards.setDynamicStakerConfig(2_000, 40_000, 3 ether);
+        _warpGateEpoch(7);
+        assertEq(sellerPoolsRewards.stakerEpochBudget(6), _shareBudget(11_500, 6));
+
+        // Past the halving the target scales to 1.5 ether with the emission,
+        // so the same stake earns share = 2000 + 38000/2.5 = 17_200.
+        _warpGateEpoch(103);
+        deal(address(token), seller, token.balanceOf(seller) + 1 ether);
+        _stakeAgentPool(sellerPools, seller, 1 ether, 4);
+        _warpGateEpoch(106);
+        assertEq(sellerPoolsRewards.stakerEpochBudget(105), _shareBudget(17_200, 105));
+    }
+
     function test_stakerEpochBudgetFreezesAtFirstSettlementUse() public {
         uint256 positionId = _setupStakerRewardsFixture();
         usageAccounting.accrueSellerPoints(seller, 10);
@@ -2742,7 +2759,13 @@ contract AntseedEmissionsGateTest is Test {
             + (uint256(stakerConfig.maxShareBps - stakerConfig.minShareBps) * stakeAmount)
                 / (stakeAmount + stakerConfig.stakeShareTarget);
         uint256 desiredBudget = (gate.getEpochEmission(103) * shareBpsAtStake) / gate.SHARE_DENOMINATOR();
-        uint256 postHalvingDesiredBudget = (gate.getEpochEmission(104) * shareBpsAtStake) / gate.SHARE_DENOMINATOR();
+        // Past the halving the target scales down with the emission, so the
+        // same stake earns a larger share of the smaller epoch budget.
+        uint256 postHalvingShareBps = stakerConfig.minShareBps
+            + (uint256(stakerConfig.maxShareBps - stakerConfig.minShareBps) * stakeAmount)
+                / (stakeAmount + stakerConfig.stakeShareTarget / 2);
+        uint256 postHalvingDesiredBudget =
+            (gate.getEpochEmission(104) * postHalvingShareBps) / gate.SHARE_DENOMINATOR();
 
         assertEq(sellerPools.totalActiveStakeAtEpoch(103), stakeAmount);
         assertEq(sellerPoolsRewards.stakerEpochBudget(103), desiredBudget);

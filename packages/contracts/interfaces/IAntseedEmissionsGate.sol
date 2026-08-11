@@ -10,6 +10,7 @@ interface IAntseedEmissionsGate {
 
     function currentEpoch() external view returns (uint256);
     function effectiveEpoch() external view returns (uint256);
+    function INITIAL_EMISSION() external view returns (uint256);
     function getEpochEmission(uint256 epoch) external view returns (uint256);
     function minters(bytes32 minterId) external view returns (address, uint32, bool);
     function minterEpochBudget(bytes32 minterId, uint256 epoch) external view returns (uint256);

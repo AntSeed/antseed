@@ -54,6 +54,7 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
     IAntseedEmissionsGate public immutable emissionsGate;
     IAntseedSellerPools public immutable sellerPools;
     IAntseedUsageAccounting public immutable usageAccounting;
+    uint256 public immutable initialEmission;
     /// @dev ANTS resolved once at construction from the pools contract,
     ///      which pins it immutably at deployment — keeping principal and
     ///      rewards on the same asset even if the registry's token address
@@ -82,6 +83,8 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
     struct DynamicStakerConfig {
         uint32 minShareBps;
         uint32 maxShareBps;
+        /// @dev Target at the gate's initial emission level. The effective
+        ///      epoch target scales proportionally with epoch emissions.
         uint256 stakeShareTarget;
     }
 
@@ -145,6 +148,8 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         emissionsGate = IAntseedEmissionsGate(_emissionsGate);
         sellerPools = IAntseedSellerPools(_sellerPools);
         usageAccounting = IAntseedUsageAccounting(_usageAccounting);
+        initialEmission = IAntseedEmissionsGate(_emissionsGate).INITIAL_EMISSION();
+        if (initialEmission == 0) revert InvalidValue();
         initialIndexEpoch = IAntseedUsageAccounting(_usageAccounting).currentEpoch();
         IERC20 token = IAntseedSellerPools(_sellerPools).antsToken();
         if (address(token) == address(0)) revert InvalidAddress();
@@ -298,8 +303,11 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         if (_pendingFromEpoch != 0 && _pendingFromEpoch < fromEpoch) {
             _currentConfig = _pendingConfig;
         }
-        _pendingConfig =
-            DynamicStakerConfig({ minShareBps: minShareBps, maxShareBps: maxShareBps, stakeShareTarget: _stakeShareTarget });
+        _pendingConfig = DynamicStakerConfig({
+            minShareBps: minShareBps,
+            maxShareBps: maxShareBps,
+            stakeShareTarget: _stakeShareTarget
+        });
         _pendingFromEpoch = fromEpoch;
 
         emit DynamicStakerConfigSet(minShareBps, maxShareBps, _stakeShareTarget, fromEpoch);
@@ -321,17 +329,19 @@ contract AntseedSellerPoolsRewards is Ownable2Step, Pausable, ReentrancyGuard {
         return _liveStakerEpochBudget(epoch, emissionsGate.controllerEpochBudget(address(this), epoch));
     }
 
-    /// @dev `maxBudget` is passed in so a caller that already holds the gate
-    ///      budget saves the duplicate external call.
+    /// @dev `maxBudget` avoids reloading the gate budget when already known.
+    ///      The configured target is denominated at the initial emission level
+    ///      and scales with each epoch's emission.
     function _liveStakerEpochBudget(uint256 epoch, uint256 maxBudget) internal view returns (uint256) {
         uint256 activeStake = sellerPools.totalActiveStakeAtEpoch(epoch);
         DynamicStakerConfig memory config = dynamicStakerConfigAt(epoch);
-        uint32 shareBps = AntseedShareMath.saturatingShareBps(
-            activeStake, config.minShareBps, config.maxShareBps, config.stakeShareTarget
-        );
+        uint256 epochEmission = emissionsGate.getEpochEmission(epoch);
+        uint256 scaledTarget = Math.mulDiv(config.stakeShareTarget, epochEmission, initialEmission);
+        uint32 shareBps =
+            AntseedShareMath.saturatingShareBps(activeStake, config.minShareBps, config.maxShareBps, scaledTarget);
         if (shareBps == 0) return 0;
 
-        uint256 desiredBudget = Math.mulDiv(emissionsGate.getEpochEmission(epoch), shareBps, GATE_SHARE_DENOMINATOR);
+        uint256 desiredBudget = Math.mulDiv(epochEmission, shareBps, GATE_SHARE_DENOMINATOR);
         return desiredBudget < maxBudget ? desiredBudget : maxBudget;
     }
 
