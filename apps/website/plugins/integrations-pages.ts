@@ -257,7 +257,7 @@ function renderSkillMarkdown(): string {
   out.push('  editor / agent / SDK ever talks to.');
   out.push('- **Peer** — someone selling inference. Each peer has a `peerId` (40-char hex),');
   out.push('  a display name, and a list of services. List with `antseed network browse`.');
-  out.push('- **Service** — a single model id like `claude-sonnet-4-6` or `deepseek-v4-flash`.');
+  out.push('- **Service** — a single model id like `kimi-k2.6` or `deepseek-v4-flash`.');
   out.push("  *This is what you pass as `model` in your tool's config.* Each service has its");
   out.push('  own native protocol list and its own `in` / `cachedIn` / `out` pricing.');
   out.push('- **Protocols** (per service) — the wire formats a service accepts *natively*,');

@@ -71,7 +71,7 @@ Test image routing through an updated buyer:
 ```bash
 curl http://localhost:8377/v1/images/generations \
   -H 'content-type: application/json' \
-  -d '{"model":"gpt-image-1","prompt":"migration test","n":1}'
+  -d '{"model":"flux.1-schnell","prompt":"migration test","n":1}'
 ```
 
 ## Existing Configuration

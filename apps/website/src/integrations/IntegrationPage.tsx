@@ -169,7 +169,7 @@ function RunFirstBanner() {
             </li>
             <li>
               <strong>Service</strong> - a single model id like{' '}
-              <code>claude-sonnet-4-6</code> or <code>deepseek-v4-flash</code>. <em>This
+              <code>kimi-k2.6</code> or <code>deepseek-v4-flash</code>. <em>This
               is what you pass as <code>model</code> in your tool's config.</em>
               Each service has its own native protocol list and{' '}
               <code>in</code>/<code>cachedIn</code>/<code>out</code> pricing.
@@ -267,8 +267,8 @@ function RunFirstBanner() {
     "peerId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "name": "Acme Inference",
     "services": [
-      { "service": "gpt-5.4",      "protocols": ["openai-responses"],         "in": 0.25, "cachedIn": 0.05, "out": 1.5 },
-      { "service": "gpt-5.5",      "protocols": ["openai-responses"],         "in": 0.4,  "cachedIn": 0.05, "out": 2 },
+      { "service": "kimi-k2.6",    "protocols": ["openai-responses"],         "in": 0.6,  "cachedIn": 0.06, "out": 2.5 },
+      { "service": "gpt-oss-120b", "protocols": ["openai-responses"],         "in": 0.15, "cachedIn": 0.02, "out": 0.6 },
       { "service": "minimax-m2.7", "protocols": ["openai-chat-completions"],  "in": 0.21, "cachedIn": 0.04, "out": 0.84 }
     ]
   },
@@ -346,8 +346,8 @@ function RunFirstBanner() {
   "services": [
     { "service": "deepseek-v4-flash", "protocols": ["openai-chat-completions"], "in": 0,    "cachedIn": 0,    "out": 0,    "tags": ["chat","fast","free","tasks"] },
     { "service": "minimax-m2.7",      "protocols": ["openai-chat-completions"], "in": 0.21, "cachedIn": 0.04, "out": 0.84, "tags": ["chat","writing","creative"] },
-    { "service": "claude-sonnet-4-6", "protocols": ["openai-chat-completions","anthropic-messages"], "in": 1.8, "cachedIn": 0.18, "out": 9, "tags": ["chat","code","coding","vision"] },
-    { "service": "gpt-5-mini",        "protocols": ["openai-responses"], "in": 0.25, "cachedIn": 0.05, "out": 2, "tags": ["chat","reasoning"] }
+    { "service": "kimi-k2.6",         "protocols": ["openai-chat-completions","anthropic-messages"], "in": 0.6, "cachedIn": 0.06, "out": 2.5, "tags": ["chat","code","coding"] },
+    { "service": "qwen3-235b-a22b-thinking", "protocols": ["openai-responses"], "in": 0.25, "cachedIn": 0.05, "out": 2, "tags": ["chat","reasoning"] }
   ]
 }`}
               />
@@ -423,8 +423,8 @@ function RunFirstBanner() {
 "gpt-oss-120b"
 "gemma-3-27b"
 "qwen3-coder-480b"
-"claude-sonnet-4-6"
-"claude-opus-4-7"`}
+"kimi-k2.6"
+"minimax-m2.7"`}
               />
               <p className={styles.runFirstHint}>
                 These are the <strong>only</strong> values you can pass as{' '}
@@ -444,6 +444,21 @@ function RunFirstBanner() {
   -H 'x-antseed-pin-peer: cccccccccccccccccccccccccccccccccccccccc' \\
   -d '{
     "model": "minimax-m2.7",
+    "messages": [{"role": "user", "content": "hi"}]
+  }'`}
+              />
+              <p className={styles.runFirstHint} style={{marginTop: 12}}>
+                <strong>Option C - model prefix (works in any tool).</strong> Set the{' '}
+                <code>model</code> field to <code>&lt;peerId&gt;@&lt;service-id&gt;</code>.
+                The proxy pins that peer for the request and strips the prefix before
+                routing, so the seller just sees the service id. This is the way to pick
+                a peer from tools where you can only type a model name.
+              </p>
+              <CodeBlock
+                snippet={`curl http://localhost:8377/v1/chat/completions \\
+  -H 'content-type: application/json' \\
+  -d '{
+    "model": "cccccccccccccccccccccccccccccccccccccccc@minimax-m2.7",
     "messages": [{"role": "user", "content": "hi"}]
   }'`}
               />

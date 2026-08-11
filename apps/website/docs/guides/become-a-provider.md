@@ -225,10 +225,12 @@ antseed seller status
 Everything you announce on the network lives in `config.json` under `seller.providers[name].services[id]`. One block per upstream provider plugin, one entry per service. The `add-service` command builds this for you:
 
 ```bash
-# Anthropic: offer claude-sonnet at $3/$15 per million tokens, tagged for chat + coding
-antseed config seller add-service anthropic claude-sonnet-4-6 \
-  --input 3 --cached 0.3 --output 15 \
-  --categories chat,coding
+# OpenRouter (OpenAI-compatible): offer GLM-5, tagged for chat + coding
+antseed config seller add-service openrouter glm-5 \
+  --upstream "z-ai/glm-5" \
+  --input 0.8 --output 2.4 \
+  --categories chat,coding \
+  --base-url https://openrouter.ai/api/v1
 ```
 
 ```bash
@@ -256,12 +258,13 @@ antseed config seller add-service local-llm llama3.2:3b \
 ```
 
 ```bash
-# OpenAI Images: announce image inputs and charge per delivered image
-antseed config seller add-service openai gpt-image-1 \
+# Images (OpenAI-compatible upstream): announce image inputs and charge per delivered image
+antseed config seller add-service openai flux.1-schnell \
+  --upstream "black-forest-labs/FLUX.1-schnell" \
   --input 0 --output 0 \
   --categories image,creative \
   --capabilities '{"inputs":["text","image"]}' \
-  --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.04}]}}'
+  --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.003}]}}'
 ```
 
 The `--upstream` flag maps the buyer-facing service name to the upstream model id. Omit it when they're the same.
