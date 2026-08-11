@@ -1,5 +1,5 @@
 import { randomInt } from 'node:crypto'
-import { mkdir, readFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
   canonicalHashBytes32,
@@ -15,7 +15,7 @@ import {
 import type { VerifierCLIConfig } from '../config/types.js'
 import { acquirePidFileLock, writeJsonAtomic } from './atomic-files.js'
 import type { ReferenceBuildCostV1 } from './model-reference.js'
-import { resolveReferenceSizingPolicy } from './reference-sizing.js'
+import { isReferenceProbeCountAllowed, resolveReferenceSizingPolicy } from './reference-sizing.js'
 import { safeServiceSlug } from './slug.js'
 
 export const BANK_EXHAUSTED = 'BANK_EXHAUSTED'
@@ -74,12 +74,25 @@ export interface SellerProbeLedgerV1 {
   }>
 }
 
+export interface EpochProbeReferenceV1 {
+  version: 1
+  kind: 'antseed-kbf-epoch-probe-reference'
+  model: string
+  epoch: string
+  compatibilityHash: string
+  reference: KbfReferenceV1
+  createdAt: string
+  createdByRunId: string
+}
+
 export interface ProbeBankPowerStatus {
   totalProbeCount: number
   eligibleProbeCount: number
   selectedProbeCount: number | null
   statisticalPower: number | null
 }
+
+const epochReferenceCreations = new Map<string, Promise<KbfReferenceV1>>()
 
 export async function appendModelReferenceToBank(input: {
   banksDir: string
@@ -187,19 +200,18 @@ export async function reserveModelAuditReference(input: {
       || normalized(ledger.sellerPeerId) !== normalized(input.sellerPeerId)) {
       throw new Error(`invalid seller probe ledger at ${ledgerPath}`)
     }
-    const used = new Set(ledger.assignments
-      .filter((assignment) => !assignment.voidedAt)
-      .filter((assignment) => !input.allowProbeReuse || assignment.runId === input.runId)
-      .flatMap((assignment) => assignment.probeIds))
-    const activeContrasts = new Set(bank.contrastModels.map(normalized))
-    const available = bank.probes.filter((entry) => !used.has(entry.probe.id)
-      && entry.distinguishingContrastModels.some((model) => activeContrasts.has(normalized(model))))
-    const shuffled = (input.shuffle ?? cryptoShuffle)(available)
     const now = input.now?.() ?? Date.now()
-    const reference = selectPoweredReference(bank, shuffled, input.config, now)
-    if (!reference) {
-      throw new Error(`${BANK_EXHAUSTED}: ${available.length} unused probes remain for ${input.sellerPeerId}`)
-    }
+    const reference = await loadOrCreateEpochProbeReference({
+      banksDir: input.banksDir,
+      model: input.model,
+      epoch: input.epoch,
+      runId: input.runId,
+      allowProbeReuse: input.allowProbeReuse === true,
+      config: input.config,
+      now,
+      shuffle: input.shuffle,
+      bank,
+    })
     const reservedAt = new Date(now).toISOString()
     const auditId = canonicalHashBytes32({
       domain: 'antseed-verifier-audit-reservation-v1',
@@ -227,6 +239,59 @@ export async function reserveModelAuditReference(input: {
   } finally {
     await lock.release()
   }
+}
+
+export async function loadModelAuditReservation(input: {
+  banksDir: string
+  model: string
+  sellerPeerId: string
+  auditId: string
+  config?: VerifierCLIConfig
+}): Promise<{ reference: KbfReferenceV1; assignment: SellerProbeLedgerV1['assignments'][number] }> {
+  const bank = await readRequiredBank(bankPath(input.banksDir, input.model), input.model)
+  const ledgerPath = sellerLedgerPath(input.banksDir, input.model, input.sellerPeerId)
+  const ledger = await readJsonIfExists<SellerProbeLedgerV1>(ledgerPath)
+  if (!ledger
+    || normalized(ledger.model) !== normalized(input.model)
+    || normalized(ledger.sellerPeerId) !== normalized(input.sellerPeerId)) {
+    throw new Error(`invalid seller probe ledger at ${ledgerPath}`)
+  }
+  const assignment = ledger.assignments.find((entry) => entry.auditId === input.auditId && !entry.voidedAt)
+  if (!assignment) throw new Error(`active audit reservation ${input.auditId} not found in ${ledgerPath}`)
+  const epochReference = await readJsonIfExists<EpochProbeReferenceV1>(
+    epochProbeReferencePath(input.banksDir, input.model, assignment.epoch),
+  )
+  if (epochReference) {
+    const reference = validateEpochProbeReference({
+      value: epochReference,
+      bank,
+      model: input.model,
+      epoch: assignment.epoch,
+      config: input.config,
+    })
+    if (reference.referenceId !== assignment.referenceId
+      || !sameValues(reference.probes.map((probe) => probe.id), assignment.probeIds)) {
+      throw new Error(`audit reservation ${input.auditId} does not match its epoch probe reference`)
+    }
+    return { reference, assignment: structuredClone(assignment) }
+  }
+  const byId = new Map(bank.probes.map((entry) => [entry.probe.id, entry]))
+  const selected = assignment.probeIds.map((probeId) => {
+    const entry = byId.get(probeId)
+    if (!entry) throw new Error(`probe ${probeId} from audit ${input.auditId} is missing from the bank`)
+    return entry
+  })
+  const reference = selectPoweredReference(
+    bank,
+    selected,
+    input.config,
+    Date.parse(assignment.reservedAt),
+  )
+  if (!reference || reference.referenceId !== assignment.referenceId
+    || reference.probes.length !== assignment.probeIds.length) {
+    throw new Error(`audit reservation ${input.auditId} is incompatible with the current probe bank`)
+  }
+  return { reference, assignment: structuredClone(assignment) }
 }
 
 export async function voidModelAuditReference(input: {
@@ -260,6 +325,149 @@ export async function voidModelAuditReference(input: {
 
 export function bankPath(banksDir: string, model: string): string {
   return join(banksDir, safeServiceSlug(model), 'bank.json')
+}
+
+export function epochProbeReferencePath(banksDir: string, model: string, epoch: string): string {
+  return join(banksDir, safeServiceSlug(model), 'epochs', `${safeServiceSlug(epoch)}.json`)
+}
+
+async function loadOrCreateEpochProbeReference(input: {
+  banksDir: string
+  model: string
+  epoch: string
+  runId: string
+  allowProbeReuse: boolean
+  config?: VerifierCLIConfig
+  now: number
+  shuffle?: <T>(values: readonly T[]) => T[]
+  bank: ProbeBankV1
+}): Promise<KbfReferenceV1> {
+  const path = epochProbeReferencePath(input.banksDir, input.model, input.epoch)
+  const pending = epochReferenceCreations.get(path)
+  if (pending) return pending
+  const created = createEpochProbeReference(path, input)
+  epochReferenceCreations.set(path, created)
+  try {
+    return await created
+  } finally {
+    if (epochReferenceCreations.get(path) === created) epochReferenceCreations.delete(path)
+  }
+}
+
+async function createEpochProbeReference(
+  path: string,
+  input: {
+    banksDir: string
+    model: string
+    epoch: string
+    runId: string
+    allowProbeReuse: boolean
+    config?: VerifierCLIConfig
+    now: number
+    shuffle?: <T>(values: readonly T[]) => T[]
+    bank: ProbeBankV1
+  },
+): Promise<KbfReferenceV1> {
+  const lock = await acquirePidFileLock(`${path}.lock`)
+  try {
+    const existing = await readJsonIfExists<EpochProbeReferenceV1>(path)
+    if (existing) {
+      return validateEpochProbeReference({
+        value: existing,
+        bank: input.bank,
+        model: input.model,
+        epoch: input.epoch,
+        config: input.config,
+      })
+    }
+    const used = input.allowProbeReuse
+      ? new Set<string>()
+      : await usedEpochProbeIds(dirname(path), input.model)
+    const activeContrasts = new Set(input.bank.contrastModels.map(normalized))
+    const available = input.bank.probes.filter((entry) => !used.has(entry.probe.id)
+      && entry.distinguishingContrastModels.some((model) => activeContrasts.has(normalized(model))))
+    const shuffled = (input.shuffle ?? cryptoShuffle)(available)
+    const reference = selectPoweredReference(input.bank, shuffled, input.config, input.now)
+    if (!reference) {
+      throw new Error(`${BANK_EXHAUSTED}: ${available.length} unused probes remain for ${input.model} epoch ${input.epoch}`)
+    }
+    const createdAt = new Date(input.now).toISOString()
+    const value: EpochProbeReferenceV1 = {
+      version: 1,
+      kind: 'antseed-kbf-epoch-probe-reference',
+      model: input.model,
+      epoch: input.epoch,
+      compatibilityHash: input.bank.compatibilityHash,
+      reference,
+      createdAt,
+      createdByRunId: input.runId,
+    }
+    await writeJsonAtomic(path, value)
+    return structuredClone(reference)
+  } finally {
+    await lock.release()
+  }
+}
+
+async function usedEpochProbeIds(directory: string, model: string): Promise<Set<string>> {
+  let names: string[]
+  try {
+    names = await readdir(directory)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return new Set()
+    throw error
+  }
+  const used = new Set<string>()
+  for (const name of names.filter((entry) => entry.endsWith('.json'))) {
+    const value = await readJsonIfExists<EpochProbeReferenceV1>(join(directory, name))
+    if (!value || value.version !== 1 || value.kind !== 'antseed-kbf-epoch-probe-reference'
+      || normalized(value.model) !== normalized(model) || !Array.isArray(value.reference?.probes)) {
+      throw new Error(`invalid epoch probe reference at ${join(directory, name)}`)
+    }
+    for (const probe of value.reference.probes) used.add(probe.id)
+  }
+  return used
+}
+
+function validateEpochProbeReference(input: {
+  value: EpochProbeReferenceV1
+  bank: ProbeBankV1
+  model: string
+  epoch: string
+  config?: VerifierCLIConfig
+}): KbfReferenceV1 {
+  const { value, bank } = input
+  if (value.version !== 1 || value.kind !== 'antseed-kbf-epoch-probe-reference'
+    || normalized(value.model) !== normalized(input.model) || value.epoch !== input.epoch
+    || value.compatibilityHash !== bank.compatibilityHash) {
+    throw new Error(`invalid epoch probe reference for ${input.model} epoch ${input.epoch}`)
+  }
+  const sizing = resolveReferenceSizingPolicy(input.config)
+  const reference = validateKbfReferenceV1(value.reference, {
+    minimumStatisticalPower: sizing.minimumStatisticalPower,
+  })
+  if (!isReferenceProbeCountAllowed(reference.probes.length, sizing)) {
+    throw new Error(`epoch probe reference for ${input.model} epoch ${input.epoch} is incompatible with configured sizing`)
+  }
+  if (probeBankCompatibilityHash(input.model, reference) !== bank.compatibilityHash) {
+    throw new Error(`epoch probe reference for ${input.model} epoch ${input.epoch} is incompatible with the bank`)
+  }
+  const bankById = new Map(bank.probes.map((entry) => [entry.probe.id, entry]))
+  const outcomeById = new Map(reference.selfTest.outcomes.map((outcome) => [outcome.probeId, outcome]))
+  for (const probe of reference.probes) {
+    const bankEntry = bankById.get(probe.id)
+    const outcome = outcomeById.get(probe.id)
+    if (!bankEntry || !outcome
+      || canonicalHashBytes32(canonicalBankProbe(bankEntry.probe)) !== canonicalHashBytes32(canonicalBankProbe(probe))
+      || canonicalHashBytes32(bankEntry.selfTest) !== canonicalHashBytes32(outcome)) {
+      throw new Error(`epoch probe ${probe.id} is inconsistent with the ${input.model} bank`)
+    }
+  }
+  return structuredClone(reference)
+}
+
+function sameValues(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index])
 }
 
 export async function inspectModelProbeBankPower(input: {
@@ -375,15 +583,7 @@ function bankFromReference(model: string, reference: KbfReferenceV1, cost: Refer
     alpha: reference.statisticalPowerEvidence.alpha,
     clopperPearsonConfidence: reference.statisticalPowerEvidence.clopperPearsonConfidence,
   }
-  const compatibilityHash = canonicalHashBytes32({
-    model: normalized(model),
-    referenceModel: normalized(reference.referenceModel),
-    serviceAliases: reference.serviceAliases.map(normalized).sort(),
-    queryProfileHash: queryProfileHash(reference.queryProfile),
-    provenance: reference.provenance ?? null,
-    minimumMismatchDelta: reference.minimumMismatchDelta,
-    assumptions,
-  })
+  const compatibilityHash = probeBankCompatibilityHash(model, reference)
   const contrastByProbe = new Map<string, string[]>()
   for (const contrast of reference.contrasts) {
     for (const probeId of contrast.distinguishingProbeIds) {
@@ -431,6 +631,21 @@ function bankFromReference(model: string, reference: KbfReferenceV1, cost: Refer
     createdAt: now,
     updatedAt: now,
   }
+}
+
+function probeBankCompatibilityHash(model: string, reference: KbfReferenceV1): string {
+  return canonicalHashBytes32({
+    model: normalized(model),
+    referenceModel: normalized(reference.referenceModel),
+    serviceAliases: reference.serviceAliases.map(normalized).sort(),
+    queryProfileHash: queryProfileHash(reference.queryProfile),
+    provenance: reference.provenance ?? null,
+    minimumMismatchDelta: reference.minimumMismatchDelta,
+    assumptions: {
+      alpha: reference.statisticalPowerEvidence.alpha,
+      clopperPearsonConfidence: reference.statisticalPowerEvidence.clopperPearsonConfidence,
+    },
+  })
 }
 
 function selectPoweredReference(

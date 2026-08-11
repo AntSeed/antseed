@@ -135,7 +135,10 @@ export class BuyerRequestHandler {
 
     let startTime = Date.now();
 
-    const executeRequest = (): Promise<SerializedHttpResponse> => new Promise<SerializedHttpResponse>((resolve, reject) => {
+    const executeRequest = (): Promise<{
+      response: SerializedHttpResponse;
+      expectedChannelId: string | null;
+    }> => new Promise((resolve, reject) => {
       const timeoutMs = this._config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
       const maxStreamBufferBytes = Math.max(1, this._config.maxStreamBufferBytes ?? 16 * 1024 * 1024);
       const maxStreamDurationMs = Math.max(1, this._config.maxStreamDurationMs ?? 5 * 60_000);
@@ -223,6 +226,8 @@ export class BuyerRequestHandler {
 
       resetTimeout(streamInitialResponseTimeoutMs);
 
+      const expectedChannelId = negotiator?.bpm?.getActiveSession?.(peer.peerId)?.sessionId ?? null;
+
       const finish = (response: SerializedHttpResponse): void => {
         if (settled) return;
         settled = true;
@@ -231,7 +236,7 @@ export class BuyerRequestHandler {
         cleanupConnectionListener();
         const cleaned = stripStreamingHeader(response);
         debugLog(`[BuyerRequest] Response for ${req.requestId.slice(0, 8)}: status=${cleaned.statusCode} (${Date.now() - startTime}ms, ${cleaned.body.length}b)`);
-        resolve(cleaned);
+        resolve({ response: cleaned, expectedChannelId });
       };
 
       const fail = (error: Error): void => {
@@ -306,17 +311,26 @@ export class BuyerRequestHandler {
       );
     });
 
-    const response = await executeRequest();
+    const firstAttempt = await executeRequest();
+    const response = firstAttempt.response;
 
     if (response.statusCode === 402 && negotiator && !externalSpendingAuth) {
       const result = await negotiator.handle402(response, peer, conn, req);
       if (result.action === 'return') return result.response;
       startTime = Date.now();
-      const retriedResponse = await executeRequest();
+      const retriedAttempt = await executeRequest();
+      const retriedResponse = retriedAttempt.response;
       if (!isFreeService) {
         negotiator.estimateCostFromResponse(peer, retriedResponse, requestedService, req.requestId);
       }
-      this._recordResponseAuth(peer, req, retriedResponse, requestedService, verificationMux);
+      this._recordResponseAuth(
+        peer,
+        req,
+        retriedResponse,
+        requestedService,
+        verificationMux,
+        retriedAttempt.expectedChannelId,
+      );
       return retriedResponse;
     }
 
@@ -324,7 +338,14 @@ export class BuyerRequestHandler {
       negotiator.estimateCostFromResponse(peer, response, requestedService, req.requestId);
     }
 
-    this._recordResponseAuth(peer, req, response, requestedService, verificationMux);
+    this._recordResponseAuth(
+      peer,
+      req,
+      response,
+      requestedService,
+      verificationMux,
+      firstAttempt.expectedChannelId,
+    );
     return response;
   }
 
@@ -356,6 +377,7 @@ export class BuyerRequestHandler {
     response: SerializedHttpResponse,
     requestedService: string | undefined,
     verificationMux: VerificationMux,
+    expectedChannelId: string | null,
   ): void {
     if (!shouldExpectResponseAuth(peer, response, requestedService)) {
       return;
@@ -363,7 +385,6 @@ export class BuyerRequestHandler {
 
     const storage = this._deps.verificationStorage;
     const advertisedService = requestedService ?? 'unknown';
-    const expectedChannelId = this._deps.negotiator?.bpm?.getActiveSession(peer.peerId)?.sessionId ?? null;
     const responseAuthPromise = verificationMux.waitForResponseAuth(
       request.requestId,
       this._config.responseAuthTimeoutMs ?? DEFAULT_RESPONSE_AUTH_GRACE_MS,

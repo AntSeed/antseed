@@ -1,4 +1,5 @@
 import type { ModelVerificationTargetResult } from '../../../verifier/model-run.js'
+import type { VerificationOutcomeReasonV1 } from '../../../verifier/outcome-reason.js'
 
 export type VerifierRunProgressPlan = {
   model: string
@@ -18,7 +19,7 @@ type VerifierRunProgressState = {
   undetermined: number
   failed: number
   skipped: number
-  phase: 'waiting' | 'running' | 'done'
+  phase: string
 }
 
 export class VerifierRunProgress {
@@ -57,26 +58,33 @@ export class VerifierRunProgress {
     this.render()
   }
 
-  recordVerdict(model: string, verdict: ModelVerificationTargetResult['status']): void {
+  recordVerdict(
+    model: string,
+    verdict: ModelVerificationTargetResult['status'],
+    reason?: VerificationOutcomeReasonV1 | null,
+  ): void {
     const state = this.states.get(model)
     if (!this.interactive || !state) return
     if (verdict === 'SAME') state.same += 1
     else if (verdict === 'DIFF') state.diff += 1
     else state.undetermined += 1
+    if (reason) state.phase = `${verdict.toLowerCase()}: ${reason.code}`
     this.render()
   }
 
-  recordFailure(model: string): void {
+  recordFailure(model: string, reason?: VerificationOutcomeReasonV1): void {
     const state = this.states.get(model)
     if (!this.interactive || !state) return
     state.failed += 1
+    if (reason) state.phase = `failed: ${reason.code}`
     this.render()
   }
 
-  recordSkip(model: string): void {
+  recordSkip(model: string, reason?: VerificationOutcomeReasonV1): void {
     const state = this.states.get(model)
     if (!this.interactive || !state) return
     state.skipped += 1
+    if (reason) state.phase = `skipped: ${reason.code}`
     this.render()
   }
 

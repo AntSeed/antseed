@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   KBF_PROBES_PER_REQUEST,
@@ -30,17 +30,47 @@ import {
 import type { ResponseAuthReader } from './response-auth-reader.js'
 import { advertisedServices } from './service-discovery.js'
 import { mapWithAdaptiveConcurrency, type AuditTaskLimiter } from './audit-concurrency.js'
+import { writeJsonAtomic } from './atomic-files.js'
+import {
+  sanitizeOutcomeSummary,
+  withBatchCounts,
+  type VerificationOutcomeReasonV1,
+} from './outcome-reason.js'
 
 const PROBE_REQUEST_ATTEMPTS = 5
-const PROBE_RETRY_BASE_DELAY_MS = 500
+const PROBE_RETRY_BASE_DELAY_MS = 1_000
+const PROBE_RETRY_MAX_DELAY_MS = 30_000
 
 class VerificationSkipSignal extends Error {
   constructor(
     readonly code: VerificationSkipCode,
     readonly reason: string,
+    readonly outcomeReason: VerificationOutcomeReasonV1,
     readonly exchange: ProxyAuditEvidenceExchangeV1,
   ) {
     super(reason)
+  }
+}
+
+class VerificationTerminalTransientSignal extends Error {
+  constructor(readonly exchange: ProxyAuditEvidenceExchangeV1) {
+    super(exchange.outcomeReason?.summary ?? exchange.failureReason ?? 'transient audit failure')
+  }
+}
+
+class LazyAuditDeadline {
+  readonly controller = new AbortController()
+  private timer: ReturnType<typeof setTimeout> | null = null
+
+  constructor(readonly timeoutMs: number) {}
+
+  start(): AbortSignal {
+    this.timer ??= setTimeout(() => this.controller.abort(), this.timeoutMs)
+    return this.controller.signal
+  }
+
+  close(): void {
+    if (this.timer) clearTimeout(this.timer)
   }
 }
 
@@ -62,6 +92,30 @@ export interface ProxyVerificationContext {
   batchLimiter: AuditTaskLimiter
   fetchFn?: typeof fetch
   sleepFn?: (delayMs: number) => Promise<void>
+  randomFn?: () => number
+}
+
+export interface ModelVerificationResumeInput {
+  parentAuditId: string
+  parentEvidenceHash: string
+  exchanges: ProxyAuditEvidenceExchangeV1[]
+}
+
+export interface ModelAuditCheckpointV1 {
+  version: 1
+  kind: 'antseed-verifier-audit-checkpoint'
+  auditId: string
+  parentAuditId: string | null
+  runId: string
+  epoch: string
+  model: string
+  targetPeerId: string
+  service: string
+  referenceId: string
+  queryProfileHash: string
+  probeIds: string[]
+  exchanges: ProxyAuditEvidenceExchangeV1[]
+  updatedAt: string
 }
 
 export interface ModelVerificationTargetResult {
@@ -70,6 +124,7 @@ export interface ModelVerificationTargetResult {
   agentId: string | null
   service: string
   status: 'SAME' | 'DIFF' | 'UNDETERMINED'
+  outcomeReason?: VerificationOutcomeReasonV1 | null
   auditId: string
   parsedProbeCount: number
   probeCount: number
@@ -78,16 +133,19 @@ export interface ModelVerificationTargetResult {
   correctRate: number | null
   requestCount: number
   cost: AuditCostSummaryV1
+  cumulativeCost?: AuditCostSummaryV1
   evidencePath: string
   evidenceHash: string
 }
 
 export interface ModelVerificationFailure {
   peerId: string
+  displayName?: string | null
   agentId: string | null
   service: string
   status: 'FAILED'
   reason: string
+  outcomeReason?: VerificationOutcomeReasonV1
 }
 
 export interface ModelVerificationSkip {
@@ -98,6 +156,7 @@ export interface ModelVerificationSkip {
   status: 'SKIPPED'
   code: VerificationSkipCode
   reason: string
+  outcomeReason?: VerificationOutcomeReasonV1
   source: 'preflight' | 'runtime'
   auditId: string | null
   evidencePath: string | null
@@ -180,30 +239,99 @@ export async function verifyModelTarget(input: {
   service: string
   reference: KbfReferenceV1
   auditId?: string
+  resume?: ModelVerificationResumeInput
+  checkpointIdentity?: {
+    runId: string
+    epoch: string
+    model: string
+  }
 }): Promise<ModelVerificationTargetResult | ModelVerificationSkip> {
   const batches = chunk(input.reference.probes, KBF_PROBES_PER_REQUEST)
-  const auditController = new AbortController()
-  const auditTimer = setTimeout(() => auditController.abort(), input.context.auditTimeoutMs)
-  let exchanges: ProxyAuditEvidenceExchangeV1[]
+  const deadline = new LazyAuditDeadline(input.context.auditTimeoutMs)
+  const auditId = input.auditId ?? canonicalHashBytes32({
+    domain: 'antseed-verifier-provisional-audit-v1',
+    peerId: input.target.peerId,
+    referenceId: input.reference.referenceId,
+    startedAt: Date.now(),
+  })
+  const exchangeByBatch = new Map<number, ProxyAuditEvidenceExchangeV1>()
+  for (const exchange of input.resume?.exchanges ?? []) {
+    if (isReusableExchange(exchange)) exchangeByBatch.set(exchange.batchIndex, exchange)
+  }
+  const reusedBatchIndexes = [...exchangeByBatch.keys()].sort((left, right) => left - right)
+  const pending = batches.flatMap((probes, batchIndex) => exchangeByBatch.has(batchIndex)
+    ? []
+    : [{ probes, batchIndex }])
+  let checkpointTail = Promise.resolve()
+  const persistCheckpoint = async (): Promise<void> => {
+    const snapshot = [...exchangeByBatch.values()].sort((left, right) => left.batchIndex - right.batchIndex)
+    checkpointTail = checkpointTail.then(() => writeJsonAtomic(
+      join(input.context.evidenceDir, '.checkpoints', `${auditId}.json`),
+      {
+        version: 1,
+        kind: 'antseed-verifier-audit-checkpoint',
+        auditId,
+        parentAuditId: input.resume?.parentAuditId ?? null,
+        runId: input.checkpointIdentity?.runId ?? '',
+        epoch: input.checkpointIdentity?.epoch ?? '',
+        model: input.checkpointIdentity?.model ?? input.reference.referenceModel,
+        targetPeerId: input.target.peerId,
+        service: input.service,
+        referenceId: input.reference.referenceId,
+        queryProfileHash: queryProfileHash(input.reference.queryProfile),
+        probeIds: input.reference.probes.map((probe) => probe.id),
+        exchanges: snapshot,
+        updatedAt: new Date().toISOString(),
+      },
+    ))
+    await checkpointTail
+  }
   try {
-    exchanges = await mapWithAdaptiveConcurrency(
-      batches,
+    const executed = await mapWithAdaptiveConcurrency(
+      pending,
       input.context.batchConcurrency,
-      (probes, batchIndex, control) => input.context.batchLimiter.run(() => executeProxyProbeBatch(
-        { ...input.context, signal: auditController.signal },
+      async ({ probes, batchIndex }, _pendingIndex, control) => input.context.batchLimiter.run(async () => {
+        const exchange = await executeProxyProbeBatch(
+        { ...input.context, signal: deadline.start() },
         input.target,
         input.service,
         input.reference,
         probes,
         batchIndex,
         control.reduceToOne,
-      )),
+        )
+        exchangeByBatch.set(batchIndex, exchange)
+        await persistCheckpoint()
+        if (batchIndex === 0 && exchange.status === 'failed' && exchange.outcomeReason?.retryable) {
+          throw new VerificationTerminalTransientSignal(exchange)
+        }
+        return exchange
+      }),
       (exchange) => exchange.status === 'succeeded'
         && exchange.responseAuth.status === 'verified'
         && exchange.timing.responseLatencyMs <= input.context.batchConcurrencyPromotionLatencyMs,
     )
+    for (const exchange of executed) exchangeByBatch.set(exchange.batchIndex, exchange)
   } catch (error) {
-    if (!(error instanceof VerificationSkipSignal)) throw error
+    if (error instanceof VerificationTerminalTransientSignal) {
+      exchangeByBatch.set(error.exchange.batchIndex, error.exchange)
+      for (const { probes, batchIndex } of pending) {
+        if (!exchangeByBatch.has(batchIndex)) {
+          exchangeByBatch.set(batchIndex, notAttemptedExchange(
+            input.context,
+            input.target,
+            input.service,
+            input.reference,
+            probes,
+            batchIndex,
+            error.exchange.outcomeReason!,
+          ))
+        }
+      }
+      await persistCheckpoint()
+    } else if (!(error instanceof VerificationSkipSignal)) {
+      throw error
+    } else {
     const completedAt = Date.now()
     const evidence: ProxyAuditSkipEvidenceV1 = {
       version: 1,
@@ -226,16 +354,21 @@ export async function verifyModelTarget(input: {
         referenceModel: input.reference.referenceModel,
       },
       exchange: error.exchange,
-      result: { status: 'SKIPPED', code: error.code, reason: error.reason },
+      result: {
+        status: 'SKIPPED',
+        code: error.code,
+        reason: error.reason,
+        outcomeReason: withBatchCounts(error.outcomeReason, 1, batches.length),
+      },
     }
     const evidenceHash = canonicalHashBytes32(evidence)
-    const auditId = input.auditId ?? deriveProxyAuditId({
+    const resolvedAuditId = input.auditId ?? deriveProxyAuditId({
       targetPeerId: input.target.peerId,
       referenceId: input.reference.referenceId,
       completedAt,
       evidenceHash,
     })
-    const written = await writeProxyAuditSkipEvidence(input.context.evidenceDir, auditId, evidence)
+    const written = await writeProxyAuditSkipEvidence(input.context.evidenceDir, resolvedAuditId, evidence)
     return {
       peerId: input.target.peerId,
       displayName: input.target.displayName ?? null,
@@ -244,14 +377,17 @@ export async function verifyModelTarget(input: {
       status: 'SKIPPED',
       code: error.code,
       reason: error.reason,
+      outcomeReason: withBatchCounts(error.outcomeReason, 1, batches.length),
       source: 'runtime',
-      auditId,
+      auditId: resolvedAuditId,
       evidencePath: written.path,
       evidenceHash: written.evidenceHash,
     }
+    }
   } finally {
-    clearTimeout(auditTimer)
+    deadline.close()
   }
+  const exchanges = [...exchangeByBatch.values()].sort((left, right) => left.batchIndex - right.batchIndex)
   const answers = exchanges.flatMap((exchange) => exchange.answers)
   const matchVector = exchanges.flatMap((exchange) => exchange.matches)
   const fragment = verifyKbf(input.reference, { answers, matchVector }, { minCoverage: 1 })
@@ -264,7 +400,10 @@ export async function verifyModelTarget(input: {
   const verdictReason = authenticated
     ? fragment.verdictReason
     : 'one or more successful proxy batches lacked valid verified ResponseAuth'
-  const cost = summarizeAuditExchangeCosts(exchanges)
+  const outcomeReason = verdict === 'UNDETERMINED' ? summarizeUndeterminedReason(exchanges, batches.length) : null
+  const cumulativeCost = summarizeAuditExchangeCosts(exchanges)
+  const newBatchIndexes = new Set(pending.map((entry) => entry.batchIndex))
+  const cost = summarizeAuditExchangeCosts(exchanges.filter((exchange) => newBatchIndexes.has(exchange.batchIndex)))
   const correctProbeCount = matchVector.filter((entry) => entry === 1).length
   const incorrectProbeCount = matchVector.filter((entry) => entry === 0).length
   const parsedProbeCount = correctProbeCount + incorrectProbeCount
@@ -295,6 +434,13 @@ export async function verifyModelTarget(input: {
       probes: input.reference.probes,
     },
     exchanges,
+    ...(input.resume ? {
+      resume: {
+        parentAuditId: input.resume.parentAuditId,
+        parentEvidenceHash: input.resume.parentEvidenceHash,
+        reusedBatchIndexes,
+      },
+    } : {}),
     result: {
       selectedProbeCount: input.reference.probes.length,
       parsedProbeCount,
@@ -303,24 +449,27 @@ export async function verifyModelTarget(input: {
       stats: fragment.stats,
       verdict,
       verdictReason,
+      outcomeReason,
       cost,
+      cumulativeCost,
     },
   }
   const evidenceHash = canonicalHashBytes32(evidence)
-  const auditId = input.auditId ?? deriveProxyAuditId({
+  const resolvedAuditId = input.auditId ?? deriveProxyAuditId({
     targetPeerId: input.target.peerId,
     referenceId: input.reference.referenceId,
     completedAt,
     evidenceHash,
   })
-  const written = await writeProxyAuditEvidence(input.context.evidenceDir, auditId, evidence)
+  const written = await writeProxyAuditEvidence(input.context.evidenceDir, resolvedAuditId, evidence)
   return {
     peerId: input.target.peerId,
     displayName: input.target.displayName ?? null,
     agentId: input.target.onChainAgentId ? String(input.target.onChainAgentId) : null,
     service: input.service,
     status: verdict,
-    auditId,
+    outcomeReason,
+    auditId: resolvedAuditId,
     parsedProbeCount,
     probeCount: input.reference.probes.length,
     correctProbeCount,
@@ -328,9 +477,39 @@ export async function verifyModelTarget(input: {
     correctRate: parsedProbeCount === 0 ? null : correctProbeCount / parsedProbeCount,
     requestCount: exchanges.length,
     cost,
+    cumulativeCost,
     evidencePath: written.path,
     evidenceHash: written.evidenceHash,
   }
+}
+
+export async function readModelAuditCheckpoints(
+  evidenceDir: string,
+): Promise<Array<{ path: string; checkpoint: ModelAuditCheckpointV1 }>> {
+  const directory = join(evidenceDir, '.checkpoints')
+  let filenames: string[]
+  try {
+    filenames = await readdir(directory)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+  const checkpointEntries = await Promise.all(filenames
+    .filter((filename) => filename.endsWith('.json'))
+    .map(async (filename) => {
+      const path = join(directory, filename)
+      const checkpoint = JSON.parse(await readFile(path, 'utf8')) as ModelAuditCheckpointV1
+      if (checkpoint.version !== 1
+        || checkpoint.kind !== 'antseed-verifier-audit-checkpoint'
+        || typeof checkpoint.auditId !== 'string'
+        || !Array.isArray(checkpoint.exchanges)) {
+        throw new Error(`invalid verifier audit checkpoint: ${path}`)
+      }
+      if (!checkpoint.runId || !checkpoint.epoch || !checkpoint.model) return null
+      return { path, checkpoint }
+    }))
+  const checkpoints = checkpointEntries.filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+  return checkpoints.sort((left, right) => left.checkpoint.updatedAt.localeCompare(right.checkpoint.updatedAt))
 }
 
 async function executeProxyProbeBatch(
@@ -342,33 +521,19 @@ async function executeProxyProbeBatch(
   batchIndex: number,
   onRateLimited?: () => void,
 ): Promise<ProxyAuditEvidenceExchangeV1> {
-  const url = `${context.proxy.baseUrl}/v1/chat/completions`
-  const headers = {
-    'content-type': 'application/json',
-    'x-antseed-pin-peer': target.peerId,
-  }
-  const body = new TextEncoder().encode(JSON.stringify({
-    ...buildKbfChatRequestBody(service, probes, { maxTokens: reference.queryProfile.maxTokensPerRequest }),
-    top_p: reference.queryProfile.generationSettings.topP,
-    stream: false,
-    n: 1,
-    ...(reference.queryProfile.requestOverrides ?? {}),
-  }))
-  const request = {
-    method: 'POST' as const,
-    url,
-    headers,
-    bodyBase64: Buffer.from(body).toString('base64'),
-    hash: canonicalHashBytes32({ method: 'POST', url, headers, bodyBase64: Buffer.from(body).toString('base64') }),
-  }
+  const { url, headers, body, request } = buildProxyBatchRequest(context, target, service, reference, probes)
   const startedAt = Date.now()
   let attemptCount = 0
   let lastFailure = 'proxy request failed'
+  let lastOutcomeReason: VerificationOutcomeReasonV1 = transportReason(lastFailure)
   let lastResponse: ProxyAuditEvidenceExchangeV1['response'] = null
   const requestIds: string[] = []
   let lastRequestId: string | null = null
+  const attemptCosts = [] as NonNullable<ProxyAuditEvidenceExchangeV1['attemptCosts']>
+  let responseAuthRetryCount = 0
   const fetchFn = context.fetchFn ?? fetch
   const sleepFn = context.sleepFn ?? sleep
+  const randomFn = context.randomFn ?? Math.random
 
   while (attemptCount < PROBE_REQUEST_ATTEMPTS && !context.signal.aborted) {
     attemptCount += 1
@@ -388,6 +553,8 @@ async function executeProxyProbeBatch(
       })
       const responseBody = new Uint8Array(await response.arrayBuffer())
       const responseHeaders = Object.fromEntries(response.headers.entries())
+      const attemptCost = parseProxyAuditExchangeCost(responseHeaders)
+      if (attemptCost) attemptCosts.push(attemptCost)
       lastResponse = {
         statusCode: response.status,
         headers: responseHeaders,
@@ -400,10 +567,15 @@ async function executeProxyProbeBatch(
       }
       if (!response.ok) {
         lastFailure = `buyer proxy HTTP ${response.status}: ${responseText(responseBody).slice(0, 500)}`
-        const skip = batchIndex === 0 ? classifyVerificationSkip(response.status, responseBody) : null
-        if (skip) {
+        const classified = classifyProxyFailure(response.status, responseBody)
+        lastOutcomeReason = {
+          ...classified.outcomeReason,
+          upstreamStatus: response.status,
+          ...(classified.outcomeReason.requestId ? {} : { requestId: safeRequestId(responseBody) ?? requestId }),
+        }
+        if (batchIndex === 0 && classified.skipCode) {
           const completedAt = Date.now()
-          throw new VerificationSkipSignal(skip.code, skip.reason, {
+          throw new VerificationSkipSignal(classified.skipCode, lastOutcomeReason.summary, lastOutcomeReason, {
             batchIndex,
             attemptCount,
             requestIds,
@@ -415,7 +587,9 @@ async function executeProxyProbeBatch(
             matches: new Array<null>(probes.length).fill(null),
             status: 'failed',
             failureReason: lastFailure,
-            cost: null,
+            cost: attemptCost,
+            attemptCosts,
+            outcomeReason: lastOutcomeReason,
             responseAuth: {
               requestId,
               status: 'missing',
@@ -425,8 +599,12 @@ async function executeProxyProbeBatch(
           })
         }
         if (response.status === 429) onRateLimited?.()
-        if (!isRetryableStatus(response.status)) break
-        throw new Error(lastFailure)
+        if (!classified.retryable) break
+        if (attemptCount < PROBE_REQUEST_ATTEMPTS) {
+          await sleepWithSignal(retryDelay(response, attemptCount, randomFn), context.signal, sleepFn)
+          continue
+        }
+        break
       }
       const completion = extractCompletionText(responseBody)
       const answers = completion === null
@@ -450,6 +628,13 @@ async function executeProxyProbeBatch(
             ? `buyer proxy request ID mismatch (${returnedRequestId} != ${requestId})`
             : 'successful buyer proxy response omitted x-antseed-request-id',
         }
+      if (responseAuth.status !== 'verified' && responseAuthRetryCount < 1 && !context.signal.aborted) {
+        responseAuthRetryCount += 1
+        lastFailure = responseAuth.failureReason ?? 'successful response lacked verified ResponseAuth'
+        lastOutcomeReason = responseAuthReason(responseAuth.status, lastFailure, requestId)
+        await sleepWithSignal(PROBE_RETRY_BASE_DELAY_MS, context.signal, sleepFn)
+        continue
+      }
       return {
         batchIndex,
         attemptCount,
@@ -462,7 +647,11 @@ async function executeProxyProbeBatch(
         matches,
         status: 'succeeded',
         failureReason: null,
-        cost: parseProxyAuditExchangeCost(responseHeaders),
+        cost: attemptCost,
+        attemptCosts,
+        outcomeReason: responseAuth.status === 'verified'
+          ? null
+          : responseAuthReason(responseAuth.status, responseAuth.failureReason, requestId),
         responseAuth: {
           requestId: responseAuth.requestId,
           status: responseAuth.status,
@@ -477,15 +666,26 @@ async function executeProxyProbeBatch(
         : controller.signal.aborted
           ? `buyer proxy request timed out after ${context.requestTimeoutMs}ms`
         : asError(error).message
+      lastOutcomeReason = context.signal.aborted
+        ? deadlineReason(context.auditTimeoutMs)
+        : controller.signal.aborted
+          ? requestTimeoutReason(context.requestTimeoutMs)
+          : lastOutcomeReason.summary === 'proxy request failed'
+            ? transportReason(lastFailure)
+            : lastOutcomeReason
       if (!context.signal.aborted && attemptCount < PROBE_REQUEST_ATTEMPTS) {
-        await sleepWithSignal(PROBE_RETRY_BASE_DELAY_MS * 2 ** (attemptCount - 1), context.signal, sleepFn)
+        const delay = boundedBackoff(attemptCount, randomFn)
+        await sleepWithSignal(delay, context.signal, sleepFn)
       }
     } finally {
       clearTimeout(timer)
       context.signal.removeEventListener('abort', abortRequest)
     }
   }
-  if (context.signal.aborted) lastFailure = `seller audit deadline exceeded after ${context.auditTimeoutMs}ms`
+  if (context.signal.aborted) {
+    lastFailure = `seller audit deadline exceeded after ${context.auditTimeoutMs}ms`
+    lastOutcomeReason = deadlineReason(context.auditTimeoutMs)
+  }
   const completedAt = Date.now()
   return {
     batchIndex,
@@ -499,7 +699,9 @@ async function executeProxyProbeBatch(
     matches: new Array<null>(probes.length).fill(null),
     status: 'failed',
     failureReason: lastFailure,
-    cost: null,
+    cost: attemptCosts.at(-1) ?? null,
+    attemptCosts,
+    outcomeReason: lastOutcomeReason,
     responseAuth: {
       requestId: lastRequestId,
       status: 'missing',
@@ -509,45 +711,376 @@ async function executeProxyProbeBatch(
   }
 }
 
-function classifyVerificationSkip(
+function classifyProxyFailure(
   statusCode: number,
   body: Uint8Array,
-): { code: VerificationSkipCode; reason: string } | null {
+): {
+  retryable: boolean
+  skipCode: VerificationSkipCode | null
+  outcomeReason: VerificationOutcomeReasonV1
+} {
   const text = responseText(body)
   let code = ''
   let message = text
+  let requestId: string | undefined
   try {
-    const parsed = JSON.parse(text) as { error?: unknown }
+    const parsed = JSON.parse(text) as Record<string, unknown>
     const error = parsed.error
     if (error && typeof error === 'object') {
       const record = error as Record<string, unknown>
       code = typeof record.code === 'string' ? record.code : ''
       message = typeof record.message === 'string' ? record.message : text
+      requestId = typeof record.request_id === 'string' ? record.request_id : undefined
     } else if (typeof error === 'string') {
       message = error
     }
+    if (!code && typeof parsed.code === 'string') code = parsed.code
+    if (typeof parsed.message === 'string') message = parsed.message
+    if (!requestId && typeof parsed.request_id === 'string') requestId = parsed.request_id
   } catch {
     // Plain-text proxy errors are supported for compatibility with older buyers.
   }
 
+  const normalizedMessage = message.toLowerCase()
+  const base = { affectedBatchCount: 1, totalBatchCount: 1, ...(code ? { providerCode: code } : {}), ...(requestId ? { requestId } : {}) }
+
+  if (statusCode === 429 || normalizedMessage.includes('max concurrency') || normalizedMessage.includes('throttl')) {
+    return {
+      retryable: true,
+      skipCode: null,
+      outcomeReason: {
+        ...base,
+        code: 'rate_limited',
+        summary: sanitizeOutcomeSummary(message),
+        retryable: true,
+        source: 'transport',
+        nextAction: 'retry later',
+      },
+    }
+  }
+  if (normalizedMessage.includes('temporarily unavailable') || normalizedMessage.includes('temporary unavailable')) {
+    return {
+      retryable: true,
+      skipCode: null,
+      outcomeReason: {
+        ...base,
+        code: 'temporarily_unavailable',
+        summary: sanitizeOutcomeSummary(message),
+        retryable: true,
+        source: 'provider',
+        nextAction: 'retry later',
+      },
+    }
+  }
+  if (normalizedMessage.includes('lock confirmation timed out')) {
+    return {
+      retryable: true,
+      skipCode: null,
+      outcomeReason: {
+        ...base,
+        code: 'payment_lock_timeout',
+        summary: sanitizeOutcomeSummary(message),
+        retryable: true,
+        source: 'payment',
+        nextAction: 'restart or repair payment channel',
+      },
+    }
+  }
+  if (code === 'GROUP_DELETED' || normalizedMessage.includes('api key') && normalizedMessage.includes('deleted')) {
+    return {
+      retryable: false,
+      skipCode: 'upstream_credentials_invalid',
+      outcomeReason: {
+        ...base,
+        code: 'upstream_credentials_invalid',
+        summary: sanitizeOutcomeSummary(message),
+        retryable: false,
+        source: 'provider',
+        nextAction: 'seller must repair credentials',
+      },
+    }
+  }
+  if (normalizedMessage.includes('invalid temperature')
+    || normalizedMessage.includes('invalid request parameter')
+    || normalizedMessage.includes('only 0.6 is allowed')) {
+    return {
+      retryable: false,
+      skipCode: 'request_profile_incompatible',
+      outcomeReason: {
+        ...base,
+        code: 'request_profile_incompatible',
+        summary: sanitizeOutcomeSummary(message),
+        retryable: false,
+        source: 'request_profile',
+        nextAction: 'seller must support canonical request profile',
+      },
+    }
+  }
+
   if (code === 'reputation_below_minimum' || code === 'price_above_maximum' || code === 'policy_rejected') {
-    return { code, reason: message }
+    return {
+      retryable: false,
+      skipCode: code,
+      outcomeReason: policyReason(code, message),
+    }
   }
   if (message.includes('outside your buyer routing policy')) {
-    return { code: 'policy_rejected', reason: message }
+    return {
+      retryable: false,
+      skipCode: 'policy_rejected',
+      outcomeReason: policyReason('policy_rejected', message),
+    }
   }
   if ((statusCode === 400 || statusCode === 404)
     && (code === 'model_not_found' || message.includes('is not served by this peer'))) {
     return {
-      code: 'stale_model_advertisement',
-      reason: `peer advertised ${extractQuotedService(message) ?? 'the requested model'} but rejected it as unavailable`,
+      retryable: false,
+      skipCode: 'stale_model_advertisement',
+      outcomeReason: {
+        ...base,
+        code: 'stale_model_advertisement',
+        summary: `peer advertised ${extractQuotedService(message) ?? 'the requested model'} but rejected it as unavailable`,
+        retryable: false,
+        source: 'provider',
+        nextAction: 'seller must support canonical request profile',
+      },
     }
   }
-  return null
+  return {
+    retryable: isRetryableStatus(statusCode),
+    skipCode: null,
+    outcomeReason: {
+      ...base,
+      code: 'transport_error',
+      summary: sanitizeOutcomeSummary(message),
+      retryable: isRetryableStatus(statusCode),
+      source: 'transport',
+      nextAction: isRetryableStatus(statusCode) ? 'retry later' : 'inspect verifier evidence',
+    },
+  }
 }
 
 function extractQuotedService(message: string): string | null {
   return message.match(/Service\s+"([^"]+)"\s+is not served by this peer/i)?.[1] ?? null
+}
+
+function buildProxyBatchRequest(
+  context: ProxyVerificationContext,
+  target: PeerInfo,
+  service: string,
+  reference: KbfReferenceV1,
+  probes: KbfProbe[],
+): {
+  url: string
+  headers: Record<string, string>
+  body: Uint8Array
+  request: ProxyAuditEvidenceExchangeV1['request']
+} {
+  const url = `${context.proxy.baseUrl}/v1/chat/completions`
+  const headers = {
+    'content-type': 'application/json',
+    'x-antseed-pin-peer': target.peerId,
+  }
+  const body = new TextEncoder().encode(JSON.stringify({
+    ...buildKbfChatRequestBody(service, probes, { maxTokens: reference.queryProfile.maxTokensPerRequest }),
+    top_p: reference.queryProfile.generationSettings.topP,
+    stream: false,
+    n: 1,
+    ...(reference.queryProfile.requestOverrides ?? {}),
+  }))
+  const bodyBase64 = Buffer.from(body).toString('base64')
+  return {
+    url,
+    headers,
+    body,
+    request: {
+      method: 'POST',
+      url,
+      headers,
+      bodyBase64,
+      hash: canonicalHashBytes32({ method: 'POST', url, headers, bodyBase64 }),
+    },
+  }
+}
+
+function notAttemptedExchange(
+  context: ProxyVerificationContext,
+  target: PeerInfo,
+  service: string,
+  reference: KbfReferenceV1,
+  probes: KbfProbe[],
+  batchIndex: number,
+  terminalReason: VerificationOutcomeReasonV1,
+): ProxyAuditEvidenceExchangeV1 {
+  const { request } = buildProxyBatchRequest(context, target, service, reference, probes)
+  const now = Date.now()
+  return {
+    batchIndex,
+    attemptCount: 0,
+    requestIds: [],
+    probeIds: probes.map((probe) => probe.id),
+    request,
+    response: null,
+    timing: { startedAt: now, completedAt: now, responseLatencyMs: 0 },
+    answers: new Array<number | null>(probes.length).fill(null),
+    matches: new Array<null>(probes.length).fill(null),
+    status: 'failed',
+    failureReason: `not attempted after terminal first-batch failure: ${terminalReason.summary}`,
+    cost: null,
+    attemptCosts: [],
+    outcomeReason: terminalReason,
+    responseAuth: {
+      requestId: null,
+      status: 'missing',
+      record: null,
+      failureReason: 'batch was not attempted after terminal first-batch failure',
+    },
+  }
+}
+
+function isReusableExchange(exchange: ProxyAuditEvidenceExchangeV1): boolean {
+  return exchange.status === 'succeeded'
+    && exchange.responseAuth.status === 'verified'
+    && exchange.answers.length === exchange.probeIds.length
+    && exchange.matches.length === exchange.probeIds.length
+}
+
+function summarizeUndeterminedReason(
+  exchanges: ProxyAuditEvidenceExchangeV1[],
+  totalBatchCount: number,
+): VerificationOutcomeReasonV1 {
+  const reasons = exchanges.flatMap((exchange) => {
+    if (exchange.status === 'succeeded' && exchange.responseAuth.status !== 'verified') {
+      return [exchange.outcomeReason ?? responseAuthReason(
+        exchange.responseAuth.status,
+        exchange.responseAuth.failureReason,
+        exchange.responseAuth.requestId,
+      )]
+    }
+    return exchange.status === 'failed'
+      ? [exchange.outcomeReason ?? transportReason(exchange.failureReason ?? 'proxy batch failed')]
+      : []
+  })
+  const grouped = new Map<string, { reason: VerificationOutcomeReasonV1; count: number }>()
+  for (const reason of reasons) {
+    const current = grouped.get(reason.code)
+    if (current) current.count += 1
+    else grouped.set(reason.code, { reason, count: 1 })
+  }
+  const dominant = [...grouped.values()].sort((left, right) => right.count - left.count)[0]
+    ?? { reason: transportReason('insufficient authenticated probe coverage'), count: totalBatchCount }
+  const suffix = grouped.size > 1
+    ? `; ${grouped.size - 1} additional reason type(s)`
+    : ''
+  return {
+    ...dominant.reason,
+    summary: `${dominant.reason.summary}${suffix}`,
+    retryable: reasons.length > 0 && reasons.every((reason) => reason.retryable),
+    affectedBatchCount: reasons.length,
+    totalBatchCount,
+    nextAction: reasons.some((reason) => reason.source === 'payment')
+      ? 'restart or repair payment channel'
+      : 'resume audit',
+  }
+}
+
+function deadlineReason(timeoutMs: number): VerificationOutcomeReasonV1 {
+  return {
+    code: 'deadline_exceeded',
+    summary: `seller audit deadline exceeded after ${timeoutMs}ms`,
+    retryable: true,
+    source: 'transport',
+    affectedBatchCount: 1,
+    totalBatchCount: 1,
+    nextAction: 'resume audit',
+  }
+}
+
+function requestTimeoutReason(timeoutMs: number): VerificationOutcomeReasonV1 {
+  return {
+    code: 'request_timeout',
+    summary: `buyer proxy request timed out after ${timeoutMs}ms`,
+    retryable: true,
+    source: 'transport',
+    affectedBatchCount: 1,
+    totalBatchCount: 1,
+    nextAction: 'resume audit',
+  }
+}
+
+function responseAuthReason(
+  status: 'missing' | 'invalid',
+  failureReason: string | null,
+  requestId: string | null,
+): VerificationOutcomeReasonV1 {
+  return {
+    code: status === 'missing' ? 'response_auth_missing' : 'response_auth_invalid',
+    summary: sanitizeOutcomeSummary(failureReason ?? `ResponseAuth ${status}`),
+    retryable: true,
+    source: 'response_auth',
+    affectedBatchCount: 1,
+    totalBatchCount: 1,
+    nextAction: 'resume audit',
+    ...(requestId ? { requestId } : {}),
+  }
+}
+
+function transportReason(summary: string): VerificationOutcomeReasonV1 {
+  return {
+    code: 'transport_error',
+    summary: sanitizeOutcomeSummary(summary),
+    retryable: true,
+    source: 'transport',
+    affectedBatchCount: 1,
+    totalBatchCount: 1,
+    nextAction: 'retry later',
+  }
+}
+
+function policyReason(
+  code: 'reputation_below_minimum' | 'price_above_maximum' | 'policy_rejected',
+  summary: string,
+): VerificationOutcomeReasonV1 {
+  return {
+    code,
+    summary: sanitizeOutcomeSummary(summary),
+    retryable: false,
+    source: 'policy',
+    affectedBatchCount: 0,
+    totalBatchCount: 0,
+    nextAction: 'adjust buyer routing policy',
+  }
+}
+
+function retryDelay(response: Response, attemptCount: number, randomFn: () => number): number {
+  const retryAfter = response.headers.get('retry-after')
+  if (retryAfter) {
+    const seconds = Number(retryAfter)
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1_000, PROBE_RETRY_MAX_DELAY_MS)
+    const date = Date.parse(retryAfter)
+    if (Number.isFinite(date)) return Math.min(Math.max(0, date - Date.now()), PROBE_RETRY_MAX_DELAY_MS)
+  }
+  return boundedBackoff(attemptCount, randomFn)
+}
+
+function boundedBackoff(attemptCount: number, randomFn: () => number): number {
+  const base = Math.min(PROBE_RETRY_BASE_DELAY_MS * 2 ** Math.max(0, attemptCount - 1), PROBE_RETRY_MAX_DELAY_MS)
+  return Math.max(1, Math.round(base * (0.75 + randomFn() * 0.5)))
+}
+
+function safeRequestId(body: Uint8Array): string | null {
+  try {
+    const parsed = JSON.parse(responseText(body)) as Record<string, unknown>
+    if (typeof parsed.request_id === 'string') return parsed.request_id.slice(0, 128)
+    const error = parsed.error
+    if (error && typeof error === 'object' && !Array.isArray(error)) {
+      const requestId = (error as Record<string, unknown>).request_id
+      if (typeof requestId === 'string') return requestId.slice(0, 128)
+    }
+  } catch {
+    return null
+  }
+  return null
 }
 
 export async function writeRunSummary(evidenceDir: string, summary: ModelVerificationRunSummary): Promise<string> {

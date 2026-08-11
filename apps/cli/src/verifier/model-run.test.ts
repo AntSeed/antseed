@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -13,8 +13,10 @@ import { ConcurrencyLimiter } from './audit-concurrency.js'
 import {
   classifyVerificationTarget,
   loadBuyerProxySnapshot,
+  readModelAuditCheckpoints,
   verifyModelTarget,
   writeRunSummary,
+  type ModelVerificationResumeInput,
   type ModelVerificationSkip,
 } from './model-run.js'
 import type { ProxyAuditEvidenceV1, ProxyAuditSkipEvidenceV1 } from './proxy-evidence.js'
@@ -92,11 +94,13 @@ function reference(count: number): KbfReferenceV1 {
 async function runTarget(
   count: number,
   answerMode: 'valid' | 'out-of-range' | 'malformed' | 'sse' | 'transport-failure' | 'hanging'
-    | 'rate-limited' = 'valid',
+    | 'rate-limited' | 'semantic-unavailable' = 'valid',
   transientFailures = 0,
   authMode: 'verified' | 'missing' | 'unverified' | 'wrong-request' | 'wrong-seller' | 'wrong-service' = 'verified',
   includeCost = true,
   auditTimeoutMs = 10_000,
+  resume?: ModelVerificationResumeInput,
+  checkpointIdentity?: { runId: string; epoch: string; model: string },
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'antseed-verifier-target-'))
   let requestCount = 0
@@ -118,6 +122,11 @@ async function runTarget(
         if (init?.signal?.aborted) abort()
         else init?.signal?.addEventListener('abort', abort, { once: true })
       })
+    }
+    if (answerMode === 'semantic-unavailable') {
+      return Response.json({
+        error: { message: 'Service is temporarily unavailable. Please try again later.' },
+      }, { status: 400 })
     }
     const body = JSON.parse(requestBody) as { messages: Array<{ content: string }> }
     const prompt = body.messages.at(-1)?.content ?? ''
@@ -233,10 +242,14 @@ async function runTarget(
       target: peer(),
       service: 'GPT-5.6-SOL',
       reference: reference(count),
+      auditId: resume ? `0x${'88'.repeat(32)}` : undefined,
+      resume,
+      checkpointIdentity,
     })
     if (result.status === 'SKIPPED') throw new Error(`unexpected skipped target: ${result.reason}`)
     const evidence = JSON.parse(await readFile(result.evidencePath, 'utf8')) as ProxyAuditEvidenceV1
-    return { result, evidence, requestCount, requests, finalBatchStartedAfterSlow }
+    const checkpoints = await readModelAuditCheckpoints(directory)
+    return { result, evidence, checkpoints, requestCount, requests, finalBatchStartedAfterSlow }
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
@@ -418,6 +431,26 @@ test('stale model advertisement skips after one model-not-found response', async
   assert.equal(run.evidence.exchange.attemptCount, 1)
 })
 
+test('deleted upstream credentials skip after the first batch with a structured reason', async () => {
+  const run = await runSkippedTarget(Response.json({
+    code: 'GROUP_DELETED',
+    message: 'API Key group was deleted',
+  }, { status: 403 }))
+  assert.equal(run.requestCount, 1)
+  assert.equal(run.result.code, 'upstream_credentials_invalid')
+  assert.equal(run.result.outcomeReason?.nextAction, 'seller must repair credentials')
+  assert.equal(run.evidence.result.outcomeReason?.code, 'upstream_credentials_invalid')
+})
+
+test('canonical temperature rejection skips after the first batch', async () => {
+  const run = await runSkippedTarget(Response.json({
+    error: { message: 'invalid temperature: only 0.6 is allowed for this model' },
+  }, { status: 400 }))
+  assert.equal(run.requestCount, 1)
+  assert.equal(run.result.code, 'request_profile_incompatible')
+  assert.equal(run.result.outcomeReason?.source, 'request_profile')
+})
+
 test('proxy runtime reduces seller concurrency after HTTP 429', async () => {
   const run = await runTarget(40, 'rate-limited')
   assert.equal(run.result.status, 'UNDETERMINED')
@@ -454,10 +487,65 @@ test('exhausted transport retries produce UNDETERMINED evidence', async () => {
   assert.equal(run.result.status, 'UNDETERMINED')
   assert.equal(run.result.parsedProbeCount, 0)
   assert.equal(run.evidence.result.stats.targetTotal, 0)
-  assert.equal(run.requestCount, 50)
+  assert.equal(run.requestCount, 5)
   assert.equal(run.evidence.exchanges.every((exchange) => exchange.status === 'failed'), true)
+  assert.equal(run.result.outcomeReason?.code, 'transport_error')
+  assert.equal(run.result.outcomeReason?.affectedBatchCount, 10)
   assert.equal(run.result.cost.pricedExchangeCount, 0)
   assert.equal(run.result.cost.missingCostExchangeCount, 10)
+})
+
+test('semantic temporarily-unavailable HTTP 400 retries and remains resumable', async () => {
+  const run = await runTarget(100, 'semantic-unavailable')
+  assert.equal(run.requestCount, 5)
+  assert.equal(run.result.status, 'UNDETERMINED')
+  assert.equal(run.result.outcomeReason?.code, 'temporarily_unavailable')
+  assert.equal(run.result.outcomeReason?.retryable, true)
+})
+
+test('resume reuses authenticated batches and requests only unresolved batches', async () => {
+  const first = await runTarget(40, 'rate-limited')
+  assert.equal(first.result.status, 'UNDETERMINED')
+  const resumed = await runTarget(40, 'valid', 0, 'verified', true, 10_000, {
+    parentAuditId: first.result.auditId,
+    parentEvidenceHash: first.result.evidenceHash,
+    exchanges: first.evidence.exchanges,
+  })
+  assert.equal(resumed.result.status, 'SAME')
+  assert.equal(resumed.requestCount, 1)
+  assert.deepEqual(resumed.evidence.resume?.reusedBatchIndexes, [0, 2, 3])
+  assert.equal(resumed.result.cost.pricedExchangeCount, 1)
+  assert.equal(resumed.result.cumulativeCost?.pricedExchangeCount, 4)
+})
+
+test('batch checkpoints retain run identity for interrupted-run discovery', async () => {
+  const run = await runTarget(40, 'rate-limited', 0, 'verified', true, 10_000, undefined, {
+    runId: 'run-checkpoint',
+    epoch: '42',
+    model: 'gpt-5.6-sol',
+  })
+  assert.equal(run.checkpoints.length, 1)
+  assert.equal(run.checkpoints[0]?.checkpoint.runId, 'run-checkpoint')
+  assert.equal(run.checkpoints[0]?.checkpoint.epoch, '42')
+  assert.equal(run.checkpoints[0]?.checkpoint.model, 'gpt-5.6-sol')
+  assert.equal(run.checkpoints[0]?.checkpoint.exchanges.length, 4)
+})
+
+test('checkpoint discovery ignores pre-resume checkpoints without run identity', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-verifier-legacy-checkpoint-'))
+  try {
+    const checkpointDirectory = join(directory, '.checkpoints')
+    await mkdir(checkpointDirectory, { recursive: true })
+    await writeFile(join(checkpointDirectory, 'legacy.json'), JSON.stringify({
+      version: 1,
+      kind: 'antseed-verifier-audit-checkpoint',
+      auditId: 'legacy-audit',
+      exchanges: [],
+    }))
+    assert.deepEqual(await readModelAuditCheckpoints(directory), [])
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
 })
 
 test('seller audit deadline aborts all remaining batches', async () => {

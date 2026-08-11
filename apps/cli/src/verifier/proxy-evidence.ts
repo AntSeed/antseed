@@ -10,6 +10,7 @@ import {
   type ReferenceQueryProfileV1,
 } from '@antseed/fingerprints'
 import type { StoredResponseAuth } from '@antseed/node'
+import type { VerificationOutcomeReasonV1 } from './outcome-reason.js'
 
 export interface ProxyAuditEvidenceExchange {
   batchIndex: number
@@ -42,6 +43,8 @@ export interface ProxyAuditEvidenceExchange {
 
 export interface ProxyAuditEvidenceExchangeV1 extends ProxyAuditEvidenceExchange {
   cost: ProxyAuditExchangeCostV1 | null
+  attemptCosts?: ProxyAuditExchangeCostV1[]
+  outcomeReason?: VerificationOutcomeReasonV1 | null
   responseAuth: {
     requestId: string | null
     status: 'verified' | 'missing' | 'invalid'
@@ -77,6 +80,8 @@ export type VerificationSkipCode =
   | 'price_above_maximum'
   | 'policy_rejected'
   | 'stale_model_advertisement'
+  | 'upstream_credentials_invalid'
+  | 'request_profile_incompatible'
 
 export interface ProxyAuditSkipEvidenceV1 {
   version: 1
@@ -103,6 +108,7 @@ export interface ProxyAuditSkipEvidenceV1 {
     status: 'SKIPPED'
     code: VerificationSkipCode
     reason: string
+    outcomeReason?: VerificationOutcomeReasonV1
   }
 }
 
@@ -138,6 +144,11 @@ export interface ProxyAuditEvidenceV1 {
     probes: KbfProbe[]
   }
   exchanges: ProxyAuditEvidenceExchangeV1[]
+  resume?: {
+    parentAuditId: string
+    parentEvidenceHash: string
+    reusedBatchIndexes: number[]
+  }
   result: {
     selectedProbeCount: number
     parsedProbeCount: number
@@ -146,7 +157,9 @@ export interface ProxyAuditEvidenceV1 {
     stats: FingerprintStats
     verdict: Exclude<FingerprintVerdict, 'UNKNOWN'>
     verdictReason: string | null
+    outcomeReason?: VerificationOutcomeReasonV1 | null
     cost: AuditCostSummaryV1
+    cumulativeCost?: AuditCostSummaryV1
   }
 }
 
@@ -175,7 +188,7 @@ export function addAuditCostSummaries(...summaries: AuditCostSummaryV1[]): Audit
 export function summarizeAuditExchangeCosts(
   exchanges: ProxyAuditEvidenceExchangeV1[],
 ): AuditCostSummaryV1 {
-  const priced = exchanges.flatMap((exchange) => exchange.cost ? [exchange.cost] : [])
+  const priced = exchanges.flatMap((exchange) => exchange.attemptCosts ?? (exchange.cost ? [exchange.cost] : []))
   return {
     inputTokens: priced.reduce((total, cost) => total + cost.inputTokens, 0),
     outputTokens: priced.reduce((total, cost) => total + cost.outputTokens, 0),

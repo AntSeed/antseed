@@ -5,7 +5,8 @@ CLI and the already-running buyer proxy. It does not start a second verifier
 daemon or expose a new buyer-proxy endpoint.
 
 The verifier builds append-only KBF probe banks from a trusted reference
-endpoint, reserves a fresh powered subset for each seller, sends two probe
+endpoint, reserves one powered subset per model and epoch, uses that exact
+subset for every seller audited for the model in the epoch, sends two probe
 batches concurrently through the buyer proxy, and records the buyer node's
 verified `ResponseAuth` for every successful batch.
 
@@ -17,6 +18,8 @@ antseed verifier reference build --all
 antseed verifier run <model>
 antseed verifier run --all
 antseed verifier run --all --allow-probe-reuse
+antseed verifier run --resume-run <run-id>
+antseed verifier run <model> --resume-run <run-id>
 antseed verifier status [--json]
 antseed verifier submit --run-id <run-id> --dry-run
 antseed verifier submit --run-id <run-id> [--yes]
@@ -27,6 +30,14 @@ antseed verifier claim
 `reference build` and `run`. All-model commands continue after per-model
 failures and exit nonzero if any model or peer fails. Reference builds and
 audit runs use bounded concurrency across models and sellers.
+
+`run --resume-run <run-id>` creates a new immutable repair run for only the
+`UNDETERMINED` sellers in the source run. A model argument may narrow the repair
+to one source model. The verifier rejects repairs when the epoch, seller,
+service, reference ID, query-profile hash, or assigned probe IDs differ. Within
+the same epoch, a normal `run` also discovers an interrupted or most-recent
+undetermined run and repairs only its unresolved batches. Use a fresh epoch or
+finish the repair before intentionally starting another complete audit.
 
 `reference build --all` skips a model when its existing bank can produce a
 reference that satisfies the configured sizing, coverage, self-test, and
@@ -130,6 +141,7 @@ Probe banks and per-seller ledgers are stored at:
 ```text
 <banksDir>/<model-slug>/
 ├── bank.json
+├── epochs/<epoch>.json
 └── sellers/<peer-id-hash>.json
 ```
 
@@ -138,17 +150,21 @@ IDs are deduplicated only when their canonical probe content and self-test
 evidence match. The append is rejected when an ID conflicts or when model,
 query-profile, provenance, or statistical assumptions are incompatible.
 
-Before dispatch, the verifier cryptographically shuffles probes not yet assigned
-to that seller during the current run. It evaluates configured 10-probe sizing
-steps and reserves the first subset meeting coverage, self-test error, and
-statistical-power requirements. The subset receives a new content-addressed KBF
-reference ID. Reservation is an atomic ledger write performed before network
-dispatch. Deterministic first-batch ineligibility responses void the assignment;
-all completed, failed, and transiently undetermined audits retain it.
-Different sellers may share probes. By default, a seller does not receive a
-probe assigned in any earlier run. `--allow-probe-reuse` permits earlier-run
-assignments to be selected again while still preventing duplicate assignment
-inside the current run.
+Before the first seller dispatch for a model and epoch, the verifier
+cryptographically shuffles eligible bank probes. It evaluates configured
+10-probe sizing steps and persists the first subset meeting coverage, self-test
+error, and statistical-power requirements in `epochs/<epoch>.json`. Every
+seller reservation in that model and epoch records the same reference ID and
+ordered probe IDs, including later runs and repair runs. Seller audit IDs and
+ledgers remain independent.
+
+By default, a newly created epoch reference excludes probes used by persisted
+references from earlier epochs. `--allow-probe-reuse` allows a new epoch
+reference to select those earlier probes again. It never changes the already
+persisted reference for the current epoch. Deterministic first-batch
+ineligibility responses void only that seller's assignment; the shared epoch
+reference remains available to the other sellers. Historical reservations made
+before epoch references were introduced retain their original probe subsets.
 
 ## ResponseAuth
 
@@ -189,10 +205,22 @@ per-audit maximum; any HTTP 429 permanently reduces the remainder of that audit
 to one batch at a time. A shared seller lock prevents one seller from being
 audited for multiple models simultaneously. Transient proxy failures use
 bounded retries. Each seller audit has a hard ten-minute wall-clock deadline
-that aborts every remaining batch and finalizes the seller as `UNDETERMINED`.
+that starts when its first batch acquires global execution capacity, aborts
+every remaining batch, and finalizes the seller as `UNDETERMINED`. Each request
+retains its 120-second timeout. Retryable `408`, `429`, `5xx`, payment-lock
+timeouts, and semantic temporary-unavailable responses receive at most five
+attempts with bounded exponential backoff, jitter, and `Retry-After` support.
 Temporary unavailability, throttling, and request timeouts remain
 `UNDETERMINED`; only deterministic policy or stale-advertisement responses are
 classified as skipped.
+
+Every completed batch is atomically checkpointed with its answers,
+`ResponseAuth`, cost, and structured failure reason. Repairs reuse only
+successful authenticated batches and resend failed, missing, or invalid-auth
+batches. The repair artifact links to its parent audit and reports incremental
+repair cost separately from cumulative audit cost. A deterministic first-batch
+failure stops pending work and voids the reservation; an exhausted transient
+first batch stops redundant work but preserves the reservation for resume.
 
 One PID-aware run lock prevents concurrent verifier runs from reserving the same
 seller probes. Stale locks are recovered when their owner PID is no longer
@@ -206,21 +234,42 @@ plus rename writes.
 ├── bundles/<run-id>/<model-slug>.json
 ├── submissions/<chain-id>/<verification-contract>/<run-id>.json
 └── epochs/<epoch>/
-    ├── summary.json
-    ├── report.md
     ├── events.jsonl
+    ├── runs/<run-id>/
+    │   ├── summary.json
+    │   └── report.md
     └── <model-slug>/
-        ├── summary.json
-        └── audits/<audit-id>.json
+        ├── runs/<run-id>.summary.json
+        └── audits/
+            ├── <audit-id>.json
+            └── .checkpoints/<audit-id>.json
 ```
 
-`status.json` is a readable snapshot of the active or most recent run. The epoch
-summary records the audit epoch window and each model summary. `report.md`
-contains one human-readable seller score table per audited model, while model
-JSON summaries retain the corresponding correct/incorrect counts and match
-rate. `events.jsonl` is append-only progress history. Each audit file is canonical JSON and includes
-the selected reference, proxy observations, ResponseAuth evidence, cost
-estimate, and verdict.
+`status.json` is a readable snapshot of the active or most recent run. Run-
+specific summary and report paths keep historical evidence immutable. After
+every completed run, `epochs/<epoch>/summary.json` and `report.md` are atomically
+refreshed as the consolidated latest epoch view. Repair outcomes replace the
+same seller's earlier outcome while unaffected sellers remain present. Each
+`report.md` model table includes `Reason`, `Next Action`, and `Evidence` columns,
+plus model and whole-run reason-code breakdowns. Machine summaries, status,
+events, progress, and submission exclusions retain the same structured reason:
+`code`, `summary`, `retryable`, `source`, affected/total batch counts, and safe
+optional upstream status, provider code, and request ID. Secrets and
+authorization values are sanitized. `events.jsonl` is append-only progress
+history. Each canonical audit file includes the selected reference, proxy
+observations, ResponseAuth evidence, incremental and cumulative cost, and
+verdict.
+
+`SAME` and `DIFF` require 100% authenticated coverage. `UNDETERMINED` means the
+statistical verdict could not be completed and remains resumable; examples are
+deadlines, throttling, temporary upstream failures, payment-lock timeouts, and
+invalid or missing ResponseAuth. `SKIPPED` means a deterministic condition made
+the seller ineligible, such as stale model advertising, invalid upstream
+credentials, buyer policy rejection, or incompatibility with the canonical
+temperature-zero request profile. `FAILED` is reserved for verifier-side hard
+failures such as an incompatible or missing probe reservation. These outcomes
+never rely on coverage alone: their report text comes from persisted batch
+evidence.
 
 ## On-Chain Model Bundles
 

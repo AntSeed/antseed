@@ -18,6 +18,7 @@ import {
   type ProxyAuditEvidenceV1,
 } from './proxy-evidence.js'
 import { safeServiceSlug } from './slug.js'
+import type { VerificationOutcomeReasonV1 } from './outcome-reason.js'
 
 export interface BundleInferenceCostSourceV1 {
   requestId: string
@@ -40,6 +41,7 @@ export interface ModelBundleSellerResultV1 {
   serviceHash: string
   verdict: 'SAME' | 'DIFF' | 'UNDETERMINED'
   verdictReason: string | null
+  outcomeReason: VerificationOutcomeReasonV1 | null
   modelShareBps: number
   auditId: string
   auditEvidenceHash: string
@@ -64,6 +66,7 @@ export interface ExcludedModelBundleAuditV1 {
   service: string
   auditId: string | null
   reason: string
+  outcomeReason?: VerificationOutcomeReasonV1
 }
 
 export interface ModelVerificationBundleEvidenceV1 {
@@ -127,7 +130,16 @@ export async function prepareModelVerificationBundle(input: {
     service: failure.service,
     auditId: null,
     reason: failure.reason,
+    ...(failure.outcomeReason ? { outcomeReason: failure.outcomeReason } : {}),
   }))
+  excludedAudits.push(...summary.skipped.map((skipped) => ({
+    peerId: skipped.peerId,
+    agentId: skipped.agentId,
+    service: skipped.service,
+    auditId: skipped.auditId,
+    reason: skipped.reason,
+    ...(skipped.outcomeReason ? { outcomeReason: skipped.outcomeReason } : {}),
+  })))
   const usedAgentServices = new Set<string>()
   const countedRequestIds = new Set<string>()
 
@@ -218,6 +230,7 @@ export async function prepareModelVerificationBundle(input: {
       serviceHash: hashedService,
       verdict: result.status,
       verdictReason: auditEvidence.result.verdictReason,
+      outcomeReason: auditEvidence.result.outcomeReason ?? result.outcomeReason ?? null,
       modelShareBps,
       auditId: result.auditId,
       auditEvidenceHash: result.evidenceHash,
