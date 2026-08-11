@@ -41,6 +41,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Fixed Codex auto-compaction failing on Anthropic-backed routes when the compaction request contained `tool_choice: "auto"` but no tools. Cross-protocol request rendering now omits `tool_choice` whenever no compatible tools remain, preventing LiteLLM and Anthropic from rejecting long-running tasks at the context limit.
 - Fixed the desktop VPR floating pill moving away from the pointer and becoming difficult to click. The pill now uses Electron's native window dragging across its passive surface, with dedicated controls for conversations, shrinking, closing, deposits, and compact expansion.
 - Fixed the desktop app crashing on launch with `ERR_MODULE_NOT_FOUND: Cannot find package '@antseed/protocol'`: the packaged app was missing the `@antseed/protocol` and `@antseed/buyer-core` workspace packages (split out of `@antseed/node` by the protocol extraction), so the main process could not resolve them from the app bundle. Desktop packaging now bundles both packages and builds them as part of the pre-dist pipeline.
 - Fixed buyers classifying unit-billed services (e.g. image generation) as free because their token pricing is zero: the free-usage gate now resolves the same provider + protocol billing route the seller uses, so paid image requests negotiate payment and record verified cost instead of rejecting the seller's usage claims.
