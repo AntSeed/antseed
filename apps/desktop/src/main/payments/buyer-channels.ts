@@ -9,6 +9,7 @@ import { pendingSpendFromChannels } from '../billing/credits-balance.js';
 import { resolveBuyerProxyPort } from '../runtime/active-config.js';
 import { getCachedChannelsClient, loadCachedCryptoConfig, setCachedChannelsClient } from './credits.js';
 import {
+  ChannelOnChainStateCache,
   normalizePaymentChannelSummary,
   requestCooperativeChannelCloseAtPort,
   runInBatches,
@@ -172,6 +173,7 @@ export function formatAnts(value: bigint): string {
 const CHANNEL_CLOSE_GRACE_SECS = 900;
 // Bound concurrent on-chain reads without skipping older active-looking rows.
 const CHANNEL_ENRICH_CONCURRENCY = 12;
+const channelOnChainStateCache = new ChannelOnChainStateCache(CHANNEL_CLOSE_GRACE_SECS);
 
 // The local ChannelStore can lag the chain (a seller-side settle/close is not
 // always observed), so rows that look active are re-checked on-chain before
@@ -191,20 +193,19 @@ async function enrichChannelStatuses(channels: DesktopPaymentChannelSummary[]): 
   }
   const candidates = channels
     .filter((row) => row.status === 'active' || row.status === 'open');
+  for (const row of candidates) {
+    channelOnChainStateCache.hydrate(row);
+  }
   await runInBatches(candidates, CHANNEL_ENRICH_CONCURRENCY, async (row) => {
     const info = await client.getSession(row.channelId);
-    const closeRequestedAt = Number(info.closeRequestedAt);
-    row.onChainDeposit = info.deposit.toString();
-    row.onChainSettled = info.settled.toString();
-    row.onChainStateKnown = info.status !== 0;
-    if (info.status === 2) row.status = 'settled';
-    else if (info.status === 3) row.status = 'timedout';
-    else if (info.status === 1 && closeRequestedAt > 0) {
-      const now = Math.floor(Date.now() / 1000);
-      row.status = now < closeRequestedAt + CHANNEL_CLOSE_GRACE_SECS ? 'closing' : 'withdrawable';
-    }
+    channelOnChainStateCache.record(row, {
+      status: info.status,
+      deposit: info.deposit.toString(),
+      settled: info.settled.toString(),
+      closeRequestedAt: Number(info.closeRequestedAt),
+    });
     // status 0 (no on-chain record) is ambiguous — a channel may exist
-    // locally before its on-chain reserve lands. Keep the local status.
+    // locally before its on-chain reserve lands. Keep the last verified state.
   });
 }
 

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  ChannelOnChainStateCache,
   normalizePaymentChannelSummary,
   requestCooperativeChannelCloseAtPort,
   runInBatches,
@@ -45,6 +46,54 @@ test('normalizePaymentChannelSummary preserves proxy seller metadata and separat
 test('normalizePaymentChannelSummary accepts the legacy reserveMax field', () => {
   const channel = normalizePaymentChannelSummary({ sessionId: 'channel-1', reserveMax: '5000000' });
   assert.equal(channel?.reserveCeiling, '5000000');
+});
+
+test('ChannelOnChainStateCache preserves the last verified state across failed or ambiguous polls', () => {
+  const cache = new ChannelOnChainStateCache(900);
+  const firstPoll = normalizePaymentChannelSummary({ sessionId: 'channel-1', status: 'active' });
+  assert.ok(firstPoll);
+  assert.equal(cache.record(firstPoll, {
+    status: 1,
+    deposit: '1000000',
+    settled: '0',
+    closeRequestedAt: 0,
+  }), true);
+
+  const failedPoll = normalizePaymentChannelSummary({ sessionId: 'channel-1', status: 'active' });
+  assert.ok(failedPoll);
+  assert.equal(cache.hydrate(failedPoll), true);
+  assert.equal(failedPoll.onChainStateKnown, true);
+  assert.equal(failedPoll.onChainDeposit, '1000000');
+  assert.equal(failedPoll.onChainSettled, '0');
+
+  const ambiguousPoll = normalizePaymentChannelSummary({ sessionId: 'channel-1', status: 'active' });
+  assert.ok(ambiguousPoll);
+  assert.equal(cache.record(ambiguousPoll, {
+    status: 0,
+    deposit: '0',
+    settled: '0',
+    closeRequestedAt: 0,
+  }), true);
+  assert.equal(ambiguousPoll.onChainStateKnown, true);
+  assert.equal(ambiguousPoll.onChainDeposit, '1000000');
+});
+
+test('ChannelOnChainStateCache advances cached closing channels to withdrawable', () => {
+  const cache = new ChannelOnChainStateCache(900);
+  const row = normalizePaymentChannelSummary({ sessionId: 'channel-1', status: 'active' });
+  assert.ok(row);
+  cache.record(row, {
+    status: 1,
+    deposit: '1000000',
+    settled: '250000',
+    closeRequestedAt: 1_000,
+  }, 1_100);
+  assert.equal(row.status, 'closing');
+
+  const laterPoll = normalizePaymentChannelSummary({ sessionId: 'channel-1', status: 'active' });
+  assert.ok(laterPoll);
+  cache.hydrate(laterPoll, 1_901);
+  assert.equal(laterPoll.status, 'withdrawable');
 });
 
 test('runInBatches processes active-looking channels beyond the first batch', async () => {

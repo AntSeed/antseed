@@ -16,6 +16,52 @@ function readStringField(raw: Record<string, unknown>, key: string): string {
   return '';
 }
 
+export type ChannelOnChainSnapshot = {
+  status: number;
+  deposit: string;
+  settled: string;
+  closeRequestedAt: number;
+};
+
+type ChannelOnChainStateRow = Pick<
+  DesktopPaymentChannelSummary,
+  'channelId' | 'onChainStateKnown' | 'onChainDeposit' | 'onChainSettled' | 'status'
+>;
+
+export class ChannelOnChainStateCache {
+  private readonly snapshots = new Map<string, ChannelOnChainSnapshot>();
+
+  constructor(private readonly closeGraceSeconds: number) {}
+
+  hydrate(row: ChannelOnChainStateRow, nowSeconds = Math.floor(Date.now() / 1000)): boolean {
+    const snapshot = this.snapshots.get(row.channelId);
+    if (!snapshot) return false;
+
+    row.onChainStateKnown = true;
+    row.onChainDeposit = snapshot.deposit;
+    row.onChainSettled = snapshot.settled;
+    if (snapshot.status === 2) row.status = 'settled';
+    else if (snapshot.status === 3) row.status = 'timedout';
+    else if (snapshot.status === 1 && snapshot.closeRequestedAt > 0) {
+      row.status = nowSeconds < snapshot.closeRequestedAt + this.closeGraceSeconds
+        ? 'closing'
+        : 'withdrawable';
+    }
+    return true;
+  }
+
+  record(
+    row: ChannelOnChainStateRow,
+    snapshot: ChannelOnChainSnapshot,
+    nowSeconds = Math.floor(Date.now() / 1000),
+  ): boolean {
+    if (snapshot.status !== 0) {
+      this.snapshots.set(row.channelId, snapshot);
+    }
+    return this.hydrate(row, nowSeconds);
+  }
+}
+
 export function normalizePaymentChannelSummary(value: unknown): DesktopPaymentChannelSummary | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
