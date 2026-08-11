@@ -9,7 +9,14 @@ hide_title: true
 
 Once connected to the AntSeed network, your buyer proxy exposes a local API at `http://localhost:8377`. Point any AI tool at this endpoint — the proxy handles peer discovery, routing, and payments transparently.
 
-## Quick Start
+There are two ways to get that proxy running:
+
+- **VPR desktop app** — while the app is open, it runs the buyer proxy at `http://localhost:8377` for you. No CLI setup needed: browse peers, pick models, and deposit USDC from the app's UI, and point any tool below at the same endpoint.
+- **CLI** — `antseed buyer start`, for headless machines, servers, and scripts. The Quick Start below covers this path.
+
+Everything in this guide works identically against both.
+
+## Quick Start (CLI)
 
 ```bash
 # 1. Install
@@ -26,11 +33,12 @@ antseed buyer start
 antseed network browse                              # list peers + services
 antseed buyer connection set --peer <40-char-hex>   # pin one
 
-# 5. Make a request
+# 5. Make a request — "<peerId>@<model>" routes to that peer explicitly
+#    (this form also works without step 4's session pin)
 curl http://localhost:8377/v1/chat/completions \
   -H 'content-type: application/json' \
   -d '{
-    "model": "deepseek-v4-flash",
+    "model": "4668854ba3e8b094e6f48fbeb59cec1cfde162f2@deepseek-v4-flash",
     "messages": [{"role": "user", "content": "Hello"}]
   }'
 
@@ -99,15 +107,15 @@ Image services advertise the `openai-images` protocol and may publish per-output
 curl http://localhost:8377/v1/images/generations \
   -H 'content-type: application/json' \
   -d '{
-    "model": "flux.1-schnell",
+    "model": "4668854ba3e8b094e6f48fbeb59cec1cfde162f2@flux.1-schnell",
     "prompt": "A tiny ant carrying a seed",
     "n": 1,
     "size": "1024x1024"
   }'
 
-# Pin a specific peer for the generation (JSON body, so peer@model works)
-#   "model": "<peerId>@flux.1-schnell"
-# For /v1/images/edits (multipart), use the header instead:
+# With a session pin the bare "flux.1-schnell" works too.
+# For /v1/images/edits (multipart body, no JSON model rewrite),
+# pin via header instead:
 #   -H 'x-antseed-pin-peer: <peerId>'
 ```
 
@@ -158,12 +166,14 @@ The wrapper writes a temporary OpenCode provider config pointing at the proxy an
 
 ## curl
 
+The model field is `"<peerId>@<model>"` — the peer id picks who serves the request, the model picks the service:
+
 ```bash
 # Anthropic format
 curl http://localhost:8377/v1/messages \
   -H "content-type: application/json" \
   -d '{
-    "model": "kimi-k2.6",
+    "model": "4668854ba3e8b094e6f48fbeb59cec1cfde162f2@kimi-k2.6",
     "max_tokens": 1024,
     "messages": [{"role": "user", "content": "Hello"}]
   }'
@@ -172,15 +182,16 @@ curl http://localhost:8377/v1/messages \
 curl http://localhost:8377/v1/chat/completions \
   -H "content-type: application/json" \
   -d '{
-    "model": "deepseek-v4-flash",
+    "model": "4668854ba3e8b094e6f48fbeb59cec1cfde162f2@deepseek-v4-flash",
     "messages": [{"role": "user", "content": "Hello"}]
   }'
 
-# Route to a specific peer — prefix the model with "<peerId>@"
+# With a session pin (antseed buyer connection set --peer <peerId>),
+# the bare service id is enough:
 curl http://localhost:8377/v1/chat/completions \
   -H "content-type: application/json" \
   -d '{
-    "model": "4668854ba3e8b094e6f48fbeb59cec1cfde162f2@deepseek-v4-flash",
+    "model": "deepseek-v4-flash",
     "messages": [{"role": "user", "content": "Hello"}]
   }'
 ```
