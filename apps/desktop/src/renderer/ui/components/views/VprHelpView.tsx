@@ -52,7 +52,7 @@ const HELP_TOPICS: HelpTopic[] = [
             body: 'The power button on the main screen starts and stops the router. The status strip at the bottom shows network health, your port, and how many peers and services are currently visible.',
           },
         ],
-        docsPath: '/getting-started/intro',
+        docsPath: '/',
       },
       {
         key: 'models',
@@ -68,7 +68,7 @@ const HELP_TOPICS: HelpTopic[] = [
             body: 'Prefer a specific seller? Tap it in the sellers list to pin it. Pinned sellers stay fixed until you unpin them from the model page or Preferences.',
           },
         ],
-        docsPath: '/guides/pricing',
+        docsPath: '/pricing',
       },
       {
         key: 'apps',
@@ -84,7 +84,7 @@ const HELP_TOPICS: HelpTopic[] = [
             body: 'Each connected app shows a pill on the main screen. The pop-out button detaches a small floating window you can keep above the app you are working in.',
           },
         ],
-        docsPath: '/getting-started/configuration',
+        docsPath: '/config',
       },
       {
         key: 'float',
@@ -132,7 +132,7 @@ const HELP_TOPICS: HelpTopic[] = [
             body: 'Turning Auto select off pauses routing decisions everywhere — connected apps stay on their last picked seller.',
           },
         ],
-        docsPath: '/guides/pricing',
+        docsPath: '/pricing',
       },
     ],
   },
@@ -170,7 +170,7 @@ const HELP_TOPICS: HelpTopic[] = [
             body: 'If the app was already running with its own API settings, check it is not overriding the base URL AntSeed configured.',
           },
         ],
-        docsPath: '/getting-started/configuration',
+        docsPath: '/config',
       },
       {
         key: 'trust-ca',
