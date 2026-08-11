@@ -125,6 +125,7 @@ function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pi
             <HugeiconsIcon icon={StarIcon} size={13} strokeWidth={2} className={styles.favStar} />
           )}
           {badge}
+          {discount && <span className={styles.discount}>{discount}</span>}
           {/* A span with the button role — the row itself is already a
               button, and a real nested button would be invalid markup (same
               pattern as the pill's Add balance shortcut). */}
@@ -154,18 +155,21 @@ function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pi
           {/* A pinned seller is the whole story of where the model routes —
               the seller's name replaces the peer count, unlabelled: naming a
               peer already says routing isn't on auto. */}
-          <span className={styles.peerMeta}>
-            {pinnedPeerLabel ? (
-              <span className={styles.pinnedSeller}>{pinnedPeerLabel}</span>
-            ) : (
-              `${entry.peerCount} ${entry.peerCount === 1 ? 'seller' : 'sellers'}`
-            )}
-          </span>
-          <span className={styles.metaDivider} aria-hidden="true">•</span>
+          {pinnedPeerLabel || !compact ? (
+            <>
+              <span className={styles.peerMeta}>
+                {pinnedPeerLabel ? (
+                  <span className={styles.pinnedSeller}>{pinnedPeerLabel}</span>
+                ) : (
+                  `${entry.peerCount} ${entry.peerCount === 1 ? 'seller' : 'sellers'}`
+                )}
+              </span>
+              <span className={styles.metaDivider} aria-hidden="true">•</span>
+            </>
+          ) : null}
           <span className={styles.metaPrice}>{priceParts}</span>
         </span>
       </span>
-      {discount && <span className={styles.discount}>{discount}</span>}
       {!compact && chevron && (
         <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} className={styles.chevron} />
       )}
