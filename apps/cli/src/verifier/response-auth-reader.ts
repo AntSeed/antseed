@@ -1,6 +1,7 @@
 import { access } from 'node:fs/promises'
 import { join } from 'node:path'
 import { VerificationStorage, type StoredRequestCost, type StoredResponseAuth } from '@antseed/node'
+import { normalized, sleep } from './utils.js'
 
 export const DEFAULT_RESPONSE_AUTH_WAIT_TIMEOUT_MS = 35_000
 export const RESPONSE_AUTH_POLL_INTERVAL_MS = 100
@@ -103,12 +104,4 @@ export function validateStoredResponseAuth(
     responseAuth: record,
     failureReason: mismatch,
   }
-}
-
-function sleep(delayMs: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, delayMs))
-}
-
-function normalized(value: string): string {
-  return value.trim().toLowerCase()
 }

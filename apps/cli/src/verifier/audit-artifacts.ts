@@ -1,7 +1,8 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { canonicalJsonStringify } from '@antseed/fingerprints'
-import { writeJsonAtomic, writeTextAtomic } from './atomic-files.js'
+import { readJsonIfExists, writeJsonAtomic, writeTextAtomic } from './atomic-files.js'
 import { addAuditCostSummaries, type AuditCostSummaryV1 } from './proxy-evidence.js'
 import type { VerificationOutcomeReasonV1 } from './outcome-reason.js'
 import type {
@@ -107,12 +108,26 @@ interface SellerAuditReportResult {
 
 interface SellerAuditReportFailure {
   peerId: string
+  displayName?: string | null
   status: 'FAILED'
   reason: string
   outcomeReason?: VerificationOutcomeReasonV1
 }
 
 type SellerAuditReportSkip = ModelVerificationSkip
+
+interface SellerAuditReportRow {
+  seller: string
+  coverage: string
+  correct: string
+  incorrect: string
+  correctRate: string
+  verdict: string
+  reason: string
+  nextAction: string
+  auditId?: string
+  evidencePath?: string
+}
 
 export function verifierStatusPath(evidenceDir: string): string {
   return join(evidenceDir, 'status.json')
@@ -132,8 +147,8 @@ export function modelAuditsDirectory(evidenceDir: string, epoch: string, model: 
 
 export function epochAuditReportPath(evidenceDir: string, epoch: string, runId?: string): string {
   return runId
-    ? join(epochDirectory(evidenceDir, epoch), 'runs', safeServiceSlug(runId), 'report.md')
-    : join(epochDirectory(evidenceDir, epoch), 'report.md')
+    ? join(epochDirectory(evidenceDir, epoch), 'runs', safeServiceSlug(runId), 'report.html')
+    : join(epochDirectory(evidenceDir, epoch), 'report.html')
 }
 
 export function verifierRunManifestPath(evidenceDir: string, runId: string): string {
@@ -147,12 +162,7 @@ export async function writeVerifierStatus(evidenceDir: string, status: VerifierS
 }
 
 export async function readVerifierStatus(evidenceDir: string): Promise<VerifierStatusV1 | null> {
-  try {
-    return JSON.parse(await readFile(verifierStatusPath(evidenceDir), 'utf8')) as VerifierStatusV1
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-    throw error
-  }
+  return readJsonIfExists(verifierStatusPath(evidenceDir))
 }
 
 export async function appendVerifierEvent(
@@ -241,52 +251,43 @@ export async function writeEpochAuditReport(
       if (!reason) return
       reasonCounts.set(reason.code, (reasonCounts.get(reason.code) ?? 0) + 1)
     }
-    const rows = results.map((result) => {
+    const rows: SellerAuditReportRow[] = results.map((result) => {
       countReason(result.outcomeReason)
-      return [
-        sellerLabel(result),
-        `${result.parsedProbeCount}/${result.probeCount}`,
-        result.parsedProbeCount === 0 ? '—' : String(result.correctProbeCount),
-        result.parsedProbeCount === 0 ? '—' : String(result.incorrectProbeCount),
-        result.correctRate === null ? 'N/A' : `**${(result.correctRate * 100).toFixed(1)}%**`,
-        result.status,
-        reportReason(result.outcomeReason),
-        result.outcomeReason?.nextAction ?? '—',
-        reportEvidence(result.auditId, result.evidencePath),
-      ]
+      return {
+        seller: sellerLabel(result),
+        coverage: `${result.parsedProbeCount}/${result.probeCount}`,
+        correct: result.parsedProbeCount === 0 ? '—' : String(result.correctProbeCount),
+        incorrect: result.parsedProbeCount === 0 ? '—' : String(result.incorrectProbeCount),
+        correctRate: result.correctRate === null ? 'N/A' : `${(result.correctRate * 100).toFixed(1)}%`,
+        verdict: result.status,
+        reason: reportReason(result.outcomeReason),
+        nextAction: result.outcomeReason?.nextAction ?? '—',
+        auditId: result.auditId,
+        evidencePath: result.evidencePath,
+      }
     })
     for (const failure of modelSummary.failures ?? []) {
       countReason(failure.outcomeReason)
-      rows.push([
-        sellerLabel(failure), '—', '—', '—', 'N/A', 'FAILED',
-        reportReason(failure.outcomeReason, failure.reason),
-        failure.outcomeReason?.nextAction ?? 'inspect verifier evidence',
-        '—',
-      ])
+      rows.push({
+        seller: sellerLabel(failure), coverage: '—', correct: '—', incorrect: '—', correctRate: 'N/A',
+        verdict: 'FAILED', reason: reportReason(failure.outcomeReason, failure.reason),
+        nextAction: failure.outcomeReason?.nextAction ?? 'inspect verifier evidence',
+      })
     }
     const skippedResults = [...(modelSummary.skipped ?? [])]
       .sort((left, right) => sellerLabel(left).localeCompare(sellerLabel(right)))
     for (const skipped of skippedResults) {
       countReason(skipped.outcomeReason)
-      rows.push([
-        sellerLabel(skipped), '—', '—', '—', 'N/A', 'SKIPPED',
-        reportReason(skipped.outcomeReason, skipped.reason),
-        skipped.outcomeReason?.nextAction ?? 'inspect verifier evidence',
-        reportEvidence(skipped.auditId ?? undefined, skipped.evidencePath ?? undefined),
-      ])
+      rows.push({
+        seller: sellerLabel(skipped), coverage: '—', correct: '—', incorrect: '—', correctRate: 'N/A',
+        verdict: 'SKIPPED', reason: reportReason(skipped.outcomeReason, skipped.reason),
+        nextAction: skipped.outcomeReason?.nextAction ?? 'inspect verifier evidence',
+        auditId: skipped.auditId ?? undefined,
+        evidencePath: skipped.evidencePath ?? undefined,
+      })
     }
     const reasonBreakdown = [...reasonCounts.entries()].sort(([left], [right]) => left.localeCompare(right))
-    return { reasonCounts, text: [
-      `## ${escapeMarkdownCell(model.model)}`,
-      '',
-      '| Seller | Coverage | Correct | Incorrect | Correct Rate | Verdict | Reason | Next Action | Evidence |',
-      '|---|---:|---:|---:|---:|---|---|---|---|',
-      ...rows.map((row) => `| ${row.map(escapeMarkdownCell).join(' | ')} |`),
-      ...(reasonBreakdown.length > 0 ? [
-        '',
-        `Reason breakdown: ${reasonBreakdown.map(([code, count]) => `\`${code}\`: ${count}`).join(', ')}`,
-      ] : []),
-    ].join('\n') }
+    return { reasonCounts, html: renderModelReportSection(model.model, rows, reasonBreakdown) }
   }))
   const overallReasons = new Map<string, number>()
   for (const section of rendered) {
@@ -295,26 +296,9 @@ export async function writeEpochAuditReport(
     }
   }
   const overallBreakdown = [...overallReasons.entries()].sort(([left], [right]) => left.localeCompare(right))
-  const text = [
-    '# AntSeed Verifier Audit Report',
-    '',
-    `- Run ID: \`${summary.runId}\``,
-    `- Epoch: \`${summary.epoch}\``,
-    ...(options.latest ? ['- View: consolidated latest epoch snapshot'] : []),
-    `- Started: ${summary.startedAt}`,
-    `- Completed: ${summary.completedAt}`,
-    `- ${options.latest ? 'Cumulative estimated cost' : 'Estimated cost'}: $${summary.cost.estimatedCostUsd.toFixed(6)}`,
-    ...(overallBreakdown.length > 0 ? [
-      '',
-      '## Outcome Reason Summary',
-      '',
-      ...overallBreakdown.map(([code, count]) => `- \`${code}\`: ${count}`),
-    ] : []),
-    '',
-    ...rendered.flatMap((section) => [section.text, '']),
-  ].join('\n').trimEnd()
+  const text = renderEpochAuditReportHtml(summary, options.latest === true, overallBreakdown, rendered.map((entry) => entry.html))
   const path = epochAuditReportPath(evidenceDir, epoch, options.latest ? undefined : summary.runId)
-  await writeTextAtomic(path, `${text}\n`)
+  await writeTextAtomic(path, text)
   return path
 }
 
@@ -439,15 +423,6 @@ function mergeReasonCounts(...groups: Record<string, number>[]): Record<string, 
   return counts
 }
 
-async function readJsonIfExists<T>(path: string): Promise<T | null> {
-  try {
-    return JSON.parse(await readFile(path, 'utf8')) as T
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-    throw error
-  }
-}
-
 function normalizedModel(value: string): string {
   return value.trim().toLowerCase()
 }
@@ -464,17 +439,143 @@ function reportReason(reason?: VerificationOutcomeReasonV1 | null, fallback = '�
   return `${reason.code}: ${reason.summary}${progress}${reason.retryable ? '; resumable' : ''}`
 }
 
-function reportEvidence(auditId?: string, evidencePath?: string): string {
+function renderEpochAuditReportHtml(
+  summary: EpochAuditSummaryV1,
+  latest: boolean,
+  reasonBreakdown: Array<[string, number]>,
+  modelSections: string[],
+): string {
+  const title = `AntSeed Verifier Audit Report — ${summary.epoch}`
+  const view = latest ? 'consolidated latest epoch snapshot' : 'immutable run report'
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(title)}</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #f4f6f8; --panel: #fff; --text: #17202a; --muted: #5d6d7e; --line: #d5dbe1; --accent: #315efb; --same: #16794a; --diff: #b42318; --undetermined: #9a6700; --skipped: #59636e; --failed: #8e1b1b; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #11151a; --panel: #1a2027; --text: #edf2f7; --muted: #aeb8c4; --line: #36404b; --accent: #8aa4ff; --same: #56d597; --diff: #ff8c82; --undetermined: #f2c14e; --skipped: #b8c0ca; --failed: #ff7b72; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { width: min(1600px, calc(100% - 32px)); margin: 32px auto 64px; }
+    header, section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 2px 8px rgb(0 0 0 / 6%); }
+    header { padding: 24px; margin-bottom: 20px; }
+    h1, h2 { margin: 0; line-height: 1.2; }
+    h1 { font-size: clamp(24px, 4vw, 38px); }
+    h2 { font-size: 22px; }
+    .subtitle { color: var(--muted); margin: 6px 0 20px; }
+    .metadata { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 0; }
+    .metadata div { border-left: 3px solid var(--accent); padding-left: 10px; min-width: 0; }
+    dt { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+    dd { margin: 2px 0 0; overflow-wrap: anywhere; }
+    section { padding: 20px; margin-top: 20px; }
+    .reasons { color: var(--muted); margin: 10px 0 0; padding-left: 20px; }
+    .table-wrap { overflow-x: auto; margin-top: 16px; }
+    table { border-collapse: collapse; width: 100%; min-width: 1120px; }
+    th, td { border-bottom: 1px solid var(--line); padding: 10px 12px; text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: 12px; letter-spacing: .03em; text-transform: uppercase; white-space: nowrap; }
+    tbody tr:last-child td { border-bottom: 0; }
+    td.numeric { font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .badge { border: 1px solid currentColor; border-radius: 999px; display: inline-block; font-size: 12px; font-weight: 800; letter-spacing: .03em; padding: 2px 8px; }
+    .same { color: var(--same); } .diff { color: var(--diff); } .undetermined { color: var(--undetermined); } .skipped { color: var(--skipped); } .failed { color: var(--failed); }
+    a { color: var(--accent); overflow-wrap: anywhere; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .92em; }
+    .empty { color: var(--muted); font-style: italic; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>AntSeed Verifier Audit Report</h1>
+    <p class="subtitle">Epoch ${escapeHtml(summary.epoch)}</p>
+    <dl class="metadata">
+      ${renderMetadata('Run ID', summary.runId)}
+      ${renderMetadata('View', view)}
+      ${renderMetadata('Epoch window', `${summary.epochStartedAt} – ${summary.epochEndsAt}`)}
+      ${renderMetadata('Started', summary.startedAt)}
+      ${renderMetadata('Completed', summary.completedAt)}
+      ${renderMetadata(latest ? 'Cumulative estimated cost' : 'Estimated cost', `$${summary.cost.estimatedCostUsd.toFixed(6)}`)}
+    </dl>
+    ${renderReasonBreakdown('Overall reason breakdown', reasonBreakdown)}
+  </header>
+  ${modelSections.join('\n  ')}
+</main>
+</body>
+</html>
+`
+}
+
+function renderModelReportSection(
+  model: string,
+  rows: SellerAuditReportRow[],
+  reasonBreakdown: Array<[string, number]>,
+): string {
+  const body = rows.length === 0
+    ? '<tr><td class="empty" colspan="9">No advertised sellers were audited for this model.</td></tr>'
+    : rows.map((row) => `<tr>
+          <td>${escapeHtml(row.seller)}</td>
+          <td class="numeric">${escapeHtml(row.coverage)}</td>
+          <td class="numeric">${escapeHtml(row.correct)}</td>
+          <td class="numeric">${escapeHtml(row.incorrect)}</td>
+          <td class="numeric">${escapeHtml(row.correctRate)}</td>
+          <td>${renderVerdict(row.verdict)}</td>
+          <td>${escapeHtml(row.reason)}</td>
+          <td>${escapeHtml(row.nextAction)}</td>
+          <td>${renderEvidence(row.auditId, row.evidencePath)}</td>
+        </tr>`).join('\n        ')
+  return `<section>
+    <h2>${escapeHtml(model)}</h2>
+    ${renderReasonBreakdown('Model reason breakdown', reasonBreakdown)}
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Seller</th><th>Coverage</th><th>Correct</th><th>Incorrect</th><th>Correct Rate</th><th>Verdict</th><th>Reason</th><th>Next Action</th><th>Evidence</th></tr></thead>
+        <tbody>
+        ${body}
+        </tbody>
+      </table>
+    </div>
+  </section>`
+}
+
+function renderMetadata(label: string, value: string): string {
+  return `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`
+}
+
+function renderReasonBreakdown(title: string, reasons: Array<[string, number]>): string {
+  if (reasons.length === 0) return ''
+  const items = reasons
+    .map(([code, count]) => `<li><code>${escapeHtml(code)}</code>: ${count}</li>`)
+    .join('')
+  return `<div><strong>${escapeHtml(title)}</strong><ul class="reasons">${items}</ul></div>`
+}
+
+function renderVerdict(verdict: string): string {
+  const normalized = verdict.toLowerCase()
+  const className = ['same', 'diff', 'undetermined', 'skipped', 'failed'].includes(normalized)
+    ? normalized
+    : 'skipped'
+  return `<span class="badge ${className}">${escapeHtml(verdict)}</span>`
+}
+
+function renderEvidence(auditId?: string, evidencePath?: string): string {
   if (!auditId && !evidencePath) return '—'
-  const audit = auditId ? `audit ${auditId.slice(0, 14)}…` : ''
-  return evidencePath ? `${audit}${audit ? '; ' : ''}${evidencePath}` : audit
+  const audit = auditId ? `audit ${auditId.slice(0, 14)}…` : 'evidence'
+  if (!evidencePath) return escapeHtml(audit)
+  const href = pathToFileURL(evidencePath).href
+  return `<a href="${escapeHtml(href)}" title="${escapeHtml(evidencePath)}">${escapeHtml(audit)}</a>`
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
 }
 
 function sellerLabel(value: { peerId: string; displayName?: string | null }): string {
   const peer = `${value.peerId.slice(0, 12)}…`
   return value.displayName ? `${value.displayName} (${peer})` : peer
-}
-
-function escapeMarkdownCell(value: string): string {
-  return value.replaceAll('|', '\\|').replaceAll('\n', ' ')
 }

@@ -31,6 +31,7 @@ import {
 } from '../../../verifier/audit-concurrency.js'
 import { acquirePidFileLock } from '../../../verifier/atomic-files.js'
 import { resolveVerifierCommandModels } from '../../../verifier/model-config.js'
+import { asError } from '../../../verifier/utils.js'
 import {
   classifyVerificationTarget,
   loadBuyerProxySnapshot,
@@ -145,15 +146,20 @@ export function registerVerifierRunCommand(verifier: Command): void {
           buyerProxy: proxy.baseUrl,
           startedAt: startedAtMs,
         })
+        const targetPolicy = {
+          minReputation: config.buyer.minPeerReputation,
+          maxPricing: config.buyer.maxPricing.defaults,
+        }
         const preparedModels = runModels.map((model) => {
           const skipped: ModelVerificationSkip[] = []
           const normalizedModel = model.trim().toLowerCase()
           const targets = proxy.peers.flatMap((peer) => {
             const resumeCandidate = resumeCandidates.get(resumeKey(model, peer.peerId))
             if (resumeOnly && !resumeCandidate) return []
-            const eligibility = classifyVerificationTarget(peer, normalizedModel)
+            const eligibility = classifyVerificationTarget(peer, normalizedModel, targetPolicy)
             if (eligibility.eligible) return [{ peer, service: eligibility.service, resumeCandidate }]
-            if (eligibility.code === 'missing_response_auth') {
+            if (eligibility.code !== 'model_not_advertised') {
+              const policySkip = eligibility.code !== 'missing_response_auth'
               skipped.push({
                 peerId: peer.peerId,
                 displayName: peer.displayName ?? null,
@@ -163,13 +169,13 @@ export function registerVerifierRunCommand(verifier: Command): void {
                 code: eligibility.code,
                 reason: eligibility.reason,
                 outcomeReason: {
-                  code: 'missing_response_auth',
+                  code: eligibility.code,
                   summary: eligibility.reason,
                   retryable: false,
-                  source: 'response_auth',
+                  source: policySkip ? 'policy' : 'response_auth',
                   affectedBatchCount: 0,
                   totalBatchCount: 0,
-                  nextAction: 'inspect verifier evidence',
+                  nextAction: policySkip ? 'adjust buyer routing policy' : 'inspect verifier evidence',
                 },
                 source: 'preflight',
                 auditId: null,
@@ -215,6 +221,9 @@ export function registerVerifierRunCommand(verifier: Command): void {
         console.log(chalk.dim(`Epoch source: ${epochWindow.source}`))
         console.log(chalk.dim(`Buyer proxy: ${proxy.baseUrl} (pid ${proxy.pid})`))
         console.log(chalk.dim('Evidence: verified ResponseAuth required for every successful batch'))
+        console.log(chalk.dim(
+          `Eligibility: reputation >= ${targetPolicy.minReputation}; maximum pricing input $${targetPolicy.maxPricing.inputUsdPerMillion}/M, output $${targetPolicy.maxPricing.outputUsdPerMillion}/M (buyer config)`,
+        ))
         if (resumeSourceRunId) {
           console.log(chalk.dim(`Resume source: ${resumeSourceRunId} (${resumeCandidates.size} unresolved audit(s))`))
         }
@@ -565,10 +574,6 @@ export function registerVerifierRunCommand(verifier: Command): void {
 
 function epochTimestamp(value: number): string {
   return new Date(value * 1_000).toISOString()
-}
-
-function asError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error))
 }
 
 export function resolveRunModels(

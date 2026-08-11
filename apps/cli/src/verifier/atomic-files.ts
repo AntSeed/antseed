@@ -1,6 +1,6 @@
-import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdir, open, readFile, rename, rm, unlink } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { randomBytes } from 'node:crypto'
 import { canonicalJsonStringify } from '@antseed/fingerprints'
 
 export async function writeJsonAtomic(path: string, value: unknown, canonical = false): Promise<void> {
@@ -8,38 +8,39 @@ export async function writeJsonAtomic(path: string, value: unknown, canonical = 
   await writeTextAtomic(path, text)
 }
 
+export async function readJsonIfExists<T>(path: string): Promise<T | null> {
+  try {
+    return JSON.parse(await readFile(path, 'utf8')) as T
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
+  }
+}
+
 export async function writeTextAtomic(path: string, text: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true })
-  const temporary = `${path}.tmp-${process.pid}-${randomBytes(6).toString('hex')}`
-  const handle = await open(temporary, 'wx')
+  const temporary = `${path}.tmp-${process.pid}-${randomUUID()}`
   try {
-    await handle.writeFile(text)
-    await handle.sync()
-  } finally {
-    await handle.close()
+    await writeExclusive(temporary, text)
+    await rename(temporary, path)
+  } catch (error) {
+    await rm(temporary, { force: true })
+    throw error
   }
-  await rename(temporary, path)
 }
 
 export interface FileLock {
-  path: string
   release(): Promise<void>
 }
 
 export async function acquirePidFileLock(path: string): Promise<FileLock> {
   await mkdir(dirname(path), { recursive: true })
-  const token = randomBytes(16).toString('hex')
+  const token = randomUUID()
+  const contents = JSON.stringify({ pid: process.pid, token, createdAt: new Date().toISOString() })
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const handle = await open(path, 'wx')
-      try {
-        await handle.writeFile(JSON.stringify({ pid: process.pid, token, createdAt: new Date().toISOString() }))
-        await handle.sync()
-      } finally {
-        await handle.close()
-      }
+      await writeExclusive(path, contents)
       return {
-        path,
         async release() {
           try {
             const current = JSON.parse(await readFile(path, 'utf8')) as { token?: unknown }
@@ -53,12 +54,20 @@ export async function acquirePidFileLock(path: string): Promise<FileLock> {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
       const stale = await isStaleLock(path)
       if (!stale) throw new Error(`verifier run already active (lock ${path})`)
-      await unlink(path).catch((unlinkError) => {
-        if ((unlinkError as NodeJS.ErrnoException).code !== 'ENOENT') throw unlinkError
-      })
+      await rm(path, { force: true })
     }
   }
   throw new Error(`could not acquire verifier lock ${path}`)
+}
+
+async function writeExclusive(path: string, text: string): Promise<void> {
+  const handle = await open(path, 'wx')
+  try {
+    await handle.writeFile(text)
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
 }
 
 async function isStaleLock(path: string): Promise<boolean> {
@@ -68,8 +77,8 @@ async function isStaleLock(path: string): Promise<boolean> {
     try {
       process.kill(Number(parsed.pid), 0)
       return false
-    } catch {
-      return true
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'ESRCH'
     }
   } catch {
     return true

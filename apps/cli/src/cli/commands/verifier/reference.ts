@@ -7,6 +7,7 @@ import { writeJsonAtomic } from '../../../verifier/atomic-files.js'
 import { resolveVerifierCommandModels, resolveVerifierModelConfig } from '../../../verifier/model-config.js'
 import { buildModelReference, createReferenceRequestLimiter } from '../../../verifier/model-reference.js'
 import { loadConfiguredVerifierModelCatalog } from '../../../verifier/openrouter-catalog.js'
+import { asError } from '../../../verifier/utils.js'
 import {
   appendModelReferenceToBank,
   inspectModelProbeBankPower,
@@ -155,10 +156,6 @@ export function registerVerifierReferenceCommand(verifier: Command): void {
       console.log(chalk.dim(`Summary: ${summaryPath}`))
       if (results.some((result) => result.status === 'FAILED')) process.exitCode = 1
     })
-}
-
-function asError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error))
 }
 
 export function referenceBuildSkipReason(

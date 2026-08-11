@@ -1,5 +1,5 @@
 import { randomInt } from 'node:crypto'
-import { mkdir, readFile, readdir } from 'node:fs/promises'
+import { mkdir, readdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
   canonicalHashBytes32,
@@ -13,10 +13,11 @@ import {
   type ReferenceProbeSelfTestV1,
 } from '@antseed/fingerprints'
 import type { VerifierCLIConfig } from '../config/types.js'
-import { acquirePidFileLock, writeJsonAtomic } from './atomic-files.js'
+import { acquirePidFileLock, readJsonIfExists, writeJsonAtomic } from './atomic-files.js'
 import type { ReferenceBuildCostV1 } from './model-reference.js'
 import { isReferenceProbeCountAllowed, resolveReferenceSizingPolicy } from './reference-sizing.js'
 import { safeServiceSlug } from './slug.js'
+import { normalized } from './utils.js'
 
 export const BANK_EXHAUSTED = 'BANK_EXHAUSTED'
 
@@ -733,17 +734,4 @@ async function readRequiredBank(path: string, model: string): Promise<ProbeBankV
     throw new Error(`probe bank for ${model} has no reference cost metadata; rebuild it`)
   }
   return bank
-}
-
-async function readJsonIfExists<T>(path: string): Promise<T | null> {
-  try {
-    return JSON.parse(await readFile(path, 'utf8')) as T
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-    throw error
-  }
-}
-
-function normalized(value: string): string {
-  return value.trim().toLowerCase()
 }

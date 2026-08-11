@@ -13,7 +13,12 @@ import {
   type KbfProbe,
   type KbfReferenceV1,
 } from '@antseed/fingerprints'
-import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1, type PeerInfo } from '@antseed/node'
+import {
+  CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
+  computeOnChainReputationScore,
+  type PeerInfo,
+  type TokenPricingUsdPerMillion,
+} from '@antseed/node'
 import { parsePersistedPeers } from '../proxy/buyer-proxy.js'
 import {
   deriveProxyAuditId,
@@ -36,6 +41,7 @@ import {
   withBatchCounts,
   type VerificationOutcomeReasonV1,
 } from './outcome-reason.js'
+import { asError, sleep } from './utils.js'
 
 const PROBE_REQUEST_ATTEMPTS = 5
 const PROBE_RETRY_BASE_DELAY_MS = 1_000
@@ -179,6 +185,11 @@ export interface ModelVerificationRunSummary {
   skipped: ModelVerificationSkip[]
 }
 
+export interface VerificationTargetPolicy {
+  minReputation: number
+  maxPricing: TokenPricingUsdPerMillion
+}
+
 export async function loadBuyerProxySnapshot(dataDir: string): Promise<BuyerProxySnapshot> {
   const statePath = join(dataDir, 'buyer.state.json')
   let parsed: {
@@ -215,9 +226,15 @@ export async function loadBuyerProxySnapshot(dataDir: string): Promise<BuyerProx
 export function classifyVerificationTarget(
   peer: PeerInfo,
   normalizedModel: string,
+  policy: VerificationTargetPolicy,
 ): { eligible: true; service: string }
   | { eligible: false; code: 'model_not_advertised'; service: null; reason: string }
-  | { eligible: false; code: 'missing_response_auth'; service: string; reason: string } {
+  | {
+    eligible: false
+    code: 'missing_response_auth' | 'reputation_below_minimum' | 'price_above_maximum' | 'policy_rejected'
+    service: string
+    reason: string
+  } {
   const service = advertisedServices(peer).get(normalizedModel)
   if (!service) {
     return { eligible: false, code: 'model_not_advertised', service: null, reason: 'model not advertised' }
@@ -230,7 +247,96 @@ export function classifyVerificationTarget(
       reason: `missing ${CONNECTION_CAPABILITY_RESPONSE_AUTH_V1}`,
     }
   }
+
+  const reputation = computeOnChainReputationScore(peer) ?? peer.reputationScore ?? 0
+  if (reputation < policy.minReputation) {
+    return {
+      eligible: false,
+      code: 'reputation_below_minimum',
+      service,
+      reason: `peer reputation ${reputation} is below buyer minimum ${policy.minReputation}`,
+    }
+  }
+
+  const offer = resolveAdvertisedOffer(peer, normalizedModel)
+  if (!offer) {
+    return {
+      eligible: false,
+      code: 'policy_rejected',
+      service,
+      reason: `buyer policy could not resolve valid advertised pricing for ${service}`,
+    }
+  }
+
+  const maxCachedInput = policy.maxPricing.cachedInputUsdPerMillion ?? policy.maxPricing.inputUsdPerMillion
+  if (
+    offer.inputUsdPerMillion > policy.maxPricing.inputUsdPerMillion
+    || offer.outputUsdPerMillion > policy.maxPricing.outputUsdPerMillion
+    || (offer.cachedInputUsdPerMillion != null && offer.cachedInputUsdPerMillion > maxCachedInput)
+  ) {
+    return {
+      eligible: false,
+      code: 'price_above_maximum',
+      service,
+      reason: `advertised price input $${offer.inputUsdPerMillion}/M, output $${offer.outputUsdPerMillion}/M exceeds buyer maximum input $${policy.maxPricing.inputUsdPerMillion}/M, output $${policy.maxPricing.outputUsdPerMillion}/M`,
+    }
+  }
+
   return { eligible: true, service }
+}
+
+function resolveAdvertisedOffer(
+  peer: PeerInfo,
+  normalizedModel: string,
+): TokenPricingUsdPerMillion | null {
+  const providers = [
+    ...peer.providers,
+    ...(peer.metadata?.providers ?? []).map((entry) => entry.provider),
+    ...Object.keys(peer.providerPricing ?? {}),
+  ].filter((provider, index, all) => provider.trim().length > 0 && all.indexOf(provider) === index)
+
+  for (const provider of providers) {
+    const matrixEntry = Object.entries(peer.providerPricing ?? {})
+      .find(([name]) => name.toLowerCase() === provider.toLowerCase())?.[1]
+    const announcement = peer.metadata?.providers
+      .find((entry) => entry.provider.toLowerCase() === provider.toLowerCase())
+    const matrixService = Object.entries(matrixEntry?.services ?? {})
+      .find(([service]) => service.trim().toLowerCase() === normalizedModel)?.[1]
+    const announcedService = announcement?.services
+      .some((service) => service.trim().toLowerCase() === normalizedModel) ?? false
+    const announcementServicePrice = Object.entries(announcement?.servicePricing ?? {})
+      .find(([service]) => service.trim().toLowerCase() === normalizedModel)?.[1]
+
+    if (!matrixService && !announcedService && !announcementServicePrice) continue
+    const offer = matrixService ?? announcementServicePrice ?? matrixEntry?.defaults ?? announcement?.defaultPricing
+    if (isValidOffer(offer)) return offer
+  }
+
+  if (
+    isFiniteNonNegative(peer.defaultInputUsdPerMillion)
+    && isFiniteNonNegative(peer.defaultOutputUsdPerMillion)
+  ) {
+    return {
+      inputUsdPerMillion: peer.defaultInputUsdPerMillion,
+      outputUsdPerMillion: peer.defaultOutputUsdPerMillion,
+      ...(isFiniteNonNegative(peer.defaultCachedInputUsdPerMillion)
+        ? { cachedInputUsdPerMillion: peer.defaultCachedInputUsdPerMillion }
+        : {}),
+    }
+  }
+
+  return null
+}
+
+function isValidOffer(offer: TokenPricingUsdPerMillion | undefined): offer is TokenPricingUsdPerMillion {
+  return !!offer
+    && isFiniteNonNegative(offer.inputUsdPerMillion)
+    && isFiniteNonNegative(offer.outputUsdPerMillion)
+    && (offer.cachedInputUsdPerMillion === undefined || isFiniteNonNegative(offer.cachedInputUsdPerMillion))
+}
+
+function isFiniteNonNegative(value: number | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
 }
 
 export async function verifyModelTarget(input: {
@@ -817,20 +923,6 @@ function classifyProxyFailure(
     }
   }
 
-  if (code === 'reputation_below_minimum' || code === 'price_above_maximum' || code === 'policy_rejected') {
-    return {
-      retryable: false,
-      skipCode: code,
-      outcomeReason: policyReason(code, message),
-    }
-  }
-  if (message.includes('outside your buyer routing policy')) {
-    return {
-      retryable: false,
-      skipCode: 'policy_rejected',
-      outcomeReason: policyReason('policy_rejected', message),
-    }
-  }
   if ((statusCode === 400 || statusCode === 404)
     && (code === 'model_not_found' || message.includes('is not served by this peer'))) {
     return {
@@ -1037,21 +1129,6 @@ function transportReason(summary: string): VerificationOutcomeReasonV1 {
   }
 }
 
-function policyReason(
-  code: 'reputation_below_minimum' | 'price_above_maximum' | 'policy_rejected',
-  summary: string,
-): VerificationOutcomeReasonV1 {
-  return {
-    code,
-    summary: sanitizeOutcomeSummary(summary),
-    retryable: false,
-    source: 'policy',
-    affectedBatchCount: 0,
-    totalBatchCount: 0,
-    nextAction: 'adjust buyer routing policy',
-  }
-}
-
 function retryDelay(response: Response, attemptCount: number, randomFn: () => number): number {
   const retryAfter = response.headers.get('retry-after')
   if (retryAfter) {
@@ -1183,10 +1260,6 @@ function chunk<T>(items: readonly T[], size: number): T[][] {
   return chunks
 }
 
-function sleep(delayMs: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, delayMs))
-}
-
 async function sleepWithSignal(
   delayMs: number,
   signal: AbortSignal,
@@ -1201,8 +1274,4 @@ async function sleepWithSignal(
   } finally {
     signal.removeEventListener('abort', abort)
   }
-}
-
-function asError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error))
 }

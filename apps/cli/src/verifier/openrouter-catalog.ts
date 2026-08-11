@@ -1,4 +1,5 @@
 import type { VerifierCLIConfig, VerifierModelPricingConfig } from '../config/types.js'
+import { normalized } from './utils.js'
 
 export type VerifierReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
@@ -91,8 +92,4 @@ function isReasoningEffort(value: unknown): value is VerifierReasoningEffort {
 function parseNonNegativeNumber(value: unknown): number | null {
   const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
-}
-
-function normalized(value: string): string {
-  return value.trim().toLowerCase()
 }

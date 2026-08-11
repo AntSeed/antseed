@@ -1,5 +1,5 @@
-import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { readFile, unlink } from 'node:fs/promises'
+import { join } from 'node:path'
 import {
   KBF_ENROLLMENT_TEMPERATURES,
   KBF_PROBES_PER_REQUEST,
@@ -35,6 +35,8 @@ import {
   canonicalKbfTolerance,
   createCanonicalKbfProbe,
 } from './canonical-kbf-domains.js'
+import { writeJsonAtomic } from './atomic-files.js'
+import { asError, normalized, sleep } from './utils.js'
 
 const CANDIDATE_COUNT = 300
 const CANDIDATE_BATCH_SIZE = 20
@@ -406,7 +408,7 @@ export async function buildModelReference(input: {
     minimumStatisticalPower: sizing.minimumStatisticalPower,
   })
   const path = referencePath(input.referencesDir, input.model)
-  await writeReference(path, validated)
+  await writeJsonAtomic(path, validated)
   const cost = query.costSummary?.() ?? summarizeReferenceCosts([])
   return { reference: validated, path, cost, finalize: () => checkpoint.remove() }
 }
@@ -502,7 +504,7 @@ async function certifyStableProbes(
   log?: (message: string) => void,
 ): Promise<KbfProbe[]> {
   if (candidates.length === 0) return []
-  const passes = await Promise.all(KBF_ENROLLMENT_TEMPERATURES.map((temperature, passIndex) => {
+  const passes = await allSettledOrThrow(KBF_ENROLLMENT_TEMPERATURES.map((temperature, passIndex) => {
     return queryProbeAnswers(model, candidates, temperature, `stability-${passIndex}`, query, {
       recoverTerminalEmptyBatches: true,
       log,
@@ -525,7 +527,7 @@ async function queryContrastOutcomes(
   log?: (message: string) => void,
 ): Promise<Map<string, string[]>> {
   const outcomes = new Map(probes.map((probe) => [probe.id, [] as string[]]))
-  const answersByModel = await Promise.all(contrastModels.map(async (contrastModel) => {
+  const answersByModel = await allSettledOrThrow(contrastModels.map(async (contrastModel) => {
     log?.(`checking contrast model ${contrastModel}`)
     return queryProbeAnswers(contrastModel, probes, 0, `contrast-${contrastModel}`, query, {
       allowIncomplete: true,
@@ -551,7 +553,7 @@ async function generateCandidates(
 ): Promise<KbfProbe[]> {
   const baseCount = Math.floor(count / CANONICAL_KBF_DOMAINS.length)
   const remainder = count % CANONICAL_KBF_DOMAINS.length
-  const generatedByDomain = await Promise.all(CANONICAL_KBF_DOMAINS.map(async (definition, domainIndex) => {
+  const generatedByDomain = await allSettledOrThrow(CANONICAL_KBF_DOMAINS.map(async (definition, domainIndex) => {
     const countPerDomain = baseCount + (domainIndex < remainder ? 1 : 0)
     if (countPerDomain === 0) return []
     const probes: KbfProbe[] = []
@@ -1244,6 +1246,13 @@ function parseRetryAfterMs(value: string | null): number | null {
   return Number.isFinite(date) ? Math.max(0, date - Date.now()) : null
 }
 
+async function allSettledOrThrow<T>(promises: readonly Promise<T>[]): Promise<T[]> {
+  const results = await Promise.allSettled(promises)
+  const rejection = results.find((result) => result.status === 'rejected')
+  if (rejection?.status === 'rejected') throw rejection.reason
+  return results.map((result) => (result as PromiseFulfilledResult<T>).value)
+}
+
 function optionalString(value: unknown): string | null {
   return typeof value === 'string' ? value : null
 }
@@ -1256,44 +1265,6 @@ function assertNonNegativeInteger(value: number, name: string): void {
   if (!Number.isInteger(value) || value < 0) throw new Error(`${name} must be a non-negative integer`)
 }
 
-async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true })
-  const temporary = `${path}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`
-  const handle = await open(temporary, 'wx')
-  try {
-    await handle.writeFile(JSON.stringify(value))
-    await handle.sync()
-  } finally {
-    await handle.close()
-  }
-  await rename(temporary, path)
-}
-
-function sleep(delayMs: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, delayMs))
-}
-
 function referencePath(referencesDir: string, model: string): string {
   return join(referencesDir, `${safeServiceSlug(model)}.json`)
-}
-
-async function writeReference(path: string, reference: KbfReferenceV1): Promise<void> {
-  await mkdir(dirname(path), { recursive: true })
-  const temporary = `${path}.tmp-${process.pid}-${Date.now()}`
-  const handle = await open(temporary, 'wx')
-  try {
-    await handle.writeFile(JSON.stringify(reference, null, 2))
-    await handle.sync()
-  } finally {
-    await handle.close()
-  }
-  await rename(temporary, path)
-}
-
-function normalized(value: string): string {
-  return value.trim().toLowerCase()
-}
-
-function asError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error))
 }

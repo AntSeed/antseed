@@ -1,6 +1,5 @@
-import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { writeJsonAtomic } from './atomic-files.js'
+import { readJsonIfExists, writeJsonAtomic } from './atomic-files.js'
 
 export type ModelSubmissionStatus = 'pending' | 'submitted' | 'failed' | 'skipped'
 
@@ -51,16 +50,11 @@ export function submissionLedgerPath(
 }
 
 export async function readSubmissionLedger(path: string): Promise<SubmissionLedgerV1 | null> {
-  try {
-    const parsed = JSON.parse(await readFile(path, 'utf8')) as SubmissionLedgerV1
-    if (parsed.version !== 1 || parsed.kind !== 'antseed-verifier-submission-ledger') {
-      throw new Error(`unsupported submission ledger: ${path}`)
-    }
-    return parsed
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-    throw error
+  const parsed = await readJsonIfExists<SubmissionLedgerV1>(path)
+  if (parsed && (parsed.version !== 1 || parsed.kind !== 'antseed-verifier-submission-ledger')) {
+    throw new Error(`unsupported submission ledger: ${path}`)
   }
+  return parsed
 }
 
 export async function writeSubmissionLedger(path: string, ledger: SubmissionLedgerV1): Promise<void> {

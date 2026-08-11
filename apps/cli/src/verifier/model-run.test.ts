@@ -38,6 +38,11 @@ function peer(overrides: Partial<PeerInfo> = {}): PeerInfo {
   }
 }
 
+const targetPolicy = {
+  minReputation: 0,
+  maxPricing: { inputUsdPerMillion: 5, outputUsdPerMillion: 30 },
+}
+
 function reference(count: number): KbfReferenceV1 {
   const probes = Array.from({ length: count }, (_, index) => ({
     id: `probe-${index + 1}`,
@@ -302,21 +307,45 @@ async function runSkippedTarget(response: Response): Promise<{
 }
 
 test('target eligibility requires ResponseAuth and preserves advertised model spelling', () => {
-  assert.deepEqual(classifyVerificationTarget(peer({ capabilities: [] }), 'gpt-5.6-sol'), {
+  assert.deepEqual(classifyVerificationTarget(peer({ capabilities: [] }), 'gpt-5.6-sol', targetPolicy), {
     eligible: false,
     code: 'missing_response_auth',
     service: 'GPT-5.6-SOL',
     reason: `missing ${CONNECTION_CAPABILITY_RESPONSE_AUTH_V1}`,
   })
-  assert.deepEqual(classifyVerificationTarget(peer(), 'gpt-5.6-sol'), {
+  assert.deepEqual(classifyVerificationTarget(peer(), 'gpt-5.6-sol', targetPolicy), {
     eligible: true,
     service: 'GPT-5.6-SOL',
   })
-  assert.deepEqual(classifyVerificationTarget(peer(), 'missing-model'), {
+  assert.deepEqual(classifyVerificationTarget(peer(), 'missing-model', targetPolicy), {
     eligible: false,
     code: 'model_not_advertised',
     service: null,
     reason: 'model not advertised',
+  })
+})
+
+test('target eligibility applies buyer reputation and pricing before audit', () => {
+  assert.deepEqual(classifyVerificationTarget(peer({ reputationScore: 20 }), 'gpt-5.6-sol', {
+    ...targetPolicy,
+    minReputation: 50,
+  }), {
+    eligible: false,
+    code: 'reputation_below_minimum',
+    service: 'GPT-5.6-SOL',
+    reason: 'peer reputation 20 is below buyer minimum 50',
+  })
+
+  assert.deepEqual(classifyVerificationTarget(peer({
+    providerPricing: { test: {
+      defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 1 },
+      services: { 'GPT-5.6-SOL': { inputUsdPerMillion: 6, outputUsdPerMillion: 31 } },
+    } },
+  }), 'gpt-5.6-sol', targetPolicy), {
+    eligible: false,
+    code: 'price_above_maximum',
+    service: 'GPT-5.6-SOL',
+    reason: 'advertised price input $6/M, output $31/M exceeds buyer maximum input $5/M, output $30/M',
   })
 })
 
@@ -400,21 +429,6 @@ test('proxy runtime retries transient failures', async () => {
   assert.equal(run.result.status, 'SAME')
   assert.equal(run.requestCount, 12)
   assert.equal(run.evidence.exchanges[0]?.attemptCount, 3)
-})
-
-test('buyer policy rejection skips after the first batch with evidence', async () => {
-  const run = await runSkippedTarget(Response.json({
-    error: {
-      type: 'buyer_policy_rejected',
-      code: 'price_above_maximum',
-      message: 'peer pricing exceeds the buyer maximum for this service',
-    },
-  }, { status: 502 }))
-  assert.equal(run.requestCount, 1)
-  assert.equal(run.result.code, 'price_above_maximum')
-  assert.equal(run.result.source, 'runtime')
-  assert.equal(run.evidence.result.status, 'SKIPPED')
-  assert.equal(run.evidence.exchange.response?.statusCode, 502)
 })
 
 test('stale model advertisement skips after one model-not-found response', async () => {

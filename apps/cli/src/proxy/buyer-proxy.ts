@@ -110,9 +110,6 @@ type PeerFailureEntry = {
 type BuyerPolicyRouter = Router & {
   allowsPeerForPolicy?: (req: SerializedHttpRequest, peer: PeerInfo) => boolean
   allowsPeerForPricing?: (req: SerializedHttpRequest, peer: PeerInfo) => boolean
-  evaluatePeerForPolicy?: (req: SerializedHttpRequest, peer: PeerInfo) =>
-    | { allowed: true; code: 'eligible'; reason: null }
-    | { allowed: false; code: string; reason: string }
 }
 
 type ProtocolTransformStrategy = {
@@ -1324,35 +1321,18 @@ export class BuyerProxy {
       return
     }
     const policyRouter = router as BuyerPolicyRouter | null | undefined
-    const policyEvaluation = policyRouter?.evaluatePeerForPolicy
-      ? policyRouter.evaluatePeerForPolicy(serializedReq, selectedPeer)
-      : policyRouter?.allowsPeerForPolicy
-        ? policyRouter.allowsPeerForPolicy(serializedReq, selectedPeer)
-          ? { allowed: true as const, code: 'eligible' as const, reason: null }
-          : {
-            allowed: false as const,
-            code: 'policy_rejected',
-            reason: 'peer is outside the buyer pricing or reputation policy',
-          }
-        : policyRouter?.allowsPeerForPricing
-          ? policyRouter.allowsPeerForPricing(serializedReq, selectedPeer)
-            ? { allowed: true as const, code: 'eligible' as const, reason: null }
-            : {
-              allowed: false as const,
-              code: 'policy_rejected',
-              reason: 'peer is outside the buyer pricing policy',
-            }
-          : { allowed: true as const, code: 'eligible' as const, reason: null }
-    if (!policyEvaluation.allowed) {
+    const policyAllowed = policyRouter?.allowsPeerForPolicy
+      ? policyRouter.allowsPeerForPolicy(serializedReq, selectedPeer)
+      : policyRouter?.allowsPeerForPricing
+        ? policyRouter.allowsPeerForPricing(serializedReq, selectedPeer)
+        : true
+    if (!policyAllowed) {
       log(`Pinned peer ${selectedPeer.peerId.slice(0, 12)}... filtered out by buyer routing policy`)
-      res.writeHead(502, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({
-        error: {
-          type: 'buyer_policy_rejected',
-          code: policyEvaluation.code,
-          message: `Pinned peer ${selectedPeer.peerId.slice(0, 12)}... is outside your buyer routing policy: ${policyEvaluation.reason}.`,
-        },
-      }))
+      res.writeHead(502, { 'content-type': 'text/plain' })
+      res.end(
+        `Pinned peer ${selectedPeer.peerId.slice(0, 12)}... is outside your buyer routing policy. `
+        + 'Pick a different service in Discover or adjust your buyer pricing/reputation limits.',
+      )
       return
     }
 

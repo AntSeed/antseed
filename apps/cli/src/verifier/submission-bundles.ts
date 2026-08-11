@@ -19,6 +19,7 @@ import {
 } from './proxy-evidence.js'
 import { safeServiceSlug } from './slug.js'
 import type { VerificationOutcomeReasonV1 } from './outcome-reason.js'
+import { asError, normalized } from './utils.js'
 
 export interface BundleInferenceCostSourceV1 {
   requestId: string
@@ -452,12 +453,4 @@ function sumMicros(values: readonly string[]): bigint {
     if (parsed < 0n) throw new Error(`negative USD micro-cost: ${value}`)
     return total + parsed
   }, 0n)
-}
-
-function normalized(value: string): string {
-  return value.trim().toLowerCase()
-}
-
-function asError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error))
 }

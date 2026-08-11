@@ -24,14 +24,6 @@ export interface LocalRouterConfig {
   now?: () => number;
 }
 
-export type PeerPolicyEvaluation =
-  | { allowed: true; code: 'eligible'; reason: null }
-  | {
-    allowed: false;
-    code: 'reputation_below_minimum' | 'price_above_maximum' | 'policy_rejected';
-    reason: string;
-  };
-
 export class LocalRouter implements Router {
   private readonly _minReputation: number;
   private readonly _maxPricing: BuyerMaxPricingConfig;
@@ -142,57 +134,22 @@ export class LocalRouter implements Router {
   }
 
   allowsPeerForPricing(req: SerializedHttpRequest, peer: PeerInfo): boolean {
-    const evaluation = this.evaluatePeerForPolicy(req, peer, { reputation: false });
-    return evaluation.allowed;
+    const requestedService = this._extractRequestedService(req);
+    const provider = this._selectProviderForPeer(peer, requestedService);
+    if (!provider) return false;
+
+    const offer = this._resolvePeerOfferPrice(peer, provider, requestedService);
+    if (!offer) return false;
+
+    const max = this._resolveBuyerMaxPrice(provider, requestedService);
+    return !this._offerExceedsMaxPrice(offer, max);
   }
 
   allowsPeerForPolicy(req: SerializedHttpRequest, peer: PeerInfo): boolean {
-    return this.evaluatePeerForPolicy(req, peer).allowed;
-  }
-
-  evaluatePeerForPolicy(
-    req: SerializedHttpRequest,
-    peer: PeerInfo,
-    options: { reputation?: boolean } = {},
-  ): PeerPolicyEvaluation {
-    const effectiveReputation = this._effectiveReputation(peer);
-    if (options.reputation !== false && effectiveReputation < this._minReputation) {
-      return {
-        allowed: false,
-        code: 'reputation_below_minimum',
-        reason: `peer reputation ${effectiveReputation} is below buyer minimum ${this._minReputation}`,
-      };
+    if (this._effectiveReputation(peer) < this._minReputation) {
+      return false;
     }
-
-    const requestedService = this._extractRequestedService(req);
-    const provider = this._selectProviderForPeer(peer, requestedService);
-    if (!provider) {
-      return {
-        allowed: false,
-        code: 'policy_rejected',
-        reason: 'buyer policy could not resolve an advertised provider for this service',
-      };
-    }
-
-    const offer = this._resolvePeerOfferPrice(peer, provider, requestedService);
-    if (!offer) {
-      return {
-        allowed: false,
-        code: 'policy_rejected',
-        reason: 'buyer policy could not resolve valid pricing for this service',
-      };
-    }
-
-    const max = this._resolveBuyerMaxPrice(provider, requestedService);
-    if (this._offerExceedsMaxPrice(offer, max)) {
-      return {
-        allowed: false,
-        code: 'price_above_maximum',
-        reason: 'peer pricing exceeds the buyer maximum for this service',
-      };
-    }
-
-    return { allowed: true, code: 'eligible', reason: null };
+    return this.allowsPeerForPricing(req, peer);
   }
 
   private _effectiveReputation(p: PeerInfo): number {

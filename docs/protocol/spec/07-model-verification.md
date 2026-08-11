@@ -171,10 +171,14 @@ before epoch references were introduced retain their original probe subsets.
 `verifier run` opens `<dataDir>/verification.db` once using the exported
 `VerificationStorage`. Only peers advertising
 `verification.response-auth.v1` are scheduled; advertised peers without it are
-recorded as skipped. A first-batch buyer-policy rejection or structured
-`model_not_found` response also stops the audit, voids its probe reservation,
-and records a reasoned `SKIPPED` entry plus evidence. Peers that never advertised
-the model are not included in that model's report.
+recorded as skipped. Before reserving probes, the verifier independently applies
+`buyer.minPeerReputation` and `buyer.maxPricing.defaults` to each advertised
+seller using the pricing and reputation in the buyer snapshot. Sellers outside
+that configured policy are recorded as reasoned preflight skips and receive no
+audit traffic. A structured first-batch `model_not_found` response stops the
+audit, voids its probe reservation, and records a reasoned `SKIPPED` entry plus
+evidence. Peers that never advertised the model are not included in that model's
+report.
 
 After each successful proxy response, the verifier reads
 `x-antseed-request-id` and polls `getResponseAuth(requestId)` every 100 ms for up
@@ -237,7 +241,7 @@ plus rename writes.
     ├── events.jsonl
     ├── runs/<run-id>/
     │   ├── summary.json
-    │   └── report.md
+    │   └── report.html
     └── <model-slug>/
         ├── runs/<run-id>.summary.json
         └── audits/
@@ -247,11 +251,13 @@ plus rename writes.
 
 `status.json` is a readable snapshot of the active or most recent run. Run-
 specific summary and report paths keep historical evidence immutable. After
-every completed run, `epochs/<epoch>/summary.json` and `report.md` are atomically
+every completed run, `epochs/<epoch>/summary.json` and `report.html` are atomically
 refreshed as the consolidated latest epoch view. Repair outcomes replace the
 same seller's earlier outcome while unaffected sellers remain present. Each
-`report.md` model table includes `Reason`, `Next Action`, and `Evidence` columns,
-plus model and whole-run reason-code breakdowns. Machine summaries, status,
+`report.html` model table includes `Reason`, `Next Action`, and clickable
+`Evidence` columns. The report is standalone HTML with embedded styling and no
+external assets, so it can be opened directly from the local evidence directory,
+and includes model and whole-run reason-code breakdowns. Machine summaries, status,
 events, progress, and submission exclusions retain the same structured reason:
 `code`, `summary`, `retryable`, `source`, affected/total batch counts, and safe
 optional upstream status, provider code, and request ID. Secrets and

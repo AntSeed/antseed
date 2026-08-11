@@ -96,11 +96,7 @@ describe('runMigrations', () => {
     expect(versions.map(v => v.version)).toEqual([1]);
   });
 
-  it('repairs request_costs when historical verification migrations occupy version 2', () => {
-    runMigrations(db, [verificationMigrations[0]!]);
-    db.prepare('INSERT INTO schema_version (version, name, applied_at) VALUES (?, ?, ?)')
-      .run(2, 'create_audit_relay_tables', Date.now());
-
+  it('creates the complete verification schema in the base migration', () => {
     runMigrations(db, verificationMigrations);
 
     const table = db.prepare(
@@ -110,8 +106,6 @@ describe('runMigrations', () => {
     const versions = db.prepare('SELECT version, name FROM schema_version ORDER BY version').all();
     expect(versions).toEqual([
       { version: 1, name: 'create_verification_tables' },
-      { version: 2, name: 'create_audit_relay_tables' },
-      { version: 9, name: 'create_request_costs_compat' },
     ]);
   });
 });

@@ -11,6 +11,7 @@ import {
   reserveReferenceCosts,
 } from '../../../verifier/probe-bank.js'
 import { openResponseAuthReader } from '../../../verifier/response-auth-reader.js'
+import { asError, normalized } from '../../../verifier/utils.js'
 import {
   prepareModelVerificationBundle,
   readPreparedModelVerificationBundle,
@@ -414,12 +415,4 @@ function formatCredits(value: bigint): string {
 
 function minBigInt(left: bigint, right: bigint): bigint {
   return left < right ? left : right
-}
-
-function normalized(value: string): string {
-  return value.trim().toLowerCase()
-}
-
-function asError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error))
 }

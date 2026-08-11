@@ -6,6 +6,7 @@ import type {
   VerifierReferenceModelConfig,
 } from '../config/types.js'
 import type { VerifierModelCatalog } from './openrouter-catalog.js'
+import { normalized } from './utils.js'
 
 export const DEFAULT_CONTRAST_INPUT_WEIGHT = 0.9
 export const DEFAULT_CONTRAST_MAX_PRICE_RATIO = 0.3
@@ -142,8 +143,4 @@ function findModelEntry(
   requestedModel: string,
 ): [string, VerifierReferenceModelConfig] | undefined {
   return Object.entries(endpoint.models).find(([service]) => normalized(service) === normalized(requestedModel))
-}
-
-function normalized(value: string): string {
-  return value.trim().toLowerCase()
 }

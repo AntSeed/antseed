@@ -170,19 +170,6 @@ describe('LocalRouter', () => {
     expect(router.allowsPeerForPolicy(makeRequest(), lowRepAllowedPrice)).toBe(false);
     expect(router.allowsPeerForPolicy(makeRequest(), highRepAllowedPrice)).toBe(true);
     expect(router.allowsPeerForPolicy(makeRequest(), highRepOverpriced)).toBe(false);
-    expect(router.evaluatePeerForPolicy(makeRequest(), lowRepAllowedPrice)).toMatchObject({
-      allowed: false,
-      code: 'reputation_below_minimum',
-    });
-    expect(router.evaluatePeerForPolicy(makeRequest(), highRepOverpriced)).toMatchObject({
-      allowed: false,
-      code: 'price_above_maximum',
-    });
-    expect(router.evaluatePeerForPolicy(makeRequest(), highRepAllowedPrice)).toEqual({
-      allowed: true,
-      code: 'eligible',
-      reason: null,
-    });
   });
 
   it('uses service-specific seller offer pricing when request service is present', () => {
