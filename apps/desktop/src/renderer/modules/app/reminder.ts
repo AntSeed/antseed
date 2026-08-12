@@ -550,11 +550,11 @@ export function initReminderModule({
         catalog: uiState.vprModelCatalog,
         referenceMap,
       });
-    if (retrospective !== null && retrospective < MIN_AMMO_USD) return null;
+    if (retrospective === null || retrospective < MIN_AMMO_USD) return null;
     return {
       variant: nextVariant,
       requestsCount,
-      retrospectiveUsd: retrospective === null ? '' : retrospective.toFixed(2),
+      retrospectiveUsd: retrospective.toFixed(2),
       prospectiveUsd: prospective.prospectiveUsd.toFixed(2),
     };
   }

@@ -1,6 +1,6 @@
 export const D1_MIN_REQUESTS = 15;
 export const D1_MIN_OUTPUT_TOKENS = 30_000;
-export const D1_WARMUP_MS = 3 * 60_000;
+export const D1_WARMUP_MS = 30 * 60_000;
 export const D1_MIN_CONVERSATIONS = 2;
 export const D1_MIN_TURNS = 3;
 export const D2_MIN_LIFETIME_REQUESTS = 8;

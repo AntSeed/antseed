@@ -256,7 +256,7 @@ test('D1 publishes the Home offer directly after a qualifying response', async (
   assert.equal(uiState.reminderOffer?.requestsCount, 15);
 });
 
-test('D1 remains hidden until the 3-minute warmup elapses', async () => {
+test('D1 remains hidden until the 30-minute warmup elapses', async () => {
   const installTime = new Date(2026, 7, 11, 12, 0, 0).getTime();
   const storage = new MemoryStorage();
   storage.setItem(INSTALL_DATE_KEY, localDay(installTime));
@@ -281,7 +281,7 @@ test('D1 remains hidden until the 3-minute warmup elapses', async () => {
   await flushPromises();
   assert.equal(uiState.reminderOffer, null);
 
-  currentTime = installTime + 3 * 60_000;
+  currentTime = installTime + 30 * 60_000;
   module.onResponseCompleted('conversation-1', {
     inputTokens: 500_000,
     outputTokens: 500_000,
@@ -438,6 +438,32 @@ test('D1 retrospective falls back to lifetime usage when daily counters carry no
   await flushPromises();
   assert.equal(uiState.reminderOffer?.variant, 'd1');
   assert.notEqual(uiState.reminderOffer?.retrospectiveUsd, '');
+});
+
+test('later reminders remain hidden until retrospective usage can be priced', async () => {
+  const now = new Date(2026, 7, 11, 12, 0, 0).getTime();
+  const storage = new MemoryStorage();
+  primeReminder(storage, now, 'armed_d2', 1, 8);
+  const uiState = makeEligibleState();
+  const module = initReminderModule({
+    uiState,
+    dependencies: {
+      storage,
+      now: () => now,
+      loadReferencePrices: async () => referenceMap,
+      notifyChanged: () => {},
+    },
+  });
+
+  module.onResponseCompleted('conversation-1', {
+    inputTokens: 0,
+    outputTokens: 0,
+    service: null,
+  });
+  await flushPromises();
+
+  assert.equal(uiState.reminderOffer, null);
+  assert.equal(uiState.reminderState, 'armed_d2');
 });
 
 test('persistCounters never lowers already-persisted totals', async () => {

@@ -8,7 +8,6 @@ import {
   ArrowUpRight01Icon,
   Cancel01Icon,
   PowerIcon,
-  ArrowReloadHorizontalIcon,
   SparklesIcon,
   Tick02Icon,
 } from '@hugeicons/core-free-icons';
