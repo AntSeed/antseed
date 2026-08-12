@@ -101,6 +101,14 @@ export type Integration = {
   format: IntegrationFormat;
   setupMinutes: number;
   status: IntegrationStatus;
+  /**
+   * `<title>` text, rendered as `<seoTitle> | AntSeed`. Keep it 40–50 chars so
+   * the full tag lands in the 50–60 Google renders without truncating.
+   * Falls back to `name`, which on its own carries no query intent.
+   */
+  seoTitle?: string;
+  /** Page `<h1>`. Falls back to `name`. */
+  headline?: string;
   /** ≤ 90 chars. Shown on the hub card. */
   oneLiner: string;
   /** 1–3 short paragraphs. Shown at top of the integration page. */
@@ -146,6 +154,8 @@ export const integrations: Integration[] = [
     format: 'anthropic-messages',
     setupMinutes: 2,
     status: 'verified',
+    seoTitle: 'Run Claude Code on any model, no subscription',
+    headline: 'Run Claude Code on any model',
     oneLiner: "Anthropic's official CLI agent - launch through AntSeed with `antseed claude`.",
     description: [
       'Claude Code is the official CLI coding agent from Anthropic. It speaks the Anthropic Messages API natively, so it slots into AntSeed through the `antseed claude` wrapper or by pointing `ANTHROPIC_BASE_URL` at your local proxy.',
@@ -233,6 +243,8 @@ export const integrations: Integration[] = [
     format: 'openai-chat',
     setupMinutes: 2,
     status: 'verified',
+    seoTitle: 'Run OpenAI Codex CLI on any model, pay per use',
+    headline: 'Run OpenAI Codex CLI on any model',
     oneLiner: "OpenAI's official CLI coding agent - use `antseed codex` for per-run proxy config.",
     description: [
       "Codex is OpenAI's terminal coding agent. Recent versions ignore `OPENAI_BASE_URL` and instead read provider config from Codex settings.",
@@ -350,6 +362,8 @@ Deposits reserved:           0 USDC → 1 USDC`,
     format: 'openai-chat',
     setupMinutes: 2,
     status: 'verified',
+    seoTitle: 'Run OpenCode on any model, pay per request',
+    headline: 'Run OpenCode on any model',
     oneLiner: 'Open-source AI coding agent - launch through AntSeed with `antseed opencode`.',
     description: [
       'OpenCode is an MIT-licensed terminal coding agent built on the Vercel AI SDK. It supports 75+ providers out of the box and lets you register custom ones via <code>opencode.json</code>.',
@@ -449,6 +463,8 @@ Deposits reserved:           0 USDC → 1 USDC`,
     format: 'openai-responses',
     setupMinutes: 3,
     status: 'verified',
+    seoTitle: 'Run the Pi coding agent on any model, pay per use',
+    headline: 'Run Pi on any model',
     oneLiner: 'Open-source terminal coding agent with a first-class AntSeed extension.',
     description: [
       '<strong>What Pi is.</strong> Pi (<code>@mariozechner/pi-coding-agent</code>) is a minimal, hackable terminal coding agent by Mario Zechner - the same lineage as <a href="https://github.com/badlogic/pi-mono">pi-mono</a>. It ships with four default tools (<code>read</code>, <code>write</code>, <code>edit</code>, <code>bash</code>) and lets you extend everything else - commands, providers, themes, even the editor UI - through TypeScript <em>extensions</em>, <em>skills</em>, and <em>prompt templates</em>. No fork required.',
@@ -563,6 +579,8 @@ Deposits reserved:           0 USDC → 1 USDC`,
     format: 'anthropic-messages',
     setupMinutes: 3,
     status: 'verified',
+    seoTitle: 'Run OpenClaw agents on any model, pay per use',
+    headline: 'Run OpenClaw on any model',
     oneLiner: 'Open-source autonomous agent runtime - register AntSeed as a custom provider in `openclaw.json`.',
     description: [
       '<strong>What OpenClaw is.</strong> OpenClaw is an open-source agent runtime for autonomous, long-running tasks (research, coding, web automation). It loads its provider catalog from <code>~/.openclaw/openclaw.json</code> - each entry is an HTTP endpoint plus a wire protocol (<code>anthropic-messages</code>, <code>openai-chat</code>, etc.) and a list of models.',
@@ -686,6 +704,8 @@ openclaw config set agents.defaults.model.primary "antseed/kimi-k2.6"`,
     format: 'openai-chat',
     setupMinutes: 3,
     status: 'verified',
+    seoTitle: 'Run Hermes agents on any model, pay per use',
+    headline: 'Run Hermes on any model',
     oneLiner: "Nous Research's agent framework - register AntSeed as a custom provider in `config.yaml`.",
     description: [
       '<strong>What Hermes is.</strong> Hermes is the agent framework from <a href="https://nousresearch.com/">Nous Research</a> (successor to OpenClaw\'s lineage). It\'s designed for autonomous, multi-step workflows - research agents, coding agents, swarms - and reads its model catalog from <code>~/.hermes/config.yaml</code>.',
@@ -804,6 +824,8 @@ auxiliary:
     format: 'openai-chat',
     setupMinutes: 5,
     status: 'verified',
+    seoTitle: 'Add AntSeed inference to GenLayer Studio',
+    headline: 'AntSeed inference in GenLayer Studio',
     oneLiner: 'Use AntSeed as an inference provider inside GenLayer Studio validators.',
     description: [
       '<strong>What GenLayer Studio is.</strong> Studio runs <em>Intelligent Contract</em> validators that consult LLMs to reach consensus. Each validator is configured with a provider entry that has a <code>provider</code> name, a <code>plugin</code> (one of <code>openai-compatible</code> / <code>anthropic</code> / <code>google</code> / <code>ollama</code> / <code>custom</code>), a <code>model</code> id, and a <code>plugin_config</code> with <code>api_url</code> and <code>api_key_env_var</code>.',
@@ -952,6 +974,8 @@ ANTSEED_API_KEY=antseed`,
     format: 'openai-chat',
     setupMinutes: 5,
     status: 'verified',
+    seoTitle: 'Vercel AI SDK on any model, OpenAI-compatible',
+    headline: 'Use AntSeed with the Vercel AI SDK',
     oneLiner: "Use `@ai-sdk/openai-compatible` to call AntSeed from `generateText` / `streamText` / `generateObject`.",
     description: [
       '<strong>What the AI SDK is.</strong> Vercel\'s <code>ai</code> package is a provider-agnostic TypeScript toolkit for building LLM apps and agents. You pick a <em>provider</em> (a small adapter package), instantiate a model from it, and pass that model into one of the framework\'s primitives: <code>generateText</code>, <code>streamText</code>, <code>generateObject</code>, or <code>streamObject</code>. The AI SDK handles tool-calling, structured output, message history, and streaming for you.',
@@ -1093,6 +1117,8 @@ const result = streamText({
     format: 'openai-chat',
     setupMinutes: 5,
     status: 'verified',
+    seoTitle: 'LangChain Python on any model, no OpenAI key',
+    headline: 'Use AntSeed with LangChain in Python',
     oneLiner: 'Drop-in `ChatOpenAI(base_url=…)` - works in chains, LCEL, and LangGraph agents.',
     description: [
       '<strong>What LangChain is.</strong> LangChain is the Python framework for composing LLMs with tools, retrievers, memory, and agents. The chat-model interface is <code>BaseChatModel</code>; <code>ChatOpenAI</code> from <code>langchain-openai</code> is a concrete subclass that talks the OpenAI Chat Completions wire format.',
@@ -1243,6 +1269,8 @@ print(llm.invoke("hi").content)`,
     format: 'multi',
     setupMinutes: 1,
     status: 'verified',
+    seoTitle: 'Call any LLM over plain HTTP with curl, no SDK',
+    headline: 'Call AntSeed with curl or raw HTTP',
     oneLiner: 'Hit the proxy with plain HTTP - useful for scripts and debugging.',
     description: [
       'The buyer proxy is a vanilla HTTP server. Anything that can issue an HTTP POST works. Three endpoints are exposed:',

@@ -52,7 +52,9 @@ const ROWS: Array<{dim: string; antseed: string; openrouter: string}> = [
   },
 ];
 
-const TITLE = 'OpenRouter Alternative: Permissionless P2P AI Inference | AntSeed';
+// 49 chars. The previous title ran to 65 and truncated in the SERP, losing the
+// end of the phrase Google had to work with.
+const TITLE = 'OpenRouter Alternative: P2P, No Account | AntSeed';
 const DESCRIPTION =
   'AntSeed is a permissionless, peer-to-peer alternative to OpenRouter. Any provider can join. Requests go direct. Pay per request in USDC - no central account.';
 
@@ -64,7 +66,7 @@ export default function VsOpenRouter(): JSX.Element {
         <meta name="description" content={DESCRIPTION} />
         <meta property="og:title" content={TITLE} />
         <meta property="og:description" content={DESCRIPTION} />
-        <link rel="canonical" href="https://antseed.com/vs/openrouter" />
+        <link rel="canonical" href="https://antseed.com/vs/openrouter/" />
         <script type="application/ld+json">
           {JSON.stringify({
             '@context': 'https://schema.org',

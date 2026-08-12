@@ -620,7 +620,9 @@ export default function IntegrationPage({integration}: {integration: Integration
     .filter((x) => x.category === i.category && x.slug !== i.slug)
     .slice(0, 4);
 
-  const pageUrl = `https://antseed.com/integrations/${i.slug}`;
+  // Trailing slash matches `trailingSlash: true` in docusaurus.config.ts, so the
+  // URLs in JSON-LD are the same ones the canonical tag and sitemap point at.
+  const pageUrl = `https://antseed.com/integrations/${i.slug}/`;
 
   // `oneLiner` is authored with markdown backticks for on-page code styling.
   // Meta descriptions are plain text, so Google and social cards would print the
@@ -629,7 +631,8 @@ export default function IntegrationPage({integration}: {integration: Integration
 
   // Mirrors what Docusaurus renders into <title> (Layout title + site title), so
   // og:title can't drift from the page title (X falls back to og:title).
-  const pageTitle = `${i.name} | AntSeed`;
+  const titleText = i.seoTitle ?? i.name;
+  const pageTitle = `${titleText} | AntSeed`;
 
   // Marks up the breadcrumb rendered below so search engines read the hierarchy.
   const breadcrumbLd = {
@@ -637,7 +640,7 @@ export default function IntegrationPage({integration}: {integration: Integration
     '@type': 'BreadcrumbList',
     itemListElement: [
       {'@type': 'ListItem', position: 1, name: 'Home', item: 'https://antseed.com/'},
-      {'@type': 'ListItem', position: 2, name: 'Integrations', item: 'https://antseed.com/integrations'},
+      {'@type': 'ListItem', position: 2, name: 'Integrations', item: 'https://antseed.com/integrations/'},
       {'@type': 'ListItem', position: 3, name: i.name, item: pageUrl},
     ],
   };
@@ -685,7 +688,7 @@ export default function IntegrationPage({integration}: {integration: Integration
 
   return (
     <Layout
-      title={i.name}
+      title={titleText}
       description={`Connect ${i.name} to the AntSeed peer-to-peer inference network. ${metaOneLiner}`}>
       <Head>
         <link rel="alternate" type="text/markdown" href="/skill.md" title="Agent-readable integration guide" />
@@ -714,7 +717,7 @@ export default function IntegrationPage({integration}: {integration: Integration
             )}
           </div>
           <div className={styles.detailHeaderText}>
-            <h1>{i.name}</h1>
+            <h1>{i.headline ?? i.name}</h1>
             <p className={styles.detailOneLiner}><Ticks>{i.oneLiner}</Ticks></p>
             <div className={styles.detailBadgeRow}>
               <span className={`${styles.detailBadge} ${styles.detailBadgeGreen}`}>{CATEGORY_LABELS[i.category]}</span>
