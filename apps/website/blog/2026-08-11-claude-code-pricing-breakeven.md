@@ -28,6 +28,8 @@ The seat side is the subscription ladder. Every tier below includes Claude Code 
 | Max 5x | $100 / month | Five times Pro's usage allowance |
 | Max 20x | $200 / month | Twenty times Pro's usage allowance |
 
+Plan prices checked against [Anthropic's plans page](https://claude.com/pricing) in August 2026. Subscription tiers get repriced and repackaged more often than API rates do, so treat the table as a snapshot and check the live page before you budget a year against it. The arithmetic below is what matters, and it works with whatever numbers are current: divide the monthly fee by your cost per request.
+
 The meter side is the API, billed per million tokens, split into input and output, with a separate and much cheaper rate for cached input.
 
 Here are the published API rates, taken from [Anthropic's pricing documentation](https://platform.claude.com/docs/en/about-claude/pricing). Verified August 2026.
@@ -128,6 +130,7 @@ One boundary worth stating clearly, since it comes up whenever provider economic
 
 Do not take our request shape. Take yours.
 
+0. Check what your plan costs today on [Anthropic's plans page](https://claude.com/pricing). That is the numerator and it moves.
 1. Pull your actual token counts from the `usage` block Anthropic returns on every response. You want `input_tokens`, `output_tokens`, and `cache_read_input_tokens` separately.
 2. Compute your own input-to-output ratio. If it is far below 6.32:1 you are doing something unusual and the output rate matters more for you than it does for most.
 3. Multiply by the published rates in the first table. That is your monthly bill at first-party pricing.
