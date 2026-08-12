@@ -27,7 +27,6 @@ import {
 } from '../../../modules/catalog/recommended';
 import { connectVprProfile } from '../../../modules/routing/proxy-sync';
 import { buyerConversationsResource, systemProxyResource } from '../../../modules/app/vpr-resources';
-import { requestQuickDeposit } from '../../../modules/app/deposit-navigation';
 import { useCachedResource } from '../../../modules/app/cached-resource';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
@@ -68,7 +67,6 @@ export function VprHomeView({ onSelectView }: Props) {
     creditsTotalOwned: state.creditsTotalOwnedUsdc,
     creditsChannels: state.creditsChannels,
     conversionOffer: state.conversionOffer,
-    conversionPreview: state.conversionPreview,
     networkAlert: state.networkAlert,
     // Unfiltered discover list, for routed-peer name resolution.
     allRows: state.discoverRows,
@@ -268,7 +266,7 @@ export function VprHomeView({ onSelectView }: Props) {
   const hasDeposited = Number(snap.creditsTotalOwned) > 0 || snap.creditsChannels.length > 0;
   const showConversionBanner = Boolean(
     snap.conversionOffer
-    && (!hasDeposited || snap.conversionPreview),
+    && !hasDeposited,
   );
 
   function submitDraft(): void {
@@ -328,7 +326,6 @@ export function VprHomeView({ onSelectView }: Props) {
             className={styles.conversionPrimary}
             onClick={() => {
               actions.acceptConversionHome();
-              requestQuickDeposit();
               onSelectView?.('deposit');
             }}
           >

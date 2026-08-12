@@ -12,7 +12,6 @@ import {
 const INSTALL_DATE_KEY = 'antseed.desktop.conversion.installDate';
 const INSTALLED_AT_KEY = 'antseed.desktop.conversion.installedAt';
 const STATE_KEY = 'antseed.desktop.conversion.state';
-const LEGACY_VARIANT_KEY = 'antseed.desktop.conversion.variant';
 const COUNTERS_KEY = 'antseed.desktop.conversion.counters';
 
 class MemoryStorage {
@@ -363,24 +362,4 @@ test('fresh installs start at D1 while existing profiles are grandfathered to D2
     dependencies: { storage: existingStorage, notifyChanged: () => {} },
   });
   assert.equal(existingState.conversionState, 'armed_d2');
-});
-
-test('legacy shown reminders migrate back into the milestone lifecycle', () => {
-  const now = new Date(2026, 7, 15, 12, 0, 0).getTime();
-  const storage = new MemoryStorage();
-  storage.setItem(INSTALL_DATE_KEY, localDay(now - 14 * 86_400_000));
-  storage.setItem(INSTALLED_AT_KEY, String(now - 14 * 86_400_000));
-  storage.setItem(STATE_KEY, 'shown');
-  storage.setItem(LEGACY_VARIANT_KEY, 'd5');
-  const uiState = createInitialUiState();
-  initConversionModule({
-    uiState,
-    dependencies: {
-      storage,
-      now: () => now,
-      loadReferencePrices: async () => referenceMap,
-      notifyChanged: () => {},
-    },
-  });
-  assert.equal(uiState.conversionState, 'armed_d15');
 });

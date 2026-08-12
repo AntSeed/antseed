@@ -12,7 +12,6 @@ import {
 import { initAppSetupModule } from './modules/app/setup';
 import { initCreditsModule } from './modules/app/credits';
 import { initConversionModule } from './modules/app/conversion';
-import { CONVERSION_DEV } from './modules/app/conversion-constants';
 import { initVprFloatModule } from './modules/app/float';
 import {
   loadFloatAutoOpen,
@@ -202,16 +201,6 @@ const {
 });
 
 const conversionApi = initConversionModule({ bridge, uiState });
-if (CONVERSION_DEV) {
-  conversionApi.preview('d1');
-  window.antseedConversionDev = {
-    show: (variant = 'd1') => {
-      conversionApi.preview(variant);
-      return `Conversion ${variant.toUpperCase()} preview shown on Home`;
-    },
-    hide: conversionApi.clearPreview,
-  };
-}
 
 // Credits API is created after chat, so use late-bound reference.
 let creditsApi: ReturnType<typeof initCreditsModule>;

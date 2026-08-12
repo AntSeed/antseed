@@ -33,8 +33,7 @@ const INSTALL_DATE_KEY = 'antseed.desktop.conversion.installDate';
 const INSTALLED_AT_KEY = 'antseed.desktop.conversion.installedAt';
 const STATE_KEY = 'antseed.desktop.conversion.state';
 const COUNTERS_KEY = 'antseed.desktop.conversion.counters';
-const LEGACY_VARIANT_KEY = 'antseed.desktop.conversion.variant';
-const LEGACY_PROFILE_KEYS = [
+const EXISTING_PROFILE_KEYS = [
   'antseed.desktop.vpr.hasChats',
   'antseed.desktop.vpr.preferences',
   'antseed.desktop.vpr.routeSelection',
@@ -71,8 +70,6 @@ export type ConversionModuleApi = {
   acceptHome: () => void;
   dismissHome: () => void;
   reconcilePayer: () => Promise<void>;
-  preview: (variant: ConversionVariant) => void;
-  clearPreview: () => void;
 };
 
 type ConversionDependencies = {
@@ -260,12 +257,6 @@ function validState(value: string | null): ConversionState | null {
     : null;
 }
 
-function validVariant(value: string | null): ConversionVariant | null {
-  return value === 'd1' || value === 'd2' || value === 'd5' || value === 'd15'
-    ? value
-    : null;
-}
-
 function nextReminderState(shownVariant: ConversionVariant | null): ConversionState {
   if (shownVariant === 'd15') return 'done';
   if (shownVariant === 'd5') return 'armed_d15';
@@ -277,11 +268,6 @@ function armedStateForVariant(variant: ConversionVariant | null): ConversionStat
   if (variant === 'd5') return 'armed_d5';
   if (variant === 'd2') return 'armed_d2';
   return 'armed_d1';
-}
-
-function reminderExpired(shownVariant: ConversionVariant | null, ageDays: number): boolean {
-  return ((shownVariant === 'd1' || shownVariant === 'd2') && ageDays >= 4)
-    || (shownVariant === 'd5' && ageDays >= 14);
 }
 
 function calendarDayOrdinal(day: string): number | null {
@@ -344,20 +330,11 @@ export function initConversionModule({
       const currentNow = now();
       const hasConversionState = storage.getItem(STATE_KEY) !== null;
       const existingProfile = !hasConversionState
-        && LEGACY_PROFILE_KEYS.some((key) => storage?.getItem(key) !== null);
+        && EXISTING_PROFILE_KEYS.some((key) => storage?.getItem(key) !== null);
       installDate = storage.getItem(INSTALL_DATE_KEY) ?? localCalendarDay(currentNow);
       installedAt = Math.max(0, Number(storage.getItem(INSTALLED_AT_KEY)) || currentNow);
       counters = parseCounters(storage.getItem(COUNTERS_KEY));
-      const currentDay = calendarDayOrdinal(localCalendarDay(currentNow));
-      const firstDay = calendarDayOrdinal(installDate);
-      const ageDays = currentDay === null || firstDay === null ? 0 : Math.max(0, currentDay - firstDay);
-      const storedState = storage.getItem(STATE_KEY);
-      const legacyVariant = validVariant(storage.getItem(LEGACY_VARIANT_KEY));
-      state = storedState === 'shown'
-        ? (reminderExpired(legacyVariant, ageDays)
-            ? nextReminderState(legacyVariant)
-            : armedStateForVariant(legacyVariant))
-        : validState(storedState) ?? (existingProfile ? 'armed_d2' : 'armed_d1');
+      state = validState(storage.getItem(STATE_KEY)) ?? (existingProfile ? 'armed_d2' : 'armed_d1');
 
       storage.setItem(INSTALL_DATE_KEY, installDate);
       storage.setItem(INSTALLED_AT_KEY, String(installedAt));
@@ -577,11 +554,6 @@ export function initConversionModule({
   }
 
   function advanceReminder(): void {
-    if (uiState.conversionPreview) {
-      uiState.conversionOffer = null;
-      notifyChanged();
-      return;
-    }
     const shownVariant = uiState.conversionOffer?.variant ?? null;
     const nextState = nextReminderState(shownVariant);
     persistState(nextState);
@@ -601,28 +573,9 @@ export function initConversionModule({
     acceptHome: advanceReminder,
     dismissHome: advanceReminder,
     async reconcilePayer() {
-      if (uiState.conversionPreview) return;
       if (!enabled || (await payerDetected()) !== true) return;
       uiState.conversionOffer = null;
       finish();
-    },
-    preview(nextVariant) {
-      const isD1 = nextVariant === 'd1';
-      const isD5 = nextVariant === 'd5';
-      const isD15 = nextVariant === 'd15';
-      uiState.conversionPreview = true;
-      uiState.conversionOffer = {
-        variant: nextVariant,
-        requestsCount: isD1 ? 23 : isD5 ? 41 : isD15 ? 96 : 13,
-        retrospectiveUsd: isD1 ? '2.10' : isD5 ? '4.85' : isD15 ? '11.40' : '1.27',
-        prospectiveUsd: '16.00',
-      };
-      notifyChanged();
-    },
-    clearPreview() {
-      uiState.conversionPreview = false;
-      uiState.conversionOffer = null;
-      notifyChanged();
     },
   };
 }

@@ -227,7 +227,6 @@ export type RendererUiState = {
   activeView: string;
   conversionState: ConversionState;
   conversionOffer: ConversionOffer | null;
-  conversionPreview: boolean;
   // --- Process / runtime state ---
   processes: RuntimeProcessState[];
   refreshing: boolean;
@@ -408,7 +407,6 @@ export function createInitialUiState(): RendererUiState {
     activeView: 'home',
     conversionState: 'armed_d1',
     conversionOffer: null,
-    conversionPreview: false,
     // Process / runtime
     processes: [],
     refreshing: false,
