@@ -68,7 +68,7 @@ The `<peerId>@<model>` form is the one to remember: it works in the model field 
 ```bash
 # Discover peers and what they serve
 antseed network browse                    # all peers + services + pricing
-antseed network browse -s deepseek        # filter by service name
+antseed network browse --service deepseek # filter by service name
 antseed network peer <peerId>             # one peer in detail (pricing, protocols, on-chain stats)
 
 # Pin / unpin a session peer
