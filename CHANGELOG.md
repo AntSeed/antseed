@@ -6,6 +6,16 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ## Unreleased
 
+### Security
+
+- P2P TCP transport is now encrypted end-to-end (`transport.tcp-enc.v1`): a wallet-signed ephemeral X25519 handshake with forward secrecy and mutual peer authentication, ChaCha20-Poly1305 framing for all payload traffic. Enabled automatically between peers that advertise the capability in discovery metadata; once offered, the handshake fails closed rather than downgrading to plaintext, and the intro signature covers the advertised capabilities and encryption offer so an on-path attacker cannot strip them to force a legacy fallback. Legacy peers still connect over plaintext unless the new `requireSecureTransport` node option is set.
+- WebRTC signaling now signs SDP descriptions (`transport.signed-sdp.v1`), binding the DTLS certificate fingerprint to the peer's wallet identity so a man-in-the-middle on the signaling socket can no longer substitute its own SDP.
+
+### Fixed
+
+- Request bodies over 240 KiB (previously 512 KiB) are now sent via the chunked upload protocol, keeping every single frame under the 256 KiB WebRTC data channel message cap so large requests work over any transport.
+- The WebRTC transport is now actually functional: nodes load node-datachannel at startup (previously it was never initialized, so every connection silently used TCP). Peers with a working WebRTC stack advertise `transport.webrtc.v1` in discovery metadata. Encrypted TCP remains the preferred transport between nodes (WebRTC data channels cap messages at ~256 KiB, below the 1 MiB protocol chunk size); initiators use WebRTC only toward peers that support WebRTC but not encrypted TCP. Sellers without a working stack now refuse `hello` signaling cleanly instead of crashing on it — previously any WebRTC connection attempt (e.g. from a browser buyer) hit an unguarded code path.
+
 ### Added
 
 - Website docs now cover the gasless `antseed buyer sweep` command: a CLI-reference entry plus a payments-guide section explaining the offline EIP-3009 authorization, the fixed USDC relay fee, broadcast via a running buyer daemon or an ephemeral node, amount clamping to credit-limit headroom, and the first-deposit minimum. The guide also gained a provider note on relaying sweeps for the fee (`relayer.enabled`, `relayer.minProfitBaseUnits`) and the `AntseedDepositRelay` address in the Base Mainnet contract table.

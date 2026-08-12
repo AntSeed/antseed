@@ -7,9 +7,11 @@ export const ANTSEED_SPENDING_AUTH_HEADER = 'x-antseed-spending-auth';
 export const ANTSEED_UPLOAD_CHUNK_HEADER = 'x-antseed-upload';
 /**
  * Maximum size of a request body that can be sent as a single request frame.
- * Larger bodies are sent as chunked upload frames.
+ * Larger bodies are sent as chunked upload frames. WebRTC data channels cap
+ * messages at 256 KiB, so this stays below that with headroom for the frame's
+ * requestId/method/path/headers.
  */
-export const ANTSEED_UPLOAD_THRESHOLD_BYTES = 512 * 1024;
+export const ANTSEED_UPLOAD_THRESHOLD_BYTES = 240 * 1024;
 /**
  * Maximum size of each chunk when sending chunked request uploads.
  * Kept small for cross-peer RTC compatibility where max message size can vary

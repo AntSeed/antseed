@@ -54,6 +54,7 @@ import { DepositRelayer } from "./payments/deposit-relayer.js";
 import {
   CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
   CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
+  CONNECTION_CAPABILITY_WEBRTC_V1,
   peerSupportsCooperativeClose,
   type SweepRequestPayload,
   type SweepReceiptPayload,
@@ -203,6 +204,8 @@ export interface NodeConfig {
   verifications?: PeerVerifications;
   /** Extra peer capability strings to advertise (e.g. supported verifier SDKs). */
   capabilities?: string[];
+  /** Refuse plaintext TCP and unsigned SDP in both directions. Default false (legacy peers fall back to plaintext). */
+  requireSecureTransport?: boolean;
   dataDir?: string;           // Default: ~/.antseed
   dhtPort?: number;           // Default: 6881 for seller, 0 for buyer
   signalingPort?: number;     // Default: 6882 for seller
@@ -1506,7 +1509,9 @@ export class AntseedNode extends EventEmitter {
     await this._dht.start();
 
     // Create ConnectionManager and start listening
-    this._connectionManager = new ConnectionManager();
+    this._connectionManager = await ConnectionManager.init(undefined, {
+      requireSecureTransport: this._config.requireSecureTransport,
+    });
     this._connectionManager.setLocalIdentity(identity);
     this._connectionManager.on("error", (err: Error) => {
       debugWarn(`[ConnectionManager] ${err.message}`);
@@ -1538,6 +1543,10 @@ export class AntseedNode extends EventEmitter {
 
     // Set up announcer for providers
     if (this._providers.length > 0) {
+      const extraCapabilities = [
+        ...(this._connectionManager.supportsWebRtc ? [CONNECTION_CAPABILITY_WEBRTC_V1] : []),
+        ...(this._config.capabilities ?? []),
+      ];
       const announcerConfig: AnnouncerConfig = {
         identity,
         dht: this._dht,
@@ -1561,7 +1570,7 @@ export class AntseedNode extends EventEmitter {
         ...(this._config.displayName ? { displayName: this._config.displayName } : {}),
         ...(this._config.publicAddress ? { publicAddress: this._config.publicAddress } : {}),
         ...(this._config.verifications ? { verifications: this._config.verifications } : {}),
-        ...(this._config.capabilities ? { capabilities: this._config.capabilities } : {}),
+        ...(extraCapabilities.length > 0 ? { capabilities: extraCapabilities } : {}),
         region: "unknown",
         pricing: new Map(
           this._providers.map((p) => [
@@ -1630,7 +1639,9 @@ export class AntseedNode extends EventEmitter {
     await this._dht.start();
 
     // Create ConnectionManager for outbound connections
-    this._connectionManager = new ConnectionManager();
+    this._connectionManager = await ConnectionManager.init(undefined, {
+      requireSecureTransport: this._config.requireSecureTransport,
+    });
     this._connectionManager.setLocalIdentity(identity);
     this._connectionManager.on("error", (err: Error) => {
       debugWarn(`[ConnectionManager] ${err.message}`);
@@ -1729,6 +1740,21 @@ export class AntseedNode extends EventEmitter {
   private _handleIncomingConnection(conn: PeerConnection): void {
     debugLog(`[Node] Incoming connection from ${conn.remotePeerId.slice(0, 12)}...`);
     const buyerPeerId = conn.remotePeerId;
+
+    const logTransport = (): void => {
+      debugLog(`[Node] Connection with ${conn.remotePeerId.slice(0, 12)}... open via ${conn.transportDescription}`);
+    };
+    if (conn.state === ConnectionState.Open || conn.state === ConnectionState.Authenticated) {
+      logTransport();
+    } else {
+      const onState = (state: ConnectionState): void => {
+        if (state === ConnectionState.Open) {
+          conn.off("stateChange", onState);
+          logTransport();
+        }
+      };
+      conn.on("stateChange", onState);
+    }
 
     // Create PaymentMux alongside ProxyMux (seller-side)
     const paymentMux = new PaymentMux(conn);
@@ -2099,6 +2125,7 @@ export class AntseedNode extends EventEmitter {
     const connConfig: ConnectionConfig = {
       remotePeerId: peer.peerId,
       isInitiator: true,
+      remoteCapabilities: [...peerCapabilities],
     };
 
     const conn = this._connectionManager.createConnection(connConfig);
@@ -2118,7 +2145,7 @@ export class AntseedNode extends EventEmitter {
       conn.on("stateChange", onState);
     });
 
-    debugLog(`[Node] Connected to ${peer.peerId.slice(0, 12)}...`);
+    debugLog(`[Node] Connected to ${peer.peerId.slice(0, 12)}... via ${conn.transportDescription}`);
     this._peerCapabilities.set(peer.peerId, peerCapabilities);
     this._wireConnection(conn, peer.peerId);
     return conn;
