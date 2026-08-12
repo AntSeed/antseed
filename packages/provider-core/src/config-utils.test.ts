@@ -1,6 +1,46 @@
 import { describe, expect, it } from 'vitest';
 import { MAX_SERVICES_PER_PROVIDER } from '@antseed/node';
-import { parseServiceCapabilitiesJson, parseServiceUnitBillingModelsJson } from './config-utils.js';
+import { isImageModelId, parseServiceCapabilitiesJson, parseServiceUnitBillingModelsJson } from './config-utils.js';
+
+describe('isImageModelId', () => {
+  it.each([
+    'gpt-image-2',
+    'openai/gpt-image-1-5',
+    'dall-e-3',
+    'grok-imagine-image-2-0',
+    'venice-sd35',
+    'krea-2-turbo',
+    'krea-v2-large',
+    'flux-2-pro',
+    'hunyuan-image-v3',
+    'ideogram-v4',
+    'imagineart-1.5-pro',
+    'luma-uni-1-max',
+    'nano-banana-pro',
+    'recraft-v4-pro',
+    'seedream-v5-lite',
+    'qwen-image-3-pro',
+    'wan-2-7-pro-text-to-image',
+    'lustify-v8',
+    'wai-Illustrious',
+    'z-image-turbo',
+    'chroma',
+  ])('recognizes image model %s', (model) => {
+    expect(isImageModelId(model)).toBe(true);
+  });
+
+  it.each([
+    'gpt-5.5',
+    'flux-capacitor-chat',
+    'qwen3-vl-235b',
+    'recraft-v3-text',
+    'seedream-chat',
+    'acme/chroma-chat',
+    'my-flux-2-pro-wrapper',
+  ])('does not classify text model %s as an image model', (model) => {
+    expect(isImageModelId(model)).toBe(false);
+  });
+});
 
 describe('parseServiceUnitBillingModelsJson', () => {
   it('rejects unknown service API protocol keys', () => {
