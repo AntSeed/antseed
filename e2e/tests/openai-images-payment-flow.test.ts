@@ -359,9 +359,10 @@ describe('OpenAI SDK integration: Images API payment flow over buyer proxy', () 
     expect(bpm).not.toBeNull();
     expect(bpm!.getActiveSession(discoveredSeller.peerId)).not.toBeNull();
     expect(bpm!.getVerifiedCost(discoveredSeller.peerId)).toBe(80_000n);
+    // Prompt estimate as input; 2 images x 1290-token equivalent as output.
     expect(bpm!.getCumulativeTokens(discoveredSeller.peerId)).toEqual({
-      inputTokens: 0n,
-      outputTokens: 0n,
+      inputTokens: 5n,
+      outputTokens: 2_580n,
     });
     expect(bpm!.getResponseTokenTotals(discoveredSeller.peerId)).toEqual({
       input: 0,

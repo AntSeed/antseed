@@ -27,10 +27,10 @@ function fakePeerId(label: string): string {
   return hex;
 }
 
-function decodeMetadataTokens(metadata: string): { inputTokens: bigint; outputTokens: bigint } {
+function decodeMetadataTokens(metadata: string): { inputTokens: bigint; outputTokens: bigint; outputImages: bigint } {
   const coder = AbiCoder.defaultAbiCoder();
-  const [, inputTokens, outputTokens] = coder.decode(['uint256', 'uint256', 'uint256', 'uint256'], metadata);
-  return { inputTokens, outputTokens };
+  const [, inputTokens, outputTokens, , outputImages] = coder.decode(['uint256', 'uint256', 'uint256', 'uint256', 'uint256'], metadata);
+  return { inputTokens, outputTokens, outputImages };
 }
 
 function decodeMetadataServices(metadata: string): Array<{
@@ -40,14 +40,16 @@ function decodeMetadataServices(metadata: string): Array<{
   cumulativeCachedInputTokens: bigint;
   cumulativeOutputTokens: bigint;
   cumulativeRequestCount: bigint;
+  cumulativeOutputImages: bigint;
 }> {
   const coder = AbiCoder.defaultAbiCoder();
-  const [, , , , services] = coder.decode([
+  const [, , , , , services] = coder.decode([
     'uint256',
     'uint256',
     'uint256',
     'uint256',
-    'tuple(bytes32 serviceId,uint256 cumulativeAmount,uint256 cumulativeInputTokens,uint256 cumulativeCachedInputTokens,uint256 cumulativeOutputTokens,uint256 cumulativeRequestCount)[]',
+    'uint256',
+    'tuple(bytes32 serviceId,uint256 cumulativeAmount,uint256 cumulativeInputTokens,uint256 cumulativeCachedInputTokens,uint256 cumulativeOutputTokens,uint256 cumulativeRequestCount,uint256 cumulativeOutputImages)[]',
   ], metadata);
   return [...services].map((service) => ({
     serviceId: service.serviceId as string,
@@ -56,6 +58,7 @@ function decodeMetadataServices(metadata: string): Array<{
     cumulativeCachedInputTokens: service.cumulativeCachedInputTokens as bigint,
     cumulativeOutputTokens: service.cumulativeOutputTokens as bigint,
     cumulativeRequestCount: service.cumulativeRequestCount as bigint,
+    cumulativeOutputImages: service.cumulativeOutputImages as bigint,
   }));
 }
 
@@ -159,8 +162,8 @@ describe('BuyerPaymentManager', () => {
     expect(sent.metadata).toBeTypeOf('string');
     expect(sent.metadata).not.toBe('');
     expect((sent.metadata as string).startsWith('0x')).toBe(true);
-    // Should preserve the first four ABI fields and append an empty dynamic services array.
-    expect((sent.metadata as string).length).toBe(2 + 6 * 64);
+    // v3 zero metadata: five head words + empty services array (offset + length) = 7 words.
+    expect((sent.metadata as string).length).toBe(2 + 7 * 64);
   });
 
   it('authorizeSpending rejects if minBudgetPerRequest exceeds maxPerRequestUsdc', async () => {
@@ -551,6 +554,7 @@ describe('BuyerPaymentManager', () => {
       cumulativeCachedInputTokens: 300n,
       cumulativeOutputTokens: 75n,
       cumulativeRequestCount: 2n,
+      cumulativeOutputImages: 0n,
     });
     expect(services).toContainEqual({
       serviceId: id('claude-opus'),
@@ -559,6 +563,7 @@ describe('BuyerPaymentManager', () => {
       cumulativeCachedInputTokens: 300n,
       cumulativeOutputTokens: 75n,
       cumulativeRequestCount: 1n,
+      cumulativeOutputImages: 0n,
     });
 
     const channel = store.getActiveChannelByPeer(sellerPeerId, CHANNEL_ROLE.BUYER);
@@ -650,6 +655,7 @@ describe('BuyerPaymentManager', () => {
       cumulativeCachedInputTokens: 300n,
       cumulativeOutputTokens: 75n,
       cumulativeRequestCount: 2n,
+      cumulativeOutputImages: 0n,
     });
   });
 
@@ -708,6 +714,7 @@ describe('BuyerPaymentManager', () => {
       cumulativeCachedInputTokens: 0n,
       cumulativeOutputTokens: 0n,
       cumulativeRequestCount: 0n,
+      cumulativeOutputImages: 0n,
     }]);
   });
 
@@ -762,8 +769,9 @@ describe('BuyerPaymentManager', () => {
       cumulativeAmount: 25_000n,
       cumulativeInputTokens: 0n,
       cumulativeCachedInputTokens: 0n,
-      cumulativeOutputTokens: 0n,
+      cumulativeOutputTokens: 1290n,
       cumulativeRequestCount: 1n,
+      cumulativeOutputImages: 1n,
     }]);
   });
 
@@ -983,7 +991,8 @@ describe('BuyerPaymentManager', () => {
     const sent = mux.sentSpendingAuths[0] as Record<string, string>;
     const totals = decodeMetadataTokens(sent.metadata);
     expect(totals.inputTokens).toBe(1000n);
-    expect(totals.outputTokens).toBe(50n);
+    expect(totals.outputTokens).toBe(50n + 2n * 1290n);
+    expect(totals.outputImages).toBe(2n);
   });
 
   it('handleNeedAuth rejects image billingUsage claiming more images than the buyer observed', async () => {
@@ -1102,6 +1111,7 @@ describe('BuyerPaymentManager', () => {
       cumulativeCachedInputTokens: 200n,
       cumulativeOutputTokens: 50n,
       cumulativeRequestCount: 1n,
+      cumulativeOutputImages: 0n,
     }]);
   });
 

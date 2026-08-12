@@ -317,6 +317,7 @@ describe("unit billing runtime", () => {
       size: "1024x1024",
       quality: "low",
       requestedImages: 1,
+      promptTokens: 1,
     });
   });
 
@@ -372,6 +373,7 @@ describe("unit billing runtime", () => {
       size: "1024x1024",
       quality: "auto",
       requestedImages: 2,
+      promptTokens: 5,
     });
   });
 
