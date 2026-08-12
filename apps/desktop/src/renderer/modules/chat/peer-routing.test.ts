@@ -1733,6 +1733,67 @@ test('a scheduled failover still retries after the user switches conversations',
   }
 });
 
+test('a retryable failure still schedules failover after the user switches conversations', async () => {
+  vi.useFakeTimers();
+  try {
+    const { api, uiState, sends, streamErrorHandlers } = setupFailoverHarness('auto');
+    await api.refreshChatConversations();
+    await api.openConversation('conv-a');
+    api.sendMessage('hello');
+    await vi.runAllTicks();
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.deepEqual(sends[0], { conversationId: 'conv-a', peerId: 'peer-a' });
+
+    uiState.chatActiveConversation = 'conv-other';
+    streamErrorHandlers[0]?.({
+      conversationId: 'conv-a',
+      error: 'Connection lost',
+      stopReason: RETRYABLE_STREAM_FAILURE,
+    });
+
+    await vi.advanceTimersByTimeAsync(7_000);
+    assert.deepEqual(sends[1], { conversationId: 'conv-a', peerId: 'peer-b' });
+    assert.equal(uiState.chatRoutingNotice, null);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test('successive failovers do not return to an earlier failed peer', async () => {
+  vi.useFakeTimers();
+  try {
+    const { api, uiState, sends, streamErrorHandlers } = setupFailoverHarness('auto');
+    uiState.chatServiceOptions.push(failoverOption('peer-c'));
+    uiState.discoverRows.push(failoverRow('peer-c'));
+    await api.refreshChatConversations();
+    await api.openConversation('conv-a');
+    api.sendMessage('hello');
+    await vi.runAllTicks();
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.deepEqual(sends[0], { conversationId: 'conv-a', peerId: 'peer-a' });
+
+    streamErrorHandlers[0]?.({
+      conversationId: 'conv-a',
+      error: 'Peer A failed',
+      stopReason: RETRYABLE_STREAM_FAILURE,
+    });
+    await vi.advanceTimersByTimeAsync(7_000);
+    assert.deepEqual(sends[1], { conversationId: 'conv-a', peerId: 'peer-b' });
+
+    streamErrorHandlers[0]?.({
+      conversationId: 'conv-a',
+      error: 'Peer B failed',
+      stopReason: RETRYABLE_STREAM_FAILURE,
+    });
+    await vi.advanceTimersByTimeAsync(7_000);
+    assert.deepEqual(sends[2], { conversationId: 'conv-a', peerId: 'peer-c' });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test('failover keeps the conversation model when the global model pill differs', async () => {
   const { api, uiState, streamErrorHandlers } = setupFailoverHarness('auto');
   uiState.chatServiceOptions = [

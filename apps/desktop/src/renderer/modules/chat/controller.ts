@@ -340,12 +340,14 @@ export function initChatModule({
 
   const chatRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const chatRetryAttempts = new Map<string, number>();
+  const chatRetryFailedPeerIds = new Map<string, Set<string>>();
 
   function clearPaymentRetry(convId: string): void {
     const timer = chatRetryTimers.get(convId);
     if (timer) clearTimeout(timer);
     chatRetryTimers.delete(convId);
     chatRetryAttempts.delete(convId);
+    chatRetryFailedPeerIds.delete(convId);
     uiState.chatRoutingNotice = null;
   }
 
@@ -367,6 +369,7 @@ export function initChatModule({
   function resolveFailoverSelection(
     convId: string,
     failedPeerId: string | undefined,
+    excludePeerIds: string[],
   ): { selection: ChatServiceSelection; fromLabel: string; toLabel: string } | null {
     if (!failedPeerId) return null;
 
@@ -396,7 +399,7 @@ export function initChatModule({
       uiState.discoverRows,
       { model, mode: 'auto', peerId: null },
       uiState.vprRoutingPreferences,
-      { excludePeerIds: [failedPeerId] },
+      { excludePeerIds },
     );
     if (!option || option.peerId === failedPeerId) return null;
 
@@ -469,7 +472,10 @@ export function initChatModule({
     let retryCtx = ctx;
     if (reason === 'request') {
       const failedPeerId = ctx?.selection?.peerId ?? findConversationSummary(convId)?.peerId;
-      const failover = resolveFailoverSelection(convId, failedPeerId);
+      const failedPeerIds = chatRetryFailedPeerIds.get(convId) ?? new Set<string>();
+      if (failedPeerId) failedPeerIds.add(failedPeerId);
+      chatRetryFailedPeerIds.set(convId, failedPeerIds);
+      const failover = resolveFailoverSelection(convId, failedPeerId, [...failedPeerIds]);
       if (failover) {
         applyFailoverSelection(convId, failover.selection);
         if (ctx) retryCtx = { ...ctx, selection: failover.selection };
@@ -3144,39 +3150,44 @@ export function initChatModule({
         setConversationStreamingMessage(data.conversationId, null);
         streamFailedAtByConversation.set(data.conversationId, Date.now());
 
-        if (data.conversationId === uiState.chatActiveConversation) {
+        const isActiveConversation = data.conversationId === uiState.chatActiveConversation;
+        if (isActiveConversation) {
           // Ensure the waiting-for-stream flag is cleared even if the error fires
           // before chat:ai-stream-start is received (which is the only other place
           // this flag gets cleared), preventing a permanent UI spinner lock.
           uiState.chatWaitingForStream = false;
           notifyUiStateChanged();
-          if (shouldClearSending) {
-            setConversationSending(data.conversationId, false);
-          }
+        }
+        if (shouldClearSending) {
+          setConversationSending(data.conversationId, false);
+          if (!isActiveConversation) notifyUiStateChanged();
+        }
 
-          if (isAbort) {
-            clearPaymentRetry(data.conversationId);
-          } else {
-            const errStr = typeof data.error === 'string' ? data.error : '';
-            const paymentMatch = /^payment_required:(\d+)$/i.exec(errStr);
-            if (paymentMatch) {
+        if (isAbort) {
+          clearPaymentRetry(data.conversationId);
+        } else {
+          const errStr = typeof data.error === 'string' ? data.error : '';
+          const paymentMatch = /^payment_required:(\d+)$/i.exec(errStr);
+          if (paymentMatch) {
+            if (isActiveConversation) {
               void handlePaymentRequired(paymentMatch[1], { convId: data.conversationId });
               if (bridge.chatAiAbort) void bridge.chatAiAbort(data.conversationId).catch(() => {});
-            } else if (stopReason?.retryable === false || outputAlreadyStarted) {
-              clearPaymentRetry(data.conversationId);
-              reportChatError(stopReason?.message || data.error, 'Request failed');
             } else {
-              scheduleChatRetry(
-                { convId: data.conversationId },
-                'request',
-                stopReason?.message ?? data.error,
-              );
+              clearPaymentRetry(data.conversationId);
             }
-            appendSystemLog(`AI Chat error (${stopReasonSummary}): ${data.error}`);
+          } else if (stopReason?.retryable === false || outputAlreadyStarted) {
+            clearPaymentRetry(data.conversationId);
+            if (isActiveConversation) {
+              reportChatError(stopReason?.message || data.error, 'Request failed');
+            }
+          } else {
+            scheduleChatRetry(
+              { convId: data.conversationId },
+              'request',
+              stopReason?.message ?? data.error,
+            );
           }
-        } else if (shouldClearSending) {
-          setConversationSending(data.conversationId, false);
-          notifyUiStateChanged();
+          appendSystemLog(`AI Chat error (${stopReasonSummary}): ${data.error}`);
         }
       });
     }
