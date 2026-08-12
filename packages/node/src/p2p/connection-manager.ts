@@ -585,9 +585,14 @@ export class ConnectionManager extends EventEmitter {
 
     ConnectionManager.registerPeerEndpoint(config.remotePeerId, endpoint);
 
-    // WebRTC only when the remote is known to accept `hello` — legacy peers
-    // crash-guard it away, so unknown peers get TCP.
-    if (this._transportMode === "webrtc" && conn.hasRemoteCapability(CONNECTION_CAPABILITY_WEBRTC_V1)) {
+    // Encrypted TCP is preferred: data channels cap messages at ~256 KiB
+    // (breaking 1 MiB protocol chunks) and set up slower. WebRTC is for peers
+    // that cannot do TCP at all; legacy peers crash-guard `hello` away, so
+    // unknown peers also get TCP.
+    const useWebRtc = this._transportMode === "webrtc"
+      && conn.hasRemoteCapability(CONNECTION_CAPABILITY_WEBRTC_V1)
+      && !conn.hasRemoteCapability(CONNECTION_CAPABILITY_TCP_ENC_V1);
+    if (useWebRtc) {
       this._createWebRtcConnection(config, conn, endpoint);
     } else {
       this._createTcpConnection(config, conn, endpoint);

@@ -13,7 +13,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
-- The WebRTC transport is now actually functional: nodes load node-datachannel at startup (previously it was never initialized, so every connection silently used TCP). Peers with a working WebRTC stack advertise `transport.webrtc.v1` in discovery metadata; initiators use WebRTC only toward peers that advertise it and fall back to TCP otherwise, so mixed fleets keep connecting. Sellers without a working stack now refuse `hello` signaling cleanly instead of crashing on it — previously any WebRTC connection attempt (e.g. from a browser buyer) hit an unguarded code path.
+- The WebRTC transport is now actually functional: nodes load node-datachannel at startup (previously it was never initialized, so every connection silently used TCP). Peers with a working WebRTC stack advertise `transport.webrtc.v1` in discovery metadata. Encrypted TCP remains the preferred transport between nodes (WebRTC data channels cap messages at ~256 KiB, below the 1 MiB protocol chunk size); initiators use WebRTC only toward peers that support WebRTC but not encrypted TCP. Sellers without a working stack now refuse `hello` signaling cleanly instead of crashing on it — previously any WebRTC connection attempt (e.g. from a browser buyer) hit an unguarded code path.
 
 ### Added
 

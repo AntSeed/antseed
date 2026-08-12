@@ -80,6 +80,32 @@ describe.skipIf(!webrtcAvailable)('webrtc transport', () => {
     expect(new TextDecoder().decode(await outboundMessage)).toBe('reply over dtls');
   }, 20_000);
 
+  it('prefers encrypted tcp when the peer supports both transports', async () => {
+    const seller = trackManager(new ConnectionManager(iceConfig));
+    const buyer = trackManager(new ConnectionManager(iceConfig));
+    seller.setLocalIdentity(sellerIdentity);
+    buyer.setLocalIdentity(buyerIdentity);
+    await seller.startListening({ peerId: sellerIdentity.peerId, host: '127.0.0.1', port: 0 });
+
+    const inboundPromise = waitForConnection(seller);
+    const outbound = buyer.createConnection({
+      remotePeerId: sellerIdentity.peerId,
+      isInitiator: true,
+      timeoutMs: 10_000,
+      endpoint: { host: '127.0.0.1', port: seller.getListeningPort()! },
+      remoteCapabilities: [CONNECTION_CAPABILITY_WEBRTC_V1, CONNECTION_CAPABILITY_TCP_ENC_V1],
+    });
+
+    const inbound = await inboundPromise;
+    await waitForOpen(outbound);
+    expect(outbound.transportDescription).toBe('tcp-encrypted');
+    // Data channels cap messages at ~256 KiB; TCP must carry full 1 MiB chunks.
+    const big = new Uint8Array(1024 * 1024).fill(7);
+    const inboundMessage = waitForMessage(inbound);
+    outbound.send(big);
+    expect(await inboundMessage).toHaveLength(big.length);
+  }, 20_000);
+
   it('falls back to tcp when the peer does not advertise webrtc', async () => {
     const seller = trackManager(new ConnectionManager(iceConfig));
     const buyer = trackManager(new ConnectionManager(iceConfig));
