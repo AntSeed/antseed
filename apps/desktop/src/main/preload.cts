@@ -546,6 +546,7 @@ const api = {
   paymentsOnrampAvailability: () => ipcRenderer.invoke('payments:onramp-availability'),
   paymentsCloseCheckoutWindows: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('payments:close-checkout-windows') as Promise<{ ok: boolean }>,
   paymentsGetBuyerUsage: () => ipcRenderer.invoke('payments:get-buyer-usage'),
+  paymentsGetBuyerSpendHistory: () => ipcRenderer.invoke('payments:get-buyer-spend-history'),
   paymentsGetChannels: () => ipcRenderer.invoke('payments:get-channels'),
   paymentsRequestCooperativeClose: (opts: { peerId: string }) => ipcRenderer.invoke('payments:request-cooperative-close', opts),
   paymentsGetRewardsSummary: () => ipcRenderer.invoke('payments:get-rewards-summary'),

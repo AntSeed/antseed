@@ -9,6 +9,7 @@ import { pendingSpendFromChannels } from '../billing/credits-balance.js';
 import { resolveBuyerProxyPort } from '../runtime/active-config.js';
 import { getCachedChannelsClient, loadCachedCryptoConfig, setCachedChannelsClient } from './credits.js';
 import {
+  applyChannelOnChainSnapshot,
   normalizePaymentChannelSummary,
   requestCooperativeChannelCloseAtPort,
   runInBatches,
@@ -46,12 +47,19 @@ export type DesktopPaymentChannelSummary = {
   channelId: string;
   peerId: string;
   seller: string;
-  reserveMax: string;
+  sellerDisplayName: string | null;
+  /** True only when the on-chain deposit and settled amounts were read successfully. */
+  onChainStateKnown: boolean;
+  /** Latest in-memory ReserveAuth ceiling, when the buyer daemon has it. */
+  reserveCeiling: string | null;
   cumulativeSigned: string;
-  /** Amount the seller has already settled on-chain (base units). Filled by
-      enrichChannelStatuses; '0' until the channel is checked against chain. */
-  settledUsdc: string;
+  /** Authoritative amount currently locked for the channel on-chain. */
+  onChainDeposit: string;
+  /** Authoritative amount already settled to the seller on-chain. */
+  onChainSettled: string;
   reservedAt: number;
+  /** Last local cumulative usage/auth update for this channel. */
+  updatedAt: number;
   status: string;
   requestCount: number;
   inputTokens: string;
@@ -163,8 +171,6 @@ export function formatAnts(value: bigint): string {
 
 
 
-// AntseedChannels grace period between requestClose() and withdraw().
-const CHANNEL_CLOSE_GRACE_SECS = 900;
 // Bound concurrent on-chain reads without skipping older active-looking rows.
 const CHANNEL_ENRICH_CONCURRENCY = 12;
 
@@ -186,23 +192,27 @@ async function enrichChannelStatuses(channels: DesktopPaymentChannelSummary[]): 
   }
   const candidates = channels
     .filter((row) => row.status === 'active' || row.status === 'open');
+  for (const row of candidates) {
+    applyChannelOnChainSnapshot(row);
+  }
   await runInBatches(candidates, CHANNEL_ENRICH_CONCURRENCY, async (row) => {
     const info = await client.getSession(row.channelId);
-    const closeRequestedAt = Number(info.closeRequestedAt);
-    row.settledUsdc = info.settled.toString();
-    if (info.status === 2) row.status = 'settled';
-    else if (info.status === 3) row.status = 'timedout';
-    else if (info.status === 1 && closeRequestedAt > 0) {
-      const now = Math.floor(Date.now() / 1000);
-      row.status = now < closeRequestedAt + CHANNEL_CLOSE_GRACE_SECS ? 'closing' : 'withdrawable';
-    }
+    applyChannelOnChainSnapshot(row, {
+      status: info.status,
+      deposit: info.deposit.toString(),
+      settled: info.settled.toString(),
+      closeRequestedAt: Number(info.closeRequestedAt),
+    });
     // status 0 (no on-chain record) is ambiguous — a channel may exist
-    // locally before its on-chain reserve lands. Keep the local status.
+    // locally before its on-chain reserve lands. Keep the last verified state.
   });
 }
 
-/** Fetch buyer channels from the local proxy and re-check them on-chain. */
-export async function loadBuyerChannels(all: boolean): Promise<DesktopPaymentChannelSummary[] | null> {
+/** Fetch buyer channels from the local proxy, optionally re-checking them on-chain. */
+export async function loadBuyerChannels(
+  all: boolean,
+  enrichOnChain = true,
+): Promise<DesktopPaymentChannelSummary[] | null> {
   const body = await fetchBuyerProxyJson(`/_antseed/channels${all ? '?all=1' : ''}`);
   if (!body) return null;
   const channels = Array.isArray(body['channels'])
@@ -210,7 +220,7 @@ export async function loadBuyerChannels(all: boolean): Promise<DesktopPaymentCha
       .map((entry) => normalizePaymentChannelSummary(entry))
       .filter((entry): entry is DesktopPaymentChannelSummary => entry !== null)
     : [];
-  await enrichChannelStatuses(channels).catch(() => {});
+  if (enrichOnChain) await enrichChannelStatuses(channels).catch(() => {});
   return channels;
 }
 

@@ -37,6 +37,11 @@ import {
   setCachedEmissionsClient,
 } from '../payments/credits.js';
 import {
+  buildLocalBuyerSpendHistory,
+  type DesktopBuyerSpendHistory,
+  unavailableLocalBuyerSpendHistory,
+} from '../payments/buyer-spend-history.js';
+import {
   demoteDepositWatchTimer,
   makeDepositsClient,
   setDepositWatchBalance,
@@ -414,6 +419,14 @@ export function registerPaymentsIpc(): void {
       error: null,
       lastActivityAt,
     };
+  });
+
+  ipcMain.handle('payments:get-buyer-spend-history', async (): Promise<{ ok: boolean; data: DesktopBuyerSpendHistory | null; error: string | null }> => {
+    const channels = await loadBuyerChannels(true, false);
+    if (!channels) {
+      return { ok: false, data: unavailableLocalBuyerSpendHistory(), error: 'buyer proxy unreachable' };
+    }
+    return { ok: true, data: buildLocalBuyerSpendHistory(channels), error: null };
   });
 
   ipcMain.handle('payments:get-channels', async (): Promise<{ ok: boolean; data: DesktopPaymentChannelSummary[] | null; error: string | null }> => {

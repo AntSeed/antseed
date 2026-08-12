@@ -111,20 +111,24 @@ export function initCreditsModule({ bridge, uiState, onBalanceSufficientForPayme
   async function refreshPaymentSummary(force = false): Promise<void> {
     if (paymentSummaryRefreshInFlight) return;
     if (!force && Date.now() - lastPaymentSummaryRefreshAt < PAYMENT_SUMMARY_THROTTLE_MS) return;
-    if (!bridge?.paymentsGetBuyerUsage && !bridge?.paymentsGetChannels && !bridge?.paymentsGetRewardsSummary) return;
+    if (!bridge?.paymentsGetBuyerUsage && !bridge?.paymentsGetBuyerSpendHistory && !bridge?.paymentsGetChannels && !bridge?.paymentsGetRewardsSummary) return;
 
     paymentSummaryRefreshInFlight = true;
     uiState.creditsSummaryLoading = true;
     notifyUiStateChanged();
     try {
-      const [usage, channels, rewards] = await Promise.all([
+      const [usage, spendHistory, channels, rewards] = await Promise.all([
         bridge?.paymentsGetBuyerUsage?.().catch(() => null) ?? Promise.resolve(null),
+        bridge?.paymentsGetBuyerSpendHistory?.().catch(() => null) ?? Promise.resolve(null),
         bridge?.paymentsGetChannels?.().catch(() => null) ?? Promise.resolve(null),
         bridge?.paymentsGetRewardsSummary?.().catch(() => null) ?? Promise.resolve(null),
       ]);
 
       if (usage?.ok && usage.data) {
         uiState.creditsBuyerUsage = usage.data;
+      }
+      if (spendHistory?.ok && spendHistory.data) {
+        uiState.creditsBuyerSpendHistory = spendHistory.data;
       }
       if (channels?.ok && Array.isArray(channels.data)) {
         uiState.creditsChannels = channels.data;

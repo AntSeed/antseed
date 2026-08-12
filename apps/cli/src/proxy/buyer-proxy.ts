@@ -1639,6 +1639,7 @@ export class BuyerProxy {
         const peer = peersById.get(channel.peerId)
         return {
           ...channel,
+          sellerDisplayName: peer?.displayName?.trim() || null,
           cooperativeCloseSupported: peer ? peerSupportsCooperativeClose(peer) : false,
         }
       })

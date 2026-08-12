@@ -119,6 +119,27 @@ export type { BuyerPaymentConfig };
 export type { SellerSessionSnapshot };
 export type { RequestStreamCallbacks, RequestStreamResponseMetadata, RequestExecutionOptions };
 
+export type BuyerChannelSummary = {
+  channelId: string;
+  peerId: string;
+  seller: string;
+  buyer: string;
+  /** Latest in-memory ReserveAuth ceiling. Null when it is not available. */
+  reserveCeiling: string | null;
+  /** Latest cumulative SpendingAuth amount persisted in the channel store. */
+  cumulativeSigned: string;
+  /** Final locally observed settlement amount, when the channel is finished. */
+  settledAmount: string | null;
+  deadline: number;
+  reservedAt: number;
+  /** Last local cumulative usage/auth update for this channel. */
+  updatedAt: number;
+  status: string;
+  requestCount: number;
+  tokensDelivered: string;
+  outputTokens: string;
+};
+
 export interface NodePaymentsConfig {
   /** Enable seller-side payment channels and automatic settlement. */
   enabled?: boolean;
@@ -1160,44 +1181,27 @@ export class AntseedNode extends EventEmitter {
    * Combines the persistent ChannelStore (session metadata + cumulative signed
    * amount) with the in-memory reserve ceiling tracked by BuyerPaymentManager.
    *
-   * Note on field semantics (buyer side, base-6 USDC strings):
-   *   - reserveMax: current reserve ceiling — what the buyer authorized the
-   *     seller to lock via ReserveAuth. Lives only in memory on the payment
-   *     manager; falls back to stored authMax if unavailable.
-   *   - cumulativeSigned (stored as authMax): rolling total of SpendingAuth
-   *     amounts signed so far. Upper bound of what the seller can settle.
+   * The ReserveAuth ceiling lives only in the payment manager. When it is not
+   * available, return null rather than substituting the unrelated cumulative
+   * SpendingAuth amount stored in authMax.
    */
-  getActiveBuyerChannels(): Array<{
-    channelId: string;
-    peerId: string;
-    seller: string;
-    buyer: string;
-    reserveMax: string;
-    cumulativeSigned: string;
-    deadline: number;
-    reservedAt: number;
-    status: string;
-    requestCount: number;
-    tokensDelivered: string;
-    outputTokens: string;
-  }> {
+  getActiveBuyerChannels(): BuyerChannelSummary[] {
     const buyerAddress = this._identity?.wallet.address ?? null;
     if (!buyerAddress || !this._channelStore) return [];
     const stored = this._channelStore.getActiveChannelsByBuyer(CHANNEL_ROLE.BUYER, buyerAddress);
     return stored.map((c) => {
       const liveReserve = this._buyerPaymentManager?.getReserveCeiling(c.peerId);
-      const reserveMax = (liveReserve != null && liveReserve > 0n)
-        ? liveReserve.toString()
-        : c.authMax;
       return {
         channelId: c.sessionId,
         peerId: c.peerId,
         seller: c.sellerEvmAddr,
         buyer: c.buyerEvmAddr,
-        reserveMax,
+        reserveCeiling: liveReserve != null && liveReserve > 0n ? liveReserve.toString() : null,
         cumulativeSigned: c.authMax,
+        settledAmount: c.settledAmount,
         deadline: c.deadline,
         reservedAt: c.reservedAt,
+        updatedAt: c.updatedAt,
         status: c.status,
         requestCount: c.requestCount,
         tokensDelivered: c.tokensDelivered,
@@ -1209,39 +1213,33 @@ export class AntseedNode extends EventEmitter {
   }
 
   /** All buyer channels (any local status), used for history views. */
-  getAllBuyerChannels(): Array<{
-    channelId: string;
-    peerId: string;
-    seller: string;
-    buyer: string;
-    reserveMax: string;
-    cumulativeSigned: string;
-    deadline: number;
-    reservedAt: number;
-    status: string;
-    requestCount: number;
-    tokensDelivered: string;
-    outputTokens: string;
-  }> {
+  getAllBuyerChannels(): BuyerChannelSummary[] {
     const buyerAddress = this._identity?.wallet.address ?? null;
     if (!buyerAddress || !this._channelStore) return [];
     const stored = this._channelStore.getAllChannelsByBuyer('buyer', buyerAddress);
-    return stored.map((c) => ({
-      channelId: c.sessionId,
-      peerId: c.peerId,
-      seller: c.sellerEvmAddr,
-      buyer: c.buyerEvmAddr,
-      reserveMax: c.authMax,
-      cumulativeSigned: c.authMax,
-      deadline: c.deadline,
-      reservedAt: c.reservedAt,
-      status: c.status,
-      requestCount: c.requestCount,
-      tokensDelivered: c.tokensDelivered,
-      // Buyer rows overload previousConsumption as cumulative output tokens
-      // (see getBuyerUsageTotals).
-      outputTokens: c.previousConsumption,
-    }));
+    return stored.map((c) => {
+      const liveReserve = c.status === CHANNEL_STATUS.ACTIVE
+        ? this._buyerPaymentManager?.getReserveCeiling(c.peerId)
+        : null;
+      return {
+        channelId: c.sessionId,
+        peerId: c.peerId,
+        seller: c.sellerEvmAddr,
+        buyer: c.buyerEvmAddr,
+        reserveCeiling: liveReserve != null && liveReserve > 0n ? liveReserve.toString() : null,
+        cumulativeSigned: c.authMax,
+        settledAmount: c.settledAmount,
+        deadline: c.deadline,
+        reservedAt: c.reservedAt,
+        updatedAt: c.updatedAt,
+        status: c.status,
+        requestCount: c.requestCount,
+        tokensDelivered: c.tokensDelivered,
+        // Buyer rows overload previousConsumption as cumulative output tokens
+        // (see getBuyerUsageTotals).
+        outputTokens: c.previousConsumption,
+      };
+    });
   }
 
   /**

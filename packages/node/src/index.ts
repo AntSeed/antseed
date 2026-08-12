@@ -9,6 +9,7 @@ export {
   type BuyerUsageTotals,
   type BuyerUsageChannelPoint,
   type BuyerUsageServicePoint,
+  type BuyerChannelSummary,
 } from './node.js';
 export type { Provider, ProviderStreamCallbacks } from './interfaces/seller-provider.js';
 export {

@@ -60,16 +60,36 @@ export type DesktopBuyerUsageTotals = {
   services?: DesktopBuyerServiceUsage[];
 };
 
+export type DesktopBuyerSpendDay = {
+  day: string;
+  dayStart: number;
+  spentUsdc: string;
+  inputTokens: string;
+  outputTokens: string;
+};
+
+export type DesktopBuyerSpendHistory = {
+  available: boolean;
+  source: 'local';
+  unavailableReason: 'buyer-unreachable' | null;
+  days: DesktopBuyerSpendDay[];
+};
+
 export type DesktopPaymentChannelSummary = {
   channelId: string;
   peerId: string;
   seller: string;
-  reserveMax: string;
+  sellerDisplayName: string | null;
+  onChainStateKnown: boolean;
+  reserveCeiling: string | null;
   cumulativeSigned: string;
-  /** Already settled on-chain (bigint string). cumulativeSigned - settledUsdc
+  /** Amount locked for this channel on-chain (bigint string). */
+  onChainDeposit: string;
+  /** Already settled on-chain (bigint string). cumulativeSigned - onChainSettled
       is what the seller can still claim against this channel. */
-  settledUsdc: string;
+  onChainSettled: string;
   reservedAt: number;
+  updatedAt: number;
   status: string;
   requestCount: number;
   /** Cumulative input tokens delivered over this channel (bigint string). */
@@ -422,6 +442,7 @@ export type DesktopBridge = {
   /** Closes any app-owned Fun checkout/sign-in popup windows (login-only flows produce no deposit, so the deposit watcher can't close them). */
   paymentsCloseCheckoutWindows?: () => Promise<{ ok: boolean }>;
   paymentsGetBuyerUsage?: () => Promise<{ ok: boolean; data: DesktopBuyerUsageTotals | null; error: string | null; lastActivityAt?: number | null }>;
+  paymentsGetBuyerSpendHistory?: () => Promise<{ ok: boolean; data: DesktopBuyerSpendHistory | null; error: string | null }>;
   paymentsGetChannels?: () => Promise<{ ok: boolean; data: DesktopPaymentChannelSummary[]; error: string | null }>;
   paymentsRequestCooperativeClose?: (opts: { peerId: string }) => Promise<{
     ok: boolean;

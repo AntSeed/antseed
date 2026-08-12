@@ -1,5 +1,6 @@
 import type {
   DaemonStateSnapshot,
+  DesktopBuyerSpendHistory,
   DesktopBuyerUsageTotals,
   DesktopPaymentChannelSummary,
   DesktopRewardsSummary,
@@ -311,6 +312,7 @@ export type RendererUiState = {
   creditsEvmAddress: string | null;
   creditsOperatorAddress: string | null;
   creditsBuyerUsage: DesktopBuyerUsageTotals | null;
+  creditsBuyerSpendHistory: DesktopBuyerSpendHistory | null;
   creditsChannels: DesktopPaymentChannelSummary[];
   creditsRewards: DesktopRewardsSummary | null;
   creditsSummaryLoading: boolean;
@@ -488,6 +490,7 @@ export function createInitialUiState(): RendererUiState {
     creditsEvmAddress: null,
     creditsOperatorAddress: null,
     creditsBuyerUsage: null,
+    creditsBuyerSpendHistory: null,
     creditsChannels: [],
     creditsRewards: null,
     creditsSummaryLoading: false,

@@ -53,11 +53,6 @@
   transition: background 0.12s ease;
 }
 
-/* Checked rows lead with the checkmark, tucked closer to the edge (Figma pl-8). */
-.rowChecked {
-  padding-left: 8px;
-}
-
 .row + .row {
   border-top: 1px solid var(--border-light);
 }
@@ -70,6 +65,14 @@
 .row:focus-visible {
   outline: none;
   box-shadow: inset 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+}
+
+.checkSlot {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 20px;
+  display: grid;
+  place-items: center;
 }
 
 .check {
@@ -154,8 +157,8 @@
   padding: 6px 10px;
 }
 
-.rowCompact.rowChecked {
-  padding-left: 6px;
+.rowCompact .discount {
+  font-size: 13px;
 }
 
 .metaDivider {
@@ -188,16 +191,19 @@
 }
 
 .discount {
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  min-width: 48px;
-  align-self: stretch;
+  flex: 0 0 64px;
+  width: 64px;
+  height: 20px;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   color: var(--accent-green);
   font-size: 15px;
   font-weight: 600;
-  line-height: 18px;
-  text-align: center;
+  line-height: 20px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .perTok {
