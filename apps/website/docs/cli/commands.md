@@ -71,10 +71,11 @@ antseed dev                           Run seller + buyer locally for testing
 | `--base-url <url>` | Set the provider-wide upstream base URL |
 
 ```bash
-antseed config seller add-service openai gpt-image-1 \
+antseed config seller add-service openai flux.1-schnell \
+  --upstream "black-forest-labs/FLUX.1-schnell" \
   --input 0 --output 0 \
   --capabilities '{"inputs":["text","image"]}' \
-  --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.04}]}}'
+  --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.003}]}}'
 ```
 
 `antseed seller setup` exposes the same capability and unit-billing fields interactively. `antseed seller start` warns if unit billing is configured for a plugin that does not support it. Image services are not health-probed because a meaningful probe would incur an upstream generation charge.
