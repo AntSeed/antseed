@@ -1,4 +1,6 @@
 import { EventEmitter } from "node:events";
+import { execFile } from "node:child_process";
+import { createRequire } from "node:module";
 import net, { type Socket } from "node:net";
 import type {
   PeerConnection as NativeRtcPeerConnection,
@@ -43,6 +45,36 @@ async function loadNodeDatachannel(): Promise<typeof import("node-datachannel")>
   if (_nodeDatachannel) return _nodeDatachannel;
   _nodeDatachannel = await import("node-datachannel");
   return _nodeDatachannel;
+}
+
+const NDC_PROBE_SOURCE =
+  "const m = require(process.argv[1]);" +
+  "const pc = new m.PeerConnection('antseed-probe', { iceServers: [] });" +
+  "const dc = pc.createDataChannel('probe', { ordered: true });" +
+  "dc.close(); pc.close();" +
+  "process.exit(0);";
+
+/**
+ * Exercise node-datachannel in a disposable child process first: a broken
+ * native build can segfault, which no in-process try/catch survives. A dead
+ * or hung child just means TCP fallback instead of a crashed node.
+ */
+function probeNodeDatachannelSafely(): Promise<boolean> {
+  return new Promise((resolve) => {
+    let modulePath: string;
+    try {
+      modulePath = createRequire(import.meta.url).resolve("node-datachannel");
+    } catch {
+      resolve(false);
+      return;
+    }
+    execFile(
+      process.execPath,
+      ["-e", NDC_PROBE_SOURCE, modulePath],
+      { timeout: 10_000 },
+      (err) => resolve(!err),
+    );
+  });
 }
 
 function getNodeDatachannel(): typeof import("node-datachannel") {
@@ -385,10 +417,12 @@ export class ConnectionManager extends EventEmitter {
   }
 
   static async init(iceConfig?: IceConfig, options?: ConnectionManagerOptions): Promise<ConnectionManager> {
-    try {
-      await loadNodeDatachannel();
-    } catch {
-      // node-datachannel not available — TCP fallback will be used
+    if (_nodeDatachannel || await probeNodeDatachannelSafely()) {
+      try {
+        await loadNodeDatachannel();
+      } catch {
+        // node-datachannel not available — TCP fallback will be used
+      }
     }
     return new ConnectionManager(iceConfig, options);
   }

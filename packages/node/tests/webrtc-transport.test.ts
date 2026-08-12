@@ -1,4 +1,4 @@
-import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { ConnectionManager, type PeerConnection } from '../src/p2p/connection-manager.js';
 import { identityFromPrivateKeyHex } from '../src/p2p/identity.js';
 import {
@@ -46,14 +46,6 @@ describe.skipIf(!webrtcAvailable)('webrtc transport', () => {
     for (const manager of managers.splice(0)) {
       manager.closeAll();
       await manager.stopListening();
-    }
-  });
-
-  afterAll(async () => {
-    try {
-      (await import('node-datachannel')).cleanup();
-    } catch {
-      // best effort
     }
   });
 
