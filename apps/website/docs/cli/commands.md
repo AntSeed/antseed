@@ -35,6 +35,7 @@ antseed seller emissions claim        Claim accumulated seller payouts
 antseed buyer start                   Start the buyer proxy
 antseed buyer start --router <name>   Start the buyer proxy with a non-default router
 antseed buyer deposit <amount>        Deposit USDC for payments
+antseed buyer sweep                   Gaslessly sweep hot-wallet USDC into deposits (fixed relay fee)
 antseed buyer withdraw <amount>       Withdraw USDC from deposits
 antseed buyer balance                 Check wallet and deposit balance
 antseed network browse                Browse available services and pricing

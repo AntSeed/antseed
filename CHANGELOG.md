@@ -8,6 +8,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Website docs now cover the gasless `antseed buyer sweep` command: a CLI-reference entry plus a payments-guide section explaining the offline EIP-3009 authorization, the fixed USDC relay fee, broadcast via a running buyer daemon or an ephemeral node, amount clamping to credit-limit headroom, and the first-deposit minimum. The guide also gained a provider note on relaying sweeps for the fee (`relayer.enabled`, `relayer.minProfitBaseUnits`) and the `AntseedDepositRelay` address in the Base Mainnet contract table.
+
 - Desktop: added seller-assisted channel closing to Activity for sellers advertising `payments.cooperative-close.v1`, with clear rejection feedback and the existing wallet-based on-chain close retained as a permanent fallback.
 
 - Discovery metadata v12 widens service catalog and per-service map counts to support up to 512 services per provider. Metadata now allows 64 categories and 4 API protocols per service, a 128 KiB signed binary snapshot, and a bounded 256 KiB HTTP metadata response. Buyers remain compatible with v10/v11 sellers, while sellers validate the same limits before announcing.
