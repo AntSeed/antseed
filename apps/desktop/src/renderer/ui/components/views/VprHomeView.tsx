@@ -4,11 +4,12 @@ import {
   ArrowDown01Icon,
   ArrowRight02Icon,
   ArrowUp02Icon,
-    ArrowUpRight01Icon,
-    Cancel01Icon,
-    PowerIcon,
-    ArrowReloadHorizontalIcon,
-    Tick02Icon,
+  ArrowUpRight01Icon,
+  Cancel01Icon,
+  PowerIcon,
+  ArrowReloadHorizontalIcon,
+  SparklesIcon,
+  Tick02Icon,
 } from '@hugeicons/core-free-icons';
 import type { VprModelCatalogEntry } from '../../../core/state';
 import { getUiStateRef } from '../../../core/store';
@@ -26,6 +27,8 @@ import {
 } from '../../../modules/catalog/recommended';
 import { connectVprProfile } from '../../../modules/routing/proxy-sync';
 import { buyerConversationsResource, systemProxyResource } from '../../../modules/app/vpr-resources';
+import { requestQuickDeposit } from '../../../modules/app/deposit-navigation';
+import { computeProspectiveUsd } from '../../../modules/app/conversion';
 import { useCachedResource } from '../../../modules/app/cached-resource';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
@@ -63,6 +66,12 @@ export function VprHomeView({ onSelectView }: Props) {
     usage: state.creditsBuyerUsage,
     floatOpen: state.vprFloatOpen,
     creditsSpendable: state.creditsSpendableUsdc,
+    creditsTotalOwned: state.creditsTotalOwnedUsdc,
+    creditsChannels: state.creditsChannels,
+    conversionOffer: state.conversionOffer,
+    conversionVariant: state.conversionVariant,
+    conversionHomeDismissed: state.conversionHomeDismissed,
+    conversionPreview: state.conversionPreview,
     networkAlert: state.networkAlert,
     // Unfiltered discover list, for routed-peer name resolution.
     allRows: state.discoverRows,
@@ -108,6 +117,10 @@ export function VprHomeView({ onSelectView }: Props) {
     return () => window.clearInterval(timer);
   }, [actions]);
 
+  useEffect(() => {
+    if (snap.conversionVariant) void actions.refreshConversionOffer();
+  }, [actions, snap.conversionVariant]);
+
   const activeProfiles = useMemo(() => activeProfilesFromRuntimeState(proxyState), [proxyState]);
   const connectedProfiles = useMemo(
     () => profiles.filter((profile) => activeProfiles?.has(profile.name) ?? false),
@@ -124,17 +137,29 @@ export function VprHomeView({ onSelectView }: Props) {
   // tokens, usage-weighted per model. Falls back to the catalog projection
   // (average best-vs-worst peer spread) until priced usage exists.
   const [referencePrices, setReferencePrices] = useState(getCachedOpenRouterPrices);
+  const [referencePricesReady, setReferencePricesReady] = useState(
+    () => getCachedOpenRouterPrices() !== null,
+  );
   useEffect(() => {
-    if (referencePrices) return;
+    if (referencePrices) {
+      setReferencePricesReady(true);
+      return undefined;
+    }
     let cancelled = false;
     void ensureOpenRouterPrices().then((map) => {
-      if (!cancelled && map) setReferencePrices(map);
+      if (cancelled) return;
+      if (map) setReferencePrices(map);
+      setReferencePricesReady(true);
     });
     return () => { cancelled = true; };
   }, [referencePrices]);
   const measuredSavings = useMemo(
     () => computeMeasuredSavings(snap.usage?.services, referencePrices),
     [snap.usage?.services, referencePrices],
+  );
+  const liveConversionProspectiveUsd = useMemo(
+    () => computeProspectiveUsd(snap.catalog, referencePrices)?.prospectiveUsd ?? null,
+    [snap.catalog, referencePrices],
   );
   const projectedSavingsPct = useMemo(() => {
     const values = snap.catalog
@@ -258,6 +283,15 @@ export function VprHomeView({ onSelectView }: Props) {
   const creditsSpendableNum = Number(snap.creditsSpendable);
   const showAddBalance = !addBalanceDismissed
     && !(Number.isFinite(creditsSpendableNum) && creditsSpendableNum > 5);
+  const hasDeposited = Number(snap.creditsTotalOwned) > 0 || snap.creditsChannels.length > 0;
+  const showConversionBanner = Boolean(
+    snap.conversionVariant
+    && snap.conversionOffer
+    && referencePricesReady
+    && snap.catalog.length > 0
+    && !snap.conversionHomeDismissed
+    && (!hasDeposited || snap.conversionPreview),
+  );
 
   function submitDraft(): void {
     const text = draft.trim();
@@ -285,6 +319,53 @@ export function VprHomeView({ onSelectView }: Props) {
       onOpen={() => onSelectView?.('chats')}
     />
   );
+
+  const conversionCard = showConversionBanner && snap.conversionOffer ? (
+    <section className={styles.conversionCard} aria-labelledby="conversion-offer-title">
+      <div className={styles.conversionContent}>
+        <div className={styles.conversionHeadline}>
+          <span className={styles.conversionIcon} aria-hidden="true">
+            <HugeiconsIcon icon={SparklesIcon} size={26} strokeWidth={2} />
+          </span>
+          <div className={styles.conversionHeadlineText}>
+            <strong id="conversion-offer-title" className={styles.conversionTitle}>
+              {snap.conversionOffer.variant === 'd1'
+                ? `Your first day cost you $0 for ${snap.conversionOffer.requestsCount} requests worth $${snap.conversionOffer.retrospectiveUsd}.`
+                : `So far, you’ve paid $0 for ${snap.conversionOffer.requestsCount} requests worth $${snap.conversionOffer.retrospectiveUsd}.`}
+            </strong>
+          </div>
+        </div>
+
+        <div className={styles.conversionProof}>
+          <strong>
+            Your $10 can turn into <em>~${Math.round(liveConversionProspectiveUsd
+              ?? Number(snap.conversionOffer.prospectiveUsd)).toLocaleString('en-US')}</em> in frontier-model value.
+          </strong>
+        </div>
+
+        <div className={styles.conversionActions}>
+          <button
+            type="button"
+            className={styles.conversionPrimary}
+            onClick={() => {
+              actions.acceptConversionPrompt();
+              requestQuickDeposit();
+              onSelectView?.('deposit');
+            }}
+          >
+            Deposit $10
+          </button>
+          <button
+            type="button"
+            className={styles.conversionSecondary}
+            onClick={actions.dismissConversionHome}
+          >
+            Not now
+          </button>
+        </div>
+      </div>
+    </section>
+  ) : null;
 
   return (
     <section className={`view view-vpr-home ${styles.view}`} role="tabpanel">
@@ -418,6 +499,8 @@ export function VprHomeView({ onSelectView }: Props) {
               </button>
             ) : null}
 
+            {conversionCard}
+
             {recentChats}
 
             <button type="button" className={styles.moreApps} onClick={() => onSelectView?.('tools')}>
@@ -425,7 +508,7 @@ export function VprHomeView({ onSelectView }: Props) {
               <HugeiconsIcon icon={ArrowRight02Icon} size={16} strokeWidth={2} />
             </button>
 
-            {showAddBalance && (
+            {showAddBalance && !snap.conversionVariant ? (
               <div className={styles.balanceBanner}>
                 <button
                   type="button"
@@ -446,7 +529,7 @@ export function VprHomeView({ onSelectView }: Props) {
                   <HugeiconsIcon icon={Cancel01Icon} size={16} strokeWidth={2} />
                 </button>
               </div>
-            )}
+            ) : null}
 
             <div className={styles.usageGroup}>
               <p className={styles.usageLabel}>Usage</p>
@@ -549,6 +632,8 @@ export function VprHomeView({ onSelectView }: Props) {
             </div>
           </div>
           )}
+
+          {conversionCard}
 
           {recentChats}
 

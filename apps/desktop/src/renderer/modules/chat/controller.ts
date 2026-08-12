@@ -75,6 +75,12 @@ type ChatModuleOptions = {
   uiState: RendererUiState;
   appendSystemLog: (message: string) => void;
   onPaymentCardShown?: () => void;
+  onRequestStarted?: () => void;
+  onResponseCompleted?: (conversationId: string, usage: {
+    inputTokens: number;
+    outputTokens: number;
+    service: string | null;
+  }) => void;
 };
 
 export type ChatModuleApi = {
@@ -109,6 +115,8 @@ export function initChatModule({
   uiState,
   appendSystemLog,
   onPaymentCardShown,
+  onRequestStarted,
+  onResponseCompleted,
 }: ChatModuleOptions): ChatModuleApi {
   // ---------------------------------------------------------------------------
   // Constants
@@ -2034,6 +2042,7 @@ export function initChatModule({
     const content = text.trim();
     // Build message content — multipart with prepared attachments, or plain string
     uiState.chatError = null;
+    onRequestStarted?.();
     setConversationSending(convId, true);
     void (async () => {
       let preparedAttachments: PreparedChatAttachment[];
@@ -2614,6 +2623,7 @@ export function initChatModule({
 
     if (bridge.onChatAiStreamStart) {
       bridge.onChatAiStreamStart((data) => {
+        onRequestStarted?.();
         if (data.conversationId === uiState.chatActiveConversation) {
           uiState.chatError = null;
           notifyUiStateChanged();
@@ -2922,6 +2932,9 @@ export function initChatModule({
         const finalizedStreamingMessage = materializeStreamingMessage(
           getConversationStreamingMessage(data.conversationId),
         );
+        const completionMeta = finalizedStreamingMessage
+          ? normalizeAssistantMeta(finalizedStreamingMessage)
+          : null;
 
         streamCompletedAtByConversation.set(data.conversationId, Date.now());
         clearPaymentRetry(data.conversationId);
@@ -2957,6 +2970,11 @@ export function initChatModule({
         }
 
         scheduleChatConversationsRefresh();
+        onResponseCompleted?.(data.conversationId, {
+          inputTokens: completionMeta?.inputTokens ?? 0,
+          outputTokens: completionMeta?.outputTokens ?? 0,
+          service: completionMeta?.service ?? null,
+        });
       });
     }
 

@@ -16,6 +16,7 @@ import { shortAddress } from '../../../core/format';
 import { VprCard, VprPage } from '../vpr/VprKit';
 import type { DepositWatchStatus } from '../../../types/bridge';
 import { BalanceSummaryCard } from './BalanceSummaryCard';
+import { consumeQuickDepositRequest } from '../../../modules/app/deposit-navigation';
 import styles from './VprDepositView.module.scss';
 
 // The Fun (fun.xyz) checkout SDK is heavy (it bundles wagmi/viem), so it loads
@@ -382,7 +383,7 @@ export function VprDepositView({ onSelectView }: Props) {
   }), shallowEqual);
 
   const [slide, setSlide] = useState<StageSlide>(() => ({
-    stage: 'choose',
+    stage: consumeQuickDepositRequest() ? 'crypto' : 'choose',
     previous: null,
     direction: 'forward',
   }));
@@ -657,7 +658,6 @@ export function VprDepositView({ onSelectView }: Props) {
       return (
         <VprPage title="Add credits" backFallback="credits">
         <div className={styles.stack}>
-
           <BalanceSummaryCard values={balanceValues} />
 
           <div className={styles.primaryMethods}>

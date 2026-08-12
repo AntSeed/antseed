@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
 import type { DesktopBuyerServiceUsage } from '../../types/bridge';
-import { computeMeasuredSavings, formatSavedUsd } from './measured-savings.js';
+import { computeMeasuredSavings, computeOfficialBaselineUsd, formatSavedUsd } from './measured-savings.js';
 
 function serviceUsage(overrides: Partial<DesktopBuyerServiceUsage> = {}): DesktopBuyerServiceUsage {
   return {
@@ -35,6 +35,30 @@ test('computes pct from actual spend vs retail baseline', () => {
   assert.equal(result.matchedServices, 1);
   assert.ok(Math.abs(result.actualUsd - 20) < 1e-9);
   assert.ok(Math.abs(result.baselineUsd - 40) < 1e-9);
+});
+
+test('computes official baseline without subtracting actual spend', () => {
+  const services = [serviceUsage({
+    amountUsdc: String(20 * 1_000_000),
+    inputTokens: String(1_000_000),
+    outputTokens: String(1_000_000),
+  })];
+  const result = computeOfficialBaselineUsd(services, { gpt4o: { input: 10, output: 30 } });
+  assert.ok(result);
+  assert.equal(result.baselineUsd, 40);
+  assert.equal(result.matchedServices, 1);
+});
+
+test('official baseline reports matched token dimensions independently', () => {
+  const services = [serviceUsage({
+    inputTokens: String(1_000_000),
+    outputTokens: String(1_000_000),
+  })];
+  const result = computeOfficialBaselineUsd(services, { gpt4o: { input: 10, output: null } });
+  assert.ok(result);
+  assert.equal(result.baselineUsd, 10);
+  assert.equal(result.matchedInputTokens, 1_000_000);
+  assert.equal(result.matchedOutputTokens, 0);
 });
 
 test('free usage counts as 100% savings', () => {

@@ -371,6 +371,9 @@ const api = {
     ipcRenderer.on('desktop:navigate-view', listener);
     return () => ipcRenderer.off('desktop:navigate-view', listener);
   },
+  conversionNotify(data: { variant: 'd1' | 'd2' | 'd5' | 'd15'; retrospectiveUsd: string; prospectiveUsd: string }): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('conversion:notify', data) as Promise<{ ok: boolean; error?: string }>;
+  },
   voiceTranscribe(audio: ArrayBuffer): Promise<{ ok: boolean; text?: string; error?: string }> {
     return ipcRenderer.invoke('voice:transcribe', audio) as Promise<{ ok: boolean; text?: string; error?: string }>;
   },

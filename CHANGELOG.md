@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Desktop: add a locally evaluated $10 frontier-model onboarding offer for qualifying free users, with first-use or grandfathered D2 entry, follow-ups on days 5 and 15 while no deposit exists, and inline chat, floating-window, Home, deposit, and native-notification surfaces.
+
 All notable user-facing changes to AntSeed packages are documented here.
 
 This project uses selective package publishing. Each release entry lists the published packages affected by that release.

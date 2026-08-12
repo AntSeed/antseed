@@ -3,6 +3,7 @@
 /* Doubled class beats the global `.view` rule (display: block, overflow-y:
    auto) regardless of stylesheet injection order. */
 .view.view {
+  position: relative;
   height: 100%;
   min-height: 0;
   display: flex;
@@ -487,11 +488,11 @@
   width: 100%;
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 14px 12px 14px 16px;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(var(--brand-rgb), 0.65);
   border-radius: 16px;
-  background:
-    linear-gradient(100deg, #047452 0%, var(--accent-green) 55%, #24a06c 100%);
+  background: var(--bg-card);
   box-shadow: var(--shadow-sm);
 }
 
@@ -499,26 +500,60 @@
   flex: 1 1 auto;
   min-width: 0;
   display: grid;
-  gap: 4px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
+  gap: 8px;
 }
 
 .balanceTitle {
-  color: #ffffff;
-  font-size: 16px;
+  color: var(--text-primary);
+  font-size: 14px;
   font-weight: 700;
-  line-height: 24px;
+  line-height: 20px;
 }
 
 .balanceText {
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--text-secondary);
   font-size: 12px;
   line-height: 16px;
+}
+
+.balanceDivider {
+  height: 1px;
+  background: var(--border);
+}
+
+.balanceOffer {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.balanceActions {
+  display: flex;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.balancePrimary,
+.balanceSecondary {
+  padding: 7px 14px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.balancePrimary {
+  border: 1px solid var(--text-primary);
+  background: var(--text-primary);
+  color: var(--bg-card);
+}
+
+.balanceSecondary {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-primary);
 }
 
 .balanceClose {
@@ -531,12 +566,111 @@
   border: none;
   border-radius: 50%;
   background: transparent;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--text-muted);
   cursor: pointer;
 }
 
 .balanceClose:hover {
-  color: #ffffff;
+  color: var(--text-primary);
+}
+
+/* ---------- Conversion card ---------- */
+
+.conversionCard {
+  position: relative;
+  width: 100%;
+  padding: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(var(--brand-rgb), 0.42);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 100% 100%, rgba(var(--brand-rgb), 0.12), transparent 44%),
+    rgba(var(--brand-rgb), 0.06);
+  box-shadow: var(--shadow-sm);
+}
+
+.conversionContent {
+  width: 100%;
+  display: grid;
+  gap: 14px;
+}
+
+.conversionHeadline {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.conversionIcon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(var(--brand-rgb), 0.16);
+  color: var(--brand);
+}
+
+.conversionIcon {
+  width: 52px;
+  height: 52px;
+}
+
+.conversionHeadlineText {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.conversionTitle {
+  color: var(--text-primary);
+  font-size: 18px;
+  line-height: 24px;
+}
+
+.conversionProof {
+  display: grid;
+  gap: 4px;
+}
+
+.conversionProof strong {
+  color: var(--text-primary);
+  font-size: 15px;
+  line-height: 21px;
+}
+
+.conversionProof em {
+  color: var(--brand);
+  font-style: normal;
+  font-weight: 800;
+}
+
+.conversionActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.conversionPrimary,
+.conversionSecondary {
+  min-height: 42px;
+  padding: 9px 14px;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.conversionPrimary {
+  border: 1px solid var(--brand);
+  background: var(--brand);
+  color: #07130f;
+}
+
+.conversionSecondary {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-primary);
 }
 
 .usageGroup {

@@ -11,6 +11,8 @@ import {
 } from './modules/app/plugin-setup';
 import { initAppSetupModule } from './modules/app/setup';
 import { initCreditsModule } from './modules/app/credits';
+import { initConversionModule } from './modules/app/conversion';
+import { CONVERSION_DEV } from './modules/app/conversion-constants';
 import { initVprFloatModule } from './modules/app/float';
 import {
   loadFloatAutoOpen,
@@ -199,6 +201,18 @@ const {
   populateSettingsForm,
 });
 
+const conversionApi = initConversionModule({ bridge, uiState });
+if (CONVERSION_DEV) {
+  conversionApi.preview('d1');
+  window.antseedConversionDev = {
+    show: (variant = 'd1') => {
+      conversionApi.preview(variant);
+      return `Conversion ${variant.toUpperCase()} preview shown on Home`;
+    },
+    hide: conversionApi.clearPreview,
+  };
+}
+
 // Credits API is created after chat, so use late-bound reference.
 let creditsApi: ReturnType<typeof initCreditsModule>;
 
@@ -207,6 +221,8 @@ const chatApi = initChatModule({
   uiState,
   appendSystemLog,
   onPaymentCardShown: () => creditsApi?.notifyPaymentCardVisible(),
+  onRequestStarted: conversionApi.onRequestStarted,
+  onResponseCompleted: conversionApi.onResponseCompleted,
 });
 
 initAppSetupModule({ uiState, bridge: bridge ?? null });
@@ -215,6 +231,7 @@ creditsApi = initCreditsModule({
   bridge: bridge as DesktopBridge,
   uiState,
   onBalanceSufficientForPayment: () => chatApi.retryAfterPayment(),
+  onPaymentStateChanged: conversionApi.reconcilePayer,
 });
 creditsApi.startPeriodicRefresh();
 
@@ -294,7 +311,14 @@ const vprFloatApi = initVprFloatModule({
   uiState,
   onSelectModel: (provider, serviceId) => actionSelectVprModel(provider, serviceId),
   refreshUsage: (force?: boolean) => creditsApi.refreshPaymentSummary(force),
+  onClosed: () => {
+    if (uiState.conversionSurface === 'float') conversionApi.dismissPrompt();
+  },
+  onConversionAccept: conversionApi.acceptPrompt,
+  onConversionDismiss: conversionApi.dismissPrompt,
 });
+conversionApi.setFloatPresenter(() => vprFloatApi.presentConversion());
+conversionApi.setFloatRefresh(() => vprFloatApi.refresh());
 
 /** Deliberate seller pin for a model: re-point that model's auto-affine chats
     to the chosen seller (chats whose seller the user picked stay put), then
@@ -643,6 +667,11 @@ registerActions({
   },
   setChatPermissionMode: chatApi.setChatPermissionMode,
   decideToolApproval: chatApi.decideToolApproval,
+  notifyConversionComposerActivity: conversionApi.onComposerActivity,
+  dismissConversionPrompt: conversionApi.dismissPrompt,
+  acceptConversionPrompt: conversionApi.acceptPrompt,
+  dismissConversionHome: conversionApi.dismissHome,
+  refreshConversionOffer: conversionApi.refreshOffer,
   rejectPaymentSession: () => {
     uiState.chatPaymentApprovalVisible = false;
     uiState.chatPaymentApprovalPeerName = null;
