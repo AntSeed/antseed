@@ -8,7 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Security
 
-- P2P TCP transport is now encrypted end-to-end (`transport.tcp-enc.v1`): a wallet-signed ephemeral X25519 handshake with forward secrecy and mutual peer authentication, ChaCha20-Poly1305 framing for all payload traffic. Enabled automatically between peers that advertise the capability in discovery metadata; once offered, the handshake fails closed rather than downgrading to plaintext, and the intro signature covers the advertised capabilities and encryption offer so an on-path attacker cannot strip them to force a legacy fallback. Legacy peers still connect over plaintext unless the new `requireSecureTransport` node option is set.
+- P2P TCP transport is now encrypted end-to-end (`transport.tcp-enc.v1`): a wallet-signed ephemeral X25519 handshake with forward secrecy and mutual peer authentication, AES-256-GCM framing for all payload traffic. Enabled automatically between peers that advertise the capability in discovery metadata; once offered, the handshake fails closed rather than downgrading to plaintext, and the intro signature covers the advertised capabilities and encryption offer so an on-path attacker cannot strip them to force a legacy fallback. Legacy peers still connect over plaintext unless the new `requireSecureTransport` node option is set.
 - WebRTC signaling now signs SDP descriptions (`transport.signed-sdp.v1`), binding the DTLS certificate fingerprint to the peer's wallet identity so a man-in-the-middle on the signaling socket can no longer substitute its own SDP.
 
 ### Fixed

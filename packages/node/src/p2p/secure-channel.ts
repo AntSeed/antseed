@@ -1,8 +1,13 @@
 /**
  * Encrypted TCP transport (transport.tcp-enc.v1): wallet-signed ephemeral
- * X25519 handshake, HKDF-SHA256 with transcript-bound salt, one
- * ChaCha20-Poly1305 key per direction, length-prefixed frames with implicit
- * counter nonces (safe: per-direction keys, TCP ordering).
+ * X25519 handshake, HKDF-SHA256 with transcript-bound salt, one AES-256-GCM
+ * key per direction, length-prefixed frames with implicit counter nonces
+ * (safe: per-direction keys, TCP ordering).
+ *
+ * AES-256-GCM (not ChaCha20-Poly1305) because it is registered in both OpenSSL
+ * and BoringSSL; the desktop app runs the node under Electron's BoringSSL,
+ * which does not expose chacha20-poly1305 via createCipheriv ("Unknown
+ * cipher").
  */
 
 import {
@@ -16,7 +21,7 @@ import {
   type KeyObject,
 } from "node:crypto";
 
-const AEAD_ALGORITHM = "chacha20-poly1305";
+const AEAD_ALGORITHM = "aes-256-gcm";
 const AEAD_TAG_BYTES = 16;
 const FRAME_HEADER_BYTES = 4;
 export const MAX_FRAME_PLAINTEXT_BYTES = 16 * 1024 * 1024;
