@@ -314,7 +314,7 @@ export type DesktopBridge = {
   chatAiListConversations?: () => Promise<{ ok: boolean; data: unknown[] }>;
   chatAiListDiscoverRows?: () => Promise<{ ok: boolean; data?: unknown[]; error?: string }>;
   chatAiGetConversation?: (id: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
-  chatAiCreateConversation?: (service: string, provider?: string, peerId?: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
+  chatAiCreateConversation?: (service: string, provider?: string, peerId?: string, routeMode?: 'auto' | 'pinned') => Promise<{ ok: boolean; data?: unknown; error?: string }>;
   chatAiDeleteConversation?: (id: string) => Promise<{ ok: boolean }>;
   chatAiRenameConversation?: (id: string, title: string) => Promise<{ ok: boolean; error?: string }>;
   chatPrepareAttachments?: (conversationId: string, attachments: RawChatAttachment[]) => Promise<{ ok: boolean; data?: PreparedChatAttachment[]; error?: string }>;
@@ -329,7 +329,7 @@ export type DesktopBridge = {
   telegramDisconnect?: () => Promise<{ ok: boolean; data?: TelegramBridgeStatus; error?: string }>;
   onTelegramStatusChanged?: (handler: (data: TelegramBridgeStatus) => void) => () => void;
   chatAiAbort?: (conversationId?: string) => Promise<{ ok: boolean }>;
-  chatAiSelectPeer?: (payload: { conversationId?: string | null; peerId?: string | null; service?: string | null; provider?: string | null }) => Promise<{ ok: boolean; error?: string }>;
+  chatAiSelectPeer?: (payload: { conversationId?: string | null; peerId?: string | null; service?: string | null; provider?: string | null; routeMode?: 'auto' | 'pinned' | null }) => Promise<{ ok: boolean; error?: string }>;
   chatSetBuyerDefaultRoute?: (payload: { peerId: string; service: string }) => Promise<{ ok: boolean; error?: string }>;
   chatSyncModelPicker?: (payload: import('../../shared/model-picker.js').ModelPickerSnapshot) => Promise<{ ok: boolean }>;
   onChatDefaultRouteChanged?: (handler: (data: { peerId: string; service: string; provider: string | null }) => void) => () => void;

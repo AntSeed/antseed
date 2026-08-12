@@ -77,6 +77,10 @@
       "import": "./dist/interfaces.js",
       "types": "./dist/interfaces.d.ts"
     },
+    "./errors": {
+      "import": "./dist/errors.js",
+      "types": "./dist/errors.d.ts"
+    },
     "./payment-mux": {
       "import": "./dist/payment-mux.js",
       "types": "./dist/payment-mux.d.ts"

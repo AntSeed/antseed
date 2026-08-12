@@ -5,6 +5,7 @@ import { type ChatStreamStopReason } from './stream-stop.js';
 import {
   normalizeChatPeerSelectionRequest,
   type ChatPeerSelectionRequest,
+  type ChatRouteMode,
 } from './peer-selection.js';
 import {
   prepareChatAttachments,
@@ -33,6 +34,7 @@ import {
 } from './permissions.js';
 import { DEFAULT_BUYER_STATE_PATH, LOCALHOST_URL } from '../constants.js';
 import { asErrorMessage } from '../utils.js';
+import type { RawPeerHealth } from '../runtime/peer-cache.js';
 import {
   type ChatServiceCatalogEntry,
   type ChatServiceProtocol,
@@ -443,9 +445,13 @@ export function registerPiChatHandlers({
       // `discoverChatServiceCatalog` read for why these must not be
       // dynamic in packaged Windows builds.
       let discoveredPeersMap: Record<string, BuyerStateDiscoveredPeer> = {};
+      let peerHealthMap: Record<string, RawPeerHealth> = {};
       try {
         const raw = await readFile(DEFAULT_BUYER_STATE_PATH, 'utf-8');
         const parsed = JSON.parse(raw) as Record<string, unknown>;
+        if (parsed.peerHealth && typeof parsed.peerHealth === 'object' && !Array.isArray(parsed.peerHealth)) {
+          peerHealthMap = parsed.peerHealth as Record<string, RawPeerHealth>;
+        }
         const arr = Array.isArray(parsed.discoveredPeers) ? parsed.discoveredPeers : [];
         const enrichmentTasks: Array<Promise<void>> = [];
         for (const p of arr) {
@@ -504,7 +510,7 @@ export function registerPiChatHandlers({
         }
       })();
 
-      const rows = (await buildDiscoverRows(entries, statsMap, discoveredPeersMap, networkStats))
+      const rows = (await buildDiscoverRows(entries, statsMap, discoveredPeersMap, networkStats, peerHealthMap))
         .filter((row) => isPriceAllowedByBuyerMax(
           row.inputUsdPerMillion,
           row.outputUsdPerMillion,
@@ -579,12 +585,17 @@ export function registerPiChatHandlers({
     return { ok: true, data: enriched };
   });
 
-  const createConversation = async (service?: string, provider?: string, peerId?: string): Promise<AiConversation> => {
+  const createConversation = async (
+    service?: string,
+    provider?: string,
+    peerId?: string,
+    routeMode?: ChatRouteMode,
+  ): Promise<AiConversation> => {
     const trimmedPeerId = peerId?.trim() ?? '';
     const peerLabel = trimmedPeerId
       ? lastServiceCatalogEntries.find((e) => e.peerId === trimmedPeerId)?.peerLabel
       : undefined;
-    const conversation = await store.create(service, provider, trimmedPeerId || undefined, peerLabel);
+    const conversation = await store.create(service, provider, trimmedPeerId || undefined, peerLabel, routeMode);
     if (trimmedPeerId) {
       preferredPeerByConversationId.set(conversation.id, trimmedPeerId);
     } else {
@@ -593,8 +604,22 @@ export function registerPiChatHandlers({
     return conversation;
   };
 
-  ipcMain.handle('chat:ai-create-conversation', async (_event, service: string, provider?: string, peerId?: string) => {
-    return { ok: true, data: await createConversation(service, provider, peerId) };
+  ipcMain.handle('chat:ai-create-conversation', async (
+    _event,
+    service: string,
+    provider?: string,
+    peerId?: string,
+    routeMode?: ChatRouteMode,
+  ) => {
+    return {
+      ok: true,
+      data: await createConversation(
+        service,
+        provider,
+        peerId,
+        routeMode === 'auto' || routeMode === 'pinned' ? routeMode : undefined,
+      ),
+    };
   });
 
   ipcMain.handle('chat:ai-delete-conversation', async (_event, id: string) => {
@@ -698,13 +723,13 @@ export function registerPiChatHandlers({
   });
 
   const applyPeerSelection = async (payload: ChatPeerSelectionRequest | string | null): Promise<{ ok: boolean; error?: string }> => {
-    const { conversationId, peerId, service, provider } = normalizeChatPeerSelectionRequest(payload);
+    const { conversationId, peerId, service, provider, routeMode } = normalizeChatPeerSelectionRequest(payload);
 
     if (conversationId) {
       if (peerId) {
         preferredPeerByConversationId.set(conversationId, peerId);
         const peerLabel = lastServiceCatalogEntries.find((entry) => entry.peerId === peerId)?.peerLabel;
-        await store.setPeer(conversationId, peerId, peerLabel);
+        await store.setPeer(conversationId, peerId, peerLabel, routeMode ?? undefined);
       } else {
         preferredPeerByConversationId.delete(conversationId);
         await store.clearPeer(conversationId);

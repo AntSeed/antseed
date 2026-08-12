@@ -238,6 +238,7 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     chatConversationsLoaded: state.chatConversationsLoaded,
     chatDiscoverRowsLoaded: state.chatDiscoverRowsLoaded,
     chatError: state.chatError,
+    chatRoutingNotice: state.chatRoutingNotice,
     chatInputDisabled: state.chatInputDisabled,
     chatLowBalanceWarning: state.chatLowBalanceWarning,
     chatMessages: state.chatMessages,
@@ -1360,6 +1361,8 @@ export function ChatView({ onSelectView }: ChatViewProps) {
 
           <div className={styles.chatInputArea}>
             {snap.chatError && <div className={styles.chatError}>{snap.chatError}</div>}
+            {/* A successful failover is informational, not a failure — amber, not red. */}
+            {snap.chatRoutingNotice && <div className={styles.chatWarning}>{snap.chatRoutingNotice}</div>}
             {attachmentError && <div className={styles.chatError}>{attachmentError}</div>}
             {voiceError && <div className={styles.chatError}>{voiceError}</div>}
             {attachmentWarning && <div className={styles.chatWarning}>{attachmentWarning}</div>}

@@ -27,6 +27,17 @@ export type { Router } from './interfaces/buyer-router.js';
 export * from './types/index.js';
 export * from './billing/index.js';
 
+// Fault attribution — lets consumers tell a dead peer from a broken buyer.
+export {
+  AntseedRequestError,
+  buyerFault,
+  peerFault,
+  faultAttributionOf,
+  faultCodeOf,
+  type FaultAttribution,
+  type AntseedErrorCode,
+} from './errors.js';
+
 // Submodule re-exports (commonly used)
 export {
   loadOrCreateIdentity,

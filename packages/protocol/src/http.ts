@@ -1,4 +1,6 @@
 export const ANTSEED_STREAMING_RESPONSE_HEADER = 'x-antseed-streaming';
+export const ANTSEED_FAULT_ATTRIBUTION_HEADER = 'x-antseed-fault-attribution';
+export const ANTSEED_BUYER_FAULT_ERROR_CODE = 'antseed_buyer_fault';
 /** Header carrying a pre-signed SpendingAuth for manual payment approval. Base64-encoded JSON. */
 export const ANTSEED_SPENDING_AUTH_HEADER = 'x-antseed-spending-auth';
 /** Marker header set on HttpRequest frames whose body is sent via HttpRequestChunk/End frames. */

@@ -6,6 +6,8 @@
  * message format.
  */
 
+import type { ChatRouteMode } from './peer-selection.js';
+
 export type TextBlock = { type: 'text'; text: string };
 export type FileBlock = {
   type: 'file';
@@ -73,6 +75,7 @@ export type AiConversation = {
   provider?: string;
   peerId?: string;
   peerLabel?: string;
+  routeMode?: ChatRouteMode;
   messages: AiChatMessage[];
   createdAt: number;
   updatedAt: number;
@@ -87,6 +90,7 @@ export type AiConversationSummary = {
   provider?: string;
   peerId?: string;
   peerLabel?: string;
+  routeMode?: ChatRouteMode;
   messageCount: number;
   createdAt: number;
   updatedAt: number;

@@ -110,6 +110,11 @@ export function normalizeDiscoverRow(raw: unknown): DiscoverRow | null {
     networkRequests: toNullableBigintString(r.networkRequests),
     networkInputTokens: toNullableBigintString(r.networkInputTokens),
     networkOutputTokens: toNullableBigintString(r.networkOutputTokens),
+    peerCooldownUntil: typeof r.peerCooldownUntil === 'number' && Number.isFinite(r.peerCooldownUntil)
+      ? r.peerCooldownUntil
+      : null,
+    peerFailureStreak: Number(r.peerFailureStreak) || 0,
+    peerLastFailureReason: typeof r.peerLastFailureReason === 'string' ? r.peerLastFailureReason : null,
     selectionValue: String(r.selectionValue ?? ''),
   };
 }

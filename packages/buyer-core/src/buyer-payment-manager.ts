@@ -34,6 +34,7 @@ import {
 import type { UnitBillingContext, UnitBillingModelV1, UnitBillingUsage } from '@antseed/protocol/billing';
 import type { ImageRequestFacts } from '@antseed/api-adapter';
 import { evaluateUnitBilling, validateUnitBillingUsage } from '@antseed/protocol/billing';
+import { buyerFault, faultCodeOf } from './errors.js';
 
 /** Default tolerance: accept seller claims up to 1.4x buyer's estimate. */
 const DEFAULT_COST_TOLERANCE = 1.4;
@@ -319,7 +320,7 @@ export class BuyerPaymentManager {
   ): Promise<string> {
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
-      throw new Error(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}...`);
+      throw buyerFault(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}...`, 'buyer-session-state');
     }
 
     const cumulativeAmount = this._cumulativeAmount.get(sellerPeerId) ?? BigInt(session.authMax);
@@ -353,7 +354,7 @@ export class BuyerPaymentManager {
   ): Promise<string> {
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
-      throw new Error(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}...`);
+      throw buyerFault(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}...`, 'buyer-session-state');
     }
 
     const currentCumulative = this._cumulativeAmount.get(sellerPeerId) ?? BigInt(session.authMax);
@@ -411,7 +412,7 @@ export class BuyerPaymentManager {
   ): Promise<CloseChannelRequestPayload> {
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
-      throw new Error(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}...`);
+      throw buyerFault(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}...`, 'buyer-session-state');
     }
 
     const cumulativeAmount = this._cumulativeAmount.get(sellerPeerId) ?? BigInt(session.authMax);
@@ -444,7 +445,7 @@ export class BuyerPaymentManager {
     const session = this.getActiveSession(sellerPeerId);
     const salt = this._reserveSalt.get(sellerPeerId);
     if (!session || !salt) {
-      throw new Error(`[BuyerPayment] No replayable reserve for seller ${sellerPeerId.slice(0, 12)}...`);
+      throw buyerFault(`[BuyerPayment] No replayable reserve for seller ${sellerPeerId.slice(0, 12)}...`, 'buyer-session-state');
     }
 
     // Force a fresh AuthAck after replaying the reserve path.
@@ -878,7 +879,10 @@ export class BuyerPaymentManager {
   ): Promise<PerRequestAuthResult> {
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
-      throw new Error(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}... — call authorizeSpending() first`);
+      throw buyerFault(
+        `[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}... — call authorizeSpending() first`,
+        'buyer-session-state',
+      );
     }
 
     // Prefer reported token counts (from seller headers or buyer's parsed response usage)
@@ -1355,12 +1359,13 @@ export class BuyerPaymentManager {
     try {
       const balance = await this.getBalance();
       if (balance.available < additionalReserve) {
-        throw new Error(
+        throw buyerFault(
           `Insufficient buyer deposits for reserve top-up: available=${balance.available} required=${additionalReserve}`,
+          'buyer-deposits-insufficient',
         );
       }
     } catch (err) {
-      if (err instanceof Error && err.message.startsWith('Insufficient buyer deposits')) {
+      if (faultCodeOf(err) === 'buyer-deposits-insufficient') {
         throw err;
       }
       debugWarn(

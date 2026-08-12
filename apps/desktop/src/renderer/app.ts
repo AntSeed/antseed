@@ -268,7 +268,12 @@ function actionSelectVprModel(provider: string, serviceId: string, peerId: strin
     uiState.vprRoutingPreferences,
   );
   if (option) {
-    chatApi.handleServiceChange(option.value, pinnedPeerId ?? option.peerId, false);
+    chatApi.handleServiceChange(
+      option.value,
+      pinnedPeerId ?? option.peerId,
+      false,
+      selection.mode === 'auto' ? 'auto' : 'pinned',
+    );
   }
   // handleServiceChange writes a pinned selection through; restore the
   // requested mode so auto keeps re-resolving the best route on future
