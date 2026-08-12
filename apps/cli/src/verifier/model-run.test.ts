@@ -349,6 +349,17 @@ test('target eligibility applies buyer reputation and pricing before audit', () 
   })
 })
 
+test('target eligibility tolerates persisted partial metadata without provider announcements', () => {
+  const persistedPeer = peer({
+    metadata: { capabilities: [CONNECTION_CAPABILITY_RESPONSE_AUTH_V1] } as PeerInfo['metadata'],
+  })
+
+  assert.deepEqual(classifyVerificationTarget(persistedPeer, 'gpt-5.6-sol', targetPolicy), {
+    eligible: true,
+    service: 'GPT-5.6-SOL',
+  })
+})
+
 test('buyer proxy snapshot requires a connected live daemon and parses peers', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'antseed-verifier-proxy-state-'))
   try {
@@ -522,14 +533,36 @@ test('resume reuses authenticated batches and requests only unresolved batches',
   assert.equal(first.result.status, 'UNDETERMINED')
   const resumed = await runTarget(40, 'valid', 0, 'verified', true, 10_000, {
     parentAuditId: first.result.auditId,
+    reservationAuditId: first.result.auditId,
     parentEvidenceHash: first.result.evidenceHash,
     exchanges: first.evidence.exchanges,
   })
   assert.equal(resumed.result.status, 'SAME')
   assert.equal(resumed.requestCount, 1)
   assert.deepEqual(resumed.evidence.resume?.reusedBatchIndexes, [0, 2, 3])
+  assert.equal(resumed.evidence.resume?.reservationAuditId, first.result.auditId)
   assert.equal(resumed.result.cost.pricedExchangeCount, 1)
   assert.equal(resumed.result.cumulativeCost?.pricedExchangeCount, 4)
+})
+
+test('repeated resume preserves the original seller reservation audit id', async () => {
+  const first = await runTarget(40, 'rate-limited')
+  const second = await runTarget(40, 'rate-limited', 0, 'verified', true, 10_000, {
+    parentAuditId: first.result.auditId,
+    reservationAuditId: first.result.auditId,
+    parentEvidenceHash: first.result.evidenceHash,
+    exchanges: first.evidence.exchanges,
+  })
+  const third = await runTarget(40, 'valid', 0, 'verified', true, 10_000, {
+    parentAuditId: second.result.auditId,
+    reservationAuditId: second.evidence.resume?.reservationAuditId ?? second.result.auditId,
+    parentEvidenceHash: second.result.evidenceHash,
+    exchanges: second.evidence.exchanges,
+  })
+
+  assert.equal(third.result.status, 'SAME')
+  assert.equal(third.evidence.resume?.parentAuditId, second.result.auditId)
+  assert.equal(third.evidence.resume?.reservationAuditId, first.result.auditId)
 })
 
 test('batch checkpoints retain run identity for interrupted-run discovery', async () => {

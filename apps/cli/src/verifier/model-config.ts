@@ -25,6 +25,15 @@ export function configuredVerifierModels(config: VerifierCLIConfig | undefined):
     .sort((left, right) => left.localeCompare(right))
 }
 
+export function excludedVerifierDomains(
+  config: VerifierCLIConfig | undefined,
+  requestedModel: string,
+): ReadonlySet<string> {
+  const endpoint = config?.referenceEndpoint
+  const entry = endpoint && findModelEntry(endpoint, requestedModel)
+  return new Set(entry?.[1].excludedDomains ?? [])
+}
+
 export function resolveVerifierCommandModels(
   config: VerifierCLIConfig | undefined,
   modelValue: string | undefined,

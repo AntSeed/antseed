@@ -1,3 +1,5 @@
+import type { CanonicalKbfDomainKey } from '../verifier/canonical-kbf-domains.js';
+
 /**
  * Dual token pricing in USD per 1M tokens.
  */
@@ -293,6 +295,17 @@ export interface VerifierModelPricingConfig {
   outputUsdPerMillion: number;
 }
 
+export interface VerifierAntseedReferenceRouteConfig {
+  /** Route target reference requests through the local AntSeed buyer proxy. */
+  type: 'antseed';
+  /** AntSeed network service requested from the pinned peer. */
+  service: string;
+  /** Exact AntSeed peer used as the target reference source. */
+  peerId: string;
+  /** Advertised target-route pricing used for reference cost accounting. */
+  pricing: VerifierModelPricingConfig;
+}
+
 export interface VerifierReferenceModelConfig {
   /** Whether all-model commands include this audited service. Default: true. */
   enabled?: boolean;
@@ -300,8 +313,12 @@ export interface VerifierReferenceModelConfig {
   upstreamModel: string;
   /** Trusted upstream pricing used for automatic contrast selection. */
   pricing?: VerifierModelPricingConfig;
+  /** Optional target-only route through the local AntSeed buyer proxy. */
+  referenceRoute?: VerifierAntseedReferenceRouteConfig;
   /** Explicit contrast models. Overrides automatic selection. */
   contrastModels?: string[];
+  /** Canonical KBF domains that reference generation and audits must skip. */
+  excludedDomains?: CanonicalKbfDomainKey[];
 }
 
 export interface VerifierContrastModelConfig {

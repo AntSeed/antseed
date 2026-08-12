@@ -4,6 +4,7 @@ import type { VerifierCLIConfig } from '../config/types.js'
 import {
   blendedModelPrice,
   configuredVerifierModels,
+  excludedVerifierDomains,
   resolveVerifierCommandModels,
   resolveVerifierModelConfig,
 } from './model-config.js'
@@ -59,6 +60,14 @@ test('blended price uses the configured input weight', () => {
 
 test('configured models include enabled entries only', () => {
   assert.deepEqual(configuredVerifierModels(config()), ['model-large'])
+})
+
+test('excluded domains apply only to their configured model', () => {
+  const value = config()
+  value.referenceEndpoint!.models['model-large']!.excludedDomains = ['medical']
+  assert.deepEqual([...excludedVerifierDomains(value, 'MODEL-LARGE')], ['medical'])
+  assert.deepEqual([...excludedVerifierDomains(value, 'disabled')], [])
+  assert.deepEqual([...excludedVerifierDomains(value, 'missing')], [])
 })
 
 test('command model resolution requires exactly one mode and configured enabled models', () => {

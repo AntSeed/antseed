@@ -95,6 +95,10 @@ describe('ReferenceQueryProfileV1', () => {
     expect(queryProfileHash(changed)).not.toBe(queryProfileHash(profile));
     expect(() => assertMatchingQueryProfile(profile, changed)).toThrow(/profile mismatch/);
     expect(() => assertMatchingQueryProfile(profile, structuredClone(profile))).not.toThrow();
+
+    const omitted = { ...profile, requestOmissions: ['temperature'] as const };
+    expect(queryProfileHash(omitted)).not.toBe(queryProfileHash(profile));
+    expect(() => assertMatchingQueryProfile(profile, omitted)).toThrow(/profile mismatch/);
   });
 });
 
@@ -113,6 +117,23 @@ describe('validateKbfReferenceV1', () => {
   it('accepts a complete, internally consistent generated reference', () => {
     const value = reference();
     expect(validateKbfReferenceV1(value)).toEqual(value);
+  });
+
+  it('validates standard request omissions', () => {
+    const valid = reference();
+    valid.queryProfile.requestOmissions = ['temperature', 'top_p'];
+    valid.referenceId = computeReferenceId(valid);
+    expect(() => validateKbfReferenceV1(valid)).not.toThrow();
+
+    const unsupported = reference();
+    unsupported.queryProfile.requestOmissions = ['frequency_penalty' as 'temperature'];
+    unsupported.referenceId = computeReferenceId(unsupported);
+    expect(() => validateKbfReferenceV1(unsupported)).toThrow(/unsupported request omissions/);
+
+    const duplicate = reference();
+    duplicate.queryProfile.requestOmissions = ['temperature', 'temperature'];
+    duplicate.referenceId = computeReferenceId(duplicate);
+    expect(() => validateKbfReferenceV1(duplicate)).toThrow(/unsupported request omissions/);
   });
 
   it('requires explicit operator trust for imported references', () => {

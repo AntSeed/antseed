@@ -52,6 +52,7 @@ const MAX_TOKENS = 1600
 const REFERENCE_SIZING_ALGORITHM_VERSION = 2
 const MINIMUM_SUPPORTED_REASONING_STRATEGY = 'reasoning-effort-minimum-supported' as const
 const DISABLED_REASONING_STRATEGY = 'reasoning-effort-none' as const
+const BARE_REASONING_STRATEGY = 'bare' as const
 const DISABLED_REASONING_REQUEST_OVERRIDES = { reasoning_effort: 'none' } as const
 const TERMINAL_EMPTY_FINISH_REASONS = new Set(['content_filter', 'length', 'refusal'])
 const REASONING_EFFORT_ASCENDING: readonly VerifierReasoningEffort[] = [
@@ -80,8 +81,7 @@ interface ReferenceBuildCheckpointV1 {
   responses: Record<string, ReferenceCachedResponseV1>
 }
 
-interface ReferenceCachedResponseV1 {
-  content: string
+interface ReferenceCachedResponseBaseV1 {
   model: string
   purpose: ReferenceBuildCostPurposeV1['purpose']
   inputTokens: number
@@ -90,6 +90,20 @@ interface ReferenceCachedResponseV1 {
   outputUsdPerMillion: number
   costUsdMicros: string
 }
+
+interface ReferenceCachedSuccessV1 extends ReferenceCachedResponseBaseV1 {
+  outcome?: 'success'
+  content: string
+}
+
+interface ReferenceCachedTerminalEmptyV1 extends ReferenceCachedResponseBaseV1 {
+  outcome: 'terminal-empty'
+  finishReason: string | null
+  nativeFinishReason: string | null
+  detail: string
+}
+
+type ReferenceCachedResponseV1 = ReferenceCachedSuccessV1 | ReferenceCachedTerminalEmptyV1
 
 export interface ReferenceBuildCostModelV1 {
   model: string
@@ -135,6 +149,17 @@ export function createReferenceRequestLimiter(
 type ReferenceQuery = ((model: string, body: Record<string, unknown>) => Promise<string>) & {
   invalidate?: (model: string, body: Record<string, unknown>) => Promise<void>
   costSummary?: () => ReferenceBuildCostV1
+}
+
+interface ReferenceRequestRoute {
+  type: 'direct' | 'antseed'
+  baseUrl: string
+  model: string
+  apiKey?: string
+  peerId?: string
+  pricing?: VerifierModelPricingConfig
+  requestOverrides: Record<string, unknown>
+  requestOmissions: Array<'temperature' | 'top_p'>
 }
 
 export async function loadModelReference(input: {
@@ -196,6 +221,7 @@ export async function buildModelReference(input: {
   referencesDir: string
   config: VerifierCLIConfig | undefined
   catalog?: VerifierModelCatalog | null
+  buyerProxyPort?: number
   fetchFn?: typeof fetch
   log?: (message: string) => void
   requestLimiter?: ReferenceRequestLimiter
@@ -209,17 +235,27 @@ export async function buildModelReference(input: {
   if (!endpoint) throw new Error('verifier.referenceEndpoint is required')
   const modelConfig = resolveVerifierModelConfig(input.config, input.model, input.catalog)
   const pricingByModel = referencePricingByModel(input.config, modelConfig, input.catalog ?? null)
-  const requestOverridesByModel = new Map(
-    [modelConfig.upstreamModel, ...modelConfig.contrastModels].map((model) => [
-      normalized(model),
-      resolveReferenceRequestOverrides(model, input.catalog ?? null),
-    ]),
+  const apiKey = (endpoint.apiKeyEnv ? process.env[endpoint.apiKeyEnv] : undefined) ?? endpoint.apiKey
+  const routesByModel = new Map(
+    [modelConfig.upstreamModel, ...modelConfig.contrastModels].map((model) => {
+      const isTarget = normalized(model) === normalized(modelConfig.upstreamModel)
+      return [normalized(model), resolveReferenceRequestRoute({
+        endpoint,
+        model,
+        apiKey,
+        catalog: input.catalog ?? null,
+        referenceRoute: isTarget ? modelConfig.referenceRoute : undefined,
+        buyerProxyPort: input.buyerProxyPort,
+      })] as const
+    }),
   )
-  const targetRequestOverrides = requestOverridesByModel.get(normalized(modelConfig.upstreamModel))!
-  const targetReasoningStrategy = 'reasoning' in targetRequestOverrides
+  const targetRoute = routesByModel.get(normalized(modelConfig.upstreamModel))!
+  const targetRequestOverrides = targetRoute.requestOverrides
+  const targetReasoningStrategy = targetRoute.type === 'antseed'
+    ? BARE_REASONING_STRATEGY
+    : 'reasoning' in targetRequestOverrides
     ? MINIMUM_SUPPORTED_REASONING_STRATEGY
     : DISABLED_REASONING_STRATEGY
-  const apiKey = (endpoint.apiKeyEnv ? process.env[endpoint.apiKeyEnv] : undefined) ?? endpoint.apiKey
   const timeoutMs = input.config?.probeRequestTimeoutMs ?? 120_000
   const sizing = resolveReferenceSizingPolicy(input.config)
   const checkpointPath = join(input.referencesDir, '.checkpoints', `${safeServiceSlug(input.model)}.json`)
@@ -235,6 +271,7 @@ export async function buildModelReference(input: {
     modelConfig: {
       service: modelConfig.service,
       upstreamModel: modelConfig.upstreamModel,
+      targetRoute,
       contrastModels: modelConfig.contrastModels,
     },
     sizing,
@@ -245,13 +282,11 @@ export async function buildModelReference(input: {
     candidatePromptVersion: 3,
     timeoutMs,
     reasoningStrategy: targetReasoningStrategy,
-    requestOverridesByModel: [...requestOverridesByModel.entries()],
+    routesByModel: [...routesByModel.entries()],
   })
   const checkpoint = await ReferenceBuildCheckpoint.open(checkpointPath, compatibilityHash)
   const limiter = input.requestLimiter ?? createReferenceRequestLimiter(input.config)
   const query = createReferenceQuery({
-    endpoint,
-    apiKey,
     timeoutMs,
     fetchFn: input.fetchFn ?? fetch,
     checkpoint,
@@ -264,8 +299,8 @@ export async function buildModelReference(input: {
       if (!pricing) throw new Error(`no reference pricing is available for ${model}`)
       return pricing
     },
-    requestOverridesForModel: (model) => requestOverridesByModel.get(normalized(model))
-      ?? resolveReferenceRequestOverrides(model, input.catalog ?? null),
+    routeForModel: (model) => routesByModel.get(normalized(model))
+      ?? resolveReferenceRequestRoute({ endpoint, model, apiKey, catalog: input.catalog ?? null }),
     log: input.log,
   })
   let collected: CollectedReferenceProbes | undefined
@@ -283,6 +318,7 @@ export async function buildModelReference(input: {
       collected = await collectReferenceProbes({
         model: modelConfig.upstreamModel,
         contrastModels: modelConfig.contrastModels,
+        excludedDomains: modelConfig.excludedDomains,
         targetCount,
         candidateCountPerRound: CANDIDATE_COUNT,
         maxNoProgressRounds: input.config?.referenceMaxNoProgressRounds ?? DEFAULT_MAX_NO_PROGRESS_ROUNDS,
@@ -293,18 +329,18 @@ export async function buildModelReference(input: {
       const additions = collected.probes.slice(selfAnswers.length, targetCount)
       if (additions.length > 0) {
         input.log?.(`self-testing ${selfAnswers.length + 1}-${targetCount} of ${targetCount} probes`)
-        selfAnswers.push(...await queryProbeAnswers(
+        selfAnswers.push(...await querySelfTestAnswers(
           modelConfig.upstreamModel,
           additions,
-          0,
-          'self-test',
           query,
+          input.log,
         ))
       }
       const probes = collected.probes.slice(0, targetCount)
       const answers = selfAnswers.slice(0, targetCount)
       const matches = computeMatchVector(answers, probes)
-      const parsed = matches.filter((match) => match !== null).length
+        .map((match, index) => answers[index] === null ? null : match)
+      const parsed = answers.filter((answer) => answer !== null).length
       const hamming = matches.filter((match) => match !== 1).length
       const coverage = parsed / targetCount
       const errorRate = hamming / targetCount
@@ -335,7 +371,7 @@ export async function buildModelReference(input: {
     )
   }
   const { probes, matches, answers, power } = selected
-  const parsed = matches.filter((match) => match !== null).length
+  const parsed = answers.filter((answer) => answer !== null).length
   const hamming = matches.filter((match) => match !== 1).length
   const selfTest = {
     hamming,
@@ -353,12 +389,13 @@ export async function buildModelReference(input: {
     throw new Error(`self-test error rate ${selfTest.errorRate.toFixed(3)} exceeds 0.35`)
   }
   const queryProfile = createReferenceQueryProfile({
-    upstreamModel: modelConfig.upstreamModel,
+    upstreamModel: targetRoute.model,
     maxTokensPerRequest: MAX_TOKENS,
     requestTimeoutMs: timeoutMs,
   })
   queryProfile.reasoningStrategy = targetReasoningStrategy
   queryProfile.requestOverrides = targetRequestOverrides
+  queryProfile.requestOmissions = targetRoute.requestOmissions
   const reference: KbfReferenceV1 = {
     version: 1,
     kind: 'kbf',
@@ -374,12 +411,24 @@ export async function buildModelReference(input: {
       params: {
         sourceId: endpoint.sourceId,
         upstreamModel: modelConfig.upstreamModel,
+        referenceRoute: targetRoute.type === 'antseed' ? {
+          type: targetRoute.type,
+          baseUrl: targetRoute.baseUrl,
+          service: targetRoute.model,
+          peerId: targetRoute.peerId,
+        } : undefined,
+        excludedDomains: [...(modelConfig.excludedDomains ?? [])],
         candidateCount: collected.candidateCount,
         sizing,
         sizingAlgorithmVersion: REFERENCE_SIZING_ALGORITHM_VERSION,
       },
     },
-    provenance: { sourceId: endpoint.sourceId, trust: endpoint.trust },
+    provenance: {
+      sourceId: targetRoute.type === 'antseed'
+        ? `${endpoint.sourceId}:antseed:${targetRoute.peerId}:${targetRoute.model}`
+        : endpoint.sourceId,
+      trust: endpoint.trust,
+    },
     queryProfile,
     selfTest,
     probes,
@@ -416,6 +465,7 @@ export async function buildModelReference(input: {
 export async function collectReferenceProbes(input: {
   model: string
   contrastModels: readonly string[]
+  excludedDomains?: readonly string[]
   targetCount: number
   query: ReferenceQuery
   candidateCountPerRound?: number
@@ -454,6 +504,7 @@ export async function collectReferenceProbes(input: {
       candidateCountPerRound,
       state.generationRound,
       input.query,
+      input.excludedDomains,
       input.log,
     )
     const candidates = generated.filter((probe) => {
@@ -505,10 +556,7 @@ async function certifyStableProbes(
 ): Promise<KbfProbe[]> {
   if (candidates.length === 0) return []
   const passes = await allSettledOrThrow(KBF_ENROLLMENT_TEMPERATURES.map((temperature, passIndex) => {
-    return queryProbeAnswers(model, candidates, temperature, `stability-${passIndex}`, query, {
-      recoverTerminalEmptyBatches: true,
-      log,
-    })
+    return queryDomainGroupedProbeAnswers(model, candidates, temperature, `stability-${passIndex}`, query, log)
   }))
   return candidates.flatMap((probe, index) => {
     const values = passes.map((pass) => pass[index] ?? null).filter((value): value is number => value !== null)
@@ -518,6 +566,35 @@ async function certifyStableProbes(
     const certified = { ...probe, consensus, tolerance: canonicalKbfTolerance(probe.domain) }
     return values.every((value) => matchesTolerance(value, certified)) ? [certified] : []
   })
+}
+
+async function queryDomainGroupedProbeAnswers(
+  model: string,
+  probes: readonly KbfProbe[],
+  temperature: number,
+  cacheDomain: string,
+  query: ReferenceQuery,
+  log?: (message: string) => void,
+): Promise<Array<number | null>> {
+  const grouped = new Map<string, { probes: KbfProbe[]; indexes: number[] }>()
+  for (const [index, probe] of probes.entries()) {
+    const group = grouped.get(probe.domain) ?? { probes: [], indexes: [] }
+    group.probes.push(probe)
+    group.indexes.push(index)
+    grouped.set(probe.domain, group)
+  }
+  const answers = new Array<number | null>(probes.length).fill(null)
+  await allSettledOrThrow([...grouped.entries()].map(async ([domain, group]) => {
+    const domainAnswers = await queryProbeAnswers(model, group.probes, temperature, cacheDomain, query, {
+      recoverTerminalEmptyBatches: true,
+      stabilityDomain: domain,
+      log,
+    })
+    for (const [groupIndex, originalIndex] of group.indexes.entries()) {
+      answers[originalIndex] = domainAnswers[groupIndex] ?? null
+    }
+  }))
+  return answers
 }
 
 async function queryContrastOutcomes(
@@ -549,11 +626,15 @@ async function generateCandidates(
   count: number,
   round: number,
   query: ReferenceQuery,
+  excludedDomains: readonly string[] = [],
   log?: (message: string) => void,
 ): Promise<KbfProbe[]> {
-  const baseCount = Math.floor(count / CANONICAL_KBF_DOMAINS.length)
-  const remainder = count % CANONICAL_KBF_DOMAINS.length
-  const generatedByDomain = await allSettledOrThrow(CANONICAL_KBF_DOMAINS.map(async (definition, domainIndex) => {
+  const excluded = new Set(excludedDomains)
+  const activeDomains = CANONICAL_KBF_DOMAINS.filter((definition) => !excluded.has(definition.key))
+  if (activeDomains.length === 0) throw new Error('reference generation requires at least one enabled canonical KBF domain')
+  const baseCount = Math.floor(count / activeDomains.length)
+  const remainder = count % activeDomains.length
+  const generatedByDomain = await allSettledOrThrow(activeDomains.map(async (definition, domainIndex) => {
     const countPerDomain = baseCount + (domainIndex < remainder ? 1 : 0)
     if (countPerDomain === 0) return []
     const probes: KbfProbe[] = []
@@ -673,8 +754,6 @@ function parseCanonicalFacts(text: string, range: readonly [number, number]): Ar
 }
 
 function createReferenceQuery(input: {
-  endpoint: VerifierReferenceEndpointConfig
-  apiKey: string | undefined
   timeoutMs: number
   fetchFn: typeof fetch
   checkpoint: ReferenceBuildCheckpoint
@@ -683,7 +762,7 @@ function createReferenceQuery(input: {
   retryCount: number
   retryBaseDelayMs: number
   pricingForModel: (model: string) => VerifierModelPricingConfig
-  requestOverridesForModel: (model: string) => Record<string, unknown>
+  routeForModel: (model: string) => ReferenceRequestRoute
   log?: (message: string) => void
 }): ReferenceQuery {
   assertPositiveInteger(input.maxRequests, 'referenceMaxRequestsPerBuild')
@@ -692,16 +771,25 @@ function createReferenceQuery(input: {
   const consumed = new Map<string, ReferenceCachedResponseV1>()
   const query = (async (model: string, body: Record<string, unknown>) => {
     const { __antseedReferenceCacheDomain, ...requestBody } = body
-    const requestOverrides = input.requestOverridesForModel(model)
+    const route = input.routeForModel(model)
     const cacheKey = canonicalHashBytes32({
       model,
       cacheDomain: __antseedReferenceCacheDomain ?? null,
       body: requestBody,
-      requestOverrides,
+      route,
     })
     const cached = input.checkpoint.get(cacheKey)
     if (cached !== undefined) {
       consumed.set(cacheKey, cached)
+      if (cached.outcome === 'terminal-empty') {
+        throw new EmptyReferenceResponseError(
+          cached.finishReason,
+          cached.nativeFinishReason,
+          cached.detail,
+          cached.inputTokens,
+          cached.outputTokens,
+        )
+      }
       return cached.content
     }
     let attempt = 0
@@ -710,16 +798,14 @@ function createReferenceQuery(input: {
       await input.checkpoint.reserveRequest(input.maxRequests)
       try {
         const response = await input.limiter.run(model, () => postChatCompletion(
-          input.endpoint,
-          input.apiKey,
-          model,
+          route,
           requestBody,
-          requestOverrides,
           input.timeoutMs,
           input.fetchFn,
         ))
         const pricing = input.pricingForModel(model)
-        const cachedResponse: ReferenceCachedResponseV1 = {
+        const cachedResponse: ReferenceCachedSuccessV1 = {
+          outcome: 'success',
           content: response.content,
           model,
           purpose: referenceRequestPurpose(__antseedReferenceCacheDomain),
@@ -737,6 +823,27 @@ function createReferenceQuery(input: {
         input.limiter.recordSuccess(model)
         return response.content
       } catch (error) {
+        if (isTerminalEmptyReferenceError(error)) {
+          const pricing = input.pricingForModel(model)
+          const cachedResponse: ReferenceCachedTerminalEmptyV1 = {
+            outcome: 'terminal-empty',
+            model,
+            purpose: referenceRequestPurpose(__antseedReferenceCacheDomain),
+            finishReason: error.finishReason,
+            nativeFinishReason: error.nativeFinishReason,
+            detail: error.detail,
+            inputTokens: error.inputTokens,
+            outputTokens: error.outputTokens,
+            inputUsdPerMillion: pricing.inputUsdPerMillion,
+            outputUsdPerMillion: pricing.outputUsdPerMillion,
+            costUsdMicros: String(Math.ceil(
+              error.inputTokens * pricing.inputUsdPerMillion
+              + error.outputTokens * pricing.outputUsdPerMillion,
+            )),
+          }
+          await input.checkpoint.set(cacheKey, cachedResponse)
+          consumed.set(cacheKey, cachedResponse)
+        }
         const retryable = isRetryableReferenceError(error)
         if (!retryable || attempt >= input.retryCount + 1) throw error
         const delayMs = retryDelayMs(error, input.retryBaseDelayMs, attempt)
@@ -751,7 +858,7 @@ function createReferenceQuery(input: {
       model,
       cacheDomain: __antseedReferenceCacheDomain ?? null,
       body: requestBody,
-      requestOverrides: input.requestOverridesForModel(model),
+      route: input.routeForModel(model),
     })
     consumed.delete(cacheKey)
     await input.checkpoint.delete(cacheKey)
@@ -962,6 +1069,7 @@ async function queryProbeAnswers(
   options: {
     allowIncomplete?: boolean
     recoverTerminalEmptyBatches?: boolean
+    stabilityDomain?: string
     log?: (message: string) => void
   } = {},
 ): Promise<Array<number | null>> {
@@ -979,7 +1087,8 @@ async function queryProbeAnswers(
       answers.push(...parseKbfAnswers(content, batch.length))
     } catch (error) {
       if (options.recoverTerminalEmptyBatches && isTerminalEmptyReferenceError(error)) {
-        options.log?.(`skipping ${batch.length}-probe stability batch for ${model}: ${asError(error).message}`)
+        const domain = options.stabilityDomain ? ` in domain ${options.stabilityDomain}` : ''
+        options.log?.(`skipping ${batch.length}-probe stability batch for ${model}${domain}: ${asError(error).message}`)
         answers.push(...new Array<number | null>(batch.length).fill(null))
         continue
       }
@@ -995,33 +1104,78 @@ async function queryProbeAnswers(
   return answers
 }
 
-async function postChatCompletion(
-  endpoint: VerifierReferenceEndpointConfig,
-  apiKey: string | undefined,
+async function querySelfTestAnswers(
   model: string,
+  probes: readonly KbfProbe[],
+  query: ReferenceQuery,
+  log?: (message: string) => void,
+): Promise<Array<number | null>> {
+  const answers: Array<number | null> = []
+  for (let offset = 0; offset < probes.length; offset += KBF_PROBES_PER_REQUEST) {
+    const batch = probes.slice(offset, offset + KBF_PROBES_PER_REQUEST)
+    answers.push(...await querySelfTestBatch(model, batch, query, log))
+  }
+  return answers
+}
+
+async function querySelfTestBatch(
+  model: string,
+  probes: readonly KbfProbe[],
+  query: ReferenceQuery,
+  log?: (message: string) => void,
+): Promise<Array<number | null>> {
+  try {
+    return await queryProbeAnswers(model, probes, 0, 'self-test', query)
+  } catch (error) {
+    if (!isTerminalEmptyReferenceError(error)) throw error
+    if (probes.length === 1) {
+      log?.(`skipping refused self-test probe ${probes[0]!.id}: ${asError(error).message}`)
+      return [null]
+    }
+    const splitAt = Math.ceil(probes.length / 2)
+    log?.(`splitting refused ${probes.length}-probe self-test batch into ${splitAt} and ${probes.length - splitAt}`)
+    const left = await querySelfTestBatch(model, probes.slice(0, splitAt), query, log)
+    const right = await querySelfTestBatch(model, probes.slice(splitAt), query, log)
+    return [...left, ...right]
+  }
+}
+
+async function postChatCompletion(
+  route: ReferenceRequestRoute,
   body: Record<string, unknown>,
-  requestOverrides: Record<string, unknown>,
   timeoutMs: number,
   fetchFn: typeof fetch,
 ): Promise<{ content: string; inputTokens: number; outputTokens: number }> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const response = await fetchFn(`${endpoint.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
-        ...(endpoint.antseedPeerId ? { 'x-antseed-pin-peer': endpoint.antseedPeerId } : {}),
-      },
-      body: JSON.stringify({ ...body, ...requestOverrides, model }),
-      signal: controller.signal,
-    })
+    let response: Response
+    try {
+      response = await fetchFn(`${route.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(route.apiKey ? { authorization: `Bearer ${route.apiKey}` } : {}),
+          ...(route.peerId ? { 'x-antseed-pin-peer': route.peerId } : {}),
+        },
+        body: JSON.stringify(applyReferenceRouteToBody(route, body)),
+        signal: controller.signal,
+      })
+    } catch (error) {
+      if (route.type !== 'antseed') throw error
+      throw new Error(
+        `AntSeed reference route unavailable for peer ${route.peerId} service ${route.model}: ${asError(error).message}`,
+        { cause: error },
+      )
+    }
     if (!response.ok) {
+      const detail = (await response.text()).slice(0, 200)
       throw new ReferenceEndpointError(
         response.status,
         parseRetryAfterMs(response.headers.get('retry-after')),
-        (await response.text()).slice(0, 200),
+        route.type === 'antseed'
+          ? `AntSeed peer ${route.peerId} service ${route.model}: ${detail}`
+          : detail,
       )
     }
     const parsed = await response.json() as {
@@ -1034,20 +1188,27 @@ async function postChatCompletion(
     }
     const choice = parsed.choices?.[0]
     const content = completionText(choice?.message?.content)
+    const inputTokens = nonNegativeInteger(parsed.usage?.prompt_tokens)
+    const outputTokens = nonNegativeInteger(parsed.usage?.completion_tokens)
     if (content === null) {
       const finishReason = optionalString(choice?.finish_reason)
       const nativeFinishReason = optionalString(choice?.native_finish_reason)
-      throw new EmptyReferenceResponseError(finishReason, nativeFinishReason, JSON.stringify({
+      const detail = JSON.stringify({
         finishReason,
         nativeFinishReason,
         completionTokens: parsed.usage?.completion_tokens ?? null,
         reasoningTokens: parsed.usage?.completion_tokens_details?.reasoning_tokens ?? null,
-      }))
+      })
+      throw new EmptyReferenceResponseError(
+        finishReason,
+        nativeFinishReason,
+        detail,
+        inputTokens ?? 0,
+        outputTokens ?? 0,
+      )
     }
-    const inputTokens = nonNegativeInteger(parsed.usage?.prompt_tokens)
-    const outputTokens = nonNegativeInteger(parsed.usage?.completion_tokens)
     if (inputTokens === null || outputTokens === null) {
-      throw new Error(`reference endpoint omitted token usage for ${model}`)
+      throw new Error(`reference endpoint omitted token usage for ${route.model}`)
     }
     return { content, inputTokens, outputTokens }
   } finally {
@@ -1093,7 +1254,9 @@ class EmptyReferenceResponseError extends Error {
   constructor(
     readonly finishReason: string | null,
     readonly nativeFinishReason: string | null,
-    detail = '',
+    readonly detail = '',
+    readonly inputTokens = 0,
+    readonly outputTokens = 0,
   ) {
     super(`reference endpoint returned no text content${detail ? `: ${detail}` : ''}`)
   }
@@ -1166,7 +1329,9 @@ function referencePricingByModel(
   catalog: VerifierModelCatalog | null,
 ): Map<string, VerifierModelPricingConfig> {
   const prices = new Map<string, VerifierModelPricingConfig>()
-  const targetPricing = resolved.pricing ?? catalog?.get(normalized(resolved.upstreamModel))?.pricing
+  const targetPricing = resolved.referenceRoute?.pricing
+    ?? resolved.pricing
+    ?? catalog?.get(normalized(resolved.upstreamModel))?.pricing
   if (!targetPricing) throw new Error(`no reference pricing is available for ${resolved.upstreamModel}`)
   prices.set(normalized(resolved.upstreamModel), targetPricing)
   for (const contrastModel of resolved.contrastModels) {
@@ -1182,12 +1347,59 @@ function referencePricingByModel(
   return prices
 }
 
+function resolveReferenceRequestRoute(input: {
+  endpoint: VerifierReferenceEndpointConfig
+  model: string
+  apiKey: string | undefined
+  catalog: VerifierModelCatalog | null
+  referenceRoute?: ResolvedVerifierModelConfig['referenceRoute']
+  buyerProxyPort?: number
+}): ReferenceRequestRoute {
+  if (input.referenceRoute?.type === 'antseed') {
+    const port = input.buyerProxyPort
+    if (!Number.isInteger(port) || port! < 1 || port! > 65_535) {
+      throw new Error('buyer.proxyPort must be configured to use an AntSeed reference route')
+    }
+    return {
+      type: 'antseed',
+      baseUrl: `http://127.0.0.1:${port}/v1`,
+      model: input.referenceRoute.service.trim(),
+      peerId: normalized(input.referenceRoute.peerId),
+      pricing: input.referenceRoute.pricing,
+      requestOverrides: {},
+      requestOmissions: ['temperature', 'top_p'],
+    }
+  }
+  return {
+    type: 'direct',
+    baseUrl: input.endpoint.baseUrl.replace(/\/+$/, ''),
+    model: input.model,
+    apiKey: input.apiKey,
+    peerId: input.endpoint.antseedPeerId,
+    requestOverrides: resolveReferenceRequestOverrides(input.model, input.catalog),
+    requestOmissions: [],
+  }
+}
+
+function applyReferenceRouteToBody(
+  route: ReferenceRequestRoute,
+  body: Record<string, unknown>,
+): Record<string, unknown> {
+  const routed: Record<string, unknown> = {
+    ...body,
+    ...route.requestOverrides,
+    model: route.model,
+  }
+  for (const field of route.requestOmissions) delete routed[field]
+  return routed
+}
+
 function isReferenceCachedResponse(value: unknown): value is ReferenceCachedResponseV1 {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
-  const response = value as Partial<ReferenceCachedResponseV1>
-  return typeof response.content === 'string'
-    && typeof response.model === 'string'
-    && ['candidate-generation', 'target-model', 'contrast-model', 'self-test'].includes(response.purpose ?? '')
+  const response = value as Record<string, unknown>
+  const common = typeof response.model === 'string'
+    && typeof response.purpose === 'string'
+    && ['candidate-generation', 'target-model', 'contrast-model', 'self-test'].includes(response.purpose)
     && nonNegativeInteger(response.inputTokens) !== null
     && nonNegativeInteger(response.outputTokens) !== null
     && typeof response.inputUsdPerMillion === 'number'
@@ -1198,6 +1410,14 @@ function isReferenceCachedResponse(value: unknown): value is ReferenceCachedResp
     && response.outputUsdPerMillion >= 0
     && typeof response.costUsdMicros === 'string'
     && /^\d+$/.test(response.costUsdMicros)
+  if (!common) return false
+  if (response.outcome === 'terminal-empty') {
+    return (typeof response.finishReason === 'string' || response.finishReason === null)
+      && (typeof response.nativeFinishReason === 'string' || response.nativeFinishReason === null)
+      && typeof response.detail === 'string'
+  }
+  return (response.outcome === undefined || response.outcome === 'success')
+    && typeof response.content === 'string'
 }
 
 function nonNegativeInteger(value: unknown): number | null {
@@ -1208,8 +1428,18 @@ function isRetryableReferenceError(error: unknown): boolean {
   if (error instanceof ReferenceEndpointError) return error.status === 429 || error.status >= 500
   if (error instanceof EmptyReferenceResponseError) return !isTerminalEmptyReferenceError(error)
   if (error instanceof Error && error.name === 'AbortError') return true
-  const code = (error as NodeJS.ErrnoException).code
-  return typeof code === 'string' && ['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT'].includes(code)
+  const retryableCodes = new Set([
+    'EAI_AGAIN', 'ECONNRESET', 'ECONNREFUSED', 'EHOSTDOWN', 'EHOSTUNREACH', 'ENETDOWN', 'ENETRESET',
+    'ENETUNREACH', 'EPIPE', 'ETIMEDOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_CONNECT_TIMEOUT',
+    'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_SOCKET',
+  ])
+  let current: unknown = error
+  for (let depth = 0; depth < 4 && current && typeof current === 'object'; depth += 1) {
+    const code = (current as NodeJS.ErrnoException).code
+    if (typeof code === 'string' && retryableCodes.has(code)) return true
+    current = (current as { cause?: unknown }).cause
+  }
+  return false
 }
 
 function isTerminalEmptyReferenceError(error: unknown): error is EmptyReferenceResponseError {

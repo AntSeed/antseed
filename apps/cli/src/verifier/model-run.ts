@@ -103,6 +103,7 @@ export interface ProxyVerificationContext {
 
 export interface ModelVerificationResumeInput {
   parentAuditId: string
+  reservationAuditId: string
   parentEvidenceHash: string
   exchanges: ProxyAuditEvidenceExchangeV1[]
 }
@@ -112,6 +113,7 @@ export interface ModelAuditCheckpointV1 {
   kind: 'antseed-verifier-audit-checkpoint'
   auditId: string
   parentAuditId: string | null
+  reservationAuditId?: string
   runId: string
   epoch: string
   model: string
@@ -298,8 +300,9 @@ function resolveAdvertisedOffer(
   for (const provider of providers) {
     const matrixEntry = Object.entries(peer.providerPricing ?? {})
       .find(([name]) => name.toLowerCase() === provider.toLowerCase())?.[1]
-    const announcement = peer.metadata?.providers
-      .find((entry) => entry.provider.toLowerCase() === provider.toLowerCase())
+    const announcement = peer.metadata?.providers?.find(
+      (entry) => entry.provider.toLowerCase() === provider.toLowerCase(),
+    )
     const matrixService = Object.entries(matrixEntry?.services ?? {})
       .find(([service]) => service.trim().toLowerCase() === normalizedModel)?.[1]
     const announcedService = announcement?.services
@@ -378,6 +381,7 @@ export async function verifyModelTarget(input: {
         kind: 'antseed-verifier-audit-checkpoint',
         auditId,
         parentAuditId: input.resume?.parentAuditId ?? null,
+        reservationAuditId: input.resume?.reservationAuditId ?? auditId,
         runId: input.checkpointIdentity?.runId ?? '',
         epoch: input.checkpointIdentity?.epoch ?? '',
         model: input.checkpointIdentity?.model ?? input.reference.referenceModel,
@@ -543,6 +547,7 @@ export async function verifyModelTarget(input: {
     ...(input.resume ? {
       resume: {
         parentAuditId: input.resume.parentAuditId,
+        reservationAuditId: input.resume.reservationAuditId,
         parentEvidenceHash: input.resume.parentEvidenceHash,
         reusedBatchIndexes,
       },
@@ -973,13 +978,15 @@ function buildProxyBatchRequest(
     'content-type': 'application/json',
     'x-antseed-pin-peer': target.peerId,
   }
-  const body = new TextEncoder().encode(JSON.stringify({
+  const requestBody: Record<string, unknown> = {
     ...buildKbfChatRequestBody(service, probes, { maxTokens: reference.queryProfile.maxTokensPerRequest }),
     top_p: reference.queryProfile.generationSettings.topP,
     stream: false,
     n: 1,
     ...(reference.queryProfile.requestOverrides ?? {}),
-  }))
+  }
+  for (const field of reference.queryProfile.requestOmissions ?? []) delete requestBody[field]
+  const body = new TextEncoder().encode(JSON.stringify(requestBody))
   const bodyBase64 = Buffer.from(body).toString('base64')
   return {
     url,

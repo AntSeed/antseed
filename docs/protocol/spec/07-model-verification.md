@@ -89,6 +89,13 @@ verifier:
       claude-sonnet-5:
         enabled: true
         upstreamModel: anthropic/claude-sonnet-5
+        referenceRoute:
+          type: antseed
+          service: sonnet-reference-service
+          peerId: 0123456789abcdef0123456789abcdef01234567
+          pricing:
+            inputUsdPerMillion: 0.30
+            outputUsdPerMillion: 0.80
       gpt-5.6-sol:
         enabled: true
         upstreamModel: openai/gpt-5.6-sol
@@ -112,6 +119,16 @@ answers. Cheap models are contrasts only. Automatic selection computes:
 ```text
 blended cost = input price × inputWeight + output price × (1 - inputWeight)
 ```
+
+An audited model may set `referenceRoute.type: antseed` to send only its target
+candidate-generation, stability, and self-test requests through the local buyer
+proxy. The buyer proxy URL is derived from `buyer.proxyPort`; the configured
+`service` is sent as the request model and every request is pinned to `peerId`.
+Contrast requests continue to use `referenceEndpoint`. Route pricing is used for
+target request cost accounting, while OpenRouter catalog pricing still drives
+automatic contrast selection. The buyer proxy must already be running. An
+unavailable peer or service fails the build without falling back, and the
+checkpoint remains available for a later resume.
 
 Candidates must cost at most the audited model's blended cost multiplied by
 `maxPriceRatio`. Disabled candidates and the target upstream model are excluded.

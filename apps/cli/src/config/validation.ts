@@ -7,6 +7,7 @@ import type {
   SellerProviderConfig,
   TokenPricingUsdPerMillion,
 } from './types.js';
+import { CANONICAL_KBF_DOMAINS } from '../verifier/canonical-kbf-domains.js';
 
 const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const MAX_PUBLIC_ADDRESS_LENGTH = 255;
@@ -23,6 +24,7 @@ const VERIFICATION_NAMESPACES = new Set(['domains', 'github']);
 const MIN_SELLER_UPLOAD_BODY_BYTES = 1024 * 1024;
 const MIN_BUYER_PEER_REFRESH_INTERVAL_MS = 1_000;
 export const MIN_BUYER_METADATA_FETCH_TIMEOUT_MS = 100;
+const CANONICAL_KBF_DOMAIN_KEYS = new Set<string>(CANONICAL_KBF_DOMAINS.map((domain) => domain.key));
 
 function validatePricingLeaf(
   path: string,
@@ -310,7 +312,10 @@ const VERIFIER_KEYS = new Set([
 const VERIFIER_REFERENCE_ENDPOINT_KEYS = new Set([
   'baseUrl', 'apiKey', 'apiKeyEnv', 'sourceId', 'trust', 'antseedPeerId', 'models', 'contrastModelBank',
 ]);
-const VERIFIER_REFERENCE_MODEL_KEYS = new Set(['enabled', 'upstreamModel', 'pricing', 'contrastModels']);
+const VERIFIER_REFERENCE_MODEL_KEYS = new Set([
+  'enabled', 'upstreamModel', 'pricing', 'referenceRoute', 'contrastModels', 'excludedDomains',
+]);
+const VERIFIER_REFERENCE_ROUTE_KEYS = new Set(['type', 'service', 'peerId', 'pricing']);
 const VERIFIER_CONTRAST_SELECTION_KEYS = new Set([
   'catalogSource', 'inputWeight', 'maxPriceRatio', 'maxModels', 'minimumIntelligenceIndex',
 ]);
@@ -505,6 +510,9 @@ function validateReferenceEndpoint(
     } else if (!usesOpenRouterCatalog && !hasExplicitContrasts && model.enabled !== false) {
       errors.push(`${modelPath}.pricing is required for automatic contrast-model selection`);
     }
+    if (model.referenceRoute !== undefined) {
+      validateReferenceRoute(`${modelPath}.referenceRoute`, model.referenceRoute, errors);
+    }
     if (model.contrastModels !== undefined) {
       if (!Array.isArray(model.contrastModels)
         || model.contrastModels.some((contrast) => typeof contrast !== 'string' || contrast.trim().length === 0)) {
@@ -514,6 +522,25 @@ function validateReferenceEndpoint(
       } else if (new Set(model.contrastModels.map((contrast) => contrast.trim().toLowerCase())).size
         !== model.contrastModels.length) {
         errors.push(`${modelPath}.contrastModels must not contain duplicates`);
+      }
+    }
+    if (model.excludedDomains !== undefined) {
+      if (!Array.isArray(model.excludedDomains)) {
+        errors.push(`${modelPath}.excludedDomains must be an array when provided`);
+      } else {
+        const excludedDomains = model.excludedDomains;
+        for (let index = 0; index < excludedDomains.length; index += 1) {
+          const domain = excludedDomains[index];
+          if (typeof domain !== 'string' || !CANONICAL_KBF_DOMAIN_KEYS.has(domain)) {
+            errors.push(`${modelPath}.excludedDomains[${index}] must be a canonical KBF domain`);
+          }
+        }
+        if (new Set(excludedDomains).size !== excludedDomains.length) {
+          errors.push(`${modelPath}.excludedDomains must not contain duplicates`);
+        }
+        if (excludedDomains.length >= CANONICAL_KBF_DOMAINS.length) {
+          errors.push(`${modelPath}.excludedDomains must leave at least one canonical KBF domain enabled`);
+        }
       }
     }
   }
@@ -528,6 +555,25 @@ function validateReferenceEndpoint(
   if (value.contrastModelBank !== undefined) {
     validateContrastModelBank(`${path}.contrastModelBank`, value.contrastModelBank, errors);
   }
+}
+
+function validateReferenceRoute(path: string, route: unknown, errors: string[]): void {
+  if (!route || typeof route !== 'object' || Array.isArray(route)) {
+    errors.push(`${path} must be an object when provided`);
+    return;
+  }
+  const value = route as Record<string, unknown>;
+  for (const key of Object.keys(value).filter((key) => !VERIFIER_REFERENCE_ROUTE_KEYS.has(key))) {
+    errors.push(`${path}.${key} is not supported`);
+  }
+  if (value.type !== 'antseed') errors.push(`${path}.type must be "antseed"`);
+  if (typeof value.service !== 'string' || value.service.trim().length === 0) {
+    errors.push(`${path}.service must be a non-empty string`);
+  }
+  if (typeof value.peerId !== 'string' || !/^[0-9a-fA-F]{40}$/.test(value.peerId)) {
+    errors.push(`${path}.peerId must be a 40-character hex peer id`);
+  }
+  validatePricing(`${path}.pricing`, value.pricing, errors);
 }
 
 function validateContrastModelBank(path: string, bank: unknown, errors: string[]): void {

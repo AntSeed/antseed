@@ -44,6 +44,8 @@ export interface ReferenceQueryProfileV1 {
   reasoningStrategy?: 'reasoning-effort-none' | 'reasoning-effort-minimum-supported' | 'disable-thinking' | 'bare';
   /** Exact additional request fields applied to reference and target queries. */
   requestOverrides?: Record<string, unknown>;
+  /** Standard request fields intentionally omitted for endpoint compatibility. */
+  requestOmissions?: Array<'temperature' | 'top_p'>;
 }
 
 export interface ReferenceProbeSelfTestV1 {
@@ -336,6 +338,13 @@ function validateQueryProfile(profile: ReferenceQueryProfileV1): void {
     throw new Error('unsupported reasoning strategy');
   }
   if (profile.requestOverrides !== undefined) object(profile.requestOverrides, 'requestOverrides');
+  if (profile.requestOmissions !== undefined) {
+    if (!Array.isArray(profile.requestOmissions)
+      || profile.requestOmissions.some((field) => !['temperature', 'top_p'].includes(field))
+      || new Set(profile.requestOmissions).size !== profile.requestOmissions.length) {
+      throw new Error('unsupported request omissions');
+    }
+  }
 }
 
 function validateProbe(probe: KbfProbe, ids: Set<string>): void {

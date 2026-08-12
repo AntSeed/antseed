@@ -146,6 +146,7 @@ export interface ProxyAuditEvidenceV1 {
   exchanges: ProxyAuditEvidenceExchangeV1[]
   resume?: {
     parentAuditId: string
+    reservationAuditId?: string
     parentEvidenceHash: string
     reusedBatchIndexes: number[]
   }

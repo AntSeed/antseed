@@ -69,6 +69,7 @@ export interface ResumeCandidate {
   peerId: string
   service: string
   auditId: string
+  reservationAuditId: string
   evidencePath: string
   evidenceHash: string
   referenceId: string
@@ -303,11 +304,11 @@ export function registerVerifierRunCommand(verifier: Command): void {
                     banksDir,
                     model,
                     sellerPeerId: target.peer.peerId,
-                    auditId: target.resumeCandidate.auditId,
+                    auditId: target.resumeCandidate.reservationAuditId,
                     config: config.verifier,
                   })
                   validateResumeCandidate(target.resumeCandidate, loaded.reference, target.service, epoch)
-                  reservationAuditId = target.resumeCandidate.auditId
+                  reservationAuditId = target.resumeCandidate.reservationAuditId
                   reference = loaded.reference
                   auditId = canonicalHashBytes32({
                     domain: 'antseed-verifier-repair-audit-v1',
@@ -317,6 +318,7 @@ export function registerVerifierRunCommand(verifier: Command): void {
                   })
                   resume = {
                     parentAuditId: target.resumeCandidate.auditId,
+                    reservationAuditId: target.resumeCandidate.reservationAuditId,
                     parentEvidenceHash: target.resumeCandidate.evidenceHash,
                     exchanges: target.resumeCandidate.exchanges,
                   }
@@ -619,6 +621,9 @@ export async function loadResumeCandidates(
         peerId: result.peerId,
         service: result.service,
         auditId: result.auditId,
+        reservationAuditId: evidence.resume?.reservationAuditId
+          ?? evidence.resume?.parentAuditId
+          ?? result.auditId,
         evidencePath: result.evidencePath,
         evidenceHash: result.evidenceHash,
         referenceId: evidence.reference.referenceId,
@@ -650,6 +655,9 @@ export async function loadCheckpointResumeCandidates(
         peerId: checkpoint.targetPeerId,
         service: checkpoint.service,
         auditId: checkpoint.auditId,
+        reservationAuditId: checkpoint.reservationAuditId
+          ?? checkpoint.parentAuditId
+          ?? checkpoint.auditId,
         evidencePath: path,
         evidenceHash,
         referenceId: checkpoint.referenceId,

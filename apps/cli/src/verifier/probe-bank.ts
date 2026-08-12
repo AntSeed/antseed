@@ -15,6 +15,7 @@ import {
 import type { VerifierCLIConfig } from '../config/types.js'
 import { acquirePidFileLock, readJsonIfExists, writeJsonAtomic } from './atomic-files.js'
 import type { ReferenceBuildCostV1 } from './model-reference.js'
+import { excludedVerifierDomains } from './model-config.js'
 import { isReferenceProbeCountAllowed, resolveReferenceSizingPolicy } from './reference-sizing.js'
 import { safeServiceSlug } from './slug.js'
 import { normalized } from './utils.js'
@@ -385,7 +386,9 @@ async function createEpochProbeReference(
       ? new Set<string>()
       : await usedEpochProbeIds(dirname(path), input.model)
     const activeContrasts = new Set(input.bank.contrastModels.map(normalized))
+    const excludedDomains = excludedVerifierDomains(input.config, input.model)
     const available = input.bank.probes.filter((entry) => !used.has(entry.probe.id)
+      && !excludedDomains.has(entry.probe.domain)
       && entry.distinguishingContrastModels.some((model) => activeContrasts.has(normalized(model))))
     const shuffled = (input.shuffle ?? cryptoShuffle)(available)
     const reference = selectPoweredReference(input.bank, shuffled, input.config, input.now)
@@ -453,6 +456,10 @@ function validateEpochProbeReference(input: {
   if (probeBankCompatibilityHash(input.model, reference) !== bank.compatibilityHash) {
     throw new Error(`epoch probe reference for ${input.model} epoch ${input.epoch} is incompatible with the bank`)
   }
+  const excludedDomains = excludedVerifierDomains(input.config, input.model)
+  if (reference.probes.some((probe) => excludedDomains.has(probe.domain))) {
+    throw new Error(`epoch probe reference for ${input.model} epoch ${input.epoch} contains an excluded domain`)
+  }
   const bankById = new Map(bank.probes.map((entry) => [entry.probe.id, entry]))
   const outcomeById = new Map(reference.selfTest.outcomes.map((outcome) => [outcome.probeId, outcome]))
   for (const probe of reference.probes) {
@@ -489,7 +496,9 @@ export async function inspectModelProbeBankPower(input: {
     throw new Error(`invalid probe bank at ${path}`)
   }
   const activeContrasts = new Set(bank.contrastModels.map(normalized))
-  const eligible = bank.probes.filter((entry) => entry.distinguishingContrastModels
+  const excludedDomains = excludedVerifierDomains(input.config, input.model)
+  const eligible = bank.probes.filter((entry) => !excludedDomains.has(entry.probe.domain)
+    && entry.distinguishingContrastModels
     .some((model) => activeContrasts.has(normalized(model))))
   if (!Array.isArray(bank.referenceCosts)) {
     return {
@@ -656,10 +665,12 @@ function selectPoweredReference(
   now: number,
 ): KbfReferenceV1 | null {
   const sizing = resolveReferenceSizingPolicy(config)
+  const excludedDomains = excludedVerifierDomains(config, bank.model)
+  const eligible = available.filter((entry) => !excludedDomains.has(entry.probe.domain))
   for (let count = sizing.minimumProbeCount;
-    count <= sizing.maximumProbeCount && count <= available.length;
+    count <= sizing.maximumProbeCount && count <= eligible.length;
     count += sizing.probeStep) {
-    const selected = available.slice(0, count)
+    const selected = eligible.slice(0, count)
     const selfTest = aggregateSelfTest(selected.map((entry) => entry.selfTest))
     const power = computeBinomialPower({
       selfHamming: selfTest.hamming,

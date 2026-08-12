@@ -1,7 +1,7 @@
 import { canonicalJsonStringify, sha256Hex, type KbfProbe, type ProbeTolerance } from '@antseed/fingerprints'
 
-export interface CanonicalKbfDomain {
-  key: string
+export interface CanonicalKbfDomain<TKey extends string = string> {
+  key: TKey
   name: string
   range: [number, number]
   tolerance: ProbeTolerance
@@ -10,19 +10,19 @@ export interface CanonicalKbfDomain {
   themes: readonly string[]
 }
 
-function domain(
-  key: string,
+function domain<const TKey extends string>(
+  key: TKey,
   name: string,
   range: [number, number],
   tolerance: ProbeTolerance,
   template: string,
   generationSubject: string,
   themes: readonly string[],
-): CanonicalKbfDomain {
+): CanonicalKbfDomain<TKey> {
   return { key, name, range, tolerance, template, generationSubject, themes }
 }
 
-export const CANONICAL_KBF_DOMAINS: readonly CanonicalKbfDomain[] = [
+export const CANONICAL_KBF_DOMAINS = [
   domain('chemistry_bp', 'Chemistry (boiling points)', [-300, 600], { mode: 'absolute', value: 3 }, 'The boiling point of {name} at 1 atm is ___°C.', 'obscure chemical compounds with well-defined boiling points at 1 atm', ['organometallics and organosilicons', 'heterocyclic nitrogen compounds and azoles', 'halogenated specialty compounds', 'sulfur and phosphorus synthesis reagents']),
   domain('chemistry_mp', 'Chemistry (melting points)', [-300, 4000], { mode: 'absolute', value: 3 }, 'The melting point of {name} is ___°C.', 'obscure compounds or minerals with well-defined melting points', ['metal oxides and ceramics', 'organic crystals and intermediates', 'inorganic salts and coordination compounds', 'intermetallic compounds and alloys']),
   domain('physics', 'Physics (material properties)', [0, 1e15], { mode: 'relative', value: 0.02 }, 'The numerical value of {name} in SI units is ___.', 'obscure physical constants, material properties, or measured quantities expressed in SI units', ['thermal and acoustic properties', 'optical properties', 'nuclear and particle constants', 'electromagnetic material properties']),
@@ -38,9 +38,13 @@ export const CANONICAL_KBF_DOMAINS: readonly CanonicalKbfDomain[] = [
   domain('chinese_internet', 'Chinese internet (platform dates)', [1990, 2030], { mode: 'absolute', value: 0 }, '{name}发生在___年。', 'Chinese internet-history events expressed as an exact year', ['early platforms', 'major product launches', 'industry events', 'games and livestreaming']),
   domain('chinese_literature', 'Chinese literature (publication years)', [-3000, 2030], { mode: 'absolute', value: 0 }, '{name}的数值是___。', 'Chinese literary facts expressed as an exact year or integer', ['modern publication years', 'classical works and authors', 'literary journals and movements', 'science fiction and online literature']),
   domain('crypto_params', 'Cryptography (parameters)', [0, 1e10], { mode: 'absolute', value: 0 }, 'The numerical value of {name} is ___.', 'documented cryptographic parameters with one exact integer answer', ['cipher rounds and block sizes', 'hash and MAC parameters', 'post-quantum parameter sets', 'standardization years']),
-]
+] as const satisfies readonly CanonicalKbfDomain[]
 
-const DOMAINS_BY_KEY = new Map(CANONICAL_KBF_DOMAINS.map((entry) => [entry.key, entry]))
+export type CanonicalKbfDomainKey = (typeof CANONICAL_KBF_DOMAINS)[number]['key']
+
+const DOMAINS_BY_KEY = new Map<string, CanonicalKbfDomain>(
+  CANONICAL_KBF_DOMAINS.map((entry) => [entry.key, entry]),
+)
 
 function slugifyDomain(domain: string): string {
   return domain.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')

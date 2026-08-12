@@ -9,6 +9,7 @@ import {
   createReferenceQueryProfile,
   type KbfReferenceV1,
 } from '@antseed/fingerprints'
+import type { VerifierCLIConfig } from '../config/types.js'
 import {
   appendModelReferenceToBank,
   BANK_EXHAUSTED,
@@ -39,6 +40,23 @@ const referenceCost = {
 
 function appendReference(banksDir: string, value = reference()) {
   return appendModelReferenceToBank({ banksDir, model: 'model-a', reference: value, cost: referenceCost })
+}
+
+function excludedDomainConfig(model = 'model-a'): VerifierCLIConfig {
+  return {
+    referenceEndpoint: {
+      baseUrl: 'https://reference.test/v1',
+      sourceId: 'test',
+      trust: 'trusted',
+      models: {
+        [model]: {
+          upstreamModel: 'upstream-a',
+          contrastModels: ['contrast-a'],
+          excludedDomains: ['medical'],
+        },
+      },
+    },
+  }
 }
 
 function reference(count = 200): KbfReferenceV1 {
@@ -135,6 +153,61 @@ test('probe bank power inspection recognizes a reusable powered reference', asyn
     await writeFile(appended.path, JSON.stringify(legacy), 'utf8')
     const withoutCosts = await inspectModelProbeBankPower({ banksDir: directory, model: 'model-a' })
     assert.equal(withoutCosts.selectedProbeCount, null)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('excluded domains are ignored by bank power and audit reservations', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-probe-bank-domains-'))
+  const identityShuffle = <T>(values: readonly T[]) => [...values]
+  try {
+    const mixed = reference()
+    for (const [index, probe] of mixed.probes.entries()) probe.domain = index < 80 ? 'medical' : 'biology'
+    mixed.referenceId = computeReferenceId(mixed)
+    await appendReference(directory, mixed)
+
+    const unrelated = await inspectModelProbeBankPower({
+      banksDir: directory,
+      model: 'model-a',
+      config: excludedDomainConfig('different-model'),
+    })
+    assert.equal(unrelated.eligibleProbeCount, 200)
+
+    const config = excludedDomainConfig()
+    const filtered = await inspectModelProbeBankPower({ banksDir: directory, model: 'model-a', config })
+    assert.equal(filtered.totalProbeCount, 200)
+    assert.equal(filtered.eligibleProbeCount, 120)
+    assert.equal(filtered.selectedProbeCount, 100)
+
+    const reserved = await reserveModelAuditReference({
+      banksDir: directory,
+      model: 'model-a',
+      sellerPeerId: '11'.repeat(20),
+      service: 'model-a',
+      runId: 'filtered-run',
+      epoch: 'filtered',
+      config,
+      shuffle: identityShuffle,
+    })
+    assert.equal(reserved.reference.probes.some((probe) => probe.domain === 'medical'), false)
+
+    const legacy = await reserveModelAuditReference({
+      banksDir: directory,
+      model: 'model-a',
+      sellerPeerId: '22'.repeat(20),
+      service: 'model-a',
+      runId: 'legacy-run',
+      epoch: 'legacy',
+      shuffle: identityShuffle,
+    })
+    await assert.rejects(loadModelAuditReservation({
+      banksDir: directory,
+      model: 'model-a',
+      sellerPeerId: '22'.repeat(20),
+      auditId: legacy.auditId,
+      config,
+    }), /contains an excluded domain/)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

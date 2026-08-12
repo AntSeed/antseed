@@ -245,7 +245,14 @@ test('loadConfig preserves and validates verifier settings', async () => {
     models: {
       'gpt-5.6-sol': {
         upstreamModel: 'gpt-5.6-sol',
+        referenceRoute: {
+          type: 'antseed',
+          service: 'gpt-5.6-sol-reference',
+          peerId: '12'.repeat(20),
+          pricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
+        },
         contrastModels: ['kimi-k3'],
+        excludedDomains: ['medical'],
       },
     },
   };
@@ -288,6 +295,8 @@ test('loadConfig preserves and validates verifier settings', async () => {
     assert.equal(config.verifier?.auditPeerTimeoutMs, 123_456);
     assert.equal(config.verifier?.contrastSelection?.inputWeight, 0.9);
     assert.equal(config.verifier?.referenceEndpoint?.sourceId, 'trusted-reference-v1');
+    assert.deepEqual(config.verifier?.referenceEndpoint?.models['gpt-5.6-sol']?.excludedDomains, ['medical']);
+    assert.equal(config.verifier?.referenceEndpoint?.models['gpt-5.6-sol']?.referenceRoute?.service, 'gpt-5.6-sol-reference');
     assert.equal(config.verifier?.referenceMaxRequestsPerBuild, 500);
     assert.equal(config.verifier?.referenceMinimumProbeCount, 120);
     assert.equal(config.verifier?.referenceMaximumProbeCount, 240);
@@ -326,6 +335,23 @@ test('loadConfig rejects invalid verifier settings', async () => {
   await withTempConfig(JSON.stringify({ verifier: { referenceMinimumProbeCount: 105 } }), async (configPath) => {
     await assert.rejects(loadConfig(configPath), /referenceMinimumProbeCount/);
   });
+  for (const [referenceRoute, message] of [
+    [{ type: 'direct', service: 'target', peerId: '12'.repeat(20), pricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 } }, /referenceRoute\.type/],
+    [{ type: 'antseed', service: '', peerId: '12'.repeat(20), pricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 } }, /referenceRoute\.service/],
+    [{ type: 'antseed', service: 'target', peerId: 'bad', pricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 } }, /referenceRoute\.peerId/],
+    [{ type: 'antseed', service: 'target', peerId: '12'.repeat(20), pricing: { inputUsdPerMillion: -1, outputUsdPerMillion: 2 } }, /referenceRoute\.pricing\.inputUsdPerMillion/],
+  ] as const) {
+    await withTempConfig(JSON.stringify({
+      verifier: {
+        referenceEndpoint: {
+          baseUrl: 'https://reference.example/v1', sourceId: 'test', trust: 'trusted',
+          models: { target: { upstreamModel: 'target', contrastModels: ['contrast'], referenceRoute } },
+        },
+      },
+    }), async (configPath) => {
+      await assert.rejects(loadConfig(configPath), message);
+    });
+  }
   await withTempConfig(JSON.stringify({ verifier: {
     referenceMinimumProbeCount: 120,
     referenceMaximumProbeCount: 100,
@@ -363,6 +389,26 @@ test('loadConfig rejects invalid verifier settings', async () => {
     },
   } }), async (configPath) => {
     await assert.rejects(loadConfig(configPath), /must be omitted/);
+  });
+  await withTempConfig(JSON.stringify({ verifier: {
+    referenceEndpoint: {
+      baseUrl: 'https://reference.example/v1', sourceId: 'test', trust: 'trusted',
+      models: { target: {
+        upstreamModel: 'target', contrastModels: ['contrast'], excludedDomains: ['medicine'],
+      } },
+    },
+  } }), async (configPath) => {
+    await assert.rejects(loadConfig(configPath), /excludedDomains\[0\].*canonical KBF domain/);
+  });
+  await withTempConfig(JSON.stringify({ verifier: {
+    referenceEndpoint: {
+      baseUrl: 'https://reference.example/v1', sourceId: 'test', trust: 'trusted',
+      models: { target: {
+        upstreamModel: 'target', contrastModels: ['contrast'], excludedDomains: ['medical', 'medical'],
+      } },
+    },
+  } }), async (configPath) => {
+    await assert.rejects(loadConfig(configPath), /excludedDomains must not contain duplicates/);
   });
   await withTempConfig(JSON.stringify({ verifier: {
     referenceEndpoint: {

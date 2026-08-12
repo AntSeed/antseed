@@ -43,4 +43,4 @@ registerMetricsCommand(program);
 registerWrappedToolCommands(program);
 registerSystemProxyCommands(program);
 
-program.parse(process.argv);
+await program.parseAsync(process.argv);

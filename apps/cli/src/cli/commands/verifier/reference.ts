@@ -91,6 +91,7 @@ export function registerVerifierReferenceCommand(verifier: Command): void {
             referencesDir,
             config: config.verifier,
             catalog,
+            buyerProxyPort: config.buyer.proxyPort,
             requestLimiter,
             log: (message) => {
               if (progress.interactive) progress.update(model, message)
