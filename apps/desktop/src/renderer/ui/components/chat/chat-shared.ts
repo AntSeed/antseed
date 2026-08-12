@@ -210,6 +210,7 @@ export type ContentBlock = {
    *  present the renderer can build an `antseed-attachment://` URL and
    *  preview the file natively. */
   attachmentId?: string;
+  generated?: boolean;
   error?: string;
   truncated?: boolean;
   attachment?: unknown;
@@ -234,6 +235,7 @@ export type AssistantMeta = {
   tokenSource: 'estimated' | 'usage' | 'unknown';
   costUsd: number;
   latencyMs: number;
+  outputImages: number;
 };
 
 export const THINKING_PHRASES: readonly string[] = [
@@ -356,6 +358,7 @@ export function normalizeAssistantMeta(msg: ChatMessage): AssistantMeta | null {
   const peerCurrentLoad = Number.isFinite(Number(meta.peerCurrentLoad)) ? Number(meta.peerCurrentLoad) : null;
   const peerMaxConcurrency = Number.isFinite(Number(meta.peerMaxConcurrency)) ? Number(meta.peerMaxConcurrency) : null;
   const routeRequestId = typeof meta.routeRequestId === 'string' && (meta.routeRequestId as string).trim().length > 0 ? (meta.routeRequestId as string).trim() : null;
+  const outputImages = Math.max(0, Math.floor(Number(meta.outputImages) || 0));
   return {
     peerId,
     peerAddress,
@@ -372,6 +375,7 @@ export function normalizeAssistantMeta(msg: ChatMessage): AssistantMeta | null {
     tokenSource,
     costUsd: costUsd > 0 ? costUsd : 0,
     latencyMs: latencyMs > 0 ? latencyMs : 0,
+    outputImages,
   };
 }
 
@@ -432,6 +436,9 @@ export function buildChatMetaParts(msg: ChatMessage): string[] {
 
   if (assistantMeta) {
     if (assistantMeta.peerId) parts.push(`peer ${assistantMeta.peerId.slice(0, 8)}`);
+    if (assistantMeta.outputImages > 0) {
+      parts.push(`${assistantMeta.outputImages} ${assistantMeta.outputImages === 1 ? 'image' : 'images'}`);
+    }
     if (assistantMeta.totalTokens > 0) {
       const tokenParts = [`${formatCompactNumber(assistantMeta.totalTokens)} tok`];
       if (assistantMeta.inputTokens > 0 || assistantMeta.outputTokens > 0) {

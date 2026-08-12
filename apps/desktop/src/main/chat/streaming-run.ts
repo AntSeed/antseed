@@ -238,7 +238,14 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
     // and another via openai-responses, the map can return the wrong
     // protocol for the peer we're actually pinned to. Fall back to the
     // map only when we have no catalog row to read from.
-    const protocol = catalogEntry?.protocol ?? await resolveProtocolForSend(serviceId);
+    const advertisedProtocol = catalogEntry?.protocol;
+    if (advertisedProtocol === 'openai-images') {
+      return {
+        ok: false,
+        error: `Service "${serviceId}" generates images and cannot be used for text chat. Select a text-capable model.`,
+      };
+    }
+    const protocol: ChatServiceProtocol = advertisedProtocol ?? await resolveProtocolForSend(serviceId);
     const supportsMultimodal = catalogEntry?.categories?.includes('multimodal') ?? false;
     const droppedImageCount = supportsMultimodal ? 0 : attachmentImages.length;
     if (droppedImageCount > 0) {

@@ -82,6 +82,11 @@ test('Explore search finds a model by category', () => {
   assert.deepEqual(filterVprCatalog(catalog, { search: 'image' }), [catalog[1]]);
 });
 
+test('Explore search finds image-only models by their derived type', () => {
+  const image = catalogEntry({ serviceId: 'art-model', label: 'Art Model', kind: 'image' });
+  assert.deepEqual(filterVprCatalog([image], { search: 'image generation' }), [image]);
+});
+
 test('Price sort places lower priced model first', () => {
   const expensive = catalogEntry({
     serviceId: 'expensive',

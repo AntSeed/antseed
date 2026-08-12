@@ -334,11 +334,12 @@ export type DesktopBridge = {
   chatAiListConversations?: () => Promise<{ ok: boolean; data: unknown[] }>;
   chatAiListDiscoverRows?: () => Promise<{ ok: boolean; data?: unknown[]; error?: string }>;
   chatAiGetConversation?: (id: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
-  chatAiCreateConversation?: (service: string, provider?: string, peerId?: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
+  chatAiCreateConversation?: (service: string, provider?: string, peerId?: string, routeMode?: 'auto' | 'pinned') => Promise<{ ok: boolean; data?: unknown; error?: string }>;
   chatAiDeleteConversation?: (id: string) => Promise<{ ok: boolean }>;
   chatAiRenameConversation?: (id: string, title: string) => Promise<{ ok: boolean; error?: string }>;
   chatPrepareAttachments?: (conversationId: string, attachments: RawChatAttachment[]) => Promise<{ ok: boolean; data?: PreparedChatAttachment[]; error?: string }>;
   attachmentDownload?: (conversationId: string, attachmentId: string, suggestedName: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
+  chatGenerateImage?: (payload: { conversationId: string; prompt: string; peerId: string; service: string }) => Promise<{ ok: boolean; user?: { role: string; content: unknown; createdAt?: number }; assistant?: { role: string; content: unknown; createdAt?: number; meta?: Record<string, unknown> }; error?: string }>;
   chatAiSend?: (conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string, permissionMode?: ChatPermissionMode) => Promise<{ ok: boolean; error?: string }>;
   chatAiSendStream?: (conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string, permissionMode?: ChatPermissionMode) => Promise<{ ok: boolean; error?: string; stopReason?: ChatAiStreamStopReason }>;
   chatPeerPermissionModeGet?: (peerId: string) => Promise<{ ok: boolean; mode?: ChatPermissionMode; error?: string }>;
@@ -349,7 +350,7 @@ export type DesktopBridge = {
   telegramDisconnect?: () => Promise<{ ok: boolean; data?: TelegramBridgeStatus; error?: string }>;
   onTelegramStatusChanged?: (handler: (data: TelegramBridgeStatus) => void) => () => void;
   chatAiAbort?: (conversationId?: string) => Promise<{ ok: boolean }>;
-  chatAiSelectPeer?: (payload: { conversationId?: string | null; peerId?: string | null; service?: string | null; provider?: string | null }) => Promise<{ ok: boolean; error?: string }>;
+  chatAiSelectPeer?: (payload: { conversationId?: string | null; peerId?: string | null; service?: string | null; provider?: string | null; routeMode?: 'auto' | 'pinned' | null }) => Promise<{ ok: boolean; error?: string }>;
   chatSetBuyerDefaultRoute?: (payload: { peerId: string; service: string }) => Promise<{ ok: boolean; error?: string }>;
   chatSyncModelPicker?: (payload: import('../../shared/model-picker.js').ModelPickerSnapshot) => Promise<{ ok: boolean }>;
   onChatDefaultRouteChanged?: (handler: (data: { peerId: string; service: string; provider: string | null }) => void) => () => void;

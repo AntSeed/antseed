@@ -61,7 +61,10 @@ function parseOptionalBoolEnv(value: string | undefined): boolean | null {
 }
 
 const PUBLIC_BASE_RPC_HOSTS = new Set([
+  'base.gateway.tenderly.co',
+  'base-public.nodies.app',
   'base.publicnode.com',
+  'base-rpc.publicnode.com',
   'base.drpc.org',
   'base.llamarpc.com',
   'mainnet.base.org',

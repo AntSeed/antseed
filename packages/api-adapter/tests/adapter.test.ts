@@ -1088,6 +1088,26 @@ describe('transformRequest responses to chat', () => {
     expect(body.tool_choice).toBe('auto');
   });
 
+  it('omits tool_choice when a Codex compaction request has no tools', () => {
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        input: [{
+          role: 'user',
+          content: [{ type: 'input_text', text: 'summarize the conversation' }],
+        }],
+        tools: [],
+        tool_choice: 'auto',
+        parallel_tool_calls: false,
+      })),
+    });
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+
+    expect(body.tools).toBeUndefined();
+    expect(body.tool_choice).toBeUndefined();
+  });
+
   it('omits tools when only built-in Responses tools are provided', () => {
     const request = makeResponsesRequest({
       body: new TextEncoder().encode(JSON.stringify({
@@ -1256,6 +1276,21 @@ describe('transformRequest responses to chat', () => {
 });
 
 describe('transformRequest responses to anthropic', () => {
+  it('omits tool_choice when no tools are available', () => {
+    const result = transformRequest(makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        input: 'summarize the conversation',
+        tools: [],
+        tool_choice: 'auto',
+      })),
+    }), { from: 'openai-responses', to: 'anthropic-messages' });
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+
+    expect(body.tools).toBeUndefined();
+    expect(body.tool_choice).toBeUndefined();
+  });
+
   it('converts responses input, tools, and shared fields to anthropic messages', () => {
     const result = transformRequest(makeResponsesRequest({
       body: new TextEncoder().encode(JSON.stringify({
@@ -1628,6 +1663,26 @@ describe('transformResponse chat to responses', () => {
 });
 
 describe('transformRequest chat to responses', () => {
+  it('omits tool_choice when no tools are available', () => {
+    const request: SerializedHttpRequest = {
+      requestId: 'req-chat-to-resp-no-tools',
+      method: 'POST',
+      path: '/v1/chat/completions',
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        messages: [{ role: 'user', content: 'summarize the conversation' }],
+        tools: [],
+        tool_choice: 'auto',
+      })),
+    };
+    const result = transformRequest(request, { from: 'openai-chat-completions', to: 'openai-responses' });
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+
+    expect(body.tools).toBeUndefined();
+    expect(body.tool_choice).toBeUndefined();
+  });
+
   it('preserves shared request fields when converting chat to responses', () => {
     const request: SerializedHttpRequest = {
       requestId: 'req-chat-to-resp',

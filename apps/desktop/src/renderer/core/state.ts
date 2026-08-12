@@ -58,11 +58,25 @@ export type ConfigFormData = {
   cryptoChainId: string;
 };
 
+export type ServiceCapabilitiesView = {
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  inputs?: string[];
+  outputs?: string[];
+  reasoning?: boolean;
+  toolUse?: boolean;
+  structuredOutput?: boolean;
+  supportedParameters?: string[];
+};
+
+export type VprModelKind = 'text' | 'image';
+
 export type ChatServiceOptionEntry = {
   id: string;
   label: string;
   provider: string;
   protocol: string;
+  capabilities?: ServiceCapabilitiesView | null;
   count: number;
   value: string;
   peerId: string;
@@ -114,6 +128,8 @@ export type VprModelCatalogEntry = {
   label: string;
   peerCount: number;
   categories: string[];
+  kind: VprModelKind;
+  protocols: string[];
   minInputUsdPerMillion: number | null;
   maxInputUsdPerMillion: number | null;
   minOutputUsdPerMillion: number | null;
@@ -148,6 +164,9 @@ export type DiscoverRow = {
   categories: string[];
   provider: string;            // internal, not shown
   protocol: string;
+  /** Seller-specific capability hints. These are deliberately not merged at
+   * model level because different peers may serve different model variants. */
+  capabilities?: ServiceCapabilitiesView | null;
 
   // Peer
   peerId: string;
@@ -207,6 +226,12 @@ export type DiscoverRow = {
   networkOutputTokens: string | null;
 
   // Derived — encoded selection for existing chat open path
+  // Peer health (buyer-proxy cooldown). A peer that recently stopped
+  // responding is deprioritized by auto routing until its cooldown lapses.
+  peerCooldownUntil: number | null;
+  peerFailureStreak: number;
+  peerLastFailureReason: string | null;
+
   selectionValue: string;
 };
 
@@ -331,6 +356,12 @@ export type RendererUiState = {
   /** IDs of all conversations currently running a request, across the whole app. */
   chatSendingConversationIds: string[];
   chatError: string | null;
+  /**
+   * Non-error routing notice, e.g. "peer X isn't responding, retrying on Y".
+   * Kept separate from `chatError` because a successful failover is not a
+   * failure and must not be rendered as one.
+   */
+  chatRoutingNotice: string | null;
   chatRoutedPeer: string;
   chatRoutedPeerId: string;
   chatSessionStarted: string;
@@ -349,7 +380,10 @@ export type RendererUiState = {
    */
   vprRoutableRows: DiscoverRow[];
   vprModelCatalog: VprModelCatalogEntry[];
+  /** Main text/connected-app route. Image models never replace this. */
   vprRouteSelection: VprRouteSelection;
+  /** Dedicated internal-chat image route, set only by “Use in chat”. */
+  chatImageRouteSelection: VprRouteSelection | null;
   /** Remembered seller pin per model (`provider:serviceId` -> peer id), so a
    * pinned model stays pinned across model switches. */
   vprModelPins: Record<string, string>;
@@ -491,6 +525,7 @@ export function createInitialUiState(): RendererUiState {
     chatSendingConversationId: null,
     chatSendingConversationIds: [],
     chatError: null,
+    chatRoutingNotice: null,
     chatRoutedPeer: '',
     chatRoutedPeerId: '',
     chatSessionStarted: '',
@@ -509,6 +544,7 @@ export function createInitialUiState(): RendererUiState {
       mode: 'auto',
       peerId: null,
     },
+    chatImageRouteSelection: null,
     vprModelPins: {},
     vprRoutingPreferences: {
       autoRouting: true,

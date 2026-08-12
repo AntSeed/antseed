@@ -25,7 +25,12 @@ import { peerIdToAddress, type PeerId } from '@antseed/protocol/peer-id';
 import type { SellerAddressResolver } from './seller-address-resolver.js';
 import type { PeerMetadata } from '@antseed/protocol/peer-metadata';
 import { BuyerChannelStore, CHANNEL_ROLE, CHANNEL_STATUS, type StoredChannel } from './channel-store-types.js';
-import { advanceUsageMetadata, CountedRequestTracker, RequestServiceTracker } from './channel-usage-accounting.js';
+import {
+  advanceUsageMetadata,
+  CountedRequestTracker,
+  normalizeRequestUsageDelta,
+  RequestServiceTracker,
+} from './channel-usage-accounting.js';
 import {
   estimateCostFromBytes,
   computeCostUsdc,
@@ -34,6 +39,7 @@ import {
 import type { UnitBillingContext, UnitBillingModelV1, UnitBillingUsage } from '@antseed/protocol/billing';
 import type { ImageRequestFacts } from '@antseed/api-adapter';
 import { evaluateUnitBilling, validateUnitBillingUsage } from '@antseed/protocol/billing';
+import { buyerFault, faultCodeOf } from './errors.js';
 
 /** Default tolerance: accept seller claims up to 1.4x buyer's estimate. */
 const DEFAULT_COST_TOLERANCE = 1.4;
@@ -102,11 +108,11 @@ interface StoredBuyerRequestBillingEntry extends BuyerRequestBillingEntry {
  * One request's newly authorized spend, reported as it is signed.
  *
  * Both the buyer-initiated (signPerRequestAuth) and seller-initiated
- * (handleNeedAuth) paths can advance the cumulative for the same request, so
- * a single request may produce more than one event; the amounts are disjoint
- * deltas and sum to the request's total. Token counts follow the same
- * lower-bound rule as metadata attribution — whichever path counts the request
- * first reports the tokens, the other reports zero.
+ * (handleNeedAuth) paths can observe the same request. Only the first path to
+ * account for a delivered response reports its service amount and tokens; a
+ * racing duplicate reports zero usage. Headroom-only authorizations may still
+ * produce an event for the newly signed channel delta without claiming that a
+ * response was delivered.
  */
 export interface BuyerSpendEvent {
   sellerPeerId: string;
@@ -319,7 +325,7 @@ export class BuyerPaymentManager {
   ): Promise<string> {
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
-      throw new Error(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}...`);
+      throw buyerFault(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}...`, 'buyer-session-state');
     }
 
     const cumulativeAmount = this._cumulativeAmount.get(sellerPeerId) ?? BigInt(session.authMax);
@@ -353,7 +359,7 @@ export class BuyerPaymentManager {
   ): Promise<string> {
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
-      throw new Error(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}...`);
+      throw buyerFault(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}...`, 'buyer-session-state');
     }
 
     const currentCumulative = this._cumulativeAmount.get(sellerPeerId) ?? BigInt(session.authMax);
@@ -411,7 +417,7 @@ export class BuyerPaymentManager {
   ): Promise<CloseChannelRequestPayload> {
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
-      throw new Error(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}...`);
+      throw buyerFault(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}...`, 'buyer-session-state');
     }
 
     const cumulativeAmount = this._cumulativeAmount.get(sellerPeerId) ?? BigInt(session.authMax);
@@ -444,7 +450,7 @@ export class BuyerPaymentManager {
     const session = this.getActiveSession(sellerPeerId);
     const salt = this._reserveSalt.get(sellerPeerId);
     if (!session || !salt) {
-      throw new Error(`[BuyerPayment] No replayable reserve for seller ${sellerPeerId.slice(0, 12)}...`);
+      throw buyerFault(`[BuyerPayment] No replayable reserve for seller ${sellerPeerId.slice(0, 12)}...`, 'buyer-session-state');
     }
 
     // Force a fresh AuthAck after replaying the reserve path.
@@ -519,9 +525,9 @@ export class BuyerPaymentManager {
 
   /**
    * Both signPerRequestAuth (buyer-initiated) and handleNeedAuth (seller-initiated)
-   * can fire for the same request when the proactive auth doesn't fully cover the
-   * seller's required cumulative. Whichever path counts a request's tokens first
-   * records its requestId here so the other path attributes only the amount delta.
+   * can fire for the same delivered response. Whichever path accounts for the
+   * response first records its requestId here so the other path does not
+   * duplicate its service amount, token totals, or request count.
    */
   private readonly _serviceTokensCounted = new CountedRequestTracker();
 
@@ -878,7 +884,10 @@ export class BuyerPaymentManager {
   ): Promise<PerRequestAuthResult> {
     const session = this.getActiveSession(sellerPeerId);
     if (!session) {
-      throw new Error(`[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}... — call authorizeSpending() first`);
+      throw buyerFault(
+        `[BuyerPayment] No active session for seller ${sellerPeerId.slice(0, 12)}... — call authorizeSpending() first`,
+        'buyer-session-state',
+      );
     }
 
     // Prefer reported token counts (from seller headers or buyer's parsed response usage)
@@ -1000,21 +1009,19 @@ export class BuyerPaymentManager {
     this._cumulativeAmount.set(sellerPeerId, newAmount);
     const signedDelta = newAmount - prevAmount;
 
-    // Update cumulative metadata
-    // If handleNeedAuth already counted this request (seller-initiated NeedAuth
-    // raced ahead), skip service attribution entirely: service totals are
-    // documented as lower bounds, so undercounting beats double-counting.
+    // Update cumulative metadata. NeedAuth may have counted this response
+    // first, so deduplicate the response's service amount and usage together.
     const alreadyCounted = this._serviceTokensCounted.has(responseStats.requestId);
     const newMeta = this._advanceUsageMetadata(
       this._metadata.get(sellerPeerId),
-      alreadyCounted ? undefined : responseStats.service,
-      {
+      responseStats.service,
+      normalizeRequestUsageDelta({
         amount: signedDelta,
         inputTokens: estimatedInputTokens,
         cachedInputTokens: estimatedCachedInputTokens,
         outputTokens: estimatedOutputTokens,
         requests: 1n,
-      },
+      }, { deliveredResponse: true, alreadyCounted }),
     );
     if (!alreadyCounted) this._serviceTokensCounted.mark(responseStats.requestId);
     this._metadata.set(sellerPeerId, newMeta);
@@ -1274,30 +1281,29 @@ export class BuyerPaymentManager {
 
     debugLog(`[BuyerPayment] NeedAuth: channel=${session.sessionId.slice(0, 18)}... required=${requiredCumulativeAmount} effective=${effectiveAmount}`);
 
-    // Advance cumulative metadata. requestCount always increments so the
-    // on-chain metadata stays consistent even when older sellers omit token
-    // fields; absent token fields contribute 0 to the running totals.
+    // Only NeedAuth frames with response cost/usage evidence represent a
+    // completed request. Budget-exhausted/headroom frames can advance the
+    // channel authorization, but must not increment request or token usage.
+    const deliveredResponse = payload.lastRequestCost != null || payload.billingUsage != null;
     const signedDelta = effectiveAmount - currentCumulative;
     const serviceAmountDelta = acceptedServiceCost > 0n
       ? (acceptedServiceCost < signedDelta ? acceptedServiceCost : signedDelta)
       : 0n;
-    // If signPerRequestAuth already counted this request (buyer-initiated auth
-    // raced ahead but didn't fully cover the seller's required cumulative), skip
-    // service attribution entirely: service totals are documented as lower
-    // bounds, so undercounting beats double-counting.
+    // If post-response signing counted this response first, deduplicate the
+    // response's service amount and usage together.
     const alreadyCounted = this._serviceTokensCounted.has(payload.requestId);
     const newMeta = this._advanceUsageMetadata(
       this._metadata.get(sellerPeerId),
-      alreadyCounted ? undefined : buyerService,
-      {
+      buyerService,
+      normalizeRequestUsageDelta({
         amount: serviceAmountDelta,
         inputTokens: reportedInputTokens,
         cachedInputTokens: reportedCachedInputTokens,
         outputTokens: reportedOutputTokens,
         requests: 1n,
-      },
+      }, { deliveredResponse, alreadyCounted }),
     );
-    if (!alreadyCounted) this._serviceTokensCounted.mark(payload.requestId);
+    if (deliveredResponse && !alreadyCounted) this._serviceTokensCounted.mark(payload.requestId);
     this._metadata.set(sellerPeerId, newMeta);
 
     // Send via PaymentMux
@@ -1307,9 +1313,9 @@ export class BuyerPaymentManager {
         sellerPeerId,
         requestId: payload.requestId ?? null,
         amountUsdc: signedDelta.toString(),
-        inputTokens: (alreadyCounted ? 0n : reportedInputTokens).toString(),
-        cachedInputTokens: (alreadyCounted ? 0n : reportedCachedInputTokens).toString(),
-        outputTokens: (alreadyCounted ? 0n : reportedOutputTokens).toString(),
+        inputTokens: (deliveredResponse && !alreadyCounted ? reportedInputTokens : 0n).toString(),
+        cachedInputTokens: (deliveredResponse && !alreadyCounted ? reportedCachedInputTokens : 0n).toString(),
+        outputTokens: (deliveredResponse && !alreadyCounted ? reportedOutputTokens : 0n).toString(),
       });
       debugLog(`[BuyerPayment] NeedAuth responded: new cumulativeAmount=${effectiveAmount}`);
     } catch {
@@ -1355,12 +1361,13 @@ export class BuyerPaymentManager {
     try {
       const balance = await this.getBalance();
       if (balance.available < additionalReserve) {
-        throw new Error(
+        throw buyerFault(
           `Insufficient buyer deposits for reserve top-up: available=${balance.available} required=${additionalReserve}`,
+          'buyer-deposits-insufficient',
         );
       }
     } catch (err) {
-      if (err instanceof Error && err.message.startsWith('Insufficient buyer deposits')) {
+      if (faultCodeOf(err) === 'buyer-deposits-insufficient') {
         throw err;
       }
       debugWarn(

@@ -141,6 +141,17 @@
   min-width: 0;
 }
 
+.image-badge {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(var(--brand-rgb), 0.12);
+  color: var(--brand);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
 .item-pricing {
   font-size: 11px;
   color: var(--text-muted);

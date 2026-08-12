@@ -1,6 +1,7 @@
 import type { DiscoverRow, VprModelCatalogEntry, VprSelectedModel } from '../../core/state';
 import { canonicalModelKey, displayModelLabel, sameCanonicalModel } from './model-identity';
 import { isFreeCatalogEntry, selectRecommendedVprCatalog } from './recommended';
+import { serviceModelKind } from './model-capabilities';
 
 const VPR_MODEL_CATALOG_SEPARATOR = '\u0001';
 
@@ -34,6 +35,10 @@ function maxPrice(values: Array<number | null>): number | null {
 function projectGroupToEntry(group: ModelCatalogGroup): VprModelCatalogEntry {
   const firstRow = group.rows[0];
   const categories = Array.from(new Set(group.rows.flatMap((row) => row.categories))).sort((a, b) => a.localeCompare(b));
+  const protocols = [...new Set(group.rows.map((row) => row.protocol))].sort();
+  const kind = group.rows.some((row) => serviceModelKind(row.protocol, row.capabilities) === 'image')
+    ? 'image'
+    : 'text';
   const peerIds = new Set(group.rows.map((row) => row.peerId));
   const pricedRows = group.rows
     .map((row) => ({ row, total: totalRowPrice(row) }))
@@ -63,6 +68,8 @@ function projectGroupToEntry(group: ModelCatalogGroup): VprModelCatalogEntry {
     label,
     peerCount: peerIds.size,
     categories,
+    kind,
+    protocols,
     minInputUsdPerMillion: bestPricedRoute?.row.inputUsdPerMillion ?? null,
     maxInputUsdPerMillion: maxPrice(group.rows.map((row) => row.inputUsdPerMillion)),
     minOutputUsdPerMillion: bestPricedRoute?.row.outputUsdPerMillion ?? null,
@@ -98,16 +105,17 @@ export function selectDefaultVprModel(
   catalog: VprModelCatalogEntry[],
   current: VprSelectedModel | null,
 ): VprSelectedModel | null {
-  if (current && findCatalogEntry(catalog, current.provider, current.serviceId)) return current;
+  if (current && findCatalogEntry(catalog, current.provider, current.serviceId)?.kind === 'text') return current;
   // First launch defaults to a free model — trying the VPR must cost nothing
   // before any balance exists. Prefer a free model from the recommended
   // lineup, then any free model on the network, then the recommended/popular
   // fallback for networks without a free seller.
-  const recommended = selectRecommendedVprCatalog(catalog);
+  const textCatalog = catalog.filter((entry) => entry.kind === 'text');
+  const recommended = selectRecommendedVprCatalog(textCatalog);
   const first = recommended.find(isFreeCatalogEntry)
-    ?? catalog.find(isFreeCatalogEntry)
+    ?? textCatalog.find(isFreeCatalogEntry)
     ?? recommended[0]
-    ?? catalog[0];
+    ?? textCatalog[0];
   if (!first) return null;
   return {
     provider: first.provider,
