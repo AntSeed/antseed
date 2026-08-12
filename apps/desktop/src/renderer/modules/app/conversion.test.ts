@@ -8,6 +8,7 @@ import {
   computeProspectiveUsd,
   computeRetrospectiveUsd,
   initConversionModule,
+  mergeCounters,
 } from './conversion';
 
 const INSTALL_DATE_KEY = 'antseed.desktop.conversion.installDate';
@@ -198,6 +199,28 @@ test('prospective value rounds to the nearest fifty cents', () => {
   assert.equal(result.prospectiveUsd, 14.5);
 });
 
+test('prospective value treats zero-priced routes as unknown instead of a discount', () => {
+  const freeInputTier = catalogEntry({
+    serviceId: 'deepseek-v4-flash',
+    label: 'DeepSeek V4 Flash',
+    minInputUsdPerMillion: 0,
+    maxInputUsdPerMillion: 0,
+    minOutputUsdPerMillion: 0.2,
+    maxOutputUsdPerMillion: 0.2,
+  });
+  const map: OpenRouterReferenceMap = {
+    ...referenceMap,
+    deepseekv4flash: { input: 0.14, output: 0.28 },
+  };
+
+  assert.equal(computeProspectiveUsd([freeInputTier], map), null);
+
+  const mixed = computeProspectiveUsd([freeInputTier, catalogEntry()], map);
+  assert.ok(mixed);
+  assert.equal(mixed.discount, 0.5);
+  assert.equal(mixed.prospectiveUsd, 20);
+});
+
 test('D1 publishes the Home offer directly after a qualifying response', async () => {
   const now = new Date(2026, 7, 11, 12, 0, 0).getTime();
   const storage = new MemoryStorage();
@@ -233,17 +256,18 @@ test('D1 publishes the Home offer directly after a qualifying response', async (
   assert.equal(uiState.conversionOffer?.requestsCount, 15);
 });
 
-test('D1 remains hidden during the warmup period', async () => {
-  const now = new Date(2026, 7, 11, 12, 0, 0).getTime();
+test('D1 remains hidden until the 3-minute warmup elapses', async () => {
+  const installTime = new Date(2026, 7, 11, 12, 0, 0).getTime();
   const storage = new MemoryStorage();
-  storage.setItem(INSTALL_DATE_KEY, localDay(now));
-  storage.setItem(INSTALLED_AT_KEY, String(now));
+  storage.setItem(INSTALL_DATE_KEY, localDay(installTime));
+  storage.setItem(INSTALLED_AT_KEY, String(installTime));
   const uiState = makeEligibleState();
+  let currentTime = installTime;
   const module = initConversionModule({
     uiState,
     dependencies: {
       storage,
-      now: () => now,
+      now: () => currentTime,
       loadReferencePrices: async () => referenceMap,
       notifyChanged: () => {},
     },
@@ -256,6 +280,15 @@ test('D1 remains hidden during the warmup period', async () => {
   });
   await flushPromises();
   assert.equal(uiState.conversionOffer, null);
+
+  currentTime = installTime + 3 * 60_000;
+  module.onResponseCompleted('conversation-1', {
+    inputTokens: 500_000,
+    outputTokens: 500_000,
+    service: 'gpt-5.6-sol',
+  });
+  await flushPromises();
+  assert.equal(uiState.conversionOffer?.variant, 'd1');
 });
 
 test('D1 suppresses the offer when any usage or conversation gate is missing', async () => {
@@ -343,6 +376,178 @@ test('D1 request and output thresholds are independent alternatives', async () =
     await flushPromises();
     assert.equal(uiState.conversionOffer?.variant, 'd1', item.name);
   }
+});
+
+test('D1 counts completions in a tool conversation that never opened in the chat view', async () => {
+  const now = new Date(2026, 7, 11, 12, 0, 0).getTime();
+  const storage = new MemoryStorage();
+  primeD1(storage, now);
+  const uiState = makeEligibleState();
+  uiState.chatActiveConversation = null;
+  uiState.chatMessages = [];
+  const module = initConversionModule({
+    uiState,
+    dependencies: {
+      storage,
+      now: () => now,
+      loadReferencePrices: async () => referenceMap,
+      notifyChanged: () => {},
+    },
+  });
+
+  for (let index = 0; index < 2; index += 1) {
+    module.onResponseCompleted('codex-desktop:thread-1', {
+      inputTokens: 500_000,
+      outputTokens: 500_000,
+      service: 'gpt-5.6-sol',
+    });
+    await flushPromises();
+    assert.equal(uiState.conversionOffer, null);
+  }
+
+  module.onResponseCompleted('codex-desktop:thread-1', {
+    inputTokens: 500_000,
+    outputTokens: 500_000,
+    service: 'gpt-5.6-sol',
+  });
+  await flushPromises();
+  assert.equal(uiState.conversionOffer?.variant, 'd1');
+});
+
+test('D1 retrospective falls back to lifetime usage when daily counters carry no tokens', async () => {
+  const now = new Date(2026, 7, 11, 12, 0, 0).getTime();
+  const storage = new MemoryStorage();
+  primeD1(storage, now, { requests: 25, inputTokens: 0, outputTokens: 0 });
+  const uiState = makeEligibleState();
+  setLifetimeUsage(uiState, 25);
+  const module = initConversionModule({
+    uiState,
+    dependencies: {
+      storage,
+      now: () => now,
+      loadReferencePrices: async () => referenceMap,
+      notifyChanged: () => {},
+    },
+  });
+
+  module.onResponseCompleted('conversation-1', {
+    inputTokens: 0,
+    outputTokens: 0,
+    service: 'gpt-5.6-sol',
+  });
+  await flushPromises();
+  assert.equal(uiState.conversionOffer?.variant, 'd1');
+  assert.notEqual(uiState.conversionOffer?.retrospectiveUsd, '');
+});
+
+test('persistCounters never lowers already-persisted totals', async () => {
+  const now = new Date(2026, 7, 11, 12, 0, 0).getTime();
+  const day = localDay(now);
+  const storage = new MemoryStorage();
+  storage.setItem(INSTALL_DATE_KEY, day);
+  storage.setItem(INSTALLED_AT_KEY, String(now));
+  storage.setItem(STATE_KEY, 'armed_d1');
+  const seed = {
+    lifetimeRequests: 5,
+    summariesSeeded: true,
+    days: {
+      [day]: {
+        requests: 5,
+        inputTokens: 100_000,
+        outputTokens: 1_000,
+        services: { deepseekv4flash: { inputTokens: 100_000, outputTokens: 1_000 } },
+      },
+    },
+  };
+  storage.setItem(COUNTERS_KEY, JSON.stringify(seed));
+  const uiState = makeEligibleState();
+  const module = initConversionModule({
+    uiState,
+    dependencies: {
+      storage,
+      now: () => now,
+      loadReferencePrices: async () => referenceMap,
+      notifyChanged: () => {},
+    },
+  });
+
+  // Simulate a newer write from a sibling module instance that advanced the
+  // totals beyond this instance's in-memory copy.
+  storage.setItem(COUNTERS_KEY, JSON.stringify({
+    lifetimeRequests: 25,
+    summariesSeeded: true,
+    days: {
+      [day]: {
+        requests: 25,
+        inputTokens: 6_000_000,
+        outputTokens: 50_000,
+        services: { deepseekv4flash: { inputTokens: 6_000_000, outputTokens: 50_000 } },
+      },
+    },
+  }));
+
+  // This (stale) instance completes a response and tries to persist its lower
+  // in-memory totals — the merge must keep the higher persisted numbers.
+  module.onResponseCompleted('conversation-1', {
+    inputTokens: 1000,
+    outputTokens: 1000,
+    service: 'gpt-5.6-sol',
+  });
+  await flushPromises();
+
+  const persisted = JSON.parse(storage.getItem(COUNTERS_KEY) ?? '{}') as {
+    lifetimeRequests: number;
+    days: Record<string, { requests: number; inputTokens: number; outputTokens: number }>;
+  };
+  assert.equal(persisted.lifetimeRequests, 25);
+  assert.equal(persisted.days[day].requests, 25);
+  assert.equal(persisted.days[day].inputTokens, 6_000_000);
+  assert.equal(persisted.days[day].outputTokens, 50_000);
+});
+
+test('mergeCounters keeps the higher totals per day and service', () => {
+  const day = '2026-08-11';
+  const higher = {
+    lifetimeRequests: 25,
+    summariesSeeded: true,
+    days: {
+      [day]: {
+        requests: 25,
+        inputTokens: 6_000_000,
+        outputTokens: 50_000,
+        services: {
+          deepseekv4flash: { inputTokens: 6_000_000, outputTokens: 50_000 },
+          gpt56sol: { inputTokens: 100, outputTokens: 200 },
+        },
+      },
+    },
+  };
+  const lower = {
+    lifetimeRequests: 3,
+    summariesSeeded: false,
+    days: {
+      [day]: {
+        requests: 3,
+        inputTokens: 0,
+        outputTokens: 0,
+        services: { deepseekv4flash: { inputTokens: 0, outputTokens: 0 } },
+      },
+      '2026-08-10': {
+        requests: 5,
+        inputTokens: 1,
+        outputTokens: 2,
+        services: {},
+      },
+    },
+  };
+
+  const merged = mergeCounters(higher, lower);
+  assert.equal(merged.lifetimeRequests, 25);
+  assert.equal(merged.days[day].requests, 25);
+  assert.equal(merged.days[day].inputTokens, 6_000_000);
+  assert.equal(merged.days[day].services.deepseekv4flash.inputTokens, 6_000_000);
+  assert.equal(merged.days[day].services.gpt56sol.inputTokens, 100);
+  assert.equal(merged.days['2026-08-10'].requests, 5);
 });
 
 test('day rollover lazily arms D2 and uses the lower lifetime threshold', async () => {

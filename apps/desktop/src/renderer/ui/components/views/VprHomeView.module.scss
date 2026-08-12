@@ -488,11 +488,11 @@
   width: 100%;
   display: flex;
   align-items: flex-start;
-  gap: 12px;
-  padding: 16px;
-  border: 1px solid rgba(var(--brand-rgb), 0.65);
+  gap: 8px;
+  padding: 14px 12px 14px 16px;
   border-radius: 16px;
-  background: var(--bg-card);
+  background:
+    linear-gradient(100deg, #047452 0%, var(--accent-green) 55%, #24a06c 100%);
   box-shadow: var(--shadow-sm);
 }
 
@@ -500,60 +500,26 @@
   flex: 1 1 auto;
   min-width: 0;
   display: grid;
-  gap: 8px;
-}
-
-.balanceTitle {
-  color: var(--text-primary);
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 20px;
-}
-
-.balanceText {
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 16px;
-}
-
-.balanceDivider {
-  height: 1px;
-  background: var(--border);
-}
-
-.balanceOffer {
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 18px;
-}
-
-.balanceActions {
-  display: flex;
-  gap: 8px;
-  padding-top: 2px;
-}
-
-.balancePrimary,
-.balanceSecondary {
-  padding: 7px 14px;
-  border-radius: 8px;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: transparent;
   font: inherit;
-  font-size: 12px;
-  font-weight: 600;
+  text-align: left;
   cursor: pointer;
 }
 
-.balancePrimary {
-  border: 1px solid var(--text-primary);
-  background: var(--text-primary);
-  color: var(--bg-card);
+.balanceTitle {
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 24px;
 }
 
-.balanceSecondary {
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-primary);
+.balanceText {
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  line-height: 16px;
 }
 
 .balanceClose {
@@ -566,12 +532,12 @@
   border: none;
   border-radius: 50%;
   background: transparent;
-  color: var(--text-muted);
+  color: rgba(255, 255, 255, 0.8);
   cursor: pointer;
 }
 
 .balanceClose:hover {
-  color: var(--text-primary);
+  color: #ffffff;
 }
 
 /* ---------- Conversion card ---------- */

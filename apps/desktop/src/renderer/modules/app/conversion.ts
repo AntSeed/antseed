@@ -130,7 +130,7 @@ export function computeProspectiveUsd(
     if (
       networkInput === null || networkOutput === null
       || !Number.isFinite(networkInput) || !Number.isFinite(networkOutput)
-      || networkInput < 0 || networkOutput < 0
+      || networkInput <= 0 || networkOutput <= 0
       || reference?.input === null || reference?.output === null
       || reference?.input === undefined || reference?.output === undefined
     ) continue;
@@ -247,6 +247,52 @@ function parseCounters(raw: string | null): ConversionCounters {
   };
 }
 
+/**
+ * Merge two counter snapshots, keeping the higher totals per day. Counters
+ * must only ever grow: a reload or a stale HMR module instance that still
+ * holds lower in-memory counts must never clobber the persisted totals.
+ */
+export function mergeCounters(
+  existing: ConversionCounters,
+  incoming: ConversionCounters,
+): ConversionCounters {
+  const days: ConversionCounters['days'] = {};
+  for (const day of new Set([...Object.keys(existing.days), ...Object.keys(incoming.days)])) {
+    const prior = existing.days[day];
+    const next = incoming.days[day];
+    if (!prior) {
+      days[day] = next;
+      continue;
+    }
+    if (!next) {
+      days[day] = prior;
+      continue;
+    }
+    const services: ConversionDayCounter['services'] = {};
+    for (const service of new Set([...Object.keys(prior.services), ...Object.keys(next.services)])) {
+      const priorService = prior.services[service];
+      const nextService = next.services[service];
+      services[service] = priorService && nextService
+        ? {
+            inputTokens: Math.max(priorService.inputTokens, nextService.inputTokens),
+            outputTokens: Math.max(priorService.outputTokens, nextService.outputTokens),
+          }
+        : priorService ?? nextService;
+    }
+    days[day] = {
+      requests: Math.max(prior.requests, next.requests),
+      inputTokens: Math.max(prior.inputTokens, next.inputTokens),
+      outputTokens: Math.max(prior.outputTokens, next.outputTokens),
+      services,
+    };
+  }
+  return {
+    lifetimeRequests: Math.max(existing.lifetimeRequests, incoming.lifetimeRequests),
+    summariesSeeded: existing.summariesSeeded || incoming.summariesSeeded,
+    days,
+  };
+}
+
 function validState(value: string | null): ConversionState | null {
   return value === 'armed_d1'
     || value === 'armed_d2'
@@ -303,6 +349,7 @@ export function initConversionModule({
   let state: ConversionState = 'armed_d1';
   let counters: ConversionCounters = { lifetimeRequests: 0, summariesSeeded: false, days: {} };
   let hasChannel = false;
+  const turnsByConversation = new Map<string, number>();
 
   function disable(): void {
     enabled = false;
@@ -348,7 +395,14 @@ export function initConversionModule({
   }
 
   function persistCounters(): boolean {
-    return write(COUNTERS_KEY, JSON.stringify(counters));
+    if (!enabled || !storage) return false;
+    try {
+      const merged = mergeCounters(parseCounters(storage.getItem(COUNTERS_KEY)), counters);
+      counters = merged;
+      return write(COUNTERS_KEY, JSON.stringify(merged));
+    } catch {
+      return write(COUNTERS_KEY, JSON.stringify(counters));
+    }
   }
 
   function persistState(next: ConversionState): boolean {
@@ -380,8 +434,9 @@ export function initConversionModule({
     }
   }
 
-  function recordCompletion(usage: ConversionCompletionUsage): void {
+  function recordCompletion(conversationId: string, usage: ConversionCompletionUsage): void {
     seedSummaries();
+    turnsByConversation.set(conversationId, (turnsByConversation.get(conversationId) ?? 0) + 1);
     const day = localCalendarDay(now());
     pruneCounters(day);
     const counter = counters.days[day] ?? emptyCounter();
@@ -411,10 +466,15 @@ export function initConversionModule({
   }
 
   function visibleUserTurns(conversationId: string): number {
-    if (conversationId !== uiState.chatActiveConversation || !Array.isArray(uiState.chatMessages)) return 0;
-    return uiState.chatMessages.filter((message) => (
+    const visible = conversationId === uiState.chatActiveConversation && Array.isArray(uiState.chatMessages)
+      ? uiState.chatMessages.filter((message) => (
       message && typeof message === 'object' && (message as { role?: unknown }).role === 'user'
-    )).length;
+      )).length
+      : 0;
+    // codex-desktop and other tool conversations never open in the chat view,
+    // so the renderer snapshot is empty for them. Count completions observed
+    // in the completing conversation as user turns instead.
+    return Math.max(visible, turnsByConversation.get(conversationId) ?? 0);
   }
 
   function hasDepositInState(): boolean {
@@ -469,6 +529,20 @@ export function initConversionModule({
         catalog: uiState.vprModelCatalog,
         referenceMap,
       })
+        // Completions from tool conversations (codex-desktop etc.) record the
+        // request count but often carry no per-response token metadata, so the
+        // daily counter can be token-less even when real usage exists. Fall
+        // back to the buyer daemon's lifetime totals rather than rendering an
+        // empty "worth $".
+        ?? (today.inputTokens + today.outputTokens === 0
+          ? computeRetrospectiveUsd({
+            services: lifetimeServices(),
+            totalInputTokens: finiteNonNegative(uiState.creditsBuyerUsage?.totalInputTokens),
+            totalOutputTokens: finiteNonNegative(uiState.creditsBuyerUsage?.totalOutputTokens),
+            catalog: uiState.vprModelCatalog,
+            referenceMap,
+          })
+          : null)
       : computeRetrospectiveUsd({
         services: lifetimeServices(),
         totalInputTokens: finiteNonNegative(uiState.creditsBuyerUsage?.totalInputTokens),
@@ -566,7 +640,7 @@ export function initConversionModule({
   return {
     onResponseCompleted(conversationId, usage) {
       if (!enabled) return;
-      recordCompletion(usage);
+      recordCompletion(conversationId, usage);
       if (state === 'done' || uiState.conversionOffer !== null) return;
       void evaluate(conversationId);
     },
