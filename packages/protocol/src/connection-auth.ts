@@ -34,7 +34,11 @@ export function buildConnectionAuthPayload(
   return `${type}|${peerId}|${ts}|${nonce}`;
 }
 
-/** v2 payload: binds the advertised capabilities and enc public key ('-' when absent). */
+/**
+ * v2 payload: binds the advertised capabilities and enc public key ('-' when
+ * absent). Capabilities are JSON-encoded — an unambiguous canonical form, so
+ * no two distinct arrays (or array/merged-string confusions) share a payload.
+ */
 export function buildConnectionAuthPayloadV2(
   type: InitialWireType,
   peerId: string,
@@ -43,7 +47,7 @@ export function buildConnectionAuthPayloadV2(
   capabilities: string[],
   encPub: string | null,
 ): string {
-  return `${type}|${peerId}|${ts}|${nonce}|caps=${capabilities.join(',')}|enc=${encPub ?? '-'}`;
+  return `${type}|${peerId}|${ts}|${nonce}|caps=${JSON.stringify(capabilities)}|enc=${encPub ?? '-'}`;
 }
 
 /**

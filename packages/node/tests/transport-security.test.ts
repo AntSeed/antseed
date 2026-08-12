@@ -165,6 +165,16 @@ describe('transport security', () => {
       }).ok).toBe(true);
     });
 
+    it('rejects capabilities merged into a single delimiter-containing string', () => {
+      const caps = ['a', 'b', 'transport.signed-sdp.v1'];
+      const auth = buildConnectionAuthEnvelope('hello', buyerIdentity.peerId, buyerIdentity.wallet, Date.now(), { capabilities: caps });
+      expect(verifyConnectionAuthEnvelope({
+        type: 'hello',
+        auth,
+        wireCapabilities: [caps.join(',')],
+      }).ok).toBe(false);
+    });
+
     it('rejects when capabilities were stripped from the wire', () => {
       const auth = buildConnectionAuthEnvelope('intro', buyerIdentity.peerId, buyerIdentity.wallet, Date.now(), { capabilities, encPub });
       expect(verifyConnectionAuthEnvelope({
