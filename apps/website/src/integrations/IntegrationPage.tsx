@@ -211,8 +211,11 @@ function RunFirstBanner() {
                 Install the CLI and start the buyer proxy.
               </p>
               <p className={styles.runFirstHint}>
-                Prefer a GUI? The <Link to="/install">VPR</Link> wraps everything below
-                in one app. CLI flow:
+                <strong>Recommended:</strong> the <Link to="/install">VPR desktop app</Link>{' '}
+                wraps everything below in one app — its <strong>Apps</strong> view
+                launches tools like this one pre-wired to the proxy, auto-selects the
+                best peer for a model, and lets you switch models per chat. The CLI flow
+                below is for headless machines and scripts:
               </p>
               <CodeBlock
                 snippet={`# 1. Install\nnpm install -g @antseed/cli\n\n# 2. Set a buyer identity (64-char hex private key).\n#    This signs requests; it never holds USDC. Generate once, reuse forever.\nexport ANTSEED_IDENTITY_HEX=$(openssl rand -hex 32)\n\n# 3. Start the proxy on http://localhost:8377\nantseed buyer start`}

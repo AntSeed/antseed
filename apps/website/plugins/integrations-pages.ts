@@ -290,11 +290,14 @@ function renderSkillMarkdown(): string {
 
   out.push('## Universal setup (do this once)');
   out.push('');
-  out.push('### Option A — VPR desktop app (easiest)');
+  out.push('### Option A — VPR desktop app (recommended)');
   out.push('');
   out.push('Download from https://antseed.com — it ships the buyer proxy, a wallet, and a');
   out.push('peer browser in a GUI. While the app is open the proxy is reachable at');
-  out.push('`http://localhost:8377`.');
+  out.push('`http://localhost:8377`. Its **Apps** view detects installed tools (Claude');
+  out.push('Code, Codex, …) and launches them already wired to AntSeed, and routing works');
+  out.push('best there: the app auto-selects the best peer for a model and supports');
+  out.push('per-chat model switching — no manual pinning needed.');
   out.push('');
   out.push('### Option B — CLI (headless / servers / agents)');
   out.push('');

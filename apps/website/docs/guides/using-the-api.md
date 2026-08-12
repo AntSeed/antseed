@@ -11,7 +11,7 @@ Once connected to the AntSeed network, your buyer proxy exposes a local API at `
 
 There are two ways to get that proxy running:
 
-- **VPR desktop app** — while the app is open, it runs the buyer proxy at `http://localhost:8377` for you. No CLI setup needed: browse peers, pick models, and deposit USDC from the app's UI, and point any tool below at the same endpoint.
+- **VPR desktop app (recommended)** — download from [antseed.com](https://antseed.com). While the app is open it runs the buyer proxy at `http://localhost:8377` for you, and its **Apps** view detects tools like Claude Code and Codex on your machine and launches them already wired to AntSeed. Routing also works best from the VPR: it auto-selects the best peer for a model and lets you switch models per chat from a dropdown, so you never manage pins by hand. Deposits and peer browsing live in the same UI.
 - **CLI** — `antseed buyer start`, for headless machines, servers, and scripts. The Quick Start below covers this path.
 
 Everything in this guide works identically against both.
@@ -121,7 +121,9 @@ curl http://localhost:8377/v1/images/generations \
 
 ## Claude Code
 
-The `antseed claude` wrapper resolves the running buyer proxy, sets `ANTHROPIC_BASE_URL` and a placeholder `ANTHROPIC_API_KEY` for the child process, and forwards the rest of your flags to Claude Code:
+**Recommended:** launch Claude Code from the VPR's **Apps** view — it detects the installed tool, wires it to the proxy, and handles peer and model routing automatically.
+
+CLI alternative — the `antseed claude` wrapper resolves the running buyer proxy, sets `ANTHROPIC_BASE_URL` and a placeholder `ANTHROPIC_API_KEY` for the child process, and forwards the rest of your flags to Claude Code:
 
 ```bash
 antseed claude --model kimi-k2.6
@@ -142,7 +144,9 @@ Claude Code sends requests to `/v1/messages`; the proxy routes them to the pinne
 
 ## Codex
 
-Recent Codex versions (0.40+) ignore `OPENAI_BASE_URL` and `OPENAI_API_KEY`. Use the wrapper for automatic per-run config:
+**Recommended:** launch Codex from the VPR's **Apps** view, which supplies the provider config and routing for you.
+
+CLI alternative — recent Codex versions (0.40+) ignore `OPENAI_BASE_URL` and `OPENAI_API_KEY`, so use the wrapper for automatic per-run config:
 
 ```bash
 antseed codex --model deepseek-v4-flash
@@ -154,6 +158,8 @@ antseed codex --model <peerId>@deepseek-v4-flash
 Or create `~/.codex/antseed.config.toml` and launch with `codex --profile antseed` for a persistent manual setup. See the [Codex integration page](/integrations/codex) for the tested profile file, routing-verification check, and known gotchas (project-local configs, `-c` flag pitfalls).
 
 ## OpenCode
+
+**Recommended:** launch OpenCode from the VPR's **Apps** view. CLI alternative:
 
 ```bash
 antseed opencode --model gpt-oss-120b
