@@ -180,7 +180,7 @@ export const integrations: Integration[] = [
     ],
     modelHints: {
       suggested: ['kimi-k2.6', 'deepseek-v4-flash', 'minimax-m2.7', 'glm-5'],
-      note: "`antseed claude --model <service-id>` passes the value to Claude Code unchanged. The valid set is whatever your pinned peer advertises - see the discovery commands below. You can also route to a specific peer per session with `--model <peerId>@<service-id>` (e.g. `--model 4668854ba3e8b094e6f48fbeb59cec1cfde162f2@kimi-k2.6`).",
+      note: "`antseed claude --model <service-id>` passes the value to Claude Code unchanged. The valid set is whatever your pinned peer advertises - see the discovery commands below. You can also route to a specific peer per session with `--model <peerId>@<service-id>`.",
     },
     test: [
       {
@@ -1274,7 +1274,7 @@ curl http://localhost:8377/v1/chat/completions \\
 curl http://localhost:8377/v1/chat/completions \\
   -H 'content-type: application/json' \\
   -d '{
-    "model": "4668854ba3e8b094e6f48fbeb59cec1cfde162f2@deepseek-v4-flash",
+    "model": "<peerId>@deepseek-v4-flash",
     "messages": [{"role": "user", "content": "Hello"}]
   }'`,
       },

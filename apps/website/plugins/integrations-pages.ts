@@ -418,7 +418,7 @@ function renderSkillMarkdown(): string {
   out.push('```bash');
   out.push('curl http://localhost:8377/v1/chat/completions \\');
   out.push("  -H 'content-type: application/json' \\");
-  out.push("  -H 'x-antseed-pin-peer: 4668854ba3e8b094e6f48fbeb59cec1cfde162f2' \\");
+  out.push("  -H 'x-antseed-pin-peer: cccccccccccccccccccccccccccccccccccccccc' \\");
   out.push('  -d \'{ "model": "minimax-m2.7", "messages": [{"role":"user","content":"hi"}] }\'');
   out.push('```');
   out.push('');

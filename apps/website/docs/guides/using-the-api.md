@@ -38,7 +38,7 @@ antseed buyer connection set --peer <40-char-hex>   # pin one
 curl http://localhost:8377/v1/chat/completions \
   -H 'content-type: application/json' \
   -d '{
-    "model": "4668854ba3e8b094e6f48fbeb59cec1cfde162f2@deepseek-v4-flash",
+    "model": "<peerId>@deepseek-v4-flash",
     "messages": [{"role": "user", "content": "Hello"}]
   }'
 
@@ -57,11 +57,11 @@ The buyer proxy does not auto-select peers. Every request must have a peer pin f
 
 | Mechanism | Scope | How |
 |---|---|---|
-| **Model prefix** `<peerId>@<model>` | one request | `"model": "4668854ba3e8b094e6f48fbeb59cec1cfde162f2@deepseek-v4-flash"` |
+| **Model prefix** `<peerId>@<model>` | one request | `"model": "<peerId>@deepseek-v4-flash"` |
 | **Header** `x-antseed-pin-peer: <peerId>` | one request | works even when the tool controls the model field |
 | **Session pin** | until changed | `antseed buyer connection set --peer <peerId>` (survives daemon restart) |
 
-Precedence when several are present: header > model prefix > session pin. The model prefix is always stripped before routing, so `4668854ba3e8b094e6f48fbeb59cec1cfde162f2@deepseek-v4-flash` reaches the seller as model `deepseek-v4-flash`.
+Precedence when several are present: header > model prefix > session pin. The model prefix is always stripped before routing, so `<peerId>@deepseek-v4-flash` reaches the seller as model `deepseek-v4-flash`.
 
 The `<peerId>@<model>` form is the one to remember: it works in the model field of **every** tool and SDK that lets you type a model name — Claude Code, Codex, LangChain, the Vercel AI SDK, curl. The peer id is 40 hex chars, with or without a `0x` prefix, case-insensitive. One caveat: the prefix rewrite needs a JSON body, so it does not work on multipart requests (`/v1/images/edits`) — use the header there.
 
@@ -107,7 +107,7 @@ Image services advertise the `openai-images` protocol and may publish per-output
 curl http://localhost:8377/v1/images/generations \
   -H 'content-type: application/json' \
   -d '{
-    "model": "4668854ba3e8b094e6f48fbeb59cec1cfde162f2@flux.1-schnell",
+    "model": "<peerId>@flux.1-schnell",
     "prompt": "A tiny ant carrying a seed",
     "n": 1,
     "size": "1024x1024"
@@ -127,7 +127,7 @@ The `antseed claude` wrapper resolves the running buyer proxy, sets `ANTHROPIC_B
 antseed claude --model kimi-k2.6
 
 # Route to a specific peer for the session:
-antseed claude --model 4668854ba3e8b094e6f48fbeb59cec1cfde162f2@kimi-k2.6
+antseed claude --model <peerId>@kimi-k2.6
 ```
 
 Manual equivalent:
@@ -148,7 +148,7 @@ Recent Codex versions (0.40+) ignore `OPENAI_BASE_URL` and `OPENAI_API_KEY`. Use
 antseed codex --model deepseek-v4-flash
 
 # Route to a specific peer:
-antseed codex --model 4668854ba3e8b094e6f48fbeb59cec1cfde162f2@deepseek-v4-flash
+antseed codex --model <peerId>@deepseek-v4-flash
 ```
 
 Or create `~/.codex/antseed.config.toml` and launch with `codex --profile antseed` for a persistent manual setup. See the [Codex integration page](/integrations/codex) for the tested profile file, routing-verification check, and known gotchas (project-local configs, `-c` flag pitfalls).
@@ -159,7 +159,7 @@ Or create `~/.codex/antseed.config.toml` and launch with `codex --profile antsee
 antseed opencode --model gpt-oss-120b
 
 # Route to a specific peer:
-antseed opencode --model 4668854ba3e8b094e6f48fbeb59cec1cfde162f2@gpt-oss-120b
+antseed opencode --model <peerId>@gpt-oss-120b
 ```
 
 The wrapper writes a temporary OpenCode provider config pointing at the proxy and removes it when the session ends. See the [OpenCode integration page](/integrations/opencode) for manual config.
@@ -173,7 +173,7 @@ The model field is `"<peerId>@<model>"` — the peer id picks who serves the req
 curl http://localhost:8377/v1/messages \
   -H "content-type: application/json" \
   -d '{
-    "model": "4668854ba3e8b094e6f48fbeb59cec1cfde162f2@kimi-k2.6",
+    "model": "<peerId>@kimi-k2.6",
     "max_tokens": 1024,
     "messages": [{"role": "user", "content": "Hello"}]
   }'
@@ -182,7 +182,7 @@ curl http://localhost:8377/v1/messages \
 curl http://localhost:8377/v1/chat/completions \
   -H "content-type: application/json" \
   -d '{
-    "model": "4668854ba3e8b094e6f48fbeb59cec1cfde162f2@deepseek-v4-flash",
+    "model": "<peerId>@deepseek-v4-flash",
     "messages": [{"role": "user", "content": "Hello"}]
   }'
 
@@ -212,7 +212,7 @@ Because auto-selection is disabled, upstream errors (429, 5xx) are passed throug
 Every non-streaming response carries telemetry headers so you can see exactly who served the request and what it cost:
 
 ```
-x-antseed-peer-id: 4668854ba3e8b094e6f48fbeb59cec1cfde162f2
+x-antseed-peer-id: <peerId>
 x-antseed-service: deepseek-v4-flash
 x-antseed-input-tokens: 14
 x-antseed-output-tokens: 78

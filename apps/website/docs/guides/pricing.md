@@ -142,9 +142,9 @@ The final charge is based on delivered image outputs, not merely the requested `
 {
   "peers": [
     {
-      "peerId": "4668854ba3e8b094e6f48fbeb59cec1cfde162f2",
+      "peerId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "version": 12,
-      "displayName": "Dark Signal",
+      "displayName": "Acme Inference",
       "region": "unknown",
       "timestamp": 1777194949071,
       "providers": [
