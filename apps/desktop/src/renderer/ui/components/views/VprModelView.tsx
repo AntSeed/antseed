@@ -1,9 +1,11 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { PreferenceHorizontalIcon, StarIcon, Tick02Icon } from '@hugeicons/core-free-icons';
+import { Copy01Icon, PreferenceHorizontalIcon, StarIcon, Tick02Icon } from '@hugeicons/core-free-icons';
 import { chooseBestVprRoute } from '../../../modules/routing/select';
 import { routesForSelectedModel } from '../../../modules/catalog/view-models';
 import { findCatalogEntry } from '../../../modules/catalog/model-catalog';
+import { modelCapabilitySummary, peerCapabilitySummary } from '../../../modules/catalog/model-capabilities';
+import { buildImageModelSkillPrompt } from '../../../modules/chat/image-model-instructions';
 import { favoriteModelKey, loadFavoriteModels, toggleFavoriteModel } from '../../../modules/catalog/favorites';
 import { vprModelPageTarget } from '../../../modules/catalog/model-page-target';
 import { modelPinKey, vprModelPinFor } from '../../../modules/routing/model-pins';
@@ -36,8 +38,10 @@ export function VprModelView({ onSelectView }: Props) {
     selection: state.vprRouteSelection,
     preferences: state.vprRoutingPreferences,
     pins: state.vprModelPins,
+    proxyPort: state.chatProxyPort,
   }), shallowEqual);
   const [favorites, setFavorites] = useState(loadFavoriteModels);
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
   // The page shows the model the user drilled into, which may not be the
   // applied route — browsing must not change routing until "Use" is pressed.
   const selectionModel = snap.selection.model;
@@ -69,6 +73,7 @@ export function VprModelView({ onSelectView }: Props) {
   const autoSelect = pinnedPeerId === null;
   // The active route (auto-chosen or pinned) leads the list with a checkmark.
   const activePeerId = autoSelect ? bestRoute?.peerId : pinnedPeerId;
+  const selectedRoute = routes.find((route) => route.peerId === activePeerId) ?? bestRoute;
   const sortedRoutes = useMemo(() => {
     const active = routes.filter((route) => route.peerId === activePeerId);
     return [...active, ...routes.filter((route) => !active.includes(route))];
@@ -85,12 +90,33 @@ export function VprModelView({ onSelectView }: Props) {
   }
 
   const favorite = favorites.has(favoriteModelKey(model.provider, model.serviceId));
-  const priceValue = priceTile(entry);
+  const imageOnly = entry.kind === 'image';
+  const priceValue = imageOnly ? 'Per image' : priceTile(entry);
+  const capabilitySummary = modelCapabilitySummary(entry);
 
   const viewedModel = model;
-  /** Make the browsed model (and its previewed pin) the active route. */
+  /** Make the browsed text model (and its previewed pin) the active route. */
   function applyModel(): void {
     actions.selectVprModel(viewedModel.provider, viewedModel.serviceId, pinnedPeerId);
+  }
+
+  async function copyImageInstructions(): Promise<void> {
+    if (!imageOnly || !selectedRoute) return;
+    try {
+      await navigator.clipboard.writeText(buildImageModelSkillPrompt(selectedRoute, snap.proxyPort));
+      setCopyState('copied');
+      window.setTimeout(() => setCopyState('idle'), 2_000);
+    } catch {
+      setCopyState('error');
+      window.setTimeout(() => setCopyState('idle'), 2_000);
+    }
+  }
+
+  function useImageInChat(): void {
+    if (!selectedRoute) return;
+    actions.startNewChat();
+    actions.selectVprModel(viewedModel.provider, viewedModel.serviceId, selectedRoute.peerId);
+    onSelectView?.('chat');
   }
 
   return (
@@ -109,8 +135,8 @@ export function VprModelView({ onSelectView }: Props) {
                 </span>
               )}
             </div>
-            {entry.categories.length > 0 && (
-              <CategoryBadges categories={entry.categories} />
+            {(entry.categories.length > 0 || imageOnly) && (
+              <CategoryBadges categories={imageOnly ? ['image-generation', ...entry.categories] : entry.categories} />
             )}
           </div>
           <div className={styles.headActions}>
@@ -127,33 +153,63 @@ export function VprModelView({ onSelectView }: Props) {
               <button
                 type="button"
                 className={styles.use}
+                disabled={imageOnly && !selectedRoute}
                 onClick={() => {
+                  if (imageOnly) {
+                    useImageInChat();
+                    return;
+                  }
                   applyModel();
                   onSelectView?.('home');
                 }}
               >
-                Use
+                {imageOnly ? 'Use in chat' : 'Use'}
               </button>
             </div>
-            <button
-              type="button"
-              className={styles.startChat}
-              onClick={() => {
-                // New chat first: applying the model while a conversation is
-                // open would rebind that conversation instead of a fresh one.
-                actions.startNewChat();
-                applyModel();
-                onSelectView?.('chat');
-              }}
-            >
-              Start chat
-            </button>
+            {imageOnly ? (
+              <button
+                type="button"
+                className={styles.startChat}
+                disabled={!selectedRoute}
+                onClick={() => { void copyImageInstructions(); }}
+              >
+                <HugeiconsIcon icon={Copy01Icon} size={13} strokeWidth={1.8} />
+                {copyState === 'copied' ? 'Copied instructions' : copyState === 'error' ? 'Copy failed' : 'Copy instructions'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={styles.startChat}
+                onClick={() => {
+                  // New chat first: applying the model while a conversation is
+                  // open would rebind that conversation instead of a fresh one.
+                  actions.startNewChat();
+                  applyModel();
+                  onSelectView?.('chat');
+                }}
+              >
+                Start chat
+              </button>
+            )}
           </div>
         </div>
 
+        {imageOnly && (
+          <div className={styles.capabilityNotice} role="note">
+            <strong>Image generation only</strong>
+            <span>Use it in AntStation's internal chat, or copy a seller-pinned skill for a normal text agent. It cannot become the main text or connected-app route.</span>
+          </div>
+        )}
+
+        {capabilitySummary.length > 0 && !imageOnly && (
+          <div className={styles.capabilityList} aria-label="Model type">
+            {capabilitySummary.map((capability) => <span key={capability}>{capability}</span>)}
+          </div>
+        )}
+
         <VprStatRow>
           <VprStatTile
-            label={priceValue === 'Free' || priceValue === '-' ? 'Price' : 'Price · /m tok'}
+            label={imageOnly || priceValue === 'Free' || priceValue === '-' ? 'Price' : 'Price · /m tok'}
             value={priceValue}
             tone={priceValue === '-' ? undefined : 'success'}
             outlined
@@ -325,6 +381,9 @@ function SellerRow({ route, active, auto, onClick }: {
   auto: boolean;
   onClick: () => void;
 }) {
+  const capabilities = peerCapabilitySummary(route);
+  const parameters = route.capabilities?.supportedParameters ?? [];
+  const capabilityLabel = [...capabilities, ...parameters.map((parameter) => parameter.replaceAll('_', ' '))].join(' · ');
   return (
     <button
       type="button"
@@ -341,7 +400,10 @@ function SellerRow({ route, active, auto, onClick }: {
           {active && <VprBadge tone="primary">{auto ? '• Auto' : 'Pinned'}</VprBadge>}
           {isFreeRoute(route) && <VprBadge tone="green">Free</VprBadge>}
         </span>
-        <span className={styles.sellerMeta}>{sellerMetaLabel(route)}</span>
+        <span className={styles.sellerMeta}>
+          {sellerMetaLabel(route)}
+          {capabilityLabel ? ` · ${capabilityLabel}` : ''}
+        </span>
       </span>
       <span className={styles.sellerScore}>{sellerReputationLabel(route)}</span>
     </button>

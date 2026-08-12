@@ -5,7 +5,7 @@ import { notifyUiStateChanged, notifyUiStateChangedSync } from '../../core/store
 import { normalizeDiscoverRow, projectRowsToChatServiceOptions } from '../catalog/discover-rows.js';
 import { resolveVprChatOption } from './projection.js';
 import { findCatalogEntry, projectRowsToVprModelCatalog, selectDefaultVprModel } from '../catalog/model-catalog.js';
-import { filterRoutableVprRoutes } from '../routing/select.js';
+import { chooseBestVprRoute, filterRoutableVprRoutes } from '../routing/select.js';
 import { routesForSelectedModel } from '../catalog/view-models.js';
 import { saveVprRouteSelection } from '../routing/preferences.js';
 import { syncBuyerDefaultRoute } from '../routing/proxy-sync.js';
@@ -47,6 +47,9 @@ type ChatConversationSummary = {
   service?: string;
   provider?: string;
   peerId?: string;
+  /** Seller that produced the latest assistant response. Display-only; the
+   * conversation's `peerId` remains its text route. */
+  lastResponsePeerId?: string;
   /**
    * How this thread's peer was chosen. Absent on threads created before route
    * modes were recorded; those are treated as 'auto'.
@@ -98,6 +101,7 @@ export type ChatModuleApi = {
   openConversation: (convId: string) => Promise<void>;
   sendMessage: (text: string, attachments?: RawChatAttachment[]) => void;
   sendMessageToConversation: (convId: string, text: string, attachments?: RawChatAttachment[]) => void;
+  generateImage: (prompt: string) => void;
   retryAfterPayment: () => void;
   abortChat: () => Promise<void>;
   handleServiceChange: (
@@ -1435,10 +1439,15 @@ export function initChatModule({
       // missing from a partial discover snapshot (peer flap, partial DHT
       // results) must not be silently replaced — it resolves again as soon as
       // its peer reappears in the catalog.
-      if (!uiState.vprRouteSelection.model) {
+      const selectedRouteModel = uiState.vprRouteSelection.model;
+      const selectedRouteEntry = selectedRouteModel
+        ? findCatalogEntry(uiState.vprModelCatalog, selectedRouteModel.provider, selectedRouteModel.serviceId)
+        : null;
+      if (!selectedRouteModel || selectedRouteEntry?.kind === 'image') {
         const defaultModel = selectDefaultVprModel(uiState.vprModelCatalog, null);
         if (defaultModel) {
           uiState.vprRouteSelection = { model: defaultModel, mode: 'auto', peerId: null };
+          saveVprRouteSelection(uiState.vprRouteSelection);
         }
       }
       // Keep the buyer proxy's default route on the current selection. Runs
@@ -2238,6 +2247,88 @@ export function initChatModule({
    * Dispatches via streaming or non-streaming bridge, handles stuck-request
    * recovery, payment-required errors, and fallback timeouts.
    */
+  function resolveSelectedImageRoute(): DiscoverRow | null {
+    const selection = uiState.chatImageRouteSelection;
+    const model = selection?.model;
+    if (!model) return null;
+    const routes = routesForSelectedModel(uiState.vprRoutableRows, model)
+      .filter((row) => row.protocol === 'openai-images');
+    if (routes.length === 0) return null;
+    if (selection.mode === 'pinned-peer' && selection.peerId) {
+      return routes.find((row) => row.peerId === selection.peerId) ?? null;
+    }
+    return chooseBestVprRoute(routes, uiState.vprRoutingPreferences);
+  }
+
+  function generateImage(prompt: string): void {
+    const content = prompt.trim();
+    if (!content || !bridge?.chatGenerateImage) return;
+    const route = resolveSelectedImageRoute();
+    if (!route) {
+      showChatError('No seller is currently available for this image model.');
+      return;
+    }
+
+    void (async () => {
+      let convId = uiState.chatActiveConversation;
+      if (!convId) {
+        const textSelection = getSelectedChatServiceSelection();
+        if (!textSelection.id) {
+          showChatError('Choose a text model before starting an image conversation.');
+          return;
+        }
+        convId = await createConversationForSelection(textSelection, { activate: true });
+      }
+      if (!convId) return;
+      if (isConversationSending(convId)) {
+        showChatError('This conversation already has a request in progress.');
+        return;
+      }
+
+      clearChatError();
+      setConversationSending(convId, true);
+      uiState.chatThinkingPhase = 'Generating image';
+      notifyUiStateChanged();
+      try {
+        const result = await bridge.chatGenerateImage!({
+          conversationId: convId,
+          prompt: content,
+          peerId: route.peerId,
+          service: route.serviceId,
+        });
+        if (!result.ok || !result.user || !result.assistant) {
+          throw new Error(result.error || 'Image generation failed.');
+        }
+        const existing = getLocalConversationMessages(convId) ?? (
+          convId === uiState.chatActiveConversation ? uiState.chatMessages as ChatMessage[] : []
+        );
+        const messages = [...existing, result.user as ChatMessage, result.assistant as ChatMessage];
+        setLocalConversationMessages(convId, messages);
+        if (convId === uiState.chatActiveConversation) uiState.chatMessages = messages;
+        if (activeConversation?.id === convId) {
+          activeConversation.messages = messages;
+          activeConversation.updatedAt = Date.now();
+          activeConversation.lastResponsePeerId = route.peerId;
+          updateThreadMeta(activeConversation);
+        }
+        if (Array.isArray(uiState.chatConversations)) {
+          const summary = (uiState.chatConversations as ChatConversationSummary[])
+            .find((conversation) => conversation.id === convId);
+          if (summary) summary.lastResponsePeerId = route.peerId;
+        }
+        scheduleChatConversationsRefresh();
+        notifyUiStateChanged();
+        queueScrollChatToBottom();
+      } catch (error) {
+        if (toErrorMessage(error) !== 'Request aborted') {
+          reportChatError(error, 'Image generation failed');
+        }
+      } finally {
+        setConversationSending(convId, false);
+      }
+    })();
+  }
+
   function dispatchChatRequest(
     convId: string,
     content: string,
@@ -3248,6 +3339,7 @@ export function initChatModule({
     openConversation,
     sendMessage,
     sendMessageToConversation,
+    generateImage,
     retryAfterPayment,
     abortChat,
     handleServiceChange,

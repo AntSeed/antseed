@@ -6,6 +6,7 @@ type SwitchServiceDialogProps = {
   visible: boolean;
   currentLabel: string;
   nextLabel: string;
+  imageOnly?: boolean;
   onContinue: (dontShowAgain: boolean) => void;
   onStartNew: (dontShowAgain: boolean) => void;
   onCancel: () => void;
@@ -15,6 +16,7 @@ export function SwitchServiceDialog({
   visible,
   currentLabel,
   nextLabel,
+  imageOnly = false,
   onContinue,
   onStartNew,
   onCancel,
@@ -31,28 +33,46 @@ export function SwitchServiceDialog({
       isOpen={visible}
       onClose={onCancel}
       size="sm"
-      title="Switch service?"
+      title={imageOnly ? 'Use image model?' : 'Switch service?'}
     >
       <p className={styles.body}>
-        You&apos;re switching from <strong>{currentLabel}</strong> to <strong>{nextLabel}</strong>.
-        Starting a new chat usually gives better results — different models handle
-        conversation context differently.
+        {imageOnly ? (
+          <>
+            <strong>{nextLabel}</strong> is an image-generation-only service. It cannot answer normal text/chat requests.
+            Selecting it keeps your current text model as the chat fallback.
+          </>
+        ) : (
+          <>
+            You&apos;re switching from <strong>{currentLabel}</strong> to <strong>{nextLabel}</strong>.
+            Starting a new chat usually gives better results — different models handle
+            conversation context differently.
+          </>
+        )}
       </p>
-      <label className={styles.dontShowRow}>
+      {!imageOnly && <label className={styles.dontShowRow}>
         <input
           type="checkbox"
           checked={dontShowAgain}
           onChange={(e) => setDontShowAgain(e.target.checked)}
         />
         Don&apos;t show this again
-      </label>
+      </label>}
       <div className={styles.actions}>
-        <Button variant="outline" onClick={() => onContinue(dontShowAgain)}>
-          Continue in this chat
-        </Button>
-        <Button onClick={() => onStartNew(dontShowAgain)}>
-          Start new chat
-        </Button>
+        {imageOnly ? (
+          <>
+            <Button variant="outline" onClick={onCancel}>Cancel</Button>
+            <Button onClick={() => onContinue(false)}>Use for image generation</Button>
+          </>
+        ) : (
+          <>
+            <Button variant="outline" onClick={() => onContinue(dontShowAgain)}>
+              Continue in this chat
+            </Button>
+            <Button onClick={() => onStartNew(dontShowAgain)}>
+              Start new chat
+            </Button>
+          </>
+        )}
       </div>
     </Modal>
   );

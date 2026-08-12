@@ -1,4 +1,16 @@
 export type ChatServiceProtocol = 'anthropic-messages' | 'openai-chat-completions' | 'openai-responses';
+export type CatalogServiceProtocol = ChatServiceProtocol | 'openai-images';
+
+export type CatalogServiceCapabilities = {
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  inputs?: string[];
+  outputs?: string[];
+  reasoning?: boolean;
+  toolUse?: boolean;
+  structuredOutput?: boolean;
+  supportedParameters?: string[];
+};
 
 export type NetworkPeerAddress = {
   peerId?: string;
@@ -9,6 +21,7 @@ export type NetworkPeerAddress = {
   services?: string[];
   sellerContract?: string;
   providerServiceApiProtocols?: Record<string, { services: Record<string, string[]> }>;
+  providerServiceCapabilities?: Record<string, { services: Record<string, CatalogServiceCapabilities> }>;
   providerPricing?: Record<string, {
     defaults?: {
       inputUsdPerMillion?: number;
@@ -35,7 +48,8 @@ export type ChatServiceCatalogEntry = {
   id: string;
   label: string;
   provider: string;
-  protocol: ChatServiceProtocol;
+  protocol: CatalogServiceProtocol;
+  capabilities?: CatalogServiceCapabilities;
   count: number;
   peerId?: string;
   peerLabel?: string;
@@ -46,8 +60,8 @@ export type ChatServiceCatalogEntry = {
   description?: string;
 };
 
-const VALID_CHAT_SERVICE_PROTOCOLS = new Set<string>([
-  'anthropic-messages', 'openai-chat-completions', 'openai-responses',
+const VALID_CATALOG_SERVICE_PROTOCOLS = new Set<string>([
+  'anthropic-messages', 'openai-chat-completions', 'openai-responses', 'openai-images',
 ]);
 
 export function inferProviderProtocol(provider: string): ChatServiceProtocol | null {
@@ -67,12 +81,15 @@ export function resolveProviderServiceProtocol(
   apiProtocols: NetworkPeerAddress['providerServiceApiProtocols'],
   provider: string,
   serviceId: string,
-): ChatServiceProtocol | null {
+): CatalogServiceProtocol | null {
   const protocols = apiProtocols?.[provider]?.services?.[serviceId];
   if (!Array.isArray(protocols)) return null;
+  // Image generation is not chat-compatible. Prefer the explicit image
+  // endpoint if a malformed announcement lists both image and chat protocols.
+  if (protocols.includes('openai-images')) return 'openai-images';
   for (const p of protocols) {
-    if (VALID_CHAT_SERVICE_PROTOCOLS.has(p)) {
-      return p as ChatServiceProtocol;
+    if (VALID_CATALOG_SERVICE_PROTOCOLS.has(p)) {
+      return p as CatalogServiceProtocol;
     }
   }
   return null;
@@ -110,12 +127,14 @@ export function resolveProviderServicePricing(
 }
 
 export function sortChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[]): ChatServiceCatalogEntry[] {
-  const protocolRank = (protocol: ChatServiceProtocol): number => (
+  const protocolRank = (protocol: CatalogServiceProtocol): number => (
     protocol === 'anthropic-messages'
       ? 0
       : protocol === 'openai-chat-completions'
         ? 1
-        : 2
+        : protocol === 'openai-responses'
+          ? 2
+          : 3
   );
 
   return entries.sort((a, b) => {
@@ -145,6 +164,7 @@ export function buildChatServiceCatalogFromPeers(peers: NetworkPeerAddress[]): C
     const apiProtocols = peer.providerServiceApiProtocols;
     const pricingMap = peer.providerPricing;
     const categoriesMap = peer.providerServiceCategories;
+    const capabilitiesMap = peer.providerServiceCapabilities;
     const defaultInput = peer.defaultInputUsdPerMillion;
     const defaultOutput = peer.defaultOutputUsdPerMillion;
     const defaultCachedInput = peer.defaultCachedInputUsdPerMillion;
@@ -160,6 +180,7 @@ export function buildChatServiceCatalogFromPeers(peers: NetworkPeerAddress[]): C
           ...Object.keys(pricingMap?.[provider]?.services ?? {}),
           ...Object.keys(apiProtocols?.[provider]?.services ?? {}),
           ...Object.keys(categoriesMap?.[provider]?.services ?? {}),
+          ...Object.keys(capabilitiesMap?.[provider]?.services ?? {}),
         ]);
 
         for (const serviceId of providerServiceIds) {
@@ -177,11 +198,13 @@ export function buildChatServiceCatalogFromPeers(peers: NetworkPeerAddress[]): C
           );
           const categories = categoriesMap?.[provider]?.services?.[serviceId];
 
+          const capabilities = capabilitiesMap?.[provider]?.services?.[serviceId];
           results.push({
             id: serviceId,
             label: serviceId,
             provider,
             protocol,
+            ...(capabilities ? { capabilities } : {}),
             count: 1,
             ...(peerId ? { peerId } : {}),
             ...(peerLabel ? { peerLabel } : {}),
@@ -218,11 +241,13 @@ export function buildChatServiceCatalogFromPeers(peers: NetworkPeerAddress[]): C
           );
           const categories = categoriesMap?.[fallbackProvider]?.services?.[serviceId];
 
+          const capabilities = capabilitiesMap?.[fallbackProvider]?.services?.[serviceId];
           results.push({
             id: serviceId,
             label: serviceId,
             provider: fallbackProvider,
             protocol,
+            ...(capabilities ? { capabilities } : {}),
             count: 1,
             ...(peerId ? { peerId } : {}),
             ...(peerLabel ? { peerLabel } : {}),
@@ -232,8 +257,11 @@ export function buildChatServiceCatalogFromPeers(peers: NetworkPeerAddress[]): C
             ...(categories?.length ? { categories } : {}),
           });
         }
-      } else {
-        // No services listed — create one entry per provider as a fallback.
+      } else if (emittedProviderServices.size === 0) {
+        // No provider-specific service maps and no peer-wide services — create
+        // one entry per provider as a legacy fallback. Do not add these
+        // synthetic rows when protocol/capability maps already produced real
+        // service entries.
         for (const provider of providerList) {
           const protocol = inferProviderProtocol(provider);
           if (!protocol) continue;

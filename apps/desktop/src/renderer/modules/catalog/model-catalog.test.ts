@@ -179,6 +179,35 @@ test('findCatalogEntry matches canonical serviceId variants across providers', (
   assert.equal(findCatalogEntry(catalog, 'other-provider', 'GPT 5.6 Luna')?.serviceId, 'gpt-5.6-luna');
 });
 
+test('catalog classifies image services without aggregating peer capabilities', () => {
+  const [entry] = projectRowsToVprModelCatalog([
+    discoverRow({
+      serviceId: 'gpt-image-test',
+      protocol: 'openai-images',
+      capabilities: { outputs: ['image'], supportedParameters: ['quality'] },
+    }),
+  ]);
+
+  assert.equal(entry.kind, 'image');
+  assert.deepEqual(entry.protocols, ['openai-images']);
+  assert.equal('capabilities' in entry, false);
+});
+
+test('selectDefaultVprModel ignores image-only services for the chat fallback', () => {
+  const catalog = projectRowsToVprModelCatalog([
+    discoverRow({
+      serviceId: 'image-free',
+      protocol: 'openai-images',
+      capabilities: { outputs: ['image'] },
+      inputUsdPerMillion: 0,
+      outputUsdPerMillion: 0,
+    }),
+    discoverRow({ serviceId: 'text-paid', peerId: 'p2' }),
+  ]);
+
+  assert.equal(selectDefaultVprModel(catalog, null)?.serviceId, 'text-paid');
+});
+
 test('catalog aggregates serviceId variants of the same model', () => {
   const catalog = projectRowsToVprModelCatalog([
     discoverRow({ provider: 'openai', serviceId: 'gpt-5.6-luna', peerId: 'p1', inputUsdPerMillion: 4, outputUsdPerMillion: 6 }),

@@ -72,7 +72,10 @@ function getConversationPeerName(
   conv: ConvRecord,
   peerDisplayNameById: ReadonlyMap<string, string>,
 ): string {
-  const peerId = String(conv.peerId || '').trim();
+  // Image generation can deliberately use a different seller from the text
+  // route retained by the conversation. Prefer the seller that produced the
+  // latest response so the conversation row describes what actually ran.
+  const peerId = String(conv.lastResponsePeerId || conv.peerId || '').trim();
   if (!peerId) return 'Other';
   return peerDisplayNameById.get(peerId)
     || getPeerDisplayName(String(conv.peerLabel || ''))
@@ -93,6 +96,7 @@ function conversationMatchesSearch(
     conv.provider,
     conv.peerLabel,
     conv.peerId,
+    conv.lastResponsePeerId,
     conv.workspacePath,
     peerName,
   ].map((value) => String(value || '').toLowerCase()).join(' ');
@@ -225,7 +229,7 @@ function ConversationRow({
   const costLabel = totalTokens > 0
     ? `$${formatUsdcAmount(totalCost)}/${formatCompactTokens(totalTokens)}`
     : '';
-  const convPeerId = String(conv.peerId || '').trim();
+  const convPeerId = String(conv.lastResponsePeerId || conv.peerId || '').trim();
   const peerName = getConversationPeerName(conv, peerDisplayNameById);
   const session = convPeerId ? chatActiveChannels.get(convPeerId) : undefined;
   const usedUsdc = Number(conv.totalEstimatedCostUsd) || 0;

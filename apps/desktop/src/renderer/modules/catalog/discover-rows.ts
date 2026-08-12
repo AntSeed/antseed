@@ -1,5 +1,6 @@
-import type { ChatServiceOptionEntry, DiscoverRow } from '../../core/state';
+import type { ChatServiceOptionEntry, DiscoverRow, ServiceCapabilitiesView } from '../../core/state';
 import type { DiscoverVerificationLink } from '../../core/state';
+import { isTextCapableRow } from './model-capabilities';
 
 const CHAT_SERVICE_SELECTION_SEPARATOR = '\u0001';
 
@@ -45,6 +46,30 @@ function normalizeVerificationLink(raw: unknown): DiscoverVerificationLink | nul
   }
 }
 
+function normalizeCapabilities(value: unknown): ServiceCapabilitiesView | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const positiveInteger = (candidate: unknown): number | undefined => (
+    typeof candidate === 'number' && Number.isSafeInteger(candidate) && candidate > 0 ? candidate : undefined
+  );
+  const stringList = (candidate: unknown): string[] | undefined => {
+    if (!Array.isArray(candidate)) return undefined;
+    const result = [...new Set(candidate.filter((item): item is string => typeof item === 'string' && item.length > 0))];
+    return result.length > 0 ? result : undefined;
+  };
+  const normalized: ServiceCapabilitiesView = {
+    ...(positiveInteger(raw.contextWindow) ? { contextWindow: positiveInteger(raw.contextWindow) } : {}),
+    ...(positiveInteger(raw.maxOutputTokens) ? { maxOutputTokens: positiveInteger(raw.maxOutputTokens) } : {}),
+    ...(stringList(raw.inputs) ? { inputs: stringList(raw.inputs) } : {}),
+    ...(stringList(raw.outputs) ? { outputs: stringList(raw.outputs) } : {}),
+    ...(typeof raw.reasoning === 'boolean' ? { reasoning: raw.reasoning } : {}),
+    ...(typeof raw.toolUse === 'boolean' ? { toolUse: raw.toolUse } : {}),
+    ...(typeof raw.structuredOutput === 'boolean' ? { structuredOutput: raw.structuredOutput } : {}),
+    ...(stringList(raw.supportedParameters) ? { supportedParameters: stringList(raw.supportedParameters) } : {}),
+  };
+  return Object.keys(normalized).length > 0 ? normalized : null;
+}
+
 function normalizeHttpsUrl(value: unknown): string | null {
   if (typeof value !== 'string' || value.trim().length === 0) return null;
   try {
@@ -68,6 +93,7 @@ export function normalizeDiscoverRow(raw: unknown): DiscoverRow | null {
     categories: Array.isArray(r.categories) ? r.categories.filter((c): c is string => typeof c === 'string') : [],
     provider: String(r.provider ?? 'unknown'),
     protocol: String(r.protocol ?? ''),
+    capabilities: normalizeCapabilities(r.capabilities),
     peerId,
     peerEvmAddress: String(r.peerEvmAddress ?? ''),
     sellerContract: typeof r.sellerContract === 'string' && r.sellerContract.length > 0 ? r.sellerContract : null,
@@ -122,6 +148,9 @@ export function normalizeDiscoverRow(raw: unknown): DiscoverRow | null {
 export function projectRowsToChatServiceOptions(rows: DiscoverRow[]): ChatServiceOptionEntry[] {
   const grouped = new Map<string, ChatServiceOptionEntry>();
   for (const row of rows) {
+    // VPR can browse image generators, but the built-in chat pipeline must
+    // only receive protocols it knows how to serialize and stream.
+    if (!isTextCapableRow(row)) continue;
     const key = `${row.provider}${CHAT_SERVICE_SELECTION_SEPARATOR}${row.serviceId}${CHAT_SERVICE_SELECTION_SEPARATOR}${row.peerId}`;
     if (grouped.has(key)) continue;
     grouped.set(key, {
@@ -129,6 +158,7 @@ export function projectRowsToChatServiceOptions(rows: DiscoverRow[]): ChatServic
       label: row.serviceLabel,
       provider: row.provider,
       protocol: row.protocol,
+      capabilities: row.capabilities,
       count: 1,
       value: row.selectionValue,
       peerId: row.peerId,

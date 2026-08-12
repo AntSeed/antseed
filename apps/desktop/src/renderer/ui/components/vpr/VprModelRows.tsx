@@ -4,6 +4,7 @@ import { ArrowRight01Icon, Settings02Icon, StarIcon, Tick02Icon } from '@hugeico
 import type { VprModelCatalogEntry } from '../../../core/state';
 import { favoriteModelKey } from '../../../modules/catalog/favorites';
 import { sameCanonicalModel } from '../../../modules/catalog/model-identity';
+import { modelCapabilitySummary } from '../../../modules/catalog/model-capabilities';
 import { BrandIcon } from '../brand/BrandIcon';
 import { formatUsdShort, VprBadge } from './VprKit';
 import styles from './VprModelRows.module.scss';
@@ -45,6 +46,7 @@ function entryMinTotalPrice(entry: VprModelCatalogEntry): number | null {
 }
 
 function isFreeEntry(entry: VprModelCatalogEntry): boolean {
+  if (entry.kind === 'image') return false;
   const { minInputUsdPerMillion: input, minOutputUsdPerMillion: output } = entry;
   return input !== null && output !== null && input <= 0 && output <= 0;
 }
@@ -86,8 +88,11 @@ function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pi
   // column for meta-line width: the gear moves up onto the title line and
   // the second line runs the full row.
   const discount = onConfigure ? null : discountLabel(entry);
+  const capabilities = modelCapabilitySummary(entry);
 
-  const priceParts = free ? (
+  const priceParts = entry.kind === 'image' ? (
+    <span className={styles.perTok}>Per-image pricing varies by seller</span>
+  ) : free ? (
     <span className={styles.perTok}>Free</span>
   ) : hasPrice ? (
     <>
@@ -120,6 +125,7 @@ function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pi
         <span className={styles.titleLine}>
           <BrandIcon name={entry.provider} hints={[entry.label]} size={16} className={styles.logo} />
           <span className={styles.label}>{entry.label}</span>
+          {entry.kind === 'image' && <VprBadge tone="type">Image</VprBadge>}
           {favorite && (
             <HugeiconsIcon icon={StarIcon} size={13} strokeWidth={2} className={styles.favStar} />
           )}
@@ -153,6 +159,12 @@ function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pi
           {/* A pinned seller is the whole story of where the model routes —
               the seller's name replaces the peer count, unlabelled: naming a
               peer already says routing isn't on auto. */}
+          {capabilities.length > 0 && (
+            <>
+              <span className={styles.capabilityMeta}>{capabilities.slice(0, 2).join(' · ')}</span>
+              <span className={styles.metaDivider} aria-hidden="true">•</span>
+            </>
+          )}
           <span className={styles.peerMeta}>
             {pinnedPeerLabel ? (
               <span className={styles.pinnedSeller}>{pinnedPeerLabel}</span>
