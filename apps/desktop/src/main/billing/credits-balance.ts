@@ -23,6 +23,19 @@ export type ChannelSpendRow = {
   onChainSettled: string;
 };
 
+export type CreditsBalanceComponents = {
+  available: bigint;
+  reserved: bigint;
+  pending: bigint;
+  wallet: bigint;
+};
+
+export type CreditsBalanceTotals = CreditsBalanceComponents & {
+  deposited: bigint;
+  spendable: bigint;
+  totalOwned: bigint;
+};
+
 /** Statuses where the seller can still settle against the buyer's signatures. */
 export function isOpenChannelStatus(status: string): boolean {
   return status === 'active' || status === 'open' || status === 'pending'
@@ -71,4 +84,24 @@ export function spendableBalance(deposited: bigint, pending: bigint): bigint {
 /** Everything the buyer still owns, including USDC waiting in its wallet. */
 export function totalOwnedBalance(spendable: bigint, wallet: bigint): bigint {
   return spendable + wallet;
+}
+
+/** Merge only successful component reads into the last-known-good snapshot. */
+export function updateCreditsBalanceComponents(
+  current: CreditsBalanceComponents,
+  updates: Partial<CreditsBalanceComponents>,
+): CreditsBalanceComponents {
+  return { ...current, ...updates };
+}
+
+/** Derive every displayed total from one internally consistent snapshot. */
+export function creditsBalanceTotals(components: CreditsBalanceComponents): CreditsBalanceTotals {
+  const deposited = components.available + components.reserved;
+  const spendable = spendableBalance(deposited, components.pending);
+  return {
+    ...components,
+    deposited,
+    spendable,
+    totalOwned: totalOwnedBalance(spendable, components.wallet),
+  };
 }

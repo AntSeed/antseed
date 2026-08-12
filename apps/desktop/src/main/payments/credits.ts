@@ -15,7 +15,11 @@ import {
   formatUsdc,
   resolveChainConfig,
 } from '@antseed/node';
-import { spendableBalance, totalOwnedBalance } from '../billing/credits-balance.js';
+import {
+  creditsBalanceTotals,
+  updateCreditsBalanceComponents,
+  type CreditsBalanceComponents,
+} from '../billing/credits-balance.js';
 import { getSecureIdentity } from '../identity.js';
 import { readConfig } from '../runtime/config-io.js';
 import { ACTIVE_CONFIG_PATH } from '../runtime/active-config.js';
@@ -57,7 +61,21 @@ const EMPTY_CREDITS: Omit<CreditsInfo, 'evmAddress'> = {
 // Use shared formatUsdc from @antseed/node
 const formatUsdc6 = formatUsdc;
 
-let cachedCreditsInfo: CreditsInfo | null = null;
+const EMPTY_BALANCE_COMPONENTS: CreditsBalanceComponents = {
+  available: 0n,
+  reserved: 0n,
+  pending: 0n,
+  wallet: 0n,
+};
+
+type CreditsComponentCache = {
+  evmAddress: string;
+  balance: CreditsBalanceComponents;
+  creditLimit: bigint;
+  operatorAddress: string | null;
+};
+
+let cachedCreditsComponents: CreditsComponentCache | null = null;
 
 // Cached crypto config — invalidated on config update. Uses protocol defaults
 // from resolveChainConfig with optional user overrides from config.json.
@@ -113,6 +131,35 @@ let creditsRpcLastFailAt = 0;
 const CREDITS_RPC_BACKOFF_THRESHOLD = 3;
 const CREDITS_RPC_RETRY_COOLDOWN_MS = 60_000;
 
+function componentCacheFor(evmAddress: string): CreditsComponentCache {
+  if (cachedCreditsComponents?.evmAddress.toLowerCase() === evmAddress.toLowerCase()) {
+    return cachedCreditsComponents;
+  }
+  cachedCreditsComponents = {
+    evmAddress,
+    balance: EMPTY_BALANCE_COMPONENTS,
+    creditLimit: 0n,
+    operatorAddress: null,
+  };
+  return cachedCreditsComponents;
+}
+
+function creditsInfoFromCache(cache: CreditsComponentCache): CreditsInfo {
+  const totals = creditsBalanceTotals(cache.balance);
+  return {
+    evmAddress: cache.evmAddress,
+    operatorAddress: cache.operatorAddress,
+    balanceUsdc: formatUsdc6(totals.deposited),
+    reservedUsdc: formatUsdc6(totals.reserved),
+    availableUsdc: formatUsdc6(totals.available),
+    pendingUsdc: formatUsdc6(totals.pending),
+    spendableUsdc: formatUsdc6(totals.spendable),
+    walletUsdc: formatUsdc6(totals.wallet),
+    totalOwnedUsdc: formatUsdc6(totals.totalOwned),
+    creditLimitUsdc: formatUsdc6(cache.creditLimit),
+  };
+}
+
 export async function refreshCreditsInfo(): Promise<CreditsInfo> {
   const identity = getSecureIdentity();
   if (!identity) {
@@ -120,6 +167,7 @@ export async function refreshCreditsInfo(): Promise<CreditsInfo> {
   }
 
   const evmAddress = identity.wallet.address;
+  const cache = componentCacheFor(evmAddress);
   const cc = await loadCachedCryptoConfig();
   if (!cc) {
     return { evmAddress, ...EMPTY_CREDITS };
@@ -129,8 +177,7 @@ export async function refreshCreditsInfo(): Promise<CreditsInfo> {
   // outages don't permanently disable balance display for the session.
   if (creditsRpcFailCount >= CREDITS_RPC_BACKOFF_THRESHOLD) {
     if (Date.now() - creditsRpcLastFailAt < CREDITS_RPC_RETRY_COOLDOWN_MS) {
-      if (cachedCreditsInfo) return cachedCreditsInfo;
-      return { evmAddress, ...EMPTY_CREDITS };
+      return creditsInfoFromCache(cache);
     }
     // Cooldown elapsed — allow a retry attempt
     creditsRpcFailCount = 0;
@@ -138,55 +185,47 @@ export async function refreshCreditsInfo(): Promise<CreditsInfo> {
 
   const depositsClient = new DepositsClient({ rpcUrl: cc.rpcUrl, ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}), contractAddress: cc.depositsAddress, usdcAddress: cc.usdcAddress, ...(cc.chainId ? { evmChainId: cc.chainId } : {}) });
 
-  try {
-    const [balance, creditLimit, operatorAddress, pending, walletBalance] = await Promise.all([
-      depositsClient.getBuyerBalance(evmAddress),
-      depositsClient.getBuyerCreditLimit(evmAddress),
-      (async (): Promise<string | null> => {
-        try {
-          const addr = await depositsClient.getOperator(evmAddress);
-          return addr && addr !== '0x0000000000000000000000000000000000000000' ? addr : null;
-        } catch { return null; }
-      })(),
-      getPendingSpendUsdc().catch(() => 0n),
-      depositsClient.getUSDCBalance(evmAddress).catch(() => 0n),
-    ]);
+  const [balanceResult, creditLimitResult, operatorResult, pendingResult, walletResult] = await Promise.allSettled([
+    depositsClient.getBuyerBalance(evmAddress),
+    depositsClient.getBuyerCreditLimit(evmAddress),
+    depositsClient.getOperator(evmAddress),
+    getPendingSpendUsdc(),
+    depositsClient.getUSDCBalance(evmAddress),
+  ]);
+
+  const balanceUpdates: Partial<CreditsBalanceComponents> = {};
+  if (balanceResult.status === 'fulfilled') {
+    balanceUpdates.available = balanceResult.value.available;
+    balanceUpdates.reserved = balanceResult.value.reserved;
     creditsRpcFailCount = 0;
-
-    const deposited = balance.available + balance.reserved;
-    const spendable = spendableBalance(deposited, pending);
-    const totalOwned = totalOwnedBalance(spendable, walletBalance);
-
-    const info: CreditsInfo = {
-      evmAddress,
-      operatorAddress,
-      balanceUsdc: formatUsdc6(deposited),
-      reservedUsdc: formatUsdc6(balance.reserved),
-      availableUsdc: formatUsdc6(balance.available),
-      pendingUsdc: formatUsdc6(pending),
-      spendableUsdc: formatUsdc6(spendable),
-      walletUsdc: formatUsdc6(walletBalance),
-      totalOwnedUsdc: formatUsdc6(totalOwned),
-      creditLimitUsdc: formatUsdc6(creditLimit),
-    };
-    cachedCreditsInfo = info;
-    return info;
-  } catch (err) {
+  } else {
     creditsRpcFailCount++;
     creditsRpcLastFailAt = Date.now();
     if (creditsRpcFailCount <= 1) {
-      try { console.warn('[credits] Deposits RPC unavailable:', err instanceof Error ? err.message : String(err)); }
+      const reason = balanceResult.reason;
+      try { console.warn('[credits] Deposits RPC unavailable:', reason instanceof Error ? reason.message : String(reason)); }
       catch { /* EPIPE — ignore */ }
     }
-    if (cachedCreditsInfo) return cachedCreditsInfo;
-    return { evmAddress, ...EMPTY_CREDITS };
   }
+  if (pendingResult.status === 'fulfilled') balanceUpdates.pending = pendingResult.value;
+  if (walletResult.status === 'fulfilled') balanceUpdates.wallet = walletResult.value;
+  cache.balance = updateCreditsBalanceComponents(cache.balance, balanceUpdates);
+
+  if (creditLimitResult.status === 'fulfilled') cache.creditLimit = creditLimitResult.value;
+  if (operatorResult.status === 'fulfilled') {
+    const address = operatorResult.value;
+    cache.operatorAddress = address && address !== '0x0000000000000000000000000000000000000000'
+      ? address
+      : null;
+  }
+
+  return creditsInfoFromCache(cache);
 }
 
 
 /** Drop the cached balance — call when the signing identity changes. */
 export function invalidateCreditsCache(): void {
-  cachedCreditsInfo = null;
+  cachedCreditsComponents = null;
 }
 
 /**
@@ -199,6 +238,7 @@ export function invalidateChainClients(): void {
   cachedEmissionsClient = null;
   cachedAntsTokenClient = null;
   cachedChannelsClient = null;
+  cachedCreditsComponents = null;
   creditsRpcFailCount = 0;
 }
 

@@ -58,6 +58,8 @@ export type DesktopPaymentChannelSummary = {
   /** Authoritative amount already settled to the seller on-chain. */
   onChainSettled: string;
   reservedAt: number;
+  /** Last local cumulative usage/auth update for this channel. */
+  updatedAt: number;
   status: string;
   requestCount: number;
   inputTokens: string;
@@ -206,8 +208,11 @@ async function enrichChannelStatuses(channels: DesktopPaymentChannelSummary[]): 
   });
 }
 
-/** Fetch buyer channels from the local proxy and re-check them on-chain. */
-export async function loadBuyerChannels(all: boolean): Promise<DesktopPaymentChannelSummary[] | null> {
+/** Fetch buyer channels from the local proxy, optionally re-checking them on-chain. */
+export async function loadBuyerChannels(
+  all: boolean,
+  enrichOnChain = true,
+): Promise<DesktopPaymentChannelSummary[] | null> {
   const body = await fetchBuyerProxyJson(`/_antseed/channels${all ? '?all=1' : ''}`);
   if (!body) return null;
   const channels = Array.isArray(body['channels'])
@@ -215,7 +220,7 @@ export async function loadBuyerChannels(all: boolean): Promise<DesktopPaymentCha
       .map((entry) => normalizePaymentChannelSummary(entry))
       .filter((entry): entry is DesktopPaymentChannelSummary => entry !== null)
     : [];
-  await enrichChannelStatuses(channels).catch(() => {});
+  if (enrichOnChain) await enrichChannelStatuses(channels).catch(() => {});
   return channels;
 }
 

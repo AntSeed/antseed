@@ -22,8 +22,7 @@ function unavailableMessage(history: DesktopBuyerSpendHistory | null, loading: b
   if (loading && history === null) return 'Loading spending history…';
   if (history === null) return 'Spending history is temporarily unavailable.';
   if (history.available) return null;
-  if (history.unavailableReason === 'unsupported-network') return 'Spending history is available on Base only.';
-  return 'Connect a wallet to view spending history.';
+  return 'Start the buyer proxy to view local spending history.';
 }
 
 export function VprSpendingChart({ history, loading }: Props): JSX.Element {

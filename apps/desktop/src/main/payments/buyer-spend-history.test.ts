@@ -1,63 +1,60 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import type { DesktopPaymentChannelSummary } from './buyer-channels.js';
 import {
-  fetchBuyerSpendHistory,
-  resetBuyerSpendHistoryCacheForTests,
+  buildLocalBuyerSpendHistory,
+  unavailableLocalBuyerSpendHistory,
 } from './buyer-spend-history.js';
 
 const NOW_MS = Date.UTC(2026, 7, 10, 12);
 
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
+function channel(overrides: Partial<DesktopPaymentChannelSummary>): DesktopPaymentChannelSummary {
+  return {
+    channelId: 'channel-1',
+    peerId: 'peer-1',
+    seller: '0xseller',
+    sellerDisplayName: null,
+    onChainStateKnown: false,
+    reserveCeiling: null,
+    cumulativeSigned: '0',
+    onChainDeposit: '0',
+    onChainSettled: '0',
+    reservedAt: NOW_MS,
+    updatedAt: NOW_MS,
+    status: 'active',
+    requestCount: 0,
+    inputTokens: '0',
+    outputTokens: '0',
+    cooperativeCloseSupported: false,
+    ...overrides,
+  };
 }
 
-test.beforeEach(() => resetBuyerSpendHistoryCacheForTests());
+test('buildLocalBuyerSpendHistory aggregates cumulative channel usage by local update day', () => {
+  const result = buildLocalBuyerSpendHistory([
+    channel({
+      channelId: 'channel-1',
+      cumulativeSigned: '125000',
+      inputTokens: '100',
+      outputTokens: '25',
+      requestCount: 2,
+      updatedAt: Date.UTC(2026, 7, 9, 10),
+    }),
+    channel({
+      channelId: 'channel-2',
+      cumulativeSigned: '70000',
+      onChainSettled: '75000',
+      inputTokens: '40',
+      outputTokens: '10',
+      requestCount: 1,
+      updatedAt: Date.UTC(2026, 7, 9, 22),
+      status: 'settled',
+    }),
+  ], NOW_MS);
 
-test('fetchBuyerSpendHistory paginates Antscan settlements and aggregates daily spend and tokens', async () => {
-  let requestUrl = '';
-  const requestBodies: Record<string, unknown>[] = [];
-  const fetchImpl: typeof fetch = async (input, init) => {
-    requestUrl = String(input);
-    const requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
-    requestBodies.push(requestBody);
-    const after = (requestBody['variables'] as Record<string, unknown>)['after'];
-    return jsonResponse({
-      data: {
-        settlementVolumes: {
-          items: after === null ? [
-            { day: '2026-08-09', dayStart: 1_786_233_600, deltaUsdc: '125000', inputTokens: '100', outputTokens: '25' },
-            { day: 'invalid', dayStart: 1_786_320_000, deltaUsdc: '500', inputTokens: '2', outputTokens: '1' },
-          ] : [
-            { day: '2026-08-09', dayStart: 1_786_233_600, deltaUsdc: '75000', inputTokens: '40', outputTokens: '10' },
-          ],
-          pageInfo: after === null
-            ? { hasNextPage: true, endCursor: 'next-page' }
-            : { hasNextPage: false, endCursor: null },
-        },
-      },
-    });
-  };
-
-  const result = await fetchBuyerSpendHistory({
-    address: '0xAbCd',
-    chainId: 8453,
-    fetchImpl,
-    nowMs: NOW_MS,
-  });
-
-  assert.equal(requestUrl, 'https://antscan.co/graphql');
-  assert.deepEqual(requestBodies[0]?.['variables'], {
-    address: '0xabcd',
-    cutoff: 1_778_630_400,
-    after: null,
-  });
-  assert.equal((requestBodies[1]?.['variables'] as Record<string, unknown>)['after'], 'next-page');
   assert.deepEqual(result, {
     available: true,
-    source: 'antscan',
+    source: 'local',
     unavailableReason: null,
     days: [{
       day: '2026-08-09',
@@ -69,69 +66,47 @@ test('fetchBuyerSpendHistory paginates Antscan settlements and aggregates daily 
   });
 });
 
-test('fetchBuyerSpendHistory reuses a successful result for 60 seconds', async () => {
-  let calls = 0;
-  const fetchImpl: typeof fetch = async () => {
-    calls += 1;
-    return jsonResponse({
-      data: {
-        settlementVolumes: {
-          items: [],
-          pageInfo: { hasNextPage: false, endCursor: null },
-        },
-      },
-    });
-  };
+test('local history uses the larger locally settled amount when it exceeds the last signed snapshot', () => {
+  const result = buildLocalBuyerSpendHistory([
+    channel({ cumulativeSigned: '90000', onChainSettled: '125000', requestCount: 1, status: 'settled' }),
+  ], NOW_MS);
 
-  await fetchBuyerSpendHistory({ address: '0x1234', chainId: 8453, fetchImpl, nowMs: NOW_MS });
-  await fetchBuyerSpendHistory({ address: '0x1234', chainId: 8453, fetchImpl, nowMs: NOW_MS + 59_999 });
-
-  assert.equal(calls, 1);
+  assert.equal(result.days[0]?.spentUsdc, '125000');
 });
 
-test('fetchBuyerSpendHistory does not call Antscan without a Base wallet', async () => {
-  const fetchImpl: typeof fetch = async () => {
-    throw new Error('unexpected fetch');
-  };
+test('local history includes unsettled and ghosted channels with delivered usage', () => {
+  const result = buildLocalBuyerSpendHistory([
+    channel({ cumulativeSigned: '300000', inputTokens: '500', requestCount: 3, status: 'active' }),
+    channel({ channelId: 'channel-2', cumulativeSigned: '200000', outputTokens: '50', requestCount: 1, status: 'ghost' }),
+  ], NOW_MS);
 
-  assert.deepEqual(
-    await fetchBuyerSpendHistory({ address: null, chainId: 8453, fetchImpl, nowMs: NOW_MS }),
-    { available: false, source: 'antscan', unavailableReason: 'no-wallet', days: [] },
-  );
-  assert.deepEqual(
-    await fetchBuyerSpendHistory({ address: '0x1234', chainId: 31337, fetchImpl, nowMs: NOW_MS }),
-    { available: false, source: 'antscan', unavailableReason: 'unsupported-network', days: [] },
-  );
+  assert.equal(result.days[0]?.spentUsdc, '500000');
+  assert.equal(result.days[0]?.inputTokens, '500');
+  assert.equal(result.days[0]?.outputTokens, '50');
 });
 
-test('fetchBuyerSpendHistory rejects transport, HTTP, and GraphQL failures', async () => {
-  await assert.rejects(
-    fetchBuyerSpendHistory({
-      address: '0x1234',
-      chainId: 8453,
-      nowMs: NOW_MS,
-      fetchImpl: async () => { throw new Error('offline'); },
-    }),
-    /offline/,
-  );
+test('local history falls back to reservedAt and ignores empty, invalid, and old channels', () => {
+  const result = buildLocalBuyerSpendHistory([
+    channel({ cumulativeSigned: '100', requestCount: 1, updatedAt: 0, reservedAt: Date.UTC(2026, 7, 8, 8) }),
+    channel({ channelId: 'empty', updatedAt: Date.UTC(2026, 7, 8, 8) }),
+    channel({ channelId: 'invalid', cumulativeSigned: 'nope', requestCount: 1 }),
+    channel({ channelId: 'old', cumulativeSigned: '900', requestCount: 1, updatedAt: Date.UTC(2026, 3, 1) }),
+  ], NOW_MS);
 
-  await assert.rejects(
-    fetchBuyerSpendHistory({
-      address: '0x1234',
-      chainId: 8453,
-      nowMs: NOW_MS,
-      fetchImpl: async () => jsonResponse({}, 503),
-    }),
-    /HTTP 503/,
-  );
+  assert.deepEqual(result.days, [{
+    day: '2026-08-08',
+    dayStart: 1_786_147_200,
+    spentUsdc: '100',
+    inputTokens: '0',
+    outputTokens: '0',
+  }]);
+});
 
-  await assert.rejects(
-    fetchBuyerSpendHistory({
-      address: '0x1234',
-      chainId: 8453,
-      nowMs: NOW_MS,
-      fetchImpl: async () => jsonResponse({ errors: [{ message: 'bad query' }] }),
-    }),
-    /GraphQL error/,
-  );
+test('unavailable local history identifies an unreachable buyer', () => {
+  assert.deepEqual(unavailableLocalBuyerSpendHistory(), {
+    available: false,
+    source: 'local',
+    unavailableReason: 'buyer-unreachable',
+    days: [],
+  });
 });

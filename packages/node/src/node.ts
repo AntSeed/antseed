@@ -126,8 +126,12 @@ export type BuyerChannelSummary = {
   reserveCeiling: string | null;
   /** Latest cumulative SpendingAuth amount persisted in the channel store. */
   cumulativeSigned: string;
+  /** Final locally observed settlement amount, when the channel is finished. */
+  settledAmount: string | null;
   deadline: number;
   reservedAt: number;
+  /** Last local cumulative usage/auth update for this channel. */
+  updatedAt: number;
   status: string;
   requestCount: number;
   tokensDelivered: string;
@@ -1190,8 +1194,10 @@ export class AntseedNode extends EventEmitter {
         buyer: c.buyerEvmAddr,
         reserveCeiling: liveReserve != null && liveReserve > 0n ? liveReserve.toString() : null,
         cumulativeSigned: c.authMax,
+        settledAmount: c.settledAmount,
         deadline: c.deadline,
         reservedAt: c.reservedAt,
+        updatedAt: c.updatedAt,
         status: c.status,
         requestCount: c.requestCount,
         tokensDelivered: c.tokensDelivered,
@@ -1218,8 +1224,10 @@ export class AntseedNode extends EventEmitter {
         buyer: c.buyerEvmAddr,
         reserveCeiling: liveReserve != null && liveReserve > 0n ? liveReserve.toString() : null,
         cumulativeSigned: c.authMax,
+        settledAmount: c.settledAmount,
         deadline: c.deadline,
         reservedAt: c.reservedAt,
+        updatedAt: c.updatedAt,
         status: c.status,
         requestCount: c.requestCount,
         tokensDelivered: c.tokensDelivered,

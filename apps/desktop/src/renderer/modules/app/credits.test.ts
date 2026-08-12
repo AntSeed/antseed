@@ -59,7 +59,7 @@ test('refreshPaymentSummary updates usage, spending history, channels, and rewar
       ok: true,
       data: {
         available: true,
-        source: 'antscan',
+        source: 'local',
         unavailableReason: null,
         days: [{
           day: '2026-08-10',
@@ -83,6 +83,7 @@ test('refreshPaymentSummary updates usage, spending history, channels, and rewar
         cumulativeSigned: '50',
         onChainDeposit: '100',
         reservedAt: 1,
+        updatedAt: 1,
         status: 'active',
         requestCount: 3,
         onChainSettled: '0',
@@ -131,7 +132,7 @@ test('refreshPaymentSummary preserves spending history when its refresh fails', 
   const uiState = createInitialUiState();
   uiState.creditsBuyerSpendHistory = {
     available: true,
-    source: 'antscan',
+    source: 'local',
     unavailableReason: null,
     days: [{
       day: '2026-08-09',

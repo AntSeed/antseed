@@ -37,8 +37,9 @@ import {
   setCachedEmissionsClient,
 } from '../payments/credits.js';
 import {
+  buildLocalBuyerSpendHistory,
   type DesktopBuyerSpendHistory,
-  fetchBuyerSpendHistory,
+  unavailableLocalBuyerSpendHistory,
 } from '../payments/buyer-spend-history.js';
 import {
   demoteDepositWatchTimer,
@@ -421,21 +422,11 @@ export function registerPaymentsIpc(): void {
   });
 
   ipcMain.handle('payments:get-buyer-spend-history', async (): Promise<{ ok: boolean; data: DesktopBuyerSpendHistory | null; error: string | null }> => {
-    try {
-      const identity = getSecureIdentity();
-      const cryptoConfig = await loadCachedCryptoConfig();
-      const data = await fetchBuyerSpendHistory({
-        address: identity?.wallet.address ?? null,
-        chainId: cryptoConfig?.chainId ?? 8453,
-      });
-      return { ok: true, data, error: null };
-    } catch (err) {
-      return {
-        ok: false,
-        data: null,
-        error: err instanceof Error ? err.message : String(err),
-      };
+    const channels = await loadBuyerChannels(true, false);
+    if (!channels) {
+      return { ok: false, data: unavailableLocalBuyerSpendHistory(), error: 'buyer proxy unreachable' };
     }
+    return { ok: true, data: buildLocalBuyerSpendHistory(channels), error: null };
   });
 
   ipcMain.handle('payments:get-channels', async (): Promise<{ ok: boolean; data: DesktopPaymentChannelSummary[] | null; error: string | null }> => {

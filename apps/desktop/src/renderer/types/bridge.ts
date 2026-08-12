@@ -70,8 +70,8 @@ export type DesktopBuyerSpendDay = {
 
 export type DesktopBuyerSpendHistory = {
   available: boolean;
-  source: 'antscan';
-  unavailableReason: 'no-wallet' | 'unsupported-network' | null;
+  source: 'local';
+  unavailableReason: 'buyer-unreachable' | null;
   days: DesktopBuyerSpendDay[];
 };
 
@@ -89,6 +89,7 @@ export type DesktopPaymentChannelSummary = {
       is what the seller can still claim against this channel. */
   onChainSettled: string;
   reservedAt: number;
+  updatedAt: number;
   status: string;
   requestCount: number;
   /** Cumulative input tokens delivered over this channel (bigint string). */

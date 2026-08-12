@@ -66,6 +66,7 @@ export function normalizePaymentChannelSummary(value: unknown): DesktopPaymentCh
     onChainDeposit: readStringField(raw, 'onChainDeposit') || '0',
     onChainSettled: readStringField(raw, 'onChainSettled') || readStringField(raw, 'settledAmount') || '0',
     reservedAt: readNumberField(raw, 'reservedAt'),
+    updatedAt: readNumberField(raw, 'updatedAt'),
     status: readStringField(raw, 'status') || 'unknown',
     requestCount: readNumberField(raw, 'requestCount'),
     inputTokens: readStringField(raw, 'tokensDelivered') || '0',
