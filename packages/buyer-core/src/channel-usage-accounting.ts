@@ -58,6 +58,25 @@ export class CountedRequestTracker {
   }
 }
 
+export function normalizeRequestUsageDelta(
+  delta: ServiceMetadataDelta,
+  options: { deliveredResponse: boolean; alreadyCounted: boolean },
+): ServiceMetadataDelta {
+  if (options.deliveredResponse && !options.alreadyCounted) return delta;
+
+  // NeedAuth and post-response signing can both report the same request cost.
+  // Once a delivered response has been attributed, the racing path must not
+  // count its amount or usage again. A budget/headroom NeedAuth does not
+  // describe a delivered response at all, so it contributes nothing.
+  return {
+    amount: 0n,
+    inputTokens: 0n,
+    cachedInputTokens: 0n,
+    outputTokens: 0n,
+    requests: 0n,
+  };
+}
+
 export function advanceUsageMetadata(
   previous: SpendingAuthMetadata | undefined,
   service: string | undefined,
