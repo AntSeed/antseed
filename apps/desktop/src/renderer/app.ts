@@ -11,7 +11,7 @@ import {
 } from './modules/app/plugin-setup';
 import { initAppSetupModule } from './modules/app/setup';
 import { initCreditsModule } from './modules/app/credits';
-import { initConversionModule } from './modules/app/conversion';
+import { initReminderModule } from './modules/app/reminder';
 import { initVprFloatModule } from './modules/app/float';
 import {
   loadFloatAutoOpen,
@@ -200,7 +200,7 @@ const {
   populateSettingsForm,
 });
 
-const conversionApi = initConversionModule({ bridge, uiState });
+const reminderApi = initReminderModule({ bridge, uiState });
 
 // Credits API is created after chat, so use late-bound reference.
 let creditsApi: ReturnType<typeof initCreditsModule>;
@@ -210,7 +210,7 @@ const chatApi = initChatModule({
   uiState,
   appendSystemLog,
   onPaymentCardShown: () => creditsApi?.notifyPaymentCardVisible(),
-  onResponseCompleted: conversionApi.onResponseCompleted,
+  onResponseCompleted: reminderApi.onResponseCompleted,
 });
 
 initAppSetupModule({ uiState, bridge: bridge ?? null });
@@ -219,7 +219,7 @@ creditsApi = initCreditsModule({
   bridge: bridge as DesktopBridge,
   uiState,
   onBalanceSufficientForPayment: () => chatApi.retryAfterPayment(),
-  onPaymentStateChanged: conversionApi.reconcilePayer,
+  onPaymentStateChanged: reminderApi.reconcilePayer,
 });
 creditsApi.startPeriodicRefresh();
 
@@ -648,8 +648,8 @@ registerActions({
   },
   setChatPermissionMode: chatApi.setChatPermissionMode,
   decideToolApproval: chatApi.decideToolApproval,
-  acceptConversionHome: conversionApi.acceptHome,
-  dismissConversionHome: conversionApi.dismissHome,
+  acceptReminderHome: reminderApi.acceptHome,
+  dismissReminderHome: reminderApi.dismissHome,
   rejectPaymentSession: () => {
     uiState.chatPaymentApprovalVisible = false;
     uiState.chatPaymentApprovalPeerName = null;

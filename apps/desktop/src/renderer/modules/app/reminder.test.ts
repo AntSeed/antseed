@@ -1,20 +1,20 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
-import type { ConversionState, ConversionVariant, VprModelCatalogEntry } from '../../core/state';
+import type { ReminderState, ReminderVariant, VprModelCatalogEntry } from '../../core/state';
 import { createInitialUiState } from '../../core/state';
 import type { DesktopBridge, DesktopPaymentChannelSummary } from '../../types/bridge';
 import type { OpenRouterReferenceMap } from '../catalog/openrouter-baseline';
 import {
   computeProspectiveUsd,
   computeRetrospectiveUsd,
-  initConversionModule,
+  initReminderModule,
   mergeCounters,
-} from './conversion';
+} from './reminder';
 
-const INSTALL_DATE_KEY = 'antseed.desktop.conversion.installDate';
-const INSTALLED_AT_KEY = 'antseed.desktop.conversion.installedAt';
-const STATE_KEY = 'antseed.desktop.conversion.state';
-const COUNTERS_KEY = 'antseed.desktop.conversion.counters';
+const INSTALL_DATE_KEY = 'antseed.desktop.reminder.installDate';
+const INSTALLED_AT_KEY = 'antseed.desktop.reminder.installedAt';
+const STATE_KEY = 'antseed.desktop.reminder.state';
+const COUNTERS_KEY = 'antseed.desktop.reminder.counters';
 
 class MemoryStorage {
   readonly values = new Map<string, string>();
@@ -120,7 +120,7 @@ function primeD1(
 function primeReminder(
   storage: MemoryStorage,
   now: number,
-  state: ConversionState,
+  state: ReminderState,
   ageDays: number,
   lifetimeRequests = 7,
 ): void {
@@ -147,7 +147,7 @@ function paymentChannel(): DesktopPaymentChannelSummary {
   };
 }
 
-function offer(variant: ConversionVariant) {
+function offer(variant: ReminderVariant) {
   return {
     variant,
     requestsCount: 10,
@@ -226,7 +226,7 @@ test('D1 publishes the Home offer directly after a qualifying response', async (
   const storage = new MemoryStorage();
   primeD1(storage, now);
   const uiState = makeEligibleState();
-  const module = initConversionModule({
+  const module = initReminderModule({
     uiState,
     dependencies: {
       storage,
@@ -243,9 +243,9 @@ test('D1 publishes the Home offer directly after a qualifying response', async (
   });
   await flushPromises();
 
-  assert.equal(uiState.conversionState, 'armed_d1');
-  assert.equal(uiState.conversionOffer?.variant, 'd1');
-  assert.equal(uiState.conversionOffer?.requestsCount, 15);
+  assert.equal(uiState.reminderState, 'armed_d1');
+  assert.equal(uiState.reminderOffer?.variant, 'd1');
+  assert.equal(uiState.reminderOffer?.requestsCount, 15);
 
   module.onResponseCompleted('conversation-1', {
     inputTokens: 500_000,
@@ -253,7 +253,7 @@ test('D1 publishes the Home offer directly after a qualifying response', async (
     service: 'gpt-5.6-sol',
   });
   await flushPromises();
-  assert.equal(uiState.conversionOffer?.requestsCount, 15);
+  assert.equal(uiState.reminderOffer?.requestsCount, 15);
 });
 
 test('D1 remains hidden until the 3-minute warmup elapses', async () => {
@@ -263,7 +263,7 @@ test('D1 remains hidden until the 3-minute warmup elapses', async () => {
   storage.setItem(INSTALLED_AT_KEY, String(installTime));
   const uiState = makeEligibleState();
   let currentTime = installTime;
-  const module = initConversionModule({
+  const module = initReminderModule({
     uiState,
     dependencies: {
       storage,
@@ -279,7 +279,7 @@ test('D1 remains hidden until the 3-minute warmup elapses', async () => {
     service: 'gpt-5.6-sol',
   });
   await flushPromises();
-  assert.equal(uiState.conversionOffer, null);
+  assert.equal(uiState.reminderOffer, null);
 
   currentTime = installTime + 3 * 60_000;
   module.onResponseCompleted('conversation-1', {
@@ -288,7 +288,7 @@ test('D1 remains hidden until the 3-minute warmup elapses', async () => {
     service: 'gpt-5.6-sol',
   });
   await flushPromises();
-  assert.equal(uiState.conversionOffer?.variant, 'd1');
+  assert.equal(uiState.reminderOffer?.variant, 'd1');
 });
 
 test('D1 suppresses the offer when any usage or conversation gate is missing', async () => {
@@ -332,7 +332,7 @@ test('D1 suppresses the offer when any usage or conversation gate is missing', a
     const storage = new MemoryStorage();
     const uiState = makeEligibleState();
     item.configure(storage, uiState);
-    const module = initConversionModule({
+    const module = initReminderModule({
       uiState,
       dependencies: {
         storage,
@@ -344,8 +344,8 @@ test('D1 suppresses the offer when any usage or conversation gate is missing', a
 
     module.onResponseCompleted(item.conversationId, item.usage);
     await flushPromises();
-    assert.equal(uiState.conversionOffer, null, item.name);
-    assert.equal(uiState.conversionState, 'armed_d1', item.name);
+    assert.equal(uiState.reminderOffer, null, item.name);
+    assert.equal(uiState.reminderState, 'armed_d1', item.name);
   }
 });
 
@@ -358,7 +358,7 @@ test('D1 request and output thresholds are independent alternatives', async () =
     const storage = new MemoryStorage();
     primeD1(storage, now, { requests: item.requests, outputTokens: item.outputTokens });
     const uiState = makeEligibleState();
-    const module = initConversionModule({
+    const module = initReminderModule({
       uiState,
       dependencies: {
         storage,
@@ -374,7 +374,7 @@ test('D1 request and output thresholds are independent alternatives', async () =
       service: 'gpt-5.6-sol',
     });
     await flushPromises();
-    assert.equal(uiState.conversionOffer?.variant, 'd1', item.name);
+    assert.equal(uiState.reminderOffer?.variant, 'd1', item.name);
   }
 });
 
@@ -385,7 +385,7 @@ test('D1 counts completions in a tool conversation that never opened in the chat
   const uiState = makeEligibleState();
   uiState.chatActiveConversation = null;
   uiState.chatMessages = [];
-  const module = initConversionModule({
+  const module = initReminderModule({
     uiState,
     dependencies: {
       storage,
@@ -402,7 +402,7 @@ test('D1 counts completions in a tool conversation that never opened in the chat
       service: 'gpt-5.6-sol',
     });
     await flushPromises();
-    assert.equal(uiState.conversionOffer, null);
+    assert.equal(uiState.reminderOffer, null);
   }
 
   module.onResponseCompleted('codex-desktop:thread-1', {
@@ -411,7 +411,7 @@ test('D1 counts completions in a tool conversation that never opened in the chat
     service: 'gpt-5.6-sol',
   });
   await flushPromises();
-  assert.equal(uiState.conversionOffer?.variant, 'd1');
+  assert.equal(uiState.reminderOffer?.variant, 'd1');
 });
 
 test('D1 retrospective falls back to lifetime usage when daily counters carry no tokens', async () => {
@@ -420,7 +420,7 @@ test('D1 retrospective falls back to lifetime usage when daily counters carry no
   primeD1(storage, now, { requests: 25, inputTokens: 0, outputTokens: 0 });
   const uiState = makeEligibleState();
   setLifetimeUsage(uiState, 25);
-  const module = initConversionModule({
+  const module = initReminderModule({
     uiState,
     dependencies: {
       storage,
@@ -436,8 +436,8 @@ test('D1 retrospective falls back to lifetime usage when daily counters carry no
     service: 'gpt-5.6-sol',
   });
   await flushPromises();
-  assert.equal(uiState.conversionOffer?.variant, 'd1');
-  assert.notEqual(uiState.conversionOffer?.retrospectiveUsd, '');
+  assert.equal(uiState.reminderOffer?.variant, 'd1');
+  assert.notEqual(uiState.reminderOffer?.retrospectiveUsd, '');
 });
 
 test('persistCounters never lowers already-persisted totals', async () => {
@@ -461,7 +461,7 @@ test('persistCounters never lowers already-persisted totals', async () => {
   };
   storage.setItem(COUNTERS_KEY, JSON.stringify(seed));
   const uiState = makeEligibleState();
-  const module = initConversionModule({
+  const module = initReminderModule({
     uiState,
     dependencies: {
       storage,
@@ -558,7 +558,7 @@ test('day rollover lazily arms D2 and uses the lower lifetime threshold', async 
   storage.setItem(COUNTERS_KEY, JSON.stringify({ lifetimeRequests: 7, summariesSeeded: true, days: {} }));
   const uiState = makeEligibleState();
   setLifetimeUsage(uiState);
-  const module = initConversionModule({
+  const module = initReminderModule({
     uiState,
     dependencies: {
       storage,
@@ -570,8 +570,8 @@ test('day rollover lazily arms D2 and uses the lower lifetime threshold', async 
 
   module.onResponseCompleted('conversation-1', { inputTokens: 1, outputTokens: 1, service: null });
   await flushPromises();
-  assert.equal(uiState.conversionState, 'armed_d2');
-  assert.equal(uiState.conversionOffer?.variant, 'd2');
+  assert.equal(uiState.reminderState, 'armed_d2');
+  assert.equal(uiState.reminderOffer?.variant, 'd2');
 });
 
 test('active returns advance every prior state to the latest due milestone', async () => {
@@ -587,7 +587,7 @@ test('active returns advance every prior state to the latest due milestone', asy
     primeReminder(storage, now, item.initial, item.ageDays);
     const uiState = makeEligibleState();
     setLifetimeUsage(uiState);
-    const module = initConversionModule({
+    const module = initReminderModule({
       uiState,
       dependencies: {
         storage,
@@ -599,8 +599,8 @@ test('active returns advance every prior state to the latest due milestone', asy
 
     module.onResponseCompleted('conversation-1', { inputTokens: 1, outputTokens: 1, service: null });
     await flushPromises();
-    assert.equal(uiState.conversionState, item.expectedState, `${item.initial} at day ${item.ageDays}`);
-    assert.equal(uiState.conversionOffer?.variant, item.expectedVariant, `${item.initial} at day ${item.ageDays}`);
+    assert.equal(uiState.reminderState, item.expectedState, `${item.initial} at day ${item.ageDays}`);
+    assert.equal(uiState.reminderOffer?.variant, item.expectedVariant, `${item.initial} at day ${item.ageDays}`);
   }
 });
 
@@ -617,7 +617,7 @@ test('day 5 and day 15 reminders wait for activity at their milestones', async (
     storage.setItem(COUNTERS_KEY, JSON.stringify({ lifetimeRequests: 7, summariesSeeded: true, days: {} }));
     const uiState = makeEligibleState();
     setLifetimeUsage(uiState);
-    const module = initConversionModule({
+    const module = initReminderModule({
       uiState,
       dependencies: {
         storage,
@@ -629,7 +629,7 @@ test('day 5 and day 15 reminders wait for activity at their milestones', async (
 
     module.onResponseCompleted('conversation-1', { inputTokens: 1, outputTokens: 1, service: null });
     await flushPromises();
-    assert.equal(uiState.conversionOffer?.variant, item.variant);
+    assert.equal(uiState.reminderOffer?.variant, item.variant);
   }
 });
 
@@ -642,7 +642,7 @@ test('day 5 reminder does not show early', async () => {
   storage.setItem(COUNTERS_KEY, JSON.stringify({ lifetimeRequests: 20, summariesSeeded: true, days: {} }));
   const uiState = makeEligibleState();
   setLifetimeUsage(uiState, 20);
-  const module = initConversionModule({
+  const module = initReminderModule({
     uiState,
     dependencies: {
       storage,
@@ -654,8 +654,8 @@ test('day 5 reminder does not show early', async () => {
 
   module.onResponseCompleted('conversation-1', { inputTokens: 1, outputTokens: 1, service: null });
   await flushPromises();
-  assert.equal(uiState.conversionOffer, null);
-  assert.equal(uiState.conversionState, 'armed_d5');
+  assert.equal(uiState.reminderOffer, null);
+  assert.equal(uiState.reminderState, 'armed_d5');
 });
 
 test('later reminders require lifetime usage, daily activity, and their milestone date', async () => {
@@ -665,7 +665,7 @@ test('later reminders require lifetime usage, daily activity, and their mileston
   primeReminder(insufficientStorage, now, 'armed_d2', 1, 6);
   const insufficientState = makeEligibleState();
   setLifetimeUsage(insufficientState, 6);
-  const insufficientModule = initConversionModule({
+  const insufficientModule = initReminderModule({
     uiState: insufficientState,
     dependencies: {
       storage: insufficientStorage,
@@ -676,14 +676,14 @@ test('later reminders require lifetime usage, daily activity, and their mileston
   });
   insufficientModule.onResponseCompleted('conversation-1', { inputTokens: 1, outputTokens: 1, service: null });
   await flushPromises();
-  assert.equal(insufficientState.conversionOffer, null);
-  assert.equal(insufficientState.conversionState, 'armed_d2');
+  assert.equal(insufficientState.reminderOffer, null);
+  assert.equal(insufficientState.reminderState, 'armed_d2');
 
   const inactiveStorage = new MemoryStorage();
   primeReminder(inactiveStorage, now, 'armed_d5', 6);
   const inactiveState = makeEligibleState();
   setLifetimeUsage(inactiveState);
-  initConversionModule({
+  initReminderModule({
     uiState: inactiveState,
     dependencies: {
       storage: inactiveStorage,
@@ -693,14 +693,14 @@ test('later reminders require lifetime usage, daily activity, and their mileston
     },
   });
   await flushPromises();
-  assert.equal(inactiveState.conversionOffer, null);
-  assert.equal(inactiveState.conversionState, 'armed_d5');
+  assert.equal(inactiveState.reminderOffer, null);
+  assert.equal(inactiveState.reminderState, 'armed_d5');
 
   const earlyD15Storage = new MemoryStorage();
   primeReminder(earlyD15Storage, now, 'armed_d15', 13, 20);
   const earlyD15State = makeEligibleState();
   setLifetimeUsage(earlyD15State, 20);
-  const earlyD15Module = initConversionModule({
+  const earlyD15Module = initReminderModule({
     uiState: earlyD15State,
     dependencies: {
       storage: earlyD15Storage,
@@ -711,8 +711,8 @@ test('later reminders require lifetime usage, daily activity, and their mileston
   });
   earlyD15Module.onResponseCompleted('conversation-1', { inputTokens: 1, outputTokens: 1, service: null });
   await flushPromises();
-  assert.equal(earlyD15State.conversionOffer, null);
-  assert.equal(earlyD15State.conversionState, 'armed_d15');
+  assert.equal(earlyD15State.reminderOffer, null);
+  assert.equal(earlyD15State.reminderState, 'armed_d15');
 });
 
 test('dismissing each offer advances to the next reminder', async () => {
@@ -729,7 +729,7 @@ test('dismissing each offer advances to the next reminder', async () => {
     storage.setItem(COUNTERS_KEY, JSON.stringify({ lifetimeRequests: 7, summariesSeeded: true, days: {} }));
     const uiState = makeEligibleState();
     setLifetimeUsage(uiState);
-    const module = initConversionModule({
+    const module = initReminderModule({
       uiState,
       dependencies: {
         storage,
@@ -741,26 +741,26 @@ test('dismissing each offer advances to the next reminder', async () => {
 
     module.onResponseCompleted('conversation-1', { inputTokens: 1, outputTokens: 1, service: null });
     await flushPromises();
-    assert.equal(uiState.conversionOffer?.variant, item.variant);
+    assert.equal(uiState.reminderOffer?.variant, item.variant);
     module.dismissHome();
-    assert.equal(uiState.conversionState, item.expected);
-    assert.equal(uiState.conversionOffer, null);
+    assert.equal(uiState.reminderState, item.expected);
+    assert.equal(uiState.reminderOffer, null);
   }
 });
 
 test('dismissing D1 advances directly to day 5', () => {
   const storage = new MemoryStorage();
   const uiState = createInitialUiState();
-  uiState.conversionOffer = offer('d1');
-  const module = initConversionModule({
+  uiState.reminderOffer = offer('d1');
+  const module = initReminderModule({
     uiState,
     dependencies: { storage, notifyChanged: () => {} },
   });
 
   module.dismissHome();
-  assert.equal(uiState.conversionState, 'armed_d5');
+  assert.equal(uiState.reminderState, 'armed_d5');
   assert.equal(storage.getItem(STATE_KEY), 'armed_d5');
-  assert.equal(uiState.conversionOffer, null);
+  assert.equal(uiState.reminderOffer, null);
 });
 
 test('every payer source suppresses an otherwise eligible offer', async () => {
@@ -792,7 +792,7 @@ test('every payer source suppresses an otherwise eligible offer', async () => {
     primeD1(storage, now);
     const uiState = makeEligibleState();
     item.configure(uiState);
-    const module = initConversionModule({
+    const module = initReminderModule({
       bridge: item.bridge,
       uiState,
       dependencies: {
@@ -809,8 +809,8 @@ test('every payer source suppresses an otherwise eligible offer', async () => {
       service: 'gpt-5.6-sol',
     });
     await flushPromises();
-    assert.equal(uiState.conversionOffer, null, item.name);
-    assert.equal(uiState.conversionState, 'done', item.name);
+    assert.equal(uiState.reminderOffer, null, item.name);
+    assert.equal(uiState.reminderState, 'done', item.name);
     assert.equal(storage.getItem(STATE_KEY), 'done', item.name);
   }
 });
@@ -825,17 +825,17 @@ test('a confirmed deposit retires and clears offers from every lifecycle state',
     const storage = new MemoryStorage();
     storage.setItem(STATE_KEY, item.state);
     const uiState = createInitialUiState();
-    const module = initConversionModule({
+    const module = initReminderModule({
       uiState,
       dependencies: { storage, notifyChanged: () => {} },
     });
-    uiState.conversionOffer = offer(item.variant);
+    uiState.reminderOffer = offer(item.variant);
     uiState.creditsTotalOwnedUsdc = '1';
 
     await module.reconcilePayer();
-    assert.equal(uiState.conversionState, 'done', item.state);
+    assert.equal(uiState.reminderState, 'done', item.state);
     assert.equal(storage.getItem(STATE_KEY), 'done', item.state);
-    assert.equal(uiState.conversionOffer, null, item.state);
+    assert.equal(uiState.reminderOffer, null, item.state);
   }
 });
 
@@ -854,7 +854,7 @@ test('failed channel lookup suppresses temporarily without advancing state', asy
         : { ok: true, data: [], error: null };
     },
   } as DesktopBridge;
-  const module = initConversionModule({
+  const module = initReminderModule({
     bridge,
     uiState,
     dependencies: {
@@ -867,19 +867,19 @@ test('failed channel lookup suppresses temporarily without advancing state', asy
 
   module.onResponseCompleted('conversation-1', { inputTokens: 1, outputTokens: 1, service: null });
   await flushPromises();
-  assert.equal(uiState.conversionState, 'armed_d2');
+  assert.equal(uiState.reminderState, 'armed_d2');
   assert.equal(storage.getItem(STATE_KEY), 'armed_d2');
-  assert.equal(uiState.conversionOffer, null);
+  assert.equal(uiState.reminderOffer, null);
 
   module.onResponseCompleted('conversation-1', { inputTokens: 1, outputTokens: 1, service: null });
   await flushPromises();
-  assert.equal(uiState.conversionState, 'armed_d5');
-  assert.equal(uiState.conversionOffer?.variant, 'd5');
+  assert.equal(uiState.reminderState, 'armed_d5');
+  assert.equal(uiState.reminderOffer?.variant, 'd5');
 });
 
 test('storage failures hide the feature', () => {
   const failedState = createInitialUiState();
-  initConversionModule({
+  initReminderModule({
     uiState: failedState,
     dependencies: {
       storage: {
@@ -889,23 +889,23 @@ test('storage failures hide the feature', () => {
       notifyChanged: () => {},
     },
   });
-  assert.equal(failedState.conversionOffer, null);
+  assert.equal(failedState.reminderOffer, null);
 });
 
 test('fresh installs start at D1 while existing profiles are grandfathered to D2', () => {
   const freshState = createInitialUiState();
-  initConversionModule({
+  initReminderModule({
     uiState: freshState,
     dependencies: { storage: new MemoryStorage(), notifyChanged: () => {} },
   });
-  assert.equal(freshState.conversionState, 'armed_d1');
+  assert.equal(freshState.reminderState, 'armed_d1');
 
   const existingStorage = new MemoryStorage();
   existingStorage.setItem('antseed.desktop.vpr.hasChats', '1');
   const existingState = createInitialUiState();
-  initConversionModule({
+  initReminderModule({
     uiState: existingState,
     dependencies: { storage: existingStorage, notifyChanged: () => {} },
   });
-  assert.equal(existingState.conversionState, 'armed_d2');
+  assert.equal(existingState.reminderState, 'armed_d2');
 });

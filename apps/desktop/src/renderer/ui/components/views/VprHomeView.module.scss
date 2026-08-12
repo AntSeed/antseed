@@ -540,9 +540,9 @@
   color: #ffffff;
 }
 
-/* ---------- Conversion card ---------- */
+/* ---------- Reminder card ---------- */
 
-.conversionCard {
+.reminderCard {
   position: relative;
   width: 100%;
   padding: 18px;
@@ -555,19 +555,19 @@
   box-shadow: var(--shadow-sm);
 }
 
-.conversionContent {
+.reminderContent {
   width: 100%;
   display: grid;
   gap: 14px;
 }
 
-.conversionHeadline {
+.reminderHeadline {
   display: flex;
   align-items: flex-start;
   gap: 12px;
 }
 
-.conversionIcon {
+.reminderIcon {
   flex: 0 0 auto;
   display: grid;
   place-items: center;
@@ -576,48 +576,48 @@
   color: var(--brand);
 }
 
-.conversionIcon {
+.reminderIcon {
   width: 52px;
   height: 52px;
 }
 
-.conversionHeadlineText {
+.reminderHeadlineText {
   min-width: 0;
   display: grid;
   gap: 5px;
 }
 
-.conversionTitle {
+.reminderTitle {
   color: var(--text-primary);
   font-size: 18px;
   line-height: 24px;
 }
 
-.conversionProof {
+.reminderProof {
   display: grid;
   gap: 4px;
 }
 
-.conversionProof strong {
+.reminderProof strong {
   color: var(--text-primary);
   font-size: 15px;
   line-height: 21px;
 }
 
-.conversionProof em {
+.reminderProof em {
   color: var(--brand);
   font-style: normal;
   font-weight: 800;
 }
 
-.conversionActions {
+.reminderActions {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
 
-.conversionPrimary,
-.conversionSecondary {
+.reminderPrimary,
+.reminderSecondary {
   min-height: 42px;
   padding: 9px 14px;
   border-radius: 10px;
@@ -627,13 +627,13 @@
   cursor: pointer;
 }
 
-.conversionPrimary {
+.reminderPrimary {
   border: 1px solid var(--brand);
   background: var(--brand);
   color: #07130f;
 }
 
-.conversionSecondary {
+.reminderSecondary {
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-primary);

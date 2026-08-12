@@ -66,7 +66,7 @@ export function VprHomeView({ onSelectView }: Props) {
     creditsSpendable: state.creditsSpendableUsdc,
     creditsTotalOwned: state.creditsTotalOwnedUsdc,
     creditsChannels: state.creditsChannels,
-    conversionOffer: state.conversionOffer,
+    reminderOffer: state.reminderOffer,
     networkAlert: state.networkAlert,
     // Unfiltered discover list, for routed-peer name resolution.
     allRows: state.discoverRows,
@@ -264,8 +264,8 @@ export function VprHomeView({ onSelectView }: Props) {
   const showAddBalance = !addBalanceDismissed
     && !(Number.isFinite(creditsSpendableNum) && creditsSpendableNum > 5);
   const hasDeposited = Number(snap.creditsTotalOwned) > 0 || snap.creditsChannels.length > 0;
-  const showConversionBanner = Boolean(
-    snap.conversionOffer
+  const showReminderBanner = Boolean(
+    snap.reminderOffer
     && !hasDeposited,
   );
 
@@ -296,36 +296,36 @@ export function VprHomeView({ onSelectView }: Props) {
     />
   );
 
-  const conversionCard = showConversionBanner && snap.conversionOffer ? (
-    <section className={styles.conversionCard} aria-labelledby="conversion-offer-title">
-      <div className={styles.conversionContent}>
-        <div className={styles.conversionHeadline}>
-          <span className={styles.conversionIcon} aria-hidden="true">
+  const reminderCard = showReminderBanner && snap.reminderOffer ? (
+    <section className={styles.reminderCard} aria-labelledby="reminder-offer-title">
+      <div className={styles.reminderContent}>
+        <div className={styles.reminderHeadline}>
+          <span className={styles.reminderIcon} aria-hidden="true">
             <HugeiconsIcon icon={SparklesIcon} size={26} strokeWidth={2} />
           </span>
-          <div className={styles.conversionHeadlineText}>
-            <strong id="conversion-offer-title" className={styles.conversionTitle}>
-              {snap.conversionOffer.variant === 'd1'
-                ? `Your first day cost you $0 for ${snap.conversionOffer.requestsCount} requests worth $${snap.conversionOffer.retrospectiveUsd}.`
-                : `So far, you’ve paid $0 for ${snap.conversionOffer.requestsCount} requests worth $${snap.conversionOffer.retrospectiveUsd}.`}
+          <div className={styles.reminderHeadlineText}>
+            <strong id="reminder-offer-title" className={styles.reminderTitle}>
+              {snap.reminderOffer.variant === 'd1'
+                ? `Your first day cost you $0 for ${snap.reminderOffer.requestsCount} requests worth $${snap.reminderOffer.retrospectiveUsd}.`
+                : `So far, you’ve paid $0 for ${snap.reminderOffer.requestsCount} requests worth $${snap.reminderOffer.retrospectiveUsd}.`}
             </strong>
           </div>
         </div>
 
-        <div className={styles.conversionProof}>
+        <div className={styles.reminderProof}>
           <strong>
             Your $10 can turn into <em>~${Math.round(Number(
-              snap.conversionOffer.prospectiveUsd,
+              snap.reminderOffer.prospectiveUsd,
             )).toLocaleString('en-US')}</em> in frontier-model value.
           </strong>
         </div>
 
-        <div className={styles.conversionActions}>
+        <div className={styles.reminderActions}>
           <button
             type="button"
-            className={styles.conversionPrimary}
+            className={styles.reminderPrimary}
             onClick={() => {
-              actions.acceptConversionHome();
+              actions.acceptReminderHome();
               onSelectView?.('deposit');
             }}
           >
@@ -333,8 +333,8 @@ export function VprHomeView({ onSelectView }: Props) {
           </button>
           <button
             type="button"
-            className={styles.conversionSecondary}
-            onClick={actions.dismissConversionHome}
+            className={styles.reminderSecondary}
+            onClick={actions.dismissReminderHome}
           >
             Not now
           </button>
@@ -475,7 +475,7 @@ export function VprHomeView({ onSelectView }: Props) {
               </button>
             ) : null}
 
-            {conversionCard}
+            {reminderCard}
 
             {recentChats}
 
@@ -484,7 +484,7 @@ export function VprHomeView({ onSelectView }: Props) {
               <HugeiconsIcon icon={ArrowRight02Icon} size={16} strokeWidth={2} />
             </button>
 
-            {showAddBalance && !snap.conversionOffer ? (
+            {showAddBalance && !snap.reminderOffer ? (
               <div className={styles.balanceBanner}>
                 <button
                   type="button"
@@ -609,7 +609,7 @@ export function VprHomeView({ onSelectView }: Props) {
           </div>
           )}
 
-          {conversionCard}
+          {reminderCard}
 
           {recentChats}
 

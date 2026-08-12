@@ -4,9 +4,9 @@ import type {
   DesktopBridge,
 } from '../../types/bridge.js';
 import type {
-  ConversionOffer,
-  ConversionState,
-  ConversionVariant,
+  ReminderOffer,
+  ReminderState,
+  ReminderVariant,
   RendererUiState,
   VprModelCatalogEntry,
 } from '../../core/state.js';
@@ -27,12 +27,12 @@ import {
   DEPOSIT_SUGGESTED_USD,
   MIN_AMMO_USD,
   MIN_NETWORK_DISCOUNT,
-} from './conversion-constants.js';
+} from './reminder-constants.js';
 
-const INSTALL_DATE_KEY = 'antseed.desktop.conversion.installDate';
-const INSTALLED_AT_KEY = 'antseed.desktop.conversion.installedAt';
-const STATE_KEY = 'antseed.desktop.conversion.state';
-const COUNTERS_KEY = 'antseed.desktop.conversion.counters';
+const INSTALL_DATE_KEY = 'antseed.desktop.reminder.installDate';
+const INSTALLED_AT_KEY = 'antseed.desktop.reminder.installedAt';
+const STATE_KEY = 'antseed.desktop.reminder.state';
+const COUNTERS_KEY = 'antseed.desktop.reminder.counters';
 const EXISTING_PROFILE_KEYS = [
   'antseed.desktop.vpr.hasChats',
   'antseed.desktop.vpr.preferences',
@@ -47,32 +47,32 @@ const EXISTING_PROFILE_KEYS = [
 type StorageLike = Pick<Storage, 'getItem' | 'setItem'>;
 
 type ServiceCounter = { inputTokens: number; outputTokens: number };
-export type ConversionDayCounter = {
+export type ReminderDayCounter = {
   requests: number;
   inputTokens: number;
   outputTokens: number;
   services: Record<string, ServiceCounter>;
 };
-type ConversionCounters = {
+type ReminderCounters = {
   lifetimeRequests: number;
   summariesSeeded: boolean;
-  days: Record<string, ConversionDayCounter>;
+  days: Record<string, ReminderDayCounter>;
 };
 
-export type ConversionCompletionUsage = {
+export type ReminderCompletionUsage = {
   inputTokens: number;
   outputTokens: number;
   service: string | null;
 };
 
-export type ConversionModuleApi = {
-  onResponseCompleted: (conversationId: string, usage: ConversionCompletionUsage) => void;
+export type ReminderModuleApi = {
+  onResponseCompleted: (conversationId: string, usage: ReminderCompletionUsage) => void;
   acceptHome: () => void;
   dismissHome: () => void;
   reconcilePayer: () => Promise<void>;
 };
 
-type ConversionDependencies = {
+type ReminderDependencies = {
   storage?: StorageLike | null;
   now?: () => number;
   loadReferencePrices?: () => Promise<OpenRouterReferenceMap | null>;
@@ -232,13 +232,13 @@ export function computeRetrospectiveUsd({
   return baselineUsd > 0 ? baselineUsd : null;
 }
 
-function emptyCounter(): ConversionDayCounter {
+function emptyCounter(): ReminderDayCounter {
   return { requests: 0, inputTokens: 0, outputTokens: 0, services: {} };
 }
 
-function parseCounters(raw: string | null): ConversionCounters {
+function parseCounters(raw: string | null): ReminderCounters {
   if (!raw) return { lifetimeRequests: 0, summariesSeeded: false, days: {} };
-  const parsed = JSON.parse(raw) as Partial<ConversionCounters>;
+  const parsed = JSON.parse(raw) as Partial<ReminderCounters>;
   const days = parsed.days && typeof parsed.days === 'object' ? parsed.days : {};
   return {
     lifetimeRequests: Math.max(0, Math.floor(Number(parsed.lifetimeRequests) || 0)),
@@ -253,10 +253,10 @@ function parseCounters(raw: string | null): ConversionCounters {
  * holds lower in-memory counts must never clobber the persisted totals.
  */
 export function mergeCounters(
-  existing: ConversionCounters,
-  incoming: ConversionCounters,
-): ConversionCounters {
-  const days: ConversionCounters['days'] = {};
+  existing: ReminderCounters,
+  incoming: ReminderCounters,
+): ReminderCounters {
+  const days: ReminderCounters['days'] = {};
   for (const day of new Set([...Object.keys(existing.days), ...Object.keys(incoming.days)])) {
     const prior = existing.days[day];
     const next = incoming.days[day];
@@ -268,7 +268,7 @@ export function mergeCounters(
       days[day] = prior;
       continue;
     }
-    const services: ConversionDayCounter['services'] = {};
+    const services: ReminderDayCounter['services'] = {};
     for (const service of new Set([...Object.keys(prior.services), ...Object.keys(next.services)])) {
       const priorService = prior.services[service];
       const nextService = next.services[service];
@@ -293,7 +293,7 @@ export function mergeCounters(
   };
 }
 
-function validState(value: string | null): ConversionState | null {
+function validState(value: string | null): ReminderState | null {
   return value === 'armed_d1'
     || value === 'armed_d2'
     || value === 'armed_d5'
@@ -303,13 +303,13 @@ function validState(value: string | null): ConversionState | null {
     : null;
 }
 
-function nextReminderState(shownVariant: ConversionVariant | null): ConversionState {
+function nextReminderState(shownVariant: ReminderVariant | null): ReminderState {
   if (shownVariant === 'd15') return 'done';
   if (shownVariant === 'd5') return 'armed_d15';
   return 'armed_d5';
 }
 
-function armedStateForVariant(variant: ConversionVariant | null): ConversionState {
+function armedStateForVariant(variant: ReminderVariant | null): ReminderState {
   if (variant === 'd15') return 'armed_d15';
   if (variant === 'd5') return 'armed_d5';
   if (variant === 'd2') return 'armed_d2';
@@ -326,15 +326,15 @@ function calendarDayOrdinal(day: string): number | null {
   return Math.floor(Date.UTC(year, month - 1, date) / 86_400_000);
 }
 
-export function initConversionModule({
+export function initReminderModule({
   bridge,
   uiState,
   dependencies = {},
 }: {
   bridge?: DesktopBridge;
   uiState: RendererUiState;
-  dependencies?: ConversionDependencies;
-}): ConversionModuleApi {
+  dependencies?: ReminderDependencies;
+}): ReminderModuleApi {
   const now = dependencies.now ?? Date.now;
   const loadReferencePrices = dependencies.loadReferencePrices ?? ensureOpenRouterPrices;
   const notifyChanged = dependencies.notifyChanged ?? notifyUiStateChanged;
@@ -346,15 +346,15 @@ export function initConversionModule({
   let enabled = storage !== null;
   let installDate = '';
   let installedAt = 0;
-  let state: ConversionState = 'armed_d1';
-  let counters: ConversionCounters = { lifetimeRequests: 0, summariesSeeded: false, days: {} };
+  let state: ReminderState = 'armed_d1';
+  let counters: ReminderCounters = { lifetimeRequests: 0, summariesSeeded: false, days: {} };
   let hasChannel = false;
   const turnsByConversation = new Map<string, number>();
 
   function disable(): void {
     enabled = false;
     storage = null;
-    uiState.conversionOffer = null;
+    uiState.reminderOffer = null;
   }
 
   function write(key: string, value: string): boolean {
@@ -375,8 +375,8 @@ export function initConversionModule({
     }
     try {
       const currentNow = now();
-      const hasConversionState = storage.getItem(STATE_KEY) !== null;
-      const existingProfile = !hasConversionState
+      const hasReminderState = storage.getItem(STATE_KEY) !== null;
+      const existingProfile = !hasReminderState
         && EXISTING_PROFILE_KEYS.some((key) => storage?.getItem(key) !== null);
       installDate = storage.getItem(INSTALL_DATE_KEY) ?? localCalendarDay(currentNow);
       installedAt = Math.max(0, Number(storage.getItem(INSTALLED_AT_KEY)) || currentNow);
@@ -391,7 +391,7 @@ export function initConversionModule({
       disable();
       return;
     }
-    uiState.conversionState = state;
+    uiState.reminderState = state;
   }
 
   function persistCounters(): boolean {
@@ -405,10 +405,10 @@ export function initConversionModule({
     }
   }
 
-  function persistState(next: ConversionState): boolean {
+  function persistState(next: ReminderState): boolean {
     if (!write(STATE_KEY, next)) return false;
     state = next;
-    uiState.conversionState = next;
+    uiState.reminderState = next;
     return true;
   }
 
@@ -434,7 +434,7 @@ export function initConversionModule({
     }
   }
 
-  function recordCompletion(conversationId: string, usage: ConversionCompletionUsage): void {
+  function recordCompletion(conversationId: string, usage: ReminderCompletionUsage): void {
     seedSummaries();
     turnsByConversation.set(conversationId, (turnsByConversation.get(conversationId) ?? 0) + 1);
     const day = localCalendarDay(now());
@@ -497,7 +497,7 @@ export function initConversionModule({
     return hasDepositInState();
   }
 
-  function dailyServices(counter: ConversionDayCounter): UsageService[] {
+  function dailyServices(counter: ReminderDayCounter): UsageService[] {
     return Object.entries(counter.services).map(([serviceName, totals]) => ({
       serviceName,
       inputTokens: totals.inputTokens,
@@ -514,7 +514,7 @@ export function initConversionModule({
     }));
   }
 
-  async function buildOffer(nextVariant: ConversionVariant): Promise<ConversionOffer | null> {
+  async function buildOffer(nextVariant: ReminderVariant): Promise<ReminderOffer | null> {
     const referenceMap = await loadReferencePrices();
     const prospective = computeProspectiveUsd(uiState.vprModelCatalog, referenceMap);
     if (!prospective) return null;
@@ -579,7 +579,7 @@ export function initConversionModule({
     if (state === 'armed_d1' && ageDays >= 1) persistState('armed_d2');
   }
 
-  async function eligibleOffer(conversationId: string): Promise<ConversionOffer | null> {
+  async function eligibleOffer(conversationId: string): Promise<ReminderOffer | null> {
     if (!enabled || state === 'done') return null;
     const payer = await payerDetected();
     if (payer === null) return null;
@@ -614,24 +614,24 @@ export function initConversionModule({
     if (
       !offer
       || !enabled
-      || uiState.conversionOffer !== null
+      || uiState.reminderOffer !== null
       || state !== armedStateForVariant(offer.variant)
     ) return;
-    uiState.conversionOffer = offer;
+    uiState.reminderOffer = offer;
     notifyChanged();
   }
 
   function finish(): void {
-    uiState.conversionOffer = null;
+    uiState.reminderOffer = null;
     persistState('done');
     notifyChanged();
   }
 
   function advanceReminder(): void {
-    const shownVariant = uiState.conversionOffer?.variant ?? null;
+    const shownVariant = uiState.reminderOffer?.variant ?? null;
     const nextState = nextReminderState(shownVariant);
     persistState(nextState);
-    uiState.conversionOffer = null;
+    uiState.reminderOffer = null;
     notifyChanged();
   }
 
@@ -641,14 +641,14 @@ export function initConversionModule({
     onResponseCompleted(conversationId, usage) {
       if (!enabled) return;
       recordCompletion(conversationId, usage);
-      if (state === 'done' || uiState.conversionOffer !== null) return;
+      if (state === 'done' || uiState.reminderOffer !== null) return;
       void evaluate(conversationId);
     },
     acceptHome: advanceReminder,
     dismissHome: advanceReminder,
     async reconcilePayer() {
       if (!enabled || (await payerDetected()) !== true) return;
-      uiState.conversionOffer = null;
+      uiState.reminderOffer = null;
       finish();
     },
   };

@@ -107,10 +107,10 @@ export type VprRoutingPreferences = {
 /** Which routing list a peer sits on. A peer is never on both. */
 export type VprPeerListing = 'allowed' | 'blocked' | 'none';
 
-export type ConversionState = 'armed_d1' | 'armed_d2' | 'armed_d5' | 'armed_d15' | 'done';
-export type ConversionVariant = 'd1' | 'd2' | 'd5' | 'd15';
-export type ConversionOffer = {
-  variant: ConversionVariant;
+export type ReminderState = 'armed_d1' | 'armed_d2' | 'armed_d5' | 'armed_d15' | 'done';
+export type ReminderVariant = 'd1' | 'd2' | 'd5' | 'd15';
+export type ReminderOffer = {
+  variant: ReminderVariant;
   requestsCount: number;
   retrospectiveUsd: string;
   prospectiveUsd: string;
@@ -225,8 +225,8 @@ export type ActiveChannelInfo = {
 
 export type RendererUiState = {
   activeView: string;
-  conversionState: ConversionState;
-  conversionOffer: ConversionOffer | null;
+  reminderState: ReminderState;
+  reminderOffer: ReminderOffer | null;
   // --- Process / runtime state ---
   processes: RuntimeProcessState[];
   refreshing: boolean;
@@ -405,8 +405,8 @@ const MAX_LOGS = 2000;
 export function createInitialUiState(): RendererUiState {
   return {
     activeView: 'home',
-    conversionState: 'armed_d1',
-    conversionOffer: null,
+    reminderState: 'armed_d1',
+    reminderOffer: null,
     // Process / runtime
     processes: [],
     refreshing: false,
