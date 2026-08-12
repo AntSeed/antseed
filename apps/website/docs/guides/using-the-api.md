@@ -209,7 +209,7 @@ When you send a request:
 1. The proxy resolves the peer pin (header > `<peerId>@<model>` prefix > session pin); if none, it returns `no_peer_pinned`.
 2. It checks the pinned peer's metadata for the requested `model` (the service name). Matching is an exact, case-insensitive string match — there are no aliases, so `deepseek-v4-flash` and `deepseek-v4` are different services.
 3. If the seller's native protocol differs from your tool's, the request is translated by the api-adapter.
-4. The request is forwarded to that peer via encrypted WebRTC and the response streams back through the proxy.
+4. The request is forwarded to that peer over an encrypted peer-to-peer connection and the response streams back through the proxy.
 
 Because auto-selection is disabled, upstream errors (429, 5xx) are passed through rather than retried against another peer — routing stays predictable and you always know who served the request.
 

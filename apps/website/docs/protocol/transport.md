@@ -7,14 +7,19 @@ hide_title: true
 
 # Transport
 
-The transport layer handles peer-to-peer communication using WebRTC DataChannels (via `node-datachannel`) with a TCP fallback. All messages are transmitted as binary frames. Compatible with existing AI API formats, so existing tools work without modification.
+The transport layer handles peer-to-peer communication over direct, end-to-end encrypted connections. Between nodes the preferred transport is an encrypted TCP channel; WebRTC DataChannels (via `node-datachannel`) are used for peers that cannot open TCP sockets, such as browsers. All messages are transmitted as binary frames. Compatible with existing AI API formats, so existing tools work without modification.
 
 ## Transport Modes
 
+Transport selection is capability-driven; a node advertises what it supports in its signed discovery metadata.
+
 | Mode | Library | Description |
 |---|---|---|
-| webrtc | node-datachannel | WebRTC DataChannel via TCP signaling |
-| tcp | Node.js net | Direct TCP socket fallback |
+| encrypted TCP (`transport.tcp-enc.v1`) | Node.js net | **Preferred.** Direct TCP with a mutually authenticated, encrypted channel (X25519 + ChaCha20-Poly1305) |
+| plaintext TCP | Node.js net | Legacy fallback for peers that do not advertise encrypted TCP |
+| webrtc (`transport.webrtc.v1`) | node-datachannel | WebRTC DataChannel (DTLS) via TCP signaling, for peers that cannot use TCP directly |
+
+An initiator uses encrypted TCP whenever the peer supports it, WebRTC only for peers that advertise WebRTC but not encrypted TCP, and plaintext TCP only with legacy peers. Encrypted TCP is preferred partly because WebRTC DataChannel messages are capped at 256 KiB, below the protocol's frame sizes.
 
 ## Frame Protocol
 
@@ -96,7 +101,7 @@ Payment messages use the type range 0x50-0x5F. All payment payloads are JSON-enc
 
 ## PaymentMux
 
-Payment messages are multiplexed over the same WebRTC DataChannel as proxy traffic. The 9-byte frame header (`type`, `messageId`, `payloadLength`) is shared across all message types — proxy (0x20-0x24), keepalive (0x10-0x11), and payment (0x50-0x5F). No separate connection or out-of-band channel is required.
+Payment messages are multiplexed over the same peer connection as proxy traffic. The 9-byte frame header (`type`, `messageId`, `payloadLength`) is shared across all message types — proxy (0x20-0x24), keepalive (0x10-0x11), and payment (0x50-0x5F). No separate connection or out-of-band channel is required.
 
 The `messageId` field links payment messages to their originating proxy request. For example, a SpendingAuth (0x50) triggered by a specific HttpResponse carrying a 402 status uses the same `messageId` as that proxy exchange, allowing the seller to correlate the authorization with the pending request.
 

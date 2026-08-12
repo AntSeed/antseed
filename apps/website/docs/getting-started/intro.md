@@ -35,7 +35,7 @@ Your Tool (Claude Code, Codex, curl)
 
 ## What Makes It Different
 
-- **No middleman** — buyers connect directly to providers via encrypted WebRTC
+- **No middleman** — buyers connect directly to providers over an end-to-end encrypted peer-to-peer channel
 - **Real payments** — USDC on Base, per-request metering, automatic settlement
 - **Any model** — providers choose what to serve, buyers choose what to use
 - **Open market** — providers compete on price, quality, and reputation
