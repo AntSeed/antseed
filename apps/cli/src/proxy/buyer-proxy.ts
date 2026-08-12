@@ -48,6 +48,7 @@ import {
   SYSTEM_ROUTED_MODEL_HEADER,
   normalizePeerId,
 } from './request-utils.js'
+import { buildNetworkModels, parseModelTypeFilter } from './network-models.js'
 import {
   findUnannouncedRequestParameters,
   getExplicitProviderOverride,
@@ -1765,6 +1766,57 @@ export class BuyerProxy {
     res.end(JSON.stringify({ ok: false, error: 'Unknown control-plane endpoint' }))
   }
 
+  /**
+   * GET /v1/models[/:id][?type=text|images] — answered locally from the
+   * discovered-peer cache, aggregated across the network. The
+   * `x-antseed-request-id` response header keeps the port-reuse probe in
+   * `buyer start` recognizing this as an AntSeed proxy.
+   */
+  private async _handleNetworkModels(res: ServerResponse, rawPath: string): Promise<void> {
+    const url = new URL(rawPath, 'http://localhost')
+    const typeFilter = parseModelTypeFilter(url.searchParams.get('type'))
+    const responseHeaders = { 'content-type': 'application/json', 'x-antseed-request-id': randomUUID() }
+    if (typeFilter === 'invalid') {
+      res.writeHead(400, responseHeaders)
+      res.end(JSON.stringify({
+        error: {
+          message: `Unknown model type "${url.searchParams.get('type') ?? ''}" — expected "text" or "images".`,
+          type: 'invalid_request_error',
+          param: 'type',
+        },
+      }))
+      return
+    }
+
+    const peers = await this._getPeers()
+    const models = buildNetworkModels(peers, Date.now())
+
+    const modelIdRaw = url.pathname.replace(/^\/v1\/models\/?/i, '')
+    if (modelIdRaw.length > 0) {
+      const modelId = decodeURIComponent(modelIdRaw).trim().toLowerCase()
+      const model = models.find((entry) => entry.id.toLowerCase() === modelId)
+      if (!model) {
+        res.writeHead(404, responseHeaders)
+        res.end(JSON.stringify({
+          error: {
+            message: `Model "${decodeURIComponent(modelIdRaw)}" was not found on the network.`,
+            type: 'invalid_request_error',
+            code: 'model_not_found',
+          },
+        }))
+        return
+      }
+      res.writeHead(200, responseHeaders)
+      res.end(JSON.stringify(model))
+      return
+    }
+
+    const data = typeFilter === 'all' ? models : models.filter((entry) => entry.type === typeFilter)
+    log(`GET /v1/models answered locally: ${data.length} models across ${peers.length} peers${typeFilter ? ` (type=${typeFilter})` : ''}`)
+    res.writeHead(200, responseHeaders)
+    res.end(JSON.stringify({ object: 'list', data }))
+  }
+
   private async _handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const method = req.method ?? 'GET'
     const path = req.url ?? '/'
@@ -1789,6 +1841,14 @@ export class BuyerProxy {
       res.writeHead(404, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ error: { message: 'Not found', type: 'invalid_request_error' } }))
       return
+    }
+
+    // `/v1/models` is answered locally from the discovered-peer cache: one
+    // entry per model across the whole network, with the peers serving it.
+    // Routed to a single pinned seller it would only cover that seller's
+    // services — and would require a pin just to browse the network.
+    if (method === 'GET' && normalizedPath.startsWith('/v1/models')) {
+      return this._handleNetworkModels(res, path)
     }
 
     // Collect request body

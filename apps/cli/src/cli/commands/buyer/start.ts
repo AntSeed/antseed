@@ -169,10 +169,10 @@ async function isCompatibleBuyerProxy(port: number, timeoutMs = 1200): Promise<b
     if (antseedHeaderNames.some((header) => response.headers.has(header))) return true
 
     const body = (await response.text()).toLowerCase()
-    // Any of these markers indicate we reached an Antseed buyer proxy on this
-    // port. The `no_peer_pinned` case is the common one now that auto
-    // selection is disabled — a fresh proxy with no session pin answers
-    // /v1/models with a structured `{ error: { type: 'no_peer_pinned', ... } }`.
+    // Current proxies answer /v1/models locally with an `x-antseed-request-id`
+    // header, so the header check above is the common hit. These body markers
+    // keep older proxies recognized — they forwarded /v1/models to the pinned
+    // peer and answered `{ error: { type: 'no_peer_pinned', ... } }` without one.
     return body.includes('no sellers available on the network')
       || body.includes('no peers support')
       || body.includes('p2p request failed')

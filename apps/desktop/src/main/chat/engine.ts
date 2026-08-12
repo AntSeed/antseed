@@ -65,7 +65,7 @@ import {
 } from '../../shared/model-picker.js';
 import { PiConversationStore } from './conversation-store.js';
 import { createStreamingRunner } from './streaming-run.js';
-import { generateChatImage } from './image-generation.js';
+import { generateChatImage, type GenerateChatImageResult } from './image-generation.js';
 import type {
   ActiveRun,
   ChatStreamErrorPayload,
@@ -105,6 +105,18 @@ export type PiChatEngine = {
   getModelPicker(): ModelPickerSnapshot | null;
   /** Rebinds a conversation's model/peer — same semantics as the chat UI's model dropdown. */
   selectPeer(request: ChatPeerSelectionRequest): Promise<{ ok: boolean; error?: string }>;
+  /**
+   * Runs a one-shot image generation against an `openai-images` service and
+   * persists the result into the conversation — the same flow as the chat
+   * UI's image button. The generated image lands in the attachment store;
+   * the returned assistant message carries its file block.
+   */
+  generateImage(request: {
+    conversationId: string;
+    prompt: string;
+    peerId: string;
+    service: string;
+  }): Promise<GenerateChatImageResult>;
   /**
    * Sets the buyer default route (the sticky "current model" new conversations
    * inherit) and tells the renderer so the UI selection follows suit.
@@ -695,7 +707,7 @@ export function registerPiChatHandlers({
     }
   });
 
-  ipcMain.handle('chat:generate-image', async (_event, payload: unknown) => {
+  const generateImageRequest = async (payload: unknown): Promise<GenerateChatImageResult> => {
     const request = payload && typeof payload === 'object'
       ? payload as { conversationId?: unknown; prompt?: unknown; peerId?: unknown; service?: unknown }
       : {};
@@ -727,7 +739,9 @@ export function registerPiChatHandlers({
         activeImageRunsByConversation.delete(conversationId);
       }
     }
-  });
+  };
+
+  ipcMain.handle('chat:generate-image', async (_event, payload: unknown) => generateImageRequest(payload));
 
   ipcMain.handle(
     'chat:ai-send-stream',
@@ -850,6 +864,7 @@ export function registerPiChatHandlers({
     discoverServiceCatalog: discoverPolicyAllowedCatalog,
     getModelPicker: () => modelPickerSnapshot,
     selectPeer: applyPeerSelection,
+    generateImage: generateImageRequest,
     setDefaultRoute: async (peerId, service, provider) => {
       const result = await setBuyerDefaultRoute(peerId, service);
       sendToRenderer('chat:default-route-changed', { peerId, service, provider: provider ?? null });

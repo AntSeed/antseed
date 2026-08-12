@@ -75,11 +75,14 @@ antseed network peer <peerId>             # one peer in detail (pricing, protoco
 antseed buyer connection set --peer <peerId>
 antseed buyer connection clear
 
-# List the services your pinned peer advertises (requires a pin; free, not billed)
+# List every model on the network (answered locally; free, no pin needed)
 curl -s http://localhost:8377/v1/models | jq '.data[].id'
+
+# Only image-generation models, with the peers that serve them
+curl -s 'http://localhost:8377/v1/models?type=images' | jq '.data[] | {id, peers: [.peers[].peerId]}'
 ```
 
-`GET /v1/models` returns the **pinned peer's** service ids, not a network-wide list — use `antseed network browse` for the whole network.
+`GET /v1/models` is answered locally from the buyer's discovered-peer cache and covers the **whole network** — no peer pin required. Each entry lists the model id, its `type` (`text` or `image`), and a `peers` array with every seller serving it (peer id, provider, protocols, and pricing), sorted by reputation. Filter with `?type=text` or `?type=images`, or look up a single model with `GET /v1/models/<id>`. Use a returned `peers[].peerId` directly as `<peerId>@<model>` to route a request to that seller.
 
 ## Supported API Formats
 
@@ -92,7 +95,7 @@ The proxy accepts these API formats. Use whichever matches your tool:
 | `/v1/responses` | OpenAI Responses API | Codex |
 | `/v1/images/generations` | OpenAI Images generation | OpenAI-compatible image clients |
 | `/v1/images/edits` | OpenAI Images edits | OpenAI-compatible multipart image clients |
-| `/v1/models` | OpenAI model list | model pickers, discovery (free) |
+| `/v1/models` | OpenAI model list | network-wide, answered locally; `?type=images` filters (free) |
 | `/v1/messages/count_tokens` | Anthropic token counting | answered locally, never routed or billed |
 
 The `model` field in your request determines which service to route to, and optionally which peer (`<peerId>@<model>`).
@@ -234,7 +237,7 @@ Streaming responses carry only the request id and peer identity headers (token c
 | Status | Code / message | Meaning | Fix |
 |---|---|---|---|
 | 400 | `no_peer_pinned` | No pin from header, model prefix, or session | Pin a peer, or use `<peerId>@<model>` |
-| 400 | `model_not_found` | Pinned peer doesn't advertise that service id | Check `curl localhost:8377/v1/models`; pin another peer |
+| 400 | `model_not_found` | Pinned peer doesn't advertise that service id | Check `curl localhost:8377/v1/models` (network-wide list with peers); pin another peer |
 | 402 | `insufficient_deposits` | No (or too little) USDC deposited | `antseed payments`, deposit; response includes `suggestedAmount` |
 | 402 | `channel_exhausted` | Per-channel budget spent | Deposit more or re-open the channel |
 | 413 | `upload_body_too_large` | Request exceeds the seller's upload limit | Response includes the seller's `maxUploadBodyBytes`; trim context or pick another peer |
