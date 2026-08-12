@@ -203,6 +203,8 @@ export interface NodeConfig {
   verifications?: PeerVerifications;
   /** Extra peer capability strings to advertise (e.g. supported verifier SDKs). */
   capabilities?: string[];
+  /** Refuse plaintext TCP and unsigned SDP in both directions. Default false (legacy peers fall back to plaintext). */
+  requireSecureTransport?: boolean;
   dataDir?: string;           // Default: ~/.antseed
   dhtPort?: number;           // Default: 6881 for seller, 0 for buyer
   signalingPort?: number;     // Default: 6882 for seller
@@ -1506,7 +1508,9 @@ export class AntseedNode extends EventEmitter {
     await this._dht.start();
 
     // Create ConnectionManager and start listening
-    this._connectionManager = new ConnectionManager();
+    this._connectionManager = new ConnectionManager(undefined, {
+      requireSecureTransport: this._config.requireSecureTransport,
+    });
     this._connectionManager.setLocalIdentity(identity);
     this._connectionManager.on("error", (err: Error) => {
       debugWarn(`[ConnectionManager] ${err.message}`);
@@ -1630,7 +1634,9 @@ export class AntseedNode extends EventEmitter {
     await this._dht.start();
 
     // Create ConnectionManager for outbound connections
-    this._connectionManager = new ConnectionManager();
+    this._connectionManager = new ConnectionManager(undefined, {
+      requireSecureTransport: this._config.requireSecureTransport,
+    });
     this._connectionManager.setLocalIdentity(identity);
     this._connectionManager.on("error", (err: Error) => {
       debugWarn(`[ConnectionManager] ${err.message}`);
@@ -2099,6 +2105,7 @@ export class AntseedNode extends EventEmitter {
     const connConfig: ConnectionConfig = {
       remotePeerId: peer.peerId,
       isInitiator: true,
+      remoteCapabilities: [...peerCapabilities],
     };
 
     const conn = this._connectionManager.createConnection(connConfig);

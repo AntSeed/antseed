@@ -57,6 +57,10 @@ export const CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1 = 'payments.cooperative-
  * that stop working, so its announced service list reflects live health.
  */
 export const CONNECTION_CAPABILITY_MODEL_HEALTH_V1 = 'seller.model-health.v1' as const;
+/** Peer signs WebRTC SDP over the signaling socket (DTLS fingerprint binding). */
+export const CONNECTION_CAPABILITY_SIGNED_SDP_V1 = 'transport.signed-sdp.v1' as const;
+/** Peer supports the encrypted TCP transport handshake (X25519 + ChaCha20-Poly1305). */
+export const CONNECTION_CAPABILITY_TCP_ENC_V1 = 'transport.tcp-enc.v1' as const;
 
 export function peerRelaysSweeps(peer: { capabilities?: string[]; metadata?: { capabilities?: string[] } }): boolean {
   return peer.capabilities?.includes(CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1) === true

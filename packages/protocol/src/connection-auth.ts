@@ -27,3 +27,60 @@ export function buildConnectionAuthPayload(
 ): string {
   return `${type}|${peerId}|${ts}|${nonce}`;
 }
+
+/**
+ * Signed-SDP payload (transport.signed-sdp.v1). Signing the SDP hash binds
+ * the DTLS fingerprint it contains to the peer's wallet identity.
+ */
+export function buildSdpAuthPayload(
+  peerId: string,
+  ts: number,
+  nonce: string,
+  descriptionType: string,
+  sdpSha256Hex: string,
+): string {
+  return `sdp|${peerId}|${ts}|${nonce}|${descriptionType}|${sdpSha256Hex}`;
+}
+
+/**
+ * TCP encryption handshake (transport.tcp-enc.v1): the `intro` line carries a
+ * signed ephemeral X25519 key bound to the intro's ts/nonce; the responder's
+ * `enc-ack` signature also covers the initiator's nonce for freshness and
+ * mutual authentication.
+ */
+export interface TcpEncOffer {
+  /** Ephemeral X25519 public key, 32 bytes hex. */
+  pub: string;
+  /** Wallet signature over buildTcpEncInitPayload(...). */
+  sig: string;
+}
+
+export interface TcpEncAckMessage {
+  type: 'enc-ack';
+  peerId: string;
+  ts: number;
+  nonce: string;
+  /** Responder's ephemeral X25519 public key, 32 bytes hex. */
+  pub: string;
+  /** Wallet signature over buildTcpEncAckPayload(...). */
+  sig: string;
+}
+
+export function buildTcpEncInitPayload(
+  peerId: string,
+  ts: number,
+  nonce: string,
+  pubHex: string,
+): string {
+  return `enc-init|${peerId}|${ts}|${nonce}|${pubHex}`;
+}
+
+export function buildTcpEncAckPayload(
+  peerId: string,
+  ts: number,
+  nonce: string,
+  pubHex: string,
+  initiatorNonce: string,
+): string {
+  return `enc-ack|${peerId}|${ts}|${nonce}|${pubHex}|${initiatorNonce}`;
+}
