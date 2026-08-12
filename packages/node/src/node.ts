@@ -54,6 +54,7 @@ import { DepositRelayer } from "./payments/deposit-relayer.js";
 import {
   CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
   CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
+  CONNECTION_CAPABILITY_WEBRTC_V1,
   peerSupportsCooperativeClose,
   type SweepRequestPayload,
   type SweepReceiptPayload,
@@ -1508,7 +1509,7 @@ export class AntseedNode extends EventEmitter {
     await this._dht.start();
 
     // Create ConnectionManager and start listening
-    this._connectionManager = new ConnectionManager(undefined, {
+    this._connectionManager = await ConnectionManager.init(undefined, {
       requireSecureTransport: this._config.requireSecureTransport,
     });
     this._connectionManager.setLocalIdentity(identity);
@@ -1542,6 +1543,10 @@ export class AntseedNode extends EventEmitter {
 
     // Set up announcer for providers
     if (this._providers.length > 0) {
+      const extraCapabilities = [
+        ...(this._connectionManager.supportsWebRtc ? [CONNECTION_CAPABILITY_WEBRTC_V1] : []),
+        ...(this._config.capabilities ?? []),
+      ];
       const announcerConfig: AnnouncerConfig = {
         identity,
         dht: this._dht,
@@ -1565,7 +1570,7 @@ export class AntseedNode extends EventEmitter {
         ...(this._config.displayName ? { displayName: this._config.displayName } : {}),
         ...(this._config.publicAddress ? { publicAddress: this._config.publicAddress } : {}),
         ...(this._config.verifications ? { verifications: this._config.verifications } : {}),
-        ...(this._config.capabilities ? { capabilities: this._config.capabilities } : {}),
+        ...(extraCapabilities.length > 0 ? { capabilities: extraCapabilities } : {}),
         region: "unknown",
         pricing: new Map(
           this._providers.map((p) => [
@@ -1634,7 +1639,7 @@ export class AntseedNode extends EventEmitter {
     await this._dht.start();
 
     // Create ConnectionManager for outbound connections
-    this._connectionManager = new ConnectionManager(undefined, {
+    this._connectionManager = await ConnectionManager.init(undefined, {
       requireSecureTransport: this._config.requireSecureTransport,
     });
     this._connectionManager.setLocalIdentity(identity);

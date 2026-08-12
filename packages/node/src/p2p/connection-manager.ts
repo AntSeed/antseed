@@ -12,6 +12,7 @@ import {
   CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
   CONNECTION_CAPABILITY_SIGNED_SDP_V1,
   CONNECTION_CAPABILITY_TCP_ENC_V1,
+  CONNECTION_CAPABILITY_WEBRTC_V1,
 } from "../types/protocol.js";
 import { type IceConfig, getDefaultIceConfig } from "./ice-config.js";
 import type { Wallet } from "ethers";
@@ -396,6 +397,17 @@ export class ConnectionManager extends EventEmitter {
     return this._iceConfig;
   }
 
+  /** True when node-datachannel loaded and the probe succeeded. */
+  get supportsWebRtc(): boolean {
+    return this._transportMode === "webrtc";
+  }
+
+  private _localCapabilities(): string[] {
+    return this.supportsWebRtc
+      ? [...LOCAL_CONNECTION_CAPABILITIES, CONNECTION_CAPABILITY_WEBRTC_V1]
+      : [...LOCAL_CONNECTION_CAPABILITIES];
+  }
+
   get connections(): ReadonlyMap<PeerId, PeerConnection> {
     return this._connections;
   }
@@ -533,7 +545,9 @@ export class ConnectionManager extends EventEmitter {
 
     ConnectionManager.registerPeerEndpoint(config.remotePeerId, endpoint);
 
-    if (this._transportMode === "webrtc") {
+    // WebRTC only when the remote is known to accept `hello` — legacy peers
+    // crash-guard it away, so unknown peers get TCP.
+    if (this._transportMode === "webrtc" && conn.hasRemoteCapability(CONNECTION_CAPABILITY_WEBRTC_V1)) {
       this._createWebRtcConnection(config, conn, endpoint);
     } else {
       this._createTcpConnection(config, conn, endpoint);
@@ -599,7 +613,7 @@ export class ConnectionManager extends EventEmitter {
           this._localPeerId!,
           this._localWallet!,
         ),
-        capabilities: [...LOCAL_CONNECTION_CAPABILITIES],
+        capabilities: this._localCapabilities(),
       });
 
       rtc = this._createRtcPeer(config.remotePeerId);
@@ -647,7 +661,7 @@ export class ConnectionManager extends EventEmitter {
         this._sendLine(socket, {
           type: "intro",
           auth,
-          capabilities: [...LOCAL_CONNECTION_CAPABILITIES],
+          capabilities: this._localCapabilities(),
         });
         conn.attachRawSocket(socket);
         return;
@@ -657,7 +671,7 @@ export class ConnectionManager extends EventEmitter {
       this._sendLine(socket, {
         type: "intro",
         auth,
-        capabilities: [...LOCAL_CONNECTION_CAPABILITIES],
+        capabilities: this._localCapabilities(),
         enc: buildTcpEncOffer(
           this._localWallet!,
           this._localPeerId!,
@@ -817,6 +831,11 @@ export class ConnectionManager extends EventEmitter {
       }
 
       if (intro.type === "hello") {
+        if (this._transportMode !== "webrtc") {
+          // No working WebRTC stack — refuse instead of crashing on rtc creation.
+          socket.destroy();
+          return;
+        }
         this._acceptWebRtcInbound(socket, verified.peerId, remaining.toString("utf8"), remoteCapabilities);
         return;
       }
@@ -992,9 +1011,16 @@ export class ConnectionManager extends EventEmitter {
     conn.attachSignalingSocket(socket);
     this._registerConnection(remotePeerId, conn);
 
-    const rtc = this._createRtcPeer(remotePeerId);
-    conn.attachRtcPeer(rtc);
-    this._wireRtcPeer(conn, rtc, socket, false);
+    let rtc: NativeRtcPeerConnection;
+    try {
+      rtc = this._createRtcPeer(remotePeerId);
+      conn.attachRtcPeer(rtc);
+      this._wireRtcPeer(conn, rtc, socket, false);
+    } catch (err) {
+      conn.fail(err instanceof Error ? err : new Error(String(err)));
+      socket.destroy();
+      return;
+    }
 
     this._attachSignalingParser(
       socket,

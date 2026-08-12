@@ -324,6 +324,27 @@ describe('transport security', () => {
       expect(outbound.state === 'failed' || outbound.state === 'closed').toBe(true);
     });
 
+    it('refuses inbound hello without crashing when webrtc is unavailable', async () => {
+      const seller = trackManager(new ConnectionManager());
+      seller.setLocalIdentity(sellerIdentity);
+      await seller.startListening({ peerId: sellerIdentity.peerId, host: '127.0.0.1', port: 0 });
+
+      let accepted = false;
+      seller.once('connection', () => { accepted = true; });
+
+      const socket = net.connect({ host: '127.0.0.1', port: seller.getListeningPort()! });
+      sockets.push(socket);
+      await new Promise<void>((resolve) => socket.once('connect', resolve));
+      socket.write(JSON.stringify({
+        type: 'hello',
+        auth: buildConnectionAuthEnvelope('hello', buyerIdentity.peerId, buyerIdentity.wallet),
+      }) + '\n');
+
+      await new Promise<void>((resolve) => socket.once('close', resolve));
+      expect(accepted).toBe(false);
+      expect(seller.getListeningPort()).not.toBeNull();
+    });
+
     it('fails closed (no plaintext downgrade) when the responder never completes the handshake', async () => {
       const silent = net.createServer((socket) => { sockets.push(socket); });
       servers.push(silent);
