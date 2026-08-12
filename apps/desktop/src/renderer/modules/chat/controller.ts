@@ -2286,9 +2286,26 @@ export function initChatModule({
       }
 
       clearChatError();
+      const optimisticUserMessage: ChatMessage = {
+        role: 'user',
+        content,
+        createdAt: Date.now(),
+      };
+      const existingBeforeRequest = getLocalConversationMessages(convId) ?? (
+        convId === uiState.chatActiveConversation ? uiState.chatMessages as ChatMessage[] : []
+      );
+      const pendingMessages = [...existingBeforeRequest, optimisticUserMessage];
+      setLocalConversationMessages(convId, pendingMessages);
+      if (convId === uiState.chatActiveConversation) uiState.chatMessages = pendingMessages;
+      if (activeConversation?.id === convId) {
+        activeConversation.messages = pendingMessages;
+        activeConversation.updatedAt = optimisticUserMessage.createdAt;
+      }
+
       setConversationSending(convId, true);
       uiState.chatThinkingPhase = 'Generating image';
       notifyUiStateChanged();
+      queueScrollChatToBottom();
       try {
         const result = await bridge.chatGenerateImage!({
           conversationId: convId,
@@ -2299,10 +2316,11 @@ export function initChatModule({
         if (!result.ok || !result.user || !result.assistant) {
           throw new Error(result.error || 'Image generation failed.');
         }
-        const existing = getLocalConversationMessages(convId) ?? (
-          convId === uiState.chatActiveConversation ? uiState.chatMessages as ChatMessage[] : []
-        );
-        const messages = [...existing, result.user as ChatMessage, result.assistant as ChatMessage];
+        const existing = getLocalConversationMessages(convId) ?? pendingMessages;
+        // The prompt was projected optimistically before the slow image call;
+        // main persists that same user turn alongside the generated attachment.
+        // Append only the returned assistant message to avoid a duplicate prompt.
+        const messages = [...existing, result.assistant as ChatMessage];
         setLocalConversationMessages(convId, messages);
         if (convId === uiState.chatActiveConversation) uiState.chatMessages = messages;
         if (activeConversation?.id === convId) {

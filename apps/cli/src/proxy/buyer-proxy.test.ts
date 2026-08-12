@@ -1306,6 +1306,20 @@ test('parsePersistedPeers preserves provider metadata so routing filters still w
             },
           },
         },
+        providerServiceUnitBillingModels: {
+          'claude-oauth': {
+            services: {
+              'claude-opus-4-6': {},
+            },
+          },
+        },
+        providerServiceCapabilities: {
+          'claude-oauth': {
+            services: {
+              'claude-opus-4-6': { contextWindow: 200000 },
+            },
+          },
+        },
         defaultInputUsdPerMillion: 3,
         defaultOutputUsdPerMillion: 15,
         maxConcurrency: 4,
@@ -1321,6 +1335,12 @@ test('parsePersistedPeers preserves provider metadata so routing filters still w
   assert.deepEqual(peer!.providers, ['claude-oauth'])
   assert.deepEqual(peer!.capabilities, ['verification.response-auth.v1'])
   assert.deepEqual(peer!.metadata?.capabilities, ['verification.response-auth.v1'])
+  assert.deepEqual(peer!.providerServiceUnitBillingModels, {
+    'claude-oauth': { services: { 'claude-opus-4-6': {} } },
+  })
+  assert.deepEqual(peer!.providerServiceCapabilities, {
+    'claude-oauth': { services: { 'claude-opus-4-6': { contextWindow: 200000 } } },
+  })
   assert.equal(peer!.defaultInputUsdPerMillion, 3)
   assert.equal(peer!.defaultOutputUsdPerMillion, 15)
   assert.equal(peer!.maxConcurrency, 4)

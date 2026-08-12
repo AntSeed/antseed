@@ -1,4 +1,10 @@
-import type { DiscoverRow, VprModelCatalogEntry, VprRouteSelection, VprRoutingPreferences } from '../../core/state';
+import type {
+  DiscoverRow,
+  VprModelCatalogEntry,
+  VprModelKind,
+  VprRouteSelection,
+  VprRoutingPreferences,
+} from '../../core/state';
 import { sameCanonicalModel } from './model-identity';
 import { modelPinKey, vprModelPinFor, type VprModelPins } from '../routing/model-pins';
 import { chooseBestVprRoute } from '../routing/select';
@@ -10,6 +16,7 @@ export type VprCatalogSort = 'Popular' | 'Price' | 'Savings' | 'Name';
 export type VprCatalogFilterOptions = {
   search?: string;
   category?: string | null;
+  kind?: VprModelKind | null;
 };
 
 export type VprSelectedRouteModel = {
@@ -32,6 +39,7 @@ function catalogSearchText(entry: VprModelCatalogEntry): string {
 }
 
 function entryMinTotalPrice(entry: VprModelCatalogEntry): number | null {
+  if (entry.kind === 'image') return entry.minImageUsdPerImage;
   if (entry.minInputUsdPerMillion === null || entry.minOutputUsdPerMillion === null) return null;
   return entry.minInputUsdPerMillion + entry.minOutputUsdPerMillion;
 }
@@ -64,6 +72,7 @@ export function filterVprCatalog(
   const category = normalized(options.category ?? '');
 
   return entries.filter((entry) => {
+    if (options.kind && (entry.kind ?? 'text') !== options.kind) return false;
     if (category && !entry.categories.some((candidate) => normalized(candidate) === category)) {
       return false;
     }

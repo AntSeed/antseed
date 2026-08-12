@@ -22,6 +22,9 @@ function trimmedUsd(value: number): string {
 }
 
 export function isFreeRoute(route: DiscoverRow): boolean {
+  if (route.protocol === 'openai-images') {
+    return route.maxImageUsdPerImage !== null && route.maxImageUsdPerImage <= 0;
+  }
   const { inputUsdPerMillion: input, outputUsdPerMillion: output } = route;
   return input !== null && output !== null && input <= 0 && output <= 0;
 }
@@ -38,6 +41,12 @@ export function sellerMetaLabel(route: DiscoverRow): string {
   }
   if (isFreeRoute(route)) {
     parts.push('Free');
+  } else if (route.protocol === 'openai-images' && route.minImageUsdPerImage !== null) {
+    const min = trimmedUsd(route.minImageUsdPerImage);
+    const max = route.maxImageUsdPerImage;
+    parts.push(max !== null && max !== route.minImageUsdPerImage
+      ? `${min}-${trimmedUsd(max)}/image`
+      : `${min}/image`);
   } else if (route.inputUsdPerMillion !== null) {
     parts.push(`${trimmedUsd(route.inputUsdPerMillion)}/m input`);
     if (route.outputUsdPerMillion !== null) {

@@ -66,6 +66,21 @@ test('buildChatServiceCatalogFromPeers keeps image protocols and peer-specific c
         },
       },
     },
+    providerServiceUnitBillingModels: {
+      openai: {
+        services: {
+          'gpt-image-test': {
+            'openai-images': {
+              version: 1,
+              components: [
+                { unit: 'output_images', priceUsd: 0.04, match: { quality: 'standard' } },
+                { unit: 'output_images', priceUsd: 0.08, match: { quality: 'hd' } },
+              ],
+            },
+          },
+        },
+      },
+    },
   }]);
 
   assert.equal(catalog.length, 1);
@@ -75,6 +90,8 @@ test('buildChatServiceCatalogFromPeers keeps image protocols and peer-specific c
     outputs: ['image'],
     supportedParameters: ['quality', 'output_format'],
   });
+  assert.equal(catalog[0]?.minImageUsdPerImage, 0.04);
+  assert.equal(catalog[0]?.maxImageUsdPerImage, 0.08);
 });
 
 test('explicit image protocol wins over a conflicting chat protocol', () => {

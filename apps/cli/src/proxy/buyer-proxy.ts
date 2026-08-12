@@ -451,6 +451,12 @@ export function parsePersistedPeers(
     if (entry.providerServiceApiProtocols && typeof entry.providerServiceApiProtocols === 'object') {
       peer.providerServiceApiProtocols = entry.providerServiceApiProtocols as PeerInfo['providerServiceApiProtocols']
     }
+    if (entry.providerServiceUnitBillingModels && typeof entry.providerServiceUnitBillingModels === 'object') {
+      peer.providerServiceUnitBillingModels = entry.providerServiceUnitBillingModels as PeerInfo['providerServiceUnitBillingModels']
+    }
+    if (entry.providerServiceCapabilities && typeof entry.providerServiceCapabilities === 'object') {
+      peer.providerServiceCapabilities = entry.providerServiceCapabilities as PeerInfo['providerServiceCapabilities']
+    }
     if (typeof entry.defaultInputUsdPerMillion === 'number') {
       peer.defaultInputUsdPerMillion = entry.defaultInputUsdPerMillion
     }
@@ -1016,6 +1022,8 @@ export class BuyerProxy {
         providerPricing: p.providerPricing ?? null,
         providerServiceCategories: p.providerServiceCategories ?? null,
         providerServiceApiProtocols: p.providerServiceApiProtocols ?? null,
+        providerServiceUnitBillingModels: p.providerServiceUnitBillingModels ?? null,
+        providerServiceCapabilities: p.providerServiceCapabilities ?? null,
         defaultInputUsdPerMillion: p.defaultInputUsdPerMillion ?? 0,
         defaultOutputUsdPerMillion: p.defaultOutputUsdPerMillion ?? 0,
         defaultCachedInputUsdPerMillion: p.defaultCachedInputUsdPerMillion ?? null,
@@ -1403,6 +1411,8 @@ export class BuyerProxy {
         providerPricing: p.providerPricing,
         providerServiceCategories: p.providerServiceCategories,
         providerServiceApiProtocols: p.providerServiceApiProtocols,
+        providerServiceUnitBillingModels: p.providerServiceUnitBillingModels,
+        providerServiceCapabilities: p.providerServiceCapabilities,
         reputationScore: p.reputationScore,
         lastSeen: p.lastSeen,
       }))

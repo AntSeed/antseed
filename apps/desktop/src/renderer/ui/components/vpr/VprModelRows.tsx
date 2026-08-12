@@ -41,6 +41,7 @@ export type VprModelRowListProps = {
 };
 
 function entryMinTotalPrice(entry: VprModelCatalogEntry): number | null {
+  if (entry.kind === 'image') return entry.minImageUsdPerImage;
   if (entry.minInputUsdPerMillion === null || entry.minOutputUsdPerMillion === null) return null;
   return entry.minInputUsdPerMillion + entry.minOutputUsdPerMillion;
 }
@@ -91,7 +92,17 @@ function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pi
   const capabilities = modelCapabilitySummary(entry);
 
   const priceParts = entry.kind === 'image' ? (
-    <span className={styles.perTok}>Per-image pricing varies by seller</span>
+    entry.minImageUsdPerImage !== null ? (
+      <>
+        <span className={styles.priceLine}>
+          <span className={styles.pricePrefix}>From:</span>
+          <span>{formatPrice(entry.minImageUsdPerImage)}</span>
+        </span>
+        <span className={styles.perTok}>/image</span>
+      </>
+    ) : (
+      <span className={styles.perTok}>Price unknown</span>
+    )
   ) : free ? (
     <span className={styles.perTok}>Free</span>
   ) : hasPrice ? (

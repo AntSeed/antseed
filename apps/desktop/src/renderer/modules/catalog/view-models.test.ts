@@ -26,6 +26,8 @@ function discoverRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
     inputUsdPerMillion: 1,
     outputUsdPerMillion: 2,
     cachedInputUsdPerMillion: null,
+    minImageUsdPerImage: null,
+    maxImageUsdPerImage: null,
     lifetimeSessions: 0,
     lifetimeRequests: 0,
     lifetimeInputTokens: 0,
