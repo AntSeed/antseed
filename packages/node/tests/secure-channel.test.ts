@@ -1,3 +1,4 @@
+import { getCiphers } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   FrameDecryptor,
@@ -128,5 +129,12 @@ describe('secure channel', () => {
 
   it('hashes sdp strings deterministically', () => {
     expect(sha256Hex('abc')).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+  });
+
+  it('uses a cipher available in both OpenSSL and BoringSSL', () => {
+    // The desktop app runs the node under Electron's BoringSSL, which does not
+    // register chacha20-poly1305 via createCipheriv ("Unknown cipher").
+    // aes-256-gcm is registered in both; regression guard for that break.
+    expect(getCiphers()).toContain('aes-256-gcm');
   });
 });

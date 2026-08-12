@@ -154,7 +154,7 @@ Note: WebRTC DataChannel messages are capped at 256 KiB, which is why encrypted 
 
 - The initiator's `intro` line carries an `enc` offer: an ephemeral X25519 public key signed by the initiator's wallet, bound to the intro envelope's ts/nonce.
 - The responder answers with a single `enc-ack` line: its own signed ephemeral key, whose signature also covers the initiator's nonce (freshness + mutual authentication — the initiator verifies the ack's peerId against the peer it dialed).
-- Session keys: HKDF-SHA256 over the X25519 shared secret, salted with a transcript hash binding both peer ids, both nonces, and both public keys. One ChaCha20-Poly1305 key per direction.
+- Session keys: HKDF-SHA256 over the X25519 shared secret, salted with a transcript hash binding both peer ids, both nonces, and both public keys. One AES-256-GCM key per direction.
 - All subsequent traffic is length-prefixed AEAD frames (`u32be length | ciphertext+tag`) with implicit per-direction counter nonces. Ephemeral keys give forward secrecy.
 - Once an `enc` offer is sent, the handshake fails closed — there is no downgrade to plaintext.
 
