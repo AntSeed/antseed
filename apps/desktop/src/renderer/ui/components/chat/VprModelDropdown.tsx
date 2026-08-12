@@ -5,6 +5,7 @@ import type { VprModelCatalogEntry } from '../../../core/state';
 import { formatPerMillionPrice } from '../../../core/peer-utils';
 import { displayModelLabel, sameCanonicalModel } from '../../../modules/catalog/model-identity';
 import { findCatalogEntry } from '../../../modules/catalog/model-catalog';
+import { modelCapabilitySummary } from '../../../modules/catalog/model-capabilities';
 import { loadFavoriteModels } from '../../../modules/catalog/favorites';
 import {
   catalogEntryKey,
@@ -37,6 +38,7 @@ function isSelected(entry: VprModelCatalogEntry, provider: string, serviceId: st
 }
 
 function priceLabel(entry: VprModelCatalogEntry): string | null {
+  if (entry.kind === 'image') return 'Per image';
   if (entry.minInputUsdPerMillion === null) return null;
   if (entry.minInputUsdPerMillion <= 0) return 'Free';
   return `${formatPerMillionPrice(entry.minInputUsdPerMillion)} in`;
@@ -66,23 +68,31 @@ export function VprModelDropdown({
     [catalog, selectedProvider, selectedServiceId],
   );
 
+  // This dropdown controls the normal text route. Image models use the
+  // dedicated internal-chat flow and must never become a connected-app or
+  // default text-agent route.
+  const textCatalog = useMemo(
+    () => catalog.filter((entry) => entry.kind === 'text'),
+    [catalog],
+  );
+
   const favoriteEntries = useMemo(
-    () => selectFavoriteVprCatalog(catalog, favorites),
-    [catalog, favorites],
+    () => selectFavoriteVprCatalog(textCatalog, favorites),
+    [favorites, textCatalog],
   );
 
   // Curated recommended lineup (minus favorites, which get their own group),
   // with the current selection always present so the active model never
   // disappears from its own switcher.
   const recommendedEntries = useMemo(() => {
-    const top = selectRecommendedVprCatalog(catalog)
+    const top = selectRecommendedVprCatalog(textCatalog)
       .filter((entry) => !favorites.has(catalogEntryKey(entry)))
       .slice(0, TOP_MODEL_COUNT);
-    if (selectedEntry && !top.includes(selectedEntry) && !favoriteEntries.includes(selectedEntry)) {
+    if (selectedEntry?.kind === 'text' && !top.includes(selectedEntry) && !favoriteEntries.includes(selectedEntry)) {
       return [selectedEntry, ...top.slice(0, TOP_MODEL_COUNT - 1)];
     }
     return top;
-  }, [catalog, favorites, favoriteEntries, selectedEntry]);
+  }, [favorites, favoriteEntries, selectedEntry, textCatalog]);
 
   useEffect(() => {
     if (!open) return;
@@ -102,6 +112,7 @@ export function VprModelDropdown({
   function renderEntry(entry: VprModelCatalogEntry) {
     const active = isSelected(entry, selectedProvider, selectedServiceId);
     const price = priceLabel(entry);
+    const capabilitySummary = modelCapabilitySummary(entry);
     return (
       <button
         key={`${entry.provider}${entry.serviceId}`}
@@ -118,11 +129,15 @@ export function VprModelDropdown({
           <span className={styles.itemNameGroup}>
             <BrandIcon name={entry.provider} hints={[entry.label]} size={16} />
             <span className={styles.itemName}>{entry.label}</span>
+            {entry.kind === 'image' && <span className={styles.imageBadge}>Image</span>}
           </span>
           {price && <span className={styles.itemPricing}>{price}</span>}
         </span>
         <span className={styles.itemMeta}>
-          {entry.peerCount} {entry.peerCount === 1 ? 'seller' : 'sellers'}
+          <span>{capabilitySummary[0] ?? `${entry.peerCount} ${entry.peerCount === 1 ? 'seller' : 'sellers'}`}</span>
+          {capabilitySummary.length > 0 && (
+            <span>{entry.peerCount} {entry.peerCount === 1 ? 'seller' : 'sellers'}</span>
+          )}
           {entry.expectedSavingsPct !== null && entry.expectedSavingsPct > 0 && (
             <span className={styles.itemSavings}>save up to {entry.expectedSavingsPct}%</span>
           )}

@@ -9,6 +9,7 @@ export {
   type BuyerUsageTotals,
   type BuyerUsageChannelPoint,
   type BuyerUsageServicePoint,
+  type BuyerChannelSummary,
 } from './node.js';
 export type { Provider, ProviderStreamCallbacks } from './interfaces/seller-provider.js';
 export {
@@ -26,6 +27,17 @@ export type { Router } from './interfaces/buyer-router.js';
 // Types (re-export everything)
 export * from './types/index.js';
 export * from './billing/index.js';
+
+// Fault attribution — lets consumers tell a dead peer from a broken buyer.
+export {
+  AntseedRequestError,
+  buyerFault,
+  peerFault,
+  faultAttributionOf,
+  faultCodeOf,
+  type FaultAttribution,
+  type AntseedErrorCode,
+} from './errors.js';
 
 // Submodule re-exports (commonly used)
 export {

@@ -501,7 +501,13 @@ export function createTelegramBridge({ engine, appendLog, onStatusChanged }: Tel
     // (buyer default route + the app UI, via setDefaultRoute's notification).
     const conversationId = settings?.activeConversationId;
     const rebind = conversationId
-      ? await engine.selectPeer({ conversationId, peerId: option.peerId, service: option.id, provider: option.provider })
+      ? await engine.selectPeer({
+          conversationId,
+          peerId: option.peerId,
+          service: option.id,
+          provider: option.provider,
+          routeMode: 'auto',
+        })
       : { ok: true as const };
     await engine.setDefaultRoute(option.peerId, option.id, option.provider);
     await client.answerCallbackQuery(query.id, 'Model set').catch(() => {});

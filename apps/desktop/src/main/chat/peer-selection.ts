@@ -7,6 +7,7 @@ export type ChatPeerSelectionRequest = {
       on the conversation so list refreshes don't revert it. */
   service?: string | null;
   provider?: string | null;
+  routeMode?: ChatRouteMode | null;
 };
 
 export type NormalizedChatPeerSelectionRequest = {
@@ -14,11 +15,24 @@ export type NormalizedChatPeerSelectionRequest = {
   peerId: string | null;
   service: string | null;
   provider: string | null;
+  routeMode: ChatRouteMode | null;
 };
+
+/**
+ * How a conversation's peer was chosen.
+ *
+ * `pinned` means the user picked this peer explicitly and it must never be
+ * changed for them. `auto` means routing chose it, so it may be re-resolved if
+ * the peer stops responding. Threads written before this field existed resolve
+ * to `undefined` and are treated as `auto` by callers: pinning is an explicit
+ * act, and failover only ever runs after a failure, where moving beats erroring.
+ */
+export type ChatRouteMode = 'auto' | 'pinned';
 
 export type PersistedPeerBinding = {
   peerId: string;
   peerLabel?: string;
+  routeMode?: ChatRouteMode;
 };
 
 type PersistedPeerSelectionEntry = {
@@ -40,6 +54,7 @@ export function normalizeChatPeerSelectionRequest(
       peerId: normalizeOptionalString(input),
       service: null,
       provider: null,
+      routeMode: null,
     };
   }
 
@@ -48,6 +63,7 @@ export function normalizeChatPeerSelectionRequest(
     peerId: normalizeOptionalString(input.peerId),
     service: normalizeOptionalString(input.service),
     provider: normalizeOptionalString(input.provider),
+    routeMode: input.routeMode === 'auto' || input.routeMode === 'pinned' ? input.routeMode : null,
   };
 }
 
@@ -67,7 +83,14 @@ export function resolveLatestPeerBinding(
     }
 
     const peerLabel = normalizeOptionalString(data?.peerLabel) ?? undefined;
-    return peerLabel ? { peerId, peerLabel } : { peerId };
+    const rawMode = data?.routeMode;
+    const routeMode: ChatRouteMode | undefined =
+      rawMode === 'auto' || rawMode === 'pinned' ? rawMode : undefined;
+    return {
+      peerId,
+      ...(peerLabel ? { peerLabel } : {}),
+      ...(routeMode ? { routeMode } : {}),
+    };
   }
 
   return null;

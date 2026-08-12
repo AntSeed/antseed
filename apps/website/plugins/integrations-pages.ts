@@ -257,7 +257,7 @@ function renderSkillMarkdown(): string {
   out.push('  editor / agent / SDK ever talks to.');
   out.push('- **Peer** — someone selling inference. Each peer has a `peerId` (40-char hex),');
   out.push('  a display name, and a list of services. List with `antseed network browse`.');
-  out.push('- **Service** — a single model id like `claude-sonnet-4-6` or `deepseek-v4-flash`.');
+  out.push('- **Service** — a single model id like `kimi-k2.6` or `deepseek-v4-flash`.');
   out.push("  *This is what you pass as `model` in your tool's config.* Each service has its");
   out.push('  own native protocol list and its own `in` / `cachedIn` / `out` pricing.');
   out.push('- **Protocols** (per service) — the wire formats a service accepts *natively*,');
@@ -290,11 +290,14 @@ function renderSkillMarkdown(): string {
 
   out.push('## Universal setup (do this once)');
   out.push('');
-  out.push('### Option A — VPR desktop app (easiest)');
+  out.push('### Option A — VPR desktop app (recommended)');
   out.push('');
   out.push('Download from https://antseed.com — it ships the buyer proxy, a wallet, and a');
   out.push('peer browser in a GUI. While the app is open the proxy is reachable at');
-  out.push('`http://localhost:8377`.');
+  out.push('`http://localhost:8377`. Its **Apps** view detects installed tools (Claude');
+  out.push('Code, Codex, …) and launches them already wired to AntSeed, and routing works');
+  out.push('best there: the app auto-selects the best peer for a model and supports');
+  out.push('per-chat model switching — no manual pinning needed.');
   out.push('');
   out.push('### Option B — CLI (headless / servers / agents)');
   out.push('');
@@ -418,7 +421,7 @@ function renderSkillMarkdown(): string {
   out.push('```bash');
   out.push('curl http://localhost:8377/v1/chat/completions \\');
   out.push("  -H 'content-type: application/json' \\");
-  out.push("  -H 'x-antseed-pin-peer: 4668854ba3e8b094e6f48fbeb59cec1cfde162f2' \\");
+  out.push("  -H 'x-antseed-pin-peer: cccccccccccccccccccccccccccccccccccccccc' \\");
   out.push('  -d \'{ "model": "minimax-m2.7", "messages": [{"role":"user","content":"hi"}] }\'');
   out.push('```');
   out.push('');

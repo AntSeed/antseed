@@ -101,6 +101,14 @@ export type Integration = {
   format: IntegrationFormat;
   setupMinutes: number;
   status: IntegrationStatus;
+  /**
+   * `<title>` text, rendered as `<seoTitle> | AntSeed`. Keep it 40–50 chars so
+   * the full tag lands in the 50–60 Google renders without truncating.
+   * Falls back to `name`, which on its own carries no query intent.
+   */
+  seoTitle?: string;
+  /** Page `<h1>`. Falls back to `name`. */
+  headline?: string;
   /** ≤ 90 chars. Shown on the hub card. */
   oneLiner: string;
   /** 1–3 short paragraphs. Shown at top of the integration page. */
@@ -146,6 +154,8 @@ export const integrations: Integration[] = [
     format: 'anthropic-messages',
     setupMinutes: 2,
     status: 'verified',
+    seoTitle: 'Run Claude Code on any model, no subscription',
+    headline: 'Run Claude Code on any model',
     oneLiner: "Anthropic's official CLI agent - launch through AntSeed with `antseed claude`.",
     description: [
       'Claude Code is the official CLI coding agent from Anthropic. It speaks the Anthropic Messages API natively, so it slots into AntSeed through the `antseed claude` wrapper or by pointing `ANTHROPIC_BASE_URL` at your local proxy.',
@@ -165,9 +175,9 @@ export const integrations: Integration[] = [
       {
         kind: 'code',
         language: 'bash',
-        snippet: 'antseed claude --model claude-sonnet-4-6',
+        snippet: 'antseed claude --model kimi-k2.6',
         note:
-          'Recommended: the wrapper reads the active buyer proxy from `buyer.state.json` or config, sets `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY` for Claude Code, and forwards extra Claude args. Add `--antseed-base-url http://host:port` only when your proxy is somewhere else.',
+          'Recommended: the wrapper reads the active buyer proxy from `buyer.state.json` or config, sets `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY` for Claude Code, and forwards extra Claude args. Add `--antseed-base-url http://host:port` only when your proxy is somewhere else. To route to a specific peer, prefix the model with its peer id: `antseed claude --model <peerId>@kimi-k2.6`.',
       },
       {
         kind: 'env',
@@ -179,25 +189,25 @@ export const integrations: Integration[] = [
       },
     ],
     modelHints: {
-      suggested: ['claude-sonnet-4-6', 'claude-opus-4-7', 'deepseek-v4-flash'],
-      note: "`antseed claude --model <service-id>` passes the value to Claude Code unchanged. The valid set is whatever your pinned peer advertises - see the discovery commands below.",
+      suggested: ['kimi-k2.6', 'deepseek-v4-flash', 'minimax-m2.7', 'glm-5'],
+      note: "`antseed claude --model <service-id>` passes the value to Claude Code unchanged. The valid set is whatever your pinned peer advertises - see the discovery commands below. You can also route to a specific peer per session with `--model <peerId>@<service-id>`.",
     },
     test: [
       {
         label: 'See which models your pinned peer offers',
         command: 'curl -s http://localhost:8377/v1/models | jq \'.data[].id\'',
         outputLabel: 'Example response',
-        output: `"claude-opus-4-7"
-"claude-sonnet-4-6"
-"deepseek-v4-flash"
-"gpt-oss-120b"`,
+        output: `"deepseek-v4-flash"
+"gpt-oss-120b"
+"kimi-k2.6"
+"minimax-m2.7"`,
         note:
           'These are the only ids that work with `--model`. To switch peers, run `antseed network browse`, then `antseed buyer connection set --peer <peerId>` and re-check this list.',
       },
       {
         label: 'Start a Claude Code session through the wrapper',
-        command: 'antseed claude --model claude-sonnet-4-6',
-        note: 'Manual equivalent after exporting the env vars above: `claude --model claude-sonnet-4-6`.',
+        command: 'antseed claude --model kimi-k2.6',
+        note: 'Manual equivalent after exporting the env vars above: `claude --model kimi-k2.6`. To pin a specific peer for the session: `antseed claude --model <peerId>@kimi-k2.6`.',
       },
     ],
     troubleshooting: [
@@ -233,6 +243,8 @@ export const integrations: Integration[] = [
     format: 'openai-chat',
     setupMinutes: 2,
     status: 'verified',
+    seoTitle: 'Run OpenAI Codex CLI on any model, pay per use',
+    headline: 'Run OpenAI Codex CLI on any model',
     oneLiner: "OpenAI's official CLI coding agent - use `antseed codex` for per-run proxy config.",
     description: [
       "Codex is OpenAI's terminal coding agent. Recent versions ignore `OPENAI_BASE_URL` and instead read provider config from Codex settings.",
@@ -247,9 +259,9 @@ export const integrations: Integration[] = [
       {
         kind: 'code',
         language: 'bash',
-        snippet: 'antseed codex --model claude-sonnet-4-6',
+        snippet: 'antseed codex --model deepseek-v4-flash',
         note:
-          'Recommended: the wrapper resolves the proxy URL, injects an AntSeed model provider with `wire_api = "responses"`, sets `ANTSEED_API_KEY=antseed`, and forwards extra Codex args. Put child flags after `--` when they look like wrapper flags.',
+          'Recommended: the wrapper resolves the proxy URL, injects an AntSeed model provider with `wire_api = "responses"`, sets `ANTSEED_API_KEY=antseed`, and forwards extra Codex args. Put child flags after `--` when they look like wrapper flags. To route to a specific peer, prefix the model with its peer id: `antseed codex --model <peerId>@deepseek-v4-flash`.',
       },
       {
         kind: 'file',
@@ -258,7 +270,7 @@ export const integrations: Integration[] = [
         snippet: `# Loaded by: codex --profile antseed
 # Set this to a service id returned by http://localhost:${ANT_PORT}/v1/models
 # after pinning an AntSeed peer.
-model = "claude-sonnet-4-6"
+model = "deepseek-v4-flash"
 model_provider = "antseed"
 
 [model_providers.antseed]
@@ -275,18 +287,18 @@ wire_api = "responses"`,
       },
     ],
     modelHints: {
-      suggested: ['claude-sonnet-4-6', 'deepseek-v3.1', 'kimi-k2.5', 'qwen-3-coder-480b'],
-      note: 'Pass the peer service id to `antseed codex --model <service-id>`. For a manual profile, set top-level `model = "<service-id>"` in `~/.codex/antseed.config.toml` or override with `codex --profile antseed --model <service-id>`.',
+      suggested: ['deepseek-v4-flash', 'kimi-k2.6', 'qwen3-coder-480b', 'minimax-m2.7'],
+      note: 'Pass the peer service id to `antseed codex --model <service-id>`. For a manual profile, set top-level `model = "<service-id>"` in `~/.codex/antseed.config.toml` or override with `codex --profile antseed --model <service-id>`. Route to a specific peer by prefixing the model: `<peerId>@<service-id>`.',
     },
     test: [
       {
         label: 'See which service ids your pinned peer exposes',
         command: 'curl -s http://localhost:8377/v1/models | jq \'.data[].id\'',
         outputLabel: 'Example response',
-        output: `"claude-opus-4-7"
-"claude-sonnet-4-6"
-"deepseek-v4-flash"
-"gpt-oss-120b"`,
+        output: `"deepseek-v4-flash"
+"gpt-oss-120b"
+"kimi-k2.6"
+"minimax-m2.7"`,
         note:
           'Whatever appears here is a valid value for top-level `model = ...` in `~/.codex/antseed.config.toml` (or for `codex --profile antseed --model <id>`).',
       },
@@ -350,6 +362,8 @@ Deposits reserved:           0 USDC → 1 USDC`,
     format: 'openai-chat',
     setupMinutes: 2,
     status: 'verified',
+    seoTitle: 'Run OpenCode on any model, pay per request',
+    headline: 'Run OpenCode on any model',
     oneLiner: 'Open-source AI coding agent - launch through AntSeed with `antseed opencode`.',
     description: [
       'OpenCode is an MIT-licensed terminal coding agent built on the Vercel AI SDK. It supports 75+ providers out of the box and lets you register custom ones via <code>opencode.json</code>.',
@@ -387,7 +401,7 @@ Deposits reserved:           0 USDC → 1 USDC`,
         "apiKey": "antseed"
       },
       "models": {
-        "claude-sonnet-4-6":  { "name": "Claude Sonnet 4.6 (via AntSeed)" },
+        "kimi-k2.6":          { "name": "Kimi K2.6 (via AntSeed)" },
         "deepseek-v4-flash":  { "name": "DeepSeek v4 Flash (via AntSeed)" },
         "gpt-oss-120b":       { "name": "gpt-oss 120B (via AntSeed)" }
       }
@@ -398,19 +412,19 @@ Deposits reserved:           0 USDC → 1 USDC`,
       },
     ],
     modelHints: {
-      suggested: ['claude-sonnet-4-6', 'claude-opus-4-7', 'deepseek-v4-flash', 'gpt-oss-120b'],
+      suggested: ['kimi-k2.6', 'deepseek-v4-flash', 'minimax-m2.7', 'gpt-oss-120b'],
       note:
-        '`antseed opencode --model <service-id>` generates a temporary config for that one id. In manual config, the keys under `models` must exactly match service ids returned by `curl http://localhost:8377/v1/models`.',
+        '`antseed opencode --model <service-id>` generates a temporary config for that one id. In manual config, the keys under `models` must exactly match service ids returned by `curl http://localhost:8377/v1/models`. Route to a specific peer by prefixing the model id: `<peerId>@<service-id>`.',
     },
     test: [
       {
         label: 'Confirm the proxy lists the same ids your config references',
         command: 'curl -s http://localhost:8377/v1/models | jq \'.data[].id\'',
         outputLabel: 'Example response',
-        output: `"claude-opus-4-7"
-"claude-sonnet-4-6"
-"deepseek-v4-flash"
-"gpt-oss-120b"`,
+        output: `"deepseek-v4-flash"
+"gpt-oss-120b"
+"kimi-k2.6"
+"minimax-m2.7"`,
         note: 'Add or remove entries under `models` in `opencode.json` so they match this list.',
       },
       {
@@ -449,6 +463,8 @@ Deposits reserved:           0 USDC → 1 USDC`,
     format: 'openai-responses',
     setupMinutes: 3,
     status: 'verified',
+    seoTitle: 'Run the Pi coding agent on any model, pay per use',
+    headline: 'Run Pi on any model',
     oneLiner: 'Open-source terminal coding agent with a first-class AntSeed extension.',
     description: [
       '<strong>What Pi is.</strong> Pi (<code>@mariozechner/pi-coding-agent</code>) is a minimal, hackable terminal coding agent by Mario Zechner - the same lineage as <a href="https://github.com/badlogic/pi-mono">pi-mono</a>. It ships with four default tools (<code>read</code>, <code>write</code>, <code>edit</code>, <code>bash</code>) and lets you extend everything else - commands, providers, themes, even the editor UI - through TypeScript <em>extensions</em>, <em>skills</em>, and <em>prompt templates</em>. No fork required.',
@@ -489,9 +505,9 @@ Deposits reserved:           0 USDC → 1 USDC`,
       },
     ],
     modelHints: {
-      suggested: ['minimax-m2.7', 'claude-sonnet-4-6', 'deepseek-v4-flash', 'qwen3-coder-480b'],
+      suggested: ['minimax-m2.7', 'kimi-k2.6', 'deepseek-v4-flash', 'qwen3-coder-480b'],
       note:
-        'The extension auto-discovers from `GET /v1/models` after Pi loads, so anything your pinned peer advertises shows up under `antseed/...`. After re-pinning a different peer, run `/reload` in Pi to refresh the model list.',
+        'The extension auto-discovers from `GET /v1/models` after Pi loads, so anything your pinned peer advertises shows up under `antseed/...`. After re-pinning a different peer, run `/reload` in Pi to refresh the model list. Route to a specific peer by prefixing the model id: `/model antseed/<peerId>@minimax-m2.7`.',
     },
     test: [
       {
@@ -504,7 +520,7 @@ Deposits reserved:           0 USDC → 1 USDC`,
         label: 'Open the model picker and pick an AntSeed-routed model',
         command: '/model',
         note:
-          'Or press Ctrl+L. The picker is fuzzy-searchable; type "antseed" to filter. You should see entries like `antseed/claude-sonnet-4-6`, `antseed/deepseek-v4-flash`, etc. - one for each service your pinned peer advertises.',
+          'Or press Ctrl+L. The picker is fuzzy-searchable; type "antseed" to filter. You should see entries like `antseed/minimax-m2.7`, `antseed/deepseek-v4-flash`, etc. - one for each service your pinned peer advertises.',
       },
       {
         label: 'Or switch directly via slash command',
@@ -563,6 +579,8 @@ Deposits reserved:           0 USDC → 1 USDC`,
     format: 'anthropic-messages',
     setupMinutes: 3,
     status: 'verified',
+    seoTitle: 'Run OpenClaw agents on any model, pay per use',
+    headline: 'Run OpenClaw on any model',
     oneLiner: 'Open-source autonomous agent runtime - register AntSeed as a custom provider in `openclaw.json`.',
     description: [
       '<strong>What OpenClaw is.</strong> OpenClaw is an open-source agent runtime for autonomous, long-running tasks (research, coding, web automation). It loads its provider catalog from <code>~/.openclaw/openclaw.json</code> - each entry is an HTTP endpoint plus a wire protocol (<code>anthropic-messages</code>, <code>openai-chat</code>, etc.) and a list of models.',
@@ -590,11 +608,11 @@ Deposits reserved:           0 USDC → 1 USDC`,
         "api": "anthropic-messages",
         "models": [
           {
-            "id": "claude-sonnet-4-6",
-            "name": "Claude Sonnet 4.6 (via AntSeed)",
+            "id": "kimi-k2.6",
+            "name": "Kimi K2.6 (via AntSeed)",
             "reasoning": false,
             "input": ["text"],
-            "contextWindow": 200000,
+            "contextWindow": 256000,
             "maxTokens": 8192
           },
           {
@@ -615,23 +633,23 @@ Deposits reserved:           0 USDC → 1 USDC`,
         kind: 'code',
         language: 'bash',
         snippet: `# Set AntSeed as the default model for new agents:
-openclaw config set agents.defaults.model.primary "antseed/claude-sonnet-4-6"`,
+openclaw config set agents.defaults.model.primary "antseed/kimi-k2.6"`,
       },
     ],
     modelHints: {
-      suggested: ['claude-sonnet-4-6', 'claude-opus-4-7', 'deepseek-v4-flash', 'gpt-oss-120b'],
+      suggested: ['kimi-k2.6', 'deepseek-v4-flash', 'minimax-m2.7', 'gpt-oss-120b'],
       note:
-        'Each `id` under `models[]` must match a service id from `curl http://127.0.0.1:8377/v1/models`. `apiKey` is required by OpenClaw\'s validator but ignored by the proxy - any non-empty string works. The `"antseed-p2p"` value is just convention.',
+        'Each `id` under `models[]` must match a service id from `curl http://127.0.0.1:8377/v1/models`. `apiKey` is required by OpenClaw\'s validator but ignored by the proxy - any non-empty string works. The `"antseed-p2p"` value is just convention. Route to a specific peer by prefixing the model id: `<peerId>@<service-id>`.',
     },
     test: [
       {
         label: 'Confirm the proxy advertises the service ids you put in config',
         command: 'curl -s http://127.0.0.1:8377/v1/models | jq \'.data[].id\'',
         outputLabel: 'Example response',
-        output: `"claude-opus-4-7"
-"claude-sonnet-4-6"
-"deepseek-v4-flash"
-"gpt-oss-120b"`,
+        output: `"deepseek-v4-flash"
+"gpt-oss-120b"
+"kimi-k2.6"
+"minimax-m2.7"`,
         note:
           'If a model id you listed in `openclaw.json` doesn\'t appear here, your pinned peer doesn\'t serve it. Pin a different peer or remove the entry.',
       },
@@ -643,7 +661,7 @@ openclaw config set agents.defaults.model.primary "antseed/claude-sonnet-4-6"`,
       },
       {
         label: 'Run an agent against AntSeed',
-        command: 'openclaw run "Summarize the README in this repo" --model antseed/claude-sonnet-4-6',
+        command: 'openclaw run "Summarize the README in this repo" --model antseed/kimi-k2.6',
       },
     ],
     troubleshooting: [
@@ -686,6 +704,8 @@ openclaw config set agents.defaults.model.primary "antseed/claude-sonnet-4-6"`,
     format: 'openai-chat',
     setupMinutes: 3,
     status: 'verified',
+    seoTitle: 'Run Hermes agents on any model, pay per use',
+    headline: 'Run Hermes on any model',
     oneLiner: "Nous Research's agent framework - register AntSeed as a custom provider in `config.yaml`.",
     description: [
       '<strong>What Hermes is.</strong> Hermes is the agent framework from <a href="https://nousresearch.com/">Nous Research</a> (successor to OpenClaw\'s lineage). It\'s designed for autonomous, multi-step workflows - research agents, coding agents, swarms - and reads its model catalog from <code>~/.hermes/config.yaml</code>.',
@@ -706,7 +726,7 @@ openclaw config set agents.defaults.model.primary "antseed/claude-sonnet-4-6"`,
         path: '~/.hermes/config.yaml  (merge into your existing config)',
         language: 'yaml',
         snippet: `model:
-  default: claude-sonnet-4-6
+  default: deepseek-v4-flash
   provider: antseed
 
 custom_providers:
@@ -715,9 +735,9 @@ custom_providers:
     api_key: antseed-p2p
     api_mode: chat_completions
     models:
-      - claude-sonnet-4-6
-      - claude-opus-4-7
       - deepseek-v4-flash
+      - kimi-k2.6
+      - glm-5
       - gpt-oss-120b
       - minimax-m2.7
 
@@ -734,19 +754,19 @@ auxiliary:
       },
     ],
     modelHints: {
-      suggested: ['claude-sonnet-4-6', 'minimax-m2.7', 'deepseek-v4-flash', 'gpt-oss-120b'],
+      suggested: ['deepseek-v4-flash', 'kimi-k2.6', 'minimax-m2.7', 'gpt-oss-120b'],
       note:
-        'Only ids listed under `models:` show up in Hermes\' picker - mirror it against `curl http://127.0.0.1:8377/v1/models` so you don\'t advertise models no peer serves. `model.provider: antseed` pins the default to this custom provider.',
+        'Only ids listed under `models:` show up in Hermes\' picker - mirror it against `curl http://127.0.0.1:8377/v1/models` so you don\'t advertise models no peer serves. `model.provider: antseed` pins the default to this custom provider. Route to a specific peer by prefixing the model id: `<peerId>@<service-id>`.',
     },
     test: [
       {
         label: 'Confirm the proxy advertises the same ids your config references',
         command: 'curl -s http://127.0.0.1:8377/v1/models | jq \'.data[].id\'',
         outputLabel: 'Example response',
-        output: `"claude-opus-4-7"
-"claude-sonnet-4-6"
-"deepseek-v4-flash"
+        output: `"deepseek-v4-flash"
+"glm-5"
 "gpt-oss-120b"
+"kimi-k2.6"
 "minimax-m2.7"`,
       },
       {
@@ -804,6 +824,8 @@ auxiliary:
     format: 'openai-chat',
     setupMinutes: 5,
     status: 'verified',
+    seoTitle: 'Add AntSeed inference to GenLayer Studio',
+    headline: 'AntSeed inference in GenLayer Studio',
     oneLiner: 'Use AntSeed as an inference provider inside GenLayer Studio validators.',
     description: [
       '<strong>What GenLayer Studio is.</strong> Studio runs <em>Intelligent Contract</em> validators that consult LLMs to reach consensus. Each validator is configured with a provider entry that has a <code>provider</code> name, a <code>plugin</code> (one of <code>openai-compatible</code> / <code>anthropic</code> / <code>google</code> / <code>ollama</code> / <code>custom</code>), a <code>model</code> id, and a <code>plugin_config</code> with <code>api_url</code> and <code>api_key_env_var</code>.',
@@ -828,12 +850,12 @@ services:
     configure: [
       {
         kind: 'file',
-        path: 'backend/node/create_nodes/default_providers/antseed_claude-sonnet-4-6.json',
+        path: 'backend/node/create_nodes/default_providers/antseed_kimi-k2.6.json',
         language: 'json',
         snippet: `{
   "provider": "antseed",
   "plugin": "openai-compatible",
-  "model": "claude-sonnet-4-6",
+  "model": "kimi-k2.6",
   "config": {},
   "plugin_config": {
     "api_key_env_var": "ANTSEED_API_KEY",
@@ -883,8 +905,8 @@ ANTSEED_API_KEY=antseed`,
       },
     ],
     modelHints: {
-      suggested: ['claude-sonnet-4-6', 'deepseek-v4-flash', 'gpt-oss-120b', 'qwen3-coder-480b'],
-      note: 'Each provider JSON file pins exactly one `model`. Studio enumerates these into the validator-creation UI; pick services you know your pinned peer offers (check `antseed network peer <peerId> --json | jq \'.matchingServices[].service\'`). To expose more models later, drop in more `antseed_<model>.json` files - no schema edit needed.',
+      suggested: ['kimi-k2.6', 'deepseek-v4-flash', 'gpt-oss-120b', 'qwen3-coder-480b'],
+      note: 'Each provider JSON file pins exactly one `model`. Studio enumerates these into the validator-creation UI; pick services you know your pinned peer offers (check `antseed network peer <peerId> --json | jq \'.matchingServices[].service\'`). To expose more models later, drop in more `antseed_<model>.json` files - no schema edit needed. To lock a file to one specific peer, set `model` to `<peerId>@<service-id>`.',
     },
     test: [
       {
@@ -919,7 +941,7 @@ ANTSEED_API_KEY=antseed`,
           'No peer is pinned in the buyer proxy. Run `antseed network browse`, pick one, then `antseed buyer connection set --peer <peerId>`. Alternatively, send a per-request `x-antseed-pin-peer` header by extending the openai-compatible plugin - not currently exposed in the standard schema, so session pin is the path of least resistance.',
       },
       {
-        problem: '`404 model_not_found` from a validator using e.g. `claude-sonnet-4-6`',
+        problem: '`404 model_not_found` from a validator using e.g. `kimi-k2.6`',
         fix:
           'Your pinned peer doesn\'t advertise that service id. Run `antseed network peer <peerId> --json | jq \'.matchingServices[].service\'` to see what it does serve. Either pin a different peer or remove that `antseed_<model>.json` file.',
       },
@@ -952,11 +974,13 @@ ANTSEED_API_KEY=antseed`,
     format: 'openai-chat',
     setupMinutes: 5,
     status: 'verified',
+    seoTitle: 'Vercel AI SDK on any model, OpenAI-compatible',
+    headline: 'Use AntSeed with the Vercel AI SDK',
     oneLiner: "Use `@ai-sdk/openai-compatible` to call AntSeed from `generateText` / `streamText` / `generateObject`.",
     description: [
       '<strong>What the AI SDK is.</strong> Vercel\'s <code>ai</code> package is a provider-agnostic TypeScript toolkit for building LLM apps and agents. You pick a <em>provider</em> (a small adapter package), instantiate a model from it, and pass that model into one of the framework\'s primitives: <code>generateText</code>, <code>streamText</code>, <code>generateObject</code>, or <code>streamObject</code>. The AI SDK handles tool-calling, structured output, message history, and streaming for you.',
       '<strong>How AntSeed plugs in.</strong> AntSeed is OpenAI-Chat-compatible at <code>http://localhost:8377/v1</code>, so the right adapter is <code>@ai-sdk/openai-compatible</code> (not <code>@ai-sdk/openai</code>). The official OpenAI provider is locked to OpenAI\'s API surface and quietly drops third-party fields; the openai-compatible provider is the one Vercel\'s own docs recommend for proxies, gateways, and any non-OpenAI server that speaks Chat Completions. You point it at the AntSeed proxy with <code>baseURL</code> and pass any non-empty <code>apiKey</code> placeholder - the proxy authenticates with your local identity key, not with this header.',
-      '<strong>Which model ids work.</strong> The first argument to the provider call is the AntSeed <em>service id</em> (e.g. <code>claude-sonnet-4-6</code>, <code>deepseek-v4-flash</code>). It must match a service your pinned peer advertises - confirm with <code>curl http://localhost:8377/v1/models</code>.',
+      '<strong>Which model ids work.</strong> The first argument to the provider call is the AntSeed <em>service id</em> (e.g. <code>deepseek-v4-flash</code>, <code>kimi-k2.6</code>). It must match a service your pinned peer advertises - confirm with <code>curl http://localhost:8377/v1/models</code>. To route to a specific peer per call, prefix the id: <code>&lt;peerId&gt;@deepseek-v4-flash</code>.',
     ],
     prereqs: ['Node.js 18 or newer'],
     install: [
@@ -988,7 +1012,8 @@ import { streamText } from 'ai';
 import { antseed } from './antseed';
 
 const result = streamText({
-  model: antseed('claude-sonnet-4-6'), // an AntSeed service id
+  model: antseed('deepseek-v4-flash'), // an AntSeed service id
+  // model: antseed('<peerId>@deepseek-v4-flash'), // …or pin a specific peer
   prompt: 'Why is the sky blue?',
 });
 
@@ -1007,7 +1032,7 @@ import { z } from 'zod';
 import { antseed } from './antseed';
 
 const { object } = await generateObject({
-  model: antseed('claude-sonnet-4-6'),
+  model: antseed('deepseek-v4-flash'),
   schema: z.object({
     title: z.string(),
     bullets: z.array(z.string()).min(3).max(5),
@@ -1018,9 +1043,9 @@ console.log(object);`,
       },
     ],
     modelHints: {
-      suggested: ['claude-sonnet-4-6', 'deepseek-v4-flash', 'gpt-oss-120b', 'qwen3-coder-480b'],
+      suggested: ['deepseek-v4-flash', 'kimi-k2.6', 'gpt-oss-120b', 'qwen3-coder-480b'],
       note:
-        'The string you pass to `antseed(\'<id>\')` is forwarded verbatim as `model` in the OpenAI Chat request. Run `curl -s http://localhost:8377/v1/models | jq \'.data[].id\'` to see exactly what your pinned peer offers.',
+        'The string you pass to `antseed(\'<id>\')` is forwarded verbatim as `model` in the OpenAI Chat request. Run `curl -s http://localhost:8377/v1/models | jq \'.data[].id\'` to see exactly what your pinned peer offers. `antseed(\'<peerId>@<id>\')` routes that one call to a specific peer.',
     },
     test: [
       {
@@ -1039,12 +1064,13 @@ usage: { promptTokens: 14, completionTokens: 78, totalTokens: 92 }`,
         language: 'typescript',
         command: `// Use \`headers\` to fan out to different peers per call.
 const result = streamText({
-  model: antseed('claude-sonnet-4-6'),
+  model: antseed('deepseek-v4-flash'),
   prompt: 'hi',
   headers: {
     'x-antseed-pin-peer': 'cccccccccccccccccccccccccccccccccccccccc',
   },
-});`,
+});
+// Equivalent without headers: antseed('cccccccccccccccccccccccccccccccccccccccc@deepseek-v4-flash')`,
         note:
           'Useful when one Node process serves many tenants and you want each request routed to a different peer. The header overrides the session pin for that single call.',
       },
@@ -1091,6 +1117,8 @@ const result = streamText({
     format: 'openai-chat',
     setupMinutes: 5,
     status: 'verified',
+    seoTitle: 'LangChain Python on any model, no OpenAI key',
+    headline: 'Use AntSeed with LangChain in Python',
     oneLiner: 'Drop-in `ChatOpenAI(base_url=…)` - works in chains, LCEL, and LangGraph agents.',
     description: [
       '<strong>What LangChain is.</strong> LangChain is the Python framework for composing LLMs with tools, retrievers, memory, and agents. The chat-model interface is <code>BaseChatModel</code>; <code>ChatOpenAI</code> from <code>langchain-openai</code> is a concrete subclass that talks the OpenAI Chat Completions wire format.',
@@ -1112,7 +1140,8 @@ const result = streamText({
 from langchain_openai import ChatOpenAI
 
 antseed = ChatOpenAI(
-    model="claude-sonnet-4-6",          # an AntSeed service id
+    model="deepseek-v4-flash",          # an AntSeed service id
+    # model="<peerId>@deepseek-v4-flash",  # …or pin a specific peer
     base_url="http://localhost:8377/v1",
     api_key="antseed",                   # any non-empty string
     temperature=0.7,
@@ -1158,9 +1187,9 @@ print(result["messages"][-1].content)`,
       },
     ],
     modelHints: {
-      suggested: ['claude-sonnet-4-6', 'deepseek-v4-flash', 'gpt-oss-120b', 'qwen3-coder-480b'],
+      suggested: ['deepseek-v4-flash', 'kimi-k2.6', 'gpt-oss-120b', 'qwen3-coder-480b'],
       note:
-        'Pick services whose `protocols` array includes `openai-chat-completions` (most do natively; the rest are translated automatically by `@antseed/api-adapter`). Tool calling and structured output rely on the service supporting OpenAI-style function-call syntax - confirm with a quick smoke test before building large agents.',
+        'Pick services whose `protocols` array includes `openai-chat-completions` (most do natively; the rest are translated automatically by `@antseed/api-adapter`). Tool calling and structured output rely on the service supporting OpenAI-style function-call syntax - confirm with a quick smoke test before building large agents. `model="<peerId>@<service-id>"` routes to a specific peer.',
     },
     test: [
       {
@@ -1176,7 +1205,7 @@ print(result["messages"][-1].content)`,
 from langchain_openai import ChatOpenAI
 
 llm = ChatOpenAI(
-    model="claude-sonnet-4-6",
+    model="deepseek-v4-flash",
     base_url="http://localhost:8377/v1",
     api_key="antseed",
     extra_headers={
@@ -1240,6 +1269,8 @@ print(llm.invoke("hi").content)`,
     format: 'multi',
     setupMinutes: 1,
     status: 'verified',
+    seoTitle: 'Call any LLM over plain HTTP with curl, no SDK',
+    headline: 'Call AntSeed with curl or raw HTTP',
     oneLiner: 'Hit the proxy with plain HTTP - useful for scripts and debugging.',
     description: [
       'The buyer proxy is a vanilla HTTP server. Anything that can issue an HTTP POST works. Three endpoints are exposed:',
@@ -1254,7 +1285,7 @@ print(llm.invoke("hi").content)`,
 curl http://localhost:8377/v1/messages \\
   -H 'content-type: application/json' \\
   -d '{
-    "model": "claude-sonnet-4-6",
+    "model": "kimi-k2.6",
     "max_tokens": 1024,
     "messages": [{"role": "user", "content": "Hello"}]
   }'
@@ -1263,13 +1294,21 @@ curl http://localhost:8377/v1/messages \\
 curl http://localhost:8377/v1/chat/completions \\
   -H 'content-type: application/json' \\
   -d '{
-    "model": "deepseek-v3.1",
+    "model": "deepseek-v4-flash",
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
+
+# Route to a specific peer: prefix the model with "<peerId>@"
+curl http://localhost:8377/v1/chat/completions \\
+  -H 'content-type: application/json' \\
+  -d '{
+    "model": "<peerId>@deepseek-v4-flash",
     "messages": [{"role": "user", "content": "Hello"}]
   }'`,
       },
     ],
     agentSummary:
-      'POST JSON to http://localhost:8377/v1/messages, /v1/chat/completions, or /v1/responses. No Authorization header required.',
+      'POST JSON to http://localhost:8377/v1/messages, /v1/chat/completions, or /v1/responses. No Authorization header required. Model field accepts "<service-id>" or "<peerId>@<service-id>" to route to a specific peer.',
   },
 ];
 

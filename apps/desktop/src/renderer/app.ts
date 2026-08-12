@@ -246,6 +246,33 @@ function rememberedPinFor(provider: string, serviceId: string): string | null {
 function actionSelectVprModel(provider: string, serviceId: string, peerId: string | null = null): void {
   const entry = findCatalogEntry(uiState.vprModelCatalog, provider, serviceId);
   if (!entry) return;
+  // Image models are internal-chat tools, not VPR defaults. Requiring an
+  // explicit seller distinguishes the dedicated "Use in chat" action from
+  // every main dropdown / connected-app model switch.
+  if (entry.kind === 'image' && !peerId) return;
+  if (entry.kind === 'image' && peerId) {
+    const selection: VprRouteSelection = {
+      model: {
+        provider: entry.provider,
+        serviceId: entry.serviceId,
+        label: entry.label,
+        categories: [...entry.categories],
+      },
+      mode: 'pinned-peer',
+      peerId,
+    };
+    uiState.chatImageRouteSelection = selection;
+    uiState.vprModelPins = setVprModelPin(
+      uiState.vprModelPins,
+      entry.provider,
+      entry.serviceId,
+      peerId,
+    );
+    saveVprModelPins(uiState.vprModelPins);
+    notifyUiStateChanged();
+    return;
+  }
+  uiState.chatImageRouteSelection = null;
   // A bare model switch restores that model's own pin instead of dropping to
   // auto — pinning one model then browsing others must not unpin it. Only
   // clearVprPinnedPeer (the "Auto select seller" toggle) forgets a pin.
@@ -266,18 +293,24 @@ function actionSelectVprModel(provider: string, serviceId: string, peerId: strin
   };
   // Auto mode resolves the peer through the routing-preferences scorer, not
   // whichever chat option happens to sort first.
-  const option = resolveVprChatOption(
-    uiState.chatServiceOptions,
-    uiState.vprRoutableRows,
-    selection,
-    uiState.vprRoutingPreferences,
-  );
+  const option = entry.kind === 'text'
+    ? resolveVprChatOption(
+        uiState.chatServiceOptions,
+        uiState.vprRoutableRows,
+        selection,
+        uiState.vprRoutingPreferences,
+      )
+    : null;
   if (option) {
-    chatApi.handleServiceChange(option.value, pinnedPeerId ?? option.peerId, false);
+    chatApi.handleServiceChange(
+      option.value,
+      pinnedPeerId ?? option.peerId,
+      false,
+      selection.mode === 'auto' ? 'auto' : 'pinned',
+    );
   }
-  // handleServiceChange writes a pinned selection through; restore the
-  // requested mode so auto keeps re-resolving the best route on future
-  // sends instead of staying pinned to today's winner.
+  // The text route is persisted and propagated to connected apps after the
+  // corresponding chat option has been resolved above.
   uiState.vprRouteSelection = selection;
   saveVprRouteSelection(selection);
   notifyUiStateChanged();
@@ -580,6 +613,7 @@ registerActions({
   openConversation: chatApi.openConversation,
   sendMessage: chatApi.sendMessage,
   sendMessageToConversation: chatApi.sendMessageToConversation,
+  generateImage: chatApi.generateImage,
   abortChat: chatApi.abortChat,
   deleteConversation: chatApi.deleteConversation,
   renameConversation: chatApi.renameConversation,

@@ -60,28 +60,28 @@ By default, metadata is fetched from `http://{host}:{port}/metadata` (`metadataP
   "displayName": "Acme Inference - us-east-1",
   "publicAddress": "peer.example.com:6882",
   "providers": [{
-    "provider": "anthropic",
-    "services": ["claude-sonnet-4-6", "claude-haiku-4-5"],
+    "provider": "openai",
+    "services": ["kimi-k2.6", "deepseek-v4-flash"],
     "defaultPricing": {
-      "inputUsdPerMillion": 3,
-      "cachedInputUsdPerMillion": 0.3,
-      "outputUsdPerMillion": 15
+      "inputUsdPerMillion": 0.6,
+      "cachedInputUsdPerMillion": 0.06,
+      "outputUsdPerMillion": 2.5
     },
     "servicePricing": {
-      "claude-sonnet-4-6": { "inputUsdPerMillion": 3, "cachedInputUsdPerMillion": 0.3, "outputUsdPerMillion": 15 },
-      "claude-haiku-4-5": { "inputUsdPerMillion": 1, "cachedInputUsdPerMillion": 0.1, "outputUsdPerMillion": 5 }
+      "kimi-k2.6": { "inputUsdPerMillion": 0.6, "cachedInputUsdPerMillion": 0.06, "outputUsdPerMillion": 2.5 },
+      "deepseek-v4-flash": { "inputUsdPerMillion": 0.25, "cachedInputUsdPerMillion": 0.025, "outputUsdPerMillion": 1 }
     },
     "serviceCategories": {
-      "claude-sonnet-4-6": ["coding", "privacy"]
+      "kimi-k2.6": ["coding", "privacy"]
     },
     "serviceApiProtocols": {
-      "claude-sonnet-4-6": ["anthropic-messages"]
+      "kimi-k2.6": ["openai-chat-completions"]
     },
     "serviceCapabilities": {
-      "claude-sonnet-4-6": {
-        "contextWindow": 200000,
+      "kimi-k2.6": {
+        "contextWindow": 256000,
         "maxOutputTokens": 64000,
-        "inputs": ["text", "image"],
+        "inputs": ["text"],
         "reasoning": true,
         "toolUse": true,
         "structuredOutput": true
@@ -112,19 +112,19 @@ Metadata v11 added `serviceUnitBillingModels`; v12 adds `serviceCapabilities` an
 
 ```json
 {
-  "serviceApiProtocols": { "gpt-image-1": ["openai-images"] },
+  "serviceApiProtocols": { "flux.1-schnell": ["openai-images"] },
   "serviceUnitBillingModels": {
-    "gpt-image-1": {
+    "flux.1-schnell": {
       "openai-images": {
         "version": 1,
         "components": [
-          { "unit": "output_images", "priceUsd": 0.04 }
+          { "unit": "output_images", "priceUsd": 0.003 }
         ]
       }
     }
   },
   "serviceCapabilities": {
-    "gpt-image-1": {
+    "flux.1-schnell": {
       "inputs": ["text", "image"],
       "outputs": ["image"],
       "supportedParameters": ["background", "output_format", "quality", "size"]

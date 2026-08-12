@@ -28,6 +28,8 @@ function discoverRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
     inputUsdPerMillion: 1,
     outputUsdPerMillion: 2,
     cachedInputUsdPerMillion: null,
+    minImageUsdPerImage: null,
+    maxImageUsdPerImage: null,
     lifetimeSessions: 0,
     lifetimeRequests: 0,
     lifetimeInputTokens: 0,
@@ -177,6 +179,66 @@ test('findCatalogEntry matches canonical serviceId variants across providers', (
   ]);
 
   assert.equal(findCatalogEntry(catalog, 'other-provider', 'GPT 5.6 Luna')?.serviceId, 'gpt-5.6-luna');
+});
+
+test('catalog classifies image services without aggregating peer capabilities', () => {
+  const [entry] = projectRowsToVprModelCatalog([
+    discoverRow({
+      serviceId: 'gpt-image-test',
+      protocol: 'openai-images',
+      capabilities: { outputs: ['image'], supportedParameters: ['quality'] },
+      minImageUsdPerImage: 0.04,
+      maxImageUsdPerImage: 0.08,
+    }),
+  ]);
+
+  assert.equal(entry.kind, 'image');
+  assert.deepEqual(entry.protocols, ['openai-images']);
+  assert.equal(entry.minImageUsdPerImage, 0.04);
+  assert.equal(entry.maxImageUsdPerImage, 0.08);
+  assert.equal('capabilities' in entry, false);
+});
+
+test('catalog chooses the cheapest image seller by per-image pricing', () => {
+  const [entry] = projectRowsToVprModelCatalog([
+    discoverRow({
+      peerId: 'expensive-image-peer',
+      protocol: 'openai-images',
+      capabilities: { outputs: ['image'] },
+      inputUsdPerMillion: 0,
+      outputUsdPerMillion: 0,
+      minImageUsdPerImage: 0.08,
+      maxImageUsdPerImage: 0.12,
+    }),
+    discoverRow({
+      peerId: 'cheap-image-peer',
+      protocol: 'openai-images',
+      capabilities: { outputs: ['image'] },
+      inputUsdPerMillion: 0,
+      outputUsdPerMillion: 0,
+      minImageUsdPerImage: 0.04,
+      maxImageUsdPerImage: 0.06,
+    }),
+  ]);
+
+  assert.equal(entry.bestPeerId, 'cheap-image-peer');
+  assert.equal(entry.minImageUsdPerImage, 0.04);
+  assert.equal(entry.maxImageUsdPerImage, 0.12);
+});
+
+test('selectDefaultVprModel ignores image-only services for the chat fallback', () => {
+  const catalog = projectRowsToVprModelCatalog([
+    discoverRow({
+      serviceId: 'image-free',
+      protocol: 'openai-images',
+      capabilities: { outputs: ['image'] },
+      inputUsdPerMillion: 0,
+      outputUsdPerMillion: 0,
+    }),
+    discoverRow({ serviceId: 'text-paid', peerId: 'p2' }),
+  ]);
+
+  assert.equal(selectDefaultVprModel(catalog, null)?.serviceId, 'text-paid');
 });
 
 test('catalog aggregates serviceId variants of the same model', () => {

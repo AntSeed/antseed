@@ -115,10 +115,10 @@ Token pricing does not describe image-generation cost. Image sellers may announc
 ```json
 {
   "serviceApiProtocols": {
-    "gpt-image-1": ["openai-images"]
+    "flux.1-schnell": ["openai-images"]
   },
   "serviceUnitBillingModels": {
-    "gpt-image-1": {
+    "flux.1-schnell": {
       "openai-images": {
         "version": 1,
         "components": [
@@ -142,25 +142,25 @@ The final charge is based on delivered image outputs, not merely the requested `
 {
   "peers": [
     {
-      "peerId": "4668854ba3e8b094e6f48fbeb59cec1cfde162f2",
+      "peerId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "version": 12,
-      "displayName": "Dark Signal",
+      "displayName": "Acme Inference",
       "region": "unknown",
       "timestamp": 1777194949071,
       "providers": [
         {
           "provider": "openai-responses",
-          "services": ["gpt-5.4", "gpt-5.5"],
+          "services": ["minimax-m2.7", "deepseek-v4-flash"],
           "defaultPricing": { "inputUsdPerMillion": 0.4, "outputUsdPerMillion": 2 },
           "servicePricing": {
-            "gpt-5.4": {
+            "minimax-m2.7": {
               "inputUsdPerMillion": 0.25,
               "outputUsdPerMillion": 1.5,
               "cachedInputUsdPerMillion": 0.05
             }
           },
-          "serviceCategories": { "gpt-5.4": ["chat", "code"] },
-          "serviceApiProtocols": { "gpt-5.4": ["openai-responses"] },
+          "serviceCategories": { "minimax-m2.7": ["chat", "code"] },
+          "serviceApiProtocols": { "minimax-m2.7": ["openai-responses"] },
           "maxConcurrency": 10,
           "currentLoad": 0
         }

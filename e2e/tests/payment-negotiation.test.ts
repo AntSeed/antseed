@@ -210,16 +210,22 @@ describe('Payment negotiation: seller sends PaymentRequired on 402', () => {
     const seller = peers.find((p) => p.peerId === sellerNode!.peerId);
     expect(seller).toBeDefined();
 
-    // The buyer will get 402, attempt negotiation, but the PaymentRequired
-    // timeout or RPC failure will cause it to fail. The request should
-    // ultimately return an error (either 402 or throw).
+    // The buyer gets a 402 and tries to negotiate, but its RPC is unreachable
+    // so it cannot read its own deposit balance. That is a buyer-side fault:
+    // the negotiator reports 503 `chain_rpc_unavailable` immediately rather
+    // than negotiating blind and stalling out into an error that blames the
+    // seller. A 402 remains acceptable for setups that get far enough to hear
+    // the seller's payment requirements first.
     const request = makeRequest();
     try {
       const response = await buyerNode!.sendRequest(seller!, request);
-      // If we get a response, it should be a 402 (negotiation failed)
-      expect(response.statusCode).toBe(402);
+      expect([402, 503]).toContain(response.statusCode);
+      if (response.statusCode === 503) {
+        const body = JSON.parse(new TextDecoder().decode(response.body)) as { reason?: string };
+        expect(body.reason).toBe('chain_rpc_unavailable');
+      }
     } catch (err) {
-      // Negotiation may throw on timeout — that's expected with unreachable RPC
+      // Negotiation may still throw on timeout for other configurations.
       expect(err).toBeDefined();
       expect((err as Error).message).toMatch(/timed?\s*out|failed|PaymentRequired|Lock confirmation/i);
     }

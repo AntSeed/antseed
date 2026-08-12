@@ -16,6 +16,13 @@ type VprRouteTarget = {
 function resolveRouteTarget(uiState: RendererUiState): VprRouteTarget | null {
   const selection = uiState.vprRouteSelection;
   if (!selection.model) return null;
+  const selectedEntry = uiState.vprModelCatalog.find((entry) => (
+    entry.provider === selection.model?.provider && entry.serviceId === selection.model.serviceId
+  ));
+  // Connected apps and the buyer's default alias currently issue text/chat
+  // requests. Leave their existing route untouched when VPR selects an image
+  // model; chat's per-conversation selection remains the text fallback.
+  if (selectedEntry?.kind === 'image') return null;
   const routes = routesForSelectedModel(uiState.vprRoutableRows, selection.model);
   const route = selection.mode === 'pinned-peer' && selection.peerId
     ? routes.find((candidate) => candidate.peerId === selection.peerId) ?? null
@@ -93,8 +100,9 @@ export async function syncBuyerDefaultRoute(
  * connect time — apps then request models the newly pinned peer doesn't
  * serve ("Service X is not served by this peer").
  *
- * The buyer default route always follows the selection; the profile restart
- * below is a no-op when no app profile is connected. Per-app route overrides
+ * Text selections update the buyer default route; image selections leave the
+ * existing text route untouched. The profile restart below is a no-op when no
+ * app profile is connected. Per-app route overrides
  * made in the Apps view are reset to the new default route; adjust them there
  * afterwards if needed.
  */

@@ -3,7 +3,11 @@ import type { BuyerConnection } from './interfaces.js';
 import { PaymentMux } from './payment-mux.js';
 import type { PeerId } from '@antseed/protocol/peer-id';
 import type { BuyerPeerView } from './interfaces.js';
-import type { SerializedHttpRequest, SerializedHttpResponse } from '@antseed/protocol/http';
+import {
+  ANTSEED_FAULT_ATTRIBUTION_HEADER,
+  type SerializedHttpRequest,
+  type SerializedHttpResponse,
+} from '@antseed/protocol/http';
 import {
   PAYMENT_CODE_CHANNEL_EXHAUSTED,
   type PaymentRequiredPayload,
@@ -31,6 +35,7 @@ import {
   extractUnitResponseUsage,
   type FinalUnitBillingResult,
 } from './unit-billing.js';
+import { buyerFault, peerFault } from './errors.js';
 
 export interface BuyerNegotiatorConfig {}
 
@@ -490,7 +495,11 @@ export class BuyerPaymentNegotiator {
         action: 'return',
         response: {
           ...response,
-          headers: { ...response.headers, 'content-type': 'application/json' },
+          headers: {
+            ...response.headers,
+            'content-type': 'application/json',
+            [ANTSEED_FAULT_ATTRIBUTION_HEADER]: 'buyer',
+          },
           body: new TextEncoder().encode(enrichedBody),
         },
       };
@@ -743,7 +752,10 @@ export class BuyerPaymentNegotiator {
       const decoded = new TextDecoder().decode(decodedBytes);
       payload = parseJsonObject(decoded) as typeof payload;
     } catch {
-      throw new Error('Invalid x-antseed-spending-auth header: failed to decode');
+      throw buyerFault(
+        'Invalid x-antseed-spending-auth header: failed to decode',
+        'invalid-spending-auth-header',
+      );
     }
 
     debugLog(`[BuyerNegotiator] External SpendingAuth: channel=${payload.channelId.slice(0, 18)}... amount=${payload.cumulativeAmount}`);
@@ -840,7 +852,7 @@ export class BuyerPaymentNegotiator {
 
     for (const [, pending] of this._pendingPaymentRequired) {
       clearTimeout(pending.timer);
-      pending.reject(new Error('Node stopped'));
+      pending.reject(buyerFault('Node stopped', 'node-stopped'));
     }
     this._pendingPaymentRequired.clear();
     this._bufferedPaymentRequired.clear();
@@ -848,7 +860,7 @@ export class BuyerPaymentNegotiator {
 
     for (const [, pending] of this._pendingCloseRequests) {
       clearTimeout(pending.timer);
-      pending.reject(new Error('Node stopped'));
+      pending.reject(buyerFault('Node stopped', 'node-stopped'));
     }
     this._pendingCloseRequests.clear();
   }
@@ -940,8 +952,9 @@ export class BuyerPaymentNegotiator {
     // Validate seller's per-request minimum
     const minBudgetPerRequest = BigInt(requirements.minBudgetPerRequest);
     if (minBudgetPerRequest > this._bpm.maxPerRequestUsdc) {
-      throw new Error(
+      throw buyerFault(
         `Seller ${peer.peerId.slice(0, 12)}... minBudgetPerRequest=${minBudgetPerRequest} exceeds buyer maxPerRequestUsdc=${this._bpm.maxPerRequestUsdc}`,
+        'buyer-budget-too-low',
       );
     }
 
@@ -950,13 +963,19 @@ export class BuyerPaymentNegotiator {
     try {
       amount = BigInt(requirements.suggestedAmount);
     } catch {
-      throw new Error(`Invalid suggestedAmount from seller ${peer.peerId.slice(0, 12)}...: "${requirements.suggestedAmount}"`);
+      throw peerFault(
+        `Invalid suggestedAmount from seller ${peer.peerId.slice(0, 12)}...: "${requirements.suggestedAmount}"`,
+        'peer-protocol-violation',
+      );
     }
     if (amount > this._bpm.maxReserveAmountUsdc) {
       amount = this._bpm.maxReserveAmountUsdc;
     }
     if (amount <= 0n) {
-      throw new Error(`Invalid reserve amount for payment to ${peer.peerId.slice(0, 12)}...`);
+      throw buyerFault(
+        `Invalid reserve amount for payment to ${peer.peerId.slice(0, 12)}...`,
+        'buyer-reserve-misconfigured',
+      );
     }
 
     const sellerEvmAddr = await this._resolveSellerAddr(peer);

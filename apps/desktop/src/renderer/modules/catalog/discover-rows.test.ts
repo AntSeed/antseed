@@ -84,6 +84,47 @@ test('projectRowsToChatServiceOptions dedupes by (provider, service, peer)', () 
   assert.equal(options.length, 1);
 });
 
+test('normalizeDiscoverRow preserves advertised service capabilities', () => {
+  const row = normalizeDiscoverRow({
+    peerId: 'abc123',
+    serviceId: 'gpt-image',
+    protocol: 'openai-images',
+    capabilities: {
+      inputs: ['text'],
+      outputs: ['image'],
+      contextWindow: 32_000,
+      supportedParameters: ['quality', 'output_format'],
+    },
+  });
+
+  assert.deepEqual(row?.capabilities, {
+    inputs: ['text'],
+    outputs: ['image'],
+    contextWindow: 32_000,
+    supportedParameters: ['quality', 'output_format'],
+  });
+});
+
+test('projectRowsToChatServiceOptions excludes image-only services from chat', () => {
+  const image = normalizeDiscoverRow({
+    peerId: 'abc123',
+    serviceId: 'gpt-image',
+    provider: 'openai',
+    protocol: 'openai-images',
+    capabilities: { outputs: ['image'] },
+  });
+  const text = normalizeDiscoverRow({
+    peerId: 'abc123',
+    serviceId: 'gpt-text',
+    provider: 'openai',
+    protocol: 'openai-responses',
+    capabilities: { outputs: ['text'] },
+  });
+
+  assert.ok(image && text);
+  assert.deepEqual(projectRowsToChatServiceOptions([image, text]).map((entry) => entry.id), ['gpt-text']);
+});
+
 test('projectRowsToChatServiceOptions preserves peer display name and cached input price', () => {
   const row = normalizeDiscoverRow({
     peerId: 'abc123',

@@ -10,7 +10,21 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ## Unreleased
 
+### Security
+
+- P2P TCP transport is now encrypted end-to-end (`transport.tcp-enc.v1`): a wallet-signed ephemeral X25519 handshake with forward secrecy and mutual peer authentication, ChaCha20-Poly1305 framing for all payload traffic. Enabled automatically between peers that advertise the capability in discovery metadata; once offered, the handshake fails closed rather than downgrading to plaintext, and the intro signature covers the advertised capabilities and encryption offer so an on-path attacker cannot strip them to force a legacy fallback. Legacy peers still connect over plaintext unless the new `requireSecureTransport` node option is set.
+- WebRTC signaling now signs SDP descriptions (`transport.signed-sdp.v1`), binding the DTLS certificate fingerprint to the peer's wallet identity so a man-in-the-middle on the signaling socket can no longer substitute its own SDP.
+
+### Fixed
+
+- Request bodies over 240 KiB (previously 512 KiB) are now sent via the chunked upload protocol, keeping every single frame under the 256 KiB WebRTC data channel message cap so large requests work over any transport.
+- The WebRTC transport is now actually functional: nodes load node-datachannel at startup (previously it was never initialized, so every connection silently used TCP). Peers with a working WebRTC stack advertise `transport.webrtc.v1` in discovery metadata. Encrypted TCP remains the preferred transport between nodes (WebRTC data channels cap messages at ~256 KiB, below the 1 MiB protocol chunk size); initiators use WebRTC only toward peers that support WebRTC but not encrypted TCP. Sellers without a working stack now refuse `hello` signaling cleanly instead of crashing on it — previously any WebRTC connection attempt (e.g. from a browser buyer) hit an unguarded code path.
+
 ### Added
+
+- Desktop VPR now discovers and clearly labels image-generation-only models, carries advertised service capability hints and per-image billing tiers through to each seller row, and shows seller-specific image prices, context windows, output limits, modalities, tools, structured output, and supported parameters without incorrectly merging those details at model level. Image models stay out of the main text and connected-app dropdowns and instead offer dedicated “Use in chat” and “Copy instructions” actions; copied instructions reference the public `antseed-images` skill and include the selected seller and service parameters. Image prompts appear in the conversation immediately while generation runs through `/v1/images/generations`, and generated files are stored as persistent conversation attachments. Image routes remain excluded from chat-only external model pickers.
+
+- Website docs now cover the gasless `antseed buyer sweep` command: a CLI-reference entry plus a payments-guide section explaining the offline EIP-3009 authorization, the fixed USDC relay fee, broadcast via a running buyer daemon or an ephemeral node, amount clamping to credit-limit headroom, and the first-deposit minimum. The guide also gained a provider note on relaying sweeps for the fee (`relayer.enabled`, `relayer.minProfitBaseUnits`) and the `AntseedDepositRelay` address in the Base Mainnet contract table.
 
 - Desktop: added seller-assisted channel closing to Activity for sellers advertising `payments.cooperative-close.v1`, with clear rejection feedback and the existing wallet-based on-chain close retained as a permanent fallback.
 
@@ -34,8 +48,17 @@ This project uses selective package publishing. Each release entry lists the pub
 - The buyer attaches its latest SpendingAuth by default; the seller closes at whichever cumulative is higher (its own or the buyer's), so a seller that lost the last authorization can still be paid in full, and a buyer cannot use this path to settle below what it owes.
 - Added `antseed buyer channels close <channelId>` (with `--no-auth` and `--json`), which runs the request through a running `antseed buyer start` daemon's live seller connection via the new `/_antseed/channels/close` control-plane endpoint.
 - Added `AntseedNode.requestChannelClose(peerId, opts)` to `@antseed/node`, plus the `payments.cooperative-close.v1` capability advertised in discovery metadata and the connection handshake.
+- Added buyer peer health cooldowns, so a seller that stops responding is temporarily deprioritized by automatic routing instead of being selected again on every request. Cooldowns escalate from 30 seconds to a maximum of 8 minutes, are cleared by any response from the peer, and are advisory only — a pinned or explicitly named peer is always still dispatched to. Exposed over the buyer control plane as `GET /_antseed/peer-health` and `POST /_antseed/peer-health/clear`.
+- Added automatic peer failover for Desktop chats using automatic routing: when the bound peer stops responding, the retry moves to the next-best healthy peer and the chat reports which peer it switched to. Chats pinned to a peer by hand always keep that peer.
+- Added fault attribution to request failures (`AntseedRequestError`, `faultAttributionOf`) so proven buyer-side problems such as empty deposits, chain authorization RPC failures, or a closed local transport are reported as buyer faults with HTTP 503 instead of being reported as peer failures with HTTP 502.
 
 ### Changed
+
+- Set generated model metadata for supported connected tools and CLI wrappers to a 280,000-token context window, with an 8,192-token output limit where the tool supports one.
+
+### Changed
+
+- Website docs and integration pages now use open-source models actually live on the network (`deepseek-v4-flash`, `kimi-k2.6`, `minimax-m2.7`, `gpt-oss-120b`, `glm-5`, `flux.1-schnell`) in every example instead of closed models, and show the `<peerId>@<model>` routing form in every tool section (Claude Code, Codex, OpenCode, curl, images, SDK integrations). The Using the API guide also gained previously undocumented material: `/v1/models` and `/v1/messages/count_tokens` endpoints, pin-mechanism precedence, the protocol-translation matrix and its limits, response telemetry headers (`x-antseed-estimated-cost-usd`, token counts, peer attribution), a buyer error catalogue, and the `/_antseed/*` health endpoints.
 
 - The default Base mainnet RPC changed from publicnode to Tenderly's public gateway (`base.gateway.tenderly.co`), with fallbacks drpc → nodies → `mainnet.base.org`. publicnode now rejects archive-depth requests on its free tier with a 403 ("Archive requests require a personal token"), which broke commands like `antseed <role> emissions claim`; llamarpc was dropped as unreliable. The seller-start public-RPC warning still recognizes the removed hosts for users who have them saved in config.
 - diemantseed.com: eligible $ANTS incentives are now claimed directly from the staking page's Claim tab (same wallet, per completed epoch) instead of requiring the desktop app; the claim banner, how-it-works steps, and FAQ were updated to match. Desktop download links and copy now use the current VPR branding (formerly AntStation). Failed wallet transactions show the concise error message instead of the full request dump.
@@ -45,6 +68,10 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Fixed image SpendingAuth service attribution when a budget/headroom authorization races ahead of the delivered response. Headroom-only messages no longer consume the request accounting slot, and the eventual image charge is attributed exactly once to the requested service with one request and zero synthetic text tokens.
+- OpenAI-compatible sellers now recognize Venice image-generation model families such as Flux, Qwen Image, Nano Banana, Recraft, Seedream, and Krea as `openai-images` services, so they advertise image output capabilities and route through image endpoints instead of Chat Completions.
+- Fixed three "Read more in the docs" links in the desktop VPR Help view opening 404 pages (`/docs/getting-started/intro`, `/docs/getting-started/configuration`, `/docs/guides/pricing`). They now point at the docs' published slugs (`/docs/`, `/docs/config`, `/docs/pricing`).
+- Fixed Codex auto-compaction failing on Anthropic-backed routes when the compaction request contained `tool_choice: "auto"` but no tools. Cross-protocol request rendering now omits `tool_choice` whenever no compatible tools remain, preventing LiteLLM and Anthropic from rejecting long-running tasks at the context limit.
 - Fixed the desktop VPR floating pill moving away from the pointer and becoming difficult to click. The pill now uses Electron's native window dragging across its passive surface, with dedicated controls for conversations, shrinking, closing, deposits, and compact expansion.
 - Fixed the desktop app crashing on launch with `ERR_MODULE_NOT_FOUND: Cannot find package '@antseed/protocol'`: the packaged app was missing the `@antseed/protocol` and `@antseed/buyer-core` workspace packages (split out of `@antseed/node` by the protocol extraction), so the main process could not resolve them from the app bundle. Desktop packaging now bundles both packages and builds them as part of the pre-dist pipeline.
 - Fixed buyers classifying unit-billed services (e.g. image generation) as free because their token pricing is zero: the free-usage gate now resolves the same provider + protocol billing route the seller uses, so paid image requests negotiate payment and record verified cost instead of rejecting the seller's usage claims.
@@ -65,6 +92,8 @@ This project uses selective package publishing. Each release entry lists the pub
 - Fixed seller crashes when sending `PaymentRequired` to a buyer that disconnected before the payment terms could be delivered.
 - Fixed the buyer's Responses→Chat Completions request adapter to group parallel tool calls into a single assistant `tool_calls` message. Previously each call became its own assistant message, so strict chat-completions upstreams rejected multi-tool turns with `an assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'`.
 - Fixed the Responses request normalizer to drop non-message input items with no renderable text (e.g. Codex `reasoning` items) instead of converting them into empty user messages mid-history.
+- Fixed buyer payment negotiation so the preflight deposit-balance read remains advisory: a transient RPC failure no longer aborts an otherwise valid negotiation, while failures from required buyer-side chain operations retain structured buyer-fault attribution.
+- Fixed `SellerAuthorizationError` so a peer that is not an authorized operator is distinguishable from a chain RPC that could not be reached; the two cases previously shared one error and could only be told apart by matching the message text.
 
 ## 2026-08-06 — Desktop 0.2.3
 
@@ -271,7 +300,6 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
-- Set generated model metadata for supported connected tools and CLI wrappers to a 280,000-token context window, with an 8,192-token output limit where the tool supports one.
 - Changed API adapter streaming transforms to use canonical stream events with per-protocol normalizers and renderers, so new stream protocols can be added without pairwise routes.
 - Changed Desktop renderer navigation to load only the active view, preload likely next views, and show a lightweight loading state while lazily loaded pages resolve.
 - Reduced the default buyer response-auth evidence sample rate from 20% to 0.5% to limit local `verification_samples` growth during high-request sessions.

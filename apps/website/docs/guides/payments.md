@@ -31,6 +31,23 @@ The contract's `deposit(buyer, amount)` pulls USDC from your connected wallet an
 Anyone can deposit on behalf of a buyer — a team treasury, a hardware wallet, or another contract. The funding source is decoupled from the node identity.
 :::
 
+### Sweeping Hot-Wallet USDC
+
+If USDC lands in your node's hot wallet (for example after a QR-code transfer), you can move it into your deposits balance without the wallet ever holding ETH:
+
+```bash
+antseed buyer sweep
+```
+
+The CLI signs an EIP-3009 authorization offline and broadcasts it over the P2P network. A permissionless relayer submits the transaction, pays the gas, and keeps a fixed USDC fee ($0.05 on Base Mainnet); the rest is credited to your deposits balance. If a buyer daemon (`antseed buyer start`) is running, the request goes out over its existing seller connections — otherwise the CLI joins the network with a temporary node.
+
+| Option | Purpose |
+|---|---|
+| `--amount <usdc>` | Amount to sweep (default: full hot-wallet balance, clamped to your credit-limit headroom) |
+| `--timeout <secs>` | How long to wait for on-chain confirmation (default: 120) |
+
+The swept amount must exceed the fixed relay fee, and a first-ever deposit must net at least 1 USDC after the fee. Your funds never move unless a relayer lands the transaction — the authorization simply expires after an hour.
+
 ### Checking Balance
 
 ```bash
@@ -87,6 +104,10 @@ antseed seller start
 
 For a one-off run, use `antseed seller start --base-rpc-url <url>`. For durable config, set `payments.crypto.rpcUrl` in `~/.antseed/config.json`.
 
+### Relaying Deposit Sweeps
+
+Sellers relay buyer deposit sweeps by default: the node verifies and simulates each incoming sweep request, submits it on-chain, and earns the fixed relay fee (minus gas). Opt out with `relayer.enabled: false` in your config, or tune the profitability floor with `relayer.minProfitBaseUnits`.
+
 ### Staking
 
 Providers must stake a minimum of $10 USDC to participate:
@@ -123,6 +144,7 @@ antseed seller emissions info
 | AntseedDeposits | `0x0F7a3a8f4Da01637d1202bb5443fcF7F88F99fD2` |
 | AntseedChannels | `0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d` |
 | AntseedStaking | `0x3652E6B22919bd322A25723B94BB207602E5c8e6` |
+| AntseedDepositRelay | `0x34a44542e76f9b4cff3a31902eDF14AbF2C3B3DD` |
 | AntseedEmissionsV2 | `0xF13bE52c4A3afC6AE29536f073588d01A0564088` |
 | ANTSToken | `0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263` |
 

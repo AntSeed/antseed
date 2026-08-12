@@ -1,5 +1,6 @@
 import type {
   DaemonStateSnapshot,
+  DesktopBuyerSpendHistory,
   DesktopBuyerUsageTotals,
   DesktopPaymentChannelSummary,
   DesktopRewardsSummary,
@@ -57,11 +58,25 @@ export type ConfigFormData = {
   cryptoChainId: string;
 };
 
+export type ServiceCapabilitiesView = {
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  inputs?: string[];
+  outputs?: string[];
+  reasoning?: boolean;
+  toolUse?: boolean;
+  structuredOutput?: boolean;
+  supportedParameters?: string[];
+};
+
+export type VprModelKind = 'text' | 'image';
+
 export type ChatServiceOptionEntry = {
   id: string;
   label: string;
   provider: string;
   protocol: string;
+  capabilities?: ServiceCapabilitiesView | null;
   count: number;
   value: string;
   peerId: string;
@@ -71,6 +86,8 @@ export type ChatServiceOptionEntry = {
   inputUsdPerMillion: number | null;
   outputUsdPerMillion: number | null;
   cachedInputUsdPerMillion?: number | null;
+  minImageUsdPerImage?: number | null;
+  maxImageUsdPerImage?: number | null;
   categories: string[];
   description: string;
 };
@@ -122,12 +139,16 @@ export type VprModelCatalogEntry = {
   label: string;
   peerCount: number;
   categories: string[];
+  kind: VprModelKind;
+  protocols: string[];
   minInputUsdPerMillion: number | null;
   maxInputUsdPerMillion: number | null;
   minOutputUsdPerMillion: number | null;
   maxOutputUsdPerMillion: number | null;
   minCachedInputUsdPerMillion: number | null;
   maxCachedInputUsdPerMillion: number | null;
+  minImageUsdPerImage: number | null;
+  maxImageUsdPerImage: number | null;
   expectedSavingsPct: number | null;
   bestPeerId: string | null;
   /**
@@ -156,6 +177,9 @@ export type DiscoverRow = {
   categories: string[];
   provider: string;            // internal, not shown
   protocol: string;
+  /** Seller-specific capability hints. These are deliberately not merged at
+   * model level because different peers may serve different model variants. */
+  capabilities?: ServiceCapabilitiesView | null;
 
   // Peer
   peerId: string;
@@ -178,6 +202,8 @@ export type DiscoverRow = {
   inputUsdPerMillion: number | null;
   outputUsdPerMillion: number | null;
   cachedInputUsdPerMillion: number | null;
+  minImageUsdPerImage: number | null;
+  maxImageUsdPerImage: number | null;
 
   // Local buyer history (from ChannelStore)
   lifetimeSessions: number;
@@ -215,6 +241,12 @@ export type DiscoverRow = {
   networkOutputTokens: string | null;
 
   // Derived — encoded selection for existing chat open path
+  // Peer health (buyer-proxy cooldown). A peer that recently stopped
+  // responding is deprioritized by auto routing until its cooldown lapses.
+  peerCooldownUntil: number | null;
+  peerFailureStreak: number;
+  peerLastFailureReason: string | null;
+
   selectionValue: string;
 };
 
@@ -298,6 +330,7 @@ export type RendererUiState = {
   creditsEvmAddress: string | null;
   creditsOperatorAddress: string | null;
   creditsBuyerUsage: DesktopBuyerUsageTotals | null;
+  creditsBuyerSpendHistory: DesktopBuyerSpendHistory | null;
   creditsChannels: DesktopPaymentChannelSummary[];
   creditsRewards: DesktopRewardsSummary | null;
   creditsSummaryLoading: boolean;
@@ -341,6 +374,12 @@ export type RendererUiState = {
   /** IDs of all conversations currently running a request, across the whole app. */
   chatSendingConversationIds: string[];
   chatError: string | null;
+  /**
+   * Non-error routing notice, e.g. "peer X isn't responding, retrying on Y".
+   * Kept separate from `chatError` because a successful failover is not a
+   * failure and must not be rendered as one.
+   */
+  chatRoutingNotice: string | null;
   chatRoutedPeer: string;
   chatRoutedPeerId: string;
   chatSessionStarted: string;
@@ -359,7 +398,10 @@ export type RendererUiState = {
    */
   vprRoutableRows: DiscoverRow[];
   vprModelCatalog: VprModelCatalogEntry[];
+  /** Main text/connected-app route. Image models never replace this. */
   vprRouteSelection: VprRouteSelection;
+  /** Dedicated internal-chat image route, set only by “Use in chat”. */
+  chatImageRouteSelection: VprRouteSelection | null;
   /** Remembered seller pin per model (`provider:serviceId` -> peer id), so a
    * pinned model stays pinned across model switches. */
   vprModelPins: Record<string, string>;
@@ -469,6 +511,7 @@ export function createInitialUiState(): RendererUiState {
     creditsEvmAddress: null,
     creditsOperatorAddress: null,
     creditsBuyerUsage: null,
+    creditsBuyerSpendHistory: null,
     creditsChannels: [],
     creditsRewards: null,
     creditsSummaryLoading: false,
@@ -503,6 +546,7 @@ export function createInitialUiState(): RendererUiState {
     chatSendingConversationId: null,
     chatSendingConversationIds: [],
     chatError: null,
+    chatRoutingNotice: null,
     chatRoutedPeer: '',
     chatRoutedPeerId: '',
     chatSessionStarted: '',
@@ -521,6 +565,7 @@ export function createInitialUiState(): RendererUiState {
       mode: 'auto',
       peerId: null,
     },
+    chatImageRouteSelection: null,
     vprModelPins: {},
     vprRoutingPreferences: {
       autoRouting: true,

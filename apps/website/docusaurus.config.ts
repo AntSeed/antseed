@@ -42,6 +42,11 @@ const config: Config = {
   favicon: 'logo.svg',
   url: 'https://antseed.com',
   baseUrl: '/',
+  // The host 308-redirects /path to /path/, so without this Docusaurus emitted
+  // canonical tags and sitemap entries pointing at the pre-redirect form: every
+  // URL was a redirect source and no page's canonical actually resolved to
+  // itself. `true` makes the emitted URLs match what the host already serves.
+  trailingSlash: true,
   onBrokenLinks: 'throw',
 
   markdown: {
@@ -62,8 +67,16 @@ const config: Config = {
         docs: {
           sidebarPath: './sidebars.ts',
           routeBasePath: 'docs',
+          // Feeds the sitemap's `lastmod` from the file's git commit date.
+          // Without it every URL carried the build date, so each deploy told
+          // crawlers all 59 pages had changed.
+          showLastUpdateTime: true,
+        },
+        pages: {
+          showLastUpdateTime: true,
         },
         blog: {
+          showLastUpdateTime: true,
           showReadingTime: true,
           blogTitle: 'AntSeed Blog',
           blogDescription: 'Insights on OpenRouter alternatives, P2P AI networks, and the future of AI inference.',

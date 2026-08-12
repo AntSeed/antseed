@@ -5,6 +5,7 @@ import { type ChatStreamStopReason } from './stream-stop.js';
 import {
   normalizeChatPeerSelectionRequest,
   type ChatPeerSelectionRequest,
+  type ChatRouteMode,
 } from './peer-selection.js';
 import {
   prepareChatAttachments,
@@ -33,6 +34,7 @@ import {
 } from './permissions.js';
 import { DEFAULT_BUYER_STATE_PATH, LOCALHOST_URL } from '../constants.js';
 import { asErrorMessage } from '../utils.js';
+import type { RawPeerHealth } from '../runtime/peer-cache.js';
 import {
   type ChatServiceCatalogEntry,
   type ChatServiceProtocol,
@@ -56,12 +58,14 @@ import {
   type DiscoverRowEntry,
 } from './service-discovery.js';
 import { isPortReachable, resolveProxyPort } from './proxy-service.js';
+import { isChatServiceProtocol } from './normalize.js';
 import {
   normalizeModelPickerSnapshot,
   type ModelPickerSnapshot,
 } from '../../shared/model-picker.js';
 import { PiConversationStore } from './conversation-store.js';
 import { createStreamingRunner } from './streaming-run.js';
+import { generateChatImage } from './image-generation.js';
 import type {
   ActiveRun,
   ChatStreamErrorPayload,
@@ -120,6 +124,7 @@ export function registerPiChatHandlers({
   void loadChatWorkspaceDir().catch(() => {});
   const store = new PiConversationStore();
   const activeRunsByConversation = new Map<string, ActiveRun>();
+  const activeImageRunsByConversation = new Map<string, AbortController>();
   const serviceProviderHints = new Map<string, string[]>();
   /** Cached payment-required info from 402 responses, keyed by conversationId. */
   const cachedPaymentRequired = new Map<string, Record<string, unknown>>();
@@ -329,7 +334,13 @@ export function registerPiChatHandlers({
     }
 
     const refreshed = await refreshServiceCatalogFromNetwork();
-    return refreshed.find((entry) => entry.id.trim().toLowerCase() === normalizedServiceId)?.protocol ?? 'anthropic-messages';
+    const match = refreshed.find((entry) => (
+      entry.id.trim().toLowerCase() === normalizedServiceId
+      && entry.protocol !== 'openai-images'
+    ));
+    return match && isChatServiceProtocol(match.protocol)
+      ? match.protocol
+      : 'anthropic-messages';
   };
 
   // Built here rather than beside the other helpers because it needs
@@ -443,9 +454,13 @@ export function registerPiChatHandlers({
       // `discoverChatServiceCatalog` read for why these must not be
       // dynamic in packaged Windows builds.
       let discoveredPeersMap: Record<string, BuyerStateDiscoveredPeer> = {};
+      let peerHealthMap: Record<string, RawPeerHealth> = {};
       try {
         const raw = await readFile(DEFAULT_BUYER_STATE_PATH, 'utf-8');
         const parsed = JSON.parse(raw) as Record<string, unknown>;
+        if (parsed.peerHealth && typeof parsed.peerHealth === 'object' && !Array.isArray(parsed.peerHealth)) {
+          peerHealthMap = parsed.peerHealth as Record<string, RawPeerHealth>;
+        }
         const arr = Array.isArray(parsed.discoveredPeers) ? parsed.discoveredPeers : [];
         const enrichmentTasks: Array<Promise<void>> = [];
         for (const p of arr) {
@@ -504,7 +519,7 @@ export function registerPiChatHandlers({
         }
       })();
 
-      const rows = (await buildDiscoverRows(entries, statsMap, discoveredPeersMap, networkStats))
+      const rows = (await buildDiscoverRows(entries, statsMap, discoveredPeersMap, networkStats, peerHealthMap))
         .filter((row) => isPriceAllowedByBuyerMax(
           row.inputUsdPerMillion,
           row.outputUsdPerMillion,
@@ -579,12 +594,17 @@ export function registerPiChatHandlers({
     return { ok: true, data: enriched };
   });
 
-  const createConversation = async (service?: string, provider?: string, peerId?: string): Promise<AiConversation> => {
+  const createConversation = async (
+    service?: string,
+    provider?: string,
+    peerId?: string,
+    routeMode?: ChatRouteMode,
+  ): Promise<AiConversation> => {
     const trimmedPeerId = peerId?.trim() ?? '';
     const peerLabel = trimmedPeerId
       ? lastServiceCatalogEntries.find((e) => e.peerId === trimmedPeerId)?.peerLabel
       : undefined;
-    const conversation = await store.create(service, provider, trimmedPeerId || undefined, peerLabel);
+    const conversation = await store.create(service, provider, trimmedPeerId || undefined, peerLabel, routeMode);
     if (trimmedPeerId) {
       preferredPeerByConversationId.set(conversation.id, trimmedPeerId);
     } else {
@@ -593,8 +613,22 @@ export function registerPiChatHandlers({
     return conversation;
   };
 
-  ipcMain.handle('chat:ai-create-conversation', async (_event, service: string, provider?: string, peerId?: string) => {
-    return { ok: true, data: await createConversation(service, provider, peerId) };
+  ipcMain.handle('chat:ai-create-conversation', async (
+    _event,
+    service: string,
+    provider?: string,
+    peerId?: string,
+    routeMode?: ChatRouteMode,
+  ) => {
+    return {
+      ok: true,
+      data: await createConversation(
+        service,
+        provider,
+        peerId,
+        routeMode === 'auto' || routeMode === 'pinned' ? routeMode : undefined,
+      ),
+    };
   });
 
   ipcMain.handle('chat:ai-delete-conversation', async (_event, id: string) => {
@@ -661,6 +695,40 @@ export function registerPiChatHandlers({
     }
   });
 
+  ipcMain.handle('chat:generate-image', async (_event, payload: unknown) => {
+    const request = payload && typeof payload === 'object'
+      ? payload as { conversationId?: unknown; prompt?: unknown; peerId?: unknown; service?: unknown }
+      : {};
+    const conversationId = typeof request.conversationId === 'string' ? request.conversationId.trim() : '';
+    const prompt = typeof request.prompt === 'string' ? request.prompt.trim() : '';
+    const peerId = typeof request.peerId === 'string' ? request.peerId.trim() : '';
+    const service = typeof request.service === 'string' ? request.service.trim() : '';
+    if (!conversationId || !prompt || !peerId || !service) {
+      return { ok: false, error: 'Conversation, prompt, image model, and seller are required.' };
+    }
+    if (!isSafeId(conversationId)) {
+      return { ok: false, error: 'Invalid conversation.' };
+    }
+    if (activeRunsByConversation.has(conversationId) || activeImageRunsByConversation.has(conversationId)) {
+      return { ok: false, error: 'A request is already in progress for this conversation.' };
+    }
+    const controller = new AbortController();
+    activeImageRunsByConversation.set(conversationId, controller);
+    try {
+      const proxyPort = await resolveProxyPort(configPath);
+      return await generateChatImage(store, proxyPort, {
+        conversationId,
+        prompt,
+        peerId,
+        service,
+      }, { signal: controller.signal });
+    } finally {
+      if (activeImageRunsByConversation.get(conversationId) === controller) {
+        activeImageRunsByConversation.delete(conversationId);
+      }
+    }
+  });
+
   ipcMain.handle(
     'chat:ai-send-stream',
     async (_event, conversationId: string, userMessage: string, service?: string, _provider?: string, attachments?: PreparedChatAttachment[], peerId?: string, permissionMode?: unknown) => {
@@ -686,9 +754,10 @@ export function registerPiChatHandlers({
     const activeRuns = trimmedConversationId
       ? [activeRunsByConversation.get(trimmedConversationId)].filter((run): run is ActiveRun => Boolean(run))
       : Array.from(activeRunsByConversation.values());
-    if (activeRuns.length === 0) {
-      return;
-    }
+    const imageRuns = trimmedConversationId
+      ? [activeImageRunsByConversation.get(trimmedConversationId)].filter((run): run is AbortController => Boolean(run))
+      : Array.from(activeImageRunsByConversation.values());
+    for (const controller of imageRuns) controller.abort();
     await Promise.all(activeRuns.map((run) => abortAndClearActiveRun(run)));
   };
 
@@ -698,13 +767,13 @@ export function registerPiChatHandlers({
   });
 
   const applyPeerSelection = async (payload: ChatPeerSelectionRequest | string | null): Promise<{ ok: boolean; error?: string }> => {
-    const { conversationId, peerId, service, provider } = normalizeChatPeerSelectionRequest(payload);
+    const { conversationId, peerId, service, provider, routeMode } = normalizeChatPeerSelectionRequest(payload);
 
     if (conversationId) {
       if (peerId) {
         preferredPeerByConversationId.set(conversationId, peerId);
         const peerLabel = lastServiceCatalogEntries.find((entry) => entry.peerId === peerId)?.peerLabel;
-        await store.setPeer(conversationId, peerId, peerLabel);
+        await store.setPeer(conversationId, peerId, peerLabel, routeMode ?? undefined);
       } else {
         preferredPeerByConversationId.delete(conversationId);
         await store.clearPeer(conversationId);

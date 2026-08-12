@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
   ArrowDown01Icon,
+  ArrowReloadHorizontalIcon,
   ArrowRight02Icon,
   ArrowUp02Icon,
   ArrowUpRight01Icon,
@@ -32,6 +33,7 @@ import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import type { ViewName } from '../../types';
 import { OverlayScrollArea } from '../OverlayScrollArea';
+import { BottomNotice } from '../BottomNotice';
 import { BrandIcon } from '../brand/BrandIcon';
 import { VprModelRowList } from '../vpr/VprModelRows';
 import { hasSeenChats, rememberSeenChats, VprRecentChatsCard } from '../vpr/VprRecentChats';
@@ -47,7 +49,7 @@ const MODEL_CHANGE_NOTICE_MS = 4_000;
 const DROPDOWN_MODEL_COUNT = 5;
 
 function isFreeEntry(entry: VprModelCatalogEntry | undefined): boolean {
-  if (!entry) return false;
+  if (!entry || entry.kind === 'image') return false;
   const { minInputUsdPerMillion: i, minOutputUsdPerMillion: o } = entry;
   return i !== null && o !== null && i <= 0 && o <= 0;
 }
@@ -168,17 +170,23 @@ export function VprHomeView({ onSelectView }: Props) {
     if (modelChangeNoticeTimer.current !== null) window.clearTimeout(modelChangeNoticeTimer.current);
   }, []);
 
-  function selectModelForNewChats(provider: string, serviceId: string): void {
-    const entry = findCatalogEntry(snap.catalog, provider, serviceId);
-    const label = entry?.label ?? displayModelLabel(serviceId);
-    setModelMenuOpen(false);
-    actions.selectVprModel(provider, serviceId);
+  function applyModelForNewChats(entry: VprModelCatalogEntry): void {
+    const label = entry.label ?? displayModelLabel(entry.serviceId);
+    actions.selectVprModel(entry.provider, entry.serviceId);
     setModelChangeNotice(`${label} selected for new chats.\nExisting chats are unchanged.`);
     if (modelChangeNoticeTimer.current !== null) window.clearTimeout(modelChangeNoticeTimer.current);
     modelChangeNoticeTimer.current = window.setTimeout(() => {
       setModelChangeNotice(null);
       modelChangeNoticeTimer.current = null;
     }, MODEL_CHANGE_NOTICE_MS);
+  }
+
+  function selectModelForNewChats(provider: string, serviceId: string): void {
+    const entry = findCatalogEntry(snap.catalog, provider, serviceId);
+    if (!entry) return;
+    setModelMenuOpen(false);
+    if (entry.kind === 'image') return;
+    applyModelForNewChats(entry);
   }
 
   // Favorites are starred on the model pages (localStorage); re-read on each
@@ -204,11 +212,12 @@ export function VprHomeView({ onSelectView }: Props) {
   // whole list is capped — favorites included — so the menu can't outgrow the
   // hero; everything past the cap lives behind "All models".
   const dropdownEntries = useMemo(() => {
-    const favoriteEntries = selectFavoriteVprCatalog(snap.catalog, favorites);
-    const recommended = selectRecommendedVprCatalog(snap.catalog)
+    const textCatalog = snap.catalog.filter((entry) => entry.kind === 'text');
+    const favoriteEntries = selectFavoriteVprCatalog(textCatalog, favorites);
+    const recommended = selectRecommendedVprCatalog(textCatalog)
       .filter((entry) => !favorites.has(catalogEntryKey(entry)));
     const top = [...favoriteEntries, ...recommended].slice(0, DROPDOWN_MODEL_COUNT);
-    if (selectedEntry && !top.includes(selectedEntry)) {
+    if (selectedEntry?.kind === 'text' && !top.includes(selectedEntry)) {
       return [selectedEntry, ...top.slice(0, DROPDOWN_MODEL_COUNT - 1)];
     }
     return top;
@@ -622,20 +631,15 @@ export function VprHomeView({ onSelectView }: Props) {
       </div>
       </OverlayScrollArea>
       {modelChangeNotice ? (
-        <div className={styles.modelChangeBanner} role="status" aria-live="polite">
-          <span className={styles.modelChangeBannerIcon} aria-hidden="true">
-            <HugeiconsIcon icon={Tick02Icon} size={16} strokeWidth={2.2} />
-          </span>
-          <span className={styles.modelChangeBannerText}>{modelChangeNotice}</span>
-          <button
-            type="button"
-            className={styles.modelChangeBannerClose}
-            aria-label="Dismiss model change confirmation"
-            onClick={() => setModelChangeNotice(null)}
-          >
-            <HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={2} />
-          </button>
-        </div>
+        <BottomNotice
+          ariaLive="polite"
+          body={modelChangeNotice}
+          dismissIcon={<HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={2} />}
+          dismissLabel="Dismiss model change confirmation"
+          icon={<HugeiconsIcon icon={Tick02Icon} size={16} strokeWidth={2.2} />}
+          layout="toast"
+          onDismiss={() => setModelChangeNotice(null)}
+        />
       ) : null}
     </section>
   );

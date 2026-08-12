@@ -13,7 +13,7 @@ CLI loads antseed-provider-echo from ~/.antseed/plugins/
        ↓
 plugin.createProvider(config) → Provider
        ↓
-AntseedNode (seller mode) handles DHT, WebRTC, metering, payments
+AntseedNode (seller mode) handles DHT, encrypted P2P transport, metering, payments
 ```
 
 Your plugin only owns the upstream connection logic. Everything else is handled by the node.

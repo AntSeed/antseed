@@ -24,7 +24,7 @@ AntSeed is a fully decentralized protocol for buying and selling AI services dir
 │   (token counting, receipts)    │
 ├─────────────────────────────────┤
 │       2. Transport Layer        │
-│   (WebRTC/TCP, binary framing)  │
+│ (encrypted TCP/WebRTC, framing) │
 ├─────────────────────────────────┤
 │       1. Discovery Layer        │
 │   (BitTorrent DHT, metadata)    │

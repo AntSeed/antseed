@@ -4,11 +4,16 @@ import { watchFile, unwatchFile } from 'node:fs'
 import { readFile, writeFile, rename, mkdir, readdir, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
+  ANTSEED_BUYER_FAULT_ERROR_CODE,
+  ANTSEED_FAULT_ATTRIBUTION_HEADER,
   ANTSEED_ATTEST_PATH,
   computeOnChainReputationScore,
   decodeSweepRequest,
+  faultAttributionOf,
+  faultCodeOf,
   peerSupportsCooperativeClose,
   type AntseedNode,
+  type FaultAttribution,
   type BuyerSpendEvent,
   type PeerInfo,
   type PeerMetadata,
@@ -41,6 +46,7 @@ import {
   ROUTED_MODEL_ALIAS,
   SYSTEM_PROXY_SOURCE_HEADER,
   SYSTEM_ROUTED_MODEL_HEADER,
+  normalizePeerId,
 } from './request-utils.js'
 import {
   findUnannouncedRequestParameters,
@@ -65,6 +71,18 @@ import {
   parseRequestBodyObject,
 } from './conversation-identity.js'
 import { ConversationStore } from './conversation-store.js'
+import {
+  recordPeerFailureEntry,
+  clearPeerHealthEntry,
+  isCoolingDown,
+  parsePersistedPeerHealth,
+  prunePeerHealth,
+  serializePeerHealth,
+  reasonEscalates,
+  type PeerFailureReason,
+  type PeerHealthEntry,
+} from './peer-health.js'
+import { PeerAttributionTracker, HEARTBEAT_MS } from './peer-attribution.js'
 import { estimateAnthropicPromptTokens, isCountTokensPath } from './count-tokens.js'
 import { getCachedVerdict, runVerifier, verifierSupportFingerprint, type CachedVerdict, type VerifierPolicy, type SellerReach, type VerifyOutcome } from '../plugins/verifier.js'
 
@@ -92,6 +110,11 @@ export interface BuyerProxyConfig {
    * and allowed by the buyer's pricing policy. A 502 is returned if the peer cannot be reached.
    */
   pinnedPeerId?: string
+  /**
+   * Clock used for peer-health bookkeeping. Injectable so tests can drive
+   * failure spacing directly instead of sleeping past the coalesce window.
+   */
+  now?: () => number
   /** Verifier-SDK policy: which verifier the buyer commits to + whether it is required. */
   verifier?: VerifierPolicy
 }
@@ -132,7 +155,6 @@ export function isModelNotFoundResponse(response: SerializedHttpResponse): boole
  * liveness (`lastReachedAt`) even if the DHT record is older.
  */
 const CARRY_FORWARD_TTL_MS = 2 * 60 * 60_000
-const PEER_FAILURE_WINDOW_MS = 5 * 60_000
 /**
  * Requests kept in the spend-attribution map. Entries outlive their request on
  * purpose (a seller-initiated auth can land after the response), so this is
@@ -144,11 +166,33 @@ const MODEL_NOT_FOUND_REFRESH_THROTTLE_MS = 30_000
 /** Verification is expensive; bound how many verdicts we retain (TTL = peer-cache TTL). */
 const VERIFY_CACHE_MAX_ENTRIES = 1024
 
-type PeerFailureEntry = {
-  count: number
-  firstFailureAt: number
-  lastFailureAt: number
-  lastReason: string
+/**
+ * Statuses that prove the peer is alive and serving. Any response short of a
+ * server error counts: a peer that answers 400 or 404 is reachable, and
+ * treating only 2xx as proof would leave a stale cooldown on a healthy peer
+ * that happens to reject every request.
+ */
+function isProofOfLife(statusCode: number): boolean {
+  return statusCode < 500 && statusCode !== 408
+}
+
+/**
+ * Map a seller's response status onto a health reason, or null when the status
+ * says nothing about the peer's liveness.
+ */
+function failureReasonForStatus(statusCode: number): PeerFailureReason | null {
+  if (statusCode === 408) return 'seller-timeout'
+  // Rate limiting is capacity pressure, not death — recorded, never escalated.
+  if (statusCode === 429) return 'seller-busy'
+  if (statusCode >= 500 && statusCode <= 599) return 'seller-5xx'
+  return null
+}
+
+function responseFaultAttribution(response: SerializedHttpResponse): FaultAttribution {
+  const attribution = response.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER]?.toLowerCase()
+  return attribution === 'buyer' || attribution === 'peer' || attribution === 'unknown'
+    ? attribution
+    : 'peer'
 }
 
 type BuyerPolicyRouter = Router & {
@@ -206,6 +250,87 @@ function adaptOpenAICompatibleErrorResponse(
     },
     body: Buffer.from(JSON.stringify(wrappedError)),
   }
+}
+
+function adaptBuyerFaultErrorResponse(
+  response: SerializedHttpResponse,
+  requestProtocol: ServiceApiProtocol | null,
+): SerializedHttpResponse {
+  if (
+    response.statusCode < 400
+    || response.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER]?.toLowerCase() !== 'buyer'
+  ) {
+    return sanitizePeerBuyerFaultMarker(response)
+  }
+
+  let parsed: Record<string, unknown> = {}
+  try {
+    parsed = JSON.parse(Buffer.from(response.body).toString('utf-8')) as Record<string, unknown>
+  } catch {
+    // Buyer-generated failures should be JSON, but keep a useful fallback if
+    // a future path emits plain text.
+  }
+
+  const nestedError = parsed.error && typeof parsed.error === 'object' && !Array.isArray(parsed.error)
+    ? parsed.error as Record<string, unknown>
+    : null
+  const reason = [nestedError?.code, parsed.code, parsed.reason, nestedError?.type, parsed.error]
+    .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+  const message = [nestedError?.message, parsed.message, parsed.error]
+    .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    ?? 'The request failed on the buyer.'
+  const body = requestProtocol === 'anthropic-messages'
+    ? {
+        type: 'error',
+        error: {
+          type: ANTSEED_BUYER_FAULT_ERROR_CODE,
+          message: reason ? `${message} (${reason})` : message,
+        },
+      }
+    : {
+        error: {
+          type: 'api_error',
+          code: ANTSEED_BUYER_FAULT_ERROR_CODE,
+          message,
+          ...(reason ? { param: reason } : {}),
+        },
+      }
+
+  return {
+    ...response,
+    headers: { ...response.headers, 'content-type': 'application/json' },
+    body: Buffer.from(JSON.stringify(body)),
+  }
+}
+
+function sanitizePeerBuyerFaultMarker(response: SerializedHttpResponse): SerializedHttpResponse {
+  if (response.statusCode < 400) return response
+
+  let parsed: Record<string, unknown>
+  try {
+    parsed = JSON.parse(Buffer.from(response.body).toString('utf-8')) as Record<string, unknown>
+  } catch {
+    return response
+  }
+
+  let changed = false
+  const scrub = (record: Record<string, unknown>): void => {
+    for (const key of ['code', 'type', 'errorCode']) {
+      if (record[key] === ANTSEED_BUYER_FAULT_ERROR_CODE) {
+        record[key] = 'upstream_error'
+        changed = true
+      }
+    }
+  }
+
+  scrub(parsed)
+  if (parsed.error && typeof parsed.error === 'object' && !Array.isArray(parsed.error)) {
+    scrub(parsed.error as Record<string, unknown>)
+  }
+
+  return changed
+    ? { ...response, body: Buffer.from(JSON.stringify(parsed)) }
+    : response
 }
 
 /**
@@ -325,6 +450,12 @@ export function parsePersistedPeers(
     }
     if (entry.providerServiceApiProtocols && typeof entry.providerServiceApiProtocols === 'object') {
       peer.providerServiceApiProtocols = entry.providerServiceApiProtocols as PeerInfo['providerServiceApiProtocols']
+    }
+    if (entry.providerServiceUnitBillingModels && typeof entry.providerServiceUnitBillingModels === 'object') {
+      peer.providerServiceUnitBillingModels = entry.providerServiceUnitBillingModels as PeerInfo['providerServiceUnitBillingModels']
+    }
+    if (entry.providerServiceCapabilities && typeof entry.providerServiceCapabilities === 'object') {
+      peer.providerServiceCapabilities = entry.providerServiceCapabilities as PeerInfo['providerServiceCapabilities']
     }
     if (typeof entry.defaultInputUsdPerMillion === 'number') {
       peer.defaultInputUsdPerMillion = entry.defaultInputUsdPerMillion
@@ -541,7 +672,16 @@ export class BuyerProxy {
   private _consecutiveEmptyDiscoveries = 0
   private _lastModelNotFoundRefreshAtMs = 0
   private _bgRefreshHandle: ReturnType<typeof setInterval> | null = null
-  private _peerFailures: Map<string, PeerFailureEntry> = new Map()
+  /**
+   * Per-peer failure streaks and cooldowns. Advisory only: a cooling-down peer
+   * is still dispatched to when a request names it, so routing can never
+   * deadlock and pinned conversations keep working.
+   */
+  private _peerHealth: Map<string, PeerHealthEntry> = new Map()
+  /** Decides whether a failure is the peer's fault at all. */
+  private readonly _attribution = new PeerAttributionTracker()
+  private _heartbeatHandle: ReturnType<typeof setInterval> | null = null
+  private readonly _now: () => number
   /** Latest relayer receipt per sweep authNonce, for CLI progress polling. */
   private readonly _sweepReceipts = new Map<string, SweepReceiptPayload>()
 
@@ -565,6 +705,7 @@ export class BuyerProxy {
     this._stateFile = join(config.dataDir, 'buyer.state.json')
     this._conversations = new ConversationStore(config.dataDir)
     this._pinnedPeer = config.pinnedPeerId?.toLowerCase() ?? null
+    this._now = config.now ?? (() => Date.now())
     this._server = createServer((req, res) => {
       this._handleRequest(req, res).catch((err) => {
         log('Unhandled error:', err)
@@ -665,6 +806,7 @@ export class BuyerProxy {
       })
     })
     this._startBackgroundRefresh()
+    this._startSuspendHeartbeat()
     // Trigger initial discovery immediately so the desktop can show services
     // without waiting for the first request or 5-minute interval. The sweep
     // emits each accepted metadata document as it arrives, so buyer.state.json
@@ -678,6 +820,11 @@ export class BuyerProxy {
     try {
       const raw = await readFile(this._stateFile, 'utf-8')
       const parsed = JSON.parse(raw) as unknown
+      // Cooldowns survive a restart — a peer that died ten seconds before we
+      // exited is still dead — but the parser clamps anything expired or
+      // impossibly distant, so a restart can never extend one. Nothing new can
+      // escalate until a success re-establishes that the buyer is healthy.
+      this._peerHealth = parsePersistedPeerHealth(parsed, this._now())
       const peers = parsePersistedPeers(parsed)
       if (peers.length === 0) {
         return
@@ -709,6 +856,10 @@ export class BuyerProxy {
     if (this._bgRefreshHandle) {
       clearInterval(this._bgRefreshHandle)
       this._bgRefreshHandle = null
+    }
+    if (this._heartbeatHandle) {
+      clearInterval(this._heartbeatHandle)
+      this._heartbeatHandle = null
     }
     await this._writeStateFile('stopped')
     await this._conversations.flush()
@@ -871,6 +1022,8 @@ export class BuyerProxy {
         providerPricing: p.providerPricing ?? null,
         providerServiceCategories: p.providerServiceCategories ?? null,
         providerServiceApiProtocols: p.providerServiceApiProtocols ?? null,
+        providerServiceUnitBillingModels: p.providerServiceUnitBillingModels ?? null,
+        providerServiceCapabilities: p.providerServiceCapabilities ?? null,
         defaultInputUsdPerMillion: p.defaultInputUsdPerMillion ?? 0,
         defaultOutputUsdPerMillion: p.defaultOutputUsdPerMillion ?? 0,
         defaultCachedInputUsdPerMillion: p.defaultCachedInputUsdPerMillion ?? null,
@@ -915,40 +1068,134 @@ export class BuyerProxy {
   }
 
   /**
-   * Keep buyer-local failure diagnostics without changing reachability.
-   * The router and discovery cache remain untouched; this is only state the
-   * buyer can later use for logs or UI indication.
+   * Record a failed request against a peer.
+   *
+   * Recording is unconditional — the streak and reason are useful diagnostics
+   * either way — but only failures the attribution gates accept as the peer's
+   * own move the cooldown. Discovery metadata is never evicted: a cooling-down
+   * peer stays routable, it just stops being *chosen*.
    */
-  private _recordPeerFailure(peerId: string, reason: string): void {
-    const now = Date.now()
-    const existing = this._peerFailures.get(peerId)
-    const shouldStartFresh = !existing || now - existing.lastFailureAt > PEER_FAILURE_WINDOW_MS
-    const entry: PeerFailureEntry = shouldStartFresh
-      ? { count: 1, firstFailureAt: now, lastFailureAt: now, lastReason: reason }
-      : {
-          count: existing.count + 1,
-          firstFailureAt: existing.firstFailureAt,
-          lastFailureAt: now,
-          lastReason: reason,
-        }
+  private _recordPeerFailure(
+    peerId: string,
+    reason: PeerFailureReason,
+    fault: FaultAttribution = 'unknown',
+  ): void {
+    const now = this._now()
+    const { verdict, rollbackPeerIds } = this._attribution.classify({
+      peerId,
+      reasonEscalates: reasonEscalates(reason),
+      fault,
+      now,
+    })
 
-    this._peerFailures.set(peerId, entry)
-    log(
-      `Peer ${peerId.slice(0, 12)}... failure ${entry.count} within diagnostic window `
-      + `(reason=${reason}); retaining cached discovery metadata.`,
-    )
+    const previous = this._peerHealth.get(peerId)
+    const entry = recordPeerFailureEntry(previous, reason, now, verdict.escalate)
+    this._peerHealth.set(peerId, entry)
+
+    if (rollbackPeerIds.length > 0) {
+      this._rollbackPeerHealth(rollbackPeerIds, 'buyer-side outage detected')
+    }
+
+    if (verdict.escalate && isCoolingDown(entry, now)) {
+      const seconds = Math.round((entry.cooldownUntil - now) / 1000)
+      log(
+        `Peer ${peerId.slice(0, 12)}... cooling down for ${seconds}s after `
+        + `${entry.failureStreak} failures (reason=${reason}).`,
+      )
+    } else {
+      const why = verdict.escalate ? 'below cooldown threshold' : verdict.suppressedBy
+      log(
+        `Peer ${peerId.slice(0, 12)}... failure recorded (reason=${reason}); `
+        + `not cooling down: ${why}.`,
+      )
+    }
+
+    void this._persistPeerHealthToState()
+  }
+
+  /**
+   * Fold a seller's HTTP response into that peer's health.
+   *
+   * Control-plane paths are exempt for the same reason `isRouterSuccess`
+   * exempts them: a failing `/v1/models` says nothing about the peer's ability
+   * to serve inference.
+   */
+  private _recordPeerResponseHealth(peerId: string, statusCode: number, path: string): void {
+    if (isControlPlaneServicesPath(path)) {
+      if (isProofOfLife(statusCode)) this._rememberSuccessfulPeer(peerId)
+      return
+    }
+
+    const reason = failureReasonForStatus(statusCode)
+
+    if (reason && statusCode >= 500) {
+      const now = this._now()
+      if (isCoolingDown(this._peerHealth.get(peerId), now)) {
+        this._rememberSuccessfulPeer(peerId)
+      }
+      this._recordPeerFailure(peerId, reason, 'peer')
+      return
+    }
+
+    if (isProofOfLife(statusCode)) {
+      // A 402, a 400, even a 429 — the peer answered, so it is alive and any
+      // cooldown is stale. Throttling still gets stamped as the last reason so
+      // "alive but refusing work" stays visible in diagnostics.
+      this._rememberSuccessfulPeer(peerId)
+      if (reason) {
+        const entry = this._peerHealth.get(peerId)
+        if (entry) {
+          this._peerHealth.set(peerId, { ...entry, lastReason: reason, lastFailureAt: this._now() })
+        }
+      }
+      return
+    }
+
+    if (reason) this._recordPeerFailure(peerId, reason, 'peer')
+  }
+
+  /**
+   * Undo cooldowns that turned out to be our fault.
+   *
+   * When the attribution gates conclude the buyer itself was down — a suspend,
+   * a dropped network — the failures recorded during that window blamed the
+   * wrong party, so the streaks they created are wound back to zero.
+   */
+  private _rollbackPeerHealth(peerIds: readonly string[], why: string): void {
+    let changed = false
+    for (const peerId of peerIds) {
+      const entry = this._peerHealth.get(peerId)
+      if (!entry || (entry.failureStreak === 0 && entry.cooldownUntil === 0)) continue
+      this._peerHealth.set(peerId, {
+        ...entry,
+        failureStreak: 0,
+        windowStartedAt: 0,
+        episodeStartedAt: 0,
+        cooldownUntil: 0,
+      })
+      changed = true
+    }
+    if (changed) {
+      log(`Cleared peer cooldowns for ${peerIds.length} peer(s): ${why}.`)
+      void this._persistPeerHealthToState()
+    }
   }
 
   /**
    * A peer told us it does not serve the requested model. Our cached
    * metadata for it is stale (the seller may have just unadvertised the
-   * model after failing its own health checks), so record the failure for
-   * diagnostics and refresh discovery metadata in the background — throttled,
-   * since one broken model can produce a burst of these.
+   * model after failing its own health checks), so refresh discovery
+   * metadata in the background — throttled, since one broken model can
+   * produce a burst of these.
+   *
+   * Deliberately does NOT touch peer health: the response itself is proof of
+   * life (`_recordPeerResponseHealth` treats any sub-500 answer as such), and
+   * a peer that is healthy for its other models must not cool down over one
+   * stale catalog entry. The router still learns via `onResult(success:false)`
+   * so scoring reflects the miss.
    */
   private _onModelNotFound(peerId: string, requestedService: string | null): void {
-    this._recordPeerFailure(peerId, `model-not-found:${requestedService ?? 'unknown'}`)
-    const now = Date.now()
+    const now = this._now()
     if (now - this._lastModelNotFoundRefreshAtMs < MODEL_NOT_FOUND_REFRESH_THROTTLE_MS) {
       return
     }
@@ -963,16 +1210,57 @@ export class BuyerProxy {
   /**
    * Stamp `lastReachedAt` on a peer after a successful request so the
    * carry-forward heuristic can trust local transport liveness even when the
-   * DHT record grows stale. Persisted so the signal survives restarts. Also
-   * clears buyer-local diagnostic failures because the peer recovered.
+   * DHT record grows stale. Persisted so the signal survives restarts.
+   *
+   * A response is also proof that the buyer's own network, DHT, chain RPC and
+   * wallet are working, which is what lets other peers' failures be attributed
+   * to them rather than to us.
    */
   private _rememberSuccessfulPeer(peerId: string): void {
-    this._peerFailures.delete(peerId)
+    const now = this._now()
+    this._attribution.recordSuccess(peerId, now)
+
+    const previous = this._peerHealth.get(peerId)
+    if (previous && (previous.failureStreak > 0 || previous.cooldownUntil > 0)) {
+      log(`Peer ${peerId.slice(0, 12)}... recovered; cooldown cleared.`)
+    }
+    this._peerHealth.set(peerId, clearPeerHealthEntry(previous, now))
+    void this._persistPeerHealthToState()
+
     const cached = this._cachedPeers.find((p) => p.peerId === peerId)
     if (cached) {
-      cached.lastReachedAt = Date.now()
+      cached.lastReachedAt = now
       this._persistPeersToState()
     }
+  }
+
+  /**
+   * Watch for the wall clock jumping forward, which means the machine slept.
+   * On wake every pending timeout and keepalive fires at once, so without this
+   * a single closed lid would cool down every peer the buyer knows.
+   */
+  private _startSuspendHeartbeat(): void {
+    if (this._heartbeatHandle) return
+    this._attribution.onHeartbeat(this._now())
+    this._heartbeatHandle = setInterval(() => {
+      const result = this._attribution.onHeartbeat(this._now())
+      if (result && result.rollbackPeerIds.length > 0) {
+        this._rollbackPeerHealth(result.rollbackPeerIds, 'machine resumed from sleep')
+      } else if (result) {
+        log('Detected a wall-clock jump; suspending peer cooldowns briefly.')
+      }
+    }, HEARTBEAT_MS)
+    this._heartbeatHandle.unref?.()
+  }
+
+  /** Persist health separately from `discoveredPeers`, which is rebuilt wholesale. */
+  private async _persistPeerHealthToState(): Promise<void> {
+    const now = this._now()
+    this._peerHealth = prunePeerHealth(this._peerHealth, now)
+    await this._mergeStateFile({
+      peerHealth: serializePeerHealth(this._peerHealth),
+      peerHealthUpdatedAt: now,
+    })
   }
 
   private async _discoverPeersFromNetwork(): Promise<PeerInfo[]> {
@@ -1123,11 +1411,77 @@ export class BuyerProxy {
         providerPricing: p.providerPricing,
         providerServiceCategories: p.providerServiceCategories,
         providerServiceApiProtocols: p.providerServiceApiProtocols,
+        providerServiceUnitBillingModels: p.providerServiceUnitBillingModels,
+        providerServiceCapabilities: p.providerServiceCapabilities,
         reputationScore: p.reputationScore,
         lastSeen: p.lastSeen,
       }))
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ ok: true, peers: payload }))
+      return
+    }
+
+    if (path === '/_antseed/peer-health' && method === 'GET') {
+      const now = this._now()
+      const attribution = this._attribution.snapshot(now)
+      // `buyerHealthy` and `suppressedUntil` are what make "why is this peer
+      // (not) cooling down" answerable from outside the process.
+      const peers = [...this._peerHealth.entries()].map(([peerId, entry]) => ({
+        peerId,
+        failureStreak: entry.failureStreak,
+        lastFailureAt: entry.lastFailureAt,
+        lastReason: entry.lastReason,
+        cooldownUntil: entry.cooldownUntil,
+        coolingDown: isCoolingDown(entry, now),
+        cooldownMsRemaining: isCoolingDown(entry, now) ? entry.cooldownUntil - now : 0,
+        lastSuccessAt: entry.lastSuccessAt,
+      }))
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({
+        ok: true,
+        now,
+        buyerHealthy: this._attribution.isBuyerHealthy(now),
+        lastAnySuccessAt: attribution.lastAnySuccessAt,
+        suppressionActive: attribution.suppressedUntil > 0,
+        suppressedUntil: attribution.suppressedUntil,
+        lastSuppressedBy: attribution.lastSuppressedBy,
+        peers,
+      }))
+      return
+    }
+
+    if (path === '/_antseed/peer-health/clear' && method === 'POST') {
+      const chunks: Buffer[] = []
+      let totalSize = 0
+      for await (const chunk of req) {
+        totalSize += (chunk as Buffer).length
+        if (totalSize > 8192) {
+          res.writeHead(413, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: 'Request body too large' }))
+          return
+        }
+        chunks.push(chunk as Buffer)
+      }
+      let peerId: string
+      try {
+        const body = JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>
+        peerId = typeof body.peerId === 'string' ? body.peerId.trim().toLowerCase() : ''
+      } catch {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'Invalid JSON body' }))
+        return
+      }
+      const normalized = normalizePeerId(peerId) ?? peerId
+      if (!/^[0-9a-f]{40}$/.test(normalized)) {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'peerId must be a 40-character hex peer id' }))
+        return
+      }
+      // Deliberately does not stamp a success: the user is asking us to give
+      // the peer another chance, not asserting that it answered.
+      this._rollbackPeerHealth([normalized], 'cleared by request')
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, peerId: normalized }))
       return
     }
 
@@ -1295,6 +1649,7 @@ export class BuyerProxy {
         const peer = peersById.get(channel.peerId)
         return {
           ...channel,
+          sellerDisplayName: peer?.displayName?.trim() || null,
           cooperativeCloseSupported: peer ? peerSupportsCooperativeClose(peer) : false,
         }
       })
@@ -2089,8 +2444,12 @@ export class BuyerProxy {
           },
         }, { signal: requestSignal })
 
-        let responseForClient = response
-        if (!streamed && adaptResponse) {
+        let responseForClient = adaptBuyerFaultErrorResponse(response, requestProtocol)
+        if (
+          !streamed
+          && adaptResponse
+          && responseForClient.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER]?.toLowerCase() !== 'buyer'
+        ) {
           responseForClient = adaptResponse(response)
         }
         responseForClient = adaptOpenAICompatibleErrorResponse(responseForClient, requestProtocol)
@@ -2112,13 +2471,14 @@ export class BuyerProxy {
           responseForClient.body,
           selectedPeer,
         )
+        const responseFault = responseFaultAttribution(responseForClient)
         const modelNotFound = !streamed
           && !isControlPlaneServicesPath(requestForPeer.path)
           && isModelNotFoundResponse(responseForClient)
         if (modelNotFound) {
           this._onModelNotFound(selectedPeer.peerId, requestedService)
         }
-        if (router) {
+        if (router && responseFault !== 'buyer') {
           router.onResult(selectedPeer, {
             success: !modelNotFound
               && isRouterSuccess(responseForClient.statusCode, requestForPeer.path, retryableStatusCodes),
@@ -2127,11 +2487,16 @@ export class BuyerProxy {
           })
         }
 
+        if (responseFault === 'buyer') {
+          this._recordPeerFailure(selectedPeer.peerId, 'buyer-local', 'buyer')
+        } else {
+          this._recordPeerResponseHealth(
+            selectedPeer.peerId, responseForClient.statusCode, requestForPeer.path,
+          )
+        }
+
         if (streamed) {
           // Headers already sent to client, can't retry
-          if (responseForClient.statusCode >= 200 && responseForClient.statusCode < 400) {
-            this._rememberSuccessfulPeer(selectedPeer.peerId)
-          }
           if (!res.writableEnded) {
             res.end()
           }
@@ -2156,9 +2521,6 @@ export class BuyerProxy {
           }
         }
 
-        if (responseForClient.statusCode >= 200 && responseForClient.statusCode < 400) {
-          this._rememberSuccessfulPeer(selectedPeer.peerId)
-        }
         res.writeHead(responseForClient.statusCode, responseHeaders)
         res.end(Buffer.from(responseForClient.body))
         return { done: true }
@@ -2168,8 +2530,11 @@ export class BuyerProxy {
           log(`Upstream raw error detail: ${summarizeErrorResponse(upstreamResponse)}`)
         }
 
-        let response = upstreamResponse
-        if (adaptResponse) {
+        let response = adaptBuyerFaultErrorResponse(upstreamResponse, requestProtocol)
+        if (
+          adaptResponse
+          && response.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER]?.toLowerCase() !== 'buyer'
+        ) {
           response = adaptResponse(response)
         }
         response = adaptOpenAICompatibleErrorResponse(response, requestProtocol)
@@ -2195,13 +2560,14 @@ export class BuyerProxy {
           latencyMs,
         )
 
+        const responseFault = responseFaultAttribution(response)
         const modelNotFound = !isControlPlaneServicesPath(requestForPeer.path)
           && isModelNotFoundResponse(response)
         if (modelNotFound) {
           this._onModelNotFound(selectedPeer.peerId, requestedService)
         }
         // Report result to router for learning
-        if (router) {
+        if (router && responseFault !== 'buyer') {
           router.onResult(selectedPeer, {
             success: !modelNotFound
               && isRouterSuccess(response.statusCode, requestForPeer.path, retryableStatusCodes),
@@ -2210,14 +2576,17 @@ export class BuyerProxy {
           })
         }
 
+        if (responseFault === 'buyer') {
+          this._recordPeerFailure(selectedPeer.peerId, 'buyer-local', 'buyer')
+        } else {
+          this._recordPeerResponseHealth(selectedPeer.peerId, response.statusCode, requestForPeer.path)
+        }
+
         // Check if retryable
         if (retryableStatusCodes.has(response.statusCode)) {
           return { done: false, statusCode: response.statusCode, responseBody: Buffer.from(response.body), responseHeaders, errorMessage: null }
         }
 
-        if (response.statusCode >= 200 && response.statusCode < 400) {
-          this._rememberSuccessfulPeer(selectedPeer.peerId)
-        }
         // Forward response headers and body to the HTTP client
         res.writeHead(response.statusCode, responseHeaders)
         res.end(Buffer.from(response.body))
@@ -2259,7 +2628,18 @@ export class BuyerProxy {
         return { done: true }
       }
 
-      this._recordPeerFailure(selectedPeer.peerId, 'request-failed')
+      // Whose fault was this? Errors raised by our own wallet, deposits,
+      // transport or state machine say nothing about the peer, and telling the
+      // user to blame the seller for their empty deposit sends them chasing the
+      // wrong fix. Anything untagged stays 'unknown', where the attribution
+      // gates decide.
+      const fault = faultAttributionOf(err)
+      const faultCode = faultCodeOf(err)
+      this._recordPeerFailure(
+        selectedPeer.peerId,
+        fault === 'buyer' ? 'buyer-local' : 'request-failed',
+        fault,
+      )
 
       if (res.headersSent) {
         // Headers already sent (streaming), can't retry
@@ -2267,6 +2647,31 @@ export class BuyerProxy {
           res.end()
         }
         return { done: true }
+      }
+
+      if (fault === 'buyer') {
+        const buyerResponse = adaptBuyerFaultErrorResponse({
+          requestId: requestForPeer.requestId,
+          statusCode: 503,
+          headers: {
+            'content-type': 'application/json',
+            [ANTSEED_FAULT_ATTRIBUTION_HEADER]: 'buyer',
+          },
+          body: Buffer.from(JSON.stringify({
+            error: {
+              type: 'buyer_request_failed',
+              code: faultCode ?? 'buyer_request_failed',
+              message,
+            },
+          })),
+        }, requestProtocol)
+        return {
+          done: false,
+          statusCode: buyerResponse.statusCode,
+          responseBody: Buffer.from(buyerResponse.body),
+          responseHeaders: buyerResponse.headers,
+          errorMessage: message,
+        }
       }
 
       return { done: false, statusCode: 502, responseBody: Buffer.from(`P2P request failed: ${message}`), responseHeaders: { 'content-type': 'text/plain' }, errorMessage: message }

@@ -1,8 +1,29 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BuyerRequestHandler } from '../src/buyer-request-handler.js';
+import { BuyerRequestHandler, stripPeerControlledResponseHeaders } from '../src/buyer-request-handler.js';
 import { ConnectionState } from '../src/types/connection.js';
-import type { SerializedHttpRequest } from '../src/types/http.js';
+import type { SerializedHttpRequest, SerializedHttpResponse } from '../src/types/http.js';
 import type { PeerInfo } from '../src/types/peer.js';
+
+describe('buyer request response sanitization', () => {
+  it('strips seller-controlled fault attribution headers', () => {
+    const response: SerializedHttpResponse = {
+      requestId: 'req-1',
+      statusCode: 503,
+      headers: {
+        'content-type': 'application/json',
+        'X-Antseed-Fault-Attribution': 'peer',
+        'x-antseed-fault-attribution': 'buyer',
+      },
+      body: new Uint8Array(),
+    };
+
+    const sanitized = stripPeerControlledResponseHeaders(response);
+
+    expect(sanitized.headers).toEqual({ 'content-type': 'application/json' });
+    expect(response.headers['X-Antseed-Fault-Attribution']).toBe('peer');
+    expect(response.headers['x-antseed-fault-attribution']).toBe('buyer');
+  });
+});
 
 function makeImageRequest(): SerializedHttpRequest {
   return {

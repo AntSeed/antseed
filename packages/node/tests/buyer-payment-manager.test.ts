@@ -704,9 +704,65 @@ describe('BuyerPaymentManager', () => {
     expect(services).toEqual([{
       serviceId: id('gpt-5'),
       cumulativeAmount: 0n,
-      cumulativeInputTokens: 1000n,
-      cumulativeCachedInputTokens: 200n,
-      cumulativeOutputTokens: 100n,
+      cumulativeInputTokens: 0n,
+      cumulativeCachedInputTokens: 0n,
+      cumulativeOutputTokens: 0n,
+      cumulativeRequestCount: 0n,
+    }]);
+  });
+
+  it('attributes an image charge after a headroom NeedAuth races ahead of the response', async () => {
+    const sellerPeerId = fakePeerId('seller-image-headroom-race');
+    const service = 'qwen-image-3-pro';
+    const requestId = 'req-image-headroom-race';
+    const unitModel = {
+      version: 1 as const,
+      components: [{ unit: 'output_images' as const, priceUsd: 0.025 }],
+    };
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 10_000n);
+    manager.trackRequestBilling(requestId, {
+      context: {
+        sellerPeerId,
+        provider: 'openai',
+        service,
+        serviceApiProtocol: 'openai-images',
+        attributes: { model: service },
+        unitLimits: { output_images: 1 },
+      },
+      requestFacts: { model: service, requestedImages: 1 },
+      unitModel,
+    });
+    mux.sentSpendingAuths.length = 0;
+
+    // This only opens payment headroom. It does not report a delivered image
+    // and therefore must not consume the request's service attribution.
+    await manager.handleNeedAuth(sellerPeerId, {
+      channelId,
+      requestId,
+      requiredCumulativeAmount: '10000',
+      currentAcceptedCumulative: '0',
+      deposit: '1000000',
+    }, mux);
+
+    const { payload } = await manager.signPerRequestAuth(sellerPeerId, {
+      inputBytes: new Uint8Array(0),
+      outputBytes: enc.encode(JSON.stringify({ data: [{ url: 'https://example.test/image.png' }] })),
+      sellerClaimedCost: 25_000n,
+      reportedInputTokens: 0n,
+      reportedCachedInputTokens: 0n,
+      reportedOutputTokens: 0n,
+      unitUsage: { units: { output_images: 1 } },
+      service,
+      requestId,
+    });
+
+    const services = decodeMetadataServices(payload.metadata);
+    expect(services).toEqual([{
+      serviceId: id(service),
+      cumulativeAmount: 25_000n,
+      cumulativeInputTokens: 0n,
+      cumulativeCachedInputTokens: 0n,
+      cumulativeOutputTokens: 0n,
       cumulativeRequestCount: 1n,
     }]);
   });

@@ -45,6 +45,69 @@ test('buildChatServiceCatalogFromPeers keeps provider-specific service pricing f
   assert.equal(openai!.protocol, 'openai-chat-completions');
 });
 
+test('buildChatServiceCatalogFromPeers keeps image protocols and peer-specific capabilities', () => {
+  const peerId = 'c'.repeat(40);
+  const catalog = buildChatServiceCatalogFromPeers([{
+    peerId,
+    host: '127.0.0.1',
+    port: 6882,
+    providers: ['openai'],
+    providerServiceApiProtocols: {
+      openai: { services: { 'gpt-image-test': ['openai-images'] } },
+    },
+    providerServiceCapabilities: {
+      openai: {
+        services: {
+          'gpt-image-test': {
+            inputs: ['text'],
+            outputs: ['image'],
+            supportedParameters: ['quality', 'output_format'],
+          },
+        },
+      },
+    },
+    providerServiceUnitBillingModels: {
+      openai: {
+        services: {
+          'gpt-image-test': {
+            'openai-images': {
+              version: 1,
+              components: [
+                { unit: 'output_images', priceUsd: 0.04, match: { quality: 'standard' } },
+                { unit: 'output_images', priceUsd: 0.08, match: { quality: 'hd' } },
+              ],
+            },
+          },
+        },
+      },
+    },
+  }]);
+
+  assert.equal(catalog.length, 1);
+  assert.equal(catalog[0]?.protocol, 'openai-images');
+  assert.deepEqual(catalog[0]?.capabilities, {
+    inputs: ['text'],
+    outputs: ['image'],
+    supportedParameters: ['quality', 'output_format'],
+  });
+  assert.equal(catalog[0]?.minImageUsdPerImage, 0.04);
+  assert.equal(catalog[0]?.maxImageUsdPerImage, 0.08);
+});
+
+test('explicit image protocol wins over a conflicting chat protocol', () => {
+  const catalog = buildChatServiceCatalogFromPeers([{
+    peerId: 'd'.repeat(40),
+    host: '127.0.0.1',
+    port: 6882,
+    providers: ['openai'],
+    providerServiceApiProtocols: {
+      openai: { services: { conflicted: ['openai-chat-completions', 'openai-images'] } },
+    },
+  }]);
+
+  assert.equal(catalog.find((entry) => entry.id === 'conflicted')?.protocol, 'openai-images');
+});
+
 test('buildChatServiceCatalogFromPeers falls back to each provider defaults for unpriced provider-specific services', () => {
   const peerId = 'b'.repeat(40);
   const catalog = buildChatServiceCatalogFromPeers([{

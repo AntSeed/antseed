@@ -74,42 +74,41 @@ interface Provider {
 }
 ```
 
-## Example: Anthropic Provider
+## Example: OpenAI-Compatible Provider
 
-```typescript title="anthropic-provider.ts"
+```typescript title="openai-compatible-provider.ts"
 import type { Provider } from '@antseed/node'
-import Anthropic from '@anthropic-ai/sdk'
+import OpenAI from 'openai'
 
 export default {
-  name: 'anthropic',
-  services: ['claude-sonnet-4-6', 'claude-haiku-4-5'],
+  name: 'openai',
+  services: ['kimi-k2.6', 'deepseek-v4-flash'],
 
   pricing: {
     defaults: {
-      inputUsdPerMillion: 3,
-      cachedInputUsdPerMillion: 0.3,
-      outputUsdPerMillion: 15
+      inputUsdPerMillion: 0.6,
+      cachedInputUsdPerMillion: 0.06,
+      outputUsdPerMillion: 2.5
     }
   },
   serviceCategories: {
-    "claude-sonnet-4-6": ["coding", "privacy"]
+    "kimi-k2.6": ["coding", "chat"]
   },
   maxConcurrency: 5,
 
   getCapacity: () => ({ current: 0, max: 10 }),
 
   async handleRequest(req) {
-    const client = new Anthropic()
-    const msg = await client.messages.create({
+    const client = new OpenAI({ baseURL: process.env.UPSTREAM_BASE_URL })
+    const completion = await client.chat.completions.create({
       model: req.model,
-      max_tokens: req.max_tokens,
       messages: req.messages,
     })
     return {
-      text: msg.content[0].text,
+      text: completion.choices[0].message.content,
       usage: {
-        input: msg.usage.input_tokens,
-        output: msg.usage.output_tokens
+        input: completion.usage.prompt_tokens,
+        output: completion.usage.completion_tokens
       }
     }
   }

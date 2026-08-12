@@ -16,6 +16,40 @@ function readStringField(raw: Record<string, unknown>, key: string): string {
   return '';
 }
 
+type ChannelOnChainSnapshot = {
+  status: number;
+  deposit: string;
+  settled: string;
+  closeRequestedAt: number;
+};
+
+const CHANNEL_CLOSE_GRACE_SECS = 900;
+const channelOnChainSnapshots = new Map<string, ChannelOnChainSnapshot>();
+
+export function applyChannelOnChainSnapshot(
+  row: DesktopPaymentChannelSummary,
+  snapshot?: ChannelOnChainSnapshot,
+  nowSeconds = Math.floor(Date.now() / 1000),
+): void {
+  if (snapshot && snapshot.status !== 0) {
+    channelOnChainSnapshots.set(row.channelId, snapshot);
+  }
+
+  const knownSnapshot = channelOnChainSnapshots.get(row.channelId);
+  if (!knownSnapshot) return;
+
+  row.onChainStateKnown = true;
+  row.onChainDeposit = knownSnapshot.deposit;
+  row.onChainSettled = knownSnapshot.settled;
+  if (knownSnapshot.status === 2) row.status = 'settled';
+  else if (knownSnapshot.status === 3) row.status = 'timedout';
+  else if (knownSnapshot.status === 1 && knownSnapshot.closeRequestedAt > 0) {
+    row.status = nowSeconds < knownSnapshot.closeRequestedAt + CHANNEL_CLOSE_GRACE_SECS
+      ? 'closing'
+      : 'withdrawable';
+  }
+}
+
 export function normalizePaymentChannelSummary(value: unknown): DesktopPaymentChannelSummary | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
@@ -25,10 +59,14 @@ export function normalizePaymentChannelSummary(value: unknown): DesktopPaymentCh
     channelId,
     peerId: readStringField(raw, 'peerId') || readStringField(raw, 'sellerPeerId'),
     seller: readStringField(raw, 'seller') || readStringField(raw, 'sellerAddress') || readStringField(raw, 'sellerEvmAddress'),
-    reserveMax: readStringField(raw, 'reserveMax') || readStringField(raw, 'maxAmount') || readStringField(raw, 'reserveMaxBaseUnits') || '0',
+    sellerDisplayName: readStringField(raw, 'sellerDisplayName') || null,
+    onChainStateKnown: raw['onChainStateKnown'] === true,
+    reserveCeiling: readStringField(raw, 'reserveCeiling') || readStringField(raw, 'reserveMax') || null,
     cumulativeSigned: readStringField(raw, 'cumulativeSigned') || readStringField(raw, 'latestCumulativeAmount') || readStringField(raw, 'cumulativeAmount') || '0',
-    settledUsdc: readStringField(raw, 'settledAmount') || '0',
+    onChainDeposit: readStringField(raw, 'onChainDeposit') || '0',
+    onChainSettled: readStringField(raw, 'onChainSettled') || readStringField(raw, 'settledAmount') || '0',
     reservedAt: readNumberField(raw, 'reservedAt'),
+    updatedAt: readNumberField(raw, 'updatedAt'),
     status: readStringField(raw, 'status') || 'unknown',
     requestCount: readNumberField(raw, 'requestCount'),
     inputTokens: readStringField(raw, 'tokensDelivered') || '0',
