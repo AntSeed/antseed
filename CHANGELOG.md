@@ -52,6 +52,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Fixed image SpendingAuth service attribution when a budget/headroom authorization races ahead of the delivered response. Headroom-only messages no longer consume the request accounting slot, and the eventual image charge is attributed exactly once to the requested service with one request and zero synthetic text tokens.
 - OpenAI-compatible sellers now recognize Venice image-generation model families such as Flux, Qwen Image, Nano Banana, Recraft, Seedream, and Krea as `openai-images` services, so they advertise image output capabilities and route through image endpoints instead of Chat Completions.
 - Fixed three "Read more in the docs" links in the desktop VPR Help view opening 404 pages (`/docs/getting-started/intro`, `/docs/getting-started/configuration`, `/docs/guides/pricing`). They now point at the docs' published slugs (`/docs/`, `/docs/config`, `/docs/pricing`).
 - Fixed Codex auto-compaction failing on Anthropic-backed routes when the compaction request contained `tool_choice: "auto"` but no tools. Cross-protocol request rendering now omits `tool_choice` whenever no compatible tools remain, preventing LiteLLM and Anthropic from rejecting long-running tasks at the context limit.
