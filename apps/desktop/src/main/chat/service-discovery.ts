@@ -57,6 +57,8 @@ export type DiscoverRowEntry = {
   inputUsdPerMillion: number | null;
   outputUsdPerMillion: number | null;
   cachedInputUsdPerMillion: number | null;
+  minImageUsdPerImage: number | null;
+  maxImageUsdPerImage: number | null;
   lifetimeSessions: number;
   lifetimeRequests: number;
   lifetimeInputTokens: number;
@@ -242,6 +244,8 @@ export function normalizeChatServiceCatalogEntry(raw: unknown): ChatServiceCatal
   const inputUsd = normalizeOptionalNumber(entry.inputUsdPerMillion);
   const outputUsd = normalizeOptionalNumber(entry.outputUsdPerMillion);
   const cachedInputUsd = normalizeOptionalNumber(entry.cachedInputUsdPerMillion);
+  const minImageUsd = normalizeOptionalNumber(entry.minImageUsdPerImage);
+  const maxImageUsd = normalizeOptionalNumber(entry.maxImageUsdPerImage);
   const categories = Array.isArray(entry.categories) ? entry.categories.filter((c): c is string => typeof c === 'string') : undefined;
   const description = typeof entry.description === 'string' ? entry.description.trim() : undefined;
   const capabilities = normalizeCatalogServiceCapabilities(entry.capabilities);
@@ -257,6 +261,8 @@ export function normalizeChatServiceCatalogEntry(raw: unknown): ChatServiceCatal
     ...(inputUsd != null && inputUsd >= 0 ? { inputUsdPerMillion: inputUsd } : {}),
     ...(outputUsd != null && outputUsd >= 0 ? { outputUsdPerMillion: outputUsd } : {}),
     ...(cachedInputUsd != null && cachedInputUsd >= 0 ? { cachedInputUsdPerMillion: cachedInputUsd } : {}),
+    ...(minImageUsd != null && minImageUsd >= 0 ? { minImageUsdPerImage: minImageUsd } : {}),
+    ...(maxImageUsd != null && maxImageUsd >= 0 ? { maxImageUsdPerImage: maxImageUsd } : {}),
     ...(categories?.length ? { categories } : {}),
     ...(description ? { description } : {}),
   };
@@ -343,6 +349,9 @@ export async function discoverChatServiceCatalog(
           : undefined,
         providerServiceCapabilities: (p.providerServiceCapabilities && typeof p.providerServiceCapabilities === 'object')
           ? p.providerServiceCapabilities as NetworkPeerAddress['providerServiceCapabilities']
+          : undefined,
+        providerServiceUnitBillingModels: (p.providerServiceUnitBillingModels && typeof p.providerServiceUnitBillingModels === 'object')
+          ? p.providerServiceUnitBillingModels as NetworkPeerAddress['providerServiceUnitBillingModels']
           : undefined,
         providerPricing: (p.providerPricing && typeof p.providerPricing === 'object')
           ? p.providerPricing as NetworkPeerAddress['providerPricing']
@@ -456,6 +465,8 @@ export async function buildDiscoverRows(
       inputUsdPerMillion: entry.inputUsdPerMillion ?? null,
       outputUsdPerMillion: entry.outputUsdPerMillion ?? null,
       cachedInputUsdPerMillion,
+      minImageUsdPerImage: entry.minImageUsdPerImage ?? null,
+      maxImageUsdPerImage: entry.maxImageUsdPerImage ?? null,
       lifetimeSessions: stats?.totalSessions ?? 0,
       lifetimeRequests: stats?.totalRequests ?? 0,
       lifetimeInputTokens: stats?.totalInputTokens ?? 0,

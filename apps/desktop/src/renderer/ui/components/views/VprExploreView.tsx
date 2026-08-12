@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { StarIcon } from '@hugeicons/core-free-icons';
+import type { VprModelKind } from '../../../core/state';
 import {
   filterVprCatalog,
   pinnedSellerLabel,
@@ -34,6 +35,7 @@ const RECOMMENDED_LIMIT = 18;
 const exploreViewCache = {
   tab: 'Recommended' as 'Recommended' | 'All',
   search: '',
+  kind: '' as VprModelKind | '',
   category: '',
   sort: 'Popular' as VprCatalogSort,
 };
@@ -50,6 +52,7 @@ export function VprExploreView({ onSelectView }: Props) {
   }), shallowEqual);
   const [tab, setTab] = useRetainedState(exploreViewCache, 'tab');
   const [search, setSearch] = useRetainedState(exploreViewCache, 'search');
+  const [kind, setKind] = useRetainedState(exploreViewCache, 'kind');
   const [category, setCategory] = useRetainedState(exploreViewCache, 'category');
   const [sort, setSort] = useRetainedState(exploreViewCache, 'sort');
   // Starred on the model pages; fresh on every visit (the view remounts).
@@ -81,10 +84,14 @@ export function VprExploreView({ onSelectView }: Props) {
       return filterVprCatalog(curated, { search });
     }
     return sortVprCatalog(
-      filterVprCatalog(snap.catalog, { search, category: category || null }),
+      filterVprCatalog(snap.catalog, {
+        search,
+        kind: kind || null,
+        category: category || null,
+      }),
       sort,
     );
-  }, [category, favorites, search, snap.catalog, sort, tab]);
+  }, [category, favorites, kind, search, snap.catalog, sort, tab]);
 
   // Any listed model that remembers a pin names its seller in place of the
   // peer count — pins are per model and survive switching between them.
@@ -156,6 +163,17 @@ export function VprExploreView({ onSelectView }: Props) {
           <div className={styles.filterRow}>
             <label className={styles.filterPill}>
               <select
+                value={kind}
+                onChange={(event) => setKind(event.currentTarget.value as VprModelKind | '')}
+                aria-label="Filter by model type"
+              >
+                <option value="">Any</option>
+                <option value="image">Image</option>
+                <option value="text">Text</option>
+              </select>
+            </label>
+            <label className={styles.filterPill}>
+              <select
                 value={category}
                 onChange={(event) => setCategory(event.currentTarget.value)}
                 aria-label="Filter by category"
@@ -172,10 +190,10 @@ export function VprExploreView({ onSelectView }: Props) {
                 onChange={(event) => setSort(event.currentTarget.value as VprCatalogSort)}
                 aria-label="Sort models"
               >
-                <option value="Popular">Sort: Popular</option>
-                <option value="Price">Sort: Price</option>
-                <option value="Savings">Sort: Savings</option>
-                <option value="Name">Sort: Name</option>
+                <option value="Popular">Popular</option>
+                <option value="Price">Price</option>
+                <option value="Savings">Savings</option>
+                <option value="Name">Name</option>
               </select>
             </label>
           </div>

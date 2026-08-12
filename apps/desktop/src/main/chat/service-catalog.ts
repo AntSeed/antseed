@@ -22,6 +22,12 @@ export type NetworkPeerAddress = {
   sellerContract?: string;
   providerServiceApiProtocols?: Record<string, { services: Record<string, string[]> }>;
   providerServiceCapabilities?: Record<string, { services: Record<string, CatalogServiceCapabilities> }>;
+  providerServiceUnitBillingModels?: Record<string, {
+    services: Record<string, Partial<Record<string, {
+      version: number;
+      components: Array<{ unit: string; priceUsd: number; match?: Record<string, string> }>;
+    }>>>;
+  }>;
   providerPricing?: Record<string, {
     defaults?: {
       inputUsdPerMillion?: number;
@@ -56,6 +62,8 @@ export type ChatServiceCatalogEntry = {
   inputUsdPerMillion?: number;
   outputUsdPerMillion?: number;
   cachedInputUsdPerMillion?: number;
+  minImageUsdPerImage?: number;
+  maxImageUsdPerImage?: number;
   categories?: string[];
   description?: string;
 };
@@ -126,6 +134,25 @@ export function resolveProviderServicePricing(
   };
 }
 
+function resolveImagePriceRange(
+  billingModels: NetworkPeerAddress['providerServiceUnitBillingModels'],
+  provider: string,
+  serviceId: string,
+): { minImageUsdPerImage?: number; maxImageUsdPerImage?: number } {
+  const components = billingModels?.[provider]?.services?.[serviceId]?.['openai-images']?.components;
+  if (!Array.isArray(components)) return {};
+  const prices = components
+    .filter((component) => component?.unit === 'output_images'
+      && Number.isFinite(component.priceUsd)
+      && component.priceUsd >= 0)
+    .map((component) => component.priceUsd);
+  if (prices.length === 0) return {};
+  return {
+    minImageUsdPerImage: Math.min(...prices),
+    maxImageUsdPerImage: Math.max(...prices),
+  };
+}
+
 export function sortChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[]): ChatServiceCatalogEntry[] {
   const protocolRank = (protocol: CatalogServiceProtocol): number => (
     protocol === 'anthropic-messages'
@@ -165,6 +192,7 @@ export function buildChatServiceCatalogFromPeers(peers: NetworkPeerAddress[]): C
     const pricingMap = peer.providerPricing;
     const categoriesMap = peer.providerServiceCategories;
     const capabilitiesMap = peer.providerServiceCapabilities;
+    const unitBillingModels = peer.providerServiceUnitBillingModels;
     const defaultInput = peer.defaultInputUsdPerMillion;
     const defaultOutput = peer.defaultOutputUsdPerMillion;
     const defaultCachedInput = peer.defaultCachedInputUsdPerMillion;
@@ -181,6 +209,7 @@ export function buildChatServiceCatalogFromPeers(peers: NetworkPeerAddress[]): C
           ...Object.keys(apiProtocols?.[provider]?.services ?? {}),
           ...Object.keys(categoriesMap?.[provider]?.services ?? {}),
           ...Object.keys(capabilitiesMap?.[provider]?.services ?? {}),
+          ...Object.keys(unitBillingModels?.[provider]?.services ?? {}),
         ]);
 
         for (const serviceId of providerServiceIds) {
@@ -197,6 +226,7 @@ export function buildChatServiceCatalogFromPeers(peers: NetworkPeerAddress[]): C
             defaultCachedInput,
           );
           const categories = categoriesMap?.[provider]?.services?.[serviceId];
+          const imagePriceRange = resolveImagePriceRange(unitBillingModels, provider, serviceId);
 
           const capabilities = capabilitiesMap?.[provider]?.services?.[serviceId];
           results.push({
@@ -211,6 +241,7 @@ export function buildChatServiceCatalogFromPeers(peers: NetworkPeerAddress[]): C
             ...(inputUsdPerMillion != null ? { inputUsdPerMillion } : {}),
             ...(outputUsdPerMillion != null ? { outputUsdPerMillion } : {}),
             ...(cachedInputUsdPerMillion != null ? { cachedInputUsdPerMillion } : {}),
+            ...imagePriceRange,
             ...(categories?.length ? { categories } : {}),
           });
         }

@@ -21,13 +21,17 @@ import styles from './VprModelView.module.scss';
 
 type Props = { onSelectView?: (view: ViewName) => void };
 
-function priceTile(entry: { minInputUsdPerMillion: number | null; maxInputUsdPerMillion: number | null }): string {
-  const min = entry.minInputUsdPerMillion;
-  const max = entry.maxInputUsdPerMillion;
+function priceRange(min: number | null, max: number | null): string {
   if (min === null) return '-';
   if (min <= 0 && (max === null || max <= 0)) return 'Free';
   if (max !== null && max !== min) return `${formatUsdShort(min)}-${formatUsdShort(max)}`;
   return formatUsdShort(min);
+}
+
+function priceTile(entry: { minInputUsdPerMillion: number | null; maxInputUsdPerMillion: number | null }): string {
+  const min = entry.minInputUsdPerMillion;
+  const max = entry.maxInputUsdPerMillion;
+  return priceRange(min, max);
 }
 
 export function VprModelView({ onSelectView }: Props) {
@@ -91,7 +95,9 @@ export function VprModelView({ onSelectView }: Props) {
 
   const favorite = favorites.has(favoriteModelKey(model.provider, model.serviceId));
   const imageOnly = entry.kind === 'image';
-  const priceValue = imageOnly ? 'Per image' : priceTile(entry);
+  const priceValue = imageOnly
+    ? priceRange(entry.minImageUsdPerImage, entry.maxImageUsdPerImage)
+    : priceTile(entry);
   const capabilitySummary = modelCapabilitySummary(entry);
 
   const viewedModel = model;
@@ -209,7 +215,9 @@ export function VprModelView({ onSelectView }: Props) {
 
         <VprStatRow>
           <VprStatTile
-            label={imageOnly || priceValue === 'Free' || priceValue === '-' ? 'Price' : 'Price · /m tok'}
+            label={imageOnly
+              ? 'Price · /image'
+              : priceValue === 'Free' || priceValue === '-' ? 'Price' : 'Price · /m tok'}
             value={priceValue}
             tone={priceValue === '-' ? undefined : 'success'}
             outlined

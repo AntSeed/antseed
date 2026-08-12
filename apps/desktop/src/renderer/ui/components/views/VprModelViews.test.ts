@@ -14,12 +14,16 @@ function catalogEntry(overrides: Partial<VprModelCatalogEntry> = {}): VprModelCa
     label: 'GPT Test',
     peerCount: 1,
     categories: [],
+    kind: 'text',
+    protocols: ['openai-chat-completions'],
     minInputUsdPerMillion: 1,
     maxInputUsdPerMillion: 1,
     minOutputUsdPerMillion: 2,
     maxOutputUsdPerMillion: 2,
     minCachedInputUsdPerMillion: null,
     maxCachedInputUsdPerMillion: null,
+    minImageUsdPerImage: null,
+    maxImageUsdPerImage: null,
     expectedSavingsPct: null,
     bestPeerId: null,
     ...overrides,
@@ -48,6 +52,8 @@ function discoverRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
     inputUsdPerMillion: 1,
     outputUsdPerMillion: 2,
     cachedInputUsdPerMillion: null,
+    minImageUsdPerImage: null,
+    maxImageUsdPerImage: null,
     lifetimeSessions: 0,
     lifetimeRequests: 0,
     lifetimeInputTokens: 0,
@@ -85,6 +91,15 @@ test('Explore search finds a model by category', () => {
 test('Explore search finds image-only models by their derived type', () => {
   const image = catalogEntry({ serviceId: 'art-model', label: 'Art Model', kind: 'image' });
   assert.deepEqual(filterVprCatalog([image], { search: 'image generation' }), [image]);
+});
+
+test('Explore filters models by output type', () => {
+  const text = catalogEntry({ serviceId: 'chat-model', label: 'Chat Model', kind: 'text' });
+  const image = catalogEntry({ serviceId: 'art-model', label: 'Art Model', kind: 'image' });
+
+  assert.deepEqual(filterVprCatalog([text, image], { kind: 'image' }), [image]);
+  assert.deepEqual(filterVprCatalog([text, image], { kind: 'text' }), [text]);
+  assert.deepEqual(filterVprCatalog([text, image], { kind: null }), [text, image]);
 });
 
 test('Price sort places lower priced model first', () => {

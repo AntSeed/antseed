@@ -108,6 +108,8 @@ export function normalizeDiscoverRow(raw: unknown): DiscoverRow | null {
     inputUsdPerMillion: typeof r.inputUsdPerMillion === 'number' ? r.inputUsdPerMillion : null,
     outputUsdPerMillion: typeof r.outputUsdPerMillion === 'number' ? r.outputUsdPerMillion : null,
     cachedInputUsdPerMillion: typeof r.cachedInputUsdPerMillion === 'number' ? r.cachedInputUsdPerMillion : null,
+    minImageUsdPerImage: typeof r.minImageUsdPerImage === 'number' ? r.minImageUsdPerImage : null,
+    maxImageUsdPerImage: typeof r.maxImageUsdPerImage === 'number' ? r.maxImageUsdPerImage : null,
     lifetimeSessions: Number(r.lifetimeSessions) || 0,
     lifetimeRequests: Number(r.lifetimeRequests) || 0,
     lifetimeInputTokens: Number(r.lifetimeInputTokens) || 0,
@@ -168,6 +170,8 @@ export function projectRowsToChatServiceOptions(rows: DiscoverRow[]): ChatServic
       inputUsdPerMillion: row.inputUsdPerMillion,
       outputUsdPerMillion: row.outputUsdPerMillion,
       cachedInputUsdPerMillion: row.cachedInputUsdPerMillion,
+      minImageUsdPerImage: row.minImageUsdPerImage,
+      maxImageUsdPerImage: row.maxImageUsdPerImage,
       categories: row.categories,
       description: '',
     });

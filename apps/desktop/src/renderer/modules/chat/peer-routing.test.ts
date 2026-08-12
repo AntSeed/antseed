@@ -395,6 +395,67 @@ test('new chat created while previous response is pending sends to its own peer'
 });
 
 
+test('image prompts appear immediately while generation is pending', async () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  uiState.chatActiveConversation = 'conv-a';
+  uiState.chatConversations = [{
+    id: 'conv-a',
+    title: 'Conversation A',
+    service: 'text-model',
+    provider: 'openai',
+    peerId: 'text-peer',
+    messages: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    usage: { inputTokens: 0, outputTokens: 0 },
+  }];
+  uiState.vprRoutableRows = [{
+    rowKey: 'image-peer:image-model',
+    peerId: 'image-peer',
+    serviceId: 'image-model',
+    protocol: 'openai-images',
+  } as DiscoverRow];
+  uiState.chatImageRouteSelection = {
+    model: { provider: 'openai', serviceId: 'image-model', label: 'Image Model', categories: [] },
+    mode: 'pinned-peer',
+    peerId: 'image-peer',
+  };
+
+  const generation = createDeferred<Awaited<ReturnType<NonNullable<DesktopBridge['chatGenerateImage']>>>>();
+  const bridge: DesktopBridge = {
+    chatGenerateImage: async () => generation.promise,
+  };
+  const api = initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+
+  api.generateImage('A tiny ant astronaut');
+
+  await waitFor(() => uiState.chatSending);
+  assert.deepEqual(uiState.chatMessages, [{
+    role: 'user',
+    content: 'A tiny ant astronaut',
+    createdAt: (uiState.chatMessages[0] as { createdAt: number }).createdAt,
+  }]);
+  assert.equal(uiState.chatThinkingPhase, 'Generating image');
+
+  generation.resolve({
+    ok: true,
+    user: { role: 'user', content: 'A tiny ant astronaut', createdAt: 10 },
+    assistant: {
+      role: 'assistant',
+      content: [{ type: 'file', fileName: 'generated.png', mimeType: 'image/png' }],
+      createdAt: 11,
+      meta: { peerId: 'image-peer', service: 'image-model' },
+    },
+  });
+
+  await waitFor(() => !uiState.chatSending);
+  assert.equal(uiState.chatMessages.length, 2);
+  assert.equal((uiState.chatMessages[0] as { role: string }).role, 'user');
+  assert.equal((uiState.chatMessages[1] as { role: string }).role, 'assistant');
+});
+
 test('stream errors clear when switching conversations', async () => {
   installDomTimers();
 

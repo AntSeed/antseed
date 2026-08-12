@@ -10,6 +10,9 @@ type ModelCatalogGroup = {
 };
 
 export function totalRowPrice(row: DiscoverRow): number | null {
+  if (serviceModelKind(row.protocol, row.capabilities) === 'image') {
+    return row.minImageUsdPerImage;
+  }
   if (row.inputUsdPerMillion === null || row.outputUsdPerMillion === null) return null;
   return row.inputUsdPerMillion + row.outputUsdPerMillion;
 }
@@ -49,7 +52,14 @@ function projectGroupToEntry(group: ModelCatalogGroup): VprModelCatalogEntry {
   }, null);
   const minTotal = minPrice(pricedRows.map((route) => route.total));
   const maxTotal = maxPrice(pricedRows.map((route) => route.total));
-  const expectedSavingsPct = pricedRows.length >= 2 && minTotal !== null && maxTotal !== null && maxTotal > minTotal
+  // Text entries compare sellers on their token total. Image entries may
+  // contain quality/size tiers, so a cross-seller "saving" percentage would
+  // compare unlike outputs; keep that tile unset.
+  const expectedSavingsPct = kind === 'text'
+    && pricedRows.length >= 2
+    && minTotal !== null
+    && maxTotal !== null
+    && maxTotal > minTotal
     ? Math.round((1 - minTotal / maxTotal) * 100)
     : null;
 
@@ -76,6 +86,8 @@ function projectGroupToEntry(group: ModelCatalogGroup): VprModelCatalogEntry {
     maxOutputUsdPerMillion: maxPrice(group.rows.map((row) => row.outputUsdPerMillion)),
     minCachedInputUsdPerMillion: bestPricedRoute?.row.cachedInputUsdPerMillion ?? null,
     maxCachedInputUsdPerMillion: maxPrice(group.rows.map((row) => row.cachedInputUsdPerMillion)),
+    minImageUsdPerImage: minPrice(group.rows.map((row) => row.minImageUsdPerImage)),
+    maxImageUsdPerImage: maxPrice(group.rows.map((row) => row.maxImageUsdPerImage)),
     expectedSavingsPct,
     bestPeerId: bestPricedRoute?.row.peerId ?? firstRow?.peerId ?? null,
   };

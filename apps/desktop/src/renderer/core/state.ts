@@ -86,6 +86,8 @@ export type ChatServiceOptionEntry = {
   inputUsdPerMillion: number | null;
   outputUsdPerMillion: number | null;
   cachedInputUsdPerMillion?: number | null;
+  minImageUsdPerImage?: number | null;
+  maxImageUsdPerImage?: number | null;
   categories: string[];
   description: string;
 };
@@ -136,6 +138,8 @@ export type VprModelCatalogEntry = {
   maxOutputUsdPerMillion: number | null;
   minCachedInputUsdPerMillion: number | null;
   maxCachedInputUsdPerMillion: number | null;
+  minImageUsdPerImage: number | null;
+  maxImageUsdPerImage: number | null;
   expectedSavingsPct: number | null;
   bestPeerId: string | null;
   /**
@@ -189,6 +193,8 @@ export type DiscoverRow = {
   inputUsdPerMillion: number | null;
   outputUsdPerMillion: number | null;
   cachedInputUsdPerMillion: number | null;
+  minImageUsdPerImage: number | null;
+  maxImageUsdPerImage: number | null;
 
   // Local buyer history (from ChannelStore)
   lifetimeSessions: number;
