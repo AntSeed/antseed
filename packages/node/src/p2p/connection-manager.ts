@@ -606,14 +606,17 @@ export class ConnectionManager extends EventEmitter {
     );
 
     signalingSocket.once("connect", () => {
+      const capabilities = this._localCapabilities();
       this._sendLine(signalingSocket, {
         type: "hello",
         auth: buildConnectionAuthEnvelope(
           "hello",
           this._localPeerId!,
           this._localWallet!,
+          Date.now(),
+          { capabilities },
         ),
-        capabilities: this._localCapabilities(),
+        capabilities,
       });
 
       rtc = this._createRtcPeer(config.remotePeerId);
@@ -651,27 +654,33 @@ export class ConnectionManager extends EventEmitter {
       this._requireSecureTransport || conn.hasRemoteCapability(CONNECTION_CAPABILITY_TCP_ENC_V1);
 
     socket.once("connect", () => {
-      const auth = buildConnectionAuthEnvelope(
-        "intro",
-        this._localPeerId!,
-        this._localWallet!,
-      );
+      const capabilities = this._localCapabilities();
 
       if (!useEncryption) {
+        // Legacy plaintext path keeps the v1 envelope old responders can verify.
         this._sendLine(socket, {
           type: "intro",
-          auth,
-          capabilities: this._localCapabilities(),
+          auth: buildConnectionAuthEnvelope("intro", this._localPeerId!, this._localWallet!),
+          capabilities,
         });
         conn.attachRawSocket(socket);
         return;
       }
 
       const ephemeral = generateEphemeralKeyPair();
+      // v2 envelope binds capabilities and the enc key, so stripping either
+      // downgrades to an unverifiable signature instead of plaintext.
+      const auth = buildConnectionAuthEnvelope(
+        "intro",
+        this._localPeerId!,
+        this._localWallet!,
+        Date.now(),
+        { capabilities, encPub: ephemeral.publicKeyHex },
+      );
       this._sendLine(socket, {
         type: "intro",
         auth,
-        capabilities: this._localCapabilities(),
+        capabilities,
         enc: buildTcpEncOffer(
           this._localWallet!,
           this._localPeerId!,
@@ -744,14 +753,20 @@ export class ConnectionManager extends EventEmitter {
   ): void {
     let buffer = Buffer.alloc(0);
     const onData = (chunk: Buffer): void => {
-      if (buffer.length + chunk.length > MAX_INITIAL_LINE_BYTES) {
-        socket.off("data", onData);
-        socket.destroy();
-        return;
-      }
       buffer = Buffer.concat([buffer, chunk]);
       const lineBreak = buffer.indexOf(0x0a); // '\n'
       if (lineBreak < 0) {
+        if (buffer.length > MAX_INITIAL_LINE_BYTES) {
+          socket.off("data", onData);
+          socket.destroy();
+        }
+        return;
+      }
+      // Only the line itself is size-limited — the same chunk may carry
+      // payload bytes (e.g. an encrypted frame right after the enc-ack).
+      if (lineBreak > MAX_INITIAL_LINE_BYTES) {
+        socket.off("data", onData);
+        socket.destroy();
         return;
       }
       socket.off("data", onData);
@@ -769,15 +784,20 @@ export class ConnectionManager extends EventEmitter {
     }, INITIAL_LINE_TIMEOUT_MS);
 
     const onData = (chunk: Buffer): void => {
-      if (buffer.length + chunk.length > MAX_INITIAL_LINE_BYTES) {
-        socket.off("data", onData);
-        clearTimeout(timeout);
-        socket.destroy();
-        return;
-      }
       buffer = Buffer.concat([buffer, chunk]);
       const lineBreak = buffer.indexOf(0x0a); // '\n'
       if (lineBreak < 0) {
+        if (buffer.length > MAX_INITIAL_LINE_BYTES) {
+          socket.off("data", onData);
+          clearTimeout(timeout);
+          socket.destroy();
+        }
+        return;
+      }
+      if (lineBreak > MAX_INITIAL_LINE_BYTES) {
+        socket.off("data", onData);
+        clearTimeout(timeout);
+        socket.destroy();
         return;
       }
 
@@ -805,9 +825,14 @@ export class ConnectionManager extends EventEmitter {
         return;
       }
 
+      const wireEncPub = intro.type === "intro" && typeof intro.enc?.pub === "string"
+        ? intro.enc.pub
+        : null;
       const verified = verifyConnectionAuthEnvelope({
         type: intro.type,
         auth: intro.auth,
+        wireCapabilities: intro.capabilities,
+        wireEncPub,
         replayGuard: this._introReplayGuard,
       });
       if (!verified.ok || !verified.peerId) {

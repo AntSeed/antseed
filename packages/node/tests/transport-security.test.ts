@@ -6,12 +6,13 @@ import {
   buildSdpAuthEnvelope,
   buildTcpEncAck,
   buildTcpEncOffer,
+  verifyConnectionAuthEnvelope,
   verifySdpAuthEnvelope,
   verifyTcpEncAck,
   verifyTcpEncOffer,
 } from '../src/p2p/connection-auth.js';
 import { ConnectionManager, type PeerConnection } from '../src/p2p/connection-manager.js';
-import { generateEphemeralKeyPair } from '../src/p2p/secure-channel.js';
+import { FrameEncryptor, deriveSessionKeys, generateEphemeralKeyPair } from '../src/p2p/secure-channel.js';
 import { identityFromPrivateKeyHex } from '../src/p2p/identity.js';
 import {
   CONNECTION_CAPABILITY_TCP_ENC_V1,
@@ -146,6 +147,62 @@ describe('transport security', () => {
       const replayed = verifySdpAuthEnvelope(opts);
       expect(replayed.ok).toBe(false);
       expect(replayed.reason).toMatch(/replayed/);
+    });
+  });
+
+  describe('v2 auth envelopes (transport binding)', () => {
+    const capabilities = ['transport.tcp-enc.v1', 'verification.response-auth.v1'];
+    const encPub = 'ab'.repeat(32);
+
+    it('verifies when wire values match the signed binding', () => {
+      const auth = buildConnectionAuthEnvelope('intro', buyerIdentity.peerId, buyerIdentity.wallet, Date.now(), { capabilities, encPub });
+      expect(auth.v).toBe(2);
+      expect(verifyConnectionAuthEnvelope({
+        type: 'intro',
+        auth,
+        wireCapabilities: capabilities,
+        wireEncPub: encPub,
+      }).ok).toBe(true);
+    });
+
+    it('rejects when capabilities were stripped from the wire', () => {
+      const auth = buildConnectionAuthEnvelope('intro', buyerIdentity.peerId, buyerIdentity.wallet, Date.now(), { capabilities, encPub });
+      expect(verifyConnectionAuthEnvelope({
+        type: 'intro',
+        auth,
+        wireCapabilities: [],
+        wireEncPub: encPub,
+      }).ok).toBe(false);
+    });
+
+    it('rejects when the enc offer was stripped from the wire', () => {
+      const auth = buildConnectionAuthEnvelope('intro', buyerIdentity.peerId, buyerIdentity.wallet, Date.now(), { capabilities, encPub });
+      expect(verifyConnectionAuthEnvelope({
+        type: 'intro',
+        auth,
+        wireCapabilities: capabilities,
+        wireEncPub: null,
+      }).ok).toBe(false);
+    });
+
+    it('rejects when the version marker is stripped', () => {
+      const auth = buildConnectionAuthEnvelope('intro', buyerIdentity.peerId, buyerIdentity.wallet, Date.now(), { capabilities, encPub });
+      const downgraded = { ...auth };
+      delete (downgraded as { v?: 2 }).v;
+      expect(verifyConnectionAuthEnvelope({
+        type: 'intro',
+        auth: downgraded,
+        wireCapabilities: capabilities,
+        wireEncPub: encPub,
+      }).ok).toBe(false);
+    });
+
+    it('rejects unknown envelope versions', () => {
+      const auth = buildConnectionAuthEnvelope('intro', buyerIdentity.peerId, buyerIdentity.wallet);
+      expect(verifyConnectionAuthEnvelope({
+        type: 'intro',
+        auth: { ...auth, v: 3 as unknown as 2 },
+      }).ok).toBe(false);
     });
   });
 
@@ -322,6 +379,104 @@ describe('transport security', () => {
       });
       await waitForFailure(outbound);
       expect(outbound.state === 'failed' || outbound.state === 'closed').toBe(true);
+    });
+
+    it('rejects an intro whose enc offer and capabilities were stripped in transit', async () => {
+      const seller = trackManager(new ConnectionManager());
+      const buyer = trackManager(new ConnectionManager());
+      seller.setLocalIdentity(sellerIdentity);
+      buyer.setLocalIdentity(buyerIdentity);
+      await seller.startListening({ peerId: sellerIdentity.peerId, host: '127.0.0.1', port: 0 });
+
+      let sellerAccepted = false;
+      seller.once('connection', () => { sellerAccepted = true; });
+
+      // MITM proxy that strips `enc` and `capabilities` from the intro line to
+      // force a plaintext downgrade.
+      const sellerPort = seller.getListeningPort()!;
+      const mitm = net.createServer((client) => {
+        sockets.push(client);
+        const upstream = net.connect({ host: '127.0.0.1', port: sellerPort });
+        sockets.push(upstream);
+        let stripped = false;
+        let buffered = '';
+        client.on('data', (chunk) => {
+          if (stripped) { upstream.write(chunk); return; }
+          buffered += chunk.toString('utf8');
+          const lineBreak = buffered.indexOf('\n');
+          if (lineBreak < 0) return;
+          const intro = JSON.parse(buffered.slice(0, lineBreak));
+          delete intro.enc;
+          delete intro.capabilities;
+          stripped = true;
+          upstream.write(JSON.stringify(intro) + '\n' + buffered.slice(lineBreak + 1));
+        });
+        upstream.on('data', (chunk) => client.write(chunk));
+        client.on('error', () => upstream.destroy());
+        upstream.on('error', () => client.destroy());
+        upstream.on('close', () => client.destroy());
+      });
+      servers.push(mitm);
+      await new Promise<void>((resolve) => mitm.listen(0, '127.0.0.1', resolve));
+      const mitmAddress = mitm.address();
+      if (!mitmAddress || typeof mitmAddress === 'string') throw new Error('no port');
+
+      const outbound = buyer.createConnection({
+        remotePeerId: sellerIdentity.peerId,
+        isInitiator: true,
+        timeoutMs: 1_000,
+        endpoint: { host: '127.0.0.1', port: mitmAddress.port },
+        remoteCapabilities: [CONNECTION_CAPABILITY_TCP_ENC_V1],
+      });
+      await waitForFailure(outbound);
+      expect(sellerAccepted).toBe(false);
+    });
+
+    it('opens when the enc-ack and the first encrypted frame arrive coalesced', async () => {
+      // Responder that writes the ack line and a large first frame in one chunk.
+      const responderEph = generateEphemeralKeyPair();
+      const payload = new Uint8Array(20_000).fill(0x42);
+      const responder = net.createServer((socket) => {
+        sockets.push(socket);
+        let buffered = '';
+        socket.on('data', (chunk) => {
+          buffered += chunk.toString('utf8');
+          const lineBreak = buffered.indexOf('\n');
+          if (lineBreak < 0) return;
+          const intro = JSON.parse(buffered.slice(0, lineBreak));
+          const ack = buildTcpEncAck(sellerIdentity.wallet, sellerIdentity.peerId, responderEph.publicKeyHex, intro.auth.nonce);
+          const keys = deriveSessionKeys(responderEph.privateKey, intro.enc.pub, {
+            initiatorPeerId: buyerIdentity.peerId,
+            responderPeerId: sellerIdentity.peerId,
+            initiatorNonce: intro.auth.nonce,
+            responderNonce: ack.nonce,
+            initiatorPubHex: intro.enc.pub,
+            responderPubHex: responderEph.publicKeyHex,
+          }, false);
+          const frame = new FrameEncryptor(keys.sendKey).encrypt(payload);
+          socket.write(Buffer.concat([Buffer.from(JSON.stringify(ack) + '\n', 'utf8'), frame]));
+        });
+      });
+      servers.push(responder);
+      await new Promise<void>((resolve) => responder.listen(0, '127.0.0.1', resolve));
+      const address = responder.address();
+      if (!address || typeof address === 'string') throw new Error('no port');
+
+      const buyer = trackManager(new ConnectionManager());
+      buyer.setLocalIdentity(buyerIdentity);
+      const outbound = buyer.createConnection({
+        remotePeerId: sellerIdentity.peerId,
+        isInitiator: true,
+        timeoutMs: 5_000,
+        endpoint: { host: '127.0.0.1', port: address.port },
+        remoteCapabilities: [CONNECTION_CAPABILITY_TCP_ENC_V1],
+      });
+
+      const firstMessage = waitForMessage(outbound);
+      await waitForOpen(outbound);
+      const received = await firstMessage;
+      expect(received).toHaveLength(20_000);
+      expect(received.every((b) => b === 0x42)).toBe(true);
     });
 
     it('refuses inbound hello without crashing when webrtc is unavailable', async () => {

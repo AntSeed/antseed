@@ -5,6 +5,7 @@ import { toPeerId } from '../types/peer.js';
 import { signUtf8, verifyUtf8 } from './identity.js';
 import {
   buildConnectionAuthPayload,
+  buildConnectionAuthPayloadV2,
   buildSdpAuthPayload,
   buildTcpEncAckPayload,
   buildTcpEncInitPayload,
@@ -22,6 +23,10 @@ export type { ConnectionAuthEnvelope, InitialWireType, TcpEncAckMessage, TcpEncO
 export interface VerifyConnectionAuthOptions {
   type: InitialWireType;
   auth: ConnectionAuthEnvelope | null | undefined;
+  /** Capabilities exactly as received on the wire; required to check v2 envelopes. */
+  wireCapabilities?: unknown;
+  /** Enc public key exactly as received on the wire. */
+  wireEncPub?: string | null;
   nowMs?: number;
   maxSkewMs?: number;
   replayGuard?: NonceReplayGuard;
@@ -85,22 +90,26 @@ export class NonceReplayGuard {
   }
 }
 
+/** Values the v2 envelope signature additionally covers. */
+export interface TransportBinding {
+  capabilities: string[];
+  encPub?: string | null;
+}
+
 export function buildConnectionAuthEnvelope(
   type: InitialWireType,
   peerId: PeerId,
   wallet: Wallet,
   nowMs = Date.now(),
+  bind?: TransportBinding,
 ): ConnectionAuthEnvelope {
   const nonce = randomBytes(NONCE_SIZE_BYTES).toString('hex');
+  if (bind) {
+    const payload = buildConnectionAuthPayloadV2(type, peerId, nowMs, nonce, bind.capabilities, bind.encPub ?? null);
+    return { peerId, ts: nowMs, nonce, sig: signUtf8(wallet, payload), v: 2 };
+  }
   const payload = buildConnectionAuthPayload(type, peerId, nowMs, nonce);
-  const sig = signUtf8(wallet, payload);
-
-  return {
-    peerId,
-    ts: nowMs,
-    nonce,
-    sig,
-  };
+  return { peerId, ts: nowMs, nonce, sig: signUtf8(wallet, payload) };
 }
 
 export function verifyConnectionAuthEnvelope(
@@ -138,7 +147,26 @@ export function verifyConnectionAuthEnvelope(
     return { ok: false, reason: 'replayed intro auth nonce' };
   }
 
-  const payload = buildConnectionAuthPayload(options.type, peerId, auth.ts, auth.nonce);
+  let payload: string;
+  if (auth.v === undefined) {
+    payload = buildConnectionAuthPayload(options.type, peerId, auth.ts, auth.nonce);
+  } else if (auth.v === 2) {
+    const caps = options.wireCapabilities ?? [];
+    if (!Array.isArray(caps) || caps.some((c) => typeof c !== 'string')) {
+      return { ok: false, reason: 'invalid capabilities for v2 envelope' };
+    }
+    payload = buildConnectionAuthPayloadV2(
+      options.type,
+      peerId,
+      auth.ts,
+      auth.nonce,
+      caps as string[],
+      options.wireEncPub ?? null,
+    );
+  } else {
+    return { ok: false, reason: 'unsupported envelope version' };
+  }
+
   const valid = verifyUtf8(peerId, payload, auth.sig);
   if (!valid) {
     return { ok: false, reason: 'signature verification failed' };

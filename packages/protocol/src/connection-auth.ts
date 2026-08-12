@@ -12,6 +12,12 @@ export interface ConnectionAuthEnvelope {
   ts: number;
   nonce: string;
   sig: string;
+  /**
+   * Payload version. v2 signatures also cover the wire capabilities and enc
+   * public key (buildConnectionAuthPayloadV2), so stripping or tampering with
+   * either — or with this marker — breaks the signature. Absent = legacy v1.
+   */
+  v?: 2;
 }
 
 /** Domain prefix for EIP-191 message signing (see signUtf8 in @antseed/node). */
@@ -26,6 +32,18 @@ export function buildConnectionAuthPayload(
   nonce: string,
 ): string {
   return `${type}|${peerId}|${ts}|${nonce}`;
+}
+
+/** v2 payload: binds the advertised capabilities and enc public key ('-' when absent). */
+export function buildConnectionAuthPayloadV2(
+  type: InitialWireType,
+  peerId: string,
+  ts: number,
+  nonce: string,
+  capabilities: string[],
+  encPub: string | null,
+): string {
+  return `${type}|${peerId}|${ts}|${nonce}|caps=${capabilities.join(',')}|enc=${encPub ?? '-'}`;
 }
 
 /**
