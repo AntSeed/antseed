@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
-import type { VprModelCatalogEntry } from '../../core/state';
+import type { ConversionState, ConversionVariant, VprModelCatalogEntry } from '../../core/state';
 import { createInitialUiState } from '../../core/state';
+import type { DesktopBridge, DesktopPaymentChannelSummary } from '../../types/bridge';
 import type { OpenRouterReferenceMap } from '../catalog/openrouter-baseline';
 import {
   computeProspectiveUsd,
@@ -91,21 +92,67 @@ function setLifetimeUsage(uiState: ReturnType<typeof createInitialUiState>, requ
   };
 }
 
-function primeD1(storage: MemoryStorage, now: number): void {
+function primeD1(
+  storage: MemoryStorage,
+  now: number,
+  overrides: Partial<{ requests: number; inputTokens: number; outputTokens: number }> = {},
+): void {
+  const requests = overrides.requests ?? 14;
+  const inputTokens = overrides.inputTokens ?? 14_000;
+  const outputTokens = overrides.outputTokens ?? 14_000;
   storage.setItem(INSTALL_DATE_KEY, localDay(now));
   storage.setItem(INSTALLED_AT_KEY, String(now - 31 * 60_000));
   storage.setItem(COUNTERS_KEY, JSON.stringify({
-    lifetimeRequests: 14,
+    lifetimeRequests: requests,
     summariesSeeded: true,
     days: {
       [localDay(now)]: {
-        requests: 14,
-        inputTokens: 14_000,
-        outputTokens: 14_000,
+        requests,
+        inputTokens,
+        outputTokens,
         services: {},
       },
     },
   }));
+}
+
+function primeReminder(
+  storage: MemoryStorage,
+  now: number,
+  state: ConversionState,
+  ageDays: number,
+  lifetimeRequests = 7,
+): void {
+  storage.setItem(INSTALL_DATE_KEY, localDay(now - ageDays * 86_400_000));
+  storage.setItem(INSTALLED_AT_KEY, String(now - ageDays * 86_400_000));
+  storage.setItem(STATE_KEY, state);
+  storage.setItem(COUNTERS_KEY, JSON.stringify({ lifetimeRequests, summariesSeeded: true, days: {} }));
+}
+
+function paymentChannel(): DesktopPaymentChannelSummary {
+  return {
+    channelId: 'channel-1',
+    peerId: 'peer-1',
+    seller: '0xseller',
+    reserveMax: '1',
+    cumulativeSigned: '0',
+    settledUsdc: '0',
+    reservedAt: 1,
+    status: 'open',
+    requestCount: 0,
+    inputTokens: '0',
+    outputTokens: '0',
+    cooperativeCloseSupported: true,
+  };
+}
+
+function offer(variant: ConversionVariant) {
+  return {
+    variant,
+    requestsCount: 10,
+    retrospectiveUsd: '1.00',
+    prospectiveUsd: '20.00',
+  };
 }
 
 async function flushPromises(): Promise<void> {
@@ -186,7 +233,7 @@ test('D1 publishes the Home offer directly after a qualifying response', async (
   assert.equal(uiState.conversionOffer?.requestsCount, 15);
 });
 
-test('D1 remains hidden until every eligibility gate passes', async () => {
+test('D1 remains hidden during the warmup period', async () => {
   const now = new Date(2026, 7, 11, 12, 0, 0).getTime();
   const storage = new MemoryStorage();
   storage.setItem(INSTALL_DATE_KEY, localDay(now));
@@ -211,6 +258,93 @@ test('D1 remains hidden until every eligibility gate passes', async () => {
   assert.equal(uiState.conversionOffer, null);
 });
 
+test('D1 suppresses the offer when any usage or conversation gate is missing', async () => {
+  const now = new Date(2026, 7, 11, 12, 0, 0).getTime();
+  for (const item of [
+    {
+      name: 'too few conversations',
+      configure(storage: MemoryStorage, uiState: ReturnType<typeof makeEligibleState>) {
+        primeD1(storage, now);
+        uiState.chatConversations = uiState.chatConversations.slice(0, 1);
+      },
+      conversationId: 'conversation-1',
+      usage: { inputTokens: 500_000, outputTokens: 500_000, service: 'gpt-5.6-sol' },
+    },
+    {
+      name: 'too few visible turns',
+      configure(storage: MemoryStorage, uiState: ReturnType<typeof makeEligibleState>) {
+        primeD1(storage, now);
+        uiState.chatMessages = uiState.chatMessages.slice(0, 2);
+      },
+      conversationId: 'conversation-1',
+      usage: { inputTokens: 500_000, outputTokens: 500_000, service: 'gpt-5.6-sol' },
+    },
+    {
+      name: 'completion is not for the active conversation',
+      configure(storage: MemoryStorage) {
+        primeD1(storage, now);
+      },
+      conversationId: 'conversation-2',
+      usage: { inputTokens: 500_000, outputTokens: 500_000, service: 'gpt-5.6-sol' },
+    },
+    {
+      name: 'both request and output thresholds are below minimum',
+      configure(storage: MemoryStorage) {
+        primeD1(storage, now, { requests: 13, outputTokens: 1_000 });
+      },
+      conversationId: 'conversation-1',
+      usage: { inputTokens: 1, outputTokens: 1, service: 'gpt-5.6-sol' },
+    },
+  ] as const) {
+    const storage = new MemoryStorage();
+    const uiState = makeEligibleState();
+    item.configure(storage, uiState);
+    const module = initConversionModule({
+      uiState,
+      dependencies: {
+        storage,
+        now: () => now,
+        loadReferencePrices: async () => referenceMap,
+        notifyChanged: () => {},
+      },
+    });
+
+    module.onResponseCompleted(item.conversationId, item.usage);
+    await flushPromises();
+    assert.equal(uiState.conversionOffer, null, item.name);
+    assert.equal(uiState.conversionState, 'armed_d1', item.name);
+  }
+});
+
+test('D1 request and output thresholds are independent alternatives', async () => {
+  const now = new Date(2026, 7, 11, 12, 0, 0).getTime();
+  for (const item of [
+    { requests: 14, outputTokens: 1_000, completionOutput: 1, name: 'request threshold' },
+    { requests: 1, outputTokens: 29_999, completionOutput: 1, name: 'output threshold' },
+  ]) {
+    const storage = new MemoryStorage();
+    primeD1(storage, now, { requests: item.requests, outputTokens: item.outputTokens });
+    const uiState = makeEligibleState();
+    const module = initConversionModule({
+      uiState,
+      dependencies: {
+        storage,
+        now: () => now,
+        loadReferencePrices: async () => referenceMap,
+        notifyChanged: () => {},
+      },
+    });
+
+    module.onResponseCompleted('conversation-1', {
+      inputTokens: 500_000,
+      outputTokens: item.completionOutput,
+      service: 'gpt-5.6-sol',
+    });
+    await flushPromises();
+    assert.equal(uiState.conversionOffer?.variant, 'd1', item.name);
+  }
+});
+
 test('day rollover lazily arms D2 and uses the lower lifetime threshold', async () => {
   const now = new Date(2026, 7, 12, 12, 0, 0).getTime();
   const storage = new MemoryStorage();
@@ -233,6 +367,36 @@ test('day rollover lazily arms D2 and uses the lower lifetime threshold', async 
   await flushPromises();
   assert.equal(uiState.conversionState, 'armed_d2');
   assert.equal(uiState.conversionOffer?.variant, 'd2');
+});
+
+test('active returns advance every prior state to the latest due milestone', async () => {
+  const now = new Date(2026, 7, 20, 12, 0, 0).getTime();
+  for (const item of [
+    { initial: 'armed_d1', ageDays: 4, expectedState: 'armed_d5', expectedVariant: 'd5' },
+    { initial: 'armed_d2', ageDays: 6, expectedState: 'armed_d5', expectedVariant: 'd5' },
+    { initial: 'armed_d1', ageDays: 14, expectedState: 'armed_d15', expectedVariant: 'd15' },
+    { initial: 'armed_d2', ageDays: 16, expectedState: 'armed_d15', expectedVariant: 'd15' },
+    { initial: 'armed_d5', ageDays: 16, expectedState: 'armed_d15', expectedVariant: 'd15' },
+  ] as const) {
+    const storage = new MemoryStorage();
+    primeReminder(storage, now, item.initial, item.ageDays);
+    const uiState = makeEligibleState();
+    setLifetimeUsage(uiState);
+    const module = initConversionModule({
+      uiState,
+      dependencies: {
+        storage,
+        now: () => now,
+        loadReferencePrices: async () => referenceMap,
+        notifyChanged: () => {},
+      },
+    });
+
+    module.onResponseCompleted('conversation-1', { inputTokens: 1, outputTokens: 1, service: null });
+    await flushPromises();
+    assert.equal(uiState.conversionState, item.expectedState, `${item.initial} at day ${item.ageDays}`);
+    assert.equal(uiState.conversionOffer?.variant, item.expectedVariant, `${item.initial} at day ${item.ageDays}`);
+  }
 });
 
 test('day 5 and day 15 reminders wait for activity at their milestones', async () => {
@@ -289,6 +453,63 @@ test('day 5 reminder does not show early', async () => {
   assert.equal(uiState.conversionState, 'armed_d5');
 });
 
+test('later reminders require lifetime usage, daily activity, and their milestone date', async () => {
+  const now = new Date(2026, 7, 20, 12, 0, 0).getTime();
+
+  const insufficientStorage = new MemoryStorage();
+  primeReminder(insufficientStorage, now, 'armed_d2', 1, 6);
+  const insufficientState = makeEligibleState();
+  setLifetimeUsage(insufficientState, 6);
+  const insufficientModule = initConversionModule({
+    uiState: insufficientState,
+    dependencies: {
+      storage: insufficientStorage,
+      now: () => now,
+      loadReferencePrices: async () => referenceMap,
+      notifyChanged: () => {},
+    },
+  });
+  insufficientModule.onResponseCompleted('conversation-1', { inputTokens: 1, outputTokens: 1, service: null });
+  await flushPromises();
+  assert.equal(insufficientState.conversionOffer, null);
+  assert.equal(insufficientState.conversionState, 'armed_d2');
+
+  const inactiveStorage = new MemoryStorage();
+  primeReminder(inactiveStorage, now, 'armed_d5', 6);
+  const inactiveState = makeEligibleState();
+  setLifetimeUsage(inactiveState);
+  initConversionModule({
+    uiState: inactiveState,
+    dependencies: {
+      storage: inactiveStorage,
+      now: () => now,
+      loadReferencePrices: async () => referenceMap,
+      notifyChanged: () => {},
+    },
+  });
+  await flushPromises();
+  assert.equal(inactiveState.conversionOffer, null);
+  assert.equal(inactiveState.conversionState, 'armed_d5');
+
+  const earlyD15Storage = new MemoryStorage();
+  primeReminder(earlyD15Storage, now, 'armed_d15', 13, 20);
+  const earlyD15State = makeEligibleState();
+  setLifetimeUsage(earlyD15State, 20);
+  const earlyD15Module = initConversionModule({
+    uiState: earlyD15State,
+    dependencies: {
+      storage: earlyD15Storage,
+      now: () => now,
+      loadReferencePrices: async () => referenceMap,
+      notifyChanged: () => {},
+    },
+  });
+  earlyD15Module.onResponseCompleted('conversation-1', { inputTokens: 1, outputTokens: 1, service: null });
+  await flushPromises();
+  assert.equal(earlyD15State.conversionOffer, null);
+  assert.equal(earlyD15State.conversionState, 'armed_d15');
+});
+
 test('dismissing each offer advances to the next reminder', async () => {
   const now = new Date(2026, 7, 15, 12, 0, 0).getTime();
   for (const item of [
@@ -322,16 +543,136 @@ test('dismissing each offer advances to the next reminder', async () => {
   }
 });
 
-test('payer detection retires the feature and storage failures hide it', async () => {
-  const payerState = createInitialUiState();
-  payerState.creditsTotalOwnedUsdc = '1';
-  const payerModule = initConversionModule({
-    uiState: payerState,
-    dependencies: { storage: new MemoryStorage(), notifyChanged: () => {} },
+test('dismissing D1 advances directly to day 5', () => {
+  const storage = new MemoryStorage();
+  const uiState = createInitialUiState();
+  uiState.conversionOffer = offer('d1');
+  const module = initConversionModule({
+    uiState,
+    dependencies: { storage, notifyChanged: () => {} },
   });
-  await payerModule.reconcilePayer();
-  assert.equal(payerState.conversionState, 'done');
 
+  module.dismissHome();
+  assert.equal(uiState.conversionState, 'armed_d5');
+  assert.equal(storage.getItem(STATE_KEY), 'armed_d5');
+  assert.equal(uiState.conversionOffer, null);
+});
+
+test('every payer source suppresses an otherwise eligible offer', async () => {
+  const now = new Date(2026, 7, 11, 12, 0, 0).getTime();
+  for (const item of [
+    {
+      name: 'owned wallet or deposit balance',
+      configure(uiState: ReturnType<typeof makeEligibleState>) {
+        uiState.creditsTotalOwnedUsdc = '1';
+      },
+      bridge: undefined,
+    },
+    {
+      name: 'channel already loaded in renderer state',
+      configure(uiState: ReturnType<typeof makeEligibleState>) {
+        uiState.creditsChannels = [paymentChannel()];
+      },
+      bridge: undefined,
+    },
+    {
+      name: 'channel returned by the payment bridge',
+      configure() {},
+      bridge: {
+        paymentsGetChannels: async () => ({ ok: true, data: [paymentChannel()], error: null }),
+      } as DesktopBridge,
+    },
+  ] as const) {
+    const storage = new MemoryStorage();
+    primeD1(storage, now);
+    const uiState = makeEligibleState();
+    item.configure(uiState);
+    const module = initConversionModule({
+      bridge: item.bridge,
+      uiState,
+      dependencies: {
+        storage,
+        now: () => now,
+        loadReferencePrices: async () => referenceMap,
+        notifyChanged: () => {},
+      },
+    });
+
+    module.onResponseCompleted('conversation-1', {
+      inputTokens: 500_000,
+      outputTokens: 500_000,
+      service: 'gpt-5.6-sol',
+    });
+    await flushPromises();
+    assert.equal(uiState.conversionOffer, null, item.name);
+    assert.equal(uiState.conversionState, 'done', item.name);
+    assert.equal(storage.getItem(STATE_KEY), 'done', item.name);
+  }
+});
+
+test('a confirmed deposit retires and clears offers from every lifecycle state', async () => {
+  for (const item of [
+    { state: 'armed_d1', variant: 'd1' },
+    { state: 'armed_d2', variant: 'd2' },
+    { state: 'armed_d5', variant: 'd5' },
+    { state: 'armed_d15', variant: 'd15' },
+  ] as const) {
+    const storage = new MemoryStorage();
+    storage.setItem(STATE_KEY, item.state);
+    const uiState = createInitialUiState();
+    const module = initConversionModule({
+      uiState,
+      dependencies: { storage, notifyChanged: () => {} },
+    });
+    uiState.conversionOffer = offer(item.variant);
+    uiState.creditsTotalOwnedUsdc = '1';
+
+    await module.reconcilePayer();
+    assert.equal(uiState.conversionState, 'done', item.state);
+    assert.equal(storage.getItem(STATE_KEY), 'done', item.state);
+    assert.equal(uiState.conversionOffer, null, item.state);
+  }
+});
+
+test('failed channel lookup suppresses temporarily without advancing state', async () => {
+  const now = new Date(2026, 7, 20, 12, 0, 0).getTime();
+  const storage = new MemoryStorage();
+  primeReminder(storage, now, 'armed_d2', 6);
+  const uiState = makeEligibleState();
+  setLifetimeUsage(uiState);
+  let lookupCount = 0;
+  const bridge = {
+    paymentsGetChannels: async () => {
+      lookupCount += 1;
+      return lookupCount === 1
+        ? { ok: false, data: [], error: 'temporarily unavailable' }
+        : { ok: true, data: [], error: null };
+    },
+  } as DesktopBridge;
+  const module = initConversionModule({
+    bridge,
+    uiState,
+    dependencies: {
+      storage,
+      now: () => now,
+      loadReferencePrices: async () => referenceMap,
+      notifyChanged: () => {},
+    },
+  });
+
+  module.onResponseCompleted('conversation-1', { inputTokens: 1, outputTokens: 1, service: null });
+  await flushPromises();
+  assert.equal(uiState.conversionState, 'armed_d2');
+  assert.equal(storage.getItem(STATE_KEY), 'armed_d2');
+  assert.equal(uiState.conversionOffer, null);
+
+  module.onResponseCompleted('conversation-1', { inputTokens: 1, outputTokens: 1, service: null });
+  await flushPromises();
+  assert.equal(uiState.conversionState, 'armed_d5');
+  assert.equal(uiState.conversionOffer?.variant, 'd5');
+});
+
+test('storage failures hide the feature', () => {
   const failedState = createInitialUiState();
   initConversionModule({
     uiState: failedState,
