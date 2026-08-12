@@ -18,6 +18,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Desktop VPR now discovers and clearly labels image-generation-only models, carries advertised service capability hints through to each seller row, and shows seller-specific context windows, output limits, modalities, tools, structured output, and supported parameters without incorrectly merging those details at model level. Image models stay out of the main text and connected-app dropdowns and instead offer dedicated “Use in chat” and “Copy instructions” actions; copied instructions reference the public `antseed-images` skill and include the selected seller and service parameters. Image prompts route through `/v1/images/generations`, and generated files are stored as persistent conversation attachments. Image routes remain excluded from chat-only external model pickers.
+
 - Website docs now cover the gasless `antseed buyer sweep` command: a CLI-reference entry plus a payments-guide section explaining the offline EIP-3009 authorization, the fixed USDC relay fee, broadcast via a running buyer daemon or an ephemeral node, amount clamping to credit-limit headroom, and the first-deposit minimum. The guide also gained a provider note on relaying sweeps for the fee (`relayer.enabled`, `relayer.minProfitBaseUnits`) and the `AntseedDepositRelay` address in the Base Mainnet contract table.
 
 - Desktop: added seller-assisted channel closing to Activity for sellers advertising `payments.cooperative-close.v1`, with clear rejection feedback and the existing wallet-based on-chain close retained as a permanent fallback.

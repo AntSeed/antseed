@@ -124,6 +124,15 @@
   line-height: 16px;
 }
 
+.capabilityMeta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--brand);
+  font-weight: 500;
+}
+
 .peerMeta {
   min-width: 0;
   overflow: hidden;

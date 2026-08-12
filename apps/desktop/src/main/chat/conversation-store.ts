@@ -8,7 +8,7 @@
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
-import type { Message } from '@mariozechner/pi-ai';
+import type { AssistantMessage, Message, UserMessage } from '@mariozechner/pi-ai';
 import { SessionManager } from '@mariozechner/pi-coding-agent';
 import { CHAT_DATA_DIR, getCurrentChatWorkspaceDir } from './workspace.js';
 import {
@@ -62,6 +62,16 @@ export function extractPeerFromEntries(manager: SessionManager): AntseedPeerData
   );
 }
 
+function latestResponsePeerId(messages: AiConversation['messages']): string | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== 'assistant') continue;
+    const peerId = message.meta?.peerId?.trim();
+    if (peerId) return peerId;
+  }
+  return undefined;
+}
+
 function summarizeConversation(conversation: AiConversation): AiConversationSummary {
   const totalTokens = normalizeTokenCount(conversation.usage.inputTokens)
     + normalizeTokenCount(conversation.usage.outputTokens);
@@ -79,6 +89,7 @@ function summarizeConversation(conversation: AiConversation): AiConversationSumm
     ...(conversation.peerId ? { peerId: conversation.peerId } : {}),
     ...(conversation.peerLabel ? { peerLabel: conversation.peerLabel } : {}),
     ...(conversation.routeMode ? { routeMode: conversation.routeMode } : {}),
+    ...(conversation.lastResponsePeerId ? { lastResponsePeerId: conversation.lastResponsePeerId } : {}),
     ...(conversation.workspacePath ? { workspacePath: conversation.workspacePath } : {}),
   };
 }
@@ -200,6 +211,7 @@ export class PiConversationStore {
     }
 
     const peerData = extractPeerFromEntries(manager);
+    const lastResponsePeerId = latestResponsePeerId(messages);
     // SessionManager reads the cwd persisted in the session file; restoration
     // across app restarts depends on that value reflecting the session workspace.
     const sessionCwd = manager.getCwd() || undefined;
@@ -213,6 +225,7 @@ export class PiConversationStore {
       updatedAt,
       usage,
       ...projectPeerBinding(peerData),
+      ...(lastResponsePeerId ? { lastResponsePeerId } : {}),
       ...(sessionCwd ? { workspacePath: sessionCwd } : {}),
     };
   }
@@ -296,6 +309,41 @@ export class PiConversationStore {
     this.pendingManagers.set(conversation.id, manager);
     this.pathCache.set(conversation.id, sessionPath);
     return conversation;
+  }
+
+  async appendImageGeneration(
+    id: string,
+    prompt: string,
+    assistantContent: string,
+    service: string,
+    peerId: string,
+  ): Promise<{ user: UserMessage; assistant: AssistantMessage }> {
+    const manager = await this.openSessionManager(id);
+    if (!manager) throw new Error('Conversation not found');
+    const timestamp = Date.now();
+    const user: UserMessage = { role: 'user', content: prompt, timestamp };
+    const assistant: AssistantMessage & { meta: { peerId: string } } = {
+      role: 'assistant',
+      content: [{ type: 'text', text: assistantContent }],
+      api: 'openai-completions',
+      provider: 'antseed',
+      model: service,
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: 'stop',
+      timestamp: timestamp + 1,
+      meta: { peerId },
+    };
+    manager.appendMessage(user);
+    manager.appendMessage(assistant);
+    this.markPersistedIfAvailable(id);
+    return { user, assistant };
   }
 
   async setPeer(id: string, peerId: string, peerLabel?: string, routeMode?: ChatRouteMode): Promise<void> {

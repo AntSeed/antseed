@@ -17,6 +17,8 @@ import { normalizeProviderId } from './provider-hint.js';
 import {
   buildChatServiceCatalogFromPeers,
   sortChatServiceCatalogEntries,
+  type CatalogServiceCapabilities,
+  type CatalogServiceProtocol,
   type ChatServiceCatalogEntry,
   type ChatServiceProtocol,
   type NetworkPeerAddress,
@@ -42,7 +44,8 @@ export type DiscoverRowEntry = {
   serviceLabel: string;
   categories: string[];
   provider: string;
-  protocol: ChatServiceProtocol;
+  protocol: CatalogServiceProtocol;
+  capabilities: CatalogServiceCapabilities | null;
   peerId: string;
   peerEvmAddress: string;
   sellerEvmAddress: string;
@@ -84,6 +87,46 @@ export type DiscoverVerificationLink = DesktopVerificationLink;
 
 export const CHAT_SERVICE_MAX_OPTIONS = 5000;
 export const CHAT_SERVICE_MAX_OPTIONS_PER_PROVIDER = 1000;
+
+const CAPABILITY_MODALITIES = new Set(['text', 'image', 'audio', 'video', 'pdf']);
+const CAPABILITY_PARAMETERS = /^[a-z][a-z0-9_]*$/;
+
+function normalizeCatalogServiceCapabilities(raw: unknown): CatalogServiceCapabilities | null {
+  const value = asPlainObject(raw);
+  if (!value) return null;
+  const positiveInteger = (candidate: unknown): number | undefined => (
+    typeof candidate === 'number' && Number.isSafeInteger(candidate) && candidate > 0
+      ? candidate
+      : undefined
+  );
+  const modalities = (candidate: unknown): string[] | undefined => {
+    if (!Array.isArray(candidate)) return undefined;
+    const normalized = [...new Set(candidate.filter(
+      (item): item is string => typeof item === 'string' && CAPABILITY_MODALITIES.has(item),
+    ))];
+    return normalized.length > 0 ? normalized : undefined;
+  };
+  const parameters = Array.isArray(value.supportedParameters)
+    ? [...new Set(value.supportedParameters.filter(
+        (item): item is string => typeof item === 'string' && CAPABILITY_PARAMETERS.test(item),
+      ))]
+    : undefined;
+  const contextWindow = positiveInteger(value.contextWindow);
+  const maxOutputTokens = positiveInteger(value.maxOutputTokens);
+  const inputs = modalities(value.inputs);
+  const outputs = modalities(value.outputs);
+  const normalized: CatalogServiceCapabilities = {
+    ...(contextWindow ? { contextWindow } : {}),
+    ...(maxOutputTokens ? { maxOutputTokens } : {}),
+    ...(inputs ? { inputs } : {}),
+    ...(outputs ? { outputs } : {}),
+    ...(typeof value.reasoning === 'boolean' ? { reasoning: value.reasoning } : {}),
+    ...(typeof value.toolUse === 'boolean' ? { toolUse: value.toolUse } : {}),
+    ...(typeof value.structuredOutput === 'boolean' ? { structuredOutput: value.structuredOutput } : {}),
+    ...(parameters?.length ? { supportedParameters: parameters } : {}),
+  };
+  return Object.keys(normalized).length > 0 ? normalized : null;
+}
 
 export async function loadBuyerMaxPricingDefaults(configPath: string): Promise<BuyerMaxPricingDefaults> {
   try {
@@ -170,7 +213,7 @@ export function updateServiceProtocolMap(
   serviceProtocolMap.clear();
   for (const entry of entries) {
     const serviceId = normalizeServiceValue(entry.id)?.toLowerCase();
-    if (!serviceId) continue;
+    if (!serviceId || !isChatServiceProtocol(entry.protocol)) continue;
     // First entry wins — the catalog is sorted by popularity (count desc)
     if (!serviceProtocolMap.has(serviceId)) {
       serviceProtocolMap.set(serviceId, entry.protocol);
@@ -187,7 +230,7 @@ export function normalizeChatServiceCatalogEntry(raw: unknown): ChatServiceCatal
   const id = normalizeServiceValue(entry.id);
   const provider = normalizeProviderId(entry.provider);
   const protocol = entry.protocol;
-  if (!id || !provider || !isChatServiceProtocol(protocol)) {
+  if (!id || !provider || (protocol !== 'openai-images' && !isChatServiceProtocol(protocol))) {
     return null;
   }
 
@@ -201,11 +244,13 @@ export function normalizeChatServiceCatalogEntry(raw: unknown): ChatServiceCatal
   const cachedInputUsd = normalizeOptionalNumber(entry.cachedInputUsdPerMillion);
   const categories = Array.isArray(entry.categories) ? entry.categories.filter((c): c is string => typeof c === 'string') : undefined;
   const description = typeof entry.description === 'string' ? entry.description.trim() : undefined;
+  const capabilities = normalizeCatalogServiceCapabilities(entry.capabilities);
   return {
     id,
     label,
     provider,
     protocol,
+    ...(capabilities ? { capabilities } : {}),
     count: normalizedCount,
     ...(peerId ? { peerId } : {}),
     ...(peerLabel ? { peerLabel } : {}),
@@ -295,6 +340,9 @@ export async function discoverChatServiceCatalog(
         sellerContract: typeof p.sellerContract === 'string' ? p.sellerContract : undefined,
         providerServiceApiProtocols: (p.providerServiceApiProtocols && typeof p.providerServiceApiProtocols === 'object')
           ? p.providerServiceApiProtocols as NetworkPeerAddress['providerServiceApiProtocols']
+          : undefined,
+        providerServiceCapabilities: (p.providerServiceCapabilities && typeof p.providerServiceCapabilities === 'object')
+          ? p.providerServiceCapabilities as NetworkPeerAddress['providerServiceCapabilities']
           : undefined,
         providerPricing: (p.providerPricing && typeof p.providerPricing === 'object')
           ? p.providerPricing as NetworkPeerAddress['providerPricing']
@@ -396,6 +444,7 @@ export async function buildDiscoverRows(
       categories: entry.categories ?? [],
       provider: entry.provider,
       protocol: entry.protocol,
+      capabilities: entry.capabilities ?? null,
       peerId,
       peerEvmAddress,
       sellerEvmAddress,

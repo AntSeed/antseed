@@ -58,12 +58,14 @@ import {
   type DiscoverRowEntry,
 } from './service-discovery.js';
 import { isPortReachable, resolveProxyPort } from './proxy-service.js';
+import { isChatServiceProtocol } from './normalize.js';
 import {
   normalizeModelPickerSnapshot,
   type ModelPickerSnapshot,
 } from '../../shared/model-picker.js';
 import { PiConversationStore } from './conversation-store.js';
 import { createStreamingRunner } from './streaming-run.js';
+import { generateChatImage } from './image-generation.js';
 import type {
   ActiveRun,
   ChatStreamErrorPayload,
@@ -122,6 +124,7 @@ export function registerPiChatHandlers({
   void loadChatWorkspaceDir().catch(() => {});
   const store = new PiConversationStore();
   const activeRunsByConversation = new Map<string, ActiveRun>();
+  const activeImageRunsByConversation = new Map<string, AbortController>();
   const serviceProviderHints = new Map<string, string[]>();
   /** Cached payment-required info from 402 responses, keyed by conversationId. */
   const cachedPaymentRequired = new Map<string, Record<string, unknown>>();
@@ -331,7 +334,13 @@ export function registerPiChatHandlers({
     }
 
     const refreshed = await refreshServiceCatalogFromNetwork();
-    return refreshed.find((entry) => entry.id.trim().toLowerCase() === normalizedServiceId)?.protocol ?? 'anthropic-messages';
+    const match = refreshed.find((entry) => (
+      entry.id.trim().toLowerCase() === normalizedServiceId
+      && entry.protocol !== 'openai-images'
+    ));
+    return match && isChatServiceProtocol(match.protocol)
+      ? match.protocol
+      : 'anthropic-messages';
   };
 
   // Built here rather than beside the other helpers because it needs
@@ -686,6 +695,40 @@ export function registerPiChatHandlers({
     }
   });
 
+  ipcMain.handle('chat:generate-image', async (_event, payload: unknown) => {
+    const request = payload && typeof payload === 'object'
+      ? payload as { conversationId?: unknown; prompt?: unknown; peerId?: unknown; service?: unknown }
+      : {};
+    const conversationId = typeof request.conversationId === 'string' ? request.conversationId.trim() : '';
+    const prompt = typeof request.prompt === 'string' ? request.prompt.trim() : '';
+    const peerId = typeof request.peerId === 'string' ? request.peerId.trim() : '';
+    const service = typeof request.service === 'string' ? request.service.trim() : '';
+    if (!conversationId || !prompt || !peerId || !service) {
+      return { ok: false, error: 'Conversation, prompt, image model, and seller are required.' };
+    }
+    if (!isSafeId(conversationId)) {
+      return { ok: false, error: 'Invalid conversation.' };
+    }
+    if (activeRunsByConversation.has(conversationId) || activeImageRunsByConversation.has(conversationId)) {
+      return { ok: false, error: 'A request is already in progress for this conversation.' };
+    }
+    const controller = new AbortController();
+    activeImageRunsByConversation.set(conversationId, controller);
+    try {
+      const proxyPort = await resolveProxyPort(configPath);
+      return await generateChatImage(store, proxyPort, {
+        conversationId,
+        prompt,
+        peerId,
+        service,
+      }, { signal: controller.signal });
+    } finally {
+      if (activeImageRunsByConversation.get(conversationId) === controller) {
+        activeImageRunsByConversation.delete(conversationId);
+      }
+    }
+  });
+
   ipcMain.handle(
     'chat:ai-send-stream',
     async (_event, conversationId: string, userMessage: string, service?: string, _provider?: string, attachments?: PreparedChatAttachment[], peerId?: string, permissionMode?: unknown) => {
@@ -711,9 +754,10 @@ export function registerPiChatHandlers({
     const activeRuns = trimmedConversationId
       ? [activeRunsByConversation.get(trimmedConversationId)].filter((run): run is ActiveRun => Boolean(run))
       : Array.from(activeRunsByConversation.values());
-    if (activeRuns.length === 0) {
-      return;
-    }
+    const imageRuns = trimmedConversationId
+      ? [activeImageRunsByConversation.get(trimmedConversationId)].filter((run): run is AbortController => Boolean(run))
+      : Array.from(activeImageRunsByConversation.values());
+    for (const controller of imageRuns) controller.abort();
     await Promise.all(activeRuns.map((run) => abortAndClearActiveRun(run)));
   };
 
