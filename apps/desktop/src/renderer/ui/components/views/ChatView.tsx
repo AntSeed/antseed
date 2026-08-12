@@ -24,7 +24,6 @@ import { ChatBubble } from '../chat/ChatBubble';
 import { hasSearchPhraseMatch, isToolResultOnlyMessage } from '../chat/chat-utils.js';
 import { WalkingAnt } from '../chat/WalkingAnt';
 import { SessionApprovalCard } from '../chat/SessionApprovalCard';
-import { ConversionCard } from '../chat/ConversionCard';
 import { ToolApprovalCard } from '../chat/ToolApprovalCard';
 import { LowBalanceWarning } from '../chat/LowBalanceWarning';
 import { VprModelDropdown } from '../chat/VprModelDropdown';
@@ -263,8 +262,6 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     chatThinkingElapsedMs: state.chatThinkingElapsedMs,
     chatThinkingPhase: state.chatThinkingPhase,
     chatToolApprovalRequests: state.chatToolApprovalRequests,
-    conversionOffer: state.conversionOffer,
-    conversionSurface: state.conversionSurface,
     chatWorkspaceDefaultPath: state.chatWorkspaceDefaultPath,
     chatWorkspacePath: state.chatWorkspacePath,
     creditsAvailableUsdc: state.creditsAvailableUsdc,
@@ -1347,16 +1344,6 @@ export function ChatView({ onSelectView }: ChatViewProps) {
               onRetry={() => actions.retryAfterPayment()}
               onCancel={() => actions.rejectPaymentSession()}
             />
-            {snap.conversionSurface === 'chat' && snap.conversionOffer ? (
-              <ConversionCard
-                offer={snap.conversionOffer}
-                onDeposit={() => {
-                  actions.acceptConversionPrompt();
-                  onSelectView?.('deposit');
-                }}
-                onDismiss={actions.dismissConversionPrompt}
-              />
-            ) : null}
           </div>
 
           {showScrollToLatest ? (
@@ -1467,7 +1454,6 @@ export function ChatView({ onSelectView }: ChatViewProps) {
                 value={inputValue}
                 onChange={(e) => {
                   setInputValue(e.target.value);
-                  actions.notifyConversionComposerActivity();
                 }}
                 onInput={handleInput}
                 onKeyDown={handleKeyDown}

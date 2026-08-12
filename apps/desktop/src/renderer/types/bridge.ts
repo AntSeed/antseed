@@ -353,11 +353,6 @@ export type DesktopBridge = {
   applyWindowView?: (viewName: string) => Promise<{ ok: true; skipped?: string }>;
   applyWindowPreset?: (presetName: string) => Promise<{ ok: true; skipped?: string }>;
   onNavigateView?: (handler: (viewName: string) => void) => () => void;
-  conversionNotify?: (data: {
-    variant: 'd1' | 'd2' | 'd5' | 'd15';
-    retrospectiveUsd: string;
-    prospectiveUsd: string;
-  }) => Promise<{ ok: boolean; error?: string }>;
   voiceTranscribe?: (audio: ArrayBuffer) => Promise<{ ok: boolean; text?: string; error?: string }>;
   voiceGetStatus?: () => Promise<unknown>;
   voiceSetModel?: (modelId: string) => Promise<unknown>;
@@ -603,19 +598,11 @@ export type VprFloatData = {
    * the "start a new session" guidance is visible without a click.
    */
   openMenu?: boolean;
-  conversionOffer?: ConversionFloatOffer;
-};
-
-export type ConversionFloatOffer = {
-  requestsCount: number;
-  retrospectiveUsd: string;
-  prospectiveUsd: string;
 };
 
 export type VprFloatAction =
   | 'open-main'
   | { type: 'open-deposit' }
-  | { type: 'dismiss-conversion' }
   | { type: 'select-model'; provider: string; serviceId: string }
   | { type: 'pin-chat-model'; conversationId: string; provider: string; serviceId: string }
   | { type: 'open-chat-app'; conversationId: string }

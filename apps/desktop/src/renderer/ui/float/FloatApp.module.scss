@@ -27,48 +27,6 @@
   -webkit-app-region: no-drag;
 }
 
-.conversionPanel {
-  position: fixed;
-  top: 80px;
-  left: 8px;
-  right: 8px;
-  display: grid;
-  gap: 5px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg-card);
-  color: var(--text-primary);
-  font-size: 12px;
-  -webkit-app-region: no-drag;
-}
-
-.conversionPanel span {
-  color: var(--text-muted);
-}
-
-.conversionActions {
-  display: flex;
-  gap: 8px;
-  margin-top: 4px;
-}
-
-.conversionActions button {
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-primary);
-  font: inherit;
-  cursor: pointer;
-}
-
-.conversionActions button:first-child {
-  border-color: var(--text-primary);
-  background: var(--text-primary);
-  color: var(--bg-card);
-}
-
 /* Compact mode: just the app badge in a round chip (56px content in an 88px
    window — the window can't go much smaller without macOS dropping its
    transparency). Fixed size so it stays a circle even mid-resize; centered

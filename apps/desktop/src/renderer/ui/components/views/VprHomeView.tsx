@@ -28,7 +28,6 @@ import {
 import { connectVprProfile } from '../../../modules/routing/proxy-sync';
 import { buyerConversationsResource, systemProxyResource } from '../../../modules/app/vpr-resources';
 import { requestQuickDeposit } from '../../../modules/app/deposit-navigation';
-import { computeProspectiveUsd } from '../../../modules/app/conversion';
 import { useCachedResource } from '../../../modules/app/cached-resource';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
@@ -69,8 +68,6 @@ export function VprHomeView({ onSelectView }: Props) {
     creditsTotalOwned: state.creditsTotalOwnedUsdc,
     creditsChannels: state.creditsChannels,
     conversionOffer: state.conversionOffer,
-    conversionVariant: state.conversionVariant,
-    conversionHomeDismissed: state.conversionHomeDismissed,
     conversionPreview: state.conversionPreview,
     networkAlert: state.networkAlert,
     // Unfiltered discover list, for routed-peer name resolution.
@@ -117,10 +114,6 @@ export function VprHomeView({ onSelectView }: Props) {
     return () => window.clearInterval(timer);
   }, [actions]);
 
-  useEffect(() => {
-    if (snap.conversionVariant) void actions.refreshConversionOffer();
-  }, [actions, snap.conversionVariant]);
-
   const activeProfiles = useMemo(() => activeProfilesFromRuntimeState(proxyState), [proxyState]);
   const connectedProfiles = useMemo(
     () => profiles.filter((profile) => activeProfiles?.has(profile.name) ?? false),
@@ -137,29 +130,18 @@ export function VprHomeView({ onSelectView }: Props) {
   // tokens, usage-weighted per model. Falls back to the catalog projection
   // (average best-vs-worst peer spread) until priced usage exists.
   const [referencePrices, setReferencePrices] = useState(getCachedOpenRouterPrices);
-  const [referencePricesReady, setReferencePricesReady] = useState(
-    () => getCachedOpenRouterPrices() !== null,
-  );
   useEffect(() => {
-    if (referencePrices) {
-      setReferencePricesReady(true);
-      return undefined;
-    }
+    if (referencePrices) return undefined;
     let cancelled = false;
     void ensureOpenRouterPrices().then((map) => {
       if (cancelled) return;
       if (map) setReferencePrices(map);
-      setReferencePricesReady(true);
     });
     return () => { cancelled = true; };
   }, [referencePrices]);
   const measuredSavings = useMemo(
     () => computeMeasuredSavings(snap.usage?.services, referencePrices),
     [snap.usage?.services, referencePrices],
-  );
-  const liveConversionProspectiveUsd = useMemo(
-    () => computeProspectiveUsd(snap.catalog, referencePrices)?.prospectiveUsd ?? null,
-    [snap.catalog, referencePrices],
   );
   const projectedSavingsPct = useMemo(() => {
     const values = snap.catalog
@@ -285,11 +267,7 @@ export function VprHomeView({ onSelectView }: Props) {
     && !(Number.isFinite(creditsSpendableNum) && creditsSpendableNum > 5);
   const hasDeposited = Number(snap.creditsTotalOwned) > 0 || snap.creditsChannels.length > 0;
   const showConversionBanner = Boolean(
-    snap.conversionVariant
-    && snap.conversionOffer
-    && referencePricesReady
-    && snap.catalog.length > 0
-    && !snap.conversionHomeDismissed
+    snap.conversionOffer
     && (!hasDeposited || snap.conversionPreview),
   );
 
@@ -338,8 +316,9 @@ export function VprHomeView({ onSelectView }: Props) {
 
         <div className={styles.conversionProof}>
           <strong>
-            Your $10 can turn into <em>~${Math.round(liveConversionProspectiveUsd
-              ?? Number(snap.conversionOffer.prospectiveUsd)).toLocaleString('en-US')}</em> in frontier-model value.
+            Your $10 can turn into <em>~${Math.round(Number(
+              snap.conversionOffer.prospectiveUsd,
+            )).toLocaleString('en-US')}</em> in frontier-model value.
           </strong>
         </div>
 
@@ -348,7 +327,7 @@ export function VprHomeView({ onSelectView }: Props) {
             type="button"
             className={styles.conversionPrimary}
             onClick={() => {
-              actions.acceptConversionPrompt();
+              actions.acceptConversionHome();
               requestQuickDeposit();
               onSelectView?.('deposit');
             }}
@@ -508,7 +487,7 @@ export function VprHomeView({ onSelectView }: Props) {
               <HugeiconsIcon icon={ArrowRight02Icon} size={16} strokeWidth={2} />
             </button>
 
-            {showAddBalance && !snap.conversionVariant ? (
+            {showAddBalance && !snap.conversionOffer ? (
               <div className={styles.balanceBanner}>
                 <button
                   type="button"

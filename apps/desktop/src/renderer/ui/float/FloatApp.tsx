@@ -78,10 +78,6 @@ export function FloatApp() {
 
   useEffect(() => bridge?.onVprFloatData?.((next) => {
     setData(next);
-    if (next.conversionOffer && compactRef.current) {
-      setCompact(false);
-      bridge.vprFloatAction?.({ type: 'set-compact', compact: false });
-    }
     // Every open lands with the dropdown already expanded (the chat list is
     // the pill's payload), so it's visible without a click. Leave compact
     // mode first — the dropdown can't render in the chip.
@@ -149,12 +145,12 @@ export function FloatApp() {
 
   // The main process resizes the window around the open dropdown panel.
   useEffect(() => {
-    bridge?.vprFloatSetExpanded?.(menuOpen || Boolean(data?.conversionOffer));
+    bridge?.vprFloatSetExpanded?.(menuOpen);
     if (!menuOpen) {
       setChatTarget(null);
       setNavDir('forward');
     }
-  }, [bridge, data?.conversionOffer, menuOpen]);
+  }, [bridge, menuOpen]);
   useEffect(() => {
     if (compact) setMenuOpen(false);
   }, [compact]);
@@ -298,27 +294,10 @@ export function FloatApp() {
         <HugeiconsIcon icon={LeftToRightListBulletIcon} size={14} strokeWidth={2} />
       </button>
 
-      {data?.conversionOffer ? (
-        <div className={styles.conversionPanel} aria-label="$10 frontier offer">
-          <strong>Add $10</strong>
-          <span>About ${data.conversionOffer.prospectiveUsd} of model usage.</span>
-          <div className={styles.conversionActions}>
-            <button type="button" onClick={() => bridge?.vprFloatAction?.({ type: 'open-deposit' })}>Add $10</button>
-            <button
-              type="button"
-              onClick={() => bridge?.vprFloatAction?.({ type: 'dismiss-conversion' })}
-              aria-label="Dismiss offer"
-            >
-              ×
-            </button>
-          </div>
-        </div>
-      ) : null}
-
       {/* Manage conversations: level 1 lists the default-model row plus one
           row per chat; clicking a row slides to the shared rich model list
           (same rows as the Home dropdown) with a back header. */}
-      {menuOpen && !data?.conversionOffer ? (
+      {menuOpen ? (
         <div className={styles.menuPanel} aria-label="Manage conversations">
           <OverlayScrollArea className={styles.menuScroll} contentClassName={styles.menuScrollContent}>
           {chatTarget === null ? (

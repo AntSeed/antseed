@@ -107,15 +107,13 @@ export type VprRoutingPreferences = {
 /** Which routing list a peer sits on. A peer is never on both. */
 export type VprPeerListing = 'allowed' | 'blocked' | 'none';
 
-export type ConversionState = 'armed_d1' | 'armed_d2' | 'armed_d5' | 'armed_d15' | 'shown' | 'done';
+export type ConversionState = 'armed_d1' | 'armed_d2' | 'armed_d5' | 'armed_d15' | 'done';
 export type ConversionVariant = 'd1' | 'd2' | 'd5' | 'd15';
-export type ConversionSurface = 'chat' | 'float' | 'home' | null;
 export type ConversionOffer = {
   variant: ConversionVariant;
   requestsCount: number;
   retrospectiveUsd: string;
   prospectiveUsd: string;
-  runRateUsdMonthly: string | null;
 };
 
 export type VprModelCatalogEntry = {
@@ -227,13 +225,8 @@ export type ActiveChannelInfo = {
 
 export type RendererUiState = {
   activeView: string;
-  conversionEnabled: boolean;
   conversionState: ConversionState;
-  conversionVariant: ConversionVariant | null;
-  conversionShownAt: number;
   conversionOffer: ConversionOffer | null;
-  conversionSurface: ConversionSurface;
-  conversionHomeDismissed: boolean;
   conversionPreview: boolean;
   // --- Process / runtime state ---
   processes: RuntimeProcessState[];
@@ -413,13 +406,8 @@ const MAX_LOGS = 2000;
 export function createInitialUiState(): RendererUiState {
   return {
     activeView: 'home',
-    conversionEnabled: false,
     conversionState: 'armed_d1',
-    conversionVariant: null,
-    conversionShownAt: 0,
     conversionOffer: null,
-    conversionSurface: null,
-    conversionHomeDismissed: false,
     conversionPreview: false,
     // Process / runtime
     processes: [],

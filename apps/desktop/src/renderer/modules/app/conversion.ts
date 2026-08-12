@@ -25,7 +25,6 @@ import {
   D1_WARMUP_MS,
   D2_MIN_LIFETIME_REQUESTS,
   DEPOSIT_SUGGESTED_USD,
-  IDLE_MS,
   MIN_AMMO_USD,
   MIN_NETWORK_DISCOUNT,
 } from './conversion-constants.js';
@@ -33,10 +32,8 @@ import {
 const INSTALL_DATE_KEY = 'antseed.desktop.conversion.installDate';
 const INSTALLED_AT_KEY = 'antseed.desktop.conversion.installedAt';
 const STATE_KEY = 'antseed.desktop.conversion.state';
-const VARIANT_KEY = 'antseed.desktop.conversion.variant';
-const SHOWN_AT_KEY = 'antseed.desktop.conversion.shownAt';
 const COUNTERS_KEY = 'antseed.desktop.conversion.counters';
-const HOME_DISMISSED_KEY = 'antseed.desktop.conversion.homeDismissed';
+const LEGACY_VARIANT_KEY = 'antseed.desktop.conversion.variant';
 const LEGACY_PROFILE_KEYS = [
   'antseed.desktop.vpr.hasChats',
   'antseed.desktop.vpr.preferences',
@@ -69,33 +66,19 @@ export type ConversionCompletionUsage = {
   service: string | null;
 };
 
-type TimerHandle = ReturnType<typeof setTimeout>;
-
 export type ConversionModuleApi = {
   onResponseCompleted: (conversationId: string, usage: ConversionCompletionUsage) => void;
-  onRequestStarted: () => void;
-  onComposerActivity: () => void;
-  dismissPrompt: () => void;
-  acceptPrompt: () => void;
+  acceptHome: () => void;
   dismissHome: () => void;
   reconcilePayer: () => Promise<void>;
-  refreshOffer: () => Promise<ConversionOffer | null>;
   preview: (variant: ConversionVariant) => void;
   clearPreview: () => void;
-  setFloatPresenter: (present: (() => Promise<boolean>) | null) => void;
-  setFloatRefresh: (refresh: (() => Promise<void>) | null) => void;
 };
 
 type ConversionDependencies = {
   storage?: StorageLike | null;
   now?: () => number;
-  setTimer?: (callback: () => void, delay: number) => TimerHandle;
-  clearTimer?: (timer: TimerHandle) => void;
-  hasFocus?: () => boolean;
-  isVisible?: () => boolean;
   loadReferencePrices?: () => Promise<OpenRouterReferenceMap | null>;
-  notifyNative?: (offer: ConversionOffer) => Promise<unknown> | void;
-  presentFloat?: () => Promise<boolean>;
   notifyChanged?: () => void;
 };
 
@@ -133,53 +116,6 @@ function referenceForEntry(
 
 function paidFrontierEntries(catalog: VprModelCatalogEntry[]): VprModelCatalogEntry[] {
   return selectRecommendedVprCatalog(catalog).filter((entry) => !isFreeCatalogEntry(entry));
-}
-
-export type ConversionModelProof = {
-  provider: string;
-  serviceId: string;
-  label: string;
-  discountPct: number;
-};
-
-function modelDiscount(
-  entry: VprModelCatalogEntry,
-  referenceMap: OpenRouterReferenceMap,
-): number | null {
-  const networkInput = entry.minInputUsdPerMillion;
-  const networkOutput = entry.minOutputUsdPerMillion;
-  const reference = referenceForEntry(entry, referenceMap);
-  if (
-    networkInput === null || networkOutput === null
-    || !Number.isFinite(networkInput) || !Number.isFinite(networkOutput)
-    || networkInput < 0 || networkOutput < 0
-    || reference?.input === null || reference?.output === null
-    || reference?.input === undefined || reference?.output === undefined
-  ) return null;
-
-  const retail = (reference.input + 3 * reference.output) / 4;
-  const network = (networkInput + 3 * networkOutput) / 4;
-  if (!(retail > 0) || network >= retail) return null;
-  return 1 - network / retail;
-}
-
-export function selectConversionModelProof(
-  catalog: VprModelCatalogEntry[],
-  referenceMap: OpenRouterReferenceMap | null,
-  limit = 3,
-): ConversionModelProof[] {
-  if (!referenceMap || limit <= 0) return [];
-  return paidFrontierEntries(catalog)
-    .map((entry) => ({ entry, discount: modelDiscount(entry, referenceMap) }))
-    .filter((result): result is { entry: VprModelCatalogEntry; discount: number } =>
-      result.discount !== null && result.discount >= MIN_NETWORK_DISCOUNT)
-    .slice(0, limit)
-    .map(({ entry, discount }) => ({
-      provider: entry.provider,
-      serviceId: entry.serviceId,
-      label: entry.label,
-      discountPct: Math.round(discount * 100),
-    }));
 }
 
 export function computeProspectiveUsd(
@@ -319,7 +255,6 @@ function validState(value: string | null): ConversionState | null {
     || value === 'armed_d2'
     || value === 'armed_d5'
     || value === 'armed_d15'
-    || value === 'shown'
     || value === 'done'
     ? value
     : null;
@@ -335,6 +270,13 @@ function nextReminderState(shownVariant: ConversionVariant | null): ConversionSt
   if (shownVariant === 'd15') return 'done';
   if (shownVariant === 'd5') return 'armed_d15';
   return 'armed_d5';
+}
+
+function armedStateForVariant(variant: ConversionVariant | null): ConversionState {
+  if (variant === 'd15') return 'armed_d15';
+  if (variant === 'd5') return 'armed_d5';
+  if (variant === 'd2') return 'armed_d2';
+  return 'armed_d1';
 }
 
 function reminderExpired(shownVariant: ConversionVariant | null, ageDays: number): boolean {
@@ -362,17 +304,8 @@ export function initConversionModule({
   dependencies?: ConversionDependencies;
 }): ConversionModuleApi {
   const now = dependencies.now ?? Date.now;
-  const setTimer = dependencies.setTimer ?? ((callback, delay) => setTimeout(callback, delay));
-  const clearTimer = dependencies.clearTimer ?? ((timer) => clearTimeout(timer));
-  const hasFocus = dependencies.hasFocus ?? (() => typeof document !== 'undefined' && document.hasFocus());
-  const isVisible = dependencies.isVisible ?? (() => typeof document !== 'undefined' && document.visibilityState === 'visible');
   const loadReferencePrices = dependencies.loadReferencePrices ?? ensureOpenRouterPrices;
   const notifyChanged = dependencies.notifyChanged ?? notifyUiStateChanged;
-  const notifyNative = dependencies.notifyNative ?? ((offer) => bridge?.conversionNotify?.({
-    variant: offer.variant,
-    retrospectiveUsd: offer.retrospectiveUsd,
-    prospectiveUsd: offer.prospectiveUsd,
-  }));
   let storage: StorageLike | null = dependencies.storage === undefined
     ? (() => {
       try { return typeof window === 'undefined' ? null : window.localStorage; } catch { return null; }
@@ -382,25 +315,13 @@ export function initConversionModule({
   let installDate = '';
   let installedAt = 0;
   let state: ConversionState = 'armed_d1';
-  let variant: ConversionVariant | null = null;
-  let shownAt = 0;
   let counters: ConversionCounters = { lifetimeRequests: 0, summariesSeeded: false, days: {} };
-  let idleTimer: TimerHandle | null = null;
-  let idleGeneration = 0;
-  let eligibleForIdle = false;
   let hasChannel = false;
-  let floatPresenter = dependencies.presentFloat ?? null;
-  let floatRefresh: (() => Promise<void>) | null = null;
 
   function disable(): void {
     enabled = false;
     storage = null;
-    if (idleTimer !== null) clearTimer(idleTimer);
-    idleTimer = null;
-    eligibleForIdle = false;
     uiState.conversionOffer = null;
-    uiState.conversionSurface = null;
-    uiState.conversionEnabled = false;
   }
 
   function write(key: string, value: string): boolean {
@@ -426,29 +347,17 @@ export function initConversionModule({
         && LEGACY_PROFILE_KEYS.some((key) => storage?.getItem(key) !== null);
       installDate = storage.getItem(INSTALL_DATE_KEY) ?? localCalendarDay(currentNow);
       installedAt = Math.max(0, Number(storage.getItem(INSTALLED_AT_KEY)) || currentNow);
-      state = validState(storage.getItem(STATE_KEY)) ?? (existingProfile ? 'armed_d2' : 'armed_d1');
-      variant = validVariant(storage.getItem(VARIANT_KEY));
-      shownAt = Math.max(0, Number(storage.getItem(SHOWN_AT_KEY)) || 0);
-      if (state.startsWith('armed_')) {
-        variant = null;
-        shownAt = 0;
-      }
       counters = parseCounters(storage.getItem(COUNTERS_KEY));
-      uiState.conversionHomeDismissed = storage.getItem(HOME_DISMISSED_KEY) === '1';
-
       const currentDay = calendarDayOrdinal(localCalendarDay(currentNow));
       const firstDay = calendarDayOrdinal(installDate);
       const ageDays = currentDay === null || firstDay === null ? 0 : Math.max(0, currentDay - firstDay);
-      const staleShownState = state === 'shown' && reminderExpired(variant, ageDays);
-      if (state === 'shown' && (uiState.conversionHomeDismissed || staleShownState)) {
-        state = nextReminderState(variant);
-        variant = null;
-        shownAt = 0;
-        uiState.conversionHomeDismissed = false;
-        storage.setItem(VARIANT_KEY, '');
-        storage.setItem(SHOWN_AT_KEY, '0');
-        storage.setItem(HOME_DISMISSED_KEY, '0');
-      }
+      const storedState = storage.getItem(STATE_KEY);
+      const legacyVariant = validVariant(storage.getItem(LEGACY_VARIANT_KEY));
+      state = storedState === 'shown'
+        ? (reminderExpired(legacyVariant, ageDays)
+            ? nextReminderState(legacyVariant)
+            : armedStateForVariant(legacyVariant))
+        : validState(storedState) ?? (existingProfile ? 'armed_d2' : 'armed_d1');
 
       storage.setItem(INSTALL_DATE_KEY, installDate);
       storage.setItem(INSTALLED_AT_KEY, String(installedAt));
@@ -458,10 +367,7 @@ export function initConversionModule({
       disable();
       return;
     }
-    uiState.conversionEnabled = true;
     uiState.conversionState = state;
-    uiState.conversionVariant = variant;
-    uiState.conversionShownAt = shownAt;
   }
 
   function persistCounters(): boolean {
@@ -594,24 +500,12 @@ export function initConversionModule({
         referenceMap,
       });
     if (retrospective !== null && retrospective < MIN_AMMO_USD) return null;
-    const runRate = isD1 && retrospective !== null ? Math.round(retrospective * 30) : null;
     return {
       variant: nextVariant,
       requestsCount,
       retrospectiveUsd: retrospective === null ? '' : retrospective.toFixed(2),
       prospectiveUsd: prospective.prospectiveUsd.toFixed(2),
-      runRateUsdMonthly: runRate !== null && runRate >= DEPOSIT_SUGGESTED_USD ? String(runRate) : null,
     };
-  }
-
-  function noCompetingPrompt(): boolean {
-    return !uiState.chatPaymentApprovalVisible && uiState.chatToolApprovalRequests.length === 0;
-  }
-
-  function noRequestInFlight(): boolean {
-    return !uiState.chatSending
-      && uiState.chatSendingConversationIds.length === 0
-      && uiState.chatStreamingMessage === null;
   }
 
   function installAgeDays(): number {
@@ -635,7 +529,7 @@ export function initConversionModule({
   }
 
   async function eligibleOffer(conversationId: string): Promise<ConversionOffer | null> {
-    if (!enabled || state === 'shown' || state === 'done') return null;
+    if (!enabled || state === 'done') return null;
     const payer = await payerDetected();
     if (payer === null) return null;
     if (payer) {
@@ -643,7 +537,6 @@ export function initConversionModule({
       return null;
     }
     transitionForDay();
-    if (!noCompetingPrompt() || !noRequestInFlight()) return null;
     const currentDay = localCalendarDay(now());
     const today = counters.days[currentDay] ?? emptyCounter();
 
@@ -665,163 +558,47 @@ export function initConversionModule({
     return buildOffer('d2');
   }
 
-  async function showAfterIdle(conversationId: string, generation: number): Promise<void> {
-    if (generation !== idleGeneration) return;
-    idleTimer = null;
-    if (!eligibleForIdle) return;
-    const offer = await eligibleOffer(conversationId);
-    if (!offer || !enabled || !eligibleForIdle || generation !== idleGeneration) return;
-    const shownTimestamp = now();
-    if (!write(VARIANT_KEY, offer.variant)) return;
-    if (!write(SHOWN_AT_KEY, String(shownTimestamp))) return;
-    if (!persistState('shown')) return;
-    variant = offer.variant;
-    shownAt = shownTimestamp;
-    uiState.conversionVariant = variant;
-    uiState.conversionShownAt = shownAt;
-    uiState.conversionOffer = offer;
-    uiState.conversionHomeDismissed = false;
-    write(HOME_DISMISSED_KEY, '0');
-    eligibleForIdle = false;
-
-    if (isVisible() && hasFocus() && uiState.activeView === 'chat') {
-      uiState.conversionSurface = 'chat';
-      notifyChanged();
-      return;
-    }
-
-    if (floatPresenter) {
-      uiState.conversionSurface = 'float';
-      notifyChanged();
-      try {
-        if (await floatPresenter()) return;
-      } catch {
-        // Fall through to the native-notification surface.
-      }
-      if (!enabled || state === 'done' || hasDepositInState()) return;
-    }
-
-    uiState.conversionSurface = 'home';
-    notifyChanged();
-    void notifyNative(offer);
-  }
-
-  function scheduleIdle(conversationId: string): void {
-    if (idleTimer !== null) clearTimer(idleTimer);
-    idleGeneration += 1;
-    const generation = idleGeneration;
-    idleTimer = setTimer(() => { void showAfterIdle(conversationId, generation); }, IDLE_MS);
-  }
-
   async function evaluate(conversationId: string): Promise<void> {
     const offer = await eligibleOffer(conversationId);
-    if (!offer || !enabled) {
-      eligibleForIdle = false;
-      return;
-    }
-    eligibleForIdle = true;
-    scheduleIdle(conversationId);
-  }
-
-  function cancelIdle(keepEligible = false): void {
-    if (idleTimer !== null) clearTimer(idleTimer);
-    idleTimer = null;
-    idleGeneration += 1;
-    if (!keepEligible) eligibleForIdle = false;
+    if (
+      !offer
+      || !enabled
+      || uiState.conversionOffer !== null
+      || state !== armedStateForVariant(offer.variant)
+    ) return;
+    uiState.conversionOffer = offer;
+    notifyChanged();
   }
 
   function finish(): void {
-    cancelIdle();
+    uiState.conversionOffer = null;
     persistState('done');
-    uiState.conversionSurface = null;
     notifyChanged();
-    void floatRefresh?.();
   }
 
   function advanceReminder(): void {
     if (uiState.conversionPreview) {
-      uiState.conversionHomeDismissed = true;
-      uiState.conversionSurface = null;
+      uiState.conversionOffer = null;
       notifyChanged();
-      void floatRefresh?.();
       return;
     }
-    cancelIdle();
-    const shownVariant = variant ?? uiState.conversionOffer?.variant ?? null;
+    const shownVariant = uiState.conversionOffer?.variant ?? null;
     const nextState = nextReminderState(shownVariant);
     persistState(nextState);
-    variant = null;
-    shownAt = 0;
-    uiState.conversionVariant = null;
-    uiState.conversionShownAt = 0;
     uiState.conversionOffer = null;
-    uiState.conversionSurface = null;
-    uiState.conversionHomeDismissed = false;
-    write(VARIANT_KEY, '');
-    write(SHOWN_AT_KEY, '0');
-    write(HOME_DISMISSED_KEY, '0');
     notifyChanged();
-    void floatRefresh?.();
-  }
-
-  function advanceExpiredReminder(): boolean {
-    if (state !== 'shown' || !reminderExpired(variant, installAgeDays())) return false;
-    const nextState = nextReminderState(variant);
-    persistState(nextState);
-    variant = null;
-    shownAt = 0;
-    uiState.conversionVariant = null;
-    uiState.conversionShownAt = 0;
-    uiState.conversionOffer = null;
-    uiState.conversionSurface = null;
-    uiState.conversionHomeDismissed = false;
-    write(VARIANT_KEY, '');
-    write(SHOWN_AT_KEY, '0');
-    write(HOME_DISMISSED_KEY, '0');
-    return true;
-  }
-
-  async function refreshOffer(): Promise<ConversionOffer | null> {
-    if (uiState.conversionPreview) return uiState.conversionOffer;
-    if (!enabled || !variant || hasDepositInState()) {
-      if (hasDepositInState()) uiState.conversionOffer = null;
-      return null;
-    }
-    const offer = await buildOffer(variant);
-    if (offer) {
-      uiState.conversionOffer = offer;
-      notifyChanged();
-      void floatRefresh?.();
-    }
-    return offer;
   }
 
   initialize();
-  if (enabled && variant) void refreshOffer();
 
   return {
     onResponseCompleted(conversationId, usage) {
       if (!enabled) return;
       recordCompletion(usage);
-      if (advanceExpiredReminder()) {
-        void evaluate(conversationId);
-        return;
-      }
-      if (state === 'shown' || state === 'done') {
-        if (variant) void refreshOffer();
-        return;
-      }
+      if (state === 'done' || uiState.conversionOffer !== null) return;
       void evaluate(conversationId);
     },
-    onRequestStarted() {
-      cancelIdle();
-    },
-    onComposerActivity() {
-      if (!eligibleForIdle) return;
-      scheduleIdle(uiState.chatActiveConversation ?? '');
-    },
-    dismissPrompt: advanceReminder,
-    acceptPrompt: advanceReminder,
+    acceptHome: advanceReminder,
     dismissHome: advanceReminder,
     async reconcilePayer() {
       if (uiState.conversionPreview) return;
@@ -829,38 +606,23 @@ export function initConversionModule({
       uiState.conversionOffer = null;
       finish();
     },
-    refreshOffer,
     preview(nextVariant) {
       const isD1 = nextVariant === 'd1';
       const isD5 = nextVariant === 'd5';
       const isD15 = nextVariant === 'd15';
       uiState.conversionPreview = true;
-      uiState.conversionEnabled = true;
-      uiState.conversionVariant = nextVariant;
       uiState.conversionOffer = {
         variant: nextVariant,
         requestsCount: isD1 ? 23 : isD5 ? 41 : isD15 ? 96 : 13,
         retrospectiveUsd: isD1 ? '2.10' : isD5 ? '4.85' : isD15 ? '11.40' : '1.27',
         prospectiveUsd: '16.00',
-        runRateUsdMonthly: isD1 ? '63' : null,
       };
-      uiState.conversionSurface = 'home';
-      uiState.conversionHomeDismissed = false;
       notifyChanged();
     },
     clearPreview() {
       uiState.conversionPreview = false;
       uiState.conversionOffer = null;
-      uiState.conversionSurface = null;
-      uiState.conversionVariant = variant;
       notifyChanged();
-      if (variant) void refreshOffer();
-    },
-    setFloatPresenter(present) {
-      floatPresenter = present;
-    },
-    setFloatRefresh(refresh) {
-      floatRefresh = refresh;
     },
   };
 }

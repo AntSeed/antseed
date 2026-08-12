@@ -75,7 +75,6 @@ type ChatModuleOptions = {
   uiState: RendererUiState;
   appendSystemLog: (message: string) => void;
   onPaymentCardShown?: () => void;
-  onRequestStarted?: () => void;
   onResponseCompleted?: (conversationId: string, usage: {
     inputTokens: number;
     outputTokens: number;
@@ -115,7 +114,6 @@ export function initChatModule({
   uiState,
   appendSystemLog,
   onPaymentCardShown,
-  onRequestStarted,
   onResponseCompleted,
 }: ChatModuleOptions): ChatModuleApi {
   // ---------------------------------------------------------------------------
@@ -2042,7 +2040,6 @@ export function initChatModule({
     const content = text.trim();
     // Build message content — multipart with prepared attachments, or plain string
     uiState.chatError = null;
-    onRequestStarted?.();
     setConversationSending(convId, true);
     void (async () => {
       let preparedAttachments: PreparedChatAttachment[];
@@ -2623,7 +2620,6 @@ export function initChatModule({
 
     if (bridge.onChatAiStreamStart) {
       bridge.onChatAiStreamStart((data) => {
-        onRequestStarted?.();
         if (data.conversationId === uiState.chatActiveConversation) {
           uiState.chatError = null;
           notifyUiStateChanged();

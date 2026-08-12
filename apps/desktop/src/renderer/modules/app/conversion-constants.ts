@@ -12,6 +12,5 @@ export const D1_MIN_TURNS = 3;
 export const D2_MIN_LIFETIME_REQUESTS = 8;
 export const MIN_AMMO_USD = 0.5;
 export const MIN_NETWORK_DISCOUNT = 0.2;
-export const IDLE_MS = conversionDev ? 3_000 : 20_000;
 export const DEPOSIT_SUGGESTED_USD = 10;
 export const COUNTER_RETENTION_DAYS = 7;

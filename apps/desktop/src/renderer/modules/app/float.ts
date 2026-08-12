@@ -49,8 +49,6 @@ const AUTO_OPEN_CLOSE_COOLDOWN_MS = 30_000;
 export type VprFloatModule = {
   /** Open the pill (always with the chat dropdown expanded). */
   openFloat: (profileName?: string) => Promise<void>;
-  /** Present the conversion teaser, returning false when Float is unavailable. */
-  presentConversion: () => Promise<boolean>;
   closeFloat: () => Promise<void>;
   /** Immediate data push for main-window changes the pill mirrors (route
       selection); no-op while the pill is closed. */
@@ -72,8 +70,6 @@ export function initVprFloatModule({
   onSelectModel,
   refreshUsage,
   onClosed,
-  onConversionAccept,
-  onConversionDismiss,
 }: {
   bridge: DesktopBridge | undefined;
   uiState: RendererUiState;
@@ -81,8 +77,6 @@ export function initVprFloatModule({
   /** Refresh the payments summary; force bypasses its self-throttle. */
   refreshUsage: (force?: boolean) => Promise<void>;
   onClosed?: () => void;
-  onConversionAccept?: () => void;
-  onConversionDismiss?: () => void;
 }): VprFloatModule {
   let timer: number | null = null;
   let profiles: SystemProxyProfileSummary[] = [];
@@ -343,13 +337,6 @@ export function initVprFloatModule({
       ...(identity ? { identityLabel: identity } : {}),
       ...(uiState.vprFloatShowRoutedPeer ? { showRoutedPeer: true } : {}),
       trafficActive: logTrafficActive() || buyerDeltaActive,
-      ...(uiState.conversionSurface === 'float' && uiState.conversionOffer ? {
-        conversionOffer: {
-          requestsCount: uiState.conversionOffer.requestsCount,
-          retrospectiveUsd: uiState.conversionOffer.retrospectiveUsd,
-          prospectiveUsd: uiState.conversionOffer.prospectiveUsd,
-        },
-      } : {}),
     };
   }
 
@@ -428,15 +415,6 @@ export function initVprFloatModule({
   bridge?.onVprFloatAction?.((action) => {
     if (typeof action !== 'object' || action === null) return;
     const type = (action as { type?: unknown }).type;
-    if (type === 'open-deposit') {
-      onConversionAccept?.();
-      return;
-    }
-    if (type === 'dismiss-conversion') {
-      onConversionDismiss?.();
-      void buildData().then((data) => bridge?.vprFloatUpdate?.(data));
-      return;
-    }
     if (type === 'select-model') {
       const { provider, serviceId } = action as { provider?: unknown; serviceId?: unknown };
       if (typeof provider === 'string' && typeof serviceId === 'string') {
@@ -484,15 +462,11 @@ export function initVprFloatModule({
     }
   });
 
-  async function openFloatInternal(profileName?: string, requireConversion = false): Promise<boolean> {
+  async function openFloatInternal(profileName?: string): Promise<boolean> {
     if (!bridge?.vprFloatOpen) return false;
     if (profileName) selectedApp = profileName;
     // Fresh numbers on open — don't show a minute-old summary.
     await refreshUsage(true);
-    if (requireConversion && (
-      uiState.conversionSurface !== 'float'
-      || uiState.conversionOffer === null
-    )) return false;
     const data = await buildData();
     // Every open lands with the chat dropdown already expanded — the list is
     // the pill's payload, so surfacing the window means surfacing the chats
@@ -524,9 +498,6 @@ export function initVprFloatModule({
       // the pill back.
       autoOpenSuppressedUntil = 0;
       await openFloatInternal(profileName);
-    },
-    presentConversion() {
-      return openFloatInternal(undefined, true);
     },
     async closeFloat() {
       await bridge?.vprFloatClose?.();

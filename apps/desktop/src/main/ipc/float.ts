@@ -113,7 +113,6 @@ export function registerFloatIpc(): void {
     ) {
       const win = getMainWindow();
       if (win) {
-        win.webContents.send('vpr-float:action', action);
         if (win.isMinimized()) win.restore();
         win.show();
         win.focus();
