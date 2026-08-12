@@ -209,6 +209,12 @@ export class PeerConnection extends EventEmitter {
     return this._crypto !== null || this._dataChannel !== null;
   }
 
+  get transportDescription(): "webrtc" | "tcp-encrypted" | "tcp-plaintext" {
+    if (this._dataChannel !== null) return "webrtc";
+    if (this._crypto !== null) return "tcp-encrypted";
+    return "tcp-plaintext";
+  }
+
   attachRawSocket(socket: Socket, initialData?: Uint8Array, crypto?: TransportCrypto): void {
     this._rawSocket = socket;
     this._crypto = crypto ?? null;

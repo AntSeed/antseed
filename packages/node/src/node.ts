@@ -1741,6 +1741,21 @@ export class AntseedNode extends EventEmitter {
     debugLog(`[Node] Incoming connection from ${conn.remotePeerId.slice(0, 12)}...`);
     const buyerPeerId = conn.remotePeerId;
 
+    const logTransport = (): void => {
+      debugLog(`[Node] Connection with ${conn.remotePeerId.slice(0, 12)}... open via ${conn.transportDescription}`);
+    };
+    if (conn.state === ConnectionState.Open || conn.state === ConnectionState.Authenticated) {
+      logTransport();
+    } else {
+      const onState = (state: ConnectionState): void => {
+        if (state === ConnectionState.Open) {
+          conn.off("stateChange", onState);
+          logTransport();
+        }
+      };
+      conn.on("stateChange", onState);
+    }
+
     // Create PaymentMux alongside ProxyMux (seller-side)
     const paymentMux = new PaymentMux(conn);
     const verificationMux = new VerificationMux(conn);
@@ -2130,7 +2145,7 @@ export class AntseedNode extends EventEmitter {
       conn.on("stateChange", onState);
     });
 
-    debugLog(`[Node] Connected to ${peer.peerId.slice(0, 12)}...`);
+    debugLog(`[Node] Connected to ${peer.peerId.slice(0, 12)}... via ${conn.transportDescription}`);
     this._peerCapabilities.set(peer.peerId, peerCapabilities);
     this._wireConnection(conn, peer.peerId);
     return conn;
