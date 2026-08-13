@@ -24,6 +24,7 @@ import {
   type SerializedHttpResponseChunk,
   type SweepReceiptPayload,
 } from '@antseed/node'
+import { canonicalModelKey } from '@antseed/node/model-identity'
 import {
   createStreamingAdapter,
   detectRequestServiceApiProtocol,
@@ -1767,34 +1768,22 @@ export class BuyerProxy {
   }
 
   /**
-   * GET /v1/models[/:id][?type=text|images] — answered locally from the
-   * discovered-peer cache, aggregated across the network. The
+   * GET /v1/models[?type=text|images] and GET /v1/models/:id — answered
+   * locally from the discovered-peer cache, aggregated across the network. The
    * `x-antseed-request-id` response header keeps the port-reuse probe in
    * `buyer start` recognizing this as an AntSeed proxy.
    */
   private async _handleNetworkModels(res: ServerResponse, rawPath: string): Promise<void> {
     const url = new URL(rawPath, 'http://localhost')
-    const typeFilter = parseModelTypeFilter(url.searchParams.get('type'))
     const responseHeaders = { 'content-type': 'application/json', 'x-antseed-request-id': randomUUID() }
-    if (typeFilter === 'invalid') {
-      res.writeHead(400, responseHeaders)
-      res.end(JSON.stringify({
-        error: {
-          message: `Unknown model type "${url.searchParams.get('type') ?? ''}" — expected "text" or "images".`,
-          type: 'invalid_request_error',
-          param: 'type',
-        },
-      }))
-      return
-    }
-
     const peers = await this._getPeers()
     const models = buildNetworkModels(peers, Date.now())
 
     const modelIdRaw = url.pathname.replace(/^\/v1\/models\/?/i, '')
     if (modelIdRaw.length > 0) {
-      const modelId = decodeURIComponent(modelIdRaw).trim().toLowerCase()
-      const model = models.find((entry) => entry.id.toLowerCase() === modelId)
+      const modelId = decodeURIComponent(modelIdRaw).trim()
+      const modelKey = canonicalModelKey(modelId)
+      const model = models.find((entry) => canonicalModelKey(entry.id) === modelKey)
       if (!model) {
         res.writeHead(404, responseHeaders)
         res.end(JSON.stringify({
@@ -1808,6 +1797,19 @@ export class BuyerProxy {
       }
       res.writeHead(200, responseHeaders)
       res.end(JSON.stringify(model))
+      return
+    }
+
+    const typeFilter = parseModelTypeFilter(url.searchParams.get('type'))
+    if (typeFilter === 'invalid') {
+      res.writeHead(400, responseHeaders)
+      res.end(JSON.stringify({
+        error: {
+          message: `Unknown model type "${url.searchParams.get('type') ?? ''}" — expected "text" or "images".`,
+          type: 'invalid_request_error',
+          param: 'type',
+        },
+      }))
       return
     }
 

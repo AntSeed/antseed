@@ -82,7 +82,7 @@ curl -s http://localhost:8377/v1/models | jq '.data[].id'
 curl -s 'http://localhost:8377/v1/models?type=images' | jq '.data[] | {id, peers: [.peers[].peerId]}'
 ```
 
-`GET /v1/models` is answered locally from the buyer's discovered-peer cache and covers the **whole network** — no peer pin required. Each entry lists the model id, its `type` (`text` or `image`), and a `peers` array with every seller serving it (peer id, provider, protocols, and pricing), sorted by reputation. Filter with `?type=text` or `?type=images`, or look up a single model with `GET /v1/models/<id>`. Use a returned `peers[].peerId` directly as `<peerId>@<model>` to route a request to that seller.
+`GET /v1/models` is answered locally from the buyer's discovered-peer cache and covers the **whole network** — no peer pin required. Cosmetic names and conservative aliases such as `claude-opus-5` and `opus-5` are grouped into one entry. Each entry lists the aggregate model id, its `type` (`text` or `image`), and a `peers` array with every seller serving it (peer id, provider, actual advertised `serviceId`, protocols, and pricing), sorted by reputation. Filter with `?type=text` or `?type=images`, or look up a single model with `GET /v1/models/<id>`. Route to a specific offer with `<peerId>@<serviceId>` using values from that same `peers[]` item.
 
 ## Supported API Formats
 

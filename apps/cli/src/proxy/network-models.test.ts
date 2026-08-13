@@ -96,6 +96,28 @@ test('aggregates one entry per model id across peers, case-insensitively', () =>
   assert.equal(qwen.created, Math.floor(NOW_MS / 1000))
   // Higher-reputation peer first.
   assert.deepEqual(qwen.peers.map((peer) => peer.peerId), [mixedSeller.peerId, textSeller.peerId])
+  assert.deepEqual(qwen.peers.map((peer) => peer.serviceId), ['QWEN3-Coder', 'qwen3-coder'])
+})
+
+test('merges conservative family aliases while preserving advertised service ids', () => {
+  const branded = makePeer({
+    peerId: 'd'.repeat(40),
+    providerServiceApiProtocols: {
+      anthropic: { services: { 'claude-opus-5': ['anthropic-messages'] } },
+    },
+  })
+  const unbranded = makePeer({
+    peerId: 'e'.repeat(40),
+    providerServiceApiProtocols: {
+      anthropic: { services: { 'Opus 5': ['anthropic-messages'] } },
+    },
+  })
+
+  const models = buildNetworkModels([branded, unbranded], NOW_MS)
+
+  assert.equal(models.length, 1)
+  assert.equal(models[0]?.id, 'claude-opus-5')
+  assert.deepEqual(models[0]?.peers.map((peer) => peer.serviceId), ['claude-opus-5', 'Opus 5'])
 })
 
 test('service pricing overrides provider defaults', () => {

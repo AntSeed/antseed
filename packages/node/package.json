@@ -40,6 +40,10 @@
     "./types": {
       "import": "./dist/types/index.js",
       "types": "./dist/types/index.d.ts"
+    },
+    "./model-identity": {
+      "import": "./dist/model-identity.js",
+      "types": "./dist/model-identity.d.ts"
     }
   },
   "scripts": {

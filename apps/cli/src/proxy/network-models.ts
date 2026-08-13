@@ -2,10 +2,11 @@
 // Aggregates the buyer's discovered-peer cache into an OpenAI-style
 // /v1/models payload that covers the whole network instead of a single
 // pinned seller. Each model id appears once, with the peers that serve it
-// (and their pricing) listed under `peers`. Callers can then pin a route
-// explicitly with `<peerId>@<model>`.
+// (and their pricing) listed under `peers`. Each peer retains its actual
+// advertised `serviceId`, which callers use to pin `<peerId>@<serviceId>`.
 
 import { buildNetworkServiceOffers, type PeerInfo } from '@antseed/node'
+import { canonicalModelKey } from '@antseed/node/model-identity'
 
 export type NetworkModelType = 'text' | 'image'
 
@@ -13,6 +14,7 @@ export type NetworkModelPeerOffer = {
   peerId: string
   displayName?: string
   provider: string
+  serviceId: string
   protocols: string[]
   type: NetworkModelType
   inputUsdPerMillion?: number
@@ -43,10 +45,9 @@ export function parseModelTypeFilter(raw: string | null): ModelTypeFilter {
 }
 
 /**
- * One entry per model id across all discovered peers. Models are grouped
- * case-insensitively (the first-seen spelling wins); a model counts as an
- * image model when any peer announces it with the `openai-images` protocol
- * or with `image` in its capability outputs.
+ * One entry per canonical model across all discovered peers. Cosmetic naming
+ * variants and conservative family aliases are grouped together, while each
+ * peer offer retains its actual advertised service id for explicit routing.
  */
 export function buildNetworkModels(peers: PeerInfo[], nowMs: number): NetworkModelEntry[] {
   const created = Math.floor(nowMs / 1000)
@@ -57,7 +58,8 @@ export function buildNetworkModels(peers: PeerInfo[], nowMs: number): NetworkMod
   }
 
   for (const offer of buildNetworkServiceOffers(peers)) {
-    const key = offer.serviceId.toLowerCase()
+    const key = canonicalModelKey(offer.serviceId)
+    if (!key) continue
     let entry = byModelKey.get(key)
     if (!entry) {
       entry = { id: offer.serviceId, object: 'model', created, owned_by: 'antseed', type: offer.type, peers: [] }
@@ -68,6 +70,7 @@ export function buildNetworkModels(peers: PeerInfo[], nowMs: number): NetworkMod
       peerId: offer.peerId,
       ...(offer.displayName ? { displayName: offer.displayName } : {}),
       provider: offer.provider,
+      serviceId: offer.serviceId,
       protocols: offer.protocols,
       type: offer.type,
       ...(offer.inputUsdPerMillion !== undefined ? { inputUsdPerMillion: offer.inputUsdPerMillion } : {}),

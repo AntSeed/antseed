@@ -849,7 +849,15 @@ function makeNetworkModelPeers(): PeerInfo[] {
   imagePeer.providerServiceApiProtocols = {
     openai: { services: { 'flux-1-schnell': ['openai-images'] } },
   }
-  return [textPeer, imagePeer]
+  const aliasPeer = makePeer('c', ['anthropic'])
+  aliasPeer.providerServiceApiProtocols = {
+    anthropic: { services: { 'Claude Opus 5': ['anthropic-messages'] } },
+  }
+  const secondAliasPeer = makePeer('d', ['anthropic'])
+  secondAliasPeer.providerServiceApiProtocols = {
+    anthropic: { services: { 'opus-5': ['anthropic-messages'] } },
+  }
+  return [textPeer, imagePeer, aliasPeer, secondAliasPeer]
 }
 
 test('GET /v1/models is answered locally with the network-wide model list', async () => {
@@ -867,11 +875,13 @@ test('GET /v1/models is answered locally with the network-wide model list', asyn
   assert.ok(res.headers['x-antseed-request-id'])
   const body = JSON.parse(res.body)
   assert.equal(body.object, 'list')
-  assert.deepEqual(body.data.map((model: { id: string }) => model.id), ['flux-1-schnell', 'qwen3-coder'])
-  const flux = body.data[0]
+  assert.deepEqual(body.data.map((model: { id: string }) => model.id), ['Claude Opus 5', 'flux-1-schnell', 'qwen3-coder'])
+  const opus = body.data[0]
+  assert.deepEqual(opus.peers.map((peer: { serviceId: string }) => peer.serviceId), ['Claude Opus 5', 'opus-5'])
+  const flux = body.data[1]
   assert.equal(flux.type, 'image')
   assert.equal(flux.peers[0]?.peerId, peers[1]?.peerId)
-  const qwen = body.data[1]
+  const qwen = body.data[2]
   assert.equal(qwen.type, 'text')
   assert.equal(qwen.peers[0]?.inputUsdPerMillion, 3)
   assert.equal(forwarded, 0)
@@ -885,7 +895,7 @@ test('GET /v1/models?type= filters by model type and rejects unknown types', asy
   assert.deepEqual(JSON.parse(images.body).data.map((model: { id: string }) => model.id), ['flux-1-schnell'])
 
   const text = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/v1/models?type=text' }))
-  assert.deepEqual(JSON.parse(text.body).data.map((model: { id: string }) => model.id), ['qwen3-coder'])
+  assert.deepEqual(JSON.parse(text.body).data.map((model: { id: string }) => model.id), ['Claude Opus 5', 'qwen3-coder'])
 
   const bad = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/v1/models?type=audio' }))
   assert.equal(bad.statusCode, 400)
@@ -898,6 +908,14 @@ test('GET /v1/models/:id looks up a single model across the network', async () =
   const hit = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/v1/models/QWEN3-coder' }))
   assert.equal(hit.statusCode, 200)
   assert.equal(JSON.parse(hit.body).id, 'qwen3-coder')
+
+  const hitWithIgnoredType = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/v1/models/QWEN3-coder?type=audio' }))
+  assert.equal(hitWithIgnoredType.statusCode, 200)
+  assert.equal(JSON.parse(hitWithIgnoredType.body).id, 'qwen3-coder')
+
+  const aliasHit = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/v1/models/opus-5' }))
+  assert.equal(aliasHit.statusCode, 200)
+  assert.equal(JSON.parse(aliasHit.body).id, 'Claude Opus 5')
 
   const miss = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/v1/models/does-not-exist' }))
   assert.equal(miss.statusCode, 404)
