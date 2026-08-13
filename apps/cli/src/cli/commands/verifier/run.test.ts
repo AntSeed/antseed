@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -12,7 +12,7 @@ import {
   type ProxyAuditEvidenceV1,
 } from '../../../verifier/proxy-evidence.js'
 import { registerVerifierCommands } from './index.js'
-import { loadResumeCandidates, resolveRunModels } from './run.js'
+import { filterCompatibleResumeCandidates, loadResumeCandidates, resolveRunModels } from './run.js'
 
 function command(): Command {
   const program = new Command().exitOverride().configureOutput({ writeErr: () => undefined, writeOut: () => undefined })
@@ -198,6 +198,53 @@ test('second repair keeps the original seller reservation audit id', async () =>
     const candidate = [...candidates.values()][0]
     assert.equal(candidate?.auditId, firstRepairAuditId)
     assert.equal(candidate?.reservationAuditId, originalAuditId)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('automatic resume ignores candidates whose archived bank reservation no longer exists', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-verifier-stale-resume-'))
+  const banksDir = join(directory, 'fresh-bank')
+  const candidate = {
+    model: 'claude-opus-4-6',
+    peerId: '11'.repeat(20),
+    service: 'claude-opus-4-6',
+    auditId: `0x${'22'.repeat(32)}`,
+    reservationAuditId: `0x${'33'.repeat(32)}`,
+    evidencePath: join(directory, 'evidence.json'),
+    evidenceHash: `0x${'44'.repeat(32)}`,
+    referenceId: 'archived-reference',
+    queryProfileHash: `0x${'55'.repeat(32)}`,
+    probeIds: ['archived-probe'],
+    exchanges: [],
+  }
+  try {
+    const modelBankDir = join(banksDir, 'claude-opus-4-6')
+    await mkdir(modelBankDir, { recursive: true })
+    await writeFile(join(modelBankDir, 'bank.json'), JSON.stringify({
+      referenceCosts: [],
+      referenceTemplate: {
+        generator: { name: 'antseed-simple-reference-builder', version: '3' },
+      },
+    }))
+    const candidates = new Map([['candidate', candidate]])
+    const automatic = await filterCompatibleResumeCandidates({
+      candidates,
+      banksDir,
+      epoch: '2026-08-13',
+      strict: false,
+    })
+    assert.equal(automatic.size, 0)
+    await assert.rejects(
+      filterCompatibleResumeCandidates({
+        candidates,
+        banksDir,
+        epoch: '2026-08-13',
+        strict: true,
+      }),
+      /incompatible with the active probe bank: invalid seller probe ledger/,
+    )
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

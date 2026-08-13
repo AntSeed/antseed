@@ -12,6 +12,7 @@ import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1, type PeerId, type PeerInfo } fr
 import { ConcurrencyLimiter } from './audit-concurrency.js'
 import {
   classifyVerificationTarget,
+  classifyVerificationTargetServices,
   loadBuyerProxySnapshot,
   readModelAuditCheckpoints,
   verifyModelTarget,
@@ -357,6 +358,27 @@ test('target eligibility tolerates persisted partial metadata without provider a
   assert.deepEqual(classifyVerificationTarget(persistedPeer, 'gpt-5.6-sol', targetPolicy), {
     eligible: true,
     service: 'GPT-5.6-SOL',
+  })
+})
+
+test('target aliases select one eligible advertised spelling without duplicating the seller', () => {
+  const aliasedPeer = peer({
+    providerPricing: { test: {
+      defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 1 },
+      services: {
+        'claude-opus-4-6': { inputUsdPerMillion: 6, outputUsdPerMillion: 31 },
+        'claude-opus-4.6': { inputUsdPerMillion: 4, outputUsdPerMillion: 20 },
+      },
+    } },
+  })
+
+  assert.deepEqual(classifyVerificationTargetServices(
+    aliasedPeer,
+    ['claude-opus-4-6', 'claude-opus-4.6'],
+    targetPolicy,
+  ), {
+    eligible: true,
+    service: 'claude-opus-4.6',
   })
 })
 

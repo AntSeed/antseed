@@ -20,6 +20,7 @@ import {
   type TokenPricingUsdPerMillion,
 } from '@antseed/node'
 import { parsePersistedPeers } from '../proxy/buyer-proxy.js'
+import { createDomainHomogeneousKbfBatches } from './kbf-batching.js'
 import {
   deriveProxyAuditId,
   parseProxyAuditExchangeCost,
@@ -287,6 +288,20 @@ export function classifyVerificationTarget(
   return { eligible: true, service }
 }
 
+export function classifyVerificationTargetServices(
+  peer: PeerInfo,
+  services: readonly string[],
+  policy: VerificationTargetPolicy,
+): ReturnType<typeof classifyVerificationTarget> {
+  const candidates = services
+    .map((service) => service.trim().toLowerCase())
+    .filter((service, index, all) => service.length > 0 && all.indexOf(service) === index)
+    .map((service) => classifyVerificationTarget(peer, service, policy))
+  return candidates.find((candidate) => candidate.eligible)
+    ?? candidates.find((candidate) => !candidate.eligible && candidate.code !== 'model_not_advertised')
+    ?? { eligible: false, code: 'model_not_advertised', service: null, reason: 'model not advertised' }
+}
+
 function resolveAdvertisedOffer(
   peer: PeerInfo,
   normalizedModel: string,
@@ -355,7 +370,11 @@ export async function verifyModelTarget(input: {
     model: string
   }
 }): Promise<ModelVerificationTargetResult | ModelVerificationSkip> {
-  const batches = chunk(input.reference.probes, KBF_PROBES_PER_REQUEST)
+  const batches = createDomainHomogeneousKbfBatches(
+    input.reference.probes,
+    KBF_PROBES_PER_REQUEST,
+    (values) => [...values],
+  )
   const deadline = new LazyAuditDeadline(input.context.auditTimeoutMs)
   const auditId = input.auditId ?? canonicalHashBytes32({
     domain: 'antseed-verifier-provisional-audit-v1',
@@ -365,12 +384,15 @@ export async function verifyModelTarget(input: {
   })
   const exchangeByBatch = new Map<number, ProxyAuditEvidenceExchangeV1>()
   for (const exchange of input.resume?.exchanges ?? []) {
-    if (isReusableExchange(exchange)) exchangeByBatch.set(exchange.batchIndex, exchange)
+    const expectedProbeIds = batches[exchange.batchIndex]?.probes.map((probe) => probe.id)
+    if (isReusableExchange(exchange) && expectedProbeIds && sameStrings(exchange.probeIds, expectedProbeIds)) {
+      exchangeByBatch.set(exchange.batchIndex, exchange)
+    }
   }
   const reusedBatchIndexes = [...exchangeByBatch.keys()].sort((left, right) => left - right)
-  const pending = batches.flatMap((probes, batchIndex) => exchangeByBatch.has(batchIndex)
+  const pending = batches.flatMap((batch, batchIndex) => exchangeByBatch.has(batchIndex)
     ? []
-    : [{ probes, batchIndex }])
+    : [{ probes: batch.probes, batchIndex }])
   let checkpointTail = Promise.resolve()
   const persistCheckpoint = async (): Promise<void> => {
     const snapshot = [...exchangeByBatch.values()].sort((left, right) => left.batchIndex - right.batchIndex)
@@ -498,8 +520,16 @@ export async function verifyModelTarget(input: {
     deadline.close()
   }
   const exchanges = [...exchangeByBatch.values()].sort((left, right) => left.batchIndex - right.batchIndex)
-  const answers = exchanges.flatMap((exchange) => exchange.answers)
-  const matchVector = exchanges.flatMap((exchange) => exchange.matches)
+  const answersByProbeId = new Map<string, number | null>()
+  const matchesByProbeId = new Map<string, 0 | 1 | null>()
+  for (const exchange of exchanges) {
+    for (const [index, probeId] of exchange.probeIds.entries()) {
+      answersByProbeId.set(probeId, exchange.answers[index] ?? null)
+      matchesByProbeId.set(probeId, exchange.matches[index] ?? null)
+    }
+  }
+  const answers = input.reference.probes.map((probe) => answersByProbeId.get(probe.id) ?? null)
+  const matchVector = input.reference.probes.map((probe) => matchesByProbeId.get(probe.id) ?? null)
   const fragment = verifyKbf(input.reference, { answers, matchVector }, { minCoverage: 1 })
   if (fragment.verdict === 'UNKNOWN') throw new Error(fragment.verdictReason ?? 'verification returned UNKNOWN')
 
@@ -1261,10 +1291,8 @@ function responseText(body: Uint8Array): string {
   return new TextDecoder().decode(body)
 }
 
-function chunk<T>(items: readonly T[], size: number): T[][] {
-  const chunks: T[][] = []
-  for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size))
-  return chunks
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index])
 }
 
 async function sleepWithSignal(

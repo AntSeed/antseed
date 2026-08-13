@@ -34,6 +34,18 @@ export function excludedVerifierDomains(
   return new Set(entry?.[1].excludedDomains ?? [])
 }
 
+export function verifierModelServices(
+  config: VerifierCLIConfig | undefined,
+  requestedModel: string,
+): string[] {
+  const endpoint = config?.referenceEndpoint
+  const entry = endpoint && findModelEntry(endpoint, requestedModel)
+  if (!entry) return [requestedModel.trim().toLowerCase()]
+  return [entry[0], ...(entry[1].serviceAliases ?? [])]
+    .map((service) => service.trim().toLowerCase())
+    .filter((service, index, services) => service.length > 0 && services.indexOf(service) === index)
+}
+
 export function resolveVerifierCommandModels(
   config: VerifierCLIConfig | undefined,
   modelValue: string | undefined,

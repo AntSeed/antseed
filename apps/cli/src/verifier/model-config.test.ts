@@ -7,6 +7,7 @@ import {
   excludedVerifierDomains,
   resolveVerifierCommandModels,
   resolveVerifierModelConfig,
+  verifierModelServices,
 } from './model-config.js'
 import type { VerifierModelCatalog } from './openrouter-catalog.js'
 
@@ -68,6 +69,16 @@ test('excluded domains apply only to their configured model', () => {
   assert.deepEqual([...excludedVerifierDomains(value, 'MODEL-LARGE')], ['medical'])
   assert.deepEqual([...excludedVerifierDomains(value, 'disabled')], [])
   assert.deepEqual([...excludedVerifierDomains(value, 'missing')], [])
+})
+
+test('configured service aliases share one logical verifier model', () => {
+  const value = config()
+  value.referenceEndpoint!.models['model-large']!.serviceAliases = ['model.large', 'vendor/model-large']
+  assert.deepEqual(verifierModelServices(value, 'MODEL-LARGE'), [
+    'model-large',
+    'model.large',
+    'vendor/model-large',
+  ])
 })
 
 test('command model resolution requires exactly one mode and configured enabled models', () => {

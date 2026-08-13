@@ -21,6 +21,7 @@ import { safeServiceSlug } from './slug.js'
 import { normalized } from './utils.js'
 
 export const BANK_EXHAUSTED = 'BANK_EXHAUSTED'
+const CURRENT_ANTSEED_REFERENCE_BUILDER_VERSION = '3'
 
 interface BankProbeV1 {
   probe: KbfProbe
@@ -495,6 +496,7 @@ export async function inspectModelProbeBankPower(input: {
     || !Array.isArray(bank.contrastModels)) {
     throw new Error(`invalid probe bank at ${path}`)
   }
+  assertCurrentBankEnrollment(bank, input.model)
   const activeContrasts = new Set(bank.contrastModels.map(normalized))
   const excludedDomains = excludedVerifierDomains(input.config, input.model)
   const eligible = bank.probes.filter((entry) => !excludedDomains.has(entry.probe.domain)
@@ -650,6 +652,12 @@ function probeBankCompatibilityHash(model: string, reference: KbfReferenceV1): s
     serviceAliases: reference.serviceAliases.map(normalized).sort(),
     queryProfileHash: queryProfileHash(reference.queryProfile),
     provenance: reference.provenance ?? null,
+    generator: {
+      name: reference.generator.name,
+      version: reference.generator.version,
+      enrollmentBatchingVersion: reference.generator.params.enrollmentBatchingVersion ?? null,
+      enrollmentStabilityVersion: reference.generator.params.enrollmentStabilityVersion ?? null,
+    },
     minimumMismatchDelta: reference.minimumMismatchDelta,
     assumptions: {
       alpha: reference.statisticalPowerEvidence.alpha,
@@ -744,5 +752,16 @@ async function readRequiredBank(path: string, model: string): Promise<ProbeBankV
   if (!Array.isArray(bank.referenceCosts)) {
     throw new Error(`probe bank for ${model} has no reference cost metadata; rebuild it`)
   }
+  assertCurrentBankEnrollment(bank, model)
   return bank
+}
+
+function assertCurrentBankEnrollment(bank: ProbeBankV1, model: string): void {
+  if (bank.referenceTemplate.generator.name === 'antseed-simple-reference-builder'
+    && bank.referenceTemplate.generator.version !== CURRENT_ANTSEED_REFERENCE_BUILDER_VERSION) {
+    throw new Error(
+      `probe bank for ${model} uses reference enrollment ${bank.referenceTemplate.generator.version}; `
+      + `archive it and rebuild with enrollment ${CURRENT_ANTSEED_REFERENCE_BUILDER_VERSION}`,
+    )
+  }
 }

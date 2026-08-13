@@ -268,6 +268,58 @@ test('probe banks reject incompatible query profiles', async () => {
   }
 })
 
+test('probe banks reject incompatible enrollment algorithms', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-probe-bank-enrollment-'))
+  try {
+    await appendReference(directory)
+    const incompatible = reference()
+    incompatible.generator = {
+      ...incompatible.generator,
+      version: 'next',
+      params: {
+        ...incompatible.generator.params,
+        enrollmentBatchingVersion: 2,
+        enrollmentStabilityVersion: 2,
+      },
+    }
+    incompatible.referenceId = computeReferenceId(incompatible)
+    await assert.rejects(appendReference(directory, incompatible), /incompatible with the new reference/)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('audit reservations reject legacy AntSeed enrollment banks', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-probe-bank-legacy-enrollment-'))
+  try {
+    const legacy = reference()
+    legacy.generator = {
+      name: 'antseed-simple-reference-builder',
+      version: '2',
+      verifierKind: 'kbf',
+      params: {},
+    }
+    legacy.referenceId = computeReferenceId(legacy)
+    await appendReference(directory, legacy)
+    await assert.rejects(inspectModelProbeBankPower({
+      banksDir: directory,
+      model: 'model-a',
+    }), /archive it and rebuild with enrollment 3/)
+    await assert.rejects(reserveModelAuditReference({
+      banksDir: directory,
+      model: 'model-a',
+      sellerPeerId: '11'.repeat(20),
+      service: 'model-a',
+      runId: 'run-a',
+      epoch: '7',
+      config: undefined,
+      shuffle: <T>(values: readonly T[]) => [...values],
+    }), /archive it and rebuild with enrollment 3/)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('every seller and run in an epoch shares one powered probe reference', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'antseed-probe-bank-'))
   const identityShuffle = <T>(values: readonly T[]) => [...values]

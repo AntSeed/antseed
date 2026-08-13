@@ -245,6 +245,7 @@ test('loadConfig preserves and validates verifier settings', async () => {
     models: {
       'gpt-5.6-sol': {
         upstreamModel: 'gpt-5.6-sol',
+        serviceAliases: ['gpt-5.6.sol'],
         referenceRoute: {
           type: 'antseed',
           service: 'gpt-5.6-sol-reference',
@@ -296,6 +297,7 @@ test('loadConfig preserves and validates verifier settings', async () => {
     assert.equal(config.verifier?.contrastSelection?.inputWeight, 0.9);
     assert.equal(config.verifier?.referenceEndpoint?.sourceId, 'trusted-reference-v1');
     assert.deepEqual(config.verifier?.referenceEndpoint?.models['gpt-5.6-sol']?.excludedDomains, ['medical']);
+    assert.deepEqual(config.verifier?.referenceEndpoint?.models['gpt-5.6-sol']?.serviceAliases, ['gpt-5.6.sol']);
     assert.equal(config.verifier?.referenceEndpoint?.models['gpt-5.6-sol']?.referenceRoute?.service, 'gpt-5.6-sol-reference');
     assert.equal(config.verifier?.referenceMaxRequestsPerBuild, 500);
     assert.equal(config.verifier?.referenceMinimumProbeCount, 120);
@@ -410,6 +412,20 @@ test('loadConfig rejects invalid verifier settings', async () => {
   } }), async (configPath) => {
     await assert.rejects(loadConfig(configPath), /excludedDomains must not contain duplicates/);
   });
+  for (const [serviceAliases, message] of [
+    [['target'], /serviceAliases must not duplicate/],
+    [['alias', 'ALIAS'], /serviceAliases must not duplicate/],
+    [[''], /serviceAliases must be a string array/],
+  ] as const) {
+    await withTempConfig(JSON.stringify({ verifier: {
+      referenceEndpoint: {
+        baseUrl: 'https://reference.example/v1', sourceId: 'test', trust: 'trusted',
+        models: { target: { upstreamModel: 'target', contrastModels: ['contrast'], serviceAliases } },
+      },
+    } }), async (configPath) => {
+      await assert.rejects(loadConfig(configPath), message);
+    });
+  }
   await withTempConfig(JSON.stringify({ verifier: {
     referenceEndpoint: {
       baseUrl: 'https://reference.example/v1', sourceId: 'test', trust: 'trusted',

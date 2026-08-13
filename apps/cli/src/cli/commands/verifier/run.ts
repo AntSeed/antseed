@@ -30,10 +30,10 @@ import {
   mapConcurrently,
 } from '../../../verifier/audit-concurrency.js'
 import { acquirePidFileLock } from '../../../verifier/atomic-files.js'
-import { resolveVerifierCommandModels } from '../../../verifier/model-config.js'
+import { resolveVerifierCommandModels, verifierModelServices } from '../../../verifier/model-config.js'
 import { asError } from '../../../verifier/utils.js'
 import {
-  classifyVerificationTarget,
+  classifyVerificationTargetServices,
   loadBuyerProxySnapshot,
   readModelAuditCheckpoints,
   verifyModelTarget,
@@ -119,11 +119,18 @@ export function registerVerifierRunCommand(verifier: Command): void {
           ? await readVerifierRunManifest(evidenceDir, previousStatus.runId).catch(() => null)
           : null
         const resumeManifest = requestedResumeManifest ?? automaticResumeManifest
-        const resumeCandidates = resumeManifest
+        const discoveredResumeCandidates = resumeManifest
           ? await loadResumeCandidates(resumeManifest, models)
           : previousStatus?.epoch === epoch
             ? await loadCheckpointResumeCandidates(evidenceDir, previousStatus.runId, epoch, models)
             : new Map<string, ResumeCandidate>()
+        const resumeCandidates = await filterCompatibleResumeCandidates({
+          candidates: discoveredResumeCandidates,
+          banksDir,
+          config: config.verifier,
+          epoch,
+          strict: requestedResumeManifest !== null,
+        })
         const resumeSourceRunId = requestedResumeManifest?.runId
           ?? (resumeCandidates.size > 0 ? previousStatus?.runId ?? null : null)
         const resumeOnly = resumeSourceRunId !== null
@@ -153,11 +160,14 @@ export function registerVerifierRunCommand(verifier: Command): void {
         }
         const preparedModels = runModels.map((model) => {
           const skipped: ModelVerificationSkip[] = []
-          const normalizedModel = model.trim().toLowerCase()
+          const configuredServices = verifierModelServices(config.verifier, model)
           const targets = proxy.peers.flatMap((peer) => {
             const resumeCandidate = resumeCandidates.get(resumeKey(model, peer.peerId))
             if (resumeOnly && !resumeCandidate) return []
-            const eligibility = classifyVerificationTarget(peer, normalizedModel, targetPolicy)
+            const services = resumeCandidate
+              ? [resumeCandidate.service.toLowerCase(), ...configuredServices]
+              : configuredServices
+            const eligibility = classifyVerificationTargetServices(peer, services, targetPolicy)
             if (eligibility.eligible) return [{ peer, service: eligibility.service, resumeCandidate }]
             if (eligibility.code !== 'model_not_advertised') {
               const policySkip = eligibility.code !== 'missing_response_auth'
@@ -668,6 +678,37 @@ export async function loadCheckpointResumeCandidates(
     }
   }
   return candidates
+}
+
+export async function filterCompatibleResumeCandidates(input: {
+  candidates: ReadonlyMap<string, ResumeCandidate>
+  banksDir: string
+  config?: VerifierCLIConfig
+  epoch: string
+  strict: boolean
+}): Promise<Map<string, ResumeCandidate>> {
+  const compatible = new Map<string, ResumeCandidate>()
+  for (const [key, candidate] of input.candidates) {
+    try {
+      const loaded = await loadModelAuditReservation({
+        banksDir: input.banksDir,
+        model: candidate.model,
+        sellerPeerId: candidate.peerId,
+        auditId: candidate.reservationAuditId,
+        config: input.config,
+      })
+      validateResumeCandidate(candidate, loaded.reference, candidate.service, input.epoch)
+      compatible.set(key, candidate)
+    } catch (error) {
+      if (input.strict) {
+        throw new Error(
+          `resume audit ${candidate.auditId} is incompatible with the active probe bank: ${asError(error).message}`,
+        )
+      }
+      return new Map()
+    }
+  }
+  return compatible
 }
 
 export function validateResumeCandidate(

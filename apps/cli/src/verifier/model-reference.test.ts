@@ -165,6 +165,8 @@ test('missing references fail with the explicit build command', async () => {
 
 test('reference build uses minimum mandatory reasoning and persists the target override', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'antseed-reference-build-'))
+  const value = config()
+  value.referenceEndpoint!.models[MODEL]!.serviceAliases = ['model.test-alias']
   const requestBodies: Array<Record<string, unknown>> = []
   const fetchFn: typeof fetch = async (_url, init) => {
     const body = JSON.parse(String(init?.body)) as Record<string, unknown> & {
@@ -190,8 +192,9 @@ test('reference build uses minimum mandatory reasoning and persists the target o
     }],
   ])
   try {
-    const built = await buildModelReference({ model: MODEL, referencesDir: directory, config: config(), catalog, fetchFn })
+    const built = await buildModelReference({ model: MODEL, referencesDir: directory, config: value, catalog, fetchFn })
     assert.equal(built.reference.probes.length, 100)
+    assert.deepEqual(built.reference.serviceAliases, [MODEL, 'model.test-alias'])
     assert.equal(built.reference.queryProfile.reasoningStrategy, 'reasoning-effort-minimum-supported')
     assert.deepEqual(built.reference.queryProfile.requestOverrides, {
       reasoning: { effort: 'low', exclude: true },
@@ -459,6 +462,7 @@ test('reference build adaptively isolates and caches a refused self-test probe',
   let refusedProbeText: string | null = null
   const refusedBatchSizes: number[] = []
   const logs: string[] = []
+  let contrastChecked = false
   const fetchFn: typeof fetch = async (_url, init) => {
     const body = JSON.parse(String(init?.body)) as {
       model: string
@@ -466,10 +470,8 @@ test('reference build adaptively isolates and caches a refused self-test probe',
     }
     const prompt = body.messages.at(-1)?.content ?? ''
     const probeLines = prompt.split('\n').filter((line) => /^\(\d+\) /.test(line))
-    const promptShapes = new Set(probeLines.map((line) => line
-      .replace(/^\(\d+\) /, '')
-      .replace(/stable fact \d+/g, '{fact}')))
-    if (body.model === 'upstream-test' && refusedProbeText === null && promptShapes.size > 1) {
+    if (body.model === 'contrast-test') contrastChecked = true
+    if (contrastChecked && body.model === 'upstream-test' && refusedProbeText === null) {
       refusedProbeText = probeLines[0]?.replace(/^\(1\) /, '') ?? null
     }
     if (body.model === 'upstream-test'
@@ -494,9 +496,9 @@ test('reference build adaptively isolates and caches a refused self-test probe',
     })
     assert.equal(built.reference.probes.length, 100)
     assert.equal(built.reference.selfTest.coverage, 0.99)
-    assert.equal(refusedBatchSizes.includes(10), true)
+    assert.equal(refusedBatchSizes.some((size) => size > 1), true)
     assert.equal(refusedBatchSizes.includes(1), true)
-    assert.equal(logs.some((message) => message.includes('splitting refused 10-probe self-test batch')), true)
+    assert.equal(logs.some((message) => /splitting refused \d+-probe self-test batch/.test(message)), true)
     assert.equal(logs.some((message) => message.includes('skipping refused self-test probe')), true)
     const attemptsAfterFirstBuild = refusedSelfTestAttempts
     await buildModelReference({
@@ -837,11 +839,11 @@ test('collector rejects certified consensus values outside the declared range', 
   assert.equal(collected.probes[0]?.consensus, 5)
 })
 
-test('collector applies the canonical absolute tolerance during stability certification', async () => {
+test('collector applies rounded agreement for canonical absolute domains', async () => {
   const stabilityAnswers = new Map([
     ['stability-0', 100],
-    ['stability-1', 102],
-    ['stability-2', 98],
+    ['stability-1', 100.4],
+    ['stability-2', 99.6],
   ])
   const query = async (_model: string, body: Record<string, unknown>): Promise<string> => {
     const messages = body.messages as Array<{ content: string }>
@@ -924,8 +926,8 @@ test('collector rejects decimal disagreement in exact-match domains', async () =
       return prompt.includes('domain biology') ? 'test organism | 100' : ''
     }
     const cacheDomain = String(body.__antseedReferenceCacheDomain ?? '')
-    if (cacheDomain === 'stability-1') return '(1) 100.4'
-    if (cacheDomain === 'stability-2') return '(1) 99.6'
+    if (cacheDomain === 'stability-1') return '(1) 100.5'
+    if (cacheDomain === 'stability-2') return '(1) 99.4'
     return '(1) 100'
   }
 
@@ -937,6 +939,84 @@ test('collector rejects decimal disagreement in exact-match domains', async () =
     maxNoProgressRounds: 1,
     query,
   }), /made no progress for 1 rounds/)
+})
+
+test('collector rejects consistently non-integral answers in exact-match domains', async () => {
+  const query = async (_model: string, body: Record<string, unknown>): Promise<string> => {
+    const messages = body.messages as Array<{ content: string }>
+    const prompt = messages.at(-1)?.content ?? ''
+    if (prompt.startsWith('Generate ')) return prompt.includes('domain biology') ? 'test organism | 100' : ''
+    return '(1) 100.4'
+  }
+
+  await assert.rejects(collectReferenceProbes({
+    model: 'reference-model',
+    contrastModels: [],
+    targetCount: 1,
+    candidateCountPerRound: 5,
+    maxNoProgressRounds: 1,
+    query,
+  }), /made no progress for 1 rounds/)
+})
+
+test('collector rejects relative-domain stability spread above two percent', async () => {
+  const query = async (_model: string, body: Record<string, unknown>): Promise<string> => {
+    const messages = body.messages as Array<{ content: string }>
+    const prompt = messages.at(-1)?.content ?? ''
+    if (prompt.startsWith('Generate ')) return prompt.includes('domain medical') ? 'test medicine | 100' : ''
+    const cacheDomain = String(body.__antseedReferenceCacheDomain ?? '')
+    if (cacheDomain === 'stability-1') return '(1) 103'
+    if (cacheDomain === 'stability-2') return '(1) 97'
+    return '(1) 100'
+  }
+
+  await assert.rejects(collectReferenceProbes({
+    model: 'reference-model',
+    contrastModels: [],
+    targetCount: 1,
+    candidateCountPerRound: 5,
+    maxNoProgressRounds: 1,
+    query,
+  }), /made no progress for 1 rounds/)
+})
+
+test('collector independently shuffles every stability pass and preserves probe alignment', async () => {
+  const passOrders: string[][] = []
+  let shuffleCalls = 0
+  const query = async (_model: string, body: Record<string, unknown>): Promise<string> => {
+    const messages = body.messages as Array<{ content: string }>
+    const prompt = messages.at(-1)?.content ?? ''
+    if (prompt.startsWith('Generate ')) return 'first organism | 10\nsecond organism | 20'
+    const names = [...prompt.matchAll(/of (first organism|second organism) is/g)].map((match) => match[1]!)
+    passOrders.push(names)
+    return names.map((name, index) => `(${index + 1}) ${name === 'first organism' ? 10 : 20}`).join('\n')
+  }
+  const shuffle = <T>(values: readonly T[]): T[] => {
+    shuffleCalls += 1
+    return shuffleCalls % 2 === 0 ? [...values].reverse() : [...values]
+  }
+
+  const collected = await collectReferenceProbes({
+    model: 'reference-model',
+    contrastModels: [],
+    excludedDomains: [
+      'chemistry_bp', 'chemistry_mp', 'physics', 'astronomy', 'math', 'programming', 'medical',
+      'crypto_params', 'chinese_history', 'chinese_geography', 'chinese_literature',
+      'chinese_internet', 'internet_culture', 'pop_culture',
+    ],
+    targetCount: 2,
+    candidateCountPerRound: 2,
+    query,
+    shuffle,
+  })
+
+  assert.equal(shuffleCalls, 3)
+  assert.deepEqual(passOrders, [
+    ['first organism', 'second organism'],
+    ['second organism', 'first organism'],
+    ['first organism', 'second organism'],
+  ])
+  assert.deepEqual(collected.probes.map((probe) => probe.consensus), [10, 20])
 })
 
 test('reference requests retry new-account throttles with queued same-model work', async () => {

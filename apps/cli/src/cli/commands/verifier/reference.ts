@@ -37,9 +37,7 @@ export function registerVerifierReferenceCommand(verifier: Command): void {
       const plans: ReferenceProgressPlan[] = await Promise.all(models.map(async (model) => {
         try {
           const selected = resolveVerifierModelConfig(config.verifier, model, catalog)
-          const bankStatus = options.all === true
-            ? await inspectModelProbeBankPower({ banksDir, model, config: config.verifier })
-            : undefined
+          const bankStatus = await inspectModelProbeBankPower({ banksDir, model, config: config.verifier })
           const skipReason = referenceBuildSkipReason(options.all === true, bankStatus)
           return {
             model,

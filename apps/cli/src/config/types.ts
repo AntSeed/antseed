@@ -309,6 +309,8 @@ export interface VerifierAntseedReferenceRouteConfig {
 export interface VerifierReferenceModelConfig {
   /** Whether all-model commands include this audited service. Default: true. */
   enabled?: boolean;
+  /** Additional network service ids audited with the same logical model and probe bank. */
+  serviceAliases?: string[];
   /** Model id sent to the reference endpoint. */
   upstreamModel: string;
   /** Trusted upstream pricing used for automatic contrast selection. */

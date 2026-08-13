@@ -86,6 +86,11 @@ verifier:
       claude-opus-5:
         enabled: true
         upstreamModel: anthropic/claude-opus-5
+      claude-opus-4-6:
+        enabled: true
+        serviceAliases:
+          - claude-opus-4.6
+        upstreamModel: anthropic/claude-opus-4.6
       claude-sonnet-5:
         enabled: true
         upstreamModel: anthropic/claude-sonnet-5
@@ -112,6 +117,11 @@ from `benchmarks.artificial_analysis.intelligence_index`; models without that
 score are not automatic contrast candidates. Manual model pricing,
 `contrastModels`, and `contrastModelBank` should be omitted when automatic
 selection is desired.
+
+`serviceAliases` maps alternate network service spellings to the same logical
+audited model and probe bank. Each seller is audited at most once, using an
+eligible spelling that seller actually advertises. The primary mapping key is
+always included automatically and aliases must not duplicate it.
 
 The audited model's `upstreamModel` remains the trusted source of ground-truth
 answers. Cheap models are contrasts only. Automatic selection computes:
@@ -151,6 +161,16 @@ unfinished checkpoint are charged once when that completed reference is first
 appended to the bank. A reference ID already present in the bank does not create
 a second claimable cost entry.
 
+Reference consistency follows the KBF enrollment procedure. Candidate probes
+are queried in domain-homogeneous batches of at most ten under temperatures
+`0`, `0.7`, and `0.7`, with an independently shuffled order for each pass.
+Exact domains require all three rounded answers to agree. Relative domains
+require the first pass to match the consensus under the domain tolerance and
+the maximum deviation from the three-answer mean to be at most 2%. The
+final reference self-test, contrast checks, and seller audits also use
+domain-homogeneous batches. Probe answers are always remapped to their original
+probe IDs before self-test scoring or audit verification.
+
 ## Probe Banks
 
 Probe banks and per-seller ledgers are stored at:
@@ -165,7 +185,9 @@ Probe banks and per-seller ledgers are stored at:
 Successful reference builds append probes and self-test outcomes. Repeated probe
 IDs are deduplicated only when their canonical probe content and self-test
 evidence match. The append is rejected when an ID conflicts or when model,
-query-profile, provenance, or statistical assumptions are incompatible.
+query-profile, provenance, statistical assumptions, or the reference-enrollment
+algorithm are incompatible. An operator must archive or remove an incompatible
+legacy bank before appending probes built by a newer enrollment algorithm.
 
 Before the first seller dispatch for a model and epoch, the verifier
 cryptographically shuffles eligible bank probes. It evaluates configured

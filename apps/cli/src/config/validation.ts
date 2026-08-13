@@ -313,7 +313,7 @@ const VERIFIER_REFERENCE_ENDPOINT_KEYS = new Set([
   'baseUrl', 'apiKey', 'apiKeyEnv', 'sourceId', 'trust', 'antseedPeerId', 'models', 'contrastModelBank',
 ]);
 const VERIFIER_REFERENCE_MODEL_KEYS = new Set([
-  'enabled', 'upstreamModel', 'pricing', 'referenceRoute', 'contrastModels', 'excludedDomains',
+  'enabled', 'serviceAliases', 'upstreamModel', 'pricing', 'referenceRoute', 'contrastModels', 'excludedDomains',
 ]);
 const VERIFIER_REFERENCE_ROUTE_KEYS = new Set(['type', 'service', 'peerId', 'pricing']);
 const VERIFIER_CONTRAST_SELECTION_KEYS = new Set([
@@ -500,6 +500,18 @@ function validateReferenceEndpoint(
     }
     if (model.enabled !== undefined && typeof model.enabled !== 'boolean') {
       errors.push(`${modelPath}.enabled must be a boolean`);
+    }
+    if (model.serviceAliases !== undefined) {
+      if (!Array.isArray(model.serviceAliases)
+        || model.serviceAliases.some((alias) => typeof alias !== 'string' || alias.trim().length === 0)) {
+        errors.push(`${modelPath}.serviceAliases must be a string array when provided`);
+      } else {
+        const normalizedServices = [service, ...model.serviceAliases]
+          .map((alias) => alias.trim().toLowerCase());
+        if (new Set(normalizedServices).size !== normalizedServices.length) {
+          errors.push(`${modelPath}.serviceAliases must not duplicate the model service or another alias`);
+        }
+      }
     }
     const hasExplicitContrasts = Array.isArray(model.contrastModels) && model.contrastModels.length > 0;
     if (model.pricing !== undefined) {

@@ -36,6 +36,7 @@ import {
   createCanonicalKbfProbe,
 } from './canonical-kbf-domains.js'
 import { writeJsonAtomic } from './atomic-files.js'
+import { createDomainHomogeneousKbfBatches } from './kbf-batching.js'
 import { asError, normalized, sleep } from './utils.js'
 
 const CANDIDATE_COUNT = 300
@@ -260,7 +261,7 @@ export async function buildModelReference(input: {
   const sizing = resolveReferenceSizingPolicy(input.config)
   const checkpointPath = join(input.referencesDir, '.checkpoints', `${safeServiceSlug(input.model)}.json`)
   const compatibilityHash = canonicalHashBytes32({
-    version: 1,
+    version: 2,
     model: normalized(input.model),
     endpoint: {
       baseUrl: endpoint.baseUrl.replace(/\/+$/, ''),
@@ -280,6 +281,8 @@ export async function buildModelReference(input: {
     candidateCountPerRound: CANDIDATE_COUNT,
     candidateBatchSize: CANDIDATE_BATCH_SIZE,
     candidatePromptVersion: 3,
+    enrollmentBatchingVersion: 2,
+    enrollmentStabilityVersion: 2,
     timeoutMs,
     reasoningStrategy: targetReasoningStrategy,
     routesByModel: [...routesByModel.entries()],
@@ -401,12 +404,14 @@ export async function buildModelReference(input: {
     kind: 'kbf',
     referenceId: '',
     referenceModel: input.model,
-    serviceAliases: [normalized(input.model)],
+    serviceAliases: [input.model, ...(modelConfig.serviceAliases ?? [])]
+      .map(normalized)
+      .filter((service, index, services) => services.indexOf(service) === index),
     createdAt: new Date().toISOString(),
     source: 'generated',
     generator: {
       name: 'antseed-simple-reference-builder',
-      version: '2',
+      version: '3',
       verifierKind: 'kbf',
       params: {
         sourceId: endpoint.sourceId,
@@ -421,6 +426,8 @@ export async function buildModelReference(input: {
         candidateCount: collected.candidateCount,
         sizing,
         sizingAlgorithmVersion: REFERENCE_SIZING_ALGORITHM_VERSION,
+        enrollmentBatchingVersion: 2,
+        enrollmentStabilityVersion: 2,
       },
     },
     provenance: {
@@ -472,6 +479,7 @@ export async function collectReferenceProbes(input: {
   maxNoProgressRounds?: number
   log?: (message: string) => void
   initial?: CollectedReferenceProbes
+  shuffle?: <T>(values: readonly T[]) => T[]
 }): Promise<CollectedReferenceProbes> {
   assertPositiveInteger(input.targetCount, 'targetCount')
   const candidateCountPerRound = input.candidateCountPerRound ?? Math.max(CANDIDATE_COUNT, input.targetCount * 3)
@@ -514,7 +522,7 @@ export async function collectReferenceProbes(input: {
     })
     state.candidateCount = state.generatedProbeIds.size
     input.log?.(`generation round ${state.generationRound}: testing ${candidates.length} new candidates for stability`)
-    const stable = await certifyStableProbes(input.model, candidates, input.query, input.log)
+    const stable = await certifyStableProbes(input.model, candidates, input.query, input.log, input.shuffle)
     const contrastOutcomes = await queryContrastOutcomes(stable, input.contrastModels, input.query, input.log)
     const accepted = stable.filter((probe) => input.contrastModels.length === 0
       || (contrastOutcomes.get(probe.id)?.length ?? 0) > 0)
@@ -553,19 +561,55 @@ async function certifyStableProbes(
   candidates: readonly KbfProbe[],
   query: ReferenceQuery,
   log?: (message: string) => void,
+  shuffle?: <T>(values: readonly T[]) => T[],
 ): Promise<KbfProbe[]> {
   if (candidates.length === 0) return []
   const passes = await allSettledOrThrow(KBF_ENROLLMENT_TEMPERATURES.map((temperature, passIndex) => {
-    return queryDomainGroupedProbeAnswers(model, candidates, temperature, `stability-${passIndex}`, query, log)
+    const passShuffle = shuffle ?? deterministicShuffle(`stability-${passIndex}`)
+    return queryDomainGroupedProbeAnswers(
+      model,
+      candidates,
+      temperature,
+      `stability-${passIndex}`,
+      query,
+      log,
+      passShuffle,
+    )
   }))
   return candidates.flatMap((probe, index) => {
     const values = passes.map((pass) => pass[index] ?? null).filter((value): value is number => value !== null)
     if (values.length !== passes.length) return []
-    const consensus = median(values)
+    const consensus = stableConsensus(values, probe)
+    if (consensus === null) return []
     if (consensus < probe.range[0] || consensus > probe.range[1]) return []
-    const certified = { ...probe, consensus, tolerance: canonicalKbfTolerance(probe.domain) }
-    return values.every((value) => matchesTolerance(value, certified)) ? [certified] : []
+    return [{ ...probe, consensus, tolerance: canonicalKbfTolerance(probe.domain) }]
   })
+}
+
+function stableConsensus(values: readonly number[], probe: KbfProbe): number | null {
+  const tolerance = CANONICAL_KBF_DOMAINS.some((definition) => definition.key === probe.domain)
+    ? canonicalKbfTolerance(probe.domain)
+    : probe.tolerance
+  if (tolerance.mode === 'absolute') {
+    const rounded = values.map(roundHalfToEven)
+    if (!rounded.every((value) => value === rounded[0])) return null
+    const consensus = rounded[0]!
+    return matchesTolerance(values[0]!, { ...probe, consensus, tolerance }) ? consensus : null
+  }
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length
+  if (mean === 0) return null
+  const maximumRelativeSpread = Math.max(...values.map((value) => Math.abs(value - mean) / Math.abs(mean)))
+  if (maximumRelativeSpread > 0.02) return null
+  const consensus = Math.round(mean * 10_000) / 10_000
+  return matchesTolerance(values[0]!, { ...probe, consensus, tolerance }) ? consensus : null
+}
+
+function roundHalfToEven(value: number): number {
+  const lower = Math.floor(value)
+  const fraction = value - lower
+  if (fraction < 0.5) return lower
+  if (fraction > 0.5) return lower + 1
+  return lower % 2 === 0 ? lower : lower + 1
 }
 
 async function queryDomainGroupedProbeAnswers(
@@ -575,25 +619,34 @@ async function queryDomainGroupedProbeAnswers(
   cacheDomain: string,
   query: ReferenceQuery,
   log?: (message: string) => void,
+  shuffle?: <T>(values: readonly T[]) => T[],
+  options: { allowIncomplete?: boolean; recoverTerminalEmptyBatches?: boolean } = {},
 ): Promise<Array<number | null>> {
-  const grouped = new Map<string, { probes: KbfProbe[]; indexes: number[] }>()
-  for (const [index, probe] of probes.entries()) {
-    const group = grouped.get(probe.domain) ?? { probes: [], indexes: [] }
-    group.probes.push(probe)
-    group.indexes.push(index)
-    grouped.set(probe.domain, group)
-  }
   const answers = new Array<number | null>(probes.length).fill(null)
-  await allSettledOrThrow([...grouped.entries()].map(async ([domain, group]) => {
-    const domainAnswers = await queryProbeAnswers(model, group.probes, temperature, cacheDomain, query, {
-      recoverTerminalEmptyBatches: true,
-      stabilityDomain: domain,
+  const batches = createDomainHomogeneousKbfBatches(probes, KBF_PROBES_PER_REQUEST, shuffle)
+  const queryBatch = async (batch: (typeof batches)[number]): Promise<void> => {
+    const domainAnswers = await queryProbeAnswers(model, batch.probes, temperature, cacheDomain, query, {
+      recoverTerminalEmptyBatches: options.recoverTerminalEmptyBatches ?? true,
+      stabilityDomain: batch.probes[0]?.domain,
       log,
     })
-    for (const [groupIndex, originalIndex] of group.indexes.entries()) {
+    for (const [groupIndex, originalIndex] of batch.indexes.entries()) {
       answers[originalIndex] = domainAnswers[groupIndex] ?? null
     }
-  }))
+  }
+  if (options.allowIncomplete) {
+    for (const batch of batches) {
+      try {
+        await queryBatch(batch)
+      } catch (error) {
+        if (!isRecoverableContrastError(error)) throw error
+        log?.(`contrast model ${model} unavailable; skipping remaining probe answers: ${asError(error).message}`)
+        break
+      }
+    }
+  } else {
+    await allSettledOrThrow(batches.map(queryBatch))
+  }
   return answers
 }
 
@@ -606,10 +659,16 @@ async function queryContrastOutcomes(
   const outcomes = new Map(probes.map((probe) => [probe.id, [] as string[]]))
   const answersByModel = await allSettledOrThrow(contrastModels.map(async (contrastModel) => {
     log?.(`checking contrast model ${contrastModel}`)
-    return queryProbeAnswers(contrastModel, probes, 0, `contrast-${contrastModel}`, query, {
-      allowIncomplete: true,
+    return queryDomainGroupedProbeAnswers(
+      contrastModel,
+      probes,
+      0,
+      `contrast-${contrastModel}`,
+      query,
       log,
-    })
+      identityShuffle,
+      { allowIncomplete: true, recoverTerminalEmptyBatches: false },
+    )
   }))
   for (const [modelIndex, contrastModel] of contrastModels.entries()) {
     const answers = answersByModel[modelIndex]!
@@ -1110,12 +1169,32 @@ async function querySelfTestAnswers(
   query: ReferenceQuery,
   log?: (message: string) => void,
 ): Promise<Array<number | null>> {
-  const answers: Array<number | null> = []
-  for (let offset = 0; offset < probes.length; offset += KBF_PROBES_PER_REQUEST) {
-    const batch = probes.slice(offset, offset + KBF_PROBES_PER_REQUEST)
-    answers.push(...await querySelfTestBatch(model, batch, query, log))
+  const answers = new Array<number | null>(probes.length).fill(null)
+  const batches = createDomainHomogeneousKbfBatches(probes, KBF_PROBES_PER_REQUEST, identityShuffle)
+  for (const batch of batches) {
+    const batchAnswers = await querySelfTestBatch(model, batch.probes, query, log)
+    for (const [batchIndex, originalIndex] of batch.indexes.entries()) {
+      answers[originalIndex] = batchAnswers[batchIndex] ?? null
+    }
   }
   return answers
+}
+
+function identityShuffle<T>(values: readonly T[]): T[] {
+  return [...values]
+}
+
+function deterministicShuffle(seed: string): <T>(values: readonly T[]) => T[] {
+  return <T>(values: readonly T[]): T[] => {
+    const shuffled = [...values]
+    let state = Number.parseInt(canonicalHashBytes32({ seed, length: values.length }).slice(2, 10), 16) >>> 0
+    for (let index = shuffled.length - 1; index > 0; index -= 1) {
+      state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0
+      const swapIndex = state % (index + 1)
+      ;[shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex]!, shuffled[index]!]
+    }
+    return shuffled
+  }
 }
 
 async function querySelfTestBatch(
@@ -1260,12 +1339,6 @@ class EmptyReferenceResponseError extends Error {
   ) {
     super(`reference endpoint returned no text content${detail ? `: ${detail}` : ''}`)
   }
-}
-
-function median(values: number[]): number {
-  const sorted = [...values].sort((left, right) => left - right)
-  const middle = Math.floor(sorted.length / 2)
-  return sorted.length % 2 === 1 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2
 }
 
 function summarizeReferenceCosts(responses: ReferenceCachedResponseV1[]): ReferenceBuildCostV1 {
