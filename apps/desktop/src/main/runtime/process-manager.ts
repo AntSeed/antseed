@@ -3,6 +3,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
+import { desktopSystemProxyCliDataDir } from '../dev-instance.js';
 import { WORKSPACE_APPS_DIR } from '../paths.js';
 
 const { join, resolve } = path;
@@ -356,7 +357,7 @@ export function resolveCommandArgs(opts: StartOptions): string[] {
       }
       break;
     case 'system-proxy':
-      args.push('--data-dir', resolveConnectDataDir());
+      args.push('--data-dir', desktopSystemProxyCliDataDir() ?? resolveConnectDataDir());
       args.push('system-proxy', 'start');
       if (opts.systemProxyPeerId) {
         args.push('--peer', opts.systemProxyPeerId);
@@ -399,6 +400,17 @@ export class ProcessManager {
 
   getState(): RuntimeProcessState[] {
     return [...this.states.values()].map((s) => ({ ...s }));
+  }
+
+  attach(mode: RuntimeMode): RuntimeProcessState {
+    const state = this.states.get(mode)!;
+    state.running = true;
+    state.pid = null;
+    state.startedAt = Date.now();
+    state.lastExitCode = null;
+    state.lastError = null;
+    this.onLog(mode, 'system', `Attached to existing ${mode} runtime`);
+    return { ...state };
   }
 
   getDaemonStateSnapshot(): DaemonStateSnapshot {
@@ -722,11 +734,15 @@ export class ProcessManager {
     });
   }
 
-  async stop(mode: RuntimeMode): Promise<RuntimeProcessState> {
+  async stop(mode: RuntimeMode, preserve = false): Promise<RuntimeProcessState> {
     const child = this.processes.get(mode);
     const state = this.states.get(mode)!;
 
-    if (!child) {
+    if (!child || preserve) {
+      if (child) {
+        this.processes.delete(mode);
+        child.unref();
+      }
       state.running = false;
       state.pid = null;
       return { ...state };

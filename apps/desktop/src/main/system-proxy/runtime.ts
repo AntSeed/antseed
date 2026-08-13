@@ -14,6 +14,9 @@ import { readFileSync } from 'node:fs';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import type { AppLaunchTarget } from '../connected-apps/launch-settings.js';
 import {
+  isMultiInstanceDevelopment,
+} from '../dev-instance.js';
+import {
   getMacAppProcessInfo,
   isAppTargetRunning,
   namedAppTarget,
@@ -447,17 +450,26 @@ export async function clearSystemProxyTransportSettings(port = DEFAULT_SYSTEM_PR
 
 export async function stopManagedRuntimes(): Promise<void> {
   try {
-    await deps().processManager.stopAll();
+    if (isMultiInstanceDevelopment()) {
+      await deps().processManager.stop('system-proxy');
+      await deps().processManager.stop('connect', true);
+    } else {
+      await deps().processManager.stopAll();
+    }
   } finally {
     // Quit path: restore OS proxy settings and unpatch tool configs so
     // nothing routes through the dead proxy while the app is closed — but
     // keep system-proxy.state.json: launch reads it to reconnect the same
     // profiles automatically. Explicit disconnects go through
     // stopSystemProxyRuntime(true), which does delete it.
-    await clearSystemProxyTransportSettings();
-    await unlink(systemProxyPidPath()).catch(() => undefined);
-    removeAllConfigPatches();
-    await stopWslRelays();
+    if (!isMultiInstanceDevelopment() || isOsSystemProxyConfigured(DEFAULT_SYSTEM_PROXY_PORT)) {
+      await clearSystemProxyTransportSettings();
+    }
+    if (!isMultiInstanceDevelopment()) {
+      await unlink(systemProxyPidPath()).catch(() => undefined);
+      removeAllConfigPatches();
+      await stopWslRelays();
+    }
     traySystemProxyProfiles = new Set();
   }
 }
@@ -696,7 +708,9 @@ export async function stopSystemProxyRuntime(clearSettings: boolean): Promise<Ru
       setupProfileNames,
       running: false,
     }), 'utf8').catch(() => undefined);
-    removeAllConfigPatches();
+    if (!isMultiInstanceDevelopment()) {
+      removeAllConfigPatches();
+    }
     await stopWslRelays();
     traySystemProxyProfiles = new Set();
     activeSystemProxyState = null;

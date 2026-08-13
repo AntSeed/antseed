@@ -4,7 +4,9 @@ import { chooseBestVprRoute } from './select';
 import { routesForSelectedModel } from '../catalog/view-models';
 import { activeProfilesFromRuntimeState, buildVprPeerOptions } from './tools';
 
-const SYSTEM_PROXY_PORT = 8378;
+declare const __ANTSEED_SYSTEM_PROXY_PORT__: number;
+
+const SYSTEM_PROXY_PORT = __ANTSEED_SYSTEM_PROXY_PORT__;
 
 type VprRouteTarget = {
   peerId: string;
