@@ -1742,7 +1742,7 @@ const RETRYABLE_STREAM_FAILURE = {
   message: 'Connection lost',
 };
 
-test('a retryable failure moves an auto conversation to a different peer', async () => {
+test('a retryable failure returns an auto conversation to model-only routing', async () => {
   const { api, uiState, persistedSelections, streamErrorHandlers } = setupFailoverHarness('auto');
   await api.refreshChatConversations();
   await api.openConversation('conv-a');
@@ -1760,7 +1760,7 @@ test('a retryable failure moves an auto conversation to a different peer', async
   await waitFor(() => persistedSelections.length === 1);
   assert.deepEqual(persistedSelections[0], {
     conversationId: 'conv-a',
-    peerId: 'peer-b',
+    peerId: null,
     service: 'model-a',
     provider: 'openai',
     routeMode: 'auto',
@@ -1787,7 +1787,7 @@ test('a scheduled failover still retries after the user switches conversations',
     uiState.chatActiveConversation = 'conv-other';
 
     await vi.advanceTimersByTimeAsync(7_000);
-    assert.deepEqual(sends[1], { conversationId: 'conv-a', peerId: 'peer-b' });
+    assert.deepEqual(sends[1], { conversationId: 'conv-a', peerId: undefined });
     assert.equal(uiState.chatRoutingNotice, null);
   } finally {
     vi.useRealTimers();
@@ -1814,14 +1814,14 @@ test('a retryable failure still schedules failover after the user switches conve
     });
 
     await vi.advanceTimersByTimeAsync(7_000);
-    assert.deepEqual(sends[1], { conversationId: 'conv-a', peerId: 'peer-b' });
+    assert.deepEqual(sends[1], { conversationId: 'conv-a', peerId: undefined });
     assert.equal(uiState.chatRoutingNotice, null);
   } finally {
     vi.useRealTimers();
   }
 });
 
-test('successive failovers do not return to an earlier failed peer', async () => {
+test('successive auto retries remain model-only', async () => {
   vi.useFakeTimers();
   try {
     const { api, uiState, sends, streamErrorHandlers } = setupFailoverHarness('auto');
@@ -1841,7 +1841,7 @@ test('successive failovers do not return to an earlier failed peer', async () =>
       stopReason: RETRYABLE_STREAM_FAILURE,
     });
     await vi.advanceTimersByTimeAsync(7_000);
-    assert.deepEqual(sends[1], { conversationId: 'conv-a', peerId: 'peer-b' });
+    assert.deepEqual(sends[1], { conversationId: 'conv-a', peerId: undefined });
 
     streamErrorHandlers[0]?.({
       conversationId: 'conv-a',
@@ -1849,7 +1849,7 @@ test('successive failovers do not return to an earlier failed peer', async () =>
       stopReason: RETRYABLE_STREAM_FAILURE,
     });
     await vi.advanceTimersByTimeAsync(7_000);
-    assert.deepEqual(sends[2], { conversationId: 'conv-a', peerId: 'peer-c' });
+    assert.deepEqual(sends[2], { conversationId: 'conv-a', peerId: undefined });
   } finally {
     vi.useRealTimers();
   }
@@ -1884,7 +1884,7 @@ test('failover keeps the conversation model when the global model pill differs',
   await waitFor(() => uiState.chatRoutingNotice !== null);
   const conversation = (uiState.chatConversations as Conversation[]).find((item) => item.id === 'conv-a');
   assert.equal(conversation?.service, 'model-a');
-  assert.equal(conversation?.peerId, 'peer-b');
+  assert.equal(conversation?.peerId, undefined);
 });
 
 test('a model switch can persist an auto-resolved peer without pinning the chat', async () => {
