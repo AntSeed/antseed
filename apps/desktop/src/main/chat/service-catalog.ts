@@ -1,53 +1,17 @@
-export type ChatServiceProtocol = 'anthropic-messages' | 'openai-chat-completions' | 'openai-responses';
-export type CatalogServiceProtocol = ChatServiceProtocol | 'openai-images';
+import {
+  buildNetworkServiceOffers,
+  type CatalogServiceCapabilities,
+  type CatalogServiceProtocol,
+  type NetworkServiceCatalogPeer,
+} from '@antseed/node';
 
-export type CatalogServiceCapabilities = {
-  contextWindow?: number;
-  maxOutputTokens?: number;
-  inputs?: string[];
-  outputs?: string[];
-  reasoning?: boolean;
-  toolUse?: boolean;
-  structuredOutput?: boolean;
-  supportedParameters?: string[];
-};
+export type ChatServiceProtocol = Exclude<CatalogServiceProtocol, 'openai-images'>;
+export type { CatalogServiceCapabilities, CatalogServiceProtocol };
 
-export type NetworkPeerAddress = {
-  peerId?: string;
-  displayName?: string;
+export type NetworkPeerAddress = NetworkServiceCatalogPeer & {
   host: string;
   port: number;
-  providers?: string[];
-  services?: string[];
   sellerContract?: string;
-  providerServiceApiProtocols?: Record<string, { services: Record<string, string[]> }>;
-  providerServiceCapabilities?: Record<string, { services: Record<string, CatalogServiceCapabilities> }>;
-  providerServiceUnitBillingModels?: Record<string, {
-    services: Record<string, Partial<Record<string, {
-      version: number;
-      components: Array<{ unit: string; priceUsd: number; match?: Record<string, string> }>;
-    }>>>;
-  }>;
-  providerPricing?: Record<string, {
-    defaults?: {
-      inputUsdPerMillion?: number;
-      outputUsdPerMillion?: number;
-      cachedInputUsdPerMillion?: number;
-      input?: number;
-      output?: number;
-    };
-    services?: Record<string, {
-      inputUsdPerMillion?: number;
-      outputUsdPerMillion?: number;
-      cachedInputUsdPerMillion?: number;
-      input?: number;
-      output?: number;
-    }>;
-  }>;
-  providerServiceCategories?: Record<string, { services: Record<string, string[]> }>;
-  defaultInputUsdPerMillion?: number;
-  defaultOutputUsdPerMillion?: number;
-  defaultCachedInputUsdPerMillion?: number;
 };
 
 export type ChatServiceCatalogEntry = {
@@ -68,91 +32,6 @@ export type ChatServiceCatalogEntry = {
   description?: string;
 };
 
-const VALID_CATALOG_SERVICE_PROTOCOLS = new Set<string>([
-  'anthropic-messages', 'openai-chat-completions', 'openai-responses', 'openai-images',
-]);
-
-export function inferProviderProtocol(provider: string): ChatServiceProtocol | null {
-  if (provider === 'openai-responses') {
-    return 'openai-responses';
-  }
-  if (provider === 'openai' || provider === 'openrouter' || provider === 'local-llm') {
-    return 'openai-chat-completions';
-  }
-  if (provider === 'anthropic' || provider === 'claude-code' || provider === 'claude-oauth') {
-    return 'anthropic-messages';
-  }
-  return null;
-}
-
-export function resolveProviderServiceProtocol(
-  apiProtocols: NetworkPeerAddress['providerServiceApiProtocols'],
-  provider: string,
-  serviceId: string,
-): CatalogServiceProtocol | null {
-  const protocols = apiProtocols?.[provider]?.services?.[serviceId];
-  if (!Array.isArray(protocols)) return null;
-  // Image generation is not chat-compatible. Prefer the explicit image
-  // endpoint if a malformed announcement lists both image and chat protocols.
-  if (protocols.includes('openai-images')) return 'openai-images';
-  for (const p of protocols) {
-    if (VALID_CATALOG_SERVICE_PROTOCOLS.has(p)) {
-      return p as CatalogServiceProtocol;
-    }
-  }
-  return null;
-}
-
-export function resolveProviderServicePricing(
-  pricingMap: NetworkPeerAddress['providerPricing'],
-  provider: string,
-  serviceId: string,
-  defaultInput?: number,
-  defaultOutput?: number,
-  defaultCachedInput?: number,
-): { inputUsdPerMillion?: number; outputUsdPerMillion?: number; cachedInputUsdPerMillion?: number } {
-  const providerPricing = pricingMap?.[provider];
-  const servicePricing = providerPricing?.services?.[serviceId];
-  const defaultPricing = providerPricing?.defaults;
-  const inputUsd = servicePricing?.inputUsdPerMillion
-    ?? servicePricing?.input
-    ?? defaultPricing?.inputUsdPerMillion
-    ?? defaultPricing?.input
-    ?? defaultInput;
-  const outputUsd = servicePricing?.outputUsdPerMillion
-    ?? servicePricing?.output
-    ?? defaultPricing?.outputUsdPerMillion
-    ?? defaultPricing?.output
-    ?? defaultOutput;
-  const cachedInputUsd = servicePricing?.cachedInputUsdPerMillion
-    ?? defaultPricing?.cachedInputUsdPerMillion
-    ?? defaultCachedInput;
-  return {
-    ...(inputUsd != null ? { inputUsdPerMillion: inputUsd } : {}),
-    ...(outputUsd != null ? { outputUsdPerMillion: outputUsd } : {}),
-    ...(cachedInputUsd != null ? { cachedInputUsdPerMillion: cachedInputUsd } : {}),
-  };
-}
-
-function resolveImagePriceRange(
-  billingModels: NetworkPeerAddress['providerServiceUnitBillingModels'],
-  provider: string,
-  serviceId: string,
-): { minImageUsdPerImage?: number; maxImageUsdPerImage?: number } {
-  const components = billingModels?.[provider]?.services?.[serviceId]?.['openai-images']?.components;
-  if (!Array.isArray(components)) return {};
-  const prices = components
-    .filter((component) => component?.unit === 'output_images'
-      && Number.isFinite(component.priceUsd)
-      && component.priceUsd >= 0)
-    .map((component) => component.priceUsd);
-  if (prices.length === 0) return {};
-  return {
-    minImageUsdPerImage: Math.min(...prices),
-    maxImageUsdPerImage: Math.max(...prices),
-  };
-}
-
 export function sortChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[]): ChatServiceCatalogEntry[] {
   const protocolRank = (protocol: CatalogServiceProtocol): number => (
     protocol === 'anthropic-messages'
@@ -165,162 +44,38 @@ export function sortChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[]
   );
 
   return entries.sort((a, b) => {
-    if (b.count !== a.count) {
-      return b.count - a.count;
-    }
+    if (b.count !== a.count) return b.count - a.count;
     if (protocolRank(a.protocol) !== protocolRank(b.protocol)) {
       return protocolRank(a.protocol) - protocolRank(b.protocol);
     }
-    if (a.provider !== b.provider) {
-      return a.provider.localeCompare(b.provider);
-    }
+    if (a.provider !== b.provider) return a.provider.localeCompare(b.provider);
     return a.id.localeCompare(b.id);
   });
 }
 
 export function buildChatServiceCatalogFromPeers(peers: NetworkPeerAddress[]): ChatServiceCatalogEntry[] {
-  const results: ChatServiceCatalogEntry[] = [];
-  for (const peer of peers) {
-    const peerId = peer.peerId;
-    const peerLabel = peer.displayName
-      ? `${peer.displayName} (${peerId?.slice(0, 8) ?? ''})`
-      : peerId ? peerId.slice(0, 12) + '...' : undefined;
-
-    const providerList = peer.providers ?? [];
-    const serviceList = peer.services ?? [];
-    const apiProtocols = peer.providerServiceApiProtocols;
-    const pricingMap = peer.providerPricing;
-    const categoriesMap = peer.providerServiceCategories;
-    const capabilitiesMap = peer.providerServiceCapabilities;
-    const unitBillingModels = peer.providerServiceUnitBillingModels;
-    const defaultInput = peer.defaultInputUsdPerMillion;
-    const defaultOutput = peer.defaultOutputUsdPerMillion;
-    const defaultCachedInput = peer.defaultCachedInputUsdPerMillion;
-
-    if (providerList.length > 0) {
-      // Build rows from each provider's own announced service map. The flattened
-      // `peer.services` list is peer-wide, so pairing every service with
-      // providerList[0] makes services belonging to a second provider inherit
-      // the first provider's defaults/pricing.
-      const emittedProviderServices = new Set<string>();
-      for (const provider of providerList) {
-        const providerServiceIds = new Set<string>([
-          ...Object.keys(pricingMap?.[provider]?.services ?? {}),
-          ...Object.keys(apiProtocols?.[provider]?.services ?? {}),
-          ...Object.keys(categoriesMap?.[provider]?.services ?? {}),
-          ...Object.keys(capabilitiesMap?.[provider]?.services ?? {}),
-          ...Object.keys(unitBillingModels?.[provider]?.services ?? {}),
-        ]);
-
-        for (const serviceId of providerServiceIds) {
-          emittedProviderServices.add(`${provider}\u0000${serviceId}`);
-          const protocol = resolveProviderServiceProtocol(apiProtocols, provider, serviceId) ?? inferProviderProtocol(provider);
-          if (!protocol) continue;
-
-          const { inputUsdPerMillion, outputUsdPerMillion, cachedInputUsdPerMillion } = resolveProviderServicePricing(
-            pricingMap,
-            provider,
-            serviceId,
-            defaultInput,
-            defaultOutput,
-            defaultCachedInput,
-          );
-          const categories = categoriesMap?.[provider]?.services?.[serviceId];
-          const imagePriceRange = resolveImagePriceRange(unitBillingModels, provider, serviceId);
-
-          const capabilities = capabilitiesMap?.[provider]?.services?.[serviceId];
-          results.push({
-            id: serviceId,
-            label: serviceId,
-            provider,
-            protocol,
-            ...(capabilities ? { capabilities } : {}),
-            count: 1,
-            ...(peerId ? { peerId } : {}),
-            ...(peerLabel ? { peerLabel } : {}),
-            ...(inputUsdPerMillion != null ? { inputUsdPerMillion } : {}),
-            ...(outputUsdPerMillion != null ? { outputUsdPerMillion } : {}),
-            ...(cachedInputUsdPerMillion != null ? { cachedInputUsdPerMillion } : {}),
-            ...imagePriceRange,
-            ...(categories?.length ? { categories } : {}),
-          });
-        }
-      }
-
-      // Backward-compatible fallback for older state files that only contain a
-      // peer-wide `services` array. In that ambiguous shape we keep the old
-      // first-provider behavior, but do not override provider-specific rows
-      // already emitted above.
-      if (serviceList.length > 0) {
-        const fallbackProvider = providerList[0] ?? 'unknown';
-        for (const serviceId of serviceList) {
-          if (emittedProviderServices.size > 0 && emittedProviderServices.has(`${fallbackProvider}\u0000${serviceId}`)) {
-            continue;
-          }
-          if (emittedProviderServices.size > 0) {
-            continue;
-          }
-          const protocol = resolveProviderServiceProtocol(apiProtocols, fallbackProvider, serviceId) ?? inferProviderProtocol(fallbackProvider);
-          if (!protocol) continue;
-          const { inputUsdPerMillion, outputUsdPerMillion, cachedInputUsdPerMillion } = resolveProviderServicePricing(
-            pricingMap,
-            fallbackProvider,
-            serviceId,
-            defaultInput,
-            defaultOutput,
-            defaultCachedInput,
-          );
-          const categories = categoriesMap?.[fallbackProvider]?.services?.[serviceId];
-
-          const capabilities = capabilitiesMap?.[fallbackProvider]?.services?.[serviceId];
-          results.push({
-            id: serviceId,
-            label: serviceId,
-            provider: fallbackProvider,
-            protocol,
-            ...(capabilities ? { capabilities } : {}),
-            count: 1,
-            ...(peerId ? { peerId } : {}),
-            ...(peerLabel ? { peerLabel } : {}),
-            ...(inputUsdPerMillion != null ? { inputUsdPerMillion } : {}),
-            ...(outputUsdPerMillion != null ? { outputUsdPerMillion } : {}),
-            ...(cachedInputUsdPerMillion != null ? { cachedInputUsdPerMillion } : {}),
-            ...(categories?.length ? { categories } : {}),
-          });
-        }
-      } else if (emittedProviderServices.size === 0) {
-        // No provider-specific service maps and no peer-wide services — create
-        // one entry per provider as a legacy fallback. Do not add these
-        // synthetic rows when protocol/capability maps already produced real
-        // service entries.
-        for (const provider of providerList) {
-          const protocol = inferProviderProtocol(provider);
-          if (!protocol) continue;
-
-          const { inputUsdPerMillion, outputUsdPerMillion, cachedInputUsdPerMillion } = resolveProviderServicePricing(
-            pricingMap,
-            provider,
-            provider,
-            defaultInput,
-            defaultOutput,
-            defaultCachedInput,
-          );
-          results.push({
-            id: provider,
-            label: provider,
-            provider,
-            protocol,
-            count: 1,
-            ...(peerId ? { peerId } : {}),
-            ...(peerLabel ? { peerLabel } : {}),
-            ...(inputUsdPerMillion != null ? { inputUsdPerMillion } : {}),
-            ...(outputUsdPerMillion != null ? { outputUsdPerMillion } : {}),
-            ...(cachedInputUsdPerMillion != null ? { cachedInputUsdPerMillion } : {}),
-          });
-        }
-      }
-    }
-  }
-
-  return sortChatServiceCatalogEntries(results);
+  const entries = buildNetworkServiceOffers(peers)
+    .filter((offer) => offer.protocol !== null)
+    .map((offer): ChatServiceCatalogEntry => {
+      const peerLabel = offer.displayName
+        ? `${offer.displayName} (${offer.peerId.slice(0, 8)})`
+        : `${offer.peerId.slice(0, 12)}...`;
+      return {
+        id: offer.serviceId,
+        label: offer.serviceId,
+        provider: offer.provider,
+        protocol: offer.protocol!,
+        ...(offer.capabilities ? { capabilities: offer.capabilities } : {}),
+        count: 1,
+        peerId: offer.peerId,
+        peerLabel,
+        ...(offer.inputUsdPerMillion !== undefined ? { inputUsdPerMillion: offer.inputUsdPerMillion } : {}),
+        ...(offer.outputUsdPerMillion !== undefined ? { outputUsdPerMillion: offer.outputUsdPerMillion } : {}),
+        ...(offer.cachedInputUsdPerMillion !== undefined ? { cachedInputUsdPerMillion: offer.cachedInputUsdPerMillion } : {}),
+        ...(offer.minImageUsdPerImage !== undefined ? { minImageUsdPerImage: offer.minImageUsdPerImage } : {}),
+        ...(offer.maxImageUsdPerImage !== undefined ? { maxImageUsdPerImage: offer.maxImageUsdPerImage } : {}),
+        ...(offer.categories?.length ? { categories: offer.categories } : {}),
+      };
+    });
+  return sortChatServiceCatalogEntries(entries);
 }

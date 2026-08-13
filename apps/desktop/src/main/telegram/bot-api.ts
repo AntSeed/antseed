@@ -68,24 +68,6 @@ type TgResponse<T> = {
   parameters?: { retry_after?: number };
 };
 
-async function parseTgResponse<T>(method: string, response: Response): Promise<T> {
-  let body: TgResponse<T>;
-  try {
-    body = await response.json() as TgResponse<T>;
-  } catch {
-    throw new TelegramApiError(method, response.status, 'Invalid response from Telegram');
-  }
-  if (!body.ok || body.result === undefined) {
-    throw new TelegramApiError(
-      method,
-      body.error_code ?? response.status,
-      body.description ?? 'Unknown error',
-      body.parameters?.retry_after ?? null,
-    );
-  }
-  return body.result;
-}
-
 async function tgCall<T>(
   token: string,
   method: string,
@@ -105,41 +87,22 @@ async function tgCall<T>(
   } finally {
     clearTimeout(timer);
   }
-  return parseTgResponse(method, response);
-}
 
-/** File payload for the multipart upload methods (sendPhoto / sendDocument). */
-export type TgUploadFile = {
-  bytes: Uint8Array;
-  fileName: string;
-  contentType: string;
-};
-
-async function tgUpload<T>(
-  token: string,
-  method: string,
-  fileField: string,
-  file: TgUploadFile,
-  params: Record<string, string>,
-  timeoutMs = 120_000,
-): Promise<T> {
-  const form = new FormData();
-  for (const [key, value] of Object.entries(params)) form.append(key, value);
-  form.append(fileField, new Blob([file.bytes], { type: file.contentType }), file.fileName);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let response: Response;
+  let body: TgResponse<T>;
   try {
-    // No explicit content-type: fetch derives the multipart boundary.
-    response = await fetch(`${TELEGRAM_API_BASE}/bot${token}/${method}`, {
-      method: 'POST',
-      body: form,
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timer);
+    body = await response.json() as TgResponse<T>;
+  } catch {
+    throw new TelegramApiError(method, response.status, 'Invalid response from Telegram');
   }
-  return parseTgResponse(method, response);
+  if (!body.ok || body.result === undefined) {
+    throw new TelegramApiError(
+      method,
+      body.error_code ?? response.status,
+      body.description ?? 'Unknown error',
+      body.parameters?.retry_after ?? null,
+    );
+  }
+  return body.result;
 }
 
 export type TelegramBotClient = {
@@ -162,10 +125,6 @@ export type TelegramBotClient = {
    * cosmetic and must never fail a turn.
    */
   sendMessageDraft(chatId: number, draftId: number, text: string): Promise<void>;
-  /** Uploads an image as a photo (Telegram caps photos at ~10 MB). */
-  sendPhoto(chatId: number, file: TgUploadFile, options?: { caption?: string }): Promise<TgMessage>;
-  /** Uploads a file as a document — the fallback for oversized or exotic images. */
-  sendDocument(chatId: number, file: TgUploadFile, options?: { caption?: string }): Promise<TgMessage>;
   editMessageText(chatId: number, messageId: number, text: string): Promise<void>;
   answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void>;
   setMyCommands(commands: Array<{ command: string; description: string }>): Promise<void>;
@@ -216,16 +175,6 @@ export function createTelegramBotClient(token: string): TelegramBotClient {
       ...(options?.replyMarkup ? { reply_markup: options.replyMarkup } : {}),
       ...(options?.disableNotification ? { disable_notification: true } : {}),
       ...(options?.parseMode ? { parse_mode: options.parseMode } : {}),
-    }),
-
-    sendPhoto: (chatId, file, options) => tgUpload<TgMessage>(token, 'sendPhoto', 'photo', file, {
-      chat_id: String(chatId),
-      ...(options?.caption ? { caption: options.caption } : {}),
-    }),
-
-    sendDocument: (chatId, file, options) => tgUpload<TgMessage>(token, 'sendDocument', 'document', file, {
-      chat_id: String(chatId),
-      ...(options?.caption ? { caption: options.caption } : {}),
     }),
 
     sendMessageDraft: async (chatId, draftId, text) => {

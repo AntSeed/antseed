@@ -1,0 +1,192 @@
+export type CatalogServiceProtocol =
+  | 'anthropic-messages'
+  | 'openai-chat-completions'
+  | 'openai-responses'
+  | 'openai-images';
+
+export type CatalogServiceCapabilities = {
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  inputs?: string[];
+  outputs?: string[];
+  reasoning?: boolean;
+  toolUse?: boolean;
+  structuredOutput?: boolean;
+  supportedParameters?: string[];
+};
+
+export type NetworkServiceCatalogPeer = {
+  peerId: string;
+  displayName?: string;
+  providers?: string[];
+  services?: string[];
+  reputationScore?: number;
+  providerServiceApiProtocols?: Record<string, { services: Record<string, string[]> }>;
+  providerServiceCapabilities?: Record<string, { services: Record<string, CatalogServiceCapabilities> }>;
+  providerServiceUnitBillingModels?: Record<string, {
+    services: Record<string, Partial<Record<string, {
+      version: number;
+      components: Array<{ unit: string; priceUsd: number; match?: Record<string, string> }>;
+    }>>>;
+  }>;
+  providerPricing?: Record<string, {
+    defaults?: {
+      inputUsdPerMillion?: number;
+      outputUsdPerMillion?: number;
+      cachedInputUsdPerMillion?: number;
+      input?: number;
+      output?: number;
+    };
+    services?: Record<string, {
+      inputUsdPerMillion?: number;
+      outputUsdPerMillion?: number;
+      cachedInputUsdPerMillion?: number;
+      input?: number;
+      output?: number;
+    }>;
+  }>;
+  providerServiceCategories?: Record<string, { services: Record<string, string[]> }>;
+  defaultInputUsdPerMillion?: number;
+  defaultOutputUsdPerMillion?: number;
+  defaultCachedInputUsdPerMillion?: number;
+};
+
+export type NetworkServiceOffer = {
+  serviceId: string;
+  provider: string;
+  protocols: string[];
+  protocol: CatalogServiceProtocol | null;
+  type: 'text' | 'image';
+  capabilities?: CatalogServiceCapabilities;
+  categories?: string[];
+  peerId: string;
+  displayName?: string;
+  reputationScore?: number;
+  inputUsdPerMillion?: number;
+  outputUsdPerMillion?: number;
+  cachedInputUsdPerMillion?: number;
+  minImageUsdPerImage?: number;
+  maxImageUsdPerImage?: number;
+};
+
+const VALID_PROTOCOLS = new Set<string>([
+  'anthropic-messages',
+  'openai-chat-completions',
+  'openai-responses',
+  'openai-images',
+]);
+
+export function inferServiceProtocol(provider: string): Exclude<CatalogServiceProtocol, 'openai-images'> | null {
+  if (provider === 'openai-responses') return 'openai-responses';
+  if (provider === 'openai' || provider === 'openrouter' || provider === 'local-llm') {
+    return 'openai-chat-completions';
+  }
+  if (provider === 'anthropic' || provider === 'claude-code' || provider === 'claude-oauth') {
+    return 'anthropic-messages';
+  }
+  return null;
+}
+
+export function resolveServiceProtocol(protocols: string[], provider: string): CatalogServiceProtocol | null {
+  if (protocols.includes('openai-images')) return 'openai-images';
+  const announced = protocols.find((protocol) => VALID_PROTOCOLS.has(protocol));
+  return announced as CatalogServiceProtocol | undefined ?? inferServiceProtocol(provider);
+}
+
+function announcedServicesByProvider(peer: NetworkServiceCatalogPeer): Map<string, Set<string>> {
+  const byProvider = new Map<string, Set<string>>();
+  const matrices: Array<Record<string, { services?: Record<string, unknown> }> | undefined> = [
+    peer.providerPricing,
+    peer.providerServiceApiProtocols,
+    peer.providerServiceCategories,
+    peer.providerServiceUnitBillingModels,
+    peer.providerServiceCapabilities,
+  ];
+  for (const matrix of matrices) {
+    for (const [provider, entry] of Object.entries(matrix ?? {})) {
+      const serviceIds = byProvider.get(provider) ?? new Set<string>();
+      byProvider.set(provider, serviceIds);
+      for (const serviceId of Object.keys(entry.services ?? {})) {
+        if (serviceId.trim()) serviceIds.add(serviceId);
+      }
+    }
+  }
+
+  if (byProvider.size === 0 && peer.services?.length && peer.providers?.length) {
+    const fallbackProvider = peer.providers[0];
+    if (fallbackProvider) {
+      byProvider.set(fallbackProvider, new Set(peer.services.filter((serviceId) => serviceId.trim())));
+    }
+  } else if (byProvider.size === 0 && peer.providers?.length) {
+    for (const provider of peer.providers) byProvider.set(provider, new Set([provider]));
+  }
+  return byProvider;
+}
+
+function resolvePricing(peer: NetworkServiceCatalogPeer, provider: string, serviceId: string) {
+  const providerPricing = peer.providerPricing?.[provider];
+  const servicePricing = providerPricing?.services?.[serviceId];
+  const defaults = providerPricing?.defaults;
+  const inputUsdPerMillion = servicePricing?.inputUsdPerMillion
+    ?? servicePricing?.input
+    ?? defaults?.inputUsdPerMillion
+    ?? defaults?.input
+    ?? peer.defaultInputUsdPerMillion;
+  const outputUsdPerMillion = servicePricing?.outputUsdPerMillion
+    ?? servicePricing?.output
+    ?? defaults?.outputUsdPerMillion
+    ?? defaults?.output
+    ?? peer.defaultOutputUsdPerMillion;
+  const cachedInputUsdPerMillion = servicePricing?.cachedInputUsdPerMillion
+    ?? defaults?.cachedInputUsdPerMillion
+    ?? peer.defaultCachedInputUsdPerMillion;
+  return { inputUsdPerMillion, outputUsdPerMillion, cachedInputUsdPerMillion };
+}
+
+function resolveImagePriceRange(peer: NetworkServiceCatalogPeer, provider: string, serviceId: string) {
+  const billingByProtocol = peer.providerServiceUnitBillingModels?.[provider]?.services?.[serviceId];
+  const prices = Object.values(billingByProtocol ?? {}).flatMap((model) =>
+    (model?.components ?? [])
+      .filter((component) => component.unit === 'output_images' && Number.isFinite(component.priceUsd) && component.priceUsd >= 0)
+      .map((component) => component.priceUsd),
+  );
+  return prices.length > 0
+    ? { minImageUsdPerImage: Math.min(...prices), maxImageUsdPerImage: Math.max(...prices) }
+    : {};
+}
+
+export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): NetworkServiceOffer[] {
+  const offers: NetworkServiceOffer[] = [];
+  for (const peer of peers) {
+    for (const [provider, serviceIds] of announcedServicesByProvider(peer)) {
+      for (const serviceId of serviceIds) {
+        const protocols = peer.providerServiceApiProtocols?.[provider]?.services?.[serviceId] ?? [];
+        const capabilities = peer.providerServiceCapabilities?.[provider]?.services?.[serviceId];
+        const protocol = resolveServiceProtocol(protocols, provider);
+        const type = protocol === 'openai-images' || capabilities?.outputs?.includes('image')
+          ? 'image'
+          : 'text';
+        const pricing = resolvePricing(peer, provider, serviceId);
+        offers.push({
+          serviceId,
+          provider,
+          protocols,
+          protocol,
+          type,
+          ...(capabilities ? { capabilities } : {}),
+          ...(peer.providerServiceCategories?.[provider]?.services?.[serviceId]?.length
+            ? { categories: peer.providerServiceCategories[provider].services[serviceId] }
+            : {}),
+          peerId: peer.peerId,
+          ...(peer.displayName ? { displayName: peer.displayName } : {}),
+          ...(peer.reputationScore !== undefined ? { reputationScore: peer.reputationScore } : {}),
+          ...(pricing.inputUsdPerMillion !== undefined ? { inputUsdPerMillion: pricing.inputUsdPerMillion } : {}),
+          ...(pricing.outputUsdPerMillion !== undefined ? { outputUsdPerMillion: pricing.outputUsdPerMillion } : {}),
+          ...(pricing.cachedInputUsdPerMillion !== undefined ? { cachedInputUsdPerMillion: pricing.cachedInputUsdPerMillion } : {}),
+          ...resolveImagePriceRange(peer, provider, serviceId),
+        });
+      }
+    }
+  }
+  return offers;
+}

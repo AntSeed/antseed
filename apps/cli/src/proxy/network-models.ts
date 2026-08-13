@@ -5,7 +5,7 @@
 // (and their pricing) listed under `peers`. Callers can then pin a route
 // explicitly with `<peerId>@<model>`.
 
-import type { PeerInfo } from '@antseed/node'
+import { buildNetworkServiceOffers, type PeerInfo } from '@antseed/node'
 
 export type NetworkModelType = 'text' | 'image'
 
@@ -43,70 +43,6 @@ export function parseModelTypeFilter(raw: string | null): ModelTypeFilter {
 }
 
 /**
- * Every (provider, serviceId) a peer announces — the union across all five
- * per-provider service matrices, since a service may appear in any of them.
- */
-function announcedServicesByProvider(peer: PeerInfo): Map<string, Set<string>> {
-  const byProvider = new Map<string, Set<string>>()
-  const matrices: Array<Record<string, { services?: Record<string, unknown> }> | undefined> = [
-    peer.providerPricing,
-    peer.providerServiceApiProtocols,
-    peer.providerServiceCategories,
-    peer.providerServiceUnitBillingModels,
-    peer.providerServiceCapabilities,
-  ]
-  for (const matrix of matrices) {
-    for (const [provider, entry] of Object.entries(matrix ?? {})) {
-      let serviceIds = byProvider.get(provider)
-      if (!serviceIds) {
-        serviceIds = new Set()
-        byProvider.set(provider, serviceIds)
-      }
-      for (const id of Object.keys(entry.services ?? {})) {
-        if (id.trim().length > 0) serviceIds.add(id)
-      }
-    }
-  }
-  return byProvider
-}
-
-function buildPeerOffer(peer: PeerInfo, provider: string, serviceId: string): NetworkModelPeerOffer {
-  const protocols = peer.providerServiceApiProtocols?.[provider]?.services[serviceId] ?? []
-  const capabilities = peer.providerServiceCapabilities?.[provider]?.services[serviceId]
-  const isImage = protocols.includes('openai-images') || capabilities?.outputs?.includes('image') === true
-
-  const pricingEntry = peer.providerPricing?.[provider]
-  const pricing = pricingEntry?.services?.[serviceId] ?? pricingEntry?.defaults
-  const inputUsdPerMillion = pricing?.inputUsdPerMillion ?? peer.defaultInputUsdPerMillion
-  const outputUsdPerMillion = pricing?.outputUsdPerMillion ?? peer.defaultOutputUsdPerMillion
-  const cachedInputUsdPerMillion = pricing?.cachedInputUsdPerMillion ?? peer.defaultCachedInputUsdPerMillion
-
-  let minImageUsdPerImage: number | undefined
-  let maxImageUsdPerImage: number | undefined
-  const billingByProtocol = peer.providerServiceUnitBillingModels?.[provider]?.services[serviceId]
-  for (const model of Object.values(billingByProtocol ?? {})) {
-    for (const component of model?.components ?? []) {
-      if (component.unit !== 'output_images' || !Number.isFinite(component.priceUsd)) continue
-      minImageUsdPerImage = minImageUsdPerImage === undefined ? component.priceUsd : Math.min(minImageUsdPerImage, component.priceUsd)
-      maxImageUsdPerImage = maxImageUsdPerImage === undefined ? component.priceUsd : Math.max(maxImageUsdPerImage, component.priceUsd)
-    }
-  }
-
-  return {
-    peerId: peer.peerId,
-    ...(peer.displayName ? { displayName: peer.displayName } : {}),
-    provider,
-    protocols,
-    type: isImage ? 'image' : 'text',
-    ...(inputUsdPerMillion !== undefined ? { inputUsdPerMillion } : {}),
-    ...(outputUsdPerMillion !== undefined ? { outputUsdPerMillion } : {}),
-    ...(cachedInputUsdPerMillion !== undefined ? { cachedInputUsdPerMillion } : {}),
-    ...(minImageUsdPerImage !== undefined ? { minImageUsdPerImage } : {}),
-    ...(maxImageUsdPerImage !== undefined ? { maxImageUsdPerImage } : {}),
-  }
-}
-
-/**
  * One entry per model id across all discovered peers. Models are grouped
  * case-insensitively (the first-seen spelling wins); a model counts as an
  * image model when any peer announces it with the `openai-images` protocol
@@ -120,20 +56,26 @@ export function buildNetworkModels(peers: PeerInfo[], nowMs: number): NetworkMod
     reputationByPeerId.set(peer.peerId, peer.reputationScore ?? -1)
   }
 
-  for (const peer of peers) {
-    for (const [provider, serviceIds] of announcedServicesByProvider(peer)) {
-      for (const serviceId of serviceIds) {
-        const offer = buildPeerOffer(peer, provider, serviceId)
-        const key = serviceId.toLowerCase()
-        let entry = byModelKey.get(key)
-        if (!entry) {
-          entry = { id: serviceId, object: 'model', created, owned_by: 'antseed', type: offer.type, peers: [] }
-          byModelKey.set(key, entry)
-        }
-        if (offer.type === 'image') entry.type = 'image'
-        entry.peers.push(offer)
-      }
+  for (const offer of buildNetworkServiceOffers(peers)) {
+    const key = offer.serviceId.toLowerCase()
+    let entry = byModelKey.get(key)
+    if (!entry) {
+      entry = { id: offer.serviceId, object: 'model', created, owned_by: 'antseed', type: offer.type, peers: [] }
+      byModelKey.set(key, entry)
     }
+    if (offer.type === 'image') entry.type = 'image'
+    entry.peers.push({
+      peerId: offer.peerId,
+      ...(offer.displayName ? { displayName: offer.displayName } : {}),
+      provider: offer.provider,
+      protocols: offer.protocols,
+      type: offer.type,
+      ...(offer.inputUsdPerMillion !== undefined ? { inputUsdPerMillion: offer.inputUsdPerMillion } : {}),
+      ...(offer.outputUsdPerMillion !== undefined ? { outputUsdPerMillion: offer.outputUsdPerMillion } : {}),
+      ...(offer.cachedInputUsdPerMillion !== undefined ? { cachedInputUsdPerMillion: offer.cachedInputUsdPerMillion } : {}),
+      ...(offer.minImageUsdPerImage !== undefined ? { minImageUsdPerImage: offer.minImageUsdPerImage } : {}),
+      ...(offer.maxImageUsdPerImage !== undefined ? { maxImageUsdPerImage: offer.maxImageUsdPerImage } : {}),
+    })
   }
 
   const entries = [...byModelKey.values()]
