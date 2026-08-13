@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'vitest';
 
 import type { DiscoverRow, VprRoutingPreferences } from '../../core/state';
-import { chooseBestVprRoute, filterRoutableVprRoutes, isPeerRoutable, isRowCoolingDown, scoreVprRoute } from './select.js';
+import { chooseBestVprRoute, filterRoutableVprRoutes, isPeerRoutable, isRouteEligibleForAutoSelection, isRowCoolingDown, scoreVprRoute } from './select.js';
 import { projectRowsToVprModelCatalog } from '../catalog/model-catalog.js';
 
 const preferences: VprRoutingPreferences = {
@@ -83,12 +83,37 @@ test('peer over max input price is penalized', () => {
   assert.ok(scoreVprRoute(expensive, preferences).score < scoreVprRoute(cheap, preferences).score);
 });
 
-test('peer below min trust score is penalized', () => {
-  const trusted = discoverRow({ peerId: 'trusted', onChainTrustScore: 50 });
-  const lowTrust = discoverRow({ peerId: 'low-trust', onChainTrustScore: 49 });
+test('peer below minimum reputation is ineligible even when much cheaper', () => {
+  const trusted = discoverRow({
+    peerId: 'trusted',
+    effectiveReputationScore: 60,
+    inputUsdPerMillion: 20,
+    outputUsdPerMillion: 20,
+  });
+  const lowTrust = discoverRow({
+    peerId: 'low-trust',
+    effectiveReputationScore: 59.9,
+    inputUsdPerMillion: 0,
+    outputUsdPerMillion: 0,
+  });
+  const prefs = { ...preferences, minTrustScore: 60 };
 
-  assert.equal(chooseBestVprRoute([lowTrust, trusted], preferences)?.peerId, 'trusted');
-  assert.ok(scoreVprRoute(lowTrust, preferences).score < scoreVprRoute(trusted, preferences).score);
+  assert.equal(isRouteEligibleForAutoSelection(lowTrust, prefs), false);
+  assert.equal(chooseBestVprRoute([lowTrust, trusted], prefs)?.peerId, 'trusted');
+});
+
+test('unknown reputation cannot bypass a positive minimum with cheap pricing', () => {
+  const unknown = discoverRow({
+    peerId: 'unknown',
+    effectiveReputationScore: null,
+    onChainReputationScore: null,
+    onChainTrustScore: null,
+    inputUsdPerMillion: 0,
+    outputUsdPerMillion: 0,
+  });
+
+  assert.equal(isRouteEligibleForAutoSelection(unknown, { ...preferences, minTrustScore: 60 }), false);
+  assert.equal(chooseBestVprRoute([unknown], { ...preferences, minTrustScore: 60 }), null);
 });
 
 test('tie breaker uses lower price', () => {

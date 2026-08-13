@@ -17,10 +17,24 @@ const fallbackPreferences: VprRoutingPreferences = {
   autoRouting: true,
   preferFreePeers: false,
   maxInputUsdPerMillion: 25,
-  minTrustScore: 0,
+  minTrustScore: 60,
   allowedPeerIds: [],
   blockedPeerIds: [],
 };
+
+test('migrates the previous zero default to the new 6.0 minimum', () => {
+  localStorage.setItem(
+    VPR_PREFERENCES_STORAGE_KEY,
+    JSON.stringify({ ...fallbackPreferences, minTrustScore: 0 }),
+  );
+
+  assert.equal(loadVprRoutingPreferences(fallbackPreferences).minTrustScore, 60);
+});
+
+test('preserves an explicitly saved zero minimum in the current format', () => {
+  saveVprRoutingPreferences({ ...fallbackPreferences, minTrustScore: 0 });
+  assert.equal(loadVprRoutingPreferences(fallbackPreferences).minTrustScore, 0);
+});
 
 const fallbackRouteSelection: VprRouteSelection = {
   model: null,

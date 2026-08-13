@@ -558,7 +558,7 @@ export function createInitialUiState(): RendererUiState {
       autoRouting: true,
       preferFreePeers: false,
       maxInputUsdPerMillion: 25,
-      minTrustScore: 0,
+      minTrustScore: 60,
       allowedPeerIds: [],
       blockedPeerIds: [],
     },

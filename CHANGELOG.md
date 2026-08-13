@@ -13,6 +13,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Desktop Auto selection now defaults to a minimum `6.0` reputation and treats that threshold as a hard eligibility requirement, so a cheaper seller below the configured minimum can never win on price. Existing installs that still carry the previous `0.0` default migrate to `6.0`; deliberate threshold changes remain persisted. Seller rows also no longer show the last on-chain settlement date.
 - Request bodies over 240 KiB (previously 512 KiB) are now sent via the chunked upload protocol, keeping every single frame under the 256 KiB WebRTC data channel message cap so large requests work over any transport.
 - The WebRTC transport is now actually functional: nodes load node-datachannel at startup (previously it was never initialized, so every connection silently used TCP). Peers with a working WebRTC stack advertise `transport.webrtc.v1` in discovery metadata. Encrypted TCP remains the preferred transport between nodes (WebRTC data channels cap messages at ~256 KiB, below the 1 MiB protocol chunk size); initiators use WebRTC only toward peers that support WebRTC but not encrypted TCP. Sellers without a working stack now refuse `hello` signaling cleanly instead of crashing on it — previously any WebRTC connection attempt (e.g. from a browser buyer) hit an unguarded code path.
 

@@ -82,15 +82,15 @@ export function scoreVprRoute(
     reasons.push('input price exceeds maximum');
   }
 
-  if (row.onChainTrustScore !== null && row.onChainTrustScore < preferences.minTrustScore) {
+  const modelReputation = row.effectiveReputationScore
+    ?? row.onChainReputationScore
+    ?? row.onChainTrustScore;
+  if (modelReputation !== null && modelReputation !== undefined && modelReputation < preferences.minTrustScore) {
     score -= 50;
     reasons.push('trust score below minimum');
   }
 
-  const trustScore = row.effectiveReputationScore
-    ?? row.onChainReputationScore
-    ?? row.onChainTrustScore
-    ?? 0;
+  const trustScore = modelReputation ?? 0;
   score += Math.min(trustScore, 100) / 5;
 
   const total = totalRowPrice(row);
@@ -118,6 +118,18 @@ export function isPeerRoutable(peerId: string, preferences: VprRoutingPreference
   return preferences.allowedPeerIds.length === 0 || preferences.allowedPeerIds.includes(peerId);
 }
 
+export function isRouteEligibleForAutoSelection(
+  row: DiscoverRow,
+  preferences: VprRoutingPreferences,
+): boolean {
+  if (!isPeerRoutable(row.peerId, preferences)) return false;
+  if (preferences.minTrustScore <= 0) return true;
+  const reputation = row.effectiveReputationScore
+    ?? row.onChainReputationScore
+    ?? row.onChainTrustScore;
+  return reputation !== null && reputation !== undefined && reputation >= preferences.minTrustScore;
+}
+
 /** Drop every route whose peer the allow/block lists rule out. */
 export function filterRoutableVprRoutes(
   rows: DiscoverRow[],
@@ -131,7 +143,8 @@ export function chooseBestVprRoute(
   preferences: VprRoutingPreferences,
   now: number = Date.now(),
 ): DiscoverRow | null {
-  const best = filterRoutableVprRoutes(rows, preferences)
+  const best = rows
+    .filter((row) => isRouteEligibleForAutoSelection(row, preferences))
     .map((row) => scoreVprRoute(row, preferences, now))
     .sort((a, b) => compareScoredRoutes(a, b, now))[0];
 

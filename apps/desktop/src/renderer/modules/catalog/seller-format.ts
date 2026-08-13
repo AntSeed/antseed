@@ -31,13 +31,6 @@ export function isFreeRoute(route: DiscoverRow): boolean {
 /** "May 20, 2026 · $0.6/m input · $1.8/m output" (Figma sellers list row). */
 export function sellerMetaLabel(route: DiscoverRow): string {
   const parts: string[] = [];
-  if (route.onChainLastSettledAt > 0) {
-    parts.push(new Date(route.onChainLastSettledAt * 1000).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    }));
-  }
   if (isFreeRoute(route)) {
     parts.push('Free');
   } else if (route.protocol === 'openai-images' && route.minImageUsdPerImage !== null) {
