@@ -3,6 +3,7 @@
  * the app picker, CA trust, and starting/stopping the runtime.
  */
 import { ipcMain } from 'electron';
+import { desktopSystemProxyCliDataDir } from '../dev-instance.js';
 import {
   type CustomAppRecord,
   customAppName,
@@ -270,7 +271,7 @@ export function registerSystemProxyIpc(deps: { processManager: ProcessManager })
 
   ipcMain.handle('system-proxy:install-ca', async () => {
     try {
-      const dataDir = resolveConnectDataDir();
+      const dataDir = desktopSystemProxyCliDataDir() ?? resolveConnectDataDir();
       const result = await processManager.runCliCommand(['--data-dir', dataDir, 'system-proxy', 'install-ca']);
       setLastSystemProxySetupAt(Date.now());
       const warning = stripAnsi(result.stdout)
@@ -365,7 +366,7 @@ export function registerSystemProxyIpc(deps: { processManager: ProcessManager })
   });
 
   ipcMain.handle('system-proxy:ca-exists', () => {
-    const dataDir = resolveConnectDataDir();
+    const dataDir = desktopSystemProxyCliDataDir() ?? resolveConnectDataDir();
     return existsSync(path.join(dataDir, 'system-proxy', 'ca.crt'))
       && existsSync(path.join(dataDir, 'system-proxy', 'ca.key'));
   });
@@ -393,7 +394,7 @@ export function registerSystemProxyIpc(deps: { processManager: ProcessManager })
   // cause), `absent` means nothing is trusted yet, `trusted` means we're set.
   ipcMain.handle('system-proxy:ca-trust-state', async (): Promise<{ ok: boolean; exists: boolean; trust: 'trusted' | 'stale' | 'absent' | 'unknown'; error?: string }> => {
     try {
-      const dataDir = resolveConnectDataDir();
+      const dataDir = desktopSystemProxyCliDataDir() ?? resolveConnectDataDir();
       const result = await processManager.runCliCommand(['--data-dir', dataDir, 'system-proxy', 'ca-trust-state']);
       const line = stripAnsi(result.stdout)
         .split(/\r?\n/)

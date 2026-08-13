@@ -45,6 +45,26 @@ Development mode:
 npm run dev
 ```
 
+Run multiple development worktrees at once while sharing the normal AntSeed
+buyer, configuration, plugins, and identity:
+
+```bash
+pnpm dev:desktop:instance status
+pnpm dev:desktop:instance codex
+pnpm dev:desktop:instance ui
+pnpm dev:desktop:instance feature-x
+```
+
+Any instance name receives stable, separate renderer, payments, and system-proxy ports
+plus its own temporary Electron Chromium profile and volatile system-proxy
+runtime files. The buyer proxy and durable `~/.antseed` data remain shared.
+The first instance starts the buyer; later instances validate its AntSeed
+status endpoint and attach without starting duplicate buyer nodes.
+In multi-instance mode, stopping, quitting, or disconnecting any
+window does not remove shared Codex/tool config patches or kill the shared
+buyer listener. Use the normal single-instance workflow when you intentionally
+want the Stop button to shut down the buyer.
+
 Build desktop assets:
 
 ```bash

@@ -5,9 +5,12 @@
  * them; see `state.ts` for which side owns which file.
  */
 import path from 'node:path';
+import { desktopSystemProxyDataDir } from '../dev-instance.js';
 import { resolveConnectDataDir } from '../runtime/process-manager.js';
 
 export function systemProxyDataDir(): string {
+  const explicit = desktopSystemProxyDataDir();
+  if (explicit) return explicit;
   return path.join(resolveConnectDataDir(), 'system-proxy');
 }
 
