@@ -8,7 +8,30 @@ describe('canonicalModelKey', () => {
     expect(sameCanonicalModel('Claude Sonnet 5', 'sonnet-5')).toBe(true);
   });
 
+  it('merges numeric-version punctuation used by established model families', () => {
+    expect(sameCanonicalModel('gpt-5.6-sol', 'gpt-56-sol')).toBe(true);
+    expect(sameCanonicalModel('gemini-3-5-flash', 'gemini-3.5-flash')).toBe(true);
+    expect(sameCanonicalModel('glm-5-2', 'GLM5.2')).toBe(true);
+    expect(sameCanonicalModel('qwen-3.5-35b-a3b', 'qwen35-35b-a3b')).toBe(true);
+    expect(sameCanonicalModel('minimax-m2.7-fast', 'minimax-m27-fast')).toBe(true);
+  });
+
+  it('merges conservative flattened vendor prefixes', () => {
+    expect(sameCanonicalModel('openai-gpt-56-sol', 'gpt-5.6-sol')).toBe(true);
+    expect(sameCanonicalModel('zai-org-glm-5-2', 'glm-5.2')).toBe(true);
+    expect(sameCanonicalModel('z-ai-glm-5-turbo', 'glm-5-turbo')).toBe(true);
+    expect(sameCanonicalModel('aion-labs-aion-3-0-mini', 'aion-3.0-mini')).toBe(true);
+    expect(sameCanonicalModel('google-gemma-3-27b-it', 'gemma-3.27b-it')).toBe(true);
+  });
+
   it('does not strip Claude from unknown family names', () => {
     expect(canonicalModelKey('claude-fable-5')).not.toBe(canonicalModelKey('fable-5'));
+  });
+
+  it('keeps materially different variants separate', () => {
+    expect(sameCanonicalModel('gpt-5.6-sol', 'gpt-5.6-sol-pro')).toBe(false);
+    expect(sameCanonicalModel('claude-opus-4.8', 'claude-opus-4.8-fast')).toBe(false);
+    expect(sameCanonicalModel('deepseek-v4-pro', 'deepseek-v4-pro:web')).toBe(false);
+    expect(sameCanonicalModel('google-palm-2', 'palm-2')).toBe(false);
   });
 });

@@ -17,7 +17,8 @@ function makePeer(overrides: Omit<Partial<PeerInfo>, 'peerId'> & { peerId: strin
 const textSeller = makePeer({
   peerId: 'a'.repeat(40),
   displayName: 'Text Seller',
-  reputationScore: 40,
+  onChainTrustScore: 40,
+  onChainReputationScore: 35,
   providerPricing: {
     openai: {
       defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
@@ -33,7 +34,8 @@ const textSeller = makePeer({
 
 const imageSeller = makePeer({
   peerId: 'b'.repeat(40),
-  reputationScore: 80,
+  onChainTrustScore: 80,
+  onChainReputationScore: 75,
   providerPricing: {
     openai: { defaults: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } },
   },
@@ -61,7 +63,8 @@ const imageSeller = makePeer({
 // image model identified only via capability outputs — no protocol announced.
 const mixedSeller = makePeer({
   peerId: 'c'.repeat(40),
-  reputationScore: 90,
+  onChainTrustScore: 90,
+  onChainReputationScore: 85,
   providerPricing: {
     'local-llm': { defaults: { inputUsdPerMillion: 0.5, outputUsdPerMillion: 0.7 } },
   },
@@ -97,7 +100,42 @@ test('aggregates one entry per model id across peers, case-insensitively', () =>
   assert.deepEqual(qwen.aliases, ['qwen3-coder', 'qwen3coder'])
   // Higher-reputation peer first.
   assert.deepEqual(qwen.peers.map((peer) => peer.peerId), [mixedSeller.peerId, textSeller.peerId])
+  assert.deepEqual(qwen.peers.map((peer) => peer.reputationScore), [90, 40])
+  assert.deepEqual(qwen.peers.map((peer) => peer.onChainTrustScore), [90, 40])
+  assert.deepEqual(qwen.peers.map((peer) => peer.onChainReputationScore), [85, 35])
   assert.deepEqual(qwen.peers.map((peer) => peer.serviceId), ['QWEN3-Coder', 'qwen3-coder'])
+})
+
+test('sorts by on-chain trust before on-chain reputation like desktop VPR', () => {
+  const reputationOnlySeller = makePeer({
+    peerId: 'f'.repeat(40),
+    onChainReputationScore: 95,
+    providerServiceApiProtocols: {
+      openai: { services: { 'qwen3-coder': ['openai-chat-completions'] } },
+    },
+  })
+
+  const models = buildNetworkModels([mixedSeller, reputationOnlySeller], NOW_MS)
+  const qwen = models.find((model) => model.id === 'QWEN3-Coder')
+  assert.ok(qwen)
+  assert.deepEqual(qwen.peers.map((peer) => peer.peerId), [reputationOnlySeller.peerId, mixedSeller.peerId])
+  assert.deepEqual(qwen.peers.map((peer) => peer.reputationScore), [95, 90])
+  assert.deepEqual(qwen.peers.map((peer) => peer.onChainTrustScore), [null, 90])
+})
+
+test('returns null reputation and sorts unknown scores last', () => {
+  const unknownSeller = makePeer({
+    peerId: '0'.repeat(40),
+    providerServiceApiProtocols: {
+      openai: { services: { 'qwen3-coder': ['openai-chat-completions'] } },
+    },
+  })
+
+  const models = buildNetworkModels([unknownSeller, textSeller], NOW_MS)
+  const qwen = models.find((model) => model.id === 'qwen3-coder')
+  assert.ok(qwen)
+  assert.deepEqual(qwen.peers.map((peer) => peer.peerId), [textSeller.peerId, unknownSeller.peerId])
+  assert.deepEqual(qwen.peers.map((peer) => peer.reputationScore), [40, null])
 })
 
 test('merges conservative family aliases while preserving advertised service ids', () => {
@@ -120,6 +158,38 @@ test('merges conservative family aliases while preserving advertised service ids
   assert.equal(models[0]?.id, 'claude-opus-5')
   assert.deepEqual(models[0]?.aliases, ['claude-opus-5', 'opus-5', 'opus5'])
   assert.deepEqual(models[0]?.peers.map((peer) => peer.serviceId), ['claude-opus-5', 'Opus 5'])
+})
+
+test('merges compact numeric versions and flattened vendor prefixes', () => {
+  const dotted = makePeer({
+    peerId: '1'.repeat(40),
+    providerServiceApiProtocols: {
+      openai: { services: { 'gpt-5.6-sol': ['openai-responses'] } },
+    },
+  })
+  const compact = makePeer({
+    peerId: '2'.repeat(40),
+    providerServiceApiProtocols: {
+      openai: { services: { 'gpt-56-sol': ['openai-responses'] } },
+    },
+  })
+  const vendorPrefixed = makePeer({
+    peerId: '3'.repeat(40),
+    providerServiceApiProtocols: {
+      openai: { services: { 'openai-gpt-56-sol': ['openai-responses'] } },
+    },
+  })
+
+  const models = buildNetworkModels([dotted, compact, vendorPrefixed], NOW_MS)
+
+  assert.equal(models.length, 1)
+  assert.equal(models[0]?.id, 'gpt-5.6-sol')
+  assert.deepEqual(models[0]?.aliases, ['gpt-5.6-sol', 'gpt-56-sol', 'gpt56sol', 'openai-gpt-56-sol'])
+  assert.deepEqual(models[0]?.peers.map((peer) => peer.serviceId), [
+    'gpt-5.6-sol',
+    'gpt-56-sol',
+    'openai-gpt-56-sol',
+  ])
 })
 
 test('service pricing overrides provider defaults', () => {

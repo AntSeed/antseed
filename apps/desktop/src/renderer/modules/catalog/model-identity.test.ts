@@ -3,15 +3,16 @@ import { test } from 'vitest';
 import { canonicalModelKey, displayModelLabel, sameCanonicalModel } from './model-identity.js';
 
 test('canonicalModelKey collapses separator and vendor-prefix variants', () => {
-  assert.equal(canonicalModelKey('gpt-5.6-luna'), 'gpt5.6luna');
-  assert.equal(canonicalModelKey('GPT 5.6 Luna'), 'gpt5.6luna');
-  assert.equal(canonicalModelKey('openai/gpt-5.6-luna'), 'gpt5.6luna');
-  assert.equal(canonicalModelKey('gpt_5.6_luna'), 'gpt5.6luna');
+  assert.equal(canonicalModelKey('gpt-5.6-luna'), 'gpt56luna');
+  assert.equal(canonicalModelKey('GPT 5.6 Luna'), 'gpt56luna');
+  assert.equal(canonicalModelKey('openai/gpt-5.6-luna'), 'gpt56luna');
+  assert.equal(canonicalModelKey('openai-gpt-56-luna'), 'gpt56luna');
+  assert.equal(canonicalModelKey('gpt_5.6_luna'), 'gpt56luna');
 });
 
 test('canonicalModelKey strips -latest and trailing date stamps', () => {
-  assert.equal(canonicalModelKey('gpt-5.6-luna-latest'), 'gpt5.6luna');
-  assert.equal(canonicalModelKey('gpt-5.6-luna-20260115'), 'gpt5.6luna');
+  assert.equal(canonicalModelKey('gpt-5.6-luna-latest'), 'gpt56luna');
+  assert.equal(canonicalModelKey('gpt-5.6-luna-20260115'), 'gpt56luna');
   assert.equal(canonicalModelKey('claude-fable-5-2026-01-15'), 'claudefable5');
 });
 
@@ -25,6 +26,13 @@ test('canonicalModelKey keeps genuinely different variants apart', () => {
   assert.notEqual(canonicalModelKey('gpt-5.6-luna'), canonicalModelKey('gpt-5.6-luna-pro'));
   assert.notEqual(canonicalModelKey('gpt-5.6-luna'), canonicalModelKey('gpt-5.6-sol'));
   assert.notEqual(canonicalModelKey('claude-fable-5'), canonicalModelKey('fable-5'));
+});
+
+test('canonicalModelKey merges live numeric-version variants', () => {
+  assert.equal(canonicalModelKey('gpt-5.6-sol'), canonicalModelKey('gpt-56-sol'));
+  assert.equal(canonicalModelKey('gemini-3-5-flash'), canonicalModelKey('gemini-3.5-flash'));
+  assert.equal(canonicalModelKey('zai-org-glm-5-2'), canonicalModelKey('glm-5.2'));
+  assert.equal(canonicalModelKey('qwen-3.5-35b-a3b'), canonicalModelKey('qwen35-35b-a3b'));
 });
 
 test('sameCanonicalModel never matches on empty keys', () => {
