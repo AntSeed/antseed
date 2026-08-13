@@ -3225,11 +3225,15 @@ export function initChatModule({
         }
 
         scheduleChatConversationsRefresh();
-        onResponseCompleted?.(data.conversationId, {
-          inputTokens: completionMeta?.inputTokens ?? 0,
-          outputTokens: completionMeta?.outputTokens ?? 0,
-          service: completionMeta?.service ?? null,
-        });
+        // Only count completions that finalized an assistant message; an empty
+        // or duplicated done event must not inflate the reminder request counters.
+        if (completionMeta) {
+          onResponseCompleted?.(data.conversationId, {
+            inputTokens: completionMeta.inputTokens ?? 0,
+            outputTokens: completionMeta.outputTokens ?? 0,
+            service: completionMeta.service ?? null,
+          });
+        }
       });
     }
 

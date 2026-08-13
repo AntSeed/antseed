@@ -5,7 +5,6 @@ import { preloadViews, viewsForPreload } from './components/viewRegistry';
 import { shallowEqual, useUiSelector } from './hooks/useUiSelector';
 import { VIEW_NAMES, type ViewName } from './types';
 import { VprShell } from './components/VprShell';
-import { getUiStateRef, notifyUiStateChanged } from '../core/store';
 
 type IdleCallbackHandle = ReturnType<typeof setTimeout> | number;
 
@@ -49,8 +48,6 @@ export function AppShell() {
     stack.push(current);
     if (stack.length > 32) stack.shift();
     activeViewRef.current = view;
-    getUiStateRef().activeView = view;
-    notifyUiStateChanged();
     setActiveView(view);
   }, []);
 
@@ -62,8 +59,6 @@ export function AppShell() {
     const next = target ?? fallback;
     if (next === current) return;
     activeViewRef.current = next;
-    getUiStateRef().activeView = next;
-    notifyUiStateChanged();
     setActiveView(next);
   }, []);
 

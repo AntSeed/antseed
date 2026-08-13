@@ -256,7 +256,6 @@ export type ActiveChannelInfo = {
 };
 
 export type RendererUiState = {
-  activeView: string;
   reminderState: ReminderState;
   reminderOffer: ReminderOffer | null;
   // --- Process / runtime state ---
@@ -446,7 +445,6 @@ const MAX_LOGS = 2000;
 
 export function createInitialUiState(): RendererUiState {
   return {
-    activeView: 'home',
     reminderState: 'armed_d1',
     reminderOffer: null,
     // Process / runtime
