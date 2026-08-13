@@ -40,6 +40,13 @@ test('MiniMax renders the official waveform and brand gradient', () => {
   assert.match(markup, /href="data:image\/png;base64,/);
 });
 
+test('GPT renders the official OpenAI blossom', () => {
+  const markup = renderToStaticMarkup(BrandIcon({ name: 'GPT 5.6 Sol' }));
+  assert.match(markup, /viewBox="0 0 16 16"/);
+  assert.match(markup, /M12\.9851 6\.93777/);
+  assert.match(markup, /fill="currentColor"/);
+});
+
 test('connected-app tool names resolve their marks', () => {
   assert.equal(resolveBrandKey('crush', 'Crush'), 'crush');
   assert.equal(resolveBrandKey('goose', 'Goose'), 'goose');
