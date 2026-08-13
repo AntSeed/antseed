@@ -258,3 +258,37 @@ test('catalog aggregates serviceId variants of the same model', () => {
   assert.equal(entry.provider, 'openai-responses');
   assert.equal(entry.label, 'GPT 5.6 Luna');
 });
+
+test('catalog uses the clean Fable name even when coding-only is the cheapest route', () => {
+  const rows = [
+    discoverRow({
+      provider: 'claude-oauth',
+      serviceId: 'fable-5-coding-only',
+      peerId: 'cheap',
+      inputUsdPerMillion: 0.45,
+      outputUsdPerMillion: 1.15,
+    }),
+    discoverRow({
+      provider: 'openai',
+      serviceId: 'claude-fable-5',
+      peerId: 'branded',
+      inputUsdPerMillion: 5,
+      outputUsdPerMillion: 30,
+    }),
+    discoverRow({
+      provider: 'openai',
+      serviceId: 'fable-5',
+      peerId: 'plain',
+      inputUsdPerMillion: 5,
+      outputUsdPerMillion: 30,
+    }),
+  ];
+
+  for (const orderedRows of [rows, [...rows].reverse()]) {
+    const [entry] = projectRowsToVprModelCatalog(orderedRows);
+    assert.equal(entry.label, 'Fable 5');
+    assert.equal(entry.bestPeerId, 'cheap');
+    assert.equal(entry.serviceId, 'fable-5-coding-only');
+    assert.equal(entry.provider, 'claude-oauth');
+  }
+});

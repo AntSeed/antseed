@@ -16,8 +16,11 @@ export function canonicalModelKey(serviceId: string): string {
   value = value.replace(/^google[-:._\s]+(?=gemma(?:[-:._\s]|\d|$))/, '');
   value = value.replace(/^aion[-:._\s]+labs[-:._\s]+(?=aion(?:[-:._\s]|\d|$))/, '');
   value = value.replace(/^(?:zai[-:._\s]+org|z[-:._\s]+ai)[-:._\s]+(?=glm(?:[-:._\s]|\d|$))/, '');
-  value = value.replace(/^claude[-:._\s]+(?=(opus|sonnet|haiku)(?:[-:._\s]|\d|$))/, '');
-  const compactVersionPunctuation = /^(?:aion|opus|sonnet|haiku|deepseek|e2ee[-:._\s]*glm|gemini|gemma|glm|gpt|grok|hermes|kimi|llama|mimo|minimax|mistral|qwen|venice[-:._\s]*uncensored)(?:[-:._\s]|\d)/.test(value);
+  value = value.replace(/^claude[-:._\s]+(?=(opus|sonnet|haiku|fable)(?:[-:._\s]|\d|$))/, '');
+  if (/^fable(?:[-:._\s]|\d)/.test(value)) {
+    value = value.replace(/[-:._\s]+coding[-:._\s]+only$/, '');
+  }
+  const compactVersionPunctuation = /^(?:aion|opus|sonnet|haiku|fable|deepseek|e2ee[-:._\s]*glm|gemini|gemma|glm|gpt|grok|hermes|kimi|llama|mimo|minimax|mistral|qwen|venice[-:._\s]*uncensored)(?:[-:._\s]|\d)/.test(value);
   return compactVersionPunctuation
     ? value.replace(/[^a-z0-9]+/g, '')
     : value.replace(/[^a-z0-9.]+/g, '').replace(/^\.+|\.+$/g, '');

@@ -13,19 +13,21 @@ test('canonicalModelKey collapses separator and vendor-prefix variants', () => {
 test('canonicalModelKey strips -latest and trailing date stamps', () => {
   assert.equal(canonicalModelKey('gpt-5.6-luna-latest'), 'gpt56luna');
   assert.equal(canonicalModelKey('gpt-5.6-luna-20260115'), 'gpt56luna');
-  assert.equal(canonicalModelKey('claude-fable-5-2026-01-15'), 'claudefable5');
+  assert.equal(canonicalModelKey('claude-fable-5-2026-01-15'), 'fable5');
 });
 
 test('canonicalModelKey merges optional Claude family prefixes', () => {
   assert.equal(canonicalModelKey('claude-opus-5'), canonicalModelKey('Opus 5'));
   assert.equal(canonicalModelKey('Claude Sonnet 5'), canonicalModelKey('sonnet-5'));
   assert.equal(canonicalModelKey('anthropic/claude-haiku-5-latest'), canonicalModelKey('haiku 5'));
+  assert.equal(canonicalModelKey('claude-fable-5'), canonicalModelKey('fable-5'));
+  assert.equal(canonicalModelKey('fable-5-coding-only'), canonicalModelKey('fable-5'));
 });
 
 test('canonicalModelKey keeps genuinely different variants apart', () => {
   assert.notEqual(canonicalModelKey('gpt-5.6-luna'), canonicalModelKey('gpt-5.6-luna-pro'));
   assert.notEqual(canonicalModelKey('gpt-5.6-luna'), canonicalModelKey('gpt-5.6-sol'));
-  assert.notEqual(canonicalModelKey('claude-fable-5'), canonicalModelKey('fable-5'));
+  assert.notEqual(canonicalModelKey('claude-novel-5'), canonicalModelKey('novel-5'));
 });
 
 test('canonicalModelKey merges live numeric-version variants', () => {

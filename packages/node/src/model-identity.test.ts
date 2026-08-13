@@ -6,6 +6,8 @@ describe('canonicalModelKey', () => {
     expect(canonicalModelKey('anthropic/claude-opus-5-20260813')).toBe('opus5');
     expect(canonicalModelKey('Opus 5')).toBe('opus5');
     expect(sameCanonicalModel('Claude Sonnet 5', 'sonnet-5')).toBe(true);
+    expect(sameCanonicalModel('Claude Fable 5', 'fable-5')).toBe(true);
+    expect(sameCanonicalModel('fable-5-coding-only', 'fable-5')).toBe(true);
   });
 
   it('merges numeric-version punctuation used by established model families', () => {
@@ -25,7 +27,7 @@ describe('canonicalModelKey', () => {
   });
 
   it('does not strip Claude from unknown family names', () => {
-    expect(canonicalModelKey('claude-fable-5')).not.toBe(canonicalModelKey('fable-5'));
+    expect(canonicalModelKey('claude-novel-5')).not.toBe(canonicalModelKey('novel-5'));
   });
 
   it('keeps materially different variants separate', () => {

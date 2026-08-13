@@ -160,6 +160,44 @@ test('merges conservative family aliases while preserving advertised service ids
   assert.deepEqual(models[0]?.peers.map((peer) => peer.serviceId), ['claude-opus-5', 'Opus 5'])
 })
 
+test('merges Fable aliases and the coding-only service variant', () => {
+  const branded = makePeer({
+    peerId: 'a'.repeat(40),
+    providerServiceApiProtocols: {
+      openai: { services: { 'claude-fable-5': ['openai-chat-completions'] } },
+    },
+  })
+  const unbranded = makePeer({
+    peerId: 'b'.repeat(40),
+    providerServiceApiProtocols: {
+      openai: { services: { 'fable-5': ['openai-chat-completions'] } },
+    },
+  })
+  const codingOnly = makePeer({
+    peerId: 'c'.repeat(40),
+    providerServiceApiProtocols: {
+      'claude-oauth': { services: { 'fable-5-coding-only': ['anthropic-messages'] } },
+    },
+  })
+
+  const models = buildNetworkModels([branded, unbranded, codingOnly], NOW_MS)
+
+  assert.equal(models.length, 1)
+  assert.equal(models[0]?.id, 'claude-fable-5')
+  assert.deepEqual(models[0]?.aliases, [
+    'claude-fable-5',
+    'fable-5',
+    'fable-5-coding-only',
+    'fable5',
+  ])
+  assert.deepEqual(models[0]?.supported_protocols, ['anthropic-messages', 'openai-chat-completions'])
+  assert.deepEqual(models[0]?.peers.map((peer) => peer.serviceId), [
+    'claude-fable-5',
+    'fable-5',
+    'fable-5-coding-only',
+  ])
+})
+
 test('merges compact numeric versions and flattened vendor prefixes', () => {
   const dotted = makePeer({
     peerId: '1'.repeat(40),

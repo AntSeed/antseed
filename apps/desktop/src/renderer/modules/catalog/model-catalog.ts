@@ -35,6 +35,20 @@ function maxPrice(values: Array<number | null>): number | null {
   return max;
 }
 
+function preferredGroupLabel(rows: DiscoverRow[]): string {
+  const labels = rows.map((row) => ({
+    label: displayModelLabel(row.serviceId, row.serviceLabel),
+    sellerNamed: row.serviceLabel.trim().length > 0 && row.serviceLabel.trim() !== row.serviceId.trim(),
+  }));
+  return labels.sort((a, b) => {
+    const aConstrained = /\bcoding\s+only\b/i.test(a.label);
+    const bConstrained = /\bcoding\s+only\b/i.test(b.label);
+    if (aConstrained !== bConstrained) return aConstrained ? 1 : -1;
+    if (a.sellerNamed !== b.sellerNamed) return a.sellerNamed ? -1 : 1;
+    return a.label.length - b.label.length || a.label.localeCompare(b.label);
+  })[0]?.label ?? '';
+}
+
 function projectGroupToEntry(group: ModelCatalogGroup): VprModelCatalogEntry {
   const firstRow = group.rows[0];
   const categories = Array.from(new Set(group.rows.flatMap((row) => row.categories))).sort((a, b) => a.localeCompare(b));
@@ -67,10 +81,7 @@ function projectGroupToEntry(group: ModelCatalogGroup): VprModelCatalogEntry {
   // selecting the entry dispatches this exact advertised pair, and the buyer
   // proxy strictly gates on what the pinned peer actually serves.
   const representative = bestPricedRoute?.row ?? firstRow;
-  const label = displayModelLabel(
-    representative.serviceId,
-    group.rows.find((row) => row.serviceLabel.trim().length > 0)?.serviceLabel,
-  );
+  const label = preferredGroupLabel(group.rows);
 
   return {
     provider: representative.provider,
