@@ -458,6 +458,228 @@ test('selectCandidatePeersForRouting can still include peers without service pro
   assert.equal(result.candidatePeers[0]?.peerId, peerWithoutMetadata.peerId)
 })
 
+test('model-only request routes to the highest-reputation canonical service match', async () => {
+  const lower = makePeer('a', ['anthropic'])
+  lower.reputationScore = 40
+  lower.providerServiceApiProtocols = {
+    anthropic: { services: { 'Claude Opus 5': ['anthropic-messages'] } },
+  }
+  const higher = makePeer('b', ['anthropic'])
+  higher.reputationScore = 90
+  higher.providerServiceApiProtocols = {
+    anthropic: { services: { 'opus-5': ['anthropic-messages'] } },
+  }
+  const proxy = makeBuyerProxyWithPeers([lower, higher], [lower, higher], permissiveRouter())
+  let selectedPeerId = ''
+  let selectedBody: Record<string, unknown> | null = null
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string; body: Uint8Array }) => {
+    selectedPeerId = peer.peerId
+    selectedBody = parseJsonBody(request.body)
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ ok: true })),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    path: '/v1/messages',
+    body: { model: 'claude-opus-5', max_tokens: 32, messages: [] },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(selectedPeerId, higher.peerId)
+  assert.equal(selectedBody?.['model'], 'opus-5')
+})
+
+test('model-only routing skips higher-reputation peers rejected by buyer policy', async () => {
+  const allowed = makePeer('a', ['openai'])
+  allowed.reputationScore = 60
+  allowed.providerServiceApiProtocols = {
+    openai: { services: { 'gpt-5': ['openai-chat-completions'] } },
+  }
+  const rejected = makePeer('b', ['openai'])
+  rejected.reputationScore = 95
+  rejected.providerServiceApiProtocols = {
+    openai: { services: { 'GPT 5': ['openai-chat-completions'] } },
+  }
+  const router = {
+    allowsPeerForPolicy: (_request: unknown, peer: PeerInfo) => peer.peerId === allowed.peerId,
+    onResult: () => {},
+  }
+  const proxy = makeBuyerProxyWithPeers([allowed, rejected], [allowed, rejected], router)
+  let selectedPeerId = ''
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string }) => {
+    selectedPeerId = peer.peerId
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ ok: true })),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'gpt-5', messages: [] } }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(selectedPeerId, allowed.peerId)
+})
+
+test('model-only routing falls back to the next reputable peer after a retryable failure', async () => {
+  const first = makePeer('a', ['openai'])
+  first.reputationScore = 95
+  first.providerServiceApiProtocols = {
+    openai: { services: { 'gpt-5': ['openai-chat-completions'] } },
+  }
+  const second = makePeer('b', ['openai'])
+  second.reputationScore = 80
+  second.providerServiceApiProtocols = {
+    openai: { services: { 'GPT 5': ['openai-chat-completions'] } },
+  }
+  const proxy = makeBuyerProxyWithPeers([first, second], [first, second], permissiveRouter())
+  const attempts: string[] = []
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string }) => {
+    attempts.push(peer.peerId)
+    return {
+      requestId: request.requestId,
+      statusCode: peer.peerId === first.peerId ? 503 : 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ peerId: peer.peerId })),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'gpt5', messages: [] } }))
+
+  assert.equal(res.statusCode, 200)
+  assert.deepEqual(attempts, [first.peerId, second.peerId])
+  assert.equal(JSON.parse(res.body).peerId, second.peerId)
+})
+
+test('model-only routing retries a rate-limited peer before falling back', async () => {
+  const first = makePeer('a', ['openai'])
+  first.reputationScore = 95
+  first.providerServiceApiProtocols = {
+    openai: { services: { 'gpt-5': ['openai-chat-completions'] } },
+  }
+  const second = makePeer('b', ['openai'])
+  second.reputationScore = 80
+  second.providerServiceApiProtocols = {
+    openai: { services: { 'GPT 5': ['openai-chat-completions'] } },
+  }
+  const proxy = makeBuyerProxyWithPeers([first, second], [first, second], permissiveRouter())
+  const attempts: string[] = []
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string }) => {
+    attempts.push(peer.peerId)
+    const firstAttempts = attempts.filter((peerId) => peerId === first.peerId).length
+    const statusCode = peer.peerId === first.peerId && firstAttempts < 3 ? 429 : 200
+    return {
+      requestId: request.requestId,
+      statusCode,
+      headers: { 'content-type': 'application/json', 'retry-after': '0' },
+      body: Buffer.from(JSON.stringify({ peerId: peer.peerId })),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'gpt-5', messages: [] } }))
+
+  assert.equal(res.statusCode, 200)
+  assert.deepEqual(attempts, [first.peerId, first.peerId, first.peerId])
+})
+
+test('model-only routing falls back after three rate-limit responses from one peer', async () => {
+  const first = makePeer('a', ['openai'])
+  first.reputationScore = 95
+  first.providerServiceApiProtocols = {
+    openai: { services: { 'gpt-5': ['openai-chat-completions'] } },
+  }
+  const second = makePeer('b', ['openai'])
+  second.reputationScore = 80
+  second.providerServiceApiProtocols = {
+    openai: { services: { 'GPT 5': ['openai-chat-completions'] } },
+  }
+  const proxy = makeBuyerProxyWithPeers([first, second], [first, second], permissiveRouter())
+  const attempts: string[] = []
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string }) => {
+    attempts.push(peer.peerId)
+    return {
+      requestId: request.requestId,
+      statusCode: peer.peerId === first.peerId ? 429 : 200,
+      headers: { 'content-type': 'application/json', 'retry-after': '0' },
+      body: Buffer.from(JSON.stringify({ peerId: peer.peerId })),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'gpt-5', messages: [] } }))
+
+  assert.equal(res.statusCode, 200)
+  assert.deepEqual(attempts, [first.peerId, first.peerId, first.peerId, second.peerId])
+})
+
+test('model-only routing skips a cooling-down peer when another offer is ready', async () => {
+  const clock = makeTestClock()
+  const cooling = makePeer('a', ['openai'])
+  cooling.reputationScore = 95
+  cooling.providerServiceApiProtocols = {
+    openai: { services: { 'gpt-5': ['openai-chat-completions'] } },
+  }
+  const ready = makePeer('b', ['openai'])
+  ready.reputationScore = 70
+  ready.providerServiceApiProtocols = {
+    openai: { services: { 'GPT 5': ['openai-chat-completions'] } },
+  }
+  const proxy = makeBuyerProxyWithPeers([cooling, ready], [cooling, ready], permissiveRouter(), clock.now)
+  ;(proxy as any)._peerHealth.set(cooling.peerId, {
+    failureStreak: 3,
+    windowStartedAt: clock.now(),
+    episodeStartedAt: clock.now(),
+    cooldownUntil: clock.now() + 60_000,
+    lastFailureAt: clock.now(),
+    lastSuccessAt: 0,
+    lastReason: 'seller-5xx',
+  })
+  let selectedPeerId = ''
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string }) => {
+    selectedPeerId = peer.peerId
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{}'),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'gpt-5', messages: [] } }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(selectedPeerId, ready.peerId)
+})
+
+test('model-only routing does not fail over after a buyer-attributed failure', async () => {
+  const first = makePeer('a', ['openai'])
+  first.reputationScore = 95
+  first.providerServiceApiProtocols = {
+    openai: { services: { 'gpt-5': ['openai-chat-completions'] } },
+  }
+  const second = makePeer('b', ['openai'])
+  second.reputationScore = 80
+  second.providerServiceApiProtocols = {
+    openai: { services: { 'GPT 5': ['openai-chat-completions'] } },
+  }
+  const proxy = makeBuyerProxyWithPeers([first, second], [first, second], permissiveRouter())
+  const attempts: string[] = []
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo) => {
+    attempts.push(peer.peerId)
+    throw buyerFault('Buyer has insufficient deposits', 'buyer-deposits-insufficient')
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'gpt-5', messages: [] } }))
+
+  assert.equal(res.statusCode, 503)
+  assert.deepEqual(attempts, [first.peerId])
+  assert.equal(JSON.parse(res.body).error.code, ANTSEED_BUYER_FAULT_ERROR_CODE)
+})
+
 test('pinned proxy request reports when the pinned peer is not discoverable', async () => {
   const pinnedPeerId = 'a'.repeat(40)
   const otherPeer = makePeer('b', ['openai'])

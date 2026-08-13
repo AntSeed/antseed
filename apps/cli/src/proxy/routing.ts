@@ -1,4 +1,5 @@
 import type { PeerInfo, SerializedHttpRequest } from '@antseed/node'
+import { canonicalModelKey } from '@antseed/node/model-identity'
 import {
   extractRequestBodyFields,
   inferProviderDefaultServiceApiProtocols,
@@ -54,8 +55,9 @@ function getPeerProviderProtocols(
   ).providerServiceApiProtocols?.[provider]?.services
   if (fromMetadata) {
     if (normalizedRequestedService) {
+      const requestedKey = canonicalModelKey(normalizedRequestedService)
       const directMatchKey = Object.keys(fromMetadata).find(
-        (key) => key.toLowerCase() === normalizedRequestedService.toLowerCase(),
+        (key) => canonicalModelKey(key) === requestedKey,
       )
       if (directMatchKey && fromMetadata[directMatchKey]?.length) {
         log(
@@ -105,11 +107,35 @@ function getDirectServiceProtocols(
   ).providerServiceApiProtocols?.[provider]?.services
   if (!fromMetadata) return []
 
+  const requestedKey = canonicalModelKey(normalizedRequestedService)
   const directMatchKey = Object.keys(fromMetadata).find(
-    (key) => key.toLowerCase() === normalizedRequestedService.toLowerCase(),
+    (key) => canonicalModelKey(key) === requestedKey,
   )
   const protocols = directMatchKey ? fromMetadata[directMatchKey] : undefined
   return protocols?.length ? Array.from(new Set(protocols)) : []
+}
+
+export function findAdvertisedServiceId(
+  peer: PeerInfo,
+  provider: string,
+  requestedService: string,
+): string | null {
+  const requestedKey = canonicalModelKey(requestedService)
+  if (!requestedKey) return null
+  const matrices: Array<Record<string, { services?: Record<string, unknown> }> | undefined> = [
+    peer.providerPricing,
+    peer.providerServiceApiProtocols,
+    peer.providerServiceCategories,
+    peer.providerServiceUnitBillingModels,
+    peer.providerServiceCapabilities,
+  ]
+  for (const matrix of matrices) {
+    const providerKey = Object.keys(matrix ?? {}).find((key) => key.toLowerCase() === provider.toLowerCase())
+    const services = providerKey ? matrix?.[providerKey]?.services : undefined
+    const serviceId = Object.keys(services ?? {}).find((key) => canonicalModelKey(key) === requestedKey)
+    if (serviceId) return serviceId
+  }
+  return null
 }
 
 function selectProviderByProtocol(

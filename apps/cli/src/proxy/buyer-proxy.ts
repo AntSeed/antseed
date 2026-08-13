@@ -52,6 +52,7 @@ import {
 import { buildNetworkModels, parseModelTypeFilter } from './network-models.js'
 import {
   findUnannouncedRequestParameters,
+  findAdvertisedServiceId,
   getExplicitProviderOverride,
   getExplicitPeerIdOverride,
   resolvePeerRoutePlan,
@@ -122,6 +123,35 @@ export interface BuyerProxyConfig {
 }
 
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
+const MODEL_RATE_LIMIT_MAX_ATTEMPTS_PER_PEER = 3
+const MODEL_RATE_LIMIT_RETRY_DELAYS_MS = [250, 750] as const
+const MODEL_RATE_LIMIT_MAX_RETRY_AFTER_MS = 2_000
+
+function rateLimitRetryDelayMs(headers: Record<string, string>, retryIndex: number): number {
+  const retryAfter = headers['retry-after'] ?? headers['Retry-After']
+  if (retryAfter) {
+    const seconds = Number(retryAfter)
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.min(MODEL_RATE_LIMIT_MAX_RETRY_AFTER_MS, Math.round(seconds * 1_000))
+    }
+  }
+  return MODEL_RATE_LIMIT_RETRY_DELAYS_MS[retryIndex] ?? MODEL_RATE_LIMIT_RETRY_DELAYS_MS.at(-1)!
+}
+
+async function waitForRetry(delayMs: number, signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) return false
+  return new Promise((resolve) => {
+    const onAbort = (): void => {
+      clearTimeout(timeout)
+      resolve(false)
+    }
+    const timeout = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve(true)
+    }, delayMs)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
 
 function isControlPlaneServicesPath(path: string): boolean {
   return path.toLowerCase().startsWith('/v1/models')
@@ -2040,22 +2070,11 @@ export class BuyerProxy {
     const explicitPeerId = getExplicitPeerIdOverride(serializedReq, effectivePinnedPeer ?? undefined, bodyPinnedPeer)
     log(`Routing hints: provider=${explicitProvider ?? 'auto'} pin-peer=${explicitPeerId ?? 'none'}`)
 
-    // Auto peer selection is disabled. Every request MUST target a specific
-    // peer, either via the per-request `x-antseed-pin-peer` header, a
-    // `<peerId>@<model>` model prefix, or a session-wide pin set by
-    // `antseed buyer connection set --peer <peerId>`.
-    //
-    // Surface the error in the structured shape OpenAI/Anthropic SDKs expect
-    // (`{ error: { type, code, message, ... } }`) so callers see a proper
-    // .message on their error objects instead of a raw text/plain body. We
-    // use HTTP 400 — the request is missing required information the buyer
-    // cannot infer on its own — which is what SDK retry/error logic treats
-    // as a non-retryable client mistake.
-    if (!explicitPeerId) {
-      log('Request rejected: no peer pinned')
+    if (!explicitPeerId && !requestedService) {
+      log('Request rejected: no peer pinned and no model requested')
       const errorMessage =
-        'No peer pinned. Auto-selection is disabled.\n'
-        + 'Pin a peer one of three ways:\n'
+        'No model or peer was specified.\n'
+        + 'Set the request model, or pin a peer one of three ways:\n'
         + '  • Per-request header:   x-antseed-pin-peer: <peerId>    (40-char hex EVM address)\n'
         + '  • Model name prefix:    <peerId>@<model>\n'
         + '  • Session pin:          antseed buyer connection set --peer <peerId>\n'
@@ -2063,10 +2082,10 @@ export class BuyerProxy {
       res.writeHead(400, { 'content-type': 'application/json' })
       res.end(JSON.stringify({
         error: {
-          type: 'no_peer_pinned',
-          code: 'no_peer_pinned',
+          type: 'missing_routing_target',
+          code: 'missing_routing_target',
           message: errorMessage,
-          param: 'x-antseed-pin-peer',
+          param: 'model',
           help: {
             perRequestHeader: 'x-antseed-pin-peer: <peerId>',
             modelPrefix: '<peerId>@<model>',
@@ -2087,6 +2106,129 @@ export class BuyerProxy {
       return
     }
 
+    if (!explicitPeerId && requestedService) {
+      const selectModelPeers = (candidateSources: PeerInfo[]): CandidatePeerRouteSelection =>
+        selectCandidatePeersForRouting(candidateSources, requestProtocol, requestedService, explicitProvider, 'strict')
+      let discoveredPeers = peers
+      let { candidatePeers: modelPeers, routePlanByPeerId: modelPlans } = selectModelPeers(discoveredPeers)
+      const cacheAgeMs = Date.now() - this._cacheLastUpdatedAtMs
+      if (modelPeers.length === 0 || cacheAgeMs > this._peerCacheTtlMs) {
+        discoveredPeers = await this._getPeers({ forceRefresh: true })
+        ;({ candidatePeers: modelPeers, routePlanByPeerId: modelPlans } = selectModelPeers(discoveredPeers))
+      }
+
+      const router = this._node.router
+      const policyRouter = router as BuyerPolicyRouter | null | undefined
+      const ranked = modelPeers
+        .map((peer) => {
+          const plan = modelPlans.get(peer.peerId)
+          const serviceId = plan ? findAdvertisedServiceId(peer, plan.provider, requestedService) : null
+          if (!plan || !serviceId) return null
+          const rewritten = overrideRoutedModelInBody(serializedReq.body, serializedReq.headers, serviceId)
+          const requestForPolicy = rewritten.overridden
+            ? { ...serializedReq, body: rewritten.body, headers: rewritten.headers }
+            : serializedReq
+          const policyAllowed = policyRouter?.allowsPeerForPolicy
+            ? policyRouter.allowsPeerForPolicy(requestForPolicy, peer)
+            : policyRouter?.allowsPeerForPricing
+              ? policyRouter.allowsPeerForPricing(requestForPolicy, peer)
+              : true
+          if (!policyAllowed) return null
+          return {
+            peer,
+            serviceId,
+            request: requestForPolicy,
+            reputation: computeOnChainReputationScore(peer) ?? peer.reputationScore ?? -1,
+          }
+        })
+        .filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null)
+        .sort((a, b) => b.reputation - a.reputation || a.peer.peerId.localeCompare(b.peer.peerId))
+
+      const now = this._now()
+      const ready = ranked.filter((candidate) => !isCoolingDown(this._peerHealth.get(candidate.peer.peerId), now))
+      const candidates = ready.length > 0 ? ready : ranked
+      if (candidates.length === 0) {
+        res.writeHead(502, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({
+          error: {
+            type: 'model_not_found',
+            code: 'model_not_found',
+            message: `No policy-allowed peer currently serves model "${requestedService}".`,
+            param: 'model',
+          },
+        }))
+        return
+      }
+
+      let lastRetry: Awaited<ReturnType<BuyerProxy['_dispatchToPeer']>> | null = null
+      let lastVerificationError: string | null = null
+      for (const [index, selected] of candidates.entries()) {
+        if (this._verifier) {
+          const makeReach = (chosenId: string): SellerReach =>
+            makeVerifierReach(this._node, selected.peer, chosenId, clientAbortController.signal)
+          const outcome = await this._verifyPeer(selected.peer, makeReach, clientAbortController.signal)
+          if (!outcome.ok) {
+            lastVerificationError = `Peer ${selected.peer.peerId.slice(0, 12)}... failed required verification (${outcome.reason ?? 'failed'}).`
+            log(`${lastVerificationError} Trying the next model peer.`)
+            continue
+          }
+        }
+
+        for (let peerAttempt = 0; peerAttempt < MODEL_RATE_LIMIT_MAX_ATTEMPTS_PER_PEER; peerAttempt += 1) {
+          log(
+            `Auto-selected peer ${selected.peer.peerId.slice(0, 12)}... for model="${requestedService}" `
+            + `service="${selected.serviceId}" reputation=${selected.reputation} peer=${index + 1}/${candidates.length} `
+            + `attempt=${peerAttempt + 1}/${MODEL_RATE_LIMIT_MAX_ATTEMPTS_PER_PEER}`,
+          )
+          const result = await this._dispatchToPeer(
+            res,
+            selected.request,
+            selected.peer,
+            modelPlans,
+            requestProtocol,
+            selected.serviceId,
+            explicitProvider,
+            router,
+            RETRYABLE_STATUS_CODES,
+            clientAbortController.signal,
+          )
+          if (result.done) return
+          lastRetry = result
+          if (result.responseHeaders[ANTSEED_FAULT_ATTRIBUTION_HEADER]?.toLowerCase() === 'buyer') {
+            res.writeHead(result.statusCode, result.responseHeaders)
+            res.end(result.responseBody)
+            return
+          }
+          const retrySamePeer = result.statusCode === 429
+            && peerAttempt + 1 < MODEL_RATE_LIMIT_MAX_ATTEMPTS_PER_PEER
+          if (!retrySamePeer) break
+          const delayMs = rateLimitRetryDelayMs(result.responseHeaders, peerAttempt)
+          log(`Peer ${selected.peer.peerId.slice(0, 12)}... is rate-limited; retrying in ${delayMs}ms.`)
+          if (!await waitForRetry(delayMs, clientAbortController.signal)) return
+        }
+        if (index + 1 < candidates.length) {
+          log(`Peer ${selected.peer.peerId.slice(0, 12)}... failed retryably; trying next model peer.`)
+        }
+      }
+
+      if (lastRetry) {
+        res.writeHead(lastRetry.statusCode, lastRetry.responseHeaders)
+        res.end(lastRetry.responseBody)
+      } else {
+        res.writeHead(502, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({
+          error: {
+            type: 'peer_verification_failed',
+            code: 'peer_verification_failed',
+            message: lastVerificationError ?? `No verified peer currently serves model "${requestedService}".`,
+          },
+        }))
+      }
+      return
+    }
+
+    const pinnedPeerId = explicitPeerId!
+
     // Narrow the candidate set to just the pinned peer (if we already know
     // about it) before running the per-peer protocol/service match. This
     // avoids wasting work — and spamming "Service strict-miss" log lines —
@@ -2094,7 +2236,7 @@ export class BuyerProxy {
     // fall through with the full list so the "not in candidate set → force
     // refresh" path still works.
     const narrowToPinned = (sources: PeerInfo[]): PeerInfo[] => {
-      const match = sources.find((p) => p.peerId.toLowerCase() === explicitPeerId)
+      const match = sources.find((p) => p.peerId.toLowerCase() === pinnedPeerId)
       return match ? [match] : sources
     }
 
@@ -2130,7 +2272,7 @@ export class BuyerProxy {
     let discoveredPeers = peers
 
     const isPinnedDiscovered = (): boolean =>
-      discoveredPeers.some((peer) => peer.peerId.toLowerCase() === explicitPeerId)
+      discoveredPeers.some((peer) => peer.peerId.toLowerCase() === pinnedPeerId)
 
     // Single refresh guard covers all three doubts about the cache: pin
     // missing, candidate filter empty, or cache past TTL.
@@ -2148,10 +2290,10 @@ export class BuyerProxy {
           ? 'model peer prefix'
           : '--peer flag or session pin'
       const diagnostics = this._formatPeerSelectionDiagnostics(discoveredPeers)
-      log(`Pinned peer ${explicitPeerId.slice(0, 12)}... not discoverable in DHT (${logSource})`)
+      log(`Pinned peer ${pinnedPeerId.slice(0, 12)}... not discoverable in DHT (${logSource})`)
       res.writeHead(502, { 'content-type': 'text/plain' })
       res.end(
-        `Pinned peer ${explicitPeerId.slice(0, 12)}... is not reachable right now. `
+        `Pinned peer ${pinnedPeerId.slice(0, 12)}... is not reachable right now. `
         + 'It may be offline, not announcing, or temporarily unreachable. '
         + 'Pick a different service in Discover or try again later. '
         + diagnostics,
@@ -2160,7 +2302,7 @@ export class BuyerProxy {
     }
 
     if (routingPeers.length === 0) {
-      const pinnedPeer = discoveredPeers.find((peer) => peer.peerId.toLowerCase() === explicitPeerId) ?? null
+      const pinnedPeer = discoveredPeers.find((peer) => peer.peerId.toLowerCase() === pinnedPeerId) ?? null
       const protocolLabel = requestProtocol ? `protocol=${requestProtocol}` : 'protocol=unknown'
       const providerLabel = explicitProvider ? `provider=${explicitProvider}` : 'provider=auto'
       const serviceLabel = requestedService ? `service=${requestedService}` : 'service=none'
@@ -2172,10 +2314,10 @@ export class BuyerProxy {
           .filter((provider) => provider.length > 0)
         if (!providers.includes(explicitProvider)) {
           const providerList = providers.length > 0 ? providers.join(', ') : 'none'
-          log(`Pinned peer ${explicitPeerId.slice(0, 12)}... does not offer explicit provider=${explicitProvider}`)
+          log(`Pinned peer ${pinnedPeerId.slice(0, 12)}... does not offer explicit provider=${explicitProvider}`)
           res.writeHead(502, { 'content-type': 'text/plain' })
           res.end(
-            `Pinned peer ${explicitPeerId.slice(0, 12)}... does not offer provider=${explicitProvider}. `
+            `Pinned peer ${pinnedPeerId.slice(0, 12)}... does not offer provider=${explicitProvider}. `
             + `Available providers: ${providerList}. `
             + 'Remove or change the x-antseed-provider header, or pick a different peer. '
             + diagnostics,
@@ -2184,10 +2326,10 @@ export class BuyerProxy {
         }
       }
 
-      log(`Pinned peer ${explicitPeerId.slice(0, 12)}... filtered out by protocol/service match`)
+      log(`Pinned peer ${pinnedPeerId.slice(0, 12)}... filtered out by protocol/service match`)
       res.writeHead(502, { 'content-type': 'text/plain' })
       res.end(
-        `Pinned peer ${explicitPeerId.slice(0, 12)}... does not support this request `
+        `Pinned peer ${pinnedPeerId.slice(0, 12)}... does not support this request `
         + `(${protocolLabel}, ${providerLabel}, ${serviceLabel}). `
         + `Pick a different service in Discover. ${diagnostics}`,
       )
@@ -2198,15 +2340,15 @@ export class BuyerProxy {
 
     const router = this._node.router
 
-    const selectedPeer = routingPeers.find((p) => p.peerId.toLowerCase() === explicitPeerId) ?? null
+    const selectedPeer = routingPeers.find((p) => p.peerId.toLowerCase() === pinnedPeerId) ?? null
 
     // Defence in depth: the discovered+narrowed checks above should make this
     // branch unreachable. Keep a structured fallback so we don't silently hang
     // if an invariant breaks.
     if (!selectedPeer) {
-      log(`Invariant: pinned peer ${explicitPeerId.slice(0, 12)}... present in DHT but missing from narrowed candidate list`)
+      log(`Invariant: pinned peer ${pinnedPeerId.slice(0, 12)}... present in DHT but missing from narrowed candidate list`)
       res.writeHead(502, { 'content-type': 'text/plain' })
-      res.end(`Pinned peer ${explicitPeerId.slice(0, 12)}... is currently unreachable. Try again in a moment.`)
+      res.end(`Pinned peer ${pinnedPeerId.slice(0, 12)}... is currently unreachable. Try again in a moment.`)
       return
     }
     const policyRouter = router as BuyerPolicyRouter | null | undefined
@@ -2260,7 +2402,7 @@ export class BuyerProxy {
     )
     if (!result.done) {
       // Pinned peer returned a retryable error. We never retry against another
-      // peer — auto-selection is disabled — so surface the error to the client.
+      // peer for an explicit pin, so surface the error to the client.
       res.writeHead(result.statusCode, result.responseHeaders)
       res.end(result.responseBody)
     }

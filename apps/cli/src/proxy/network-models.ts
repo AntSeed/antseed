@@ -26,6 +26,7 @@ export type NetworkModelPeerOffer = {
 
 export type NetworkModelEntry = {
   id: string
+  aliases: string[]
   object: 'model'
   created: number
   owned_by: 'antseed'
@@ -34,6 +35,13 @@ export type NetworkModelEntry = {
 }
 
 export type ModelTypeFilter = 'all' | NetworkModelType | 'invalid'
+
+function normalizedModelAlias(serviceId: string): string {
+  let value = serviceId.trim().toLowerCase()
+  const slash = value.lastIndexOf('/')
+  if (slash >= 0) value = value.slice(slash + 1)
+  return value.replace(/[^a-z0-9.]+/g, '-').replace(/^-+|-+$/g, '')
+}
 
 /** Maps a `?type=` query value to a filter; absent/empty means "all". */
 export function parseModelTypeFilter(raw: string | null): ModelTypeFilter {
@@ -62,9 +70,18 @@ export function buildNetworkModels(peers: PeerInfo[], nowMs: number): NetworkMod
     if (!key) continue
     let entry = byModelKey.get(key)
     if (!entry) {
-      entry = { id: offer.serviceId, object: 'model', created, owned_by: 'antseed', type: offer.type, peers: [] }
+      entry = {
+        id: offer.serviceId,
+        aliases: [],
+        object: 'model',
+        created,
+        owned_by: 'antseed',
+        type: offer.type,
+        peers: [],
+      }
       byModelKey.set(key, entry)
     }
+    entry.aliases.push(normalizedModelAlias(offer.serviceId), key)
     if (offer.type === 'image') entry.type = 'image'
     entry.peers.push({
       peerId: offer.peerId,
@@ -83,6 +100,7 @@ export function buildNetworkModels(peers: PeerInfo[], nowMs: number): NetworkMod
 
   const entries = [...byModelKey.values()]
   for (const entry of entries) {
+    entry.aliases = [...new Set(entry.aliases.filter(Boolean))].sort((a, b) => a.localeCompare(b))
     entry.peers.sort((a, b) => (
       (reputationByPeerId.get(b.peerId) ?? -1) - (reputationByPeerId.get(a.peerId) ?? -1)
       || a.peerId.localeCompare(b.peerId)

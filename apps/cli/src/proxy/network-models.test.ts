@@ -94,6 +94,7 @@ test('aggregates one entry per model id across peers, case-insensitively', () =>
   assert.equal(qwen.object, 'model')
   assert.equal(qwen.owned_by, 'antseed')
   assert.equal(qwen.created, Math.floor(NOW_MS / 1000))
+  assert.deepEqual(qwen.aliases, ['qwen3-coder', 'qwen3coder'])
   // Higher-reputation peer first.
   assert.deepEqual(qwen.peers.map((peer) => peer.peerId), [mixedSeller.peerId, textSeller.peerId])
   assert.deepEqual(qwen.peers.map((peer) => peer.serviceId), ['QWEN3-Coder', 'qwen3-coder'])
@@ -117,6 +118,7 @@ test('merges conservative family aliases while preserving advertised service ids
 
   assert.equal(models.length, 1)
   assert.equal(models[0]?.id, 'claude-opus-5')
+  assert.deepEqual(models[0]?.aliases, ['claude-opus-5', 'opus-5', 'opus5'])
   assert.deepEqual(models[0]?.peers.map((peer) => peer.serviceId), ['claude-opus-5', 'Opus 5'])
 })
 
