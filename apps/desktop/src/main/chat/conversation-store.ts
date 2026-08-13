@@ -45,7 +45,7 @@ type CachedSummary = {
 
 export type AntseedPeerData = { peerId: string; peerLabel?: string; routeMode?: ChatRouteMode };
 
-export function isPersistedPeerBindingPinned(peerData: AntseedPeerData | null): boolean {
+export function isPersistedPeerBindingPinned(peerData: AntseedPeerData | null): peerData is AntseedPeerData {
   return Boolean(peerData?.peerId) && peerData?.routeMode !== 'auto';
 }
 

@@ -86,20 +86,6 @@ async function loadSnapshotFromBuyerState(dataDir: string): Promise<BrowseSnapsh
   }
 }
 
-/**
- * A pricing entry counts as "free" when both input and output prices are
- * finite and zero. We intentionally don't treat undefined/negative values as
- * free — those are "unknown" and handled separately by the formatter.
- */
-function isFreePricing(pricing: { inputUsdPerMillion: number; outputUsdPerMillion: number }): boolean {
-  return (
-    Number.isFinite(pricing.inputUsdPerMillion)
-    && Number.isFinite(pricing.outputUsdPerMillion)
-    && pricing.inputUsdPerMillion === 0
-    && pricing.outputUsdPerMillion === 0
-  );
-}
-
 const offersByPeer = new WeakMap<PeerInfo, NetworkServiceOffer[]>();
 function peerServiceOffers(peer: PeerInfo): NetworkServiceOffer[] {
   let offers = offersByPeer.get(peer);
@@ -114,14 +100,15 @@ function offerServiceLabel(offer: NetworkServiceOffer): string {
   return offer.serviceId === offer.provider ? '(default)' : offer.serviceId;
 }
 
+/**
+ * An offer counts as "free" when input, output, and (if announced)
+ * cached-input prices are all exactly $0. Undefined input/output prices are
+ * "unknown", not free — those are handled separately by the formatter.
+ */
 function isFreeOffer(offer: NetworkServiceOffer): boolean {
   return (
-    offer.inputUsdPerMillion !== undefined
-    && offer.outputUsdPerMillion !== undefined
-    && isFreePricing({
-      inputUsdPerMillion: offer.inputUsdPerMillion,
-      outputUsdPerMillion: offer.outputUsdPerMillion,
-    })
+    offer.inputUsdPerMillion === 0
+    && offer.outputUsdPerMillion === 0
     && (offer.cachedInputUsdPerMillion === undefined || offer.cachedInputUsdPerMillion === 0)
   );
 }

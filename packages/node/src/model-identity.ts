@@ -1,3 +1,30 @@
+/** Trailing "coding only" restriction suffix on an advertised service id. */
+export const CODING_ONLY_SUFFIX_RE = /(?:[-:._\s]+coding[-:._\s]+only|codingonly)$/i;
+
+/**
+ * Strip cosmetic decorations shared by canonical keys and display names:
+ * vendor paths, `latest` and trailing release dates, flattened
+ * anthropic/openai prefixes, Claude family reordering, and the coding-only
+ * suffix on Claude family models.
+ */
+function stripModelDecorations(value: string): string {
+  let normalized = String(value ?? '').trim().toLowerCase();
+  const slash = normalized.lastIndexOf('/');
+  if (slash >= 0) normalized = normalized.slice(slash + 1);
+  normalized = normalized.replace(/[-:._\s]+(latest|\d{6,8}|\d{4}-\d{2}(-\d{2})?)$/, '');
+  normalized = normalized.replace(/^anthropic[-:._\s]+(?=claude(?:[-:._\s]|\d|$))/, '');
+  normalized = normalized.replace(/^openai[-:._\s]+(?=gpt(?:[-:._\s]|\d|$))/, '');
+  normalized = normalized.replace(
+    /^claude[-:._\s]+(\d+(?:[-:._\s]+\d+)?)[-:._\s]+(opus|sonnet|haiku|fable)(?=([-:._\s]|$))/,
+    '$2-$1',
+  );
+  normalized = normalized.replace(/^claude[-:._\s]+(?=(opus|sonnet|haiku|fable)(?:[-:._\s]|\d|$))/, '');
+  if (/^(?:opus|sonnet|haiku|fable)(?:[-:._\s]|\d)/.test(normalized)) {
+    normalized = normalized.replace(CODING_ONLY_SUFFIX_RE, '');
+  }
+  return normalized;
+}
+
 /**
  * Normalize advertised model names into a conservative cross-provider match
  * key. Cosmetic separators, vendor paths, `latest`, and trailing release dates
@@ -7,23 +34,10 @@
  * `gpt-5.6`, `gpt-5-6`, and `gpt-56` without changing arbitrary service ids.
  */
 export function canonicalModelKey(serviceId: string): string {
-  let value = String(serviceId ?? '').trim().toLowerCase();
-  const slash = value.lastIndexOf('/');
-  if (slash >= 0) value = value.slice(slash + 1);
-  value = value.replace(/[-:._\s]+(latest|\d{6,8}|\d{4}-\d{2}(-\d{2})?)$/, '');
-  value = value.replace(/^anthropic[-:._\s]+(?=claude(?:[-:._\s]|\d|$))/, '');
-  value = value.replace(/^openai[-:._\s]+(?=gpt(?:[-:._\s]|\d|$))/, '');
+  let value = stripModelDecorations(serviceId);
   value = value.replace(/^google[-:._\s]+(?=gemma(?:[-:._\s]|\d|$))/, '');
   value = value.replace(/^aion[-:._\s]+labs[-:._\s]+(?=aion(?:[-:._\s]|\d|$))/, '');
   value = value.replace(/^(?:zai[-:._\s]+org|z[-:._\s]+ai)[-:._\s]+(?=glm(?:[-:._\s]|\d|$))/, '');
-  value = value.replace(
-    /^claude[-:._\s]+(\d+(?:[-:._\s]+\d+)?)[-:._\s]+(opus|sonnet|haiku|fable)(?=([-:._\s]|$))/,
-    '$2-$1',
-  );
-  value = value.replace(/^claude[-:._\s]+(?=(opus|sonnet|haiku|fable)(?:[-:._\s]|\d|$))/, '');
-  if (/^(?:opus|sonnet|haiku|fable)(?:[-:._\s]|\d)/.test(value)) {
-    value = value.replace(/(?:[-:._\s]+coding[-:._\s]+only|codingonly)$/, '');
-  }
   const compactVersionPunctuation = /^(?:aion|opus|sonnet|haiku|fable|deepseek|e2ee[-:._\s]*glm|gemini|gemma|glm|gpt|grok|hermes|kimi|llama|mimo|minimax|mistral|qwen|venice[-:._\s]*uncensored)(?:[-:._\s]|\d)/.test(value);
   return compactVersionPunctuation
     ? value.replace(/[^a-z0-9]+/g, '')
@@ -50,24 +64,6 @@ const DISPLAY_TOKEN_CASING: Record<string, string> = {
 };
 
 const DISPLAY_SLUG_RE = /^[a-z0-9./_:-]+$/;
-
-function stripModelDecorations(value: string): string {
-  let normalized = value.trim().toLowerCase();
-  const slash = normalized.lastIndexOf('/');
-  if (slash >= 0) normalized = normalized.slice(slash + 1);
-  normalized = normalized.replace(/[-:._\s]+(latest|\d{6,8}|\d{4}-\d{2}(-\d{2})?)$/, '');
-  normalized = normalized.replace(/^anthropic[-:._\s]+(?=claude(?:[-:._\s]|\d|$))/, '');
-  normalized = normalized.replace(/^openai[-:._\s]+(?=gpt(?:[-:._\s]|\d|$))/, '');
-  normalized = normalized.replace(
-    /^claude[-:._\s]+(\d+(?:[-:._\s]+\d+)?)[-:._\s]+(opus|sonnet|haiku|fable)(?=([-:._\s]|$))/,
-    '$2-$1',
-  );
-  normalized = normalized.replace(/^claude[-:._\s]+(?=(opus|sonnet|haiku|fable)(?:[-:._\s]|\d|$))/, '');
-  if (/^(?:opus|sonnet|haiku|fable)(?:[-:._\s]|\d)/.test(normalized)) {
-    normalized = normalized.replace(/(?:[-:._\s]+coding[-:._\s]+only|codingonly)$/, '');
-  }
-  return normalized;
-}
 
 function titleModelToken(token: string): string {
   const mapped = DISPLAY_TOKEN_CASING[token];
@@ -108,9 +104,7 @@ function preferredGptDisplayName(value: string): string | null {
   if (!/^\d/.test(remainder)) return null;
   const tokens = remainder.split(/[-_:./\s]+/).filter(Boolean);
   if (tokens.length === 0) return 'GPT';
-
   const version = takePreferredDecimalVersion(tokens);
-
   const suffix = tokens.map(titleModelToken).join(' ');
   return `GPT ${version}${suffix ? ` ${suffix}` : ''}`.trim();
 }

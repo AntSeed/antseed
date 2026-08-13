@@ -543,20 +543,15 @@ export function registerPiChatHandlers({
     // routeMode existed are treated as pinned so upgrades do not erase an
     // explicit seller choice; only explicit auto routes discard peer affinity.
     const enriched = conversations.map((c) => {
-      const peerBound = isPersistedPeerBindingPinned({
-        peerId: c.peerId ?? '',
-        ...(c.routeMode ? { routeMode: c.routeMode } : {}),
-      });
-      const memPeerId = peerBound ? preferredPeerByConversationId.get(c.id) : undefined;
-      const peerId = peerBound ? (memPeerId || c.peerId) : undefined;
+      if (!isPersistedPeerBindingPinned({ peerId: c.peerId ?? '', routeMode: c.routeMode })) {
+        preferredPeerByConversationId.delete(c.id);
+        return { ...c, peerId: undefined };
+      }
+      const peerId = preferredPeerByConversationId.get(c.id) || c.peerId;
       if (peerId && !preferredPeerByConversationId.has(c.id)) {
         preferredPeerByConversationId.set(c.id, peerId);
-      } else if (!peerId) {
-        preferredPeerByConversationId.delete(c.id);
       }
-      return peerId
-        ? { ...c, peerId, routeMode: c.routeMode ?? 'pinned' as const }
-        : { ...c, peerId: undefined };
+      return { ...c, peerId, routeMode: c.routeMode ?? 'pinned' };
     });
     return { ok: true, data: enriched };
   });

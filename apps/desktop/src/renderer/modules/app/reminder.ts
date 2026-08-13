@@ -124,15 +124,14 @@ export function computeProspectiveUsd(
   const discounts: number[] = [];
 
   for (const entry of paidFrontierEntries(catalog)) {
+    const reference = referenceForEntry(entry, referenceMap);
+    if (!reference || reference.input === null || reference.output === null) continue;
     const networkInput = entry.minInputUsdPerMillion;
     const networkOutput = entry.minOutputUsdPerMillion;
-    const reference = referenceForEntry(entry, referenceMap);
     if (
       networkInput === null || networkOutput === null
       || !Number.isFinite(networkInput) || !Number.isFinite(networkOutput)
       || networkInput <= 0 || networkOutput <= 0
-      || reference?.input === null || reference?.output === null
-      || reference?.input === undefined || reference?.output === undefined
     ) continue;
 
     const official = (reference.input + 3 * reference.output) / 4;
@@ -158,12 +157,9 @@ function frontierReferenceMedians(
   const output: number[] = [];
   for (const entry of paidFrontierEntries(catalog)) {
     const reference = referenceForEntry(entry, referenceMap);
-    if (reference?.input !== null && reference?.input !== undefined && reference.input >= 0) {
-      input.push(reference.input);
-    }
-    if (reference?.output !== null && reference?.output !== undefined && reference.output >= 0) {
-      output.push(reference.output);
-    }
+    if (!reference) continue;
+    if (reference.input !== null && reference.input >= 0) input.push(reference.input);
+    if (reference.output !== null && reference.output >= 0) output.push(reference.output);
   }
   const inputMedian = median(input);
   const outputMedian = median(output);
@@ -309,11 +305,16 @@ function nextReminderState(shownVariant: ReminderVariant | null): ReminderState 
   return 'armed_d5';
 }
 
-function armedStateForVariant(variant: ReminderVariant | null): ReminderState {
-  if (variant === 'd15') return 'armed_d15';
-  if (variant === 'd5') return 'armed_d5';
-  if (variant === 'd2') return 'armed_d2';
-  return 'armed_d1';
+function armedStateForVariant(variant: ReminderVariant): ReminderState {
+  return `armed_${variant}`;
+}
+
+function defaultStorage(): StorageLike | null {
+  try {
+    return typeof window === 'undefined' ? null : window.localStorage;
+  } catch {
+    return null;
+  }
 }
 
 function calendarDayOrdinal(day: string): number | null {
@@ -339,9 +340,7 @@ export function initReminderModule({
   const loadReferencePrices = dependencies.loadReferencePrices ?? ensureOpenRouterPrices;
   const notifyChanged = dependencies.notifyChanged ?? notifyUiStateChanged;
   let storage: StorageLike | null = dependencies.storage === undefined
-    ? (() => {
-      try { return typeof window === 'undefined' ? null : window.localStorage; } catch { return null; }
-    })()
+    ? defaultStorage()
     : dependencies.storage;
   let enabled = storage !== null;
   let installDate = '';
@@ -466,11 +465,12 @@ export function initReminderModule({
   }
 
   function visibleUserTurns(conversationId: string): number {
-    const visible = conversationId === uiState.chatActiveConversation && Array.isArray(uiState.chatMessages)
-      ? uiState.chatMessages.filter((message) => (
-      message && typeof message === 'object' && (message as { role?: unknown }).role === 'user'
-      )).length
-      : 0;
+    let visible = 0;
+    if (conversationId === uiState.chatActiveConversation && Array.isArray(uiState.chatMessages)) {
+      visible = uiState.chatMessages.filter((message) => (
+        message && typeof message === 'object' && (message as { role?: unknown }).role === 'user'
+      )).length;
+    }
     // codex-desktop and other tool conversations never open in the chat view,
     // so the renderer snapshot is empty for them. Count completions observed
     // in the completing conversation as user turns instead.
@@ -514,6 +514,16 @@ export function initReminderModule({
     }));
   }
 
+  function lifetimeRetrospectiveUsd(referenceMap: OpenRouterReferenceMap | null): number | null {
+    return computeRetrospectiveUsd({
+      services: lifetimeServices(),
+      totalInputTokens: finiteNonNegative(uiState.creditsBuyerUsage?.totalInputTokens),
+      totalOutputTokens: finiteNonNegative(uiState.creditsBuyerUsage?.totalOutputTokens),
+      catalog: uiState.vprModelCatalog,
+      referenceMap,
+    });
+  }
+
   async function buildOffer(nextVariant: ReminderVariant): Promise<ReminderOffer | null> {
     const referenceMap = await loadReferencePrices();
     const prospective = computeProspectiveUsd(uiState.vprModelCatalog, referenceMap);
@@ -521,35 +531,26 @@ export function initReminderModule({
     const today = counters.days[localCalendarDay(now())] ?? emptyCounter();
     const isD1 = nextVariant === 'd1';
     const requestsCount = isD1 ? today.requests : lifetimeRequests();
-    const retrospective = isD1
-      ? computeRetrospectiveUsd({
+    let retrospective: number | null;
+    if (isD1) {
+      retrospective = computeRetrospectiveUsd({
         services: dailyServices(today),
         totalInputTokens: today.inputTokens,
         totalOutputTokens: today.outputTokens,
         catalog: uiState.vprModelCatalog,
         referenceMap,
-      })
-        // Completions from tool conversations (codex-desktop etc.) record the
-        // request count but often carry no per-response token metadata, so the
-        // daily counter can be token-less even when real usage exists. Fall
-        // back to the buyer daemon's lifetime totals rather than rendering an
-        // empty "worth $".
-        ?? (today.inputTokens + today.outputTokens === 0
-          ? computeRetrospectiveUsd({
-            services: lifetimeServices(),
-            totalInputTokens: finiteNonNegative(uiState.creditsBuyerUsage?.totalInputTokens),
-            totalOutputTokens: finiteNonNegative(uiState.creditsBuyerUsage?.totalOutputTokens),
-            catalog: uiState.vprModelCatalog,
-            referenceMap,
-          })
-          : null)
-      : computeRetrospectiveUsd({
-        services: lifetimeServices(),
-        totalInputTokens: finiteNonNegative(uiState.creditsBuyerUsage?.totalInputTokens),
-        totalOutputTokens: finiteNonNegative(uiState.creditsBuyerUsage?.totalOutputTokens),
-        catalog: uiState.vprModelCatalog,
-        referenceMap,
       });
+      // Completions from tool conversations (codex-desktop etc.) record the
+      // request count but often carry no per-response token metadata, so the
+      // daily counter can be token-less even when real usage exists. Fall
+      // back to the buyer daemon's lifetime totals rather than rendering an
+      // empty "worth $".
+      if (retrospective === null && today.inputTokens + today.outputTokens === 0) {
+        retrospective = lifetimeRetrospectiveUsd(referenceMap);
+      }
+    } else {
+      retrospective = lifetimeRetrospectiveUsd(referenceMap);
+    }
     if (retrospective === null || retrospective < MIN_AMMO_USD) return null;
     return {
       variant: nextVariant,
@@ -648,7 +649,6 @@ export function initReminderModule({
     dismissHome: advanceReminder,
     async reconcilePayer() {
       if (!enabled || (await payerDetected()) !== true) return;
-      uiState.reminderOffer = null;
       finish();
     },
   };

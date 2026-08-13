@@ -39,6 +39,11 @@ function comparableTotalPrice(row: DiscoverRow): number {
   return totalRowPrice(row) ?? Number.POSITIVE_INFINITY;
 }
 
+/** Model-specific reputation with on-chain fallbacks; null when unscored. */
+function modelReputationScore(row: DiscoverRow): number | null {
+  return row.effectiveReputationScore ?? row.onChainReputationScore ?? row.onChainTrustScore;
+}
+
 function compareScoredRoutes(a: VprScoredRoute, b: VprScoredRoute, now: number): number {
   // Health outranks price certainty. Without this tier a cooling-down priced
   // route would still beat a healthy unknown-price one, because the
@@ -82,16 +87,13 @@ export function scoreVprRoute(
     reasons.push('input price exceeds maximum');
   }
 
-  const modelReputation = row.effectiveReputationScore
-    ?? row.onChainReputationScore
-    ?? row.onChainTrustScore;
-  if (modelReputation !== null && modelReputation !== undefined && modelReputation < preferences.minTrustScore) {
+  const modelReputation = modelReputationScore(row);
+  if (modelReputation !== null && modelReputation < preferences.minTrustScore) {
     score -= 50;
     reasons.push('trust score below minimum');
   }
 
-  const trustScore = modelReputation ?? 0;
-  score += Math.min(trustScore, 100) / 5;
+  score += Math.min(modelReputation ?? 0, 100) / 5;
 
   const total = totalRowPrice(row);
   if (total === null) {
@@ -124,10 +126,8 @@ export function isRouteEligibleForAutoSelection(
 ): boolean {
   if (!isPeerRoutable(row.peerId, preferences)) return false;
   if (preferences.minTrustScore <= 0) return true;
-  const reputation = row.effectiveReputationScore
-    ?? row.onChainReputationScore
-    ?? row.onChainTrustScore;
-  return reputation !== null && reputation !== undefined && reputation >= preferences.minTrustScore;
+  const reputation = modelReputationScore(row);
+  return reputation !== null && reputation >= preferences.minTrustScore;
 }
 
 /** Drop every route whose peer the allow/block lists rule out. */

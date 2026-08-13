@@ -158,6 +158,34 @@ async function waitForRetry(delayMs: number, signal: AbortSignal): Promise<boole
   })
 }
 
+/**
+ * A routed-model target is either a bare `<service>` (automatic peer
+ * selection) or an explicit `<peerId>@<service>` pin. The `antseed` alias
+ * itself can never be a target — it would recurse.
+ */
+function isValidRoutedModelTarget(value: string): boolean {
+  if (value === ROUTED_MODEL_ALIAS) return false
+  return !value.includes('@') || parsePeerPinnedService(value) !== null
+}
+
+/** Returns `request` with its body's model field rewritten to `serviceId`, or unchanged if nothing rewrote. */
+function withRoutedModel(request: SerializedHttpRequest, serviceId: string): SerializedHttpRequest {
+  const rewritten = overrideRoutedModelInBody(request.body, request.headers, serviceId)
+  return rewritten.overridden
+    ? { ...request, body: rewritten.body, headers: rewritten.headers }
+    : request
+}
+
+function peerAllowedByPolicy(
+  policyRouter: BuyerPolicyRouter | null | undefined,
+  request: SerializedHttpRequest,
+  peer: PeerInfo,
+): boolean {
+  if (policyRouter?.allowsPeerForPolicy) return policyRouter.allowsPeerForPolicy(request, peer)
+  if (policyRouter?.allowsPeerForPricing) return policyRouter.allowsPeerForPricing(request, peer)
+  return true
+}
+
 function isControlPlaneServicesPath(path: string): boolean {
   return path.toLowerCase().startsWith('/v1/models')
 }
@@ -942,10 +970,7 @@ export class BuyerProxy {
         this._pinnedPeer = pinnedPeer
       }
       const routedModel = typeof parsed.defaultRoutedModel === 'string' ? parsed.defaultRoutedModel.trim() : ''
-      this._defaultRoutedModel = routedModel.length > 0 && routedModel !== ROUTED_MODEL_ALIAS
-        && (!routedModel.includes('@') || parsePeerPinnedService(routedModel))
-        ? routedModel
-        : null
+      this._defaultRoutedModel = routedModel.length > 0 && isValidRoutedModelTarget(routedModel) ? routedModel : null
       log(`Session overrides reloaded: peer=${this._pinnedPeer ?? 'none'} route=${this._defaultRoutedModel ?? 'none'}`)
     } catch {
       // state file unreadable; keep current values
@@ -1557,7 +1582,7 @@ export class BuyerProxy {
         res.end(JSON.stringify({ ok: false, error: 'Invalid JSON body' }))
         return
       }
-      if (model === ROUTED_MODEL_ALIAS || (model.includes('@') && !parsePeerPinnedService(model))) {
+      if (model.length > 0 && !isValidRoutedModelTarget(model)) {
         res.writeHead(400, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ ok: false, error: 'model must be "<service>", "<peerId>@<service>", or empty to clear' }))
         return
@@ -1616,7 +1641,7 @@ export class BuyerProxy {
       }
       if ('pinnedModel' in parsed) {
         const pin = typeof parsed.pinnedModel === 'string' ? parsed.pinnedModel.trim() : ''
-        if (pin === ROUTED_MODEL_ALIAS || (pin.includes('@') && !parsePeerPinnedService(pin))) {
+        if (pin.length > 0 && !isValidRoutedModelTarget(pin)) {
           res.writeHead(400, { 'content-type': 'application/json' })
           res.end(JSON.stringify({ ok: false, error: 'pinnedModel must be "<service>", "<peerId>@<service>", or empty to clear' }))
           return
@@ -2136,22 +2161,14 @@ export class BuyerProxy {
         .map((peer) => {
           const plan = modelPlans.get(peer.peerId)
             ?? resolvePeerRoutePlan(peer, requestProtocol, requestedService, explicitProvider, 'strict')
-          const offer = plan?.serviceId ? findAdvertisedServiceOffer(peer, plan.provider, plan.serviceId) : null
-          if (!plan || !offer) return null
-          const serviceId = plan.serviceId ?? offer.serviceId
-          const rewritten = overrideRoutedModelInBody(serializedReq.body, serializedReq.headers, serviceId)
-          const requestForPolicy = rewritten.overridden
-            ? { ...serializedReq, body: rewritten.body, headers: rewritten.headers }
-            : serializedReq
-          const policyAllowed = policyRouter?.allowsPeerForPolicy
-            ? policyRouter.allowsPeerForPolicy(requestForPolicy, peer)
-            : policyRouter?.allowsPeerForPricing
-              ? policyRouter.allowsPeerForPricing(requestForPolicy, peer)
-              : true
-          if (!policyAllowed) return null
+          if (!plan?.serviceId) return null
+          const offer = findAdvertisedServiceOffer(peer, plan.provider, plan.serviceId)
+          if (!offer) return null
+          const requestForPolicy = withRoutedModel(serializedReq, plan.serviceId)
+          if (!peerAllowedByPolicy(policyRouter, requestForPolicy, peer)) return null
           return {
             peer,
-            serviceId,
+            serviceId: plan.serviceId,
             request: requestForPolicy,
             reputation: normalizedModelReputationScore(peer, this._now()) ?? -1,
             hasCachedInputPricing: offer.cachedInputUsdPerMillion !== undefined,
@@ -2159,19 +2176,14 @@ export class BuyerProxy {
         })
         .filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null)
       const preferCachedPricing = ranked.some((candidate) => candidate.hasCachedInputPricing)
-      ranked.sort((a, b) => {
-        const aEffectiveReputation = effectiveModelReputationScore(
-          a.reputation >= 0 ? a.reputation : null,
-          a.hasCachedInputPricing,
+      const effectiveReputation = (candidate: (typeof ranked)[number]): number =>
+        effectiveModelReputationScore(
+          candidate.reputation >= 0 ? candidate.reputation : null,
+          candidate.hasCachedInputPricing,
           preferCachedPricing,
         ) ?? -1
-        const bEffectiveReputation = effectiveModelReputationScore(
-          b.reputation >= 0 ? b.reputation : null,
-          b.hasCachedInputPricing,
-          preferCachedPricing,
-        ) ?? -1
-        return bEffectiveReputation - aEffectiveReputation || a.peer.peerId.localeCompare(b.peer.peerId)
-      })
+      ranked.sort((a, b) =>
+        effectiveReputation(b) - effectiveReputation(a) || a.peer.peerId.localeCompare(b.peer.peerId))
 
       const now = this._now()
       const ready = ranked.filter((candidate) => !isCoolingDown(this._peerHealth.get(candidate.peer.peerId), now))
@@ -2384,18 +2396,8 @@ export class BuyerProxy {
     const selectedPlan = routingPlans.get(selectedPeer.peerId)
       ?? resolvePeerRoutePlan(selectedPeer, requestProtocol, requestedService, explicitProvider, 'lenient')
     const pinnedServiceId = selectedPlan?.serviceId ?? requestedService
-    const pinnedRewrite = pinnedServiceId
-      ? overrideRoutedModelInBody(serializedReq.body, serializedReq.headers, pinnedServiceId)
-      : { body: serializedReq.body, headers: serializedReq.headers, overridden: false }
-    const pinnedRequest = pinnedRewrite.overridden
-      ? { ...serializedReq, body: pinnedRewrite.body, headers: pinnedRewrite.headers }
-      : serializedReq
-    const policyAllowed = policyRouter?.allowsPeerForPolicy
-      ? policyRouter.allowsPeerForPolicy(pinnedRequest, selectedPeer)
-      : policyRouter?.allowsPeerForPricing
-        ? policyRouter.allowsPeerForPricing(pinnedRequest, selectedPeer)
-        : true
-    if (!policyAllowed) {
+    const pinnedRequest = pinnedServiceId ? withRoutedModel(serializedReq, pinnedServiceId) : serializedReq
+    if (!peerAllowedByPolicy(policyRouter, pinnedRequest, selectedPeer)) {
       log(`Pinned peer ${selectedPeer.peerId.slice(0, 12)}... filtered out by buyer routing policy`)
       res.writeHead(502, { 'content-type': 'text/plain' })
       res.end(
@@ -2586,14 +2588,7 @@ export class BuyerProxy {
       },
     }
     if (selectedRoutePlan.serviceId) {
-      const routedModel = overrideRoutedModelInBody(
-        requestForPeer.body,
-        requestForPeer.headers,
-        selectedRoutePlan.serviceId,
-      )
-      if (routedModel.overridden) {
-        requestForPeer = { ...requestForPeer, body: routedModel.body, headers: routedModel.headers }
-      }
+      requestForPeer = withRoutedModel(requestForPeer, selectedRoutePlan.serviceId)
     }
     const clientWantsStreaming = requestWantsStreaming(serializedReq.headers, serializedReq.body)
     let adaptResponse: ((response: SerializedHttpResponse) => SerializedHttpResponse) | null = null

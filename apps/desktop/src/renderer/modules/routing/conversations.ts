@@ -39,8 +39,9 @@ export function conversationPinnedPeerId(record: BuyerConversationSummary): stri
     predates `lastModel`. Both fields are `<peerId>@<service>` strings. */
 export function conversationRoutedPeerId(record: BuyerConversationSummary): string | null {
   const model = record.lastModel || record.pinnedModel;
-  const at = model?.indexOf('@') ?? -1;
-  return at > 0 ? model!.slice(0, at).toLowerCase() || null : null;
+  if (!model) return null;
+  const at = model.indexOf('@');
+  return at > 0 ? model.slice(0, at).toLowerCase() || null : null;
 }
 
 /**

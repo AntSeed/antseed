@@ -1,11 +1,11 @@
 import {
   buildNetworkServiceOffers,
+  selectLowestPricedNetworkServiceOffer,
   type NetworkServiceOffer,
   type PeerInfo,
   type SerializedHttpRequest,
 } from '@antseed/node'
 import { canonicalModelKey } from '@antseed/node/model-identity'
-import { selectLowestPricedModelOffer } from './network-models.js'
 import {
   extractRequestBodyFields,
   inferProviderDefaultServiceApiProtocols,
@@ -99,13 +99,9 @@ function getPeerProviderProtocols(
   return inferred
 }
 
-export function findAdvertisedServiceId(
-  peer: PeerInfo,
-  provider: string,
-  requestedService: string,
-): string | null {
-  return findAdvertisedServiceOffer(peer, provider, requestedService)?.serviceId ?? null
-}
+// Service ids like `...-coding-only` restrict what the seller accepts; never
+// substitute them for an unrestricted request unless they were asked for by name.
+const CODING_ONLY_SERVICE_ID = /(?:[-:._\s]+coding[-:._\s]+only|codingonly)$/i
 
 export function findAdvertisedServiceOffer(
   peer: PeerInfo,
@@ -118,12 +114,12 @@ export function findAdvertisedServiceOffer(
     offer.provider.toLowerCase() === provider.toLowerCase()
     && canonicalModelKey(offer.serviceId) === requestedKey
   ))
-  if (/(?:[-:._\s]+coding[-:._\s]+only|codingonly)$/i.test(requestedService)) {
+  if (CODING_ONLY_SERVICE_ID.test(requestedService)) {
     const exact = offers.find((offer) => offer.serviceId.toLowerCase() === requestedService.trim().toLowerCase())
     if (exact) return exact
   }
-  const unrestricted = offers.filter((offer) => !/(?:[-:._\s]+coding[-:._\s]+only|codingonly)$/i.test(offer.serviceId))
-  return selectLowestPricedModelOffer(unrestricted.length > 0 ? unrestricted : offers)
+  const unrestricted = offers.filter((offer) => !CODING_ONLY_SERVICE_ID.test(offer.serviceId))
+  return selectLowestPricedNetworkServiceOffer(unrestricted.length > 0 ? unrestricted : offers)
 }
 
 function selectProviderByProtocol(
@@ -159,16 +155,17 @@ function selectAdvertisedServiceByProtocol(
   for (const provider of candidates) {
     const offer = findAdvertisedServiceOffer(peer, provider, requestedService)
     if (!offer) continue
-    const supportedProtocols = offer.protocols.length > 0
-      ? offer.protocols.filter((protocol): protocol is ServiceApiProtocol => (
-          protocol === 'anthropic-messages'
-          || protocol === 'openai-chat-completions'
-          || protocol === 'openai-responses'
-          || protocol === 'openai-images'
-        ))
-      : offer.protocol
-        ? [offer.protocol]
-        : []
+    let supportedProtocols: ServiceApiProtocol[] = []
+    if (offer.protocols.length > 0) {
+      supportedProtocols = offer.protocols.filter((protocol): protocol is ServiceApiProtocol => (
+        protocol === 'anthropic-messages'
+        || protocol === 'openai-chat-completions'
+        || protocol === 'openai-responses'
+        || protocol === 'openai-images'
+      ))
+    } else if (offer.protocol) {
+      supportedProtocols = [offer.protocol]
+    }
     const selection = selectTargetProtocolForRequest(requestProtocol, supportedProtocols)
     if (!selection) continue
     compatible.push({
@@ -176,11 +173,9 @@ function selectAdvertisedServiceByProtocol(
       plan: { provider, selection, serviceId: offer.serviceId },
     })
   }
-  const unrestricted = compatible.filter(
-    ({ offer }) => !/(?:[-:._\s]+coding[-:._\s]+only|codingonly)$/i.test(offer.serviceId),
-  )
+  const unrestricted = compatible.filter(({ offer }) => !CODING_ONLY_SERVICE_ID.test(offer.serviceId))
   const eligible = unrestricted.length > 0 ? unrestricted : compatible
-  const selectedOffer = selectLowestPricedModelOffer(eligible.map((candidate) => candidate.offer))
+  const selectedOffer = selectLowestPricedNetworkServiceOffer(eligible.map((candidate) => candidate.offer))
   return compatible.find((candidate) => candidate.offer === selectedOffer)?.plan ?? null
 }
 
@@ -211,9 +206,8 @@ export function resolvePeerRoutePlan(
         const offer = findAdvertisedServiceOffer(peer, provider, requestedService)
         if (offer) return { provider, selection: null, serviceId: offer.serviceId }
       }
-      return serviceFilterMode === 'strict' ? null : candidates[0]
-        ? { provider: candidates[0], selection: null, serviceId: null }
-        : null
+      if (serviceFilterMode === 'strict' || !candidates[0]) return null
+      return { provider: candidates[0], selection: null, serviceId: null }
     }
     const provider = candidates[0]
     return provider ? { provider, selection: null, serviceId: null } : null

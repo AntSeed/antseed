@@ -74,7 +74,6 @@ export function VprModelView({ onSelectView }: Props) {
   // The active route (auto-chosen or pinned) leads the list with a checkmark.
   const activePeerId = autoSelect ? bestRoute?.peerId : pinnedPeerId;
   const selectedRoute = routes.find((route) => route.peerId === activePeerId) ?? bestRoute;
-  const sortedRoutes = routes;
 
   if (!model || !entry) {
     return (
@@ -267,11 +266,11 @@ export function VprModelView({ onSelectView }: Props) {
             <span className={styles.sellerHeadTitle}>Sellers</span>
             <span className={styles.sellerHeadAside}>Reputation</span>
           </div>
-          {sortedRoutes.length === 0 ? (
+          {routes.length === 0 ? (
             <div className={styles.empty}>No sellers available for this model</div>
           ) : (
             <VprCard className={styles.sellerCard}>
-              {sortedRoutes.map((route) => {
+              {routes.map((route) => {
                 const active = route.peerId === activePeerId;
                 return (
                   <SellerRow

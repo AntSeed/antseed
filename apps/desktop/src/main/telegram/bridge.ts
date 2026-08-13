@@ -403,27 +403,13 @@ export function createTelegramBridge({ engine, appendLog, onStatusChanged }: Tel
         bareModel = routed.service;
       }
       if (bareModel) return { service: bareModel };
-      // No usable routed peer (fresh install, or a route the policy rejects).
+      // No stored route (fresh install, or a route the policy rejects).
       // Mirror the app's picker: the renderer-pushed curated list (favorites
-      // first) when available, otherwise the first discovered catalog entry —
-      // preferring whichever serves the routed bare model name, if any.
-      const wanted = bareModel.trim().toLowerCase();
-      const pickerModels = (engine.getModelPicker()?.models ?? []).filter((model) => model.routePeerId);
-      const pickerMatch = wanted
-        ? pickerModels.find((model) => (
-          (model.routeServiceId ?? model.serviceId).trim().toLowerCase() === wanted
-          || model.serviceId.trim().toLowerCase() === wanted
-        ))
-        : undefined;
-      const picked = pickerMatch ?? pickerModels[0];
-      if (picked?.routePeerId) {
-        return { service: picked.serviceId };
-      }
-      const match = wanted
-        ? entries.find((entry) => entry.id.trim().toLowerCase() === wanted && entry.peerId)
-        : undefined;
-      const chosen = match ?? entries.find((entry) => entry.peerId);
-      if (chosen?.peerId) return { service: chosen.id };
+      // first) when available, otherwise the first discovered catalog entry.
+      const picked = (engine.getModelPicker()?.models ?? []).find((model) => model.routePeerId);
+      if (picked) return { service: picked.serviceId };
+      const chosen = entries.find((entry) => entry.peerId);
+      if (chosen) return { service: chosen.id };
     } catch {
       // Discovery unavailable — the engine will surface the buyer error.
     }

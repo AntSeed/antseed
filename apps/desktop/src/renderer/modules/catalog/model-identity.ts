@@ -9,8 +9,7 @@
  */
 
 export { canonicalModelKey, sameCanonicalModel } from '@antseed/node/model-identity';
-import { preferredModelDisplayName } from '@antseed/node/model-identity';
-import { canonicalModelKey } from '@antseed/node/model-identity';
+import { canonicalModelKey, preferredModelDisplayName } from '@antseed/node/model-identity';
 
 /** Re-canonicalize keys persisted before the shared model identity migration. */
 export function canonicalPersistedModelKey(value: string): string {

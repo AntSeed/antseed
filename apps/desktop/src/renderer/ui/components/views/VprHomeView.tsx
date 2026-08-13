@@ -272,10 +272,7 @@ export function VprHomeView({ onSelectView }: Props) {
   const showAddBalance = !addBalanceDismissed
     && !(Number.isFinite(creditsSpendableNum) && creditsSpendableNum > 5);
   const hasDeposited = Number(snap.creditsTotalOwned) > 0 || snap.creditsChannels.length > 0;
-  const showReminderBanner = Boolean(
-    snap.reminderOffer
-    && !hasDeposited,
-  );
+  const reminderOffer = hasDeposited ? null : snap.reminderOffer;
 
   function submitDraft(): void {
     const text = draft.trim();
@@ -304,7 +301,7 @@ export function VprHomeView({ onSelectView }: Props) {
     />
   );
 
-  const reminderCard = showReminderBanner && snap.reminderOffer ? (
+  const reminderCard = reminderOffer ? (
     <section className={styles.reminderCard} aria-labelledby="reminder-offer-title">
       <div className={styles.reminderContent}>
         <div className={styles.reminderHeadline}>
@@ -313,9 +310,9 @@ export function VprHomeView({ onSelectView }: Props) {
           </span>
           <div className={styles.reminderHeadlineText}>
             <strong id="reminder-offer-title" className={styles.reminderTitle}>
-              {snap.reminderOffer.variant === 'd1'
-                ? `Your first day cost you $0 for ${snap.reminderOffer.requestsCount} requests worth $${snap.reminderOffer.retrospectiveUsd}.`
-                : `So far, you’ve paid $0 for ${snap.reminderOffer.requestsCount} requests worth $${snap.reminderOffer.retrospectiveUsd}.`}
+              {reminderOffer.variant === 'd1'
+                ? `Your first day cost you $0 for ${reminderOffer.requestsCount} requests worth $${reminderOffer.retrospectiveUsd}.`
+                : `So far, you’ve paid $0 for ${reminderOffer.requestsCount} requests worth $${reminderOffer.retrospectiveUsd}.`}
             </strong>
           </div>
         </div>
@@ -323,7 +320,7 @@ export function VprHomeView({ onSelectView }: Props) {
         <div className={styles.reminderProof}>
           <strong>
             Your $10 can turn into <em>~${Math.round(Number(
-              snap.reminderOffer.prospectiveUsd,
+              reminderOffer.prospectiveUsd,
             )).toLocaleString('en-US')}</em> in frontier-model value.
           </strong>
         </div>

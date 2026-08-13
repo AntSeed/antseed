@@ -79,12 +79,12 @@ export function loadVprRoutingPreferences(fallback: VprRoutingPreferences): VprR
     return fallback;
   }
 
-  const storedMinimumTrust = readNonNegativeFiniteNumber(parsed.minTrustScore, fallback.minTrustScore);
-  const minTrustScore = parsed.version === VPR_PREFERENCES_VERSION
-    ? storedMinimumTrust
-    : storedMinimumTrust === 0
-      ? fallback.minTrustScore
-      : storedMinimumTrust;
+  // Pre-versioned preferences defaulted minTrustScore to 0; a stored 0 there
+  // means "never touched", so it adopts the new default instead.
+  let minTrustScore = readNonNegativeFiniteNumber(parsed.minTrustScore, fallback.minTrustScore);
+  if (parsed.version !== VPR_PREFERENCES_VERSION && minTrustScore === 0) {
+    minTrustScore = fallback.minTrustScore;
+  }
 
   return {
     autoRouting: readBoolean(parsed.autoRouting, fallback.autoRouting),

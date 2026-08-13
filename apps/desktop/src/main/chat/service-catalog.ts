@@ -46,6 +46,14 @@ type NetworkModelsEntry = {
   peers?: unknown;
 };
 
+const CATALOG_SERVICE_PROTOCOLS = new Set<string>([
+  'anthropic-messages', 'openai-chat-completions', 'openai-responses', 'openai-images',
+]);
+
+function isCatalogServiceProtocol(value: unknown): value is CatalogServiceProtocol {
+  return typeof value === 'string' && CATALOG_SERVICE_PROTOCOLS.has(value);
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -56,29 +64,29 @@ function nonNegativeNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
+function positiveInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
 function normalizeCapabilities(value: unknown): CatalogServiceCapabilities | undefined {
   const raw = asRecord(value);
   if (!raw) return undefined;
   const capabilities: CatalogServiceCapabilities = {};
-  if (typeof raw.contextWindow === 'number' && Number.isSafeInteger(raw.contextWindow) && raw.contextWindow > 0) {
-    capabilities.contextWindow = raw.contextWindow;
-  }
-  if (typeof raw.maxOutputTokens === 'number' && Number.isSafeInteger(raw.maxOutputTokens) && raw.maxOutputTokens > 0) {
-    capabilities.maxOutputTokens = raw.maxOutputTokens;
-  }
-  for (const key of ['inputs', 'outputs'] as const) {
-    if (Array.isArray(raw[key])) {
-      const values = raw[key].filter((item): item is string => typeof item === 'string');
-      if (values.length > 0) capabilities[key] = values;
-    }
+  const contextWindow = positiveInteger(raw.contextWindow);
+  if (contextWindow !== undefined) capabilities.contextWindow = contextWindow;
+  const maxOutputTokens = positiveInteger(raw.maxOutputTokens);
+  if (maxOutputTokens !== undefined) capabilities.maxOutputTokens = maxOutputTokens;
+  for (const key of ['inputs', 'outputs', 'supportedParameters'] as const) {
+    const values = stringArray(raw[key]);
+    if (values.length > 0) capabilities[key] = values;
   }
   if (typeof raw.reasoning === 'boolean') capabilities.reasoning = raw.reasoning;
   if (typeof raw.toolUse === 'boolean') capabilities.toolUse = raw.toolUse;
   if (typeof raw.structuredOutput === 'boolean') capabilities.structuredOutput = raw.structuredOutput;
-  if (Array.isArray(raw.supportedParameters)) {
-    const values = raw.supportedParameters.filter((item): item is string => typeof item === 'string');
-    if (values.length > 0) capabilities.supportedParameters = values;
-  }
   return Object.keys(capabilities).length > 0 ? capabilities : undefined;
 }
 
@@ -93,28 +101,21 @@ export function buildChatServiceCatalogFromNetworkModels(payload: unknown): Chat
 
   const entries: ChatServiceCatalogEntry[] = [];
   for (const rawModel of root.data) {
-    const model = asRecord(rawModel) as NetworkModelsEntry | null;
+    const model: NetworkModelsEntry | null = asRecord(rawModel);
     if (!model || !Array.isArray(model.peers)) continue;
     const label = typeof model.name === 'string' && model.name.trim() ? model.name.trim() : null;
     for (const rawOffer of model.peers) {
-      const offer = asRecord(rawOffer) as NetworkModelsPeerOffer | null;
+      const offer: NetworkModelsPeerOffer | null = asRecord(rawOffer);
       if (!offer) continue;
       const peerId = typeof offer.peerId === 'string' ? offer.peerId.trim() : '';
       const provider = typeof offer.provider === 'string' ? offer.provider.trim() : '';
       const serviceId = typeof offer.serviceId === 'string' ? offer.serviceId.trim() : '';
       const protocol = offer.protocol;
-      if (!peerId || !provider || !serviceId || (
-        protocol !== 'anthropic-messages'
-        && protocol !== 'openai-chat-completions'
-        && protocol !== 'openai-responses'
-        && protocol !== 'openai-images'
-      )) continue;
+      if (!peerId || !provider || !serviceId || !isCatalogServiceProtocol(protocol)) continue;
 
       const displayName = typeof offer.displayName === 'string' ? offer.displayName.trim() : '';
       const capabilities = normalizeCapabilities(offer.capabilities);
-      const categories = Array.isArray(offer.categories)
-        ? offer.categories.filter((item): item is string => typeof item === 'string')
-        : [];
+      const categories = stringArray(offer.categories);
       const effectiveReputationScore = nonNegativeNumber(offer.effectiveReputationScore);
       const inputUsdPerMillion = nonNegativeNumber(offer.inputUsdPerMillion);
       const outputUsdPerMillion = nonNegativeNumber(offer.outputUsdPerMillion);

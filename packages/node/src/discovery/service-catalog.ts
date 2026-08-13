@@ -1,3 +1,5 @@
+import { CODING_ONLY_SUFFIX_RE, canonicalModelKey } from '../model-identity.js';
+
 export type CatalogServiceProtocol =
   | 'anthropic-messages'
   | 'openai-chat-completions'
@@ -91,8 +93,8 @@ export function inferServiceProtocol(provider: string): Exclude<CatalogServicePr
 
 export function resolveServiceProtocol(protocols: string[], provider: string): CatalogServiceProtocol | null {
   if (protocols.includes('openai-images')) return 'openai-images';
-  const announced = protocols.find((protocol) => VALID_PROTOCOLS.has(protocol));
-  return announced as CatalogServiceProtocol | undefined ?? inferServiceProtocol(provider);
+  const announced = protocols.find((protocol) => VALID_PROTOCOLS.has(protocol)) as CatalogServiceProtocol | undefined;
+  return announced ?? inferServiceProtocol(provider);
 }
 
 function announcedServicesByProvider(peer: NetworkServiceCatalogPeer): Map<string, Set<string>> {
@@ -110,9 +112,7 @@ function announcedServicesByProvider(peer: NetworkServiceCatalogPeer): Map<strin
       if (announcedServiceIds.length === 0) continue;
       const serviceIds = byProvider.get(provider) ?? new Set<string>();
       byProvider.set(provider, serviceIds);
-      for (const serviceId of announcedServiceIds) {
-        if (serviceId.trim()) serviceIds.add(serviceId);
-      }
+      for (const serviceId of announcedServiceIds) serviceIds.add(serviceId);
     }
   }
 
@@ -166,6 +166,7 @@ export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): N
       for (const serviceId of serviceIds) {
         const protocols = peer.providerServiceApiProtocols?.[provider]?.services?.[serviceId] ?? [];
         const capabilities = peer.providerServiceCapabilities?.[provider]?.services?.[serviceId];
+        const categories = peer.providerServiceCategories?.[provider]?.services?.[serviceId];
         const protocol = resolveServiceProtocol(protocols, provider);
         const type = protocol === 'openai-images' || capabilities?.outputs?.includes('image')
           ? 'image'
@@ -178,9 +179,7 @@ export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): N
           protocol,
           type,
           ...(capabilities ? { capabilities } : {}),
-          ...(peer.providerServiceCategories?.[provider]?.services?.[serviceId]?.length
-            ? { categories: peer.providerServiceCategories[provider].services[serviceId] }
-            : {}),
+          ...(categories?.length ? { categories } : {}),
           peerId: peer.peerId,
           ...(peer.displayName ? { displayName: peer.displayName } : {}),
           ...(peer.reputationScore !== undefined ? { reputationScore: peer.reputationScore } : {}),
@@ -226,9 +225,8 @@ export function selectLowestPricedCanonicalOffers(offers: NetworkServiceOffer[])
   }
   return [...grouped.values()]
     .map((candidates) => {
-      const unrestricted = candidates.filter((offer) => !/(?:[-:._\s]+coding[-:._\s]+only|codingonly)$/i.test(offer.serviceId));
+      const unrestricted = candidates.filter((offer) => !CODING_ONLY_SUFFIX_RE.test(offer.serviceId));
       return selectLowestPricedNetworkServiceOffer(unrestricted.length > 0 ? unrestricted : candidates);
     })
     .filter((offer): offer is NetworkServiceOffer => offer !== null);
 }
-import { canonicalModelKey } from '../model-identity.js';

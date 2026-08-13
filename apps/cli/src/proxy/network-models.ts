@@ -12,7 +12,6 @@ import {
   effectiveModelReputationScore,
   normalizedModelReputationScore as normalizeModelReputationScore,
   selectLowestPricedCanonicalOffers,
-  selectLowestPricedNetworkServiceOffer,
   type CatalogServiceCapabilities,
   type CatalogServiceProtocol,
   type NetworkServiceOffer,
@@ -107,10 +106,6 @@ export function normalizedModelReputationScore(peer: PeerInfo, nowMs: number = D
     ...peer,
     onChainReputationScore: peer.onChainReputationScore ?? computeOnChainReputationScore(peer, nowMs),
   })
-}
-
-export function selectLowestPricedModelOffer(offers: NetworkServiceOffer[]): NetworkServiceOffer | null {
-  return selectLowestPricedNetworkServiceOffer(offers)
 }
 
 function countReported<T>(values: Array<T | undefined>): number {
