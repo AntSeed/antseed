@@ -10,6 +10,18 @@
 
 export { canonicalModelKey, sameCanonicalModel } from '@antseed/node/model-identity';
 import { preferredModelDisplayName } from '@antseed/node/model-identity';
+import { canonicalModelKey } from '@antseed/node/model-identity';
+
+/** Re-canonicalize keys persisted before the shared model identity migration. */
+export function canonicalPersistedModelKey(value: string): string {
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) return '';
+  const legacyClaudeKey = trimmed.replace(
+    /^claude(?=(?:opus|sonnet|haiku|fable)\d)/,
+    'claude-',
+  );
+  return canonicalModelKey(legacyClaudeKey) || trimmed;
+}
 
 /** Human model name for display: a seller-provided label that already reads
  *  as prose wins; slug-shaped labels and raw serviceIds get prettified

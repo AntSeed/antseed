@@ -704,3 +704,22 @@ test('type filter splits text and image models', () => {
 test('returns an empty list when no peers are discovered', () => {
   assert.deepEqual(buildNetworkModels([], NOW_MS), [])
 })
+
+test('keeps a canonically merged model text-routable when any peer serves text', () => {
+  const image = makePeer({
+    peerId: '4'.repeat(40),
+    providerServiceApiProtocols: {
+      openai: { services: { 'shared-model': ['openai-images'] } },
+    },
+  })
+  const text = makePeer({
+    peerId: '5'.repeat(40),
+    providerServiceApiProtocols: {
+      openai: { services: { 'shared model': ['openai-chat-completions'] } },
+    },
+  })
+
+  const [model] = buildNetworkModels([image, text], NOW_MS)
+  assert.equal(model?.type, 'text')
+  assert.deepEqual(model?.peers.map((peer) => peer.type).sort(), ['image', 'text'])
+})

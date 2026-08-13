@@ -2135,9 +2135,9 @@ export class BuyerProxy {
       const ranked = modelPeers
         .map((peer) => {
           const plan = modelPlans.get(peer.peerId)
-          const offer = plan ? findAdvertisedServiceOffer(peer, plan.provider, requestedService) : null
+          const offer = plan?.serviceId ? findAdvertisedServiceOffer(peer, plan.provider, plan.serviceId) : null
           if (!plan || !offer) return null
-          const serviceId = offer.serviceId
+          const serviceId = plan.serviceId ?? offer.serviceId
           const rewritten = overrideRoutedModelInBody(serializedReq.body, serializedReq.headers, serviceId)
           const requestForPolicy = rewritten.overridden
             ? { ...serializedReq, body: rewritten.body, headers: rewritten.headers }
@@ -2273,7 +2273,7 @@ export class BuyerProxy {
       requestProtocol,
       requestedService,
       explicitProvider,
-      'lenient',
+      requestedService ? 'strict' : 'lenient',
     )
 
     let hasForcedRefresh = false
@@ -2380,10 +2380,19 @@ export class BuyerProxy {
       return
     }
     const policyRouter = router as BuyerPolicyRouter | null | undefined
+    const selectedPlan = routingPlans.get(selectedPeer.peerId)
+      ?? resolvePeerRoutePlan(selectedPeer, requestProtocol, requestedService, explicitProvider, 'lenient')
+    const pinnedServiceId = selectedPlan?.serviceId ?? requestedService
+    const pinnedRewrite = pinnedServiceId
+      ? overrideRoutedModelInBody(serializedReq.body, serializedReq.headers, pinnedServiceId)
+      : { body: serializedReq.body, headers: serializedReq.headers, overridden: false }
+    const pinnedRequest = pinnedRewrite.overridden
+      ? { ...serializedReq, body: pinnedRewrite.body, headers: pinnedRewrite.headers }
+      : serializedReq
     const policyAllowed = policyRouter?.allowsPeerForPolicy
-      ? policyRouter.allowsPeerForPolicy(serializedReq, selectedPeer)
+      ? policyRouter.allowsPeerForPolicy(pinnedRequest, selectedPeer)
       : policyRouter?.allowsPeerForPricing
-        ? policyRouter.allowsPeerForPricing(serializedReq, selectedPeer)
+        ? policyRouter.allowsPeerForPricing(pinnedRequest, selectedPeer)
         : true
     if (!policyAllowed) {
       log(`Pinned peer ${selectedPeer.peerId.slice(0, 12)}... filtered out by buyer routing policy`)
@@ -2418,7 +2427,7 @@ export class BuyerProxy {
     log(`Using pinned peer ${selectedPeer.peerId.slice(0, 12)}...`)
     const result = await this._dispatchToPeer(
       res,
-      serializedReq,
+      pinnedRequest,
       selectedPeer,
       routingPlans,
       requestProtocol,
@@ -2574,6 +2583,16 @@ export class BuyerProxy {
         ...headersForPeer,
         'x-antseed-provider': selectedRoutePlan.provider,
       },
+    }
+    if (selectedRoutePlan.serviceId) {
+      const routedModel = overrideRoutedModelInBody(
+        requestForPeer.body,
+        requestForPeer.headers,
+        selectedRoutePlan.serviceId,
+      )
+      if (routedModel.overridden) {
+        requestForPeer = { ...requestForPeer, body: routedModel.body, headers: routedModel.headers }
+      }
     }
     const clientWantsStreaming = requestWantsStreaming(serializedReq.headers, serializedReq.body)
     let adaptResponse: ((response: SerializedHttpResponse) => SerializedHttpResponse) | null = null

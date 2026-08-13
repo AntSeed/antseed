@@ -10,7 +10,7 @@
  * has a positive baseline cost.
  */
 import type { DesktopBuyerServiceUsage } from '../../types/bridge';
-import { normalizeModelKey } from '../../../shared/model-key.js';
+import { canonicalModelKey } from './model-identity.js';
 
 type ReferencePrice = { input: number | null; output: number | null; cachedInput?: number | null };
 type ReferenceMap = Record<string, ReferencePrice>;
@@ -61,7 +61,7 @@ export function computeMeasuredSavings(
 
   for (const service of services) {
     if (!service.serviceName) continue;
-    const ref = referenceMap[normalizeModelKey(service.serviceName)];
+    const ref = referenceMap[canonicalModelKey(service.serviceName)];
     if (!ref || (ref.input === null && ref.output === null)) continue;
 
     // Buyer-side inputTokens are total logical input (fresh + cached) —

@@ -106,9 +106,11 @@ function announcedServicesByProvider(peer: NetworkServiceCatalogPeer): Map<strin
   ];
   for (const matrix of matrices) {
     for (const [provider, entry] of Object.entries(matrix ?? {})) {
+      const announcedServiceIds = Object.keys(entry.services ?? {}).filter((serviceId) => serviceId.trim());
+      if (announcedServiceIds.length === 0) continue;
       const serviceIds = byProvider.get(provider) ?? new Set<string>();
       byProvider.set(provider, serviceIds);
-      for (const serviceId of Object.keys(entry.services ?? {})) {
+      for (const serviceId of announcedServiceIds) {
         if (serviceId.trim()) serviceIds.add(serviceId);
       }
     }
@@ -223,7 +225,10 @@ export function selectLowestPricedCanonicalOffers(offers: NetworkServiceOffer[])
     grouped.set(key, candidates);
   }
   return [...grouped.values()]
-    .map(selectLowestPricedNetworkServiceOffer)
+    .map((candidates) => {
+      const unrestricted = candidates.filter((offer) => !/(?:[-:._\s]+coding[-:._\s]+only|codingonly)$/i.test(offer.serviceId));
+      return selectLowestPricedNetworkServiceOffer(unrestricted.length > 0 ? unrestricted : candidates);
+    })
     .filter((offer): offer is NetworkServiceOffer => offer !== null);
 }
 import { canonicalModelKey } from '../model-identity.js';

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createServer, type RequestListener } from 'node:http';
 import test from 'node:test';
 import { createDefaultConfig } from '../../../config/defaults.js';
 import { resolveEffectiveBuyerConfig } from '../../../config/effective.js';
@@ -6,8 +7,24 @@ import {
   buildBuyerRuntimeOverridesFromFlags,
   buildBuyerBootstrapEntries,
   buildRouterRuntimeEnvFromBuyerConfig,
+  isCompatibleBuyerProxy,
   resolveBuyerRouterName,
 } from './start.js';
+
+async function withProbeServer(
+  handler: RequestListener,
+  run: (port: number) => Promise<void>,
+): Promise<void> {
+  const server = createServer(handler);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  try {
+    await run(address.port);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+}
 
 test('buyer start runtime overrides are runtime-only and win over env/config', () => {
   const config = createDefaultConfig();
@@ -92,4 +109,22 @@ test('buyer start bootstrap entries respect explicit configured nodes', () => {
 test('buyer start defaults router name to local', () => {
   assert.equal(resolveBuyerRouterName({}), 'local');
   assert.equal(resolveBuyerRouterName({ router: 'claude-code' }), 'claude-code');
+});
+
+test('buyer start rejects legacy proxies that only return no_peer_pinned', async () => {
+  await withProbeServer((_req, res) => {
+    res.writeHead(400, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: { type: 'no_peer_pinned' } }));
+  }, async (port) => {
+    assert.equal(await isCompatibleBuyerProxy(port), false);
+  });
+});
+
+test('buyer start recognizes current proxies by AntSeed response header', async () => {
+  await withProbeServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json', 'x-antseed-request-id': 'test' });
+    res.end(JSON.stringify({ object: 'list', data: [] }));
+  }, async (port) => {
+    assert.equal(await isCompatibleBuyerProxy(port), true);
+  });
 });

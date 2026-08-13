@@ -255,7 +255,7 @@ export function buildNetworkModels(peers: PeerInfo[], nowMs: number): NetworkMod
     for (const duplicate of duplicateOffers) {
       entry.aliases.push(normalizedModelAlias(duplicate.serviceId), key)
     }
-    if (offer.type === 'image') entry.type = 'image'
+    if (offer.type === 'text') entry.type = 'text'
     const peer = peerById.get(offer.peerId)
     entry.peers.push({
       peerId: offer.peerId,

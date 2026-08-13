@@ -444,6 +444,51 @@ test('selectCandidatePeersForRouting in lenient mode prefers exact service match
   assert.ok(plan, 'expected a route plan for the lenient-kept peer')
   assert.equal(plan!.provider, 'local-llm')
   assert.equal(plan!.selection?.requiresTransform, false)
+  assert.equal(plan!.serviceId, 'llama')
+})
+
+test('selectCandidatePeersForRouting derives protocol from the selected cheapest alias', () => {
+  const peer = makePeer('a', ['openai', 'claude-oauth'])
+  peer.providerPricing = {
+    openai: { defaults: { inputUsdPerMillion: 5, outputUsdPerMillion: 25 }, services: { 'claude-opus-5': { inputUsdPerMillion: 5, outputUsdPerMillion: 25 } } },
+    'claude-oauth': { defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 5 }, services: { 'opus-5': { inputUsdPerMillion: 1, outputUsdPerMillion: 5 } } },
+  }
+  peer.providerServiceApiProtocols = {
+    openai: { services: { 'claude-opus-5': ['openai-chat-completions'] } },
+    'claude-oauth': { services: { 'opus-5': ['anthropic-messages'] } },
+  }
+
+  const result = selectCandidatePeersForRouting(
+    [peer],
+    'openai-chat-completions',
+    'Claude Opus 5',
+    null,
+  )
+
+  const plan = result.routePlanByPeerId.get(peer.peerId)
+  assert.ok(plan)
+  assert.equal(plan.provider, 'claude-oauth')
+  assert.equal(plan.serviceId, 'opus-5')
+  assert.equal(plan.selection?.targetProtocol, 'anthropic-messages')
+  assert.equal(plan.selection?.requiresTransform, true)
+})
+
+test('selectCandidatePeersForRouting prefers a full service over a cheaper coding-only alias', () => {
+  const peer = makePeer('a', ['anthropic', 'claude-oauth'])
+  peer.providerPricing = {
+    anthropic: { defaults: { inputUsdPerMillion: 5, outputUsdPerMillion: 25 }, services: { 'claude-opus-5': { inputUsdPerMillion: 5, outputUsdPerMillion: 25 } } },
+    'claude-oauth': { defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 5 }, services: { 'opus-5-coding-only': { inputUsdPerMillion: 1, outputUsdPerMillion: 5 } } },
+  }
+  peer.providerServiceApiProtocols = {
+    anthropic: { services: { 'claude-opus-5': ['anthropic-messages'] } },
+    'claude-oauth': { services: { 'opus-5-coding-only': ['anthropic-messages'] } },
+  }
+
+  const result = selectCandidatePeersForRouting([peer], 'anthropic-messages', 'opus-5', null)
+  const plan = result.routePlanByPeerId.get(peer.peerId)
+  assert.ok(plan)
+  assert.equal(plan.provider, 'anthropic')
+  assert.equal(plan.serviceId, 'claude-opus-5')
 })
 
 test('selectCandidatePeersForRouting can still include peers without service protocol metadata', () => {
@@ -903,6 +948,32 @@ test('pinned proxy request reports when the pinned peer is not discoverable', as
   assert.equal(res.statusCode, 502)
   assert.match(res.body, /is not reachable right now/)
   assert.match(res.body, /It may be offline, not announcing, or temporarily unreachable/)
+})
+
+test('pinned proxy request rewrites a canonical alias to the advertised service id', async () => {
+  const pinnedPeer = makePeer('a', ['openai'])
+  pinnedPeer.providerServiceApiProtocols = {
+    openai: { services: { 'gpt-5.6-sol': ['openai-chat-completions'] } },
+  }
+  const proxy = makeBuyerProxyWithPeers([pinnedPeer], [pinnedPeer], permissiveRouter())
+  let selectedBody: Record<string, unknown> | null = null
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: { requestId: string; body: Uint8Array }) => {
+    selectedBody = parseJsonBody(request.body)
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{}'),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-antseed-pin-peer': pinnedPeer.peerId },
+    body: { model: 'gpt-56-sol', messages: [] },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(selectedBody?.['model'], 'gpt-5.6-sol')
 })
 
 test('pinned proxy request reports explicit provider mismatch separately', async () => {

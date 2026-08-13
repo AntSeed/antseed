@@ -18,6 +18,7 @@ import { log, normalizePeerId } from './request-utils.js'
 export type PeerProtocolRoutePlan = {
   provider: string
   selection: TargetProtocolSelection | null
+  serviceId: string | null
 }
 
 export type CandidatePeerRouteSelection = {
@@ -98,29 +99,6 @@ function getPeerProviderProtocols(
   return inferred
 }
 
-function getDirectServiceProtocols(
-  peer: PeerInfo,
-  provider: string,
-  requestedService: string | null,
-): ServiceApiProtocol[] {
-  const normalizedRequestedService = requestedService?.trim()
-  if (!normalizedRequestedService) return []
-
-  const fromMetadata = (
-    peer as PeerInfo & {
-      providerServiceApiProtocols?: Record<string, { services: Record<string, ServiceApiProtocol[]> }>
-    }
-  ).providerServiceApiProtocols?.[provider]?.services
-  if (!fromMetadata) return []
-
-  const requestedKey = canonicalModelKey(normalizedRequestedService)
-  const directMatchKey = Object.keys(fromMetadata).find(
-    (key) => canonicalModelKey(key) === requestedKey,
-  )
-  const protocols = directMatchKey ? fromMetadata[directMatchKey] : undefined
-  return protocols?.length ? Array.from(new Set(protocols)) : []
-}
-
 export function findAdvertisedServiceId(
   peer: PeerInfo,
   provider: string,
@@ -140,7 +118,12 @@ export function findAdvertisedServiceOffer(
     offer.provider.toLowerCase() === provider.toLowerCase()
     && canonicalModelKey(offer.serviceId) === requestedKey
   ))
-  return selectLowestPricedModelOffer(offers)
+  if (/(?:[-:._\s]+coding[-:._\s]+only|codingonly)$/i.test(requestedService)) {
+    const exact = offers.find((offer) => offer.serviceId.toLowerCase() === requestedService.trim().toLowerCase())
+    if (exact) return exact
+  }
+  const unrestricted = offers.filter((offer) => !/(?:[-:._\s]+coding[-:._\s]+only|codingonly)$/i.test(offer.serviceId))
+  return selectLowestPricedModelOffer(unrestricted.length > 0 ? unrestricted : offers)
 }
 
 function selectProviderByProtocol(
@@ -156,14 +139,49 @@ function selectProviderByProtocol(
       continue
     }
     if (!selection.requiresTransform) {
-      return { provider, selection }
+      return { provider, selection, serviceId: null }
     }
     if (!transformedFallback) {
-      transformedFallback = { provider, selection }
+      transformedFallback = { provider, selection, serviceId: null }
     }
   }
 
   return transformedFallback
+}
+
+function selectAdvertisedServiceByProtocol(
+  peer: PeerInfo,
+  candidates: string[],
+  requestProtocol: ServiceApiProtocol,
+  requestedService: string,
+): PeerProtocolRoutePlan | null {
+  const compatible: Array<{ offer: NetworkServiceOffer; plan: PeerProtocolRoutePlan }> = []
+  for (const provider of candidates) {
+    const offer = findAdvertisedServiceOffer(peer, provider, requestedService)
+    if (!offer) continue
+    const supportedProtocols = offer.protocols.length > 0
+      ? offer.protocols.filter((protocol): protocol is ServiceApiProtocol => (
+          protocol === 'anthropic-messages'
+          || protocol === 'openai-chat-completions'
+          || protocol === 'openai-responses'
+          || protocol === 'openai-images'
+        ))
+      : offer.protocol
+        ? [offer.protocol]
+        : []
+    const selection = selectTargetProtocolForRequest(requestProtocol, supportedProtocols)
+    if (!selection) continue
+    compatible.push({
+      offer,
+      plan: { provider, selection, serviceId: offer.serviceId },
+    })
+  }
+  const unrestricted = compatible.filter(
+    ({ offer }) => !/(?:[-:._\s]+coding[-:._\s]+only|codingonly)$/i.test(offer.serviceId),
+  )
+  const eligible = unrestricted.length > 0 ? unrestricted : compatible
+  const selectedOffer = selectLowestPricedModelOffer(eligible.map((candidate) => candidate.offer))
+  return compatible.find((candidate) => candidate.offer === selectedOffer)?.plan ?? null
 }
 
 export function resolvePeerRoutePlan(
@@ -189,16 +207,19 @@ export function resolvePeerRoutePlan(
 
   if (!requestProtocol) {
     const provider = candidates[0]
-    return provider ? { provider, selection: null } : null
+    const serviceId = provider && requestedService
+      ? findAdvertisedServiceOffer(peer, provider, requestedService)?.serviceId ?? null
+      : null
+    return provider ? { provider, selection: null, serviceId } : null
   }
 
-  if (serviceFilterMode === 'lenient' && requestedService?.trim()) {
-    const exactPlan = selectProviderByProtocol(
-      candidates,
-      requestProtocol,
-      (provider) => getDirectServiceProtocols(peer, provider, requestedService),
-    )
+  if (requestedService?.trim()) {
+    const exactPlan = selectAdvertisedServiceByProtocol(peer, candidates, requestProtocol, requestedService)
     if (exactPlan) return exactPlan
+    const hasAdvertisedCanonicalOffer = candidates.some(
+      (provider) => findAdvertisedServiceOffer(peer, provider, requestedService) !== null,
+    )
+    if (hasAdvertisedCanonicalOffer) return null
   }
 
   return selectProviderByProtocol(

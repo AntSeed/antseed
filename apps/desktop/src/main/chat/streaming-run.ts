@@ -66,7 +66,12 @@ import {
   resolveSystemPrompt,
   PROXY_RUNTIME_API_KEY,
 } from './proxy-service.js';
-import { CHAT_AGENT_DIR, extractPeerFromEntries, PiConversationStore } from './conversation-store.js';
+import {
+  CHAT_AGENT_DIR,
+  extractPeerFromEntries,
+  isPersistedPeerBindingPinned,
+  PiConversationStore,
+} from './conversation-store.js';
 import {
   generateConversationTitleWithModel,
   getMessageText,
@@ -199,9 +204,9 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
     const serviceId = normalizeServiceId(serviceOverride || context.model?.modelId);
     const persistedPeer = extractPeerFromEntries(sessionManager);
     const peerOverrideId = normalizePeerId(peerOverride) ?? null;
-    const persistedPinnedPeerId = persistedPeer?.routeMode === 'pinned' ? persistedPeer.peerId : null;
+    const persistedPinnedPeerId = isPersistedPeerBindingPinned(persistedPeer) ? persistedPeer!.peerId : null;
     const preferredPeerId = peerOverrideId ?? preferredPeerByConversationId.get(conversationId) ?? persistedPinnedPeerId;
-    if (!preferredPeerId && persistedPeer?.peerId) {
+    if (!preferredPeerId && persistedPeer?.routeMode === 'auto' && persistedPeer.peerId) {
       preferredPeerByConversationId.delete(conversationId);
       void store.clearPeer(conversationId);
     }

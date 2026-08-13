@@ -165,3 +165,13 @@ test('selectFavoriteVprCatalog returns only starred entries in catalog order', (
 
   assert.deepEqual(favorites.map((entry) => entry.serviceId), ['obscure-model']);
 });
+
+test('recommended exact matching prefers the base model over a more popular variant', () => {
+  const catalog = projectRowsToVprModelCatalog([
+    discoverRow({ provider: 'openai', serviceId: 'gpt-5.6-terra', peerId: 'p1' }),
+    discoverRow({ provider: 'openai', serviceId: 'gpt-5.6-terra', peerId: 'p2' }),
+    discoverRow({ provider: 'openai', serviceId: 'gpt-5.6', peerId: 'p3' }),
+  ]);
+
+  assert.equal(selectRecommendedVprCatalog(catalog)[0]?.serviceId, 'gpt-5.6');
+});

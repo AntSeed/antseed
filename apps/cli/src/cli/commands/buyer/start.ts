@@ -147,7 +147,7 @@ async function isPortReachable(port: number, timeoutMs = 700): Promise<boolean> 
   })
 }
 
-async function isCompatibleBuyerProxy(port: number, timeoutMs = 1200): Promise<boolean> {
+export async function isCompatibleBuyerProxy(port: number, timeoutMs = 1200): Promise<boolean> {
   const overallBudgetMs = Math.max(1, timeoutMs)
   const startedAt = Date.now()
   const reachabilityTimeoutMs = Math.min(overallBudgetMs, 700)
@@ -168,17 +168,8 @@ async function isCompatibleBuyerProxy(port: number, timeoutMs = 1200): Promise<b
     const antseedHeaderNames = ['x-antseed-request-id', 'x-antseed-peer-id', 'x-antseed-provider']
     if (antseedHeaderNames.some((header) => response.headers.has(header))) return true
 
-    const body = (await response.text()).toLowerCase()
-    // Current proxies answer /v1/models locally with an `x-antseed-request-id`
-    // header, so the header check above is the common hit. These body markers
-    // keep older proxies recognized — they forwarded /v1/models to the pinned
-    // peer and answered `{ error: { type: 'no_peer_pinned', ... } }` without one.
-    return body.includes('no sellers available on the network')
-      || body.includes('no peers support')
-      || body.includes('p2p request failed')
-      || body.includes('pinned peer')
-      || body.includes('no peer pinned')
-      || body.includes('"no_peer_pinned"')
+    await response.body?.cancel()
+    return false
   } catch {
     return false
   } finally {

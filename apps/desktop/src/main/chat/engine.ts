@@ -62,7 +62,7 @@ import {
   normalizeModelPickerSnapshot,
   type ModelPickerSnapshot,
 } from '../../shared/model-picker.js';
-import { PiConversationStore } from './conversation-store.js';
+import { isPersistedPeerBindingPinned, PiConversationStore } from './conversation-store.js';
 import { createStreamingRunner } from './streaming-run.js';
 import { generateChatImage } from './image-generation.js';
 import type {
@@ -539,17 +539,24 @@ export function registerPiChatHandlers({
 
   ipcMain.handle('chat:ai-list-conversations', async () => {
     const conversations = await store.list();
-    // Only explicit seller pins remain peer-bound. Legacy/auto peer affinity
-    // is ignored so model-only routing can rank and fail over per request.
+    // Explicit seller pins remain peer-bound. Conversations saved before
+    // routeMode existed are treated as pinned so upgrades do not erase an
+    // explicit seller choice; only explicit auto routes discard peer affinity.
     const enriched = conversations.map((c) => {
-      const memPeerId = c.routeMode === 'pinned' ? preferredPeerByConversationId.get(c.id) : undefined;
-      const peerId = c.routeMode === 'pinned' ? (memPeerId || c.peerId) : undefined;
+      const peerBound = isPersistedPeerBindingPinned({
+        peerId: c.peerId ?? '',
+        ...(c.routeMode ? { routeMode: c.routeMode } : {}),
+      });
+      const memPeerId = peerBound ? preferredPeerByConversationId.get(c.id) : undefined;
+      const peerId = peerBound ? (memPeerId || c.peerId) : undefined;
       if (peerId && !preferredPeerByConversationId.has(c.id)) {
         preferredPeerByConversationId.set(c.id, peerId);
       } else if (!peerId) {
         preferredPeerByConversationId.delete(c.id);
       }
-      return peerId ? { ...c, peerId } : { ...c, peerId: undefined };
+      return peerId
+        ? { ...c, peerId, routeMode: c.routeMode ?? 'pinned' as const }
+        : { ...c, peerId: undefined };
     });
     return { ok: true, data: enriched };
   });

@@ -45,6 +45,10 @@ type CachedSummary = {
 
 export type AntseedPeerData = { peerId: string; peerLabel?: string; routeMode?: ChatRouteMode };
 
+export function isPersistedPeerBindingPinned(peerData: AntseedPeerData | null): boolean {
+  return Boolean(peerData?.peerId) && peerData?.routeMode !== 'auto';
+}
+
 export function projectPeerBinding(peerData: AntseedPeerData | null): Pick<
   AiConversation,
   'peerId' | 'peerLabel' | 'routeMode'

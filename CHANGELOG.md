@@ -13,6 +13,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Fixed canonical model routing and upgrade compatibility: selected aliases now keep their matching service protocol, pinned aliases are rewritten to the peer's advertised service ID, full services are not displaced by cheaper `coding-only` routes, mixed text/image catalogs remain text-routable, and legacy favorites, seller pins, conversation pins, and stale buyer proxies migrate safely.
 - Desktop model discovery now consumes the buyer proxy's `/v1/models` catalog directly, so canonical model grouping, cheapest duplicate selection, cached-price reputation penalties, capabilities, and peer ordering use the same source of truth as API clients.
 - On-chain reputation no longer collapses established migrated/facade sellers to the `$25` new-seller credit when their staking contract returns a missing or zero `stakedAt` timestamp. High-activity verified accounts infer mature status, and refresh failures or zero reads no longer overwrite a previously valid staking date.
 - Desktop Auto selection now defaults to a minimum `6.0` reputation and treats that threshold as a hard eligibility requirement, so a cheaper seller below the configured minimum can never win on price. Existing installs that still carry the previous `0.0` default migrate to `6.0`; deliberate threshold changes remain persisted. Seller rows also no longer show the last on-chain settlement date.
