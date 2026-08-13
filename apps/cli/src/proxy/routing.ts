@@ -206,11 +206,17 @@ export function resolvePeerRoutePlan(
   const candidates = explicitProvider ? [explicitProvider] : providers
 
   if (!requestProtocol) {
+    if (requestedService) {
+      for (const provider of candidates) {
+        const offer = findAdvertisedServiceOffer(peer, provider, requestedService)
+        if (offer) return { provider, selection: null, serviceId: offer.serviceId }
+      }
+      return serviceFilterMode === 'strict' ? null : candidates[0]
+        ? { provider: candidates[0], selection: null, serviceId: null }
+        : null
+    }
     const provider = candidates[0]
-    const serviceId = provider && requestedService
-      ? findAdvertisedServiceOffer(peer, provider, requestedService)?.serviceId ?? null
-      : null
-    return provider ? { provider, selection: null, serviceId } : null
+    return provider ? { provider, selection: null, serviceId: null } : null
   }
 
   if (requestedService?.trim()) {

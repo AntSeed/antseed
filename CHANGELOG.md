@@ -13,6 +13,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Fixed model-only routing for forwardable endpoints without a detectable API protocol, prevented Desktop Auto chat dispatch from bypassing the minimum-reputation gate, and stopped legacy multi-provider peer metadata from assigning every service exclusively to the first provider.
 - Fixed canonical model routing and upgrade compatibility: selected aliases now keep their matching service protocol, pinned aliases are rewritten to the peer's advertised service ID, full services are not displaced by cheaper `coding-only` routes, mixed text/image catalogs remain text-routable, and legacy favorites, seller pins, conversation pins, and stale buyer proxies migrate safely.
 - Desktop model discovery now consumes the buyer proxy's `/v1/models` catalog directly, so canonical model grouping, cheapest duplicate selection, cached-price reputation penalties, capabilities, and peer ordering use the same source of truth as API clients.
 - On-chain reputation no longer collapses established migrated/facade sellers to the `$25` new-seller credit when their staking contract returns a missing or zero `stakedAt` timestamp. High-activity verified accounts infer mature status, and refresh failures or zero reads no longer overwrite a previously valid staking date.

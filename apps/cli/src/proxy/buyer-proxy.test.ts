@@ -674,6 +674,32 @@ test('model-only request routes through a legacy peer-wide service announcement'
   assert.equal(selectedBody?.['model'], 'gpt-5.6-terra')
 })
 
+test('model-only request routes when the request path has no detectable protocol', async () => {
+  const peer = makePeer('a', ['openai'])
+  peer.providerServiceApiProtocols = {
+    openai: { services: { 'embedding-model': ['openai-chat-completions'] } },
+  }
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], permissiveRouter())
+  let selectedBody: Record<string, unknown> | null = null
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: { requestId: string; body: Uint8Array }) => {
+    selectedBody = parseJsonBody(request.body)
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{}'),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    path: '/v1/models/custom-operation',
+    body: { model: 'embedding-model', input: 'hello' },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(selectedBody?.['model'], 'embedding-model')
+})
+
 test('model-only request uses the cheapest duplicate service advertised by one peer', async () => {
   const peer = makePeer('a', ['openai'])
   peer.providerPricing = {

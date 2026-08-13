@@ -28,6 +28,24 @@ describe('network service catalog', () => {
     });
   });
 
+  it('does not assign every legacy service only to the first provider', () => {
+    const offers = buildNetworkServiceOffers([peer({
+      providers: ['anthropic', 'openai-responses'],
+      services: ['claude-sonnet-4-5', 'gpt-5.6'],
+    })]);
+
+    expect(offers.map((offer) => ({
+      provider: offer.provider,
+      serviceId: offer.serviceId,
+      protocol: offer.protocol,
+    }))).toEqual([
+      { provider: 'anthropic', serviceId: 'claude-sonnet-4-5', protocol: 'anthropic-messages' },
+      { provider: 'anthropic', serviceId: 'gpt-5.6', protocol: 'anthropic-messages' },
+      { provider: 'openai-responses', serviceId: 'claude-sonnet-4-5', protocol: 'openai-responses' },
+      { provider: 'openai-responses', serviceId: 'gpt-5.6', protocol: 'openai-responses' },
+    ]);
+  });
+
   it('keeps the unrestricted service when a cheaper coding-only alias exists', () => {
     const offers = buildNetworkServiceOffers([peer({
       providerPricing: {

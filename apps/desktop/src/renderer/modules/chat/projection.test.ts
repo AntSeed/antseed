@@ -130,6 +130,20 @@ test('auto mode falls back to the first matching option when no rows exist', () 
   assert.equal(resolveVprChatOption([only], [], autoSelection, preferences), only);
 });
 
+test('auto mode does not bypass the minimum reputation gate', () => {
+  const lowReputation = option();
+  const rows = [discoverRow({
+    effectiveReputationScore: 49,
+    onChainReputationScore: 49,
+    onChainTrustScore: 49,
+  })];
+
+  assert.equal(
+    resolveVprChatOption([lowReputation], rows, autoSelection, preferences),
+    null,
+  );
+});
+
 test('pinned mode still requires the exact peer', () => {
   const other = option({ peerId: 'peer-2', value: 'openaigpt-testpeer-2' });
   const rows = [discoverRow({ peerId: 'peer-2' })];

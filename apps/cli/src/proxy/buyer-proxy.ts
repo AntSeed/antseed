@@ -2135,6 +2135,7 @@ export class BuyerProxy {
       const ranked = modelPeers
         .map((peer) => {
           const plan = modelPlans.get(peer.peerId)
+            ?? resolvePeerRoutePlan(peer, requestProtocol, requestedService, explicitProvider, 'strict')
           const offer = plan?.serviceId ? findAdvertisedServiceOffer(peer, plan.provider, plan.serviceId) : null
           if (!plan || !offer) return null
           const serviceId = plan.serviceId ?? offer.serviceId

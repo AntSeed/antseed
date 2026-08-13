@@ -117,9 +117,9 @@ function announcedServicesByProvider(peer: NetworkServiceCatalogPeer): Map<strin
   }
 
   if (byProvider.size === 0 && peer.services?.length && peer.providers?.length) {
-    const fallbackProvider = peer.providers[0];
-    if (fallbackProvider) {
-      byProvider.set(fallbackProvider, new Set(peer.services.filter((serviceId) => serviceId.trim())));
+    const serviceIds = peer.services.filter((serviceId) => serviceId.trim());
+    for (const provider of peer.providers) {
+      if (provider.trim()) byProvider.set(provider, new Set(serviceIds));
     }
   } else if (byProvider.size === 0 && peer.providers?.length) {
     for (const provider of peer.providers) byProvider.set(provider, new Set([provider]));
