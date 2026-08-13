@@ -1,3 +1,4 @@
+import { estimateTokenCount } from 'tokenx';
 import type { SerializedHttpResponse, SerializedHttpResponseChunk } from './types.js';
 
 const encoder = new TextEncoder();
@@ -66,7 +67,7 @@ export interface ImageRequestFacts {
   quality?: string;
   resolution?: string;
   requestedImages?: number;
-  /** chars/4 estimate of the text prompt only — input images never contribute. */
+  /** Estimated token count of the text prompt only — input images never contribute. */
   promptTokens?: number;
 }
 
@@ -178,7 +179,7 @@ export function extractImageRequestFacts(input: {
     facts.requestedImages = requestedImages;
   }
   if (typeof body.prompt === 'string' && body.prompt.length > 0) {
-    facts.promptTokens = Math.ceil(body.prompt.length / 4);
+    facts.promptTokens = Math.max(1, estimateTokenCount(body.prompt));
   }
   return facts;
 }
