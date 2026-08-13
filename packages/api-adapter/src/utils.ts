@@ -1,3 +1,4 @@
+import { estimateTokenCount } from 'tokenx';
 import type { SerializedHttpResponse, SerializedHttpResponseChunk } from './types.js';
 
 const encoder = new TextEncoder();
@@ -66,6 +67,8 @@ export interface ImageRequestFacts {
   quality?: string;
   resolution?: string;
   requestedImages?: number;
+  /** Estimated token count of the text prompt only — input images never contribute. */
+  promptTokens?: number;
 }
 
 /** Plain API-shape usage facts parsed from provider responses. */
@@ -175,6 +178,9 @@ export function extractImageRequestFacts(input: {
   if (requestedImages !== undefined) {
     facts.requestedImages = requestedImages;
   }
+  if (typeof body.prompt === 'string' && body.prompt.length > 0) {
+    facts.promptTokens = Math.max(1, estimateTokenCount(body.prompt));
+  }
   return facts;
 }
 
@@ -248,7 +254,7 @@ function toOptionalPositiveInt(value: unknown): number | undefined {
   return parsed;
 }
 
-function setStringAttr(target: ImageRequestFacts, key: keyof Omit<ImageRequestFacts, 'requestedImages'>, value: unknown): void {
+function setStringAttr(target: ImageRequestFacts, key: keyof Omit<ImageRequestFacts, 'requestedImages' | 'promptTokens'>, value: unknown): void {
   if (typeof value === 'string' && value.trim().length > 0) {
     target[key] = value.trim();
   }

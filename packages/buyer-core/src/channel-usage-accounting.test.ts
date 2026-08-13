@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getServiceMetadataId, ZERO_METADATA } from '@antseed/protocol/signatures';
+import { getServiceMetadataId, OUTPUT_IMAGE_TOKEN_EQUIVALENT, ZERO_METADATA } from '@antseed/protocol/signatures';
 import { advanceUsageMetadata, normalizeRequestUsageDelta } from './channel-usage-accounting.js';
 
 describe('normalizeRequestUsageDelta', () => {
@@ -9,6 +9,7 @@ describe('normalizeRequestUsageDelta', () => {
     cachedInputTokens: 3n,
     outputTokens: 7n,
     requests: 1n,
+    outputImages: 1n,
   };
 
   it('removes duplicate amount and usage for an already-counted response', () => {
@@ -21,6 +22,7 @@ describe('normalizeRequestUsageDelta', () => {
       cachedInputTokens: 0n,
       outputTokens: 0n,
       requests: 0n,
+      outputImages: 0n,
     });
   });
 
@@ -41,6 +43,7 @@ describe('normalizeRequestUsageDelta', () => {
       cachedInputTokens: 0n,
       outputTokens: 0n,
       requests: 0n,
+      outputImages: 0n,
     });
   });
 });
@@ -54,6 +57,7 @@ describe('NeedAuth and post-response metadata accounting', () => {
       cachedInputTokens: 0n,
       outputTokens: 0n,
       requests: 1n,
+      outputImages: 1n,
     });
     const afterPostResponse = advanceUsageMetadata(
       afterNeedAuth,
@@ -64,6 +68,7 @@ describe('NeedAuth and post-response metadata accounting', () => {
         cachedInputTokens: 0n,
         outputTokens: 0n,
         requests: 1n,
+        outputImages: 1n,
       }, { deliveredResponse: true, alreadyCounted: true }),
     );
 
@@ -71,6 +76,7 @@ describe('NeedAuth and post-response metadata accounting', () => {
       cumulativeInputTokens: 0n,
       cumulativeOutputTokens: 0n,
       cumulativeRequestCount: 1n,
+      cumulativeOutputImages: 1n,
       services: [{
         serviceId: getServiceMetadataId(service),
         cumulativeAmount: 25_000n,
@@ -78,7 +84,24 @@ describe('NeedAuth and post-response metadata accounting', () => {
         cumulativeCachedInputTokens: 0n,
         cumulativeOutputTokens: 0n,
         cumulativeRequestCount: 1n,
+        cumulativeOutputImages: 1n,
       }],
     });
+  });
+
+  it('credits the flat token equivalent per image into output tokens', () => {
+    const service = 'venice-sd35';
+    const images = 2n;
+    const meta = advanceUsageMetadata(ZERO_METADATA, service, {
+      amount: 10_000n,
+      inputTokens: 8n,
+      cachedInputTokens: 0n,
+      outputTokens: images * OUTPUT_IMAGE_TOKEN_EQUIVALENT,
+      requests: 1n,
+      outputImages: images,
+    });
+
+    expect(meta.cumulativeOutputImages).toBe(2n);
+    expect(meta.cumulativeOutputTokens).toBe(2n * OUTPUT_IMAGE_TOKEN_EQUIVALENT);
   });
 });

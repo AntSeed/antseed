@@ -15,6 +15,7 @@ import {
   makeChannelsDomain,
   computeMetadataHash,
   encodeMetadata,
+  OUTPUT_IMAGE_TOKEN_EQUIVALENT,
   ZERO_METADATA,
   ZERO_METADATA_HASH,
   computeChannelId,
@@ -38,7 +39,7 @@ import {
 } from './pricing.js';
 import type { UnitBillingContext, UnitBillingModelV1, UnitBillingUsage } from '@antseed/protocol/billing';
 import type { ImageRequestFacts } from '@antseed/api-adapter';
-import { evaluateUnitBilling, validateUnitBillingUsage } from '@antseed/protocol/billing';
+import { evaluateUnitBilling, unitUsageFromReport, validateUnitBillingUsage } from '@antseed/protocol/billing';
 import { buyerFault, faultCodeOf } from './errors.js';
 
 /** Default tolerance: accept seller claims up to 1.4x buyer's estimate. */
@@ -53,6 +54,10 @@ const MAX_REQUEST_BILLING_ENTRIES = 512;
 /** How long NeedAuth validation waits for the buyer's own response processing
  *  to record delivered unit usage before rejecting a positive claim. */
 const OBSERVED_UNIT_USAGE_WAIT_MS = 5_000;
+
+function countOutputImages(usage: UnitBillingUsage | undefined): bigint {
+  return BigInt(Math.max(0, Math.floor(usage?.units.output_images ?? 0)));
+}
 
 function validateUnitNormalizedCost(
   model: UnitBillingModelV1,
@@ -122,7 +127,9 @@ export interface BuyerSpendEvent {
   amountUsdc: string;
   inputTokens: string;
   cachedInputTokens: string;
+  /** Includes OUTPUT_IMAGE_TOKEN_EQUIVALENT credits for generated images. */
   outputTokens: string;
+  outputImages: string;
 }
 
 export type BuyerSpendListener = (event: BuyerSpendEvent) => void;
@@ -255,6 +262,7 @@ export class BuyerPaymentManager {
       cumulativeInputTokens: current.cumulativeInputTokens,
       cumulativeOutputTokens: current.cumulativeOutputTokens,
       cumulativeRequestCount: current.cumulativeRequestCount,
+      cumulativeOutputImages: current.cumulativeOutputImages ?? 0n,
       services: [],
     };
   }
@@ -900,6 +908,7 @@ export class BuyerPaymentManager {
     let estimatedInputTokens: bigint;
     let estimatedOutputTokens: bigint;
     let estimatedCachedInputTokens = 0n;
+    let byteEstimatedTokens = false;
     let buyerEstimatedRequestCost: bigint;
 
     const requestBilling = responseStats.requestId != null
@@ -960,6 +969,7 @@ export class BuyerPaymentManager {
       );
     } else {
       // Fall back to byte-based estimation
+      byteEstimatedTokens = true;
       const estimate = this._estimateResponseCost(sellerPeerId, responseStats.inputBytes, responseStats.outputBytes, responseStats.service);
       estimatedInputTokens = estimate ? BigInt(estimate.inputTokens) : 0n;
       estimatedOutputTokens = estimate ? BigInt(estimate.outputTokens) : 0n;
@@ -970,6 +980,23 @@ export class BuyerPaymentManager {
       debugLog(
         `[BuyerPayment] Byte-estimated tokens (no reported): in=${estimatedInputTokens} out=${estimatedOutputTokens} cost=${buyerEstimatedRequestCost}`,
       );
+    }
+
+    // Image attribution (metadata/stats only — never cost). The count is the
+    // buyer's own observation of the delivered response, so it survives a
+    // headroom NeedAuth having already consumed the request-billing entry.
+    const estimatedOutputImages = countOutputImages(responseStats.unitUsage);
+    if (estimatedOutputImages > 0n) {
+      if (byteEstimatedTokens) {
+        // Byte estimates of an image response are base64 noise, not tokens.
+        estimatedOutputTokens = 0n;
+        estimatedInputTokens = 0n;
+        estimatedCachedInputTokens = 0n;
+      }
+      estimatedOutputTokens += estimatedOutputImages * OUTPUT_IMAGE_TOKEN_EQUIVALENT;
+      if (estimatedInputTokens <= 0n) {
+        estimatedInputTokens = BigInt(requestBilling?.requestFacts.promptTokens ?? 0);
+      }
     }
 
     // Determine the accepted cost for this request:
@@ -1021,6 +1048,7 @@ export class BuyerPaymentManager {
         cachedInputTokens: estimatedCachedInputTokens,
         outputTokens: estimatedOutputTokens,
         requests: 1n,
+        outputImages: estimatedOutputImages,
       }, { deliveredResponse: true, alreadyCounted }),
     );
     if (!alreadyCounted) this._serviceTokensCounted.mark(responseStats.requestId);
@@ -1034,6 +1062,7 @@ export class BuyerPaymentManager {
       inputTokens: (alreadyCounted ? 0n : estimatedInputTokens).toString(),
       cachedInputTokens: (alreadyCounted ? 0n : estimatedCachedInputTokens).toString(),
       outputTokens: (alreadyCounted ? 0n : estimatedOutputTokens).toString(),
+      outputImages: (alreadyCounted ? 0n : estimatedOutputImages).toString(),
     });
 
     debugLog(
@@ -1112,6 +1141,7 @@ export class BuyerPaymentManager {
       return;
     }
     let acceptedServiceCost = 0n;
+    let acceptedOutputImages = 0n;
     const reportedInputTokens = BigInt(payload.inputTokens ?? '0');
     const reportedCachedInputTokens = BigInt(payload.cachedInputTokens ?? '0');
     const reportedOutputTokens = BigInt(payload.outputTokens ?? '0');
@@ -1163,6 +1193,7 @@ export class BuyerPaymentManager {
             this._costTolerance,
             observedUnitUsage,
           );
+          acceptedOutputImages = countOutputImages(unitUsageFromReport(payload.billingUsage));
         }
 
         const buyerEstimate = tokenEstimate + acceptedUnitCost;
@@ -1292,15 +1323,25 @@ export class BuyerPaymentManager {
     // If post-response signing counted this response first, deduplicate the
     // response's service amount and usage together.
     const alreadyCounted = this._serviceTokensCounted.has(payload.requestId);
+    // Attribution only — never cost; mirrors signPerRequestAuth.
+    let attributedInputTokens = reportedInputTokens;
+    let attributedOutputTokens = reportedOutputTokens;
+    if (acceptedOutputImages > 0n) {
+      attributedOutputTokens += acceptedOutputImages * OUTPUT_IMAGE_TOKEN_EQUIVALENT;
+      if (attributedInputTokens <= 0n) {
+        attributedInputTokens = BigInt(requestBilling?.requestFacts.promptTokens ?? 0);
+      }
+    }
     const newMeta = this._advanceUsageMetadata(
       this._metadata.get(sellerPeerId),
       buyerService,
       normalizeRequestUsageDelta({
         amount: serviceAmountDelta,
-        inputTokens: reportedInputTokens,
+        inputTokens: attributedInputTokens,
         cachedInputTokens: reportedCachedInputTokens,
-        outputTokens: reportedOutputTokens,
+        outputTokens: attributedOutputTokens,
         requests: 1n,
+        outputImages: acceptedOutputImages,
       }, { deliveredResponse, alreadyCounted }),
     );
     if (deliveredResponse && !alreadyCounted) this._serviceTokensCounted.mark(payload.requestId);
@@ -1313,9 +1354,10 @@ export class BuyerPaymentManager {
         sellerPeerId,
         requestId: payload.requestId ?? null,
         amountUsdc: signedDelta.toString(),
-        inputTokens: (deliveredResponse && !alreadyCounted ? reportedInputTokens : 0n).toString(),
+        inputTokens: (deliveredResponse && !alreadyCounted ? attributedInputTokens : 0n).toString(),
         cachedInputTokens: (deliveredResponse && !alreadyCounted ? reportedCachedInputTokens : 0n).toString(),
-        outputTokens: (deliveredResponse && !alreadyCounted ? reportedOutputTokens : 0n).toString(),
+        outputTokens: (deliveredResponse && !alreadyCounted ? attributedOutputTokens : 0n).toString(),
+        outputImages: (deliveredResponse && !alreadyCounted ? acceptedOutputImages : 0n).toString(),
       });
       debugLog(`[BuyerPayment] NeedAuth responded: new cumulativeAmount=${effectiveAmount}`);
     } catch {
