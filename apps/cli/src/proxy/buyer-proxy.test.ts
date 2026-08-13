@@ -493,6 +493,32 @@ test('model-only request routes to the highest-reputation canonical service matc
   assert.equal(selectedBody?.['model'], 'opus-5')
 })
 
+test('model-only request routes through a legacy peer-wide service announcement', async () => {
+  const peer = makePeer('a', ['openai']) as PeerInfo & { services: string[] }
+  peer.services = ['gpt-5.6-terra']
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], permissiveRouter())
+  let selectedPeerId = ''
+  let selectedBody: Record<string, unknown> | null = null
+  ;(proxy as any)._node.sendRequest = async (selectedPeer: PeerInfo, request: { requestId: string; body: Uint8Array }) => {
+    selectedPeerId = selectedPeer.peerId
+    selectedBody = parseJsonBody(request.body)
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ ok: true })),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    body: { model: 'gpt-56-terra', messages: [] },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(selectedPeerId, peer.peerId)
+  assert.equal(selectedBody?.['model'], 'gpt-5.6-terra')
+})
+
 test('antseed alias with a model-only default route uses automatic peer selection', async () => {
   const lower = makePeer('a', ['openai'])
   lower.reputationScore = 40

@@ -135,6 +135,13 @@ export function findAdvertisedServiceId(
     const serviceId = Object.keys(services ?? {}).find((key) => canonicalModelKey(key) === requestedKey)
     if (serviceId) return serviceId
   }
+
+  const hasProviderMetadata = matrices.some((matrix) => Object.keys(matrix ?? {}).length > 0)
+  const legacyPeer = peer as PeerInfo & { services?: string[] }
+  const fallbackProvider = peer.providers[0]
+  if (!hasProviderMetadata && fallbackProvider?.toLowerCase() === provider.toLowerCase()) {
+    return legacyPeer.services?.find((serviceId) => canonicalModelKey(serviceId) === requestedKey) ?? null
+  }
   return null
 }
 
