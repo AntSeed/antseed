@@ -9,7 +9,9 @@ import { getGlobalOptions } from '../types.js';
 import { loadConfig } from '../../../config/loader.js';
 import {
   AntseedNode,
+  buildNetworkServiceOffers,
   computeOnChainReputationScore,
+  type NetworkServiceOffer,
   type PeerInfo,
 } from '@antseed/node';
 import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery';
@@ -98,23 +100,42 @@ function isFreePricing(pricing: { inputUsdPerMillion: number; outputUsdPerMillio
   );
 }
 
+const offersByPeer = new WeakMap<PeerInfo, NetworkServiceOffer[]>();
+function peerServiceOffers(peer: PeerInfo): NetworkServiceOffer[] {
+  let offers = offersByPeer.get(peer);
+  if (!offers) {
+    offers = buildNetworkServiceOffers([peer]);
+    offersByPeer.set(peer, offers);
+  }
+  return offers;
+}
+
+function offerServiceLabel(offer: NetworkServiceOffer): string {
+  return offer.serviceId === offer.provider ? '(default)' : offer.serviceId;
+}
+
+function isFreeOffer(offer: NetworkServiceOffer): boolean {
+  return (
+    offer.inputUsdPerMillion !== undefined
+    && offer.outputUsdPerMillion !== undefined
+    && isFreePricing({
+      inputUsdPerMillion: offer.inputUsdPerMillion,
+      outputUsdPerMillion: offer.outputUsdPerMillion,
+    })
+    && (offer.cachedInputUsdPerMillion === undefined || offer.cachedInputUsdPerMillion === 0)
+  );
+}
+
 /**
  * Derive the set of service names this peer offers, flattened across all its
  * providers, in stable (sorted) order.
  */
 function collectServiceNames(peer: PeerInfo): string[] {
   const names = new Set<string>();
-  const pricing = peer.providerPricing;
-  if (pricing) {
-    for (const entry of Object.values(pricing)) {
-      const services = entry.services;
-      if (services) {
-        for (const name of Object.keys(services)) {
-          const trimmed = name.trim();
-          if (trimmed.length > 0) names.add(trimmed);
-        }
-      }
-    }
+  for (const offer of peerServiceOffers(peer)) {
+    if (offer.serviceId === offer.provider) continue;
+    const trimmed = offer.serviceId.trim();
+    if (trimmed.length > 0) names.add(trimmed);
   }
   return Array.from(names).sort((a, b) => a.localeCompare(b));
 }
@@ -125,20 +146,8 @@ function collectServiceNames(peer: PeerInfo): string[] {
  */
 function collectFreeServiceNames(peer: PeerInfo): string[] {
   const names = new Set<string>();
-  const pricing = peer.providerPricing;
-  if (pricing) {
-    for (const entry of Object.values(pricing)) {
-      if (entry.services) {
-        for (const [serviceName, servicePricing] of Object.entries(entry.services)) {
-          if (isFreePricing(servicePricing)) names.add(serviceName);
-        }
-      }
-      // If the provider's defaults are free and no per-service override lifts
-      // them, consider "(default)" a free offering worth surfacing.
-      if (entry.defaults && isFreePricing(entry.defaults) && (!entry.services || Object.keys(entry.services).length === 0)) {
-        names.add('(default)');
-      }
-    }
+  for (const offer of peerServiceOffers(peer)) {
+    if (isFreeOffer(offer)) names.add(offerServiceLabel(offer));
   }
   return Array.from(names).sort((a, b) => a.localeCompare(b));
 }
@@ -192,21 +201,15 @@ export function peerMatchesServiceFilter(peer: PeerInfo, filter: string): boolea
 function resolveBestPaidPricing(peer: PeerInfo): { input: number | null; output: number | null } {
   let bestInput: number | null = null;
   let bestOutput: number | null = null;
-  const pricing = peer.providerPricing;
-  if (pricing) {
-    for (const entry of Object.values(pricing)) {
-      const candidates: Array<{ inputUsdPerMillion: number; outputUsdPerMillion: number }> = [];
-      if (entry.defaults) candidates.push(entry.defaults);
-      if (entry.services) candidates.push(...Object.values(entry.services));
-      for (const c of candidates) {
-        if (isFreePricing(c)) continue;
-        if (Number.isFinite(c.inputUsdPerMillion) && c.inputUsdPerMillion > 0) {
-          if (bestInput === null || c.inputUsdPerMillion < bestInput) bestInput = c.inputUsdPerMillion;
-        }
-        if (Number.isFinite(c.outputUsdPerMillion) && c.outputUsdPerMillion > 0) {
-          if (bestOutput === null || c.outputUsdPerMillion < bestOutput) bestOutput = c.outputUsdPerMillion;
-        }
-      }
+  for (const offer of peerServiceOffers(peer)) {
+    if (isFreeOffer(offer)) continue;
+    const input = offer.inputUsdPerMillion;
+    const output = offer.outputUsdPerMillion;
+    if (input !== undefined && Number.isFinite(input) && input > 0) {
+      if (bestInput === null || input < bestInput) bestInput = input;
+    }
+    if (output !== undefined && Number.isFinite(output) && output > 0) {
+      if (bestOutput === null || output < bestOutput) bestOutput = output;
     }
   }
   // Top-level defaults are only used when we have nothing else — and only if
@@ -522,7 +525,7 @@ function renderCompactTable(peers: PeerInfo[], hasChainData: boolean): void {
     console.log(chalk.dim(`  ${chalk.red('⚠')} peers triggered on-chain sybil heuristics. Run ${chalk.bold('antseed network peer <id>')} for the per-signal breakdown.`));
   }
   if (anyFreeService) {
-    console.log(chalk.dim('  Free column lists services a peer offers at $0 in/out. "Min In/Out $/1M" always reflects the cheapest PAID option.'));
+    console.log(chalk.dim('  Free column lists services a peer offers at $0 input, cached-input, and output. "Min In/Out $/1M" always reflects the cheapest PAID option.'));
   }
   if (anyDelegatedSeller) {
     console.log(chalk.dim(`  ${chalk.yellow('On-chain seller')} is the contract address that receives payments — differs from Peer when a delegated/proxy operator runs the node.`));
@@ -569,63 +572,26 @@ function renderExpandedTable(peers: PeerInfo[], requestedTags: Set<string>): voi
   const anyVerificationLinks = peers.some((peer) => collectPeerVerificationLinks(peer).length > 0);
 
   for (const peer of peers) {
-    const pricing = peer.providerPricing;
-    if (!pricing || Object.keys(pricing).length === 0) {
-      // Peer with no pricing info — render one row per provider as a fallback
-      // shape so the table is never empty for a known peer. These rows have
-      // no tags and can never match `--tag`, so suppress them under a filter.
-      if (hasTagFilter) continue;
-      for (const provider of peer.providers) {
-        rows.push({
-          peerId: peer.peerId,
-          provider,
-          service: '—',
-          input: formatUsdPerMillion(peer.defaultInputUsdPerMillion ?? null),
-          output: formatUsdPerMillion(peer.defaultOutputUsdPerMillion ?? null),
-          score: formatReputationScore(peer),
-          sessions: typeof peer.onChainChannelCount === 'number' ? String(peer.onChainChannelCount) : '—',
-          volume: formatUsdcVolume(peer.onChainTotalVolumeUsdcMicros ?? null),
-          tags: [],
-        });
-      }
-      continue;
-    }
-    for (const [providerName, providerEntry] of Object.entries(pricing)) {
-      const services = providerEntry.services ?? {};
-      const serviceEntries = Object.entries(services);
-      if (serviceEntries.length === 0) {
-        // Synthetic `(default)` row — defaults aren't tagged so they can't
-        // match a tag filter; keep the row only when no filter is active.
-        if (hasTagFilter) continue;
-        rows.push({
-          peerId: peer.peerId,
-          provider: providerName,
-          service: '(default)',
-          input: formatUsdPerMillion(providerEntry.defaults?.inputUsdPerMillion ?? null),
-          output: formatUsdPerMillion(providerEntry.defaults?.outputUsdPerMillion ?? null),
-          score: formatReputationScore(peer),
-          sessions: typeof peer.onChainChannelCount === 'number' ? String(peer.onChainChannelCount) : '—',
-          volume: formatUsdcVolume(peer.onChainTotalVolumeUsdcMicros ?? null),
-          tags: [],
-        });
+    const offers = [...peerServiceOffers(peer)].sort((a, b) => (
+      a.provider.localeCompare(b.provider) || a.serviceId.localeCompare(b.serviceId)
+    ));
+    for (const offer of offers) {
+      const isFallbackRow = offer.serviceId === offer.provider;
+      if (hasTagFilter && isFallbackRow) continue;
+      if (hasTagFilter && !serviceMatchesTagFilter(peer, offer.provider, offer.serviceId, requestedTags)) {
         continue;
       }
-      for (const [serviceName, servicePricing] of serviceEntries.sort(([a], [b]) => a.localeCompare(b))) {
-        if (hasTagFilter && !serviceMatchesTagFilter(peer, providerName, serviceName, requestedTags)) {
-          continue;
-        }
-        rows.push({
-          peerId: peer.peerId,
-          provider: providerName,
-          service: serviceName,
-          input: formatUsdPerMillion(servicePricing.inputUsdPerMillion),
-          output: formatUsdPerMillion(servicePricing.outputUsdPerMillion),
-          score: formatReputationScore(peer),
-          sessions: typeof peer.onChainChannelCount === 'number' ? String(peer.onChainChannelCount) : '—',
-          volume: formatUsdcVolume(peer.onChainTotalVolumeUsdcMicros ?? null),
-          tags: collectServiceTags(peer, providerName, serviceName),
-        });
-      }
+      rows.push({
+        peerId: peer.peerId,
+        provider: offer.provider,
+        service: offerServiceLabel(offer),
+        input: formatUsdPerMillion(offer.inputUsdPerMillion ?? null),
+        output: formatUsdPerMillion(offer.outputUsdPerMillion ?? null),
+        score: formatReputationScore(peer),
+        sessions: typeof peer.onChainChannelCount === 'number' ? String(peer.onChainChannelCount) : '—',
+        volume: formatUsdcVolume(peer.onChainTotalVolumeUsdcMicros ?? null),
+        tags: collectServiceTags(peer, offer.provider, offer.serviceId),
+      });
     }
   }
 
@@ -832,7 +798,13 @@ export function registerNetworkBrowseCommand(networkCmd: Command): void {
 
       const topPeer = displayed[0];
       if (topPeer) {
-        console.log(chalk.bold('Pin a peer:'));
+        const exampleService = collectServiceNames(topPeer)[0];
+        console.log(chalk.bold('Use a model (auto-selects the best peer, no pin needed):'));
+        console.log(`  curl -s localhost:8377/v1/models | jq '.data[].id'   ${chalk.dim('# every model on the network')}`);
+        if (exampleService) {
+          console.log(chalk.dim(`  then request it:  curl localhost:8377/v1/chat/completions -d '{"model": "${exampleService}", ...}'`));
+        }
+        console.log(chalk.bold('Or force this seller:'));
         console.log(`  antseed buyer connection set --peer ${topPeer.peerId}`);
         console.log(chalk.dim(`  or per-request:   curl -H "x-antseed-pin-peer: ${topPeer.peerId}" ...`));
         console.log(chalk.dim(`  full details:     antseed network peer ${topPeer.peerId}`));

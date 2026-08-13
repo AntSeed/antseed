@@ -38,7 +38,7 @@ antseed buyer deposit <amount>        Deposit USDC for payments
 antseed buyer sweep                   Gaslessly sweep hot-wallet USDC into deposits (fixed relay fee)
 antseed buyer withdraw <amount>       Withdraw USDC from deposits
 antseed buyer balance                 Check wallet and deposit balance
-antseed network browse                Browse available services and pricing
+antseed network browse                Browse peers, models, and pricing (same catalog as /v1/models)
 antseed payments                      Launch the payments portal
 ```
 

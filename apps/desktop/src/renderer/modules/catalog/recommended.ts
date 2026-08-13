@@ -32,8 +32,13 @@ const RECOMMENDED_MODEL_LINEUP: ReadonlyArray<{ pattern: RegExp; exact: string }
 
 export function isFreeCatalogEntry(entry: VprModelCatalogEntry): boolean {
   if (entry.kind === 'image') return false;
-  const { minInputUsdPerMillion: input, minOutputUsdPerMillion: output } = entry;
-  return input !== null && output !== null && input <= 0 && output <= 0;
+  const {
+    minInputUsdPerMillion: input,
+    minOutputUsdPerMillion: output,
+    minCachedInputUsdPerMillion: cached,
+  } = entry;
+  return input !== null && output !== null && input <= 0 && output <= 0
+    && (cached === null || cached <= 0);
 }
 
 function entryMatchText(entry: VprModelCatalogEntry): string {

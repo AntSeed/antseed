@@ -26,7 +26,7 @@ Treat these values as fixed for the request:
 - `output` — optional destination path
 - `proxy_url` — optional buyer URL; default `http://127.0.0.1:8377`
 
-Build the routed model as `<peer_id>@<service_id>`. Do not silently substitute another seller or service. If the route fails, report the error and let the user choose another route.
+Build the routed model as `<peer_id>@<service_id>`. The proxy can auto-select a peer from a bare model name, but this skill intentionally routes to the exact seller the user chose — pinned requests never fail over. Do not silently substitute another seller or service. If the route fails, report the error and let the user choose another route.
 
 ## Generate an Image
 
@@ -53,6 +53,8 @@ jq -r '.data[0].b64_json // empty' "$response_file" | base64 --decode > "$output
 
 If the response contains `data[0].url` instead, download it immediately to the output file. Accept only an HTTPS URL. Do not follow redirects to private, loopback, link-local, or otherwise unsafe destinations.
 
+The `<peer_id>@<service_id>` prefix requires a JSON body. If the user asks for `/v1/images/edits` (multipart body, no JSON model to rewrite), pin the seller with the `x-antseed-pin-peer: <peer_id>` header instead and send the bare `service_id` as the model.
+
 ## Safety and Output Rules
 
 - Never print or paste image base64, generated-image URLs, authorization headers, private keys, or full API responses into chat or logs.
@@ -65,8 +67,8 @@ If the response contains `data[0].url` instead, download it immediately to the o
 
 ## Errors
 
-- `no_peer_pinned`: ensure the model is exactly `<peer_id>@<service_id>`.
-- `model_not_found`: the selected seller does not advertise that exact service ID.
+- `missing_routing_target` (or `no_peer_pinned` from a pre-release proxy): the request reached the proxy without a model or pin — ensure the model is exactly `<peer_id>@<service_id>`.
+- `model_not_found`: the selected seller does not advertise that exact service ID. Check `curl -s 'http://127.0.0.1:8377/v1/models?type=images'` — answered locally, it lists every image model on the network with the peers serving it.
 - HTTP `402`: the buyer needs additional deposited USDC or payment-channel capacity.
 - HTTP `502`: the selected peer is unavailable or outside the buyer's routing policy. Do not silently fail over.
 - Connection refused: start AntSeed Desktop or `antseed buyer start`.

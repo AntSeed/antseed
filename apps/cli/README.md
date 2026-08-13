@@ -22,7 +22,7 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 | `antseed buyer deposit <amount>` | Deposit USDC for payments |
 | `antseed buyer withdraw <amount>` | Withdraw USDC from deposits |
 | `antseed buyer balance` | Check wallet and deposit balance |
-| `antseed network browse` | Browse available services and pricing |
+| `antseed network browse` | Browse peers, models, and pricing (same catalog as `/v1/models`) |
 | `antseed payments` | Launch the payments portal |
 | **Session** | |
 | `antseed buyer connection get` | Show current session state (pinned service, peer) |
@@ -272,9 +272,24 @@ For production sellers, prefer a dedicated Base JSON-RPC endpoint over public de
 
 This release announces metadata v12. Buyers supporting only older metadata versions drop v12 sellers from discovery, while updated buyers continue accepting older v10/v11 sellers. Upgrade buyer CLIs and desktop apps before upgrading sellers. Removing capability or unit-billing fields does not downgrade the metadata version; rollback requires running the older seller binary.
 
-### Peer pinning (live, while proxy is running)
+### Model-only routing and peer pinning
 
-After `antseed buyer start` is running, you can pin all subsequent requests to a peer without restarting:
+Pinning a peer is optional. A request that names only a model auto-selects the
+highest-reputation compatible peer allowed by your buyer policy, and fails over
+to the next-ranked peer on peer-attributed errors. Discover what the network
+serves without any pin:
+
+```bash
+# Every model on the network, aggregated across sellers (answered locally)
+curl -s http://localhost:8377/v1/models | jq '.data[].id'
+
+# Peers, pricing, and reputation
+antseed network browse
+```
+
+When you do want to force a specific seller, pin it. After `antseed buyer
+start` is running, you can pin all subsequent requests to a peer without
+restarting:
 
 ```bash
 # Pin all requests to a specific peer (bypasses router for peer selection)

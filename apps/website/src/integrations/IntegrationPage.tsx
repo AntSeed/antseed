@@ -193,9 +193,11 @@ function RunFirstBanner() {
               chatbots, this is often the dominant cost line.
             </li>
             <li>
-              <strong>Pin</strong> - telling your buyer proxy “route requests to{' '}
-              <em>this</em> peer.” No auto-selection - you choose, the proxy obeys.
-              Two ways: a session-wide pin via{' '}
+              <strong>Pin</strong> - optionally telling your buyer proxy “route
+              requests to <em>this</em> peer.” Without a pin, the proxy
+              auto-selects the highest-reputation peer serving the requested
+              model and fails over when that peer misbehaves. Pin when you want
+              one specific seller: a session-wide pin via{' '}
               <code>antseed buyer connection set --peer &lt;id&gt;</code> (saved to{' '}
               <code>~/.antseed/buyer.state.json</code>), or a per-request{' '}
               <code>x-antseed-pin-peer: &lt;id&gt;</code> header (no session state
@@ -407,18 +409,17 @@ function RunFirstBanner() {
             <span className={styles.runFirstNum}>4</span>
             <div className={styles.runFirstBody}>
               <p className={styles.runFirstStepTitle}>
-                Tell the proxy which peer to use, then verify it serves your models.
+                Verify the proxy sees your models — and optionally pick a seller.
               </p>
               <p className={styles.runFirstHint}>
-                Two ways to do this. Pick whichever fits your workflow - you can mix them.
-              </p>
-              <p className={styles.runFirstHint} style={{marginTop: 6}}>
-                <strong>Option A - session pin (most common).</strong> One command, every
-                future request goes to that peer. Persists in{' '}
-                <code>~/.antseed/buyer.state.json</code> across restarts.
+                <strong>No pin needed.</strong> A request that names only a model
+                auto-selects the highest-reputation compatible peer and fails
+                over to the next-ranked seller on peer errors.{' '}
+                <code>/v1/models</code> lists every model on the network,
+                aggregated across sellers:
               </p>
               <CodeBlock
-                snippet={`# Pin the peer you chose for every request from now on (survives restart).\n# Replace the id below with one from your real \`antseed network browse\` output.\nantseed buyer connection set --peer cccccccccccccccccccccccccccccccccccccccc\n\n# What models does the proxy now expose? (OpenAI-compatible /v1/models)\ncurl -s http://localhost:8377/v1/models | jq '.data[].id'`}
+                snippet={`# Every model on the network (OpenAI-compatible, answered locally)\ncurl -s http://localhost:8377/v1/models | jq '.data[].id'`}
               />
               <ExampleOutput
                 label="Example response"
@@ -430,16 +431,28 @@ function RunFirstBanner() {
 "minimax-m2.7"`}
               />
               <p className={styles.runFirstHint}>
-                These are the <strong>only</strong> values you can pass as{' '}
-                <code>model</code> in your tool's config. Pass anything else and the
-                proxy returns <code>404 model_not_found</code>.
+                These are the values you can pass as <code>model</code> in your
+                tool's config (close aliases like <code>opus-5</code> for{' '}
+                <code>claude-opus-5</code> also resolve). A model no policy-allowed
+                peer serves returns <code>502 model_not_found</code>.
               </p>
               <p className={styles.runFirstHint} style={{marginTop: 12}}>
-                <strong>Option B - per-request header (no pin needed).</strong> Send{' '}
+                To force a <em>specific</em> seller instead of auto-selection,
+                pick one of three overrides — you can mix them:
+              </p>
+              <p className={styles.runFirstHint} style={{marginTop: 6}}>
+                <strong>Option A - session pin.</strong> One command, every
+                future request goes to that peer. Persists in{' '}
+                <code>~/.antseed/buyer.state.json</code> across restarts.
+              </p>
+              <CodeBlock
+                snippet={`# Pin the peer you chose for every request from now on (survives restart).\n# Replace the id below with one from your real \`antseed network browse\` output.\nantseed buyer connection set --peer cccccccccccccccccccccccccccccccccccccccc`}
+              />
+              <p className={styles.runFirstHint} style={{marginTop: 12}}>
+                <strong>Option B - per-request header.</strong> Send{' '}
                 <code>x-antseed-pin-peer: &lt;peerId&gt;</code> on each call. Overrides
-                any session pin for that one request, and works even if no peer has been
-                pinned at all. Best for scripts, schedulers, and multi-tenant deployments
-                that fan out to different peers per call.
+                any session pin for that one request. Best for scripts, schedulers, and
+                multi-tenant deployments that fan out to different peers per call.
               </p>
               <CodeBlock
                 snippet={`curl http://localhost:8377/v1/chat/completions \\
@@ -768,8 +781,9 @@ export default function IntegrationPage({integration}: {integration: Integration
             </div>
             {i.modelHints.note && <p className={styles.modelNote}><Ticks>{i.modelHints.note}</Ticks></p>}
             <p className={styles.modelNote}>
-              The exact list of models depends on which peer you pin. Run{' '}
-              <code>antseed network browse</code> or open the{' '}
+              The full list is every model on the network. Run{' '}
+              <code>curl -s localhost:8377/v1/models</code>,{' '}
+              <code>antseed network browse</code>, or open the{' '}
               <a href="https://antseedstats.com/network" target="_blank" rel="noopener noreferrer">live network page</a> to see what's available right now.
             </p>
           </Section>
