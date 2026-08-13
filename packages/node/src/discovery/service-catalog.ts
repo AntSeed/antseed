@@ -190,3 +190,38 @@ export function buildNetworkServiceOffers(peers: NetworkServiceCatalogPeer[]): N
   }
   return offers;
 }
+
+function comparableOfferPrice(offer: NetworkServiceOffer): number {
+  if (offer.type === 'image') return offer.minImageUsdPerImage ?? Number.POSITIVE_INFINITY;
+  if (offer.inputUsdPerMillion === undefined || offer.outputUsdPerMillion === undefined) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return offer.inputUsdPerMillion + offer.outputUsdPerMillion;
+}
+
+export function compareNetworkServiceOfferPrice(a: NetworkServiceOffer, b: NetworkServiceOffer): number {
+  return comparableOfferPrice(a) - comparableOfferPrice(b)
+    || a.serviceId.localeCompare(b.serviceId)
+    || a.provider.localeCompare(b.provider);
+}
+
+export function selectLowestPricedNetworkServiceOffer(offers: NetworkServiceOffer[]): NetworkServiceOffer | null {
+  return [...offers].sort(compareNetworkServiceOfferPrice)[0] ?? null;
+}
+
+/** One cheapest advertised route per peer and canonical model, across providers and aliases. */
+export function selectLowestPricedCanonicalOffers(offers: NetworkServiceOffer[]): NetworkServiceOffer[] {
+  const grouped = new Map<string, NetworkServiceOffer[]>();
+  for (const offer of offers) {
+    const modelKey = canonicalModelKey(offer.serviceId);
+    if (!modelKey) continue;
+    const key = `${offer.peerId}\u0000${modelKey}`;
+    const candidates = grouped.get(key) ?? [];
+    candidates.push(offer);
+    grouped.set(key, candidates);
+  }
+  return [...grouped.values()]
+    .map(selectLowestPricedNetworkServiceOffer)
+    .filter((offer): offer is NetworkServiceOffer => offer !== null);
+}
+import { canonicalModelKey } from '../model-identity.js';

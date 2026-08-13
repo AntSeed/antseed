@@ -3,9 +3,8 @@ import type { CSSProperties, JSX } from 'react';
 /**
  * Vendor brand marks for the VPR Home screen (tool buttons + Popular list).
  *
- * These are hand-authored, recognizable-but-generic geometric marks — not the
- * vendors' exact trademarked logos. They render inline as SVG so they inherit
- * `currentColor` where monochrome and pin brand hues where the mark is iconic.
+ * These render inline as SVG so they inherit `currentColor` where monochrome
+ * and pin brand hues where the mark is iconic.
  *
  * Resolution is by substring match against a profile `name`, a provider slug,
  * or a model label, so callers can pass whatever identifier they have on hand.
@@ -27,6 +26,7 @@ export type BrandKey =
   | 'gemini'
   | 'grok'
   | 'mistral'
+  | 'minimax'
   | 'llama'
   | 'telegram'
   | 'generic';
@@ -42,6 +42,7 @@ const GEMINI_BLUE = '#4285F4';
 const MISTRAL_ORANGE = '#FA500F';
 const META_BLUE = '#0668E1';
 const TELEGRAM_BLUE = '#26A5E4';
+const MINIMAX_ICON = 'data:image/png;base64,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';
 
 const glyphs: Record<BrandKey, BrandGlyph> = {
   // Anthropic / Claude — radiating sunburst mark.
@@ -198,6 +199,12 @@ const glyphs: Record<BrandKey, BrandGlyph> = {
       />
     </svg>
   ),
+  // MiniMax — exact favicon served by minimax.io.
+  minimax: ({ size }) => (
+    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true">
+      <image width="32" height="32" href={MINIMAX_ICON} />
+    </svg>
+  ),
   // Llama / Meta — infinity loop.
   llama: ({ size }) => (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -239,6 +246,7 @@ const MATCHERS: Array<[BrandKey, RegExp]> = [
   ['gemini', /(gemini|gemma|google)/i],
   ['grok', /(grok|(^|[^a-z0-9])x-?ai([^a-z0-9]|$))/i],
   ['mistral', /(mistral|mixtral|magistral|devstral|codestral)/i],
+  ['minimax', /mini[-\s]?max/i],
   ['llama', /llama/i],
   // Vendors that double as provider/protocol slugs.
   ['telegram', /telegram/i],

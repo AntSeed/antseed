@@ -9,12 +9,14 @@ import {
   buildNetworkServiceOffers,
   computeOnChainReputationScore,
   scoreFromTrust,
+  selectLowestPricedCanonicalOffers,
+  selectLowestPricedNetworkServiceOffer,
   type CatalogServiceCapabilities,
   type CatalogServiceProtocol,
   type NetworkServiceOffer,
   type PeerInfo,
 } from '@antseed/node'
-import { canonicalModelKey } from '@antseed/node/model-identity'
+import { canonicalModelKey, preferredModelDisplayName } from '@antseed/node/model-identity'
 
 export type NetworkModelType = 'text' | 'image'
 
@@ -66,6 +68,7 @@ export type NetworkModelCapabilityCoverage = {
 
 export type NetworkModelEntry = {
   id: string
+  name: string
   aliases: string[]
   object: 'model'
   created: number
@@ -117,22 +120,8 @@ export function normalizedModelReputationScore(peer: PeerInfo, nowMs: number = D
   return typeof score === 'number' && Number.isFinite(score) ? score : null
 }
 
-function comparableOfferPrice(offer: NetworkServiceOffer): number {
-  if (offer.type === 'image') return offer.minImageUsdPerImage ?? Number.POSITIVE_INFINITY
-  if (offer.inputUsdPerMillion === undefined || offer.outputUsdPerMillion === undefined) {
-    return Number.POSITIVE_INFINITY
-  }
-  return offer.inputUsdPerMillion + offer.outputUsdPerMillion
-}
-
-export function compareNetworkServiceOfferPrice(a: NetworkServiceOffer, b: NetworkServiceOffer): number {
-  return comparableOfferPrice(a) - comparableOfferPrice(b)
-    || a.serviceId.localeCompare(b.serviceId)
-    || a.provider.localeCompare(b.provider)
-}
-
 export function selectLowestPricedModelOffer(offers: NetworkServiceOffer[]): NetworkServiceOffer | null {
-  return [...offers].sort(compareNetworkServiceOfferPrice)[0] ?? null
+  return selectLowestPricedNetworkServiceOffer(offers)
 }
 
 function countReported<T>(values: Array<T | undefined>): number {
@@ -234,18 +223,20 @@ export function buildNetworkModels(peers: PeerInfo[], nowMs: number): NetworkMod
     reputationByPeerId.set(peer.peerId, desktopPeerReputationScore(peer, nowMs))
   }
 
+  const allOffers = buildNetworkServiceOffers(peers)
   const offersByPeerModel = new Map<string, NetworkServiceOffer[]>()
-  for (const offer of buildNetworkServiceOffers(peers)) {
+  for (const offer of allOffers) {
     const key = canonicalModelKey(offer.serviceId)
     if (!key) continue
-    const peerModelKey = `${offer.peerId}\u0000${offer.provider.toLowerCase()}\u0000${key}`
+    const peerModelKey = `${offer.peerId}\u0000${key}`
     const duplicateOffers = offersByPeerModel.get(peerModelKey) ?? []
     duplicateOffers.push(offer)
     offersByPeerModel.set(peerModelKey, duplicateOffers)
   }
 
+  const selectedOffers = new Set(selectLowestPricedCanonicalOffers(allOffers))
   for (const duplicateOffers of offersByPeerModel.values()) {
-    const offer = selectLowestPricedModelOffer(duplicateOffers)
+    const offer = duplicateOffers.find((candidate) => selectedOffers.has(candidate))
     if (!offer) continue
     const key = canonicalModelKey(offer.serviceId)
     if (!key) continue
@@ -253,6 +244,7 @@ export function buildNetworkModels(peers: PeerInfo[], nowMs: number): NetworkMod
     if (!entry) {
       entry = {
         id: offer.serviceId,
+        name: preferredModelDisplayName(offer.serviceId),
         aliases: [],
         object: 'model',
         created,

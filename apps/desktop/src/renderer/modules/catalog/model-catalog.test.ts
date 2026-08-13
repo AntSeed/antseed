@@ -283,6 +283,26 @@ test('catalog aggregates serviceId variants of the same model', () => {
   assert.equal(entry.label, 'GPT 5.6 Luna');
 });
 
+test('catalog uses the protocol preferred name for compact GPT aliases', () => {
+  const [entry] = projectRowsToVprModelCatalog([
+    discoverRow({ provider: 'openai', serviceId: 'gpt-56-luna', peerId: 'p1' }),
+    discoverRow({ provider: 'openai-responses', serviceId: 'gpt-5.6-luna', peerId: 'p2' }),
+  ]);
+
+  assert.equal(entry.label, 'GPT 5.6 Luna');
+});
+
+test('catalog uses the protocol preferred name for MiniMax aliases', () => {
+  const [entry] = projectRowsToVprModelCatalog([
+    discoverRow({ provider: 'openai', serviceId: 'minimax-m2-5', peerId: 'p1' }),
+    discoverRow({ provider: 'openai-responses', serviceId: 'MiniMax-M2.5', peerId: 'p2' }),
+    discoverRow({ provider: 'openai', serviceId: 'minimax-m25', peerId: 'p3' }),
+  ]);
+
+  assert.equal(entry.label, 'MiniMax M2.5');
+  assert.equal(entry.peerCount, 3);
+});
+
 test('catalog uses the clean Fable name even when coding-only is the cheapest route', () => {
   const rows = [
     discoverRow({
@@ -310,9 +330,20 @@ test('catalog uses the clean Fable name even when coding-only is the cheapest ro
 
   for (const orderedRows of [rows, [...rows].reverse()]) {
     const [entry] = projectRowsToVprModelCatalog(orderedRows);
-    assert.equal(entry.label, 'Fable 5');
+    assert.equal(entry.label, 'Claude Fable 5');
     assert.equal(entry.bestPeerId, 'cheap');
     assert.equal(entry.serviceId, 'fable-5-coding-only');
     assert.equal(entry.provider, 'claude-oauth');
   }
+});
+
+test('catalog merges Claude coding-only routes into their base model', () => {
+  const catalog = projectRowsToVprModelCatalog([
+    discoverRow({ provider: 'anthropic', serviceId: 'claude-opus-4.8', peerId: 'base' }),
+    discoverRow({ provider: 'claude-oauth', serviceId: 'opus-4.8-coding-only', peerId: 'coding' }),
+  ]);
+
+  assert.equal(catalog.length, 1);
+  assert.equal(catalog[0]?.label, 'Claude Opus 4.8');
+  assert.equal(catalog[0]?.peerCount, 2);
 });

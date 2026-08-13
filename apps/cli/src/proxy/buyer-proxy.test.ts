@@ -1329,11 +1329,13 @@ test('GET /v1/models is answered locally with the network-wide model list', asyn
   assert.equal(body.object, 'list')
   assert.deepEqual(body.data.map((model: { id: string }) => model.id), ['Claude Opus 5', 'flux-1-schnell', 'qwen3-coder'])
   const opus = body.data[0]
+  assert.equal(opus.name, 'Claude Opus 5')
   assert.deepEqual(opus.peers.map((peer: { serviceId: string }) => peer.serviceId), ['Claude Opus 5', 'opus-5'])
   const flux = body.data[1]
   assert.equal(flux.type, 'image')
   assert.equal(flux.peers[0]?.peerId, peers[1]?.peerId)
   const qwen = body.data[2]
+  assert.equal(qwen.name, 'Qwen3 Coder')
   assert.equal(qwen.type, 'text')
   assert.deepEqual(qwen.supported_protocols, ['openai-responses'])
   assert.equal(qwen.context_length, 128_000)

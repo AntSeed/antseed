@@ -51,10 +51,39 @@ test('displayModelLabel prettifies slug ids', () => {
 });
 
 test('displayModelLabel keeps human labels untouched', () => {
-  assert.equal(displayModelLabel('gpt-5.6-luna', 'GPT-5.6 Luna'), 'GPT-5.6 Luna');
+  assert.equal(displayModelLabel('gpt-5.6-luna', 'GPT-5.6 Luna'), 'GPT 5.6 Luna');
   assert.equal(displayModelLabel('', 'Select a model'), 'Select a model');
+  assert.equal(displayModelLabel('s1', 'GPT Test'), 'GPT Test');
 });
 
 test('displayModelLabel prettifies slug-shaped labels', () => {
   assert.equal(displayModelLabel('svc-1', 'gpt-5.6-luna'), 'GPT 5.6 Luna');
+});
+
+test('displayModelLabel uses one GPT version convention across aliases', () => {
+  assert.equal(displayModelLabel('gpt-5.6-luna'), 'GPT 5.6 Luna');
+  assert.equal(displayModelLabel('gpt-5-6-luna'), 'GPT 5.6 Luna');
+  assert.equal(displayModelLabel('gpt-56-luna'), 'GPT 5.6 Luna');
+});
+
+test('displayModelLabel prefixes unified Claude families', () => {
+  assert.equal(displayModelLabel('opus-5'), 'Claude Opus 5');
+  assert.equal(displayModelLabel('sonnet-5'), 'Claude Sonnet 5');
+  assert.equal(displayModelLabel('fable-5-coding-only'), 'Claude Fable 5');
+  assert.equal(displayModelLabel('claude-opus-4-8'), 'Claude Opus 4.8');
+  assert.equal(displayModelLabel('sonnet-4.6'), 'Claude Sonnet 4.6');
+  assert.equal(displayModelLabel('claude-3-haiku'), 'Claude 3 Haiku');
+});
+
+test('canonicalModelKey merges Claude coding-only aliases globally', () => {
+  assert.equal(canonicalModelKey('opus-4.8-coding-only'), canonicalModelKey('claude-opus-4.8'));
+  assert.equal(canonicalModelKey('sonnet-4.6-coding-only'), canonicalModelKey('claude-sonnet-4.6'));
+  assert.equal(canonicalModelKey('haiku-4.5-coding-only'), canonicalModelKey('claude-haiku-4.5'));
+});
+
+test('displayModelLabel normalizes MiniMax decimal versions', () => {
+  assert.equal(displayModelLabel('minimax-m2.5'), 'MiniMax M2.5');
+  assert.equal(displayModelLabel('minimax-m2-5'), 'MiniMax M2.5');
+  assert.equal(displayModelLabel('minimax-m25'), 'MiniMax M2.5');
+  assert.equal(displayModelLabel('minimax-m2-7:web'), 'MiniMax M2.7 Web');
 });

@@ -45,6 +45,43 @@ test('buildChatServiceCatalogFromPeers keeps provider-specific service pricing f
   assert.equal(openai!.protocol, 'openai-chat-completions');
 });
 
+test('buildChatServiceCatalogFromPeers keeps one cheapest canonical offer per peer', () => {
+  const peerId = 'e'.repeat(40);
+  const catalog = buildChatServiceCatalogFromPeers([{
+    peerId,
+    displayName: 'surplusintelligence.ai',
+    host: '127.0.0.1',
+    port: 6882,
+    providers: ['anthropic', 'claude-oauth', 'openai'],
+    providerPricing: {
+      anthropic: {
+        defaults: { inputUsdPerMillion: 18, outputUsdPerMillion: 9 },
+        services: { 'claude-opus-4.8': { inputUsdPerMillion: 18, outputUsdPerMillion: 9 } },
+      },
+      'claude-oauth': {
+        defaults: { inputUsdPerMillion: 2.25, outputUsdPerMillion: 11.25 },
+        services: { 'opus-4.8-coding-only': { inputUsdPerMillion: 2.25, outputUsdPerMillion: 11.25 } },
+      },
+      openai: {
+        defaults: { inputUsdPerMillion: 0.35, outputUsdPerMillion: 0.95 },
+        services: { 'claude-opus-4-8': { inputUsdPerMillion: 0.35, outputUsdPerMillion: 0.95 } },
+      },
+    },
+    providerServiceApiProtocols: {
+      anthropic: { services: { 'claude-opus-4.8': ['anthropic-messages'] } },
+      'claude-oauth': { services: { 'opus-4.8-coding-only': ['anthropic-messages'] } },
+      openai: { services: { 'claude-opus-4-8': ['openai-chat-completions'] } },
+    },
+  }]);
+
+  assert.equal(catalog.length, 1);
+  assert.equal(catalog[0]?.peerId, peerId);
+  assert.equal(catalog[0]?.provider, 'openai');
+  assert.equal(catalog[0]?.id, 'claude-opus-4-8');
+  assert.equal(catalog[0]?.inputUsdPerMillion, 0.35);
+  assert.equal(catalog[0]?.outputUsdPerMillion, 0.95);
+});
+
 test('buildChatServiceCatalogFromPeers keeps image protocols and peer-specific capabilities', () => {
   const peerId = 'c'.repeat(40);
   const catalog = buildChatServiceCatalogFromPeers([{

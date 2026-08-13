@@ -9,49 +9,11 @@
  */
 
 export { canonicalModelKey, sameCanonicalModel } from '@antseed/node/model-identity';
-
-/* Tokens whose conventional casing isn't first-letter-capitalized. */
-const TOKEN_CASING: Record<string, string> = {
-  gpt: 'GPT',
-  chatgpt: 'ChatGPT',
-  glm: 'GLM',
-  deepseek: 'DeepSeek',
-  openai: 'OpenAI',
-  xai: 'xAI',
-  ai: 'AI',
-  llm: 'LLM',
-  oss: 'OSS',
-  moe: 'MoE',
-};
-
-/* A string that reads as a machine key rather than a human label. */
-const SLUG_RE = /^[a-z0-9./_:-]+$/;
-
-function prettifySlug(slug: string): string {
-  let value = slug.toLowerCase();
-  const slash = value.lastIndexOf('/');
-  if (slash >= 0) value = value.slice(slash + 1);
-  return value
-    .split(/[-_:\s]+/)
-    .filter(Boolean)
-    .map((token) => {
-      const mapped = TOKEN_CASING[token];
-      if (mapped) return mapped;
-      // Short letter+version tokens: v4 → V4, k3 → K3, r2.5 → R2.5.
-      if (/^[a-z]\d+(\.\d+)?$/.test(token)) return token.toUpperCase();
-      if (/^\d/.test(token)) return token;
-      return token.charAt(0).toUpperCase() + token.slice(1);
-    })
-    .join(' ');
-}
+import { preferredModelDisplayName } from '@antseed/node/model-identity';
 
 /** Human model name for display: a seller-provided label that already reads
  *  as prose wins; slug-shaped labels and raw serviceIds get prettified
  *  ("claude-fable-5" → "Claude Fable 5"). */
 export function displayModelLabel(serviceId: string, serviceLabel?: string | null): string {
-  const label = (serviceLabel ?? '').trim();
-  if (label && !SLUG_RE.test(label)) return label;
-  const source = label || String(serviceId ?? '').trim();
-  if (!source || !SLUG_RE.test(source)) return source;
-  return prettifySlug(source);
+  return preferredModelDisplayName(serviceId, serviceLabel);
 }

@@ -1,5 +1,6 @@
 import {
   buildNetworkServiceOffers,
+  selectLowestPricedCanonicalOffers,
   type CatalogServiceCapabilities,
   type CatalogServiceProtocol,
   type NetworkServiceCatalogPeer,
@@ -54,7 +55,7 @@ export function sortChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[]
 }
 
 export function buildChatServiceCatalogFromPeers(peers: NetworkPeerAddress[]): ChatServiceCatalogEntry[] {
-  const entries = buildNetworkServiceOffers(peers)
+  const entries = selectLowestPricedCanonicalOffers(buildNetworkServiceOffers(peers))
     .filter((offer) => offer.protocol !== null)
     .map((offer): ChatServiceCatalogEntry => {
       const peerLabel = offer.displayName

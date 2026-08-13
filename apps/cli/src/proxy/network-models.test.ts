@@ -342,6 +342,26 @@ test('merges Fable aliases and the coding-only service variant', () => {
   ])
 })
 
+test('merges Claude coding-only aliases and displays decimal versions', () => {
+  const base = makePeer({
+    peerId: '7'.repeat(40),
+    providerServiceApiProtocols: {
+      anthropic: { services: { 'claude-opus-4.8': ['anthropic-messages'] } },
+    },
+  })
+  const codingOnly = makePeer({
+    peerId: '8'.repeat(40),
+    providerServiceApiProtocols: {
+      'claude-oauth': { services: { 'opus-4.8-coding-only': ['anthropic-messages'] } },
+    },
+  })
+
+  const models = buildNetworkModels([base, codingOnly], NOW_MS)
+  assert.equal(models.length, 1)
+  assert.equal(models[0]?.name, 'Claude Opus 4.8')
+  assert.deepEqual(models[0]?.peers.map((peer) => peer.serviceId), ['claude-opus-4.8', 'opus-4.8-coding-only'])
+})
+
 test('merges compact numeric versions and flattened vendor prefixes', () => {
   const dotted = makePeer({
     peerId: '1'.repeat(40),
@@ -366,12 +386,38 @@ test('merges compact numeric versions and flattened vendor prefixes', () => {
 
   assert.equal(models.length, 1)
   assert.equal(models[0]?.id, 'gpt-5.6-sol')
+  assert.equal(models[0]?.name, 'GPT 5.6 Sol')
   assert.deepEqual(models[0]?.aliases, ['gpt-5.6-sol', 'gpt-56-sol', 'gpt56sol', 'openai-gpt-56-sol'])
   assert.deepEqual(models[0]?.peers.map((peer) => peer.serviceId), [
     'gpt-5.6-sol',
     'gpt-56-sol',
     'openai-gpt-56-sol',
   ])
+})
+
+test('uses preferred MiniMax decimal display names across aliases', () => {
+  const dotted = makePeer({
+    peerId: '4'.repeat(40),
+    providerServiceApiProtocols: {
+      openai: { services: { 'minimax-m2.5': ['openai-chat-completions'] } },
+    },
+  })
+  const separated = makePeer({
+    peerId: '5'.repeat(40),
+    providerServiceApiProtocols: {
+      openai: { services: { 'minimax-m2-5': ['openai-chat-completions'] } },
+    },
+  })
+  const compact = makePeer({
+    peerId: '6'.repeat(40),
+    providerServiceApiProtocols: {
+      openai: { services: { 'minimax-m25': ['openai-chat-completions'] } },
+    },
+  })
+
+  const models = buildNetworkModels([dotted, separated, compact], NOW_MS)
+  assert.equal(models.length, 1)
+  assert.equal(models[0]?.name, 'MiniMax M2.5')
 })
 
 test('keeps only the lowest-priced duplicate text offer from one peer', () => {
@@ -403,6 +449,45 @@ test('keeps only the lowest-priced duplicate text offer from one peer', () => {
   assert.equal(model.peers[0]?.inputUsdPerMillion, 1)
   assert.equal(model.peers[0]?.outputUsdPerMillion, 2)
   assert.deepEqual(model.aliases, ['gpt-5.6-sol', 'gpt-56-sol', 'gpt56sol'])
+})
+
+test('keeps only the cheapest canonical offer across providers for one peer', () => {
+  const peer = makePeer({
+    peerId: 'a'.repeat(40),
+    providers: ['anthropic', 'claude-oauth', 'openai'],
+    providerPricing: {
+      anthropic: {
+        defaults: { inputUsdPerMillion: 18, outputUsdPerMillion: 9 },
+        services: { 'claude-opus-4.8': { inputUsdPerMillion: 18, outputUsdPerMillion: 9 } },
+      },
+      'claude-oauth': {
+        defaults: { inputUsdPerMillion: 2.25, outputUsdPerMillion: 11.25 },
+        services: { 'opus-4.8-coding-only': { inputUsdPerMillion: 2.25, outputUsdPerMillion: 11.25 } },
+      },
+      openai: {
+        defaults: { inputUsdPerMillion: 0.35, outputUsdPerMillion: 0.95 },
+        services: { 'claude-opus-4-8': { inputUsdPerMillion: 0.35, outputUsdPerMillion: 0.95 } },
+      },
+    },
+    providerServiceApiProtocols: {
+      anthropic: { services: { 'claude-opus-4.8': ['anthropic-messages'] } },
+      'claude-oauth': { services: { 'opus-4.8-coding-only': ['anthropic-messages'] } },
+      openai: { services: { 'claude-opus-4-8': ['openai-chat-completions'] } },
+    },
+  })
+
+  const model = buildNetworkModels([peer], NOW_MS)[0]
+  assert.ok(model)
+  assert.equal(model.peers.length, 1)
+  assert.equal(model.peers[0]?.provider, 'openai')
+  assert.equal(model.peers[0]?.serviceId, 'claude-opus-4-8')
+  assert.equal(model.peers[0]?.inputUsdPerMillion, 0.35)
+  assert.deepEqual(model.aliases, [
+    'claude-opus-4-8',
+    'claude-opus-4.8',
+    'opus-4.8-coding-only',
+    'opus48',
+  ])
 })
 
 test('keeps only the lowest-priced duplicate image offer from one peer', () => {
