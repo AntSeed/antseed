@@ -115,7 +115,7 @@ export interface ReceiveAuthorizationMessage {
 // =========================================================================
 
 /**
- * SpendingAuth metadata v2.
+ * SpendingAuth metadata v3.
  *
  * ABI layout:
  *   abi.encode(
@@ -123,13 +123,23 @@ export interface ReceiveAuthorizationMessage {
  *     uint256 cumulativeInputTokens,
  *     uint256 cumulativeOutputTokens,
  *     uint256 cumulativeRequestCount,
+ *     uint256 cumulativeOutputImages,
  *     ServiceTotal[] services
  *   )
  *
- * The first four fields intentionally match v1 so legacy decoders can read
+ * The first four fields intentionally match v1/v2 so legacy decoders can read
  * aggregate token/request counters by decoding only those fields. Service
  * entries are buyer-side attribution metadata for indexers: input tokens
- * include cached input, with cached input broken out separately.
+ * include cached input, with cached input broken out separately. The service
+ * tuple appends cumulativeOutputImages after the v2 fields; decoders must
+ * switch on the leading version word before decoding the services array.
+ *
+ * Generated images are counted twice, deliberately:
+ *   - cumulativeOutputImages holds the raw image count (ground truth),
+ *   - cumulativeOutputTokens is additionally credited a flat
+ *     OUTPUT_IMAGE_TOKEN_EQUIVALENT per image, so token counters reflect
+ *     image work. Real text tokens are recoverable as
+ *     cumulativeOutputTokens - cumulativeOutputImages * OUTPUT_IMAGE_TOKEN_EQUIVALENT.
  *
  * Service cumulativeAmount values may be lower than the top-level
  * cumulativeAmount because the buyer can sign reserve headroom, cap a
@@ -141,6 +151,8 @@ export interface SpendingAuthMetadata {
   cumulativeInputTokens: bigint;
   cumulativeOutputTokens: bigint;
   cumulativeRequestCount: bigint;
+  /** Optional so FreeUsageMetadata-shaped objects remain assignable; encodes as 0. */
+  cumulativeOutputImages?: bigint;
   services?: SpendingAuthServiceMetadata[];
 }
 
@@ -151,11 +163,23 @@ export interface SpendingAuthServiceMetadata {
   cumulativeCachedInputTokens: bigint;
   cumulativeOutputTokens: bigint;
   cumulativeRequestCount: bigint;
+  cumulativeOutputImages: bigint;
 }
 
-export const METADATA_VERSION = 2n;
+export const METADATA_VERSION = 3n;
+
+/**
+ * Flat output-token equivalent credited per generated image in v3 metadata
+ * (Gemini 2.5 Flash Image's published rate). Attribution only — never feeds
+ * cost verification. Bound to METADATA_VERSION: changing it requires a bump.
+ */
+export const OUTPUT_IMAGE_TOKEN_EQUIVALENT = 1290n;
 
 const SERVICE_METADATA_ABI_TYPE =
+  'tuple(bytes32 serviceId,uint256 cumulativeAmount,uint256 cumulativeInputTokens,uint256 cumulativeCachedInputTokens,uint256 cumulativeOutputTokens,uint256 cumulativeRequestCount,uint256 cumulativeOutputImages)[]';
+
+/** v2 service tuple, still used by FreeUsage metadata v1 (no image counter). */
+const SERVICE_METADATA_ABI_TYPE_V2 =
   'tuple(bytes32 serviceId,uint256 cumulativeAmount,uint256 cumulativeInputTokens,uint256 cumulativeCachedInputTokens,uint256 cumulativeOutputTokens,uint256 cumulativeRequestCount)[]';
 
 export function encodeMetadata(metadata: SpendingAuthMetadata): string {
@@ -164,12 +188,13 @@ export function encodeMetadata(metadata: SpendingAuthMetadata): string {
     a.serviceId < b.serviceId ? -1 : a.serviceId > b.serviceId ? 1 : 0,
   );
   return coder.encode(
-    ['uint256', 'uint256', 'uint256', 'uint256', SERVICE_METADATA_ABI_TYPE],
+    ['uint256', 'uint256', 'uint256', 'uint256', 'uint256', SERVICE_METADATA_ABI_TYPE],
     [
       METADATA_VERSION,
       metadata.cumulativeInputTokens,
       metadata.cumulativeOutputTokens,
       metadata.cumulativeRequestCount,
+      metadata.cumulativeOutputImages ?? 0n,
       services,
     ],
   );
@@ -185,6 +210,7 @@ export interface ServiceMetadataDelta {
   cachedInputTokens: bigint;
   outputTokens: bigint;
   requests: bigint;
+  outputImages: bigint;
 }
 
 export function withServiceMetadata<T extends { services?: SpendingAuthServiceMetadata[] }>(
@@ -207,6 +233,7 @@ export function withServiceMetadata<T extends { services?: SpendingAuthServiceMe
     cumulativeCachedInputTokens: 0n,
     cumulativeOutputTokens: 0n,
     cumulativeRequestCount: 0n,
+    cumulativeOutputImages: 0n,
   };
 
   byServiceId.set(serviceId, {
@@ -216,6 +243,7 @@ export function withServiceMetadata<T extends { services?: SpendingAuthServiceMe
     cumulativeCachedInputTokens: existing.cumulativeCachedInputTokens + delta.cachedInputTokens,
     cumulativeOutputTokens: existing.cumulativeOutputTokens + delta.outputTokens,
     cumulativeRequestCount: existing.cumulativeRequestCount + delta.requests,
+    cumulativeOutputImages: (existing.cumulativeOutputImages ?? 0n) + delta.outputImages,
   });
 
   return {
@@ -234,6 +262,7 @@ export const ZERO_METADATA: SpendingAuthMetadata = {
   cumulativeInputTokens: 0n,
   cumulativeOutputTokens: 0n,
   cumulativeRequestCount: 0n,
+  cumulativeOutputImages: 0n,
   services: [],
 };
 
@@ -251,9 +280,9 @@ export const ZERO_METADATA_HASH: string = computeMetadataHash(ZERO_METADATA);
  *     ServiceTotal[] services
  *   )
  *
- * Uses the same service tuple as paid SpendingAuth metadata so indexers can
- * decode per-service attribution uniformly. cumulativeAmount is always zero
- * for free usage.
+ * Uses the v2 service tuple (no cumulativeOutputImages field — extra object
+ * properties are ignored when encoding), so existing FreeUsage v1 decoders
+ * keep working unchanged. cumulativeAmount is always zero for free usage.
  */
 export interface FreeUsageMetadata {
   cumulativeInputTokens: bigint;
@@ -272,7 +301,7 @@ export function encodeFreeUsageMetadata(metadata: FreeUsageMetadata): string {
     a.serviceId < b.serviceId ? -1 : a.serviceId > b.serviceId ? 1 : 0,
   );
   return coder.encode(
-    ['uint256', 'uint256', 'uint256', 'uint256', SERVICE_METADATA_ABI_TYPE],
+    ['uint256', 'uint256', 'uint256', 'uint256', SERVICE_METADATA_ABI_TYPE_V2],
     [
       FREE_USAGE_METADATA_VERSION,
       metadata.cumulativeInputTokens,
