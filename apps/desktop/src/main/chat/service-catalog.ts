@@ -1,22 +1,10 @@
-import {
-  buildNetworkServiceOffers,
-  effectiveModelReputationScore,
-  normalizedModelReputationScore,
-  selectLowestPricedCanonicalOffers,
-  type CatalogServiceCapabilities,
-  type CatalogServiceProtocol,
-  type NetworkServiceCatalogPeer,
+import type {
+  CatalogServiceCapabilities,
+  CatalogServiceProtocol,
 } from '@antseed/node';
-import { canonicalModelKey } from '@antseed/node/model-identity';
 
 export type ChatServiceProtocol = Exclude<CatalogServiceProtocol, 'openai-images'>;
 export type { CatalogServiceCapabilities, CatalogServiceProtocol };
-
-export type NetworkPeerAddress = NetworkServiceCatalogPeer & {
-  host: string;
-  port: number;
-  sellerContract?: string;
-};
 
 export type ChatServiceCatalogEntry = {
   id: string;
@@ -37,6 +25,125 @@ export type ChatServiceCatalogEntry = {
   description?: string;
 };
 
+type NetworkModelsPeerOffer = {
+  peerId?: unknown;
+  displayName?: unknown;
+  provider?: unknown;
+  serviceId?: unknown;
+  protocol?: unknown;
+  capabilities?: unknown;
+  categories?: unknown;
+  effectiveReputationScore?: unknown;
+  inputUsdPerMillion?: unknown;
+  outputUsdPerMillion?: unknown;
+  cachedInputUsdPerMillion?: unknown;
+  minImageUsdPerImage?: unknown;
+  maxImageUsdPerImage?: unknown;
+};
+
+type NetworkModelsEntry = {
+  name?: unknown;
+  peers?: unknown;
+};
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function nonNegativeNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function normalizeCapabilities(value: unknown): CatalogServiceCapabilities | undefined {
+  const raw = asRecord(value);
+  if (!raw) return undefined;
+  const capabilities: CatalogServiceCapabilities = {};
+  if (typeof raw.contextWindow === 'number' && Number.isSafeInteger(raw.contextWindow) && raw.contextWindow > 0) {
+    capabilities.contextWindow = raw.contextWindow;
+  }
+  if (typeof raw.maxOutputTokens === 'number' && Number.isSafeInteger(raw.maxOutputTokens) && raw.maxOutputTokens > 0) {
+    capabilities.maxOutputTokens = raw.maxOutputTokens;
+  }
+  for (const key of ['inputs', 'outputs'] as const) {
+    if (Array.isArray(raw[key])) {
+      const values = raw[key].filter((item): item is string => typeof item === 'string');
+      if (values.length > 0) capabilities[key] = values;
+    }
+  }
+  if (typeof raw.reasoning === 'boolean') capabilities.reasoning = raw.reasoning;
+  if (typeof raw.toolUse === 'boolean') capabilities.toolUse = raw.toolUse;
+  if (typeof raw.structuredOutput === 'boolean') capabilities.structuredOutput = raw.structuredOutput;
+  if (Array.isArray(raw.supportedParameters)) {
+    const values = raw.supportedParameters.filter((item): item is string => typeof item === 'string');
+    if (values.length > 0) capabilities.supportedParameters = values;
+  }
+  return Object.keys(capabilities).length > 0 ? capabilities : undefined;
+}
+
+/**
+ * Flattens the buyer proxy's canonical `/v1/models` response into the exact
+ * peer offers consumed by Desktop. Model identity, deduplication, pricing,
+ * capabilities, reputation penalties, and peer order all come from the proxy.
+ */
+export function buildChatServiceCatalogFromNetworkModels(payload: unknown): ChatServiceCatalogEntry[] {
+  const root = asRecord(payload);
+  if (!root || !Array.isArray(root.data)) return [];
+
+  const entries: ChatServiceCatalogEntry[] = [];
+  for (const rawModel of root.data) {
+    const model = asRecord(rawModel) as NetworkModelsEntry | null;
+    if (!model || !Array.isArray(model.peers)) continue;
+    const label = typeof model.name === 'string' && model.name.trim() ? model.name.trim() : null;
+    for (const rawOffer of model.peers) {
+      const offer = asRecord(rawOffer) as NetworkModelsPeerOffer | null;
+      if (!offer) continue;
+      const peerId = typeof offer.peerId === 'string' ? offer.peerId.trim() : '';
+      const provider = typeof offer.provider === 'string' ? offer.provider.trim() : '';
+      const serviceId = typeof offer.serviceId === 'string' ? offer.serviceId.trim() : '';
+      const protocol = offer.protocol;
+      if (!peerId || !provider || !serviceId || (
+        protocol !== 'anthropic-messages'
+        && protocol !== 'openai-chat-completions'
+        && protocol !== 'openai-responses'
+        && protocol !== 'openai-images'
+      )) continue;
+
+      const displayName = typeof offer.displayName === 'string' ? offer.displayName.trim() : '';
+      const capabilities = normalizeCapabilities(offer.capabilities);
+      const categories = Array.isArray(offer.categories)
+        ? offer.categories.filter((item): item is string => typeof item === 'string')
+        : [];
+      const effectiveReputationScore = nonNegativeNumber(offer.effectiveReputationScore);
+      const inputUsdPerMillion = nonNegativeNumber(offer.inputUsdPerMillion);
+      const outputUsdPerMillion = nonNegativeNumber(offer.outputUsdPerMillion);
+      const cachedInputUsdPerMillion = nonNegativeNumber(offer.cachedInputUsdPerMillion);
+      const minImageUsdPerImage = nonNegativeNumber(offer.minImageUsdPerImage);
+      const maxImageUsdPerImage = nonNegativeNumber(offer.maxImageUsdPerImage);
+
+      entries.push({
+        id: serviceId,
+        label: label ?? serviceId,
+        provider,
+        protocol,
+        ...(capabilities ? { capabilities } : {}),
+        count: 1,
+        peerId,
+        peerLabel: displayName ? `${displayName} (${peerId.slice(0, 8)})` : `${peerId.slice(0, 12)}...`,
+        effectiveReputationScore: effectiveReputationScore ?? null,
+        ...(inputUsdPerMillion !== undefined ? { inputUsdPerMillion } : {}),
+        ...(outputUsdPerMillion !== undefined ? { outputUsdPerMillion } : {}),
+        ...(cachedInputUsdPerMillion !== undefined ? { cachedInputUsdPerMillion } : {}),
+        ...(minImageUsdPerImage !== undefined ? { minImageUsdPerImage } : {}),
+        ...(maxImageUsdPerImage !== undefined ? { maxImageUsdPerImage } : {}),
+        ...(categories.length > 0 ? { categories } : {}),
+      });
+    }
+  }
+  return entries;
+}
+
 export function sortChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[]): ChatServiceCatalogEntry[] {
   const protocolRank = (protocol: CatalogServiceProtocol): number => (
     protocol === 'anthropic-messages'
@@ -56,47 +163,4 @@ export function sortChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[]
     if (a.provider !== b.provider) return a.provider.localeCompare(b.provider);
     return a.id.localeCompare(b.id);
   });
-}
-
-export function buildChatServiceCatalogFromPeers(peers: NetworkPeerAddress[]): ChatServiceCatalogEntry[] {
-  const selectedOffers = selectLowestPricedCanonicalOffers(buildNetworkServiceOffers(peers));
-  const peerById = new Map(peers.map((peer) => [peer.peerId, peer]));
-  const cachedPricingByModel = new Map<string, boolean>();
-  for (const offer of selectedOffers) {
-    const key = canonicalModelKey(offer.serviceId);
-    if (!key) continue;
-    cachedPricingByModel.set(key, (cachedPricingByModel.get(key) ?? false) || offer.cachedInputUsdPerMillion !== undefined);
-  }
-  const entries = selectedOffers
-    .filter((offer) => offer.protocol !== null)
-    .map((offer): ChatServiceCatalogEntry => {
-      const peer = peerById.get(offer.peerId);
-      const modelKey = canonicalModelKey(offer.serviceId);
-      const reputation = normalizedModelReputationScore(peer ?? {});
-      const peerLabel = offer.displayName
-        ? `${offer.displayName} (${offer.peerId.slice(0, 8)})`
-        : `${offer.peerId.slice(0, 12)}...`;
-      return {
-        id: offer.serviceId,
-        label: offer.serviceId,
-        provider: offer.provider,
-        protocol: offer.protocol!,
-        ...(offer.capabilities ? { capabilities: offer.capabilities } : {}),
-        count: 1,
-        peerId: offer.peerId,
-        peerLabel,
-        effectiveReputationScore: effectiveModelReputationScore(
-          reputation,
-          offer.cachedInputUsdPerMillion !== undefined,
-          modelKey ? cachedPricingByModel.get(modelKey) === true : false,
-        ),
-        ...(offer.inputUsdPerMillion !== undefined ? { inputUsdPerMillion: offer.inputUsdPerMillion } : {}),
-        ...(offer.outputUsdPerMillion !== undefined ? { outputUsdPerMillion: offer.outputUsdPerMillion } : {}),
-        ...(offer.cachedInputUsdPerMillion !== undefined ? { cachedInputUsdPerMillion: offer.cachedInputUsdPerMillion } : {}),
-        ...(offer.minImageUsdPerImage !== undefined ? { minImageUsdPerImage: offer.minImageUsdPerImage } : {}),
-        ...(offer.maxImageUsdPerImage !== undefined ? { maxImageUsdPerImage: offer.maxImageUsdPerImage } : {}),
-        ...(offer.categories?.length ? { categories: offer.categories } : {}),
-      };
-    });
-  return sortChatServiceCatalogEntries(entries);
 }

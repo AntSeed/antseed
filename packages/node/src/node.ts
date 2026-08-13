@@ -974,7 +974,7 @@ export class AntseedNode extends EventEmitter {
         const [agentId, stake, stakedAt] = await Promise.all([
           stakingClient.getAgentId(evmAddress),
           stakingClient.getStake(evmAddress).catch(() => 0n),
-          stakingClient.getStakedAt(evmAddress).catch(() => 0),
+          stakingClient.getStakedAt(evmAddress).catch(() => null),
         ]);
         const stats = await channelsClient.getAgentStats(agentId);
         p.onChainAgentId = agentId;
@@ -990,7 +990,12 @@ export class AntseedNode extends EventEmitter {
           ? Number(volumeMicros)
           : Number.MAX_SAFE_INTEGER;
         p.onChainLastSettledAtSec = stats.lastSettledAt;
-        p.onChainStakedAtSec = stakedAt;
+        // Some migrated/facade staking accounts return zero for `stakedAt`,
+        // and transient RPC failures used to be coerced to zero as well. A
+        // zero read must not erase a previously verified positive timestamp.
+        if (typeof stakedAt === 'number' && Number.isFinite(stakedAt) && stakedAt > 0) {
+          p.onChainStakedAtSec = stakedAt;
+        }
         p.onChainStatsFetchedAt = Date.now();
       } catch {
         // Per-peer verification failure — keep whatever seller metadata claimed

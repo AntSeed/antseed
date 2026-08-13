@@ -36,6 +36,7 @@ import { DEFAULT_BUYER_STATE_PATH, LOCALHOST_URL } from '../constants.js';
 import { asErrorMessage } from '../utils.js';
 import type { RawPeerHealth } from '../runtime/peer-cache.js';
 import {
+  buildChatServiceCatalogFromNetworkModels,
   type ChatServiceCatalogEntry,
   type ChatServiceProtocol,
 } from './service-catalog.js';
@@ -46,12 +47,10 @@ import { augmentChatToolPath } from './tool-env.js';
 import type { AiConversation } from './conversation-types.js';
 import {
   buildDiscoverRows,
-  discoverChatServiceCatalog,
   isCatalogEntryAllowedByBuyerMax,
   isPriceAllowedByBuyerMax,
   limitChatServiceCatalogEntries,
   loadBuyerMaxPricingDefaults,
-  normalizeChatServiceCatalogEntries,
   updateServiceProtocolMap,
   updateServiceProviderHints,
   type BuyerStateDiscoveredPeer,
@@ -124,7 +123,6 @@ export function registerPiChatHandlers({
   isBuyerRuntimeRunning,
   ensureBuyerRuntimeStarted,
   appendSystemLog,
-  getNetworkPeers,
 }: RegisterPiChatHandlersOptions): PiChatEngine {
   void loadChatWorkspaceDir().catch(() => {});
   const store = new PiConversationStore();
@@ -300,13 +298,21 @@ export function registerPiChatHandlers({
     }
 
     serviceCatalogRefreshPromise = (async () => {
-      const entries = await discoverChatServiceCatalog(getNetworkPeers);
-      const limited = limitChatServiceCatalogEntries(normalizeChatServiceCatalogEntries(entries));
-      updateServiceProviderHints(serviceProviderHints, limited);
-      updateServiceProtocolMap(serviceProtocolMap, limited);
-      lastServiceCatalogRefreshAt = Date.now();
-      lastServiceCatalogEntries = limited;
-      return limited;
+      try {
+        const port = await resolveProxyPort(configPath);
+        const response = await fetch(`${LOCALHOST_URL}:${port}/v1/models`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const entries = buildChatServiceCatalogFromNetworkModels(await response.json());
+        const limited = limitChatServiceCatalogEntries(entries);
+        updateServiceProviderHints(serviceProviderHints, limited);
+        updateServiceProtocolMap(serviceProtocolMap, limited);
+        lastServiceCatalogRefreshAt = Date.now();
+        lastServiceCatalogEntries = limited;
+        return limited;
+      } catch (error) {
+        appendSystemLog(`Desktop model catalog refresh failed: ${asErrorMessage(error)}`);
+        return lastServiceCatalogEntries;
+      }
     })().finally(() => { serviceCatalogRefreshPromise = null; });
 
     return serviceCatalogRefreshPromise;
@@ -455,9 +461,6 @@ export function registerPiChatHandlers({
         }
       }));
 
-      // Static imports at the top of the file — see note on the
-      // `discoverChatServiceCatalog` read for why these must not be
-      // dynamic in packaged Windows builds.
       let discoveredPeersMap: Record<string, BuyerStateDiscoveredPeer> = {};
       let peerHealthMap: Record<string, RawPeerHealth> = {};
       try {
@@ -488,9 +491,6 @@ export function registerPiChatHandlers({
               sellerContract: typeof rec.sellerContract === 'string' ? rec.sellerContract : undefined,
               verificationLinks: collectPeerVerificationLinks({ verificationResults: rec.verificationResults }),
               peerIconUrl: null,
-              providerPricing: rec.providerPricing as Record<string, {
-                services?: Record<string, { cachedInputUsdPerMillion?: number }>
-              }> | undefined,
             };
             discoveredPeersMap[peerId] = peerRecord;
             enrichmentTasks.push(
