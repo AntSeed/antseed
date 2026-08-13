@@ -1,5 +1,5 @@
 import type { VprModelCatalogEntry } from '../../core/state';
-import { normalizeModelKey } from '../../../shared/model-key.js';
+import { canonicalModelKey } from './model-identity.js';
 
 /**
  * Renderer-side cache + application of OpenRouter reference prices.
@@ -19,6 +19,11 @@ let inflight: Promise<ReferenceMap | null> | null = null;
 
 export function getCachedOpenRouterPrices(): ReferenceMap | null {
   return cachedMap;
+}
+
+function canonicalReferenceKey(value: string): string {
+  const legacyClaudeKey = value.replace(/^claude(?=(?:opus|sonnet|haiku|fable)\d)/, 'claude-');
+  return canonicalModelKey(legacyClaudeKey);
 }
 
 /**
@@ -58,8 +63,14 @@ export function applyOpenRouterBaselines(
   map: ReferenceMap | null,
 ): VprModelCatalogEntry[] {
   if (!map || Object.keys(map).length === 0) return catalog;
+  const canonicalMap = new Map<string, ReferencePrice>();
+  for (const [key, price] of Object.entries(map)) {
+    const canonicalKey = canonicalReferenceKey(key);
+    if (canonicalKey && !canonicalMap.has(canonicalKey)) canonicalMap.set(canonicalKey, price);
+  }
   return catalog.map((entry) => {
-    const ref = map[normalizeModelKey(entry.label)] ?? map[normalizeModelKey(entry.serviceId)];
+    const ref = canonicalMap.get(canonicalReferenceKey(entry.serviceId))
+      ?? canonicalMap.get(canonicalReferenceKey(entry.label));
     if (!ref) return entry;
 
     const baselineInput =

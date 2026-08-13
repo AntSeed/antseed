@@ -1,4 +1,9 @@
-import { buildNetworkServiceOffers, type PeerInfo, type SerializedHttpRequest } from '@antseed/node'
+import {
+  buildNetworkServiceOffers,
+  type NetworkServiceOffer,
+  type PeerInfo,
+  type SerializedHttpRequest,
+} from '@antseed/node'
 import { canonicalModelKey } from '@antseed/node/model-identity'
 import { selectLowestPricedModelOffer } from './network-models.js'
 import {
@@ -121,13 +126,21 @@ export function findAdvertisedServiceId(
   provider: string,
   requestedService: string,
 ): string | null {
+  return findAdvertisedServiceOffer(peer, provider, requestedService)?.serviceId ?? null
+}
+
+export function findAdvertisedServiceOffer(
+  peer: PeerInfo,
+  provider: string,
+  requestedService: string,
+): NetworkServiceOffer | null {
   const requestedKey = canonicalModelKey(requestedService)
   if (!requestedKey) return null
   const offers = buildNetworkServiceOffers([peer]).filter((offer) => (
     offer.provider.toLowerCase() === provider.toLowerCase()
     && canonicalModelKey(offer.serviceId) === requestedKey
   ))
-  return selectLowestPricedModelOffer(offers)?.serviceId ?? null
+  return selectLowestPricedModelOffer(offers)
 }
 
 function selectProviderByProtocol(

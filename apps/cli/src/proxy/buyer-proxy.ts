@@ -49,10 +49,15 @@ import {
   SYSTEM_ROUTED_MODEL_HEADER,
   normalizePeerId,
 } from './request-utils.js'
-import { buildNetworkModels, parseModelTypeFilter } from './network-models.js'
+import {
+  buildNetworkModels,
+  effectiveModelReputationScore,
+  normalizedModelReputationScore,
+  parseModelTypeFilter,
+} from './network-models.js'
 import {
   findUnannouncedRequestParameters,
-  findAdvertisedServiceId,
+  findAdvertisedServiceOffer,
   getExplicitProviderOverride,
   getExplicitPeerIdOverride,
   resolvePeerRoutePlan,
@@ -555,6 +560,10 @@ export function parsePersistedPeers(
     }
     if (entry.verificationResults && typeof entry.verificationResults === 'object') {
       peer.verificationResults = entry.verificationResults as PeerInfo['verificationResults']
+    }
+    if (peer.onChainReputationScore === undefined) {
+      const derivedScore = computeOnChainReputationScore(peer, nowMs)
+      if (derivedScore !== null) peer.onChainReputationScore = derivedScore
     }
     peers.push(peer)
   }
@@ -2126,8 +2135,9 @@ export class BuyerProxy {
       const ranked = modelPeers
         .map((peer) => {
           const plan = modelPlans.get(peer.peerId)
-          const serviceId = plan ? findAdvertisedServiceId(peer, plan.provider, requestedService) : null
-          if (!plan || !serviceId) return null
+          const offer = plan ? findAdvertisedServiceOffer(peer, plan.provider, requestedService) : null
+          if (!plan || !offer) return null
+          const serviceId = offer.serviceId
           const rewritten = overrideRoutedModelInBody(serializedReq.body, serializedReq.headers, serviceId)
           const requestForPolicy = rewritten.overridden
             ? { ...serializedReq, body: rewritten.body, headers: rewritten.headers }
@@ -2142,11 +2152,25 @@ export class BuyerProxy {
             peer,
             serviceId,
             request: requestForPolicy,
-            reputation: computeOnChainReputationScore(peer) ?? peer.reputationScore ?? -1,
+            reputation: normalizedModelReputationScore(peer, this._now()) ?? -1,
+            hasCachedInputPricing: offer.cachedInputUsdPerMillion !== undefined,
           }
         })
         .filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null)
-        .sort((a, b) => b.reputation - a.reputation || a.peer.peerId.localeCompare(b.peer.peerId))
+      const preferCachedPricing = ranked.some((candidate) => candidate.hasCachedInputPricing)
+      ranked.sort((a, b) => {
+        const aEffectiveReputation = effectiveModelReputationScore(
+          a.reputation >= 0 ? a.reputation : null,
+          a.hasCachedInputPricing,
+          preferCachedPricing,
+        ) ?? -1
+        const bEffectiveReputation = effectiveModelReputationScore(
+          b.reputation >= 0 ? b.reputation : null,
+          b.hasCachedInputPricing,
+          preferCachedPricing,
+        ) ?? -1
+        return bEffectiveReputation - aEffectiveReputation || a.peer.peerId.localeCompare(b.peer.peerId)
+      })
 
       const now = this._now()
       const ready = ranked.filter((candidate) => !isCoolingDown(this._peerHealth.get(candidate.peer.peerId), now))

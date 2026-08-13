@@ -11,6 +11,7 @@ import {
   CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
   CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
   buyerFault,
+  computeOnChainReputationScore,
   type PeerInfo,
   type SerializedHttpResponse,
 } from '@antseed/node'
@@ -491,6 +492,115 @@ test('model-only request routes to the highest-reputation canonical service matc
   assert.equal(res.statusCode, 200)
   assert.equal(selectedPeerId, higher.peerId)
   assert.equal(selectedBody?.['model'], 'opus-5')
+})
+
+test('model-only request applies a cached-input pricing reputation penalty', async () => {
+  const priced = makePeer('a', ['openai'])
+  priced.reputationScore = 75
+  priced.providerPricing = {
+    openai: {
+      defaults: { inputUsdPerMillion: 2, outputUsdPerMillion: 4 },
+      services: {
+        'cache-model': { inputUsdPerMillion: 2, outputUsdPerMillion: 4, cachedInputUsdPerMillion: 0.2 },
+      },
+    },
+  }
+  priced.providerServiceApiProtocols = {
+    openai: { services: { 'cache-model': ['openai-chat-completions'] } },
+  }
+  const unpriced = makePeer('b', ['openai'])
+  unpriced.reputationScore = 90
+  unpriced.providerPricing = {
+    openai: {
+      defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
+      services: { 'cache-model': { inputUsdPerMillion: 1, outputUsdPerMillion: 2 } },
+    },
+  }
+  unpriced.providerServiceApiProtocols = {
+    openai: { services: { 'cache-model': ['openai-chat-completions'] } },
+  }
+  const proxy = makeBuyerProxyWithPeers([unpriced, priced], [unpriced, priced], permissiveRouter())
+  let selectedPeerId = ''
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string }) => {
+    selectedPeerId = peer.peerId
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ ok: true })),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'cache-model', messages: [] } }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(selectedPeerId, priced.peerId)
+})
+
+test('model-only cached-input pricing penalty does not bury a substantially stronger peer', async () => {
+  const priced = makePeer('a', ['openai'])
+  priced.reputationScore = 20
+  priced.providerPricing = {
+    openai: {
+      defaults: { inputUsdPerMillion: 2, outputUsdPerMillion: 4 },
+      services: {
+        'cache-model': { inputUsdPerMillion: 2, outputUsdPerMillion: 4, cachedInputUsdPerMillion: 0.2 },
+      },
+    },
+  }
+  priced.providerServiceApiProtocols = {
+    openai: { services: { 'cache-model': ['openai-chat-completions'] } },
+  }
+  const unpriced = makePeer('b', ['openai'])
+  unpriced.reputationScore = 100
+  unpriced.providerServiceApiProtocols = {
+    openai: { services: { 'cache-model': ['openai-chat-completions'] } },
+  }
+  const proxy = makeBuyerProxyWithPeers([priced, unpriced], [priced, unpriced], permissiveRouter())
+  let selectedPeerId = ''
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string }) => {
+    selectedPeerId = peer.peerId
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ ok: true })),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'cache-model', messages: [] } }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(selectedPeerId, unpriced.peerId)
+})
+
+test('model-only request keeps reputation ordering when cached-input pricing is absent for all peers', async () => {
+  const lower = makePeer('a', ['openai'])
+  lower.reputationScore = 20
+  lower.providerServiceApiProtocols = {
+    openai: { services: { 'no-cache-model': ['openai-chat-completions'] } },
+  }
+  const higher = makePeer('b', ['openai'])
+  higher.reputationScore = 100
+  higher.providerServiceApiProtocols = {
+    openai: { services: { 'no-cache-model': ['openai-chat-completions'] } },
+  }
+  const proxy = makeBuyerProxyWithPeers([lower, higher], [lower, higher], permissiveRouter())
+  let selectedPeerId = ''
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string }) => {
+    selectedPeerId = peer.peerId
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ ok: true })),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'no-cache-model', messages: [] } }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(selectedPeerId, higher.peerId)
 })
 
 test('model-only request routes through a legacy peer-wide service announcement', async () => {
@@ -1745,6 +1855,29 @@ test('parsePersistedPeers preserves provider metadata so routing filters still w
   assert.equal(result.candidatePeers.length, 1)
   assert.equal(result.candidatePeers[0]?.peerId, validPeerId)
   assert.equal(result.routePlanByPeerId.get(validPeerId)?.provider, 'claude-oauth')
+})
+
+test('parsePersistedPeers re-derives on-chain reputation from persisted stats', () => {
+  const persisted = {
+    discoveredPeers: [
+      {
+        peerId: validPeerId,
+        providers: ['claude-oauth'],
+        lastSeen: NOW - 5_000,
+        onChainStakeUsdcMicros: 2_000_000,
+        onChainChannelCount: 20,
+        onChainGhostCount: 0,
+        onChainTotalVolumeUsdcMicros: 100_000_000,
+        onChainLastSettledAtSec: Math.floor((NOW - 60_000) / 1000),
+        onChainStakedAtSec: Math.floor((NOW - 40 * 86_400_000) / 1000),
+      },
+    ],
+  }
+
+  const [peer] = parsePersistedPeers(persisted, NOW)
+  assert.ok(peer)
+  assert.equal(peer.onChainReputationScore, computeOnChainReputationScore(peer, NOW))
+  assert.ok((peer.onChainReputationScore ?? 0) > 0)
 })
 
 test('parsePersistedPeers restores sellerContract into peer.metadata', () => {

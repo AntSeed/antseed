@@ -8,7 +8,7 @@
  * empty map — the UI simply omits the struck-through baseline.
  */
 
-import { normalizeModelKey } from '../../shared/model-key.js';
+import { canonicalModelKey } from '@antseed/node/model-identity';
 
 const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models';
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
@@ -52,7 +52,7 @@ function buildMap(models: OpenRouterModel[]): OpenRouterReferenceMap {
     if (price.input === null && price.output === null) continue;
     for (const raw of [model.id, model.name]) {
       if (typeof raw !== 'string' || raw.trim().length === 0) continue;
-      const key = normalizeModelKey(raw);
+      const key = canonicalModelKey(raw);
       // First match wins; ids are listed before names so canonical ids win ties.
       if (key && !map[key]) map[key] = price;
     }

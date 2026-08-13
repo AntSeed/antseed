@@ -98,9 +98,11 @@ test('aggregates one entry per model id across peers, case-insensitively', () =>
   assert.equal(qwen.owned_by, 'antseed')
   assert.equal(qwen.created, Math.floor(NOW_MS / 1000))
   assert.deepEqual(qwen.aliases, ['qwen3-coder', 'qwen3coder'])
-  // Higher-reputation peer first.
+  // The missing cached-price penalty reduces reputation without forcing the
+  // stronger peer behind a substantially weaker complete offer.
   assert.deepEqual(qwen.peers.map((peer) => peer.peerId), [mixedSeller.peerId, textSeller.peerId])
   assert.deepEqual(qwen.peers.map((peer) => peer.reputationScore), [90, 40])
+  assert.deepEqual(qwen.peers.map((peer) => peer.effectiveReputationScore), [42.5, 35])
   assert.deepEqual(qwen.peers.map((peer) => peer.onChainTrustScore), [90, 40])
   assert.deepEqual(qwen.peers.map((peer) => peer.onChainReputationScore), [85, 35])
   assert.deepEqual(qwen.peers.map((peer) => peer.serviceId), ['QWEN3-Coder', 'qwen3-coder'])
@@ -136,6 +138,148 @@ test('returns null reputation and sorts unknown scores last', () => {
   assert.ok(qwen)
   assert.deepEqual(qwen.peers.map((peer) => peer.peerId), [textSeller.peerId, unknownSeller.peerId])
   assert.deepEqual(qwen.peers.map((peer) => peer.reputationScore), [40, null])
+})
+
+test('derives on-chain reputation from raw persisted stats', () => {
+  const peer = makePeer({
+    peerId: '9'.repeat(40),
+    providers: ['claude-oauth'],
+    providerServiceApiProtocols: {
+      'claude-oauth': { services: { 'claude-opus-4-6': ['anthropic-messages'] } },
+    },
+    onChainStakeUsdcMicros: 2_000_000,
+    onChainChannelCount: 20,
+    onChainGhostCount: 0,
+    onChainTotalVolumeUsdcMicros: 100_000_000,
+    onChainLastSettledAtSec: Math.floor((NOW_MS - 60_000) / 1000),
+    onChainStakedAtSec: Math.floor((NOW_MS - 40 * 86_400_000) / 1000),
+  })
+
+  const [model] = buildNetworkModels([peer], NOW_MS)
+  const [offer] = model?.peers ?? []
+  assert.ok(offer)
+  assert.ok((offer.onChainReputationScore ?? 0) > 0)
+  assert.equal(offer.reputationScore, offer.onChainReputationScore)
+})
+
+test('cached-input pricing penalty can change a close reputation ranking', () => {
+  const priced = makePeer({
+    peerId: '1'.repeat(40),
+    onChainTrustScore: 75,
+    providerPricing: {
+      openai: {
+        defaults: { inputUsdPerMillion: 2, outputUsdPerMillion: 4 },
+        services: {
+          'cache-model': { inputUsdPerMillion: 2, outputUsdPerMillion: 4, cachedInputUsdPerMillion: 0.2 },
+        },
+      },
+    },
+    providerServiceApiProtocols: {
+      openai: { services: { 'cache-model': ['openai-chat-completions'] } },
+    },
+  })
+  const unpriced = makePeer({
+    peerId: '2'.repeat(40),
+    onChainTrustScore: 90,
+    providerPricing: {
+      openai: {
+        defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
+        services: { 'cache-model': { inputUsdPerMillion: 1, outputUsdPerMillion: 2 } },
+      },
+    },
+    providerServiceApiProtocols: {
+      openai: { services: { 'cache-model': ['openai-chat-completions'] } },
+    },
+  })
+
+  const model = buildNetworkModels([unpriced, priced], NOW_MS)[0]
+  assert.deepEqual(model?.peers.map((peer) => peer.peerId), [priced.peerId, unpriced.peerId])
+  assert.deepEqual(model?.peers.map((peer) => peer.reputationScore), [75, 90])
+  assert.ok((model?.peers[0]?.effectiveReputationScore ?? 0) > (model?.peers[1]?.effectiveReputationScore ?? 0))
+})
+
+test('cached-input penalty uses normalized reputation instead of raw trust', () => {
+  const flash = makePeer({
+    peerId: '3'.repeat(40),
+    onChainTrustScore: 10_425.074,
+    onChainReputationScore: 99.93,
+    providerServiceApiProtocols: {
+      'claude-oauth': { services: { 'claude-opus-4-6': ['anthropic-messages'] } },
+    },
+  })
+  const venice = makePeer({
+    peerId: '4'.repeat(40),
+    onChainTrustScore: 5_428.609,
+    onChainReputationScore: 90.31,
+    providerPricing: {
+      'claude-oauth': {
+        defaults: { inputUsdPerMillion: 3, outputUsdPerMillion: 15 },
+        services: {
+          'opus-4.6': { inputUsdPerMillion: 3, outputUsdPerMillion: 15, cachedInputUsdPerMillion: 0.3 },
+        },
+      },
+    },
+    providerServiceApiProtocols: {
+      'claude-oauth': { services: { 'opus-4.6': ['anthropic-messages'] } },
+    },
+  })
+
+  const model = buildNetworkModels([flash, venice], NOW_MS)[0]
+  assert.deepEqual(model?.peers.map((peer) => peer.peerId), [venice.peerId, flash.peerId])
+  assert.equal(model?.peers[0]?.effectiveReputationScore, 90.31)
+  assert.ok(Math.abs((model?.peers[1]?.effectiveReputationScore ?? 0) - 49.965) < 1e-9)
+})
+
+test('cached-input pricing penalty does not bury a substantially stronger peer', () => {
+  const priced = makePeer({
+    peerId: '5'.repeat(40),
+    onChainTrustScore: 20,
+    onChainReputationScore: 20,
+    providerPricing: {
+      openai: {
+        defaults: { inputUsdPerMillion: 2, outputUsdPerMillion: 4 },
+        services: {
+          'cache-model': { inputUsdPerMillion: 2, outputUsdPerMillion: 4, cachedInputUsdPerMillion: 0.2 },
+        },
+      },
+    },
+    providerServiceApiProtocols: {
+      openai: { services: { 'cache-model': ['openai-chat-completions'] } },
+    },
+  })
+  const unpriced = makePeer({
+    peerId: '6'.repeat(40),
+    onChainTrustScore: 100,
+    onChainReputationScore: 100,
+    providerServiceApiProtocols: {
+      openai: { services: { 'cache-model': ['openai-chat-completions'] } },
+    },
+  })
+
+  const model = buildNetworkModels([priced, unpriced], NOW_MS)[0]
+  assert.deepEqual(model?.peers.map((peer) => peer.peerId), [unpriced.peerId, priced.peerId])
+  assert.ok((model?.peers[0]?.effectiveReputationScore ?? 0) > (model?.peers[1]?.effectiveReputationScore ?? 0))
+})
+
+test('keeps reputation ordering when no offer reports cached-input pricing', () => {
+  const lower = makePeer({
+    peerId: '3'.repeat(40),
+    onChainTrustScore: 20,
+    providerServiceApiProtocols: {
+      openai: { services: { 'no-cache-model': ['openai-chat-completions'] } },
+    },
+  })
+  const higher = makePeer({
+    peerId: '4'.repeat(40),
+    onChainTrustScore: 100,
+    providerServiceApiProtocols: {
+      openai: { services: { 'no-cache-model': ['openai-chat-completions'] } },
+    },
+  })
+
+  const model = buildNetworkModels([lower, higher], NOW_MS)[0]
+  assert.deepEqual(model?.peers.map((peer) => peer.peerId), [higher.peerId, lower.peerId])
+  assert.deepEqual(model?.peers.map((peer) => peer.effectiveReputationScore), [100, 20])
 })
 
 test('merges conservative family aliases while preserving advertised service ids', () => {

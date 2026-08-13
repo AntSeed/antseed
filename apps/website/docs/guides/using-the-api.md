@@ -88,6 +88,8 @@ Model-level `context_length`, `max_output_tokens`, modalities, capability boolea
 
 If one peer advertises multiple service ids that normalize to the same model, AntSeed keeps a single offer for that peer: the lowest-priced alias. Text offers compare `inputUsdPerMillion + outputUsdPerMillion`; image offers compare `minImageUsdPerImage`; an explicitly known price beats an unknown price. All observed names remain in the model's `aliases`, and model-only routing rewrites requests to the retained seller service id.
 
+Cached-input pricing is treated as model-specific metadata completeness. If at least one offer for a model advertises `cachedInputUsdPerMillion`, an offer that omits it receives a 50% reduction to its effective reputation for that model because its real cost can be materially higher for cache-heavy workloads. This remains a soft penalty: an exceptionally stronger peer can still outrank a weaker peer with complete cached pricing. If no offer for the model advertises cached-input pricing, AntSeed assumes the model may not support caching and applies no penalty. `reputationScore` remains the raw trust/reputation value, while `effectiveReputationScore` shows the normalized model-specific score used for ordering and model-only routing.
+
 The desktop's **Auto** route stores the selected model without a peer id. Telegram model selections, automatic in-app chats, and connected apps configured with the `antseed` model alias therefore use the same live reputation ranking, cooldown avoidance, and peer fallback on each request. Explicitly choosing a seller in the desktop stores `<peerId>@<serviceId>` instead and intentionally keeps that route single-peer.
 
 ## Supported API Formats
