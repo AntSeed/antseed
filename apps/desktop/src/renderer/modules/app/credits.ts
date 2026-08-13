@@ -6,6 +6,7 @@ type CreditsModuleOptions = {
   bridge?: DesktopBridge;
   uiState: RendererUiState;
   onBalanceSufficientForPayment?: () => void;
+  onPaymentStateChanged?: () => void | Promise<void>;
 };
 
 export type CreditsModuleApi = {
@@ -26,7 +27,12 @@ const PAYMENT_SUMMARY_THROTTLE_MS = 55_000;
 
 const MAX_AUTO_RETRIES = 2;
 
-export function initCreditsModule({ bridge, uiState, onBalanceSufficientForPayment }: CreditsModuleOptions): CreditsModuleApi {
+export function initCreditsModule({
+  bridge,
+  uiState,
+  onBalanceSufficientForPayment,
+  onPaymentStateChanged,
+}: CreditsModuleOptions): CreditsModuleApi {
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
   let fastRefreshTimer: ReturnType<typeof setInterval> | null = null;
   let autoRetryCount = 0;
@@ -101,6 +107,7 @@ export function initCreditsModule({ bridge, uiState, onBalanceSufficientForPayme
         }
 
         if (changed) notifyUiStateChanged();
+        await onPaymentStateChanged?.();
 
       }
     } catch {
@@ -148,6 +155,7 @@ export function initCreditsModule({ bridge, uiState, onBalanceSufficientForPayme
       paymentSummaryRefreshInFlight = false;
       uiState.creditsSummaryLoading = false;
       notifyUiStateChanged();
+      await onPaymentStateChanged?.();
     }
   }
 

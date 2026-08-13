@@ -18,6 +18,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Desktop: add a locally evaluated $10 frontier-model onboarding offer on the VPR Home screen for qualifying free users, with first-use or grandfathered D2 entry and follow-ups on days 5 and 15 while no deposit exists.
+
 - SpendingAuth metadata v3 counts generated images: a raw `output_images` counter (top-level and per-service) plus a flat 1290-output-token equivalent per image credited into the token counters, so image work shows up in usage stats. Image requests with no upstream token usage attribute an estimated prompt token count as input. Attribution only — image billing stays on the per-unit price, and the equivalents never enter cost verification. Existing decoders keep reading the aggregate counters (first four fields unchanged); the services array layout is versioned.
 
 - Desktop VPR now discovers and clearly labels image-generation-only models, carries advertised service capability hints and per-image billing tiers through to each seller row, and shows seller-specific image prices, context windows, output limits, modalities, tools, structured output, and supported parameters without incorrectly merging those details at model level. Image models stay out of the main text and connected-app dropdowns and instead offer dedicated “Use in chat” and “Copy instructions” actions; copied instructions reference the public `antseed-images` skill and include the selected seller and service parameters. Image prompts appear in the conversation immediately while generation runs through `/v1/images/generations`, and generated files are stored as persistent conversation attachments. Image routes remain excluded from chat-only external model pickers.
