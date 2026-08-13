@@ -11,6 +11,7 @@ import {
 } from './modules/app/plugin-setup';
 import { initAppSetupModule } from './modules/app/setup';
 import { initCreditsModule } from './modules/app/credits';
+import { initReminderModule } from './modules/app/reminder';
 import { initVprFloatModule } from './modules/app/float';
 import {
   loadFloatAutoOpen,
@@ -199,6 +200,8 @@ const {
   populateSettingsForm,
 });
 
+const reminderApi = initReminderModule({ bridge, uiState });
+
 // Credits API is created after chat, so use late-bound reference.
 let creditsApi: ReturnType<typeof initCreditsModule>;
 
@@ -207,6 +210,7 @@ const chatApi = initChatModule({
   uiState,
   appendSystemLog,
   onPaymentCardShown: () => creditsApi?.notifyPaymentCardVisible(),
+  onResponseCompleted: reminderApi.onResponseCompleted,
 });
 
 initAppSetupModule({ uiState, bridge: bridge ?? null });
@@ -215,6 +219,7 @@ creditsApi = initCreditsModule({
   bridge: bridge as DesktopBridge,
   uiState,
   onBalanceSufficientForPayment: () => chatApi.retryAfterPayment(),
+  onPaymentStateChanged: reminderApi.reconcilePayer,
 });
 creditsApi.startPeriodicRefresh();
 
@@ -677,6 +682,8 @@ registerActions({
   },
   setChatPermissionMode: chatApi.setChatPermissionMode,
   decideToolApproval: chatApi.decideToolApproval,
+  acceptReminderHome: reminderApi.acceptHome,
+  dismissReminderHome: reminderApi.dismissHome,
   rejectPaymentSession: () => {
     uiState.chatPaymentApprovalVisible = false;
     uiState.chatPaymentApprovalPeerName = null;

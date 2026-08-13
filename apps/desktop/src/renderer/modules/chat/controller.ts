@@ -83,6 +83,11 @@ type ChatModuleOptions = {
   uiState: RendererUiState;
   appendSystemLog: (message: string) => void;
   onPaymentCardShown?: () => void;
+  onResponseCompleted?: (conversationId: string, usage: {
+    inputTokens: number;
+    outputTokens: number;
+    service: string | null;
+  }) => void;
 };
 
 export type ChatModuleApi = {
@@ -123,6 +128,7 @@ export function initChatModule({
   uiState,
   appendSystemLog,
   onPaymentCardShown,
+  onResponseCompleted,
 }: ChatModuleOptions): ChatModuleApi {
   // ---------------------------------------------------------------------------
   // Constants
@@ -3181,6 +3187,9 @@ export function initChatModule({
         const finalizedStreamingMessage = materializeStreamingMessage(
           getConversationStreamingMessage(data.conversationId),
         );
+        const completionMeta = finalizedStreamingMessage
+          ? normalizeAssistantMeta(finalizedStreamingMessage)
+          : null;
 
         streamCompletedAtByConversation.set(data.conversationId, Date.now());
         clearPaymentRetry(data.conversationId);
@@ -3216,6 +3225,15 @@ export function initChatModule({
         }
 
         scheduleChatConversationsRefresh();
+        // Only count completions that finalized an assistant message; an empty
+        // or duplicated done event must not inflate the reminder request counters.
+        if (completionMeta) {
+          onResponseCompleted?.(data.conversationId, {
+            inputTokens: completionMeta.inputTokens ?? 0,
+            outputTokens: completionMeta.outputTokens ?? 0,
+            service: completionMeta.service ?? null,
+          });
+        }
       });
     }
 

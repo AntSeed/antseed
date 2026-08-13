@@ -10,10 +10,8 @@
  * has a positive baseline cost.
  */
 import type { DesktopBuyerServiceUsage } from '../../types/bridge';
+import type { OpenRouterReferenceMap } from './openrouter-baseline.js';
 import { canonicalModelKey } from './model-identity.js';
-
-type ReferencePrice = { input: number | null; output: number | null; cachedInput?: number | null };
-type ReferenceMap = Record<string, ReferencePrice>;
 
 const USDC_BASE_UNITS_PER_USD = 1_000_000;
 
@@ -51,7 +49,7 @@ export function formatSavedUsd(usd: number): string {
  */
 export function computeMeasuredSavings(
   services: DesktopBuyerServiceUsage[] | undefined,
-  referenceMap: ReferenceMap | null,
+  referenceMap: OpenRouterReferenceMap | null,
 ): MeasuredSavings | null {
   if (!services || services.length === 0 || !referenceMap) return null;
 
@@ -88,4 +86,55 @@ export function computeMeasuredSavings(
   // Paying above retail is not "saving" — clamp instead of showing negatives.
   const pct = Math.round(Math.max(0, Math.min(1, 1 - actualUsd / baselineUsd)) * 100);
   return { pct, actualUsd, baselineUsd, matchedServices };
+}
+
+export type OfficialBaseline = {
+  baselineUsd: number;
+  matchedServices: number;
+  matchedInputTokens: number;
+  matchedOutputTokens: number;
+};
+
+/** Official-price value only, for surfaces that describe free usage rather
+ * than the difference between retail and the amount actually paid. */
+export function computeOfficialBaselineUsd(
+  services: DesktopBuyerServiceUsage[] | undefined,
+  referenceMap: OpenRouterReferenceMap | null,
+): OfficialBaseline | null {
+  if (!services || services.length === 0 || !referenceMap) return null;
+
+  let baselineUsd = 0;
+  let matchedServices = 0;
+  let matchedInputTokens = 0;
+  let matchedOutputTokens = 0;
+
+  for (const service of services) {
+    if (!service.serviceName) continue;
+    const ref = referenceMap[canonicalModelKey(service.serviceName)];
+    if (!ref || (ref.input === null && ref.output === null)) continue;
+
+    const totalInput = toNumberTokens(service.inputTokens);
+    const cached = Math.min(toNumberTokens(service.cachedInputTokens), totalInput);
+    const freshInput = totalInput - cached;
+    const output = toNumberTokens(service.outputTokens);
+    if (totalInput === 0 && output === 0) continue;
+
+    const inputPrice = ref.input ?? 0;
+    const cachedPrice = ref.cachedInput ?? inputPrice;
+    const outputPrice = ref.output ?? 0;
+    const inputBaseline = ref.input === null
+      ? 0
+      : (freshInput * inputPrice + cached * cachedPrice) / 1_000_000;
+    const outputBaseline = ref.output === null ? 0 : output * outputPrice / 1_000_000;
+    const serviceBaseline = inputBaseline + outputBaseline;
+    if (serviceBaseline <= 0) continue;
+
+    baselineUsd += serviceBaseline;
+    matchedServices += 1;
+    if (ref.input !== null) matchedInputTokens += totalInput;
+    if (ref.output !== null) matchedOutputTokens += output;
+  }
+
+  if (matchedServices === 0 || baselineUsd <= 0) return null;
+  return { baselineUsd, matchedServices, matchedInputTokens, matchedOutputTokens };
 }

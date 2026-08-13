@@ -657,7 +657,6 @@ export function VprDepositView({ onSelectView }: Props) {
       return (
         <VprPage title="Add credits" backFallback="credits">
         <div className={styles.stack}>
-
           <BalanceSummaryCard values={balanceValues} />
 
           <div className={styles.primaryMethods}>
