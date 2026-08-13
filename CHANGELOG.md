@@ -8,7 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Security
 
-- P2P TCP transport is now encrypted end-to-end (`transport.tcp-enc.v1`): a wallet-signed ephemeral X25519 handshake with forward secrecy and mutual peer authentication, ChaCha20-Poly1305 framing for all payload traffic. Enabled automatically between peers that advertise the capability in discovery metadata; once offered, the handshake fails closed rather than downgrading to plaintext, and the intro signature covers the advertised capabilities and encryption offer so an on-path attacker cannot strip them to force a legacy fallback. Legacy peers still connect over plaintext unless the new `requireSecureTransport` node option is set.
+- P2P TCP transport is now encrypted end-to-end (`transport.tcp-enc.v1`): a wallet-signed ephemeral X25519 handshake with forward secrecy and mutual peer authentication, AES-256-GCM framing for all payload traffic. Enabled automatically between peers that advertise the capability in discovery metadata; once offered, the handshake fails closed rather than downgrading to plaintext, and the intro signature covers the advertised capabilities and encryption offer so an on-path attacker cannot strip them to force a legacy fallback. Legacy peers still connect over plaintext unless the new `requireSecureTransport` node option is set.
 - WebRTC signaling now signs SDP descriptions (`transport.signed-sdp.v1`), binding the DTLS certificate fingerprint to the peer's wallet identity so a man-in-the-middle on the signaling socket can no longer substitute its own SDP.
 
 ### Fixed
@@ -19,6 +19,8 @@ This project uses selective package publishing. Each release entry lists the pub
 ### Added
 
 - Desktop: add a locally evaluated $10 frontier-model onboarding offer on the VPR Home screen for qualifying free users, with first-use or grandfathered D2 entry and follow-ups on days 5 and 15 while no deposit exists.
+
+- SpendingAuth metadata v3 counts generated images: a raw `output_images` counter (top-level and per-service) plus a flat 1290-output-token equivalent per image credited into the token counters, so image work shows up in usage stats. Image requests with no upstream token usage attribute an estimated prompt token count as input. Attribution only — image billing stays on the per-unit price, and the equivalents never enter cost verification. Existing decoders keep reading the aggregate counters (first four fields unchanged); the services array layout is versioned.
 
 - Desktop VPR now discovers and clearly labels image-generation-only models, carries advertised service capability hints and per-image billing tiers through to each seller row, and shows seller-specific image prices, context windows, output limits, modalities, tools, structured output, and supported parameters without incorrectly merging those details at model level. Image models stay out of the main text and connected-app dropdowns and instead offer dedicated “Use in chat” and “Copy instructions” actions; copied instructions reference the public `antseed-images` skill and include the selected seller and service parameters. Image prompts appear in the conversation immediately while generation runs through `/v1/images/generations`, and generated files are stored as persistent conversation attachments. Image routes remain excluded from chat-only external model pickers.
 

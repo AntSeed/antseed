@@ -15,7 +15,7 @@ Transport selection is capability-driven; a node advertises what it supports in 
 
 | Mode | Library | Description |
 |---|---|---|
-| encrypted TCP (`transport.tcp-enc.v1`) | Node.js net | **Preferred.** Direct TCP with a mutually authenticated, encrypted channel (X25519 + ChaCha20-Poly1305) |
+| encrypted TCP (`transport.tcp-enc.v1`) | Node.js net | **Preferred.** Direct TCP with a mutually authenticated, encrypted channel (X25519 + AES-256-GCM) |
 | plaintext TCP | Node.js net | Legacy fallback for peers that do not advertise encrypted TCP |
 | webrtc (`transport.webrtc.v1`) | node-datachannel | WebRTC DataChannel (DTLS) via TCP signaling, for peers that cannot use TCP directly |
 

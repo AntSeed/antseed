@@ -60,6 +60,8 @@ export interface StoredChannelServiceTotal {
   cumulativeCachedInputTokens: string; // bigint as string
   cumulativeOutputTokens: string; // bigint as string
   cumulativeRequestCount: string; // bigint as string
+  /** bigint as string; optional — rows/callers predating migration 005 default to '0'. */
+  cumulativeOutputImages?: string;
   updatedAt: number;
 }
 

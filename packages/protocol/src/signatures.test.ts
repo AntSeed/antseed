@@ -27,7 +27,7 @@ const SALT = '0x' + 'ab'.repeat(32);
 
 describe('EIP-712 golden vectors', () => {
   it('pins ZERO_METADATA_HASH', () => {
-    expect(ZERO_METADATA_HASH).toBe('0x64aa30b1977c7fc3b2ccf5704b5ad880197cc8941ec647e8799522c8745c4dbf');
+    expect(ZERO_METADATA_HASH).toBe('0xd26da485bf13b78f40dee0909067460d0d8d2510431238d75f7971400b85e0e3');
   });
 
   it('pins channelId derivation', () => {
@@ -47,7 +47,14 @@ describe('EIP-712 golden vectors', () => {
       services: [],
     };
     expect(computeMetadataHash(metadata)).toBe(
-      '0x593dbe83289528725f4a521982dc688327df7bdea2cbfbb46ea749e26cc275b2',
+      '0xb9b176a3f2735a8160329e354c7ba2f0a84b39258c479b441702c3126210301c',
+    );
+    // Omitted cumulativeOutputImages encodes identically to an explicit zero.
+    expect(computeMetadataHash({ ...metadata, cumulativeOutputImages: 0n })).toBe(
+      computeMetadataHash(metadata),
+    );
+    expect(computeMetadataHash({ ...metadata, cumulativeOutputImages: 2n })).not.toBe(
+      computeMetadataHash(metadata),
     );
     // Sorted service entries change the hash deterministically.
     const withService = {
@@ -59,6 +66,7 @@ describe('EIP-712 golden vectors', () => {
         cumulativeCachedInputTokens: 100n,
         cumulativeOutputTokens: 567n,
         cumulativeRequestCount: 3n,
+        cumulativeOutputImages: 2n,
       }],
     };
     expect(encodeMetadata(withService)).not.toBe(encodeMetadata(metadata));
