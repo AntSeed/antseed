@@ -192,6 +192,104 @@ test('merges compact numeric versions and flattened vendor prefixes', () => {
   ])
 })
 
+test('keeps only the lowest-priced duplicate text offer from one peer', () => {
+  const peer = makePeer({
+    peerId: '8'.repeat(40),
+    providerPricing: {
+      openai: {
+        defaults: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+        services: {
+          'gpt-5.6-sol': { inputUsdPerMillion: 4, outputUsdPerMillion: 8 },
+          'gpt-56-sol': { inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
+        },
+      },
+    },
+    providerServiceApiProtocols: {
+      openai: {
+        services: {
+          'gpt-5.6-sol': ['openai-responses'],
+          'gpt-56-sol': ['openai-responses'],
+        },
+      },
+    },
+  })
+
+  const model = buildNetworkModels([peer], NOW_MS)[0]
+  assert.ok(model)
+  assert.equal(model.peers.length, 1)
+  assert.equal(model.peers[0]?.serviceId, 'gpt-56-sol')
+  assert.equal(model.peers[0]?.inputUsdPerMillion, 1)
+  assert.equal(model.peers[0]?.outputUsdPerMillion, 2)
+  assert.deepEqual(model.aliases, ['gpt-5.6-sol', 'gpt-56-sol', 'gpt56sol'])
+})
+
+test('keeps only the lowest-priced duplicate image offer from one peer', () => {
+  const peer = makePeer({
+    peerId: '9'.repeat(40),
+    providerServiceApiProtocols: {
+      openai: {
+        services: {
+          'flux-1-schnell': ['openai-images'],
+          'flux1-schnell': ['openai-images'],
+        },
+      },
+    },
+    providerServiceUnitBillingModels: {
+      openai: {
+        services: {
+          'flux-1-schnell': {
+            'openai-images': {
+              version: 1,
+              components: [{ unit: 'output_images', priceUsd: 0.04 }],
+            },
+          },
+          'flux1-schnell': {
+            'openai-images': {
+              version: 1,
+              components: [{ unit: 'output_images', priceUsd: 0.01 }],
+            },
+          },
+        },
+      },
+    },
+  })
+
+  const model = buildNetworkModels([peer], NOW_MS)[0]
+  assert.ok(model)
+  assert.equal(model.peers.length, 1)
+  assert.equal(model.peers[0]?.serviceId, 'flux1-schnell')
+  assert.equal(model.peers[0]?.minImageUsdPerImage, 0.01)
+})
+
+test('prefers a known duplicate price over an unknown price', () => {
+  const peer = makePeer({
+    peerId: '0'.repeat(40),
+    providerServiceApiProtocols: {
+      openai: {
+        services: {
+          'flux-1-schnell': ['openai-images'],
+          'flux1-schnell': ['openai-images'],
+        },
+      },
+    },
+    providerServiceUnitBillingModels: {
+      openai: {
+        services: {
+          'flux1-schnell': {
+            'openai-images': {
+              version: 1,
+              components: [{ unit: 'output_images', priceUsd: 0.02 }],
+            },
+          },
+        },
+      },
+    },
+  })
+
+  const model = buildNetworkModels([peer], NOW_MS)[0]
+  assert.equal(model?.peers[0]?.serviceId, 'flux1-schnell')
+})
+
 test('service pricing overrides provider defaults', () => {
   const models = buildNetworkModels([textSeller], NOW_MS)
   const offer = models[0]?.peers[0]

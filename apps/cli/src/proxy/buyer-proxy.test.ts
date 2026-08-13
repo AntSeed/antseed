@@ -519,6 +519,45 @@ test('model-only request routes through a legacy peer-wide service announcement'
   assert.equal(selectedBody?.['model'], 'gpt-5.6-terra')
 })
 
+test('model-only request uses the cheapest duplicate service advertised by one peer', async () => {
+  const peer = makePeer('a', ['openai'])
+  peer.providerPricing = {
+    openai: {
+      defaults: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+      services: {
+        'gpt-5.6-sol': { inputUsdPerMillion: 5, outputUsdPerMillion: 10 },
+        'gpt-56-sol': { inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
+      },
+    },
+  }
+  peer.providerServiceApiProtocols = {
+    openai: {
+      services: {
+        'gpt-5.6-sol': ['openai-chat-completions'],
+        'gpt-56-sol': ['openai-chat-completions'],
+      },
+    },
+  }
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], permissiveRouter())
+  let selectedBody: Record<string, unknown> | null = null
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: { requestId: string; body: Uint8Array }) => {
+    selectedBody = parseJsonBody(request.body)
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ ok: true })),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    body: { model: 'gpt-5.6-sol', messages: [] },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(selectedBody?.['model'], 'gpt-56-sol')
+})
+
 test('antseed alias with a model-only default route uses automatic peer selection', async () => {
   const lower = makePeer('a', ['openai'])
   lower.reputationScore = 40

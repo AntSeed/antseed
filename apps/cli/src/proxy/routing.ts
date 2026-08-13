@@ -1,5 +1,6 @@
-import type { PeerInfo, SerializedHttpRequest } from '@antseed/node'
+import { buildNetworkServiceOffers, type PeerInfo, type SerializedHttpRequest } from '@antseed/node'
 import { canonicalModelKey } from '@antseed/node/model-identity'
+import { selectLowestPricedModelOffer } from './network-models.js'
 import {
   extractRequestBodyFields,
   inferProviderDefaultServiceApiProtocols,
@@ -122,27 +123,11 @@ export function findAdvertisedServiceId(
 ): string | null {
   const requestedKey = canonicalModelKey(requestedService)
   if (!requestedKey) return null
-  const matrices: Array<Record<string, { services?: Record<string, unknown> }> | undefined> = [
-    peer.providerPricing,
-    peer.providerServiceApiProtocols,
-    peer.providerServiceCategories,
-    peer.providerServiceUnitBillingModels,
-    peer.providerServiceCapabilities,
-  ]
-  for (const matrix of matrices) {
-    const providerKey = Object.keys(matrix ?? {}).find((key) => key.toLowerCase() === provider.toLowerCase())
-    const services = providerKey ? matrix?.[providerKey]?.services : undefined
-    const serviceId = Object.keys(services ?? {}).find((key) => canonicalModelKey(key) === requestedKey)
-    if (serviceId) return serviceId
-  }
-
-  const hasProviderMetadata = matrices.some((matrix) => Object.keys(matrix ?? {}).length > 0)
-  const legacyPeer = peer as PeerInfo & { services?: string[] }
-  const fallbackProvider = peer.providers[0]
-  if (!hasProviderMetadata && fallbackProvider?.toLowerCase() === provider.toLowerCase()) {
-    return legacyPeer.services?.find((serviceId) => canonicalModelKey(serviceId) === requestedKey) ?? null
-  }
-  return null
+  const offers = buildNetworkServiceOffers([peer]).filter((offer) => (
+    offer.provider.toLowerCase() === provider.toLowerCase()
+    && canonicalModelKey(offer.serviceId) === requestedKey
+  ))
+  return selectLowestPricedModelOffer(offers)?.serviceId ?? null
 }
 
 function selectProviderByProtocol(

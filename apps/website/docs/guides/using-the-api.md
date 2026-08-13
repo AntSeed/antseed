@@ -86,6 +86,8 @@ curl -s 'http://localhost:8377/v1/models?type=images' | jq '.data[] | {id, peers
 
 Model-level `context_length`, `max_output_tokens`, modalities, capability booleans, and `supported_parameters` are conservative guarantees for model-only routing: numeric limits use the lowest value, lists use the intersection, and booleans are `true` only when every offer explicitly reports support. If any offer omits a field, that model-level field is omitted rather than treating unknown as unsupported. `capability_coverage` reports how many offers supplied each field, while `supported_protocols` is the union of protocols available across sellers. The full per-peer capabilities remain authoritative when selecting a particular seller.
 
+If one peer advertises multiple service ids that normalize to the same model, AntSeed keeps a single offer for that peer: the lowest-priced alias. Text offers compare `inputUsdPerMillion + outputUsdPerMillion`; image offers compare `minImageUsdPerImage`; an explicitly known price beats an unknown price. All observed names remain in the model's `aliases`, and model-only routing rewrites requests to the retained seller service id.
+
 The desktop's **Auto** route stores the selected model without a peer id. Telegram model selections, automatic in-app chats, and connected apps configured with the `antseed` model alias therefore use the same live reputation ranking, cooldown avoidance, and peer fallback on each request. Explicitly choosing a seller in the desktop stores `<peerId>@<serviceId>` instead and intentionally keeps that route single-peer.
 
 ## Supported API Formats
