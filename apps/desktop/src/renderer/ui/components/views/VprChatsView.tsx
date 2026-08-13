@@ -126,18 +126,15 @@ export function VprChatsView({ onSelectView: _onSelectView }: Props) {
   }, [favorites, selected, snap.catalog]);
 
   const pinChat = useCallback(async (id: string, provider: string, serviceId: string) => {
-    // The model's own seller pin outranks the auto-scored best route — the
-    // same order the global route resolves in. A model change also resets a
-    // per-chat seller choice: it was made for the old model.
-    const peerId = resolvePeerForModel(snap.discoverRows, snap.pins, snap.preferences, { provider, serviceId });
-    if (!peerId) {
+    const hasRoute = routesForSelectedModel(snap.discoverRows, { provider, serviceId }).length > 0;
+    if (!hasRoute) {
       setMessage(`No available route for ${serviceId} right now`);
       return;
     }
     setMessage(null);
-    await window.antseedDesktop?.buyerConversationsUpdate?.({ id, pinnedModel: `${peerId}@${serviceId}`, peerSource: 'auto' });
+    await window.antseedDesktop?.buyerConversationsUpdate?.({ id, pinnedModel: serviceId, peerSource: 'auto' });
     await refresh();
-  }, [refresh, snap.discoverRows, snap.pins, snap.preferences]);
+  }, [refresh, snap.discoverRows]);
 
   // Per-chat seller choice: pick the exact peer this chat's requests go to
   // (switching the chat's model too when the config page is for another

@@ -303,7 +303,7 @@ const api = {
   chatAiSelectPeer(payload: { conversationId?: string | null; peerId?: string | null; service?: string | null; provider?: string | null; routeMode?: 'auto' | 'pinned' | null }): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:ai-select-peer', payload);
   },
-  chatSetBuyerDefaultRoute(payload: { peerId: string; service: string }): Promise<{ ok: boolean; error?: string }> {
+  chatSetBuyerDefaultRoute(payload: { peerId?: string; service: string }): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:set-buyer-default-route', payload);
   },
   chatSyncModelPicker(payload: unknown): Promise<{ ok: boolean }> {

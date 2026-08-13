@@ -430,7 +430,7 @@ export function initChatModule({
     const patch = {
       service: selection.id,
       provider: selection.provider ?? undefined,
-      peerId: selection.peerId,
+      peerId: undefined,
       routeMode: 'auto' as const,
     };
     if (activeConversation?.id === convId) Object.assign(activeConversation, patch);
@@ -440,7 +440,7 @@ export function initChatModule({
     }
     void bridge?.chatAiSelectPeer?.({
       conversationId: convId,
-      peerId: selection.peerId,
+      peerId: null,
       service: selection.id,
       provider: selection.provider,
       routeMode: 'auto',

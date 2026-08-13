@@ -199,7 +199,12 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
     const serviceId = normalizeServiceId(serviceOverride || context.model?.modelId);
     const persistedPeer = extractPeerFromEntries(sessionManager);
     const peerOverrideId = normalizePeerId(peerOverride) ?? null;
-    const preferredPeerId = peerOverrideId ?? preferredPeerByConversationId.get(conversationId) ?? persistedPeer?.peerId ?? null;
+    const persistedPinnedPeerId = persistedPeer?.routeMode === 'pinned' ? persistedPeer.peerId : null;
+    const preferredPeerId = peerOverrideId ?? preferredPeerByConversationId.get(conversationId) ?? persistedPinnedPeerId;
+    if (!preferredPeerId && persistedPeer?.peerId) {
+      preferredPeerByConversationId.delete(conversationId);
+      void store.clearPeer(conversationId);
+    }
     const persistedPermissionMode: ChatPermissionMode = preferredPeerId
       ? await getPeerPermissionMode(preferredPeerId)
       : 'manual';

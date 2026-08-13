@@ -493,6 +493,39 @@ test('model-only request routes to the highest-reputation canonical service matc
   assert.equal(selectedBody?.['model'], 'opus-5')
 })
 
+test('antseed alias with a model-only default route uses automatic peer selection', async () => {
+  const lower = makePeer('a', ['openai'])
+  lower.reputationScore = 40
+  lower.providerServiceApiProtocols = {
+    openai: { services: { 'gpt-56-sol': ['openai-chat-completions'] } },
+  }
+  const higher = makePeer('b', ['openai'])
+  higher.reputationScore = 90
+  higher.providerServiceApiProtocols = {
+    openai: { services: { 'openai-gpt-56-sol': ['openai-chat-completions'] } },
+  }
+  const proxy = makeBuyerProxyWithPeers([lower, higher], [lower, higher], permissiveRouter())
+  ;(proxy as any)._defaultRoutedModel = 'gpt-5.6-sol'
+  let selectedPeerId = ''
+  let selectedBody: Record<string, unknown> | null = null
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string; body: Uint8Array }) => {
+    selectedPeerId = peer.peerId
+    selectedBody = parseJsonBody(request.body)
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ ok: true })),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'antseed', messages: [] } }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(selectedPeerId, higher.peerId)
+  assert.equal(selectedBody?.['model'], 'openai-gpt-56-sol')
+})
+
 test('model-only routing skips higher-reputation peers rejected by buyer policy', async () => {
   const allowed = makePeer('a', ['openai'])
   allowed.reputationScore = 60
@@ -1871,7 +1904,14 @@ test('route control endpoint sets, persists, and returns the default routed mode
   const persisted = JSON.parse(await readFile(join(dir, 'buyer.state.json'), 'utf-8')) as Record<string, unknown>
   assert.equal(persisted['defaultRoutedModel'], `${validPeerId}@gpt-4o`)
 
-  const invalid = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { model: 'gpt-4o' } }))
+  const automatic = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { model: 'gpt-4o' } }))
+  assert.equal(automatic.statusCode, 200)
+  assert.deepEqual(JSON.parse(automatic.body), { ok: true, model: 'gpt-4o' })
+
+  const automaticPersisted = JSON.parse(await readFile(join(dir, 'buyer.state.json'), 'utf-8')) as Record<string, unknown>
+  assert.equal(automaticPersisted['defaultRoutedModel'], 'gpt-4o')
+
+  const invalid = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { model: 'not-a-peer@gpt-4o' } }))
   assert.equal(invalid.statusCode, 400)
 
   const cleared = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { model: '' } }))
@@ -2109,9 +2149,16 @@ test('conversation control endpoints list, rename, pin, reject bad pins, delete'
     assert.equal(rename.statusCode, 200)
     assert.equal(store.get('opencode:ses_x')?.label, 'Login refactor')
 
+    const automaticPin = await invokeProxy(proxy, makeProxyRequest({
+      path: '/_antseed/conversations/update',
+      body: { id: 'opencode:ses_x', pinnedModel: 'gpt-5.6-sol', peerSource: 'auto' },
+    }))
+    assert.equal(automaticPin.statusCode, 200)
+    assert.equal(store.getPinnedModel('opencode', 'ses_x'), 'gpt-5.6-sol')
+
     const badPin = await invokeProxy(proxy, makeProxyRequest({
       path: '/_antseed/conversations/update',
-      body: { id: 'opencode:ses_x', pinnedModel: 'not-a-route' },
+      body: { id: 'opencode:ses_x', pinnedModel: 'not-a-peer@gpt-5.6-sol' },
     }))
     assert.equal(badPin.statusCode, 400)
 

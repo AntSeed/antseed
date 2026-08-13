@@ -6,11 +6,21 @@ import { activeProfilesFromRuntimeState, buildVprPeerOptions } from './tools';
 
 const SYSTEM_PROXY_PORT = 8378;
 
-type VprRouteTarget = {
+export type VprRouteTarget = {
   peerId: string;
   model: string;
   servedModels: string[];
 };
+
+export function buyerDefaultRoutePayload(
+  selection: RendererUiState['vprRouteSelection'],
+  target: VprRouteTarget,
+): { peerId?: string; service: string } {
+  if (selection.mode === 'pinned-peer') {
+    return { peerId: target.peerId, service: target.model };
+  }
+  return { service: selection.model?.serviceId ?? target.model };
+}
 
 /** Resolve the current VPR selection to a concrete peer + model target. */
 function resolveRouteTarget(uiState: RendererUiState): VprRouteTarget | null {
@@ -88,7 +98,9 @@ export async function syncBuyerDefaultRoute(
   if (!bridge?.chatSetBuyerDefaultRoute) return;
   const target = resolveRouteTarget(uiState);
   if (!target) return;
-  await bridge.chatSetBuyerDefaultRoute({ peerId: target.peerId, service: target.model }).catch(() => undefined);
+  await bridge.chatSetBuyerDefaultRoute(
+    buyerDefaultRoutePayload(uiState.vprRouteSelection, target),
+  ).catch(() => undefined);
 }
 
 /**

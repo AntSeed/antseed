@@ -80,7 +80,12 @@ augmentChatToolPath();
  * sendToRenderer callback — tee it into the chat event bus to observe them.
  */
 export type PiChatEngine = {
-  createConversation(service?: string, provider?: string, peerId?: string): Promise<AiConversation>;
+  createConversation(
+    service?: string,
+    provider?: string,
+    peerId?: string,
+    routeMode?: ChatRouteMode,
+  ): Promise<AiConversation>;
   sendMessageStream(
     conversationId: string,
     userMessage: string,
@@ -534,15 +539,17 @@ export function registerPiChatHandlers({
 
   ipcMain.handle('chat:ai-list-conversations', async () => {
     const conversations = await store.list();
-    // Enrich summaries: prefer in-memory peer, fall back to persisted
+    // Only explicit seller pins remain peer-bound. Legacy/auto peer affinity
+    // is ignored so model-only routing can rank and fail over per request.
     const enriched = conversations.map((c) => {
-      const memPeerId = preferredPeerByConversationId.get(c.id);
-      const peerId = memPeerId || c.peerId;
+      const memPeerId = c.routeMode === 'pinned' ? preferredPeerByConversationId.get(c.id) : undefined;
+      const peerId = c.routeMode === 'pinned' ? (memPeerId || c.peerId) : undefined;
       if (peerId && !preferredPeerByConversationId.has(c.id)) {
-        // Warm the in-memory cache from persisted data
         preferredPeerByConversationId.set(c.id, peerId);
+      } else if (!peerId) {
+        preferredPeerByConversationId.delete(c.id);
       }
-      return peerId ? { ...c, peerId } : c;
+      return peerId ? { ...c, peerId } : { ...c, peerId: undefined };
     });
     return { ok: true, data: enriched };
   });
@@ -600,7 +607,7 @@ export function registerPiChatHandlers({
     peerId?: string,
     routeMode?: ChatRouteMode,
   ): Promise<AiConversation> => {
-    const trimmedPeerId = peerId?.trim() ?? '';
+    const trimmedPeerId = routeMode === 'pinned' ? peerId?.trim() ?? '' : '';
     const peerLabel = trimmedPeerId
       ? lastServiceCatalogEntries.find((e) => e.peerId === trimmedPeerId)?.peerLabel
       : undefined;
@@ -768,12 +775,13 @@ export function registerPiChatHandlers({
 
   const applyPeerSelection = async (payload: ChatPeerSelectionRequest | string | null): Promise<{ ok: boolean; error?: string }> => {
     const { conversationId, peerId, service, provider, routeMode } = normalizeChatPeerSelectionRequest(payload);
+    const pinnedPeerId = routeMode === 'pinned' ? peerId : null;
 
     if (conversationId) {
-      if (peerId) {
-        preferredPeerByConversationId.set(conversationId, peerId);
-        const peerLabel = lastServiceCatalogEntries.find((entry) => entry.peerId === peerId)?.peerLabel;
-        await store.setPeer(conversationId, peerId, peerLabel, routeMode ?? undefined);
+      if (pinnedPeerId) {
+        preferredPeerByConversationId.set(conversationId, pinnedPeerId);
+        const peerLabel = lastServiceCatalogEntries.find((entry) => entry.peerId === pinnedPeerId)?.peerLabel;
+        await store.setPeer(conversationId, pinnedPeerId, peerLabel, 'pinned');
       } else {
         preferredPeerByConversationId.delete(conversationId);
         await store.clearPeer(conversationId);
@@ -783,7 +791,7 @@ export function registerPiChatHandlers({
       }
     }
 
-    if (!peerId) {
+    if (!pinnedPeerId) {
       return { ok: true };
     }
 
@@ -793,7 +801,7 @@ export function registerPiChatHandlers({
       const response = await fetch(`${LOCALHOST_URL}:${proxyPort}/_antseed/connect`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ peerId }),
+        body: JSON.stringify({ peerId: pinnedPeerId }),
       });
       const result = await response.json() as { ok: boolean; error?: string };
       return { ok: result.ok, error: result.error };
@@ -812,8 +820,8 @@ export function registerPiChatHandlers({
   const setBuyerDefaultRoute = async (peerIdRaw: unknown, serviceRaw: unknown): Promise<{ ok: boolean; error?: string }> => {
     const peerId = typeof peerIdRaw === 'string' ? peerIdRaw.trim() : '';
     const service = typeof serviceRaw === 'string' ? serviceRaw.trim() : '';
-    if (!peerId || !service) return { ok: false, error: 'peerId and service are required' };
-    const model = `${peerId}@${service}`;
+    if (!service) return { ok: false, error: 'service is required' };
+    const model = peerId ? `${peerId}@${service}` : service;
     if (model === lastPostedDefaultRoute) return { ok: true };
     try {
       const proxyPort = await resolveProxyPort(configPath);

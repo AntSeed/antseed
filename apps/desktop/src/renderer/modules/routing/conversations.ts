@@ -20,12 +20,17 @@ export function conversationTitle(record: BuyerConversationSummary): string {
 
 /** Service id of the pinned model, or null when following the default route. */
 export function conversationPinnedServiceId(record: BuyerConversationSummary): string | null {
-  return record.pinnedModel?.split('@').slice(1).join('@') || null;
+  const model = record.pinnedModel?.trim() ?? '';
+  if (!model) return null;
+  const at = model.indexOf('@');
+  return at > 0 ? model.slice(at + 1) || null : model;
 }
 
 /** Peer id of the chat's pinned route, or null while unpinned. */
 export function conversationPinnedPeerId(record: BuyerConversationSummary): string | null {
-  return record.pinnedModel?.split('@')[0]?.toLowerCase() || null;
+  const model = record.pinnedModel?.trim() ?? '';
+  const at = model.indexOf('@');
+  return at > 0 ? model.slice(0, at).toLowerCase() || null : null;
 }
 
 /** Peer id of the seller that served the chat's most recent request — ground
@@ -34,7 +39,8 @@ export function conversationPinnedPeerId(record: BuyerConversationSummary): stri
     predates `lastModel`. Both fields are `<peerId>@<service>` strings. */
 export function conversationRoutedPeerId(record: BuyerConversationSummary): string | null {
   const model = record.lastModel || record.pinnedModel;
-  return model?.split('@')[0]?.toLowerCase() || null;
+  const at = model?.indexOf('@') ?? -1;
+  return at > 0 ? model!.slice(0, at).toLowerCase() || null : null;
 }
 
 /**

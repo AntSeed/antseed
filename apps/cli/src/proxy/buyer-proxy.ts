@@ -674,7 +674,8 @@ export class BuyerProxy {
   private _stateFileWatching = false
   private _pinnedPeer: string | null
   /**
-   * Route substituted for the `antseed` model alias (`<peerId>@<service>`).
+   * Route substituted for the `antseed` model alias (`<service>` for automatic
+   * peer selection, or `<peerId>@<service>` for an explicit seller pin).
    * Set via `POST /_antseed/route` (the desktop keeps it on the current VPR
    * selection) and persisted in buyer.state.json like the session peer pin.
    */
@@ -932,7 +933,10 @@ export class BuyerProxy {
         this._pinnedPeer = pinnedPeer
       }
       const routedModel = typeof parsed.defaultRoutedModel === 'string' ? parsed.defaultRoutedModel.trim() : ''
-      this._defaultRoutedModel = parsePeerPinnedService(routedModel) ? routedModel : null
+      this._defaultRoutedModel = routedModel.length > 0 && routedModel !== ROUTED_MODEL_ALIAS
+        && (!routedModel.includes('@') || parsePeerPinnedService(routedModel))
+        ? routedModel
+        : null
       log(`Session overrides reloaded: peer=${this._pinnedPeer ?? 'none'} route=${this._defaultRoutedModel ?? 'none'}`)
     } catch {
       // state file unreadable; keep current values
@@ -1544,9 +1548,9 @@ export class BuyerProxy {
         res.end(JSON.stringify({ ok: false, error: 'Invalid JSON body' }))
         return
       }
-      if (model.length > 0 && !parsePeerPinnedService(model)) {
+      if (model === ROUTED_MODEL_ALIAS || (model.includes('@') && !parsePeerPinnedService(model))) {
         res.writeHead(400, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ ok: false, error: 'model must be "<peerId>@<service>" (or empty to clear)' }))
+        res.end(JSON.stringify({ ok: false, error: 'model must be "<service>", "<peerId>@<service>", or empty to clear' }))
         return
       }
       this._defaultRoutedModel = model.length > 0 ? model : null
@@ -1603,9 +1607,9 @@ export class BuyerProxy {
       }
       if ('pinnedModel' in parsed) {
         const pin = typeof parsed.pinnedModel === 'string' ? parsed.pinnedModel.trim() : ''
-        if (pin.length > 0 && !parsePeerPinnedService(pin)) {
+        if (pin === ROUTED_MODEL_ALIAS || (pin.includes('@') && !parsePeerPinnedService(pin))) {
           res.writeHead(400, { 'content-type': 'application/json' })
-          res.end(JSON.stringify({ ok: false, error: 'pinnedModel must be "<peerId>@<service>" (or empty to clear)' }))
+          res.end(JSON.stringify({ ok: false, error: 'pinnedModel must be "<service>", "<peerId>@<service>", or empty to clear' }))
           return
         }
         // 'user' marks a seller the user chose for this specific chat — the
