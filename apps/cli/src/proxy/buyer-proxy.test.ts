@@ -1126,6 +1126,28 @@ function makeNetworkModelPeers(): PeerInfo[] {
       services: { 'qwen3-coder': { inputUsdPerMillion: 3, outputUsdPerMillion: 4 } },
     },
   }
+  textPeer.providerServiceApiProtocols = {
+    openai: { services: { 'qwen3-coder': ['openai-responses'] } },
+  }
+  textPeer.providerServiceCapabilities = {
+    openai: {
+      services: {
+        'qwen3-coder': {
+          contextWindow: 128_000,
+          maxOutputTokens: 32_000,
+          inputs: ['text', 'image'],
+          outputs: ['text'],
+          reasoning: true,
+          toolUse: true,
+          structuredOutput: true,
+          supportedParameters: ['temperature', 'tools'],
+        },
+      },
+    },
+  }
+  textPeer.providerServiceCategories = {
+    openai: { services: { 'qwen3-coder': ['chat', 'reasoning'] } },
+  }
   const imagePeer = makePeer('b', ['openai'])
   imagePeer.providerServiceApiProtocols = {
     openai: { services: { 'flux-1-schnell': ['openai-images'] } },
@@ -1164,6 +1186,23 @@ test('GET /v1/models is answered locally with the network-wide model list', asyn
   assert.equal(flux.peers[0]?.peerId, peers[1]?.peerId)
   const qwen = body.data[2]
   assert.equal(qwen.type, 'text')
+  assert.deepEqual(qwen.supported_protocols, ['openai-responses'])
+  assert.equal(qwen.context_length, 128_000)
+  assert.equal(qwen.max_output_tokens, 32_000)
+  assert.deepEqual(qwen.architecture, {
+    input_modalities: ['image', 'text'],
+    output_modalities: ['text'],
+  })
+  assert.deepEqual(qwen.capabilities, {
+    reasoning: true,
+    tool_use: true,
+    structured_output: true,
+  })
+  assert.deepEqual(qwen.supported_parameters, ['temperature', 'tools'])
+  assert.equal(qwen.capability_coverage.context_length, 1)
+  assert.equal(qwen.peers[0]?.protocol, 'openai-responses')
+  assert.deepEqual(qwen.peers[0]?.categories, ['chat', 'reasoning'])
+  assert.equal(qwen.peers[0]?.capabilities?.contextWindow, 128_000)
   assert.equal(qwen.peers[0]?.inputUsdPerMillion, 3)
   assert.equal(forwarded, 0)
 })
@@ -1188,7 +1227,10 @@ test('GET /v1/models/:id looks up a single model across the network', async () =
 
   const hit = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/v1/models/QWEN3-coder' }))
   assert.equal(hit.statusCode, 200)
-  assert.equal(JSON.parse(hit.body).id, 'qwen3-coder')
+  const hitBody = JSON.parse(hit.body)
+  assert.equal(hitBody.id, 'qwen3-coder')
+  assert.equal(hitBody.context_length, 128_000)
+  assert.equal(hitBody.peers[0]?.capabilities?.toolUse, true)
 
   const hitWithIgnoredType = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/v1/models/QWEN3-coder?type=audio' }))
   assert.equal(hitWithIgnoredType.statusCode, 200)

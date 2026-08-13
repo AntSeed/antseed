@@ -5,7 +5,12 @@
 // (and their pricing) listed under `peers`. Each peer retains its actual
 // advertised `serviceId`, which callers use to pin `<peerId>@<serviceId>`.
 
-import { buildNetworkServiceOffers, type PeerInfo } from '@antseed/node'
+import {
+  buildNetworkServiceOffers,
+  type CatalogServiceCapabilities,
+  type CatalogServiceProtocol,
+  type PeerInfo,
+} from '@antseed/node'
 import { canonicalModelKey } from '@antseed/node/model-identity'
 
 export type NetworkModelType = 'text' | 'image'
@@ -15,8 +20,11 @@ export type NetworkModelPeerOffer = {
   displayName?: string
   provider: string
   serviceId: string
+  protocol: CatalogServiceProtocol | null
   protocols: string[]
   type: NetworkModelType
+  capabilities?: CatalogServiceCapabilities
+  categories?: string[]
   reputationScore: number | null
   onChainTrustScore: number | null
   onChainReputationScore: number | null
@@ -27,6 +35,18 @@ export type NetworkModelPeerOffer = {
   maxImageUsdPerImage?: number
 }
 
+export type NetworkModelCapabilityCoverage = {
+  total_offers: number
+  context_length: number
+  max_output_tokens: number
+  input_modalities: number
+  output_modalities: number
+  reasoning: number
+  tool_use: number
+  structured_output: number
+  supported_parameters: number
+}
+
 export type NetworkModelEntry = {
   id: string
   aliases: string[]
@@ -34,6 +54,20 @@ export type NetworkModelEntry = {
   created: number
   owned_by: 'antseed'
   type: NetworkModelType
+  supported_protocols: string[]
+  context_length?: number
+  max_output_tokens?: number
+  architecture?: {
+    input_modalities?: string[]
+    output_modalities?: string[]
+  }
+  capabilities?: {
+    reasoning?: boolean
+    tool_use?: boolean
+    structured_output?: boolean
+  }
+  supported_parameters?: string[]
+  capability_coverage: NetworkModelCapabilityCoverage
   peers: NetworkModelPeerOffer[]
 }
 
@@ -49,6 +83,77 @@ function normalizedModelAlias(serviceId: string): string {
 function desktopPeerReputationScore(peer: PeerInfo): number | null {
   const score = peer.onChainTrustScore ?? peer.onChainReputationScore
   return typeof score === 'number' && Number.isFinite(score) ? score : null
+}
+
+function countReported<T>(values: Array<T | undefined>): number {
+  return values.filter((value) => value !== undefined).length
+}
+
+function guaranteedMinimum(values: Array<number | undefined>): number | undefined {
+  return values.every((value) => value !== undefined) ? Math.min(...values as number[]) : undefined
+}
+
+function guaranteedBoolean(values: Array<boolean | undefined>): boolean | undefined {
+  return values.every((value) => value !== undefined) ? values.every(Boolean) : undefined
+}
+
+function guaranteedIntersection(values: Array<string[] | undefined>): string[] | undefined {
+  if (!values.every((value) => value !== undefined)) return undefined
+  const [first = [], ...rest] = values as string[][]
+  return [...new Set(first)].filter((value) => rest.every((items) => items.includes(value))).sort((a, b) => a.localeCompare(b))
+}
+
+function aggregateModelCapabilities(entry: NetworkModelEntry): void {
+  const capabilities = entry.peers.map((peer) => peer.capabilities)
+  const contextWindows = capabilities.map((value) => value?.contextWindow)
+  const maxOutputTokens = capabilities.map((value) => value?.maxOutputTokens)
+  const inputModalities = capabilities.map((value) => value?.inputs)
+  const outputModalities = capabilities.map((value) => value?.outputs)
+  const reasoning = capabilities.map((value) => value?.reasoning)
+  const toolUse = capabilities.map((value) => value?.toolUse)
+  const structuredOutput = capabilities.map((value) => value?.structuredOutput)
+  const supportedParameters = capabilities.map((value) => value?.supportedParameters)
+
+  entry.supported_protocols = [...new Set(entry.peers.flatMap((peer) => [peer.protocol, ...peer.protocols]))]
+    .filter((protocol): protocol is string => Boolean(protocol))
+    .sort((a, b) => a.localeCompare(b))
+  entry.capability_coverage = {
+    total_offers: entry.peers.length,
+    context_length: countReported(contextWindows),
+    max_output_tokens: countReported(maxOutputTokens),
+    input_modalities: countReported(inputModalities),
+    output_modalities: countReported(outputModalities),
+    reasoning: countReported(reasoning),
+    tool_use: countReported(toolUse),
+    structured_output: countReported(structuredOutput),
+    supported_parameters: countReported(supportedParameters),
+  }
+
+  const contextLength = guaranteedMinimum(contextWindows)
+  const maxOutput = guaranteedMinimum(maxOutputTokens)
+  const inputs = guaranteedIntersection(inputModalities)
+  const outputs = guaranteedIntersection(outputModalities)
+  const guaranteedReasoning = guaranteedBoolean(reasoning)
+  const guaranteedToolUse = guaranteedBoolean(toolUse)
+  const guaranteedStructuredOutput = guaranteedBoolean(structuredOutput)
+  const parameters = guaranteedIntersection(supportedParameters)
+
+  if (contextLength !== undefined) entry.context_length = contextLength
+  if (maxOutput !== undefined) entry.max_output_tokens = maxOutput
+  if (inputs !== undefined || outputs !== undefined) {
+    entry.architecture = {
+      ...(inputs !== undefined ? { input_modalities: inputs } : {}),
+      ...(outputs !== undefined ? { output_modalities: outputs } : {}),
+    }
+  }
+  if (guaranteedReasoning !== undefined || guaranteedToolUse !== undefined || guaranteedStructuredOutput !== undefined) {
+    entry.capabilities = {
+      ...(guaranteedReasoning !== undefined ? { reasoning: guaranteedReasoning } : {}),
+      ...(guaranteedToolUse !== undefined ? { tool_use: guaranteedToolUse } : {}),
+      ...(guaranteedStructuredOutput !== undefined ? { structured_output: guaranteedStructuredOutput } : {}),
+    }
+  }
+  if (parameters !== undefined) entry.supported_parameters = parameters
 }
 
 /** Maps a `?type=` query value to a filter; absent/empty means "all". */
@@ -86,6 +191,18 @@ export function buildNetworkModels(peers: PeerInfo[], nowMs: number): NetworkMod
         created,
         owned_by: 'antseed',
         type: offer.type,
+        supported_protocols: [],
+        capability_coverage: {
+          total_offers: 0,
+          context_length: 0,
+          max_output_tokens: 0,
+          input_modalities: 0,
+          output_modalities: 0,
+          reasoning: 0,
+          tool_use: 0,
+          structured_output: 0,
+          supported_parameters: 0,
+        },
         peers: [],
       }
       byModelKey.set(key, entry)
@@ -98,8 +215,11 @@ export function buildNetworkModels(peers: PeerInfo[], nowMs: number): NetworkMod
       ...(offer.displayName ? { displayName: offer.displayName } : {}),
       provider: offer.provider,
       serviceId: offer.serviceId,
+      protocol: offer.protocol,
       protocols: offer.protocols,
       type: offer.type,
+      ...(offer.capabilities ? { capabilities: offer.capabilities } : {}),
+      ...(offer.categories ? { categories: offer.categories } : {}),
       reputationScore: reputationByPeerId.get(offer.peerId) ?? null,
       onChainTrustScore: peer?.onChainTrustScore ?? null,
       onChainReputationScore: peer?.onChainReputationScore ?? null,
@@ -115,6 +235,7 @@ export function buildNetworkModels(peers: PeerInfo[], nowMs: number): NetworkMod
   for (const entry of entries) {
     entry.aliases = [...new Set(entry.aliases.filter(Boolean))].sort((a, b) => a.localeCompare(b))
     entry.peers.sort((a, b) => (b.reputationScore ?? -1) - (a.reputationScore ?? -1))
+    aggregateModelCapabilities(entry)
   }
   entries.sort((a, b) => a.id.localeCompare(b.id))
   return entries

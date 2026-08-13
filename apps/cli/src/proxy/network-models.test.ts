@@ -202,6 +202,119 @@ test('service pricing overrides provider defaults', () => {
   assert.equal(offer.displayName, 'Text Seller')
 })
 
+test('exposes peer capabilities and conservative model-level guarantees', () => {
+  const first = makePeer({
+    peerId: '4'.repeat(40),
+    providerServiceApiProtocols: {
+      openai: { services: { 'gpt-capable': ['openai-responses'] } },
+    },
+    providerServiceCapabilities: {
+      openai: {
+        services: {
+          'gpt-capable': {
+            contextWindow: 200_000,
+            maxOutputTokens: 64_000,
+            inputs: ['text', 'image'],
+            outputs: ['text'],
+            reasoning: true,
+            toolUse: true,
+            structuredOutput: true,
+            supportedParameters: ['temperature', 'tools', 'response_format'],
+          },
+        },
+      },
+    },
+    providerServiceCategories: {
+      openai: { services: { 'gpt-capable': ['chat', 'reasoning'] } },
+    },
+  })
+  const second = makePeer({
+    peerId: '5'.repeat(40),
+    providerServiceApiProtocols: {
+      openai: { services: { 'gpt-capable': ['openai-chat-completions'] } },
+    },
+    providerServiceCapabilities: {
+      openai: {
+        services: {
+          'gpt-capable': {
+            contextWindow: 128_000,
+            maxOutputTokens: 32_000,
+            inputs: ['text'],
+            outputs: ['text'],
+            reasoning: false,
+            toolUse: true,
+            structuredOutput: false,
+            supportedParameters: ['tools', 'top_p', 'temperature'],
+          },
+        },
+      },
+    },
+  })
+
+  const model = buildNetworkModels([first, second], NOW_MS)[0]
+  assert.ok(model)
+  assert.deepEqual(model.supported_protocols, ['openai-chat-completions', 'openai-responses'])
+  assert.equal(model.context_length, 128_000)
+  assert.equal(model.max_output_tokens, 32_000)
+  assert.deepEqual(model.architecture, {
+    input_modalities: ['text'],
+    output_modalities: ['text'],
+  })
+  assert.deepEqual(model.capabilities, {
+    reasoning: false,
+    tool_use: true,
+    structured_output: false,
+  })
+  assert.deepEqual(model.supported_parameters, ['temperature', 'tools'])
+  assert.deepEqual(model.capability_coverage, {
+    total_offers: 2,
+    context_length: 2,
+    max_output_tokens: 2,
+    input_modalities: 2,
+    output_modalities: 2,
+    reasoning: 2,
+    tool_use: 2,
+    structured_output: 2,
+    supported_parameters: 2,
+  })
+  assert.equal(model.peers[0]?.protocol, 'openai-responses')
+  assert.deepEqual(model.peers[0]?.categories, ['chat', 'reasoning'])
+  assert.equal(model.peers[0]?.capabilities?.contextWindow, 200_000)
+})
+
+test('does not claim model-level guarantees when any offer omits a capability', () => {
+  const reported = makePeer({
+    peerId: '6'.repeat(40),
+    providerServiceCapabilities: {
+      openai: {
+        services: {
+          'partially-described': {
+            contextWindow: 128_000,
+            inputs: ['text', 'image'],
+            toolUse: true,
+          },
+        },
+      },
+    },
+  })
+  const unknown = makePeer({
+    peerId: '7'.repeat(40),
+    providerServiceApiProtocols: {
+      openai: { services: { 'partially-described': ['openai-chat-completions'] } },
+    },
+  })
+
+  const model = buildNetworkModels([reported, unknown], NOW_MS)[0]
+  assert.ok(model)
+  assert.equal(model.context_length, undefined)
+  assert.equal(model.architecture, undefined)
+  assert.equal(model.capabilities, undefined)
+  assert.equal(model.supported_parameters, undefined)
+  assert.equal(model.capability_coverage.context_length, 1)
+  assert.equal(model.capability_coverage.input_modalities, 1)
+  assert.equal(model.capability_coverage.tool_use, 1)
+})
+
 test('image models are detected via protocol or capability outputs', () => {
   const models = buildNetworkModels([textSeller, imageSeller, mixedSeller], NOW_MS)
   const flux = models.find((model) => model.id === 'flux-1-schnell')
