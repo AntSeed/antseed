@@ -21,6 +21,8 @@ export type NetworkServiceCatalogPeer = {
   providers?: string[];
   services?: string[];
   reputationScore?: number;
+  onChainTrustScore?: number | null;
+  onChainReputationScore?: number | null;
   providerServiceApiProtocols?: Record<string, { services: Record<string, string[]> }>;
   providerServiceCapabilities?: Record<string, { services: Record<string, CatalogServiceCapabilities> }>;
   providerServiceUnitBillingModels?: Record<string, {

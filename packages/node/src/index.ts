@@ -251,6 +251,13 @@ export { ANTSEED_ATTEST_PATH } from './interfaces/plugin.js'
 // Reputation
 export { UptimeTracker } from './reputation/uptime-tracker.js';
 export {
+  MISSING_CACHED_INPUT_PRICE_REPUTATION_MULTIPLIER,
+  compareEffectiveModelReputation,
+  effectiveModelReputationScore,
+  normalizedModelReputationScore,
+  type ModelReputationSource,
+} from './reputation/model-reputation.js';
+export {
   computeOnChainTrust,
   computeOnChainTrustBreakdown,
   buildSybilContext,

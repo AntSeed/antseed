@@ -1,10 +1,13 @@
 import {
   buildNetworkServiceOffers,
+  effectiveModelReputationScore,
+  normalizedModelReputationScore,
   selectLowestPricedCanonicalOffers,
   type CatalogServiceCapabilities,
   type CatalogServiceProtocol,
   type NetworkServiceCatalogPeer,
 } from '@antseed/node';
+import { canonicalModelKey } from '@antseed/node/model-identity';
 
 export type ChatServiceProtocol = Exclude<CatalogServiceProtocol, 'openai-images'>;
 export type { CatalogServiceCapabilities, CatalogServiceProtocol };
@@ -24,6 +27,7 @@ export type ChatServiceCatalogEntry = {
   count: number;
   peerId?: string;
   peerLabel?: string;
+  effectiveReputationScore?: number | null;
   inputUsdPerMillion?: number;
   outputUsdPerMillion?: number;
   cachedInputUsdPerMillion?: number;
@@ -55,9 +59,20 @@ export function sortChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[]
 }
 
 export function buildChatServiceCatalogFromPeers(peers: NetworkPeerAddress[]): ChatServiceCatalogEntry[] {
-  const entries = selectLowestPricedCanonicalOffers(buildNetworkServiceOffers(peers))
+  const selectedOffers = selectLowestPricedCanonicalOffers(buildNetworkServiceOffers(peers));
+  const peerById = new Map(peers.map((peer) => [peer.peerId, peer]));
+  const cachedPricingByModel = new Map<string, boolean>();
+  for (const offer of selectedOffers) {
+    const key = canonicalModelKey(offer.serviceId);
+    if (!key) continue;
+    cachedPricingByModel.set(key, (cachedPricingByModel.get(key) ?? false) || offer.cachedInputUsdPerMillion !== undefined);
+  }
+  const entries = selectedOffers
     .filter((offer) => offer.protocol !== null)
     .map((offer): ChatServiceCatalogEntry => {
+      const peer = peerById.get(offer.peerId);
+      const modelKey = canonicalModelKey(offer.serviceId);
+      const reputation = normalizedModelReputationScore(peer ?? {});
       const peerLabel = offer.displayName
         ? `${offer.displayName} (${offer.peerId.slice(0, 8)})`
         : `${offer.peerId.slice(0, 12)}...`;
@@ -70,6 +85,11 @@ export function buildChatServiceCatalogFromPeers(peers: NetworkPeerAddress[]): C
         count: 1,
         peerId: offer.peerId,
         peerLabel,
+        effectiveReputationScore: effectiveModelReputationScore(
+          reputation,
+          offer.cachedInputUsdPerMillion !== undefined,
+          modelKey ? cachedPricingByModel.get(modelKey) === true : false,
+        ),
         ...(offer.inputUsdPerMillion !== undefined ? { inputUsdPerMillion: offer.inputUsdPerMillion } : {}),
         ...(offer.outputUsdPerMillion !== undefined ? { outputUsdPerMillion: offer.outputUsdPerMillion } : {}),
         ...(offer.cachedInputUsdPerMillion !== undefined ? { cachedInputUsdPerMillion: offer.cachedInputUsdPerMillion } : {}),

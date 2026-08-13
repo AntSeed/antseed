@@ -3,7 +3,7 @@ import { test } from 'vitest';
 
 import type { DiscoverRow, VprRouteSelection } from '../../core/state';
 import { modelPinKey } from '../routing/model-pins.js';
-import { pinnedSellerLabel, pinnedSellerLabels } from './view-models.js';
+import { compareModelRoutesByReputation, pinnedSellerLabel, pinnedSellerLabels } from './view-models.js';
 
 function discoverRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
   const peerId = overrides.peerId ?? 'p1';
@@ -43,6 +43,7 @@ function discoverRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
     onChainLastSettledAt: 0,
     onChainReputationScore: null,
     onChainTrustScore: 75,
+    effectiveReputationScore: 75,
     onChainSybilRisk: null,
     onChainSybilFlags: [],
     networkRequests: null,
@@ -116,4 +117,18 @@ test('models without a pin get no label', () => {
   const labels = pinnedSellerLabels(rows, {}, [{ provider: 'openai', serviceId: 'gpt-test' }]);
 
   assert.equal(labels.size, 0);
+});
+
+test('seller ordering matches effective reputation instead of raw trust', () => {
+  const routes = [
+    discoverRow({ peerId: 'flash', onChainTrustScore: 10_432, onChainReputationScore: 100, effectiveReputationScore: 50 }),
+    discoverRow({ peerId: 'apex', onChainTrustScore: 895, onChainReputationScore: 78.4, effectiveReputationScore: 78.4 }),
+    discoverRow({ peerId: 'venice', onChainTrustScore: 5_428, onChainReputationScore: 98.3, effectiveReputationScore: 98.3 }),
+  ];
+
+  assert.deepEqual(routes.sort(compareModelRoutesByReputation).map((route) => route.peerId), [
+    'venice',
+    'apex',
+    'flash',
+  ]);
 });

@@ -3,10 +3,9 @@
 import type { DiscoverRow } from '../../core/state';
 import { formatUsdShort } from '../../core/format';
 
-/** Trust scores are 0-100 internally; the UI shows them on the Figma 10-point
- * reputation scale ("9.8"). */
+/** Effective model reputation is 0-100; the UI shows it on a 10-point scale. */
 export function sellerReputationLabel(route: DiscoverRow): string {
-  const score = route.onChainTrustScore ?? route.onChainReputationScore;
+  const score = route.effectiveReputationScore ?? route.onChainReputationScore;
   if (score === null) return '-';
   return reputationScaleLabel(score);
 }

@@ -2,7 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Copy01Icon, PreferenceHorizontalIcon, StarIcon, Tick02Icon } from '@hugeicons/core-free-icons';
 import { chooseBestVprRoute } from '../../../modules/routing/select';
-import { routesForSelectedModel } from '../../../modules/catalog/view-models';
+import { compareModelRoutesByReputation, routesForSelectedModel } from '../../../modules/catalog/view-models';
 import { findCatalogEntry } from '../../../modules/catalog/model-catalog';
 import { modelCapabilitySummary, peerCapabilitySummary } from '../../../modules/catalog/model-capabilities';
 import { buildImageModelSkillPrompt } from '../../../modules/chat/image-model-instructions';
@@ -57,11 +57,7 @@ export function VprModelView({ onSelectView }: Props) {
   const entry = model ? findCatalogEntry(snap.catalog, model.provider, model.serviceId) : null;
   const routes = useMemo(() => {
     const list = routesForSelectedModel(snap.discoverRows, model);
-    return [...list].sort((a, b) => {
-      const scoreA = a.onChainTrustScore ?? a.onChainReputationScore ?? -1;
-      const scoreB = b.onChainTrustScore ?? b.onChainReputationScore ?? -1;
-      return scoreB - scoreA;
-    });
+    return [...list].sort(compareModelRoutesByReputation);
   }, [model, snap.discoverRows]);
   const bestRoute = useMemo(() => chooseBestVprRoute(routes, snap.preferences), [routes, snap.preferences]);
 
@@ -78,10 +74,7 @@ export function VprModelView({ onSelectView }: Props) {
   // The active route (auto-chosen or pinned) leads the list with a checkmark.
   const activePeerId = autoSelect ? bestRoute?.peerId : pinnedPeerId;
   const selectedRoute = routes.find((route) => route.peerId === activePeerId) ?? bestRoute;
-  const sortedRoutes = useMemo(() => {
-    const active = routes.filter((route) => route.peerId === activePeerId);
-    return [...active, ...routes.filter((route) => !active.includes(route))];
-  }, [activePeerId, routes]);
+  const sortedRoutes = routes;
 
   if (!model || !entry) {
     return (

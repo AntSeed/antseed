@@ -82,6 +82,55 @@ test('buildChatServiceCatalogFromPeers keeps one cheapest canonical offer per pe
   assert.equal(catalog[0]?.outputUsdPerMillion, 0.95);
 });
 
+test('buildChatServiceCatalogFromPeers applies the endpoint model reputation penalty', () => {
+  const completePeerId = 'f'.repeat(40);
+  const incompletePeerId = '9'.repeat(40);
+  const catalog = buildChatServiceCatalogFromPeers([
+    {
+      peerId: completePeerId,
+      host: '127.0.0.1',
+      port: 6882,
+      onChainTrustScore: 895,
+      onChainReputationScore: 78,
+      providerPricing: {
+        openai: {
+          services: {
+            'claude-opus-4-8': {
+              inputUsdPerMillion: 1.5,
+              outputUsdPerMillion: 7.5,
+              cachedInputUsdPerMillion: 0.25,
+            },
+          },
+        },
+      },
+      providerServiceApiProtocols: {
+        openai: { services: { 'claude-opus-4-8': ['openai-chat-completions'] } },
+      },
+    },
+    {
+      peerId: incompletePeerId,
+      host: '127.0.0.1',
+      port: 6882,
+      onChainTrustScore: 10_000,
+      onChainReputationScore: 100,
+      providerPricing: {
+        openai: {
+          services: {
+            'opus-4.8': { inputUsdPerMillion: 1, outputUsdPerMillion: 5 },
+          },
+        },
+      },
+      providerServiceApiProtocols: {
+        openai: { services: { 'opus-4.8': ['openai-chat-completions'] } },
+      },
+    },
+  ]);
+
+  const byPeer = new Map(catalog.map((entry) => [entry.peerId, entry]));
+  assert.equal(byPeer.get(completePeerId)?.effectiveReputationScore, 78);
+  assert.equal(byPeer.get(incompletePeerId)?.effectiveReputationScore, 50);
+});
+
 test('buildChatServiceCatalogFromPeers keeps image protocols and peer-specific capabilities', () => {
   const peerId = 'c'.repeat(40);
   const catalog = buildChatServiceCatalogFromPeers([{

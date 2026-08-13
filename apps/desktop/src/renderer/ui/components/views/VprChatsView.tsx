@@ -18,7 +18,11 @@ import {
   selectFavoriteVprCatalog,
   selectRecommendedVprCatalog,
 } from '../../../modules/catalog/recommended';
-import { resolvePeerForModel, routesForSelectedModel } from '../../../modules/catalog/view-models';
+import {
+  compareModelRoutesByReputation,
+  resolvePeerForModel,
+  routesForSelectedModel,
+} from '../../../modules/catalog/view-models';
 import { shortPeerId } from '../../../modules/routing/tools';
 import { isFreeRoute, sellerMetaLabel, sellerReputationLabel } from '../../../modules/catalog/seller-format';
 import { buyerConversationsResource, systemProxyResource } from '../../../modules/app/vpr-resources';
@@ -156,11 +160,7 @@ export function VprChatsView({ onSelectView: _onSelectView }: Props) {
   const configEntry = configModel ? findCatalogEntry(snap.catalog, configModel.provider, configModel.serviceId) : null;
   const configRoutes = useMemo(() => {
     if (!configModel) return [];
-    return [...routesForSelectedModel(snap.discoverRows, configModel)].sort((a, b) => {
-      const scoreA = a.onChainTrustScore ?? a.onChainReputationScore ?? -1;
-      const scoreB = b.onChainTrustScore ?? b.onChainReputationScore ?? -1;
-      return scoreB - scoreA;
-    });
+    return [...routesForSelectedModel(snap.discoverRows, configModel)].sort(compareModelRoutesByReputation);
   }, [configModel, snap.discoverRows]);
   // The chat's current peer counts as active only on its own model's page.
   const configIsChatModel = Boolean(selected && configModel

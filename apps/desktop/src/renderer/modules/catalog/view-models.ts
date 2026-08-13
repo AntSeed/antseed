@@ -24,6 +24,12 @@ export type VprSelectedRouteModel = {
   serviceId?: string | null;
 } | null | undefined;
 
+export function compareModelRoutesByReputation(a: DiscoverRow, b: DiscoverRow): number {
+  const scoreA = a.effectiveReputationScore ?? a.onChainReputationScore ?? -1;
+  const scoreB = b.effectiveReputationScore ?? b.onChainReputationScore ?? -1;
+  return scoreB - scoreA || a.peerId.localeCompare(b.peerId);
+}
+
 function normalized(value: string): string {
   return value.trim().toLowerCase();
 }

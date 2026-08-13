@@ -1,0 +1,30 @@
+import { describe, expect, it } from 'vitest';
+import {
+  compareEffectiveModelReputation,
+  effectiveModelReputationScore,
+  normalizedModelReputationScore,
+} from '../src/reputation/model-reputation.js';
+
+describe('model reputation', () => {
+  it('prefers normalized on-chain reputation over unbounded raw trust', () => {
+    expect(normalizedModelReputationScore({
+      onChainTrustScore: 10_000,
+      onChainReputationScore: 78.4,
+    })).toBe(78.4);
+  });
+
+  it('penalizes missing cached-input pricing only when the model supports it', () => {
+    expect(effectiveModelReputationScore(100, false, true)).toBe(50);
+    expect(effectiveModelReputationScore(100, false, false)).toBe(100);
+  });
+
+  it('sorts by effective model reputation', () => {
+    const offers = [
+      { peerId: 'flash', effectiveReputationScore: 50 },
+      { peerId: 'venice', effectiveReputationScore: 98.3 },
+      { peerId: 'apex', effectiveReputationScore: 78.4 },
+    ];
+    expect(offers.sort(compareEffectiveModelReputation).map((offer) => offer.peerId))
+      .toEqual(['venice', 'apex', 'flash']);
+  });
+});

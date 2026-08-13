@@ -74,6 +74,7 @@ export type DiscoverRowEntry = {
   onChainLastSettledAt: number;
   onChainReputationScore: number | null;
   onChainTrustScore: number | null;
+  effectiveReputationScore: number | null;
   onChainSybilRisk: number | null;
   onChainSybilFlags: string[];
   networkRequests: string | null;
@@ -482,6 +483,7 @@ export async function buildDiscoverRows(
       onChainLastSettledAt,
       onChainReputationScore,
       onChainTrustScore,
+      effectiveReputationScore: entry.effectiveReputationScore ?? onChainReputationScore,
       onChainSybilRisk,
       onChainSybilFlags,
       networkRequests,

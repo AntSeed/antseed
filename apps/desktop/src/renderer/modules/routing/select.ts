@@ -87,7 +87,10 @@ export function scoreVprRoute(
     reasons.push('trust score below minimum');
   }
 
-  const trustScore = row.onChainTrustScore ?? row.onChainReputationScore ?? 0;
+  const trustScore = row.effectiveReputationScore
+    ?? row.onChainReputationScore
+    ?? row.onChainTrustScore
+    ?? 0;
   score += Math.min(trustScore, 100) / 5;
 
   const total = totalRowPrice(row);

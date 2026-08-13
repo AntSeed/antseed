@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { PeerInfo } from '@antseed/node'
-import { buildNetworkModels, parseModelTypeFilter } from './network-models.js'
+import { buildNetworkModels, normalizedModelReputationScore, parseModelTypeFilter } from './network-models.js'
 
 const NOW_MS = 1_700_000_000_000
 
@@ -108,7 +108,7 @@ test('aggregates one entry per model id across peers, case-insensitively', () =>
   assert.deepEqual(qwen.peers.map((peer) => peer.serviceId), ['QWEN3-Coder', 'qwen3-coder'])
 })
 
-test('sorts by on-chain trust before on-chain reputation like desktop VPR', () => {
+test('sorts by normalized on-chain reputation like desktop VPR', () => {
   const reputationOnlySeller = makePeer({
     peerId: 'f'.repeat(40),
     onChainReputationScore: 95,
@@ -279,7 +279,10 @@ test('keeps reputation ordering when no offer reports cached-input pricing', () 
 
   const model = buildNetworkModels([lower, higher], NOW_MS)[0]
   assert.deepEqual(model?.peers.map((peer) => peer.peerId), [higher.peerId, lower.peerId])
-  assert.deepEqual(model?.peers.map((peer) => peer.effectiveReputationScore), [100, 20])
+  assert.deepEqual(
+    model?.peers.map((peer) => peer.effectiveReputationScore),
+    [normalizedModelReputationScore(higher, NOW_MS), normalizedModelReputationScore(lower, NOW_MS)],
+  )
 })
 
 test('merges conservative family aliases while preserving advertised service ids', () => {
