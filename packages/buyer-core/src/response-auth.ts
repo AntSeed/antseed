@@ -106,11 +106,19 @@ export function verifyResponseAuth(
 }
 
 export function hashRequest(request: SerializedHttpRequest): string {
-  return keccak256(encodeHttpRequest(request));
+  return keccak256(responseAuthRequestPreimage(request));
 }
 
 export function hashResponse(response: SerializedHttpResponse): string {
-  return keccak256(encodeHttpResponse(stripStreamingHeader(response)));
+  return keccak256(responseAuthResponsePreimage(response));
+}
+
+export function responseAuthRequestPreimage(request: SerializedHttpRequest): Uint8Array {
+  return encodeHttpRequest(request);
+}
+
+export function responseAuthResponsePreimage(response: SerializedHttpResponse): Uint8Array {
+  return encodeHttpResponse(stripStreamingHeader(response));
 }
 
 function buildResponseAuthSigningBytes(payload: Omit<ResponseAuthPayload, 'signature'>): Uint8Array {

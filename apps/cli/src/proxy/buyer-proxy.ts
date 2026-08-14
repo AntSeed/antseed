@@ -1985,6 +1985,7 @@ export class BuyerProxy {
     const {
       'x-antseed-pin-peer': _pinPeer,
       'x-antseed-prefer-peer': _preferPeer,
+      'x-antseed-capture-response-auth-preimages': captureResponseAuthPreimages,
       ...headersForPeer
     } = serializedReq.headers
     let requestForPeer: SerializedHttpRequest = {
@@ -2093,7 +2094,10 @@ export class BuyerProxy {
               }
             }
           },
-        }, { signal: requestSignal })
+        }, {
+          signal: requestSignal,
+          captureResponseAuthPreimages: captureResponseAuthPreimages === '1',
+        })
 
         let responseForClient = response
         if (!streamed && adaptResponse) {
@@ -2169,7 +2173,10 @@ export class BuyerProxy {
         res.end(Buffer.from(responseForClient.body))
         return { done: true }
       } else {
-        const upstreamResponse = await this._node.sendRequest(selectedPeer, requestForPeer, { signal: requestSignal })
+        const upstreamResponse = await this._node.sendRequest(selectedPeer, requestForPeer, {
+          signal: requestSignal,
+          captureResponseAuthPreimages: captureResponseAuthPreimages === '1',
+        })
         if (upstreamResponse.statusCode >= 400 && !adaptResponse) {
           log(`Upstream raw error detail: ${summarizeErrorResponse(upstreamResponse)}`)
         }

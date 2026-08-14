@@ -651,6 +651,64 @@ test('non-stream transformed responses requests force upstream stream without st
   assert.equal(body.content?.[0]?.text, 'hi')
 })
 
+test('verifier preimage capture header stays local and enables exact capture', async () => {
+  const peer = makePeer('a', ['openai'])
+  const proxy = makeBuyerProxyWithPeers([peer], [peer])
+  let capturedHeaders: Record<string, string> | null = null
+  let capturedCaptureFlag: boolean | undefined
+  ;(proxy as any)._node.sendRequest = async (
+    _peer: PeerInfo,
+    request: { requestId: string; headers: Record<string, string> },
+    options: { captureResponseAuthPreimages?: boolean },
+  ) => {
+    capturedHeaders = request.headers
+    capturedCaptureFlag = options.captureResponseAuthPreimages
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{"choices":[{"message":{"content":"ok"}}]}'),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    headers: {
+      'x-antseed-pin-peer': peer.peerId,
+      'x-antseed-capture-response-auth-preimages': '1',
+    },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(capturedHeaders?.['x-antseed-capture-response-auth-preimages'], undefined)
+  assert.equal(capturedCaptureFlag, true)
+})
+
+test('ordinary proxy requests leave exact preimage capture disabled', async () => {
+  const peer = makePeer('a', ['openai'])
+  const proxy = makeBuyerProxyWithPeers([peer], [peer])
+  let capturedCaptureFlag: boolean | undefined
+  ;(proxy as any)._node.sendRequest = async (
+    _peer: PeerInfo,
+    request: { requestId: string },
+    options: { captureResponseAuthPreimages?: boolean },
+  ) => {
+    capturedCaptureFlag = options.captureResponseAuthPreimages
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{"choices":[{"message":{"content":"ok"}}]}'),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-antseed-pin-peer': peer.peerId },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(capturedCaptureFlag, false)
+})
+
 test('accept-sse transformed responses requests stream adapted client events without body stream flag', async () => {
   const peer = makePeer('a', ['openai-responses'])
   peer.providerServiceApiProtocols = {
