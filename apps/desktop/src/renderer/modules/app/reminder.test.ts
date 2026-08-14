@@ -191,6 +191,21 @@ test('retrospective value prices matched and unmatched usage', () => {
   assert.equal(blended, 0.7);
 });
 
+test('Claude-family usage matches canonical OpenRouter reference keys', () => {
+  const map: OpenRouterReferenceMap = {
+    fable5: { input: 5, output: 30 },
+  };
+  const value = computeRetrospectiveUsd({
+    services: [{ serviceName: 'claude-fable-5', inputTokens: 1_000_000, outputTokens: 1_000_000 }],
+    totalInputTokens: 1_000_000,
+    totalOutputTokens: 1_000_000,
+    catalog: [catalogEntry({ serviceId: 'fable-5', label: 'Claude Fable 5' })],
+    referenceMap: map,
+  });
+
+  assert.equal(value, 35);
+});
+
 test('prospective value rounds to the nearest fifty cents', () => {
   const result = computeProspectiveUsd([
     catalogEntry({ minInputUsdPerMillion: 7, minOutputUsdPerMillion: 21 }),

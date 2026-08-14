@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildChatServiceCatalogFromNetworkModels } from './service-catalog.js';
+import {
+  buildChatServiceCatalogFromNetworkModels,
+  buildChatServiceCatalogFromPersistedPeers,
+} from './service-catalog.js';
 
 const venicePeerId = '9'.repeat(40);
 const flashPeerId = 'f'.repeat(40);
@@ -93,4 +96,27 @@ test('network models catalog supports image offers and ignores invalid peers', (
   assert.equal(catalog[0]?.protocol, 'openai-images');
   assert.equal(catalog[0]?.minImageUsdPerImage, 0.04);
   assert.equal(catalog[0]?.maxImageUsdPerImage, 0.08);
+});
+
+test('persisted peer catalog keeps stale offers available during cold start', () => {
+  const peerId = 'a'.repeat(40);
+  const catalog = buildChatServiceCatalogFromPersistedPeers({
+    discoveredPeers: [{
+      peerId,
+      displayName: 'Cached Seller',
+      providers: ['openai'],
+      lastSeen: 1,
+      providerServiceApiProtocols: {
+        openai: { services: { 'gpt-5.6-sol': ['openai-chat-completions'] } },
+      },
+      providerPricing: {
+        openai: { services: { 'gpt-5.6-sol': { inputUsdPerMillion: 2, outputUsdPerMillion: 8 } } },
+      },
+    }],
+  });
+
+  assert.equal(catalog.length, 1);
+  assert.equal(catalog[0]?.peerId, peerId);
+  assert.equal(catalog[0]?.id, 'gpt-5.6-sol');
+  assert.equal(catalog[0]?.inputUsdPerMillion, 2);
 });

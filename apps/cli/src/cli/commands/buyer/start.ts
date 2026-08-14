@@ -168,8 +168,13 @@ export async function isCompatibleBuyerProxy(port: number, timeoutMs = 1200): Pr
     const antseedHeaderNames = ['x-antseed-request-id', 'x-antseed-peer-id', 'x-antseed-provider']
     if (antseedHeaderNames.some((header) => response.headers.has(header))) return true
 
-    await response.body?.cancel()
-    return false
+    const body = (await response.text()).toLowerCase()
+    return body.includes('no sellers available on the network')
+      || body.includes('no peers support')
+      || body.includes('p2p request failed')
+      || body.includes('pinned peer')
+      || body.includes('no peer pinned')
+      || body.includes('"no_peer_pinned"')
   } catch {
     return false
   } finally {

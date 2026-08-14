@@ -1,5 +1,5 @@
 import type { DiscoverRow, VprModelCatalogEntry, VprSelectedModel } from '../../core/state';
-import { canonicalModelKey, displayModelLabel, sameCanonicalModel } from './model-identity';
+import { CODING_ONLY_SUFFIX_RE, canonicalModelKey, displayModelLabel, sameCanonicalModel } from './model-identity';
 import { isFreeCatalogEntry, selectRecommendedVprCatalog } from './recommended';
 import { serviceModelKind } from './model-capabilities';
 
@@ -64,6 +64,16 @@ function projectGroupToEntry(group: ModelCatalogGroup): VprModelCatalogEntry {
     if (best === null || route.total < best.total) return route;
     return best;
   }, null);
+  const unrestrictedRows = group.rows.filter((row) => !CODING_ONLY_SUFFIX_RE.test(row.serviceId));
+  const representativeRows = unrestrictedRows.length > 0 ? unrestrictedRows : group.rows;
+  const representativePricedRows = pricedRows.filter(({ row }) => representativeRows.includes(row));
+  const representative = representativePricedRows.reduce<{ row: DiscoverRow; total: number } | null>((best, route) => {
+    if (best === null
+      || route.total < best.total
+      || (route.total === best.total && route.row.serviceId.localeCompare(best.row.serviceId) < 0)
+    ) return route;
+    return best;
+  }, null)?.row ?? representativeRows[0];
   const minTotal = minPrice(pricedRows.map((route) => route.total));
   const maxTotal = maxPrice(pricedRows.map((route) => route.total));
   // Text entries compare sellers on their token total. Image entries may
@@ -77,10 +87,6 @@ function projectGroupToEntry(group: ModelCatalogGroup): VprModelCatalogEntry {
     ? Math.round((1 - minTotal / maxTotal) * 100)
     : null;
 
-  // The entry's provider/serviceId must stay consistent with bestPeerId —
-  // selecting the entry dispatches this exact advertised pair, and the buyer
-  // proxy strictly gates on what the pinned peer actually serves.
-  const representative = bestPricedRoute?.row ?? firstRow;
   const label = preferredGroupLabel(group.rows);
 
   return {
@@ -100,7 +106,7 @@ function projectGroupToEntry(group: ModelCatalogGroup): VprModelCatalogEntry {
     minImageUsdPerImage: minPrice(group.rows.map((row) => row.minImageUsdPerImage)),
     maxImageUsdPerImage: maxPrice(group.rows.map((row) => row.maxImageUsdPerImage)),
     expectedSavingsPct,
-    bestPeerId: bestPricedRoute?.row.peerId ?? firstRow?.peerId ?? null,
+    bestPeerId: representative?.peerId ?? null,
   };
 }
 

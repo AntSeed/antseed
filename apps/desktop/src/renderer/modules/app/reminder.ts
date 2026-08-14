@@ -1,4 +1,4 @@
-import { normalizeModelKey } from '../../../shared/model-key.js';
+import { canonicalModelKey } from '@antseed/node/model-identity';
 import type {
   DesktopBuyerServiceUsage,
   DesktopBridge,
@@ -106,8 +106,8 @@ function referenceForEntry(
   entry: VprModelCatalogEntry,
   referenceMap: OpenRouterReferenceMap,
 ) {
-  return referenceMap[normalizeModelKey(entry.label)]
-    ?? referenceMap[normalizeModelKey(entry.serviceId)]
+  return referenceMap[canonicalModelKey(entry.label)]
+    ?? referenceMap[canonicalModelKey(entry.serviceId)]
     ?? null;
 }
 
@@ -194,7 +194,7 @@ export function computeRetrospectiveUsd({
 
   for (const service of services) {
     if (!service.serviceName) continue;
-    const reference = referenceMap[normalizeModelKey(service.serviceName)];
+    const reference = referenceMap[canonicalModelKey(service.serviceName)];
     if (!reference || (reference.input === null && reference.output === null)) continue;
     const inputTokens = finiteNonNegative(service.inputTokens);
     const outputTokens = finiteNonNegative(service.outputTokens);
@@ -443,7 +443,7 @@ export function initReminderModule({
     counter.inputTokens += finiteNonNegative(usage.inputTokens);
     counter.outputTokens += finiteNonNegative(usage.outputTokens);
     if (usage.service) {
-      const serviceKey = normalizeModelKey(usage.service);
+      const serviceKey = canonicalModelKey(usage.service);
       if (serviceKey) {
         const service = counter.services[serviceKey] ?? { inputTokens: 0, outputTokens: 0 };
         service.inputTokens += finiteNonNegative(usage.inputTokens);

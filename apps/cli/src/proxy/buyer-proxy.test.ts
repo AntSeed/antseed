@@ -491,6 +491,20 @@ test('selectCandidatePeersForRouting prefers a full service over a cheaper codin
   assert.equal(plan.serviceId, 'claude-opus-5')
 })
 
+test('selectCandidatePeersForRouting excludes coding-only-only peers from unrestricted requests', () => {
+  const peer = makePeer('a', ['claude-oauth'])
+  peer.providerServiceApiProtocols = {
+    'claude-oauth': { services: { 'opus-5-coding-only': ['anthropic-messages'] } },
+  }
+
+  const unrestricted = selectCandidatePeersForRouting([peer], 'anthropic-messages', 'opus-5', null)
+  assert.equal(unrestricted.candidatePeers.length, 0)
+
+  const explicit = selectCandidatePeersForRouting([peer], 'anthropic-messages', 'opus-5-coding-only', null)
+  assert.equal(explicit.candidatePeers.length, 1)
+  assert.equal(explicit.routePlanByPeerId.get(peer.peerId)?.serviceId, 'opus-5-coding-only')
+})
+
 test('selectCandidatePeersForRouting can still include peers without service protocol metadata', () => {
   const peerWithoutMetadata = makePeer('a', ['openai'])
   const result = selectCandidatePeersForRouting(
@@ -1002,6 +1016,32 @@ test('pinned proxy request rewrites a canonical alias to the advertised service 
   assert.equal(selectedBody?.['model'], 'gpt-5.6-sol')
 })
 
+test('pinned proxy request dispatches when stale metadata misses the requested model', async () => {
+  const pinnedPeer = makePeer('a', ['openai'])
+  pinnedPeer.providerServiceApiProtocols = {
+    openai: { services: { 'known-model': ['openai-chat-completions'] } },
+  }
+  const proxy = makeBuyerProxyWithPeers([pinnedPeer], [pinnedPeer], permissiveRouter())
+  let selectedBody: Record<string, unknown> | null = null
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: { requestId: string; body: Uint8Array }) => {
+    selectedBody = parseJsonBody(request.body)
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{}'),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-antseed-pin-peer': pinnedPeer.peerId },
+    body: { model: 'new-helper-model', messages: [] },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(selectedBody?.['model'], 'new-helper-model')
+})
+
 test('pinned proxy request reports explicit provider mismatch separately', async () => {
   const pinnedPeer = makePeer('a', ['local-llm'])
   const proxy = makeBuyerProxyWithPeers([pinnedPeer])
@@ -1491,6 +1531,11 @@ test('GET /v1/models/:id looks up a single model across the network', async () =
   const miss = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/v1/models/does-not-exist' }))
   assert.equal(miss.statusCode, 404)
   assert.equal(JSON.parse(miss.body).error.code, 'model_not_found')
+
+  const malformed = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/v1/models/gpt%zz' }))
+  assert.equal(malformed.statusCode, 404)
+  assert.equal(malformed.headers['content-type'], 'application/json')
+  assert.equal(JSON.parse(malformed.body).error.code, 'model_not_found')
 })
 
 test('a buyer-side outage rolls back the cooldowns it caused', async () => {

@@ -13,6 +13,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Fixed network model routing review issues: unrestricted requests no longer select coding-only offers, Auto routes sync unrestricted service IDs, explicit peer pins tolerate stale service metadata, legacy conversations return to model-only routing unless explicitly pinned, legacy proxy reuse works across versions, raw trust fallbacks are normalized, malformed model IDs return JSON 404s, reminder savings use canonical model keys, and Desktop can show its persisted catalog during cold start.
 - Fixed model-only routing for forwardable endpoints without a detectable API protocol, prevented Desktop Auto chat dispatch from bypassing the minimum-reputation gate, and stopped legacy multi-provider peer metadata from assigning every service exclusively to the first provider.
 - Fixed canonical model routing and upgrade compatibility: selected aliases now keep their matching service protocol, pinned aliases are rewritten to the peer's advertised service ID, full services are not displaced by cheaper `coding-only` routes, mixed text/image catalogs remain text-routable, and legacy favorites, seller pins, conversation pins, and stale buyer proxies migrate safely.
 - Desktop model discovery now consumes the buyer proxy's `/v1/models` catalog directly, so canonical model grouping, cheapest duplicate selection, cached-price reputation penalties, capabilities, and peer ordering use the same source of truth as API clients.

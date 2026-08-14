@@ -46,7 +46,7 @@ type CachedSummary = {
 export type AntseedPeerData = { peerId: string; peerLabel?: string; routeMode?: ChatRouteMode };
 
 export function isPersistedPeerBindingPinned(peerData: AntseedPeerData | null): peerData is AntseedPeerData {
-  return Boolean(peerData?.peerId) && peerData?.routeMode !== 'auto';
+  return Boolean(peerData?.peerId) && peerData?.routeMode === 'pinned';
 }
 
 export function projectPeerBinding(peerData: AntseedPeerData | null): Pick<
@@ -58,6 +58,15 @@ export function projectPeerBinding(peerData: AntseedPeerData | null): Pick<
     ...(peerData?.peerLabel ? { peerLabel: peerData.peerLabel } : {}),
     ...(peerData?.routeMode ? { routeMode: peerData.routeMode } : {}),
   };
+}
+
+export function projectPersistedConversationRoute<T extends {
+  peerId?: string;
+  routeMode?: ChatRouteMode;
+}>(conversation: T): T {
+  return conversation.peerId && conversation.routeMode === 'pinned'
+    ? { ...conversation, routeMode: 'pinned' }
+    : { ...conversation, peerId: undefined, routeMode: 'auto' };
 }
 
 export function extractPeerFromEntries(manager: SessionManager): AntseedPeerData | null {

@@ -1,6 +1,12 @@
 import type {
   CatalogServiceCapabilities,
   CatalogServiceProtocol,
+  NetworkServiceCatalogPeer,
+} from '@antseed/node';
+import {
+  buildNetworkServiceOffers,
+  normalizedModelReputationScore,
+  preferredModelDisplayName,
 } from '@antseed/node';
 
 export type ChatServiceProtocol = Exclude<CatalogServiceProtocol, 'openai-images'>;
@@ -143,6 +149,46 @@ export function buildChatServiceCatalogFromNetworkModels(payload: unknown): Chat
     }
   }
   return entries;
+}
+
+/** Build a startup fallback from the persisted peer cache without applying a
+ * freshness cutoff. The live `/v1/models` response replaces this snapshot as
+ * soon as discovery produces current offers. */
+export function buildChatServiceCatalogFromPersistedPeers(payload: unknown): ChatServiceCatalogEntry[] {
+  const root = asRecord(payload);
+  const peers = root && Array.isArray(root.discoveredPeers)
+    ? root.discoveredPeers.filter((peer): peer is NetworkServiceCatalogPeer => {
+      const record = asRecord(peer);
+      return record !== null
+        && typeof record.peerId === 'string'
+        && Array.isArray(record.providers);
+    })
+    : [];
+  const peersById = new Map(peers.map((peer) => [peer.peerId, peer]));
+  return buildNetworkServiceOffers(peers).flatMap((offer) => {
+    if (!offer.protocol) return [];
+    const peer = peersById.get(offer.peerId);
+    const effectiveReputationScore = peer ? normalizedModelReputationScore(peer) : null;
+    return [{
+      id: offer.serviceId,
+      label: preferredModelDisplayName(offer.serviceId),
+      provider: offer.provider,
+      protocol: offer.protocol,
+      ...(offer.capabilities ? { capabilities: offer.capabilities } : {}),
+      count: 1,
+      peerId: offer.peerId,
+      peerLabel: offer.displayName
+        ? `${offer.displayName} (${offer.peerId.slice(0, 8)})`
+        : `${offer.peerId.slice(0, 12)}...`,
+      effectiveReputationScore,
+      ...(offer.inputUsdPerMillion !== undefined ? { inputUsdPerMillion: offer.inputUsdPerMillion } : {}),
+      ...(offer.outputUsdPerMillion !== undefined ? { outputUsdPerMillion: offer.outputUsdPerMillion } : {}),
+      ...(offer.cachedInputUsdPerMillion !== undefined ? { cachedInputUsdPerMillion: offer.cachedInputUsdPerMillion } : {}),
+      ...(offer.minImageUsdPerImage !== undefined ? { minImageUsdPerImage: offer.minImageUsdPerImage } : {}),
+      ...(offer.maxImageUsdPerImage !== undefined ? { maxImageUsdPerImage: offer.maxImageUsdPerImage } : {}),
+      ...(offer.categories?.length ? { categories: offer.categories } : {}),
+    }];
+  });
 }
 
 export function sortChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[]): ChatServiceCatalogEntry[] {

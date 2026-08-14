@@ -1,4 +1,5 @@
 import type { DiscoverRow, VprRoutingPreferences } from '../../core/state';
+import { scoreFromTrust } from '@antseed/node';
 import { totalRowPrice } from '../catalog/model-catalog.js';
 
 export type VprScoredRoute = {
@@ -41,7 +42,9 @@ function comparableTotalPrice(row: DiscoverRow): number {
 
 /** Model-specific reputation with on-chain fallbacks; null when unscored. */
 function modelReputationScore(row: DiscoverRow): number | null {
-  return row.effectiveReputationScore ?? row.onChainReputationScore ?? row.onChainTrustScore;
+  return row.effectiveReputationScore
+    ?? row.onChainReputationScore
+    ?? (row.onChainTrustScore === null ? null : scoreFromTrust(row.onChainTrustScore));
 }
 
 function compareScoredRoutes(a: VprScoredRoute, b: VprScoredRoute, now: number): number {

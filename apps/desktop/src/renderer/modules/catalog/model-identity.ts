@@ -8,7 +8,7 @@
  * keys never reach the UI.
  */
 
-export { canonicalModelKey, sameCanonicalModel } from '@antseed/node/model-identity';
+export { CODING_ONLY_SUFFIX_RE, canonicalModelKey, sameCanonicalModel } from '@antseed/node/model-identity';
 import { canonicalModelKey, preferredModelDisplayName } from '@antseed/node/model-identity';
 
 /** Re-canonicalize keys persisted before the shared model identity migration. */

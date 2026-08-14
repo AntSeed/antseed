@@ -62,9 +62,8 @@ function getPeerProviderProtocols(
   ).providerServiceApiProtocols?.[provider]?.services
   if (fromMetadata) {
     if (normalizedRequestedService) {
-      const requestedKey = canonicalModelKey(normalizedRequestedService)
       const directMatchKey = Object.keys(fromMetadata).find(
-        (key) => canonicalModelKey(key) === requestedKey,
+        (key) => isRequestedServiceMatch(key, normalizedRequestedService),
       )
       if (directMatchKey && fromMetadata[directMatchKey]?.length) {
         log(
@@ -103,6 +102,14 @@ function getPeerProviderProtocols(
 // substitute them for an unrestricted request unless they were asked for by name.
 const CODING_ONLY_SERVICE_ID = /(?:[-:._\s]+coding[-:._\s]+only|codingonly)$/i
 
+function isRequestedServiceMatch(advertisedService: string, requestedService: string): boolean {
+  if (canonicalModelKey(advertisedService) !== canonicalModelKey(requestedService)) return false
+  if (CODING_ONLY_SERVICE_ID.test(requestedService)) {
+    return advertisedService.trim().toLowerCase() === requestedService.trim().toLowerCase()
+  }
+  return !CODING_ONLY_SERVICE_ID.test(advertisedService)
+}
+
 export function findAdvertisedServiceOffer(
   peer: PeerInfo,
   provider: string,
@@ -112,14 +119,12 @@ export function findAdvertisedServiceOffer(
   if (!requestedKey) return null
   const offers = buildNetworkServiceOffers([peer]).filter((offer) => (
     offer.provider.toLowerCase() === provider.toLowerCase()
-    && canonicalModelKey(offer.serviceId) === requestedKey
+    && isRequestedServiceMatch(offer.serviceId, requestedService)
   ))
   if (CODING_ONLY_SERVICE_ID.test(requestedService)) {
-    const exact = offers.find((offer) => offer.serviceId.toLowerCase() === requestedService.trim().toLowerCase())
-    if (exact) return exact
+    return offers[0] ?? null
   }
-  const unrestricted = offers.filter((offer) => !CODING_ONLY_SERVICE_ID.test(offer.serviceId))
-  return selectLowestPricedNetworkServiceOffer(unrestricted.length > 0 ? unrestricted : offers)
+  return selectLowestPricedNetworkServiceOffer(offers)
 }
 
 function selectProviderByProtocol(
@@ -173,9 +178,7 @@ function selectAdvertisedServiceByProtocol(
       plan: { provider, selection, serviceId: offer.serviceId },
     })
   }
-  const unrestricted = compatible.filter(({ offer }) => !CODING_ONLY_SERVICE_ID.test(offer.serviceId))
-  const eligible = unrestricted.length > 0 ? unrestricted : compatible
-  const selectedOffer = selectLowestPricedNetworkServiceOffer(eligible.map((candidate) => candidate.offer))
+  const selectedOffer = selectLowestPricedNetworkServiceOffer(compatible.map((candidate) => candidate.offer))
   return compatible.find((candidate) => candidate.offer === selectedOffer)?.plan ?? null
 }
 

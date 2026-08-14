@@ -117,8 +117,8 @@ test('catalog retains cached-input pricing from a non-representative unified rou
     }),
   ]);
 
-  assert.equal(entry.bestPeerId, 'cheap-coding-only');
-  assert.equal(entry.serviceId, 'fable-5-coding-only');
+  assert.equal(entry.bestPeerId, 'cached-fable');
+  assert.equal(entry.serviceId, 'claude-fable-5');
   assert.equal(entry.minCachedInputUsdPerMillion, 0.6);
   assert.equal(entry.maxCachedInputUsdPerMillion, 0.6);
 });
@@ -331,9 +331,9 @@ test('catalog uses the clean Fable name even when coding-only is the cheapest ro
   for (const orderedRows of [rows, [...rows].reverse()]) {
     const [entry] = projectRowsToVprModelCatalog(orderedRows);
     assert.equal(entry.label, 'Claude Fable 5');
-    assert.equal(entry.bestPeerId, 'cheap');
-    assert.equal(entry.serviceId, 'fable-5-coding-only');
-    assert.equal(entry.provider, 'claude-oauth');
+    assert.equal(entry.bestPeerId, 'branded');
+    assert.equal(entry.serviceId, 'claude-fable-5');
+    assert.equal(entry.provider, 'openai');
   }
 });
 

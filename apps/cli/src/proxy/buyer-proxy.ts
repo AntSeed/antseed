@@ -1849,14 +1849,19 @@ export class BuyerProxy {
 
     const modelIdRaw = url.pathname.replace(/^\/v1\/models\/?/i, '')
     if (modelIdRaw.length > 0) {
-      const modelId = decodeURIComponent(modelIdRaw).trim()
+      let modelId: string
+      try {
+        modelId = decodeURIComponent(modelIdRaw).trim()
+      } catch {
+        modelId = modelIdRaw.trim()
+      }
       const modelKey = canonicalModelKey(modelId)
       const model = models.find((entry) => canonicalModelKey(entry.id) === modelKey)
       if (!model) {
         res.writeHead(404, responseHeaders)
         res.end(JSON.stringify({
           error: {
-            message: `Model "${decodeURIComponent(modelIdRaw)}" was not found on the network.`,
+            message: `Model "${modelId}" was not found on the network.`,
             type: 'invalid_request_error',
             code: 'model_not_found',
           },
@@ -2286,7 +2291,7 @@ export class BuyerProxy {
       requestProtocol,
       requestedService,
       explicitProvider,
-      requestedService ? 'strict' : 'lenient',
+      'lenient',
     )
 
     let hasForcedRefresh = false

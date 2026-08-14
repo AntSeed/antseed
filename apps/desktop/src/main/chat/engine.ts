@@ -37,6 +37,7 @@ import { asErrorMessage } from '../utils.js';
 import type { RawPeerHealth } from '../runtime/peer-cache.js';
 import {
   buildChatServiceCatalogFromNetworkModels,
+  buildChatServiceCatalogFromPersistedPeers,
   type ChatServiceCatalogEntry,
   type ChatServiceProtocol,
 } from './service-catalog.js';
@@ -62,7 +63,11 @@ import {
   normalizeModelPickerSnapshot,
   type ModelPickerSnapshot,
 } from '../../shared/model-picker.js';
-import { isPersistedPeerBindingPinned, PiConversationStore } from './conversation-store.js';
+import {
+  isPersistedPeerBindingPinned,
+  PiConversationStore,
+  projectPersistedConversationRoute,
+} from './conversation-store.js';
 import { createStreamingRunner } from './streaming-run.js';
 import { generateChatImage } from './image-generation.js';
 import type {
@@ -289,6 +294,15 @@ export function registerPiChatHandlers({
   const SERVICE_CATALOG_DEBOUNCE_MS = 5_000;
   let serviceCatalogRefreshPromise: Promise<ChatServiceCatalogEntry[]> | null = null;
 
+  const loadPersistedServiceCatalog = async (): Promise<ChatServiceCatalogEntry[]> => {
+    try {
+      const raw = await readFile(DEFAULT_BUYER_STATE_PATH, 'utf-8');
+      return limitChatServiceCatalogEntries(buildChatServiceCatalogFromPersistedPeers(JSON.parse(raw)));
+    } catch {
+      return [];
+    }
+  };
+
   const refreshServiceCatalogFromNetwork = async (): Promise<ChatServiceCatalogEntry[]> => {
     // Deduplicate concurrent calls
     if (serviceCatalogRefreshPromise) return serviceCatalogRefreshPromise;
@@ -304,14 +318,18 @@ export function registerPiChatHandlers({
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const entries = buildChatServiceCatalogFromNetworkModels(await response.json());
         const limited = limitChatServiceCatalogEntries(entries);
-        updateServiceProviderHints(serviceProviderHints, limited);
-        updateServiceProtocolMap(serviceProtocolMap, limited);
+        const resolved = limited.length > 0 ? limited : await loadPersistedServiceCatalog();
+        updateServiceProviderHints(serviceProviderHints, resolved);
+        updateServiceProtocolMap(serviceProtocolMap, resolved);
         lastServiceCatalogRefreshAt = Date.now();
-        lastServiceCatalogEntries = limited;
-        return limited;
+        lastServiceCatalogEntries = resolved;
+        return resolved;
       } catch (error) {
         appendSystemLog(`Desktop model catalog refresh failed: ${asErrorMessage(error)}`);
-        return lastServiceCatalogEntries;
+        if (lastServiceCatalogEntries.length > 0) return lastServiceCatalogEntries;
+        const persisted = await loadPersistedServiceCatalog();
+        lastServiceCatalogEntries = persisted;
+        return persisted;
       }
     })().finally(() => { serviceCatalogRefreshPromise = null; });
 
@@ -539,19 +557,19 @@ export function registerPiChatHandlers({
 
   ipcMain.handle('chat:ai-list-conversations', async () => {
     const conversations = await store.list();
-    // Explicit seller pins remain peer-bound. Conversations saved before
-    // routeMode existed are treated as pinned so upgrades do not erase an
-    // explicit seller choice; only explicit auto routes discard peer affinity.
+    // Only explicit seller pins remain peer-bound. Conversations written
+    // before routeMode existed predate explicit pinning, so they return to
+    // model-only Auto routing on upgrade.
     const enriched = conversations.map((c) => {
       if (!isPersistedPeerBindingPinned({ peerId: c.peerId ?? '', routeMode: c.routeMode })) {
         preferredPeerByConversationId.delete(c.id);
-        return { ...c, peerId: undefined };
+        return projectPersistedConversationRoute(c);
       }
       const peerId = preferredPeerByConversationId.get(c.id) || c.peerId;
       if (peerId && !preferredPeerByConversationId.has(c.id)) {
         preferredPeerByConversationId.set(c.id, peerId);
       }
-      return { ...c, peerId, routeMode: c.routeMode ?? 'pinned' };
+      return { ...c, peerId, routeMode: 'pinned' as const };
     });
     return { ok: true, data: enriched };
   });
@@ -598,8 +616,9 @@ export function registerPiChatHandlers({
     if (!conversation) {
       return { ok: false, error: 'Conversation not found' };
     }
+    const routedConversation = projectPersistedConversationRoute(conversation);
     const peerId = preferredPeerByConversationId.get(id);
-    const enriched = peerId ? { ...conversation, peerId } : conversation;
+    const enriched = peerId ? { ...routedConversation, peerId } : routedConversation;
     return { ok: true, data: enriched };
   });
 

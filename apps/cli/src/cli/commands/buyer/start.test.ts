@@ -111,12 +111,12 @@ test('buyer start defaults router name to local', () => {
   assert.equal(resolveBuyerRouterName({ router: 'claude-code' }), 'claude-code');
 });
 
-test('buyer start rejects legacy proxies that only return no_peer_pinned', async () => {
+test('buyer start recognizes legacy proxies that only return no_peer_pinned', async () => {
   await withProbeServer((_req, res) => {
     res.writeHead(400, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ error: { type: 'no_peer_pinned' } }));
   }, async (port) => {
-    assert.equal(await isCompatibleBuyerProxy(port), false);
+    assert.equal(await isCompatibleBuyerProxy(port), true);
   });
 });
 
