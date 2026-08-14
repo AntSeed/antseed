@@ -258,13 +258,26 @@ const MATCHERS: Array<[BrandKey, RegExp]> = [
   ['pi', /(^|[^a-z0-9])pi([^a-z0-9]|$)/i],
 ];
 
+/* Model lists resolve the same provider+label pairs on every render — cache
+   by haystack so the matcher regexes only ever run once per identifier. */
+const BRAND_KEY_CACHE_LIMIT = 4096;
+const brandKeyCache = new Map<string, BrandKey>();
+
 export function resolveBrandKey(...candidates: Array<string | null | undefined>): BrandKey {
   const haystack = candidates.filter(Boolean).join(' ');
   if (!haystack) return 'generic';
+  const cached = brandKeyCache.get(haystack);
+  if (cached) return cached;
+  let resolved: BrandKey = 'generic';
   for (const [key, pattern] of MATCHERS) {
-    if (pattern.test(haystack)) return key;
+    if (pattern.test(haystack)) {
+      resolved = key;
+      break;
+    }
   }
-  return 'generic';
+  if (brandKeyCache.size >= BRAND_KEY_CACHE_LIMIT) brandKeyCache.clear();
+  brandKeyCache.set(haystack, resolved);
+  return resolved;
 }
 
 export type BrandIconProps = {

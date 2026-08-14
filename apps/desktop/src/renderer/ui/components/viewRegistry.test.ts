@@ -49,7 +49,7 @@ describe('view registry', () => {
     expect(viewsForPreload('eager')).toEqual(
       ['home', 'explore', 'tools', 'credits', 'chat'] satisfies ViewName[],
     );
-    expect(viewsForPreload('idle')).toEqual(['preferences', 'deposit', 'activity', 'rewards', 'help'] satisfies ViewName[]);
+    expect(viewsForPreload('idle')).toEqual(['model', 'preferences', 'deposit', 'activity', 'rewards', 'help'] satisfies ViewName[]);
   });
 
   it('assigns every view a slide position', () => {

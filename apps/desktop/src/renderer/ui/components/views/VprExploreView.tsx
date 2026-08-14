@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useDeferredValue, useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { StarIcon } from '@hugeicons/core-free-icons';
 import type { VprModelKind } from '../../../core/state';
@@ -48,13 +48,20 @@ export function VprExploreView({ onSelectView }: Props) {
     modelPins: state.vprModelPins,
     discoverRows: state.vprRoutableRows,
     discoverRowsLoaded: state.chatDiscoverRowsLoaded,
-    connectBadge: state.connectBadge,
   }), shallowEqual);
   const [tab, setTab] = useRetainedState(exploreViewCache, 'tab');
   const [search, setSearch] = useRetainedState(exploreViewCache, 'search');
   const [kind, setKind] = useRetainedState(exploreViewCache, 'kind');
   const [family, setFamily] = useRetainedState(exploreViewCache, 'family');
   const [sort, setSort] = useRetainedState(exploreViewCache, 'sort');
+  // Tab/filter/search changes re-render the full model list — hundreds of
+  // rows. Deriving the list from deferred values keeps the tapped control
+  // responsive: the tab/pill paints its new state in the urgent render and
+  // the list catches up in an interruptible background render.
+  const listInputs = useDeferredValue(useMemo(
+    () => ({ tab, search, kind, family, sort }),
+    [family, kind, search, sort, tab],
+  ));
   // Starred on the model pages; fresh on every visit (the view remounts).
   const [favorites] = useState(loadFavoriteModels);
 
@@ -66,29 +73,29 @@ export function VprExploreView({ onSelectView }: Props) {
 
   const families = useMemo(() => availableModelFamilies(snap.catalog), [snap.catalog]);
   const favoriteEntries = useMemo(
-    () => (tab === 'Recommended'
-      ? filterVprCatalog(selectFavoriteVprCatalog(snap.catalog, favorites), { search })
+    () => (listInputs.tab === 'Recommended'
+      ? filterVprCatalog(selectFavoriteVprCatalog(snap.catalog, favorites), { search: listInputs.search })
       : []),
-    [favorites, search, snap.catalog, tab],
+    [favorites, listInputs, snap.catalog],
   );
   const entries = useMemo(() => {
-    if (tab === 'Recommended') {
+    if (listInputs.tab === 'Recommended') {
       // Curated lineup order (frontier + free) — the sort control only
       // exists on the All tab. Favorites get their own section above.
       const curated = selectRecommendedVprCatalog(snap.catalog)
         .filter((entry) => !favorites.has(catalogEntryKey(entry)))
         .slice(0, RECOMMENDED_LIMIT);
-      return filterVprCatalog(curated, { search });
+      return filterVprCatalog(curated, { search: listInputs.search });
     }
     return sortVprCatalog(
       filterVprCatalog(snap.catalog, {
-        search,
-        kind: kind || null,
-        family: family || null,
+        search: listInputs.search,
+        kind: listInputs.kind || null,
+        family: listInputs.family || null,
       }),
-      sort,
+      listInputs.sort,
     );
-  }, [family, favorites, kind, search, snap.catalog, sort, tab]);
+  }, [favorites, listInputs, snap.catalog]);
 
   // Any listed model that remembers a pin names its seller in place of the
   // peer count — pins are per model and survive switching between them.
@@ -239,14 +246,21 @@ export function VprExploreView({ onSelectView }: Props) {
             />
           </>
         ) : favoriteEntries.length === 0 && (
-          <div className={styles.empty} role="status">
-            <div>
-              {snap.discoverRowsLoaded ? 'No models match the current filters.' : `Model discovery is ${snap.connectBadge.label.toLowerCase()}.`}
+          snap.discoverRowsLoaded ? (
+            <div className={styles.empty} role="status">
+              <div>No models match the current filters.</div>
+              <button type="button" onClick={() => { void actions.refreshAll(); }}>
+                Refresh models
+              </button>
             </div>
-            <button type="button" onClick={() => { void actions.refreshAll(); }}>
-              Refresh models
-            </button>
-          </div>
+          ) : (
+            /* Discovery still fetching the first snapshot — a spinner, not a
+               dead-end empty state; rows stream in as soon as the poll lands. */
+            <div className={styles.empty} role="status" aria-live="polite" aria-label="Loading models">
+              <span className="route-loading-spinner" aria-hidden="true" />
+              <div>Loading models…</div>
+            </div>
+          )
         )}
       </div>
       </VprPage>

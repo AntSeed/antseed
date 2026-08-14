@@ -34,6 +34,21 @@ function stripModelDecorations(value: string): string {
  * `gpt-5.6`, `gpt-5-6`, and `gpt-56` without changing arbitrary service ids.
  */
 export function canonicalModelKey(serviceId: string): string {
+  const cached = canonicalKeyCache.get(serviceId);
+  if (cached !== undefined) return cached;
+  const key = computeCanonicalModelKey(serviceId);
+  // Hot path: callers canonicalize the same few hundred advertised service
+  // ids over and over (catalog projection, per-row selected checks, routing).
+  // The bound only guards against pathological unbounded inputs.
+  if (canonicalKeyCache.size >= CANONICAL_KEY_CACHE_LIMIT) canonicalKeyCache.clear();
+  canonicalKeyCache.set(serviceId, key);
+  return key;
+}
+
+const CANONICAL_KEY_CACHE_LIMIT = 8192;
+const canonicalKeyCache = new Map<string, string>();
+
+function computeCanonicalModelKey(serviceId: string): string {
   let value = stripModelDecorations(serviceId);
   value = value.replace(/^google[-:._\s]+(?=gemma(?:[-:._\s]|\d|$))/, '');
   value = value.replace(/^aion[-:._\s]+labs[-:._\s]+(?=aion(?:[-:._\s]|\d|$))/, '');
