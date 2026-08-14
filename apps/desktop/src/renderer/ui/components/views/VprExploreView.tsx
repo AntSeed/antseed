@@ -10,6 +10,7 @@ import {
   type VprCatalogSort,
 } from '../../../modules/catalog/view-models';
 import { findCatalogEntry } from '../../../modules/catalog/model-catalog';
+import { availableModelFamilies } from '../../../modules/catalog/model-families';
 import { loadFavoriteModels } from '../../../modules/catalog/favorites';
 import { setVprModelPageTarget } from '../../../modules/catalog/model-page-target';
 import {
@@ -17,7 +18,6 @@ import {
   selectFavoriteVprCatalog,
   selectRecommendedVprCatalog,
 } from '../../../modules/catalog/recommended';
-import { formatCategoryLabel } from '../chat/discover-filter-util';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { useRetainedState } from '../../hooks/useRetainedState';
@@ -36,7 +36,7 @@ const exploreViewCache = {
   tab: 'Recommended' as 'Recommended' | 'All',
   search: '',
   kind: '' as VprModelKind | '',
-  category: '',
+  family: '',
   sort: 'Popular' as VprCatalogSort,
 };
 
@@ -53,7 +53,7 @@ export function VprExploreView({ onSelectView }: Props) {
   const [tab, setTab] = useRetainedState(exploreViewCache, 'tab');
   const [search, setSearch] = useRetainedState(exploreViewCache, 'search');
   const [kind, setKind] = useRetainedState(exploreViewCache, 'kind');
-  const [category, setCategory] = useRetainedState(exploreViewCache, 'category');
+  const [family, setFamily] = useRetainedState(exploreViewCache, 'family');
   const [sort, setSort] = useRetainedState(exploreViewCache, 'sort');
   // Starred on the model pages; fresh on every visit (the view remounts).
   const [favorites] = useState(loadFavoriteModels);
@@ -64,10 +64,7 @@ export function VprExploreView({ onSelectView }: Props) {
     [snap.discoverRows, snap.selection],
   );
 
-  const categories = useMemo(
-    () => Array.from(new Set(snap.catalog.flatMap((entry) => entry.categories))).sort((a, b) => a.localeCompare(b)),
-    [snap.catalog],
-  );
+  const families = useMemo(() => availableModelFamilies(snap.catalog), [snap.catalog]);
   const favoriteEntries = useMemo(
     () => (tab === 'Recommended'
       ? filterVprCatalog(selectFavoriteVprCatalog(snap.catalog, favorites), { search })
@@ -87,11 +84,11 @@ export function VprExploreView({ onSelectView }: Props) {
       filterVprCatalog(snap.catalog, {
         search,
         kind: kind || null,
-        category: category || null,
+        family: family || null,
       }),
       sort,
     );
-  }, [category, favorites, kind, search, snap.catalog, sort, tab]);
+  }, [family, favorites, kind, search, snap.catalog, sort, tab]);
 
   // Any listed model that remembers a pin names its seller in place of the
   // peer count — pins are per model and survive switching between them.
@@ -167,20 +164,20 @@ export function VprExploreView({ onSelectView }: Props) {
                 onChange={(event) => setKind(event.currentTarget.value as VprModelKind | '')}
                 aria-label="Filter by model type"
               >
-                <option value="">Any</option>
+                <option value="">Model type</option>
                 <option value="image">Image</option>
                 <option value="text">Text</option>
               </select>
             </label>
             <label className={styles.filterPill}>
               <select
-                value={category}
-                onChange={(event) => setCategory(event.currentTarget.value)}
-                aria-label="Filter by category"
+                value={family}
+                onChange={(event) => setFamily(event.currentTarget.value)}
+                aria-label="Filter by model family"
               >
-                <option value="">Category</option>
-                {categories.map((entry) => (
-                  <option key={entry} value={entry}>{formatCategoryLabel(entry)}</option>
+                <option value="">Model family</option>
+                {families.map((entry) => (
+                  <option key={entry} value={entry}>{entry}</option>
                 ))}
               </select>
             </label>
