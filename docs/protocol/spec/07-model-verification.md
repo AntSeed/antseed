@@ -323,8 +323,10 @@ every completed run, `epochs/<epoch>/<model>/report.html` is atomically replaced
 with the latest run for that model and epoch. Each report table includes `Reason`,
 `Next Action`, and clickable `Evidence` columns. The report is standalone HTML
 with embedded styling and no external assets, so it can be opened directly from
-the local evidence directory, and includes model and whole-run reason-code
-breakdowns. Machine summaries, status,
+the local evidence directory or a copied evidence ZIP. All report evidence links
+are relative to the report, so they remain usable after extraction on another
+machine. The report includes model and whole-run reason-code breakdowns. Machine
+summaries, status,
 events, progress, and submission exclusions retain the same structured reason:
 `code`, `summary`, `retryable`, `source`, affected/total batch counts, and safe
 optional upstream status, provider code, and request ID. Secrets and
@@ -334,10 +336,33 @@ existing readers. Model reference integrity is stored once per reference ID and
 contains probe definitions, three-pass enrollment evidence, and reference
 self-test outcomes. Each seller `exchanges/` file contains one request batch and
 its exact signed preimages. The model-run `probe-consensus.json` groups only
-authenticated seller answers with exact preimages by probe, and records counts
-and rates matching or differing from the trusted reference consensus. Each
-seller contribution links back to its peer ID, internal seller evidence ID,
-evidence hash, batch index, request ID, and signed request/response hashes.
+authenticated seller answers with exact preimages by probe. Every authenticated
+answer remains visible, but reference-point voting includes only sellers whose
+answer is backed by verified ResponseAuth and exact signed preimages. The
+seller's final model-level `SAME`, `DIFF`, or `UNDETERMINED` verdict does not
+change that per-probe vote. Each authenticated seller contributes at most one
+vote per probe. A reference point is
+`CONFIRMED` when at least half of eligible answers match the reference, including
+an exact tie, `REJECTED` when fewer than half match, and `NO_RESPONSE` when no
+eligible seller answered. The artifact records the decision rule, support and
+rejection counts, rates, and global reference-point totals. Each seller
+contribution links back to its peer ID, final verdict, internal seller evidence
+ID, evidence hash, batch index, request ID, signed request/response hashes, and
+ResponseAuth signature. Every probe also records the full question text, domain,
+reference answer, physical validity range, tolerance rule, and the inclusive
+answer interval derived from that tolerance. Each probe enumerates every audited
+seller by peer ID as `CONFIRMED`, `REJECTED`, `NO_RESPONSE`, or `EXCLUDED`, with
+counts for every category. `NO_RESPONSE` means no verified answer exists for that
+probe; `EXCLUDED` is reserved for a verified response that cannot produce a
+scoreable per-probe outcome. The global decision records the eligible answer
+count and minimum confirmation count, and uses all authenticated `CONFIRMED` and
+`REJECTED` answers, including those from an `UNDETERMINED` seller. A missing or
+malformed numeric answer in a completed authenticated
+response is `REJECTED` under the fixed-denominator rule, not `NO_RESPONSE`. The
+HTML report renders one expandable story per question: the OpenRouter-enrolled
+reference answer, all seller categories and addresses, the global majority
+decision, and a portable link to each signed exchange JSON containing the raw
+buyer-proxy request, raw response, signature, and exact signed preimages.
 
 `SAME` and `DIFF` require 100% authenticated coverage. `UNDETERMINED` means the
 statistical verdict could not be completed and remains resumable; examples are
@@ -362,6 +387,9 @@ Submission groups valid seller audits by model and sends one
 `submitVerificationBundle` transaction per model. Each transaction commits the
 expected epoch, total model-audit cost, one canonical bundle evidence hash, one
 ordered list of seller agent IDs, service hashes, verdicts, and model-share BPS.
+The bundle contains the canonical probe-consensus hash, reference ID, decision
+rule, and vote summary, so the on-chain evidence hash commits to the exact
+per-probe majority decisions without expanding the contract ABI.
 Probe counts and a separate requested-credit value are not part of the contract
 ABI or events. Invalid or tampered seller artifacts are excluded before
 broadcast and listed with their reason in the bundle evidence.

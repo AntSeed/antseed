@@ -95,6 +95,7 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
         emit MaxCreditUsdMicrosPerVerifierPerEpochSet(maximum);
     }
 
+    /// @notice Submits the audit for one model across multiple seller peers.
     function submitVerificationBundle(
         uint256 expectedEpoch,
         uint64 totalAuditCostUsdMicros,

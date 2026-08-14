@@ -1,6 +1,5 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { basename, dirname, join, relative, sep } from 'node:path'
 import { canonicalJsonStringify } from '@antseed/fingerprints'
 import { readJsonIfExists, writeJsonAtomic, writeTextAtomic } from './atomic-files.js'
 import type { AuditCostSummaryV1 } from './proxy-evidence.js'
@@ -10,6 +9,7 @@ import type {
   ModelVerificationSkip,
   ModelVerificationTargetResult,
 } from './model-run.js'
+import type { ModelProbeConsensusEvidenceV1 } from './model-consensus-evidence.js'
 import { safeServiceSlug } from './slug.js'
 
 export interface VerifierStatusV1 {
@@ -274,6 +274,9 @@ export async function writeModelAuditReports(
       consensusEvidencePath?: string
       referenceIntegrityPath?: string
     }
+    const consensus = modelSummary.consensusEvidencePath
+      ? JSON.parse(await readFile(modelSummary.consensusEvidencePath, 'utf8')) as ModelProbeConsensusEvidenceV1
+      : null
     const results = [...(modelSummary.results ?? [])].sort((left, right) => {
       if (left.correctRate === null && right.correctRate !== null) return 1
       if (left.correctRate !== null && right.correctRate === null) return -1
@@ -325,8 +328,11 @@ export async function writeModelAuditReports(
       })
     }
     const reasonBreakdown = [...reasonCounts.entries()].sort(([left], [right]) => left.localeCompare(right))
+    const reportPath = modelAuditReportPath(evidenceDir, epoch, model.model)
+    const reportDirectory = dirname(reportPath)
     return {
       model: model.model,
+      path: reportPath,
       reasonCounts,
       html: renderModelReportSection(
         model.model,
@@ -335,6 +341,8 @@ export async function writeModelAuditReports(
         model.summaryPath,
         modelSummary.consensusEvidencePath,
         modelSummary.referenceIntegrityPath,
+        consensus,
+        reportDirectory,
       ),
       consensusEvidencePath: modelSummary.consensusEvidencePath,
       referenceIntegrityPath: modelSummary.referenceIntegrityPath,
@@ -344,7 +352,7 @@ export async function writeModelAuditReports(
     const modelSummary = summary.models.find((model) => model.model === entry.model)
     if (!modelSummary) throw new Error(`missing ${entry.model} summary while rendering report`)
     const reasonBreakdown = [...entry.reasonCounts.entries()].sort(([left], [right]) => left.localeCompare(right))
-    const path = modelAuditReportPath(evidenceDir, epoch, entry.model)
+    const path = entry.path
     const text = renderModelAuditReportHtml(
       {
         ...summary,
@@ -367,6 +375,7 @@ export async function writeModelAuditReports(
           ? [{ model: entry.model, path: entry.referenceIntegrityPath }]
           : [],
       },
+      dirname(path),
     )
     await writeTextAtomic(path, text)
     return { model: entry.model, path }
@@ -392,6 +401,7 @@ function renderModelAuditReportHtml(
     modelConsensus: Array<{ model: string; path: string }>
     modelReferences: Array<{ model: string; path: string }>
   },
+  reportDirectory: string,
 ): string {
   const title = `AntSeed ${model} Verification Report — ${summary.epoch}`
   return `<!doctype html>
@@ -408,7 +418,7 @@ function renderModelAuditReportHtml(
     main { width: min(1600px, calc(100% - 32px)); margin: 32px auto 64px; }
     header, section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 2px 8px rgb(0 0 0 / 6%); }
     header { padding: 24px; margin-bottom: 20px; }
-    h1, h2 { margin: 0; line-height: 1.2; }
+    h1, h2, h3 { margin: 0; line-height: 1.2; }
     h1 { font-size: clamp(24px, 4vw, 38px); }
     h2 { font-size: 22px; }
     .subtitle { color: var(--muted); margin: 6px 0 20px; }
@@ -418,6 +428,17 @@ function renderModelAuditReportHtml(
     dt { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
     dd { margin: 2px 0 0; overflow-wrap: anywhere; }
     section { padding: 20px; margin-top: 20px; }
+    .probe-consensus { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 18px; }
+    .probe-consensus h3 { font-size: 17px; margin-bottom: 14px; }
+    .consensus-question { border: 1px solid var(--line); border-radius: 10px; margin-top: 12px; padding: 0 14px 14px; }
+    .consensus-question > summary { align-items: baseline; display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 0; }
+    .question-number { color: var(--muted); font-weight: 700; }
+    .question-text { color: var(--text); flex: 1 1 520px; font-weight: 700; }
+    .reference-answer { font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .vote-group { margin-top: 18px; }
+    .vote-group h4 { margin: 0 0 8px; }
+    .vote-table { min-width: 860px; }
+    .evidence-description { color: var(--muted); display: block; margin-top: 5px; max-width: 700px; }
     .reasons { color: var(--muted); margin: 10px 0 0; padding-left: 20px; }
     .table-wrap { overflow-x: auto; margin-top: 16px; }
     table { border-collapse: collapse; width: 100%; min-width: 1120px; }
@@ -454,7 +475,7 @@ function renderModelAuditReportHtml(
       ${renderMetadata('Completed', summary.completedAt)}
       ${renderMetadata('Estimated cost', `$${summary.cost.estimatedCostUsd.toFixed(6)}`)}
     </dl>
-    ${renderGlobalEvidenceLinks(evidenceLinks)}
+    ${renderGlobalEvidenceLinks(evidenceLinks, reportDirectory)}
     ${renderReasonBreakdown('Model reason breakdown', reasonBreakdown)}
   </header>
   ${modelSection}
@@ -471,6 +492,8 @@ function renderModelReportSection(
   summaryPath: string,
   consensusEvidencePath?: string,
   referenceIntegrityPath?: string,
+  consensus: ModelProbeConsensusEvidenceV1 | null = null,
+  reportDirectory?: string,
 ): string {
   const body = rows.length === 0
     ? '<tr><td class="empty" colspan="9">No advertised sellers were audited for this model.</td></tr>'
@@ -483,17 +506,18 @@ function renderModelReportSection(
           <td>${renderVerdict(row.verdict)}</td>
           <td>${escapeHtml(row.reason)}</td>
           <td>${escapeHtml(row.nextAction)}</td>
-          <td>${renderEvidence(row.auditId, row.evidencePath, row.evidenceFiles)}</td>
+          <td>${renderEvidence(row.auditId, row.evidencePath, row.evidenceFiles, reportDirectory)}</td>
         </tr>`).join('\n        ')
   return `<section>
     <h2>${escapeHtml(model)}</h2>
     <div class="evidence-links"><strong>Model audit</strong>
-      ${renderFileLink(dirname(summaryPath), 'Open audit folder')}
-      ${renderFileLink(summaryPath, 'Summary JSON')}
-      ${consensusEvidencePath ? renderFileLink(consensusEvidencePath, 'Probe consensus JSON') : ''}
-      ${consensusEvidencePath ? renderFileLink(join(dirname(consensusEvidencePath), 'manifest.json'), 'Manifest JSON') : ''}
-      ${referenceIntegrityPath ? renderFileLink(referenceIntegrityPath, 'Reference probe integrity') : ''}
+      ${renderFileLink(dirname(summaryPath), 'Open audit folder', reportDirectory)}
+      ${renderFileLink(summaryPath, 'Summary JSON', reportDirectory)}
+      ${consensusEvidencePath ? renderFileLink(consensusEvidencePath, 'Probe consensus JSON', reportDirectory) : ''}
+      ${consensusEvidencePath ? renderFileLink(join(dirname(consensusEvidencePath), 'manifest.json'), 'Manifest JSON', reportDirectory) : ''}
+      ${referenceIntegrityPath ? renderFileLink(referenceIntegrityPath, 'Reference probe integrity', reportDirectory) : ''}
     </div>
+    ${renderProbeConsensus(consensus, consensusEvidencePath, reportDirectory)}
     ${renderReasonBreakdown('Model reason breakdown', reasonBreakdown)}
     <div class="table-wrap">
       <table>
@@ -504,6 +528,137 @@ function renderModelReportSection(
       </table>
     </div>
   </section>`
+}
+
+function renderProbeConsensus(
+  consensus: ModelProbeConsensusEvidenceV1 | null,
+  consensusEvidencePath?: string,
+  reportDirectory?: string,
+): string {
+  if (!consensus) return ''
+  const summary = consensus.summary
+  const consensusDirectory = consensusEvidencePath ? dirname(consensusEvidencePath) : null
+  const openRouterReference = consensus.reference?.sourceId?.startsWith('openrouter') === true
+  const referenceName = openRouterReference ? 'OpenRouter reference answer' : 'Reference answer'
+  const referenceSource = consensus.reference
+    ? [consensus.reference.sourceId, consensus.reference.upstreamModel].filter(Boolean).join(' · ')
+    : 'Unavailable'
+  const questionCards = consensus.probes.map((probe, index) => {
+    const confirming = probe.sellerAnswers.filter((answer) => answer.sellerDecision === 'CONFIRMED')
+    const rejecting = probe.sellerAnswers.filter((answer) => answer.sellerDecision === 'REJECTED')
+    const excluded = probe.sellerAnswers.filter((answer) => answer.sellerDecision === 'EXCLUDED')
+    const noResponsePeerIds = new Set(probe.sellerDecisions.NO_RESPONSE.peerIds)
+    const noResponse = consensus.sellers.filter((seller) => noResponsePeerIds.has(seller.peerId))
+    return `<details class="consensus-question">
+      <summary>
+        <span class="question-number">Question ${index + 1}</span>
+        <span class="question-text">${escapeHtml(probe.question)}</span>
+        <span class="reference-answer">${escapeHtml(referenceName)}: <strong>${escapeHtml(String(probe.referenceConsensus))}</strong></span>
+        <span>${probe.sellerDecisions.CONFIRMED.count} confirmed · ${probe.sellerDecisions.REJECTED.count} rejected · ${probe.sellerDecisions.NO_RESPONSE.count} no response</span>
+        ${renderVerdict(probe.referenceDecision)}
+      </summary>
+      <dl class="metadata">
+        ${renderMetadata('Probe ID', probe.probeId)}
+        ${renderMetadata('Domain', probe.domain)}
+        ${renderMetadata(referenceName, String(probe.referenceConsensus))}
+        ${renderMetadata('Physical validity range', `${probe.range[0]} to ${probe.range[1]}`)}
+        ${renderMetadata('Tolerance rule', `${probe.tolerance.mode} ${probe.tolerance.value}`)}
+        ${renderMetadata('Accepted answer interval', `${probe.acceptedAnswerInterval.minimum} to ${probe.acceptedAnswerInterval.maximum} (inclusive)`)}
+        ${renderMetadata('Majority vote', `${probe.referenceSupportCount} confirm / ${probe.referenceRejectCount} reject`)}
+        ${renderMetadata('Required to confirm', String(probe.globalDecision.requiredConfirmedSellerCount))}
+        ${renderMetadata('Support rate', formatPercent(probe.referenceSupportRate))}
+        ${renderMetadata('Global decision', probe.globalDecision.decision)}
+      </dl>
+      ${renderConsensusSellerAnswers('CONFIRMED — within the accepted answer interval', confirming, consensusDirectory, reportDirectory)}
+      ${renderConsensusSellerAnswers('REJECTED — outside tolerance or malformed completed answer', rejecting, consensusDirectory, reportDirectory)}
+      ${renderConsensusNoResponseSellers(noResponse, consensusDirectory, reportDirectory)}
+      ${excluded.length > 0
+        ? renderConsensusSellerAnswers('EXCLUDED — authenticated response could not be scored', excluded, consensusDirectory, reportDirectory)
+        : ''}
+    </details>`
+  }).join('\n')
+  return `<div class="probe-consensus">
+    <h3>Does the seller majority agree with the ${openRouterReference ? 'OpenRouter' : 'enrolled'} reference?</h3>
+    <p class="explanation">Each question shows the reference answer, the seller answers that confirm it, the seller answers that reject it, and direct links to each signed exchange. Every scoreable answer backed by verified ResponseAuth votes, including answers from sellers whose final model-level verdict is UNDETERMINED. Unsigned or missing answers do not vote. A tie confirms the reference.</p>
+    <dl class="metadata">
+      ${renderMetadata('Reference source', referenceSource)}
+      ${renderMetadata('Eligible sellers', String(summary.eligibleSellerCount))}
+      ${renderMetadata('Confirmed reference points', `${summary.confirmedReferencePointCount}/${summary.probeCount}`)}
+      ${renderMetadata('Rejected reference points', String(summary.rejectedReferencePointCount))}
+      ${renderMetadata('No-response reference points', String(summary.noResponseReferencePointCount))}
+      ${renderMetadata('Confirmation rate', formatPercent(summary.referencePointConfirmationRate))}
+    </dl>
+    <div class="question-consensus-list">${questionCards}</div>
+  </div>`
+}
+
+function renderConsensusSellerAnswers(
+  title: string,
+  answers: ModelProbeConsensusEvidenceV1['probes'][number]['sellerAnswers'],
+  consensusDirectory: string | null,
+  reportDirectory?: string,
+): string {
+  const rows = answers.length === 0
+    ? '<tr><td class="empty" colspan="4">No seller answers in this group.</td></tr>'
+    : answers.map((answer) => {
+      const exchangePath = consensusDirectory
+        ? join(consensusDirectory, answer.rawResponse.exchangePath)
+        : null
+      return `<tr>
+        <td><code>${escapeHtml(answer.peerId)}</code></td>
+        <td class="numeric">${escapeHtml(answer.answer === null ? 'unparsed' : String(answer.answer))}</td>
+        <td>${renderVerdict(answer.sellerVerdict)}</td>
+        <td>${exchangePath ? renderFileLink(exchangePath, 'Open signed exchange JSON', reportDirectory) : '—'}
+          <small class="evidence-description">Contains the raw buyer-proxy request and response, ResponseAuth signature, exact signed request/response preimages, and hashes.</small>
+          <small class="evidence-description">Decision reason: <code>${escapeHtml(answer.decisionReason)}</code></small>
+          <details><summary>Signature and hashes</summary><ul class="evidence-files">
+            <li>Request ID: <code>${escapeHtml(answer.requestId)}</code></li>
+            <li>Request hash: <code>${escapeHtml(answer.requestHash)}</code></li>
+            <li>Response hash: <code>${escapeHtml(answer.responseHash)}</code></li>
+            <li>ResponseAuth signature: <code>${escapeHtml(answer.responseAuthSignature)}</code></li>
+          </ul></details>
+        </td>
+      </tr>`
+    }).join('')
+  return `<div class="vote-group">
+    <h4>${escapeHtml(title)} (${answers.length})</h4>
+    <div class="table-wrap"><table class="vote-table">
+      <thead><tr><th>Seller peer</th><th>Seller answer</th><th>Seller audit verdict</th><th>Signed evidence and underlying data</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+  </div>`
+}
+
+function renderConsensusNoResponseSellers(
+  sellers: ModelProbeConsensusEvidenceV1['sellers'],
+  consensusDirectory: string | null,
+  reportDirectory?: string,
+): string {
+  const rows = sellers.length === 0
+    ? '<tr><td class="empty" colspan="3">Every audited seller has a classified answer for this question.</td></tr>'
+    : sellers.map((seller) => {
+      const evidencePath = consensusDirectory
+        ? join(consensusDirectory, seller.relativeEvidencePath)
+        : null
+      return `<tr>
+        <td><code>${escapeHtml(seller.peerId)}</code></td>
+        <td>${renderVerdict(seller.verdict)}</td>
+        <td>${evidencePath ? renderFileLink(evidencePath, 'Open seller evidence JSON', reportDirectory) : '—'}
+          <small class="evidence-description">No verified seller answer was available for this question, so this seller does not participate in the majority calculation.</small>
+        </td>
+      </tr>`
+    }).join('')
+  return `<div class="vote-group">
+    <h4>NO_RESPONSE — no eligible signed answer (${sellers.length})</h4>
+    <div class="table-wrap"><table class="vote-table">
+      <thead><tr><th>Seller peer</th><th>Seller audit verdict</th><th>Seller evidence</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+  </div>`
+}
+
+function formatPercent(value: number | null): string {
+  return value === null ? 'N/A' : `${(value * 100).toFixed(1)}%`
 }
 
 function renderMetadata(label: string, value: string): string {
@@ -520,22 +675,33 @@ function renderReasonBreakdown(title: string, reasons: Array<[string, number]>):
 
 function renderVerdict(verdict: string): string {
   const normalized = verdict.toLowerCase()
-  const className = ['same', 'diff', 'undetermined', 'skipped', 'failed'].includes(normalized)
-    ? normalized
-    : 'skipped'
+  const className = normalized === 'confirmed'
+    ? 'same'
+    : normalized === 'rejected'
+      ? 'diff'
+      : normalized === 'no_response'
+        ? 'undetermined'
+        : ['same', 'diff', 'undetermined', 'skipped', 'failed'].includes(normalized)
+          ? normalized
+          : 'skipped'
   return `<span class="badge ${className}">${escapeHtml(verdict)}</span>`
 }
 
-function renderEvidence(auditId?: string, evidencePath?: string, evidenceFiles: ReportEvidenceFile[] = []): string {
+function renderEvidence(
+  auditId?: string,
+  evidencePath?: string,
+  evidenceFiles: ReportEvidenceFile[] = [],
+  reportDirectory?: string,
+): string {
   if (!auditId && !evidencePath) return '—'
   const audit = auditId ? `seller audit ${auditId.slice(0, 14)}…` : null
   if (!evidencePath) return audit ? escapeHtml(audit) : '—'
   const isPack = basename(evidencePath) === 'evidence.json'
   const directLinks = isPack
-    ? `${renderFileLink(dirname(evidencePath), 'Open folder')}<br>${renderFileLink(evidencePath, 'Evidence JSON')}`
-    : renderFileLink(evidencePath, 'Open evidence record')
+    ? `${renderFileLink(dirname(evidencePath), 'Open folder', reportDirectory)}<br>${renderFileLink(evidencePath, 'Evidence JSON', reportDirectory)}`
+    : renderFileLink(evidencePath, 'Open evidence record', reportDirectory)
   const allFiles = evidenceFiles.length === 0 ? '' : `<details><summary>All evidence files (${evidenceFiles.length})</summary>
-      <ul class="evidence-files">${evidenceFiles.map((file) => `<li>${renderFileLink(file.path, file.label)}`
+      <ul class="evidence-files">${evidenceFiles.map((file) => `<li>${renderFileLink(file.path, file.label, reportDirectory)}`
         + `${file.purpose ? `<small>${escapeHtml(file.purpose)}</small>` : ''}</li>`).join('')}</ul>
     </details>`
   return `${directLinks}${allFiles}${audit ? `<br><code>${escapeHtml(audit)}</code>` : ''}`
@@ -548,25 +714,35 @@ function renderGlobalEvidenceLinks(
     modelConsensus: Array<{ model: string; path: string }>
     modelReferences: Array<{ model: string; path: string }>
   },
+  reportDirectory?: string,
 ): string {
   const entries = [
-    renderFileLink(links.summaryPath, 'Open run summary'),
-    ...(links.manifestPath ? [renderFileLink(links.manifestPath, 'Open run manifest')] : []),
+    renderFileLink(links.summaryPath, 'Open run summary', reportDirectory),
+    ...(links.manifestPath ? [renderFileLink(links.manifestPath, 'Open run manifest', reportDirectory)] : []),
     ...links.modelConsensus.flatMap((entry) => [
-      renderFileLink(dirname(entry.path), `${entry.model} evidence folder`),
-      renderFileLink(entry.path, `${entry.model} consensus JSON`),
-      renderFileLink(join(dirname(entry.path), 'manifest.json'), `${entry.model} manifest`),
+      renderFileLink(dirname(entry.path), `${entry.model} evidence folder`, reportDirectory),
+      renderFileLink(entry.path, `${entry.model} consensus JSON`, reportDirectory),
+      renderFileLink(join(dirname(entry.path), 'manifest.json'), `${entry.model} manifest`, reportDirectory),
     ]),
     ...links.modelReferences.map((entry) => renderFileLink(
       entry.path,
       `${entry.model} reference integrity`,
+      reportDirectory,
     )),
   ]
   return `<nav class="evidence-links" aria-label="Run evidence"><strong>Run evidence</strong>${entries.join('')}</nav>`
 }
 
-function renderFileLink(path: string, label: string): string {
-  return `<a href="${escapeHtml(pathToFileURL(path).href)}" title="${escapeHtml(path)}">${escapeHtml(label)}</a>`
+function renderFileLink(path: string, label: string, reportDirectory?: string): string {
+  const href = reportDirectory ? portableRelativeHref(reportDirectory, path) : path
+  return `<a href="${escapeHtml(href)}" title="${escapeHtml(path)}">${escapeHtml(label)}</a>`
+}
+
+function portableRelativeHref(fromDirectory: string, path: string): string {
+  const pathSegments = relative(fromDirectory, path).split(sep)
+  return pathSegments.map((segment) => segment === '..' || segment === '.'
+    ? segment
+    : encodeURIComponent(segment)).join('/')
 }
 
 async function readReportEvidenceFiles(evidencePath?: string): Promise<ReportEvidenceFile[]> {

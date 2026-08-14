@@ -25,11 +25,13 @@ import {
 import { id } from 'ethers'
 import {
   modelAuditSellersDirectory,
+  modelReferencesDirectory,
   writeModelAuditSummary,
   writeVerifierRunManifest,
   type ModelAuditSummaryV1,
   type VerifierRunManifestV1,
 } from './audit-artifacts.js'
+import { writeModelProbeConsensusEvidence } from './model-consensus-evidence.js'
 import { appendModelReferenceToBank, bankPath } from './probe-bank.js'
 import {
   emptyAuditCostSummary,
@@ -341,6 +343,16 @@ async function writeModelFixture(input: {
       },
     })
   }
+  const results = audits.map((audit) => audit.result)
+  const consensus = await writeModelProbeConsensusEvidence({
+    directory: join(input.evidenceDir, 'epochs', input.epoch, input.model, 'audits', input.runId),
+    referencesDirectory: modelReferencesDirectory(input.evidenceDir, input.epoch, input.model),
+    runId: input.runId,
+    epoch: input.epoch,
+    model: input.model,
+    createdAt: input.timestamps.completedAt,
+    results,
+  })
   const summaryPath = await writeModelAuditSummary(input.evidenceDir, input.epoch, input.model, {
     version: 1,
     kind: 'antseed-verifier-model-summary',
@@ -349,10 +361,12 @@ async function writeModelFixture(input: {
     model: input.model,
     startedAt: input.timestamps.startedAt,
     completedAt: input.timestamps.completedAt,
-    results: audits.map((audit) => audit.result),
+    results,
     failures: [],
     skipped: [],
     cost: emptyAuditCostSummary(),
+    consensusEvidencePath: consensus.consensusPath,
+    referenceIntegrityPath: consensus.referenceIntegrityPath ?? undefined,
   })
   const reference = referenceFixture(input.model)
   await appendModelReferenceToBank({

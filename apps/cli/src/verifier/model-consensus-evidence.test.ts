@@ -5,9 +5,18 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { createReferenceQueryProfile } from '@antseed/fingerprints'
 import { emptyAuditCostSummary, writeProxyAuditEvidence, type ProxyAuditEvidenceV1 } from './proxy-evidence.js'
-import { writeModelProbeConsensusEvidence } from './model-consensus-evidence.js'
+import {
+  decideReferencePoint,
+  REFERENCE_VOTE_DECISION_RULE,
+  writeModelProbeConsensusEvidence,
+} from './model-consensus-evidence.js'
 
-function audit(peerId: string, answer: number, match: 0 | 1): ProxyAuditEvidenceV1 {
+function audit(
+  peerId: string,
+  answer: number,
+  match: 0 | 1,
+  verdict: 'SAME' | 'DIFF' | 'UNDETERMINED' = match ? 'SAME' : 'DIFF',
+): ProxyAuditEvidenceV1 {
   return {
     version: 1, kind: 'antseed-buyer-proxy-kbf-audit',
     evidenceLevel: 'proxy-observation-with-verified-response-auth-no-payment-evidence',
@@ -45,26 +54,39 @@ function audit(peerId: string, answer: number, match: 0 | 1): ProxyAuditEvidence
     result: { selectedProbeCount: 1, parsedProbeCount: 1, matchVector: [match], matchVectorHash: `0x${'77'.repeat(32)}`,
       stats: { selfHamming: 0, selfTotal: 1, targetHamming: match ? 0 : 1, targetTotal: 1,
         selfCoverage: 1, targetCoverage: 1, p0Cp99: 0.1, pValueBinomial: 1 },
-      verdict: match ? 'SAME' : 'DIFF', verdictReason: null, cost: emptyAuditCostSummary() },
+      verdict, verdictReason: null, cost: emptyAuditCostSummary() },
   }
 }
+
+test('reference point decisions confirm ties and require at least one eligible response', () => {
+  assert.equal(decideReferencePoint(1, 0), 'CONFIRMED')
+  assert.equal(decideReferencePoint(1, 1), 'CONFIRMED')
+  assert.equal(decideReferencePoint(1, 2), 'REJECTED')
+  assert.equal(decideReferencePoint(0, 0), 'NO_RESPONSE')
+})
 
 test('model consensus evidence aggregates authenticated seller support by probe', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'antseed-model-consensus-'))
   try {
     const runDirectory = join(directory, 'audits', 'run-1')
     const results = []
-    for (const [index, match] of ([1, 0] as const).entries()) {
+    const sellers = [
+      { match: 1 as const, verdict: 'SAME' as const },
+      { match: 0 as const, verdict: 'DIFF' as const },
+      { match: 1 as const, verdict: 'UNDETERMINED' as const },
+    ]
+    for (const [index, seller] of sellers.entries()) {
       const peerId = String(index + 1).repeat(40)
       const auditId = `audit-${index}`
       const written = await writeProxyAuditEvidence(
         join(runDirectory, 'sellers'),
         auditId,
-        audit(peerId, match ? 10 : 11, match),
+        audit(peerId, seller.match ? 10 : 11, seller.match, seller.verdict),
       )
-      results.push({ peerId, displayName: null, agentId: null, service: 'model-a', status: match ? 'SAME' as const : 'DIFF' as const,
-        auditId, parsedProbeCount: 1, probeCount: 1, correctProbeCount: match, incorrectProbeCount: match ? 0 : 1,
-        correctRate: match, requestCount: 1, cost: emptyAuditCostSummary(), evidencePath: written.path,
+      results.push({ peerId, displayName: null, agentId: null, service: 'model-a', status: seller.verdict,
+        auditId, parsedProbeCount: 1, probeCount: 1, correctProbeCount: seller.match,
+        incorrectProbeCount: seller.match ? 0 : 1, correctRate: seller.match, requestCount: 1,
+        cost: emptyAuditCostSummary(), evidencePath: written.path,
         evidenceHash: written.evidenceHash })
     }
     const written = await writeModelProbeConsensusEvidence({
@@ -78,11 +100,41 @@ test('model consensus evidence aggregates authenticated seller support by probe'
       evidenceLevel?: string
       scope: { referenceIntegrity: string; rawSellerResponses: string; paymentEvidence: boolean }
       reference: { relativeIntegrityPath: string }
-      summary: { authenticatedSellerCount: number; referenceMatchCount: number; referenceMismatchCount: number }
+      decisionRule: typeof REFERENCE_VOTE_DECISION_RULE
+      summary: {
+        authenticatedSellerCount: number
+        eligibleSellerCount: number
+        referenceMatchCount: number
+        referenceMismatchCount: number
+        eligibleAnswerCount: number
+        referenceSupportCount: number
+        referenceRejectCount: number
+        confirmedReferencePointCount: number
+        rejectedReferencePointCount: number
+        noResponseReferencePointCount: number
+        referencePointConfirmationRate: number | null
+      }
       probes: Array<{
-        sellerAnswers: Array<{ rawResponse: { exchangePath: string; signedResponsePreimageField: string } }>
+        sellerAnswers: Array<{
+          responseAuthSignature: string
+          rawResponse: {
+            exchangePath: string
+            responseAuthSignatureField: string
+            signedResponsePreimageField: string
+          }
+        }>
         probeId: string
+        domain: string
+        name: string
+        question: string
+        acceptedAnswerInterval: { minimum: number; maximum: number; inclusive: boolean }
+        sellerDecisions: Record<string, { count: number; peerIds: string[] }>
+        globalDecision: { decision: string; requiredConfirmedSellerCount: number }
         referenceConsensus: number
+        eligibleSellerAnswerCount: number
+        referenceSupportCount: number
+        referenceRejectCount: number
+        referenceDecision: string
       }>
     }
     assert.equal(evidence.version, 1)
@@ -96,11 +148,18 @@ test('model consensus evidence aggregates authenticated seller support by probe'
       onChainInclusionProof: false,
     })
     assert.deepEqual(evidence.summary, {
-      probeCount: 1, auditedSellerCount: 2, authenticatedSellerCount: 2, signedExchangeCount: 2,
-      authenticatedAnswerCount: 2, referenceMatchCount: 1, referenceMismatchCount: 1,
-      unparsedAnswerCount: 0, referenceMatchRate: 0.5,
+      probeCount: 1, auditedSellerCount: 3, authenticatedSellerCount: 3, eligibleSellerCount: 3,
+      signedExchangeCount: 3, authenticatedAnswerCount: 3, referenceMatchCount: 2, referenceMismatchCount: 1,
+      unparsedAnswerCount: 0, referenceMatchRate: 2 / 3, eligibleAnswerCount: 3,
+      referenceSupportCount: 2, referenceRejectCount: 1, confirmedReferencePointCount: 1,
+      rejectedReferencePointCount: 0, noResponseReferencePointCount: 0, referencePointConfirmationRate: 1,
     })
-    assert.equal(evidence.probes[0]?.sellerAnswers.length, 2)
+    assert.deepEqual(evidence.decisionRule, REFERENCE_VOTE_DECISION_RULE)
+    assert.equal(evidence.probes[0]?.sellerAnswers.length, 3)
+    assert.equal(evidence.probes[0]?.eligibleSellerAnswerCount, 3)
+    assert.equal(evidence.probes[0]?.referenceSupportCount, 2)
+    assert.equal(evidence.probes[0]?.referenceRejectCount, 1)
+    assert.equal(evidence.probes[0]?.referenceDecision, 'CONFIRMED')
     assert.equal(
       evidence.probes[0]?.sellerAnswers[0]?.rawResponse.exchangePath,
       'sellers/1111111111111111111111111111111111111111/exchanges/000.json',
@@ -109,7 +168,28 @@ test('model consensus evidence aggregates authenticated seller support by probe'
       evidence.probes[0]?.sellerAnswers[0]?.rawResponse.signedResponsePreimageField,
       'responseAuth.signedPreimages.responseBase64',
     )
+    assert.equal(
+      evidence.probes[0]?.sellerAnswers[0]?.rawResponse.responseAuthSignatureField,
+      'responseAuth.record.signature',
+    )
     assert.equal(evidence.probes[0]?.probeId, 'probe-1')
+    assert.equal(evidence.probes[0]?.domain, 'math')
+    assert.equal(evidence.probes[0]?.name, 'probe')
+    assert.equal(evidence.probes[0]?.question, 'Value is ___.')
+    assert.deepEqual(evidence.probes[0]?.acceptedAnswerInterval, {
+      minimum: 10, maximum: 10, inclusive: true,
+    })
+    assert.deepEqual(evidence.probes[0]?.sellerDecisions, {
+      CONFIRMED: { count: 2, peerIds: ['1'.repeat(40), '3'.repeat(40)] },
+      REJECTED: { count: 1, peerIds: ['2'.repeat(40)] },
+      NO_RESPONSE: { count: 0, peerIds: [] },
+      EXCLUDED: { count: 0, peerIds: [] },
+    })
+    assert.deepEqual(evidence.probes[0]?.globalDecision, {
+      decision: 'CONFIRMED', eligibleSellerAnswerCount: 3, requiredConfirmedSellerCount: 2,
+      confirmedSellerCount: 2, rejectedSellerCount: 1,
+    })
+    assert.equal(evidence.probes[0]?.sellerAnswers[0]?.responseAuthSignature, `0x${'66'.repeat(65)}`)
     assert.equal(evidence.probes[0]?.referenceConsensus, 10)
     assert.match(evidence.reference.relativeIntegrityPath, /^\.\.\/\.\.\/references\/reference-1\/probe-integrity\.json$/)
     assert.ok(written.referenceIntegrityPath)

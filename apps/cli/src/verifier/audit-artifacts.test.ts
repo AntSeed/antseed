@@ -18,6 +18,7 @@ import {
   writeVerifierStatus,
 } from './audit-artifacts.js'
 import { emptyAuditCostSummary } from './proxy-evidence.js'
+import { REFERENCE_VOTE_DECISION_RULE } from './model-consensus-evidence.js'
 
 test('verifier artifacts use model-first epoch directories', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'antseed-artifacts-'))
@@ -43,6 +44,71 @@ test('verifier artifacts use model-first epoch directories', async () => {
     }))
     const consensusPath = join(modelAuditsDirectory(directory, '7', 'Model A', 'run'), 'probe-consensus.json')
     const referencePath = join(modelReferenceDirectory(directory, '7', 'Model A', 'reference:1'), 'probe-integrity.json')
+    await mkdir(modelAuditsDirectory(directory, '7', 'Model A', 'run'), { recursive: true })
+    await writeFile(consensusPath, JSON.stringify({
+      version: 1,
+      kind: 'antseed-verifier-model-probe-consensus',
+      runId: 'run',
+      epoch: '7',
+      model: 'Model A',
+      createdAt: status.startedAt,
+      scope: {
+        referenceConsensus: true,
+        referenceIntegrity: 'linked-model-reference-file',
+        sellerAnswers: 'verified-response-auth-with-exact-preimages-only',
+        rawSellerResponses: 'linked-seller-exchange-files',
+        paymentEvidence: false,
+        onChainInclusionProof: false,
+      },
+      reference: null,
+      decisionRule: REFERENCE_VOTE_DECISION_RULE,
+      summary: {
+        probeCount: 1, auditedSellerCount: 1, authenticatedSellerCount: 1, eligibleSellerCount: 1,
+        signedExchangeCount: 1, authenticatedAnswerCount: 1, referenceMatchCount: 1,
+        referenceMismatchCount: 0, unparsedAnswerCount: 0, referenceMatchRate: 1,
+        eligibleAnswerCount: 1, referenceSupportCount: 1, referenceRejectCount: 0,
+        confirmedReferencePointCount: 1, rejectedReferencePointCount: 0,
+        noResponseReferencePointCount: 0, referencePointConfirmationRate: 1,
+      },
+      sellers: [],
+      probes: [{
+        probeId: 'probe-1', domain: 'math', name: 'test_weight', question: 'The test weight is ___.',
+        range: [0, 20], tolerance: { mode: 'absolute', value: 0 },
+        acceptedAnswerInterval: { minimum: 10, maximum: 10, inclusive: true },
+        referenceId: 'reference:1', referenceConsensus: 10,
+        referenceSelfTest: { answer: 10, match: 1 }, authenticatedSellerAnswerCount: 1,
+        referenceMatchCount: 1, referenceMismatchCount: 0, unparsedAnswerCount: 0,
+        referenceMatchRate: 1, eligibleSellerAnswerCount: 1, referenceSupportCount: 1,
+        referenceRejectCount: 0, referenceSupportRate: 1, referenceDecision: 'CONFIRMED',
+        sellerDecisions: {
+          CONFIRMED: { count: 1, peerIds: ['11'.repeat(20)] },
+          REJECTED: { count: 0, peerIds: [] },
+          NO_RESPONSE: { count: 0, peerIds: [] },
+          EXCLUDED: { count: 0, peerIds: [] },
+        },
+        globalDecision: {
+          decision: 'CONFIRMED', eligibleSellerAnswerCount: 1, requiredConfirmedSellerCount: 1,
+          confirmedSellerCount: 1, rejectedSellerCount: 0,
+        },
+        sellerAnswers: [{
+          peerId: '11'.repeat(20), sellerVerdict: 'SAME', eligibleForReferenceVote: true,
+          referenceVote: 'CONFIRM', sellerDecision: 'CONFIRMED',
+          decisionReason: 'within-reference-tolerance',
+          sellerEvidenceId: 'audit-1', evidenceHash: `0x${'34'.repeat(32)}`,
+          batchIndex: 0, requestId: 'request-1', requestHash: `0x${'44'.repeat(32)}`,
+          responseHash: `0x${'55'.repeat(32)}`, responseAuthSignature: `0x${'66'.repeat(65)}`,
+          answer: 10, match: 1,
+          rawResponse: {
+            exchangePath: `sellers/${'11'.repeat(20)}/exchanges/000.json`,
+            buyerProxyRequestField: 'request.bodyBase64', buyerProxyBodyField: 'response.bodyBase64',
+            responseAuthSignatureField: 'responseAuth.record.signature',
+            signedRequestPreimageField: 'responseAuth.signedPreimages.requestBase64',
+            signedResponsePreimageField: 'responseAuth.signedPreimages.responseBase64',
+            responseAuthSigningPreimageField: 'responseAuth.signedPreimages.responseAuthSigningBase64',
+          },
+        }],
+      }],
+    }))
     const modelPath = await writeModelAuditSummary(directory, '7', 'Model A', {
       version: 1, kind: 'antseed-verifier-model-summary', runId: 'run', epoch: '7', model: 'Model A',
       startedAt: status.startedAt, completedAt: status.startedAt, results: [{
@@ -89,6 +155,17 @@ test('verifier artifacts use model-first epoch directories', async () => {
     assert.match(report, /Seller A \(111111111111…\)/)
     assert.match(report, /Open audit folder/)
     assert.match(report, /Probe consensus JSON/)
+    assert.match(report, /Does the seller majority agree with the enrolled reference\?/)
+    assert.match(report, /Every scoreable answer backed by verified ResponseAuth votes/)
+    assert.match(report, /The test weight is ___\./)
+    assert.match(report, /CONFIRMED — within the accepted answer interval \(1\)/)
+    assert.match(report, /NO_RESPONSE — no eligible signed answer \(0\)/)
+    assert.match(report, /Accepted answer interval/)
+    assert.match(report, /Open signed exchange JSON/)
+    assert.match(report, /href="audits\/run\/sellers\/1111111111111111111111111111111111111111\/exchanges\/000\.json"/)
+    assert.doesNotMatch(report, /href="file:/)
+    assert.match(report, /Confirmed reference points/)
+    assert.match(report, /CONFIRMED/)
     assert.match(report, /Reference probe integrity/)
     assert.match(report, /Open folder/)
     assert.match(report, /Evidence JSON/)

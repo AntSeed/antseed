@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, relative, sep } from 'node:path'
 import type { StoredRequestCost } from '@antseed/node'
 import {
   VERIFIER_VERDICT_DIFF,
@@ -11,6 +11,7 @@ import {
 import { canonicalHashBytes32, canonicalJsonStringify } from '@antseed/fingerprints'
 import type { ModelAuditSummaryV1, VerifierRunManifestV1 } from './audit-artifacts.js'
 import { writeJsonAtomic } from './atomic-files.js'
+import type { ModelProbeConsensusEvidenceV1 } from './model-consensus-evidence.js'
 import type { ReferenceCostEntryV1 } from './probe-bank.js'
 import {
   verifyProxyAuditEvidenceFile,
@@ -80,6 +81,13 @@ export interface ModelVerificationBundleEvidenceV1 {
     startedAt: string
     endsAt: string
   }
+  consensus: {
+    evidenceHash: string
+    relativeEvidencePath: string
+    referenceId: string | null
+    decisionRule: ModelProbeConsensusEvidenceV1['decisionRule']
+    summary: ModelProbeConsensusEvidenceV1['summary']
+  }
   results: ModelBundleSellerResultV1[]
   referenceCosts: Array<{
     costId: string
@@ -122,6 +130,12 @@ export async function prepareModelVerificationBundle(input: {
   resolveAgentOwner(agentId: bigint): Promise<string>
 }): Promise<PreparedModelVerificationBundle> {
   const summary = await readModelSummary(input.modelSummaryPath, input.manifest.runId, input.model)
+  if (!summary.consensusEvidencePath) throw new Error(`model consensus evidence is missing for ${input.model}`)
+  const consensus = await readModelConsensusEvidence(
+    summary.consensusEvidencePath,
+    input.manifest.runId,
+    input.model,
+  )
   const results: ModelBundleSellerResultV1[] = []
   const contractResults: VerificationResultInput[] = []
   const excludedAudits: ExcludedModelBundleAuditV1[] = summary.failures.map((failure) => ({
@@ -256,6 +270,13 @@ export async function prepareModelVerificationBundle(input: {
     epochWindow: {
       startedAt: input.manifest.epochStartedAt,
       endsAt: input.manifest.epochEndsAt,
+    },
+    consensus: {
+      evidenceHash: canonicalHashBytes32(consensus),
+      relativeEvidencePath: relative(input.evidenceDir, summary.consensusEvidencePath).split(sep).join('/'),
+      referenceId: consensus.reference?.referenceId ?? null,
+      decisionRule: consensus.decisionRule,
+      summary: consensus.summary,
     },
     results,
     referenceCosts: input.referenceCosts.map((entry) => ({
@@ -405,6 +426,24 @@ async function readModelSummary(path: string, runId: string, model: string): Pro
   if (parsed.runId !== runId || normalized(parsed.model) !== normalized(model)) {
     throw new Error(`model audit summary does not belong to run ${runId}: ${path}`)
   }
+  return parsed
+}
+
+async function readModelConsensusEvidence(
+  path: string,
+  runId: string,
+  model: string,
+): Promise<ModelProbeConsensusEvidenceV1> {
+  const bytes = await readFile(path)
+  const parsed = JSON.parse(bytes.toString('utf8')) as ModelProbeConsensusEvidenceV1
+  if (parsed.version !== 1 || parsed.kind !== 'antseed-verifier-model-probe-consensus') {
+    throw new Error(`invalid model consensus evidence: ${path}`)
+  }
+  if (parsed.runId !== runId || normalized(parsed.model) !== normalized(model)) {
+    throw new Error(`model consensus evidence does not belong to run ${runId}: ${path}`)
+  }
+  const canonical = Buffer.from(canonicalJsonStringify(parsed))
+  if (!bytes.equals(canonical)) throw new Error(`model consensus evidence is not canonical JSON: ${path}`)
   return parsed
 }
 

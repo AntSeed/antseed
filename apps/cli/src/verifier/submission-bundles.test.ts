@@ -3,9 +3,10 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { createReferenceQueryProfile } from '@antseed/fingerprints'
+import { canonicalJsonStringify, createReferenceQueryProfile } from '@antseed/fingerprints'
 import type { StoredRequestCost } from '@antseed/node'
 import { writeModelAuditSummary, type VerifierRunManifestV1 } from './audit-artifacts.js'
+import { writeModelProbeConsensusEvidence } from './model-consensus-evidence.js'
 import { emptyAuditCostSummary, writeProxyAuditEvidence, type ProxyAuditEvidenceV1 } from './proxy-evidence.js'
 import {
   prepareModelVerificationBundle,
@@ -155,6 +156,17 @@ test('model bundles account costs once and derive deterministic IDs', async () =
       evidencePath: written.path,
       evidenceHash: written.evidenceHash,
     })
+    const modelResults = [
+      result('11'.repeat(20), '7', 'audit-1', audit1, 'SAME'),
+      result('22'.repeat(20), '8', 'audit-2', audit2, 'DIFF'),
+      result('33'.repeat(20), '9', 'audit-3', audit3, 'SAME'),
+    ]
+    const consensus = await writeModelProbeConsensusEvidence({
+      directory: join(directory, 'epochs', '4', 'model-a', 'audits', 'run-1'),
+      referencesDirectory: join(directory, 'epochs', '4', 'model-a', 'references'),
+      runId: 'run-1', epoch: '4', model: 'model-a', createdAt: '2026-08-06T12:05:00.000Z',
+      results: modelResults,
+    })
     const summaryPath = await writeModelAuditSummary(directory, '4', 'model-a', {
       version: 1,
       kind: 'antseed-verifier-model-summary',
@@ -163,14 +175,12 @@ test('model bundles account costs once and derive deterministic IDs', async () =
       model: 'model-a',
       startedAt: '2026-08-06T12:00:00.000Z',
       completedAt: '2026-08-06T12:05:00.000Z',
-      results: [
-        result('11'.repeat(20), '7', 'audit-1', audit1, 'SAME'),
-        result('22'.repeat(20), '8', 'audit-2', audit2, 'DIFF'),
-        result('33'.repeat(20), '9', 'audit-3', audit3, 'SAME'),
-      ],
+      results: modelResults,
       failures: [],
       skipped: [],
       cost: emptyAuditCostSummary(),
+      consensusEvidencePath: consensus.consensusPath,
+      referenceIntegrityPath: consensus.referenceIntegrityPath ?? undefined,
     })
     const manifest: VerifierRunManifestV1 = {
       version: 1,
@@ -213,6 +223,16 @@ test('model bundles account costs once and derive deterministic IDs', async () =
     const second = await prepare()
 
     assert.equal(first.evidenceHash, second.evidenceHash)
+    assert.equal(first.evidence.consensus.referenceId, 'reference-1')
+    assert.equal(first.evidence.consensus.summary.probeCount, 1)
+    assert.equal(first.evidence.consensus.summary.noResponseReferencePointCount, 1)
+    assert.match(first.evidence.consensus.evidenceHash, /^0x[0-9a-f]{64}$/)
+    const consensusEvidence = JSON.parse(await readFile(consensus.consensusPath, 'utf8')) as { createdAt: string }
+    consensusEvidence.createdAt = '2026-08-06T12:06:00.000Z'
+    await writeFile(consensus.consensusPath, canonicalJsonStringify(consensusEvidence))
+    const changedConsensus = await prepare()
+    assert.notEqual(changedConsensus.evidence.consensus.evidenceHash, first.evidence.consensus.evidenceHash)
+    assert.notEqual(changedConsensus.evidenceHash, first.evidenceHash)
     assert.equal(first.results.length, 2)
     assert.equal(first.results[1]!.modelShareBps, 0)
     assert.equal(first.evidence.inferenceCostUsdMicros, '1450000')

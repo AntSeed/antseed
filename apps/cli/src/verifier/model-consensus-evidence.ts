@@ -1,6 +1,11 @@
 import { readFile } from 'node:fs/promises'
 import { dirname, join, relative, sep } from 'node:path'
-import { canonicalHashBytes32, type KbfProbe, type ReferenceQueryProfileV1 } from '@antseed/fingerprints'
+import {
+  canonicalHashBytes32,
+  type KbfProbe,
+  type KbfReferenceV1,
+  type ReferenceQueryProfileV1,
+} from '@antseed/fingerprints'
 import { writeJsonAtomic } from './atomic-files.js'
 import type { ModelVerificationTargetResult } from './model-run.js'
 import { verifyProxyAuditEvidenceFile, type ProxyAuditEvidenceV1 } from './proxy-evidence.js'
@@ -29,6 +34,24 @@ interface ReferenceIntegrityEvidenceV1 {
   }>
 }
 
+export type ReferencePointDecision = 'CONFIRMED' | 'REJECTED' | 'NO_RESPONSE'
+export type SellerReferencePointDecision = ReferencePointDecision | 'EXCLUDED'
+
+export const REFERENCE_VOTE_DECISION_RULE = {
+  unit: 'one-vote-per-authenticated-seller-per-probe',
+  includedSellerVerdicts: ['SAME', 'DIFF', 'UNDETERMINED'],
+  excludedSellerVerdicts: [],
+  confirmationThresholdBps: 5_000,
+  tiePolicy: 'confirm',
+  noResponseDecision: 'NO_RESPONSE',
+} as const
+
+export function decideReferencePoint(referenceSupportCount: number, referenceRejectCount: number): ReferencePointDecision {
+  const eligibleSellerAnswerCount = referenceSupportCount + referenceRejectCount
+  if (eligibleSellerAnswerCount === 0) return 'NO_RESPONSE'
+  return referenceSupportCount * 2 >= eligibleSellerAnswerCount ? 'CONFIRMED' : 'REJECTED'
+}
+
 export interface ModelProbeConsensusEvidenceV1 {
   version: 1
   kind: 'antseed-verifier-model-probe-consensus'
@@ -46,30 +69,54 @@ export interface ModelProbeConsensusEvidenceV1 {
   }
   reference: {
     referenceId: string
+    referenceModel: string
+    upstreamModel: string
+    sourceId: string | null
     integrityHash: string
     integrityPath: string
     relativeIntegrityPath: string
   } | null
+  decisionRule: typeof REFERENCE_VOTE_DECISION_RULE
   summary: {
     probeCount: number
     auditedSellerCount: number
     authenticatedSellerCount: number
+    eligibleSellerCount: number
     signedExchangeCount: number
     authenticatedAnswerCount: number
     referenceMatchCount: number
     referenceMismatchCount: number
     unparsedAnswerCount: number
     referenceMatchRate: number | null
+    eligibleAnswerCount: number
+    referenceSupportCount: number
+    referenceRejectCount: number
+    confirmedReferencePointCount: number
+    rejectedReferencePointCount: number
+    noResponseReferencePointCount: number
+    referencePointConfirmationRate: number | null
   }
   sellers: Array<{
     sellerEvidenceId: string
     peerId: string
+    verdict: ModelVerificationTargetResult['status']
+    eligibleForReferenceVote: boolean
     evidenceHash: string
     evidencePath: string
     relativeEvidencePath: string
   }>
   probes: Array<{
     probeId: string
+    domain: string
+    name: string
+    question: string
+    range: [number, number]
+    tolerance: KbfProbe['tolerance']
+    acceptedAnswerInterval: {
+      minimum: number
+      maximum: number
+      inclusive: true
+    }
     referenceId: string
     referenceConsensus: number
     referenceSelfTest: { answer: number | null; match: 0 | 1 | null }
@@ -78,18 +125,48 @@ export interface ModelProbeConsensusEvidenceV1 {
     referenceMismatchCount: number
     unparsedAnswerCount: number
     referenceMatchRate: number | null
+    eligibleSellerAnswerCount: number
+    referenceSupportCount: number
+    referenceRejectCount: number
+    referenceSupportRate: number | null
+    referenceDecision: ReferencePointDecision
+    sellerDecisions: Record<SellerReferencePointDecision, {
+      count: number
+      peerIds: string[]
+    }>
+    globalDecision: {
+      decision: ReferencePointDecision
+      eligibleSellerAnswerCount: number
+      requiredConfirmedSellerCount: number
+      confirmedSellerCount: number
+      rejectedSellerCount: number
+    }
     sellerAnswers: Array<{
       peerId: string
+      sellerVerdict: ModelVerificationTargetResult['status']
+      eligibleForReferenceVote: boolean
+      referenceVote: 'CONFIRM' | 'REJECT' | null
+      sellerDecision: Exclude<SellerReferencePointDecision, 'NO_RESPONSE'>
+      decisionReason:
+        | 'within-reference-tolerance'
+        | 'outside-reference-tolerance'
+        | 'missing-or-malformed-answer-in-completed-response'
+        | 'answer-not-scoreable'
       sellerEvidenceId: string
       evidenceHash: string
       batchIndex: number
       requestId: string
       requestHash: string
       responseHash: string
+      responseAuthSignature: string
       rawResponse: {
         exchangePath: string
+        buyerProxyRequestField: 'request.bodyBase64'
         buyerProxyBodyField: 'response.bodyBase64'
+        responseAuthSignatureField: 'responseAuth.record.signature'
+        signedRequestPreimageField: 'responseAuth.signedPreimages.requestBase64'
         signedResponsePreimageField: 'responseAuth.signedPreimages.responseBase64'
+        responseAuthSigningPreimageField: 'responseAuth.signedPreimages.responseAuthSigningBase64'
       }
       answer: number | null
       match: 0 | 1 | null
@@ -112,6 +189,7 @@ export async function writeModelProbeConsensusEvidence(input: {
   model: string
   createdAt: string
   results: ModelVerificationTargetResult[]
+  referenceSource?: KbfReferenceV1
 }): Promise<{
   directory: string
   consensusPath: string
@@ -121,6 +199,7 @@ export async function writeModelProbeConsensusEvidence(input: {
   const probeById = new Map<string, ProbeAccumulator>()
   const sellers: ModelProbeConsensusEvidenceV1['sellers'] = []
   const authenticatedSellers = new Set<string>()
+  const eligibleSellers = new Set<string>()
   let signedExchangeCount = 0
   let referenceEvidence: ProxyAuditEvidenceV1['reference'] | null = null
   let referenceEvidenceHash: string | null = null
@@ -136,6 +215,8 @@ export async function writeModelProbeConsensusEvidence(input: {
     sellers.push({
       sellerEvidenceId: result.auditId,
       peerId: result.peerId,
+      verdict: result.status,
+      eligibleForReferenceVote: false,
       evidenceHash: result.evidenceHash,
       evidencePath: result.evidencePath,
       relativeEvidencePath: relativePath(input.directory, result.evidencePath),
@@ -166,27 +247,52 @@ export async function writeModelProbeConsensusEvidence(input: {
         || !auth.requestId) continue
       signedExchangeCount += 1
       authenticatedSellers.add(result.peerId.toLowerCase())
+      eligibleSellers.add(result.peerId.toLowerCase())
       for (const [index, probeId] of exchange.probeIds.entries()) {
         const accumulator = probeById.get(probeId)
         if (!accumulator) continue
+        const answer = exchange.answers[index] ?? null
+        const match = exchange.matches[index] ?? null
+        const sellerDecision = match === null
+          ? 'EXCLUDED'
+          : match === 1 ? 'CONFIRMED' : 'REJECTED'
+        const decisionReason = match === null
+          ? 'answer-not-scoreable'
+          : match === 1
+            ? 'within-reference-tolerance'
+            : answer === null
+              ? 'missing-or-malformed-answer-in-completed-response'
+              : 'outside-reference-tolerance'
         accumulator.sellerAnswers.push({
           peerId: result.peerId,
+          sellerVerdict: result.status,
+          eligibleForReferenceVote: match !== null,
+          referenceVote: match === null
+            ? null
+            : match === 1 ? 'CONFIRM' : 'REJECT',
+          sellerDecision,
+          decisionReason,
           sellerEvidenceId: result.auditId,
           evidenceHash: result.evidenceHash,
           batchIndex: exchange.batchIndex,
           requestId: auth.requestId,
           requestHash: auth.record.requestHash,
           responseHash: auth.record.responseHash,
+          responseAuthSignature: auth.record.signature,
           rawResponse: {
             exchangePath: relativePath(
               input.directory,
               join(dirname(result.evidencePath), 'exchanges', `${String(exchange.batchIndex).padStart(3, '0')}.json`),
             ),
+            buyerProxyRequestField: 'request.bodyBase64',
             buyerProxyBodyField: 'response.bodyBase64',
+            responseAuthSignatureField: 'responseAuth.record.signature',
+            signedRequestPreimageField: 'responseAuth.signedPreimages.requestBase64',
             signedResponsePreimageField: 'responseAuth.signedPreimages.responseBase64',
+            responseAuthSigningPreimageField: 'responseAuth.signedPreimages.responseAuthSigningBase64',
           },
-          answer: exchange.answers[index] ?? null,
-          match: exchange.matches[index] ?? null,
+          answer,
+          match,
         })
       }
     }
@@ -195,27 +301,81 @@ export async function writeModelProbeConsensusEvidence(input: {
   const probes = [...probeById.values()]
     .sort((left, right) => left.probe.id.localeCompare(right.probe.id))
     .map((entry) => {
-      const referenceMatchCount = entry.sellerAnswers.filter((answer) => answer.match === 1).length
-      const referenceMismatchCount = entry.sellerAnswers.filter((answer) => answer.match === 0).length
+      const sellerAnswers = entry.sellerAnswers.sort((left, right) => left.peerId.localeCompare(right.peerId))
+      const referenceMatchCount = sellerAnswers.filter((answer) => answer.match === 1).length
+      const referenceMismatchCount = sellerAnswers.filter((answer) => answer.match === 0).length
       const authenticatedSellerAnswerCount = referenceMatchCount + referenceMismatchCount
+      const confirmedPeerIds = sellerAnswers
+        .filter((answer) => answer.sellerDecision === 'CONFIRMED')
+        .map((answer) => answer.peerId)
+      const rejectedPeerIds = sellerAnswers
+        .filter((answer) => answer.sellerDecision === 'REJECTED')
+        .map((answer) => answer.peerId)
+      const excludedPeerIds = sellerAnswers
+        .filter((answer) => answer.sellerDecision === 'EXCLUDED')
+        .map((answer) => answer.peerId)
+      const answeredPeerIds = new Set(sellerAnswers.map((answer) => answer.peerId.toLowerCase()))
+      const noResponsePeerIds = sellers
+        .filter((seller) => !answeredPeerIds.has(seller.peerId.toLowerCase()))
+        .map((seller) => seller.peerId)
+        .sort()
+      const referenceSupportCount = confirmedPeerIds.length
+      const referenceRejectCount = rejectedPeerIds.length
+      const eligibleSellerAnswerCount = referenceSupportCount + referenceRejectCount
+      const referenceDecision = decideReferencePoint(referenceSupportCount, referenceRejectCount)
       return {
         probeId: entry.probe.id,
+        domain: entry.probe.domain,
+        name: entry.probe.name,
+        question: entry.probe.template,
+        range: entry.probe.range,
+        tolerance: entry.probe.tolerance,
+        acceptedAnswerInterval: acceptedAnswerInterval(entry.probe),
         referenceId: entry.referenceId,
         referenceConsensus: entry.probe.consensus,
         referenceSelfTest: entry.referenceSelfTest,
-        sellerAnswers: entry.sellerAnswers.sort((left, right) => left.peerId.localeCompare(right.peerId)),
+        sellerAnswers,
         authenticatedSellerAnswerCount,
         referenceMatchCount,
         referenceMismatchCount,
-        unparsedAnswerCount: entry.sellerAnswers.filter((answer) => answer.match === null).length,
+        unparsedAnswerCount: sellerAnswers.filter((answer) => answer.answer === null).length,
         referenceMatchRate: authenticatedSellerAnswerCount === 0
           ? null
           : referenceMatchCount / authenticatedSellerAnswerCount,
+        eligibleSellerAnswerCount,
+        referenceSupportCount,
+        referenceRejectCount,
+        referenceSupportRate: eligibleSellerAnswerCount === 0
+          ? null
+          : referenceSupportCount / eligibleSellerAnswerCount,
+        referenceDecision,
+        sellerDecisions: {
+          CONFIRMED: { count: confirmedPeerIds.length, peerIds: confirmedPeerIds },
+          REJECTED: { count: rejectedPeerIds.length, peerIds: rejectedPeerIds },
+          NO_RESPONSE: { count: noResponsePeerIds.length, peerIds: noResponsePeerIds },
+          EXCLUDED: { count: excludedPeerIds.length, peerIds: excludedPeerIds },
+        },
+        globalDecision: {
+          decision: referenceDecision,
+          eligibleSellerAnswerCount,
+          requiredConfirmedSellerCount: eligibleSellerAnswerCount === 0
+            ? 0
+            : Math.ceil(eligibleSellerAnswerCount / 2),
+          confirmedSellerCount: referenceSupportCount,
+          rejectedSellerCount: referenceRejectCount,
+        },
       }
     })
   const referenceMatchCount = probes.reduce((total, probe) => total + probe.referenceMatchCount, 0)
   const referenceMismatchCount = probes.reduce((total, probe) => total + probe.referenceMismatchCount, 0)
   const authenticatedAnswerCount = referenceMatchCount + referenceMismatchCount
+  const referenceSupportCount = probes.reduce((total, probe) => total + probe.referenceSupportCount, 0)
+  const referenceRejectCount = probes.reduce((total, probe) => total + probe.referenceRejectCount, 0)
+  const eligibleAnswerCount = referenceSupportCount + referenceRejectCount
+  const confirmedReferencePointCount = probes.filter((probe) => probe.referenceDecision === 'CONFIRMED').length
+  const rejectedReferencePointCount = probes.filter((probe) => probe.referenceDecision === 'REJECTED').length
+  const noResponseReferencePointCount = probes.filter((probe) => probe.referenceDecision === 'NO_RESPONSE').length
+  const decidedReferencePointCount = confirmedReferencePointCount + rejectedReferencePointCount
   const referenceIntegrity = referenceEvidence ? createReferenceIntegrityEvidence(referenceEvidence) : null
   const referenceIntegrityPath = referenceIntegrity
     ? join(input.referencesDirectory, safeServiceSlug(referenceIntegrity.referenceId), 'probe-integrity.json')
@@ -223,6 +383,9 @@ export async function writeModelProbeConsensusEvidence(input: {
   if (referenceIntegrity && referenceIntegrityPath) await writeJsonAtomic(referenceIntegrityPath, referenceIntegrity, true)
   const reference = referenceIntegrity && referenceIntegrityPath ? {
     referenceId: referenceIntegrity.referenceId,
+    referenceModel: referenceIntegrity.referenceModel,
+    upstreamModel: referenceIntegrity.queryProfile.upstreamModel,
+    sourceId: referenceSourceId(input.referenceSource, referenceIntegrity.referenceId),
     integrityHash: canonicalHashBytes32(referenceIntegrity),
     integrityPath: referenceIntegrityPath,
     relativeIntegrityPath: relativePath(input.directory, referenceIntegrityPath),
@@ -243,18 +406,34 @@ export async function writeModelProbeConsensusEvidence(input: {
       onChainInclusionProof: false,
     },
     reference,
+    decisionRule: REFERENCE_VOTE_DECISION_RULE,
     summary: {
       probeCount: probes.length,
       auditedSellerCount: input.results.length,
       authenticatedSellerCount: authenticatedSellers.size,
+      eligibleSellerCount: eligibleSellers.size,
       signedExchangeCount,
       authenticatedAnswerCount,
       referenceMatchCount,
       referenceMismatchCount,
       unparsedAnswerCount: probes.reduce((total, probe) => total + probe.unparsedAnswerCount, 0),
       referenceMatchRate: authenticatedAnswerCount === 0 ? null : referenceMatchCount / authenticatedAnswerCount,
+      eligibleAnswerCount,
+      referenceSupportCount,
+      referenceRejectCount,
+      confirmedReferencePointCount,
+      rejectedReferencePointCount,
+      noResponseReferencePointCount,
+      referencePointConfirmationRate: decidedReferencePointCount === 0
+        ? null
+        : confirmedReferencePointCount / decidedReferencePointCount,
     },
-    sellers: sellers.sort((left, right) => left.peerId.localeCompare(right.peerId)),
+    sellers: sellers
+      .map((seller) => ({
+        ...seller,
+        eligibleForReferenceVote: authenticatedSellers.has(seller.peerId.toLowerCase()),
+      }))
+      .sort((left, right) => left.peerId.localeCompare(right.peerId)),
     probes,
   }
   const consensusPath = join(input.directory, 'probe-consensus.json')
@@ -276,6 +455,33 @@ export async function writeModelProbeConsensusEvidence(input: {
   const manifestPath = join(input.directory, 'manifest.json')
   await writeJsonAtomic(manifestPath, manifest, true)
   return { directory: input.directory, consensusPath, manifestPath, referenceIntegrityPath }
+}
+
+function referenceSourceId(reference: KbfReferenceV1 | undefined, expectedReferenceId: string): string | null {
+  if (!reference || reference.referenceId !== expectedReferenceId) return null
+  const provenanceSourceId = reference.provenance?.sourceId
+  if (typeof provenanceSourceId === 'string' && provenanceSourceId.length > 0) return provenanceSourceId
+  const generatorSourceId = reference.generator.params.sourceId
+  return typeof generatorSourceId === 'string' && generatorSourceId.length > 0 ? generatorSourceId : null
+}
+
+function acceptedAnswerInterval(probe: KbfProbe): {
+  minimum: number
+  maximum: number
+  inclusive: true
+} {
+  const distance = probe.tolerance.mode === 'absolute'
+    ? probe.tolerance.value
+    : Math.abs(probe.consensus) * probe.tolerance.value
+  return {
+    minimum: stableDisplayNumber(probe.consensus - distance),
+    maximum: stableDisplayNumber(probe.consensus + distance),
+    inclusive: true,
+  }
+}
+
+function stableDisplayNumber(value: number): number {
+  return Number(value.toPrecision(15))
 }
 
 export async function writeModelAuditManifest(input: {

@@ -43,6 +43,7 @@ import {
   type ModelVerificationSkip,
 } from '../../../verifier/model-run.js'
 import {
+  epochProbeReferencePath,
   loadModelAuditReservation,
   reserveModelAuditReference,
   voidModelAuditReference,
@@ -492,6 +493,7 @@ export function registerVerifierRunCommand(verifier: Command): void {
             model,
             createdAt: modelCompletedAt,
             results,
+            referenceSource: await readEpochReferenceSource(banksDir, model, epoch),
           })
           const summaryPath = await writeModelAuditSummary(evidenceDir, epoch, model, {
             version: 1,
@@ -609,6 +611,22 @@ export function registerVerifierRunCommand(verifier: Command): void {
         await runLock.release()
       }
     })
+}
+
+async function readEpochReferenceSource(
+  banksDir: string,
+  model: string,
+  epoch: string,
+): Promise<KbfReferenceV1 | undefined> {
+  try {
+    const value = JSON.parse(await readFile(epochProbeReferencePath(banksDir, model, epoch), 'utf8')) as {
+      reference?: KbfReferenceV1
+    }
+    return value.reference
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
 }
 
 function epochTimestamp(value: number): string {
