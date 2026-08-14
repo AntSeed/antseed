@@ -8,8 +8,11 @@ import path from 'node:path';
 
 import {
   applyConfigPatch,
+  codexRoutedModelSlug,
   parseJsoncObject,
   readConfigPatch,
+  refreshCodexModelCatalog,
+  refreshOpenCodeModelCatalog,
   removeConfigPatch,
   substituteBaseUrlHost,
   type CodexConfigPatchDef,
@@ -20,7 +23,7 @@ import { DEFAULT_APP_PROFILES } from '../connected-apps/defaults.js';
 
 const PEER_ID = '0123456789abcdef0123456789abcdef01234567';
 
-function makePatch(configPath: string): ConfigPatchDef {
+function makePatch(configPath: string): OpencodeConfigPatchDef {
   return {
     configPath,
     providerKey: 'antseed',
@@ -78,7 +81,13 @@ test('applyConfigPatch patches JSONC configs and writes a backup before normaliz
     }\n`;
     await writeFile(configPath, original, 'utf8');
 
-    applyConfigPatch(makePatch(configPath), PEER_ID, 9456);
+    applyConfigPatch(makePatch(configPath), PEER_ID, 9456, {
+      openCodeInAppSelection: true,
+      openCodeModels: [
+        { provider: 'openai-responses', id: 'gpt-5.6-sol', name: 'GPT 5.6 Sol' },
+        { provider: 'openai-responses', id: 'openai/qwen3-coder', name: 'Qwen3 Coder' },
+      ],
+    });
 
     const config = JSON.parse(await readFile(configPath, 'utf8')) as {
       provider: Record<string, {
@@ -103,18 +112,94 @@ test('applyConfigPatch patches JSONC configs and writes a backup before normaliz
     assert.equal(config.provider.antseed?.options?.baseURL, 'http://127.0.0.1:9456/v1');
     assert.equal(config.provider.antseed?.options?.apiKey, 'antseed');
     assert.deepEqual(config.provider.antseed?.models, {
-      antseed: {
-        name: 'AntSeed Auto',
+      'gpt-5.6-sol': {
+        name: 'GPT 5.6 Sol',
+        attachment: true,
+        modalities: { input: ['text', 'image'], output: ['text'] },
+        limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
+      },
+      'openai/qwen3-coder': {
+        name: 'Qwen3 Coder',
         attachment: true,
         modalities: { input: ['text', 'image'], output: ['text'] },
         limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
       },
     });
-    assert.equal(config.model, 'antseed/antseed');
+    assert.equal(config.model, 'antseed/gpt-5.6-sol');
     assert.deepEqual(config.disabled_providers, ['other']);
     assert.equal(config.notes, 'keep // literal text');
 
     assert.equal(await readFile(`${configPath}.antseed.bak`, 'utf8'), original);
+  });
+});
+
+test('refreshOpenCodeModelCatalog updates models without changing the active OpenCode selection', async () => {
+  await withTempConfig(async (_dir, configPath) => {
+    const patch = makePatch(configPath);
+    applyConfigPatch(patch, PEER_ID, 8377, {
+      openCodeModels: [{ provider: 'openai-responses', id: 'gpt-5.6-sol', name: 'GPT 5.6 Sol' }],
+      openCodeInAppSelection: true,
+    });
+    const selected = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, unknown>;
+    selected['model'] = 'antseed/gpt-5.6-sol';
+    await writeFile(configPath, JSON.stringify(selected), 'utf8');
+
+    assert.equal(refreshOpenCodeModelCatalog(patch, 8377, [
+      { provider: 'openai-responses', id: 'gpt-5.6-sol', name: 'GPT 5.6 Sol' },
+      { provider: 'openai-responses', id: 'qwen3-coder', name: 'Qwen3 Coder' },
+    ], true), true);
+
+    const config = JSON.parse(await readFile(configPath, 'utf8')) as {
+      model: string;
+      provider: Record<string, { models: Record<string, unknown> }>;
+    };
+    assert.equal(config.model, 'antseed/gpt-5.6-sol');
+    assert.deepEqual(Object.keys(config.provider.antseed!.models), ['gpt-5.6-sol', 'qwen3-coder']);
+  });
+});
+
+test('refreshOpenCodeModelCatalog never falls back to AntSeed VPR during empty in-app startup', async () => {
+  await withTempConfig(async (_dir, configPath) => {
+    const patch = makePatch(configPath);
+    applyConfigPatch(patch, PEER_ID, 8377, {
+      openCodeInAppSelection: true,
+      openCodeModels: [],
+    });
+
+    const config = JSON.parse(await readFile(configPath, 'utf8')) as {
+      model?: string;
+      provider: Record<string, { models: Record<string, unknown> }>;
+    };
+    assert.equal(config.model, undefined);
+    assert.deepEqual(config.provider.antseed!.models, {});
+  });
+});
+
+test('refreshOpenCodeModelCatalog leaves only AntSeed VPR outside in-app selection', async () => {
+  await withTempConfig(async (_dir, configPath) => {
+    const patch = makePatch(configPath);
+    applyConfigPatch(patch, PEER_ID, 8377, {
+      openCodeModels: [{ provider: 'openai-responses', id: 'gpt-5.6-sol', name: 'GPT 5.6 Sol' }],
+      openCodeInAppSelection: true,
+    });
+
+    assert.equal(refreshOpenCodeModelCatalog(patch, 8377, [
+      { provider: 'openai-responses', id: 'gpt-5.6-sol', name: 'GPT 5.6 Sol' },
+    ], false), true);
+
+    const config = JSON.parse(await readFile(configPath, 'utf8')) as {
+      model: string;
+      provider: Record<string, { models: Record<string, { name: string }> }>;
+    };
+    assert.equal(config.model, 'antseed/antseed');
+    assert.deepEqual(config.provider.antseed!.models, {
+      antseed: {
+        name: 'AntSeed VPR',
+        attachment: true,
+        modalities: { input: ['text', 'image'], output: ['text'] },
+        limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
+      },
+    });
   });
 });
 
@@ -185,7 +270,7 @@ test('removeConfigPatch is a no-op when the target file does not exist', async (
   });
 });
 
-function makeCodexPatch(configPath: string): ConfigPatchDef {
+function makeCodexPatch(configPath: string): CodexConfigPatchDef {
   return {
     format: 'codex',
     configPath,
@@ -195,12 +280,17 @@ function makeCodexPatch(configPath: string): ConfigPatchDef {
   };
 }
 
-test('applyConfigPatch (codex) sets top-level keys before tables and appends a managed provider table', async () => {
+test('applyConfigPatch (codex) uses an isolated HTTP-only AntSeed provider', async () => {
   await withTempConfig(async (dir) => {
     const configPath = path.join(dir, 'config.toml');
     const original = [
       '# user comment',
+      'model_provider = "ollama"',
+      'openai_base_url = "https://api.example.test/v1"',
       'model = "gpt-5"',
+      '',
+      '[features]',
+      'multi_agent = true',
       '',
       '[mcp_servers.docs]',
       'command = "docs-server"',
@@ -211,63 +301,275 @@ test('applyConfigPatch (codex) sets top-level keys before tables and appends a m
     applyConfigPatch(makeCodexPatch(configPath), PEER_ID, 9456);
 
     const raw = await readFile(configPath, 'utf8');
-    const lines = raw.split('\n');
-    const firstTable = lines.findIndex((line) => line.startsWith('['));
-    assert.ok(lines.indexOf('model_provider = "antseed"') < firstTable);
-    assert.ok(lines.indexOf('model = "antseed"') < firstTable);
-    assert.ok(lines.indexOf(`model_context_window = ${ANTSEED_MODEL_CONTEXT_WINDOW}`) < firstTable);
-    assert.equal(lines[0], '# user comment');
-    assert.equal(lines.filter((line) => /^\s*model\s*=/.test(line)).length, 1);
-    assert.ok(raw.includes('[mcp_servers.docs]'));
+    assert.ok(raw.includes('model_provider = "antseed"'));
+    assert.ok(raw.includes('openai_base_url = "https://api.example.test/v1"'));
     assert.ok(raw.includes('[model_providers.antseed]'));
-    assert.ok(raw.includes('name = "AntSeed"'));
     assert.ok(raw.includes('base_url = "http://127.0.0.1:9456/v1"'));
     assert.ok(raw.includes('wire_api = "responses"'));
+    assert.ok(raw.includes('supports_websockets = false'));
+    assert.ok(raw.includes('model = "gpt-5"'));
+    assert.ok(raw.includes('[features]'));
+    assert.ok(raw.includes('enable_request_compression = false'));
+    assert.ok(raw.includes('multi_agent = true'));
+    assert.ok(raw.includes('[mcp_servers.docs]'));
+    assert.ok(!raw.includes('model_context_window'));
     assert.equal(await readFile(`${configPath}.antseed.bak`, 'utf8'), original);
   });
 });
 
-test('applyConfigPatch (codex) creates the config file and replaces a previous managed table', async () => {
+test('applyConfigPatch (codex) shows AntSeed VPR for routed models and restores the client model when the catalog is empty', async () => {
   await withTempConfig(async (dir) => {
     const configPath = path.join(dir, 'config.toml');
-    applyConfigPatch(makeCodexPatch(configPath), PEER_ID, 8377);
-    applyConfigPatch(makeCodexPatch(configPath), PEER_ID, 8378);
+    const patch = makeCodexPatch(configPath);
+    await writeFile(configPath, 'model = "gpt-5"\n', 'utf8');
 
-    const raw = await readFile(configPath, 'utf8');
-    assert.equal(raw.split('[model_providers.antseed]').length, 2);
-    assert.ok(raw.includes('model = "antseed"'));
-    assert.ok(raw.includes('base_url = "http://127.0.0.1:8378/v1"'));
-    assert.ok(!raw.includes('8377'));
+    applyConfigPatch(patch, PEER_ID, 8377, { useRoutedModelAlias: true });
+    const routedConfig = await readFile(configPath, 'utf8');
+    assert.ok(routedConfig.includes('model = "antseed"'));
+    assert.ok(routedConfig.includes(`model_catalog_json = ${JSON.stringify(path.join(dir, 'antseed-models.json'))}`));
+    const routedCatalog = JSON.parse(await readFile(path.join(dir, 'antseed-models.json'), 'utf8')) as {
+      models: Array<{ slug: string; display_name: string }>;
+    };
+    assert.deepEqual(routedCatalog.models.map(({ slug, display_name }) => ({ slug, display_name })), [
+      { slug: 'antseed', display_name: 'AntSeed VPR' },
+    ]);
+
+    applyConfigPatch(patch, PEER_ID, 8377);
+    assert.ok((await readFile(configPath, 'utf8')).includes('model = "gpt-5"'));
   });
 });
 
-test('removeConfigPatch (codex) removes the managed table and model selection but keeps user tables', async () => {
+test('applyConfigPatch (codex) publishes exact picker models and preserves the last picker selection', async () => {
   await withTempConfig(async (dir) => {
     const configPath = path.join(dir, 'config.toml');
-    await writeFile(configPath, '[mcp_servers.docs]\ncommand = "docs-server"\n', 'utf8');
     const patch = makeCodexPatch(configPath);
+    const models = [
+      { provider: 'openai-responses', id: 'gpt-5.6-sol', name: 'GPT 5.6 Sol' },
+      { provider: 'anthropic', id: 'claude/opus-5', name: 'Claude Opus 5' },
+    ];
+    await writeFile(configPath, 'model = "gpt-5"\n', 'utf8');
+
+    applyConfigPatch(patch, PEER_ID, 8377, { codexModels: models });
+    const firstSlug = codexRoutedModelSlug(models[0]!);
+    const secondSlug = codexRoutedModelSlug(models[1]!);
+    assert.ok((await readFile(configPath, 'utf8')).includes(`model = ${JSON.stringify(firstSlug)}`));
+    const catalog = JSON.parse(await readFile(path.join(dir, 'antseed-models.json'), 'utf8')) as {
+      models: Array<{
+        slug: string;
+        display_name: string;
+        supports_search_tool?: boolean;
+        web_search_tool_type?: string;
+        apply_patch_tool_type?: string;
+      }>;
+    };
+    assert.deepEqual(catalog.models.map(({ slug, display_name }) => ({ slug, display_name })), [
+      { slug: firstSlug, display_name: 'GPT 5.6 Sol' },
+      { slug: secondSlug, display_name: 'Claude Opus 5' },
+    ]);
+    assert.ok(catalog.models.every((model) => model.supports_search_tool === false));
+    assert.ok(catalog.models.every((model) => model.web_search_tool_type === undefined));
+    assert.ok(catalog.models.every((model) => model.apply_patch_tool_type === 'freeform'));
+
+    const selected = (await readFile(configPath, 'utf8')).replace(
+      `model = ${JSON.stringify(firstSlug)}`,
+      `model = ${JSON.stringify(secondSlug)}`,
+    );
+    await writeFile(configPath, selected, 'utf8');
+    applyConfigPatch(patch, PEER_ID, 8377, { useRoutedModelAlias: true, codexModels: models });
+    applyConfigPatch(patch, PEER_ID, 8377, { codexModels: models });
+    assert.ok((await readFile(configPath, 'utf8')).includes(`model = ${JSON.stringify(secondSlug)}`));
+
+    assert.equal(removeConfigPatch(patch), true);
+    assert.equal(await readFile(configPath, 'utf8'), 'model = "gpt-5"\n');
+  });
+});
+
+test('refreshCodexModelCatalog falls back when the selected picker model disappears', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'config.toml');
+    const patch = makeCodexPatch(configPath);
+    const first = { provider: 'openai-responses', id: 'gpt-5.6-sol', name: 'GPT 5.6 Sol' };
+    const second = { provider: 'anthropic', id: 'claude-opus-5', name: 'Claude Opus 5' };
+    await writeFile(configPath, 'model = "gpt-5"\n', 'utf8');
+    applyConfigPatch(patch, PEER_ID, 8377, { codexModels: [first, second] });
+    const firstSlug = codexRoutedModelSlug(first);
+    const secondSlug = codexRoutedModelSlug(second);
+    await writeFile(
+      configPath,
+      (await readFile(configPath, 'utf8')).replace(`model = ${JSON.stringify(firstSlug)}`, `model = ${JSON.stringify(secondSlug)}`),
+      'utf8',
+    );
+
+    assert.equal(refreshCodexModelCatalog(patch, 8377, [first], true), true);
+    assert.ok((await readFile(configPath, 'utf8')).includes(`model = ${JSON.stringify(firstSlug)}`));
+  });
+});
+
+test('Codex picker slugs carry the concrete seller peer', () => {
+  assert.equal(codexRoutedModelSlug({
+    provider: 'openai-responses',
+    id: 'gpt-5.6-sol',
+    name: 'GPT 5.6 Sol',
+    peerId: 'b'.repeat(40),
+  }), `antseed/openai-responses/${'b'.repeat(40)}@gpt-5.6-sol`);
+});
+
+test('Codex routed catalog strips inherited code-only mode and forces freeform patch support', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'config.toml');
+    await writeFile(path.join(dir, 'models_cache.json'), JSON.stringify({
+      models: [{
+        slug: 'native',
+        display_name: 'Native',
+        visibility: 'list',
+        supported_in_api: true,
+        tool_mode: 'code_mode_only',
+        apply_patch_tool_type: null,
+      }],
+    }), 'utf8');
+    applyConfigPatch(makeCodexPatch(configPath), PEER_ID, 8377, {
+      codexModels: [{ provider: 'openai', id: 'claude-opus-5', name: 'Claude Opus 5' }],
+    });
+
+    const catalog = JSON.parse(await readFile(path.join(dir, 'antseed-models.json'), 'utf8')) as {
+      models: Array<Record<string, unknown>>;
+    };
+    assert.equal(catalog.models[0]?.['tool_mode'], undefined);
+    assert.equal(catalog.models[0]?.['apply_patch_tool_type'], 'freeform');
+  });
+});
+
+test('removeConfigPatch (codex) restores an existing model catalog path', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'config.toml');
+    const patch = makeCodexPatch(configPath);
+    const originalCatalog = path.join(dir, 'user-models.json');
+    await writeFile(configPath, `model_catalog_json = ${JSON.stringify(originalCatalog)}\nmodel = "gpt-5"\n`, 'utf8');
+
+    applyConfigPatch(patch, PEER_ID, 8377, { useRoutedModelAlias: true });
+    assert.equal(removeConfigPatch(patch), true);
+    assert.equal(
+      await readFile(configPath, 'utf8'),
+      `model_catalog_json = ${JSON.stringify(originalCatalog)}\nmodel = "gpt-5"\n`,
+    );
+  });
+});
+
+test('applyConfigPatch (codex) disables hosted search and restores the previous mode', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'config.toml');
+    const patch = makeCodexPatch(configPath);
+    await writeFile(configPath, 'web_search = "live"\nmodel = "gpt-5"\n', 'utf8');
+
+    applyConfigPatch(patch, PEER_ID, 8377, { useRoutedModelAlias: true });
+    assert.ok((await readFile(configPath, 'utf8')).includes('web_search = "disabled"'));
+
+    assert.equal(removeConfigPatch(patch), true);
+    assert.equal(await readFile(configPath, 'utf8'), 'web_search = "live"\nmodel = "gpt-5"\n');
+  });
+});
+
+test('applyConfigPatch (codex) retains the original baseline across repeated applies', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'config.toml');
+    await writeFile(configPath, 'model_provider = "ollama"\nopenai_base_url = "https://original.test/v1"\nmodel = "llama3"\n\n[features]\nenable_request_compression = true\n', 'utf8');
+    const patch = makeCodexPatch(configPath);
+    applyConfigPatch(patch, PEER_ID, 8377);
+    applyConfigPatch(patch, PEER_ID, 8378);
+
+    assert.equal(removeConfigPatch(patch), true);
+    assert.equal(await readFile(configPath, 'utf8'), 'model_provider = "ollama"\nopenai_base_url = "https://original.test/v1"\nmodel = "llama3"\n\n[features]\nenable_request_compression = true\n');
+  });
+});
+
+test('applyConfigPatch (codex) migrates an existing native OpenAI patch without losing its baseline', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'config.toml');
+    const statePath = `${configPath}.antseed.state.json`;
+    await writeFile(configPath, 'model_provider = "openai"\nopenai_base_url = "http://127.0.0.1:8377/v1"\nmodel = "gpt-5"\n', 'utf8');
+    await writeFile(statePath, JSON.stringify({
+      modelProvider: 'ollama',
+      openaiBaseUrl: 'https://api.example.test/v1',
+      managedBaseURL: 'http://127.0.0.1:8377/v1',
+    }), 'utf8');
+
+    applyConfigPatch(makeCodexPatch(configPath), PEER_ID, 8378);
+
+    const raw = await readFile(configPath, 'utf8');
+    assert.ok(raw.includes('model_provider = "antseed"'));
+    assert.ok(raw.includes('openai_base_url = "https://api.example.test/v1"'));
+    assert.ok(raw.includes('model = "gpt-5"'));
+    assert.ok(raw.includes('[model_providers.antseed]'));
+    assert.ok(raw.includes('base_url = "http://127.0.0.1:8378/v1"'));
+    assert.ok(raw.includes('supports_websockets = false'));
+  });
+});
+
+test('removeConfigPatch (codex) restores absent values without removing unrelated edits', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'config.toml');
+    const patch = makeCodexPatch(configPath);
+    await writeFile(configPath, 'model = "gpt-5"\ntheme = "dark"\n', 'utf8');
     applyConfigPatch(patch, PEER_ID, 8377);
 
     assert.equal(removeConfigPatch(patch), true);
-
-    const raw = await readFile(configPath, 'utf8');
-    assert.ok(raw.includes('[mcp_servers.docs]'));
-    assert.ok(!raw.includes('model_provider'));
-    assert.ok(!raw.includes('model = "antseed"'));
-    assert.ok(!raw.includes('model_context_window'));
-    assert.ok(!raw.includes('[model_providers.antseed]'));
-
+    assert.equal(await readFile(configPath, 'utf8'), 'model = "gpt-5"\ntheme = "dark"\n');
     assert.equal(removeConfigPatch(patch), false);
   });
 });
 
-test('removeConfigPatch (codex) keeps a model_provider selection it does not own', async () => {
+test('removeConfigPatch (codex) does not overwrite managed keys edited while connected', async () => {
   await withTempConfig(async (dir) => {
     const configPath = path.join(dir, 'config.toml');
-    await writeFile(configPath, 'model_provider = "ollama"\nmodel = "llama3"\n', 'utf8');
+    const patch = makeCodexPatch(configPath);
+    await writeFile(configPath, 'model_provider = "ollama"\nopenai_base_url = "https://original.test/v1"\n', 'utf8');
+    applyConfigPatch(patch, PEER_ID, 8377);
+    const edited = (await readFile(configPath, 'utf8'))
+      .replace('model_provider = "antseed"', 'model_provider = "azure"')
+      .replace('base_url = "http://127.0.0.1:8377/v1"', 'base_url = "https://edited.test/v1"')
+      .replace('enable_request_compression = false', 'enable_request_compression = true');
+    await writeFile(configPath, edited, 'utf8');
 
-    assert.equal(removeConfigPatch(makeCodexPatch(configPath)), false);
-    assert.equal(await readFile(configPath, 'utf8'), 'model_provider = "ollama"\nmodel = "llama3"\n');
+    assert.equal(removeConfigPatch(patch), true);
+    const raw = (await readFile(configPath, 'utf8')).trimEnd();
+    assert.ok(raw.includes('model_provider = "azure"'));
+    assert.ok(raw.includes('openai_base_url = "https://original.test/v1"'));
+    assert.ok(raw.includes('enable_request_compression = true'));
+    assert.ok(!raw.includes('model_catalog_json'));
+    assert.ok(!raw.includes('model = "antseed/'));
+  });
+});
+
+test('applyConfigPatch (codex) refreshes the custom AntSeed provider', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'config.toml');
+    const statePath = `${configPath}.antseed.state.json`;
+    await writeFile(configPath, [
+      'model_provider = "antseed"',
+      'model = "gpt-5"',
+      '',
+      '[model_providers.antseed]',
+      'name = "AntSeed"',
+      'base_url = "http://127.0.0.1:8377/v1"',
+      'wire_api = "responses"',
+      '',
+    ].join('\n'), 'utf8');
+    await writeFile(statePath, JSON.stringify({
+      model: 'gpt-5',
+      modelProvider: 'ollama',
+      openaiBaseUrl: 'https://api.example.test/v1',
+      managedBaseURL: 'http://127.0.0.1:8377/v1',
+    }), 'utf8');
+
+    applyConfigPatch(makeCodexPatch(configPath), PEER_ID, 8378);
+
+    const raw = await readFile(configPath, 'utf8');
+    assert.ok(raw.includes('model_provider = "antseed"'));
+    assert.ok(!raw.includes('openai_base_url'));
+    assert.ok(raw.includes('model = "gpt-5"'));
+    assert.ok(raw.includes('[model_providers.antseed]'));
+    assert.ok(raw.includes('base_url = "http://127.0.0.1:8378/v1"'));
+    assert.ok(raw.includes('supports_websockets = false'));
   });
 });
 
@@ -299,7 +601,7 @@ test('applyConfigPatch (pi) writes the provider into models.json and the default
     assert.equal(models.providers.antseed?.api, 'openai-responses');
     assert.equal(models.providers.antseed?.apiKey, 'antseed');
     assert.deepEqual(models.providers.antseed?.models, [
-      { id: 'antseed', name: 'AntSeed Auto', contextWindow: ANTSEED_MODEL_CONTEXT_WINDOW, maxTokens: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
+      { id: 'antseed', name: 'AntSeed VPR', contextWindow: ANTSEED_MODEL_CONTEXT_WINDOW, maxTokens: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
     ]);
 
     const settings = JSON.parse(await readFile(settingsPath, 'utf8')) as Record<string, unknown>;
@@ -337,7 +639,10 @@ test('applyConfigPatch writes only the routed-model alias across formats', async
     const codexPath = path.join(dir, 'config.toml');
     applyConfigPatch(makeCodexPatch(codexPath), PEER_ID, 8377);
     const codexRaw = await readFile(codexPath, 'utf8');
-    assert.ok(codexRaw.includes('model = "antseed"'));
+    assert.ok(codexRaw.includes('model_provider = "antseed"'));
+    assert.ok(codexRaw.includes('[model_providers.antseed]'));
+    assert.ok(codexRaw.includes('base_url = "http://127.0.0.1:8377/v1"'));
+    assert.doesNotMatch(codexRaw, /^model\s*=/m);
     assert.ok(!codexRaw.includes(`${PEER_ID}@`));
 
     const modelsPath = path.join(dir, 'models.json');

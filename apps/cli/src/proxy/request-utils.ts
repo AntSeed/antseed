@@ -219,6 +219,72 @@ export function summarizeErrorResponse(response: SerializedHttpResponse): string
   return `body="${snippet}"`
 }
 
+const PRIVATE_REQUEST_HEADERS = new Set([
+  'authorization',
+  'proxy-authorization',
+  'proxy-authenticate',
+  'x-api-key',
+  'x-goog-api-key',
+  'chatgpt-account-id',
+  'x-chatgpt-account-id',
+  'cookie',
+  'cookie2',
+  'x-csrf-token',
+  'x-xsrf-token',
+  'csrf-token',
+  'x-csrftoken',
+  'openai-organization',
+  'openai-project',
+  'openai-account',
+  'x-openai-organization',
+  'x-openai-project',
+  'x-openai-account',
+  'connection',
+  'keep-alive',
+  'transfer-encoding',
+  'te',
+  'trailer',
+  'upgrade',
+  'host',
+  'x-antseed-pin-peer',
+  'x-antseed-prefer-peer',
+  'x-antseed-system-routed',
+  'x-antseed-system-proxy-source',
+  'originator',
+  'session-id',
+  'thread-id',
+  'x-session-id',
+  'x-session-affinity',
+  'x-parent-session-id',
+  'x-codex-turn-metadata',
+  'x-claude-code-session-id',
+])
+
+export function stripPrivateRequestHeaders(headers: Record<string, string>): Record<string, string> {
+  const connectionTokens = new Set<string>()
+  for (const [name, value] of Object.entries(headers)) {
+    if (name.toLowerCase() === 'connection') {
+      for (const token of value.split(',')) {
+        const normalized = token.trim().toLowerCase()
+        if (normalized) connectionTokens.add(normalized)
+      }
+    }
+  }
+
+  const stripped: Record<string, string> = {}
+  for (const [name, value] of Object.entries(headers)) {
+    const normalized = name.toLowerCase()
+    if (
+      PRIVATE_REQUEST_HEADERS.has(normalized)
+      || connectionTokens.has(normalized)
+      || /^x-.+-session-id$/.test(normalized)
+      || normalized.endsWith('-turn-metadata')
+    ) continue
+    stripped[normalized] = value
+  }
+  return stripped
+}
+
 export function requestWantsStreaming(headers: Record<string, string>, body: Uint8Array): boolean {
   if (getHeader(headers, 'accept').toLowerCase().includes('text/event-stream')) {
     return true
@@ -268,6 +334,42 @@ export function isLoopbackPeer(peer: PeerInfo): boolean {
  * rewriting their configs.
  */
 export const ROUTED_MODEL_ALIAS = 'antseed'
+const ROUTED_MODEL_PREFIX = `${ROUTED_MODEL_ALIAS}/`
+
+export type RoutedModelSelection = {
+  provider: string
+  service: string
+}
+
+export function parseRoutedModelSelection(value: string): RoutedModelSelection | null {
+  const raw = value.trim()
+  if (!raw.toLowerCase().startsWith(ROUTED_MODEL_PREFIX)) return null
+  const remainder = raw.slice(ROUTED_MODEL_PREFIX.length)
+  const separator = remainder.indexOf('/')
+  if (separator <= 0 || separator === remainder.length - 1) return null
+  const provider = remainder.slice(0, separator).trim().toLowerCase()
+  const service = remainder.slice(separator + 1).trim()
+  return provider && service ? { provider, service } : null
+}
+
+export function rewriteRoutedModelSelection(
+  body: Uint8Array,
+  headers: Record<string, string>,
+): { body: Uint8Array; headers: Record<string, string>; selection: RoutedModelSelection | null } {
+  if (!getHeader(headers, 'content-type').toLowerCase().includes('application/json') || body.length === 0) {
+    return { body, headers, selection: null }
+  }
+  const obj = parseJsonObject(body)
+  if (!obj) return { body, headers, selection: null }
+  const rawModel = typeof obj['model'] === 'string' ? obj['model'].trim() : ''
+  const rawService = typeof obj['service'] === 'string' ? obj['service'].trim() : ''
+  const selection = parseRoutedModelSelection(rawModel) ?? parseRoutedModelSelection(rawService)
+  if (!selection) return { body, headers, selection: null }
+  if (parseRoutedModelSelection(rawModel)) obj['model'] = selection.service
+  if (parseRoutedModelSelection(rawService) || obj['service'] === undefined) obj['service'] = selection.service
+  const rewritten = encodeRewrittenJsonBody(obj, headers)
+  return { ...rewritten, selection }
+}
 
 export function substituteRoutedModelAlias(
   body: Uint8Array,
@@ -343,6 +445,33 @@ export function overrideRoutedModelInBody(
   }
   const { body: rewritten, headers: updatedHeaders } = encodeRewrittenJsonBody(obj, headers)
   return { body: rewritten, headers: updatedHeaders, overridden: true }
+}
+
+export function rewriteRequestedModelInBody(
+  body: Uint8Array,
+  headers: Record<string, string>,
+  service: string,
+): { body: Uint8Array; headers: Record<string, string>; rewritten: boolean } {
+  if (!getHeader(headers, 'content-type').toLowerCase().includes('application/json') || body.length === 0) {
+    return { body, headers, rewritten: false }
+  }
+  const obj = parseJsonObject(body)
+  if (!obj) {
+    return { body, headers, rewritten: false }
+  }
+  const target = service.trim()
+  if (!target) {
+    return { body, headers, rewritten: false }
+  }
+  const currentModel = typeof obj['model'] === 'string' ? obj['model'].trim() : ''
+  const currentService = typeof obj['service'] === 'string' ? obj['service'].trim() : ''
+  if (currentModel === target && currentService === target) {
+    return { body, headers, rewritten: false }
+  }
+  obj['model'] = target
+  obj['service'] = target
+  const { body: rewrittenBody, headers: updatedHeaders } = encodeRewrittenJsonBody(obj, headers)
+  return { body: rewrittenBody, headers: updatedHeaders, rewritten: true }
 }
 
 function encodeRewrittenJsonBody(

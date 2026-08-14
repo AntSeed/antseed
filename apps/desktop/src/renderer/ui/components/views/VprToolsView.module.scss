@@ -66,6 +66,206 @@
   background: transparent;
 }
 
+.applicationRouteControl {
+  position: relative;
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0 30px;
+}
+
+.applicationRouteButton {
+  width: 100%;
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.applicationRouteButton:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-float);
+}
+
+.applicationRouteButton:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+}
+
+.applicationRouteTitle {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.applicationRouteTitle > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.applicationRouteMeta {
+  color: var(--accent-green);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.applicationRouteChevron {
+  color: var(--text-muted);
+  transition: transform 0.12s ease;
+}
+
+.applicationRouteChevronOpen {
+  transform: rotate(180deg);
+}
+
+.applicationRouteHint {
+  padding-left: 2px;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.applicationRouteMenu {
+  position: absolute;
+  top: 46px;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  border-radius: 16px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-float);
+  overflow: hidden;
+}
+
+.routeChoice {
+  width: 100%;
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.routeChoice + .routeChoice,
+.routeChoice + :global(*) {
+  border-top: 1px solid var(--border-light);
+}
+
+.routeChoice:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.routeChoice:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.routeChoiceSelected {
+  padding-left: 8px;
+}
+
+.routeChoiceCheck {
+  flex: 0 0 auto;
+  color: var(--accent-green);
+}
+
+.routeChoiceText {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.routeChoiceTitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.routeChoiceMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.routeChoiceMeta > span:first-child {
+  color: var(--accent-green);
+  font-weight: 500;
+}
+
+.applicationRouteMenuFooter {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 16px;
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--bg-card);
+  color: var(--accent-green);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.applicationRouteMenuFooter:hover {
+  background: var(--bg-hover);
+}
+
+.routeBrowseBody {
+  max-height: min(70vh, 620px);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+}
+
+.routeBrowseSection {
+  display: grid;
+  gap: 6px;
+}
+
+.routeBrowseTitle {
+  padding: 0 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .appHead {
   display: flex;
   align-items: center;

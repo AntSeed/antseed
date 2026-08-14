@@ -7,6 +7,7 @@ import {
   renderCanonicalResponseToOpenAIChatBody,
   renderCanonicalResponseToOpenAIResponsesBody,
   type CanonicalLlmResponse,
+  type CanonicalRequestTranslationContext,
 } from './canonical.js';
 import { encodeJson, encodeText, parseJsonObject } from './utils.js';
 
@@ -15,13 +16,17 @@ export interface ServiceApiResponseTransformOptions {
   to: ServiceApiProtocol;
   streamRequested?: boolean;
   fallbackModel?: string | null;
+  translationContext?: CanonicalRequestTranslationContext;
 }
 
 type ResponseNormalizer = (
   body: Record<string, unknown>,
   fallbacks: { id: string; model: string },
 ) => CanonicalLlmResponse;
-type ResponseRenderer = (response: CanonicalLlmResponse) => Record<string, unknown>;
+type ResponseRenderer = (
+  response: CanonicalLlmResponse,
+  options: ServiceApiResponseTransformOptions,
+) => Record<string, unknown>;
 
 const RESPONSE_NORMALIZERS: Partial<Record<ServiceApiProtocol, ResponseNormalizer>> = {
   'anthropic-messages': normalizeAnthropicMessagesResponseBody,
@@ -32,7 +37,10 @@ const RESPONSE_NORMALIZERS: Partial<Record<ServiceApiProtocol, ResponseNormalize
 const RESPONSE_RENDERERS: Partial<Record<ServiceApiProtocol, ResponseRenderer>> = {
   'anthropic-messages': renderCanonicalResponseToAnthropicMessagesBody,
   'openai-chat-completions': renderCanonicalResponseToOpenAIChatBody,
-  'openai-responses': renderCanonicalResponseToOpenAIResponsesBody,
+  'openai-responses': (response, options) => renderCanonicalResponseToOpenAIResponsesBody(
+    response,
+    { translationContext: options.translationContext },
+  ),
 };
 
 export function transformResponse(
@@ -56,7 +64,7 @@ export function transformResponse(
     id: fallbackResponseId(response.requestId, options.to),
     model: options.fallbackModel ?? 'unknown',
   });
-  const body = render(canonical);
+  const body = render(canonical, options);
 
   if (options.streamRequested) {
     return {
@@ -303,24 +311,31 @@ function buildOpenAIResponsesStream(body: Record<string, unknown>): Uint8Array {
       continue;
     }
 
-    if (outputItem.type === 'function_call') {
-      const argumentsText = typeof outputItem.arguments === 'string' ? outputItem.arguments : '';
+    if (outputItem.type === 'function_call' || outputItem.type === 'custom_tool_call') {
+      const isCustom = outputItem.type === 'custom_tool_call';
+      const inputText = isCustom
+        ? (typeof outputItem.input === 'string' ? outputItem.input : '')
+        : (typeof outputItem.arguments === 'string' ? outputItem.arguments : '');
       pushEvent('response.output_item.added', {
         output_index: outputIndex,
-        item: { ...outputItem, status: 'in_progress', arguments: '' },
+        item: {
+          ...outputItem,
+          status: 'in_progress',
+          ...(isCustom ? { input: '' } : { arguments: '' }),
+        },
       });
-      pushEvent('response.function_call_arguments.delta', {
+      pushEvent(isCustom ? 'response.custom_tool_call_input.delta' : 'response.function_call_arguments.delta', {
         output_index: outputIndex,
         item_id: outputItem.id,
         call_id: outputItem.call_id,
-        delta: argumentsText,
+        delta: inputText,
       });
-      pushEvent('response.function_call_arguments.done', {
+      pushEvent(isCustom ? 'response.custom_tool_call_input.done' : 'response.function_call_arguments.done', {
         output_index: outputIndex,
         item_id: outputItem.id,
         call_id: outputItem.call_id,
         name: outputItem.name,
-        arguments: argumentsText,
+        ...(isCustom ? { input: inputText } : { arguments: inputText }),
       });
       pushEvent('response.output_item.done', { output_index: outputIndex, item: outputItem });
     }

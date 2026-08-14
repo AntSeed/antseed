@@ -1,26 +1,39 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Add01Icon, ArrowDown01Icon, ArrowLeft01Icon, ArrowReloadHorizontalIcon, ArrowRight01Icon, Copy01Icon, Settings02Icon, SquareLock01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
 import { Modal } from '@antseed/ui';
+import type { VprApplicationRouteSelection, VprModelCatalogEntry } from '../../../core/state';
 import type { InstalledAppEntry, SystemProxyProfileSummary } from '../../../types/bridge';
 import { chooseBestVprRoute, isPeerRoutable } from '../../../modules/routing/select';
 import { routesForSelectedModel } from '../../../modules/catalog/view-models';
+import { findCatalogEntry } from '../../../modules/catalog/model-catalog';
+import { loadFavoriteModels } from '../../../modules/catalog/favorites';
+import {
+  catalogEntryKey,
+  selectFavoriteVprCatalog,
+  selectRecommendedVprCatalog,
+} from '../../../modules/catalog/recommended';
 import { installedAppsResource, systemProxyResource } from '../../../modules/app/vpr-resources';
 import { useCachedResource } from '../../../modules/app/cached-resource';
 import {
   activeProfilesFromRuntimeState,
   buildVprPeerOptions,
-  resolveVprToolRouteForPeerOptions,
 } from '../../../modules/routing/tools';
+import {
+  toApplicationRoutePolicies,
+  vprApplicationRouteSelectionFor,
+} from '../../../modules/routing/application-routes';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { BrandIcon } from '../brand/BrandIcon';
 import { VprBadge, VprPage, VprSearch } from '../vpr/VprKit';
+import { VprModelRowList } from '../vpr/VprModelRows';
 import { TelegramBotCard } from './TelegramBotCard';
 import styles from './VprToolsView.module.scss';
 
 
 const DEFAULT_PORT = 8378;
+const APPLICATION_MODEL_MENU_COUNT = 5;
 
 /** Two-pane modal navigation: the main pane slides to the application list
     the same way the app's screens slide ('none' = no animation on open). */
@@ -39,12 +52,61 @@ type GuiTestResult = {
   error?: string;
 };
 
+function modelApplicationRoute(entry: VprModelCatalogEntry): VprApplicationRouteSelection {
+  return {
+    mode: 'model',
+    model: {
+      provider: entry.provider,
+      serviceId: entry.serviceId,
+      label: entry.label,
+      categories: [...entry.categories],
+    },
+  };
+}
+
+function ApplicationRouteChoice({
+  title,
+  meta,
+  description,
+  selected,
+  disabled,
+  onClick,
+}: {
+  title: string;
+  meta: string;
+  description?: string;
+  selected: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`${styles.routeChoice}${selected ? ` ${styles.routeChoiceSelected}` : ''}`}
+      aria-pressed={selected}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      {selected ? <HugeiconsIcon icon={Tick02Icon} size={16} strokeWidth={2} className={styles.routeChoiceCheck} /> : null}
+      <span className={styles.routeChoiceText}>
+        <span className={styles.routeChoiceTitle}>{title}</span>
+        <span className={styles.routeChoiceMeta}>
+          <span>{meta}</span>
+          {description ? <span>{description}</span> : null}
+        </span>
+      </span>
+    </button>
+  );
+}
+
 export function VprToolsView() {
   const actions = useActions();
   const snap = useUiSelector((state) => ({
     lastPeers: state.lastPeers,
     discoverRows: state.vprRoutableRows,
+    catalog: state.vprModelCatalog,
     selection: state.vprRouteSelection,
+    applicationRoutes: state.vprApplicationRoutes,
     preferences: state.vprRoutingPreferences,
   }), shallowEqual);
   const proxyResource = useCachedResource(systemProxyResource);
@@ -94,6 +156,11 @@ export function VprToolsView() {
   // together with the identity draft by the modal's Save button.
   const [launchDraft, setLaunchDraft] = useState<InstalledAppEntry | null | undefined>(undefined);
   const [settingsSaving, setSettingsSaving] = useState(false);
+  const [routeMenuFor, setRouteMenuFor] = useState<string | null>(null);
+  const [routeBrowseFor, setRouteBrowseFor] = useState<string | null>(null);
+  const [routeBrowseSearch, setRouteBrowseSearch] = useState('');
+  const [routeFavorites, setRouteFavorites] = useState(loadFavoriteModels);
+  const routeMenuRef = useRef<HTMLDivElement>(null);
   const installedAppsResourceSnapshot = useCachedResource(installedAppsResource, false);
   const installedApps = installedAppsResourceSnapshot.data;
   const installedAppsError = installedAppsResourceSnapshot.error;
@@ -121,7 +188,68 @@ export function VprToolsView() {
 
   const hasProxyProfile = useMemo(() => profiles.some((profile) => profile.kind === 'proxy'), [profiles]);
 
+  const routeMenuSelection = routeMenuFor
+    ? vprApplicationRouteSelectionFor(snap.applicationRoutes, routeMenuFor)
+    : null;
+  const routeMenuSelectedEntry = routeMenuSelection?.mode === 'model'
+    ? findCatalogEntry(
+      snap.catalog,
+      routeMenuSelection.model.provider,
+      routeMenuSelection.model.serviceId,
+    )
+    : null;
+  const routeMenuEntries = useMemo(() => {
+    const favoriteEntries = selectFavoriteVprCatalog(snap.catalog, routeFavorites);
+    const recommended = selectRecommendedVprCatalog(snap.catalog)
+      .filter((entry) => !routeFavorites.has(catalogEntryKey(entry)));
+    const top = [...favoriteEntries, ...recommended].slice(0, APPLICATION_MODEL_MENU_COUNT);
+    if (routeMenuSelectedEntry && !top.includes(routeMenuSelectedEntry)) {
+      return [routeMenuSelectedEntry, ...top.slice(0, APPLICATION_MODEL_MENU_COUNT - 1)];
+    }
+    return top;
+  }, [routeFavorites, routeMenuSelectedEntry, snap.catalog]);
+
+  const routeBrowseSelection = routeBrowseFor
+    ? vprApplicationRouteSelectionFor(snap.applicationRoutes, routeBrowseFor)
+    : null;
+  const routeBrowseLists = useMemo(() => {
+    const query = routeBrowseSearch.trim().toLowerCase();
+    const catalog = query
+      ? snap.catalog.filter((entry) => (
+        entry.label.toLowerCase().includes(query)
+        || entry.serviceId.toLowerCase().includes(query)
+        || entry.provider.toLowerCase().includes(query)
+      ))
+      : snap.catalog;
+    const favorites = selectFavoriteVprCatalog(catalog, routeFavorites);
+    const favoriteKeys = new Set(favorites.map(catalogEntryKey));
+    const recommended = selectRecommendedVprCatalog(catalog)
+      .filter((entry) => !favoriteKeys.has(catalogEntryKey(entry)));
+    const recommendedKeys = new Set(recommended.map(catalogEntryKey));
+    const remaining = catalog.filter((entry) => (
+      !favoriteKeys.has(catalogEntryKey(entry))
+      && !recommendedKeys.has(catalogEntryKey(entry))
+    ));
+    return { favorites, recommended, remaining };
+  }, [routeBrowseSearch, routeFavorites, snap.catalog]);
+
   const refresh = systemProxyResource.refresh;
+
+  useEffect(() => {
+    if (!routeMenuFor) return;
+    setRouteFavorites(loadFavoriteModels());
+    function closeRouteMenu(event: MouseEvent): void {
+      if (routeMenuRef.current && !routeMenuRef.current.contains(event.target as Node)) {
+        setRouteMenuFor(null);
+      }
+    }
+    document.addEventListener('mousedown', closeRouteMenu);
+    return () => document.removeEventListener('mousedown', closeRouteMenu);
+  }, [routeMenuFor]);
+
+  useEffect(() => {
+    if (routeBrowseFor) setRouteFavorites(loadFavoriteModels());
+  }, [routeBrowseFor]);
 
   // Trust state shells out to the CLI (which queries the OS keychain), so it is
   // fetched on demand — mount, after adding an app, after trusting — never on
@@ -172,25 +300,18 @@ export function VprToolsView() {
     void testGui();
   }, [hasConnectedProxyProfile, testGui]);
 
-  // Every connected app follows the default VPR route; the model itself is
-  // resolved live by the buyer (the `antseed` alias), so there are no per-app
-  // model overrides here anymore.
   const startProfiles = useCallback(async (names: string[]): Promise<boolean> => {
     const bridge = window.antseedDesktop;
     if (!bridge?.systemProxyStart || !defaultPeerId) return false;
     setBusy(names.join(','));
     setMessage(null);
-    const defaultRoute = { peerId: defaultPeerId, model: defaultModel };
-    const routeOverrides = Object.fromEntries(
-      names.map((name) => [name, resolveVprToolRouteForPeerOptions({}, name, defaultRoute, peerOptions)]),
-    );
     const result = await bridge.systemProxyStart({
       peerId: defaultPeerId,
       port: DEFAULT_PORT,
       profiles: names,
       defaultModel: defaultModel || undefined,
       servedModels: peerOptions.find((peer) => peer.peerId === defaultPeerId)?.services ?? [],
-      toolRoutes: routeOverrides,
+      applicationRoutes: toApplicationRoutePolicies(snap.applicationRoutes),
       profileSwitch: proxyState?.running === true || activeProfileNames.length > 0,
     });
     setBusy(null);
@@ -200,7 +321,23 @@ export function VprToolsView() {
     }
     systemProxyResource.setData({ profiles, state: result.state ?? null });
     return true;
-  }, [activeProfileNames.length, defaultModel, defaultPeerId, peerOptions, profiles, proxyState?.running]);
+  }, [activeProfileNames.length, defaultModel, defaultPeerId, peerOptions, profiles, proxyState?.running, snap.applicationRoutes]);
+
+  const setApplicationRoute = useCallback(async (
+    profileName: string,
+    selection: VprApplicationRouteSelection,
+  ): Promise<void> => {
+    setRouteMenuFor(null);
+    setRouteBrowseFor(null);
+    setRouteBrowseSearch('');
+    setMessage(null);
+    const result = await actions.setVprApplicationRoute(profileName, selection);
+    if (!result.ok) {
+      setMessage(result.error ?? 'Unable to update application model');
+      return;
+    }
+    await systemProxyResource.refresh();
+  }, [actions]);
 
   const disconnect = useCallback(async () => {
     const bridge = window.antseedDesktop;
@@ -512,6 +649,21 @@ export function VprToolsView() {
               const connected = activeProfiles?.has(profile.name) ?? false;
               const setupComplete = setupProfiles.has(profile.name);
               const canRestart = connected && profile.canRestart === true;
+              const applicationRoute = vprApplicationRouteSelectionFor(snap.applicationRoutes, profile.name);
+               const applicationModel = applicationRoute.mode === 'model'
+                 ? findCatalogEntry(snap.catalog, applicationRoute.model.provider, applicationRoute.model.serviceId)
+                 : null;
+               const defaultApplicationModel = snap.selection.model
+                 ? findCatalogEntry(snap.catalog, snap.selection.model.provider, snap.selection.model.serviceId)
+                 : null;
+               const applicationRouteTitle = applicationRoute.mode === 'client-model'
+                 ? 'In-app selection'
+                 : applicationRoute.mode === 'follow-global'
+                   ? defaultApplicationModel?.label ?? snap.selection.model?.label ?? 'Select model'
+                   : applicationModel?.label ?? applicationRoute.model.label;
+               const applicationRouteMeta = applicationRoute.mode === 'client-model'
+                 ? profile.displayName
+                 : applicationRoute.mode === 'model' && !applicationModel ? 'Unavailable' : 'Best';
               return (
                 <div key={profile.name} className={`${styles.appPill}${connected ? ` ${styles.appPillConnected}` : ''}`}>
                   <div className={styles.appHead}>
@@ -607,6 +759,90 @@ export function VprToolsView() {
                     )}
                   </div>
 
+                  {connected ? (
+                    <div
+                      className={styles.applicationRouteControl}
+                      ref={routeMenuFor === profile.name ? routeMenuRef : undefined}
+                    >
+                      <button
+                        type="button"
+                        className={styles.applicationRouteButton}
+                        onClick={() => setRouteMenuFor((open) => open === profile.name ? null : profile.name)}
+                        aria-haspopup="listbox"
+                        aria-expanded={routeMenuFor === profile.name}
+                        title="Change model for new chats"
+                      >
+                        <span className={styles.applicationRouteTitle}>
+                          {applicationRoute.mode === 'model' ? (
+                            <BrandIcon
+                              name={applicationRoute.model.provider}
+                              hints={[applicationRoute.model.label]}
+                              size={16}
+                            />
+                          ) : null}
+                          <span>{applicationRouteTitle}</span>
+                        </span>
+                        <span className={styles.applicationRouteMeta}>{applicationRouteMeta}</span>
+                        <HugeiconsIcon
+                          icon={ArrowDown01Icon}
+                          size={16}
+                          strokeWidth={2}
+                          className={`${styles.applicationRouteChevron}${routeMenuFor === profile.name ? ` ${styles.applicationRouteChevronOpen}` : ''}`}
+                        />
+                      </button>
+                      <span className={styles.applicationRouteHint}>Model changes apply to new chats.</span>
+
+                      {routeMenuFor === profile.name && routeMenuSelection ? (
+                        <div className={styles.applicationRouteMenu} role="listbox">
+                          {profile.name === 'codex' || profile.name === 'opencode' ? (
+                            <ApplicationRouteChoice
+                              title="In-app selection"
+                              meta={profile.displayName}
+                              description={`Use model selected in ${profile.displayName}`}
+                              selected={routeMenuSelection.mode === 'client-model'}
+                              onClick={() => { void setApplicationRoute(profile.name, { mode: 'client-model' }); }}
+                            />
+                          ) : null}
+                          {routeMenuSelection.mode === 'model' && !routeMenuSelectedEntry ? (
+                            <ApplicationRouteChoice
+                              title={routeMenuSelection.model.label}
+                              meta="Unavailable"
+                              selected
+                              disabled
+                              onClick={() => undefined}
+                            />
+                          ) : null}
+                          <VprModelRowList
+                            entries={routeMenuEntries}
+                            selectedProvider={routeMenuSelection.mode === 'model' ? routeMenuSelection.model.provider : undefined}
+                            selectedServiceId={routeMenuSelection.mode === 'model' ? routeMenuSelection.model.serviceId : undefined}
+                            favoriteKeys={routeFavorites}
+                            routingLabel="Best"
+                            selectOnly
+                            frameless
+                            onSelect={(provider, serviceId) => {
+                              const entry = findCatalogEntry(snap.catalog, provider, serviceId);
+                              if (entry) void setApplicationRoute(profile.name, modelApplicationRoute(entry));
+                            }}
+                            emptyLabel="No models discovered yet"
+                          />
+                          <button
+                            type="button"
+                            className={styles.applicationRouteMenuFooter}
+                            onClick={() => {
+                              setRouteMenuFor(null);
+                              setRouteBrowseFor(profile.name);
+                              setRouteBrowseSearch('');
+                            }}
+                          >
+                            <span>All models</span>
+                            <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} />
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+
                 </div>
               );
             })}
@@ -693,6 +929,89 @@ export function VprToolsView() {
       </div>
       </VprPage>
 
+      <Modal
+        isOpen={routeBrowseFor !== null}
+        onClose={() => {
+          setRouteBrowseFor(null);
+          setRouteBrowseSearch('');
+        }}
+        size="sm"
+        className={styles.vprModal}
+        title={routeBrowseFor
+          ? `${profiles.find((profile) => profile.name === routeBrowseFor)?.displayName ?? 'Application'} model`
+          : 'Application model'}
+        subtitle="Choose any model currently available in VPR. Seller routing stays on Best."
+      >
+        {routeBrowseFor && routeBrowseSelection ? (
+          <div className={styles.routeBrowseBody}>
+            <VprSearch
+              value={routeBrowseSearch}
+              onChange={setRouteBrowseSearch}
+              placeholder="Search models"
+            />
+            {routeBrowseLists.favorites.length > 0 ? (
+              <section className={styles.routeBrowseSection}>
+                <div className={styles.routeBrowseTitle}>Favorites</div>
+                <VprModelRowList
+                  entries={routeBrowseLists.favorites}
+                  selectedProvider={routeBrowseSelection.mode === 'model' ? routeBrowseSelection.model.provider : undefined}
+                  selectedServiceId={routeBrowseSelection.mode === 'model' ? routeBrowseSelection.model.serviceId : undefined}
+                  favoriteKeys={routeFavorites}
+                  routingLabel="Best"
+                  selectOnly
+                  onSelect={(provider, serviceId) => {
+                    const entry = findCatalogEntry(snap.catalog, provider, serviceId);
+                    if (entry) void setApplicationRoute(routeBrowseFor, modelApplicationRoute(entry));
+                  }}
+                  emptyLabel="No favorite models"
+                />
+              </section>
+            ) : null}
+            {routeBrowseLists.recommended.length > 0 ? (
+              <section className={styles.routeBrowseSection}>
+                <div className={styles.routeBrowseTitle}>Recommended</div>
+                <VprModelRowList
+                  entries={routeBrowseLists.recommended}
+                  selectedProvider={routeBrowseSelection.mode === 'model' ? routeBrowseSelection.model.provider : undefined}
+                  selectedServiceId={routeBrowseSelection.mode === 'model' ? routeBrowseSelection.model.serviceId : undefined}
+                  favoriteKeys={routeFavorites}
+                  routingLabel="Best"
+                  selectOnly
+                  onSelect={(provider, serviceId) => {
+                    const entry = findCatalogEntry(snap.catalog, provider, serviceId);
+                    if (entry) void setApplicationRoute(routeBrowseFor, modelApplicationRoute(entry));
+                  }}
+                  emptyLabel="No recommended models"
+                />
+              </section>
+            ) : null}
+            {routeBrowseLists.remaining.length > 0 ? (
+              <section className={styles.routeBrowseSection}>
+                <div className={styles.routeBrowseTitle}>All models</div>
+                <VprModelRowList
+                  entries={routeBrowseLists.remaining}
+                  selectedProvider={routeBrowseSelection.mode === 'model' ? routeBrowseSelection.model.provider : undefined}
+                  selectedServiceId={routeBrowseSelection.mode === 'model' ? routeBrowseSelection.model.serviceId : undefined}
+                  favoriteKeys={routeFavorites}
+                  routingLabel="Best"
+                  selectOnly
+                  onSelect={(provider, serviceId) => {
+                    const entry = findCatalogEntry(snap.catalog, provider, serviceId);
+                    if (entry) void setApplicationRoute(routeBrowseFor, modelApplicationRoute(entry));
+                  }}
+                  emptyLabel="No models"
+                />
+              </section>
+            ) : null}
+            {routeBrowseLists.favorites.length === 0
+              && routeBrowseLists.recommended.length === 0
+              && routeBrowseLists.remaining.length === 0 ? (
+                <div className={styles.empty}>No models match your search.</div>
+              ) : null}
+          </div>
+        ) : null}
+      </Modal>
+
       {/* Connected-apps explainer. */}
       <Modal
         isOpen={helpOpen}
@@ -732,9 +1051,9 @@ export function VprToolsView() {
             <span className={styles.settingTitle}>Models and chats</span>
           </div>
           <p className={styles.settingHint}>
-            Connected apps follow the model selected on the VPR home screen. Each chat
-            then sticks to the model that served its first request — pin a different
-            one per chat from Recent chats or the floating pill.
+            Each connected app uses its own selected model. Codex and OpenCode can use
+            In-app selection to keep the model selected inside the app. Changes apply to new
+            chats; existing chats keep the route assigned to their first request.
           </p>
         </section>
         <section className={styles.settingSection}>

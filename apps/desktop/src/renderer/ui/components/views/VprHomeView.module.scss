@@ -186,7 +186,14 @@
   color: var(--accent-green);
 }
 
-/* ---------- Default model card + dropdown ---------- */
+/* ---------- Connected app model cards + dropdowns ---------- */
+
+.appModelList {
+  width: 100%;
+  display: grid;
+  gap: 8px;
+  margin-top: 2px;
+}
 
 .modelDropdown {
   position: relative;
@@ -269,6 +276,14 @@
   gap: 2px;
 }
 
+.appIcon {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  border-radius: 5px;
+  object-fit: contain;
+}
+
 .modelCardCaption {
   min-width: 0;
   display: flex;
@@ -335,6 +350,53 @@
 .modelCardChevron {
   flex: 0 0 auto;
   color: var(--text-secondary);
+}
+
+.routeChoice {
+  width: 100%;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--border-light);
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.routeChoice:hover {
+  background: var(--bg-hover);
+}
+
+.routeChoiceSelected {
+  color: var(--accent-green);
+}
+
+.routeChoice > span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.routeChoice strong,
+.routeChoice small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.routeChoice strong {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.routeChoice small {
+  color: var(--text-muted);
+  font-size: 11px;
 }
 
 /* ---------- Connected variant ---------- */

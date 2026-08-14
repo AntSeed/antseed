@@ -4,15 +4,15 @@ import {
   ArrowDown01Icon,
   ArrowRight02Icon,
   ArrowUp02Icon,
+  Tick02Icon,
     ArrowUpRight01Icon,
     Cancel01Icon,
     PowerIcon,
     ArrowReloadHorizontalIcon,
 } from '@hugeicons/core-free-icons';
-import type { VprModelCatalogEntry } from '../../../core/state';
+import type { VprApplicationRouteSelection, VprModelCatalogEntry } from '../../../core/state';
 import { getUiStateRef } from '../../../core/store';
 import { activeProfilesFromRuntimeState } from '../../../modules/routing/tools';
-import { pinnedSellerLabel, pinnedSellerLabels } from '../../../modules/catalog/view-models';
 import { findCatalogEntry } from '../../../modules/catalog/model-catalog';
 import { computeMeasuredSavings, formatSavedUsd } from '../../../modules/catalog/measured-savings';
 import { ensureOpenRouterPrices, getCachedOpenRouterPrices } from '../../../modules/catalog/openrouter-baseline';
@@ -24,6 +24,7 @@ import {
   selectRecommendedVprCatalog,
 } from '../../../modules/catalog/recommended';
 import { connectVprProfile } from '../../../modules/routing/proxy-sync';
+import { vprApplicationRouteSelectionFor } from '../../../modules/routing/application-routes';
 import { buyerConversationsResource, systemProxyResource } from '../../../modules/app/vpr-resources';
 import { useCachedResource } from '../../../modules/app/cached-resource';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
@@ -43,18 +44,12 @@ const ADD_BALANCE_DISMISSED_KEY = 'antseed.desktop.vpr.addBalanceDismissed';
 /* Rows in the model dropdown (Figma) — the full catalog lives on Models. */
 const DROPDOWN_MODEL_COUNT = 5;
 
-function isFreeEntry(entry: VprModelCatalogEntry | undefined): boolean {
-  if (!entry) return false;
-  const { minInputUsdPerMillion: i, minOutputUsdPerMillion: o } = entry;
-  return i !== null && o !== null && i <= 0 && o <= 0;
-}
-
 export function VprHomeView({ onSelectView }: Props) {
   const actions = useActions();
   const snap = useUiSelector((state) => ({
     catalog: state.vprModelCatalog,
     selection: state.vprRouteSelection,
-    modelPins: state.vprModelPins,
+    applicationRoutes: state.vprApplicationRoutes,
     discoverRows: state.vprRoutableRows,
     processes: state.processes,
     connectBadge: state.connectBadge,
@@ -89,12 +84,6 @@ export function VprHomeView({ onSelectView }: Props) {
       ? findCatalogEntry(snap.catalog, selectedModel.provider, selectedModel.serviceId) ?? undefined
       : undefined),
     [snap.catalog, selectedModel],
-  );
-  const modelIsFree = isFreeEntry(selectedEntry);
-  // Non-auto routing: the model row names the seller it is pinned to.
-  const pinnedSeller = useMemo(
-    () => pinnedSellerLabel(snap.discoverRows, snap.selection),
-    [snap.discoverRows, snap.selection],
   );
   useEffect(() => {
     if (conversations) rememberSeenChats(conversations.length);
@@ -151,49 +140,73 @@ export function VprHomeView({ onSelectView }: Props) {
   }, [actions, hasConnectedApps]);
 
   const [connectingProfile, setConnectingProfile] = useState<string | null>(null);
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [modelMenuFor, setModelMenuFor] = useState<string | null>(null);
   const [favorites, setFavorites] = useState(loadFavoriteModels);
   const modelMenuRef = useRef<HTMLDivElement>(null);
 
   // Favorites are starred on the model pages (localStorage); re-read on each
   // open so stars toggled elsewhere show up without a remount.
   useEffect(() => {
-    if (modelMenuOpen) setFavorites(loadFavoriteModels());
-  }, [modelMenuOpen]);
+    if (modelMenuFor) setFavorites(loadFavoriteModels());
+  }, [modelMenuFor]);
 
   // Close the model dropdown on any outside click.
   useEffect(() => {
-    if (!modelMenuOpen) return;
+    if (!modelMenuFor) return;
     function handleClick(event: MouseEvent): void {
       if (modelMenuRef.current && !modelMenuRef.current.contains(event.target as Node)) {
-        setModelMenuOpen(false);
+        setModelMenuFor(null);
       }
     }
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
-  }, [modelMenuOpen]);
+  }, [modelMenuFor]);
 
   // The dropdown lists starred favorites first (marked with a star), then the
   // curated recommended lineup, with the current selection always present. The
   // whole list is capped — favorites included — so the menu can't outgrow the
   // hero; everything past the cap lives behind "All models".
+  const openApplicationRoute = modelMenuFor
+    ? vprApplicationRouteSelectionFor(snap.applicationRoutes, modelMenuFor)
+    : null;
+  const openApplicationEntry = openApplicationRoute?.mode === 'model'
+    ? findCatalogEntry(
+      snap.catalog,
+      openApplicationRoute.model.provider,
+      openApplicationRoute.model.serviceId,
+    )
+    : null;
   const dropdownEntries = useMemo(() => {
     const favoriteEntries = selectFavoriteVprCatalog(snap.catalog, favorites);
     const recommended = selectRecommendedVprCatalog(snap.catalog)
       .filter((entry) => !favorites.has(catalogEntryKey(entry)));
     const top = [...favoriteEntries, ...recommended].slice(0, DROPDOWN_MODEL_COUNT);
-    if (selectedEntry && !top.includes(selectedEntry)) {
-      return [selectedEntry, ...top.slice(0, DROPDOWN_MODEL_COUNT - 1)];
+    if (openApplicationEntry && !top.includes(openApplicationEntry)) {
+      return [openApplicationEntry, ...top.slice(0, DROPDOWN_MODEL_COUNT - 1)];
     }
     return top;
-  }, [favorites, selectedEntry, snap.catalog]);
+  }, [favorites, openApplicationEntry, snap.catalog]);
 
-  // Every listed model that remembers a pin names its seller, not just the
-  // selected one — pins survive switching models.
-  const dropdownPins = useMemo(
-    () => pinnedSellerLabels(snap.discoverRows, snap.modelPins, dropdownEntries),
-    [dropdownEntries, snap.discoverRows, snap.modelPins],
-  );
+  async function setApplicationRoute(
+    profileName: string,
+    selection: VprApplicationRouteSelection,
+  ): Promise<void> {
+    setModelMenuFor(null);
+    await actions.setVprApplicationRoute(profileName, selection);
+    await systemProxyResource.refresh();
+  }
+
+  function modelApplicationRoute(entry: VprModelCatalogEntry): VprApplicationRouteSelection {
+    return {
+      mode: 'model',
+      model: {
+        provider: entry.provider,
+        serviceId: entry.serviceId,
+        label: entry.label,
+        categories: [...entry.categories],
+      },
+    };
+  }
 
   // One-click connect from the app buttons; falls back to the Apps page when
   // the profile can't be connected automatically (e.g. no route yet).
@@ -304,75 +317,94 @@ export function VprHomeView({ onSelectView }: Props) {
               : snap.connectBadge.label}
           </div>
 
-          <div className={styles.modelDropdown} ref={modelMenuRef}>
-            <button
-              type="button"
-              className={styles.modelCard}
-              onClick={() => setModelMenuOpen((open) => !open)}
-              aria-haspopup="listbox"
-              aria-expanded={modelMenuOpen}
-              title="Change new session model"
-            >
-              <span className={styles.modelCardBody}>
-                <span className={styles.modelCardTitle}>
-                  {selectedModel && (
-                    <BrandIcon name={selectedModel.provider} hints={[selectedModel.label]} size={20} />
-                  )}
-                  <span className={styles.modelName}>
-                    {selectedEntry?.label
-                      ?? (selectedModel ? displayModelLabel(selectedModel.serviceId, selectedModel.label) : 'None selected')}
-                  </span>
-                  {modelIsFree && <span className={styles.freeTag}>Free</span>}
-                </span>
-                <span className={styles.modelCardCaption}>
-                  {/* Same wording as the pill: this picks the model the next
-                      app session starts on, not a global default. */}
-                  <span>New session model</span>
-                  {/* Where the model routes: the pinned seller by name, or
-                      how many peers are serving it while on auto. */}
-                  {(pinnedSeller || selectedEntry) && (
-                    <span className={styles.modelCardDivider} aria-hidden="true">|</span>
-                  )}
-                  {pinnedSeller ? (
-                    <span className={styles.modelCardSeller}>{pinnedSeller}</span>
-                  ) : selectedEntry ? (
-                    <span className={styles.modelCardMeta}>
-                      {selectedEntry.peerCount} {selectedEntry.peerCount === 1 ? 'peer' : 'peers'}
-                    </span>
-                  ) : null}
-                </span>
-              </span>
-              <HugeiconsIcon icon={ArrowDown01Icon} size={24} strokeWidth={2} className={styles.modelCardChevron} />
-            </button>
-            {modelMenuOpen && (
-              <div className={styles.modelMenu} role="listbox">
-                <VprModelRowList
-                  entries={dropdownEntries}
-                  selectedProvider={selectedModel?.provider}
-                  selectedServiceId={selectedModel?.serviceId}
-                  favoriteKeys={favorites}
-                  selectOnly
-                  pinnedPeerLabels={dropdownPins}
-                  onSelect={(provider, serviceId) => {
-                    setModelMenuOpen(false);
-                    actions.selectVprModel(provider, serviceId);
-                  }}
-                  emptyLabel="No models discovered yet"
-                  frameless
-                />
-                <button
-                  type="button"
-                  className={styles.modelMenuFooter}
-                  onClick={() => {
-                    setModelMenuOpen(false);
-                    onSelectView?.('explore');
-                  }}
+          <div className={styles.appModelList}>
+            {connectedProfiles.map((profile) => {
+              const route = vprApplicationRouteSelectionFor(snap.applicationRoutes, profile.name);
+              const routeEntry = route.mode === 'model'
+                ? findCatalogEntry(snap.catalog, route.model.provider, route.model.serviceId)
+                : null;
+              const routeLabel = route.mode === 'client-model'
+                ? 'In-app selection'
+                : route.mode === 'follow-global'
+                  ? defaultModelLabel
+                  : routeEntry?.label ?? route.model.label;
+              const routeMeta = route.mode === 'client-model'
+                ? profile.displayName
+                : 'Best';
+              const menuOpen = modelMenuFor === profile.name;
+              return (
+                <div
+                  key={profile.name}
+                  className={styles.modelDropdown}
+                  ref={menuOpen ? modelMenuRef : undefined}
                 >
-                  <span>All models</span>
-                  <HugeiconsIcon icon={ArrowRight02Icon} size={16} strokeWidth={2} />
-                </button>
-              </div>
-            )}
+                  <button
+                    type="button"
+                    className={styles.modelCard}
+                    onClick={() => setModelMenuFor((open) => open === profile.name ? null : profile.name)}
+                    aria-haspopup="listbox"
+                    aria-expanded={menuOpen}
+                    title={`Change ${profile.displayName} model`}
+                  >
+                    <span className={styles.modelCardBody}>
+                      <span className={styles.modelCardTitle}>
+                        {profile.iconDataUri ? (
+                          <img src={profile.iconDataUri} alt="" className={styles.appIcon} />
+                        ) : (
+                          <BrandIcon name={profile.name} hints={[profile.displayName]} size={20} />
+                        )}
+                        <span className={styles.modelName}>{routeLabel}</span>
+                      </span>
+                      <span className={styles.modelCardCaption}>
+                        <span>{profile.displayName}</span>
+                        <span className={styles.modelCardDivider} aria-hidden="true">|</span>
+                        <span className={styles.modelCardSeller}>{routeMeta}</span>
+                      </span>
+                    </span>
+                    <HugeiconsIcon icon={ArrowDown01Icon} size={24} strokeWidth={2} className={styles.modelCardChevron} />
+                  </button>
+                  {menuOpen ? (
+                    <div className={styles.modelMenu} role="listbox">
+                      {profile.name === 'codex' || profile.name === 'opencode' ? (
+                        <button
+                          type="button"
+                          className={`${styles.routeChoice}${route.mode === 'client-model' ? ` ${styles.routeChoiceSelected}` : ''}`}
+                          onClick={() => { void setApplicationRoute(profile.name, { mode: 'client-model' }); }}
+                        >
+                          {route.mode === 'client-model' ? <HugeiconsIcon icon={Tick02Icon} size={16} strokeWidth={2} /> : null}
+                          <span><strong>In-app selection</strong><small>{`Use model selected in ${profile.displayName}`}</small></span>
+                        </button>
+                      ) : null}
+                      <VprModelRowList
+                        entries={dropdownEntries}
+                        selectedProvider={route.mode === 'model' ? route.model.provider : undefined}
+                        selectedServiceId={route.mode === 'model' ? route.model.serviceId : undefined}
+                        favoriteKeys={favorites}
+                        selectOnly
+                        routingLabel="Best"
+                        onSelect={(provider, serviceId) => {
+                          const entry = findCatalogEntry(snap.catalog, provider, serviceId);
+                          if (entry) void setApplicationRoute(profile.name, modelApplicationRoute(entry));
+                        }}
+                        emptyLabel="No models discovered yet"
+                        frameless
+                      />
+                      <button
+                        type="button"
+                        className={styles.modelMenuFooter}
+                        onClick={() => {
+                          setModelMenuFor(null);
+                          onSelectView?.('tools');
+                        }}
+                      >
+                        <span>All models in Apps</span>
+                        <HugeiconsIcon icon={ArrowRight02Icon} size={16} strokeWidth={2} />
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>

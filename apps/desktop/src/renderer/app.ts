@@ -19,14 +19,18 @@ import {
   saveFloatShowRoutedPeer,
 } from './modules/app/float-settings';
 import { initModelPickerSync } from './modules/catalog/picker-sync';
-import { applyVprRouteToConnectedProxy } from './modules/routing/proxy-sync';
+import { initConnectedAppModelCatalogSync } from './modules/catalog/connected-app-catalog-sync';
+import { applyVprRouteToConnectedProxy, syncBuyerApplicationRoutes } from './modules/routing/proxy-sync';
+import { setVprApplicationRouteSelection } from './modules/routing/application-routes';
 import { findCatalogEntry } from './modules/catalog/model-catalog';
 import { resolveVprChatOption } from './modules/chat/projection';
-import type { VprRouteSelection } from './core/state';
+import type { VprApplicationRouteSelection, VprRouteSelection } from './core/state';
 import {
   applyPeerListing,
+  loadVprApplicationRoutes,
   loadVprRouteSelection,
   loadVprRoutingPreferences,
+  saveVprApplicationRoutes,
   saveVprRouteSelection,
   saveVprRoutingPreferences,
 } from './modules/routing/preferences';
@@ -112,6 +116,7 @@ void applyMacOsRtlClass();
 const uiState = createInitialUiState();
 uiState.vprRoutingPreferences = loadVprRoutingPreferences(uiState.vprRoutingPreferences);
 uiState.vprRouteSelection = loadVprRouteSelection(uiState.vprRouteSelection);
+uiState.vprApplicationRoutes = loadVprApplicationRoutes(uiState.vprApplicationRoutes);
 uiState.vprModelPins = loadVprModelPins();
 uiState.vprFloatAutoOpen = loadFloatAutoOpen();
 uiState.vprFloatShowRoutedPeer = loadFloatShowRoutedPeer();
@@ -238,6 +243,21 @@ function rememberedPinFor(provider: string, serviceId: string): string | null {
   return serves ? peerId : null;
 }
 
+async function actionSetVprApplicationRoute(
+  profileName: string,
+  selection: VprApplicationRouteSelection,
+): Promise<void> {
+  uiState.vprApplicationRoutes = setVprApplicationRouteSelection(
+    uiState.vprApplicationRoutes,
+    profileName,
+    selection,
+  );
+  saveVprApplicationRoutes(uiState.vprApplicationRoutes);
+  notifyUiStateChanged();
+  const result = await syncBuyerApplicationRoutes(bridge, uiState);
+  if (!result.ok) throw new Error(result.error ?? 'Unable to update application route');
+}
+
 function actionSelectVprModel(provider: string, serviceId: string, peerId: string | null = null): void {
   const entry = findCatalogEntry(uiState.vprModelCatalog, provider, serviceId);
   if (!entry) return;
@@ -279,10 +299,8 @@ function actionSelectVprModel(provider: string, serviceId: string, peerId: strin
   // The floating pill mirrors the selection — push it now instead of
   // letting it lag behind on its poll tick.
   void vprFloatApi?.refresh();
-  // Keep connected app profiles in step with the new route: the system
-  // proxy captured its default model and served-models list at connect
-  // time, and the buyer is now pinned to the new model's peer — stale
-  // profiles would forward models that peer doesn't serve.
+  // Update the buyer route in place. Connected apps keep running; only
+  // follow-global policies observe the new default on future chats.
   void applyVprRouteToConnectedProxy(bridge, uiState);
   // An explicit seller choice re-points the model's existing auto-routed
   // chats too; a bare model switch (remembered-pin restore) moves nothing.
@@ -293,6 +311,7 @@ const vprFloatApi = initVprFloatModule({
   bridge,
   uiState,
   onSelectModel: (provider, serviceId) => actionSelectVprModel(provider, serviceId),
+  onSetApplicationRoute: actionSetVprApplicationRoute,
   refreshUsage: (force?: boolean) => creditsApi.refreshPaymentSummary(force),
 });
 
@@ -311,6 +330,7 @@ function sweepChatsForSellerPin(provider: string, serviceId: string, peerId: str
 // Keep the main process fed with the curated model list (favorites +
 // recommended) so the Telegram /model picker matches the app's dropdown.
 initModelPickerSync({ bridge, uiState });
+initConnectedAppModelCatalogSync({ bridge, uiState });
 
 /* ------------------------------------------------------------------ */
 /*  Runtime activity helpers                                           */
@@ -583,6 +603,14 @@ registerActions({
   handleServiceBlur: chatApi.handleServiceBlur,
   clearPinnedPeer: chatApi.clearPinnedPeer,
   selectVprModel: actionSelectVprModel,
+  setVprApplicationRoute: async (profileName: string, selection: VprApplicationRouteSelection) => {
+    try {
+      await actionSetVprApplicationRoute(profileName, selection);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  },
   clearVprPinnedPeer: () => {
     // Forgetting the pin has to reach the per-model store too, or selecting
     // the model again would restore the pin the user just cleared.

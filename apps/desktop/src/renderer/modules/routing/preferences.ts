@@ -1,7 +1,14 @@
-import type { VprPeerListing, VprRoutingPreferences, VprRouteSelection } from '../../core/state';
+import type {
+  VprApplicationRoutes,
+  VprApplicationRouteSelection,
+  VprPeerListing,
+  VprRoutingPreferences,
+  VprRouteSelection,
+} from '../../core/state';
 
 export const VPR_PREFERENCES_STORAGE_KEY = 'antseed.desktop.vpr.preferences';
 export const VPR_ROUTE_SELECTION_STORAGE_KEY = 'antseed.desktop.vpr.routeSelection';
+export const VPR_APPLICATION_ROUTES_STORAGE_KEY = 'antseed.desktop.vpr.applicationRoutes';
 
 type StoredObject = Record<string, unknown>;
 
@@ -150,4 +157,32 @@ export function saveVprRouteSelection(value: VprRouteSelection): void {
     return;
   }
   localStorage.setItem(VPR_ROUTE_SELECTION_STORAGE_KEY, JSON.stringify(value));
+}
+
+function loadApplicationRouteSelection(value: unknown): VprApplicationRouteSelection | null {
+  if (!isStoredObject(value)) return null;
+  if (value.mode === 'client-model' || value.mode === 'follow-global') {
+    return { mode: value.mode };
+  }
+  if (value.mode !== 'model') return null;
+  const model = loadRouteModel(value.model);
+  return model ? { mode: 'model', model } : null;
+}
+
+export function loadVprApplicationRoutes(fallback: VprApplicationRoutes = {}): VprApplicationRoutes {
+  const parsed = loadJson(VPR_APPLICATION_ROUTES_STORAGE_KEY);
+  if (!isStoredObject(parsed)) return fallback;
+  const routes: VprApplicationRoutes = {};
+  for (const [profileName, value] of Object.entries(parsed)) {
+    const name = profileName.trim();
+    if (!name || name.length > 128 || !/^[a-z0-9][a-z0-9._-]*$/i.test(name)) continue;
+    const selection = loadApplicationRouteSelection(value);
+    if (selection) routes[name] = selection;
+  }
+  return routes;
+}
+
+export function saveVprApplicationRoutes(value: VprApplicationRoutes): void {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.setItem(VPR_APPLICATION_ROUTES_STORAGE_KEY, JSON.stringify(value));
 }

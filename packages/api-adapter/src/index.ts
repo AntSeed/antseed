@@ -1,4 +1,5 @@
 export {
+  requestTransformFailureReason,
   transformRequest,
   type ServiceApiRequestTransformOptions,
   type ServiceApiRequestTransformResult,
@@ -16,6 +17,7 @@ export {
 
 export {
   DEFAULT_ANTHROPIC_MAX_TOKENS,
+  type CanonicalRequestTranslationContext,
 } from './canonical.js';
 
 export {

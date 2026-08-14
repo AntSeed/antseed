@@ -25,6 +25,13 @@ test('default app profiles are config-patch entries with unique names', () => {
   }
 });
 
+test('Codex routes its native provider through the buyer endpoint', () => {
+  const codex = DEFAULT_APP_PROFILES.find((profile) => profile.name === 'codex');
+  const patch = codex?.configPatch as Record<string, unknown>;
+  assert.equal(patch['format'], 'codex');
+  assert.equal(patch['providerKey'], 'antseed');
+});
+
 test('platformConfigPath keeps the posix path off Windows and for home-rooted tools', () => {
   const winFolder = { base: 'APPDATA', segments: ['Zed', 'settings.json'] } as const;
   assert.equal(platformConfigPath('~/.config/zed/settings.json', winFolder, 'darwin'), '~/.config/zed/settings.json');

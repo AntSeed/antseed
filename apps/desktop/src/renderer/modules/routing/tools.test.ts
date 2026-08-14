@@ -6,8 +6,6 @@ import {
   activeProfilesFromRuntimeState,
   buildVprPeerOptions,
   buildVprProfileTraffic,
-  resolveVprToolRoute,
-  resolveVprToolRouteForPeerOptions,
 } from './tools.js';
 
 function peer(overrides: Partial<PeerEntry> = {}): PeerEntry {
@@ -106,48 +104,4 @@ test('activeProfilesFromRuntimeState returns null when metadata is missing', () 
   const state: RuntimeProcessState = { mode: 'system-proxy', running: true };
 
   assert.equal(activeProfilesFromRuntimeState(state), null);
-});
-
-test('resolveVprToolRoute returns override values when present and defaults otherwise', () => {
-  assert.deepEqual(
-    resolveVprToolRoute({ profile: { peerId: 'override-peer', model: 'override-model' } }, 'profile', {
-      peerId: 'default-peer',
-      model: 'default-model',
-    }),
-    { peerId: 'override-peer', model: 'override-model' },
-  );
-  assert.deepEqual(
-    resolveVprToolRoute({}, 'profile', { peerId: 'default-peer', model: 'default-model' }),
-    { peerId: 'default-peer', model: 'default-model' },
-  );
-});
-
-test('resolveVprToolRouteForPeerOptions does not mix a tool peer with an invalid default model', () => {
-  assert.deepEqual(
-    resolveVprToolRouteForPeerOptions(
-      { profile: { peerId: 'peer-2', model: '' } },
-      'profile',
-      { peerId: 'peer-1', model: 'deepseek-v4-pro' },
-      [
-        { peerId: 'peer-1', label: 'Peer One', services: ['deepseek-v4-pro'], online: true },
-        { peerId: 'peer-2', label: 'Peer Two', services: ['claude-sonnet'], online: true },
-      ],
-    ),
-    { peerId: 'peer-2', model: 'claude-sonnet' },
-  );
-});
-
-test('resolveVprToolRouteForPeerOptions keeps a valid explicit tool model', () => {
-  assert.deepEqual(
-    resolveVprToolRouteForPeerOptions(
-      { profile: { peerId: 'peer-2', model: 'claude-haiku' } },
-      'profile',
-      { peerId: 'peer-1', model: 'deepseek-v4-pro' },
-      [
-        { peerId: 'peer-1', label: 'Peer One', services: ['deepseek-v4-pro'], online: true },
-        { peerId: 'peer-2', label: 'Peer Two', services: ['claude-sonnet', 'claude-haiku'], online: true },
-      ],
-    ),
-    { peerId: 'peer-2', model: 'claude-haiku' },
-  );
 });

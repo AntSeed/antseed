@@ -101,7 +101,8 @@ export function getUiSnapshot(): RendererUiState {
     chatServiceOptions: [...state.chatServiceOptions],
     discoverRows: [...state.discoverRows],
     vprRoutableRows: [...state.vprRoutableRows],
-    // vprModelCatalog / creditsChannels / vprRouteSelection are reassigned
+    // vprModelCatalog / creditsChannels / vprRouteSelection /
+    // vprApplicationRoutes are reassigned
     // wholesale at every mutation site, so the top-level spread passes their
     // references through safely — no per-snapshot deep clone needed.
     vprRoutingPreferences: { ...state.vprRoutingPreferences },

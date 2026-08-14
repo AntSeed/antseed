@@ -1,4 +1,4 @@
-import type { RendererUiState } from '../../core/state';
+import type { RendererUiState, VprApplicationRouteSelection } from '../../core/state';
 import { formatCompactTokens, formatCredits, shortAddress } from '../../core/format';
 import { notifyUiStateChanged } from '../../core/store';
 import type {
@@ -29,6 +29,7 @@ import {
 } from '../catalog/recommended';
 import { pinnedSellerLabels, resolvePeerForModel } from '../catalog/view-models';
 import { activeProfilesFromRuntimeState } from '../routing/tools';
+import { vprApplicationRouteSelectionFor } from '../routing/application-routes';
 
 const FLOAT_UPDATE_INTERVAL_MS = 3_000;
 /** Chat rows the pill's dropdown shows (buyer stores more). */
@@ -63,10 +64,11 @@ export type VprFloatModule = {
  * it's open. Model changes made in the pill come back as 'select-model'
  * actions.
  */
-export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsage }: {
+export function initVprFloatModule({ bridge, uiState, onSelectModel, onSetApplicationRoute, refreshUsage }: {
   bridge: DesktopBridge | undefined;
   uiState: RendererUiState;
   onSelectModel: (provider: string, serviceId: string) => void;
+  onSetApplicationRoute: (profileName: string, selection: VprApplicationRouteSelection) => Promise<void>;
   /** Refresh the payments summary; force bypasses its self-throttle. */
   refreshUsage: (force?: boolean) => Promise<void>;
 }): VprFloatModule {
@@ -309,6 +311,7 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
       apps: connected.map((profile) => ({
         name: profile.name,
         displayName: profile.displayName,
+        route: vprApplicationRouteSelectionFor(uiState.vprApplicationRoutes, profile.name),
         ...(profile.toolSlugs ? { toolSlugs: profile.toolSlugs } : {}),
         // Carry the app's real icon so the pill matches the main window's
         // app rows instead of always drawing the generic brand mark.
@@ -415,8 +418,18 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
       }
       return;
     }
-    // Pin one chat to a model: resolve the peer for that model the same way
-    // the global selection does, then hand the pin to the buyer.
+    if (type === 'set-application-route') {
+      const { profileName, selection } = action as { profileName?: unknown; selection?: unknown };
+      if (typeof profileName !== 'string' || !selection || typeof selection !== 'object') return;
+      const mode = (selection as { mode?: unknown }).mode;
+      if (mode !== 'client-model' && mode !== 'follow-global' && mode !== 'model') return;
+      void onSetApplicationRoute(profileName, selection as VprApplicationRouteSelection)
+        .then(() => buildData())
+        .then((next) => bridge?.vprFloatUpdate?.(next));
+      return;
+    }
+    // Pin one chat to a model: resolve the best peer for that model the same
+    // way the global selection does, then hand the pin to the buyer.
     if (type === 'pin-chat-model') {
       const { conversationId, provider, serviceId } = action as { conversationId?: unknown; provider?: unknown; serviceId?: unknown };
       if (typeof conversationId !== 'string' || typeof provider !== 'string' || typeof serviceId !== 'string') return;

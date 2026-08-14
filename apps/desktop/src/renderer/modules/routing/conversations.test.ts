@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { conversationMatchesApp } from './conversations';
+import { conversationMatchesApp, conversationPinnedServiceId } from './conversations';
 
 describe('conversationMatchesApp', () => {
   it('matches on the profile name with prefix flexibility', () => {
@@ -23,5 +23,30 @@ describe('conversationMatchesApp', () => {
 
   it('ignores empty slug entries', () => {
     expect(conversationMatchesApp('anything', { name: 'custom-api', toolSlugs: [''] })).toBe(false);
+  });
+});
+
+describe('conversationPinnedServiceId', () => {
+  const conversation = {
+    id: 'opencode:session',
+    tool: 'opencode',
+    sessionKey: 'session',
+    snippet: 'hello',
+    label: null,
+    pinnedModel: null,
+    lastModel: `${'a'.repeat(40)}@qwen3-coder`,
+    createdAt: 1,
+    lastActiveAt: 1,
+  };
+
+  it('shows the resolved automatic route when no manual pin exists', () => {
+    expect(conversationPinnedServiceId(conversation)).toBe('qwen3-coder');
+  });
+
+  it('shows a manual pin ahead of the last automatic route', () => {
+    expect(conversationPinnedServiceId({
+      ...conversation,
+      pinnedModel: `${'b'.repeat(40)}@gpt-5.4`,
+    })).toBe('gpt-5.4');
   });
 });

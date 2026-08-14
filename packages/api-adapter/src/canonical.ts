@@ -7,16 +7,30 @@ import {
 } from './utils.js';
 
 export interface CanonicalFunctionTool {
+  type: 'function';
   name: string;
+  namespace?: string;
   description?: string;
   parameters: Record<string, unknown>;
 }
+
+export type CanonicalCustomToolType = 'custom' | 'local_shell' | 'shell';
+
+export interface CanonicalCustomTool {
+  type: CanonicalCustomToolType;
+  name: string;
+  description?: string;
+  format?: Record<string, unknown>;
+  definition?: Record<string, unknown>;
+}
+
+export type CanonicalTool = CanonicalFunctionTool | CanonicalCustomTool;
 
 export type CanonicalToolChoice =
   | 'auto'
   | 'none'
   | 'required'
-  | { type: 'function'; name: string };
+  | { type: 'function' | 'custom'; name: string };
 
 // Anthropic requires max_tokens; the OpenAI protocols treat it as optional.
 export const DEFAULT_ANTHROPIC_MAX_TOKENS = 16_384;
@@ -25,10 +39,33 @@ export type CanonicalContentPart =
   | { type: 'text'; text: string }
   | { type: 'image'; url?: string; mediaType?: string; data?: string };
 
+export type CanonicalToolOutput = string | CanonicalContentPart[];
+
 export type CanonicalInputItem =
   | { type: 'message'; role: 'user' | 'assistant'; content: CanonicalContentPart[] }
   | { type: 'function_call'; id: string; name: string; arguments: Record<string, unknown> | string }
-  | { type: 'function_call_output'; callId: string; output: string };
+  | { type: 'function_call_output'; callId: string; output: CanonicalToolOutput }
+  | { type: 'custom_tool_call'; id: string; name: string; input: string }
+  | { type: 'custom_tool_call_output'; callId: string; output: CanonicalToolOutput };
+
+export interface CanonicalCustomToolTranslation {
+  type: CanonicalCustomToolType;
+  name: string;
+  syntheticName: string;
+  format?: Record<string, unknown>;
+  definition?: Record<string, unknown>;
+}
+
+export interface CanonicalNamespaceToolTranslation {
+  namespace: string;
+  name: string;
+  syntheticName: string;
+}
+
+export interface CanonicalRequestTranslationContext {
+  readonly customTools: readonly CanonicalCustomToolTranslation[];
+  readonly namespaceTools?: readonly CanonicalNamespaceToolTranslation[];
+}
 
 /**
  * Where a prompt prefix ends and may be cached by the seller's upstream.
@@ -57,7 +94,7 @@ export interface CanonicalLlmRequest {
   temperature?: number;
   topP?: number;
   stop?: string | string[];
-  tools?: CanonicalFunctionTool[];
+  tools?: CanonicalTool[];
   toolChoice?: CanonicalToolChoice;
   metadata?: Record<string, unknown>;
   user?: string;
@@ -91,11 +128,98 @@ function toolParameters(parameters: unknown): Record<string, unknown> {
     : { type: 'object', properties: {} };
 }
 
+export function createCanonicalRequestTranslationContext(
+  request: CanonicalLlmRequest,
+): CanonicalRequestTranslationContext {
+  const functionNames = new Set(
+    (request.tools ?? [])
+      .filter((tool): tool is CanonicalFunctionTool => tool.type === 'function')
+      .map((tool) => tool.name),
+  );
+  const customTools = new Map<string, CanonicalCustomToolTranslation>();
+  const addCustomTool = (
+    type: CanonicalCustomToolType,
+    name: string,
+    format?: Record<string, unknown>,
+    definition?: Record<string, unknown>,
+  ): void => {
+    if (customTools.has(name)) return;
+    let index = customTools.size + 1;
+    let syntheticName = name;
+    while (functionNames.has(syntheticName)) {
+      syntheticName = `antseed_custom_${index}`;
+      index += 1;
+    }
+    functionNames.add(syntheticName);
+    customTools.set(name, {
+      type,
+      name,
+      syntheticName,
+      ...(format ? { format } : {}),
+      ...(definition ? { definition } : {}),
+    });
+  };
+
+  for (const tool of request.tools ?? []) {
+    if (tool.type !== 'function') addCustomTool(tool.type, tool.name, tool.format, tool.definition);
+  }
+  for (const item of request.input) {
+    if (item.type === 'custom_tool_call') addCustomTool('custom', item.name);
+  }
+  const namespaceTools = (request.tools ?? []).flatMap((tool): CanonicalNamespaceToolTranslation[] => (
+    tool.type === 'function' && tool.namespace
+      ? [{
+        namespace: tool.namespace,
+        name: tool.name.startsWith(`${tool.namespace}__`)
+          ? tool.name.slice(`${tool.namespace}__`.length)
+          : tool.name,
+        syntheticName: tool.name,
+      }]
+      : []
+  ));
+  return { customTools: [...customTools.values()], namespaceTools };
+}
+
+export function customToolTranslationForSyntheticName(
+  context: CanonicalRequestTranslationContext | undefined,
+  syntheticName: string,
+): CanonicalCustomToolTranslation | undefined {
+  return context?.customTools.find((tool) => tool.syntheticName === syntheticName);
+}
+
+export function namespaceToolTranslationForSyntheticName(
+  context: CanonicalRequestTranslationContext | undefined,
+  syntheticName: string,
+): CanonicalNamespaceToolTranslation | undefined {
+  return context?.namespaceTools?.find((tool) => tool.syntheticName === syntheticName);
+}
+
+function syntheticCustomToolName(context: CanonicalRequestTranslationContext, name: string): string {
+  return context.customTools.find((tool) => tool.name === name)?.syntheticName ?? name;
+}
+
+export function customToolInputFromArguments(argumentsValue: Record<string, unknown> | string): string {
+  const parsed = typeof argumentsValue === 'string' ? parseJsonSafe(argumentsValue) : argumentsValue;
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const input = (parsed as Record<string, unknown>).input;
+    if (typeof input === 'string') return input;
+  }
+  return typeof argumentsValue === 'string' ? argumentsValue : JSON.stringify(argumentsValue);
+}
+
+interface CanonicalRequestRenderOptions {
+  translationContext?: CanonicalRequestTranslationContext;
+}
+
 export function renderCanonicalRequestToOpenAIChatBody(
   request: CanonicalLlmRequest,
-  options: { toolCallContent?: '' | null; groupAssistantToolCallsWithPreviousMessage?: boolean } = {},
+  options: CanonicalRequestRenderOptions & {
+    toolCallContent?: '' | null;
+    groupAssistantToolCallsWithPreviousMessage?: boolean;
+  } = {},
 ): Record<string, unknown> {
   const messages: unknown[] = [];
+  const translationContext = options.translationContext ?? createCanonicalRequestTranslationContext(request);
   if (request.instructions !== undefined && request.instructions.length > 0) {
     messages.push({ role: 'system', content: request.instructions });
   }
@@ -114,14 +238,19 @@ export function renderCanonicalRequestToOpenAIChatBody(
       messages.push({ role: item.role, content: renderCanonicalContentToOpenAIChat(item.content) });
       continue;
     }
-    if (item.type === 'function_call') {
+    if (item.type === 'function_call' || item.type === 'custom_tool_call') {
       const toolCall = {
         id: item.id,
         type: 'function',
-        function: { name: item.name, arguments: stringifyToolArguments(item.arguments) },
+        function: {
+          name: item.type === 'custom_tool_call'
+            ? syntheticCustomToolName(translationContext, item.name)
+            : item.name,
+          arguments: item.type === 'custom_tool_call'
+            ? JSON.stringify({ input: item.input })
+            : stringifyToolArguments(item.arguments),
+        },
       };
-      // Parallel calls must share one assistant message: OpenAI requires the
-      // tool results to immediately follow the message that requested them.
       const previous = messages[messages.length - 1];
       if (isAssistantMessage(previous)
         && (options.groupAssistantToolCallsWithPreviousMessage || Array.isArray(previous.tool_calls))) {
@@ -136,7 +265,7 @@ export function renderCanonicalRequestToOpenAIChatBody(
       });
       continue;
     }
-    messages.push({ role: 'tool', tool_call_id: item.callId, content: item.output });
+    messages.push({ role: 'tool', tool_call_id: item.callId, content: textFromToolOutput(item.output) });
   }
 
   const body: Record<string, unknown> = {
@@ -149,9 +278,9 @@ export function renderCanonicalRequestToOpenAIChatBody(
   if (typeof request.temperature === 'number') body.temperature = request.temperature;
   if (typeof request.topP === 'number') body.top_p = request.topP;
   if (request.stop !== undefined) body.stop = request.stop;
-  const tools = renderCanonicalToolsToOpenAIChat(request.tools);
+  const tools = renderCanonicalToolsToOpenAIChat(request.tools, translationContext);
   if (tools) body.tools = tools;
-  const toolChoice = renderCanonicalToolChoiceToOpenAIChat(request.toolChoice);
+  const toolChoice = renderCanonicalToolChoiceToOpenAIChat(request.toolChoice, translationContext);
   if (toolChoice !== undefined) body.tool_choice = toolChoice;
   if (request.metadata) body.metadata = request.metadata;
   if (request.user) body.user = request.user;
@@ -164,7 +293,7 @@ export function renderCanonicalRequestToOpenAIChatBody(
 
 export function renderCanonicalRequestToOpenAIResponsesBody(
   request: CanonicalLlmRequest,
-  options: { includeMetadata?: boolean; includeUser?: boolean } = {},
+  options: CanonicalRequestRenderOptions & { includeMetadata?: boolean; includeUser?: boolean } = {},
 ): Record<string, unknown> {
   const input: unknown[] = [];
 
@@ -188,10 +317,21 @@ export function renderCanonicalRequestToOpenAIResponsesBody(
       });
       continue;
     }
+    if (item.type === 'custom_tool_call') {
+      const id = responseFunctionCallId(item.id);
+      input.push({
+        type: 'custom_tool_call',
+        id,
+        call_id: id,
+        name: item.name,
+        input: item.input,
+      });
+      continue;
+    }
     input.push({
-      type: 'function_call_output',
+      type: item.type,
       call_id: responseFunctionCallId(item.callId),
-      output: item.output,
+      output: renderCanonicalToolOutputToOpenAIResponses(item.output),
     });
   }
 
@@ -240,7 +380,13 @@ function resolveCacheBreakpoints(request: CanonicalLlmRequest): CanonicalCacheBr
 
   const instructionsLength = request.instructions?.length ?? 0;
   const inputLength = request.input.reduce((total, item) => (
-    total + (item.type === 'message' ? textFromCanonicalContent(item.content).length : item.type === 'function_call_output' ? item.output.length : 0)
+    total + (item.type === 'message'
+      ? textFromCanonicalContent(item.content).length
+      : item.type === 'function_call_output' || item.type === 'custom_tool_call_output'
+        ? textFromToolOutput(item.output).length
+        : item.type === 'custom_tool_call'
+          ? item.input.length
+          : 0)
   ), 0);
   if (instructionsLength + inputLength < MIN_SYNTHESIZED_CACHE_CHARS) {
     return { instructions: false, tools: false, inputIndices: [] };
@@ -255,9 +401,13 @@ function resolveCacheBreakpoints(request: CanonicalLlmRequest): CanonicalCacheBr
   };
 }
 
-export function renderCanonicalRequestToAnthropicMessagesBody(request: CanonicalLlmRequest): Record<string, unknown> {
+export function renderCanonicalRequestToAnthropicMessagesBody(
+  request: CanonicalLlmRequest,
+  options: CanonicalRequestRenderOptions = {},
+): Record<string, unknown> {
   const messages: Array<{ role: 'user' | 'assistant'; content: unknown[] }> = [];
   const breakpoints = resolveCacheBreakpoints(request);
+  const translationContext = options.translationContext ?? createCanonicalRequestTranslationContext(request);
 
   const appendBlock = (role: 'user' | 'assistant', block: Record<string, unknown>): void => {
     const previous = messages[messages.length - 1];
@@ -279,18 +429,22 @@ export function renderCanonicalRequestToAnthropicMessagesBody(request: Canonical
   for (const [index, item] of request.input.entries()) {
     if (item.type === 'message') {
       for (const part of renderCanonicalContentToAnthropic(item.content)) appendBlock(item.role, part);
-    } else if (item.type === 'function_call') {
+    } else if (item.type === 'function_call' || item.type === 'custom_tool_call') {
       appendBlock('assistant', {
         type: 'tool_use',
         id: item.id,
-        name: item.name,
-        input: parseToolArguments(item.arguments),
+        name: item.type === 'custom_tool_call'
+          ? syntheticCustomToolName(translationContext, item.name)
+          : item.name,
+        input: item.type === 'custom_tool_call'
+          ? { input: item.input }
+          : parseToolArguments(item.arguments),
       });
     } else {
       appendBlock('user', {
         type: 'tool_result',
         tool_use_id: item.callId,
-        content: item.output,
+        content: textFromToolOutput(item.output),
       });
     }
     if (breakpoints.inputIndices.includes(index)) markLastBlock();
@@ -312,7 +466,7 @@ export function renderCanonicalRequestToAnthropicMessagesBody(request: Canonical
   if (typeof request.temperature === 'number') body.temperature = request.temperature;
   if (typeof request.topP === 'number') body.top_p = request.topP;
   if (request.stop !== undefined) body.stop_sequences = Array.isArray(request.stop) ? request.stop : [request.stop];
-  const tools = renderCanonicalToolsToAnthropic(request.tools);
+  const tools = renderCanonicalToolsToAnthropic(request.tools, translationContext);
   if (tools) {
     if (breakpoints.tools) {
       const lastTool = tools[tools.length - 1];
@@ -320,7 +474,7 @@ export function renderCanonicalRequestToAnthropicMessagesBody(request: Canonical
     }
     body.tools = tools;
   }
-  const toolChoice = renderCanonicalToolChoiceToAnthropic(request.toolChoice);
+  const toolChoice = renderCanonicalToolChoiceToAnthropic(request.toolChoice, translationContext);
   if (toolChoice !== undefined) body.tool_choice = toolChoice;
   if (request.metadata || request.user) {
     body.metadata = {
@@ -476,11 +630,22 @@ export function normalizeOpenAIResponsesRequestBody(body: Record<string, unknown
       const msg = item as Record<string, unknown>;
       const type = typeof msg.type === 'string' ? msg.type : '';
 
-      if (type === 'function_call_output') {
+      if (type === 'function_call_output' || type === 'custom_tool_call_output') {
         request.input.push({
-          type: 'function_call_output',
+          type,
           callId: typeof msg.call_id === 'string' ? msg.call_id : '',
-          output: typeof msg.output === 'string' ? msg.output : '',
+          output: canonicalToolOutputFromOpenAIResponses(msg.output),
+        });
+        continue;
+      }
+
+      if (type === 'local_shell_call_output' || type === 'shell_call_output') {
+        request.input.push({
+          type: 'custom_tool_call_output',
+          callId: typeof msg.call_id === 'string'
+            ? msg.call_id
+            : (typeof msg.id === 'string' ? msg.id : ''),
+          output: canonicalToolOutputFromOpenAIResponses(msg.output),
         });
         continue;
       }
@@ -490,13 +655,39 @@ export function normalizeOpenAIResponsesRequestBody(body: Record<string, unknown
           type: 'function_call',
           id: typeof msg.call_id === 'string' && msg.call_id.length > 0
             ? msg.call_id : (typeof msg.id === 'string' ? msg.id : ''),
-          name: typeof msg.name === 'string' ? msg.name : '',
+          name: typeof msg.name === 'string'
+            ? (typeof msg.namespace === 'string' && msg.namespace.length > 0
+              ? `${msg.namespace}__${msg.name}`
+              : msg.name)
+            : '',
           arguments: typeof msg.arguments === 'string' ? msg.arguments : JSON.stringify(msg.arguments ?? {}),
         });
         continue;
       }
 
-      // Codex interleaves reasoning/local_shell_call items with messages. They
+      if (type === 'custom_tool_call') {
+        request.input.push({
+          type: 'custom_tool_call',
+          id: typeof msg.call_id === 'string' && msg.call_id.length > 0
+            ? msg.call_id : (typeof msg.id === 'string' ? msg.id : ''),
+          name: typeof msg.name === 'string' ? msg.name : '',
+          input: typeof msg.input === 'string' ? msg.input : JSON.stringify(msg.input ?? ''),
+        });
+        continue;
+      }
+
+      if (type === 'local_shell_call' || type === 'shell_call') {
+        request.input.push({
+          type: 'custom_tool_call',
+          id: typeof msg.call_id === 'string' && msg.call_id.length > 0
+            ? msg.call_id : (typeof msg.id === 'string' ? msg.id : ''),
+          name: type === 'local_shell_call' ? 'local_shell' : 'shell',
+          input: JSON.stringify(msg.action ?? {}),
+        });
+        continue;
+      }
+
+      // Codex interleaves reasoning items with messages. They
       // have no role, and turning them into empty messages would separate a
       // function_call from its output.
       if (type !== 'message' && typeof msg.role !== 'string') continue;
@@ -681,7 +872,10 @@ export function renderCanonicalResponseToOpenAIChatBody(response: CanonicalLlmRe
   };
 }
 
-export function renderCanonicalResponseToOpenAIResponsesBody(response: CanonicalLlmResponse): Record<string, unknown> {
+export function renderCanonicalResponseToOpenAIResponsesBody(
+  response: CanonicalLlmResponse,
+  options: CanonicalRequestRenderOptions = {},
+): Record<string, unknown> {
   const output: unknown[] = [];
   const text = response.output
     .filter((item): item is { type: 'text'; text: string } => item.type === 'text')
@@ -700,11 +894,16 @@ export function renderCanonicalResponseToOpenAIResponsesBody(response: Canonical
 
   for (const item of response.output) {
     if (item.type !== 'function_call') continue;
-    output.push({
+    const customTool = customToolTranslationForSyntheticName(options.translationContext, item.name);
+    const namespaceTool = namespaceToolTranslationForSyntheticName(options.translationContext, item.name);
+    output.push(customTool
+      ? renderTranslatedCustomToolCall(item, customTool)
+      : {
       type: 'function_call',
       id: item.id,
       call_id: item.id,
-      name: item.name,
+      name: namespaceTool?.name ?? item.name,
+      ...(namespaceTool ? { namespace: namespaceTool.namespace } : {}),
       arguments: stringifyToolArguments(item.arguments),
       status: 'completed',
     });
@@ -719,6 +918,39 @@ export function renderCanonicalResponseToOpenAIResponsesBody(response: Canonical
     output,
     output_text: text,
     usage: openAIResponsesUsage(response.usage),
+  };
+}
+
+function renderTranslatedCustomToolCall(
+  item: Extract<CanonicalOutputItem, { type: 'function_call' }>,
+  customTool: CanonicalCustomToolTranslation,
+): Record<string, unknown> {
+  const input = customToolInputFromArguments(item.arguments);
+  if (customTool.type === 'local_shell') {
+    return {
+      type: 'local_shell_call',
+      id: item.id,
+      call_id: item.id,
+      action: parseJsonSafe(input) ?? input,
+      status: 'completed',
+    };
+  }
+  if (customTool.type === 'shell') {
+    return {
+      type: 'shell_call',
+      id: item.id,
+      call_id: item.id,
+      action: parseJsonSafe(input) ?? input,
+      environment: customTool.definition?.environment ?? null,
+      status: 'completed',
+    };
+  }
+  return {
+    type: 'custom_tool_call',
+    id: item.id,
+    call_id: item.id,
+    name: customTool.name,
+    input,
   };
 }
 
@@ -807,6 +1039,23 @@ function textFromCanonicalContent(content: CanonicalContentPart[]): string {
     .map((part) => part.text)
     .filter((text) => text.length > 0)
     .join('\n');
+}
+
+function textFromToolOutput(output: CanonicalToolOutput): string {
+  if (typeof output === 'string') return output;
+  return output.map((part) => (
+    part.type === 'text' ? part.text : part.url ?? (part.data ? `[image:${part.mediaType ?? 'unknown'}]` : '')
+  )).filter((part) => part.length > 0).join('\n');
+}
+
+function canonicalToolOutputFromOpenAIResponses(output: unknown): CanonicalToolOutput {
+  if (typeof output === 'string') return output;
+  return canonicalContentFromOpenAIResponses(output);
+}
+
+function renderCanonicalToolOutputToOpenAIResponses(output: CanonicalToolOutput): unknown {
+  if (typeof output === 'string') return output;
+  return renderCanonicalContentToOpenAIResponses(output, 'user');
 }
 
 function renderCanonicalContentToOpenAIChat(content: CanonicalContentPart[]): string | unknown[] {
@@ -1008,6 +1257,7 @@ function normalizeAnthropicTools(toolsRaw: unknown): CanonicalFunctionTool[] | u
     const tool = toolRaw as Record<string, unknown>;
     if (typeof tool.name !== 'string' || tool.name.length === 0) continue;
     const entry: CanonicalFunctionTool = {
+      type: 'function',
       name: tool.name,
       parameters: toolParameters(tool.input_schema),
     };
@@ -1025,57 +1275,122 @@ function normalizeChatTools(tools: unknown[]): CanonicalFunctionTool[] | undefin
     if (tool.type !== 'function' || !tool.function || typeof tool.function !== 'object') continue;
     const fn = tool.function as Record<string, unknown>;
     if (typeof fn.name !== 'string' || fn.name.length === 0) continue;
-    const entry: CanonicalFunctionTool = { name: fn.name, parameters: toolParameters(fn.parameters) };
+    const entry: CanonicalFunctionTool = { type: 'function', name: fn.name, parameters: toolParameters(fn.parameters) };
     if (typeof fn.description === 'string' && fn.description.length > 0) entry.description = fn.description;
     out.push(entry);
   }
   return out.length > 0 ? out : undefined;
 }
 
-function normalizeResponsesTools(tools: unknown[]): CanonicalFunctionTool[] | undefined {
-  const out: CanonicalFunctionTool[] = [];
+function normalizeResponsesTools(tools: unknown[]): CanonicalTool[] | undefined {
+  const out: CanonicalTool[] = [];
   for (const raw of tools) {
     if (!raw || typeof raw !== 'object') continue;
     const tool = raw as Record<string, unknown>;
-    if (tool.type !== 'function' || typeof tool.name !== 'string' || tool.name.length === 0) continue;
-    const entry: CanonicalFunctionTool = { name: tool.name, parameters: toolParameters(tool.parameters) };
-    if (typeof tool.description === 'string' && tool.description.length > 0) entry.description = tool.description;
-    out.push(entry);
+    if (tool.type === 'function' && typeof tool.name === 'string' && tool.name.length > 0) {
+      const entry: CanonicalFunctionTool = {
+        type: 'function',
+        name: tool.name,
+        parameters: toolParameters(tool.parameters),
+      };
+      if (typeof tool.description === 'string' && tool.description.length > 0) entry.description = tool.description;
+      out.push(entry);
+      continue;
+    }
+    if (tool.type === 'custom' && typeof tool.name === 'string' && tool.name.length > 0) {
+      const entry: CanonicalCustomTool = { type: 'custom', name: tool.name };
+      if (typeof tool.description === 'string' && tool.description.length > 0) entry.description = tool.description;
+      if (tool.format && typeof tool.format === 'object' && !Array.isArray(tool.format)) {
+        entry.format = tool.format as Record<string, unknown>;
+      }
+      out.push(entry);
+      continue;
+    }
+    if (tool.type === 'namespace'
+      && typeof tool.name === 'string'
+      && tool.name.length > 0
+      && Array.isArray(tool.tools)) {
+      for (const rawNested of tool.tools) {
+        if (!rawNested || typeof rawNested !== 'object' || Array.isArray(rawNested)) continue;
+        const nested = rawNested as Record<string, unknown>;
+        if (nested.type !== 'function' || typeof nested.name !== 'string' || nested.name.length === 0) continue;
+        const entry: CanonicalFunctionTool = {
+          type: 'function',
+          name: `${tool.name}__${nested.name}`,
+          namespace: tool.name,
+          parameters: toolParameters(nested.parameters),
+        };
+        if (typeof nested.description === 'string' && nested.description.length > 0) entry.description = nested.description;
+        out.push(entry);
+      }
+      continue;
+    }
+    if (tool.type === 'local_shell' || tool.type === 'shell') {
+      out.push({
+        type: tool.type,
+        name: tool.type,
+        definition: { ...tool },
+      });
+    }
   }
   return out.length > 0 ? out : undefined;
 }
 
 function renderCanonicalToolsToAnthropic(
-  tools: CanonicalFunctionTool[] | undefined,
+  tools: CanonicalTool[] | undefined,
+  context: CanonicalRequestTranslationContext,
 ): Array<Record<string, unknown>> | undefined {
   if (!tools || tools.length === 0) return undefined;
   return tools.map((tool) => ({
-    name: tool.name,
+    name: tool.type === 'function' ? tool.name : syntheticCustomToolName(context, tool.name),
     ...(tool.description ? { description: tool.description } : {}),
-    input_schema: tool.parameters,
+    input_schema: tool.type === 'function' ? tool.parameters : customToolParameters(),
   }));
 }
 
-function renderCanonicalToolsToOpenAIChat(tools: CanonicalFunctionTool[] | undefined): unknown[] | undefined {
+function renderCanonicalToolsToOpenAIChat(
+  tools: CanonicalTool[] | undefined,
+  context: CanonicalRequestTranslationContext,
+): unknown[] | undefined {
   if (!tools || tools.length === 0) return undefined;
   return tools.map((tool) => ({
     type: 'function',
     function: {
-      name: tool.name,
+      name: tool.type === 'function' ? tool.name : syntheticCustomToolName(context, tool.name),
       ...(tool.description ? { description: tool.description } : {}),
-      parameters: tool.parameters,
+      parameters: tool.type === 'function' ? tool.parameters : customToolParameters(),
     },
   }));
 }
 
-function renderCanonicalToolsToOpenAIResponses(tools: CanonicalFunctionTool[] | undefined): unknown[] | undefined {
+function renderCanonicalToolsToOpenAIResponses(tools: CanonicalTool[] | undefined): unknown[] | undefined {
   if (!tools || tools.length === 0) return undefined;
-  return tools.map((tool) => ({
-    type: 'function',
-    name: tool.name,
-    ...(tool.description ? { description: tool.description } : {}),
-    parameters: tool.parameters,
-  }));
+  return tools.map((tool) => {
+    if (tool.type === 'function') {
+      return {
+        type: 'function',
+        name: tool.name,
+        ...(tool.description ? { description: tool.description } : {}),
+        parameters: tool.parameters,
+      };
+    }
+    if (tool.definition) return tool.definition;
+    return {
+      type: 'custom',
+      name: tool.name,
+      ...(tool.description ? { description: tool.description } : {}),
+      ...(tool.format ? { format: tool.format } : {}),
+    };
+  });
+}
+
+function customToolParameters(): Record<string, unknown> {
+  return {
+    type: 'object',
+    properties: { input: { type: 'string' } },
+    required: ['input'],
+    additionalProperties: false,
+  };
 }
 
 function normalizeAnthropicToolChoice(toolChoice: unknown): CanonicalToolChoice | undefined {
@@ -1115,23 +1430,43 @@ function normalizeResponsesToolChoice(toolChoice: unknown): CanonicalToolChoice 
   }
   if (!toolChoice || typeof toolChoice !== 'object' || Array.isArray(toolChoice)) return undefined;
   const choice = toolChoice as Record<string, unknown>;
-  if (choice.type === 'function' && typeof choice.name === 'string') {
-    return { type: 'function', name: choice.name };
+  if ((choice.type === 'function' || choice.type === 'custom') && typeof choice.name === 'string') {
+    return { type: choice.type, name: choice.name };
   }
   return undefined;
 }
 
-function renderCanonicalToolChoiceToAnthropic(toolChoice: CanonicalToolChoice | undefined): unknown {
+function renderCanonicalToolChoiceToAnthropic(
+  toolChoice: CanonicalToolChoice | undefined,
+  context: CanonicalRequestTranslationContext,
+): unknown {
   if (toolChoice === 'required') return { type: 'any' };
   if (toolChoice === 'auto' || toolChoice === 'none') return { type: toolChoice };
-  if (toolChoice?.type === 'function') return { type: 'tool', name: toolChoice.name };
+  if (toolChoice) {
+    return {
+      type: 'tool',
+      name: toolChoice.type === 'custom'
+        ? syntheticCustomToolName(context, toolChoice.name)
+        : toolChoice.name,
+    };
+  }
   return undefined;
 }
 
-function renderCanonicalToolChoiceToOpenAIChat(toolChoice: CanonicalToolChoice | undefined): unknown {
+function renderCanonicalToolChoiceToOpenAIChat(
+  toolChoice: CanonicalToolChoice | undefined,
+  context: CanonicalRequestTranslationContext,
+): unknown {
   if (typeof toolChoice === 'string') return toolChoice;
-  if (toolChoice?.type === 'function') {
-    return { type: 'function', function: { name: toolChoice.name } };
+  if (toolChoice) {
+    return {
+      type: 'function',
+      function: {
+        name: toolChoice.type === 'custom'
+          ? syntheticCustomToolName(context, toolChoice.name)
+          : toolChoice.name,
+      },
+    };
   }
   return undefined;
 }

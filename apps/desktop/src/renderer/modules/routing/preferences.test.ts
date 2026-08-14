@@ -1,17 +1,21 @@
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'vitest';
 
-import type { VprRoutingPreferences, VprRouteSelection } from '../../core/state';
+import type { VprApplicationRoutes, VprRoutingPreferences, VprRouteSelection } from '../../core/state';
 import {
   applyPeerListing,
+  loadVprApplicationRoutes,
   loadVprRouteSelection,
   loadVprRoutingPreferences,
   peerListingOf,
+  saveVprApplicationRoutes,
   saveVprRouteSelection,
   saveVprRoutingPreferences,
+  VPR_APPLICATION_ROUTES_STORAGE_KEY,
   VPR_PREFERENCES_STORAGE_KEY,
   VPR_ROUTE_SELECTION_STORAGE_KEY,
 } from './preferences.js';
+import { vprApplicationRouteSelectionFor } from './application-routes.js';
 
 const fallbackPreferences: VprRoutingPreferences = {
   autoRouting: true,
@@ -80,6 +84,38 @@ test('valid VPR preferences and route selection save and load', () => {
 
   assert.deepEqual(loadVprRoutingPreferences(fallbackPreferences), preferences);
   assert.deepEqual(loadVprRouteSelection(fallbackRouteSelection), routeSelection);
+});
+
+test('application routes persist independently and use migration defaults when missing', () => {
+  const routes: VprApplicationRoutes = {
+    codex: {
+      mode: 'model',
+      model: {
+        provider: 'openai',
+        serviceId: 'gpt-5.4',
+        label: 'GPT-5.4',
+        categories: ['coding'],
+      },
+    },
+    opencode: { mode: 'follow-global' },
+  };
+
+  saveVprApplicationRoutes(routes);
+  const loaded = loadVprApplicationRoutes();
+  assert.deepEqual(loaded, routes);
+  assert.deepEqual(vprApplicationRouteSelectionFor(loaded, 'codex'), routes.codex);
+  assert.deepEqual(vprApplicationRouteSelectionFor({}, 'codex'), { mode: 'client-model' });
+  assert.deepEqual(vprApplicationRouteSelectionFor({}, 'opencode'), { mode: 'client-model' });
+});
+
+test('malformed application route entries are ignored without losing valid entries', () => {
+  localStorage.setItem(VPR_APPLICATION_ROUTES_STORAGE_KEY, JSON.stringify({
+    codex: { mode: 'client-model' },
+    broken: { mode: 'model', model: { provider: 'openai' } },
+    'bad profile': { mode: 'follow-global' },
+  }));
+
+  assert.deepEqual(loadVprApplicationRoutes(), { codex: { mode: 'client-model' } });
 });
 
 test('peer lists from older stored preferences fall back to empty', () => {

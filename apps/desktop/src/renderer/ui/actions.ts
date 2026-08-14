@@ -1,4 +1,9 @@
-import type { ConfigFormData, VprPeerListing, VprRoutingPreferences } from '../core/state';
+import type {
+  ConfigFormData,
+  VprApplicationRouteSelection,
+  VprPeerListing,
+  VprRoutingPreferences,
+} from '../core/state';
 import type { ChatPermissionMode, RawChatAttachment, ToolApprovalDecision } from '../types/bridge';
 
 export type AppActions = {
@@ -23,6 +28,10 @@ export type AppActions = {
   handleServiceBlur: () => void;
   clearPinnedPeer: () => void;
   selectVprModel: (provider: string, serviceId: string, peerId?: string | null) => void;
+  setVprApplicationRoute: (
+    profileName: string,
+    selection: VprApplicationRouteSelection,
+  ) => Promise<{ ok: boolean; error?: string }>;
   clearVprPinnedPeer: () => void;
   /**
    * Remember (or forget, with null) a seller pin for a model without applying

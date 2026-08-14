@@ -274,12 +274,19 @@
    one-liner above the chat rows. */
 /* Pinned above the footer: full-bleed like it, text aligned with its 12px
    inset. */
-.menuRowDefault {
-  min-height: 26px;
-  padding: 3px 12px;
-  border: none;
+.appRouteList {
   border-top: 1px solid var(--border-light);
+}
+
+.menuRowDefault {
+  min-height: 38px;
+  padding: 5px 12px;
+  border: none;
   border-radius: 0;
+}
+
+.menuRowDefault + .menuRowDefault {
+  border-top: 1px solid var(--border-light);
 }
 
 .menuRowDefaultTitle {
@@ -465,6 +472,58 @@
 .menuRowChevron {
   flex: 0 0 auto;
   color: var(--text-muted);
+}
+
+.routeChoices {
+  border-block: 1px solid var(--border-light);
+}
+
+.routeChoice {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.routeChoice + .routeChoice {
+  border-top: 1px solid var(--border-light);
+}
+
+.routeChoice:hover {
+  background: var(--bg-hover);
+}
+
+.routeChoiceSelected {
+  color: var(--accent-green);
+}
+
+.routeChoice > span {
+  min-width: 0;
+  display: grid;
+}
+
+.routeChoice strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.routeChoice small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 10px;
 }
 
 /* Back header of the drill-down model list: hosts the shared VprBackTitle

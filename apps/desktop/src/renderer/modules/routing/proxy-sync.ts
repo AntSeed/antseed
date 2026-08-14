@@ -3,6 +3,7 @@ import type { DesktopBridge, RuntimeProcessState } from '../../types/bridge';
 import { chooseBestVprRoute } from './select';
 import { routesForSelectedModel } from '../catalog/view-models';
 import { activeProfilesFromRuntimeState, buildVprPeerOptions } from './tools';
+import { toApplicationRoutePolicies } from './application-routes';
 
 const SYSTEM_PROXY_PORT = 8378;
 
@@ -48,6 +49,7 @@ async function startProfilesOnRoute(
   target: VprRouteTarget,
   profileNames: string[],
   profileSwitch: boolean,
+  uiState: RendererUiState,
 ): Promise<{ ok: boolean; state?: RuntimeProcessState | null; error?: string }> {
   if (!bridge.systemProxyStart) return { ok: false, error: 'System proxy is unavailable in this build' };
   try {
@@ -57,10 +59,24 @@ async function startProfilesOnRoute(
       profiles: profileNames,
       defaultModel: target.model,
       servedModels: target.servedModels,
-      toolRoutes: Object.fromEntries(profileNames.map((name) => [name, { peerId: target.peerId, model: target.model }])),
+      applicationRoutes: toApplicationRoutePolicies(uiState.vprApplicationRoutes),
       profileSwitch,
     });
     return { ok: result.ok, state: result.state ?? null, ...(result.error ? { error: result.error } : {}) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function syncBuyerApplicationRoutes(
+  bridge: DesktopBridge | undefined,
+  uiState: RendererUiState,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!bridge?.systemProxySetApplicationRoutes) return { ok: true };
+  try {
+    return await bridge.systemProxySetApplicationRoutes(
+      toApplicationRoutePolicies(uiState.vprApplicationRoutes),
+    );
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -85,30 +101,19 @@ export async function syncBuyerDefaultRoute(
 }
 
 /**
- * Re-point the running system proxy at the current VPR route selection.
- *
- * Without this, changing the default model (Home dropdown, model view Apply,
- * floating pill) re-pins the buyer to the new model's peer while connected
- * app profiles keep the served-models list and default model captured at
- * connect time — apps then request models the newly pinned peer doesn't
- * serve ("Service X is not served by this peer").
- *
- * The buyer default route always follows the selection; the profile restart
- * below is a no-op when no app profile is connected. Per-app route overrides
- * made in the Apps view are reset to the new default route; adjust them there
- * afterwards if needed.
+ * Push route changes to the buyer without touching app configs or restarting
+ * connected applications. Follow-global policies resolve the new default at
+ * request time; explicit application models and Codex Auto stay unchanged.
  */
 export async function applyVprRouteToConnectedProxy(
   bridge: DesktopBridge | undefined,
   uiState: RendererUiState,
 ): Promise<void> {
   if (!bridge) return;
-  void syncBuyerDefaultRoute(bridge, uiState);
-  const profileNames = await activeProfileNames(bridge);
-  if (profileNames.length === 0) return;
-  const target = resolveRouteTarget(uiState);
-  if (!target) return;
-  await startProfilesOnRoute(bridge, target, profileNames, true);
+  await Promise.all([
+    syncBuyerDefaultRoute(bridge, uiState),
+    syncBuyerApplicationRoutes(bridge, uiState),
+  ]);
 }
 
 /**
@@ -126,5 +131,5 @@ export async function connectVprProfile(
   if (!target) return { ok: false, error: 'No model route available yet' };
   const existing = await activeProfileNames(bridge);
   const profileNames = Array.from(new Set([...existing, profileName]));
-  return startProfilesOnRoute(bridge, target, profileNames, existing.length > 0);
+  return startProfilesOnRoute(bridge, target, profileNames, existing.length > 0, uiState);
 }

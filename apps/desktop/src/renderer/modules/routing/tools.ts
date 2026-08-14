@@ -9,7 +9,6 @@ export type VprProfileTraffic = {
   lastStatus: number | null;
   lastStatusAt: number | null;
 };
-export type VprToolRoute = { peerId: string; model: string };
 
 export const STATUS_TEXT: Record<number, string> = {
   400: 'Bad request', 401: 'Unauthorized', 402: 'Payment required', 403: 'Forbidden',
@@ -94,33 +93,4 @@ export function buildVprProfileTraffic(
   }
 
   return traffic;
-}
-
-export function resolveVprToolRoute(
-  routes: Record<string, VprToolRoute>,
-  profileName: string,
-  defaults: VprToolRoute,
-): VprToolRoute {
-  const override = routes[profileName];
-  return {
-    peerId: override?.peerId || defaults.peerId,
-    model: override?.model || defaults.model,
-  };
-}
-
-export function resolveVprToolRouteForPeerOptions(
-  routes: Record<string, VprToolRoute>,
-  profileName: string,
-  defaults: VprToolRoute,
-  peerOptions: VprPeerOption[],
-): VprToolRoute {
-  const override = routes[profileName];
-  const peerId = override?.peerId || defaults.peerId;
-  const services = peerOptions.find((peer) => peer.peerId === peerId)?.services ?? [];
-  const model = override?.model || (!override ? defaults.model : '');
-
-  if (!model || (services.length > 0 && !services.includes(model))) {
-    return { peerId, model: services[0] ?? '' };
-  }
-  return { peerId, model };
 }

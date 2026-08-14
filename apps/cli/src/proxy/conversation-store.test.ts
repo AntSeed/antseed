@@ -28,31 +28,79 @@ test('touch creates a conversation and keeps the original snippet', async () => 
   }
 })
 
-test('first resolved model becomes the pin and later touches never replace it', async () => {
+test('automatic routes are separate from manual pins and switch with the requested model', async () => {
   const dir = await makeDir()
   try {
     const store = new ConversationStore(dir)
     const firstModel = 'a'.repeat(40) + '@gpt-5.4'
     const laterModel = 'b'.repeat(40) + '@glm-5'
 
-    // Created without a resolved model (e.g. a title request): no pin yet.
     const created = store.touch({ tool: 'codex', sessionKey: 's1' })
     assert.equal(created.pinnedModel, null)
 
-    // The first request that resolves a model pins the chat to it.
-    const pinned = store.touch({ tool: 'codex', sessionKey: 's1', lastModel: firstModel })
-    assert.equal(pinned.pinnedModel, firstModel)
+    store.setAutomaticRoute(created.id, 'gpt-5.4', firstModel)
+    assert.equal(store.getAutomaticRoute('codex', 's1', 'gpt-5.4'), firstModel)
+    assert.equal(store.getAutomaticRoute('codex', 's1', 'glm-5'), null)
+    assert.equal(store.getPinnedModel('codex', 's1'), null)
 
-    // A later request served by a different route (default changed) keeps
-    // the original pin — the default only steers chats that haven't started.
-    const touched = store.touch({ tool: 'codex', sessionKey: 's1', lastModel: laterModel })
-    assert.equal(touched.pinnedModel, firstModel)
-    assert.equal(touched.lastModel, laterModel)
+    store.setAutomaticRoute(created.id, 'glm-5', laterModel)
+    assert.equal(store.getAutomaticRoute('codex', 's1', 'gpt-5.4'), null)
+    assert.equal(store.getAutomaticRoute('codex', 's1', 'glm-5'), laterModel)
+    assert.equal(store.get('codex:s1')?.lastModel, laterModel)
 
-    // A brand-new chat pins to its first model immediately.
-    const fresh = store.touch({ tool: 'codex', sessionKey: 's2', lastModel: laterModel })
-    assert.equal(fresh.pinnedModel, laterModel)
+    store.setPinnedModel(created.id, firstModel)
+    assert.equal(store.getPinnedModel('codex', 's1'), firstModel)
+    assert.equal(store.getAutomaticRoute('codex', 's1', 'glm-5'), laterModel)
     await store.flush()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('application routes are first-write snapshots and persist across reloads', async () => {
+  const dir = await makeDir()
+  try {
+    const store = new ConversationStore(dir)
+    const created = store.touch({ tool: 'opencode', sessionKey: 's1' })
+    const first = {
+      profileName: 'opencode',
+      mode: 'model' as const,
+      provider: 'openai',
+      service: 'qwen3-coder',
+      peerId: null,
+    }
+    store.assignApplicationRoute(created.id, first)
+    store.assignApplicationRoute(created.id, {
+      profileName: 'opencode',
+      mode: 'model',
+      provider: 'anthropic',
+      service: 'claude-sonnet',
+      peerId: null,
+    })
+    await store.flush()
+
+    assert.deepEqual(store.getApplicationRoute('opencode', 's1'), first)
+    const reloaded = new ConversationStore(dir)
+    assert.deepEqual(reloaded.getApplicationRoute('opencode', 's1'), first)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('older conversation records load with no application route', async () => {
+  const dir = await makeDir()
+  try {
+    const { writeFile } = await import('node:fs/promises')
+    await writeFile(join(dir, CONVERSATIONS_FILE), JSON.stringify({
+      conversations: [{
+        tool: 'codex',
+        sessionKey: 'legacy',
+        createdAt: Date.now(),
+        lastActiveAt: Date.now(),
+      }],
+    }), 'utf8')
+    const store = new ConversationStore(dir)
+    assert.equal(store.get('codex:legacy')?.applicationRoute, null)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

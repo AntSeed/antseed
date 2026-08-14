@@ -57,14 +57,18 @@ import {
 import {
   type SystemProxyGuiTestResult,
   getLastSystemProxySetupAt,
+  getProfileConfigChangedAt,
   getSystemProxyProcessState,
   refreshTrayMenu,
   restartTargetProcessInfo,
   runGuiSystemProxyTrustProbe,
   setLastSystemProxySetupAt,
+  setSystemProxyApplicationRoutes,
   startSystemProxyRuntime,
+  syncConnectedAppModelCatalog,
   stopSystemProxyRuntime,
 } from '../system-proxy/runtime.js';
+import type { ApplicationRoutePolicies } from '../../shared/application-routes.js';
 import {
   shell,
 } from 'electron';
@@ -92,7 +96,10 @@ export function registerSystemProxyIpc(deps: { processManager: ProcessManager })
         openUrl: profile.openUrl,
         toolName: profile.toolName,
         canRestart: Boolean(launchTarget),
-        needsRestart: launchTarget ? await appTargetNeedsRestart(launchTarget, getLastSystemProxySetupAt()) : false,
+        needsRestart: launchTarget ? await appTargetNeedsRestart(
+          launchTarget,
+          Math.max(getLastSystemProxySetupAt() ?? 0, getProfileConfigChangedAt(profile.name) ?? 0) || null,
+        ) : false,
         toolSlugs: effectiveToolSlugs(profile.name, profile.toolSlugs, profile.label),
         ...(iconDataUri ? { iconDataUri } : {}),
         ...(launchTarget ? { launchAppName: launchTarget.name } : {}),
@@ -224,9 +231,26 @@ export function registerSystemProxyIpc(deps: { processManager: ProcessManager })
     }
   });
 
-  ipcMain.handle('system-proxy:start', async (_event, opts: { peerId: string; port?: number; profiles?: string[]; defaultModel?: string; servedModels?: string[]; toolRoutes?: Record<string, { peerId: string; model: string }>; profileSwitch?: boolean }) => {
+  ipcMain.handle('system-proxy:start', async (_event, opts: { peerId: string; port?: number; profiles?: string[]; defaultModel?: string; servedModels?: string[]; applicationRoutes?: ApplicationRoutePolicies; profileSwitch?: boolean }) => {
     try {
       return { ok: true, state: await startSystemProxyRuntime(opts) };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('system-proxy:set-application-routes', async (_event, opts: { routes?: unknown }) => {
+    try {
+      await setSystemProxyApplicationRoutes(opts?.routes as ApplicationRoutePolicies);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('system-proxy:sync-model-catalog', async (_event, snapshot: unknown) => {
+    try {
+      return { ok: true, changed: await syncConnectedAppModelCatalog(snapshot) };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }

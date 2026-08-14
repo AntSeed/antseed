@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { connect } from 'node:net'
 import { Readable } from 'node:stream'
 import test from 'node:test'
 import { CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1, type PeerInfo, type SerializedHttpResponse } from '@antseed/node'
@@ -18,8 +19,16 @@ import {
   selectCandidatePeersForRouting,
   substituteRoutedModelAlias,
   sweepStaleStateTmpFiles,
+  parseRoutedModelSelection,
+  rewriteRoutedModelSelection,
 } from './buyer-proxy.js'
-import { overrideRoutedModelInBody, SYSTEM_ROUTED_MODEL_HEADER } from './request-utils.js'
+import { parseApplicationRouteMap } from './application-routes.js'
+import {
+  overrideRoutedModelInBody,
+  rewriteRequestedModelInBody,
+  stripPrivateRequestHeaders,
+  SYSTEM_ROUTED_MODEL_HEADER,
+} from './request-utils.js'
 
 function makePeer(seed: string, providers: string[]): PeerInfo {
   const repeated = (seed.repeat(40) + 'a'.repeat(40)).slice(0, 40)
@@ -28,6 +37,57 @@ function makePeer(seed: string, providers: string[]): PeerInfo {
     lastSeen: Date.now(),
     providers,
   }
+}
+
+function makeServicePeer(seed: string, provider: string, services: string[]): PeerInfo {
+  const peer = makePeer(seed, [provider])
+  peer.providerServiceApiProtocols = {
+    [provider]: {
+      services: Object.fromEntries(services.map((service) => [service, ['openai-responses']])),
+    },
+  } as PeerInfo['providerServiceApiProtocols']
+  peer.providerPricing = {
+    [provider]: {
+      defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
+      services: Object.fromEntries(services.map((service) => [service, { inputUsdPerMillion: 1, outputUsdPerMillion: 2 }])),
+    },
+  }
+  return peer
+}
+
+async function makeApplicationRouteProxy(peers: PeerInfo[]): Promise<{
+  proxy: BuyerProxy
+  dir: string
+  dispatched: Array<{ peerId: string; body: Record<string, unknown>; headers: Record<string, string> }>
+}> {
+  const dir = await mkdtemp(join(tmpdir(), 'antseed-app-routes-'))
+  const dispatched: Array<{ peerId: string; body: Record<string, unknown>; headers: Record<string, string> }> = []
+  const proxy = new BuyerProxy({
+    port: 0,
+    dataDir: dir,
+    node: {
+      router: {
+        selectPeer: (_request: unknown, candidates: PeerInfo[]) => candidates[0] ?? null,
+        onResult: () => undefined,
+      },
+      sendRequest: async (peer: PeerInfo, request: { requestId: string; body: Uint8Array; headers: Record<string, string> }) => {
+        dispatched.push({
+          peerId: peer.peerId,
+          body: JSON.parse(Buffer.from(request.body).toString('utf8')) as Record<string, unknown>,
+          headers: request.headers,
+        })
+        return {
+          requestId: request.requestId,
+          statusCode: 200,
+          headers: { 'content-type': 'application/json' },
+          body: Buffer.from('{}'),
+        }
+      },
+    } as any,
+  })
+  ;(proxy as any)._getPeers = async () => peers
+  ;(proxy as any)._cacheLastUpdatedAtMs = Date.now()
+  return { proxy, dir, dispatched }
 }
 
 function makeProxyRequest(options: {
@@ -113,6 +173,33 @@ async function invokeProxy(proxy: BuyerProxy, req: Readable): Promise<ReturnType
   return res
 }
 
+test('stripPrivateRequestHeaders removes credentials case-insensitively and retains API headers', () => {
+  const stripped = stripPrivateRequestHeaders({
+    Authorization: 'Bearer secret',
+    'PROXY-AUTHORIZATION': 'Basic secret',
+    'X-API-KEY': 'secret',
+    'X-Goog-Api-Key': 'secret',
+    'ChatGPT-Account-Id': 'account-secret',
+    Cookie: 'session=secret',
+    'X-CSRF-Token': 'secret',
+    'OpenAI-Organization': 'org-secret',
+    'X-OpenAI-Project': 'project-secret',
+    Connection: 'keep-alive, X-Internal-Hop',
+    'X-Internal-Hop': 'secret',
+    'Content-Type': 'application/json',
+    Accept: 'text/event-stream',
+    'OpenAI-Beta': 'responses=v1',
+    'X-Stainless-Lang': 'js',
+  })
+
+  assert.deepEqual(stripped, {
+    'content-type': 'application/json',
+    accept: 'text/event-stream',
+    'openai-beta': 'responses=v1',
+    'x-stainless-lang': 'js',
+  })
+})
+
 test('BuyerProxy defaults to the configured 5 min background refresh interval', () => {
   const proxy = new BuyerProxy({
     port: 0,
@@ -132,6 +219,53 @@ test('BuyerProxy accepts a custom background refresh interval', () => {
   })
 
   assert.equal((proxy as any)._bgRefreshIntervalMs, 15_000)
+})
+
+test('BuyerProxy rejects Responses WebSocket upgrades with the Codex HTTP fallback status', async () => {
+  const proxy = new BuyerProxy({
+    port: 0,
+    dataDir: '/tmp/antseed-test',
+    node: { router: null } as any,
+  })
+  const server = (proxy as any)._server
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      server.removeListener('error', reject)
+      resolve()
+    })
+  })
+  const address = server.address()
+  assert.ok(address && typeof address === 'object')
+
+  try {
+    const response = await new Promise<string>((resolve, reject) => {
+      const socket = connect(address.port, '127.0.0.1')
+      let data = ''
+      socket.setEncoding('utf8')
+      socket.on('connect', () => socket.write([
+        'GET /v1/responses HTTP/1.1',
+        `Host: 127.0.0.1:${address.port}`,
+        'Connection: Upgrade',
+        'Upgrade: websocket',
+        'Sec-WebSocket-Version: 13',
+        'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+        '',
+        '',
+      ].join('\r\n')))
+      socket.on('data', (chunk) => {
+        data += chunk
+        if (!data.includes('\r\n\r\n')) return
+        socket.destroy()
+        resolve(data)
+      })
+      socket.on('error', reject)
+    })
+
+    assert.match(response, /^HTTP\/1\.1 426 Upgrade Required\r\n/)
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
 })
 
 test('BuyerProxy starts incremental discovery on startup', async (t) => {
@@ -378,6 +512,133 @@ test('selectCandidatePeersForRouting can still include peers without service pro
   assert.equal(result.candidatePeers[0]?.peerId, peerWithoutMetadata.peerId)
 })
 
+test('unpinned explicit model routes through only explicitly advertising compatible peers', async () => {
+  const eligible = makePeer('a', ['openai-responses'])
+  eligible.providerServiceApiProtocols = { 'openai-responses': { services: { 'gpt-5.4': ['openai-responses'] } } }
+  eligible.providerPricing = { 'openai-responses': { defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 }, services: { 'gpt-5.4': { inputUsdPerMillion: 1, outputUsdPerMillion: 2 } } } }
+  const wrongModel = makePeer('b', ['openai-responses'])
+  wrongModel.providerServiceApiProtocols = { 'openai-responses': { services: { 'gpt-4o': ['openai-responses'] } } }
+  wrongModel.providerPricing = { 'openai-responses': { defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 }, services: { 'gpt-4o': { inputUsdPerMillion: 1, outputUsdPerMillion: 2 } } } }
+  let selectedCandidates: PeerInfo[] = []
+  let dispatchedPeerId: string | null = null
+  let dispatchedHeaders: Record<string, string> | null = null
+  const router = {
+    selectPeer: (_request: unknown, peers: PeerInfo[]) => {
+      selectedCandidates = peers
+      return peers[0] ?? null
+    },
+    onResult: () => undefined,
+  }
+  const proxy = makeBuyerProxyWithPeers([wrongModel, eligible], [wrongModel, eligible], router)
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string; headers: Record<string, string> }) => {
+    dispatchedPeerId = peer.peerId
+    dispatchedHeaders = request.headers
+    return { requestId: request.requestId, statusCode: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from('{}') }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    path: '/v1/responses',
+    headers: {
+      Authorization: 'Bearer secret',
+      'X-API-KEY': 'secret',
+      Cookie: 'session=secret',
+      'OpenAI-Project': 'project-secret',
+      'OpenAI-Beta': 'responses=v1',
+    },
+    body: { model: 'GPT-5.4', input: 'hello' },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.deepEqual(selectedCandidates.map((peer) => peer.peerId), [eligible.peerId])
+  assert.equal(dispatchedPeerId, eligible.peerId)
+  assert.equal(dispatchedHeaders?.['authorization'], undefined)
+  assert.equal(dispatchedHeaders?.['x-api-key'], undefined)
+  assert.equal(dispatchedHeaders?.['cookie'], undefined)
+  assert.equal(dispatchedHeaders?.['openai-project'], undefined)
+  assert.equal(dispatchedHeaders?.['openai-beta'], 'responses=v1')
+})
+
+test('automatic conversation routing is sticky per model and reselects on model change', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'antseed-auto-sticky-'))
+  const first = makePeer('a', ['openai-responses'])
+  const second = makePeer('b', ['openai-responses'])
+  for (const peer of [first, second]) {
+    peer.providerServiceApiProtocols = { 'openai-responses': { services: {
+      'gpt-5.4': ['openai-responses'],
+      'gpt-5.5': ['openai-responses'],
+    } } }
+    peer.providerPricing = { 'openai-responses': { defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 }, services: {
+      'gpt-5.4': { inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
+      'gpt-5.5': { inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
+    } } }
+  }
+  let broadSelections = 0
+  const candidateSets: string[][] = []
+  const dispatched: string[] = []
+  const proxy = new BuyerProxy({
+    port: 0,
+    dataDir: dir,
+    node: {
+      router: {
+        selectPeer: (_request: unknown, peers: PeerInfo[]) => {
+          candidateSets.push(peers.map((peer) => peer.peerId))
+          if (peers.length === 1) return peers[0] ?? null
+          return peers[broadSelections++ % peers.length] ?? null
+        },
+        onResult: () => undefined,
+      },
+      sendRequest: async (peer: PeerInfo, request: { requestId: string }) => {
+        dispatched.push(peer.peerId)
+        return { requestId: request.requestId, statusCode: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from('{}') }
+      },
+    } as any,
+  })
+  ;(proxy as any)._getPeers = async () => [first, second]
+  ;(proxy as any)._cacheLastUpdatedAtMs = Date.now()
+  t.after(async () => {
+    await (proxy as any)._conversations.flush()
+    await rm(dir, { recursive: true, force: true })
+  })
+  const request = (model: string) => makeProxyRequest({
+    path: '/v1/responses',
+    headers: { originator: 'codex_exec', 'session-id': 'sticky-session' },
+    body: { model, input: 'hello' },
+  })
+
+  await invokeProxy(proxy, request('gpt-5.4'))
+  await invokeProxy(proxy, request('gpt-5.4'))
+  await invokeProxy(proxy, request('gpt-5.5'))
+
+  assert.equal(broadSelections, 2)
+  assert.deepEqual(candidateSets, [
+    [first.peerId, second.peerId],
+    [first.peerId],
+    [first.peerId, second.peerId],
+  ])
+  assert.deepEqual(dispatched, [first.peerId, first.peerId, second.peerId])
+  assert.equal((proxy as any)._conversations.get('codex-exec:sticky-session')?.automaticService, 'gpt-5.5')
+})
+
+test('unpinned explicit model refreshes once and returns a structured no-peer error', async () => {
+  const proxy = makeBuyerProxyWithPeers([], [])
+  let refreshes = 0
+  ;(proxy as any)._getPeers = async (options?: { forceRefresh?: boolean }) => {
+    if (options?.forceRefresh) refreshes += 1
+    return []
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    path: '/v1/responses',
+    body: { model: 'missing-model', input: 'hello' },
+  }))
+  const body = JSON.parse(res.body) as { error: { code: string; model: string } }
+
+  assert.equal(res.statusCode, 503)
+  assert.equal(refreshes, 1)
+  assert.equal(body.error.code, 'no_eligible_model_peers')
+  assert.equal(body.error.model, 'missing-model')
+})
+
 test('pinned proxy request reports when the pinned peer is not discoverable', async () => {
   const pinnedPeerId = 'a'.repeat(40)
   const otherPeer = makePeer('b', ['openai'])
@@ -411,6 +672,40 @@ test('pinned proxy request reports explicit provider mismatch separately', async
   assert.match(res.body, /does not offer provider=openai/)
   assert.match(res.body, /Available providers: local-llm/)
   assert.match(res.body, /x-antseed-provider header/)
+})
+
+test('pinned proxy reconciles a stale provider when the exact service has one provider', async () => {
+  const pinnedPeer = makeServicePeer('a', 'openai-responses', ['gpt-5.6-sol'])
+  let outboundProvider: string | undefined
+  const router = {
+    selectPeer: (_request: unknown, peers: PeerInfo[]) => peers[0] ?? null,
+    onResult: () => undefined,
+  }
+  const proxy = makeBuyerProxyWithPeers([pinnedPeer], [pinnedPeer], router)
+  ;(proxy as any)._node.sendRequest = async (
+    _peer: PeerInfo,
+    request: { requestId: string; headers: Record<string, string> },
+  ) => {
+    outboundProvider = request.headers['x-antseed-provider']
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{}'),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    path: '/v1/responses',
+    headers: {
+      'x-antseed-pin-peer': pinnedPeer.peerId,
+      'x-antseed-provider': 'openai',
+    },
+    body: { model: 'gpt-5.6-sol', input: 'hello' },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(outboundProvider, 'openai-responses')
 })
 
 test('pinned proxy request reports protocol or service mismatch when provider is available', async () => {
@@ -546,6 +841,70 @@ test('/v1/models retryable response reports router success', async () => {
   assert.match(res.body, /model probe failed/)
   assert.equal(routerResults.length, 1)
   assert.equal(routerResults[0]?.success, true)
+})
+
+test('responses custom tools survive Chat-only peer request and response adaptation', async () => {
+  const peer = makePeer('a', ['openai'])
+  peer.providerServiceApiProtocols = {
+    openai: {
+      services: {
+        'claude-opus-5': ['openai-chat-completions'],
+      },
+    },
+  }
+  let capturedRequestBody: Record<string, unknown> | null = null
+  const proxy = makeBuyerProxyWithPeers([peer], [peer])
+  ;(proxy as any)._node.sendRequest = async (
+    _peer: PeerInfo,
+    request: { requestId: string; body: Uint8Array },
+  ) => {
+    capturedRequestBody = parseJsonBody(request.body)
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({
+        id: 'chatcmpl-custom',
+        model: 'claude-opus-5',
+        choices: [{
+          finish_reason: 'tool_calls',
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [{
+              id: 'call_shell_1',
+              type: 'function',
+              function: { name: 'shell_command', arguments: '{"input":"pwd"}' },
+            }],
+          },
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      })),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    path: '/v1/responses',
+    headers: { 'x-antseed-pin-peer': peer.peerId },
+    body: {
+      model: 'claude-opus-5',
+      input: 'run pwd',
+      tools: [{ type: 'custom', name: 'shell_command' }],
+    },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.ok(capturedRequestBody)
+  const outboundTools = capturedRequestBody['tools'] as Array<{ function: { name: string } }>
+  assert.equal(outboundTools[0]?.function.name, 'shell_command')
+  const body = JSON.parse(res.body) as { output: Array<Record<string, unknown>> }
+  assert.deepEqual(body.output[0], {
+    type: 'custom_tool_call',
+    id: 'call_shell_1',
+    call_id: 'call_shell_1',
+    name: 'shell_command',
+    input: 'pwd',
+  })
 })
 
 test('non-stream transformed responses requests force upstream stream without streaming to client', async () => {
@@ -1124,6 +1483,28 @@ test('substituteRoutedModelAlias leaves non-alias models untouched', () => {
   assert.equal(result.body, body)
 })
 
+test('parseRoutedModelSelection decodes provider and preserves slashes in the service', () => {
+  assert.deepEqual(parseRoutedModelSelection('antseed/openai-responses/openai/gpt-5.6-sol'), {
+    provider: 'openai-responses',
+    service: 'openai/gpt-5.6-sol',
+  })
+  assert.equal(parseRoutedModelSelection('antseed'), null)
+  assert.equal(parseRoutedModelSelection('gpt-5.6-sol'), null)
+})
+
+test('rewriteRoutedModelSelection replaces the catalog slug and updates content-length', () => {
+  const body = makeJsonBody({ model: 'antseed/openai-responses/openai/gpt-5.6-sol', input: 'hello' })
+  const result = rewriteRoutedModelSelection(body, {
+    'content-type': 'application/json',
+    'content-length': String(body.length),
+  })
+  assert.deepEqual(result.selection, { provider: 'openai-responses', service: 'openai/gpt-5.6-sol' })
+  const parsed = parseJsonBody(result.body)
+  assert.equal(parsed['model'], 'openai/gpt-5.6-sol')
+  assert.equal(parsed['service'], 'openai/gpt-5.6-sol')
+  assert.equal(result.headers['content-length'], String(result.body.length))
+})
+
 test('overrideRoutedModelInBody swaps the model, mirrors an identical service field, and fixes content-length', () => {
   const oldRoute = `${validPeerId}@gpt-4o`
   const newRoute = `${'bb'.repeat(20)}@glm-5`
@@ -1156,6 +1537,19 @@ test('overrideRoutedModelInBody no-ops on a matching model, a missing model, or 
   assert.equal(overrideRoutedModelInBody(nonJson, { 'content-type': 'text/plain' }, route).overridden, false)
 })
 
+test('rewriteRequestedModelInBody replaces both model and service fields', () => {
+  const original = makeJsonBody({ model: 'old-model', service: 'old-service', messages: [] })
+  const result = rewriteRequestedModelInBody(original, {
+    'content-type': 'application/json',
+    'content-length': String(original.length),
+  }, 'new-model')
+  const parsed = JSON.parse(Buffer.from(result.body).toString('utf8')) as Record<string, unknown>
+  assert.equal(result.rewritten, true)
+  assert.equal(parsed['model'], 'new-model')
+  assert.equal(parsed['service'], 'new-model')
+  assert.equal(result.headers['content-length'], String(result.body.length))
+})
+
 test('route control endpoint sets, persists, and returns the default routed model', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'antseed-buyer-route-'))
   t.after(() => rm(dir, { recursive: true, force: true }))
@@ -1180,6 +1574,315 @@ test('route control endpoint sets, persists, and returns the default routed mode
 
   const cleared = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/route', body: { model: '' } }))
   assert.deepEqual(JSON.parse(cleared.body), { ok: true, model: null })
+})
+
+test('application route endpoint atomically replaces and persists policies', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'antseed-buyer-app-route-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const proxy = new BuyerProxy({ port: 0, dataDir: dir, node: { router: null } as any })
+  const routes = {
+    codex: { mode: 'client-model', toolSlugs: ['codex'] },
+    opencode: { mode: 'model', provider: 'openai-responses', service: 'qwen3-coder', toolSlugs: ['opencode'] },
+  }
+
+  const set = await invokeProxy(proxy, makeProxyRequest({
+    path: '/_antseed/application-routes',
+    body: { routes },
+  }))
+  assert.equal(set.statusCode, 200)
+  assert.deepEqual(Object.keys((proxy as any)._applicationRoutes).sort(), ['codex', 'opencode'])
+
+  const persisted = JSON.parse(await readFile(join(dir, 'buyer.state.json'), 'utf8')) as Record<string, unknown>
+  assert.deepEqual(Object.keys(persisted['applicationRoutes'] as Record<string, unknown>).sort(), ['codex', 'opencode'])
+
+  const reloaded = new BuyerProxy({ port: 0, dataDir: dir, node: { router: null } as any })
+  await (reloaded as any)._reloadSessionOverrides()
+  assert.deepEqual(Object.keys((reloaded as any)._applicationRoutes).sort(), ['codex', 'opencode'])
+
+  const cleared = await invokeProxy(proxy, makeProxyRequest({
+    path: '/_antseed/application-routes',
+    body: { routes: {} },
+  }))
+  assert.equal(cleared.statusCode, 200)
+  assert.deepEqual((proxy as any)._applicationRoutes, {})
+})
+
+test('Codex client-model policy preserves the model selected by the client', async () => {
+  const peer = makeServicePeer('a', 'openai-responses', ['gpt-5.4'])
+  const { proxy, dir, dispatched } = await makeApplicationRouteProxy([peer])
+  try {
+    ;(proxy as any)._applicationRoutes = parseApplicationRouteMap({
+      codex: { mode: 'client-model', toolSlugs: ['codex'] },
+    })
+    const response = await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/responses',
+      headers: { originator: 'codex', 'session-id': 'codex-auto' },
+      body: { model: 'gpt-5.4', input: 'hello' },
+    }))
+
+    assert.equal(response.statusCode, 200)
+    assert.equal(dispatched[0]?.body['model'], 'gpt-5.4')
+    assert.equal((proxy as any)._conversations.get('codex:codex-auto')?.applicationRoute, null)
+  } finally {
+    await (proxy as any)._conversations.flush()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('namespaced picker models route without relying on client identity headers', async () => {
+  const peer = makeServicePeer('a', 'openai', ['gpt-5.4'])
+  peer.providerServiceApiProtocols = {
+    openai: { services: { 'gpt-5.4': ['openai-chat-completions'] } },
+  }
+  const { proxy, dir, dispatched } = await makeApplicationRouteProxy([peer])
+  try {
+    const response = await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/responses',
+      body: { model: 'antseed/openai/gpt-5.4', input: 'hello' },
+    }))
+
+    assert.equal(response.statusCode, 200)
+    assert.equal(dispatched[0]?.body['model'], 'gpt-5.4')
+    assert.equal(dispatched[0]?.headers['x-antseed-provider'], 'openai')
+  } finally {
+    await (proxy as any)._conversations.flush()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('Codex client-model policy routes namespaced picker models to the selected provider and service', async () => {
+  const peer = makeServicePeer('a', 'openai-responses', ['openai/gpt-5.4'])
+  const { proxy, dir, dispatched } = await makeApplicationRouteProxy([peer])
+  try {
+    ;(proxy as any)._applicationRoutes = parseApplicationRouteMap({
+      codex: { mode: 'client-model', toolSlugs: ['codex'] },
+    })
+    const response = await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/responses',
+      headers: { originator: 'codex', 'session-id': 'codex-picker' },
+      body: { model: 'antseed/openai-responses/openai/gpt-5.4', input: 'hello' },
+    }))
+
+    assert.equal(response.statusCode, 200)
+    assert.equal(dispatched[0]?.body['model'], 'openai/gpt-5.4')
+    assert.equal(dispatched[0]?.body['service'], 'openai/gpt-5.4')
+    assert.equal(dispatched[0]?.headers['x-antseed-provider'], 'openai-responses')
+  } finally {
+    await (proxy as any)._conversations.flush()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('Codex peer-aware picker model overrides an unrelated global seller pin', async () => {
+  const catGpt = makeServicePeer('a', 'openai-responses', ['gpt-5.6-sol'])
+  const claudePeer = makeServicePeer('b', 'openai', ['claude-opus-5'])
+  claudePeer.providerServiceApiProtocols = {
+    openai: { services: { 'claude-opus-5': ['openai-chat-completions'] } },
+  }
+  const { proxy, dir, dispatched } = await makeApplicationRouteProxy([catGpt, claudePeer])
+  try {
+    ;(proxy as any)._pinnedPeer = catGpt.peerId
+    ;(proxy as any)._applicationRoutes = parseApplicationRouteMap({
+      codex: { mode: 'client-model', toolSlugs: ['codex'] },
+    })
+    const response = await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/responses',
+      headers: { originator: 'codex', 'session-id': 'codex-claude-picker' },
+      body: {
+        model: `antseed/openai/${claudePeer.peerId}@claude-opus-5`,
+        input: 'hello',
+      },
+    }))
+
+    assert.equal(response.statusCode, 200)
+    assert.equal(dispatched[0]?.peerId, claudePeer.peerId)
+    assert.equal(dispatched[0]?.body['model'], 'claude-opus-5')
+    assert.equal(dispatched[0]?.headers['x-antseed-provider'], 'openai')
+  } finally {
+    await (proxy as any)._conversations.flush()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('two application model policies override clients independently and restrict providers', async () => {
+  const codexPeer = makeServicePeer('a', 'openai-responses', ['gpt-5.4'])
+  const openCodePeer = makeServicePeer('b', 'openai-responses', ['qwen3-coder'])
+  const { proxy, dir, dispatched } = await makeApplicationRouteProxy([codexPeer, openCodePeer])
+  try {
+    ;(proxy as any)._applicationRoutes = parseApplicationRouteMap({
+      codex: { mode: 'model', provider: 'openai-responses', service: 'gpt-5.4', toolSlugs: ['codex'] },
+      opencode: { mode: 'model', provider: 'openai-responses', service: 'qwen3-coder', toolSlugs: ['opencode'] },
+    })
+
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/responses',
+      headers: { originator: 'codex_exec', 'session-id': 'codex-explicit' },
+      body: { model: 'antseed', input: 'hello' },
+    }))
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/responses',
+      headers: {
+        'x-antseed-system-proxy-source': 'opencode',
+        'user-agent': 'generic-sdk/1.0',
+        'x-session-id': 'open-explicit',
+      },
+      body: { model: 'antseed', input: 'hello' },
+    }))
+
+    assert.deepEqual(dispatched.map((entry) => [entry.peerId, entry.body['model']]), [
+      [codexPeer.peerId, 'gpt-5.4'],
+      [openCodePeer.peerId, 'qwen3-coder'],
+    ])
+    assert.deepEqual(dispatched.map((entry) => entry.headers['x-antseed-provider']), [
+      'openai-responses',
+      'openai-responses',
+    ])
+  } finally {
+    await (proxy as any)._conversations.flush()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('OpenCode follow-global resolves the current global peer and service', async () => {
+  const peer = makeServicePeer('a', 'openai-responses', ['gpt-5.4'])
+  const { proxy, dir, dispatched } = await makeApplicationRouteProxy([peer])
+  try {
+    ;(proxy as any)._defaultRoutedModel = `${peer.peerId}@gpt-5.4`
+    ;(proxy as any)._applicationRoutes = parseApplicationRouteMap({
+      opencode: { mode: 'follow-global', toolSlugs: ['opencode'] },
+    })
+    const response = await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/responses',
+      headers: { 'user-agent': 'opencode/1.0', 'x-session-id': 'follow-default' },
+      body: { model: 'antseed', input: 'hello' },
+    }))
+
+    assert.equal(response.statusCode, 200)
+    assert.equal(dispatched[0]?.peerId, peer.peerId)
+    assert.equal(dispatched[0]?.body['model'], 'gpt-5.4')
+    assert.deepEqual((proxy as any)._conversations.get('opencode:follow-default')?.applicationRoute, {
+      profileName: 'opencode',
+      mode: 'follow-global',
+      provider: null,
+      service: 'gpt-5.4',
+      peerId: peer.peerId,
+    })
+  } finally {
+    await (proxy as any)._conversations.flush()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('application route snapshots keep existing chats stable while new chats use later selections', async () => {
+  const first = makeServicePeer('a', 'openai-responses', ['gpt-5.4'])
+  const second = makeServicePeer('b', 'openai-responses', ['qwen3-coder'])
+  const { proxy, dir, dispatched } = await makeApplicationRouteProxy([first, second])
+  try {
+    ;(proxy as any)._applicationRoutes = parseApplicationRouteMap({
+      opencode: { mode: 'model', provider: 'openai-responses', service: 'gpt-5.4', toolSlugs: ['opencode'] },
+    })
+    const request = (sessionKey: string) => makeProxyRequest({
+      path: '/v1/responses',
+      headers: { 'user-agent': 'opencode/1.0', 'x-session-id': sessionKey },
+      body: { model: 'antseed', input: 'hello' },
+    })
+
+    await invokeProxy(proxy, request('existing'))
+    ;(proxy as any)._applicationRoutes = parseApplicationRouteMap({
+      opencode: { mode: 'model', provider: 'openai-responses', service: 'qwen3-coder', toolSlugs: ['opencode'] },
+    })
+    await invokeProxy(proxy, request('existing'))
+    await invokeProxy(proxy, request('new-chat'))
+
+    assert.deepEqual(dispatched.map((entry) => entry.body['model']), ['gpt-5.4', 'gpt-5.4', 'qwen3-coder'])
+    assert.equal((proxy as any)._conversations.get('opencode:existing')?.applicationRoute?.service, 'gpt-5.4')
+    assert.equal((proxy as any)._conversations.get('opencode:new-chat')?.applicationRoute?.service, 'qwen3-coder')
+  } finally {
+    await (proxy as any)._conversations.flush()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('explicit application models keep Best sticky and fail over when the seller becomes ineligible', async () => {
+  const first = makeServicePeer('a', 'openai-responses', ['gpt-5.4'])
+  const second = makeServicePeer('b', 'openai-responses', ['gpt-5.4'])
+  const { proxy, dir, dispatched } = await makeApplicationRouteProxy([first, second])
+  let blockedPeerId: string | null = null
+  const router = (proxy as any)._node.router as {
+    selectPeer: (request: unknown, peers: PeerInfo[]) => PeerInfo | null
+    allowsPeerForPolicy?: (request: unknown, peer: PeerInfo) => boolean
+  }
+  router.selectPeer = (_request, peers) => peers.find((peer) => peer.peerId !== blockedPeerId) ?? null
+  router.allowsPeerForPolicy = (_request, peer) => peer.peerId !== blockedPeerId
+
+  try {
+    ;(proxy as any)._applicationRoutes = parseApplicationRouteMap({
+      opencode: { mode: 'model', provider: 'openai-responses', service: 'gpt-5.4', toolSlugs: ['opencode'] },
+    })
+    const request = () => makeProxyRequest({
+      path: '/v1/responses',
+      headers: { 'user-agent': 'opencode/1.0', 'x-session-id': 'best-failover' },
+      body: { model: 'antseed', input: 'hello' },
+    })
+
+    await invokeProxy(proxy, request())
+    blockedPeerId = first.peerId
+    await invokeProxy(proxy, request())
+
+    assert.deepEqual(dispatched.map((entry) => entry.peerId), [first.peerId, second.peerId])
+    assert.equal(
+      (proxy as any)._conversations.get('opencode:best-failover')?.automaticRoute,
+      `${second.peerId}@gpt-5.4`,
+    )
+  } finally {
+    await (proxy as any)._conversations.flush()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('title requests do not snapshot routes and subagents inherit the parent snapshot', async () => {
+  const first = makeServicePeer('a', 'openai-responses', ['gpt-5.4'])
+  const second = makeServicePeer('b', 'openai-responses', ['qwen3-coder'])
+  const { proxy, dir, dispatched } = await makeApplicationRouteProxy([first, second])
+  try {
+    ;(proxy as any)._applicationRoutes = parseApplicationRouteMap({
+      opencode: { mode: 'model', provider: 'openai-responses', service: 'gpt-5.4', toolSlugs: ['opencode'] },
+    })
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/chat/completions',
+      headers: { 'user-agent': 'opencode/1.0', 'x-session-id': 'parent' },
+      body: { model: 'antseed', messages: [{ role: 'user', content: 'Generate a title for this conversation:' }] },
+    }))
+    assert.equal((proxy as any)._conversations.get('opencode:parent'), null)
+
+    ;(proxy as any)._applicationRoutes = parseApplicationRouteMap({
+      opencode: { mode: 'model', provider: 'openai-responses', service: 'qwen3-coder', toolSlugs: ['opencode'] },
+    })
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/responses',
+      headers: { 'user-agent': 'opencode/1.0', 'x-session-id': 'parent' },
+      body: { model: 'antseed', input: 'real prompt' },
+    }))
+
+    ;(proxy as any)._applicationRoutes = parseApplicationRouteMap({
+      opencode: { mode: 'model', provider: 'openai-responses', service: 'gpt-5.4', toolSlugs: ['opencode'] },
+    })
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/responses',
+      headers: {
+        'user-agent': 'opencode/1.0',
+        'x-session-id': 'subagent',
+        'x-parent-session-id': 'parent',
+      },
+      body: { model: 'antseed', input: 'subagent work' },
+    }))
+
+    assert.deepEqual(dispatched.map((entry) => entry.body['model']), ['gpt-5.4', 'qwen3-coder', 'qwen3-coder'])
+    assert.equal((proxy as any)._conversations.get('opencode:parent')?.applicationRoute?.service, 'qwen3-coder')
+  } finally {
+    await (proxy as any)._conversations.flush()
+    await rm(dir, { recursive: true, force: true })
+  }
 })
 
 test('buyer-usage endpoint reports lastActivityAt, null until a request is dispatched', async () => {
@@ -1295,15 +1998,13 @@ test('chat pin overrides a system-proxy-routed model on intercepted requests', a
     const pinnedRoute = `${'bb'.repeat(20)}@pinned-model`
     const store = (proxy as any)._conversations
 
-    // First intercepted request: the system proxy already rewrote the tool's
-    // upstream model to its connect-time route and marked the request. The
-    // chat auto-pins to the model that served it.
     await invokeProxy(proxy, makeProxyRequest({
       path: '/v1/messages',
       headers: { 'x-claude-code-session-id': 'cc-1', [SYSTEM_ROUTED_MODEL_HEADER]: '1' },
       body: { model: proxyRoute, messages: [{ role: 'user', content: 'hello there' }] },
     }))
-    assert.equal(store.get('claude-code:cc-1')?.pinnedModel, proxyRoute)
+    assert.equal(store.get('claude-code:cc-1')?.pinnedModel, null)
+    assert.equal(store.get('claude-code:cc-1')?.lastModel, proxyRoute)
 
     // The user re-pins the chat from the desktop (float / chats view).
     store.setPinnedModel('claude-code:cc-1', pinnedRoute)
@@ -1316,13 +2017,14 @@ test('chat pin overrides a system-proxy-routed model on intercepted requests', a
     }))
     assert.equal(store.get('claude-code:cc-1')?.lastModel, pinnedRoute)
 
-    // Without the marker the model is a client choice and is respected.
+    // Manual pins are the highest-precedence route even when the client sends
+    // a different model on a later request.
     await invokeProxy(proxy, makeProxyRequest({
       path: '/v1/messages',
       headers: { 'x-claude-code-session-id': 'cc-1' },
       body: { model: proxyRoute, messages: [{ role: 'user', content: 'explicit' }] },
     }))
-    assert.equal(store.get('claude-code:cc-1')?.lastModel, proxyRoute)
+    assert.equal(store.get('claude-code:cc-1')?.lastModel, pinnedRoute)
     await store.flush()
   } finally {
     await rm(dir, { recursive: true, force: true })

@@ -1,8 +1,9 @@
 import { ANTSEED_MODEL_CONTEXT_WINDOW, ANTSEED_MODEL_MAX_OUTPUT_TOKENS } from '@antseed/node/types';
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import type { ConnectedAppModelCatalogEntry } from '../../shared/connected-app-model-catalog.js';
 import {
   WSL_TOOL_PROBES,
   clearWslTargetsForTool,
@@ -19,7 +20,7 @@ import {
  * ROUTED_MODEL_ALIAS in apps/cli/src/proxy/request-utils.ts.
  */
 export const ROUTED_MODEL_ALIAS = 'antseed';
-const ROUTED_MODEL_ALIAS_LABEL = 'AntSeed Auto';
+const ROUTED_MODEL_ALIAS_LABEL = 'AntSeed VPR';
 
 /**
  * Config patches point a tool's own configuration at the buyer proxy. Each
@@ -384,24 +385,41 @@ function removeFromStringArray(config: JsonObject, key: string, value: string): 
  * a model is the desktop route selector, so route changes reach running tool
  * sessions without a config rewrite.
  */
-export function applyConfigPatch(patch: ConfigPatchDef, peerId: string, buyerPort: number, wslTargetsFile?: string): void {
+export function applyConfigPatch(
+  patch: ConfigPatchDef,
+  peerId: string,
+  buyerPort: number,
+  options: {
+    useRoutedModelAlias?: boolean;
+    openCodeModels?: readonly ConnectedAppModelCatalogEntry[];
+    openCodeInAppSelection?: boolean;
+    codexModels?: readonly ConnectedAppModelCatalogEntry[];
+    wslTargetsFile?: string;
+  } = {},
+): void {
   if (!isBuyerProxyRoutablePeerId(peerId)) {
     throw new Error('Config-based routing requires a 40-character hex peer ID. Select a chain-backed peer before enabling this tool.');
   }
   if (patch.format === 'codex') {
-    applyCodexConfigPatch(patch, buyerPort, wslTargetsFile);
+    applyCodexConfigPatch(
+      patch,
+      buyerPort,
+      options.codexModels ?? [],
+      options.useRoutedModelAlias === true,
+      options.wslTargetsFile,
+    );
     return;
   }
   if (patch.format === 'pi') {
-    applyPiConfigPatch(patch, buyerPort, wslTargetsFile);
+    applyPiConfigPatch(patch, buyerPort, options.wslTargetsFile);
     return;
   }
   if (patch.format === 'crush') {
-    applyCrushConfigPatch(patch, buyerPort, wslTargetsFile);
+    applyCrushConfigPatch(patch, buyerPort, options.wslTargetsFile);
     return;
   }
   if (patch.format === 'goose') {
-    applyGooseConfigPatch(patch, buyerPort, wslTargetsFile);
+    applyGooseConfigPatch(patch, buyerPort, options.wslTargetsFile);
     return;
   }
   if (patch.format === 'zed') {
@@ -412,7 +430,14 @@ export function applyConfigPatch(patch: ConfigPatchDef, peerId: string, buyerPor
     applyT3CodeConfigPatch(patch, buyerPort);
     return;
   }
-  applyOpencodeConfigPatch(patch, buyerPort, wslTargetsFile);
+  applyOpenCodeConfigPatch(
+    patch,
+    buyerPort,
+    options.openCodeModels ?? [],
+    options.openCodeInAppSelection === true,
+    true,
+    options.wslTargetsFile,
+  );
 }
 
 /** Replace the host of a base URL, leaving scheme, port, and path untouched.
@@ -504,51 +529,111 @@ function removeWslInstalls(
   return changed;
 }
 
-function applyOpencodeConfigPatch(patch: OpencodeConfigPatchDef, buyerPort: number, wslTargetsFile?: string): void {
+function openCodeModelDefinition(name: string): JsonObject {
+  return {
+    name,
+    attachment: true,
+    modalities: { input: ['text', 'image'], output: ['text'] },
+    limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
+  };
+}
+
+function applyOpenCodeConfigPatch(
+  patch: OpencodeConfigPatchDef,
+  buyerPort: number,
+  models: readonly ConnectedAppModelCatalogEntry[],
+  inAppSelection: boolean,
+  selectDefault: boolean,
+  wslTargetsFile?: string,
+): boolean {
   const filePath = expandTilde(patch.configPath);
   const baseURL = patch.baseURL.replace('{buyerPort}', String(buyerPort));
   if (patch.installProbe !== 'opencode') {
-    applyOpencodeProviderToFile(filePath, patch, baseURL);
-    return;
+    return applyOpencodeProviderToFile(filePath, patch, baseURL, models, inAppSelection, selectDefault);
   }
+  let changed = false;
   applyWithInstallProbe({
     tool: 'opencode',
     native: { configPath: filePath },
     posix: { configPath: patch.configPath },
     baseURL,
     wslTargetsFile,
-    write: (paths, url) => applyOpencodeProviderToFile(paths.configPath, patch, url),
+    write: (paths, url) => {
+      changed = applyOpencodeProviderToFile(paths.configPath, patch, url, models, inAppSelection, selectDefault) || changed;
+    },
   });
+  return changed;
 }
 
-function applyOpencodeProviderToFile(filePath: string, patch: OpencodeConfigPatchDef, baseURL: string): void {
+function applyOpencodeProviderToFile(
+  filePath: string,
+  patch: OpencodeConfigPatchDef,
+  baseURL: string,
+  models: readonly ConnectedAppModelCatalogEntry[],
+  inAppSelection: boolean,
+  selectDefault: boolean,
+): boolean {
   backupConfigFile(filePath);
   const config = readConfigPatchFile(filePath);
-
   const providers = (config['provider'] && typeof config['provider'] === 'object' && !Array.isArray(config['provider']))
     ? config['provider'] as JsonObject
     : {};
-  providers[patch.providerKey] = {
+  const modelDefinitions: JsonObject = inAppSelection
+    ? Object.fromEntries(models.map((model) => [model.id, openCodeModelDefinition(model.name)]))
+    : { [ROUTED_MODEL_ALIAS]: openCodeModelDefinition(ROUTED_MODEL_ALIAS_LABEL) };
+  const provider = {
     name: patch.providerName,
     npm: patch.npm,
     options: {
       baseURL,
       apiKey: 'antseed',
     },
-    models: {
-      [ROUTED_MODEL_ALIAS]: {
-        name: ROUTED_MODEL_ALIAS_LABEL,
-        attachment: true,
-        modalities: { input: ['text', 'image'], output: ['text'] },
-        limit: { context: ANTSEED_MODEL_CONTEXT_WINDOW, output: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
-      },
-    },
+    models: modelDefinitions,
   };
+  const before = JSON.stringify({ provider: providers[patch.providerKey], model: config['model'] });
+  providers[patch.providerKey] = provider;
   config['provider'] = providers;
-  config['model'] = `${patch.providerKey}/${ROUTED_MODEL_ALIAS}`;
+  const selectedModel = typeof config['model'] === 'string' ? config['model'] : '';
+  const selectedId = selectedModel.startsWith(`${patch.providerKey}/`)
+    ? selectedModel.slice(patch.providerKey.length + 1)
+    : '';
+  if (inAppSelection) {
+    if (models.length === 0) {
+      delete config['model'];
+    } else if (selectDefault || !Object.prototype.hasOwnProperty.call(modelDefinitions, selectedId)) {
+      config['model'] = `${patch.providerKey}/${models[0]!.id}`;
+    }
+  } else if (selectDefault || selectedId !== ROUTED_MODEL_ALIAS) {
+    config['model'] = `${patch.providerKey}/${ROUTED_MODEL_ALIAS}`;
+  }
   removeFromStringArray(config, 'disabled_providers', patch.providerKey);
+  const changed = before !== JSON.stringify({ provider, model: config['model'] });
+  if (changed) writeJsonFile(filePath, config);
+  return changed;
+}
 
-  writeJsonFile(filePath, config);
+export function refreshOpenCodeModelCatalog(
+  patch: OpencodeConfigPatchDef,
+  buyerPort: number,
+  models: readonly ConnectedAppModelCatalogEntry[],
+  inAppSelection: boolean,
+): boolean {
+  return applyOpenCodeConfigPatch(patch, buyerPort, models, inAppSelection, false);
+}
+
+export function refreshCodexModelCatalog(
+  patch: CodexConfigPatchDef,
+  buyerPort: number,
+  models: readonly ConnectedAppModelCatalogEntry[],
+  inAppSelection: boolean,
+): boolean {
+  const filePath = expandTilde(patch.configPath);
+  const beforeConfig = existsSync(filePath) ? readFileSync(filePath, 'utf8') : '';
+  const catalogPath = path.join(path.dirname(filePath), CODEX_CATALOG_FILE_NAME);
+  const beforeCatalog = existsSync(catalogPath) ? readFileSync(catalogPath, 'utf8') : '';
+  applyCodexConfigPatch(patch, buyerPort, models, !inAppSelection);
+  return beforeConfig !== readFileSync(filePath, 'utf8')
+    || beforeCatalog !== readFileSync(catalogPath, 'utf8');
 }
 
 export function removeConfigPatch(patch: ConfigPatchDef, wslTargetsFile?: string): boolean {
@@ -606,12 +691,112 @@ function writeTextFile(filePath: string, content: string): void {
 }
 
 // --- Codex CLI (`~/.codex/config.toml`) ---
-//
-// Codex config is TOML, edited structurally instead of parsed: the managed
-// `[model_providers.<key>]` table is replaced wholesale and the top-level
-// `model_provider` / `model` keys are set in the region before the first
-// table header (TOML requires top-level keys there). Everything the user
-// wrote is left untouched.
+
+type CodexPatchState = {
+  model: string | null;
+  modelProvider: string | null;
+  openaiBaseUrl: string | null;
+  modelCatalogJson: string | null;
+  webSearch: string | null;
+  requestCompression: boolean | null;
+  featuresTableExisted: boolean;
+  managedBaseURL: string;
+  managedCatalogPath: string;
+  lastClientModel: string | null;
+  managedModel: string | null;
+};
+
+const CODEX_CATALOG_FILE_NAME = 'antseed-models.json';
+const CODEX_ROUTED_MODEL_PREFIX = 'antseed/';
+
+export function codexRoutedModelSlug(model: ConnectedAppModelCatalogEntry): string {
+  const service = model.peerId ? `${model.peerId}@${model.id}` : model.id;
+  return `${CODEX_ROUTED_MODEL_PREFIX}${model.provider}/${service}`;
+}
+
+function codexCatalogTemplate(filePath: string): JsonObject {
+  const fallback = {
+    slug: 'gpt-5',
+    display_name: 'GPT-5',
+    description: '',
+    default_reasoning_level: 'medium',
+    supported_reasoning_levels: [
+      { effort: 'low', description: 'Fast responses with lighter reasoning' },
+      { effort: 'medium', description: 'Balances speed and reasoning depth' },
+      { effort: 'high', description: 'Greater reasoning depth for complex problems' },
+    ],
+    visibility: 'list',
+    supported_in_api: true,
+    priority: 1,
+    input_modalities: ['text', 'image'],
+    supports_parallel_tool_calls: true,
+    apply_patch_tool_type: 'freeform',
+    multi_agent_version: 'v1',
+  };
+  try {
+    const parsed = JSON.parse(readFileSync(path.join(path.dirname(filePath), 'models_cache.json'), 'utf8')) as { models?: unknown };
+    if (!Array.isArray(parsed.models)) return fallback;
+    const models = parsed.models.filter((model): model is JsonObject => Boolean(model) && typeof model === 'object' && !Array.isArray(model));
+    return models.find((model) => model['visibility'] === 'list') ?? models[0] ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function codexCatalogModel(template: JsonObject, slug: string, name: string, priority: number): JsonObject {
+  const {
+    web_search_tool_type: _webSearchToolType,
+    tool_mode: _toolMode,
+    ...compatibleTemplate
+  } = template;
+  return {
+    ...compatibleTemplate,
+    slug,
+    display_name: name,
+    description: `${name} routed through AntSeed VPR.`,
+    visibility: 'list',
+    supported_in_api: true,
+    priority,
+    additional_speed_tiers: [],
+    service_tiers: [],
+    availability_nux: null,
+    upgrade: null,
+    context_window: ANTSEED_MODEL_CONTEXT_WINDOW,
+    max_context_window: ANTSEED_MODEL_CONTEXT_WINDOW,
+    effective_context_window_percent: 95,
+    supports_search_tool: false,
+    apply_patch_tool_type: 'freeform',
+    use_responses_lite: false,
+  };
+}
+
+function codexCatalogModels(
+  filePath: string,
+  models: readonly ConnectedAppModelCatalogEntry[],
+  useRoutedModelAlias: boolean,
+): JsonObject[] {
+  const template = codexCatalogTemplate(filePath);
+  if (useRoutedModelAlias) {
+    return [codexCatalogModel(template, ROUTED_MODEL_ALIAS, ROUTED_MODEL_ALIAS_LABEL, 1)];
+  }
+  return models.map((model, index) => codexCatalogModel(
+    template,
+    codexRoutedModelSlug(model),
+    model.name,
+    index + 1,
+  ));
+}
+
+function writeJsonFileAtomic(filePath: string, data: JsonObject): boolean {
+  const content = `${JSON.stringify(data, null, 2)}\n`;
+  if (existsSync(filePath) && readFileSync(filePath, 'utf8') === content) return false;
+  const dir = path.dirname(filePath);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const temporaryPath = `${filePath}.tmp.${process.pid}`;
+  writeFileSync(temporaryPath, content, { encoding: 'utf8', mode: 0o600 });
+  renameSync(temporaryPath, filePath);
+  return true;
+}
 
 function tomlBasicString(value: string): string {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
@@ -633,6 +818,20 @@ function removeCodexProviderTable(lines: readonly string[], providerKey: string)
   let end = start + 1;
   while (end < lines.length && !/^\s*\[/.test(lines[end]!)) end++;
   return { lines: [...lines.slice(0, start), ...lines.slice(end)], changed: true };
+}
+
+function appendCodexProviderTable(lines: readonly string[], patch: CodexConfigPatchDef, baseURL: string): string[] {
+  const next = [...lines];
+  while (next.length > 0 && next[next.length - 1]!.trim() === '') next.pop();
+  return [
+    ...next,
+    '',
+    `[model_providers.${patch.providerKey}]`,
+    `name = ${tomlBasicString(patch.providerName)}`,
+    `base_url = ${tomlBasicString(baseURL)}`,
+    'wire_api = "responses"',
+    'supports_websockets = false',
+  ];
 }
 
 function tomlTopLevelKeyIndex(lines: readonly string[], key: string): number {
@@ -663,8 +862,9 @@ function setTomlTopLevelString(lines: readonly string[], key: string, value: str
 function readTomlTopLevelString(lines: readonly string[], key: string): string | undefined {
   const index = tomlTopLevelKeyIndex(lines, key);
   if (index === -1) return undefined;
-  const match = lines[index]!.match(/=\s*"((?:[^"\\]|\\.)*)"\s*(#.*)?$/);
-  return match ? match[1]!.replace(/\\(.)/g, '$1') : undefined;
+  const match = lines[index]!.match(/=\s*(?:"((?:[^"\\]|\\.)*)"|'([^']*)')\s*(#.*)?$/);
+  if (!match) return undefined;
+  return match[1] === undefined ? match[2] : match[1]!.replace(/\\(.)/g, '$1');
 }
 
 function removeTomlTopLevelKey(lines: readonly string[], key: string): string[] {
@@ -673,11 +873,102 @@ function removeTomlTopLevelKey(lines: readonly string[], key: string): string[] 
   return [...lines.slice(0, index), ...lines.slice(index + 1)];
 }
 
-function applyCodexConfigPatch(patch: CodexConfigPatchDef, buyerPort: number, wslTargetsFile?: string): void {
+function tomlTableKeyIndex(lines: readonly string[], table: string, key: string): number {
+  const start = lines.findIndex((line) => new RegExp(`^\\s*\\[\\s*${table}\\s*\\]\\s*(#.*)?$`).test(line));
+  if (start === -1) return -1;
+  const pattern = new RegExp(`^\\s*${key}\\s*=`);
+  for (let i = start + 1; i < lines.length && !/^\s*\[/.test(lines[i]!); i++) {
+    if (pattern.test(lines[i]!)) return i;
+  }
+  return -1;
+}
+
+function readTomlTableBoolean(lines: readonly string[], table: string, key: string): boolean | undefined {
+  const index = tomlTableKeyIndex(lines, table, key);
+  if (index === -1) return undefined;
+  const match = lines[index]!.match(/=\s*(true|false)\s*(#.*)?$/);
+  return match ? match[1] === 'true' : undefined;
+}
+
+function setTomlTableBoolean(lines: readonly string[], table: string, key: string, value: boolean): string[] {
+  const assignment = `${key} = ${String(value)}`;
+  const index = tomlTableKeyIndex(lines, table, key);
+  if (index !== -1) {
+    const next = [...lines];
+    next[index] = assignment;
+    return next;
+  }
+  const start = lines.findIndex((line) => new RegExp(`^\\s*\\[\\s*${table}\\s*\\]\\s*(#.*)?$`).test(line));
+  if (start !== -1) return [...lines.slice(0, start + 1), assignment, ...lines.slice(start + 1)];
+  const next = [...lines];
+  while (next.length > 0 && next[next.length - 1]!.trim() === '') next.pop();
+  return [...next, '', `[${table}]`, assignment];
+}
+
+function restoreTomlTableBoolean(
+  lines: readonly string[],
+  table: string,
+  key: string,
+  baseline: boolean | null,
+  tableExisted: boolean,
+): string[] {
+  if (baseline !== null) return setTomlTableBoolean(lines, table, key, baseline);
+  const index = tomlTableKeyIndex(lines, table, key);
+  let next = index === -1 ? [...lines] : [...lines.slice(0, index), ...lines.slice(index + 1)];
+  if (!tableExisted) {
+    const tableIndex = next.findIndex((line) => new RegExp(`^\\s*\\[\\s*${table}\\s*\\]\\s*(#.*)?$`).test(line));
+    if (tableIndex !== -1) next = [...next.slice(0, tableIndex), ...next.slice(tableIndex + 1)];
+  }
+  return next;
+}
+
+function codexPatchStatePath(filePath: string): string {
+  return `${filePath}.antseed.state.json`;
+}
+
+function readCodexPatchState(filePath: string): CodexPatchState | null {
+  try {
+    const value = JSON.parse(readFileSync(codexPatchStatePath(filePath), 'utf8')) as Partial<CodexPatchState>;
+    if ((typeof value.model === 'string' || value.model === null || value.model === undefined)
+      && (typeof value.modelProvider === 'string' || value.modelProvider === null)
+      && (typeof value.openaiBaseUrl === 'string' || value.openaiBaseUrl === null)
+      && (typeof value.modelCatalogJson === 'string' || value.modelCatalogJson === null || value.modelCatalogJson === undefined)
+      && (typeof value.webSearch === 'string' || value.webSearch === null || value.webSearch === undefined)
+      && (typeof value.requestCompression === 'boolean' || value.requestCompression === null || value.requestCompression === undefined)
+      && (typeof value.featuresTableExisted === 'boolean' || value.featuresTableExisted === undefined)
+      && typeof value.managedBaseURL === 'string'
+      && (typeof value.managedCatalogPath === 'string' || value.managedCatalogPath === undefined)
+      && (typeof value.lastClientModel === 'string' || value.lastClientModel === null || value.lastClientModel === undefined)
+      && (typeof value.managedModel === 'string' || value.managedModel === null || value.managedModel === undefined)) {
+      return {
+        ...value,
+        model: value.model ?? null,
+        modelCatalogJson: value.modelCatalogJson ?? null,
+        webSearch: value.webSearch ?? null,
+        requestCompression: value.requestCompression ?? null,
+        featuresTableExisted: value.featuresTableExisted ?? true,
+        managedCatalogPath: value.managedCatalogPath ?? '',
+        lastClientModel: value.lastClientModel ?? null,
+        managedModel: value.managedModel ?? ROUTED_MODEL_ALIAS,
+      } as CodexPatchState;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function applyCodexConfigPatch(
+  patch: CodexConfigPatchDef,
+  buyerPort: number,
+  models: readonly ConnectedAppModelCatalogEntry[],
+  useRoutedModelAlias: boolean,
+  wslTargetsFile?: string,
+): void {
   const filePath = expandTilde(patch.configPath);
   const baseURL = patch.baseURL.replace('{buyerPort}', String(buyerPort));
   if (patch.installProbe !== 'codex') {
-    applyCodexProviderToFile(filePath, patch, baseURL);
+    applyCodexProviderToFile(filePath, patch, baseURL, models, useRoutedModelAlias);
     return;
   }
   applyWithInstallProbe({
@@ -686,29 +977,79 @@ function applyCodexConfigPatch(patch: CodexConfigPatchDef, buyerPort: number, ws
     posix: { configPath: patch.configPath },
     baseURL,
     wslTargetsFile,
-    write: (paths, url) => applyCodexProviderToFile(paths.configPath, patch, url),
+    write: (paths, url) => applyCodexProviderToFile(paths.configPath, patch, url, models, useRoutedModelAlias),
   });
 }
 
-function applyCodexProviderToFile(filePath: string, patch: CodexConfigPatchDef, baseURL: string): void {
+function applyCodexProviderToFile(
+  filePath: string,
+  patch: CodexConfigPatchDef,
+  baseURL: string,
+  models: readonly ConnectedAppModelCatalogEntry[],
+  useRoutedModelAlias: boolean,
+): void {
   backupConfigFile(filePath);
   const raw = existsSync(filePath) ? readFileSync(filePath, 'utf8') : '';
   let lines = raw.length > 0 ? raw.split('\n') : [];
+  const managedBaseURL = baseURL;
+  const managedCatalogPath = path.join(path.dirname(filePath), CODEX_CATALOG_FILE_NAME);
+  const previousState = readCodexPatchState(filePath);
+  const currentModel = readTomlTopLevelString(lines, 'model') ?? null;
+  const currentClientModel = currentModel?.startsWith(CODEX_ROUTED_MODEL_PREFIX) ? currentModel : null;
+  const availableClientModels = new Set(models.map(codexRoutedModelSlug));
+  const state: CodexPatchState = {
+    model: previousState
+      ? previousState.model ?? (currentModel === ROUTED_MODEL_ALIAS || currentClientModel ? null : currentModel)
+      : currentModel,
+    modelProvider: previousState ? previousState.modelProvider : readTomlTopLevelString(lines, 'model_provider') ?? null,
+    openaiBaseUrl: previousState ? previousState.openaiBaseUrl : readTomlTopLevelString(lines, 'openai_base_url') ?? null,
+    modelCatalogJson: previousState ? previousState.modelCatalogJson : readTomlTopLevelString(lines, 'model_catalog_json') ?? null,
+    webSearch: previousState ? previousState.webSearch : readTomlTopLevelString(lines, 'web_search') ?? null,
+    requestCompression: previousState
+      ? previousState.requestCompression
+      : readTomlTableBoolean(lines, 'features', 'enable_request_compression') ?? null,
+    featuresTableExisted: previousState
+      ? previousState.featuresTableExisted
+      : lines.some((line) => /^\s*\[\s*features\s*\]\s*(#.*)?$/.test(line)),
+    managedBaseURL,
+    managedCatalogPath,
+    lastClientModel: currentClientModel ?? previousState?.lastClientModel ?? null,
+    managedModel: previousState?.managedModel ?? null,
+  };
+  writeJsonFileAtomic(managedCatalogPath, {
+    models: codexCatalogModels(filePath, models, useRoutedModelAlias),
+  });
   lines = removeCodexProviderTable(lines, patch.providerKey).lines;
+  // Older AntSeed patches redirected the built-in OpenAI provider. Restore its
+  // baseline while migrating to the isolated, HTTP-only AntSeed provider.
+  if (previousState && readTomlTopLevelString(lines, 'openai_base_url') === previousState.managedBaseURL) {
+    lines = restoreCodexTopLevelString(lines, 'openai_base_url', previousState.openaiBaseUrl);
+  }
   lines = setTomlTopLevelString(lines, 'model_provider', patch.providerKey);
-  lines = setTomlTopLevelString(lines, 'model', ROUTED_MODEL_ALIAS);
-  lines = setTomlTopLevelValue(lines, 'model_context_window', String(ANTSEED_MODEL_CONTEXT_WINDOW));
-  while (lines.length > 0 && lines[lines.length - 1]!.trim() === '') lines.pop();
-  lines.push(
-    '',
-    `[model_providers.${patch.providerKey}]`,
-    `name = ${tomlBasicString(patch.providerName)}`,
-    `base_url = ${tomlBasicString(baseURL)}`,
-    // The only wire API Codex still supports; no env_key means Codex sends no
-    // Authorization header, which the keyless buyer proxy expects.
-    'wire_api = "responses"',
-  );
-  writeTextFile(filePath, `${lines.join('\n')}\n`);
+  lines = setTomlTopLevelString(lines, 'model_catalog_json', managedCatalogPath);
+  lines = setTomlTopLevelString(lines, 'web_search', 'disabled');
+  lines = setTomlTableBoolean(lines, 'features', 'enable_request_compression', false);
+  if (useRoutedModelAlias) {
+    lines = setTomlTopLevelString(lines, 'model', ROUTED_MODEL_ALIAS);
+    state.managedModel = ROUTED_MODEL_ALIAS;
+  } else if (models.length > 0) {
+    const selectedModel = state.lastClientModel && availableClientModels.has(state.lastClientModel)
+      ? state.lastClientModel
+      : codexRoutedModelSlug(models[0]!);
+    lines = setTomlTopLevelString(lines, 'model', selectedModel);
+    state.lastClientModel = selectedModel;
+    state.managedModel = selectedModel;
+  } else {
+    lines = restoreCodexTopLevelString(lines, 'model', state.model);
+    state.managedModel = state.model;
+  }
+  lines = appendCodexProviderTable(lines, patch, managedBaseURL);
+  writeTextFile(filePath, `${lines.join('\n').replace(/\n+$/, '')}\n`);
+  writeJsonFile(codexPatchStatePath(filePath), state);
+}
+
+function restoreCodexTopLevelString(lines: readonly string[], key: string, baseline: string | null): string[] {
+  return baseline === null ? removeTomlTopLevelKey(lines, key) : setTomlTopLevelString(lines, key, baseline);
 }
 
 function removeCodexConfigPatch(patch: CodexConfigPatchDef, wslTargetsFile?: string): boolean {
@@ -720,22 +1061,55 @@ function removeCodexConfigPatch(patch: CodexConfigPatchDef, wslTargetsFile?: str
 }
 
 function removeCodexProviderFromFile(filePath: string, patch: CodexConfigPatchDef): boolean {
+  const state = readCodexPatchState(filePath);
   if (!existsSync(filePath)) return false;
-  const raw = readFileSync(filePath, 'utf8');
-  const removal = removeCodexProviderTable(raw.split('\n'), patch.providerKey);
-  let lines = removal.lines;
+  let lines = readFileSync(filePath, 'utf8').split('\n');
+  const removal = removeCodexProviderTable(lines, patch.providerKey);
+  lines = removal.lines;
   let changed = removal.changed;
+  const managedBaseURL = state?.managedBaseURL;
   if (readTomlTopLevelString(lines, 'model_provider') === patch.providerKey) {
-    lines = removeTomlTopLevelKey(lines, 'model_provider');
-    lines = removeTomlTopLevelKey(lines, 'model');
-    lines = removeTomlTopLevelKey(lines, 'model_context_window');
+    lines = restoreCodexTopLevelString(lines, 'model_provider', state?.modelProvider ?? null);
+    changed = true;
+  } else if (managedBaseURL
+    && readTomlTopLevelString(lines, 'model_provider') === 'openai'
+    && readTomlTopLevelString(lines, 'openai_base_url') === managedBaseURL) {
+    // Remove patches written by older AntSeed versions.
+    lines = restoreCodexTopLevelString(lines, 'model_provider', state?.modelProvider ?? null);
     changed = true;
   }
-  if (!changed) return false;
-  backupConfigFile(filePath);
-  while (lines.length > 0 && lines[lines.length - 1]!.trim() === '') lines.pop();
-  writeTextFile(filePath, lines.length > 0 ? `${lines.join('\n')}\n` : '');
-  return true;
+  if (state && readTomlTopLevelString(lines, 'model') === state.managedModel) {
+    lines = restoreCodexTopLevelString(lines, 'model', state.model);
+    changed = true;
+  }
+  if (state && readTomlTopLevelString(lines, 'openai_base_url') === state.managedBaseURL) {
+    lines = restoreCodexTopLevelString(lines, 'openai_base_url', state.openaiBaseUrl);
+    changed = true;
+  }
+  if (state && readTomlTopLevelString(lines, 'model_catalog_json') === state.managedCatalogPath) {
+    lines = restoreCodexTopLevelString(lines, 'model_catalog_json', state.modelCatalogJson);
+    changed = true;
+  }
+  if (state && readTomlTopLevelString(lines, 'web_search') === 'disabled') {
+    lines = restoreCodexTopLevelString(lines, 'web_search', state.webSearch);
+    changed = true;
+  }
+  if (state && readTomlTableBoolean(lines, 'features', 'enable_request_compression') === false) {
+    lines = restoreTomlTableBoolean(
+      lines,
+      'features',
+      'enable_request_compression',
+      state.requestCompression,
+      state.featuresTableExisted,
+    );
+    changed = true;
+  }
+  if (changed) {
+    backupConfigFile(filePath);
+    writeTextFile(filePath, lines.length > 1 ? `${lines.join('\n').replace(/\n+$/, '')}\n` : '');
+  }
+  if (state) unlinkSync(codexPatchStatePath(filePath));
+  return changed;
 }
 
 // --- pi (`~/.pi/agent/models.json` + `~/.pi/agent/settings.json`) ---

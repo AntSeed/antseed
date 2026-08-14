@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { RuntimeMode, RuntimeProcessState, StartOptions } from './runtime/process-manager.js';
+import type { ApplicationRoutePolicies } from '../shared/application-routes.js';
+import type { ConnectedAppModelCatalogSnapshot } from '../shared/connected-app-model-catalog.js';
 
 type LogEvent = {
   mode: RuntimeMode;
@@ -557,8 +559,14 @@ const api = {
     ipcRenderer.on('deposits:watch-status', listener);
     return () => ipcRenderer.off('deposits:watch-status', listener);
   },
-  systemProxyStart(opts: { peerId: string; port?: number; profiles?: string[]; defaultModel?: string; servedModels?: string[]; toolRoutes?: Record<string, { peerId: string; model: string }>; profileSwitch?: boolean }): Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }> {
+  systemProxyStart(opts: { peerId: string; port?: number; profiles?: string[]; defaultModel?: string; servedModels?: string[]; applicationRoutes?: ApplicationRoutePolicies; profileSwitch?: boolean }): Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }> {
     return ipcRenderer.invoke('system-proxy:start', opts) as Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }>;
+  },
+  systemProxySetApplicationRoutes(routes: ApplicationRoutePolicies): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:set-application-routes', { routes }) as Promise<{ ok: boolean; error?: string }>;
+  },
+  systemProxySyncModelCatalog(snapshot: ConnectedAppModelCatalogSnapshot): Promise<{ ok: boolean; changed?: boolean; error?: string }> {
+    return ipcRenderer.invoke('system-proxy:sync-model-catalog', snapshot) as Promise<{ ok: boolean; changed?: boolean; error?: string }>;
   },
   systemProxyListProfiles() {
     return ipcRenderer.invoke('system-proxy:list-profiles');

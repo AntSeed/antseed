@@ -13,6 +13,7 @@ import { net as electronNet, type MenuItemConstructorOptions } from 'electron';
 import { readFileSync } from 'node:fs';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import type { AppLaunchTarget } from '../connected-apps/launch-settings.js';
+import { effectiveToolSlugs } from '../connected-apps/profile-targets.js';
 import {
   getMacAppProcessInfo,
   isAppTargetRunning,
@@ -23,7 +24,12 @@ import { getNetworkSnapshot, lookupPeer, type DashboardNetworkPeer } from '../ru
 import type { ProcessManager, RuntimeMode, RuntimeProcessState } from '../runtime/process-manager.js';
 import { applyWindowView, getMainWindow } from '../ui/window.js';
 import { updateDesktopTray } from '../ui/tray.js';
-import { applyConfigPatch, removeConfigPatch } from './config-patch.js';
+import {
+  applyConfigPatch,
+  refreshCodexModelCatalog,
+  refreshOpenCodeModelCatalog,
+  removeConfigPatch,
+} from './config-patch.js';
 import {
   DEFAULT_SYSTEM_PROXY_PORT,
   SYSTEM_PROXY_PROFILES,
@@ -49,6 +55,25 @@ import {
 } from './paths.js';
 import { clearWslTargetsForTool, isWslTool, readWslTargets } from './wsl.js';
 import { stopWslRelays, syncWslRelays } from './wsl-relay.js';
+import {
+  applicationRoutePolicyFor,
+  parseApplicationRoutePolicies,
+  type ApplicationRoutePolicies,
+} from '../../shared/application-routes.js';
+import {
+  parseConnectedAppModelCatalog,
+  type ConnectedAppModelCatalogSnapshot,
+} from '../../shared/connected-app-model-catalog.js';
+import {
+  applicationRouteChangeRequiresRestart,
+  buildActiveBuyerApplicationRoutes,
+  migrateApplicationRoutePolicies,
+  type BuyerApplicationRoutePolicies,
+} from './application-route-policies.js';
+export type {
+  BuyerApplicationRoutePolicy,
+  BuyerApplicationRoutePolicies,
+} from './application-route-policies.js';
 
 /** What this module needs from the app around it — injected once at startup. */
 export type SystemProxyDeps = {
@@ -76,6 +101,8 @@ let traySystemProxyPeerId = '';
 let traySystemProxyModel = '';
 let traySystemProxyProfiles = new Set<string>();
 let activeSystemProxyState: (RuntimeProcessState & Record<string, unknown>) | null = null;
+let connectedAppModelCatalog: ConnectedAppModelCatalogSnapshot = { models: [] };
+const profileConfigChangedAt = new Map<string, number>();
 
 export type SystemProxyGuiTestResult = {
   ok: boolean;
@@ -104,6 +131,26 @@ function knownSetupProfileNames(metadata: Record<string, unknown>, extras: strin
   ]));
 }
 
+export function migratePersistedApplicationRoutes(metadata: Record<string, unknown>): ApplicationRoutePolicies {
+  return migrateApplicationRoutePolicies(
+    metadata,
+    (peerId) => lookupPeer(peerId)?.providers ?? [],
+  );
+}
+
+export function activeBuyerApplicationRoutes(
+  profileNames: string[],
+  routes: ApplicationRoutePolicies,
+): BuyerApplicationRoutePolicies {
+  const profiles = allSystemProxyProfiles();
+  return buildActiveBuyerApplicationRoutes(profileNames, routes, (profileName) => {
+    const profile = profiles.find((entry) => entry.name === profileName);
+    return profile
+      ? effectiveToolSlugs(profile.name, profile.toolSlugs, profile.label)
+      : [profileName];
+  });
+}
+
 export function readSystemProxyRuntimeMetadata(): Record<string, unknown> {
   // Desktop file first; the CLI child's state file only as a fallback (it
   // exists while the child runs, and older desktop builds persisted there).
@@ -122,6 +169,11 @@ export function readSystemProxyRuntimeMetadata(): Record<string, unknown> {
 
 export function loadPersistedSystemProxyState(): void {
   const metadata = readSystemProxyRuntimeMetadata();
+  try {
+    connectedAppModelCatalog = parseConnectedAppModelCatalog(metadata['connectedAppModelCatalog'] ?? { models: [] });
+  } catch {
+    connectedAppModelCatalog = { models: [] };
+  }
   const activeProfileNames = readStringArray(metadata['activeProfileNames']);
   const peerId = typeof metadata['peerId'] === 'string' ? metadata['peerId'] : '';
   const defaultModel = typeof metadata['defaultModel'] === 'string' ? metadata['defaultModel'] : '';
@@ -138,7 +190,7 @@ export function loadPersistedSystemProxyState(): void {
     defaultModel,
     activeProfileNames,
     setupProfileNames: knownSetupProfileNames(metadata),
-    toolRoutes: metadata['toolRoutes'],
+    applicationRoutes: migratePersistedApplicationRoutes(metadata),
   };
   traySystemProxyPeerId = peerId;
   traySystemProxyModel = defaultModel;
@@ -208,7 +260,8 @@ export async function setActiveSystemProxyState(state: RuntimeProcessState & Rec
     defaultModel: state['defaultModel'],
     activeProfileNames: state['activeProfileNames'],
     setupProfileNames,
-    toolRoutes: state['toolRoutes'],
+    applicationRoutes: state['applicationRoutes'],
+    connectedAppModelCatalog,
     running: state.running,
   }), 'utf8').catch(() => undefined);
 }
@@ -468,15 +521,14 @@ export type SystemProxyStartRequest = {
   profiles?: string[];
   defaultModel?: string;
   servedModels?: string[];
-  toolRoutes?: Record<string, { peerId: string; model: string }>;
+  applicationRoutes?: ApplicationRoutePolicies;
   profileSwitch?: boolean;
   /** Overrides the 5s default — launch restore allows a slow cold start. */
   readyTimeoutMs?: number;
 };
 
-export function routeForTool(opts: SystemProxyStartRequest, profileName: string): { peerId: string; model: string; services: string[] } {
-  const route = opts.toolRoutes?.[profileName];
-  const peerId = route?.peerId?.trim() || opts.peerId;
+export function resolveDefaultSystemProxyRoute(opts: SystemProxyStartRequest): { peerId: string; model: string; services: string[] } {
+  const peerId = opts.peerId;
   const peer = lookupPeer(peerId);
   // For the request's own peer, merge the caller-provided served-models list
   // into the cached announcement — the renderer resolves its default model
@@ -486,15 +538,10 @@ export function routeForTool(opts: SystemProxyStartRequest, profileName: string)
   const services = peerId === opts.peerId
     ? Array.from(new Set([...(peer?.services ?? []), ...(opts.servedModels ?? [])]))
     : peer?.services ?? [];
-  const requestedModel = route?.model?.trim();
   const defaultModel = opts.defaultModel?.trim() ?? '';
-  const model = route
-    // Explicitly routed model is used verbatim; otherwise fall back to the
-    // peer's first service, then the default model.
-    ? (requestedModel || (services[0] ?? defaultModel))
-    : (defaultModel && (services.length === 0 || services.includes(defaultModel))
-      ? defaultModel
-      : services[0] ?? defaultModel);
+  const model = defaultModel && (services.length === 0 || services.includes(defaultModel))
+    ? defaultModel
+    : services[0] ?? defaultModel;
   return { peerId, model, services };
 }
 
@@ -510,9 +557,13 @@ export async function startSystemProxyRuntime(opts: SystemProxyStartRequest): Pr
 export async function startSystemProxyRuntimeInner(opts: SystemProxyStartRequest): Promise<RuntimeProcessState | null> {
   const port = opts.port ?? DEFAULT_SYSTEM_PROXY_PORT;
   const allProfiles = opts.profiles ?? [];
+  const persistedMetadata = readSystemProxyRuntimeMetadata();
+  const applicationRoutes = opts.applicationRoutes
+    ? parseApplicationRoutePolicies(opts.applicationRoutes)
+    : migratePersistedApplicationRoutes(persistedMetadata);
   const proxyProfiles = allProfiles.filter((name) => !isConfigPatchProfileName(name));
   const configPatchProfiles = allProfiles.filter((name) => isConfigPatchProfileName(name));
-  const proxyRoute = proxyProfiles.length > 0 ? routeForTool(opts, proxyProfiles[0]!) : routeForTool(opts, allProfiles[0] ?? '');
+  const defaultRoute = resolveDefaultSystemProxyRoute(opts);
   const previousProfiles = new Set(
     Array.isArray(activeSystemProxyState?.['activeProfileNames'])
       ? activeSystemProxyState['activeProfileNames'].filter((name: unknown): name is string => typeof name === 'string')
@@ -543,8 +594,11 @@ export async function startSystemProxyRuntimeInner(opts: SystemProxyStartRequest
   const buyerProxyPort = await resolveBuyerProxyPort();
   // Keep the buyer's default route on the current selection so configs that
   // carry the routed-model alias follow route changes without a rewrite.
-  const defaultRoute = routeForTool(opts, '');
   await postBuyerDefaultRoute(buyerProxyPort, defaultRoute.peerId, defaultRoute.model);
+  await postBuyerApplicationRoutes(
+    buyerProxyPort,
+    activeBuyerApplicationRoutes(allProfiles, applicationRoutes),
+  );
   // One profile failing its install probe must not take down the rest of the
   // batch: launch restore re-applies every previously-connected profile in a
   // single call, and a connect click sends the union of the already-connected
@@ -557,10 +611,18 @@ export async function startSystemProxyRuntimeInner(opts: SystemProxyStartRequest
     const profile = SYSTEM_PROXY_PROFILES.find((p) => p.name === name);
     if (!profile?.configPatch) continue;
     try {
-      // The patched config carries only the routed-model alias; the buyer
-      // resolves it to the default route posted above, so the model picked in
-      // the floating pill / VPR applies to running tool sessions.
-      applyConfigPatch(profile.configPatch, defaultRoute.peerId, buyerProxyPort, systemProxyWslTargetsPath());
+      // Config patches only point the application at the local buyer. Alias-
+      // based apps keep using the default route, while Codex keeps its own
+      // model and lets the buyer apply its application policy.
+      applyConfigPatch(profile.configPatch, defaultRoute.peerId, buyerProxyPort, {
+        useRoutedModelAlias: name === 'codex' && applicationRoutePolicyFor(applicationRoutes, name).mode !== 'client-model',
+        codexModels: name === 'codex' ? connectedAppModelCatalog.models : undefined,
+        openCodeModels: name === 'opencode' ? connectedAppModelCatalog.models : undefined,
+        openCodeInAppSelection: name === 'opencode'
+          && applicationRoutePolicyFor(applicationRoutes, name).mode === 'client-model',
+        wslTargetsFile: systemProxyWslTargetsPath(),
+      });
+      if (!newlyConnectedProfiles.includes(name)) profileConfigChangedAt.set(name, Date.now());
       deps().appendLog('system-proxy', 'system', `${profile.label}: connected by config patch (peer=${shortTrayPeerId(defaultRoute.peerId)}, model=${defaultRoute.model || 'auto'} via selection)`);
     } catch (err) {
       failedConfigPatchProfiles.add(name);
@@ -595,11 +657,11 @@ export async function startSystemProxyRuntimeInner(opts: SystemProxyStartRequest
     state = await deps().processManager.start({
       mode: 'system-proxy',
       env: systemProxyProfilesEnv(),
-      systemProxyPeerId: proxyRoute.peerId,
+      systemProxyPeerId: defaultRoute.peerId,
       systemProxyPort: opts.port,
       systemProxyProfiles: proxyProfiles,
-      systemProxyDefaultModel: proxyRoute.model || undefined,
-      systemProxyServedModels: proxyRoute.services,
+      systemProxyDefaultModel: defaultRoute.model || undefined,
+      systemProxyServedModels: defaultRoute.services,
       setSystemProxy: true,
     });
     try {
@@ -626,7 +688,7 @@ export async function startSystemProxyRuntimeInner(opts: SystemProxyStartRequest
     port,
     peerId: opts.peerId,
     defaultModel: opts.defaultModel,
-    toolRoutes: opts.toolRoutes,
+    applicationRoutes,
     activeProfileNames: appliedProfiles,
     running: proxyProfiles.length > 0 ? state?.running === true : appliedConfigPatchProfiles.length > 0,
   } as RuntimeProcessState & Record<string, unknown>;
@@ -659,13 +721,17 @@ export async function restartSystemProxyRuntime(opts: SystemProxyStartRequest): 
  * which apps were connected.
  */
 export async function restoreSystemProxyProfilesAtLaunch(opts: SystemProxyStartRequest): Promise<void> {
-  const persisted = readSystemProxyRuntimeMetadata();
+  const rawPersisted = readSystemProxyRuntimeMetadata();
+  const { toolRoutes: _legacyToolRoutes, ...persisted } = rawPersisted;
+  persisted.applicationRoutes = migratePersistedApplicationRoutes(rawPersisted);
   const attempts = 3;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     // A manual connect while we were backing off owns the runtime now.
     if (attempt > 1 && activeSystemProxyState !== null) return;
     try {
+      const restartRestoredApps = activeSystemProxyState !== null;
       await startSystemProxyRuntime({ ...opts, readyTimeoutMs: 20_000 });
+      if (restartRestoredApps) await restartConnectedApps(opts.profiles ?? []);
       return;
     } catch (err) {
       deps().appendLog('system-proxy', 'system', `System Proxy auto-start attempt ${attempt}/${attempts} failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -686,12 +752,20 @@ export async function stopSystemProxyRuntime(clearSettings: boolean): Promise<Ru
   const setupProfileNames = knownSetupProfileNames(metadata);
   const state = await deps().processManager.stop('system-proxy');
   if (clearSettings) {
+    try {
+      const buyerProxyPort = await resolveBuyerProxyPort();
+      await postBuyerApplicationRoutes(buyerProxyPort, {});
+    } catch (err) {
+      deps().appendLog('system-proxy', 'system', `Application route clear failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
     await clearSystemProxyTransportSettings();
     await unlink(systemProxyPidPath()).catch(() => undefined);
     await unlink(systemProxyStatePath()).catch(() => undefined);
     await mkdir(systemProxyDataDir(), { recursive: true }).catch(() => undefined);
+    const { toolRoutes: _legacyToolRoutes, ...nextMetadata } = metadata;
     await writeFile(systemProxyDesktopStatePath(), JSON.stringify({
-      ...metadata,
+      ...nextMetadata,
+      applicationRoutes: migratePersistedApplicationRoutes(metadata),
       activeProfileNames: [],
       setupProfileNames,
       running: false,
@@ -785,6 +859,139 @@ export async function postBuyerDefaultRoute(buyerPort: number, peerId: string, m
   } catch (err) {
     deps().appendLog('system-proxy', 'system', `Default route update failed: ${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+export async function postBuyerApplicationRoutes(
+  buyerPort: number,
+  routes: BuyerApplicationRoutePolicies,
+): Promise<void> {
+  const response = await fetch(`http://127.0.0.1:${buyerPort}/_antseed/application-routes`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ routes }),
+    signal: AbortSignal.timeout(3_000),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { error?: unknown } | null;
+    const message = typeof payload?.error === 'string'
+      ? payload.error
+      : `Buyer rejected application routes (${response.status})`;
+    throw new Error(message);
+  }
+}
+
+export function getProfileConfigChangedAt(profileName: string): number | null {
+  return profileConfigChangedAt.get(profileName) ?? null;
+}
+
+export async function syncConnectedAppModelCatalog(value: unknown): Promise<boolean> {
+  const next = parseConnectedAppModelCatalog(value);
+  if (JSON.stringify(next) === JSON.stringify(connectedAppModelCatalog)) return false;
+  connectedAppModelCatalog = next;
+  const metadata = readSystemProxyRuntimeMetadata();
+  await mkdir(systemProxyDataDir(), { recursive: true }).catch(() => undefined);
+  await writeFile(systemProxyDesktopStatePath(), JSON.stringify({
+    ...metadata,
+    connectedAppModelCatalog,
+  }), 'utf8');
+  const state = getSystemProxyProcessState() as (RuntimeProcessState & Record<string, unknown>) | null;
+  const activeProfileNames = readStringArray(state?.['activeProfileNames']);
+  const applicationRoutes = parseApplicationRoutePolicies(state?.['applicationRoutes'] ?? {});
+  const buyerProxyPort = activeProfileNames.some((name) => name === 'codex' || name === 'opencode')
+    ? await resolveBuyerProxyPort()
+    : null;
+  if (buyerProxyPort !== null && activeProfileNames.includes('codex')) {
+    const profile = SYSTEM_PROXY_PROFILES.find((entry) => entry.name === 'codex');
+    if (profile?.configPatch?.format === 'codex') {
+      const changed = refreshCodexModelCatalog(
+        profile.configPatch,
+        buyerProxyPort,
+        next.models,
+        applicationRoutePolicyFor(applicationRoutes, 'codex').mode === 'client-model',
+      );
+      if (changed) profileConfigChangedAt.set('codex', Date.now());
+    }
+  }
+  if (buyerProxyPort !== null && activeProfileNames.includes('opencode')) {
+    const profile = SYSTEM_PROXY_PROFILES.find((entry) => entry.name === 'opencode');
+    if (profile?.configPatch && profile.configPatch.format !== 'codex' && profile.configPatch.format !== 'pi'
+      && profile.configPatch.format !== 'crush' && profile.configPatch.format !== 'goose'
+      && profile.configPatch.format !== 'zed' && profile.configPatch.format !== 't3code') {
+      const changed = refreshOpenCodeModelCatalog(
+        profile.configPatch,
+        buyerProxyPort,
+        next.models,
+        applicationRoutePolicyFor(applicationRoutes, 'opencode').mode === 'client-model',
+      );
+      if (changed) profileConfigChangedAt.set('opencode', Date.now());
+    }
+  }
+  return true;
+}
+
+export async function setSystemProxyApplicationRoutes(routes: ApplicationRoutePolicies): Promise<void> {
+  const parsed = parseApplicationRoutePolicies(routes);
+  const state = getSystemProxyProcessState();
+  const metadata = readSystemProxyRuntimeMetadata();
+  const stateMetadata = state as (RuntimeProcessState & Record<string, unknown>) | null;
+  const activeProfileNames = readStringArray(stateMetadata?.['activeProfileNames'] ?? metadata['activeProfileNames']);
+  const previousRoutes = parseApplicationRoutePolicies(
+    stateMetadata?.['applicationRoutes'] ?? metadata['applicationRoutes'] ?? {},
+  );
+  const restartCodex = activeProfileNames.includes('codex')
+    && applicationRouteChangeRequiresRestart('codex', previousRoutes, parsed);
+
+  if (state?.mode === 'system-proxy') {
+    await setActiveSystemProxyState({
+      ...state,
+      applicationRoutes: parsed,
+    } as RuntimeProcessState & Record<string, unknown>);
+  } else {
+    const { toolRoutes: _legacyToolRoutes, ...nextMetadata } = metadata;
+    await mkdir(systemProxyDataDir(), { recursive: true }).catch(() => undefined);
+    await writeFile(systemProxyDesktopStatePath(), JSON.stringify({
+      ...nextMetadata,
+      applicationRoutes: parsed,
+    }), 'utf8');
+  }
+
+  const buyerProxyPort = await resolveBuyerProxyPort();
+  const peerId = typeof stateMetadata?.['peerId'] === 'string'
+    ? stateMetadata['peerId']
+    : typeof metadata['peerId'] === 'string'
+      ? metadata['peerId']
+      : null;
+  if (activeProfileNames.includes('codex') && peerId) {
+    const codexProfile = SYSTEM_PROXY_PROFILES.find((profile) => profile.name === 'codex');
+    if (codexProfile?.configPatch) {
+      applyConfigPatch(codexProfile.configPatch, peerId, buyerProxyPort, {
+        useRoutedModelAlias: applicationRoutePolicyFor(parsed, 'codex').mode !== 'client-model',
+        codexModels: connectedAppModelCatalog.models,
+        wslTargetsFile: systemProxyWslTargetsPath(),
+      });
+      profileConfigChangedAt.set('codex', Date.now());
+    }
+  }
+  if (activeProfileNames.includes('opencode')) {
+    const openCodeProfile = SYSTEM_PROXY_PROFILES.find((profile) => profile.name === 'opencode');
+    if (openCodeProfile?.configPatch && openCodeProfile.configPatch.format !== 'codex'
+      && openCodeProfile.configPatch.format !== 'pi' && openCodeProfile.configPatch.format !== 'crush'
+      && openCodeProfile.configPatch.format !== 'goose' && openCodeProfile.configPatch.format !== 'zed'
+      && openCodeProfile.configPatch.format !== 't3code') {
+      const changed = refreshOpenCodeModelCatalog(
+        openCodeProfile.configPatch,
+        buyerProxyPort,
+        connectedAppModelCatalog.models,
+        applicationRoutePolicyFor(parsed, 'opencode').mode === 'client-model',
+      );
+      if (changed) profileConfigChangedAt.set('opencode', Date.now());
+    }
+  }
+  await postBuyerApplicationRoutes(
+    buyerProxyPort,
+    activeBuyerApplicationRoutes(activeProfileNames, parsed),
+  );
+  if (restartCodex) await restartConnectedApps(['codex']);
 }
 
 export async function setTrayProfile(profileName: string, enabled: boolean): Promise<void> {

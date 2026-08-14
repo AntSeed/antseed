@@ -153,6 +153,8 @@ export function buildCodexConfigArgs(baseUrlV1: string, model: string): string[]
     '-c',
     'model_providers.antseed.wire_api="responses"',
     '-c',
+    'model_providers.antseed.supports_websockets=false',
+    '-c',
     'model_providers.antseed.env_key="ANTSEED_API_KEY"',
     '-c',
     `model_providers.antseed.env_key_instructions=${tomlString('The AntSeed wrapper sets ANTSEED_API_KEY automatically.')}`,
@@ -162,6 +164,10 @@ export function buildCodexConfigArgs(baseUrlV1: string, model: string): string[]
     'model_provider="antseed"',
     '-c',
     `model_context_window=${ANTSEED_MODEL_CONTEXT_WINDOW}`,
+    '-c',
+    'features.enable_request_compression=false',
+    '-c',
+    'web_search="disabled"',
   ]
 }
 

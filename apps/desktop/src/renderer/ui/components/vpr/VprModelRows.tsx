@@ -37,6 +37,9 @@ export type VprModelRowListProps = {
    * model (the chat detail's seller picker). Hosts without one (Home
    * dropdown, floating pill) omit this and render no button. */
   onConfigure?: (provider: string, serviceId: string) => void;
+  /** Optional routing-mode label that replaces the seller count while keeping
+   * the existing catalog price, favorite, and recommendation presentation. */
+  routingLabel?: string;
 };
 
 function entryMinTotalPrice(entry: VprModelCatalogEntry): number | null {
@@ -65,7 +68,7 @@ function formatPrice(price: number | null): string {
   return price === null ? '—' : formatUsdShort(price);
 }
 
-function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pinnedPeerLabel, onClick, onConfigure }: {
+function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pinnedPeerLabel, routingLabel, onClick, onConfigure }: {
   entry: VprModelCatalogEntry;
   /** Leading checkmark for the currently selected model (Figma "model list" checked state). */
   checked?: boolean;
@@ -76,6 +79,7 @@ function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pi
   chevron?: boolean;
   /** Seller this model is pinned to; replaces the peer count on the meta line. */
   pinnedPeerLabel?: string | null;
+  routingLabel?: string;
   onClick: () => void;
   /** Trailing config button (per-context model settings). */
   onConfigure?: () => void;
@@ -154,7 +158,9 @@ function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pi
               the seller's name replaces the peer count, unlabelled: naming a
               peer already says routing isn't on auto. */}
           <span className={styles.peerMeta}>
-            {pinnedPeerLabel ? (
+            {routingLabel ? (
+              <span className={styles.pinnedSeller}>{routingLabel}</span>
+            ) : pinnedPeerLabel ? (
               <span className={styles.pinnedSeller}>{pinnedPeerLabel}</span>
             ) : (
               `${entry.peerCount} ${entry.peerCount === 1 ? 'seller' : 'sellers'}`
@@ -208,6 +214,7 @@ export function VprModelRowList({
   selectOnly,
   pinnedPeerLabels,
   onConfigure,
+  routingLabel,
 }: VprModelRowListProps): JSX.Element {
   if (entries.length === 0) {
     return (
@@ -253,6 +260,7 @@ export function VprModelRowList({
             compact={compact}
             chevron={!selectOnly}
             pinnedPeerLabel={pinned}
+            routingLabel={routingLabel}
             favorite={favoriteKeys?.has(favoriteModelKey(entry.provider, entry.serviceId))}
             badge={free ? (
               <VprBadge tone="green">Free</VprBadge>

@@ -1,3 +1,10 @@
+import {
+  customToolInputFromArguments,
+  customToolTranslationForSyntheticName,
+  namespaceToolTranslationForSyntheticName,
+  type CanonicalCustomToolTranslation,
+  type CanonicalRequestTranslationContext,
+} from './canonical.js';
 import type { SerializedHttpResponseChunk, ServiceApiProtocol } from './types.js';
 import {
   createChatStreamParser,
@@ -15,6 +22,7 @@ export interface ServiceApiStreamTransformOptions {
   from: ServiceApiProtocol;
   to: ServiceApiProtocol;
   fallbackModel?: string | null;
+  translationContext?: CanonicalRequestTranslationContext;
 }
 
 interface CanonicalStreamToolCall {
@@ -43,6 +51,7 @@ type CanonicalStreamRenderer = (options: StreamTransformInternals) => ProtocolSt
 
 interface StreamTransformInternals {
   fallbackModel: string | null;
+  translationContext?: CanonicalRequestTranslationContext;
 }
 
 interface ProtocolStreamNormalizer {
@@ -76,7 +85,10 @@ export function createStreamingAdapter(
   const createRenderer = STREAM_RENDERERS[options.to];
   if (!createNormalizer || !createRenderer) return null;
 
-  const internals = { fallbackModel: options.fallbackModel ?? null };
+  const internals: StreamTransformInternals = {
+    fallbackModel: options.fallbackModel ?? null,
+    translationContext: options.translationContext,
+  };
   const normalizer = createNormalizer(internals);
   const renderer = createRenderer(internals);
 
@@ -694,13 +706,18 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
             arguments: '',
           };
           toolCalls.set(event.index, toolCall);
+          const customTool = customToolTranslationForSyntheticName(options.translationContext, toolCall.name);
+          const namespaceTool = namespaceToolTranslationForSyntheticName(options.translationContext, toolCall.name);
           pushEvent(emitted, 'response.output_item.added', {
             output_index: getToolOutputIndex(event.index),
-            item: {
+            item: customTool
+              ? streamingTranslatedToolCall(toolCall, customTool, false)
+              : {
               type: 'function_call',
               id: toolCall.id,
               call_id: toolCall.id,
-              name: toolCall.name,
+              name: namespaceTool?.name ?? toolCall.name,
+              ...(namespaceTool ? { namespace: namespaceTool.namespace } : {}),
               arguments: '',
               status: 'in_progress',
             },
@@ -717,12 +734,14 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
           };
           const toolCall = { ...existing, arguments: existing.arguments + event.argumentsDelta };
           toolCalls.set(event.index, toolCall);
-          pushEvent(emitted, 'response.function_call_arguments.delta', {
-            output_index: getToolOutputIndex(event.index),
-            item_id: toolCall.id,
-            call_id: toolCall.id,
-            delta: event.argumentsDelta,
-          });
+          if (!customToolTranslationForSyntheticName(options.translationContext, toolCall.name)) {
+            pushEvent(emitted, 'response.function_call_arguments.delta', {
+              output_index: getToolOutputIndex(event.index),
+              item_id: toolCall.id,
+              call_id: toolCall.id,
+              delta: event.argumentsDelta,
+            });
+          }
           continue;
         }
 
@@ -759,11 +778,34 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
 
             for (const toolCall of sortedToolCalls(toolCalls)) {
               const outputIndex = getToolOutputIndex(toolCall.index);
+              const customTool = customToolTranslationForSyntheticName(options.translationContext, toolCall.name);
+              const namespaceTool = namespaceToolTranslationForSyntheticName(options.translationContext, toolCall.name);
+              if (customTool) {
+                if (customTool.type === 'custom') {
+                  const input = customToolInputFromArguments(toolCall.arguments);
+                  pushEvent(emitted, 'response.custom_tool_call_input.delta', {
+                    output_index: outputIndex,
+                    item_id: toolCall.id,
+                    delta: input,
+                  });
+                  pushEvent(emitted, 'response.custom_tool_call_input.done', {
+                    output_index: outputIndex,
+                    item_id: toolCall.id,
+                    input,
+                  });
+                }
+                pushEvent(emitted, 'response.output_item.done', {
+                  output_index: outputIndex,
+                  item: streamingTranslatedToolCall(toolCall, customTool, true),
+                });
+                continue;
+              }
               pushEvent(emitted, 'response.function_call_arguments.done', {
                 output_index: outputIndex,
                 item_id: toolCall.id,
                 call_id: toolCall.id,
-                name: toolCall.name,
+                name: namespaceTool?.name ?? toolCall.name,
+                ...(namespaceTool ? { namespace: namespaceTool.namespace } : {}),
                 arguments: toolCall.arguments,
               });
               pushEvent(emitted, 'response.output_item.done', {
@@ -772,7 +814,8 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
                   type: 'function_call',
                   id: toolCall.id,
                   call_id: toolCall.id,
-                  name: toolCall.name,
+                  name: namespaceTool?.name ?? toolCall.name,
+                  ...(namespaceTool ? { namespace: namespaceTool.namespace } : {}),
                   arguments: toolCall.arguments,
                   status: 'completed',
                 },
@@ -795,14 +838,21 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
                   status: 'completed' as const,
                   content: [{ type: 'output_text' as const, text: textBuffer, annotations: [] }],
                 }] : []),
-                ...sortedToolCalls(toolCalls).map((toolCall) => ({
-                  type: 'function_call' as const,
-                  id: toolCall.id,
-                  call_id: toolCall.id,
-                  name: toolCall.name,
-                  arguments: toolCall.arguments,
-                  status: 'completed' as const,
-                })),
+                ...sortedToolCalls(toolCalls).map((toolCall) => {
+                  const customTool = customToolTranslationForSyntheticName(options.translationContext, toolCall.name);
+                  const namespaceTool = namespaceToolTranslationForSyntheticName(options.translationContext, toolCall.name);
+                  return customTool
+                    ? streamingTranslatedToolCall(toolCall, customTool, true)
+                    : {
+                    type: 'function_call' as const,
+                    id: toolCall.id,
+                    call_id: toolCall.id,
+                    name: namespaceTool?.name ?? toolCall.name,
+                    ...(namespaceTool ? { namespace: namespaceTool.namespace } : {}),
+                    arguments: toolCall.arguments,
+                    status: 'completed' as const,
+                  };
+                }),
               ],
               output_text: textBuffer,
               usage: openAIResponsesUsage(event.usage),
@@ -820,6 +870,40 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
       }
       return [];
     },
+  };
+}
+
+function streamingTranslatedToolCall(
+  toolCall: CanonicalStreamToolCall,
+  customTool: CanonicalCustomToolTranslation,
+  completed: boolean,
+): Record<string, unknown> {
+  const input = completed ? customToolInputFromArguments(toolCall.arguments) : '';
+  if (customTool.type === 'local_shell') {
+    return {
+      type: 'local_shell_call',
+      id: toolCall.id,
+      call_id: toolCall.id,
+      action: completed ? parseJsonSafe(input) ?? input : {},
+      status: completed ? 'completed' : 'in_progress',
+    };
+  }
+  if (customTool.type === 'shell') {
+    return {
+      type: 'shell_call',
+      id: toolCall.id,
+      call_id: toolCall.id,
+      action: completed ? parseJsonSafe(input) ?? input : {},
+      environment: customTool.definition?.environment ?? null,
+      status: completed ? 'completed' : 'in_progress',
+    };
+  }
+  return {
+    type: 'custom_tool_call',
+    id: toolCall.id,
+    call_id: toolCall.id,
+    name: customTool.name,
+    input,
   };
 }
 

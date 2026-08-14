@@ -23,6 +23,7 @@ import {
   detectRequestServiceApiProtocol,
   type ServiceApiProtocol,
   type StreamingResponseAdapter,
+  requestTransformFailureReason,
   transformRequest,
   transformResponse,
 } from './service-api-adapter.js'
@@ -35,17 +36,21 @@ import {
   requestWantsStreaming,
   parsePeerPinnedService,
   rewritePeerPinnedServiceInBody,
+  rewriteRequestedModelInBody,
+  rewriteRoutedModelSelection,
   substituteRoutedModelAlias,
-  overrideRoutedModelInBody,
   ROUTED_MODEL_ALIAS,
   SYSTEM_PROXY_SOURCE_HEADER,
   SYSTEM_ROUTED_MODEL_HEADER,
+  stripPrivateRequestHeaders,
 } from './request-utils.js'
 import {
   getExplicitProviderOverride,
   getExplicitPeerIdOverride,
   resolvePeerRoutePlan,
   selectCandidatePeersForRouting,
+  peerExplicitlyAdvertisesService,
+  providersExplicitlyAdvertisingService,
   type CandidatePeerRouteSelection,
   type PeerProtocolRoutePlan,
 } from './routing.js'
@@ -58,17 +63,30 @@ import { DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from '../config/defaults.js'
 import {
   extractConversationIdentity,
   extractFirstUserSnippet,
+  extractRequestTool,
   isCompletionRequestPath,
   isTitleGenerationRequest,
   parseRequestBodyObject,
 } from './conversation-identity.js'
-import { ConversationStore } from './conversation-store.js'
+import { ConversationStore, type StoredApplicationRoute } from './conversation-store.js'
+import {
+  matchApplicationRoute,
+  parseApplicationRouteMap,
+  type BuyerApplicationRouteMap,
+} from './application-routes.js'
 import { estimateAnthropicPromptTokens, isCountTokensPath } from './count-tokens.js'
 import { getCachedVerdict, runVerifier, verifierSupportFingerprint, type CachedVerdict, type VerifierPolicy, type SellerReach, type VerifyOutcome } from '../plugins/verifier.js'
 
 // Re-export for backward compatibility (used by tests and other consumers)
 export { selectCandidatePeersForRouting, type CandidatePeerRouteSelection } from './routing.js'
-export { parsePeerPinnedService, rewritePeerPinnedServiceInBody, substituteRoutedModelAlias, ROUTED_MODEL_ALIAS } from './request-utils.js'
+export {
+  parsePeerPinnedService,
+  parseRoutedModelSelection,
+  rewritePeerPinnedServiceInBody,
+  rewriteRoutedModelSelection,
+  substituteRoutedModelAlias,
+  ROUTED_MODEL_ALIAS,
+} from './request-utils.js'
 
 export interface BuyerProxyConfig {
   port: number
@@ -415,7 +433,7 @@ export function makeVerifierReach(
       requestId: randomUUID(),
       method: r.method,
       path: r.path,
-      headers: r.headers ?? {},
+      headers: stripPrivateRequestHeaders(r.headers ?? {}),
       body: r.body ?? new Uint8Array(),
     }, { signal, controlPlane: true })
     return { statusCode: resp.statusCode, headers: resp.headers, body: resp.body }
@@ -510,6 +528,7 @@ export class BuyerProxy {
    * selection) and persisted in buyer.state.json like the session peer pin.
    */
   private _defaultRoutedModel: string | null = null
+  private _applicationRoutes: BuyerApplicationRouteMap = {}
   private _conversations!: ConversationStore
   /**
    * Wall-clock of the last model-request activity (dispatch or streamed
@@ -567,6 +586,11 @@ export class BuyerProxy {
         }
         res.end(`Proxy error: ${err instanceof Error ? err.message : String(err)}`)
       })
+    })
+    this._server.on('upgrade', (req, socket) => {
+      const path = (req.url ?? '/').split('?')[0]?.trim().toLowerCase()
+      const status = path === '/v1/responses' ? '426 Upgrade Required' : '404 Not Found'
+      socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`)
     })
 
     const sweepEventNode = this._node as AntseedNode & {
@@ -744,7 +768,11 @@ export class BuyerProxy {
       }
       const routedModel = typeof parsed.defaultRoutedModel === 'string' ? parsed.defaultRoutedModel.trim() : ''
       this._defaultRoutedModel = parsePeerPinnedService(routedModel) ? routedModel : null
-      log(`Session overrides reloaded: peer=${this._pinnedPeer ?? 'none'} route=${this._defaultRoutedModel ?? 'none'}`)
+      this._applicationRoutes = parseApplicationRouteMap(parsed.applicationRoutes ?? {})
+      log(
+        `Session overrides reloaded: peer=${this._pinnedPeer ?? 'none'} route=${this._defaultRoutedModel ?? 'none'} `
+        + `applicationRoutes=${Object.keys(this._applicationRoutes).length}`,
+      )
     } catch {
       // state file unreadable; keep current values
     }
@@ -775,7 +803,11 @@ export class BuyerProxy {
     // in the file — the debounce may have been cancelled before
     // _reloadSessionOverrides could commit the latest CLI-written values.
     const sessionOverrides = state === 'connected'
-      ? { pinnedPeerId: this._pinnedPeer, defaultRoutedModel: this._defaultRoutedModel }
+      ? {
+          pinnedPeerId: this._pinnedPeer,
+          defaultRoutedModel: this._defaultRoutedModel,
+          applicationRoutes: this._applicationRoutes,
+        }
       : {}
     await this._mergeStateFile({
       state,
@@ -1165,6 +1197,38 @@ export class BuyerProxy {
       return
     }
 
+    if (path === '/_antseed/application-routes' && method === 'POST') {
+      const chunks: Buffer[] = []
+      let totalSize = 0
+      for await (const chunk of req) {
+        totalSize += (chunk as Buffer).length
+        if (totalSize > 64 * 1024) {
+          res.writeHead(413, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: 'Request body too large' }))
+          return
+        }
+        chunks.push(chunk as Buffer)
+      }
+      let routes: BuyerApplicationRouteMap
+      try {
+        const body = JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>
+        routes = parseApplicationRouteMap(body.routes)
+      } catch (err) {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({
+          ok: false,
+          error: err instanceof Error ? err.message : 'Invalid application routes',
+        }))
+        return
+      }
+      this._applicationRoutes = routes
+      await this._mergeStateFile({ applicationRoutes: this._applicationRoutes })
+      log(`Application routes replaced: ${Object.keys(this._applicationRoutes).length}`)
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, routes: this._applicationRoutes }))
+      return
+    }
+
     if (path === '/_antseed/conversations' && method === 'GET') {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ ok: true, conversations: this._conversations.list() }))
@@ -1468,16 +1532,14 @@ export class BuyerProxy {
     const effectivePinnedPeer = this._pinnedPeer
 
     // Per-chat routing: completion requests carry a stable per-conversation
-    // identity (see conversation-identity.ts). A chat pinned to a model
-    // overrides the session default when resolving the `antseed` alias;
-    // subagent sessions inherit their parent chat's pin. The default route
-    // only steers a chat's first request — the model that serves it becomes
-    // the chat's own pin (ConversationStore.touch), so changing the default
-    // later applies to new chats only.
+    // identity (see conversation-identity.ts). Manual chat pins win first,
+    // then the application's first-turn route snapshot, then the currently
+    // active application policy. Subagent sessions inherit the parent route.
     const isConversationRequest = method === 'POST' && isCompletionRequestPath(path)
     const conversationBody = isConversationRequest
       ? parseRequestBodyObject(serializedReq.body, serializedReq.headers)
       : null
+    const requestTool = isConversationRequest ? extractRequestTool(serializedReq.headers) : ''
     const conversationIdentity = isConversationRequest
       ? extractConversationIdentity(serializedReq.headers, conversationBody)
       : null
@@ -1490,13 +1552,125 @@ export class BuyerProxy {
           ? this._conversations.getPinnedModel(conversationIdentity.tool, conversationIdentity.parentSessionKey)
           : null)
       : null
-    const effectiveRoutedModel = chatPinnedModel ?? this._defaultRoutedModel
+    const storedApplicationRoute = conversationIdentity
+      ? this._conversations.getApplicationRoute(conversationIdentity.tool, conversationIdentity.sessionKey)
+        ?? (conversationIdentity.parentSessionKey
+          ? this._conversations.getApplicationRoute(conversationIdentity.tool, conversationIdentity.parentSessionKey)
+          : null)
+      : null
+    const matchedApplicationRoute = isConversationRequest
+      ? matchApplicationRoute(this._applicationRoutes, requestTool)
+      : null
+    const titleTurn = isTitleGenerationRequest(conversationBody)
+    let applicationRouteSnapshot: StoredApplicationRoute | null = null
+    let appliedModelRoute: string | null = null
+
+    const applyModelRoute = (target: string, provider: string | null = null): void => {
+      const rewrite = rewriteRequestedModelInBody(serializedReq.body, serializedReq.headers, target)
+      serializedReq = {
+        ...serializedReq,
+        body: rewrite.body,
+        headers: provider
+          ? { ...rewrite.headers, 'x-antseed-provider': provider }
+          : rewrite.headers,
+      }
+      appliedModelRoute = target
+    }
+
+    if (chatPinnedModel) {
+      applyModelRoute(chatPinnedModel)
+      log(`Manual chat pin applied${systemRoutedModel ? ' to system-routed request' : ''}: -> ${chatPinnedModel}`)
+    } else if (storedApplicationRoute) {
+      if (storedApplicationRoute.mode === 'follow-global') {
+        const route = storedApplicationRoute.peerId
+          ? `${storedApplicationRoute.peerId}@${storedApplicationRoute.service}`
+          : null
+        if (route) applyModelRoute(route)
+      } else {
+        applyModelRoute(storedApplicationRoute.service, storedApplicationRoute.provider)
+      }
+      log(`Conversation application route applied: profile=${storedApplicationRoute.profileName} mode=${storedApplicationRoute.mode}`)
+    } else if (matchedApplicationRoute?.mode === 'follow-global') {
+      const route = this._defaultRoutedModel
+      const parsedRoute = route ? parsePeerPinnedService(route) : null
+      if (!route || !parsedRoute) {
+        log(`Request rejected: application ${matchedApplicationRoute.profileName} follows an unset default route`)
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({
+          error: {
+            type: 'no_default_route',
+            code: 'no_default_route',
+            message: `${matchedApplicationRoute.profileName} follows the VPR default, but no default route is set. Pick a model in the desktop app.`,
+            param: 'model',
+          },
+        }))
+        return
+      }
+      applyModelRoute(route)
+      applicationRouteSnapshot = {
+        profileName: matchedApplicationRoute.profileName,
+        mode: 'follow-global',
+        provider: null,
+        service: parsedRoute.service,
+        peerId: parsedRoute.peerId,
+      }
+      log(`Application route applied: profile=${matchedApplicationRoute.profileName} mode=follow-global`)
+    } else if (matchedApplicationRoute?.mode === 'model') {
+      applyModelRoute(matchedApplicationRoute.service, matchedApplicationRoute.provider)
+      applicationRouteSnapshot = {
+        profileName: matchedApplicationRoute.profileName,
+        mode: 'model',
+        provider: matchedApplicationRoute.provider,
+        service: matchedApplicationRoute.service,
+        peerId: null,
+      }
+      log(
+        `Application route applied: profile=${matchedApplicationRoute.profileName} mode=model `
+        + `provider=${matchedApplicationRoute.provider} service=${matchedApplicationRoute.service}`,
+      )
+    } else if (matchedApplicationRoute?.mode === 'client-model') {
+      const routedSelection = rewriteRoutedModelSelection(serializedReq.body, serializedReq.headers)
+      if (routedSelection.selection) {
+        serializedReq = {
+          ...serializedReq,
+          body: routedSelection.body,
+          headers: {
+            ...routedSelection.headers,
+            'x-antseed-provider': routedSelection.selection.provider,
+          },
+        }
+        appliedModelRoute = routedSelection.selection.service
+        log(
+          `Client application model applied: profile=${matchedApplicationRoute.profileName} `
+          + `provider=${routedSelection.selection.provider} service=${routedSelection.selection.service}`,
+        )
+      }
+    }
+
+    if (!appliedModelRoute) {
+      const routedSelection = rewriteRoutedModelSelection(serializedReq.body, serializedReq.headers)
+      if (routedSelection.selection) {
+        serializedReq = {
+          ...serializedReq,
+          body: routedSelection.body,
+          headers: {
+            ...routedSelection.headers,
+            'x-antseed-provider': routedSelection.selection.provider,
+          },
+        }
+        appliedModelRoute = routedSelection.selection.service
+        log(
+          `Catalog model applied: provider=${routedSelection.selection.provider} `
+          + `service=${routedSelection.selection.service}`,
+        )
+      }
+    }
 
     // Resolve the `antseed` model alias to the session's default route first,
     // so the regular `<peerId>@<service>` pin rewrite below picks up the
     // substituted value. Tool configs written by the desktop carry the alias
     // so route changes apply to running sessions without config rewrites.
-    const aliasResult = substituteRoutedModelAlias(serializedReq.body, serializedReq.headers, effectiveRoutedModel)
+    const aliasResult = substituteRoutedModelAlias(serializedReq.body, serializedReq.headers, this._defaultRoutedModel)
     if (aliasResult.aliasRequested && !aliasResult.substituted) {
       log(`Request rejected: model alias "${ROUTED_MODEL_ALIAS}" with no default route set`)
       res.writeHead(400, { 'content-type': 'application/json' })
@@ -1513,42 +1687,24 @@ export class BuyerProxy {
     }
     if (aliasResult.substituted) {
       serializedReq = { ...serializedReq, body: aliasResult.body, headers: aliasResult.headers }
-      log(`Model alias applied: ${ROUTED_MODEL_ALIAS} -> ${effectiveRoutedModel}${chatPinnedModel ? ' (chat pin)' : ''}`)
-    }
-
-    // System-proxy-intercepted tools can't carry the alias — the proxy
-    // rewrites their upstream model names to its connect-time route and
-    // marks the request. A chat pin must still win there, exactly as it
-    // does for alias-carrying configs; otherwise pinning a chat in the
-    // desktop silently does nothing for intercepted apps.
-    let chatPinOverrideApplied = false
-    if (systemRoutedModel && !aliasResult.aliasRequested && chatPinnedModel) {
-      const pinOverride = overrideRoutedModelInBody(serializedReq.body, serializedReq.headers, chatPinnedModel)
-      if (pinOverride.overridden) {
-        serializedReq = { ...serializedReq, body: pinOverride.body, headers: pinOverride.headers }
-        chatPinOverrideApplied = true
-        log(`Chat pin applied to system-routed model: -> ${chatPinnedModel}`)
-      }
+      appliedModelRoute = this._defaultRoutedModel
+      log(`Model alias applied: ${ROUTED_MODEL_ALIAS} -> ${this._defaultRoutedModel}`)
     }
 
     // Track the conversation (subagent traffic rolls up into the parent
     // chat). The snippet is only extracted the first time a chat is seen.
     // A thread the tool opened for its own housekeeping is routed and paid
     // for normally, but is not a chat — Codex titles every new chat from one.
+    let trackedConversationId: string | null = null
     if (conversationIdentity?.isUserThread) {
       const rawModel = typeof conversationBody?.['model'] === 'string' ? conversationBody['model'] : ''
-      const resolvedModel = aliasResult.substituted
-        ? effectiveRoutedModel
-        : chatPinOverrideApplied
-          ? chatPinnedModel
-          : (parsePeerPinnedService(rawModel) ? rawModel : null)
+      const resolvedModel = appliedModelRoute ?? (parsePeerPinnedService(rawModel) ? rawModel : null)
       const trackedKey = conversationIdentity.parentSessionKey ?? conversationIdentity.sessionKey
       const known = this._conversations.get(`${conversationIdentity.tool}:${trackedKey}`)
       // A title turn runs on the tool's own small model and races ahead of the
       // first real turn, so it must not become the chat's model: that pin
       // outranks the default route for every later turn, which would strand
       // the whole session on a model the user never picked.
-      const titleTurn = isTitleGenerationRequest(conversationBody)
       const snippet = known?.snippet ? null : extractFirstUserSnippet(conversationBody)
       // Some tools (T3/Claude) fire title-only requests when a new chat opens.
       // Route them normally, but do not create a blank AntSeed conversation row
@@ -1562,8 +1718,12 @@ export class BuyerProxy {
           snippet,
           lastModel: titleTurn ? null : resolvedModel,
         })
+        if (!titleTurn && applicationRouteSnapshot) {
+          this._conversations.assignApplicationRoute(tracked.id, applicationRouteSnapshot)
+        }
         // Bind the request to the chat so its cost can be attributed when the
         // payment layer signs for it (see _attributeSpend).
+        trackedConversationId = tracked.id
         this._trackRequestConversation(serializedReq.requestId, tracked.id)
       }
     }
@@ -1602,9 +1762,80 @@ export class BuyerProxy {
     const requestProtocol = detectRequestServiceApiProtocol(serializedReq)
     const requestedService = extractRequestedService(serializedReq)
     log(`Routing: protocol=${requestProtocol ?? 'null'} service=${requestedService ?? 'null'}`)
-    const explicitProvider = getExplicitProviderOverride(serializedReq)
-    const explicitPeerId = getExplicitPeerIdOverride(serializedReq, effectivePinnedPeer ?? undefined, bodyPinnedPeer)
+    let explicitProvider = getExplicitProviderOverride(serializedReq)
+    let explicitPeerId = getExplicitPeerIdOverride(serializedReq, effectivePinnedPeer ?? undefined, bodyPinnedPeer)
     log(`Routing hints: provider=${explicitProvider ?? 'auto'} pin-peer=${explicitPeerId ?? 'none'}`)
+
+    if (!explicitPeerId && requestedService) {
+      const trackedConversation = trackedConversationId ? this._conversations.get(trackedConversationId) : null
+      const stickyRoute = trackedConversation
+        ? this._conversations.getAutomaticRoute(trackedConversation.tool, trackedConversation.sessionKey, requestedService)
+        : null
+      const stickyPeerId = stickyRoute ? parsePeerPinnedService(stickyRoute)?.peerId ?? null : null
+      let automaticPeers = await this._getPeers()
+      const selectEligible = (sources: PeerInfo[]): CandidatePeerRouteSelection => selectCandidatePeersForRouting(
+        sources.filter((peer) => peerExplicitlyAdvertisesService(peer, requestedService)),
+        requestProtocol,
+        requestedService,
+        explicitProvider,
+        'strict',
+      )
+      let automaticSelection = selectEligible(automaticPeers)
+      const stickyEligible = stickyPeerId
+        ? automaticSelection.candidatePeers.find((peer) => peer.peerId.toLowerCase() === stickyPeerId)
+        : null
+      if (!stickyEligible && automaticSelection.candidatePeers.length === 0) {
+        automaticPeers = await this._getPeers({ forceRefresh: true })
+        automaticSelection = selectEligible(automaticPeers)
+      }
+      const eligiblePeers = automaticSelection.candidatePeers
+      if (eligiblePeers.length === 0) {
+        res.writeHead(503, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: {
+          type: 'no_eligible_model_peers',
+          code: 'no_eligible_model_peers',
+          message: `No peers explicitly advertise a compatible route for model "${requestedService}". Peer discovery was refreshed once.`,
+          model: requestedService,
+          protocol: requestProtocol,
+          provider: explicitProvider,
+        } }))
+        return
+      }
+      const stickyAfterRefresh = stickyPeerId
+        ? eligiblePeers.find((peer) => peer.peerId.toLowerCase() === stickyPeerId)
+        : null
+      const router = this._node.router
+      const stickySelection = stickyAfterRefresh && router
+        ? router.selectPeer(serializedReq, [stickyAfterRefresh])
+        : null
+      const selected = stickySelection ?? router?.selectPeer(serializedReq, eligiblePeers) ?? null
+      if (!selected) {
+        res.writeHead(503, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: {
+          type: 'peer_selection_failed',
+          code: 'peer_selection_failed',
+          message: `The buyer router did not select an eligible peer for model "${requestedService}".`,
+          model: requestedService,
+          eligiblePeerCount: eligiblePeers.length,
+        } }))
+        return
+      }
+      const validated = eligiblePeers.find((peer) => peer.peerId.toLowerCase() === selected.peerId.toLowerCase())
+      if (!validated) {
+        res.writeHead(502, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: {
+          type: 'invalid_router_selection',
+          code: 'invalid_router_selection',
+          message: 'The buyer router selected a peer outside the eligible model peer set.',
+          selectedPeerId: selected.peerId,
+        } }))
+        return
+      }
+      explicitPeerId = validated.peerId.toLowerCase()
+      if (trackedConversationId) {
+        this._conversations.setAutomaticRoute(trackedConversationId, requestedService, `${explicitPeerId}@${requestedService}`)
+      }
+    }
 
     // Auto peer selection is disabled. Every request MUST target a specific
     // peer, either via the per-request `x-antseed-pin-peer` header, a
@@ -1653,6 +1884,34 @@ export class BuyerProxy {
       return
     }
 
+    const reconcilePinnedProvider = (sources: PeerInfo[]): void => {
+      if (!explicitProvider || !requestedService) return
+      const pinnedPeer = sources.find((peer) => peer.peerId.toLowerCase() === explicitPeerId)
+      if (!pinnedPeer) return
+      const advertisedProviders = pinnedPeer.providers
+        .map((provider) => provider.trim().toLowerCase())
+        .filter((provider) => provider.length > 0)
+      if (advertisedProviders.includes(explicitProvider)) return
+
+      const serviceProviders = providersExplicitlyAdvertisingService(pinnedPeer, requestedService)
+      if (serviceProviders.length !== 1) return
+      const resolvedProvider = serviceProviders[0]!
+      serializedReq = {
+        ...serializedReq,
+        headers: {
+          ...serializedReq.headers,
+          'x-antseed-provider': resolvedProvider,
+        },
+      }
+      log(
+        `Pinned service provider reconciled: peer=${explicitPeerId.slice(0, 12)}... `
+        + `service=${requestedService} provider=${explicitProvider}->${resolvedProvider}`,
+      )
+      explicitProvider = resolvedProvider
+    }
+
+    reconcilePinnedProvider(peers)
+
     // Narrow the candidate set to just the pinned peer (if we already know
     // about it) before running the per-peer protocol/service match. This
     // avoids wasting work — and spamming "Service strict-miss" log lines —
@@ -1669,7 +1928,7 @@ export class BuyerProxy {
       requestProtocol,
       requestedService,
       explicitProvider,
-      'lenient',
+      bodyPinnedPeer || serializedReq.headers['x-antseed-pin-peer'] || effectivePinnedPeer ? 'lenient' : 'strict',
     )
 
     let hasForcedRefresh = false
@@ -1680,6 +1939,7 @@ export class BuyerProxy {
       hasForcedRefresh = true
       log(`Forcing peer refresh before routing after ${reason}.`)
       discoveredPeers = await this._getPeers({ forceRefresh: true })
+      reconcilePinnedProvider(discoveredPeers)
       ;({
         candidatePeers: routingPeers,
         routePlanByPeerId: routingPlans,
@@ -1973,8 +2233,13 @@ export class BuyerProxy {
         streamRequested: clientWantsStreaming,
       })
       if (!transformed) {
+        const reason = requestTransformFailureReason(requestForPeer, {
+          from: strategy.from,
+          to: strategy.to,
+          streamRequested: clientWantsStreaming,
+        })
         res.writeHead(502, { 'content-type': 'text/plain' })
-        res.end(`Failed to transform request for ${transformKey}`)
+        res.end(`Failed to transform request for ${transformKey}${reason ? `: ${reason}` : ''}`)
         return { done: true }
       }
       requestForPeer = {
@@ -1990,12 +2255,14 @@ export class BuyerProxy {
           to: strategy.from,
           streamRequested: transformed.streamRequested,
           fallbackModel: transformed.requestedModel,
+          translationContext: transformed.translationContext,
         }) ?? response
       if (transformed.streamRequested) {
         streamResponseAdapter = createStreamingAdapter({
           from: strategy.to,
           to: strategy.from,
           fallbackModel: transformed.requestedModel,
+          translationContext: transformed.translationContext,
         })
         if (!streamResponseAdapter) {
           res.writeHead(502, { 'content-type': 'text/plain' })
@@ -2003,6 +2270,11 @@ export class BuyerProxy {
           return { done: true }
         }
       }
+    }
+
+    requestForPeer = {
+      ...requestForPeer,
+      headers: stripPrivateRequestHeaders(requestForPeer.headers),
     }
 
     if (DEBUG()) {

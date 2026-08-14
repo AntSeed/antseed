@@ -176,6 +176,28 @@ export function resolvePeerRoutePlan(
   )
 }
 
+export function providersExplicitlyAdvertisingService(peer: PeerInfo, requestedService: string): string[] {
+  const normalized = requestedService.trim().toLowerCase()
+  if (!normalized) return []
+
+  const providers = new Set<string>()
+  for (const [provider, pricing] of Object.entries(peer.providerPricing ?? {})) {
+    if (Object.keys(pricing.services ?? {}).some((service) => service.trim().toLowerCase() === normalized)) {
+      providers.add(provider.trim().toLowerCase())
+    }
+  }
+  for (const [provider, protocols] of Object.entries(peer.providerServiceApiProtocols ?? {})) {
+    if (Object.keys(protocols.services ?? {}).some((service) => service.trim().toLowerCase() === normalized)) {
+      providers.add(provider.trim().toLowerCase())
+    }
+  }
+  return Array.from(providers).filter((provider) => provider.length > 0)
+}
+
+export function peerExplicitlyAdvertisesService(peer: PeerInfo, requestedService: string): boolean {
+  return providersExplicitlyAdvertisingService(peer, requestedService).length > 0
+}
+
 export function selectCandidatePeersForRouting(
   peers: PeerInfo[],
   requestProtocol: ServiceApiProtocol | null,

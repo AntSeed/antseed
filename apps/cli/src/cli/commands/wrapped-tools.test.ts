@@ -157,10 +157,13 @@ test('buildCodexConfigArgs uses ephemeral config overrides on the real Codex hom
   assert.ok(args.includes('model_providers.antseed.name="AntSeed"'))
   assert.ok(args.includes(`model_providers.antseed.base_url="${V1_PROXY_URL}"`))
   assert.ok(args.includes('model_providers.antseed.wire_api="responses"'))
+  assert.ok(args.includes('model_providers.antseed.supports_websockets=false'))
   assert.ok(args.includes('model_providers.antseed.env_key="ANTSEED_API_KEY"'))
   assert.ok(args.includes(`model="${MODEL_ID}"`))
   assert.ok(args.includes('model_provider="antseed"'))
   assert.ok(args.includes(`model_context_window=${ANTSEED_MODEL_CONTEXT_WINDOW}`))
+  assert.ok(args.includes('features.enable_request_compression=false'))
+  assert.ok(args.includes('web_search="disabled"'))
 })
 
 test('buildOpenCodeConfigContent configures AntSeed provider and selected model', () => {

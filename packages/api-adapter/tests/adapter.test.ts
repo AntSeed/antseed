@@ -1,12 +1,13 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { SerializedHttpRequest, SerializedHttpResponse, ServiceApiProtocol } from '../src/types.js';
-import { transformRequest } from '../src/request-transform.js';
+import { requestTransformFailureReason, transformRequest } from '../src/request-transform.js';
 import { transformResponse } from '../src/response-transform.js';
 import { createStreamingAdapter } from '../src/stream-transform.js';
 import {
   DEFAULT_ANTHROPIC_MAX_TOKENS,
   normalizeAnthropicMessagesRequestBody,
   renderCanonicalRequestToAnthropicMessagesBody,
+  type CanonicalRequestTranslationContext,
 } from '../src/canonical.js';
 import {
   detectRequestServiceApiProtocol,
@@ -115,7 +116,11 @@ function adaptResponseForTest(
   from: ServiceApiProtocol,
   to: ServiceApiProtocol,
   response: SerializedHttpResponse,
-  options: { fallbackModel?: string | null; streamRequested?: boolean } = {},
+  options: {
+    fallbackModel?: string | null;
+    streamRequested?: boolean;
+    translationContext?: CanonicalRequestTranslationContext;
+  } = {},
 ): SerializedHttpResponse {
   const transformed = transformResponse(response, { from, to, ...options });
   expect(transformed).not.toBeNull();
@@ -126,8 +131,9 @@ function createStreamAdapterForTest(
   from: ServiceApiProtocol,
   to: ServiceApiProtocol,
   fallbackModel: string | null,
+  translationContext?: CanonicalRequestTranslationContext,
 ) {
-  const adapter = createStreamingAdapter({ from, to, fallbackModel });
+  const adapter = createStreamingAdapter({ from, to, fallbackModel, translationContext });
   expect(adapter).not.toBeNull();
   return adapter!;
 }
@@ -1073,17 +1079,126 @@ describe('transformRequest responses to chat', () => {
     expect(body.tool_choice).toBe('auto');
   });
 
-  it('omits tools when only built-in Responses tools are provided', () => {
+  it('converts Responses custom tools and history to synthetic Chat functions', () => {
     const request = makeResponsesRequest({
       body: new TextEncoder().encode(JSON.stringify({
         model: 'gpt-4.1',
-        input: 'test',
-        tools: [{ type: 'web_search' }],
+        input: [
+          { type: 'custom_tool_call', call_id: 'call_shell_1', name: 'shell_command', input: 'pwd' },
+          { type: 'custom_tool_call_output', call_id: 'call_shell_1', output: '/tmp' },
+        ],
+        tools: [{ type: 'custom', name: 'shell_command', description: 'Run a command' }],
+        tool_choice: { type: 'custom', name: 'shell_command' },
       })),
     });
     const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
     const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
-    expect(body.tools).toBeUndefined();
+
+    expect(body.tools).toEqual([{
+      type: 'function',
+      function: {
+        name: 'shell_command',
+        description: 'Run a command',
+        parameters: {
+          type: 'object',
+          properties: { input: { type: 'string' } },
+          required: ['input'],
+          additionalProperties: false,
+        },
+      },
+    }]);
+    expect(body.tool_choice).toEqual({ type: 'function', function: { name: 'shell_command' } });
+    expect(body.messages).toEqual([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{
+          id: 'call_shell_1',
+          type: 'function',
+          function: { name: 'shell_command', arguments: '{"input":"pwd"}' },
+        }],
+      },
+      { role: 'tool', tool_call_id: 'call_shell_1', content: '/tmp' },
+    ]);
+    expect(result!.translationContext.customTools).toEqual([{
+      type: 'custom',
+      name: 'shell_command',
+      syntheticName: 'shell_command',
+    }]);
+  });
+
+  it('uses a collision-safe synthetic name for custom tools', () => {
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        input: 'test',
+        tools: [
+          { type: 'function', name: 'apply_patch', parameters: { type: 'object' } },
+          { type: 'custom', name: 'apply_patch' },
+        ],
+      })),
+    });
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+    const names = (body.tools as Array<{ function: { name: string } }>).map((tool) => tool.function.name);
+
+    expect(names).toEqual(['apply_patch', 'antseed_custom_1']);
+    expect(result!.translationContext.customTools[0]?.syntheticName).toBe('antseed_custom_1');
+  });
+
+  it('flattens Codex collaboration namespaces and ignores explicitly disabled search', () => {
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        input: 'delegate',
+        tools: [
+          {
+            type: 'namespace',
+            name: 'collaboration',
+            description: 'Sub-agent tools',
+            tools: [{
+              type: 'function',
+              name: 'spawn_agent',
+              description: 'Spawn an agent',
+              parameters: { type: 'object', properties: { message: { type: 'string' } } },
+            }],
+          },
+          { type: 'web_search', external_web_access: false },
+        ],
+      })),
+    });
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+
+    expect(body.tools).toEqual([{
+      type: 'function',
+      function: {
+        name: 'collaboration__spawn_agent',
+        description: 'Spawn an agent',
+        parameters: { type: 'object', properties: { message: { type: 'string' } } },
+      },
+    }]);
+    expect(result!.translationContext.namespaceTools).toEqual([{
+      namespace: 'collaboration',
+      name: 'spawn_agent',
+      syntheticName: 'collaboration__spawn_agent',
+    }]);
+  });
+
+  it('fails closed when enabled built-in Responses tools are provided', () => {
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        input: 'test',
+        tools: [{ type: 'web_search', external_web_access: true }],
+      })),
+    });
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
+    expect(result).toBeNull();
+    expect(requestTransformFailureReason(request, {
+      from: 'openai-responses',
+      to: 'openai-chat-completions',
+    })).toBe('unsupported Responses tool declaration type=web_search');
   });
 
   it('remaps object tool_choice to Chat Completions nested format', () => {
@@ -1232,6 +1347,58 @@ describe('transformRequest responses to chat', () => {
 
     expect(messages.map((message) => message.role)).toEqual(['user', 'assistant', 'tool']);
     expect(messages[2]).toEqual({ role: 'tool', tool_call_id: 'get_goal:0', content: 'ship it' });
+  });
+
+  it('fails closed when nonconvertible Responses tool history is provided', () => {
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        input: [
+          { role: 'user', content: 'search' },
+          { type: 'web_search_call', id: 'search_1', status: 'completed' },
+        ],
+      })),
+    });
+    expect(transformRequest(request, {
+      from: 'openai-responses',
+      to: 'openai-chat-completions',
+    })).toBeNull();
+  });
+
+  it('converts local shell declarations and history without dropping them', () => {
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        tools: [{ type: 'local_shell' }],
+        input: [
+          {
+            type: 'local_shell_call',
+            id: 'item_1',
+            call_id: 'call_1',
+            action: { type: 'exec', command: ['pwd'], env: {} },
+          },
+          { type: 'local_shell_call_output', id: 'call_1', output: '{"stdout":"/tmp"}' },
+        ],
+      })),
+    });
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+    const tools = body.tools as Array<{ function: { name: string } }>;
+    const messages = body.messages as Array<Record<string, unknown>>;
+
+    expect(tools[0]?.function.name).toBe('local_shell');
+    expect(messages[0]).toMatchObject({
+      role: 'assistant',
+      tool_calls: [{
+        id: 'call_1',
+        function: { name: 'local_shell' },
+      }],
+    });
+    expect(messages[1]).toEqual({
+      role: 'tool',
+      tool_call_id: 'call_1',
+      content: '{"stdout":"/tmp"}',
+    });
   });
 
   it('returns null for unsupported request protocols', () => {
@@ -1435,6 +1602,111 @@ describe('transformResponse chat to responses', () => {
     expect(functionCall!.id).toBe('call_123');
     expect(functionCall!.call_id).toBe('call_123');
     expect(functionCall!.arguments).toBe('{"path":"hello.txt"}');
+  });
+
+  it('restores synthetic Chat function calls as Responses custom tool calls', () => {
+    const transformedRequest = transformRequest(makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        input: 'run pwd',
+        tools: [{ type: 'custom', name: 'shell_command' }],
+      })),
+    }), { from: 'openai-responses', to: 'openai-chat-completions' })!;
+    const chatResponse = makeOpenAIResponse({
+      body: new TextEncoder().encode(JSON.stringify({
+        id: 'chatcmpl-custom',
+        model: 'gpt-4.1',
+        choices: [{
+          index: 0,
+          finish_reason: 'tool_calls',
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [{
+              id: 'call_shell_1',
+              type: 'function',
+              function: { name: 'shell_command', arguments: '{"input":"pwd"}' },
+            }],
+          },
+        }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      })),
+    });
+
+    const result = adaptResponseForTest('openai-chat-completions', 'openai-responses', chatResponse, {
+      translationContext: transformedRequest.translationContext,
+    });
+    const body = JSON.parse(new TextDecoder().decode(result.body)) as Record<string, unknown>;
+    expect((body.output as Array<Record<string, unknown>>)[0]).toEqual({
+      type: 'custom_tool_call',
+      id: 'call_shell_1',
+      call_id: 'call_shell_1',
+      name: 'shell_command',
+      input: 'pwd',
+    });
+  });
+
+  it('restores flattened collaboration calls with their namespace', () => {
+    const translationContext: CanonicalRequestTranslationContext = {
+      customTools: [],
+      namespaceTools: [{
+        namespace: 'collaboration',
+        name: 'collaboration__spawn_agent',
+        syntheticName: 'collaboration__spawn_agent',
+      }],
+    };
+    const result = adaptResponseForTest('openai-chat-completions', 'openai-responses', makeOpenAIResponse({
+      body: new TextEncoder().encode(JSON.stringify({
+        id: 'chatcmpl-collab',
+        model: 'gpt-4.1',
+        choices: [{
+          finish_reason: 'tool_calls',
+          message: {
+            tool_calls: [{
+              id: 'call_agent_1',
+              type: 'function',
+              function: { name: 'collaboration__spawn_agent', arguments: '{"message":"work"}' },
+            }],
+          },
+        }],
+        usage: {},
+      })),
+    }), { translationContext });
+    const body = JSON.parse(new TextDecoder().decode(result.body)) as Record<string, unknown>;
+    expect((body.output as Array<Record<string, unknown>>)[0]).toMatchObject({
+      type: 'function_call',
+      name: 'collaboration__spawn_agent',
+      namespace: 'collaboration',
+    });
+  });
+
+  it('preserves malformed synthetic arguments as custom tool input', () => {
+    const translationContext: CanonicalRequestTranslationContext = {
+      customTools: [{ type: 'custom', name: 'apply_patch', syntheticName: 'apply_patch' }],
+    };
+    const result = adaptResponseForTest('openai-chat-completions', 'openai-responses', makeOpenAIResponse({
+      body: new TextEncoder().encode(JSON.stringify({
+        id: 'chatcmpl-malformed',
+        model: 'gpt-4.1',
+        choices: [{
+          finish_reason: 'tool_calls',
+          message: {
+            tool_calls: [{
+              id: 'call_patch_1',
+              type: 'function',
+              function: { name: 'apply_patch', arguments: 'not-json' },
+            }],
+          },
+        }],
+        usage: {},
+      })),
+    }), { translationContext });
+    const body = JSON.parse(new TextDecoder().decode(result.body)) as Record<string, unknown>;
+    expect((body.output as Array<Record<string, unknown>>)[0]).toMatchObject({
+      type: 'custom_tool_call',
+      name: 'apply_patch',
+      input: 'not-json',
+    });
   });
 
   it('uses fallback service when response has none', () => {
@@ -1877,6 +2149,90 @@ describe('createStreamingAdapter chat to responses', () => {
     expect(sseText).toContain('event: response.function_call_arguments.done');
     expect(sseText).toContain('"name":"write"');
     expect(sseText).toContain('hello.txt');
+  });
+
+  it('restores streamed synthetic functions as Responses custom tool events', () => {
+    const translationContext: CanonicalRequestTranslationContext = {
+      customTools: [{ type: 'custom', name: 'shell_command', syntheticName: 'shell_command' }],
+    };
+    const adapter = createStreamAdapterForTest(
+      'openai-chat-completions',
+      'openai-responses',
+      '',
+      translationContext,
+    );
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-custom-tool',
+      data: new TextEncoder().encode(
+        'data: {"id":"chatcmpl-tool","model":"gpt-4.1","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"shell_command","arguments":"{\\"input\\":\\"p"}}]},"finish_reason":null}]}\n\n'
+        + 'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"wd\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+
+    const events = parseSseEvents(chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join(''));
+    expect(events.some((event) => event.event === 'response.function_call_arguments.delta')).toBe(false);
+    expect(events.find((event) => event.event === 'response.output_item.added')?.data).toContain('"type":"custom_tool_call"');
+    expect(events.find((event) => event.event === 'response.custom_tool_call_input.delta')?.data).toContain('"delta":"pwd"');
+    expect(events.find((event) => event.event === 'response.custom_tool_call_input.done')?.data).toContain('"input":"pwd"');
+    const completed = JSON.parse(events.find((event) => event.event === 'response.completed')!.data) as Record<string, unknown>;
+    expect(completed).toMatchObject({
+      response: {
+        output: [{
+          type: 'custom_tool_call',
+          id: 'call_1',
+          call_id: 'call_1',
+          name: 'shell_command',
+          input: 'pwd',
+        }],
+      },
+    });
+  });
+
+  it('restores streamed collaboration namespace in every terminal event', () => {
+    const translationContext: CanonicalRequestTranslationContext = {
+      customTools: [],
+      namespaceTools: [{
+        namespace: 'collaboration',
+        name: 'spawn_agent',
+        syntheticName: 'collaboration__spawn_agent',
+      }],
+    };
+    const adapter = createStreamAdapterForTest(
+      'openai-chat-completions',
+      'openai-responses',
+      '',
+      translationContext,
+    );
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-collaboration-tool',
+      data: new TextEncoder().encode(
+        'data: {"id":"chatcmpl-tool","model":"gpt-4.1","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"collaboration__spawn_agent","arguments":"{\\"message\\":\\"work\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+
+    const events = parseSseEvents(chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join(''));
+    for (const eventName of [
+      'response.output_item.added',
+      'response.function_call_arguments.done',
+      'response.output_item.done',
+    ]) {
+      const data = events.find((event) => event.event === eventName)?.data ?? '';
+      expect(data).toContain('"name":"spawn_agent"');
+      expect(data).toContain('"namespace":"collaboration"');
+      expect(data).not.toContain('collaboration__spawn_agent');
+    }
+    const completed = JSON.parse(events.find((event) => event.event === 'response.completed')!.data) as {
+      response: { output: Array<Record<string, unknown>> };
+    };
+    expect(completed.response.output[0]).toMatchObject({
+      type: 'function_call',
+      name: 'spawn_agent',
+      namespace: 'collaboration',
+    });
   });
 
   it('emits response.created first and avoids phantom text items for tool-only streams', () => {

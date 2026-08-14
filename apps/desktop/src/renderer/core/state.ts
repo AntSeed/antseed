@@ -90,6 +90,16 @@ export type VprRouteSelection = {
   peerId: string | null;
 };
 
+export type VprApplicationRouteSelection =
+  | { mode: 'client-model' }
+  | { mode: 'follow-global' }
+  | {
+      mode: 'model';
+      model: VprSelectedModel;
+    };
+
+export type VprApplicationRoutes = Record<string, VprApplicationRouteSelection>;
+
 export type VprRoutingPreferences = {
   autoRouting: boolean;
   preferFreePeers: boolean;
@@ -344,6 +354,7 @@ export type RendererUiState = {
   vprRoutableRows: DiscoverRow[];
   vprModelCatalog: VprModelCatalogEntry[];
   vprRouteSelection: VprRouteSelection;
+  vprApplicationRoutes: VprApplicationRoutes;
   /** Remembered seller pin per model (`provider:serviceId` -> peer id), so a
    * pinned model stays pinned across model switches. */
   vprModelPins: Record<string, string>;
@@ -500,6 +511,7 @@ export function createInitialUiState(): RendererUiState {
       mode: 'auto',
       peerId: null,
     },
+    vprApplicationRoutes: {},
     vprModelPins: {},
     vprRoutingPreferences: {
       autoRouting: true,

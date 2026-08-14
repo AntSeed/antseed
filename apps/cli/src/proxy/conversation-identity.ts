@@ -161,6 +161,10 @@ function detectTool(headers: Record<string, string>): string {
   return slugifyTool(product) || 'unknown'
 }
 
+export function extractRequestTool(headers: Record<string, string>): string {
+  return systemProxySource(headers) || toolSessionHeader(headers)?.tool || detectTool(headers)
+}
+
 function sessionKeyFromBody(body: Record<string, unknown> | null): string {
   if (!body) return ''
   const cacheKey = body['prompt_cache_key']
@@ -202,7 +206,7 @@ export function extractConversationIdentity(
   if (!trimmed) return null
   const parent = getHeader(headers, 'x-parent-session-id').trim()
   return {
-    tool: systemProxySource(headers) || named?.tool || detectTool(headers),
+    tool: extractRequestTool(headers),
     sessionKey: trimmed,
     parentSessionKey: parent.length > 0 ? parent : null,
     isUserThread: isUserThread(headers),

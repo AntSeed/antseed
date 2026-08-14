@@ -1,3 +1,6 @@
+import type { ApplicationRoutePolicies } from '../../shared/application-routes';
+import type { ConnectedAppModelCatalogSnapshot } from '../../shared/connected-app-model-catalog';
+
 export type RuntimeMode = 'connect' | 'system-proxy';
 
 export type RuntimeProcessState = {
@@ -416,7 +419,9 @@ export type DesktopBridge = {
   depositsWatchStop?: () => Promise<{ ok: boolean }>;
   onDepositsWatchStatus?: (handler: (data: DepositWatchStatus) => void) => () => void;
 
-  systemProxyStart?: (opts: { peerId: string; port?: number; profiles?: string[]; defaultModel?: string; servedModels?: string[]; toolRoutes?: Record<string, { peerId: string; model: string }>; profileSwitch?: boolean }) => Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }>;
+  systemProxyStart?: (opts: { peerId: string; port?: number; profiles?: string[]; defaultModel?: string; servedModels?: string[]; applicationRoutes?: ApplicationRoutePolicies; profileSwitch?: boolean }) => Promise<{ ok: boolean; state?: RuntimeProcessState; error?: string }>;
+  systemProxySetApplicationRoutes?: (routes: ApplicationRoutePolicies) => Promise<{ ok: boolean; error?: string }>;
+  systemProxySyncModelCatalog?: (snapshot: ConnectedAppModelCatalogSnapshot) => Promise<{ ok: boolean; changed?: boolean; error?: string }>;
   systemProxyListProfiles?: () => Promise<SystemProxyProfileSummary[]>;
   /** Installed applications for the "Open with" picker (macOS .app bundles,
       Windows Start Menu shortcuts). */
@@ -476,9 +481,7 @@ export type BuyerConversationSummary = {
   sessionKey: string;
   snippet: string;
   label: string | null;
-  /** Per-chat route pin as `<peerId>@<service>`. The buyer pins a chat to
-      the first model that serves it, so this is null only until the chat's
-      first resolved request; the default route applies to new chats only. */
+  /** User-controlled per-chat route pin as `<peerId>@<service>`. */
   pinnedModel: string | null;
   /** How the pin's peer was chosen: 'user' = the user picked this seller for
       this chat (sweeps never move it), 'auto' = routing picked it. Absent on
@@ -502,6 +505,7 @@ export type BuyerConversationSummary = {
 export type VprFloatApp = {
   name: string;
   displayName: string;
+  route: import('../core/state').VprApplicationRouteSelection;
   /** Client names that attribute conversations to this app (see
       SystemProxyProfileSummary.toolSlugs). */
   toolSlugs?: string[];
@@ -523,7 +527,7 @@ export type VprFloatConversation = {
   title: string;
   /** Compact session identifier for the meta line ("019f83b7"). */
   sessionShort: string;
-  /** Service id of the pinned model, or null when following the default route. */
+  /** Service id of the chat's effective manual or automatic route. */
   pinnedServiceId: string | null;
   lastActiveAt: number;
   /** True while the chat is receiving traffic (recent request activity) —
@@ -587,6 +591,7 @@ export type VprFloatAction =
   | 'open-main'
   | { type: 'open-deposit' }
   | { type: 'select-model'; provider: string; serviceId: string }
+  | { type: 'set-application-route'; profileName: string; selection: import('../core/state').VprApplicationRouteSelection }
   | { type: 'pin-chat-model'; conversationId: string; provider: string; serviceId: string }
   | { type: 'open-chat-app'; conversationId: string }
   | { type: 'set-compact'; compact: boolean };

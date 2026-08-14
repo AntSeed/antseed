@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { ArrowExpand02Icon, ArrowRight01Icon, ArrowShrink02Icon, ArrowUpRight01Icon, Cancel01Icon } from '@hugeicons/core-free-icons';
+import { ArrowExpand02Icon, ArrowRight01Icon, ArrowShrink02Icon, ArrowUpRight01Icon, Cancel01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
 import type { VprFloatApp, VprFloatData } from '../../types/bridge';
 import { conversationAge, conversationMatchesApp } from '../../modules/routing/conversations';
 import { displayToolName } from '../../modules/routing/tool-names';
@@ -46,8 +46,8 @@ export function FloatApp() {
   const [data, setData] = useState<VprFloatData | null>(null);
   // Whether the conversations panel is open; the window grows while it is.
   const [menuOpen, setMenuOpen] = useState(false);
-  // Drill-down inside the conversations panel: null = the list, 'default' =
-  // picking the default model, otherwise the conversation id being pinned.
+  // Drill-down inside the conversations panel: app routes and individual
+  // conversations share the same compact model browser.
   const [chatTarget, setChatTarget] = useState<string | null>(null);
   // Which way the next level change animates: drilling in slides from the
   // right, going back slides from the left.
@@ -197,9 +197,13 @@ export function FloatApp() {
     return (tool: string): VprFloatApp | null =>
       apps.find((app) => conversationMatchesApp(tool, app)) ?? null;
   }, [data?.apps]);
+  const targetAppName = chatTarget?.startsWith('app:') ? chatTarget.slice(4) : null;
+  const targetApp = targetAppName
+    ? (data?.apps ?? []).find((app) => app.name === targetAppName) ?? null
+    : null;
   // Level-2 target chat; a chat that ages out of the list mid-visit falls
   // back to the conversations list.
-  const targetChat = chatTarget && chatTarget !== 'default'
+  const targetChat = chatTarget && !targetAppName
     ? conversations.find((chat) => chat.id === chatTarget) ?? null
     : null;
   const targetChatApp = targetChat ? appForTool(targetChat.tool) : null;
@@ -207,11 +211,11 @@ export function FloatApp() {
     ? (targetChatApp?.displayName ?? displayToolName(targetChat.tool))
     : '';
   useEffect(() => {
-    if (chatTarget && chatTarget !== 'default' && !targetChat) {
+    if (chatTarget && !targetChat && !targetApp) {
       setNavDir('back');
       setChatTarget(null);
     }
-  }, [chatTarget, targetChat]);
+  }, [chatTarget, targetApp, targetChat]);
 
   /** Enter a drill-down level (slides in from the right). */
   const drillIn = (target: string) => {
@@ -252,16 +256,19 @@ export function FloatApp() {
     () => new Map(Object.entries(data?.pinnedSellers ?? {})),
     [data?.pinnedSellers],
   );
-  const pinnedSeller = selectedModelValue ? pinnedSellers.get(selectedModelValue) ?? null : null;
+  const applicationRouteLabel = (app: VprFloatApp): string => {
+    if (app.route.mode === 'client-model') return 'In-app selection';
+    if (app.route.mode === 'follow-global') return modelLabel;
+    return app.route.model.label;
+  };
   // Routing state: while the buyer runtime is stopped the pill shows a
   // "Not connected" status and the dropdown hides recent chats.
   const runtimeOn = data?.runtimeOn ?? true;
 
-  // The model that served the most recent chat (its pin, set by the buyer on
-  // the chat's first request) — shown on the pill face instead of the
-  // default selection.
+  // The effective model for the most recent resolved chat — shown on the pill
+  // face instead of the global default selection.
   const recentModelLabel = useMemo(() => {
-    // Newest chat with a resolved pin — brand-new chats have none yet.
+    // Brand-new chats have no resolved route yet.
     const recent = conversations.find((chat) => chat.pinnedServiceId)?.pinnedServiceId;
     if (!recent) return null;
     return models.find((model) => model.serviceId === recent)?.label ?? recent;
@@ -413,9 +420,8 @@ export function FloatApp() {
               ) : conversations.map((chat) => {
                 const app = appForTool(chat.tool);
                 const appLabel = app?.displayName ?? displayToolName(chat.tool);
-                // Name the model the chat runs on: its pin (set by the buyer
-                // on the chat's first request), falling back to the default
-                // route for chats that haven't resolved a request yet.
+                // Name the model the chat currently runs on. Chats that have
+                // not resolved a request yet do not have a route to show.
                 const pinnedLabel = chat.pinnedServiceId
                   ? (models.find((model) => model.serviceId === chat.pinnedServiceId)?.label ?? chat.pinnedServiceId)
                   : null;
@@ -456,13 +462,13 @@ export function FloatApp() {
                 );
               })}
             </div>
-          ) : (chatTarget === 'default' || targetChat) ? (
+          ) : (targetApp || targetChat) ? (
             <div key={chatTarget} className={slideClass}>
               {/* Same back-title chrome as the inner VPR pages, plus a
                   right-side shortcut launching the chat's app. */}
               <div className={styles.menuBack}>
                 <VprBackTitle
-                  title={targetChat ? targetChat.title : 'New session model'}
+                  title={targetChat ? targetChat.title : targetApp?.displayName ?? 'App model'}
                   onBack={drillBack}
                 />
                 {targetChat ? (
@@ -478,20 +484,44 @@ export function FloatApp() {
                   </button>
                 ) : null}
               </div>
+              {targetApp ? (
+                <div className={styles.routeChoices}>
+                  {targetApp.name === 'codex' || targetApp.name === 'opencode' ? (
+                    <button
+                      type="button"
+                      className={`${styles.routeChoice}${targetApp.route.mode === 'client-model' ? ` ${styles.routeChoiceSelected}` : ''}`}
+                      onClick={() => {
+                        bridge?.vprFloatAction?.({ type: 'set-application-route', profileName: targetApp.name, selection: { mode: 'client-model' } });
+                        drillBack();
+                      }}
+                    >
+                      {targetApp.route.mode === 'client-model' ? <HugeiconsIcon icon={Tick02Icon} size={14} strokeWidth={2} /> : null}
+                      <span><strong>In-app selection</strong><small>{`Use model selected in ${targetApp.displayName}`}</small></span>
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
               <VprModelRowList
                 entries={models}
-                selectedProvider={targetChat ? undefined : data?.selectedModel?.provider}
-                selectedServiceId={targetChat ? (targetChat.pinnedServiceId ?? undefined) : data?.selectedModel?.serviceId}
+                selectedProvider={targetApp?.route.mode === 'model' ? targetApp.route.model.provider : undefined}
+                selectedServiceId={targetChat ? (targetChat.pinnedServiceId ?? undefined) : targetApp?.route.mode === 'model' ? targetApp.route.model.serviceId : undefined}
                 favoriteKeys={favoriteKeys}
                 compact
-                // Per-model pins belong to the default route — a chat's own
-                // pin is a different scope.
-                pinnedPeerLabels={targetChat ? undefined : pinnedSellers}
                 onSelect={(provider, serviceId) => {
                   if (targetChat) {
                     bridge?.vprFloatAction?.({ type: 'pin-chat-model', conversationId: targetChat.id, provider, serviceId });
-                  } else {
-                    bridge?.vprFloatAction?.({ type: 'select-model', provider, serviceId });
+                  } else if (targetApp) {
+                    const model = models.find((entry) => entry.provider === provider && entry.serviceId === serviceId);
+                    if (model) {
+                      bridge?.vprFloatAction?.({
+                        type: 'set-application-route',
+                        profileName: targetApp.name,
+                        selection: {
+                          mode: 'model',
+                          model: { provider: model.provider, serviceId: model.serviceId, label: model.label, categories: [...model.categories] },
+                        },
+                      });
+                    }
                   }
                   drillBack();
                 }}
@@ -501,23 +531,27 @@ export function FloatApp() {
             </div>
           ) : null}
           </OverlayScrollArea>
-          {/* Setting, not a chat: a quiet one-liner naming the model the next
-              app session starts on — pinned above the footer, list level only. */}
           {chatTarget === null ? (
-            <button
-              type="button"
-              className={`${styles.menuRow} ${styles.menuRowDefault}`}
-              onClick={() => drillIn('default')}
-            >
-              <span className={styles.menuRowDefaultTitle}>New session model</span>
-              <span className={styles.menuRowValue}>
-                <span className={styles.menuRowValueModel}>{modelLabel}</span>
-                {/* Pinned routing names its seller here — the pill has no
-                    other place that says where requests actually go. */}
-                {pinnedSeller ? <span className={styles.menuRowSeller}>{pinnedSeller}</span> : null}
-              </span>
-              <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.menuRowChevron} />
-            </button>
+            <div className={styles.appRouteList}>
+              {(data?.apps ?? []).map((app) => (
+                <button
+                  type="button"
+                  key={app.name}
+                  className={`${styles.menuRow} ${styles.menuRowDefault}`}
+                  onClick={() => drillIn(`app:${app.name}`)}
+                >
+                  <AppMark app={app} size={15} />
+                  <span className={styles.menuRowDefaultTitle}>{app.displayName}</span>
+                  <span className={styles.menuRowValue}>
+                    <span className={styles.menuRowValueModel}>{applicationRouteLabel(app)}</span>
+                    <span className={styles.menuRowSeller}>
+                      {app.route.mode === 'client-model' ? app.displayName : 'Best'}
+                    </span>
+                  </span>
+                  <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.menuRowChevron} />
+                </button>
+              ))}
+            </div>
           ) : null}
           {/* Pinned footer: opens the main AntSeed window (VPR). */}
           <button

@@ -18,9 +18,12 @@ export function conversationTitle(record: BuyerConversationSummary): string {
   return record.label || record.snippet || record.sessionKey.slice(0, 12);
 }
 
-/** Service id of the pinned model, or null when following the default route. */
+/** Service id of the chat's effective route. Manual pins win; otherwise the
+    most recently resolved automatic or application route is shown. */
 export function conversationPinnedServiceId(record: BuyerConversationSummary): string | null {
-  return record.pinnedModel?.split('@').slice(1).join('@') || null;
+  const route = record.pinnedModel || record.lastModel;
+  if (!route) return null;
+  return route.includes('@') ? route.split('@').slice(1).join('@') || null : route;
 }
 
 /** Peer id of the chat's pinned route, or null while unpinned. */

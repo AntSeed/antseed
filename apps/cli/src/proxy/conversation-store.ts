@@ -22,16 +22,20 @@ export type StoredConversation = {
   snippet: string
   /** User-assigned name; overrides the snippet for display when set. */
   label: string | null
-  /** Per-chat route pin as `<peerId>@<service>`. The default route only
-      steers a chat's first request: the model that serves it is pinned here
-      (see touch), so later default changes affect only new chats. Null only
-      until the chat's first resolved request. */
+  /** User-controlled per-chat model pin. This always overrides the captured
+      application route and the automatic Best seller route. */
   pinnedModel: string | null
   /** How the pin's peer was chosen. 'auto' means routing picked it (first
       request affinity, or the desktop re-pointing chats when a seller is
       pinned for the model); 'user' means the user chose this seller for this
       specific chat, which nothing overrides until they clear it. */
   peerSource: 'auto' | 'user'
+  /** Application/default route captured on the first genuine user request.
+      This is separate from a manual per-chat pin: manual pins still win, while
+      this snapshot keeps later application-dropdown changes scoped to new chats. */
+  applicationRoute: StoredApplicationRoute | null
+  automaticRoute: string | null
+  automaticService: string | null
   /** Model that served the most recent request (`<peerId>@<service>`), for display. */
   lastModel: string | null
   /** USDC base units authorized for this chat's requests (bigint as string).
@@ -48,6 +52,14 @@ export type StoredConversation = {
   requestCount: number
   createdAt: number
   lastActiveAt: number
+}
+
+export type StoredApplicationRoute = {
+  profileName: string
+  mode: 'follow-global' | 'model'
+  provider: string | null
+  service: string
+  peerId: string | null
 }
 
 export const CONVERSATIONS_FILE = 'conversations.json'
@@ -78,6 +90,37 @@ function sanitizeRecord(value: unknown): StoredConversation | null {
   const tool = typeof record.tool === 'string' ? record.tool : ''
   const sessionKey = typeof record.sessionKey === 'string' ? record.sessionKey : ''
   if (!tool || !sessionKey) return null
+  const applicationRouteRaw = record.applicationRoute
+  let applicationRoute: StoredApplicationRoute | null = null
+  if (applicationRouteRaw && typeof applicationRouteRaw === 'object' && !Array.isArray(applicationRouteRaw)) {
+    const route = applicationRouteRaw as Record<string, unknown>
+    const mode = route.mode
+    const profileName = typeof route.profileName === 'string' ? route.profileName.trim() : ''
+    const service = typeof route.service === 'string' ? route.service.trim() : ''
+    const provider = typeof route.provider === 'string' && route.provider.trim()
+      ? route.provider.trim().toLowerCase()
+      : null
+    const peerId = typeof route.peerId === 'string' && route.peerId.trim()
+      ? route.peerId.trim().toLowerCase()
+      : null
+    if (profileName && service && mode === 'follow-global' && peerId) {
+      applicationRoute = {
+        profileName,
+        mode,
+        provider: null,
+        service,
+        peerId,
+      }
+    } else if (profileName && service && mode === 'model' && provider) {
+      applicationRoute = {
+        profileName,
+        mode,
+        provider,
+        service,
+        peerId: null,
+      }
+    }
+  }
   return {
     id: conversationId(tool, sessionKey),
     tool,
@@ -88,6 +131,9 @@ function sanitizeRecord(value: unknown): StoredConversation | null {
     label: typeof record.label === 'string' && record.label.length > 0 ? record.label : null,
     pinnedModel: typeof record.pinnedModel === 'string' && record.pinnedModel.length > 0 ? record.pinnedModel : null,
     peerSource: record.peerSource === 'user' ? 'user' : 'auto',
+    applicationRoute,
+    automaticRoute: typeof record.automaticRoute === 'string' && record.automaticRoute.length > 0 ? record.automaticRoute : null,
+    automaticService: typeof record.automaticService === 'string' && record.automaticService.length > 0 ? record.automaticService : null,
     lastModel: typeof record.lastModel === 'string' && record.lastModel.length > 0 ? record.lastModel : null,
     spentUsdc: sanitizeCounter(record.spentUsdc),
     inputTokens: sanitizeCounter(record.inputTokens),
@@ -167,9 +213,8 @@ export class ConversationStore {
    * Record activity for a conversation, creating it on first sight. The
    * snippet only sticks at creation — later turns keep the original label.
    *
-   * The first model that actually serves the chat becomes its pin: the
-   * session default only steers chats that haven't resolved a request yet,
-   * so changing the default never re-routes an existing conversation.
+   * Route snapshots and automatic seller stickiness are updated separately;
+   * touch only records activity and preserves those routing fields.
    */
   touch(input: { tool: string; sessionKey: string; snippet?: string | null; lastModel?: string | null }): StoredConversation {
     const id = conversationId(input.tool, input.sessionKey)
@@ -181,7 +226,10 @@ export class ConversationStore {
         ...existing,
         lastActiveAt: now,
         lastModel: input.lastModel ?? existing.lastModel,
-        pinnedModel: existing.pinnedModel ?? input.lastModel ?? null,
+        pinnedModel: existing.pinnedModel,
+        applicationRoute: existing.applicationRoute,
+        automaticRoute: existing.automaticRoute,
+        automaticService: existing.automaticService,
         snippet: existing.snippet || (input.snippet ?? ''),
       }
     } else {
@@ -191,8 +239,11 @@ export class ConversationStore {
         sessionKey: input.sessionKey,
         snippet: input.snippet ?? '',
         label: null,
-        pinnedModel: input.lastModel ?? null,
+        pinnedModel: null,
         peerSource: 'auto',
+        applicationRoute: null,
+        automaticRoute: null,
+        automaticService: null,
         lastModel: input.lastModel ?? null,
         spentUsdc: '0',
         inputTokens: '0',
@@ -267,6 +318,35 @@ export class ConversationStore {
 
   getPinnedModel(tool: string, sessionKey: string): string | null {
     return this._byId.get(conversationId(tool, sessionKey))?.pinnedModel ?? null
+  }
+
+  getApplicationRoute(tool: string, sessionKey: string): StoredApplicationRoute | null {
+    return this._byId.get(conversationId(tool, sessionKey))?.applicationRoute ?? null
+  }
+
+  assignApplicationRoute(id: string, applicationRoute: StoredApplicationRoute): StoredConversation | null {
+    const existing = this._byId.get(id)
+    if (!existing) return null
+    if (existing.applicationRoute) return existing
+    const record = { ...existing, applicationRoute }
+    this._byId.set(id, record)
+    void this._persist()
+    return record
+  }
+
+  getAutomaticRoute(tool: string, sessionKey: string, service: string): string | null {
+    const record = this._byId.get(conversationId(tool, sessionKey))
+    if (!record?.automaticRoute || record.automaticService?.toLowerCase() !== service.toLowerCase()) return null
+    return record.automaticRoute
+  }
+
+  setAutomaticRoute(id: string, service: string, route: string): StoredConversation | null {
+    const existing = this._byId.get(id)
+    if (!existing) return null
+    const record = { ...existing, automaticRoute: route, automaticService: service, lastModel: route }
+    this._byId.set(id, record)
+    void this._persist()
+    return record
   }
 
   setLabel(id: string, label: string | null): StoredConversation | null {
