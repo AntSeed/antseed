@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -83,6 +83,21 @@ test('canonical proxy evidence round-trips and derives a stable audit id', async
     assert.equal(written.evidenceHash, hash)
     assert.equal((await readFile(written.path, 'utf8')).endsWith('\n'), false)
     assert.deepEqual(await verifyProxyAuditEvidenceFile(written.path, hash), value)
+    const packDirectory = join(directory, auditId)
+    assert.deepEqual((await readdir(packDirectory)).sort(), [
+      'README.md', 'evidence.json', 'exchanges', 'manifest.json', 'probe-integrity.json',
+    ])
+    const manifest = JSON.parse(await readFile(join(packDirectory, 'manifest.json'), 'utf8')) as {
+      evidenceLevel: string
+      scope: { paymentEvidence: boolean; onChainInclusionProof: boolean }
+    }
+    assert.equal(manifest.evidenceLevel, value.evidenceLevel)
+    assert.deepEqual(manifest.scope, {
+      responseAuthentication: 'seller-signed-response-auth',
+      exactSignedPreimages: true,
+      paymentEvidence: false,
+      onChainInclusionProof: false,
+    })
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

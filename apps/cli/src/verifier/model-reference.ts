@@ -261,7 +261,7 @@ export async function buildModelReference(input: {
   const sizing = resolveReferenceSizingPolicy(input.config)
   const checkpointPath = join(input.referencesDir, '.checkpoints', `${safeServiceSlug(input.model)}.json`)
   const compatibilityHash = canonicalHashBytes32({
-    version: 2,
+    version: 3,
     model: normalized(input.model),
     endpoint: {
       baseUrl: endpoint.baseUrl.replace(/\/+$/, ''),
@@ -283,6 +283,7 @@ export async function buildModelReference(input: {
     candidatePromptVersion: 3,
     enrollmentBatchingVersion: 2,
     enrollmentStabilityVersion: 2,
+    enrollmentEvidenceVersion: 1,
     timeoutMs,
     reasoningStrategy: targetReasoningStrategy,
     routesByModel: [...routesByModel.entries()],
@@ -411,7 +412,7 @@ export async function buildModelReference(input: {
     source: 'generated',
     generator: {
       name: 'antseed-simple-reference-builder',
-      version: '3',
+      version: '4',
       verifierKind: 'kbf',
       params: {
         sourceId: endpoint.sourceId,
@@ -428,6 +429,7 @@ export async function buildModelReference(input: {
         sizingAlgorithmVersion: REFERENCE_SIZING_ALGORITHM_VERSION,
         enrollmentBatchingVersion: 2,
         enrollmentStabilityVersion: 2,
+        enrollmentEvidenceVersion: 1,
       },
     },
     provenance: {
@@ -582,7 +584,19 @@ async function certifyStableProbes(
     const consensus = stableConsensus(values, probe)
     if (consensus === null) return []
     if (consensus < probe.range[0] || consensus > probe.range[1]) return []
-    return [{ ...probe, consensus, tolerance: canonicalKbfTolerance(probe.domain) }]
+    const tolerance = canonicalKbfTolerance(probe.domain)
+    return [{
+      ...probe,
+      consensus,
+      tolerance,
+      enrollmentEvidence: {
+        temperatures: [...KBF_ENROLLMENT_TEMPERATURES],
+        answers: values,
+        rule: tolerance.mode === 'absolute'
+          ? 'rounded-exact-agreement'
+          : 'relative-maximum-deviation-2-percent',
+      },
+    }]
   })
 }
 

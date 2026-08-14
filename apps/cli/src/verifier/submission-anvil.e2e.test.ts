@@ -443,6 +443,7 @@ function auditEvidence(input: {
         requestId: input.requestId,
         status: 'verified',
         record: null,
+        signedPreimages: null,
         failureReason: null,
       },
     }],

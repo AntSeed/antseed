@@ -304,7 +304,7 @@ test('audit reservations reject legacy AntSeed enrollment banks', async () => {
     await assert.rejects(inspectModelProbeBankPower({
       banksDir: directory,
       model: 'model-a',
-    }), /archive it and rebuild with enrollment 3/)
+    }), /archive it and rebuild with enrollment 4/)
     await assert.rejects(reserveModelAuditReference({
       banksDir: directory,
       model: 'model-a',
@@ -314,7 +314,7 @@ test('audit reservations reject legacy AntSeed enrollment banks', async () => {
       epoch: '7',
       config: undefined,
       shuffle: <T>(values: readonly T[]) => [...values],
-    }), /archive it and rebuild with enrollment 3/)
+    }), /archive it and rebuild with enrollment 4/)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

@@ -8,6 +8,7 @@ import type { VerifierCLIConfig } from '../../../config/types.js'
 import {
   appendVerifierEvent,
   epochAuditReportPath,
+  modelDirectory,
   modelAuditsDirectory,
   readVerifierRunManifest,
   readVerifierStatus,
@@ -57,6 +58,7 @@ import { createVerifierClient } from '../../payment-utils.js'
 import { getGlobalOptions } from '../types.js'
 import { VerifierRunProgress } from './run-progress.js'
 import { failureOutcomeReason } from '../../../verifier/outcome-reason.js'
+import { writeModelProbeConsensusEvidence } from '../../../verifier/model-consensus-evidence.js'
 
 interface RunOptions {
   all?: boolean
@@ -478,6 +480,14 @@ export function registerVerifierRunCommand(verifier: Command): void {
           const modelCompletedAt = new Date().toISOString()
           const modelCost = addAuditCostSummaries(...results.map((result) => result.cost))
           const reasonCounts = countOutcomeReasons(results, failures, allSkipped)
+          const consensusEvidence = await writeModelProbeConsensusEvidence({
+            directory: join(modelDirectory(evidenceDir, epoch, model), 'runs'),
+            runId,
+            epoch,
+            model,
+            createdAt: modelCompletedAt,
+            results,
+          })
           const summaryPath = await writeModelAuditSummary(evidenceDir, epoch, model, {
             version: 1,
             kind: 'antseed-verifier-model-summary',
@@ -491,6 +501,7 @@ export function registerVerifierRunCommand(verifier: Command): void {
             skipped: allSkipped,
             cost: modelCost,
             reasonCounts,
+            consensusEvidencePath: consensusEvidence.consensusPath,
           })
           const modelSummary = {
             model,

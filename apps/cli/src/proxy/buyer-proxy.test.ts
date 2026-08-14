@@ -394,6 +394,36 @@ test('pinned proxy request reports when the pinned peer is not discoverable', as
   assert.match(res.body, /It may be offline, not announcing, or temporarily unreachable/)
 })
 
+test('verifier preimage capture header stays local and enables exact capture', async () => {
+  const peer = makePeer('a', ['openai'])
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], basicRouter)
+  let capturedHeaders: Record<string, string> | null = null
+  let capturedCaptureFlag: boolean | undefined
+  ;(proxy as any)._node.sendRequest = async (
+    _peer: PeerInfo,
+    request: { requestId: string; headers: Record<string, string> },
+    options: { captureResponseAuthPreimages?: boolean },
+  ) => {
+    capturedHeaders = request.headers
+    capturedCaptureFlag = options.captureResponseAuthPreimages
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{"choices":[{"message":{"content":"ok"}}]}'),
+    }
+  }
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    headers: {
+      'x-antseed-pin-peer': peer.peerId,
+      'x-antseed-capture-response-auth-preimages': '1',
+    },
+  }))
+  assert.equal(res.statusCode, 200)
+  assert.equal(capturedHeaders?.['x-antseed-capture-response-auth-preimages'], undefined)
+  assert.equal(capturedCaptureFlag, true)
+})
+
 test('pinned proxy request reports explicit provider mismatch separately', async () => {
   const pinnedPeer = makePeer('a', ['local-llm'])
   const proxy = makeBuyerProxyWithPeers([pinnedPeer])

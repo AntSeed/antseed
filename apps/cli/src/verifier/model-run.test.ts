@@ -197,7 +197,10 @@ async function runTarget(
     getRequestCost() { return null },
     async waitForVerified(input) {
       if (authMode === 'missing') {
-        return { requestId: input.requestId, status: 'missing', responseAuth: null, failureReason: 'missing' }
+        return {
+          requestId: input.requestId, status: 'missing', responseAuth: null, signedPreimages: null,
+          failureReason: 'missing',
+        }
       }
       const record = {
         version: 1 as const,
@@ -215,12 +218,23 @@ async function runTarget(
         receivedAt: Date.now(),
         verified: authMode !== 'unverified',
         verificationError: authMode === 'unverified' ? 'bad signature' : null,
+        requestPreimage: null,
+        responsePreimage: null,
       }
       const valid = authMode === 'verified'
       return {
         requestId: input.requestId,
         status: valid ? 'verified' : 'invalid',
         responseAuth: record,
+        signedPreimages: valid ? {
+          encoding: 'antseed-http-codec-v1',
+          signatureEncoding: 'antseed-response-auth-signing-v1',
+          requestBase64: 'AA==',
+          responseBase64: 'AA==',
+          responseAuthSigningBase64: 'AA==',
+          requestHash: record.requestHash,
+          responseHash: record.responseHash,
+        } : null,
         failureReason: valid ? null : authMode,
       }
     },

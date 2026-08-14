@@ -17,6 +17,7 @@ import {
   CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
   computeOnChainReputationScore,
   type PeerInfo,
+  type StoredResponseAuth,
   type TokenPricingUsdPerMillion,
 } from '@antseed/node'
 import { parsePersistedPeers } from '../proxy/buyer-proxy.js'
@@ -63,6 +64,11 @@ class VerificationTerminalTransientSignal extends Error {
   constructor(readonly exchange: ProxyAuditEvidenceExchangeV1) {
     super(exchange.outcomeReason?.summary ?? exchange.failureReason ?? 'transient audit failure')
   }
+}
+
+function exportedResponseAuthRecord(record: StoredResponseAuth): Omit<StoredResponseAuth, 'requestPreimage' | 'responsePreimage'> {
+  const { requestPreimage: _requestPreimage, responsePreimage: _responsePreimage, ...exported } = record
+  return exported
 }
 
 class LazyAuditDeadline {
@@ -735,6 +741,7 @@ async function executeProxyProbeBatch(
               requestId,
               status: 'missing',
               record: null,
+              signedPreimages: null,
               failureReason: 'proxy batch was rejected before a successful authenticated response',
             },
           })
@@ -765,6 +772,7 @@ async function executeProxyProbeBatch(
           requestId,
           status: returnedRequestId ? 'invalid' as const : 'missing' as const,
           responseAuth: null,
+          signedPreimages: null,
           failureReason: returnedRequestId
             ? `buyer proxy request ID mismatch (${returnedRequestId} != ${requestId})`
             : 'successful buyer proxy response omitted x-antseed-request-id',
@@ -796,7 +804,11 @@ async function executeProxyProbeBatch(
         responseAuth: {
           requestId: responseAuth.requestId,
           status: responseAuth.status,
-          record: responseAuth.responseAuth,
+          record: responseAuth.responseAuth ? exportedResponseAuthRecord(responseAuth.responseAuth) : null,
+          signedPreimages: responseAuth.signedPreimages ? {
+            ...responseAuth.signedPreimages,
+            hashAlgorithm: 'keccak256',
+          } : null,
           failureReason: responseAuth.failureReason,
         },
       }
@@ -847,6 +859,7 @@ async function executeProxyProbeBatch(
       requestId: lastRequestId,
       status: 'missing',
       record: null,
+      signedPreimages: null,
       failureReason: 'proxy batch did not complete successfully',
     },
   }
@@ -1007,6 +1020,7 @@ function buildProxyBatchRequest(
   const headers = {
     'content-type': 'application/json',
     'x-antseed-pin-peer': target.peerId,
+    'x-antseed-capture-response-auth-preimages': '1',
   }
   const requestBody: Record<string, unknown> = {
     ...buildKbfChatRequestBody(service, probes, { maxTokens: reference.queryProfile.maxTokensPerRequest }),
@@ -1062,6 +1076,7 @@ function notAttemptedExchange(
       requestId: null,
       status: 'missing',
       record: null,
+      signedPreimages: null,
       failureReason: 'batch was not attempted after terminal first-batch failure',
     },
   }
@@ -1070,6 +1085,7 @@ function notAttemptedExchange(
 function isReusableExchange(exchange: ProxyAuditEvidenceExchangeV1): boolean {
   return exchange.status === 'succeeded'
     && exchange.responseAuth.status === 'verified'
+    && exchange.responseAuth.signedPreimages !== null
     && exchange.answers.length === exchange.probeIds.length
     && exchange.matches.length === exchange.probeIds.length
 }

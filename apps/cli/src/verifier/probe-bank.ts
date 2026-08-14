@@ -21,7 +21,7 @@ import { safeServiceSlug } from './slug.js'
 import { normalized } from './utils.js'
 
 export const BANK_EXHAUSTED = 'BANK_EXHAUSTED'
-const CURRENT_ANTSEED_REFERENCE_BUILDER_VERSION = '3'
+const CURRENT_ANTSEED_REFERENCE_BUILDER_VERSION = '4'
 
 interface BankProbeV1 {
   probe: KbfProbe

@@ -17,6 +17,7 @@ import type { VerificationStorage } from "./verification/storage.js";
 import type { VerificationSampler } from "./verification/samples.js";
 import type { BuyerFreeUsageManager } from "./payments/buyer-free-usage-manager.js";
 import { verifyResponseAuth } from "./verification/response-auth.js";
+import { encodeHttpRequest, encodeHttpResponse } from "./proxy/request-codec.js";
 import { extractServiceFromBody } from "./utils/json-codec.js";
 import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 } from "./types/protocol.js";
 
@@ -36,6 +37,8 @@ export interface RequestExecutionOptions {
   signal?: AbortSignal;
   /** Skip payment/free-usage machinery for internal control-plane requests. */
   controlPlane?: boolean;
+  /** Persist exact signed request/response preimages for portable verifier evidence. */
+  captureResponseAuthPreimages?: boolean;
 }
 
 export interface BuyerRequestHandlerConfig {
@@ -330,6 +333,7 @@ export class BuyerRequestHandler {
         requestedService,
         verificationMux,
         retriedAttempt.expectedChannelId,
+        options?.captureResponseAuthPreimages === true,
       );
       return retriedResponse;
     }
@@ -345,6 +349,7 @@ export class BuyerRequestHandler {
       requestedService,
       verificationMux,
       firstAttempt.expectedChannelId,
+      options?.captureResponseAuthPreimages === true,
     );
     return response;
   }
@@ -378,6 +383,7 @@ export class BuyerRequestHandler {
     requestedService: string | undefined,
     verificationMux: VerificationMux,
     expectedChannelId: string | null,
+    capturePreimages: boolean,
   ): void {
     if (!shouldExpectResponseAuth(peer, response, requestedService)) {
       return;
@@ -412,6 +418,8 @@ export class BuyerRequestHandler {
           receivedAt: Date.now(),
           verified: verification.valid,
           verificationError: verification.reason ?? null,
+          requestPreimage: capturePreimages ? encodeHttpRequest(request) : null,
+          responsePreimage: capturePreimages ? encodeHttpResponse(stripStreamingHeader(response)) : null,
         });
 
         void this._deps.verificationSampler?.maybeStoreResponseAuthSample({

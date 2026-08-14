@@ -171,6 +171,11 @@ final reference self-test, contrast checks, and seller audits also use
 domain-homogeneous batches. Probe answers are always remapped to their original
 probe IDs before self-test scoring or audit verification.
 
+Every accepted generated probe preserves its three enrollment temperatures,
+the three parsed enrollment answers, and the exact stability rule used to form
+the stored reference consensus. This metadata travels with the probe into the
+bank, per-seller evidence packs, and model-run consensus evidence.
+
 ## Probe Banks
 
 Probe banks and per-seller ledgers are stored at:
@@ -224,12 +229,25 @@ After each successful proxy response, the verifier reads
 to `responseAuthWaitTimeoutMs`. The stored record must be verified and match the
 request ID, seller peer ID, and advertised service.
 
-Evidence schema v1 includes the stored ResponseAuth record and its local
-verification status for every exchange. If any successful batch lacks valid
+Future verifier requests ask the local buyer proxy to retain the exact AntSeed
+codec bytes hashed by `ResponseAuth`. The local capture control header is
+removed before P2P routing. For every successful exchange, evidence contains:
+
+- the seller-signed `ResponseAuth` payload and signature;
+- the exact encoded request and response bytes, in base64;
+- the exact `antseed-response-auth-v1` signature-message bytes, in base64; and
+- the recomputed Keccak-256 request and response hashes.
+
+The reader rejects missing or hash-mismatching preimages. Therefore a rebuilt
+buyer proxy must be restarted before starting a new audit. Existing historical
+evidence remains readable, but cannot retroactively gain bytes that were not
+retained when those requests ran. If any successful batch lacks valid
 authenticated evidence, observations are preserved but the audit verdict is
-forced to `UNDETERMINED`. This evidence includes local proxy request/response
-observations and signed hashes; it is not claimed to be an independently
-reproducible wire transcript or payment-evidence pack.
+forced to `UNDETERMINED`.
+
+`evidenceLevel` is retained as a proof-scope boundary, not a quality score. It
+prevents seller-signed proxy observations from being described as payment or
+on-chain evidence. Each readable manifest repeats that scope explicitly.
 
 Each successful exchange also records the buyer proxy's token counts, selected
 seller prices, token-count source, and estimated USD cost. Audit, model, epoch,
@@ -282,9 +300,19 @@ plus rename writes.
     │   ├── summary.json
     │   └── report.html
     └── <model-slug>/
-        ├── runs/<run-id>.summary.json
+        ├── runs/
+        │   ├── <run-id>.summary.json
+        │   └── <run-id>.evidence-pack/
+        │       ├── README.md
+        │       ├── manifest.json
+        │       └── probe-consensus.json
         └── audits/
-            ├── <audit-id>.json
+            ├── <audit-id>/
+            │   ├── README.md
+            │   ├── manifest.json
+            │   ├── evidence.json
+            │   ├── probe-integrity.json
+            │   └── exchanges/<batch-index>.json
             └── .checkpoints/<audit-id>.json
 ```
 
@@ -301,9 +329,15 @@ events, progress, and submission exclusions retain the same structured reason:
 `code`, `summary`, `retryable`, `source`, affected/total batch counts, and safe
 optional upstream status, provider code, and request ID. Secrets and
 authorization values are sanitized. `events.jsonl` is append-only progress
-history. Each canonical audit file includes the selected reference, proxy
-observations, ResponseAuth evidence, incremental and cumulative cost, and
-verdict.
+history. `evidence.json` remains the canonical complete per-seller artifact for
+existing readers. `probe-integrity.json` separates probe definitions,
+three-pass enrollment evidence, reference self-test outcomes, and the audited
+seller's answers. Each `exchanges/` file contains one request batch and its
+exact signed preimages. The model-run `probe-consensus.json` groups only
+authenticated seller answers with exact preimages by probe, and records counts
+and rates matching or differing from the trusted reference consensus. Each
+seller contribution links back to its audit ID, evidence hash, batch index,
+request ID, and signed request/response hashes.
 
 `SAME` and `DIFF` require 100% authenticated coverage. `UNDETERMINED` means the
 statistical verdict could not be completed and remains resumable; examples are

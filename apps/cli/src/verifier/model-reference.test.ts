@@ -864,6 +864,11 @@ test('collector applies rounded agreement for canonical absolute domains', async
   assert.equal(collected.probes.length, 1)
   assert.equal(collected.probes[0]?.domain, 'chemistry_bp')
   assert.equal(collected.probes[0]?.consensus, 100)
+  assert.deepEqual(collected.probes[0]?.enrollmentEvidence, {
+    temperatures: [0, 0.7, 0.7],
+    answers: [100, 100.4, 99.6],
+    rule: 'rounded-exact-agreement',
+  })
 })
 
 test('collector never requests excluded canonical domains', async () => {

@@ -1,5 +1,5 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { canonicalJsonStringify } from '@antseed/fingerprints'
 import { readJsonIfExists, writeJsonAtomic, writeTextAtomic } from './atomic-files.js'
@@ -49,6 +49,7 @@ export interface ModelAuditSummaryV1 {
   skipped: ModelVerificationSkip[]
   cost: AuditCostSummaryV1
   reasonCounts?: Record<string, number>
+  consensusEvidencePath?: string
 }
 
 export interface VerifierRunManifestV1 {
@@ -237,6 +238,7 @@ export async function writeEpochAuditReport(
       results?: SellerAuditReportResult[]
       failures?: SellerAuditReportFailure[]
       skipped?: SellerAuditReportSkip[]
+      consensusEvidencePath?: string
     }
     const results = [...(modelSummary.results ?? [])].sort((left, right) => {
       if (left.correctRate === null && right.correctRate !== null) return 1
@@ -287,7 +289,10 @@ export async function writeEpochAuditReport(
       })
     }
     const reasonBreakdown = [...reasonCounts.entries()].sort(([left], [right]) => left.localeCompare(right))
-    return { reasonCounts, html: renderModelReportSection(model.model, rows, reasonBreakdown) }
+    return {
+      reasonCounts,
+      html: renderModelReportSection(model.model, rows, reasonBreakdown, modelSummary.consensusEvidencePath),
+    }
   }))
   const overallReasons = new Map<string, number>()
   for (const section of rendered) {
@@ -510,6 +515,7 @@ function renderModelReportSection(
   model: string,
   rows: SellerAuditReportRow[],
   reasonBreakdown: Array<[string, number]>,
+  consensusEvidencePath?: string,
 ): string {
   const body = rows.length === 0
     ? '<tr><td class="empty" colspan="9">No advertised sellers were audited for this model.</td></tr>'
@@ -526,6 +532,9 @@ function renderModelReportSection(
         </tr>`).join('\n        ')
   return `<section>
     <h2>${escapeHtml(model)}</h2>
+    ${consensusEvidencePath
+      ? `<p><a href="${escapeHtml(pathToFileURL(consensusEvidencePath).href)}">Authenticated probe consensus evidence</a></p>`
+      : ''}
     ${renderReasonBreakdown('Model reason breakdown', reasonBreakdown)}
     <div class="table-wrap">
       <table>
@@ -562,8 +571,11 @@ function renderEvidence(auditId?: string, evidencePath?: string): string {
   if (!auditId && !evidencePath) return '—'
   const audit = auditId ? `audit ${auditId.slice(0, 14)}…` : 'evidence'
   if (!evidencePath) return escapeHtml(audit)
-  const href = pathToFileURL(evidencePath).href
-  return `<a href="${escapeHtml(href)}" title="${escapeHtml(evidencePath)}">${escapeHtml(audit)}</a>`
+  const readablePath = basename(evidencePath) === 'evidence.json'
+    ? join(dirname(evidencePath), 'README.md')
+    : evidencePath
+  const href = pathToFileURL(readablePath).href
+  return `<a href="${escapeHtml(href)}" title="${escapeHtml(readablePath)}">${escapeHtml(audit)}</a>`
 }
 
 function escapeHtml(value: string): string {
