@@ -243,7 +243,7 @@ test('automatic resume ignores candidates whose archived bank reservation no lon
         epoch: '2026-08-13',
         strict: true,
       }),
-      /incompatible with the active probe bank: invalid seller probe ledger/,
+      /incompatible with the active probe bank: probe bank for claude-opus-4-6 uses reference enrollment/,
     )
   } finally {
     await rm(directory, { recursive: true, force: true })

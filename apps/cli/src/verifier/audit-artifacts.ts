@@ -3,7 +3,7 @@ import { basename, dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { canonicalJsonStringify } from '@antseed/fingerprints'
 import { readJsonIfExists, writeJsonAtomic, writeTextAtomic } from './atomic-files.js'
-import { addAuditCostSummaries, type AuditCostSummaryV1 } from './proxy-evidence.js'
+import type { AuditCostSummaryV1 } from './proxy-evidence.js'
 import type { VerificationOutcomeReasonV1 } from './outcome-reason.js'
 import type {
   ModelVerificationFailure,
@@ -50,6 +50,7 @@ export interface ModelAuditSummaryV1 {
   cost: AuditCostSummaryV1
   reasonCounts?: Record<string, number>
   consensusEvidencePath?: string
+  referenceIntegrityPath?: string
 }
 
 export interface VerifierRunManifestV1 {
@@ -78,10 +79,11 @@ export interface EpochAuditSummaryV1 {
   epochEndsAt: string
   startedAt: string
   completedAt: string
-  reportPath: string
+  reportPaths: Array<{ model: string; path: string }>
   models: Array<{
     model: string
     summaryPath: string
+    reportPath?: string
     resultCount: number
     failureCount: number
     skippedCount: number
@@ -128,6 +130,13 @@ interface SellerAuditReportRow {
   nextAction: string
   auditId?: string
   evidencePath?: string
+  evidenceFiles?: ReportEvidenceFile[]
+}
+
+interface ReportEvidenceFile {
+  label: string
+  path: string
+  purpose: string | null
 }
 
 export function verifierStatusPath(evidenceDir: string): string {
@@ -142,14 +151,39 @@ export function modelDirectory(evidenceDir: string, epoch: string, model: string
   return join(epochDirectory(evidenceDir, epoch), safeServiceSlug(model))
 }
 
-export function modelAuditsDirectory(evidenceDir: string, epoch: string, model: string): string {
-  return join(modelDirectory(evidenceDir, epoch, model), 'audits')
+export function modelAuditsDirectory(
+  evidenceDir: string,
+  epoch: string,
+  model: string,
+  runId: string,
+): string {
+  return join(modelDirectory(evidenceDir, epoch, model), 'audits', safeServiceSlug(runId))
 }
 
-export function epochAuditReportPath(evidenceDir: string, epoch: string, runId?: string): string {
-  return runId
-    ? join(epochDirectory(evidenceDir, epoch), 'runs', safeServiceSlug(runId), 'report.html')
-    : join(epochDirectory(evidenceDir, epoch), 'report.html')
+export function modelAuditSellersDirectory(
+  evidenceDir: string,
+  epoch: string,
+  model: string,
+  runId: string,
+): string {
+  return join(modelAuditsDirectory(evidenceDir, epoch, model, runId), 'sellers')
+}
+
+export function modelReferencesDirectory(evidenceDir: string, epoch: string, model: string): string {
+  return join(modelDirectory(evidenceDir, epoch, model), 'references')
+}
+
+export function modelReferenceDirectory(
+  evidenceDir: string,
+  epoch: string,
+  model: string,
+  referenceId: string,
+): string {
+  return join(modelReferencesDirectory(evidenceDir, epoch, model), safeServiceSlug(referenceId))
+}
+
+export function modelAuditReportPath(evidenceDir: string, epoch: string, model: string): string {
+  return join(modelDirectory(evidenceDir, epoch, model), 'report.html')
 }
 
 export function verifierRunManifestPath(evidenceDir: string, runId: string): string {
@@ -183,17 +217,17 @@ export async function writeModelAuditSummary(
   model: string,
   summary: ModelAuditSummaryV1,
 ): Promise<string> {
-  const path = join(modelDirectory(evidenceDir, epoch, model), 'runs', `${safeServiceSlug(summary.runId)}.summary.json`)
+  const path = join(modelAuditsDirectory(evidenceDir, epoch, model, summary.runId), 'summary.json')
   await writeJsonAtomic(path, summary)
   return path
 }
 
 export async function writeEpochAuditSummary(
   evidenceDir: string,
-  epoch: string,
+  _epoch: string,
   summary: EpochAuditSummaryV1,
 ): Promise<string> {
-  const path = join(epochDirectory(evidenceDir, epoch), 'runs', safeServiceSlug(summary.runId), 'summary.json')
+  const path = join(evidenceDir, 'runs', `${safeServiceSlug(summary.runId)}.summary.json`)
   await writeJsonAtomic(path, summary)
   return path
 }
@@ -227,18 +261,18 @@ export async function readVerifierRunManifest(
   return parsed
 }
 
-export async function writeEpochAuditReport(
+export async function writeModelAuditReports(
   evidenceDir: string,
   epoch: string,
   summary: EpochAuditSummaryV1,
-  options: { latest?: boolean } = {},
-): Promise<string> {
+): Promise<Array<{ model: string; path: string }>> {
   const rendered = await Promise.all(summary.models.map(async (model) => {
     const modelSummary = JSON.parse(await readFile(model.summaryPath, 'utf8')) as {
       results?: SellerAuditReportResult[]
       failures?: SellerAuditReportFailure[]
       skipped?: SellerAuditReportSkip[]
       consensusEvidencePath?: string
+      referenceIntegrityPath?: string
     }
     const results = [...(modelSummary.results ?? [])].sort((left, right) => {
       if (left.correctRate === null && right.correctRate !== null) return 1
@@ -253,7 +287,7 @@ export async function writeEpochAuditReport(
       if (!reason) return
       reasonCounts.set(reason.code, (reasonCounts.get(reason.code) ?? 0) + 1)
     }
-    const rows: SellerAuditReportRow[] = results.map((result) => {
+    const rows: SellerAuditReportRow[] = await Promise.all(results.map(async (result) => {
       countReason(result.outcomeReason)
       return {
         seller: sellerLabel(result),
@@ -266,8 +300,9 @@ export async function writeEpochAuditReport(
         nextAction: result.outcomeReason?.nextAction ?? '—',
         auditId: result.auditId,
         evidencePath: result.evidencePath,
+        evidenceFiles: await readReportEvidenceFiles(result.evidencePath),
       }
-    })
+    }))
     for (const failure of modelSummary.failures ?? []) {
       countReason(failure.outcomeReason)
       rows.push({
@@ -286,154 +321,56 @@ export async function writeEpochAuditReport(
         nextAction: skipped.outcomeReason?.nextAction ?? 'inspect verifier evidence',
         auditId: skipped.auditId ?? undefined,
         evidencePath: skipped.evidencePath ?? undefined,
+        evidenceFiles: await readReportEvidenceFiles(skipped.evidencePath ?? undefined),
       })
     }
     const reasonBreakdown = [...reasonCounts.entries()].sort(([left], [right]) => left.localeCompare(right))
     return {
+      model: model.model,
       reasonCounts,
-      html: renderModelReportSection(model.model, rows, reasonBreakdown, modelSummary.consensusEvidencePath),
+      html: renderModelReportSection(
+        model.model,
+        rows,
+        reasonBreakdown,
+        model.summaryPath,
+        modelSummary.consensusEvidencePath,
+        modelSummary.referenceIntegrityPath,
+      ),
+      consensusEvidencePath: modelSummary.consensusEvidencePath,
+      referenceIntegrityPath: modelSummary.referenceIntegrityPath,
     }
   }))
-  const overallReasons = new Map<string, number>()
-  for (const section of rendered) {
-    for (const [code, count] of section.reasonCounts) {
-      overallReasons.set(code, (overallReasons.get(code) ?? 0) + count)
-    }
-  }
-  const overallBreakdown = [...overallReasons.entries()].sort(([left], [right]) => left.localeCompare(right))
-  const text = renderEpochAuditReportHtml(summary, options.latest === true, overallBreakdown, rendered.map((entry) => entry.html))
-  const path = epochAuditReportPath(evidenceDir, epoch, options.latest ? undefined : summary.runId)
-  await writeTextAtomic(path, text)
-  return path
-}
-
-export async function writeLatestEpochAuditSnapshot(
-  evidenceDir: string,
-  epoch: string,
-  current: EpochAuditSummaryV1,
-  options: { mergeExisting: boolean },
-): Promise<{ summaryPath: string; reportPath: string; summary: EpochAuditSummaryV1 }> {
-  const existingPath = join(epochDirectory(evidenceDir, epoch), 'summary.json')
-  const existing = options.mergeExisting
-    ? await readJsonIfExists<EpochAuditSummaryV1>(existingPath)
-    : null
-  const modelSummaries = new Map<string, ModelAuditSummaryV1>()
-  if (existing?.version === 1 && existing.kind === 'antseed-verifier-epoch-summary') {
-    for (const model of existing.models) {
-      const summary = await readJsonIfExists<ModelAuditSummaryV1>(model.summaryPath)
-      if (summary?.version === 1 && summary.kind === 'antseed-verifier-model-summary') {
-        modelSummaries.set(normalizedModel(summary.model), summary)
-      }
-    }
-  }
-  for (const model of current.models) {
-    const update = JSON.parse(await readFile(model.summaryPath, 'utf8')) as ModelAuditSummaryV1
-    const key = normalizedModel(update.model)
-    const previous = modelSummaries.get(key)
-    modelSummaries.set(key, previous ? mergeModelAuditSummaries(previous, update, current.runId) : update)
-  }
-
-  const models: EpochAuditSummaryV1['models'] = []
-  for (const modelSummary of [...modelSummaries.values()].sort((left, right) => left.model.localeCompare(right.model))) {
-    const summaryPath = join(modelDirectory(evidenceDir, epoch, modelSummary.model), 'summary.json')
-    await writeJsonAtomic(summaryPath, modelSummary)
-    models.push({
-      model: modelSummary.model,
-      summaryPath,
-      resultCount: modelSummary.results.length,
-      failureCount: modelSummary.failures.length,
-      skippedCount: modelSummary.skipped.length,
-      cost: modelSummary.cost,
-      reasonCounts: modelSummary.reasonCounts,
-    })
-  }
-  const reasonCounts = mergeReasonCounts(...models.map((model) => model.reasonCounts ?? {}))
-  const summary = {
-    ...current,
-    startedAt: existing?.startedAt ?? current.startedAt,
-    reportPath: epochAuditReportPath(evidenceDir, epoch),
-    models,
-    failureCount: models.reduce((total, model) => total + model.failureCount, 0),
-    cost: addAuditCostSummaries(...models.map((model) => model.cost)),
-    reasonCounts,
-  }
-  await writeJsonAtomic(existingPath, summary)
-  const reportPath = await writeEpochAuditReport(evidenceDir, epoch, summary, { latest: true })
-  return { summaryPath: existingPath, reportPath, summary }
-}
-
-function mergeModelAuditSummaries(
-  previous: ModelAuditSummaryV1,
-  update: ModelAuditSummaryV1,
-  runId: string,
-): ModelAuditSummaryV1 {
-  const outcomes = new Map<string, {
-    type: 'result' | 'failure' | 'skip'
-    value: ModelVerificationTargetResult | ModelVerificationFailure | ModelVerificationSkip
-  }>()
-  const add = (
-    type: 'result' | 'failure' | 'skip',
-    values: Array<ModelVerificationTargetResult | ModelVerificationFailure | ModelVerificationSkip>,
-  ): void => {
-    for (const value of values) outcomes.set(normalizedPeer(value.peerId), { type, value })
-  }
-  add('result', previous.results)
-  add('failure', previous.failures)
-  add('skip', previous.skipped)
-  add('result', update.results)
-  add('failure', update.failures)
-  add('skip', update.skipped)
-  const results: ModelVerificationTargetResult[] = []
-  const failures: ModelVerificationFailure[] = []
-  const skipped: ModelVerificationSkip[] = []
-  for (const outcome of outcomes.values()) {
-    if (outcome.type === 'result') results.push(outcome.value as ModelVerificationTargetResult)
-    else if (outcome.type === 'failure') failures.push(outcome.value as ModelVerificationFailure)
-    else skipped.push(outcome.value as ModelVerificationSkip)
-  }
-  const byPeer = <T extends { peerId: string }>(left: T, right: T): number => left.peerId.localeCompare(right.peerId)
-  results.sort(byPeer)
-  failures.sort(byPeer)
-  skipped.sort(byPeer)
-  return {
-    ...update,
-    runId,
-    startedAt: previous.startedAt,
-    results,
-    failures,
-    skipped,
-    cost: addAuditCostSummaries(previous.cost, update.cost),
-    reasonCounts: countModelOutcomeReasons(results, failures, skipped),
-  }
-}
-
-function countModelOutcomeReasons(
-  results: ModelVerificationTargetResult[],
-  failures: ModelVerificationFailure[],
-  skipped: ModelVerificationSkip[],
-): Record<string, number> {
-  const counts: Record<string, number> = {}
-  for (const entry of [...results, ...failures, ...skipped]) {
-    const code = entry.outcomeReason?.code
-    if (code) counts[code] = (counts[code] ?? 0) + 1
-  }
-  return counts
-}
-
-function mergeReasonCounts(...groups: Record<string, number>[]): Record<string, number> {
-  const counts: Record<string, number> = {}
-  for (const group of groups) {
-    for (const [code, count] of Object.entries(group)) counts[code] = (counts[code] ?? 0) + count
-  }
-  return counts
-}
-
-function normalizedModel(value: string): string {
-  return value.trim().toLowerCase()
-}
-
-function normalizedPeer(value: string): string {
-  return value.trim().toLowerCase()
+  return Promise.all(rendered.map(async (entry) => {
+    const modelSummary = summary.models.find((model) => model.model === entry.model)
+    if (!modelSummary) throw new Error(`missing ${entry.model} summary while rendering report`)
+    const reasonBreakdown = [...entry.reasonCounts.entries()].sort(([left], [right]) => left.localeCompare(right))
+    const path = modelAuditReportPath(evidenceDir, epoch, entry.model)
+    const text = renderModelAuditReportHtml(
+      {
+        ...summary,
+        reportPaths: [{ model: entry.model, path }],
+        models: [modelSummary],
+        failureCount: modelSummary.failureCount,
+        cost: modelSummary.cost,
+        reasonCounts: modelSummary.reasonCounts,
+      },
+      entry.model,
+      reasonBreakdown,
+      entry.html,
+      {
+        summaryPath: join(evidenceDir, 'runs', `${safeServiceSlug(summary.runId)}.summary.json`),
+        manifestPath: verifierRunManifestPath(evidenceDir, summary.runId),
+        modelConsensus: entry.consensusEvidencePath
+          ? [{ model: entry.model, path: entry.consensusEvidencePath }]
+          : [],
+        modelReferences: entry.referenceIntegrityPath
+          ? [{ model: entry.model, path: entry.referenceIntegrityPath }]
+          : [],
+      },
+    )
+    await writeTextAtomic(path, text)
+    return { model: entry.model, path }
+  }))
 }
 
 function reportReason(reason?: VerificationOutcomeReasonV1 | null, fallback = '—'): string {
@@ -444,14 +381,19 @@ function reportReason(reason?: VerificationOutcomeReasonV1 | null, fallback = '�
   return `${reason.code}: ${reason.summary}${progress}${reason.retryable ? '; resumable' : ''}`
 }
 
-function renderEpochAuditReportHtml(
+function renderModelAuditReportHtml(
   summary: EpochAuditSummaryV1,
-  latest: boolean,
+  model: string,
   reasonBreakdown: Array<[string, number]>,
-  modelSections: string[],
+  modelSection: string,
+  evidenceLinks: {
+    summaryPath: string
+    manifestPath: string | null
+    modelConsensus: Array<{ model: string; path: string }>
+    modelReferences: Array<{ model: string; path: string }>
+  },
 ): string {
-  const title = `AntSeed Verifier Audit Report — ${summary.epoch}`
-  const view = latest ? 'consolidated latest epoch snapshot' : 'immutable run report'
+  const title = `AntSeed ${model} Verification Report — ${summary.epoch}`
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -470,6 +412,7 @@ function renderEpochAuditReportHtml(
     h1 { font-size: clamp(24px, 4vw, 38px); }
     h2 { font-size: 22px; }
     .subtitle { color: var(--muted); margin: 6px 0 20px; }
+    .explanation { color: var(--muted); margin: -8px 0 20px; max-width: 900px; }
     .metadata { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 0; }
     .metadata div { border-left: 3px solid var(--accent); padding-left: 10px; min-width: 0; }
     dt { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
@@ -485,6 +428,14 @@ function renderEpochAuditReportHtml(
     .badge { border: 1px solid currentColor; border-radius: 999px; display: inline-block; font-size: 12px; font-weight: 800; letter-spacing: .03em; padding: 2px 8px; }
     .same { color: var(--same); } .diff { color: var(--diff); } .undetermined { color: var(--undetermined); } .skipped { color: var(--skipped); } .failed { color: var(--failed); }
     a { color: var(--accent); overflow-wrap: anywhere; }
+    .evidence-links { align-items: center; display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 14px; }
+    .evidence-links a { border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; text-decoration: none; }
+    .evidence-links a:hover { border-color: var(--accent); }
+    details { margin-top: 8px; }
+    summary { color: var(--accent); cursor: pointer; }
+    .evidence-files { margin: 8px 0 0; padding-left: 18px; }
+    .evidence-files li { margin: 4px 0; }
+    .evidence-files small { color: var(--muted); display: block; }
     code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .92em; }
     .empty { color: var(--muted); font-style: italic; }
   </style>
@@ -492,19 +443,21 @@ function renderEpochAuditReportHtml(
 <body>
 <main>
   <header>
-    <h1>AntSeed Verifier Audit Report</h1>
-    <p class="subtitle">Epoch ${escapeHtml(summary.epoch)}</p>
+    <h1>AntSeed Model Verification Report</h1>
+    <p class="subtitle">${escapeHtml(model)} · Epoch ${escapeHtml(summary.epoch)}</p>
+    <p class="explanation">This report covers one model in one verification run. Each seller row links to that seller's signed evidence.</p>
     <dl class="metadata">
-      ${renderMetadata('Run ID', summary.runId)}
-      ${renderMetadata('View', view)}
+      ${renderMetadata('Verification Run ID', summary.runId)}
+      ${renderMetadata('View', 'latest verification run for this model and epoch')}
       ${renderMetadata('Epoch window', `${summary.epochStartedAt} – ${summary.epochEndsAt}`)}
       ${renderMetadata('Started', summary.startedAt)}
       ${renderMetadata('Completed', summary.completedAt)}
-      ${renderMetadata(latest ? 'Cumulative estimated cost' : 'Estimated cost', `$${summary.cost.estimatedCostUsd.toFixed(6)}`)}
+      ${renderMetadata('Estimated cost', `$${summary.cost.estimatedCostUsd.toFixed(6)}`)}
     </dl>
-    ${renderReasonBreakdown('Overall reason breakdown', reasonBreakdown)}
+    ${renderGlobalEvidenceLinks(evidenceLinks)}
+    ${renderReasonBreakdown('Model reason breakdown', reasonBreakdown)}
   </header>
-  ${modelSections.join('\n  ')}
+  ${modelSection}
 </main>
 </body>
 </html>
@@ -515,7 +468,9 @@ function renderModelReportSection(
   model: string,
   rows: SellerAuditReportRow[],
   reasonBreakdown: Array<[string, number]>,
+  summaryPath: string,
   consensusEvidencePath?: string,
+  referenceIntegrityPath?: string,
 ): string {
   const body = rows.length === 0
     ? '<tr><td class="empty" colspan="9">No advertised sellers were audited for this model.</td></tr>'
@@ -528,17 +483,21 @@ function renderModelReportSection(
           <td>${renderVerdict(row.verdict)}</td>
           <td>${escapeHtml(row.reason)}</td>
           <td>${escapeHtml(row.nextAction)}</td>
-          <td>${renderEvidence(row.auditId, row.evidencePath)}</td>
+          <td>${renderEvidence(row.auditId, row.evidencePath, row.evidenceFiles)}</td>
         </tr>`).join('\n        ')
   return `<section>
     <h2>${escapeHtml(model)}</h2>
-    ${consensusEvidencePath
-      ? `<p><a href="${escapeHtml(pathToFileURL(consensusEvidencePath).href)}">Authenticated probe consensus evidence</a></p>`
-      : ''}
+    <div class="evidence-links"><strong>Model audit</strong>
+      ${renderFileLink(dirname(summaryPath), 'Open audit folder')}
+      ${renderFileLink(summaryPath, 'Summary JSON')}
+      ${consensusEvidencePath ? renderFileLink(consensusEvidencePath, 'Probe consensus JSON') : ''}
+      ${consensusEvidencePath ? renderFileLink(join(dirname(consensusEvidencePath), 'manifest.json'), 'Manifest JSON') : ''}
+      ${referenceIntegrityPath ? renderFileLink(referenceIntegrityPath, 'Reference probe integrity') : ''}
+    </div>
     ${renderReasonBreakdown('Model reason breakdown', reasonBreakdown)}
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Seller</th><th>Coverage</th><th>Correct</th><th>Incorrect</th><th>Correct Rate</th><th>Verdict</th><th>Reason</th><th>Next Action</th><th>Evidence</th></tr></thead>
+        <thead><tr><th>Seller</th><th>Coverage</th><th>Correct</th><th>Incorrect</th><th>Correct Rate</th><th>Verdict</th><th>Reason</th><th>Next Action</th><th>Seller Audit Evidence</th></tr></thead>
         <tbody>
         ${body}
         </tbody>
@@ -567,15 +526,69 @@ function renderVerdict(verdict: string): string {
   return `<span class="badge ${className}">${escapeHtml(verdict)}</span>`
 }
 
-function renderEvidence(auditId?: string, evidencePath?: string): string {
+function renderEvidence(auditId?: string, evidencePath?: string, evidenceFiles: ReportEvidenceFile[] = []): string {
   if (!auditId && !evidencePath) return '—'
-  const audit = auditId ? `audit ${auditId.slice(0, 14)}…` : 'evidence'
-  if (!evidencePath) return escapeHtml(audit)
-  const readablePath = basename(evidencePath) === 'evidence.json'
-    ? join(dirname(evidencePath), 'README.md')
-    : evidencePath
-  const href = pathToFileURL(readablePath).href
-  return `<a href="${escapeHtml(href)}" title="${escapeHtml(readablePath)}">${escapeHtml(audit)}</a>`
+  const audit = auditId ? `seller audit ${auditId.slice(0, 14)}…` : null
+  if (!evidencePath) return audit ? escapeHtml(audit) : '—'
+  const isPack = basename(evidencePath) === 'evidence.json'
+  const directLinks = isPack
+    ? `${renderFileLink(dirname(evidencePath), 'Open folder')}<br>${renderFileLink(evidencePath, 'Evidence JSON')}`
+    : renderFileLink(evidencePath, 'Open evidence record')
+  const allFiles = evidenceFiles.length === 0 ? '' : `<details><summary>All evidence files (${evidenceFiles.length})</summary>
+      <ul class="evidence-files">${evidenceFiles.map((file) => `<li>${renderFileLink(file.path, file.label)}`
+        + `${file.purpose ? `<small>${escapeHtml(file.purpose)}</small>` : ''}</li>`).join('')}</ul>
+    </details>`
+  return `${directLinks}${allFiles}${audit ? `<br><code>${escapeHtml(audit)}</code>` : ''}`
+}
+
+function renderGlobalEvidenceLinks(
+  links: {
+    summaryPath: string
+    manifestPath: string | null
+    modelConsensus: Array<{ model: string; path: string }>
+    modelReferences: Array<{ model: string; path: string }>
+  },
+): string {
+  const entries = [
+    renderFileLink(links.summaryPath, 'Open run summary'),
+    ...(links.manifestPath ? [renderFileLink(links.manifestPath, 'Open run manifest')] : []),
+    ...links.modelConsensus.flatMap((entry) => [
+      renderFileLink(dirname(entry.path), `${entry.model} evidence folder`),
+      renderFileLink(entry.path, `${entry.model} consensus JSON`),
+      renderFileLink(join(dirname(entry.path), 'manifest.json'), `${entry.model} manifest`),
+    ]),
+    ...links.modelReferences.map((entry) => renderFileLink(
+      entry.path,
+      `${entry.model} reference integrity`,
+    )),
+  ]
+  return `<nav class="evidence-links" aria-label="Run evidence"><strong>Run evidence</strong>${entries.join('')}</nav>`
+}
+
+function renderFileLink(path: string, label: string): string {
+  return `<a href="${escapeHtml(pathToFileURL(path).href)}" title="${escapeHtml(path)}">${escapeHtml(label)}</a>`
+}
+
+async function readReportEvidenceFiles(evidencePath?: string): Promise<ReportEvidenceFile[]> {
+  if (!evidencePath) return []
+  if (basename(evidencePath) !== 'evidence.json') {
+    return [{ label: basename(evidencePath), path: evidencePath, purpose: null }]
+  }
+  const packDirectory = dirname(evidencePath)
+  try {
+    const manifest = JSON.parse(await readFile(join(packDirectory, 'manifest.json'), 'utf8')) as {
+      files?: Array<{ path?: string; purpose?: string }>
+    }
+    return [
+      { label: 'README.md', path: join(packDirectory, 'README.md'), purpose: 'Human-readable pack guide' },
+      { label: 'manifest.json', path: join(packDirectory, 'manifest.json'), purpose: 'Canonical file hashes and evidence scope' },
+      ...(manifest.files ?? []).flatMap((file) => file.path
+        ? [{ label: file.path, path: join(packDirectory, file.path), purpose: file.purpose ?? null }]
+        : []),
+    ]
+  } catch {
+    return [{ label: 'evidence.json', path: evidencePath, purpose: 'Canonical complete audit evidence' }]
+  }
 }
 
 function escapeHtml(value: string): string {

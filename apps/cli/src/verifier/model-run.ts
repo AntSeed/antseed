@@ -97,6 +97,7 @@ export interface BuyerProxySnapshot {
 export interface ProxyVerificationContext {
   proxy: BuyerProxySnapshot
   evidenceDir: string
+  checkpointRootDir?: string
   requestTimeoutMs: number
   auditTimeoutMs: number
   responseAuthReader: ResponseAuthReader
@@ -403,7 +404,7 @@ export async function verifyModelTarget(input: {
   const persistCheckpoint = async (): Promise<void> => {
     const snapshot = [...exchangeByBatch.values()].sort((left, right) => left.batchIndex - right.batchIndex)
     checkpointTail = checkpointTail.then(() => writeJsonAtomic(
-      join(input.context.evidenceDir, '.checkpoints', `${auditId}.json`),
+      join(input.context.checkpointRootDir ?? input.context.evidenceDir, '.checkpoints', `${auditId}.json`),
       {
         version: 1,
         kind: 'antseed-verifier-audit-checkpoint',

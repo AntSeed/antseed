@@ -5,9 +5,8 @@ export type ModelSubmissionStatus = 'pending' | 'submitted' | 'failed' | 'skippe
 
 export interface ModelSubmissionLedgerEntryV1 {
   model: string
-  bundleId: string
-  serviceHashes: string[]
   evidenceHash: string
+  serviceHashes: string[]
   evidencePath: string
   resultCount: number
   inferenceCostUsdMicros: string

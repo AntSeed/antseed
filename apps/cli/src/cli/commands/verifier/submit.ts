@@ -109,7 +109,6 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
             const bundle = existing
               ? await readPreparedModelVerificationBundle({
                 evidencePath: existing.evidencePath,
-                bundleId: existing.bundleId,
                 evidenceHash: existing.evidenceHash,
               })
               : await prepareModelVerificationBundle({
@@ -123,7 +122,7 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
                 resolveAgentOwner: (agentId) => verifierClient.agentOwner(agentId),
               })
             if (bundle.results.length === 0) throw new Error('no valid seller results remain after preflight validation')
-            const alreadySubmitted = await verifierClient.isBundleSubmitted(bundle.bundleId)
+            const alreadySubmitted = await verifierClient.isVerificationSubmitted(bundle.evidenceHash)
             const expectedAwardedCreditUsdMicros = alreadySubmitted
               ? 0n
               : minBigInt(bundle.totalAuditCostUsdMicros, remainingPreviewCreditUsdMicros)
@@ -158,11 +157,11 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
           const now = new Date().toISOString()
           try {
             if (item.alreadySubmitted) {
-              const event = await requireBundleEvent(verifierClient, bundle.bundleId)
+              const event = await requireBundleEvent(verifierClient, bundle.evidenceHash)
               await markReferenceCostsClaimed({
                 banksDir,
                 model: bundle.model,
-                bundleId: bundle.bundleId,
+                evidenceHash: bundle.evidenceHash,
                 transactionHash: event.transactionHash,
               })
               ledger.models[bundle.model] = ledgerEntry(bundle, {
@@ -194,22 +193,21 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
             await reserveReferenceCosts({
               banksDir,
               model: bundle.model,
-              bundleId: bundle.bundleId,
+              evidenceHash: bundle.evidenceHash,
               costIds: bundle.referenceCostIds,
             })
 
             const transactionHash = await verifierClient.submitVerificationBundle(identity.wallet, {
-              bundleId: bundle.bundleId,
               expectedEpoch: bundle.expectedEpoch,
               totalAuditCostUsdMicros: bundle.totalAuditCostUsdMicros,
               evidenceHash: bundle.evidenceHash,
               results: bundle.results,
             })
-            const event = await requireBundleEvent(verifierClient, bundle.bundleId)
+            const event = await requireBundleEvent(verifierClient, bundle.evidenceHash)
             await markReferenceCostsClaimed({
               banksDir,
               model: bundle.model,
-              bundleId: bundle.bundleId,
+              evidenceHash: bundle.evidenceHash,
               transactionHash,
             })
             ledger.models[bundle.model] = ledgerEntry(bundle, {
@@ -321,11 +319,11 @@ async function confirmSubmission(bundleCount: number): Promise<void> {
 
 async function requireBundleEvent(
   verifierClient: ReturnType<typeof createVerifierClient>,
-  bundleId: string,
+  evidenceHash: string,
 ) {
-  const events = await verifierClient.queryBundles(bundleId)
+  const events = await verifierClient.queryBundles(evidenceHash)
   const event = events.at(-1)
-  if (!event) throw new Error(`submitted bundle event not found for ${bundleId}`)
+  if (!event) throw new Error(`submitted bundle event not found for ${evidenceHash}`)
   return event
 }
 
@@ -336,7 +334,6 @@ function ledgerEntry(
 ): ModelSubmissionLedgerEntryV1 {
   return {
     model: bundle.model,
-    bundleId: bundle.bundleId,
     serviceHashes: bundle.results.map((result) => result.serviceHash),
     evidenceHash: bundle.evidenceHash,
     evidencePath: bundle.evidencePath,

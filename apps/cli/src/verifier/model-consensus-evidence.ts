@@ -1,9 +1,33 @@
-import { mkdir } from 'node:fs/promises'
-import { join } from 'node:path'
-import { canonicalHashBytes32, type KbfProbe } from '@antseed/fingerprints'
-import { writeJsonAtomic, writeTextAtomic } from './atomic-files.js'
+import { readFile } from 'node:fs/promises'
+import { dirname, join, relative, sep } from 'node:path'
+import { canonicalHashBytes32, type KbfProbe, type ReferenceQueryProfileV1 } from '@antseed/fingerprints'
+import { writeJsonAtomic } from './atomic-files.js'
 import type { ModelVerificationTargetResult } from './model-run.js'
-import { verifyProxyAuditEvidenceFile } from './proxy-evidence.js'
+import { verifyProxyAuditEvidenceFile, type ProxyAuditEvidenceV1 } from './proxy-evidence.js'
+import { safeServiceSlug } from './slug.js'
+
+interface ReferenceIntegrityEvidenceV1 {
+  version: 1
+  kind: 'antseed-kbf-reference-integrity'
+  referenceId: string
+  referenceModel: string
+  queryProfileHash: string
+  queryProfile: ReferenceQueryProfileV1
+  statisticalPower: number
+  statisticalPowerEvidence: Record<string, unknown>
+  selfTest: ProxyAuditEvidenceV1['reference']['selfTest']
+  summary: {
+    totalProbeCount: number
+    referenceConsensusConfirmedCount: number
+    referenceSelfMismatchCount: number
+    referenceSelfMissingCount: number
+  }
+  probes: Array<{
+    probe: KbfProbe
+    referenceSelfTest: { answer: number | null; match: 0 | 1 | null }
+    referenceConsensusConfirmed: boolean
+  }>
+}
 
 export interface ModelProbeConsensusEvidenceV1 {
   version: 1
@@ -12,13 +36,20 @@ export interface ModelProbeConsensusEvidenceV1 {
   epoch: string
   model: string
   createdAt: string
-  evidenceLevel: 'authenticated-seller-consensus-no-payment-evidence'
   scope: {
     referenceConsensus: true
+    referenceIntegrity: 'linked-model-reference-file'
     sellerAnswers: 'verified-response-auth-with-exact-preimages-only'
+    rawSellerResponses: 'linked-seller-exchange-files'
     paymentEvidence: false
     onChainInclusionProof: false
   }
+  reference: {
+    referenceId: string
+    integrityHash: string
+    integrityPath: string
+    relativeIntegrityPath: string
+  } | null
   summary: {
     probeCount: number
     auditedSellerCount: number
@@ -30,15 +61,17 @@ export interface ModelProbeConsensusEvidenceV1 {
     unparsedAnswerCount: number
     referenceMatchRate: number | null
   }
-  audits: Array<{
-    auditId: string
+  sellers: Array<{
+    sellerEvidenceId: string
     peerId: string
     evidenceHash: string
     evidencePath: string
+    relativeEvidencePath: string
   }>
   probes: Array<{
-    probe: KbfProbe
+    probeId: string
     referenceId: string
+    referenceConsensus: number
     referenceSelfTest: { answer: number | null; match: 0 | 1 | null }
     authenticatedSellerAnswerCount: number
     referenceMatchCount: number
@@ -47,12 +80,17 @@ export interface ModelProbeConsensusEvidenceV1 {
     referenceMatchRate: number | null
     sellerAnswers: Array<{
       peerId: string
-      auditId: string
+      sellerEvidenceId: string
       evidenceHash: string
       batchIndex: number
       requestId: string
       requestHash: string
       responseHash: string
+      rawResponse: {
+        exchangePath: string
+        buyerProxyBodyField: 'response.bodyBase64'
+        signedResponsePreimageField: 'responseAuth.signedPreimages.responseBase64'
+      }
       answer: number | null
       match: 0 | 1 | null
     }>
@@ -68,26 +106,39 @@ interface ProbeAccumulator {
 
 export async function writeModelProbeConsensusEvidence(input: {
   directory: string
+  referencesDirectory: string
   runId: string
   epoch: string
   model: string
   createdAt: string
   results: ModelVerificationTargetResult[]
-}): Promise<{ directory: string; consensusPath: string; manifestPath: string }> {
-  const packDirectory = join(input.directory, `${input.runId}.evidence-pack`)
-  await mkdir(packDirectory, { recursive: true })
+}): Promise<{
+  directory: string
+  consensusPath: string
+  manifestPath: string
+  referenceIntegrityPath: string | null
+}> {
   const probeById = new Map<string, ProbeAccumulator>()
-  const audits: ModelProbeConsensusEvidenceV1['audits'] = []
+  const sellers: ModelProbeConsensusEvidenceV1['sellers'] = []
   const authenticatedSellers = new Set<string>()
   let signedExchangeCount = 0
+  let referenceEvidence: ProxyAuditEvidenceV1['reference'] | null = null
+  let referenceEvidenceHash: string | null = null
 
   for (const result of input.results) {
     const evidence = await verifyProxyAuditEvidenceFile(result.evidencePath, result.evidenceHash)
-    audits.push({
-      auditId: result.auditId,
+    const currentReferenceHash = canonicalHashBytes32(evidence.reference)
+    if (referenceEvidenceHash && referenceEvidenceHash !== currentReferenceHash) {
+      throw new Error(`conflicting reference evidence while building ${input.model} run ${input.runId}`)
+    }
+    referenceEvidence ??= evidence.reference
+    referenceEvidenceHash ??= currentReferenceHash
+    sellers.push({
+      sellerEvidenceId: result.auditId,
       peerId: result.peerId,
       evidenceHash: result.evidenceHash,
       evidencePath: result.evidencePath,
+      relativeEvidencePath: relativePath(input.directory, result.evidencePath),
     })
     const selfTestByProbeId = new Map(
       (evidence.reference.selfTest.outcomes ?? []).map((outcome) => [outcome.probeId, outcome]),
@@ -120,12 +171,20 @@ export async function writeModelProbeConsensusEvidence(input: {
         if (!accumulator) continue
         accumulator.sellerAnswers.push({
           peerId: result.peerId,
-          auditId: result.auditId,
+          sellerEvidenceId: result.auditId,
           evidenceHash: result.evidenceHash,
           batchIndex: exchange.batchIndex,
           requestId: auth.requestId,
           requestHash: auth.record.requestHash,
           responseHash: auth.record.responseHash,
+          rawResponse: {
+            exchangePath: relativePath(
+              input.directory,
+              join(dirname(result.evidencePath), 'exchanges', `${String(exchange.batchIndex).padStart(3, '0')}.json`),
+            ),
+            buyerProxyBodyField: 'response.bodyBase64',
+            signedResponsePreimageField: 'responseAuth.signedPreimages.responseBase64',
+          },
           answer: exchange.answers[index] ?? null,
           match: exchange.matches[index] ?? null,
         })
@@ -140,7 +199,10 @@ export async function writeModelProbeConsensusEvidence(input: {
       const referenceMismatchCount = entry.sellerAnswers.filter((answer) => answer.match === 0).length
       const authenticatedSellerAnswerCount = referenceMatchCount + referenceMismatchCount
       return {
-        ...entry,
+        probeId: entry.probe.id,
+        referenceId: entry.referenceId,
+        referenceConsensus: entry.probe.consensus,
+        referenceSelfTest: entry.referenceSelfTest,
         sellerAnswers: entry.sellerAnswers.sort((left, right) => left.peerId.localeCompare(right.peerId)),
         authenticatedSellerAnswerCount,
         referenceMatchCount,
@@ -154,6 +216,17 @@ export async function writeModelProbeConsensusEvidence(input: {
   const referenceMatchCount = probes.reduce((total, probe) => total + probe.referenceMatchCount, 0)
   const referenceMismatchCount = probes.reduce((total, probe) => total + probe.referenceMismatchCount, 0)
   const authenticatedAnswerCount = referenceMatchCount + referenceMismatchCount
+  const referenceIntegrity = referenceEvidence ? createReferenceIntegrityEvidence(referenceEvidence) : null
+  const referenceIntegrityPath = referenceIntegrity
+    ? join(input.referencesDirectory, safeServiceSlug(referenceIntegrity.referenceId), 'probe-integrity.json')
+    : null
+  if (referenceIntegrity && referenceIntegrityPath) await writeJsonAtomic(referenceIntegrityPath, referenceIntegrity, true)
+  const reference = referenceIntegrity && referenceIntegrityPath ? {
+    referenceId: referenceIntegrity.referenceId,
+    integrityHash: canonicalHashBytes32(referenceIntegrity),
+    integrityPath: referenceIntegrityPath,
+    relativeIntegrityPath: relativePath(input.directory, referenceIntegrityPath),
+  } : null
   const consensus: ModelProbeConsensusEvidenceV1 = {
     version: 1,
     kind: 'antseed-verifier-model-probe-consensus',
@@ -161,13 +234,15 @@ export async function writeModelProbeConsensusEvidence(input: {
     epoch: input.epoch,
     model: input.model,
     createdAt: input.createdAt,
-    evidenceLevel: 'authenticated-seller-consensus-no-payment-evidence',
     scope: {
       referenceConsensus: true,
+      referenceIntegrity: 'linked-model-reference-file',
       sellerAnswers: 'verified-response-auth-with-exact-preimages-only',
+      rawSellerResponses: 'linked-seller-exchange-files',
       paymentEvidence: false,
       onChainInclusionProof: false,
     },
+    reference,
     summary: {
       probeCount: probes.length,
       auditedSellerCount: input.results.length,
@@ -179,10 +254,10 @@ export async function writeModelProbeConsensusEvidence(input: {
       unparsedAnswerCount: probes.reduce((total, probe) => total + probe.unparsedAnswerCount, 0),
       referenceMatchRate: authenticatedAnswerCount === 0 ? null : referenceMatchCount / authenticatedAnswerCount,
     },
-    audits: audits.sort((left, right) => left.peerId.localeCompare(right.peerId)),
+    sellers: sellers.sort((left, right) => left.peerId.localeCompare(right.peerId)),
     probes,
   }
-  const consensusPath = join(packDirectory, 'probe-consensus.json')
+  const consensusPath = join(input.directory, 'probe-consensus.json')
   await writeJsonAtomic(consensusPath, consensus, true)
   const manifest = {
     version: 1,
@@ -190,27 +265,100 @@ export async function writeModelProbeConsensusEvidence(input: {
     runId: input.runId,
     epoch: input.epoch,
     model: input.model,
-    evidenceLevel: consensus.evidenceLevel,
+    scope: consensus.scope,
+    reference,
     files: [{
       path: 'probe-consensus.json',
       hash: canonicalHashBytes32(consensus),
       purpose: 'Reference consensus and authenticated seller support by probe',
     }],
   }
-  const manifestPath = join(packDirectory, 'manifest.json')
+  const manifestPath = join(input.directory, 'manifest.json')
   await writeJsonAtomic(manifestPath, manifest, true)
-  await writeTextAtomic(join(packDirectory, 'README.md'), modelEvidencePackReadme(consensus))
-  return { directory: packDirectory, consensusPath, manifestPath }
+  return { directory: input.directory, consensusPath, manifestPath, referenceIntegrityPath }
 }
 
-function modelEvidencePackReadme(evidence: ModelProbeConsensusEvidenceV1): string {
-  return `# AntSeed Model Consensus Evidence\n\n`
-    + `Model: ${evidence.model}\n\n`
-    + `This pack groups ${evidence.summary.signedExchangeCount} seller-signed exchanges from `
-    + `${evidence.summary.authenticatedSellerCount} authenticated seller(s) by reference probe.\n\n`
-    + `- probe-consensus.json: reference probes, enrollment evidence, self-test results, and signed seller support\n`
-    + `- manifest.json: canonical file hashes and evidence scope\n\n`
-    + `Each seller answer points to its audit ID, evidence hash, batch, request ID, and signed request/response hashes. `
-    + `The corresponding audit evidence pack contains the exact request, response, and signature preimages. `
-    + `Evidence level describes proof scope; this pack proves seller-authenticated responses, not payment or on-chain inclusion.\n`
+export async function writeModelAuditManifest(input: {
+  directory: string
+  runId: string
+  epoch: string
+  model: string
+  summaryPath: string
+  consensusPath: string
+  referenceIntegrityPath: string | null
+  results: ModelVerificationTargetResult[]
+}): Promise<string> {
+  const summary = JSON.parse(await readFile(input.summaryPath, 'utf8')) as unknown
+  const consensus = JSON.parse(await readFile(input.consensusPath, 'utf8')) as ModelProbeConsensusEvidenceV1
+  const manifest = {
+    version: 1,
+    kind: 'antseed-verifier-model-evidence-pack',
+    runId: input.runId,
+    epoch: input.epoch,
+    model: input.model,
+    scope: consensus.scope,
+    reference: consensus.reference,
+    files: [
+      {
+        path: relativePath(input.directory, input.summaryPath),
+        hash: canonicalHashBytes32(summary),
+        purpose: 'Seller results, failures, skips, cost, and outcome reasons for this model run',
+      },
+      {
+        path: relativePath(input.directory, input.consensusPath),
+        hash: canonicalHashBytes32(consensus),
+        purpose: 'Reference consensus and authenticated seller support by probe',
+      },
+    ],
+    sellers: input.results
+      .map((result) => ({
+        peerId: result.peerId,
+        sellerEvidenceId: result.auditId,
+        evidenceHash: result.evidenceHash,
+        evidencePath: relativePath(input.directory, result.evidencePath),
+      }))
+      .sort((left, right) => left.peerId.localeCompare(right.peerId)),
+    referenceIntegrityPath: input.referenceIntegrityPath
+      ? relativePath(input.directory, input.referenceIntegrityPath)
+      : null,
+  }
+  const manifestPath = join(input.directory, 'manifest.json')
+  await writeJsonAtomic(manifestPath, manifest, true)
+  return manifestPath
+}
+
+function createReferenceIntegrityEvidence(reference: ProxyAuditEvidenceV1['reference']): ReferenceIntegrityEvidenceV1 {
+  const selfTestByProbeId = new Map(
+    (reference.selfTest.outcomes ?? []).map((outcome) => [outcome.probeId, outcome]),
+  )
+  const probes = reference.probes.map((probe) => {
+    const referenceSelfTest = selfTestByProbeId.get(probe.id) ?? { answer: null, match: null }
+    return {
+      probe,
+      referenceSelfTest,
+      referenceConsensusConfirmed: referenceSelfTest.match === 1,
+    }
+  })
+  return {
+    version: 1,
+    kind: 'antseed-kbf-reference-integrity',
+    referenceId: reference.referenceId,
+    referenceModel: reference.referenceModel,
+    queryProfileHash: reference.queryProfileHash,
+    queryProfile: reference.queryProfile,
+    statisticalPower: reference.statisticalPower,
+    statisticalPowerEvidence: reference.statisticalPowerEvidence,
+    selfTest: reference.selfTest,
+    summary: {
+      totalProbeCount: probes.length,
+      referenceConsensusConfirmedCount: probes.filter((entry) => entry.referenceSelfTest.match === 1).length,
+      referenceSelfMismatchCount: probes.filter((entry) => entry.referenceSelfTest.match === 0).length,
+      referenceSelfMissingCount: probes.filter((entry) => entry.referenceSelfTest.match === null).length,
+    },
+    probes,
+  }
+}
+
+function relativePath(from: string, to: string): string {
+  return relative(from, to).split(sep).join('/')
 }

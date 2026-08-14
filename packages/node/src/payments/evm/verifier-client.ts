@@ -34,7 +34,6 @@ export interface VerificationResultInput {
 }
 
 export interface SubmitVerificationBundleInput {
-  bundleId: string;
   expectedEpoch: number | bigint;
   /** Exact audit cost and credit weight in USD micros: $1 = 1_000_000, $1.20 = 1_200_000. */
   totalAuditCostUsdMicros: number | bigint;
@@ -43,12 +42,11 @@ export interface SubmitVerificationBundleInput {
 }
 
 export interface VerificationBundleSubmittedEvent {
-  bundleId: string;
+  evidenceHash: string;
   verifier: string;
   epoch: bigint;
   totalAuditCostUsdMicros: bigint;
   awardedCreditUsdMicros: bigint;
-  evidenceHash: string;
   resultCount: number;
   blockNumber: number;
   logIndex: number;
@@ -72,8 +70,8 @@ export interface AttestationSubmittedEvent {
 export const VERIFICATION_ABI = [
   'function setVerifier(address verifier, bool approved) external',
   'function setMaxCreditUsdMicrosPerVerifierPerEpoch(uint64 maximum) external',
-  'function submitVerificationBundle(bytes32 bundleId,uint256 expectedEpoch,uint64 totalAuditCostUsdMicros,bytes32 evidenceHash,(uint256 agentId,bytes32 serviceHash,uint8 verdict,uint16 modelShareBps)[] results) external',
-  'function isBundleSubmitted(bytes32 bundleId) external view returns (bool)',
+  'function submitVerificationBundle(uint256 expectedEpoch,uint64 totalAuditCostUsdMicros,bytes32 evidenceHash,(uint256 agentId,bytes32 serviceHash,uint8 verdict,uint16 modelShareBps)[] results) external',
+  'function isVerificationSubmitted(bytes32 evidenceHash) external view returns (bool)',
   'function registry() external view returns (address)',
   'function emissionsGate() external view returns (address)',
   'function firstRewardedEpoch() external view returns (uint256)',
@@ -89,8 +87,8 @@ export const VERIFICATION_ABI = [
   'function verifierEpochBudget(uint256 epoch) external view returns (uint256)',
   'function verifierEpochTotalCreditUsdMicros(uint256 epoch) external view returns (uint256)',
   'function epochRemainderSettled(uint256 epoch) external view returns (bool)',
-  'event VerificationBundleSubmitted(bytes32 indexed bundleId,address indexed verifier,uint256 indexed epoch,uint64 totalAuditCostUsdMicros,uint64 awardedCreditUsdMicros,bytes32 evidenceHash,uint32 resultCount)',
-  'event VerificationResultSubmitted(bytes32 indexed bundleId,uint256 indexed agentId,bytes32 indexed serviceHash,uint8 verdict,uint16 modelShareBps)',
+  'event VerificationBundleSubmitted(bytes32 indexed evidenceHash,address indexed verifier,uint256 indexed epoch,uint64 totalAuditCostUsdMicros,uint64 awardedCreditUsdMicros,uint32 resultCount)',
+  'event VerificationResultSubmitted(bytes32 indexed evidenceHash,uint256 indexed agentId,bytes32 indexed serviceHash,uint8 verdict,uint16 modelShareBps)',
 ] as const;
 
 const EMISSIONS_GATE_EPOCH_ABI = [
@@ -139,7 +137,6 @@ export class VerifierClient extends BaseEvmClient {
       signer,
       VERIFICATION_ABI,
       'submitVerificationBundle',
-      input.bundleId,
       BigInt(input.expectedEpoch),
       BigInt(input.totalAuditCostUsdMicros),
       input.evidenceHash,
@@ -152,8 +149,8 @@ export class VerifierClient extends BaseEvmClient {
     );
   }
 
-  async isBundleSubmitted(bundleId: string): Promise<boolean> {
-    return Boolean(await this._contract().getFunction('isBundleSubmitted')(bundleId));
+  async isVerificationSubmitted(evidenceHash: string): Promise<boolean> {
+    return Boolean(await this._contract().getFunction('isVerificationSubmitted')(evidenceHash));
   }
 
   async registry(): Promise<string> {
@@ -256,26 +253,26 @@ export class VerifierClient extends BaseEvmClient {
     const resultFilterFactory = contract.filters.VerificationResultSubmitted;
     const bundleFilterFactory = contract.filters.VerificationBundleSubmitted;
     if (!resultFilterFactory || !bundleFilterFactory) {
-      throw new Error('verification bundle events are missing from verification ABI');
+      throw new Error('verification events are missing from verification ABI');
     }
     const [resultLogs, bundleLogs] = await Promise.all([
       contract.queryFilter(resultFilterFactory(null, BigInt(agentId), null), fromBlock, toBlock),
       contract.queryFilter(bundleFilterFactory(), fromBlock, toBlock),
     ]);
-    const bundles = new Map(this._bundleEvents(bundleLogs).map((event) => [event.bundleId.toLowerCase(), event]));
+    const bundles = new Map(this._bundleEvents(bundleLogs).map((event) => [event.evidenceHash.toLowerCase(), event]));
     return resultLogs.flatMap((log) => {
       if (!(log instanceof EventLog)) return [];
-      const bundleId = String(log.args.bundleId ?? log.args[0]);
-      const bundle = bundles.get(bundleId.toLowerCase());
+      const evidenceHash = String(log.args.evidenceHash ?? log.args[0]);
+      const bundle = bundles.get(evidenceHash.toLowerCase());
       if (!bundle) return [];
       return [{
-        auditId: bundleId,
+        auditId: evidenceHash,
         verifier: bundle.verifier,
         agentId: BigInt(log.args.agentId ?? log.args[1]),
         serviceHash: String(log.args.serviceHash ?? log.args[2]),
         verdict: Number(log.args.verdict ?? log.args[3]) as VerifierVerdict,
         modelShareBps: Number(log.args.modelShareBps ?? log.args[4]),
-        evidenceHash: bundle.evidenceHash,
+        evidenceHash,
         epoch: bundle.epoch,
         blockNumber: log.blockNumber,
         logIndex: log.index,
@@ -285,27 +282,26 @@ export class VerifierClient extends BaseEvmClient {
   }
 
   async queryBundles(
-    bundleId: string | null = null,
+    evidenceHash: string | null = null,
     fromBlock: number | 'earliest' = 'earliest',
     toBlock: number | 'latest' = 'latest',
   ): Promise<VerificationBundleSubmittedEvent[]> {
     const contract = this._contract();
     const filterFactory = contract.filters.VerificationBundleSubmitted;
     if (!filterFactory) throw new Error('VerificationBundleSubmitted event is missing from verification ABI');
-    return this._bundleEvents(await contract.queryFilter(filterFactory(bundleId), fromBlock, toBlock));
+    return this._bundleEvents(await contract.queryFilter(filterFactory(evidenceHash), fromBlock, toBlock));
   }
 
   private _bundleEvents(logs: readonly unknown[]): VerificationBundleSubmittedEvent[] {
     return logs.flatMap((log) => {
       if (!(log instanceof EventLog)) return [];
       return [{
-        bundleId: String(log.args.bundleId ?? log.args[0]),
+        evidenceHash: String(log.args.evidenceHash ?? log.args[0]),
         verifier: getAddress(String(log.args.verifier ?? log.args[1])),
         epoch: BigInt(log.args.epoch ?? log.args[2]),
         totalAuditCostUsdMicros: BigInt(log.args.totalAuditCostUsdMicros ?? log.args[3]),
         awardedCreditUsdMicros: BigInt(log.args.awardedCreditUsdMicros ?? log.args[4]),
-        evidenceHash: String(log.args.evidenceHash ?? log.args[5]),
-        resultCount: Number(log.args.resultCount ?? log.args[6]),
+        resultCount: Number(log.args.resultCount ?? log.args[5]),
         blockNumber: log.blockNumber,
         logIndex: log.index,
         transactionHash: log.transactionHash,

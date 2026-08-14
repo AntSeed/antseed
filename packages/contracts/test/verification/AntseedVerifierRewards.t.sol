@@ -69,7 +69,7 @@ contract AntseedVerifierRewardsTest is Test {
 
     function test_preRewardedEpochAppliesResultsWithoutRecordingDeadCredits() public {
         uint256 agentId = _register(address(0xCAFE));
-        bytes32 bundleId = keccak256("pre-rewarded");
+        bytes32 evidenceHash = keccak256("pre-rewarded");
         IAntseedVerification.VerificationResult[] memory results = new IAntseedVerification.VerificationResult[](1);
         results[0] = IAntseedVerification.VerificationResult({
             agentId: agentId,
@@ -79,10 +79,10 @@ contract AntseedVerifierRewardsTest is Test {
         });
         vm.prank(verifierA);
         verification.submitVerificationBundle(
-            bundleId, _currentEpoch(), 1_000_000, keccak256(abi.encode("evidence", bundleId)), results
+            _currentEpoch(), 1_000_000, evidenceHash, results
         );
 
-        assertTrue(verification.isBundleSubmitted(bundleId));
+        assertTrue(verification.isVerificationSubmitted(evidenceHash));
         assertEq(verification.agentPointsPenaltyBps(agentId), 2_500);
         assertEq(verification.epochCreditUsdMicros(_currentEpoch(), verifierA), 0);
         assertEq(verification.epochTotalCreditUsdMicros(_currentEpoch()), 0);
@@ -96,7 +96,7 @@ contract AntseedVerifierRewardsTest is Test {
         uint256 agentId = _register(address(0xCAFE));
         _submit(verifierA, agentId, keccak256("no-live-budget"), 1_000_000);
 
-        assertTrue(verification.isBundleSubmitted(keccak256("no-live-budget")));
+        assertTrue(verification.isVerificationSubmitted(keccak256("no-live-budget")));
         assertEq(verification.epochCreditUsdMicros(rewardedEpoch, verifierA), 0);
         assertEq(verification.epochTotalCreditUsdMicros(rewardedEpoch), 0);
     }
@@ -189,7 +189,7 @@ contract AntseedVerifierRewardsTest is Test {
         agentId = identity.register();
     }
 
-    function _submit(address verifier, uint256 agentId, bytes32 auditId, uint64 creditUsdMicros) private {
+    function _submit(address verifier, uint256 agentId, bytes32 evidenceHash, uint64 creditUsdMicros) private {
         IAntseedVerification.VerificationResult[] memory results = new IAntseedVerification.VerificationResult[](1);
         results[0] = IAntseedVerification.VerificationResult({
             agentId: agentId,
@@ -199,10 +199,9 @@ contract AntseedVerifierRewardsTest is Test {
         });
         vm.prank(verifier);
         verification.submitVerificationBundle(
-            auditId,
             _currentEpoch(),
             creditUsdMicros,
-            keccak256(abi.encode("evidence", auditId)),
+            evidenceHash,
             results
         );
     }

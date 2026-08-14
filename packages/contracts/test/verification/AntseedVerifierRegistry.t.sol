@@ -61,7 +61,7 @@ contract AntseedVerifierRegistryTest is Test {
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bytes32 bundleTopic = keccak256(
-            "VerificationBundleSubmitted(bytes32,address,uint256,uint64,uint64,bytes32,uint32)"
+            "VerificationBundleSubmitted(bytes32,address,uint256,uint64,uint64,uint32)"
         );
         bytes32 resultTopic = keccak256("VerificationResultSubmitted(bytes32,uint256,bytes32,uint8,uint16)");
         uint256 bundleEvents;
@@ -102,7 +102,6 @@ contract AntseedVerifierRegistryTest is Test {
         verification.setMaxCreditUsdMicrosPerVerifierPerEpoch(1_000_000);
         vm.expectRevert(AntseedVerification.NotApprovedVerifier.selector);
         verification.submitVerificationBundle(
-            keccak256("unauthorized"),
             _currentEpoch(),
             1_000_000,
             keccak256("unauthorized-evidence"),
@@ -134,7 +133,6 @@ contract AntseedVerifierRegistryTest is Test {
         vm.prank(verifier);
         vm.expectRevert(AntseedVerification.EpochChanged.selector);
         verification.submitVerificationBundle(
-            keccak256("stale"),
             expectedEpoch,
             1_000_000,
             keccak256("stale-evidence"),
@@ -155,22 +153,22 @@ contract AntseedVerifierRegistryTest is Test {
         assertEq(verification.agentPointsPenaltyBps(agentId), 3_000);
     }
 
-    function test_rejectsDuplicateBundleUnknownSelfDuplicateResultAndInvalidInputs() public {
-        bytes32 bundleId = keccak256("validation");
-        _submit(verifier, bundleId, _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.SAME, 0), 1_000_000);
-        assertTrue(verification.isBundleSubmitted(bundleId));
+    function test_rejectsDuplicateEvidenceUnknownSelfDuplicateResultAndInvalidInputs() public {
+        bytes32 evidenceHash = keccak256("validation");
+        _submit(verifier, evidenceHash, _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.SAME, 0), 1_000_000);
+        assertTrue(verification.isVerificationSubmitted(evidenceHash));
 
         vm.prank(verifier);
-        vm.expectRevert(AntseedVerification.BundleAlreadyExists.selector);
+        vm.expectRevert(AntseedVerification.VerificationAlreadySubmitted.selector);
         verification.submitVerificationBundle(
-            bundleId, _currentEpoch(), 1_000_000, keccak256("duplicate"),
+            _currentEpoch(), 1_000_000, evidenceHash,
             _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.SAME, 0)
         );
 
         vm.prank(verifier);
         vm.expectRevert(AntseedVerification.UnknownAgent.selector);
         verification.submitVerificationBundle(
-            keccak256("unknown"), _currentEpoch(), 1_000_000, keccak256("unknown-evidence"),
+            _currentEpoch(), 1_000_000, keccak256("unknown-evidence"),
             _oneResult(999, SERVICE_HASH, IAntseedVerification.Verdict.SAME, 0)
         );
 
@@ -178,69 +176,29 @@ contract AntseedVerifierRegistryTest is Test {
         vm.prank(seller);
         vm.expectRevert(AntseedVerification.SelfAudit.selector);
         verification.submitVerificationBundle(
-            keccak256("self"), _currentEpoch(), 1_000_000, keccak256("self-evidence"),
+            _currentEpoch(), 1_000_000, keccak256("self-evidence"),
             _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.SAME, 0)
-        );
-
-        IAntseedVerification.VerificationResult[] memory duplicates = new IAntseedVerification.VerificationResult[](2);
-        duplicates[0] = _result(agentId, SERVICE_HASH, IAntseedVerification.Verdict.SAME, 0);
-        duplicates[1] = _result(agentId, SERVICE_HASH, IAntseedVerification.Verdict.DIFF, 0);
-        vm.prank(verifier);
-        vm.expectRevert(AntseedVerification.DuplicateResult.selector);
-        verification.submitVerificationBundle(
-            keccak256("duplicate-result"), _currentEpoch(), 1_000_000, keccak256("duplicate-result-evidence"), duplicates
         );
 
         vm.prank(verifier);
         vm.expectRevert(AntseedVerification.InvalidModelShare.selector);
         verification.submitVerificationBundle(
-            keccak256("bad-share"), _currentEpoch(), 1_000_000, keccak256("bad-share-evidence"),
+            _currentEpoch(), 1_000_000, keccak256("bad-share-evidence"),
             _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.SAME, 1)
         );
     }
 
-    function test_rejectsEmptyAndOversizedBundles() public {
-        IAntseedVerification.VerificationResult[] memory empty = new IAntseedVerification.VerificationResult[](0);
-        vm.prank(verifier);
-        vm.expectRevert(AntseedVerification.EmptyBundle.selector);
-        verification.submitVerificationBundle(keccak256("empty"), _currentEpoch(), 0, keccak256("empty-evidence"), empty);
-
-        IAntseedVerification.VerificationResult[] memory oversized =
-            new IAntseedVerification.VerificationResult[](verification.MAX_RESULTS_PER_BUNDLE() + 1);
-        vm.prank(verifier);
-        vm.expectRevert(AntseedVerification.TooManyResults.selector);
-        verification.submitVerificationBundle(
-            keccak256("oversized"), _currentEpoch(), 0, keccak256("oversized-evidence"), oversized
-        );
-    }
-
-    function test_acceptsMaximumBundleSize() public {
-        uint256 resultCount = verification.MAX_RESULTS_PER_BUNDLE();
-        IAntseedVerification.VerificationResult[] memory results =
-            new IAntseedVerification.VerificationResult[](resultCount);
-        for (uint256 i = 0; i < resultCount; i++) {
-            uint256 targetAgentId = 1_000 + i;
-            identityRegistry.setOwner(targetAgentId, address(uint160(10_000 + i)));
-            results[i] = _result(targetAgentId, SERVICE_HASH, IAntseedVerification.Verdict.SAME, 0);
-        }
-
-        bytes32 bundleId = keccak256("maximum-size");
-        _submit(verifier, bundleId, results, 0);
-        assertTrue(verification.isBundleSubmitted(bundleId));
-    }
-
     function _submit(
         address caller,
-        bytes32 bundleId,
+        bytes32 evidenceHash,
         IAntseedVerification.VerificationResult[] memory results,
         uint64 costUsdMicros
     ) private {
         vm.prank(caller);
         verification.submitVerificationBundle(
-            bundleId,
             _currentEpoch(),
             costUsdMicros,
-            keccak256(abi.encode(bundleId, caller)),
+            evidenceHash,
             results
         );
     }

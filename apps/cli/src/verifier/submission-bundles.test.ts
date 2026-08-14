@@ -118,7 +118,7 @@ const referenceCost: ReferenceCostEntryV1 = {
     }],
   },
   status: 'unclaimed',
-  reservedBundleId: null,
+  reservedEvidenceHash: null,
   claimedTransactionHash: null,
 }
 
@@ -212,7 +212,6 @@ test('model bundles account costs once and derive deterministic IDs', async () =
     const first = await prepare()
     const second = await prepare()
 
-    assert.equal(first.bundleId, second.bundleId)
     assert.equal(first.evidenceHash, second.evidenceHash)
     assert.equal(first.results.length, 2)
     assert.equal(first.results[1]!.modelShareBps, 0)
@@ -226,14 +225,12 @@ test('model bundles account costs once and derive deterministic IDs', async () =
     await writeModelVerificationBundleEvidence(first)
     assert.equal((await readPreparedModelVerificationBundle({
       evidencePath: first.evidencePath,
-      bundleId: first.bundleId,
       evidenceHash: first.evidenceHash,
-    })).bundleId, first.bundleId)
+    })).evidenceHash, first.evidenceHash)
     await writeFile(first.evidencePath, `${await readFile(first.evidencePath, 'utf8')} `)
     await assert.rejects(
       readPreparedModelVerificationBundle({
         evidencePath: first.evidencePath,
-        bundleId: first.bundleId,
         evidenceHash: first.evidenceHash,
       }),
       /not canonical JSON/,

@@ -32,17 +32,18 @@ interface IAntseedVerification is IAntseedPointsPolicy {
     function setVerifier(address verifier, bool approved) external;
     function setMaxCreditUsdMicrosPerVerifierPerEpoch(uint64 maximum) external;
 
-    /// @notice Submits audit cost directly as the verifier credit weight before applying the epoch cap.
-    /// @dev `totalAuditCostUsdMicros` preserves fractional credits exactly; no whole-dollar rounding occurs.
+    /// @notice Submits all audited seller results for one model as the verifier credit weight.
+    /// @dev `evidenceHash` is the canonical hash of the model bundle evidence and doubles as the
+    ///      replay-protection key. `totalAuditCostUsdMicros` preserves fractional credits exactly;
+    ///      no whole-dollar rounding occurs.
     function submitVerificationBundle(
-        bytes32 bundleId,
         uint256 expectedEpoch,
         uint64 totalAuditCostUsdMicros,
         bytes32 evidenceHash,
         VerificationResult[] calldata results
     ) external;
 
-    function isBundleSubmitted(bytes32 bundleId) external view returns (bool);
+    function isVerificationSubmitted(bytes32 evidenceHash) external view returns (bool);
 
     function epochCreditUsdMicros(uint256 epoch, address verifier) external view returns (uint256);
     function epochTotalCreditUsdMicros(uint256 epoch) external view returns (uint256);

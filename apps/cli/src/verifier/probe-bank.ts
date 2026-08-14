@@ -55,7 +55,7 @@ export interface ReferenceCostEntryV1 {
   referenceId: string
   cost: ReferenceBuildCostV1
   status: 'unclaimed' | 'reserved' | 'claimed'
-  reservedBundleId: string | null
+  reservedEvidenceHash: string | null
   claimedTransactionHash: string | null
 }
 
@@ -527,19 +527,19 @@ export function sellerLedgerPath(banksDir: string, model: string, sellerPeerId: 
 export async function listClaimableReferenceCosts(
   banksDir: string,
   model: string,
-  bundleId?: string,
+  evidenceHash?: string,
 ): Promise<ReferenceCostEntryV1[]> {
   const bank = await readRequiredBank(bankPath(banksDir, model), model)
   return bank.referenceCosts
     .filter((entry) => entry.status === 'unclaimed'
-      || (entry.status === 'reserved' && entry.reservedBundleId === bundleId))
+      || (entry.status === 'reserved' && entry.reservedEvidenceHash === evidenceHash))
     .map((entry) => structuredClone(entry))
 }
 
 export async function reserveReferenceCosts(input: {
   banksDir: string
   model: string
-  bundleId: string
+  evidenceHash: string
   costIds: string[]
 }): Promise<ReferenceCostEntryV1[]> {
   const path = bankPath(input.banksDir, input.model)
@@ -551,11 +551,11 @@ export async function reserveReferenceCosts(input: {
     for (const entry of bank.referenceCosts) {
       if (!requested.has(entry.costId)) continue
       if (entry.status === 'claimed') throw new Error(`reference cost ${entry.costId} is already claimed`)
-      if (entry.status === 'reserved' && entry.reservedBundleId !== input.bundleId) {
+      if (entry.status === 'reserved' && entry.reservedEvidenceHash !== input.evidenceHash) {
         throw new Error(`reference cost ${entry.costId} is reserved by another bundle`)
       }
       entry.status = 'reserved'
-      entry.reservedBundleId = input.bundleId
+      entry.reservedEvidenceHash = input.evidenceHash
       reserved.push(structuredClone(entry))
       requested.delete(entry.costId)
     }
@@ -571,7 +571,7 @@ export async function reserveReferenceCosts(input: {
 export async function markReferenceCostsClaimed(input: {
   banksDir: string
   model: string
-  bundleId: string
+  evidenceHash: string
   transactionHash: string
 }): Promise<void> {
   const path = bankPath(input.banksDir, input.model)
@@ -579,7 +579,7 @@ export async function markReferenceCostsClaimed(input: {
   try {
     const bank = await readRequiredBank(path, input.model)
     for (const entry of bank.referenceCosts) {
-      if (entry.status !== 'reserved' || entry.reservedBundleId !== input.bundleId) continue
+      if (entry.status !== 'reserved' || entry.reservedEvidenceHash !== input.evidenceHash) continue
       entry.status = 'claimed'
       entry.claimedTransactionHash = input.transactionHash
     }
@@ -637,7 +637,7 @@ function bankFromReference(model: string, reference: KbfReferenceV1, cost: Refer
       referenceId: reference.referenceId,
       cost,
       status: 'unclaimed',
-      reservedBundleId: null,
+      reservedEvidenceHash: null,
       claimedTransactionHash: null,
     }],
     createdAt: now,

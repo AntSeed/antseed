@@ -14,8 +14,6 @@ import { IERC8004Registry } from "../interfaces/IERC8004Registry.sol";
 
 contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGuard {
     uint256 public constant BPS_DENOMINATOR = 10_000;
-    uint256 public constant MAX_RESULTS_PER_BUNDLE = 64;
-
     IAntseedRegistry public immutable override registry;
     IAntseedEmissionsGate public immutable override emissionsGate;
     uint256 public immutable override firstRewardedEpoch;
@@ -26,7 +24,7 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
     /// @dev The default cap is 100 credits. Fractional credits remain exact, so $1.20 is 1_200_000 units.
     uint64 public override maxCreditUsdMicrosPerVerifierPerEpoch = 100_000_000;
 
-    mapping(bytes32 bundleId => bool submitted) private _submittedBundles;
+    mapping(bytes32 evidenceHash => bool submitted) private _submittedVerifications;
     mapping(uint256 agentId => uint16 penaltyBps) private _agentPointsPenaltyBps;
 
     mapping(uint256 epoch => mapping(address verifier => uint256 creditUsdMicros)) public override epochCreditUsdMicros;
@@ -39,16 +37,15 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
     event VerifierApprovalSet(address indexed verifier, bool approved);
     event MaxCreditUsdMicrosPerVerifierPerEpochSet(uint64 maximum);
     event VerificationBundleSubmitted(
-        bytes32 indexed bundleId,
+        bytes32 indexed evidenceHash,
         address indexed verifier,
         uint256 indexed epoch,
         uint64 totalAuditCostUsdMicros,
         uint64 awardedCreditUsdMicros,
-        bytes32 evidenceHash,
         uint32 resultCount
     );
     event VerificationResultSubmitted(
-        bytes32 indexed bundleId,
+        bytes32 indexed evidenceHash,
         uint256 indexed agentId,
         bytes32 indexed serviceHash,
         Verdict verdict,
@@ -64,10 +61,7 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
     error InvalidVerdict();
     error InvalidModelShare();
     error EpochChanged();
-    error BundleAlreadyExists();
-    error EmptyBundle();
-    error TooManyResults();
-    error DuplicateResult();
+    error VerificationAlreadySubmitted();
     error UnknownAgent();
     error SelfAudit();
     error PreEffectiveEpoch();
@@ -102,17 +96,13 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
     }
 
     function submitVerificationBundle(
-        bytes32 bundleId,
         uint256 expectedEpoch,
         uint64 totalAuditCostUsdMicros,
         bytes32 evidenceHash,
         VerificationResult[] calldata results
     ) external override onlyApprovedVerifier nonReentrant {
-        if (bundleId == bytes32(0) || evidenceHash == bytes32(0)) revert InvalidValue();
-        if (_submittedBundles[bundleId]) revert BundleAlreadyExists();
-        if (results.length == 0) revert EmptyBundle();
-        if (results.length > MAX_RESULTS_PER_BUNDLE) revert TooManyResults();
-
+        if (evidenceHash == bytes32(0)) revert InvalidValue();
+        if (_submittedVerifications[evidenceHash]) revert VerificationAlreadySubmitted();
         uint256 epoch = currentEpoch();
         if (epoch != expectedEpoch) revert EpochChanged();
 
@@ -120,15 +110,9 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
             VerificationResult calldata result = results[i];
             _validateResult(result);
             if (_resolveAgentOwner(result.agentId) == msg.sender) revert SelfAudit();
-            for (uint256 j = 0; j < i; j++) {
-                VerificationResult calldata previous = results[j];
-                if (previous.agentId == result.agentId && previous.serviceHash == result.serviceHash) {
-                    revert DuplicateResult();
-                }
-            }
         }
 
-        _submittedBundles[bundleId] = true;
+        _submittedVerifications[evidenceHash] = true;
 
         uint64 awardedCreditUsdMicros;
         if (epoch >= firstRewardedEpoch && emissionsGate.controllerEpochBudget(address(this), epoch) != 0) {
@@ -146,25 +130,19 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
         }
 
         emit VerificationBundleSubmitted(
-            bundleId,
-            msg.sender,
-            epoch,
-            totalAuditCostUsdMicros,
-            awardedCreditUsdMicros,
-            evidenceHash,
-            uint32(results.length)
+            evidenceHash, msg.sender, epoch, totalAuditCostUsdMicros, awardedCreditUsdMicros, uint32(results.length)
         );
         for (uint256 i = 0; i < results.length; i++) {
             VerificationResult calldata result = results[i];
             _applyAttestationPenalty(result.agentId, result.verdict, result.modelShareBps);
             emit VerificationResultSubmitted(
-                bundleId, result.agentId, result.serviceHash, result.verdict, result.modelShareBps
+                evidenceHash, result.agentId, result.serviceHash, result.verdict, result.modelShareBps
             );
         }
     }
 
-    function isBundleSubmitted(bytes32 bundleId) external view override returns (bool) {
-        return _submittedBundles[bundleId];
+    function isVerificationSubmitted(bytes32 evidenceHash) external view override returns (bool) {
+        return _submittedVerifications[evidenceHash];
     }
 
     function currentEpoch() public view override returns (uint256) {

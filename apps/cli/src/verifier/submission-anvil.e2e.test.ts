@@ -8,21 +8,29 @@ import { dirname, join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
-import { createReferenceQueryProfile } from '@antseed/fingerprints'
+import {
+  canonicalHashBytes32,
+  computeBinomialPower,
+  computeReferenceId,
+  createReferenceQueryProfile,
+  queryProfileHash,
+  type KbfReferenceV1,
+} from '@antseed/fingerprints'
 import { VerificationStorage } from '@antseed/node'
 import {
   VERIFIER_VERDICT_DIFF,
   VERIFIER_VERDICT_UNDETERMINED,
   VerifierClient,
 } from '@antseed/node/payments'
+import { id } from 'ethers'
 import {
-  modelAuditsDirectory,
+  modelAuditSellersDirectory,
   writeModelAuditSummary,
   writeVerifierRunManifest,
   type ModelAuditSummaryV1,
   type VerifierRunManifestV1,
 } from './audit-artifacts.js'
-import { bankPath } from './probe-bank.js'
+import { appendModelReferenceToBank, bankPath } from './probe-bank.js'
 import {
   emptyAuditCostSummary,
   writeProxyAuditEvidence,
@@ -33,6 +41,8 @@ import { submissionLedgerPath, type SubmissionLedgerV1 } from './submission-ledg
 const RUN_ANVIL_E2E = process.env['ANTSEED_RUN_VERIFIER_ANVIL_E2E'] === '1'
 const DEPLOYER_PRIVATE_KEY = 'ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
 const VERIFIER_ADDRESS = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'
+const VERIFICATION_MINTER_ID = id('antseed.emissions.verification.v1')
+const EPOCH_DURATION_SECONDS = 7 * 24 * 60 * 60
 const SELLER_ADDRESSES = [
   '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
   '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC',
@@ -88,9 +98,16 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
     )
     castSend(rpcUrl, registryAddress, 'setIdentityRegistry(address)', [identityRegistryAddress])
     castSend(rpcUrl, verificationAddress, 'setVerifier(address,bool)', [VERIFIER_ADDRESS, 'true'])
+    castSend(rpcUrl, emissionsGateAddress, 'setMinter(bytes32,address,uint32,bool)', [
+      VERIFICATION_MINTER_ID,
+      verificationAddress,
+      '10000',
+      'true',
+    ])
     for (const [index, sellerAddress] of SELLER_ADDRESSES.entries()) {
       castSend(rpcUrl, identityRegistryAddress, 'setOwner(uint256,address)', [String(index + 1), sellerAddress])
     }
+    increaseTime(rpcUrl, EPOCH_DURATION_SECONDS)
 
     const dataDir = join(directory, 'data')
     const evidenceDir = join(dataDir, 'verifier', 'evidence')
@@ -108,7 +125,14 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
           identityRegistryAddress,
         },
       },
-      verifier: { evidenceDir, banksDir },
+      verifier: {
+        evidenceDir,
+        banksDir,
+        referenceMinimumProbeCount: 10,
+        referenceMaximumProbeCount: 10,
+        referenceProbeStep: 10,
+        referenceMinimumStatisticalPower: 0.5,
+      },
     }))
     const storage = new VerificationStorage(join(dataDir, 'verification.db'))
     storage.close()
@@ -131,6 +155,7 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
       model: MODELS[0],
       timestamps,
       referenceCostUsdMicros: '200000',
+      auditCount: 10,
       audits: [
         { agentId: '1', peerId: '11'.repeat(20), verdict: 'SAME', telemetryUsd: 0.6 },
         { agentId: '2', peerId: '22'.repeat(20), verdict: 'DIFF', telemetryUsd: 0.4 },
@@ -144,6 +169,7 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
       model: MODELS[1],
       timestamps,
       referenceCostUsdMicros: '1000000',
+      auditCount: 10,
       audits: [
         { agentId: '3', peerId: '33'.repeat(20), verdict: 'UNDETERMINED', telemetryUsd: 99.4 },
       ],
@@ -156,6 +182,7 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
       model: MODELS[2],
       timestamps,
       referenceCostUsdMicros: '100000',
+      auditCount: 10,
       audits: [
         { agentId: '4', peerId: '44'.repeat(20), verdict: 'SAME', telemetryUsd: 0.1 },
       ],
@@ -185,7 +212,7 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
     const dryRun = runCli(dataDir, configPath, rpcUrl, runId, ['--dry-run'])
     assert.equal(dryRun.status, 0, dryRun.output)
     assert.match(dryRun.output, /Dry run complete/)
-    assert.equal((await createVerifierClient(rpcUrl, verificationAddress).queryBundles()).length, 0)
+    assert.equal((await createVerifierClient(rpcUrl, verificationAddress).queryAttestations(1n)).length, 0)
 
     const originalModelBEvidence = await readFile(modelB.audits[0]!.path, 'utf8')
     await writeFile(modelB.audits[0]!.path, `${originalModelBEvidence} `)
@@ -193,7 +220,11 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
     assert.equal(partialSubmit.status, 1, partialSubmit.output)
     assert.match(partialSubmit.output, /model-b: preflight failed: no valid seller results remain/)
     assert.match(partialSubmit.output, /Submitted: 2; skipped: 0; failed: 1/)
-    assert.equal((await createVerifierClient(rpcUrl, verificationAddress).queryBundles()).length, 2)
+    const partialBundles = await createVerifierClient(rpcUrl, verificationAddress).queryBundles()
+    assert.equal(partialBundles.length, 2)
+    assert.equal((await createVerifierClient(rpcUrl, verificationAddress).queryAttestations(1n)).length, 1)
+    assert.equal((await createVerifierClient(rpcUrl, verificationAddress).queryAttestations(2n)).length, 1)
+    assert.equal((await createVerifierClient(rpcUrl, verificationAddress).queryAttestations(4n)).length, 1)
     assert.equal(
       await createVerifierClient(rpcUrl, verificationAddress)
         .epochCreditUsdMicros(epochWindow.epoch, VERIFIER_ADDRESS),
@@ -210,10 +241,8 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
     const readClient = createVerifierClient(rpcUrl, verificationAddress)
     const bundles = await readClient.queryBundles()
     assert.equal(bundles.length, 3)
-    const costs = new Map(bundles.map((event) => [event.totalAuditCostUsdMicros.toString(), event]))
-    assert.equal(costs.get('1200000')?.awardedCreditUsdMicros, 1_200_000n)
-    assert.equal(costs.get('200000')?.awardedCreditUsdMicros, 200_000n)
-    assert.equal(costs.get('100400000')?.awardedCreditUsdMicros, 98_600_000n)
+    assert.equal((await readClient.queryAttestations(1n)).length, 1)
+    assert.equal((await readClient.queryAttestations(4n)).length, 1)
     assert.equal(await readClient.epochCreditUsdMicros(epochWindow.epoch, VERIFIER_ADDRESS), 100_000_000n)
     assert.equal(await readClient.epochTotalCreditUsdMicros(epochWindow.epoch), 100_000_000n)
 
@@ -224,7 +253,6 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
     const undetermined = await readClient.queryAttestations(3n)
     assert.equal(undetermined.length, 1)
     assert.equal(undetermined[0]!.verdict, VERIFIER_VERDICT_UNDETERMINED)
-    assert.equal(bundles.reduce((total, event) => total + event.resultCount, 0), 4)
 
     const ledgerFile = submissionLedgerPath(evidenceDir, 31_337n, verificationAddress, runId)
     const ledger = JSON.parse(await readFile(ledgerFile, 'utf8')) as SubmissionLedgerV1
@@ -267,6 +295,7 @@ async function writeModelFixture(input: {
     completedAt: string
   }
   referenceCostUsdMicros: string
+  auditCount: number
   audits: Array<{
     agentId: string
     peerId: string
@@ -283,7 +312,7 @@ async function writeModelFixture(input: {
   for (const [index, audit] of input.audits.entries()) {
     const auditId = `${input.model}-audit-${index + 1}`
     const written = await writeProxyAuditEvidence(
-      modelAuditsDirectory(input.evidenceDir, input.epoch, input.model),
+      modelAuditSellersDirectory(input.evidenceDir, input.epoch, input.model, input.runId),
       auditId,
       auditEvidence({
         model: input.model,
@@ -325,12 +354,64 @@ async function writeModelFixture(input: {
     skipped: [],
     cost: emptyAuditCostSummary(),
   })
+  const reference = referenceFixture(input.model)
+  await appendModelReferenceToBank({
+    banksDir: input.banksDir,
+    model: input.model,
+    reference,
+    cost: {
+      totalUsdMicros: input.referenceCostUsdMicros,
+      requestCount: 1,
+      models: [{
+        model: input.model,
+        requestCount: 1,
+        inputTokens: 10,
+        outputTokens: 2,
+        inputUsdPerMillion: 1,
+        outputUsdPerMillion: 2,
+        costUsdMicros: input.referenceCostUsdMicros,
+      }],
+      purposes: [{
+        purpose: 'target-model',
+        model: input.model,
+        requestCount: 1,
+        inputTokens: 10,
+        outputTokens: 2,
+        inputUsdPerMillion: 1,
+        outputUsdPerMillion: 2,
+        costUsdMicros: input.referenceCostUsdMicros,
+      }],
+    },
+  })
   const path = bankPath(input.banksDir, input.model)
   await mkdir(dirname(path), { recursive: true })
   await writeFile(path, JSON.stringify({
     version: 1,
     kind: 'antseed-kbf-probe-bank',
     model: input.model,
+    compatibilityHash: bankCompatibilityHash(input.model, reference),
+    queryProfile: reference.queryProfile,
+    referenceTemplate: {
+      referenceModel: reference.referenceModel,
+      serviceAliases: reference.serviceAliases,
+      source: reference.source,
+      generator: reference.generator,
+      provenance: reference.provenance,
+      minimumMismatchDelta: reference.minimumMismatchDelta,
+    },
+    statisticalAssumptions: {
+      alpha: 0.05,
+      clopperPearsonConfidence: 0.99,
+    },
+    contrastModels: reference.contrasts.map((contrast) => contrast.model),
+    probes: reference.probes.map((probe) => ({
+      probe,
+      selfTest: reference.selfTest.outcomes.find((outcome) => outcome.probeId === probe.id)!,
+      distinguishingContrastModels: reference.contrasts
+        .filter((contrast) => contrast.distinguishingProbeIds.includes(probe.id))
+        .map((contrast) => contrast.model),
+    })),
+    sourceReferenceIds: [reference.referenceId],
     referenceCosts: [{
       costId: `0x${String(MODELS.indexOf(input.model as typeof MODELS[number]) + 1).padStart(64, '0')}`,
       referenceId: `${input.model}-reference`,
@@ -358,13 +439,95 @@ async function writeModelFixture(input: {
         }],
       },
       status: 'unclaimed',
-      reservedBundleId: null,
+      reservedEvidenceHash: null,
       claimedTransactionHash: null,
     }],
     createdAt: input.timestamps.startedAt,
     updatedAt: input.timestamps.completedAt,
   }))
   return { model: input.model, summaryPath, resultCount: audits.length, audits }
+}
+
+function referenceFixture(model: string): KbfReferenceV1 {
+  const probes = Array.from({ length: inputAuditCount(model) }, (_, index) => ({
+    id: `${model}-probe-${index + 1}`,
+    name: `probe ${index + 1}`,
+    domain: 'test',
+    template: `The test value ${index + 1} is ___.`,
+    consensus: index + 1,
+    range: [0, inputAuditCount(model) + 1] as [number, number],
+    tolerance: { mode: 'absolute' as const, value: 0 },
+  }))
+  const count = probes.length
+  const power = computeBinomialPower({
+    selfHamming: 0,
+    selfTotal: count,
+    minimumMismatchDelta: 0.1,
+    alpha: 0.05,
+    cpConfidence: 0.99,
+  })
+  const value: KbfReferenceV1 = {
+    version: 1,
+    kind: 'kbf',
+    referenceId: '',
+    referenceModel: model,
+    serviceAliases: [model],
+    createdAt: '2026-08-06T00:00:00.000Z',
+    source: 'generated',
+    generator: { name: 'test', version: '1', verifierKind: 'kbf', params: {} },
+    provenance: { sourceId: 'trusted', trust: 'trusted' },
+    queryProfile: createReferenceQueryProfile({ upstreamModel: `upstream-${model}` }),
+    selfTest: {
+      hamming: 0,
+      total: count,
+      coverage: 1,
+      errorRate: 0,
+      outcomes: probes.map((probe) => ({ probeId: probe.id, answer: probe.consensus, match: 1 })),
+    },
+    probes,
+    selectedProbeCount: count,
+    minimumMismatchDelta: 0.1,
+    statisticalPower: power.power,
+    statisticalPowerEvidence: {
+      test: 'one-sided-binomial',
+      alpha: 0.05,
+      clopperPearsonConfidence: 0.99,
+      selfHamming: 0,
+      selfTotal: count,
+      p0UpperBound: power.p0,
+      alternativeMismatchRate: power.p1,
+      criticalMismatchCount: power.criticalMismatchCount,
+      power: power.power,
+    },
+    contrasts: [{ model: `${model}-contrast`, distinguishingProbeIds: probes.map((probe) => probe.id) }],
+  }
+  value.referenceId = computeReferenceId(value)
+  return value
+}
+
+function inputAuditCount(model: string): number {
+  return Math.max(10, 10 * (MODELS.indexOf(model as typeof MODELS[number]) + 1))
+}
+
+function bankCompatibilityHash(model: string, reference: KbfReferenceV1): string {
+  return canonicalHashBytes32({
+    model,
+    referenceModel: reference.referenceModel,
+    serviceAliases: reference.serviceAliases.slice().sort(),
+    queryProfileHash: queryProfileHash(reference.queryProfile),
+    provenance: reference.provenance ?? null,
+    generator: {
+      name: reference.generator.name,
+      version: reference.generator.version,
+      enrollmentBatchingVersion: reference.generator.params.enrollmentBatchingVersion ?? null,
+      enrollmentStabilityVersion: reference.generator.params.enrollmentStabilityVersion ?? null,
+    },
+    minimumMismatchDelta: reference.minimumMismatchDelta,
+    assumptions: {
+      alpha: reference.statisticalPowerEvidence.alpha,
+      clopperPearsonConfidence: reference.statisticalPowerEvidence.clopperPearsonConfidence,
+    },
+  })
 }
 
 function auditEvidence(input: {
@@ -528,6 +691,11 @@ function castSend(rpcUrl: string, contract: string, signature: string, args: str
     signature,
     ...args,
   ], repoRoot)
+}
+
+function increaseTime(rpcUrl: string, seconds: number): void {
+  runCommand('cast', ['rpc', '--rpc-url', rpcUrl, 'evm_increaseTime', String(seconds)], repoRoot)
+  runCommand('cast', ['rpc', '--rpc-url', rpcUrl, 'evm_mine'], repoRoot)
 }
 
 function runCommand(command: string, args: string[], cwd: string): string {

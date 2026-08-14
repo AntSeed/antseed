@@ -52,31 +52,82 @@ function audit(peerId: string, answer: number, match: 0 | 1): ProxyAuditEvidence
 test('model consensus evidence aggregates authenticated seller support by probe', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'antseed-model-consensus-'))
   try {
+    const runDirectory = join(directory, 'audits', 'run-1')
     const results = []
     for (const [index, match] of ([1, 0] as const).entries()) {
       const peerId = String(index + 1).repeat(40)
       const auditId = `audit-${index}`
-      const written = await writeProxyAuditEvidence(join(directory, 'audits'), auditId, audit(peerId, match ? 10 : 11, match))
+      const written = await writeProxyAuditEvidence(
+        join(runDirectory, 'sellers'),
+        auditId,
+        audit(peerId, match ? 10 : 11, match),
+      )
       results.push({ peerId, displayName: null, agentId: null, service: 'model-a', status: match ? 'SAME' as const : 'DIFF' as const,
         auditId, parsedProbeCount: 1, probeCount: 1, correctProbeCount: match, incorrectProbeCount: match ? 0 : 1,
         correctRate: match, requestCount: 1, cost: emptyAuditCostSummary(), evidencePath: written.path,
         evidenceHash: written.evidenceHash })
     }
     const written = await writeModelProbeConsensusEvidence({
-      directory: join(directory, 'runs'), runId: 'run-1', epoch: '2026-08-13', model: 'model-a',
+      directory: runDirectory,
+      referencesDirectory: join(directory, 'references'),
+      runId: 'run-1', epoch: '2026-08-13', model: 'model-a',
       createdAt: '2026-08-13T10:01:00.000Z', results,
     })
     const evidence = JSON.parse(await readFile(written.consensusPath, 'utf8')) as {
+      version: number
+      evidenceLevel?: string
+      scope: { referenceIntegrity: string; rawSellerResponses: string; paymentEvidence: boolean }
+      reference: { relativeIntegrityPath: string }
       summary: { authenticatedSellerCount: number; referenceMatchCount: number; referenceMismatchCount: number }
-      probes: Array<{ sellerAnswers: unknown[]; probe: { enrollmentEvidence?: unknown } }>
+      probes: Array<{
+        sellerAnswers: Array<{ rawResponse: { exchangePath: string; signedResponsePreimageField: string } }>
+        probeId: string
+        referenceConsensus: number
+      }>
     }
+    assert.equal(evidence.version, 1)
+    assert.equal(evidence.evidenceLevel, undefined)
+    assert.deepEqual(evidence.scope, {
+      referenceConsensus: true,
+      referenceIntegrity: 'linked-model-reference-file',
+      sellerAnswers: 'verified-response-auth-with-exact-preimages-only',
+      rawSellerResponses: 'linked-seller-exchange-files',
+      paymentEvidence: false,
+      onChainInclusionProof: false,
+    })
     assert.deepEqual(evidence.summary, {
       probeCount: 1, auditedSellerCount: 2, authenticatedSellerCount: 2, signedExchangeCount: 2,
       authenticatedAnswerCount: 2, referenceMatchCount: 1, referenceMismatchCount: 1,
       unparsedAnswerCount: 0, referenceMatchRate: 0.5,
     })
     assert.equal(evidence.probes[0]?.sellerAnswers.length, 2)
-    assert.ok(evidence.probes[0]?.probe.enrollmentEvidence)
+    assert.equal(
+      evidence.probes[0]?.sellerAnswers[0]?.rawResponse.exchangePath,
+      'sellers/1111111111111111111111111111111111111111/exchanges/000.json',
+    )
+    assert.equal(
+      evidence.probes[0]?.sellerAnswers[0]?.rawResponse.signedResponsePreimageField,
+      'responseAuth.signedPreimages.responseBase64',
+    )
+    assert.equal(evidence.probes[0]?.probeId, 'probe-1')
+    assert.equal(evidence.probes[0]?.referenceConsensus, 10)
+    assert.match(evidence.reference.relativeIntegrityPath, /^\.\.\/\.\.\/references\/reference-1\/probe-integrity\.json$/)
+    assert.ok(written.referenceIntegrityPath)
+    const integrity = JSON.parse(await readFile(written.referenceIntegrityPath!, 'utf8')) as {
+      kind: string
+      probes: Array<{ probe: { enrollmentEvidence?: unknown } }>
+    }
+    assert.equal(integrity.kind, 'antseed-kbf-reference-integrity')
+    assert.ok(integrity.probes[0]?.probe.enrollmentEvidence)
+
+    const manifest = JSON.parse(await readFile(written.manifestPath, 'utf8')) as {
+      version: number
+      evidenceLevel?: string
+      scope: { rawSellerResponses: string }
+    }
+    assert.equal(manifest.version, 1)
+    assert.equal(manifest.evidenceLevel, undefined)
+    assert.equal(manifest.scope.rawSellerResponses, 'linked-seller-exchange-files')
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

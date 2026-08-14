@@ -83,9 +83,9 @@ test('canonical proxy evidence round-trips and derives a stable audit id', async
     assert.equal(written.evidenceHash, hash)
     assert.equal((await readFile(written.path, 'utf8')).endsWith('\n'), false)
     assert.deepEqual(await verifyProxyAuditEvidenceFile(written.path, hash), value)
-    const packDirectory = join(directory, auditId)
+    const packDirectory = join(directory, value.target.peerId)
     assert.deepEqual((await readdir(packDirectory)).sort(), [
-      'README.md', 'evidence.json', 'exchanges', 'manifest.json', 'probe-integrity.json',
+      'README.md', 'evidence.json', 'exchanges', 'manifest.json',
     ])
     const manifest = JSON.parse(await readFile(join(packDirectory, 'manifest.json'), 'utf8')) as {
       evidenceLevel: string

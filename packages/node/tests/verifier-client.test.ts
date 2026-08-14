@@ -26,7 +26,6 @@ describe('VerifierClient combined ABI', () => {
     const execWrite = vi.fn().mockResolvedValue('0xattest');
     (client as unknown as { _execWrite: typeof execWrite })._execWrite = execWrite;
     const input: SubmitVerificationBundleInput = {
-      bundleId: AUDIT_ID,
       expectedEpoch: 7,
       totalAuditCostUsdMicros: 1_500_000,
       evidenceHash: '0x' + '99'.repeat(32),
@@ -43,7 +42,6 @@ describe('VerifierClient combined ABI', () => {
       signer,
       VERIFICATION_ABI,
       'submitVerificationBundle',
-      AUDIT_ID,
       7n,
       1_500_000n,
       input.evidenceHash,
@@ -67,7 +65,7 @@ describe('VerifierClient combined ABI', () => {
   it('exposes one compact verification and reward ABI', () => {
     const iface = new Interface(VERIFICATION_ABI);
     expect(iface.getFunction('submitVerificationBundle')).not.toBeNull();
-    expect(iface.getFunction('isBundleSubmitted')).not.toBeNull();
+    expect(iface.getFunction('isVerificationSubmitted')).not.toBeNull();
     expect(iface.getFunction('claimVerifierReward')).not.toBeNull();
     expect(iface.getFunction('latestAttestation')).toBeNull();
     expect(iface.getFunction('servicePointsPenaltyBps')).toBeNull();
@@ -85,17 +83,16 @@ describe('VerifierClient combined ABI', () => {
     const iface = new Interface(VERIFICATION_ABI);
     const bundle = iface.getEvent('VerificationBundleSubmitted');
     expect(bundle?.inputs.map((input) => input.name)).toEqual([
-      'bundleId',
+      'evidenceHash',
       'verifier',
       'epoch',
       'totalAuditCostUsdMicros',
       'awardedCreditUsdMicros',
-      'evidenceHash',
       'resultCount',
     ]);
     const result = iface.getEvent('VerificationResultSubmitted');
     expect(result?.inputs.map((input) => input.name)).toEqual([
-      'bundleId',
+      'evidenceHash',
       'agentId',
       'serviceHash',
       'verdict',

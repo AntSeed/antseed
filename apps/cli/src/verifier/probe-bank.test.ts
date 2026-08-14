@@ -498,29 +498,29 @@ test('different seller ledgers reserve the same epoch reference concurrently', a
   }
 })
 
-test('reference costs reserve and claim exactly once for a bundle', async () => {
+test('reference costs reserve and claim exactly once for an evidence hash', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'antseed-probe-bank-'))
   try {
     await appendReference(directory)
     const claimable = await listClaimableReferenceCosts(directory, 'model-a')
     assert.equal(claimable.length, 1)
-    const bundleId = `0x${'77'.repeat(32)}`
+    const evidenceHash = `0x${'77'.repeat(32)}`
     const reserved = await reserveReferenceCosts({
       banksDir: directory,
       model: 'model-a',
-      bundleId,
+      evidenceHash,
       costIds: claimable.map((entry) => entry.costId),
     })
     assert.equal(reserved[0]!.status, 'reserved')
     assert.equal((await listClaimableReferenceCosts(directory, 'model-a')).length, 0)
-    assert.equal((await listClaimableReferenceCosts(directory, 'model-a', bundleId)).length, 1)
+    assert.equal((await listClaimableReferenceCosts(directory, 'model-a', evidenceHash)).length, 1)
     await markReferenceCostsClaimed({
       banksDir: directory,
       model: 'model-a',
-      bundleId,
+      evidenceHash,
       transactionHash: `0x${'88'.repeat(32)}`,
     })
-    assert.equal((await listClaimableReferenceCosts(directory, 'model-a', bundleId)).length, 0)
+    assert.equal((await listClaimableReferenceCosts(directory, 'model-a', evidenceHash)).length, 0)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

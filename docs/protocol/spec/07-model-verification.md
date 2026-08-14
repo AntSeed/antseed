@@ -291,53 +291,53 @@ plus rename writes.
 ```text
 <evidenceDir>/
 ├── status.json
-├── runs/<run-id>.json
+├── runs/
+│   ├── <run-id>.json
+│   └── <run-id>.summary.json
 ├── bundles/<run-id>/<model-slug>.json
 ├── submissions/<chain-id>/<verification-contract>/<run-id>.json
 └── epochs/<epoch>/
     ├── events.jsonl
-    ├── runs/<run-id>/
-    │   ├── summary.json
-    │   └── report.html
     └── <model-slug>/
-        ├── runs/
-        │   ├── <run-id>.summary.json
-        │   └── <run-id>.evidence-pack/
-        │       ├── README.md
-        │       ├── manifest.json
-        │       └── probe-consensus.json
+        ├── report.html
+        ├── references/
+        │   └── <reference-id>/
+        │       └── probe-integrity.json
         └── audits/
-            ├── <audit-id>/
-            │   ├── README.md
-            │   ├── manifest.json
-            │   ├── evidence.json
-            │   ├── probe-integrity.json
-            │   └── exchanges/<batch-index>.json
-            └── .checkpoints/<audit-id>.json
+            └── <run-id>/
+                ├── summary.json
+                ├── probe-consensus.json
+                ├── manifest.json
+                ├── .checkpoints/<seller-evidence-id>.json
+                └── sellers/
+                    └── <seller-peer-id>/
+                        ├── README.md
+                        ├── manifest.json
+                        ├── evidence.json
+                        └── exchanges/<batch-index>.json
 ```
 
-`status.json` is a readable snapshot of the active or most recent run. Run-
-specific summary and report paths keep historical evidence immutable. After
-every completed run, `epochs/<epoch>/summary.json` and `report.html` are atomically
-refreshed as the consolidated latest epoch view. Repair outcomes replace the
-same seller's earlier outcome while unaffected sellers remain present. Each
-`report.html` model table includes `Reason`, `Next Action`, and clickable
-`Evidence` columns. The report is standalone HTML with embedded styling and no
-external assets, so it can be opened directly from the local evidence directory,
-and includes model and whole-run reason-code breakdowns. Machine summaries, status,
+`status.json` is a readable snapshot of the active or most recent run. Model-
+specific audit directories keep historical seller evidence immutable. After
+every completed run, `epochs/<epoch>/<model>/report.html` is atomically replaced
+with the latest run for that model and epoch. Each report table includes `Reason`,
+`Next Action`, and clickable `Evidence` columns. The report is standalone HTML
+with embedded styling and no external assets, so it can be opened directly from
+the local evidence directory, and includes model and whole-run reason-code
+breakdowns. Machine summaries, status,
 events, progress, and submission exclusions retain the same structured reason:
 `code`, `summary`, `retryable`, `source`, affected/total batch counts, and safe
 optional upstream status, provider code, and request ID. Secrets and
 authorization values are sanitized. `events.jsonl` is append-only progress
 history. `evidence.json` remains the canonical complete per-seller artifact for
-existing readers. `probe-integrity.json` separates probe definitions,
-three-pass enrollment evidence, reference self-test outcomes, and the audited
-seller's answers. Each `exchanges/` file contains one request batch and its
-exact signed preimages. The model-run `probe-consensus.json` groups only
+existing readers. Model reference integrity is stored once per reference ID and
+contains probe definitions, three-pass enrollment evidence, and reference
+self-test outcomes. Each seller `exchanges/` file contains one request batch and
+its exact signed preimages. The model-run `probe-consensus.json` groups only
 authenticated seller answers with exact preimages by probe, and records counts
 and rates matching or differing from the trusted reference consensus. Each
-seller contribution links back to its audit ID, evidence hash, batch index,
-request ID, and signed request/response hashes.
+seller contribution links back to its peer ID, internal seller evidence ID,
+evidence hash, batch index, request ID, and signed request/response hashes.
 
 `SAME` and `DIFF` require 100% authenticated coverage. `UNDETERMINED` means the
 statistical verdict could not be completed and remains resumable; examples are

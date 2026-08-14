@@ -7,14 +7,14 @@ import { loadConfig } from '../../../config/loader.js'
 import type { VerifierCLIConfig } from '../../../config/types.js'
 import {
   appendVerifierEvent,
-  epochAuditReportPath,
-  modelDirectory,
   modelAuditsDirectory,
+  modelAuditReportPath,
+  modelAuditSellersDirectory,
+  modelReferencesDirectory,
   readVerifierRunManifest,
   readVerifierStatus,
-  writeEpochAuditReport,
   writeEpochAuditSummary,
-  writeLatestEpochAuditSnapshot,
+  writeModelAuditReports,
   writeModelAuditSummary,
   writeVerifierRunManifest,
   writeVerifierStatus,
@@ -58,7 +58,10 @@ import { createVerifierClient } from '../../payment-utils.js'
 import { getGlobalOptions } from '../types.js'
 import { VerifierRunProgress } from './run-progress.js'
 import { failureOutcomeReason } from '../../../verifier/outcome-reason.js'
-import { writeModelProbeConsensusEvidence } from '../../../verifier/model-consensus-evidence.js'
+import {
+  writeModelAuditManifest,
+  writeModelProbeConsensusEvidence,
+} from '../../../verifier/model-consensus-evidence.js'
 
 interface RunOptions {
   all?: boolean
@@ -355,7 +358,8 @@ export function registerVerifierRunCommand(verifier: Command): void {
                 const result = await verifyModelTarget({
                   context: {
                     proxy,
-                    evidenceDir: modelAuditsDirectory(evidenceDir, epoch, model),
+                    evidenceDir: modelAuditSellersDirectory(evidenceDir, epoch, model, runId),
+                    checkpointRootDir: modelAuditsDirectory(evidenceDir, epoch, model, runId),
                     requestTimeoutMs: config.verifier?.probeRequestTimeoutMs ?? 120_000,
                     auditTimeoutMs: config.verifier?.auditPeerTimeoutMs ?? 600_000,
                     responseAuthReader: responseAuthReader!,
@@ -481,7 +485,8 @@ export function registerVerifierRunCommand(verifier: Command): void {
           const modelCost = addAuditCostSummaries(...results.map((result) => result.cost))
           const reasonCounts = countOutcomeReasons(results, failures, allSkipped)
           const consensusEvidence = await writeModelProbeConsensusEvidence({
-            directory: join(modelDirectory(evidenceDir, epoch, model), 'runs'),
+            directory: modelAuditsDirectory(evidenceDir, epoch, model, runId),
+            referencesDirectory: modelReferencesDirectory(evidenceDir, epoch, model),
             runId,
             epoch,
             model,
@@ -502,10 +507,22 @@ export function registerVerifierRunCommand(verifier: Command): void {
             cost: modelCost,
             reasonCounts,
             consensusEvidencePath: consensusEvidence.consensusPath,
+            referenceIntegrityPath: consensusEvidence.referenceIntegrityPath ?? undefined,
+          })
+          await writeModelAuditManifest({
+            directory: modelAuditsDirectory(evidenceDir, epoch, model, runId),
+            runId,
+            epoch,
+            model,
+            summaryPath,
+            consensusPath: consensusEvidence.consensusPath,
+            referenceIntegrityPath: consensusEvidence.referenceIntegrityPath,
+            results,
           })
           const modelSummary = {
             model,
             summaryPath,
+            reportPath: modelAuditReportPath(evidenceDir, epoch, model),
             resultCount: results.length,
             failureCount: failures.length,
             skippedCount: allSkipped.length,
@@ -534,14 +551,16 @@ export function registerVerifierRunCommand(verifier: Command): void {
           epochEndsAt: status.epochEndsAt,
           startedAt: status.startedAt,
           completedAt,
-          reportPath: epochAuditReportPath(evidenceDir, epoch, runId),
+          reportPaths: epochModels.map((model) => ({
+            model: model.model,
+            path: modelAuditReportPath(evidenceDir, epoch, model.model),
+          })),
           models: epochModels,
           failureCount: status.failures,
           cost: status.cost,
           reasonCounts: status.reasonCounts ?? {},
         } satisfies EpochAuditSummaryV1
         const epochSummaryPath = await writeEpochAuditSummary(evidenceDir, epoch, epochSummary)
-        const reportPath = await writeEpochAuditReport(evidenceDir, epoch, epochSummary)
         const manifestPath = await writeVerifierRunManifest(evidenceDir, {
           version: 1,
           kind: 'antseed-verifier-run-manifest',
@@ -558,9 +577,7 @@ export function registerVerifierRunCommand(verifier: Command): void {
           models: epochModels,
           failureCount: status.failures,
         })
-        const latestSnapshot = await writeLatestEpochAuditSnapshot(evidenceDir, epoch, epochSummary, {
-          mergeExisting: resumeSourceRunId !== null,
-        })
+        const reportPaths = await writeModelAuditReports(evidenceDir, epoch, epochSummary)
         status.state = status.failures > 0 ? 'failed' : 'completed'
         status.completedAt = completedAt
         status.currentModel = null
@@ -575,8 +592,7 @@ export function registerVerifierRunCommand(verifier: Command): void {
         })
         console.log(chalk.dim(`Summary: ${epochSummaryPath}`))
         console.log(chalk.dim(`Run manifest: ${manifestPath}`))
-        console.log(chalk.dim(`Seller report: ${reportPath}`))
-        console.log(chalk.dim(`Latest consolidated report: ${latestSnapshot.reportPath}`))
+        for (const report of reportPaths) console.log(chalk.dim(`Report (${report.model}): ${report.path}`))
         console.log(chalk.dim(`Estimated audit cost: $${status.cost.estimatedCostUsd.toFixed(6)}`))
         if (status.failures > 0) process.exitCode = 1
       } catch (error) {
@@ -665,7 +681,7 @@ export async function loadCheckpointResumeCandidates(
 ): Promise<Map<string, ResumeCandidate>> {
   const candidates = new Map<string, ResumeCandidate>()
   for (const model of models) {
-    const checkpoints = await readModelAuditCheckpoints(modelAuditsDirectory(evidenceDir, epoch, model))
+    const checkpoints = await readModelAuditCheckpoints(modelAuditsDirectory(evidenceDir, epoch, model, sourceRunId))
     for (const { path, checkpoint } of checkpoints) {
       if (checkpoint.runId !== sourceRunId
         || checkpoint.epoch !== epoch

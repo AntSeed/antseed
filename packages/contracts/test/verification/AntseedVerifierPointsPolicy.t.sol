@@ -95,7 +95,7 @@ contract AntseedVerifierPointsPolicyTest is Test {
         new AntseedVerification(address(0), address(gate));
     }
 
-    function _submit(IAntseedVerification.Verdict verdict, uint16 modelShareBps, bytes32 auditId) private {
+    function _submit(IAntseedVerification.Verdict verdict, uint16 modelShareBps, bytes32 evidenceHash) private {
         uint256 epoch = verification.currentEpoch();
         IAntseedVerification.VerificationResult[] memory results = new IAntseedVerification.VerificationResult[](1);
         results[0] = IAntseedVerification.VerificationResult({
@@ -106,10 +106,9 @@ contract AntseedVerifierPointsPolicyTest is Test {
         });
         vm.prank(verifier);
         verification.submitVerificationBundle(
-            auditId,
             epoch,
             1_000_000,
-            keccak256(abi.encode("evidence", auditId)),
+            evidenceHash,
             results
         );
     }

@@ -94,7 +94,6 @@ export interface ModelVerificationBundleEvidenceV1 {
 
 export interface PreparedModelVerificationBundle {
   model: string
-  bundleId: string
   evidenceHash: string
   evidencePath: string
   evidence: ModelVerificationBundleEvidenceV1
@@ -273,22 +272,8 @@ export async function prepareModelVerificationBundle(input: {
     throw new Error(`model bundle has ${contractResults.length} results; maximum is 64`)
   }
   const evidenceHash = canonicalHashBytes32(evidence)
-  const bundleId = canonicalHashBytes32({
-    domain: 'antseed-verification-model-bundle-v1',
-    runId: input.manifest.runId,
-    model: normalized(input.model),
-    expectedEpoch: input.manifest.epoch,
-    results: contractResults.map((result) => ({
-      agentId: BigInt(result.agentId).toString(),
-      serviceHash: result.serviceHash,
-      verdict: result.verdict,
-      modelShareBps: result.modelShareBps,
-    })),
-    evidenceHash,
-  })
   return {
     model: input.model,
-    bundleId,
     evidenceHash,
     evidencePath: modelBundleEvidencePath(input.evidenceDir, input.manifest.runId, input.model),
     evidence,
@@ -308,7 +293,6 @@ export async function writeModelVerificationBundleEvidence(
 
 export async function readPreparedModelVerificationBundle(input: {
   evidencePath: string
-  bundleId: string
   evidenceHash: string
 }): Promise<PreparedModelVerificationBundle> {
   const raw = await readFile(input.evidencePath, 'utf8')
@@ -329,25 +313,8 @@ export async function readPreparedModelVerificationBundle(input: {
     verdict: verifierVerdict(result.verdict),
     modelShareBps: result.modelShareBps,
   }))
-  const derivedBundleId = canonicalHashBytes32({
-    domain: 'antseed-verification-model-bundle-v1',
-    runId: evidence.runId,
-    model: normalized(evidence.model),
-    expectedEpoch: evidence.expectedEpoch,
-    results: results.map((result) => ({
-      agentId: BigInt(result.agentId).toString(),
-      serviceHash: result.serviceHash,
-      verdict: result.verdict,
-      modelShareBps: result.modelShareBps,
-    })),
-    evidenceHash,
-  })
-  if (derivedBundleId.toLowerCase() !== input.bundleId.toLowerCase()) {
-    throw new Error(`model bundle ID mismatch at ${input.evidencePath}`)
-  }
   return {
     model: evidence.model,
-    bundleId: derivedBundleId,
     evidenceHash,
     evidencePath: input.evidencePath,
     evidence,

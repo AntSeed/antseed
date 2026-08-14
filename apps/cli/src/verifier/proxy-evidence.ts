@@ -11,6 +11,7 @@ import {
 } from '@antseed/fingerprints'
 import type { StoredResponseAuth } from '@antseed/node'
 import type { VerificationOutcomeReasonV1 } from './outcome-reason.js'
+import { safeServiceSlug } from './slug.js'
 
 export type ExportedResponseAuthRecord = Omit<StoredResponseAuth, 'requestPreimage' | 'responsePreimage'>
 
@@ -199,31 +200,6 @@ interface ProxyAuditEvidencePackManifestV1 {
   }>
 }
 
-interface ProbeIntegrityEvidenceV1 {
-  version: 1
-  kind: 'antseed-kbf-probe-integrity'
-  referenceId: string
-  referenceModel: string
-  queryProfileHash: string
-  statisticalPower: number
-  statisticalPowerEvidence: Record<string, unknown>
-  summary: {
-    totalProbeCount: number
-    referenceConsensusConfirmedCount: number
-    referenceSelfMismatchCount: number
-    referenceSelfMissingCount: number
-    auditedPeerMatchCount: number
-    auditedPeerMismatchCount: number
-    auditedPeerMissingCount: number
-  }
-  probes: Array<{
-    probe: KbfProbe
-    referenceSelfTest: { answer: number | null; match: 0 | 1 | null }
-    referenceConsensusConfirmed: boolean
-    auditedPeer: { answer: number | null; match: 0 | 1 | null }
-  }>
-}
-
 export function emptyAuditCostSummary(): AuditCostSummaryV1 {
   return {
     inputTokens: 0,
@@ -315,18 +291,12 @@ export async function writeProxyAuditEvidence(
   evidence: ProxyAuditEvidenceV1,
 ): Promise<{ path: string; evidenceHash: string }> {
   const evidenceHash = proxyAuditEvidenceHash(evidence)
-  const packDirectory = join(evidenceDir, auditId)
+  const packDirectory = join(evidenceDir, safeServiceSlug(evidence.target.peerId))
   const exchangesDirectory = join(packDirectory, 'exchanges')
   await mkdir(exchangesDirectory, { recursive: true })
   const path = join(packDirectory, 'evidence.json')
   const writtenFiles: ProxyAuditEvidencePackManifestV1['files'] = []
   writtenFiles.push(await writeEvidencePackJson(path, evidence, 'Canonical complete audit evidence'))
-  const probeIntegrity = createProbeIntegrityEvidence(evidence)
-  writtenFiles.push(await writeEvidencePackJson(
-    join(packDirectory, 'probe-integrity.json'),
-    probeIntegrity,
-    'Probe definitions, reference consensus confirmation, and audited peer outcomes',
-  ))
   for (const exchange of evidence.exchanges) {
     const exchangePath = join('exchanges', `${String(exchange.batchIndex).padStart(3, '0')}.json`)
     writtenFiles.push(await writeEvidencePackJson(
@@ -353,52 +323,8 @@ export async function writeProxyAuditEvidence(
     files: writtenFiles,
   }
   await writeEvidencePackJson(join(packDirectory, 'manifest.json'), manifest, 'Evidence pack manifest')
-  await writeTextAtomic(join(packDirectory, 'README.md'), evidencePackReadme(manifest, probeIntegrity))
+  await writeTextAtomic(join(packDirectory, 'README.md'), evidencePackReadme(manifest, evidence.reference.referenceId))
   return { path, evidenceHash }
-}
-
-function createProbeIntegrityEvidence(evidence: ProxyAuditEvidenceV1): ProbeIntegrityEvidenceV1 {
-  const selfTestByProbeId = new Map(
-    (evidence.reference.selfTest.outcomes ?? []).map((outcome) => [outcome.probeId, outcome]),
-  )
-  const peerByProbeId = new Map<string, { answer: number | null; match: 0 | 1 | null }>()
-  for (const exchange of evidence.exchanges) {
-    for (const [index, probeId] of exchange.probeIds.entries()) {
-      peerByProbeId.set(probeId, {
-        answer: exchange.answers[index] ?? null,
-        match: exchange.matches[index] ?? null,
-      })
-    }
-  }
-  const probes = evidence.reference.probes.map((probe) => {
-    const selfTest = selfTestByProbeId.get(probe.id) ?? { answer: null, match: null }
-    const auditedPeer = peerByProbeId.get(probe.id) ?? { answer: null, match: null }
-    return {
-      probe,
-      referenceSelfTest: selfTest,
-      referenceConsensusConfirmed: selfTest.match === 1,
-      auditedPeer,
-    }
-  })
-  return {
-    version: 1,
-    kind: 'antseed-kbf-probe-integrity',
-    referenceId: evidence.reference.referenceId,
-    referenceModel: evidence.reference.referenceModel,
-    queryProfileHash: evidence.reference.queryProfileHash,
-    statisticalPower: evidence.reference.statisticalPower,
-    statisticalPowerEvidence: evidence.reference.statisticalPowerEvidence,
-    summary: {
-      totalProbeCount: probes.length,
-      referenceConsensusConfirmedCount: probes.filter((entry) => entry.referenceSelfTest.match === 1).length,
-      referenceSelfMismatchCount: probes.filter((entry) => entry.referenceSelfTest.match === 0).length,
-      referenceSelfMissingCount: probes.filter((entry) => entry.referenceSelfTest.match === null).length,
-      auditedPeerMatchCount: probes.filter((entry) => entry.auditedPeer.match === 1).length,
-      auditedPeerMismatchCount: probes.filter((entry) => entry.auditedPeer.match === 0).length,
-      auditedPeerMissingCount: probes.filter((entry) => entry.auditedPeer.match === null).length,
-    },
-    probes,
-  }
 }
 
 async function writeEvidencePackJson(
@@ -426,14 +352,14 @@ async function writeTextAtomic(path: string, value: string): Promise<void> {
 
 function evidencePackReadme(
   manifest: ProxyAuditEvidencePackManifestV1,
-  integrity: ProbeIntegrityEvidenceV1,
+  referenceId: string,
 ): string {
   return `# AntSeed Verifier Evidence Pack\n\n`
     + `Audit: ${manifest.auditId}\n\n`
     + `- evidence.json: canonical complete audit evidence; hash ${manifest.evidenceHash}\n`
-    + `- probe-integrity.json: ${integrity.summary.totalProbeCount} probes with reference self-test and audited-peer outcomes\n`
     + `- exchanges/: one file per request batch, including the signed ResponseAuth record and exact AntSeed codec preimages\n`
     + `- manifest.json: hashes and evidence scope\n\n`
+    + `Reference probe integrity is stored once for reference ${referenceId} in the model's references directory.\n\n`
     + `The local HTTP capture hash and signed P2P hash intentionally use different representations. `
     + `Recompute signed hashes from responseAuth.signedPreimages using Keccak-256, then verify the seller signature `
     + `against responseAuth.signedPreimages.responseAuthSigningBase64. `
@@ -442,13 +368,14 @@ function evidencePackReadme(
 
 export async function writeProxyAuditSkipEvidence(
   evidenceDir: string,
-  auditId: string,
+  _auditId: string,
   evidence: ProxyAuditSkipEvidenceV1,
 ): Promise<{ path: string; evidenceHash: string }> {
   const evidenceHash = canonicalHashBytes32(evidence)
   const bytes = new TextEncoder().encode(canonicalJsonStringify(evidence))
-  await mkdir(evidenceDir, { recursive: true })
-  const path = join(evidenceDir, `${auditId}.skip.json`)
+  const packDirectory = join(evidenceDir, safeServiceSlug(evidence.target.peerId))
+  await mkdir(packDirectory, { recursive: true })
+  const path = join(packDirectory, 'skip.json')
   const temporaryPath = `${path}.tmp-${process.pid}-${Date.now()}`
   const handle = await open(temporaryPath, 'wx')
   try {
