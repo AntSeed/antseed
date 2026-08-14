@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { generateChatImage } from './image-generation.js';
 import { convertAssistantMessageForUi } from './message-projection.js';
 
-test('generateChatImage routes through the image endpoint and returns a stored attachment block', async () => {
+test('generateChatImage uses model-only routing and persists the peer selected by the proxy', async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
   const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
@@ -12,20 +12,26 @@ test('generateChatImage routes through the image endpoint and returns a stored a
     calls.push({ url: String(input), body: JSON.parse(String(init?.body)) as Record<string, unknown> });
     return new Response(JSON.stringify({ data: [{ b64_json: png.toString('base64') }] }), {
       status: 200,
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'x-antseed-peer-id': 'routed-peer',
+        'x-antseed-service': 'image-model-v2',
+      },
     });
   }) as typeof fetch;
 
   let persistedPrompt = '';
   let persistedMarker = '';
   let persistedPeerId = '';
+  let persistedService = '';
   let persistedBytes = Buffer.alloc(0);
   try {
     const result = await generateChatImage({
-      appendImageGeneration: async (_id, prompt, marker, _service, peerId) => {
+      appendImageGeneration: async (_id, prompt, marker, service, peerId) => {
         persistedPrompt = prompt;
         persistedMarker = marker;
-        persistedPeerId = peerId;
+        persistedService = service;
+        persistedPeerId = peerId ?? '';
         return {
           user: { role: 'user', content: prompt, timestamp: 10 },
           assistant: {
@@ -38,7 +44,7 @@ test('generateChatImage routes through the image endpoint and returns a stored a
         };
       },
     }, 8377, {
-      conversationId: 'conversation-1', prompt: 'A tiny ant astronaut', peerId: 'peer-1', service: 'image-model',
+      conversationId: 'conversation-1', prompt: 'A tiny ant astronaut', service: 'image-model',
     }, {
       persistAttachment: async (_conversationId, _attachmentId, _name, bytes) => {
         persistedBytes = Buffer.from(bytes);
@@ -49,14 +55,52 @@ test('generateChatImage routes through the image endpoint and returns a stored a
     assert.equal(result.ok, true);
     assert.equal(calls[0]?.url, 'http://127.0.0.1:8377/v1/images/generations');
     assert.deepEqual(calls[0]?.body, {
-      model: 'peer-1@image-model', prompt: 'A tiny ant astronaut', n: 1, response_format: 'b64_json',
+      model: 'image-model', prompt: 'A tiny ant astronaut', n: 1, response_format: 'b64_json',
     });
     assert.equal(persistedPrompt, 'A tiny ant astronaut');
-    assert.equal(persistedPeerId, 'peer-1');
+    assert.equal(persistedPeerId, 'routed-peer');
+    assert.equal(persistedService, 'image-model-v2');
     assert.match(persistedMarker, /^<generated-image id="([^"]+)" mime="image\/png" name="generated-[a-f0-9]{8}\.png">$/);
     assert.deepEqual(persistedBytes, png);
     assert.equal(result.assistant?.meta?.outputImages, 1);
     assert.equal(Array.isArray(result.assistant?.content), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('generateChatImage preserves an explicitly pinned image peer', async () => {
+  const originalFetch = globalThis.fetch;
+  let model = '';
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
+  globalThis.fetch = (async (_input, init) => {
+    model = (JSON.parse(String(init?.body)) as { model?: string }).model ?? '';
+    return new Response(JSON.stringify({ data: [{ b64_json: png.toString('base64') }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }) as typeof fetch;
+
+  try {
+    const result = await generateChatImage({
+      appendImageGeneration: async (_id, prompt, marker) => ({
+        user: { role: 'user', content: prompt, timestamp: 1 },
+        assistant: {
+          role: 'assistant', content: [{ type: 'text', text: marker }], api: 'openai-completions',
+          provider: 'antseed', model: 'image-model', usage: {
+            input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          }, stopReason: 'stop', timestamp: 2,
+        },
+      }),
+    }, 8377, {
+      conversationId: 'conversation-1', prompt: 'A pinned ant', peerId: 'peer-1', service: 'image-model',
+    }, {
+      persistAttachment: async () => '/tmp/generated.png',
+    });
+
+    assert.equal(result.ok, true, result.error);
+    assert.equal(model, 'peer-1@image-model');
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -49,7 +49,7 @@ for (const [network, prefix, family] of [
 export type GenerateChatImageRequest = {
   conversationId: string;
   prompt: string;
-  peerId: string;
+  peerId?: string | null;
   service: string;
 };
 
@@ -172,10 +172,10 @@ export async function generateChatImage(
 ): Promise<GenerateChatImageResult> {
   const conversationId = request.conversationId.trim();
   const prompt = request.prompt.trim();
-  const peerId = request.peerId.trim();
+  const peerId = request.peerId?.trim() ?? '';
   const service = request.service.trim();
-  if (!conversationId || !prompt || !peerId || !service) {
-    return { ok: false, error: 'Conversation, prompt, image model, and seller are required.' };
+  if (!conversationId || !prompt || !service) {
+    return { ok: false, error: 'Conversation, prompt, and image model are required.' };
   }
 
   try {
@@ -185,7 +185,7 @@ export async function generateChatImage(
         'content-type': 'application/json',
         authorization: 'Bearer antseed-desktop',
       },
-      body: JSON.stringify({ model: `${peerId}@${service}`, prompt, n: 1, response_format: 'b64_json' }),
+      body: JSON.stringify({ model: peerId ? `${peerId}@${service}` : service, prompt, n: 1, response_format: 'b64_json' }),
       signal: dependencies.signal
         ? AbortSignal.any([dependencies.signal, AbortSignal.timeout(IMAGE_REQUEST_TIMEOUT_MS)])
         : AbortSignal.timeout(IMAGE_REQUEST_TIMEOUT_MS),
@@ -197,6 +197,8 @@ export async function generateChatImage(
     }
     const image = payload?.data?.[0];
     if (!image) throw new Error('Image service returned no image.');
+    const routedPeerId = response.headers.get('x-antseed-peer-id')?.trim() || peerId;
+    const routedService = response.headers.get('x-antseed-service')?.trim() || service;
 
     let bytes: Buffer;
     let mimeType = 'image/png';
@@ -215,7 +217,13 @@ export async function generateChatImage(
     const fileName = `generated-${attachmentId.slice(0, 8)}.${extension}`;
     await (dependencies.persistAttachment ?? saveAttachment)(conversationId, attachmentId, fileName, bytes);
     const persistedMarker = `<generated-image id="${attachmentId}" mime="${mimeType}" name="${fileName}">`;
-    const persisted = await store.appendImageGeneration(conversationId, prompt, persistedMarker, service, peerId);
+    const persisted = await store.appendImageGeneration(
+      conversationId,
+      prompt,
+      persistedMarker,
+      routedService,
+      routedPeerId || undefined,
+    );
     const user: AiChatMessage = { role: 'user', content: prompt, createdAt: persisted.user.timestamp };
     const assistant: AiChatMessage = {
       role: 'assistant',

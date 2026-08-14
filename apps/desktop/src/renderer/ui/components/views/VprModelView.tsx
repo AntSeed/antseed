@@ -99,9 +99,9 @@ export function VprModelView({ onSelectView }: Props) {
   }
 
   async function copyImageInstructions(): Promise<void> {
-    if (!imageOnly || !selectedRoute) return;
+    if (!imageOnly || !entry) return;
     try {
-      await navigator.clipboard.writeText(buildImageModelSkillPrompt(selectedRoute, snap.proxyPort));
+      await navigator.clipboard.writeText(buildImageModelSkillPrompt(entry, snap.proxyPort));
       setCopyState('copied');
       window.setTimeout(() => setCopyState('idle'), 2_000);
     } catch {
@@ -113,7 +113,7 @@ export function VprModelView({ onSelectView }: Props) {
   function useImageInChat(): void {
     if (!selectedRoute) return;
     actions.startNewChat();
-    actions.selectVprModel(viewedModel.provider, viewedModel.serviceId, selectedRoute.peerId);
+    actions.selectVprModel(viewedModel.provider, viewedModel.serviceId, pinnedPeerId);
     onSelectView?.('chat');
   }
 
@@ -168,7 +168,6 @@ export function VprModelView({ onSelectView }: Props) {
               <button
                 type="button"
                 className={styles.startChat}
-                disabled={!selectedRoute}
                 onClick={() => { void copyImageInstructions(); }}
               >
                 <HugeiconsIcon icon={Copy01Icon} size={13} strokeWidth={1.8} />

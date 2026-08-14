@@ -1,24 +1,26 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
-import type { DiscoverRow } from '../../core/state';
+import type { VprModelCatalogEntry } from '../../core/state';
 import {
   ANTSEED_IMAGES_SKILL_URL,
   buildImageModelSkillPrompt,
 } from './image-model-instructions';
 
-const route = {
-  peerId: 'peer-venice',
+const model = {
   serviceId: 'gpt-image-2',
-} satisfies Pick<DiscoverRow, 'peerId' | 'serviceId'>;
+  label: 'GPT Image 2',
+} satisfies Pick<VprModelCatalogEntry, 'serviceId' | 'label'>;
 
-test('buildImageModelSkillPrompt references the public skill with the selected route parameters', () => {
-  const prompt = buildImageModelSkillPrompt(route, 8377);
+test('buildImageModelSkillPrompt discovers image models and uses model-only routing', () => {
+  const prompt = buildImageModelSkillPrompt(model, 8377);
 
   assert.equal(prompt.includes(ANTSEED_IMAGES_SKILL_URL), true);
-  assert.match(prompt, /peer_id: peer-venice/);
-  assert.match(prompt, /service_id: gpt-image-2/);
+  assert.match(prompt, /\/v1\/models\?type=images/);
+  assert.match(prompt, /model: gpt-image-2/);
+  assert.match(prompt, /display_name: GPT Image 2/);
   assert.match(prompt, /proxy_url: http:\/\/127\.0\.0\.1:8377/);
   assert.match(prompt, /Use the user's image request as the prompt/);
-  assert.match(prompt, /Do not substitute another peer or service/);
+  assert.match(prompt, /do not pin a peer/i);
+  assert.doesNotMatch(prompt, /peer_id|peer-venice|@gpt-image-2/);
   assert.doesNotMatch(prompt, /response_format|authorization|b64_json/);
 });

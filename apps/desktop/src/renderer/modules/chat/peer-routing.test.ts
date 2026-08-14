@@ -395,7 +395,7 @@ test('new chat created while previous response is pending sends to its own peer'
 });
 
 
-test('image prompts appear immediately while generation is pending', async () => {
+test('auto image prompts use model-only routing and appear immediately while generation is pending', async () => {
   installDomTimers();
 
   const uiState = createInitialUiState();
@@ -416,16 +416,21 @@ test('image prompts appear immediately while generation is pending', async () =>
     peerId: 'image-peer',
     serviceId: 'image-model',
     protocol: 'openai-images',
+    effectiveReputationScore: 80,
   } as DiscoverRow];
   uiState.chatImageRouteSelection = {
     model: { provider: 'openai', serviceId: 'image-model', label: 'Image Model', categories: [] },
-    mode: 'pinned-peer',
-    peerId: 'image-peer',
+    mode: 'auto',
+    peerId: null,
   };
 
   const generation = createDeferred<Awaited<ReturnType<NonNullable<DesktopBridge['chatGenerateImage']>>>>();
+  let request: Parameters<NonNullable<DesktopBridge['chatGenerateImage']>>[0] | null = null;
   const bridge: DesktopBridge = {
-    chatGenerateImage: async () => generation.promise,
+    chatGenerateImage: async (payload) => {
+      request = payload;
+      return generation.promise;
+    },
   };
   const api = initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
 
@@ -438,6 +443,11 @@ test('image prompts appear immediately while generation is pending', async () =>
     createdAt: (uiState.chatMessages[0] as { createdAt: number }).createdAt,
   }]);
   assert.equal(uiState.chatThinkingPhase, 'Generating image');
+  assert.deepEqual(request, {
+    conversationId: 'conv-a',
+    prompt: 'A tiny ant astronaut',
+    service: 'image-model',
+  });
 
   generation.resolve({
     ok: true,

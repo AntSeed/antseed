@@ -329,13 +329,14 @@ export class PiConversationStore {
     prompt: string,
     assistantContent: string,
     service: string,
-    peerId: string,
+    peerId?: string | null,
   ): Promise<{ user: UserMessage; assistant: AssistantMessage }> {
     const manager = await this.openSessionManager(id);
     if (!manager) throw new Error('Conversation not found');
     const timestamp = Date.now();
     const user: UserMessage = { role: 'user', content: prompt, timestamp };
-    const assistant: AssistantMessage & { meta: { peerId: string } } = {
+    const trimmedPeerId = peerId?.trim() ?? '';
+    const assistant: AssistantMessage = {
       role: 'assistant',
       content: [{ type: 'text', text: assistantContent }],
       api: 'openai-completions',
@@ -351,7 +352,7 @@ export class PiConversationStore {
       },
       stopReason: 'stop',
       timestamp: timestamp + 1,
-      meta: { peerId },
+      ...(trimmedPeerId ? { meta: { peerId: trimmedPeerId } } : {}),
     };
     manager.appendMessage(user);
     manager.appendMessage(assistant);

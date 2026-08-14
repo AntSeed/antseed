@@ -731,8 +731,8 @@ export function registerPiChatHandlers({
     const prompt = typeof request.prompt === 'string' ? request.prompt.trim() : '';
     const peerId = typeof request.peerId === 'string' ? request.peerId.trim() : '';
     const service = typeof request.service === 'string' ? request.service.trim() : '';
-    if (!conversationId || !prompt || !peerId || !service) {
-      return { ok: false, error: 'Conversation, prompt, image model, and seller are required.' };
+    if (!conversationId || !prompt || !service) {
+      return { ok: false, error: 'Conversation, prompt, and image model are required.' };
     }
     if (!isSafeId(conversationId)) {
       return { ok: false, error: 'Invalid conversation.' };
@@ -747,7 +747,7 @@ export function registerPiChatHandlers({
       return await generateChatImage(store, proxyPort, {
         conversationId,
         prompt,
-        peerId,
+        ...(peerId ? { peerId } : {}),
         service,
       }, { signal: controller.signal });
     } finally {
