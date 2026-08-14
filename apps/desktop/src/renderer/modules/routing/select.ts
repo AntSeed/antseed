@@ -1,5 +1,5 @@
 import type { DiscoverRow, VprRoutingPreferences } from '../../core/state';
-import { scoreFromTrust } from '@antseed/node';
+import { scoreFromTrust } from '@antseed/node/on-chain-reputation';
 import { totalRowPrice } from '../catalog/model-catalog.js';
 
 export type VprScoredRoute = {
