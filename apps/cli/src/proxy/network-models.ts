@@ -303,17 +303,17 @@ export function buildNetworkModels(
         : normalizedReputationByPeerId.get(peer.peerId) ?? null
     }
     if (options.routingPreferences) {
-      const ranked = rankModelRoutes(entry.peers.map((peer) => {
-        const health = options.peerHealth?.get(peer.peerId)
-          ?? options.peerHealth?.get(peer.peerId.toLowerCase())
+      const ranked = rankModelRoutes(entry.peers.map((offer) => {
+        const health = options.peerHealth?.get(offer.peerId)
+          ?? options.peerHealth?.get(offer.peerId.toLowerCase())
         return {
-          peer,
-          ...peer,
+          ...offer,
+          sourceOffer: offer,
           peerCooldownUntil: health?.cooldownUntil ?? null,
           peerFailureStreak: health?.failureStreak ?? 0,
         }
       }), options.routingPreferences, nowMs)
-      entry.peers = ranked.map(({ peer }) => peer)
+      entry.peers = ranked.map(({ sourceOffer }) => sourceOffer)
     } else {
       entry.peers.sort(compareEffectiveModelReputation)
     }
