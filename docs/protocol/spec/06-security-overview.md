@@ -65,7 +65,7 @@ The buyer-seller flow enforces:
 - Per request: buyer signs EIP-712 SpendingAuth (channelId, cumulativeAmount, metadataHash).
 - Seller submits latest SpendingAuth to settle() or close() on-chain.
 - On buyer disconnect: seller calls close() with last SpendingAuth to finalize.
-- On seller disappearance: requestTimeout() (permissionless after deadline) + withdraw() after 15min grace.
+- On seller disappearance: buyer/operator requestClose() + withdraw() after 15min grace.
 - Channels contract holds no USDC — all funds managed by AntseedDeposits.
 
 ## 4. Cryptographic Control Plane

@@ -154,7 +154,7 @@ All contracts verified on [BaseScan](https://basescan.org). For testnet (Base Se
 
 If a provider disappears mid-session, the buyer's funds are not lost:
 
-1. After the session deadline passes, anyone can call `requestTimeout()`
-2. After a 15-minute grace period, the buyer calls `withdraw()` to release locked funds
+1. The buyer (or their deposits operator) calls `requestClose()` on AntseedChannels — callable anytime while the channel is active
+2. After a 15-minute grace period (so the seller can still submit a final SpendingAuth), the buyer calls `withdraw()` to release remaining locked funds back to their deposit
 
-This is handled automatically by the protocol.
+If the seller is still online, the buyer can instead request a cooperative close and skip the grace period. Desktop and CLI expose both paths.
