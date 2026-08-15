@@ -7,7 +7,23 @@ hide_title: true
 
 # Router Plugin
 
-Router plugins control how buyer requests are distributed across available sellers. Each router defines its own scoring logic for peer selection. On failure, the router automatically switches to the next-best provider — because AI APIs are stateless, these switches are invisible to the application.
+Router plugins enforce general buyer policy and record request results. For model-only requests, the buyer proxy first resolves the canonical model and uses the shared model-route ranking from `@antseed/node/model-routing`, so the desktop catalog, `/v1/models/:id`, internal chat, and CLI proxy agree on seller order. Retryable peer failures may advance to the next eligible seller; recognized conversations softly prefer their previous successful route, while explicit pins remain hard.
+
+## Model-Only Routing Preferences
+
+The shared defaults are:
+
+```typescript
+const DEFAULT_MODEL_ROUTING_PREFERENCES = {
+  preferFreePeers: false,
+  maxInputUsdPerMillion: 25,
+  minTrustScore: 60,
+  allowedPeerIds: [],
+  blockedPeerIds: [],
+};
+```
+
+`minTrustScore` and the allow/block lists determine eligibility. Eligible offers are ordered using trust, token or image price, cached-input pricing coverage, recent failures, cooldowns, and free-peer preference. The buyer proxy watches `buyer.routingPreferences` in `config.json`, so desktop preference changes also affect connected apps and direct API calls without maintaining a second routing implementation.
 
 ## Default Scoring Weights
 
@@ -24,7 +40,7 @@ const DEFAULT_WEIGHTS = {
 } as const;
 ```
 
-All factors are min-max normalized across the eligible candidate pool. By default there is no minimum reputation gate (`minReputation: 0`); buyers can explicitly raise it to exclude lower-reputation peers before scoring. Peers in failure cooldown (exponential backoff after 3 consecutive failures) are also excluded.
+These legacy router-core weights remain available to router-plugin authors for non-model-specific selection. They are not the ordering used by the buyer proxy's model-only route planner described above. Model-only routing defaults to the hard `minTrustScore: 60` gate, and cooling or recently failing peers are deprioritized by the shared model-route ranking.
 
 ## Router Interface
 
@@ -48,4 +64,4 @@ interface Router {
 }
 ```
 
-If you don't provide a router, the SDK uses a default that selects the cheapest peer with reputation above a minimum threshold.
+If you don't provide a router, the SDK supplies the default policy router. The CLI buyer proxy still applies the shared model-route ranking before dispatching a model-only request.

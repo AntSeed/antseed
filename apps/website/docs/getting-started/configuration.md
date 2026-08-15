@@ -316,12 +316,32 @@ See the [metadata v12 upgrade guide](/docs/guides/metadata-v12-upgrade) before u
 
 ## Buyer Settings
 
-Buyers can cap what they're willing to pay to avoid expensive providers:
+Model-only requests use one shared Price + Trust policy in the CLI buyer proxy and the desktop VPR. The defaults are:
+
+```json
+{
+  "buyer": {
+    "routingPreferences": {
+      "preferFreePeers": false,
+      "maxInputUsdPerMillion": 25,
+      "minTrustScore": 60,
+      "allowedPeerIds": [],
+      "blockedPeerIds": []
+    }
+  }
+}
+```
+
+`minTrustScore` is a hard eligibility gate. At the default `60`, sellers below 60 and sellers without a usable score are not selected automatically. CLI-only buyers can lower it, or set it to `0` to disable the gate. `allowedPeerIds` becomes an allowlist when non-empty; `blockedPeerIds` always excludes matching sellers. Peer ids may include or omit the `0x` prefix.
+
+Eligible offers are ranked using trust, token or image price, cached-input pricing coverage, recent failures, cooldowns, and `preferFreePeers`. `maxInputUsdPerMillion` is a strong price preference in that ranking; the separate hierarchical `maxPricing` policy remains the hard price-cap mechanism:
 
 ```bash
 antseed config buyer set maxPricing.defaults.inputUsdPerMillion 25
 antseed config buyer set maxPricing.defaults.outputUsdPerMillion 75
 ```
+
+The desktop writes routing-preference changes to this same config. A running buyer proxy watches the config file and reloads valid `buyer.routingPreferences` changes automatically.
 
 The buyer proxy refreshes its discovered peer cache from the DHT in the background. The default is 5 minutes, and you can tune it in milliseconds:
 
