@@ -30,10 +30,9 @@ BUYER                              SELLER                           ON-CHAIN
   │                                  │    releases remaining lock     │   session finalized
   │                                  │                                │
   │  === TIMEOUT (seller gone) ====  │                                │
-  │                                  │   (deadline passes)            │
-  │   anyone ── requestTimeout() ──────────────────────────────────── ►│ ← marks timed out
+  │   buyer ── requestClose() ─────────────────────────────────────── ►│ ← starts grace period
   │   (15min grace)                  │                                │
-  │   anyone ── withdraw() ────────────────────────────────────────── ►│ ← funds returned
+  │   buyer ── withdraw() ─────────────────────────────────────────── ►│ ← funds returned
 ```
 
 ### Reserve
@@ -52,7 +51,7 @@ The seller calls `settle()` with the latest SpendingAuth to charge the cumulativ
 
 ### Timeout
 
-If the seller disappears after the deadline, anyone can call `requestTimeout()`. After a 15-minute grace period, `withdraw()` releases the locked funds back to the buyer's deposit.
+If the seller disappears, the buyer (or their deposits operator) calls `requestClose()` anytime while the channel is active. After a 15-minute grace period, the buyer calls `withdraw()` to release remaining locked funds back to their deposit.
 
 ### Cooperative close (buyer-requested)
 
@@ -92,7 +91,7 @@ The seller agrees only when it is **not mid-accumulation** with that buyer:
   `pending_auth` plus `requiredCumulativeAmount`. The buyer signs and retries.
 
 Rejections are normal outcomes, not errors — the channel is left untouched and
-the buyer can retry or fall back to `requestTimeout()`. When neither side holds
+the buyer can retry or fall back to `requestClose()`. When neither side holds
 a usable auth the seller closes at the current on-chain `settled` amount with an
 empty signature, which the contract accepts without signature verification
 (`finalAmount == settled`) and which claims no unproven spend.
