@@ -4,6 +4,7 @@ import { beforeEach, test } from 'vitest';
 import type { VprRoutingPreferences, VprRouteSelection } from '../../core/state';
 import {
   applyPeerListing,
+  buyerModelRoutingPreferences,
   loadVprRouteSelection,
   loadVprRoutingPreferences,
   peerListingOf,
@@ -94,6 +95,26 @@ test('valid VPR preferences and route selection save and load', () => {
 
   assert.deepEqual(loadVprRoutingPreferences(fallbackPreferences), preferences);
   assert.deepEqual(loadVprRouteSelection(fallbackRouteSelection), routeSelection);
+});
+
+test('buyer config projection excludes the Desktop-only auto-routing toggle', () => {
+  assert.deepEqual(buyerModelRoutingPreferences(fallbackPreferences), {
+    preferFreePeers: fallbackPreferences.preferFreePeers,
+    maxInputUsdPerMillion: fallbackPreferences.maxInputUsdPerMillion,
+    minTrustScore: fallbackPreferences.minTrustScore,
+    allowedPeerIds: fallbackPreferences.allowedPeerIds,
+    blockedPeerIds: fallbackPreferences.blockedPeerIds,
+  });
+});
+
+test('buyer config projection drops malformed peer ids before writing config', () => {
+  const peerId = 'a'.repeat(40);
+  const projected = buyerModelRoutingPreferences({
+    ...fallbackPreferences,
+    allowedPeerIds: ['not-a-peer', `0x${peerId}`],
+  });
+
+  assert.deepEqual(projected.allowedPeerIds, [`0x${peerId}`]);
 });
 
 test('peer lists from older stored preferences fall back to empty', () => {

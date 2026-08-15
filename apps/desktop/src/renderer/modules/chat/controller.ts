@@ -488,7 +488,12 @@ export function initChatModule({
       const failover = resolveFailoverSelection(convId, failedPeerId, [...failedPeerIds]);
       if (failover) {
         applyFailoverSelection(convId, failover.selection);
-        if (ctx) retryCtx = { ...ctx, selection: failover.selection };
+        if (ctx) {
+          retryCtx = {
+            ...ctx,
+            selection: { id: failover.selection.id, provider: failover.selection.provider },
+          };
+        }
         const notice = `${failover.fromLabel} isn't responding. `
           + `Retrying on ${failover.toLabel} in ${PAYMENT_AUTO_RETRY_DELAY_MS / 1000}s...`;
         if (convId === uiState.chatActiveConversation) {
@@ -577,6 +582,24 @@ export function initChatModule({
     const id = normalizeChatServiceId(parts[1]);
     const peerId = parts[2]?.trim() || undefined;
     return { id, provider, peerId };
+  }
+
+  function modelOnlySelection(selection: ChatServiceSelection): ChatServiceSelection {
+    return { id: selection.id, provider: selection.provider };
+  }
+
+  function selectionForCurrentRoute(selection: ChatServiceSelection): ChatServiceSelection {
+    return uiState.vprRouteSelection.mode === 'pinned-peer'
+      ? selection
+      : modelOnlySelection(selection);
+  }
+
+  function pinnedConversationPeerId(
+    conversation: ChatConversationSummary | null | undefined,
+    fallbackPeerId = '',
+  ): string | undefined {
+    if (conversation?.routeMode !== 'pinned') return undefined;
+    return conversation.peerId?.trim() || fallbackPeerId.trim() || undefined;
   }
 
   function findMatchingChatServiceOptionValue(
@@ -1152,7 +1175,7 @@ export function initChatModule({
 
     const conversationModel = normalizeChatServiceId(conversation?.service);
     if (conversationModel.length > 0) {
-      const conversationPeerId = conversation?.peerId?.trim() || undefined;
+      const conversationPeerId = pinnedConversationPeerId(conversation);
       return {
         id: conversationModel,
         provider: normalizeProviderId(conversation?.provider),
@@ -1165,12 +1188,15 @@ export function initChatModule({
 
   function getSelectedChatServiceSelection(): ChatServiceSelection {
     // Active conversations are immutable unless the user explicitly switches
-    // service/peer. Always prefer the conversation's persisted model+peer over
-    // the global dropdown value, because the dropdown can be refreshed/re-sorted
-    // by Discover while a thread is open.
+    // service/peer. Always prefer the persisted model and any explicit pin over
+    // the global dropdown value, because Discover may refresh or re-sort it
+    // while a thread is open.
     const conversationModel = normalizeChatServiceId(activeConversation?.service);
     if (conversationModel.length > 0) {
-      const conversationPeerId = activeConversation?.peerId?.trim() || uiState.chatSelectedPeerId || undefined;
+      const conversationPeerId = pinnedConversationPeerId(
+        activeConversation,
+        uiState.chatSelectedPeerId,
+      );
       return {
         id: conversationModel,
         provider: normalizeProviderId(activeConversation?.provider),
@@ -1186,19 +1212,24 @@ export function initChatModule({
     );
     if (vprOption) {
       const selected = decodeChatServiceSelection(vprOption.value);
-      if (selected.id.length > 0) return selected;
+      if (selected.id.length > 0) {
+        return selectionForCurrentRoute(selected);
+      }
     }
 
     const selectedValue = decodeChatServiceSelection(uiState.chatSelectedServiceValue);
-    if (selectedValue.id.length > 0) return selectedValue;
+    if (selectedValue.id.length > 0) {
+      return selectionForCurrentRoute(selectedValue);
+    }
 
     if (uiState.chatServiceOptions.length > 0) {
       const firstOption = decodeChatServiceSelection(uiState.chatServiceOptions[0].value);
       if (firstOption.id.length > 0) {
-        return {
+        const selection = {
           ...firstOption,
           peerId: firstOption.peerId ?? uiState.chatServiceOptions[0].peerId,
         };
+        return selectionForCurrentRoute(selection);
       }
     }
 
@@ -1994,10 +2025,12 @@ export function initChatModule({
     }
 
     try {
-      const peerId = (selection.peerId ?? uiState.chatSelectedPeerId) || undefined;
       // Record how this thread's peer was chosen: a pinned thread must keep its
       // peer forever, while an auto thread may be re-routed if the peer dies.
       const routeMode = uiState.vprRouteSelection.mode === 'pinned-peer' ? 'pinned' : 'auto';
+      const peerId = routeMode === 'pinned'
+        ? (selection.peerId ?? uiState.chatSelectedPeerId) || undefined
+        : undefined;
       const result = await bridge.chatAiCreateConversation(
         selection.id,
         selection.provider ?? undefined,
@@ -2264,9 +2297,8 @@ export function initChatModule({
       const route = routes.find((row) => row.peerId === selection.peerId);
       return route ? { service: route.serviceId, peerId: route.peerId } : null;
     }
-    return chooseBestVprRoute(routes, uiState.vprRoutingPreferences)
-      ? { service: model.serviceId }
-      : null;
+    const route = chooseBestVprRoute(routes, uiState.vprRoutingPreferences);
+    return route ? { service: model.serviceId } : null;
   }
 
   function generateImage(prompt: string): void {
@@ -2325,6 +2357,9 @@ export function initChatModule({
         if (!result.ok || !result.user || !result.assistant) {
           throw new Error(result.error || 'Image generation failed.');
         }
+        const responsePeerId = typeof result.assistant.meta?.peerId === 'string'
+          ? result.assistant.meta.peerId.trim()
+          : route.peerId ?? '';
         const existing = getLocalConversationMessages(convId) ?? pendingMessages;
         // The prompt was projected optimistically before the slow image call;
         // main persists that same user turn alongside the generated attachment.
@@ -2335,13 +2370,13 @@ export function initChatModule({
         if (activeConversation?.id === convId) {
           activeConversation.messages = messages;
           activeConversation.updatedAt = Date.now();
-          activeConversation.lastResponsePeerId = route.peerId;
+          activeConversation.lastResponsePeerId = responsePeerId || undefined;
           updateThreadMeta(activeConversation);
         }
         if (Array.isArray(uiState.chatConversations)) {
           const summary = (uiState.chatConversations as ChatConversationSummary[])
             .find((conversation) => conversation.id === convId);
-          if (summary) summary.lastResponsePeerId = route.peerId;
+          if (summary) summary.lastResponsePeerId = responsePeerId || undefined;
         }
         scheduleChatConversationsRefresh();
         notifyUiStateChanged();
@@ -2588,6 +2623,7 @@ export function initChatModule({
     const nextServiceId = normalizeChatServiceId(selectedOption?.id ?? decoded.id);
     const nextProvider = normalizeProviderId(selectedOption?.provider ?? decoded.provider);
     const nextRouteMode = routeMode ?? (peerId ? 'pinned' : 'auto');
+    const pinnedPeerId = nextRouteMode === 'pinned' ? peerId : '';
 
     // Write the explicit pick through to the VPR route selection so the two
     // never disagree about which model+peer a new conversation targets. The
@@ -2611,16 +2647,16 @@ export function initChatModule({
           };
       uiState.vprRouteSelection = {
         model: selectedModel,
-        mode: peerId ? 'pinned-peer' : 'auto',
-        peerId: peerId || null,
+        mode: pinnedPeerId ? 'pinned-peer' : 'auto',
+        peerId: pinnedPeerId || null,
       };
       if (rememberModelPin) {
-        if (peerId) {
+        if (pinnedPeerId) {
           uiState.vprModelPins = setVprModelPin(
             uiState.vprModelPins,
             selectedModel.provider,
             selectedModel.serviceId,
-            peerId,
+            pinnedPeerId,
           );
         } else {
           uiState.vprModelPins = clearVprModelPin(
@@ -2636,8 +2672,10 @@ export function initChatModule({
     }
 
     if (activeConversation) {
-      activeConversation.peerId = peerId || undefined;
-      activeConversation.peerLabel = selectedOption?.peerDisplayName || selectedOption?.peerLabel || undefined;
+      activeConversation.peerId = pinnedPeerId || undefined;
+      activeConversation.peerLabel = pinnedPeerId
+        ? selectedOption?.peerDisplayName || selectedOption?.peerLabel || undefined
+        : undefined;
       activeConversation.routeMode = nextRouteMode;
 
       if (nextServiceId) {
@@ -2650,7 +2688,7 @@ export function initChatModule({
         const list = uiState.chatConversations as ChatConversationSummary[];
         const summary = list.find((c) => c.id === convId);
         if (summary) {
-          summary.peerId = peerId || '';
+          summary.peerId = pinnedPeerId || '';
           summary.peerLabel = activeConversation.peerLabel ?? '';
           summary.routeMode = nextRouteMode;
           if (nextServiceId) {
@@ -2663,14 +2701,14 @@ export function initChatModule({
     if (bridge?.chatAiSelectPeer) {
       void bridge.chatAiSelectPeer({
         conversationId: uiState.chatActiveConversation,
-        peerId: peerId || null,
+        peerId: pinnedPeerId || null,
         // Persist the model rebinding too — the in-memory summary update
         // above is otherwise reverted by the next conversation-list refresh.
         ...(nextServiceId ? { service: nextServiceId, provider: nextProvider ?? '' } : {}),
         routeMode: nextRouteMode,
       }).catch(() => undefined);
     }
-    void refreshChatPermissionModeForPeer(peerId);
+    void refreshChatPermissionModeForPeer(pinnedPeerId);
 
     notifyUiStateChanged();
   }

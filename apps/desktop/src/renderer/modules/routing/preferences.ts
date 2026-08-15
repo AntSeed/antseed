@@ -1,8 +1,10 @@
 import type { VprPeerListing, VprRoutingPreferences, VprRouteSelection } from '../../core/state';
+import type { ModelRoutingPreferences } from '@antseed/node/model-routing';
 
 export const VPR_PREFERENCES_STORAGE_KEY = 'antseed.desktop.vpr.preferences';
 export const VPR_ROUTE_SELECTION_STORAGE_KEY = 'antseed.desktop.vpr.routeSelection';
 const VPR_PREFERENCES_VERSION = 2;
+const ROUTING_PEER_ID_PATTERN = /^(?:0x)?[0-9a-f]{40}$/i;
 
 type StoredObject = Record<string, unknown>;
 
@@ -111,6 +113,20 @@ export function saveVprRoutingPreferences(value: VprRoutingPreferences): void {
     version: VPR_PREFERENCES_VERSION,
     ...value,
   }));
+}
+
+export function buyerModelRoutingPreferences(
+  value: VprRoutingPreferences,
+): ModelRoutingPreferences {
+  const validPeerIds = (peerIds: string[]): string[] => normalizePeerIdList(peerIds)
+    .filter((peerId) => ROUTING_PEER_ID_PATTERN.test(peerId));
+  return {
+    preferFreePeers: value.preferFreePeers,
+    maxInputUsdPerMillion: value.maxInputUsdPerMillion,
+    minTrustScore: value.minTrustScore,
+    allowedPeerIds: validPeerIds(value.allowedPeerIds),
+    blockedPeerIds: validPeerIds(value.blockedPeerIds),
+  };
 }
 
 export function peerListingOf(preferences: VprRoutingPreferences, peerId: string): VprPeerListing {

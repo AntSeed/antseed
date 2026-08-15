@@ -244,6 +244,20 @@ export {
   type StreamingResponseAdapter,
 } from './proxy/service-api-adapter.js';
 export { DefaultRouter, type DefaultRouterConfig } from './routing/default-router.js';
+export {
+  DEFAULT_MODEL_ROUTING_PREFERENCES,
+  chooseBestModelRoute,
+  isModelRouteCoolingDown,
+  isModelRouteEligible,
+  isModelRoutePeerAllowed,
+  modelRouteReputationScore,
+  modelRouteTotalPrice,
+  rankModelRoutes,
+  scoreModelRoute,
+  type ModelRouteCandidate,
+  type ModelRoutingPreferences,
+  type ScoredModelRoute,
+} from './routing/model-route-ranking.js';
 
 export type { AntseedPlugin, AntseedProviderPlugin, AntseedRouterPlugin, AntseedVerifierPlugin, Prover, VerifyContext, VerifyResult, ClaimResult, SellerRequest, SellerResponse, PluginConfigKey, ConfigField } from './interfaces/plugin.js'
 export { ANTSEED_ATTEST_PATH } from './interfaces/plugin.js'

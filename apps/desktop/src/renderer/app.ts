@@ -21,11 +21,11 @@ import {
 } from './modules/app/float-settings';
 import { initModelPickerSync } from './modules/catalog/picker-sync';
 import { applyVprRouteToConnectedProxy } from './modules/routing/proxy-sync';
-import { findCatalogEntry } from './modules/catalog/model-catalog';
+import { createVprRouteSelection, findCatalogEntry } from './modules/catalog/model-catalog';
 import { resolveVprChatOption } from './modules/chat/projection';
-import type { VprRouteSelection } from './core/state';
 import {
   applyPeerListing,
+  buyerModelRoutingPreferences,
   loadVprRouteSelection,
   loadVprRoutingPreferences,
   saveVprRouteSelection,
@@ -166,6 +166,23 @@ const {
   defaultDashboardPort: DEFAULT_DASHBOARD_PORT,
 });
 
+let lastQueuedBuyerRoutingPreferences = '';
+let buyerRoutingPreferencesSyncVersion = 0;
+function syncBuyerRoutingPreferences(): void {
+  if (!bridge?.updateConfig) return;
+  const routingPreferences = buyerModelRoutingPreferences(uiState.vprRoutingPreferences);
+  const serialized = JSON.stringify(routingPreferences);
+  if (serialized === lastQueuedBuyerRoutingPreferences) return;
+  lastQueuedBuyerRoutingPreferences = serialized;
+  const version = ++buyerRoutingPreferencesSyncVersion;
+  void updateDashboardConfig({ buyer: { routingPreferences } }).then((result) => {
+    if (result.ok || version !== buyerRoutingPreferencesSyncVersion) return;
+    lastQueuedBuyerRoutingPreferences = '';
+    appendSystemLog(`Buyer routing preferences were not saved: ${result.error ?? 'unknown error'}`);
+  });
+}
+syncBuyerRoutingPreferences();
+
 const {
   clearRouterPluginHint,
   updatePluginHintFromLog,
@@ -246,29 +263,20 @@ function rememberedPinFor(provider: string, serviceId: string): string | null {
 function actionSelectVprModel(provider: string, serviceId: string, peerId: string | null = null): void {
   const entry = findCatalogEntry(uiState.vprModelCatalog, provider, serviceId);
   if (!entry) return;
-  // Image models are internal-chat tools, not VPR defaults. Requiring an
-  // explicit seller distinguishes the dedicated "Use in chat" action from
-  // every main dropdown / connected-app model switch.
-  if (entry.kind === 'image' && !peerId) return;
-  if (entry.kind === 'image' && peerId) {
-    const selection: VprRouteSelection = {
-      model: {
-        provider: entry.provider,
-        serviceId: entry.serviceId,
-        label: entry.label,
-        categories: [...entry.categories],
-      },
-      mode: 'pinned-peer',
-      peerId,
-    };
+  // Image models are internal-chat tools, not VPR defaults. A bare model uses
+  // network Auto routing; only an explicitly selected seller creates a pin.
+  if (entry.kind === 'image') {
+    const selection = createVprRouteSelection(entry, peerId);
     uiState.chatImageRouteSelection = selection;
-    uiState.vprModelPins = setVprModelPin(
-      uiState.vprModelPins,
-      entry.provider,
-      entry.serviceId,
-      peerId,
-    );
-    saveVprModelPins(uiState.vprModelPins);
+    if (selection.peerId) {
+      uiState.vprModelPins = setVprModelPin(
+        uiState.vprModelPins,
+        entry.provider,
+        entry.serviceId,
+        selection.peerId,
+      );
+      saveVprModelPins(uiState.vprModelPins);
+    }
     notifyUiStateChanged();
     return;
   }
@@ -281,16 +289,7 @@ function actionSelectVprModel(provider: string, serviceId: string, peerId: strin
     uiState.vprModelPins = setVprModelPin(uiState.vprModelPins, entry.provider, entry.serviceId, pinnedPeerId);
     saveVprModelPins(uiState.vprModelPins);
   }
-  const selection: VprRouteSelection = {
-    model: {
-      provider: entry.provider,
-      serviceId: entry.serviceId,
-      label: entry.label,
-      categories: [...entry.categories],
-    },
-    mode: pinnedPeerId ? 'pinned-peer' : 'auto',
-    peerId: pinnedPeerId,
-  };
+  const selection = createVprRouteSelection(entry, pinnedPeerId);
   // Auto mode resolves the peer through the routing-preferences scorer, not
   // whichever chat option happens to sort first.
   const option = entry.kind === 'text'
@@ -647,6 +646,7 @@ registerActions({
   updateVprRoutingPreferences: (patch) => {
     uiState.vprRoutingPreferences = { ...uiState.vprRoutingPreferences, ...patch };
     saveVprRoutingPreferences(uiState.vprRoutingPreferences);
+    syncBuyerRoutingPreferences();
     // Peer rules gate which sellers and models are visible at all, so a patch
     // touching them has to re-derive the catalog, not just repaint.
     if (patch.allowedPeerIds || patch.blockedPeerIds) {
@@ -657,6 +657,7 @@ registerActions({
   setVprPeerListing: (peerId, listing) => {
     uiState.vprRoutingPreferences = applyPeerListing(uiState.vprRoutingPreferences, peerId, listing);
     saveVprRoutingPreferences(uiState.vprRoutingPreferences);
+    syncBuyerRoutingPreferences();
     chatApi.applyPeerAccessRules();
 
     // A pin the new lists rule out would keep routing to a peer the user just

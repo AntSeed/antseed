@@ -11,10 +11,12 @@ import {
   computeOnChainReputationScore,
   effectiveModelReputationScore,
   normalizedModelReputationScore as normalizeModelReputationScore,
+  rankModelRoutes,
   selectLowestPricedCanonicalOffers,
   type CatalogServiceCapabilities,
   type CatalogServiceProtocol,
   type NetworkServiceOffer,
+  type ModelRoutingPreferences,
   type PeerInfo,
 } from '@antseed/node'
 import { canonicalModelKey, preferredModelDisplayName } from '@antseed/node/model-identity'
@@ -82,6 +84,14 @@ export type NetworkModelEntry = {
 }
 
 export type ModelTypeFilter = 'all' | NetworkModelType | 'invalid'
+
+export type NetworkModelBuildOptions = {
+  routingPreferences?: ModelRoutingPreferences | null
+  peerHealth?: ReadonlyMap<string, {
+    cooldownUntil?: number | null
+    failureStreak?: number | null
+  }>
+}
 
 function normalizedModelAlias(serviceId: string): string {
   let value = serviceId.trim().toLowerCase()
@@ -193,7 +203,11 @@ export function parseModelTypeFilter(raw: string | null): ModelTypeFilter {
  * variants and conservative family aliases are grouped together, while each
  * peer offer retains its actual advertised service id for explicit routing.
  */
-export function buildNetworkModels(peers: PeerInfo[], nowMs: number): NetworkModelEntry[] {
+export function buildNetworkModels(
+  peers: PeerInfo[],
+  nowMs: number,
+  options: NetworkModelBuildOptions = {},
+): NetworkModelEntry[] {
   const created = Math.floor(nowMs / 1000)
   const byModelKey = new Map<string, NetworkModelEntry>()
   const legacyReputationByPeerId = new Map<string, number | null>()
@@ -288,7 +302,21 @@ export function buildNetworkModels(peers: PeerInfo[], nowMs: number): NetworkMod
           )
         : normalizedReputationByPeerId.get(peer.peerId) ?? null
     }
-    entry.peers.sort(compareEffectiveModelReputation)
+    if (options.routingPreferences) {
+      const ranked = rankModelRoutes(entry.peers.map((peer) => {
+        const health = options.peerHealth?.get(peer.peerId)
+          ?? options.peerHealth?.get(peer.peerId.toLowerCase())
+        return {
+          peer,
+          ...peer,
+          peerCooldownUntil: health?.cooldownUntil ?? null,
+          peerFailureStreak: health?.failureStreak ?? 0,
+        }
+      }), options.routingPreferences, nowMs)
+      entry.peers = ranked.map(({ peer }) => peer)
+    } else {
+      entry.peers.sort(compareEffectiveModelReputation)
+    }
     aggregateModelCapabilities(entry)
   }
   entries.sort((a, b) => a.id.localeCompare(b.id))

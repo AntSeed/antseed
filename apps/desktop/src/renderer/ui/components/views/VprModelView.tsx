@@ -194,7 +194,7 @@ export function VprModelView({ onSelectView }: Props) {
         {imageOnly && (
           <div className={styles.capabilityNotice} role="note">
             <strong>Image generation only</strong>
-            <span>Use it in AntStation's internal chat, or copy a seller-pinned skill for a normal text agent. It cannot become the main text or connected-app route.</span>
+            <span>Use it in the internal chat, or copy model-only instructions for a normal text agent. It cannot become the main text or connected-app route.</span>
           </div>
         )}
 

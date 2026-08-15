@@ -62,6 +62,8 @@ test('generateChatImage uses model-only routing and persists the peer selected b
     assert.equal(persistedService, 'image-model-v2');
     assert.match(persistedMarker, /^<generated-image id="([^"]+)" mime="image\/png" name="generated-[a-f0-9]{8}\.png">$/);
     assert.deepEqual(persistedBytes, png);
+    assert.equal(result.assistant?.meta?.peerId, 'routed-peer');
+    assert.equal(result.assistant?.meta?.service, 'image-model-v2');
     assert.equal(result.assistant?.meta?.outputImages, 1);
     assert.equal(Array.isArray(result.assistant?.content), true);
   } finally {
@@ -101,6 +103,7 @@ test('generateChatImage preserves an explicitly pinned image peer', async () => 
 
     assert.equal(result.ok, true, result.error);
     assert.equal(model, 'peer-1@image-model');
+    assert.equal(result.assistant?.meta?.peerId, 'peer-1');
   } finally {
     globalThis.fetch = originalFetch;
   }

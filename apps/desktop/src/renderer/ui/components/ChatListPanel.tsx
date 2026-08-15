@@ -8,7 +8,12 @@ import {
 } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { MoreVerticalIcon, Add01Icon, Search01Icon } from '@hugeicons/core-free-icons';
-import { getPeerGradient, getPeerDisplayName, formatCompactTokens } from '../../core/peer-utils';
+import {
+  formatCompactTokens,
+  getPeerDisplayName,
+  getPeerGradient,
+  preferredPeerDisplayName,
+} from '../../core/peer-utils';
 import { displayModelLabel } from '../../modules/catalog/model-identity';
 import { formatUsdcAmount } from '../../core/format';
 import { shallowEqual, useUiSelector } from '../hooks/useUiSelector';
@@ -503,12 +508,12 @@ export function ChatListPanel({ onSelectView }: { onSelectView?: (view: import('
     for (const row of rows) {
       const peerId = String(row.peerId || '').trim();
       if (!peerId || map.has(peerId)) continue;
-      const name = getPeerDisplayName(row.peerLabel) || String(row.peerDisplayName || '').trim();
+      const name = preferredPeerDisplayName(row.peerDisplayName, row.peerLabel);
       if (name) map.set(peerId, name);
     }
 
     for (const conv of allConversations) {
-      const peerId = String(conv.peerId || '').trim();
+      const peerId = String(conv.lastResponsePeerId || conv.peerId || '').trim();
       if (!peerId || map.has(peerId)) continue;
       const name = getPeerDisplayName(String(conv.peerLabel || ''));
       if (name) map.set(peerId, name);

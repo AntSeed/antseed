@@ -41,6 +41,53 @@ test('createDefaultConfig uses a higher seller concurrency default', () => {
   assert.equal(config.seller.maxConcurrentBuyers, 50);
 });
 
+test('createDefaultConfig includes shared model routing preferences', () => {
+  const config = createDefaultConfig();
+
+  assert.deepEqual(config.buyer.routingPreferences, {
+    preferFreePeers: false,
+    maxInputUsdPerMillion: 25,
+    minTrustScore: 60,
+    allowedPeerIds: [],
+    blockedPeerIds: [],
+  });
+});
+
+test('loadConfig merges partial model routing preferences with defaults', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      buyer: {
+        routingPreferences: {
+          preferFreePeers: true,
+          allowedPeerIds: ['0x' + 'a'.repeat(40)],
+        },
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.deepEqual(config.buyer.routingPreferences, {
+        preferFreePeers: true,
+        maxInputUsdPerMillion: 25,
+        minTrustScore: 60,
+        allowedPeerIds: ['0x' + 'a'.repeat(40)],
+        blockedPeerIds: [],
+      });
+    },
+  );
+});
+
+test('loadConfig rejects invalid model routing peer ids', async () => {
+  await withTempConfig(
+    JSON.stringify({ buyer: { routingPreferences: { blockedPeerIds: ['not-a-peer'] } } }),
+    async (configPath) => {
+      await assert.rejects(
+        () => loadConfig(configPath),
+        /buyer\.routingPreferences\.blockedPeerIds/,
+      );
+    },
+  );
+});
+
 test('loadConfig reads nested seller.providers[name].services[id] shape', async () => {
   await withTempConfig(
     JSON.stringify({
