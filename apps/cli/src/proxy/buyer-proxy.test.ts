@@ -12,6 +12,7 @@ import {
   CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
   buyerFault,
   computeOnChainReputationScore,
+  type ModelRoutingPreferences,
   type PeerInfo,
   type SerializedHttpResponse,
 } from '@antseed/node'
@@ -107,6 +108,7 @@ function makeBuyerProxyWithPeers(
   refreshedPeers = initialPeers,
   router: unknown = null,
   now?: () => number,
+  routingPreferences?: ModelRoutingPreferences,
 ): BuyerProxy {
   const proxy = new BuyerProxy({
     port: 0,
@@ -115,11 +117,20 @@ function makeBuyerProxyWithPeers(
       router,
     } as any,
     ...(now ? { now } : {}),
+    ...(routingPreferences ? { routingPreferences } : {}),
   })
   ;(proxy as any)._getPeers = async (options?: { forceRefresh?: boolean }) =>
     options?.forceRefresh ? refreshedPeers : initialPeers
   ;(proxy as any)._cacheLastUpdatedAtMs = Date.now()
   return proxy
+}
+
+const priceAndTrustPreferences: ModelRoutingPreferences = {
+  preferFreePeers: false,
+  maxInputUsdPerMillion: 25,
+  minTrustScore: 60,
+  allowedPeerIds: [],
+  blockedPeerIds: [],
 }
 
 /**
@@ -185,6 +196,43 @@ test('BuyerProxy accepts a custom background refresh interval', () => {
   })
 
   assert.equal((proxy as any)._bgRefreshIntervalMs, 15_000)
+})
+
+test('BuyerProxy reloads model routing preferences from config', async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'antseed-routing-config-'))
+  const configPath = join(dataDir, 'config.json')
+  t.after(() => rm(dataDir, { recursive: true, force: true }))
+  const allowedPeerId = 'a'.repeat(40)
+
+  await writeFile(configPath, JSON.stringify({
+    buyer: {
+      routingPreferences: {
+        preferFreePeers: true,
+        maxInputUsdPerMillion: 8,
+        minTrustScore: 72,
+        allowedPeerIds: [allowedPeerId],
+        blockedPeerIds: [],
+      },
+    },
+  }))
+
+  const proxy = new BuyerProxy({
+    port: 0,
+    dataDir,
+    configPath,
+    routingPreferences: priceAndTrustPreferences,
+    node: { router: null } as any,
+  })
+
+  await (proxy as any)._reloadRoutingPreferences()
+
+  assert.deepEqual((proxy as any)._routingPreferences, {
+    preferFreePeers: true,
+    maxInputUsdPerMillion: 8,
+    minTrustScore: 72,
+    allowedPeerIds: [allowedPeerId],
+    blockedPeerIds: [],
+  })
 })
 
 test('BuyerProxy starts incremental discovery on startup', async (t) => {
@@ -553,6 +601,69 @@ test('model-only request routes to the highest-reputation canonical service matc
   assert.equal(selectedBody?.['model'], 'opus-5')
 })
 
+test('conversation routing keeps the actual peer as a soft preference and fails over when needed', async () => {
+  const preferred = makePeer('c', ['openai'])
+  preferred.reputationScore = 70
+  preferred.providerServiceApiProtocols = {
+    openai: { services: { 'kimi-k3': ['openai-chat-completions'] } },
+  }
+  const rankedFirst = makePeer('d', ['openai'])
+  rankedFirst.reputationScore = 95
+  rankedFirst.providerServiceApiProtocols = {
+    openai: { services: { 'Kimi K3': ['openai-chat-completions'] } },
+  }
+  const proxy = makeBuyerProxyWithPeers([rankedFirst, preferred], [rankedFirst, preferred], permissiveRouter())
+  const attempts: string[] = []
+  let preferredReachable = true
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string; headers: Record<string, string> }) => {
+    attempts.push(peer.peerId)
+    assert.equal(request.headers['x-antstation-session-id'], undefined)
+    assert.equal(request.headers['x-antseed-prefer-peer'], undefined)
+    return {
+      requestId: request.requestId,
+      statusCode: peer.peerId === preferred.peerId && !preferredReachable ? 503 : 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ peerId: peer.peerId })),
+    }
+  }
+
+  const conversationHeaders = {
+    'x-antstation-session-id': 'conversation-soft-affinity',
+    'x-antseed-prefer-peer': preferred.peerId,
+  }
+  await invokeProxy(proxy, makeProxyRequest({
+    headers: conversationHeaders,
+    body: { model: 'kimi-k3', messages: [{ role: 'user', content: 'hello' }] },
+  }))
+  assert.deepEqual(attempts, [preferred.peerId])
+
+  preferredReachable = false
+  attempts.length = 0
+  await invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-antstation-session-id': 'conversation-soft-affinity' },
+    body: { model: 'kimi-k3', messages: [{ role: 'user', content: 'again' }] },
+  }))
+  assert.deepEqual(attempts, [preferred.peerId, rankedFirst.peerId])
+
+  const stored = (proxy as any)._conversations.get('antstation:conversation-soft-affinity')
+  assert.equal(stored?.pinnedModel, `${rankedFirst.peerId}@Kimi K3`)
+  assert.equal(stored?.lastModel, `${rankedFirst.peerId}@Kimi K3`)
+
+  attempts.length = 0
+  await invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-antstation-session-id': 'conversation-soft-affinity' },
+    body: { model: 'kimi-k3', messages: [{ role: 'user', content: 'third' }] },
+  }))
+  assert.equal(attempts[0], rankedFirst.peerId)
+
+  const route = await invokeProxy(proxy, makeProxyRequest({
+    method: 'GET',
+    path: `/_antseed/conversations/${encodeURIComponent('antstation:conversation-soft-affinity')}`,
+  }))
+  assert.equal(route.statusCode, 200)
+  assert.equal(JSON.parse(route.body).conversation.lastModel, `${rankedFirst.peerId}@Kimi K3`)
+})
+
 test('model-only request applies a cached-input pricing reputation penalty', async () => {
   const priced = makePeer('a', ['openai'])
   priced.reputationScore = 75
@@ -817,6 +928,93 @@ test('model-only routing skips higher-reputation peers rejected by buyer policy'
 
   assert.equal(res.statusCode, 200)
   assert.equal(selectedPeerId, allowed.peerId)
+})
+
+test('/models order and model-only dispatch use the same Price + Trust ranking', async () => {
+  const cobaltRelay = makePeer('a', ['openai'])
+  cobaltRelay.reputationScore = 99
+  cobaltRelay.providerPricing = {
+    openai: { defaults: { inputUsdPerMillion: 1.88, outputUsdPerMillion: 9.38 } },
+  }
+  cobaltRelay.providerServiceApiProtocols = {
+    openai: { services: { 'kimi-k3': ['openai-chat-completions'] } },
+  }
+  const emberRoute = makePeer('b', ['openai'])
+  emberRoute.reputationScore = 96
+  emberRoute.providerPricing = {
+    openai: { defaults: { inputUsdPerMillion: 0.9, outputUsdPerMillion: 2.7 } },
+  }
+  emberRoute.providerServiceApiProtocols = {
+    openai: { services: { 'Kimi K3': ['openai-chat-completions'] } },
+  }
+  const proxy = makeBuyerProxyWithPeers(
+    [cobaltRelay, emberRoute],
+    [cobaltRelay, emberRoute],
+    permissiveRouter(),
+    undefined,
+    priceAndTrustPreferences,
+  )
+  let selectedPeerId = ''
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string }) => {
+    selectedPeerId = peer.peerId
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ peerId: peer.peerId })),
+    }
+  }
+
+  const modelsRes = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/v1/models/kimi-k3' }))
+  const peerOrder = (JSON.parse(modelsRes.body) as { peers: Array<{ peerId: string }> }).peers
+    .map((peer) => peer.peerId)
+  const completionRes = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'kimi-k3', messages: [] } }))
+
+  assert.equal(modelsRes.statusCode, 200)
+  assert.deepEqual(peerOrder, [emberRoute.peerId, cobaltRelay.peerId])
+  assert.equal(completionRes.statusCode, 200)
+  assert.equal(selectedPeerId, emberRoute.peerId)
+})
+
+test('Price + Trust routing falls back after the preferred cheaper peer fails', async () => {
+  const cobaltRelay = makePeer('a', ['openai'])
+  cobaltRelay.reputationScore = 99
+  cobaltRelay.providerPricing = {
+    openai: { defaults: { inputUsdPerMillion: 1.88, outputUsdPerMillion: 9.38 } },
+  }
+  cobaltRelay.providerServiceApiProtocols = {
+    openai: { services: { 'kimi-k3': ['openai-chat-completions'] } },
+  }
+  const emberRoute = makePeer('b', ['openai'])
+  emberRoute.reputationScore = 96
+  emberRoute.providerPricing = {
+    openai: { defaults: { inputUsdPerMillion: 0.9, outputUsdPerMillion: 2.7 } },
+  }
+  emberRoute.providerServiceApiProtocols = {
+    openai: { services: { 'Kimi K3': ['openai-chat-completions'] } },
+  }
+  const proxy = makeBuyerProxyWithPeers(
+    [cobaltRelay, emberRoute],
+    [cobaltRelay, emberRoute],
+    permissiveRouter(),
+    undefined,
+    priceAndTrustPreferences,
+  )
+  const attempts: string[] = []
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string }) => {
+    attempts.push(peer.peerId)
+    return {
+      requestId: request.requestId,
+      statusCode: peer.peerId === emberRoute.peerId ? 503 : 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ peerId: peer.peerId })),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'kimi-k3', messages: [] } }))
+
+  assert.equal(res.statusCode, 200)
+  assert.deepEqual(attempts, [emberRoute.peerId, cobaltRelay.peerId])
 })
 
 test('model-only routing falls back to the next reputable peer after a retryable failure', async () => {
@@ -2374,7 +2572,7 @@ test('per-chat pin overrides the default routed model for the antseed alias', as
     ;(proxy as any)._defaultRoutedModel = defaultRoute
     const store = (proxy as any)._conversations
     store.touch({ tool: 'codex-exec', sessionKey: 'sess-1' })
-    store.setPinnedModel('codex-exec:sess-1', pinnedRoute)
+    store.setPinnedModel('codex-exec:sess-1', pinnedRoute, 'user')
 
     await invokeProxy(proxy, makeProxyRequest({
       path: '/v1/responses',
@@ -2426,7 +2624,7 @@ test('chat pin overrides a system-proxy-routed model on intercepted requests', a
     assert.equal(store.get('claude-code:cc-1')?.pinnedModel, proxyRoute)
 
     // The user re-pins the chat from the desktop (float / chats view).
-    store.setPinnedModel('claude-code:cc-1', pinnedRoute)
+    store.setPinnedModel('claude-code:cc-1', pinnedRoute, 'user')
 
     // Later requests still arrive with the proxy-assigned model; the pin wins.
     await invokeProxy(proxy, makeProxyRequest({

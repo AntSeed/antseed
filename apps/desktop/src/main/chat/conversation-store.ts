@@ -224,7 +224,8 @@ export class PiConversationStore {
     }
 
     const peerData = extractPeerFromEntries(manager);
-    const lastResponsePeerId = latestResponsePeerId(messages);
+    const lastResponsePeerId = latestResponsePeerId(messages)
+      ?? (peerData?.routeMode === 'auto' ? peerData.peerId : undefined);
     // SessionManager reads the cwd persisted in the session file; restoration
     // across app restarts depends on that value reflecting the session workspace.
     const sessionCwd = manager.getCwd() || undefined;

@@ -1,4 +1,9 @@
-import type { DiscoverRow, VprModelCatalogEntry, VprSelectedModel } from '../../core/state';
+import type {
+  DiscoverRow,
+  VprModelCatalogEntry,
+  VprRouteSelection,
+  VprSelectedModel,
+} from '../../core/state';
 import { CODING_ONLY_SUFFIX_RE, canonicalModelKey, displayModelLabel, sameCanonicalModel } from './model-identity';
 import { isFreeCatalogEntry, selectRecommendedVprCatalog } from './recommended';
 import { serviceModelKind } from './model-capabilities';
@@ -164,4 +169,21 @@ export function findCatalogEntry(
     // selections that reference a sibling key still resolve to the entry.
     ?? catalog.find((entry) => sameCanonicalModel(entry.serviceId, serviceId))
     ?? null;
+}
+
+export function createVprRouteSelection(
+  entry: VprModelCatalogEntry,
+  peerId: string | null,
+): VprRouteSelection {
+  const normalizedPeerId = peerId?.trim() || null;
+  return {
+    model: {
+      provider: entry.provider,
+      serviceId: entry.serviceId,
+      label: entry.label,
+      categories: [...entry.categories],
+    },
+    mode: normalizedPeerId ? 'pinned-peer' : 'auto',
+    peerId: normalizedPeerId,
+  };
 }

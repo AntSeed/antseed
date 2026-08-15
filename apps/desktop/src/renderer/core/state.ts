@@ -9,6 +9,10 @@ import type {
 } from '../types/bridge';
 import type { ChatMessage } from '../ui/components/chat/chat-shared';
 import type { ChatPermissionMode, ToolApprovalRequest } from '../types/bridge';
+import {
+  DEFAULT_MODEL_ROUTING_PREFERENCES,
+  type ModelRoutingPreferences,
+} from '@antseed/node/model-routing';
 
 export type BadgeTone = 'active' | 'idle' | 'warn' | 'bad';
 
@@ -107,18 +111,8 @@ export type VprRouteSelection = {
   peerId: string | null;
 };
 
-export type VprRoutingPreferences = {
+export type VprRoutingPreferences = ModelRoutingPreferences & {
   autoRouting: boolean;
-  preferFreePeers: boolean;
-  maxInputUsdPerMillion: number;
-  minTrustScore: number;
-  /**
-   * Peer allowlist. While non-empty, auto routing only ever considers these
-   * peers — every other seller is dropped before scoring.
-   */
-  allowedPeerIds: string[];
-  /** Peers auto routing never selects. Takes precedence over the allowlist. */
-  blockedPeerIds: string[];
 };
 
 /** Which routing list a peer sits on. A peer is never on both. */
@@ -569,9 +563,7 @@ export function createInitialUiState(): RendererUiState {
     vprModelPins: {},
     vprRoutingPreferences: {
       autoRouting: true,
-      preferFreePeers: false,
-      maxInputUsdPerMillion: 25,
-      minTrustScore: 60,
+      ...DEFAULT_MODEL_ROUTING_PREFERENCES,
       allowedPeerIds: [],
       blockedPeerIds: [],
     },

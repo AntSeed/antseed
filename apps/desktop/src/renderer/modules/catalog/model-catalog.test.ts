@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'vitest';
 import type { DiscoverRow, VprSelectedModel } from '../../core/state';
 import {
+  createVprRouteSelection,
   findCatalogEntry,
   projectRowsToVprModelCatalog,
   selectDefaultVprModel,
@@ -221,6 +222,39 @@ test('catalog classifies image services without aggregating peer capabilities', 
   assert.equal(entry.minImageUsdPerImage, 0.04);
   assert.equal(entry.maxImageUsdPerImage, 0.08);
   assert.equal('capabilities' in entry, false);
+});
+
+test('image model route selections support both Auto and explicit seller pins', () => {
+  const [entry] = projectRowsToVprModelCatalog([
+    discoverRow({
+      serviceId: 'image-model',
+      protocol: 'openai-images',
+      capabilities: { outputs: ['image'] },
+      minImageUsdPerImage: 0.04,
+      maxImageUsdPerImage: 0.04,
+    }),
+  ]);
+
+  assert.deepEqual(createVprRouteSelection(entry, null), {
+    model: {
+      provider: entry.provider,
+      serviceId: entry.serviceId,
+      label: entry.label,
+      categories: [],
+    },
+    mode: 'auto',
+    peerId: null,
+  });
+  assert.deepEqual(createVprRouteSelection(entry, ' image-peer '), {
+    model: {
+      provider: entry.provider,
+      serviceId: entry.serviceId,
+      label: entry.label,
+      categories: [],
+    },
+    mode: 'pinned-peer',
+    peerId: 'image-peer',
+  });
 });
 
 test('catalog chooses the cheapest image seller by per-image pricing', () => {

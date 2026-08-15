@@ -349,6 +349,11 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       console.log(chalk.dim(`  max per-request USDC: ${(Number(maxPerRequestUsdc) / 1_000_000).toFixed(6)}`))
       console.log(chalk.dim(`  max reserve USDC: ${(Number(maxReserveAmountUsdc) / 1_000_000).toFixed(6)}`))
       console.log(chalk.dim(`  min peer reputation: ${effectiveBuyerConfig.minPeerReputation}`))
+      console.log(chalk.dim(
+        `  auto routing: min trust=${effectiveBuyerConfig.routingPreferences.minTrustScore}, `
+        + `max input=${effectiveBuyerConfig.routingPreferences.maxInputUsdPerMillion} USD/1M, `
+        + `prefer free=${effectiveBuyerConfig.routingPreferences.preferFreePeers ? 'yes' : 'no'}`,
+      ))
       console.log(chalk.dim(`  peer refresh interval: ${effectiveBuyerConfig.peerRefreshIntervalMs}ms`))
       console.log(chalk.dim(`  metadata fetch timeout: ${effectiveBuyerConfig.metadataFetchTimeoutMs}ms`))
       console.log(chalk.dim(`  metadata v2 service opt-out: ${effectiveBuyerConfig.disableMetadataV2Services ? 'enabled' : 'disabled'}`))
@@ -443,6 +448,8 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         node,
         pinnedPeerId,
         dataDir: globalOpts.dataDir,
+        configPath: globalOpts.config,
+        routingPreferences: effectiveBuyerConfig.routingPreferences,
         backgroundRefreshIntervalMs: effectiveBuyerConfig.peerRefreshIntervalMs,
         ...(verifierPolicy ? { verifier: verifierPolicy } : {}),
       })

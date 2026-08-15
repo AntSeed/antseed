@@ -88,7 +88,7 @@ export const faqLd = {
       name: 'What if an AntSeed service goes offline?',
       acceptedAnswer: {
         '@type': 'Answer',
-        text: 'AntSeed automatically detects provider failures and reroutes to the next best specialized service available. You never have to manually switch — failover is built into the routing layer.',
+        text: 'Model-only routes automatically fail over to the next eligible ranked seller after retryable peer failures. A conversation normally prefers its previously selected seller, but that soft affinity can switch when the seller is unavailable, cooling down, or no longer allowed. Explicit seller pins remain hard.',
       },
     },
     {
@@ -96,7 +96,7 @@ export const faqLd = {
       name: 'Do I need to sign up or create an account to use AntSeed?',
       acceptedAnswer: {
         '@type': 'Answer',
-        text: 'No account required. Install the CLI, start the buyer proxy, and you are live on the network — request any listed model and the proxy auto-selects the best peer serving it. Any tool that speaks the OpenAI API format works immediately.',
+        text: 'No account required. Install the CLI, start the buyer proxy, and request any model from the network-wide /v1/models catalog. The proxy applies the same Price + Trust preferences as the desktop, with a default minimum trust score of 60. Any tool that speaks a supported OpenAI or Anthropic API format works immediately.',
       },
     },
     {
@@ -136,7 +136,7 @@ export const faqLd = {
       name: 'How does pricing work on AntSeed?',
       acceptedAnswer: {
         '@type': 'Answer',
-        text: 'Providers set their own prices. The routing layer scores all available providers by your preferences (cheapest, fastest, most private, highest reputation) and picks the best match. Prices are visible before routing.',
+        text: 'Providers set their own prices. For model-only requests, AntSeed ranks eligible offers using shared Price + Trust preferences, pricing metadata, cached-input pricing coverage, and peer health. The default minimum trust score is 60, while explicit seller pins remain available when you need a fixed route.',
       },
     },
     {
@@ -218,7 +218,7 @@ If a provider offers access to GPT-4 or other closed-source models, you can acce
 
 ### What if a service goes offline?
 
-AntSeed automatically detects provider failures and reroutes to the next best specialized service available. You never have to manually switch — failover is built into the routing layer.
+Model-only routes automatically fail over to the next eligible ranked seller after retryable peer failures. A conversation normally keeps a soft affinity to the seller that successfully served it, but the proxy can switch when that seller is unavailable, cooling down, policy-ineligible, or fails retryably. Explicit seller pins remain hard and do not switch automatically.
 
 ---
 
@@ -226,7 +226,7 @@ AntSeed automatically detects provider failures and reroutes to the next best sp
 
 ### Do I need to sign up or create an account?
 
-No account required. Install the CLI, run `antseed buyer start`, and you are live on the network — request any model listed by `curl localhost:8377/v1/models` and the proxy auto-selects the highest-reputation peer serving it (pinning a specific peer with `antseed buyer connection set --peer <peerId>` stays available as an override). Any tool that speaks the OpenAI API format works immediately.
+No account required. Install the CLI, run `antseed buyer start`, and request any model listed by `curl localhost:8377/v1/models`. The proxy applies the same Price + Trust preferences as the desktop VPR, including the default hard minimum trust score of `60`. Pinning a specific seller with `antseed buyer connection set --peer <peerId>`, `x-antseed-pin-peer`, or `<peerId>@<model>` remains available as an explicit override. Tools that speak a supported OpenAI or Anthropic API format work immediately.
 
 ### How do I install AntSeed?
 
@@ -262,7 +262,7 @@ See the [provider setup guide](/docs/guides/become-a-provider) to get started.
 
 ### How does pricing work?
 
-Providers set their own prices. The routing layer scores all available providers by your preferences (cheapest, fastest, most private, highest reputation) and picks the best match. Prices are visible before routing.
+Providers set their own prices. For model-only requests, the routing layer ranks eligible offers using shared Price + Trust preferences, token or image pricing, cached-input pricing coverage, recent failures, cooldowns, and free-peer preference. The default minimum trust score is `60`; explicit seller pins remain available when you need a fixed route. Prices are visible in the network-wide `/v1/models` catalog before routing.
 
 ### How do providers get paid?
 

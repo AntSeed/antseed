@@ -84,7 +84,7 @@ Each side sends a 32-byte random nonce signed with its secp256k1 private key via
 
 ## Reconnection
 
-Exponential backoff with jitter: base delay 1s, max delay 30s, max 5 attempts. Formula: `min(baseDelay * 2^attempt + jitter, maxDelay)`. Because AI APIs are stateless, provider switches are invisible to the application.
+Exponential backoff with jitter: base delay 1s, max delay 30s, max 5 attempts. Formula: `min(baseDelay * 2^attempt + jitter, maxDelay)`. The buyer proxy handles transport reconnection independently from model-route failover. For model-only conversations, it softly prefers the seller that previously served the conversation and switches only when that route is unavailable, cooling down, policy-ineligible, or fails retryably. Explicit peer pins never switch automatically.
 
 ## Payment Messages
 

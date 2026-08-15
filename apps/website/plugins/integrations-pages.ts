@@ -274,8 +274,8 @@ function renderSkillMarkdown(): string {
   out.push('  this is often the dominant cost line.');
   out.push('- **Pin** — optionally telling the buyer proxy "route requests to *this* peer."');
   out.push('  Pinning is not required: a request that names only a model auto-selects the');
-  out.push('  highest-reputation compatible peer allowed by buyer policy, and fails over to');
-  out.push('  the next reputation-ranked peer on peer-attributed retryable failures');
+  out.push('  highest-ranked eligible offer under the shared Price + Trust preferences, and');
+  out.push('  fails over to the next ranked peer on peer-attributed retryable failures');
   out.push('  (rate-limited peers get up to 3 same-peer retries before fallback). Pin when');
   out.push('  you want to force one specific seller:');
   out.push('  - **Session pin**: `antseed buyer connection set --peer <peerId>`. Persists in');
@@ -288,6 +288,9 @@ function renderSkillMarkdown(): string {
   out.push('  Precedence when several are present: header > model prefix > session pin.');
   out.push('  Explicitly pinned requests never fail over to a different peer. A request');
   out.push('  with neither a model nor a pin returns `400 missing_routing_target`.');
+  out.push('  For recognized conversations, a successful automatic route becomes a soft');
+  out.push('  affinity: later turns prefer the same seller and service while they remain');
+  out.push('  healthy and policy-eligible, but automatic routing can still fail over.');
   out.push('');
 
   out.push('## Universal setup (do this once)');
@@ -297,9 +300,9 @@ function renderSkillMarkdown(): string {
   out.push('Download from https://antseed.com — it ships the buyer proxy, a wallet, and a');
   out.push('peer browser in a GUI. While the app is open the proxy is reachable at');
   out.push('`http://localhost:8377`. Its **Apps** view detects installed tools (Claude');
-  out.push('Code, Codex, …) and launches them already wired to AntSeed, and routing works');
-  out.push('best there: the app auto-selects the best peer for a model and supports');
-  out.push('per-chat model switching — no manual pinning needed.');
+  out.push('Code, Codex, …) and launches them already wired to AntSeed. The app saves');
+  out.push('its Price + Trust preferences into the buyer config, so internal chat,');
+  out.push('connected apps, and direct API calls all use the same routing policy.');
   out.push('');
   out.push('### Option B — CLI (headless / servers / agents)');
   out.push('');
@@ -323,8 +326,8 @@ function renderSkillMarkdown(): string {
   out.push('#    ?type=text or ?type=images; single lookup: GET /v1/models/<id>.');
   out.push("curl -s http://localhost:8377/v1/models | jq '.data[].id'");
   out.push('');
-  out.push('# 5. Make a request — the model name auto-selects the highest-reputation');
-  out.push('#    compatible peer allowed by your buyer policy. No pin needed.');
+  out.push('# 5. Make a request — the model name selects the highest-ranked eligible');
+  out.push('#    offer under the shared Price + Trust preferences. No pin needed.');
   out.push('curl http://localhost:8377/v1/chat/completions \\');
   out.push("  -H 'content-type: application/json' \\");
   out.push('  -d \'{ "model": "deepseek-v4-flash", "messages": [{"role": "user", "content": "Hello"}] }\'');
@@ -415,10 +418,10 @@ function renderSkillMarkdown(): string {
   out.push('No `Authorization` header is required by the buyer proxy. It authenticates and');
   out.push("pays peers using the local node's identity key and on-chain USDC deposits.");
   out.push('');
-  out.push('### Per-request peer selection (no session pin needed)');
+  out.push('### Explicit seller overrides');
   out.push('');
-  out.push('Pinning is optional — a request that names a model routes automatically. Two');
-  out.push('ways to force a specific peer when you want one seller:');
+  out.push('Pinning is optional — a request that names a model routes automatically. Use');
+  out.push('one of these overrides only when you need a specific seller:');
   out.push('');
   out.push('1. **Session pin** — `antseed buyer connection set --peer <peerId>`. Persists in');
   out.push('   `~/.antseed/buyer.state.json` (`pinnedPeerId`) and applies to every request');
@@ -428,6 +431,13 @@ function renderSkillMarkdown(): string {
   out.push('   `antseed buyer connection set` at all** if every request includes this header');
   out.push('   — the proxy will accept and route them. Best for scripts, schedulers, and');
   out.push('   multi-tenant deployments that need to fan out to different peers per call.');
+  out.push('3. **Model prefix** — set `model` to `<peerId>@<service-id>` when the client');
+  out.push('   lets you type a model name. The prefix is stripped before seller dispatch.');
+  out.push('');
+  out.push('Model-only routing uses `buyer.routingPreferences` (default `minTrustScore: 60`)');
+  out.push('for the same Price + Trust order shown by `/v1/models/:id` and the desktop.');
+  out.push('Recognized conversations softly prefer their previous successful seller; this');
+  out.push('affinity can fail over, unlike either explicit pin option.');
   out.push('');
   out.push('Example (per-request, no session pin):');
   out.push('');
@@ -531,7 +541,7 @@ function renderSkillMarkdown(): string {
   out.push("   peer <peerId> --json`. Match the tool's wire format against the service's");
   out.push('   `protocols` array — NOT the `provider` field. Then');
   out.push('   `antseed buyer connection set --peer <peerId>`. Not required — a request that');
-  out.push('   names a model auto-selects the highest-reputation policy-allowed peer.');
+  out.push('   names a model uses the shared Price + Trust ranking and policy gates.');
   out.push('8. If the tool is not listed: pick the **curl / Raw HTTP** entry and adapt — the');
   out.push('   contract is stable.');
   out.push('');

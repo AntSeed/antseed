@@ -127,6 +127,43 @@ test('failed discover response does not mark catalog loaded', async () => {
   assert.equal(uiState.chatDiscoverRowsLoaded, false);
 });
 
+test('completed text responses immediately record the actual routed peer', () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  uiState.chatConversations = [{
+    id: 'conv-a',
+    title: 'Conversation A',
+    service: 'model-a',
+    provider: 'openai',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    usage: { inputTokens: 0, outputTokens: 0 },
+  }];
+  let doneHandler: ((data: {
+    conversationId: string;
+    message: { role: string; content: unknown; meta?: Record<string, unknown> };
+  }) => void) | null = null;
+  const bridge: DesktopBridge = {
+    onChatAiDone: (handler) => {
+      doneHandler = handler;
+      return () => undefined;
+    },
+  };
+
+  initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+  assert.ok(doneHandler);
+  (doneHandler as NonNullable<typeof doneHandler>)({
+    conversationId: 'conv-a',
+    message: { role: 'assistant', content: 'done', meta: { peerId: 'actual-peer' } },
+  });
+
+  assert.equal(
+    (uiState.chatConversations[0] as { lastResponsePeerId?: string }).lastResponsePeerId,
+    'actual-peer',
+  );
+});
+
 test('opening a conversation tracks the loading gap before peer binding is restored', async () => {
   installDomTimers();
 
@@ -250,7 +287,7 @@ test('aborting a chat clears sending state before IPC settles', async () => {
   await abortPromise;
 });
 
-test('new chat created while previous response is pending sends to its own peer', async () => {
+test('new chat created while previous response is pending keeps its own model and pin state', async () => {
   installDomTimers();
 
   const uiState = createInitialUiState();
@@ -358,7 +395,7 @@ test('new chat created while previous response is pending sends to its own peer'
     message: 'first message',
     service: 'model-a',
     provider: 'openai',
-    peerId: 'peer-a',
+    peerId: undefined,
   });
   assert.deepEqual(uiState.chatSendingConversationIds, ['conv-1']);
 
@@ -375,7 +412,7 @@ test('new chat created while previous response is pending sends to its own peer'
     provider: 'openai',
     peerId: 'peer-b',
   });
-  assert.equal(conversations[0]!.peerId, 'peer-a');
+  assert.equal(conversations[0]!.peerId, '');
   assert.equal(conversations[1]!.peerId, 'peer-b');
   assert.equal(uiState.chatActiveConversation, 'conv-2');
   assert.equal(uiState.chatRoutedPeerId, 'peer-b');
@@ -464,6 +501,7 @@ test('auto image prompts use model-only routing and appear immediately while gen
   assert.equal(uiState.chatMessages.length, 2);
   assert.equal((uiState.chatMessages[0] as { role: string }).role, 'user');
   assert.equal((uiState.chatMessages[1] as { role: string }).role, 'assistant');
+  assert.equal((uiState.chatConversations[0] as { lastResponsePeerId?: string }).lastResponsePeerId, 'image-peer');
 });
 
 test('stream errors clear when switching conversations', async () => {
@@ -665,7 +703,7 @@ test('payment-required card clears when switching conversations or models', asyn
     message: 'paywalled prompt',
     service: 'model-a',
     provider: 'openai',
-    peerId: 'peer-a',
+    peerId: undefined,
   });
   assert.equal(uiState.chatPaymentApprovalVisible, true);
   assert.equal(uiState.chatPaymentApprovalPeerName, 'Peer A');
@@ -877,7 +915,7 @@ test('queued send targets its original conversation after switching chats', asyn
     message: 'queued for a',
     service: 'model-a',
     provider: 'openai',
-    peerId: 'peer-a',
+    peerId: undefined,
   });
   assert.equal(uiState.chatActiveConversation, 'conv-b');
   assert.equal(uiState.chatRoutedPeerId, 'peer-b');
@@ -1001,7 +1039,7 @@ test('explicit dropdown pick overrides the VPR auto-selected model for a new cha
   assert.equal(uiState.vprModelPins['modelb'], 'peer-b');
 });
 
-test('active conversation with persisted peer ignores a different VPR selected model', async () => {
+test('active legacy conversation keeps its model without treating its saved peer as a pin', async () => {
   installDomTimers();
   const uiState = createInitialUiState();
   uiState.chatServiceOptions = [chatOption('model-a', 'peer-a'), chatOption('model-b', 'peer-b')];
@@ -1034,7 +1072,7 @@ test('active conversation with persisted peer ignores a different VPR selected m
     message: 'still active conversation',
     service: 'model-a',
     provider: 'openai',
-    peerId: 'peer-a',
+    peerId: undefined,
   });
 });
 
@@ -1114,8 +1152,8 @@ test('sending from reopened conversation ignores unrelated global dropdown peer'
   const api = initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
   await api.openConversation('conv-a');
 
-  // Simulate the user/global selector moving to another peer after the thread
-  // is open. The thread itself must remain pinned to conv-a's persisted peer.
+  // Simulate the user/global selector moving after the thread is open. The
+  // legacy saved peer remains display affinity, while dispatch stays model-only.
   uiState.chatSelectedServiceValue = `openai${SEP}model-b${SEP}peer-b`;
   uiState.chatSelectedPeerId = 'peer-b';
 
@@ -1125,7 +1163,7 @@ test('sending from reopened conversation ignores unrelated global dropdown peer'
   assert.deepEqual(sends[0], {
     service: 'model-a',
     provider: 'openai',
-    peerId: 'peer-a',
+    peerId: undefined,
   });
   assert.equal(uiState.chatActiveConversation, 'conv-a');
   assert.equal(uiState.chatRoutedPeerId, 'peer-a');
@@ -1554,7 +1592,7 @@ test('switching service mid-conversation routes the next send to the new model',
     message: 'hello from model a',
     service: 'model-a',
     provider: 'openai',
-    peerId: 'peer-a',
+    peerId: undefined,
   });
 
   for (const handler of streamDoneHandlers) {
@@ -1815,7 +1853,7 @@ test('a retryable failure still schedules failover after the user switches conve
     await vi.runAllTicks();
     await Promise.resolve();
     await Promise.resolve();
-    assert.deepEqual(sends[0], { conversationId: 'conv-a', peerId: 'peer-a' });
+    assert.deepEqual(sends[0], { conversationId: 'conv-a', peerId: undefined });
 
     uiState.chatActiveConversation = 'conv-other';
     streamErrorHandlers[0]?.({
@@ -1844,7 +1882,7 @@ test('successive auto retries remain model-only', async () => {
     await vi.runAllTicks();
     await Promise.resolve();
     await Promise.resolve();
-    assert.deepEqual(sends[0], { conversationId: 'conv-a', peerId: 'peer-a' });
+    assert.deepEqual(sends[0], { conversationId: 'conv-a', peerId: undefined });
 
     streamErrorHandlers[0]?.({
       conversationId: 'conv-a',

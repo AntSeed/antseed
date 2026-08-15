@@ -237,7 +237,13 @@ export async function generateChatImage(
         generated: true,
       }],
       createdAt: persisted.assistant.timestamp,
-      meta: { peerId, provider: 'antseed', service, tokenSource: 'unknown', outputImages: 1 },
+      meta: {
+        ...(routedPeerId ? { peerId: routedPeerId } : {}),
+        provider: 'antseed',
+        service: routedService,
+        tokenSource: 'unknown',
+        outputImages: 1,
+      },
     };
     return { ok: true, user, assistant };
   } catch (error) {

@@ -1,3 +1,4 @@
+import { DEFAULT_MODEL_ROUTING_PREFERENCES } from '@antseed/node/model-routing';
 import type { AntseedConfig } from './types.js';
 
 export const DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS = 5 * 60_000;
@@ -27,6 +28,11 @@ export function createDefaultConfig(): AntseedConfig {
         },
       },
       minPeerReputation: 0,
+      routingPreferences: {
+        ...DEFAULT_MODEL_ROUTING_PREFERENCES,
+        allowedPeerIds: [],
+        blockedPeerIds: [],
+      },
       proxyPort: 8377,
       peerRefreshIntervalMs: DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS,
       metadataFetchTimeoutMs: DEFAULT_BUYER_METADATA_FETCH_TIMEOUT_MS,

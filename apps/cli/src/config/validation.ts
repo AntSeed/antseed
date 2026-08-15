@@ -24,6 +24,7 @@ const VERIFICATION_NAMESPACES = new Set(['domains', 'github']);
 const MIN_SELLER_UPLOAD_BODY_BYTES = 1024 * 1024;
 const MIN_BUYER_PEER_REFRESH_INTERVAL_MS = 1_000;
 export const MIN_BUYER_METADATA_FETCH_TIMEOUT_MS = 100;
+const PEER_ID_PATTERN = /^(?:0x)?[0-9a-f]{40}$/i;
 
 function validatePricingLeaf(
   path: string,
@@ -307,6 +308,23 @@ export function validateConfig(config: AntseedConfig): string[] {
 
   if (!Number.isFinite(config.buyer.minPeerReputation) || config.buyer.minPeerReputation < 0 || config.buyer.minPeerReputation > 100) {
     errors.push('buyer.minPeerReputation must be in range 0-100');
+  }
+
+  const routingPreferences = config.buyer.routingPreferences;
+  if (typeof routingPreferences.preferFreePeers !== 'boolean') {
+    errors.push('buyer.routingPreferences.preferFreePeers must be a boolean');
+  }
+  if (!Number.isFinite(routingPreferences.maxInputUsdPerMillion) || routingPreferences.maxInputUsdPerMillion < 0) {
+    errors.push('buyer.routingPreferences.maxInputUsdPerMillion must be a non-negative finite number');
+  }
+  if (!Number.isFinite(routingPreferences.minTrustScore) || routingPreferences.minTrustScore < 0 || routingPreferences.minTrustScore > 100) {
+    errors.push('buyer.routingPreferences.minTrustScore must be in range 0-100');
+  }
+  for (const key of ['allowedPeerIds', 'blockedPeerIds'] as const) {
+    const peerIds = routingPreferences[key];
+    if (!Array.isArray(peerIds) || peerIds.some((peerId) => typeof peerId !== 'string' || !PEER_ID_PATTERN.test(peerId.trim()))) {
+      errors.push(`buyer.routingPreferences.${key} must contain only 40-character hex peer IDs`);
+    }
   }
 
   if (!Number.isInteger(config.buyer.proxyPort) || config.buyer.proxyPort < 1 || config.buyer.proxyPort > 65535) {

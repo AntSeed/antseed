@@ -3,6 +3,7 @@ import type {
   ServiceCapabilities,
   UnitBillingModelV1,
 } from '@antseed/node';
+import type { ModelRoutingPreferences } from '@antseed/node/model-routing';
 
 /**
  * Dual token pricing in USD per 1M tokens.
@@ -168,6 +169,8 @@ export interface BuyerCLIConfig {
   maxPricing: HierarchicalPricingConfig;
   /** Minimum peer reputation score (0-100) */
   minPeerReputation: number;
+  /** Model-only auto-routing preferences shared by the proxy and Desktop. */
+  routingPreferences: ModelRoutingPreferences;
   /** Local proxy listen port */
   proxyPort: number;
   /** How often the buyer refreshes its peer list from the DHT in the background (ms) */

@@ -125,6 +125,77 @@ test('sorts by normalized on-chain reputation like desktop VPR', () => {
   assert.deepEqual(qwen.peers.map((peer) => peer.onChainTrustScore), [null, 90])
 })
 
+test('sorts /models peers with the configured Price + Trust preferences', () => {
+  const cobaltRelay = makePeer({
+    peerId: '1'.repeat(40),
+    onChainReputationScore: 99,
+    providerPricing: {
+      openai: {
+        defaults: { inputUsdPerMillion: 1.88, outputUsdPerMillion: 9.38 },
+      },
+    },
+    providerServiceApiProtocols: {
+      openai: { services: { 'kimi-k3': ['openai-chat-completions'] } },
+    },
+  })
+  const emberRoute = makePeer({
+    peerId: '2'.repeat(40),
+    onChainReputationScore: 96,
+    providerPricing: {
+      openai: {
+        defaults: { inputUsdPerMillion: 0.9, outputUsdPerMillion: 2.7 },
+      },
+    },
+    providerServiceApiProtocols: {
+      openai: { services: { 'Kimi K3': ['openai-chat-completions'] } },
+    },
+  })
+
+  const [model] = buildNetworkModels([cobaltRelay, emberRoute], NOW_MS, {
+    routingPreferences: {
+      preferFreePeers: false,
+      maxInputUsdPerMillion: 25,
+      minTrustScore: 60,
+      allowedPeerIds: [],
+      blockedPeerIds: [],
+    },
+  })
+
+  assert.deepEqual(model?.peers.map((peer) => peer.peerId), [emberRoute.peerId, cobaltRelay.peerId])
+})
+
+test('configured /models sorting puts cooling peers after healthy routes', () => {
+  const cooling = makePeer({
+    peerId: '3'.repeat(40),
+    onChainReputationScore: 99,
+    providerPricing: { openai: { defaults: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 } } },
+    providerServiceApiProtocols: {
+      openai: { services: { 'health-model': ['openai-chat-completions'] } },
+    },
+  })
+  const healthy = makePeer({
+    peerId: '4'.repeat(40),
+    onChainReputationScore: 70,
+    providerPricing: { openai: { defaults: { inputUsdPerMillion: 10, outputUsdPerMillion: 10 } } },
+    providerServiceApiProtocols: {
+      openai: { services: { 'health-model': ['openai-chat-completions'] } },
+    },
+  })
+
+  const [model] = buildNetworkModels([cooling, healthy], NOW_MS, {
+    routingPreferences: {
+      preferFreePeers: false,
+      maxInputUsdPerMillion: 25,
+      minTrustScore: 60,
+      allowedPeerIds: [],
+      blockedPeerIds: [],
+    },
+    peerHealth: new Map([[cooling.peerId, { cooldownUntil: NOW_MS + 30_000, failureStreak: 3 }]]),
+  })
+
+  assert.deepEqual(model?.peers.map((peer) => peer.peerId), [healthy.peerId, cooling.peerId])
+})
+
 test('returns null reputation and sorts unknown scores last', () => {
   const unknownSeller = makePeer({
     peerId: '0'.repeat(40),

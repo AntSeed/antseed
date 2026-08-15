@@ -11,12 +11,15 @@ import {
   decodeSweepRequest,
   faultAttributionOf,
   faultCodeOf,
+  isModelRouteEligible,
   peerSupportsCooperativeClose,
+  rankModelRoutes,
   type AntseedNode,
   type FaultAttribution,
   type BuyerSpendEvent,
   type PeerInfo,
   type PeerMetadata,
+  type ModelRoutingPreferences,
   type RequestStreamResponseMetadata,
   type Router,
   type SerializedHttpRequest,
@@ -93,6 +96,7 @@ import {
 import { PeerAttributionTracker, HEARTBEAT_MS } from './peer-attribution.js'
 import { estimateAnthropicPromptTokens, isCountTokensPath } from './count-tokens.js'
 import { getCachedVerdict, runVerifier, verifierSupportFingerprint, type CachedVerdict, type VerifierPolicy, type SellerReach, type VerifyOutcome } from '../plugins/verifier.js'
+import { loadConfig } from '../config/loader.js'
 
 // Re-export for backward compatibility (used by tests and other consumers)
 export { selectCandidatePeersForRouting, type CandidatePeerRouteSelection } from './routing.js'
@@ -103,6 +107,10 @@ export interface BuyerProxyConfig {
   node: AntseedNode
   /** Data directory used to persist buyer.state.json (discovered peers, session peer pin). */
   dataDir: string
+  /** Config file watched for live buyer.routingPreferences updates. */
+  configPath?: string
+  /** Price + trust preferences used for model-only automatic routing. */
+  routingPreferences?: ModelRoutingPreferences
   /** How often to refresh the peer list from DHT in the background (ms). Default: 300000 (5 min) */
   backgroundRefreshIntervalMs?: number
   /**
@@ -708,7 +716,9 @@ export class BuyerProxy {
   private readonly _peerCacheTtlMs: number
   private readonly _stateDir: string
   private readonly _stateFile: string
+  private readonly _configPath: string | null
   private _stateFileWatching = false
+  private _configFileWatching = false
   private _pinnedPeer: string | null
   /**
    * Route substituted for the `antseed` model alias (`<service>` for automatic
@@ -728,6 +738,8 @@ export class BuyerProxy {
   private readonly _verifier?: VerifierPolicy
   private readonly _verifyCache = new Map<string, CachedVerdict>()
   private _stateWatchDebounce: ReturnType<typeof setTimeout> | null = null
+  private _configWatchDebounce: ReturnType<typeof setTimeout> | null = null
+  private _routingPreferences: ModelRoutingPreferences | null
 
   private _stateWriteChain: Promise<void> = Promise.resolve()
 
@@ -773,8 +785,16 @@ export class BuyerProxy {
     this._peerCacheTtlMs = Math.max(0, config.peerCacheTtlMs ?? Math.max(6 * 60_000, this._bgRefreshIntervalMs + 60_000))
     this._stateDir = config.dataDir
     this._stateFile = join(config.dataDir, 'buyer.state.json')
+    this._configPath = config.configPath ?? null
     this._conversations = new ConversationStore(config.dataDir)
     this._pinnedPeer = config.pinnedPeerId?.toLowerCase() ?? null
+    this._routingPreferences = config.routingPreferences
+      ? {
+          ...config.routingPreferences,
+          allowedPeerIds: [...config.routingPreferences.allowedPeerIds],
+          blockedPeerIds: [...config.routingPreferences.blockedPeerIds],
+        }
+      : null
     this._now = config.now ?? (() => Date.now())
     this._server = createServer((req, res) => {
       this._handleRequest(req, res).catch((err) => {
@@ -884,6 +904,7 @@ export class BuyerProxy {
     this._startIncrementalDiscoverySweep()
     await this._writeStateFile('connected')
     this._watchStateFile()
+    this._watchConfigFile()
   }
 
   private async _hydratePeersFromStateFile(): Promise<void> {
@@ -922,6 +943,14 @@ export class BuyerProxy {
     if (this._stateFileWatching) {
       unwatchFile(this._stateFile)
       this._stateFileWatching = false
+    }
+    if (this._configWatchDebounce) {
+      clearTimeout(this._configWatchDebounce)
+      this._configWatchDebounce = null
+    }
+    if (this._configFileWatching && this._configPath) {
+      unwatchFile(this._configPath)
+      this._configFileWatching = false
     }
     if (this._bgRefreshHandle) {
       clearInterval(this._bgRefreshHandle)
@@ -974,6 +1003,42 @@ export class BuyerProxy {
       log(`Session overrides reloaded: peer=${this._pinnedPeer ?? 'none'} route=${this._defaultRoutedModel ?? 'none'}`)
     } catch {
       // state file unreadable; keep current values
+    }
+  }
+
+  private _watchConfigFile(): void {
+    if (!this._configPath) return
+    try {
+      watchFile(this._configPath, { persistent: false, interval: 500 }, (curr, prev) => {
+        if (curr.mtimeMs === prev.mtimeMs && curr.ino === prev.ino) return
+        if (this._configWatchDebounce) clearTimeout(this._configWatchDebounce)
+        this._configWatchDebounce = setTimeout(() => {
+          this._configWatchDebounce = null
+          void this._reloadRoutingPreferences().catch(() => {})
+        }, 50)
+      })
+      this._configFileWatching = true
+    } catch {
+      // Config watcher failure is non-fatal; startup preferences remain active.
+    }
+  }
+
+  private async _reloadRoutingPreferences(): Promise<void> {
+    if (!this._configPath) return
+    try {
+      const config = await loadConfig(this._configPath)
+      const next = config.buyer.routingPreferences
+      this._routingPreferences = {
+        ...next,
+        allowedPeerIds: [...next.allowedPeerIds],
+        blockedPeerIds: [...next.blockedPeerIds],
+      }
+      log(
+        `Routing preferences reloaded: minTrust=${next.minTrustScore} maxInput=${next.maxInputUsdPerMillion} `
+        + `preferFree=${next.preferFreePeers} allow=${next.allowedPeerIds.length} block=${next.blockedPeerIds.length}`,
+      )
+    } catch (err) {
+      log(`Routing preferences reload ignored: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 
@@ -1601,6 +1666,24 @@ export class BuyerProxy {
       return
     }
 
+    const conversationMatch = path.match(/^\/_antseed\/conversations\/(.+)$/)
+    if (conversationMatch && method === 'GET') {
+      let id = ''
+      try {
+        id = decodeURIComponent(conversationMatch[1] ?? '')
+      } catch {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'Invalid conversation id' }))
+        return
+      }
+      const conversation = this._conversations.get(id)
+      res.writeHead(conversation ? 200 : 404, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(conversation
+        ? { ok: true, conversation }
+        : { ok: false, error: 'Unknown conversation' }))
+      return
+    }
+
     if (path === '/_antseed/conversations/update' && method === 'POST') {
       const chunks: Buffer[] = []
       let totalSize = 0
@@ -1845,7 +1928,10 @@ export class BuyerProxy {
     const url = new URL(rawPath, 'http://localhost')
     const responseHeaders = { 'content-type': 'application/json', 'x-antseed-request-id': randomUUID() }
     const peers = await this._getPeers()
-    const models = buildNetworkModels(peers, Date.now())
+    const models = buildNetworkModels(peers, this._now(), {
+      routingPreferences: this._routingPreferences,
+      peerHealth: this._peerHealth,
+    })
 
     const modelIdRaw = url.pathname.replace(/^\/v1\/models\/?/i, '')
     if (modelIdRaw.length > 0) {
@@ -1975,12 +2061,10 @@ export class BuyerProxy {
     const effectivePinnedPeer = this._pinnedPeer
 
     // Per-chat routing: completion requests carry a stable per-conversation
-    // identity (see conversation-identity.ts). A chat pinned to a model
-    // overrides the session default when resolving the `antseed` alias;
-    // subagent sessions inherit their parent chat's pin. The default route
-    // only steers a chat's first request — the model that serves it becomes
-    // the chat's own pin (ConversationStore.touch), so changing the default
-    // later applies to new chats only.
+    // identity (see conversation-identity.ts). Explicit chat pins remain hard;
+    // automatically selected routes become soft affinity, so later turns stay
+    // on the same seller unless it is cooling, unavailable, or fails retryably.
+    // Subagent sessions inherit their parent chat's route.
     const isConversationRequest = method === 'POST' && isCompletionRequestPath(path)
     const conversationBody = isConversationRequest
       ? parseRequestBodyObject(serializedReq.body, serializedReq.headers)
@@ -1991,13 +2075,22 @@ export class BuyerProxy {
     // Internal marker from the system proxy: source profile used only for
     // local conversation attribution. Stripped here so it never reaches a seller.
     delete serializedReq.headers[SYSTEM_PROXY_SOURCE_HEADER]
-    const chatPinnedModel = conversationIdentity
-      ? this._conversations.getPinnedModel(conversationIdentity.tool, conversationIdentity.sessionKey)
-        ?? (conversationIdentity.parentSessionKey
-          ? this._conversations.getPinnedModel(conversationIdentity.tool, conversationIdentity.parentSessionKey)
-          : null)
+    const trackedConversationKey = conversationIdentity
+      ? conversationIdentity.parentSessionKey ?? conversationIdentity.sessionKey
       : null
+    const storedConversation = conversationIdentity && trackedConversationKey
+      ? this._conversations.get(`${conversationIdentity.tool}:${trackedConversationKey}`)
+      : null
+    const storedAutoRoute = storedConversation?.peerSource === 'auto' && storedConversation.pinnedModel
+      ? parsePeerPinnedService(storedConversation.pinnedModel)
+      : null
+    const chatPinnedModel = storedConversation?.peerSource === 'user'
+      ? storedConversation.pinnedModel
+      : storedAutoRoute?.service ?? storedConversation?.pinnedModel ?? null
+    const preferredPeerHeader = normalizePeerId(serializedReq.headers['x-antseed-prefer-peer'] ?? '')
+    const preferredConversationPeerId = preferredPeerHeader ?? storedAutoRoute?.peerId ?? null
     const effectiveRoutedModel = chatPinnedModel ?? this._defaultRoutedModel
+    let trackedConversationId: string | null = storedConversation?.id ?? null
 
     // Resolve the `antseed` model alias to the session's default route first,
     // so the regular `<peerId>@<service>` pin rewrite below picks up the
@@ -2069,6 +2162,15 @@ export class BuyerProxy {
           snippet,
           lastModel: titleTurn ? null : resolvedModel,
         })
+        const explicitConversationPin = resolvedModel && (
+          parsePeerPinnedService(rawModel)
+          || (aliasResult.substituted && parsePeerPinnedService(effectiveRoutedModel ?? ''))
+          || (chatPinOverrideApplied && parsePeerPinnedService(chatPinnedModel ?? ''))
+        )
+        if (explicitConversationPin) {
+          this._conversations.setPinnedModel(tracked.id, resolvedModel, 'user')
+        }
+        trackedConversationId = tracked.id
         // Bind the request to the chat so its cost can be attributed when the
         // payment layer signs for it (see _attributeSpend).
         this._trackRequestConversation(serializedReq.requestId, tracked.id)
@@ -2162,7 +2264,7 @@ export class BuyerProxy {
 
       const router = this._node.router
       const policyRouter = router as BuyerPolicyRouter | null | undefined
-      const ranked = modelPeers
+      const routeCandidates = modelPeers
         .map((peer) => {
           const plan = modelPlans.get(peer.peerId)
             ?? resolvePeerRoutePlan(peer, requestProtocol, requestedService, explicitProvider, 'strict')
@@ -2177,22 +2279,50 @@ export class BuyerProxy {
             request: requestForPolicy,
             reputation: normalizedModelReputationScore(peer, this._now()) ?? -1,
             hasCachedInputPricing: offer.cachedInputUsdPerMillion !== undefined,
+            inputUsdPerMillion: offer.inputUsdPerMillion ?? null,
+            outputUsdPerMillion: offer.outputUsdPerMillion ?? null,
+            minImageUsdPerImage: offer.minImageUsdPerImage ?? null,
           }
         })
         .filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null)
-      const preferCachedPricing = ranked.some((candidate) => candidate.hasCachedInputPricing)
-      const effectiveReputation = (candidate: (typeof ranked)[number]): number =>
-        effectiveModelReputationScore(
-          candidate.reputation >= 0 ? candidate.reputation : null,
-          candidate.hasCachedInputPricing,
-          preferCachedPricing,
-        ) ?? -1
-      ranked.sort((a, b) =>
-        effectiveReputation(b) - effectiveReputation(a) || a.peer.peerId.localeCompare(b.peer.peerId))
-
       const now = this._now()
-      const ready = ranked.filter((candidate) => !isCoolingDown(this._peerHealth.get(candidate.peer.peerId), now))
-      const candidates = ready.length > 0 ? ready : ranked
+      const preferCachedPricing = routeCandidates.some((candidate) => candidate.hasCachedInputPricing)
+      const ranked = routeCandidates.map((candidate) => {
+        const health = this._peerHealth.get(candidate.peer.peerId)
+        return {
+          ...candidate,
+          peerId: candidate.peer.peerId,
+          effectiveReputationScore: effectiveModelReputationScore(
+            candidate.reputation >= 0 ? candidate.reputation : null,
+            candidate.hasCachedInputPricing,
+            preferCachedPricing,
+          ),
+          peerCooldownUntil: health?.cooldownUntil ?? null,
+          peerFailureStreak: health?.failureStreak ?? 0,
+        }
+      })
+      let candidates: typeof ranked
+      const routingPreferences = this._routingPreferences
+      if (routingPreferences) {
+        candidates = rankModelRoutes(ranked, routingPreferences, now)
+          .filter((candidate) => isModelRouteEligible(candidate, routingPreferences))
+      } else {
+        ranked.sort((a, b) =>
+          (b.effectiveReputationScore ?? -1) - (a.effectiveReputationScore ?? -1)
+          || a.peer.peerId.localeCompare(b.peer.peerId))
+        const ready = ranked.filter((candidate) => !isCoolingDown(this._peerHealth.get(candidate.peer.peerId), now))
+        candidates = ready.length > 0 ? ready : ranked
+      }
+      if (preferredConversationPeerId) {
+        const preferredIndex = candidates.findIndex((candidate) => (
+          candidate.peer.peerId.toLowerCase() === preferredConversationPeerId
+          && !isCoolingDown(this._peerHealth.get(candidate.peer.peerId), now)
+        ))
+        if (preferredIndex > 0) {
+          const [preferred] = candidates.splice(preferredIndex, 1)
+          if (preferred) candidates.unshift(preferred)
+        }
+      }
       if (candidates.length === 0) {
         res.writeHead(502, { 'content-type': 'application/json' })
         res.end(JSON.stringify({
@@ -2223,7 +2353,8 @@ export class BuyerProxy {
         for (let peerAttempt = 0; peerAttempt < MODEL_RATE_LIMIT_MAX_ATTEMPTS_PER_PEER; peerAttempt += 1) {
           log(
             `Auto-selected peer ${selected.peer.peerId.slice(0, 12)}... for model="${requestedService}" `
-            + `service="${selected.serviceId}" reputation=${selected.reputation} peer=${index + 1}/${candidates.length} `
+            + `service="${selected.serviceId}" reputation=${selected.reputation} `
+            + `effective=${selected.effectiveReputationScore ?? 'unknown'} peer=${index + 1}/${candidates.length} `
             + `attempt=${peerAttempt + 1}/${MODEL_RATE_LIMIT_MAX_ATTEMPTS_PER_PEER}`,
           )
           const result = await this._dispatchToPeer(
@@ -2238,7 +2369,15 @@ export class BuyerProxy {
             RETRYABLE_STATUS_CODES,
             clientAbortController.signal,
           )
-          if (result.done) return
+          if (result.done) {
+            if (trackedConversationId) {
+              this._conversations.recordRoutedModel(
+                trackedConversationId,
+                `${selected.peer.peerId}@${selected.serviceId}`,
+              )
+            }
+            return
+          }
           lastRetry = result
           if (result.responseHeaders[ANTSEED_FAULT_ATTRIBUTION_HEADER]?.toLowerCase() === 'buyer') {
             res.writeHead(result.statusCode, result.responseHeaders)
@@ -2445,6 +2584,12 @@ export class BuyerProxy {
       RETRYABLE_STATUS_CODES,
       clientAbortController.signal,
     )
+    if (result.done && trackedConversationId && pinnedServiceId) {
+      this._conversations.recordRoutedModel(
+        trackedConversationId,
+        `${selectedPeer.peerId}@${pinnedServiceId}`,
+      )
+    }
     if (!result.done) {
       // Pinned peer returned a retryable error. We never retry against another
       // peer for an explicit pin, so surface the error to the client.
@@ -2583,6 +2728,7 @@ export class BuyerProxy {
     const {
       'x-antseed-pin-peer': _pinPeer,
       'x-antseed-prefer-peer': _preferPeer,
+      'x-antstation-session-id': _antstationSession,
       ...headersForPeer
     } = serializedReq.headers
     let requestForPeer: SerializedHttpRequest = {
