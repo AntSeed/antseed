@@ -127,6 +127,43 @@ test('failed discover response does not mark catalog loaded', async () => {
   assert.equal(uiState.chatDiscoverRowsLoaded, false);
 });
 
+test('completed text responses immediately record the actual routed peer', () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  uiState.chatConversations = [{
+    id: 'conv-a',
+    title: 'Conversation A',
+    service: 'model-a',
+    provider: 'openai',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    usage: { inputTokens: 0, outputTokens: 0 },
+  }];
+  let doneHandler: ((data: {
+    conversationId: string;
+    message: { role: string; content: unknown; meta?: Record<string, unknown> };
+  }) => void) | null = null;
+  const bridge: DesktopBridge = {
+    onChatAiDone: (handler) => {
+      doneHandler = handler;
+      return () => undefined;
+    },
+  };
+
+  initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+  assert.ok(doneHandler);
+  (doneHandler as NonNullable<typeof doneHandler>)({
+    conversationId: 'conv-a',
+    message: { role: 'assistant', content: 'done', meta: { peerId: 'actual-peer' } },
+  });
+
+  assert.equal(
+    (uiState.chatConversations[0] as { lastResponsePeerId?: string }).lastResponsePeerId,
+    'actual-peer',
+  );
+});
+
 test('opening a conversation tracks the loading gap before peer binding is restored', async () => {
   installDomTimers();
 

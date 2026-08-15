@@ -2755,6 +2755,14 @@ export function initChatModule({
     if (bridge.onChatAiDone) {
       bridge.onChatAiDone((data) => {
         const incomingMessage = data.message as ChatMessage;
+        const responsePeerId = typeof incomingMessage.meta?.peerId === 'string'
+          ? incomingMessage.meta.peerId.trim()
+          : '';
+        if (responsePeerId && Array.isArray(uiState.chatConversations)) {
+          const summary = (uiState.chatConversations as ChatConversationSummary[])
+            .find((conversation) => conversation.id === data.conversationId);
+          if (summary) summary.lastResponsePeerId = responsePeerId;
+        }
         const isStreamingCommit = hasConversationStreamingMessage(data.conversationId);
         if (isStreamingCommit) {
           updateStreamingMessage(data.conversationId, (message) => {

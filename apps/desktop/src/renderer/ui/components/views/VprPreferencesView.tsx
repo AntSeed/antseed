@@ -172,7 +172,7 @@ export function VprPreferencesView({ onSelectView }: Props) {
             />
             <VprSettingRow
               title="Show routed peer"
-              hint="Name the seller each chat's requests actually went to next to its model — for checking where routing really lands."
+              hint="Show the seller each chat's requests actually went through in chat lists and next to its model."
               control={(
                 <VprToggle
                   checked={snap.floatShowRoutedPeer}

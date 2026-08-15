@@ -601,6 +601,69 @@ test('model-only request routes to the highest-reputation canonical service matc
   assert.equal(selectedBody?.['model'], 'opus-5')
 })
 
+test('conversation routing keeps the actual peer as a soft preference and fails over when needed', async () => {
+  const preferred = makePeer('c', ['openai'])
+  preferred.reputationScore = 70
+  preferred.providerServiceApiProtocols = {
+    openai: { services: { 'kimi-k3': ['openai-chat-completions'] } },
+  }
+  const rankedFirst = makePeer('d', ['openai'])
+  rankedFirst.reputationScore = 95
+  rankedFirst.providerServiceApiProtocols = {
+    openai: { services: { 'Kimi K3': ['openai-chat-completions'] } },
+  }
+  const proxy = makeBuyerProxyWithPeers([rankedFirst, preferred], [rankedFirst, preferred], permissiveRouter())
+  const attempts: string[] = []
+  let preferredReachable = true
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string; headers: Record<string, string> }) => {
+    attempts.push(peer.peerId)
+    assert.equal(request.headers['x-antstation-session-id'], undefined)
+    assert.equal(request.headers['x-antseed-prefer-peer'], undefined)
+    return {
+      requestId: request.requestId,
+      statusCode: peer.peerId === preferred.peerId && !preferredReachable ? 503 : 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ peerId: peer.peerId })),
+    }
+  }
+
+  const conversationHeaders = {
+    'x-antstation-session-id': 'conversation-soft-affinity',
+    'x-antseed-prefer-peer': preferred.peerId,
+  }
+  await invokeProxy(proxy, makeProxyRequest({
+    headers: conversationHeaders,
+    body: { model: 'kimi-k3', messages: [{ role: 'user', content: 'hello' }] },
+  }))
+  assert.deepEqual(attempts, [preferred.peerId])
+
+  preferredReachable = false
+  attempts.length = 0
+  await invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-antstation-session-id': 'conversation-soft-affinity' },
+    body: { model: 'kimi-k3', messages: [{ role: 'user', content: 'again' }] },
+  }))
+  assert.deepEqual(attempts, [preferred.peerId, rankedFirst.peerId])
+
+  const stored = (proxy as any)._conversations.get('antstation:conversation-soft-affinity')
+  assert.equal(stored?.pinnedModel, `${rankedFirst.peerId}@Kimi K3`)
+  assert.equal(stored?.lastModel, `${rankedFirst.peerId}@Kimi K3`)
+
+  attempts.length = 0
+  await invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-antstation-session-id': 'conversation-soft-affinity' },
+    body: { model: 'kimi-k3', messages: [{ role: 'user', content: 'third' }] },
+  }))
+  assert.equal(attempts[0], rankedFirst.peerId)
+
+  const route = await invokeProxy(proxy, makeProxyRequest({
+    method: 'GET',
+    path: `/_antseed/conversations/${encodeURIComponent('antstation:conversation-soft-affinity')}`,
+  }))
+  assert.equal(route.statusCode, 200)
+  assert.equal(JSON.parse(route.body).conversation.lastModel, `${rankedFirst.peerId}@Kimi K3`)
+})
+
 test('model-only request applies a cached-input pricing reputation penalty', async () => {
   const priced = makePeer('a', ['openai'])
   priced.reputationScore = 75
@@ -2509,7 +2572,7 @@ test('per-chat pin overrides the default routed model for the antseed alias', as
     ;(proxy as any)._defaultRoutedModel = defaultRoute
     const store = (proxy as any)._conversations
     store.touch({ tool: 'codex-exec', sessionKey: 'sess-1' })
-    store.setPinnedModel('codex-exec:sess-1', pinnedRoute)
+    store.setPinnedModel('codex-exec:sess-1', pinnedRoute, 'user')
 
     await invokeProxy(proxy, makeProxyRequest({
       path: '/v1/responses',
@@ -2561,7 +2624,7 @@ test('chat pin overrides a system-proxy-routed model on intercepted requests', a
     assert.equal(store.get('claude-code:cc-1')?.pinnedModel, proxyRoute)
 
     // The user re-pins the chat from the desktop (float / chats view).
-    store.setPinnedModel('claude-code:cc-1', pinnedRoute)
+    store.setPinnedModel('claude-code:cc-1', pinnedRoute, 'user')
 
     // Later requests still arrive with the proxy-assigned model; the pin wins.
     await invokeProxy(proxy, makeProxyRequest({

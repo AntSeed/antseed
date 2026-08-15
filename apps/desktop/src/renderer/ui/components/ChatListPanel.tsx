@@ -203,6 +203,7 @@ function ConversationRow({
   sendingConvIds,
   approvalConvIds,
   chatActiveChannels,
+  showRoutedPeer,
   peerDisplayNameById,
   peerIconUrlById,
   onSelectConv,
@@ -216,6 +217,7 @@ function ConversationRow({
   sendingConvIds: ReadonlySet<string>;
   approvalConvIds: ReadonlySet<string>;
   chatActiveChannels: Map<string, { reservedUsdc: string; peerName: string }>;
+  showRoutedPeer: boolean;
   peerDisplayNameById: ReadonlyMap<string, string>;
   peerIconUrlById: ReadonlyMap<string, string>;
   onSelectConv: (id: string) => void;
@@ -276,22 +278,26 @@ function ConversationRow({
         </div>
       </div>
       <div className={styles.meta}>
-        <span
-          className={`${styles.avatar}${showAvatarIcon ? ` ${styles.avatarIcon}` : ''}`}
-          style={showAvatarIcon ? undefined : { background: avatarGradient }}
-        >
-          {showAvatarIcon ? (
-            <img
-              className={styles.avatarImage}
-              src={avatarIconUrl ?? undefined}
-              alt=""
-              loading="lazy"
-              referrerPolicy="no-referrer"
-              onError={() => setAvatarIconFailed(true)}
-            />
-          ) : avatarLetter}
-        </span>
-        <span className={styles.peerName}>{peerName}</span>
+        {showRoutedPeer && (
+          <>
+            <span
+              className={`${styles.avatar}${showAvatarIcon ? ` ${styles.avatarIcon}` : ''}`}
+              style={showAvatarIcon ? undefined : { background: avatarGradient }}
+            >
+              {showAvatarIcon ? (
+                <img
+                  className={styles.avatarImage}
+                  src={avatarIconUrl ?? undefined}
+                  alt=""
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                  onError={() => setAvatarIconFailed(true)}
+                />
+              ) : avatarLetter}
+            </span>
+            <span className={styles.peerName}>{peerName}</span>
+          </>
+        )}
         {costLabel && <span className={styles.cost}>{costLabel}</span>}
         <span className={styles.time}>{timeLabel}</span>
       </div>
@@ -327,6 +333,7 @@ function ChatSearchModal({
   conversations,
   activeConvId,
   sendingConvIds,
+  showRoutedPeer,
   peerDisplayNameById,
   onSelectConv,
   onClose,
@@ -334,6 +341,7 @@ function ChatSearchModal({
   conversations: ConvRecord[];
   activeConvId: string | null;
   sendingConvIds: ReadonlySet<string>;
+  showRoutedPeer: boolean;
   peerDisplayNameById: ReadonlyMap<string, string>;
   onSelectConv: (id: string) => void;
   onClose: () => void;
@@ -438,7 +446,7 @@ function ChatSearchModal({
                     )}
                   </span>
                   <span className={styles.searchResultMeta}>
-                    <span>{peerName}</span>
+                    {showRoutedPeer && <span>{peerName}</span>}
                     {serviceLabel && <span>{serviceLabel}</span>}
                     {costLabel && <span>{costLabel}</span>}
                     <span>{timeLabel}</span>
@@ -464,6 +472,7 @@ export function ChatListPanel({ onSelectView }: { onSelectView?: (view: import('
     chatServiceOptions,
     chatSelectedServiceValue,
     chatSelectedPeerId,
+    vprFloatShowRoutedPeer,
   } = useUiSelector((state) => ({
     chatConversations: state.chatConversations,
     chatActiveConversation: state.chatActiveConversation,
@@ -475,6 +484,7 @@ export function ChatListPanel({ onSelectView }: { onSelectView?: (view: import('
     chatServiceOptions: state.chatServiceOptions,
     chatSelectedServiceValue: state.chatSelectedServiceValue,
     chatSelectedPeerId: state.chatSelectedPeerId,
+    vprFloatShowRoutedPeer: state.vprFloatShowRoutedPeer,
   }), shallowEqual);
   const actions = useActions();
   const conversations = Array.isArray(chatConversations) ? chatConversations : EMPTY_CONVERSATIONS;
@@ -640,6 +650,7 @@ export function ChatListPanel({ onSelectView }: { onSelectView?: (view: import('
               sendingConvIds={sendingConvIds}
               approvalConvIds={approvalConvIds}
               chatActiveChannels={chatActiveChannels}
+              showRoutedPeer={vprFloatShowRoutedPeer}
               peerDisplayNameById={peerDisplayNameById}
               peerIconUrlById={peerIconUrlById}
               onSelectConv={handleSelectConv}
@@ -656,6 +667,7 @@ export function ChatListPanel({ onSelectView }: { onSelectView?: (view: import('
           conversations={allConversations}
           activeConvId={chatActiveConversation}
           sendingConvIds={sendingConvIds}
+          showRoutedPeer={vprFloatShowRoutedPeer}
           peerDisplayNameById={peerDisplayNameById}
           onSelectConv={handleSelectConv}
           onClose={() => setChatSearchOpen(false)}

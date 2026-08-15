@@ -557,19 +557,14 @@ export function registerPiChatHandlers({
 
   ipcMain.handle('chat:ai-list-conversations', async () => {
     const conversations = await store.list();
-    // Only explicit seller pins remain peer-bound. Conversations written
-    // before routeMode existed predate explicit pinning, so they return to
-    // model-only Auto routing on upgrade.
     const enriched = conversations.map((c) => {
-      if (!isPersistedPeerBindingPinned({ peerId: c.peerId ?? '', routeMode: c.routeMode })) {
-        preferredPeerByConversationId.delete(c.id);
-        return projectPersistedConversationRoute(c);
-      }
       const peerId = preferredPeerByConversationId.get(c.id) || c.peerId;
       if (peerId && !preferredPeerByConversationId.has(c.id)) {
         preferredPeerByConversationId.set(c.id, peerId);
       }
-      return { ...c, peerId, routeMode: 'pinned' as const };
+      return isPersistedPeerBindingPinned({ peerId: c.peerId ?? '', routeMode: c.routeMode })
+        ? { ...c, peerId, routeMode: 'pinned' as const }
+        : projectPersistedConversationRoute(c);
     });
     return { ok: true, data: enriched };
   });
@@ -617,8 +612,11 @@ export function registerPiChatHandlers({
       return { ok: false, error: 'Conversation not found' };
     }
     const routedConversation = projectPersistedConversationRoute(conversation);
-    const peerId = preferredPeerByConversationId.get(id);
-    const enriched = peerId ? { ...routedConversation, peerId } : routedConversation;
+    const peerId = preferredPeerByConversationId.get(id) || conversation.peerId;
+    if (peerId) preferredPeerByConversationId.set(id, peerId);
+    const enriched = conversation.routeMode === 'pinned' && peerId
+      ? { ...routedConversation, peerId, routeMode: 'pinned' as const }
+      : routedConversation;
     return { ok: true, data: enriched };
   });
 

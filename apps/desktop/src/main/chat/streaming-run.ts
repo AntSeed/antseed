@@ -61,6 +61,7 @@ import {
 } from './message-projection.js';
 import {
   makeProxyService,
+  fetchProxyConversationRoute,
   normalizePaymentBody,
   resolveProxyPort,
   resolveSystemPrompt,
@@ -205,11 +206,11 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
     const persistedPeer = extractPeerFromEntries(sessionManager);
     const peerOverrideId = normalizePeerId(peerOverride) ?? null;
     const persistedPinnedPeerId = isPersistedPeerBindingPinned(persistedPeer) ? persistedPeer.peerId : null;
-    const preferredPeerId = peerOverrideId ?? preferredPeerByConversationId.get(conversationId) ?? persistedPinnedPeerId;
-    if (!preferredPeerId && persistedPeer?.routeMode === 'auto' && persistedPeer.peerId) {
-      preferredPeerByConversationId.delete(conversationId);
-      void store.clearPeer(conversationId);
-    }
+    const preferredPeerId = peerOverrideId
+      ?? preferredPeerByConversationId.get(conversationId)
+      ?? persistedPeer?.peerId
+      ?? null;
+    const routeMode = peerOverrideId || persistedPinnedPeerId ? 'pinned' : 'auto';
     const persistedPermissionMode: ChatPermissionMode = preferredPeerId
       ? await getPeerPermissionMode(preferredPeerId)
       : 'manual';
@@ -220,7 +221,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
       preferredPeerByConversationId.set(conversationId, preferredPeerId);
       if (peerOverrideId && persistedPeer?.peerId !== peerOverrideId) {
         const peerLabel = getServiceCatalogEntries().find((entry) => entry.peerId === peerOverrideId)?.peerLabel;
-        void store.setPeer(conversationId, peerOverrideId, peerLabel);
+        void store.setPeer(conversationId, peerOverrideId, peerLabel, 'pinned');
       }
     }
     // Catalog entry for this (service, peer) pair drives both the API
@@ -273,6 +274,8 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
       preferredPeerId,
       null,
       supportsMultimodal,
+      routeMode,
+      conversationId,
     );
 
     const authStorage = AuthStorage.inMemory();
@@ -730,10 +733,22 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
         }
       }
 
-      if (pendingAssistantMessage) {
+      const completedAssistantMessage = pendingAssistantMessage as AiChatMessage | null;
+      if (completedAssistantMessage) {
+        const routed = await fetchProxyConversationRoute(proxyPort, conversationId);
+        if (routed?.peerId) {
+          completedAssistantMessage.meta = {
+            ...(completedAssistantMessage.meta ?? {}),
+            peerId: routed.peerId,
+            service: routed.service,
+          };
+          preferredPeerByConversationId.set(conversationId, routed.peerId);
+          const peerLabel = getServiceCatalogEntries().find((entry) => entry.peerId === routed.peerId)?.peerLabel;
+          await store.setPeer(conversationId, routed.peerId, peerLabel, routeMode);
+        }
         sendToRenderer('chat:ai-done', {
           conversationId,
-          message: pendingAssistantMessage,
+          message: completedAssistantMessage,
         });
         pendingAssistantMessage = null;
       }

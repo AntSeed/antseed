@@ -1666,6 +1666,24 @@ export class BuyerProxy {
       return
     }
 
+    const conversationMatch = path.match(/^\/_antseed\/conversations\/(.+)$/)
+    if (conversationMatch && method === 'GET') {
+      let id = ''
+      try {
+        id = decodeURIComponent(conversationMatch[1] ?? '')
+      } catch {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'Invalid conversation id' }))
+        return
+      }
+      const conversation = this._conversations.get(id)
+      res.writeHead(conversation ? 200 : 404, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(conversation
+        ? { ok: true, conversation }
+        : { ok: false, error: 'Unknown conversation' }))
+      return
+    }
+
     if (path === '/_antseed/conversations/update' && method === 'POST') {
       const chunks: Buffer[] = []
       let totalSize = 0
@@ -2043,12 +2061,10 @@ export class BuyerProxy {
     const effectivePinnedPeer = this._pinnedPeer
 
     // Per-chat routing: completion requests carry a stable per-conversation
-    // identity (see conversation-identity.ts). A chat pinned to a model
-    // overrides the session default when resolving the `antseed` alias;
-    // subagent sessions inherit their parent chat's pin. The default route
-    // only steers a chat's first request — the model that serves it becomes
-    // the chat's own pin (ConversationStore.touch), so changing the default
-    // later applies to new chats only.
+    // identity (see conversation-identity.ts). Explicit chat pins remain hard;
+    // automatically selected routes become soft affinity, so later turns stay
+    // on the same seller unless it is cooling, unavailable, or fails retryably.
+    // Subagent sessions inherit their parent chat's route.
     const isConversationRequest = method === 'POST' && isCompletionRequestPath(path)
     const conversationBody = isConversationRequest
       ? parseRequestBodyObject(serializedReq.body, serializedReq.headers)
@@ -2059,13 +2075,22 @@ export class BuyerProxy {
     // Internal marker from the system proxy: source profile used only for
     // local conversation attribution. Stripped here so it never reaches a seller.
     delete serializedReq.headers[SYSTEM_PROXY_SOURCE_HEADER]
-    const chatPinnedModel = conversationIdentity
-      ? this._conversations.getPinnedModel(conversationIdentity.tool, conversationIdentity.sessionKey)
-        ?? (conversationIdentity.parentSessionKey
-          ? this._conversations.getPinnedModel(conversationIdentity.tool, conversationIdentity.parentSessionKey)
-          : null)
+    const trackedConversationKey = conversationIdentity
+      ? conversationIdentity.parentSessionKey ?? conversationIdentity.sessionKey
       : null
+    const storedConversation = conversationIdentity && trackedConversationKey
+      ? this._conversations.get(`${conversationIdentity.tool}:${trackedConversationKey}`)
+      : null
+    const storedAutoRoute = storedConversation?.peerSource === 'auto' && storedConversation.pinnedModel
+      ? parsePeerPinnedService(storedConversation.pinnedModel)
+      : null
+    const chatPinnedModel = storedConversation?.peerSource === 'user'
+      ? storedConversation.pinnedModel
+      : storedAutoRoute?.service ?? storedConversation?.pinnedModel ?? null
+    const preferredPeerHeader = normalizePeerId(serializedReq.headers['x-antseed-prefer-peer'] ?? '')
+    const preferredConversationPeerId = preferredPeerHeader ?? storedAutoRoute?.peerId ?? null
     const effectiveRoutedModel = chatPinnedModel ?? this._defaultRoutedModel
+    let trackedConversationId: string | null = storedConversation?.id ?? null
 
     // Resolve the `antseed` model alias to the session's default route first,
     // so the regular `<peerId>@<service>` pin rewrite below picks up the
@@ -2137,6 +2162,15 @@ export class BuyerProxy {
           snippet,
           lastModel: titleTurn ? null : resolvedModel,
         })
+        const explicitConversationPin = resolvedModel && (
+          parsePeerPinnedService(rawModel)
+          || (aliasResult.substituted && parsePeerPinnedService(effectiveRoutedModel ?? ''))
+          || (chatPinOverrideApplied && parsePeerPinnedService(chatPinnedModel ?? ''))
+        )
+        if (explicitConversationPin) {
+          this._conversations.setPinnedModel(tracked.id, resolvedModel, 'user')
+        }
+        trackedConversationId = tracked.id
         // Bind the request to the chat so its cost can be attributed when the
         // payment layer signs for it (see _attributeSpend).
         this._trackRequestConversation(serializedReq.requestId, tracked.id)
@@ -2279,6 +2313,16 @@ export class BuyerProxy {
         const ready = ranked.filter((candidate) => !isCoolingDown(this._peerHealth.get(candidate.peer.peerId), now))
         candidates = ready.length > 0 ? ready : ranked
       }
+      if (preferredConversationPeerId) {
+        const preferredIndex = candidates.findIndex((candidate) => (
+          candidate.peer.peerId.toLowerCase() === preferredConversationPeerId
+          && !isCoolingDown(this._peerHealth.get(candidate.peer.peerId), now)
+        ))
+        if (preferredIndex > 0) {
+          const [preferred] = candidates.splice(preferredIndex, 1)
+          if (preferred) candidates.unshift(preferred)
+        }
+      }
       if (candidates.length === 0) {
         res.writeHead(502, { 'content-type': 'application/json' })
         res.end(JSON.stringify({
@@ -2325,7 +2369,15 @@ export class BuyerProxy {
             RETRYABLE_STATUS_CODES,
             clientAbortController.signal,
           )
-          if (result.done) return
+          if (result.done) {
+            if (trackedConversationId) {
+              this._conversations.recordRoutedModel(
+                trackedConversationId,
+                `${selected.peer.peerId}@${selected.serviceId}`,
+              )
+            }
+            return
+          }
           lastRetry = result
           if (result.responseHeaders[ANTSEED_FAULT_ATTRIBUTION_HEADER]?.toLowerCase() === 'buyer') {
             res.writeHead(result.statusCode, result.responseHeaders)
@@ -2532,6 +2584,12 @@ export class BuyerProxy {
       RETRYABLE_STATUS_CODES,
       clientAbortController.signal,
     )
+    if (result.done && trackedConversationId && pinnedServiceId) {
+      this._conversations.recordRoutedModel(
+        trackedConversationId,
+        `${selectedPeer.peerId}@${pinnedServiceId}`,
+      )
+    }
     if (!result.done) {
       // Pinned peer returned a retryable error. We never retry against another
       // peer for an explicit pin, so surface the error to the client.
@@ -2670,6 +2728,7 @@ export class BuyerProxy {
     const {
       'x-antseed-pin-peer': _pinPeer,
       'x-antseed-prefer-peer': _preferPeer,
+      'x-antstation-session-id': _antstationSession,
       ...headersForPeer
     } = serializedReq.headers
     let requestForPeer: SerializedHttpRequest = {
