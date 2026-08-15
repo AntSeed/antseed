@@ -129,6 +129,9 @@ export function normalizeDiscoverRow(raw: unknown): DiscoverRow | null {
     onChainTrustScore: typeof r.onChainTrustScore === 'number' && Number.isFinite(r.onChainTrustScore)
       ? r.onChainTrustScore
       : null,
+    effectiveReputationScore: typeof r.effectiveReputationScore === 'number' && Number.isFinite(r.effectiveReputationScore)
+      ? r.effectiveReputationScore
+      : null,
     onChainSybilRisk: typeof r.onChainSybilRisk === 'number' && Number.isFinite(r.onChainSybilRisk)
       ? r.onChainSybilRisk
       : null,

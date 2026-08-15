@@ -192,21 +192,31 @@ Give the user `http://127.0.0.1:3118/?token=<hex>` (the URL from the portal log)
 
 If `ssh -L` fails with `channel 1: open failed: administratively prohibited`, the remote sshd has `AllowTcpForwarding no`. Enable it in `/etc/ssh/sshd_config` (or a drop-in under `/etc/ssh/sshd_config.d/`), run `sudo sshd -t` to validate, then `sudo systemctl reload sshd`. Existing SSH sessions are not dropped by the reload.
 
-## Pick a peer
+## Model routing
 
-The buyer proxy does not auto-select peers. Every request is rejected with `no_peer_pinned` until a peer is pinned — you must pick one explicitly.
+Pinning a peer is optional. A request that names only a model automatically selects the highest-reputation compatible peer allowed by buyer policy, and fails over to the next reputation-ranked peer on peer-attributed retryable failures. Pinned requests never fail over.
 
-List the network, find a peer that serves the model you want, and pin it:
+List every model on the network — `GET /v1/models` is answered locally and covers the whole network, independent of any pinned peer:
 
 ```bash
-antseed network browse                              # table of peers and their services
-antseed network peer <peerId>                       # full details for one peer
-antseed buyer connection set --peer <peerId>        # pin it for this session
+curl -s http://127.0.0.1:8377/v1/models | jq '.data[].id'   # all models, network-wide
+antseed network browse                                      # table of peers and their services
 ```
 
-Alternatively, pass `x-antseed-pin-peer: <peerId>` as a per-request header if the caller can inject headers.
+Close aliases (e.g. `claude-opus-5` / `opus-5` / `opus5`) merge into one entry with an `aliases` array and a `peers` array of every seller serving the model.
 
-**The pinned peer is session-only and is cleared when the buyer proxy restarts.** For non-systemd setups (desktop app, background process), re-run `antseed buyer connection set --peer <peerId>` after every restart.
+### Optional: force a specific seller
+
+Three pin mechanisms override auto-selection (precedence: header > model prefix > session pin):
+
+```bash
+antseed network peer <peerId>                       # full details for one peer
+antseed buyer connection set --peer <peerId>        # session pin
+```
+
+Alternatively, pass `x-antseed-pin-peer: <peerId>` as a per-request header, or prefix the model with `<peerId>@<service-id>`.
+
+**The session pin is cleared when the buyer proxy restarts.** For non-systemd setups (desktop app, background process), re-run `antseed buyer connection set --peer <peerId>` after every restart.
 
 For persistent systemd deployments, put `--peer <peerId>` in the `ExecStart=` line instead — it survives restarts and avoids a stale state file.
 
@@ -237,7 +247,7 @@ Notes:
 - `base_url` must match the buyer proxy port. Default is `8377`; if you started the buyer with `--port 5005`, use `http://127.0.0.1:5005/v1` here instead.
 - `api_key` is required by Hermes' OpenAI client but ignored by the buyer proxy — any non-empty string works. `antseed-p2p` is the convention.
 - `api_mode: chat_completions` is required — the buyer proxy speaks OpenAI chat-completions, not the Responses API.
-- `models` is the menu Hermes exposes to the user; only IDs listed here can be selected. Mirror it against `antseed network browse` (or `curl -s http://127.0.0.1:8377/v1/models`) so you don't advertise models no peer serves.
+- `models` is the menu Hermes exposes to the user; only IDs listed here can be selected. Mirror it against `curl -s http://127.0.0.1:8377/v1/models` — answered locally, it lists every model on the whole network regardless of any pinned peer — so you don't advertise models no peer serves.
 - `model.default` is the one Hermes uses when no explicit model is passed; `model.provider: antseed` pins it to this custom provider.
 
 ### Auxiliary calls when using openai-responses models
@@ -260,7 +270,7 @@ Check which protocol a model uses with `antseed network peer <peerId>` — look 
 
 ### Swapping the routed model
 
-If you switch to a model the currently-pinned peer doesn't serve, re-pin to a peer that does (`antseed network browse` → `antseed buyer connection set --peer <peerId>`) before the next request. Then edit `model.default` (and the `models` list if needed) and restart the Hermes systemd unit — the buyer proxy stays up, no CLI change, no contract call:
+Edit `model.default` (and the `models` list if needed) and restart the Hermes systemd unit — the buyer proxy stays up, no CLI change, no contract call. Model-only requests auto-select a peer that serves the new model. Only if you pinned a peer that doesn't serve it do you need to clear the pin (`antseed buyer connection clear`) or re-pin to one that does:
 
 ```bash
 sudo systemctl restart hermes

@@ -86,7 +86,7 @@ test('price min/max ignores null values', () => {
   assert.equal(entry.maxCachedInputUsdPerMillion, null);
 });
 
-test('catalog entry minimum prices come from the same best route', () => {
+test('catalog input/output prices come from the best route while cached price spans the group', () => {
   const [entry] = projectRowsToVprModelCatalog([
     discoverRow({ peerId: 'low-input', inputUsdPerMillion: 1, outputUsdPerMillion: 20, cachedInputUsdPerMillion: 0.1 }),
     discoverRow({ peerId: 'low-output', inputUsdPerMillion: 8, outputUsdPerMillion: 2, cachedInputUsdPerMillion: 0.8 }),
@@ -95,8 +95,32 @@ test('catalog entry minimum prices come from the same best route', () => {
   assert.equal(entry.bestPeerId, 'low-output');
   assert.equal(entry.minInputUsdPerMillion, 8);
   assert.equal(entry.minOutputUsdPerMillion, 2);
-  assert.equal(entry.minCachedInputUsdPerMillion, 0.8);
+  assert.equal(entry.minCachedInputUsdPerMillion, 0.1);
   assert.equal(entry.maxCachedInputUsdPerMillion, 0.8);
+});
+
+test('catalog retains cached-input pricing from a non-representative unified route', () => {
+  const [entry] = projectRowsToVprModelCatalog([
+    discoverRow({
+      peerId: 'cheap-coding-only',
+      serviceId: 'fable-5-coding-only',
+      inputUsdPerMillion: 0.45,
+      outputUsdPerMillion: 1.15,
+      cachedInputUsdPerMillion: null,
+    }),
+    discoverRow({
+      peerId: 'cached-fable',
+      serviceId: 'claude-fable-5',
+      inputUsdPerMillion: 5,
+      outputUsdPerMillion: 30,
+      cachedInputUsdPerMillion: 0.6,
+    }),
+  ]);
+
+  assert.equal(entry.bestPeerId, 'cached-fable');
+  assert.equal(entry.serviceId, 'claude-fable-5');
+  assert.equal(entry.minCachedInputUsdPerMillion, 0.6);
+  assert.equal(entry.maxCachedInputUsdPerMillion, 0.6);
 });
 
 test('expectedSavingsPct is 50 for totals 10 and 20', () => {
@@ -257,4 +281,69 @@ test('catalog aggregates serviceId variants of the same model', () => {
   assert.equal(entry.serviceId, 'GPT 5.6 Luna');
   assert.equal(entry.provider, 'openai-responses');
   assert.equal(entry.label, 'GPT 5.6 Luna');
+});
+
+test('catalog uses the protocol preferred name for compact GPT aliases', () => {
+  const [entry] = projectRowsToVprModelCatalog([
+    discoverRow({ provider: 'openai', serviceId: 'gpt-56-luna', peerId: 'p1' }),
+    discoverRow({ provider: 'openai-responses', serviceId: 'gpt-5.6-luna', peerId: 'p2' }),
+  ]);
+
+  assert.equal(entry.label, 'GPT 5.6 Luna');
+});
+
+test('catalog uses the protocol preferred name for MiniMax aliases', () => {
+  const [entry] = projectRowsToVprModelCatalog([
+    discoverRow({ provider: 'openai', serviceId: 'minimax-m2-5', peerId: 'p1' }),
+    discoverRow({ provider: 'openai-responses', serviceId: 'MiniMax-M2.5', peerId: 'p2' }),
+    discoverRow({ provider: 'openai', serviceId: 'minimax-m25', peerId: 'p3' }),
+  ]);
+
+  assert.equal(entry.label, 'MiniMax M2.5');
+  assert.equal(entry.peerCount, 3);
+});
+
+test('catalog uses the clean Fable name even when coding-only is the cheapest route', () => {
+  const rows = [
+    discoverRow({
+      provider: 'claude-oauth',
+      serviceId: 'fable-5-coding-only',
+      peerId: 'cheap',
+      inputUsdPerMillion: 0.45,
+      outputUsdPerMillion: 1.15,
+    }),
+    discoverRow({
+      provider: 'openai',
+      serviceId: 'claude-fable-5',
+      peerId: 'branded',
+      inputUsdPerMillion: 5,
+      outputUsdPerMillion: 30,
+    }),
+    discoverRow({
+      provider: 'openai',
+      serviceId: 'fable-5',
+      peerId: 'plain',
+      inputUsdPerMillion: 5,
+      outputUsdPerMillion: 30,
+    }),
+  ];
+
+  for (const orderedRows of [rows, [...rows].reverse()]) {
+    const [entry] = projectRowsToVprModelCatalog(orderedRows);
+    assert.equal(entry.label, 'Claude Fable 5');
+    assert.equal(entry.bestPeerId, 'branded');
+    assert.equal(entry.serviceId, 'claude-fable-5');
+    assert.equal(entry.provider, 'openai');
+  }
+});
+
+test('catalog merges Claude coding-only routes into their base model', () => {
+  const catalog = projectRowsToVprModelCatalog([
+    discoverRow({ provider: 'anthropic', serviceId: 'claude-opus-4.8', peerId: 'base' }),
+    discoverRow({ provider: 'claude-oauth', serviceId: 'opus-4.8-coding-only', peerId: 'coding' }),
+  ]);
+
+  assert.equal(catalog.length, 1);
+  assert.equal(catalog[0]?.label, 'Claude Opus 4.8');
+  assert.equal(catalog[0]?.peerCount, 2);
 });

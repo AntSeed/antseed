@@ -29,16 +29,16 @@ export ANTSEED_IDENTITY_HEX=<your-private-key-hex>
 antseed buyer start
 # Proxy listening on http://localhost:8377
 
-# 4. Pick a peer to route through
-antseed network browse                              # list peers + services
-antseed buyer connection set --peer <40-char-hex>   # pin one
+# 4. Browse available models and peers
+curl -s http://localhost:8377/v1/models | jq '.data[].id'
+antseed network browse
 
-# 5. Make a request — "<peerId>@<model>" routes to that peer explicitly
-#    (this form also works without step 4's session pin)
+# 5. Make a request — the model name auto-selects the highest-reputation
+#    compatible peer allowed by your buyer policy
 curl http://localhost:8377/v1/chat/completions \
   -H 'content-type: application/json' \
   -d '{
-    "model": "<peerId>@deepseek-v4-flash",
+    "model": "deepseek-v4-flash",
     "messages": [{"role": "user", "content": "Hello"}]
   }'
 
@@ -47,13 +47,13 @@ antseed payments
 # Open http://localhost:3118, connect a funded wallet, deposit USDC
 ```
 
-Until a peer is pinned, every request returns `no_peer_pinned` — there is no auto-selection. You can skip step 4 entirely by encoding the peer in the model field: `"model": "<peerId>@deepseek-v4-flash"` routes that single request to that peer. See [Pick a peer and model](#pick-a-peer-and-model) below.
+Model-only requests automatically select the highest-reputation compatible peer that passes your buyer pricing and reputation policy. To force one seller, encode the peer in the model field: `"model": "<peerId>@deepseek-v4-flash"`. See [Pick a peer and model](#pick-a-peer-and-model) below.
 
 `antseed buyer start` does not require a pre-existing `~/.antseed/config.json`. If the file is missing, the CLI starts with built-in defaults such as router `local` and proxy port `8377`. The proxy binds to `127.0.0.1` only — it is never exposed to your LAN.
 
 ## Pick a peer and model
 
-The buyer proxy does not auto-select peers. Every request must have a peer pin from one of three mechanisms:
+The buyer proxy can auto-select a peer from the requested model, or you can override that choice with one of three explicit pin mechanisms:
 
 | Mechanism | Scope | How |
 |---|---|---|
@@ -63,7 +63,7 @@ The buyer proxy does not auto-select peers. Every request must have a peer pin f
 
 Precedence when several are present: header > model prefix > session pin. The model prefix is always stripped before routing, so `<peerId>@deepseek-v4-flash` reaches the seller as model `deepseek-v4-flash`.
 
-The `<peerId>@<model>` form is the one to remember: it works in the model field of **every** tool and SDK that lets you type a model name — Claude Code, Codex, LangChain, the Vercel AI SDK, curl. The peer id is 40 hex chars, with or without a `0x` prefix, case-insensitive. One caveat: the prefix rewrite needs a JSON body, so it does not work on multipart requests (`/v1/images/edits`) — use the header there.
+Without a pin, the proxy canonicalizes the requested model name, considers every compatible peer advertising that model, applies buyer policy, and selects the highest-reputation remaining peer. The `<peerId>@<model>` form forces a specific seller and works in the model field of **every** tool and SDK that lets you type a model name — Claude Code, Codex, LangChain, the Vercel AI SDK, curl. The peer id is 40 hex chars, with or without a `0x` prefix, case-insensitive. One caveat: the prefix rewrite needs a JSON body, so it does not work on multipart requests (`/v1/images/edits`) — use the header there.
 
 ```bash
 # Discover peers and what they serve
@@ -75,11 +75,22 @@ antseed network peer <peerId>             # one peer in detail (pricing, protoco
 antseed buyer connection set --peer <peerId>
 antseed buyer connection clear
 
-# List the services your pinned peer advertises (requires a pin; free, not billed)
+# List every model on the network (answered locally; free, no pin needed)
 curl -s http://localhost:8377/v1/models | jq '.data[].id'
+
+# Only image-generation models, with the peers that serve them
+curl -s 'http://localhost:8377/v1/models?type=images' | jq '.data[] | {id, peers: [.peers[].peerId]}'
 ```
 
-`GET /v1/models` returns the **pinned peer's** service ids, not a network-wide list — use `antseed network browse` for the whole network.
+`GET /v1/models` is answered locally from the buyer's discovered-peer cache and covers the **whole network** — no peer pin required. Cosmetic names and conservative aliases such as `claude-opus-5` and `opus-5` are grouped into one entry, whose `aliases` array includes normalized observed names and the compact canonical key (for example `['claude-opus-5', 'opus-5', 'opus5']`). Established model families also merge numeric-version punctuation and conservative flattened vendor prefixes, so names such as `gpt-5.6-sol`, `gpt-56-sol`, and `openai-gpt-56-sol` resolve to the same entry; Claude `coding-only` aliases merge into their base model, while meaningful variants such as `fast` and `web` remain distinct. Each entry keeps an observed `id` for compatibility and exposes a protocol-wide preferred `name` for display, so every GPT 5.6 alias renders consistently as names such as `GPT 5.6 Sol` or `GPT 5.6 Luna`. It also lists the model `type` (`text` or `image`) and a `peers` array with every seller serving it. A peer appears at most once per canonical model: when the same peer advertises equivalent aliases through one or more providers, AntSeed retains only its cheapest known offer while preserving that offer's actual provider, protocol, and `serviceId` for routing. Each peer offer also includes reputation, pricing, categories, and seller-reported capabilities such as context window, output limit, modalities, reasoning, tool use, structured output, and supported parameters. Offers use the same reputation ordering as the desktop VPR: `onChainTrustScore` first, falling back to `onChainReputationScore`; the selected value is also returned as `reputationScore`. Missing scores are returned as `null` and sorted last. Filter with `?type=text` or `?type=images`, or look up a single model with `GET /v1/models/<id>`. Sending an API request with only one of these model names automatically selects the highest-reputation compatible peer allowed by buyer policy; route to a specific offer explicitly with `<peerId>@<serviceId>` using values from that same `peers[]` item.
+
+Model-level `context_length`, `max_output_tokens`, modalities, capability booleans, and `supported_parameters` are conservative guarantees for model-only routing: numeric limits use the lowest value, lists use the intersection, and booleans are `true` only when every offer explicitly reports support. If any offer omits a field, that model-level field is omitted rather than treating unknown as unsupported. `capability_coverage` reports how many offers supplied each field, while `supported_protocols` is the union of protocols available across sellers. The full per-peer capabilities remain authoritative when selecting a particular seller.
+
+If one peer advertises multiple service ids that normalize to the same model, AntSeed keeps a single offer for that peer: the lowest-priced alias. Text offers compare `inputUsdPerMillion + outputUsdPerMillion`; image offers compare `minImageUsdPerImage`; an explicitly known price beats an unknown price. All observed names remain in the model's `aliases`, and model-only routing rewrites requests to the retained seller service id.
+
+Cached-input pricing is treated as model-specific metadata completeness. If at least one offer for a model advertises `cachedInputUsdPerMillion`, an offer that omits it receives a 50% reduction to its effective reputation for that model because its real cost can be materially higher for cache-heavy workloads. This remains a soft penalty: an exceptionally stronger peer can still outrank a weaker peer with complete cached pricing. If no offer for the model advertises cached-input pricing, AntSeed assumes the model may not support caching and applies no penalty. `reputationScore` remains the raw trust/reputation value, while `effectiveReputationScore` shows the normalized model-specific score used for ordering and model-only routing.
+
+The desktop's **Auto** route stores the selected model without a peer id. Telegram model selections, automatic in-app chats, and connected apps configured with the `antseed` model alias therefore use the same live reputation ranking, cooldown avoidance, and peer fallback on each request. Explicitly choosing a seller in the desktop stores `<peerId>@<serviceId>` instead and intentionally keeps that route single-peer.
 
 ## Supported API Formats
 
@@ -92,7 +103,7 @@ The proxy accepts these API formats. Use whichever matches your tool:
 | `/v1/responses` | OpenAI Responses API | Codex |
 | `/v1/images/generations` | OpenAI Images generation | OpenAI-compatible image clients |
 | `/v1/images/edits` | OpenAI Images edits | OpenAI-compatible multipart image clients |
-| `/v1/models` | OpenAI model list | model pickers, discovery (free) |
+| `/v1/models` | OpenAI model list | network-wide, answered locally; `?type=images` filters (free) |
 | `/v1/messages/count_tokens` | Anthropic token counting | answered locally, never routed or billed |
 
 The `model` field in your request determines which service to route to, and optionally which peer (`<peerId>@<model>`).
@@ -206,12 +217,13 @@ curl http://localhost:8377/v1/chat/completions \
 
 When you send a request:
 
-1. The proxy resolves the peer pin (header > `<peerId>@<model>` prefix > session pin); if none, it returns `no_peer_pinned`.
-2. It checks the pinned peer's metadata for the requested `model` (the service name). Matching is an exact, case-insensitive string match — there are no aliases, so `deepseek-v4-flash` and `deepseek-v4` are different services.
-3. If the seller's native protocol differs from your tool's, the request is translated by the api-adapter.
-4. The request is forwarded to that peer over an encrypted peer-to-peer connection and the response streams back through the proxy.
+1. The proxy resolves an explicit peer pin when present (header > `<peerId>@<model>` prefix > session pin).
+2. Without a pin, it canonicalizes the requested model, finds compatible peer offers, applies buyer pricing/reputation policy, and selects the highest-reputation remaining peer.
+3. The request model is rewritten to the selected peer's actual advertised `serviceId`, so aliases such as `claude-opus-5`, `opus-5`, and `opus5` route correctly.
+4. If the seller's native protocol differs from your tool's, the request is translated by the api-adapter.
+5. The request is forwarded to that peer over an encrypted peer-to-peer connection and the response streams back through the proxy.
 
-Because auto-selection is disabled, upstream errors (429, 5xx) are passed through rather than retried against another peer — routing stays predictable and you always know who served the request.
+Explicitly pinned requests never fail over to a different peer. Model-only requests use the peer-health system from PR #750: peers in an active cooldown are skipped when another offer is ready, and peer-attributed retryable failures advance to the next reputation-ranked offer. Buyer-local failures, client cancellation, non-retryable responses, and responses whose streaming headers already started never fail over.
 
 ## Response Headers: Cost and Attribution
 
@@ -233,8 +245,8 @@ Streaming responses carry only the request id and peer identity headers (token c
 
 | Status | Code / message | Meaning | Fix |
 |---|---|---|---|
-| 400 | `no_peer_pinned` | No pin from header, model prefix, or session | Pin a peer, or use `<peerId>@<model>` |
-| 400 | `model_not_found` | Pinned peer doesn't advertise that service id | Check `curl localhost:8377/v1/models`; pin another peer |
+| 400 | `missing_routing_target` | Request has neither a model nor an explicit peer pin | Set `model`, or pin a peer |
+| 502 | `model_not_found` | No policy-allowed peer currently advertises the requested model or alias | Check `curl localhost:8377/v1/models`; adjust policy or choose another model |
 | 402 | `insufficient_deposits` | No (or too little) USDC deposited | `antseed payments`, deposit; response includes `suggestedAmount` |
 | 402 | `channel_exhausted` | Per-channel budget spent | Deposit more or re-open the channel |
 | 413 | `upload_body_too_large` | Request exceeds the seller's upload limit | Response includes the seller's `maxUploadBodyBytes`; trim context or pick another peer |
@@ -321,5 +333,5 @@ If you're using Pi, Codex or another agent, these skills can walk you through th
 
 - [`antseed/antseed-pi`](https://github.com/AntSeed/pi-antseed) — Use the AntSeed local buyer proxy as a model provider in pi.
 - [`@skills/join-buyer`](https://github.com/AntSeed/antseed/tree/main/skills/join-buyer) — step-by-step buyer setup for Claude Code agents
-- [`@skills/antseed-images`](https://github.com/AntSeed/antseed/tree/main/skills/antseed-images) — generate images through an exact AntSeed seller and image service
+- [`@skills/antseed-images`](https://github.com/AntSeed/antseed/tree/main/skills/antseed-images) — discover image models from `/v1/models?type=images` and generate through automatic model-only peer routing
 - [`@skills/openclaw-antseed`](https://github.com/AntSeed/antseed/tree/main/skills/openclaw-antseed) — connect OpenClaw to AntSeed as a buyer

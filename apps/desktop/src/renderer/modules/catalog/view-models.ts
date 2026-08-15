@@ -6,6 +6,7 @@ import type {
   VprRoutingPreferences,
 } from '../../core/state';
 import { sameCanonicalModel } from './model-identity';
+import { modelFamilyLabel } from './model-families';
 import { modelPinKey, vprModelPinFor, type VprModelPins } from '../routing/model-pins';
 import { chooseBestVprRoute } from '../routing/select';
 import { shortPeerId } from '../routing/tools';
@@ -17,12 +18,20 @@ export type VprCatalogFilterOptions = {
   search?: string;
   category?: string | null;
   kind?: VprModelKind | null;
+  /** Family display name from `availableModelFamilies` (e.g. "Anthropic"). */
+  family?: string | null;
 };
 
 export type VprSelectedRouteModel = {
   provider?: string | null;
   serviceId?: string | null;
 } | null | undefined;
+
+export function compareModelRoutesByReputation(a: DiscoverRow, b: DiscoverRow): number {
+  const scoreA = a.effectiveReputationScore ?? a.onChainReputationScore ?? -1;
+  const scoreB = b.effectiveReputationScore ?? b.onChainReputationScore ?? -1;
+  return scoreB - scoreA || a.peerId.localeCompare(b.peerId);
+}
 
 function normalized(value: string): string {
   return value.trim().toLowerCase();
@@ -73,6 +82,7 @@ export function filterVprCatalog(
 
   return entries.filter((entry) => {
     if (options.kind && (entry.kind ?? 'text') !== options.kind) return false;
+    if (options.family && modelFamilyLabel(entry) !== options.family) return false;
     if (category && !entry.categories.some((candidate) => normalized(candidate) === category)) {
       return false;
     }

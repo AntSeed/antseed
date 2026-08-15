@@ -2,15 +2,26 @@ import type { RendererUiState } from '../../core/state';
 import type { DesktopBridge, RuntimeProcessState } from '../../types/bridge';
 import { chooseBestVprRoute } from './select';
 import { routesForSelectedModel } from '../catalog/view-models';
+import { CODING_ONLY_SUFFIX_RE } from '../catalog/model-identity';
 import { activeProfilesFromRuntimeState, buildVprPeerOptions } from './tools';
 
 const SYSTEM_PROXY_PORT = 8378;
 
-type VprRouteTarget = {
+export type VprRouteTarget = {
   peerId: string;
   model: string;
   servedModels: string[];
 };
+
+export function buyerDefaultRoutePayload(
+  selection: RendererUiState['vprRouteSelection'],
+  target: VprRouteTarget,
+): { peerId?: string; service: string } {
+  if (selection.mode === 'pinned-peer') {
+    return { peerId: target.peerId, service: target.model };
+  }
+  return { service: target.model };
+}
 
 /** Resolve the current VPR selection to a concrete peer + model target. */
 function resolveRouteTarget(uiState: RendererUiState): VprRouteTarget | null {
@@ -23,7 +34,10 @@ function resolveRouteTarget(uiState: RendererUiState): VprRouteTarget | null {
   // requests. Leave their existing route untouched when VPR selects an image
   // model; chat's per-conversation selection remains the text fallback.
   if (selectedEntry?.kind === 'image') return null;
-  const routes = routesForSelectedModel(uiState.vprRoutableRows, selection.model);
+  const canonicalServiceId = selectedEntry?.serviceId ?? selection.model.serviceId;
+  const modelRoutes = routesForSelectedModel(uiState.vprRoutableRows, selection.model);
+  const unrestrictedRoutes = modelRoutes.filter((candidate) => !CODING_ONLY_SUFFIX_RE.test(candidate.serviceId));
+  const routes = selection.mode === 'pinned-peer' ? modelRoutes : unrestrictedRoutes;
   const route = selection.mode === 'pinned-peer' && selection.peerId
     ? routes.find((candidate) => candidate.peerId === selection.peerId) ?? null
     : chooseBestVprRoute(routes, uiState.vprRoutingPreferences);
@@ -32,7 +46,7 @@ function resolveRouteTarget(uiState: RendererUiState): VprRouteTarget | null {
 
   // Routes aggregate serviceId variants of the model — send the id the
   // chosen peer actually advertises, not the selection's representative.
-  const model = route?.serviceId ?? selection.model.serviceId;
+  const model = route?.serviceId ?? canonicalServiceId;
   const peerOptions = buildVprPeerOptions(uiState.lastPeers, uiState.vprRoutableRows);
   const services = peerOptions.find((peer) => peer.peerId === peerId)?.services ?? [];
   // The resolved model must always be in the served list — main's route
@@ -88,7 +102,9 @@ export async function syncBuyerDefaultRoute(
   if (!bridge?.chatSetBuyerDefaultRoute) return;
   const target = resolveRouteTarget(uiState);
   if (!target) return;
-  await bridge.chatSetBuyerDefaultRoute({ peerId: target.peerId, service: target.model }).catch(() => undefined);
+  await bridge.chatSetBuyerDefaultRoute(
+    buyerDefaultRoutePayload(uiState.vprRouteSelection, target),
+  ).catch(() => undefined);
 }
 
 /**

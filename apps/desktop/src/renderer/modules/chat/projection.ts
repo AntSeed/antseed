@@ -85,5 +85,7 @@ export function resolveVprChatOption(
     if (bestOption) return bestOption;
   }
 
-  return findChatOptionForVprSelection(options, selection);
+  return candidates.length === 0
+    ? findChatOptionForVprSelection(options, selection)
+    : null;
 }

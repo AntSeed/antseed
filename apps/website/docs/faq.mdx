@@ -96,7 +96,7 @@ export const faqLd = {
       name: 'Do I need to sign up or create an account to use AntSeed?',
       acceptedAnswer: {
         '@type': 'Answer',
-        text: 'No account required. Install the CLI, start the buyer proxy, pick a peer, and you are live on the network. Any tool that speaks the OpenAI API format works immediately.',
+        text: 'No account required. Install the CLI, start the buyer proxy, and you are live on the network — request any listed model and the proxy auto-selects the best peer serving it. Any tool that speaks the OpenAI API format works immediately.',
       },
     },
     {
@@ -226,7 +226,7 @@ AntSeed automatically detects provider failures and reroutes to the next best sp
 
 ### Do I need to sign up or create an account?
 
-No account required. Install the CLI, run `antseed buyer start`, pick a peer with `antseed network browse` + `antseed buyer connection set --peer <peerId>`, and you are live on the network. Any tool that speaks the OpenAI API format works immediately.
+No account required. Install the CLI, run `antseed buyer start`, and you are live on the network — request any model listed by `curl localhost:8377/v1/models` and the proxy auto-selects the highest-reputation peer serving it (pinning a specific peer with `antseed buyer connection set --peer <peerId>` stays available as an override). Any tool that speaks the OpenAI API format works immediately.
 
 ### How do I install AntSeed?
 

@@ -69,6 +69,7 @@ function discoverRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
     onChainLastSettledAt: 0,
     onChainReputationScore: null,
     onChainTrustScore: null,
+    effectiveReputationScore: null,
     onChainSybilRisk: null,
     onChainSybilFlags: [],
     networkRequests: null,

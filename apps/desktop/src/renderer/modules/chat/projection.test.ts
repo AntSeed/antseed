@@ -95,8 +95,9 @@ function discoverRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
     onChainGhostCount: 0,
     onChainTotalVolumeUsdc: '0',
     onChainLastSettledAt: 0,
+    effectiveReputationScore: 75,
     onChainReputationScore: null,
-    onChainTrustScore: 75,
+    onChainTrustScore: null,
     onChainSybilRisk: null,
     onChainSybilFlags: [],
     networkRequests: null,
@@ -128,6 +129,20 @@ test('auto mode falls back to the first matching option when no rows exist', () 
   const only = option();
 
   assert.equal(resolveVprChatOption([only], [], autoSelection, preferences), only);
+});
+
+test('auto mode does not bypass the minimum reputation gate', () => {
+  const lowReputation = option();
+  const rows = [discoverRow({
+    effectiveReputationScore: 49,
+    onChainReputationScore: 49,
+    onChainTrustScore: 49,
+  })];
+
+  assert.equal(
+    resolveVprChatOption([lowReputation], rows, autoSelection, preferences),
+    null,
+  );
 });
 
 test('pinned mode still requires the exact peer', () => {

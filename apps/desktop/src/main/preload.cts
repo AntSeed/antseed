@@ -279,7 +279,7 @@ const api = {
   attachmentDownload(conversationId: string, attachmentId: string, suggestedName: string): Promise<{ ok: boolean; path?: string; error?: string }> {
     return ipcRenderer.invoke('attachment:download', conversationId, attachmentId, suggestedName);
   },
-  chatGenerateImage(payload: { conversationId: string; prompt: string; peerId: string; service: string }): Promise<{ ok: boolean; user?: unknown; assistant?: unknown; error?: string }> {
+  chatGenerateImage(payload: { conversationId: string; prompt: string; peerId?: string; service: string }): Promise<{ ok: boolean; user?: unknown; assistant?: unknown; error?: string }> {
     return ipcRenderer.invoke('chat:generate-image', payload);
   },
   chatAiSend(conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string, permissionMode?: ChatPermissionMode): Promise<{ ok: boolean; error?: string }> {
@@ -303,7 +303,7 @@ const api = {
   chatAiSelectPeer(payload: { conversationId?: string | null; peerId?: string | null; service?: string | null; provider?: string | null; routeMode?: 'auto' | 'pinned' | null }): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:ai-select-peer', payload);
   },
-  chatSetBuyerDefaultRoute(payload: { peerId: string; service: string }): Promise<{ ok: boolean; error?: string }> {
+  chatSetBuyerDefaultRoute(payload: { peerId?: string; service: string }): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:set-buyer-default-route', payload);
   },
   chatSyncModelPicker(payload: unknown): Promise<{ ok: boolean }> {

@@ -6,9 +6,19 @@ import {
   clearVprPinsForPeer,
   filterVprModelPins,
   modelPinKey,
+  loadVprModelPins,
   setVprModelPin,
   vprModelPinFor,
 } from './model-pins.js';
+
+const storage = new Map<string, string>();
+Object.defineProperty(globalThis, 'localStorage', {
+  configurable: true,
+  value: {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value),
+  },
+});
 
 test('a pin is stored and read back per model', () => {
   const pins = setVprModelPin({}, 'openai', 'gpt-test', 'peer-1');
@@ -55,4 +65,19 @@ test('filtering pins removes every peer rejected by the current rules', () => {
 
 test('blank peer ids are not stored', () => {
   assert.deepEqual(setVprModelPin({}, 'openai', 'gpt-test', '   '), {});
+});
+
+test('loads pins persisted with legacy canonical model keys', () => {
+  storage.set('antseed.desktop.vpr.modelPins', JSON.stringify({
+    claudefable5: 'peer-1',
+    'gpt5.6sol': 'peer-2',
+    'glm5.2': 'peer-3',
+  }));
+
+  assert.deepEqual(loadVprModelPins(), {
+    fable5: 'peer-1',
+    gpt56sol: 'peer-2',
+    glm52: 'peer-3',
+  });
+  storage.clear();
 });

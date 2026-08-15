@@ -436,7 +436,7 @@ export function initChatModule({
     const patch = {
       service: selection.id,
       provider: selection.provider ?? undefined,
-      peerId: selection.peerId,
+      peerId: undefined,
       routeMode: 'auto' as const,
     };
     if (activeConversation?.id === convId) Object.assign(activeConversation, patch);
@@ -446,7 +446,7 @@ export function initChatModule({
     }
     void bridge?.chatAiSelectPeer?.({
       conversationId: convId,
-      peerId: selection.peerId,
+      peerId: null,
       service: selection.id,
       provider: selection.provider,
       routeMode: 'auto',
@@ -2253,7 +2253,7 @@ export function initChatModule({
    * Dispatches via streaming or non-streaming bridge, handles stuck-request
    * recovery, payment-required errors, and fallback timeouts.
    */
-  function resolveSelectedImageRoute(): DiscoverRow | null {
+  function resolveSelectedImageRoute(): { service: string; peerId?: string } | null {
     const selection = uiState.chatImageRouteSelection;
     const model = selection?.model;
     if (!model) return null;
@@ -2261,9 +2261,12 @@ export function initChatModule({
       .filter((row) => row.protocol === 'openai-images');
     if (routes.length === 0) return null;
     if (selection.mode === 'pinned-peer' && selection.peerId) {
-      return routes.find((row) => row.peerId === selection.peerId) ?? null;
+      const route = routes.find((row) => row.peerId === selection.peerId);
+      return route ? { service: route.serviceId, peerId: route.peerId } : null;
     }
-    return chooseBestVprRoute(routes, uiState.vprRoutingPreferences);
+    return chooseBestVprRoute(routes, uiState.vprRoutingPreferences)
+      ? { service: model.serviceId }
+      : null;
   }
 
   function generateImage(prompt: string): void {
@@ -2316,8 +2319,8 @@ export function initChatModule({
         const result = await bridge.chatGenerateImage!({
           conversationId: convId,
           prompt: content,
-          peerId: route.peerId,
-          service: route.serviceId,
+          service: route.service,
+          ...(route.peerId ? { peerId: route.peerId } : {}),
         });
         if (!result.ok || !result.user || !result.assistant) {
           throw new Error(result.error || 'Image generation failed.');

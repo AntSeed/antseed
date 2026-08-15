@@ -10,8 +10,8 @@
  * has a positive baseline cost.
  */
 import type { DesktopBuyerServiceUsage } from '../../types/bridge';
-import { normalizeModelKey } from '../../../shared/model-key.js';
 import type { OpenRouterReferenceMap } from './openrouter-baseline.js';
+import { canonicalModelKey } from './model-identity.js';
 
 const USDC_BASE_UNITS_PER_USD = 1_000_000;
 
@@ -59,7 +59,7 @@ export function computeMeasuredSavings(
 
   for (const service of services) {
     if (!service.serviceName) continue;
-    const ref = referenceMap[normalizeModelKey(service.serviceName)];
+    const ref = referenceMap[canonicalModelKey(service.serviceName)];
     if (!ref || (ref.input === null && ref.output === null)) continue;
 
     // Buyer-side inputTokens are total logical input (fresh + cached) —
@@ -110,7 +110,7 @@ export function computeOfficialBaselineUsd(
 
   for (const service of services) {
     if (!service.serviceName) continue;
-    const ref = referenceMap[normalizeModelKey(service.serviceName)];
+    const ref = referenceMap[canonicalModelKey(service.serviceName)];
     if (!ref || (ref.input === null && ref.output === null)) continue;
 
     const totalInput = toNumberTokens(service.inputTokens);

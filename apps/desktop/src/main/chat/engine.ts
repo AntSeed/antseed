@@ -36,6 +36,8 @@ import { DEFAULT_BUYER_STATE_PATH, LOCALHOST_URL } from '../constants.js';
 import { asErrorMessage } from '../utils.js';
 import type { RawPeerHealth } from '../runtime/peer-cache.js';
 import {
+  buildChatServiceCatalogFromNetworkModels,
+  buildChatServiceCatalogFromPersistedPeers,
   type ChatServiceCatalogEntry,
   type ChatServiceProtocol,
 } from './service-catalog.js';
@@ -46,12 +48,10 @@ import { augmentChatToolPath } from './tool-env.js';
 import type { AiConversation } from './conversation-types.js';
 import {
   buildDiscoverRows,
-  discoverChatServiceCatalog,
   isCatalogEntryAllowedByBuyerMax,
   isPriceAllowedByBuyerMax,
   limitChatServiceCatalogEntries,
   loadBuyerMaxPricingDefaults,
-  normalizeChatServiceCatalogEntries,
   updateServiceProtocolMap,
   updateServiceProviderHints,
   type BuyerStateDiscoveredPeer,
@@ -63,7 +63,11 @@ import {
   normalizeModelPickerSnapshot,
   type ModelPickerSnapshot,
 } from '../../shared/model-picker.js';
-import { PiConversationStore } from './conversation-store.js';
+import {
+  isPersistedPeerBindingPinned,
+  PiConversationStore,
+  projectPersistedConversationRoute,
+} from './conversation-store.js';
 import { createStreamingRunner } from './streaming-run.js';
 import { generateChatImage } from './image-generation.js';
 import type {
@@ -80,7 +84,12 @@ augmentChatToolPath();
  * sendToRenderer callback — tee it into the chat event bus to observe them.
  */
 export type PiChatEngine = {
-  createConversation(service?: string, provider?: string, peerId?: string): Promise<AiConversation>;
+  createConversation(
+    service?: string,
+    provider?: string,
+    peerId?: string,
+    routeMode?: ChatRouteMode,
+  ): Promise<AiConversation>;
   sendMessageStream(
     conversationId: string,
     userMessage: string,
@@ -119,7 +128,6 @@ export function registerPiChatHandlers({
   isBuyerRuntimeRunning,
   ensureBuyerRuntimeStarted,
   appendSystemLog,
-  getNetworkPeers,
 }: RegisterPiChatHandlersOptions): PiChatEngine {
   void loadChatWorkspaceDir().catch(() => {});
   const store = new PiConversationStore();
@@ -286,6 +294,15 @@ export function registerPiChatHandlers({
   const SERVICE_CATALOG_DEBOUNCE_MS = 5_000;
   let serviceCatalogRefreshPromise: Promise<ChatServiceCatalogEntry[]> | null = null;
 
+  const loadPersistedServiceCatalog = async (): Promise<ChatServiceCatalogEntry[]> => {
+    try {
+      const raw = await readFile(DEFAULT_BUYER_STATE_PATH, 'utf-8');
+      return limitChatServiceCatalogEntries(buildChatServiceCatalogFromPersistedPeers(JSON.parse(raw)));
+    } catch {
+      return [];
+    }
+  };
+
   const refreshServiceCatalogFromNetwork = async (): Promise<ChatServiceCatalogEntry[]> => {
     // Deduplicate concurrent calls
     if (serviceCatalogRefreshPromise) return serviceCatalogRefreshPromise;
@@ -295,13 +312,25 @@ export function registerPiChatHandlers({
     }
 
     serviceCatalogRefreshPromise = (async () => {
-      const entries = await discoverChatServiceCatalog(getNetworkPeers);
-      const limited = limitChatServiceCatalogEntries(normalizeChatServiceCatalogEntries(entries));
-      updateServiceProviderHints(serviceProviderHints, limited);
-      updateServiceProtocolMap(serviceProtocolMap, limited);
-      lastServiceCatalogRefreshAt = Date.now();
-      lastServiceCatalogEntries = limited;
-      return limited;
+      try {
+        const port = await resolveProxyPort(configPath);
+        const response = await fetch(`${LOCALHOST_URL}:${port}/v1/models`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const entries = buildChatServiceCatalogFromNetworkModels(await response.json());
+        const limited = limitChatServiceCatalogEntries(entries);
+        const resolved = limited.length > 0 ? limited : await loadPersistedServiceCatalog();
+        updateServiceProviderHints(serviceProviderHints, resolved);
+        updateServiceProtocolMap(serviceProtocolMap, resolved);
+        lastServiceCatalogRefreshAt = Date.now();
+        lastServiceCatalogEntries = resolved;
+        return resolved;
+      } catch (error) {
+        appendSystemLog(`Desktop model catalog refresh failed: ${asErrorMessage(error)}`);
+        if (lastServiceCatalogEntries.length > 0) return lastServiceCatalogEntries;
+        const persisted = await loadPersistedServiceCatalog();
+        lastServiceCatalogEntries = persisted;
+        return persisted;
+      }
     })().finally(() => { serviceCatalogRefreshPromise = null; });
 
     return serviceCatalogRefreshPromise;
@@ -450,9 +479,6 @@ export function registerPiChatHandlers({
         }
       }));
 
-      // Static imports at the top of the file — see note on the
-      // `discoverChatServiceCatalog` read for why these must not be
-      // dynamic in packaged Windows builds.
       let discoveredPeersMap: Record<string, BuyerStateDiscoveredPeer> = {};
       let peerHealthMap: Record<string, RawPeerHealth> = {};
       try {
@@ -483,9 +509,6 @@ export function registerPiChatHandlers({
               sellerContract: typeof rec.sellerContract === 'string' ? rec.sellerContract : undefined,
               verificationLinks: collectPeerVerificationLinks({ verificationResults: rec.verificationResults }),
               peerIconUrl: null,
-              providerPricing: rec.providerPricing as Record<string, {
-                services?: Record<string, { cachedInputUsdPerMillion?: number }>
-              }> | undefined,
             };
             discoveredPeersMap[peerId] = peerRecord;
             enrichmentTasks.push(
@@ -534,15 +557,19 @@ export function registerPiChatHandlers({
 
   ipcMain.handle('chat:ai-list-conversations', async () => {
     const conversations = await store.list();
-    // Enrich summaries: prefer in-memory peer, fall back to persisted
+    // Only explicit seller pins remain peer-bound. Conversations written
+    // before routeMode existed predate explicit pinning, so they return to
+    // model-only Auto routing on upgrade.
     const enriched = conversations.map((c) => {
-      const memPeerId = preferredPeerByConversationId.get(c.id);
-      const peerId = memPeerId || c.peerId;
+      if (!isPersistedPeerBindingPinned({ peerId: c.peerId ?? '', routeMode: c.routeMode })) {
+        preferredPeerByConversationId.delete(c.id);
+        return projectPersistedConversationRoute(c);
+      }
+      const peerId = preferredPeerByConversationId.get(c.id) || c.peerId;
       if (peerId && !preferredPeerByConversationId.has(c.id)) {
-        // Warm the in-memory cache from persisted data
         preferredPeerByConversationId.set(c.id, peerId);
       }
-      return peerId ? { ...c, peerId } : c;
+      return { ...c, peerId, routeMode: 'pinned' as const };
     });
     return { ok: true, data: enriched };
   });
@@ -589,8 +616,9 @@ export function registerPiChatHandlers({
     if (!conversation) {
       return { ok: false, error: 'Conversation not found' };
     }
+    const routedConversation = projectPersistedConversationRoute(conversation);
     const peerId = preferredPeerByConversationId.get(id);
-    const enriched = peerId ? { ...conversation, peerId } : conversation;
+    const enriched = peerId ? { ...routedConversation, peerId } : routedConversation;
     return { ok: true, data: enriched };
   });
 
@@ -600,7 +628,7 @@ export function registerPiChatHandlers({
     peerId?: string,
     routeMode?: ChatRouteMode,
   ): Promise<AiConversation> => {
-    const trimmedPeerId = peerId?.trim() ?? '';
+    const trimmedPeerId = routeMode === 'pinned' ? peerId?.trim() ?? '' : '';
     const peerLabel = trimmedPeerId
       ? lastServiceCatalogEntries.find((e) => e.peerId === trimmedPeerId)?.peerLabel
       : undefined;
@@ -703,8 +731,8 @@ export function registerPiChatHandlers({
     const prompt = typeof request.prompt === 'string' ? request.prompt.trim() : '';
     const peerId = typeof request.peerId === 'string' ? request.peerId.trim() : '';
     const service = typeof request.service === 'string' ? request.service.trim() : '';
-    if (!conversationId || !prompt || !peerId || !service) {
-      return { ok: false, error: 'Conversation, prompt, image model, and seller are required.' };
+    if (!conversationId || !prompt || !service) {
+      return { ok: false, error: 'Conversation, prompt, and image model are required.' };
     }
     if (!isSafeId(conversationId)) {
       return { ok: false, error: 'Invalid conversation.' };
@@ -719,7 +747,7 @@ export function registerPiChatHandlers({
       return await generateChatImage(store, proxyPort, {
         conversationId,
         prompt,
-        peerId,
+        ...(peerId ? { peerId } : {}),
         service,
       }, { signal: controller.signal });
     } finally {
@@ -768,12 +796,13 @@ export function registerPiChatHandlers({
 
   const applyPeerSelection = async (payload: ChatPeerSelectionRequest | string | null): Promise<{ ok: boolean; error?: string }> => {
     const { conversationId, peerId, service, provider, routeMode } = normalizeChatPeerSelectionRequest(payload);
+    const pinnedPeerId = routeMode === 'pinned' ? peerId : null;
 
     if (conversationId) {
-      if (peerId) {
-        preferredPeerByConversationId.set(conversationId, peerId);
-        const peerLabel = lastServiceCatalogEntries.find((entry) => entry.peerId === peerId)?.peerLabel;
-        await store.setPeer(conversationId, peerId, peerLabel, routeMode ?? undefined);
+      if (pinnedPeerId) {
+        preferredPeerByConversationId.set(conversationId, pinnedPeerId);
+        const peerLabel = lastServiceCatalogEntries.find((entry) => entry.peerId === pinnedPeerId)?.peerLabel;
+        await store.setPeer(conversationId, pinnedPeerId, peerLabel, 'pinned');
       } else {
         preferredPeerByConversationId.delete(conversationId);
         await store.clearPeer(conversationId);
@@ -783,7 +812,7 @@ export function registerPiChatHandlers({
       }
     }
 
-    if (!peerId) {
+    if (!pinnedPeerId) {
       return { ok: true };
     }
 
@@ -793,7 +822,7 @@ export function registerPiChatHandlers({
       const response = await fetch(`${LOCALHOST_URL}:${proxyPort}/_antseed/connect`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ peerId }),
+        body: JSON.stringify({ peerId: pinnedPeerId }),
       });
       const result = await response.json() as { ok: boolean; error?: string };
       return { ok: result.ok, error: result.error };
@@ -812,8 +841,8 @@ export function registerPiChatHandlers({
   const setBuyerDefaultRoute = async (peerIdRaw: unknown, serviceRaw: unknown): Promise<{ ok: boolean; error?: string }> => {
     const peerId = typeof peerIdRaw === 'string' ? peerIdRaw.trim() : '';
     const service = typeof serviceRaw === 'string' ? serviceRaw.trim() : '';
-    if (!peerId || !service) return { ok: false, error: 'peerId and service are required' };
-    const model = `${peerId}@${service}`;
+    if (!service) return { ok: false, error: 'service is required' };
+    const model = peerId ? `${peerId}@${service}` : service;
     if (model === lastPostedDefaultRoute) return { ok: true };
     try {
       const proxyPort = await resolveProxyPort(configPath);

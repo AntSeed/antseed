@@ -45,6 +45,10 @@ type CachedSummary = {
 
 export type AntseedPeerData = { peerId: string; peerLabel?: string; routeMode?: ChatRouteMode };
 
+export function isPersistedPeerBindingPinned(peerData: AntseedPeerData | null): peerData is AntseedPeerData {
+  return Boolean(peerData?.peerId) && peerData?.routeMode === 'pinned';
+}
+
 export function projectPeerBinding(peerData: AntseedPeerData | null): Pick<
   AiConversation,
   'peerId' | 'peerLabel' | 'routeMode'
@@ -54,6 +58,15 @@ export function projectPeerBinding(peerData: AntseedPeerData | null): Pick<
     ...(peerData?.peerLabel ? { peerLabel: peerData.peerLabel } : {}),
     ...(peerData?.routeMode ? { routeMode: peerData.routeMode } : {}),
   };
+}
+
+export function projectPersistedConversationRoute<T extends {
+  peerId?: string;
+  routeMode?: ChatRouteMode;
+}>(conversation: T): T {
+  return conversation.peerId && conversation.routeMode === 'pinned'
+    ? { ...conversation, routeMode: 'pinned' }
+    : { ...conversation, peerId: undefined, routeMode: 'auto' };
 }
 
 export function extractPeerFromEntries(manager: SessionManager): AntseedPeerData | null {
@@ -316,13 +329,14 @@ export class PiConversationStore {
     prompt: string,
     assistantContent: string,
     service: string,
-    peerId: string,
+    peerId?: string | null,
   ): Promise<{ user: UserMessage; assistant: AssistantMessage }> {
     const manager = await this.openSessionManager(id);
     if (!manager) throw new Error('Conversation not found');
     const timestamp = Date.now();
     const user: UserMessage = { role: 'user', content: prompt, timestamp };
-    const assistant: AssistantMessage & { meta: { peerId: string } } = {
+    const trimmedPeerId = peerId?.trim() ?? '';
+    const assistant: AssistantMessage = {
       role: 'assistant',
       content: [{ type: 'text', text: assistantContent }],
       api: 'openai-completions',
@@ -338,7 +352,7 @@ export class PiConversationStore {
       },
       stopReason: 'stop',
       timestamp: timestamp + 1,
-      meta: { peerId },
+      ...(trimmedPeerId ? { meta: { peerId: trimmedPeerId } } : {}),
     };
     manager.appendMessage(user);
     manager.appendMessage(assistant);

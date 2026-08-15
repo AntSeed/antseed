@@ -136,7 +136,7 @@ test('usage-weighted: heavy cheap model dominates light expensive one', () => {
   ];
   const result = computeMeasuredSavings(services, {
     'gpt4o': { input: 10, output: 30 },
-    'claudesonnet': { input: 10, output: 30 },
+    sonnet: { input: 10, output: 30 },
   });
   assert.ok(result);
   // total baseline $101, paid $11 → ~89% (weighted, not the 45% plain average)
@@ -150,4 +150,20 @@ test('formatSavedUsd renders compact USD labels', () => {
   assert.equal(formatSavedUsd(0.42), '$0.42');
   assert.equal(formatSavedUsd(12.4), '$12.40');
   assert.equal(formatSavedUsd(1234), '$1.2k');
+});
+
+test('matches reference prices with the shared canonical model key', () => {
+  const result = computeMeasuredSavings([
+    serviceUsage({
+      serviceName: 'claude-fable-5',
+      amountUsdc: '1000000',
+      inputTokens: '1000000',
+    }),
+  ], {
+    fable5: { input: 5, output: 30 },
+  });
+
+  assert.ok(result);
+  assert.equal(result.matchedServices, 1);
+  assert.equal(result.baselineUsd, 5);
 });

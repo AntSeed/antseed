@@ -36,6 +36,10 @@
 .row {
   width: 100%;
   min-height: 54px;
+  /* Long model lists: rows outside the viewport skip layout and paint.
+     The intrinsic size keeps the scrollbar stable at the row's min-height. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 54px;
   display: flex;
   gap: 8px;
   align-items: center;

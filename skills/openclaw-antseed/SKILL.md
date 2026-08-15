@@ -133,7 +133,9 @@ json.dump(cfg, sys.stdout, indent=2)
 " > /tmp/oc_antseed.json && mv /tmp/oc_antseed.json ~/.openclaw/openclaw.json
 ```
 
-Replace `SERVICE_ID_HERE` with the service from `antseed network browse` (e.g., `deepseek-v3.1`, `kimi-k2.5`).
+Replace `SERVICE_ID_HERE` with a model from `curl -s http://127.0.0.1:8377/v1/models` (answered locally; lists every model on the whole network, no peer pin needed) or `antseed network browse` (e.g., `deepseek-v3.1`, `kimi-k2.5`).
+
+A request that names only a model automatically selects the highest-reputation compatible peer allowed by buyer policy. To force a specific seller instead, use `<peerId>@<service-id>` as the model id — pinned requests never fail over.
 
 Set as default:
 
@@ -147,7 +149,7 @@ openclaw config set agents.defaults.model.primary "antseed/SERVICE_ID_HERE"
 curl -s http://127.0.0.1:8377/v1/models
 ```
 
-If the proxy returns available services, the connection is working.
+If the proxy returns models from across the network, the connection is working. The list is independent of any pinned peer.
 
 ## Notes
 

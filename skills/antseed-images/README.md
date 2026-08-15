@@ -1,6 +1,6 @@
 # antseed-images
 
-Generate images from text prompts through a seller-specific AntSeed image route.
+Generate images from text prompts through AntSeed's network-wide image model routing.
 
 ## Install
 
@@ -18,22 +18,20 @@ You can also point an agent directly at [`SKILL.md`](SKILL.md).
 
 AntSeed Desktop or `antseed buyer start` must be running, and the buyer must have sufficient deposited USDC. The skill uses the local buyer proxy, normally at `http://127.0.0.1:8377`.
 
-## Required parameters
+## Parameters
 
-Provide the skill with the exact route selected in AntStation:
+Provide the skill with:
 
-- `peer_id` — seller peer ID
-- `service_id` — seller's advertised image service ID
+- `model` — image model id or alias; optional when you want the skill to inspect the current catalog first
 - `prompt` — image description
 
-The skill sends the request to `/v1/images/generations` with the routed model `<peer_id>@<service_id>`. It does not silently switch sellers.
+The skill first queries `/v1/models?type=images`, resolves the requested model against the returned ids and aliases, and sends the bare model id to `/v1/images/generations`. The buyer proxy selects the best eligible peer and handles fallback.
 
 ## Example prompt
 
 ```text
 Use the antseed-images skill with:
-peer_id: 9e8f9aaee684298b7f2af2ae008e3692f0e9f4f7
-service_id: gpt-image-2
+model: gpt-image-2
 prompt: A tiny ant astronaut planting a seed on Mars
 ```
 

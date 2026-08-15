@@ -147,7 +147,7 @@ async function isPortReachable(port: number, timeoutMs = 700): Promise<boolean> 
   })
 }
 
-async function isCompatibleBuyerProxy(port: number, timeoutMs = 1200): Promise<boolean> {
+export async function isCompatibleBuyerProxy(port: number, timeoutMs = 1200): Promise<boolean> {
   const overallBudgetMs = Math.max(1, timeoutMs)
   const startedAt = Date.now()
   const reachabilityTimeoutMs = Math.min(overallBudgetMs, 700)
@@ -169,10 +169,6 @@ async function isCompatibleBuyerProxy(port: number, timeoutMs = 1200): Promise<b
     if (antseedHeaderNames.some((header) => response.headers.has(header))) return true
 
     const body = (await response.text()).toLowerCase()
-    // Any of these markers indicate we reached an Antseed buyer proxy on this
-    // port. The `no_peer_pinned` case is the common one now that auto
-    // selection is disabled — a fresh proxy with no session pin answers
-    // /v1/models with a structured `{ error: { type: 'no_peer_pinned', ... } }`.
     return body.includes('no sellers available on the network')
       || body.includes('no peers support')
       || body.includes('p2p request failed')
@@ -363,10 +359,10 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       if (pinnedPeerId) {
         console.log(chalk.yellow(`  pinned peer: ${pinnedPeerId} (router bypassed)`))
       } else {
-        console.log(chalk.yellow('  pinned peer: none — auto-selection is disabled, requests will fail until a peer is pinned'))
-        console.log(chalk.dim('    Pin a peer with:  antseed network browse → antseed buyer connection set --peer <peerId>'))
-        console.log(chalk.dim('    Or per-request:   x-antseed-pin-peer: <peerId> header'))
-        console.log(chalk.dim('    Or in model:      <peerId>@<model>'))
+        console.log(chalk.yellow('  pinned peer: none — model-only requests auto-select the highest-reputation allowed peer'))
+        console.log(chalk.dim('    Explicit session pin: antseed network browse → antseed buyer connection set --peer <peerId>'))
+        console.log(chalk.dim('    Explicit request pin: x-antseed-pin-peer: <peerId> header'))
+        console.log(chalk.dim('    Explicit model pin:   <peerId>@<model>'))
       }
       console.log('')
 

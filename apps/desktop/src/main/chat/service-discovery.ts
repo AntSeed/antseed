@@ -2,12 +2,11 @@
  * Builds the catalog of services buyers can route to, and the enriched
  * Discover rows behind the Explore view.
  *
- * Source data is the buyer daemon's cached peer list (buyer.state.json);
- * on-chain seller stats are layered on top and memoized.
+ * Source data is the buyer proxy's canonical `/v1/models` response; desktop-
+ * local history, health, and identity details are layered on top.
  */
 
 import { readFile } from 'node:fs/promises';
-import { DEFAULT_BUYER_STATE_PATH } from '../constants.js';
 import { readPeerHealth, type RawPeerHealth } from '../runtime/peer-cache.js';
 import {
   DESKTOP_DEFAULT_MAX_INPUT_USD_PER_MILLION,
@@ -15,13 +14,11 @@ import {
 } from '../runtime/config-io.js';
 import { normalizeProviderId } from './provider-hint.js';
 import {
-  buildChatServiceCatalogFromPeers,
   sortChatServiceCatalogEntries,
   type CatalogServiceCapabilities,
   type CatalogServiceProtocol,
   type ChatServiceCatalogEntry,
   type ChatServiceProtocol,
-  type NetworkPeerAddress,
 } from './service-catalog.js';
 import {
   asPlainObject,
@@ -74,6 +71,7 @@ export type DiscoverRowEntry = {
   onChainLastSettledAt: number;
   onChainReputationScore: number | null;
   onChainTrustScore: number | null;
+  effectiveReputationScore: number | null;
   onChainSybilRisk: number | null;
   onChainSybilFlags: string[];
   networkRequests: string | null;
@@ -249,6 +247,7 @@ export function normalizeChatServiceCatalogEntry(raw: unknown): ChatServiceCatal
   const categories = Array.isArray(entry.categories) ? entry.categories.filter((c): c is string => typeof c === 'string') : undefined;
   const description = typeof entry.description === 'string' ? entry.description.trim() : undefined;
   const capabilities = normalizeCatalogServiceCapabilities(entry.capabilities);
+  const effectiveReputationScore = normalizeOptionalNumber(entry.effectiveReputationScore);
   return {
     id,
     label,
@@ -258,6 +257,7 @@ export function normalizeChatServiceCatalogEntry(raw: unknown): ChatServiceCatal
     count: normalizedCount,
     ...(peerId ? { peerId } : {}),
     ...(peerLabel ? { peerLabel } : {}),
+    ...(effectiveReputationScore != null && effectiveReputationScore >= 0 ? { effectiveReputationScore } : {}),
     ...(inputUsd != null && inputUsd >= 0 ? { inputUsdPerMillion: inputUsd } : {}),
     ...(outputUsd != null && outputUsd >= 0 ? { outputUsdPerMillion: outputUsd } : {}),
     ...(cachedInputUsd != null && cachedInputUsd >= 0 ? { cachedInputUsdPerMillion: cachedInputUsd } : {}),
@@ -309,74 +309,6 @@ export function limitChatServiceCatalogEntries(entries: ChatServiceCatalogEntry[
   return limited;
 }
 
-/**
- * Build the chat service catalog directly from peer data (already in buyer.state.json).
- * No HTTP metadata fetches needed — providers and services are in the peer list.
- */
-export async function discoverChatServiceCatalog(
-  getNetworkPeers?: () => Promise<NetworkPeerAddress[]>,
-): Promise<ChatServiceCatalogEntry[]> {
-  // Read peers directly from buyer.state.json for immediate availability.
-  // Falls back to the getNetworkPeers callback if the file isn't available.
-  //
-  // NOTE: `readFile` and `DEFAULT_BUYER_STATE_PATH` are imported statically
-  // at the top of this file. A previous version used dynamic
-  // `await import('../constants.js')` here, which broke in the packaged
-  // Windows Electron build — dynamic ESM imports of relative specifiers
-  // inside `app.asar` fail URL resolution on Windows, the catch below
-  // swallowed the error, and the chat service catalog silently stayed
-  // empty ("Searching for services..." forever).
-  let peers: NetworkPeerAddress[] = [];
-  try {
-    const raw = await readFile(DEFAULT_BUYER_STATE_PATH, 'utf-8');
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const rawPeers = Array.isArray(parsed.discoveredPeers) ? parsed.discoveredPeers : [];
-    // Show every cached peer regardless of lastSeen — the sidebar already
-    // surfaces them offline, and filtering here leaves Discover empty on
-    // cold-start (e.g. laptop opened after overnight) until DHT rediscovers.
-    peers = rawPeers
-      .filter((p): p is Record<string, unknown> => p !== null && typeof p === 'object')
-      .map((p) => ({
-        peerId: typeof p.peerId === 'string' ? p.peerId : '',
-        displayName: typeof p.displayName === 'string' ? p.displayName : undefined,
-        host: '',
-        port: 0,
-        providers: Array.isArray(p.providers) ? p.providers.map(String) : [],
-        services: Array.isArray(p.services) ? p.services.map(String) : [],
-        sellerContract: typeof p.sellerContract === 'string' ? p.sellerContract : undefined,
-        providerServiceApiProtocols: (p.providerServiceApiProtocols && typeof p.providerServiceApiProtocols === 'object')
-          ? p.providerServiceApiProtocols as NetworkPeerAddress['providerServiceApiProtocols']
-          : undefined,
-        providerServiceCapabilities: (p.providerServiceCapabilities && typeof p.providerServiceCapabilities === 'object')
-          ? p.providerServiceCapabilities as NetworkPeerAddress['providerServiceCapabilities']
-          : undefined,
-        providerServiceUnitBillingModels: (p.providerServiceUnitBillingModels && typeof p.providerServiceUnitBillingModels === 'object')
-          ? p.providerServiceUnitBillingModels as NetworkPeerAddress['providerServiceUnitBillingModels']
-          : undefined,
-        providerPricing: (p.providerPricing && typeof p.providerPricing === 'object')
-          ? p.providerPricing as NetworkPeerAddress['providerPricing']
-          : undefined,
-        providerServiceCategories: (p.providerServiceCategories && typeof p.providerServiceCategories === 'object')
-          ? p.providerServiceCategories as NetworkPeerAddress['providerServiceCategories']
-          : undefined,
-        defaultInputUsdPerMillion: typeof p.defaultInputUsdPerMillion === 'number' ? p.defaultInputUsdPerMillion : undefined,
-        defaultOutputUsdPerMillion: typeof p.defaultOutputUsdPerMillion === 'number' ? p.defaultOutputUsdPerMillion : undefined,
-        defaultCachedInputUsdPerMillion: typeof p.defaultCachedInputUsdPerMillion === 'number' ? p.defaultCachedInputUsdPerMillion : undefined,
-      }))
-      .filter((p) => p.peerId.length === 40); // EVM address peer IDs only (40 hex chars)
-  } catch {
-    // File not ready yet — try the callback
-    if (!getNetworkPeers) return [];
-    try {
-      peers = await getNetworkPeers();
-    } catch {
-      return [];
-    }
-  }
-
-  return buildChatServiceCatalogFromPeers(peers);
-}
-
 export type BuyerStateDiscoveredPeer = {
   onChainAgentId: number | null;
   onChainStakeUsdcMicros: number | null;
@@ -391,7 +323,6 @@ export type BuyerStateDiscoveredPeer = {
   sellerContract?: string;
   verificationLinks: DiscoverVerificationLink[];
   peerIconUrl: string | null;
-  providerPricing?: Record<string, { services?: Record<string, { cachedInputUsdPerMillion?: number }> }>;
 };
 
 export function invalidateOnChainEnrichmentCache(): void {
@@ -423,13 +354,6 @@ export async function buildDiscoverRows(
     const sellerEvmAddress = /^[0-9a-f]{40}$/.test(sellerHex) ? `0x${sellerHex}` : peerEvmAddress;
 
     const stats = peerStats.get(peerId);
-    const cachedPricingEntry = peerBlob?.providerPricing?.[entry.provider]?.services?.[entry.id];
-    const cachedInputUsdPerMillion = Number.isFinite(entry.cachedInputUsdPerMillion)
-      ? entry.cachedInputUsdPerMillion!
-      : Number.isFinite(cachedPricingEntry?.cachedInputUsdPerMillion)
-        ? cachedPricingEntry!.cachedInputUsdPerMillion!
-        : null;
-
     const agentId = peerBlob?.onChainAgentId ?? 0;
     const stakeUsdc = String(peerBlob?.onChainStakeUsdcMicros ?? 0);
     const onChainActiveChannelCount = peerBlob?.onChainChannelCount ?? 0;
@@ -464,7 +388,7 @@ export async function buildDiscoverRows(
       peerLabel: entry.peerLabel ?? peerId.slice(0, 12) + '...',
       inputUsdPerMillion: entry.inputUsdPerMillion ?? null,
       outputUsdPerMillion: entry.outputUsdPerMillion ?? null,
-      cachedInputUsdPerMillion,
+      cachedInputUsdPerMillion: entry.cachedInputUsdPerMillion ?? null,
       minImageUsdPerImage: entry.minImageUsdPerImage ?? null,
       maxImageUsdPerImage: entry.maxImageUsdPerImage ?? null,
       lifetimeSessions: stats?.totalSessions ?? 0,
@@ -482,6 +406,7 @@ export async function buildDiscoverRows(
       onChainLastSettledAt,
       onChainReputationScore,
       onChainTrustScore,
+      effectiveReputationScore: entry.effectiveReputationScore ?? null,
       onChainSybilRisk,
       onChainSybilFlags,
       networkRequests,

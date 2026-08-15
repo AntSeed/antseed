@@ -3,7 +3,8 @@ import { test } from 'vitest';
 
 import type { DiscoverRow, VprRouteSelection } from '../../core/state';
 import { modelPinKey } from '../routing/model-pins.js';
-import { pinnedSellerLabel, pinnedSellerLabels } from './view-models.js';
+import type { VprModelCatalogEntry } from '../../core/state';
+import { compareModelRoutesByReputation, filterVprCatalog, pinnedSellerLabel, pinnedSellerLabels } from './view-models.js';
 
 function discoverRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
   const peerId = overrides.peerId ?? 'p1';
@@ -43,6 +44,7 @@ function discoverRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
     onChainLastSettledAt: 0,
     onChainReputationScore: null,
     onChainTrustScore: 75,
+    effectiveReputationScore: 75,
     onChainSybilRisk: null,
     onChainSybilFlags: [],
     networkRequests: null,
@@ -116,4 +118,59 @@ test('models without a pin get no label', () => {
   const labels = pinnedSellerLabels(rows, {}, [{ provider: 'openai', serviceId: 'gpt-test' }]);
 
   assert.equal(labels.size, 0);
+});
+
+function catalogEntry(overrides: Partial<VprModelCatalogEntry> = {}): VprModelCatalogEntry {
+  return {
+    provider: 'openai',
+    serviceId: 'gpt-test',
+    label: 'GPT Test',
+    peerCount: 1,
+    categories: [],
+    kind: 'text',
+    protocols: [],
+    minInputUsdPerMillion: 1,
+    maxInputUsdPerMillion: 1,
+    minOutputUsdPerMillion: 2,
+    maxOutputUsdPerMillion: 2,
+    minCachedInputUsdPerMillion: null,
+    maxCachedInputUsdPerMillion: null,
+    minImageUsdPerImage: null,
+    maxImageUsdPerImage: null,
+    expectedSavingsPct: null,
+    bestPeerId: null,
+    ...overrides,
+  };
+}
+
+test('filters the catalog by model family', () => {
+  const entries = [
+    catalogEntry({ serviceId: 'claude-opus', label: 'Claude Opus 4.8', provider: 'anthropic' }),
+    catalogEntry({ serviceId: 'glm-5-2', label: 'GLM 5.2' }),
+    catalogEntry({ serviceId: 'gpt-5-6', label: 'GPT-5.6' }),
+  ];
+
+  assert.deepEqual(
+    filterVprCatalog(entries, { family: 'Anthropic' }).map((entry) => entry.serviceId),
+    ['claude-opus'],
+  );
+  assert.deepEqual(
+    filterVprCatalog(entries, { family: 'Z.ai' }).map((entry) => entry.serviceId),
+    ['glm-5-2'],
+  );
+  assert.equal(filterVprCatalog(entries, { family: null }).length, 3);
+});
+
+test('seller ordering matches effective reputation instead of raw trust', () => {
+  const routes = [
+    discoverRow({ peerId: 'flash', onChainTrustScore: 10_432, onChainReputationScore: 100, effectiveReputationScore: 50 }),
+    discoverRow({ peerId: 'apex', onChainTrustScore: 895, onChainReputationScore: 78.4, effectiveReputationScore: 78.4 }),
+    discoverRow({ peerId: 'venice', onChainTrustScore: 5_428, onChainReputationScore: 98.3, effectiveReputationScore: 98.3 }),
+  ];
+
+  assert.deepEqual(routes.sort(compareModelRoutesByReputation).map((route) => route.peerId), [
+    'venice',
+    'apex',
+    'flash',
+  ]);
 });

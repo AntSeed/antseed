@@ -227,6 +227,8 @@ export type DiscoverRow = {
   onChainLastSettledAt: number;
   onChainReputationScore: number | null; // displayed 0-100 score
   onChainTrustScore: number | null;
+  /** Model-specific 0-100 reputation after pricing-completeness adjustments. */
+  effectiveReputationScore?: number | null;
   onChainSybilRisk: number | null;
   onChainSybilFlags: string[];
 
@@ -569,7 +571,7 @@ export function createInitialUiState(): RendererUiState {
       autoRouting: true,
       preferFreePeers: false,
       maxInputUsdPerMillion: 25,
-      minTrustScore: 0,
+      minTrustScore: 60,
       allowedPeerIds: [],
       blockedPeerIds: [],
     },

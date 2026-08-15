@@ -8,7 +8,6 @@
 import type { IpcMain } from 'electron';
 import type { AgentSession } from '@mariozechner/pi-coding-agent';
 import type { ChatStreamStopReason } from './stream-stop.js';
-import type { NetworkPeerAddress } from './service-catalog.js';
 
 export type RegisterPiChatHandlersOptions = {
   ipcMain: IpcMain;
@@ -17,7 +16,6 @@ export type RegisterPiChatHandlersOptions = {
   isBuyerRuntimeRunning: () => boolean;
   ensureBuyerRuntimeStarted?: () => Promise<boolean>;
   appendSystemLog: (line: string) => void;
-  getNetworkPeers?: () => Promise<NetworkPeerAddress[]>;
 };
 
 export type ChatStreamErrorPayload = {

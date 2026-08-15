@@ -402,27 +402,14 @@ export function createTelegramBridge({ engine, appendLog, onStatusChanged }: Tel
         log(`Default route ${routed.peerId.slice(0, 12)}...@${routed.service} is outside the buyer routing policy — picking a fresh default.`);
         bareModel = routed.service;
       }
-      // No usable routed peer (fresh install, or a route the policy rejects).
+      if (bareModel) return { service: bareModel };
+      // No stored route (fresh install, or a route the policy rejects).
       // Mirror the app's picker: the renderer-pushed curated list (favorites
-      // first) when available, otherwise the first discovered catalog entry —
-      // preferring whichever serves the routed bare model name, if any.
-      const wanted = bareModel.trim().toLowerCase();
-      const pickerModels = (engine.getModelPicker()?.models ?? []).filter((model) => model.routePeerId);
-      const pickerMatch = wanted
-        ? pickerModels.find((model) => (
-          (model.routeServiceId ?? model.serviceId).trim().toLowerCase() === wanted
-          || model.serviceId.trim().toLowerCase() === wanted
-        ))
-        : undefined;
-      const picked = pickerMatch ?? pickerModels[0];
-      if (picked?.routePeerId) {
-        return { peerId: picked.routePeerId, service: picked.routeServiceId ?? picked.serviceId };
-      }
-      const match = wanted
-        ? entries.find((entry) => entry.id.trim().toLowerCase() === wanted && entry.peerId)
-        : undefined;
-      const chosen = match ?? entries.find((entry) => entry.peerId);
-      if (chosen?.peerId) return { peerId: chosen.peerId, service: chosen.id };
+      // first) when available, otherwise the first discovered catalog entry.
+      const picked = (engine.getModelPicker()?.models ?? []).find((model) => model.routePeerId);
+      if (picked) return { service: picked.serviceId };
+      const chosen = entries.find((entry) => entry.peerId);
+      if (chosen) return { service: chosen.id };
     } catch {
       // Discovery unavailable — the engine will surface the buyer error.
     }
@@ -503,25 +490,24 @@ export function createTelegramBridge({ engine, appendLog, onStatusChanged }: Tel
     const rebind = conversationId
       ? await engine.selectPeer({
           conversationId,
-          peerId: option.peerId,
+          peerId: null,
           service: option.id,
           provider: option.provider,
           routeMode: 'auto',
         })
       : { ok: true as const };
-    await engine.setDefaultRoute(option.peerId, option.id, option.provider);
+    await engine.setDefaultRoute('', option.id, option.provider);
     await client.answerCallbackQuery(query.id, 'Model set').catch(() => {});
     await client.editMessageText(pick.chatId, pick.messageId, `Model: ${option.label}`).catch(() => {});
     if (!rebind.ok && rebind.error) {
-      // The pin is stored; the warmup hiccup only means the first request connects cold.
-      log(`Peer warmup after /model failed: ${rebind.error}`);
+      log(`Conversation model update after /model failed: ${rebind.error}`);
     }
   };
 
   const ensureConversation = async (): Promise<string> => {
     if (settings?.activeConversationId) return settings.activeConversationId;
     const route = await resolveDefaultRoute();
-    const conversation = await engine.createConversation(route.service, undefined, route.peerId);
+    const conversation = await engine.createConversation(route.service, undefined, route.peerId, route.peerId ? 'pinned' : 'auto');
     bridgeConversationIds.add(conversation.id);
     if (settings) {
       settings.activeConversationId = conversation.id;

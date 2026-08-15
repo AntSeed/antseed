@@ -1,5 +1,5 @@
 import type { DiscoverRow, VprModelCatalogEntry, VprSelectedModel } from '../../core/state';
-import { canonicalModelKey, displayModelLabel, sameCanonicalModel } from './model-identity';
+import { CODING_ONLY_SUFFIX_RE, canonicalModelKey, displayModelLabel, sameCanonicalModel } from './model-identity';
 import { isFreeCatalogEntry, selectRecommendedVprCatalog } from './recommended';
 import { serviceModelKind } from './model-capabilities';
 
@@ -35,6 +35,20 @@ function maxPrice(values: Array<number | null>): number | null {
   return max;
 }
 
+function preferredGroupLabel(rows: DiscoverRow[]): string {
+  const labels = rows.map((row) => ({
+    label: displayModelLabel(row.serviceId, row.serviceLabel),
+    sellerNamed: row.serviceLabel.trim().length > 0 && row.serviceLabel.trim() !== row.serviceId.trim(),
+  }));
+  return labels.sort((a, b) => {
+    const aConstrained = /\bcoding\s+only\b/i.test(a.label);
+    const bConstrained = /\bcoding\s+only\b/i.test(b.label);
+    if (aConstrained !== bConstrained) return aConstrained ? 1 : -1;
+    if (a.sellerNamed !== b.sellerNamed) return a.sellerNamed ? -1 : 1;
+    return a.label.length - b.label.length || a.label.localeCompare(b.label);
+  })[0]?.label ?? '';
+}
+
 function projectGroupToEntry(group: ModelCatalogGroup): VprModelCatalogEntry {
   const firstRow = group.rows[0];
   const categories = Array.from(new Set(group.rows.flatMap((row) => row.categories))).sort((a, b) => a.localeCompare(b));
@@ -50,6 +64,16 @@ function projectGroupToEntry(group: ModelCatalogGroup): VprModelCatalogEntry {
     if (best === null || route.total < best.total) return route;
     return best;
   }, null);
+  const unrestrictedRows = group.rows.filter((row) => !CODING_ONLY_SUFFIX_RE.test(row.serviceId));
+  const representativeRows = unrestrictedRows.length > 0 ? unrestrictedRows : group.rows;
+  const representativePricedRows = pricedRows.filter(({ row }) => representativeRows.includes(row));
+  const representative = representativePricedRows.reduce<{ row: DiscoverRow; total: number } | null>((best, route) => {
+    if (best === null
+      || route.total < best.total
+      || (route.total === best.total && route.row.serviceId.localeCompare(best.row.serviceId) < 0)
+    ) return route;
+    return best;
+  }, null)?.row ?? representativeRows[0];
   const minTotal = minPrice(pricedRows.map((route) => route.total));
   const maxTotal = maxPrice(pricedRows.map((route) => route.total));
   // Text entries compare sellers on their token total. Image entries may
@@ -63,14 +87,7 @@ function projectGroupToEntry(group: ModelCatalogGroup): VprModelCatalogEntry {
     ? Math.round((1 - minTotal / maxTotal) * 100)
     : null;
 
-  // The entry's provider/serviceId must stay consistent with bestPeerId —
-  // selecting the entry dispatches this exact advertised pair, and the buyer
-  // proxy strictly gates on what the pinned peer actually serves.
-  const representative = bestPricedRoute?.row ?? firstRow;
-  const label = displayModelLabel(
-    representative.serviceId,
-    group.rows.find((row) => row.serviceLabel.trim().length > 0)?.serviceLabel,
-  );
+  const label = preferredGroupLabel(group.rows);
 
   return {
     provider: representative.provider,
@@ -84,12 +101,12 @@ function projectGroupToEntry(group: ModelCatalogGroup): VprModelCatalogEntry {
     maxInputUsdPerMillion: maxPrice(group.rows.map((row) => row.inputUsdPerMillion)),
     minOutputUsdPerMillion: bestPricedRoute?.row.outputUsdPerMillion ?? null,
     maxOutputUsdPerMillion: maxPrice(group.rows.map((row) => row.outputUsdPerMillion)),
-    minCachedInputUsdPerMillion: bestPricedRoute?.row.cachedInputUsdPerMillion ?? null,
+    minCachedInputUsdPerMillion: minPrice(group.rows.map((row) => row.cachedInputUsdPerMillion)),
     maxCachedInputUsdPerMillion: maxPrice(group.rows.map((row) => row.cachedInputUsdPerMillion)),
     minImageUsdPerImage: minPrice(group.rows.map((row) => row.minImageUsdPerImage)),
     maxImageUsdPerImage: maxPrice(group.rows.map((row) => row.maxImageUsdPerImage)),
     expectedSavingsPct,
-    bestPeerId: bestPricedRoute?.row.peerId ?? firstRow?.peerId ?? null,
+    bestPeerId: representative?.peerId ?? null,
   };
 }
 

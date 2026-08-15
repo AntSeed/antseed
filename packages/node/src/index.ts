@@ -27,6 +27,12 @@ export type { Router } from './interfaces/buyer-router.js';
 // Types (re-export everything)
 export * from './types/index.js';
 export * from './billing/index.js';
+export { canonicalModelKey, preferredModelDisplayName, sameCanonicalModel } from './model-identity.js';
+export {
+  compareNetworkServiceOfferPrice,
+  selectLowestPricedCanonicalOffers,
+  selectLowestPricedNetworkServiceOffer,
+} from './discovery/service-catalog.js';
 
 // Fault attribution — lets consumers tell a dead peer from a broken buyer.
 export {
@@ -101,6 +107,15 @@ export {
 } from './discovery/verification-links.js';
 export { MetadataServer, type MetadataServerConfig } from './discovery/metadata-server.js';
 export { parsePublicAddress, MAX_PUBLIC_ADDRESS_LENGTH, type ParsedPublicAddress } from './discovery/public-address.js';
+export {
+  buildNetworkServiceOffers,
+  inferServiceProtocol,
+  resolveServiceProtocol,
+  type CatalogServiceCapabilities,
+  type CatalogServiceProtocol,
+  type NetworkServiceCatalogPeer,
+  type NetworkServiceOffer,
+} from './discovery/service-catalog.js';
 export { MeteringStorage } from './metering/storage.js';
 export { BalanceManager } from './payments/balance-manager.js';
 export {
@@ -235,6 +250,13 @@ export { ANTSEED_ATTEST_PATH } from './interfaces/plugin.js'
 
 // Reputation
 export { UptimeTracker } from './reputation/uptime-tracker.js';
+export {
+  MISSING_CACHED_INPUT_PRICE_REPUTATION_MULTIPLIER,
+  compareEffectiveModelReputation,
+  effectiveModelReputationScore,
+  normalizedModelReputationScore,
+  type ModelReputationSource,
+} from './reputation/model-reputation.js';
 export {
   computeOnChainTrust,
   computeOnChainTrustBreakdown,

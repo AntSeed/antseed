@@ -436,9 +436,8 @@ export function initVprFloatModule({
         const record = records.find((row) => row.id === conversationId);
         const current = record ? conversationPinnedServiceId(record) : null;
         if (current && sameCanonicalModel(current, serviceId)) return;
-        const pin = resolvePinRoute(provider, serviceId);
-        if (!pin) return;
-        await bridge?.buyerConversationsUpdate?.({ id: conversationId, pinnedModel: pin });
+        if (!resolvePinRoute(provider, serviceId)) return;
+        await bridge?.buyerConversationsUpdate?.({ id: conversationId, pinnedModel: serviceId, peerSource: 'auto' });
         bridge?.vprFloatUpdate?.(await buildData());
       })();
       return;
