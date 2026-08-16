@@ -6,6 +6,10 @@ type ImageGenerationPlaceholderProps = {
   editing?: boolean;
 };
 
+export function isImageGenerationPhase(phase: string | null | undefined): boolean {
+  return phase === 'Generating image' || phase === 'Editing image';
+}
+
 export function ImageGenerationPlaceholder({ editing = false }: ImageGenerationPlaceholderProps) {
   const label = editing ? 'Editing your image' : 'Generating your image';
 

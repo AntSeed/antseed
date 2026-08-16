@@ -29,7 +29,7 @@ import {
   substituteRoutedModelAlias,
   sweepStaleStateTmpFiles,
 } from './buyer-proxy.js'
-import { overrideRoutedModelInBody, SYSTEM_ROUTED_MODEL_HEADER } from './request-utils.js'
+import { extractRequestedService, overrideRoutedModelInBody, SYSTEM_ROUTED_MODEL_HEADER } from './request-utils.js'
 
 function makePeer(seed: string, providers: string[]): PeerInfo {
   const repeated = (seed.repeat(40) + 'a'.repeat(40)).slice(0, 40)
@@ -2331,6 +2331,31 @@ function parseJsonBody(body: Uint8Array): Record<string, unknown> {
 }
 
 const jsonHeaders: Record<string, string> = { 'content-type': 'application/json' }
+
+test('extractRequestedService reads the model from multipart image edits', () => {
+  const boundary = 'image-edit-boundary'
+  const body = new TextEncoder().encode([
+    `--${boundary}`,
+    'Content-Disposition: form-data; name="model"',
+    '',
+    'gpt-image-2',
+    `--${boundary}`,
+    'Content-Disposition: form-data; name="image"; filename="source.png"',
+    'Content-Type: image/png',
+    '',
+    'image-bytes',
+    `--${boundary}--`,
+    '',
+  ].join('\r\n'))
+
+  assert.equal(extractRequestedService({
+    requestId: 'request-1',
+    method: 'POST',
+    path: '/v1/images/edits',
+    headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+    body,
+  }), 'gpt-image-2')
+})
 
 test('parsePeerPinnedService parses 40-char hex peer prefixes', () => {
   assert.deepEqual(parsePeerPinnedService(`${validPeerId}@claude-sonnet-4-5`), {

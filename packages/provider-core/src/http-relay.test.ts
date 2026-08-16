@@ -162,6 +162,43 @@ describe('HttpRelay', () => {
     expect(parsed.model).toBe('together/kimi2.5');
   });
 
+  it('preserves and rewrites model fields in multipart image edits', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+    const responses: SerializedHttpResponse[] = [];
+    const relay = new HttpRelay(
+      makeConfig({
+        allowedServices: ['gpt-image-2'],
+        serviceRewriteMap: { 'gpt-image-2': 'upstream/gpt-image-2' },
+      }),
+      { onResponse: (response) => responses.push(response) },
+    );
+    const form = new FormData();
+    form.append('prompt', 'Now with a blue background');
+    form.append('image', new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' }), 'source.png');
+    const webRequest = new Request('https://buyer.invalid/v1/images/edits', { method: 'POST', body: form });
+
+    await relay.handleRequest(makeRequest({
+      path: '/v1/images/edits',
+      headers: {
+        'content-type': webRequest.headers.get('content-type') ?? '',
+        'x-antseed-service': 'gpt-image-2',
+      },
+      body: new Uint8Array(await webRequest.arrayBuffer()),
+    }));
+
+    expect(responses[0]?.statusCode).toBe(200);
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const sentHeaders = options.headers as Record<string, string>;
+    expect(sentHeaders['x-antseed-service']).toBeUndefined();
+    const forwarded = await new Response(options.body, {
+      headers: { 'content-type': sentHeaders['content-type'] ?? '' },
+    }).formData();
+    expect(forwarded.get('model')).toBe('upstream/gpt-image-2');
+    expect(forwarded.get('prompt')).toBe('Now with a blue background');
+    expect(forwarded.get('image')).toBeInstanceOf(Blob);
+  });
+
   it('enforces concurrency limit', async () => {
     // Create a fetch that blocks until we resolve it
     let resolveFirst!: (value: Response) => void;
@@ -220,6 +257,7 @@ describe('HttpRelay', () => {
         'content-type': 'application/json',
         'connection': 'keep-alive',
         'x-antseed-provider': 'anthropic',
+        'x-antseed-service': 'claude-sonnet-4-20250514',
         'host': 'localhost:3000',
         'x-custom': 'keep-me',
       },
@@ -229,6 +267,7 @@ describe('HttpRelay', () => {
     const sentHeaders = opts.headers as Record<string, string>;
     expect(sentHeaders['connection']).toBeUndefined();
     expect(sentHeaders['x-antseed-provider']).toBeUndefined();
+    expect(sentHeaders['x-antseed-service']).toBeUndefined();
     expect(sentHeaders['host']).toBeUndefined();
     expect(sentHeaders['x-custom']).toBe('keep-me');
   });

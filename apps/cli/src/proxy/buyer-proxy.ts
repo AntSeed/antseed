@@ -2810,6 +2810,7 @@ export class BuyerProxy {
       headers: {
         ...headersForPeer,
         'x-antseed-provider': selectedRoutePlan.provider,
+        ...(requestedService ? { 'x-antseed-service': requestedService } : {}),
       },
     }
     if (selectedRoutePlan.serviceId) {
