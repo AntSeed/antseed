@@ -357,6 +357,8 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       ))
       console.log(chalk.dim(`  peer refresh interval: ${effectiveBuyerConfig.peerRefreshIntervalMs}ms`))
       console.log(chalk.dim(`  metadata fetch timeout: ${effectiveBuyerConfig.metadataFetchTimeoutMs}ms`))
+      console.log(chalk.dim(`  request timeout: ${effectiveBuyerConfig.requestTimeoutMs}ms`))
+      console.log(chalk.dim(`  max stream duration: ${effectiveBuyerConfig.maxStreamDurationMs}ms`))
       console.log(chalk.dim(`  metadata v2 service opt-out: ${effectiveBuyerConfig.disableMetadataV2Services ? 'enabled' : 'disabled'}`))
       if (logFilter.length > 0) {
         console.log(chalk.dim(`  debug log filter: ${logFilter}`))
@@ -379,6 +381,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         dataDir: globalOpts.dataDir,
         configPath: globalOpts.config,
         metadataFetchTimeoutMs: effectiveBuyerConfig.metadataFetchTimeoutMs,
+        requestTimeoutMs: effectiveBuyerConfig.requestTimeoutMs,
         maxStreamDurationMs: effectiveBuyerConfig.maxStreamDurationMs,
         payments: paymentsConfig,
         verification: effectiveBuyerConfig.verification,

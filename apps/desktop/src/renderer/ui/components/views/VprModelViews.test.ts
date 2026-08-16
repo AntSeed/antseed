@@ -6,6 +6,7 @@ import {
   routesForSelectedModel,
   sortVprCatalog,
 } from '../../../modules/catalog/view-models.js';
+import { peerCapabilitySummary } from '../../../modules/catalog/model-capabilities.js';
 
 function catalogEntry(overrides: Partial<VprModelCatalogEntry> = {}): VprModelCatalogEntry {
   return {
@@ -135,4 +136,18 @@ test('Model route filtering excludes other service IDs but keeps canonical varia
     }),
     [selected, otherProvider, variantKey],
   );
+});
+
+test('image seller summaries distinguish generation-only routes from edit support', () => {
+  const generationOnly = discoverRow({
+    protocol: 'openai-images',
+    capabilities: { inputs: ['text'], outputs: ['image'] },
+  });
+  const editable = discoverRow({
+    protocol: 'openai-images',
+    capabilities: { inputs: ['text', 'image'], outputs: ['image'] },
+  });
+
+  assert.equal(peerCapabilitySummary(generationOnly)[0], 'Image generation only');
+  assert.equal(peerCapabilitySummary(editable)[0], 'Image generation + editing');
 });

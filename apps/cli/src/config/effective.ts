@@ -162,9 +162,7 @@ export function resolveEffectiveBuyerConfig(input: ResolveEffectiveConfigInput):
   }
 
   assertValidMetadataFetchTimeoutMs(buyer.metadataFetchTimeoutMs, 'buyer.metadataFetchTimeoutMs');
-  if (buyer.maxStreamDurationMs !== undefined) {
-    assertValidMaxStreamDurationMs(buyer.maxStreamDurationMs, 'buyer.maxStreamDurationMs');
-  }
+  assertValidMaxStreamDurationMs(buyer.maxStreamDurationMs, 'buyer.maxStreamDurationMs');
 
   return buyer;
 }

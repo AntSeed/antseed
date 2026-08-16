@@ -112,8 +112,9 @@ export function VprModelView({ onSelectView }: Props) {
 
   function useImageInChat(): void {
     if (!selectedRoute) return;
+    const peerId = autoSelect ? null : selectedRoute.peerId;
     actions.startNewChat();
-    actions.selectVprModel(viewedModel.provider, viewedModel.serviceId, pinnedPeerId);
+    actions.selectVprModel(viewedModel.provider, viewedModel.serviceId, peerId);
     onSelectView?.('chat');
   }
 
