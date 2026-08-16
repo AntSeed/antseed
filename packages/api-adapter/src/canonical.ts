@@ -1,6 +1,7 @@
 import {
   extractUsage,
   mapFinishReasonToAnthropicStopReason,
+  openAIResponsesMessageId,
   parseJsonSafe,
   toStringContent,
   type TokenUsage,
@@ -698,7 +699,7 @@ export function renderCanonicalResponseToOpenAIResponsesBody(response: Canonical
   if (text.length > 0) {
     output.push({
       type: 'message',
-      id: `${response.id}_msg_1`,
+      id: openAIResponsesMessageId(response.id),
       role: 'assistant',
       status: 'completed',
       content: [{ type: 'output_text', text, annotations: [] }],

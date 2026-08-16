@@ -8,7 +8,7 @@ import {
   renderCanonicalRequestToOpenAIResponsesBody,
   type CanonicalLlmRequest,
 } from './canonical.js';
-import { encodeJson, parseJsonObject } from './utils.js';
+import { encodeJson, openAIResponsesMessageId, parseJsonObject } from './utils.js';
 
 export interface ServiceApiRequestTransformResult {
   request: SerializedHttpRequest;
@@ -23,6 +23,7 @@ export interface ServiceApiRequestTransformOptions {
 }
 
 const CLIENT_STREAM_REQUESTED_HEADER = 'x-antseed-client-stream-requested';
+const LEGACY_RESPONSES_MESSAGE_ID_SUFFIX = '_msg_1';
 
 type RequestNormalizer = (body: Record<string, unknown>) => CanonicalLlmRequest;
 type RequestRenderer = (
@@ -74,8 +75,11 @@ export function transformRequest(
   const normalized = normalize(body);
   const streamRequested = options.streamRequested ?? normalized.stream;
   if (options.from === options.to) {
+    const repairedBody = options.from === 'openai-responses'
+      ? repairLegacyResponsesMessageIds(body)
+      : null;
     return {
-      request,
+      request: repairedBody ? { ...request, body: encodeJson(repairedBody) } : request,
       streamRequested,
       requestedModel: normalized.model,
     };
@@ -103,6 +107,31 @@ export function transformRequest(
     streamRequested,
     requestedModel: normalized.model,
   };
+}
+
+function repairLegacyResponsesMessageIds(body: Record<string, unknown>): Record<string, unknown> | null {
+  if (!Array.isArray(body.input)) return null;
+
+  let changed = false;
+  const input = body.input.map((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
+    const record = item as Record<string, unknown>;
+    if (record.type !== 'message' && record.type !== 'item_reference') return item;
+    if (
+      typeof record.id !== 'string'
+      || record.id.startsWith('msg_')
+      || !record.id.endsWith(LEGACY_RESPONSES_MESSAGE_ID_SUFFIX)
+    ) {
+      return item;
+    }
+
+    const responseId = record.id.slice(0, -LEGACY_RESPONSES_MESSAGE_ID_SUFFIX.length);
+    if (responseId.length === 0) return item;
+    changed = true;
+    return { ...record, id: openAIResponsesMessageId(responseId) };
+  });
+
+  return changed ? { ...body, input } : null;
 }
 
 function headersForTargetProtocol(
