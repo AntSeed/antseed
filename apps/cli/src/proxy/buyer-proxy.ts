@@ -12,6 +12,7 @@ import {
   faultAttributionOf,
   faultCodeOf,
   isModelRouteEligible,
+  modelRouteTotalPrice,
   peerSupportsCooperativeClose,
   rankModelRoutes,
   type AntseedNode,
@@ -2347,6 +2348,7 @@ export class BuyerProxy {
           if (!peerAllowedByPolicy(policyRouter, requestForPolicy, peer)) return null
           return {
             peer,
+            peerId: peer.peerId,
             serviceId: plan.serviceId,
             request: requestForPolicy,
             reputation: normalizedModelReputationScore(peer, this._now()) ?? -1,
@@ -2363,11 +2365,11 @@ export class BuyerProxy {
         const health = this._peerHealth.get(candidate.peer.peerId)
         return {
           ...candidate,
-          peerId: candidate.peer.peerId,
           effectiveReputationScore: effectiveModelReputationScore(
             candidate.reputation >= 0 ? candidate.reputation : null,
             candidate.hasCachedInputPricing,
             preferCachedPricing,
+            modelRouteTotalPrice(candidate) === 0,
           ),
           peerCooldownUntil: health?.cooldownUntil ?? null,
           peerFailureStreak: health?.failureStreak ?? 0,

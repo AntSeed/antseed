@@ -190,6 +190,51 @@ test('selectDefaultVprModel prefers a free model for the first selection', () =>
   assert.equal(selectDefaultVprModel(catalog, null)?.serviceId, 'free-mini');
 });
 
+test('selectDefaultVprModel skips a free model without a routable free peer', () => {
+  const catalog = projectRowsToVprModelCatalog([
+    discoverRow({ provider: 'openai', serviceId: 'gpt-5.6', serviceLabel: 'GPT 5.6', peerId: 'p1' }),
+    discoverRow({ provider: 'openai', serviceId: 'gpt-5.6', serviceLabel: 'GPT 5.6', peerId: 'p2' }),
+    // Free entry whose only free seller the eligibility gate rejects.
+    discoverRow({
+      provider: 'openai',
+      serviceId: 'gated-free',
+      serviceLabel: 'Gated Free',
+      peerId: 'p3',
+      inputUsdPerMillion: 0,
+      outputUsdPerMillion: 0,
+    }),
+    // Free entry with a routable free seller.
+    discoverRow({
+      provider: 'openai',
+      serviceId: 'open-free',
+      serviceLabel: 'Open Free',
+      peerId: 'p4',
+      inputUsdPerMillion: 0,
+      outputUsdPerMillion: 0,
+    }),
+  ]);
+  const isFreeEntryRoutable = (entry: { serviceId: string }): boolean => entry.serviceId === 'open-free';
+
+  assert.equal(selectDefaultVprModel(catalog, null, isFreeEntryRoutable)?.serviceId, 'open-free');
+});
+
+test('selectDefaultVprModel falls back to the popular pick when no free model is routable', () => {
+  const catalog = projectRowsToVprModelCatalog([
+    discoverRow({ provider: 'openai', serviceId: 'gpt-5.6', serviceLabel: 'GPT 5.6', peerId: 'p1' }),
+    discoverRow({ provider: 'openai', serviceId: 'gpt-5.6', serviceLabel: 'GPT 5.6', peerId: 'p2' }),
+    discoverRow({
+      provider: 'openai',
+      serviceId: 'gated-free',
+      serviceLabel: 'Gated Free',
+      peerId: 'p3',
+      inputUsdPerMillion: 0,
+      outputUsdPerMillion: 0,
+    }),
+  ]);
+
+  assert.equal(selectDefaultVprModel(catalog, null, () => false)?.serviceId, 'gpt-5.6');
+});
+
 test('findCatalogEntry returns null when the service is absent', () => {
   const catalog = projectRowsToVprModelCatalog([
     discoverRow({ provider: 'openai', serviceId: 's1' }),

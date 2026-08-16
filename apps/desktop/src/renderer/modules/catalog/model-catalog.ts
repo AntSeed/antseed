@@ -138,16 +138,19 @@ export function projectRowsToVprModelCatalog(rows: DiscoverRow[]): VprModelCatal
 export function selectDefaultVprModel(
   catalog: VprModelCatalogEntry[],
   current: VprSelectedModel | null,
+  isFreeEntryRoutable: (entry: VprModelCatalogEntry) => boolean = () => true,
 ): VprSelectedModel | null {
   if (current && findCatalogEntry(catalog, current.provider, current.serviceId)?.kind === 'text') return current;
   // First launch defaults to a free model — trying the VPR must cost nothing
   // before any balance exists. Prefer a free model from the recommended
   // lineup, then any free model on the network, then the recommended/popular
-  // fallback for networks without a free seller.
+  // fallback for networks without a routable free seller.
   const textCatalog = catalog.filter((entry) => entry.kind === 'text');
   const recommended = selectRecommendedVprCatalog(textCatalog);
-  const first = recommended.find(isFreeCatalogEntry)
-    ?? textCatalog.find(isFreeCatalogEntry)
+  const isRoutableFreeEntry = (entry: VprModelCatalogEntry): boolean =>
+    isFreeCatalogEntry(entry) && isFreeEntryRoutable(entry);
+  const first = recommended.find(isRoutableFreeEntry)
+    ?? textCatalog.find(isRoutableFreeEntry)
     ?? recommended[0]
     ?? textCatalog[0];
   if (!first) return null;

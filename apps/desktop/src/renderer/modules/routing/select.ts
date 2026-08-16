@@ -4,6 +4,7 @@ import {
   isModelRouteCoolingDown,
   isModelRouteEligible,
   isModelRoutePeerAllowed,
+  modelRouteTotalPrice,
   scoreModelRoute,
 } from '@antseed/node/model-routing';
 
@@ -52,6 +53,16 @@ export function filterRoutableVprRoutes(
   preferences: VprRoutingPreferences,
 ): DiscoverRow[] {
   return rows.filter((row) => isPeerRoutable(row.peerId, preferences));
+}
+
+/** Whether auto-selection can use a free route from this set. */
+export function hasEligibleFreeVprRoute(
+  rows: DiscoverRow[],
+  preferences: VprRoutingPreferences,
+): boolean {
+  return rows.some(
+    (row) => modelRouteTotalPrice(row) === 0 && isModelRouteEligible(row, preferences),
+  );
 }
 
 export function chooseBestVprRoute(

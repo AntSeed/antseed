@@ -18,6 +18,11 @@ describe('model reputation', () => {
     expect(effectiveModelReputationScore(100, false, false)).toBe(100);
   });
 
+  it('never penalizes a free offer for omitting cached-input pricing', () => {
+    expect(effectiveModelReputationScore(100, false, true, true)).toBe(100);
+    expect(effectiveModelReputationScore(null, false, true, true)).toBeNull();
+  });
+
   it('sorts by effective model reputation', () => {
     const offers = [
       { peerId: 'flash', effectiveReputationScore: 50 },

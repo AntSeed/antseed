@@ -48,6 +48,25 @@ describe('model route ranking', () => {
       .toEqual([emberRoute.peerId, cobaltRelay.peerId]);
   });
 
+  it('prefers price over reputation among peers above the trust gate', () => {
+    // Trust is a gate, not a rank: a 9.9-reputation paid seller must not
+    // beat an eligible 7.9-reputation free seller of the same model.
+    const reputablePaid = route({
+      peerId: 'a'.repeat(40),
+      effectiveReputationScore: 99,
+      inputUsdPerMillion: 0.19,
+      outputUsdPerMillion: 0.75,
+    });
+    const eligibleFree = route({
+      peerId: 'b'.repeat(40),
+      effectiveReputationScore: 79,
+      inputUsdPerMillion: 0,
+      outputUsdPerMillion: 0,
+    });
+
+    expect(chooseBestModelRoute([reputablePaid, eligibleFree], preferences)?.peerId).toBe(eligibleFree.peerId);
+  });
+
   it('never auto-selects a peer below the minimum trust score', () => {
     const trusted = route({ peerId: 'a'.repeat(40), effectiveReputationScore: 60, inputUsdPerMillion: 20, outputUsdPerMillion: 20 });
     const cheap = route({ peerId: 'b'.repeat(40), effectiveReputationScore: 59.9, inputUsdPerMillion: 0, outputUsdPerMillion: 0 });

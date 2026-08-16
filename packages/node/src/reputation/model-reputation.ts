@@ -23,13 +23,17 @@ export function normalizedModelReputationScore(source: ModelReputationSource): n
   return finiteScore(source.reputationScore);
 }
 
-/** Apply model-specific pricing completeness to a normalized reputation. */
+/**
+ * Apply model-specific pricing completeness to a normalized reputation.
+ * Free offers are complete even when cached-input pricing is omitted.
+ */
 export function effectiveModelReputationScore(
   reputation: number | null,
   hasCachedInputPricing: boolean,
   modelHasCachedInputPricing: boolean,
+  isFreeOffer = false,
 ): number | null {
-  if (reputation === null) return null;
+  if (reputation === null || isFreeOffer) return reputation;
   return modelHasCachedInputPricing && !hasCachedInputPricing
     ? reputation * MISSING_CACHED_INPUT_PRICE_REPUTATION_MULTIPLIER
     : reputation;
