@@ -18,6 +18,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Local-LLM providers now consume per-service pricing from seller configuration, so differently priced local models are advertised with their configured rates instead of inheriting the provider default.
 - CLI plugin installation now reports an actionable Node.js/npm requirement when `npm` is unavailable instead of exposing the raw `spawn npm ENOENT` process error.
 - CLI seller configuration now passes a configured `baseUrl` to the local-LLM plugin using its declared `LOCAL_LLM_BASE_URL` key instead of silently falling back to the default Ollama endpoint.
 - Provider body injection configured for OpenAI-compatible chat requests no longer leaks into `/v1/images/*` requests, preventing strict image-generation upstreams from rejecting otherwise valid payloads.
