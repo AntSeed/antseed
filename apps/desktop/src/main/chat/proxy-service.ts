@@ -37,10 +37,11 @@ export function makeProxyService(
   if (preferredPeerId) {
     headers[routeMode === 'pinned' ? 'x-antseed-pin-peer' : 'x-antseed-prefer-peer'] = preferredPeerId;
   }
-  // "antstation" here is a wire identifier the CLI buyer proxy matches on
-  // (header + conversation key prefix) — renaming it breaks conversation
-  // affinity against deployed CLIs, so it survives the AntStation → VPR rename.
-  if (conversationId) headers['x-antstation-session-id'] = conversationId;
+  // The buyer proxy derives the conversation identity generically from the
+  // `x-<tool>-session-id` header name, so this yields tool slug "vpr" and
+  // conversation key `vpr:<id>`. Existing chats stored under the legacy
+  // `antstation:` key re-establish peer affinity on their next message.
+  if (conversationId) headers['x-vpr-session-id'] = conversationId;
   if (spendingAuth) headers['x-antseed-spending-auth'] = spendingAuth;
 
   // The OpenAI SDK appends API paths (e.g. /responses, /chat/completions)
@@ -95,7 +96,7 @@ export async function fetchProxyConversationRoute(
   conversationId: string,
 ): Promise<{ peerId: string; service: string } | null> {
   try {
-    const id = encodeURIComponent(`antstation:${conversationId}`);
+    const id = encodeURIComponent(`vpr:${conversationId}`);
     const response = await fetch(`${LOCALHOST_URL}:${port}/_antseed/conversations/${id}`, {
       signal: AbortSignal.timeout(2_000),
     });

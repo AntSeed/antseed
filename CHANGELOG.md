@@ -8,7 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
-- Desktop: the in-app chat is now branded VPR — the AntStation name, logo wordmark, and labels (title bar, setup screen, empty chat state, floating pill, preferences hint, and assistant system prompt) are replaced with VPR.
+- Desktop: the in-app chat is now branded VPR — the AntStation name, logo wordmark, and labels (title bar, setup screen, empty chat state, floating pill, preferences hint, chat-list source label, and assistant system prompt) are replaced with VPR. In-app chats now identify themselves to the buyer proxy with the `x-vpr-session-id` header (conversation key `vpr:<id>`); the proxy still strips the legacy `x-antstation-session-id` header from older desktop builds before forwarding to sellers, and chats recorded under the legacy identity keep showing as VPR while their peer affinity re-establishes on the next message.
 
 ### Security
 

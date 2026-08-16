@@ -617,6 +617,7 @@ test('conversation routing keeps the actual peer as a soft preference and fails 
   let preferredReachable = true
   ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string; headers: Record<string, string> }) => {
     attempts.push(peer.peerId)
+    assert.equal(request.headers['x-vpr-session-id'], undefined)
     assert.equal(request.headers['x-antstation-session-id'], undefined)
     assert.equal(request.headers['x-antseed-prefer-peer'], undefined)
     return {
@@ -628,7 +629,7 @@ test('conversation routing keeps the actual peer as a soft preference and fails 
   }
 
   const conversationHeaders = {
-    'x-antstation-session-id': 'conversation-soft-affinity',
+    'x-vpr-session-id': 'conversation-soft-affinity',
     'x-antseed-prefer-peer': preferred.peerId,
   }
   await invokeProxy(proxy, makeProxyRequest({
@@ -640,25 +641,25 @@ test('conversation routing keeps the actual peer as a soft preference and fails 
   preferredReachable = false
   attempts.length = 0
   await invokeProxy(proxy, makeProxyRequest({
-    headers: { 'x-antstation-session-id': 'conversation-soft-affinity' },
+    headers: { 'x-vpr-session-id': 'conversation-soft-affinity' },
     body: { model: 'kimi-k3', messages: [{ role: 'user', content: 'again' }] },
   }))
   assert.deepEqual(attempts, [preferred.peerId, rankedFirst.peerId])
 
-  const stored = (proxy as any)._conversations.get('antstation:conversation-soft-affinity')
+  const stored = (proxy as any)._conversations.get('vpr:conversation-soft-affinity')
   assert.equal(stored?.pinnedModel, `${rankedFirst.peerId}@Kimi K3`)
   assert.equal(stored?.lastModel, `${rankedFirst.peerId}@Kimi K3`)
 
   attempts.length = 0
   await invokeProxy(proxy, makeProxyRequest({
-    headers: { 'x-antstation-session-id': 'conversation-soft-affinity' },
+    headers: { 'x-vpr-session-id': 'conversation-soft-affinity' },
     body: { model: 'kimi-k3', messages: [{ role: 'user', content: 'third' }] },
   }))
   assert.equal(attempts[0], rankedFirst.peerId)
 
   const route = await invokeProxy(proxy, makeProxyRequest({
     method: 'GET',
-    path: `/_antseed/conversations/${encodeURIComponent('antstation:conversation-soft-affinity')}`,
+    path: `/_antseed/conversations/${encodeURIComponent('vpr:conversation-soft-affinity')}`,
   }))
   assert.equal(route.statusCode, 200)
   assert.equal(JSON.parse(route.body).conversation.lastModel, `${rankedFirst.peerId}@Kimi K3`)
