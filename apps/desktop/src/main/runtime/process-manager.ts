@@ -387,6 +387,7 @@ export function resolveCommandArgs(opts: StartOptions): string[] {
 
 export class ProcessManager {
   private readonly processes = new Map<RuntimeMode, ChildProcessWithoutNullStreams>();
+  private readonly attachedModes = new Set<RuntimeMode>();
   private runtimeNativeAligned = false;
   private runtimeNativeAlignmentPromise: Promise<void> | null = null;
   private readonly states = new Map<RuntimeMode, RuntimeProcessState>([
@@ -404,12 +405,29 @@ export class ProcessManager {
 
   attach(mode: RuntimeMode): RuntimeProcessState {
     const state = this.states.get(mode)!;
+    this.attachedModes.add(mode);
     state.running = true;
     state.pid = null;
     state.startedAt = Date.now();
     state.lastExitCode = null;
     state.lastError = null;
     this.onLog(mode, 'system', `Attached to existing ${mode} runtime`);
+    return { ...state };
+  }
+
+  isAttached(mode: RuntimeMode): boolean {
+    return this.attachedModes.has(mode);
+  }
+
+  detach(mode: RuntimeMode, reason: string): RuntimeProcessState {
+    const state = this.states.get(mode)!;
+    if (!this.attachedModes.delete(mode)) {
+      return { ...state };
+    }
+    state.running = false;
+    state.pid = null;
+    state.lastError = reason;
+    this.onLog(mode, 'system', reason);
     return { ...state };
   }
 
@@ -431,6 +449,7 @@ export class ProcessManager {
     if (this.processes.has(mode)) {
       throw new Error(`${mode} is already running`);
     }
+    this.attachedModes.delete(mode);
 
     const cliExecution = resolveCliExecution();
     const args = resolveCommandArgs(opts);
@@ -737,6 +756,7 @@ export class ProcessManager {
   async stop(mode: RuntimeMode, preserve = false): Promise<RuntimeProcessState> {
     const child = this.processes.get(mode);
     const state = this.states.get(mode)!;
+    this.attachedModes.delete(mode);
 
     if (!child || preserve) {
       if (child) {

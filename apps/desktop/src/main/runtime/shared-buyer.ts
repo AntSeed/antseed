@@ -1,3 +1,5 @@
+import type { ProcessManager } from './process-manager.js';
+
 export async function isCompatibleSharedBuyer(port: number, timeoutMs = 1_200): Promise<boolean> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -15,4 +17,18 @@ export async function isCompatibleSharedBuyer(port: number, timeoutMs = 1_200): 
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function refreshSharedBuyerAttachment(
+  processManager: ProcessManager,
+  port: number,
+): Promise<boolean> {
+  if (!processManager.isAttached('connect')) {
+    return false;
+  }
+  if (await isCompatibleSharedBuyer(port)) {
+    return true;
+  }
+  processManager.detach('connect', `Shared buyer proxy on 127.0.0.1:${port} is no longer reachable.`);
+  return false;
 }

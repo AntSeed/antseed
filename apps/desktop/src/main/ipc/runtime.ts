@@ -7,7 +7,7 @@ import { isMultiInstanceDevelopment } from '../dev-instance.js';
 import type { LogEvent } from '../runtime/log-parser.js';
 import type { ProcessManager, RuntimeProcessState } from '../runtime/process-manager.js';
 import { resolveBuyerProxyPort } from '../runtime/active-config.js';
-import { isCompatibleSharedBuyer } from '../runtime/shared-buyer.js';
+import { isCompatibleSharedBuyer, refreshSharedBuyerAttachment } from '../runtime/shared-buyer.js';
 
 /** Shape every dashboard-style handler answers with. */
 export type ApiResult = {
@@ -106,6 +106,10 @@ export function registerRuntimeIpc(deps: RuntimeIpcDeps): void {
   } = deps;
 
   ipcMain.handle('runtime:get-state', async () => {
+    if (isMultiInstanceDevelopment() && processManager.isAttached('connect')) {
+      const port = await resolveBuyerProxyPort();
+      await refreshSharedBuyerAttachment(processManager, port);
+    }
     return {
       processes: getCombinedProcessState(),
       daemonState: processManager.getDaemonStateSnapshot(),

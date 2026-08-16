@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { resolveCommandArgs } from './process-manager.js';
+import { ProcessManager, resolveCommandArgs } from './process-manager.js';
 
 test('resolveCommandArgs launches the grouped buyer runtime command without forcing the default router', () => {
   const args = resolveCommandArgs({
@@ -60,4 +60,20 @@ test('resolveCommandArgs launches the System Proxy runtime with selected profile
     '--served-model', 'model-b',
     '--system-proxy',
   ]);
+});
+
+test('attached runtimes can be stopped locally without owning the shared process', async () => {
+  const logs: string[] = [];
+  const processManager = new ProcessManager((_mode, _stream, line) => logs.push(line));
+
+  const attached = processManager.attach('connect');
+  assert.equal(attached.running, true);
+  assert.equal(attached.pid, null);
+  assert.equal(processManager.isAttached('connect'), true);
+
+  const stopped = await processManager.stop('connect', true);
+  assert.equal(stopped.running, false);
+  assert.equal(stopped.pid, null);
+  assert.equal(processManager.isAttached('connect'), false);
+  assert.deepEqual(logs, ['Attached to existing connect runtime']);
 });

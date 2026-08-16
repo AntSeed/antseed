@@ -1,15 +1,10 @@
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { resolveInstancePorts } from './dev-instance-config.mjs';
 
 const instanceName = process.argv.slice(2).find((arg) => arg !== '--') ?? 'status';
-const numericSlot = Number(instanceName);
-const slot = Number.isInteger(numericSlot)
-  ? numericSlot
-  : [...instanceName].reduce(
-    (hash, character) => Math.imul(hash ^ character.charCodeAt(0), 16777619) >>> 0,
-    2166136261,
-  ) % 1000;
+const ports = resolveInstancePorts(instanceName);
 const instanceDir = path.join(tmpdir(), 'antseed-desktop', instanceName);
 const child = spawn('pnpm', ['run', 'dev'], {
   cwd: process.cwd(),
@@ -17,10 +12,10 @@ const child = spawn('pnpm', ['run', 'dev'], {
     ...process.env,
     ANTSEED_DESKTOP_INSTANCE: instanceName,
     ANTSEED_DESKTOP_MULTI_INSTANCE: '1',
-    ANTSEED_DESKTOP_RENDERER_PORT: String(5174 + slot),
+    ANTSEED_DESKTOP_RENDERER_PORT: String(ports.renderer),
     ANTSEED_DESKTOP_USER_DATA_DIR: path.join(instanceDir, 'electron'),
-    ANTSEED_PAYMENTS_PORT: String(3118 + slot),
-    ANTSEED_SYSTEM_PROXY_PORT: String(8378 + slot),
+    ANTSEED_PAYMENTS_PORT: String(ports.payments),
+    ANTSEED_SYSTEM_PROXY_PORT: String(ports.systemProxy),
     ANTSEED_SYSTEM_PROXY_DATA_DIR: path.join(instanceDir, 'system-proxy'),
   },
   stdio: 'inherit',
