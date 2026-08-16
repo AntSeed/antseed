@@ -255,7 +255,7 @@ const MATCHERS: Array<[BrandKey, RegExp]> = [
   ['goose', /goose/i],
   // Standalone words only — these appear inside too many other identifiers.
   ['zed', /(^|[^a-z0-9])zed([^a-z0-9]|$)/i],
-  ['pi', /(^|[^a-z0-9])pi([^a-z0-9]|$)/i],
+  ['pi', /(gooey-?pi|(^|[^a-z0-9])pi([^a-z0-9]|$))/i],
 ];
 
 /* Model lists resolve the same provider+label pairs on every render — cache

@@ -53,6 +53,7 @@ test('connected-app tool names resolve their marks', () => {
   assert.equal(resolveBrandKey('zed', 'Zed'), 'zed');
   assert.equal(resolveBrandKey('codex', 'Codex'), 'codex');
   assert.equal(resolveBrandKey('pi', 'pi'), 'pi');
+  assert.equal(resolveBrandKey('gooeypi', 'GooeyPi'), 'pi');
   // Standalone-word guards: no false hits inside other identifiers.
   assert.equal(resolveBrandKey('amazed-tool', 'thing'), 'generic');
   assert.equal(resolveBrandKey('pixel-model', 'thing'), 'generic');
