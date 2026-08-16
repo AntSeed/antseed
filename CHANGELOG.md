@@ -21,6 +21,7 @@ This project uses selective package publishing. Each release entry lists the pub
 ### Fixed
 
 - CLI identity loading now fails safely when the data directory contains an app-encrypted, unreadable, or malformed identity instead of silently generating a second wallet and overwriting or competing with the existing signer.
+- Fixed Desktop image chats dropping an explicitly selected seller when moving from a model page into chat. Image follow-ups use true edits only with sellers that advertise image input support; generation-only sellers instead generate a new image from the cumulative prompt history, and payment progress no longer replaces the image shimmer with the text loader.
 - Fixed Desktop image edits losing their selected model while crossing the multipart buyer/seller relay, which caused compatible upstreams to reject follow-up prompts with `model is required`. The image generation shimmer now also appears reliably for the first prompt, before the conversation has entered persistent image mode.
 - Local-LLM providers now consume per-service pricing from seller configuration, so differently priced local models are advertised with their configured rates instead of inheriting the provider default.
 - CLI plugin installation now reports an actionable Node.js/npm requirement when `npm` is unavailable instead of exposing the raw `spawn npm ENOENT` process error.

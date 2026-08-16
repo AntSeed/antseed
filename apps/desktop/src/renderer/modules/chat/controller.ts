@@ -4,6 +4,7 @@ import type { BadgeTone } from '../../core/state';
 import { notifyUiStateChanged, notifyUiStateChangedSync } from '../../core/store';
 import { normalizeDiscoverRow, projectRowsToChatServiceOptions } from '../catalog/discover-rows.js';
 import { resolveVprChatOption } from './projection.js';
+import { supportsImageEdits } from '../catalog/model-capabilities.js';
 import { findCatalogEntry, projectRowsToVprModelCatalog, selectDefaultVprModel } from '../catalog/model-catalog.js';
 import { sameCanonicalModel } from '../catalog/model-identity.js';
 import { chooseBestVprRoute, filterRoutableVprRoutes } from '../routing/select.js';
@@ -33,6 +34,7 @@ import {
   cloneContentBlock,
   formatCompactNumber,
   getMyrmecochoryLabel,
+  isImageRequestPhase,
   normalizeAssistantMeta,
   paymentLogToThinkingPhase,
 } from '../../ui/components/chat/chat-shared';
@@ -90,6 +92,37 @@ type ChatModuleOptions = {
     service: string | null;
   }) => void;
 };
+
+const CUMULATIVE_IMAGE_PROMPT_HEADER = 'Generate a new image using the full conversation history below as cumulative instructions.';
+const CUMULATIVE_IMAGE_PROMPT_FOOTER = 'Return only the newly generated image.';
+
+function buildCumulativeImagePrompt(priorPrompts: string[], currentPrompt: string): string {
+  const previousPrompt = priorPrompts.at(-1) ?? '';
+  if (previousPrompt.startsWith(CUMULATIVE_IMAGE_PROMPT_HEADER)
+    && previousPrompt.endsWith(CUMULATIVE_IMAGE_PROMPT_FOOTER)) {
+    const history = previousPrompt
+      .slice(CUMULATIVE_IMAGE_PROMPT_HEADER.length, -CUMULATIVE_IMAGE_PROMPT_FOOTER.length)
+      .trim();
+    const followUpNumbers = [...history.matchAll(/^Follow-up (\d+):/gm)]
+      .map((match) => Number.parseInt(match[1] ?? '0', 10));
+    const nextFollowUp = Math.max(0, ...followUpNumbers) + 1;
+    return [
+      CUMULATIVE_IMAGE_PROMPT_HEADER,
+      '',
+      history,
+      `Follow-up ${String(nextFollowUp)}: ${currentPrompt}`,
+      '',
+      CUMULATIVE_IMAGE_PROMPT_FOOTER,
+    ].join('\n');
+  }
+  return [
+    CUMULATIVE_IMAGE_PROMPT_HEADER,
+    '',
+    ...[...priorPrompts, currentPrompt].map((entry, index) => `${index === 0 ? 'Initial request' : `Follow-up ${String(index)}`}: ${entry}`),
+    '',
+    CUMULATIVE_IMAGE_PROMPT_FOOTER,
+  ].join('\n');
+}
 
 export type ChatModuleApi = {
   refreshChatServiceOptions: () => Promise<void>;
@@ -2287,7 +2320,13 @@ export function initChatModule({
    * Dispatches via streaming or non-streaming bridge, handles stuck-request
    * recovery, payment-required errors, and fallback timeouts.
    */
-  function resolveSelectedImageRoute(): { service: string; peerId?: string; autoPeerId?: string } | null {
+  function resolveSelectedImageRoute({
+    requiresImageInput = false,
+    preferredPeerId = '',
+  }: {
+    requiresImageInput?: boolean;
+    preferredPeerId?: string;
+  } = {}): { service: string; peerId?: string } | null {
     const selection = uiState.chatImageRouteSelection;
     const model = selection?.model;
     if (!model) return null;
@@ -2296,16 +2335,21 @@ export function initChatModule({
     if (routes.length === 0) return null;
     if (selection.mode === 'pinned-peer' && selection.peerId) {
       const route = routes.find((row) => row.peerId === selection.peerId);
-      return route ? { service: route.serviceId, peerId: route.peerId } : null;
+      if (!route || (requiresImageInput && !supportsImageEdits(route))) return null;
+      return { service: route.serviceId, peerId: route.peerId };
     }
-    const route = chooseBestVprRoute(routes, uiState.vprRoutingPreferences);
-    return route ? { service: model.serviceId, autoPeerId: route.peerId } : null;
+    const eligibleRoutes = requiresImageInput ? routes.filter(supportsImageEdits) : routes;
+    const preferredRoute = eligibleRoutes.find((row) => row.peerId === preferredPeerId);
+    const route = preferredRoute ?? chooseBestVprRoute(eligibleRoutes, uiState.vprRoutingPreferences);
+    if (!route) return null;
+    if (requiresImageInput) return { service: route.serviceId, peerId: route.peerId };
+    return { service: model.serviceId };
   }
 
   function generateImage(prompt: string): void {
     const content = prompt.trim();
     if (!content || !bridge?.chatGenerateImage) return;
-    const route = resolveSelectedImageRoute();
+    let route = resolveSelectedImageRoute();
     if (!route) {
       showChatError('No seller is currently available for this image model.');
       return;
@@ -2339,6 +2383,7 @@ export function initChatModule({
       let sourceImageAttachmentId = '';
       let sourceImagePeerId = '';
       let sourceImageServiceId = '';
+      let editing = false;
       for (let messageIndex = existingBeforeRequest.length - 1; messageIndex >= 0 && !sourceImageAttachmentId; messageIndex -= 1) {
         const message = existingBeforeRequest[messageIndex];
         if (message?.role !== 'assistant' || !Array.isArray(message.content)) continue;
@@ -2352,6 +2397,29 @@ export function initChatModule({
           }
         }
       }
+      if (sourceImageAttachmentId) {
+        const preferredPeerId = sourceImagePeerId && sameCanonicalModel(sourceImageServiceId, route.service)
+          ? sourceImagePeerId
+          : '';
+        const editRoute = resolveSelectedImageRoute({ requiresImageInput: true, preferredPeerId });
+        if (editRoute) {
+          route = editRoute;
+          editing = true;
+        }
+      }
+      const priorImagePrompts = existingBeforeRequest.flatMap((message, messageIndex) => {
+        const nextMessage = existingBeforeRequest[messageIndex + 1];
+        const generatedImageFollows = nextMessage?.role === 'assistant'
+          && Array.isArray(nextMessage.content)
+          && nextMessage.content.some((block) => block?.type === 'file' && block.generated === true);
+        return message.role === 'user' && generatedImageFollows && typeof message.content === 'string' && message.content.trim()
+          ? [message.content.trim()]
+          : [];
+      });
+      const requestPrompt = sourceImageAttachmentId && !editing && priorImagePrompts.length > 0
+        ? buildCumulativeImagePrompt(priorImagePrompts, content)
+        : content;
+      optimisticUserMessage.content = requestPrompt;
       const pendingMessages = [...existingBeforeRequest, optimisticUserMessage];
       setLocalConversationMessages(convId, pendingMessages);
       if (convId === uiState.chatActiveConversation) uiState.chatMessages = pendingMessages;
@@ -2361,21 +2429,16 @@ export function initChatModule({
       }
 
       setConversationSending(convId, true);
-      uiState.chatThinkingPhase = sourceImageAttachmentId ? 'Editing image' : 'Generating image';
+      uiState.chatThinkingPhase = editing ? 'Editing image' : 'Generating image';
       notifyUiStateChanged();
       queueScrollChatToBottom();
       try {
-        const editPeerId = sourceImageAttachmentId
-          ? (sourceImagePeerId && sameCanonicalModel(sourceImageServiceId, route.service)
-              ? sourceImagePeerId
-              : route.autoPeerId)
-          : '';
         const result = await bridge.chatGenerateImage!({
           conversationId: convId,
-          prompt: content,
+          prompt: requestPrompt,
           service: route.service,
-          ...((route.peerId || editPeerId) ? { peerId: route.peerId || editPeerId } : {}),
-          ...(sourceImageAttachmentId ? { sourceImageAttachmentId } : {}),
+          ...(route.peerId ? { peerId: route.peerId } : {}),
+          ...(editing ? { sourceImageAttachmentId } : {}),
         });
         if (!result.ok || !result.user || !result.assistant) {
           throw new Error(result.error || 'Image generation failed.');
@@ -3415,6 +3478,7 @@ export function initChatModule({
 
   function handleLogLineForThinkingPhase(line: string): void {
     if (!uiState.chatSending) return;
+    if (isImageRequestPhase(uiState.chatThinkingPhase)) return;
     const phase = paymentLogToThinkingPhase(line);
     if (!phase) return;
     clearThinkingPhaseExpiry();

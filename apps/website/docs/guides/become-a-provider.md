@@ -258,18 +258,31 @@ antseed config seller add-service local-llm llama3.2:3b \
 ```
 
 ```bash
-# Images (OpenAI-compatible upstream): announce image inputs and charge per delivered image
+# Image generation only: text prompt in, image out
 antseed config seller add-service openai flux.1-schnell \
   --upstream "black-forest-labs/FLUX.1-schnell" \
   --input 0 --output 0 \
   --categories image,creative \
-  --capabilities '{"inputs":["text","image"]}' \
+  --capabilities '{"inputs":["text"],"outputs":["image"]}' \
   --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.003}]}}'
+```
+
+```bash
+# Image generation + editing: advertise image input only when this configured
+# upstream service accepts image edit requests end to end
+antseed config seller add-service openai image-studio \
+  --upstream "edit-capable-upstream-model" \
+  --input 0 --output 0 \
+  --categories image,creative \
+  --capabilities '{"inputs":["text","image"],"outputs":["image"]}' \
+  --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.01}]}}'
 ```
 
 The `--upstream` flag maps the buyer-facing service name to the upstream model id. Omit it when they're the same.
 
-Capability fields are optional discovery hints. Unit billing is currently supported by the `openai` provider for `openai-images`; startup warns if a different plugin ignores the setting. Image services remain advertised but are skipped by periodic health checks to avoid generating paid probe images.
+For an `openai-images` service, `outputs: ["image"]` identifies an image result. Input modalities are an operational routing contract: `inputs: ["text"]` means generation only, while `inputs: ["text", "image"]` means the seller can accept both `/v1/images/generations` and multipart `/v1/images/edits`. Do not advertise `image` input merely because the upstream platform offers editing somewhere; the exact configured service and provider adapter must support the edit request end to end. In particular, Venice-backed services must remain generation-only until AntSeed has a native Venice edit adapter.
+
+Unit billing is currently supported by the `openai` provider for `openai-images`; startup warns if a different plugin ignores the setting. Image services remain advertised but are skipped by periodic health checks to avoid generating paid probe images.
 
 You only have to do this once per service. To see what you've configured:
 
