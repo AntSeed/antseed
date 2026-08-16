@@ -527,7 +527,7 @@ export function VprHomeView({ onSelectView }: Props) {
                       <span
                         className={styles.savingValue}
                         title={measuredSavings
-                          ? `Measured vs retail: paid $${measuredSavings.actualUsd.toFixed(2)} for usage worth $${measuredSavings.baselineUsd.toFixed(2)} at OpenRouter prices`
+                          ? `Measured vs retail: paid $${measuredSavings.actualUsd.toFixed(2)} for usage worth $${measuredSavings.baselineUsd.toFixed(2)} at retail reference prices`
                           : 'Estimated from current network price spread'}
                       >
                         {measuredSavings

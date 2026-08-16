@@ -19,11 +19,13 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 | **Buying** | |
 | `antseed buyer start` | Start the buyer proxy and connect to sellers |
 | `antseed buyer start --router <name>` | Start the buyer proxy with a non-default router |
-| `antseed buyer deposit <amount>` | Deposit USDC for payments |
+| `antseed buyer deposit` | Show your funding address + QR; incoming USDC deposits automatically (gasless) |
+| `antseed buyer sweep` | Manually sweep hot-wallet USDC into deposits (gasless) |
+| `antseed buyer activity` | Activity summary: tokens, spend history, savings, channels, claimable ANTS |
+| `antseed buyer deposit --onchain <usdc>` | Direct on-chain deposit from the hot wallet (requires ETH for gas) |
 | `antseed buyer withdraw <amount>` | Withdraw USDC from deposits |
 | `antseed buyer balance` | Check wallet and deposit balance |
 | `antseed network browse` | Browse peers, models, and pricing (same catalog as `/v1/models`) |
-| `antseed payments` | Launch the payments portal |
 | **Session** | |
 | `antseed buyer connection get` | Show current session state (pinned service, peer) |
 | `antseed buyer connection set` | Update service/peer overrides on a running proxy |
@@ -351,24 +353,23 @@ antseed seller start
 # 1. Set your identity (secp256k1 private key)
 export ANTSEED_IDENTITY_HEX=<your-private-key-hex>
 
-# 2. Launch the payments portal to deposit USDC
-antseed payments
-# Payments portal running at http://127.0.0.1:3118
-
-# 3. In the portal, connect a funded wallet (e.g. MetaMask) and deposit USDC
-#    for your node. The contract's deposit(buyer, amount) pulls USDC from the
-#    connected wallet and credits your node — the identity key never holds funds.
-
-# 4. Connect to the network
+# 2. Connect to the network
 antseed buyer start
 # Proxy listening on http://localhost:8377
+
+# 3. Fund your node: shows your address + a QR code, then deposits incoming
+#    USDC into your credits automatically (gasless — a relayer submits the
+#    transaction for a fixed ~$0.05 USDC fee)
+antseed buyer deposit
 ```
 
 Point your AI tools (Claude Code, Codex, etc.) at `http://localhost:8377` as the API base URL. The router handles peer selection and failover transparently.
 
-### Payments Portal
+### Depositing USDC
 
-The payments portal is a local web UI for depositing USDC and viewing payment activity. Run `antseed payments` to start it at `http://localhost:3118`. Connect any funded wallet (MetaMask, Coinbase Wallet, etc.) — the contract's `deposit(buyer, amount)` pulls USDC from your connected wallet and credits your node's address. Your node's identity key never needs to hold USDC or ETH.
+`antseed buyer deposit` prints your node's funding address and a QR code (an EIP-681 payment request any mobile wallet can scan). Send USDC on Base to that address from anywhere — an exchange withdrawal, another wallet, a card on-ramp. Incoming funds are swept into your deposits balance gaslessly: your node signs an EIP-3009 authorization and a permissionless relayer submits the transaction for a fixed ~$0.05 USDC fee, so the hot wallet never needs ETH. While watching, the command also serves the connected-wallet checkout page and prints its link (`http://127.0.0.1:3118?token=…`) for depositing from a browser-extension wallet instead.
+
+While `antseed buyer start` is running, this sweeping happens automatically in the background (disable with `buyer.autoSweep: false` in your config). `antseed buyer sweep` triggers the same gasless sweep manually, and `antseed buyer deposit --onchain <usdc>` remains for direct on-chain deposits from a hot wallet that holds ETH. (The `antseed payments` web portal is retired.)
 
 ### Configuration
 
@@ -388,6 +389,7 @@ Use `base-sepolia` for testing with MockUSDC.
 ### Runtime Controls
 
 - `ANTSEED_BASE_RPC_URL=<url>` — custom Base JSON-RPC endpoint for seller on-chain operations (recommended for production)
+- `ANTSEED_COMPARABLE_PRICES_URL=<url>` — retail-prices models API for the `antseed buyer activity` Saved tile (OpenRouter-compatible schema, e.g. `https://openrouter.ai/api/v1/models`). Release builds ship with a baked-in default; set the variable to override it, or set it to an empty string to disable the savings baseline. Builds from source have no default
 - `ANTSEED_BUYER_METADATA_FETCH_TIMEOUT_MS=<ms>` — runtime override for buyer peer-discovery metadata fetch timeout
 - `ANTSEED_BUYER_DISABLE_METADATA_V2_SERVICES=true` — suppress buyer per-service metadata v2 attribution while keeping aggregate usage totals
 - `ANTSEED_SETTLEMENT_IDLE_MS=600000` — idle time before settling a session (default: 10 minutes)

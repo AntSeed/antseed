@@ -13,27 +13,31 @@ AntSeed uses USDC on Base Mainnet for all payments. Buyers pre-deposit USDC, pro
 
 ### Depositing USDC
 
-The recommended way to deposit is through the payments portal:
+The recommended way to deposit is `antseed buyer deposit`:
 
 ```bash
-antseed payments
-# Opens at http://localhost:3118
+antseed buyer deposit
 ```
 
-In the portal:
-1. Connect a funded wallet (MetaMask, Coinbase Wallet, etc.)
-2. Enter the amount to deposit
-3. Approve the USDC transfer and confirm the deposit
+It prints your node's funding address and a QR code (an EIP-681 payment request any mobile wallet can scan). Send USDC on Base to that address from anywhere — another wallet, an exchange withdrawal, a card on-ramp — and the incoming funds are deposited into your credits automatically: your node signs a gasless authorization and a permissionless relayer submits the transaction for a fixed USDC fee ($0.05 on Base Mainnet). Your node's hot wallet never needs ETH.
 
-The contract's `deposit(buyer, amount)` pulls USDC from your connected wallet and credits your node's address. Your node's identity key never needs to hold USDC or ETH.
+Prefer a browser wallet? While watching, the command also serves the connected-wallet checkout page and prints its link (`http://127.0.0.1:3118?token=…`). Open it, connect MetaMask / Coinbase Wallet / Rabby, and the deposit goes straight into the Deposits contract — the command detects the credit and finishes either way.
+
+While `antseed buyer start` is running, this sweeping also happens automatically in the background whenever USDC lands in the hot wallet (disable with `buyer.autoSweep: false` in your config).
+
+| Option | Purpose |
+|---|---|
+| `--amount <usdc>` | Amount to prefill in the QR payment request and browser checkout |
+| `--no-watch` | Print the address and QR code without waiting for funds |
+| `--onchain <usdc>` | Direct on-chain deposit from the hot wallet (requires ETH for gas) |
 
 :::tip Third-Party Funding
-Anyone can deposit on behalf of a buyer — a team treasury, a hardware wallet, or another contract. The funding source is decoupled from the node identity.
+Anyone can fund a buyer — a team treasury, a hardware wallet, or another contract. The funding source is decoupled from the node identity.
 :::
 
-### Sweeping Hot-Wallet USDC
+### Sweeping Hot-Wallet USDC Manually
 
-If USDC lands in your node's hot wallet (for example after a QR-code transfer), you can move it into your deposits balance without the wallet ever holding ETH:
+`antseed buyer deposit` and the running buyer sweep incoming USDC for you; `antseed buyer sweep` triggers the same gasless sweep once, on demand:
 
 ```bash
 antseed buyer sweep
@@ -48,15 +52,16 @@ The CLI signs an EIP-3009 authorization offline and broadcasts it over the P2P n
 
 The swept amount must exceed the fixed relay fee, and a first-ever deposit must net at least 1 USDC after the fee. Your funds never move unless a relayer lands the transaction — the authorization simply expires after an hour.
 
-### Checking Balance
+### Checking Balance and Activity
 
 ```bash
-antseed buyer balance
+antseed buyer balance    # wallet + deposits balances
+antseed buyer activity   # tokens, spending history, measured savings, active channels
 ```
 
-### Withdrawing
+`antseed buyer activity` mirrors the desktop app's Activity view: lifetime tokens/spent/saved, a per-day spending chart (`--days 7|30|90`), active channels with their locked amounts and channel IDs, and ANTS emissions available to claim (`antseed buyer emissions claim`). It needs the buyer connection running (`antseed buyer start`).
 
-Withdrawals are initiated through the payments portal or CLI:
+### Withdrawing
 
 ```bash
 antseed buyer withdraw 5

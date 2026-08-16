@@ -179,6 +179,13 @@ export interface BuyerCLIConfig {
   metadataFetchTimeoutMs: number;
   /** Disable per-service attribution in buyer-signed metadata v2. */
   disableMetadataV2Services: boolean;
+  /**
+   * Automatically sweep incoming hot-wallet USDC into the deposits balance
+   * while the buyer daemon runs (gasless, via the relayer network).
+   * Default: true. `false` limits sweeping to explicit requests
+   * (`antseed deposit`, the desktop deposit view, `antseed buyer sweep`).
+   */
+  autoSweep?: boolean;
   /** Buyer-side response-auth evidence sampling settings. */
   verification?: BuyerVerificationConfig;
 }

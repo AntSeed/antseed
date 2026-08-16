@@ -285,14 +285,15 @@ registerRuntimeIpc({
 
 // ── Incoming USDC watcher + P2P relay sweep ──
 //
-// While the in-app deposit panel is open, the renderer starts this watcher.
-// It polls the hot wallet's USDC balance; any increase is treated as an
-// incoming deposit (QR transfer or Coinbase Onramp delivery). The funds are
-// then swept into AntseedDeposits gaslessly: the hot wallet signs an EIP-3009
-// authorization addressed to the AntseedDepositRelay contract and the buyer
-// daemon broadcasts a SweepRequest to connected peers; a permissionless
-// relayer submits it on-chain and earns the contract's fixed USDC fee
-// (docs/protocol/spec/09-deposit-sweep.md). The hot wallet never needs ETH.
+// The buyer daemon owns the hot-wallet watcher: it polls the USDC balance,
+// treats any increase as an incoming deposit (QR transfer or Coinbase Onramp
+// delivery), signs an EIP-3009 authorization addressed to the
+// AntseedDepositRelay contract, and offers it to connected peers; a
+// permissionless relayer submits it on-chain and earns the contract's fixed
+// USDC fee (docs/protocol/spec/09-deposit-sweep.md). The hot wallet never
+// needs ETH. While the in-app deposit panel is open, the renderer promotes
+// the daemon's watcher to a fast cadence and mirrors its progress events
+// (payments/deposit-sweep.ts).
 
 // ── AI Chat IPC Handlers ──
 const piChatEngine = registerPiChatHandlers({

@@ -43,8 +43,8 @@ curl http://localhost:8377/v1/chat/completions \
   }'
 
 # 6. Deposit USDC when you want to pay providers
-antseed payments
-# Open http://localhost:3118, connect a funded wallet, deposit USDC
+antseed buyer deposit
+# Shows your funding address + QR code; incoming USDC deposits automatically
 ```
 
 Model-only requests automatically rank compatible offers using your Price + Trust preferences, peer health, and model-specific pricing metadata. The default minimum trust score is `60`; lower-trust or unscored sellers are ineligible unless you lower `buyer.routingPreferences.minTrustScore` (set it to `0` to disable the gate). To force one seller, encode the peer in the model field: `"model": "<peerId>@deepseek-v4-flash"`. See [Automatic routing and explicit pins](#automatic-routing-and-explicit-pins) below.
@@ -267,7 +267,7 @@ Streaming responses carry only the request id and peer identity headers (token c
 |---|---|---|---|
 | 400 | `missing_routing_target` | Request has neither a model nor an explicit peer pin | Set `model`, or pin a peer |
 | 502 | `model_not_found` | No policy-allowed peer currently advertises the requested model or alias | Check `curl localhost:8377/v1/models`; adjust policy or choose another model |
-| 402 | `insufficient_deposits` | No (or too little) USDC deposited | `antseed payments`, deposit; response includes `suggestedAmount` |
+| 402 | `insufficient_deposits` | No (or too little) USDC deposited | `antseed buyer deposit`; response includes `suggestedAmount` |
 | 402 | `channel_exhausted` | Per-channel budget spent | Deposit more or re-open the channel |
 | 413 | `upload_body_too_large` | Request exceeds the seller's upload limit | Response includes the seller's `maxUploadBodyBytes`; trim context or pick another peer |
 | 502 | `Pinned peer … is not reachable` | Peer offline or not announcing | `antseed network browse` for alternatives |

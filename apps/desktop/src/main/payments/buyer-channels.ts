@@ -174,6 +174,32 @@ export function formatAnts(value: bigint): string {
 // Bound concurrent on-chain reads without skipping older active-looking rows.
 const CHANNEL_ENRICH_CONCURRENCY = 12;
 
+// Channels with a delegated seller live behind the seller's facade contract
+// (the row's `seller` is the contract, e.g. DiemStakingProxy) and have no
+// record on the canonical AntseedChannels. ChannelsClient probes
+// `channelsAddress()` on the facade to find the underlying deployment, so a
+// per-seller client resolves those rows. EOA sellers cache as non-facades and
+// simply keep returning status 0.
+const sellerFacadeClients = new Map<string, ChannelsClient>();
+
+function facadeClientFor(
+  cc: NonNullable<Awaited<ReturnType<typeof loadCachedCryptoConfig>>>,
+  seller: string,
+): ChannelsClient {
+  const key = seller.toLowerCase();
+  let client = sellerFacadeClients.get(key);
+  if (!client) {
+    client = new ChannelsClient({
+      rpcUrl: cc.rpcUrl,
+      ...(cc.fallbackRpcUrls ? { fallbackRpcUrls: cc.fallbackRpcUrls } : {}),
+      contractAddress: seller,
+      evmChainId: cc.chainId,
+    });
+    sellerFacadeClients.set(key, client);
+  }
+  return client;
+}
+
 // The local ChannelStore can lag the chain (a seller-side settle/close is not
 // always observed), so rows that look active are re-checked on-chain before
 // the activity view offers a Close action on a dead channel.
@@ -190,13 +216,20 @@ async function enrichChannelStatuses(channels: DesktopPaymentChannelSummary[]): 
     });
     setCachedChannelsClient(client);
   }
+  // Every row the activity view treats as current is re-checked, including
+  // 'closing'/'withdrawable' — a channel withdrawn or settled since the last
+  // look would otherwise keep its stale row (and locked amount) forever.
   const candidates = channels
-    .filter((row) => row.status === 'active' || row.status === 'open');
+    .filter((row) => row.status === 'active' || row.status === 'open'
+      || row.status === 'closing' || row.status === 'withdrawable');
   for (const row of candidates) {
     applyChannelOnChainSnapshot(row);
   }
   await runInBatches(candidates, CHANNEL_ENRICH_CONCURRENCY, async (row) => {
-    const info = await client.getSession(row.channelId);
+    let info = await client.getSession(row.channelId);
+    if (info.status === 0 && /^0x[0-9a-fA-F]{40}$/.test(row.seller)) {
+      info = await facadeClientFor(cc, row.seller).getSession(row.channelId).catch(() => info);
+    }
     applyChannelOnChainSnapshot(row, {
       status: info.status,
       deposit: info.deposit.toString(),

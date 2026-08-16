@@ -3,13 +3,14 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowUpRight01Icon } from '@hugeicons/core-free-icons';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
-import { formatCredits, shortAddress } from '../../../core/format';
+import { shortAddress } from '../../../core/format';
 import { computeMeasuredSavings, formatSavedUsd } from '../../../modules/catalog/measured-savings';
 import { ensureOpenRouterPrices, getCachedOpenRouterPrices } from '../../../modules/catalog/openrouter-baseline';
 import { formatCompactTokens, VprCard, VprPage, VprStatRow, VprStatTile } from '../vpr/VprKit';
 import { VprSpendingChart } from './VprSpendingChart';
 import {
   channelCloseAction,
+  channelRecoverableBaseUnits,
   compareChannelsByLockedAmount,
   formatChannelLockedAmount,
   isFundedCurrentChannel,
@@ -104,6 +105,13 @@ export function VprActivityView({ onSelectView }: Props) {
     [allRows],
   );
   const totalSpent = sumBaseUnits(allRows.map((row) => row.cumulativeSigned));
+  // Header total = what the displayed rows can actually recover, so it always
+  // matches their sum. The Deposits contract's raw `reserved` overstates this:
+  // it still counts spend that is signed but not yet settled by the seller.
+  const totalRowsLocked = useMemo(
+    () => rows.reduce((acc, row) => acc + channelRecoverableBaseUnits(row), 0n),
+    [rows],
+  );
   const measuredSavings = useMemo(
     () => computeMeasuredSavings(snap.usage?.services, referencePrices),
     [snap.usage?.services, referencePrices],
@@ -153,7 +161,7 @@ export function VprActivityView({ onSelectView }: Props) {
             label="Saved"
             value={(
               <span title={measuredSavings
-                ? `Measured against OpenRouter retail prices across ${measuredSavings.matchedServices} matched services`
+                ? `Measured against retail reference prices across ${measuredSavings.matchedServices} matched services`
                 : undefined}
               >
                 {totalSavings}
@@ -167,7 +175,7 @@ export function VprActivityView({ onSelectView }: Props) {
         <div className={styles.sectionIntro}>
           <div className={styles.sectionHeader}>
             <h2 className={styles.sectionTitle}>Active channels</h2>
-            <span className={styles.sectionValue}>${formatCredits(snap.reserved)} locked</span>
+            <span className={styles.sectionValue}>${baseUnitsToUsd(totalRowsLocked.toString())} locked</span>
           </div>
         </div>
 

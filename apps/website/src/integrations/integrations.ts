@@ -309,12 +309,12 @@ wire_api = "responses"`,
       },
       {
         label: 'Verify inference is actually paid through AntSeed',
-        command: 'open http://localhost:3118   # or: antseed buyer status',
+        command: 'antseed buyer balance   # or: antseed buyer status',
         outputLabel: 'What to look for after one real prompt',
         output: `Deposits available: 4.289391 USDC → 3.289391 USDC
 Deposits reserved:           0 USDC → 1 USDC`,
         note:
-          'The buyer dashboard at http://localhost:3118 is the authoritative real-time signal: a non-zero `Reserved` (channel opened) and/or a drop in `Available` (settled spend) after a real prompt confirms AntSeed served the request. The `antseed buyer status` CLI output is cached and may lag the dashboard - refresh the web view for confirmation. Do not rely on `lsof -i | grep codex` or `~/.codex/log/codex-tui.log`: Codex keeps persistent TCP connections to Cloudflare/ChatGPT IPs (e.g. 172.64.0.0/13) for non-inference purposes (the cause was not isolated during testing), and the `provider=OpenAI` lines in the TUI log are not a reliable indicator that inference went to OpenAI - the on-chain numbers can show AntSeed served the request despite that log line.',
+          'The on-chain deposit numbers are the authoritative signal: a non-zero `Reserved` (channel opened) and/or a drop in `Available` (settled spend) after a real prompt confirms AntSeed served the request. Re-run `antseed buyer balance` for a fresh read. Do not rely on `lsof -i | grep codex` or `~/.codex/log/codex-tui.log`: Codex keeps persistent TCP connections to Cloudflare/ChatGPT IPs (e.g. 172.64.0.0/13) for non-inference purposes (the cause was not isolated during testing), and the `provider=OpenAI` lines in the TUI log are not a reliable indicator that inference went to OpenAI - the on-chain numbers can show AntSeed served the request despite that log line.',
       },
     ],
     troubleshooting: [
@@ -324,7 +324,7 @@ Deposits reserved:           0 USDC → 1 USDC`,
       },
       {
         problem: 'How can I tell if Codex is actually routing through AntSeed?',
-        fix: 'Check the buyer dashboard at http://localhost:3118 (or `antseed buyer status`) after sending a test prompt. `Reserved` going from $0 to a non-zero value (a channel was opened) and/or `Available` dropping (spend settled) confirms AntSeed served the request. If both stay flat after a real prompt, the profile is not being applied. Do not trust `lsof` connections to Cloudflare IPs or `provider=OpenAI` lines in `~/.codex/log/codex-tui.log` - neither is a reliable routing signal.',
+        fix: 'Check `antseed buyer balance` (or `antseed buyer status`) after sending a test prompt. `Reserved` going from $0 to a non-zero value (a channel was opened) and/or `Available` dropping (spend settled) confirms AntSeed served the request. If both stay flat after a real prompt, the profile is not being applied. Do not trust `lsof` connections to Cloudflare IPs or `provider=OpenAI` lines in `~/.codex/log/codex-tui.log` - neither is a reliable routing signal.',
       },
       {
         problem: 'Codex prints `Ignored unsupported project-local config keys … model_provider, model_providers`',
@@ -815,7 +815,7 @@ auxiliary:
     links: [
       { label: 'Hermes Agent (Nous Research)', href: 'https://github.com/NousResearch/hermes-agent' },
       {
-        label: 'AntSeed skill: hermes-antseed (full walkthrough including systemd, remote hosts, payment portal)',
+        label: 'AntSeed skill: hermes-antseed (full walkthrough including systemd, remote hosts, funding)',
         href: 'https://github.com/AntSeed/antseed/tree/main/skills/hermes-antseed',
       },
     ],
@@ -962,7 +962,7 @@ ANTSEED_API_KEY=antseed`,
     ],
     caveats: [
       'AntSeed is a local daemon, not a hosted endpoint. Every Studio operator must run the VPR or `antseed buyer start` on their own machine and fund their wallet - there is no central account.',
-      'Free services exist on the AntSeed network (`in: 0, out: 0`), but using paid ones requires a USDC deposit on Base. The VPR guides users through this on first launch; the CLI exposes it as `antseed payments`.',
+      'Free services exist on the AntSeed network (`in: 0, out: 0`), but using paid ones requires a USDC deposit on Base. The VPR guides users through this on first launch; the CLI exposes it as `antseed buyer deposit`.',
     ],
     links: [
       { label: 'GenLayer Studio repo', href: 'https://github.com/genlayerlabs/genlayer-studio' },
