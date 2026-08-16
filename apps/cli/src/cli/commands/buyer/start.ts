@@ -379,6 +379,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         dataDir: globalOpts.dataDir,
         configPath: globalOpts.config,
         metadataFetchTimeoutMs: effectiveBuyerConfig.metadataFetchTimeoutMs,
+        maxStreamDurationMs: effectiveBuyerConfig.maxStreamDurationMs,
         payments: paymentsConfig,
         verification: effectiveBuyerConfig.verification,
       })

@@ -177,6 +177,11 @@ export interface BuyerCLIConfig {
   peerRefreshIntervalMs: number;
   /** Timeout in ms for each HTTP metadata fetch during peer discovery */
   metadataFetchTimeoutMs: number;
+  /**
+   * Maximum wall time in ms a single streaming response may run before the
+   * buyer cancels it mid-stream. Default: 30 minutes.
+   */
+  maxStreamDurationMs?: number;
   /** Disable per-service attribution in buyer-signed metadata v2. */
   disableMetadataV2Services: boolean;
   /**

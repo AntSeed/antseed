@@ -24,6 +24,7 @@ const VERIFICATION_NAMESPACES = new Set(['domains', 'github']);
 const MIN_SELLER_UPLOAD_BODY_BYTES = 1024 * 1024;
 const MIN_BUYER_PEER_REFRESH_INTERVAL_MS = 1_000;
 export const MIN_BUYER_METADATA_FETCH_TIMEOUT_MS = 100;
+export const MIN_BUYER_MAX_STREAM_DURATION_MS = 1_000;
 const PEER_ID_PATTERN = /^(?:0x)?[0-9a-f]{40}$/i;
 
 function validatePricingLeaf(
@@ -337,6 +338,13 @@ export function validateConfig(config: AntseedConfig): string[] {
 
   if (!Number.isInteger(config.buyer.metadataFetchTimeoutMs) || config.buyer.metadataFetchTimeoutMs < MIN_BUYER_METADATA_FETCH_TIMEOUT_MS) {
     errors.push('buyer.metadataFetchTimeoutMs must be an integer >= 100');
+  }
+
+  if (
+    config.buyer.maxStreamDurationMs !== undefined
+    && (!Number.isInteger(config.buyer.maxStreamDurationMs) || config.buyer.maxStreamDurationMs < MIN_BUYER_MAX_STREAM_DURATION_MS)
+  ) {
+    errors.push('buyer.maxStreamDurationMs must be an integer >= 1000');
   }
 
   if (typeof config.buyer.disableMetadataV2Services !== 'boolean') {

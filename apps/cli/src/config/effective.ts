@@ -1,5 +1,5 @@
 import type { BuyerCLIConfig, AntseedConfig, SellerCLIConfig } from './types.js';
-import { MIN_BUYER_METADATA_FETCH_TIMEOUT_MS } from './validation.js';
+import { MIN_BUYER_MAX_STREAM_DURATION_MS, MIN_BUYER_METADATA_FETCH_TIMEOUT_MS } from './validation.js';
 
 export interface SellerRuntimeOverrides {
   reserveFloor?: number;
@@ -42,6 +42,11 @@ function parseEnvBoolean(env: NodeJS.ProcessEnv, key: string): boolean | undefin
 function assertValidMetadataFetchTimeoutMs(value: number, sourceLabel: string): void {
   if (Number.isInteger(value) && value >= MIN_BUYER_METADATA_FETCH_TIMEOUT_MS) return;
   throw new Error(`${sourceLabel} must be an integer >= ${MIN_BUYER_METADATA_FETCH_TIMEOUT_MS}`);
+}
+
+function assertValidMaxStreamDurationMs(value: number, sourceLabel: string): void {
+  if (Number.isInteger(value) && value >= MIN_BUYER_MAX_STREAM_DURATION_MS) return;
+  throw new Error(`${sourceLabel} must be an integer >= ${MIN_BUYER_MAX_STREAM_DURATION_MS}`);
 }
 
 /**
@@ -110,6 +115,11 @@ export function resolveEffectiveBuyerConfig(input: ResolveEffectiveConfigInput):
   if (env[envMetadataFetchTimeoutKey] !== undefined && envMetadataFetchTimeoutMs === undefined) {
     throw new Error(`${envMetadataFetchTimeoutKey} must be a finite number`);
   }
+  const envMaxStreamDurationKey = 'ANTSEED_BUYER_MAX_STREAM_DURATION_MS';
+  const envMaxStreamDurationMs = parseEnvNumber(env, envMaxStreamDurationKey);
+  if (env[envMaxStreamDurationKey] !== undefined && envMaxStreamDurationMs === undefined) {
+    throw new Error(`${envMaxStreamDurationKey} must be a finite number`);
+  }
   const envDisableMetadataV2Services = parseEnvBoolean(env, 'ANTSEED_BUYER_DISABLE_METADATA_V2_SERVICES');
 
   if (envMinReputation !== undefined) {
@@ -123,6 +133,9 @@ export function resolveEffectiveBuyerConfig(input: ResolveEffectiveConfigInput):
   }
   if (envMetadataFetchTimeoutMs !== undefined) {
     buyer.metadataFetchTimeoutMs = envMetadataFetchTimeoutMs;
+  }
+  if (envMaxStreamDurationMs !== undefined) {
+    buyer.maxStreamDurationMs = envMaxStreamDurationMs;
   }
   if (envDisableMetadataV2Services !== undefined) {
     buyer.disableMetadataV2Services = envDisableMetadataV2Services;
@@ -149,6 +162,9 @@ export function resolveEffectiveBuyerConfig(input: ResolveEffectiveConfigInput):
   }
 
   assertValidMetadataFetchTimeoutMs(buyer.metadataFetchTimeoutMs, 'buyer.metadataFetchTimeoutMs');
+  if (buyer.maxStreamDurationMs !== undefined) {
+    assertValidMaxStreamDurationMs(buyer.maxStreamDurationMs, 'buyer.maxStreamDurationMs');
+  }
 
   return buyer;
 }
