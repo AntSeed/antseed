@@ -18,6 +18,7 @@ const COLUMNS: {title: string; links: {label: string; to?: string; href?: string
     links: [
       {label: '$ANTS Token', to: '/ants-token'},
       {label: 'vs OpenRouter', to: '/vs/openrouter'},
+      {label: 'LLM cost calculator', to: '/llm-api-cost-calculator'},
       {label: 'AntSeedStats ↗', href: 'https://antseedstats.com'},
     ],
   },

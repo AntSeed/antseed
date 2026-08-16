@@ -1,0 +1,554 @@
+.calculatorSection {
+  padding-top: 24px;
+}
+
+.calculatorShell {
+  display: grid;
+  grid-template-columns: minmax(0, 0.86fr) minmax(0, 1.14fr);
+  overflow: hidden;
+  background: var(--as-card);
+  border: 1px solid var(--as-line);
+  border-radius: 28px;
+  box-shadow: 0 28px 80px rgba(0, 30, 18, 0.1);
+}
+
+.controlsPane,
+.resultsPane {
+  min-width: 0;
+  padding: 36px;
+}
+
+.controlsPane {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(16, 185, 129, 0.1), transparent 36%),
+    var(--as-card);
+}
+
+.resultsPane {
+  display: flex;
+  min-height: 590px;
+  flex-direction: column;
+  justify-content: center;
+  background:
+    linear-gradient(rgba(198, 240, 226, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(198, 240, 226, 0.045) 1px, transparent 1px),
+    var(--as-soil-1);
+  background-size: 32px 32px;
+  color: var(--as-heading);
+}
+
+.liveHeader,
+.liveHeader > div,
+.sourceNote,
+.resultHeading,
+.verdict strong,
+.retryButton {
+  display: flex;
+  align-items: center;
+}
+
+.liveHeader {
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 52px;
+}
+
+.liveHeader > div {
+  gap: 9px;
+}
+
+.liveDot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--as-clay);
+  box-shadow: 0 0 0 5px var(--as-clay-dim);
+}
+
+.liveDotReady {
+  background: var(--as-green);
+  box-shadow: 0 0 0 5px var(--as-green-dim);
+}
+
+.liveLabel,
+.refreshButton,
+.fieldLabel,
+.sourceNote,
+.resultKicker,
+.priceCardLabel,
+.priceCardPeriod,
+.sellerPill,
+.verdictEyebrow,
+.feeNote,
+.stepCard > span,
+.errorEyebrow {
+  font-family: var(--as-font-data);
+}
+
+.liveLabel {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--as-text-2);
+}
+
+.refreshButton,
+.retryButton {
+  border: 0;
+  cursor: pointer;
+}
+
+.refreshButton {
+  padding: 6px 0;
+  background: transparent;
+  color: var(--as-green-deep);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.refreshButton:hover:not(:disabled) {
+  color: var(--as-green);
+}
+
+.refreshButton:disabled {
+  cursor: wait;
+  opacity: 0.45;
+}
+
+.controlsTitleBlock {
+  margin-bottom: 32px;
+}
+
+.controlsTitleBlock h2,
+.resultHeading h2,
+.loadingState h2,
+.errorState h2,
+.stepCard h3 {
+  margin: 0;
+  font-family: var(--as-font-display);
+  color: var(--as-heading);
+}
+
+.controlsTitleBlock h2 {
+  font-size: clamp(30px, 3vw, 42px);
+  line-height: 1.05;
+  letter-spacing: -0.035em;
+}
+
+.controlsTitleBlock p {
+  max-width: 460px;
+  margin: 12px 0 0;
+  color: var(--as-text-2);
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.field {
+  display: block;
+  margin-top: 20px;
+}
+
+.fieldLabel {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--as-text-3);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.field select,
+.numberControl {
+  width: 100%;
+  height: 54px;
+  border: 1px solid var(--as-line-strong);
+  border-radius: 14px;
+  background: var(--as-page-bg);
+  color: var(--as-text);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.field select {
+  padding: 0 42px 0 16px;
+  font: 600 14px/1 var(--as-font-ui);
+}
+
+.field select:focus,
+.numberControl:focus-within {
+  border-color: var(--as-green);
+  box-shadow: 0 0 0 4px var(--as-green-dim);
+  outline: none;
+}
+
+.field select:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.tokenGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.numberControl {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+
+.numberControl input {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  padding: 0 8px 0 16px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--as-text);
+  font: 650 16px/1 var(--as-font-data);
+}
+
+.numberControl span {
+  padding-right: 14px;
+  color: var(--as-text-3);
+  font-size: 12px;
+}
+
+.sourceNote {
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 28px;
+  color: var(--as-text-3);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.sourceNote a {
+  color: var(--as-green-deep);
+  text-decoration: none;
+}
+
+.sourceNote a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.resultHeading {
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+
+.resultKicker {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--as-live-text);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.resultHeading h2 {
+  color: var(--as-heading);
+  font-size: clamp(26px, 3vw, 38px);
+  line-height: 1.08;
+  letter-spacing: -0.035em;
+}
+
+.sellerPill {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  border: 1px solid var(--as-line);
+  border-radius: 999px;
+  color: var(--as-text-2);
+  font-size: 11px;
+}
+
+.priceCards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.priceCard {
+  padding: 22px;
+  border: 1px solid var(--as-line);
+  border-radius: 20px;
+  background: var(--as-surface-tint);
+}
+
+.antseedCard {
+  border-color: rgba(16, 185, 129, 0.32);
+  background: linear-gradient(145deg, rgba(16, 185, 129, 0.16), rgba(16, 185, 129, 0.035));
+}
+
+.priceCardLabel,
+.priceCardPeriod {
+  display: block;
+}
+
+.priceCardLabel {
+  color: var(--as-text-2);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.priceCard > strong {
+  display: block;
+  margin-top: 18px;
+  color: var(--as-heading);
+  font: 600 clamp(34px, 4vw, 54px)/0.95 var(--as-font-display);
+  letter-spacing: -0.05em;
+}
+
+.antseedCard > strong {
+  color: var(--as-live-bright);
+}
+
+.priceCardPeriod {
+  margin-top: 8px;
+  color: var(--as-text-3);
+  font-size: 10px;
+}
+
+.priceCard dl {
+  margin: 22px 0 0;
+}
+
+.priceCard dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 9px;
+  border-top: 1px solid var(--as-line);
+  color: var(--as-text-3);
+  font: 11px/18px var(--as-font-data);
+}
+
+.priceCard dt,
+.priceCard dd {
+  margin: 0;
+}
+
+.priceCard dd {
+  color: var(--as-text-2);
+}
+
+.verdict {
+  margin-top: 12px;
+  padding: 22px;
+  border: 1px solid var(--as-line);
+  border-radius: 20px;
+}
+
+.verdictSaving {
+  border-color: rgba(16, 185, 129, 0.28);
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.verdictDirect {
+  border-color: rgba(215, 150, 39, 0.28);
+  background: rgba(215, 150, 39, 0.08);
+}
+
+.verdictEyebrow {
+  color: var(--as-text-2);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.verdict strong {
+  gap: 12px;
+  margin-top: 5px;
+  color: var(--as-heading);
+  font: 600 30px/1 var(--as-font-display);
+}
+
+.verdict strong small {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: var(--as-line);
+  color: var(--as-text-2);
+  font: 650 11px/1 var(--as-font-data);
+  letter-spacing: 0.03em;
+}
+
+.verdict p,
+.feeNote {
+  color: var(--as-text-2);
+}
+
+.verdict p {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.feeNote {
+  margin: 14px 4px 0;
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.loadingState,
+.errorState {
+  max-width: 430px;
+  margin: auto;
+  text-align: center;
+}
+
+.loadingMark {
+  display: block;
+  width: 44px;
+  height: 44px;
+  margin: 0 auto 24px;
+  border: 1px solid var(--as-line-on-void);
+  border-top-color: var(--as-green);
+  border-radius: 50%;
+  animation: spin 900ms linear infinite;
+}
+
+.loadingState h2,
+.errorState h2 {
+  color: var(--as-heading);
+  font-size: 32px;
+  line-height: 1.08;
+  letter-spacing: -0.035em;
+}
+
+.loadingState p,
+.errorState p {
+  margin: 12px 0 0;
+  color: var(--as-text-2);
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.errorEyebrow {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--as-clay);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.retryButton {
+  gap: 8px;
+  justify-content: center;
+  margin: 22px auto 0;
+  padding: 11px 16px;
+  border-radius: 999px;
+  background: var(--as-green);
+  color: var(--as-soil-1);
+  font: 650 13px/1 var(--as-font-ui);
+}
+
+.stepsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-top: 40px;
+}
+
+.stepCard {
+  min-height: 230px;
+  padding: 26px;
+  border: 1px solid var(--as-line);
+  border-radius: 22px;
+  background: var(--as-card);
+}
+
+.stepCard > span {
+  color: var(--as-green-deep);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.stepCard h3 {
+  margin-top: 46px;
+  font-size: 24px;
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+}
+
+.stepCard p {
+  margin: 12px 0 0;
+  color: var(--as-text-2);
+  font-size: 14px;
+  line-height: 22px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 996px) {
+  .calculatorShell {
+    grid-template-columns: 1fr;
+  }
+
+  .resultsPane {
+    min-height: 560px;
+  }
+
+  .stepsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .stepCard {
+    min-height: 0;
+  }
+
+  .stepCard h3 {
+    margin-top: 30px;
+  }
+}
+
+@media (max-width: 640px) {
+  .calculatorSection {
+    padding-top: 8px;
+  }
+
+  .calculatorShell {
+    border-radius: 20px;
+  }
+
+  .controlsPane,
+  .resultsPane {
+    padding: 24px 18px;
+  }
+
+  .liveHeader {
+    margin-bottom: 38px;
+  }
+
+  .tokenGrid,
+  .priceCards {
+    grid-template-columns: 1fr;
+  }
+
+  .resultsPane {
+    min-height: 720px;
+  }
+
+  .resultHeading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loadingMark {
+    animation: none;
+  }
+}
