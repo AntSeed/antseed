@@ -14,6 +14,7 @@ import { IERC8004Registry } from "../interfaces/IERC8004Registry.sol";
 
 contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGuard {
     uint256 public constant BPS_DENOMINATOR = 10_000;
+    uint256 public constant MAX_EVIDENCE_URI_BYTES = 200;
     IAntseedRegistry public immutable override registry;
     IAntseedEmissionsGate public immutable override emissionsGate;
     uint256 public immutable override firstRewardedEpoch;
@@ -42,7 +43,8 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
         uint256 indexed epoch,
         uint64 totalAuditCostUsdMicros,
         uint64 awardedCreditUsdMicros,
-        uint32 resultCount
+        uint32 resultCount,
+        string evidenceUri
     );
     event VerificationResultSubmitted(
         bytes32 indexed evidenceHash,
@@ -62,6 +64,7 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
     error InvalidModelShare();
     error EpochChanged();
     error VerificationAlreadySubmitted();
+    error InvalidEvidenceUri();
     error UnknownAgent();
     error SelfAudit();
     error PreEffectiveEpoch();
@@ -100,9 +103,11 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
         uint256 expectedEpoch,
         uint64 totalAuditCostUsdMicros,
         bytes32 evidenceHash,
+        string calldata evidenceUri,
         VerificationResult[] calldata results
     ) external override onlyApprovedVerifier nonReentrant {
         if (evidenceHash == bytes32(0)) revert InvalidValue();
+        _validateEvidenceUri(evidenceUri);
         if (_submittedVerifications[evidenceHash]) revert VerificationAlreadySubmitted();
         uint256 epoch = currentEpoch();
         if (epoch != expectedEpoch) revert EpochChanged();
@@ -131,7 +136,13 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
         }
 
         emit VerificationBundleSubmitted(
-            evidenceHash, msg.sender, epoch, totalAuditCostUsdMicros, awardedCreditUsdMicros, uint32(results.length)
+            evidenceHash,
+            msg.sender,
+            epoch,
+            totalAuditCostUsdMicros,
+            awardedCreditUsdMicros,
+            uint32(results.length),
+            evidenceUri
         );
         for (uint256 i = 0; i < results.length; i++) {
             VerificationResult calldata result = results[i];
@@ -140,6 +151,16 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
                 evidenceHash, result.agentId, result.serviceHash, result.verdict, result.modelShareBps
             );
         }
+    }
+
+    function _validateEvidenceUri(string calldata evidenceUri) private pure {
+        bytes memory uri = bytes(evidenceUri);
+        if (uri.length == 0) return;
+        if (
+            uri.length <= 7 || uri.length > MAX_EVIDENCE_URI_BYTES || uri[0] != bytes1("i") || uri[1] != bytes1("p")
+                || uri[2] != bytes1("f") || uri[3] != bytes1("s") || uri[4] != bytes1(":") || uri[5] != bytes1("/")
+                || uri[6] != bytes1("/")
+        ) revert InvalidEvidenceUri();
     }
 
     function isVerificationSubmitted(bytes32 evidenceHash) external view override returns (bool) {

@@ -26,6 +26,7 @@ import { id } from 'ethers'
 import {
   modelAuditSellersDirectory,
   modelReferencesDirectory,
+  writeEpochAuditSummary,
   writeModelAuditSummary,
   writeVerifierRunManifest,
   type ModelAuditSummaryV1,
@@ -61,6 +62,11 @@ const cliEntry = join(repoRoot, 'apps', 'cli', 'dist', 'cli', 'index.js')
 interface CommandResult {
   status: number
   output: string
+}
+
+interface RunCliOptions {
+  env?: NodeJS.ProcessEnv
+  importPath?: string
 }
 
 interface WrittenAudit {
@@ -189,6 +195,25 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
         { agentId: '4', peerId: '44'.repeat(20), verdict: 'SAME', telemetryUsd: 0.1 },
       ],
     })
+    const summaryModels = [modelA, modelB, modelC].map((fixture) => ({
+      model: fixture.model,
+      summaryPath: fixture.summaryPath,
+      resultCount: fixture.resultCount,
+      failureCount: 0,
+      skippedCount: 0,
+      cost: emptyAuditCostSummary(),
+    }))
+    const summaryPath = await writeEpochAuditSummary(evidenceDir, epochWindow.epoch.toString(), {
+      version: 1,
+      kind: 'antseed-verifier-epoch-summary',
+      runId,
+      epoch: epochWindow.epoch.toString(),
+      ...timestamps,
+      reportPaths: [],
+      models: summaryModels,
+      failureCount: 0,
+      cost: emptyAuditCostSummary(),
+    })
     const manifest: VerifierRunManifestV1 = {
       version: 1,
       kind: 'antseed-verifier-run-manifest',
@@ -197,33 +222,49 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
       epoch: epochWindow.epoch.toString(),
       epochSource: 'onchain',
       ...timestamps,
-      summaryPath: join(evidenceDir, 'epochs', epochWindow.epoch.toString(), 'summary.json'),
+      summaryPath,
       modelOrder: [...MODELS],
-      models: [modelA, modelB, modelC].map((fixture) => ({
-        model: fixture.model,
-        summaryPath: fixture.summaryPath,
-        resultCount: fixture.resultCount,
-        failureCount: 0,
-        skippedCount: 0,
-        cost: emptyAuditCostSummary(),
-      })),
+      models: summaryModels,
       failureCount: 0,
     }
     await writeVerifierRunManifest(evidenceDir, manifest)
+    const pinataLogPath = join(directory, 'pinata-uploads.jsonl')
+    const pinataPreloadPath = join(directory, 'mock-pinata.mjs')
+    await writeMockPinataPreload(pinataPreloadPath, pinataLogPath, banksDir)
+    const pinataOptions: RunCliOptions = {
+      importPath: pinataPreloadPath,
+      env: { PINATA_JWT: 'test-pinata-jwt' },
+    }
 
-    const dryRun = runCli(dataDir, configPath, rpcUrl, runId, ['--dry-run'])
+    const dryRun = runCli(
+      dataDir,
+      configPath,
+      rpcUrl,
+      runId,
+      ['--dry-run', '--publish-ipfs'],
+      { env: { PINATA_JWT: '' } },
+    )
     assert.equal(dryRun.status, 0, dryRun.output)
     assert.match(dryRun.output, /Dry run complete/)
     assert.equal((await createVerifierClient(rpcUrl, verificationAddress).queryAttestations(1n)).length, 0)
 
     const originalModelBEvidence = await readFile(modelB.audits[0]!.path, 'utf8')
     await writeFile(modelB.audits[0]!.path, `${originalModelBEvidence} `)
-    const partialSubmit = runCli(dataDir, configPath, rpcUrl, runId, ['--yes'])
+    const partialSubmit = runCli(dataDir, configPath, rpcUrl, runId, ['--yes', '--publish-ipfs'], pinataOptions)
     assert.equal(partialSubmit.status, 1, partialSubmit.output)
     assert.match(partialSubmit.output, /model-b: preflight failed: no valid seller results remain/)
     assert.match(partialSubmit.output, /Submitted: 2; skipped: 0; failed: 1/)
+    assert.match(partialSubmit.output, /IPFS \(model-a\): ipfs:\/\//)
+    assert.match(partialSubmit.output, /IPFS \(model-c\): ipfs:\/\//)
     const partialBundles = await createVerifierClient(rpcUrl, verificationAddress).queryBundles()
     assert.equal(partialBundles.length, 2)
+    assert.ok(partialBundles.every((bundle) => bundle.evidenceUri.startsWith('ipfs://')))
+    const partialUploads = await readJsonLines<MockPinataUpload>(pinataLogPath)
+    assert.deepEqual(partialUploads.map((upload) => upload.model).sort(), ['model-a', 'model-c'])
+    assert.ok(partialUploads.every((upload) => upload.authorizationPresent))
+    assert.ok(partialUploads.every((upload) => upload.referenceStatuses.every((status) => status === 'unclaimed')))
+    assert.ok(partialUploads.every((upload) => upload.files.some((path) => path.endsWith('/publication.json'))))
+    assert.ok(partialUploads.every((upload) => upload.files.some((path) => path.includes('/bundles/'))))
     assert.equal((await createVerifierClient(rpcUrl, verificationAddress).queryAttestations(1n)).length, 1)
     assert.equal((await createVerifierClient(rpcUrl, verificationAddress).queryAttestations(2n)).length, 1)
     assert.equal((await createVerifierClient(rpcUrl, verificationAddress).queryAttestations(4n)).length, 1)
@@ -234,7 +275,7 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
     )
 
     await writeFile(modelB.audits[0]!.path, originalModelBEvidence)
-    const retry = runCli(dataDir, configPath, rpcUrl, runId, ['--yes'])
+    const retry = runCli(dataDir, configPath, rpcUrl, runId, ['--yes', '--publish-ipfs'], pinataOptions)
     assert.equal(retry.status, 0, retry.output)
     assert.match(retry.output, /model-a: bundle already submitted/)
     assert.match(retry.output, /model-c: bundle already submitted/)
@@ -263,6 +304,9 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
       const entry = ledger.models[model]!
       assert.ok(['submitted', 'skipped'].includes(entry.status))
       assert.ok(entry.transactionHash)
+      assert.equal(entry.publication?.status, 'published')
+      assert.ok(entry.publication?.uri?.startsWith('ipfs://'))
+      assert.ok((entry.publication?.totalBytes ?? 0) > 0)
       const bank = JSON.parse(await readFile(bankPath(banksDir, model), 'utf8')) as {
         referenceCosts: Array<{ status: string; claimedTransactionHash: string | null }>
       }
@@ -270,10 +314,18 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
       assert.equal(bank.referenceCosts[0]?.claimedTransactionHash, entry.transactionHash)
     }
 
+    const uploadsBeforeRecovery = await readJsonLines<MockPinataUpload>(pinataLogPath)
+    assert.equal(uploadsBeforeRecovery.length, 3)
+    ledger.models['model-b']!.status = 'pending'
+    ledger.models['model-b']!.transactionHash = null
+    ledger.models['model-b']!.blockNumber = null
+    await writeFile(ledgerFile, JSON.stringify(ledger, null, 2))
+
     const beforeFinalRetry = bundles.map((event) => event.transactionHash).sort()
-    const finalRetry = runCli(dataDir, configPath, rpcUrl, runId, ['--yes'])
+    const finalRetry = runCli(dataDir, configPath, rpcUrl, runId, ['--yes', '--publish-ipfs'], pinataOptions)
     assert.equal(finalRetry.status, 0, finalRetry.output)
     assert.match(finalRetry.output, /Submitted: 0; skipped: 3; failed: 0/)
+    assert.equal((await readJsonLines<MockPinataUpload>(pinataLogPath)).length, 3)
     assert.deepEqual(
       (await createVerifierClient(rpcUrl, verificationAddress).queryBundles())
         .map((event) => event.transactionHash)
@@ -652,8 +704,10 @@ function runCli(
   rpcUrl: string,
   runId: string,
   submitOptions: string[],
+  options: RunCliOptions = {},
 ): CommandResult {
   const result = spawnSync(process.execPath, [
+    ...(options.importPath ? ['--import', options.importPath] : []),
     cliEntry,
     '--data-dir', dataDir,
     '--config', configPath,
@@ -665,12 +719,72 @@ function runCli(
   ], {
     cwd: repoRoot,
     encoding: 'utf8',
-    env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+    env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1', ...options.env },
   })
   return {
     status: result.status ?? 1,
     output: `${result.stdout ?? ''}${result.stderr ?? ''}`,
   }
+}
+
+interface MockPinataUpload {
+  model: string
+  evidenceHash: string
+  authorizationPresent: boolean
+  referenceStatuses: string[]
+  files: string[]
+}
+
+async function readJsonLines<T>(path: string): Promise<T[]> {
+  try {
+    return (await readFile(path, 'utf8'))
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as T)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+}
+
+async function writeMockPinataPreload(path: string, logPath: string, banksDir: string): Promise<void> {
+  const bankPaths = Object.fromEntries(MODELS.map((model) => [model, bankPath(banksDir, model)]))
+  await writeFile(path, `
+import { appendFileSync, readFileSync } from 'node:fs'
+
+const originalFetch = globalThis.fetch
+const logPath = ${JSON.stringify(logPath)}
+const bankPaths = ${JSON.stringify(bankPaths)}
+const cids = {
+  'model-a': 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3r3eifqeedsvt2eubqtskghpm',
+  'model-b': 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3r3eifqeedsvt2eubqtskghpn',
+  'model-c': 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3r3eifqeedsvt2eubqtskghpp',
+}
+
+globalThis.fetch = async (input, init) => {
+  if (String(input) !== 'https://api.pinata.cloud/pinning/pinFileToIPFS') {
+    return originalFetch(input, init)
+  }
+  const form = init.body
+  const metadata = JSON.parse(String(form.get('pinataMetadata')))
+  const model = metadata.keyvalues.model
+  const bank = JSON.parse(readFileSync(bankPaths[model], 'utf8'))
+  const files = form.getAll('file').map((file) => file.name)
+  appendFileSync(logPath, JSON.stringify({
+    model,
+    evidenceHash: metadata.keyvalues.evidenceHash,
+    authorizationPresent: new Headers(init.headers).get('authorization') === 'Bearer test-pinata-jwt',
+    referenceStatuses: bank.referenceCosts.map((entry) => entry.status),
+    files,
+  }) + '\\n')
+  return new Response(JSON.stringify({
+    IpfsHash: cids[model],
+    PinSize: form.getAll('file').reduce((total, file) => total + file.size, 0),
+    Timestamp: '2026-08-16T12:00:00.000Z',
+  }), { status: 200, headers: { 'content-type': 'application/json' } })
+}
+`)
 }
 
 function createVerifierClient(rpcUrl: string, contractAddress: string): VerifierClient {

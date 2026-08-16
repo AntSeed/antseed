@@ -23,6 +23,7 @@ antseed verifier run <model> --resume-run <run-id>
 antseed verifier status [--json]
 antseed verifier submit --run-id <run-id> --dry-run
 antseed verifier submit --run-id <run-id> [--yes]
+antseed verifier submit --run-id <run-id> --publish-ipfs [--yes]
 antseed verifier claim
 ```
 
@@ -386,13 +387,51 @@ the run timestamps fall outside the recorded epoch window.
 Submission groups valid seller audits by model and sends one
 `submitVerificationBundle` transaction per model. Each transaction commits the
 expected epoch, total model-audit cost, one canonical bundle evidence hash, one
-ordered list of seller agent IDs, service hashes, verdicts, and model-share BPS.
+optional evidence URI, and one ordered list of seller agent IDs, service hashes,
+verdicts, and model-share BPS. The shared `VerificationBundleSubmitted` event
+emits the URI as a non-indexed string while keeping the evidence hash, verifier,
+and epoch indexed. Empty URIs remain valid for local-only submissions; non-empty
+URIs must use `ipfs://` and are limited to 200 UTF-8 bytes.
 The bundle contains the canonical probe-consensus hash, reference ID, decision
 rule, and vote summary, so the on-chain evidence hash commits to the exact
-per-probe majority decisions without expanding the contract ABI.
+per-probe majority decisions. This URI-bearing ABI requires redeploying the
+verification contract.
 Probe counts and a separate requested-credit value are not part of the contract
 ABI or events. Invalid or tampered seller artifacts are excluded before
 broadcast and listed with their reason in the bundle evidence.
+
+### Public IPFS Evidence
+
+`verifier submit --publish-ipfs` publishes one complete public Pinata folder per
+model before broadcasting that model's transaction. The command requires a
+`PINATA_JWT` environment variable with public upload permission. The JWT is
+never accepted as a command argument, written to configuration, persisted in a
+ledger, or included in an error message.
+
+Each folder preserves paths relative to `evidenceDir` and contains the canonical
+bundle, selected run manifest and summary, probe consensus, reference-integrity
+evidence, finalized seller manifests and evidence, signed exchange files, and
+an immutable HTML report rendered for the selected run. `publication.json`
+indexes every included file by relative path, byte size, and SHA-256 hash. PID
+locks, status snapshots, event logs, `.checkpoints`, submission ledgers, and
+other operational state are excluded.
+
+Pinata returns one CIDv1 for the model folder. The CLI submits `ipfs://<cid>` as
+the bundle's `evidenceUri`, records the CID, URI, size, file count, timestamps,
+and publication status in the local submission ledger, and prints the URI in
+the final summary. Consumers query `VerificationBundleSubmitted` by its indexed
+`evidenceHash`, fetch the emitted URI, locate the bundle path from
+`publication.json`, canonicalize the bundle, and verify its SHA-256 against the
+event hash. The URI is event-only and is not stored in contract state.
+
+Publication is fail-closed per model. The CLI retries network errors, HTTP 429,
+and HTTP 5xx responses up to three attempts, but authentication and other HTTP
+4xx failures are immediate. A failed pin prevents that model's cost reservation
+and transaction while other models continue. Successful ledger publications
+are reused by evidence hash on retry. After broadcast, the CLI requires the
+confirmed event URI to equal the pinned URI before marking the model submitted.
+A bundle previously submitted with an empty URI cannot be retroactively
+anchored because historical events are immutable.
 
 Verdicts map to `SAME = 1`, `DIFF = 2`, and `UNDETERMINED = 3`. All model shares
 currently submit as zero. In particular, a zero-share `DIFF` clears the existing
@@ -440,10 +479,13 @@ reserves them atomically against the content-addressed bundle ID before
 broadcast, keeps the reservation after a failed transaction for an idempotent
 retry, and marks them claimed only after the bundle is confirmed on-chain. The
 submission ledger records transaction hashes, block numbers, costs, credits,
-errors, and reservation IDs per model. `--dry-run` performs validation and shows
-the model preview without reserving costs or sending transactions.
+errors, reservation IDs, and optional Pinata publication state per model.
+`--dry-run --publish-ipfs` builds and previews the public package's file count
+and size without reading `PINATA_JWT`, uploading, reserving costs, or sending
+transactions.
 
 Distributed workers, automatic epoch scheduling, transaction-gas reimbursement,
-and daemon operation remain out of scope. Existing verification contracts,
+and daemon operation remain out of scope. Existing verification contracts that
+do not emit `evidenceUri`,
 reference banks without cost metadata, and old audit artifacts are intentionally
 incompatible and must be redeployed or regenerated.

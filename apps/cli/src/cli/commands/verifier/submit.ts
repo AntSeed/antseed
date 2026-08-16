@@ -11,6 +11,11 @@ import {
   reserveReferenceCosts,
 } from '../../../verifier/probe-bank.js'
 import { openResponseAuthReader } from '../../../verifier/response-auth-reader.js'
+import {
+  prepareVerificationPublication,
+  publishVerificationToPinata,
+  type PreparedVerificationPublication,
+} from '../../../verifier/ipfs-publication.js'
 import { asError, normalized } from '../../../verifier/utils.js'
 import {
   prepareModelVerificationBundle,
@@ -23,6 +28,7 @@ import {
   submissionLedgerPath,
   writeSubmissionLedger,
   type ModelSubmissionLedgerEntryV1,
+  type ModelSubmissionPublicationV1,
   type SubmissionLedgerV1,
 } from '../../../verifier/submission-ledger.js'
 import { createVerifierClient, loadCryptoContext } from '../../payment-utils.js'
@@ -33,12 +39,15 @@ interface SubmitOptions {
   dryRun?: boolean
   yes?: boolean
   rpcUrl?: string
+  publishIpfs?: boolean
 }
 
 interface PreparedSubmission {
   bundle: PreparedModelVerificationBundle
+  modelSummaryPath: string
   alreadySubmitted: boolean
   expectedAwardedCreditUsdMicros: bigint
+  publication: PreparedVerificationPublication | null
 }
 
 interface PreparationFailure {
@@ -54,6 +63,7 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
     .option('--dry-run', 'validate and preview bundles without reserving costs or broadcasting')
     .option('--yes', 'submit without an interactive confirmation prompt')
     .option('--rpc-url <url>', 'Base JSON-RPC URL override')
+    .option('--publish-ipfs', 'publish complete public evidence to Pinata before on-chain submission')
     .action(async (options: SubmitOptions, command: Command) => {
       const globalOptions = getGlobalOptions(command)
       const config = await loadConfig(globalOptions.config)
@@ -127,7 +137,21 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
               ? 0n
               : minBigInt(bundle.totalAuditCostUsdMicros, remainingPreviewCreditUsdMicros)
             if (!alreadySubmitted) remainingPreviewCreditUsdMicros -= expectedAwardedCreditUsdMicros
-            prepared.push({ bundle, alreadySubmitted, expectedAwardedCreditUsdMicros })
+            const publication = options.publishIpfs
+              ? await prepareVerificationPublication({
+                evidenceDir,
+                manifest,
+                modelSummaryPath: modelManifest.summaryPath,
+                bundle,
+              })
+              : null
+            prepared.push({
+              bundle,
+              modelSummaryPath: modelManifest.summaryPath,
+              alreadySubmitted,
+              expectedAwardedCreditUsdMicros,
+              publication,
+            })
           } catch (error) {
             preparationFailures.push({ model, error: asError(error) })
           }
@@ -135,12 +159,19 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
 
         printPreview(prepared, preparationFailures)
         if (options.dryRun) {
-          console.log(chalk.dim('Dry run complete; no reference costs were reserved and no transactions were sent.'))
+          console.log(chalk.dim(
+            'Dry run complete; no IPFS uploads, reference-cost reservations, or transactions were performed.',
+          ))
           if (preparationFailures.length > 0) process.exitCode = 1
           return
         }
         if (prepared.length === 0) {
           throw new Error('no model bundles are eligible for submission')
+        }
+        const pinataJwt = options.publishIpfs ? process.env['PINATA_JWT']?.trim() : undefined
+        if (options.publishIpfs && !pinataJwt) throw new Error('PINATA_JWT is required with --publish-ipfs')
+        if (options.publishIpfs) {
+          console.warn(chalk.yellow('IPFS publication is public: complete verifier evidence and signed exchanges will be pinned.'))
         }
         if (!options.yes) await confirmSubmission(prepared.filter((entry) => !entry.alreadySubmitted).length)
 
@@ -150,14 +181,23 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
         let submittedSellerResults = 0
         let totalAuditCostUsdMicros = 0n
         let awardedCreditUsdMicros = 0n
+        const publishedUris: Array<{ model: string; uri: string }> = []
 
         for (const item of prepared) {
           const { bundle } = item
           totalAuditCostUsdMicros += bundle.totalAuditCostUsdMicros
           const now = new Date().toISOString()
+          let publication = ledger.models[bundle.model]?.publication
           try {
             if (item.alreadySubmitted) {
               const event = await requireBundleEvent(verifierClient, bundle.evidenceHash)
+              if (options.publishIpfs) {
+                if (!event.evidenceUri) {
+                  throw new Error('bundle was already submitted without an IPFS URI and cannot be retroactively anchored')
+                }
+                publication = publicationFromEvent(item.publication!, event.evidenceUri, publication)
+                publishedUris.push({ model: bundle.model, uri: event.evidenceUri })
+              }
               await markReferenceCostsClaimed({
                 banksDir,
                 model: bundle.model,
@@ -171,7 +211,7 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
                 blockNumber: event.blockNumber,
                 error: null,
                 lastAttemptAt: now,
-              })
+              }, publication)
               await writeSubmissionLedger(ledgerPath, ledger)
               skippedBundles += 1
               awardedCreditUsdMicros += event.awardedCreditUsdMicros
@@ -181,6 +221,44 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
             }
 
             await writeModelVerificationBundleEvidence(bundle)
+            const verifiedBundle = await readPreparedModelVerificationBundle({
+              evidencePath: bundle.evidencePath,
+              evidenceHash: bundle.evidenceHash,
+            })
+            let evidenceUri = ''
+            if (options.publishIpfs) {
+              const preparedPublication = await prepareVerificationPublication({
+                evidenceDir,
+                manifest,
+                modelSummaryPath: item.modelSummaryPath,
+                bundle: verifiedBundle,
+              })
+              if (isReusablePublication(publication, bundle.evidenceHash)) {
+                evidenceUri = publication.uri!
+              } else {
+                try {
+                  const published = await publishVerificationToPinata(preparedPublication, pinataJwt!)
+                  publication = {
+                    provider: 'pinata',
+                    status: 'published',
+                    evidenceHash: published.evidenceHash,
+                    cid: published.cid,
+                    uri: published.uri,
+                    pinSize: published.pinSize,
+                    totalBytes: preparedPublication.totalBytes,
+                    fileCount: published.fileCount,
+                    publishedAt: published.publishedAt,
+                    lastAttemptAt: new Date().toISOString(),
+                    error: null,
+                  }
+                  evidenceUri = published.uri
+                } catch (error) {
+                  publication = failedPublication(preparedPublication, asError(error))
+                  throw error
+                }
+              }
+              publishedUris.push({ model: bundle.model, uri: evidenceUri })
+            }
             ledger.models[bundle.model] = ledgerEntry(bundle, {
               status: 'pending',
               awardedCreditUsdMicros: null,
@@ -188,7 +266,7 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
               blockNumber: null,
               error: null,
               lastAttemptAt: now,
-            })
+            }, publication)
             await writeSubmissionLedger(ledgerPath, ledger)
             await reserveReferenceCosts({
               banksDir,
@@ -201,9 +279,13 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
               expectedEpoch: bundle.expectedEpoch,
               totalAuditCostUsdMicros: bundle.totalAuditCostUsdMicros,
               evidenceHash: bundle.evidenceHash,
+              evidenceUri,
               results: bundle.results,
             })
             const event = await requireBundleEvent(verifierClient, bundle.evidenceHash)
+            if (event.evidenceUri !== evidenceUri) {
+              throw new Error(`submitted bundle event URI mismatch: expected ${evidenceUri || '(empty)'}`)
+            }
             await markReferenceCostsClaimed({
               banksDir,
               model: bundle.model,
@@ -217,7 +299,7 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
               blockNumber: event.blockNumber,
               error: null,
               lastAttemptAt: new Date().toISOString(),
-            })
+            }, publication)
             await writeSubmissionLedger(ledgerPath, ledger)
             successfulBundles += 1
             submittedSellerResults += bundle.results.length
@@ -236,7 +318,7 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
               blockNumber: null,
               error: failure.message,
               lastAttemptAt: new Date().toISOString(),
-            })
+            }, publication)
             await writeSubmissionLedger(ledgerPath, ledger)
             failedBundles += 1
             console.warn(chalk.yellow(`${bundle.model}: submission failed (continuing): ${failure.message}`))
@@ -268,6 +350,7 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
           + `${formatCredits(creditUsdMicrosAfter)} after; ${formatCredits(remainingAllowanceUsdMicros)} remaining`,
         )
         console.log(`  Audit cost not credited because of epoch cap: ${formatUsdMicros(costNotCreditedUsdMicros)}`)
+        for (const publication of publishedUris) console.log(`  IPFS (${publication.model}): ${publication.uri}`)
         console.log(chalk.dim(`Submission ledger: ${ledgerPath}`))
         if (failedBundles > 0) process.exitCode = 1
       } finally {
@@ -278,7 +361,7 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
 
 function printPreview(prepared: PreparedSubmission[], failures: PreparationFailure[]): void {
   const table = new Table({
-    head: ['Model', 'Results', 'SAME', 'DIFF', 'UNDET', 'Inference', 'Reference', 'Audit Cost', 'Expected Award'],
+    head: ['Model', 'Results', 'SAME', 'DIFF', 'UNDET', 'Inference', 'Reference', 'Audit Cost', 'IPFS', 'Expected Award'],
   })
   for (const item of prepared) {
     const verdictCounts = item.bundle.evidence.results.reduce((counts, result) => {
@@ -294,11 +377,12 @@ function printPreview(prepared: PreparedSubmission[], failures: PreparationFailu
       formatUsdMicros(BigInt(item.bundle.evidence.inferenceCostUsdMicros)),
       formatUsdMicros(BigInt(item.bundle.evidence.referenceCostUsdMicros)),
       formatUsdMicros(item.bundle.totalAuditCostUsdMicros),
+      item.publication ? `${item.publication.fileCount} files / ${formatBytes(item.publication.totalBytes)}` : 'off',
       item.alreadySubmitted ? 'already submitted' : formatCredits(item.expectedAwardedCreditUsdMicros),
     ])
   }
   for (const failure of failures) {
-    table.push([failure.model, 'BLOCKED', '—', '—', '—', '—', '—', '—', failure.error.message])
+    table.push([failure.model, 'BLOCKED', '—', '—', '—', '—', '—', '—', '—', failure.error.message])
   }
   console.log(table.toString())
 }
@@ -331,6 +415,7 @@ function ledgerEntry(
   bundle: PreparedModelVerificationBundle,
   state: Pick<ModelSubmissionLedgerEntryV1,
     'status' | 'awardedCreditUsdMicros' | 'transactionHash' | 'blockNumber' | 'error' | 'lastAttemptAt'>,
+  publication?: ModelSubmissionPublicationV1,
 ): ModelSubmissionLedgerEntryV1 {
   return {
     model: bundle.model,
@@ -342,7 +427,64 @@ function ledgerEntry(
     referenceCostUsdMicros: bundle.evidence.referenceCostUsdMicros,
     totalAuditCostUsdMicros: bundle.totalAuditCostUsdMicros.toString(),
     referenceCostIds: bundle.referenceCostIds,
+    ...(publication ? { publication } : {}),
     ...state,
+  }
+}
+
+function isReusablePublication(
+  publication: ModelSubmissionPublicationV1 | undefined,
+  evidenceHash: string,
+): publication is ModelSubmissionPublicationV1 & { cid: string; uri: string } {
+  return publication?.status === 'published'
+    && normalized(publication.evidenceHash) === normalized(evidenceHash)
+    && typeof publication.cid === 'string'
+    && publication.cid.length > 0
+    && publication.uri === `ipfs://${publication.cid}`
+}
+
+function failedPublication(
+  prepared: PreparedVerificationPublication,
+  error: Error,
+): ModelSubmissionPublicationV1 {
+  return {
+    provider: 'pinata',
+    status: 'failed',
+    evidenceHash: prepared.evidenceHash,
+    cid: null,
+    uri: null,
+    pinSize: null,
+    totalBytes: prepared.totalBytes,
+    fileCount: prepared.fileCount,
+    publishedAt: null,
+    lastAttemptAt: new Date().toISOString(),
+    error: error.message,
+  }
+}
+
+function publicationFromEvent(
+  prepared: PreparedVerificationPublication,
+  evidenceUri: string,
+  existing?: ModelSubmissionPublicationV1,
+): ModelSubmissionPublicationV1 {
+  if (!evidenceUri.startsWith('ipfs://') || evidenceUri.length <= 'ipfs://'.length) {
+    throw new Error(`submitted bundle has an invalid IPFS URI: ${evidenceUri}`)
+  }
+  if (isReusablePublication(existing, prepared.evidenceHash) && existing.uri !== evidenceUri) {
+    throw new Error(`local publication URI ${existing.uri} does not match on-chain URI ${evidenceUri}`)
+  }
+  return {
+    provider: 'pinata',
+    status: 'published',
+    evidenceHash: prepared.evidenceHash,
+    cid: evidenceUri.slice('ipfs://'.length),
+    uri: evidenceUri,
+    pinSize: existing?.pinSize ?? prepared.totalBytes,
+    totalBytes: existing?.totalBytes ?? prepared.totalBytes,
+    fileCount: existing?.fileCount ?? prepared.fileCount,
+    publishedAt: existing?.publishedAt ?? new Date().toISOString(),
+    lastAttemptAt: new Date().toISOString(),
+    error: null,
   }
 }
 
@@ -408,6 +550,12 @@ function formatCredits(value: bigint): string {
   const whole = value / 1_000_000n
   const fraction = (value % 1_000_000n).toString().padStart(6, '0')
   return `${whole}.${fraction}`
+}
+
+function formatBytes(value: number): string {
+  if (value < 1_024) return `${value} B`
+  if (value < 1_048_576) return `${(value / 1_024).toFixed(1)} KiB`
+  return `${(value / 1_048_576).toFixed(1)} MiB`
 }
 
 function minBigInt(left: bigint, right: bigint): bigint {

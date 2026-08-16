@@ -34,12 +34,13 @@ interface IAntseedVerification is IAntseedPointsPolicy {
 
     /// @notice Submits all audited seller results for one model as the verifier credit weight.
     /// @dev `evidenceHash` is the canonical hash of the model bundle evidence and doubles as the
-    ///      replay-protection key. `totalAuditCostUsdMicros` preserves fractional credits exactly;
-    ///      no whole-dollar rounding occurs.
+    ///      replay-protection key. `evidenceUri` optionally locates the public evidence package.
+    ///      `totalAuditCostUsdMicros` preserves fractional credits exactly; no whole-dollar rounding occurs.
     function submitVerificationBundle(
         uint256 expectedEpoch,
         uint64 totalAuditCostUsdMicros,
         bytes32 evidenceHash,
+        string calldata evidenceUri,
         VerificationResult[] calldata results
     ) external;
 

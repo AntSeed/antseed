@@ -61,7 +61,7 @@ contract AntseedVerifierRegistryTest is Test {
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bytes32 bundleTopic = keccak256(
-            "VerificationBundleSubmitted(bytes32,address,uint256,uint64,uint64,uint32)"
+            "VerificationBundleSubmitted(bytes32,address,uint256,uint64,uint64,uint32,string)"
         );
         bytes32 resultTopic = keccak256("VerificationResultSubmitted(bytes32,uint256,bytes32,uint8,uint16)");
         uint256 bundleEvents;
@@ -73,6 +73,58 @@ contract AntseedVerifierRegistryTest is Test {
         }
         assertEq(bundleEvents, 1);
         assertEq(resultEvents, 2);
+    }
+
+    function test_emitsIpfsEvidenceUriInBundleEvent() public {
+        bytes32 evidenceHash = keccak256("ipfs-evidence");
+        string memory evidenceUri = "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3r3eifqeedsvt2eubqtskghpm";
+        vm.recordLogs();
+        _submitWithUri(
+            verifier,
+            evidenceHash,
+            evidenceUri,
+            _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.SAME, 0),
+            1_000_000
+        );
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 bundleTopic = keccak256(
+            "VerificationBundleSubmitted(bytes32,address,uint256,uint64,uint64,uint32,string)"
+        );
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length == 0 || logs[i].topics[0] != bundleTopic) continue;
+            (, , , string memory emittedUri) = abi.decode(logs[i].data, (uint64, uint64, uint32, string));
+            assertEq(emittedUri, evidenceUri);
+            return;
+        }
+        fail("bundle event not emitted");
+    }
+
+    function test_rejectsInvalidAndOversizedEvidenceUris() public {
+        IAntseedVerification.VerificationResult[] memory results =
+            _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.SAME, 0);
+
+        vm.prank(verifier);
+        vm.expectRevert(AntseedVerification.InvalidEvidenceUri.selector);
+        verification.submitVerificationBundle(
+            _currentEpoch(), 1_000_000, keccak256("https-evidence"), "https://example.invalid/evidence", results
+        );
+
+        vm.prank(verifier);
+        vm.expectRevert(AntseedVerification.InvalidEvidenceUri.selector);
+        verification.submitVerificationBundle(
+            _currentEpoch(), 1_000_000, keccak256("empty-cid"), "ipfs://", results
+        );
+
+        vm.prank(verifier);
+        vm.expectRevert(AntseedVerification.InvalidEvidenceUri.selector);
+        verification.submitVerificationBundle(
+            _currentEpoch(),
+            1_000_000,
+            keccak256("oversized-uri"),
+            string.concat("ipfs://", string(new bytes(194))),
+            results
+        );
     }
 
     function test_awardsOnlyRemainingCreditsAtEpochCap() public {
@@ -105,6 +157,7 @@ contract AntseedVerifierRegistryTest is Test {
             _currentEpoch(),
             1_000_000,
             keccak256("unauthorized-evidence"),
+            "",
             _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.SAME, 0)
         );
         vm.stopPrank();
@@ -136,6 +189,7 @@ contract AntseedVerifierRegistryTest is Test {
             expectedEpoch,
             1_000_000,
             keccak256("stale-evidence"),
+            "",
             _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.SAME, 0)
         );
     }
@@ -162,6 +216,7 @@ contract AntseedVerifierRegistryTest is Test {
         vm.expectRevert(AntseedVerification.VerificationAlreadySubmitted.selector);
         verification.submitVerificationBundle(
             _currentEpoch(), 1_000_000, evidenceHash,
+            "",
             _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.SAME, 0)
         );
 
@@ -169,6 +224,7 @@ contract AntseedVerifierRegistryTest is Test {
         vm.expectRevert(AntseedVerification.UnknownAgent.selector);
         verification.submitVerificationBundle(
             _currentEpoch(), 1_000_000, keccak256("unknown-evidence"),
+            "",
             _oneResult(999, SERVICE_HASH, IAntseedVerification.Verdict.SAME, 0)
         );
 
@@ -177,6 +233,7 @@ contract AntseedVerifierRegistryTest is Test {
         vm.expectRevert(AntseedVerification.SelfAudit.selector);
         verification.submitVerificationBundle(
             _currentEpoch(), 1_000_000, keccak256("self-evidence"),
+            "",
             _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.SAME, 0)
         );
 
@@ -184,6 +241,7 @@ contract AntseedVerifierRegistryTest is Test {
         vm.expectRevert(AntseedVerification.InvalidModelShare.selector);
         verification.submitVerificationBundle(
             _currentEpoch(), 1_000_000, keccak256("bad-share-evidence"),
+            "",
             _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.SAME, 1)
         );
     }
@@ -194,11 +252,22 @@ contract AntseedVerifierRegistryTest is Test {
         IAntseedVerification.VerificationResult[] memory results,
         uint64 costUsdMicros
     ) private {
+        _submitWithUri(caller, evidenceHash, "", results, costUsdMicros);
+    }
+
+    function _submitWithUri(
+        address caller,
+        bytes32 evidenceHash,
+        string memory evidenceUri,
+        IAntseedVerification.VerificationResult[] memory results,
+        uint64 costUsdMicros
+    ) private {
         vm.prank(caller);
         verification.submitVerificationBundle(
             _currentEpoch(),
             costUsdMicros,
             evidenceHash,
+            evidenceUri,
             results
         );
     }

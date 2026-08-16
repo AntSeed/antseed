@@ -3,6 +3,20 @@ import { readJsonIfExists, writeJsonAtomic } from './atomic-files.js'
 
 export type ModelSubmissionStatus = 'pending' | 'submitted' | 'failed' | 'skipped'
 
+export interface ModelSubmissionPublicationV1 {
+  provider: 'pinata'
+  status: 'published' | 'failed'
+  evidenceHash: string
+  cid: string | null
+  uri: string | null
+  pinSize: number | null
+  totalBytes?: number
+  fileCount: number
+  publishedAt: string | null
+  lastAttemptAt: string
+  error: string | null
+}
+
 export interface ModelSubmissionLedgerEntryV1 {
   model: string
   evidenceHash: string
@@ -19,6 +33,7 @@ export interface ModelSubmissionLedgerEntryV1 {
   error: string | null
   lastAttemptAt: string
   referenceCostIds: string[]
+  publication?: ModelSubmissionPublicationV1
 }
 
 export interface SubmissionLedgerV1 {

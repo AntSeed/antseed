@@ -1,4 +1,4 @@
-import { Interface, Wallet } from 'ethers';
+import { EventLog, Interface, Log, Wallet, type Provider } from 'ethers';
 import { describe, expect, it, vi } from 'vitest';
 import {
   VERIFICATION_ABI,
@@ -29,6 +29,7 @@ describe('VerifierClient combined ABI', () => {
       expectedEpoch: 7,
       totalAuditCostUsdMicros: 1_500_000,
       evidenceHash: '0x' + '99'.repeat(32),
+      evidenceUri: 'ipfs://bafytest',
       results: [{
         agentId: 9,
         serviceHash: SERVICE_HASH,
@@ -45,6 +46,7 @@ describe('VerifierClient combined ABI', () => {
       7n,
       1_500_000n,
       input.evidenceHash,
+      input.evidenceUri,
       [{ agentId: 9n, serviceHash: SERVICE_HASH, verdict: VERIFIER_VERDICT_DIFF, modelShareBps: 2500 }],
     );
   });
@@ -89,6 +91,7 @@ describe('VerifierClient combined ABI', () => {
       'totalAuditCostUsdMicros',
       'awardedCreditUsdMicros',
       'resultCount',
+      'evidenceUri',
     ]);
     const result = iface.getEvent('VerificationResultSubmitted');
     expect(result?.inputs.map((input) => input.name)).toEqual([
@@ -98,5 +101,33 @@ describe('VerifierClient combined ABI', () => {
       'verdict',
       'modelShareBps',
     ]);
+  });
+
+  it('parses the on-chain IPFS evidence URI from bundle events', () => {
+    const client = new VerifierClient({
+      rpcUrl: 'http://127.0.0.1:1',
+      contractAddress: VERIFICATION_ADDRESS,
+    });
+    const iface = new Interface(VERIFICATION_ABI);
+    const fragment = iface.getEvent('VerificationBundleSubmitted')!;
+    const evidenceUri = 'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3r3eifqeedsvt2eubqtskghpm';
+    const encoded = iface.encodeEventLog(fragment, [AUDIT_ID, VERIFICATION_ADDRESS, 7, 100, 90, 1, evidenceUri]);
+    const log = new Log({
+      transactionHash: '0x' + '22'.repeat(32),
+      blockHash: '0x' + '33'.repeat(32),
+      blockNumber: 12,
+      removed: false,
+      address: VERIFICATION_ADDRESS,
+      data: encoded.data,
+      topics: encoded.topics,
+      index: 3,
+      transactionIndex: 1,
+    }, null as unknown as Provider);
+    const parsed = (client as unknown as {
+      _bundleEvents(logs: readonly unknown[]): Array<{ evidenceUri: string }>;
+    })._bundleEvents([new EventLog(log, iface, fragment)]);
+
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]?.evidenceUri).toBe(evidenceUri);
   });
 });

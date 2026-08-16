@@ -38,6 +38,7 @@ export interface SubmitVerificationBundleInput {
   /** Exact audit cost and credit weight in USD micros: $1 = 1_000_000, $1.20 = 1_200_000. */
   totalAuditCostUsdMicros: number | bigint;
   evidenceHash: string;
+  evidenceUri: string;
   results: VerificationResultInput[];
 }
 
@@ -48,6 +49,7 @@ export interface VerificationBundleSubmittedEvent {
   totalAuditCostUsdMicros: bigint;
   awardedCreditUsdMicros: bigint;
   resultCount: number;
+  evidenceUri: string;
   blockNumber: number;
   logIndex: number;
   transactionHash: string;
@@ -70,7 +72,7 @@ export interface AttestationSubmittedEvent {
 export const VERIFICATION_ABI = [
   'function setVerifier(address verifier, bool approved) external',
   'function setMaxCreditUsdMicrosPerVerifierPerEpoch(uint64 maximum) external',
-  'function submitVerificationBundle(uint256 expectedEpoch,uint64 totalAuditCostUsdMicros,bytes32 evidenceHash,(uint256 agentId,bytes32 serviceHash,uint8 verdict,uint16 modelShareBps)[] results) external',
+  'function submitVerificationBundle(uint256 expectedEpoch,uint64 totalAuditCostUsdMicros,bytes32 evidenceHash,string evidenceUri,(uint256 agentId,bytes32 serviceHash,uint8 verdict,uint16 modelShareBps)[] results) external',
   'function isVerificationSubmitted(bytes32 evidenceHash) external view returns (bool)',
   'function registry() external view returns (address)',
   'function emissionsGate() external view returns (address)',
@@ -87,7 +89,7 @@ export const VERIFICATION_ABI = [
   'function verifierEpochBudget(uint256 epoch) external view returns (uint256)',
   'function verifierEpochTotalCreditUsdMicros(uint256 epoch) external view returns (uint256)',
   'function epochRemainderSettled(uint256 epoch) external view returns (bool)',
-  'event VerificationBundleSubmitted(bytes32 indexed evidenceHash,address indexed verifier,uint256 indexed epoch,uint64 totalAuditCostUsdMicros,uint64 awardedCreditUsdMicros,uint32 resultCount)',
+  'event VerificationBundleSubmitted(bytes32 indexed evidenceHash,address indexed verifier,uint256 indexed epoch,uint64 totalAuditCostUsdMicros,uint64 awardedCreditUsdMicros,uint32 resultCount,string evidenceUri)',
   'event VerificationResultSubmitted(bytes32 indexed evidenceHash,uint256 indexed agentId,bytes32 indexed serviceHash,uint8 verdict,uint16 modelShareBps)',
 ] as const;
 
@@ -140,6 +142,7 @@ export class VerifierClient extends BaseEvmClient {
       BigInt(input.expectedEpoch),
       BigInt(input.totalAuditCostUsdMicros),
       input.evidenceHash,
+      input.evidenceUri,
       input.results.map((result) => ({
         agentId: BigInt(result.agentId),
         serviceHash: result.serviceHash,
@@ -302,6 +305,7 @@ export class VerifierClient extends BaseEvmClient {
         totalAuditCostUsdMicros: BigInt(log.args.totalAuditCostUsdMicros ?? log.args[3]),
         awardedCreditUsdMicros: BigInt(log.args.awardedCreditUsdMicros ?? log.args[4]),
         resultCount: Number(log.args.resultCount ?? log.args[5]),
+        evidenceUri: String(log.args.evidenceUri ?? log.args[6]),
         blockNumber: log.blockNumber,
         logIndex: log.index,
         transactionHash: log.transactionHash,

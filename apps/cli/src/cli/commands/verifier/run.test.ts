@@ -29,7 +29,10 @@ test('verifier exposes proxy run, reference, and claim workflows', () => {
 test('verifier submit exposes model-bundle submission controls', () => {
   const verifier = command().commands.find((entry) => entry.name() === 'verifier')!
   const submit = verifier.commands.find((entry) => entry.name() === 'submit')!
-  assert.deepEqual(submit.options.map((option) => option.long), ['--run-id', '--dry-run', '--yes', '--rpc-url'])
+  assert.deepEqual(
+    submit.options.map((option) => option.long),
+    ['--run-id', '--dry-run', '--yes', '--rpc-url', '--publish-ipfs'],
+  )
 })
 
 test('verifier reference exposes only the explicit build workflow', () => {

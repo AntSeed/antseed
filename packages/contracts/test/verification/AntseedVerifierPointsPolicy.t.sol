@@ -109,6 +109,7 @@ contract AntseedVerifierPointsPolicyTest is Test {
             epoch,
             1_000_000,
             evidenceHash,
+            "",
             results
         );
     }

@@ -79,7 +79,7 @@ contract AntseedVerifierRewardsTest is Test {
         });
         vm.prank(verifierA);
         verification.submitVerificationBundle(
-            _currentEpoch(), 1_000_000, evidenceHash, results
+            _currentEpoch(), 1_000_000, evidenceHash, "", results
         );
 
         assertTrue(verification.isVerificationSubmitted(evidenceHash));
@@ -202,6 +202,7 @@ contract AntseedVerifierRewardsTest is Test {
             _currentEpoch(),
             creditUsdMicros,
             evidenceHash,
+            "",
             results
         );
     }

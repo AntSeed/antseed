@@ -266,6 +266,16 @@ export async function writeModelAuditReports(
   epoch: string,
   summary: EpochAuditSummaryV1,
 ): Promise<Array<{ model: string; path: string }>> {
+  const rendered = await renderModelAuditReports(evidenceDir, epoch, summary)
+  await Promise.all(rendered.map((entry) => writeTextAtomic(entry.path, entry.html)))
+  return rendered.map(({ model, path }) => ({ model, path }))
+}
+
+export async function renderModelAuditReports(
+  evidenceDir: string,
+  epoch: string,
+  summary: EpochAuditSummaryV1,
+): Promise<Array<{ model: string; path: string; html: string }>> {
   const rendered = await Promise.all(summary.models.map(async (model) => {
     const modelSummary = JSON.parse(await readFile(model.summaryPath, 'utf8')) as {
       results?: SellerAuditReportResult[]
@@ -348,7 +358,7 @@ export async function writeModelAuditReports(
       referenceIntegrityPath: modelSummary.referenceIntegrityPath,
     }
   }))
-  return Promise.all(rendered.map(async (entry) => {
+  return rendered.map((entry) => {
     const modelSummary = summary.models.find((model) => model.model === entry.model)
     if (!modelSummary) throw new Error(`missing ${entry.model} summary while rendering report`)
     const reasonBreakdown = [...entry.reasonCounts.entries()].sort(([left], [right]) => left.localeCompare(right))
@@ -377,9 +387,8 @@ export async function writeModelAuditReports(
       },
       dirname(path),
     )
-    await writeTextAtomic(path, text)
-    return { model: entry.model, path }
-  }))
+    return { model: entry.model, path, html: text }
+  })
 }
 
 function reportReason(reason?: VerificationOutcomeReasonV1 | null, fallback = '—'): string {
