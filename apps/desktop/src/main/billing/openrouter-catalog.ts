@@ -1,16 +1,28 @@
 /**
- * OpenRouter reference-price catalog.
+ * Comparable retail-price catalog.
  *
- * Fetches the public OpenRouter model list and derives per-model retail pricing
+ * Fetches a configurable models API and derives per-model retail pricing
  * (USD per million tokens) that the renderer strikes through on the VPR Home
- * "Popular" list as a savings baseline. Cached in-memory with a TTL so we don't
- * hammer the endpoint on every discover refresh. All failures degrade to an
- * empty map — the UI simply omits the struck-through baseline.
+ * "Popular" list as a savings baseline. The endpoint must serve the
+ * OpenRouter-compatible models schema —
+ * `{ data: [{ id, name, pricing: { prompt, completion, input_cache_read } }] }`
+ * with prices in USD per token — which is what the OpenRouter* type names in
+ * this file refer to. The URL comes exclusively from the
+ * ANTSEED_COMPARABLE_PRICES_URL environment variable (e.g. set it to
+ * OpenRouter's models endpoint); with it unset, retail baselines and the
+ * Saved tile are simply off. Cached in-memory with a TTL so we don't hammer
+ * the endpoint on every discover refresh. All failures degrade to an empty
+ * map — the UI omits the struck-through baseline.
  */
 
 import { canonicalModelKey } from '@antseed/node/model-identity';
 
-const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models';
+export const COMPARABLE_PRICES_URL_ENV = 'ANTSEED_COMPARABLE_PRICES_URL';
+
+function comparablePricesUrl(): string | null {
+  const raw = process.env[COMPARABLE_PRICES_URL_ENV]?.trim();
+  return raw || null;
+}
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const FAILURE_BACKOFF_MS = 60 * 1000; // retry soon after a failed/empty fetch
 const FETCH_TIMEOUT_MS = 8000;
@@ -61,10 +73,12 @@ function buildMap(models: OpenRouterModel[]): OpenRouterReferenceMap {
 }
 
 async function fetchReferenceMap(): Promise<OpenRouterReferenceMap> {
+  const url = comparablePricesUrl();
+  if (!url) return {};
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const response = await fetch(OPENROUTER_MODELS_URL, {
+    const response = await fetch(url, {
       signal: controller.signal,
       headers: { Accept: 'application/json' },
     });
@@ -84,6 +98,7 @@ async function fetchReferenceMap(): Promise<OpenRouterReferenceMap> {
  * stale. Concurrent callers share a single in-flight request.
  */
 export async function getOpenRouterReferencePrices(): Promise<OpenRouterReferenceMap> {
+  if (!comparablePricesUrl()) return cache?.map ?? {};
   const now = Date.now();
   if (cache && now - cache.at < CACHE_TTL_MS) return cache.map;
   if (inflight) return inflight;

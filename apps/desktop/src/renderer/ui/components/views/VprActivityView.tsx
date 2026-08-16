@@ -161,7 +161,7 @@ export function VprActivityView({ onSelectView }: Props) {
             label="Saved"
             value={(
               <span title={measuredSavings
-                ? `Measured against OpenRouter retail prices across ${measuredSavings.matchedServices} matched services`
+                ? `Measured against retail reference prices across ${measuredSavings.matchedServices} matched services`
                 : undefined}
               >
                 {totalSavings}

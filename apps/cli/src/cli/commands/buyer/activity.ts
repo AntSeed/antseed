@@ -21,8 +21,15 @@ import { daemonJson } from './daemon.js'
 import { pastEpochs } from '../emissions.js'
 
 const HISTORY_WINDOWS = [7, 30, 90]
-const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models'
-const OPENROUTER_TIMEOUT_MS = 8_000
+/**
+ * Endpoint serving comparable retail prices for the Saved tile, in the
+ * OpenRouter-compatible models schema:
+ * `{ data: [{ id, name, pricing: { prompt, completion, input_cache_read } }] }`
+ * with prices in USD per token (e.g. set it to OpenRouter's models endpoint).
+ * No default — with the env unset, the savings baseline is off.
+ */
+const COMPARABLE_PRICES_URL_ENV = 'ANTSEED_COMPARABLE_PRICES_URL'
+const COMPARABLE_PRICES_TIMEOUT_MS = 8_000
 const CHART_WIDTH = 24
 const ONCHAIN_READ_CONCURRENCY = 8
 const MAX_CHANNEL_ROWS = 12
@@ -172,7 +179,7 @@ function buildSpendHistory(channels: DaemonChannelRow[], days: number, nowMs = D
 }
 
 // ─── Measured savings (mirrors the desktop's measured-savings module) ───
-// What the buyer actually paid vs the same tokens at OpenRouter retail
+// What the buyer actually paid vs the same tokens at retail reference
 // prices. Models with no retail match are excluded from BOTH sides.
 
 interface MeasuredSavings {
@@ -184,9 +191,16 @@ interface MeasuredSavings {
 
 type ReferencePrice = { input: number | null; output: number | null; cachedInput: number | null }
 
-async function fetchOpenRouterPrices(): Promise<Map<string, ReferencePrice> | null> {
+function comparablePricesUrl(): string | null {
+  const raw = process.env[COMPARABLE_PRICES_URL_ENV]?.trim()
+  return raw || null
+}
+
+async function fetchComparableRetailPrices(): Promise<Map<string, ReferencePrice> | null> {
+  const url = comparablePricesUrl()
+  if (!url) return null
   try {
-    const res = await fetch(OPENROUTER_MODELS_URL, { signal: AbortSignal.timeout(OPENROUTER_TIMEOUT_MS) })
+    const res = await fetch(url, { signal: AbortSignal.timeout(COMPARABLE_PRICES_TIMEOUT_MS) })
     if (!res.ok) return null
     const body = await res.json() as { data?: Array<{ id?: unknown; name?: unknown; pricing?: { prompt?: unknown; completion?: unknown; input_cache_read?: unknown } | null }> }
     if (!Array.isArray(body?.data)) return null
@@ -451,7 +465,7 @@ export function registerBuyerActivityCommand(buyerCmd: Command): void {
       // the summary.
       const currentChannels = channels.filter((row) => isCurrentChannelStatus(row.status))
       const [referenceMap, serviceNames, deposits, rewards, onChain] = await Promise.all([
-        fetchOpenRouterPrices(),
+        fetchComparableRetailPrices(),
         resolveServiceNames(globalOpts.dataDir, (usage?.services ?? []).map((s) => s.serviceIdHash)),
         fetchDepositsBalance(config, address),
         fetchClaimableRewards(config, address),
@@ -531,9 +545,16 @@ export function registerBuyerActivityCommand(buyerCmd: Command): void {
       console.log('')
       console.log(chalk.bold('Activity'))
       console.log('')
-      const savedLabel = savings
-        ? `${formatSavedUsd(savings.baselineUsd - savings.actualUsd)} (${savings.pct}% vs OpenRouter retail, ${savings.matchedServices} matched model${savings.matchedServices === 1 ? '' : 's'})`
-        : (usage?.totalRequests ?? 0) === 0 ? '$0' : chalk.dim('unavailable')
+      let savedLabel: string
+      if (savings) {
+        savedLabel = `${formatSavedUsd(savings.baselineUsd - savings.actualUsd)} (${savings.pct}% vs retail, ${savings.matchedServices} matched model${savings.matchedServices === 1 ? '' : 's'})`
+      } else if ((usage?.totalRequests ?? 0) === 0) {
+        savedLabel = '$0'
+      } else if (!comparablePricesUrl()) {
+        savedLabel = chalk.dim(`off — set ${COMPARABLE_PRICES_URL_ENV} to a retail-prices models API`)
+      } else {
+        savedLabel = chalk.dim('unavailable')
+      }
       console.log(`  Tokens ${chalk.bold(formatCompactTokens(totalTokens))} · Spent ${chalk.bold(formatUsd(totalSpent))} · Saved ${chalk.bold(savedLabel)}`)
       console.log('')
 
