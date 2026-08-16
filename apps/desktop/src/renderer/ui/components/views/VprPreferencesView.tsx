@@ -189,7 +189,7 @@ export function VprPreferencesView({ onSelectView }: Props) {
           <VprCard className={styles.card}>
             <VprSettingRow
               title="Theme"
-              hint="Applies to every AntStation window."
+              hint="Applies to every VPR window."
               control={(
                 <div className={styles.themeSegment} role="radiogroup" aria-label="Theme">
                   {([

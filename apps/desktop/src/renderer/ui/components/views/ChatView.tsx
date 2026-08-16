@@ -38,7 +38,7 @@ import type { ChatPermissionMode, RawChatAttachment } from '../../../types/bridg
 import type { VprModelCatalogEntry } from '../../../core/state';
 import { getPeerDisplayName } from '../../../core/peer-utils';
 import { getUiStateRef, notifyUiStateChangedSync } from '../../../core/store';
-import { AntStationStackedLogo } from '../AntStationLogo';
+import { VprStackedLogo } from '../VprLogo';
 import { cancelVoiceRecording, startVoiceRecording, stopVoiceRecording } from '../../lib/voice-recorder';
 import styles from './ChatView.module.scss';
 import bubbleStyles from '../chat/ChatBubble.module.scss';
@@ -1293,7 +1293,7 @@ export function ChatView({ onSelectView }: ChatViewProps) {
           <div className={styles.chatMessages} ref={scrollRef} data-chat-scroll>
             {showWelcome ? (
               <div className={styles.chatWelcome}>
-                <AntStationStackedLogo height={72} />
+                <VprStackedLogo height={72} />
                 <div className={styles.chatWelcomeSubtitle}>
                   Start typing. Best provider auto-selected by reputation.
                 </div>

@@ -6,6 +6,10 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ## Unreleased
 
+### Changed
+
+- Desktop: the in-app chat is now branded VPR — the AntStation name, logo wordmark, and labels (title bar, setup screen, empty chat state, floating pill, preferences hint, chat-list source label, and assistant system prompt) are replaced with VPR. In-app chats now identify themselves to the buyer proxy with the `x-vpr-session-id` header (conversation key `vpr:<id>`); the proxy still strips the legacy `x-antstation-session-id` header from older desktop builds before forwarding to sellers, and chats recorded under the legacy identity keep showing as VPR while their peer affinity re-establishes on the next message.
+
 ### Security
 
 - P2P TCP transport is now encrypted end-to-end (`transport.tcp-enc.v1`): a wallet-signed ephemeral X25519 handshake with forward secrecy and mutual peer authentication, AES-256-GCM framing for all payload traffic. Enabled automatically between peers that advertise the capability in discovery metadata; once offered, the handshake fails closed rather than downgrading to plaintext, and the intro signature covers the advertised capabilities and encryption offer so an on-path attacker cannot strip them to force a legacy fallback. Legacy peers still connect over plaintext unless the new `requireSecureTransport` node option is set.

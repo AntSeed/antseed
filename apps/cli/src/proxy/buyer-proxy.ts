@@ -2104,7 +2104,7 @@ export class BuyerProxy {
         error: {
           type: 'no_default_route',
           code: 'no_default_route',
-          message: `Model "${ROUTED_MODEL_ALIAS}" routes to the model selected in AntStation, but no route is set. `
+          message: `Model "${ROUTED_MODEL_ALIAS}" routes to the model selected in VPR, but no route is set. `
             + 'Pick a model in the desktop app, or request "<peerId>@<model>" explicitly.',
           param: 'model',
         },
@@ -2728,6 +2728,8 @@ export class BuyerProxy {
     const {
       'x-antseed-pin-peer': _pinPeer,
       'x-antseed-prefer-peer': _preferPeer,
+      'x-vpr-session-id': _vprSession,
+      // Legacy desktop builds (pre AntStation → VPR rename) still send this.
       'x-antstation-session-id': _antstationSession,
       ...headersForPeer
     } = serializedReq.headers
