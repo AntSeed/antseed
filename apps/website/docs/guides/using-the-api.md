@@ -156,7 +156,7 @@ curl http://localhost:8377/v1/images/edits \
 #   -H 'x-antseed-pin-peer: <peerId>'
 ```
 
-Image edits are multipart requests, but their `model` field follows the same routing and seller-side alias rewriting rules as JSON generation requests. Upgrade the buyer and seller together if an upstream rejects an edit with `model is required`: `@antseed/cli@0.1.150`, `@antseed/provider-core@0.2.53`, and `@antseed/provider-openai@0.2.45` predate multipart model preservation, so edits that depend on a seller service rewrite can fail on those versions. The provider plugin pins its provider-core version, so updating only the buyer is not sufficient. Desktop v0.2.16 predates conversational image editing entirely.
+Image edits are multipart requests, but their `model` field follows the same routing and seller-side alias rewriting rules as JSON generation requests. Upgrade the buyer and seller together if an upstream rejects an edit with `model is required`: `@antseed/cli@0.1.150`, `@antseed/provider-core@0.2.53`, and `@antseed/provider-openai@0.2.45` predate multipart model preservation, so edits that depend on a seller service rewrite can fail on those versions. Use `@antseed/cli@0.1.151`, `@antseed/provider-core@0.2.54`, and `@antseed/provider-openai@0.2.46` or newer. The provider plugin pins its provider-core version, so updating only the buyer is not sufficient. Desktop v0.2.16 predates conversational image editing entirely.
 
 ## Claude Code
 
