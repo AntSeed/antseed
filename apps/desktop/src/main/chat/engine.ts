@@ -723,17 +723,23 @@ export function registerPiChatHandlers({
 
   ipcMain.handle('chat:generate-image', async (_event, payload: unknown) => {
     const request = payload && typeof payload === 'object'
-      ? payload as { conversationId?: unknown; prompt?: unknown; peerId?: unknown; service?: unknown }
+      ? payload as { conversationId?: unknown; prompt?: unknown; peerId?: unknown; service?: unknown; sourceImageAttachmentId?: unknown }
       : {};
     const conversationId = typeof request.conversationId === 'string' ? request.conversationId.trim() : '';
     const prompt = typeof request.prompt === 'string' ? request.prompt.trim() : '';
     const peerId = typeof request.peerId === 'string' ? request.peerId.trim() : '';
     const service = typeof request.service === 'string' ? request.service.trim() : '';
+    const sourceImageAttachmentId = typeof request.sourceImageAttachmentId === 'string'
+      ? request.sourceImageAttachmentId.trim()
+      : '';
     if (!conversationId || !prompt || !service) {
       return { ok: false, error: 'Conversation, prompt, and image model are required.' };
     }
     if (!isSafeId(conversationId)) {
       return { ok: false, error: 'Invalid conversation.' };
+    }
+    if (sourceImageAttachmentId && !isSafeId(sourceImageAttachmentId)) {
+      return { ok: false, error: 'Invalid source image.' };
     }
     if (activeRunsByConversation.has(conversationId) || activeImageRunsByConversation.has(conversationId)) {
       return { ok: false, error: 'A request is already in progress for this conversation.' };
@@ -747,6 +753,7 @@ export function registerPiChatHandlers({
         prompt,
         ...(peerId ? { peerId } : {}),
         service,
+        ...(sourceImageAttachmentId ? { sourceImageAttachmentId } : {}),
       }, { signal: controller.signal });
     } finally {
       if (activeImageRunsByConversation.get(conversationId) === controller) {

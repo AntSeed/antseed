@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { BlockList, isIP } from 'node:net';
 import { lookup } from 'node:dns/promises';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import { LOCALHOST_URL } from '../constants.js';
-import { saveAttachment } from './attachments/store.js';
+import { resolveAttachmentPath, saveAttachment } from './attachments/store.js';
 import type { AiChatMessage } from './conversation-types.js';
 import type { PiConversationStore } from './conversation-store.js';
 
@@ -51,6 +53,7 @@ export type GenerateChatImageRequest = {
   prompt: string;
   peerId?: string | null;
   service: string;
+  sourceImageAttachmentId?: string | null;
 };
 
 export type GenerateChatImageResult = {
@@ -161,8 +164,15 @@ async function downloadImage(value: unknown): Promise<{ bytes: Buffer; mimeType:
 
 export type GenerateChatImageDependencies = {
   persistAttachment?: typeof saveAttachment;
+  loadSourceAttachment?: (conversationId: string, attachmentId: string) => Promise<{ bytes: Buffer; fileName: string }>;
   signal?: AbortSignal;
 };
+
+async function loadSourceAttachment(conversationId: string, attachmentId: string): Promise<{ bytes: Buffer; fileName: string }> {
+  const filePath = await resolveAttachmentPath(conversationId, attachmentId);
+  if (!filePath) throw new Error('The image to edit is no longer available.');
+  return { bytes: await readFile(filePath), fileName: path.basename(filePath) };
+}
 
 export async function generateChatImage(
   store: Pick<PiConversationStore, 'appendImageGeneration'>,
@@ -174,18 +184,40 @@ export async function generateChatImage(
   const prompt = request.prompt.trim();
   const peerId = request.peerId?.trim() ?? '';
   const service = request.service.trim();
+  const sourceImageAttachmentId = request.sourceImageAttachmentId?.trim() ?? '';
   if (!conversationId || !prompt || !service) {
     return { ok: false, error: 'Conversation, prompt, and image model are required.' };
   }
 
   try {
-    const response = await fetch(`${LOCALHOST_URL}:${String(proxyPort)}/v1/images/generations`, {
+    let endpoint = '/v1/images/generations';
+    let body: string | FormData;
+    const headers: Record<string, string> = { authorization: 'Bearer antseed-desktop' };
+    if (sourceImageAttachmentId) {
+      const source = await (dependencies.loadSourceAttachment ?? loadSourceAttachment)(conversationId, sourceImageAttachmentId);
+      if (source.bytes.length === 0 || source.bytes.length > MAX_GENERATED_IMAGE_BYTES) {
+        throw new Error('The image to edit is invalid or exceeds the desktop size limit.');
+      }
+      const sourceMimeType = detectImageMimeType(source.bytes);
+      if (!sourceMimeType) throw new Error('The image to edit uses an unsupported image format.');
+      const form = new FormData();
+      form.append('model', service);
+      form.append('prompt', prompt);
+      form.append('n', '1');
+      form.append('response_format', 'b64_json');
+      form.append('image', new Blob([source.bytes], { type: sourceMimeType }), source.fileName);
+      endpoint = '/v1/images/edits';
+      body = form;
+      if (peerId) headers['x-antseed-pin-peer'] = peerId;
+    } else {
+      headers['content-type'] = 'application/json';
+      body = JSON.stringify({ model: peerId ? `${peerId}@${service}` : service, prompt, n: 1, response_format: 'b64_json' });
+    }
+
+    const response = await fetch(`${LOCALHOST_URL}:${String(proxyPort)}${endpoint}`, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: 'Bearer antseed-desktop',
-      },
-      body: JSON.stringify({ model: peerId ? `${peerId}@${service}` : service, prompt, n: 1, response_format: 'b64_json' }),
+      headers,
+      body,
       signal: dependencies.signal
         ? AbortSignal.any([dependencies.signal, AbortSignal.timeout(IMAGE_REQUEST_TIMEOUT_MS)])
         : AbortSignal.timeout(IMAGE_REQUEST_TIMEOUT_MS),
