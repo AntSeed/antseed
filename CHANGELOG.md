@@ -17,6 +17,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- CLI plugin installation now reports an actionable Node.js/npm requirement when `npm` is unavailable instead of exposing the raw `spawn npm ENOENT` process error.
 - CLI seller configuration now passes a configured `baseUrl` to the local-LLM plugin using its declared `LOCAL_LLM_BASE_URL` key instead of silently falling back to the default Ollama endpoint.
 - Provider body injection configured for OpenAI-compatible chat requests no longer leaks into `/v1/images/*` requests, preventing strict image-generation upstreams from rejecting otherwise valid payloads.
 - Conversations can now switch from a Chat Completions-backed model to a native OpenAI Responses model without failing on incompatible synthetic message IDs. Existing affected histories are repaired narrowly on continuation, while native Responses conversations remain byte-for-byte passthrough so cache keys, response chaining, encrypted reasoning, and prompt history are preserved.
