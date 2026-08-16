@@ -178,8 +178,13 @@ function compareScoredModelRoutes<T extends ModelRouteCandidate>(
   const bKnown = bPrice !== null;
   if (aKnown !== bKnown) return aKnown ? -1 : 1;
 
-  return b.score - a.score
-    || (aPrice ?? Number.POSITIVE_INFINITY) - (bPrice ?? Number.POSITIVE_INFINITY)
+  // Trust is a gate, not a rank: among eligible, ready peers the cheapest
+  // total price wins, and the blended score (reputation, failure streaks,
+  // preference bonuses) only breaks price ties. Reputation ordering above
+  // the eligibility threshold would re-apply the trust filter as a soft
+  // rank and let a well-rated seller beat a free one on 2 display points.
+  return (aPrice ?? Number.POSITIVE_INFINITY) - (bPrice ?? Number.POSITIVE_INFINITY)
+    || b.score - a.score
     || normalizedPeerId(a.route.peerId).localeCompare(normalizedPeerId(b.route.peerId));
 }
 
