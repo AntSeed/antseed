@@ -238,7 +238,7 @@ export interface NodeConfig {
   maxStreamBufferBytes?: number;
   /** Maximum upload body size (bytes) a seller will accept per request. Default: 64 MiB. */
   maxUploadBodyBytes?: number;
-  /** Maximum wall time allowed for a streaming response. Default: 5 minutes. */
+  /** Maximum wall time allowed for a streaming response. Default: 30 minutes. */
   maxStreamDurationMs?: number;
   /** Allow private/loopback IPs in DHT lookups. Default: false. Set true for local testing. */
   allowPrivateIPs?: boolean;

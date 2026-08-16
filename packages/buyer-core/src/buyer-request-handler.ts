@@ -55,6 +55,7 @@ export interface BuyerRequestHandlerConfig {
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 5 * 60_000;
+const DEFAULT_MAX_STREAM_DURATION_MS = 30 * 60_000;
 const DEFAULT_RESPONSE_AUTH_GRACE_MS = 30_000;
 
 export interface BuyerRequestHandlerDeps {
@@ -165,7 +166,7 @@ export class BuyerRequestHandler {
     const executeRequest = (): Promise<SerializedHttpResponse> => new Promise<SerializedHttpResponse>((resolve, reject) => {
       const timeoutMs = this._config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
       const maxStreamBufferBytes = Math.max(1, this._config.maxStreamBufferBytes ?? 16 * 1024 * 1024);
-      const maxStreamDurationMs = Math.max(1, this._config.maxStreamDurationMs ?? 5 * 60_000);
+      const maxStreamDurationMs = Math.max(1, this._config.maxStreamDurationMs ?? DEFAULT_MAX_STREAM_DURATION_MS);
       const streamInitialResponseTimeoutMs = callbacks ? Math.max(timeoutMs, 90_000) : timeoutMs;
       const streamIdleTimeoutMs = Math.max(timeoutMs, 60_000);
       let settled = false;
