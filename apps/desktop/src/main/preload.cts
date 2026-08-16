@@ -654,6 +654,11 @@ const api = {
     ipcRenderer.on('desktop:open-floating-window', listener);
     return () => ipcRenderer.off('desktop:open-floating-window', listener);
   },
+  onDesktopSelectVprModel(handler: (selection: unknown) => void): () => void {
+    const listener = (_: unknown, selection: unknown) => handler(selection);
+    ipcRenderer.on('desktop:select-vpr-model', listener);
+    return () => ipcRenderer.off('desktop:select-vpr-model', listener);
+  },
   onDesktopConnectMain(handler: () => void): () => void {
     const listener = () => handler();
     ipcRenderer.on('desktop:connect-main', listener);

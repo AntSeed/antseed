@@ -30,8 +30,22 @@ export type ModelPickerSnapshot = {
   /** Display order: favorites first, then recommended. */
   models: ModelPickerEntry[];
   /** The app's current model selection, for the ✓ mark. */
-  selected: { provider: string; serviceId: string } | null;
+  selected: ModelPickerSelection | null;
 };
+
+export type ModelPickerSelection = {
+  provider: string;
+  serviceId: string;
+};
+
+export function normalizeModelPickerSelection(raw: unknown): ModelPickerSelection | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const selection = raw as Record<string, unknown>;
+  if (typeof selection.provider !== 'string' || typeof selection.serviceId !== 'string') return null;
+  const provider = selection.provider.trim();
+  const serviceId = selection.serviceId.trim();
+  return provider && serviceId ? { provider, serviceId } : null;
+}
 
 export function normalizeModelPickerSnapshot(raw: unknown): ModelPickerSnapshot | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -56,10 +70,6 @@ export function normalizeModelPickerSnapshot(raw: unknown): ModelPickerSnapshot 
       routeProvider: asId(entry.routeProvider),
     });
   }
-  const selectedRaw = snapshot.selected as Record<string, unknown> | null | undefined;
-  const selected = selectedRaw && typeof selectedRaw === 'object'
-    && typeof selectedRaw.provider === 'string' && typeof selectedRaw.serviceId === 'string'
-    ? { provider: selectedRaw.provider, serviceId: selectedRaw.serviceId }
-    : null;
+  const selected = normalizeModelPickerSelection(snapshot.selected);
   return { models, selected };
 }

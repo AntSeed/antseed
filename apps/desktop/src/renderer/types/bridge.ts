@@ -482,6 +482,7 @@ export type DesktopBridge = {
   onVprFloatClosed?: (handler: () => void) => () => void;
   onVprFloatAction?: (handler: (action: unknown) => void) => () => void;
   onDesktopOpenFloatingWindow?: (handler: () => void) => () => void;
+  onDesktopSelectVprModel?: (handler: (selection: unknown) => void) => () => void;
   onDesktopConnectMain?: (handler: () => void) => () => void;
   onDesktopDisconnectMain?: (handler: () => void) => () => void;
 };

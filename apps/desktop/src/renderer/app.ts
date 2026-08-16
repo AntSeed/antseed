@@ -19,6 +19,7 @@ import {
   saveFloatShowRoutedPeer,
 } from './modules/app/float-settings';
 import { initModelPickerSync } from './modules/catalog/picker-sync';
+import { normalizeModelPickerSelection } from '../shared/model-picker.js';
 import { applyVprRouteToConnectedProxy } from './modules/routing/proxy-sync';
 import { findCatalogEntry } from './modules/catalog/model-catalog';
 import { resolveVprChatOption } from './modules/chat/projection';
@@ -682,6 +683,10 @@ registerActions({
 });
 
 bridge?.onDesktopOpenFloatingWindow?.(() => { void vprFloatApi.openFloat(); });
+bridge?.onDesktopSelectVprModel?.((raw) => {
+  const selection = normalizeModelPickerSelection(raw);
+  if (selection) actionSelectVprModel(selection.provider, selection.serviceId);
+});
 bridge?.onDesktopConnectMain?.(() => { void actionStartAll(); });
 bridge?.onDesktopDisconnectMain?.(() => { void actionStopAll(); });
 

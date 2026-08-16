@@ -76,6 +76,11 @@ import { registerPaymentsIpc } from './ipc/payments.js';
 import { registerRuntimeIpc } from './ipc/runtime.js';
 import { registerSystemProxyIpc } from './ipc/system-proxy.js';
 import { registerTelegramIpc } from './ipc/telegram.js';
+import type { ModelPickerSnapshot, ModelPickerSelection } from '../shared/model-picker.js';
+import {
+  buildVprNativeMenuItems,
+  selectVprNativeMenuModel,
+} from './ui/vpr-native-menu.js';
 import {
   effectiveLaunchTarget,
 } from './connected-apps/profile-targets.js';
@@ -305,6 +310,8 @@ const processManager = new ProcessManager((mode, stream, line) => {
   appendLog(mode, stream, line);
 });
 
+let trayModelPicker: ModelPickerSnapshot | null = null;
+
 initSystemProxyRuntime({
   appName: APP_NAME,
   appendLog,
@@ -421,6 +428,10 @@ const piChatEngine = registerPiChatHandlers({
         && peer.port > 0
         && peer.port <= 65535);
   },
+  onModelPickerChanged: (snapshot) => {
+    trayModelPicker = snapshot;
+    refreshTrayMenu();
+  },
 });
 
 // ── Telegram bridge ──
@@ -514,11 +525,35 @@ app.whenReady().then(async () => {
     getMainWindow()?.webContents.send(running ? 'desktop:disconnect-main' : 'desktop:connect-main');
   };
 
+  const selectTrayModel = (selection: ModelPickerSelection) => {
+    trayModelPicker = selectVprNativeMenuModel(trayModelPicker, selection);
+    refreshTrayMenu();
+    getMainWindow()?.webContents.send('desktop:select-vpr-model', selection);
+  };
+
+  const showModelsOverview = () => {
+    showMainWindow();
+    const win = getMainWindow();
+    if (!win) return;
+    const navigate = () => win.webContents.send('desktop:navigate-view', 'explore');
+    if (win.webContents.isLoadingMainFrame()) {
+      win.webContents.once('did-finish-load', navigate);
+    } else {
+      navigate();
+    }
+  };
+
   createDesktopTray({
     appName: APP_NAME,
     iconPath: TRAY_ICON_PATH,
     onShow: showMainWindow,
-    buildMenu: () => buildSystemProxyTrayMenu(showMainWindow, showFloatingWindow, toggleMainConnection),
+    buildMenu: () => [
+      ...buildSystemProxyTrayMenu(showMainWindow, showFloatingWindow, toggleMainConnection),
+      ...buildVprNativeMenuItems(trayModelPicker, {
+        selectModel: selectTrayModel,
+        browseModels: showModelsOverview,
+      }),
+    ],
   });
   refreshTrayMenu();
 
