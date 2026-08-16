@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { getServiceMetadataId } from '@antseed/node'
 import { canonicalModelKey } from '@antseed/node/model-identity'
 import { getGlobalOptions } from '../types.js'
+import { BAKED_COMPARABLE_PRICES_URL } from '../../../generated/baked-defaults.js'
 import { loadConfig } from '../../../config/loader.js'
 import type { AntseedConfig } from '../../../config/types.js'
 import {
@@ -26,7 +27,9 @@ const HISTORY_WINDOWS = [7, 30, 90]
  * OpenRouter-compatible models schema:
  * `{ data: [{ id, name, pricing: { prompt, completion, input_cache_read } }] }`
  * with prices in USD per token (e.g. set it to OpenRouter's models endpoint).
- * No default — with the env unset, the savings baseline is off.
+ * Release builds bake a default via scripts/bake-comparable-prices-url.mjs;
+ * with neither env nor baked value, the savings baseline is off. Setting the
+ * env to an empty string disables a baked default.
  */
 const COMPARABLE_PRICES_URL_ENV = 'ANTSEED_COMPARABLE_PRICES_URL'
 const COMPARABLE_PRICES_TIMEOUT_MS = 8_000
@@ -194,8 +197,12 @@ interface MeasuredSavings {
 type ReferencePrice = { input: number | null; output: number | null; cachedInput: number | null }
 
 function comparablePricesUrl(): string | null {
-  const raw = process.env[COMPARABLE_PRICES_URL_ENV]?.trim()
-  return raw || null
+  const raw = process.env[COMPARABLE_PRICES_URL_ENV]
+  if (raw !== undefined) {
+    // A set-but-empty env explicitly disables a baked release default.
+    return raw.trim() || null
+  }
+  return BAKED_COMPARABLE_PRICES_URL
 }
 
 async function fetchComparableRetailPrices(): Promise<Map<string, ReferencePrice> | null> {

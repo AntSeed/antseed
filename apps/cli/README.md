@@ -389,7 +389,7 @@ Use `base-sepolia` for testing with MockUSDC.
 ### Runtime Controls
 
 - `ANTSEED_BASE_RPC_URL=<url>` — custom Base JSON-RPC endpoint for seller on-chain operations (recommended for production)
-- `ANTSEED_COMPARABLE_PRICES_URL=<url>` — retail-prices models API for the `antseed buyer activity` Saved tile (OpenRouter-compatible schema, e.g. `https://openrouter.ai/api/v1/models`); unset disables the savings baseline
+- `ANTSEED_COMPARABLE_PRICES_URL=<url>` — retail-prices models API for the `antseed buyer activity` Saved tile (OpenRouter-compatible schema, e.g. `https://openrouter.ai/api/v1/models`). Release builds ship with a baked-in default; set the variable to override it, or set it to an empty string to disable the savings baseline. Builds from source have no default
 - `ANTSEED_BUYER_METADATA_FETCH_TIMEOUT_MS=<ms>` — runtime override for buyer peer-discovery metadata fetch timeout
 - `ANTSEED_BUYER_DISABLE_METADATA_V2_SERVICES=true` — suppress buyer per-service metadata v2 attribution while keeping aggregate usage totals
 - `ANTSEED_SETTLEMENT_IDLE_MS=600000` — idle time before settling a session (default: 10 minutes)

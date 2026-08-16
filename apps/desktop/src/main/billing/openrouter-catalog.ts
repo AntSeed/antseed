@@ -7,21 +7,27 @@
  * OpenRouter-compatible models schema —
  * `{ data: [{ id, name, pricing: { prompt, completion, input_cache_read } }] }`
  * with prices in USD per token — which is what the OpenRouter* type names in
- * this file refer to. The URL comes exclusively from the
- * ANTSEED_COMPARABLE_PRICES_URL environment variable (e.g. set it to
- * OpenRouter's models endpoint); with it unset, retail baselines and the
- * Saved tile are simply off. Cached in-memory with a TTL so we don't hammer
- * the endpoint on every discover refresh. All failures degrade to an empty
- * map — the UI omits the struck-through baseline.
+ * this file refer to. The URL comes from the ANTSEED_COMPARABLE_PRICES_URL
+ * environment variable (e.g. set it to OpenRouter's models endpoint);
+ * release builds bake a default via scripts/bake-comparable-prices-url.mjs,
+ * and a set-but-empty env disables it. With neither, retail baselines and
+ * the Saved tile are simply off. Cached in-memory with a TTL so we don't
+ * hammer the endpoint on every discover refresh. All failures degrade to an
+ * empty map — the UI omits the struck-through baseline.
  */
 
 import { canonicalModelKey } from '@antseed/node/model-identity';
+import { BAKED_COMPARABLE_PRICES_URL } from '../generated/baked-defaults.js';
 
 export const COMPARABLE_PRICES_URL_ENV = 'ANTSEED_COMPARABLE_PRICES_URL';
 
 function comparablePricesUrl(): string | null {
-  const raw = process.env[COMPARABLE_PRICES_URL_ENV]?.trim();
-  return raw || null;
+  const raw = process.env[COMPARABLE_PRICES_URL_ENV];
+  if (raw !== undefined) {
+    // A set-but-empty env explicitly disables a baked release default.
+    return raw.trim() || null;
+  }
+  return BAKED_COMPARABLE_PRICES_URL;
 }
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const FAILURE_BACKOFF_MS = 60 * 1000; // retry soon after a failed/empty fetch
