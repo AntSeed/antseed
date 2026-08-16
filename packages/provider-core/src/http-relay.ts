@@ -70,6 +70,86 @@ function deepMerge(target: Record<string, unknown>, source: Record<string, unkno
   return out;
 }
 
+function getHeader(headers: Record<string, string>, name: string): string {
+  const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === name.toLowerCase());
+  return entry?.[1] ?? '';
+}
+
+function multipartBoundary(contentType: string): string {
+  const match = /^multipart\/form-data\s*;.*?boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(contentType.trim());
+  return (match?.[1] ?? match?.[2] ?? '').trim();
+}
+
+function readMultipartTextField(body: Uint8Array, contentType: string, fieldName: string): string | null {
+  const boundary = multipartBoundary(contentType);
+  if (!boundary) return null;
+  const text = new TextDecoder('latin1').decode(body);
+  const delimiter = `--${boundary}`;
+  let index = text.indexOf(delimiter);
+  while (index !== -1) {
+    index += delimiter.length;
+    if (text.startsWith('--', index)) break;
+    const headerEnd = text.indexOf('\r\n\r\n', index);
+    if (headerEnd === -1) break;
+    const next = text.indexOf(`\r\n${delimiter}`, headerEnd + 4);
+    if (next === -1) break;
+    const headers = text.slice(index, headerEnd);
+    const params = /content-disposition:\s*form-data\s*;([^\r\n]*)/i.exec(headers)?.[1] ?? '';
+    const name = /name="([^"]*)"/i.exec(params)?.[1] ?? '';
+    if (name === fieldName && !/filename\s*=/i.test(params)) {
+      const raw = body.subarray(headerEnd + 4, next);
+      return new TextDecoder().decode(raw).trim();
+    }
+    index = next + 2;
+  }
+  return null;
+}
+
+function setMultipartTextField(
+  body: Uint8Array,
+  contentType: string,
+  fieldName: string,
+  value: string,
+): Uint8Array | null {
+  const boundary = multipartBoundary(contentType);
+  if (!boundary || !/^[A-Za-z0-9_.-]+$/.test(fieldName)) return null;
+  const text = new TextDecoder('latin1').decode(body);
+  const delimiter = `--${boundary}`;
+  let index = text.indexOf(delimiter);
+  while (index !== -1) {
+    index += delimiter.length;
+    if (text.startsWith('--', index)) break;
+    const headerEnd = text.indexOf('\r\n\r\n', index);
+    if (headerEnd === -1) break;
+    const next = text.indexOf(`\r\n${delimiter}`, headerEnd + 4);
+    if (next === -1) break;
+    const headers = text.slice(index, headerEnd);
+    const params = /content-disposition:\s*form-data\s*;([^\r\n]*)/i.exec(headers)?.[1] ?? '';
+    const name = /name="([^"]*)"/i.exec(params)?.[1] ?? '';
+    if (name === fieldName && !/filename\s*=/i.test(params)) {
+      const replacement = new TextEncoder().encode(value);
+      const out = new Uint8Array(headerEnd + 4 + replacement.length + body.length - next);
+      out.set(body.subarray(0, headerEnd + 4), 0);
+      out.set(replacement, headerEnd + 4);
+      out.set(body.subarray(next), headerEnd + 4 + replacement.length);
+      return out;
+    }
+    index = next + 2;
+  }
+
+  const finalDelimiter = `${delimiter}--`;
+  const finalIndex = text.lastIndexOf(finalDelimiter);
+  if (finalIndex === -1) return null;
+  const insertion = new TextEncoder().encode(
+    `${delimiter}\r\nContent-Disposition: form-data; name="${fieldName}"\r\n\r\n${value}\r\n`,
+  );
+  const out = new Uint8Array(finalIndex + insertion.length + body.length - finalIndex);
+  out.set(body.subarray(0, finalIndex), 0);
+  out.set(insertion, finalIndex);
+  out.set(body.subarray(finalIndex), finalIndex + insertion.length);
+  return out;
+}
+
 export class HttpRelay {
   private readonly _config: RelayConfig;
   private readonly _callbacks: RelayCallbacks;
@@ -156,61 +236,76 @@ export class HttpRelay {
       // Swap auth headers
       let swappedRequest = swapAuthHeader(request, effectiveConfig);
 
-      // Always process JSON bodies to normalize "service" → "model" for upstream APIs,
-      // apply service rewrites, and inject extra fields.
+      // Normalize the requested service into the upstream model for both JSON
+      // and multipart Images API requests. Multipart edits otherwise bypass
+      // alias rewriting and some upstreams report the model as missing.
       if (swappedRequest.method !== 'GET' && swappedRequest.method !== 'HEAD') {
-        try {
-          const decoded = JSON.parse(new TextDecoder().decode(swappedRequest.body)) as Record<string, unknown>;
-          const transformed: Record<string, unknown> = { ...decoded };
+        const contentType = getHeader(swappedRequest.headers, 'content-type');
+        if (/^multipart\/form-data/i.test(contentType.trim())) {
+          const requestedService = getHeader(swappedRequest.headers, 'x-antseed-service').trim()
+            || readMultipartTextField(swappedRequest.body, contentType, 'service')
+            || readMultipartTextField(swappedRequest.body, contentType, 'model')
+            || '';
+          if (requestedService) {
+            const rewrittenService = this._config.serviceRewriteMap?.[requestedService.toLowerCase()]?.trim();
+            const upstreamModel = rewrittenService || requestedService;
+            const rewrittenBody = setMultipartTextField(swappedRequest.body, contentType, 'model', upstreamModel);
+            if (rewrittenBody) swappedRequest = { ...swappedRequest, body: rewrittenBody };
+          }
+        } else {
+          try {
+            const decoded = JSON.parse(new TextDecoder().decode(swappedRequest.body)) as Record<string, unknown>;
+            const transformed: Record<string, unknown> = { ...decoded };
 
-          // Read from both "model" (upstream API compat) and "service" (native) fields
-          const requestedService = (transformed.service ?? transformed.model) as string | undefined;
+            // Read from both "model" (upstream API compat) and "service" (native) fields
+            const requestedService = (transformed.service ?? transformed.model) as string | undefined;
 
-          if (this._config.serviceRewriteMap && typeof requestedService === 'string' && requestedService.trim().length > 0) {
-            const rewrittenService = this._config.serviceRewriteMap[requestedService.trim().toLowerCase()];
-            if (typeof rewrittenService === 'string' && rewrittenService.trim().length > 0) {
-              transformed.model = rewrittenService.trim();
+            if (this._config.serviceRewriteMap && typeof requestedService === 'string' && requestedService.trim().length > 0) {
+              const rewrittenService = this._config.serviceRewriteMap[requestedService.trim().toLowerCase()];
+              if (typeof rewrittenService === 'string' && rewrittenService.trim().length > 0) {
+                transformed.model = rewrittenService.trim();
+              }
             }
-          }
 
-          // Normalize: if client sent "service" without "model", copy to "model" for upstream API compat.
-          if (transformed.service !== undefined && transformed.model === undefined) {
-            transformed.model = transformed.service;
-          }
-          // Remove the "service" field — upstream APIs don't understand it.
-          delete transformed.service;
-
-          // Force `stream_options.include_usage = true` on streaming OpenAI Chat
-          // Completions requests. Without this, strict OpenAI-spec upstreams
-          // (e.g. api.minimax.io) return SSE streams with no `usage` chunk,
-          // which makes `parseResponseUsage` return zeros and causes the
-          // seller to record `cost=0 (in=0 out=0)` for every request —
-          // effectively giving away inference for free.
-          //
-          // We only touch `/v1/chat/completions` with `stream:true`, and we
-          // preserve any caller-supplied `stream_options` fields. We don't
-          // override an explicit `include_usage:false` (operators can still
-          // disable via `injectJsonFields` below if they really need to).
-          if (
-            request.path.toLowerCase().startsWith('/v1/chat/completions')
-            && transformed.stream === true
-          ) {
-            const existing = transformed.stream_options && typeof transformed.stream_options === 'object' && !Array.isArray(transformed.stream_options)
-              ? transformed.stream_options as Record<string, unknown>
-              : {};
-            if (existing.include_usage === undefined) {
-              transformed.stream_options = { ...existing, include_usage: true };
+            // Normalize: if client sent "service" without "model", copy to "model" for upstream API compat.
+            if (transformed.service !== undefined && transformed.model === undefined) {
+              transformed.model = transformed.service;
             }
+            // Remove the "service" field — upstream APIs don't understand it.
+            delete transformed.service;
+
+            // Force `stream_options.include_usage = true` on streaming OpenAI Chat
+            // Completions requests. Without this, strict OpenAI-spec upstreams
+            // (e.g. api.minimax.io) return SSE streams with no `usage` chunk,
+            // which makes `parseResponseUsage` return zeros and causes the
+            // seller to record `cost=0 (in=0 out=0)` for every request —
+            // effectively giving away inference for free.
+            //
+            // We only touch `/v1/chat/completions` with `stream:true`, and we
+            // preserve any caller-supplied `stream_options` fields. We don't
+            // override an explicit `include_usage:false` (operators can still
+            // disable via `injectJsonFields` below if they really need to).
+            if (
+              request.path.toLowerCase().startsWith('/v1/chat/completions')
+              && transformed.stream === true
+            ) {
+              const existing = transformed.stream_options && typeof transformed.stream_options === 'object' && !Array.isArray(transformed.stream_options)
+                ? transformed.stream_options as Record<string, unknown>
+                : {};
+              if (existing.include_usage === undefined) {
+                transformed.stream_options = { ...existing, include_usage: true };
+              }
+            }
+
+            const isImageRequest = request.path.toLowerCase().startsWith('/v1/images/');
+            const merged = this._config.injectJsonFields && !isImageRequest
+              ? deepMerge(transformed, this._config.injectJsonFields)
+              : transformed;
+
+            swappedRequest = { ...swappedRequest, body: new TextEncoder().encode(JSON.stringify(merged)) };
+          } catch {
+            // Not JSON — leave body unchanged
           }
-
-          const isImageRequest = request.path.toLowerCase().startsWith('/v1/images/');
-          const merged = this._config.injectJsonFields && !isImageRequest
-            ? deepMerge(transformed, this._config.injectJsonFields)
-            : transformed;
-
-          swappedRequest = { ...swappedRequest, body: new TextEncoder().encode(JSON.stringify(merged)) };
-        } catch {
-          // Not JSON — leave body unchanged
         }
       }
 
