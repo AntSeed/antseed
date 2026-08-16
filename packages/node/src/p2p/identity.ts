@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { access, readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { Wallet } from "ethers";
@@ -10,6 +10,7 @@ export { hexToBytes, bytesToHex };
 
 const CONFIG_DIR = join(homedir(), ".antseed");
 const PRIVATE_KEY_FILE = "identity.key";
+const ENCRYPTED_PRIVATE_KEY_FILE = "identity.enc";
 
 export interface Identity {
   peerId: PeerId;
@@ -32,26 +33,47 @@ export interface IdentityStore {
  */
 export class FileIdentityStore implements IdentityStore {
   private readonly keyPath: string;
+  private readonly encryptedKeyPath: string;
   private readonly dir: string;
 
   constructor(configDir?: string) {
     this.dir = configDir ?? CONFIG_DIR;
     this.keyPath = join(this.dir, PRIVATE_KEY_FILE);
+    this.encryptedKeyPath = join(this.dir, ENCRYPTED_PRIVATE_KEY_FILE);
   }
 
   async load(): Promise<string | null> {
     try {
       const hexKey = (await readFile(this.keyPath, "utf-8")).trim();
-      return hexKey.length > 0 ? hexKey : null;
-    } catch {
-      return null;
+      return hexKey;
+    } catch (error) {
+      if (!isMissingFileError(error)) {
+        throw new Error(`Unable to read identity at ${this.keyPath}; refusing to create a replacement identity.`, { cause: error });
+      }
     }
+
+    try {
+      await access(this.encryptedKeyPath);
+    } catch (error) {
+      if (isMissingFileError(error)) return null;
+      throw new Error(`Unable to inspect identity at ${this.encryptedKeyPath}; refusing to create a replacement identity.`, { cause: error });
+    }
+
+    throw new Error(
+      `An app-encrypted identity already exists at ${this.encryptedKeyPath}. ` +
+      'The CLI cannot decrypt Electron safeStorage identities and will not create a second wallet in the same data directory. ' +
+      'Back up the private key from VPR and import it for CLI use, launch the CLI through VPR, or choose a different --data-dir.',
+    );
   }
 
   async save(hexKey: string): Promise<void> {
     await mkdir(this.dir, { recursive: true });
     await writeFile(this.keyPath, hexKey, { mode: 0o600 });
   }
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
 
 /** Environment variable for passing identity hex from a parent process (e.g. desktop → CLI). */
@@ -94,7 +116,10 @@ export async function loadOrCreateIdentity(configDirOrStore?: string | IdentityS
       : configDirOrStore;
 
   const existingHex = await store.load();
-  if (existingHex && existingHex.length === 64) {
+  if (existingHex !== null) {
+    if (existingHex.length !== 64) {
+      throw new Error(`Existing identity is invalid: expected 64 hex characters, found ${existingHex.length}. Refusing to replace it.`);
+    }
     return identityFromPrivateKeyHex(existingHex);
   }
 
