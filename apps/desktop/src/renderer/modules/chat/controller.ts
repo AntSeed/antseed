@@ -93,6 +93,37 @@ type ChatModuleOptions = {
   }) => void;
 };
 
+const CUMULATIVE_IMAGE_PROMPT_HEADER = 'Generate a new image using the full conversation history below as cumulative instructions.';
+const CUMULATIVE_IMAGE_PROMPT_FOOTER = 'Return only the newly generated image.';
+
+function buildCumulativeImagePrompt(priorPrompts: string[], currentPrompt: string): string {
+  const previousPrompt = priorPrompts.at(-1) ?? '';
+  if (previousPrompt.startsWith(CUMULATIVE_IMAGE_PROMPT_HEADER)
+    && previousPrompt.endsWith(CUMULATIVE_IMAGE_PROMPT_FOOTER)) {
+    const history = previousPrompt
+      .slice(CUMULATIVE_IMAGE_PROMPT_HEADER.length, -CUMULATIVE_IMAGE_PROMPT_FOOTER.length)
+      .trim();
+    const followUpNumbers = [...history.matchAll(/^Follow-up (\d+):/gm)]
+      .map((match) => Number.parseInt(match[1] ?? '0', 10));
+    const nextFollowUp = Math.max(0, ...followUpNumbers) + 1;
+    return [
+      CUMULATIVE_IMAGE_PROMPT_HEADER,
+      '',
+      history,
+      `Follow-up ${String(nextFollowUp)}: ${currentPrompt}`,
+      '',
+      CUMULATIVE_IMAGE_PROMPT_FOOTER,
+    ].join('\n');
+  }
+  return [
+    CUMULATIVE_IMAGE_PROMPT_HEADER,
+    '',
+    ...[...priorPrompts, currentPrompt].map((entry, index) => `${index === 0 ? 'Initial request' : `Follow-up ${String(index)}`}: ${entry}`),
+    '',
+    CUMULATIVE_IMAGE_PROMPT_FOOTER,
+  ].join('\n');
+}
+
 export type ChatModuleApi = {
   refreshChatServiceOptions: () => Promise<void>;
   /** Re-derive the routable rows, model catalog and service list after a peer
@@ -2352,6 +2383,7 @@ export function initChatModule({
       let sourceImageAttachmentId = '';
       let sourceImagePeerId = '';
       let sourceImageServiceId = '';
+      let editing = false;
       for (let messageIndex = existingBeforeRequest.length - 1; messageIndex >= 0 && !sourceImageAttachmentId; messageIndex -= 1) {
         const message = existingBeforeRequest[messageIndex];
         if (message?.role !== 'assistant' || !Array.isArray(message.content)) continue;
@@ -2370,12 +2402,24 @@ export function initChatModule({
           ? sourceImagePeerId
           : '';
         const editRoute = resolveSelectedImageRoute({ requiresImageInput: true, preferredPeerId });
-        if (!editRoute) {
-          showChatError('The selected seller does not support image editing. Choose one that accepts image input.');
-          return;
+        if (editRoute) {
+          route = editRoute;
+          editing = true;
         }
-        route = editRoute;
       }
+      const priorImagePrompts = existingBeforeRequest.flatMap((message, messageIndex) => {
+        const nextMessage = existingBeforeRequest[messageIndex + 1];
+        const generatedImageFollows = nextMessage?.role === 'assistant'
+          && Array.isArray(nextMessage.content)
+          && nextMessage.content.some((block) => block?.type === 'file' && block.generated === true);
+        return message.role === 'user' && generatedImageFollows && typeof message.content === 'string' && message.content.trim()
+          ? [message.content.trim()]
+          : [];
+      });
+      const requestPrompt = sourceImageAttachmentId && !editing && priorImagePrompts.length > 0
+        ? buildCumulativeImagePrompt(priorImagePrompts, content)
+        : content;
+      optimisticUserMessage.content = requestPrompt;
       const pendingMessages = [...existingBeforeRequest, optimisticUserMessage];
       setLocalConversationMessages(convId, pendingMessages);
       if (convId === uiState.chatActiveConversation) uiState.chatMessages = pendingMessages;
@@ -2385,16 +2429,16 @@ export function initChatModule({
       }
 
       setConversationSending(convId, true);
-      uiState.chatThinkingPhase = sourceImageAttachmentId ? 'Editing image' : 'Generating image';
+      uiState.chatThinkingPhase = editing ? 'Editing image' : 'Generating image';
       notifyUiStateChanged();
       queueScrollChatToBottom();
       try {
         const result = await bridge.chatGenerateImage!({
           conversationId: convId,
-          prompt: content,
+          prompt: requestPrompt,
           service: route.service,
           ...(route.peerId ? { peerId: route.peerId } : {}),
-          ...(sourceImageAttachmentId ? { sourceImageAttachmentId } : {}),
+          ...(editing ? { sourceImageAttachmentId } : {}),
         });
         if (!result.ok || !result.user || !result.assistant) {
           throw new Error(result.error || 'Image generation failed.');

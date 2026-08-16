@@ -108,6 +108,13 @@ MIN_SUPPORTED_METADATA_VERSION = 10
 | maxConcurrency   | number   | Maximum concurrent requests (>= 1)                           |
 | currentLoad      | number   | Current number of active requests                            |
 
+For a service using the `openai-images` API protocol, modality capabilities are normative routing claims:
+
+- `{ inputs: ["text"], outputs: ["image"] }` means image generation only.
+- `{ inputs: ["text", "image"], outputs: ["image"] }` means image generation and image editing.
+
+A seller MUST advertise `image` input only when the exact announced service can accept an image-bearing edit request through its configured provider adapter and upstream route. Support elsewhere in the upstream vendor's API, or through a different upstream model, does not make the announced service edit-capable. Buyers MUST NOT route `/v1/images/edits` to a service that omits `image` from its inputs.
+
 ### Binary Encoding Format
 
 **Source:** `node/src/discovery/metadata-codec.ts`

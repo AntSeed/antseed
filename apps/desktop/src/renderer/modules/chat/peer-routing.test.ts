@@ -681,17 +681,20 @@ test('switching image models edits through a seller serving the new model', asyn
   await waitFor(() => !uiState.chatSending);
 });
 
-test('generation-only image sellers are not sent edit requests', async () => {
+test('generation-only image sellers generate from cumulative prompt history', async () => {
   installDomTimers();
 
-  const existingMessages = [{
-    role: 'assistant' as const,
-    content: [{
-      type: 'file', fileName: 'generated.png', mimeType: 'image/png',
-      attachmentId: 'generated-attachment', generated: true,
-    }],
-    meta: { peerId: 'venice-peer', service: 'image-model' },
-  }];
+  const existingMessages = [
+    { role: 'user' as const, content: 'A red ant in a garden' },
+    {
+      role: 'assistant' as const,
+      content: [{
+        type: 'file', fileName: 'generated.png', mimeType: 'image/png',
+        attachmentId: 'generated-attachment', generated: true,
+      }],
+      meta: { peerId: 'venice-peer', service: 'image-model' },
+    },
+  ];
   const uiState = createInitialUiState();
   uiState.chatActiveConversation = 'conv-a';
   uiState.chatMessages = existingMessages;
@@ -708,19 +711,102 @@ test('generation-only image sellers are not sent edit requests', async () => {
     mode: 'pinned-peer',
     peerId: 'venice-peer',
   };
-  let requestCount = 0;
+  const generation = createDeferred<Awaited<ReturnType<NonNullable<DesktopBridge['chatGenerateImage']>>>>();
+  let request: Parameters<NonNullable<DesktopBridge['chatGenerateImage']>>[0] | null = null;
   const api = initChatModule({
-    bridge: { chatGenerateImage: async () => { requestCount += 1; return { ok: false, error: 'unexpected' }; } },
+    bridge: { chatGenerateImage: async (payload) => { request = payload; return generation.promise; } },
     uiState,
     appendSystemLog: () => undefined,
   });
 
   api.generateImage('Now make it blue');
-  await waitFor(() => Boolean(uiState.chatError));
+  await waitFor(() => uiState.chatSending);
 
-  assert.equal(requestCount, 0);
-  assert.match(uiState.chatError ?? '', /does not support image editing/i);
-  assert.equal(uiState.chatSending, false);
+  assert.equal(uiState.chatThinkingPhase, 'Generating image');
+  assert.deepEqual(request, {
+    conversationId: 'conv-a',
+    prompt: [
+      'Generate a new image using the full conversation history below as cumulative instructions.',
+      '',
+      'Initial request: A red ant in a garden',
+      'Follow-up 1: Now make it blue',
+      '',
+      'Return only the newly generated image.',
+    ].join('\n'),
+    peerId: 'venice-peer',
+    service: 'image-model',
+  });
+  assert.equal(uiState.chatMessages.at(-1)?.content, request?.prompt);
+
+  generation.resolve({ ok: false, error: 'Request aborted' });
+  await waitFor(() => !uiState.chatSending);
+});
+
+test('generation-only image prompt history grows without nesting prior cumulative prompts', async () => {
+  installDomTimers();
+
+  const cumulativePrompt = [
+    'Generate a new image using the full conversation history below as cumulative instructions.',
+    '',
+    'Initial request: A red ant in a garden',
+    'Follow-up 1: Now make it blue',
+    '',
+    'Return only the newly generated image.',
+  ].join('\n');
+  const existingMessages = [
+    { role: 'user' as const, content: 'A red ant in a garden' },
+    {
+      role: 'assistant' as const,
+      content: [{ type: 'file', attachmentId: 'first-image', generated: true }],
+      meta: { peerId: 'venice-peer', service: 'image-model' },
+    },
+    { role: 'user' as const, content: cumulativePrompt },
+    {
+      role: 'assistant' as const,
+      content: [{ type: 'file', attachmentId: 'second-image', generated: true }],
+      meta: { peerId: 'venice-peer', service: 'image-model' },
+    },
+  ];
+  const uiState = createInitialUiState();
+  uiState.chatActiveConversation = 'conv-a';
+  uiState.chatMessages = existingMessages;
+  uiState.chatConversations = [{
+    id: 'conv-a', title: 'Conversation A', service: 'text-model', provider: 'openai', peerId: 'text-peer',
+    messages: existingMessages, createdAt: Date.now(), updatedAt: Date.now(), usage: { inputTokens: 0, outputTokens: 0 },
+  }];
+  uiState.vprRoutableRows = [{
+    rowKey: 'venice-peer:image-model', peerId: 'venice-peer', serviceId: 'image-model',
+    protocol: 'openai-images', capabilities: { inputs: ['text'], outputs: ['image'] }, effectiveReputationScore: 99,
+  } as DiscoverRow];
+  uiState.chatImageRouteSelection = {
+    model: { provider: 'openai', serviceId: 'image-model', label: 'Image Model', categories: [] },
+    mode: 'pinned-peer',
+    peerId: 'venice-peer',
+  };
+  const generation = createDeferred<Awaited<ReturnType<NonNullable<DesktopBridge['chatGenerateImage']>>>>();
+  let request: Parameters<NonNullable<DesktopBridge['chatGenerateImage']>>[0] | null = null;
+  const api = initChatModule({
+    bridge: { chatGenerateImage: async (payload) => { request = payload; return generation.promise; } },
+    uiState,
+    appendSystemLog: () => undefined,
+  });
+
+  api.generateImage('Make it a watercolor');
+  await waitFor(() => uiState.chatSending);
+
+  assert.equal(request?.prompt, [
+    'Generate a new image using the full conversation history below as cumulative instructions.',
+    '',
+    'Initial request: A red ant in a garden',
+    'Follow-up 1: Now make it blue',
+    'Follow-up 2: Make it a watercolor',
+    '',
+    'Return only the newly generated image.',
+  ].join('\n'));
+  assert.equal(request?.prompt.match(/Generate a new image using/g)?.length, 1);
+
+  generation.resolve({ ok: false, error: 'Request aborted' });
+  await waitFor(() => !uiState.chatSending);
 });
 
 test('stream errors clear when switching conversations', async () => {

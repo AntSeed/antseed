@@ -158,7 +158,9 @@ curl http://localhost:8377/v1/images/edits \
 
 Image edits are multipart requests, but their `model` field follows the same routing and seller-side alias rewriting rules as JSON generation requests. Upgrade the buyer and seller together if an upstream rejects an edit with `model is required`: `@antseed/cli@0.1.150`, `@antseed/provider-core@0.2.53`, and `@antseed/provider-openai@0.2.45` predate multipart model preservation, so edits that depend on a seller service rewrite can fail on those versions. Use `@antseed/cli@0.1.151`, `@antseed/provider-core@0.2.54`, and `@antseed/provider-openai@0.2.46` or newer. The provider plugin pins its provider-core version, so updating only the buyer is not sufficient. Desktop v0.2.16 predates conversational image editing entirely.
 
-Sellers that support edits must advertise `image` in their service's input modalities. A service advertising only text input is generation-only: buyers must not route `/v1/images/edits` to it, even if its upstream model family can generate images.
+Sellers that support edits must advertise both `text` and `image` in the service's input modalities, with `image` in its outputs. This is an end-to-end capability claim for that exact configured service: the provider adapter, upstream endpoint, and upstream model must all accept image edits. A service advertising `inputs: ["text"]` is generation-only, so buyers must not route `/v1/images/edits` to it. Do not add image input merely because the upstream vendor supports editing through a different endpoint or separate model. Venice-backed services are generation-only through the current generic OpenAI-compatible adapter; native Venice edit translation is tracked separately.
+
+In Desktop image chats, follow-up prompts use `/v1/images/edits` only when the selected seller advertises image input. With a generation-only seller, Desktop keeps the selected seller and requests a new image using the conversation's image-prompt history as cumulative instructions.
 
 ## Claude Code
 

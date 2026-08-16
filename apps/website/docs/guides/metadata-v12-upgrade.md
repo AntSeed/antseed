@@ -98,6 +98,12 @@ No mandatory config-file migration is required. Existing seller services continu
 }
 ```
 
+For image services, modality values affect routing rather than serving as cosmetic metadata:
+
+- `inputs: ["text"]`, `outputs: ["image"]` advertises image generation only.
+- `inputs: ["text", "image"]`, `outputs: ["image"]` advertises image generation and editing.
+- Advertise image input only when the exact provider adapter, upstream endpoint, and configured model support edit requests end to end. Vendor-level edit support through a different API is not sufficient.
+
 Only the built-in `openai` provider currently consumes image unit billing. Seller startup warns when `unitBillingModels` are configured for a plugin that does not support them.
 
 ## Health Checks
