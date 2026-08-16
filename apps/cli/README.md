@@ -251,6 +251,8 @@ antseed config seller set maxUploadBodyBytes 134217728
 antseed config buyer set maxPricing.defaults.inputUsdPerMillion 25
 antseed config buyer set maxPricing.defaults.cachedInputUsdPerMillion 12
 antseed config buyer set maxPricing.defaults.outputUsdPerMillion 75
+antseed config buyer set routingPreferences.minTrustScore 60
+antseed config buyer set routingPreferences.maxInputUsdPerMillion 25
 antseed config buyer set peerRefreshIntervalMs 300000
 antseed config buyer set metadataFetchTimeoutMs 1500
 antseed config buyer set disableMetadataV2Services true
@@ -274,18 +276,33 @@ This release announces metadata v12. Buyers supporting only older metadata versi
 
 ### Model-only routing and peer pinning
 
-Pinning a peer is optional. A request that names only a model auto-selects the
-highest-reputation compatible peer allowed by your buyer policy, and fails over
-to the next-ranked peer on peer-attributed errors. Discover what the network
-serves without any pin:
+Pinning a peer is optional. A request that names only a model uses the shared
+Price + Trust ranking configured under `buyer.routingPreferences`. The default
+`minTrustScore` is `60` and acts as a hard eligibility gate; eligible offers are
+ordered using trust, token or image price, cached-input pricing coverage, recent
+failures, cooldowns, free-peer preference, and seller access rules. Model-only
+requests can fail over on peer-attributed retryable errors.
+
+Discover what the network serves without any pin:
 
 ```bash
 # Every model on the network, aggregated across sellers (answered locally)
 curl -s http://localhost:8377/v1/models | jq '.data[].id'
 
-# Peers, pricing, and reputation
+# Filter the list by modality, or inspect one unified model and its ranked offers
+curl -s 'http://localhost:8377/v1/models?type=text'
+curl -s 'http://localhost:8377/v1/models?type=images'
+curl -s http://localhost:8377/v1/models/<model-id>
+
+# Peers, pricing, protocols, capabilities, and reputation
 antseed network browse
 ```
+
+`GET /v1/models` is network-wide and groups compatible aliases. Duplicate
+offers from one seller collapse to its cheapest matching service. For recognized
+conversations, the first successful automatic route becomes a soft affinity:
+later turns prefer the same seller and service while they remain healthy and
+policy-eligible, but can still fail over. Explicit pins remain hard.
 
 When you do want to force a specific seller, pin it. After `antseed buyer
 start` is running, you can pin all subsequent requests to a peer without
@@ -302,7 +319,7 @@ antseed buyer connection get
 antseed buyer connection clear
 ```
 
-Session peer pins are stored in `~/.antseed/buyer.state.json` and picked up by the running proxy immediately via file-watching. The desktop app reads and writes the same file to expose peer selection in its UI.
+Session peer pins are stored in `~/.antseed/buyer.state.json`, survive proxy restarts, and are picked up by the running proxy immediately via file-watching. The desktop app reads and writes the same file to expose explicit peer selection in its UI.
 
 For tools that can only set a model name, use `<peerId>@<model>` as the model. The proxy strips the peer prefix before provider matching and forwards only `<model>` to the seller. If both this model prefix and `x-antseed-pin-peer` are sent, the header selects the peer and the model prefix is still stripped.
 

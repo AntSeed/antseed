@@ -67,7 +67,7 @@ export function VprPreferencesView({ onSelectView }: Props) {
 
           <VprSettingRow
             title="Prefer free peers when available"
-            hint="Free sellers win ties even when a paid seller scores higher."
+            hint="Adds a strong routing bonus to zero-cost offers."
             control={(
               <VprToggle
                 checked={snap.preferences.preferFreePeers}
@@ -111,7 +111,7 @@ export function VprPreferencesView({ onSelectView }: Props) {
               onChange={(next) => actions.updateVprRoutingPreferences({ maxInputUsdPerMillion: next })}
               ariaLabel="Price preference"
             />
-            <div className={styles.sliderHint}>Sellers charging more than this per million input tokens are never used</div>
+            <div className={styles.sliderHint}>Sellers above this input price receive a strong ranking penalty</div>
           </div>
 
           <VprSettingRow

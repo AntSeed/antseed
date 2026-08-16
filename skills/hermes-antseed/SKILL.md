@@ -20,7 +20,7 @@ Hermes agent  →  127.0.0.1:8377  →  AntSeed P2P  →  Provider peer  →  Up
 
 - Buyer proxy discovers providers via DHT, opens a payment channel per seller, signs per-request vouchers.
 - Exposes an OpenAI-compatible `/v1/*` endpoint — that's what Hermes points at as `OPENAI_BASE_URL`.
-- The model ID Hermes passes is the AntSeed **service ID** (e.g. `minimax-m2.7`), not an OpenAI model name.
+- The model ID Hermes passes is an id or alias from AntSeed's network-wide `/v1/models` catalog (e.g. `minimax-m2.7`). The proxy resolves it to the selected seller's actual advertised service id.
 
 The buyer proxy and Hermes can run on the same machine (laptop, VPS, cloud box — anywhere). The only requirement is that Hermes can reach `127.0.0.1:8377`.
 
@@ -50,7 +50,6 @@ Always create `~/.antseed/config.json` with `payments.crypto.chainId` set. Witho
 {
   "network": {},
   "buyer": {
-    "minPeerReputation": 0,
     "maxPricing": {
       "defaults": {
         "inputUsdPerMillion": 100,
@@ -194,16 +193,19 @@ If `ssh -L` fails with `channel 1: open failed: administratively prohibited`, th
 
 ## Model routing
 
-Pinning a peer is optional. A request that names only a model automatically selects the highest-reputation compatible peer allowed by buyer policy, and fails over to the next reputation-ranked peer on peer-attributed retryable failures. Pinned requests never fail over.
+Pinning a peer is optional. A request that names only a model selects the highest-ranked eligible offer under the shared Price + Trust preferences, including pricing, cached-input pricing coverage, recent failures, cooldowns, and seller access rules. Peer-attributed retryable failures can advance to the next ranked offer. Explicitly pinned requests never fail over.
 
 List every model on the network — `GET /v1/models` is answered locally and covers the whole network, independent of any pinned peer:
 
 ```bash
 curl -s http://127.0.0.1:8377/v1/models | jq '.data[].id'   # all models, network-wide
+curl -s 'http://127.0.0.1:8377/v1/models?type=text'          # text models only
+curl -s 'http://127.0.0.1:8377/v1/models?type=images'        # image models only
+curl -s http://127.0.0.1:8377/v1/models/<model-id>           # one model + ranked offers
 antseed network browse                                      # table of peers and their services
 ```
 
-Close aliases (e.g. `claude-opus-5` / `opus-5` / `opus5`) merge into one entry with an `aliases` array and a `peers` array of every seller serving the model.
+Close aliases (e.g. `claude-opus-5` / `opus-5` / `opus5`) merge into one entry with an `aliases` array and a `peers` array of every seller serving the model in routing-preference order. Duplicate offers from one seller collapse to its cheapest matching service.
 
 ### Optional: force a specific seller
 
@@ -216,9 +218,7 @@ antseed buyer connection set --peer <peerId>        # session pin
 
 Alternatively, pass `x-antseed-pin-peer: <peerId>` as a per-request header, or prefix the model with `<peerId>@<service-id>`.
 
-**The session pin is cleared when the buyer proxy restarts.** For non-systemd setups (desktop app, background process), re-run `antseed buyer connection set --peer <peerId>` after every restart.
-
-For persistent systemd deployments, put `--peer <peerId>` in the `ExecStart=` line instead — it survives restarts and avoids a stale state file.
+Session pins are stored in `buyer.state.json`, survive buyer-proxy restarts, and are reloaded by the running proxy. A systemd `--peer <peerId>` flag is another hard-pin option for deployments that want the route declared directly in `ExecStart=`.
 
 ## Wiring Hermes to the buyer proxy
 
@@ -248,11 +248,11 @@ Notes:
 - `api_key` is required by Hermes' OpenAI client but ignored by the buyer proxy — any non-empty string works. `antseed-p2p` is the convention.
 - `api_mode: chat_completions` is required — the buyer proxy speaks OpenAI chat-completions, not the Responses API.
 - `models` is the menu Hermes exposes to the user; only IDs listed here can be selected. Mirror it against `curl -s http://127.0.0.1:8377/v1/models` — answered locally, it lists every model on the whole network regardless of any pinned peer — so you don't advertise models no peer serves.
-- `model.default` is the one Hermes uses when no explicit model is passed; `model.provider: antseed` pins it to this custom provider.
+- `model.default` is the one Hermes uses when no explicit model is passed; `model.provider: antseed` selects the AntSeed client integration, not a specific seller peer.
 
 ### Auxiliary calls when using openai-responses models
 
-Some peers (e.g. Dark Signal) serve GPT models via the `openai-responses` protocol, which requires streaming. Hermes auxiliary functions (title generation, context compression, etc.) make non-streaming requests and will fail with `HTTP 400: Stream must be set to true` if they hit an openai-responses model.
+Some sellers serve models only through the `openai-responses` protocol, which requires streaming. Hermes auxiliary functions (title generation, context compression, etc.) make non-streaming requests and will fail with `HTTP 400: Stream must be set to true` if they hit an openai-responses-only offer.
 
 Fix: point Hermes auxiliaries at a `chat_completions` model from the same or a different peer. In `~/.hermes/config.yaml`, override the auxiliary providers that make non-streaming calls:
 
@@ -266,7 +266,7 @@ auxiliary:
     model: minimax-m2.7
 ```
 
-Check which protocol a model uses with `antseed network peer <peerId>` — look for `protocols: openai-chat-completions` vs `protocols: openai-responses` in the service listing.
+Check the available protocols with `GET /v1/models/<model-id>` and inspect each `peers[]` offer. Use `antseed network peer <peerId>` only when you need the full metadata for one seller.
 
 ### Swapping the routed model
 

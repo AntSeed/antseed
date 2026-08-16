@@ -25,7 +25,7 @@ Provide the skill with:
 - `model` — image model id or alias; optional when you want the skill to inspect the current catalog first
 - `prompt` — image description
 
-The skill first queries `/v1/models?type=images`, resolves the requested model against the returned ids and aliases, and sends the bare model id to `/v1/images/generations`. The buyer proxy selects the best eligible peer and handles fallback.
+The skill first queries `/v1/models?type=images`, resolves the requested model against the returned ids and aliases, and sends the bare model id to `/v1/images/generations`. The buyer proxy applies the shared Price + Trust preferences and handles fallback between eligible sellers.
 
 ## Example prompt
 

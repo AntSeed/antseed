@@ -49,7 +49,6 @@ If you want non-default behavior, create or edit `~/.antseed/config.json`:
 ```json
 {
   "buyer": {
-    "minPeerReputation": 50,
     "maxPricing": {
       "defaults": {
         "inputUsdPerMillion": 25,
@@ -103,12 +102,16 @@ antseed config buyer set maxPricing.defaults.inputUsdPerMillion 25
 antseed config buyer set maxPricing.defaults.cachedInputUsdPerMillion 12
 antseed config buyer set maxPricing.defaults.outputUsdPerMillion 75
 
-# Minimum peer reputation score (0-100, higher = stricter)
-antseed config buyer set minPeerReputation 50
+# Shared model-only Price + Trust preferences
+# minTrustScore is a hard eligibility gate; the default is 60
+antseed config buyer set routingPreferences.minTrustScore 60
+antseed config buyer set routingPreferences.maxInputUsdPerMillion 25
 
 ```
 
-These settings are optional. Skip them if the defaults are fine.
+These settings are optional. Skip them if the defaults are fine. The desktop VPR
+writes the same `buyer.routingPreferences`, and a running proxy hot-reloads valid
+changes from `config.json`.
 
 Advanced: if you intentionally want a non-default proxy port:
 
@@ -200,7 +203,7 @@ The API key value doesn't matter when going through the proxy — set it to any 
 
 ## Step 10: Discover models and route by name
 
-Pinning a peer is optional. A request that names only a model automatically selects the highest-reputation compatible peer allowed by your buyer policy, and fails over to the next reputation-ranked peer on peer-attributed retryable failures (429s get up to 3 same-peer retries before fallback).
+Pinning a peer is optional. A request that names only a model selects the highest-ranked eligible offer under the shared Price + Trust preferences. Ranking also accounts for cached-input pricing coverage, recent failures, cooldowns, free-peer preference, and seller access rules. Peer-attributed retryable failures can advance to the next ranked offer; 429s get up to three attempts on the same peer before fallback.
 
 List every model on the network — `GET /v1/models` is answered locally from the buyer's discovered-peer cache and covers the whole network, no pin needed:
 
@@ -211,7 +214,9 @@ curl -s http://localhost:8377/v1/models/<id>                   # one model in de
 antseed network browse                                         # peers + services + pricing
 ```
 
-Close aliases such as `claude-opus-5`, `opus-5`, and `opus5` are grouped into one entry with an `aliases` array and a `peers` array listing every seller serving the model. Send a request with any of those names and the proxy routes it.
+Close aliases such as `claude-opus-5`, `opus-5`, and `opus5` are grouped into one entry with an `aliases` array and a `peers` array listing every seller serving the model in routing-preference order. Duplicate aliases from one seller collapse to its cheapest matching offer. Send a request with any returned id or alias and the proxy routes it.
+
+For recognized conversations, a successful automatic route becomes a soft affinity: later turns prefer the seller and service that actually served the chat while they remain healthy and eligible. Automatic affinity can fail over; explicit pins cannot.
 
 ### Optional: force a specific seller
 
@@ -265,7 +270,7 @@ All signing happens with the identity key. No additional wallets or browser exte
 
 - **"Payment setup failed"**: Check `antseed buyer balance` — you need deposited USDC. Run `antseed buyer deposit <amount>`.
 - **"No peers found"**: The network may be sparse. Try `antseed network browse` to check. Add bootstrap nodes to config if needed.
-- **`no_peer_pinned`**: Only returned by pre-release proxies (upgrade `@antseed/cli`) or by requests that name no model. On current proxies a request that names a model never returns this; a request with neither a model nor a pin returns 400 `missing_routing_target`.
+- **`missing_routing_target` (400)**: The request names neither a model nor an explicit peer. Add a bare model id for automatic routing.
 - **`model_not_found` (502)**: No policy-allowed peer currently advertises the requested model or alias. Check `curl localhost:8377/v1/models`; adjust buyer policy or choose another model.
 - **"Lock confirmation timed out"**: The provider's on-chain reserve is slow. This is usually a testnet issue — retry the request.
 - **"Connection refused on 8377"**: Make sure `antseed buyer start` is still running.

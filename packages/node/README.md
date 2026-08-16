@@ -385,7 +385,7 @@ interface Router {
 }
 ```
 
-If no router is set, the SDK uses a built-in `DefaultRouter` that selects the cheapest peer above a minimum reputation threshold.
+If no router is set, the SDK uses a built-in `DefaultRouter` that selects the cheapest peer above a minimum reputation threshold. The CLI buyer proxy adds a model-specific planning layer before dispatch: bare model ids are canonicalized and ranked with `@antseed/node/model-routing` using shared Price + Trust preferences, health signals, and seller access rules. Explicit peer pins bypass automatic peer selection.
 
 ## Building a Custom Provider Plugin
 
