@@ -33,9 +33,9 @@ curl --fail-with-body \
   "$proxy_url/v1/models?type=images"
 ```
 
-The endpoint is answered locally and returns network-wide image models. If `model` was provided, match it case-insensitively against each entry's `id` and `aliases`, then use the matched entry's bare `id`. If no model was provided, inspect the available models and their capabilities; select an obvious match for the request or ask the user when the choice is material.
+The endpoint is answered locally and returns network-wide image models. If `model` was provided, match it case-insensitively against each entry's `id` and `aliases`, then use the matched entry's bare `id`. If no model was provided, inspect the available models and their capabilities; select an obvious match for the request or ask the user when the choice is material. Use `GET /v1/models/<id>` when you need the selected model's full ranked offers, protocols, pricing, and capabilities.
 
-Do not construct `<peer_id>@<service_id>` and do not send `x-antseed-pin-peer`. A bare model id lets the buyer proxy select the best eligible peer and fail over when another serving peer is needed.
+Do not construct `<peer_id>@<service_id>` and do not send `x-antseed-pin-peer`. A bare model id lets the buyer proxy apply its Price + Trust preferences and fail over when another eligible serving peer is needed.
 
 ## Generate an Image
 

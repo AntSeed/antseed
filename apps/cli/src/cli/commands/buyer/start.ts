@@ -364,7 +364,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       if (pinnedPeerId) {
         console.log(chalk.yellow(`  pinned peer: ${pinnedPeerId} (router bypassed)`))
       } else {
-        console.log(chalk.yellow('  pinned peer: none — model-only requests auto-select the highest-reputation allowed peer'))
+        console.log(chalk.yellow('  pinned peer: none — model-only requests use the configured Price + Trust ranking'))
         console.log(chalk.dim('    Explicit session pin: antseed network browse → antseed buyer connection set --peer <peerId>'))
         console.log(chalk.dim('    Explicit request pin: x-antseed-pin-peer: <peerId> header'))
         console.log(chalk.dim('    Explicit model pin:   <peerId>@<model>'))

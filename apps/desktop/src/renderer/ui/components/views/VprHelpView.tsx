@@ -125,7 +125,7 @@ const HELP_TOPICS: HelpTopic[] = [
         sections: [
           {
             heading: 'Trust, price and free peers',
-            body: 'Minimum trust score filters out sellers rated below your bar. Price preference caps what you are willing to pay per million input tokens. Prefer free peers makes no-cost sellers win ties.',
+            body: 'Minimum trust score is a hard eligibility gate. Price preference strongly penalizes sellers above your preferred input-token price, while maxPricing remains the hard spending cap. Prefer free peers gives zero-cost offers a strong routing bonus.',
           },
           {
             heading: 'Pausing auto select',

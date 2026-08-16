@@ -566,7 +566,7 @@ test('selectCandidatePeersForRouting can still include peers without service pro
   assert.equal(result.candidatePeers[0]?.peerId, peerWithoutMetadata.peerId)
 })
 
-test('model-only request routes to the highest-reputation canonical service match', async () => {
+test('model-only request routes to the highest-ranked canonical service match', async () => {
   const lower = makePeer('a', ['anthropic'])
   lower.reputationScore = 40
   lower.providerServiceApiProtocols = {
