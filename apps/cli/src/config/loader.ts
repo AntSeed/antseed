@@ -432,6 +432,7 @@ function mergeBuyerConfig(
       peerRefreshIntervalMs: defaults.peerRefreshIntervalMs,
       metadataFetchTimeoutMs: defaults.metadataFetchTimeoutMs,
       disableMetadataV2Services: defaults.disableMetadataV2Services,
+      autoSweep: defaults.autoSweep,
       ...(normalizeBuyerVerification(undefined, defaults.verification)),
     };
   }
@@ -455,6 +456,11 @@ function mergeBuyerConfig(
       value['disableMetadataV2Services'],
       defaults.disableMetadataV2Services,
       'buyer.disableMetadataV2Services',
+    ),
+    autoSweep: normalizeBooleanConfigValue(
+      value['autoSweep'],
+      defaults.autoSweep ?? true,
+      'buyer.autoSweep',
     ),
     ...(normalizeBuyerVerification(value['verification'], defaults.verification)),
   };

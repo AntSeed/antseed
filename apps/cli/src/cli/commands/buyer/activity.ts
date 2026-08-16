@@ -96,7 +96,9 @@ function normalizeChannelRow(entry: unknown): DaemonChannelRow | null {
     updatedAt: num(raw, 'updatedAt'),
     status: str(raw, 'status', 'unknown'),
     requestCount: num(raw, 'requestCount'),
-    inputTokens: str(raw, 'inputTokens'),
+    // Daemon channel rows name cumulative input tokens `tokensDelivered`
+    // (BuyerChannelSummary in @antseed/node).
+    inputTokens: str(raw, 'tokensDelivered'),
     outputTokens: str(raw, 'outputTokens'),
   }
 }

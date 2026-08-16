@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { test, vi } from 'vitest';
 import type { DesktopBridge } from '../../../types/bridge';
 import {
-  channelLockedBaseUnits,
   channelCloseAction,
   channelRecoverableBaseUnits,
   compareChannelsByLockedAmount,
@@ -12,13 +11,6 @@ import {
   isCurrentChannelStatus,
   requestSellerAssistedClose,
 } from './vpr-activity-close';
-
-test('channelLockedBaseUnits subtracts settled spend from the channel reserve', () => {
-  assert.equal(channelLockedBaseUnits({ onChainDeposit: '5000000', onChainSettled: '700000' }), 4_300_000n);
-  assert.equal(channelLockedBaseUnits({ onChainDeposit: '5000000', onChainSettled: '5000000' }), 0n);
-  assert.equal(channelLockedBaseUnits({ onChainDeposit: '5000000', onChainSettled: '6000000' }), 0n);
-  assert.equal(channelLockedBaseUnits({ onChainDeposit: 'invalid', onChainSettled: '0' }), 0n);
-});
 
 test('channelRecoverableBaseUnits counts signed-but-unsettled spend as spent', () => {
   // Seller has settled nothing on-chain yet, but the buyer already signed
@@ -71,11 +63,13 @@ test('isCurrentChannelStatus keeps only channels that still hold funds', () => {
   }
 });
 
-test('isFundedCurrentChannel hides channels only after confirming no remaining lock', () => {
-  assert.equal(isFundedCurrentChannel({ status: 'active', onChainStateKnown: false, onChainDeposit: '0', onChainSettled: '0' }), true);
-  assert.equal(isFundedCurrentChannel({ status: 'active', onChainStateKnown: true, onChainDeposit: '5000000', onChainSettled: '700000' }), true);
-  assert.equal(isFundedCurrentChannel({ status: 'active', onChainStateKnown: true, onChainDeposit: '5000000', onChainSettled: '5000000' }), false);
-  assert.equal(isFundedCurrentChannel({ status: 'settled', onChainStateKnown: false, onChainDeposit: '5000000', onChainSettled: '0' }), false);
+test('isFundedCurrentChannel hides channels only after confirming nothing is recoverable', () => {
+  assert.equal(isFundedCurrentChannel({ status: 'active', onChainStateKnown: false, onChainDeposit: '0', onChainSettled: '0', cumulativeSigned: '0' }), true);
+  assert.equal(isFundedCurrentChannel({ status: 'active', onChainStateKnown: true, onChainDeposit: '5000000', onChainSettled: '700000', cumulativeSigned: '0' }), true);
+  assert.equal(isFundedCurrentChannel({ status: 'active', onChainStateKnown: true, onChainDeposit: '5000000', onChainSettled: '5000000', cumulativeSigned: '0' }), false);
+  // Fully spent via signed-but-unsettled auths — nothing recoverable, hide it.
+  assert.equal(isFundedCurrentChannel({ status: 'active', onChainStateKnown: true, onChainDeposit: '5000000', onChainSettled: '0', cumulativeSigned: '5000000' }), false);
+  assert.equal(isFundedCurrentChannel({ status: 'settled', onChainStateKnown: false, onChainDeposit: '5000000', onChainSettled: '0', cumulativeSigned: '0' }), false);
 });
 
 test('cooperativeCloseRejectionMessage maps actionable rejection codes', () => {

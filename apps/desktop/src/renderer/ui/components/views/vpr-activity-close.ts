@@ -19,20 +19,10 @@ export function isFundedCurrentChannel(row: {
   onChainStateKnown: boolean;
   onChainDeposit: string;
   onChainSettled: string;
+  cumulativeSigned: string;
 }): boolean {
   if (!isCurrentChannelStatus(row.status)) return false;
-  return !row.onChainStateKnown || channelLockedBaseUnits(row) > 0n;
-}
-
-/** On-chain reserve still held for the channel (deposit − on-chain settled). */
-export function channelLockedBaseUnits(row: { onChainDeposit: string; onChainSettled: string }): bigint {
-  try {
-    const reserved = BigInt(row.onChainDeposit || '0');
-    const settled = BigInt(row.onChainSettled || '0');
-    return reserved > settled ? reserved - settled : 0n;
-  } catch {
-    return 0n;
-  }
+  return !row.onChainStateKnown || channelRecoverableBaseUnits(row) > 0n;
 }
 
 /**

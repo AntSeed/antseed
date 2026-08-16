@@ -236,6 +236,32 @@ test('loadConfig defaults and preserves buyer metadata v2 service opt-out settin
   );
 });
 
+test('loadConfig defaults buyer autoSweep on and preserves an explicit false', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      buyer: {
+        proxyPort: 9123,
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.equal(config.buyer.autoSweep, true);
+    }
+  );
+
+  await withTempConfig(
+    JSON.stringify({
+      buyer: {
+        autoSweep: false,
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.equal(config.buyer.autoSweep, false);
+    }
+  );
+});
+
 test('loadConfig rejects invalid buyer disableMetadataV2Services', async () => {
   await withTempConfig(
     JSON.stringify({
