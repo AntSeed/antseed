@@ -1,6 +1,6 @@
 ---
 sidebar_position: 3
-slug: /protocol/transport
+slug: /transport
 title: Transport
 hide_title: true
 ---

@@ -52,7 +52,7 @@ export function registerSellerDoctorCommand(sellerCmd: Command): void {
           console.log('');
           console.log(chalk.yellow('A successful local probe does not prove inbound NAT reachability.'));
           console.log('Verify the endpoint from another network, and configure port forwarding/firewall rules if needed.');
-          console.log('Guide: https://antseed.com/docs/protocol/transport');
+          console.log('Guide: https://antseed.com/docs/transport/');
         }
 
         if (!healthy) process.exitCode = 1;

@@ -171,6 +171,6 @@ export function startupReachabilityWarning(value: string | undefined): string | 
     assessment.message,
     'Set one with: antseed config seller set publicAddress "seller.example.com:6882"',
     'Then run: antseed seller doctor',
-    'Networking guide: https://antseed.com/docs/protocol/transport',
+    'Networking guide: https://antseed.com/docs/transport/',
   ].join('\n');
 }

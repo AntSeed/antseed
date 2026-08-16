@@ -118,6 +118,7 @@ const config: Config = {
           {from: '/lightpaper', to: '/docs/lightpaper'},
           // /connect was renamed to /integrations — keep old links working.
           {from: '/connect', to: '/integrations'},
+          {from: '/docs/protocol/transport', to: '/docs/transport'},
           ...integrationEntries.map((i) => ({
             from: `/connect/${i.slug}`,
             to: `/integrations/${i.slug}`,
