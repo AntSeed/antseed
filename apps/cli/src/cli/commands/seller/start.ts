@@ -306,7 +306,10 @@ export function buildSellerPluginRuntimeEnv(
     runtimeEnv['ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON'] = JSON.stringify(serviceUnitBillingModels)
   }
   if (providerCfg.baseUrl) {
-    runtimeEnv['OPENAI_BASE_URL'] = providerCfg.baseUrl
+    const baseUrlKey = resolvePluginPackage(providerCfg.plugin) === '@antseed/provider-local-llm'
+      ? 'LOCAL_LLM_BASE_URL'
+      : 'OPENAI_BASE_URL'
+    runtimeEnv[baseUrlKey] = providerCfg.baseUrl
   }
   if (providerCfg.pathRewrite && Object.keys(providerCfg.pathRewrite).length > 0) {
     runtimeEnv['OPENAI_PATH_REWRITE_JSON'] = JSON.stringify(providerCfg.pathRewrite)
