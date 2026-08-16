@@ -1,6 +1,7 @@
 import {
   extractUsage,
   mapFinishReasonToAnthropicStopReason,
+  openAIResponsesFunctionCallId,
   openAIResponsesMessageId,
   parseJsonSafe,
   toStringContent,
@@ -710,7 +711,7 @@ export function renderCanonicalResponseToOpenAIResponsesBody(response: Canonical
     if (item.type !== 'function_call') continue;
     output.push({
       type: 'function_call',
-      id: item.id,
+      id: openAIResponsesFunctionCallId(item.id),
       call_id: item.id,
       name: item.name,
       arguments: stringifyToolArguments(item.arguments),

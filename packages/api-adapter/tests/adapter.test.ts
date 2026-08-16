@@ -994,6 +994,13 @@ describe('native responses passthrough', () => {
         input: [
           { type: 'reasoning', id: 'rs_native', encrypted_content: 'encrypted' },
           {
+            type: 'function_call',
+            id: 'fc_native',
+            call_id: 'tool_native',
+            name: 'search',
+            arguments: '{}',
+          },
+          {
             type: 'message',
             id: 'msg_native',
             role: 'assistant',
@@ -1028,6 +1035,14 @@ describe('native responses passthrough', () => {
             content: [{ type: 'output_text', text: 'legacy prefix', annotations: [] }],
           },
           { type: 'item_reference', id: 'chatcmpl-reference_msg_1' },
+          {
+            type: 'function_call',
+            id: 'tool_legacy',
+            call_id: 'tool_legacy',
+            name: 'search',
+            arguments: '{}',
+          },
+          { type: 'item_reference', id: 'tool_legacy' },
           { type: 'message', id: 'msg_native', role: 'assistant', content: [] },
         ],
       })),
@@ -1043,7 +1058,9 @@ describe('native responses passthrough', () => {
     expect(body.prompt_cache_retention).toBe('24h');
     expect(input[0].id).toBe('msg_chatcmpl-legacy_1');
     expect(input[1].id).toBe('msg_chatcmpl-reference_1');
-    expect(input[2].id).toBe('msg_native');
+    expect(input[2]).toMatchObject({ id: 'fc_tool_legacy', call_id: 'tool_legacy' });
+    expect(input[3].id).toBe('fc_tool_legacy');
+    expect(input[4].id).toBe('msg_native');
   });
 
   it('preserves the exact response and does not create a stream adapter', () => {
@@ -1565,7 +1582,7 @@ describe('transformResponse chat to responses', () => {
     const functionCall = output.find((item) => item.type === 'function_call');
     expect(functionCall).toBeDefined();
     expect(functionCall!.name).toBe('write');
-    expect(functionCall!.id).toBe('call_123');
+    expect(functionCall!.id).toBe('fc_call_123');
     expect(functionCall!.call_id).toBe('call_123');
     expect(functionCall!.arguments).toBe('{"path":"hello.txt"}');
   });
@@ -1675,7 +1692,7 @@ describe('transformResponse chat to responses', () => {
       output_index: 1,
       item: {
         type: 'function_call',
-        id: 'call_123',
+        id: 'fc_call_123',
         call_id: 'call_123',
         name: 'write',
         arguments: '',
@@ -1688,7 +1705,7 @@ describe('transformResponse chat to responses', () => {
     expect(JSON.parse(delta!.data)).toMatchObject({
       type: 'response.function_call_arguments.delta',
       output_index: 1,
-      item_id: 'call_123',
+      item_id: 'fc_call_123',
       call_id: 'call_123',
       delta: '{"path":"hello.txt"}',
     });
@@ -1698,7 +1715,7 @@ describe('transformResponse chat to responses', () => {
     expect(JSON.parse(done!.data)).toMatchObject({
       type: 'response.function_call_arguments.done',
       output_index: 1,
-      item_id: 'call_123',
+      item_id: 'fc_call_123',
       call_id: 'call_123',
       name: 'write',
       arguments: '{"path":"hello.txt"}',
@@ -2055,7 +2072,7 @@ describe('createStreamingAdapter chat to responses', () => {
       output_index: 0,
       item: {
         type: 'function_call',
-        id: 'call_1',
+        id: 'fc_call_1',
       },
     });
 
@@ -2066,7 +2083,7 @@ describe('createStreamingAdapter chat to responses', () => {
       response: {
         output: [{
           type: 'function_call',
-          id: 'call_1',
+          id: 'fc_call_1',
           call_id: 'call_1',
           name: 'write',
           arguments: '{"path":"hello.txt"}',

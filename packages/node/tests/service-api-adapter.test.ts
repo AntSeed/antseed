@@ -651,7 +651,7 @@ describe('transformResponse chat to responses', () => {
     const functionCall = output.find((item) => item.type === 'function_call');
     expect(functionCall).toBeDefined();
     expect(functionCall!.name).toBe('write');
-    expect(functionCall!.id).toBe('call_123');
+    expect(functionCall!.id).toBe('fc_call_123');
     expect(functionCall!.call_id).toBe('call_123');
     expect(functionCall!.arguments).toBe('{"path":"hello.txt"}');
   });
@@ -761,7 +761,7 @@ describe('transformResponse chat to responses', () => {
       output_index: 1,
       item: {
         type: 'function_call',
-        id: 'call_123',
+        id: 'fc_call_123',
         call_id: 'call_123',
         name: 'write',
         arguments: '',
@@ -774,7 +774,7 @@ describe('transformResponse chat to responses', () => {
     expect(JSON.parse(delta!.data)).toMatchObject({
       type: 'response.function_call_arguments.delta',
       output_index: 1,
-      item_id: 'call_123',
+      item_id: 'fc_call_123',
       call_id: 'call_123',
       delta: '{"path":"hello.txt"}',
     });
@@ -784,7 +784,7 @@ describe('transformResponse chat to responses', () => {
     expect(JSON.parse(done!.data)).toMatchObject({
       type: 'response.function_call_arguments.done',
       output_index: 1,
-      item_id: 'call_123',
+      item_id: 'fc_call_123',
       call_id: 'call_123',
       name: 'write',
       arguments: '{"path":"hello.txt"}',
@@ -903,7 +903,7 @@ describe('createStreamingAdapter chat to responses', () => {
       output_index: 0,
       item: {
         type: 'function_call',
-        id: 'call_1',
+        id: 'fc_call_1',
       },
     });
 
@@ -914,7 +914,7 @@ describe('createStreamingAdapter chat to responses', () => {
       response: {
         output: [{
           type: 'function_call',
-          id: 'call_1',
+          id: 'fc_call_1',
           call_id: 'call_1',
           name: 'write',
           arguments: '{"path":"hello.txt"}',
