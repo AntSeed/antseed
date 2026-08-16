@@ -42,11 +42,9 @@ import {
   unavailableLocalBuyerSpendHistory,
 } from '../payments/buyer-spend-history.js';
 import {
-  demoteDepositWatchTimer,
+  demoteDepositWatch,
   makeDepositsClient,
-  setDepositWatchBalance,
-  startDepositWatchTimer,
-  sweepIncomingUsdc,
+  startDepositWatch,
 } from '../payments/deposit-sweep.js';
 import {
   DEFAULT_CARD_PROVIDERS,
@@ -284,13 +282,13 @@ export function registerPaymentsIpc(): void {
       try {
         balance = await client.getUSDCBalance(address);
       } catch {
-        // RPC hiccup — the poll loop picks it up
+        // RPC hiccup — the daemon's watcher picks it up
       }
-      setDepositWatchBalance(balance);
-      startDepositWatchTimer();
-      // USDC already sitting in the wallet (sent before the panel opened, or a
-      // card purchase that landed while the app was closed) — sweep it now.
-      if (balance > 0n) void sweepIncomingUsdc(client, address);
+      // The daemon's watcher does the sweeping (it holds the same key and the
+      // live relayer connections); this only promotes it to the fast cadence
+      // and forwards its progress events. USDC already sitting in the wallet
+      // is swept on the daemon's first fast tick.
+      await startDepositWatch();
       return {
         ok: true,
         data: {
@@ -307,8 +305,9 @@ export function registerPaymentsIpc(): void {
 
   ipcMain.handle('deposits:watch-stop', () => {
     // Not a hard stop: deliveries can land after the deposit view closes, so
-    // the watcher lingers at a slow cadence (and stops itself later).
-    demoteDepositWatchTimer();
+    // the daemon's watcher demotes to a slow cadence and the status poll
+    // lingers (and stops itself later).
+    demoteDepositWatch();
     return { ok: true };
   });
 

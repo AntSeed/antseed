@@ -82,6 +82,7 @@ import {
   parseRequestBodyObject,
 } from './conversation-identity.js'
 import { ConversationStore } from './conversation-store.js'
+import type { DepositWatcher } from './deposit-watcher.js'
 import {
   recordPeerFailureEntry,
   clearPeerHealthEntry,
@@ -766,6 +767,12 @@ export class BuyerProxy {
   private readonly _now: () => number
   /** Latest relayer receipt per sweep authNonce, for CLI progress polling. */
   private readonly _sweepReceipts = new Map<string, SweepReceiptPayload>()
+  /**
+   * Hot-wallet deposit watcher (auto-sweep). Owned by `buyer start`, attached
+   * here so the desktop and `antseed deposit` can drive it over the control
+   * plane instead of running a second signer against the same wallet.
+   */
+  private _depositWatcher: DepositWatcher | null = null
 
   /**
    * requestId -> the conversation that issued it, so the node's per-request
@@ -870,6 +877,16 @@ export class BuyerProxy {
       if (oldest === undefined) break
       this._requestConversations.delete(oldest)
     }
+  }
+
+  /** Attach the hot-wallet deposit watcher (owned by `buyer start`). */
+  setDepositWatcher(watcher: DepositWatcher): void {
+    this._depositWatcher = watcher
+  }
+
+  /** Latest relayer receipt for a sweep authNonce, if one has arrived. */
+  getSweepReceipt(authNonce: string): SweepReceiptPayload | null {
+    return this._sweepReceipts.get(authNonce.toLowerCase()) ?? null
   }
 
   async start(): Promise<void> {
@@ -1903,6 +1920,61 @@ export class BuyerProxy {
         res.writeHead(502, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ ok: false, error: message }))
       }
+      return
+    }
+
+    // Hot-wallet deposit watcher (auto-sweep). The desktop and `antseed
+    // deposit` drive the daemon's single watcher through these instead of
+    // running a second signer against the same wallet.
+    if (path === '/_antseed/deposits/status' && method === 'GET') {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({
+        ok: true,
+        watcher: this._depositWatcher !== null,
+        status: this._depositWatcher?.status() ?? null,
+      }))
+      return
+    }
+
+    if (path === '/_antseed/deposits/watch' && method === 'POST') {
+      const chunks: Buffer[] = []
+      let totalSize = 0
+      for await (const chunk of req) {
+        totalSize += (chunk as Buffer).length
+        if (totalSize > 1024) {
+          res.writeHead(413, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: 'Request body too large' }))
+          return
+        }
+        chunks.push(chunk as Buffer)
+      }
+      let mode: string
+      try {
+        const body = JSON.parse(Buffer.concat(chunks).toString() || '{}')
+        mode = String(body.mode ?? 'active')
+      } catch {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'Invalid JSON body' }))
+        return
+      }
+      if (mode !== 'active' && mode !== 'background') {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'mode must be "active" or "background"' }))
+        return
+      }
+      const watcher = this._depositWatcher
+      if (!watcher) {
+        res.writeHead(503, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({
+          ok: false,
+          error: 'Deposit watcher unavailable — payments are disabled or this chain has no deposit relay.',
+        }))
+        return
+      }
+      if (mode === 'active') watcher.promote()
+      else watcher.demote()
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, status: watcher.status() }))
       return
     }
 

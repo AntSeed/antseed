@@ -385,7 +385,7 @@ function renderSkillMarkdown(): string {
   out.push('antseed buyer connection set --peer <peerId>');
   out.push('');
   out.push('# 9. (Optional) Deposit USDC on Base for paid services');
-  out.push('antseed payments  # opens portal at 127.0.0.1:3118?token=<hex> — connect a wallet, deposit USDC');
+  out.push('antseed buyer deposit  # prints the funding address + QR; incoming USDC deposits automatically (gasless)');
   out.push('```');
   out.push('');
   out.push('### Security notes for agents and deploys');
@@ -467,7 +467,7 @@ function renderSkillMarkdown(): string {
   out.push('| `identity.enc` | Encrypted copy of `identity.key` (when the desktop app sets a passphrase). | yes | only if `identity.key` is also intact |');
   out.push('| `config.json` | Static settings: chain id, proxy port, max-pricing caps, bootstrap nodes, payments preferences. Hand-editable. | yes | yes (defaults are sane) |');
   out.push('| `buyer.state.json` | Live runtime state: `pinnedPeerId`, the discovered-peers cache (`discoveredPeers`), on-chain stats, the proxy `pid` and `port`. Re-built from the network on next start. | yes (the pin survives restart) | yes (you lose the pin and the cached peer list — next browse will repopulate) |');
-  out.push('| `metering.db` | SQLite log of every request the proxy served (model, peer, tokens, USDC). Used by `antseed buyer status` and the payments portal. | yes | yes (you lose request history; settlement is unaffected) |');
+  out.push('| `metering.db` | SQLite log of every request the proxy served (model, peer, tokens, USDC). Used by `antseed buyer status` and the desktop app. | yes | yes (you lose request history; settlement is unaffected) |');
   out.push('| `payments/` | Per-channel state used by the seller-side settlement flow (only relevant if you also run `antseed seller`). | yes | only if you do not run a seller |');
   out.push('| `plugins/` | Cache of downloaded provider plugins. | yes | yes (re-downloaded on next use) |');
   out.push('| `chat/`, `projects/` | Used by the desktop app for local chat history. Empty on a CLI-only setup. | yes | yes |');

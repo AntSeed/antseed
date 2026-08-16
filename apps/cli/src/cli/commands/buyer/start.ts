@@ -7,7 +7,7 @@ import { homedir } from 'node:os'
 import { createConnection } from 'node:net'
 import { getGlobalOptions } from '../types.js'
 import { loadConfig } from '../../../config/loader.js'
-import { AntseedNode, DepositsClient, getInstance, resolveChainConfig } from '@antseed/node'
+import { AntseedNode, DepositRelayClient, DepositsClient, getInstance, peerRelaysSweeps, resolveChainConfig } from '@antseed/node'
 import type { NodePaymentsConfig } from '@antseed/node'
 import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
@@ -15,6 +15,7 @@ import { loadRouterPlugin, loadVerifierPlugin, buildPluginConfig, getPackageVers
 import { ensurePluginsUpToDate } from '../../../plugins/drift.js'
 import { resolvePluginPackage } from '../../../plugins/registry.js'
 import { BuyerProxy } from '../../../proxy/buyer-proxy.js'
+import { DepositWatcher } from '../../../proxy/deposit-watcher.js'
 import { curatedVerifierIds, resolveVerifierPolicy, type VerifierPolicy } from '../../../plugins/verifier.js'
 import { resolveEffectiveBuyerConfig, type BuyerRuntimeOverrides } from '../../../config/effective.js'
 import type { BuyerCLIConfig } from '../../../config/types.js'
@@ -476,6 +477,47 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         }
       }
 
+      // Hot-wallet deposit watcher (auto-sweep): incoming USDC is swept into
+      // the deposits balance gaslessly via the relayer network. Skipped when
+      // another daemon owns the proxy port — it already runs a watcher, and a
+      // second signer against the same wallet would race it.
+      let depositWatcher: DepositWatcher | null = null
+      const depositRelayAddress = cryptoOverrides?.depositRelayAddress || chainConfig.depositRelayAddress
+      if (ownsProxyListener && paymentsConfig?.enabled && depositRelayAddress) {
+        const identity = node.identity!
+        depositWatcher = new DepositWatcher({
+          wallet: identity.wallet,
+          address: identity.wallet.address,
+          depositsClient: new DepositsClient({
+            rpcUrl: chainConfig.rpcUrl,
+            ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
+            contractAddress: chainConfig.depositsContractAddress,
+            usdcAddress: chainConfig.usdcContractAddress,
+            evmChainId: chainConfig.evmChainId,
+          }),
+          relayClient: new DepositRelayClient({
+            rpcUrl: chainConfig.rpcUrl,
+            ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
+            contractAddress: depositRelayAddress,
+            evmChainId: chainConfig.evmChainId,
+          }),
+          usdcAddress: chainConfig.usdcContractAddress,
+          evmChainId: chainConfig.evmChainId,
+          depositRelayAddress,
+          dispatch: (payload) => node.dispatchSweepRequest(payload),
+          connectRelayers: async () => {
+            const relayers = (await node.discoverPeers()).filter(peerRelaysSweeps)
+            await Promise.allSettled(relayers.slice(0, 4).map((peer) => node.connectToPeer(peer)))
+          },
+          getReceipt: async (authNonce) => proxy.getSweepReceipt(authNonce),
+        })
+        proxy.setDepositWatcher(depositWatcher)
+        if (effectiveBuyerConfig.autoSweep !== false) {
+          depositWatcher.startIdle()
+          console.log(chalk.dim('Auto-sweep: watching the hot wallet — incoming USDC deposits automatically (buyer.autoSweep=false disables).'))
+        }
+      }
+
       const proxyUrl = `http://localhost:${proxyPort}`
       console.log('')
       if (toolHints.length > 0) {
@@ -495,6 +537,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
 
       setupShutdownHandler(async () => {
         nodeSpinner.start('Shutting down...')
+        depositWatcher?.stop()
         if (ownsProxyListener) await proxy.stop()
         await node.stop()
         nodeSpinner.succeed('Disconnected. All channels finalized.')

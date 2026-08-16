@@ -2956,3 +2956,80 @@ test('sweepStaleStateTmpFiles: removes aged temp files, keeps fresh and unrelate
 test('sweepStaleStateTmpFiles: tolerates a missing directory', async () => {
   await sweepStaleStateTmpFiles(join(tmpdir(), 'antseed-does-not-exist', randomUUID()))
 })
+
+// ---------- Deposit watcher control plane ----------
+
+test('deposits/status reports no watcher until one is attached', async () => {
+  const proxy = new BuyerProxy({
+    port: 0,
+    dataDir: '/tmp/antseed-test',
+    node: { router: null } as any,
+  })
+
+  const res = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/deposits/status' }))
+  assert.equal(res.statusCode, 200)
+  assert.deepEqual(JSON.parse(res.body), { ok: true, watcher: false, status: null })
+})
+
+test('deposits/watch returns 503 when no watcher is attached', async () => {
+  const proxy = new BuyerProxy({
+    port: 0,
+    dataDir: '/tmp/antseed-test',
+    node: { router: null } as any,
+  })
+
+  const res = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/deposits/watch', body: { mode: 'active' } }))
+  assert.equal(res.statusCode, 503)
+  assert.equal((JSON.parse(res.body) as { ok: boolean }).ok, false)
+})
+
+test('deposits/watch promotes and demotes an attached watcher and returns its status', async () => {
+  const proxy = new BuyerProxy({
+    port: 0,
+    dataDir: '/tmp/antseed-test',
+    node: { router: null } as any,
+  })
+  const calls: string[] = []
+  const fakeStatus = {
+    mode: 'idle',
+    address: '0x' + 'ab'.repeat(20),
+    usdcBalance: '0',
+    sweepInFlight: false,
+    lastEvent: null,
+  }
+  proxy.setDepositWatcher({
+    promote: () => { calls.push('promote') },
+    demote: () => { calls.push('demote') },
+    status: () => fakeStatus,
+  } as any)
+
+  const active = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/deposits/watch', body: { mode: 'active' } }))
+  assert.equal(active.statusCode, 200)
+  assert.deepEqual(JSON.parse(active.body), { ok: true, status: fakeStatus })
+
+  const background = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/deposits/watch', body: { mode: 'background' } }))
+  assert.equal(background.statusCode, 200)
+  assert.deepEqual(calls, ['promote', 'demote'])
+
+  const invalid = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/deposits/watch', body: { mode: 'nonsense' } }))
+  assert.equal(invalid.statusCode, 400)
+  assert.deepEqual(calls, ['promote', 'demote'])
+
+  const status = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/deposits/status' }))
+  assert.deepEqual(JSON.parse(status.body), { ok: true, watcher: true, status: fakeStatus })
+})
+
+test('getSweepReceipt returns cached relayer receipts case-insensitively', () => {
+  const proxy = new BuyerProxy({
+    port: 0,
+    dataDir: '/tmp/antseed-test',
+    node: { router: null } as any,
+  })
+  const nonce = '0x' + 'AB'.repeat(32)
+  const receipt = { authNonce: nonce.toLowerCase(), status: 'confirmed', txHash: '0x' + '12'.repeat(32) }
+  ;(proxy as any)._sweepReceipts.set(nonce.toLowerCase(), receipt)
+
+  assert.equal(proxy.getSweepReceipt(nonce), receipt)
+  assert.equal(proxy.getSweepReceipt(nonce.toLowerCase()), receipt)
+  assert.equal(proxy.getSweepReceipt('0x' + '00'.repeat(32)), null)
+})

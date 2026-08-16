@@ -494,22 +494,20 @@ function RunFirstBanner() {
             <div className={styles.runFirstBody}>
               <p className={styles.runFirstStepTitle}>
                 <span className={styles.runFirstOptionalTag}>Optional</span>
-                Deposit USDC - only needed for paid services. Use the payments portal
-                so funding flows from a <strong>separate cold wallet</strong>, not from
-                the buyer identity:
+                Deposit USDC - only needed for paid services:
               </p>
-              <CodeBlock snippet={`antseed payments`} />
+              <CodeBlock snippet={`antseed buyer deposit`} />
               <p className={styles.runFirstHint}>
-                The portal opens at{' '}
-                <code>http://127.0.0.1:3118?token=&lt;hex&gt;</code> (token printed once at
-                startup). Connect MetaMask / Coinbase Wallet / Rabby, sign the deposit,
-                and USDC moves into the Deposits contract credited to your buyer
-                address. Verify with <code>antseed buyer balance</code>.
+                Prints your buyer&apos;s funding address and a QR code (an EIP-681
+                payment request). Send USDC to it from any wallet or exchange —
+                incoming funds are swept into the Deposits contract and credited to
+                your buyer automatically: a permissionless relayer submits the
+                transaction for a fixed ~$0.05 USDC fee, so the buyer never needs
+                ETH. Verify with <code>antseed buyer balance</code>.
               </p>
               <p className={styles.runFirstHint}>
-                <strong>Don't send funds to your <code>ANTSEED_IDENTITY_HEX</code>{' '}
-                wallet directly</strong> - it's a hot signing key, not a treasury. The
-                portal handles the deposit contract call from your cold wallet.
+                <strong>Send USDC on the Base network only</strong> - other tokens or
+                networks are not recoverable by the sweep.
               </p>
             </div>
           </li>

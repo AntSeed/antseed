@@ -37,6 +37,7 @@ export function createDefaultConfig(): AntseedConfig {
       peerRefreshIntervalMs: DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS,
       metadataFetchTimeoutMs: DEFAULT_BUYER_METADATA_FETCH_TIMEOUT_MS,
       disableMetadataV2Services: false,
+      autoSweep: true,
     },
     payments: {
       preferredMethod: 'crypto',

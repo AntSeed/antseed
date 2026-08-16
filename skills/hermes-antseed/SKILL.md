@@ -140,56 +140,23 @@ The service user must own the `~/.antseed/` directory that holds `config.json` a
 
 The buyer startup log prints the Deposits/Channels addresses and RPC URL it bound to — glance at those to confirm it's on the chain you expected.
 
-## Funding via the payments portal
+## Funding the buyer
 
-`antseed payments` starts a local web UI bound to `127.0.0.1:3118`, protected by a random bearer token printed once at startup. Use it to deposit USDC, view channel state, and withdraw.
+`antseed buyer deposit` prints the buyer's funding address and a QR code (an EIP-681 payment request), then watches the hot wallet and deposits incoming USDC into the buyer's credits automatically: the node signs a gasless EIP-3009 authorization and a permissionless relayer submits the transaction on-chain for a fixed ~$0.05 USDC fee. The buyer never needs ETH. (The old `antseed payments` web portal is retired.)
 
 ```bash
-antseed payments
-# Payments portal running at http://127.0.0.1:3118?token=<hex>
+antseed buyer deposit              # address + QR, then waits and auto-deposits incoming USDC
+antseed buyer deposit --no-watch   # just print the address + QR
 ```
 
-Open the printed URL in a browser **with the `?token=...` query string intact** — the frontend reads the token from `window.location.search` exactly once and caches it. If you land on `/` without the token, every API call returns 401.
+Send USDC **on the Base network only** to the printed address — from any wallet, an exchange withdrawal, or a card on-ramp. While `antseed buyer start` is running, incoming hot-wallet USDC is swept into the deposits balance automatically even without `antseed buyer deposit` open (config `buyer.autoSweep`, default `true`). `antseed buyer sweep` triggers one sweep manually.
 
-The token rotates on every portal restart. If you've restarted the portal and the browser starts returning 401s, tell the user to close the tab fully and reopen with the new URL — a refresh alone won't drop the cached token.
-
-From the portal, the user connects an external wallet (MetaMask, Coinbase Wallet, etc.) and signs the deposit transaction there. USDC flows from the user's cold wallet into the Deposits contract, credited to the buyer address.
-
-### Two addresses — do not confuse them
-
-The portal UI shows the **Deposits contract address** as the USDC destination. This is a smart contract, not the buyer wallet. Do not send ETH or any other token to this address — only USDC.
-
-| Address | What it is | What to send |
-|---------|-----------|--------------|
-| Shown in portal | Deposits contract | USDC only |
-| `antseed buyer balance` → Wallet | Buyer wallet | Nothing — buyer needs no gas |
-
-After depositing, confirm with `antseed buyer balance` — the "Deposits Account → Available" line should reflect your deposit.
+After funding, confirm with `antseed buyer balance` — the "Deposits Account → Available" line should reflect the deposit (net of the relay fee). A first-ever deposit must net at least 1 USDC after the fee.
 
 ### When Hermes runs on a remote host
 
-If the buyer runs on a remote box, `127.0.0.1:3118` isn't reachable from the user's browser directly. Start the portal on the remote host detached, then SSH-forward the port to the user's laptop.
+No port forwarding is needed anymore: `antseed buyer deposit` is plain terminal output, so run it inside the SSH session (the QR renders in the terminal) or just copy the printed address. The running buyer daemon on the remote host sweeps the funds automatically once they land.
 
-Start the portal remotely so it survives the SSH call returning:
-
-```bash
-ssh user@host "nohup antseed payments > /tmp/antseed-payments.log 2>&1 </dev/null & disown"
-ssh user@host "cat /tmp/antseed-payments.log"   # read back the bearer token
-```
-
-A bare `ssh user@host "antseed payments &"` will die on disconnect — always `nohup` + `disown` + redirect stdio.
-
-Then open a local forward on the user's laptop:
-
-```bash
-ssh -N -L 127.0.0.1:3118:127.0.0.1:3118 user@host
-```
-
-Bind the left-hand side explicitly to `127.0.0.1:` — omitting the host lets OpenSSH pick IPv6-only, which many browsers then fail to reach.
-
-Give the user `http://127.0.0.1:3118/?token=<hex>` (the URL from the portal log). The browser hits the local forward, which reaches the remote portal.
-
-If `ssh -L` fails with `channel 1: open failed: administratively prohibited`, the remote sshd has `AllowTcpForwarding no`. Enable it in `/etc/ssh/sshd_config` (or a drop-in under `/etc/ssh/sshd_config.d/`), run `sudo sshd -t` to validate, then `sudo systemctl reload sshd`. Existing SSH sessions are not dropped by the reload.
 
 ## Model routing
 
