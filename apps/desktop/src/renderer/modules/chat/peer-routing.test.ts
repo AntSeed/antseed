@@ -504,6 +504,139 @@ test('auto image prompts use model-only routing and appear immediately while gen
   assert.equal((uiState.chatConversations[0] as { lastResponsePeerId?: string }).lastResponsePeerId, 'image-peer');
 });
 
+test('follow-up image prompts edit the latest generated image', async () => {
+  installDomTimers();
+
+  const existingMessages = [{
+    role: 'assistant' as const,
+    content: [{
+      type: 'file',
+      fileName: 'generated.png',
+      mimeType: 'image/png',
+      attachmentId: 'generated-attachment',
+      generated: true,
+    }],
+    meta: { peerId: 'source-image-peer', service: 'image-model' },
+  }];
+  const uiState = createInitialUiState();
+  uiState.chatActiveConversation = 'conv-a';
+  uiState.chatMessages = existingMessages;
+  uiState.chatConversations = [{
+    id: 'conv-a',
+    title: 'Conversation A',
+    service: 'text-model',
+    provider: 'openai',
+    peerId: 'text-peer',
+    messages: existingMessages,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    usage: { inputTokens: 0, outputTokens: 0 },
+  }];
+  uiState.vprRoutableRows = [{
+    rowKey: 'source-image-peer:image-model',
+    peerId: 'source-image-peer',
+    serviceId: 'image-model',
+    protocol: 'openai-images',
+    effectiveReputationScore: 80,
+  } as DiscoverRow];
+  uiState.chatImageRouteSelection = {
+    model: { provider: 'openai', serviceId: 'image-model', label: 'Image Model', categories: [] },
+    mode: 'auto',
+    peerId: null,
+  };
+
+  const generation = createDeferred<Awaited<ReturnType<NonNullable<DesktopBridge['chatGenerateImage']>>>>();
+  let request: Parameters<NonNullable<DesktopBridge['chatGenerateImage']>>[0] | null = null;
+  const bridge: DesktopBridge = {
+    chatGenerateImage: async (payload) => {
+      request = payload;
+      return generation.promise;
+    },
+  };
+  const api = initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+
+  api.generateImage('Now with a blue background');
+
+  await waitFor(() => uiState.chatSending);
+  assert.equal(uiState.chatThinkingPhase, 'Editing image');
+  assert.deepEqual(request, {
+    conversationId: 'conv-a',
+    prompt: 'Now with a blue background',
+    peerId: 'source-image-peer',
+    service: 'image-model',
+    sourceImageAttachmentId: 'generated-attachment',
+  });
+
+  generation.resolve({ ok: false, error: 'Request aborted' });
+  await waitFor(() => !uiState.chatSending);
+});
+
+test('switching image models edits through a seller serving the new model', async () => {
+  installDomTimers();
+
+  const existingMessages = [{
+    role: 'assistant' as const,
+    content: [{
+      type: 'file',
+      fileName: 'generated.png',
+      mimeType: 'image/png',
+      attachmentId: 'generated-attachment',
+      generated: true,
+    }],
+    meta: { peerId: 'old-image-peer', service: 'old-image-model' },
+  }];
+  const uiState = createInitialUiState();
+  uiState.chatActiveConversation = 'conv-a';
+  uiState.chatMessages = existingMessages;
+  uiState.chatConversations = [{
+    id: 'conv-a',
+    title: 'Conversation A',
+    service: 'text-model',
+    provider: 'openai',
+    peerId: 'text-peer',
+    messages: existingMessages,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    usage: { inputTokens: 0, outputTokens: 0 },
+  }];
+  uiState.vprRoutableRows = [{
+    rowKey: 'new-image-peer:new-image-model',
+    peerId: 'new-image-peer',
+    serviceId: 'new-image-model',
+    protocol: 'openai-images',
+    effectiveReputationScore: 80,
+  } as DiscoverRow];
+  uiState.chatImageRouteSelection = {
+    model: { provider: 'openai', serviceId: 'new-image-model', label: 'New Image Model', categories: [] },
+    mode: 'auto',
+    peerId: null,
+  };
+
+  const generation = createDeferred<Awaited<ReturnType<NonNullable<DesktopBridge['chatGenerateImage']>>>>();
+  let request: Parameters<NonNullable<DesktopBridge['chatGenerateImage']>>[0] | null = null;
+  const bridge: DesktopBridge = {
+    chatGenerateImage: async (payload) => {
+      request = payload;
+      return generation.promise;
+    },
+  };
+  const api = initChatModule({ bridge, uiState, appendSystemLog: () => undefined });
+
+  api.generateImage('Make it look like a watercolor');
+
+  await waitFor(() => uiState.chatSending);
+  assert.deepEqual(request, {
+    conversationId: 'conv-a',
+    prompt: 'Make it look like a watercolor',
+    peerId: 'new-image-peer',
+    service: 'new-image-model',
+    sourceImageAttachmentId: 'generated-attachment',
+  });
+
+  generation.resolve({ ok: false, error: 'Request aborted' });
+  await waitFor(() => !uiState.chatSending);
+});
+
 test('stream errors clear when switching conversations', async () => {
   installDomTimers();
 

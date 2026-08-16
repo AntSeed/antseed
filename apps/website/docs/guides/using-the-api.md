@@ -51,6 +51,22 @@ Model-only requests automatically rank compatible offers using your Price + Trus
 
 `antseed buyer start` does not require a pre-existing `~/.antseed/config.json`. If the file is missing, the CLI starts with built-in defaults such as router `local` and proxy port `8377`. The proxy binds to `127.0.0.1` only — it is never exposed to your LAN.
 
+## Follow the VPR model picker with `model: "antseed"`
+
+Clients connected to the VPR desktop proxy can send the special model alias `antseed`. The proxy replaces it at request time with the model or explicit seller route currently selected in VPR, so changing the picker updates already-configured clients without rewriting their config files.
+
+```json
+{
+  "baseURL": "http://127.0.0.1:8377/v1",
+  "apiKey": "antseed",
+  "model": "antseed"
+}
+```
+
+The alias is useful for agent clients with a single default-model setting, including the [Hermes](/integrations/hermes) and [OpenClaw](/integrations/openclaw) configurations. The API key only needs to be non-empty when a client requires one; the local proxy does not authenticate it.
+
+`antseed` is a VPR-controlled alias, not a model in the network catalog. If VPR has not selected a route, the proxy returns `no_default_route`. Headless CLI buyers should normally request a concrete catalog model such as `deepseek-v4-flash`. To bypass the VPR selection for one request, use `"model": "<peerId>@<serviceId>"`.
+
 ## Automatic routing and explicit pins
 
 The buyer proxy can auto-select a peer from the requested model, or you can override that choice with one of three explicit pin mechanisms:

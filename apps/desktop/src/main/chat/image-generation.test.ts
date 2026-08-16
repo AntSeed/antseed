@@ -109,6 +109,75 @@ test('generateChatImage preserves an explicitly pinned image peer', async () => 
   }
 });
 
+test('generateChatImage edits a prior generated image with multipart routing', async () => {
+  const originalFetch = globalThis.fetch;
+  const sourcePng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01]);
+  const editedPng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x02]);
+  let requestUrl = '';
+  let requestHeaders = new Headers();
+  let requestBody: unknown;
+  globalThis.fetch = (async (input, init) => {
+    requestUrl = String(input);
+    requestHeaders = new Headers(init?.headers);
+    requestBody = init?.body;
+    return new Response(JSON.stringify({ data: [{ b64_json: editedPng.toString('base64') }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }) as typeof fetch;
+
+  let loadedAttachmentId = '';
+  let persistedBytes = Buffer.alloc(0);
+  try {
+    const result = await generateChatImage({
+      appendImageGeneration: async (_id, prompt, marker) => ({
+        user: { role: 'user', content: prompt, timestamp: 1 },
+        assistant: {
+          role: 'assistant', content: [{ type: 'text', text: marker }], api: 'openai-completions',
+          provider: 'antseed', model: 'image-model', usage: {
+            input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          }, stopReason: 'stop', timestamp: 2,
+        },
+      }),
+    }, 8377, {
+      conversationId: 'conversation-1',
+      prompt: 'Now with a blue background',
+      peerId: 'image-peer',
+      service: 'image-model',
+      sourceImageAttachmentId: 'source-image',
+    }, {
+      loadSourceAttachment: async (_conversationId, attachmentId) => {
+        loadedAttachmentId = attachmentId;
+        return { bytes: sourcePng, fileName: 'source.png' };
+      },
+      persistAttachment: async (_conversationId, _attachmentId, _name, bytes) => {
+        persistedBytes = Buffer.from(bytes);
+        return '/tmp/edited.png';
+      },
+    });
+
+    assert.equal(result.ok, true, result.error);
+    assert.equal(requestUrl, 'http://127.0.0.1:8377/v1/images/edits');
+    assert.equal(requestHeaders.get('authorization'), 'Bearer antseed-desktop');
+    assert.equal(requestHeaders.get('x-antseed-pin-peer'), 'image-peer');
+    assert.equal(requestHeaders.has('content-type'), false);
+    assert.equal(loadedAttachmentId, 'source-image');
+    assert.ok(requestBody instanceof FormData);
+    assert.equal(requestBody.get('model'), 'image-model');
+    assert.equal(requestBody.get('prompt'), 'Now with a blue background');
+    assert.equal(requestBody.get('n'), '1');
+    assert.equal(requestBody.get('response_format'), 'b64_json');
+    const image = requestBody.get('image');
+    assert.ok(image instanceof Blob);
+    assert.equal(image.type, 'image/png');
+    assert.deepEqual(Buffer.from(await image.arrayBuffer()), sourcePng);
+    assert.deepEqual(persistedBytes, editedPng);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('generateChatImage rejects empty prompts without calling the proxy', async () => {
   const originalFetch = globalThis.fetch;
   let called = false;

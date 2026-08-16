@@ -5,6 +5,7 @@ import { notifyUiStateChanged, notifyUiStateChangedSync } from '../../core/store
 import { normalizeDiscoverRow, projectRowsToChatServiceOptions } from '../catalog/discover-rows.js';
 import { resolveVprChatOption } from './projection.js';
 import { findCatalogEntry, projectRowsToVprModelCatalog, selectDefaultVprModel } from '../catalog/model-catalog.js';
+import { sameCanonicalModel } from '../catalog/model-identity.js';
 import { chooseBestVprRoute, filterRoutableVprRoutes } from '../routing/select.js';
 import { routesForSelectedModel } from '../catalog/view-models.js';
 import { saveVprRouteSelection } from '../routing/preferences.js';
@@ -2286,7 +2287,7 @@ export function initChatModule({
    * Dispatches via streaming or non-streaming bridge, handles stuck-request
    * recovery, payment-required errors, and fallback timeouts.
    */
-  function resolveSelectedImageRoute(): { service: string; peerId?: string } | null {
+  function resolveSelectedImageRoute(): { service: string; peerId?: string; autoPeerId?: string } | null {
     const selection = uiState.chatImageRouteSelection;
     const model = selection?.model;
     if (!model) return null;
@@ -2298,7 +2299,7 @@ export function initChatModule({
       return route ? { service: route.serviceId, peerId: route.peerId } : null;
     }
     const route = chooseBestVprRoute(routes, uiState.vprRoutingPreferences);
-    return route ? { service: model.serviceId } : null;
+    return route ? { service: model.serviceId, autoPeerId: route.peerId } : null;
   }
 
   function generateImage(prompt: string): void {
@@ -2335,6 +2336,22 @@ export function initChatModule({
       const existingBeforeRequest = getLocalConversationMessages(convId) ?? (
         convId === uiState.chatActiveConversation ? uiState.chatMessages as ChatMessage[] : []
       );
+      let sourceImageAttachmentId = '';
+      let sourceImagePeerId = '';
+      let sourceImageServiceId = '';
+      for (let messageIndex = existingBeforeRequest.length - 1; messageIndex >= 0 && !sourceImageAttachmentId; messageIndex -= 1) {
+        const message = existingBeforeRequest[messageIndex];
+        if (message?.role !== 'assistant' || !Array.isArray(message.content)) continue;
+        for (let blockIndex = message.content.length - 1; blockIndex >= 0; blockIndex -= 1) {
+          const block = message.content[blockIndex];
+          if (block?.type === 'file' && block.generated === true && typeof block.attachmentId === 'string') {
+            sourceImageAttachmentId = block.attachmentId.trim();
+            sourceImagePeerId = typeof message.meta?.peerId === 'string' ? message.meta.peerId.trim() : '';
+            sourceImageServiceId = typeof message.meta?.service === 'string' ? message.meta.service.trim() : '';
+            break;
+          }
+        }
+      }
       const pendingMessages = [...existingBeforeRequest, optimisticUserMessage];
       setLocalConversationMessages(convId, pendingMessages);
       if (convId === uiState.chatActiveConversation) uiState.chatMessages = pendingMessages;
@@ -2344,15 +2361,21 @@ export function initChatModule({
       }
 
       setConversationSending(convId, true);
-      uiState.chatThinkingPhase = 'Generating image';
+      uiState.chatThinkingPhase = sourceImageAttachmentId ? 'Editing image' : 'Generating image';
       notifyUiStateChanged();
       queueScrollChatToBottom();
       try {
+        const editPeerId = sourceImageAttachmentId
+          ? (sourceImagePeerId && sameCanonicalModel(sourceImageServiceId, route.service)
+              ? sourceImagePeerId
+              : route.autoPeerId)
+          : '';
         const result = await bridge.chatGenerateImage!({
           conversationId: convId,
           prompt: content,
           service: route.service,
-          ...(route.peerId ? { peerId: route.peerId } : {}),
+          ...((route.peerId || editPeerId) ? { peerId: route.peerId || editPeerId } : {}),
+          ...(sourceImageAttachmentId ? { sourceImageAttachmentId } : {}),
         });
         if (!result.ok || !result.user || !result.assistant) {
           throw new Error(result.error || 'Image generation failed.');
