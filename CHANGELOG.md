@@ -8,6 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
+- Desktop Connected Apps now opens directly to the complete app list without the redundant search field at the top; application-picker searches remain available when choosing an installed app. The Home notice for apps that need restarting can now be dismissed for the current app launch and returns after Desktop is relaunched.
 - Desktop Connected Apps now includes GooeyPi, configures its Pi harness through `~/.pi/agent/models.json`, auto-detects the installed desktop app, and stamps distinct `originator` headers for Pi and GooeyPi so VPR conversations are attributed to the correct client instead of the underlying OpenAI SDK.
 - Buyer request and streaming duration limits are now configurable through `buyer.requestTimeoutMs` and `buyer.maxStreamDurationMs`, allowing slow or long-running generations to exceed the previous fixed five-minute cap.
 - The default streaming duration cap was raised from 5 to 30 minutes. Streams longer than the cap were cancelled mid-response, which surfaced in OpenAI Responses clients (e.g. Codex CLI) as `stream disconnected before completion: stream closed before response.completed` on long agentic turns. The cap can also be set via the `ANTSEED_BUYER_MAX_STREAM_DURATION_MS` environment variable.

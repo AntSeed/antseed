@@ -43,6 +43,7 @@ import styles from './VprHomeView.module.scss';
 type Props = { onSelectView?: (view: ViewName) => void };
 
 const ADD_BALANCE_DISMISSED_KEY = 'antseed.desktop.vpr.addBalanceDismissed';
+const RESTART_NOTICE_DISMISSED_KEY = 'antseed.desktop.vpr.restartNoticeDismissed';
 const MODEL_CHANGE_NOTICE_MS = 4_000;
 /* Rows in the model dropdown (Figma) — the full catalog lives on Models. */
 const DROPDOWN_MODEL_COUNT = 5;
@@ -83,6 +84,13 @@ export function VprHomeView({ onSelectView }: Props) {
   const [addBalanceDismissed, setAddBalanceDismissed] = useState(() => {
     try {
       return localStorage.getItem(ADD_BALANCE_DISMISSED_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [restartNoticeDismissed, setRestartNoticeDismissed] = useState(() => {
+    try {
+      return sessionStorage.getItem(RESTART_NOTICE_DISMISSED_KEY) === '1';
     } catch {
       return false;
     }
@@ -256,6 +264,13 @@ export function VprHomeView({ onSelectView }: Props) {
     setAddBalanceDismissed(true);
     try {
       localStorage.setItem(ADD_BALANCE_DISMISSED_KEY, '1');
+    } catch { /* private mode */ }
+  }
+
+  function dismissRestartNotice(): void {
+    setRestartNoticeDismissed(true);
+    try {
+      sessionStorage.setItem(RESTART_NOTICE_DISMISSED_KEY, '1');
     } catch { /* private mode */ }
   }
 
@@ -469,15 +484,24 @@ export function VprHomeView({ onSelectView }: Props) {
           <div className={styles.connectedGroup}>
             {/* Connected apps live on the Apps page — home leads with the
                 chats themselves. */}
-            {restartProfiles.length > 0 ? (
-              <button type="button" className={styles.restartBanner} onClick={() => onSelectView?.('tools')}>
-                <HugeiconsIcon icon={ArrowReloadHorizontalIcon} size={18} strokeWidth={2} />
-                <span>
-                  <strong>{restartProfiles.length === 1 ? restartProfiles[0]!.displayName : `${restartProfiles.length} apps`} need a restart</strong>
-                  <small>Restart to apply the VPR connection.</small>
-                </span>
-                <HugeiconsIcon icon={ArrowRight02Icon} size={16} strokeWidth={2} />
-              </button>
+            {restartProfiles.length > 0 && !restartNoticeDismissed ? (
+              <div className={styles.restartBanner}>
+                <button type="button" className={styles.restartBannerBody} onClick={() => onSelectView?.('tools')}>
+                  <HugeiconsIcon icon={ArrowReloadHorizontalIcon} size={18} strokeWidth={2} />
+                  <span>
+                    <strong>{restartProfiles.length === 1 ? restartProfiles[0]!.displayName : `${restartProfiles.length} apps`} need a restart</strong>
+                    <small>Restart to apply the VPR connection.</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={styles.restartBannerClose}
+                  onClick={dismissRestartNotice}
+                  aria-label="Dismiss app restart notice"
+                >
+                  <HugeiconsIcon icon={Cancel01Icon} size={16} strokeWidth={2} />
+                </button>
+              </div>
             ) : null}
 
             {reminderCard}
