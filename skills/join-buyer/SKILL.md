@@ -49,7 +49,6 @@ If you want non-default behavior, create or edit `~/.antseed/config.json`:
 ```json
 {
   "buyer": {
-    "minPeerReputation": 50,
     "maxPricing": {
       "defaults": {
         "inputUsdPerMillion": 25,

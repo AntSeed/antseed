@@ -50,7 +50,6 @@ Always create `~/.antseed/config.json` with `payments.crypto.chainId` set. Witho
 {
   "network": {},
   "buyer": {
-    "minPeerReputation": 0,
     "maxPricing": {
       "defaults": {
         "inputUsdPerMillion": 100,
