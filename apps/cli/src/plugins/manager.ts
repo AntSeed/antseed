@@ -44,15 +44,28 @@ async function ensurePluginsDir(): Promise<void> {
   }
 }
 
+export function normalizePluginInstallError(packageName: string, error: unknown): Error {
+  if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+    return new Error(
+      `Cannot install ${packageName}: npm was not found. Install Node.js 20 or newer (which includes npm), then retry.`,
+    )
+  }
+  return error instanceof Error ? error : new Error(String(error))
+}
+
 export async function installPlugin(packageName: string): Promise<void> {
   const existing = inflightInstalls.get(packageName)
   if (existing) return existing
   const run = (async () => {
     await ensurePluginsDir()
-    await execFileAsync('npm', ['install', '--ignore-scripts', packageName], {
-      cwd: getPluginsDir(),
-      timeout: INSTALL_TIMEOUT_MS,
-    })
+    try {
+      await execFileAsync('npm', ['install', '--ignore-scripts', packageName], {
+        cwd: getPluginsDir(),
+        timeout: INSTALL_TIMEOUT_MS,
+      })
+    } catch (error) {
+      throw normalizePluginInstallError(packageName, error)
+    }
   })()
   inflightInstalls.set(packageName, run)
   try {

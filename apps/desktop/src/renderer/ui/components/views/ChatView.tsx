@@ -24,6 +24,7 @@ import { useRetainedState } from '../../hooks/useRetainedState';
 import { ChatBubble } from '../chat/ChatBubble';
 import { hasSearchPhraseMatch, isToolResultOnlyMessage } from '../chat/chat-utils.js';
 import { WalkingAnt } from '../chat/WalkingAnt';
+import { ImageGenerationPlaceholder } from '../chat/ImageGenerationPlaceholder';
 import { SessionApprovalCard } from '../chat/SessionApprovalCard';
 import { ToolApprovalCard } from '../chat/ToolApprovalCard';
 import { LowBalanceWarning } from '../chat/LowBalanceWarning';
@@ -699,7 +700,6 @@ export function ChatView({ onSelectView }: ChatViewProps) {
   // with an open conversation this also rebinds the thread to the new model.
   const applyModelChange = useCallback(
     (entry: VprModelCatalogEntry) => {
-      if (entry.kind === 'image') return;
       actions.selectVprModel(entry.provider, entry.serviceId);
     },
     [actions],
@@ -1118,6 +1118,9 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     snap.chatSendingConversationId === snap.chatActiveConversation ||
     activeConversationIsSending
   );
+  const showImageGenerationPlaceholder = showThinkingIndicator
+    && imageMode
+    && (snap.chatThinkingPhase === 'Generating image' || snap.chatThinkingPhase === 'Editing image');
   const chatComposerDisabled = currentPeerNotFound && !imageMode;
   const chatSendDisabled = chatComposerDisabled
     || (imageMode ? snap.chatSendDisabled || inputValue.trim().length === 0 : snap.chatSendDisabled && attachedFiles.length === 0);
@@ -1161,10 +1164,11 @@ export function ChatView({ onSelectView }: ChatViewProps) {
           <div className={styles.serviceSwitcherAnchor}>
             <VprModelDropdown
               catalog={snap.vprModelCatalog}
+              kind={imageMode ? 'image' : 'text'}
               selectedProvider={selectedModelProvider}
               selectedServiceId={selectedModelServiceId}
               fallbackLabel={currentServiceLabel}
-              disabled={snap.chatInputDisabled || snap.chatSending}
+              disabled={(snap.chatInputDisabled || snap.chatSending) && !(imageMode && snap.chatSending)}
               onSelect={handleModelSwitch}
               onBrowseAll={() => onSelectView?.('explore')}
             />
@@ -1330,12 +1334,14 @@ export function ChatView({ onSelectView }: ChatViewProps) {
                 conversationId={snap.chatActiveConversation || undefined}
               />
             ) : null}
-            {showThinkingIndicator && (
+            {showImageGenerationPlaceholder ? (
+              <ImageGenerationPlaceholder editing={snap.chatThinkingPhase === 'Editing image'} />
+            ) : showThinkingIndicator ? (
               <WalkingAnt
                 elapsedMs={snap.chatThinkingElapsedMs}
                 phaseLabel={snap.chatThinkingPhase}
               />
-            )}
+            ) : null}
             {activePendingQueue.map((item) => (
               <div
                 key={`pending-${item.id}`}
