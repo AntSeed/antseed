@@ -20,7 +20,7 @@ export function registerSellerDoctorCommand(sellerCmd: Command): void {
         const globalOpts = getGlobalOptions(sellerCmd);
         const config = await loadConfig(globalOpts.config);
         const assessment = assessSellerPublicAddress(config.seller.publicAddress);
-        const probe = assessment.endpoint && assessment.publiclyRoutable
+        const probe = assessment.endpoint
           ? await probeTcpEndpoint(assessment.endpoint, timeoutMs)
           : null;
         const healthy = assessment.publiclyRoutable && probe?.reachable === true;
@@ -46,7 +46,7 @@ export function registerSellerDoctorCommand(sellerCmd: Command): void {
           } else if (probe) {
             console.log(chalk.red(`  Local TCP probe: failed (${probe.error ?? 'unknown error'})`));
           } else {
-            console.log(chalk.yellow('  Local TCP probe: skipped until a public endpoint is configured'));
+            console.log(chalk.yellow('  Local TCP probe: skipped — configure a host:port endpoint first'));
           }
 
           console.log('');

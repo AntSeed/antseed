@@ -24,6 +24,8 @@ test('assessSellerPublicAddress flags missing and non-public endpoints', () => {
   assert.equal(assessSellerPublicAddress('100.64.0.1:6882').classification, 'private');
   assert.equal(assessSellerPublicAddress('169.254.1.2:6882').classification, 'link-local');
   assert.equal(assessSellerPublicAddress('203.0.113.10:6882').classification, 'unroutable');
+  assert.equal(assessSellerPublicAddress('198.18.0.1:6882').classification, 'unroutable');
+  assert.equal(assessSellerPublicAddress('198.19.255.255:6882').classification, 'unroutable');
   assert.equal(assessSellerPublicAddress('[::1]:6882').classification, 'loopback');
   assert.equal(assessSellerPublicAddress('[fd00::1]:6882').classification, 'private');
   assert.equal(assessSellerPublicAddress('[2001:db8::1]:6882').classification, 'unroutable');

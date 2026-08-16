@@ -1,4 +1,5 @@
 import { createConnection, isIP } from 'node:net';
+import { parseHostPort, type HostPortEndpoint } from '../../../config/public-address.js';
 
 export type SellerEndpointClassification =
   | 'missing'
@@ -11,10 +12,7 @@ export type SellerEndpointClassification =
   | 'unroutable'
   | 'potentially-public';
 
-export interface SellerEndpoint {
-  host: string;
-  port: number;
-}
+export type SellerEndpoint = HostPortEndpoint;
 
 export interface SellerReachabilityAssessment {
   address: string;
@@ -31,22 +29,7 @@ export interface TcpProbeResult {
 }
 
 export function parseSellerEndpoint(value: string): SellerEndpoint | null {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return null;
-
-  const lastColon = trimmed.lastIndexOf(':');
-  if (lastColon <= 0 || lastColon === trimmed.length - 1) return null;
-
-  let host = trimmed.slice(0, lastColon).trim();
-  const portText = trimmed.slice(lastColon + 1);
-  if (host.startsWith('[') && host.endsWith(']')) {
-    host = host.slice(1, -1);
-  }
-  if (host.length === 0 || !/^\d+$/.test(portText)) return null;
-
-  const port = Number(portText);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
-  return { host, port };
+  return parseHostPort(value);
 }
 
 function classifyIpv4(host: string): SellerEndpointClassification {
@@ -61,12 +44,12 @@ function classifyIpv4(host: string): SellerEndpointClassification {
     || (first === 100 && second >= 64 && second <= 127)
     || (first === 172 && second >= 16 && second <= 31)
     || (first === 192 && second === 168)
-    || (first === 198 && (second === 18 || second === 19))
   ) {
     return 'private';
   }
   if (
     (first === 192 && second === 0 && octets[2] === 2)
+    || (first === 198 && (second === 18 || second === 19))
     || (first === 198 && second === 51 && octets[2] === 100)
     || (first === 203 && second === 0 && octets[2] === 113)
     || first >= 240
