@@ -101,6 +101,34 @@ describe('HttpRelay', () => {
     expect(responses[0]!.statusCode).toBe(200);
   });
 
+  it('does not inject chat-only fields into image requests', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+    const relay = new HttpRelay(
+      makeConfig({
+        allowedServices: ['venice-sd35'],
+        injectJsonFields: {
+          venice_parameters: { include_venice_system_prompt: false },
+        },
+      }),
+      { onResponse: () => undefined },
+    );
+
+    await relay.handleRequest(makeRequest({
+      path: '/v1/images/generations',
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'venice-sd35',
+        prompt: 'A seedling',
+      })),
+    }));
+
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const upstreamBody = JSON.parse(
+      new TextDecoder().decode(options.body as Uint8Array),
+    ) as Record<string, unknown>;
+    expect(upstreamBody).toEqual({ model: 'venice-sd35', prompt: 'A seedling' });
+  });
+
   it('rewrites announced service names to upstream service IDs before relay', async () => {
     fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
 

@@ -203,7 +203,8 @@ export class HttpRelay {
             }
           }
 
-          const merged = this._config.injectJsonFields
+          const isImageRequest = request.path.toLowerCase().startsWith('/v1/images/');
+          const merged = this._config.injectJsonFields && !isImageRequest
             ? deepMerge(transformed, this._config.injectJsonFields)
             : transformed;
 
