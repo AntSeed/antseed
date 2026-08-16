@@ -1,6 +1,6 @@
 ---
 sidebar_position: 3
-slug: /transport
+slug: /protocol/transport
 title: Transport
 hide_title: true
 ---
@@ -20,6 +20,33 @@ Transport selection is capability-driven; a node advertises what it supports in 
 | webrtc (`transport.webrtc.v1`) | node-datachannel | WebRTC DataChannel (DTLS) via TCP signaling, for peers that cannot use TCP directly |
 
 An initiator uses encrypted TCP whenever the peer supports it, WebRTC only for peers that advertise WebRTC but not encrypted TCP, and plaintext TCP only with legacy peers. Encrypted TCP is preferred partly because WebRTC DataChannel messages are capped at 256 KiB, below the protocol's frame sizes.
+
+## Seller Networking
+
+A seller must announce an address that buyers can reach from the public internet. The default seller signaling/TCP port is `6882`; the DHT port is `6881`. `seller.publicAddress` should point to the public hostname or IP and the externally reachable signaling port, not a LAN address such as `192.168.x.x` or `10.x.x.x`.
+
+```bash
+antseed config seller set publicAddress "seller.example.com:6882"
+antseed seller doctor
+```
+
+`antseed seller start` prints a prominent warning when `publicAddress` is empty or uses a loopback, private, link-local, unspecified, or multicast IP. `antseed seller doctor` classifies the configured address and attempts a bounded TCP connection from the seller machine. A successful local connection is useful but does **not** prove that inbound NAT traversal works; verify the same endpoint from a different network before considering the seller reachable.
+
+### Home or Office NAT
+
+1. Give the seller machine a stable LAN address.
+2. Forward the external TCP port (normally `6882`) on the router to the seller machine's signaling port.
+3. Allow inbound TCP traffic on that port in the host and cloud firewalls.
+4. Set `seller.publicAddress` to the router's public IP or a DNS name that resolves to it.
+5. Test the endpoint from a cellular connection, remote host, or another external network.
+
+Some routers do not support NAT loopback (hairpinning), so a local probe to the public address can fail even when external clients can connect. Conversely, a local listener can succeed while the router still blocks inbound traffic. Carrier-grade NAT (CGNAT) usually prevents port forwarding entirely; request a public IP from the ISP or use a VPS pattern instead.
+
+### VPS and Reverse Tunnels
+
+The simplest production deployment is a VPS with a public IP: allow inbound TCP on the announced port and run the seller there. If inference must remain on a private machine, expose its signaling port through a stable TCP reverse tunnel or gateway on a VPS, then announce the VPS hostname and public port. Configure the tunnel as a supervised service so it reconnects after restarts, and restrict firewall access to only the required ports.
+
+Do not announce SSH-only tunnels, private VPN addresses, or temporary tunnel hostnames that buyers cannot reach. Re-run `antseed seller doctor` and an external connection test after changing DNS, firewall, router, or tunnel settings.
 
 ## Frame Protocol
 

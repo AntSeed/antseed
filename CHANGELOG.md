@@ -19,6 +19,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Seller startup now warns when `seller.publicAddress` is missing or non-public, and `antseed seller doctor` classifies and locally probes the announced endpoint with explicit NAT guidance. The transport documentation now covers port forwarding, firewalls, VPS/reverse-tunnel deployments, and is available at `/docs/protocol/transport` instead of the broken route.
 - Fixed Desktop image edits losing their selected model while crossing the multipart buyer/seller relay, which caused compatible upstreams to reject follow-up prompts with `model is required`. The image generation shimmer now also appears reliably for the first prompt, before the conversation has entered persistent image mode.
 - Local-LLM providers now consume per-service pricing from seller configuration, so differently priced local models are advertised with their configured rates instead of inheriting the provider default.
 - CLI plugin installation now reports an actionable Node.js/npm requirement when `npm` is unavailable instead of exposing the raw `spawn npm ENOENT` process error.

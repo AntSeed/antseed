@@ -25,7 +25,7 @@ When you want AI inference, your node finds providers through a distributed hash
 
 This is the key distinction: on AntSeed, privacy is *structural*, not promised. A centralized aggregator sees every request from every user, and you must trust its retention policy. On AntSeed, there is no position in the network from which anyone could collect all requests, because requests never converge on a single point.
 
-Details: [Peer Discovery](/docs/discovery) · [Transport](/docs/transport)
+Details: [Peer Discovery](/docs/discovery) · [Transport](/docs/protocol/transport)
 
 ## Paying without identifying yourself
 
