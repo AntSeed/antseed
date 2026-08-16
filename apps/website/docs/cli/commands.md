@@ -47,6 +47,7 @@ antseed network browse                Browse peers, models, and pricing (same ca
 
 ```bash title="network"
 antseed seller status                 Show seller status
+antseed seller doctor                 Diagnose the announced seller endpoint
 antseed buyer status                  Show buyer status
 antseed metrics serve                 Serve Prometheus-compatible buyer/seller metrics
 antseed config                        Manage config file
