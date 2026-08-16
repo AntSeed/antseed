@@ -279,6 +279,7 @@ function makePiPatch(modelsPath: string, settingsPath: string): ConfigPatchDef {
     providerKey: 'antseed',
     baseURL: 'http://127.0.0.1:{buyerPort}/v1',
     api: 'openai-responses',
+    originator: 'pi',
   };
 }
 
@@ -292,12 +293,13 @@ test('applyConfigPatch (pi) writes the provider into models.json and the default
     applyConfigPatch(makePiPatch(modelsPath, settingsPath), PEER_ID, 9456);
 
     const models = JSON.parse(await readFile(modelsPath, 'utf8')) as {
-      providers: Record<string, { baseUrl?: string; api?: string; apiKey?: string; models?: Array<{ id: string; name: string; contextWindow: number; maxTokens: number }> }>;
+      providers: Record<string, { baseUrl?: string; api?: string; apiKey?: string; headers?: Record<string, string>; models?: Array<{ id: string; name: string; contextWindow: number; maxTokens: number }> }>;
     };
     assert.ok(models.providers.ollama);
     assert.equal(models.providers.antseed?.baseUrl, 'http://127.0.0.1:9456/v1');
     assert.equal(models.providers.antseed?.api, 'openai-responses');
     assert.equal(models.providers.antseed?.apiKey, 'antseed');
+    assert.deepEqual(models.providers.antseed?.headers, { originator: 'pi' });
     assert.deepEqual(models.providers.antseed?.models, [
       { id: 'antseed', name: 'AntSeed Auto', contextWindow: ANTSEED_MODEL_CONTEXT_WINDOW, maxTokens: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
     ]);

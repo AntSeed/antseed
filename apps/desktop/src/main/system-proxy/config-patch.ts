@@ -65,6 +65,7 @@ export type PiConfigPatchDef = {
   readonly providerKey: string;
   readonly baseURL: string;
   readonly api: 'openai-completions' | 'openai-responses' | 'anthropic-messages';
+  readonly originator?: string;
   readonly installProbe?: 'pi';
 };
 
@@ -158,6 +159,7 @@ export function readConfigPatch(value: unknown, profileName: string): ConfigPatc
   }
   if (format === 'pi') {
     const api = raw['api'];
+    const originator = readString(raw, 'originator');
     return {
       format: 'pi',
       configPath,
@@ -165,6 +167,7 @@ export function readConfigPatch(value: unknown, profileName: string): ConfigPatc
       providerKey,
       baseURL,
       api: api === 'openai-responses' || api === 'anthropic-messages' ? api : 'openai-completions',
+      ...(originator ? { originator } : {}),
       ...(raw['installProbe'] === 'pi' ? { installProbe: 'pi' as const } : {}),
     };
   }
@@ -771,6 +774,7 @@ function applyPiProviderToFiles(modelsPath: string, settingsPath: string, patch:
     baseUrl: baseURL,
     api: patch.api,
     apiKey: 'antseed',
+    ...(patch.originator ? { headers: { originator: patch.originator } } : {}),
     models: [
       {
         id: ROUTED_MODEL_ALIAS,
