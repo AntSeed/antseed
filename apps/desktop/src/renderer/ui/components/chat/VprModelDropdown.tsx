@@ -21,6 +21,7 @@ const TOP_MODEL_COUNT = 12;
 
 type VprModelDropdownProps = {
   catalog: VprModelCatalogEntry[];
+  kind: VprModelCatalogEntry['kind'];
   selectedProvider: string;
   selectedServiceId: string;
   /** Trigger label when the selection has no catalog entry (loading, none). */
@@ -29,6 +30,13 @@ type VprModelDropdownProps = {
   onSelect: (entry: VprModelCatalogEntry) => void;
   onBrowseAll: () => void;
 };
+
+export function filterVprModelDropdownCatalog(
+  catalog: VprModelCatalogEntry[],
+  kind: VprModelCatalogEntry['kind'],
+): VprModelCatalogEntry[] {
+  return catalog.filter((entry) => entry.kind === kind);
+}
 
 function isSelected(entry: VprModelCatalogEntry, provider: string, serviceId: string): boolean {
   // Entries aggregate serviceId variants — a selection referencing any
@@ -46,6 +54,7 @@ function priceLabel(entry: VprModelCatalogEntry): string | null {
 
 export function VprModelDropdown({
   catalog,
+  kind,
   selectedProvider,
   selectedServiceId,
   fallbackLabel,
@@ -68,31 +77,28 @@ export function VprModelDropdown({
     [catalog, selectedProvider, selectedServiceId],
   );
 
-  // This dropdown controls the normal text route. Image models use the
-  // dedicated internal-chat flow and must never become a connected-app or
-  // default text-agent route.
-  const textCatalog = useMemo(
-    () => catalog.filter((entry) => entry.kind === 'text'),
-    [catalog],
+  const modeCatalog = useMemo(
+    () => filterVprModelDropdownCatalog(catalog, kind),
+    [catalog, kind],
   );
 
   const favoriteEntries = useMemo(
-    () => selectFavoriteVprCatalog(textCatalog, favorites),
-    [favorites, textCatalog],
+    () => selectFavoriteVprCatalog(modeCatalog, favorites),
+    [favorites, modeCatalog],
   );
 
   // Curated recommended lineup (minus favorites, which get their own group),
   // with the current selection always present so the active model never
   // disappears from its own switcher.
   const recommendedEntries = useMemo(() => {
-    const top = selectRecommendedVprCatalog(textCatalog)
+    const top = (kind === 'image' ? modeCatalog : selectRecommendedVprCatalog(modeCatalog))
       .filter((entry) => !favorites.has(catalogEntryKey(entry)))
-      .slice(0, TOP_MODEL_COUNT);
-    if (selectedEntry?.kind === 'text' && !top.includes(selectedEntry) && !favoriteEntries.includes(selectedEntry)) {
+      .slice(0, kind === 'image' ? modeCatalog.length : TOP_MODEL_COUNT);
+    if (selectedEntry?.kind === kind && !top.includes(selectedEntry) && !favoriteEntries.includes(selectedEntry)) {
       return [selectedEntry, ...top.slice(0, TOP_MODEL_COUNT - 1)];
     }
     return top;
-  }, [favorites, favoriteEntries, selectedEntry, textCatalog]);
+  }, [favorites, favoriteEntries, kind, modeCatalog, selectedEntry]);
 
   useEffect(() => {
     if (!open) return;
@@ -171,21 +177,23 @@ export function VprModelDropdown({
                 Favorites
               </div>
               {favoriteEntries.map(renderEntry)}
-              <div className={styles.modelDropdownSection}>Recommended</div>
+              <div className={styles.modelDropdownSection}>{kind === 'image' ? 'Image models' : 'Recommended'}</div>
             </>
           )}
           {recommendedEntries.map(renderEntry)}
-          <button
-            type="button"
-            className={styles.modelDropdownFooter}
-            onClick={() => {
-              setOpen(false);
-              onBrowseAll();
-            }}
-          >
-            <span>All models</span>
-            <HugeiconsIcon icon={ArrowRight01Icon} size={13} strokeWidth={1.8} />
-          </button>
+          {kind === 'text' && (
+            <button
+              type="button"
+              className={styles.modelDropdownFooter}
+              onClick={() => {
+                setOpen(false);
+                onBrowseAll();
+              }}
+            >
+              <span>All models</span>
+              <HugeiconsIcon icon={ArrowRight01Icon} size={13} strokeWidth={1.8} />
+            </button>
+          )}
         </div>
       )}
     </div>
