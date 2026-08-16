@@ -584,7 +584,7 @@ Deposits reserved:           0 USDC → 1 USDC`,
     oneLiner: 'Open-source autonomous agent runtime - register AntSeed as a custom provider in `openclaw.json`.',
     description: [
       '<strong>What OpenClaw is.</strong> OpenClaw is an open-source agent runtime for autonomous, long-running tasks (research, coding, web automation). It loads its provider catalog from <code>~/.openclaw/openclaw.json</code> - each entry is an HTTP endpoint plus a wire protocol (<code>anthropic-messages</code>, <code>openai-chat</code>, etc.) and a list of models.',
-      '<strong>How AntSeed plugs in.</strong> Add a provider entry called <code>antseed</code> that points at <code>http://127.0.0.1:8377</code> with <code>api: "anthropic-messages"</code>. Each model id you list under that provider must be a model id from <code>GET /v1/models</code> - the network-wide list - and OpenClaw will surface them in its model picker as <code>antseed/&lt;service-id&gt;</code>.',
+      '<strong>How AntSeed plugs in.</strong> Add a provider entry called <code>antseed</code> that points at <code>http://127.0.0.1:8377</code> with <code>api: "anthropic-messages"</code>. Use the special model id <code>antseed</code> to follow the current VPR model picker, or list concrete ids from <code>GET /v1/models</code>. OpenClaw surfaces them as <code>antseed/antseed</code> and <code>antseed/&lt;service-id&gt;</code>.',
       '<strong>Why a config entry instead of env vars.</strong> OpenClaw runs many providers in parallel (one per task, sometimes one per agent). A single base-URL override would force every agent through AntSeed; a named provider lets you mix AntSeed with hosted Anthropic, OpenAI, or local models on a per-agent basis.',
     ],
     install: [
@@ -607,6 +607,14 @@ Deposits reserved:           0 USDC → 1 USDC`,
         "apiKey": "antseed-p2p",
         "api": "anthropic-messages",
         "models": [
+          {
+            "id": "antseed",
+            "name": "Current VPR selection",
+            "reasoning": false,
+            "input": ["text"],
+            "contextWindow": 128000,
+            "maxTokens": 8192
+          },
           {
             "id": "kimi-k2.6",
             "name": "Kimi K2.6 (via AntSeed)",
@@ -632,14 +640,14 @@ Deposits reserved:           0 USDC → 1 USDC`,
       {
         kind: 'code',
         language: 'bash',
-        snippet: `# Set AntSeed as the default model for new agents:
-openclaw config set agents.defaults.model.primary "antseed/kimi-k2.6"`,
+        snippet: `# Follow the current VPR model picker for new agents:
+openclaw config set agents.defaults.model.primary "antseed/antseed"`,
       },
     ],
     modelHints: {
       suggested: ['kimi-k2.6', 'deepseek-v4-flash', 'minimax-m2.7', 'gpt-oss-120b'],
       note:
-        'Each `id` under `models[]` must match a model id from `curl http://127.0.0.1:8377/v1/models`. `apiKey` is required by OpenClaw\'s validator but ignored by the proxy - any non-empty string works. The `"antseed-p2p"` value is just convention. Route to a specific peer by prefixing its advertised service id: `<peerId>@<service-id>`.',
+        'The special `antseed` id follows the current VPR model picker. Every other `id` under `models[]` must match a model id from `curl http://127.0.0.1:8377/v1/models`. `apiKey` is required by OpenClaw\'s validator but ignored by the proxy - any non-empty string works. Route to a specific peer by prefixing its advertised service id: `<peerId>@<service-id>`.',
     },
     test: [
       {
@@ -694,7 +702,7 @@ openclaw config set agents.defaults.model.primary "antseed/kimi-k2.6"`,
       },
     ],
     agentSummary:
-      'Edit ~/.openclaw/openclaw.json: under models.providers, add an `antseed` entry with baseUrl=http://127.0.0.1:8377, api="anthropic-messages", apiKey="antseed-p2p", and a `models[]` array whose `id` values match model ids from GET /v1/models. Optionally `openclaw config set agents.defaults.model.primary "antseed/<id>"`. Reload with `openclaw config reload`.',
+      'Edit ~/.openclaw/openclaw.json: under models.providers, add an `antseed` entry with baseUrl=http://127.0.0.1:8377, api="anthropic-messages", apiKey="antseed-p2p", and model id `antseed` to follow the VPR picker. Concrete ids from GET /v1/models also work. Set the default with `openclaw config set agents.defaults.model.primary "antseed/antseed"`, then reload.',
   },
   {
     slug: 'hermes',
@@ -709,7 +717,7 @@ openclaw config set agents.defaults.model.primary "antseed/kimi-k2.6"`,
     oneLiner: "Nous Research's agent framework - register AntSeed as a custom provider in `config.yaml`.",
     description: [
       '<strong>What Hermes is.</strong> Hermes is the agent framework from <a href="https://nousresearch.com/">Nous Research</a> (successor to OpenClaw\'s lineage). It\'s designed for autonomous, multi-step workflows - research agents, coding agents, swarms - and reads its model catalog from <code>~/.hermes/config.yaml</code>.',
-      '<strong>How AntSeed plugs in.</strong> Add an entry under <code>custom_providers</code> with <code>base_url: http://127.0.0.1:8377/v1</code>, <code>api_mode: chat_completions</code>, and a list of <code>models</code>. Each model id must appear in <code>GET /v1/models</code> - the network-wide list. Then point <code>model.default</code> at the one you want as primary.',
+      '<strong>How AntSeed plugs in.</strong> Add an entry under <code>custom_providers</code> with <code>base_url: http://127.0.0.1:8377/v1</code>, <code>api_mode: chat_completions</code>, and a list of <code>models</code>. Use <code>antseed</code> to follow the current VPR picker, or add concrete ids from <code>GET /v1/models</code>.',
       '<strong>One Hermes-specific gotcha.</strong> Some peers serve GPT-style models via the <code>openai-responses</code> protocol, which <em>requires</em> streaming. Hermes\' auxiliary calls (title generation, context compression) are non-streaming and will fail against those models with <code>HTTP 400: Stream must be set to true</code>. Pin auxiliary slots to a <code>chat_completions</code> model (config example below).',
     ],
     install: [
@@ -726,7 +734,7 @@ openclaw config set agents.defaults.model.primary "antseed/kimi-k2.6"`,
         path: '~/.hermes/config.yaml  (merge into your existing config)',
         language: 'yaml',
         snippet: `model:
-  default: deepseek-v4-flash
+  default: antseed
   provider: antseed
 
 custom_providers:
@@ -735,6 +743,7 @@ custom_providers:
     api_key: antseed-p2p
     api_mode: chat_completions
     models:
+      - antseed
       - deepseek-v4-flash
       - kimi-k2.6
       - glm-5
@@ -756,7 +765,7 @@ auxiliary:
     modelHints: {
       suggested: ['deepseek-v4-flash', 'kimi-k2.6', 'minimax-m2.7', 'gpt-oss-120b'],
       note:
-        'Only ids listed under `models:` show up in Hermes\' picker - mirror it against `curl http://127.0.0.1:8377/v1/models` so you don\'t advertise models no peer serves. `model.provider: antseed` selects the AntSeed integration, not a seller. Route to a specific peer by prefixing its advertised service id: `<peerId>@<service-id>`.',
+        'The special `antseed` id follows the current VPR model picker. Other ids listed under `models:` should come from `curl http://127.0.0.1:8377/v1/models`. `model.provider: antseed` selects the AntSeed integration, not a seller. Route to a specific peer by prefixing its advertised service id: `<peerId>@<service-id>`.',
     },
     test: [
       {
@@ -1298,6 +1307,14 @@ curl http://localhost:8377/v1/chat/completions \\
     "messages": [{"role": "user", "content": "Hello"}]
   }'
 
+# Follow the model currently selected in VPR:
+curl http://localhost:8377/v1/chat/completions \\
+  -H 'content-type: application/json' \\
+  -d '{
+    "model": "antseed",
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
+
 # Route to a specific peer: prefix the model with "<peerId>@"
 curl http://localhost:8377/v1/chat/completions \\
   -H 'content-type: application/json' \\
@@ -1308,7 +1325,7 @@ curl http://localhost:8377/v1/chat/completions \\
       },
     ],
     agentSummary:
-      'POST JSON to http://localhost:8377/v1/messages, /v1/chat/completions, or /v1/responses. No Authorization header required. Model field accepts "<model-id>" for automatic routing or "<peerId>@<service-id>" to route to a specific peer.',
+      'POST JSON to http://localhost:8377/v1/messages, /v1/chat/completions, or /v1/responses. No Authorization header required. Model field accepts `antseed` to follow the VPR picker, "<model-id>" for automatic routing, or "<peerId>@<service-id>" to route to a specific peer.',
   },
 ];
 
