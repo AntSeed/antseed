@@ -3,7 +3,12 @@ import test from 'node:test';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { DEFAULT_BUYER_METADATA_FETCH_TIMEOUT_MS, DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from './defaults.js';
+import {
+  DEFAULT_BUYER_MAX_STREAM_DURATION_MS,
+  DEFAULT_BUYER_METADATA_FETCH_TIMEOUT_MS,
+  DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS,
+  DEFAULT_BUYER_REQUEST_TIMEOUT_MS,
+} from './defaults.js';
 import { loadConfig } from './loader.js';
 import { createDefaultConfig } from './defaults.js';
 import { deriveDisplayNameFromPeerId, shouldDeriveDisplayName } from './identity-display-name.js';
@@ -190,22 +195,28 @@ test('loadConfig applies the default buyer peer refresh interval when missing', 
       const config = await loadConfig(configPath);
       assert.equal(config.buyer.peerRefreshIntervalMs, DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS);
       assert.equal(config.buyer.metadataFetchTimeoutMs, DEFAULT_BUYER_METADATA_FETCH_TIMEOUT_MS);
+      assert.equal(config.buyer.requestTimeoutMs, DEFAULT_BUYER_REQUEST_TIMEOUT_MS);
+      assert.equal(config.buyer.maxStreamDurationMs, DEFAULT_BUYER_MAX_STREAM_DURATION_MS);
     }
   );
 });
 
-test('loadConfig preserves explicit buyer peerRefreshIntervalMs and metadataFetchTimeoutMs', async () => {
+test('loadConfig preserves explicit buyer discovery and request timeouts', async () => {
   await withTempConfig(
     JSON.stringify({
       buyer: {
         peerRefreshIntervalMs: 15_000,
         metadataFetchTimeoutMs: 2_500,
+        requestTimeoutMs: 600_000,
+        maxStreamDurationMs: 900_000,
       },
     }),
     async (configPath) => {
       const config = await loadConfig(configPath);
       assert.equal(config.buyer.peerRefreshIntervalMs, 15_000);
       assert.equal(config.buyer.metadataFetchTimeoutMs, 2_500);
+      assert.equal(config.buyer.requestTimeoutMs, 600_000);
+      assert.equal(config.buyer.maxStreamDurationMs, 900_000);
     }
   );
 });
@@ -345,6 +356,18 @@ test('loadConfig rejects invalid buyer metadataFetchTimeoutMs', async () => {
         /buyer\.metadataFetchTimeoutMs/
       );
     }
+  );
+});
+
+test('loadConfig rejects invalid buyer request duration limits', async () => {
+  await withTempConfig(
+    JSON.stringify({ buyer: { requestTimeoutMs: 0, maxStreamDurationMs: -1 } }),
+    async (configPath) => {
+      await assert.rejects(
+        async () => loadConfig(configPath),
+        /buyer\.requestTimeoutMs.*buyer\.maxStreamDurationMs/s,
+      );
+    },
   );
 });
 

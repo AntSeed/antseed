@@ -431,6 +431,8 @@ function mergeBuyerConfig(
       proxyPort: defaults.proxyPort,
       peerRefreshIntervalMs: defaults.peerRefreshIntervalMs,
       metadataFetchTimeoutMs: defaults.metadataFetchTimeoutMs,
+      requestTimeoutMs: defaults.requestTimeoutMs,
+      maxStreamDurationMs: defaults.maxStreamDurationMs,
       disableMetadataV2Services: defaults.disableMetadataV2Services,
       autoSweep: defaults.autoSweep,
       ...(normalizeBuyerVerification(undefined, defaults.verification)),
@@ -452,6 +454,12 @@ function mergeBuyerConfig(
     metadataFetchTimeoutMs: typeof value['metadataFetchTimeoutMs'] === 'number'
       ? value['metadataFetchTimeoutMs']
       : defaults.metadataFetchTimeoutMs,
+    requestTimeoutMs: typeof value['requestTimeoutMs'] === 'number'
+      ? value['requestTimeoutMs']
+      : defaults.requestTimeoutMs,
+    maxStreamDurationMs: typeof value['maxStreamDurationMs'] === 'number'
+      ? value['maxStreamDurationMs']
+      : defaults.maxStreamDurationMs,
     disableMetadataV2Services: normalizeBooleanConfigValue(
       value['disableMetadataV2Services'],
       defaults.disableMetadataV2Services,
