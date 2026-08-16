@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { ImageGenerationPlaceholder } from './ImageGenerationPlaceholder';
+import { ImageGenerationPlaceholder, isImageGenerationPhase } from './ImageGenerationPlaceholder';
+
+test('image phases include both first generations and follow-up edits', () => {
+  assert.equal(isImageGenerationPhase('Generating image'), true);
+  assert.equal(isImageGenerationPhase('Editing image'), true);
+  assert.equal(isImageGenerationPhase('Calling tool'), false);
+});
 
 test('image generation placeholder announces generation state', () => {
   const markup = renderToStaticMarkup(<ImageGenerationPlaceholder />);

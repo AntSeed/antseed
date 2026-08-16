@@ -24,7 +24,7 @@ import { useRetainedState } from '../../hooks/useRetainedState';
 import { ChatBubble } from '../chat/ChatBubble';
 import { hasSearchPhraseMatch, isToolResultOnlyMessage } from '../chat/chat-utils.js';
 import { WalkingAnt } from '../chat/WalkingAnt';
-import { ImageGenerationPlaceholder } from '../chat/ImageGenerationPlaceholder';
+import { ImageGenerationPlaceholder, isImageGenerationPhase } from '../chat/ImageGenerationPlaceholder';
 import { SessionApprovalCard } from '../chat/SessionApprovalCard';
 import { ToolApprovalCard } from '../chat/ToolApprovalCard';
 import { LowBalanceWarning } from '../chat/LowBalanceWarning';
@@ -1118,9 +1118,8 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     snap.chatSendingConversationId === snap.chatActiveConversation ||
     activeConversationIsSending
   );
-  const showImageGenerationPlaceholder = showThinkingIndicator
-    && imageMode
-    && (snap.chatThinkingPhase === 'Generating image' || snap.chatThinkingPhase === 'Editing image');
+  const imageRequestInProgress = showThinkingIndicator && isImageGenerationPhase(snap.chatThinkingPhase);
+  const imageUiMode = imageMode || imageRequestInProgress;
   const chatComposerDisabled = currentPeerNotFound && !imageMode;
   const chatSendDisabled = chatComposerDisabled
     || (imageMode ? snap.chatSendDisabled || inputValue.trim().length === 0 : snap.chatSendDisabled && attachedFiles.length === 0);
@@ -1164,11 +1163,11 @@ export function ChatView({ onSelectView }: ChatViewProps) {
           <div className={styles.serviceSwitcherAnchor}>
             <VprModelDropdown
               catalog={snap.vprModelCatalog}
-              kind={imageMode ? 'image' : 'text'}
+              kind={imageUiMode ? 'image' : 'text'}
               selectedProvider={selectedModelProvider}
               selectedServiceId={selectedModelServiceId}
               fallbackLabel={currentServiceLabel}
-              disabled={(snap.chatInputDisabled || snap.chatSending) && !(imageMode && snap.chatSending)}
+              disabled={(snap.chatInputDisabled || snap.chatSending) && !imageRequestInProgress}
               onSelect={handleModelSwitch}
               onBrowseAll={() => onSelectView?.('explore')}
             />
@@ -1334,7 +1333,7 @@ export function ChatView({ onSelectView }: ChatViewProps) {
                 conversationId={snap.chatActiveConversation || undefined}
               />
             ) : null}
-            {showImageGenerationPlaceholder ? (
+            {imageRequestInProgress ? (
               <ImageGenerationPlaceholder editing={snap.chatThinkingPhase === 'Editing image'} />
             ) : showThinkingIndicator ? (
               <WalkingAnt
