@@ -5,6 +5,7 @@ import {
   extractUsage,
   makeStreamingStartResponse,
   mapFinishReasonToAnthropicStopReason,
+  openAIResponsesFunctionCallId,
   openAIResponsesMessageId,
   parseJsonSafe,
   parseSseBuffer,
@@ -696,11 +697,12 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
             arguments: '',
           };
           toolCalls.set(event.index, toolCall);
+          const itemId = openAIResponsesFunctionCallId(toolCall.id);
           pushEvent(emitted, 'response.output_item.added', {
             output_index: getToolOutputIndex(event.index),
             item: {
               type: 'function_call',
-              id: toolCall.id,
+              id: itemId,
               call_id: toolCall.id,
               name: toolCall.name,
               arguments: '',
@@ -721,7 +723,7 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
           toolCalls.set(event.index, toolCall);
           pushEvent(emitted, 'response.function_call_arguments.delta', {
             output_index: getToolOutputIndex(event.index),
-            item_id: toolCall.id,
+            item_id: openAIResponsesFunctionCallId(toolCall.id),
             call_id: toolCall.id,
             delta: event.argumentsDelta,
           });
@@ -761,9 +763,10 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
 
             for (const toolCall of sortedToolCalls(toolCalls)) {
               const outputIndex = getToolOutputIndex(toolCall.index);
+              const itemId = openAIResponsesFunctionCallId(toolCall.id);
               pushEvent(emitted, 'response.function_call_arguments.done', {
                 output_index: outputIndex,
-                item_id: toolCall.id,
+                item_id: itemId,
                 call_id: toolCall.id,
                 name: toolCall.name,
                 arguments: toolCall.arguments,
@@ -772,7 +775,7 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
                 output_index: outputIndex,
                 item: {
                   type: 'function_call',
-                  id: toolCall.id,
+                  id: itemId,
                   call_id: toolCall.id,
                   name: toolCall.name,
                   arguments: toolCall.arguments,
@@ -799,7 +802,7 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
                 }] : []),
                 ...sortedToolCalls(toolCalls).map((toolCall) => ({
                   type: 'function_call' as const,
-                  id: toolCall.id,
+                  id: openAIResponsesFunctionCallId(toolCall.id),
                   call_id: toolCall.id,
                   name: toolCall.name,
                   arguments: toolCall.arguments,

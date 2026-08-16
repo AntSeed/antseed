@@ -8,7 +8,12 @@ import {
   renderCanonicalRequestToOpenAIResponsesBody,
   type CanonicalLlmRequest,
 } from './canonical.js';
-import { encodeJson, openAIResponsesMessageId, parseJsonObject } from './utils.js';
+import {
+  encodeJson,
+  openAIResponsesFunctionCallId,
+  openAIResponsesMessageId,
+  parseJsonObject,
+} from './utils.js';
 
 export interface ServiceApiRequestTransformResult {
   request: SerializedHttpRequest;
@@ -76,7 +81,7 @@ export function transformRequest(
   const streamRequested = options.streamRequested ?? normalized.stream;
   if (options.from === options.to) {
     const repairedBody = options.from === 'openai-responses'
-      ? repairLegacyResponsesMessageIds(body)
+      ? repairLegacyResponsesItemIds(body)
       : null;
     return {
       request: repairedBody ? { ...request, body: encodeJson(repairedBody) } : request,
@@ -109,26 +114,35 @@ export function transformRequest(
   };
 }
 
-function repairLegacyResponsesMessageIds(body: Record<string, unknown>): Record<string, unknown> | null {
+function repairLegacyResponsesItemIds(body: Record<string, unknown>): Record<string, unknown> | null {
   if (!Array.isArray(body.input)) return null;
 
   let changed = false;
   const input = body.input.map((item) => {
     if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
     const record = item as Record<string, unknown>;
-    if (record.type !== 'message' && record.type !== 'item_reference') return item;
-    if (
-      typeof record.id !== 'string'
-      || record.id.startsWith('msg_')
-      || !record.id.endsWith(LEGACY_RESPONSES_MESSAGE_ID_SUFFIX)
+    if (typeof record.id !== 'string') return item;
+
+    let repairedId: string | null = null;
+    if (record.type === 'function_call' && !record.id.startsWith('fc_')) {
+      repairedId = openAIResponsesFunctionCallId(record.id);
+    } else if (
+      (record.type === 'message' || record.type === 'item_reference')
+      && !record.id.startsWith('msg_')
+      && record.id.endsWith(LEGACY_RESPONSES_MESSAGE_ID_SUFFIX)
     ) {
-      return item;
+      const responseId = record.id.slice(0, -LEGACY_RESPONSES_MESSAGE_ID_SUFFIX.length);
+      if (responseId.length > 0) repairedId = openAIResponsesMessageId(responseId);
+    } else if (
+      record.type === 'item_reference'
+      && (record.id.startsWith('call_') || record.id.startsWith('tool_'))
+    ) {
+      repairedId = openAIResponsesFunctionCallId(record.id);
     }
 
-    const responseId = record.id.slice(0, -LEGACY_RESPONSES_MESSAGE_ID_SUFFIX.length);
-    if (responseId.length === 0) return item;
+    if (!repairedId) return item;
     changed = true;
-    return { ...record, id: openAIResponsesMessageId(responseId) };
+    return { ...record, id: repairedId };
   });
 
   return changed ? { ...body, input } : null;
