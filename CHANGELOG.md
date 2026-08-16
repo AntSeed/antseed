@@ -17,6 +17,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- CLI seller configuration now passes a configured `baseUrl` to the local-LLM plugin using its declared `LOCAL_LLM_BASE_URL` key instead of silently falling back to the default Ollama endpoint.
 - Provider body injection configured for OpenAI-compatible chat requests no longer leaks into `/v1/images/*` requests, preventing strict image-generation upstreams from rejecting otherwise valid payloads.
 - Conversations can now switch from a Chat Completions-backed model to a native OpenAI Responses model without failing on incompatible synthetic message IDs. Existing affected histories are repaired narrowly on continuation, while native Responses conversations remain byte-for-byte passthrough so cache keys, response chaining, encrypted reasoning, and prompt history are preserved.
 - Documentation, integration guides, buyer skills, and CLI/Desktop help now consistently describe model-only routing through the network-wide `/v1/models` catalog, shared Price + Trust preferences, soft conversation affinity, retry fallback, and persistent explicit peer pins. Automatic routes use catalog model IDs, while `<peerId>@<serviceId>` is reserved for explicitly selecting a seller offer.
