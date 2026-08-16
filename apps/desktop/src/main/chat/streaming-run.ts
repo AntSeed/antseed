@@ -20,7 +20,7 @@ import {
 import type { AssistantMessage, AssistantMessageEvent, Message } from '@mariozechner/pi-ai';
 import { createBrowserPreviewTool, createStartDevServerTool } from './dev-tools.js';
 import { webFetchTool } from './web-fetch.js';
-import { buildAntstationSystemPrompt } from './system-prompt.js';
+import { buildVprSystemPrompt } from './system-prompt.js';
 import {
   classifyChatStreamFailure,
   formatChatStreamStopForLog,
@@ -285,7 +285,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
     // Pass the system prompt via resourceLoader so it is applied on every turn.
     // (agent-session rebuilds _baseSystemPrompt from the loader each turn, so a
     // one-shot session.agent.setSystemPrompt call would be overridden.)
-    // Priority: user override (env/config) → AntStation default.
+    // Priority: user override (env/config) → VPR default.
     const userSystemPrompt = await resolveSystemPrompt(configPath);
     const sessionWorkspaceDir = sessionManager.getCwd()?.trim();
     const chatWorkspaceDir = sessionWorkspaceDir && existsSync(sessionWorkspaceDir)
@@ -352,7 +352,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
       agentDir: CHAT_AGENT_DIR,
       settingsManager,
       extensionFactories: [toolApprovalExtension],
-      systemPrompt: buildAntstationSystemPrompt(userSystemPrompt, chatWorkspaceDir, permissionMode),
+      systemPrompt: buildVprSystemPrompt(userSystemPrompt, chatWorkspaceDir, permissionMode),
     });
     await resourceLoader.reload();
 

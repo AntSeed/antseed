@@ -37,6 +37,9 @@ export function makeProxyService(
   if (preferredPeerId) {
     headers[routeMode === 'pinned' ? 'x-antseed-pin-peer' : 'x-antseed-prefer-peer'] = preferredPeerId;
   }
+  // "antstation" here is a wire identifier the CLI buyer proxy matches on
+  // (header + conversation key prefix) — renaming it breaks conversation
+  // affinity against deployed CLIs, so it survives the AntStation → VPR rename.
   if (conversationId) headers['x-antstation-session-id'] = conversationId;
   if (spendingAuth) headers['x-antseed-spending-auth'] = spendingAuth;
 
