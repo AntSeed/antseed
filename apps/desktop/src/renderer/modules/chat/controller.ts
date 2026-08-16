@@ -4,9 +4,9 @@ import type { BadgeTone } from '../../core/state';
 import { notifyUiStateChanged, notifyUiStateChangedSync } from '../../core/store';
 import { normalizeDiscoverRow, projectRowsToChatServiceOptions } from '../catalog/discover-rows.js';
 import { resolveVprChatOption } from './projection.js';
+import { supportsImageEdits } from '../catalog/model-capabilities.js';
 import { findCatalogEntry, projectRowsToVprModelCatalog, selectDefaultVprModel } from '../catalog/model-catalog.js';
 import { sameCanonicalModel } from '../catalog/model-identity.js';
-import { supportsImageEdits } from '../catalog/model-capabilities.js';
 import { chooseBestVprRoute, filterRoutableVprRoutes } from '../routing/select.js';
 import { routesForSelectedModel } from '../catalog/view-models.js';
 import { saveVprRouteSelection } from '../routing/preferences.js';
@@ -34,7 +34,7 @@ import {
   cloneContentBlock,
   formatCompactNumber,
   getMyrmecochoryLabel,
-  isImageGenerationPhase,
+  isImageRequestPhase,
   normalizeAssistantMeta,
   paymentLogToThinkingPhase,
 } from '../../ui/components/chat/chat-shared';
@@ -2289,10 +2289,13 @@ export function initChatModule({
    * Dispatches via streaming or non-streaming bridge, handles stuck-request
    * recovery, payment-required errors, and fallback timeouts.
    */
-  function resolveSelectedImageRoute(options: {
-    requireImageInput?: boolean;
+  function resolveSelectedImageRoute({
+    requiresImageInput = false,
+    preferredPeerId = '',
+  }: {
+    requiresImageInput?: boolean;
     preferredPeerId?: string;
-  } = {}): { service: string; peerId?: string; autoPeerId?: string } | null {
+  } = {}): { service: string; peerId?: string } | null {
     const selection = uiState.chatImageRouteSelection;
     const model = selection?.model;
     if (!model) return null;
@@ -2301,18 +2304,15 @@ export function initChatModule({
     if (routes.length === 0) return null;
     if (selection.mode === 'pinned-peer' && selection.peerId) {
       const route = routes.find((row) => row.peerId === selection.peerId);
-      if (!route || (options.requireImageInput && !supportsImageEdits(route))) return null;
+      if (!route || (requiresImageInput && !supportsImageEdits(route))) return null;
       return { service: route.serviceId, peerId: route.peerId };
     }
-    const eligibleRoutes = options.requireImageInput ? routes.filter(supportsImageEdits) : routes;
-    const preferredRoute = options.preferredPeerId
-      ? eligibleRoutes.find((row) => row.peerId === options.preferredPeerId)
-      : null;
+    const eligibleRoutes = requiresImageInput ? routes.filter(supportsImageEdits) : routes;
+    const preferredRoute = eligibleRoutes.find((row) => row.peerId === preferredPeerId);
     const route = preferredRoute ?? chooseBestVprRoute(eligibleRoutes, uiState.vprRoutingPreferences);
     if (!route) return null;
-    return options.requireImageInput
-      ? { service: route.serviceId, autoPeerId: route.peerId }
-      : { service: model.serviceId, autoPeerId: route.peerId };
+    if (requiresImageInput) return { service: route.serviceId, peerId: route.peerId };
+    return { service: model.serviceId };
   }
 
   function generateImage(prompt: string): void {
@@ -2369,9 +2369,9 @@ export function initChatModule({
         const preferredPeerId = sourceImagePeerId && sameCanonicalModel(sourceImageServiceId, route.service)
           ? sourceImagePeerId
           : '';
-        const editRoute = resolveSelectedImageRoute({ requireImageInput: true, preferredPeerId });
+        const editRoute = resolveSelectedImageRoute({ requiresImageInput: true, preferredPeerId });
         if (!editRoute) {
-          showChatError('The selected seller supports image generation but not image editing. Choose a seller that accepts image input.');
+          showChatError('The selected seller does not support image editing. Choose one that accepts image input.');
           return;
         }
         route = editRoute;
@@ -2389,12 +2389,11 @@ export function initChatModule({
       notifyUiStateChanged();
       queueScrollChatToBottom();
       try {
-        const targetPeerId = route.peerId || (sourceImageAttachmentId ? route.autoPeerId : '');
         const result = await bridge.chatGenerateImage!({
           conversationId: convId,
           prompt: content,
           service: route.service,
-          ...(targetPeerId ? { peerId: targetPeerId } : {}),
+          ...(route.peerId ? { peerId: route.peerId } : {}),
           ...(sourceImageAttachmentId ? { sourceImageAttachmentId } : {}),
         });
         if (!result.ok || !result.user || !result.assistant) {
@@ -3435,7 +3434,7 @@ export function initChatModule({
 
   function handleLogLineForThinkingPhase(line: string): void {
     if (!uiState.chatSending) return;
-    if (isImageGenerationPhase(uiState.chatThinkingPhase)) return;
+    if (isImageRequestPhase(uiState.chatThinkingPhase)) return;
     const phase = paymentLogToThinkingPhase(line);
     if (!phase) return;
     clearThinkingPhaseExpiry();

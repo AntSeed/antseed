@@ -719,7 +719,7 @@ test('generation-only image sellers are not sent edit requests', async () => {
   await waitFor(() => Boolean(uiState.chatError));
 
   assert.equal(requestCount, 0);
-  assert.match(uiState.chatError ?? '', /not image editing/i);
+  assert.match(uiState.chatError ?? '', /does not support image editing/i);
   assert.equal(uiState.chatSending, false);
 });
 

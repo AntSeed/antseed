@@ -34,13 +34,6 @@ function priceTile(entry: { minInputUsdPerMillion: number | null; maxInputUsdPer
   return priceRange(min, max);
 }
 
-export function imageChatPeerId(
-  autoSelect: boolean,
-  selectedRoute: Pick<DiscoverRow, 'peerId'> | null | undefined,
-): string | null {
-  return autoSelect ? null : selectedRoute?.peerId ?? null;
-}
-
 export function VprModelView({ onSelectView }: Props) {
   const actions = useActions();
   const snap = useUiSelector((state) => ({
@@ -119,8 +112,9 @@ export function VprModelView({ onSelectView }: Props) {
 
   function useImageInChat(): void {
     if (!selectedRoute) return;
+    const peerId = autoSelect ? null : selectedRoute.peerId;
     actions.startNewChat();
-    actions.selectVprModel(viewedModel.provider, viewedModel.serviceId, imageChatPeerId(autoSelect, selectedRoute));
+    actions.selectVprModel(viewedModel.provider, viewedModel.serviceId, peerId);
     onSelectView?.('chat');
   }
 

@@ -7,7 +7,6 @@ import {
   sortVprCatalog,
 } from '../../../modules/catalog/view-models.js';
 import { peerCapabilitySummary } from '../../../modules/catalog/model-capabilities.js';
-import { imageChatPeerId } from './VprModelView.js';
 
 function catalogEntry(overrides: Partial<VprModelCatalogEntry> = {}): VprModelCatalogEntry {
   return {
@@ -137,11 +136,6 @@ test('Model route filtering excludes other service IDs but keeps canonical varia
     }),
     [selected, otherProvider, variantKey],
   );
-});
-
-test('Use in chat preserves an explicitly selected image seller', () => {
-  assert.equal(imageChatPeerId(false, { peerId: 'venice-peer' }), 'venice-peer');
-  assert.equal(imageChatPeerId(true, { peerId: 'best-auto-peer' }), null);
 });
 
 test('image seller summaries distinguish generation-only routes from edit support', () => {

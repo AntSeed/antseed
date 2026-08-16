@@ -263,7 +263,7 @@ export const THINKING_PHRASES: readonly string[] = [
 
 const myrmecochoryPhrases = THINKING_PHRASES;
 
-export function isImageGenerationPhase(phase: string | null | undefined): boolean {
+export function isImageRequestPhase(phase: string | null | undefined): boolean {
   return phase === 'Generating image' || phase === 'Editing image';
 }
 

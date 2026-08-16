@@ -22,7 +22,7 @@ import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { useRetainedState } from '../../hooks/useRetainedState';
 import { ChatBubble } from '../chat/ChatBubble';
-import { isImageGenerationPhase } from '../chat/chat-shared';
+import { isImageRequestPhase } from '../chat/chat-shared';
 import { hasSearchPhraseMatch, isToolResultOnlyMessage } from '../chat/chat-utils.js';
 import { WalkingAnt } from '../chat/WalkingAnt';
 import { ImageGenerationPlaceholder } from '../chat/ImageGenerationPlaceholder';
@@ -1119,7 +1119,7 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     snap.chatSendingConversationId === snap.chatActiveConversation ||
     activeConversationIsSending
   );
-  const imageRequestInProgress = showThinkingIndicator && isImageGenerationPhase(snap.chatThinkingPhase);
+  const imageRequestInProgress = showThinkingIndicator && isImageRequestPhase(snap.chatThinkingPhase);
   const imageUiMode = imageMode || imageRequestInProgress;
   const chatComposerDisabled = currentPeerNotFound && !imageMode;
   const chatSendDisabled = chatComposerDisabled
