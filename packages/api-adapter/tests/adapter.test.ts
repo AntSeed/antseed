@@ -979,6 +979,89 @@ describe('selectTargetProtocolForRequest – responses', () => {
   });
 });
 
+describe('native responses passthrough', () => {
+  const decode = (body: Uint8Array): Record<string, unknown> =>
+    JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
+
+  it('preserves the exact request and cache-relevant history fields', () => {
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-5.5',
+        previous_response_id: 'resp_previous',
+        prompt_cache_key: 'conversation-42',
+        prompt_cache_retention: '24h',
+        include: ['reasoning.encrypted_content'],
+        input: [
+          { type: 'reasoning', id: 'rs_native', encrypted_content: 'encrypted' },
+          {
+            type: 'message',
+            id: 'msg_native',
+            role: 'assistant',
+            status: 'completed',
+            content: [{ type: 'output_text', text: 'cached prefix', annotations: [] }],
+          },
+          { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'continue' }] },
+        ],
+      })),
+    });
+
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-responses' });
+
+    expect(result).not.toBeNull();
+    expect(result!.request).toBe(request);
+    expect(result!.request.body).toBe(request.body);
+  });
+
+  it('repairs only legacy synthesized IDs while preserving cache fields', () => {
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-5.5',
+        previous_response_id: 'resp_previous',
+        prompt_cache_key: 'conversation-42',
+        prompt_cache_retention: '24h',
+        input: [
+          {
+            type: 'message',
+            id: 'chatcmpl-legacy_msg_1',
+            role: 'assistant',
+            status: 'completed',
+            content: [{ type: 'output_text', text: 'legacy prefix', annotations: [] }],
+          },
+          { type: 'item_reference', id: 'chatcmpl-reference_msg_1' },
+          { type: 'message', id: 'msg_native', role: 'assistant', content: [] },
+        ],
+      })),
+    });
+
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-responses' });
+    const body = decode(result!.request.body);
+    const input = body.input as Array<Record<string, unknown>>;
+
+    expect(result!.request).not.toBe(request);
+    expect(body.previous_response_id).toBe('resp_previous');
+    expect(body.prompt_cache_key).toBe('conversation-42');
+    expect(body.prompt_cache_retention).toBe('24h');
+    expect(input[0].id).toBe('msg_chatcmpl-legacy_1');
+    expect(input[1].id).toBe('msg_chatcmpl-reference_1');
+    expect(input[2].id).toBe('msg_native');
+  });
+
+  it('preserves the exact response and does not create a stream adapter', () => {
+    const response: SerializedHttpResponse = {
+      requestId: 'req-native-response',
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({
+        id: 'resp_native',
+        output: [{ type: 'message', id: 'msg_native', role: 'assistant', content: [] }],
+      })),
+    };
+
+    expect(transformResponse(response, { from: 'openai-responses', to: 'openai-responses' })).toBe(response);
+    expect(createStreamingAdapter({ from: 'openai-responses', to: 'openai-responses' })).toBeNull();
+  });
+});
+
 describe('transformRequest responses to chat', () => {
   it('converts string input to chat completions request', () => {
     const result = transformRequest(makeResponsesRequest(), { from: 'openai-responses', to: 'openai-chat-completions' });
@@ -1399,7 +1482,7 @@ describe('transformResponse chat to responses', () => {
     const output = body.output as Array<Record<string, unknown>>;
     expect(output).toHaveLength(1);
     expect(output[0].type).toBe('message');
-    expect(output[0].id).toBe('chatcmpl-abc_msg_1');
+    expect(output[0].id).toBe('msg_chatcmpl-abc_1');
     expect(output[0].role).toBe('assistant');
     expect(output[0].status).toBe('completed');
 
@@ -1549,7 +1632,7 @@ describe('transformResponse chat to responses', () => {
       output_index: 0,
       item: {
         type: 'message',
-        id: 'chatcmpl-stream_msg_1',
+        id: 'msg_chatcmpl-stream_1',
         status: 'in_progress',
         content: [{ type: 'output_text', text: '', annotations: [] }],
       },
@@ -1559,7 +1642,7 @@ describe('transformResponse chat to responses', () => {
     expect(delta).toBeDefined();
     expect(JSON.parse(delta!.data)).toMatchObject({
       type: 'response.output_text.delta',
-      item_id: 'chatcmpl-stream_msg_1',
+      item_id: 'msg_chatcmpl-stream_1',
       output_index: 0,
       content_index: 0,
       delta: 'Hello!',

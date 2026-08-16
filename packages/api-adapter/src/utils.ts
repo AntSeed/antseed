@@ -34,6 +34,10 @@ export function encodeText(text: string): Uint8Array {
   return encoder.encode(text);
 }
 
+export function openAIResponsesMessageId(responseId: string): string {
+  return `msg_${responseId}_1`;
+}
+
 export function parseJsonSafe(raw: string): unknown {
   try {
     return JSON.parse(raw) as unknown;

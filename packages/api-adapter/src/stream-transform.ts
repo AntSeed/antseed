@@ -5,6 +5,7 @@ import {
   extractUsage,
   makeStreamingStartResponse,
   mapFinishReasonToAnthropicStopReason,
+  openAIResponsesMessageId,
   parseJsonSafe,
   parseSseBuffer,
   type StreamingResponseAdapter,
@@ -613,6 +614,7 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
   };
 
   const getResponseId = (): string => responseId || fallbackResponsesId(options.fallbackModel);
+  const getMessageId = (): string => openAIResponsesMessageId(getResponseId());
   const getToolOutputIndex = (index: number): number => index + (outputStarted ? 1 : 0);
 
   const ensureResponseCreated = (
@@ -643,7 +645,7 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
     ensureResponseCreated(emitted, null);
     if (outputStarted) return;
     outputStarted = true;
-    const msgId = `${getResponseId()}_msg_1`;
+    const msgId = getMessageId();
     pushEvent(emitted, 'response.output_item.added', {
       output_index: 0,
       item: {
@@ -677,7 +679,7 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
           textBuffer += event.delta;
           pushEvent(emitted, 'response.output_text.delta', {
             output_index: 0,
-            item_id: `${getResponseId()}_msg_1`,
+            item_id: getMessageId(),
             content_index: 0,
             delta: event.delta,
             logprobs: [],
@@ -730,7 +732,7 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
           ensureResponseCreated(emitted, null);
           if (!outputDone) {
             outputDone = true;
-            const msgId = `${getResponseId()}_msg_1`;
+            const msgId = getMessageId();
             if (outputStarted) {
               pushEvent(emitted, 'response.output_text.done', {
                 output_index: 0,
@@ -790,7 +792,7 @@ function createResponsesStreamRenderer(options: StreamTransformInternals): Proto
               output: [
                 ...(outputStarted ? [{
                   type: 'message' as const,
-                  id: `${getResponseId()}_msg_1`,
+                  id: getMessageId(),
                   role: 'assistant' as const,
                   status: 'completed' as const,
                   content: [{ type: 'output_text' as const, text: textBuffer, annotations: [] }],
