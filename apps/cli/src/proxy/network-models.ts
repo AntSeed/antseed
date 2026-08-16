@@ -10,6 +10,7 @@ import {
   compareEffectiveModelReputation,
   computeOnChainReputationScore,
   effectiveModelReputationScore,
+  modelRouteTotalPrice,
   normalizedModelReputationScore as normalizeModelReputationScore,
   rankModelRoutes,
   selectLowestPricedCanonicalOffers,
@@ -299,6 +300,7 @@ export function buildNetworkModels(
             sourcePeer ? normalizedModelReputationScore(sourcePeer, nowMs) : peer.onChainReputationScore,
             peer.cachedInputUsdPerMillion !== undefined,
             true,
+            modelRouteTotalPrice(peer) === 0,
           )
         : normalizedReputationByPeerId.get(peer.peerId) ?? null
     }

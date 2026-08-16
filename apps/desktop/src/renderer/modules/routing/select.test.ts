@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'vitest';
 
 import type { DiscoverRow, VprRoutingPreferences } from '../../core/state';
-import { chooseBestVprRoute, filterRoutableVprRoutes, isPeerRoutable, isRouteEligibleForAutoSelection, isRowCoolingDown, scoreVprRoute } from './select.js';
+import { chooseBestVprRoute, filterRoutableVprRoutes, hasEligibleFreeVprRoute, isPeerRoutable, isRouteEligibleForAutoSelection, isRowCoolingDown, scoreVprRoute } from './select.js';
 import { projectRowsToVprModelCatalog } from '../catalog/model-catalog.js';
 
 const preferences: VprRoutingPreferences = {
@@ -344,4 +344,20 @@ test('scoreVprRoute explains why a cooling-down peer was deprioritized', () => {
   const scored = scoreVprRoute(discoverRow({ peerCooldownUntil: NOW + 30_000 }), preferences, NOW);
   assert.ok(scored.reasons.includes('peer cooling down'));
   assert.ok(scored.score < 0);
+});
+
+test('hasEligibleFreeVprRoute requires a $0 route that passes the eligibility gate', () => {
+  const freeRated = discoverRow({ peerId: 'free-rated', inputUsdPerMillion: 0, outputUsdPerMillion: 0 });
+  const freeUnrated = discoverRow({
+    peerId: 'free-unrated',
+    inputUsdPerMillion: 0,
+    outputUsdPerMillion: 0,
+    effectiveReputationScore: null,
+  });
+  const paid = discoverRow({ peerId: 'paid' });
+
+  assert.equal(hasEligibleFreeVprRoute([freeRated, paid], preferences), true);
+  // A free seller with no reputation fails the trust gate; a paid seller never counts.
+  assert.equal(hasEligibleFreeVprRoute([freeUnrated, paid], preferences), false);
+  assert.equal(hasEligibleFreeVprRoute([freeRated], { ...preferences, blockedPeerIds: ['free-rated'] }), false);
 });

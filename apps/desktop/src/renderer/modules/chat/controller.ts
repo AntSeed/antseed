@@ -1,13 +1,12 @@
-import type { DiscoverRow, RendererUiState } from '../../core/state';
+import type { BadgeTone, DiscoverRow, RendererUiState, VprModelCatalogEntry } from '../../core/state';
 import { LOCALHOST_URL } from '../../constants';
-import type { BadgeTone } from '../../core/state';
 import { notifyUiStateChanged, notifyUiStateChangedSync } from '../../core/store';
 import { normalizeDiscoverRow, projectRowsToChatServiceOptions } from '../catalog/discover-rows.js';
 import { resolveVprChatOption } from './projection.js';
 import { supportsImageEdits } from '../catalog/model-capabilities.js';
 import { findCatalogEntry, projectRowsToVprModelCatalog, selectDefaultVprModel } from '../catalog/model-catalog.js';
 import { sameCanonicalModel } from '../catalog/model-identity.js';
-import { chooseBestVprRoute, filterRoutableVprRoutes } from '../routing/select.js';
+import { chooseBestVprRoute, filterRoutableVprRoutes, hasEligibleFreeVprRoute } from '../routing/select.js';
 import { routesForSelectedModel } from '../catalog/view-models.js';
 import { saveVprRouteSelection } from '../routing/preferences.js';
 import { syncBuyerDefaultRoute } from '../routing/proxy-sync.js';
@@ -1386,6 +1385,13 @@ export function initChatModule({
    * models only they offer — disappear immediately instead of lingering until
    * the next discovery refresh.
    */
+  function isFreeEntryRoutable(entry: VprModelCatalogEntry): boolean {
+    return hasEligibleFreeVprRoute(
+      routesForSelectedModel(uiState.vprRoutableRows, entry),
+      uiState.vprRoutingPreferences,
+    );
+  }
+
   function applyPeerAccessRules(): void {
     uiState.vprRoutableRows = filterRoutableVprRoutes(
       uiState.discoverRows,
@@ -1400,7 +1406,7 @@ export function initChatModule({
     // exclude — leaving it selected would strand every send with no route.
     const selected = uiState.vprRouteSelection.model;
     if (selected && routesForSelectedModel(uiState.vprRoutableRows, selected).length === 0) {
-      const defaultModel = selectDefaultVprModel(uiState.vprModelCatalog, null);
+      const defaultModel = selectDefaultVprModel(uiState.vprModelCatalog, null, isFreeEntryRoutable);
       uiState.vprRouteSelection = { model: defaultModel, mode: 'auto', peerId: null };
       saveVprRouteSelection(uiState.vprRouteSelection);
     }
@@ -1515,7 +1521,7 @@ export function initChatModule({
         ? findCatalogEntry(uiState.vprModelCatalog, selectedRouteModel.provider, selectedRouteModel.serviceId)
         : null;
       if (!selectedRouteModel || selectedRouteEntry?.kind === 'image') {
-        const defaultModel = selectDefaultVprModel(uiState.vprModelCatalog, null);
+        const defaultModel = selectDefaultVprModel(uiState.vprModelCatalog, null, isFreeEntryRoutable);
         if (defaultModel) {
           uiState.vprRouteSelection = { model: defaultModel, mode: 'auto', peerId: null };
           saveVprRouteSelection(uiState.vprRouteSelection);
