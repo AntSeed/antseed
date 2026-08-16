@@ -1,13 +1,23 @@
-import { Menu, nativeImage, Tray, type MenuItemConstructorOptions } from 'electron';
+import {
+  Menu,
+  nativeImage,
+  Tray,
+  type MenuItemConstructorOptions,
+  type Rectangle,
+} from 'electron';
 
 let tray: Tray | null = null;
 let currentOptions: DesktopTrayOptions | null = null;
+let contextMenu: Menu | null = null;
 
 export type DesktopTrayOptions = {
   appName: string;
   iconPath: string | undefined;
   onShow: () => void;
   buildMenu?: () => MenuItemConstructorOptions[];
+  onPrimaryClick?: (bounds: Rectangle) => void;
+  onBeforeContextMenu?: () => void;
+  title?: string;
 };
 
 function defaultMenu({ appName, onShow }: Pick<DesktopTrayOptions, 'appName' | 'onShow'>): MenuItemConstructorOptions[] {
@@ -19,10 +29,10 @@ function defaultMenu({ appName, onShow }: Pick<DesktopTrayOptions, 'appName' | '
 }
 
 function rebuildMenu(): void {
-  if (!tray || !currentOptions) return;
-  tray.setContextMenu(Menu.buildFromTemplate(
+  if (!currentOptions) return;
+  contextMenu = Menu.buildFromTemplate(
     currentOptions.buildMenu?.() ?? defaultMenu(currentOptions),
-  ));
+  );
 }
 
 export function createDesktopTray(options: DesktopTrayOptions): void {
@@ -42,14 +52,27 @@ export function createDesktopTray(options: DesktopTrayOptions): void {
   tray = new Tray(image);
   currentOptions = options;
   tray.setToolTip(appName);
+  tray.setTitle(options.title ?? '');
   rebuildMenu();
-  tray.on('click', () => {
-    tray?.popUpContextMenu();
+  tray.on('click', (_event, bounds) => {
+    if (currentOptions?.onPrimaryClick) {
+      currentOptions.onPrimaryClick(bounds);
+      return;
+    }
+    if (contextMenu) tray?.popUpContextMenu(contextMenu);
+  });
+  tray.on('right-click', () => {
+    currentOptions?.onBeforeContextMenu?.();
+    if (contextMenu) tray?.popUpContextMenu(contextMenu);
   });
 }
 
 export function updateDesktopTray(options: Partial<Omit<DesktopTrayOptions, 'iconPath'>> = {}): void {
   if (!currentOptions) return;
   currentOptions = { ...currentOptions, ...options };
+  if (tray && options.title !== undefined) {
+    tray.setTitle(options.title);
+    tray.setToolTip(options.title ? `${currentOptions.appName} — ${options.title}` : currentOptions.appName);
+  }
   rebuildMenu();
 }

@@ -9,6 +9,7 @@ import type { IpcMain } from 'electron';
 import type { AgentSession } from '@mariozechner/pi-coding-agent';
 import type { ChatStreamStopReason } from './stream-stop.js';
 import type { NetworkPeerAddress } from './service-catalog.js';
+import type { ModelPickerSnapshot } from '../../shared/model-picker.js';
 
 export type RegisterPiChatHandlersOptions = {
   ipcMain: IpcMain;
@@ -18,6 +19,7 @@ export type RegisterPiChatHandlersOptions = {
   ensureBuyerRuntimeStarted?: () => Promise<boolean>;
   appendSystemLog: (line: string) => void;
   getNetworkPeers?: () => Promise<NetworkPeerAddress[]>;
+  onModelPickerChanged?: (snapshot: ModelPickerSnapshot) => void;
 };
 
 export type ChatStreamErrorPayload = {

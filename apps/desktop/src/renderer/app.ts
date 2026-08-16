@@ -19,6 +19,7 @@ import {
   saveFloatShowRoutedPeer,
 } from './modules/app/float-settings';
 import { initModelPickerSync } from './modules/catalog/picker-sync';
+import { normalizeVprMenuBarAction } from '../shared/vpr-menu-bar.js';
 import { applyVprRouteToConnectedProxy } from './modules/routing/proxy-sync';
 import { findCatalogEntry } from './modules/catalog/model-catalog';
 import { resolveVprChatOption } from './modules/chat/projection';
@@ -684,6 +685,12 @@ registerActions({
 bridge?.onDesktopOpenFloatingWindow?.(() => { void vprFloatApi.openFloat(); });
 bridge?.onDesktopConnectMain?.(() => { void actionStartAll(); });
 bridge?.onDesktopDisconnectMain?.(() => { void actionStopAll(); });
+bridge?.onVprMenuBarAction?.((raw) => {
+  const action = normalizeVprMenuBarAction(raw);
+  if (action?.type === 'select-model') {
+    actionSelectVprModel(action.provider, action.serviceId);
+  }
+});
 
 /* ------------------------------------------------------------------ */
 /*  Mount React (store + actions both ready)                           */

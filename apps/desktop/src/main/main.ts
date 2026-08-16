@@ -35,6 +35,7 @@ import {
   createWindow,
   createApplicationMenu,
   getMainWindow,
+  hideVprMenuBarWindow,
 } from './ui/window.js';
 import { createDesktopTray } from './ui/tray.js';
 import { ensureConfig } from './runtime/config-io.js';
@@ -76,6 +77,13 @@ import { registerPaymentsIpc } from './ipc/payments.js';
 import { registerRuntimeIpc } from './ipc/runtime.js';
 import { registerSystemProxyIpc } from './ipc/system-proxy.js';
 import { registerTelegramIpc } from './ipc/telegram.js';
+import {
+  initVprMenuBarIpc,
+  openVprMenuBar,
+  registerVprMenuBarIpc,
+  setVprMenuBarState,
+} from './ipc/vpr-menu-bar.js';
+import { buildVprMenuBarState } from '../shared/vpr-menu-bar.js';
 import {
   effectiveLaunchTarget,
 } from './connected-apps/profile-targets.js';
@@ -329,6 +337,7 @@ registerPaymentsIpc();
 registerDesktopIpc();
 registerAppIpc();
 registerFloatIpc();
+registerVprMenuBarIpc();
 registerSystemProxyIpc({ processManager });
 registerRuntimeIpc({
   processManager,
@@ -421,6 +430,9 @@ const piChatEngine = registerPiChatHandlers({
         && peer.port > 0
         && peer.port <= 65535);
   },
+  onModelPickerChanged: (snapshot) => {
+    setVprMenuBarState(buildVprMenuBarState(snapshot));
+  },
 });
 
 // ── Telegram bridge ──
@@ -509,6 +521,25 @@ app.whenReady().then(async () => {
     });
   };
 
+  initVprMenuBarIpc({
+    ensureMainWindow: (visible) => {
+      if (!getMainWindow()) {
+        createWindow(
+          { appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl },
+          { show: visible },
+        );
+      }
+      const win = getMainWindow();
+      if (visible && win) {
+        if (win.isMinimized()) win.restore();
+        win.show();
+        win.focus();
+      }
+      return win;
+    },
+    showFloatingWindow,
+  });
+
   const toggleMainConnection = () => {
     const running = getCombinedProcessState().some((state) => state.mode === 'connect' && state.running);
     getMainWindow()?.webContents.send(running ? 'desktop:disconnect-main' : 'desktop:connect-main');
@@ -518,6 +549,8 @@ app.whenReady().then(async () => {
     appName: APP_NAME,
     iconPath: TRAY_ICON_PATH,
     onShow: showMainWindow,
+    onPrimaryClick: openVprMenuBar,
+    onBeforeContextMenu: hideVprMenuBarWindow,
     buildMenu: () => buildSystemProxyTrayMenu(showMainWindow, showFloatingWindow, toggleMainConnection),
   });
   refreshTrayMenu();

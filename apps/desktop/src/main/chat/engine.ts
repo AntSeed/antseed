@@ -116,6 +116,7 @@ export function registerPiChatHandlers({
   ensureBuyerRuntimeStarted,
   appendSystemLog,
   getNetworkPeers,
+  onModelPickerChanged,
 }: RegisterPiChatHandlersOptions): PiChatEngine {
   void loadChatWorkspaceDir().catch(() => {});
   const store = new PiConversationStore();
@@ -317,7 +318,10 @@ export function registerPiChatHandlers({
   let modelPickerSnapshot: ModelPickerSnapshot | null = null;
   ipcMain.handle('chat:sync-model-picker', (_event, payload: unknown) => {
     const normalized = normalizeModelPickerSnapshot(payload);
-    if (normalized) modelPickerSnapshot = normalized;
+    if (normalized) {
+      modelPickerSnapshot = normalized;
+      onModelPickerChanged?.(normalized);
+    }
     return { ok: normalized != null };
   });
 

@@ -53,6 +53,8 @@ export default defineConfig(({ mode }) => {
         index: path.resolve(rendererRoot, 'index.html'),
         // Detachable always-on-top pill window (see src/main/window.ts).
         float: path.resolve(rendererRoot, 'float.html'),
+        // macOS menu-bar VPR model picker popover.
+        menuBar: path.resolve(rendererRoot, 'menu-bar.html'),
       },
     },
   },

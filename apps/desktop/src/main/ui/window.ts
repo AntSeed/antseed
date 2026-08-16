@@ -11,6 +11,7 @@ import {
 import { windowPresetForView, type WindowSizePresetName } from '../../shared/view-windows.js';
 import { PRELOAD_PATH } from '../paths.js';
 import { adoptCheckoutWindow, checkoutWindowOpenHandler, closeCheckoutWindows } from '../payments/checkout-window.js';
+import { presentVprMenuBarWindow } from './vpr-menu-bar-presentation.js';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -19,6 +20,7 @@ let mainWindow: BrowserWindow | null = null;
    edge. 80 sits right at the macOS transparency floor — frameless
    transparent windows paint an opaque backing below ~80px. */
 let floatWindow: BrowserWindow | null = null;
+let vprMenuBarWindow: BrowserWindow | null = null;
 const FLOAT_WINDOW_WIDTH = 272;
 const FLOAT_WINDOW_HEIGHT = 80;
 /** Pill height while a custom dropdown (chat / model) is open. */
@@ -96,12 +98,28 @@ export interface WindowConfig {
   rendererUrl: string;
 }
 
+export type CreateWindowOptions = {
+  show?: boolean;
+};
+
 export function getMainWindow(): BrowserWindow | null {
   return mainWindow;
 }
 
 export function getFloatWindow(): BrowserWindow | null {
   return floatWindow && !floatWindow.isDestroyed() ? floatWindow : null;
+}
+
+export function getVprMenuBarWindow(): BrowserWindow | null {
+  return vprMenuBarWindow && !vprMenuBarWindow.isDestroyed() ? vprMenuBarWindow : null;
+}
+
+export function hideVprMenuBarWindow(): void {
+  getVprMenuBarWindow()?.hide();
+}
+
+export function closeVprMenuBarWindow(): void {
+  getVprMenuBarWindow()?.close();
 }
 
 export function closeFloatWindow(): void {
@@ -170,6 +188,115 @@ function floatRendererUrl(rendererUrl: string): string {
   return rendererUrl.includes('index.html')
     ? rendererUrl.replace('index.html', 'float.html')
     : new URL('float.html', rendererUrl).toString();
+}
+
+function vprMenuBarRendererUrl(rendererUrl: string): string {
+  return rendererUrl.includes('index.html')
+    ? rendererUrl.replace('index.html', 'menu-bar.html')
+    : new URL('menu-bar.html', rendererUrl).toString();
+}
+
+const VPR_MENU_BAR_WINDOW_WIDTH = 384;
+
+function vprMenuBarWindowHeight(modelCount: number, workAreaHeight: number): number {
+  const contentHeight = 182 + Math.max(0, Math.min(modelCount, 8)) * 48;
+  return Math.min(contentHeight, Math.max(260, workAreaHeight - 24));
+}
+
+function vprMenuBarBounds(anchor: Rectangle, modelCount: number): Rectangle {
+  const display = screen.getDisplayMatching(anchor).workArea;
+  const height = vprMenuBarWindowHeight(modelCount, display.height);
+  return {
+    x: clamp(
+      Math.round(anchor.x + anchor.width / 2 - VPR_MENU_BAR_WINDOW_WIDTH / 2),
+      display.x + 8,
+      display.x + display.width - VPR_MENU_BAR_WINDOW_WIDTH - 8,
+    ),
+    y: clamp(anchor.y + anchor.height + 4, display.y + 2, display.y + display.height - height - 8),
+    width: VPR_MENU_BAR_WINDOW_WIDTH,
+    height,
+  };
+}
+
+export function updateVprMenuBarWindow(data: { models?: unknown[] }): void {
+  const win = getVprMenuBarWindow();
+  if (!win) return;
+  const modelCount = Array.isArray(data.models) ? data.models.length : 0;
+  const current = win.getBounds();
+  const workArea = screen.getDisplayMatching(current).workArea;
+  const height = vprMenuBarWindowHeight(modelCount, workArea.height);
+  if (height !== current.height) {
+    win.setResizable(true);
+    win.setBounds({
+      ...current,
+      y: clamp(current.y, workArea.y + 2, workArea.y + workArea.height - height - 8),
+      height,
+    });
+    win.setResizable(false);
+  }
+  if (!win.webContents.isDestroyed()) win.webContents.send('vpr-menu-bar:data', data);
+}
+
+export function openVprMenuBarWindow(
+  config: WindowConfig,
+  anchor: Rectangle,
+  data: { models?: unknown[] },
+): BrowserWindow {
+  const existing = getVprMenuBarWindow();
+  const modelCount = Array.isArray(data.models) ? data.models.length : 0;
+  const bounds = vprMenuBarBounds(anchor, modelCount);
+  if (existing) {
+    if (existing.isVisible()) {
+      existing.hide();
+      return existing;
+    }
+    existing.setResizable(true);
+    existing.setBounds(bounds);
+    existing.setResizable(false);
+    existing.webContents.send('vpr-menu-bar:data', data);
+    presentVprMenuBarWindow(existing);
+    return existing;
+  }
+
+  vprMenuBarWindow = new BrowserWindow({
+    ...bounds,
+    show: false,
+    title: `${config.appName} Model Picker`,
+    type: process.platform === 'darwin' ? 'panel' : undefined,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    hasShadow: false,
+    acceptFirstMouse: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    webPreferences: {
+      preload: PRELOAD_PATH,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  const created = vprMenuBarWindow;
+  created.setAlwaysOnTop(true, 'pop-up-menu');
+  created.on('blur', () => created.hide());
+  created.webContents.on('before-input-event', (_event, input) => {
+    if (input.type === 'keyDown' && input.key === 'Escape') created.hide();
+  });
+  created.webContents.once('did-finish-load', () => {
+    if (created.isDestroyed()) return;
+    created.webContents.send('vpr-menu-bar:data', data);
+    presentVprMenuBarWindow(created);
+  });
+  void created.loadURL(vprMenuBarRendererUrl(config.rendererUrl));
+  created.on('closed', () => {
+    if (vprMenuBarWindow === created) vprMenuBarWindow = null;
+  });
+  return created;
 }
 
 export function openFloatWindow(config: WindowConfig, initialData: unknown): BrowserWindow {
@@ -410,7 +537,7 @@ export function applyWindowPreset(presetName: string): { ok: true; skipped?: 'fu
   return { ok: true };
 }
 
-export function createWindow(config: WindowConfig): void {
+export function createWindow(config: WindowConfig, options: CreateWindowOptions = {}): void {
   // The default view is 'home', which maps to the compact preset (see
   // applyWindowView). Open at that size so the window doesn't briefly render
   // large and then snap down on first mount.
@@ -424,6 +551,7 @@ export function createWindow(config: WindowConfig): void {
     : {};
 
   mainWindow = new BrowserWindow({
+    show: options.show ?? true,
     width: initialPreset.width,
     height: initialPreset.height,
     minWidth: initialPreset.minWidth,
@@ -512,6 +640,7 @@ export function createWindow(config: WindowConfig): void {
   mainWindow.on('closed', () => {
     mainWindow = null;
     closeFloatWindow();
+    closeVprMenuBarWindow();
     closeCheckoutWindows();
   });
 }

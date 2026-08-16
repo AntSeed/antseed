@@ -481,6 +481,10 @@ export type DesktopBridge = {
   onVprFloatCompact?: (handler: (compact: boolean) => void) => () => void;
   onVprFloatClosed?: (handler: () => void) => () => void;
   onVprFloatAction?: (handler: (action: unknown) => void) => () => void;
+  vprMenuBarGetState?: () => Promise<import('../../shared/vpr-menu-bar.js').VprMenuBarState | null>;
+  vprMenuBarAction?: (action: import('../../shared/vpr-menu-bar.js').VprMenuBarAction) => void;
+  onVprMenuBarData?: (handler: (data: import('../../shared/vpr-menu-bar.js').VprMenuBarState) => void) => () => void;
+  onVprMenuBarAction?: (handler: (action: unknown) => void) => () => void;
   onDesktopOpenFloatingWindow?: (handler: () => void) => () => void;
   onDesktopConnectMain?: (handler: () => void) => () => void;
   onDesktopDisconnectMain?: (handler: () => void) => () => void;
