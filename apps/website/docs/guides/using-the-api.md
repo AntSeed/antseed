@@ -158,6 +158,8 @@ curl http://localhost:8377/v1/images/edits \
 
 Image edits are multipart requests, but their `model` field follows the same routing and seller-side alias rewriting rules as JSON generation requests. Upgrade the buyer and seller together if an upstream rejects an edit with `model is required`: `@antseed/cli@0.1.150`, `@antseed/provider-core@0.2.53`, and `@antseed/provider-openai@0.2.45` predate multipart model preservation, so edits that depend on a seller service rewrite can fail on those versions. Use `@antseed/cli@0.1.151`, `@antseed/provider-core@0.2.54`, and `@antseed/provider-openai@0.2.46` or newer. The provider plugin pins its provider-core version, so updating only the buyer is not sufficient. Desktop v0.2.16 predates conversational image editing entirely.
 
+Sellers that support edits must advertise `image` in their service's input modalities. A service advertising only text input is generation-only: buyers must not route `/v1/images/edits` to it, even if its upstream model family can generate images.
+
 ## Claude Code
 
 **Recommended:** launch Claude Code from the VPR's **Apps** view — it detects the installed tool, wires it to the proxy, and handles peer and model routing automatically.

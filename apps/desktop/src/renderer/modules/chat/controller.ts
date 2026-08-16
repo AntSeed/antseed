@@ -6,6 +6,7 @@ import { normalizeDiscoverRow, projectRowsToChatServiceOptions } from '../catalo
 import { resolveVprChatOption } from './projection.js';
 import { findCatalogEntry, projectRowsToVprModelCatalog, selectDefaultVprModel } from '../catalog/model-catalog.js';
 import { sameCanonicalModel } from '../catalog/model-identity.js';
+import { supportsImageEdits } from '../catalog/model-capabilities.js';
 import { chooseBestVprRoute, filterRoutableVprRoutes } from '../routing/select.js';
 import { routesForSelectedModel } from '../catalog/view-models.js';
 import { saveVprRouteSelection } from '../routing/preferences.js';
@@ -33,6 +34,7 @@ import {
   cloneContentBlock,
   formatCompactNumber,
   getMyrmecochoryLabel,
+  isImageGenerationPhase,
   normalizeAssistantMeta,
   paymentLogToThinkingPhase,
 } from '../../ui/components/chat/chat-shared';
@@ -2287,7 +2289,10 @@ export function initChatModule({
    * Dispatches via streaming or non-streaming bridge, handles stuck-request
    * recovery, payment-required errors, and fallback timeouts.
    */
-  function resolveSelectedImageRoute(): { service: string; peerId?: string; autoPeerId?: string } | null {
+  function resolveSelectedImageRoute(options: {
+    requireImageInput?: boolean;
+    preferredPeerId?: string;
+  } = {}): { service: string; peerId?: string; autoPeerId?: string } | null {
     const selection = uiState.chatImageRouteSelection;
     const model = selection?.model;
     if (!model) return null;
@@ -2296,16 +2301,24 @@ export function initChatModule({
     if (routes.length === 0) return null;
     if (selection.mode === 'pinned-peer' && selection.peerId) {
       const route = routes.find((row) => row.peerId === selection.peerId);
-      return route ? { service: route.serviceId, peerId: route.peerId } : null;
+      if (!route || (options.requireImageInput && !supportsImageEdits(route))) return null;
+      return { service: route.serviceId, peerId: route.peerId };
     }
-    const route = chooseBestVprRoute(routes, uiState.vprRoutingPreferences);
-    return route ? { service: model.serviceId, autoPeerId: route.peerId } : null;
+    const eligibleRoutes = options.requireImageInput ? routes.filter(supportsImageEdits) : routes;
+    const preferredRoute = options.preferredPeerId
+      ? eligibleRoutes.find((row) => row.peerId === options.preferredPeerId)
+      : null;
+    const route = preferredRoute ?? chooseBestVprRoute(eligibleRoutes, uiState.vprRoutingPreferences);
+    if (!route) return null;
+    return options.requireImageInput
+      ? { service: route.serviceId, autoPeerId: route.peerId }
+      : { service: model.serviceId, autoPeerId: route.peerId };
   }
 
   function generateImage(prompt: string): void {
     const content = prompt.trim();
     if (!content || !bridge?.chatGenerateImage) return;
-    const route = resolveSelectedImageRoute();
+    let route = resolveSelectedImageRoute();
     if (!route) {
       showChatError('No seller is currently available for this image model.');
       return;
@@ -2352,6 +2365,17 @@ export function initChatModule({
           }
         }
       }
+      if (sourceImageAttachmentId) {
+        const preferredPeerId = sourceImagePeerId && sameCanonicalModel(sourceImageServiceId, route.service)
+          ? sourceImagePeerId
+          : '';
+        const editRoute = resolveSelectedImageRoute({ requireImageInput: true, preferredPeerId });
+        if (!editRoute) {
+          showChatError('The selected seller supports image generation but not image editing. Choose a seller that accepts image input.');
+          return;
+        }
+        route = editRoute;
+      }
       const pendingMessages = [...existingBeforeRequest, optimisticUserMessage];
       setLocalConversationMessages(convId, pendingMessages);
       if (convId === uiState.chatActiveConversation) uiState.chatMessages = pendingMessages;
@@ -2365,16 +2389,12 @@ export function initChatModule({
       notifyUiStateChanged();
       queueScrollChatToBottom();
       try {
-        const editPeerId = sourceImageAttachmentId
-          ? (sourceImagePeerId && sameCanonicalModel(sourceImageServiceId, route.service)
-              ? sourceImagePeerId
-              : route.autoPeerId)
-          : '';
+        const targetPeerId = route.peerId || (sourceImageAttachmentId ? route.autoPeerId : '');
         const result = await bridge.chatGenerateImage!({
           conversationId: convId,
           prompt: content,
           service: route.service,
-          ...((route.peerId || editPeerId) ? { peerId: route.peerId || editPeerId } : {}),
+          ...(targetPeerId ? { peerId: targetPeerId } : {}),
           ...(sourceImageAttachmentId ? { sourceImageAttachmentId } : {}),
         });
         if (!result.ok || !result.user || !result.assistant) {
@@ -3415,6 +3435,7 @@ export function initChatModule({
 
   function handleLogLineForThinkingPhase(line: string): void {
     if (!uiState.chatSending) return;
+    if (isImageGenerationPhase(uiState.chatThinkingPhase)) return;
     const phase = paymentLogToThinkingPhase(line);
     if (!phase) return;
     clearThinkingPhaseExpiry();

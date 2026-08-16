@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { ImageGenerationPlaceholder, isImageGenerationPhase } from './ImageGenerationPlaceholder';
+import { isImageGenerationPhase } from './chat-shared';
+import { ImageGenerationPlaceholder } from './ImageGenerationPlaceholder';
 
 test('image phases include both first generations and follow-up edits', () => {
   assert.equal(isImageGenerationPhase('Generating image'), true);
