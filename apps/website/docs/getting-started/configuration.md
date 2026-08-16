@@ -362,6 +362,15 @@ antseed buyer start --metadata-fetch-timeout-ms 1500
 ANTSEED_BUYER_METADATA_FETCH_TIMEOUT_MS=1500 antseed buyer start
 ```
 
+Long-running models can take more than the default five minutes to respond. Configure the initial/non-streaming request timeout and the maximum total stream duration independently:
+
+```bash
+antseed config buyer set requestTimeoutMs 600000
+antseed config buyer set maxStreamDurationMs 900000
+```
+
+`requestTimeoutMs` applies while waiting for a non-streaming response or for a stream to begin. Once streaming starts, idle-stream protection remains active, while `maxStreamDurationMs` controls the total permitted stream lifetime.
+
 Buyer SpendingAuth and free-usage metadata v2 include aggregate usage totals by default. They also include per-service attribution unless disabled. Privacy-sensitive buyers can keep aggregate accounting while suppressing service IDs and per-service totals:
 
 ```bash

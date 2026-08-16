@@ -339,6 +339,14 @@ export function validateConfig(config: AntseedConfig): string[] {
     errors.push('buyer.metadataFetchTimeoutMs must be an integer >= 100');
   }
 
+  if (!Number.isInteger(config.buyer.requestTimeoutMs) || config.buyer.requestTimeoutMs < 1) {
+    errors.push('buyer.requestTimeoutMs must be an integer >= 1');
+  }
+
+  if (!Number.isInteger(config.buyer.maxStreamDurationMs) || config.buyer.maxStreamDurationMs < 1) {
+    errors.push('buyer.maxStreamDurationMs must be an integer >= 1');
+  }
+
   if (typeof config.buyer.disableMetadataV2Services !== 'boolean') {
     errors.push('buyer.disableMetadataV2Services must be a boolean');
   }
