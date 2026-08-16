@@ -623,7 +623,7 @@ describe('transformResponse chat to responses', () => {
     const output = body.output as Array<Record<string, unknown>>;
     expect(output).toHaveLength(1);
     expect(output[0].type).toBe('message');
-    expect(output[0].id).toBe('chatcmpl-abc_msg_1');
+    expect(output[0].id).toBe('msg_chatcmpl-abc_1');
     expect(output[0].role).toBe('assistant');
     expect(output[0].status).toBe('completed');
 
@@ -718,7 +718,7 @@ describe('transformResponse chat to responses', () => {
       output_index: 0,
       item: {
         type: 'message',
-        id: 'chatcmpl-stream_msg_1',
+        id: 'msg_chatcmpl-stream_1',
         status: 'in_progress',
         content: [{ type: 'output_text', text: '', annotations: [] }],
       },
@@ -728,7 +728,7 @@ describe('transformResponse chat to responses', () => {
     expect(delta).toBeDefined();
     expect(JSON.parse(delta!.data)).toMatchObject({
       type: 'response.output_text.delta',
-      item_id: 'chatcmpl-stream_msg_1',
+      item_id: 'msg_chatcmpl-stream_1',
       output_index: 0,
       content_index: 0,
       delta: 'Hello!',
