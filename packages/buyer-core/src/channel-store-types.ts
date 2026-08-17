@@ -96,4 +96,12 @@ export interface BuyerChannelStore {
     services?: readonly SpendingAuthServiceMetadata[],
   ): void;
   getChannelMetadata(channel: StoredChannel): SpendingAuthMetadata;
+  /**
+   * Durability barrier, awaited after a signed authorization is persisted and
+   * BEFORE it is transmitted to the seller. A durable store (e.g. IndexedDB
+   * behind a synchronous cache) must not resolve until the preceding writes
+   * are committed, so a crash after transmission can never lose a signature
+   * the seller already holds. Synchronous stores (sqlite, in-memory) omit it.
+   */
+  flush?(): void | Promise<void>;
 }

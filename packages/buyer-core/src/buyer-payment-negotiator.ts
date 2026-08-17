@@ -783,11 +783,12 @@ export class BuyerPaymentNegotiator {
         settledAmount: null,
         status: CHANNEL_STATUS.ACTIVE,
         latestBuyerSig: null,
-        latestSpendingAuthSig: null,
-        latestMetadata: null,
+        latestSpendingAuthSig: payload.spendingAuthSig,
+        latestMetadata: payload.metadata,
         createdAt: Date.now(),
         updatedAt: Date.now(),
       });
+      await this._channelStore.flush?.();
     }
 
     pmux.sendSpendingAuth(payload);
