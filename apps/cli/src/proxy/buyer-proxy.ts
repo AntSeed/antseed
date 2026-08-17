@@ -4,14 +4,23 @@ import { watchFile, unwatchFile } from 'node:fs'
 import { readFile, writeFile, rename, mkdir, readdir, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
+  ANTSEED_BUYER_FAULT_ERROR_CODE,
+  ANTSEED_FAULT_ATTRIBUTION_HEADER,
   ANTSEED_ATTEST_PATH,
   computeOnChainReputationScore,
   decodeSweepRequest,
+  faultAttributionOf,
+  faultCodeOf,
+  isModelRouteEligible,
+  modelRouteTotalPrice,
   peerSupportsCooperativeClose,
+  rankModelRoutes,
   type AntseedNode,
+  type FaultAttribution,
   type BuyerSpendEvent,
   type PeerInfo,
   type PeerMetadata,
+  type ModelRoutingPreferences,
   type RequestStreamResponseMetadata,
   type Router,
   type SerializedHttpRequest,
@@ -19,6 +28,7 @@ import {
   type SerializedHttpResponseChunk,
   type SweepReceiptPayload,
 } from '@antseed/node'
+import { canonicalModelKey } from '@antseed/node/model-identity'
 import {
   createStreamingAdapter,
   detectRequestServiceApiProtocol,
@@ -41,9 +51,17 @@ import {
   ROUTED_MODEL_ALIAS,
   SYSTEM_PROXY_SOURCE_HEADER,
   SYSTEM_ROUTED_MODEL_HEADER,
+  normalizePeerId,
 } from './request-utils.js'
 import {
+  buildNetworkModels,
+  effectiveModelReputationScore,
+  normalizedModelReputationScore,
+  parseModelTypeFilter,
+} from './network-models.js'
+import {
   findUnannouncedRequestParameters,
+  findAdvertisedServiceOffer,
   getExplicitProviderOverride,
   getExplicitPeerIdOverride,
   resolvePeerRoutePlan,
@@ -65,8 +83,22 @@ import {
   parseRequestBodyObject,
 } from './conversation-identity.js'
 import { ConversationStore } from './conversation-store.js'
+import type { DepositWatcher } from './deposit-watcher.js'
+import {
+  recordPeerFailureEntry,
+  clearPeerHealthEntry,
+  isCoolingDown,
+  parsePersistedPeerHealth,
+  prunePeerHealth,
+  serializePeerHealth,
+  reasonEscalates,
+  type PeerFailureReason,
+  type PeerHealthEntry,
+} from './peer-health.js'
+import { PeerAttributionTracker, HEARTBEAT_MS } from './peer-attribution.js'
 import { estimateAnthropicPromptTokens, isCountTokensPath } from './count-tokens.js'
 import { getCachedVerdict, runVerifier, verifierSupportFingerprint, type CachedVerdict, type VerifierPolicy, type SellerReach, type VerifyOutcome } from '../plugins/verifier.js'
+import { loadConfig } from '../config/loader.js'
 
 // Re-export for backward compatibility (used by tests and other consumers)
 export { selectCandidatePeersForRouting, type CandidatePeerRouteSelection } from './routing.js'
@@ -77,6 +109,10 @@ export interface BuyerProxyConfig {
   node: AntseedNode
   /** Data directory used to persist buyer.state.json (discovered peers, session peer pin). */
   dataDir: string
+  /** Config file watched for live buyer.routingPreferences updates. */
+  configPath?: string
+  /** Price + trust preferences used for model-only automatic routing. */
+  routingPreferences?: ModelRoutingPreferences
   /** How often to refresh the peer list from DHT in the background (ms). Default: 300000 (5 min) */
   backgroundRefreshIntervalMs?: number
   /**
@@ -92,11 +128,73 @@ export interface BuyerProxyConfig {
    * and allowed by the buyer's pricing policy. A 502 is returned if the peer cannot be reached.
    */
   pinnedPeerId?: string
+  /**
+   * Clock used for peer-health bookkeeping. Injectable so tests can drive
+   * failure spacing directly instead of sleeping past the coalesce window.
+   */
+  now?: () => number
   /** Verifier-SDK policy: which verifier the buyer commits to + whether it is required. */
   verifier?: VerifierPolicy
 }
 
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
+const MODEL_RATE_LIMIT_MAX_ATTEMPTS_PER_PEER = 3
+const MODEL_RATE_LIMIT_RETRY_DELAYS_MS = [250, 750] as const
+const MODEL_RATE_LIMIT_MAX_RETRY_AFTER_MS = 2_000
+
+function rateLimitRetryDelayMs(headers: Record<string, string>, retryIndex: number): number {
+  const retryAfter = headers['retry-after'] ?? headers['Retry-After']
+  if (retryAfter) {
+    const seconds = Number(retryAfter)
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.min(MODEL_RATE_LIMIT_MAX_RETRY_AFTER_MS, Math.round(seconds * 1_000))
+    }
+  }
+  return MODEL_RATE_LIMIT_RETRY_DELAYS_MS[retryIndex] ?? MODEL_RATE_LIMIT_RETRY_DELAYS_MS.at(-1)!
+}
+
+async function waitForRetry(delayMs: number, signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) return false
+  return new Promise((resolve) => {
+    const onAbort = (): void => {
+      clearTimeout(timeout)
+      resolve(false)
+    }
+    const timeout = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve(true)
+    }, delayMs)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+/**
+ * A routed-model target is either a bare `<service>` (automatic peer
+ * selection) or an explicit `<peerId>@<service>` pin. The `antseed` alias
+ * itself can never be a target — it would recurse.
+ */
+function isValidRoutedModelTarget(value: string): boolean {
+  if (value === ROUTED_MODEL_ALIAS) return false
+  return !value.includes('@') || parsePeerPinnedService(value) !== null
+}
+
+/** Returns `request` with its body's model field rewritten to `serviceId`, or unchanged if nothing rewrote. */
+function withRoutedModel(request: SerializedHttpRequest, serviceId: string): SerializedHttpRequest {
+  const rewritten = overrideRoutedModelInBody(request.body, request.headers, serviceId)
+  return rewritten.overridden
+    ? { ...request, body: rewritten.body, headers: rewritten.headers }
+    : request
+}
+
+function peerAllowedByPolicy(
+  policyRouter: BuyerPolicyRouter | null | undefined,
+  request: SerializedHttpRequest,
+  peer: PeerInfo,
+): boolean {
+  if (policyRouter?.allowsPeerForPolicy) return policyRouter.allowsPeerForPolicy(request, peer)
+  if (policyRouter?.allowsPeerForPricing) return policyRouter.allowsPeerForPricing(request, peer)
+  return true
+}
 
 function isControlPlaneServicesPath(path: string): boolean {
   return path.toLowerCase().startsWith('/v1/models')
@@ -132,7 +230,6 @@ export function isModelNotFoundResponse(response: SerializedHttpResponse): boole
  * liveness (`lastReachedAt`) even if the DHT record is older.
  */
 const CARRY_FORWARD_TTL_MS = 2 * 60 * 60_000
-const PEER_FAILURE_WINDOW_MS = 5 * 60_000
 /**
  * Requests kept in the spend-attribution map. Entries outlive their request on
  * purpose (a seller-initiated auth can land after the response), so this is
@@ -144,11 +241,33 @@ const MODEL_NOT_FOUND_REFRESH_THROTTLE_MS = 30_000
 /** Verification is expensive; bound how many verdicts we retain (TTL = peer-cache TTL). */
 const VERIFY_CACHE_MAX_ENTRIES = 1024
 
-type PeerFailureEntry = {
-  count: number
-  firstFailureAt: number
-  lastFailureAt: number
-  lastReason: string
+/**
+ * Statuses that prove the peer is alive and serving. Any response short of a
+ * server error counts: a peer that answers 400 or 404 is reachable, and
+ * treating only 2xx as proof would leave a stale cooldown on a healthy peer
+ * that happens to reject every request.
+ */
+function isProofOfLife(statusCode: number): boolean {
+  return statusCode < 500 && statusCode !== 408
+}
+
+/**
+ * Map a seller's response status onto a health reason, or null when the status
+ * says nothing about the peer's liveness.
+ */
+function failureReasonForStatus(statusCode: number): PeerFailureReason | null {
+  if (statusCode === 408) return 'seller-timeout'
+  // Rate limiting is capacity pressure, not death — recorded, never escalated.
+  if (statusCode === 429) return 'seller-busy'
+  if (statusCode >= 500 && statusCode <= 599) return 'seller-5xx'
+  return null
+}
+
+function responseFaultAttribution(response: SerializedHttpResponse): FaultAttribution {
+  const attribution = response.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER]?.toLowerCase()
+  return attribution === 'buyer' || attribution === 'peer' || attribution === 'unknown'
+    ? attribution
+    : 'peer'
 }
 
 type BuyerPolicyRouter = Router & {
@@ -206,6 +325,87 @@ function adaptOpenAICompatibleErrorResponse(
     },
     body: Buffer.from(JSON.stringify(wrappedError)),
   }
+}
+
+function adaptBuyerFaultErrorResponse(
+  response: SerializedHttpResponse,
+  requestProtocol: ServiceApiProtocol | null,
+): SerializedHttpResponse {
+  if (
+    response.statusCode < 400
+    || response.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER]?.toLowerCase() !== 'buyer'
+  ) {
+    return sanitizePeerBuyerFaultMarker(response)
+  }
+
+  let parsed: Record<string, unknown> = {}
+  try {
+    parsed = JSON.parse(Buffer.from(response.body).toString('utf-8')) as Record<string, unknown>
+  } catch {
+    // Buyer-generated failures should be JSON, but keep a useful fallback if
+    // a future path emits plain text.
+  }
+
+  const nestedError = parsed.error && typeof parsed.error === 'object' && !Array.isArray(parsed.error)
+    ? parsed.error as Record<string, unknown>
+    : null
+  const reason = [nestedError?.code, parsed.code, parsed.reason, nestedError?.type, parsed.error]
+    .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+  const message = [nestedError?.message, parsed.message, parsed.error]
+    .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    ?? 'The request failed on the buyer.'
+  const body = requestProtocol === 'anthropic-messages'
+    ? {
+        type: 'error',
+        error: {
+          type: ANTSEED_BUYER_FAULT_ERROR_CODE,
+          message: reason ? `${message} (${reason})` : message,
+        },
+      }
+    : {
+        error: {
+          type: 'api_error',
+          code: ANTSEED_BUYER_FAULT_ERROR_CODE,
+          message,
+          ...(reason ? { param: reason } : {}),
+        },
+      }
+
+  return {
+    ...response,
+    headers: { ...response.headers, 'content-type': 'application/json' },
+    body: Buffer.from(JSON.stringify(body)),
+  }
+}
+
+function sanitizePeerBuyerFaultMarker(response: SerializedHttpResponse): SerializedHttpResponse {
+  if (response.statusCode < 400) return response
+
+  let parsed: Record<string, unknown>
+  try {
+    parsed = JSON.parse(Buffer.from(response.body).toString('utf-8')) as Record<string, unknown>
+  } catch {
+    return response
+  }
+
+  let changed = false
+  const scrub = (record: Record<string, unknown>): void => {
+    for (const key of ['code', 'type', 'errorCode']) {
+      if (record[key] === ANTSEED_BUYER_FAULT_ERROR_CODE) {
+        record[key] = 'upstream_error'
+        changed = true
+      }
+    }
+  }
+
+  scrub(parsed)
+  if (parsed.error && typeof parsed.error === 'object' && !Array.isArray(parsed.error)) {
+    scrub(parsed.error as Record<string, unknown>)
+  }
+
+  return changed
+    ? { ...response, body: Buffer.from(JSON.stringify(parsed)) }
+    : response
 }
 
 /**
@@ -326,6 +526,12 @@ export function parsePersistedPeers(
     if (entry.providerServiceApiProtocols && typeof entry.providerServiceApiProtocols === 'object') {
       peer.providerServiceApiProtocols = entry.providerServiceApiProtocols as PeerInfo['providerServiceApiProtocols']
     }
+    if (entry.providerServiceUnitBillingModels && typeof entry.providerServiceUnitBillingModels === 'object') {
+      peer.providerServiceUnitBillingModels = entry.providerServiceUnitBillingModels as PeerInfo['providerServiceUnitBillingModels']
+    }
+    if (entry.providerServiceCapabilities && typeof entry.providerServiceCapabilities === 'object') {
+      peer.providerServiceCapabilities = entry.providerServiceCapabilities as PeerInfo['providerServiceCapabilities']
+    }
     if (typeof entry.defaultInputUsdPerMillion === 'number') {
       peer.defaultInputUsdPerMillion = entry.defaultInputUsdPerMillion
     }
@@ -392,6 +598,10 @@ export function parsePersistedPeers(
     }
     if (entry.verificationResults && typeof entry.verificationResults === 'object') {
       peer.verificationResults = entry.verificationResults as PeerInfo['verificationResults']
+    }
+    if (peer.onChainReputationScore === undefined) {
+      const derivedScore = computeOnChainReputationScore(peer, nowMs)
+      if (derivedScore !== null) peer.onChainReputationScore = derivedScore
     }
     peers.push(peer)
   }
@@ -508,10 +718,13 @@ export class BuyerProxy {
   private readonly _peerCacheTtlMs: number
   private readonly _stateDir: string
   private readonly _stateFile: string
+  private readonly _configPath: string | null
   private _stateFileWatching = false
+  private _configFileWatching = false
   private _pinnedPeer: string | null
   /**
-   * Route substituted for the `antseed` model alias (`<peerId>@<service>`).
+   * Route substituted for the `antseed` model alias (`<service>` for automatic
+   * peer selection, or `<peerId>@<service>` for an explicit seller pin).
    * Set via `POST /_antseed/route` (the desktop keeps it on the current VPR
    * selection) and persisted in buyer.state.json like the session peer pin.
    */
@@ -527,6 +740,8 @@ export class BuyerProxy {
   private readonly _verifier?: VerifierPolicy
   private readonly _verifyCache = new Map<string, CachedVerdict>()
   private _stateWatchDebounce: ReturnType<typeof setTimeout> | null = null
+  private _configWatchDebounce: ReturnType<typeof setTimeout> | null = null
+  private _routingPreferences: ModelRoutingPreferences | null
 
   private _stateWriteChain: Promise<void> = Promise.resolve()
 
@@ -541,9 +756,24 @@ export class BuyerProxy {
   private _consecutiveEmptyDiscoveries = 0
   private _lastModelNotFoundRefreshAtMs = 0
   private _bgRefreshHandle: ReturnType<typeof setInterval> | null = null
-  private _peerFailures: Map<string, PeerFailureEntry> = new Map()
+  /**
+   * Per-peer failure streaks and cooldowns. Advisory only: a cooling-down peer
+   * is still dispatched to when a request names it, so routing can never
+   * deadlock and pinned conversations keep working.
+   */
+  private _peerHealth: Map<string, PeerHealthEntry> = new Map()
+  /** Decides whether a failure is the peer's fault at all. */
+  private readonly _attribution = new PeerAttributionTracker()
+  private _heartbeatHandle: ReturnType<typeof setInterval> | null = null
+  private readonly _now: () => number
   /** Latest relayer receipt per sweep authNonce, for CLI progress polling. */
   private readonly _sweepReceipts = new Map<string, SweepReceiptPayload>()
+  /**
+   * Hot-wallet deposit watcher (auto-sweep). Owned by `buyer start`, attached
+   * here so the desktop and `antseed deposit` can drive it over the control
+   * plane instead of running a second signer against the same wallet.
+   */
+  private _depositWatcher: DepositWatcher | null = null
 
   /**
    * requestId -> the conversation that issued it, so the node's per-request
@@ -563,8 +793,17 @@ export class BuyerProxy {
     this._peerCacheTtlMs = Math.max(0, config.peerCacheTtlMs ?? Math.max(6 * 60_000, this._bgRefreshIntervalMs + 60_000))
     this._stateDir = config.dataDir
     this._stateFile = join(config.dataDir, 'buyer.state.json')
+    this._configPath = config.configPath ?? null
     this._conversations = new ConversationStore(config.dataDir)
     this._pinnedPeer = config.pinnedPeerId?.toLowerCase() ?? null
+    this._routingPreferences = config.routingPreferences
+      ? {
+          ...config.routingPreferences,
+          allowedPeerIds: [...config.routingPreferences.allowedPeerIds],
+          blockedPeerIds: [...config.routingPreferences.blockedPeerIds],
+        }
+      : null
+    this._now = config.now ?? (() => Date.now())
     this._server = createServer((req, res) => {
       this._handleRequest(req, res).catch((err) => {
         log('Unhandled error:', err)
@@ -641,6 +880,16 @@ export class BuyerProxy {
     }
   }
 
+  /** Attach the hot-wallet deposit watcher (owned by `buyer start`). */
+  setDepositWatcher(watcher: DepositWatcher): void {
+    this._depositWatcher = watcher
+  }
+
+  /** Latest relayer receipt for a sweep authNonce, if one has arrived. */
+  getSweepReceipt(authNonce: string): SweepReceiptPayload | null {
+    return this._sweepReceipts.get(authNonce.toLowerCase()) ?? null
+  }
+
   async start(): Promise<void> {
     this._startedAtMs = Date.now()
     // Clean up temp files orphaned by state writes whose rename failed in a
@@ -665,6 +914,7 @@ export class BuyerProxy {
       })
     })
     this._startBackgroundRefresh()
+    this._startSuspendHeartbeat()
     // Trigger initial discovery immediately so the desktop can show services
     // without waiting for the first request or 5-minute interval. The sweep
     // emits each accepted metadata document as it arrives, so buyer.state.json
@@ -672,12 +922,18 @@ export class BuyerProxy {
     this._startIncrementalDiscoverySweep()
     await this._writeStateFile('connected')
     this._watchStateFile()
+    this._watchConfigFile()
   }
 
   private async _hydratePeersFromStateFile(): Promise<void> {
     try {
       const raw = await readFile(this._stateFile, 'utf-8')
       const parsed = JSON.parse(raw) as unknown
+      // Cooldowns survive a restart — a peer that died ten seconds before we
+      // exited is still dead — but the parser clamps anything expired or
+      // impossibly distant, so a restart can never extend one. Nothing new can
+      // escalate until a success re-establishes that the buyer is healthy.
+      this._peerHealth = parsePersistedPeerHealth(parsed, this._now())
       const peers = parsePersistedPeers(parsed)
       if (peers.length === 0) {
         return
@@ -706,9 +962,21 @@ export class BuyerProxy {
       unwatchFile(this._stateFile)
       this._stateFileWatching = false
     }
+    if (this._configWatchDebounce) {
+      clearTimeout(this._configWatchDebounce)
+      this._configWatchDebounce = null
+    }
+    if (this._configFileWatching && this._configPath) {
+      unwatchFile(this._configPath)
+      this._configFileWatching = false
+    }
     if (this._bgRefreshHandle) {
       clearInterval(this._bgRefreshHandle)
       this._bgRefreshHandle = null
+    }
+    if (this._heartbeatHandle) {
+      clearInterval(this._heartbeatHandle)
+      this._heartbeatHandle = null
     }
     await this._writeStateFile('stopped')
     await this._conversations.flush()
@@ -749,10 +1017,46 @@ export class BuyerProxy {
         this._pinnedPeer = pinnedPeer
       }
       const routedModel = typeof parsed.defaultRoutedModel === 'string' ? parsed.defaultRoutedModel.trim() : ''
-      this._defaultRoutedModel = parsePeerPinnedService(routedModel) ? routedModel : null
+      this._defaultRoutedModel = routedModel.length > 0 && isValidRoutedModelTarget(routedModel) ? routedModel : null
       log(`Session overrides reloaded: peer=${this._pinnedPeer ?? 'none'} route=${this._defaultRoutedModel ?? 'none'}`)
     } catch {
       // state file unreadable; keep current values
+    }
+  }
+
+  private _watchConfigFile(): void {
+    if (!this._configPath) return
+    try {
+      watchFile(this._configPath, { persistent: false, interval: 500 }, (curr, prev) => {
+        if (curr.mtimeMs === prev.mtimeMs && curr.ino === prev.ino) return
+        if (this._configWatchDebounce) clearTimeout(this._configWatchDebounce)
+        this._configWatchDebounce = setTimeout(() => {
+          this._configWatchDebounce = null
+          void this._reloadRoutingPreferences().catch(() => {})
+        }, 50)
+      })
+      this._configFileWatching = true
+    } catch {
+      // Config watcher failure is non-fatal; startup preferences remain active.
+    }
+  }
+
+  private async _reloadRoutingPreferences(): Promise<void> {
+    if (!this._configPath) return
+    try {
+      const config = await loadConfig(this._configPath)
+      const next = config.buyer.routingPreferences
+      this._routingPreferences = {
+        ...next,
+        allowedPeerIds: [...next.allowedPeerIds],
+        blockedPeerIds: [...next.blockedPeerIds],
+      }
+      log(
+        `Routing preferences reloaded: minTrust=${next.minTrustScore} maxInput=${next.maxInputUsdPerMillion} `
+        + `preferFree=${next.preferFreePeers} allow=${next.allowedPeerIds.length} block=${next.blockedPeerIds.length}`,
+      )
+    } catch (err) {
+      log(`Routing preferences reload ignored: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 
@@ -871,6 +1175,8 @@ export class BuyerProxy {
         providerPricing: p.providerPricing ?? null,
         providerServiceCategories: p.providerServiceCategories ?? null,
         providerServiceApiProtocols: p.providerServiceApiProtocols ?? null,
+        providerServiceUnitBillingModels: p.providerServiceUnitBillingModels ?? null,
+        providerServiceCapabilities: p.providerServiceCapabilities ?? null,
         defaultInputUsdPerMillion: p.defaultInputUsdPerMillion ?? 0,
         defaultOutputUsdPerMillion: p.defaultOutputUsdPerMillion ?? 0,
         defaultCachedInputUsdPerMillion: p.defaultCachedInputUsdPerMillion ?? null,
@@ -915,40 +1221,134 @@ export class BuyerProxy {
   }
 
   /**
-   * Keep buyer-local failure diagnostics without changing reachability.
-   * The router and discovery cache remain untouched; this is only state the
-   * buyer can later use for logs or UI indication.
+   * Record a failed request against a peer.
+   *
+   * Recording is unconditional — the streak and reason are useful diagnostics
+   * either way — but only failures the attribution gates accept as the peer's
+   * own move the cooldown. Discovery metadata is never evicted: a cooling-down
+   * peer stays routable, it just stops being *chosen*.
    */
-  private _recordPeerFailure(peerId: string, reason: string): void {
-    const now = Date.now()
-    const existing = this._peerFailures.get(peerId)
-    const shouldStartFresh = !existing || now - existing.lastFailureAt > PEER_FAILURE_WINDOW_MS
-    const entry: PeerFailureEntry = shouldStartFresh
-      ? { count: 1, firstFailureAt: now, lastFailureAt: now, lastReason: reason }
-      : {
-          count: existing.count + 1,
-          firstFailureAt: existing.firstFailureAt,
-          lastFailureAt: now,
-          lastReason: reason,
-        }
+  private _recordPeerFailure(
+    peerId: string,
+    reason: PeerFailureReason,
+    fault: FaultAttribution = 'unknown',
+  ): void {
+    const now = this._now()
+    const { verdict, rollbackPeerIds } = this._attribution.classify({
+      peerId,
+      reasonEscalates: reasonEscalates(reason),
+      fault,
+      now,
+    })
 
-    this._peerFailures.set(peerId, entry)
-    log(
-      `Peer ${peerId.slice(0, 12)}... failure ${entry.count} within diagnostic window `
-      + `(reason=${reason}); retaining cached discovery metadata.`,
-    )
+    const previous = this._peerHealth.get(peerId)
+    const entry = recordPeerFailureEntry(previous, reason, now, verdict.escalate)
+    this._peerHealth.set(peerId, entry)
+
+    if (rollbackPeerIds.length > 0) {
+      this._rollbackPeerHealth(rollbackPeerIds, 'buyer-side outage detected')
+    }
+
+    if (verdict.escalate && isCoolingDown(entry, now)) {
+      const seconds = Math.round((entry.cooldownUntil - now) / 1000)
+      log(
+        `Peer ${peerId.slice(0, 12)}... cooling down for ${seconds}s after `
+        + `${entry.failureStreak} failures (reason=${reason}).`,
+      )
+    } else {
+      const why = verdict.escalate ? 'below cooldown threshold' : verdict.suppressedBy
+      log(
+        `Peer ${peerId.slice(0, 12)}... failure recorded (reason=${reason}); `
+        + `not cooling down: ${why}.`,
+      )
+    }
+
+    void this._persistPeerHealthToState()
+  }
+
+  /**
+   * Fold a seller's HTTP response into that peer's health.
+   *
+   * Control-plane paths are exempt for the same reason `isRouterSuccess`
+   * exempts them: a failing `/v1/models` says nothing about the peer's ability
+   * to serve inference.
+   */
+  private _recordPeerResponseHealth(peerId: string, statusCode: number, path: string): void {
+    if (isControlPlaneServicesPath(path)) {
+      if (isProofOfLife(statusCode)) this._rememberSuccessfulPeer(peerId)
+      return
+    }
+
+    const reason = failureReasonForStatus(statusCode)
+
+    if (reason && statusCode >= 500) {
+      const now = this._now()
+      if (isCoolingDown(this._peerHealth.get(peerId), now)) {
+        this._rememberSuccessfulPeer(peerId)
+      }
+      this._recordPeerFailure(peerId, reason, 'peer')
+      return
+    }
+
+    if (isProofOfLife(statusCode)) {
+      // A 402, a 400, even a 429 — the peer answered, so it is alive and any
+      // cooldown is stale. Throttling still gets stamped as the last reason so
+      // "alive but refusing work" stays visible in diagnostics.
+      this._rememberSuccessfulPeer(peerId)
+      if (reason) {
+        const entry = this._peerHealth.get(peerId)
+        if (entry) {
+          this._peerHealth.set(peerId, { ...entry, lastReason: reason, lastFailureAt: this._now() })
+        }
+      }
+      return
+    }
+
+    if (reason) this._recordPeerFailure(peerId, reason, 'peer')
+  }
+
+  /**
+   * Undo cooldowns that turned out to be our fault.
+   *
+   * When the attribution gates conclude the buyer itself was down — a suspend,
+   * a dropped network — the failures recorded during that window blamed the
+   * wrong party, so the streaks they created are wound back to zero.
+   */
+  private _rollbackPeerHealth(peerIds: readonly string[], why: string): void {
+    let changed = false
+    for (const peerId of peerIds) {
+      const entry = this._peerHealth.get(peerId)
+      if (!entry || (entry.failureStreak === 0 && entry.cooldownUntil === 0)) continue
+      this._peerHealth.set(peerId, {
+        ...entry,
+        failureStreak: 0,
+        windowStartedAt: 0,
+        episodeStartedAt: 0,
+        cooldownUntil: 0,
+      })
+      changed = true
+    }
+    if (changed) {
+      log(`Cleared peer cooldowns for ${peerIds.length} peer(s): ${why}.`)
+      void this._persistPeerHealthToState()
+    }
   }
 
   /**
    * A peer told us it does not serve the requested model. Our cached
    * metadata for it is stale (the seller may have just unadvertised the
-   * model after failing its own health checks), so record the failure for
-   * diagnostics and refresh discovery metadata in the background — throttled,
-   * since one broken model can produce a burst of these.
+   * model after failing its own health checks), so refresh discovery
+   * metadata in the background — throttled, since one broken model can
+   * produce a burst of these.
+   *
+   * Deliberately does NOT touch peer health: the response itself is proof of
+   * life (`_recordPeerResponseHealth` treats any sub-500 answer as such), and
+   * a peer that is healthy for its other models must not cool down over one
+   * stale catalog entry. The router still learns via `onResult(success:false)`
+   * so scoring reflects the miss.
    */
   private _onModelNotFound(peerId: string, requestedService: string | null): void {
-    this._recordPeerFailure(peerId, `model-not-found:${requestedService ?? 'unknown'}`)
-    const now = Date.now()
+    const now = this._now()
     if (now - this._lastModelNotFoundRefreshAtMs < MODEL_NOT_FOUND_REFRESH_THROTTLE_MS) {
       return
     }
@@ -963,16 +1363,57 @@ export class BuyerProxy {
   /**
    * Stamp `lastReachedAt` on a peer after a successful request so the
    * carry-forward heuristic can trust local transport liveness even when the
-   * DHT record grows stale. Persisted so the signal survives restarts. Also
-   * clears buyer-local diagnostic failures because the peer recovered.
+   * DHT record grows stale. Persisted so the signal survives restarts.
+   *
+   * A response is also proof that the buyer's own network, DHT, chain RPC and
+   * wallet are working, which is what lets other peers' failures be attributed
+   * to them rather than to us.
    */
   private _rememberSuccessfulPeer(peerId: string): void {
-    this._peerFailures.delete(peerId)
+    const now = this._now()
+    this._attribution.recordSuccess(peerId, now)
+
+    const previous = this._peerHealth.get(peerId)
+    if (previous && (previous.failureStreak > 0 || previous.cooldownUntil > 0)) {
+      log(`Peer ${peerId.slice(0, 12)}... recovered; cooldown cleared.`)
+    }
+    this._peerHealth.set(peerId, clearPeerHealthEntry(previous, now))
+    void this._persistPeerHealthToState()
+
     const cached = this._cachedPeers.find((p) => p.peerId === peerId)
     if (cached) {
-      cached.lastReachedAt = Date.now()
+      cached.lastReachedAt = now
       this._persistPeersToState()
     }
+  }
+
+  /**
+   * Watch for the wall clock jumping forward, which means the machine slept.
+   * On wake every pending timeout and keepalive fires at once, so without this
+   * a single closed lid would cool down every peer the buyer knows.
+   */
+  private _startSuspendHeartbeat(): void {
+    if (this._heartbeatHandle) return
+    this._attribution.onHeartbeat(this._now())
+    this._heartbeatHandle = setInterval(() => {
+      const result = this._attribution.onHeartbeat(this._now())
+      if (result && result.rollbackPeerIds.length > 0) {
+        this._rollbackPeerHealth(result.rollbackPeerIds, 'machine resumed from sleep')
+      } else if (result) {
+        log('Detected a wall-clock jump; suspending peer cooldowns briefly.')
+      }
+    }, HEARTBEAT_MS)
+    this._heartbeatHandle.unref?.()
+  }
+
+  /** Persist health separately from `discoveredPeers`, which is rebuilt wholesale. */
+  private async _persistPeerHealthToState(): Promise<void> {
+    const now = this._now()
+    this._peerHealth = prunePeerHealth(this._peerHealth, now)
+    await this._mergeStateFile({
+      peerHealth: serializePeerHealth(this._peerHealth),
+      peerHealthUpdatedAt: now,
+    })
   }
 
   private async _discoverPeersFromNetwork(): Promise<PeerInfo[]> {
@@ -1123,11 +1564,77 @@ export class BuyerProxy {
         providerPricing: p.providerPricing,
         providerServiceCategories: p.providerServiceCategories,
         providerServiceApiProtocols: p.providerServiceApiProtocols,
+        providerServiceUnitBillingModels: p.providerServiceUnitBillingModels,
+        providerServiceCapabilities: p.providerServiceCapabilities,
         reputationScore: p.reputationScore,
         lastSeen: p.lastSeen,
       }))
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ ok: true, peers: payload }))
+      return
+    }
+
+    if (path === '/_antseed/peer-health' && method === 'GET') {
+      const now = this._now()
+      const attribution = this._attribution.snapshot(now)
+      // `buyerHealthy` and `suppressedUntil` are what make "why is this peer
+      // (not) cooling down" answerable from outside the process.
+      const peers = [...this._peerHealth.entries()].map(([peerId, entry]) => ({
+        peerId,
+        failureStreak: entry.failureStreak,
+        lastFailureAt: entry.lastFailureAt,
+        lastReason: entry.lastReason,
+        cooldownUntil: entry.cooldownUntil,
+        coolingDown: isCoolingDown(entry, now),
+        cooldownMsRemaining: isCoolingDown(entry, now) ? entry.cooldownUntil - now : 0,
+        lastSuccessAt: entry.lastSuccessAt,
+      }))
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({
+        ok: true,
+        now,
+        buyerHealthy: this._attribution.isBuyerHealthy(now),
+        lastAnySuccessAt: attribution.lastAnySuccessAt,
+        suppressionActive: attribution.suppressedUntil > 0,
+        suppressedUntil: attribution.suppressedUntil,
+        lastSuppressedBy: attribution.lastSuppressedBy,
+        peers,
+      }))
+      return
+    }
+
+    if (path === '/_antseed/peer-health/clear' && method === 'POST') {
+      const chunks: Buffer[] = []
+      let totalSize = 0
+      for await (const chunk of req) {
+        totalSize += (chunk as Buffer).length
+        if (totalSize > 8192) {
+          res.writeHead(413, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: 'Request body too large' }))
+          return
+        }
+        chunks.push(chunk as Buffer)
+      }
+      let peerId: string
+      try {
+        const body = JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>
+        peerId = typeof body.peerId === 'string' ? body.peerId.trim().toLowerCase() : ''
+      } catch {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'Invalid JSON body' }))
+        return
+      }
+      const normalized = normalizePeerId(peerId) ?? peerId
+      if (!/^[0-9a-f]{40}$/.test(normalized)) {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'peerId must be a 40-character hex peer id' }))
+        return
+      }
+      // Deliberately does not stamp a success: the user is asking us to give
+      // the peer another chance, not asserting that it answered.
+      this._rollbackPeerHealth([normalized], 'cleared by request')
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, peerId: normalized }))
       return
     }
 
@@ -1158,9 +1665,9 @@ export class BuyerProxy {
         res.end(JSON.stringify({ ok: false, error: 'Invalid JSON body' }))
         return
       }
-      if (model.length > 0 && !parsePeerPinnedService(model)) {
+      if (model.length > 0 && !isValidRoutedModelTarget(model)) {
         res.writeHead(400, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ ok: false, error: 'model must be "<peerId>@<service>" (or empty to clear)' }))
+        res.end(JSON.stringify({ ok: false, error: 'model must be "<service>", "<peerId>@<service>", or empty to clear' }))
         return
       }
       this._defaultRoutedModel = model.length > 0 ? model : null
@@ -1174,6 +1681,24 @@ export class BuyerProxy {
     if (path === '/_antseed/conversations' && method === 'GET') {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ ok: true, conversations: this._conversations.list() }))
+      return
+    }
+
+    const conversationMatch = path.match(/^\/_antseed\/conversations\/(.+)$/)
+    if (conversationMatch && method === 'GET') {
+      let id = ''
+      try {
+        id = decodeURIComponent(conversationMatch[1] ?? '')
+      } catch {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'Invalid conversation id' }))
+        return
+      }
+      const conversation = this._conversations.get(id)
+      res.writeHead(conversation ? 200 : 404, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(conversation
+        ? { ok: true, conversation }
+        : { ok: false, error: 'Unknown conversation' }))
       return
     }
 
@@ -1217,9 +1742,9 @@ export class BuyerProxy {
       }
       if ('pinnedModel' in parsed) {
         const pin = typeof parsed.pinnedModel === 'string' ? parsed.pinnedModel.trim() : ''
-        if (pin.length > 0 && !parsePeerPinnedService(pin)) {
+        if (pin.length > 0 && !isValidRoutedModelTarget(pin)) {
           res.writeHead(400, { 'content-type': 'application/json' })
-          res.end(JSON.stringify({ ok: false, error: 'pinnedModel must be "<peerId>@<service>" (or empty to clear)' }))
+          res.end(JSON.stringify({ ok: false, error: 'pinnedModel must be "<service>", "<peerId>@<service>", or empty to clear' }))
           return
         }
         // 'user' marks a seller the user chose for this specific chat — the
@@ -1295,6 +1820,7 @@ export class BuyerProxy {
         const peer = peersById.get(channel.peerId)
         return {
           ...channel,
+          sellerDisplayName: peer?.displayName?.trim() || null,
           cooperativeCloseSupported: peer ? peerSupportsCooperativeClose(peer) : false,
         }
       })
@@ -1398,6 +1924,61 @@ export class BuyerProxy {
       return
     }
 
+    // Hot-wallet deposit watcher (auto-sweep). The desktop and `antseed
+    // deposit` drive the daemon's single watcher through these instead of
+    // running a second signer against the same wallet.
+    if (path === '/_antseed/deposits/status' && method === 'GET') {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({
+        ok: true,
+        watcher: this._depositWatcher !== null,
+        status: this._depositWatcher?.status() ?? null,
+      }))
+      return
+    }
+
+    if (path === '/_antseed/deposits/watch' && method === 'POST') {
+      const chunks: Buffer[] = []
+      let totalSize = 0
+      for await (const chunk of req) {
+        totalSize += (chunk as Buffer).length
+        if (totalSize > 1024) {
+          res.writeHead(413, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: 'Request body too large' }))
+          return
+        }
+        chunks.push(chunk as Buffer)
+      }
+      let mode: string
+      try {
+        const body = JSON.parse(Buffer.concat(chunks).toString() || '{}')
+        mode = String(body.mode ?? 'active')
+      } catch {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'Invalid JSON body' }))
+        return
+      }
+      if (mode !== 'active' && mode !== 'background') {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'mode must be "active" or "background"' }))
+        return
+      }
+      const watcher = this._depositWatcher
+      if (!watcher) {
+        res.writeHead(503, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({
+          ok: false,
+          error: 'Deposit watcher unavailable — payments are disabled or this chain has no deposit relay.',
+        }))
+        return
+      }
+      if (mode === 'active') watcher.promote()
+      else watcher.demote()
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, status: watcher.status() }))
+      return
+    }
+
     const sweepReceiptMatch = path.match(/^\/_antseed\/sweep\/(0x[0-9a-fA-F]{64})$/)
     if (sweepReceiptMatch && method === 'GET') {
       const receipt = this._sweepReceipts.get(sweepReceiptMatch[1]!.toLowerCase()) ?? null
@@ -1408,6 +1989,66 @@ export class BuyerProxy {
 
     res.writeHead(404, { 'content-type': 'application/json' })
     res.end(JSON.stringify({ ok: false, error: 'Unknown control-plane endpoint' }))
+  }
+
+  /**
+   * GET /v1/models[?type=text|images] and GET /v1/models/:id — answered
+   * locally from the discovered-peer cache, aggregated across the network. The
+   * `x-antseed-request-id` response header keeps the port-reuse probe in
+   * `buyer start` recognizing this as an AntSeed proxy.
+   */
+  private async _handleNetworkModels(res: ServerResponse, rawPath: string): Promise<void> {
+    const url = new URL(rawPath, 'http://localhost')
+    const responseHeaders = { 'content-type': 'application/json', 'x-antseed-request-id': randomUUID() }
+    const peers = await this._getPeers()
+    const models = buildNetworkModels(peers, this._now(), {
+      routingPreferences: this._routingPreferences,
+      peerHealth: this._peerHealth,
+    })
+
+    const modelIdRaw = url.pathname.replace(/^\/v1\/models\/?/i, '')
+    if (modelIdRaw.length > 0) {
+      let modelId: string
+      try {
+        modelId = decodeURIComponent(modelIdRaw).trim()
+      } catch {
+        modelId = modelIdRaw.trim()
+      }
+      const modelKey = canonicalModelKey(modelId)
+      const model = models.find((entry) => canonicalModelKey(entry.id) === modelKey)
+      if (!model) {
+        res.writeHead(404, responseHeaders)
+        res.end(JSON.stringify({
+          error: {
+            message: `Model "${modelId}" was not found on the network.`,
+            type: 'invalid_request_error',
+            code: 'model_not_found',
+          },
+        }))
+        return
+      }
+      res.writeHead(200, responseHeaders)
+      res.end(JSON.stringify(model))
+      return
+    }
+
+    const typeFilter = parseModelTypeFilter(url.searchParams.get('type'))
+    if (typeFilter === 'invalid') {
+      res.writeHead(400, responseHeaders)
+      res.end(JSON.stringify({
+        error: {
+          message: `Unknown model type "${url.searchParams.get('type') ?? ''}" — expected "text" or "images".`,
+          type: 'invalid_request_error',
+          param: 'type',
+        },
+      }))
+      return
+    }
+
+    const data = typeFilter === 'all' ? models : models.filter((entry) => entry.type === typeFilter)
+    log(`GET /v1/models answered locally: ${data.length} models across ${peers.length} peers${typeFilter ? ` (type=${typeFilter})` : ''}`)
+    res.writeHead(200, responseHeaders)
+    res.end(JSON.stringify({ object: 'list', data }))
   }
 
   private async _handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -1434,6 +2075,14 @@ export class BuyerProxy {
       res.writeHead(404, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ error: { message: 'Not found', type: 'invalid_request_error' } }))
       return
+    }
+
+    // `/v1/models` is answered locally from the discovered-peer cache: one
+    // entry per model across the whole network, with the peers serving it.
+    // Routed to a single pinned seller it would only cover that seller's
+    // services — and would require a pin just to browse the network.
+    if (method === 'GET' && normalizedPath.startsWith('/v1/models')) {
+      return this._handleNetworkModels(res, path)
     }
 
     // Collect request body
@@ -1485,12 +2134,10 @@ export class BuyerProxy {
     const effectivePinnedPeer = this._pinnedPeer
 
     // Per-chat routing: completion requests carry a stable per-conversation
-    // identity (see conversation-identity.ts). A chat pinned to a model
-    // overrides the session default when resolving the `antseed` alias;
-    // subagent sessions inherit their parent chat's pin. The default route
-    // only steers a chat's first request — the model that serves it becomes
-    // the chat's own pin (ConversationStore.touch), so changing the default
-    // later applies to new chats only.
+    // identity (see conversation-identity.ts). Explicit chat pins remain hard;
+    // automatically selected routes become soft affinity, so later turns stay
+    // on the same seller unless it is cooling, unavailable, or fails retryably.
+    // Subagent sessions inherit their parent chat's route.
     const isConversationRequest = method === 'POST' && isCompletionRequestPath(path)
     const conversationBody = isConversationRequest
       ? parseRequestBodyObject(serializedReq.body, serializedReq.headers)
@@ -1501,13 +2148,22 @@ export class BuyerProxy {
     // Internal marker from the system proxy: source profile used only for
     // local conversation attribution. Stripped here so it never reaches a seller.
     delete serializedReq.headers[SYSTEM_PROXY_SOURCE_HEADER]
-    const chatPinnedModel = conversationIdentity
-      ? this._conversations.getPinnedModel(conversationIdentity.tool, conversationIdentity.sessionKey)
-        ?? (conversationIdentity.parentSessionKey
-          ? this._conversations.getPinnedModel(conversationIdentity.tool, conversationIdentity.parentSessionKey)
-          : null)
+    const trackedConversationKey = conversationIdentity
+      ? conversationIdentity.parentSessionKey ?? conversationIdentity.sessionKey
       : null
+    const storedConversation = conversationIdentity && trackedConversationKey
+      ? this._conversations.get(`${conversationIdentity.tool}:${trackedConversationKey}`)
+      : null
+    const storedAutoRoute = storedConversation?.peerSource === 'auto' && storedConversation.pinnedModel
+      ? parsePeerPinnedService(storedConversation.pinnedModel)
+      : null
+    const chatPinnedModel = storedConversation?.peerSource === 'user'
+      ? storedConversation.pinnedModel
+      : storedAutoRoute?.service ?? storedConversation?.pinnedModel ?? null
+    const preferredPeerHeader = normalizePeerId(serializedReq.headers['x-antseed-prefer-peer'] ?? '')
+    const preferredConversationPeerId = preferredPeerHeader ?? storedAutoRoute?.peerId ?? null
     const effectiveRoutedModel = chatPinnedModel ?? this._defaultRoutedModel
+    let trackedConversationId: string | null = storedConversation?.id ?? null
 
     // Resolve the `antseed` model alias to the session's default route first,
     // so the regular `<peerId>@<service>` pin rewrite below picks up the
@@ -1521,7 +2177,7 @@ export class BuyerProxy {
         error: {
           type: 'no_default_route',
           code: 'no_default_route',
-          message: `Model "${ROUTED_MODEL_ALIAS}" routes to the model selected in AntStation, but no route is set. `
+          message: `Model "${ROUTED_MODEL_ALIAS}" routes to the model selected in VPR, but no route is set. `
             + 'Pick a model in the desktop app, or request "<peerId>@<model>" explicitly.',
           param: 'model',
         },
@@ -1579,6 +2235,15 @@ export class BuyerProxy {
           snippet,
           lastModel: titleTurn ? null : resolvedModel,
         })
+        const explicitConversationPin = resolvedModel && (
+          parsePeerPinnedService(rawModel)
+          || (aliasResult.substituted && parsePeerPinnedService(effectiveRoutedModel ?? ''))
+          || (chatPinOverrideApplied && parsePeerPinnedService(chatPinnedModel ?? ''))
+        )
+        if (explicitConversationPin) {
+          this._conversations.setPinnedModel(tracked.id, resolvedModel, 'user')
+        }
+        trackedConversationId = tracked.id
         // Bind the request to the chat so its cost can be attributed when the
         // payment layer signs for it (see _attributeSpend).
         this._trackRequestConversation(serializedReq.requestId, tracked.id)
@@ -1623,22 +2288,11 @@ export class BuyerProxy {
     const explicitPeerId = getExplicitPeerIdOverride(serializedReq, effectivePinnedPeer ?? undefined, bodyPinnedPeer)
     log(`Routing hints: provider=${explicitProvider ?? 'auto'} pin-peer=${explicitPeerId ?? 'none'}`)
 
-    // Auto peer selection is disabled. Every request MUST target a specific
-    // peer, either via the per-request `x-antseed-pin-peer` header, a
-    // `<peerId>@<model>` model prefix, or a session-wide pin set by
-    // `antseed buyer connection set --peer <peerId>`.
-    //
-    // Surface the error in the structured shape OpenAI/Anthropic SDKs expect
-    // (`{ error: { type, code, message, ... } }`) so callers see a proper
-    // .message on their error objects instead of a raw text/plain body. We
-    // use HTTP 400 — the request is missing required information the buyer
-    // cannot infer on its own — which is what SDK retry/error logic treats
-    // as a non-retryable client mistake.
-    if (!explicitPeerId) {
-      log('Request rejected: no peer pinned')
+    if (!explicitPeerId && !requestedService) {
+      log('Request rejected: no peer pinned and no model requested')
       const errorMessage =
-        'No peer pinned. Auto-selection is disabled.\n'
-        + 'Pin a peer one of three ways:\n'
+        'No model or peer was specified.\n'
+        + 'Set the request model, or pin a peer one of three ways:\n'
         + '  • Per-request header:   x-antseed-pin-peer: <peerId>    (40-char hex EVM address)\n'
         + '  • Model name prefix:    <peerId>@<model>\n'
         + '  • Session pin:          antseed buyer connection set --peer <peerId>\n'
@@ -1646,10 +2300,10 @@ export class BuyerProxy {
       res.writeHead(400, { 'content-type': 'application/json' })
       res.end(JSON.stringify({
         error: {
-          type: 'no_peer_pinned',
-          code: 'no_peer_pinned',
+          type: 'missing_routing_target',
+          code: 'missing_routing_target',
           message: errorMessage,
-          param: 'x-antseed-pin-peer',
+          param: 'model',
           help: {
             perRequestHeader: 'x-antseed-pin-peer: <peerId>',
             modelPrefix: '<peerId>@<model>',
@@ -1670,6 +2324,170 @@ export class BuyerProxy {
       return
     }
 
+    if (!explicitPeerId && requestedService) {
+      const selectModelPeers = (candidateSources: PeerInfo[]): CandidatePeerRouteSelection =>
+        selectCandidatePeersForRouting(candidateSources, requestProtocol, requestedService, explicitProvider, 'strict')
+      let discoveredPeers = peers
+      let { candidatePeers: modelPeers, routePlanByPeerId: modelPlans } = selectModelPeers(discoveredPeers)
+      const cacheAgeMs = Date.now() - this._cacheLastUpdatedAtMs
+      if (modelPeers.length === 0 || cacheAgeMs > this._peerCacheTtlMs) {
+        discoveredPeers = await this._getPeers({ forceRefresh: true })
+        ;({ candidatePeers: modelPeers, routePlanByPeerId: modelPlans } = selectModelPeers(discoveredPeers))
+      }
+
+      const router = this._node.router
+      const policyRouter = router as BuyerPolicyRouter | null | undefined
+      const routeCandidates = modelPeers
+        .map((peer) => {
+          const plan = modelPlans.get(peer.peerId)
+            ?? resolvePeerRoutePlan(peer, requestProtocol, requestedService, explicitProvider, 'strict')
+          if (!plan?.serviceId) return null
+          const offer = findAdvertisedServiceOffer(peer, plan.provider, plan.serviceId)
+          if (!offer) return null
+          const requestForPolicy = withRoutedModel(serializedReq, plan.serviceId)
+          if (!peerAllowedByPolicy(policyRouter, requestForPolicy, peer)) return null
+          return {
+            peer,
+            peerId: peer.peerId,
+            serviceId: plan.serviceId,
+            request: requestForPolicy,
+            reputation: normalizedModelReputationScore(peer, this._now()) ?? -1,
+            hasCachedInputPricing: offer.cachedInputUsdPerMillion !== undefined,
+            inputUsdPerMillion: offer.inputUsdPerMillion ?? null,
+            outputUsdPerMillion: offer.outputUsdPerMillion ?? null,
+            minImageUsdPerImage: offer.minImageUsdPerImage ?? null,
+          }
+        })
+        .filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null)
+      const now = this._now()
+      const preferCachedPricing = routeCandidates.some((candidate) => candidate.hasCachedInputPricing)
+      const ranked = routeCandidates.map((candidate) => {
+        const health = this._peerHealth.get(candidate.peer.peerId)
+        return {
+          ...candidate,
+          effectiveReputationScore: effectiveModelReputationScore(
+            candidate.reputation >= 0 ? candidate.reputation : null,
+            candidate.hasCachedInputPricing,
+            preferCachedPricing,
+            modelRouteTotalPrice(candidate) === 0,
+          ),
+          peerCooldownUntil: health?.cooldownUntil ?? null,
+          peerFailureStreak: health?.failureStreak ?? 0,
+        }
+      })
+      let candidates: typeof ranked
+      const routingPreferences = this._routingPreferences
+      if (routingPreferences) {
+        candidates = rankModelRoutes(ranked, routingPreferences, now)
+          .filter((candidate) => isModelRouteEligible(candidate, routingPreferences))
+      } else {
+        ranked.sort((a, b) =>
+          (b.effectiveReputationScore ?? -1) - (a.effectiveReputationScore ?? -1)
+          || a.peer.peerId.localeCompare(b.peer.peerId))
+        const ready = ranked.filter((candidate) => !isCoolingDown(this._peerHealth.get(candidate.peer.peerId), now))
+        candidates = ready.length > 0 ? ready : ranked
+      }
+      if (preferredConversationPeerId) {
+        const preferredIndex = candidates.findIndex((candidate) => (
+          candidate.peer.peerId.toLowerCase() === preferredConversationPeerId
+          && !isCoolingDown(this._peerHealth.get(candidate.peer.peerId), now)
+        ))
+        if (preferredIndex > 0) {
+          const [preferred] = candidates.splice(preferredIndex, 1)
+          if (preferred) candidates.unshift(preferred)
+        }
+      }
+      if (candidates.length === 0) {
+        res.writeHead(502, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({
+          error: {
+            type: 'model_not_found',
+            code: 'model_not_found',
+            message: `No policy-allowed peer currently serves model "${requestedService}".`,
+            param: 'model',
+          },
+        }))
+        return
+      }
+
+      let lastRetry: Awaited<ReturnType<BuyerProxy['_dispatchToPeer']>> | null = null
+      let lastVerificationError: string | null = null
+      for (const [index, selected] of candidates.entries()) {
+        if (this._verifier) {
+          const makeReach = (chosenId: string): SellerReach =>
+            makeVerifierReach(this._node, selected.peer, chosenId, clientAbortController.signal)
+          const outcome = await this._verifyPeer(selected.peer, makeReach, clientAbortController.signal)
+          if (!outcome.ok) {
+            lastVerificationError = `Peer ${selected.peer.peerId.slice(0, 12)}... failed required verification (${outcome.reason ?? 'failed'}).`
+            log(`${lastVerificationError} Trying the next model peer.`)
+            continue
+          }
+        }
+
+        for (let peerAttempt = 0; peerAttempt < MODEL_RATE_LIMIT_MAX_ATTEMPTS_PER_PEER; peerAttempt += 1) {
+          log(
+            `Auto-selected peer ${selected.peer.peerId.slice(0, 12)}... for model="${requestedService}" `
+            + `service="${selected.serviceId}" reputation=${selected.reputation} `
+            + `effective=${selected.effectiveReputationScore ?? 'unknown'} peer=${index + 1}/${candidates.length} `
+            + `attempt=${peerAttempt + 1}/${MODEL_RATE_LIMIT_MAX_ATTEMPTS_PER_PEER}`,
+          )
+          const result = await this._dispatchToPeer(
+            res,
+            selected.request,
+            selected.peer,
+            modelPlans,
+            requestProtocol,
+            selected.serviceId,
+            explicitProvider,
+            router,
+            RETRYABLE_STATUS_CODES,
+            clientAbortController.signal,
+          )
+          if (result.done) {
+            if (trackedConversationId) {
+              this._conversations.recordRoutedModel(
+                trackedConversationId,
+                `${selected.peer.peerId}@${selected.serviceId}`,
+              )
+            }
+            return
+          }
+          lastRetry = result
+          if (result.responseHeaders[ANTSEED_FAULT_ATTRIBUTION_HEADER]?.toLowerCase() === 'buyer') {
+            res.writeHead(result.statusCode, result.responseHeaders)
+            res.end(result.responseBody)
+            return
+          }
+          const retrySamePeer = result.statusCode === 429
+            && peerAttempt + 1 < MODEL_RATE_LIMIT_MAX_ATTEMPTS_PER_PEER
+          if (!retrySamePeer) break
+          const delayMs = rateLimitRetryDelayMs(result.responseHeaders, peerAttempt)
+          log(`Peer ${selected.peer.peerId.slice(0, 12)}... is rate-limited; retrying in ${delayMs}ms.`)
+          if (!await waitForRetry(delayMs, clientAbortController.signal)) return
+        }
+        if (index + 1 < candidates.length) {
+          log(`Peer ${selected.peer.peerId.slice(0, 12)}... failed retryably; trying next model peer.`)
+        }
+      }
+
+      if (lastRetry) {
+        res.writeHead(lastRetry.statusCode, lastRetry.responseHeaders)
+        res.end(lastRetry.responseBody)
+      } else {
+        res.writeHead(502, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({
+          error: {
+            type: 'peer_verification_failed',
+            code: 'peer_verification_failed',
+            message: lastVerificationError ?? `No verified peer currently serves model "${requestedService}".`,
+          },
+        }))
+      }
+      return
+    }
+
+    const pinnedPeerId = explicitPeerId!
+
     // Narrow the candidate set to just the pinned peer (if we already know
     // about it) before running the per-peer protocol/service match. This
     // avoids wasting work — and spamming "Service strict-miss" log lines —
@@ -1677,7 +2495,7 @@ export class BuyerProxy {
     // fall through with the full list so the "not in candidate set → force
     // refresh" path still works.
     const narrowToPinned = (sources: PeerInfo[]): PeerInfo[] => {
-      const match = sources.find((p) => p.peerId.toLowerCase() === explicitPeerId)
+      const match = sources.find((p) => p.peerId.toLowerCase() === pinnedPeerId)
       return match ? [match] : sources
     }
 
@@ -1713,7 +2531,7 @@ export class BuyerProxy {
     let discoveredPeers = peers
 
     const isPinnedDiscovered = (): boolean =>
-      discoveredPeers.some((peer) => peer.peerId.toLowerCase() === explicitPeerId)
+      discoveredPeers.some((peer) => peer.peerId.toLowerCase() === pinnedPeerId)
 
     // Single refresh guard covers all three doubts about the cache: pin
     // missing, candidate filter empty, or cache past TTL.
@@ -1731,10 +2549,10 @@ export class BuyerProxy {
           ? 'model peer prefix'
           : '--peer flag or session pin'
       const diagnostics = this._formatPeerSelectionDiagnostics(discoveredPeers)
-      log(`Pinned peer ${explicitPeerId.slice(0, 12)}... not discoverable in DHT (${logSource})`)
+      log(`Pinned peer ${pinnedPeerId.slice(0, 12)}... not discoverable in DHT (${logSource})`)
       res.writeHead(502, { 'content-type': 'text/plain' })
       res.end(
-        `Pinned peer ${explicitPeerId.slice(0, 12)}... is not reachable right now. `
+        `Pinned peer ${pinnedPeerId.slice(0, 12)}... is not reachable right now. `
         + 'It may be offline, not announcing, or temporarily unreachable. '
         + 'Pick a different service in Discover or try again later. '
         + diagnostics,
@@ -1743,7 +2561,7 @@ export class BuyerProxy {
     }
 
     if (routingPeers.length === 0) {
-      const pinnedPeer = discoveredPeers.find((peer) => peer.peerId.toLowerCase() === explicitPeerId) ?? null
+      const pinnedPeer = discoveredPeers.find((peer) => peer.peerId.toLowerCase() === pinnedPeerId) ?? null
       const protocolLabel = requestProtocol ? `protocol=${requestProtocol}` : 'protocol=unknown'
       const providerLabel = explicitProvider ? `provider=${explicitProvider}` : 'provider=auto'
       const serviceLabel = requestedService ? `service=${requestedService}` : 'service=none'
@@ -1755,10 +2573,10 @@ export class BuyerProxy {
           .filter((provider) => provider.length > 0)
         if (!providers.includes(explicitProvider)) {
           const providerList = providers.length > 0 ? providers.join(', ') : 'none'
-          log(`Pinned peer ${explicitPeerId.slice(0, 12)}... does not offer explicit provider=${explicitProvider}`)
+          log(`Pinned peer ${pinnedPeerId.slice(0, 12)}... does not offer explicit provider=${explicitProvider}`)
           res.writeHead(502, { 'content-type': 'text/plain' })
           res.end(
-            `Pinned peer ${explicitPeerId.slice(0, 12)}... does not offer provider=${explicitProvider}. `
+            `Pinned peer ${pinnedPeerId.slice(0, 12)}... does not offer provider=${explicitProvider}. `
             + `Available providers: ${providerList}. `
             + 'Remove or change the x-antseed-provider header, or pick a different peer. '
             + diagnostics,
@@ -1767,10 +2585,10 @@ export class BuyerProxy {
         }
       }
 
-      log(`Pinned peer ${explicitPeerId.slice(0, 12)}... filtered out by protocol/service match`)
+      log(`Pinned peer ${pinnedPeerId.slice(0, 12)}... filtered out by protocol/service match`)
       res.writeHead(502, { 'content-type': 'text/plain' })
       res.end(
-        `Pinned peer ${explicitPeerId.slice(0, 12)}... does not support this request `
+        `Pinned peer ${pinnedPeerId.slice(0, 12)}... does not support this request `
         + `(${protocolLabel}, ${providerLabel}, ${serviceLabel}). `
         + `Pick a different service in Discover. ${diagnostics}`,
       )
@@ -1781,24 +2599,23 @@ export class BuyerProxy {
 
     const router = this._node.router
 
-    const selectedPeer = routingPeers.find((p) => p.peerId.toLowerCase() === explicitPeerId) ?? null
+    const selectedPeer = routingPeers.find((p) => p.peerId.toLowerCase() === pinnedPeerId) ?? null
 
     // Defence in depth: the discovered+narrowed checks above should make this
     // branch unreachable. Keep a structured fallback so we don't silently hang
     // if an invariant breaks.
     if (!selectedPeer) {
-      log(`Invariant: pinned peer ${explicitPeerId.slice(0, 12)}... present in DHT but missing from narrowed candidate list`)
+      log(`Invariant: pinned peer ${pinnedPeerId.slice(0, 12)}... present in DHT but missing from narrowed candidate list`)
       res.writeHead(502, { 'content-type': 'text/plain' })
-      res.end(`Pinned peer ${explicitPeerId.slice(0, 12)}... is currently unreachable. Try again in a moment.`)
+      res.end(`Pinned peer ${pinnedPeerId.slice(0, 12)}... is currently unreachable. Try again in a moment.`)
       return
     }
     const policyRouter = router as BuyerPolicyRouter | null | undefined
-    const policyAllowed = policyRouter?.allowsPeerForPolicy
-      ? policyRouter.allowsPeerForPolicy(serializedReq, selectedPeer)
-      : policyRouter?.allowsPeerForPricing
-        ? policyRouter.allowsPeerForPricing(serializedReq, selectedPeer)
-        : true
-    if (!policyAllowed) {
+    const selectedPlan = routingPlans.get(selectedPeer.peerId)
+      ?? resolvePeerRoutePlan(selectedPeer, requestProtocol, requestedService, explicitProvider, 'lenient')
+    const pinnedServiceId = selectedPlan?.serviceId ?? requestedService
+    const pinnedRequest = pinnedServiceId ? withRoutedModel(serializedReq, pinnedServiceId) : serializedReq
+    if (!peerAllowedByPolicy(policyRouter, pinnedRequest, selectedPeer)) {
       log(`Pinned peer ${selectedPeer.peerId.slice(0, 12)}... filtered out by buyer routing policy`)
       res.writeHead(502, { 'content-type': 'text/plain' })
       res.end(
@@ -1831,7 +2648,7 @@ export class BuyerProxy {
     log(`Using pinned peer ${selectedPeer.peerId.slice(0, 12)}...`)
     const result = await this._dispatchToPeer(
       res,
-      serializedReq,
+      pinnedRequest,
       selectedPeer,
       routingPlans,
       requestProtocol,
@@ -1841,9 +2658,15 @@ export class BuyerProxy {
       RETRYABLE_STATUS_CODES,
       clientAbortController.signal,
     )
+    if (result.done && trackedConversationId && pinnedServiceId) {
+      this._conversations.recordRoutedModel(
+        trackedConversationId,
+        `${selectedPeer.peerId}@${pinnedServiceId}`,
+      )
+    }
     if (!result.done) {
       // Pinned peer returned a retryable error. We never retry against another
-      // peer — auto-selection is disabled — so surface the error to the client.
+      // peer for an explicit pin, so surface the error to the client.
       res.writeHead(result.statusCode, result.responseHeaders)
       res.end(result.responseBody)
     }
@@ -1979,6 +2802,9 @@ export class BuyerProxy {
     const {
       'x-antseed-pin-peer': _pinPeer,
       'x-antseed-prefer-peer': _preferPeer,
+      'x-vpr-session-id': _vprSession,
+      // Legacy desktop builds (pre AntStation → VPR rename) still send this.
+      'x-antstation-session-id': _antstationSession,
       ...headersForPeer
     } = serializedReq.headers
     let requestForPeer: SerializedHttpRequest = {
@@ -1986,7 +2812,11 @@ export class BuyerProxy {
       headers: {
         ...headersForPeer,
         'x-antseed-provider': selectedRoutePlan.provider,
+        ...(requestedService ? { 'x-antseed-service': requestedService } : {}),
       },
+    }
+    if (selectedRoutePlan.serviceId) {
+      requestForPeer = withRoutedModel(requestForPeer, selectedRoutePlan.serviceId)
     }
     const clientWantsStreaming = requestWantsStreaming(serializedReq.headers, serializedReq.body)
     let adaptResponse: ((response: SerializedHttpResponse) => SerializedHttpResponse) | null = null
@@ -2089,8 +2919,12 @@ export class BuyerProxy {
           },
         }, { signal: requestSignal })
 
-        let responseForClient = response
-        if (!streamed && adaptResponse) {
+        let responseForClient = adaptBuyerFaultErrorResponse(response, requestProtocol)
+        if (
+          !streamed
+          && adaptResponse
+          && responseForClient.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER]?.toLowerCase() !== 'buyer'
+        ) {
           responseForClient = adaptResponse(response)
         }
         responseForClient = adaptOpenAICompatibleErrorResponse(responseForClient, requestProtocol)
@@ -2112,13 +2946,14 @@ export class BuyerProxy {
           responseForClient.body,
           selectedPeer,
         )
+        const responseFault = responseFaultAttribution(responseForClient)
         const modelNotFound = !streamed
           && !isControlPlaneServicesPath(requestForPeer.path)
           && isModelNotFoundResponse(responseForClient)
         if (modelNotFound) {
           this._onModelNotFound(selectedPeer.peerId, requestedService)
         }
-        if (router) {
+        if (router && responseFault !== 'buyer') {
           router.onResult(selectedPeer, {
             success: !modelNotFound
               && isRouterSuccess(responseForClient.statusCode, requestForPeer.path, retryableStatusCodes),
@@ -2127,11 +2962,16 @@ export class BuyerProxy {
           })
         }
 
+        if (responseFault === 'buyer') {
+          this._recordPeerFailure(selectedPeer.peerId, 'buyer-local', 'buyer')
+        } else {
+          this._recordPeerResponseHealth(
+            selectedPeer.peerId, responseForClient.statusCode, requestForPeer.path,
+          )
+        }
+
         if (streamed) {
           // Headers already sent to client, can't retry
-          if (responseForClient.statusCode >= 200 && responseForClient.statusCode < 400) {
-            this._rememberSuccessfulPeer(selectedPeer.peerId)
-          }
           if (!res.writableEnded) {
             res.end()
           }
@@ -2156,9 +2996,6 @@ export class BuyerProxy {
           }
         }
 
-        if (responseForClient.statusCode >= 200 && responseForClient.statusCode < 400) {
-          this._rememberSuccessfulPeer(selectedPeer.peerId)
-        }
         res.writeHead(responseForClient.statusCode, responseHeaders)
         res.end(Buffer.from(responseForClient.body))
         return { done: true }
@@ -2168,8 +3005,11 @@ export class BuyerProxy {
           log(`Upstream raw error detail: ${summarizeErrorResponse(upstreamResponse)}`)
         }
 
-        let response = upstreamResponse
-        if (adaptResponse) {
+        let response = adaptBuyerFaultErrorResponse(upstreamResponse, requestProtocol)
+        if (
+          adaptResponse
+          && response.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER]?.toLowerCase() !== 'buyer'
+        ) {
           response = adaptResponse(response)
         }
         response = adaptOpenAICompatibleErrorResponse(response, requestProtocol)
@@ -2195,13 +3035,14 @@ export class BuyerProxy {
           latencyMs,
         )
 
+        const responseFault = responseFaultAttribution(response)
         const modelNotFound = !isControlPlaneServicesPath(requestForPeer.path)
           && isModelNotFoundResponse(response)
         if (modelNotFound) {
           this._onModelNotFound(selectedPeer.peerId, requestedService)
         }
         // Report result to router for learning
-        if (router) {
+        if (router && responseFault !== 'buyer') {
           router.onResult(selectedPeer, {
             success: !modelNotFound
               && isRouterSuccess(response.statusCode, requestForPeer.path, retryableStatusCodes),
@@ -2210,14 +3051,17 @@ export class BuyerProxy {
           })
         }
 
+        if (responseFault === 'buyer') {
+          this._recordPeerFailure(selectedPeer.peerId, 'buyer-local', 'buyer')
+        } else {
+          this._recordPeerResponseHealth(selectedPeer.peerId, response.statusCode, requestForPeer.path)
+        }
+
         // Check if retryable
         if (retryableStatusCodes.has(response.statusCode)) {
           return { done: false, statusCode: response.statusCode, responseBody: Buffer.from(response.body), responseHeaders, errorMessage: null }
         }
 
-        if (response.statusCode >= 200 && response.statusCode < 400) {
-          this._rememberSuccessfulPeer(selectedPeer.peerId)
-        }
         // Forward response headers and body to the HTTP client
         res.writeHead(response.statusCode, responseHeaders)
         res.end(Buffer.from(response.body))
@@ -2259,7 +3103,18 @@ export class BuyerProxy {
         return { done: true }
       }
 
-      this._recordPeerFailure(selectedPeer.peerId, 'request-failed')
+      // Whose fault was this? Errors raised by our own wallet, deposits,
+      // transport or state machine say nothing about the peer, and telling the
+      // user to blame the seller for their empty deposit sends them chasing the
+      // wrong fix. Anything untagged stays 'unknown', where the attribution
+      // gates decide.
+      const fault = faultAttributionOf(err)
+      const faultCode = faultCodeOf(err)
+      this._recordPeerFailure(
+        selectedPeer.peerId,
+        fault === 'buyer' ? 'buyer-local' : 'request-failed',
+        fault,
+      )
 
       if (res.headersSent) {
         // Headers already sent (streaming), can't retry
@@ -2267,6 +3122,31 @@ export class BuyerProxy {
           res.end()
         }
         return { done: true }
+      }
+
+      if (fault === 'buyer') {
+        const buyerResponse = adaptBuyerFaultErrorResponse({
+          requestId: requestForPeer.requestId,
+          statusCode: 503,
+          headers: {
+            'content-type': 'application/json',
+            [ANTSEED_FAULT_ATTRIBUTION_HEADER]: 'buyer',
+          },
+          body: Buffer.from(JSON.stringify({
+            error: {
+              type: 'buyer_request_failed',
+              code: faultCode ?? 'buyer_request_failed',
+              message,
+            },
+          })),
+        }, requestProtocol)
+        return {
+          done: false,
+          statusCode: buyerResponse.statusCode,
+          responseBody: Buffer.from(buyerResponse.body),
+          responseHeaders: buyerResponse.headers,
+          errorMessage: message,
+        }
       }
 
       return { done: false, statusCode: 502, responseBody: Buffer.from(`P2P request failed: ${message}`), responseHeaders: { 'content-type': 'text/plain' }, errorMessage: message }

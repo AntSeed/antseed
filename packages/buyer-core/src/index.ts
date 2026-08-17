@@ -1,4 +1,5 @@
 export * from './interfaces.js';
+export * from './errors.js';
 export * from './channel-store-types.js';
 export * from './debug.js';
 export * from './pricing.js';

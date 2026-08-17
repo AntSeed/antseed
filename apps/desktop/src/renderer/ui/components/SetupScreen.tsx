@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AntStationMark } from './AntStationLogo';
+import { VprMark } from './VprLogo';
 import { shallowEqual, useUiSelector } from '../hooks/useUiSelector';
 import styles from './SetupScreen.module.scss';
 
@@ -81,7 +81,7 @@ export function SetupScreen() {
       <div className={styles.container}>
         <div className={styles.content}>
           <div className={styles.brand}>
-            <AntStationMark size={64} />
+            <VprMark size={64} />
             <span className={styles.brandName}>VPR</span>
           </div>
           <h1 className={styles.title}>Setting up your VPR</h1>

@@ -8,7 +8,7 @@
  * store is what re-fills it on a model switch.
  */
 
-import { canonicalModelKey } from '../catalog/model-identity.js';
+import { canonicalModelKey, canonicalPersistedModelKey } from '../catalog/model-identity.js';
 
 export const VPR_MODEL_PINS_STORAGE_KEY = 'antseed.desktop.vpr.modelPins';
 
@@ -34,7 +34,8 @@ export function loadVprModelPins(): VprModelPins {
       const separator = key.indexOf(':');
       const normalizedKey = separator > 0
         ? modelPinKey(key.slice(0, separator), key.slice(separator + 1))
-        : key;
+        : canonicalPersistedModelKey(key);
+      if (!normalizedKey) continue;
       pins[normalizedKey] = peerId;
     }
     return pins;

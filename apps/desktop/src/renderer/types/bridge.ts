@@ -1,3 +1,11 @@
+import type {
+  VprCompactApp,
+  VprCompactConversation,
+  VprCompactModel,
+  VprCompactSurfaceAction,
+  VprCompactSurfaceData,
+} from '../../shared/vpr-compact-surface.js';
+
 export type RuntimeMode = 'connect' | 'system-proxy';
 
 export type RuntimeProcessState = {
@@ -60,16 +68,36 @@ export type DesktopBuyerUsageTotals = {
   services?: DesktopBuyerServiceUsage[];
 };
 
+export type DesktopBuyerSpendDay = {
+  day: string;
+  dayStart: number;
+  spentUsdc: string;
+  inputTokens: string;
+  outputTokens: string;
+};
+
+export type DesktopBuyerSpendHistory = {
+  available: boolean;
+  source: 'local';
+  unavailableReason: 'buyer-unreachable' | null;
+  days: DesktopBuyerSpendDay[];
+};
+
 export type DesktopPaymentChannelSummary = {
   channelId: string;
   peerId: string;
   seller: string;
-  reserveMax: string;
+  sellerDisplayName: string | null;
+  onChainStateKnown: boolean;
+  reserveCeiling: string | null;
   cumulativeSigned: string;
-  /** Already settled on-chain (bigint string). cumulativeSigned - settledUsdc
+  /** Amount locked for this channel on-chain (bigint string). */
+  onChainDeposit: string;
+  /** Already settled on-chain (bigint string). cumulativeSigned - onChainSettled
       is what the seller can still claim against this channel. */
-  settledUsdc: string;
+  onChainSettled: string;
   reservedAt: number;
+  updatedAt: number;
   status: string;
   requestCount: number;
   /** Cumulative input tokens delivered over this channel (bigint string). */
@@ -314,11 +342,12 @@ export type DesktopBridge = {
   chatAiListConversations?: () => Promise<{ ok: boolean; data: unknown[] }>;
   chatAiListDiscoverRows?: () => Promise<{ ok: boolean; data?: unknown[]; error?: string }>;
   chatAiGetConversation?: (id: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
-  chatAiCreateConversation?: (service: string, provider?: string, peerId?: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
+  chatAiCreateConversation?: (service: string, provider?: string, peerId?: string, routeMode?: 'auto' | 'pinned') => Promise<{ ok: boolean; data?: unknown; error?: string }>;
   chatAiDeleteConversation?: (id: string) => Promise<{ ok: boolean }>;
   chatAiRenameConversation?: (id: string, title: string) => Promise<{ ok: boolean; error?: string }>;
   chatPrepareAttachments?: (conversationId: string, attachments: RawChatAttachment[]) => Promise<{ ok: boolean; data?: PreparedChatAttachment[]; error?: string }>;
   attachmentDownload?: (conversationId: string, attachmentId: string, suggestedName: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
+  chatGenerateImage?: (payload: { conversationId: string; prompt: string; peerId?: string; service: string; sourceImageAttachmentId?: string }) => Promise<{ ok: boolean; user?: { role: string; content: unknown; createdAt?: number }; assistant?: { role: string; content: unknown; createdAt?: number; meta?: Record<string, unknown> }; error?: string }>;
   chatAiSend?: (conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string, permissionMode?: ChatPermissionMode) => Promise<{ ok: boolean; error?: string }>;
   chatAiSendStream?: (conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string, permissionMode?: ChatPermissionMode) => Promise<{ ok: boolean; error?: string; stopReason?: ChatAiStreamStopReason }>;
   chatPeerPermissionModeGet?: (peerId: string) => Promise<{ ok: boolean; mode?: ChatPermissionMode; error?: string }>;
@@ -329,8 +358,8 @@ export type DesktopBridge = {
   telegramDisconnect?: () => Promise<{ ok: boolean; data?: TelegramBridgeStatus; error?: string }>;
   onTelegramStatusChanged?: (handler: (data: TelegramBridgeStatus) => void) => () => void;
   chatAiAbort?: (conversationId?: string) => Promise<{ ok: boolean }>;
-  chatAiSelectPeer?: (payload: { conversationId?: string | null; peerId?: string | null; service?: string | null; provider?: string | null }) => Promise<{ ok: boolean; error?: string }>;
-  chatSetBuyerDefaultRoute?: (payload: { peerId: string; service: string }) => Promise<{ ok: boolean; error?: string }>;
+  chatAiSelectPeer?: (payload: { conversationId?: string | null; peerId?: string | null; service?: string | null; provider?: string | null; routeMode?: 'auto' | 'pinned' | null }) => Promise<{ ok: boolean; error?: string }>;
+  chatSetBuyerDefaultRoute?: (payload: { peerId?: string; service: string }) => Promise<{ ok: boolean; error?: string }>;
   chatSyncModelPicker?: (payload: import('../../shared/model-picker.js').ModelPickerSnapshot) => Promise<{ ok: boolean }>;
   onChatDefaultRouteChanged?: (handler: (data: { peerId: string; service: string; provider: string | null }) => void) => () => void;
   chatAiGetProxyStatus?: () => Promise<{ ok: boolean; data: { running: boolean; port: number } }>;
@@ -421,6 +450,7 @@ export type DesktopBridge = {
   /** Closes any app-owned Fun checkout/sign-in popup windows (login-only flows produce no deposit, so the deposit watcher can't close them). */
   paymentsCloseCheckoutWindows?: () => Promise<{ ok: boolean }>;
   paymentsGetBuyerUsage?: () => Promise<{ ok: boolean; data: DesktopBuyerUsageTotals | null; error: string | null; lastActivityAt?: number | null }>;
+  paymentsGetBuyerSpendHistory?: () => Promise<{ ok: boolean; data: DesktopBuyerSpendHistory | null; error: string | null }>;
   paymentsGetChannels?: () => Promise<{ ok: boolean; data: DesktopPaymentChannelSummary[]; error: string | null }>;
   paymentsRequestCooperativeClose?: (opts: { peerId: string }) => Promise<{
     ok: boolean;
@@ -477,10 +507,14 @@ export type DesktopBridge = {
   vprFloatGetCompact?: () => Promise<boolean>;
   vprFloatUpdate?: (data: VprFloatData) => void;
   vprFloatAction?: (action: VprFloatAction) => void;
+  vprMenuBarGetState?: () => Promise<VprFloatData | null>;
+  vprMenuBarAction?: (action: import('../../shared/vpr-menu-bar.js').VprMenuBarAction) => void;
   onVprFloatData?: (handler: (data: VprFloatData) => void) => () => void;
   onVprFloatCompact?: (handler: (compact: boolean) => void) => () => void;
   onVprFloatClosed?: (handler: () => void) => () => void;
   onVprFloatAction?: (handler: (action: unknown) => void) => () => void;
+  onVprMenuBarData?: (handler: (data: VprFloatData | null) => void) => () => void;
+  onVprMenuBarVisibility?: (handler: (visible: boolean) => void) => () => void;
   onDesktopOpenFloatingWindow?: (handler: () => void) => () => void;
   onDesktopConnectMain?: (handler: () => void) => () => void;
   onDesktopDisconnectMain?: (handler: () => void) => () => void;
@@ -516,94 +550,8 @@ export type BuyerConversationSummary = {
   lastActiveAt: number;
 };
 
-export type VprFloatApp = {
-  name: string;
-  displayName: string;
-  /** Client names that attribute conversations to this app (see
-      SystemProxyProfileSummary.toolSlugs). */
-  toolSlugs?: string[];
-  /** The associated application's real icon, same as the main window's app
-      rows use; without one the pill falls back to a drawn brand mark. */
-  iconDataUri?: string;
-};
-
-/** Full catalog entries flow to the pill so its model list renders exactly
-    like the Home dropdown (brand icon, discounted price, badges). Type-only
-    import — no runtime cycle with core/state. */
-export type VprFloatModel = import('../core/state').VprModelCatalogEntry;
-
-/** One chat row in the pill's chat dropdown. */
-export type VprFloatConversation = {
-  id: string;
-  tool: string;
-  /** Display name: user label, else prompt snippet, else the session key. */
-  title: string;
-  /** Compact session identifier for the meta line ("019f83b7"). */
-  sessionShort: string;
-  /** Service id of the pinned model, or null when following the default route. */
-  pinnedServiceId: string | null;
-  lastActiveAt: number;
-  /** True while the chat is receiving traffic (recent request activity) —
-      drives the green pulse on its row. */
-  active: boolean;
-  /** Formatted spend for this chat ("$0.42", "<$0.01"), or null when nothing
-      has been attributed to it yet. */
-  cost: string | null;
-  /** Display name of the seller that served the chat's most recent request,
-      or null while no request has resolved. Rendered only when the
-      "Show routed peer" debug preference is on. */
-  routedPeerName: string | null;
-};
-
-/** Display payload the main window pushes to the floating pill. */
-export type VprFloatData = {
-  /** Connected app profiles the pill's app dropdown can switch between. */
-  apps: VprFloatApp[];
-  /** Which app the pill should track (profile name). */
-  selectedApp: string;
-  /** Models available in the pill's model dropdown: the same curated list as
-      the Home dropdown (favorites, then the recommended lineup). */
-  models: VprFloatModel[];
-  /** `provider:serviceId` keys of user-starred models — matching rows get a
-      star, same as the Home dropdown. */
-  favoriteKeys?: string[];
-  selectedModel: { provider: string; serviceId: string } | null;
-  /** Seller names for pinned models, keyed `provider:serviceId` — pins are per
-      model, so a model keeps its seller while another one is selected. */
-  pinnedSellers?: Record<string, string>;
-  /** Recent tool chats, newest first (per-chat routing scope picker). */
-  conversations: VprFloatConversation[];
-  /** Usage line: buyer-wide total tokens ("1.2M tok"). */
-  usageLabel: string;
-  /** Current available balance ("$12.34") — remaining, not spent. */
-  balanceLabel?: string;
-  /** True when the balance is effectively empty but the selected default
-      model is paid — the pill shows an "Add balance" shortcut. */
-  needsFunds?: boolean;
-  /** True while the buyer (connect) runtime is running. When false the pill
-      shows a "Not connected" state and hides recent chats. */
-  runtimeOn?: boolean;
-  /** Shortened buyer identity (signer address), e.g. "0x1234...abcd". */
-  identityLabel?: string;
-  /** Debug preference: chat rows name the routed seller next to the model. */
-  showRoutedPeer?: boolean;
-  /**
-   * True when traffic moved through the system proxy or the buyer proxy
-   * since the previous payload — drives the pulse on the app icon.
-   */
-  trafficActive: boolean;
-  /**
-   * One-shot: set only on the payload that opens the pill right after an app
-   * connects — the pill expands out of compact mode and opens its dropdown so
-   * the "start a new session" guidance is visible without a click.
-   */
-  openMenu?: boolean;
-};
-
-export type VprFloatAction =
-  | 'open-main'
-  | { type: 'open-deposit' }
-  | { type: 'select-model'; provider: string; serviceId: string }
-  | { type: 'pin-chat-model'; conversationId: string; provider: string; serviceId: string }
-  | { type: 'open-chat-app'; conversationId: string }
-  | { type: 'set-compact'; compact: boolean };
+export type VprFloatApp = VprCompactApp;
+export type VprFloatModel = VprCompactModel;
+export type VprFloatConversation = VprCompactConversation;
+export type VprFloatData = VprCompactSurfaceData;
+export type VprFloatAction = VprCompactSurfaceAction;

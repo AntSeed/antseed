@@ -3,7 +3,7 @@ import { test } from 'vitest';
 import type { DiscoverRow } from '../../core/state';
 import { projectRowsToVprModelCatalog, selectDefaultVprModel } from './model-catalog.js';
 import { favoriteModelKey } from './favorites.js';
-import { selectFavoriteVprCatalog, selectRecommendedVprCatalog } from './recommended.js';
+import { isFreeCatalogEntry, selectFavoriteVprCatalog, selectRecommendedVprCatalog } from './recommended.js';
 
 function discoverRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
   const peerId = overrides.peerId ?? 'p1';
@@ -164,4 +164,30 @@ test('selectFavoriteVprCatalog returns only starred entries in catalog order', (
   const favorites = selectFavoriteVprCatalog(catalog, new Set([favoriteModelKey('openai', 'obscure-model')]));
 
   assert.deepEqual(favorites.map((entry) => entry.serviceId), ['obscure-model']);
+});
+
+test('recommended exact matching prefers the base model over a more popular variant', () => {
+  const catalog = projectRowsToVprModelCatalog([
+    discoverRow({ provider: 'openai', serviceId: 'gpt-5.6-terra', peerId: 'p1' }),
+    discoverRow({ provider: 'openai', serviceId: 'gpt-5.6-terra', peerId: 'p2' }),
+    discoverRow({ provider: 'openai', serviceId: 'gpt-5.6', peerId: 'p3' }),
+  ]);
+
+  assert.equal(selectRecommendedVprCatalog(catalog)[0]?.serviceId, 'gpt-5.6');
+});
+
+test('a paid cached-input rate disqualifies an otherwise free entry', () => {
+  const [paidCached] = projectRowsToVprModelCatalog([
+    discoverRow({ inputUsdPerMillion: 0, outputUsdPerMillion: 0, cachedInputUsdPerMillion: 5 }),
+  ]);
+  const [noCached] = projectRowsToVprModelCatalog([
+    discoverRow({ inputUsdPerMillion: 0, outputUsdPerMillion: 0, cachedInputUsdPerMillion: null }),
+  ]);
+  const [freeCached] = projectRowsToVprModelCatalog([
+    discoverRow({ inputUsdPerMillion: 0, outputUsdPerMillion: 0, cachedInputUsdPerMillion: 0 }),
+  ]);
+
+  assert.equal(isFreeCatalogEntry(paidCached!), false);
+  assert.equal(isFreeCatalogEntry(noCached!), true);
+  assert.equal(isFreeCatalogEntry(freeCached!), true);
 });

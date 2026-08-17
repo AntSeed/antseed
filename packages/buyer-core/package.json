@@ -1,7 +1,7 @@
 {
   "name": "@antseed/buyer-core",
-  "version": "0.1.0",
-  "description": "Transport-agnostic AntSeed buyer machinery: request handling, payment negotiation, channel accounting. Portable \u2014 no Node-only dependencies",
+  "version": "0.1.5",
+  "description": "Transport-agnostic AntSeed buyer machinery: request handling, payment negotiation, channel accounting. Portable — no Node-only dependencies",
   "type": "module",
   "files": [
     "dist"
@@ -76,6 +76,10 @@
     "./interfaces": {
       "import": "./dist/interfaces.js",
       "types": "./dist/interfaces.d.ts"
+    },
+    "./errors": {
+      "import": "./dist/errors.js",
+      "types": "./dist/errors.d.ts"
     },
     "./payment-mux": {
       "import": "./dist/payment-mux.js",

@@ -8,7 +8,6 @@ import { execFileSync, spawn } from 'node:child_process';
 import path from 'node:path';
 import electronUpdater from 'electron-updater';
 const { autoUpdater } = electronUpdater;
-import { isIP } from 'node:net';
 import {
   ProcessManager,
   type RuntimeMode,
@@ -26,15 +25,13 @@ import {
   ensureDefaultPlugin,
 } from './runtime/plugins.js';
 import {
-  refreshPeerCache,
-  getNetworkSnapshot,
   onPeersChanged,
-  type DashboardNetworkPeer,
 } from './runtime/peer-cache.js';
 import {
   createWindow,
   createApplicationMenu,
   getMainWindow,
+  hideVprMenuBarWindow,
 } from './ui/window.js';
 import { createDesktopTray } from './ui/tray.js';
 import { ensureConfig } from './runtime/config-io.js';
@@ -72,6 +69,11 @@ import { LOCALHOST_URL } from './constants.js';
 import { registerAppIpc } from './ipc/app.js';
 import { registerDesktopIpc } from './ipc/desktop.js';
 import { registerFloatIpc } from './ipc/float.js';
+import {
+  initVprMenuBarIpc,
+  openVprMenuBar,
+  registerVprMenuBarIpc,
+} from './ipc/vpr-menu-bar.js';
 import { registerPaymentsIpc } from './ipc/payments.js';
 import { registerRuntimeIpc } from './ipc/runtime.js';
 import { registerSystemProxyIpc } from './ipc/system-proxy.js';
@@ -114,65 +116,6 @@ disableSandboxIfAppImageCannotSandbox();
 
 const logBuffer: LogEvent[] = [];
 let lastRuntimeActivityHash = '';
-
-function isPublicMetadataHost(rawHost: string): boolean {
-  const host = rawHost.trim();
-  if (host.length === 0 || host.includes('/') || host.includes('..') || host.includes('@')) {
-    return false;
-  }
-
-  const ipVersion = isIP(host);
-  if (ipVersion === 0) {
-    return false;
-  }
-
-  if (ipVersion === 4) {
-    const parts = host.split('.').map((part) => Number(part));
-    if (parts.length !== 4 || parts.some((part) => !Number.isFinite(part) || part < 0 || part > 255)) {
-      return false;
-    }
-    const a = parts[0] ?? 0;
-    const b = parts[1] ?? 0;
-    if (a === 10) return false;
-    if (a === 127) return false;
-    if (a === 172 && b >= 16 && b <= 31) return false;
-    if (a === 192 && b === 168) return false;
-    if (a === 169 && b === 254) return false;
-    if (a === 100 && b >= 64 && b <= 127) return false;
-    if (a === 198 && (b === 18 || b === 19)) return false;
-    if (a === 0) return false;
-    return true;
-  }
-
-  const normalized = host.toLowerCase();
-  if (normalized === '::1' || normalized === '::' || normalized.startsWith('::ffff:')) {
-    return false;
-  }
-  if (
-    normalized.startsWith('fe80:')
-    || normalized.startsWith('fe81:')
-    || normalized.startsWith('fe82:')
-    || normalized.startsWith('fe83:')
-    || normalized.startsWith('fe84:')
-    || normalized.startsWith('fe85:')
-    || normalized.startsWith('fe86:')
-    || normalized.startsWith('fe87:')
-    || normalized.startsWith('fe88:')
-    || normalized.startsWith('fe89:')
-    || normalized.startsWith('fe8a:')
-    || normalized.startsWith('fe8b:')
-    || normalized.startsWith('fe8c:')
-    || normalized.startsWith('fe8d:')
-    || normalized.startsWith('fe8e:')
-    || normalized.startsWith('fe8f:')
-    || normalized.startsWith('fc')
-    || normalized.startsWith('fd')
-  ) {
-    return false;
-  }
-
-  return true;
-}
 
 /**
  * Kill any leftover process still listening on the buyer proxy port after the
@@ -329,6 +272,7 @@ registerPaymentsIpc();
 registerDesktopIpc();
 registerAppIpc();
 registerFloatIpc();
+registerVprMenuBarIpc();
 registerSystemProxyIpc({ processManager });
 registerRuntimeIpc({
   processManager,
@@ -348,14 +292,15 @@ registerRuntimeIpc({
 
 // ── Incoming USDC watcher + P2P relay sweep ──
 //
-// While the in-app deposit panel is open, the renderer starts this watcher.
-// It polls the hot wallet's USDC balance; any increase is treated as an
-// incoming deposit (QR transfer or Coinbase Onramp delivery). The funds are
-// then swept into AntseedDeposits gaslessly: the hot wallet signs an EIP-3009
-// authorization addressed to the AntseedDepositRelay contract and the buyer
-// daemon broadcasts a SweepRequest to connected peers; a permissionless
-// relayer submits it on-chain and earns the contract's fixed USDC fee
-// (docs/protocol/spec/09-deposit-sweep.md). The hot wallet never needs ETH.
+// The buyer daemon owns the hot-wallet watcher: it polls the USDC balance,
+// treats any increase as an incoming deposit (QR transfer or Coinbase Onramp
+// delivery), signs an EIP-3009 authorization addressed to the
+// AntseedDepositRelay contract, and offers it to connected peers; a
+// permissionless relayer submits it on-chain and earns the contract's fixed
+// USDC fee (docs/protocol/spec/09-deposit-sweep.md). The hot wallet never
+// needs ETH. While the in-app deposit panel is open, the renderer promotes
+// the daemon's watcher to a fast cadence and mirrors its progress events
+// (payments/deposit-sweep.ts).
 
 // ── AI Chat IPC Handlers ──
 const piChatEngine = registerPiChatHandlers({
@@ -400,26 +345,6 @@ const piChatEngine = registerPiChatHandlers({
   },
   appendSystemLog: (line) => {
     appendLog("connect", "system", line);
-  },
-  getNetworkPeers: async () => {
-    await refreshPeerCache();
-    const snapshot = getNetworkSnapshot();
-    if (!snapshot.ok) {
-      return [];
-    }
-    return snapshot.peers
-      .map((peer: DashboardNetworkPeer) => ({
-        peerId: typeof peer.peerId === "string" ? peer.peerId : "",
-        displayName: peer.displayName ?? undefined,
-        host: typeof peer.host === "string" ? peer.host.trim() : "",
-        port: Number(peer.port) || 0,
-        providers: Array.isArray(peer.providers) ? peer.providers.map((provider) => String(provider)) : [],
-        services: Array.isArray(peer.services) ? peer.services.map((s) => String(s)) : [],
-      }))
-      .filter((peer) => peer.host.length > 0
-        && isPublicMetadataHost(peer.host)
-        && peer.port > 0
-        && peer.port <= 65535);
   },
 });
 
@@ -498,16 +423,39 @@ app.whenReady().then(async () => {
   startSystemProxyWatchdog();
 
   const showFloatingWindow = () => {
-    const win = getMainWindow();
-    if (win) {
-      win.webContents.send('desktop:open-floating-window');
-      return;
+    if (!getMainWindow()) {
+      createWindow(
+        { appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl },
+        { show: false },
+      );
     }
-    showMainWindow();
-    getMainWindow()?.webContents.once('did-finish-load', () => {
-      getMainWindow()?.webContents.send('desktop:open-floating-window');
-    });
+    const win = getMainWindow();
+    if (!win) return;
+    const open = (): void => {
+      if (!win.isDestroyed()) win.webContents.send('desktop:open-floating-window');
+    };
+    if (win.webContents.isLoadingMainFrame()) win.webContents.once('did-finish-load', open);
+    else open();
   };
+
+  initVprMenuBarIpc({
+    ensureMainWindow: (visible) => {
+      if (!getMainWindow()) {
+        createWindow(
+          { appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl },
+          { show: visible },
+        );
+      }
+      const win = getMainWindow();
+      if (visible && win) {
+        if (win.isMinimized()) win.restore();
+        win.show();
+        win.focus();
+      }
+      return win;
+    },
+    showFloatingWindow,
+  });
 
   const toggleMainConnection = () => {
     const running = getCombinedProcessState().some((state) => state.mode === 'connect' && state.running);
@@ -518,6 +466,8 @@ app.whenReady().then(async () => {
     appName: APP_NAME,
     iconPath: TRAY_ICON_PATH,
     onShow: showMainWindow,
+    onPrimaryClick: openVprMenuBar,
+    onBeforeContextMenu: hideVprMenuBarWindow,
     buildMenu: () => buildSystemProxyTrayMenu(showMainWindow, showFloatingWindow, toggleMainConnection),
   });
   refreshTrayMenu();

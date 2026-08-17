@@ -80,16 +80,19 @@
   }
 }
 
-/* ---------- Filter chips (Type / Category / Sort) ---------- */
+/* ---------- Filter chips (Type / Family / Sort) ---------- */
 
 .filterRow {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
+  min-width: 0;
 }
 
 .filterPill {
   display: inline-flex;
+  min-width: 0;
   border-radius: 16px;
   border: 1px solid var(--border);
   background: var(--bg-card);
@@ -98,8 +101,9 @@
 .filterPill select {
   appearance: none;
   -webkit-appearance: none;
-  max-width: 160px;
-  padding: 6px 24px 6px 12px;
+  min-width: 0;
+  max-width: 112px;
+  padding: 6px 22px 6px 9px;
   border: none;
   border-radius: 16px;
   background:

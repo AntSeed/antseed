@@ -13,6 +13,8 @@ import {
   CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
   CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
   CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
+  CONNECTION_CAPABILITY_SIGNED_SDP_V1,
+  CONNECTION_CAPABILITY_TCP_ENC_V1,
 } from '../src/types/protocol.js';
 import { METADATA_VERSION } from '../src/discovery/peer-metadata.js';
 
@@ -108,6 +110,8 @@ describe('PeerAnnouncer capabilities', () => {
     expect(meta?.capabilities).toEqual([
       CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
       CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
+      CONNECTION_CAPABILITY_SIGNED_SDP_V1,
+      CONNECTION_CAPABILITY_TCP_ENC_V1,
     ]);
   });
 
@@ -121,6 +125,8 @@ describe('PeerAnnouncer capabilities', () => {
     expect(meta?.capabilities).toEqual([
       CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
       CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
+      CONNECTION_CAPABILITY_SIGNED_SDP_V1,
+      CONNECTION_CAPABILITY_TCP_ENC_V1,
       CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
     ]);
   });

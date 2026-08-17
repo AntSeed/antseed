@@ -1,4 +1,5 @@
 import {
+  ANTSEED_FAULT_ATTRIBUTION_HEADER,
   ANTSEED_STREAMING_RESPONSE_HEADER,
   ANTSEED_SPENDING_AUTH_HEADER,
   type SerializedHttpRequest,
@@ -26,6 +27,7 @@ import {
   selectTargetProtocolForRequest,
 } from '@antseed/api-adapter';
 import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 } from '@antseed/protocol/messages';
+import { buyerFault, peerFault } from './errors.js';
 
 export interface RequestStreamResponseMetadata {
   streaming: boolean;
@@ -53,6 +55,7 @@ export interface BuyerRequestHandlerConfig {
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 5 * 60_000;
+const DEFAULT_MAX_STREAM_DURATION_MS = 30 * 60_000;
 const DEFAULT_RESPONSE_AUTH_GRACE_MS = 30_000;
 
 export interface BuyerRequestHandlerDeps {
@@ -90,7 +93,7 @@ export class BuyerRequestHandler {
     options?: RequestExecutionOptions,
   ): Promise<SerializedHttpResponse> {
     if (!req.requestId || typeof req.requestId !== "string") {
-      throw new Error("requestId must be a non-empty string");
+      throw buyerFault("requestId must be a non-empty string", 'invalid-request');
     }
 
     const opName = callbacks ? "sendRequestStream" : "sendRequest";
@@ -163,7 +166,7 @@ export class BuyerRequestHandler {
     const executeRequest = (): Promise<SerializedHttpResponse> => new Promise<SerializedHttpResponse>((resolve, reject) => {
       const timeoutMs = this._config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
       const maxStreamBufferBytes = Math.max(1, this._config.maxStreamBufferBytes ?? 16 * 1024 * 1024);
-      const maxStreamDurationMs = Math.max(1, this._config.maxStreamDurationMs ?? 5 * 60_000);
+      const maxStreamDurationMs = Math.max(1, this._config.maxStreamDurationMs ?? DEFAULT_MAX_STREAM_DURATION_MS);
       const streamInitialResponseTimeoutMs = callbacks ? Math.max(timeoutMs, 90_000) : timeoutMs;
       const streamIdleTimeoutMs = Math.max(timeoutMs, 60_000);
       let settled = false;
@@ -254,7 +257,7 @@ export class BuyerRequestHandler {
         if (activeTimeout) clearTimeout(activeTimeout);
         cleanupAbortListener();
         cleanupConnectionListener();
-        const cleaned = stripStreamingHeader(response);
+        const cleaned = stripPeerControlledResponseHeaders(stripStreamingHeader(response));
         debugLog(`[BuyerRequest] Response for ${req.requestId.slice(0, 8)}: status=${cleaned.statusCode} (${Date.now() - startTime}ms, ${cleaned.body.length}b)`);
         resolve(cleaned);
       };
@@ -276,14 +279,17 @@ export class BuyerRequestHandler {
             streamStarted = true;
             streamStartedAtMs = Date.now();
             streamBufferedBytes = 0;
-            streamStartResponse = stripStreamingHeader(response);
+            streamStartResponse = stripPeerControlledResponseHeaders(stripStreamingHeader(response));
             debugLog(`[BuyerRequest] Stream started for ${req.requestId.slice(0, 8)}; idle-timeout=${streamIdleTimeoutMs}ms`);
             resetTimeout(streamIdleTimeoutMs);
             callbacks?.onResponseStart?.(streamStartResponse, { streaming: true });
             return;
           }
 
-          callbacks?.onResponseStart?.(stripStreamingHeader(response), { streaming: false });
+          callbacks?.onResponseStart?.(
+            stripPeerControlledResponseHeaders(stripStreamingHeader(response)),
+            { streaming: false },
+          );
           finish(response);
         },
         (chunk) => {
@@ -308,7 +314,10 @@ export class BuyerRequestHandler {
               const nextBufferedBytes = streamBufferedBytes + chunk.data.length;
               if (nextBufferedBytes > maxStreamBufferBytes) {
                 mux.cancelProxyRequest(req.requestId);
-                fail(new Error(`Stream ${req.requestId} exceeded max buffered size (${maxStreamBufferBytes} bytes)`));
+                fail(buyerFault(
+                  `Stream ${req.requestId} exceeded max buffered size (${maxStreamBufferBytes} bytes)`,
+                  'buyer-stream-limit',
+                ));
                 return;
               }
               streamBufferedBytes = nextBufferedBytes;
@@ -319,7 +328,10 @@ export class BuyerRequestHandler {
           if (!chunk.done) return;
 
           if (!streamStartResponse) {
-            fail(new Error(`Stream ${req.requestId} ended before response start`));
+            fail(peerFault(
+              `Stream ${req.requestId} ended before response start`,
+              'peer-protocol-violation',
+            ));
             return;
           }
 
@@ -559,6 +571,19 @@ function stripStreamingHeader(response: SerializedHttpResponse): SerializedHttpR
   const headers = { ...response.headers };
   delete headers[ANTSEED_STREAMING_RESPONSE_HEADER];
   return { ...response, headers };
+}
+
+export function stripPeerControlledResponseHeaders(
+  response: SerializedHttpResponse,
+): SerializedHttpResponse {
+  const headers = Object.fromEntries(
+    Object.entries(response.headers).filter(
+      ([name]) => name.toLowerCase() !== ANTSEED_FAULT_ATTRIBUTION_HEADER,
+    ),
+  );
+  return Object.keys(headers).length === Object.keys(response.headers).length
+    ? response
+    : { ...response, headers };
 }
 
 function shouldExpectResponseAuth(

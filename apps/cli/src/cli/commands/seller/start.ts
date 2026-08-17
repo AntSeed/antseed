@@ -35,6 +35,7 @@ import { resolveEffectiveSellerConfig, type SellerRuntimeOverrides } from '../..
 import { ensureDerivedIdentityDisplayName } from '../../../config/identity-display-name.js'
 import { AntAgentProvider, loadAntAgent, type AntAgentDefinition } from '@antseed/ant-agent'
 import { resolvePluginPackage } from '../../../plugins/registry.js'
+import { startupReachabilityWarning } from './reachability.js'
 
 function getStateFile(dataDir: string): string {
   return join(dataDir, 'daemon.state.json')
@@ -306,7 +307,10 @@ export function buildSellerPluginRuntimeEnv(
     runtimeEnv['ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON'] = JSON.stringify(serviceUnitBillingModels)
   }
   if (providerCfg.baseUrl) {
-    runtimeEnv['OPENAI_BASE_URL'] = providerCfg.baseUrl
+    const baseUrlKey = resolvePluginPackage(providerCfg.plugin) === '@antseed/provider-local-llm'
+      ? 'LOCAL_LLM_BASE_URL'
+      : 'OPENAI_BASE_URL'
+    runtimeEnv[baseUrlKey] = providerCfg.baseUrl
   }
   if (providerCfg.pathRewrite && Object.keys(providerCfg.pathRewrite).length > 0) {
     runtimeEnv['OPENAI_PATH_REWRITE_JSON'] = JSON.stringify(providerCfg.pathRewrite)
@@ -755,6 +759,11 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         console.log(chalk.dim(`  Peer ID: ${node.peerId ?? 'unknown'}`))
         console.log(chalk.dim(`  DHT port: ${node.dhtPort}`))
         console.log(chalk.dim(`  Signaling port: ${node.signalingPort}`))
+        const reachabilityWarning = startupReachabilityWarning(config.seller.publicAddress)
+        if (reachabilityWarning) {
+          console.log('')
+          console.warn(chalk.yellow.bold(reachabilityWarning))
+        }
         if (requestedVerifierIds.length > 0) {
           console.log(chalk.dim(`  Verifiers advertised: ${requestedVerifierIds.join(', ')}`))
         }

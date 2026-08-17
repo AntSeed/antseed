@@ -7,7 +7,7 @@ import { homedir } from 'node:os'
 import { createConnection } from 'node:net'
 import { getGlobalOptions } from '../types.js'
 import { loadConfig } from '../../../config/loader.js'
-import { AntseedNode, DepositsClient, getInstance, resolveChainConfig } from '@antseed/node'
+import { AntseedNode, DepositRelayClient, DepositsClient, getInstance, peerRelaysSweeps, resolveChainConfig } from '@antseed/node'
 import type { NodePaymentsConfig } from '@antseed/node'
 import { OFFICIAL_BOOTSTRAP_NODES, parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
@@ -15,6 +15,7 @@ import { loadRouterPlugin, loadVerifierPlugin, buildPluginConfig, getPackageVers
 import { ensurePluginsUpToDate } from '../../../plugins/drift.js'
 import { resolvePluginPackage } from '../../../plugins/registry.js'
 import { BuyerProxy } from '../../../proxy/buyer-proxy.js'
+import { DepositWatcher } from '../../../proxy/deposit-watcher.js'
 import { curatedVerifierIds, resolveVerifierPolicy, type VerifierPolicy } from '../../../plugins/verifier.js'
 import { resolveEffectiveBuyerConfig, type BuyerRuntimeOverrides } from '../../../config/effective.js'
 import type { BuyerCLIConfig } from '../../../config/types.js'
@@ -147,7 +148,7 @@ async function isPortReachable(port: number, timeoutMs = 700): Promise<boolean> 
   })
 }
 
-async function isCompatibleBuyerProxy(port: number, timeoutMs = 1200): Promise<boolean> {
+export async function isCompatibleBuyerProxy(port: number, timeoutMs = 1200): Promise<boolean> {
   const overallBudgetMs = Math.max(1, timeoutMs)
   const startedAt = Date.now()
   const reachabilityTimeoutMs = Math.min(overallBudgetMs, 700)
@@ -169,10 +170,6 @@ async function isCompatibleBuyerProxy(port: number, timeoutMs = 1200): Promise<b
     if (antseedHeaderNames.some((header) => response.headers.has(header))) return true
 
     const body = (await response.text()).toLowerCase()
-    // Any of these markers indicate we reached an Antseed buyer proxy on this
-    // port. The `no_peer_pinned` case is the common one now that auto
-    // selection is disabled — a fresh proxy with no session pin answers
-    // /v1/models with a structured `{ error: { type: 'no_peer_pinned', ... } }`.
     return body.includes('no sellers available on the network')
       || body.includes('no peers support')
       || body.includes('p2p request failed')
@@ -353,8 +350,15 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       console.log(chalk.dim(`  max per-request USDC: ${(Number(maxPerRequestUsdc) / 1_000_000).toFixed(6)}`))
       console.log(chalk.dim(`  max reserve USDC: ${(Number(maxReserveAmountUsdc) / 1_000_000).toFixed(6)}`))
       console.log(chalk.dim(`  min peer reputation: ${effectiveBuyerConfig.minPeerReputation}`))
+      console.log(chalk.dim(
+        `  auto routing: min trust=${effectiveBuyerConfig.routingPreferences.minTrustScore}, `
+        + `max input=${effectiveBuyerConfig.routingPreferences.maxInputUsdPerMillion} USD/1M, `
+        + `prefer free=${effectiveBuyerConfig.routingPreferences.preferFreePeers ? 'yes' : 'no'}`,
+      ))
       console.log(chalk.dim(`  peer refresh interval: ${effectiveBuyerConfig.peerRefreshIntervalMs}ms`))
       console.log(chalk.dim(`  metadata fetch timeout: ${effectiveBuyerConfig.metadataFetchTimeoutMs}ms`))
+      console.log(chalk.dim(`  request timeout: ${effectiveBuyerConfig.requestTimeoutMs}ms`))
+      console.log(chalk.dim(`  max stream duration: ${effectiveBuyerConfig.maxStreamDurationMs}ms`))
       console.log(chalk.dim(`  metadata v2 service opt-out: ${effectiveBuyerConfig.disableMetadataV2Services ? 'enabled' : 'disabled'}`))
       if (logFilter.length > 0) {
         console.log(chalk.dim(`  debug log filter: ${logFilter}`))
@@ -363,10 +367,10 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       if (pinnedPeerId) {
         console.log(chalk.yellow(`  pinned peer: ${pinnedPeerId} (router bypassed)`))
       } else {
-        console.log(chalk.yellow('  pinned peer: none — auto-selection is disabled, requests will fail until a peer is pinned'))
-        console.log(chalk.dim('    Pin a peer with:  antseed network browse → antseed buyer connection set --peer <peerId>'))
-        console.log(chalk.dim('    Or per-request:   x-antseed-pin-peer: <peerId> header'))
-        console.log(chalk.dim('    Or in model:      <peerId>@<model>'))
+        console.log(chalk.yellow('  pinned peer: none — model-only requests use the configured Price + Trust ranking'))
+        console.log(chalk.dim('    Explicit session pin: antseed network browse → antseed buyer connection set --peer <peerId>'))
+        console.log(chalk.dim('    Explicit request pin: x-antseed-pin-peer: <peerId> header'))
+        console.log(chalk.dim('    Explicit model pin:   <peerId>@<model>'))
       }
       console.log('')
 
@@ -377,6 +381,8 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         dataDir: globalOpts.dataDir,
         configPath: globalOpts.config,
         metadataFetchTimeoutMs: effectiveBuyerConfig.metadataFetchTimeoutMs,
+        requestTimeoutMs: effectiveBuyerConfig.requestTimeoutMs,
+        maxStreamDurationMs: effectiveBuyerConfig.maxStreamDurationMs,
         payments: paymentsConfig,
         verification: effectiveBuyerConfig.verification,
       })
@@ -447,6 +453,8 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         node,
         pinnedPeerId,
         dataDir: globalOpts.dataDir,
+        configPath: globalOpts.config,
+        routingPreferences: effectiveBuyerConfig.routingPreferences,
         backgroundRefreshIntervalMs: effectiveBuyerConfig.peerRefreshIntervalMs,
         ...(verifierPolicy ? { verifier: verifierPolicy } : {}),
       })
@@ -473,6 +481,47 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         }
       }
 
+      // Hot-wallet deposit watcher (auto-sweep): incoming USDC is swept into
+      // the deposits balance gaslessly via the relayer network. Skipped when
+      // another daemon owns the proxy port — it already runs a watcher, and a
+      // second signer against the same wallet would race it.
+      let depositWatcher: DepositWatcher | null = null
+      const depositRelayAddress = cryptoOverrides?.depositRelayAddress || chainConfig.depositRelayAddress
+      if (ownsProxyListener && paymentsConfig?.enabled && depositRelayAddress) {
+        const identity = node.identity!
+        depositWatcher = new DepositWatcher({
+          wallet: identity.wallet,
+          address: identity.wallet.address,
+          depositsClient: new DepositsClient({
+            rpcUrl: chainConfig.rpcUrl,
+            ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
+            contractAddress: chainConfig.depositsContractAddress,
+            usdcAddress: chainConfig.usdcContractAddress,
+            evmChainId: chainConfig.evmChainId,
+          }),
+          relayClient: new DepositRelayClient({
+            rpcUrl: chainConfig.rpcUrl,
+            ...(chainConfig.fallbackRpcUrls ? { fallbackRpcUrls: chainConfig.fallbackRpcUrls } : {}),
+            contractAddress: depositRelayAddress,
+            evmChainId: chainConfig.evmChainId,
+          }),
+          usdcAddress: chainConfig.usdcContractAddress,
+          evmChainId: chainConfig.evmChainId,
+          depositRelayAddress,
+          dispatch: (payload) => node.dispatchSweepRequest(payload),
+          connectRelayers: async () => {
+            const relayers = (await node.discoverPeers()).filter(peerRelaysSweeps)
+            await Promise.allSettled(relayers.slice(0, 4).map((peer) => node.connectToPeer(peer)))
+          },
+          getReceipt: async (authNonce) => proxy.getSweepReceipt(authNonce),
+        })
+        proxy.setDepositWatcher(depositWatcher)
+        if (effectiveBuyerConfig.autoSweep !== false) {
+          depositWatcher.startIdle()
+          console.log(chalk.dim('Auto-sweep: watching the hot wallet — incoming USDC deposits automatically (buyer.autoSweep=false disables).'))
+        }
+      }
+
       const proxyUrl = `http://localhost:${proxyPort}`
       console.log('')
       if (toolHints.length > 0) {
@@ -492,6 +541,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
 
       setupShutdownHandler(async () => {
         nodeSpinner.start('Shutting down...')
+        depositWatcher?.stop()
         if (ownsProxyListener) await proxy.stop()
         await node.stop()
         nodeSpinner.succeed('Disconnected. All channels finalized.')

@@ -53,15 +53,20 @@ export function initModelPickerSync({ bridge, uiState }: {
     const favoriteEntries = selectFavoriteVprCatalog(uiState.vprModelCatalog, favorites);
     const recommended = selectRecommendedVprCatalog(uiState.vprModelCatalog)
       .filter((entry) => !favorites.has(catalogEntryKey(entry)));
-    const entries: VprModelCatalogEntry[] = [...favoriteEntries, ...recommended];
+    // External model pickers currently dispatch chat requests. Image-only
+    // endpoints remain browseable in VPR but must not leak into those pickers.
+    const entries: VprModelCatalogEntry[] = [...favoriteEntries, ...recommended]
+      .filter((entry) => entry.kind === 'text');
     const selection = uiState.vprRouteSelection.model;
     if (
       selection
       && !entries.some((entry) => entry.provider === selection.provider && entry.serviceId === selection.serviceId)
     ) {
-      const selected = uiState.vprModelCatalog.find(
-        (entry) => entry.provider === selection.provider && entry.serviceId === selection.serviceId,
-      );
+      const selected = uiState.vprModelCatalog.find((entry) => (
+        entry.provider === selection.provider
+        && entry.serviceId === selection.serviceId
+        && entry.kind === 'text'
+      ));
       if (selected) entries.unshift(selected);
     }
     const models: ModelPickerEntry[] = entries.map((entry) => {
@@ -78,7 +83,13 @@ export function initModelPickerSync({ bridge, uiState }: {
     });
     return {
       models,
-      selected: selection ? { provider: selection.provider, serviceId: selection.serviceId } : null,
+      selected: selection && uiState.vprModelCatalog.find((entry) => (
+        entry.provider === selection.provider
+        && entry.serviceId === selection.serviceId
+        && entry.kind === 'text'
+      ))
+        ? { provider: selection.provider, serviceId: selection.serviceId }
+        : null,
     };
   };
 

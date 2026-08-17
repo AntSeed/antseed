@@ -1,6 +1,10 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
+import {
+  DEFAULT_MODEL_ROUTING_PREFERENCES,
+  type ModelRoutingPreferences,
+} from '@antseed/node/model-routing';
 import type {
   HierarchicalPricingConfig,
   AntseedConfig,
@@ -348,6 +352,46 @@ function normalizeMinPeerReputation(value: unknown, fallback: number): number {
   return value === 50 ? fallback : value;
 }
 
+function normalizeRoutingPeerIds(value: unknown, fallback: string[]): string[] {
+  if (value === undefined) return [...fallback];
+  if (!Array.isArray(value)) return [String(value)];
+  return value.map((entry) => String(entry));
+}
+
+function cloneRoutingPreferences(value: ModelRoutingPreferences): ModelRoutingPreferences {
+  return {
+    ...value,
+    allowedPeerIds: [...value.allowedPeerIds],
+    blockedPeerIds: [...value.blockedPeerIds],
+  };
+}
+
+function mergeBuyerRoutingPreferences(
+  fallback: ModelRoutingPreferences,
+  value: unknown,
+): ModelRoutingPreferences {
+  if (!isRecord(value)) {
+    return cloneRoutingPreferences(fallback);
+  }
+
+  const preferFreePeers = value['preferFreePeers'];
+  const maxInputUsdPerMillion = value['maxInputUsdPerMillion'];
+  const minTrustScore = value['minTrustScore'];
+  return {
+    preferFreePeers: preferFreePeers === undefined
+      ? fallback.preferFreePeers
+      : preferFreePeers as boolean,
+    maxInputUsdPerMillion: maxInputUsdPerMillion === undefined
+      ? fallback.maxInputUsdPerMillion
+      : toFiniteOrNaN(maxInputUsdPerMillion),
+    minTrustScore: minTrustScore === undefined
+      ? fallback.minTrustScore
+      : toFiniteOrNaN(minTrustScore),
+    allowedPeerIds: normalizeRoutingPeerIds(value['allowedPeerIds'], fallback.allowedPeerIds),
+    blockedPeerIds: normalizeRoutingPeerIds(value['blockedPeerIds'], fallback.blockedPeerIds),
+  };
+}
+
 function cloneBuyerVerification(
   value: AntseedConfig['buyer']['verification'],
 ): AntseedConfig['buyer']['verification'] {
@@ -378,20 +422,29 @@ function mergeBuyerConfig(
   defaults: AntseedConfig['buyer'],
   value: unknown
 ): AntseedConfig['buyer'] {
+  const defaultRoutingPreferences = defaults.routingPreferences ?? DEFAULT_MODEL_ROUTING_PREFERENCES;
   if (!isRecord(value)) {
     return {
       maxPricing: mergeHierarchicalPricing(defaults.maxPricing, undefined),
       minPeerReputation: defaults.minPeerReputation,
+      routingPreferences: cloneRoutingPreferences(defaultRoutingPreferences),
       proxyPort: defaults.proxyPort,
       peerRefreshIntervalMs: defaults.peerRefreshIntervalMs,
       metadataFetchTimeoutMs: defaults.metadataFetchTimeoutMs,
+      requestTimeoutMs: defaults.requestTimeoutMs,
+      maxStreamDurationMs: defaults.maxStreamDurationMs,
       disableMetadataV2Services: defaults.disableMetadataV2Services,
+      autoSweep: defaults.autoSweep,
       ...(normalizeBuyerVerification(undefined, defaults.verification)),
     };
   }
   return {
     maxPricing: mergeHierarchicalPricing(defaults.maxPricing, value['maxPricing']),
     minPeerReputation: normalizeMinPeerReputation(value['minPeerReputation'], defaults.minPeerReputation),
+    routingPreferences: mergeBuyerRoutingPreferences(
+      defaultRoutingPreferences,
+      value['routingPreferences'],
+    ),
     proxyPort: typeof value['proxyPort'] === 'number'
       ? value['proxyPort']
       : defaults.proxyPort,
@@ -401,10 +454,21 @@ function mergeBuyerConfig(
     metadataFetchTimeoutMs: typeof value['metadataFetchTimeoutMs'] === 'number'
       ? value['metadataFetchTimeoutMs']
       : defaults.metadataFetchTimeoutMs,
+    requestTimeoutMs: typeof value['requestTimeoutMs'] === 'number'
+      ? value['requestTimeoutMs']
+      : defaults.requestTimeoutMs,
+    maxStreamDurationMs: typeof value['maxStreamDurationMs'] === 'number'
+      ? value['maxStreamDurationMs']
+      : defaults.maxStreamDurationMs,
     disableMetadataV2Services: normalizeBooleanConfigValue(
       value['disableMetadataV2Services'],
       defaults.disableMetadataV2Services,
       'buyer.disableMetadataV2Services',
+    ),
+    autoSweep: normalizeBooleanConfigValue(
+      value['autoSweep'],
+      defaults.autoSweep ?? true,
+      'buyer.autoSweep',
     ),
     ...(normalizeBuyerVerification(value['verification'], defaults.verification)),
   };

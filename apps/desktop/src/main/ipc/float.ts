@@ -19,10 +19,60 @@ import {
   openFloatWindow,
   setFloatWindowCompact,
   setFloatWindowExpanded,
+  updateVprMenuBarWindow,
 } from '../ui/window.js';
 
 /** Last payload pushed to the pill, replayed when it reopens. */
 let lastVprFloatData: unknown;
+
+export function getLastVprFloatData(): unknown {
+  return lastVprFloatData;
+}
+
+export function routeVprSurfaceAction(action: unknown): void {
+  const type = action && typeof action === 'object'
+    ? (action as { type?: unknown }).type
+    : null;
+  if (action === 'open-main' || type === 'open-main') {
+    const win = getMainWindow();
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+      const navigate = (): void => {
+        if (!win.isDestroyed()) win.webContents.send('desktop:navigate-view', 'home');
+      };
+      if (win.webContents.isLoadingMainFrame()) win.webContents.once('did-finish-load', navigate);
+      else navigate();
+    }
+    return;
+  }
+  if (type === 'open-deposit') {
+    const win = getMainWindow();
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+      const navigate = (): void => {
+        if (!win.isDestroyed()) win.webContents.send('desktop:navigate-view', 'deposit');
+      };
+      if (win.webContents.isLoadingMainFrame()) win.webContents.once('did-finish-load', navigate);
+      else navigate();
+    }
+    return;
+  }
+  if (type === 'set-compact') {
+    setFloatWindowCompact((action as { compact?: unknown }).compact === true);
+    return;
+  }
+  const win = getMainWindow();
+  if (!win) return;
+  const send = (): void => {
+    if (!win.isDestroyed()) win.webContents.send('vpr-float:action', action);
+  };
+  if (win.webContents.isLoadingMainFrame()) win.webContents.once('did-finish-load', send);
+  else send();
+}
 
 export function registerFloatIpc(): void {
   ipcMain.handle('vpr-float:open', (_event, data: unknown) => {
@@ -46,6 +96,7 @@ export function registerFloatIpc(): void {
   ipcMain.on('vpr-float:update', (_event, data: unknown) => {
     lastVprFloatData = data;
     getFloatWindow()?.webContents.send('vpr-float:data', data);
+    updateVprMenuBarWindow(data);
   });
 
   // Grow/shrink the pill while one of its custom dropdowns is open.
@@ -95,40 +146,5 @@ export function registerFloatIpc(): void {
     }
   });
 
-  ipcMain.on('vpr-float:action', (_event, action: unknown) => {
-    if (action === 'open-main') {
-      const win = getMainWindow();
-      if (win) {
-        if (win.isMinimized()) win.restore();
-        win.show();
-        win.focus();
-        // Always land on the home screen, wherever the window was left.
-        win.webContents.send('desktop:navigate-view', 'home');
-      }
-      return;
-    }
-    if (
-      typeof action === 'object' && action !== null
-      && (action as { type?: unknown }).type === 'open-deposit'
-    ) {
-      const win = getMainWindow();
-      if (win) {
-        if (win.isMinimized()) win.restore();
-        win.show();
-        win.focus();
-        win.webContents.send('desktop:navigate-view', 'deposit');
-      }
-      return;
-    }
-    if (
-      typeof action === 'object' && action !== null
-      && (action as { type?: unknown }).type === 'set-compact'
-    ) {
-      setFloatWindowCompact((action as { compact?: unknown }).compact === true);
-      return;
-    }
-    // Structured actions (e.g. model selection) are handled by the main
-    // window's renderer, which owns routing state.
-    getMainWindow()?.webContents.send('vpr-float:action', action);
-  });
+  ipcMain.on('vpr-float:action', (_event, action: unknown) => routeVprSurfaceAction(action));
 }

@@ -1,4 +1,11 @@
-import type { PeerInfo, SerializedHttpRequest } from '@antseed/node'
+import {
+  buildNetworkServiceOffers,
+  selectLowestPricedNetworkServiceOffer,
+  type NetworkServiceOffer,
+  type PeerInfo,
+  type SerializedHttpRequest,
+} from '@antseed/node'
+import { canonicalModelKey } from '@antseed/node/model-identity'
 import {
   extractRequestBodyFields,
   inferProviderDefaultServiceApiProtocols,
@@ -11,6 +18,7 @@ import { log, normalizePeerId } from './request-utils.js'
 export type PeerProtocolRoutePlan = {
   provider: string
   selection: TargetProtocolSelection | null
+  serviceId: string | null
 }
 
 export type CandidatePeerRouteSelection = {
@@ -55,7 +63,7 @@ function getPeerProviderProtocols(
   if (fromMetadata) {
     if (normalizedRequestedService) {
       const directMatchKey = Object.keys(fromMetadata).find(
-        (key) => key.toLowerCase() === normalizedRequestedService.toLowerCase(),
+        (key) => isRequestedServiceMatch(key, normalizedRequestedService),
       )
       if (directMatchKey && fromMetadata[directMatchKey]?.length) {
         log(
@@ -90,26 +98,33 @@ function getPeerProviderProtocols(
   return inferred
 }
 
-function getDirectServiceProtocols(
+// Service ids like `...-coding-only` restrict what the seller accepts; never
+// substitute them for an unrestricted request unless they were asked for by name.
+const CODING_ONLY_SERVICE_ID = /(?:[-:._\s]+coding[-:._\s]+only|codingonly)$/i
+
+function isRequestedServiceMatch(advertisedService: string, requestedService: string): boolean {
+  if (canonicalModelKey(advertisedService) !== canonicalModelKey(requestedService)) return false
+  if (CODING_ONLY_SERVICE_ID.test(requestedService)) {
+    return advertisedService.trim().toLowerCase() === requestedService.trim().toLowerCase()
+  }
+  return !CODING_ONLY_SERVICE_ID.test(advertisedService)
+}
+
+export function findAdvertisedServiceOffer(
   peer: PeerInfo,
   provider: string,
-  requestedService: string | null,
-): ServiceApiProtocol[] {
-  const normalizedRequestedService = requestedService?.trim()
-  if (!normalizedRequestedService) return []
-
-  const fromMetadata = (
-    peer as PeerInfo & {
-      providerServiceApiProtocols?: Record<string, { services: Record<string, ServiceApiProtocol[]> }>
-    }
-  ).providerServiceApiProtocols?.[provider]?.services
-  if (!fromMetadata) return []
-
-  const directMatchKey = Object.keys(fromMetadata).find(
-    (key) => key.toLowerCase() === normalizedRequestedService.toLowerCase(),
-  )
-  const protocols = directMatchKey ? fromMetadata[directMatchKey] : undefined
-  return protocols?.length ? Array.from(new Set(protocols)) : []
+  requestedService: string,
+): NetworkServiceOffer | null {
+  const requestedKey = canonicalModelKey(requestedService)
+  if (!requestedKey) return null
+  const offers = buildNetworkServiceOffers([peer]).filter((offer) => (
+    offer.provider.toLowerCase() === provider.toLowerCase()
+    && isRequestedServiceMatch(offer.serviceId, requestedService)
+  ))
+  if (CODING_ONLY_SERVICE_ID.test(requestedService)) {
+    return offers[0] ?? null
+  }
+  return selectLowestPricedNetworkServiceOffer(offers)
 }
 
 function selectProviderByProtocol(
@@ -125,14 +140,46 @@ function selectProviderByProtocol(
       continue
     }
     if (!selection.requiresTransform) {
-      return { provider, selection }
+      return { provider, selection, serviceId: null }
     }
     if (!transformedFallback) {
-      transformedFallback = { provider, selection }
+      transformedFallback = { provider, selection, serviceId: null }
     }
   }
 
   return transformedFallback
+}
+
+function selectAdvertisedServiceByProtocol(
+  peer: PeerInfo,
+  candidates: string[],
+  requestProtocol: ServiceApiProtocol,
+  requestedService: string,
+): PeerProtocolRoutePlan | null {
+  const compatible: Array<{ offer: NetworkServiceOffer; plan: PeerProtocolRoutePlan }> = []
+  for (const provider of candidates) {
+    const offer = findAdvertisedServiceOffer(peer, provider, requestedService)
+    if (!offer) continue
+    let supportedProtocols: ServiceApiProtocol[] = []
+    if (offer.protocols.length > 0) {
+      supportedProtocols = offer.protocols.filter((protocol): protocol is ServiceApiProtocol => (
+        protocol === 'anthropic-messages'
+        || protocol === 'openai-chat-completions'
+        || protocol === 'openai-responses'
+        || protocol === 'openai-images'
+      ))
+    } else if (offer.protocol) {
+      supportedProtocols = [offer.protocol]
+    }
+    const selection = selectTargetProtocolForRequest(requestProtocol, supportedProtocols)
+    if (!selection) continue
+    compatible.push({
+      offer,
+      plan: { provider, selection, serviceId: offer.serviceId },
+    })
+  }
+  const selectedOffer = selectLowestPricedNetworkServiceOffer(compatible.map((candidate) => candidate.offer))
+  return compatible.find((candidate) => candidate.offer === selectedOffer)?.plan ?? null
 }
 
 export function resolvePeerRoutePlan(
@@ -157,17 +204,25 @@ export function resolvePeerRoutePlan(
   const candidates = explicitProvider ? [explicitProvider] : providers
 
   if (!requestProtocol) {
+    if (requestedService) {
+      for (const provider of candidates) {
+        const offer = findAdvertisedServiceOffer(peer, provider, requestedService)
+        if (offer) return { provider, selection: null, serviceId: offer.serviceId }
+      }
+      if (serviceFilterMode === 'strict' || !candidates[0]) return null
+      return { provider: candidates[0], selection: null, serviceId: null }
+    }
     const provider = candidates[0]
-    return provider ? { provider, selection: null } : null
+    return provider ? { provider, selection: null, serviceId: null } : null
   }
 
-  if (serviceFilterMode === 'lenient' && requestedService?.trim()) {
-    const exactPlan = selectProviderByProtocol(
-      candidates,
-      requestProtocol,
-      (provider) => getDirectServiceProtocols(peer, provider, requestedService),
-    )
+  if (requestedService?.trim()) {
+    const exactPlan = selectAdvertisedServiceByProtocol(peer, candidates, requestProtocol, requestedService)
     if (exactPlan) return exactPlan
+    const hasAdvertisedCanonicalOffer = candidates.some(
+      (provider) => findAdvertisedServiceOffer(peer, provider, requestedService) !== null,
+    )
+    if (hasAdvertisedCanonicalOffer) return null
   }
 
   return selectProviderByProtocol(

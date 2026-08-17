@@ -38,6 +38,37 @@
   line-height: 16px;
 }
 
+/* ---------- Section heading ---------- */
+
+.sectionIntro {
+  display: grid;
+  gap: 4px;
+  margin: 0 4px -4px;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sectionTitle,
+.sectionValue {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  line-height: 15px;
+  text-transform: uppercase;
+}
+
+.sectionValue {
+  letter-spacing: 0;
+  text-transform: none;
+}
+
 /* ---------- Channel list ---------- */
 
 .listCard {
@@ -46,9 +77,9 @@
 }
 
 .row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   padding: 10px 0;
 }
@@ -66,7 +97,13 @@
 .rowTitle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+}
+
+.rowSellerGroup {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
 }
 
 .rowSeller {
@@ -74,6 +111,16 @@
   font-size: 12px;
   font-weight: 600;
   line-height: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowLocked {
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 15px;
+  white-space: nowrap;
 }
 
 .statusPill {
@@ -100,39 +147,22 @@
   color: var(--text-secondary);
 }
 
-.rowMeta {
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 15px;
-}
-
 .rowSide {
-  display: grid;
-  gap: 2px;
-  justify-items: end;
+  display: flex;
+  align-items: center;
   flex: 0 0 auto;
-}
-
-.rowAmount {
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 16px;
-}
-
-.rowReserve {
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 15px;
 }
 
 .rowAction {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 2px;
-  padding: 0;
-  border: none;
-  background: transparent;
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent-green) 35%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-green) 10%, transparent);
   color: var(--accent-green);
   font-size: 11px;
   font-weight: 600;
@@ -144,12 +174,6 @@
   color: var(--brand);
 }
 
-.rowActions {
-  display: grid;
-  gap: 2px;
-  justify-items: end;
-}
-
 .rowAction:disabled,
 .rowActionSecondary:disabled {
   cursor: default;
@@ -159,9 +183,12 @@
 .rowActionSecondary {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 2px;
-  padding: 0;
-  border: none;
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
   background: transparent;
   color: var(--text-secondary);
   font-size: 11px;
@@ -188,12 +215,11 @@
   color: var(--text-secondary);
 }
 
-/* ---------- Footnote ---------- */
-
-.footnote {
-  color: var(--text-secondary);
+.channelFootnote {
+  margin: 0;
+  padding: 0 8px;
+  color: var(--text-faint, var(--text-secondary));
   font-size: 11px;
   line-height: 15px;
   text-align: center;
-  padding: 0 8px;
 }
