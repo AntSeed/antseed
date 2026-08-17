@@ -177,7 +177,7 @@ const config: Config = {
           url: 'https://antseed.com',
           sameAs: [
             'https://github.com/AntSeed/antseed',
-            'https://x.com/antseedai',
+            'https://x.com/antseed',
             'https://t.me/antseed',
           ],
         },
@@ -207,7 +207,7 @@ const config: Config = {
       {property: 'og:type', content: 'website'},
       {property: 'og:site_name', content: 'AntSeed'},
       {name: 'twitter:card', content: 'summary_large_image'},
-      {name: 'twitter:site', content: '@antseedai'},
+      {name: 'twitter:site', content: '@antseed'},
       {name: 'twitter:image', content: 'https://antseed.com/og-image.png'},
       {property: 'og:image', content: 'https://antseed.com/og-image.png'},
       {property: 'og:image:width', content: '1200'},
@@ -255,7 +255,7 @@ const config: Config = {
           className: 'header-github-link',
         },
         {
-          href: 'https://x.com/antseedai',
+          href: 'https://x.com/antseed',
           'aria-label': 'X',
           position: 'right',
           className: 'header-x-link',
