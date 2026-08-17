@@ -25,6 +25,7 @@ const COLUMNS: {title: string; links: {label: string; to?: string; href?: string
     title: 'More',
     links: [
       {label: 'Blog', to: '/blog'},
+      {label: 'LLM API cost calculator', to: '/llm-api-cost-calculator'},
       {label: 'Brand', to: '/brand'},
       {label: 'Terms of Service', to: '/terms-of-service'},
     ],

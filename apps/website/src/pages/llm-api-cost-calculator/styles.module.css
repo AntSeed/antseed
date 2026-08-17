@@ -1,0 +1,392 @@
+/*
+ * Uses the site's own tokens only:
+ *   --as-*   brand palette from AntSeed's theme
+ *   --ifm-*  Docusaurus surface/text tokens, so dark mode flips for free
+ */
+
+.page {
+  padding: 64px 20px 88px;
+}
+
+.wrap {
+  max-width: 660px;
+  margin: 0 auto;
+}
+
+.h1 {
+  font-family: var(--as-font-display);
+  font-size: clamp(30px, 5vw, 38px);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+  margin: 0;
+  color: var(--ifm-heading-color);
+}
+
+.lede {
+  margin-top: 16px;
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--ifm-color-emphasis-700);
+  max-width: 56ch;
+}
+
+/* ---------- inputs ---------- */
+
+.card {
+  margin-top: 32px;
+  background: var(--as-card);
+  border-radius: 16px;
+  padding: 26px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.wide {
+  grid-column: 1 / -1;
+}
+
+.field label {
+  font-family: var(--as-font-data);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ifm-color-emphasis-700);
+  margin-bottom: 9px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.field select,
+.field input {
+  width: 100%;
+  background: var(--ifm-background-color);
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 10px;
+  color: var(--ifm-font-color-base);
+  font-family: var(--as-font-data);
+  font-size: 16px;
+  padding: 13px 14px;
+  appearance: none;
+}
+
+.field select {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' fill='none'><path d='M1 1.5 6 6.5 11 1.5' stroke='%23808080' stroke-width='1.6'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  padding-right: 38px;
+}
+
+.field select:focus-visible,
+.field input:focus-visible {
+  outline: 2px solid var(--as-green);
+  outline-offset: 1px;
+}
+
+/* ---------- tooltip ---------- */
+
+.tip {
+  position: relative;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: var(--ifm-color-emphasis-700);
+  cursor: help;
+  letter-spacing: 0;
+  background: var(--ifm-background-color);
+  flex: none;
+}
+
+.tip em {
+  position: absolute;
+  bottom: 24px;
+  left: -8px;
+  width: 268px;
+  z-index: 5;
+  background: var(--as-void);
+  color: var(--as-primary-0);
+  font-style: normal;
+  font-family: var(--as-font-ui);
+  font-size: 13px;
+  letter-spacing: 0;
+  text-transform: none;
+  line-height: 1.5;
+  padding: 12px 14px;
+  border-radius: 10px;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.14s;
+}
+
+.tip em code {
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  background: var(--as-line-on-void);
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: inherit;
+}
+
+.tip:hover em,
+.tip:focus em,
+.tip:focus-visible em {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* ---------- results ---------- */
+
+.rows {
+  margin-top: 40px;
+}
+
+.row + .row {
+  margin-top: 26px;
+  padding-top: 26px;
+  border-top: 2px dotted var(--ifm-color-emphasis-300); /* pheromone trail */
+}
+
+.rowTop {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.who {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--ifm-color-emphasis-700);
+}
+
+.win .who {
+  color: var(--as-green-deep);
+}
+
+.amt {
+  font-family: var(--as-font-data);
+  font-size: clamp(28px, 6vw, 34px);
+  font-weight: 500;
+  letter-spacing: -0.035em;
+  color: var(--ifm-color-emphasis-600);
+  white-space: nowrap;
+}
+
+.win .amt {
+  color: var(--ifm-heading-color);
+}
+
+.track {
+  margin-top: 12px;
+  height: 10px;
+  border-radius: 6px;
+  background: var(--ifm-color-emphasis-200);
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  border-radius: 6px;
+  background: var(--ifm-color-emphasis-400);
+  transition: width 0.4s ease;
+}
+
+.win .fill {
+  background: linear-gradient(90deg, var(--as-green-deep), var(--as-green));
+}
+
+.rate {
+  font-family: var(--as-font-data);
+  font-size: 13px;
+  color: var(--ifm-color-emphasis-600);
+  margin: 11px 0 0;
+}
+
+.out {
+  margin-top: 38px;
+  font-size: clamp(21px, 4vw, 26px);
+  font-weight: 600;
+  letter-spacing: -0.018em;
+  color: var(--ifm-heading-color);
+}
+
+.out b {
+  color: var(--as-clay);
+  font-weight: 600;
+}
+
+.sub {
+  margin-top: 10px;
+  font-family: var(--as-font-data);
+  font-size: 14px;
+  color: var(--ifm-color-emphasis-700);
+}
+
+/* ---------- status ---------- */
+
+.live {
+  margin-top: 26px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  color: var(--ifm-color-emphasis-600);
+}
+
+.live i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--as-green);
+  flex: none;
+}
+
+.err i {
+  background: var(--as-clay);
+}
+
+.fine {
+  margin-top: 20px;
+  padding-top: 22px;
+  border-top: 1px solid var(--ifm-color-emphasis-200);
+  font-family: var(--as-font-data);
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--ifm-color-emphasis-600);
+}
+
+/* ---------- content ---------- */
+
+.h2 {
+  margin-top: 56px;
+  font-family: var(--as-font-display);
+  font-size: 23px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.h3 {
+  margin-top: 30px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+.answer {
+  margin-top: 9px;
+  font-size: 16px;
+  line-height: 1.65;
+  color: var(--ifm-color-emphasis-700);
+}
+
+.cta {
+  margin-top: 44px;
+  padding: 26px;
+  background: var(--as-card);
+  border-radius: 16px;
+}
+
+.ctaH {
+  margin: 0;
+  font-family: var(--as-font-display);
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.cta p {
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--ifm-color-emphasis-700);
+  margin-top: 10px;
+}
+
+.btn {
+  display: inline-block;
+  margin-top: 18px;
+  background: var(--as-void);
+  color: #fff;
+  text-decoration: none;
+  font-size: 15px;
+  font-weight: 500;
+  padding: 13px 22px;
+  border-radius: 10px;
+}
+
+.btn:hover {
+  background: var(--as-green-deep);
+  color: #fff;
+  text-decoration: none;
+}
+
+@media (max-width: 560px) {
+  .page {
+    padding: 40px 18px 64px;
+  }
+  .card {
+    grid-template-columns: 1fr;
+    padding: 22px;
+  }
+  .tip em {
+    width: 210px;
+    left: auto;
+    right: -8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fill,
+  .tip em {
+    transition: none;
+  }
+}
+
+
+/* ---------- dark mode ----------
+ * --as-card, --as-ink and --as-green-deep are fixed light-theme brand values,
+ * so anything that used them needs a dark counterpart from the same palette.
+ */
+
+:global(html[data-theme='dark']) .card,
+:global(html[data-theme='dark']) .cta {
+  background: var(--as-void-2, #06281b);
+}
+
+:global(html[data-theme='dark']) .field select,
+:global(html[data-theme='dark']) .field input,
+:global(html[data-theme='dark']) .tip {
+  background: var(--as-void-deep, #001408);
+  border-color: var(--as-line-on-void, rgba(255, 255, 255, 0.1));
+}
+
+:global(html[data-theme='dark']) .win .who {
+  color: var(--as-green-bright, #3dc799);
+}
+
+:global(html[data-theme='dark']) .tip em {
+  background: var(--as-primary-9, #03251a);
+  border: 1px solid var(--as-line-on-void, rgba(255, 255, 255, 0.1));
+}
+
+:global(html[data-theme='dark']) .btn {
+  background: var(--as-green-deep, #0a6f4d);
+}
+
+:global(html[data-theme='dark']) .btn:hover {
+  background: var(--as-green, #10b981);
+  color: var(--as-void, #001e12);
+}

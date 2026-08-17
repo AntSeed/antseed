@@ -1284,6 +1284,10 @@ const FAQ_DATA = [
     a: "OpenRouter is a centralized aggregator: it decides which models are listed, routes every request through its own servers, and holds provider payouts until withdrawal. AntSeed removes the aggregator from routing. Requests go peer-to-peer, payments settle on-chain directly to the provider's wallet, and anyone can provide - no approval needed. <a href=\"/vs/openrouter\">Read the full comparison →</a>",
   },
   {
+    q: 'How do I know what I would actually pay?',
+    a: 'Add up the input and output tokens you burn in a month from your provider\'s usage dashboard, then run them through the <a href="/llm-api-cost-calculator">LLM API cost calculator</a>. It prices your real usage at the standard published rate side by side with the cheapest seller currently serving that model on the AntSeed network. Both sides are read live, and it will tell you when buying direct is the better deal.',
+  },
+  {
     q: 'What happens when LLMs become so good that anyone can do anything?',
     a: 'That is exactly what we want. When LLMs become dramatically more capable, costs collapse and more people can run their own capable LLMs on their own hardware. Those people become AntSeed providers - the supply side grows, not shrinks. But "anyone can do anything" does not mean everyone delivers the same result. The value is in what you build on top: the skills, the workflows, the domain expertise, the agent orchestration. A more capable base model raises the ceiling for every provider.',
   },

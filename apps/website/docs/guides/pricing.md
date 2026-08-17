@@ -21,6 +21,8 @@ There are **two ways** to get AntSeed pricing. Both serve the same schema; they 
 
 The cached endpoint is convenient and good enough for most read-only use. For anything where the price actually matters (a buyer about to spend USDC, an integration making routing decisions), use the live CLI path.
 
+To price a month of real usage without writing any code, the [LLM API cost calculator](/llm-api-cost-calculator) puts the standard published rate for a model next to the cheapest seller currently serving it on the network.
+
 ## Cached endpoint
 
 ```text
