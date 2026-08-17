@@ -44,7 +44,7 @@ test('generateChatImage uses model-only routing and persists the peer selected b
         };
       },
     }, 8377, {
-      conversationId: 'conversation-1', prompt: 'A tiny ant astronaut', safeMode: true, service: 'image-model',
+      conversationId: 'conversation-1', prompt: 'A tiny ant astronaut', moderation: 'low', service: 'image-model',
     }, {
       persistAttachment: async (_conversationId, _attachmentId, _name, bytes) => {
         persistedBytes = Buffer.from(bytes);
@@ -55,7 +55,7 @@ test('generateChatImage uses model-only routing and persists the peer selected b
     assert.equal(result.ok, true);
     assert.equal(calls[0]?.url, 'http://127.0.0.1:8377/v1/images/generations');
     assert.deepEqual(calls[0]?.body, {
-      model: 'image-model', prompt: 'A tiny ant astronaut', n: 1, response_format: 'b64_json', safe_mode: true,
+      model: 'image-model', prompt: 'A tiny ant astronaut', n: 1, response_format: 'b64_json', moderation: 'low',
     });
     assert.equal(persistedPrompt, 'A tiny ant astronaut');
     assert.equal(persistedPeerId, 'routed-peer');
@@ -144,7 +144,7 @@ test('generateChatImage edits a prior generated image with multipart routing', a
       conversationId: 'conversation-1',
       prompt: 'Now with a blue background',
       peerId: 'image-peer',
-      safeMode: true,
+      moderation: 'low',
       service: 'image-model',
       sourceImageAttachmentId: 'source-image',
     }, {
@@ -169,7 +169,7 @@ test('generateChatImage edits a prior generated image with multipart routing', a
     assert.equal(requestBody.get('prompt'), 'Now with a blue background');
     assert.equal(requestBody.get('n'), '1');
     assert.equal(requestBody.get('response_format'), 'b64_json');
-    assert.equal(requestBody.get('safe_mode'), 'true');
+    assert.equal(requestBody.get('moderation'), 'low');
     const image = requestBody.get('image');
     assert.ok(image instanceof Blob);
     assert.equal(image.type, 'image/png');

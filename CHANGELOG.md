@@ -8,7 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
-- Desktop image chats now default `safe_mode` to `true` for image models whose selected seller, or every eligible auto-routed seller, advertises support for that request parameter.
+- Desktop image chats now request `moderation: "low"` for image models whose selected seller, or every eligible auto-routed seller, advertises support for that parameter, disabling provider-side Safe Mode blurring without sending unsupported fields.
 - The AntSeed X (Twitter) account moved from `@antseedai` to `@antseed`; all website, desktop help, and brand guideline links now point to https://x.com/antseed.
 
 - Desktop Connected Apps now opens directly to the complete app list without the redundant search field at the top; application-picker searches remain available when choosing an installed app. The Home notice for apps that need restarting can now be dismissed for the current app launch and returns after Desktop is relaunched.
