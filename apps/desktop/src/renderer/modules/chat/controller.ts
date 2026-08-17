@@ -2332,24 +2332,37 @@ export function initChatModule({
   }: {
     requiresImageInput?: boolean;
     preferredPeerId?: string;
-  } = {}): { service: string; peerId?: string } | null {
+  } = {}): { service: string; peerId?: string; moderation?: 'low' } | null {
     const selection = uiState.chatImageRouteSelection;
     const model = selection?.model;
     if (!model) return null;
     const routes = routesForSelectedModel(uiState.vprRoutableRows, model)
       .filter((row) => row.protocol === 'openai-images');
+    const supportsModeration = (row: DiscoverRow): boolean => row.capabilities?.supportedParameters
+      ?.some((parameter) => parameter.trim().toLowerCase() === 'moderation') ?? false;
     if (routes.length === 0) return null;
     if (selection.mode === 'pinned-peer' && selection.peerId) {
       const route = routes.find((row) => row.peerId === selection.peerId);
       if (!route || (requiresImageInput && !supportsImageEdits(route))) return null;
-      return { service: route.serviceId, peerId: route.peerId };
+      return {
+        service: route.serviceId,
+        peerId: route.peerId,
+        ...(supportsModeration(route) ? { moderation: 'low' as const } : {}),
+      };
     }
     const eligibleRoutes = requiresImageInput ? routes.filter(supportsImageEdits) : routes;
     const preferredRoute = eligibleRoutes.find((row) => row.peerId === preferredPeerId);
     const route = preferredRoute ?? chooseBestVprRoute(eligibleRoutes, uiState.vprRoutingPreferences);
     if (!route) return null;
-    if (requiresImageInput) return { service: route.serviceId, peerId: route.peerId };
-    return { service: model.serviceId };
+    if (requiresImageInput) {
+      return {
+        service: route.serviceId,
+        peerId: route.peerId,
+        ...(supportsModeration(route) ? { moderation: 'low' as const } : {}),
+      };
+    }
+    const moderation = eligibleRoutes.every(supportsModeration) ? 'low' as const : undefined;
+    return { service: model.serviceId, ...(moderation ? { moderation } : {}) };
   }
 
   function generateImage(prompt: string): void {
@@ -2444,6 +2457,7 @@ export function initChatModule({
           prompt: requestPrompt,
           service: route.service,
           ...(route.peerId ? { peerId: route.peerId } : {}),
+          ...(route.moderation ? { moderation: route.moderation } : {}),
           ...(editing ? { sourceImageAttachmentId } : {}),
         });
         if (!result.ok || !result.user || !result.assistant) {

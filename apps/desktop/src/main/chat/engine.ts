@@ -723,11 +723,14 @@ export function registerPiChatHandlers({
 
   ipcMain.handle('chat:generate-image', async (_event, payload: unknown) => {
     const request = payload && typeof payload === 'object'
-      ? payload as { conversationId?: unknown; prompt?: unknown; peerId?: unknown; service?: unknown; sourceImageAttachmentId?: unknown }
+      ? payload as { conversationId?: unknown; prompt?: unknown; peerId?: unknown; moderation?: unknown; service?: unknown; sourceImageAttachmentId?: unknown }
       : {};
     const conversationId = typeof request.conversationId === 'string' ? request.conversationId.trim() : '';
     const prompt = typeof request.prompt === 'string' ? request.prompt.trim() : '';
     const peerId = typeof request.peerId === 'string' ? request.peerId.trim() : '';
+    const moderation = request.moderation === 'auto' || request.moderation === 'low'
+      ? request.moderation
+      : undefined;
     const service = typeof request.service === 'string' ? request.service.trim() : '';
     const sourceImageAttachmentId = typeof request.sourceImageAttachmentId === 'string'
       ? request.sourceImageAttachmentId.trim()
@@ -752,6 +755,7 @@ export function registerPiChatHandlers({
         conversationId,
         prompt,
         ...(peerId ? { peerId } : {}),
+        ...(moderation ? { moderation } : {}),
         service,
         ...(sourceImageAttachmentId ? { sourceImageAttachmentId } : {}),
       }, { signal: controller.signal });

@@ -9,6 +9,8 @@ This project uses selective package publishing. Each release entry lists the pub
 ### Changed
 
 - Desktop tray left-click now opens a full chat-first VPR status popover with live balance and routing state, recent session costs and model controls, app shortcuts, and links to Chats, Deposit, Home, and the retained detachable floating window; the native right-click tray menu remains available.
+- Desktop image chats now request `moderation: "low"` for image models whose selected seller, or every eligible auto-routed seller, advertises support for that parameter, disabling provider-side Safe Mode blurring without sending unsupported fields.
+- The AntSeed X (Twitter) account moved from `@antseedai` to `@antseed`; all website, desktop help, and brand guideline links now point to https://x.com/antseed.
 - Desktop Connected Apps now opens directly to the complete app list without the redundant search field at the top; application-picker searches remain available when choosing an installed app. The Home notice for apps that need restarting can now be dismissed for the current app launch and returns after Desktop is relaunched.
 - Desktop Connected Apps now includes GooeyPi, configures its Pi harness through `~/.pi/agent/models.json`, auto-detects the installed desktop app, and stamps distinct `originator` headers for Pi and GooeyPi so VPR conversations are attributed to the correct client instead of the underlying OpenAI SDK.
 - Buyer request and streaming duration limits are now configurable through `buyer.requestTimeoutMs` and `buyer.maxStreamDurationMs`, allowing slow or long-running generations to exceed the previous fixed five-minute cap.

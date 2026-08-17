@@ -52,6 +52,7 @@ export type GenerateChatImageRequest = {
   conversationId: string;
   prompt: string;
   peerId?: string | null;
+  moderation?: 'auto' | 'low';
   service: string;
   sourceImageAttachmentId?: string | null;
 };
@@ -205,13 +206,20 @@ export async function generateChatImage(
       form.append('prompt', prompt);
       form.append('n', '1');
       form.append('response_format', 'b64_json');
+      if (request.moderation) form.append('moderation', request.moderation);
       form.append('image', new Blob([source.bytes], { type: sourceMimeType }), source.fileName);
       endpoint = '/v1/images/edits';
       body = form;
       if (peerId) headers['x-antseed-pin-peer'] = peerId;
     } else {
       headers['content-type'] = 'application/json';
-      body = JSON.stringify({ model: peerId ? `${peerId}@${service}` : service, prompt, n: 1, response_format: 'b64_json' });
+      body = JSON.stringify({
+        model: peerId ? `${peerId}@${service}` : service,
+        prompt,
+        n: 1,
+        response_format: 'b64_json',
+        ...(request.moderation ? { moderation: request.moderation } : {}),
+      });
     }
 
     const response = await fetch(`${LOCALHOST_URL}:${String(proxyPort)}${endpoint}`, {
