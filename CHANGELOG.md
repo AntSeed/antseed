@@ -6,6 +6,10 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ## Unreleased
 
+### Added
+
+- `@antseed/antseed-verifier`, the capability-based attestation SDK (buyer verifier + seller prover for TEE capabilities such as `seller-node-tee-genuine` and `seller-provider-gpu-cc`), moved into the monorepo at `packages/antseed-verifier` from its standalone repository. It now builds, tests, and publishes through the same workflow as every other `@antseed/*` package; the package name, version, GPL-3.0-only license, and public API are unchanged.
+
 ### Changed
 
 - Desktop image chats now request `moderation: "low"` for image models whose selected seller, or every eligible auto-routed seller, advertises support for that parameter, disabling provider-side Safe Mode blurring without sending unsupported fields.
