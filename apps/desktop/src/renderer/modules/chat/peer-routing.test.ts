@@ -432,7 +432,7 @@ test('new chat created while previous response is pending keeps its own model an
 });
 
 
-test('auto image prompts use model-only routing and appear immediately while generation is pending', async () => {
+test('mixed-capability auto image routes omit moderation and appear immediately while generation is pending', async () => {
   installDomTimers();
 
   const uiState = createInitialUiState();
@@ -448,13 +448,23 @@ test('auto image prompts use model-only routing and appear immediately while gen
     updatedAt: Date.now(),
     usage: { inputTokens: 0, outputTokens: 0 },
   }];
-  uiState.vprRoutableRows = [{
-    rowKey: 'image-peer:image-model',
-    peerId: 'image-peer',
-    serviceId: 'image-model',
-    protocol: 'openai-images',
-    effectiveReputationScore: 80,
-  } as DiscoverRow];
+  uiState.vprRoutableRows = [
+    {
+      rowKey: 'image-peer:image-model',
+      peerId: 'image-peer',
+      serviceId: 'image-model',
+      protocol: 'openai-images',
+      capabilities: { supportedParameters: ['moderation'] },
+      effectiveReputationScore: 80,
+    } as DiscoverRow,
+    {
+      rowKey: 'legacy-image-peer:image-model',
+      peerId: 'legacy-image-peer',
+      serviceId: 'image-model',
+      protocol: 'openai-images',
+      effectiveReputationScore: 70,
+    } as DiscoverRow,
+  ];
   uiState.chatImageRouteSelection = {
     model: { provider: 'openai', serviceId: 'image-model', label: 'Image Model', categories: [] },
     mode: 'auto',
@@ -506,6 +516,67 @@ test('auto image prompts use model-only routing and appear immediately while gen
   assert.equal((uiState.chatConversations[0] as { lastResponsePeerId?: string }).lastResponsePeerId, 'image-peer');
 });
 
+test('auto image routes send low moderation when every eligible seller supports it', async () => {
+  installDomTimers();
+
+  const uiState = createInitialUiState();
+  uiState.chatActiveConversation = 'conv-a';
+  uiState.chatConversations = [{
+    id: 'conv-a',
+    title: 'Conversation A',
+    service: 'text-model',
+    provider: 'openai',
+    peerId: 'text-peer',
+    messages: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    usage: { inputTokens: 0, outputTokens: 0 },
+  }];
+  uiState.vprRoutableRows = [
+    {
+      rowKey: 'image-peer-a:image-model',
+      peerId: 'image-peer-a',
+      serviceId: 'image-model',
+      protocol: 'openai-images',
+      capabilities: { supportedParameters: ['moderation'] },
+      effectiveReputationScore: 80,
+    } as DiscoverRow,
+    {
+      rowKey: 'image-peer-b:image-model',
+      peerId: 'image-peer-b',
+      serviceId: 'image-model',
+      protocol: 'openai-images',
+      capabilities: { supportedParameters: ['MODERATION'] },
+      effectiveReputationScore: 70,
+    } as DiscoverRow,
+  ];
+  uiState.chatImageRouteSelection = {
+    model: { provider: 'openai', serviceId: 'image-model', label: 'Image Model', categories: [] },
+    mode: 'auto',
+    peerId: null,
+  };
+
+  const generation = createDeferred<Awaited<ReturnType<NonNullable<DesktopBridge['chatGenerateImage']>>>>();
+  let request: Parameters<NonNullable<DesktopBridge['chatGenerateImage']>>[0] | null = null;
+  const api = initChatModule({
+    bridge: { chatGenerateImage: async (payload) => { request = payload; return generation.promise; } },
+    uiState,
+    appendSystemLog: () => undefined,
+  });
+
+  api.generateImage('A tiny ant astronaut');
+  await waitFor(() => uiState.chatSending);
+  assert.deepEqual(request, {
+    conversationId: 'conv-a',
+    prompt: 'A tiny ant astronaut',
+    moderation: 'low',
+    service: 'image-model',
+  });
+
+  generation.resolve({ ok: false, error: 'Request aborted' });
+  await waitFor(() => !uiState.chatSending);
+});
+
 test('pinned image prompts route to the explicitly selected seller', async () => {
   installDomTimers();
 
@@ -518,7 +589,7 @@ test('pinned image prompts route to the explicitly selected seller', async () =>
   uiState.vprRoutableRows = [{
     rowKey: 'venice-peer:image-model', peerId: 'venice-peer', serviceId: 'image-model',
     protocol: 'openai-images', effectiveReputationScore: 99,
-    capabilities: { supportedParameters: ['safe_mode'] },
+    capabilities: { supportedParameters: ['moderation'] },
   } as DiscoverRow];
   uiState.chatImageRouteSelection = {
     model: { provider: 'openai', serviceId: 'image-model', label: 'Image Model', categories: [] },
@@ -540,7 +611,7 @@ test('pinned image prompts route to the explicitly selected seller', async () =>
     conversationId: 'conv-a',
     prompt: 'A flying ant',
     peerId: 'venice-peer',
-    safeMode: true,
+    moderation: 'low',
     service: 'image-model',
   });
 
@@ -581,7 +652,7 @@ test('follow-up image prompts edit the latest generated image', async () => {
     peerId: 'source-image-peer',
     serviceId: 'image-model',
     protocol: 'openai-images',
-    capabilities: { inputs: ['text', 'image'], outputs: ['image'], supportedParameters: ['safe_mode'] },
+    capabilities: { inputs: ['text', 'image'], outputs: ['image'], supportedParameters: ['moderation'] },
     effectiveReputationScore: 80,
   } as DiscoverRow];
   uiState.chatImageRouteSelection = {
@@ -608,7 +679,7 @@ test('follow-up image prompts edit the latest generated image', async () => {
     conversationId: 'conv-a',
     prompt: 'Now with a blue background',
     peerId: 'source-image-peer',
-    safeMode: true,
+    moderation: 'low',
     service: 'image-model',
     sourceImageAttachmentId: 'generated-attachment',
   });

@@ -52,7 +52,7 @@ export type GenerateChatImageRequest = {
   conversationId: string;
   prompt: string;
   peerId?: string | null;
-  safeMode?: boolean;
+  moderation?: 'auto' | 'low';
   service: string;
   sourceImageAttachmentId?: string | null;
 };
@@ -206,7 +206,7 @@ export async function generateChatImage(
       form.append('prompt', prompt);
       form.append('n', '1');
       form.append('response_format', 'b64_json');
-      if (request.safeMode === true) form.append('safe_mode', 'true');
+      if (request.moderation) form.append('moderation', request.moderation);
       form.append('image', new Blob([source.bytes], { type: sourceMimeType }), source.fileName);
       endpoint = '/v1/images/edits';
       body = form;
@@ -218,7 +218,7 @@ export async function generateChatImage(
         prompt,
         n: 1,
         response_format: 'b64_json',
-        ...(request.safeMode === true ? { safe_mode: true } : {}),
+        ...(request.moderation ? { moderation: request.moderation } : {}),
       });
     }
 

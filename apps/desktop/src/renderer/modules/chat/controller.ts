@@ -2332,14 +2332,14 @@ export function initChatModule({
   }: {
     requiresImageInput?: boolean;
     preferredPeerId?: string;
-  } = {}): { service: string; peerId?: string; safeMode?: true } | null {
+  } = {}): { service: string; peerId?: string; moderation?: 'low' } | null {
     const selection = uiState.chatImageRouteSelection;
     const model = selection?.model;
     if (!model) return null;
     const routes = routesForSelectedModel(uiState.vprRoutableRows, model)
       .filter((row) => row.protocol === 'openai-images');
-    const supportsSafeMode = (row: DiscoverRow): boolean => row.capabilities?.supportedParameters
-      ?.some((parameter) => parameter.trim().toLowerCase() === 'safe_mode') ?? false;
+    const supportsModeration = (row: DiscoverRow): boolean => row.capabilities?.supportedParameters
+      ?.some((parameter) => parameter.trim().toLowerCase() === 'moderation') ?? false;
     if (routes.length === 0) return null;
     if (selection.mode === 'pinned-peer' && selection.peerId) {
       const route = routes.find((row) => row.peerId === selection.peerId);
@@ -2347,7 +2347,7 @@ export function initChatModule({
       return {
         service: route.serviceId,
         peerId: route.peerId,
-        ...(supportsSafeMode(route) ? { safeMode: true } : {}),
+        ...(supportsModeration(route) ? { moderation: 'low' as const } : {}),
       };
     }
     const eligibleRoutes = requiresImageInput ? routes.filter(supportsImageEdits) : routes;
@@ -2358,11 +2358,11 @@ export function initChatModule({
       return {
         service: route.serviceId,
         peerId: route.peerId,
-        ...(supportsSafeMode(route) ? { safeMode: true } : {}),
+        ...(supportsModeration(route) ? { moderation: 'low' as const } : {}),
       };
     }
-    const safeMode = eligibleRoutes.every(supportsSafeMode);
-    return { service: model.serviceId, ...(safeMode ? { safeMode: true } : {}) };
+    const moderation = eligibleRoutes.every(supportsModeration) ? 'low' as const : undefined;
+    return { service: model.serviceId, ...(moderation ? { moderation } : {}) };
   }
 
   function generateImage(prompt: string): void {
@@ -2457,7 +2457,7 @@ export function initChatModule({
           prompt: requestPrompt,
           service: route.service,
           ...(route.peerId ? { peerId: route.peerId } : {}),
-          ...(route.safeMode ? { safeMode: true } : {}),
+          ...(route.moderation ? { moderation: route.moderation } : {}),
           ...(editing ? { sourceImageAttachmentId } : {}),
         });
         if (!result.ok || !result.user || !result.assistant) {
