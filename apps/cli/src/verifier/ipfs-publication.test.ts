@@ -39,7 +39,12 @@ test('builds a portable finalized model package and excludes operational files',
     await writeFile(consensusPath, JSON.stringify({ version: 1, kind: 'fixture-consensus' }))
     await writeFile(join(auditDirectory, 'manifest.json'), JSON.stringify({ version: 1, kind: 'fixture-manifest' }))
     await writeFile(join(auditDirectory, 'sellers', 'peer-a', 'evidence.json'), JSON.stringify({ signed: true }))
-    await writeFile(join(auditDirectory, 'sellers', 'peer-a', 'exchanges', '000.json'), JSON.stringify({ raw: true }))
+    for (let index = 0; index < 151; index += 1) {
+      await writeFile(
+        join(auditDirectory, 'sellers', 'peer-a', 'exchanges', `${String(index).padStart(3, '0')}.json`),
+        JSON.stringify({ raw: true, index }),
+      )
+    }
     await writeFile(join(auditDirectory, '.checkpoints', 'secret.json'), JSON.stringify({ transient: true }))
     await writeFile(join(auditDirectory, 'status.json'), JSON.stringify({ state: 'running' }))
     await writeFile(join(auditDirectory, 'events.jsonl'), '{}\n')
@@ -106,10 +111,14 @@ test('builds a portable finalized model package and excludes operational files',
 
     assert.ok(paths.includes('publication.json'))
     assert.ok(paths.includes(`bundles/${runId}/model-a.json`))
-    assert.ok(paths.includes(`epochs/${epoch}/Model_A/report.html`))
-    assert.ok(paths.includes(`epochs/${epoch}/Model_A/audits/${runId}/sellers/peer-a/evidence.json`))
-    assert.ok(paths.includes(`epochs/${epoch}/Model_A/audits/${runId}/sellers/peer-a/exchanges/000.json`))
-    assert.ok(paths.includes(`epochs/${epoch}/Model_A/references/reference-1/probe-integrity.json`))
+    assert.ok(paths.includes('model/report.html'))
+    assert.ok(paths.includes(`model/audits/${runId}/sellers/peer-a/evidence.json`))
+    const exchangeArchivePath = `model/audits/${runId}/sellers/peer-a/exchanges.bundle.json`
+    assert.ok(paths.includes(exchangeArchivePath))
+    assert.equal(paths.some((path) => path.includes('/exchanges/')), false)
+    assert.ok(paths.length <= 150)
+    assert.ok(paths.includes('model/references/reference-1/probe-integrity.json'))
+    assert.ok(paths.every((path) => path.split('/').length - 1 <= 6))
     assert.equal(paths.some((path) => path.includes('.checkpoints')), false)
     assert.equal(paths.some((path) => path.endsWith('status.json')), false)
     assert.equal(paths.some((path) => path.endsWith('events.jsonl')), false)
@@ -118,6 +127,20 @@ test('builds a portable finalized model package and excludes operational files',
 
     const report = publication.files.find((file) => file.path.endsWith('/report.html'))!
     assert.match(Buffer.from(report.bytes).toString('utf8'), new RegExp(runId))
+
+    const exchangeArchive = JSON.parse(Buffer.from(
+      publication.files.find((file) => file.path === exchangeArchivePath)!.bytes,
+    ).toString('utf8')) as {
+      kind: string
+      files: Array<{ path: string; sha256: string; bytesBase64: string }>
+    }
+    assert.equal(exchangeArchive.kind, 'antseed-verifier-ipfs-file-archive')
+    assert.equal(exchangeArchive.files.length, 151)
+    assert.ok(exchangeArchive.files[0]!.path.endsWith('/exchanges/000.json'))
+    assert.deepEqual(
+      Buffer.from(exchangeArchive.files[0]!.bytesBase64, 'base64'),
+      Buffer.from(JSON.stringify({ raw: true, index: 0 })),
+    )
 
     const repeated = await prepareVerificationPublication({ evidenceDir, manifest, modelSummaryPath, bundle })
     assert.deepEqual(
@@ -128,9 +151,20 @@ test('builds a portable finalized model package and excludes operational files',
     const indexFile = publication.files.find((file) => file.path === 'publication.json')!
     const index = JSON.parse(Buffer.from(indexFile.bytes).toString('utf8')) as {
       evidenceHash: string
+      layout: { modelRoot: string; sourceModelRoot: string }
+      sourceFileCount: number
+      archives: Array<{ path: string; files: Array<{ path: string; sha256: string }> }>
       files: Array<{ path: string; sha256: string }>
     }
     assert.equal(index.evidenceHash, bundle.evidenceHash)
+    assert.deepEqual(index.layout, {
+      modelRoot: 'model',
+      sourceModelRoot: `epochs/${epoch}/Model_A`,
+    })
+    assert.ok(index.sourceFileCount > publication.fileCount)
+    assert.equal(index.archives.length, 1)
+    assert.equal(index.archives[0]!.path, exchangeArchivePath)
+    assert.equal(index.archives[0]!.files.length, 151)
     assert.equal(index.files.some((file) => file.path === 'publication.json'), false)
     assert.ok(index.files.every((file) => file.sha256.startsWith('sha256:')))
   } finally {
@@ -138,9 +172,9 @@ test('builds a portable finalized model package and excludes operational files',
   }
 })
 
-test('uploads a CIDv1 Pinata folder with metadata and retries transient failures', async () => {
-  const publication = fixturePublication()
-  const calls: Array<{ authorization: string | null; names: string[] }> = []
+test('uploads a CIDv1 Pinata folder with portable package paths and retries transient failures', async () => {
+  const publication = fixturePublication(2)
+  const calls: Array<{ authorization: string | null; names: string[]; cidVersion: unknown }> = []
   let attempts = 0
   const fetchImpl: typeof fetch = async (_input, init) => {
     attempts += 1
@@ -150,12 +184,15 @@ test('uploads a CIDv1 Pinata folder with metadata and retries transient failures
       names: [...form.entries()].map(([name, value]) => name === 'file' && value instanceof File
         ? `${name}:${value.name}`
         : name),
+      cidVersion: form.get('cid_version'),
     })
     if (attempts < 3) return new Response('{}', { status: 503 })
     return new Response(JSON.stringify({
-      IpfsHash: 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3r3eifqeedsvt2eubqtskghpm',
-      PinSize: 42,
-      Timestamp: '2026-08-16T12:00:00.000Z',
+      data: {
+        cid: 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3r3eifqeedsvt2eubqtskghpm',
+        size: 42,
+        created_at: '2026-08-16T12:00:00.000Z',
+      },
     }), { status: 200, headers: { 'content-type': 'application/json' } })
   }
 
@@ -168,10 +205,16 @@ test('uploads a CIDv1 Pinata folder with metadata and retries transient failures
   assert.equal(attempts, 3)
   assert.equal(result.uri, `ipfs://${result.cid}`)
   assert.equal(result.pinSize, 42)
+  assert.equal(result.fileCount, 2)
   assert.ok(calls.every((call) => call.authorization === 'Bearer secret-jwt'))
-  assert.ok(calls[0]!.names.includes(`file:${publication.packageName}/bundle.json`))
-  assert.ok(calls[0]!.names.includes('pinataMetadata'))
-  assert.ok(calls[0]!.names.includes('pinataOptions'))
+  assert.equal(calls[0]!.names.filter((name) => name.startsWith('file:')).length, 2)
+  assert.ok(calls[0]!.names.includes('file:bundle.json'))
+  assert.ok(calls[0]!.names.includes('file:evidence/001.json'))
+  assert.ok(calls[0]!.names.includes('network'))
+  assert.ok(calls[0]!.names.includes('name'))
+  assert.ok(calls[0]!.names.includes('keyvalues'))
+  assert.ok(calls[0]!.names.includes('cid_version'))
+  assert.equal(calls[0]!.cidVersion, 'v1')
 })
 
 test('does not retry permanent Pinata authentication failures or expose the JWT', async () => {
@@ -180,12 +223,13 @@ test('does not retry permanent Pinata authentication failures or expose the JWT'
     publishVerificationToPinata(fixturePublication(), 'do-not-leak', {
       fetchImpl: async () => {
         attempts += 1
-        return new Response('{}', { status: 401 })
+        return new Response(JSON.stringify({ error: 'Bearer do-not-leak is invalid' }), { status: 401 })
       },
       sleep: async () => undefined,
     }),
     (error: Error) => {
       assert.match(error.message, /HTTP 401/)
+      assert.match(error.message, /Bearer \[redacted\]/)
       assert.doesNotMatch(error.message, /do-not-leak/)
       return true
     },
@@ -249,8 +293,16 @@ function fixtureBundle(
   }
 }
 
-function fixturePublication(): PreparedVerificationPublication {
-  const bytes = Buffer.from('{}')
+function fixturePublication(fileCount = 1): PreparedVerificationPublication {
+  const files = Array.from({ length: fileCount }, (_, index) => {
+    const bytes = Buffer.from(JSON.stringify({ index }))
+    return {
+      path: index === 0 ? 'bundle.json' : `evidence/${String(index).padStart(3, '0')}.json`,
+      bytes,
+      size: bytes.length,
+      sha256: `sha256:${String(index).padStart(64, '0')}`,
+    }
+  })
   return {
     version: 1,
     kind: 'antseed-verifier-ipfs-publication-package',
@@ -258,8 +310,8 @@ function fixturePublication(): PreparedVerificationPublication {
     model: 'model',
     evidenceHash: `0x${'11'.repeat(32)}`,
     packageName: 'antseed-verification-run-model',
-    files: [{ path: 'bundle.json', bytes, size: bytes.length, sha256: `sha256:${'11'.repeat(32)}` }],
-    fileCount: 1,
-    totalBytes: bytes.length,
+    files,
+    fileCount: files.length,
+    totalBytes: files.reduce((total, file) => total + file.size, 0),
   }
 }

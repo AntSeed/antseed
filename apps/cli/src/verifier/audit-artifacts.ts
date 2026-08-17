@@ -525,6 +525,7 @@ function renderModelReportSection(
       ${consensusEvidencePath ? renderFileLink(consensusEvidencePath, 'Probe consensus JSON', reportDirectory) : ''}
       ${consensusEvidencePath ? renderFileLink(join(dirname(consensusEvidencePath), 'manifest.json'), 'Manifest JSON', reportDirectory) : ''}
       ${referenceIntegrityPath ? renderFileLink(referenceIntegrityPath, 'Reference probe integrity', reportDirectory) : ''}
+      ${consensus ? '<a href="#audit-integrity">Audit Integrity</a>' : ''}
     </div>
     ${renderProbeConsensus(consensus, consensusEvidencePath, reportDirectory)}
     ${renderReasonBreakdown('Model reason breakdown', reasonBreakdown)}
@@ -586,7 +587,7 @@ function renderProbeConsensus(
         : ''}
     </details>`
   }).join('\n')
-  return `<div class="probe-consensus">
+  return `<div class="probe-consensus" id="audit-integrity">
     <h3>Does the seller majority agree with the ${openRouterReference ? 'OpenRouter' : 'enrolled'} reference?</h3>
     <p class="explanation">Each question shows the reference answer, the seller answers that confirm it, the seller answers that reject it, and direct links to each signed exchange. Every scoreable answer backed by verified ResponseAuth votes, including answers from sellers whose final model-level verdict is UNDETERMINED. Unsigned or missing answers do not vote. A tie confirms the reference.</p>
     <dl class="metadata">

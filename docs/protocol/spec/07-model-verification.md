@@ -408,13 +408,16 @@ model before broadcasting that model's transaction. The command requires a
 never accepted as a command argument, written to configuration, persisted in a
 ledger, or included in an error message.
 
-Each folder preserves paths relative to `evidenceDir` and contains the canonical
-bundle, selected run manifest and summary, probe consensus, reference-integrity
-evidence, finalized seller manifests and evidence, signed exchange files, and
-an immutable HTML report rendered for the selected run. `publication.json`
-indexes every included file by relative path, byte size, and SHA-256 hash. PID
-locks, status snapshots, event logs, `.checkpoints`, submission ledgers, and
-other operational state are excluded.
+Each folder contains the canonical bundle, selected run manifest and summary,
+probe consensus, reference-integrity evidence, finalized seller manifests and
+evidence, signed exchange files, and an immutable HTML report rendered for the
+selected run. Run and bundle paths remain relative to `evidenceDir`. The
+selected model's complete subtree is relocated as a unit from
+`epochs/<epoch>/<model>/` to `model/` so all report-relative links remain valid
+while satisfying Pinata's public multipart depth limit. `publication.json`
+records both roots and indexes every included file by published relative path,
+byte size, and SHA-256 hash. PID locks, status snapshots, event logs,
+`.checkpoints`, submission ledgers, and other operational state are excluded.
 
 Pinata returns one CIDv1 for the model folder. The CLI submits `ipfs://<cid>` as
 the bundle's `evidenceUri`, records the CID, URI, size, file count, timestamps,

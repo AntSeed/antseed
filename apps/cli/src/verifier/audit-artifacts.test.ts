@@ -155,6 +155,8 @@ test('verifier artifacts use model-first epoch directories', async () => {
     assert.match(report, /Seller A \(111111111111…\)/)
     assert.match(report, /Open audit folder/)
     assert.match(report, /Probe consensus JSON/)
+    assert.match(report, /href="#audit-integrity">Audit Integrity<\/a>/)
+    assert.match(report, /class="probe-consensus" id="audit-integrity"/)
     assert.match(report, /Does the seller majority agree with the enrolled reference\?/)
     assert.match(report, /Every scoreable answer backed by verified ResponseAuth votes/)
     assert.match(report, /The test weight is ___\./)

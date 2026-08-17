@@ -40,8 +40,13 @@ import {
   type ProxyAuditEvidenceV1,
 } from './proxy-evidence.js'
 import { submissionLedgerPath, type SubmissionLedgerV1 } from './submission-ledger.js'
+import {
+  rewardCreditShortfallReason,
+  summarizeSubmissionCosts,
+} from '../cli/commands/verifier/submit.js'
 
 const RUN_ANVIL_E2E = process.env['ANTSEED_RUN_VERIFIER_ANVIL_E2E'] === '1'
+const RUN_REAL_PINATA = process.env['ANTSEED_RUN_REAL_PINATA'] === '1'
 const DEPLOYER_PRIVATE_KEY = 'ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
 const VERIFIER_ADDRESS = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'
 const VERIFICATION_MINTER_ID = id('antseed.emissions.verification.v1')
@@ -74,6 +79,25 @@ interface WrittenAudit {
   evidenceHash: string
   result: ModelAuditSummaryV1['results'][number]
 }
+
+test('submission cost summary does not attribute failed bundles to the epoch cap', () => {
+  const summary = summarizeSubmissionCosts([{
+    totalAuditCostUsdMicros: 288_393n,
+    awardedCreditUsdMicros: null,
+    status: 'failed',
+  }])
+  assert.equal(summary.totalAuditCostUsdMicros, 288_393n)
+  assert.equal(summary.submittedAuditCostUsdMicros, 0n)
+  assert.equal(summary.failedAuditCostUsdMicros, 288_393n)
+  assert.equal(summary.awardedCreditUsdMicros, 0n)
+  assert.equal(summary.submittedCostWithoutCreditUsdMicros, 0n)
+  assert.equal(rewardCreditShortfallReason({
+    epoch: 18n,
+    firstRewardedEpoch: 19n,
+    epochRewardBudget: 0n,
+    remainingAllowanceUsdMicros: 100_000_000n,
+  }), 'epoch 18 precedes first rewarded epoch 19')
+})
 
 test('verifier submit sends per-model bundles to Anvil with retry-safe accounting', {
   skip: !RUN_ANVIL_E2E,
@@ -229,12 +253,9 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
     }
     await writeVerifierRunManifest(evidenceDir, manifest)
     const pinataLogPath = join(directory, 'pinata-uploads.jsonl')
-    const pinataPreloadPath = join(directory, 'mock-pinata.mjs')
-    await writeMockPinataPreload(pinataPreloadPath, pinataLogPath, banksDir)
-    const pinataOptions: RunCliOptions = {
-      importPath: pinataPreloadPath,
-      env: { PINATA_JWT: 'test-pinata-jwt' },
-    }
+    const pinataOptions = RUN_REAL_PINATA
+      ? realPinataOptions()
+      : await mockPinataOptions(directory, pinataLogPath, banksDir)
 
     const dryRun = runCli(
       dataDir,
@@ -259,12 +280,14 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
     const partialBundles = await createVerifierClient(rpcUrl, verificationAddress).queryBundles()
     assert.equal(partialBundles.length, 2)
     assert.ok(partialBundles.every((bundle) => bundle.evidenceUri.startsWith('ipfs://')))
-    const partialUploads = await readJsonLines<MockPinataUpload>(pinataLogPath)
-    assert.deepEqual(partialUploads.map((upload) => upload.model).sort(), ['model-a', 'model-c'])
-    assert.ok(partialUploads.every((upload) => upload.authorizationPresent))
-    assert.ok(partialUploads.every((upload) => upload.referenceStatuses.every((status) => status === 'unclaimed')))
-    assert.ok(partialUploads.every((upload) => upload.files.some((path) => path.endsWith('/publication.json'))))
-    assert.ok(partialUploads.every((upload) => upload.files.some((path) => path.includes('/bundles/'))))
+    if (!RUN_REAL_PINATA) {
+      const partialUploads = await readJsonLines<MockPinataUpload>(pinataLogPath)
+      assert.deepEqual(partialUploads.map((upload) => upload.model).sort(), ['model-a', 'model-c'])
+      assert.ok(partialUploads.every((upload) => upload.authorizationPresent))
+      assert.ok(partialUploads.every((upload) => upload.referenceStatuses.every((status) => status === 'unclaimed')))
+      assert.ok(partialUploads.every((upload) => upload.files.some((path) => path === 'publication.json')))
+      assert.ok(partialUploads.every((upload) => upload.files.some((path) => path.startsWith('bundles/'))))
+    }
     assert.equal((await createVerifierClient(rpcUrl, verificationAddress).queryAttestations(1n)).length, 1)
     assert.equal((await createVerifierClient(rpcUrl, verificationAddress).queryAttestations(2n)).length, 1)
     assert.equal((await createVerifierClient(rpcUrl, verificationAddress).queryAttestations(4n)).length, 1)
@@ -314,8 +337,10 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
       assert.equal(bank.referenceCosts[0]?.claimedTransactionHash, entry.transactionHash)
     }
 
-    const uploadsBeforeRecovery = await readJsonLines<MockPinataUpload>(pinataLogPath)
-    assert.equal(uploadsBeforeRecovery.length, 3)
+    if (!RUN_REAL_PINATA) {
+      const uploadsBeforeRecovery = await readJsonLines<MockPinataUpload>(pinataLogPath)
+      assert.equal(uploadsBeforeRecovery.length, 3)
+    }
     ledger.models['model-b']!.status = 'pending'
     ledger.models['model-b']!.transactionHash = null
     ledger.models['model-b']!.blockNumber = null
@@ -325,13 +350,26 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
     const finalRetry = runCli(dataDir, configPath, rpcUrl, runId, ['--yes', '--publish-ipfs'], pinataOptions)
     assert.equal(finalRetry.status, 0, finalRetry.output)
     assert.match(finalRetry.output, /Submitted: 0; skipped: 3; failed: 0/)
-    assert.equal((await readJsonLines<MockPinataUpload>(pinataLogPath)).length, 3)
+    if (!RUN_REAL_PINATA) {
+      assert.equal((await readJsonLines<MockPinataUpload>(pinataLogPath)).length, 3)
+    }
     assert.deepEqual(
       (await createVerifierClient(rpcUrl, verificationAddress).queryBundles())
         .map((event) => event.transactionHash)
         .sort(),
       beforeFinalRetry,
     )
+    if (RUN_REAL_PINATA) {
+      console.log(`REAL_PINATA_RESULT ${JSON.stringify({
+        runId,
+        verificationAddress,
+        bundles: (await createVerifierClient(rpcUrl, verificationAddress).queryBundles()).map((event) => ({
+          evidenceHash: event.evidenceHash,
+          evidenceUri: event.evidenceUri,
+          transactionHash: event.transactionHash,
+        })),
+      })}`)
+    }
   } finally {
     await stopProcess(anvil)
     await rm(directory, { recursive: true, force: true })
@@ -735,6 +773,25 @@ interface MockPinataUpload {
   files: string[]
 }
 
+function realPinataOptions(): RunCliOptions {
+  const jwt = process.env['PINATA_JWT']?.trim()
+  if (!jwt) throw new Error('PINATA_JWT is required with ANTSEED_RUN_REAL_PINATA=1')
+  return { env: { PINATA_JWT: jwt } }
+}
+
+async function mockPinataOptions(
+  directory: string,
+  pinataLogPath: string,
+  banksDir: string,
+): Promise<RunCliOptions> {
+  const pinataPreloadPath = join(directory, 'mock-pinata.mjs')
+  await writeMockPinataPreload(pinataPreloadPath, pinataLogPath, banksDir)
+  return {
+    importPath: pinataPreloadPath,
+    env: { PINATA_JWT: 'test-pinata-jwt' },
+  }
+}
+
 async function readJsonLines<T>(path: string): Promise<T[]> {
   try {
     return (await readFile(path, 'utf8'))
@@ -763,25 +820,27 @@ const cids = {
 }
 
 globalThis.fetch = async (input, init) => {
-  if (String(input) !== 'https://api.pinata.cloud/pinning/pinFileToIPFS') {
+  if (String(input) !== 'https://uploads.pinata.cloud/v3/files') {
     return originalFetch(input, init)
   }
   const form = init.body
-  const metadata = JSON.parse(String(form.get('pinataMetadata')))
-  const model = metadata.keyvalues.model
+  const metadata = JSON.parse(String(form.get('keyvalues')))
+  const model = metadata.model
   const bank = JSON.parse(readFileSync(bankPaths[model], 'utf8'))
   const files = form.getAll('file').map((file) => file.name)
   appendFileSync(logPath, JSON.stringify({
     model,
-    evidenceHash: metadata.keyvalues.evidenceHash,
+    evidenceHash: metadata.evidenceHash,
     authorizationPresent: new Headers(init.headers).get('authorization') === 'Bearer test-pinata-jwt',
     referenceStatuses: bank.referenceCosts.map((entry) => entry.status),
     files,
   }) + '\\n')
   return new Response(JSON.stringify({
-    IpfsHash: cids[model],
-    PinSize: form.getAll('file').reduce((total, file) => total + file.size, 0),
-    Timestamp: '2026-08-16T12:00:00.000Z',
+    data: {
+      cid: cids[model],
+      size: form.getAll('file').reduce((total, file) => total + file.size, 0),
+      created_at: '2026-08-16T12:00:00.000Z',
+    },
   }), { status: 200, headers: { 'content-type': 'application/json' } })
 }
 `)
