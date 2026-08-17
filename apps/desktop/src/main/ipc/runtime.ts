@@ -3,8 +3,11 @@
  * network, plugins, and dashboard config.
  */
 import { ipcMain } from 'electron';
+import { isMultiInstanceDevelopment } from '../dev-instance.js';
 import type { LogEvent } from '../runtime/log-parser.js';
 import type { ProcessManager, RuntimeProcessState } from '../runtime/process-manager.js';
+import { resolveBuyerProxyPort } from '../runtime/active-config.js';
+import { isCompatibleSharedBuyer, refreshSharedBuyerAttachment } from '../runtime/shared-buyer.js';
 
 /** Shape every dashboard-style handler answers with. */
 export type ApiResult = {
@@ -103,6 +106,10 @@ export function registerRuntimeIpc(deps: RuntimeIpcDeps): void {
   } = deps;
 
   ipcMain.handle('runtime:get-state', async () => {
+    if (isMultiInstanceDevelopment() && processManager.isAttached('connect')) {
+      const port = await resolveBuyerProxyPort();
+      await refreshSharedBuyerAttachment(processManager, port);
+    }
     return {
       processes: getCombinedProcessState(),
       daemonState: processManager.getDaemonStateSnapshot(),
@@ -111,6 +118,19 @@ export function registerRuntimeIpc(deps: RuntimeIpcDeps): void {
   });
 
   ipcMain.handle('runtime:start', async (_event, options: StartOptions) => {
+    if (options.mode === 'connect' && isMultiInstanceDevelopment()) {
+      const port = await resolveBuyerProxyPort();
+      if (await isCompatibleSharedBuyer(port)) {
+        const state = processManager.attach('connect');
+        appendLog('connect', 'system', `Reusing shared buyer proxy on 127.0.0.1:${port}.`);
+        return {
+          state,
+          processes: getCombinedProcessState(),
+          daemonState: processManager.getDaemonStateSnapshot(),
+        };
+      }
+    }
+
     await ensureSecureIdentity();
 
     const startOptions: StartOptions = {
@@ -135,11 +155,15 @@ export function registerRuntimeIpc(deps: RuntimeIpcDeps): void {
   });
 
   ipcMain.handle('runtime:stop', async (_event, mode: RuntimeMode) => {
-    const state = await processManager.stop(mode);
+    const preserveSharedBuyer = mode === 'connect' && isMultiInstanceDevelopment();
+    const state = await processManager.stop(mode, preserveSharedBuyer);
     if (mode === 'connect') {
-      // Stop must actually silence the buyer proxy, not just our child — an
-      // orphaned runtime reusing the port would keep serving requests.
-      await killOrphanBuyerProxy();
+      // Normal Stop must silence the buyer proxy, not just our child. Named
+      // development instances instead release shared ownership so one test
+      // window cannot break every other window and connected tool.
+      if (!isMultiInstanceDevelopment()) {
+        await killOrphanBuyerProxy();
+      }
     }
     return {
       state,

@@ -20,7 +20,9 @@ import { TelegramBotCard } from './TelegramBotCard';
 import styles from './VprToolsView.module.scss';
 
 
-const DEFAULT_PORT = 8378;
+declare const __ANTSEED_SYSTEM_PROXY_PORT__: number;
+
+const DEFAULT_PORT = __ANTSEED_SYSTEM_PROXY_PORT__;
 
 /** Two-pane modal navigation: the main pane slides to the application list
     the same way the app's screens slide ('none' = no animation on open). */

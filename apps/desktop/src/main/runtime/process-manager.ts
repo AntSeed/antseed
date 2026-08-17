@@ -3,6 +3,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
+import { desktopSystemProxyCliDataDir } from '../dev-instance.js';
 import { WORKSPACE_APPS_DIR } from '../paths.js';
 
 const { join, resolve } = path;
@@ -356,7 +357,7 @@ export function resolveCommandArgs(opts: StartOptions): string[] {
       }
       break;
     case 'system-proxy':
-      args.push('--data-dir', resolveConnectDataDir());
+      args.push('--data-dir', desktopSystemProxyCliDataDir() ?? resolveConnectDataDir());
       args.push('system-proxy', 'start');
       if (opts.systemProxyPeerId) {
         args.push('--peer', opts.systemProxyPeerId);
@@ -386,6 +387,7 @@ export function resolveCommandArgs(opts: StartOptions): string[] {
 
 export class ProcessManager {
   private readonly processes = new Map<RuntimeMode, ChildProcessWithoutNullStreams>();
+  private readonly attachedModes = new Set<RuntimeMode>();
   private runtimeNativeAligned = false;
   private runtimeNativeAlignmentPromise: Promise<void> | null = null;
   private readonly states = new Map<RuntimeMode, RuntimeProcessState>([
@@ -399,6 +401,34 @@ export class ProcessManager {
 
   getState(): RuntimeProcessState[] {
     return [...this.states.values()].map((s) => ({ ...s }));
+  }
+
+  attach(mode: RuntimeMode): RuntimeProcessState {
+    const state = this.states.get(mode)!;
+    this.attachedModes.add(mode);
+    state.running = true;
+    state.pid = null;
+    state.startedAt = Date.now();
+    state.lastExitCode = null;
+    state.lastError = null;
+    this.onLog(mode, 'system', `Attached to existing ${mode} runtime`);
+    return { ...state };
+  }
+
+  isAttached(mode: RuntimeMode): boolean {
+    return this.attachedModes.has(mode);
+  }
+
+  detach(mode: RuntimeMode, reason: string): RuntimeProcessState {
+    const state = this.states.get(mode)!;
+    if (!this.attachedModes.delete(mode)) {
+      return { ...state };
+    }
+    state.running = false;
+    state.pid = null;
+    state.lastError = reason;
+    this.onLog(mode, 'system', reason);
+    return { ...state };
   }
 
   getDaemonStateSnapshot(): DaemonStateSnapshot {
@@ -419,6 +449,7 @@ export class ProcessManager {
     if (this.processes.has(mode)) {
       throw new Error(`${mode} is already running`);
     }
+    this.attachedModes.delete(mode);
 
     const cliExecution = resolveCliExecution();
     const args = resolveCommandArgs(opts);
@@ -722,11 +753,16 @@ export class ProcessManager {
     });
   }
 
-  async stop(mode: RuntimeMode): Promise<RuntimeProcessState> {
+  async stop(mode: RuntimeMode, preserve = false): Promise<RuntimeProcessState> {
     const child = this.processes.get(mode);
     const state = this.states.get(mode)!;
+    this.attachedModes.delete(mode);
 
-    if (!child) {
+    if (!child || preserve) {
+      if (child) {
+        this.processes.delete(mode);
+        child.unref();
+      }
       state.running = false;
       state.pid = null;
       return { ...state };
