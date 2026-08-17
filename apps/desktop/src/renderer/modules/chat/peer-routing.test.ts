@@ -518,6 +518,7 @@ test('pinned image prompts route to the explicitly selected seller', async () =>
   uiState.vprRoutableRows = [{
     rowKey: 'venice-peer:image-model', peerId: 'venice-peer', serviceId: 'image-model',
     protocol: 'openai-images', effectiveReputationScore: 99,
+    capabilities: { supportedParameters: ['safe_mode'] },
   } as DiscoverRow];
   uiState.chatImageRouteSelection = {
     model: { provider: 'openai', serviceId: 'image-model', label: 'Image Model', categories: [] },
@@ -539,6 +540,7 @@ test('pinned image prompts route to the explicitly selected seller', async () =>
     conversationId: 'conv-a',
     prompt: 'A flying ant',
     peerId: 'venice-peer',
+    safeMode: true,
     service: 'image-model',
   });
 
@@ -579,7 +581,7 @@ test('follow-up image prompts edit the latest generated image', async () => {
     peerId: 'source-image-peer',
     serviceId: 'image-model',
     protocol: 'openai-images',
-    capabilities: { inputs: ['text', 'image'], outputs: ['image'] },
+    capabilities: { inputs: ['text', 'image'], outputs: ['image'], supportedParameters: ['safe_mode'] },
     effectiveReputationScore: 80,
   } as DiscoverRow];
   uiState.chatImageRouteSelection = {
@@ -606,6 +608,7 @@ test('follow-up image prompts edit the latest generated image', async () => {
     conversationId: 'conv-a',
     prompt: 'Now with a blue background',
     peerId: 'source-image-peer',
+    safeMode: true,
     service: 'image-model',
     sourceImageAttachmentId: 'generated-attachment',
   });
