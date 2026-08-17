@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
-import { modelMetadataFor, modelTagsFor } from './model-metadata.js';
+import { availableModelTags, modelMetadataFor, modelTagsFor } from './model-metadata.js';
 
 test('curated registry labels known models from maintained catalogs', () => {
   assert.deepEqual(modelTagsFor('lustify-v8'), ['Uncensored']);
@@ -13,6 +13,13 @@ test('curated registry labels known models from maintained catalogs', () => {
 test('curated aliases resolve to the same reviewed model metadata', () => {
   assert.deepEqual(modelTagsFor('glm-4.7-flash-heretic'), ['Uncensored', 'Reasoning', 'Fast']);
   assert.deepEqual(modelTagsFor('venice-role-play-uncensored'), ['Uncensored', 'Vision', 'Roleplay']);
+});
+
+test('available tags are deduplicated, sorted, and limited to supported UI capabilities', () => {
+  assert.deepEqual(
+    availableModelTags(['gpt-5.2-codex', 'sonar-pro', 'google/gemini-2.5-pro', 'totally-unknown']),
+    ['Coding', 'Reasoning', 'Vision', 'Web search'],
+  );
 });
 
 test('metadata retains provenance without trusting seller categories', () => {

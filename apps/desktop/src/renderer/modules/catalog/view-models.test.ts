@@ -143,6 +143,24 @@ function catalogEntry(overrides: Partial<VprModelCatalogEntry> = {}): VprModelCa
   };
 }
 
+test('filters the catalog by reviewed model tag', () => {
+  const entries = [
+    catalogEntry({ serviceId: 'gpt-5.2-codex' }),
+    catalogEntry({ serviceId: 'sonar-pro' }),
+    catalogEntry({ serviceId: 'unregistered-model' }),
+  ];
+
+  assert.deepEqual(
+    filterVprCatalog(entries, { tags: ['Coding'] }).map((entry) => entry.serviceId),
+    ['gpt-5.2-codex'],
+  );
+  assert.deepEqual(
+    filterVprCatalog(entries, { tags: ['vision'] }).map((entry) => entry.serviceId),
+    ['gpt-5.2-codex', 'sonar-pro'],
+  );
+  assert.equal(filterVprCatalog(entries, { tags: [] }).length, 3);
+});
+
 test('filters the catalog by model family', () => {
   const entries = [
     catalogEntry({ serviceId: 'claude-opus', label: 'Claude Opus 4.8', provider: 'anthropic' }),
@@ -151,14 +169,14 @@ test('filters the catalog by model family', () => {
   ];
 
   assert.deepEqual(
-    filterVprCatalog(entries, { family: 'Anthropic' }).map((entry) => entry.serviceId),
+    filterVprCatalog(entries, { families: ['Anthropic'] }).map((entry) => entry.serviceId),
     ['claude-opus'],
   );
   assert.deepEqual(
-    filterVprCatalog(entries, { family: 'Z.ai' }).map((entry) => entry.serviceId),
+    filterVprCatalog(entries, { families: ['Z.ai'] }).map((entry) => entry.serviceId),
     ['glm-5-2'],
   );
-  assert.equal(filterVprCatalog(entries, { family: null }).length, 3);
+  assert.equal(filterVprCatalog(entries, { families: [] }).length, 3);
 });
 
 test('seller ordering matches effective reputation instead of raw trust', () => {
