@@ -20,10 +20,27 @@ export interface RtcEnvironment {
   WebSocket: WebSocketCtor;
 }
 
+/** How the selected ICE candidate pair reaches the seller. */
+export interface ConnectionPathInfo {
+  /** 'relay' when traffic flows through a TURN server, 'direct' otherwise. */
+  path: 'direct' | 'relay' | 'unknown';
+}
+
 export interface ConnectionOptions {
   connectTimeoutMs?: number;
-  iceServers?: string[];
+  /**
+   * STUN/TURN servers: bare `stun:`/`turn:` URL strings, or full
+   * RTCIceServer entries when TURN credentials are needed.
+   */
+  iceServers?: (string | RTCIceServer)[];
+  /** Pass 'relay' to force TURN-only paths (privacy: hides the client IP from the seller). */
+  iceTransportPolicy?: RTCIceTransportPolicy;
   capabilities?: string[];
+  /**
+   * Called once after the DataChannel opens with the selected path kind.
+   * Deliberately coarse — no addresses or raw ICE candidates are exposed.
+   */
+  onConnectionInfo?: (info: ConnectionPathInfo) => void;
 }
 
 const DATA_CHANNEL_LABEL = 'antseed-data';
@@ -73,7 +90,10 @@ export class SellerConnection {
     });
 
     const pc = new env.RTCPeerConnection({
-      iceServers: (options.iceServers ?? DEFAULT_ICE_SERVERS).map((urls) => ({ urls })),
+      iceServers: (options.iceServers ?? DEFAULT_ICE_SERVERS).map((server) =>
+        typeof server === 'string' ? { urls: server } : server,
+      ),
+      ...(options.iceTransportPolicy ? { iceTransportPolicy: options.iceTransportPolicy } : {}),
     });
     const dc = pc.createDataChannel(DATA_CHANNEL_LABEL, { ordered: true });
     dc.binaryType = 'arraybuffer';
@@ -139,6 +159,11 @@ export class SellerConnection {
     dc.onmessage = (event) => conn.handleMessage(event.data as ArrayBuffer | string);
     dc.onclose = () => conn.fail('datachannel closed');
     conn.startKeepalive();
+
+    if (options.onConnectionInfo) {
+      const report = options.onConnectionInfo;
+      void classifyConnectionPath(pc).then((path) => report({ path })).catch(() => {});
+    }
 
     // The bridge is only needed for signaling; free the relay slot (it counts
     // against the per-IP cap). The seller keeps the session alive — its
@@ -248,5 +273,47 @@ export class SellerConnection {
       this.awaitingPong = true;
       this.sendFrame(MessageType.Ping, payload);
     }, PING_INTERVAL_MS);
+  }
+}
+
+/**
+ * Classify the selected ICE path from getStats(): 'relay' when either side of
+ * the nominated candidate pair is a TURN relay candidate. Returns 'unknown'
+ * when stats are unavailable (e.g. non-browser polyfills). Never surfaces
+ * addresses or raw candidates.
+ */
+async function classifyConnectionPath(pc: RTCPeerConnection): Promise<ConnectionPathInfo['path']> {
+  try {
+    const stats = await pc.getStats();
+    const byId = new Map<string, Record<string, unknown>>();
+    stats.forEach((report: unknown, id: string) => byId.set(id, report as Record<string, unknown>));
+
+    let selected: Record<string, unknown> | undefined;
+    for (const report of byId.values()) {
+      if (report.type !== 'candidate-pair') continue;
+      if (report.selected === true || (report.nominated === true && report.state === 'succeeded')) {
+        selected = report;
+        break;
+      }
+    }
+    // Firefox marks the pair via the transport's selectedCandidatePairId.
+    if (!selected) {
+      for (const report of byId.values()) {
+        if (report.type === 'transport' && typeof report.selectedCandidatePairId === 'string') {
+          selected = byId.get(report.selectedCandidatePairId);
+          break;
+        }
+      }
+    }
+    if (!selected) return 'unknown';
+
+    for (const key of ['localCandidateId', 'remoteCandidateId'] as const) {
+      const candidateId = selected[key];
+      if (typeof candidateId !== 'string') continue;
+      if (byId.get(candidateId)?.candidateType === 'relay') return 'relay';
+    }
+    return 'direct';
+  } catch {
+    return 'unknown';
   }
 }

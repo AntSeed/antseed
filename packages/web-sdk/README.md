@@ -18,14 +18,56 @@ const session = await client.connect(sellers[0].peerId);
 
 const response = await session.request(
   {
-    path: '/v1/messages',
-    provider: 'anthropic',
+    path: '/v1/chat/completions',
+    provider: 'openai',
     headers: { accept: 'text/event-stream' },
-    body: JSON.stringify({ model: 'claude-sonnet-5', stream: true, messages: [...] }),
+    body: JSON.stringify({ model: 'gpt-oss-120b', stream: true, messages: [...] }),
   },
   { onChunk: (data, done) => render(new TextDecoder().decode(data)) },
 );
 ```
+
+## Example page
+
+A working single-page example (seller discovery, connect, streaming chat)
+lives in [`examples/example.html`](examples/example.html):
+
+```bash
+pnpm --filter @antseed/web-sdk run example
+# open http://127.0.0.1:8974/example.html
+```
+
+It expects a reachable relay (`node apps/relay/dist/index.js`, default port
+8917 — use `RELAY_STATIC_SELLERS=<peerId>@<host>:<port>` to pin a local
+seller) and works unfunded against sellers that accept free requests.
+
+## Durable channel state and multiple tabs
+
+By default the client uses an in-memory channel store: on reload the latest
+signed SpendingAuth state is gone and reserved funds stay locked until the
+session deadline passes. Production apps should inject a durable store:
+
+```ts
+const client = new AntseedWebClient({ relayUrl, wallet, channelStore: myStore });
+```
+
+`channelStore` takes any `BuyerChannelStore` (re-exported here). For
+crash-safety implement the optional `flush()`: it is awaited after each newly
+signed authorization is persisted and *before* it is transmitted, so it must
+not resolve until the write is durably committed (e.g. IndexedDB behind a
+synchronous in-memory cache). If several tabs can share the store, the
+implementation must also serialize signing (e.g. `navigator.locks`) —
+SpendingAuth amounts are cumulative per channel, and two tabs signing
+concurrently corrupt the sequence. Without a shared store, each tab opens its
+own channel and reserves its own budget.
+
+## ICE / TURN configuration
+
+`connection.iceServers` accepts bare URL strings or full `RTCIceServer`
+entries (for TURN credentials); `connection.iceTransportPolicy: 'relay'`
+forces TURN-only paths. `connection.onConnectionInfo` reports the selected
+path (`'direct' | 'relay' | 'unknown'`) once connected, without exposing
+addresses or raw candidates.
 
 ## Architecture
 
@@ -40,7 +82,7 @@ shared code, not a reimplementation:
 - **@antseed/buyer-core** — the buyer machinery: `BuyerRequestHandler`,
   `BuyerPaymentManager`, `BuyerPaymentNegotiator`, `ProxyMux`/`PaymentMux`.
   The exact classes behind the node/CLI buyer proxy, wired here to a WebRTC
-  DataChannel and `MemoryChannelStore`.
+  DataChannel and the configured channel store (in-memory by default).
 
 So 402 negotiation, ReserveAuth/AuthAck, NeedAuth cost validation, cumulative
 SpendingAuth metadata, streaming, and chunked uploads behave identically to

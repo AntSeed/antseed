@@ -2,10 +2,9 @@
  * High-level browser buyer built on the SHARED buyer machinery from
  * @antseed/buyer-core — the same BuyerRequestHandler / BuyerPaymentManager /
  * BuyerPaymentNegotiator stack the node buyer proxy runs, wired to a WebRTC
- * transport and an in-memory channel store.
+ * transport and an injectable channel store (in-memory by default).
  */
 
-import { Wallet } from 'ethers';
 import {
   BuyerPaymentManager,
   BuyerPaymentNegotiator,
@@ -17,8 +16,10 @@ import {
   type BuyerConnection,
   type BuyerIdentity,
   type BuyerPeerView,
+  type BuyerSigner,
   type PaymentMux,
 } from '@antseed/buyer-core';
+import type { BuyerChannelStore } from '@antseed/buyer-core/channel-store-types';
 import {
   MessageType,
   toPeerId,
@@ -56,9 +57,27 @@ export interface WebPaymentConfig {
 export interface ClientOptions {
   /** Relay base URL, e.g. https://relay.antseed.com */
   relayUrl: string;
-  /** Buyer hot-wallet key or Wallet; the peerId is its EVM address. */
+  /**
+   * Buyer hot-wallet key, or any ethers AbstractSigner exposing its address
+   * as a property (Wallet, JsonRpcSigner, custom non-extractable-key
+   * signers). The peerId is its EVM address. Note: the payment stack signs a
+   * SpendingAuth per request, so signers that prompt per signature (browser
+   * extension wallets) are impractical for chat-style traffic.
+   */
   privateKey?: string;
-  wallet?: Wallet;
+  wallet?: BuyerSigner;
+  /**
+   * Channel bookkeeping store. Defaults to a fresh in-memory store: channel
+   * state is lost on reload and reserved funds stay locked until the session
+   * deadline. Production apps should inject a durable implementation whose
+   * `flush()` commits before resolving (e.g. IndexedDB behind a synchronous
+   * cache) — it is awaited after each signed authorization is persisted and
+   * before it is transmitted. When several tabs may share one store, the
+   * implementation must also serialize signing (e.g. Web Locks): SpendingAuth
+   * amounts are cumulative per channel, and two tabs signing concurrently
+   * corrupt the sequence.
+   */
+  channelStore?: BuyerChannelStore;
   /** Defaults to Base mainnet (chain 8453). */
   payment?: Partial<WebPaymentConfig>;
   connection?: ConnectionOptions;
@@ -106,7 +125,7 @@ export class AntseedWebClient {
   private readonly identity: BuyerIdentity;
   private readonly env: RtcEnvironment;
   private readonly payment: WebPaymentConfig;
-  private readonly store = new MemoryChannelStore();
+  private readonly store: BuyerChannelStore;
   private readonly handler: BuyerRequestHandler;
   readonly negotiator: BuyerPaymentNegotiator;
   private readonly sessions = new Map<string, SessionWiring>();
@@ -115,6 +134,7 @@ export class AntseedWebClient {
     const wallet = options.wallet ?? (options.privateKey ? signerFromPrivateKey(options.privateKey) : null);
     if (!wallet) throw new Error('provide privateKey or wallet');
     this.identity = { peerId: toPeerId(wallet.address.slice(2).toLowerCase()), wallet };
+    this.store = options.channelStore ?? new MemoryChannelStore();
 
     const globalRtc = (globalThis as Record<string, unknown>).RTCPeerConnection as
       | typeof RTCPeerConnection
