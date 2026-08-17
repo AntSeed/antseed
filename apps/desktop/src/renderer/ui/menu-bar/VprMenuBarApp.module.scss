@@ -1,4 +1,6 @@
 .shell {
+  --vpr-compact-footer-bg: #e6edf3;
+
   position: fixed;
   inset: 0;
   padding: 8px;
@@ -17,7 +19,6 @@
   border-radius: 3px 0 0;
   background: var(--bg-card);
   transform: translateX(-50%) rotate(45deg);
-  box-shadow: -1px -1px 0 var(--border);
 }
 
 .popover {
@@ -29,11 +30,19 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: 16px;
-  background: var(--bg-card);
+  background: linear-gradient(
+    to bottom,
+    var(--bg-card) 0 calc(100% - 44px),
+    var(--vpr-compact-footer-bg) calc(100% - 44px)
+  );
   box-shadow: none;
   -webkit-app-region: no-drag;
+}
+
+:global(body:not(.dark-theme)) .shell {
+  --vpr-compact-footer-bg: #2a2a2c;
 }
 
 .popover button {

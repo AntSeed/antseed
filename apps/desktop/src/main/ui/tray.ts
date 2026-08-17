@@ -5,6 +5,7 @@ import {
   type MenuItemConstructorOptions,
   type Rectangle,
 } from 'electron';
+import { configureTrayClickBehavior } from './tray-click-behavior.js';
 
 let tray: Tray | null = null;
 let currentOptions: DesktopTrayOptions | null = null;
@@ -49,6 +50,7 @@ export function createDesktopTray(options: DesktopTrayOptions): void {
   image.setTemplateImage(true);
 
   tray = new Tray(image);
+  configureTrayClickBehavior(tray);
   currentOptions = options;
   tray.setToolTip(appName);
   rebuildMenu();

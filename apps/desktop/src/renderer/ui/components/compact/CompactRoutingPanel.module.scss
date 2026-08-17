@@ -234,7 +234,7 @@
   padding: 0 17px;
   border: 0;
   border-radius: 0 0 20px 20px;
-  background: #e6edf3;
+  background: var(--vpr-compact-footer-bg, #e6edf3);
   color: #24292b;
   font-size: 14px;
   font-weight: 650;
@@ -244,8 +244,8 @@
 .footer:hover,
 .footer:focus-visible { background: #cdd6dd; outline: none; }
 .panelFloat .footer { height: 36px; padding: 0 12px; border-radius: 0 0 16px 16px; font-size: 12px; }
-.panelMenuBar .footer { height: 44px; padding: 0 11px; border-radius: 0 0 15px 15px; font-size: 12px; }
-:global(body:not(.dark-theme)) .footer { background: #2a2a2c; color: #f0eee8; }
+.panelMenuBar .footer { height: 44px; padding: 0 11px; border-radius: 0; font-size: 12px; }
+:global(body:not(.dark-theme)) .footer { background: var(--vpr-compact-footer-bg, #2a2a2c); color: #f0eee8; }
 :global(body:not(.dark-theme)) .footer:hover { background: #19191b; }
 
 @media (prefers-reduced-motion: reduce) {
