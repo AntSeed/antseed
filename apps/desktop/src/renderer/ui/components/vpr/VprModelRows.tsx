@@ -7,6 +7,7 @@ import { sameCanonicalModel } from '../../../modules/catalog/model-identity';
 import { modelCapabilitySummary } from '../../../modules/catalog/model-capabilities';
 import { modelTagsFor } from '../../../modules/catalog/model-metadata';
 import { BrandIcon } from '../brand/BrandIcon';
+import { InfoTooltip } from '../InfoTooltip';
 import { formatUsdShort, VprBadge } from './VprKit';
 import styles from './VprModelRows.module.scss';
 
@@ -151,9 +152,21 @@ function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pi
             </span>
           ))}
           {!compact && hiddenModelTags.length > 0 && (
-            <span className={styles.modelTagMore} title={hiddenModelTags.join(' · ')}>
-              +{hiddenModelTags.length}
-            </span>
+            <InfoTooltip
+              align="left"
+              narrow
+              interactive
+              content={<span>{hiddenModelTags.join(' · ')}</span>}
+            >
+              <span
+                className={styles.modelTagMore}
+                role="button"
+                tabIndex={0}
+                onClick={(event) => event.stopPropagation()}
+              >
+                +{hiddenModelTags.length}
+              </span>
+            </InfoTooltip>
           )}
           {favorite && (
             <HugeiconsIcon icon={StarIcon} size={13} strokeWidth={2} className={styles.favStar} />

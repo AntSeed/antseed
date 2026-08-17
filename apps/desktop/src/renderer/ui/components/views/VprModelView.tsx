@@ -16,6 +16,7 @@ import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import type { ViewName } from '../../types';
 import { BrandIcon } from '../brand/BrandIcon';
+import { InfoTooltip } from '../InfoTooltip';
 import { formatUsdShort, VprBadge, VprCard, VprPage, VprSettingRow, VprStatRow, VprStatTile, VprToggle } from '../vpr/VprKit';
 import styles from './VprModelView.module.scss';
 
@@ -356,9 +357,16 @@ function ModelTagBadges({ tags }: { tags: string[] }) {
         </span>
       ))}
       {(visibleCount === null || hiddenTags.length > 0) && (
-        <span className={styles.badgeMore} title={hiddenTags.join(' · ')}>
-          +{hiddenTags.length || tags.length}
-        </span>
+        <InfoTooltip
+          align="left"
+          narrow
+          interactive
+          content={<span>{hiddenTags.join(' · ')}</span>}
+        >
+          <span className={styles.badgeMore} role="button" tabIndex={0}>
+            +{hiddenTags.length || tags.length}
+          </span>
+        </InfoTooltip>
       )}
     </div>
   );
