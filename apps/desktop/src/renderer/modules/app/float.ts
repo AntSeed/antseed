@@ -86,6 +86,7 @@ export function initVprFloatModule({
   let lastBuyerRequestTotal: number | null = null;
   let menuBarOpen = false;
   let snapshotReady = false;
+  let recentConversations: VprFloatConversation[] = [];
 
   function surfaceOpen(): boolean {
     return uiState.vprFloatOpen || menuBarOpen;
@@ -279,12 +280,13 @@ export function initVprFloatModule({
     };
   }
 
-  async function loadConversations(): Promise<VprFloatConversation[]> {
+  async function loadConversations(): Promise<VprFloatConversation[] | null> {
     try {
-      const records = (await bridge?.buyerConversationsList?.()) ?? [];
+      const records = await bridge?.buyerConversationsList?.();
+      if (!records) return null;
       return records.slice(0, FLOAT_CONVERSATION_LIMIT).map(floatConversation);
     } catch {
-      return [];
+      return null;
     }
   }
 
@@ -324,6 +326,13 @@ export function initVprFloatModule({
     const runtimeOn = uiState.processes.some(
       (process) => process.mode === 'connect' && process.running === true,
     );
+    const loadedConversations = await loadConversations();
+    if (loadedConversations) recentConversations = loadedConversations;
+    const conversations = runtimeOn
+      ? recentConversations
+      : recentConversations.map((conversation) => (
+          conversation.active ? { ...conversation, active: false } : conversation
+        ));
 
     return {
       ready: snapshotReady,
@@ -340,9 +349,7 @@ export function initVprFloatModule({
       favoriteKeys,
       selectedModel: selection ? { provider: selection.provider, serviceId: selection.serviceId } : null,
       ...(Object.keys(pinnedSellers).length > 0 ? { pinnedSellers } : {}),
-      // No chats while routing is stopped — a dead runtime serving a live
-      // chat list reads as connected when it isn't.
-      conversations: runtimeOn ? await loadConversations() : [],
+      conversations,
       usageLabel: usageLabel(),
       balanceLabel: balanceLabel(),
       needsFunds: needsFunds(),

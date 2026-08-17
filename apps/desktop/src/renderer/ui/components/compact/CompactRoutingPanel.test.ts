@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
 import type { VprFloatData } from '../../../types/bridge.js';
-import { compactRoutingStatus } from './CompactRoutingPanel.js';
+import {
+  compactRoutingShowsConversations,
+  compactRoutingStatus,
+} from './CompactRoutingPanel.js';
 
 function data(overrides: Partial<VprFloatData> = {}): VprFloatData {
   return {
@@ -56,4 +59,10 @@ test('active routing status falls back cleanly before a model is resolved', () =
     compactRoutingStatus(data({ trafficActive: true })).label,
     'Routing…',
   );
+});
+
+test('menu bar keeps historical conversations visible while routing is stopped', () => {
+  assert.equal(compactRoutingShowsConversations('menu-bar', false), true);
+  assert.equal(compactRoutingShowsConversations('float', false), false);
+  assert.equal(compactRoutingShowsConversations('float', true), true);
 });

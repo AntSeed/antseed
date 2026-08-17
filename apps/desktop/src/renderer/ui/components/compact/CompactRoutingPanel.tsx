@@ -28,6 +28,13 @@ export type CompactRoutingStatus = {
   tone: 'active' | 'ready' | 'funds' | 'stopped' | 'loading';
 };
 
+export function compactRoutingShowsConversations(
+  variant: CompactRoutingVariant,
+  runtimeOn: boolean,
+): boolean {
+  return runtimeOn || variant === 'menu-bar';
+}
+
 export function compactRoutingStatus(data: VprFloatData | null): CompactRoutingStatus {
   if (!data || data.ready === false) {
     return { label: 'Loading routing…', hint: 'Refreshing AntSeed routing status.', tone: 'loading' };
@@ -148,6 +155,7 @@ export function CompactRoutingPanel({
   const modelLabel = selectedModel?.label ?? 'Select model';
   const pinnedSeller = selectedModelValue ? pinnedSellers.get(selectedModelValue) ?? null : null;
   const runtimeOn = readyData?.runtimeOn ?? true;
+  const showConversations = compactRoutingShowsConversations(variant, runtimeOn);
 
   const idleApps = useMemo(
     () => (readyData?.apps ?? []).filter((app) => !conversations.some((chat) => conversationMatchesApp(chat.tool, app))),
@@ -203,7 +211,7 @@ export function CompactRoutingPanel({
           )
         ) : target === null ? (
           <div key="list" className={slideClass}>
-            {!runtimeOn ? <div className={styles.empty}>Not connected — routing is stopped. Open VPR to start it.</div> : null}
+            {!runtimeOn && conversations.length === 0 ? <div className={styles.empty}>Not connected — routing is stopped. Open VPR to start it.</div> : null}
             {runtimeOn && conversations.length === 0 && idleApps.map((app) => (
               <div key={app.name} className={styles.hint}>
                 <AppMark app={app} size={variant === 'menu-bar' ? 18 : 16} />
@@ -211,7 +219,7 @@ export function CompactRoutingPanel({
               </div>
             ))}
             {runtimeOn && conversations.length === 0 && idleApps.length === 0 ? <div className={styles.empty}>No tool chats seen yet</div> : null}
-            {runtimeOn ? conversations.map((chat) => {
+            {showConversations ? conversations.map((chat) => {
               const app = appForTool(chat.tool);
               const appLabel = app?.displayName ?? displayToolName(chat.tool);
               const pinnedLabel = chat.pinnedServiceId
