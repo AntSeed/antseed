@@ -18,7 +18,7 @@ declare const __APP_VERSION__: string;
 type Props = { onSelectView?: (view: import('../../types').ViewName) => void };
 
 const TELEGRAM_URL = 'https://t.me/antseed';
-const X_URL = 'https://x.com/antseedai';
+const X_URL = 'https://x.com/antseed';
 const DOCS_BASE_URL = 'https://antseed.com/docs';
 
 type HelpSection = { heading: string; body: string };
