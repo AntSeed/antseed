@@ -9,6 +9,7 @@ import {
   type CSSProperties,
   type FocusEvent,
   type MouseEvent,
+  type PointerEvent,
   type ReactElement,
   type ReactNode,
 } from 'react';
@@ -54,7 +55,10 @@ type TriggerProps = {
   onMouseLeave?: (e: MouseEvent<HTMLElement>) => void;
   onFocus?: (e: FocusEvent<HTMLElement>) => void;
   onBlur?: (e: FocusEvent<HTMLElement>) => void;
+  onClick?: (e: MouseEvent<HTMLElement>) => void;
   'aria-describedby'?: string;
+  'aria-controls'?: string;
+  'aria-expanded'?: boolean;
 };
 
 export type InfoTooltipProps = {
@@ -63,6 +67,10 @@ export type InfoTooltipProps = {
   content: ReactNode;
   /** Which edge of the panel anchors to which edge of the trigger. */
   align?: InfoTooltipAlign;
+  /** Wider panel for structured content such as a balance breakdown. */
+  wide?: boolean;
+  /** Keep the panel usable on hover and allow click-to-pin behavior. */
+  interactive?: boolean;
   /**
    * The trigger element. Must be a single React element that accepts a
    * `ref` to an HTMLElement (DOM elements all do; custom components need
@@ -71,9 +79,11 @@ export type InfoTooltipProps = {
   children: ReactElement;
 };
 
-export function InfoTooltip({ content, align = 'right', children }: InfoTooltipProps) {
+export function InfoTooltip({ content, align = 'right', wide = false, interactive = false, children }: InfoTooltipProps) {
   const triggerRef = useRef<HTMLElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
+  const closeTimerRef = useRef<number | null>(null);
+  const pinnedRef = useRef(false);
   const [open, setOpen] = useState(false);
   const [style, setStyle] = useState<CSSProperties>({ left: 0, top: 0 });
   const tooltipId = useId();
@@ -109,13 +119,27 @@ export function InfoTooltip({ content, align = 'right', children }: InfoTooltipP
   }, [align]);
 
   const show = useCallback(() => {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
     reposition();
     setOpen(true);
   }, [reposition]);
 
   const hide = useCallback(() => {
+    pinnedRef.current = false;
     setOpen(false);
   }, []);
+
+  const scheduleHide = useCallback(() => {
+    if (!interactive || pinnedRef.current) return;
+    if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = window.setTimeout(() => {
+      setOpen(false);
+      closeTimerRef.current = null;
+    }, 120);
+  }, [interactive]);
 
   // Reposition on resize/scroll only while the tooltip is open. Scroll
   // capture-phase so we catch scrolls in any ancestor, not just window.
@@ -128,6 +152,27 @@ export function InfoTooltip({ content, align = 'right', children }: InfoTooltipP
       window.removeEventListener('scroll', reposition, true);
     };
   }, [open, reposition]);
+
+  useEffect(() => {
+    if (!open || !interactive) return undefined;
+    const onPointerDown = (event: globalThis.PointerEvent) => {
+      const target = event.target as Node;
+      if (!triggerRef.current?.contains(target) && !tooltipRef.current?.contains(target)) hide();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') hide();
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [hide, interactive, open]);
+
+  useEffect(() => () => {
+    if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
+  }, []);
 
   if (!isValidElement(children)) {
     // Defensive: render the children as-is rather than crashing if the
@@ -157,7 +202,8 @@ export function InfoTooltip({ content, align = 'right', children }: InfoTooltipP
     },
     onMouseLeave: (e: MouseEvent<HTMLElement>) => {
       childProps.onMouseLeave?.(e);
-      hide();
+      if (interactive) scheduleHide();
+      else hide();
     },
     onFocus: (e: FocusEvent<HTMLElement>) => {
       childProps.onFocus?.(e);
@@ -165,9 +211,21 @@ export function InfoTooltip({ content, align = 'right', children }: InfoTooltipP
     },
     onBlur: (e: FocusEvent<HTMLElement>) => {
       childProps.onBlur?.(e);
-      hide();
+      if (interactive) scheduleHide();
+      else hide();
+    },
+    onClick: (e: MouseEvent<HTMLElement>) => {
+      childProps.onClick?.(e);
+      if (!interactive) return;
+      if (pinnedRef.current) {
+        hide();
+        return;
+      }
+      pinnedRef.current = true;
+      show();
     },
     'aria-describedby': tooltipId,
+    ...(interactive ? { 'aria-controls': tooltipId, 'aria-expanded': open } : {}),
   });
 
   return (
@@ -176,9 +234,17 @@ export function InfoTooltip({ content, align = 'right', children }: InfoTooltipP
       <div
         ref={tooltipRef}
         id={tooltipId}
-        role="tooltip"
-        className={`${styles.tooltip}${open ? ` ${styles.tooltipOpen}` : ''}`}
+        role={interactive ? 'dialog' : 'tooltip'}
+        className={[
+          styles.tooltip,
+          wide ? styles.tooltipWide : '',
+          interactive ? styles.tooltipInteractive : '',
+          open ? styles.tooltipOpen : '',
+        ].filter(Boolean).join(' ')}
         style={style}
+        onMouseEnter={interactive ? show : undefined}
+        onMouseLeave={interactive ? scheduleHide : undefined}
+        onPointerDown={interactive ? (event: PointerEvent<HTMLDivElement>) => event.stopPropagation() : undefined}
       >
         {content}
       </div>

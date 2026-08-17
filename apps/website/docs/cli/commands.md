@@ -34,17 +34,20 @@ antseed seller emissions claim        Claim accumulated seller payouts
 ```bash title="buyer"
 antseed buyer start                   Start the buyer proxy
 antseed buyer start --router <name>   Start the buyer proxy with a non-default router
-antseed buyer deposit <amount>        Deposit USDC for payments
+antseed buyer deposit                       Show funding address + QR; incoming USDC deposits automatically (gasless)
+antseed buyer sweep                   Gaslessly sweep hot-wallet USDC into deposits (fixed relay fee)
+antseed buyer deposit --onchain <usdc>  Direct on-chain deposit from the hot wallet (requires ETH for gas)
 antseed buyer withdraw <amount>       Withdraw USDC from deposits
+antseed buyer activity                Activity summary: tokens, spend history, savings, channels, claimable ANTS
 antseed buyer balance                 Check wallet and deposit balance
-antseed network browse                Browse available services and pricing
-antseed payments                      Launch the payments portal
+antseed network browse                Browse peers, models, and pricing (same catalog as /v1/models)
 ```
 
 ### Network and monitoring
 
 ```bash title="network"
 antseed seller status                 Show seller status
+antseed seller doctor                 Diagnose the announced seller endpoint
 antseed buyer status                  Show buyer status
 antseed metrics serve                 Serve Prometheus-compatible buyer/seller metrics
 antseed config                        Manage config file
@@ -71,10 +74,11 @@ antseed dev                           Run seller + buyer locally for testing
 | `--base-url <url>` | Set the provider-wide upstream base URL |
 
 ```bash
-antseed config seller add-service openai gpt-image-1 \
+antseed config seller add-service openai flux.1-schnell \
+  --upstream "black-forest-labs/FLUX.1-schnell" \
   --input 0 --output 0 \
   --capabilities '{"inputs":["text","image"]}' \
-  --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.04}]}}'
+  --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.003}]}}'
 ```
 
 `antseed seller setup` exposes the same capability and unit-billing fields interactively. `antseed seller start` warns if unit billing is configured for a plugin that does not support it. Image services are not health-probed because a meaningful probe would incur an upstream generation charge.

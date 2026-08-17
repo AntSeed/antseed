@@ -10,7 +10,7 @@ function names(profiles: readonly unknown[]): string[] {
   return profiles.map((profile) => (profile as Record<string, unknown>)['name'] as string);
 }
 
-const DEFAULT_NAMES = ['opencode', 'codex', 't3code', 'pi', 'crush', 'goose', 'zed'];
+const DEFAULT_NAMES = ['opencode', 'codex', 't3code', 'pi', 'gooeypi', 'crush', 'goose', 'zed'];
 
 test('default app profiles are config-patch entries with unique names', () => {
   assert.deepEqual(names(DEFAULT_APP_PROFILES), DEFAULT_NAMES);
@@ -23,6 +23,21 @@ test('default app profiles are config-patch entries with unique names', () => {
     const slugs = profile['toolSlugs'] as string[];
     assert.ok(Array.isArray(slugs) && slugs.length > 0);
   }
+});
+
+test('GooeyPi patches the shared Pi config without requiring pi on PATH', () => {
+  const profile = DEFAULT_APP_PROFILES.find((entry) => entry['name'] === 'gooeypi');
+  assert.ok(profile);
+  assert.deepEqual(profile['toolSlugs'], ['gooeypi']);
+  assert.deepEqual(profile['configPatch'], {
+    format: 'pi',
+    configPath: '~/.pi/agent/models.json',
+    settingsPath: '~/.pi/agent/settings.json',
+    providerKey: 'antseed-gooeypi',
+    baseURL: 'http://localhost:{buyerPort}/v1',
+    api: 'openai-responses',
+    originator: 'gooeypi',
+  });
 });
 
 test('platformConfigPath keeps the posix path off Windows and for home-rooted tools', () => {
@@ -62,6 +77,6 @@ test('mergeWithDefaultAppProfiles lets external profiles override same-name defa
     { name: 'opencode', displayName: 'OpenCode (private override)' },
   ];
   const merged = mergeWithDefaultAppProfiles(external);
-  assert.deepEqual(names(merged), ['acme', 'opencode', 'codex', 't3code', 'pi', 'crush', 'goose', 'zed']);
+  assert.deepEqual(names(merged), ['acme', 'opencode', 'codex', 't3code', 'pi', 'gooeypi', 'crush', 'goose', 'zed']);
   assert.equal((merged[1] as Record<string, unknown>)['displayName'], 'OpenCode (private override)');
 });

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'vitest';
 
 import type { DiscoverRow, VprRoutingPreferences } from '../../core/state';
-import { chooseBestVprRoute, filterRoutableVprRoutes, isPeerRoutable, scoreVprRoute } from './select.js';
+import { chooseBestVprRoute, filterRoutableVprRoutes, hasEligibleFreeVprRoute, isPeerRoutable, isRouteEligibleForAutoSelection, isRowCoolingDown, scoreVprRoute } from './select.js';
 import { projectRowsToVprModelCatalog } from '../catalog/model-catalog.js';
 
 const preferences: VprRoutingPreferences = {
@@ -48,13 +48,17 @@ function discoverRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
     onChainGhostCount: 0,
     onChainTotalVolumeUsdc: '0',
     onChainLastSettledAt: 0,
+    effectiveReputationScore: 75,
     onChainReputationScore: null,
-    onChainTrustScore: 75,
+    onChainTrustScore: null,
     onChainSybilRisk: null,
     onChainSybilFlags: [],
     networkRequests: null,
     networkInputTokens: null,
     networkOutputTokens: null,
+    peerCooldownUntil: null,
+    peerFailureStreak: 0,
+    peerLastFailureReason: null,
     selectionValue: `${provider}\u0001${serviceId}\u0001${peerId}`,
     ...overrides,
   };
@@ -80,12 +84,48 @@ test('peer over max input price is penalized', () => {
   assert.ok(scoreVprRoute(expensive, preferences).score < scoreVprRoute(cheap, preferences).score);
 });
 
-test('peer below min trust score is penalized', () => {
-  const trusted = discoverRow({ peerId: 'trusted', onChainTrustScore: 50 });
-  const lowTrust = discoverRow({ peerId: 'low-trust', onChainTrustScore: 49 });
+test('peer below minimum reputation is ineligible even when much cheaper', () => {
+  const trusted = discoverRow({
+    peerId: 'trusted',
+    effectiveReputationScore: 60,
+    inputUsdPerMillion: 20,
+    outputUsdPerMillion: 20,
+  });
+  const lowTrust = discoverRow({
+    peerId: 'low-trust',
+    effectiveReputationScore: 59.9,
+    inputUsdPerMillion: 0,
+    outputUsdPerMillion: 0,
+  });
+  const prefs = { ...preferences, minTrustScore: 60 };
 
-  assert.equal(chooseBestVprRoute([lowTrust, trusted], preferences)?.peerId, 'trusted');
-  assert.ok(scoreVprRoute(lowTrust, preferences).score < scoreVprRoute(trusted, preferences).score);
+  assert.equal(isRouteEligibleForAutoSelection(lowTrust, prefs), false);
+  assert.equal(chooseBestVprRoute([lowTrust, trusted], prefs)?.peerId, 'trusted');
+});
+
+test('unknown reputation cannot bypass a positive minimum with cheap pricing', () => {
+  const unknown = discoverRow({
+    peerId: 'unknown',
+    effectiveReputationScore: null,
+    onChainReputationScore: null,
+    onChainTrustScore: null,
+    inputUsdPerMillion: 0,
+    outputUsdPerMillion: 0,
+  });
+
+  assert.equal(isRouteEligibleForAutoSelection(unknown, { ...preferences, minTrustScore: 60 }), false);
+  assert.equal(chooseBestVprRoute([unknown], { ...preferences, minTrustScore: 60 }), null);
+});
+
+test('legacy raw trust is normalized before applying the minimum score', () => {
+  const legacy = discoverRow({
+    effectiveReputationScore: null,
+    onChainReputationScore: null,
+    onChainTrustScore: 100,
+  });
+
+  assert.equal(isRouteEligibleForAutoSelection(legacy, { ...preferences, minTrustScore: 60 }), false);
+  assert.ok(scoreVprRoute(legacy, preferences).score < 120);
 });
 
 test('tie breaker uses lower price', () => {
@@ -93,13 +133,13 @@ test('tie breaker uses lower price', () => {
     peerId: 'cheaper',
     inputUsdPerMillion: 1,
     outputUsdPerMillion: 1,
-    onChainTrustScore: 60,
+    effectiveReputationScore: 60,
   });
   const pricier = discoverRow({
     peerId: 'pricier',
     inputUsdPerMillion: 3,
     outputUsdPerMillion: 3,
-    onChainTrustScore: 80,
+    effectiveReputationScore: 80,
   });
 
   assert.equal(scoreVprRoute(cheaper, preferences).score, scoreVprRoute(pricier, preferences).score);
@@ -115,6 +155,7 @@ test('missing price and trust values are handled without mutating rows', () => {
     peerId: 'missing-values',
     inputUsdPerMillion: null,
     outputUsdPerMillion: null,
+    effectiveReputationScore: null,
     onChainReputationScore: null,
     onChainTrustScore: null,
   });
@@ -147,13 +188,13 @@ test('known priced route beats unknown route even when trust is lower', () => {
     peerId: 'unpriced',
     inputUsdPerMillion: null,
     outputUsdPerMillion: null,
-    onChainTrustScore: 100,
+    effectiveReputationScore: 100,
   });
   const cheap = discoverRow({
     peerId: 'cheap',
     inputUsdPerMillion: 1,
     outputUsdPerMillion: 2,
-    onChainTrustScore: 50,
+    effectiveReputationScore: 50,
   });
 
   assert.equal(scoreVprRoute(unpriced, preferences).score, 110);
@@ -162,7 +203,7 @@ test('known priced route beats unknown route even when trust is lower', () => {
 });
 
 test('blocked peers are never chosen, even when they score best', () => {
-  const blocked = discoverRow({ peerId: 'blocked', inputUsdPerMillion: 0, outputUsdPerMillion: 0, onChainTrustScore: 100 });
+  const blocked = discoverRow({ peerId: 'blocked', inputUsdPerMillion: 0, outputUsdPerMillion: 0, effectiveReputationScore: 100 });
   const other = discoverRow({ peerId: 'other', inputUsdPerMillion: 5, outputUsdPerMillion: 5 });
   const prefs = { ...preferences, blockedPeerIds: ['blocked'] };
 
@@ -210,4 +251,113 @@ test('blocking the only seller of a model removes it from the catalog', () => {
   const prefs = { ...preferences, blockedPeerIds: ['solo'] };
 
   assert.deepEqual(projectRowsToVprModelCatalog(filterRoutableVprRoutes(rows, prefs)), []);
+});
+
+const NOW = 1_700_000_000_000;
+
+test('a cooling-down peer loses even when it is cheaper and more trusted', () => {
+  const best = chooseBestVprRoute(
+    [
+      discoverRow({
+        peerId: 'cooling',
+        inputUsdPerMillion: 0.1,
+        outputUsdPerMillion: 0.1,
+        effectiveReputationScore: 99,
+        peerCooldownUntil: NOW + 30_000,
+      }),
+      discoverRow({ peerId: 'healthy', inputUsdPerMillion: 5, outputUsdPerMillion: 5, effectiveReputationScore: 60 }),
+    ],
+    preferences,
+    NOW,
+  );
+
+  assert.equal(best?.peerId, 'healthy');
+});
+
+test('a cooling-down priced peer loses to a healthy unknown-price peer', () => {
+  // Guards the compare-order fix: the known-price tier used to be evaluated
+  // before the score, so no cooldown penalty could ever outrank it.
+  const best = chooseBestVprRoute(
+    [
+      discoverRow({ peerId: 'cooling', inputUsdPerMillion: 1, outputUsdPerMillion: 1, peerCooldownUntil: NOW + 30_000 }),
+      discoverRow({ peerId: 'unpriced', inputUsdPerMillion: null, outputUsdPerMillion: null }),
+    ],
+    preferences,
+    NOW,
+  );
+
+  assert.equal(best?.peerId, 'unpriced');
+});
+
+test('routing still returns a peer when every candidate is cooling down', () => {
+  const best = chooseBestVprRoute(
+    [
+      discoverRow({ peerId: 'a', inputUsdPerMillion: 5, outputUsdPerMillion: 5, peerCooldownUntil: NOW + 30_000 }),
+      discoverRow({ peerId: 'b', inputUsdPerMillion: 1, outputUsdPerMillion: 1, peerCooldownUntil: NOW + 30_000 }),
+    ],
+    preferences,
+    NOW,
+  );
+
+  // Cooldown is a penalty, never a filter — the cheapest of a bad set wins.
+  assert.equal(best?.peerId, 'b');
+});
+
+test('an expired or absent cooldown is ignored', () => {
+  assert.equal(isRowCoolingDown(discoverRow({ peerCooldownUntil: NOW - 1 }), NOW), false);
+  assert.equal(isRowCoolingDown(discoverRow({ peerCooldownUntil: null }), NOW), false);
+  assert.equal(isRowCoolingDown(discoverRow({ peerCooldownUntil: NOW + 1_000 }), NOW), true);
+});
+
+test('an impossibly distant cooldown is treated as no cooldown', () => {
+  assert.equal(isRowCoolingDown(discoverRow({ peerCooldownUntil: NOW + 86_400_000 }), NOW), false);
+});
+
+test('failure streak breaks a tie between otherwise identical peers', () => {
+  const best = chooseBestVprRoute(
+    [
+      discoverRow({ peerId: 'flaky', peerFailureStreak: 2 }),
+      discoverRow({ peerId: 'clean', peerFailureStreak: 0 }),
+    ],
+    preferences,
+    NOW,
+  );
+
+  assert.equal(best?.peerId, 'clean');
+});
+
+test('the blocklist still wins over a healthy peer', () => {
+  const best = chooseBestVprRoute(
+    [
+      discoverRow({ peerId: 'blocked' }),
+      discoverRow({ peerId: 'cooling', peerCooldownUntil: NOW + 30_000 }),
+    ],
+    { ...preferences, blockedPeerIds: ['blocked'] },
+    NOW,
+  );
+
+  // Blocked is absolute; cooling down is only a preference.
+  assert.equal(best?.peerId, 'cooling');
+});
+
+test('scoreVprRoute explains why a cooling-down peer was deprioritized', () => {
+  const scored = scoreVprRoute(discoverRow({ peerCooldownUntil: NOW + 30_000 }), preferences, NOW);
+  assert.ok(scored.reasons.includes('peer cooling down'));
+  assert.ok(scored.score < 0);
+});
+
+test('hasEligibleFreeVprRoute requires a $0 route that passes the eligibility gate', () => {
+  const freeRated = discoverRow({ peerId: 'free-rated', inputUsdPerMillion: 0, outputUsdPerMillion: 0 });
+  const freeUnrated = discoverRow({
+    peerId: 'free-unrated',
+    inputUsdPerMillion: 0,
+    outputUsdPerMillion: 0,
+    effectiveReputationScore: null,
+  });
+  const paid = discoverRow({ peerId: 'paid' });
+
+  assert.equal(hasEligibleFreeVprRoute([freeRated, paid], preferences), true);
+  // A free seller with no reputation fails the trust gate; a paid seller never counts.
+  assert.equal(hasEligibleFreeVprRoute([freeUnrated, paid], preferences), false);
+  assert.equal(hasEligibleFreeVprRoute([freeRated], { ...preferences, blockedPeerIds: ['free-rated'] }), false);
 });

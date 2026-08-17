@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { HttpMetadataResolver } from '../src/discovery/http-metadata-resolver.js';
+import { HttpMetadataResolver, MAX_METADATA_HTTP_RESPONSE_SIZE } from '../src/discovery/http-metadata-resolver.js';
 import { METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
 
 function buildMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
@@ -32,6 +32,10 @@ afterEach(() => {
 });
 
 describe('HttpMetadataResolver', () => {
+  it('uses a bounded default response size', () => {
+    expect(MAX_METADATA_HTTP_RESPONSE_SIZE).toBe(256 * 1024);
+  });
+
   it('fetches metadata from the single endpoint regardless of announced version', async () => {
     const metadata = buildMetadata({ version: 11 });
     const fetchMock = vi.fn().mockResolvedValue(
@@ -102,6 +106,45 @@ describe('HttpMetadataResolver', () => {
     }
     const results = await Promise.all(pending);
     expect(results.every((result) => result !== null)).toBe(true);
+  });
+
+  it('rejects metadata exceeding the configured content length limit', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(buildMetadata()), {
+        status: 200,
+        headers: {
+          'content-type': 'application/json',
+          'content-length': '101',
+        },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const resolver = new HttpMetadataResolver({
+      timeoutMs: 100,
+      failureCooldownMs: 0,
+      maxResponseBytes: 100,
+    });
+
+    await expect(resolver.resolve({ host: '1.1.1.1', port: 6882 })).resolves.toBeNull();
+  });
+
+  it('stops reading streamed metadata after the response limit', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('x'.repeat(101), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const resolver = new HttpMetadataResolver({
+      timeoutMs: 100,
+      failureCooldownMs: 0,
+      maxResponseBytes: 100,
+    });
+
+    await expect(resolver.resolve({ host: '1.1.1.1', port: 6882 })).resolves.toBeNull();
   });
   it('caches failed endpoints for the configured cooldown', async () => {
     const fetchMock = vi.fn().mockRejectedValue(new Error('network down'));

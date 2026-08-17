@@ -128,6 +128,34 @@ describe('computeOnChainTrust', () => {
     expect(young.trust).toBeLessThan(mature.trust);
   });
 
+  it('does not treat a verified staked account with an unknown timestamp as brand new', () => {
+    const breakdown = computeOnChainTrustBreakdown(
+      makePeer({
+        onChainChannelCount: 1_208,
+        onChainGhostCount: 16,
+        onChainTotalVolumeUsdcMicros: 5_428_786_420,
+        onChainLastSettledAtSec: NOW_SEC,
+        onChainStakedAtSec: 0,
+        onChainStakeUsdcMicros: 10_000_000,
+      }),
+      NOW_MS,
+    )!;
+
+    expect(breakdown.daysSinceStaked).toBeNull();
+    expect(breakdown.volumeCreditCapUsdc).toBe(3_775);
+    expect(breakdown.creditedVolumeUsdc).toBe(3_775);
+    expect(computeOnChainReputationScore({
+      ...makePeer({
+        onChainChannelCount: 1_208,
+        onChainGhostCount: 16,
+        onChainTotalVolumeUsdcMicros: 5_428_786_420,
+        onChainLastSettledAtSec: NOW_SEC,
+        onChainStakedAtSec: 0,
+        onChainStakeUsdcMicros: 10_000_000,
+      }),
+    }, NOW_MS)).toBeGreaterThan(80);
+  });
+
   it('caps ticketBonus at TICKET_MAX (one fat channel cannot pump the score)', () => {
     // One channel at $100 → avg $100 → ticket would be 50× without the cap.
     const b = computeOnChainTrustBreakdown(

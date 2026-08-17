@@ -2,12 +2,12 @@
 sidebar_position: 8
 slug: /guides/metadata-v12-upgrade
 title: Metadata v12 Upgrade
-description: Safe rollout order for AntSeed metadata v12, service capabilities, and image unit billing.
+description: Safe rollout order for AntSeed metadata v12, large service catalogs, capabilities, and image unit billing.
 ---
 
 # Metadata v12 Upgrade
 
-Metadata v12 adds per-service capability hints. It builds on metadata v11, which added per-service unit billing for image outputs.
+Metadata v12 adds per-service capability hints and widens service catalog and per-service map counts from `uint8` to `uint16`. It builds on metadata v11, which added per-service unit billing for image outputs.
 
 This is a **buyer-first migration**. An older buyer rejects metadata versions newer than it understands and drops that seller from discovery.
 
@@ -20,6 +20,17 @@ This is a **buyer-first migration**. An older buyer rejects metadata versions ne
 | v12 | Visible | Visible | Visible |
 
 Updated buyers remain backward-compatible with existing sellers. Updated sellers are not visible to older buyers.
+
+## New Metadata Limits
+
+- 512 services per provider
+- 512 entries in service pricing, categories, API protocols, capabilities, and expanded billing models
+- 64 categories per service
+- 4 API protocols per service
+- 128 KiB maximum signed binary metadata
+- 256 KiB maximum HTTP metadata response
+
+The seller validates these limits before announcing. Buyers apply the same signed-metadata validation after downloading a bounded HTTP response.
 
 ## What Requires an Upgrade
 
@@ -53,14 +64,14 @@ antseed --version
 antseed network browse --json
 ```
 
-In JSON output, upgraded sellers report `"version": 12`. Confirm their provider entry includes the expected `serviceCapabilities` and, for image services, `serviceApiProtocols` plus `serviceUnitBillingModels`.
+In JSON output, upgraded sellers report `"version": 12`. Confirm large providers expose their complete service catalog and that capability/image entries appear where configured.
 
 Test image routing through an updated buyer:
 
 ```bash
 curl http://localhost:8377/v1/images/generations \
   -H 'content-type: application/json' \
-  -d '{"model":"gpt-image-1","prompt":"migration test","n":1}'
+  -d '{"model":"flux.1-schnell","prompt":"migration test","n":1}'
 ```
 
 ## Existing Configuration
@@ -72,7 +83,9 @@ No mandatory config-file migration is required. Existing seller services continu
   "capabilities": {
     "contextWindow": 200000,
     "inputs": ["text", "image"],
-    "toolUse": true
+    "outputs": ["image"],
+    "toolUse": true,
+    "supportedParameters": ["background", "output_format", "quality", "size"]
   },
   "unitBillingModels": {
     "openai-images": {
@@ -84,6 +97,12 @@ No mandatory config-file migration is required. Existing seller services continu
   }
 }
 ```
+
+For image services, modality values affect routing rather than serving as cosmetic metadata:
+
+- `inputs: ["text"]`, `outputs: ["image"]` advertises image generation only.
+- `inputs: ["text", "image"]`, `outputs: ["image"]` advertises image generation and editing.
+- Advertise image input only when the exact provider adapter, upstream endpoint, and configured model support edit requests end to end. Vendor-level edit support through a different API is not sufficient.
 
 Only the built-in `openai` provider currently consumes image unit billing. Seller startup warns when `unitBillingModels` are configured for a plugin that does not support them.
 

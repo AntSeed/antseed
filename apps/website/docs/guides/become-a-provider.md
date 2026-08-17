@@ -225,10 +225,12 @@ antseed seller status
 Everything you announce on the network lives in `config.json` under `seller.providers[name].services[id]`. One block per upstream provider plugin, one entry per service. The `add-service` command builds this for you:
 
 ```bash
-# Anthropic: offer claude-sonnet at $3/$15 per million tokens, tagged for chat + coding
-antseed config seller add-service anthropic claude-sonnet-4-6 \
-  --input 3 --cached 0.3 --output 15 \
-  --categories chat,coding
+# OpenRouter (OpenAI-compatible): offer GLM-5, tagged for chat + coding
+antseed config seller add-service openrouter glm-5 \
+  --upstream "z-ai/glm-5" \
+  --input 0.8 --output 2.4 \
+  --categories chat,coding \
+  --base-url https://openrouter.ai/api/v1
 ```
 
 ```bash
@@ -256,17 +258,31 @@ antseed config seller add-service local-llm llama3.2:3b \
 ```
 
 ```bash
-# OpenAI Images: announce image inputs and charge per delivered image
-antseed config seller add-service openai gpt-image-1 \
+# Image generation only: text prompt in, image out
+antseed config seller add-service openai flux.1-schnell \
+  --upstream "black-forest-labs/FLUX.1-schnell" \
   --input 0 --output 0 \
   --categories image,creative \
-  --capabilities '{"inputs":["text","image"]}' \
-  --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.04}]}}'
+  --capabilities '{"inputs":["text"],"outputs":["image"]}' \
+  --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.003}]}}'
+```
+
+```bash
+# Image generation + editing: advertise image input only when this configured
+# upstream service accepts image edit requests end to end
+antseed config seller add-service openai image-studio \
+  --upstream "edit-capable-upstream-model" \
+  --input 0 --output 0 \
+  --categories image,creative \
+  --capabilities '{"inputs":["text","image"],"outputs":["image"]}' \
+  --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.01}]}}'
 ```
 
 The `--upstream` flag maps the buyer-facing service name to the upstream model id. Omit it when they're the same.
 
-Capability fields are optional discovery hints. Unit billing is currently supported by the `openai` provider for `openai-images`; startup warns if a different plugin ignores the setting. Image services remain advertised but are skipped by periodic health checks to avoid generating paid probe images.
+For an `openai-images` service, `outputs: ["image"]` identifies an image result. Input modalities are an operational routing contract: `inputs: ["text"]` means generation only, while `inputs: ["text", "image"]` means the seller can accept both `/v1/images/generations` and multipart `/v1/images/edits`. Do not advertise `image` input merely because the upstream platform offers editing somewhere; the exact configured service and provider adapter must support the edit request end to end. In particular, Venice-backed services must remain generation-only until AntSeed has a native Venice edit adapter.
+
+Unit billing is currently supported by the `openai` provider for `openai-images`; startup warns if a different plugin ignores the setting. Image services remain advertised but are skipped by periodic health checks to avoid generating paid probe images.
 
 You only have to do this once per service. To see what you've configured:
 

@@ -60,28 +60,28 @@ By default, metadata is fetched from `http://{host}:{port}/metadata` (`metadataP
   "displayName": "Acme Inference - us-east-1",
   "publicAddress": "peer.example.com:6882",
   "providers": [{
-    "provider": "anthropic",
-    "services": ["claude-sonnet-4-6", "claude-haiku-4-5"],
+    "provider": "openai",
+    "services": ["kimi-k2.6", "deepseek-v4-flash"],
     "defaultPricing": {
-      "inputUsdPerMillion": 3,
-      "cachedInputUsdPerMillion": 0.3,
-      "outputUsdPerMillion": 15
+      "inputUsdPerMillion": 0.6,
+      "cachedInputUsdPerMillion": 0.06,
+      "outputUsdPerMillion": 2.5
     },
     "servicePricing": {
-      "claude-sonnet-4-6": { "inputUsdPerMillion": 3, "cachedInputUsdPerMillion": 0.3, "outputUsdPerMillion": 15 },
-      "claude-haiku-4-5": { "inputUsdPerMillion": 1, "cachedInputUsdPerMillion": 0.1, "outputUsdPerMillion": 5 }
+      "kimi-k2.6": { "inputUsdPerMillion": 0.6, "cachedInputUsdPerMillion": 0.06, "outputUsdPerMillion": 2.5 },
+      "deepseek-v4-flash": { "inputUsdPerMillion": 0.25, "cachedInputUsdPerMillion": 0.025, "outputUsdPerMillion": 1 }
     },
     "serviceCategories": {
-      "claude-sonnet-4-6": ["coding", "privacy"]
+      "kimi-k2.6": ["coding", "privacy"]
     },
     "serviceApiProtocols": {
-      "claude-sonnet-4-6": ["anthropic-messages"]
+      "kimi-k2.6": ["openai-chat-completions"]
     },
     "serviceCapabilities": {
-      "claude-sonnet-4-6": {
-        "contextWindow": 200000,
+      "kimi-k2.6": {
+        "contextWindow": 256000,
         "maxOutputTokens": 64000,
-        "inputs": ["text", "image"],
+        "inputs": ["text"],
         "reasoning": true,
         "toolUse": true,
         "structuredOutput": true
@@ -108,28 +108,34 @@ By default, metadata is fetched from `http://{host}:{port}/metadata` (`metadataP
 
 Recommended category tags: `privacy`, `legal`, `uncensored`, `coding`, `finance`, `tee` (custom tags are allowed).
 
-Metadata v11 added `serviceUnitBillingModels`; v12 added `serviceCapabilities`. Image providers advertise `openai-images` and may attach an `output_images` billing model:
+Metadata v11 added `serviceUnitBillingModels`; v12 adds `serviceCapabilities` and widens service catalog and service-map counts to support up to 512 entries. Image providers advertise `openai-images` and may attach an `output_images` billing model:
 
 ```json
 {
-  "serviceApiProtocols": { "gpt-image-1": ["openai-images"] },
+  "serviceApiProtocols": { "flux.1-schnell": ["openai-images"] },
   "serviceUnitBillingModels": {
-    "gpt-image-1": {
+    "flux.1-schnell": {
       "openai-images": {
         "version": 1,
         "components": [
-          { "unit": "output_images", "priceUsd": 0.04 }
+          { "unit": "output_images", "priceUsd": 0.003 }
         ]
       }
     }
   },
   "serviceCapabilities": {
-    "gpt-image-1": { "inputs": ["text", "image"] }
+    "flux.1-schnell": {
+      "inputs": ["text", "image"],
+      "outputs": ["image"],
+      "supportedParameters": ["background", "output_format", "quality", "size"]
+    }
   }
 }
 ```
 
-Capability fields are optional; absence means unknown. Unit-billing components may match `model`, `size`, `quality`, or `resolution`. Discovery only includes capability and billing entries for services currently advertised by the provider.
+Capability fields are optional; absence means unknown. `inputs` and `outputs` declare accepted and produced modalities (`text`, `image`, `audio`, `video`, `pdf`); `supportedParameters` lists extra request-body parameter names the service accepts (lowercase snake_case, announced in code-unit sorted order). Unit-billing components may match `model`, `size`, `quality`, or `resolution`. Discovery only includes capability and billing entries for services currently advertised by the provider.
+
+Capabilities are hints, not enforced contracts. The buyer proxy performs one advisory check: when a peer announces `supportedParameters` for the routed service and the request body carries parameters outside that list, the proxy logs a warning and forwards the request unchanged — the upstream provider remains the authority on which parameters it accepts.
 
 :::warning Metadata version compatibility
 Buyers reject metadata versions newer than they understand. A v10/v11 buyer therefore drops a v12 seller, while a v12 buyer continues to accept v10 and v11 sellers. Upgrade buyers before sellers using the [metadata v12 migration guide](/docs/guides/metadata-v12-upgrade).

@@ -112,6 +112,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+      - name: Bake comparable-prices URL
+        env:
+          ANTSEED_COMPARABLE_PRICES_URL: ${{ vars.ANTSEED_COMPARABLE_PRICES_URL }}
+        run: node scripts/bake-comparable-prices-url.mjs --require
+
       - name: Build monorepo (tiers 0-3)
         run: |
           pnpm run build:tier0
@@ -190,6 +195,12 @@ jobs:
       # node-gyp to rebuild native modules against Electron's Node ABI.
       - name: Install dependencies
         run: pnpm install
+        shell: pwsh
+
+      - name: Bake comparable-prices URL
+        env:
+          ANTSEED_COMPARABLE_PRICES_URL: ${{ vars.ANTSEED_COMPARABLE_PRICES_URL }}
+        run: node scripts/bake-comparable-prices-url.mjs --require
         shell: pwsh
 
       - name: Build monorepo (tiers 0-3)
@@ -275,6 +286,11 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install
+
+      - name: Bake comparable-prices URL
+        env:
+          ANTSEED_COMPARABLE_PRICES_URL: ${{ vars.ANTSEED_COMPARABLE_PRICES_URL }}
+        run: node scripts/bake-comparable-prices-url.mjs --require
 
       - name: Build monorepo (tiers 0-3)
         run: |

@@ -3,6 +3,7 @@ import type {
   ServiceCapabilities,
   UnitBillingModelV1,
 } from '@antseed/node';
+import type { ModelRoutingPreferences } from '@antseed/node/model-routing';
 
 /**
  * Dual token pricing in USD per 1M tokens.
@@ -168,14 +169,27 @@ export interface BuyerCLIConfig {
   maxPricing: HierarchicalPricingConfig;
   /** Minimum peer reputation score (0-100) */
   minPeerReputation: number;
+  /** Model-only auto-routing preferences shared by the proxy and Desktop. */
+  routingPreferences: ModelRoutingPreferences;
   /** Local proxy listen port */
   proxyPort: number;
   /** How often the buyer refreshes its peer list from the DHT in the background (ms) */
   peerRefreshIntervalMs: number;
   /** Timeout in ms for each HTTP metadata fetch during peer discovery */
   metadataFetchTimeoutMs: number;
+  /** Timeout in ms while waiting for a non-streaming response or initial stream response. */
+  requestTimeoutMs: number;
+  /** Maximum total duration in ms for a streaming response. Default: 30 minutes. */
+  maxStreamDurationMs: number;
   /** Disable per-service attribution in buyer-signed metadata v2. */
   disableMetadataV2Services: boolean;
+  /**
+   * Automatically sweep incoming hot-wallet USDC into the deposits balance
+   * while the buyer daemon runs (gasless, via the relayer network).
+   * Default: true. `false` limits sweeping to explicit requests
+   * (`antseed deposit`, the desktop deposit view, `antseed buyer sweep`).
+   */
+  autoSweep?: boolean;
   /** Buyer-side response-auth evidence sampling settings. */
   verification?: BuyerVerificationConfig;
 }

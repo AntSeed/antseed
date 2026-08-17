@@ -36,6 +36,10 @@
 .row {
   width: 100%;
   min-height: 54px;
+  /* Long model lists: rows outside the viewport skip layout and paint.
+     The intrinsic size keeps the scrollbar stable at the row's min-height. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 54px;
   display: flex;
   gap: 8px;
   align-items: center;
@@ -53,11 +57,6 @@
   transition: background 0.12s ease;
 }
 
-/* Checked rows lead with the checkmark, tucked closer to the edge (Figma pl-8). */
-.rowChecked {
-  padding-left: 8px;
-}
-
 .row + .row {
   border-top: 1px solid var(--border-light);
 }
@@ -70,6 +69,14 @@
 .row:focus-visible {
   outline: none;
   box-shadow: inset 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+}
+
+.checkSlot {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 20px;
+  display: grid;
+  place-items: center;
 }
 
 .check {
@@ -124,6 +131,15 @@
   line-height: 16px;
 }
 
+.capabilityMeta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--brand);
+  font-weight: 500;
+}
+
 .peerMeta {
   min-width: 0;
   overflow: hidden;
@@ -145,8 +161,8 @@
   padding: 6px 10px;
 }
 
-.rowCompact.rowChecked {
-  padding-left: 6px;
+.rowCompact .discount {
+  font-size: 13px;
 }
 
 .metaDivider {
@@ -179,16 +195,19 @@
 }
 
 .discount {
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  min-width: 48px;
-  align-self: stretch;
+  flex: 0 0 64px;
+  width: 64px;
+  height: 20px;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   color: var(--accent-green);
   font-size: 15px;
   font-weight: 600;
-  line-height: 18px;
-  text-align: center;
+  line-height: 20px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .perTok {

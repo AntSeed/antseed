@@ -24,6 +24,7 @@ import {
   loadBuyerChannels,
   normalizeBuyerUsageTotals,
   notePendingSpend,
+  requestCooperativeChannelClose,
 } from '../payments/buyer-channels.js';
 import { resolveServiceIdHashes } from '../payments/service-hash-resolver.js';
 import {
@@ -36,11 +37,14 @@ import {
   setCachedEmissionsClient,
 } from '../payments/credits.js';
 import {
-  demoteDepositWatchTimer,
+  buildLocalBuyerSpendHistory,
+  type DesktopBuyerSpendHistory,
+  unavailableLocalBuyerSpendHistory,
+} from '../payments/buyer-spend-history.js';
+import {
+  demoteDepositWatch,
   makeDepositsClient,
-  setDepositWatchBalance,
-  startDepositWatchTimer,
-  sweepIncomingUsdc,
+  startDepositWatch,
 } from '../payments/deposit-sweep.js';
 import {
   DEFAULT_CARD_PROVIDERS,
@@ -278,13 +282,13 @@ export function registerPaymentsIpc(): void {
       try {
         balance = await client.getUSDCBalance(address);
       } catch {
-        // RPC hiccup — the poll loop picks it up
+        // RPC hiccup — the daemon's watcher picks it up
       }
-      setDepositWatchBalance(balance);
-      startDepositWatchTimer();
-      // USDC already sitting in the wallet (sent before the panel opened, or a
-      // card purchase that landed while the app was closed) — sweep it now.
-      if (balance > 0n) void sweepIncomingUsdc(client, address);
+      // The daemon's watcher does the sweeping (it holds the same key and the
+      // live relayer connections); this only promotes it to the fast cadence
+      // and forwards its progress events. USDC already sitting in the wallet
+      // is swept on the daemon's first fast tick.
+      await startDepositWatch();
       return {
         ok: true,
         data: {
@@ -301,8 +305,9 @@ export function registerPaymentsIpc(): void {
 
   ipcMain.handle('deposits:watch-stop', () => {
     // Not a hard stop: deliveries can land after the deposit view closes, so
-    // the watcher lingers at a slow cadence (and stops itself later).
-    demoteDepositWatchTimer();
+    // the daemon's watcher demotes to a slow cadence and the status poll
+    // lingers (and stops itself later).
+    demoteDepositWatch();
     return { ok: true };
   });
 
@@ -415,6 +420,14 @@ export function registerPaymentsIpc(): void {
     };
   });
 
+  ipcMain.handle('payments:get-buyer-spend-history', async (): Promise<{ ok: boolean; data: DesktopBuyerSpendHistory | null; error: string | null }> => {
+    const channels = await loadBuyerChannels(true, false);
+    if (!channels) {
+      return { ok: false, data: unavailableLocalBuyerSpendHistory(), error: 'buyer proxy unreachable' };
+    }
+    return { ok: true, data: buildLocalBuyerSpendHistory(channels), error: null };
+  });
+
   ipcMain.handle('payments:get-channels', async (): Promise<{ ok: boolean; data: DesktopPaymentChannelSummary[] | null; error: string | null }> => {
     const channels = await loadBuyerChannels(true);
     if (!channels) {
@@ -422,6 +435,23 @@ export function registerPaymentsIpc(): void {
     }
     notePendingSpend(channels);
     return { ok: true, data: channels, error: null };
+  });
+
+  ipcMain.handle('payments:request-cooperative-close', async (_event, opts?: { peerId?: string }) => {
+    const peerId = typeof opts?.peerId === 'string' ? opts.peerId.trim() : '';
+    if (!peerId) {
+      return { ok: false, result: null, error: 'Invalid peerId' };
+    }
+    try {
+      const result = await requestCooperativeChannelClose(peerId);
+      return { ok: true, result, error: null };
+    } catch (err) {
+      return {
+        ok: false,
+        result: null,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
   });
 
   ipcMain.handle('payments:get-rewards-summary', async (): Promise<{ ok: boolean; data: DesktopRewardsSummary | null; error: string | null }> => {

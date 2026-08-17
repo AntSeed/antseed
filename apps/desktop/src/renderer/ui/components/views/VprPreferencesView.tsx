@@ -67,7 +67,7 @@ export function VprPreferencesView({ onSelectView }: Props) {
 
           <VprSettingRow
             title="Prefer free peers when available"
-            hint="Free sellers win ties even when a paid seller scores higher."
+            hint="Adds a strong routing bonus to zero-cost offers."
             control={(
               <VprToggle
                 checked={snap.preferences.preferFreePeers}
@@ -111,7 +111,7 @@ export function VprPreferencesView({ onSelectView }: Props) {
               onChange={(next) => actions.updateVprRoutingPreferences({ maxInputUsdPerMillion: next })}
               ariaLabel="Price preference"
             />
-            <div className={styles.sliderHint}>Sellers charging more than this per million input tokens are never used</div>
+            <div className={styles.sliderHint}>Sellers above this input price receive a strong ranking penalty</div>
           </div>
 
           <VprSettingRow
@@ -172,7 +172,7 @@ export function VprPreferencesView({ onSelectView }: Props) {
             />
             <VprSettingRow
               title="Show routed peer"
-              hint="Name the seller each chat's requests actually went to next to its model — for checking where routing really lands."
+              hint="Show the seller each chat's requests actually went through in chat lists and next to its model."
               control={(
                 <VprToggle
                   checked={snap.floatShowRoutedPeer}
@@ -189,7 +189,7 @@ export function VprPreferencesView({ onSelectView }: Props) {
           <VprCard className={styles.card}>
             <VprSettingRow
               title="Theme"
-              hint="Applies to every AntStation window."
+              hint="Applies to every VPR window."
               control={(
                 <div className={styles.themeSegment} role="radiogroup" aria-label="Theme">
                   {([

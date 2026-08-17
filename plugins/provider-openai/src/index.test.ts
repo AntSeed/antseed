@@ -153,15 +153,58 @@ describe('provider-openai plugin', () => {
     });
   });
 
-  it('advertises grok imagine services as openai-images', async () => {
+  it('defaults image services to outputs: ["image"] capabilities', async () => {
     const provider = await plugin.createProvider({
       OPENAI_API_KEY: 'sk-test-key',
-      OPENAI_BASE_URL: 'https://api.x.ai',
-      ANTSEED_ALLOWED_SERVICES: 'grok-imagine-image,grok-imagine-image-quality',
+      ANTSEED_ALLOWED_SERVICES: 'cover-art,gpt-5.5',
+      ANTSEED_SERVICE_ALIAS_MAP_JSON: '{"cover-art":"gpt-image-1"}',
     });
 
-    expect(provider.serviceApiProtocols?.['grok-imagine-image']).toEqual(['openai-images']);
-    expect(provider.serviceApiProtocols?.['grok-imagine-image-quality']).toEqual(['openai-images']);
+    expect(provider.serviceCapabilities?.['cover-art']).toEqual({ outputs: ['image'] });
+    expect(provider.serviceCapabilities?.['gpt-5.5']).toBeUndefined();
+  });
+
+  it('lets explicit capability config override the image-service default', async () => {
+    const provider = await plugin.createProvider({
+      OPENAI_API_KEY: 'sk-test-key',
+      ANTSEED_ALLOWED_SERVICES: 'cover-art',
+      ANTSEED_SERVICE_ALIAS_MAP_JSON: '{"cover-art":"gpt-image-1"}',
+      ANTSEED_SERVICE_CAPABILITIES_JSON: JSON.stringify({
+        'cover-art': {
+          inputs: ['text', 'image'],
+          supportedParameters: ['background', 'output_format', 'quality', 'size'],
+        },
+      }),
+    });
+
+    expect(provider.serviceCapabilities?.['cover-art']).toEqual({
+      outputs: ['image'],
+      inputs: ['text', 'image'],
+      supportedParameters: ['background', 'output_format', 'quality', 'size'],
+    });
+  });
+
+  it('advertises supported image model families as openai-images', async () => {
+    const imageServices = [
+      'grok-imagine-image',
+      'grok-imagine-image-quality',
+      'venice-sd35',
+      'flux-2-pro',
+      'krea-v2-large',
+      'nano-banana-pro',
+      'qwen-image-3-pro',
+      'wan-2-7-pro-text-to-image',
+    ];
+    const provider = await plugin.createProvider({
+      OPENAI_API_KEY: 'sk-test-key',
+      OPENAI_BASE_URL: 'https://api.venice.ai/api',
+      ANTSEED_ALLOWED_SERVICES: imageServices.join(','),
+    });
+
+    for (const service of imageServices) {
+      expect(provider.serviceApiProtocols?.[service]).toEqual(['openai-images']);
+      expect(provider.serviceCapabilities?.[service]).toEqual({ outputs: ['image'] });
+    }
   });
 
   it('does not advertise image services for openrouter flavor yet', async () => {

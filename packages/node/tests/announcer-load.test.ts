@@ -143,7 +143,7 @@ describe('PeerAnnouncer live load metadata', () => {
     // DHT announces as announcing 1, because service filtering is metadata
     // driven. Keep generated catalogs inside the signed metadata validator's
     // service-count limit so this test stays focused on DHT work.
-    for (const n of [1, 10, 20]) {
+    for (const n of [1, 100, 512]) {
       const { config, dht } = makeConfig();
       config.providers = [{
         provider: 'openai',

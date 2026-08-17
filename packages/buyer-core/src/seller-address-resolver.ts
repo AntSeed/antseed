@@ -2,6 +2,7 @@ import type { PeerId } from '@antseed/protocol/peer-id';
 import { peerIdToAddress } from '@antseed/protocol/peer-id';
 import type { PeerMetadata } from '@antseed/protocol/peer-metadata';
 import { debugWarn } from './debug.js';
+import type { AntseedErrorCode, FaultAttribution } from './errors.js';
 
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_CACHE_MAX_ENTRIES = 1024;
@@ -19,9 +20,31 @@ export type IsOperatorChecker = (
 ) => Promise<boolean>;
 
 export class SellerAuthorizationError extends Error {
-  constructor(reason: string) {
-    super(`seller authorization failed: ${reason}`);
+  readonly attribution: FaultAttribution;
+  readonly code: AntseedErrorCode;
+
+  private constructor(reason: string, attribution: FaultAttribution, code: AntseedErrorCode, cause?: unknown) {
+    super(`seller authorization failed: ${reason}`, cause !== undefined ? { cause } : undefined);
     this.name = "SellerAuthorizationError";
+    this.attribution = attribution;
+    this.code = code;
+  }
+
+  static peerNotAuthorized(): SellerAuthorizationError {
+    return new SellerAuthorizationError(
+      'peer is not an authorized operator',
+      'peer',
+      'peer-not-authorized',
+    );
+  }
+
+  static rpcUnavailable(cause?: unknown): SellerAuthorizationError {
+    return new SellerAuthorizationError(
+      'isOperator RPC failed',
+      'buyer',
+      'chain-rpc-unavailable',
+      cause,
+    );
   }
 }
 
@@ -93,7 +116,7 @@ export class SellerAddressResolver {
       debugWarn(
         `[Resolver] peer ${peerId.slice(0, 12)}... is NOT an operator of ${sellerContract}`,
       );
-      throw new SellerAuthorizationError("peer is not an authorized operator");
+      throw SellerAuthorizationError.peerNotAuthorized();
     }
 
     this._pruneCache();
@@ -133,7 +156,7 @@ export class SellerAddressResolver {
         lastErr instanceof Error ? lastErr.message : lastErr
       }`,
     );
-    throw new SellerAuthorizationError("isOperator RPC failed");
+    throw SellerAuthorizationError.rpcUnavailable(lastErr);
   }
 
   private _pruneCache(): void {

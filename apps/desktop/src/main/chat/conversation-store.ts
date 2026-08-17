@@ -8,10 +8,14 @@
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
-import type { Message } from '@mariozechner/pi-ai';
+import type { AssistantMessage, Message, UserMessage } from '@mariozechner/pi-ai';
 import { SessionManager } from '@mariozechner/pi-coding-agent';
 import { CHAT_DATA_DIR, getCurrentChatWorkspaceDir } from './workspace.js';
-import { ANTSEED_PEER_CUSTOM_TYPE, resolveLatestPeerBinding } from './peer-selection.js';
+import {
+  ANTSEED_PEER_CUSTOM_TYPE,
+  resolveLatestPeerBinding,
+  type ChatRouteMode,
+} from './peer-selection.js';
 import { sanitizeProviderHint } from './provider-hint.js';
 import { normalizeServiceId, normalizeTokenCount } from './normalize.js';
 import {
@@ -39,12 +43,46 @@ type CachedSummary = {
   summary: AiConversationSummary | null;
 };
 
-export type AntseedPeerData = { peerId: string; peerLabel?: string };
+export type AntseedPeerData = { peerId: string; peerLabel?: string; routeMode?: ChatRouteMode };
+
+export function isPersistedPeerBindingPinned(peerData: AntseedPeerData | null): peerData is AntseedPeerData {
+  return Boolean(peerData?.peerId) && peerData?.routeMode === 'pinned';
+}
+
+export function projectPeerBinding(peerData: AntseedPeerData | null): Pick<
+  AiConversation,
+  'peerId' | 'peerLabel' | 'routeMode'
+> {
+  return {
+    ...(peerData?.peerId ? { peerId: peerData.peerId } : {}),
+    ...(peerData?.peerLabel ? { peerLabel: peerData.peerLabel } : {}),
+    ...(peerData?.routeMode ? { routeMode: peerData.routeMode } : {}),
+  };
+}
+
+export function projectPersistedConversationRoute<T extends {
+  peerId?: string;
+  routeMode?: ChatRouteMode;
+}>(conversation: T): T {
+  return conversation.peerId && conversation.routeMode === 'pinned'
+    ? { ...conversation, routeMode: 'pinned' }
+    : { ...conversation, peerId: undefined, routeMode: 'auto' };
+}
 
 export function extractPeerFromEntries(manager: SessionManager): AntseedPeerData | null {
   return resolveLatestPeerBinding(
     manager.getEntries() as Array<{ type?: string; customType?: string; data?: unknown }>,
   );
+}
+
+function latestResponsePeerId(messages: AiConversation['messages']): string | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== 'assistant') continue;
+    const peerId = message.meta?.peerId?.trim();
+    if (peerId) return peerId;
+  }
+  return undefined;
 }
 
 function summarizeConversation(conversation: AiConversation): AiConversationSummary {
@@ -63,6 +101,8 @@ function summarizeConversation(conversation: AiConversation): AiConversationSumm
     totalEstimatedCostUsd: deriveCost(conversation.messages),
     ...(conversation.peerId ? { peerId: conversation.peerId } : {}),
     ...(conversation.peerLabel ? { peerLabel: conversation.peerLabel } : {}),
+    ...(conversation.routeMode ? { routeMode: conversation.routeMode } : {}),
+    ...(conversation.lastResponsePeerId ? { lastResponsePeerId: conversation.lastResponsePeerId } : {}),
     ...(conversation.workspacePath ? { workspacePath: conversation.workspacePath } : {}),
   };
 }
@@ -184,6 +224,8 @@ export class PiConversationStore {
     }
 
     const peerData = extractPeerFromEntries(manager);
+    const lastResponsePeerId = latestResponsePeerId(messages)
+      ?? (peerData?.routeMode === 'auto' ? peerData.peerId : undefined);
     // SessionManager reads the cwd persisted in the session file; restoration
     // across app restarts depends on that value reflecting the session workspace.
     const sessionCwd = manager.getCwd() || undefined;
@@ -196,8 +238,8 @@ export class PiConversationStore {
       createdAt,
       updatedAt,
       usage,
-      ...(peerData?.peerId ? { peerId: peerData.peerId } : {}),
-      ...(peerData?.peerLabel ? { peerLabel: peerData.peerLabel } : {}),
+      ...projectPeerBinding(peerData),
+      ...(lastResponsePeerId ? { lastResponsePeerId } : {}),
       ...(sessionCwd ? { workspacePath: sessionCwd } : {}),
     };
   }
@@ -250,7 +292,13 @@ export class PiConversationStore {
     return await this.readConversationFromPath(sessionPath);
   }
 
-  async create(service?: string, provider?: string, peerId?: string, peerLabel?: string): Promise<AiConversation> {
+  async create(
+    service?: string,
+    provider?: string,
+    peerId?: string,
+    peerLabel?: string,
+    routeMode?: ChatRouteMode,
+  ): Promise<AiConversation> {
     const workspaceDir = await this.ensureWorkspaceDir();
     const manager = SessionManager.create(workspaceDir, this.sessionsDir);
     // Persist '' (not the local proxy sentinel) when no real upstream
@@ -264,6 +312,7 @@ export class PiConversationStore {
       manager.appendCustomEntry(ANTSEED_PEER_CUSTOM_TYPE, {
         peerId: trimmedPeerId,
         ...(peerLabel ? { peerLabel } : {}),
+        ...(routeMode ? { routeMode } : {}),
       } satisfies AntseedPeerData);
     }
     const sessionPath = manager.getSessionFile();
@@ -276,10 +325,50 @@ export class PiConversationStore {
     return conversation;
   }
 
-  async setPeer(id: string, peerId: string, peerLabel?: string): Promise<void> {
+  async appendImageGeneration(
+    id: string,
+    prompt: string,
+    assistantContent: string,
+    service: string,
+    peerId?: string | null,
+  ): Promise<{ user: UserMessage; assistant: AssistantMessage }> {
+    const manager = await this.openSessionManager(id);
+    if (!manager) throw new Error('Conversation not found');
+    const timestamp = Date.now();
+    const user: UserMessage = { role: 'user', content: prompt, timestamp };
+    const trimmedPeerId = peerId?.trim() ?? '';
+    const assistant: AssistantMessage = {
+      role: 'assistant',
+      content: [{ type: 'text', text: assistantContent }],
+      api: 'openai-completions',
+      provider: 'antseed',
+      model: service,
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: 'stop',
+      timestamp: timestamp + 1,
+      ...(trimmedPeerId ? { meta: { peerId: trimmedPeerId } } : {}),
+    };
+    manager.appendMessage(user);
+    manager.appendMessage(assistant);
+    this.markPersistedIfAvailable(id);
+    return { user, assistant };
+  }
+
+  async setPeer(id: string, peerId: string, peerLabel?: string, routeMode?: ChatRouteMode): Promise<void> {
     const manager = await this.openSessionManager(id);
     if (!manager) return;
-    manager.appendCustomEntry(ANTSEED_PEER_CUSTOM_TYPE, { peerId, peerLabel } satisfies AntseedPeerData);
+    const effectiveMode = routeMode ?? extractPeerFromEntries(manager)?.routeMode;
+    manager.appendCustomEntry(
+      ANTSEED_PEER_CUSTOM_TYPE,
+      { peerId, peerLabel, ...(effectiveMode ? { routeMode: effectiveMode } : {}) } satisfies AntseedPeerData,
+    );
   }
 
   /** Persist an in-conversation model switch. Without this the rebinding only

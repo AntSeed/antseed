@@ -94,7 +94,9 @@ export const VIEW_REGISTRY = {
   ),
   model: createViewEntry(
     async () => (await import('./views/VprModelView')).VprModelView as ComponentType<RoutedViewProps>,
-    { receivesOnSelectView: true, slideIndex: 2, preloadPriority: 'none' },
+    // Idle preload: the model page is one tap away from the Models list, and
+    // lazy-importing its chunk on that tap stalls the slide-in noticeably.
+    { receivesOnSelectView: true, slideIndex: 2, preloadPriority: 'idle' },
   ),
   tools: createViewEntry(
     async () => (await import('./views/VprToolsView')).VprToolsView as ComponentType<RoutedViewProps>,

@@ -22,18 +22,18 @@
   pointer-events: none;
   transition: opacity 0.12s ease, visibility 0.12s ease;
 
-  strong,
-  span {
+  > strong,
+  > span {
     display: block;
   }
 
-  strong {
+  > strong {
     margin-bottom: 4px;
     color: var(--text-primary);
     font-size: 12px;
   }
 
-  span + span {
+  > span + span {
     margin-top: 3px;
   }
 }
@@ -41,6 +41,16 @@
 .tooltip-open {
   opacity: 1;
   visibility: visible;
+}
+
+.tooltip-wide {
+  width: 320px;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+}
+
+.tooltip-interactive.tooltip-open {
+  pointer-events: auto;
 }
 
 :global(.dark-theme) {

@@ -63,7 +63,8 @@ interface PendingUpload {
 }
 
 /**
- * Request/response multiplexer over DataChannel.
+ * Request/response multiplexer over a peer connection (encrypted TCP
+ * preferred; WebRTC DataChannel for TCP-incapable peers).
  * Handles both buyer-side and seller-side proxy communication.
  */
 export class ProxyMux {

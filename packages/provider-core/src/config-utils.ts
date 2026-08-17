@@ -157,8 +157,12 @@ export function parseServiceCapabilitiesJson(raw: string | undefined, key = 'ANT
       if (caps[field] !== undefined) normalized[field] = caps[field] as number;
     }
     if (caps.inputs !== undefined) normalized.inputs = caps.inputs as ServiceCapabilities['inputs'];
+    if (caps.outputs !== undefined) normalized.outputs = caps.outputs as ServiceCapabilities['outputs'];
     for (const field of ['reasoning', 'toolUse', 'structuredOutput'] as const) {
       if (caps[field] !== undefined) normalized[field] = caps[field] as boolean;
+    }
+    if (caps.supportedParameters !== undefined) {
+      normalized.supportedParameters = caps.supportedParameters as ServiceCapabilities['supportedParameters'];
     }
     // Same validator the announce path uses, so anything accepted here is
     // guaranteed to announce instead of failing silently at announce time.
@@ -197,4 +201,20 @@ export function buildServiceApiProtocols(
 ): Record<string, ServiceApiProtocol[]> | undefined {
   if (services.length === 0) return undefined;
   return Object.fromEntries(services.map((service) => [service, [protocol]]));
+}
+
+/**
+ * Well-known image-generation model families. Shared by the openai plugin's
+ * protocol classification and the seller setup wizard's capability prompts so
+ * "what counts as an image model" cannot drift between the two.
+ *
+ * Match the final path segment so namespaced model IDs such as
+ * `venice/flux-2-pro` work without treating an unrelated namespace as a model
+ * family. Keep generic one-word IDs exact to avoid false positives.
+ */
+const IMAGE_MODEL_ID_PATTERN = /^(?:gpt-image-|dall-e(?:-|$)|grok-imagine-image(?:-|$)|venice-sd35$|krea-(?:2-|v2-)|flux-2-|hunyuan-image-|ideogram-v4(?:-|$)|imagineart-|luma-uni-|nano-banana-|recraft-v4(?:-|$)|seedream-v[45](?:-|$)|qwen-image(?:-|$)|wan-2-7(?:-pro)?-text-to-image$|lustify-|wai-illustrious$|z-image-|chroma$)/;
+
+export function isImageModelId(model: string): boolean {
+  const modelId = model.trim().toLowerCase().split('/').pop() ?? '';
+  return IMAGE_MODEL_ID_PATTERN.test(modelId);
 }

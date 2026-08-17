@@ -108,9 +108,28 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
       baseURL: 'http://localhost:{buyerPort}/v1',
       // Pi's OpenAI Responses transport includes prompt_cache_key with the
       // Pi session id. The buyer proxy uses that as the conversation key so
-      // Pi chats show up in AntStation/VPR Recent Chats.
+      // Pi chats show up in VPR Recent Chats.
       api: 'openai-responses',
+      originator: 'pi',
       installProbe: 'pi',
+    },
+  },
+  {
+    name: 'gooeypi',
+    displayName: 'GooeyPi',
+    kind: 'config-patch',
+    method: 'Config patch',
+    toolSlugs: ['gooeypi'],
+    domains: [],
+    pathPrefixes: [],
+    configPatch: {
+      format: 'pi',
+      configPath: '~/.pi/agent/models.json',
+      settingsPath: '~/.pi/agent/settings.json',
+      providerKey: 'antseed-gooeypi',
+      baseURL: 'http://localhost:{buyerPort}/v1',
+      api: 'openai-responses',
+      originator: 'gooeypi',
     },
   },
   {

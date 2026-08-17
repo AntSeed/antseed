@@ -1,6 +1,8 @@
 import {
   extractUsage,
   mapFinishReasonToAnthropicStopReason,
+  openAIResponsesFunctionCallId,
+  openAIResponsesMessageId,
   parseJsonSafe,
   toStringContent,
   type TokenUsage,
@@ -63,6 +65,16 @@ export interface CanonicalLlmRequest {
   user?: string;
   promptCacheKey?: string;
   cacheBreakpoints?: CanonicalCacheBreakpoints;
+}
+
+function assignToolsAndToolChoice(
+  body: Record<string, unknown>,
+  tools: unknown[] | undefined,
+  toolChoice: unknown,
+): void {
+  if (!tools || tools.length === 0) return;
+  body.tools = tools;
+  if (toolChoice !== undefined) body.tool_choice = toolChoice;
 }
 
 export type CanonicalOutputItem =
@@ -150,9 +162,8 @@ export function renderCanonicalRequestToOpenAIChatBody(
   if (typeof request.topP === 'number') body.top_p = request.topP;
   if (request.stop !== undefined) body.stop = request.stop;
   const tools = renderCanonicalToolsToOpenAIChat(request.tools);
-  if (tools) body.tools = tools;
   const toolChoice = renderCanonicalToolChoiceToOpenAIChat(request.toolChoice);
-  if (toolChoice !== undefined) body.tool_choice = toolChoice;
+  assignToolsAndToolChoice(body, tools, toolChoice);
   if (request.metadata) body.metadata = request.metadata;
   if (request.user) body.user = request.user;
   // Routes the request to the cache that holds this conversation's prefix.
@@ -206,9 +217,8 @@ export function renderCanonicalRequestToOpenAIResponsesBody(
   if (typeof request.topP === 'number') body.top_p = request.topP;
   if (request.stop !== undefined) body.stop = request.stop;
   const tools = renderCanonicalToolsToOpenAIResponses(request.tools);
-  if (tools) body.tools = tools;
   const toolChoice = renderCanonicalToolChoiceToOpenAIResponses(request.toolChoice);
-  if (toolChoice !== undefined) body.tool_choice = toolChoice;
+  assignToolsAndToolChoice(body, tools, toolChoice);
   if (options.includeMetadata !== false && request.metadata) body.metadata = request.metadata;
   if (options.includeUser !== false && request.user) body.user = request.user;
   if (request.promptCacheKey) body.prompt_cache_key = request.promptCacheKey;
@@ -318,10 +328,9 @@ export function renderCanonicalRequestToAnthropicMessagesBody(request: Canonical
       const lastTool = tools[tools.length - 1];
       if (lastTool) lastTool.cache_control = EPHEMERAL_CACHE_CONTROL;
     }
-    body.tools = tools;
   }
   const toolChoice = renderCanonicalToolChoiceToAnthropic(request.toolChoice);
-  if (toolChoice !== undefined) body.tool_choice = toolChoice;
+  assignToolsAndToolChoice(body, tools, toolChoice);
   if (request.metadata || request.user) {
     body.metadata = {
       ...(request.metadata ?? {}),
@@ -691,7 +700,7 @@ export function renderCanonicalResponseToOpenAIResponsesBody(response: Canonical
   if (text.length > 0) {
     output.push({
       type: 'message',
-      id: `${response.id}_msg_1`,
+      id: openAIResponsesMessageId(response.id),
       role: 'assistant',
       status: 'completed',
       content: [{ type: 'output_text', text, annotations: [] }],
@@ -702,7 +711,7 @@ export function renderCanonicalResponseToOpenAIResponsesBody(response: Canonical
     if (item.type !== 'function_call') continue;
     output.push({
       type: 'function_call',
-      id: item.id,
+      id: openAIResponsesFunctionCallId(item.id),
       call_id: item.id,
       name: item.name,
       arguments: stringifyToolArguments(item.arguments),

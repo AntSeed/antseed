@@ -1,20 +1,37 @@
-import type { DiscoverRow, VprModelCatalogEntry, VprRouteSelection, VprRoutingPreferences } from '../../core/state';
+import type {
+  DiscoverRow,
+  VprModelCatalogEntry,
+  VprModelKind,
+  VprRouteSelection,
+  VprRoutingPreferences,
+} from '../../core/state';
 import { sameCanonicalModel } from './model-identity';
+import { modelFamilyLabel } from './model-families';
 import { modelPinKey, vprModelPinFor, type VprModelPins } from '../routing/model-pins';
 import { chooseBestVprRoute } from '../routing/select';
 import { shortPeerId } from '../routing/tools';
+import { serviceModelKind } from './model-capabilities';
 
 export type VprCatalogSort = 'Popular' | 'Price' | 'Savings' | 'Name';
 
 export type VprCatalogFilterOptions = {
   search?: string;
   category?: string | null;
+  kind?: VprModelKind | null;
+  /** Family display name from `availableModelFamilies` (e.g. "Anthropic"). */
+  family?: string | null;
 };
 
 export type VprSelectedRouteModel = {
   provider?: string | null;
   serviceId?: string | null;
 } | null | undefined;
+
+export function compareModelRoutesByReputation(a: DiscoverRow, b: DiscoverRow): number {
+  const scoreA = a.effectiveReputationScore ?? a.onChainReputationScore ?? -1;
+  const scoreB = b.effectiveReputationScore ?? b.onChainReputationScore ?? -1;
+  return scoreB - scoreA || a.peerId.localeCompare(b.peerId);
+}
 
 function normalized(value: string): string {
   return value.trim().toLowerCase();
@@ -26,10 +43,12 @@ function catalogSearchText(entry: VprModelCatalogEntry): string {
     entry.serviceId,
     entry.provider,
     ...entry.categories,
+    entry.kind === 'image' ? 'image generation image-only' : 'text chat',
   ].join(' ').toLowerCase();
 }
 
 function entryMinTotalPrice(entry: VprModelCatalogEntry): number | null {
+  if (entry.kind === 'image') return entry.minImageUsdPerImage;
   if (entry.minInputUsdPerMillion === null || entry.minOutputUsdPerMillion === null) return null;
   return entry.minInputUsdPerMillion + entry.minOutputUsdPerMillion;
 }
@@ -62,6 +81,8 @@ export function filterVprCatalog(
   const category = normalized(options.category ?? '');
 
   return entries.filter((entry) => {
+    if (options.kind && (entry.kind ?? 'text') !== options.kind) return false;
+    if (options.family && modelFamilyLabel(entry) !== options.family) return false;
     if (category && !entry.categories.some((candidate) => normalized(candidate) === category)) {
       return false;
     }
@@ -101,7 +122,16 @@ export function routesForSelectedModel(
   // Canonical match: sellers advertise the same model under near-identical
   // serviceIds and different provider strings — all of them are routes for
   // the selected model. Dispatch must carry the chosen row's own serviceId.
-  return rows.filter((row) => sameCanonicalModel(row.serviceId, serviceId));
+  const selectedEntryKind = rows.find((row) => (
+    row.provider === selectedModel?.provider && row.serviceId === serviceId
+  ));
+  const kind = selectedEntryKind
+    ? serviceModelKind(selectedEntryKind.protocol, selectedEntryKind.capabilities)
+    : undefined;
+  return rows.filter((row) => (
+    sameCanonicalModel(row.serviceId, serviceId)
+    && (kind === undefined || serviceModelKind(row.protocol, row.capabilities) === kind)
+  ));
 }
 
 /**

@@ -1,4 +1,5 @@
 import type { RendererUiState } from '../../core/state';
+import { selectHeadlineBalanceUsdc } from '../../core/balance';
 import { formatCompactTokens, formatCredits, shortAddress } from '../../core/format';
 import { notifyUiStateChanged } from '../../core/store';
 import type {
@@ -63,12 +64,19 @@ export type VprFloatModule = {
  * it's open. Model changes made in the pill come back as 'select-model'
  * actions.
  */
-export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsage }: {
+export function initVprFloatModule({
+  bridge,
+  uiState,
+  onSelectModel,
+  refreshUsage,
+  onClosed,
+}: {
   bridge: DesktopBridge | undefined;
   uiState: RendererUiState;
   onSelectModel: (provider: string, serviceId: string) => void;
   /** Refresh the payments summary; force bypasses its self-throttle. */
   refreshUsage: (force?: boolean) => Promise<void>;
+  onClosed?: () => void;
 }): VprFloatModule {
   let timer: number | null = null;
   let profiles: SystemProxyProfileSummary[] = [];
@@ -123,9 +131,9 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
     return `${formatCompactTokens(usage?.totalInputTokens, usage?.totalOutputTokens)} tok`;
   }
 
-  /** What the user still owns: deposits minus spend already authorized. */
+  /** Complete owned balance, including USDC awaiting deposit sweep. */
   function balanceLabel(): string {
-    return `$${formatCredits(uiState.creditsSpendableUsdc)}`;
+    return `$${formatCredits(selectHeadlineBalanceUsdc(uiState))}`;
   }
 
   /** The buyer identity (signer address), shortened. */
@@ -401,6 +409,7 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
     // auto-open back so dismissing the pill actually dismisses it.
     autoOpenSuppressedUntil = Date.now() + AUTO_OPEN_CLOSE_COOLDOWN_MS;
     syncAutoOpenWatcher();
+    onClosed?.();
   });
 
   bridge?.onVprFloatAction?.((action) => {
@@ -427,9 +436,8 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
         const record = records.find((row) => row.id === conversationId);
         const current = record ? conversationPinnedServiceId(record) : null;
         if (current && sameCanonicalModel(current, serviceId)) return;
-        const pin = resolvePinRoute(provider, serviceId);
-        if (!pin) return;
-        await bridge?.buyerConversationsUpdate?.({ id: conversationId, pinnedModel: pin });
+        if (!resolvePinRoute(provider, serviceId)) return;
+        await bridge?.buyerConversationsUpdate?.({ id: conversationId, pinnedModel: serviceId, peerSource: 'auto' });
         bridge?.vprFloatUpdate?.(await buildData());
       })();
       return;
@@ -453,7 +461,8 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
     }
   });
 
-  async function openFloatInternal(profileName?: string): Promise<void> {
+  async function openFloatInternal(profileName?: string): Promise<boolean> {
+    if (!bridge?.vprFloatOpen) return false;
     if (profileName) selectedApp = profileName;
     // Fresh numbers on open — don't show a minute-old summary.
     await refreshUsage(true);
@@ -463,11 +472,13 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
     // (pop-out button, connect, and traffic auto-open alike). Only the open
     // payload carries the flag; periodic updates must not re-expand a menu
     // the user collapsed.
-    await bridge?.vprFloatOpen?.({ ...data, openMenu: true });
+    const result = await bridge.vprFloatOpen({ ...data, openMenu: true });
+    if (!result.ok) return false;
     uiState.vprFloatOpen = true;
     notifyUiStateChanged();
     startUpdater();
     syncAutoOpenWatcher();
+    return true;
   }
 
   // Survive a main-window reload while the pill is open (dev HMR, cmd+R).

@@ -199,10 +199,10 @@ Each service entry supports five optional fields:
 | `upstreamModel` | string | The model id the provider plugin will forward requests to. Defaults to the service id itself. |
 | `categories` | string[] | Normie-friendly tags announced in peer metadata (e.g. `chat`, `coding`, `math`, `study`, `fast`, `free`). |
 | `pricing` | object | Per-service pricing in USD per million tokens. If omitted, the provider's `defaults` are used. |
-| `capabilities` | object | Optional discovery hints: `contextWindow`, `maxOutputTokens`, `inputs`, `reasoning`, `toolUse`, and `structuredOutput`. |
+| `capabilities` | object | Optional discovery hints: `contextWindow`, `maxOutputTokens`, `inputs`, `outputs`, `reasoning`, `toolUse`, `structuredOutput`, and `supportedParameters`. |
 | `unitBillingModels` | object | Optional per-protocol non-token pricing. Currently consumed by the `openai` provider for `openai-images` services. |
 
-Capabilities are hints, not enforced limits. Omitted fields mean “unknown.” Supported input values are `text`, `image`, `audio`, `video`, and `pdf`.
+Capabilities are hints, not enforced limits. Omitted fields mean “unknown.” Supported modality values for `inputs` and `outputs` are `text`, `image`, `audio`, `video`, and `pdf`. `supportedParameters` lists extra request-body parameter names the service accepts (lowercase snake_case, e.g. `background`, `output_format`, `seed`) — useful for image services where clients otherwise have to guess. The `openai` provider automatically advertises `outputs: ["image"]` for `openai-images` services; explicit config extends or overrides that default per field.
 
 For image services, a flat per-image price looks like this:
 
@@ -270,14 +270,15 @@ antseed config seller add-service together deepseek-v3.1 \
 Capabilities and image unit pricing are JSON options:
 
 ```bash
-antseed config seller add-service openai gpt-image-1 \
+antseed config seller add-service openai flux.1-schnell \
+  --upstream "black-forest-labs/FLUX.1-schnell" \
   --input 0 --output 0 \
   --categories image,creative \
-  --capabilities '{"inputs":["text","image"],"structuredOutput":false}' \
-  --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.04}]}}'
+  --capabilities '{"inputs":["text","image"],"outputs":["image"],"supportedParameters":["background","output_format","quality","size"]}' \
+  --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.003}]}}'
 ```
 
-The interactive `antseed seller setup` flow prompts for the same optional JSON objects. The CLI serializes them into plugin runtime config. Seller startup warns when unit billing is configured for a plugin that does not declare support.
+The interactive `antseed seller setup` flow builds the capabilities object for you with one question per field, tailored to the service's protocol: image models are asked about input modalities and supported request parameters (image output is announced automatically), text models about context window, modalities, reasoning, tool use, structured output, and supported parameters. Answer `y` at the capabilities prompt, or paste a JSON object there to skip the guided flow. Unit billing models are still entered as JSON. The CLI serializes both into plugin runtime config. Seller startup warns when unit billing is configured for a plugin that does not declare support.
 
 To remove one:
 
@@ -315,12 +316,32 @@ See the [metadata v12 upgrade guide](/docs/guides/metadata-v12-upgrade) before u
 
 ## Buyer Settings
 
-Buyers can cap what they're willing to pay to avoid expensive providers:
+Model-only requests use one shared Price + Trust policy in the CLI buyer proxy and the desktop VPR. The defaults are:
+
+```json
+{
+  "buyer": {
+    "routingPreferences": {
+      "preferFreePeers": false,
+      "maxInputUsdPerMillion": 25,
+      "minTrustScore": 60,
+      "allowedPeerIds": [],
+      "blockedPeerIds": []
+    }
+  }
+}
+```
+
+`minTrustScore` is a hard eligibility gate. At the default `60`, sellers below 60 and sellers without a usable score are not selected automatically. CLI-only buyers can lower it, or set it to `0` to disable the gate. `allowedPeerIds` becomes an allowlist when non-empty; `blockedPeerIds` always excludes matching sellers. Peer ids may include or omit the `0x` prefix.
+
+Eligible offers are ranked using trust, token or image price, cached-input pricing coverage, recent failures, cooldowns, and `preferFreePeers`. `maxInputUsdPerMillion` is a strong price preference in that ranking; the separate hierarchical `maxPricing` policy remains the hard price-cap mechanism:
 
 ```bash
 antseed config buyer set maxPricing.defaults.inputUsdPerMillion 25
 antseed config buyer set maxPricing.defaults.outputUsdPerMillion 75
 ```
+
+The desktop writes routing-preference changes to this same config. A running buyer proxy watches the config file and reloads valid `buyer.routingPreferences` changes automatically.
 
 The buyer proxy refreshes its discovered peer cache from the DHT in the background. The default is 5 minutes, and you can tune it in milliseconds:
 
@@ -340,6 +361,15 @@ For one process, use either the runtime flag or env var instead of writing confi
 antseed buyer start --metadata-fetch-timeout-ms 1500
 ANTSEED_BUYER_METADATA_FETCH_TIMEOUT_MS=1500 antseed buyer start
 ```
+
+Long-running models can exceed the defaults (5 minutes for `requestTimeoutMs`, 30 minutes for `maxStreamDurationMs`). Configure the initial/non-streaming request timeout and the maximum total stream duration independently:
+
+```bash
+antseed config buyer set requestTimeoutMs 600000
+antseed config buyer set maxStreamDurationMs 3600000
+```
+
+`requestTimeoutMs` applies while waiting for a non-streaming response or for a stream to begin. Once streaming starts, idle-stream protection remains active, while `maxStreamDurationMs` controls the total permitted stream lifetime. The stream cap can also be set per process with the `ANTSEED_BUYER_MAX_STREAM_DURATION_MS` environment variable.
 
 Buyer SpendingAuth and free-usage metadata v2 include aggregate usage totals by default. They also include per-service attribution unless disabled. Privacy-sensitive buyers can keep aggregate accounting while suppressing service IDs and per-service totals:
 

@@ -1,10 +1,22 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowUpRight01Icon } from '@hugeicons/core-free-icons';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { shortAddress } from '../../../core/format';
-import { VprCard, VprPage, VprStatRow, VprStatTile } from '../vpr/VprKit';
+import { computeMeasuredSavings, formatSavedUsd } from '../../../modules/catalog/measured-savings';
+import { ensureOpenRouterPrices, getCachedOpenRouterPrices } from '../../../modules/catalog/openrouter-baseline';
+import { formatCompactTokens, VprCard, VprPage, VprStatRow, VprStatTile } from '../vpr/VprKit';
+import { VprSpendingChart } from './VprSpendingChart';
+import {
+  channelCloseAction,
+  channelRecoverableBaseUnits,
+  compareChannelsByLockedAmount,
+  formatChannelLockedAmount,
+  isFundedCurrentChannel,
+  requestSellerAssistedClose,
+  type ChannelCloseFeedback,
+} from './vpr-activity-close';
 import styles from './VprActivityView.module.scss';
 
 const PAYMENT_SUMMARY_POLL_MS = 60_000;
@@ -36,50 +48,28 @@ function isActiveStatus(status: string): boolean {
   return status === 'active' || status === 'open';
 }
 
-/** Signed but not yet settled on this channel, in base units. */
-function unsettledBaseUnits(row: { cumulativeSigned: string; settledUsdc: string }): bigint {
-  try {
-    const signed = BigInt(row.cumulativeSigned || '0');
-    const settled = BigInt(row.settledUsdc || '0');
-    return signed > settled ? signed - settled : 0n;
-  } catch {
-    return 0n;
-  }
-}
-
-/** Row action: close an active channel, withdraw once the grace period ran. */
-function rowAction(status: string): 'Close' | 'Withdraw' | null {
-  if (isActiveStatus(status)) return 'Close';
-  if (status === 'withdrawable') return 'Withdraw';
-  return null;
-}
-
 function statusTone(status: string): 'active' | 'pending' | 'closed' {
   if (isActiveStatus(status) || status === 'withdrawable') return 'active';
   if (status === 'closing' || status === 'close_requested' || status === 'pending') return 'pending';
   return 'closed';
 }
 
-function formatDate(tsSeconds: number): string {
-  if (!tsSeconds) return '';
-  // reservedAt may arrive in seconds or milliseconds depending on source.
-  const ms = tsSeconds > 1_000_000_000_000 ? tsSeconds : tsSeconds * 1000;
-  return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
 type Props = { onSelectView?: (view: import('../../types').ViewName) => void };
 
-/**
- * In-app payment-channel activity (moved from the browser portal). Read-only:
- * closing a channel needs the authorized wallet's signature, so that single
- * action opens the secure checkout page in the browser.
- */
+/** In-app payment-channel activity and channel-close actions. */
 export function VprActivityView({ onSelectView }: Props) {
   const actions = useActions();
+  const [pendingChannelIds, setPendingChannelIds] = useState<Set<string>>(() => new Set());
+  const [onChainFallbackChannelIds, setOnChainFallbackChannelIds] = useState<Set<string>>(() => new Set());
+  const [closeFeedback, setCloseFeedback] = useState<Record<string, ChannelCloseFeedback>>({});
   const snap = useUiSelector((state) => ({
     channels: state.creditsChannels,
     loading: state.creditsSummaryLoading,
+    reserved: state.creditsReservedUsdc,
+    spendHistory: state.creditsBuyerSpendHistory,
+    usage: state.creditsBuyerUsage,
   }), shallowEqual);
+  const [referencePrices, setReferencePrices] = useState(getCachedOpenRouterPrices);
 
   // Force-refresh on entry and whenever the window regains focus — the user
   // typically lands here right after an on-chain action in the browser pay
@@ -95,21 +85,65 @@ export function VprActivityView({ onSelectView }: Props) {
     };
   }, [actions]);
 
-  const rows = useMemo(
+  useEffect(() => {
+    if (referencePrices) return;
+    let cancelled = false;
+    void ensureOpenRouterPrices().then((prices) => {
+      if (!cancelled && prices) setReferencePrices(prices);
+    });
+    return () => { cancelled = true; };
+  }, [referencePrices]);
+
+  const allRows = useMemo(
     () => [...snap.channels].sort((a, b) => (b.reservedAt || 0) - (a.reservedAt || 0)),
     [snap.channels],
   );
-  const activeCount = rows.filter((row) => isActiveStatus(row.status)).length;
-  const totalSpent = sumBaseUnits(rows.map((row) => row.cumulativeSigned));
-  // Authorized on channels the seller can still settle against — already
-  // committed, so it is deducted from the headline balance elsewhere.
-  const totalPending = rows
-    .filter((row) => isActiveStatus(row.status) || row.status === 'closing' || row.status === 'withdrawable')
-    .reduce((sum, row) => sum + unsettledBaseUnits(row), 0n)
-    .toString();
+  const rows = useMemo(
+    () => allRows
+      .filter(isFundedCurrentChannel)
+      .sort(compareChannelsByLockedAmount),
+    [allRows],
+  );
+  const totalSpent = sumBaseUnits(allRows.map((row) => row.cumulativeSigned));
+  // Header total = what the displayed rows can actually recover, so it always
+  // matches their sum. The Deposits contract's raw `reserved` overstates this:
+  // it still counts spend that is signed but not yet settled by the seller.
+  const totalRowsLocked = useMemo(
+    () => rows.reduce((acc, row) => acc + channelRecoverableBaseUnits(row), 0n),
+    [rows],
+  );
+  const measuredSavings = useMemo(
+    () => computeMeasuredSavings(snap.usage?.services, referencePrices),
+    [snap.usage?.services, referencePrices],
+  );
+  const totalSavings = measuredSavings
+    ? formatSavedUsd(measuredSavings.baselineUsd - measuredSavings.actualUsd)
+    : (snap.usage?.totalRequests ?? 0) === 0 ? '$0' : '-';
 
-  const closeChannel = (channelId: string) => {
+  const openOnChainClose = (channelId: string) => {
     void window.antseedDesktop?.paymentsOpenPayPage?.({ kind: 'close-channel', channelId });
+  };
+
+  const askSellerToClose = async (channelId: string, peerId: string) => {
+    setPendingChannelIds((current) => new Set(current).add(channelId));
+    setCloseFeedback((current) => {
+      const next = { ...current };
+      delete next[channelId];
+      return next;
+    });
+    const feedback = await requestSellerAssistedClose(peerId, window.antseedDesktop, {
+      credits: () => actions.refreshCredits(),
+      summary: () => actions.refreshPaymentSummary(true),
+    });
+    setCloseFeedback((current) => ({ ...current, [channelId]: feedback }));
+    if (feedback.tone === 'error') {
+      setOnChainFallbackChannelIds((current) => new Set(current).add(channelId));
+    }
+    setPendingChannelIds((current) => {
+      const next = new Set(current);
+      next.delete(channelId);
+      return next;
+    });
   };
 
   return (
@@ -118,57 +152,109 @@ export function VprActivityView({ onSelectView }: Props) {
       <div className={styles.stack}>
 
         <VprStatRow>
-          <VprStatTile label="Active" value={activeCount} />
-          <VprStatTile label="Pending" value={`$${baseUnitsToUsd(totalPending)}`} />
+          <VprStatTile
+            label="Tokens"
+            value={formatCompactTokens(snap.usage?.totalInputTokens, snap.usage?.totalOutputTokens)}
+          />
           <VprStatTile label="Spent" value={`$${baseUnitsToUsd(totalSpent)}`} />
+          <VprStatTile
+            label="Saved"
+            value={(
+              <span title={measuredSavings
+                ? `Measured against retail reference prices across ${measuredSavings.matchedServices} matched services`
+                : undefined}
+              >
+                {totalSavings}
+              </span>
+            )}
+          />
         </VprStatRow>
+
+        <VprSpendingChart history={snap.spendHistory} loading={snap.loading} />
+
+        <div className={styles.sectionIntro}>
+          <div className={styles.sectionHeader}>
+            <h2 className={styles.sectionTitle}>Active channels</h2>
+            <span className={styles.sectionValue}>${baseUnitsToUsd(totalRowsLocked.toString())} locked</span>
+          </div>
+        </div>
 
         {rows.length === 0 ? (
           <VprCard className={styles.emptyCard}>
-            <span className={styles.emptyTitle}>{snap.loading ? 'Loading activity...' : 'No payment activity yet'}</span>
+            <span className={styles.emptyTitle}>{snap.loading ? 'Loading activity...' : 'No open channels'}</span>
             <span className={styles.emptyHint}>
-              Channels open automatically when you start using the network and settle as you go.
+              Channels open automatically when you start using the network.
             </span>
           </VprCard>
         ) : (
           <VprCard className={styles.listCard}>
-            {rows.map((row) => (
-              <div key={row.channelId} className={styles.row}>
-                <div className={styles.rowMain}>
-                  <div className={styles.rowTitle}>
-                    <span className={styles.rowSeller}>{shortAddress(row.seller || row.peerId || null)}</span>
-                    <span className={`${styles.statusPill} ${styles[`status_${statusTone(row.status)}`]}`}>
-                      {row.status}
-                    </span>
+            {rows.map((row) => {
+              const closeAction = channelCloseAction(
+                row.status,
+                row.cooperativeCloseSupported,
+                onChainFallbackChannelIds.has(row.channelId),
+              );
+              const pending = pendingChannelIds.has(row.channelId);
+              const feedback = closeFeedback[row.channelId];
+              return (
+                <div key={row.channelId} className={styles.row}>
+                  <div className={styles.rowMain}>
+                    <div className={styles.rowTitle}>
+                      <span className={styles.rowSellerGroup}>
+                        <span className={styles.rowSeller}>{row.sellerDisplayName || shortAddress(row.seller || row.peerId || null)}</span>
+                      </span>
+                      {!isActiveStatus(row.status) && (
+                        <span className={`${styles.statusPill} ${styles[`status_${statusTone(row.status)}`]}`}>
+                          {row.status}
+                        </span>
+                      )}
+                    </div>
+                    {feedback && (
+                      <span className={`${styles.closeFeedback} ${styles[`closeFeedback_${feedback.tone}`]}`} role={feedback.tone === 'error' ? 'alert' : 'status'}>
+                        {feedback.message}
+                      </span>
+                    )}
                   </div>
-                  <span className={styles.rowMeta}>
-                    {formatDate(row.reservedAt)}
-                    {row.requestCount ? ` · ${row.requestCount.toLocaleString('en-US')} requests` : ''}
+                  <span className={styles.rowLocked}>
+                    {formatChannelLockedAmount(row)}
                   </span>
+                  <div className={styles.rowSide}>
+                    {closeAction === 'seller-and-on-chain' && (
+                      <button
+                        type="button"
+                        className={styles.rowAction}
+                        disabled={pending}
+                        onClick={() => { void askSellerToClose(row.channelId, row.peerId); }}
+                      >
+                        {pending ? 'Closing…' : 'Close channel'}
+                      </button>
+                    )}
+                    {closeAction === 'on-chain' && (
+                      <button type="button" className={styles.rowActionSecondary} onClick={() => openOnChainClose(row.channelId)}>
+                        <span>Request on-chain close</span>
+                        <HugeiconsIcon icon={ArrowUpRight01Icon} size={12} strokeWidth={2} />
+                      </button>
+                    )}
+                    {closeAction === 'withdraw' && (
+                      <button type="button" className={styles.rowAction} onClick={() => openOnChainClose(row.channelId)}>
+                        <span>Withdraw</span>
+                        <HugeiconsIcon icon={ArrowUpRight01Icon} size={12} strokeWidth={2} />
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <div className={styles.rowSide}>
-                  <span className={styles.rowAmount}>${baseUnitsToUsd(row.cumulativeSigned)}</span>
-                  <span className={styles.rowReserve}>
-                    {unsettledBaseUnits(row) > 0n
-                      ? `$${baseUnitsToUsd(unsettledBaseUnits(row).toString())} pending`
-                      : `of $${baseUnitsToUsd(row.reserveMax)}`}
-                  </span>
-                  {rowAction(row.status) && (
-                    <button type="button" className={styles.rowAction} onClick={() => closeChannel(row.channelId)}>
-                      <span>{rowAction(row.status)}</span>
-                      <HugeiconsIcon icon={ArrowUpRight01Icon} size={12} strokeWidth={2} />
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </VprCard>
         )}
 
-        <span className={styles.footnote}>
-          Closing a channel returns its unused reserve to your balance. It needs your authorized
-          wallet&apos;s signature, so it opens in a secure browser window.
-        </span>
+        {rows.length > 0 && (
+          <p className={styles.channelFootnote}>
+            Active channels hold funds that cannot be spent elsewhere. Close a channel to release
+            them.
+          </p>
+        )}
+
       </div>
       </VprPage>
     </section>
