@@ -1,7 +1,7 @@
 {
   "name": "@antseed/desktop",
   "productName": "AntSeed VPR",
-  "version": "0.2.20",
+  "version": "0.2.21",
   "private": true,
   "description": "Desktop app for AntSeed",
   "author": "AntSeed <hello@antseed.com>",
@@ -11,6 +11,7 @@
   "scripts": {
     "ensure:cli-dist": "pnpm -C ../../packages/api-adapter build && pnpm -C ../../packages/protocol build && pnpm -C ../../packages/buyer-core build && pnpm -C ../../packages/router-core build && pnpm -C ../../plugins/router-local build && pnpm -C ../../packages/node build && pnpm -C ../payments build:server && pnpm -C ../cli build",
     "brand:electron-dev": "node ./scripts/brand-electron-dev.mjs",
+    "models:update-metadata": "pnpm -C ../../packages/node build && node ./scripts/update-model-metadata.mjs",
     "ensure:native": "npm run ensure:runtime-native",
     "ensure:runtime-native": "node ./scripts/ensure-runtime-native-modules.mjs",
     "prebuild": "npm run ensure:cli-dist && npm run brand:electron-dev && npm run ensure:native && node ../../scripts/remove-paths.mjs dist",

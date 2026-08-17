@@ -7,6 +7,7 @@ import type {
 } from '../../core/state';
 import { sameCanonicalModel } from './model-identity';
 import { modelFamilyLabel } from './model-families';
+import { modelTagsFor } from './model-metadata';
 import { modelPinKey, vprModelPinFor, type VprModelPins } from '../routing/model-pins';
 import { chooseBestVprRoute } from '../routing/select';
 import { shortPeerId } from '../routing/tools';
@@ -18,8 +19,10 @@ export type VprCatalogFilterOptions = {
   search?: string;
   category?: string | null;
   kind?: VprModelKind | null;
-  /** Family display name from `availableModelFamilies` (e.g. "Anthropic"). */
-  family?: string | null;
+  kinds?: readonly VprModelKind[] | null;
+  tags?: readonly string[] | null;
+  /** Family display names from `availableModelFamilies` (e.g. "Anthropic"). */
+  families?: readonly string[] | null;
 };
 
 export type VprSelectedRouteModel = {
@@ -43,6 +46,7 @@ function catalogSearchText(entry: VprModelCatalogEntry): string {
     entry.serviceId,
     entry.provider,
     ...entry.categories,
+    ...modelTagsFor(entry.serviceId),
     entry.kind === 'image' ? 'image generation image-only' : 'text chat',
   ].join(' ').toLowerCase();
 }
@@ -79,10 +83,19 @@ export function filterVprCatalog(
 ): VprModelCatalogEntry[] {
   const search = normalized(options.search ?? '');
   const category = normalized(options.category ?? '');
+  const kinds = new Set(options.kinds ?? []);
+  const tags = new Set((options.tags ?? []).map(normalized));
+  const families = new Set(options.families ?? []);
 
   return entries.filter((entry) => {
     if (options.kind && (entry.kind ?? 'text') !== options.kind) return false;
-    if (options.family && modelFamilyLabel(entry) !== options.family) return false;
+    if (kinds.size > 0 && !kinds.has(entry.kind ?? 'text')) return false;
+    if (tags.size > 0) {
+      const entryTags = new Set(modelTagsFor(entry.serviceId).map(normalized));
+      if (![...tags].every((tag) => entryTags.has(tag))) return false;
+    }
+    const family = modelFamilyLabel(entry);
+    if (families.size > 0 && (!family || !families.has(family))) return false;
     if (category && !entry.categories.some((candidate) => normalized(candidate) === category)) {
       return false;
     }

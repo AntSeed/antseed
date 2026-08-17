@@ -35,6 +35,12 @@ type RequestHandler = (request: SerializedHttpRequest) => void | Promise<void>;
 export interface ProxyMuxUploadLimits {
   /** Max body bytes for a single upload. Default: 64 MiB. Buyer receives 413 on violation. */
   maxUploadBodyBytes?: number;
+  /**
+   * Buyer-side chunked-upload threshold. Default: ANTSEED_UPLOAD_THRESHOLD_BYTES
+   * (512 KiB). Transports with smaller message ceilings (e.g. W3C WebRTC's
+   * ~256 KiB SCTP default against libdatachannel peers) lower this.
+   */
+  uploadThresholdBytes?: number;
   /** Max bytes across ALL concurrent in-progress uploads. Default: 256 MiB. */
   maxTotalPendingUploadBytes?: number;
   /** Max ms between the header frame and HttpRequestEnd. Default: 120_000 ms. */
@@ -77,12 +83,14 @@ export class ProxyMux {
   private _totalPendingUploadBytes = 0;
 
   private readonly _maxUploadBodyBytes: number;
+  private readonly _uploadThresholdBytes: number;
   private readonly _maxTotalPendingUploadBytes: number;
   private readonly _uploadTimeoutMs: number;
 
   constructor(connection: BuyerConnection, uploadLimits?: ProxyMuxUploadLimits) {
     this._connection = connection;
     this._maxUploadBodyBytes       = uploadLimits?.maxUploadBodyBytes       ?? DEFAULT_MAX_UPLOAD_BODY_BYTES;
+    this._uploadThresholdBytes     = uploadLimits?.uploadThresholdBytes     ?? ANTSEED_UPLOAD_THRESHOLD_BYTES;
     this._maxTotalPendingUploadBytes = uploadLimits?.maxTotalPendingUploadBytes ?? DEFAULT_MAX_TOTAL_PENDING_BYTES;
     this._uploadTimeoutMs          = uploadLimits?.uploadTimeoutMs          ?? DEFAULT_UPLOAD_TIMEOUT_MS;
   }
@@ -93,7 +101,7 @@ export class ProxyMux {
     onResponse: ResponseHandler,
     onChunk: ChunkHandler
   ): void {
-    const useChunkedUpload = request.body.length > ANTSEED_UPLOAD_THRESHOLD_BYTES;
+    const useChunkedUpload = request.body.length > this._uploadThresholdBytes;
     debugLog(
       `[ProxyMux] send request reqId=${request.requestId.slice(0, 8)} bytes=${request.body.length} chunked=${useChunkedUpload ? "true" : "false"}`,
     );

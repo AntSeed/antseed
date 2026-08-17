@@ -302,7 +302,19 @@ export class PeerConnection extends EventEmitter {
     }
 
     if (this._dataChannel && this._dataChannel.isOpen()) {
-      const ok = this._dataChannel.sendMessageBinary(data);
+      // node-datachannel can THROW ("Cannot send message on destroyed
+      // socket") when the peer tears the channel down between isOpen() and
+      // this call — a common race with browser buyers that connect and drop
+      // freely. The throw crosses a native boundary and aborts the process if
+      // it escapes, so convert it into a graceful connection failure.
+      let ok: boolean;
+      try {
+        ok = this._dataChannel.sendMessageBinary(data);
+      } catch (err) {
+        const wrapped = err instanceof Error ? err : new Error(String(err));
+        this.fail(wrapped);
+        throw wrapped;
+      }
       if (!ok) {
         const err = new Error(`Failed to send data to ${this.remotePeerId}`);
         this.fail(err);

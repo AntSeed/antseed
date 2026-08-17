@@ -610,8 +610,11 @@ export class BuyerPaymentManager {
     this._channelStore.upsertChannel({
       ...session,
       authMax: cumulativeAmount.toString(),
+      latestSpendingAuthSig: spendingAuthSig,
+      latestMetadata: encodedMetadata,
       updatedAt: Date.now(),
     });
+    await this._channelStore.flush?.();
 
     paymentMux.sendSpendingAuth({
       channelId: session.sessionId,
@@ -740,13 +743,14 @@ export class BuyerPaymentManager {
       settledAt: null,
       settledAmount: null,
       status: CHANNEL_STATUS.ACTIVE,
-      latestBuyerSig: null,
+      latestBuyerSig: reserveAuthSig,
       latestSpendingAuthSig: null,
       latestMetadata: null,
       createdAt: now,
       updatedAt: now,
     };
     this._channelStore.upsertChannel(session);
+    await this._channelStore.flush?.();
 
     // Send SpendingAuth via PaymentMux — reserve carries ReserveAuth sig
     paymentMux.sendSpendingAuth({
@@ -1090,8 +1094,11 @@ export class BuyerPaymentManager {
       ...session,
       authMax: newAmount.toString(),
       requestCount: Number(newMeta.cumulativeRequestCount),
+      latestSpendingAuthSig: spendingAuthSig,
+      latestMetadata: encodedMetadata,
       updatedAt: Date.now(),
     });
+    await this._channelStore.flush?.();
 
     const payload: SpendingAuthPayload = {
       channelId: session.sessionId,

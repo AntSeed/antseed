@@ -26,6 +26,52 @@ export type CandidatePeerRouteSelection = {
   routePlanByPeerId: Map<string, PeerProtocolRoutePlan>
 }
 
+export const REQUIRED_PARAMETERS_HEADER = 'x-antseed-required-parameters'
+const REQUIRED_PARAMETER_PATTERN = /^[a-z][a-z0-9_.-]{0,63}$/
+const MAX_REQUIRED_PARAMETERS = 16
+
+/**
+ * Parse an internal buyer routing constraint. An empty array means no
+ * constraint; null means the caller supplied a malformed header.
+ */
+export function parseRequiredParametersHeader(value: string | undefined): string[] | null {
+  if (value === undefined || value.trim() === '') return []
+  if (value.length > 1_024) return null
+  const parameters = [...new Set(value.split(',').map((entry) => entry.trim().toLowerCase()))]
+  if (
+    parameters.length === 0
+    || parameters.length > MAX_REQUIRED_PARAMETERS
+    || parameters.some((parameter) => !REQUIRED_PARAMETER_PATTERN.test(parameter))
+  ) {
+    return null
+  }
+  return parameters
+}
+
+/** Required parameters are strict: missing capability metadata is unsupported. */
+export function findMissingRequiredParameters(
+  peer: PeerInfo,
+  provider: string,
+  requestedService: string | null,
+  requiredParameters: readonly string[],
+): string[] {
+  if (requiredParameters.length === 0) return []
+  const service = requestedService?.trim()
+  if (!service) return [...requiredParameters]
+
+  const providerKey = Object.keys(peer.providerServiceCapabilities ?? {})
+    .find((key) => key.toLowerCase() === provider.toLowerCase())
+  const services = providerKey ? peer.providerServiceCapabilities?.[providerKey]?.services : undefined
+  const serviceKey = services
+    ? Object.keys(services).find((key) => isRequestedServiceMatch(key, service))
+    : undefined
+  const announced = serviceKey ? services?.[serviceKey]?.supportedParameters : undefined
+  if (!announced) return [...requiredParameters]
+
+  const supported = new Set(announced.map((parameter) => parameter.trim().toLowerCase()))
+  return requiredParameters.filter((parameter) => !supported.has(parameter.toLowerCase()))
+}
+
 // `strict` drops peers that don't advertise the requested service; `lenient`
 // falls back to the provider's protocol set so a pinned peer still dispatches
 // and surfaces the seller's real upstream error.
@@ -297,8 +343,11 @@ export function findUnannouncedRequestParameters(
 
   const fields = extractRequestBodyFields(request.headers, request.body)
   if (!fields) return []
-  const allowed = new Set<string>([...announced, ...(PROTOCOL_BASELINE_FIELDS[requestProtocol] ?? [])])
-  return Object.keys(fields).filter((key) => !allowed.has(key))
+  const allowed = new Set<string>(
+    [...announced, ...(PROTOCOL_BASELINE_FIELDS[requestProtocol] ?? [])]
+      .map((parameter) => parameter.toLowerCase()),
+  )
+  return Object.keys(fields).filter((key) => !allowed.has(key.toLowerCase()))
 }
 
 export function pickProviderForPeer(peer: PeerInfo, request: SerializedHttpRequest): string {

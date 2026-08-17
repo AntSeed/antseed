@@ -328,6 +328,28 @@ importers:
         specifier: ^2.14.0
         version: 2.19.5(@tanstack/query-core@5.97.0)(@tanstack/react-query@5.97.0(react@18.3.1))(@types/react@18.3.28)(bufferutil@4.1.0)(encoding@0.1.13)(fastestsmallesttextencoderdecoder@1.0.22)(immer@11.1.15)(react@18.3.1)(typescript@5.9.3)(utf-8-validate@5.0.10)(viem@2.47.12(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@3.25.76))(zod@3.25.76)
 
+  apps/relay:
+    dependencies:
+      ws:
+        specifier: ^8.18.0
+        version: 8.19.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+    devDependencies:
+      '@antseed/node':
+        specifier: workspace:*
+        version: link:../../packages/node
+      '@types/node':
+        specifier: ^20.11.0
+        version: 20.19.33
+      '@types/ws':
+        specifier: ^8.5.12
+        version: 8.18.1
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.0.0
+        version: 2.1.9(@types/node@20.19.33)(sass@1.97.3)(terser@5.46.0)
+
   apps/website:
     dependencies:
       '@docusaurus/core':
@@ -588,6 +610,43 @@ importers:
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
+
+  packages/web-sdk:
+    dependencies:
+      '@antseed/buyer-core':
+        specifier: workspace:*
+        version: link:../buyer-core
+      '@antseed/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      ethers:
+        specifier: ~6.16.0
+        version: 6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+    devDependencies:
+      '@antseed/node':
+        specifier: workspace:*
+        version: link:../node
+      '@types/node':
+        specifier: ^20.11.0
+        version: 20.19.33
+      '@types/ws':
+        specifier: ^8.5.12
+        version: 8.18.1
+      esbuild:
+        specifier: ^0.25.0
+        version: 0.25.12
+      node-datachannel:
+        specifier: ^0.7.0
+        version: 0.7.0
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.0.0
+        version: 2.1.9(@types/node@20.19.33)(sass@1.97.3)(terser@5.46.0)
+      ws:
+        specifier: ^8.18.0
+        version: 8.19.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
 
   plugins/provider-anthropic:
     dependencies:

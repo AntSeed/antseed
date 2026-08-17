@@ -193,7 +193,10 @@ export async function generateChatImage(
   try {
     let endpoint = '/v1/images/generations';
     let body: string | FormData;
-    const headers: Record<string, string> = { authorization: 'Bearer antseed-desktop' };
+    const headers: Record<string, string> = {
+      authorization: 'Bearer antseed-desktop',
+      ...(request.moderation ? { 'x-antseed-required-parameters': 'moderation' } : {}),
+    };
     if (sourceImageAttachmentId) {
       const source = await (dependencies.loadSourceAttachment ?? loadSourceAttachment)(conversationId, sourceImageAttachmentId);
       if (source.bytes.length === 0 || source.bytes.length > MAX_GENERATED_IMAGE_BYTES) {

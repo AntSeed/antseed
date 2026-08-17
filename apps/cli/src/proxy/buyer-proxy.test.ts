@@ -601,6 +601,114 @@ test('model-only request routes to the highest-ranked canonical service match', 
   assert.equal(selectedBody?.['model'], 'opus-5')
 })
 
+test('required parameters filter automatic routes and are stripped before seller dispatch', async () => {
+  const unsupported = makePeer('a', ['openai'])
+  unsupported.reputationScore = 99
+  unsupported.providerServiceApiProtocols = {
+    openai: { services: { 'venice-sd35': ['openai-images'] } },
+  }
+  unsupported.providerServiceCapabilities = {
+    openai: { services: { 'venice-sd35': { outputs: ['image'] } } },
+  }
+  const supported = makePeer('b', ['openai'])
+  supported.reputationScore = 70
+  supported.providerServiceApiProtocols = {
+    openai: { services: { 'venice-sd35': ['openai-images'] } },
+  }
+  supported.providerServiceCapabilities = {
+    openai: {
+      services: {
+        'venice-sd35': { outputs: ['image'], supportedParameters: ['moderation'] },
+      },
+    },
+  }
+  const proxy = makeBuyerProxyWithPeers(
+    [unsupported, supported],
+    [unsupported, supported],
+    permissiveRouter(),
+  )
+  let selectedPeerId = ''
+  let forwardedHeaders: Record<string, string> = {}
+  ;(proxy as any)._node.sendRequest = async (
+    peer: PeerInfo,
+    request: { requestId: string; headers: Record<string, string> },
+  ) => {
+    selectedPeerId = peer.peerId
+    forwardedHeaders = request.headers
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ data: [{ b64_json: 'image' }] })),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    path: '/v1/images/generations',
+    headers: { 'x-antseed-required-parameters': 'moderation' },
+    body: { model: 'venice-sd35', prompt: 'a landscape', moderation: 'low' },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(selectedPeerId, supported.peerId)
+  assert.equal(forwardedHeaders['x-antseed-required-parameters'], undefined)
+})
+
+test('required parameters fail clearly when no automatic route advertises support', async () => {
+  const peer = makePeer('a', ['openai'])
+  peer.providerServiceApiProtocols = {
+    openai: { services: { 'venice-sd35': ['openai-images'] } },
+  }
+  peer.providerServiceCapabilities = {
+    openai: { services: { 'venice-sd35': { outputs: ['image'] } } },
+  }
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], permissiveRouter())
+  let dispatches = 0
+  ;(proxy as any)._node.sendRequest = async () => {
+    dispatches += 1
+    throw new Error('must not dispatch')
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    path: '/v1/images/generations',
+    headers: { 'x-antseed-required-parameters': 'moderation' },
+    body: { model: 'venice-sd35', prompt: 'a landscape', moderation: 'low' },
+  }))
+
+  assert.equal(res.statusCode, 422)
+  assert.equal(JSON.parse(res.body).error.code, 'required_capability_unavailable')
+  assert.equal(dispatches, 0)
+})
+
+test('pinned routes fail clearly when the seller lacks a required parameter', async () => {
+  const peer = makePeer('a', ['openai'])
+  peer.providerServiceApiProtocols = {
+    openai: { services: { 'venice-sd35': ['openai-images'] } },
+  }
+  peer.providerServiceCapabilities = {
+    openai: { services: { 'venice-sd35': { outputs: ['image'] } } },
+  }
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], permissiveRouter())
+  let dispatches = 0
+  ;(proxy as any)._node.sendRequest = async () => {
+    dispatches += 1
+    throw new Error('must not dispatch')
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    path: '/v1/images/generations',
+    headers: {
+      'x-antseed-pin-peer': peer.peerId,
+      'x-antseed-required-parameters': 'moderation',
+    },
+    body: { model: 'venice-sd35', prompt: 'a landscape', moderation: 'low' },
+  }))
+
+  assert.equal(res.statusCode, 422)
+  assert.equal(JSON.parse(res.body).error.code, 'required_capability_unavailable')
+  assert.equal(dispatches, 0)
+})
+
 test('conversation routing keeps the actual peer as a soft preference and fails over when needed', async () => {
   const preferred = makePeer('c', ['openai'])
   preferred.reputationScore = 70
