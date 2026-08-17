@@ -21,6 +21,14 @@ export function supportsImageEdits(row: DiscoverRow): boolean {
   return row.capabilities?.inputs?.some((input) => input.trim().toLowerCase() === 'image') ?? false;
 }
 
+export function supportsServiceParameter(row: DiscoverRow, parameter: string): boolean {
+  const normalized = parameter.trim().toLowerCase();
+  return normalized.length > 0 && (
+    row.capabilities?.supportedParameters
+      ?.some((supported) => supported.trim().toLowerCase() === normalized) ?? false
+  );
+}
+
 export function formatTokenCount(value: number): string {
   if (value >= 1_000_000) {
     const millions = value / 1_000_000;
@@ -33,15 +41,15 @@ export function formatTokenCount(value: number): string {
   return value.toLocaleString('en-US');
 }
 
-export function modelCapabilitySummary(entry: VprModelCatalogEntry): string[] {
-  return entry.kind === 'image' ? ['Image generation only'] : [];
+export function modelCapabilitySummary(_entry: VprModelCatalogEntry): string[] {
+  return [];
 }
 
 export function peerCapabilitySummary(row: DiscoverRow): string[] {
   const capabilities = row.capabilities;
   const summary: string[] = [];
-  if (serviceModelKind(row.protocol, capabilities) === 'image') {
-    summary.push(supportsImageEdits(row) ? 'Image generation + editing' : 'Image generation only');
+  if (serviceModelKind(row.protocol, capabilities) === 'image' && supportsImageEdits(row)) {
+    summary.push('Image editing');
   }
   if (capabilities?.contextWindow) summary.push(`${formatTokenCount(capabilities.contextWindow)} context`);
   if (capabilities?.maxOutputTokens) summary.push(`${formatTokenCount(capabilities.maxOutputTokens)} max output`);

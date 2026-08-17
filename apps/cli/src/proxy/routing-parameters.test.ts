@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { PeerInfo } from '@antseed/node'
-import { findUnannouncedRequestParameters } from './routing.js'
+import {
+  findMissingRequiredParameters,
+  findUnannouncedRequestParameters,
+  parseRequiredParametersHeader,
+} from './routing.js'
 
 const encode = (value: unknown): Uint8Array => new TextEncoder().encode(JSON.stringify(value))
 
@@ -35,6 +39,28 @@ const imagePeer = makePeer({
       },
     },
   },
+})
+
+test('parses normalized required-parameter constraints and rejects malformed values', () => {
+  assert.deepEqual(parseRequiredParametersHeader(undefined), [])
+  assert.deepEqual(parseRequiredParametersHeader(' Moderation,moderation,output_format '), ['moderation', 'output_format'])
+  assert.equal(parseRequiredParametersHeader('moderation,not valid'), null)
+  assert.equal(parseRequiredParametersHeader(Array.from({ length: 17 }, (_, index) => `p${index}`).join(',')), null)
+})
+
+test('strict required parameters reject absent metadata and accept announced support', () => {
+  assert.deepEqual(
+    findMissingRequiredParameters(imagePeer, 'openai', 'gpt-image-1', ['quality', 'moderation']),
+    ['moderation'],
+  )
+  assert.deepEqual(
+    findMissingRequiredParameters(imagePeer, 'OpenAI', 'GPT Image 1', ['OUTPUT_FORMAT']),
+    [],
+  )
+  assert.deepEqual(
+    findMissingRequiredParameters(makePeer(), 'openai', 'gpt-image-1', ['moderation']),
+    ['moderation'],
+  )
 })
 
 test('flags parameters outside the announced list plus protocol baseline', () => {

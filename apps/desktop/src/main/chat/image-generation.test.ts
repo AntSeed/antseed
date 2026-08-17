@@ -6,10 +6,14 @@ import { convertAssistantMessageForUi } from './message-projection.js';
 
 test('generateChatImage uses model-only routing and persists the peer selected by the proxy', async () => {
   const originalFetch = globalThis.fetch;
-  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const calls: Array<{ url: string; headers: Headers; body: Record<string, unknown> }> = [];
   const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
   globalThis.fetch = (async (input, init) => {
-    calls.push({ url: String(input), body: JSON.parse(String(init?.body)) as Record<string, unknown> });
+    calls.push({
+      url: String(input),
+      headers: new Headers(init?.headers),
+      body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+    });
     return new Response(JSON.stringify({ data: [{ b64_json: png.toString('base64') }] }), {
       status: 200,
       headers: {
@@ -57,6 +61,7 @@ test('generateChatImage uses model-only routing and persists the peer selected b
     assert.deepEqual(calls[0]?.body, {
       model: 'image-model', prompt: 'A tiny ant astronaut', n: 1, response_format: 'b64_json', moderation: 'low',
     });
+    assert.equal(calls[0]?.headers.get('x-antseed-required-parameters'), 'moderation');
     assert.equal(persistedPrompt, 'A tiny ant astronaut');
     assert.equal(persistedPeerId, 'routed-peer');
     assert.equal(persistedService, 'image-model-v2');
@@ -162,6 +167,7 @@ test('generateChatImage edits a prior generated image with multipart routing', a
     assert.equal(requestUrl, 'http://127.0.0.1:8377/v1/images/edits');
     assert.equal(requestHeaders.get('authorization'), 'Bearer antseed-desktop');
     assert.equal(requestHeaders.get('x-antseed-pin-peer'), 'image-peer');
+    assert.equal(requestHeaders.get('x-antseed-required-parameters'), 'moderation');
     assert.equal(requestHeaders.has('content-type'), false);
     assert.equal(loadedAttachmentId, 'source-image');
     assert.ok(requestBody instanceof FormData);

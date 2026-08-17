@@ -3,7 +3,7 @@ import { LOCALHOST_URL } from '../../constants';
 import { notifyUiStateChanged, notifyUiStateChangedSync } from '../../core/store';
 import { normalizeDiscoverRow, projectRowsToChatServiceOptions } from '../catalog/discover-rows.js';
 import { resolveVprChatOption } from './projection.js';
-import { supportsImageEdits } from '../catalog/model-capabilities.js';
+import { supportsImageEdits, supportsServiceParameter } from '../catalog/model-capabilities.js';
 import { findCatalogEntry, projectRowsToVprModelCatalog, selectDefaultVprModel } from '../catalog/model-catalog.js';
 import { sameCanonicalModel } from '../catalog/model-identity.js';
 import { chooseBestVprRoute, filterRoutableVprRoutes, hasEligibleFreeVprRoute } from '../routing/select.js';
@@ -2338,31 +2338,28 @@ export function initChatModule({
     if (!model) return null;
     const routes = routesForSelectedModel(uiState.vprRoutableRows, model)
       .filter((row) => row.protocol === 'openai-images');
-    const supportsModeration = (row: DiscoverRow): boolean => row.capabilities?.supportedParameters
-      ?.some((parameter) => parameter.trim().toLowerCase() === 'moderation') ?? false;
     if (routes.length === 0) return null;
     if (selection.mode === 'pinned-peer' && selection.peerId) {
       const route = routes.find((row) => row.peerId === selection.peerId);
       if (!route || (requiresImageInput && !supportsImageEdits(route))) return null;
-      return {
-        service: route.serviceId,
-        peerId: route.peerId,
-        ...(supportsModeration(route) ? { moderation: 'low' as const } : {}),
-      };
+      return { service: route.serviceId, peerId: route.peerId, moderation: 'low' };
     }
     const eligibleRoutes = requiresImageInput ? routes.filter(supportsImageEdits) : routes;
-    const preferredRoute = eligibleRoutes.find((row) => row.peerId === preferredPeerId);
-    const route = preferredRoute ?? chooseBestVprRoute(eligibleRoutes, uiState.vprRoutingPreferences);
+    const moderationRoutes = eligibleRoutes.filter((row) => supportsServiceParameter(row, 'moderation'));
+    // Prefer capability-compatible sellers for requests that resolve to one
+    // concrete peer (image edits). If none advertise support, keep a route so
+    // the buyer proxy can fail with its explicit required-capability error.
+    const routingPool = moderationRoutes.length > 0 ? moderationRoutes : eligibleRoutes;
+    const preferredRoute = routingPool.find((row) => row.peerId === preferredPeerId);
+    const route = preferredRoute ?? chooseBestVprRoute(routingPool, uiState.vprRoutingPreferences);
     if (!route) return null;
     if (requiresImageInput) {
-      return {
-        service: route.serviceId,
-        peerId: route.peerId,
-        ...(supportsModeration(route) ? { moderation: 'low' as const } : {}),
-      };
+      return { service: route.serviceId, peerId: route.peerId, moderation: 'low' };
     }
-    const moderation = eligibleRoutes.every(supportsModeration) ? 'low' as const : undefined;
-    return { service: model.serviceId, ...(moderation ? { moderation } : {}) };
+    // Keep model-only routing for generation. The internal required-parameter
+    // header makes the buyer proxy filter fallback candidates to sellers that
+    // advertise moderation instead of silently dropping the field.
+    return { service: model.serviceId, moderation: 'low' };
   }
 
   function generateImage(prompt: string): void {

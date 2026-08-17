@@ -49,6 +49,11 @@
   overflow-y: auto;
 }
 
+.tooltip-narrow {
+  width: max-content;
+  max-width: min(180px, calc(100vw - 24px));
+}
+
 .tooltip-interactive.tooltip-open {
   pointer-events: auto;
 }
