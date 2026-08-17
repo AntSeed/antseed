@@ -82,6 +82,15 @@ export function initVprFloatModule({
   let profiles: SystemProxyProfileSummary[] = [];
   let selectedApp = '';
   let lastBuyerRequestTotal: number | null = null;
+  let menuBarOpen = false;
+
+  function surfaceOpen(): boolean {
+    return uiState.vprFloatOpen || menuBarOpen;
+  }
+
+  function publish(data: VprFloatData): void {
+    bridge?.vprFloatUpdate?.(data);
+  }
 
   // --- Auto-open on traffic (opt-in) -------------------------------------
   // While the pill is closed and the preference is on, the same two traffic
@@ -185,7 +194,7 @@ export function initVprFloatModule({
       completionRefreshTimer = null;
       void refreshUsage(true)
         .then(() => buildData())
-        .then((data) => bridge?.vprFloatUpdate?.(data));
+        .then(publish);
     }, COMPLETION_REFRESH_DEBOUNCE_MS);
   }
 
@@ -194,7 +203,7 @@ export function initVprFloatModule({
     const line = event.line.replace(/\x1b\[[0-9;]*m/g, '');
     if (line.includes('cors preflight') || !TRAFFIC_LINE_PATTERN.test(line)) return;
 
-    if (!uiState.vprFloatOpen) {
+    if (!surfaceOpen()) {
       // Closed pill: the only thing a traffic line can do is auto-open it.
       lastTrafficLineAt = Date.now();
       maybeAutoOpen();
@@ -205,7 +214,7 @@ export function initVprFloatModule({
     lastTrafficLineAt = Date.now();
     if (!wasActive) {
       // Idle -> active transition: light the pulse right away.
-      void buildData().then((data) => bridge?.vprFloatUpdate?.(data));
+      void buildData().then(publish);
     }
     if (COMPLETION_LINE_PATTERN.test(line)) {
       scheduleCompletionRefresh();
@@ -343,14 +352,14 @@ export function initVprFloatModule({
   async function tick(): Promise<void> {
     const { active, completed } = await buyerProxyTraffic();
     buyerDeltaActive = active;
-    bridge?.vprFloatUpdate?.(await buildData());
+    publish(await buildData());
 
     if (completed) {
       // A response was metered since the last tick — pull fresh channel
       // totals now instead of waiting out the summary throttle, then push
       // the updated token/cost numbers straight to the pill.
       await refreshUsage(true);
-      bridge?.vprFloatUpdate?.(await buildData());
+      publish(await buildData());
     } else {
       // Ambient keep-warm; the credits module's self-throttle absorbs it.
       void refreshUsage(false);
@@ -369,10 +378,15 @@ export function initVprFloatModule({
     timer = window.setInterval(() => { void tick(); }, FLOAT_UPDATE_INTERVAL_MS);
   }
 
+  function syncUpdater(): void {
+    if (surfaceOpen()) startUpdater();
+    else stopUpdater();
+  }
+
   /** Pop the pill for incoming traffic — gated on the preference, the
       post-close cooldown, and a single in-flight open. */
   function maybeAutoOpen(): void {
-    if (!autoOpenEnabled || uiState.vprFloatOpen || autoOpenInFlight) return;
+    if (!autoOpenEnabled || surfaceOpen() || autoOpenInFlight) return;
     if (Date.now() < autoOpenSuppressedUntil) return;
     autoOpenInFlight = true;
     void openFloatInternal()
@@ -386,7 +400,7 @@ export function initVprFloatModule({
       tick and auto-open on activity. Runs only while the pill is closed
       and the preference is on. */
   function syncAutoOpenWatcher(): void {
-    const shouldWatch = autoOpenEnabled && !uiState.vprFloatOpen;
+    const shouldWatch = autoOpenEnabled && !surfaceOpen();
     if (shouldWatch && autoOpenWatchTimer === null) {
       autoOpenWatchTimer = window.setInterval(() => {
         void buyerProxyTraffic().then(({ active }) => {
@@ -400,11 +414,11 @@ export function initVprFloatModule({
   }
 
   bridge?.onVprFloatClosed?.(() => {
-    stopUpdater();
     if (uiState.vprFloatOpen) {
       uiState.vprFloatOpen = false;
       notifyUiStateChanged();
     }
+    syncUpdater();
     // The traffic that prompted this close is likely still flowing — hold
     // auto-open back so dismissing the pill actually dismisses it.
     autoOpenSuppressedUntil = Date.now() + AUTO_OPEN_CLOSE_COOLDOWN_MS;
@@ -420,7 +434,7 @@ export function initVprFloatModule({
       if (typeof provider === 'string' && typeof serviceId === 'string') {
         onSelectModel(provider, serviceId);
         // Push the new selection immediately instead of waiting for the tick.
-        void buildData().then((data) => bridge?.vprFloatUpdate?.(data));
+        void buildData().then(publish);
       }
       return;
     }
@@ -438,7 +452,7 @@ export function initVprFloatModule({
         if (current && sameCanonicalModel(current, serviceId)) return;
         if (!resolvePinRoute(provider, serviceId)) return;
         await bridge?.buyerConversationsUpdate?.({ id: conversationId, pinnedModel: serviceId, peerSource: 'auto' });
-        bridge?.vprFloatUpdate?.(await buildData());
+        publish(await buildData());
       })();
       return;
     }
@@ -458,6 +472,17 @@ export function initVprFloatModule({
         const profile = profiles.find((item) => conversationMatchesApp(record.tool, item));
         if (profile) await bridge?.openTool?.(profile.toolName ?? profile.name);
       })();
+    }
+  });
+
+  bridge?.onVprMenuBarVisibility?.((visible) => {
+    menuBarOpen = visible;
+    syncUpdater();
+    syncAutoOpenWatcher();
+    if (visible) {
+      void refreshUsage(true)
+        .then(() => buildData())
+        .then(publish);
     }
   });
 
@@ -490,6 +515,7 @@ export function initVprFloatModule({
     }
     syncAutoOpenWatcher();
   });
+  void buildData().then(publish);
 
   return {
     async openFloat(profileName?: string) {
@@ -501,12 +527,9 @@ export function initVprFloatModule({
     async closeFloat() {
       await bridge?.vprFloatClose?.();
     },
-    /** Push fresh data to the pill right away — for main-window changes the
-        pill should mirror instantly (route selection) instead of waiting
-        out the poll tick. No-op while the pill is closed. */
+    /** Push fresh data to the shared cache and any visible compact surface. */
     async refresh() {
-      if (!uiState.vprFloatOpen) return;
-      bridge?.vprFloatUpdate?.(await buildData());
+      publish(await buildData());
     },
     setAutoOpen(enabled: boolean) {
       autoOpenEnabled = enabled;

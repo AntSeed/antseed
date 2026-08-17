@@ -51,6 +51,8 @@ export default defineConfig(({ mode }) => {
         index: path.resolve(rendererRoot, 'index.html'),
         // Detachable always-on-top pill window (see src/main/window.ts).
         float: path.resolve(rendererRoot, 'float.html'),
+        // Tray-anchored macOS routing status popover.
+        menuBar: path.resolve(rendererRoot, 'menu-bar.html'),
       },
     },
   },

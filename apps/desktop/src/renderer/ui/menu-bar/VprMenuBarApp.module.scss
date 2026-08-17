@@ -1,0 +1,40 @@
+.shell {
+  position: fixed;
+  inset: 0;
+  padding: 8px;
+  color: var(--text-primary);
+  user-select: none;
+}
+
+.arrow {
+  position: absolute;
+  z-index: 2;
+  top: 2px;
+  left: 50%;
+  width: 15px;
+  height: 15px;
+  border-radius: 3px 0 0;
+  background: var(--bg-card);
+  transform: translateX(-50%) rotate(45deg);
+  box-shadow: -1px -1px 0 var(--border);
+}
+
+.popover {
+  position: relative;
+  z-index: 3;
+  width: 400px;
+  height: calc(100vh - 16px);
+  min-height: 332px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 21px;
+  background: var(--bg-card);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.52), 0 6px 24px rgba(0, 0, 0, 0.34);
+  -webkit-app-region: no-drag;
+}
+
+.popover button {
+  -webkit-app-region: no-drag;
+}

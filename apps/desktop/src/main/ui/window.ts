@@ -5,12 +5,19 @@ import {
   nativeImage,
   app,
   screen,
+  systemPreferences,
   type Rectangle,
   type MenuItemConstructorOptions,
 } from 'electron';
 import { windowPresetForView, type WindowSizePresetName } from '../../shared/view-windows.js';
 import { PRELOAD_PATH } from '../paths.js';
 import { adoptCheckoutWindow, checkoutWindowOpenHandler, closeCheckoutWindows } from '../payments/checkout-window.js';
+import {
+  presentVprMenuBarWindow,
+  subscribeToMacosMenuTracking,
+  vprMenuBarBounds as calculateVprMenuBarBounds,
+  vprMenuBarWindowHeight,
+} from './vpr-menu-bar-presentation.js';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -19,6 +26,8 @@ let mainWindow: BrowserWindow | null = null;
    edge. 80 sits right at the macOS transparency floor — frameless
    transparent windows paint an opaque backing below ~80px. */
 let floatWindow: BrowserWindow | null = null;
+let vprMenuBarWindow: BrowserWindow | null = null;
+let vprMenuBarVisibilityHandler: ((visible: boolean) => void) | null = null;
 const FLOAT_WINDOW_WIDTH = 272;
 const FLOAT_WINDOW_HEIGHT = 80;
 /** Pill height while a custom dropdown (chat / model) is open. */
@@ -104,6 +113,18 @@ export function getFloatWindow(): BrowserWindow | null {
   return floatWindow && !floatWindow.isDestroyed() ? floatWindow : null;
 }
 
+export function getVprMenuBarWindow(): BrowserWindow | null {
+  return vprMenuBarWindow && !vprMenuBarWindow.isDestroyed() ? vprMenuBarWindow : null;
+}
+
+export function hideVprMenuBarWindow(): void {
+  getVprMenuBarWindow()?.hide();
+}
+
+export function closeVprMenuBarWindow(): void {
+  getVprMenuBarWindow()?.close();
+}
+
 export function closeFloatWindow(): void {
   getFloatWindow()?.close();
 }
@@ -170,6 +191,112 @@ function floatRendererUrl(rendererUrl: string): string {
   return rendererUrl.includes('index.html')
     ? rendererUrl.replace('index.html', 'float.html')
     : new URL('float.html', rendererUrl).toString();
+}
+
+function vprMenuBarRendererUrl(rendererUrl: string): string {
+  return rendererUrl.includes('index.html')
+    ? rendererUrl.replace('index.html', 'menu-bar.html')
+    : new URL('menu-bar.html', rendererUrl).toString();
+}
+
+function vprMenuBarConversationCount(data: unknown): number {
+  if (!data || typeof data !== 'object') return 0;
+  const conversations = (data as { conversations?: unknown }).conversations;
+  return Array.isArray(conversations) ? conversations.length : 0;
+}
+
+export function vprMenuBarBounds(anchor: Rectangle, conversationCount: number, workArea?: Rectangle): Rectangle {
+  const display = workArea ?? screen.getDisplayMatching(anchor).workArea;
+  return calculateVprMenuBarBounds(anchor, display, conversationCount);
+}
+
+export function updateVprMenuBarWindow(data: unknown): void {
+  const win = getVprMenuBarWindow();
+  if (!win) return;
+  const current = win.getBounds();
+  const workArea = screen.getDisplayMatching(current).workArea;
+  const height = vprMenuBarWindowHeight(vprMenuBarConversationCount(data), workArea.height);
+  if (height !== current.height) {
+    win.setResizable(true);
+    win.setBounds({
+      ...current,
+      y: clamp(current.y, workArea.y + 2, workArea.y + workArea.height - height - 8),
+      height,
+    });
+    win.setResizable(false);
+  }
+  if (!win.webContents.isDestroyed()) win.webContents.send('vpr-menu-bar:data', data);
+}
+
+export function openVprMenuBarWindow(
+  config: WindowConfig,
+  anchor: Rectangle,
+  data: unknown,
+  onVisibilityChanged?: (visible: boolean) => void,
+): BrowserWindow {
+  const existing = getVprMenuBarWindow();
+  const bounds = vprMenuBarBounds(anchor, vprMenuBarConversationCount(data));
+  vprMenuBarVisibilityHandler = onVisibilityChanged ?? vprMenuBarVisibilityHandler;
+  if (existing) {
+    if (existing.isVisible()) {
+      existing.hide();
+      return existing;
+    }
+    existing.setResizable(true);
+    existing.setBounds(bounds);
+    existing.setResizable(false);
+    existing.webContents.send('vpr-menu-bar:data', data);
+    presentVprMenuBarWindow(existing);
+    return existing;
+  }
+
+  vprMenuBarWindow = new BrowserWindow({
+    ...bounds,
+    show: false,
+    title: `${config.appName} Status`,
+    type: process.platform === 'darwin' ? 'panel' : undefined,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    hasShadow: false,
+    acceptFirstMouse: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    webPreferences: {
+      preload: PRELOAD_PATH,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  const created = vprMenuBarWindow;
+  const unsubscribeMenuTracking = subscribeToMacosMenuTracking(systemPreferences, () => {
+    if (!created.isDestroyed() && created.isVisible()) created.hide();
+  });
+  created.setAlwaysOnTop(true, 'pop-up-menu');
+  created.on('show', () => vprMenuBarVisibilityHandler?.(true));
+  created.on('hide', () => vprMenuBarVisibilityHandler?.(false));
+  created.on('blur', () => created.hide());
+  created.webContents.on('before-input-event', (_event, input) => {
+    if (input.type === 'keyDown' && input.key === 'Escape') created.hide();
+  });
+  created.webContents.once('did-finish-load', () => {
+    if (created.isDestroyed()) return;
+    created.webContents.send('vpr-menu-bar:data', data);
+    presentVprMenuBarWindow(created);
+  });
+  void created.loadURL(vprMenuBarRendererUrl(config.rendererUrl));
+  created.on('closed', () => {
+    unsubscribeMenuTracking();
+    vprMenuBarVisibilityHandler?.(false);
+    vprMenuBarVisibilityHandler = null;
+    if (vprMenuBarWindow === created) vprMenuBarWindow = null;
+  });
+  return created;
 }
 
 export function openFloatWindow(config: WindowConfig, initialData: unknown): BrowserWindow {
@@ -410,7 +537,7 @@ export function applyWindowPreset(presetName: string): { ok: true; skipped?: 'fu
   return { ok: true };
 }
 
-export function createWindow(config: WindowConfig): void {
+export function createWindow(config: WindowConfig, options: { show?: boolean } = {}): void {
   // The default view is 'home', which maps to the compact preset (see
   // applyWindowView). Open at that size so the window doesn't briefly render
   // large and then snap down on first mount.
@@ -424,6 +551,7 @@ export function createWindow(config: WindowConfig): void {
     : {};
 
   mainWindow = new BrowserWindow({
+    show: options.show ?? true,
     width: initialPreset.width,
     height: initialPreset.height,
     minWidth: initialPreset.minWidth,
@@ -483,7 +611,7 @@ export function createWindow(config: WindowConfig): void {
       });
   });
 
-  if (config.isDev) {
+  if (config.isDev && options.show !== false) {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   }
 
@@ -512,6 +640,7 @@ export function createWindow(config: WindowConfig): void {
   mainWindow.on('closed', () => {
     mainWindow = null;
     closeFloatWindow();
+    closeVprMenuBarWindow();
     closeCheckoutWindows();
   });
 }
