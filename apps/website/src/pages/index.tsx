@@ -1377,7 +1377,7 @@ export default function Home(): JSX.Element {
       'AntSeed is a decentralized peer-to-peer marketplace for AI inference. Providers compete on price to run any AI model, with no central account.',
     sameAs: [
       'https://github.com/AntSeed/antseed',
-      'https://x.com/antseedai',
+      'https://x.com/antseed',
       'https://t.me/antseed',
     ],
   };
