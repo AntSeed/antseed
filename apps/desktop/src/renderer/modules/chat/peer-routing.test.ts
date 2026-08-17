@@ -432,7 +432,7 @@ test('new chat created while previous response is pending keeps its own model an
 });
 
 
-test('mixed-capability auto image routes omit moderation and appear immediately while generation is pending', async () => {
+test('mixed-capability auto image routes require moderation and appear immediately while generation is pending', async () => {
   installDomTimers();
 
   const uiState = createInitialUiState();
@@ -495,6 +495,7 @@ test('mixed-capability auto image routes omit moderation and appear immediately 
   assert.deepEqual(request, {
     conversationId: 'conv-a',
     prompt: 'A tiny ant astronaut',
+    moderation: 'low',
     service: 'image-model',
   });
 
@@ -716,14 +717,28 @@ test('switching image models edits through a seller serving the new model', asyn
     updatedAt: Date.now(),
     usage: { inputTokens: 0, outputTokens: 0 },
   }];
-  uiState.vprRoutableRows = [{
-    rowKey: 'new-image-peer:new-image-model',
-    peerId: 'new-image-peer',
-    serviceId: 'new-image-model',
-    protocol: 'openai-images',
-    capabilities: { inputs: ['text', 'image'], outputs: ['image'] },
-    effectiveReputationScore: 80,
-  } as DiscoverRow];
+  uiState.vprRoutableRows = [
+    {
+      rowKey: 'new-image-peer:new-image-model',
+      peerId: 'new-image-peer',
+      serviceId: 'new-image-model',
+      protocol: 'openai-images',
+      capabilities: { inputs: ['text', 'image'], outputs: ['image'] },
+      effectiveReputationScore: 80,
+    } as DiscoverRow,
+    {
+      rowKey: 'moderation-image-peer:new-image-model',
+      peerId: 'moderation-image-peer',
+      serviceId: 'new-image-model',
+      protocol: 'openai-images',
+      capabilities: {
+        inputs: ['text', 'image'],
+        outputs: ['image'],
+        supportedParameters: ['moderation'],
+      },
+      effectiveReputationScore: 70,
+    } as DiscoverRow,
+  ];
   uiState.chatImageRouteSelection = {
     model: { provider: 'openai', serviceId: 'new-image-model', label: 'New Image Model', categories: [] },
     mode: 'auto',
@@ -746,7 +761,8 @@ test('switching image models edits through a seller serving the new model', asyn
   assert.deepEqual(request, {
     conversationId: 'conv-a',
     prompt: 'Make it look like a watercolor',
-    peerId: 'new-image-peer',
+    peerId: 'moderation-image-peer',
+    moderation: 'low',
     service: 'new-image-model',
     sourceImageAttachmentId: 'generated-attachment',
   });
@@ -808,6 +824,7 @@ test('generation-only image sellers generate from cumulative prompt history', as
       'Return only the newly generated image.',
     ].join('\n'),
     peerId: 'venice-peer',
+    moderation: 'low',
     service: 'image-model',
   });
   assert.equal(uiState.chatMessages.at(-1)?.content, request?.prompt);
@@ -878,6 +895,7 @@ test('generation-only image prompt history grows without nesting prior cumulativ
     'Return only the newly generated image.',
   ].join('\n'));
   assert.equal(request?.prompt.match(/Generate a new image using/g)?.length, 1);
+  assert.equal(request?.moderation, 'low');
 
   generation.resolve({ ok: false, error: 'Request aborted' });
   await waitFor(() => !uiState.chatSending);

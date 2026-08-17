@@ -60,10 +60,13 @@ import {
   parseModelTypeFilter,
 } from './network-models.js'
 import {
+  findMissingRequiredParameters,
   findUnannouncedRequestParameters,
   findAdvertisedServiceOffer,
   getExplicitProviderOverride,
   getExplicitPeerIdOverride,
+  parseRequiredParametersHeader,
+  REQUIRED_PARAMETERS_HEADER,
   resolvePeerRoutePlan,
   selectCandidatePeersForRouting,
   type CandidatePeerRouteSelection,
@@ -2128,6 +2131,21 @@ export class BuyerProxy {
       headers,
       body: new Uint8Array(body),
     }
+    const requiredParameters = parseRequiredParametersHeader(
+      serializedReq.headers[REQUIRED_PARAMETERS_HEADER],
+    )
+    if (requiredParameters === null) {
+      res.writeHead(400, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({
+        error: {
+          type: 'invalid_request_error',
+          code: 'invalid_required_parameters',
+          message: `${REQUIRED_PARAMETERS_HEADER} must contain at most 16 comma-separated parameter names.`,
+          param: REQUIRED_PARAMETERS_HEADER,
+        },
+      }))
+      return
+    }
 
     // Snapshot the session overrides before any await so a concurrent
     // _reloadSessionOverrides() cannot change routing mid-request.
@@ -2344,6 +2362,21 @@ export class BuyerProxy {
           if (!plan?.serviceId) return null
           const offer = findAdvertisedServiceOffer(peer, plan.provider, plan.serviceId)
           if (!offer) return null
+          const missingRequired = plan.selection?.requiresTransform
+            ? requiredParameters
+            : findMissingRequiredParameters(
+                peer,
+                plan.provider,
+                plan.serviceId,
+                requiredParameters,
+              )
+          if (missingRequired.length > 0) {
+            log(
+              `Capability filter: peer ${peer.peerId.slice(0, 12)}... service="${plan.serviceId}" `
+              + `missing required parameter(s): ${missingRequired.join(', ')}`,
+            )
+            return null
+          }
           const requestForPolicy = withRoutedModel(serializedReq, plan.serviceId)
           if (!peerAllowedByPolicy(policyRouter, requestForPolicy, peer)) return null
           return {
@@ -2398,14 +2431,22 @@ export class BuyerProxy {
         }
       }
       if (candidates.length === 0) {
-        res.writeHead(502, { 'content-type': 'application/json' })
+        const capabilityRequired = requiredParameters.length > 0
+        res.writeHead(capabilityRequired ? 422 : 502, { 'content-type': 'application/json' })
         res.end(JSON.stringify({
-          error: {
-            type: 'model_not_found',
-            code: 'model_not_found',
-            message: `No policy-allowed peer currently serves model "${requestedService}".`,
-            param: 'model',
-          },
+          error: capabilityRequired
+            ? {
+                type: 'required_capability_unavailable',
+                code: 'required_capability_unavailable',
+                message: `No policy-allowed seller for model "${requestedService}" advertises required parameter(s): ${requiredParameters.join(', ')}.`,
+                param: REQUIRED_PARAMETERS_HEADER,
+              }
+            : {
+                type: 'model_not_found',
+                code: 'model_not_found',
+                message: `No policy-allowed peer currently serves model "${requestedService}".`,
+                param: 'model',
+              },
         }))
         return
       }
@@ -2614,6 +2655,26 @@ export class BuyerProxy {
     const selectedPlan = routingPlans.get(selectedPeer.peerId)
       ?? resolvePeerRoutePlan(selectedPeer, requestProtocol, requestedService, explicitProvider, 'lenient')
     const pinnedServiceId = selectedPlan?.serviceId ?? requestedService
+    const missingRequired = selectedPlan && !selectedPlan.selection?.requiresTransform
+      ? findMissingRequiredParameters(
+          selectedPeer,
+          selectedPlan.provider,
+          pinnedServiceId,
+          requiredParameters,
+        )
+      : requiredParameters
+    if (missingRequired.length > 0) {
+      res.writeHead(422, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({
+        error: {
+          type: 'required_capability_unavailable',
+          code: 'required_capability_unavailable',
+          message: `Pinned seller does not advertise required parameter(s) for model "${pinnedServiceId ?? requestedService ?? 'unknown'}": ${missingRequired.join(', ')}.`,
+          param: REQUIRED_PARAMETERS_HEADER,
+        },
+      }))
+      return
+    }
     const pinnedRequest = pinnedServiceId ? withRoutedModel(serializedReq, pinnedServiceId) : serializedReq
     if (!peerAllowedByPolicy(policyRouter, pinnedRequest, selectedPeer)) {
       log(`Pinned peer ${selectedPeer.peerId.slice(0, 12)}... filtered out by buyer routing policy`)
@@ -2802,6 +2863,7 @@ export class BuyerProxy {
     const {
       'x-antseed-pin-peer': _pinPeer,
       'x-antseed-prefer-peer': _preferPeer,
+      [REQUIRED_PARAMETERS_HEADER]: _requiredParameters,
       'x-vpr-session-id': _vprSession,
       // Legacy desktop builds (pre AntStation → VPR rename) still send this.
       'x-antstation-session-id': _antstationSession,

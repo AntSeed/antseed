@@ -5,6 +5,7 @@ import type { VprModelCatalogEntry } from '../../../core/state';
 import { favoriteModelKey } from '../../../modules/catalog/favorites';
 import { sameCanonicalModel } from '../../../modules/catalog/model-identity';
 import { modelCapabilitySummary } from '../../../modules/catalog/model-capabilities';
+import { modelTagsFor } from '../../../modules/catalog/model-metadata';
 import { BrandIcon } from '../brand/BrandIcon';
 import { formatUsdShort, VprBadge } from './VprKit';
 import styles from './VprModelRows.module.scss';
@@ -90,6 +91,9 @@ function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pi
   // the second line runs the full row.
   const discount = onConfigure ? null : discountLabel(entry);
   const capabilities = modelCapabilitySummary(entry);
+  const modelTags = modelTagsFor(entry.serviceId);
+  const visibleModelTags = modelTags.slice(0, 1);
+  const hiddenModelTags = modelTags.slice(visibleModelTags.length);
 
   const priceParts = entry.kind === 'image' ? (
     entry.minImageUsdPerImage !== null ? (
@@ -128,16 +132,29 @@ function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pi
       aria-pressed={checked}
       onClick={onClick}
     >
-      <span className={styles.checkSlot} aria-hidden="true">
-        {checked && (
+      {checked && (
+        <span className={styles.checkSlot} aria-hidden="true">
           <HugeiconsIcon icon={Tick02Icon} size={16} strokeWidth={2} className={styles.check} />
-        )}
-      </span>
+        </span>
+      )}
       <span className={styles.rowMain}>
         <span className={styles.titleLine}>
           <BrandIcon name={entry.provider} hints={[entry.label]} size={16} className={styles.logo} />
           <span className={styles.label}>{entry.label}</span>
-          {entry.kind === 'image' && <VprBadge tone="type">Image</VprBadge>}
+          {entry.kind === 'image' && <span className={styles.modelTypeTag}>Image</span>}
+          {!compact && visibleModelTags.map((tag) => (
+            <span
+              key={tag}
+              className={`${styles.modelTag}${tag === 'Uncensored' ? ` ${styles.modelTagUncensored}` : ''}`}
+            >
+              {tag}
+            </span>
+          ))}
+          {!compact && hiddenModelTags.length > 0 && (
+            <span className={styles.modelTagMore} title={hiddenModelTags.join(' · ')}>
+              +{hiddenModelTags.length}
+            </span>
+          )}
           {favorite && (
             <HugeiconsIcon icon={StarIcon} size={13} strokeWidth={2} className={styles.favStar} />
           )}

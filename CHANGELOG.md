@@ -8,7 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
-- Desktop image chats now request `moderation: "low"` for image models whose selected seller, or every eligible auto-routed seller, advertises support for that parameter, disabling provider-side Safe Mode blurring without sending unsupported fields.
+- Desktop image chats now require sellers that advertise `moderation` support and send `moderation: "low"`, preventing automatic fallback to sellers that would silently restore provider-side Safe Mode blurring. Model lists show reviewed tags such as **Uncensored**, **Coding**, **Reasoning**, **Vision**, **Web search**, and **Open weights** from a versioned declarative registry covering maintained OpenRouter and Venice catalogs with per-model provenance, instead of trusting seller-announced categories. Seller rows identify offers with **Moderation control**, and requests fail clearly when no compatible seller is available.
 - The AntSeed X (Twitter) account moved from `@antseedai` to `@antseed`; all website, desktop help, and brand guideline links now point to https://x.com/antseed.
 
 - Desktop Connected Apps now opens directly to the complete app list without the redundant search field at the top; application-picker searches remain available when choosing an installed app. The Home notice for apps that need restarting can now be dismissed for the current app launch and returns after Desktop is relaunched.

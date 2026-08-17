@@ -6,7 +6,7 @@ import {
   routesForSelectedModel,
   sortVprCatalog,
 } from '../../../modules/catalog/view-models.js';
-import { peerCapabilitySummary } from '../../../modules/catalog/model-capabilities.js';
+import { peerCapabilitySummary, supportsServiceParameter } from '../../../modules/catalog/model-capabilities.js';
 
 function catalogEntry(overrides: Partial<VprModelCatalogEntry> = {}): VprModelCatalogEntry {
   return {
@@ -95,6 +95,11 @@ test('Explore search finds image-only models by their derived type', () => {
   assert.deepEqual(filterVprCatalog([image], { search: 'image generation' }), [image]);
 });
 
+test('Explore search finds curated model tags without seller categories', () => {
+  const image = catalogEntry({ serviceId: 'lustify-v8', label: 'Lustify V8', kind: 'image', categories: [] });
+  assert.deepEqual(filterVprCatalog([image], { search: 'uncensored' }), [image]);
+});
+
 test('Explore filters models by output type', () => {
   const text = catalogEntry({ serviceId: 'chat-model', label: 'Chat Model', kind: 'text' });
   const image = catalogEntry({ serviceId: 'art-model', label: 'Art Model', kind: 'image' });
@@ -138,6 +143,16 @@ test('Model route filtering excludes other service IDs but keeps canonical varia
   );
 });
 
+test('service parameter support is matched case-insensitively', () => {
+  const route = discoverRow({
+    protocol: 'openai-images',
+    capabilities: { outputs: ['image'], supportedParameters: ['MODERATION', 'output_format'] },
+  });
+
+  assert.equal(supportsServiceParameter(route, 'moderation'), true);
+  assert.equal(supportsServiceParameter(route, 'quality'), false);
+});
+
 test('image seller summaries distinguish generation-only routes from edit support', () => {
   const generationOnly = discoverRow({
     protocol: 'openai-images',
@@ -148,6 +163,6 @@ test('image seller summaries distinguish generation-only routes from edit suppor
     capabilities: { inputs: ['text', 'image'], outputs: ['image'] },
   });
 
-  assert.equal(peerCapabilitySummary(generationOnly)[0], 'Image generation only');
-  assert.equal(peerCapabilitySummary(editable)[0], 'Image generation + editing');
+  assert.equal(peerCapabilitySummary(generationOnly)[0], undefined);
+  assert.equal(peerCapabilitySummary(editable)[0], 'Image editing');
 });

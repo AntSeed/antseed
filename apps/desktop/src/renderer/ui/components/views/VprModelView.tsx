@@ -4,14 +4,14 @@ import { Copy01Icon, PreferenceHorizontalIcon, StarIcon, Tick02Icon } from '@hug
 import { chooseBestVprRoute } from '../../../modules/routing/select';
 import { compareModelRoutesByReputation, routesForSelectedModel } from '../../../modules/catalog/view-models';
 import { findCatalogEntry } from '../../../modules/catalog/model-catalog';
-import { modelCapabilitySummary, peerCapabilitySummary } from '../../../modules/catalog/model-capabilities';
+import { peerCapabilitySummary, supportsServiceParameter } from '../../../modules/catalog/model-capabilities';
+import { modelTagsFor } from '../../../modules/catalog/model-metadata';
 import { buildImageModelSkillPrompt } from '../../../modules/chat/image-model-instructions';
 import { favoriteModelKey, loadFavoriteModels, toggleFavoriteModel } from '../../../modules/catalog/favorites';
 import { vprModelPageTarget } from '../../../modules/catalog/model-page-target';
 import { modelPinKey, vprModelPinFor } from '../../../modules/routing/model-pins';
 import { isFreeRoute, sellerMetaLabel, sellerReputationLabel } from '../../../modules/catalog/seller-format';
 import type { DiscoverRow } from '../../../core/state';
-import { formatCategoryLabel } from '../chat/discover-filter-util';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import type { ViewName } from '../../types';
@@ -90,7 +90,8 @@ export function VprModelView({ onSelectView }: Props) {
   const priceValue = imageOnly
     ? priceRange(entry.minImageUsdPerImage, entry.maxImageUsdPerImage)
     : priceTile(entry);
-  const capabilitySummary = modelCapabilitySummary(entry);
+  const modelTags = modelTagsFor(entry.serviceId);
+  const displayedModelTags = imageOnly ? ['Image generation', ...modelTags] : modelTags;
 
   const viewedModel = model;
   /** Make the browsed text model (and its previewed pin) the active route. */
@@ -134,8 +135,8 @@ export function VprModelView({ onSelectView }: Props) {
                 </span>
               )}
             </div>
-            {(entry.categories.length > 0 || imageOnly) && (
-              <CategoryBadges categories={imageOnly ? ['image-generation', ...entry.categories] : entry.categories} />
+            {displayedModelTags.length > 0 && (
+              <ModelTagBadges tags={displayedModelTags} />
             )}
           </div>
           <div className={styles.headActions}>
@@ -191,19 +192,6 @@ export function VprModelView({ onSelectView }: Props) {
             )}
           </div>
         </div>
-
-        {imageOnly && (
-          <div className={styles.capabilityNotice} role="note">
-            <strong>Image generation only</strong>
-            <span>Use it in the internal chat, or copy model-only instructions for a normal text agent. It cannot become the main text or connected-app route.</span>
-          </div>
-        )}
-
-        {capabilitySummary.length > 0 && !imageOnly && (
-          <div className={styles.capabilityList} aria-label="Model type">
-            {capabilitySummary.map((capability) => <span key={capability}>{capability}</span>)}
-          </div>
-        )}
 
         <VprStatRow>
           <VprStatTile
@@ -306,19 +294,20 @@ export function VprModelView({ onSelectView }: Props) {
 const BADGE_GAP = 2;
 
 /**
- * Category tags on a single line, always. The row measures itself before
+ * Curated model tags on a single line, always. The row measures itself before
  * paint and shows only as many tags as actually fit, collapsing the rest into
  * a "+N" chip whose title lists them — no wrapping, no clipped chips.
  */
-function CategoryBadges({ categories }: { categories: string[] }) {
+function ModelTagBadges({ tags }: { tags: string[] }) {
   const rowRef = useRef<HTMLDivElement | null>(null);
   // null = measuring pass: render every tag (plus a worst-case "+N" chip) so
   // their widths can be read; the fitted count replaces it before paint.
   const [visibleCount, setVisibleCount] = useState<number | null>(null);
+  const tagSignature = tags.join('\0');
 
   useLayoutEffect(() => {
     setVisibleCount(null);
-  }, [categories]);
+  }, [tagSignature]);
 
   // Refit when the row's width changes (window resize, layout shifts).
   useLayoutEffect(() => {
@@ -353,20 +342,22 @@ function CategoryBadges({ categories }: { categories: string[] }) {
       : fitted(max - BADGE_GAP - chip.offsetWidth));
   }, [visibleCount]);
 
-  const visible = visibleCount ?? categories.length;
-  const hiddenCategories = categories.slice(visible);
+  const visible = visibleCount ?? tags.length;
+  const hiddenTags = tags.slice(visible);
 
   return (
     <div className={styles.badgeRow} ref={rowRef}>
-      {categories.slice(0, visible).map((category) => (
-        <VprBadge key={category} tone="type">{formatCategoryLabel(category)}</VprBadge>
-      ))}
-      {(visibleCount === null || hiddenCategories.length > 0) && (
+      {tags.slice(0, visible).map((tag) => (
         <span
-          className={styles.badgeMore}
-          title={hiddenCategories.map(formatCategoryLabel).join(' · ')}
+          key={tag}
+          className={`${styles.modelTag}${tag === 'Uncensored' ? ` ${styles.modelTagUncensored}` : ''}`}
         >
-          <VprBadge tone="type">+{hiddenCategories.length || categories.length}</VprBadge>
+          {tag}
+        </span>
+      ))}
+      {(visibleCount === null || hiddenTags.length > 0) && (
+        <span className={styles.badgeMore} title={hiddenTags.join(' · ')}>
+          +{hiddenTags.length || tags.length}
         </span>
       )}
     </div>
@@ -383,7 +374,14 @@ function SellerRow({ route, active, auto, onClick }: {
 }) {
   const capabilities = peerCapabilitySummary(route);
   const parameters = route.capabilities?.supportedParameters ?? [];
-  const capabilityLabel = [...capabilities, ...parameters.map((parameter) => parameter.replaceAll('_', ' '))].join(' · ');
+  const hasModerationControl = route.protocol === 'openai-images'
+    && supportsServiceParameter(route, 'moderation');
+  const capabilityLabel = [
+    ...capabilities,
+    ...parameters
+      .filter((parameter) => parameter.trim().toLowerCase() !== 'moderation')
+      .map((parameter) => parameter.replaceAll('_', ' ')),
+  ].join(' · ');
   return (
     <button
       type="button"
@@ -399,6 +397,7 @@ function SellerRow({ route, active, auto, onClick }: {
           {route.peerDisplayName || route.peerLabel || route.peerId}
           {active && <VprBadge tone="primary">{auto ? '• Auto' : 'Pinned'}</VprBadge>}
           {isFreeRoute(route) && <VprBadge tone="green">Free</VprBadge>}
+          {hasModerationControl && <VprBadge tone="neutral">Moderation control</VprBadge>}
         </span>
         <span className={styles.sellerMeta}>
           {sellerMetaLabel(route)}

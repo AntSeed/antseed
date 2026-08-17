@@ -7,6 +7,7 @@ import type {
 } from '../../core/state';
 import { sameCanonicalModel } from './model-identity';
 import { modelFamilyLabel } from './model-families';
+import { modelTagsFor } from './model-metadata';
 import { modelPinKey, vprModelPinFor, type VprModelPins } from '../routing/model-pins';
 import { chooseBestVprRoute } from '../routing/select';
 import { shortPeerId } from '../routing/tools';
@@ -43,6 +44,7 @@ function catalogSearchText(entry: VprModelCatalogEntry): string {
     entry.serviceId,
     entry.provider,
     ...entry.categories,
+    ...modelTagsFor(entry.serviceId),
     entry.kind === 'image' ? 'image generation image-only' : 'text chat',
   ].join(' ').toLowerCase();
 }
