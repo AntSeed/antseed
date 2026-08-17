@@ -20,6 +20,7 @@ function data(overrides: Partial<VprFloatData> = {}): VprFloatData {
 
 test('compact routing status covers loading, stopped, idle, and insufficient funds', () => {
   assert.equal(compactRoutingStatus(null).tone, 'loading');
+  assert.equal(compactRoutingStatus(data({ ready: false })).tone, 'loading');
   assert.deepEqual(compactRoutingStatus(data({ runtimeOn: false, needsFunds: true })), {
     label: 'Not connected',
     hint: 'Routing is stopped — apps are not going through AntSeed. Open VPR to start it.',

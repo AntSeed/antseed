@@ -8,6 +8,7 @@ import {
 } from '../app-context.js';
 import { getLastVprFloatData, routeVprSurfaceAction } from './float.js';
 import {
+  getVprMenuBarPointerPosition,
   getMainWindow,
   hideVprMenuBarWindow,
   openVprMenuBarWindow,
@@ -69,6 +70,7 @@ export function openVprMenuBar(anchor: Rectangle): void {
 
 export function registerVprMenuBarIpc(): void {
   ipcMain.handle('vpr-menu-bar:get-state', () => getLastVprFloatData());
+  ipcMain.handle('vpr-menu-bar:get-placement', () => getVprMenuBarPointerPosition());
   ipcMain.on('vpr-menu-bar:action', (_event, raw: unknown) => {
     const action = normalizeVprMenuBarAction(raw);
     if (!action) return;

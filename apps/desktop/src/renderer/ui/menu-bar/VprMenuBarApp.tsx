@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { VprFloatData } from '../../types/bridge';
 import type { VprMenuBarAction } from '../../../shared/vpr-menu-bar.js';
 import {
@@ -16,6 +16,7 @@ function isData(value: unknown): value is VprFloatData {
 export function VprMenuBarApp() {
   const bridge = window.antseedDesktop;
   const [data, setData] = useState<VprFloatData | null>(null);
+  const [pointerX, setPointerX] = useState(20);
   const rootRef = useRef<HTMLDivElement>(null);
   const send = (action: VprMenuBarAction) => bridge?.vprMenuBarAction?.(action);
 
@@ -24,12 +25,19 @@ export function VprMenuBarApp() {
     void bridge?.vprMenuBarGetState?.().then((next) => {
       if (mounted && isData(next)) setData(next);
     });
-    const unsubscribe = bridge?.onVprMenuBarData?.((next) => {
+    void bridge?.vprMenuBarGetPlacement?.().then((next) => {
+      if (mounted && Number.isFinite(next)) setPointerX(next);
+    });
+    const unsubscribeData = bridge?.onVprMenuBarData?.((next) => {
       if (isData(next)) setData(next);
+    });
+    const unsubscribePlacement = bridge?.onVprMenuBarPlacement?.((next) => {
+      if (Number.isFinite(next)) setPointerX(next);
     });
     return () => {
       mounted = false;
-      unsubscribe?.();
+      unsubscribeData?.();
+      unsubscribePlacement?.();
     };
   }, [bridge]);
 
@@ -50,7 +58,12 @@ export function VprMenuBarApp() {
   }
 
   return (
-    <div ref={rootRef} className={styles.shell} onKeyDown={handleKeys}>
+    <div
+      ref={rootRef}
+      className={styles.shell}
+      style={{ '--vpr-menu-pointer-x': `${pointerX}px` } as CSSProperties}
+      onKeyDown={handleKeys}
+    >
       <div className={styles.arrow} />
       <section className={styles.popover} aria-label="AntSeed routing status">
         <CompactRoutingHeader

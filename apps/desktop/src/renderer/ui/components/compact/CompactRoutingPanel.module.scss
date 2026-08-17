@@ -12,10 +12,10 @@
 }
 
 .headerMenuBar {
-  min-height: 104px;
-  grid-template-columns: 54px minmax(0, 1fr) auto;
-  gap: 10px;
-  padding: 16px 16px 14px;
+  min-height: 72px;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 9px 10px 8px;
   border-bottom: 1px solid var(--border-light);
 }
 
@@ -29,9 +29,9 @@
 }
 
 .headerMenuBar .brandBadge {
-  width: 52px;
-  height: 52px;
-  border-radius: 17px;
+  width: 36px;
+  height: 36px;
+  border-radius: 13px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
@@ -51,9 +51,9 @@
 
 .balanceLine { gap: 7px; }
 .balance { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 650; }
-.headerMenuBar .balance { font-size: 25px; line-height: 28px; letter-spacing: -0.04em; }
+.headerMenuBar .balance { font-size: 19px; line-height: 21px; letter-spacing: -0.03em; }
 .status { gap: 6px; color: var(--text-muted); font-size: 12px; line-height: 16px; }
-.headerMenuBar .status { font-size: 13px; }
+.headerMenuBar .status { font-size: 11px; line-height: 14px; }
 .statusLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .statusDot {
@@ -81,7 +81,7 @@
   cursor: pointer;
 }
 
-.headerActions { display: flex; align-self: start; gap: 2px; }
+.headerActions { display: flex; align-self: start; gap: 1px; }
 .headerActions button,
 .openApp {
   width: 29px;
@@ -95,6 +95,7 @@
   color: var(--text-muted);
   cursor: pointer;
 }
+.headerActions button { width: 24px; height: 24px; }
 .headerActions button:hover,
 .headerActions button:focus-visible,
 .openApp:hover,
@@ -121,8 +122,11 @@
   font-weight: 650;
 }
 .sectionHead span:last-child { color: var(--text-faint); font-size: 11px; font-weight: 500; }
+.panelMenuBar .sectionHead { height: 30px; padding: 0 10px 6px; font-size: 11px; }
+.panelMenuBar .sectionHead span:last-child { font-size: 10px; }
 .scroll { flex: 1 1 auto; min-height: 0; }
 .scrollContent { display: flex; flex-direction: column; padding: 4px 8px 7px; }
+.panelMenuBar .scrollContent { padding: 1px 5px 3px; }
 .panelFloat .scrollContent { padding: 6px; }
 .slide,
 .slideBack { display: flex; flex-direction: column; gap: 2px; }
@@ -149,18 +153,24 @@
   cursor: pointer;
 }
 .panelFloat .row { min-height: 50px; grid-template-columns: 26px minmax(0, 1fr) 14px; padding: 5px 8px; border-radius: 10px; }
+.panelMenuBar .row { min-height: 48px; grid-template-columns: 24px minmax(0, 1fr) 13px; padding: 4px 6px; border-radius: 10px; }
 .row:hover,
 .row:focus-visible { background: var(--bg-hover); outline: none; }
 .rowIcon { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--bg-surface); }
+.panelMenuBar .rowIcon { width: 22px; height: 22px; border-radius: 6px; }
 .panelFloat .rowIcon { width: 22px; height: 22px; border-radius: 6px; }
 .appIcon { flex: 0 0 auto; border-radius: 5px; object-fit: contain; }
 .rowText { min-width: 0; display: grid; gap: 4px; }
+.panelMenuBar .rowText { gap: 2px; }
 .rowTitleLine,
 .rowMeta { min-width: 0; display: flex; align-items: center; gap: 6px; }
 .rowTitle { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 600; }
+.panelMenuBar .rowTitle { font-size: 12px; }
 .panelFloat .rowTitle { font-size: 12px; }
 .rowCost { flex: 0 0 auto; color: var(--text-secondary); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .rowMeta { color: var(--text-muted); font-size: 11.5px; }
+.panelMenuBar .rowCost { font-size: 11px; }
+.panelMenuBar .rowMeta { font-size: 10.5px; }
 .rowMeta > span:first-child,
 .rowModel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rowModel { margin-left: auto; padding-left: 5px; text-align: right; }
@@ -175,9 +185,19 @@
 .hint small { color: var(--text-muted); font-size: 11px; }
 .loading { display: grid; gap: 8px; padding: 10px; }
 .loading span { height: 58px; border-radius: 12px; background: linear-gradient(90deg, var(--bg-surface), var(--bg-hover), var(--bg-surface)); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
+.loadingState { min-height: 140px; display: grid; place-content: center; justify-items: center; gap: 5px; padding: 18px; color: var(--text-secondary); text-align: center; }
+.loadingState strong { font-size: 12px; font-weight: 650; }
+.loadingState small { max-width: 220px; color: var(--text-muted); font-size: 10.5px; line-height: 15px; }
+.loadingMark { display: grid; place-items: center; width: 38px; height: 38px; margin-bottom: 3px; border-radius: 13px; background: var(--bg-surface); animation: loading-pulse 1.4s ease-in-out infinite; }
 @keyframes shimmer { to { background-position: -200% 0; } }
+@keyframes loading-pulse { 50% { opacity: 0.55; transform: scale(0.96); } }
 
 .backHeader { display: flex; align-items: center; justify-content: space-between; gap: 5px; padding: 3px 5px 4px; }
+.panelMenuBar .backHeader { min-width: 0; padding: 3px 6px 4px; }
+.panelMenuBar .backHeader > button:first-child { min-width: 0; min-height: 30px; flex: 1 1 auto; gap: 4px; overflow: hidden; padding-right: 8px; font-size: 13.5px; line-height: 18px; white-space: nowrap; text-align: left; }
+.panelMenuBar .backHeader > button:first-child > svg { flex: 0 0 auto; width: 18px; height: 18px; }
+.panelMenuBar .backHeader > button:first-child > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panelMenuBar .backHeader > .openApp { flex: 0 0 auto; }
 .openApp { display: inline-flex; gap: 3px; flex: 0 0 auto; }
 
 .defaultRow {
@@ -197,6 +217,8 @@
   cursor: pointer;
 }
 .panelFloat .defaultRow { min-height: 30px; padding: 3px 12px; }
+.panelMenuBar .defaultRow { min-height: 40px; padding: 0 10px; gap: 7px; font-size: 11px; }
+.panelMenuBar .defaultValue strong { max-width: 116px; font-size: 11px; }
 .defaultRow:hover,
 .defaultRow:focus-visible { background: var(--bg-hover); outline: none; }
 .defaultValue { min-width: 0; display: grid; justify-items: end; }
@@ -222,11 +244,13 @@
 .footer:hover,
 .footer:focus-visible { background: #cdd6dd; outline: none; }
 .panelFloat .footer { height: 36px; padding: 0 12px; border-radius: 0 0 16px 16px; font-size: 12px; }
+.panelMenuBar .footer { height: 44px; padding: 0 11px; border-radius: 0 0 15px 15px; font-size: 12px; }
 :global(body:not(.dark-theme)) .footer { background: #2a2a2c; color: #f0eee8; }
 :global(body:not(.dark-theme)) .footer:hover { background: #19191b; }
 
 @media (prefers-reduced-motion: reduce) {
   .slide,
   .slideBack,
-  .loading span { animation: none; }
+  .loading span,
+  .loadingMark { animation: none; }
 }

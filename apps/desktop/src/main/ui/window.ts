@@ -16,6 +16,7 @@ import {
   presentVprMenuBarWindow,
   subscribeToMacosMenuTracking,
   vprMenuBarBounds as calculateVprMenuBarBounds,
+  vprMenuBarPointerX as calculateVprMenuBarPointerX,
   vprMenuBarWindowHeight,
 } from './vpr-menu-bar-presentation.js';
 
@@ -28,6 +29,7 @@ let mainWindow: BrowserWindow | null = null;
 let floatWindow: BrowserWindow | null = null;
 let vprMenuBarWindow: BrowserWindow | null = null;
 let vprMenuBarVisibilityHandler: ((visible: boolean) => void) | null = null;
+let vprMenuBarPointerPosition = 20;
 const FLOAT_WINDOW_WIDTH = 272;
 const FLOAT_WINDOW_HEIGHT = 80;
 /** Pill height while a custom dropdown (chat / model) is open. */
@@ -115,6 +117,10 @@ export function getFloatWindow(): BrowserWindow | null {
 
 export function getVprMenuBarWindow(): BrowserWindow | null {
   return vprMenuBarWindow && !vprMenuBarWindow.isDestroyed() ? vprMenuBarWindow : null;
+}
+
+export function getVprMenuBarPointerPosition(): number {
+  return vprMenuBarPointerPosition;
 }
 
 export function hideVprMenuBarWindow(): void {
@@ -236,6 +242,7 @@ export function openVprMenuBarWindow(
 ): BrowserWindow {
   const existing = getVprMenuBarWindow();
   const bounds = vprMenuBarBounds(anchor, vprMenuBarConversationCount(data));
+  vprMenuBarPointerPosition = calculateVprMenuBarPointerX(anchor, bounds);
   vprMenuBarVisibilityHandler = onVisibilityChanged ?? vprMenuBarVisibilityHandler;
   if (existing) {
     if (existing.isVisible()) {
@@ -246,6 +253,7 @@ export function openVprMenuBarWindow(
     existing.setBounds(bounds);
     existing.setResizable(false);
     existing.webContents.send('vpr-menu-bar:data', data);
+    existing.webContents.send('vpr-menu-bar:placement', vprMenuBarPointerPosition);
     presentVprMenuBarWindow(existing);
     return existing;
   }
@@ -287,6 +295,7 @@ export function openVprMenuBarWindow(
   created.webContents.once('did-finish-load', () => {
     if (created.isDestroyed()) return;
     created.webContents.send('vpr-menu-bar:data', data);
+    created.webContents.send('vpr-menu-bar:placement', vprMenuBarPointerPosition);
     presentVprMenuBarWindow(created);
   });
   void created.loadURL(vprMenuBarRendererUrl(config.rendererUrl));

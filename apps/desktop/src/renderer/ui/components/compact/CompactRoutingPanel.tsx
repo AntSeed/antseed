@@ -29,7 +29,7 @@ export type CompactRoutingStatus = {
 };
 
 export function compactRoutingStatus(data: VprFloatData | null): CompactRoutingStatus {
-  if (!data) {
+  if (!data || data.ready === false) {
     return { label: 'Loading routing…', hint: 'Refreshing AntSeed routing status.', tone: 'loading' };
   }
   if (data.runtimeOn === false) {
@@ -89,14 +89,15 @@ export function CompactRoutingHeader({
   onOpenFloatingWindow?: () => void;
   onDismiss?: () => void;
 }) {
-  const status = compactRoutingStatus(data);
+  const readyData = data?.ready === false ? null : data;
+  const status = compactRoutingStatus(readyData);
   return (
     <header className={`${styles.header} ${variant === 'menu-bar' ? styles.headerMenuBar : styles.headerFloat}`}>
-      <span className={styles.brandBadge}><VprMark size={variant === 'menu-bar' ? 38 : 26} /></span>
+      <span className={styles.brandBadge}><VprMark size={26} /></span>
       <span className={styles.headerBody}>
         <span className={styles.balanceLine}>
-          <span className={styles.balance}>{data?.balanceLabel ?? '—'}</span>
-          {data?.needsFunds ? (
+          <span className={styles.balance}>{readyData?.balanceLabel ?? '—'}</span>
+          {readyData?.needsFunds ? (
             <button type="button" className={styles.addBalance} onClick={onAddBalance}>Add balance</button>
           ) : null}
         </span>
@@ -135,26 +136,27 @@ export function CompactRoutingPanel({
 }) {
   const [target, setTarget] = useState<string | null>(null);
   const [direction, setDirection] = useState<'forward' | 'back'>('forward');
-  const conversations = data?.conversations ?? [];
-  const models = data?.models ?? [];
-  const favoriteKeys = useMemo(() => new Set(data?.favoriteKeys ?? []), [data?.favoriteKeys]);
-  const pinnedSellers = useMemo(() => new Map(Object.entries(data?.pinnedSellers ?? {})), [data?.pinnedSellers]);
-  const selectedModelValue = data?.selectedModel
-    ? `${data.selectedModel.provider}:${data.selectedModel.serviceId}`
+  const readyData = data?.ready === false ? null : data;
+  const conversations = readyData?.conversations ?? [];
+  const models = readyData?.models ?? [];
+  const favoriteKeys = useMemo(() => new Set(readyData?.favoriteKeys ?? []), [readyData?.favoriteKeys]);
+  const pinnedSellers = useMemo(() => new Map(Object.entries(readyData?.pinnedSellers ?? {})), [readyData?.pinnedSellers]);
+  const selectedModelValue = readyData?.selectedModel
+    ? `${readyData.selectedModel.provider}:${readyData.selectedModel.serviceId}`
     : '';
   const selectedModel = models.find((model) => `${model.provider}:${model.serviceId}` === selectedModelValue) ?? null;
   const modelLabel = selectedModel?.label ?? 'Select model';
   const pinnedSeller = selectedModelValue ? pinnedSellers.get(selectedModelValue) ?? null : null;
-  const runtimeOn = data?.runtimeOn ?? true;
+  const runtimeOn = readyData?.runtimeOn ?? true;
 
   const idleApps = useMemo(
-    () => (data?.apps ?? []).filter((app) => !conversations.some((chat) => conversationMatchesApp(chat.tool, app))),
-    [data?.apps, conversations],
+    () => (readyData?.apps ?? []).filter((app) => !conversations.some((chat) => conversationMatchesApp(chat.tool, app))),
+    [readyData?.apps, conversations],
   );
   const appForTool = useMemo(() => {
-    const apps = data?.apps ?? [];
+    const apps = readyData?.apps ?? [];
     return (tool: string): VprFloatApp | null => apps.find((app) => conversationMatchesApp(tool, app)) ?? null;
-  }, [data?.apps]);
+  }, [readyData?.apps]);
   const targetChat = target && target !== 'default'
     ? conversations.find((chat) => chat.id === target) ?? null
     : null;
@@ -180,23 +182,31 @@ export function CompactRoutingPanel({
 
   return (
     <section className={`${styles.panel} ${variant === 'menu-bar' ? styles.panelMenuBar : styles.panelFloat}`} aria-label="Manage routing sessions">
-      {variant === 'menu-bar' && target === null ? (
+      {variant === 'menu-bar' && readyData && target === null ? (
         <div className={styles.sectionHead}>
           <span>Recent routing sessions</span>
           <span>{conversations.length > 0 ? `${conversations.length} recent` : ''}</span>
         </div>
       ) : null}
       <OverlayScrollArea className={styles.scroll} contentClassName={styles.scrollContent}>
-        {!data ? (
-          <div className={styles.loading} aria-label="Loading routing sessions">
-            <span /><span /><span />
-          </div>
+        {!readyData ? (
+          variant === 'menu-bar' ? (
+            <div className={styles.loadingState} aria-label="Loading VPR status">
+              <span className={styles.loadingMark}><VprMark size={24} /></span>
+              <strong>Loading VPR…</strong>
+              <small>Fetching balance, models, and recent sessions</small>
+            </div>
+          ) : (
+            <div className={styles.loading} aria-label="Loading routing sessions">
+              <span /><span /><span />
+            </div>
+          )
         ) : target === null ? (
           <div key="list" className={slideClass}>
             {!runtimeOn ? <div className={styles.empty}>Not connected — routing is stopped. Open VPR to start it.</div> : null}
             {runtimeOn && conversations.length === 0 && idleApps.map((app) => (
               <div key={app.name} className={styles.hint}>
-                <AppMark app={app} size={variant === 'menu-bar' ? 24 : 16} />
+                <AppMark app={app} size={variant === 'menu-bar' ? 18 : 16} />
                 <span><strong>{app.displayName} connected</strong><small>Start a new session and send your first prompt</small></span>
               </div>
             ))}
@@ -209,7 +219,7 @@ export function CompactRoutingPanel({
                 : null;
               return (
                 <button type="button" data-menu-item="true" key={chat.id} className={styles.row} onClick={() => drillIn(chat.id)} title={chat.title}>
-                  <span className={styles.rowIcon}><AppMark app={app} tool={chat.tool} size={variant === 'menu-bar' ? 19 : 16} /></span>
+                  <span className={styles.rowIcon}><AppMark app={app} tool={chat.tool} size={variant === 'menu-bar' ? 15 : 16} /></span>
                   <span className={styles.rowText}>
                     <span className={styles.rowTitleLine}>
                       <span className={styles.rowTitle}>{chat.title}</span>
@@ -220,7 +230,7 @@ export function CompactRoutingPanel({
                       <span>{appLabel} · {conversationAge(chat.lastActiveAt)}</span>
                       <span className={styles.rowModel}>
                         {pinnedLabel ?? modelLabel}
-                        {data.showRoutedPeer && chat.routedPeerName ? <em> · {chat.routedPeerName}</em> : null}
+                        {readyData.showRoutedPeer && chat.routedPeerName ? <em> · {chat.routedPeerName}</em> : null}
                       </span>
                     </span>
                   </span>
@@ -242,8 +252,8 @@ export function CompactRoutingPanel({
             </div>
             <VprModelRowList
               entries={models}
-              selectedProvider={targetChat ? undefined : data.selectedModel?.provider}
-              selectedServiceId={targetChat ? targetChat.pinnedServiceId ?? undefined : data.selectedModel?.serviceId}
+              selectedProvider={targetChat ? undefined : readyData.selectedModel?.provider}
+              selectedServiceId={targetChat ? targetChat.pinnedServiceId ?? undefined : readyData.selectedModel?.serviceId}
               favoriteKeys={favoriteKeys}
               compact
               pinnedPeerLabels={targetChat ? undefined : pinnedSellers}
@@ -259,7 +269,7 @@ export function CompactRoutingPanel({
           </div>
         ) : null}
       </OverlayScrollArea>
-      {target === null ? (
+      {readyData && target === null ? (
         <button type="button" data-menu-item="true" className={styles.defaultRow} onClick={() => drillIn('default')}>
           <span>Model for new chats</span>
           <span className={styles.defaultValue}><strong>{modelLabel}</strong>{pinnedSeller ? <small>{pinnedSeller}</small> : null}</span>
@@ -267,8 +277,8 @@ export function CompactRoutingPanel({
         </button>
       ) : null}
       <button type="button" data-menu-item="true" className={styles.footer} onClick={onOpenMain} title="Open VPR">
-        <span><VprMark size={variant === 'menu-bar' ? 22 : 14} />Open VPR</span>
-        <HugeiconsIcon icon={ArrowUpRight01Icon} size={variant === 'menu-bar' ? 17 : 13} strokeWidth={2} />
+        <span><VprMark size={variant === 'menu-bar' ? 16 : 14} />Open VPR</span>
+        <HugeiconsIcon icon={ArrowUpRight01Icon} size={variant === 'menu-bar' ? 14 : 13} strokeWidth={2} />
       </button>
     </section>
   );

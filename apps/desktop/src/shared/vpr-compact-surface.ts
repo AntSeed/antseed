@@ -40,6 +40,8 @@ export type VprCompactConversation = {
 };
 
 export type VprCompactSurfaceData = {
+  /** False until the main renderer has completed its first runtime refresh. */
+  ready?: boolean;
   apps: VprCompactApp[];
   selectedApp: string;
   models: VprCompactModel[];

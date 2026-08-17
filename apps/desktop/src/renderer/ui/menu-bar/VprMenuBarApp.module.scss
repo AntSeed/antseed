@@ -2,6 +2,7 @@
   position: fixed;
   inset: 0;
   padding: 8px;
+  background: transparent;
   color: var(--text-primary);
   user-select: none;
 }
@@ -10,7 +11,7 @@
   position: absolute;
   z-index: 2;
   top: 2px;
-  left: 50%;
+  left: var(--vpr-menu-pointer-x, 20px);
   width: 15px;
   height: 15px;
   border-radius: 3px 0 0;
@@ -22,16 +23,16 @@
 .popover {
   position: relative;
   z-index: 3;
-  width: 400px;
+  width: calc(100vw - 16px);
   height: calc(100vh - 16px);
-  min-height: 332px;
+  min-height: 256px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 21px;
+  border-radius: 16px;
   background: var(--bg-card);
-  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.52), 0 6px 24px rgba(0, 0, 0, 0.34);
+  box-shadow: none;
   -webkit-app-region: no-drag;
 }
 

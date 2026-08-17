@@ -53,6 +53,8 @@ export type VprFloatModule = {
   /** Immediate data push for main-window changes the pill mirrors (route
       selection); no-op while the pill is closed. */
   refresh: () => Promise<void>;
+  /** Publish authoritative compact data after startup hydration completes. */
+  markReady: () => void;
   /** Persist the auto-open-on-traffic preference and re-arm (or stand down)
       the closed-pill traffic watcher accordingly. */
   setAutoOpen: (enabled: boolean) => void;
@@ -83,6 +85,7 @@ export function initVprFloatModule({
   let selectedApp = '';
   let lastBuyerRequestTotal: number | null = null;
   let menuBarOpen = false;
+  let snapshotReady = false;
 
   function surfaceOpen(): boolean {
     return uiState.vprFloatOpen || menuBarOpen;
@@ -323,6 +326,7 @@ export function initVprFloatModule({
     );
 
     return {
+      ready: snapshotReady,
       apps: connected.map((profile) => ({
         name: profile.name,
         displayName: profile.displayName,
@@ -530,6 +534,11 @@ export function initVprFloatModule({
     /** Push fresh data to the shared cache and any visible compact surface. */
     async refresh() {
       publish(await buildData());
+    },
+    markReady() {
+      if (snapshotReady) return;
+      snapshotReady = true;
+      void buildData().then(publish);
     },
     setAutoOpen(enabled: boolean) {
       autoOpenEnabled = enabled;
