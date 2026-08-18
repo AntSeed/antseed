@@ -115,5 +115,6 @@ describe('BuyerPaymentNegotiator', () => {
       latestSpendingAuthSig: payload.spendingAuthSig,
       latestMetadata: payload.metadata,
     }));
+    expect(upsertChannel.mock.calls[0]?.[0]).not.toHaveProperty('reserveAuthPending');
   });
 });

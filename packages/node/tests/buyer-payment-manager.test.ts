@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
-import { AbiCoder, id, Wallet } from 'ethers';
+import { AbiCoder, id, keccak256, Wallet } from 'ethers';
 import { BuyerPaymentManager, type BuyerPaymentConfig } from '../src/payments/buyer-payment-manager.js';
 import { ChannelStore, CHANNEL_ROLE } from '../src/payments/channel-store.js';
 import type { PaymentMux } from '../src/p2p/payment-mux.js';
@@ -164,6 +164,18 @@ describe('BuyerPaymentManager', () => {
     expect((sent.metadata as string).startsWith('0x')).toBe(true);
     // v3 zero metadata: five head words + empty services array (offset + length) = 7 words.
     expect((sent.metadata as string).length).toBe(2 + 7 * 64);
+  });
+
+  it('does not transmit ReserveAuth when durable persistence fails', async () => {
+    const persistenceError = new Error('durable write failed');
+    Object.assign(store, {
+      commitAuthorization: vi.fn().mockRejectedValue(persistenceError),
+    });
+
+    await expect(
+      manager.authorizeSpending(fakePeerId('seller-persist-fail'), mux, 50_000n, TEST_PRICING),
+    ).rejects.toThrow('durable write failed');
+    expect(mux.sentSpendingAuths).toHaveLength(0);
   });
 
   it('authorizeSpending rejects if minBudgetPerRequest exceeds maxPerRequestUsdc', async () => {
@@ -614,7 +626,8 @@ describe('BuyerPaymentManager', () => {
 
   it('signPerRequestAuth hydrates cumulative service metadata after restart', async () => {
     const sellerPeerId = fakePeerId('seller-service-restart');
-    await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
+    await manager.handleAuthAck(sellerPeerId, { channelId });
 
     await manager.signPerRequestAuth(
       sellerPeerId,
@@ -683,6 +696,23 @@ describe('BuyerPaymentManager', () => {
     expect(mux.sentSpendingAuths.length).toBe(1);
     const sent = mux.sentSpendingAuths[0] as Record<string, unknown>;
     expect(sent.cumulativeAmount).toBe('50000');
+  });
+
+  it('handleNeedAuth propagates durable persistence failures without transmitting', async () => {
+    const sellerPeerId = fakePeerId('seller-needauth-persist-fail');
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
+    mux.sentSpendingAuths.length = 0;
+    Object.assign(store, {
+      commitAuthorization: vi.fn().mockRejectedValue(new Error('durable NeedAuth write failed')),
+    });
+
+    await expect(manager.handleNeedAuth(sellerPeerId, {
+      channelId,
+      requiredCumulativeAmount: '50000',
+      currentAcceptedCumulative: '0',
+      deposit: '1000000',
+    }, mux)).rejects.toThrow('durable NeedAuth write failed');
+    expect(mux.sentSpendingAuths).toHaveLength(0);
   });
 
   it('handleNeedAuth does not attribute unsigned headroom to service amount without reported cost', async () => {
@@ -1489,7 +1519,49 @@ describe('BuyerPaymentManager', () => {
     expect(mux.sentSpendingAuths).toHaveLength(1);
     const replay = mux.sentSpendingAuths[0] as Record<string, unknown>;
     expect(replay.reserveMaxAmount).toBe('50000');
-    expect(manager.getReserveCeiling(sellerPeerId)).toBe(150_000n);
+    // Replaying the original reserve is used when the channel was not found
+    // on-chain, so the unconfirmed top-up ceiling must not survive the replay.
+    expect(manager.getReserveCeiling(sellerPeerId)).toBe(50_000n);
+  });
+
+  it('resendReserveAuth hashes the exact non-zero metadata it transmits', async () => {
+    const sellerPeerId = fakePeerId('seller-replay-meta');
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
+    manager.trackRequestService('replay-meta-request', 'gpt-5');
+    await manager.handleNeedAuth(sellerPeerId, {
+      channelId,
+      requestId: 'replay-meta-request',
+      requiredCumulativeAmount: '50000',
+      currentAcceptedCumulative: '0',
+      deposit: '1000000',
+      lastRequestCost: '0',
+      inputTokens: '10',
+      outputTokens: '4',
+    }, mux);
+    mux.sentSpendingAuths.length = 0;
+
+    await manager.resendReserveAuth(sellerPeerId, mux);
+
+    const replay = mux.sentSpendingAuths[0] as Record<string, string>;
+    expect(decodeMetadataTokens(replay.metadata)).toMatchObject({ inputTokens: 10n, outputTokens: 4n });
+    expect(replay.metadataHash).toBe(keccak256(replay.metadata));
+  });
+
+  it('persists a cooperative-close authorization before returning it', async () => {
+    const sellerPeerId = fakePeerId('seller-close-persist');
+    const channelId = await manager.authorizeSpending(sellerPeerId, mux, 10_000n, TEST_PRICING);
+    await manager.handleNeedAuth(sellerPeerId, {
+      channelId,
+      requiredCumulativeAmount: '50000',
+      currentAcceptedCumulative: '0',
+      deposit: '1000000',
+    }, mux);
+    const commitAuthorization = vi.fn().mockRejectedValue(new Error('close authorization write failed'));
+    Object.assign(store, { commitAuthorization });
+
+    await expect(manager.buildCloseChannelRequest(sellerPeerId))
+      .rejects.toThrow('close authorization write failed');
+    expect(commitAuthorization).toHaveBeenCalledOnce();
   });
 
   // parseResponseCost tests removed — method removed (cost flows through NeedAuth now)

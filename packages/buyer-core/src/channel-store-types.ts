@@ -48,6 +48,20 @@ export interface StoredChannel {
   latestBuyerSig: string | null;
   latestSpendingAuthSig: string | null;
   latestMetadata: string | null;       // hex-encoded
+  /** Browser recovery context for replaying the original ReserveAuth. */
+  reserveSalt?: string | null;
+  /** Initial reserve ceiling, before any top-ups. */
+  initialReserveAmount?: string | null;
+  /** Latest signed reserve ceiling, including top-ups. */
+  reserveMaxAmount?: string | null;
+  /** Latest ReserveAuth signature, retained for idempotent replay. */
+  latestReserveAuthSig?: string | null;
+  /** Deadline covered by latestReserveAuthSig. */
+  latestReserveDeadline?: number | null;
+  /** True until the initial reserve is acknowledged or a top-up is observed on-chain. */
+  reserveAuthPending?: boolean;
+  /** Last reserve ceiling acknowledged initially or observed on-chain. */
+  confirmedReserveAmount?: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -97,11 +111,21 @@ export interface BuyerChannelStore {
   ): void;
   getChannelMetadata(channel: StoredChannel): SpendingAuthMetadata;
   /**
+   * Atomically persist a signed authorization and its service totals. Stores
+   * without an asynchronous durability boundary may omit this method.
+   */
+  commitAuthorization?(
+    channel: StoredChannel,
+    services?: readonly SpendingAuthServiceMetadata[],
+  ): void | Promise<void>;
+  /**
    * Durability barrier, awaited after a signed authorization is persisted and
    * BEFORE it is transmitted to the seller. A durable store (e.g. IndexedDB
    * behind a synchronous cache) must not resolve until the preceding writes
    * are committed, so a crash after transmission can never lose a signature
-   * the seller already holds. Synchronous stores (sqlite, in-memory) omit it.
+   * the seller already holds. Synchronous stores may return immediately.
    */
   flush?(): void | Promise<void>;
+  /** Release backing resources after all writes have completed. */
+  close?(): void | Promise<void>;
 }
