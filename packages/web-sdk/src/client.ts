@@ -79,6 +79,8 @@ export interface ClientOptions {
   requestTimeoutMs?: number;
   /** Receives asynchronous transport/protocol failures before the session closes. */
   onError?: (error: Error, context: { sellerPeerId: PeerId }) => void;
+  /** Receives background IndexedDB failures as soon as a queued write fails. */
+  onPersistenceError?: (error: Error) => void;
   /** Reject non-empty DHT snapshots older than this. Defaults to 15 minutes. */
   maxSellerSnapshotAgeMs?: number;
   /** Override RTCPeerConnection/WebSocket (browser globals by default). */
@@ -280,6 +282,7 @@ export class AntseedWebClient {
       const store = options.channelStore ?? await IndexedDbChannelStore.open({
         databaseName: options.persistence?.databaseName ?? `antseed-web-sdk:${scope}`,
         ...(options.persistence?.indexedDB ? { indexedDB: options.persistence.indexedDB } : {}),
+        ...(options.onPersistenceError ? { onWriteError: options.onPersistenceError } : {}),
       });
       const { privateKey: _privateKey, ...safeOptions } = options;
       return new AntseedWebClient({ ...safeOptions, wallet, channelStore: store }, tabLock);
@@ -353,6 +356,7 @@ export class AntseedWebClient {
       if (existing.conn.isOpen) return existing;
       // Close a lingering (e.g. mid-connect) session before overwriting it.
       existing.conn.close();
+      this.dropSession(peerId);
     }
 
     const pending = this.sessionPromises.get(peerId);

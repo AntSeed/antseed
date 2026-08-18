@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { indexedDB } from 'fake-indexeddb';
 import { Wallet } from 'ethers';
 import {
@@ -87,6 +87,24 @@ describe('IndexedDbChannelStore', () => {
       settledAmount: '123',
     });
     await restored.close();
+  });
+
+  it('reports a queued write failure without waiting for a later flush', async () => {
+    const databaseName = `antseed-test-${crypto.randomUUID()}`;
+    databases.push(databaseName);
+    const onWriteError = vi.fn();
+    const store = await IndexedDbChannelStore.open({
+      databaseName,
+      indexedDB,
+      onWriteError,
+    });
+    (store as unknown as { db: IDBDatabase }).db.close();
+
+    store.upsertChannel(sampleChannel());
+
+    await vi.waitFor(() => expect(onWriteError).toHaveBeenCalledOnce());
+    expect(onWriteError.mock.calls[0]?.[0]).toBeInstanceOf(Error);
+    await expect(store.flush()).rejects.toThrow('IndexedDB channel persistence failed');
   });
 
   it('hydrates reserve replay context before the next manager can sign', async () => {

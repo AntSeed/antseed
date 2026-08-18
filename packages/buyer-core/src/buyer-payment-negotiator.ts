@@ -837,6 +837,7 @@ export class BuyerPaymentNegotiator {
         this._channelStore.upsertChannel(externalChannel);
         await this._channelStore.flush?.();
       }
+      this._bpm.adoptPersistedAuthorization(externalChannel);
     }
 
     pmux.sendSpendingAuth(payload);

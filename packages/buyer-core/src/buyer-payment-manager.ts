@@ -241,61 +241,76 @@ export class BuyerPaymentManager {
     }
 
     for (const channel of latestByPeer.values()) {
-      const peerId = channel.peerId;
-      const persistedCumulative = BigInt(channel.authMax);
-      this._cumulativeAmount.set(peerId, persistedCumulative);
-      const metadata = this._sanitizeMetadata(this._channelStore.getChannelMetadata(channel));
-      this._metadata.set(peerId, metadata);
-      if (!this._disableMetadataV2Services) {
-        this._persistServiceMetadata(channel.sessionId, metadata);
-      }
-      // Hydrate verifiedCost to authMax so _maxSignable can grow beyond maxPerRequestUsdc.
-      // Without this, maxSignable = 0 + maxPerRequestUsdc after restart, permanently capping
-      // the cumulative and causing non-monotonic SpendingAuth rejections on the seller.
-      this._verifiedCost.set(peerId, persistedCumulative);
-      // Stores predating browser recovery (including the current sqlite node
-      // store) omit these optional fields. Preserve their historical default
-      // ceiling instead of interpreting missing recovery state as a confirmed
-      // zero reserve.
-      const hasReserveRecoveryState = channel.confirmedReserveAmount != null
-        || channel.reserveMaxAmount != null
-        || channel.reserveAuthPending != null;
-      if (hasReserveRecoveryState) {
-        const confirmedReserve = channel.confirmedReserveAmount != null
-          ? BigInt(channel.confirmedReserveAmount)
-          : channel.reserveMaxAmount != null && channel.reserveAuthPending !== true
-            ? BigInt(channel.reserveMaxAmount)
-            : 0n;
-        this._currentReserveCeiling.set(peerId, confirmedReserve);
-        if (confirmedReserve > 0n) this._confirmedPeers.add(peerId);
-        if (
-          channel.reserveAuthPending === true
-          && channel.latestReserveAuthSig
-          && channel.reserveSalt
-          && channel.reserveMaxAmount != null
-          && channel.latestReserveDeadline != null
-        ) {
-          this._pendingReserveAuth.set(peerId, {
-            signature: channel.latestReserveAuthSig,
-            salt: channel.reserveSalt,
-            maxAmount: BigInt(channel.reserveMaxAmount),
-            deadline: channel.latestReserveDeadline,
-            confirmedAmount: confirmedReserve,
-          });
-        }
-      }
-      if (channel.initialReserveAmount != null) {
-        this._initialReserveAmount.set(peerId, BigInt(channel.initialReserveAmount));
-      }
-      if (channel.reserveSalt) {
-        this._reserveSalt.set(peerId, channel.reserveSalt);
-      }
-      this._responseTokenTotals.set(peerId, {
-        input: Number(channel.tokensDelivered),
-        output: Number(channel.previousConsumption),
-        requests: channel.requestCount,
-      });
+      this._hydrateChannel(channel, true);
     }
+  }
+
+  /** Adopt an authorization durably written outside this manager. */
+  adoptPersistedAuthorization(channel: StoredChannel): void {
+    if (
+      channel.role !== CHANNEL_ROLE.BUYER
+      || channel.buyerEvmAddr.toLowerCase() !== this._identity.wallet.address.toLowerCase()
+    ) {
+      throw buyerFault('Cannot adopt an authorization owned by another buyer', 'buyer-session-state');
+    }
+    this._hydrateChannel(channel, false);
+  }
+
+  private _hydrateChannel(channel: StoredChannel, persistServiceMetadata: boolean): void {
+    const peerId = channel.peerId;
+    const persistedCumulative = BigInt(channel.authMax);
+    this._cumulativeAmount.set(peerId, persistedCumulative);
+    const metadata = this._sanitizeMetadata(this._channelStore.getChannelMetadata(channel));
+    this._metadata.set(peerId, metadata);
+    if (persistServiceMetadata && !this._disableMetadataV2Services) {
+      this._persistServiceMetadata(channel.sessionId, metadata);
+    }
+    // Hydrate verifiedCost to authMax so _maxSignable can grow beyond maxPerRequestUsdc.
+    // Without this, maxSignable = 0 + maxPerRequestUsdc after restart, permanently capping
+    // the cumulative and causing non-monotonic SpendingAuth rejections on the seller.
+    this._verifiedCost.set(peerId, persistedCumulative);
+    // Stores predating browser recovery (including the current sqlite node
+    // store) omit these optional fields. Preserve their historical default
+    // ceiling instead of interpreting missing recovery state as a confirmed
+    // zero reserve.
+    const hasReserveRecoveryState = channel.confirmedReserveAmount != null
+      || channel.reserveMaxAmount != null
+      || channel.reserveAuthPending != null;
+    if (hasReserveRecoveryState) {
+      const confirmedReserve = channel.confirmedReserveAmount != null
+        ? BigInt(channel.confirmedReserveAmount)
+        : channel.reserveMaxAmount != null && channel.reserveAuthPending !== true
+          ? BigInt(channel.reserveMaxAmount)
+          : 0n;
+      this._currentReserveCeiling.set(peerId, confirmedReserve);
+      if (confirmedReserve > 0n) this._confirmedPeers.add(peerId);
+      if (
+        channel.reserveAuthPending === true
+        && channel.latestReserveAuthSig
+        && channel.reserveSalt
+        && channel.reserveMaxAmount != null
+        && channel.latestReserveDeadline != null
+      ) {
+        this._pendingReserveAuth.set(peerId, {
+          signature: channel.latestReserveAuthSig,
+          salt: channel.reserveSalt,
+          maxAmount: BigInt(channel.reserveMaxAmount),
+          deadline: channel.latestReserveDeadline,
+          confirmedAmount: confirmedReserve,
+        });
+      }
+    }
+    if (channel.initialReserveAmount != null) {
+      this._initialReserveAmount.set(peerId, BigInt(channel.initialReserveAmount));
+    }
+    if (channel.reserveSalt) {
+      this._reserveSalt.set(peerId, channel.reserveSalt);
+    }
+    this._responseTokenTotals.set(peerId, {
+      input: Number(channel.tokensDelivered),
+      output: Number(channel.previousConsumption),
+      requests: channel.requestCount,
+    });
   }
 
   get signer(): AbstractSigner {
@@ -448,7 +463,13 @@ export class BuyerPaymentManager {
 
     const currentCumulative = this._cumulativeAmount.get(sellerPeerId) ?? BigInt(session.authMax);
     let maxSignable = this._maxSignable(sellerPeerId);
-    maxSignable = this._reopenOverdraftWindowIfCollapsed(sellerPeerId, currentCumulative, maxSignable, 'extendCurrentSpendingAuth');
+    const reopened = this._reopenOverdraftWindowIfCollapsed(
+      sellerPeerId,
+      currentCumulative,
+      maxSignable,
+      'extendCurrentSpendingAuth',
+    );
+    maxSignable = reopened.maxSignable;
 
     const ceiling = this._getCeiling(sellerPeerId);
     // Prefer the seller-supplied target when present — a raw
@@ -474,7 +495,14 @@ export class BuyerPaymentManager {
     }
 
     const currentMeta = this._sanitizeMetadata(this._metadata.get(sellerPeerId));
-    await this._sendUpdatedSpendingAuth(session, sellerPeerId, nextCumulative, currentMeta, paymentMux);
+    const spendingAuth = await this._commitUpdatedSpendingAuth(
+      session,
+      sellerPeerId,
+      nextCumulative,
+      currentMeta,
+    );
+    this._verifiedCost.set(sellerPeerId, reopened.verifiedCost);
+    paymentMux.sendSpendingAuth(spendingAuth);
 
     // Send topUp AFTER the SpendingAuth so the seller processes the higher
     // cumulative first, meeting the on-chain settle threshold for topUp.
@@ -701,7 +729,8 @@ export class BuyerPaymentManager {
     currentCumulative: bigint,
     maxSignable: bigint,
     context: 'extendCurrentSpendingAuth' | 'handleNeedAuth',
-  ): bigint {
+    verifiedCost = this._verifiedCost.get(sellerPeerId) ?? 0n,
+  ): { maxSignable: bigint; verifiedCost: bigint } {
     // Overdraft-window unblock: when the buyer has already signed up to
     // `verified + maxPerRequest` and the seller returned 402 because `spent`
     // caught up, advance `verifiedCost` to the current signed cumulative so
@@ -717,18 +746,16 @@ export class BuyerPaymentManager {
     // already signed. Seller-provided values remain destination hints bounded
     // by `verifiedCost + maxPerRequestUsdc` and are never used to mint new
     // trust directly.
-    if (maxSignable > currentCumulative) return maxSignable;
+    if (maxSignable > currentCumulative) return { maxSignable, verifiedCost };
 
-    const previousVerified = this._verifiedCost.get(sellerPeerId) ?? 0n;
-    if (currentCumulative <= previousVerified) return maxSignable;
+    if (currentCumulative <= verifiedCost) return { maxSignable, verifiedCost };
 
-    this._verifiedCost.set(sellerPeerId, currentCumulative);
-    const reopened = this._maxSignable(sellerPeerId);
+    const reopened = this._maxSignableForVerified(sellerPeerId, currentCumulative);
     debugLog(
-      `[BuyerPayment] ${context}: advanced verifiedCost ${previousVerified} → ${currentCumulative} ` +
+      `[BuyerPayment] ${context}: will advance verifiedCost ${verifiedCost} → ${currentCumulative} ` +
       `to unblock overdraft window for ${sellerPeerId.slice(0, 12)}...`,
     );
-    return reopened;
+    return { maxSignable: reopened, verifiedCost: currentCumulative };
   }
 
   private _needsCeilingAdvance(requestedAmount: bigint, maxSignable: bigint, ceiling: bigint): boolean {
@@ -814,13 +841,12 @@ export class BuyerPaymentManager {
     await this._channelStore.flush?.();
   }
 
-  private async _sendUpdatedSpendingAuth(
+  private async _commitUpdatedSpendingAuth(
     session: StoredChannel,
     sellerPeerId: string,
     cumulativeAmount: bigint,
     metadata: SpendingAuthMetadata,
-    paymentMux: PaymentMux,
-  ): Promise<void> {
+  ): Promise<SpendingAuthPayload> {
     const sanitizedMetadata = this._sanitizeMetadata(metadata);
     const metadataHashHex = computeMetadataHash(sanitizedMetadata);
     const encodedMetadata = encodeMetadata(sanitizedMetadata);
@@ -831,7 +857,6 @@ export class BuyerPaymentManager {
     };
     const spendingAuthSig = await signSpendingAuth(this._signer, this._channelsDomain, metadataMsg);
 
-    this._cumulativeAmount.set(sellerPeerId, cumulativeAmount);
     await this._commitAuthorization({
       ...session,
       authMax: cumulativeAmount.toString(),
@@ -841,13 +866,14 @@ export class BuyerPaymentManager {
       updatedAt: Date.now(),
     }, sanitizedMetadata);
 
-    paymentMux.sendSpendingAuth({
+    this._cumulativeAmount.set(sellerPeerId, cumulativeAmount);
+    return {
       channelId: session.sessionId,
       cumulativeAmount: cumulativeAmount.toString(),
       metadataHash: metadataHashHex,
       metadata: encodedMetadata,
       spendingAuthSig,
-    });
+    };
   }
 
   private async _topUpAfterSpendAuthBestEffort(
@@ -1107,6 +1133,10 @@ export class BuyerPaymentManager {
    */
   private _maxSignable(sellerPeerId: string): bigint {
     const verified = this._verifiedCost.get(sellerPeerId) ?? 0n;
+    return this._maxSignableForVerified(sellerPeerId, verified);
+  }
+
+  private _maxSignableForVerified(sellerPeerId: string, verified: bigint): bigint {
     const ceiling = this._getCeiling(sellerPeerId);
     const maxSignable = verified + this._config.maxPerRequestUsdc;
     return maxSignable < ceiling ? maxSignable : ceiling;
@@ -1170,6 +1200,7 @@ export class BuyerPaymentManager {
     let estimatedCachedInputTokens = 0n;
     let byteEstimatedTokens = false;
     let buyerEstimatedRequestCost: bigint;
+    let verifiedCostDelta = 0n;
 
     const requestBilling = responseStats.requestId != null
       ? this.getRequestBilling(responseStats.requestId)
@@ -1191,11 +1222,7 @@ export class BuyerPaymentManager {
         : 0n;
       const unitCost = validateUnitNormalizedCost(unitBillingModel, requestBilling.context, responseStats.unitUsage);
       buyerEstimatedRequestCost = tokenCost + unitCost;
-      this._accumulateVerifiedCost(sellerPeerId, {
-        cost: buyerEstimatedRequestCost,
-        inputTokens: Number(estimatedInputTokens),
-        outputTokens: Number(estimatedOutputTokens),
-      });
+      verifiedCostDelta += buyerEstimatedRequestCost;
       debugLog(
         `[BuyerPayment] Hybrid billing-estimated cost=${buyerEstimatedRequestCost} service=${responseStats.service ?? 'unknown'}`,
       );
@@ -1214,13 +1241,13 @@ export class BuyerPaymentManager {
       if (pricing) {
         const cost = computeCostUsdc(Number(freshInputTokens), Number(estimatedOutputTokens), pricing, Number(cachedInputTokens));
         buyerEstimatedRequestCost = cost;
-        this._accumulateVerifiedCost(sellerPeerId, { cost, inputTokens: Number(estimatedInputTokens), outputTokens: Number(estimatedOutputTokens) });
+        verifiedCostDelta += cost;
       } else if (responseStats.sellerClaimedCost != null && responseStats.sellerClaimedCost > 0n) {
         // No local pricing available (e.g. after buyer restart before session pricing is restored).
         // Use seller's claimed cost for verifiedCost accumulation so _maxSignable can grow.
         // The seller's claim is still validated against tolerance below.
         buyerEstimatedRequestCost = responseStats.sellerClaimedCost;
-        this._accumulateVerifiedCost(sellerPeerId, { cost: responseStats.sellerClaimedCost, inputTokens: Number(estimatedInputTokens), outputTokens: Number(estimatedOutputTokens) });
+        verifiedCostDelta += responseStats.sellerClaimedCost;
       } else {
         buyerEstimatedRequestCost = 0n;
       }
@@ -1235,7 +1262,7 @@ export class BuyerPaymentManager {
       estimatedOutputTokens = estimate ? BigInt(estimate.outputTokens) : 0n;
       buyerEstimatedRequestCost = estimate ? estimate.cost : 0n;
       if (estimate) {
-        this._accumulateVerifiedCost(sellerPeerId, estimate);
+        verifiedCostDelta += estimate.cost;
       }
       debugLog(
         `[BuyerPayment] Byte-estimated tokens (no reported): in=${estimatedInputTokens} out=${estimatedOutputTokens} cost=${buyerEstimatedRequestCost}`,
@@ -1290,13 +1317,14 @@ export class BuyerPaymentManager {
     // for the next request (so the seller has budget to serve it).
     // maxSignable already caps at reserve ceiling, so one cap is sufficient
     const prevAmount = this._cumulativeAmount.get(sellerPeerId) ?? 0n;
-    const maxSignable = this._maxSignable(sellerPeerId);
+    const previousVerifiedCost = this._verifiedCost.get(sellerPeerId) ?? 0n;
+    const nextVerifiedCost = previousVerifiedCost + verifiedCostDelta;
+    const maxSignable = this._maxSignableForVerified(sellerPeerId, nextVerifiedCost);
     let newAmount = prevAmount + acceptedCost;
     if (newAmount > maxSignable) newAmount = maxSignable;
     // A conservative recovery ceiling may temporarily be below an amount we
     // already signed. SpendingAuth is cumulative and must never move backward.
     if (newAmount < prevAmount) newAmount = prevAmount;
-    this._cumulativeAmount.set(sellerPeerId, newAmount);
     const signedDelta = newAmount - prevAmount;
 
     // Update cumulative metadata. NeedAuth may have counted this response
@@ -1314,19 +1342,6 @@ export class BuyerPaymentManager {
         outputImages: estimatedOutputImages,
       }, { deliveredResponse: true, alreadyCounted }),
     );
-    if (!alreadyCounted) this._serviceTokensCounted.mark(responseStats.requestId);
-    this._metadata.set(sellerPeerId, newMeta);
-
-    this._reportSpend({
-      sellerPeerId,
-      requestId: responseStats.requestId ?? null,
-      amountUsdc: signedDelta.toString(),
-      inputTokens: (alreadyCounted ? 0n : estimatedInputTokens).toString(),
-      cachedInputTokens: (alreadyCounted ? 0n : estimatedCachedInputTokens).toString(),
-      outputTokens: (alreadyCounted ? 0n : estimatedOutputTokens).toString(),
-      outputImages: (alreadyCounted ? 0n : estimatedOutputImages).toString(),
-    });
-
     debugLog(
       `[BuyerPayment] signPerRequestAuth #${newMeta.cumulativeRequestCount}: ` +
       `thisReq in=${estimatedInputTokens} out=${estimatedOutputTokens} | ` +
@@ -1357,6 +1372,20 @@ export class BuyerPaymentManager {
       latestMetadata: encodedMetadata,
       updatedAt: Date.now(),
     }, newMeta);
+
+    this._cumulativeAmount.set(sellerPeerId, newAmount);
+    this._verifiedCost.set(sellerPeerId, nextVerifiedCost);
+    this._metadata.set(sellerPeerId, newMeta);
+    if (!alreadyCounted) this._serviceTokensCounted.mark(responseStats.requestId);
+    this._reportSpend({
+      sellerPeerId,
+      requestId: responseStats.requestId ?? null,
+      amountUsdc: signedDelta.toString(),
+      inputTokens: (alreadyCounted ? 0n : estimatedInputTokens).toString(),
+      cachedInputTokens: (alreadyCounted ? 0n : estimatedCachedInputTokens).toString(),
+      outputTokens: (alreadyCounted ? 0n : estimatedOutputTokens).toString(),
+      outputImages: (alreadyCounted ? 0n : estimatedOutputImages).toString(),
+    });
 
     const payload: SpendingAuthPayload = {
       channelId: session.sessionId,
@@ -1407,6 +1436,7 @@ export class BuyerPaymentManager {
     }
     let acceptedServiceCost = 0n;
     let acceptedOutputImages = 0n;
+    let verifiedCostDelta = 0n;
     const reportedInputTokens = BigInt(payload.inputTokens ?? '0');
     const reportedCachedInputTokens = BigInt(payload.cachedInputTokens ?? '0');
     const reportedOutputTokens = BigInt(payload.outputTokens ?? '0');
@@ -1470,11 +1500,7 @@ export class BuyerPaymentManager {
           throw new Error(`Seller total cost ${sellerTotalCost} exceeds buyer estimate ${buyerEstimate}`);
         }
         acceptedServiceCost = sellerTotalCost;
-        this._accumulateVerifiedCost(sellerPeerId, {
-          cost: acceptedServiceCost,
-          inputTokens: Number(reportedInputTokens),
-          outputTokens: Number(reportedOutputTokens),
-        });
+        verifiedCostDelta += acceptedServiceCost;
         debugLog(
           `[BuyerPayment] NeedAuth hybrid billing: token=${tokenEstimate} unit=${acceptedUnitCost} sellerTotal=${sellerTotalCost} — validated`,
         );
@@ -1533,20 +1559,26 @@ export class BuyerPaymentManager {
       }
 
       // Accumulate verified cost from the seller's report
-      this._accumulateVerifiedCost(sellerPeerId, {
-        cost: sellerCost,
-        inputTokens: Number(sellerIn),
-        outputTokens: Number(sellerOut),
-      });
+      verifiedCostDelta += sellerCost;
     }
 
     // Cap at overdraft limit: verifiedCost + maxPerRequestUsdc, then at reserve ceiling.
     // This prevents a malicious seller from claiming a small cost but requesting the full reserve.
-    let maxSignable = this._maxSignable(sellerPeerId);
+    const previousVerifiedCost = this._verifiedCost.get(sellerPeerId) ?? 0n;
+    let nextVerifiedCost = previousVerifiedCost + verifiedCostDelta;
+    let maxSignable = this._maxSignableForVerified(sellerPeerId, nextVerifiedCost);
     const ceiling = this._getCeiling(sellerPeerId);
     let needsTopUp = this._needsCeilingAdvance(requiredCumulativeAmount, maxSignable, ceiling);
     if (maxSignable <= currentCumulative && !needsTopUp) {
-      maxSignable = this._reopenOverdraftWindowIfCollapsed(sellerPeerId, currentCumulative, maxSignable, 'handleNeedAuth');
+      const reopened = this._reopenOverdraftWindowIfCollapsed(
+        sellerPeerId,
+        currentCumulative,
+        maxSignable,
+        'handleNeedAuth',
+        nextVerifiedCost,
+      );
+      maxSignable = reopened.maxSignable;
+      nextVerifiedCost = reopened.verifiedCost;
       needsTopUp = this._needsCeilingAdvance(requiredCumulativeAmount, maxSignable, ceiling);
       if (maxSignable <= currentCumulative && !needsTopUp) {
         debugWarn(
@@ -1609,13 +1641,18 @@ export class BuyerPaymentManager {
         outputImages: acceptedOutputImages,
       }, { deliveredResponse, alreadyCounted }),
     );
-    if (deliveredResponse && !alreadyCounted) this._serviceTokensCounted.mark(payload.requestId);
-    this._metadata.set(sellerPeerId, newMeta);
-
     // Persistence and transport failures must propagate to the connection
     // owner. In particular, swallowing an IndexedDB failure leaves the browser
     // connected with advanced in-memory counters but no durable signature.
-    await this._sendUpdatedSpendingAuth(session, sellerPeerId, effectiveAmount, newMeta, paymentMux);
+    const spendingAuth = await this._commitUpdatedSpendingAuth(
+      session,
+      sellerPeerId,
+      effectiveAmount,
+      newMeta,
+    );
+    this._verifiedCost.set(sellerPeerId, nextVerifiedCost);
+    this._metadata.set(sellerPeerId, newMeta);
+    if (deliveredResponse && !alreadyCounted) this._serviceTokensCounted.mark(payload.requestId);
     this._reportSpend({
       sellerPeerId,
       requestId: payload.requestId ?? null,
@@ -1625,6 +1662,7 @@ export class BuyerPaymentManager {
       outputTokens: (deliveredResponse && !alreadyCounted ? attributedOutputTokens : 0n).toString(),
       outputImages: (deliveredResponse && !alreadyCounted ? acceptedOutputImages : 0n).toString(),
     });
+    paymentMux.sendSpendingAuth(spendingAuth);
     debugLog(`[BuyerPayment] NeedAuth responded: new cumulativeAmount=${effectiveAmount}`);
 
     // Send topUp AFTER the SpendingAuth so the seller processes the higher

@@ -205,6 +205,22 @@ describe('relay production admission controls', () => {
     const [code] = await once(ws, 'close');
     expect(code).toBe(1009);
   });
+
+  it('counts an abnormal client disconnect as a failed bridge', async () => {
+    const before = await relayMetrics(relayPort);
+    const ws = new WebSocket(`ws://127.0.0.1:${relayPort}/bridge/${PEER_ID}`, {
+      headers: { origin: 'https://allowed.example' },
+    });
+    await once(ws, 'open');
+    const closed = once(ws, 'close');
+    ws.terminate();
+    await closed;
+    await waitForBridgeCount(relay, 0);
+
+    const after = await relayMetrics(relayPort);
+    expect(after.bridgeFailed).toBe(before.bridgeFailed + 1);
+    expect(after.bridgeCompleted).toBe(before.bridgeCompleted);
+  });
 });
 
 async function waitForBridgeCount(relay: RelayServer, expected: number): Promise<void> {
@@ -213,6 +229,15 @@ async function waitForBridgeCount(relay: RelayServer, expected: number): Promise
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   expect(relay.bridgeCount).toBe(expected);
+}
+
+async function relayMetrics(port: number): Promise<{
+  bridgeFailed: number;
+  bridgeCompleted: number;
+}> {
+  const response = await fetch(`http://127.0.0.1:${port}/metrics`);
+  expect(response.status).toBe(200);
+  return response.json() as Promise<{ bridgeFailed: number; bridgeCompleted: number }>;
 }
 
 describe('trustProxy per-IP accounting', () => {

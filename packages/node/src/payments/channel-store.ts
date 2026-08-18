@@ -64,6 +64,7 @@ export class ChannelStore {
     receipt: Omit<StoredReceipt, 'id'>,
   ) => void;
   private readonly _replaceServiceTotalsTxn: (sessionId: string, totals: StoredChannelServiceTotal[]) => void;
+  private readonly _commitAuthorizationTxn: (channel: StoredChannel, totals: StoredChannelServiceTotal[]) => void;
 
   private readonly _stmts: {
     upsert: Database.Statement;
@@ -101,7 +102,7 @@ export class ChannelStore {
         this.insertReceipt(receipt);
       },
     );
-    this._replaceServiceTotalsTxn = this._db.transaction((sessionId: string, totals: StoredChannelServiceTotal[]) => {
+    const replaceServiceTotals = (sessionId: string, totals: StoredChannelServiceTotal[]) => {
       this._stmts.deleteServiceTotals.run(sessionId);
       for (const total of totals) {
         this._stmts.insertServiceTotal.run({
@@ -116,7 +117,14 @@ export class ChannelStore {
           updatedAt: total.updatedAt,
         });
       }
-    });
+    };
+    this._replaceServiceTotalsTxn = this._db.transaction(replaceServiceTotals);
+    this._commitAuthorizationTxn = this._db.transaction(
+      (channel: StoredChannel, totals: StoredChannelServiceTotal[]) => {
+        this.upsertChannel(channel);
+        replaceServiceTotals(channel.sessionId, totals);
+      },
+    );
   }
 
   private _prepareStatements() {
@@ -467,18 +475,21 @@ export class ChannelStore {
   }
 
   replaceMetadataServiceTotals(sessionId: string, services: readonly SpendingAuthServiceMetadata[] = []): void {
-    this.replaceServiceTotals(
-      sessionId,
-      services.map((service) => ({
-        serviceId: service.serviceId,
-        cumulativeAmount: service.cumulativeAmount.toString(),
-        cumulativeInputTokens: service.cumulativeInputTokens.toString(),
-        cumulativeCachedInputTokens: service.cumulativeCachedInputTokens.toString(),
-        cumulativeOutputTokens: service.cumulativeOutputTokens.toString(),
-        cumulativeRequestCount: service.cumulativeRequestCount.toString(),
-        cumulativeOutputImages: (service.cumulativeOutputImages ?? 0n).toString(),
-      })),
-    );
+    this.replaceServiceTotals(sessionId, this._metadataTotals(services));
+  }
+
+  /** Persist the signed channel snapshot and its exact service totals atomically. */
+  commitAuthorization(
+    channel: StoredChannel,
+    services: readonly SpendingAuthServiceMetadata[] = [],
+  ): void {
+    const updatedAt = Date.now();
+    const totals = this._metadataTotals(services).map((total) => ({
+      sessionId: channel.sessionId,
+      ...total,
+      updatedAt,
+    }));
+    this._commitAuthorizationTxn(channel, totals);
   }
 
   getServiceTotals(sessionId: string): StoredChannelServiceTotal[] {
@@ -562,6 +573,20 @@ export class ChannelStore {
       cumulativeOutputImages: services.reduce((sum, s) => sum + s.cumulativeOutputImages, 0n),
       services,
     };
+  }
+
+  private _metadataTotals(
+    services: readonly SpendingAuthServiceMetadata[],
+  ): Omit<StoredChannelServiceTotal, 'sessionId' | 'updatedAt'>[] {
+    return services.map((service) => ({
+      serviceId: service.serviceId,
+      cumulativeAmount: service.cumulativeAmount.toString(),
+      cumulativeInputTokens: service.cumulativeInputTokens.toString(),
+      cumulativeCachedInputTokens: service.cumulativeCachedInputTokens.toString(),
+      cumulativeOutputTokens: service.cumulativeOutputTokens.toString(),
+      cumulativeRequestCount: service.cumulativeRequestCount.toString(),
+      cumulativeOutputImages: (service.cumulativeOutputImages ?? 0n).toString(),
+    }));
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────

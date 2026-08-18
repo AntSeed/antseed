@@ -79,6 +79,33 @@ describe('AntseedWebClient.create', () => {
     await client.close();
   });
 
+  it('replaces the payment mux when reconnecting a stale transport', async () => {
+    const oldConnection = mockConnection(true);
+    const newConnection = mockConnection(true);
+    vi.spyOn(SellerConnection, 'connect')
+      .mockResolvedValueOnce(oldConnection.connection)
+      .mockResolvedValueOnce(newConnection.connection);
+    const client = AntseedWebClient.ephemeral({
+      relayUrl: 'http://relay.invalid',
+      wallet: Wallet.createRandom(),
+      payment: { rpcUrl: '' },
+      env: {
+        RTCPeerConnection: class {} as unknown as typeof RTCPeerConnection,
+        WebSocket: class {} as never,
+      },
+    });
+    const peerId = '79'.repeat(20);
+
+    await client.connect(peerId);
+    const firstMux = client.negotiator.getPaymentMux(peerId);
+    oldConnection.state.isOpen = false;
+    await client.connect(peerId);
+
+    expect(oldConnection.state.close).toHaveBeenCalledOnce();
+    expect(client.negotiator.getPaymentMux(peerId)).not.toBe(firstMux);
+    await client.close();
+  });
+
   it('recovers a pending reserve before the first browser request is sent', async () => {
     const connection = {
       isOpen: true,
@@ -306,4 +333,25 @@ function deleteDatabase(name: string): Promise<void> {
     request.onsuccess = () => resolve();
     request.onerror = () => reject(request.error);
   });
+}
+
+function mockConnection(initiallyOpen: boolean): {
+  connection: SellerConnection;
+  state: { isOpen: boolean; close: ReturnType<typeof vi.fn> };
+} {
+  const state = {
+    isOpen: initiallyOpen,
+    close: vi.fn(),
+  };
+  const connection = {
+    get isOpen() { return state.isOpen; },
+    state: ConnectionState.Open,
+    send: vi.fn(),
+    close: state.close,
+    on: vi.fn().mockReturnThis(),
+    off: vi.fn().mockReturnThis(),
+    onFrame: () => {},
+    onClose: () => {},
+  } as unknown as SellerConnection;
+  return { connection, state };
 }

@@ -126,6 +126,8 @@ export class MemoryChannelStore implements BuyerChannelStore {
 export interface IndexedDbChannelStoreOptions {
   databaseName: string;
   indexedDB?: IDBFactory;
+  /** Called asynchronously as soon as a queued IndexedDB write fails. */
+  onWriteError?: (error: Error) => void;
 }
 
 interface StoredServiceTotalRecord {
@@ -155,7 +157,10 @@ export class IndexedDbChannelStore extends MemoryChannelStore {
   private fatalWriteError: unknown = null;
   private closed = false;
 
-  private constructor(private readonly db: IDBDatabase) {
+  private constructor(
+    private readonly db: IDBDatabase,
+    private readonly onWriteError?: (error: Error) => void,
+  ) {
     super();
   }
 
@@ -163,7 +168,7 @@ export class IndexedDbChannelStore extends MemoryChannelStore {
     const factory = options.indexedDB ?? globalThis.indexedDB;
     if (!factory) throw new Error('IndexedDB unavailable');
     const db = await openDatabase(factory, options.databaseName);
-    const store = new IndexedDbChannelStore(db);
+    const store = new IndexedDbChannelStore(db, options.onWriteError);
     await store.hydrate();
     return store;
   }
@@ -283,7 +288,15 @@ export class IndexedDbChannelStore extends MemoryChannelStore {
         return operation();
       })
       .catch((error: unknown) => {
-        this.fatalWriteError ??= error;
+        if (this.fatalWriteError) return;
+        this.fatalWriteError = error;
+        try {
+          this.onWriteError?.(
+            error instanceof Error ? error : new Error(String(error)),
+          );
+        } catch {
+          // Persistence observers are diagnostic only.
+        }
       });
   }
 

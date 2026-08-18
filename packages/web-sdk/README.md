@@ -118,6 +118,9 @@ committed channel state.
 Every ReserveAuth and SpendingAuth is committed to IndexedDB before it is
 sent. The database contains channel identifiers, signatures, cumulative
 amounts, metadata, and recovery context, but never the buyer private key.
+Use `onPersistenceError` to surface background failures from ordinary
+status/accounting writes immediately; awaited authorization commits and
+`close()` also reject when persistence is unhealthy.
 Call `await client.close()` when the application is done to flush storage and
 release the lock. Page-unload handlers are not a channel recovery mechanism.
 

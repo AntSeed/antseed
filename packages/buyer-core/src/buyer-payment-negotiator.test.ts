@@ -80,12 +80,16 @@ describe('BuyerPaymentNegotiator', () => {
     const sendSpendingAuth = vi.fn(() => {
       events.push('send');
     });
+    const adoptPersistedAuthorization = vi.fn(() => {
+      events.push('adopt');
+    });
 
     const negotiator = Object.create(BuyerPaymentNegotiator.prototype) as BuyerPaymentNegotiator;
     const internals = negotiator as unknown as {
       getOrCreatePaymentMux: () => { sendSpendingAuth: typeof sendSpendingAuth };
       _resolveSellerAddr: () => Promise<string>;
       _channelStore: { upsertChannel: typeof upsertChannel; flush: typeof flush };
+      _bpm: { adoptPersistedAuthorization: typeof adoptPersistedAuthorization };
       _identity: { wallet: { address: string } };
       _waitForLockConfirmation: () => Promise<void>;
       _lockedPeers: Set<string>;
@@ -94,6 +98,7 @@ describe('BuyerPaymentNegotiator', () => {
     internals.getOrCreatePaymentMux = () => ({ sendSpendingAuth });
     internals._resolveSellerAddr = async () => `0x${'3'.repeat(40)}`;
     internals._channelStore = { upsertChannel, flush };
+    internals._bpm = { adoptPersistedAuthorization };
     internals._identity = { wallet: { address: `0x${'4'.repeat(40)}` } };
     internals._waitForLockConfirmation = async () => {};
     internals._lockedPeers = new Set();
@@ -110,11 +115,12 @@ describe('BuyerPaymentNegotiator', () => {
 
     // The signed authorization must be durably persisted before the seller
     // can ever see it — a crash after transmit must not lose the signature.
-    expect(events).toEqual(['upsert', 'flush:start', 'flush:end', 'send']);
+    expect(events).toEqual(['upsert', 'flush:start', 'flush:end', 'adopt', 'send']);
     expect(upsertChannel).toHaveBeenCalledWith(expect.objectContaining({
       latestSpendingAuthSig: payload.spendingAuthSig,
       latestMetadata: payload.metadata,
     }));
     expect(upsertChannel.mock.calls[0]?.[0]).not.toHaveProperty('reserveAuthPending');
+    expect(adoptPersistedAuthorization).toHaveBeenCalledWith(upsertChannel.mock.calls[0]?.[0]);
   });
 });

@@ -238,9 +238,13 @@ export class RelayServer {
     };
 
     tcp.on('error', (err) => finish(1011, `seller: ${err.message}`.slice(0, 120)));
-    tcp.on('close', () => finish(1000, 'seller closed'));
+    tcp.on('close', (hadError) =>
+      finish(
+        hadError ? 1011 : 1000,
+        hadError ? 'seller connection error' : 'seller closed',
+      ));
     wsStream.on('error', () => finish(1011, 'client error'));
-    ws.on('close', () => finish(1000, 'client closed'));
+    ws.on('close', (code) => finish(code, code === 1000 ? 'client closed' : `client closed (${code})`));
 
     wsStream.pipe(tcp);
     // end:false — seller FIN must not end the ws stream (that closes without a
