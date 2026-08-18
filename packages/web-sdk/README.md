@@ -8,9 +8,16 @@ runtime dependency is ethers.
 ```ts
 import { AntseedWebClient } from '@antseed/web-sdk';
 
-const client = new AntseedWebClient({
+const client = await AntseedWebClient.create({
   relayUrl: 'https://relay.example.com',
   privateKey: buyerHotWalletKey,        // peerId = its EVM address
+  connection: {
+    iceServers: [
+      { urls: 'stun:stun.example.com' },
+      { urls: 'turns:turn.example.com', username, credential },
+    ],
+    onConnectionInfo: ({ path }) => showPath(path), // direct | relay | unknown
+  },
 });
 
 const sellers = await client.sellers();
@@ -73,8 +80,10 @@ addresses or raw candidates.
 
 This package contains only the browser-specific pieces: relay signaling
 (`hello` envelope, SDP offer, trickle ICE), the `RTCPeerConnection`
-transport, keepalive, and an in-memory channel store. Everything else is
-shared code, not a reimplementation:
+transport, keepalive, channel-store adapters, and cross-tab coordination.
+Everything else is shared code, not a reimplementation. Production clients
+use an IndexedDB store; the in-memory store remains available only through
+the explicit `ephemeral()` API:
 
 - **@antseed/protocol** — wire format: message types, frame/HTTP/payment
   codecs, EIP-712 payment signatures, connection auth. Same modules
@@ -96,6 +105,41 @@ needed for signaling, and holding it would consume the relay's per-IP bridge
 slots. There is no re-signaling path; a dropped DataChannel means a fresh
 `connect()`.
 
+## Persistence and multiple tabs
+
+`AntseedWebClient.create()` is asynchronous because it acquires an exclusive
+Web Lock for the buyer identity and hydrates IndexedDB before the payment
+manager may sign. Only one tab can use a buyer on the same chain/channels
+contract at a time. A second tab fails with `BuyerAlreadyActiveError` by
+default; set `persistence.waitForLock` to wait instead. A crashed tab releases
+its Web Lock automatically, and its successor recovers the last durably
+committed channel state.
+
+Every ReserveAuth and SpendingAuth is committed to IndexedDB before it is
+sent. The database contains channel identifiers, signatures, cumulative
+amounts, metadata, and recovery context, but never the buyer private key.
+Call `await client.close()` when the application is done to flush storage and
+release the lock. Page-unload handlers are not a channel recovery mechanism.
+
+`AntseedWebClient.ephemeral()` retains in-memory behavior for tests and free
+interoperability experiments. It must not be used for paid traffic because a
+reload loses its channel state and it provides no multi-tab exclusion.
+
+`SellerSession.close()` closes only the WebRTC transport. Use
+`await session.closeChannel()` to request cooperative settlement from a
+supporting seller. `client.listActiveChannels()` exposes locally unresolved
+channels for recovery UI. If the seller is unavailable, call
+`session.requestOnChainClose(operatorSigner)` and, after the contract grace
+period, `session.withdrawTimedOutChannel(operatorSigner)`. The signer must be
+the operator configured for the buyer in AntseedDeposits; the SDK does not
+assume that the browser wallet or any particular backend owns that role.
+
+The relay verifies DHT metadata before caching it, and the SDK rejects a
+non-empty seller snapshot older than `maxSellerSnapshotAgeMs` (15 minutes by
+default) before normalizing it into the shared buyer pricing/capability view.
+The relay remains a trusted discovery-availability boundary; connection auth,
+seller response authentication, and payment signatures remain end to end.
+
 ## Known limitation: large non-streamed responses
 
 Chunking currently protects the upload direction only. A seller sends a
@@ -116,4 +160,9 @@ via the gasless EIP-3009 sweep). Deposit UX is out of scope for this SDK.
 envelope, frame codec, EIP-712 signatures, metadata hashing) and an
 end-to-end suite that drives the real `@antseed/node` seller listener through
 a real relay instance, with `node-datachannel/polyfill` standing in for the
-browser's `RTCPeerConnection`.
+browser's `RTCPeerConnection`. `pnpm run test:browser` additionally launches
+real Chromium and Firefox runtimes, connects their native WebRTC stacks to an
+unchanged seller through the relay, and verifies multi-tab exclusion plus
+crash takeover. The browser suite also completes paid 402 negotiation, verifies
+the EIP-712 authorizations, reloads IndexedDB, simulates lost seller state, and
+recovers the same on-chain channel without issuing a second reserve.
