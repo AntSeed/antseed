@@ -171,28 +171,30 @@ export class AntseedWebClient {
     this.env = { RTCPeerConnection: RTCPeerConnectionImpl, WebSocket: WebSocketImpl };
     this.payment = { ...BASE_MAINNET, ...options.payment };
 
-    const depositsClient = options.depositsClient !== undefined
-      ? options.depositsClient
-      : this.payment.rpcUrl
-      ? new DepositsClient({
-          rpcUrl: this.payment.rpcUrl,
-          ...(this.payment.fallbackRpcUrls ? { fallbackRpcUrls: this.payment.fallbackRpcUrls } : {}),
-          contractAddress: this.payment.depositsContractAddress,
-          usdcAddress: this.payment.usdcAddress,
-          evmChainId: this.payment.chainId,
-        })
-      : null;
+    let depositsClient: DepositsClient | null = null;
+    if (options.depositsClient !== undefined) {
+      depositsClient = options.depositsClient;
+    } else if (this.payment.rpcUrl) {
+      depositsClient = new DepositsClient({
+        rpcUrl: this.payment.rpcUrl,
+        ...(this.payment.fallbackRpcUrls ? { fallbackRpcUrls: this.payment.fallbackRpcUrls } : {}),
+        contractAddress: this.payment.depositsContractAddress,
+        usdcAddress: this.payment.usdcAddress,
+        evmChainId: this.payment.chainId,
+      });
+    }
 
-    const channelsClient = options.channelsClient !== undefined
-      ? options.channelsClient
-      : this.payment.rpcUrl
-      ? new ChannelsClient({
-          rpcUrl: this.payment.rpcUrl,
-          ...(this.payment.fallbackRpcUrls ? { fallbackRpcUrls: this.payment.fallbackRpcUrls } : {}),
-          contractAddress: this.payment.channelsContractAddress,
-          evmChainId: this.payment.chainId,
-        })
-      : null;
+    let channelsClient: ChannelsClient | null = null;
+    if (options.channelsClient !== undefined) {
+      channelsClient = options.channelsClient;
+    } else if (this.payment.rpcUrl) {
+      channelsClient = new ChannelsClient({
+        rpcUrl: this.payment.rpcUrl,
+        ...(this.payment.fallbackRpcUrls ? { fallbackRpcUrls: this.payment.fallbackRpcUrls } : {}),
+        contractAddress: this.payment.channelsContractAddress,
+        evmChainId: this.payment.chainId,
+      });
+    }
     this.channelsClient = channelsClient;
 
     const sellerAddressResolver = channelsClient
@@ -625,16 +627,18 @@ export class SellerSession {
 
   /** Start the on-chain timeout path when cooperative close is unavailable. */
   requestOnChainClose(operatorSigner: AbstractSigner): Promise<string> {
-    const channel = this.client.listActiveChannels().find((entry) => entry.peerId === this.peer.peerId);
-    if (!channel) throw new Error(`No active payment channel with seller ${this.peer.peerId.slice(0, 12)}...`);
-    return this.client.requestOnChainClose(channel.sessionId, operatorSigner);
+    return this.client.requestOnChainClose(this.requireActiveChannel().sessionId, operatorSigner);
   }
 
   /** Withdraw after the on-chain close grace period. */
   withdrawTimedOutChannel(operatorSigner: AbstractSigner): Promise<string> {
+    return this.client.withdrawTimedOutChannel(this.requireActiveChannel().sessionId, operatorSigner);
+  }
+
+  private requireActiveChannel(): StoredChannel {
     const channel = this.client.listActiveChannels().find((entry) => entry.peerId === this.peer.peerId);
     if (!channel) throw new Error(`No active payment channel with seller ${this.peer.peerId.slice(0, 12)}...`);
-    return this.client.withdrawTimedOutChannel(channel.sessionId, operatorSigner);
+    return channel;
   }
 }
 

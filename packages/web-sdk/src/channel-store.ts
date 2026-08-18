@@ -177,12 +177,7 @@ export class IndexedDbChannelStore extends MemoryChannelStore {
     this.assertWritable();
     const copy = cloneChannel(channel);
     super.upsertChannel(copy);
-    this.enqueue(async () => {
-      const tx = this.db.transaction(CHANNELS_STORE, 'readwrite');
-      const done = transactionDone(tx);
-      tx.objectStore(CHANNELS_STORE).put(copy);
-      await done;
-    });
+    this.enqueuePutChannel(copy);
   }
 
   override updateChannelStatus(sessionId: string, status: ChannelStatus, settledAmount?: string): void {
@@ -190,13 +185,7 @@ export class IndexedDbChannelStore extends MemoryChannelStore {
     super.updateChannelStatus(sessionId, status, settledAmount);
     const channel = this.channels.get(sessionId);
     if (!channel) return;
-    const copy = cloneChannel(channel);
-    this.enqueue(async () => {
-      const tx = this.db.transaction(CHANNELS_STORE, 'readwrite');
-      const done = transactionDone(tx);
-      tx.objectStore(CHANNELS_STORE).put(copy);
-      await done;
-    });
+    this.enqueuePutChannel(cloneChannel(channel));
   }
 
   override replaceMetadataServiceTotals(
@@ -216,12 +205,8 @@ export class IndexedDbChannelStore extends MemoryChannelStore {
     this.assertWritable();
     const channelCopy = cloneChannel(channel);
     const serviceCopies = services.map(cloneService);
-    MemoryChannelStore.prototype.upsertChannel.call(this, channelCopy);
-    MemoryChannelStore.prototype.replaceMetadataServiceTotals.call(
-      this,
-      channelCopy.sessionId,
-      serviceCopies,
-    );
+    super.upsertChannel(channelCopy);
+    super.replaceMetadataServiceTotals(channelCopy.sessionId, serviceCopies);
 
     this.enqueue(async () => {
       const tx = this.db.transaction([CHANNELS_STORE, SERVICE_TOTALS_STORE], 'readwrite');
@@ -258,7 +243,7 @@ export class IndexedDbChannelStore extends MemoryChannelStore {
     await done;
 
     for (const channel of channels) {
-      MemoryChannelStore.prototype.upsertChannel.call(this, channel);
+      super.upsertChannel(channel);
     }
     const grouped = new Map<string, SpendingAuthServiceMetadata[]>();
     for (const record of totals) {
@@ -267,7 +252,7 @@ export class IndexedDbChannelStore extends MemoryChannelStore {
       grouped.set(record.sessionId, services);
     }
     for (const [sessionId, services] of grouped) {
-      MemoryChannelStore.prototype.replaceMetadataServiceTotals.call(this, sessionId, services);
+      super.replaceMetadataServiceTotals(sessionId, services);
     }
   }
 
@@ -279,6 +264,15 @@ export class IndexedDbChannelStore extends MemoryChannelStore {
     const done = transactionDone(tx);
     return replaceServiceRecordsInTransaction(tx, sessionId, services)
       .then(() => done);
+  }
+
+  private enqueuePutChannel(copy: StoredChannel): void {
+    this.enqueue(async () => {
+      const tx = this.db.transaction(CHANNELS_STORE, 'readwrite');
+      const done = transactionDone(tx);
+      tx.objectStore(CHANNELS_STORE).put(copy);
+      await done;
+    });
   }
 
   private enqueue(operation: () => Promise<void>): void {
