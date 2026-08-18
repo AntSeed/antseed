@@ -139,6 +139,13 @@ export class SellerCache {
     return { peers, static: this.config.staticSellers, updatedAt: this.updatedAt };
   }
 
+  /** Whether this instance has a usable, sufficiently fresh seller view. */
+  isReady(maxAgeMs: number): boolean {
+    if (!this.config.dht) return this.config.staticSellers.length > 0;
+    const updatedAtMs = Date.parse(this.updatedAt);
+    return Number.isFinite(updatedAtMs) && Date.now() - updatedAtMs <= maxAgeMs;
+  }
+
   async poll(): Promise<void> {
     const peerId = toPeerId(randomBytes(20).toString('hex'));
     const dht = new DHTNode({

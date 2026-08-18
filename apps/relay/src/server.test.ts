@@ -127,7 +127,93 @@ describe('RelayServer bridge', () => {
     const body = (await res.json()) as { static: { peerId: string }[] };
     expect(body.static[0]?.peerId).toBe(PEER_ID);
   });
+
+  it('reports readiness and privacy-safe aggregate metrics', async () => {
+    const ready = await fetch(`http://127.0.0.1:${relayPort}/readyz`);
+    expect(ready.status).toBe(200);
+    const metrics = await fetch(`http://127.0.0.1:${relayPort}/metrics`);
+    expect(metrics.status).toBe(200);
+    const body = (await metrics.json()) as Record<string, number>;
+    expect(body.bridgeAttempts).toBeGreaterThan(0);
+    expect(body).toHaveProperty('activeBridges');
+    expect(JSON.stringify(body)).not.toContain(PEER_ID);
+  });
 });
+
+describe('relay production admission controls', () => {
+  let seller: net.Server;
+  let relay: RelayServer;
+  let relayPort: number;
+
+  beforeAll(async () => {
+    seller = net.createServer((socket) => socket.on('data', (chunk) => socket.write(chunk)));
+    seller.listen(0);
+    await once(seller, 'listening');
+    relay = new RelayServer(
+      new SellerCache({
+        dht: false,
+        pollIntervalMs: 60_000,
+        staticSellers: [{
+          peerId: PEER_ID,
+          host: '127.0.0.1',
+          port: (seller.address() as net.AddressInfo).port,
+        }],
+      }),
+      {
+        port: 0,
+        maxBridgesPerIp: 8,
+        maxBridgesGlobal: 8,
+        maxBridgesPerSeller: 1,
+        maxPayloadBytes: 32,
+        tcpConnectTimeoutMs: 2_000,
+        idleTimeoutMs: 60_000,
+        allowedOrigins: ['https://allowed.example'],
+      },
+    );
+    await relay.start();
+    relayPort = relay.address().port;
+  });
+
+  afterAll(async () => {
+    await relay.stop();
+    seller.close();
+  });
+
+  it('enforces the Origin allowlist and per-seller cap', async () => {
+    const url = `ws://127.0.0.1:${relayPort}/bridge/${PEER_ID}`;
+    const forbidden = new WebSocket(url, { headers: { origin: 'https://evil.example' } });
+    const [originError] = await once(forbidden, 'error');
+    expect((originError as Error).message).toContain('403');
+
+    const first = new WebSocket(url, { headers: { origin: 'https://allowed.example' } });
+    await once(first, 'open');
+    const saturated = new WebSocket(url, { headers: { origin: 'https://allowed.example' } });
+    const [capacityError] = await once(saturated, 'error');
+    expect((capacityError as Error).message).toContain('429');
+    const closed = once(first, 'close');
+    first.close();
+    await closed;
+    await waitForBridgeCount(relay, 0);
+  });
+
+  it('rejects oversized signaling messages', async () => {
+    const ws = new WebSocket(`ws://127.0.0.1:${relayPort}/bridge/${PEER_ID}`, {
+      headers: { origin: 'https://allowed.example' },
+    });
+    await once(ws, 'open');
+    ws.send(Buffer.alloc(64));
+    const [code] = await once(ws, 'close');
+    expect(code).toBe(1009);
+  });
+});
+
+async function waitForBridgeCount(relay: RelayServer, expected: number): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (relay.bridgeCount !== expected && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  expect(relay.bridgeCount).toBe(expected);
+}
 
 describe('trustProxy per-IP accounting', () => {
   let seller: net.Server;

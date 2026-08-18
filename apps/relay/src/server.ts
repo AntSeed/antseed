@@ -23,6 +23,12 @@ export interface RelayServerConfig {
   maxBridgesPerIp: number;
   tcpConnectTimeoutMs: number;
   idleTimeoutMs: number;
+  maxBridgesGlobal?: number;
+  maxBridgesPerSeller?: number;
+  maxPayloadBytes?: number;
+  readinessMaxAgeMs?: number;
+  /** Optional browser Origin allowlist. Empty/undefined accepts every origin. */
+  allowedOrigins?: string[];
   /**
    * Set when the relay runs behind a TLS-terminating proxy (ALB, nginx):
    * per-IP limits then use the last X-Forwarded-For entry (appended by the
@@ -38,14 +44,25 @@ export class RelayServer {
   private http: Server;
   private wss: WebSocketServer;
   private bridgesPerIp = new Map<string, number>();
+  private bridgesPerSeller = new Map<string, number>();
   private activeBridges = 0;
+  private metrics = {
+    bridgeAttempts: 0,
+    bridgeAccepted: 0,
+    bridgeRejected: 0,
+    bridgeCompleted: 0,
+    bridgeFailed: 0,
+  };
 
   constructor(
     private readonly cache: SellerCache,
     private readonly config: RelayServerConfig,
   ) {
     this.http = createServer((req, res) => this.handleHttp(req, res));
-    this.wss = new WebSocketServer({ noServer: true });
+    this.wss = new WebSocketServer({
+      noServer: true,
+      maxPayload: this.config.maxPayloadBytes ?? 1024 * 1024,
+    });
     this.http.on('upgrade', (req, socket, head) => this.handleUpgrade(req, socket, head));
   }
 
@@ -86,6 +103,21 @@ export class RelayServer {
       res.writeHead(200, { 'content-type': 'text/plain' }).end('ok');
       return;
     }
+    if (url.pathname === '/readyz') {
+      const ready = this.cache.isReady(this.config.readinessMaxAgeMs ?? 15 * 60_000);
+      res.writeHead(ready ? 200 : 503, { 'content-type': 'text/plain' }).end(ready ? 'ready' : 'seller cache stale');
+      return;
+    }
+    if (url.pathname === '/metrics') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        ...this.metrics,
+        activeBridges: this.activeBridges,
+        activeClientIps: this.bridgesPerIp.size,
+        activeSellers: this.bridgesPerSeller.size,
+      }));
+      return;
+    }
     if (url.pathname === '/sellers') {
       res.writeHead(200, { 'content-type': 'application/json', ...corsHeaders() });
       res.end(JSON.stringify(this.cache.snapshot()));
@@ -95,41 +127,72 @@ export class RelayServer {
   }
 
   private handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
+    this.metrics.bridgeAttempts++;
+    const reject = (status: number, reason: string) => {
+      this.metrics.bridgeRejected++;
+      rejectUpgrade(socket, status, reason);
+    };
+    if (!this.isAllowedOrigin(req)) {
+      reject(403, 'Forbidden Origin');
+      return;
+    }
     const match = BRIDGE_PATH_REGEX.exec(new URL(req.url ?? '/', 'http://relay').pathname);
     const peerId = match?.[1]?.toLowerCase();
     if (!peerId || !PEER_ID_REGEX.test(peerId)) {
-      rejectUpgrade(socket, 400, 'Bad Request');
+      reject(400, 'Bad Request');
       return;
     }
 
     const endpoint = this.cache.resolve(peerId);
     if (!endpoint) {
-      rejectUpgrade(socket, 404, 'Unknown Seller');
+      reject(404, 'Unknown Seller');
       return;
     }
     // Discovered endpoints are attacker-announced; never bridge into private
     // ranges. Hostnames get the same check at DNS resolution in runBridge.
     if (!endpoint.trusted && net.isIP(endpoint.host) && isForbiddenIp(endpoint.host)) {
-      rejectUpgrade(socket, 403, 'Forbidden Seller Address');
+      reject(403, 'Forbidden Seller Address');
       return;
     }
 
     const ip = this.clientIp(req);
     if ((this.bridgesPerIp.get(ip) ?? 0) >= this.config.maxBridgesPerIp) {
-      rejectUpgrade(socket, 429, 'Too Many Bridges');
+      reject(429, 'Too Many Bridges');
+      return;
+    }
+    if (this.activeBridges >= (this.config.maxBridgesGlobal ?? 1_024)) {
+      reject(503, 'Relay Saturated');
+      return;
+    }
+    if ((this.bridgesPerSeller.get(peerId) ?? 0) >= (this.config.maxBridgesPerSeller ?? 8)) {
+      reject(429, 'Seller Busy');
       return;
     }
 
     this.wss.handleUpgrade(req, socket, head, (ws) => {
       this.bridgesPerIp.set(ip, (this.bridgesPerIp.get(ip) ?? 0) + 1);
+      this.bridgesPerSeller.set(peerId, (this.bridgesPerSeller.get(peerId) ?? 0) + 1);
       this.activeBridges++;
-      this.runBridge(ws, endpoint, () => {
+      this.metrics.bridgeAccepted++;
+      this.runBridge(ws, endpoint, (failed) => {
         const remaining = (this.bridgesPerIp.get(ip) ?? 1) - 1;
         if (remaining <= 0) this.bridgesPerIp.delete(ip);
         else this.bridgesPerIp.set(ip, remaining);
+        const sellerRemaining = (this.bridgesPerSeller.get(peerId) ?? 1) - 1;
+        if (sellerRemaining <= 0) this.bridgesPerSeller.delete(peerId);
+        else this.bridgesPerSeller.set(peerId, sellerRemaining);
         this.activeBridges--;
+        if (failed) this.metrics.bridgeFailed++;
+        else this.metrics.bridgeCompleted++;
       });
     });
+  }
+
+  private isAllowedOrigin(req: IncomingMessage): boolean {
+    const allowed = this.config.allowedOrigins;
+    if (!allowed || allowed.length === 0) return true;
+    const origin = req.headers.origin;
+    return typeof origin === 'string' && allowed.includes(origin);
   }
 
   private clientIp(req: IncomingMessage): string {
@@ -144,7 +207,7 @@ export class RelayServer {
     return req.socket.remoteAddress ?? 'unknown';
   }
 
-  private runBridge(ws: WebSocket, endpoint: SellerEndpoint, onDone: () => void): void {
+  private runBridge(ws: WebSocket, endpoint: SellerEndpoint, onDone: (failed: boolean) => void): void {
     const { host, port } = endpoint;
     const tcp = net.connect({
       host,
@@ -171,7 +234,7 @@ export class RelayServer {
       } else {
         wsStream.destroy();
       }
-      onDone();
+      onDone(closeCode !== 1000);
     };
 
     tcp.on('error', (err) => finish(1011, `seller: ${err.message}`.slice(0, 120)));
