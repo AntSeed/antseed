@@ -252,7 +252,13 @@ For epochs `<= MIGRATION_EPOCH`, V1 points are combined with V2 points on claim.
 
 #### Points Policy Hook
 
-An optional `IAntseedPointsPolicy` can be set by owner. If set and its `points()` call succeeds, it returns weighted seller/buyer points. If not set, or if the call reverts, raw points are used.
+`AntseedUsageAccounting` exposes one `IAntseedPointsPolicy` hook. New deployments set that hook to an owned `AntseedPointsPolicyRegistry`, which contains at most eight `IAntseedPointsPenaltyPolicy` contracts. Each registered policy declares a nonzero penalty category and independently returns seller and buyer penalties between 0 and 10,000 basis points for the original settled usage.
+
+Policies in the same category may describe overlapping evidence, so only the largest seller and buyer penalty in each category applies. Category maxima are added across categories. Ordinary combined penalties saturate at 9,000 BPS, preserving 10% of raw points; a single 10,000-BPS result is an explicit hard veto for that side and reduces its points to zero. The final penalty is applied once to raw points, making results independent of registration order and preventing policies from amplifying points. An empty registry passes raw points through unchanged.
+
+Registration validates the policy's category, and each evaluation call has a 100,000 gas allowance. If any policy reverts, exhausts its allowance, lacks the expected selector, returns malformed data, or reports a penalty above 10,000 BPS, the registry fails the complete evaluation. Usage accounting catches that failure, emits `PointsPolicyFailed`, and records zero points for both sides without reverting channel settlement.
+
+After deploying an `AntseedWashTradingRegistry`, operators run `RegisterWashTradingPointsPolicy.s.sol` with the proof registry and points-policy registry addresses. The script deploys `AntseedWashTradingPointsPolicy`, registers it, and verifies the adapter's proof-registry pointer, penalty category, and registry membership on-chain.
 
 #### Per-Epoch Pro-Rata Distribution
 

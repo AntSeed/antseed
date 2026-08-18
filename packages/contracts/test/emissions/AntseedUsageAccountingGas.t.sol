@@ -8,8 +8,10 @@ import { AntseedEmissionsGate } from "../../emissions/AntseedEmissionsGate.sol";
 import { AntseedRegistry } from "../../core/AntseedRegistry.sol";
 import { AntseedSellerPools } from "../../sellers/AntseedSellerPools.sol";
 import { AntseedUsageAccounting } from "../../emissions/AntseedUsageAccounting.sol";
+import { IAntseedPointsPenaltyPolicy } from "../../interfaces/IAntseedPointsPenaltyPolicy.sol";
 import { IAntseedPointsPolicy } from "../../interfaces/IAntseedPointsPolicy.sol";
 import { IAntseedUsageAccounting } from "../../interfaces/IAntseedUsageAccounting.sol";
+import { AntseedPointsPolicyRegistry } from "../../policies/AntseedPointsPolicyRegistry.sol";
 import { MockERC8004Registry } from "../mocks/MockERC8004Registry.sol";
 
 contract MockSellerAgentLookupForUsageAccountingGas {
@@ -40,6 +42,40 @@ contract MockUsagePointsPolicyForUsageAccountingGas is IAntseedPointsPolicy {
     {
         sellerPoints = (rawPoints * sellerWeightBps) / 10_000;
         buyerPoints = (rawPoints * buyerWeightBps) / 10_000;
+    }
+}
+
+contract RevertingPointsPenaltyPolicyForUsageAccountingGas is IAntseedPointsPenaltyPolicy {
+    function penaltyCategory() external pure returns (bytes32) {
+        return keccak256("reverting");
+    }
+
+    function penaltyBps(bytes32, address, address, uint256) external pure returns (uint16, uint16) {
+        revert("policy broken");
+    }
+}
+
+contract GasBurningPointsPenaltyPolicyForUsageAccountingGas is IAntseedPointsPenaltyPolicy {
+    function penaltyCategory() external pure returns (bytes32) {
+        return keccak256("gas-burning");
+    }
+
+    function penaltyBps(bytes32, address, address, uint256) external view returns (uint16, uint16) {
+        while (gasleft() > 0) { }
+        return (0, 0);
+    }
+}
+
+contract MalformedPointsPenaltyPolicyForUsageAccountingGas {
+    function penaltyCategory() external pure returns (bytes32) {
+        return keccak256("malformed");
+    }
+
+    fallback() external {
+        assembly {
+            mstore(0, 1)
+            return(0, 32)
+        }
     }
 }
 
@@ -311,6 +347,39 @@ contract AntseedUsageAccountingGasTest is Test {
         usageAccounting.accrueSellerPoints(seller, 10);
         usageAccounting.accrueBuyerPoints(buyer, 10);
         assertEq(usageAccounting.totalBuyerPointsByEpoch(5), buyerPointsBefore + 10);
+    }
+
+    function test_revertingRegistryPolicySkipsRecordingInsteadOfBlockingSettlement() public {
+        _assertRegistryPolicyFailureDoesNotBlock(
+            address(new RevertingPointsPenaltyPolicyForUsageAccountingGas()), keccak256("reverting-policy")
+        );
+    }
+
+    function test_gasBurningRegistryPolicySkipsRecordingInsteadOfBlockingSettlement() public {
+        _assertRegistryPolicyFailureDoesNotBlock(
+            address(new GasBurningPointsPenaltyPolicyForUsageAccountingGas()), keccak256("gas-burning-policy")
+        );
+    }
+
+    function test_malformedRegistryPolicySkipsRecordingInsteadOfBlockingSettlement() public {
+        _assertRegistryPolicyFailureDoesNotBlock(
+            address(new MalformedPointsPenaltyPolicyForUsageAccountingGas()), keccak256("malformed-policy")
+        );
+    }
+
+    function _assertRegistryPolicyFailureDoesNotBlock(address brokenPolicy, bytes32 channelId) internal {
+        uint256 buyerPointsBefore = usageAccounting.totalBuyerPointsByEpoch(5);
+        uint256 sellerPointsBefore = usageAccounting.totalSellerPointsByEpoch(5);
+        AntseedPointsPolicyRegistry pointsRegistry = new AntseedPointsPolicyRegistry(address(this));
+        pointsRegistry.registerPolicy(brokenPolicy);
+        usageAccounting.setPointsPolicy(address(pointsRegistry));
+
+        usageAccounting.accruePoints(channelId, buyer, seller, 10);
+        usageAccounting.accrueSellerPoints(seller, 10);
+        usageAccounting.accrueBuyerPoints(buyer, 10);
+
+        assertEq(usageAccounting.totalBuyerPointsByEpoch(5), buyerPointsBefore);
+        assertEq(usageAccounting.totalSellerPointsByEpoch(5), sellerPointsBefore);
     }
 }
 

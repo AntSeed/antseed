@@ -8,6 +8,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Contracts: added a points-policy registry that combines up to eight category-aware buyer/seller penalties behind usage accounting's existing hook. It takes the maximum penalty per category, adds category penalties with a 9,000-BPS soft ceiling, and treats 10,000 BPS as a hard veto. New recognized-usage deployments install an empty pass-through registry by default; policy failures fail closed without blocking settlement.
+
 - Desktop: added seller-assisted channel closing to Activity for sellers advertising `payments.cooperative-close.v1`, with clear rejection feedback and the existing wallet-based on-chain close retained as a permanent fallback.
 
 - Discovery metadata v12 widens service catalog and per-service map counts to support up to 512 services per provider. Metadata now allows 64 categories and 4 API protocols per service, a 128 KiB signed binary snapshot, and a bounded 256 KiB HTTP metadata response. Buyers remain compatible with v10/v11 sellers, while sellers validate the same limits before announcing.

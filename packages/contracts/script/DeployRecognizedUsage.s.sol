@@ -9,6 +9,7 @@ import { AntseedLegacyEmissionsEscrow } from "../emissions/AntseedLegacyEmission
 import { AntseedSellerPoolsRewards } from "../emissions/AntseedSellerPoolsRewards.sol";
 import { AntseedUsageAccounting } from "../emissions/AntseedUsageAccounting.sol";
 import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
+import { AntseedPointsPolicyRegistry } from "../policies/AntseedPointsPolicyRegistry.sol";
 import { AntseedSellerPools } from "../sellers/AntseedSellerPools.sol";
 import { AntseedSellerRegistry } from "../sellers/AntseedSellerRegistry.sol";
 
@@ -175,6 +176,10 @@ contract DeployRecognizedUsage is Script {
             new AntseedUsageAccounting(address(sellerPools), existingChannels, address(gate));
         console.log("UsageAccounting:        ", address(usageAccounting));
 
+        AntseedPointsPolicyRegistry pointsPolicyRegistry = new AntseedPointsPolicyRegistry(deployer);
+        usageAccounting.setPointsPolicy(address(pointsPolicyRegistry));
+        console.log("PointsPolicyRegistry:   ", address(pointsPolicyRegistry));
+
         AntseedSellerPoolsRewards sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
         console.log("SellerPoolsRewards: ", address(sellerPoolsRewards));
@@ -272,6 +277,7 @@ contract DeployRecognizedUsage is Script {
         console.log("  escrow) BEFORE flipping, then sets registry emissions/staking");
         console.log("  to the new stack. Env it needs:");
         console.log("    USAGE_ACCOUNTING=          ", address(usageAccounting));
+        console.log("    POINTS_POLICY_REGISTRY=    ", address(pointsPolicyRegistry));
         console.log("    SELLER_REGISTRY=           ", address(sellerRegistry));
         console.log("    DIEM_STAKING_PROXY=        <deployed proxy address>");
         console.log("    REGISTRY_OWNER_PRIVATE_KEY=<AntseedRegistry owner key>");
