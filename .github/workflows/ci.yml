@@ -114,3 +114,31 @@ jobs:
 
       - name: Typecheck
         run: pnpm run typecheck
+
+  browser-web-sdk:
+    name: Browser WebRTC (Chromium + Firefox)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Install browser runtimes
+        run: pnpm exec playwright install --with-deps chromium firefox
+
+      - name: Build browser test dependencies
+        run: pnpm run build:tier0 && pnpm --filter=@antseed/relay run build
+
+      - name: Run native-browser WebRTC acceptance
+        run: pnpm --filter=@antseed/web-sdk run test:browser
