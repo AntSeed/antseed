@@ -7,6 +7,10 @@ description: Safe rollout order for AntSeed metadata v12, large service catalogs
 
 # Metadata v12 Upgrade
 
+:::note Historical migration
+This guide documents the v12 rollout. New deployments should follow the [metadata v13 upgrade guide](/docs/guides/metadata-v13-upgrade).
+:::
+
 Metadata v12 adds per-service capability hints and widens service catalog and per-service map counts from `uint8` to `uint16`. It builds on metadata v11, which added per-service unit billing for image outputs.
 
 This is a **buyer-first migration**. An older buyer rejects metadata versions newer than it understands and drops that seller from discovery.

@@ -1,6 +1,6 @@
 # Antseed Network Protocol Specification
 
-**Version:** 1.9 (current discovery metadata format uses `METADATA_VERSION = 12`)
+**Version:** 1.10 (current discovery metadata format uses `METADATA_VERSION = 13`)
 
 ## Overview
 
@@ -110,6 +110,7 @@ See: [08-fingerprint-swarm.md](./08-fingerprint-swarm.md)
 
 | Version | Date | Notes |
 |---|---|---|
+| 1.10 | 2026-08-18 | Updated discovery for metadata v13 operation-specific image generation/edit billing and buyer-first rollout requirements |
 | 1.9 | 2026-08-09 | Updated discovery for metadata v11/v12, image unit billing, service capabilities, and buyer-first rollout requirements |
 | 1.8 | 2026-06-15 | Updated discovery spec for metadata v10, seller contracts, peer capabilities, and domain/GitHub verification claims |
 | 1.7 | 2026-06-15 | Added Real Money, Fake Models as model-substitution motivation for model verification |

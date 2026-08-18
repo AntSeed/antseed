@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { encodeMetadata, decodeMetadata, encodeMetadataForSigning } from '../src/discovery/metadata-codec.js';
-import { METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
+import { METADATA_VERSION, OPERATION_UNIT_BILLING_METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
 
 function makeMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   return {
@@ -241,6 +241,70 @@ describe('encodeMetadata / decodeMetadata', () => {
       }],
     });
     expect(encodeMetadataForSigning(changed)).not.toEqual(encodeMetadataForSigning(original));
+  });
+
+  it('round-trips v13 operation-specific image billing and signs operation bytes', () => {
+    const original = makeMetadata({
+      version: OPERATION_UNIT_BILLING_METADATA_VERSION,
+      providers: [{
+        provider: 'openai',
+        services: ['cover-art'],
+        defaultPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+        serviceApiProtocols: { 'cover-art': ['openai-images'] },
+        serviceUnitBillingModels: {
+          'cover-art': {
+            'openai-images': {
+              version: 1,
+              components: [
+                { unit: 'output_images', priceUsd: 0.02, match: { operation: 'image_generation' } },
+                { unit: 'output_images', priceUsd: 0.04, match: { operation: 'image_edit' } },
+              ],
+            },
+          },
+        },
+        maxConcurrency: 3,
+        currentLoad: 0,
+      }],
+    });
+
+    const decoded = decodeMetadata(encodeMetadata(original));
+    expect(decoded.providers[0]?.serviceUnitBillingModels?.['cover-art']?.['openai-images']?.components)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ match: { operation: 'image_generation' } }),
+        expect.objectContaining({ match: { operation: 'image_edit' } }),
+      ]));
+
+    const changed = structuredClone(original);
+    changed.providers[0]!.serviceUnitBillingModels!['cover-art']!['openai-images']!.components[1]!.match = {
+      operation: 'image_generation',
+    };
+    expect(encodeMetadataForSigning(changed)).not.toEqual(encodeMetadataForSigning(original));
+  });
+
+  it('rejects operation billing keys encoded as pre-v13 metadata', () => {
+    const original = makeMetadata({
+      version: SERVICE_CAPABILITIES_METADATA_VERSION,
+      providers: [{
+        provider: 'openai',
+        services: ['cover-art'],
+        defaultPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+        serviceApiProtocols: { 'cover-art': ['openai-images'] },
+        serviceUnitBillingModels: {
+          'cover-art': {
+            'openai-images': {
+              version: 1,
+              components: [
+                { unit: 'output_images', priceUsd: 0.04, match: { operation: 'image_edit' } },
+              ],
+            },
+          },
+        },
+        maxConcurrency: 3,
+        currentLoad: 0,
+      }],
+    });
+
+    expect(() => encodeMetadata(original)).toThrow(/require metadata v13/);
   });
 
   it('round-trips v12 service capabilities and signs capability bytes', () => {

@@ -108,7 +108,7 @@ By default, metadata is fetched from `http://{host}:{port}/metadata` (`metadataP
 
 Recommended category tags: `privacy`, `legal`, `uncensored`, `coding`, `finance`, `tee` (custom tags are allowed).
 
-Metadata v11 added `serviceUnitBillingModels`; v12 adds `serviceCapabilities` and widens service catalog and service-map counts to support up to 512 entries. Image providers advertise `openai-images` and may attach an `output_images` billing model:
+Metadata v11 added `serviceUnitBillingModels`; v12 added `serviceCapabilities` and widened service catalog and service-map counts to support up to 512 entries; v13 adds operation-specific image billing. Image providers advertise `openai-images` and may attach an `output_images` billing model:
 
 ```json
 {
@@ -118,7 +118,8 @@ Metadata v11 added `serviceUnitBillingModels`; v12 adds `serviceCapabilities` an
       "openai-images": {
         "version": 1,
         "components": [
-          { "unit": "output_images", "priceUsd": 0.003 }
+          { "unit": "output_images", "priceUsd": 0.003, "match": { "operation": "image_generation" } },
+          { "unit": "output_images", "priceUsd": 0.006, "match": { "operation": "image_edit" } }
         ]
       }
     }
@@ -133,12 +134,12 @@ Metadata v11 added `serviceUnitBillingModels`; v12 adds `serviceCapabilities` an
 }
 ```
 
-Capability fields are optional; absence means unknown. `inputs` and `outputs` declare accepted and produced modalities (`text`, `image`, `audio`, `video`, `pdf`); `supportedParameters` lists extra request-body parameter names the service accepts (lowercase snake_case, announced in code-unit sorted order). Unit-billing components may match `model`, `size`, `quality`, or `resolution`. Discovery only includes capability and billing entries for services currently advertised by the provider.
+Capability fields are optional; absence means unknown. `inputs` and `outputs` declare accepted and produced modalities (`text`, `image`, `audio`, `video`, `pdf`); `supportedParameters` lists extra request-body parameter names the service accepts (lowercase snake_case, announced in code-unit sorted order). Unit-billing components may match `model`, `size`, `quality`, `resolution`, or the path-derived `operation` (`image_generation` or `image_edit`). Discovery only includes capability and billing entries for services currently advertised by the provider.
 
 Capabilities are hints, not enforced contracts. The buyer proxy performs one advisory check: when a peer announces `supportedParameters` for the routed service and the request body carries parameters outside that list, the proxy logs a warning and forwards the request unchanged — the upstream provider remains the authority on which parameters it accepts.
 
 :::warning Metadata version compatibility
-Buyers reject metadata versions newer than they understand. A v10/v11 buyer therefore drops a v12 seller, while a v12 buyer continues to accept v10 and v11 sellers. Upgrade buyers before sellers using the [metadata v12 migration guide](/docs/guides/metadata-v12-upgrade).
+Buyers reject metadata versions newer than they understand. A v10-v12 buyer therefore drops a v13 seller, while a v13 buyer continues to accept v10-v12 sellers. Upgrade buyers before sellers using the [metadata v13 migration guide](/docs/guides/metadata-v13-upgrade).
 :::
 
 `publicAddress` is optional. When present, buyers should prefer it over the raw host learned from the DHT announcement. This is intended for deployments where DHT traffic exits from one IP but buyers must connect to another address, such as a Kubernetes load balancer.

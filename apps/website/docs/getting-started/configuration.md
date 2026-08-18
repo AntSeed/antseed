@@ -312,7 +312,7 @@ Seller health checks probe supported text protocols immediately at startup and p
 }
 ```
 
-See the [metadata v12 upgrade guide](/docs/guides/metadata-v12-upgrade) before upgrading seller fleets; older buyers cannot discover v12 sellers.
+See the [metadata v13 upgrade guide](/docs/guides/metadata-v13-upgrade) before upgrading seller fleets; older buyers cannot discover v13 sellers.
 
 ## Buyer Settings
 

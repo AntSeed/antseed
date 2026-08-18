@@ -114,6 +114,18 @@ antseed config seller add-service openai gpt-image-1 \
 
 `--unit-billing-models` is currently consumed by the `openai` provider for `openai-images`. Seller startup warns when the selected plugin ignores it. Image services are skipped by periodic model health checks to avoid generating billable probe images.
 
+Venice image services can pair generation with a native edit model. The provider advertises image input only when this pairing exists:
+
+```bash
+antseed config seller add-service venice grok-imagine-image-quality \
+  --upstream grok-imagine-image-quality \
+  --image-edit-model grok-imagine-quality-edit \
+  --input 0 --output 0 \
+  --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.06,"match":{"operation":"image_generation"}},{"unit":"output_images","priceUsd":0.06,"match":{"operation":"image_edit"}}]}}'
+```
+
+Venice edits support `response_format=b64_json`; explicit `response_format=url` and unsupported multipart fields are rejected before the upstream request. Seller startup warns when `imageEditModel` is configured without an `openai-images` billing model. The example prices reflect Venice's catalog when written; verify current generation and edit pricing through `GET https://api.venice.ai/api/v1/models?type=image` and `?type=inpaint` before advertising a service.
+
 **Routers** select peers and proxy requests (consumer mode):
 
 ```bash
@@ -272,9 +284,9 @@ antseed buyer start --disable-metadata-v2-services
 
 For production sellers, prefer a dedicated Base JSON-RPC endpoint over public defaults. You can set it durably with `payments.crypto.rpcUrl`, at runtime with `ANTSEED_BASE_RPC_URL`, or for one run with `antseed seller start --base-rpc-url <url>`.
 
-### Metadata v12 rollout
+### Metadata v13 rollout
 
-This release announces metadata v12. Buyers supporting only older metadata versions drop v12 sellers from discovery, while updated buyers continue accepting older v10/v11 sellers. Upgrade buyer CLIs and desktop apps before upgrading sellers. Removing capability or unit-billing fields does not downgrade the metadata version; rollback requires running the older seller binary.
+This release announces metadata v13 for operation-specific image pricing. Buyers supporting only older metadata versions drop v13 sellers from discovery, while updated buyers continue accepting older v10-v12 sellers. Upgrade buyer CLIs and desktop apps before upgrading sellers. Removing operation-specific billing fields does not downgrade the metadata version; rollback requires running the older seller binary.
 
 ### Model-only routing and peer pinning
 

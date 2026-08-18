@@ -82,6 +82,7 @@ export function registerConfigCommand(program: Command): void {
     .command('add-service <provider> <serviceId>')
     .description('Add a service offering under a provider (e.g., add-service openai gpt-4 --input 5 --output 15 --categories chat,coding)')
     .option('--upstream <model>', 'upstream model identifier (defaults to serviceId)')
+    .option('--image-edit-model <model>', 'native image-edit model paired with this generation service')
     .option('--input <usd>', 'input price in USD per 1M tokens', parseFloat)
     .option('--output <usd>', 'output price in USD per 1M tokens', parseFloat)
     .option('--cached <usd>', 'cached-input price in USD per 1M tokens', parseFloat)
@@ -108,6 +109,9 @@ export function registerConfigCommand(program: Command): void {
           service.upstreamModel = options.upstream as string;
         } else if (!service.upstreamModel) {
           service.upstreamModel = serviceId;
+        }
+        if (options.imageEditModel) {
+          service.imageEditModel = options.imageEditModel as string;
         }
         const hasInput = typeof options.input === 'number';
         const hasOutput = typeof options.output === 'number';

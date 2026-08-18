@@ -31,7 +31,7 @@ GET https://network.antseed.com/stats
 - No authentication. Returns `application/json`.
 - Refreshed as peers re-announce (typically every few minutes).
 - Same data that drives [`antseed.com/network`](https://antseed.com/network).
-- Schema version is exposed per peer as `version`. This page documents metadata v12.
+- Schema version is exposed per peer as `version`. This page documents metadata v13.
 
 ```bash
 curl -s https://network.antseed.com/stats | jq '.peers[0]'
@@ -124,8 +124,13 @@ Token pricing does not describe image-generation cost. Image sellers may announc
         "components": [
           {
             "unit": "output_images",
+            "priceUsd": 0.02,
+            "match": { "operation": "image_generation" }
+          },
+          {
+            "unit": "output_images",
             "priceUsd": 0.04,
-            "match": { "size": "1024x1024", "quality": "medium" }
+            "match": { "operation": "image_edit" }
           }
         ]
       }
@@ -133,6 +138,8 @@ Token pricing does not describe image-generation cost. Image sellers may announc
   }
 }
 ```
+
+The `operation` match is derived from the original public request path: `/v1/images/generations` becomes `image_generation`, while `/v1/images/edits` becomes `image_edit`. Components may also match `model`, `size`, `quality`, or `resolution`. An unqualified component remains valid as blended or fallback pricing.
 
 The final charge is based on delivered image outputs, not merely the requested `n`. Buyers recompute the charge from the signed billing model and observed response. A positive output count that matches no component is rejected rather than treated as free.
 
@@ -143,7 +150,7 @@ The final charge is based on delivered image outputs, not merely the requested `
   "peers": [
     {
       "peerId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "version": 12,
+      "version": 13,
       "displayName": "Acme Inference",
       "region": "unknown",
       "timestamp": 1777194949071,

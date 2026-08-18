@@ -15,7 +15,7 @@ import {
   MAX_SERVICE_API_PROTOCOLS_PER_SERVICE,
   MAX_PEER_CAPABILITIES,
 } from '../src/discovery/metadata-validator.js';
-import { METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
+import { METADATA_VERSION, OPERATION_UNIT_BILLING_METADATA_VERSION, SERVICE_CAPABILITIES_METADATA_VERSION, SERVICE_UNIT_BILLING_METADATA_VERSION, type PeerMetadata } from '../src/discovery/peer-metadata.js';
 
 function validMetadata(overrides?: Partial<PeerMetadata>): PeerMetadata {
   return {
@@ -347,6 +347,41 @@ describe('validateMetadata', () => {
         }),
       ]),
     );
+  });
+
+  it('requires metadata v13 for operation-specific billing matches', () => {
+    const provider = {
+      provider: 'openai',
+      services: ['cover-art'],
+      defaultPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+      serviceApiProtocols: { 'cover-art': ['openai-images'] },
+      serviceUnitBillingModels: {
+        'cover-art': {
+          'openai-images': {
+            version: 1,
+            components: [
+              { unit: 'output_images', priceUsd: 0.04, match: { operation: 'image_edit' } },
+            ],
+          },
+        },
+      },
+      maxConcurrency: 1,
+      currentLoad: 0,
+    } satisfies PeerMetadata['providers'][number];
+
+    expect(validateMetadata(validMetadata({
+      version: SERVICE_CAPABILITIES_METADATA_VERSION,
+      providers: [provider],
+    }))).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        field: expect.stringContaining('match.operation'),
+        message: expect.stringContaining('require metadata version 13'),
+      }),
+    ]));
+    expect(validateMetadata(validMetadata({
+      version: OPERATION_UNIT_BILLING_METADATA_VERSION,
+      providers: [provider],
+    }))).toEqual([]);
   });
 
   it('accepts valid service capabilities and rejects malformed ones', () => {

@@ -329,7 +329,7 @@ antseed network browse
 For production monitoring, expose seller metrics with `antseed metrics serve --role seller`. See [Metrics](/docs/guides/metrics).
 
 :::warning Upgrade buyers before sellers
-This release emits discovery metadata v12. Older buyers reject newer metadata and will not see upgraded sellers. Follow the [metadata v12 upgrade guide](/docs/guides/metadata-v12-upgrade) when rolling out a mixed buyer/seller fleet.
+This release emits discovery metadata v13. Older buyers reject newer metadata and will not see upgraded sellers. Follow the [metadata v13 upgrade guide](/docs/guides/metadata-v13-upgrade) when rolling out a mixed buyer/seller fleet.
 :::
 
 ## How Payments Work

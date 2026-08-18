@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   captureUnitBillingContext,
   computeFinalUnitBilling,
+  evaluateUnitBilling,
   isFreeUnitBillingModel,
   unitUsageFromReport,
   validateUnitBillingModelV1,
@@ -281,6 +282,19 @@ describe("unit billing runtime", () => {
     );
   });
 
+  it("rejects unknown operation billing matches", () => {
+    expect(validateUnitBillingModelV1({
+      version: 1,
+      components: [{
+        unit: "output_images",
+        priceUsd: 0.04,
+        match: { operation: "edit" },
+      }],
+    })).toEqual(expect.arrayContaining([
+      expect.stringContaining("match.operation is unsupported"),
+    ]));
+  });
+
   it("captures request-owned unit context without protocol billing vocabulary in api-adapter facts", () => {
     const request: SerializedHttpRequest = {
       requestId: "req-image",
@@ -309,6 +323,7 @@ describe("unit billing runtime", () => {
         model: "gpt-image-2",
         size: "1024x1024",
         quality: "low",
+        operation: "image_generation",
       },
       unitLimits: { output_images: 1 },
     });
@@ -365,7 +380,12 @@ describe("unit billing runtime", () => {
 
     expect(captured.context).toMatchObject({
       serviceApiProtocol: "openai-images",
-      attributes: { model: "gpt-image-2", size: "1024x1024", quality: "auto" },
+      attributes: {
+        model: "gpt-image-2",
+        size: "1024x1024",
+        quality: "auto",
+        operation: "image_edit",
+      },
       unitLimits: { output_images: 2 },
     });
     expect(captured.requestFacts).toEqual({
@@ -375,6 +395,34 @@ describe("unit billing runtime", () => {
       requestedImages: 2,
       promptTokens: 4,
     });
+  });
+
+  it("charges generation and edit requests using separate operation components", () => {
+    const model: UnitBillingModelV1 = {
+      version: 1,
+      components: [
+        {
+          unit: "output_images",
+          priceUsd: 0.02,
+          match: { operation: "image_generation" },
+        },
+        {
+          unit: "output_images",
+          priceUsd: 0.04,
+          match: { operation: "image_edit" },
+        },
+      ],
+    };
+    const usage = { units: { output_images: 1 } };
+
+    expect(evaluateUnitBilling(model, {
+      ...imageContext,
+      attributes: { operation: "image_generation" },
+    }, usage)).toBe(20_000n);
+    expect(evaluateUnitBilling(model, {
+      ...imageContext,
+      attributes: { operation: "image_edit" },
+    }, usage)).toBe(40_000n);
   });
 
   it("normalizes omitted image tiers and invalid counts before billing", () => {
@@ -401,6 +449,7 @@ describe("unit billing runtime", () => {
       model: "gpt-image-2",
       size: "auto",
       quality: "auto",
+      operation: "image_generation",
     });
     expect(captured.context.unitLimits).toEqual({ output_images: 1 });
   });

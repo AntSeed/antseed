@@ -30,6 +30,7 @@ const DOMAIN_VERIFICATION_METHODS_BY_ID: DomainVerificationMethod[] = ["dns-txt"
 const SERVICE_UNIT_BILLING_METADATA_VERSION = 11;
 const SERVICE_CAPABILITIES_METADATA_VERSION = 12;
 const WIDE_SERVICE_COUNTS_METADATA_VERSION = 12;
+const OPERATION_UNIT_BILLING_METADATA_VERSION = 13;
 const UNIT_BILLING_UNITS_BY_ID: UnitBillingUnitV1[] = [...UNIT_BILLING_UNITS_V1];
 const UNIT_BILLING_UNIT_IDS = new Map<UnitBillingUnitV1, number>(UNIT_BILLING_UNITS_BY_ID.map((unit, index) => [unit, index]));
 const UNIT_BILLING_MATCH_KEYS_BY_ID: UnitBillingMatchKeyV1[] = [...UNIT_BILLING_MATCH_KEYS_V1];
@@ -219,7 +220,7 @@ function encodeBody(metadata: PeerMetadata): Uint8Array {
     }
 
     if (metadata.version >= SERVICE_UNIT_BILLING_METADATA_VERSION) {
-      encodeServiceUnitBillingModels(parts, p.serviceUnitBillingModels, hasWideServiceCounts);
+      encodeServiceUnitBillingModels(parts, p.serviceUnitBillingModels, hasWideServiceCounts, metadata.version);
     }
     if (metadata.version >= SERVICE_CAPABILITIES_METADATA_VERSION) {
       encodeServiceCapabilities(parts, p.serviceCapabilities, hasWideServiceCounts);
@@ -420,6 +421,7 @@ function encodeServiceUnitBillingModels(
   parts: Uint8Array[],
   serviceUnitBillingModels: PeerMetadata["providers"][number]["serviceUnitBillingModels"],
   hasWideServiceCounts: boolean,
+  metadataVersion: number,
 ): void {
   const entries: Array<[string, ServiceApiProtocol, UnitBillingModelV1]> = [];
   for (const [serviceName, protocolModels] of Object.entries(serviceUnitBillingModels ?? {})) {
@@ -447,6 +449,10 @@ function encodeServiceUnitBillingModels(
       const matchEntries = Object.entries(component.match ?? {})
         .filter((entry): entry is [UnitBillingMatchKeyV1, string] => UNIT_BILLING_MATCH_KEY_IDS.has(entry[0] as UnitBillingMatchKeyV1))
         .sort(([a], [b]) => (UNIT_BILLING_MATCH_KEY_IDS.get(a) ?? 0) - (UNIT_BILLING_MATCH_KEY_IDS.get(b) ?? 0));
+      if (metadataVersion < OPERATION_UNIT_BILLING_METADATA_VERSION
+        && matchEntries.some(([key]) => key === 'operation')) {
+        throw new Error(`Operation billing matches require metadata v${OPERATION_UNIT_BILLING_METADATA_VERSION}`);
+      }
       parts.push(new Uint8Array([matchEntries.length]));
       for (const [key, value] of matchEntries) {
         parts.push(new Uint8Array([UNIT_BILLING_MATCH_KEY_IDS.get(key) ?? 255]));
@@ -665,6 +671,7 @@ function decodeServiceUnitBillingModels(
   setOffset: (offset: number) => void,
   checkBounds: (offset: number, needed: number, total: number) => void,
   hasWideServiceCounts: boolean,
+  metadataVersion: number,
 ): PeerMetadata["providers"][number]["serviceUnitBillingModels"] | undefined {
   let offset = getOffset();
   const [entryCount, nextOffset] = readServiceEntryCount(data, offset, checkBounds, hasWideServiceCounts);
@@ -706,6 +713,9 @@ function decodeServiceUnitBillingModels(
         offset += 1;
         if (!key) {
           throw new Error("Unsupported service unit billing match key");
+        }
+        if (key === 'operation' && metadataVersion < OPERATION_UNIT_BILLING_METADATA_VERSION) {
+          throw new Error(`Operation billing matches require metadata v${OPERATION_UNIT_BILLING_METADATA_VERSION}`);
         }
         const [value, valueOffset] = readUtf8(data, offset, checkBounds);
         offset = valueOffset;
@@ -925,7 +935,7 @@ export function decodeMetadata(data: Uint8Array): PeerMetadata {
     }
 
     const serviceUnitBillingModels = version >= SERVICE_UNIT_BILLING_METADATA_VERSION
-      ? decodeServiceUnitBillingModels(data, () => offset, (next) => { offset = next; }, checkBounds, hasWideServiceCounts)
+      ? decodeServiceUnitBillingModels(data, () => offset, (next) => { offset = next; }, checkBounds, hasWideServiceCounts, version)
       : undefined;
     const serviceCapabilities = version >= SERVICE_CAPABILITIES_METADATA_VERSION
       ? decodeServiceCapabilities(data, () => offset, (next) => { offset = next; }, checkBounds, hasWideServiceCounts)

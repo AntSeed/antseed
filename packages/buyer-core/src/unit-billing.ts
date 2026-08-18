@@ -57,7 +57,7 @@ export function captureUnitBillingContext(args: {
     body: parsed ?? undefined,
   });
   const requestUsage = factsToUnitUsage(requestFacts);
-  const attributes = factsToAttributes(requestFacts);
+  const attributes = factsToAttributes(requestFacts, args.request.path);
   return {
     context: {
       sellerPeerId: args.sellerPeerId,
@@ -122,13 +122,27 @@ function factsToUnitUsage(facts: ImageRequestFacts): UnitBillingUsage {
 
 function factsToAttributes(
   facts: ImageRequestFacts,
+  requestPath: string,
 ): Partial<Record<UnitBillingMatchKeyV1, string>> | undefined {
   const attributes: Partial<Record<UnitBillingMatchKeyV1, string>> = {};
   for (const key of ['model', 'size', 'quality', 'resolution'] as const) {
     const value = facts[key];
     if (value !== undefined) attributes[key] = value;
   }
+  const operation = imageOperationFromPath(requestPath);
+  if (operation) attributes.operation = operation;
   return Object.keys(attributes).length > 0 ? attributes : undefined;
+}
+
+function imageOperationFromPath(path: string): string | undefined {
+  switch (path.split('?', 1)[0]?.toLowerCase()) {
+    case '/v1/images/generations':
+      return 'image_generation';
+    case '/v1/images/edits':
+      return 'image_edit';
+    default:
+      return undefined;
+  }
 }
 
 function capOutputImagesToRequest(

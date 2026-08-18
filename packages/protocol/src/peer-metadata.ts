@@ -6,11 +6,12 @@ import {
   type ServiceApiProtocol,
 } from './service-api.js';
 
-export const METADATA_VERSION = 12;
+export const METADATA_VERSION = 13;
 /** Oldest announced metadata version buyers still accept from sellers. */
 export const MIN_SUPPORTED_METADATA_VERSION = 10;
 export const SERVICE_UNIT_BILLING_METADATA_VERSION = 11;
 export const SERVICE_CAPABILITIES_METADATA_VERSION = 12;
+export const OPERATION_UNIT_BILLING_METADATA_VERSION = 13;
 export const WELL_KNOWN_SERVICE_CATEGORIES = [
   "privacy",
   "legal",

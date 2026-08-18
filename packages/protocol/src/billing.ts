@@ -9,10 +9,16 @@ export const UNIT_BILLING_MATCH_KEYS_V1 = [
   'size',
   'quality',
   'resolution',
+  'operation',
+] as const;
+export const UNIT_BILLING_OPERATIONS_V1 = [
+  'image_generation',
+  'image_edit',
 ] as const;
 
 export type UnitBillingUnitV1 = (typeof UNIT_BILLING_UNITS_V1)[number];
 export type UnitBillingMatchKeyV1 = (typeof UNIT_BILLING_MATCH_KEYS_V1)[number];
+export type UnitBillingOperationV1 = (typeof UNIT_BILLING_OPERATIONS_V1)[number];
 
 export interface UnitBillingComponentV1 {
   unit: UnitBillingUnitV1;
@@ -57,6 +63,7 @@ export const FREE_UNIT_BILLING_MODEL_V1: UnitBillingModelV1 = {
 
 export const UNIT_BILLING_UNIT_SET_V1 = new Set<string>(UNIT_BILLING_UNITS_V1);
 export const UNIT_BILLING_MATCH_KEY_SET_V1 = new Set<string>(UNIT_BILLING_MATCH_KEYS_V1);
+export const UNIT_BILLING_OPERATION_SET_V1 = new Set<string>(UNIT_BILLING_OPERATIONS_V1);
 
 export function isUnitBillingUnitV1(value: string): value is UnitBillingUnitV1 {
   return UNIT_BILLING_UNIT_SET_V1.has(value);
@@ -111,6 +118,8 @@ export function validateUnitBillingModelV1(model: UnitBillingModelV1): string[] 
           }
           if (typeof value !== 'string' || value.length === 0) {
             errors.push(`components[${index}].match.${key} must be a non-empty string`);
+          } else if (key === 'operation' && !UNIT_BILLING_OPERATION_SET_V1.has(value)) {
+            errors.push(`components[${index}].match.operation is unsupported`);
           }
         }
       }
