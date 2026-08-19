@@ -960,11 +960,13 @@ export class AntseedNode extends EventEmitter {
     const ON_CHAIN_STATS_TTL_MS = 60_000;
     const nowMs = Date.now();
     const queue = peers.slice();
+    const peersWithCompleteStats = new Set<PeerInfo>();
     const verifyOne = async (p: PeerInfo): Promise<void> => {
       if (
         typeof p.onChainStatsFetchedAt === 'number'
         && nowMs - p.onChainStatsFetchedAt < ON_CHAIN_STATS_TTL_MS
       ) {
+        peersWithCompleteStats.add(p);
         return;
       }
       try {
@@ -973,10 +975,13 @@ export class AntseedNode extends EventEmitter {
           : peerIdToAddress(p.peerId);
         const [agentId, stake, stakedAt] = await Promise.all([
           stakingClient.getAgentId(evmAddress),
-          stakingClient.getStake(evmAddress).catch(() => 0n),
+          stakingClient.getStake(evmAddress).catch(() => null),
           stakingClient.getStakedAt(evmAddress).catch(() => null),
         ]);
         const stats = await channelsClient.getAgentStats(agentId);
+        if (stake === null || stakedAt === null) {
+          return;
+        }
         p.onChainAgentId = agentId;
         p.onChainStakeUsdcMicros = stake <= BigInt(Number.MAX_SAFE_INTEGER)
           ? Number(stake)
@@ -997,9 +1002,10 @@ export class AntseedNode extends EventEmitter {
           p.onChainStakedAtSec = stakedAt;
         }
         p.onChainStatsFetchedAt = Date.now();
+        peersWithCompleteStats.add(p);
       } catch {
-        // Per-peer verification failure — keep whatever seller metadata claimed
-        // (channelCount/ghostCount); volume/lastSettled remain undefined.
+        // Per-peer verification failure — preserve the previous complete
+        // snapshot, or leave a newly discovered peer unenriched.
       }
     };
     const workers: Array<Promise<void>> = [];
@@ -1014,15 +1020,16 @@ export class AntseedNode extends EventEmitter {
     }
     await Promise.all(workers);
 
-    this._applyTrustAndSybil(peers);
+    this._applyTrustAndSybil(peers, peersWithCompleteStats);
   }
 
-  private _applyTrustAndSybil(peers: PeerInfo[]): void {
+  private _applyTrustAndSybil(peers: PeerInfo[], peersToUpdate?: ReadonlySet<PeerInfo>): void {
     if (peers.length === 0) return;
     const ctx: SybilContext | undefined = peers.length >= 2
       ? buildSybilContext(peers)
       : undefined;
     for (const p of peers) {
+      if (peersToUpdate && !peersToUpdate.has(p)) continue;
       const trust = computeOnChainTrust(p);
       if (trust === null) continue;
       p.onChainTrustScore = trust;
