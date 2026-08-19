@@ -67,6 +67,7 @@ antseed dev                           Run seller + buyer locally for testing
 | Option | Purpose |
 |---|---|
 | `--upstream <model>` | Map the public service ID to an upstream model ID |
+| `--venice-edit-model <model>` | Venice-only native edit model; enables image editing for this service |
 | `--input`, `--cached`, `--output` | Token prices in USD per million tokens |
 | `--categories <csv>` | Discovery tags |
 | `--capabilities <json>` | Model hints such as context window, input modalities, reasoning, and tool use |
@@ -80,6 +81,8 @@ antseed config seller add-service openai flux.1-schnell \
   --capabilities '{"inputs":["text","image"]}' \
   --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.003}]}}'
 ```
+
+For Venice, `--venice-edit-model` enables native `/api/v1/image/edit` translation and image-input advertisement for that service. The command stores the value as `imageEditModel` under that service in `config.json`, and seller startup loads it automatically. Configure one shared `openai-images` price for generation and edits. Omit it for generation-only services and do not use it with other upstreams.
 
 `antseed seller setup` exposes the same capability and unit-billing fields interactively. `antseed seller start` warns if unit billing is configured for a plugin that does not support it. Image services are not health-probed because a meaningful probe would incur an upstream generation charge.
 

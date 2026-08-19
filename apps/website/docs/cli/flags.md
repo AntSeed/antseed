@@ -42,11 +42,12 @@ Service capabilities and image unit pricing are durable service configuration ra
 
 ```bash
 antseed config seller add-service <provider> <service> \
+  --venice-edit-model '<venice-edit-model>' \
   --capabilities '<json>' \
   --unit-billing-models '<json>'
 ```
 
-They can also be entered in `antseed seller setup` or written directly under `seller.providers.<provider>.services.<service>` in `config.json`.
+Capabilities and unit billing can also be entered in `antseed seller setup`. Native Venice edit pairings can be written directly as `imageEditModel` under `seller.providers.<provider>.services.<service>` in `config.json`.
 
 ## Metrics Flags
 
