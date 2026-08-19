@@ -6,6 +6,8 @@
 
 import type { Signer } from 'ethers';
 import {
+  CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
+  CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
   ConnectionState,
   FrameDecoder,
   MessageType,
@@ -43,13 +45,20 @@ export interface ConnectionOptions {
   onConnectionInfo?: (info: ConnectionPathInfo) => void;
 }
 
+/** @deprecated Use ConnectionPathInfo. */
+export type ConnectionInfo = ConnectionPathInfo;
+
 const DATA_CHANNEL_LABEL = 'antseed-data';
 const PING_INTERVAL_MS = 15_000;
 const MAX_MISSED_PONGS = 3;
-const DEFAULT_ICE_SERVERS = [
-  'stun:stun.l.google.com:19302',
-  'stun:stun1.l.google.com:19302',
-  'stun:stun2.l.google.com:19302',
+const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
+];
+const DEFAULT_CAPABILITIES = [
+  CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
+  CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
 ];
 
 type StateListener = (state: ConnectionState) => void;
@@ -60,7 +69,7 @@ export class SellerConnection {
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private missedPongs = 0;
   private awaitingPong = false;
-  private _state: ConnectionState = ConnectionState.Open;
+  private _state: ConnectionState = ConnectionState.Connecting;
   private stateListeners = new Set<StateListener>();
 
   /** Set by the session wiring; receives every non-keepalive inbound frame. */
@@ -86,7 +95,7 @@ export class SellerConnection {
     signaling.sendHello({
       type: 'hello',
       auth: hello,
-      capabilities: options.capabilities ?? [],
+      capabilities: options.capabilities ?? DEFAULT_CAPABILITIES,
     });
 
     const pc = new env.RTCPeerConnection({
@@ -135,29 +144,40 @@ export class SellerConnection {
     await pc.setLocalDescription(offer);
     signaling.sendSignal({ type: 'sdp', sdp: offer.sdp ?? '', descriptionType: 'offer' });
 
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error(`connection timeout after ${connectTimeoutMs}ms`)),
-        connectTimeoutMs,
-      );
-      dc.onopen = () => {
-        clearTimeout(timer);
-        resolve();
-      };
-      dc.onerror = (event) => {
-        clearTimeout(timer);
-        reject(new Error(`datachannel error: ${String((event as ErrorEvent).message ?? event)}`));
-      };
-      pc.onconnectionstatechange = () => {
-        if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error(`connection timeout after ${connectTimeoutMs}ms`)),
+          connectTimeoutMs,
+        );
+        dc.onopen = () => {
           clearTimeout(timer);
-          reject(new Error(`peer connection ${pc.connectionState}`));
-        }
-      };
-    });
+          resolve();
+        };
+        dc.onerror = (event) => {
+          clearTimeout(timer);
+          reject(new Error(`datachannel error: ${String((event as ErrorEvent).message ?? event)}`));
+        };
+        pc.onconnectionstatechange = () => {
+          if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+            clearTimeout(timer);
+            reject(new Error(`peer connection ${pc.connectionState}`));
+          }
+        };
+      });
+    } catch (error) {
+      conn.close();
+      throw error;
+    }
 
+    conn.setState(ConnectionState.Open);
     dc.onmessage = (event) => conn.handleMessage(event.data as ArrayBuffer | string);
     dc.onclose = () => conn.fail('datachannel closed');
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        conn.fail(`peer connection ${pc.connectionState}`);
+      }
+    };
     conn.startKeepalive();
 
     if (options.onConnectionInfo) {

@@ -21,7 +21,8 @@ For every public package, list commits touching it since its version was last bu
 ```bash
 for p in packages/protocol packages/api-adapter packages/buyer-core packages/node \
          packages/provider-core packages/router-core packages/ant-agent \
-         plugins/* apps/cli apps/payments apps/network-stats; do
+         packages/web-sdk plugins/* apps/cli apps/payments apps/network-stats \
+         apps/relay; do
   bump=$(git log origin/main -1 --format=%H -G'"version": ' -- $p/package.json)
   echo "=== $p"
   git log --oneline --no-merges $bump..origin/main -- $p
@@ -116,4 +117,5 @@ plugins/*    provider-anthropic, provider-claude-code, provider-claude-oauth,
              provider-openai, provider-openai-responses, provider-local-llm,
              router-local
 apps/*       @antseed/cli, @antseed/network-stats, @antseed/payments
+             @antseed/relay
 ```

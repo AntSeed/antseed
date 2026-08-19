@@ -44,10 +44,13 @@ function createMockBpm(): BuyerPaymentManager & Record<string, unknown> {
     getActiveSession: vi.fn().mockReturnValue(null),
     retireSession: vi.fn(),
     canReplayReserveAuth: vi.fn().mockReturnValue(false),
+    hasPendingReserveAuth: vi.fn().mockReturnValue(false),
+    reconcileReserveAmount: vi.fn().mockResolvedValue(undefined),
     extendCurrentSpendingAuth: vi.fn().mockResolvedValue(undefined),
     getCumulativeAmount: vi.fn().mockReturnValue(0n),
     resendCurrentSpendingAuth: vi.fn().mockResolvedValue(undefined),
     resendReserveAuth: vi.fn().mockResolvedValue(undefined),
+    resendPendingReserveAuth: vi.fn().mockResolvedValue(undefined),
     isLockConfirmed: vi.fn().mockReturnValue(false),
     isLockRejected: vi.fn().mockReturnValue(false),
     recordAndPersistTokens: vi.fn(),
@@ -190,6 +193,43 @@ describe('BuyerPaymentNegotiator', () => {
       await negotiator.preparePreRequestAuth(peer, conn);
 
       expect(bpm.topUpReserve).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('recoverPendingReserveBeforeRequest', () => {
+    it('reconciles an initial reserve that reached chain before AuthAck was lost', async () => {
+      let pending = true;
+      (bpm.getActiveSession as ReturnType<typeof vi.fn>)
+        .mockReturnValue(makeActiveSession(SELLER_PEER_ID));
+      (bpm.hasPendingReserveAuth as ReturnType<typeof vi.fn>)
+        .mockImplementation(() => pending);
+      (bpm.reconcileReserveAmount as ReturnType<typeof vi.fn>)
+        .mockImplementation(async () => {
+          pending = false;
+          (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
+        });
+
+      await negotiator.recoverPendingReserveBeforeRequest(peer, conn);
+
+      expect(channelsClient.getSession).toHaveBeenCalled();
+      expect(bpm.reconcileReserveAmount).toHaveBeenCalledWith(peer.peerId, 1_000_000n);
+      expect(bpm.resendCurrentSpendingAuth).toHaveBeenCalledWith(peer.peerId, expect.anything());
+    });
+
+    it('fails closed when pending reserve recovery has no chain client', async () => {
+      (bpm.hasPendingReserveAuth as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      negotiator = new BuyerPaymentNegotiator(
+        identity,
+        bpm as unknown as BuyerPaymentManager,
+        depositsClient,
+        null,
+        channelStore,
+        config,
+        emitter,
+      );
+
+      await expect(negotiator.recoverPendingReserveBeforeRequest(peer, conn))
+        .rejects.toThrow(/without an on-chain channels client/);
     });
   });
 
@@ -892,6 +932,16 @@ describe('BuyerPaymentNegotiator', () => {
     it('throws when there is no active session', async () => {
       (bpm.getActiveSession as ReturnType<typeof vi.fn>).mockReturnValue(null);
       await expect(negotiator.requestChannelClose(SELLER_PEER_ID, conn)).rejects.toThrow(/No active payment channel/);
+    });
+
+    it('does not transmit close when the pre-close authorization is not durable', async () => {
+      vi.spyOn(negotiator, 'sendPostResponseAuthTo')
+        .mockRejectedValue(new Error('IndexedDB persistence failed'));
+
+      await expect(negotiator.requestChannelClose(SELLER_PEER_ID, conn))
+        .rejects.toThrow('IndexedDB persistence failed');
+      expect((bpm as Record<string, unknown>).buildCloseChannelRequest).not.toHaveBeenCalled();
+      expect(conn.send).not.toHaveBeenCalled();
     });
 
     it('sends the request and retires the session once the seller confirms', async () => {

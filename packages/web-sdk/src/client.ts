@@ -2,42 +2,49 @@
  * High-level browser buyer built on the SHARED buyer machinery from
  * @antseed/buyer-core — the same BuyerRequestHandler / BuyerPaymentManager /
  * BuyerPaymentNegotiator stack the node buyer proxy runs, wired to a WebRTC
- * transport and an injectable channel store (in-memory by default).
+ * transport and an injectable channel store. `create()` supplies durable
+ * browser persistence; the public constructor retains the in-memory default.
  */
 
+import { Contract, type AbstractSigner } from 'ethers';
 import {
   BuyerPaymentManager,
   BuyerPaymentNegotiator,
   BuyerRequestHandler,
+  CHANNEL_ROLE,
+  CHANNEL_STATUS,
   ChannelsClient,
   DepositsClient,
   ProxyMux,
+  SellerAddressResolver,
   VerificationMux,
   type BuyerConnection,
+  type BuyerChannelStore,
   type BuyerIdentity,
   type BuyerPeerView,
   type BuyerSigner,
   type PaymentMux,
+  type StoredChannel,
 } from '@antseed/buyer-core';
-import type { BuyerChannelStore } from '@antseed/buyer-core/channel-store-types';
 import {
   MessageType,
   toPeerId,
+  type CloseChannelResultPayload,
+  type PeerMetadata,
   type PeerId,
   type SerializedHttpRequest,
   type SerializedHttpResponse,
 } from '@antseed/protocol';
 import { SellerConnection, type ConnectionOptions, type RtcEnvironment } from './connection.js';
-import { MemoryChannelStore } from './channel-store.js';
+import { IndexedDbChannelStore, MemoryChannelStore } from './channel-store.js';
 import { signerFromPrivateKey } from './identity.js';
+import { BuyerTabLock, type WebLockManagerLike } from './tab-lock.js';
 
-export interface SellerSummary {
-  peerId: string;
+export interface SellerSummary extends BuyerPeerView {
   displayName?: string;
   publicAddress?: string;
-  providers: unknown[];
   sellerContract?: string;
-  [key: string]: unknown;
+  metadata?: PeerMetadata;
 }
 
 export interface WebPaymentConfig {
@@ -66,24 +73,33 @@ export interface ClientOptions {
    */
   privateKey?: string;
   wallet?: BuyerSigner;
-  /**
-   * Channel bookkeeping store. Defaults to a fresh in-memory store: channel
-   * state is lost on reload and reserved funds stay locked until the session
-   * deadline. Production apps should inject a durable implementation whose
-   * `flush()` commits before resolving (e.g. IndexedDB behind a synchronous
-   * cache) — it is awaited after each signed authorization is persisted and
-   * before it is transmitted. When several tabs may share one store, the
-   * implementation must also serialize signing (e.g. Web Locks): SpendingAuth
-   * amounts are cumulative per channel, and two tabs signing concurrently
-   * corrupt the sequence.
-   */
-  channelStore?: BuyerChannelStore;
   /** Defaults to Base mainnet (chain 8453). */
   payment?: Partial<WebPaymentConfig>;
   connection?: ConnectionOptions;
   requestTimeoutMs?: number;
+  /** Receives asynchronous transport/protocol failures before the session closes. */
+  onError?: (error: Error, context: { sellerPeerId: PeerId }) => void;
+  /** Receives background IndexedDB failures as soon as a queued write fails. */
+  onPersistenceError?: (error: Error) => void;
+  /** Reject non-empty DHT snapshots older than this. Defaults to 15 minutes. */
+  maxSellerSnapshotAgeMs?: number;
   /** Override RTCPeerConnection/WebSocket (browser globals by default). */
   env?: Partial<RtcEnvironment>;
+  /**
+   * Pre-opened custom channel store. The public constructor defaults to a
+   * fresh in-memory store; production browser apps should prefer `create()`
+   * so signed authorizations are durably committed before transmission and
+   * signing is serialized across tabs.
+   */
+  channelStore?: BuyerChannelStore;
+  /** Durable browser storage and cross-tab coordination options. */
+  persistence?: {
+    databaseName?: string;
+    indexedDB?: IDBFactory;
+    locks?: WebLockManagerLike;
+    /** Wait for the other tab to release the buyer instead of failing fast. */
+    waitForLock?: boolean;
+  };
   /** Override the on-chain read clients (tests, custom RPC stacks). */
   depositsClient?: DepositsClient | null;
   channelsClient?: ChannelsClient | null;
@@ -126,13 +142,18 @@ export class AntseedWebClient {
   private readonly env: RtcEnvironment;
   private readonly payment: WebPaymentConfig;
   private readonly store: BuyerChannelStore;
+  private readonly channelsClient: ChannelsClient | null;
   private readonly handler: BuyerRequestHandler;
   readonly negotiator: BuyerPaymentNegotiator;
-  private readonly sessions = new Map<string, SessionWiring>();
+  private readonly sessions = new Map<PeerId, SessionWiring>();
+  private readonly sessionPromises = new Map<PeerId, Promise<SessionWiring>>();
+  private closed = false;
 
-  constructor(private readonly options: ClientOptions) {
-    const wallet = options.wallet ?? (options.privateKey ? signerFromPrivateKey(options.privateKey) : null);
-    if (!wallet) throw new Error('provide privateKey or wallet');
+  constructor(
+    private readonly options: ClientOptions,
+    private readonly tabLock?: BuyerTabLock,
+  ) {
+    const wallet = resolveWallet(options);
     this.identity = { peerId: toPeerId(wallet.address.slice(2).toLowerCase()), wallet };
     this.store = options.channelStore ?? new MemoryChannelStore();
 
@@ -149,6 +170,45 @@ export class AntseedWebClient {
     }
     this.env = { RTCPeerConnection: RTCPeerConnectionImpl, WebSocket: WebSocketImpl };
     this.payment = { ...BASE_MAINNET, ...options.payment };
+
+    let depositsClient: DepositsClient | null = null;
+    if (options.depositsClient !== undefined) {
+      depositsClient = options.depositsClient;
+    } else if (this.payment.rpcUrl) {
+      depositsClient = new DepositsClient({
+        rpcUrl: this.payment.rpcUrl,
+        ...(this.payment.fallbackRpcUrls ? { fallbackRpcUrls: this.payment.fallbackRpcUrls } : {}),
+        contractAddress: this.payment.depositsContractAddress,
+        usdcAddress: this.payment.usdcAddress,
+        evmChainId: this.payment.chainId,
+      });
+    }
+
+    let channelsClient: ChannelsClient | null = null;
+    if (options.channelsClient !== undefined) {
+      channelsClient = options.channelsClient;
+    } else if (this.payment.rpcUrl) {
+      channelsClient = new ChannelsClient({
+        rpcUrl: this.payment.rpcUrl,
+        ...(this.payment.fallbackRpcUrls ? { fallbackRpcUrls: this.payment.fallbackRpcUrls } : {}),
+        contractAddress: this.payment.channelsContractAddress,
+        evmChainId: this.payment.chainId,
+      });
+    }
+    this.channelsClient = channelsClient;
+
+    const sellerAddressResolver = channelsClient
+      ? new SellerAddressResolver({
+          isOperator: async (sellerContract, peerAddress) => {
+            const contract = new Contract(
+              sellerContract,
+              ['function isOperator(address) view returns (bool)'],
+              channelsClient.provider,
+            );
+            return contract.getFunction('isOperator')(peerAddress) as Promise<boolean>;
+          },
+        })
+      : undefined;
 
     const bpm = new BuyerPaymentManager(
       this.identity,
@@ -169,29 +229,8 @@ export class AntseedWebClient {
         dataDir: '',
       },
       this.store,
+      sellerAddressResolver,
     );
-
-    const depositsClient = options.depositsClient !== undefined
-      ? options.depositsClient
-      : this.payment.rpcUrl
-      ? new DepositsClient({
-          rpcUrl: this.payment.rpcUrl,
-          ...(this.payment.fallbackRpcUrls ? { fallbackRpcUrls: this.payment.fallbackRpcUrls } : {}),
-          contractAddress: this.payment.depositsContractAddress,
-          usdcAddress: this.payment.usdcAddress,
-          evmChainId: this.payment.chainId,
-        })
-      : null;
-    const channelsClient = options.channelsClient !== undefined
-      ? options.channelsClient
-      : this.payment.rpcUrl
-      ? new ChannelsClient({
-          rpcUrl: this.payment.rpcUrl,
-          ...(this.payment.fallbackRpcUrls ? { fallbackRpcUrls: this.payment.fallbackRpcUrls } : {}),
-          contractAddress: this.payment.channelsContractAddress,
-          evmChainId: this.payment.chainId,
-        })
-      : null;
 
     this.negotiator = new BuyerPaymentNegotiator(
       this.identity,
@@ -201,6 +240,7 @@ export class AntseedWebClient {
       this.store,
       {},
       { emit: () => true },
+      sellerAddressResolver,
     );
 
     this.handler = new BuyerRequestHandler(
@@ -218,6 +258,51 @@ export class AntseedWebClient {
     );
   }
 
+  /**
+   * Open a production browser client. This acquires the identity-wide tab lock
+   * and hydrates IndexedDB before BuyerPaymentManager is constructed.
+   */
+  static async create(options: ClientOptions): Promise<AntseedWebClient> {
+    const wallet = resolveWallet(options);
+    const payment = { ...BASE_MAINNET, ...options.payment };
+    const locks = options.persistence?.locks
+      ?? (globalThis.navigator as Navigator & { locks?: WebLockManagerLike } | undefined)?.locks;
+    if (!locks) {
+      throw new Error('Web Locks API unavailable — paid browser operation is disabled');
+    }
+
+    const scope = [
+      payment.chainId,
+      payment.channelsContractAddress.toLowerCase(),
+      wallet.address.toLowerCase(),
+    ].join(':');
+    const tabLock = await BuyerTabLock.acquire(`antseed:buyer:${scope}`, locks, {
+      wait: options.persistence?.waitForLock ?? false,
+    });
+
+    try {
+      const store = options.channelStore ?? await IndexedDbChannelStore.open({
+        databaseName: options.persistence?.databaseName ?? `antseed-web-sdk:${scope}`,
+        ...(options.persistence?.indexedDB ? { indexedDB: options.persistence.indexedDB } : {}),
+        ...(options.onPersistenceError ? { onWriteError: options.onPersistenceError } : {}),
+      });
+      const { privateKey: _privateKey, ...safeOptions } = options;
+      return new AntseedWebClient({ ...safeOptions, wallet, channelStore: store }, tabLock);
+    } catch (error) {
+      await tabLock.release();
+      throw error;
+    }
+  }
+
+  /**
+   * In-memory client for tests and free interoperability experiments. Paid
+   * applications must use `create()` so reload recovery and tab exclusion are
+   * active.
+   */
+  static ephemeral(options: ClientOptions): AntseedWebClient {
+    return new AntseedWebClient({ ...options, channelStore: options.channelStore ?? new MemoryChannelStore() });
+  }
+
   get peerId(): PeerId {
     return this.identity.peerId;
   }
@@ -225,48 +310,96 @@ export class AntseedWebClient {
   async sellers(): Promise<SellerSummary[]> {
     const res = await fetch(`${this.options.relayUrl.replace(/\/$/, '')}/sellers`);
     if (!res.ok) throw new Error(`relay /sellers failed: ${res.status}`);
-    const body = (await res.json()) as { peers: SellerSummary[]; static: { peerId: string; host: string; port: number }[] };
+    const body = (await res.json()) as {
+      peers: PeerMetadata[];
+      static: { peerId: string; host: string; port: number }[];
+      updatedAt: string;
+    };
+    let useDiscoveredPeers = body.peers.length > 0;
+    if (useDiscoveredPeers) {
+      const updatedAt = Date.parse(body.updatedAt);
+      const maxAge = this.options.maxSellerSnapshotAgeMs ?? 15 * 60_000;
+      if (!Number.isFinite(updatedAt) || Date.now() - updatedAt > maxAge) {
+        if (body.static.length === 0) throw new Error('relay seller snapshot is stale');
+        useDiscoveredPeers = false;
+      }
+    }
     const byId = new Map<string, SellerSummary>();
     for (const entry of body.static) {
-      byId.set(entry.peerId, { peerId: entry.peerId, providers: [], publicAddress: `${entry.host}:${entry.port}` });
+      const peerId = toPeerId(entry.peerId.toLowerCase());
+      byId.set(peerId, { peerId, providers: [], publicAddress: `${entry.host}:${entry.port}` });
     }
-    for (const peer of body.peers) byId.set(peer.peerId, peer);
+    if (useDiscoveredPeers) {
+      for (const metadata of body.peers) {
+        const peer = sellerSummaryFromMetadata(metadata);
+        byId.set(peer.peerId, peer);
+      }
+    }
     return [...byId.values()];
   }
 
   /** Connect to a seller. `peer` extras (pricing, metadata) improve cost validation. */
-  async connect(sellerPeerId: string, peer: Partial<BuyerPeerView> = {}): Promise<SellerSession> {
+  async connect(
+    seller: string | SellerSummary,
+    peer: Partial<BuyerPeerView> = {},
+  ): Promise<SellerSession> {
+    this.assertOpen();
+    const sellerPeerId = typeof seller === 'string' ? seller : seller.peerId;
     const peerId = toPeerId(sellerPeerId.toLowerCase());
-    const peerView: BuyerPeerView = { ...peer, peerId };
+    const sellerView = typeof seller === 'string'
+      ? {}
+      : seller as unknown as Partial<BuyerPeerView>;
+    const peerView: BuyerPeerView = { ...sellerView, ...peer, peerId };
     await this.requireSession(peerId);
     return new SellerSession(this, peerView);
   }
 
   /** @internal */
   async requireSession(peerId: PeerId): Promise<SessionWiring> {
+    this.assertOpen();
     const existing = this.sessions.get(peerId);
     if (existing) {
       if (existing.conn.isOpen) return existing;
       // Close a lingering (e.g. mid-connect) session before overwriting it.
       existing.conn.close();
+      this.dropSession(peerId);
     }
 
+    const pending = this.sessionPromises.get(peerId);
+    if (pending) return pending;
+
+    const opening = this.openSession(peerId);
+    this.sessionPromises.set(peerId, opening);
+    try {
+      return await opening;
+    } finally {
+      if (this.sessionPromises.get(peerId) === opening) {
+        this.sessionPromises.delete(peerId);
+      }
+    }
+  }
+
+  private async openSession(peerId: PeerId): Promise<SessionWiring> {
     const bridgeUrl = `${this.options.relayUrl.replace(/\/$/, '').replace(/^http/, 'ws')}/bridge/${peerId}`;
     const conn = await SellerConnection.connect(bridgeUrl, this.identity.wallet, this.env, this.options.connection);
+    if (this.closed) {
+      conn.close();
+      throw new Error('AntseedWebClient is closed');
+    }
     const proxyMux = new ProxyMux(conn, { uploadThresholdBytes: BROWSER_UPLOAD_THRESHOLD_BYTES });
     const verificationMux = new VerificationMux(conn);
     const paymentMux: PaymentMux = this.negotiator.getOrCreatePaymentMux(peerId, conn as BuyerConnection);
 
     conn.onFrame = (frame) => {
       if (frame.type >= 0x50 && frame.type <= 0x5f) {
-        void paymentMux.handleFrame(frame);
+        void paymentMux.handleFrame(frame).catch((error: unknown) => this.failSession(peerId, error));
       } else if (frame.type >= 0x80 && frame.type <= 0x8f) {
-        void verificationMux.handleFrame(frame);
+        void verificationMux.handleFrame(frame).catch((error: unknown) => this.failSession(peerId, error));
       } else if (frame.type !== MessageType.Ping && frame.type !== MessageType.Pong) {
-        void proxyMux.handleFrame(frame);
+        void proxyMux.handleFrame(frame).catch((error: unknown) => this.failSession(peerId, error));
       }
     };
-    conn.onClose = () => this.sessions.delete(peerId);
+    conn.onClose = () => this.dropSession(peerId);
 
     const wiring: SessionWiring = { conn, proxyMux, verificationMux };
     this.sessions.set(peerId, wiring);
@@ -274,11 +407,13 @@ export class AntseedWebClient {
   }
 
   /** @internal */
-  sendRequest(
+  async sendRequest(
     peer: BuyerPeerView,
     req: SerializedHttpRequest,
     callbacks?: { onChunk?: (data: Uint8Array, done: boolean) => void },
   ): Promise<SerializedHttpResponse> {
+    const session = await this.requireSession(peer.peerId);
+    await this.negotiator.recoverPendingReserveBeforeRequest(peer, session.conn);
     const streamCallbacks = callbacks?.onChunk
       ? {
           onResponseChunk: (chunk: { data: Uint8Array; done: boolean }) =>
@@ -292,13 +427,178 @@ export class AntseedWebClient {
     const peerId = toPeerId(sellerPeerId.toLowerCase());
     const session = this.sessions.get(peerId);
     session?.conn.close();
-    this.sessions.delete(peerId);
+    this.dropSession(peerId);
   }
 
   closeAll(): void {
-    for (const [, session] of this.sessions) session.conn.close();
-    this.sessions.clear();
+    for (const [peerId, session] of [...this.sessions]) {
+      session.conn.close();
+      this.dropSession(peerId);
+    }
   }
+
+  listActiveChannels(): StoredChannel[] {
+    return this.store.getActiveChannelsByBuyer(CHANNEL_ROLE.BUYER, this.identity.wallet.address);
+  }
+
+  /** @internal */
+  getActiveChannelForPeer(sellerPeerId: string): StoredChannel | null {
+    return this.store.getActiveChannelByPeerAndBuyer(
+      toPeerId(sellerPeerId.toLowerCase()),
+      CHANNEL_ROLE.BUYER,
+      this.identity.wallet.address,
+    );
+  }
+
+  /** Start the contract grace period using the buyer's configured operator signer. */
+  async requestOnChainClose(channelId: string, operatorSigner: AbstractSigner): Promise<string> {
+    this.assertOwnedActiveChannel(channelId);
+    if (!this.channelsClient) throw new Error('channels client unavailable');
+    return this.channelsClient.requestClose(operatorSigner, channelId);
+  }
+
+  /** Release the remaining reserve after the contract grace period has elapsed. */
+  async withdrawTimedOutChannel(channelId: string, operatorSigner: AbstractSigner): Promise<string> {
+    this.assertOwnedActiveChannel(channelId);
+    if (!this.channelsClient) throw new Error('channels client unavailable');
+    const txHash = await this.channelsClient.withdraw(operatorSigner, channelId);
+    this.store.updateChannelStatus(channelId, CHANNEL_STATUS.TIMEOUT);
+    await this.store.flush?.();
+    return txHash;
+  }
+
+  /** Close all transports, flush storage, and release this buyer for another tab. */
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    await this.negotiator.drainPendingNeedAuth();
+    this.closeAll();
+    this.negotiator.cleanup();
+    try {
+      await this.store.flush?.();
+      await this.store.close?.();
+    } finally {
+      await this.tabLock?.release();
+    }
+  }
+
+  /** @internal */
+  async requestChannelClose(
+    peer: BuyerPeerView,
+    options?: { includeAuth?: boolean; timeoutMs?: number },
+  ): Promise<CloseChannelResultPayload> {
+    const session = await this.requireSession(peer.peerId);
+    const result = await this.negotiator.requestChannelClose(peer.peerId, session.conn, options);
+    await this.store.flush?.();
+    return result;
+  }
+
+  private dropSession(peerId: PeerId): void {
+    const session = this.sessions.get(peerId);
+    session?.verificationMux.close();
+    this.negotiator.onPeerDisconnect(peerId);
+    this.sessions.delete(peerId);
+  }
+
+  private failSession(peerId: PeerId, cause: unknown): void {
+    const error = cause instanceof Error ? cause : new Error(String(cause));
+    try {
+      this.options.onError?.(error, { sellerPeerId: peerId });
+    } catch {
+      // Error observers are diagnostic only and must not create a second
+      // unhandled rejection while the failed session is being torn down.
+    } finally {
+      this.disconnect(peerId);
+    }
+  }
+
+  private assertOpen(): void {
+    if (this.closed) throw new Error('AntseedWebClient is closed');
+  }
+
+  private assertOwnedActiveChannel(channelId: string): StoredChannel {
+    this.assertOpen();
+    const channel = this.store.getChannel(channelId);
+    if (
+      !channel
+      || channel.status !== CHANNEL_STATUS.ACTIVE
+      || channel.role !== CHANNEL_ROLE.BUYER
+      || channel.buyerEvmAddr.toLowerCase() !== this.identity.wallet.address.toLowerCase()
+    ) {
+      throw new Error('active channel is not owned by this buyer');
+    }
+    return channel;
+  }
+}
+
+export function sellerSummaryFromMetadata(metadata: PeerMetadata): SellerSummary {
+  const providers = metadata.providers.map((provider) => provider.provider);
+  const firstProvider = metadata.providers[0];
+  const providerPricing: NonNullable<BuyerPeerView['providerPricing']> = {};
+  const providerServiceCategories: NonNullable<BuyerPeerView['providerServiceCategories']> = {};
+  const providerServiceApiProtocols: NonNullable<BuyerPeerView['providerServiceApiProtocols']> = {};
+  const providerServiceUnitBillingModels: NonNullable<BuyerPeerView['providerServiceUnitBillingModels']> = {};
+  const providerServiceCapabilities: NonNullable<BuyerPeerView['providerServiceCapabilities']> = {};
+
+  for (const announcement of metadata.providers) {
+    const provider = announcement.provider;
+    const services = Object.fromEntries(
+      announcement.services.map((service) => [
+        service,
+        announcement.servicePricing?.[service] ?? announcement.defaultPricing,
+      ]),
+    );
+    const pricing = providerPricing[provider];
+    if (pricing) {
+      pricing.services ??= {};
+      Object.assign(pricing.services, services);
+    } else {
+      providerPricing[provider] = {
+        defaults: { ...announcement.defaultPricing },
+        ...(Object.keys(services).length > 0 ? { services } : {}),
+      };
+    }
+
+    mergeServiceMatrix(providerServiceCategories, provider, announcement.serviceCategories);
+    mergeServiceMatrix(providerServiceApiProtocols, provider, announcement.serviceApiProtocols);
+    mergeServiceMatrix(
+      providerServiceUnitBillingModels,
+      provider,
+      announcement.serviceUnitBillingModels,
+    );
+    mergeServiceMatrix(providerServiceCapabilities, provider, announcement.serviceCapabilities);
+  }
+
+  return {
+    peerId: toPeerId(metadata.peerId.toLowerCase()),
+    ...(metadata.displayName ? { displayName: metadata.displayName } : {}),
+    ...(metadata.publicAddress ? { publicAddress: metadata.publicAddress } : {}),
+    ...(metadata.sellerContract ? { sellerContract: metadata.sellerContract } : {}),
+    metadata,
+    providers,
+    ...(metadata.capabilities?.length ? { capabilities: [...metadata.capabilities] } : {}),
+    ...(Object.keys(providerPricing).length ? { providerPricing } : {}),
+    ...(Object.keys(providerServiceCategories).length ? { providerServiceCategories } : {}),
+    ...(Object.keys(providerServiceApiProtocols).length ? { providerServiceApiProtocols } : {}),
+    ...(Object.keys(providerServiceUnitBillingModels).length
+      ? { providerServiceUnitBillingModels }
+      : {}),
+    ...(Object.keys(providerServiceCapabilities).length ? { providerServiceCapabilities } : {}),
+    defaultInputUsdPerMillion: firstProvider?.defaultPricing.inputUsdPerMillion,
+    defaultOutputUsdPerMillion: firstProvider?.defaultPricing.outputUsdPerMillion,
+    defaultCachedInputUsdPerMillion: firstProvider?.defaultPricing.cachedInputUsdPerMillion,
+  };
+}
+
+function mergeServiceMatrix<T>(
+  target: Record<string, { services: Record<string, T> }>,
+  provider: string,
+  services: Record<string, T> | undefined,
+): void {
+  if (!services || Object.keys(services).length === 0) return;
+  const existing = target[provider];
+  if (existing) Object.assign(existing.services, services);
+  else target[provider] = { services: { ...services } };
 }
 
 export class SellerSession {
@@ -329,4 +629,35 @@ export class SellerSession {
   close(): void {
     this.client.disconnect(this.peer.peerId);
   }
+
+  /** Ask the seller to settle and release this payment channel. */
+  closeChannel(options?: {
+    includeAuth?: boolean;
+    timeoutMs?: number;
+  }): Promise<CloseChannelResultPayload> {
+    return this.client.requestChannelClose(this.peer, options);
+  }
+
+  /** Start the on-chain timeout path when cooperative close is unavailable. */
+  requestOnChainClose(operatorSigner: AbstractSigner): Promise<string> {
+    return this.client.requestOnChainClose(this.requireActiveChannel().sessionId, operatorSigner);
+  }
+
+  /** Withdraw after the on-chain close grace period. */
+  withdrawTimedOutChannel(operatorSigner: AbstractSigner): Promise<string> {
+    return this.client.withdrawTimedOutChannel(this.requireActiveChannel().sessionId, operatorSigner);
+  }
+
+  private requireActiveChannel(): StoredChannel {
+    const channel = this.client.getActiveChannelForPeer(this.peer.peerId);
+    if (!channel) throw new Error(`No active payment channel with seller ${this.peer.peerId.slice(0, 12)}...`);
+    return channel;
+  }
+}
+
+function resolveWallet(options: ClientOptions): BuyerSigner {
+  const wallet = options.wallet
+    ?? (options.privateKey ? signerFromPrivateKey(options.privateKey) : null);
+  if (!wallet) throw new Error('provide privateKey or wallet');
+  return wallet;
 }

@@ -210,7 +210,7 @@ beforeAll(async () => {
   });
   await relay.start();
 
-  const client = new AntseedWebClient({
+  const client = AntseedWebClient.ephemeral({
     relayUrl: `http://127.0.0.1:${relay.address().port}`,
     privateKey: buyerWallet.privateKey,
     payment: { chainId: CHAIN_ID, channelsContractAddress: CHANNELS_ADDRESS, rpcUrl: '' },
