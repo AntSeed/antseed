@@ -7,7 +7,7 @@ import {
   type PeerMetadata,
 } from '@antseed/protocol';
 import { CHANNEL_ROLE, CHANNEL_STATUS } from '@antseed/buyer-core';
-import { AntseedWebClient, sellerSummaryFromMetadata } from './client.js';
+import { AntseedWebClient, SellerSession, sellerSummaryFromMetadata } from './client.js';
 import { SellerConnection } from './connection.js';
 import { MemoryChannelStore } from './channel-store.js';
 import {
@@ -76,6 +76,41 @@ describe('AntseedWebClient.create', () => {
 
     expect(connect).toHaveBeenCalledTimes(1);
     expect(first.peer.peerId).toBe(second.peer.peerId);
+    await client.close();
+  });
+
+  it('returns static sellers while ignoring a stale DHT snapshot', async () => {
+    const staticPeerId = '66'.repeat(20);
+    const stalePeerId = '55'.repeat(20);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      peers: [{
+        peerId: stalePeerId,
+        version: 12,
+        region: 'global',
+        timestamp: Date.now() - 60_000,
+        signature: '0xsig',
+        capabilities: [],
+        providers: [],
+      }],
+      static: [{ peerId: staticPeerId, host: 'static.example', port: 8917 }],
+      updatedAt: new Date(Date.now() - 60_000).toISOString(),
+    }), { status: 200 }));
+    const client = AntseedWebClient.ephemeral({
+      relayUrl: 'http://relay.invalid',
+      wallet: Wallet.createRandom(),
+      payment: { rpcUrl: '' },
+      maxSellerSnapshotAgeMs: 1_000,
+      env: {
+        RTCPeerConnection: class {} as unknown as typeof RTCPeerConnection,
+        WebSocket: class {} as never,
+      },
+    });
+
+    await expect(client.sellers()).resolves.toEqual([{
+      peerId: staticPeerId,
+      providers: [],
+      publicAddress: 'static.example:8917',
+    }]);
     await client.close();
   });
 
@@ -266,6 +301,67 @@ describe('AntseedWebClient.create', () => {
     expect(channelsClient.requestClose).toHaveBeenCalledWith(operator, channelId);
     expect(channelsClient.withdraw).toHaveBeenCalledWith(operator, channelId);
     expect(store.getChannel(channelId)?.status).toBe(CHANNEL_STATUS.TIMEOUT);
+    await client.close();
+  });
+
+  it('targets the latest active channel for seller-level lifecycle actions', async () => {
+    const wallet = Wallet.createRandom();
+    const store = new MemoryChannelStore();
+    const peerId = '98'.repeat(20);
+    const olderChannelId = `0x${'21'.repeat(32)}`;
+    const newerChannelId = `0x${'22'.repeat(32)}`;
+    const now = Date.now();
+    const baseChannel = {
+      peerId,
+      role: CHANNEL_ROLE.BUYER,
+      sellerEvmAddr: `0x${peerId}`,
+      buyerEvmAddr: wallet.address,
+      nonce: 0,
+      authMax: '0',
+      deadline: Math.floor(now / 1000) + 900,
+      previousSessionId: `0x${'00'.repeat(32)}`,
+      previousConsumption: '0',
+      tokensDelivered: '0',
+      requestCount: 0,
+      reservedAt: now,
+      settledAt: null,
+      settledAmount: null,
+      status: CHANNEL_STATUS.ACTIVE,
+      latestBuyerSig: null,
+      latestSpendingAuthSig: null,
+      latestMetadata: null,
+    } as const;
+    store.upsertChannel({
+      ...baseChannel,
+      sessionId: olderChannelId,
+      createdAt: now - 1_000,
+      updatedAt: now - 1_000,
+    });
+    store.upsertChannel({
+      ...baseChannel,
+      sessionId: newerChannelId,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const channelsClient = {
+      requestClose: vi.fn().mockResolvedValue('0xrequest'),
+    };
+    const client = AntseedWebClient.ephemeral({
+      relayUrl: 'http://relay.invalid',
+      wallet,
+      payment: { rpcUrl: '' },
+      channelStore: store,
+      channelsClient: channelsClient as never,
+      env: {
+        RTCPeerConnection: class {} as unknown as typeof RTCPeerConnection,
+        WebSocket: class {} as never,
+      },
+    });
+    const seller = new SellerSession(client, { peerId });
+    const operator = Wallet.createRandom();
+
+    await expect(seller.requestOnChainClose(operator)).resolves.toBe('0xrequest');
+    expect(channelsClient.requestClose).toHaveBeenCalledWith(operator, newerChannelId);
     await client.close();
   });
 });

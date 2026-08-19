@@ -315,11 +315,13 @@ export class AntseedWebClient {
       static: { peerId: string; host: string; port: number }[];
       updatedAt: string;
     };
-    if (body.peers.length > 0) {
+    let useDiscoveredPeers = body.peers.length > 0;
+    if (useDiscoveredPeers) {
       const updatedAt = Date.parse(body.updatedAt);
       const maxAge = this.options.maxSellerSnapshotAgeMs ?? 15 * 60_000;
       if (!Number.isFinite(updatedAt) || Date.now() - updatedAt > maxAge) {
-        throw new Error('relay seller snapshot is stale');
+        if (body.static.length === 0) throw new Error('relay seller snapshot is stale');
+        useDiscoveredPeers = false;
       }
     }
     const byId = new Map<string, SellerSummary>();
@@ -327,9 +329,11 @@ export class AntseedWebClient {
       const peerId = toPeerId(entry.peerId.toLowerCase());
       byId.set(peerId, { peerId, providers: [], publicAddress: `${entry.host}:${entry.port}` });
     }
-    for (const metadata of body.peers) {
-      const peer = sellerSummaryFromMetadata(metadata);
-      byId.set(peer.peerId, peer);
+    if (useDiscoveredPeers) {
+      for (const metadata of body.peers) {
+        const peer = sellerSummaryFromMetadata(metadata);
+        byId.set(peer.peerId, peer);
+      }
     }
     return [...byId.values()];
   }
@@ -435,6 +439,15 @@ export class AntseedWebClient {
 
   listActiveChannels(): StoredChannel[] {
     return this.store.getActiveChannelsByBuyer(CHANNEL_ROLE.BUYER, this.identity.wallet.address);
+  }
+
+  /** @internal */
+  getActiveChannelForPeer(sellerPeerId: string): StoredChannel | null {
+    return this.store.getActiveChannelByPeerAndBuyer(
+      toPeerId(sellerPeerId.toLowerCase()),
+      CHANNEL_ROLE.BUYER,
+      this.identity.wallet.address,
+    );
   }
 
   /** Start the contract grace period using the buyer's configured operator signer. */
@@ -636,7 +649,7 @@ export class SellerSession {
   }
 
   private requireActiveChannel(): StoredChannel {
-    const channel = this.client.listActiveChannels().find((entry) => entry.peerId === this.peer.peerId);
+    const channel = this.client.getActiveChannelForPeer(this.peer.peerId);
     if (!channel) throw new Error(`No active payment channel with seller ${this.peer.peerId.slice(0, 12)}...`);
     return channel;
   }

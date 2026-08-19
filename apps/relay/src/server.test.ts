@@ -138,6 +138,16 @@ describe('RelayServer bridge', () => {
     expect(body).toHaveProperty('activeBridges');
     expect(JSON.stringify(body)).not.toContain(PEER_ID);
   });
+
+  it('keeps static sellers ready when DHT discovery is stale', () => {
+    const cache = new SellerCache({
+      dht: true,
+      pollIntervalMs: 60_000,
+      staticSellers: [{ peerId: PEER_ID, host: '127.0.0.1', port: sellerPort }],
+    });
+
+    expect(cache.isReady(1)).toBe(true);
+  });
 });
 
 describe('relay production admission controls', () => {

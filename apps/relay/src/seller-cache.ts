@@ -141,7 +141,8 @@ export class SellerCache {
 
   /** Whether this instance has a usable, sufficiently fresh seller view. */
   isReady(maxAgeMs: number): boolean {
-    if (!this.config.dht) return this.config.staticSellers.length > 0;
+    if (this.config.staticSellers.length > 0) return true;
+    if (!this.config.dht) return false;
     const updatedAtMs = Date.parse(this.updatedAt);
     return Number.isFinite(updatedAtMs) && Date.now() - updatedAtMs <= maxAgeMs;
   }
