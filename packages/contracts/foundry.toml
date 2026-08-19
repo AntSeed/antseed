@@ -13,6 +13,7 @@ optimizer = true
 optimizer_runs = 200
 via_ir = true
 ffi = false
+fs_permissions = [{ access = "read", path = "./test/fixtures" }]
 
 # Lean defaults — keep `forge test` fast for routine runs.
 [profile.default.fuzz]

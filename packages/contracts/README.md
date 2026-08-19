@@ -44,6 +44,27 @@ cd packages/node
 forge test
 ```
 
+## Wash-Trading Enforcement
+
+`AntseedWashTradingRegistry` accepts a pinned RISC Zero proof of conservative
+positive evidence for one seller. The guest must authenticate a seller-to-funder
+USDC path, funding of at least three distinct buyers, and at least 1,000 USDC of
+settlements by those buyers after funding. Every receipt is proven against its
+Base header and every referenced historical header must be accepted by the
+configured finalized Base state oracle.
+
+A valid proof permanently sets a 9,000-BPS reduction for that seller's future
+points through `AntseedWashTradingPointsPolicy`. It never penalizes buyers and
+does not claw back locked or claimed rewards.
+
+The proof does not claim complete seller activity, all buyers, a primary or
+first funder, a share of total volume, or a complete P0/P1 report. Because the
+rule uses only authenticated positive evidence, omitted data can only prevent a
+penalty; it cannot manufacture one. Enforcement therefore needs no evidence or
+findings root, fraud-proof guest, challenge window, watcher, revision, or
+finding-materialization lifecycle. See the sibling `loop-proof/README.md` for
+the exact guest statement and commands.
+
 ## Contracts
 
 ### ANTSToken.sol

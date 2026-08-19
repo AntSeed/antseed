@@ -1,183 +1,133 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { IRiscZeroVerifier } from "../interfaces/IRiscZeroVerifier.sol";
-import { IBlockhashSource } from "../interfaces/IBlockhashSource.sol";
+import { IBaseAnalysisStateOracle } from "../interfaces/IBaseAnalysisStateOracle.sol";
 import { IAntseedWashTradingRegistry } from "../interfaces/IAntseedWashTradingRegistry.sol";
+import { IRiscZeroVerifier } from "../interfaces/IRiscZeroVerifier.sol";
 
 /**
  * @title AntseedWashTradingRegistry
- * @notice Records proof-carrying wash-trading findings. A finding is a
- *         zero-knowledge proof that a funding loop exists on this chain:
- *         seller → (forwarding hops) → funder → buyer, followed by
- *         buyer → seller settlement volume, all read from authenticated
- *         Base receipts inside the zkVM guest.
+ * @notice Applies a seller-only future-reward penalty from authenticated,
+ *         monotonic positive evidence proven by the pinned RISC Zero guest.
  *
- *         Submission is permissionless: validity comes entirely from the
- *         RISC Zero seal, which only exists for an honest execution of the
- *         guest whose hash is `imageId`. The contract is fully immutable —
- *         no owner, no setters. One registry IS one rule version: a new
- *         predicate ships as a new registry deployment, and consumers switch
- *         by registering the matching AntseedWashTradingPointsPolicy in
- *         AntseedPointsPolicyRegistry. Recorded findings are permanent; nobody,
- *         including the deployer, can accept, remove, or alter one outside the
- *         proof path.
- *
- *         Consumers: AntseedWashTradingPointsPolicy reads `isFlagged` and is
- *         composed by AntseedPointsPolicyRegistry so flagged buyer/seller edges
- *         accrue zero reward points.
- *
- * @dev    Evidence block hashes are checked against `blockhashSource`
- *         (AntseedBlockhashKeeper). Fresh evidence must therefore be
- *         checkpointed or submitted within the native 256-block window.
- *         Historical evidence older than the keeper's records needs a guest
- *         version that walks parent hashes to a recent anchor (predicate v2).
+ * The proof need not be complete. Omitting evidence can only prevent a seller
+ * from reaching the thresholds; it cannot create an unsupported penalty.
  */
 contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
-    /// @dev Mirrors the guest's journal ABI encoding: abi.encode(LoopJournal).
+    uint32 public constant PREDICATE_VERSION = 2;
+    uint64 public constant BASE_CHAIN_ID = 8_453;
+    address public constant BASE_USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
+    address public constant ANTSEED_CHANNELS = 0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d;
+    address public constant ANTSEED_DEPOSITS = 0x0F7a3a8f4Da01637d1202bb5443fcF7F88F99fD2;
+    uint32 public constant MINIMUM_LINKED_BUYERS = 3;
+    uint128 public constant MINIMUM_SUSPICIOUS_VOLUME_RAW = 1_000_000_000;
+    uint16 public constant PENALTY_BPS = 9_000;
+
     struct BlockRef {
         uint64 number;
         bytes32 blockHash;
     }
 
-    struct LoopJournal {
+    struct SellerPenaltyJournal {
         uint32 predicateVersion;
         uint64 chainId;
         address usdc;
         address channels;
         address deposits;
         address seller;
-        address buyer;
         address funder;
+        uint32 linkedBuyerCount;
         uint32 hopCount;
+        uint16 penaltyBps;
         uint128 sellerOutflowRaw;
-        uint128 fundedRaw;
-        uint128 settledAfterFundingRaw;
-        uint64 fundingBlock;
+        uint128 totalFundedRaw;
+        uint128 suspiciousVolumeRaw;
+        uint64 earliestFundingBlock;
+        uint64 latestSettlementBlock;
         BlockRef[] blockRefs;
     }
 
-    struct Finding {
-        uint32 predicateVersion;
-        uint32 hopCount;
-        address funder;
-        uint128 fundedRaw;
-        uint128 settledAfterFundingRaw;
-        uint64 fundingBlock;
-        uint64 recordedAt;
-        address submitter;
-    }
-
     IRiscZeroVerifier public immutable verifier;
-    IBlockhashSource public immutable blockhashSource;
-    bytes32 public immutable imageId;
+    IBaseAnalysisStateOracle public immutable stateOracle;
+    bytes32 public immutable sellerPenaltyImageId;
 
-    /// @notice Proven loop findings keyed buyer → seller.
-    mapping(address => mapping(address => Finding)) public findings;
-
-    /// @notice Block of the first proven loop per seller (0 = never flagged).
-    ///         A seller flag is permanent and covers ALL of the seller's
-    ///         volume and locked-reward claims, not just the proven edge.
-    mapping(address => uint64) public sellerFlaggedAt;
-
-    event LoopFindingRecorded(
-        address indexed seller,
-        address indexed buyer,
-        address indexed funder,
-        uint32 hopCount,
-        uint128 fundedRaw,
-        uint128 settledAfterFundingRaw,
-        address submitter
-    );
+    mapping(address seller => uint16 penaltyBps) public override sellerPenaltyBps;
+    mapping(bytes32 journalDigest => bool consumed) public consumedJournalDigests;
 
     error ZeroAddress();
-    error WrongChain(uint64 journalChainId);
-    error WrongContracts();
-    error NoBlockRefs();
-    error BlockNotCanonical(uint64 number, bytes32 claimed);
+    error ZeroImageId();
+    error InvalidProofJournal();
+    error NonCanonicalBlock(uint64 blockNumber, bytes32 blockHash);
 
-    address public immutable usdc;
-    address public immutable channels;
-    address public immutable deposits;
+    event SellerPenaltyApplied(
+        address indexed seller,
+        address indexed funder,
+        bytes32 indexed journalDigest,
+        uint32 linkedBuyerCount,
+        uint128 suspiciousVolumeRaw,
+        uint16 penaltyBps
+    );
 
-    constructor(
-        address verifier_,
-        bytes32 imageId_,
-        address blockhashSource_,
-        address usdc_,
-        address channels_,
-        address deposits_
-    ) {
-        if (
-            verifier_ == address(0) || blockhashSource_ == address(0) || usdc_ == address(0)
-                || channels_ == address(0) || deposits_ == address(0)
-        ) revert ZeroAddress();
+    constructor(address verifier_, address stateOracle_, bytes32 sellerPenaltyImageId_) {
+        if (verifier_ == address(0) || stateOracle_ == address(0)) revert ZeroAddress();
+        if (sellerPenaltyImageId_ == bytes32(0)) revert ZeroImageId();
         verifier = IRiscZeroVerifier(verifier_);
-        imageId = imageId_;
-        blockhashSource = IBlockhashSource(blockhashSource_);
-        usdc = usdc_;
-        channels = channels_;
-        deposits = deposits_;
+        stateOracle = IBaseAnalysisStateOracle(stateOracle_);
+        sellerPenaltyImageId = sellerPenaltyImageId_;
     }
 
-    /// @notice Record a proven funding loop. Callable by anyone: the seal is
-    ///         the authority, the sender is only credited as submitter.
-    /// @param seal        RISC Zero receipt seal for `imageId`.
-    /// @param journalData The guest journal, exactly as committed
-    ///                    (abi.encode(LoopJournal)).
-    function submitLoopFinding(bytes calldata seal, bytes calldata journalData) external {
-        LoopJournal memory journal = abi.decode(journalData, (LoopJournal));
+    /**
+     * @notice Verifies a seller-penalty receipt and applies the fixed penalty.
+     * @return applied True only when this call newly penalizes the seller.
+     */
+    function submitSellerPenalty(bytes calldata seal, bytes calldata journalData) external returns (bool applied) {
+        bytes32 journalDigest = sha256(journalData);
+        if (consumedJournalDigests[journalDigest]) return false;
 
-        if (journal.chainId != block.chainid) revert WrongChain(journal.chainId);
-        if (journal.usdc != usdc || journal.channels != channels || journal.deposits != deposits) {
-            revert WrongContracts();
-        }
-        if (journal.blockRefs.length == 0) revert NoBlockRefs();
+        verifier.verify(seal, sellerPenaltyImageId, journalDigest);
+        SellerPenaltyJournal memory journal = abi.decode(journalData, (SellerPenaltyJournal));
+        _validateJournal(journal);
 
-        // The proof: this exact journal came out of the pinned guest.
-        verifier.verify(seal, imageId, sha256(journalData));
-
-        // The anchor: every block the guest relied on is canonical here.
-        IBlockhashSource source = blockhashSource;
-        for (uint256 i = 0; i < journal.blockRefs.length; i++) {
-            BlockRef memory ref = journal.blockRefs[i];
-            if (source.blockHash(ref.number) != ref.blockHash) {
-                revert BlockNotCanonical(ref.number, ref.blockHash);
+        uint64 previousBlock;
+        for (uint256 i = 0; i < journal.blockRefs.length; ++i) {
+            BlockRef memory blockRef = journal.blockRefs[i];
+            if (blockRef.blockHash == bytes32(0) || (i != 0 && blockRef.number <= previousBlock)) {
+                revert InvalidProofJournal();
             }
+            if (!stateOracle.isCanonicalBlock(blockRef.number, blockRef.blockHash)) {
+                revert NonCanonicalBlock(blockRef.number, blockRef.blockHash);
+            }
+            previousBlock = blockRef.number;
         }
 
-        if (sellerFlaggedAt[journal.seller] == 0) {
-            sellerFlaggedAt[journal.seller] = uint64(block.number);
-        }
-        findings[journal.buyer][journal.seller] = Finding({
-            predicateVersion: journal.predicateVersion,
-            hopCount: journal.hopCount,
-            funder: journal.funder,
-            fundedRaw: journal.fundedRaw,
-            settledAfterFundingRaw: journal.settledAfterFundingRaw,
-            fundingBlock: journal.fundingBlock,
-            recordedAt: uint64(block.number),
-            submitter: msg.sender
-        });
+        consumedJournalDigests[journalDigest] = true;
+        if (sellerPenaltyBps[journal.seller] == PENALTY_BPS) return false;
 
-        emit LoopFindingRecorded(
+        sellerPenaltyBps[journal.seller] = PENALTY_BPS;
+        emit SellerPenaltyApplied(
             journal.seller,
-            journal.buyer,
             journal.funder,
-            journal.hopCount,
-            journal.fundedRaw,
-            journal.settledAfterFundingRaw,
-            msg.sender
+            journalDigest,
+            journal.linkedBuyerCount,
+            journal.suspiciousVolumeRaw,
+            PENALTY_BPS
         );
+        return true;
     }
 
     /// @inheritdoc IAntseedWashTradingRegistry
-    function isFlagged(address buyer, address seller) external view returns (bool) {
-        return findings[buyer][seller].recordedAt != 0;
+    function isSellerPenalized(address seller) external view returns (bool) {
+        return sellerPenaltyBps[seller] != 0;
     }
 
-    /// @inheritdoc IAntseedWashTradingRegistry
-    function isSellerFlagged(address seller) external view returns (bool) {
-        return sellerFlaggedAt[seller] != 0;
+    function _validateJournal(SellerPenaltyJournal memory journal) private pure {
+        if (
+            journal.predicateVersion != PREDICATE_VERSION || journal.chainId != BASE_CHAIN_ID
+                || journal.usdc != BASE_USDC || journal.channels != ANTSEED_CHANNELS || journal.deposits != ANTSEED_DEPOSITS
+                || journal.seller == address(0) || journal.funder == address(0)
+                || journal.linkedBuyerCount < MINIMUM_LINKED_BUYERS || journal.penaltyBps != PENALTY_BPS
+                || journal.suspiciousVolumeRaw < MINIMUM_SUSPICIOUS_VOLUME_RAW || journal.earliestFundingBlock == 0
+                || journal.latestSettlementBlock <= journal.earliestFundingBlock || journal.blockRefs.length == 0
+        ) revert InvalidProofJournal();
     }
 }

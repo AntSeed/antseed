@@ -8,6 +8,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Contracts: replaced the challengeable full-analysis lifecycle with one conservative RISC Zero seller-penalty proof. Enforcement now requires authenticated seller-to-funder funding of at least three distinct buyers and at least 1,000 USDC of post-funding settlement volume, plus canonical finalized Base block references. Valid proofs reduce future seller points by 9,000 BPS; buyers and existing locked rewards are unaffected. Full P0/P1 analytics remain reporting-only.
+
 - Contracts: added a points-policy registry that combines up to eight category-aware buyer/seller penalties behind usage accounting's existing hook. It takes the maximum penalty per category, adds category penalties with a 9,000-BPS soft ceiling, and treats 10,000 BPS as a hard veto. New recognized-usage deployments install an empty pass-through registry by default; policy failures fail closed without blocking settlement.
 
 - Desktop: added seller-assisted channel closing to Activity for sellers advertising `payments.cooperative-close.v1`, with clear rejection feedback and the existing wallet-based on-chain close retained as a permanent fallback.

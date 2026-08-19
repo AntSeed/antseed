@@ -258,7 +258,13 @@ Policies in the same category may describe overlapping evidence, so only the lar
 
 Registration validates the policy's category, and each evaluation call has a 100,000 gas allowance. If any policy reverts, exhausts its allowance, lacks the expected selector, returns malformed data, or reports a penalty above 10,000 BPS, the registry fails the complete evaluation. Usage accounting catches that failure, emits `PointsPolicyFailed`, and records zero points for both sides without reverting channel settlement.
 
-After deploying an `AntseedWashTradingRegistry`, operators run `RegisterWashTradingPointsPolicy.s.sol` with the proof registry and points-policy registry addresses. The script deploys `AntseedWashTradingPointsPolicy`, registers it, and verifies the adapter's proof-registry pointer, penalty category, and registry membership on-chain.
+`AntseedWashTradingRegistry` accepts one pinned RISC Zero seller-penalty proof. The guest authenticates a seller-to-funder USDC path, funding of at least three distinct buyers, and at least 1,000 USDC of authentic `ChannelSettled` volume occurring after each buyer's funding. It pins Base chain ID and the USDC, Channels, and Deposits addresses, rejects duplicate log references, and commits every referenced Base block number and hash.
+
+The proof is deliberately not a complete P0/P1 analysis. Enforcement uses only monotonic positive evidence: omitting evidence can only reduce the proven buyer count or volume and therefore make a penalty harder to obtain. It cannot create an unsupported penalty. For this reason the enforcement path has no candidate lifecycle, findings root, challenge period, fraud proof, watcher dependency, buyer finding, or finding-materialization step. Full P0/P1 scans remain reporting-only.
+
+After the verifier accepts the receipt, `IBaseAnalysisStateOracle` must authenticate every referenced historical Base block from finalized OP Stack/L1 commitments. An RPC response is not production-safe, EVM `blockhash()` reaches only 256 blocks, and a keeper cannot authenticate historical blocks it did not checkpoint. A valid proof sets a fixed 9,000-BPS reduction for the seller's future points. Buyer points and existing locked rewards are unchanged; there is no clawback or confiscation.
+
+Operators first run `DeployWashTradingEnforcement.s.sol` with the RISC Zero verifier, finalized Base state oracle, and seller-penalty guest image ID. They then run `RegisterWashTradingPointsPolicy.s.sol` with the deployed proof registry and points-policy registry.
 
 #### Per-Epoch Pro-Rata Distribution
 
