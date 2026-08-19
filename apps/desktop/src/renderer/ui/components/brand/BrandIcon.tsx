@@ -43,7 +43,7 @@ const GEMINI_BLUE = '#4285F4';
 const MISTRAL_ORANGE = '#FA500F';
 const META_BLUE = '#0668E1';
 const TELEGRAM_BLUE = '#26A5E4';
-const HERMES_ICON = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAK0klEQVR42r1Xa1Rb15nd51y9eOkFwuIlhMFAwGCwiSFOMSS2E9vjeKZOhB0nTtzm0VnxpJOkSTpNW1+UNl3pa6ZJJmuaTjOdLCeTDmRW4kwa51Fj5BgHzMPG2LJARiCQECAkJCQhCene0x+2W+zEadbqar9/9/WdffY+9/u+DVw/CGOM4EsEY4wC+FLv/i2C8DxP/6IEAMiWLVuKdu7c/jhj7AoTxGQycXxTk8RkMnFXdmwymVRf//o9/75mzRr1chba2kzcnxi6lPNPzPKUXI+vtrY2DgCeeebJ5379yo+mrtwj13xBKQHP83TFirTst9r/g5nu3vcUAOy585bKrbfeWnFpYZ4ul7HNZFqeh15X93KDIeeJxw50OoY/ZA8/YNp9+Zmquvqm2x++97av1dfVbwOQCQDPP/fNpyedx4UHH7j/Y41Go3rorvVPHzv0oPNnT+z4hytJ+VqUNAApV9Z45Qf7DvL/eNtjACBZvjrP8xwhJPntpx7Zk63Xb4zHBbZnz9Z//aDTobul6aZHq8t0pbfXEHRdYDCW1jjOnO17YevWxicW5kNk5UrD5pa779xBp04GMhJzht07y9/OyUj82INMv6H21melvR2H7wpN/7qxed0PlInp+jab58efAWC1WhkAHOt2cN/6Zh0ZGp4WczREr88peKl+bTma1+tYboFW3JQTpkShW3nROfPCzEyQxRIxsWRVEXf4yBlSpmFdQ44wEnFrUpMS3tUxXizpS3tAHrAPbttfNXtDtjxY1dM/igFXsvszOphMJgCAsSBLEwjGmNPlY4yJVGBMjCxGxUy1nCjSMzitSkYYE5hckS5SIU5GRqcx451nxrwM/Wv7VtscrsAH0+45SThMCgsEe170pfvYKoktmYwnczrf/xR2H7Edtsz9njFGuOUAZmdnOafTKabIlSXFJcY7PDPzTCqX0VjQR6xOgeSvSEcKFuF0h/FOxySRiV6iy1bDPhFAikJBP7H0tH3jxQ/6I1xqd4ac3jBxYTIvlkik7NmshG3ImhLw+KRErnCfGYt86/yYc8hqtXJXSdDcbBGPWwjSNcrBhXDU6/WFsmZ8OqaUholzPICBC3lYCEcx61/CxEUbtLJZeEPr2NRshKQopDMqlbyXMUYoIaP9/SV3PPt47Xs06N0cTkiTSpkgIarc40/+xt0CuPwASHt7u3CVBGYzRBCg8+P3T7ucrjlfWCSvv/4O6xuahwAOow4P3I4RDNtdEEQRF90C/ue1/2PTcxHinZ4JdXR0TAAAA8hDu9Ibb6nWb05fuQUfHbNKy29/BNs35mxqrIjWMJ6nPH+pLkiu/Q9FUSSkro5BCI+uzC0sG+iOMqNRgfWNJSjKT0OxUQnDVAh5mQUY6JnD8cF5VKxLR7YqEddqtSKllDGAGCzDVr0YOKkuKN+wvr5C0Kf6uSPvnet1zcXOo9XMzJfLgeRzq1F/vyDcULqYk62mldWrRd/kWRz6zRsoKSrClq/kon9wGv3np5AuZSguq4UhTwuvZzTo9/sjjDHS3tJCJ9vbp4KaqteK1OIG57CdfnT42Nv/2+fdD2CBEJBLRH0OAEIIZYyJhJCn7r1PusoXXKrVyKl4z/oCqq+rRXmhAro8I1ZnDeLYuWnmScjgmnBGujuPPg9AaG5ulnR2NosgIEbZbJPdFgGXkUXWrZXk/bbXGwJ4SoiZfVE5FAgh7OWf/8smCUkoqwsVTFrYRF49nYIpHxAQUhEJJ/BGPwcXtwqNN1fR2Qm77KEDB3bWlhXkWiyWZGtrJwXAjvZ63s/I0jBlmhgcdYV+QQjQ2gpc2f21DBDGGBoaGrK33dbwYppuZUud0YP6ojBe/iAOu7oA74xVw6eWYGSSQ0geh5a6SZNuCHt2Z0l6/LEHDzz5z/Wv/tebLZWVB+yABYZCpUxCBXKia6zr3QHPm4yBEGIWr+op1yrQY7dHVZrMiu6BMWa3jQiDtiD6Th7HhuIgyhQ9MGSEkB3twuayKSTmx3HUYsWwJ0k+PNqdtI2FqjZuqFm1e/dugTFGTw7MnLY7/AGFOvX7PA/aSj47M0iWdUFKCBFavrr1juAiKfcvLLKFqJEbvyjHSGgWeZ45iMVNGJuYR0BSipg3gdiSA//5ewkC2ZXYtmGWhkQv8wYC32GMHSWELB58cM2NmhT5ucdfOjXAjjJCzIRdC4BebkK0paVF+OXL39v1k+f/6YVwJM7JIpNkW50MalkEEjGGwmwldDl5uHPfZqy++UbIZUpoNWqkZ6ehv/sUpOlqqs5g8GX+3U07vvZ9yy++fdevZIqcZ8Z8dJIHT4FW8vntl+cpMZvZowf2P71+/ZqDRzrHU9vf6WPadIE89thenHj7t+g5N4aGsiyMYTXWbqiC3TYJwT2I+MI0lBUbYR08CypGUaLPxKx2FxoNDmzVOjCXUECVmea+jz9UQgmJiZdmg6tYkBCzWeR5RnuO171lGfAXEWXDw9rsEqZUMXLeq8YxpwZqhQ9yCbB/zRjWbazEWKodfVwQR04B6mQEDTdW4siHpxFLCizF+zY55Y5dcItetz5P1Vyan/kugLggHqTXHkAAoDzPU7OZiNCu+0pF/a77o8FJJOI+Upfpwr35FtRlXEAkcwtEfQPODC+g65Mz+ORMAIGlDHBl92PCFcWqQg302RlYgoblljVCZyx4MlE6fnf+CvHiwUMd3yEAW/7vX8WA2WwWqxp3rF2E4b/PffguQCiLJeTEMTYBxZIOXGo+CoobUbTyAs4O1WBw5CaQqAG3GM6hLrsKxz4Kwu20I1WVi6Qinc24JhDXl+zfV1mTqlVm+RkbWgAYIYR8LgAKAPMB6T2Dp3peNuqCrzTeejvLXrFCHFow4L6fngbURhh0ciwtuJGbl4WitXWori1DKAaoZGHU3pCD8dE5TE5Os7LK1VyWhgUcg8cjUoVuZ1JYGiEEDGi57pRMAcB30fJvwcn/f1Rl2FTeffI0jc5fFHX6HJFTaMXt1UF8tcaBRb8bC4sEGhoARRJTPgE3Gz3YVDqGQtUSy8ovFQe7fieodcXq/FV5r+epBNn8fNwGAO0t1x/BKQASjfpdFRUVaWcHbTe6bB0/z83TfazXF9KxaZEe7xmFf7gDvWc90KpTsWfDklhtYOyiewlnek/CNtCLw6ciJE2ZwxWXl9mG+o+diC5yTRyS4ogj7ASA8xXt7IsAMADEatUlQ1O9e1Olth/6QtzKkTMfvSGXJbvSJCSawYBUMckc5wcEOcLU5ThH5ItzrEQlQqOQIiU9wzHr6GnzzUWyaGLyhwZZ71ue+URDcDHYBwCtZlwXwLKRzJmMReeG09LWyyK+vq6gz/pihW5JUVOVv12jTk1Mu7yka8DZft7ufPZ3R7rFEi0q6qv1SwkqoX63433HxOBeGZvq8M+prd+9Jyt9PhD/+1feG36BAEutX2DbrjkcJs7vP7UQDs92AyuMOzaWPnfwkTqpfciusHqWJLqslL5PT1jeysmUHJpZpNyJnnHFN+4qoXtvK7o3VZa13e+bGwCsfo8/uVfOcUYAIugXW0bu6ksru2yhOEBFSYqy5NOhxcjJ4ZBjNpx4UyqTv1pTUxlbkEimg8HYgn9RsnhhPO7vH42fd3gD7d9bivgsALRyZWAmEO+3Tvj6+IOgFsv1Jfgywf0Z58v9FV0uKCV/7KGS5QYTaJLwlyzitebzcoXFl3LIfwD34AIMitQdfgAAAABJRU5ErkJggg==';
+const HERMES_ICON = new URL('../../../assets/hermes-agent.svg', import.meta.url).href;
 const MINIMAX_ICON = 'data:image/png;base64,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';
 
 const glyphs: Record<BrandKey, BrandGlyph> = {
@@ -223,11 +223,24 @@ const glyphs: Record<BrandKey, BrandGlyph> = {
       />
     </svg>
   ),
-  // Hermes Agent — official desktop character artwork.
+  // Hermes Agent — monochrome portrait mark.
   hermes: ({ size }) => (
-    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true">
-      <image width="32" height="32" href={HERMES_ICON} />
-    </svg>
+    <span
+      style={{
+        display: 'block',
+        width: size,
+        height: size,
+        backgroundColor: 'currentColor',
+        WebkitMaskImage: `url(${HERMES_ICON})`,
+        WebkitMaskPosition: 'center',
+        WebkitMaskRepeat: 'no-repeat',
+        WebkitMaskSize: 'contain',
+        maskImage: `url(${HERMES_ICON})`,
+        maskPosition: 'center',
+        maskRepeat: 'no-repeat',
+        maskSize: 'contain',
+      }}
+    />
   ),
   // Fallback — generic chip.
   generic: ({ size }) => (
