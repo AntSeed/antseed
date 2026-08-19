@@ -47,10 +47,11 @@ test('GPT renders the official OpenAI blossom', () => {
   assert.match(markup, /fill="currentColor"/);
 });
 
-test('Hermes renders its official desktop artwork', () => {
+test('Hermes renders its portrait mark as a theme-aware mask', () => {
   const markup = renderToStaticMarkup(BrandIcon({ name: 'hermes', hints: ['Hermes Agent'] }));
-  assert.match(markup, /viewBox="0 0 32 32"/);
-  assert.match(markup, /href="data:image\/png;base64,/);
+  assert.match(markup, /hermes-agent\.svg/);
+  assert.match(markup, /background-color:currentColor/);
+  assert.match(markup, /mask-size:contain/);
 });
 
 test('connected-app tool names resolve their marks', () => {
