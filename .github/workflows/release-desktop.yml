@@ -185,9 +185,10 @@ jobs:
     needs: create-draft
     runs-on: windows-latest
     timeout-minutes: 45
-    # Gate the signing secrets behind a protected environment (required
-    # reviewer) — the TOTP seed is a long-lived signing credential and the
-    # repo is public.
+    # The signing secrets live in a protected environment restricted by a
+    # deployment ref policy (main + desktop-v* tags) — the TOTP seed is a
+    # long-lived signing credential and the repo is public, so arbitrary
+    # branches must not be able to read it. No manual approval.
     environment: release-signing
     env:
       # Exposed at job level so steps can gate on `env.WIN_SIGN_EMAIL != ''`
