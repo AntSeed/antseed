@@ -3,8 +3,6 @@ import type { KeyboardEvent } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
   Add01Icon,
-  ArrowLeft03Icon,
-  ArrowRight03Icon,
   ArrowUp02Icon,
   ArrowRight01Icon,
   ArrowDown02Icon,
@@ -12,6 +10,8 @@ import {
   Cancel01Icon,
   Folder01Icon,
   Mic01Icon,
+  PanelLeftCloseIcon,
+  PanelLeftOpenIcon,
   Search01Icon,
   SecurityWarningIcon,
   Shield01Icon
@@ -1151,15 +1151,16 @@ export function ChatView({ onSelectView }: ChatViewProps) {
             type="button"
             className={styles.panelToggle}
             onClick={handleTogglePanelExpanded}
-            title={snap.chatPanelExpanded ? 'Collapse to the thin view' : 'Expand to show conversations'}
-            aria-label={snap.chatPanelExpanded ? 'Collapse to the thin view' : 'Expand to show conversations'}
+            title={snap.chatPanelExpanded ? 'Hide chats' : 'View chats'}
+            aria-label={snap.chatPanelExpanded ? 'Hide chats' : 'View chats'}
             aria-pressed={snap.chatPanelExpanded}
           >
             <HugeiconsIcon
-              icon={snap.chatPanelExpanded ? ArrowLeft03Icon : ArrowRight03Icon}
-              size={16}
+              icon={snap.chatPanelExpanded ? PanelLeftOpenIcon : PanelLeftCloseIcon}
+              size={17}
               strokeWidth={1.8}
             />
+            <span>{snap.chatPanelExpanded ? 'Hide chats' : 'View chats'}</span>
           </button>
           <div className={styles.serviceSwitcherAnchor}>
             <VprModelDropdown
