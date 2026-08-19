@@ -8,7 +8,7 @@ name: Release Desktop
 #        notarized via Apple App Store Connect API key.
 # Windows: NSIS installer, x64 + arm64. Optional code signing via the
 #          CA's cloud signing API if the WIN_SIGN_* secrets are set
-#          (see apps/desktop/scripts/win-sign.js).
+#          (see apps/desktop/scripts/win-sign.cjs).
 # Linux: AppImage + deb, x64 + arm64, unsigned. Each arch builds on a
 #        native runner (ubuntu-latest / ubuntu-24.04-arm) so native
 #        modules never need cross-compilation.
@@ -250,7 +250,7 @@ jobs:
           # Baked into the renderer bundle by vite.config.ts (Fun deposit CTA).
           ANTSEED_FUNKIT_API_KEY: ${{ secrets.ANTSEED_FUNKIT_API_KEY }}
           # WIN_SIGN_EMAIL comes from the job-level env; both are read by
-          # apps/desktop/scripts/win-sign.js (the win.sign hook).
+          # apps/desktop/scripts/win-sign.cjs (the win.sign hook).
           WIN_SIGN_OTP: ${{ secrets.WIN_SIGN_OTP }}
         run: |
           if ("${{ inputs.dry_run }}" -eq "true") {

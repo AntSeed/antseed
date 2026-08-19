@@ -106,7 +106,7 @@ win:
   # script header for the flow). No-ops when the WIN_SIGN_* env vars are
   # absent (unsigned local builds). sha256 only — the sha1 pass adds
   # nothing on any Windows that can run Electron.
-  sign: ./scripts/win-sign.js
+  sign: ./scripts/win-sign.cjs
   signingHashAlgorithms:
     - sha256
   target:
