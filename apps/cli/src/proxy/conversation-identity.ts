@@ -1,4 +1,5 @@
 import { parseJsonObject } from '@antseed/api-adapter'
+import { createHash } from 'node:crypto'
 import { SYSTEM_PROXY_SOURCE_HEADER } from './request-utils.js'
 
 /**
@@ -183,6 +184,38 @@ function sessionKeyFromBody(body: Record<string, unknown> | null): string {
 }
 
 /**
+ * Some OpenAI-compatible clients identify themselves but do not expose their
+ * internal conversation id on the wire. Build a deterministic fallback from
+ * the stable request prefix through the first genuine user turn, so appended
+ * assistant/tool history does not change the key on later requests.
+ */
+function syntheticSessionKeyFromBody(body: Record<string, unknown> | null): string {
+  if (!body) return ''
+  const candidates = [body['messages'], body['input']]
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) continue
+    for (let index = 0; index < candidate.length; index++) {
+      const item = candidate[index]
+      if (!item || typeof item !== 'object' || Array.isArray(item)) continue
+      const record = item as Record<string, unknown>
+      if (record['role'] !== 'user') continue
+      const texts = textFromContent(record['content'] ?? record['text'])
+      const genuineText = texts.find((text) => {
+        const normalized = normalizeSnippet(text)
+        return normalized.length > 0
+          && !looksLikeMachineContext(text)
+          && !looksLikeTitleRequest(text)
+          && !INSTRUCTION_DOC_PATTERN.test(normalized)
+      })
+      if (!genuineText) continue
+      const stablePrefix = JSON.stringify(candidate.slice(0, index + 1))
+      return `synthetic-${createHash('sha256').update(stablePrefix).digest('hex').slice(0, 32)}`
+    }
+  }
+  return ''
+}
+
+/**
  * Extract the conversation identity from a completion request, or null when
  * the tool sent nothing to key on. `parsedBody` is the request body as a JSON
  * object when available (callers usually have it parsed already).
@@ -192,17 +225,20 @@ export function extractConversationIdentity(
   parsedBody: Record<string, unknown> | null,
 ): ConversationIdentity | null {
   const named = toolSessionHeader(headers)
+  const source = systemProxySource(headers)
+  const originator = slugifyTool(getHeader(headers, 'originator'))
   const sessionKey = named?.sessionKey
     || getHeader(headers, 'thread-id')
     || getHeader(headers, 'session-id')
     || getHeader(headers, 'x-session-id')
     || getHeader(headers, 'x-session-affinity')
     || sessionKeyFromBody(parsedBody)
+    || ((source || originator) ? syntheticSessionKeyFromBody(parsedBody) : '')
   const trimmed = sessionKey.trim()
   if (!trimmed) return null
   const parent = getHeader(headers, 'x-parent-session-id').trim()
   return {
-    tool: systemProxySource(headers) || named?.tool || detectTool(headers),
+    tool: source || named?.tool || detectTool(headers),
     sessionKey: trimmed,
     parentSessionKey: parent.length > 0 ? parent : null,
     isUserThread: isUserThread(headers),

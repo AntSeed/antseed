@@ -8,6 +8,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
+- Desktop Connected Apps now includes Hermes Agent, configures its named OpenAI-compatible provider in `~/.hermes/config.yaml`, launches the installed Hermes desktop app by default, and shows concise app descriptions with website/download links directly in each app's settings header. Hermes chats now appear in Recent Chats even though Hermes does not send an explicit session header: the buyer derives a stable, privacy-preserving conversation key from the initial user-turn prefix and ignores title-generation housekeeping requests.
+- Nested desktop info tooltips now stack above their parent tooltip instead of being hidden behind it.
 - Desktop chat now uses a clear, lightweight **View chats** / **Hide chats** control with matching sidebar-state icons, replacing the ambiguous arrow-only conversation-list toggle.
 
 - Windows desktop installers are now Authenticode-signed with the AntSeed Foundation's code-signing certificate. The release build signs directly against the issuing CA's cloud HSM (the private key never exists outside it), with the credentials held in a reviewer-protected CI environment; local and fork builds without the signing secrets continue to produce unsigned installers unchanged.
