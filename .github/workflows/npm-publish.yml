@@ -65,6 +65,7 @@ jobs:
           pnpm run build:tier2
           pnpm run build:tier3
           pnpm --filter=@antseed/cli run build
+          pnpm --filter=@antseed/network-stats run build
 
       - name: Test
         run: pnpm -r run test
@@ -76,6 +77,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: >
           pnpm --filter './packages/*' --filter './plugins/*'
-          --filter @antseed/cli --filter @antseed/payments
+          --filter @antseed/cli --filter @antseed/network-stats
+          --filter @antseed/payments --filter @antseed/relay
           publish --access public --no-git-checks
           ${{ inputs.dry_run && '--dry-run' || '' }}
