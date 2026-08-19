@@ -6,6 +6,7 @@ import {
   routesForSelectedModel,
   sortVprCatalog,
 } from '../../../modules/catalog/view-models.js';
+import { peerCapabilitySummary, supportsServiceParameter } from '../../../modules/catalog/model-capabilities.js';
 
 function catalogEntry(overrides: Partial<VprModelCatalogEntry> = {}): VprModelCatalogEntry {
   return {
@@ -14,12 +15,16 @@ function catalogEntry(overrides: Partial<VprModelCatalogEntry> = {}): VprModelCa
     label: 'GPT Test',
     peerCount: 1,
     categories: [],
+    kind: 'text',
+    protocols: ['openai-chat-completions'],
     minInputUsdPerMillion: 1,
     maxInputUsdPerMillion: 1,
     minOutputUsdPerMillion: 2,
     maxOutputUsdPerMillion: 2,
     minCachedInputUsdPerMillion: null,
     maxCachedInputUsdPerMillion: null,
+    minImageUsdPerImage: null,
+    maxImageUsdPerImage: null,
     expectedSavingsPct: null,
     bestPeerId: null,
     ...overrides,
@@ -48,6 +53,8 @@ function discoverRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
     inputUsdPerMillion: 1,
     outputUsdPerMillion: 2,
     cachedInputUsdPerMillion: null,
+    minImageUsdPerImage: null,
+    maxImageUsdPerImage: null,
     lifetimeSessions: 0,
     lifetimeRequests: 0,
     lifetimeInputTokens: 0,
@@ -63,6 +70,7 @@ function discoverRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
     onChainLastSettledAt: 0,
     onChainReputationScore: null,
     onChainTrustScore: null,
+    effectiveReputationScore: null,
     onChainSybilRisk: null,
     onChainSybilFlags: [],
     networkRequests: null,
@@ -80,6 +88,25 @@ test('Explore search finds a model by category', () => {
   ];
 
   assert.deepEqual(filterVprCatalog(catalog, { search: 'image' }), [catalog[1]]);
+});
+
+test('Explore search finds image-only models by their derived type', () => {
+  const image = catalogEntry({ serviceId: 'art-model', label: 'Art Model', kind: 'image' });
+  assert.deepEqual(filterVprCatalog([image], { search: 'image generation' }), [image]);
+});
+
+test('Explore search finds curated model tags without seller categories', () => {
+  const image = catalogEntry({ serviceId: 'lustify-v8', label: 'Lustify V8', kind: 'image', categories: [] });
+  assert.deepEqual(filterVprCatalog([image], { search: 'uncensored' }), [image]);
+});
+
+test('Explore filters models by output type', () => {
+  const text = catalogEntry({ serviceId: 'chat-model', label: 'Chat Model', kind: 'text' });
+  const image = catalogEntry({ serviceId: 'art-model', label: 'Art Model', kind: 'image' });
+
+  assert.deepEqual(filterVprCatalog([text, image], { kind: 'image' }), [image]);
+  assert.deepEqual(filterVprCatalog([text, image], { kind: 'text' }), [text]);
+  assert.deepEqual(filterVprCatalog([text, image], { kind: null }), [text, image]);
 });
 
 test('Price sort places lower priced model first', () => {
@@ -114,4 +141,28 @@ test('Model route filtering excludes other service IDs but keeps canonical varia
     }),
     [selected, otherProvider, variantKey],
   );
+});
+
+test('service parameter support is matched case-insensitively', () => {
+  const route = discoverRow({
+    protocol: 'openai-images',
+    capabilities: { outputs: ['image'], supportedParameters: ['MODERATION', 'output_format'] },
+  });
+
+  assert.equal(supportsServiceParameter(route, 'moderation'), true);
+  assert.equal(supportsServiceParameter(route, 'quality'), false);
+});
+
+test('image seller summaries distinguish generation-only routes from edit support', () => {
+  const generationOnly = discoverRow({
+    protocol: 'openai-images',
+    capabilities: { inputs: ['text'], outputs: ['image'] },
+  });
+  const editable = discoverRow({
+    protocol: 'openai-images',
+    capabilities: { inputs: ['text', 'image'], outputs: ['image'] },
+  });
+
+  assert.equal(peerCapabilitySummary(generationOnly)[0], undefined);
+  assert.equal(peerCapabilitySummary(editable)[0], 'Image editing');
 });

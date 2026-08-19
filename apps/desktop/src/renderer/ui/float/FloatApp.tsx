@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { ArrowExpand02Icon, ArrowRight01Icon, ArrowShrink02Icon, ArrowUpRight01Icon, Cancel01Icon } from '@hugeicons/core-free-icons';
+import { ArrowExpand02Icon, ArrowRight01Icon, ArrowShrink02Icon, ArrowUpRight01Icon, Cancel01Icon, LeftToRightListBulletIcon } from '@hugeicons/core-free-icons';
 import type { VprFloatApp, VprFloatData } from '../../types/bridge';
 import { conversationAge, conversationMatchesApp } from '../../modules/routing/conversations';
 import { displayToolName } from '../../modules/routing/tool-names';
-import { AntStationMark } from '../components/AntStationLogo';
+import { VprMark } from '../components/VprLogo';
 import { BrandIcon } from '../components/brand/BrandIcon';
 import { OverlayScrollArea } from '../components/OverlayScrollArea';
 import { VprBackTitle } from '../components/vpr/VprKit';
@@ -55,88 +55,6 @@ export function FloatApp() {
   const [compact, setCompact] = useState(() => window.innerWidth <= COMPACT_MAX_WIDTH);
   // Compact chip flipped over, showing the expand button on its back face.
   const [flipped, setFlipped] = useState(false);
-
-  // The chip's center buttons must be clickable AND draggable, which
-  // -webkit-app-region can't express (drag regions swallow clicks). So the
-  // buttons are no-drag and dragging is done by hand: pointer deltas stream
-  // to the main process, and a press that never moved past the threshold
-  // counts as the click.
-  const chipDrag = useRef<{ x: number; y: number; moved: boolean } | null>(null);
-  const chipDragHandlers = {
-    onPointerDown: (event: React.PointerEvent<HTMLButtonElement>) => {
-      if (event.button !== 0) return;
-      event.currentTarget.setPointerCapture(event.pointerId);
-      chipDrag.current = { x: event.screenX, y: event.screenY, moved: false };
-    },
-    onPointerMove: (event: React.PointerEvent<HTMLButtonElement>) => {
-      const state = chipDrag.current;
-      if (!state) return;
-      const dx = event.screenX - state.x;
-      const dy = event.screenY - state.y;
-      if (!state.moved && Math.hypot(dx, dy) < 3) return;
-      state.moved = true;
-      state.x = event.screenX;
-      state.y = event.screenY;
-      bridge?.vprFloatMoveBy?.(dx, dy);
-    },
-    onPointerUp: () => {
-      // Leave `moved` for onClick (fires right after) to consume.
-      if (chipDrag.current && !chipDrag.current.moved) chipDrag.current = null;
-    },
-    onPointerCancel: () => {
-      chipDrag.current = null;
-    },
-  };
-  /** True when the press that triggered this click was actually a drag. */
-  const chipClickWasDrag = () => {
-    const dragged = chipDrag.current?.moved ?? false;
-    chipDrag.current = null;
-    return dragged;
-  };
-
-  // The expanded pill and the open dropdown drag the same way as the chip:
-  // manual pointer deltas, with a press that never crossed the threshold
-  // counting as the click. Capture starts only once movement crosses the
-  // threshold — capturing on pointerdown would retarget the eventual click
-  // away from dropdown rows and make them unclickable.
-  const pillDrag = useRef<{ x: number; y: number; moved: boolean } | null>(null);
-  const pillDragHandlers = {
-    onPointerDown: (event: React.PointerEvent<HTMLElement>) => {
-      if (event.button !== 0) return;
-      pillDrag.current = { x: event.screenX, y: event.screenY, moved: false };
-    },
-    onPointerMove: (event: React.PointerEvent<HTMLElement>) => {
-      const state = pillDrag.current;
-      if (!state) return;
-      const dx = event.screenX - state.x;
-      const dy = event.screenY - state.y;
-      if (!state.moved && Math.hypot(dx, dy) < 3) return;
-      if (!state.moved) {
-        state.moved = true;
-        event.currentTarget.setPointerCapture(event.pointerId);
-      }
-      state.x = event.screenX;
-      state.y = event.screenY;
-      bridge?.vprFloatMoveBy?.(dx, dy);
-    },
-    onPointerUp: () => {
-      // Leave `moved` for the click (fires right after) to consume.
-      if (pillDrag.current && !pillDrag.current.moved) pillDrag.current = null;
-    },
-    onPointerCancel: () => {
-      pillDrag.current = null;
-    },
-    // Swallow the click a drag would otherwise end with — runs in the
-    // capture phase so dropdown rows never see it.
-    onClickCapture: (event: React.MouseEvent<HTMLElement>) => {
-      const dragged = pillDrag.current?.moved ?? false;
-      pillDrag.current = null;
-      if (dragged) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
-    },
-  };
 
   // Reset the flip whenever the chip leaves/enters compact mode, and flip
   // back on its own if the user doesn't take the expand action.
@@ -269,7 +187,7 @@ export function FloatApp() {
 
   // The pill leads with the AntSeed identity — the badge is always the
   // AntSeed mark; model branding stays inside the dropdown rows.
-  const badgeIcon = <AntStationMark size={26} />;
+  const badgeIcon = <VprMark size={26} />;
 
   // The idle state used to read "Ready", which people took to mean the app was
   // doing something — the one thing it doesn't mean. Name the connection
@@ -297,8 +215,7 @@ export function FloatApp() {
               <button
                 type="button"
                 className={styles.chipIconButton}
-                {...chipDragHandlers}
-                onClick={() => { if (!chipClickWasDrag()) setFlipped(true); }}
+                onClick={() => setFlipped(true)}
                 title="Options"
                 aria-label="Show expand button"
               >
@@ -311,8 +228,7 @@ export function FloatApp() {
             <button
               type="button"
               className={styles.chipExpandButton}
-              {...chipDragHandlers}
-              onClick={() => { if (!chipClickWasDrag()) setCompactMode(false); }}
+              onClick={() => setCompactMode(false)}
               title="Expand"
               aria-label="Expand floating window"
             >
@@ -327,17 +243,11 @@ export function FloatApp() {
 
   return (
     <div className={styles.pill}>
-      {/* The whole pill face is the dropdown trigger — badge, label and
-          usage line together — and doubles as a drag handle: pointer deltas
-          move the window, and only a press that never moved counts as the
-          click that toggles the panel. */}
-      <button
-        type="button"
-        className={styles.pillTrigger}
-        {...pillDragHandlers}
-        onClick={() => setMenuOpen(!menuOpen)}
-        aria-expanded={menuOpen}
-        aria-label="Usage and conversations"
+      {/* The full pill face is a native Electron drag region. Interactive
+          actions opt out individually, so dragging never competes with a
+          click on the same pixels. */}
+      <div
+        className={styles.pillContent}
         title="AntSeed"
       >
         <span className={styles.appBadge}>{badgeIcon}</span>
@@ -345,26 +255,16 @@ export function FloatApp() {
           <span className={styles.triggerLabel}>
             {data?.balanceLabel ?? '$0.00'}
             {/* Empty balance + paid default model: jump straight to Add
-                balance. A span (not a button) — it lives inside the trigger
-                button, so a real nested button would be invalid markup. */}
+                balance. This button carves a no-drag control out of the native
+                pill drag region. */}
             {data?.needsFunds ? (
-              <span
-                role="button"
-                tabIndex={0}
+              <button
+                type="button"
                 className={styles.addBalance}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  bridge?.vprFloatAction?.({ type: 'open-deposit' });
-                }}
-                onKeyDown={(event) => {
-                  if (event.key !== 'Enter' && event.key !== ' ') return;
-                  event.stopPropagation();
-                  event.preventDefault();
-                  bridge?.vprFloatAction?.({ type: 'open-deposit' });
-                }}
+                onClick={() => bridge?.vprFloatAction?.({ type: 'open-deposit' })}
               >
                 Add balance
-              </span>
+              </button>
             ) : null}
           </span>
           <span className={styles.usage} title={statusHint}>
@@ -381,13 +281,24 @@ export function FloatApp() {
             <span className={styles.usageLabel}>{statusLabel}</span>
           </span>
         </span>
+      </div>
+
+      <button
+        type="button"
+        className={`${styles.menuToggle}${menuOpen ? ` ${styles.menuToggleOpen}` : ''}`}
+        onClick={() => setMenuOpen(!menuOpen)}
+        aria-expanded={menuOpen}
+        aria-label={menuOpen ? 'Close conversations menu' : 'Open conversations menu'}
+        title={menuOpen ? 'Close menu' : 'Open menu'}
+      >
+        <HugeiconsIcon icon={LeftToRightListBulletIcon} size={14} strokeWidth={2} />
       </button>
 
       {/* Manage conversations: level 1 lists the default-model row plus one
           row per chat; clicking a row slides to the shared rich model list
           (same rows as the Home dropdown) with a back header. */}
       {menuOpen ? (
-        <div className={styles.menuPanel} aria-label="Manage conversations" {...pillDragHandlers}>
+        <div className={styles.menuPanel} aria-label="Manage conversations">
           <OverlayScrollArea className={styles.menuScroll} contentClassName={styles.menuScrollContent}>
           {chatTarget === null ? (
             <div key="list" className={slideClass}>
@@ -441,7 +352,14 @@ export function FloatApp() {
                         <span className={styles.menuRowMetaText}>
                           {appLabel} · {conversationAge(chat.lastActiveAt)}
                         </span>
-                        <span className={styles.menuRowModel}>{pinnedLabel ?? modelLabel}</span>
+                        <span className={styles.menuRowModel}>
+                          {pinnedLabel ?? modelLabel}
+                          {/* Seller that served the chat's last request
+                              ("Show routed peer" preference). */}
+                          {data?.showRoutedPeer && chat.routedPeerName ? (
+                            <span className={styles.menuRowPeer}> · {chat.routedPeerName}</span>
+                          ) : null}
+                        </span>
                       </span>
                     </span>
                     <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} className={styles.menuRowChevron} />
@@ -494,15 +412,15 @@ export function FloatApp() {
             </div>
           ) : null}
           </OverlayScrollArea>
-          {/* Setting, not a chat: a quiet one-liner naming the model the next
-              app session starts on — pinned above the footer, list level only. */}
+          {/* Setting, not a chat: a quiet one-liner naming the model new chats
+              start on — pinned above the footer, list level only. */}
           {chatTarget === null ? (
             <button
               type="button"
               className={`${styles.menuRow} ${styles.menuRowDefault}`}
               onClick={() => drillIn('default')}
             >
-              <span className={styles.menuRowDefaultTitle}>New session model</span>
+              <span className={styles.menuRowDefaultTitle}>Model for new chats</span>
               <span className={styles.menuRowValue}>
                 <span className={styles.menuRowValueModel}>{modelLabel}</span>
                 {/* Pinned routing names its seller here — the pill has no
@@ -520,7 +438,7 @@ export function FloatApp() {
             title="Open VPR"
           >
             <span className={styles.menuFooterLabel}>
-              <AntStationMark size={14} />
+              <VprMark size={14} />
               <span>Open VPR</span>
             </span>
             <HugeiconsIcon icon={ArrowUpRight01Icon} size={13} strokeWidth={2} />

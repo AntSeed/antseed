@@ -1,4 +1,5 @@
 import type { RendererUiState } from '../../core/state';
+import { selectHeadlineBalanceUsdc } from '../../core/balance';
 import { formatCompactTokens, formatCredits, shortAddress } from '../../core/format';
 import { notifyUiStateChanged } from '../../core/store';
 import type {
@@ -13,11 +14,13 @@ import {
   conversationCost,
   conversationMatchesApp,
   conversationPinnedServiceId,
+  conversationRoutedPeerName,
   conversationTitle,
   isConversationActive,
   shortSessionId,
 } from '../routing/conversations';
 import { loadFavoriteModels } from '../catalog/favorites';
+import { sameCanonicalModel } from '../catalog/model-identity';
 import { loadFloatAutoOpen } from './float-settings';
 import {
   catalogEntryKey,
@@ -25,8 +28,7 @@ import {
   selectFavoriteVprCatalog,
   selectRecommendedVprCatalog,
 } from '../catalog/recommended';
-import { chooseBestVprRoute } from '../routing/select';
-import { pinnedSellerLabels, routesForSelectedModel } from '../catalog/view-models';
+import { pinnedSellerLabels, resolvePeerForModel } from '../catalog/view-models';
 import { activeProfilesFromRuntimeState } from '../routing/tools';
 
 const FLOAT_UPDATE_INTERVAL_MS = 3_000;
@@ -62,12 +64,19 @@ export type VprFloatModule = {
  * it's open. Model changes made in the pill come back as 'select-model'
  * actions.
  */
-export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsage }: {
+export function initVprFloatModule({
+  bridge,
+  uiState,
+  onSelectModel,
+  refreshUsage,
+  onClosed,
+}: {
   bridge: DesktopBridge | undefined;
   uiState: RendererUiState;
   onSelectModel: (provider: string, serviceId: string) => void;
   /** Refresh the payments summary; force bypasses its self-throttle. */
   refreshUsage: (force?: boolean) => Promise<void>;
+  onClosed?: () => void;
 }): VprFloatModule {
   let timer: number | null = null;
   let profiles: SystemProxyProfileSummary[] = [];
@@ -122,9 +131,9 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
     return `${formatCompactTokens(usage?.totalInputTokens, usage?.totalOutputTokens)} tok`;
   }
 
-  /** What the user still owns: deposits minus spend already authorized. */
+  /** Complete owned balance, including USDC awaiting deposit sweep. */
   function balanceLabel(): string {
-    return `$${formatCredits(uiState.creditsSpendableUsdc)}`;
+    return `$${formatCredits(selectHeadlineBalanceUsdc(uiState))}`;
   }
 
   /** The buyer identity (signer address), shortened. */
@@ -254,6 +263,7 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
       lastActiveAt: record.lastActiveAt,
       active: isConversationActive(record.lastActiveAt),
       cost: conversationCost(record),
+      routedPeerName: conversationRoutedPeerName(record, uiState.discoverRows),
     };
   }
 
@@ -266,10 +276,15 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
     }
   }
 
-  /** Best route peer for a model, mirroring how the global selection routes. */
+  /** Peer for a chat pinned to this model: the model's own seller pin when
+      one exists, else the best auto route — same as the global selection. */
   function resolvePinRoute(provider: string, serviceId: string): string | null {
-    const routes = routesForSelectedModel(uiState.vprRoutableRows, { provider, serviceId });
-    const peerId = chooseBestVprRoute(routes, uiState.vprRoutingPreferences)?.peerId ?? null;
+    const peerId = resolvePeerForModel(
+      uiState.vprRoutableRows,
+      uiState.vprModelPins,
+      uiState.vprRoutingPreferences,
+      { provider, serviceId },
+    );
     return peerId ? `${peerId}@${serviceId}` : null;
   }
 
@@ -320,6 +335,7 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
       needsFunds: needsFunds(),
       runtimeOn,
       ...(identity ? { identityLabel: identity } : {}),
+      ...(uiState.vprFloatShowRoutedPeer ? { showRoutedPeer: true } : {}),
       trafficActive: logTrafficActive() || buyerDeltaActive,
     };
   }
@@ -393,6 +409,7 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
     // auto-open back so dismissing the pill actually dismisses it.
     autoOpenSuppressedUntil = Date.now() + AUTO_OPEN_CLOSE_COOLDOWN_MS;
     syncAutoOpenWatcher();
+    onClosed?.();
   });
 
   bridge?.onVprFloatAction?.((action) => {
@@ -407,16 +424,22 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
       }
       return;
     }
-    // Pin one chat to a model: resolve the best peer for that model the same
-    // way the global selection does, then hand the pin to the buyer.
+    // Pin one chat to a model: resolve the peer for that model the same way
+    // the global selection does, then hand the pin to the buyer.
     if (type === 'pin-chat-model') {
       const { conversationId, provider, serviceId } = action as { conversationId?: unknown; provider?: unknown; serviceId?: unknown };
       if (typeof conversationId !== 'string' || typeof provider !== 'string' || typeof serviceId !== 'string') return;
-      const pin = resolvePinRoute(provider, serviceId);
-      if (!pin) return;
-      void bridge?.buyerConversationsUpdate?.({ id: conversationId, pinnedModel: pin })
-        .then(() => buildData())
-        .then((data) => bridge?.vprFloatUpdate?.(data));
+      void (async () => {
+        // Re-picking the chat's current model is a no-op — re-pinning would
+        // re-resolve the peer, wiping a per-chat seller pin back to auto.
+        const records = (await bridge?.buyerConversationsList?.()) ?? [];
+        const record = records.find((row) => row.id === conversationId);
+        const current = record ? conversationPinnedServiceId(record) : null;
+        if (current && sameCanonicalModel(current, serviceId)) return;
+        if (!resolvePinRoute(provider, serviceId)) return;
+        await bridge?.buyerConversationsUpdate?.({ id: conversationId, pinnedModel: serviceId, peerSource: 'auto' });
+        bridge?.vprFloatUpdate?.(await buildData());
+      })();
       return;
     }
     // Open the app a chat belongs to (chat header shortcut): the tool's
@@ -438,7 +461,8 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
     }
   });
 
-  async function openFloatInternal(profileName?: string): Promise<void> {
+  async function openFloatInternal(profileName?: string): Promise<boolean> {
+    if (!bridge?.vprFloatOpen) return false;
     if (profileName) selectedApp = profileName;
     // Fresh numbers on open — don't show a minute-old summary.
     await refreshUsage(true);
@@ -448,11 +472,13 @@ export function initVprFloatModule({ bridge, uiState, onSelectModel, refreshUsag
     // (pop-out button, connect, and traffic auto-open alike). Only the open
     // payload carries the flag; periodic updates must not re-expand a menu
     // the user collapsed.
-    await bridge?.vprFloatOpen?.({ ...data, openMenu: true });
+    const result = await bridge.vprFloatOpen({ ...data, openMenu: true });
+    if (!result.ok) return false;
     uiState.vprFloatOpen = true;
     notifyUiStateChanged();
     startUpdater();
     syncAutoOpenWatcher();
+    return true;
   }
 
   // Survive a main-window reload while the pill is open (dev HMR, cmd+R).

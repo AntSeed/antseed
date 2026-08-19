@@ -20,9 +20,9 @@ import {
   removeConfigPatch,
   type ConfigPatchDef,
 } from './config-patch.js';
-import { systemProxyDataDir } from './paths.js';
+import { systemProxyDataDir, systemProxyWslTargetsPath } from './paths.js';
 
-export const DEFAULT_SYSTEM_PROXY_PORT = 8378;
+export const DEFAULT_SYSTEM_PROXY_PORT = Number(process.env['ANTSEED_SYSTEM_PROXY_PORT']) || 8378;
 export const SYSTEM_PROXY_PROFILES_JSON_ENV = 'ANTSEED_SYSTEM_PROXY_PROFILES_JSON';
 export const SYSTEM_PROXY_PROFILES_FILE_ENV = 'ANTSEED_SYSTEM_PROXY_PROFILES_FILE';
 export const PACKAGED_SYSTEM_PROXY_PROFILES_RELATIVE = 'system-proxy-profiles.json';
@@ -186,6 +186,6 @@ export function readAppAction(value: unknown): DesktopSystemProxyProfile['appAct
 export function removeAllConfigPatches(): void {
   for (const profile of SYSTEM_PROXY_PROFILES) {
     if (profile.kind !== 'config-patch' || !profile.configPatch) continue;
-    removeConfigPatch(profile.configPatch);
+    removeConfigPatch(profile.configPatch, systemProxyWslTargetsPath());
   }
 }

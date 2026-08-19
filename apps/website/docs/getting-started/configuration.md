@@ -12,7 +12,7 @@ AntSeed stores configuration at `~/.antseed/config.json`. This file is the norma
 The intended workflow is:
 
 1. Create or update `config.json` with `antseed seller setup` or `antseed config ...`
-2. Keep non-secret settings there: providers, services, pricing, categories, ports, bootstrap nodes
+2. Keep non-secret settings there: providers, services, pricing, capabilities, billing models, ports, bootstrap nodes
 3. Keep secrets in environment variables: API keys, identity key
 4. Start your node with the grouped runtime commands
 
@@ -60,8 +60,8 @@ Use `config.json` for durable node behavior. Use env vars for secrets and tempor
 |---|---|
 | Provider/plugin selection | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` |
 | `baseUrl` for OpenAI-compatible providers | `ANTSEED_IDENTITY_HEX` |
-| Service list and categories | `ANTSEED_DEBUG=1` |
-| Pricing defaults and per-service pricing | One-off runtime overrides in deployment scripts |
+| Service list, categories, and capabilities | `ANTSEED_DEBUG=1` |
+| Token pricing and per-service unit billing | One-off runtime overrides in deployment scripts |
 | Domain/GitHub verification claims | |
 | `payments.crypto.rpcUrl` for durable RPC config | `ANTSEED_BASE_RPC_URL` for deployment-specific Base RPC endpoints |
 | Buyer proxy port and peer refresh interval | `ANTSEED_DATA_DIR` for per-process buyer state isolation |
@@ -84,7 +84,15 @@ For example, this is a normal production pattern:
               "cachedInputUsdPerMillion": 0.06,
               "outputUsdPerMillion": 1.7
             },
-            "categories": ["chat", "coding", "math"]
+            "categories": ["chat", "coding", "math"],
+            "capabilities": {
+              "contextWindow": 128000,
+              "maxOutputTokens": 32768,
+              "inputs": ["text"],
+              "reasoning": true,
+              "toolUse": true,
+              "structuredOutput": true
+            }
           }
         }
       }
@@ -139,7 +147,7 @@ Prefer `--data-dir` in service/systemd scripts. `ANTSEED_DATA_DIR` is equivalent
 | Section | Description |
 |---|---|
 | `identity` | Display name |
-| `seller` | Per-provider service offerings (plugin, pricing, categories, upstream model mapping), reserve floor, max concurrent buyers, agent directory |
+| `seller` | Per-provider service offerings (plugin, pricing, capabilities, unit billing, categories, upstream model mapping), reserve floor, max concurrent buyers, agent directory |
 | `buyer` | Max pricing thresholds, proxy port, DHT peer refresh interval |
 | `payments` | Chain ID (`base-mainnet` by default) |
 | `network` | Bootstrap nodes |
@@ -184,13 +192,34 @@ Everything a seller announces lives under `seller.providers[name]`. The key unde
 }
 ```
 
-Each service entry supports three optional fields:
+Each service entry supports five optional fields:
 
 | Field | Type | Description |
 |---|---|---|
 | `upstreamModel` | string | The model id the provider plugin will forward requests to. Defaults to the service id itself. |
 | `categories` | string[] | Normie-friendly tags announced in peer metadata (e.g. `chat`, `coding`, `math`, `study`, `fast`, `free`). |
 | `pricing` | object | Per-service pricing in USD per million tokens. If omitted, the provider's `defaults` are used. |
+| `capabilities` | object | Optional discovery hints: `contextWindow`, `maxOutputTokens`, `inputs`, `outputs`, `reasoning`, `toolUse`, `structuredOutput`, and `supportedParameters`. |
+| `unitBillingModels` | object | Optional per-protocol non-token pricing. Currently consumed by the `openai` provider for `openai-images` services. |
+
+Capabilities are hints, not enforced limits. Omitted fields mean “unknown.” Supported modality values for `inputs` and `outputs` are `text`, `image`, `audio`, `video`, and `pdf`. `supportedParameters` lists extra request-body parameter names the service accepts (lowercase snake_case, e.g. `background`, `output_format`, `seed`) — useful for image services where clients otherwise have to guess. The `openai` provider automatically advertises `outputs: ["image"]` for `openai-images` services; explicit config extends or overrides that default per field.
+
+For image services, a flat per-image price looks like this:
+
+```json
+{
+  "unitBillingModels": {
+    "openai-images": {
+      "version": 1,
+      "components": [
+        { "unit": "output_images", "priceUsd": 0.04 }
+      ]
+    }
+  }
+}
+```
+
+Components may include a `match` object using `model`, `size`, `quality`, or `resolution`. Every positive delivered unit must match a component; unmatched image tiers are rejected instead of being billed as zero.
 
 `baseUrl` on the provider block is forwarded to plugins that honor it (the `openai` plugin uses it as `OPENAI_BASE_URL` for Together, OpenRouter, etc.).
 
@@ -238,6 +267,19 @@ antseed config seller add-service together deepseek-v3.1 \
   --base-url https://api.together.ai
 ```
 
+Capabilities and image unit pricing are JSON options:
+
+```bash
+antseed config seller add-service openai flux.1-schnell \
+  --upstream "black-forest-labs/FLUX.1-schnell" \
+  --input 0 --output 0 \
+  --categories image,creative \
+  --capabilities '{"inputs":["text","image"],"outputs":["image"],"supportedParameters":["background","output_format","quality","size"]}' \
+  --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.003}]}}'
+```
+
+The interactive `antseed seller setup` flow builds the capabilities object for you with one question per field, tailored to the service's protocol: image models are asked about input modalities and supported request parameters (image output is announced automatically), text models about context window, modalities, reasoning, tool use, structured output, and supported parameters. Answer `y` at the capabilities prompt, or paste a JSON object there to skip the guided flow. Unit billing models are still entered as JSON. The CLI serializes both into plugin runtime config. Seller startup warns when unit billing is configured for a plugin that does not declare support.
+
 To remove one:
 
 ```bash
@@ -249,16 +291,57 @@ You can also edit individual fields directly:
 ```bash
 antseed config seller set providers.together.services.deepseek-v3.1.pricing.inputUsdPerMillion 0.55
 antseed config seller set providers.together.services.deepseek-v3.1.categories '["chat","math","coding","fast"]'
+antseed config seller set providers.together.services.deepseek-v3.1.capabilities '{"contextWindow":128000,"inputs":["text"],"toolUse":true}'
 ```
+
+## Model Health Checks
+
+Seller health checks probe supported text protocols immediately at startup and periodically afterward. After repeated failures, the service is temporarily removed from discovery; its capability and billing metadata disappear with it and return when the service recovers.
+
+`openai-images` services are intentionally skipped. A meaningful image probe would generate a billable image, so image services remain advertised until a non-billable image-specific probe is available.
+
+```json
+{
+  "seller": {
+    "healthCheck": {
+      "enabled": true,
+      "intervalMs": 300000,
+      "failureThreshold": 3
+    }
+  }
+}
+```
+
+See the [metadata v12 upgrade guide](/docs/guides/metadata-v12-upgrade) before upgrading seller fleets; older buyers cannot discover v12 sellers.
 
 ## Buyer Settings
 
-Buyers can cap what they're willing to pay to avoid expensive providers:
+Model-only requests use one shared Price + Trust policy in the CLI buyer proxy and the desktop VPR. The defaults are:
+
+```json
+{
+  "buyer": {
+    "routingPreferences": {
+      "preferFreePeers": false,
+      "maxInputUsdPerMillion": 25,
+      "minTrustScore": 60,
+      "allowedPeerIds": [],
+      "blockedPeerIds": []
+    }
+  }
+}
+```
+
+`minTrustScore` is a hard eligibility gate. At the default `60`, sellers below 60 and sellers without a usable score are not selected automatically. CLI-only buyers can lower it, or set it to `0` to disable the gate. `allowedPeerIds` becomes an allowlist when non-empty; `blockedPeerIds` always excludes matching sellers. Peer ids may include or omit the `0x` prefix.
+
+Eligible offers are ranked using trust, token or image price, cached-input pricing coverage, recent failures, cooldowns, and `preferFreePeers`. `maxInputUsdPerMillion` is a strong price preference in that ranking; the separate hierarchical `maxPricing` policy remains the hard price-cap mechanism:
 
 ```bash
 antseed config buyer set maxPricing.defaults.inputUsdPerMillion 25
 antseed config buyer set maxPricing.defaults.outputUsdPerMillion 75
 ```
+
+The desktop writes routing-preference changes to this same config. A running buyer proxy watches the config file and reloads valid `buyer.routingPreferences` changes automatically.
 
 The buyer proxy refreshes its discovered peer cache from the DHT in the background. The default is 5 minutes, and you can tune it in milliseconds:
 
@@ -278,6 +361,15 @@ For one process, use either the runtime flag or env var instead of writing confi
 antseed buyer start --metadata-fetch-timeout-ms 1500
 ANTSEED_BUYER_METADATA_FETCH_TIMEOUT_MS=1500 antseed buyer start
 ```
+
+Long-running models can exceed the defaults (5 minutes for `requestTimeoutMs`, 30 minutes for `maxStreamDurationMs`). Configure the initial/non-streaming request timeout and the maximum total stream duration independently:
+
+```bash
+antseed config buyer set requestTimeoutMs 600000
+antseed config buyer set maxStreamDurationMs 3600000
+```
+
+`requestTimeoutMs` applies while waiting for a non-streaming response or for a stream to begin. Once streaming starts, idle-stream protection remains active, while `maxStreamDurationMs` controls the total permitted stream lifetime. The stream cap can also be set per process with the `ANTSEED_BUYER_MAX_STREAM_DURATION_MS` environment variable.
 
 Buyer SpendingAuth and free-usage metadata v2 include aggregate usage totals by default. They also include per-service attribution unless disabled. Privacy-sensitive buyers can keep aggregate accounting while suppressing service IDs and per-service totals:
 

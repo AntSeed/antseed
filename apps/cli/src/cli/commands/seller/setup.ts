@@ -11,6 +11,9 @@ import { assertValidConfig } from '../../../config/validation.js';
 import { TRUSTED_PLUGINS } from '../../../plugins/registry.js';
 import { installPlugin } from '../../../plugins/manager.js';
 import type { AntseedConfig, SellerProviderConfig, SellerServiceConfig } from '../../../config/types.js';
+import { isImageModelId } from '@antseed/provider-core';
+import { parseServiceUnitBillingModelsInput } from '../../../config/service-metadata.js';
+import { promptServiceCapabilities } from './capability-prompts.js';
 import { createIdentityClient, createStakingClient, normalizeHttpRpcUrl } from '../../payment-utils.js';
 
 export function buildSellerSetupProviderEntry(input: {
@@ -179,6 +182,9 @@ export function registerSellerSetupCommand(sellerCmd: Command): void {
           const svcInputStr = await rl.question('Input price (USD/1M, or enter for provider default): ');
           const svcOutputStr = await rl.question('Output price (USD/1M, or enter for provider default): ');
           const categoriesStr = await rl.question('Categories (comma-separated, e.g., chat,coding): ');
+          const serviceKind = isImageModelId(upstreamInput.trim() || serviceId) ? 'image' : 'text';
+          const capabilities = await promptServiceCapabilities(rl, serviceKind);
+          const unitBillingModelsStr = await rl.question('Unit billing models JSON by protocol (optional): ');
 
           const service: SellerServiceConfig = {};
           const upstreamModel = upstreamInput.trim();
@@ -197,6 +203,12 @@ export function registerSellerSetupCommand(sellerCmd: Command): void {
 
           if (categoriesStr.trim()) {
             service.categories = categoriesStr.split(',').map((item) => item.trim().toLowerCase()).filter(Boolean);
+          }
+          if (capabilities) {
+            service.capabilities = capabilities;
+          }
+          if (unitBillingModelsStr.trim()) {
+            service.unitBillingModels = parseServiceUnitBillingModelsInput(unitBillingModelsStr.trim());
           }
 
           services[serviceId] = service;

@@ -7,14 +7,46 @@ hide_title: true
 
 # Transport
 
-The transport layer handles peer-to-peer communication using WebRTC DataChannels (via `node-datachannel`) with a TCP fallback. All messages are transmitted as binary frames. Compatible with existing AI API formats, so existing tools work without modification.
+The transport layer handles peer-to-peer communication over direct, end-to-end encrypted connections. Between nodes the preferred transport is an encrypted TCP channel; WebRTC DataChannels (via `node-datachannel`) are used for peers that cannot open TCP sockets, such as browsers. All messages are transmitted as binary frames. Compatible with existing AI API formats, so existing tools work without modification.
 
 ## Transport Modes
 
+Transport selection is capability-driven; a node advertises what it supports in its signed discovery metadata.
+
 | Mode | Library | Description |
 |---|---|---|
-| webrtc | node-datachannel | WebRTC DataChannel via TCP signaling |
-| tcp | Node.js net | Direct TCP socket fallback |
+| encrypted TCP (`transport.tcp-enc.v1`) | Node.js net | **Preferred.** Direct TCP with a mutually authenticated, encrypted channel (X25519 + AES-256-GCM) |
+| plaintext TCP | Node.js net | Legacy fallback for peers that do not advertise encrypted TCP |
+| webrtc (`transport.webrtc.v1`) | node-datachannel | WebRTC DataChannel (DTLS) via TCP signaling, for peers that cannot use TCP directly |
+
+An initiator uses encrypted TCP whenever the peer supports it, WebRTC only for peers that advertise WebRTC but not encrypted TCP, and plaintext TCP only with legacy peers. Encrypted TCP is preferred partly because WebRTC DataChannel messages are capped at 256 KiB, below the protocol's frame sizes.
+
+## Seller Networking
+
+A seller must announce an address that buyers can reach from the public internet. The default seller signaling/TCP port is `6882`; the DHT port is `6881`. `seller.publicAddress` should point to the public hostname or IP and the externally reachable signaling port, not a LAN address such as `192.168.x.x` or `10.x.x.x`.
+
+```bash
+antseed config seller set publicAddress "seller.example.com:6882"
+antseed seller doctor
+```
+
+`antseed seller start` prints a prominent warning when `publicAddress` is empty or uses a loopback, private, link-local, unspecified, or multicast IP. `antseed seller doctor` classifies the configured address and attempts a bounded TCP connection from the seller machine. A successful local connection is useful but does **not** prove that inbound NAT traversal works; verify the same endpoint from a different network before considering the seller reachable.
+
+### Home or Office NAT
+
+1. Give the seller machine a stable LAN address.
+2. Forward the external TCP port (normally `6882`) on the router to the seller machine's signaling port.
+3. Allow inbound TCP traffic on that port in the host and cloud firewalls.
+4. Set `seller.publicAddress` to the router's public IP or a DNS name that resolves to it.
+5. Test the endpoint from a cellular connection, remote host, or another external network.
+
+Some routers do not support NAT loopback (hairpinning), so a local probe to the public address can fail even when external clients can connect. Conversely, a local listener can succeed while the router still blocks inbound traffic. Carrier-grade NAT (CGNAT) usually prevents port forwarding entirely; request a public IP from the ISP or use a VPS pattern instead.
+
+### VPS and Reverse Tunnels
+
+The simplest production deployment is a VPS with a public IP: allow inbound TCP on the announced port and run the seller there. If inference must remain on a private machine, expose its signaling port through a stable TCP reverse tunnel or gateway on a VPS, then announce the VPS hostname and public port. Configure the tunnel as a supervised service so it reconnects after restarts, and restrict firewall access to only the required ports.
+
+Do not announce SSH-only tunnels, private VPN addresses, or temporary tunnel hostnames that buyers cannot reach. Re-run `antseed seller doctor` and an external connection test after changing DNS, firewall, router, or tunnel settings.
 
 ## Frame Protocol
 
@@ -79,7 +111,7 @@ Each side sends a 32-byte random nonce signed with its secp256k1 private key via
 
 ## Reconnection
 
-Exponential backoff with jitter: base delay 1s, max delay 30s, max 5 attempts. Formula: `min(baseDelay * 2^attempt + jitter, maxDelay)`. Because AI APIs are stateless, provider switches are invisible to the application.
+Exponential backoff with jitter: base delay 1s, max delay 30s, max 5 attempts. Formula: `min(baseDelay * 2^attempt + jitter, maxDelay)`. The buyer proxy handles transport reconnection independently from model-route failover. For model-only conversations, it softly prefers the seller that previously served the conversation and switches only when that route is unavailable, cooling down, policy-ineligible, or fails retryably. Explicit peer pins never switch automatically.
 
 ## Payment Messages
 
@@ -96,7 +128,7 @@ Payment messages use the type range 0x50-0x5F. All payment payloads are JSON-enc
 
 ## PaymentMux
 
-Payment messages are multiplexed over the same WebRTC DataChannel as proxy traffic. The 9-byte frame header (`type`, `messageId`, `payloadLength`) is shared across all message types — proxy (0x20-0x24), keepalive (0x10-0x11), and payment (0x50-0x5F). No separate connection or out-of-band channel is required.
+Payment messages are multiplexed over the same peer connection as proxy traffic. The 9-byte frame header (`type`, `messageId`, `payloadLength`) is shared across all message types — proxy (0x20-0x24), keepalive (0x10-0x11), and payment (0x50-0x5F). No separate connection or out-of-band channel is required.
 
 The `messageId` field links payment messages to their originating proxy request. For example, a SpendingAuth (0x50) triggered by a specific HttpResponse carrying a 402 status uses the same `messageId` as that proxy exchange, allowing the seller to correlate the authorization with the pending request.
 

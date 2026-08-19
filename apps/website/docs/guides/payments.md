@@ -13,33 +13,55 @@ AntSeed uses USDC on Base Mainnet for all payments. Buyers pre-deposit USDC, pro
 
 ### Depositing USDC
 
-The recommended way to deposit is through the payments portal:
+The recommended way to deposit is `antseed buyer deposit`:
 
 ```bash
-antseed payments
-# Opens at http://localhost:3118
+antseed buyer deposit
 ```
 
-In the portal:
-1. Connect a funded wallet (MetaMask, Coinbase Wallet, etc.)
-2. Enter the amount to deposit
-3. Approve the USDC transfer and confirm the deposit
+It prints your node's funding address and a QR code (an EIP-681 payment request any mobile wallet can scan). Send USDC on Base to that address from anywhere — another wallet, an exchange withdrawal, a card on-ramp — and the incoming funds are deposited into your credits automatically: your node signs a gasless authorization and a permissionless relayer submits the transaction for a fixed USDC fee ($0.05 on Base Mainnet). Your node's hot wallet never needs ETH.
 
-The contract's `deposit(buyer, amount)` pulls USDC from your connected wallet and credits your node's address. Your node's identity key never needs to hold USDC or ETH.
+Prefer a browser wallet? While watching, the command also serves the connected-wallet checkout page and prints its link (`http://127.0.0.1:3118?token=…`). Open it, connect MetaMask / Coinbase Wallet / Rabby, and the deposit goes straight into the Deposits contract — the command detects the credit and finishes either way.
+
+While `antseed buyer start` is running, this sweeping also happens automatically in the background whenever USDC lands in the hot wallet (disable with `buyer.autoSweep: false` in your config).
+
+| Option | Purpose |
+|---|---|
+| `--amount <usdc>` | Amount to prefill in the QR payment request and browser checkout |
+| `--no-watch` | Print the address and QR code without waiting for funds |
+| `--onchain <usdc>` | Direct on-chain deposit from the hot wallet (requires ETH for gas) |
 
 :::tip Third-Party Funding
-Anyone can deposit on behalf of a buyer — a team treasury, a hardware wallet, or another contract. The funding source is decoupled from the node identity.
+Anyone can fund a buyer — a team treasury, a hardware wallet, or another contract. The funding source is decoupled from the node identity.
 :::
 
-### Checking Balance
+### Sweeping Hot-Wallet USDC Manually
+
+`antseed buyer deposit` and the running buyer sweep incoming USDC for you; `antseed buyer sweep` triggers the same gasless sweep once, on demand:
 
 ```bash
-antseed buyer balance
+antseed buyer sweep
 ```
 
-### Withdrawing
+The CLI signs an EIP-3009 authorization offline and broadcasts it over the P2P network. A permissionless relayer submits the transaction, pays the gas, and keeps a fixed USDC fee ($0.05 on Base Mainnet); the rest is credited to your deposits balance. If a buyer daemon (`antseed buyer start`) is running, the request goes out over its existing seller connections — otherwise the CLI joins the network with a temporary node.
 
-Withdrawals are initiated through the payments portal or CLI:
+| Option | Purpose |
+|---|---|
+| `--amount <usdc>` | Amount to sweep (default: full hot-wallet balance, clamped to your credit-limit headroom) |
+| `--timeout <secs>` | How long to wait for on-chain confirmation (default: 120) |
+
+The swept amount must exceed the fixed relay fee, and a first-ever deposit must net at least 1 USDC after the fee. Your funds never move unless a relayer lands the transaction — the authorization simply expires after an hour.
+
+### Checking Balance and Activity
+
+```bash
+antseed buyer balance    # wallet + deposits balances
+antseed buyer activity   # tokens, spending history, measured savings, active channels
+```
+
+`antseed buyer activity` mirrors the desktop app's Activity view: lifetime tokens/spent/saved, a per-day spending chart (`--days 7|30|90`), active channels with their locked amounts and channel IDs, and ANTS emissions available to claim (`antseed buyer emissions claim`). It needs the buyer connection running (`antseed buyer start`).
+
+### Withdrawing
 
 ```bash
 antseed buyer withdraw 5
@@ -87,6 +109,10 @@ antseed seller start
 
 For a one-off run, use `antseed seller start --base-rpc-url <url>`. For durable config, set `payments.crypto.rpcUrl` in `~/.antseed/config.json`.
 
+### Relaying Deposit Sweeps
+
+Sellers relay buyer deposit sweeps by default: the node verifies and simulates each incoming sweep request, submits it on-chain, and earns the fixed relay fee (minus gas). Opt out with `relayer.enabled: false` in your config, or tune the profitability floor with `relayer.minProfitBaseUnits`.
+
 ### Staking
 
 Providers must stake a minimum of $10 USDC to participate:
@@ -123,6 +149,7 @@ antseed seller emissions info
 | AntseedDeposits | `0x0F7a3a8f4Da01637d1202bb5443fcF7F88F99fD2` |
 | AntseedChannels | `0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d` |
 | AntseedStaking | `0x3652E6B22919bd322A25723B94BB207602E5c8e6` |
+| AntseedDepositRelay | `0x34a44542e76f9b4cff3a31902eDF14AbF2C3B3DD` |
 | AntseedEmissionsV2 | `0xF13bE52c4A3afC6AE29536f073588d01A0564088` |
 | ANTSToken | `0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263` |
 
@@ -132,7 +159,7 @@ All contracts verified on [BaseScan](https://basescan.org). For testnet (Base Se
 
 If a provider disappears mid-session, the buyer's funds are not lost:
 
-1. After the session deadline passes, anyone can call `requestTimeout()`
-2. After a 15-minute grace period, the buyer calls `withdraw()` to release locked funds
+1. The buyer (or their deposits operator) calls `requestClose()` on AntseedChannels — callable anytime while the channel is active
+2. After a 15-minute grace period (so the seller can still submit a final SpendingAuth), the buyer calls `withdraw()` to release remaining locked funds back to their deposit
 
-This is handled automatically by the protocol.
+If the seller is still online, the buyer can instead request a cooperative close and skip the grace period. Desktop and CLI expose both paths.

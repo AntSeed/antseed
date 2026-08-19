@@ -19,11 +19,13 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 | **Buying** | |
 | `antseed buyer start` | Start the buyer proxy and connect to sellers |
 | `antseed buyer start --router <name>` | Start the buyer proxy with a non-default router |
-| `antseed buyer deposit <amount>` | Deposit USDC for payments |
+| `antseed buyer deposit` | Show your funding address + QR; incoming USDC deposits automatically (gasless) |
+| `antseed buyer sweep` | Manually sweep hot-wallet USDC into deposits (gasless) |
+| `antseed buyer activity` | Activity summary: tokens, spend history, savings, channels, claimable ANTS |
+| `antseed buyer deposit --onchain <usdc>` | Direct on-chain deposit from the hot wallet (requires ETH for gas) |
 | `antseed buyer withdraw <amount>` | Withdraw USDC from deposits |
 | `antseed buyer balance` | Check wallet and deposit balance |
-| `antseed network browse` | Browse available services and pricing |
-| `antseed payments` | Launch the payments portal |
+| `antseed network browse` | Browse peers, models, and pricing (same catalog as `/v1/models`) |
 | **Session** | |
 | `antseed buyer connection get` | Show current session state (pinned service, peer) |
 | `antseed buyer connection set` | Update service/peer overrides on a running proxy |
@@ -100,6 +102,17 @@ antseed config seller add-service anthropic claude-sonnet-4-5-20250929 \
   --categories coding,chat
 antseed seller start
 ```
+
+Per-service capability hints and non-token billing are durable config fields:
+
+```bash
+antseed config seller add-service openai gpt-image-1 \
+  --input 0 --output 0 \
+  --capabilities '{"inputs":["text","image"]}' \
+  --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.04}]}}'
+```
+
+`--unit-billing-models` is currently consumed by the `openai` provider for `openai-images`. Seller startup warns when the selected plugin ignores it. Image services are skipped by periodic model health checks to avoid generating billable probe images.
 
 **Routers** select peers and proxy requests (consumer mode):
 
@@ -228,6 +241,7 @@ antseed config seller remove-service anthropic claude-sonnet-4-5-20250929
 antseed config seller set providers.anthropic.defaults.inputUsdPerMillion 12
 antseed config seller set providers.anthropic.services.claude-sonnet-4-5-20250929.pricing.outputUsdPerMillion 20
 antseed config seller set providers.anthropic.services.claude-sonnet-4-5-20250929.categories '["coding","legal"]'
+antseed config seller set providers.anthropic.services.claude-sonnet-4-5-20250929.capabilities '{"contextWindow":200000,"inputs":["text","image"],"toolUse":true}'
 
 # Seller public address override for load-balanced deployments
 antseed config seller set publicAddress "peer.example.com:6882"
@@ -239,6 +253,8 @@ antseed config seller set maxUploadBodyBytes 134217728
 antseed config buyer set maxPricing.defaults.inputUsdPerMillion 25
 antseed config buyer set maxPricing.defaults.cachedInputUsdPerMillion 12
 antseed config buyer set maxPricing.defaults.outputUsdPerMillion 75
+antseed config buyer set routingPreferences.minTrustScore 60
+antseed config buyer set routingPreferences.maxInputUsdPerMillion 25
 antseed config buyer set peerRefreshIntervalMs 300000
 antseed config buyer set metadataFetchTimeoutMs 1500
 antseed config buyer set disableMetadataV2Services true
@@ -256,9 +272,43 @@ antseed buyer start --disable-metadata-v2-services
 
 For production sellers, prefer a dedicated Base JSON-RPC endpoint over public defaults. You can set it durably with `payments.crypto.rpcUrl`, at runtime with `ANTSEED_BASE_RPC_URL`, or for one run with `antseed seller start --base-rpc-url <url>`.
 
-### Peer pinning (live, while proxy is running)
+### Metadata v12 rollout
 
-After `antseed buyer start` is running, you can pin all subsequent requests to a peer without restarting:
+This release announces metadata v12. Buyers supporting only older metadata versions drop v12 sellers from discovery, while updated buyers continue accepting older v10/v11 sellers. Upgrade buyer CLIs and desktop apps before upgrading sellers. Removing capability or unit-billing fields does not downgrade the metadata version; rollback requires running the older seller binary.
+
+### Model-only routing and peer pinning
+
+Pinning a peer is optional. A request that names only a model uses the shared
+Price + Trust ranking configured under `buyer.routingPreferences`. The default
+`minTrustScore` is `60` and acts as a hard eligibility gate; eligible offers are
+ordered using trust, token or image price, cached-input pricing coverage, recent
+failures, cooldowns, free-peer preference, and seller access rules. Model-only
+requests can fail over on peer-attributed retryable errors.
+
+Discover what the network serves without any pin:
+
+```bash
+# Every model on the network, aggregated across sellers (answered locally)
+curl -s http://localhost:8377/v1/models | jq '.data[].id'
+
+# Filter the list by modality, or inspect one unified model and its ranked offers
+curl -s 'http://localhost:8377/v1/models?type=text'
+curl -s 'http://localhost:8377/v1/models?type=images'
+curl -s http://localhost:8377/v1/models/<model-id>
+
+# Peers, pricing, protocols, capabilities, and reputation
+antseed network browse
+```
+
+`GET /v1/models` is network-wide and groups compatible aliases. Duplicate
+offers from one seller collapse to its cheapest matching service. For recognized
+conversations, the first successful automatic route becomes a soft affinity:
+later turns prefer the same seller and service while they remain healthy and
+policy-eligible, but can still fail over. Explicit pins remain hard.
+
+When you do want to force a specific seller, pin it. After `antseed buyer
+start` is running, you can pin all subsequent requests to a peer without
+restarting:
 
 ```bash
 # Pin all requests to a specific peer (bypasses router for peer selection)
@@ -271,7 +321,7 @@ antseed buyer connection get
 antseed buyer connection clear
 ```
 
-Session peer pins are stored in `~/.antseed/buyer.state.json` and picked up by the running proxy immediately via file-watching. The desktop app reads and writes the same file to expose peer selection in its UI.
+Session peer pins are stored in `~/.antseed/buyer.state.json`, survive proxy restarts, and are picked up by the running proxy immediately via file-watching. The desktop app reads and writes the same file to expose explicit peer selection in its UI.
 
 For tools that can only set a model name, use `<peerId>@<model>` as the model. The proxy strips the peer prefix before provider matching and forwards only `<model>` to the seller. If both this model prefix and `x-antseed-pin-peer` are sent, the header selects the peer and the model prefix is still stripped.
 
@@ -303,24 +353,23 @@ antseed seller start
 # 1. Set your identity (secp256k1 private key)
 export ANTSEED_IDENTITY_HEX=<your-private-key-hex>
 
-# 2. Launch the payments portal to deposit USDC
-antseed payments
-# Payments portal running at http://127.0.0.1:3118
-
-# 3. In the portal, connect a funded wallet (e.g. MetaMask) and deposit USDC
-#    for your node. The contract's deposit(buyer, amount) pulls USDC from the
-#    connected wallet and credits your node — the identity key never holds funds.
-
-# 4. Connect to the network
+# 2. Connect to the network
 antseed buyer start
 # Proxy listening on http://localhost:8377
+
+# 3. Fund your node: shows your address + a QR code, then deposits incoming
+#    USDC into your credits automatically (gasless — a relayer submits the
+#    transaction for a fixed ~$0.05 USDC fee)
+antseed buyer deposit
 ```
 
 Point your AI tools (Claude Code, Codex, etc.) at `http://localhost:8377` as the API base URL. The router handles peer selection and failover transparently.
 
-### Payments Portal
+### Depositing USDC
 
-The payments portal is a local web UI for depositing USDC and viewing payment activity. Run `antseed payments` to start it at `http://localhost:3118`. Connect any funded wallet (MetaMask, Coinbase Wallet, etc.) — the contract's `deposit(buyer, amount)` pulls USDC from your connected wallet and credits your node's address. Your node's identity key never needs to hold USDC or ETH.
+`antseed buyer deposit` prints your node's funding address and a QR code (an EIP-681 payment request any mobile wallet can scan). Send USDC on Base to that address from anywhere — an exchange withdrawal, another wallet, a card on-ramp. Incoming funds are swept into your deposits balance gaslessly: your node signs an EIP-3009 authorization and a permissionless relayer submits the transaction for a fixed ~$0.05 USDC fee, so the hot wallet never needs ETH. While watching, the command also serves the connected-wallet checkout page and prints its link (`http://127.0.0.1:3118?token=…`) for depositing from a browser-extension wallet instead.
+
+While `antseed buyer start` is running, this sweeping happens automatically in the background (disable with `buyer.autoSweep: false` in your config). `antseed buyer sweep` triggers the same gasless sweep manually, and `antseed buyer deposit --onchain <usdc>` remains for direct on-chain deposits from a hot wallet that holds ETH. (The `antseed payments` web portal is retired.)
 
 ### Configuration
 
@@ -340,6 +389,7 @@ Use `base-sepolia` for testing with MockUSDC.
 ### Runtime Controls
 
 - `ANTSEED_BASE_RPC_URL=<url>` — custom Base JSON-RPC endpoint for seller on-chain operations (recommended for production)
+- `ANTSEED_COMPARABLE_PRICES_URL=<url>` — retail-prices models API for the `antseed buyer activity` Saved tile (OpenRouter-compatible schema, e.g. `https://openrouter.ai/api/v1/models`). Release builds ship with a baked-in default; set the variable to override it, or set it to an empty string to disable the savings baseline. Builds from source have no default
 - `ANTSEED_BUYER_METADATA_FETCH_TIMEOUT_MS=<ms>` — runtime override for buyer peer-discovery metadata fetch timeout
 - `ANTSEED_BUYER_DISABLE_METADATA_V2_SERVICES=true` — suppress buyer per-service metadata v2 attribution while keeping aggregate usage totals
 - `ANTSEED_SETTLEMENT_IDLE_MS=600000` — idle time before settling a session (default: 10 minutes)

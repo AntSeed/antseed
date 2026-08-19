@@ -7,6 +7,7 @@ import {
   assertSellerPrerequisites,
   buildSellerRuntimeOverridesFromFlags,
   buildSellerPluginRuntimeEnv,
+  getUnsupportedUnitBillingWarning,
   isPublicRpcUrl,
   mergeSellerRuntimeEnv,
   parseOptionalPositiveIntegerEnv,
@@ -66,6 +67,17 @@ test('buildSellerPluginRuntimeEnv translates unified config into flat ANTSEED_* 
             inputUsdPerMillion: 18,
             outputUsdPerMillion: 42,
           },
+          capabilities: {
+            contextWindow: 200000,
+            inputs: ['text', 'image'],
+            toolUse: true,
+          },
+          unitBillingModels: {
+            'openai-images': {
+              version: 1,
+              components: [{ unit: 'output_images', priceUsd: 0.04 }],
+            },
+          },
         },
         'claude-opus-4-5': {
           upstreamModel: 'anthropic/claude-opus-4-5-20251117',
@@ -103,6 +115,21 @@ test('buildSellerPluginRuntimeEnv translates unified config into flat ANTSEED_* 
   assert.equal(aliases['claude-opus-4-5'], 'anthropic/claude-opus-4-5-20251117');
   // When upstream == serviceId, no alias entry is emitted.
   assert.equal(aliases['claude-sonnet-4-5-20250929'], undefined);
+
+  const capabilities = JSON.parse(runtimeEnv['ANTSEED_SERVICE_CAPABILITIES_JSON'] ?? '{}') as Record<string, unknown>;
+  assert.deepEqual(capabilities['claude-sonnet-4-5-20250929'], {
+    contextWindow: 200000,
+    inputs: ['text', 'image'],
+    toolUse: true,
+  });
+
+  const unitBillingModels = JSON.parse(runtimeEnv['ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON'] ?? '{}') as Record<string, unknown>;
+  assert.deepEqual(unitBillingModels['claude-sonnet-4-5-20250929'], {
+    'openai-images': {
+      version: 1,
+      components: [{ unit: 'output_images', priceUsd: 0.04 }],
+    },
+  });
 });
 
 test('buildSellerPluginRuntimeEnv returns bare env when no provider is configured', () => {
@@ -113,6 +140,35 @@ test('buildSellerPluginRuntimeEnv returns bare env when no provider is configure
   assert.equal(runtimeEnv['ANTSEED_OUTPUT_USD_PER_MILLION'], undefined);
   assert.equal(runtimeEnv['ANTSEED_ALLOWED_SERVICES'], undefined);
   assert.equal(runtimeEnv['ANTSEED_MAX_CONCURRENCY'], '7');
+});
+
+test('getUnsupportedUnitBillingWarning identifies plugins that ignore configured models', () => {
+  const provider = {
+    plugin: 'anthropic',
+    services: {
+      'claude-sonnet': {
+        unitBillingModels: {
+          'openai-images': {
+            version: 1 as const,
+            components: [{ unit: 'output_images' as const, priceUsd: 0.04 }],
+          },
+        },
+      },
+    },
+  };
+
+  assert.match(
+    getUnsupportedUnitBillingWarning('anthropic', provider, []) ?? '',
+    /Provider "anthropic".*ignores unitBillingModels.*claude-sonnet/,
+  );
+  assert.equal(
+    getUnsupportedUnitBillingWarning('openai', provider, [{
+      key: 'ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON',
+      label: 'Unit billing',
+      type: 'string',
+    }]),
+    undefined,
+  );
 });
 
 test('buildSellerPluginRuntimeEnv sets OPENAI_BASE_URL from provider baseUrl', () => {
@@ -128,6 +184,22 @@ test('buildSellerPluginRuntimeEnv sets OPENAI_BASE_URL from provider baseUrl', (
   };
   const runtimeEnv = buildSellerPluginRuntimeEnv(config.seller, 'openai');
   assert.equal(runtimeEnv['OPENAI_BASE_URL'], 'https://api.together.ai');
+});
+
+test('buildSellerPluginRuntimeEnv sets LOCAL_LLM_BASE_URL for local LLM providers', () => {
+  const config = createDefaultConfig();
+  config.seller.providers = {
+    local: {
+      plugin: 'local-llm',
+      baseUrl: 'http://192.168.1.100:11434',
+      services: {
+        'qwen3.5-9b': {},
+      },
+    },
+  };
+  const runtimeEnv = buildSellerPluginRuntimeEnv(config.seller, 'local');
+  assert.equal(runtimeEnv['LOCAL_LLM_BASE_URL'], 'http://192.168.1.100:11434');
+  assert.equal(runtimeEnv['OPENAI_BASE_URL'], undefined);
 });
 
 test('assertSellerPrerequisites fails when no services are configured', async () => {

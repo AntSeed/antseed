@@ -158,6 +158,15 @@ describe('detectRequestServiceApiProtocol', () => {
       detectRequestServiceApiProtocol(makeRequest({ path: '/v1/chat/completions' })),
     ).toBe('openai-chat-completions');
   });
+
+  it('detects openai images from the generations and edits paths', () => {
+    expect(
+      detectRequestServiceApiProtocol(makeRequest({ path: '/v1/images/generations' })),
+    ).toBe('openai-images');
+    expect(
+      detectRequestServiceApiProtocol(makeRequest({ path: '/v1/images/edits' })),
+    ).toBe('openai-images');
+  });
 });
 
 describe('selectTargetProtocolForRequest', () => {
@@ -187,8 +196,14 @@ describe('inferProviderDefaultServiceApiProtocols', () => {
     expect(inferProviderDefaultServiceApiProtocols('claude-oauth')).toEqual(['anthropic-messages']);
   });
 
-  it('infers openai-style providers', () => {
-    expect(inferProviderDefaultServiceApiProtocols('openai')).toEqual(['openai-chat-completions']);
+  it('keeps generic openai fallback chat-only', () => {
+    expect(inferProviderDefaultServiceApiProtocols('openai')).toEqual([
+      'openai-chat-completions',
+    ]);
+  });
+
+  it('keeps local-llm fallback chat-only', () => {
+    expect(inferProviderDefaultServiceApiProtocols('local-llm')).toEqual(['openai-chat-completions']);
   });
 });
 
@@ -964,6 +979,106 @@ describe('selectTargetProtocolForRequest – responses', () => {
   });
 });
 
+describe('native responses passthrough', () => {
+  const decode = (body: Uint8Array): Record<string, unknown> =>
+    JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
+
+  it('preserves the exact request and cache-relevant history fields', () => {
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-5.5',
+        previous_response_id: 'resp_previous',
+        prompt_cache_key: 'conversation-42',
+        prompt_cache_retention: '24h',
+        include: ['reasoning.encrypted_content'],
+        input: [
+          { type: 'reasoning', id: 'rs_native', encrypted_content: 'encrypted' },
+          {
+            type: 'function_call',
+            id: 'fc_native',
+            call_id: 'tool_native',
+            name: 'search',
+            arguments: '{}',
+          },
+          {
+            type: 'message',
+            id: 'msg_native',
+            role: 'assistant',
+            status: 'completed',
+            content: [{ type: 'output_text', text: 'cached prefix', annotations: [] }],
+          },
+          { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'continue' }] },
+        ],
+      })),
+    });
+
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-responses' });
+
+    expect(result).not.toBeNull();
+    expect(result!.request).toBe(request);
+    expect(result!.request.body).toBe(request.body);
+  });
+
+  it('repairs only legacy synthesized IDs while preserving cache fields', () => {
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-5.5',
+        previous_response_id: 'resp_previous',
+        prompt_cache_key: 'conversation-42',
+        prompt_cache_retention: '24h',
+        input: [
+          {
+            type: 'message',
+            id: 'chatcmpl-legacy_msg_1',
+            role: 'assistant',
+            status: 'completed',
+            content: [{ type: 'output_text', text: 'legacy prefix', annotations: [] }],
+          },
+          { type: 'item_reference', id: 'chatcmpl-reference_msg_1' },
+          {
+            type: 'function_call',
+            id: 'tool_legacy',
+            call_id: 'tool_legacy',
+            name: 'search',
+            arguments: '{}',
+          },
+          { type: 'item_reference', id: 'tool_legacy' },
+          { type: 'message', id: 'msg_native', role: 'assistant', content: [] },
+        ],
+      })),
+    });
+
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-responses' });
+    const body = decode(result!.request.body);
+    const input = body.input as Array<Record<string, unknown>>;
+
+    expect(result!.request).not.toBe(request);
+    expect(body.previous_response_id).toBe('resp_previous');
+    expect(body.prompt_cache_key).toBe('conversation-42');
+    expect(body.prompt_cache_retention).toBe('24h');
+    expect(input[0].id).toBe('msg_chatcmpl-legacy_1');
+    expect(input[1].id).toBe('msg_chatcmpl-reference_1');
+    expect(input[2]).toMatchObject({ id: 'fc_tool_legacy', call_id: 'tool_legacy' });
+    expect(input[3].id).toBe('fc_tool_legacy');
+    expect(input[4].id).toBe('msg_native');
+  });
+
+  it('preserves the exact response and does not create a stream adapter', () => {
+    const response: SerializedHttpResponse = {
+      requestId: 'req-native-response',
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({
+        id: 'resp_native',
+        output: [{ type: 'message', id: 'msg_native', role: 'assistant', content: [] }],
+      })),
+    };
+
+    expect(transformResponse(response, { from: 'openai-responses', to: 'openai-responses' })).toBe(response);
+    expect(createStreamingAdapter({ from: 'openai-responses', to: 'openai-responses' })).toBeNull();
+  });
+});
+
 describe('transformRequest responses to chat', () => {
   it('converts string input to chat completions request', () => {
     const result = transformRequest(makeResponsesRequest(), { from: 'openai-responses', to: 'openai-chat-completions' });
@@ -1071,6 +1186,26 @@ describe('transformRequest responses to chat', () => {
       function: { name: 'search', description: 'Search the web', parameters: { type: 'object' } },
     }]);
     expect(body.tool_choice).toBe('auto');
+  });
+
+  it('omits tool_choice when a Codex compaction request has no tools', () => {
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        input: [{
+          role: 'user',
+          content: [{ type: 'input_text', text: 'summarize the conversation' }],
+        }],
+        tools: [],
+        tool_choice: 'auto',
+        parallel_tool_calls: false,
+      })),
+    });
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+
+    expect(body.tools).toBeUndefined();
+    expect(body.tool_choice).toBeUndefined();
   });
 
   it('omits tools when only built-in Responses tools are provided', () => {
@@ -1241,6 +1376,21 @@ describe('transformRequest responses to chat', () => {
 });
 
 describe('transformRequest responses to anthropic', () => {
+  it('omits tool_choice when no tools are available', () => {
+    const result = transformRequest(makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        input: 'summarize the conversation',
+        tools: [],
+        tool_choice: 'auto',
+      })),
+    }), { from: 'openai-responses', to: 'anthropic-messages' });
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+
+    expect(body.tools).toBeUndefined();
+    expect(body.tool_choice).toBeUndefined();
+  });
+
   it('converts responses input, tools, and shared fields to anthropic messages', () => {
     const result = transformRequest(makeResponsesRequest({
       body: new TextEncoder().encode(JSON.stringify({
@@ -1349,7 +1499,7 @@ describe('transformResponse chat to responses', () => {
     const output = body.output as Array<Record<string, unknown>>;
     expect(output).toHaveLength(1);
     expect(output[0].type).toBe('message');
-    expect(output[0].id).toBe('chatcmpl-abc_msg_1');
+    expect(output[0].id).toBe('msg_chatcmpl-abc_1');
     expect(output[0].role).toBe('assistant');
     expect(output[0].status).toBe('completed');
 
@@ -1432,7 +1582,7 @@ describe('transformResponse chat to responses', () => {
     const functionCall = output.find((item) => item.type === 'function_call');
     expect(functionCall).toBeDefined();
     expect(functionCall!.name).toBe('write');
-    expect(functionCall!.id).toBe('call_123');
+    expect(functionCall!.id).toBe('fc_call_123');
     expect(functionCall!.call_id).toBe('call_123');
     expect(functionCall!.arguments).toBe('{"path":"hello.txt"}');
   });
@@ -1499,7 +1649,7 @@ describe('transformResponse chat to responses', () => {
       output_index: 0,
       item: {
         type: 'message',
-        id: 'chatcmpl-stream_msg_1',
+        id: 'msg_chatcmpl-stream_1',
         status: 'in_progress',
         content: [{ type: 'output_text', text: '', annotations: [] }],
       },
@@ -1509,7 +1659,7 @@ describe('transformResponse chat to responses', () => {
     expect(delta).toBeDefined();
     expect(JSON.parse(delta!.data)).toMatchObject({
       type: 'response.output_text.delta',
-      item_id: 'chatcmpl-stream_msg_1',
+      item_id: 'msg_chatcmpl-stream_1',
       output_index: 0,
       content_index: 0,
       delta: 'Hello!',
@@ -1542,7 +1692,7 @@ describe('transformResponse chat to responses', () => {
       output_index: 1,
       item: {
         type: 'function_call',
-        id: 'call_123',
+        id: 'fc_call_123',
         call_id: 'call_123',
         name: 'write',
         arguments: '',
@@ -1555,7 +1705,7 @@ describe('transformResponse chat to responses', () => {
     expect(JSON.parse(delta!.data)).toMatchObject({
       type: 'response.function_call_arguments.delta',
       output_index: 1,
-      item_id: 'call_123',
+      item_id: 'fc_call_123',
       call_id: 'call_123',
       delta: '{"path":"hello.txt"}',
     });
@@ -1565,7 +1715,7 @@ describe('transformResponse chat to responses', () => {
     expect(JSON.parse(done!.data)).toMatchObject({
       type: 'response.function_call_arguments.done',
       output_index: 1,
-      item_id: 'call_123',
+      item_id: 'fc_call_123',
       call_id: 'call_123',
       name: 'write',
       arguments: '{"path":"hello.txt"}',
@@ -1613,6 +1763,26 @@ describe('transformResponse chat to responses', () => {
 });
 
 describe('transformRequest chat to responses', () => {
+  it('omits tool_choice when no tools are available', () => {
+    const request: SerializedHttpRequest = {
+      requestId: 'req-chat-to-resp-no-tools',
+      method: 'POST',
+      path: '/v1/chat/completions',
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-4.1',
+        messages: [{ role: 'user', content: 'summarize the conversation' }],
+        tools: [],
+        tool_choice: 'auto',
+      })),
+    };
+    const result = transformRequest(request, { from: 'openai-chat-completions', to: 'openai-responses' });
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+
+    expect(body.tools).toBeUndefined();
+    expect(body.tool_choice).toBeUndefined();
+  });
+
   it('preserves shared request fields when converting chat to responses', () => {
     const request: SerializedHttpRequest = {
       requestId: 'req-chat-to-resp',
@@ -1902,7 +2072,7 @@ describe('createStreamingAdapter chat to responses', () => {
       output_index: 0,
       item: {
         type: 'function_call',
-        id: 'call_1',
+        id: 'fc_call_1',
       },
     });
 
@@ -1913,7 +2083,7 @@ describe('createStreamingAdapter chat to responses', () => {
       response: {
         output: [{
           type: 'function_call',
-          id: 'call_1',
+          id: 'fc_call_1',
           call_id: 'call_1',
           name: 'write',
           arguments: '{"path":"hello.txt"}',

@@ -1,6 +1,5 @@
 import {
   BrowserWindow,
-  shell,
   Menu,
   dialog,
   nativeImage,
@@ -11,6 +10,7 @@ import {
 } from 'electron';
 import { windowPresetForView, type WindowSizePresetName } from '../../shared/view-windows.js';
 import { PRELOAD_PATH } from '../paths.js';
+import { adoptCheckoutWindow, checkoutWindowOpenHandler, closeCheckoutWindows } from '../payments/checkout-window.js';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -138,38 +138,6 @@ export function setFloatWindowCompact(compact: boolean): void {
     height,
   });
   win.setResizable(false);
-}
-
-/**
- * Move the pill by a pointer delta. The chip's centre button and the pill face
- * are click targets, so they can't be `-webkit-app-region` drag handles — the
- * renderer streams pointer deltas here instead.
- *
- * Deliberately `setBounds` with the intended size, never `setPosition`:
- * `setPosition` re-submits the size it reads back off the window, and Windows
- * converts window rects DIP↔pixel with an *enclosing* rounding, so on a
- * display with fractional scaling (125%, 150%) a rect whose origin isn't on a
- * pixel boundary comes back a pixel or two wider than it went in. Feeding that
- * back in on the next pointer tick compounds it — the pill visibly grows as
- * it's dragged. Passing the target size every time makes each move idempotent.
- */
-export function moveFloatWindowBy(dx: number, dy: number): void {
-  const win = getFloatWindow();
-  if (!win) return;
-  const bounds = win.getBounds();
-  const { width, height } = floatTargetSize();
-  const x = Math.round(bounds.x + dx);
-  const y = Math.round(bounds.y + dy);
-  // Recovering a size that already drifted needs the constraints lifted:
-  // a non-resizable window's min/max are pinned to whatever size it had when
-  // the flag went off, so an inflated size otherwise clamps itself in place.
-  const drifted = bounds.width !== width || bounds.height !== height;
-  if (drifted) {
-    win.setResizable(true);
-    win.setMinimumSize(FLOAT_WINDOW_COMPACT_SIZE, FLOAT_WINDOW_MIN_HEIGHT);
-  }
-  win.setBounds({ x, y, width, height });
-  if (drifted) win.setResizable(false);
 }
 
 /**
@@ -478,10 +446,11 @@ export function createWindow(config: WindowConfig): void {
     ...macosWindowChrome,
   });
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
-    return { action: 'deny' };
-  });
+  // Sized popups (the Fun checkout's card/sign-in flows) open as app-owned
+  // child windows so they can be closed when the payment lands; everything
+  // else leaves for the system browser.
+  mainWindow.webContents.setWindowOpenHandler(checkoutWindowOpenHandler);
+  mainWindow.webContents.on('did-create-window', (child) => adoptCheckoutWindow(child));
 
   mainWindow.on('enter-full-screen', () => {
     mainWindow?.webContents.send('fullscreen-change', true);
@@ -543,6 +512,7 @@ export function createWindow(config: WindowConfig): void {
   mainWindow.on('closed', () => {
     mainWindow = null;
     closeFloatWindow();
+    closeCheckoutWindows();
   });
 }
 

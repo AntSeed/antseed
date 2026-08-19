@@ -1,5 +1,6 @@
 import type {
   DaemonStateSnapshot,
+  DesktopBuyerSpendHistory,
   DesktopBuyerUsageTotals,
   DesktopPaymentChannelSummary,
   DesktopRewardsSummary,
@@ -8,6 +9,10 @@ import type {
 } from '../types/bridge';
 import type { ChatMessage } from '../ui/components/chat/chat-shared';
 import type { ChatPermissionMode, ToolApprovalRequest } from '../types/bridge';
+import {
+  DEFAULT_MODEL_ROUTING_PREFERENCES,
+  type ModelRoutingPreferences,
+} from '@antseed/node/model-routing';
 
 export type BadgeTone = 'active' | 'idle' | 'warn' | 'bad';
 
@@ -57,11 +62,25 @@ export type ConfigFormData = {
   cryptoChainId: string;
 };
 
+export type ServiceCapabilitiesView = {
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  inputs?: string[];
+  outputs?: string[];
+  reasoning?: boolean;
+  toolUse?: boolean;
+  structuredOutput?: boolean;
+  supportedParameters?: string[];
+};
+
+export type VprModelKind = 'text' | 'image';
+
 export type ChatServiceOptionEntry = {
   id: string;
   label: string;
   provider: string;
   protocol: string;
+  capabilities?: ServiceCapabilitiesView | null;
   count: number;
   value: string;
   peerId: string;
@@ -71,6 +90,8 @@ export type ChatServiceOptionEntry = {
   inputUsdPerMillion: number | null;
   outputUsdPerMillion: number | null;
   cachedInputUsdPerMillion?: number | null;
+  minImageUsdPerImage?: number | null;
+  maxImageUsdPerImage?: number | null;
   categories: string[];
   description: string;
 };
@@ -90,22 +111,21 @@ export type VprRouteSelection = {
   peerId: string | null;
 };
 
-export type VprRoutingPreferences = {
+export type VprRoutingPreferences = ModelRoutingPreferences & {
   autoRouting: boolean;
-  preferFreePeers: boolean;
-  maxInputUsdPerMillion: number;
-  minTrustScore: number;
-  /**
-   * Peer allowlist. While non-empty, auto routing only ever considers these
-   * peers — every other seller is dropped before scoring.
-   */
-  allowedPeerIds: string[];
-  /** Peers auto routing never selects. Takes precedence over the allowlist. */
-  blockedPeerIds: string[];
 };
 
 /** Which routing list a peer sits on. A peer is never on both. */
 export type VprPeerListing = 'allowed' | 'blocked' | 'none';
+
+export type ReminderState = 'armed_d1' | 'armed_d2' | 'armed_d5' | 'armed_d15' | 'done';
+export type ReminderVariant = 'd1' | 'd2' | 'd5' | 'd15';
+export type ReminderOffer = {
+  variant: ReminderVariant;
+  requestsCount: number;
+  retrospectiveUsd: string;
+  prospectiveUsd: string;
+};
 
 export type VprModelCatalogEntry = {
   provider: string;
@@ -113,12 +133,16 @@ export type VprModelCatalogEntry = {
   label: string;
   peerCount: number;
   categories: string[];
+  kind: VprModelKind;
+  protocols: string[];
   minInputUsdPerMillion: number | null;
   maxInputUsdPerMillion: number | null;
   minOutputUsdPerMillion: number | null;
   maxOutputUsdPerMillion: number | null;
   minCachedInputUsdPerMillion: number | null;
   maxCachedInputUsdPerMillion: number | null;
+  minImageUsdPerImage: number | null;
+  maxImageUsdPerImage: number | null;
   expectedSavingsPct: number | null;
   bestPeerId: string | null;
   /**
@@ -147,6 +171,9 @@ export type DiscoverRow = {
   categories: string[];
   provider: string;            // internal, not shown
   protocol: string;
+  /** Seller-specific capability hints. These are deliberately not merged at
+   * model level because different peers may serve different model variants. */
+  capabilities?: ServiceCapabilitiesView | null;
 
   // Peer
   peerId: string;
@@ -169,6 +196,8 @@ export type DiscoverRow = {
   inputUsdPerMillion: number | null;
   outputUsdPerMillion: number | null;
   cachedInputUsdPerMillion: number | null;
+  minImageUsdPerImage: number | null;
+  maxImageUsdPerImage: number | null;
 
   // Local buyer history (from ChannelStore)
   lifetimeSessions: number;
@@ -192,6 +221,8 @@ export type DiscoverRow = {
   onChainLastSettledAt: number;
   onChainReputationScore: number | null; // displayed 0-100 score
   onChainTrustScore: number | null;
+  /** Model-specific 0-100 reputation after pricing-completeness adjustments. */
+  effectiveReputationScore?: number | null;
   onChainSybilRisk: number | null;
   onChainSybilFlags: string[];
 
@@ -206,6 +237,12 @@ export type DiscoverRow = {
   networkOutputTokens: string | null;
 
   // Derived — encoded selection for existing chat open path
+  // Peer health (buyer-proxy cooldown). A peer that recently stopped
+  // responding is deprioritized by auto routing until its cooldown lapses.
+  peerCooldownUntil: number | null;
+  peerFailureStreak: number;
+  peerLastFailureReason: string | null;
+
   selectionValue: string;
 };
 
@@ -215,6 +252,8 @@ export type ActiveChannelInfo = {
 };
 
 export type RendererUiState = {
+  reminderState: ReminderState;
+  reminderOffer: ReminderOffer | null;
   // --- Process / runtime state ---
   processes: RuntimeProcessState[];
   refreshing: boolean;
@@ -276,12 +315,17 @@ export type RendererUiState = {
   creditsTotalUsdc: string;
   /** Signed but not yet settled on-chain — spent in every sense but the ledger's. */
   creditsPendingUsdc: string;
-  /** Total minus pending: the balance the user actually still owns. Headline. */
+  /** Deposits minus pending spend; used for spending and low-funds decisions. */
   creditsSpendableUsdc: string;
+  /** USDC waiting in the buyer wallet before it can be swept into deposits. */
+  creditsWalletUsdc: string;
+  /** Spendable deposits plus wallet USDC. Used by balance headlines. */
+  creditsTotalOwnedUsdc: string;
   creditsCreditLimitUsdc: string;
   creditsEvmAddress: string | null;
   creditsOperatorAddress: string | null;
   creditsBuyerUsage: DesktopBuyerUsageTotals | null;
+  creditsBuyerSpendHistory: DesktopBuyerSpendHistory | null;
   creditsChannels: DesktopPaymentChannelSummary[];
   creditsRewards: DesktopRewardsSummary | null;
   creditsSummaryLoading: boolean;
@@ -325,6 +369,12 @@ export type RendererUiState = {
   /** IDs of all conversations currently running a request, across the whole app. */
   chatSendingConversationIds: string[];
   chatError: string | null;
+  /**
+   * Non-error routing notice, e.g. "peer X isn't responding, retrying on Y".
+   * Kept separate from `chatError` because a successful failover is not a
+   * failure and must not be rendered as one.
+   */
+  chatRoutingNotice: string | null;
   chatRoutedPeer: string;
   chatRoutedPeerId: string;
   chatSessionStarted: string;
@@ -343,7 +393,10 @@ export type RendererUiState = {
    */
   vprRoutableRows: DiscoverRow[];
   vprModelCatalog: VprModelCatalogEntry[];
+  /** Main text/connected-app route. Image models never replace this. */
   vprRouteSelection: VprRouteSelection;
+  /** Dedicated internal-chat image route, set only by “Use in chat”. */
+  chatImageRouteSelection: VprRouteSelection | null;
   /** Remembered seller pin per model (`provider:serviceId` -> peer id), so a
    * pinned model stays pinned across model switches. */
   vprModelPins: Record<string, string>;
@@ -352,6 +405,8 @@ export type RendererUiState = {
   vprFloatOpen: boolean;
   /** Opt-in: pop the pill open on its own when routed traffic starts. */
   vprFloatAutoOpen: boolean;
+  /** Debug aid: the pill's chat rows name the routed seller next to the model. */
+  vprFloatShowRoutedPeer: boolean;
   chatDiscoverRowsLoaded: boolean;
   chatSelectedServiceValue: string;
   chatSelectedPeerId: string;
@@ -386,6 +441,8 @@ const MAX_LOGS = 2000;
 
 export function createInitialUiState(): RendererUiState {
   return {
+    reminderState: 'armed_d1',
+    reminderOffer: null,
     // Process / runtime
     processes: [],
     refreshing: false,
@@ -442,10 +499,13 @@ export function createInitialUiState(): RendererUiState {
     creditsTotalUsdc: '0',
     creditsPendingUsdc: '0',
     creditsSpendableUsdc: '0',
+    creditsWalletUsdc: '0',
+    creditsTotalOwnedUsdc: '0',
     creditsCreditLimitUsdc: '0',
     creditsEvmAddress: null,
     creditsOperatorAddress: null,
     creditsBuyerUsage: null,
+    creditsBuyerSpendHistory: null,
     creditsChannels: [],
     creditsRewards: null,
     creditsSummaryLoading: false,
@@ -480,6 +540,7 @@ export function createInitialUiState(): RendererUiState {
     chatSendingConversationId: null,
     chatSendingConversationIds: [],
     chatError: null,
+    chatRoutingNotice: null,
     chatRoutedPeer: '',
     chatRoutedPeerId: '',
     chatSessionStarted: '',
@@ -498,17 +559,17 @@ export function createInitialUiState(): RendererUiState {
       mode: 'auto',
       peerId: null,
     },
+    chatImageRouteSelection: null,
     vprModelPins: {},
     vprRoutingPreferences: {
       autoRouting: true,
-      preferFreePeers: false,
-      maxInputUsdPerMillion: 25,
-      minTrustScore: 0,
+      ...DEFAULT_MODEL_ROUTING_PREFERENCES,
       allowedPeerIds: [],
       blockedPeerIds: [],
     },
     vprFloatOpen: false,
     vprFloatAutoOpen: false,
+    vprFloatShowRoutedPeer: false,
     chatDiscoverRowsLoaded: false,
     chatSelectedServiceValue: '',
     chatSelectedPeerId: '',

@@ -1,0 +1,11 @@
+.pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  animation: deposit-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes deposit-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.45; transform: scale(0.8); }
+}

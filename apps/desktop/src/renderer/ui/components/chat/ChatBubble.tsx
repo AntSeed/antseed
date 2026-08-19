@@ -345,7 +345,7 @@ function DiffStatsButton({ item, onOpen, compact = false }: { item: ToolRenderIt
 
 function ToolModal({ item, onClose }: { item: ToolRenderItem; onClose: () => void }) {
   const [closing, setClosing] = useState(false);
-  const closingTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const closingTimerRef = useRef<number | null>(null);
 
   const close = (): void => {
     setClosing(true);
@@ -691,6 +691,25 @@ function FileAttachmentBlock({ block, conversationId }: { block: ContentBlock; c
   const metaText = [mimeType, size, block.truncated ? 'truncated' : '', isError ? String(block.error || 'unsupported') : '']
     .filter(Boolean)
     .join(' · ');
+  const inlineImageSrc = block.generated && canPreview && viewer.src && mimeType.startsWith('image/')
+    ? viewer.src
+    : null;
+
+  if (inlineImageSrc) {
+    return (
+      <>
+        <button
+          type="button"
+          className={styles.generatedImageButton}
+          onClick={() => setViewerOpen(true)}
+          aria-label={`Preview ${fileName}`}
+        >
+          <img src={inlineImageSrc} className={styles.generatedImage} alt="Generated image" />
+        </button>
+        {viewerOpen && <AttachmentViewer attachment={viewer} onClose={() => setViewerOpen(false)} />}
+      </>
+    );
+  }
 
   const inner = (
     <>

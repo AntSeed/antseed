@@ -1,5 +1,5 @@
 import type { AntseedProviderPlugin, ConfigField, ServiceApiProtocol } from '@antseed/node';
-import { BaseProvider, OAuthTokenProvider, StaticTokenProvider, parseServiceAliasMap, parseNonNegativeNumber, parseServicePricingJson } from '@antseed/provider-core';
+import { BaseProvider, OAuthTokenProvider, StaticTokenProvider, parseServiceAliasMap, parseNonNegativeNumber, parseServicePricingJson, parseServiceCapabilitiesJson } from '@antseed/provider-core';
 
 const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
 const CLAUDE_CODE_VERSION = '2.1.75';
@@ -19,6 +19,7 @@ const configSchema: ConfigField[] = [
   { key: 'ANTSEED_ALLOWED_SERVICES', label: 'Allowed Services', type: 'string[]', required: false },
   { key: 'ANTSEED_SERVICE_ALIAS_MAP_JSON', label: 'Service Alias Map', type: 'string', required: false, description: 'JSON map of announced service → upstream model name' },
   { key: 'ANTSEED_SERVICE_PRICING_JSON', label: 'Service Pricing Map', type: 'string', required: false, description: 'JSON map of announced service → per-service pricing' },
+  { key: 'ANTSEED_SERVICE_CAPABILITIES_JSON', label: 'Service Capabilities JSON', type: 'string', required: false, description: 'Per-service model capability JSON' },
   { key: 'ANTSEED_THROTTLE_MIN_TIME_MS', label: 'Throttle Min Time', type: 'number', required: false, description: 'Minimum ms between upstream requests (e.g. 1000)' },
 ];
 
@@ -71,6 +72,7 @@ const plugin: AntseedProviderPlugin = {
     const serviceApiProtocols = buildServiceApiProtocols(allowedServices, 'anthropic-messages');
     const serviceRewriteMap = parseServiceAliasMap(config['ANTSEED_SERVICE_ALIAS_MAP_JSON']);
     const servicePricing = parseServicePricingJson(config['ANTSEED_SERVICE_PRICING_JSON']);
+    const serviceCapabilities = parseServiceCapabilitiesJson(config['ANTSEED_SERVICE_CAPABILITIES_JSON']);
     const throttleMinTime = parseInt(config['ANTSEED_THROTTLE_MIN_TIME_MS'] ?? '0', 10);
 
     return new BaseProvider({
@@ -85,6 +87,7 @@ const plugin: AntseedProviderPlugin = {
         ...(servicePricing ? { services: servicePricing } : {}),
       },
       ...(serviceApiProtocols ? { serviceApiProtocols } : {}),
+      ...(serviceCapabilities ? { serviceCapabilities } : {}),
       relay: {
         baseUrl: 'https://api.anthropic.com',
         authHeaderName: 'authorization',

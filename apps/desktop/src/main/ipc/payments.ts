@@ -24,6 +24,7 @@ import {
   loadBuyerChannels,
   normalizeBuyerUsageTotals,
   notePendingSpend,
+  requestCooperativeChannelClose,
 } from '../payments/buyer-channels.js';
 import { resolveServiceIdHashes } from '../payments/service-hash-resolver.js';
 import {
@@ -36,13 +37,14 @@ import {
   setCachedEmissionsClient,
 } from '../payments/credits.js';
 import {
-  DEPOSIT_WATCH_INTERVAL_MS,
-  getDepositWatchTimer,
+  buildLocalBuyerSpendHistory,
+  type DesktopBuyerSpendHistory,
+  unavailableLocalBuyerSpendHistory,
+} from '../payments/buyer-spend-history.js';
+import {
+  demoteDepositWatch,
   makeDepositsClient,
-  pollDepositWatch,
-  setDepositWatchBalance,
-  setDepositWatchTimer,
-  sweepIncomingUsdc,
+  startDepositWatch,
 } from '../payments/deposit-sweep.js';
 import {
   DEFAULT_CARD_PROVIDERS,
@@ -50,12 +52,17 @@ import {
   PAY_PAGE_KINDS,
   type PayPageKind,
   crossmintApiBase,
+  fetchOnrampAvailability,
+  focusMainWindow,
   getPaymentsPortalToken,
   openPaymentsPopup,
   readCardProviders,
   readCrossmintClientKey,
+  readFunkitApiKey,
   startPaymentsPortal,
 } from '../payments/portal.js';
+import { closeCheckoutWindows, openCheckoutPopup } from '../payments/checkout-window.js';
+import { getMainWindow } from '../ui/window.js';
 import {
   lookupPeer,
   refreshPeerCache,
@@ -179,8 +186,24 @@ export function registerPaymentsIpc(): void {
         parsed.searchParams.set('cur', cur);
         if (amountStr) parsed.searchParams.set('amount', amountStr);
         parsed.searchParams.set('sig', await identity.wallet.signMessage(message));
+        // The chooser's Stripe row is the only path here — open the page on
+        // exactly that integration (no provider tab strip). Unsigned, UX-only.
+        parsed.searchParams.set('provider', 'stripe');
       }
       const url = parsed.toString();
+
+      // AntSeed Pay needs no wallet extension (the link is pre-signed), so it
+      // opens as an app-owned checkout popup: the deposit watcher closes it
+      // the moment the bought USDC lands, instead of stranding a browser tab.
+      if (provider.id === 'antseed-pay') {
+        // The full signed funding link — nothing secret in it (the sig is in
+        // the URL by design), and having it in the dev log makes testing the
+        // hosted page outside the popup trivial. Dev only: production output
+        // shouldn't carry the buyer's address.
+        if (isDev) console.log('[payments] antseed-pay funding link:', url);
+        openCheckoutPopup(url, getMainWindow());
+        return { ok: true, url };
+      }
 
       try {
         await shell.openExternal(url);
@@ -196,6 +219,18 @@ export function registerPaymentsIpc(): void {
     }
   });
 
+  // Region-gated deposit options: the hosted pay page reports which providers
+  // it would offer this machine's region (Stripe = US only). Fail-closed —
+  // an unreachable page just hides the gated rows.
+  ipcMain.handle('payments:onramp-availability', async () => {
+    try {
+      const availability = await fetchOnrampAvailability();
+      return { ok: true, data: availability };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
   ipcMain.handle('payments:crossmint-config', async () => {
     try {
       const clientKey = await readCrossmintClientKey();
@@ -204,6 +239,24 @@ export function registerPaymentsIpc(): void {
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
+  });
+
+  ipcMain.handle('payments:funkit-config', async () => {
+    try {
+      const apiKey = await readFunkitApiKey();
+      if (!apiKey) return { ok: true, data: null };
+      return { ok: true, data: { apiKey } };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // The renderer closes the Fun checkout/sign-in popup windows on flows that
+  // never produce a deposit — e.g. a Google login, where "success" is the
+  // SDK's connection status flipping to connected, not funds arriving.
+  ipcMain.handle('payments:close-checkout-windows', () => {
+    if (closeCheckoutWindows()) focusMainWindow();
+    return { ok: true };
   });
 
   ipcMain.handle('credits:get-info', async (): Promise<{ ok: boolean; data: CreditsInfo | null; error: string | null }> => {
@@ -229,15 +282,13 @@ export function registerPaymentsIpc(): void {
       try {
         balance = await client.getUSDCBalance(address);
       } catch {
-        // RPC hiccup — the poll loop picks it up
+        // RPC hiccup — the daemon's watcher picks it up
       }
-      setDepositWatchBalance(balance);
-      if (!getDepositWatchTimer()) {
-        setDepositWatchTimer(setInterval(() => { void pollDepositWatch(); }, DEPOSIT_WATCH_INTERVAL_MS));
-      }
-      // USDC already sitting in the wallet (sent before the panel opened, or a
-      // card purchase that landed while the app was closed) — sweep it now.
-      if (balance > 0n) void sweepIncomingUsdc(client, address);
+      // The daemon's watcher does the sweeping (it holds the same key and the
+      // live relayer connections); this only promotes it to the fast cadence
+      // and forwards its progress events. USDC already sitting in the wallet
+      // is swept on the daemon's first fast tick.
+      await startDepositWatch();
       return {
         ok: true,
         data: {
@@ -253,11 +304,10 @@ export function registerPaymentsIpc(): void {
   });
 
   ipcMain.handle('deposits:watch-stop', () => {
-    const timer = getDepositWatchTimer();
-    if (timer) {
-      clearInterval(timer);
-      setDepositWatchTimer(null);
-    }
+    // Not a hard stop: deliveries can land after the deposit view closes, so
+    // the daemon's watcher demotes to a slow cadence and the status poll
+    // lingers (and stops itself later).
+    demoteDepositWatch();
     return { ok: true };
   });
 
@@ -370,6 +420,14 @@ export function registerPaymentsIpc(): void {
     };
   });
 
+  ipcMain.handle('payments:get-buyer-spend-history', async (): Promise<{ ok: boolean; data: DesktopBuyerSpendHistory | null; error: string | null }> => {
+    const channels = await loadBuyerChannels(true, false);
+    if (!channels) {
+      return { ok: false, data: unavailableLocalBuyerSpendHistory(), error: 'buyer proxy unreachable' };
+    }
+    return { ok: true, data: buildLocalBuyerSpendHistory(channels), error: null };
+  });
+
   ipcMain.handle('payments:get-channels', async (): Promise<{ ok: boolean; data: DesktopPaymentChannelSummary[] | null; error: string | null }> => {
     const channels = await loadBuyerChannels(true);
     if (!channels) {
@@ -377,6 +435,23 @@ export function registerPaymentsIpc(): void {
     }
     notePendingSpend(channels);
     return { ok: true, data: channels, error: null };
+  });
+
+  ipcMain.handle('payments:request-cooperative-close', async (_event, opts?: { peerId?: string }) => {
+    const peerId = typeof opts?.peerId === 'string' ? opts.peerId.trim() : '';
+    if (!peerId) {
+      return { ok: false, result: null, error: 'Invalid peerId' };
+    }
+    try {
+      const result = await requestCooperativeChannelClose(peerId);
+      return { ok: true, result, error: null };
+    } catch (err) {
+      return {
+        ok: false,
+        result: null,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
   });
 
   ipcMain.handle('payments:get-rewards-summary', async (): Promise<{ ok: boolean; data: DesktopRewardsSummary | null; error: string | null }> => {

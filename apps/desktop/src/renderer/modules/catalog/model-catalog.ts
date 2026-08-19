@@ -1,6 +1,12 @@
-import type { DiscoverRow, VprModelCatalogEntry, VprSelectedModel } from '../../core/state';
-import { canonicalModelKey, displayModelLabel, sameCanonicalModel } from './model-identity';
+import type {
+  DiscoverRow,
+  VprModelCatalogEntry,
+  VprRouteSelection,
+  VprSelectedModel,
+} from '../../core/state';
+import { CODING_ONLY_SUFFIX_RE, canonicalModelKey, displayModelLabel, sameCanonicalModel } from './model-identity';
 import { isFreeCatalogEntry, selectRecommendedVprCatalog } from './recommended';
+import { serviceModelKind } from './model-capabilities';
 
 const VPR_MODEL_CATALOG_SEPARATOR = '\u0001';
 
@@ -9,6 +15,9 @@ type ModelCatalogGroup = {
 };
 
 export function totalRowPrice(row: DiscoverRow): number | null {
+  if (serviceModelKind(row.protocol, row.capabilities) === 'image') {
+    return row.minImageUsdPerImage;
+  }
   if (row.inputUsdPerMillion === null || row.outputUsdPerMillion === null) return null;
   return row.inputUsdPerMillion + row.outputUsdPerMillion;
 }
@@ -31,9 +40,27 @@ function maxPrice(values: Array<number | null>): number | null {
   return max;
 }
 
+function preferredGroupLabel(rows: DiscoverRow[]): string {
+  const labels = rows.map((row) => ({
+    label: displayModelLabel(row.serviceId, row.serviceLabel),
+    sellerNamed: row.serviceLabel.trim().length > 0 && row.serviceLabel.trim() !== row.serviceId.trim(),
+  }));
+  return labels.sort((a, b) => {
+    const aConstrained = /\bcoding\s+only\b/i.test(a.label);
+    const bConstrained = /\bcoding\s+only\b/i.test(b.label);
+    if (aConstrained !== bConstrained) return aConstrained ? 1 : -1;
+    if (a.sellerNamed !== b.sellerNamed) return a.sellerNamed ? -1 : 1;
+    return a.label.length - b.label.length || a.label.localeCompare(b.label);
+  })[0]?.label ?? '';
+}
+
 function projectGroupToEntry(group: ModelCatalogGroup): VprModelCatalogEntry {
   const firstRow = group.rows[0];
   const categories = Array.from(new Set(group.rows.flatMap((row) => row.categories))).sort((a, b) => a.localeCompare(b));
+  const protocols = [...new Set(group.rows.map((row) => row.protocol))].sort();
+  const kind = group.rows.some((row) => serviceModelKind(row.protocol, row.capabilities) === 'image')
+    ? 'image'
+    : 'text';
   const peerIds = new Set(group.rows.map((row) => row.peerId));
   const pricedRows = group.rows
     .map((row) => ({ row, total: totalRowPrice(row) }))
@@ -42,20 +69,30 @@ function projectGroupToEntry(group: ModelCatalogGroup): VprModelCatalogEntry {
     if (best === null || route.total < best.total) return route;
     return best;
   }, null);
+  const unrestrictedRows = group.rows.filter((row) => !CODING_ONLY_SUFFIX_RE.test(row.serviceId));
+  const representativeRows = unrestrictedRows.length > 0 ? unrestrictedRows : group.rows;
+  const representativePricedRows = pricedRows.filter(({ row }) => representativeRows.includes(row));
+  const representative = representativePricedRows.reduce<{ row: DiscoverRow; total: number } | null>((best, route) => {
+    if (best === null
+      || route.total < best.total
+      || (route.total === best.total && route.row.serviceId.localeCompare(best.row.serviceId) < 0)
+    ) return route;
+    return best;
+  }, null)?.row ?? representativeRows[0];
   const minTotal = minPrice(pricedRows.map((route) => route.total));
   const maxTotal = maxPrice(pricedRows.map((route) => route.total));
-  const expectedSavingsPct = pricedRows.length >= 2 && minTotal !== null && maxTotal !== null && maxTotal > minTotal
+  // Text entries compare sellers on their token total. Image entries may
+  // contain quality/size tiers, so a cross-seller "saving" percentage would
+  // compare unlike outputs; keep that tile unset.
+  const expectedSavingsPct = kind === 'text'
+    && pricedRows.length >= 2
+    && minTotal !== null
+    && maxTotal !== null
+    && maxTotal > minTotal
     ? Math.round((1 - minTotal / maxTotal) * 100)
     : null;
 
-  // The entry's provider/serviceId must stay consistent with bestPeerId —
-  // selecting the entry dispatches this exact advertised pair, and the buyer
-  // proxy strictly gates on what the pinned peer actually serves.
-  const representative = bestPricedRoute?.row ?? firstRow;
-  const label = displayModelLabel(
-    representative.serviceId,
-    group.rows.find((row) => row.serviceLabel.trim().length > 0)?.serviceLabel,
-  );
+  const label = preferredGroupLabel(group.rows);
 
   return {
     provider: representative.provider,
@@ -63,14 +100,18 @@ function projectGroupToEntry(group: ModelCatalogGroup): VprModelCatalogEntry {
     label,
     peerCount: peerIds.size,
     categories,
+    kind,
+    protocols,
     minInputUsdPerMillion: bestPricedRoute?.row.inputUsdPerMillion ?? null,
     maxInputUsdPerMillion: maxPrice(group.rows.map((row) => row.inputUsdPerMillion)),
     minOutputUsdPerMillion: bestPricedRoute?.row.outputUsdPerMillion ?? null,
     maxOutputUsdPerMillion: maxPrice(group.rows.map((row) => row.outputUsdPerMillion)),
-    minCachedInputUsdPerMillion: bestPricedRoute?.row.cachedInputUsdPerMillion ?? null,
+    minCachedInputUsdPerMillion: minPrice(group.rows.map((row) => row.cachedInputUsdPerMillion)),
     maxCachedInputUsdPerMillion: maxPrice(group.rows.map((row) => row.cachedInputUsdPerMillion)),
+    minImageUsdPerImage: minPrice(group.rows.map((row) => row.minImageUsdPerImage)),
+    maxImageUsdPerImage: maxPrice(group.rows.map((row) => row.maxImageUsdPerImage)),
     expectedSavingsPct,
-    bestPeerId: bestPricedRoute?.row.peerId ?? firstRow?.peerId ?? null,
+    bestPeerId: representative?.peerId ?? null,
   };
 }
 
@@ -97,17 +138,21 @@ export function projectRowsToVprModelCatalog(rows: DiscoverRow[]): VprModelCatal
 export function selectDefaultVprModel(
   catalog: VprModelCatalogEntry[],
   current: VprSelectedModel | null,
+  isFreeEntryRoutable: (entry: VprModelCatalogEntry) => boolean = () => true,
 ): VprSelectedModel | null {
-  if (current && findCatalogEntry(catalog, current.provider, current.serviceId)) return current;
+  if (current && findCatalogEntry(catalog, current.provider, current.serviceId)?.kind === 'text') return current;
   // First launch defaults to a free model — trying the VPR must cost nothing
   // before any balance exists. Prefer a free model from the recommended
   // lineup, then any free model on the network, then the recommended/popular
-  // fallback for networks without a free seller.
-  const recommended = selectRecommendedVprCatalog(catalog);
-  const first = recommended.find(isFreeCatalogEntry)
-    ?? catalog.find(isFreeCatalogEntry)
+  // fallback for networks without a routable free seller.
+  const textCatalog = catalog.filter((entry) => entry.kind === 'text');
+  const recommended = selectRecommendedVprCatalog(textCatalog);
+  const isRoutableFreeEntry = (entry: VprModelCatalogEntry): boolean =>
+    isFreeCatalogEntry(entry) && isFreeEntryRoutable(entry);
+  const first = recommended.find(isRoutableFreeEntry)
+    ?? textCatalog.find(isRoutableFreeEntry)
     ?? recommended[0]
-    ?? catalog[0];
+    ?? textCatalog[0];
   if (!first) return null;
   return {
     provider: first.provider,
@@ -127,4 +172,21 @@ export function findCatalogEntry(
     // selections that reference a sibling key still resolve to the entry.
     ?? catalog.find((entry) => sameCanonicalModel(entry.serviceId, serviceId))
     ?? null;
+}
+
+export function createVprRouteSelection(
+  entry: VprModelCatalogEntry,
+  peerId: string | null,
+): VprRouteSelection {
+  const normalizedPeerId = peerId?.trim() || null;
+  return {
+    model: {
+      provider: entry.provider,
+      serviceId: entry.serviceId,
+      label: entry.label,
+      categories: [...entry.categories],
+    },
+    mode: normalizedPeerId ? 'pinned-peer' : 'auto',
+    peerId: normalizedPeerId,
+  };
 }

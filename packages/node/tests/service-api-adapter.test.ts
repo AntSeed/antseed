@@ -151,8 +151,14 @@ describe('inferProviderDefaultServiceApiProtocols', () => {
     expect(inferProviderDefaultServiceApiProtocols('claude-oauth')).toEqual(['anthropic-messages']);
   });
 
-  it('infers openai-style providers', () => {
-    expect(inferProviderDefaultServiceApiProtocols('openai')).toEqual(['openai-chat-completions']);
+  it('keeps generic openai fallback chat-only', () => {
+    expect(inferProviderDefaultServiceApiProtocols('openai')).toEqual([
+      'openai-chat-completions',
+    ]);
+  });
+
+  it('keeps local-llm fallback chat-only', () => {
+    expect(inferProviderDefaultServiceApiProtocols('local-llm')).toEqual(['openai-chat-completions']);
   });
 });
 
@@ -617,7 +623,7 @@ describe('transformResponse chat to responses', () => {
     const output = body.output as Array<Record<string, unknown>>;
     expect(output).toHaveLength(1);
     expect(output[0].type).toBe('message');
-    expect(output[0].id).toBe('chatcmpl-abc_msg_1');
+    expect(output[0].id).toBe('msg_chatcmpl-abc_1');
     expect(output[0].role).toBe('assistant');
     expect(output[0].status).toBe('completed');
 
@@ -645,7 +651,7 @@ describe('transformResponse chat to responses', () => {
     const functionCall = output.find((item) => item.type === 'function_call');
     expect(functionCall).toBeDefined();
     expect(functionCall!.name).toBe('write');
-    expect(functionCall!.id).toBe('call_123');
+    expect(functionCall!.id).toBe('fc_call_123');
     expect(functionCall!.call_id).toBe('call_123');
     expect(functionCall!.arguments).toBe('{"path":"hello.txt"}');
   });
@@ -712,7 +718,7 @@ describe('transformResponse chat to responses', () => {
       output_index: 0,
       item: {
         type: 'message',
-        id: 'chatcmpl-stream_msg_1',
+        id: 'msg_chatcmpl-stream_1',
         status: 'in_progress',
         content: [{ type: 'output_text', text: '', annotations: [] }],
       },
@@ -722,7 +728,7 @@ describe('transformResponse chat to responses', () => {
     expect(delta).toBeDefined();
     expect(JSON.parse(delta!.data)).toMatchObject({
       type: 'response.output_text.delta',
-      item_id: 'chatcmpl-stream_msg_1',
+      item_id: 'msg_chatcmpl-stream_1',
       output_index: 0,
       content_index: 0,
       delta: 'Hello!',
@@ -755,7 +761,7 @@ describe('transformResponse chat to responses', () => {
       output_index: 1,
       item: {
         type: 'function_call',
-        id: 'call_123',
+        id: 'fc_call_123',
         call_id: 'call_123',
         name: 'write',
         arguments: '',
@@ -768,7 +774,7 @@ describe('transformResponse chat to responses', () => {
     expect(JSON.parse(delta!.data)).toMatchObject({
       type: 'response.function_call_arguments.delta',
       output_index: 1,
-      item_id: 'call_123',
+      item_id: 'fc_call_123',
       call_id: 'call_123',
       delta: '{"path":"hello.txt"}',
     });
@@ -778,7 +784,7 @@ describe('transformResponse chat to responses', () => {
     expect(JSON.parse(done!.data)).toMatchObject({
       type: 'response.function_call_arguments.done',
       output_index: 1,
-      item_id: 'call_123',
+      item_id: 'fc_call_123',
       call_id: 'call_123',
       name: 'write',
       arguments: '{"path":"hello.txt"}',
@@ -897,7 +903,7 @@ describe('createStreamingAdapter chat to responses', () => {
       output_index: 0,
       item: {
         type: 'function_call',
-        id: 'call_1',
+        id: 'fc_call_1',
       },
     });
 
@@ -908,7 +914,7 @@ describe('createStreamingAdapter chat to responses', () => {
       response: {
         output: [{
           type: 'function_call',
-          id: 'call_1',
+          id: 'fc_call_1',
           call_id: 'call_1',
           name: 'write',
           arguments: '{"path":"hello.txt"}',

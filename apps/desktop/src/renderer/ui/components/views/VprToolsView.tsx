@@ -20,7 +20,9 @@ import { TelegramBotCard } from './TelegramBotCard';
 import styles from './VprToolsView.module.scss';
 
 
-const DEFAULT_PORT = 8378;
+declare const __ANTSEED_SYSTEM_PROXY_PORT__: number;
+
+const DEFAULT_PORT = __ANTSEED_SYSTEM_PROXY_PORT__;
 
 /** Two-pane modal navigation: the main pane slides to the application list
     the same way the app's screens slide ('none' = no animation on open). */
@@ -58,7 +60,6 @@ export function VprToolsView() {
   const [guiTest, setGuiTest] = useState<GuiTestResult | null>(null);
   const [trustBusy, setTrustBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const [addUrl, setAddUrl] = useState('');
   const [addBusy, setAddBusy] = useState(false);
@@ -467,18 +468,12 @@ export function VprToolsView() {
     }
   }, [activeProfileNames, disconnect, refresh, startProfiles]);
 
-  const visibleProfiles = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    const filtered = query
-      ? profiles.filter((profile) => profile.displayName.toLowerCase().includes(query) || profile.name.toLowerCase().includes(query))
-      : profiles;
+  const orderedProfiles = useMemo(() => {
     // Connected apps float to the top; the sort is stable, so each group keeps
     // its original order.
     const isConnected = (name: string): boolean => activeProfiles?.has(name) ?? false;
-    return [...filtered].sort((a, b) => Number(isConnected(b.name)) - Number(isConnected(a.name)));
-  }, [profiles, search, activeProfiles]);
-
-  const telegramVisible = !search.trim() || 'telegram bot'.includes(search.trim().toLowerCase());
+    return [...profiles].sort((a, b) => Number(isConnected(b.name)) - Number(isConnected(a.name)));
+  }, [profiles, activeProfiles]);
 
   // Certificate trust presentation. A live probe failure (certTrustError) or a
   // stale/absent keychain state all mean the same thing to the user: press
@@ -498,17 +493,11 @@ export function VprToolsView() {
     <section className={`view view-vpr-tools view-pinned-header ${styles.view}`} role="tabpanel">
       <VprPage title="Connected apps" backFallback="home">
       <div className={styles.stack}>
-
-        <VprSearch value={search} onChange={setSearch} placeholder="Search app" />
-
         {message ? <p className={styles.note} role="status">{message}</p> : null}
 
-        {visibleProfiles.length === 0 && !telegramVisible ? (
-          <div className={styles.empty}>{profiles.length === 0 ? 'No tool profiles configured' : 'No apps match your search'}</div>
-        ) : (
-          <div className={styles.appList}>
-            {telegramVisible ? <TelegramBotCard /> : null}
-            {visibleProfiles.map((profile) => {
+        <div className={styles.appList}>
+          <TelegramBotCard />
+          {orderedProfiles.map((profile) => {
               const connected = activeProfiles?.has(profile.name) ?? false;
               const setupComplete = setupProfiles.has(profile.name);
               const canRestart = connected && profile.canRestart === true;
@@ -609,9 +598,8 @@ export function VprToolsView() {
 
                 </div>
               );
-            })}
-          </div>
-        )}
+          })}
+        </div>
 
         <button
           type="button"

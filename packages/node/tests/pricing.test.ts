@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { estimateTokensFromBytes, estimateTokensFromText, computeCostUsdc, estimateCostFromBytes } from '../src/payments/pricing.js';
+import {
+  computeCostUsdc,
+  estimateCostFromBytes,
+  estimateTokensFromBytes,
+  estimateTokensFromText,
+  isFreeUnitBillingModel,
+  validateUnitBillingModelV1,
+} from '../src/payments/pricing.js';
+import { evaluateUnitBilling } from '../src/billing/unit.js';
 
 describe('pricing utilities', () => {
   // ── estimateTokensFromBytes ──
@@ -82,5 +90,44 @@ describe('pricing utilities', () => {
     expect(result.inputTokens).toBeGreaterThan(0);
     expect(result.outputTokens).toBeGreaterThan(0);
     expect(result.cost).toBeGreaterThan(0n);
+  });
+
+  it('evaluates image unit billing with exact match attributes', () => {
+    const costUsdc = evaluateUnitBilling({
+      version: 1,
+      components: [
+        { unit: 'output_images', priceUsd: 0.04, match: { size: '1024x1024' } },
+        { unit: 'output_images', priceUsd: 0.08, match: { size: '2048x2048' } },
+      ],
+    }, {
+      sellerPeerId: 'seller',
+      provider: 'openai',
+      service: 'gpt-image-1',
+      serviceApiProtocol: 'openai-images',
+      attributes: { size: '1024x1024' },
+    }, {
+      units: { output_images: 2 },
+    });
+    expect(costUsdc).toBe(80_000n);
+  });
+
+  it('validates unit and price shape', () => {
+    expect(validateUnitBillingModelV1({
+      version: 1,
+      components: [
+        { unit: 'requests', priceUsd: Number.NaN } as any,
+      ],
+    })).toEqual(expect.arrayContaining([
+      expect.stringContaining('unsupported'),
+      expect.stringContaining('priceUsd'),
+    ]));
+  });
+
+  it('treats non-zero image billing as paid even with free token fallback', () => {
+    expect(isFreeUnitBillingModel({ version: 1, components: [] })).toBe(true);
+    expect(isFreeUnitBillingModel({
+      version: 1,
+      components: [{ unit: 'output_images', priceUsd: 0.01 }],
+    })).toBe(false);
   });
 });

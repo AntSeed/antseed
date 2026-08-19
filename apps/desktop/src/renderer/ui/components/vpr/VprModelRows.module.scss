@@ -36,6 +36,10 @@
 .row {
   width: 100%;
   min-height: 54px;
+  /* Long model lists: rows outside the viewport skip layout and paint.
+     The intrinsic size keeps the scrollbar stable at the row's min-height. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 54px;
   display: flex;
   gap: 8px;
   align-items: center;
@@ -53,11 +57,6 @@
   transition: background 0.12s ease;
 }
 
-/* Checked rows lead with the checkmark, tucked closer to the edge (Figma pl-8). */
-.rowChecked {
-  padding-left: 8px;
-}
-
 .row + .row {
   border-top: 1px solid var(--border-light);
 }
@@ -70,6 +69,14 @@
 .row:focus-visible {
   outline: none;
   box-shadow: inset 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+}
+
+.checkSlot {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 20px;
+  display: grid;
+  place-items: center;
 }
 
 .check {
@@ -105,6 +112,47 @@
   line-height: 20px;
 }
 
+.modelTypeTag,
+.modelTag,
+.modelTagMore {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  border: 1px solid color-mix(in srgb, var(--text-secondary) 16%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-secondary) 6%, transparent);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 550;
+  line-height: 16px;
+  letter-spacing: 0.01em;
+}
+
+.modelTypeTag,
+.modelTag {
+  padding: 0 7px;
+}
+
+.modelTypeTag {
+  border-color: color-mix(in srgb, var(--brand) 18%, transparent);
+  background: color-mix(in srgb, var(--brand) 7%, transparent);
+  color: var(--brand);
+}
+
+.modelTagUncensored {
+  border-color: color-mix(in srgb, var(--accent-green) 24%, transparent);
+  background: color-mix(in srgb, var(--accent-green) 9%, transparent);
+  color: var(--accent-green);
+}
+
+.modelTagMore {
+  min-width: 24px;
+  justify-content: center;
+  padding: 0 6px;
+  cursor: default;
+}
+
 .favStar {
   flex: 0 0 auto;
   color: var(--accent-yellow);
@@ -122,6 +170,15 @@
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 16px;
+}
+
+.capabilityMeta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--brand);
+  font-weight: 500;
 }
 
 .peerMeta {
@@ -145,8 +202,8 @@
   padding: 6px 10px;
 }
 
-.rowCompact.rowChecked {
-  padding-left: 6px;
+.rowCompact .discount {
+  font-size: 13px;
 }
 
 .metaDivider {
@@ -179,16 +236,19 @@
 }
 
 .discount {
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  min-width: 48px;
-  align-self: stretch;
+  flex: 0 0 64px;
+  width: 64px;
+  height: 20px;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   color: var(--accent-green);
   font-size: 15px;
   font-weight: 600;
-  line-height: 18px;
-  text-align: center;
+  line-height: 20px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .perTok {
@@ -200,4 +260,30 @@
 .chevron {
   flex: 0 0 auto;
   color: var(--text-secondary);
+}
+
+/* Per-context settings shortcut, sitting at the end of the title line (the
+   chat detail's model list) — quiet until hovered so the row still reads as
+   one action. Sized to the title's line-height so it doesn't stretch it. */
+.configButton {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-block: -1px;
+  border-radius: 7px;
+  color: var(--text-muted);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.configButton:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.configButton:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px rgba(var(--brand-rgb), 0.4);
 }

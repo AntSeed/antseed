@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
 import type { DesktopBuyerServiceUsage } from '../../types/bridge';
-import { computeMeasuredSavings, formatSavedUsd } from './measured-savings.js';
+import { computeMeasuredSavings, computeOfficialBaselineUsd, formatSavedUsd } from './measured-savings.js';
 
 function serviceUsage(overrides: Partial<DesktopBuyerServiceUsage> = {}): DesktopBuyerServiceUsage {
   return {
@@ -35,6 +35,30 @@ test('computes pct from actual spend vs retail baseline', () => {
   assert.equal(result.matchedServices, 1);
   assert.ok(Math.abs(result.actualUsd - 20) < 1e-9);
   assert.ok(Math.abs(result.baselineUsd - 40) < 1e-9);
+});
+
+test('computes official baseline without subtracting actual spend', () => {
+  const services = [serviceUsage({
+    amountUsdc: String(20 * 1_000_000),
+    inputTokens: String(1_000_000),
+    outputTokens: String(1_000_000),
+  })];
+  const result = computeOfficialBaselineUsd(services, { gpt4o: { input: 10, output: 30 } });
+  assert.ok(result);
+  assert.equal(result.baselineUsd, 40);
+  assert.equal(result.matchedServices, 1);
+});
+
+test('official baseline reports matched token dimensions independently', () => {
+  const services = [serviceUsage({
+    inputTokens: String(1_000_000),
+    outputTokens: String(1_000_000),
+  })];
+  const result = computeOfficialBaselineUsd(services, { gpt4o: { input: 10, output: null } });
+  assert.ok(result);
+  assert.equal(result.baselineUsd, 10);
+  assert.equal(result.matchedInputTokens, 1_000_000);
+  assert.equal(result.matchedOutputTokens, 0);
 });
 
 test('free usage counts as 100% savings', () => {
@@ -112,7 +136,7 @@ test('usage-weighted: heavy cheap model dominates light expensive one', () => {
   ];
   const result = computeMeasuredSavings(services, {
     'gpt4o': { input: 10, output: 30 },
-    'claudesonnet': { input: 10, output: 30 },
+    sonnet: { input: 10, output: 30 },
   });
   assert.ok(result);
   // total baseline $101, paid $11 → ~89% (weighted, not the 45% plain average)
@@ -126,4 +150,20 @@ test('formatSavedUsd renders compact USD labels', () => {
   assert.equal(formatSavedUsd(0.42), '$0.42');
   assert.equal(formatSavedUsd(12.4), '$12.40');
   assert.equal(formatSavedUsd(1234), '$1.2k');
+});
+
+test('matches reference prices with the shared canonical model key', () => {
+  const result = computeMeasuredSavings([
+    serviceUsage({
+      serviceName: 'claude-fable-5',
+      amountUsdc: '1000000',
+      inputTokens: '1000000',
+    }),
+  ], {
+    fable5: { input: 5, output: 30 },
+  });
+
+  assert.ok(result);
+  assert.equal(result.matchedServices, 1);
+  assert.equal(result.baselineUsd, 5);
 });

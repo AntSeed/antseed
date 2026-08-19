@@ -20,7 +20,7 @@ Hermes agent  →  127.0.0.1:8377  →  AntSeed P2P  →  Provider peer  →  Up
 
 - Buyer proxy discovers providers via DHT, opens a payment channel per seller, signs per-request vouchers.
 - Exposes an OpenAI-compatible `/v1/*` endpoint — that's what Hermes points at as `OPENAI_BASE_URL`.
-- The model ID Hermes passes is the AntSeed **service ID** (e.g. `minimax-m2.7`), not an OpenAI model name.
+- The model ID Hermes passes is an id or alias from AntSeed's network-wide `/v1/models` catalog (e.g. `minimax-m2.7`). The proxy resolves it to the selected seller's actual advertised service id.
 
 The buyer proxy and Hermes can run on the same machine (laptop, VPS, cloud box — anywhere). The only requirement is that Hermes can reach `127.0.0.1:8377`.
 
@@ -50,7 +50,6 @@ Always create `~/.antseed/config.json` with `payments.crypto.chainId` set. Witho
 {
   "network": {},
   "buyer": {
-    "minPeerReputation": 0,
     "maxPricing": {
       "defaults": {
         "inputUsdPerMillion": 100,
@@ -141,74 +140,52 @@ The service user must own the `~/.antseed/` directory that holds `config.json` a
 
 The buyer startup log prints the Deposits/Channels addresses and RPC URL it bound to — glance at those to confirm it's on the chain you expected.
 
-## Funding via the payments portal
+## Funding the buyer
 
-`antseed payments` starts a local web UI bound to `127.0.0.1:3118`, protected by a random bearer token printed once at startup. Use it to deposit USDC, view channel state, and withdraw.
+`antseed buyer deposit` prints the buyer's funding address and a QR code (an EIP-681 payment request), then watches the hot wallet and deposits incoming USDC into the buyer's credits automatically: the node signs a gasless EIP-3009 authorization and a permissionless relayer submits the transaction on-chain for a fixed ~$0.05 USDC fee. The buyer never needs ETH. (The old `antseed payments` web portal is retired.)
 
 ```bash
-antseed payments
-# Payments portal running at http://127.0.0.1:3118?token=<hex>
+antseed buyer deposit              # address + QR, then waits and auto-deposits incoming USDC
+antseed buyer deposit --no-watch   # just print the address + QR
 ```
 
-Open the printed URL in a browser **with the `?token=...` query string intact** — the frontend reads the token from `window.location.search` exactly once and caches it. If you land on `/` without the token, every API call returns 401.
+Send USDC **on the Base network only** to the printed address — from any wallet, an exchange withdrawal, or a card on-ramp. While `antseed buyer start` is running, incoming hot-wallet USDC is swept into the deposits balance automatically even without `antseed buyer deposit` open (config `buyer.autoSweep`, default `true`). `antseed buyer sweep` triggers one sweep manually.
 
-The token rotates on every portal restart. If you've restarted the portal and the browser starts returning 401s, tell the user to close the tab fully and reopen with the new URL — a refresh alone won't drop the cached token.
-
-From the portal, the user connects an external wallet (MetaMask, Coinbase Wallet, etc.) and signs the deposit transaction there. USDC flows from the user's cold wallet into the Deposits contract, credited to the buyer address.
-
-### Two addresses — do not confuse them
-
-The portal UI shows the **Deposits contract address** as the USDC destination. This is a smart contract, not the buyer wallet. Do not send ETH or any other token to this address — only USDC.
-
-| Address | What it is | What to send |
-|---------|-----------|--------------|
-| Shown in portal | Deposits contract | USDC only |
-| `antseed buyer balance` → Wallet | Buyer wallet | Nothing — buyer needs no gas |
-
-After depositing, confirm with `antseed buyer balance` — the "Deposits Account → Available" line should reflect your deposit.
+After funding, confirm with `antseed buyer balance` — the "Deposits Account → Available" line should reflect the deposit (net of the relay fee). A first-ever deposit must net at least 1 USDC after the fee.
 
 ### When Hermes runs on a remote host
 
-If the buyer runs on a remote box, `127.0.0.1:3118` isn't reachable from the user's browser directly. Start the portal on the remote host detached, then SSH-forward the port to the user's laptop.
+No port forwarding is needed anymore: `antseed buyer deposit` is plain terminal output, so run it inside the SSH session (the QR renders in the terminal) or just copy the printed address. The running buyer daemon on the remote host sweeps the funds automatically once they land.
 
-Start the portal remotely so it survives the SSH call returning:
+
+## Model routing
+
+Pinning a peer is optional. A request that names only a model selects the highest-ranked eligible offer under the shared Price + Trust preferences, including pricing, cached-input pricing coverage, recent failures, cooldowns, and seller access rules. Peer-attributed retryable failures can advance to the next ranked offer. Explicitly pinned requests never fail over.
+
+List every model on the network — `GET /v1/models` is answered locally and covers the whole network, independent of any pinned peer:
 
 ```bash
-ssh user@host "nohup antseed payments > /tmp/antseed-payments.log 2>&1 </dev/null & disown"
-ssh user@host "cat /tmp/antseed-payments.log"   # read back the bearer token
+curl -s http://127.0.0.1:8377/v1/models | jq '.data[].id'   # all models, network-wide
+curl -s 'http://127.0.0.1:8377/v1/models?type=text'          # text models only
+curl -s 'http://127.0.0.1:8377/v1/models?type=images'        # image models only
+curl -s http://127.0.0.1:8377/v1/models/<model-id>           # one model + ranked offers
+antseed network browse                                      # table of peers and their services
 ```
 
-A bare `ssh user@host "antseed payments &"` will die on disconnect — always `nohup` + `disown` + redirect stdio.
+Close aliases (e.g. `claude-opus-5` / `opus-5` / `opus5`) merge into one entry with an `aliases` array and a `peers` array of every seller serving the model in routing-preference order. Duplicate offers from one seller collapse to its cheapest matching service.
 
-Then open a local forward on the user's laptop:
+### Optional: force a specific seller
 
-```bash
-ssh -N -L 127.0.0.1:3118:127.0.0.1:3118 user@host
-```
-
-Bind the left-hand side explicitly to `127.0.0.1:` — omitting the host lets OpenSSH pick IPv6-only, which many browsers then fail to reach.
-
-Give the user `http://127.0.0.1:3118/?token=<hex>` (the URL from the portal log). The browser hits the local forward, which reaches the remote portal.
-
-If `ssh -L` fails with `channel 1: open failed: administratively prohibited`, the remote sshd has `AllowTcpForwarding no`. Enable it in `/etc/ssh/sshd_config` (or a drop-in under `/etc/ssh/sshd_config.d/`), run `sudo sshd -t` to validate, then `sudo systemctl reload sshd`. Existing SSH sessions are not dropped by the reload.
-
-## Pick a peer
-
-The buyer proxy does not auto-select peers. Every request is rejected with `no_peer_pinned` until a peer is pinned — you must pick one explicitly.
-
-List the network, find a peer that serves the model you want, and pin it:
+Three pin mechanisms override auto-selection (precedence: header > model prefix > session pin):
 
 ```bash
-antseed network browse                              # table of peers and their services
 antseed network peer <peerId>                       # full details for one peer
-antseed buyer connection set --peer <peerId>        # pin it for this session
+antseed buyer connection set --peer <peerId>        # session pin
 ```
 
-Alternatively, pass `x-antseed-pin-peer: <peerId>` as a per-request header if the caller can inject headers.
+Alternatively, pass `x-antseed-pin-peer: <peerId>` as a per-request header, or prefix the model with `<peerId>@<service-id>`.
 
-**The pinned peer is session-only and is cleared when the buyer proxy restarts.** For non-systemd setups (desktop app, background process), re-run `antseed buyer connection set --peer <peerId>` after every restart.
-
-For persistent systemd deployments, put `--peer <peerId>` in the `ExecStart=` line instead — it survives restarts and avoids a stale state file.
+Session pins are stored in `buyer.state.json`, survive buyer-proxy restarts, and are reloaded by the running proxy. A systemd `--peer <peerId>` flag is another hard-pin option for deployments that want the route declared directly in `ExecStart=`.
 
 ## Wiring Hermes to the buyer proxy
 
@@ -237,12 +214,12 @@ Notes:
 - `base_url` must match the buyer proxy port. Default is `8377`; if you started the buyer with `--port 5005`, use `http://127.0.0.1:5005/v1` here instead.
 - `api_key` is required by Hermes' OpenAI client but ignored by the buyer proxy — any non-empty string works. `antseed-p2p` is the convention.
 - `api_mode: chat_completions` is required — the buyer proxy speaks OpenAI chat-completions, not the Responses API.
-- `models` is the menu Hermes exposes to the user; only IDs listed here can be selected. Mirror it against `antseed network browse` (or `curl -s http://127.0.0.1:8377/v1/models`) so you don't advertise models no peer serves.
-- `model.default` is the one Hermes uses when no explicit model is passed; `model.provider: antseed` pins it to this custom provider.
+- `models` is the menu Hermes exposes to the user; only IDs listed here can be selected. Mirror it against `curl -s http://127.0.0.1:8377/v1/models` — answered locally, it lists every model on the whole network regardless of any pinned peer — so you don't advertise models no peer serves.
+- `model.default` is the one Hermes uses when no explicit model is passed; `model.provider: antseed` selects the AntSeed client integration, not a specific seller peer.
 
 ### Auxiliary calls when using openai-responses models
 
-Some peers (e.g. Dark Signal) serve GPT models via the `openai-responses` protocol, which requires streaming. Hermes auxiliary functions (title generation, context compression, etc.) make non-streaming requests and will fail with `HTTP 400: Stream must be set to true` if they hit an openai-responses model.
+Some sellers serve models only through the `openai-responses` protocol, which requires streaming. Hermes auxiliary functions (title generation, context compression, etc.) make non-streaming requests and will fail with `HTTP 400: Stream must be set to true` if they hit an openai-responses-only offer.
 
 Fix: point Hermes auxiliaries at a `chat_completions` model from the same or a different peer. In `~/.hermes/config.yaml`, override the auxiliary providers that make non-streaming calls:
 
@@ -256,11 +233,11 @@ auxiliary:
     model: minimax-m2.7
 ```
 
-Check which protocol a model uses with `antseed network peer <peerId>` — look for `protocols: openai-chat-completions` vs `protocols: openai-responses` in the service listing.
+Check the available protocols with `GET /v1/models/<model-id>` and inspect each `peers[]` offer. Use `antseed network peer <peerId>` only when you need the full metadata for one seller.
 
 ### Swapping the routed model
 
-If you switch to a model the currently-pinned peer doesn't serve, re-pin to a peer that does (`antseed network browse` → `antseed buyer connection set --peer <peerId>`) before the next request. Then edit `model.default` (and the `models` list if needed) and restart the Hermes systemd unit — the buyer proxy stays up, no CLI change, no contract call:
+Edit `model.default` (and the `models` list if needed) and restart the Hermes systemd unit — the buyer proxy stays up, no CLI change, no contract call. Model-only requests auto-select a peer that serves the new model. Only if you pinned a peer that doesn't serve it do you need to clear the pin (`antseed buyer connection clear`) or re-pin to one that does:
 
 ```bash
 sudo systemctl restart hermes

@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import type { ViewName } from '../types';
 import { shallowEqual, useUiSelector } from '../hooks/useUiSelector';
+import { selectHeadlineBalanceUsdc } from '../../core/balance';
 import { formatCredits } from '../../core/format';
 import { navViews } from './viewRegistry';
 import { ChatListPanel } from './ChatListPanel';
+import { DepositProgressBanner } from './DepositProgressBanner';
 import { NetworkAlertBanner } from './NetworkAlertBanner';
 import { UpdateBanner } from './UpdateBanner';
 import { VprNavContext } from './vpr/VprNavContext';
@@ -40,7 +42,7 @@ const bottomNavEntries = navViews('bottom');
 
 export function VprShell({ activeView, onSelectView, onNavigateBack, children }: VprShellProps) {
   const snap = useUiSelector((state) => ({
-    creditsSpendableUsdc: state.creditsSpendableUsdc,
+    headlineBalanceUsdc: selectHeadlineBalanceUsdc(state),
     connectBadgeLabel: state.connectBadge.label,
     networkHealth: state.ovDhtHealth,
     proxyPort: state.ovProxyPort,
@@ -129,12 +131,13 @@ export function VprShell({ activeView, onSelectView, onNavigateBack, children }:
               title="Add credits"
               onClick={() => onSelectView('deposit')}
             >
-              ${formatCredits(snap.creditsSpendableUsdc)}
+              ${formatCredits(snap.headlineBalanceUsdc)}
             </button>
           </div>
         )}
         <NetworkAlertBanner />
         <UpdateBanner />
+        <DepositProgressBanner />
       </main>
       <footer className={styles.statusStrip}>
         <span

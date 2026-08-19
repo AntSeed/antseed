@@ -91,20 +91,39 @@ Seller rewards are capped at 50% of the seller bucket per seller per epoch. Buye
 
 ANTS tokens are non-transferable until network maturity. This prevents early speculation from distorting incentives.
 
-## Router Scoring
+## Buyer Route Scoring
 
-On-chain reputation feeds into the router's peer selection algorithm. The `@antseed/router-core` default weights:
+On-chain trust and reputation feed into model-only seller selection. The buyer proxy and desktop share the route ranking exported by `@antseed/node/model-routing`, and `/v1/models/:id` returns peer offers in that same policy order.
+
+The default model routing preferences are:
+
+```typescript
+{
+  preferFreePeers: false,
+  maxInputUsdPerMillion: 25,
+  minTrustScore: 60,
+  allowedPeerIds: [],
+  blockedPeerIds: [],
+}
+```
+
+The minimum trust score and allow/block lists are hard eligibility rules. Eligible offers are ranked by effective trust, token or image price, cached-input pricing coverage, free-peer preference, recent failures, and cooldown state. If at least one seller for a model advertises cached-input pricing, offers that omit it receive a model-specific reputation reduction; if none advertise it, no seller is penalized. A recognized conversation softly prefers its previous successful seller while that offer remains healthy and eligible.
+
+The lower-level `@antseed/router-core` package also exposes generic router weights for plugin authors:
 
 | Factor | Weight |
 |---|---|
-| Price | 0.40 |
-| Latency | 0.30 |
+| Price | 0.30 |
+| Latency | 0.25 |
 | Capacity | 0.20 |
 | Reputation | 0.10 |
+| Freshness | 0.10 |
+| Reliability | 0.05 |
 
 ### Scoring Rules
 
-- **Minimum reputation filter**: Defaults to `0` (no reputation gate). Buyers can explicitly raise `minPeerReputation` to exclude lower-reputation peers before scoring.
+- **Model-only eligibility**: Defaults to `minTrustScore: 60`. Buyers can lower `buyer.routingPreferences.minTrustScore`, or set it to `0` to consider unscored and lower-trust peers.
+- **Legacy policy filter**: `buyer.minPeerReputation` and hierarchical `maxPricing` remain separate hard policy checks applied before the model-route ranking.
 - **On-chain precedence**: When on-chain reputation data is available, it takes precedence over locally reported reputation. Runtime metrics such as latency and failure history are handled separately by router scoring.
 - **Score composition**: On-chain score is multi-factor. Settled USDC volume carries the largest weight through an exponent-shaped logarithmic curve, so large settled-volume differences continue to matter and many tiny channels cannot rank highly by themselves. Completed `channelCount`, average settled value per channel, `lastSettledAt` recency, and seller stake age also contribute. `ghostCount` applies a penalty based on the ghost-channel rate.
 - **Latency**: Tracked as an exponential moving average (alpha: 0.3).

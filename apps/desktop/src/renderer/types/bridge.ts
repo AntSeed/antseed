@@ -60,22 +60,55 @@ export type DesktopBuyerUsageTotals = {
   services?: DesktopBuyerServiceUsage[];
 };
 
+export type DesktopBuyerSpendDay = {
+  day: string;
+  dayStart: number;
+  spentUsdc: string;
+  inputTokens: string;
+  outputTokens: string;
+};
+
+export type DesktopBuyerSpendHistory = {
+  available: boolean;
+  source: 'local';
+  unavailableReason: 'buyer-unreachable' | null;
+  days: DesktopBuyerSpendDay[];
+};
+
 export type DesktopPaymentChannelSummary = {
   channelId: string;
   peerId: string;
   seller: string;
-  reserveMax: string;
+  sellerDisplayName: string | null;
+  onChainStateKnown: boolean;
+  reserveCeiling: string | null;
   cumulativeSigned: string;
-  /** Already settled on-chain (bigint string). cumulativeSigned - settledUsdc
+  /** Amount locked for this channel on-chain (bigint string). */
+  onChainDeposit: string;
+  /** Already settled on-chain (bigint string). cumulativeSigned - onChainSettled
       is what the seller can still claim against this channel. */
-  settledUsdc: string;
+  onChainSettled: string;
   reservedAt: number;
+  updatedAt: number;
   status: string;
   requestCount: number;
   /** Cumulative input tokens delivered over this channel (bigint string). */
   inputTokens: string;
   /** Cumulative output tokens over this channel (bigint string). */
   outputTokens: string;
+  cooperativeCloseSupported: boolean;
+};
+
+export type CooperativeCloseResult = {
+  version: 1;
+  channelId: string;
+  status: 'closed' | 'rejected';
+  txHash?: string;
+  finalAmount?: string;
+  code?: 'busy' | 'pending_auth' | 'no_channel' | 'invalid_auth' | 'close_failed' | 'unsupported';
+  reason?: string;
+  retryAfterMs?: number;
+  requiredCumulativeAmount?: string;
 };
 
 export type DesktopRewardsSummary = {
@@ -87,7 +120,7 @@ export type DesktopRewardsSummary = {
 };
 
 export type DepositWatchStatus = {
-  phase: 'received' | 'sweeping' | 'credited' | 'error';
+  phase: 'deferred' | 'received' | 'sweeping' | 'credited' | 'error';
   /** USDC base units (6 decimals), bigint string. */
   amountBaseUnits?: string;
   txHash?: string;
@@ -301,11 +334,12 @@ export type DesktopBridge = {
   chatAiListConversations?: () => Promise<{ ok: boolean; data: unknown[] }>;
   chatAiListDiscoverRows?: () => Promise<{ ok: boolean; data?: unknown[]; error?: string }>;
   chatAiGetConversation?: (id: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
-  chatAiCreateConversation?: (service: string, provider?: string, peerId?: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
+  chatAiCreateConversation?: (service: string, provider?: string, peerId?: string, routeMode?: 'auto' | 'pinned') => Promise<{ ok: boolean; data?: unknown; error?: string }>;
   chatAiDeleteConversation?: (id: string) => Promise<{ ok: boolean }>;
   chatAiRenameConversation?: (id: string, title: string) => Promise<{ ok: boolean; error?: string }>;
   chatPrepareAttachments?: (conversationId: string, attachments: RawChatAttachment[]) => Promise<{ ok: boolean; data?: PreparedChatAttachment[]; error?: string }>;
   attachmentDownload?: (conversationId: string, attachmentId: string, suggestedName: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
+  chatGenerateImage?: (payload: { conversationId: string; prompt: string; peerId?: string; moderation?: 'auto' | 'low'; service: string; sourceImageAttachmentId?: string }) => Promise<{ ok: boolean; user?: { role: string; content: unknown; createdAt?: number }; assistant?: { role: string; content: unknown; createdAt?: number; meta?: Record<string, unknown> }; error?: string }>;
   chatAiSend?: (conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string, permissionMode?: ChatPermissionMode) => Promise<{ ok: boolean; error?: string }>;
   chatAiSendStream?: (conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string, permissionMode?: ChatPermissionMode) => Promise<{ ok: boolean; error?: string; stopReason?: ChatAiStreamStopReason }>;
   chatPeerPermissionModeGet?: (peerId: string) => Promise<{ ok: boolean; mode?: ChatPermissionMode; error?: string }>;
@@ -316,8 +350,8 @@ export type DesktopBridge = {
   telegramDisconnect?: () => Promise<{ ok: boolean; data?: TelegramBridgeStatus; error?: string }>;
   onTelegramStatusChanged?: (handler: (data: TelegramBridgeStatus) => void) => () => void;
   chatAiAbort?: (conversationId?: string) => Promise<{ ok: boolean }>;
-  chatAiSelectPeer?: (payload: { conversationId?: string | null; peerId?: string | null; service?: string | null; provider?: string | null }) => Promise<{ ok: boolean; error?: string }>;
-  chatSetBuyerDefaultRoute?: (payload: { peerId: string; service: string }) => Promise<{ ok: boolean; error?: string }>;
+  chatAiSelectPeer?: (payload: { conversationId?: string | null; peerId?: string | null; service?: string | null; provider?: string | null; routeMode?: 'auto' | 'pinned' | null }) => Promise<{ ok: boolean; error?: string }>;
+  chatSetBuyerDefaultRoute?: (payload: { peerId?: string; service: string }) => Promise<{ ok: boolean; error?: string }>;
   chatSyncModelPicker?: (payload: import('../../shared/model-picker.js').ModelPickerSnapshot) => Promise<{ ok: boolean }>;
   onChatDefaultRouteChanged?: (handler: (data: { peerId: string; service: string; provider: string | null }) => void) => () => void;
   chatAiGetProxyStatus?: () => Promise<{ ok: boolean; data: { running: boolean; port: number } }>;
@@ -371,7 +405,7 @@ export type DesktopBridge = {
   downloadUpdate?: () => Promise<InstallUpdateResult>;
   getUpdateStatus?: () => Promise<UpdateStatus | null>;
   setDebugLogs?: (enabled: boolean) => Promise<{ ok: true }>;
-  creditsGetInfo?: () => Promise<{ ok: boolean; data: { evmAddress: string | null; operatorAddress: string | null; balanceUsdc: string; reservedUsdc: string; availableUsdc: string; pendingUsdc: string; spendableUsdc: string; creditLimitUsdc: string } | null; error: string | null }>;
+  creditsGetInfo?: () => Promise<{ ok: boolean; data: { evmAddress: string | null; operatorAddress: string | null; balanceUsdc: string; reservedUsdc: string; availableUsdc: string; pendingUsdc: string; spendableUsdc: string; walletUsdc: string; totalOwnedUsdc: string; creditLimitUsdc: string } | null; error: string | null }>;
   /** Prompts a native save dialog and writes the signer private key to the chosen file. */
   identityExportKey?: () => Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string | null }>;
   /** Replaces the signer private key (the current one is backed up on disk first). */
@@ -399,12 +433,22 @@ export type DesktopBridge = {
     error?: string;
   }>;
 
-  paymentsOpenPayPage?: (opts: { kind?: 'deposit' | 'withdraw' | 'authorize' | 'claim' | 'diem' | 'close-channel'; amountUsdc?: string; channelId?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
+  paymentsOpenPayPage?: (opts: { kind?: 'deposit' | 'withdraw' | 'authorize' | 'claim' | 'close-channel'; amountUsdc?: string; channelId?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
   paymentsCardProviders?: () => Promise<{ ok: boolean; data?: Array<{ id: string; label: string }>; error?: string }>;
   paymentsOpenCardProvider?: (opts?: { providerId?: string; amountUsdc?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
   paymentsCrossmintConfig?: () => Promise<{ ok: boolean; data?: { clientKey: string; apiBase: string } | null; error?: string }>;
+  paymentsFunkitConfig?: () => Promise<{ ok: boolean; data?: { apiKey: string } | null; error?: string }>;
+  paymentsOnrampAvailability?: () => Promise<{ ok: boolean; data?: { country: string | null; stripe: boolean }; error?: string }>;
+  /** Closes any app-owned Fun checkout/sign-in popup windows (login-only flows produce no deposit, so the deposit watcher can't close them). */
+  paymentsCloseCheckoutWindows?: () => Promise<{ ok: boolean }>;
   paymentsGetBuyerUsage?: () => Promise<{ ok: boolean; data: DesktopBuyerUsageTotals | null; error: string | null; lastActivityAt?: number | null }>;
+  paymentsGetBuyerSpendHistory?: () => Promise<{ ok: boolean; data: DesktopBuyerSpendHistory | null; error: string | null }>;
   paymentsGetChannels?: () => Promise<{ ok: boolean; data: DesktopPaymentChannelSummary[]; error: string | null }>;
+  paymentsRequestCooperativeClose?: (opts: { peerId: string }) => Promise<{
+    ok: boolean;
+    result: CooperativeCloseResult | null;
+    error: string | null;
+  }>;
   paymentsGetRewardsSummary?: () => Promise<{ ok: boolean; data: DesktopRewardsSummary | null; error: string | null }>;
   /** Fired when a browser pay page reports a completed payment action. */
   onPaymentsCompleted?: (handler: () => void) => () => void;
@@ -448,12 +492,11 @@ export type DesktopBridge = {
   vprFloatSetExpanded?: (expanded: boolean) => void;
   /** null while the buyer is unreachable (e.g. still starting up). */
   buyerConversationsList?: () => Promise<BuyerConversationSummary[] | null>;
-  buyerConversationsUpdate?: (opts: { id: string; label?: string | null; pinnedModel?: string; delete?: boolean }) => Promise<{ ok: boolean; conversation?: BuyerConversationSummary; error?: string }>;
+  buyerConversationsUpdate?: (opts: { id: string; label?: string | null; pinnedModel?: string; peerSource?: 'auto' | 'user'; delete?: boolean }) => Promise<{ ok: boolean; conversation?: BuyerConversationSummary; error?: string }>;
   vprFloatOpen?: (data: VprFloatData) => Promise<{ ok: boolean }>;
   vprFloatClose?: () => Promise<{ ok: boolean }>;
   vprFloatIsOpen?: () => Promise<boolean>;
   vprFloatGetCompact?: () => Promise<boolean>;
-  vprFloatMoveBy?: (dx: number, dy: number) => void;
   vprFloatUpdate?: (data: VprFloatData) => void;
   vprFloatAction?: (action: VprFloatAction) => void;
   onVprFloatData?: (handler: (data: VprFloatData) => void) => () => void;
@@ -476,6 +519,10 @@ export type BuyerConversationSummary = {
       the first model that serves it, so this is null only until the chat's
       first resolved request; the default route applies to new chats only. */
   pinnedModel: string | null;
+  /** How the pin's peer was chosen: 'user' = the user picked this seller for
+      this chat (sweeps never move it), 'auto' = routing picked it. Absent on
+      rows from buyers that predate the field — treat as 'auto'. */
+  peerSource?: 'auto' | 'user';
   /** Model that served the most recent request (`<peerId>@<service>`). */
   lastModel: string | null;
   /** USDC base units this chat has cost (bigint string), subagents included.
@@ -524,6 +571,10 @@ export type VprFloatConversation = {
   /** Formatted spend for this chat ("$0.42", "<$0.01"), or null when nothing
       has been attributed to it yet. */
   cost: string | null;
+  /** Display name of the seller that served the chat's most recent request,
+      or null while no request has resolved. Rendered only when the
+      "Show routed peer" debug preference is on. */
+  routedPeerName: string | null;
 };
 
 /** Display payload the main window pushes to the floating pill. */
@@ -556,6 +607,8 @@ export type VprFloatData = {
   runtimeOn?: boolean;
   /** Shortened buyer identity (signer address), e.g. "0x1234...abcd". */
   identityLabel?: string;
+  /** Debug preference: chat rows name the routed seller next to the model. */
+  showRoutedPeer?: boolean;
   /**
    * True when traffic moved through the system proxy or the buyer proxy
    * since the previous payload — drives the pulse on the app icon.

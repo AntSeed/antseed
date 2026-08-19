@@ -16,7 +16,6 @@ import {
   getFloatWindow,
   getFloatWindowCompact,
   getMainWindow,
-  moveFloatWindowBy,
   openFloatWindow,
   setFloatWindowCompact,
   setFloatWindowExpanded,
@@ -43,15 +42,6 @@ export function registerFloatIpc(): void {
   ipcMain.handle('vpr-float:is-open', () => Boolean(getFloatWindow()));
 
   ipcMain.handle('vpr-float:get-compact', () => getFloatWindowCompact());
-
-  // Manual window drag for the compact chip's center button: it must stay a
-  // click target (flip/expand), so it can't be a -webkit-app-region drag
-  // handle — the renderer streams pointer deltas instead.
-  ipcMain.on('vpr-float:move-by', (_event, dx: unknown, dy: unknown) => {
-    if (typeof dx !== 'number' || typeof dy !== 'number') return;
-    if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
-    moveFloatWindowBy(dx, dy);
-  });
 
   ipcMain.on('vpr-float:update', (_event, data: unknown) => {
     lastVprFloatData = data;
@@ -90,6 +80,7 @@ export function registerFloatIpc(): void {
     if (record.delete === true) payload.delete = true;
     if ('label' in record) payload.label = typeof record.label === 'string' ? record.label : null;
     if ('pinnedModel' in record) payload.pinnedModel = typeof record.pinnedModel === 'string' ? record.pinnedModel : '';
+    if (record.peerSource === 'user' || record.peerSource === 'auto') payload.peerSource = record.peerSource;
     try {
       const buyerPort = await resolveBuyerProxyPort();
       const response = await fetch(`http://127.0.0.1:${buyerPort}/_antseed/conversations/update`, {

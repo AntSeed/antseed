@@ -187,7 +187,7 @@ export async function transcribeVoiceAudio(audio: ArrayBuffer | Uint8Array): Pro
   const status = await getVoiceTranscriptionStatus();
   if (!status.available) return { ok: false, error: status.error || 'Local transcription is not installed.' };
 
-  const dir = await mkdtemp(path.join(tmpdir(), 'antstation-whisper-'));
+  const dir = await mkdtemp(path.join(tmpdir(), 'vpr-whisper-'));
   try {
     const audioPath = path.join(dir, 'input.wav');
     const outputBase = path.join(dir, 'transcript');

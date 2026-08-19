@@ -8,7 +8,7 @@ import { sanitizeStoredSnippet } from './conversation-identity.js'
  *
  * Each record maps one tool chat session (identified on the wire — see
  * conversation-identity.ts) to a display label and an optional per-chat
- * routed-model pin. Persists as `conversations.json` in the buyer data dir,
+ * routed-model affinity. Persists as `conversations.json` in the buyer data dir,
  * written atomically (tmp + rename) with writes serialized behind a queue,
  * mirroring how buyer.state.json is handled. No database involved.
  */
@@ -22,11 +22,15 @@ export type StoredConversation = {
   snippet: string
   /** User-assigned name; overrides the snippet for display when set. */
   label: string | null
-  /** Per-chat route pin as `<peerId>@<service>`. The default route only
-      steers a chat's first request: the model that serves it is pinned here
-      (see touch), so later default changes affect only new chats. Null only
-      until the chat's first resolved request. */
+  /** Per-chat route as `<peerId>@<service>`. Automatic routes are soft
+      affinity; user-selected routes are hard pins. Null only until the
+      chat's first resolved request. */
   pinnedModel: string | null
+  /** How the route's peer was chosen. 'auto' means routing picked it (first
+      request affinity, or the desktop re-pointing chats when a seller is
+      pinned for the model); 'user' means the user chose this seller for this
+      specific chat, which nothing overrides until they clear it. */
+  peerSource: 'auto' | 'user'
   /** Model that served the most recent request (`<peerId>@<service>`), for display. */
   lastModel: string | null
   /** USDC base units authorized for this chat's requests (bigint as string).
@@ -82,6 +86,7 @@ function sanitizeRecord(value: unknown): StoredConversation | null {
     snippet: typeof record.snippet === 'string' ? sanitizeStoredSnippet(record.snippet) : '',
     label: typeof record.label === 'string' && record.label.length > 0 ? record.label : null,
     pinnedModel: typeof record.pinnedModel === 'string' && record.pinnedModel.length > 0 ? record.pinnedModel : null,
+    peerSource: record.peerSource === 'user' ? 'user' : 'auto',
     lastModel: typeof record.lastModel === 'string' && record.lastModel.length > 0 ? record.lastModel : null,
     spentUsdc: sanitizeCounter(record.spentUsdc),
     inputTokens: sanitizeCounter(record.inputTokens),
@@ -186,6 +191,7 @@ export class ConversationStore {
         snippet: input.snippet ?? '',
         label: null,
         pinnedModel: input.lastModel ?? null,
+        peerSource: 'auto',
         lastModel: input.lastModel ?? null,
         spentUsdc: '0',
         inputTokens: '0',
@@ -262,6 +268,22 @@ export class ConversationStore {
     return this._byId.get(conversationId(tool, sessionKey))?.pinnedModel ?? null
   }
 
+  recordRoutedModel(id: string, routedModel: string): StoredConversation | null {
+    const existing = this._byId.get(id)
+    if (!existing) return null
+    const record = {
+      ...existing,
+      pinnedModel: existing.peerSource === 'user' && existing.pinnedModel
+        ? existing.pinnedModel
+        : routedModel,
+      lastModel: routedModel,
+      lastActiveAt: Date.now(),
+    }
+    this._byId.set(id, record)
+    void this._persist()
+    return record
+  }
+
   setLabel(id: string, label: string | null): StoredConversation | null {
     const existing = this._byId.get(id)
     if (!existing) return null
@@ -272,10 +294,15 @@ export class ConversationStore {
     return record
   }
 
-  setPinnedModel(id: string, pinnedModel: string | null): StoredConversation | null {
+  setPinnedModel(id: string, pinnedModel: string | null, peerSource: 'auto' | 'user' = 'auto'): StoredConversation | null {
     const existing = this._byId.get(id)
     if (!existing) return null
-    const record = { ...existing, pinnedModel: pinnedModel || null }
+    // A cleared pin has no peer to attribute, so the source resets with it.
+    const record = {
+      ...existing,
+      pinnedModel: pinnedModel || null,
+      peerSource: pinnedModel ? peerSource : 'auto' as const,
+    }
     this._byId.set(id, record)
     void this._persist()
     return record

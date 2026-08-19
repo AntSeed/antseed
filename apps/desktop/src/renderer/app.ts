@@ -11,15 +11,21 @@ import {
 } from './modules/app/plugin-setup';
 import { initAppSetupModule } from './modules/app/setup';
 import { initCreditsModule } from './modules/app/credits';
+import { initReminderModule } from './modules/app/reminder';
 import { initVprFloatModule } from './modules/app/float';
-import { loadFloatAutoOpen, saveFloatAutoOpen } from './modules/app/float-settings';
+import {
+  loadFloatAutoOpen,
+  loadFloatShowRoutedPeer,
+  saveFloatAutoOpen,
+  saveFloatShowRoutedPeer,
+} from './modules/app/float-settings';
 import { initModelPickerSync } from './modules/catalog/picker-sync';
 import { applyVprRouteToConnectedProxy } from './modules/routing/proxy-sync';
-import { findCatalogEntry } from './modules/catalog/model-catalog';
+import { createVprRouteSelection, findCatalogEntry } from './modules/catalog/model-catalog';
 import { resolveVprChatOption } from './modules/chat/projection';
-import type { VprRouteSelection } from './core/state';
 import {
   applyPeerListing,
+  buyerModelRoutingPreferences,
   loadVprRouteSelection,
   loadVprRoutingPreferences,
   saveVprRouteSelection,
@@ -34,6 +40,8 @@ import {
   vprModelPinFor,
 } from './modules/routing/model-pins';
 import { isPeerRoutable } from './modules/routing/select';
+import { sweepAutoChatsToSeller } from './modules/routing/chat-peer-sweep';
+import { buyerConversationsResource } from './modules/app/vpr-resources';
 import { routesForSelectedModel } from './modules/catalog/view-models';
 import { mountAppShell } from './ui/mount';
 import { initThemeMode } from './ui/lib/theme';
@@ -107,6 +115,7 @@ uiState.vprRoutingPreferences = loadVprRoutingPreferences(uiState.vprRoutingPref
 uiState.vprRouteSelection = loadVprRouteSelection(uiState.vprRouteSelection);
 uiState.vprModelPins = loadVprModelPins();
 uiState.vprFloatAutoOpen = loadFloatAutoOpen();
+uiState.vprFloatShowRoutedPeer = loadFloatShowRoutedPeer();
 // Sessions that pinned a seller before pins were stored per model carry the
 // pin only on the selection — seed the store from it so the first model
 // switch doesn't silently drop it.
@@ -157,6 +166,23 @@ const {
   defaultDashboardPort: DEFAULT_DASHBOARD_PORT,
 });
 
+let lastQueuedBuyerRoutingPreferences = '';
+let buyerRoutingPreferencesSyncVersion = 0;
+function syncBuyerRoutingPreferences(): void {
+  if (!bridge?.updateConfig) return;
+  const routingPreferences = buyerModelRoutingPreferences(uiState.vprRoutingPreferences);
+  const serialized = JSON.stringify(routingPreferences);
+  if (serialized === lastQueuedBuyerRoutingPreferences) return;
+  lastQueuedBuyerRoutingPreferences = serialized;
+  const version = ++buyerRoutingPreferencesSyncVersion;
+  void updateDashboardConfig({ buyer: { routingPreferences } }).then((result) => {
+    if (result.ok || version !== buyerRoutingPreferencesSyncVersion) return;
+    lastQueuedBuyerRoutingPreferences = '';
+    appendSystemLog(`Buyer routing preferences were not saved: ${result.error ?? 'unknown error'}`);
+  });
+}
+syncBuyerRoutingPreferences();
+
 const {
   clearRouterPluginHint,
   updatePluginHintFromLog,
@@ -191,6 +217,8 @@ const {
   populateSettingsForm,
 });
 
+const reminderApi = initReminderModule({ bridge, uiState });
+
 // Credits API is created after chat, so use late-bound reference.
 let creditsApi: ReturnType<typeof initCreditsModule>;
 
@@ -199,6 +227,7 @@ const chatApi = initChatModule({
   uiState,
   appendSystemLog,
   onPaymentCardShown: () => creditsApi?.notifyPaymentCardVisible(),
+  onResponseCompleted: reminderApi.onResponseCompleted,
 });
 
 initAppSetupModule({ uiState, bridge: bridge ?? null });
@@ -207,6 +236,7 @@ creditsApi = initCreditsModule({
   bridge: bridge as DesktopBridge,
   uiState,
   onBalanceSufficientForPayment: () => chatApi.retryAfterPayment(),
+  onPaymentStateChanged: reminderApi.reconcilePayer,
 });
 creditsApi.startPeriodicRefresh();
 
@@ -233,6 +263,26 @@ function rememberedPinFor(provider: string, serviceId: string): string | null {
 function actionSelectVprModel(provider: string, serviceId: string, peerId: string | null = null): void {
   const entry = findCatalogEntry(uiState.vprModelCatalog, provider, serviceId);
   if (!entry) return;
+  // Image models are internal-chat tools, not VPR defaults. Restore a
+  // remembered explicit seller pin when the model page hands the model to
+  // chat; clearing Auto removes that remembered pin first.
+  if (entry.kind === 'image') {
+    const pinnedPeerId = peerId ?? rememberedPinFor(entry.provider, entry.serviceId);
+    const selection = createVprRouteSelection(entry, pinnedPeerId);
+    uiState.chatImageRouteSelection = selection;
+    if (selection.peerId) {
+      uiState.vprModelPins = setVprModelPin(
+        uiState.vprModelPins,
+        entry.provider,
+        entry.serviceId,
+        selection.peerId,
+      );
+      saveVprModelPins(uiState.vprModelPins);
+    }
+    notifyUiStateChanged();
+    return;
+  }
+  uiState.chatImageRouteSelection = null;
   // A bare model switch restores that model's own pin instead of dropping to
   // auto — pinning one model then browsing others must not unpin it. Only
   // clearVprPinnedPeer (the "Auto select seller" toggle) forgets a pin.
@@ -241,30 +291,27 @@ function actionSelectVprModel(provider: string, serviceId: string, peerId: strin
     uiState.vprModelPins = setVprModelPin(uiState.vprModelPins, entry.provider, entry.serviceId, pinnedPeerId);
     saveVprModelPins(uiState.vprModelPins);
   }
-  const selection: VprRouteSelection = {
-    model: {
-      provider: entry.provider,
-      serviceId: entry.serviceId,
-      label: entry.label,
-      categories: [...entry.categories],
-    },
-    mode: pinnedPeerId ? 'pinned-peer' : 'auto',
-    peerId: pinnedPeerId,
-  };
+  const selection = createVprRouteSelection(entry, pinnedPeerId);
   // Auto mode resolves the peer through the routing-preferences scorer, not
   // whichever chat option happens to sort first.
-  const option = resolveVprChatOption(
-    uiState.chatServiceOptions,
-    uiState.vprRoutableRows,
-    selection,
-    uiState.vprRoutingPreferences,
-  );
+  const option = entry.kind === 'text'
+    ? resolveVprChatOption(
+        uiState.chatServiceOptions,
+        uiState.vprRoutableRows,
+        selection,
+        uiState.vprRoutingPreferences,
+      )
+    : null;
   if (option) {
-    chatApi.handleServiceChange(option.value, pinnedPeerId ?? option.peerId, false);
+    chatApi.handleServiceChange(
+      option.value,
+      pinnedPeerId ?? option.peerId,
+      false,
+      selection.mode === 'auto' ? 'auto' : 'pinned',
+    );
   }
-  // handleServiceChange writes a pinned selection through; restore the
-  // requested mode so auto keeps re-resolving the best route on future
-  // sends instead of staying pinned to today's winner.
+  // The text route is persisted and propagated to connected apps after the
+  // corresponding chat option has been resolved above.
   uiState.vprRouteSelection = selection;
   saveVprRouteSelection(selection);
   notifyUiStateChanged();
@@ -276,6 +323,9 @@ function actionSelectVprModel(provider: string, serviceId: string, peerId: strin
   // time, and the buyer is now pinned to the new model's peer — stale
   // profiles would forward models that peer doesn't serve.
   void applyVprRouteToConnectedProxy(bridge, uiState);
+  // An explicit seller choice re-points the model's existing auto-routed
+  // chats too; a bare model switch (remembered-pin restore) moves nothing.
+  if (peerId) sweepChatsForSellerPin(entry.provider, entry.serviceId, peerId);
 }
 
 const vprFloatApi = initVprFloatModule({
@@ -284,6 +334,18 @@ const vprFloatApi = initVprFloatModule({
   onSelectModel: (provider, serviceId) => actionSelectVprModel(provider, serviceId),
   refreshUsage: (force?: boolean) => creditsApi.refreshPaymentSummary(force),
 });
+
+/** Deliberate seller pin for a model: re-point that model's auto-affine chats
+    to the chosen seller (chats whose seller the user picked stay put), then
+    refresh the surfaces that show chat routes. */
+function sweepChatsForSellerPin(provider: string, serviceId: string, peerId: string): void {
+  void sweepAutoChatsToSeller(bridge, uiState.vprRoutableRows, { provider, serviceId }, peerId)
+    .then((changed) => {
+      if (!changed) return;
+      void buyerConversationsResource.refresh();
+      void vprFloatApi.refresh();
+    });
+}
 
 // Keep the main process fed with the curated model list (favorites +
 // recommended) so the Telegram /model picker matches the app's dropdown.
@@ -552,6 +614,7 @@ registerActions({
   openConversation: chatApi.openConversation,
   sendMessage: chatApi.sendMessage,
   sendMessageToConversation: chatApi.sendMessageToConversation,
+  generateImage: chatApi.generateImage,
   abortChat: chatApi.abortChat,
   deleteConversation: chatApi.deleteConversation,
   renameConversation: chatApi.renameConversation,
@@ -577,11 +640,15 @@ registerActions({
       ? setVprModelPin(uiState.vprModelPins, provider, serviceId, peerId)
       : clearVprModelPin(uiState.vprModelPins, provider, serviceId);
     saveVprModelPins(uiState.vprModelPins);
+    // Pinning re-points the model's auto-affine chats; clearing moves
+    // nothing — chats keep their current peer as affinity.
+    if (peerId) sweepChatsForSellerPin(provider, serviceId, peerId);
     notifyUiStateChanged();
   },
   updateVprRoutingPreferences: (patch) => {
     uiState.vprRoutingPreferences = { ...uiState.vprRoutingPreferences, ...patch };
     saveVprRoutingPreferences(uiState.vprRoutingPreferences);
+    syncBuyerRoutingPreferences();
     // Peer rules gate which sellers and models are visible at all, so a patch
     // touching them has to re-derive the catalog, not just repaint.
     if (patch.allowedPeerIds || patch.blockedPeerIds) {
@@ -592,6 +659,7 @@ registerActions({
   setVprPeerListing: (peerId, listing) => {
     uiState.vprRoutingPreferences = applyPeerListing(uiState.vprRoutingPreferences, peerId, listing);
     saveVprRoutingPreferences(uiState.vprRoutingPreferences);
+    syncBuyerRoutingPreferences();
     chatApi.applyPeerAccessRules();
 
     // A pin the new lists rule out would keep routing to a peer the user just
@@ -617,6 +685,8 @@ registerActions({
   },
   setChatPermissionMode: chatApi.setChatPermissionMode,
   decideToolApproval: chatApi.decideToolApproval,
+  acceptReminderHome: reminderApi.acceptHome,
+  dismissReminderHome: reminderApi.dismissHome,
   rejectPaymentSession: () => {
     uiState.chatPaymentApprovalVisible = false;
     uiState.chatPaymentApprovalPeerName = null;
@@ -643,6 +713,14 @@ registerActions({
     uiState.vprFloatAutoOpen = enabled;
     saveFloatAutoOpen(enabled);
     vprFloatApi.setAutoOpen(enabled);
+    notifyUiStateChanged();
+  },
+  setVprFloatShowRoutedPeer: (enabled: boolean) => {
+    uiState.vprFloatShowRoutedPeer = enabled;
+    saveFloatShowRoutedPeer(enabled);
+    // The pill reads the flag from its data payload — push it right away so
+    // an open pill reflects the toggle without waiting out the poll tick.
+    void vprFloatApi.refresh();
     notifyUiStateChanged();
   },
 });

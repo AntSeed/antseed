@@ -15,7 +15,7 @@ antseed seller setup                  Initialize seller onboarding
 antseed buyer start                   Start the buyer proxy
 ```
 
-In normal use, you configure the node once with `antseed seller setup` or `antseed config ...`, then start it later with `antseed seller start` or `antseed buyer start` without repeating flags every time. Secrets such as API keys stay in env vars; provider definitions, services, pricing, and `baseUrl` live in `~/.antseed/config.json`.
+In normal use, you configure the node once with `antseed seller setup` or `antseed config ...`, then start it later with `antseed seller start` or `antseed buyer start` without repeating flags every time. Secrets such as API keys stay in env vars; provider definitions, services, pricing, capabilities, unit billing, and `baseUrl` live in `~/.antseed/config.json`.
 
 ### Providing (selling)
 
@@ -34,17 +34,20 @@ antseed seller emissions claim        Claim accumulated seller payouts
 ```bash title="buyer"
 antseed buyer start                   Start the buyer proxy
 antseed buyer start --router <name>   Start the buyer proxy with a non-default router
-antseed buyer deposit <amount>        Deposit USDC for payments
+antseed buyer deposit                       Show funding address + QR; incoming USDC deposits automatically (gasless)
+antseed buyer sweep                   Gaslessly sweep hot-wallet USDC into deposits (fixed relay fee)
+antseed buyer deposit --onchain <usdc>  Direct on-chain deposit from the hot wallet (requires ETH for gas)
 antseed buyer withdraw <amount>       Withdraw USDC from deposits
+antseed buyer activity                Activity summary: tokens, spend history, savings, channels, claimable ANTS
 antseed buyer balance                 Check wallet and deposit balance
-antseed network browse                Browse available services and pricing
-antseed payments                      Launch the payments portal
+antseed network browse                Browse peers, models, and pricing (same catalog as /v1/models)
 ```
 
 ### Network and monitoring
 
 ```bash title="network"
 antseed seller status                 Show seller status
+antseed seller doctor                 Diagnose the announced seller endpoint
 antseed buyer status                  Show buyer status
 antseed metrics serve                 Serve Prometheus-compatible buyer/seller metrics
 antseed config                        Manage config file
@@ -56,3 +59,28 @@ antseed network bootstrap             Run a dedicated DHT bootstrap node
 antseed buyer connection              Manage connection settings
 antseed dev                           Run seller + buyer locally for testing
 ```
+
+### Service configuration
+
+`antseed config seller add-service <provider> <serviceId>` supports:
+
+| Option | Purpose |
+|---|---|
+| `--upstream <model>` | Map the public service ID to an upstream model ID |
+| `--input`, `--cached`, `--output` | Token prices in USD per million tokens |
+| `--categories <csv>` | Discovery tags |
+| `--capabilities <json>` | Model hints such as context window, input modalities, reasoning, and tool use |
+| `--unit-billing-models <json>` | Per-protocol non-token billing, currently used by `openai-images` |
+| `--base-url <url>` | Set the provider-wide upstream base URL |
+
+```bash
+antseed config seller add-service openai flux.1-schnell \
+  --upstream "black-forest-labs/FLUX.1-schnell" \
+  --input 0 --output 0 \
+  --capabilities '{"inputs":["text","image"]}' \
+  --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.003}]}}'
+```
+
+`antseed seller setup` exposes the same capability and unit-billing fields interactively. `antseed seller start` warns if unit billing is configured for a plugin that does not support it. Image services are not health-probed because a meaningful probe would incur an upstream generation charge.
+
+Before deploying this CLI version to sellers, follow the [metadata v12 upgrade order](/docs/guides/metadata-v12-upgrade): upgrade buyers first, then sellers.

@@ -80,40 +80,17 @@
   }
 }
 
-/* ---------- Filter chips (Type / Category / Sort) ---------- */
+/* ---------- Filter dropdowns (Type / Capability / Family / Sort) ---------- */
 
 .filterRow {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  min-width: 0;
 }
 
-.filterPill {
-  display: inline-flex;
-  border-radius: 16px;
-  border: 1px solid var(--border);
-  background: var(--bg-card);
-}
-
-.filterPill select {
-  appearance: none;
-  -webkit-appearance: none;
-  max-width: 160px;
-  padding: 6px 24px 6px 12px;
-  border: none;
-  border-radius: 16px;
-  background:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%236b7570' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
-    right 8px center / 10px 6px no-repeat;
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 16px;
-  cursor: pointer;
-  outline: none;
-}
-
-.filterPillEnd {
+.filterEnd {
   margin-left: auto;
 }
 

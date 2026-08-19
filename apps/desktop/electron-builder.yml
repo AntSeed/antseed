@@ -123,15 +123,17 @@ nsis:
 linux:
   icon: assets/antseed-dock-icon.png
   category: Development
+  # Deterministic names (default deb naming uses the package name + amd64):
+  # AntSeed-VPR-<version>-<x64|arm64>.<AppImage|deb>. The website download
+  # matcher and the alpha mirror both rely on this shape.
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+  # NOTE: arch is intentionally NOT pinned here (same reasoning as mac above).
+  # CI builds each arch on a matching native runner (ubuntu-latest /
+  # ubuntu-24.04-arm), so the default current-arch build always packs
+  # prepare-dist's matching-arch native modules.
   target:
     - target: AppImage
-      arch:
-        - x64
-        - arm64
     - target: deb
-      arch:
-        - x64
-        - arm64
 
 publish:
   provider: github

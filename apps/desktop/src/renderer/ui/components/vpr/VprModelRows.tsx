@@ -1,10 +1,13 @@
 import type { JSX } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { ArrowRight01Icon, StarIcon, Tick02Icon } from '@hugeicons/core-free-icons';
+import { ArrowRight01Icon, Settings02Icon, StarIcon, Tick02Icon } from '@hugeicons/core-free-icons';
 import type { VprModelCatalogEntry } from '../../../core/state';
 import { favoriteModelKey } from '../../../modules/catalog/favorites';
 import { sameCanonicalModel } from '../../../modules/catalog/model-identity';
+import { modelCapabilitySummary } from '../../../modules/catalog/model-capabilities';
+import { modelTagsFor } from '../../../modules/catalog/model-metadata';
 import { BrandIcon } from '../brand/BrandIcon';
+import { InfoTooltip } from '../InfoTooltip';
 import { formatUsdShort, VprBadge } from './VprKit';
 import styles from './VprModelRows.module.scss';
 
@@ -33,14 +36,20 @@ export type VprModelRowListProps = {
    * A matching row swaps its peer count for the seller, so a non-auto route is
    * visible without opening the model page. */
   pinnedPeerLabels?: ReadonlyMap<string, string>;
+  /** Rows get a trailing config button opening per-context settings for that
+   * model (the chat detail's seller picker). Hosts without one (Home
+   * dropdown, floating pill) omit this and render no button. */
+  onConfigure?: (provider: string, serviceId: string) => void;
 };
 
 function entryMinTotalPrice(entry: VprModelCatalogEntry): number | null {
+  if (entry.kind === 'image') return entry.minImageUsdPerImage;
   if (entry.minInputUsdPerMillion === null || entry.minOutputUsdPerMillion === null) return null;
   return entry.minInputUsdPerMillion + entry.minOutputUsdPerMillion;
 }
 
 function isFreeEntry(entry: VprModelCatalogEntry): boolean {
+  if (entry.kind === 'image') return false;
   const { minInputUsdPerMillion: input, minOutputUsdPerMillion: output } = entry;
   return input !== null && output !== null && input <= 0 && output <= 0;
 }
@@ -61,7 +70,7 @@ function formatPrice(price: number | null): string {
   return price === null ? '—' : formatUsdShort(price);
 }
 
-function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pinnedPeerLabel, onClick }: {
+function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pinnedPeerLabel, onClick, onConfigure }: {
   entry: VprModelCatalogEntry;
   /** Leading checkmark for the currently selected model (Figma "model list" checked state). */
   checked?: boolean;
@@ -73,12 +82,33 @@ function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pi
   /** Seller this model is pinned to; replaces the peer count on the meta line. */
   pinnedPeerLabel?: string | null;
   onClick: () => void;
+  /** Trailing config button (per-context model settings). */
+  onConfigure?: () => void;
 }): JSX.Element {
   const free = isFreeEntry(entry);
   const hasPrice = entry.minInputUsdPerMillion !== null || entry.minOutputUsdPerMillion !== null;
-  const discount = discountLabel(entry);
+  // Config-bearing rows (the chat detail's model list) trade the discount
+  // column for meta-line width: the gear moves up onto the title line and
+  // the second line runs the full row.
+  const discount = onConfigure ? null : discountLabel(entry);
+  const capabilities = modelCapabilitySummary(entry);
+  const modelTags = modelTagsFor(entry.serviceId);
+  const visibleModelTags = modelTags.slice(0, 1);
+  const hiddenModelTags = modelTags.slice(visibleModelTags.length);
 
-  const priceParts = free ? (
+  const priceParts = entry.kind === 'image' ? (
+    entry.minImageUsdPerImage !== null ? (
+      <>
+        <span className={styles.priceLine}>
+          <span className={styles.pricePrefix}>From:</span>
+          <span>{formatPrice(entry.minImageUsdPerImage)}</span>
+        </span>
+        <span className={styles.perTok}>/image</span>
+      </>
+    ) : (
+      <span className={styles.perTok}>Price unknown</span>
+    )
+  ) : free ? (
     <span className={styles.perTok}>Free</span>
   ) : hasPrice ? (
     <>
@@ -98,40 +128,101 @@ function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pi
       type="button"
       className={[
         styles.row,
-        checked ? styles.rowChecked : '',
         compact ? styles.rowCompact : '',
       ].filter(Boolean).join(' ')}
       aria-pressed={checked}
       onClick={onClick}
     >
       {checked && (
-        <HugeiconsIcon icon={Tick02Icon} size={16} strokeWidth={2} className={styles.check} />
+        <span className={styles.checkSlot} aria-hidden="true">
+          <HugeiconsIcon icon={Tick02Icon} size={16} strokeWidth={2} className={styles.check} />
+        </span>
       )}
       <span className={styles.rowMain}>
         <span className={styles.titleLine}>
           <BrandIcon name={entry.provider} hints={[entry.label]} size={16} className={styles.logo} />
           <span className={styles.label}>{entry.label}</span>
+          {entry.kind === 'image' && <span className={styles.modelTypeTag}>Image</span>}
+          {!compact && visibleModelTags.map((tag) => (
+            <span
+              key={tag}
+              className={`${styles.modelTag}${tag === 'Uncensored' ? ` ${styles.modelTagUncensored}` : ''}`}
+            >
+              {tag}
+            </span>
+          ))}
+          {!compact && hiddenModelTags.length > 0 && (
+            <InfoTooltip
+              align="left"
+              narrow
+              interactive
+              content={<span>{hiddenModelTags.join(' · ')}</span>}
+            >
+              <span
+                className={styles.modelTagMore}
+                role="button"
+                tabIndex={0}
+                onClick={(event) => event.stopPropagation()}
+              >
+                +{hiddenModelTags.length}
+              </span>
+            </InfoTooltip>
+          )}
           {favorite && (
             <HugeiconsIcon icon={StarIcon} size={13} strokeWidth={2} className={styles.favStar} />
           )}
           {badge}
+          {discount && <span className={styles.discount}>{discount}</span>}
+          {/* A span with the button role — the row itself is already a
+              button, and a real nested button would be invalid markup (same
+              pattern as the pill's Add balance shortcut). */}
+          {onConfigure && (
+            <span
+              role="button"
+              tabIndex={0}
+              className={styles.configButton}
+              title="Model settings for this chat"
+              aria-label={`Settings for ${entry.label}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onConfigure();
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.stopPropagation();
+                event.preventDefault();
+                onConfigure();
+              }}
+            >
+              <HugeiconsIcon icon={Settings02Icon} size={15} strokeWidth={1.8} />
+            </span>
+          )}
         </span>
         <span className={styles.metaLine}>
           {/* A pinned seller is the whole story of where the model routes —
               the seller's name replaces the peer count, unlabelled: naming a
               peer already says routing isn't on auto. */}
-          <span className={styles.peerMeta}>
-            {pinnedPeerLabel ? (
-              <span className={styles.pinnedSeller}>{pinnedPeerLabel}</span>
-            ) : (
-              `${entry.peerCount} ${entry.peerCount === 1 ? 'seller' : 'sellers'}`
-            )}
-          </span>
-          <span className={styles.metaDivider} aria-hidden="true">•</span>
+          {!compact && capabilities.length > 0 && (
+            <>
+              <span className={styles.capabilityMeta}>{capabilities.slice(0, 2).join(' · ')}</span>
+              <span className={styles.metaDivider} aria-hidden="true">•</span>
+            </>
+          )}
+          {pinnedPeerLabel || !compact ? (
+            <>
+              <span className={styles.peerMeta}>
+                {pinnedPeerLabel ? (
+                  <span className={styles.pinnedSeller}>{pinnedPeerLabel}</span>
+                ) : (
+                  `${entry.peerCount} ${entry.peerCount === 1 ? 'seller' : 'sellers'}`
+                )}
+              </span>
+              <span className={styles.metaDivider} aria-hidden="true">•</span>
+            </>
+          ) : null}
           <span className={styles.metaPrice}>{priceParts}</span>
         </span>
       </span>
-      {discount && <span className={styles.discount}>{discount}</span>}
       {!compact && chevron && (
         <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} className={styles.chevron} />
       )}
@@ -174,6 +265,7 @@ export function VprModelRowList({
   compact,
   selectOnly,
   pinnedPeerLabels,
+  onConfigure,
 }: VprModelRowListProps): JSX.Element {
   if (entries.length === 0) {
     return (
@@ -226,6 +318,7 @@ export function VprModelRowList({
               <VprBadge tone="green">Cheapest</VprBadge>
             ) : null}
             onClick={() => onSelect(entry.provider, entry.serviceId)}
+            onConfigure={onConfigure ? () => onConfigure(entry.provider, entry.serviceId) : undefined}
           />
         );
       })}

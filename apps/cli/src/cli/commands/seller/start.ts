@@ -13,6 +13,7 @@ import {
   DEFAULT_HEALTH_CHECK_FAILURE_THRESHOLD,
   type Provider,
   type Prover,
+  type ConfigField,
   resolveChainConfig,
   loadOrCreateIdentity,
 } from '@antseed/node'
@@ -24,7 +25,7 @@ import {
   createStakingClient,
   resolveBaseRpcUrlOverride,
 } from '../../payment-utils.js'
-import type { AntseedConfig } from '../../../config/types.js'
+import type { AntseedConfig, SellerCLIConfig, SellerProviderConfig } from '../../../config/types.js'
 import { ANTSEED_VERIFIER_SDKS_ENV, buildVerifierCapabilities, normalizeVerifierIds } from '../../../plugins/verifier.js'
 import { parseBootstrapList, toBootstrapConfig } from '@antseed/node/discovery'
 import { setupShutdownHandler } from '../../shutdown.js'
@@ -32,9 +33,9 @@ import { loadProviderPlugin, loadProverPlugin, buildPluginConfig, getPackageVers
 import { ensurePluginsUpToDate } from '../../../plugins/drift.js'
 import { resolveEffectiveSellerConfig, type SellerRuntimeOverrides } from '../../../config/effective.js'
 import { ensureDerivedIdentityDisplayName } from '../../../config/identity-display-name.js'
-import type { SellerCLIConfig } from '../../../config/types.js'
 import { AntAgentProvider, loadAntAgent, type AntAgentDefinition } from '@antseed/ant-agent'
 import { resolvePluginPackage } from '../../../plugins/registry.js'
+import { startupReachabilityWarning } from './reachability.js'
 
 function getStateFile(dataDir: string): string {
   return join(dataDir, 'daemon.state.json')
@@ -61,7 +62,10 @@ function parseOptionalBoolEnv(value: string | undefined): boolean | null {
 }
 
 const PUBLIC_BASE_RPC_HOSTS = new Set([
+  'base.gateway.tenderly.co',
+  'base-public.nodies.app',
   'base.publicnode.com',
+  'base-rpc.publicnode.com',
   'base.drpc.org',
   'base.llamarpc.com',
   'mainnet.base.org',
@@ -274,12 +278,20 @@ export function buildSellerPluginRuntimeEnv(
   // the plugin env avoids dead noise in process.env.
   const servicePricing: Record<string, unknown> = {}
   const serviceAliasMap: Record<string, string> = {}
+  const serviceCapabilities: Record<string, unknown> = {}
+  const serviceUnitBillingModels: Record<string, unknown> = {}
   for (const [serviceId, serviceCfg] of Object.entries(providerCfg.services)) {
     if (serviceCfg.pricing) {
       servicePricing[serviceId] = serviceCfg.pricing
     }
     if (serviceCfg.upstreamModel && serviceCfg.upstreamModel !== serviceId) {
       serviceAliasMap[serviceId] = serviceCfg.upstreamModel
+    }
+    if (serviceCfg.capabilities) {
+      serviceCapabilities[serviceId] = serviceCfg.capabilities
+    }
+    if (serviceCfg.unitBillingModels) {
+      serviceUnitBillingModels[serviceId] = serviceCfg.unitBillingModels
     }
   }
   if (Object.keys(servicePricing).length > 0) {
@@ -288,8 +300,17 @@ export function buildSellerPluginRuntimeEnv(
   if (Object.keys(serviceAliasMap).length > 0) {
     runtimeEnv['ANTSEED_SERVICE_ALIAS_MAP_JSON'] = JSON.stringify(serviceAliasMap)
   }
+  if (Object.keys(serviceCapabilities).length > 0) {
+    runtimeEnv['ANTSEED_SERVICE_CAPABILITIES_JSON'] = JSON.stringify(serviceCapabilities)
+  }
+  if (Object.keys(serviceUnitBillingModels).length > 0) {
+    runtimeEnv['ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON'] = JSON.stringify(serviceUnitBillingModels)
+  }
   if (providerCfg.baseUrl) {
-    runtimeEnv['OPENAI_BASE_URL'] = providerCfg.baseUrl
+    const baseUrlKey = resolvePluginPackage(providerCfg.plugin) === '@antseed/provider-local-llm'
+      ? 'LOCAL_LLM_BASE_URL'
+      : 'OPENAI_BASE_URL'
+    runtimeEnv[baseUrlKey] = providerCfg.baseUrl
   }
   if (providerCfg.pathRewrite && Object.keys(providerCfg.pathRewrite).length > 0) {
     runtimeEnv['OPENAI_PATH_REWRITE_JSON'] = JSON.stringify(providerCfg.pathRewrite)
@@ -302,6 +323,21 @@ export function buildSellerPluginRuntimeEnv(
   }
 
   return runtimeEnv
+}
+
+export function getUnsupportedUnitBillingWarning(
+  providerName: string,
+  providerConfig: SellerProviderConfig,
+  configFields: ConfigField[],
+): string | undefined {
+  const configuredServices = Object.entries(providerConfig.services)
+    .filter(([, service]) => service.unitBillingModels !== undefined)
+    .map(([serviceId]) => serviceId)
+  if (configuredServices.length === 0) return undefined
+  if (configFields.some((field) => field.key === 'ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON')) {
+    return undefined
+  }
+  return `Provider "${providerName}" (${providerConfig.plugin}) ignores unitBillingModels for service(s): ${configuredServices.join(', ')} because its plugin does not support unit billing.`
 }
 
 export function mergeSellerRuntimeEnv(
@@ -409,8 +445,14 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         const spinner = ora(`Loading provider plugin "${packageName}" for "${providerName}"...`).start()
         try {
           const plugin = await loadProviderPlugin(packageName)
+          const configFields = plugin.configSchema ?? plugin.configKeys ?? []
+          const unitBillingWarning = getUnsupportedUnitBillingWarning(providerName, providerCfg, configFields)
+          if (unitBillingWarning) {
+            spinner.warn(chalk.yellow(unitBillingWarning))
+            spinner.start(`Loading provider plugin "${packageName}" for "${providerName}"...`)
+          }
           const runtimeEnv = buildSellerPluginRuntimeEnv(effectiveSellerConfig, providerName)
-          const basePluginConfig = buildPluginConfig(plugin.configSchema ?? plugin.configKeys ?? [])
+          const basePluginConfig = buildPluginConfig(configFields)
           const pluginConfig = mergeSellerRuntimeEnv(basePluginConfig, runtimeEnv, { forcePricingOverride })
           const provider = await plugin.createProvider(pluginConfig)
           if (provider.init) {
@@ -717,6 +759,11 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         console.log(chalk.dim(`  Peer ID: ${node.peerId ?? 'unknown'}`))
         console.log(chalk.dim(`  DHT port: ${node.dhtPort}`))
         console.log(chalk.dim(`  Signaling port: ${node.signalingPort}`))
+        const reachabilityWarning = startupReachabilityWarning(config.seller.publicAddress)
+        if (reachabilityWarning) {
+          console.log('')
+          console.warn(chalk.yellow.bold(reachabilityWarning))
+        }
         if (requestedVerifierIds.length > 0) {
           console.log(chalk.dim(`  Verifiers advertised: ${requestedVerifierIds.join(', ')}`))
         }
@@ -725,9 +772,11 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         process.exit(1)
       }
 
-      // Periodic model health self-checks: probe every advertised service with
-      // a 1-token completion; unadvertise services that keep failing and
+      // Periodic model health self-checks: probe supported text services with
+      // a minimal completion; unadvertise services that keep failing and
       // restore them when they recover, refreshing signed metadata each time.
+      // Image services are skipped because a meaningful probe would generate
+      // and charge for an image.
       let healthChecker: ModelHealthChecker | null = null
       if (healthCheckEnabled && registeredProviders.length > 0) {
         healthChecker = new ModelHealthChecker({

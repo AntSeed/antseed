@@ -84,46 +84,6 @@
   cursor: default;
 }
 
-/* ---------- DIEM link card ---------- */
-
-.linkCard {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 16px;
-}
-
-.linkText {
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 16px;
-}
-
-.linkText strong {
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
-.linkAction {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--accent-green);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 16px;
-  cursor: pointer;
-}
-
-.linkAction:hover {
-  color: var(--brand);
-}
-
 /* ---------- About ---------- */
 
 .aboutCard {

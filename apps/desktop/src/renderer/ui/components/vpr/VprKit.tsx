@@ -52,9 +52,7 @@ export function VprPage({ title, onBack, backFallback, header, children }: {
   children: ReactNode;
 }): JSX.Element {
   const nav = useContext(VprNavContext);
-  // Spendable, not available: this pill sits directly above the headline
-  // balance on the Balance page, so it has to be the same number.
-  const credits = useUiSelector((state) => state.creditsSpendableUsdc);
+  const credits = useUiSelector((state) => state.creditsTotalOwnedUsdc);
   return (
     <>
       <div className={styles.pageTop}>

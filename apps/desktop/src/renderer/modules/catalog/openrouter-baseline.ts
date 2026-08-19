@@ -1,5 +1,5 @@
 import type { VprModelCatalogEntry } from '../../core/state';
-import { normalizeModelKey } from '../../../shared/model-key.js';
+import { canonicalModelKey } from './model-identity.js';
 
 /**
  * Renderer-side cache + application of OpenRouter reference prices.
@@ -11,21 +11,30 @@ import { normalizeModelKey } from '../../../shared/model-key.js';
  * degrades gracefully: no match / no cache → entries pass through unchanged.
  */
 
-type ReferencePrice = { input: number | null; output: number | null; cachedInput?: number | null };
-type ReferenceMap = Record<string, ReferencePrice>;
+export type OpenRouterReferencePrice = {
+  input: number | null;
+  output: number | null;
+  cachedInput?: number | null;
+};
+export type OpenRouterReferenceMap = Record<string, OpenRouterReferencePrice>;
 
-let cachedMap: ReferenceMap | null = null;
-let inflight: Promise<ReferenceMap | null> | null = null;
+let cachedMap: OpenRouterReferenceMap | null = null;
+let inflight: Promise<OpenRouterReferenceMap | null> | null = null;
 
-export function getCachedOpenRouterPrices(): ReferenceMap | null {
+export function getCachedOpenRouterPrices(): OpenRouterReferenceMap | null {
   return cachedMap;
+}
+
+function canonicalReferenceKey(value: string): string {
+  const legacyClaudeKey = value.replace(/^claude(?=(?:opus|sonnet|haiku|fable)\d)/, 'claude-');
+  return canonicalModelKey(legacyClaudeKey);
 }
 
 /**
  * Warm the reference-price cache from the main process. Concurrent callers
  * share one request; resolves to the map (or `null` if unavailable).
  */
-export async function ensureOpenRouterPrices(): Promise<ReferenceMap | null> {
+export async function ensureOpenRouterPrices(): Promise<OpenRouterReferenceMap | null> {
   if (cachedMap) return cachedMap;
   if (inflight) return inflight;
   const bridge = window.antseedDesktop;
@@ -33,7 +42,7 @@ export async function ensureOpenRouterPrices(): Promise<ReferenceMap | null> {
   inflight = bridge
     .getOpenRouterReferencePrices()
     .then((map) => {
-      const result: ReferenceMap = map ?? {};
+      const result: OpenRouterReferenceMap = map ?? {};
       // Only cache a non-empty map — an empty result means the main process
       // couldn't fetch prices, and caching it would make the failure terminal.
       // Leaving cachedMap unset lets later calls re-request.
@@ -55,11 +64,17 @@ export async function ensureOpenRouterPrices(): Promise<ReferenceMap | null> {
  */
 export function applyOpenRouterBaselines(
   catalog: VprModelCatalogEntry[],
-  map: ReferenceMap | null,
+  map: OpenRouterReferenceMap | null,
 ): VprModelCatalogEntry[] {
   if (!map || Object.keys(map).length === 0) return catalog;
+  const canonicalMap = new Map<string, OpenRouterReferencePrice>();
+  for (const [key, price] of Object.entries(map)) {
+    const canonicalKey = canonicalReferenceKey(key);
+    if (canonicalKey && !canonicalMap.has(canonicalKey)) canonicalMap.set(canonicalKey, price);
+  }
   return catalog.map((entry) => {
-    const ref = map[normalizeModelKey(entry.label)] ?? map[normalizeModelKey(entry.serviceId)];
+    const ref = canonicalMap.get(canonicalReferenceKey(entry.serviceId))
+      ?? canonicalMap.get(canonicalReferenceKey(entry.label));
     if (!ref) return entry;
 
     const baselineInput =

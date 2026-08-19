@@ -261,8 +261,8 @@ const api = {
   chatAiGetConversation(id: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
     return ipcRenderer.invoke('chat:ai-get-conversation', id);
   },
-  chatAiCreateConversation(service: string, provider?: string, peerId?: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
-    return ipcRenderer.invoke('chat:ai-create-conversation', service, provider, peerId);
+  chatAiCreateConversation(service: string, provider?: string, peerId?: string, routeMode?: 'auto' | 'pinned'): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-create-conversation', service, provider, peerId, routeMode);
   },
   chatAiListDiscoverRows(): Promise<{ ok: boolean; data?: unknown[]; error?: string }> {
     return ipcRenderer.invoke('chat:ai-list-discover-rows');
@@ -278,6 +278,9 @@ const api = {
   },
   attachmentDownload(conversationId: string, attachmentId: string, suggestedName: string): Promise<{ ok: boolean; path?: string; error?: string }> {
     return ipcRenderer.invoke('attachment:download', conversationId, attachmentId, suggestedName);
+  },
+  chatGenerateImage(payload: { conversationId: string; prompt: string; peerId?: string; moderation?: 'auto' | 'low'; service: string; sourceImageAttachmentId?: string }): Promise<{ ok: boolean; user?: unknown; assistant?: unknown; error?: string }> {
+    return ipcRenderer.invoke('chat:generate-image', payload);
   },
   chatAiSend(conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string, permissionMode?: ChatPermissionMode): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:ai-send', conversationId, message, service, provider, attachments, peerId, permissionMode);
@@ -297,10 +300,10 @@ const api = {
   chatAiAbort(conversationId?: string): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:ai-abort', conversationId);
   },
-  chatAiSelectPeer(payload: { conversationId?: string | null; peerId?: string | null; service?: string | null; provider?: string | null }): Promise<{ ok: boolean; error?: string }> {
+  chatAiSelectPeer(payload: { conversationId?: string | null; peerId?: string | null; service?: string | null; provider?: string | null; routeMode?: 'auto' | 'pinned' | null }): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:ai-select-peer', payload);
   },
-  chatSetBuyerDefaultRoute(payload: { peerId: string; service: string }): Promise<{ ok: boolean; error?: string }> {
+  chatSetBuyerDefaultRoute(payload: { peerId?: string; service: string }): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:set-buyer-default-route', payload);
   },
   chatSyncModelPicker(payload: unknown): Promise<{ ok: boolean }> {
@@ -539,8 +542,13 @@ const api = {
   paymentsCardProviders: () => ipcRenderer.invoke('payments:card-providers'),
   paymentsOpenCardProvider: (opts?: { providerId?: string; amountUsdc?: string }) => ipcRenderer.invoke('payments:open-card-provider', opts),
   paymentsCrossmintConfig: () => ipcRenderer.invoke('payments:crossmint-config'),
+  paymentsFunkitConfig: () => ipcRenderer.invoke('payments:funkit-config'),
+  paymentsOnrampAvailability: () => ipcRenderer.invoke('payments:onramp-availability'),
+  paymentsCloseCheckoutWindows: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('payments:close-checkout-windows') as Promise<{ ok: boolean }>,
   paymentsGetBuyerUsage: () => ipcRenderer.invoke('payments:get-buyer-usage'),
+  paymentsGetBuyerSpendHistory: () => ipcRenderer.invoke('payments:get-buyer-spend-history'),
   paymentsGetChannels: () => ipcRenderer.invoke('payments:get-channels'),
+  paymentsRequestCooperativeClose: (opts: { peerId: string }) => ipcRenderer.invoke('payments:request-cooperative-close', opts),
   paymentsGetRewardsSummary: () => ipcRenderer.invoke('payments:get-rewards-summary'),
   onPaymentsCompleted(handler: () => void): () => void {
     const listener = () => handler();
@@ -610,9 +618,6 @@ const api = {
   vprFloatGetCompact(): Promise<boolean> {
     return ipcRenderer.invoke('vpr-float:get-compact') as Promise<boolean>;
   },
-  vprFloatMoveBy(dx: number, dy: number): void {
-    ipcRenderer.send('vpr-float:move-by', dx, dy);
-  },
   vprFloatUpdate(data: unknown): void {
     ipcRenderer.send('vpr-float:update', data);
   },
@@ -625,7 +630,7 @@ const api = {
   buyerConversationsList(): Promise<unknown[] | null> {
     return ipcRenderer.invoke('buyer:conversations-list') as Promise<unknown[] | null>;
   },
-  buyerConversationsUpdate(opts: { id: string; label?: string | null; pinnedModel?: string; delete?: boolean }): Promise<{ ok: boolean; conversation?: unknown; error?: string }> {
+  buyerConversationsUpdate(opts: { id: string; label?: string | null; pinnedModel?: string; peerSource?: 'auto' | 'user'; delete?: boolean }): Promise<{ ok: boolean; conversation?: unknown; error?: string }> {
     return ipcRenderer.invoke('buyer:conversations-update', opts) as Promise<{ ok: boolean; conversation?: unknown; error?: string }>;
   },
   onVprFloatData(handler: (data: unknown) => void): () => void {
@@ -665,6 +670,22 @@ const api = {
   },
 };
 
-contextBridge.exposeInMainWorld('antseedDesktop', api);
+// The preload runs in the renderer, where `location` exists — this file is
+// compiled with the main-process tsconfig (node libs only), which doesn't
+// know the DOM globals.
+declare const location: { protocol: string; hostname: string };
+
+// Child windows opened via window.open (the Fun checkout popups —
+// payments/checkout-window.ts) inherit this preload from the main window but
+// load third-party payment pages. The IPC bridge must never reach those
+// documents: expose it only on the app's own origins (file:// in packaged
+// builds, the localhost dev server / payments portal in dev).
+const isAppDocument =
+  location.protocol === 'file:' ||
+  location.hostname === 'localhost' ||
+  location.hostname === '127.0.0.1';
+if (isAppDocument) {
+  contextBridge.exposeInMainWorld('antseedDesktop', api);
+}
 
 export type DesktopBridge = typeof api;

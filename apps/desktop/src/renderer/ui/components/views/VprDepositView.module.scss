@@ -16,46 +16,26 @@
   min-width: 0;
 }
 
-/* ---------- Balance header ---------- */
-
-.balanceCard {
+.primaryMethods {
   display: grid;
-  gap: 2px;
-  padding: 12px 16px;
-}
-
-.balanceLabel {
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 16px;
-}
-
-.balanceValue {
-  color: var(--text-primary);
-  font-size: 24px;
-  font-weight: 650;
-  line-height: 28px;
-}
-
-.balanceHint {
-  margin-top: 2px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 16px;
+  gap: 12px;
+  width: 100%;
 }
 
 /* ---------- Method chooser (CTAs) ---------- */
 
-/* Primary Fun CTA: Fun's near-black brand surface with an inverted wordmark
-   chip. Swap the chip for the official asset once their brand kit lands. */
+/* Primary Fun CTA: same row anatomy as .methodCta (icon chip · title +
+   caption · badge cluster · arrow) but on Fun's near-black brand surface. */
 .funCta {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
+  gap: 12px;
   width: 100%;
   margin-top: 4px;
-  padding: 14px 16px;
+  /* Same padding + two-line text block as .methodCta, so the primary CTA and
+     the method rows all land on the same height. */
+  padding: 10px 14px;
+  text-align: left;
   border: 1px solid var(--border);
   border-radius: 14px;
   background: #0e0e12;
@@ -73,9 +53,126 @@
   transform: translateY(-1px);
 }
 
+/* Dark mode inverts the CTA: light surface, near-black content — the
+   high-contrast primary in both themes. */
+:global(body.dark-theme) .funCta {
+  background: #f4f4f6;
+  color: #0e0e12;
+}
+
+:global(body.dark-theme) .funCta:hover {
+  filter: brightness(0.96);
+}
+
 .funCta:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+}
+
+.funCta:disabled {
+  cursor: default;
+  opacity: 0.65;
+  transform: none;
+  filter: none;
+  box-shadow: none;
+}
+
+/* Stripe Link-branded primary: the green "Pay with link" pill, content
+   centered, same radius/height family as the other CTAs. Brand green holds
+   in both themes. */
+.linkCta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 4px;
+  padding: 15px 14px;
+  border: none;
+  border-radius: 14px;
+  background: #00d632;
+  color: #011e0f;
+  font-size: 15.5px;
+  font-weight: 600;
+  line-height: 22px;
+  cursor: pointer;
+  transition: filter 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.linkCta:hover {
+  filter: brightness(1.06);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+.linkCta:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
+}
+
+/* Quiet trust line under the pill: processor name + accepted-card badges. */
+.linkCtaSub {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/* One deposit option: its CTA plus the supporting icon row / footnote. */
+.methodGroup {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+}
+
+.methodGroup > button {
+  justify-self: stretch;
+}
+
+/* Leading Fun-logo chip — .methodCtaIcon's geometry, tinted from the CTA's
+   own text color so it holds up in both themes. */
+.funCtaIcon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+/* Text block takes the middle so the badge cluster hugs the right edge,
+   matching the method rows below. */
+.funCtaText {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.funCtaTitle {
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 20px;
+}
+
+.funCtaCaption {
+  color: color-mix(in srgb, currentColor 65%, transparent);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+}
+
+/* Small-print qualifier under an option ("* Email required…"). */
+.methodFootnote {
+  color: var(--text-faint, var(--text-secondary));
+  font-size: 11px;
+  line-height: 14px;
+  text-align: center;
 }
 
 /* Expander for the secondary deposit methods. */
@@ -130,6 +227,14 @@
   display: block;
 }
 
+/* Trailing chevron on a method row — quiet "this opens a screen" affordance. */
+.methodArrow {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-secondary);
+}
+
 /* Round filler chip in a badge cluster ("+", QR glyph, …). */
 .badgeChip {
   display: inline-flex;
@@ -149,6 +254,9 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  /* Explicit: the Fun SDK wraps its button in a provider div, so the row
+     can't rely on grid-item stretch like the plain buttons do. */
+  width: 100%;
   padding: 10px 14px;
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -163,11 +271,6 @@
   border-color: var(--brand);
   box-shadow: var(--shadow-sm);
   transform: translateY(-1px);
-}
-
-.methodCta:hover .methodCtaArrow {
-  color: var(--brand);
-  transform: translateX(2px);
 }
 
 .methodCtaIcon {
@@ -199,12 +302,6 @@
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 16px;
-}
-
-.methodCtaArrow {
-  flex: 0 0 auto;
-  color: var(--text-secondary);
-  transition: color 0.12s ease, transform 0.12s ease;
 }
 
 /* ---------- Amount card ---------- */
@@ -517,24 +614,13 @@
 
 /* ---------- Trust footer ---------- */
 
-/* Compact trust strip: one row of payment/security/crypto marks with a
-   single reassurance line beneath. */
+/* Compact trust strip: short reassurance lines (the payment marks now sit
+   under the primary CTA). */
 .trustStrip {
   display: grid;
   justify-items: center;
   gap: 6px;
   margin-top: 4px;
-}
-
-.trustIcons {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-secondary);
-}
-
-.trustIcons svg {
-  display: block;
 }
 
 .trustLine {

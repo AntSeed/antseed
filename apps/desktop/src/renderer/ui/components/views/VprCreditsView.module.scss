@@ -35,41 +35,9 @@
   gap: 8px;
 }
 
-.balanceCard {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 16px;
-}
-
-.balanceText {
-  display: grid;
-  gap: 4px;
-}
-
-.balanceLabel {
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 16px;
-}
-
-.balanceValue {
-  color: var(--text-primary);
-  font-size: 28px;
-  font-weight: 650;
-  line-height: 32px;
-}
-
-.balanceHint {
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 16px;
-}
-
 .payButtons {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 8px;
 }
 

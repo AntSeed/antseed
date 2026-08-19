@@ -47,6 +47,33 @@ describe('AntseedNode incremental discovery enrichment', () => {
     expect(peers[0]?.onChainReputationScore).toEqual(expect.any(Number));
   });
 
+  it('does not overwrite a verified staking timestamp when a refresh returns zero', async () => {
+    const node = new AntseedNode({ role: 'buyer' });
+    const previousStakedAt = Math.floor(Date.now() / 1000) - 90 * 86_400;
+    const peer = makePeer();
+    peer.onChainStakedAtSec = previousStakedAt;
+    (node as any)._stakingClient = {
+      getAgentId: vi.fn().mockResolvedValue(123),
+      getStake: vi.fn().mockResolvedValue(10_000_000n),
+      getStakedAt: vi.fn().mockResolvedValue(0),
+    };
+    (node as any)._channelsClient = {
+      getAgentStats: vi.fn().mockResolvedValue({
+        channelCount: 1_208,
+        ghostCount: 16,
+        totalVolumeUsdc: 5_428_786_420n,
+        lastSettledAt: Math.floor(Date.now() / 1000),
+      }),
+    };
+
+    await (node as any)._enrichPeersWithOnChainStats([peer]);
+
+    expect(peer.onChainStakedAtSec).toBe(previousStakedAt);
+    (node as any)._applyTrustAndSybil([peer]);
+    expect(peer.onChainTrustScore).toBeCloseTo(5_428.78642, 6);
+    expect(peer.onChainReputationScore).toBeGreaterThan(90);
+  });
+
   it('emits external verification results without blocking initial discovery events', async () => {
     const node = new AntseedNode({ role: 'buyer' });
     const peer = makePeer();

@@ -52,6 +52,11 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
       npm: '@ai-sdk/openai-compatible',
       providerName: 'AntSeed',
       baseURL: 'http://localhost:{buyerPort}/v1',
+      // Patch actual installations (native and, on Windows, WSL distros)
+      // instead of blindly writing the one path above; fail the connect when
+      // the tool is found nowhere. Set on every built-in CLI tool below;
+      // see applyWithInstallProbe.
+      installProbe: 'opencode',
     },
   },
   {
@@ -68,6 +73,7 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
       providerKey: 'antseed',
       providerName: 'AntSeed',
       baseURL: 'http://localhost:{buyerPort}/v1',
+      installProbe: 'codex',
     },
   },
   {
@@ -102,8 +108,28 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
       baseURL: 'http://localhost:{buyerPort}/v1',
       // Pi's OpenAI Responses transport includes prompt_cache_key with the
       // Pi session id. The buyer proxy uses that as the conversation key so
-      // Pi chats show up in AntStation/VPR Recent Chats.
+      // Pi chats show up in VPR Recent Chats.
       api: 'openai-responses',
+      originator: 'pi',
+      installProbe: 'pi',
+    },
+  },
+  {
+    name: 'gooeypi',
+    displayName: 'GooeyPi',
+    kind: 'config-patch',
+    method: 'Config patch',
+    toolSlugs: ['gooeypi'],
+    domains: [],
+    pathPrefixes: [],
+    configPatch: {
+      format: 'pi',
+      configPath: '~/.pi/agent/models.json',
+      settingsPath: '~/.pi/agent/settings.json',
+      providerKey: 'antseed-gooeypi',
+      baseURL: 'http://localhost:{buyerPort}/v1',
+      api: 'openai-responses',
+      originator: 'gooeypi',
     },
   },
   {
@@ -121,9 +147,12 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
         base: 'LOCALAPPDATA',
         segments: ['crush', 'crush.json'],
       }),
+      // WSL installs read the XDG path regardless of the Windows resolution.
+      wslConfigPath: '~/.config/crush/crush.json',
       providerKey: 'antseed',
       providerName: 'AntSeed',
       baseURL: 'http://localhost:{buyerPort}/v1',
+      installProbe: 'crush',
     },
   },
   {
@@ -141,9 +170,12 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
         base: 'APPDATA',
         segments: ['Block', 'goose', 'config', 'config.yaml'],
       }),
+      // WSL installs read the XDG path regardless of the Windows resolution.
+      wslConfigPath: '~/.config/goose/config.yaml',
       // goose provider engine; the host root is patched to the buyer proxy.
       providerKey: 'openai',
       baseURL: 'http://localhost:{buyerPort}',
+      installProbe: 'goose',
     },
   },
   {

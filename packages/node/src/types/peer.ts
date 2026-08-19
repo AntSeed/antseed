@@ -1,49 +1,26 @@
-import type { ServiceApiProtocol } from "./service-api.js";
 import type { PeerMetadata } from "../discovery/peer-metadata.js";
 import type { DomainVerificationResult } from "../discovery/domain-verification.js";
 import type { GithubVerificationResult } from "../discovery/github-verification.js";
 
-/**
- * A PeerId is the EVM address hex (40 lowercase chars = 20 bytes, no 0x prefix).
- * This is the canonical identifier for any peer in the network.
- * The peer's secp256k1 wallet address serves as both P2P and on-chain identity.
- */
-export type PeerId = string & { readonly __brand: "PeerId" };
+// PeerId primitives moved to @antseed/protocol.
+export { toPeerId, peerIdToAddress, type PeerId } from '@antseed/protocol/peer-id';
+import type { PeerId } from '@antseed/protocol/peer-id';
 
-/**
- * Validates and brands a string as a PeerId.
- * Must be exactly 40 lowercase hex characters (EVM address without 0x).
- */
-export function toPeerId(hex: string): PeerId {
-  if (!/^[0-9a-f]{40}$/.test(hex)) {
-    throw new Error(`Invalid PeerId: expected 40 hex chars, got "${hex.slice(0, 20)}..."`);
-  }
-  return hex as PeerId;
-}
-
-/** Convert a PeerId to a checksummed 0x-prefixed EVM address. */
-export function peerIdToAddress(peerId: string): string {
-  return '0x' + peerId;
-}
-
-export interface TokenPricingUsdPerMillion {
-  inputUsdPerMillion: number;
-  outputUsdPerMillion: number;
-  cachedInputUsdPerMillion?: number;
-}
-
-export interface ProviderPricingMatrixEntry {
-  defaults: TokenPricingUsdPerMillion;
-  services?: Record<string, TokenPricingUsdPerMillion>;
-}
-
-export interface ProviderServiceCategoryMatrixEntry {
-  services: Record<string, string[]>;
-}
-
-export interface ProviderServiceApiProtocolMatrixEntry {
-  services: Record<string, ServiceApiProtocol[]>;
-}
+export type { TokenPricingUsdPerMillion } from '@antseed/protocol/peer-metadata';
+export type {
+  ProviderPricingMatrixEntry,
+  ProviderServiceCategoryMatrixEntry,
+  ProviderServiceApiProtocolMatrixEntry,
+  ProviderServiceUnitBillingModelMatrixEntry,
+  ProviderServiceCapabilityMatrixEntry,
+} from '@antseed/protocol/peer-pricing';
+import type {
+  ProviderPricingMatrixEntry,
+  ProviderServiceCategoryMatrixEntry,
+  ProviderServiceApiProtocolMatrixEntry,
+  ProviderServiceUnitBillingModelMatrixEntry,
+  ProviderServiceCapabilityMatrixEntry,
+} from '@antseed/protocol/peer-pricing';
 
 export interface PeerVerificationResults {
   /** True when every announced external claim verified successfully. */
@@ -85,6 +62,10 @@ export interface PeerInfo {
   providerServiceCategories?: Record<string, ProviderServiceCategoryMatrixEntry>;
   /** Provider/service API protocols announced by seller. */
   providerServiceApiProtocols?: Record<string, ProviderServiceApiProtocolMatrixEntry>;
+  /** Provider/service/protocol unit billing models announced by seller. */
+  providerServiceUnitBillingModels?: Record<string, ProviderServiceUnitBillingModelMatrixEntry>;
+  /** Provider/service model capability hints announced by seller. */
+  providerServiceCapabilities?: Record<string, ProviderServiceCapabilityMatrixEntry>;
   /** Deterministic fallback default input price (USD per 1M tokens). */
   defaultInputUsdPerMillion?: number;
   /** Deterministic fallback default output price (USD per 1M tokens). */

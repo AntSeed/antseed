@@ -7,6 +7,8 @@ import type {
   SellerProviderConfig,
   TokenPricingUsdPerMillion,
 } from './types.js';
+import { validateServiceMetadata } from './service-metadata.js';
+import { parseHostPort } from './public-address.js';
 
 const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const MAX_PUBLIC_ADDRESS_LENGTH = 255;
@@ -23,6 +25,8 @@ const VERIFICATION_NAMESPACES = new Set(['domains', 'github']);
 const MIN_SELLER_UPLOAD_BODY_BYTES = 1024 * 1024;
 const MIN_BUYER_PEER_REFRESH_INTERVAL_MS = 1_000;
 export const MIN_BUYER_METADATA_FETCH_TIMEOUT_MS = 100;
+export const MIN_BUYER_MAX_STREAM_DURATION_MS = 1;
+const PEER_ID_PATTERN = /^(?:0x)?[0-9a-f]{40}$/i;
 
 function validatePricingLeaf(
   path: string,
@@ -110,6 +114,7 @@ function validateSellerProviders(
         validatePricingLeaf(`${servicePath}.pricing`, serviceCfg.pricing, errors);
       }
       validateCategoryList(`${servicePath}.categories`, serviceCfg.categories, errors);
+      errors.push(...validateServiceMetadata(servicePath, serviceCfg));
     }
   }
 }
@@ -119,24 +124,7 @@ function parsePublicAddress(value: string): { host: string; port: number } | nul
   if (trimmed.length === 0 || trimmed.length > MAX_PUBLIC_ADDRESS_LENGTH) {
     return null;
   }
-
-  const lastColon = trimmed.lastIndexOf(':');
-  if (lastColon <= 0 || lastColon === trimmed.length - 1) {
-    return null;
-  }
-
-  const host = trimmed.slice(0, lastColon).trim();
-  const portText = trimmed.slice(lastColon + 1);
-  if (!/^\d+$/.test(portText)) {
-    return null;
-  }
-
-  const port = Number(portText);
-  if (host.length === 0 || !Number.isInteger(port) || port < 1 || port > 65535) {
-    return null;
-  }
-
-  return { host, port };
+  return parseHostPort(trimmed);
 }
 
 function isValidDomainName(value: string): boolean {
@@ -307,6 +295,23 @@ export function validateConfig(config: AntseedConfig): string[] {
     errors.push('buyer.minPeerReputation must be in range 0-100');
   }
 
+  const routingPreferences = config.buyer.routingPreferences;
+  if (typeof routingPreferences.preferFreePeers !== 'boolean') {
+    errors.push('buyer.routingPreferences.preferFreePeers must be a boolean');
+  }
+  if (!Number.isFinite(routingPreferences.maxInputUsdPerMillion) || routingPreferences.maxInputUsdPerMillion < 0) {
+    errors.push('buyer.routingPreferences.maxInputUsdPerMillion must be a non-negative finite number');
+  }
+  if (!Number.isFinite(routingPreferences.minTrustScore) || routingPreferences.minTrustScore < 0 || routingPreferences.minTrustScore > 100) {
+    errors.push('buyer.routingPreferences.minTrustScore must be in range 0-100');
+  }
+  for (const key of ['allowedPeerIds', 'blockedPeerIds'] as const) {
+    const peerIds = routingPreferences[key];
+    if (!Array.isArray(peerIds) || peerIds.some((peerId) => typeof peerId !== 'string' || !PEER_ID_PATTERN.test(peerId.trim()))) {
+      errors.push(`buyer.routingPreferences.${key} must contain only 40-character hex peer IDs`);
+    }
+  }
+
   if (!Number.isInteger(config.buyer.proxyPort) || config.buyer.proxyPort < 1 || config.buyer.proxyPort > 65535) {
     errors.push('buyer.proxyPort must be an integer in range 1-65535');
   }
@@ -317,6 +322,14 @@ export function validateConfig(config: AntseedConfig): string[] {
 
   if (!Number.isInteger(config.buyer.metadataFetchTimeoutMs) || config.buyer.metadataFetchTimeoutMs < MIN_BUYER_METADATA_FETCH_TIMEOUT_MS) {
     errors.push('buyer.metadataFetchTimeoutMs must be an integer >= 100');
+  }
+
+  if (!Number.isInteger(config.buyer.requestTimeoutMs) || config.buyer.requestTimeoutMs < 1) {
+    errors.push('buyer.requestTimeoutMs must be an integer >= 1');
+  }
+
+  if (!Number.isInteger(config.buyer.maxStreamDurationMs) || config.buyer.maxStreamDurationMs < MIN_BUYER_MAX_STREAM_DURATION_MS) {
+    errors.push('buyer.maxStreamDurationMs must be an integer >= 1');
   }
 
   if (typeof config.buyer.disableMetadataV2Services !== 'boolean') {

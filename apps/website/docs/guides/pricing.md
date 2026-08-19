@@ -31,7 +31,7 @@ GET https://network.antseed.com/stats
 - No authentication. Returns `application/json`.
 - Refreshed as peers re-announce (typically every few minutes).
 - Same data that drives [`antseed.com/network`](https://antseed.com/network).
-- Schema version is exposed per peer as `version`. This page documents version `8`.
+- Schema version is exposed per peer as `version`. This page documents metadata v12.
 
 ```bash
 curl -s https://network.antseed.com/stats | jq '.peers[0]'
@@ -65,7 +65,7 @@ interface StatsResponse {
 ```ts
 interface PeerMetadata {
   peerId: string;             // 40-char lowercase hex
-  version: number;            // metadata schema version (currently 8)
+  version: number;            // metadata schema version (currently 12)
   displayName?: string;
   providers: ProviderAnnouncement[];
   region: string;             // e.g. "us-east", "unknown"
@@ -89,6 +89,8 @@ interface ProviderAnnouncement {
   servicePricing?: Record<string, TokenPricing>;           // per-model price overrides
   serviceCategories?: Record<string, string[]>;            // tags like "chat", "code", "reasoning"
   serviceApiProtocols?: Record<string, ApiProtocol[]>;     // e.g. ["openai-chat-completions"]
+  serviceUnitBillingModels?: Record<string, Record<string, UnitBillingModelV1>>;
+  serviceCapabilities?: Record<string, ServiceCapabilities>;
   maxConcurrency: number;
   currentLoad: number;                                     // active requests right now
 }
@@ -106,31 +108,59 @@ interface TokenPricing {
 }
 ```
 
+## Image unit pricing
+
+Token pricing does not describe image-generation cost. Image sellers may announce `serviceUnitBillingModels` keyed by service and API protocol:
+
+```json
+{
+  "serviceApiProtocols": {
+    "flux.1-schnell": ["openai-images"]
+  },
+  "serviceUnitBillingModels": {
+    "flux.1-schnell": {
+      "openai-images": {
+        "version": 1,
+        "components": [
+          {
+            "unit": "output_images",
+            "priceUsd": 0.04,
+            "match": { "size": "1024x1024", "quality": "medium" }
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+The final charge is based on delivered image outputs, not merely the requested `n`. Buyers recompute the charge from the signed billing model and observed response. A positive output count that matches no component is rejected rather than treated as free.
+
 ## Example response (truncated)
 
 ```json
 {
   "peers": [
     {
-      "peerId": "4668854ba3e8b094e6f48fbeb59cec1cfde162f2",
-      "version": 8,
-      "displayName": "Dark Signal",
+      "peerId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "version": 12,
+      "displayName": "Acme Inference",
       "region": "unknown",
       "timestamp": 1777194949071,
       "providers": [
         {
           "provider": "openai-responses",
-          "services": ["gpt-5.4", "gpt-5.5"],
+          "services": ["minimax-m2.7", "deepseek-v4-flash"],
           "defaultPricing": { "inputUsdPerMillion": 0.4, "outputUsdPerMillion": 2 },
           "servicePricing": {
-            "gpt-5.4": {
+            "minimax-m2.7": {
               "inputUsdPerMillion": 0.25,
               "outputUsdPerMillion": 1.5,
               "cachedInputUsdPerMillion": 0.05
             }
           },
-          "serviceCategories": { "gpt-5.4": ["chat", "code"] },
-          "serviceApiProtocols": { "gpt-5.4": ["openai-responses"] },
+          "serviceCategories": { "minimax-m2.7": ["chat", "code"] },
+          "serviceApiProtocols": { "minimax-m2.7": ["openai-responses"] },
           "maxConcurrency": 10,
           "currentLoad": 0
         }
@@ -183,7 +213,7 @@ If a user asks for AntSeed prices:
 ## Stability
 
 - The `/stats` URL is stable. Breaking schema changes will ship under a new path (e.g. `/v9/stats`); the `version` field on each peer record signals the schema in use.
-- New optional fields may appear without a version bump. Treat unknown fields as opaque.
+- New optional fields may appear in the HTTP indexer envelope without a path change. Signed peer-metadata binary extensions require a metadata version bump; buyers reject versions newer than they understand.
 - Field semantics will not change in place — if a unit or meaning changes, the field is renamed.
 
 ## See also

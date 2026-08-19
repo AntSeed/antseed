@@ -1,4 +1,6 @@
 import { EventEmitter } from "node:events";
+import { execFile } from "node:child_process";
+import { createRequire } from "node:module";
 import net, { type Socket } from "node:net";
 import type {
   PeerConnection as NativeRtcPeerConnection,
@@ -10,15 +12,32 @@ import { ConnectionState, type ConnectionConfig } from "../types/connection.js";
 import {
   CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
   CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
+  CONNECTION_CAPABILITY_SIGNED_SDP_V1,
+  CONNECTION_CAPABILITY_TCP_ENC_V1,
+  CONNECTION_CAPABILITY_WEBRTC_V1,
 } from "../types/protocol.js";
 import { type IceConfig, getDefaultIceConfig } from "./ice-config.js";
 import type { Wallet } from "ethers";
 import {
   type ConnectionAuthEnvelope,
+  type TcpEncAckMessage,
+  type TcpEncOffer,
   NonceReplayGuard,
   buildConnectionAuthEnvelope,
+  buildSdpAuthEnvelope,
+  buildTcpEncAck,
+  buildTcpEncOffer,
   verifyConnectionAuthEnvelope,
+  verifySdpAuthEnvelope,
+  verifyTcpEncAck,
+  verifyTcpEncOffer,
 } from "./connection-auth.js";
+import {
+  type TransportCrypto,
+  createTransportCrypto,
+  deriveSessionKeys,
+  generateEphemeralKeyPair,
+} from "./secure-channel.js";
 
 let _nodeDatachannel: typeof import("node-datachannel") | null = null;
 
@@ -26,6 +45,36 @@ async function loadNodeDatachannel(): Promise<typeof import("node-datachannel")>
   if (_nodeDatachannel) return _nodeDatachannel;
   _nodeDatachannel = await import("node-datachannel");
   return _nodeDatachannel;
+}
+
+const NDC_PROBE_SOURCE =
+  "const m = require(process.argv[1]);" +
+  "const pc = new m.PeerConnection('antseed-probe', { iceServers: [] });" +
+  "const dc = pc.createDataChannel('probe', { ordered: true });" +
+  "dc.close(); pc.close();" +
+  "process.exit(0);";
+
+/**
+ * Exercise node-datachannel in a disposable child process first: a broken
+ * native build can segfault, which no in-process try/catch survives. A dead
+ * or hung child just means TCP fallback instead of a crashed node.
+ */
+function probeNodeDatachannelSafely(): Promise<boolean> {
+  return new Promise((resolve) => {
+    let modulePath: string;
+    try {
+      modulePath = createRequire(import.meta.url).resolve("node-datachannel");
+    } catch {
+      resolve(false);
+      return;
+    }
+    execFile(
+      process.execPath,
+      ["-e", NDC_PROBE_SOURCE, modulePath],
+      { timeout: 10_000 },
+      (err) => resolve(!err),
+    );
+  });
 }
 
 function getNodeDatachannel(): typeof import("node-datachannel") {
@@ -39,11 +88,19 @@ export interface PeerEndpoint {
 }
 
 type TransportMode = "webrtc" | "tcp";
+type MetadataProvider = () => object | null;
+
+export interface ConnectionManagerOptions {
+  /** Refuse plaintext TCP and unsigned SDP in both directions. Default false (legacy interop). */
+  requireSecureTransport?: boolean;
+}
 type InitialWireMessage =
   | {
       type: "intro";
       auth: ConnectionAuthEnvelope;
       capabilities?: string[];
+      /** transport.tcp-enc.v1 offer; absent on legacy peers. */
+      enc?: TcpEncOffer;
     }
   | {
       type: "hello";
@@ -56,6 +113,8 @@ type SignalingMessage =
       type: "sdp";
       sdp: string;
       descriptionType: NativeDescriptionType;
+      /** transport.signed-sdp.v1 envelope; absent on legacy peers. */
+      auth?: ConnectionAuthEnvelope;
     }
   | {
       type: "candidate";
@@ -71,6 +130,8 @@ const TCP_KEEPALIVE_INITIAL_DELAY_MS = 10_000;
 const LOCAL_CONNECTION_CAPABILITIES = [
   CONNECTION_CAPABILITY_RESPONSE_AUTH_V1,
   CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
+  CONNECTION_CAPABILITY_SIGNED_SDP_V1,
+  CONNECTION_CAPABILITY_TCP_ENC_V1,
 ] as const;
 
 /** Represents a single P2P connection. */
@@ -85,6 +146,7 @@ export class PeerConnection extends EventEmitter {
   private _rawSocket: Socket | null = null;
   private _signalingSocket: Socket | null = null;
   private _remoteCapabilities = new Set<string>();
+  private _crypto: TransportCrypto | null = null;
 
   constructor(config: ConnectionConfig) {
     super();
@@ -142,12 +204,41 @@ export class PeerConnection extends EventEmitter {
     });
   }
 
-  attachRawSocket(socket: Socket, initialData?: Uint8Array): void {
+  /** True for encrypted TCP framing or a (DTLS) data channel; false for legacy plaintext TCP. */
+  get isEncryptedTransport(): boolean {
+    return this._crypto !== null || this._dataChannel !== null;
+  }
+
+  get transportDescription(): "webrtc" | "tcp-encrypted" | "tcp-plaintext" {
+    if (this._dataChannel !== null) return "webrtc";
+    if (this._crypto !== null) return "tcp-encrypted";
+    return "tcp-plaintext";
+  }
+
+  attachRawSocket(socket: Socket, initialData?: Uint8Array, crypto?: TransportCrypto): void {
     this._rawSocket = socket;
+    this._crypto = crypto ?? null;
     socket.setKeepAlive(true, TCP_KEEPALIVE_INITIAL_DELAY_MS);
 
+    const deliver = (chunk: Uint8Array): void => {
+      if (!this._crypto) {
+        this.emit("message", chunk);
+        return;
+      }
+      let messages: Uint8Array[];
+      try {
+        messages = this._crypto.decryptor.push(chunk);
+      } catch (err) {
+        this.fail(err instanceof Error ? err : new Error(String(err)));
+        return;
+      }
+      for (const message of messages) {
+        this.emit("message", message);
+      }
+    };
+
     socket.on("data", (chunk: Buffer) => {
-      this.emit("message", new Uint8Array(chunk));
+      deliver(new Uint8Array(chunk));
     });
 
     socket.on("error", (err: Error) => {
@@ -167,7 +258,7 @@ export class PeerConnection extends EventEmitter {
 
     if (initialData && initialData.length > 0) {
       queueMicrotask(() => {
-        this.emit("message", initialData);
+        deliver(initialData);
       });
     }
   }
@@ -211,7 +302,19 @@ export class PeerConnection extends EventEmitter {
     }
 
     if (this._dataChannel && this._dataChannel.isOpen()) {
-      const ok = this._dataChannel.sendMessageBinary(data);
+      // node-datachannel can THROW ("Cannot send message on destroyed
+      // socket") when the peer tears the channel down between isOpen() and
+      // this call — a common race with browser buyers that connect and drop
+      // freely. The throw crosses a native boundary and aborts the process if
+      // it escapes, so convert it into a graceful connection failure.
+      let ok: boolean;
+      try {
+        ok = this._dataChannel.sendMessageBinary(data);
+      } catch (err) {
+        const wrapped = err instanceof Error ? err : new Error(String(err));
+        this.fail(wrapped);
+        throw wrapped;
+      }
       if (!ok) {
         const err = new Error(`Failed to send data to ${this.remotePeerId}`);
         this.fail(err);
@@ -227,6 +330,19 @@ export class PeerConnection extends EventEmitter {
       const err = new Error(`Cannot send to ${this.remotePeerId}: no writable transport`);
       this.fail(err);
       throw err;
+    }
+
+    if (this._crypto) {
+      let frame: Buffer;
+      try {
+        frame = this._crypto.encryptor.encrypt(data);
+      } catch (err) {
+        const wrapped = err instanceof Error ? err : new Error(String(err));
+        this.fail(wrapped);
+        throw wrapped;
+      }
+      this._rawSocket.write(frame);
+      return;
     }
 
     this._rawSocket.write(Buffer.from(data));
@@ -304,29 +420,44 @@ export class ConnectionManager extends EventEmitter {
   private _listenPort: number | null = null;
   private _server: net.Server | null = null;
   private _transportMode: TransportMode;
-  private _metadataProvider: (() => object | null) | null = null;
+  private _metadataProvider: MetadataProvider | null = null;
+  private _requireSecureTransport: boolean;
   private _ipConnectionCounts = new Map<string, number>();
   private readonly _introReplayGuard = new NonceReplayGuard();
   private static _knownEndpoints = new Map<PeerId, PeerEndpoint>();
   private static _detectedTransportMode: TransportMode | null = null;
 
-  constructor(iceConfig?: IceConfig) {
+  constructor(iceConfig?: IceConfig, options?: ConnectionManagerOptions) {
     super();
     this._iceConfig = iceConfig ?? getDefaultIceConfig();
     this._transportMode = ConnectionManager._detectTransportMode();
+    this._requireSecureTransport = options?.requireSecureTransport ?? false;
   }
 
-  static async init(iceConfig?: IceConfig): Promise<ConnectionManager> {
-    try {
-      await loadNodeDatachannel();
-    } catch {
-      // node-datachannel not available — TCP fallback will be used
+  static async init(iceConfig?: IceConfig, options?: ConnectionManagerOptions): Promise<ConnectionManager> {
+    if (_nodeDatachannel || await probeNodeDatachannelSafely()) {
+      try {
+        await loadNodeDatachannel();
+      } catch {
+        // node-datachannel not available — TCP fallback will be used
+      }
     }
-    return new ConnectionManager(iceConfig);
+    return new ConnectionManager(iceConfig, options);
   }
 
   get iceConfig(): IceConfig {
     return this._iceConfig;
+  }
+
+  /** True when node-datachannel loaded and the probe succeeded. */
+  get supportsWebRtc(): boolean {
+    return this._transportMode === "webrtc";
+  }
+
+  private _localCapabilities(): string[] {
+    return this.supportsWebRtc
+      ? [...LOCAL_CONNECTION_CAPABILITIES, CONNECTION_CAPABILITY_WEBRTC_V1]
+      : [...LOCAL_CONNECTION_CAPABILITIES];
   }
 
   get connections(): ReadonlyMap<PeerId, PeerConnection> {
@@ -337,7 +468,7 @@ export class ConnectionManager extends EventEmitter {
     return this._listenPort;
   }
 
-  setMetadataProvider(provider: () => object | null): void {
+  setMetadataProvider(provider: MetadataProvider): void {
     this._metadataProvider = provider;
   }
 
@@ -437,6 +568,9 @@ export class ConnectionManager extends EventEmitter {
     }
 
     const conn = new PeerConnection(config);
+    if (config.remoteCapabilities && config.remoteCapabilities.length > 0) {
+      conn.setRemoteCapabilities(config.remoteCapabilities);
+    }
     this._registerConnection(config.remotePeerId, conn);
     conn.startTimeout();
 
@@ -463,7 +597,14 @@ export class ConnectionManager extends EventEmitter {
 
     ConnectionManager.registerPeerEndpoint(config.remotePeerId, endpoint);
 
-    if (this._transportMode === "webrtc") {
+    // Encrypted TCP is preferred: data channels cap messages at ~256 KiB
+    // (breaking 1 MiB protocol chunks) and set up slower. WebRTC is for peers
+    // that cannot do TCP at all; legacy peers crash-guard `hello` away, so
+    // unknown peers also get TCP.
+    const useWebRtc = this._transportMode === "webrtc"
+      && conn.hasRemoteCapability(CONNECTION_CAPABILITY_WEBRTC_V1)
+      && !conn.hasRemoteCapability(CONNECTION_CAPABILITY_TCP_ENC_V1);
+    if (useWebRtc) {
       this._createWebRtcConnection(config, conn, endpoint);
     } else {
       this._createTcpConnection(config, conn, endpoint);
@@ -522,14 +663,17 @@ export class ConnectionManager extends EventEmitter {
     );
 
     signalingSocket.once("connect", () => {
+      const capabilities = this._localCapabilities();
       this._sendLine(signalingSocket, {
         type: "hello",
         auth: buildConnectionAuthEnvelope(
           "hello",
           this._localPeerId!,
           this._localWallet!,
+          Date.now(),
+          { capabilities },
         ),
-        capabilities: [...LOCAL_CONNECTION_CAPABILITIES],
+        capabilities,
       });
 
       rtc = this._createRtcPeer(config.remotePeerId);
@@ -562,17 +706,88 @@ export class ConnectionManager extends EventEmitter {
   ): void {
     const socket = net.connect({ host: endpoint.host, port: endpoint.port });
 
+    // Once offered, the handshake fails closed on timeout — never a plaintext downgrade.
+    const useEncryption =
+      this._requireSecureTransport || conn.hasRemoteCapability(CONNECTION_CAPABILITY_TCP_ENC_V1);
+
     socket.once("connect", () => {
+      const capabilities = this._localCapabilities();
+
+      if (!useEncryption) {
+        // Legacy plaintext path keeps the v1 envelope old responders can verify.
+        this._sendLine(socket, {
+          type: "intro",
+          auth: buildConnectionAuthEnvelope("intro", this._localPeerId!, this._localWallet!),
+          capabilities,
+        });
+        conn.attachRawSocket(socket);
+        return;
+      }
+
+      const ephemeral = generateEphemeralKeyPair();
+      // v2 envelope binds capabilities and the enc key, so stripping either
+      // downgrades to an unverifiable signature instead of plaintext.
+      const auth = buildConnectionAuthEnvelope(
+        "intro",
+        this._localPeerId!,
+        this._localWallet!,
+        Date.now(),
+        { capabilities, encPub: ephemeral.publicKeyHex },
+      );
       this._sendLine(socket, {
         type: "intro",
-        auth: buildConnectionAuthEnvelope(
-          "intro",
-          this._localPeerId!,
+        auth,
+        capabilities,
+        enc: buildTcpEncOffer(
           this._localWallet!,
+          this._localPeerId!,
+          auth.ts,
+          auth.nonce,
+          ephemeral.publicKeyHex,
         ),
-        capabilities: [...LOCAL_CONNECTION_CAPABILITIES],
       });
-      conn.attachRawSocket(socket);
+
+      // Everything after the enc-ack line is encrypted frames.
+      this._readSingleLine(socket, (line, remaining) => {
+        let ack: Partial<TcpEncAckMessage>;
+        try {
+          ack = JSON.parse(line) as Partial<TcpEncAckMessage>;
+        } catch {
+          conn.fail(new Error(`Peer ${config.remotePeerId} sent an invalid enc-ack`));
+          socket.destroy();
+          return;
+        }
+
+        const verified = verifyTcpEncAck({
+          ack,
+          expectedPeerId: config.remotePeerId,
+          initiatorNonce: auth.nonce,
+        });
+        if (!verified.ok) {
+          conn.fail(new Error(`Encrypted transport handshake with ${config.remotePeerId} failed: ${verified.reason}`));
+          socket.destroy();
+          return;
+        }
+
+        const keys = deriveSessionKeys(
+          ephemeral.privateKey,
+          ack.pub!,
+          {
+            initiatorPeerId: this._localPeerId!,
+            responderPeerId: config.remotePeerId,
+            initiatorNonce: auth.nonce,
+            responderNonce: ack.nonce!,
+            initiatorPubHex: ephemeral.publicKeyHex,
+            responderPubHex: ack.pub!,
+          },
+          true,
+        );
+        conn.attachRawSocket(
+          socket,
+          remaining.length > 0 ? new Uint8Array(remaining) : undefined,
+          createTransportCrypto(keys),
+        );
+      });
     });
 
     socket.on("error", (err: Error) => {
@@ -588,6 +803,37 @@ export class ConnectionManager extends EventEmitter {
     });
   }
 
+  /** Buffer until the first newline, then detach and hand over line + remaining bytes. */
+  private _readSingleLine(
+    socket: Socket,
+    onLine: (line: string, remaining: Buffer) => void,
+  ): void {
+    let buffer = Buffer.alloc(0);
+    const onData = (chunk: Buffer): void => {
+      buffer = Buffer.concat([buffer, chunk]);
+      const lineBreak = buffer.indexOf(0x0a); // '\n'
+      if (lineBreak < 0) {
+        if (buffer.length > MAX_INITIAL_LINE_BYTES) {
+          socket.off("data", onData);
+          socket.destroy();
+        }
+        return;
+      }
+      // Only the line itself is size-limited — the same chunk may carry
+      // payload bytes (e.g. an encrypted frame right after the enc-ack).
+      if (lineBreak > MAX_INITIAL_LINE_BYTES) {
+        socket.off("data", onData);
+        socket.destroy();
+        return;
+      }
+      socket.off("data", onData);
+      const line = buffer.subarray(0, lineBreak).toString("utf8").trim();
+      const remaining = buffer.subarray(lineBreak + 1);
+      onLine(line, remaining);
+    };
+    socket.on("data", onData);
+  }
+
   private _handleInboundSocket(socket: Socket): void {
     let buffer = Buffer.alloc(0);
     const timeout = setTimeout(() => {
@@ -595,15 +841,20 @@ export class ConnectionManager extends EventEmitter {
     }, INITIAL_LINE_TIMEOUT_MS);
 
     const onData = (chunk: Buffer): void => {
-      if (buffer.length + chunk.length > MAX_INITIAL_LINE_BYTES) {
-        socket.off("data", onData);
-        clearTimeout(timeout);
-        socket.destroy();
-        return;
-      }
       buffer = Buffer.concat([buffer, chunk]);
       const lineBreak = buffer.indexOf(0x0a); // '\n'
       if (lineBreak < 0) {
+        if (buffer.length > MAX_INITIAL_LINE_BYTES) {
+          socket.off("data", onData);
+          clearTimeout(timeout);
+          socket.destroy();
+        }
+        return;
+      }
+      if (lineBreak > MAX_INITIAL_LINE_BYTES) {
+        socket.off("data", onData);
+        clearTimeout(timeout);
+        socket.destroy();
         return;
       }
 
@@ -631,9 +882,14 @@ export class ConnectionManager extends EventEmitter {
         return;
       }
 
+      const wireEncPub = intro.type === "intro" && typeof intro.enc?.pub === "string"
+        ? intro.enc.pub
+        : null;
       const verified = verifyConnectionAuthEnvelope({
         type: intro.type,
         auth: intro.auth,
+        wireCapabilities: intro.capabilities,
+        wireEncPub,
         replayGuard: this._introReplayGuard,
       });
       if (!verified.ok || !verified.peerId) {
@@ -644,11 +900,24 @@ export class ConnectionManager extends EventEmitter {
       const remoteCapabilities = normalizeCapabilities(intro.capabilities);
 
       if (intro.type === "intro") {
+        if (intro.enc) {
+          this._acceptEncryptedTcpInbound(socket, verified.peerId, intro, remaining, remoteCapabilities);
+          return;
+        }
+        if (this._requireSecureTransport) {
+          socket.destroy();
+          return;
+        }
         this._acceptTcpInbound(socket, verified.peerId, remaining, remoteCapabilities);
         return;
       }
 
       if (intro.type === "hello") {
+        if (this._transportMode !== "webrtc") {
+          // No working WebRTC stack — refuse instead of crashing on rtc creation.
+          socket.destroy();
+          return;
+        }
         this._acceptWebRtcInbound(socket, verified.peerId, remaining.toString("utf8"), remoteCapabilities);
         return;
       }
@@ -726,11 +995,61 @@ export class ConnectionManager extends EventEmitter {
     );
   }
 
+  private _acceptEncryptedTcpInbound(
+    socket: Socket,
+    remotePeerId: PeerId,
+    intro: Extract<InitialWireMessage, { type: "intro" }>,
+    remainingData: Buffer,
+    remoteCapabilities: string[],
+  ): void {
+    if (!this._localPeerId || !this._localWallet) {
+      // No wallet — cannot sign a valid ack.
+      socket.destroy();
+      return;
+    }
+
+    const offerVerified = verifyTcpEncOffer({
+      offer: intro.enc,
+      peerId: remotePeerId,
+      introTs: intro.auth.ts,
+      introNonce: intro.auth.nonce,
+    });
+    if (!offerVerified.ok) {
+      socket.destroy();
+      return;
+    }
+
+    const ephemeral = generateEphemeralKeyPair();
+    const ack = buildTcpEncAck(
+      this._localWallet,
+      this._localPeerId,
+      ephemeral.publicKeyHex,
+      intro.auth.nonce,
+    );
+    this._sendLine(socket, ack);
+
+    const keys = deriveSessionKeys(
+      ephemeral.privateKey,
+      intro.enc!.pub,
+      {
+        initiatorPeerId: remotePeerId,
+        responderPeerId: this._localPeerId,
+        initiatorNonce: intro.auth.nonce,
+        responderNonce: ack.nonce,
+        initiatorPubHex: intro.enc!.pub,
+        responderPubHex: ephemeral.publicKeyHex,
+      },
+      false,
+    );
+    this._acceptTcpInbound(socket, remotePeerId, remainingData, remoteCapabilities, createTransportCrypto(keys));
+  }
+
   private _acceptTcpInbound(
     socket: Socket,
     remotePeerId: PeerId,
     remainingData: Buffer,
     remoteCapabilities: string[],
+    crypto?: TransportCrypto,
   ): void {
     const existing = this._connections.get(remotePeerId);
     if (existing && existing.state !== ConnectionState.Closed && existing.state !== ConnectionState.Failed) {
@@ -748,6 +1067,7 @@ export class ConnectionManager extends EventEmitter {
     conn.attachRawSocket(
       socket,
       remainingData.length > 0 ? new Uint8Array(remainingData) : undefined,
+      crypto,
     );
     this.emit("connection", conn);
   }
@@ -773,9 +1093,16 @@ export class ConnectionManager extends EventEmitter {
     conn.attachSignalingSocket(socket);
     this._registerConnection(remotePeerId, conn);
 
-    const rtc = this._createRtcPeer(remotePeerId);
-    conn.attachRtcPeer(rtc);
-    this._wireRtcPeer(conn, rtc, socket, false);
+    let rtc: NativeRtcPeerConnection;
+    try {
+      rtc = this._createRtcPeer(remotePeerId);
+      conn.attachRtcPeer(rtc);
+      this._wireRtcPeer(conn, rtc, socket, false);
+    } catch (err) {
+      conn.fail(err instanceof Error ? err : new Error(String(err)));
+      socket.destroy();
+      return;
+    }
 
     this._attachSignalingParser(
       socket,
@@ -806,10 +1133,16 @@ export class ConnectionManager extends EventEmitter {
     isInitiator: boolean,
   ): void {
     rtc.onLocalDescription((sdp: string, descriptionType: string) => {
+      const normalizedType = this._normalizeDescriptionType(descriptionType);
+      // Signing the SDP binds its DTLS fingerprint to our identity.
+      const auth = this._localPeerId && this._localWallet
+        ? buildSdpAuthEnvelope(this._localPeerId, this._localWallet, normalizedType, sdp)
+        : undefined;
       this._sendLine(signalingSocket, {
         type: "sdp",
         sdp,
-        descriptionType: this._normalizeDescriptionType(descriptionType),
+        descriptionType: normalizedType,
+        ...(auth ? { auth } : {}),
       });
     });
 
@@ -862,8 +1195,30 @@ export class ConnectionManager extends EventEmitter {
   ): void {
     try {
       if (signal.type === "sdp") {
+        if (signal.auth) {
+          const verified = verifySdpAuthEnvelope({
+            auth: signal.auth,
+            expectedPeerId: conn.remotePeerId,
+            descriptionType: signal.descriptionType,
+            sdp: signal.sdp,
+            replayGuard: this._introReplayGuard,
+          });
+          if (!verified.ok) {
+            conn.fail(new Error(`SDP signature from ${conn.remotePeerId} rejected: ${verified.reason}`));
+            return;
+          }
+        } else if (
+          this._requireSecureTransport
+          || conn.hasRemoteCapability(CONNECTION_CAPABILITY_SIGNED_SDP_V1)
+        ) {
+          // Peer is known to sign its SDP — unsigned means a stripped signature.
+          conn.fail(new Error(`Peer ${conn.remotePeerId} sent unsigned SDP`));
+          return;
+        }
         rtc.setRemoteDescription(signal.sdp, signal.descriptionType);
       } else {
+        // Candidates stay unsigned: DTLS still verifies the cert against the
+        // signed SDP fingerprint, so tampering can only break connectivity.
         rtc.addRemoteCandidate(signal.candidate, signal.mid);
       }
     } catch (err) {

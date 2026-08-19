@@ -1,6 +1,27 @@
-import { useMemo, useState } from 'react';
-import { HugeiconsIcon } from '@hugeicons/react';
-import { StarIcon } from '@hugeicons/core-free-icons';
+import { useDeferredValue, useMemo, useState } from 'react';
+import { HugeiconsIcon, type IconSvgElement } from '@hugeicons/react';
+import {
+  AiBrain01Icon,
+  AlphabetGreekIcon,
+  ChartUpIcon,
+  CodeIcon,
+  Dollar01Icon,
+  EyeIcon,
+  Globe02Icon,
+  HeadphonesIcon,
+  HierarchyIcon,
+  Image01Icon,
+  PaintBrush01Icon,
+  Shield01Icon,
+  Sorting01Icon,
+  SourceCodeIcon,
+  StarIcon,
+  Tag01Icon,
+  TextIcon,
+  TheaterIcon,
+  ZapIcon,
+} from '@hugeicons/core-free-icons';
+import type { VprModelKind } from '../../../core/state';
 import {
   filterVprCatalog,
   pinnedSellerLabel,
@@ -9,18 +30,21 @@ import {
   type VprCatalogSort,
 } from '../../../modules/catalog/view-models';
 import { findCatalogEntry } from '../../../modules/catalog/model-catalog';
+import { availableModelFamilies } from '../../../modules/catalog/model-families';
 import { loadFavoriteModels } from '../../../modules/catalog/favorites';
+import { availableModelTags } from '../../../modules/catalog/model-metadata';
 import { setVprModelPageTarget } from '../../../modules/catalog/model-page-target';
 import {
   catalogEntryKey,
   selectFavoriteVprCatalog,
   selectRecommendedVprCatalog,
 } from '../../../modules/catalog/recommended';
-import { formatCategoryLabel } from '../chat/discover-filter-util';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { useRetainedState } from '../../hooks/useRetainedState';
 import type { ViewName } from '../../types';
+import { BrandIcon } from '../brand/BrandIcon';
+import { VprFilterDropdown, VprMultiFilterDropdown, type VprFilterOption } from '../vpr/VprFilterDropdown';
 import { VprModelRowList, VprSelectedModelCard } from '../vpr/VprModelRows';
 import { VprPage, VprSearch } from '../vpr/VprKit';
 import styles from './VprExploreView.module.scss';
@@ -29,12 +53,30 @@ type Props = { onSelectView?: (view: ViewName) => void };
 
 const RECOMMENDED_LIMIT = 18;
 
+function FilterIconView({ icon }: { icon: IconSvgElement }) {
+  return <HugeiconsIcon icon={icon} size={16} strokeWidth={1.8} />;
+}
+
+const TAG_ICONS: Readonly<Record<string, IconSvgElement>> = {
+  Anime: PaintBrush01Icon,
+  'Audio input': HeadphonesIcon,
+  Coding: CodeIcon,
+  Fast: ZapIcon,
+  'Open weights': SourceCodeIcon,
+  Reasoning: AiBrain01Icon,
+  Roleplay: TheaterIcon,
+  Uncensored: Shield01Icon,
+  Vision: EyeIcon,
+  'Web search': Globe02Icon,
+};
+
 // Renderer-lifetime cache: tab/search/filter/sort survive drilling into a
 // model page and back (ViewHost unmounts inactive views).
 const exploreViewCache = {
   tab: 'Recommended' as 'Recommended' | 'All',
   search: '',
-  category: '',
+  types: [] as string[],
+  families: [] as string[],
   sort: 'Popular' as VprCatalogSort,
 };
 
@@ -46,12 +88,20 @@ export function VprExploreView({ onSelectView }: Props) {
     modelPins: state.vprModelPins,
     discoverRows: state.vprRoutableRows,
     discoverRowsLoaded: state.chatDiscoverRowsLoaded,
-    connectBadge: state.connectBadge,
   }), shallowEqual);
   const [tab, setTab] = useRetainedState(exploreViewCache, 'tab');
   const [search, setSearch] = useRetainedState(exploreViewCache, 'search');
-  const [category, setCategory] = useRetainedState(exploreViewCache, 'category');
+  const [types, setTypes] = useRetainedState(exploreViewCache, 'types');
+  const [families, setFamilies] = useRetainedState(exploreViewCache, 'families');
   const [sort, setSort] = useRetainedState(exploreViewCache, 'sort');
+  // Tab/filter/search changes re-render the full model list — hundreds of
+  // rows. Deriving the list from deferred values keeps the tapped control
+  // responsive: the tab/pill paints its new state in the urgent render and
+  // the list catches up in an interruptible background render.
+  const listInputs = useDeferredValue(useMemo(
+    () => ({ tab, search, types, families, sort }),
+    [families, search, sort, tab, types],
+  ));
   // Starred on the model pages; fresh on every visit (the view remounts).
   const [favorites] = useState(loadFavoriteModels);
 
@@ -61,30 +111,64 @@ export function VprExploreView({ onSelectView }: Props) {
     [snap.discoverRows, snap.selection],
   );
 
-  const categories = useMemo(
-    () => Array.from(new Set(snap.catalog.flatMap((entry) => entry.categories))).sort((a, b) => a.localeCompare(b)),
+  const availableFamilies = useMemo(() => availableModelFamilies(snap.catalog), [snap.catalog]);
+  const tags = useMemo(
+    () => availableModelTags(snap.catalog.map((entry) => entry.serviceId)),
     [snap.catalog],
   );
+  const typeOptions = useMemo<readonly VprFilterOption<string>[]>(() => [
+    { value: 'kind:text', label: 'Text', description: 'Chat and language models', icon: <FilterIconView icon={TextIcon} /> },
+    { value: 'kind:image', label: 'Image', description: 'Image generation models', icon: <FilterIconView icon={Image01Icon} /> },
+    ...tags.map((modelTag) => ({
+      value: `tag:${modelTag}`,
+      label: modelTag,
+      description: `Models tagged ${modelTag}`,
+      icon: <FilterIconView icon={TAG_ICONS[modelTag] ?? Tag01Icon} />,
+    })),
+  ], [tags]);
+  const familyOptions = useMemo<readonly VprFilterOption<string>[]>(() => [
+    ...availableFamilies.map((modelFamily) => ({
+      value: modelFamily,
+      label: modelFamily,
+      description: `${modelFamily} models`,
+      icon: <BrandIcon name={modelFamily} hints={[modelFamily]} size={16} />,
+    })),
+  ], [availableFamilies]);
+  const sortOptions = useMemo<readonly VprFilterOption<VprCatalogSort>[]>(() => [
+    { value: 'Popular', label: 'Popular', description: 'Most available sellers first', icon: <FilterIconView icon={Sorting01Icon} /> },
+    { value: 'Price', label: 'Price', description: 'Lowest price first', icon: <FilterIconView icon={Dollar01Icon} /> },
+    { value: 'Savings', label: 'Savings', description: 'Largest savings first', icon: <FilterIconView icon={ChartUpIcon} /> },
+    { value: 'Name', label: 'Name', description: 'Alphabetical order', icon: <FilterIconView icon={AlphabetGreekIcon} /> },
+  ], []);
   const favoriteEntries = useMemo(
-    () => (tab === 'Recommended'
-      ? filterVprCatalog(selectFavoriteVprCatalog(snap.catalog, favorites), { search })
+    () => (listInputs.tab === 'Recommended'
+      ? filterVprCatalog(selectFavoriteVprCatalog(snap.catalog, favorites), { search: listInputs.search })
       : []),
-    [favorites, search, snap.catalog, tab],
+    [favorites, listInputs, snap.catalog],
   );
   const entries = useMemo(() => {
-    if (tab === 'Recommended') {
+    if (listInputs.tab === 'Recommended') {
       // Curated lineup order (frontier + free) — the sort control only
       // exists on the All tab. Favorites get their own section above.
       const curated = selectRecommendedVprCatalog(snap.catalog)
         .filter((entry) => !favorites.has(catalogEntryKey(entry)))
         .slice(0, RECOMMENDED_LIMIT);
-      return filterVprCatalog(curated, { search });
+      return filterVprCatalog(curated, { search: listInputs.search });
     }
     return sortVprCatalog(
-      filterVprCatalog(snap.catalog, { search, category: category || null }),
-      sort,
+      filterVprCatalog(snap.catalog, {
+        search: listInputs.search,
+        kinds: listInputs.types
+          .filter((value) => value.startsWith('kind:'))
+          .map((value) => value.slice(5) as VprModelKind),
+        tags: listInputs.types
+          .filter((value) => value.startsWith('tag:'))
+          .map((value) => value.slice(4)),
+        families: listInputs.families,
+      }),
+      listInputs.sort,
     );
-  }, [category, favorites, search, snap.catalog, sort, tab]);
+  }, [favorites, listInputs, snap.catalog]);
 
   // Any listed model that remembers a pin names its seller in place of the
   // peer count — pins are per model and survive switching between them.
@@ -154,30 +238,28 @@ export function VprExploreView({ onSelectView }: Props) {
 
         {tab === 'All' && (
           <div className={styles.filterRow}>
-            <label className={styles.filterPill}>
-              <select
-                value={category}
-                onChange={(event) => setCategory(event.currentTarget.value)}
-                aria-label="Filter by category"
-              >
-                <option value="">Category</option>
-                {categories.map((entry) => (
-                  <option key={entry} value={entry}>{formatCategoryLabel(entry)}</option>
-                ))}
-              </select>
-            </label>
-            <label className={`${styles.filterPill} ${styles.filterPillEnd}`}>
-              <select
+            <VprMultiFilterDropdown
+              label="Type"
+              values={types}
+              options={typeOptions}
+              onChange={setTypes}
+            />
+            <VprMultiFilterDropdown
+              label="Family"
+              values={families}
+              options={familyOptions}
+              onChange={setFamilies}
+              emptyIcon={<FilterIconView icon={HierarchyIcon} />}
+            />
+            <div className={styles.filterEnd}>
+              <VprFilterDropdown
+                label="Sort models"
                 value={sort}
-                onChange={(event) => setSort(event.currentTarget.value as VprCatalogSort)}
-                aria-label="Sort models"
-              >
-                <option value="Popular">Sort: Popular</option>
-                <option value="Price">Sort: Price</option>
-                <option value="Savings">Sort: Savings</option>
-                <option value="Name">Sort: Name</option>
-              </select>
-            </label>
+                options={sortOptions}
+                onChange={setSort}
+                align="end"
+              />
+            </div>
           </div>
         )}
 
@@ -224,14 +306,21 @@ export function VprExploreView({ onSelectView }: Props) {
             />
           </>
         ) : favoriteEntries.length === 0 && (
-          <div className={styles.empty} role="status">
-            <div>
-              {snap.discoverRowsLoaded ? 'No models match the current filters.' : `Model discovery is ${snap.connectBadge.label.toLowerCase()}.`}
+          snap.discoverRowsLoaded ? (
+            <div className={styles.empty} role="status">
+              <div>No models match the current filters.</div>
+              <button type="button" onClick={() => { void actions.refreshAll(); }}>
+                Refresh models
+              </button>
             </div>
-            <button type="button" onClick={() => { void actions.refreshAll(); }}>
-              Refresh models
-            </button>
-          </div>
+          ) : (
+            /* Discovery still fetching the first snapshot — a spinner, not a
+               dead-end empty state; rows stream in as soon as the poll lands. */
+            <div className={styles.empty} role="status" aria-live="polite" aria-label="Loading models">
+              <span className="route-loading-spinner" aria-hidden="true" />
+              <div>Loading models…</div>
+            </div>
+          )
         )}
       </div>
       </VprPage>

@@ -1,5 +1,13 @@
-import type { PeerInfo, SerializedHttpRequest } from '@antseed/node'
 import {
+  buildNetworkServiceOffers,
+  selectLowestPricedNetworkServiceOffer,
+  type NetworkServiceOffer,
+  type PeerInfo,
+  type SerializedHttpRequest,
+} from '@antseed/node'
+import { canonicalModelKey } from '@antseed/node/model-identity'
+import {
+  extractRequestBodyFields,
   inferProviderDefaultServiceApiProtocols,
   selectTargetProtocolForRequest,
   type ServiceApiProtocol,
@@ -10,11 +18,58 @@ import { log, normalizePeerId } from './request-utils.js'
 export type PeerProtocolRoutePlan = {
   provider: string
   selection: TargetProtocolSelection | null
+  serviceId: string | null
 }
 
 export type CandidatePeerRouteSelection = {
   candidatePeers: PeerInfo[]
   routePlanByPeerId: Map<string, PeerProtocolRoutePlan>
+}
+
+export const REQUIRED_PARAMETERS_HEADER = 'x-antseed-required-parameters'
+const REQUIRED_PARAMETER_PATTERN = /^[a-z][a-z0-9_.-]{0,63}$/
+const MAX_REQUIRED_PARAMETERS = 16
+
+/**
+ * Parse an internal buyer routing constraint. An empty array means no
+ * constraint; null means the caller supplied a malformed header.
+ */
+export function parseRequiredParametersHeader(value: string | undefined): string[] | null {
+  if (value === undefined || value.trim() === '') return []
+  if (value.length > 1_024) return null
+  const parameters = [...new Set(value.split(',').map((entry) => entry.trim().toLowerCase()))]
+  if (
+    parameters.length === 0
+    || parameters.length > MAX_REQUIRED_PARAMETERS
+    || parameters.some((parameter) => !REQUIRED_PARAMETER_PATTERN.test(parameter))
+  ) {
+    return null
+  }
+  return parameters
+}
+
+/** Required parameters are strict: missing capability metadata is unsupported. */
+export function findMissingRequiredParameters(
+  peer: PeerInfo,
+  provider: string,
+  requestedService: string | null,
+  requiredParameters: readonly string[],
+): string[] {
+  if (requiredParameters.length === 0) return []
+  const service = requestedService?.trim()
+  if (!service) return [...requiredParameters]
+
+  const providerKey = Object.keys(peer.providerServiceCapabilities ?? {})
+    .find((key) => key.toLowerCase() === provider.toLowerCase())
+  const services = providerKey ? peer.providerServiceCapabilities?.[providerKey]?.services : undefined
+  const serviceKey = services
+    ? Object.keys(services).find((key) => isRequestedServiceMatch(key, service))
+    : undefined
+  const announced = serviceKey ? services?.[serviceKey]?.supportedParameters : undefined
+  if (!announced) return [...requiredParameters]
+
+  const supported = new Set(announced.map((parameter) => parameter.trim().toLowerCase()))
+  return requiredParameters.filter((parameter) => !supported.has(parameter.toLowerCase()))
 }
 
 // `strict` drops peers that don't advertise the requested service; `lenient`
@@ -54,7 +109,7 @@ function getPeerProviderProtocols(
   if (fromMetadata) {
     if (normalizedRequestedService) {
       const directMatchKey = Object.keys(fromMetadata).find(
-        (key) => key.toLowerCase() === normalizedRequestedService.toLowerCase(),
+        (key) => isRequestedServiceMatch(key, normalizedRequestedService),
       )
       if (directMatchKey && fromMetadata[directMatchKey]?.length) {
         log(
@@ -89,26 +144,33 @@ function getPeerProviderProtocols(
   return inferred
 }
 
-function getDirectServiceProtocols(
+// Service ids like `...-coding-only` restrict what the seller accepts; never
+// substitute them for an unrestricted request unless they were asked for by name.
+const CODING_ONLY_SERVICE_ID = /(?:[-:._\s]+coding[-:._\s]+only|codingonly)$/i
+
+function isRequestedServiceMatch(advertisedService: string, requestedService: string): boolean {
+  if (canonicalModelKey(advertisedService) !== canonicalModelKey(requestedService)) return false
+  if (CODING_ONLY_SERVICE_ID.test(requestedService)) {
+    return advertisedService.trim().toLowerCase() === requestedService.trim().toLowerCase()
+  }
+  return !CODING_ONLY_SERVICE_ID.test(advertisedService)
+}
+
+export function findAdvertisedServiceOffer(
   peer: PeerInfo,
   provider: string,
-  requestedService: string | null,
-): ServiceApiProtocol[] {
-  const normalizedRequestedService = requestedService?.trim()
-  if (!normalizedRequestedService) return []
-
-  const fromMetadata = (
-    peer as PeerInfo & {
-      providerServiceApiProtocols?: Record<string, { services: Record<string, ServiceApiProtocol[]> }>
-    }
-  ).providerServiceApiProtocols?.[provider]?.services
-  if (!fromMetadata) return []
-
-  const directMatchKey = Object.keys(fromMetadata).find(
-    (key) => key.toLowerCase() === normalizedRequestedService.toLowerCase(),
-  )
-  const protocols = directMatchKey ? fromMetadata[directMatchKey] : undefined
-  return protocols?.length ? Array.from(new Set(protocols)) : []
+  requestedService: string,
+): NetworkServiceOffer | null {
+  const requestedKey = canonicalModelKey(requestedService)
+  if (!requestedKey) return null
+  const offers = buildNetworkServiceOffers([peer]).filter((offer) => (
+    offer.provider.toLowerCase() === provider.toLowerCase()
+    && isRequestedServiceMatch(offer.serviceId, requestedService)
+  ))
+  if (CODING_ONLY_SERVICE_ID.test(requestedService)) {
+    return offers[0] ?? null
+  }
+  return selectLowestPricedNetworkServiceOffer(offers)
 }
 
 function selectProviderByProtocol(
@@ -124,14 +186,46 @@ function selectProviderByProtocol(
       continue
     }
     if (!selection.requiresTransform) {
-      return { provider, selection }
+      return { provider, selection, serviceId: null }
     }
     if (!transformedFallback) {
-      transformedFallback = { provider, selection }
+      transformedFallback = { provider, selection, serviceId: null }
     }
   }
 
   return transformedFallback
+}
+
+function selectAdvertisedServiceByProtocol(
+  peer: PeerInfo,
+  candidates: string[],
+  requestProtocol: ServiceApiProtocol,
+  requestedService: string,
+): PeerProtocolRoutePlan | null {
+  const compatible: Array<{ offer: NetworkServiceOffer; plan: PeerProtocolRoutePlan }> = []
+  for (const provider of candidates) {
+    const offer = findAdvertisedServiceOffer(peer, provider, requestedService)
+    if (!offer) continue
+    let supportedProtocols: ServiceApiProtocol[] = []
+    if (offer.protocols.length > 0) {
+      supportedProtocols = offer.protocols.filter((protocol): protocol is ServiceApiProtocol => (
+        protocol === 'anthropic-messages'
+        || protocol === 'openai-chat-completions'
+        || protocol === 'openai-responses'
+        || protocol === 'openai-images'
+      ))
+    } else if (offer.protocol) {
+      supportedProtocols = [offer.protocol]
+    }
+    const selection = selectTargetProtocolForRequest(requestProtocol, supportedProtocols)
+    if (!selection) continue
+    compatible.push({
+      offer,
+      plan: { provider, selection, serviceId: offer.serviceId },
+    })
+  }
+  const selectedOffer = selectLowestPricedNetworkServiceOffer(compatible.map((candidate) => candidate.offer))
+  return compatible.find((candidate) => candidate.offer === selectedOffer)?.plan ?? null
 }
 
 export function resolvePeerRoutePlan(
@@ -156,17 +250,25 @@ export function resolvePeerRoutePlan(
   const candidates = explicitProvider ? [explicitProvider] : providers
 
   if (!requestProtocol) {
+    if (requestedService) {
+      for (const provider of candidates) {
+        const offer = findAdvertisedServiceOffer(peer, provider, requestedService)
+        if (offer) return { provider, selection: null, serviceId: offer.serviceId }
+      }
+      if (serviceFilterMode === 'strict' || !candidates[0]) return null
+      return { provider: candidates[0], selection: null, serviceId: null }
+    }
     const provider = candidates[0]
-    return provider ? { provider, selection: null } : null
+    return provider ? { provider, selection: null, serviceId: null } : null
   }
 
-  if (serviceFilterMode === 'lenient' && requestedService?.trim()) {
-    const exactPlan = selectProviderByProtocol(
-      candidates,
-      requestProtocol,
-      (provider) => getDirectServiceProtocols(peer, provider, requestedService),
-    )
+  if (requestedService?.trim()) {
+    const exactPlan = selectAdvertisedServiceByProtocol(peer, candidates, requestProtocol, requestedService)
     if (exactPlan) return exactPlan
+    const hasAdvertisedCanonicalOffer = candidates.some(
+      (provider) => findAdvertisedServiceOffer(peer, provider, requestedService) !== null,
+    )
+    if (hasAdvertisedCanonicalOffer) return null
   }
 
   return selectProviderByProtocol(
@@ -202,6 +304,50 @@ export function selectCandidatePeersForRouting(
     candidatePeers,
     routePlanByPeerId,
   }
+}
+
+// Protocol-core request fields that are never flagged against a peer's
+// announced supportedParameters: the announced list describes optional
+// extras, not the fields every request on that protocol carries.
+const PROTOCOL_BASELINE_FIELDS: Partial<Record<ServiceApiProtocol, readonly string[]>> = {
+  'openai-images': ['model', 'prompt', 'image', 'mask', 'n', 'stream'],
+  'openai-chat-completions': ['model', 'messages', 'stream'],
+  'openai-responses': ['model', 'input', 'stream'],
+  'anthropic-messages': ['model', 'messages', 'max_tokens', 'stream'],
+}
+
+/**
+ * Soft pre-flight check against the peer's announced `supportedParameters`
+ * capability: returns request-body parameter names the peer did not announce
+ * for the routed service. Empty when the peer announces no list (absence
+ * means unknown, not unsupported) or the body is not parseable. Callers log
+ * a warning — never reject — since the list is a hint, not a contract.
+ */
+export function findUnannouncedRequestParameters(
+  peer: PeerInfo,
+  provider: string,
+  requestedService: string | null,
+  requestProtocol: ServiceApiProtocol | null,
+  request: SerializedHttpRequest,
+): string[] {
+  const normalizedService = requestedService?.trim().toLowerCase()
+  if (!requestProtocol || !normalizedService) return []
+
+  const providerKey = Object.keys(peer.providerServiceCapabilities ?? {})
+    .find((key) => key.toLowerCase() === provider.toLowerCase())
+  const services = providerKey ? peer.providerServiceCapabilities?.[providerKey]?.services : undefined
+  if (!services) return []
+  const serviceKey = Object.keys(services).find((key) => key.toLowerCase() === normalizedService)
+  const announced = serviceKey ? services[serviceKey]?.supportedParameters : undefined
+  if (!announced || announced.length === 0) return []
+
+  const fields = extractRequestBodyFields(request.headers, request.body)
+  if (!fields) return []
+  const allowed = new Set<string>(
+    [...announced, ...(PROTOCOL_BASELINE_FIELDS[requestProtocol] ?? [])]
+      .map((parameter) => parameter.toLowerCase()),
+  )
+  return Object.keys(fields).filter((key) => !allowed.has(key.toLowerCase()))
 }
 
 export function pickProviderForPeer(peer: PeerInfo, request: SerializedHttpRequest): string {

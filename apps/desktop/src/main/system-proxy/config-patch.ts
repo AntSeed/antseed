@@ -1,7 +1,17 @@
 import { ANTSEED_MODEL_CONTEXT_WINDOW, ANTSEED_MODEL_MAX_OUTPUT_TOKENS } from '@antseed/node/types';
+import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import {
+  WSL_TOOL_PROBES,
+  clearWslTargetsForTool,
+  discoverWslToolTargets,
+  readWslTargetsForTool,
+  saveWslTargetsForTool,
+  type WslConfigTarget,
+  type WslTool,
+} from './wsl.js';
 
 /**
  * Model alias resolved by the buyer proxy at request time to the route
@@ -28,6 +38,13 @@ export type OpencodeConfigPatchDef = {
   readonly npm: string;
   readonly providerName: string;
   readonly baseURL: string;
+  /** When set, the patcher targets actual installations of the named tool —
+      native only if install signals exist, plus every WSL distro carrying it
+      (Windows) — and throws when the tool is found nowhere, instead of
+      blindly creating a config for a program that isn't there. Unset keeps
+      the write-the-one-path behavior for generic/external profiles.
+      See applyWithInstallProbe. */
+  readonly installProbe?: 'opencode';
 };
 
 export type CodexConfigPatchDef = {
@@ -36,6 +53,7 @@ export type CodexConfigPatchDef = {
   readonly providerKey: string;
   readonly providerName: string;
   readonly baseURL: string;
+  readonly installProbe?: 'codex';
 };
 
 export type PiConfigPatchDef = {
@@ -47,24 +65,34 @@ export type PiConfigPatchDef = {
   readonly providerKey: string;
   readonly baseURL: string;
   readonly api: 'openai-completions' | 'openai-responses' | 'anthropic-messages';
+  readonly originator?: string;
+  readonly installProbe?: 'pi';
 };
 
 export type CrushConfigPatchDef = {
   readonly format: 'crush';
   readonly configPath: string;
+  /** POSIX config path for WSL installs — `configPath` is resolved to a
+      Windows known folder at definition time, which is meaningless inside a
+      distro. */
+  readonly wslConfigPath?: string;
   readonly providerKey: string;
   readonly providerName: string;
   readonly baseURL: string;
+  readonly installProbe?: 'crush';
 };
 
 export type GooseConfigPatchDef = {
   readonly format: 'goose';
   /** goose config.yaml (flat env-style keys). */
   readonly configPath: string;
+  /** POSIX config path for WSL installs — see CrushConfigPatchDef. */
+  readonly wslConfigPath?: string;
   /** goose provider engine ('openai' for openai-compatible hosts). */
   readonly providerKey: string;
   /** Host root without /v1 — goose appends the chat-completions path itself. */
   readonly baseURL: string;
+  readonly installProbe?: 'goose';
 };
 
 export type ZedConfigPatchDef = {
@@ -126,10 +154,12 @@ export function readConfigPatch(value: unknown, profileName: string): ConfigPatc
       providerKey,
       providerName: readRequiredString(raw, 'providerName', profileName),
       baseURL,
+      ...(raw['installProbe'] === 'codex' ? { installProbe: 'codex' as const } : {}),
     };
   }
   if (format === 'pi') {
     const api = raw['api'];
+    const originator = readString(raw, 'originator');
     return {
       format: 'pi',
       configPath,
@@ -137,19 +167,32 @@ export function readConfigPatch(value: unknown, profileName: string): ConfigPatc
       providerKey,
       baseURL,
       api: api === 'openai-responses' || api === 'anthropic-messages' ? api : 'openai-completions',
+      ...(originator ? { originator } : {}),
+      ...(raw['installProbe'] === 'pi' ? { installProbe: 'pi' as const } : {}),
     };
   }
   if (format === 'crush') {
+    const wslConfigPath = readString(raw, 'wslConfigPath');
     return {
       format: 'crush',
       configPath,
+      ...(wslConfigPath ? { wslConfigPath } : {}),
       providerKey,
       providerName: readRequiredString(raw, 'providerName', profileName),
       baseURL,
+      ...(raw['installProbe'] === 'crush' ? { installProbe: 'crush' as const } : {}),
     };
   }
   if (format === 'goose') {
-    return { format: 'goose', configPath, providerKey, baseURL };
+    const wslConfigPath = readString(raw, 'wslConfigPath');
+    return {
+      format: 'goose',
+      configPath,
+      ...(wslConfigPath ? { wslConfigPath } : {}),
+      providerKey,
+      baseURL,
+      ...(raw['installProbe'] === 'goose' ? { installProbe: 'goose' as const } : {}),
+    };
   }
   if (format === 'zed') {
     return {
@@ -176,6 +219,7 @@ export function readConfigPatch(value: unknown, profileName: string): ConfigPatc
     npm: readRequiredString(raw, 'npm', profileName),
     providerName: readRequiredString(raw, 'providerName', profileName),
     baseURL,
+    ...(raw['installProbe'] === 'opencode' ? { installProbe: 'opencode' as const } : {}),
   };
 }
 
@@ -343,24 +387,24 @@ function removeFromStringArray(config: JsonObject, key: string, value: string): 
  * a model is the desktop route selector, so route changes reach running tool
  * sessions without a config rewrite.
  */
-export function applyConfigPatch(patch: ConfigPatchDef, peerId: string, buyerPort: number): void {
+export function applyConfigPatch(patch: ConfigPatchDef, peerId: string, buyerPort: number, wslTargetsFile?: string): void {
   if (!isBuyerProxyRoutablePeerId(peerId)) {
     throw new Error('Config-based routing requires a 40-character hex peer ID. Select a chain-backed peer before enabling this tool.');
   }
   if (patch.format === 'codex') {
-    applyCodexConfigPatch(patch, buyerPort);
+    applyCodexConfigPatch(patch, buyerPort, wslTargetsFile);
     return;
   }
   if (patch.format === 'pi') {
-    applyPiConfigPatch(patch, buyerPort);
+    applyPiConfigPatch(patch, buyerPort, wslTargetsFile);
     return;
   }
   if (patch.format === 'crush') {
-    applyCrushConfigPatch(patch, buyerPort);
+    applyCrushConfigPatch(patch, buyerPort, wslTargetsFile);
     return;
   }
   if (patch.format === 'goose') {
-    applyGooseConfigPatch(patch, buyerPort);
+    applyGooseConfigPatch(patch, buyerPort, wslTargetsFile);
     return;
   }
   if (patch.format === 'zed') {
@@ -371,7 +415,116 @@ export function applyConfigPatch(patch: ConfigPatchDef, peerId: string, buyerPor
     applyT3CodeConfigPatch(patch, buyerPort);
     return;
   }
+  applyOpencodeConfigPatch(patch, buyerPort, wslTargetsFile);
+}
+
+/** Replace the host of a base URL, leaving scheme, port, and path untouched.
+    Regex rather than URL because the string may still carry the `{buyerPort}`
+    placeholder, which URL refuses to parse. */
+export function substituteBaseUrlHost(baseURL: string, host: string): string {
+  return baseURL.replace(/^(https?:\/\/)[^/:]+/, `$1${host}`);
+}
+
+/** Signals that a tool actually exists natively: its config dir, its
+    home-relative install/state locations (shared with the WSL probe), or the
+    binary on PATH. Any one suffices — a GUI process sees a reduced PATH, and
+    some tools only create the config dir once configured. */
+function nativeToolInstalled(tool: WslTool, configFilePath: string): boolean {
+  if (existsSync(path.dirname(configFilePath))) return true;
+  const probe = WSL_TOOL_PROBES[tool];
+  if (probe.signals.some((signal) => existsSync(path.join(homedir(), ...signal.split('/'))))) return true;
+  try {
+    if (process.platform === 'win32') {
+      execFileSync('where.exe', [probe.binary], { stdio: 'ignore', windowsHide: true });
+    } else {
+      execFileSync('/bin/sh', ['-c', `command -v ${probe.binary}`], { stdio: 'ignore' });
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+type PatchFilePaths = { configPath: string; settingsPath?: string };
+
+/**
+ * Shared install-probe patching: write the config to the native install only
+ * when install signals exist, write it into every WSL distro carrying the
+ * tool (with a base URL host that distro can reach), remember the WSL
+ * targets for removal, and throw when the tool is found nowhere.
+ */
+function applyWithInstallProbe(opts: {
+  tool: WslTool;
+  native: PatchFilePaths;
+  /** `~/`-rooted config locations, for mapping into WSL distros. */
+  posix: PatchFilePaths;
+  baseURL: string;
+  wslTargetsFile?: string;
+  write: (paths: PatchFilePaths, baseURL: string) => void;
+}): void {
+  const nativeInstalled = nativeToolInstalled(opts.tool, opts.native.configPath);
+  const wslTargets = discoverWslToolTargets(opts.tool, opts.posix);
+  if (!nativeInstalled && wslTargets.length === 0) {
+    throw new Error(
+      `${opts.tool} was not found on this machine`
+      + (process.platform === 'win32' ? ' or in any WSL distro' : '')
+      + ` — nothing to connect. Looked for ${path.dirname(opts.native.configPath)}, `
+      + `its home install locations, and a ${WSL_TOOL_PROBES[opts.tool].binary} binary on PATH. `
+      + `Install ${opts.tool} (or run it once), then reconnect.`,
+    );
+  }
+  if (nativeInstalled) opts.write(opts.native, opts.baseURL);
+  for (const target of wslTargets) {
+    // Inside WSL, `localhost` is the distro's own VM under NAT networking —
+    // the config must carry the host the distro can actually reach the
+    // Windows-side buyer proxy on.
+    opts.write(
+      { configPath: target.configPath, ...(target.settingsPath ? { settingsPath: target.settingsPath } : {}) },
+      substituteBaseUrlHost(opts.baseURL, target.host),
+    );
+  }
+  if (opts.wslTargetsFile) saveWslTargetsForTool(opts.wslTargetsFile, opts.tool, wslTargets);
+}
+
+/** Unpatch the WSL targets remembered for `tool` and forget them. */
+function removeWslInstalls(
+  tool: WslTool,
+  wslTargetsFile: string | undefined,
+  removeFrom: (target: WslConfigTarget) => boolean,
+): boolean {
+  if (!wslTargetsFile) return false;
+  let changed = false;
+  for (const target of readWslTargetsForTool(wslTargetsFile, tool)) {
+    try {
+      if (removeFrom(target)) changed = true;
+    } catch {
+      // Distro stopped or the UNC share is unavailable. The stale provider
+      // entry is inert (it points at a dead host/port) and the next connect
+      // rewrites it.
+    }
+  }
+  clearWslTargetsForTool(wslTargetsFile, tool);
+  return changed;
+}
+
+function applyOpencodeConfigPatch(patch: OpencodeConfigPatchDef, buyerPort: number, wslTargetsFile?: string): void {
   const filePath = expandTilde(patch.configPath);
+  const baseURL = patch.baseURL.replace('{buyerPort}', String(buyerPort));
+  if (patch.installProbe !== 'opencode') {
+    applyOpencodeProviderToFile(filePath, patch, baseURL);
+    return;
+  }
+  applyWithInstallProbe({
+    tool: 'opencode',
+    native: { configPath: filePath },
+    posix: { configPath: patch.configPath },
+    baseURL,
+    wslTargetsFile,
+    write: (paths, url) => applyOpencodeProviderToFile(paths.configPath, patch, url),
+  });
+}
+
+function applyOpencodeProviderToFile(filePath: string, patch: OpencodeConfigPatchDef, baseURL: string): void {
   backupConfigFile(filePath);
   const config = readConfigPatchFile(filePath);
 
@@ -382,7 +535,7 @@ export function applyConfigPatch(patch: ConfigPatchDef, peerId: string, buyerPor
     name: patch.providerName,
     npm: patch.npm,
     options: {
-      baseURL: patch.baseURL.replace('{buyerPort}', String(buyerPort)),
+      baseURL,
       apiKey: 'antseed',
     },
     models: {
@@ -401,18 +554,18 @@ export function applyConfigPatch(patch: ConfigPatchDef, peerId: string, buyerPor
   writeJsonFile(filePath, config);
 }
 
-export function removeConfigPatch(patch: ConfigPatchDef): boolean {
+export function removeConfigPatch(patch: ConfigPatchDef, wslTargetsFile?: string): boolean {
   if (patch.format === 'codex') {
-    return removeCodexConfigPatch(patch);
+    return removeCodexConfigPatch(patch, wslTargetsFile);
   }
   if (patch.format === 'pi') {
-    return removePiConfigPatch(patch);
+    return removePiConfigPatch(patch, wslTargetsFile);
   }
   if (patch.format === 'crush') {
-    return removeCrushConfigPatch(patch);
+    return removeCrushConfigPatch(patch, wslTargetsFile);
   }
   if (patch.format === 'goose') {
-    return removeGooseConfigPatch(patch);
+    return removeGooseConfigPatch(patch, wslTargetsFile);
   }
   if (patch.format === 'zed') {
     return removeZedConfigPatch(patch);
@@ -420,7 +573,14 @@ export function removeConfigPatch(patch: ConfigPatchDef): boolean {
   if (patch.format === 't3code') {
     return removeT3CodeConfigPatch(patch);
   }
-  const filePath = expandTilde(patch.configPath);
+  let changed = removeOpencodeProviderFromFile(expandTilde(patch.configPath), patch);
+  if (patch.installProbe === 'opencode') {
+    changed = removeWslInstalls('opencode', wslTargetsFile, (target) => removeOpencodeProviderFromFile(target.configPath, patch)) || changed;
+  }
+  return changed;
+}
+
+function removeOpencodeProviderFromFile(filePath: string, patch: OpencodeConfigPatchDef): boolean {
   const config = tryReadConfigPatchFile(filePath);
   if (!config) return false;
   backupConfigFile(filePath);
@@ -516,8 +676,24 @@ function removeTomlTopLevelKey(lines: readonly string[], key: string): string[] 
   return [...lines.slice(0, index), ...lines.slice(index + 1)];
 }
 
-function applyCodexConfigPatch(patch: CodexConfigPatchDef, buyerPort: number): void {
+function applyCodexConfigPatch(patch: CodexConfigPatchDef, buyerPort: number, wslTargetsFile?: string): void {
   const filePath = expandTilde(patch.configPath);
+  const baseURL = patch.baseURL.replace('{buyerPort}', String(buyerPort));
+  if (patch.installProbe !== 'codex') {
+    applyCodexProviderToFile(filePath, patch, baseURL);
+    return;
+  }
+  applyWithInstallProbe({
+    tool: 'codex',
+    native: { configPath: filePath },
+    posix: { configPath: patch.configPath },
+    baseURL,
+    wslTargetsFile,
+    write: (paths, url) => applyCodexProviderToFile(paths.configPath, patch, url),
+  });
+}
+
+function applyCodexProviderToFile(filePath: string, patch: CodexConfigPatchDef, baseURL: string): void {
   backupConfigFile(filePath);
   const raw = existsSync(filePath) ? readFileSync(filePath, 'utf8') : '';
   let lines = raw.length > 0 ? raw.split('\n') : [];
@@ -530,7 +706,7 @@ function applyCodexConfigPatch(patch: CodexConfigPatchDef, buyerPort: number): v
     '',
     `[model_providers.${patch.providerKey}]`,
     `name = ${tomlBasicString(patch.providerName)}`,
-    `base_url = ${tomlBasicString(patch.baseURL.replace('{buyerPort}', String(buyerPort)))}`,
+    `base_url = ${tomlBasicString(baseURL)}`,
     // The only wire API Codex still supports; no env_key means Codex sends no
     // Authorization header, which the keyless buyer proxy expects.
     'wire_api = "responses"',
@@ -538,8 +714,15 @@ function applyCodexConfigPatch(patch: CodexConfigPatchDef, buyerPort: number): v
   writeTextFile(filePath, `${lines.join('\n')}\n`);
 }
 
-function removeCodexConfigPatch(patch: CodexConfigPatchDef): boolean {
-  const filePath = expandTilde(patch.configPath);
+function removeCodexConfigPatch(patch: CodexConfigPatchDef, wslTargetsFile?: string): boolean {
+  let changed = removeCodexProviderFromFile(expandTilde(patch.configPath), patch);
+  if (patch.installProbe === 'codex') {
+    changed = removeWslInstalls('codex', wslTargetsFile, (target) => removeCodexProviderFromFile(target.configPath, patch)) || changed;
+  }
+  return changed;
+}
+
+function removeCodexProviderFromFile(filePath: string, patch: CodexConfigPatchDef): boolean {
   if (!existsSync(filePath)) return false;
   const raw = readFileSync(filePath, 'utf8');
   const removal = removeCodexProviderTable(raw.split('\n'), patch.providerKey);
@@ -564,17 +747,34 @@ function removeCodexConfigPatch(patch: CodexConfigPatchDef): boolean {
 // provider/model from settings.json. The apiKey is a placeholder — the buyer
 // proxy is keyless, but pi hides models that have no credential at all.
 
-function applyPiConfigPatch(patch: PiConfigPatchDef, buyerPort: number): void {
-  const modelsPath = expandTilde(patch.configPath);
+function applyPiConfigPatch(patch: PiConfigPatchDef, buyerPort: number, wslTargetsFile?: string): void {
+  const baseURL = patch.baseURL.replace('{buyerPort}', String(buyerPort));
+  const native = { configPath: expandTilde(patch.configPath), settingsPath: expandTilde(patch.settingsPath) };
+  if (patch.installProbe !== 'pi') {
+    applyPiProviderToFiles(native.configPath, native.settingsPath, patch, baseURL);
+    return;
+  }
+  applyWithInstallProbe({
+    tool: 'pi',
+    native,
+    posix: { configPath: patch.configPath, settingsPath: patch.settingsPath },
+    baseURL,
+    wslTargetsFile,
+    write: (paths, url) => applyPiProviderToFiles(paths.configPath, paths.settingsPath ?? native.settingsPath, patch, url),
+  });
+}
+
+function applyPiProviderToFiles(modelsPath: string, settingsPath: string, patch: PiConfigPatchDef, baseURL: string): void {
   backupConfigFile(modelsPath);
   const config = readConfigPatchFile(modelsPath);
   const providers = (config['providers'] && typeof config['providers'] === 'object' && !Array.isArray(config['providers']))
     ? config['providers'] as JsonObject
     : {};
   providers[patch.providerKey] = {
-    baseUrl: patch.baseURL.replace('{buyerPort}', String(buyerPort)),
+    baseUrl: baseURL,
     api: patch.api,
     apiKey: 'antseed',
+    ...(patch.originator ? { headers: { originator: patch.originator } } : {}),
     models: [
       {
         id: ROUTED_MODEL_ALIAS,
@@ -587,7 +787,6 @@ function applyPiConfigPatch(patch: PiConfigPatchDef, buyerPort: number): void {
   config['providers'] = providers;
   writeJsonFile(modelsPath, config);
 
-  const settingsPath = expandTilde(patch.settingsPath);
   backupConfigFile(settingsPath);
   const settings = readConfigPatchFile(settingsPath);
   settings['defaultProvider'] = patch.providerKey;
@@ -595,9 +794,17 @@ function applyPiConfigPatch(patch: PiConfigPatchDef, buyerPort: number): void {
   writeJsonFile(settingsPath, settings);
 }
 
-function removePiConfigPatch(patch: PiConfigPatchDef): boolean {
+function removePiConfigPatch(patch: PiConfigPatchDef, wslTargetsFile?: string): boolean {
+  let changed = removePiProviderFromFiles(expandTilde(patch.configPath), expandTilde(patch.settingsPath), patch);
+  if (patch.installProbe === 'pi') {
+    changed = removeWslInstalls('pi', wslTargetsFile, (target) =>
+      removePiProviderFromFiles(target.configPath, target.settingsPath ?? '', patch)) || changed;
+  }
+  return changed;
+}
+
+function removePiProviderFromFiles(modelsPath: string, settingsPath: string, patch: PiConfigPatchDef): boolean {
   let changed = false;
-  const modelsPath = expandTilde(patch.configPath);
   const config = tryReadConfigPatchFile(modelsPath);
   const providers = config?.['providers'];
   if (config && providers && typeof providers === 'object' && !Array.isArray(providers) && (patch.providerKey in (providers as JsonObject))) {
@@ -606,7 +813,6 @@ function removePiConfigPatch(patch: PiConfigPatchDef): boolean {
     writeJsonFile(modelsPath, config);
     changed = true;
   }
-  const settingsPath = expandTilde(patch.settingsPath);
   const settings = tryReadConfigPatchFile(settingsPath);
   if (settings && settings['defaultProvider'] === patch.providerKey) {
     backupConfigFile(settingsPath);
@@ -628,15 +834,31 @@ function asObject(value: unknown): JsonObject {
 // `type: "openai-compat"`; the default model selection lives under
 // `models.large` / `models.small` as `{ provider, model }`.
 
-function applyCrushConfigPatch(patch: CrushConfigPatchDef, buyerPort: number): void {
+function applyCrushConfigPatch(patch: CrushConfigPatchDef, buyerPort: number, wslTargetsFile?: string): void {
   const filePath = expandTilde(patch.configPath);
+  const baseURL = patch.baseURL.replace('{buyerPort}', String(buyerPort));
+  if (patch.installProbe !== 'crush') {
+    applyCrushProviderToFile(filePath, patch, baseURL);
+    return;
+  }
+  applyWithInstallProbe({
+    tool: 'crush',
+    native: { configPath: filePath },
+    posix: { configPath: patch.wslConfigPath ?? patch.configPath },
+    baseURL,
+    wslTargetsFile,
+    write: (paths, url) => applyCrushProviderToFile(paths.configPath, patch, url),
+  });
+}
+
+function applyCrushProviderToFile(filePath: string, patch: CrushConfigPatchDef, baseURL: string): void {
   backupConfigFile(filePath);
   const config = readConfigPatchFile(filePath);
   const providers = asObject(config['providers']);
   providers[patch.providerKey] = {
     type: 'openai-compat',
     name: patch.providerName,
-    base_url: patch.baseURL.replace('{buyerPort}', String(buyerPort)),
+    base_url: baseURL,
     api_key: 'antseed',
     models: [
       { id: ROUTED_MODEL_ALIAS, name: ROUTED_MODEL_ALIAS_LABEL, context_window: ANTSEED_MODEL_CONTEXT_WINDOW, default_max_tokens: ANTSEED_MODEL_MAX_OUTPUT_TOKENS },
@@ -651,8 +873,15 @@ function applyCrushConfigPatch(patch: CrushConfigPatchDef, buyerPort: number): v
   writeJsonFile(filePath, config);
 }
 
-function removeCrushConfigPatch(patch: CrushConfigPatchDef): boolean {
-  const filePath = expandTilde(patch.configPath);
+function removeCrushConfigPatch(patch: CrushConfigPatchDef, wslTargetsFile?: string): boolean {
+  let changed = removeCrushProviderFromFile(expandTilde(patch.configPath), patch);
+  if (patch.installProbe === 'crush') {
+    changed = removeWslInstalls('crush', wslTargetsFile, (target) => removeCrushProviderFromFile(target.configPath, patch)) || changed;
+  }
+  return changed;
+}
+
+function removeCrushProviderFromFile(filePath: string, patch: CrushConfigPatchDef): boolean {
   const config = tryReadConfigPatchFile(filePath);
   if (!config) return false;
   let changed = false;
@@ -721,30 +950,59 @@ function removeYamlTopLevelKey(lines: readonly string[], key: string): string[] 
   return [...lines.slice(0, index), ...lines.slice(index + 1)];
 }
 
-/** True for host values only this patch would have written (loopback root). */
-function isLoopbackHost(value: string | undefined): boolean {
-  return !!value && /^https?:\/\/(localhost|127\.0\.0\.1):\d+\/?$/.test(value);
+/** True for host values only this patch would have written: a loopback root,
+    or one of the WSL-reachable hosts a recorded target carries. */
+function isLoopbackHost(value: string | undefined, extraHosts: readonly string[] = []): boolean {
+  if (!value) return false;
+  if (/^https?:\/\/(localhost|127\.0\.0\.1):\d+\/?$/.test(value)) return true;
+  return extraHosts.some((host) =>
+    new RegExp(`^https?://${host.replace(/[.$]/g, '\\$&')}:\\d+/?$`).test(value));
 }
 
-function applyGooseConfigPatch(patch: GooseConfigPatchDef, buyerPort: number): void {
+function applyGooseConfigPatch(patch: GooseConfigPatchDef, buyerPort: number, wslTargetsFile?: string): void {
   const filePath = expandTilde(patch.configPath);
+  const baseURL = patch.baseURL.replace('{buyerPort}', String(buyerPort));
+  if (patch.installProbe !== 'goose') {
+    applyGooseProviderToFile(filePath, patch, baseURL);
+    return;
+  }
+  applyWithInstallProbe({
+    tool: 'goose',
+    native: { configPath: filePath },
+    posix: { configPath: patch.wslConfigPath ?? patch.configPath },
+    baseURL,
+    wslTargetsFile,
+    write: (paths, url) => applyGooseProviderToFile(paths.configPath, patch, url),
+  });
+}
+
+function applyGooseProviderToFile(filePath: string, patch: GooseConfigPatchDef, baseURL: string): void {
   backupConfigFile(filePath);
   const raw = existsSync(filePath) ? readFileSync(filePath, 'utf8') : '';
   let lines = raw.length > 0 ? raw.split('\n') : [];
   while (lines.length > 0 && lines[lines.length - 1]!.trim() === '') lines.pop();
   lines = setYamlTopLevelString(lines, 'GOOSE_PROVIDER', patch.providerKey);
   lines = setYamlTopLevelString(lines, 'GOOSE_MODEL', ROUTED_MODEL_ALIAS);
-  lines = setYamlTopLevelString(lines, 'OPENAI_HOST', patch.baseURL.replace('{buyerPort}', String(buyerPort)));
+  lines = setYamlTopLevelString(lines, 'OPENAI_HOST', baseURL);
   lines = setYamlTopLevelString(lines, 'OPENAI_API_KEY', 'antseed');
   writeTextFile(filePath, `${lines.join('\n')}\n`);
 }
 
-function removeGooseConfigPatch(patch: GooseConfigPatchDef): boolean {
-  const filePath = expandTilde(patch.configPath);
+function removeGooseConfigPatch(patch: GooseConfigPatchDef, wslTargetsFile?: string): boolean {
+  let changed = removeGooseProviderFromFile(expandTilde(patch.configPath), patch, []);
+  if (patch.installProbe === 'goose') {
+    // The WSL config carries the gateway address rather than a loopback
+    // host, so the recorded host joins the ownership check.
+    changed = removeWslInstalls('goose', wslTargetsFile, (target) => removeGooseProviderFromFile(target.configPath, patch, [target.host])) || changed;
+  }
+  return changed;
+}
+
+function removeGooseProviderFromFile(filePath: string, patch: GooseConfigPatchDef, extraHosts: readonly string[]): boolean {
   if (!existsSync(filePath)) return false;
   let lines = readFileSync(filePath, 'utf8').split('\n');
   let changed = false;
-  if (isLoopbackHost(readYamlTopLevelString(lines, 'OPENAI_HOST'))) {
+  if (isLoopbackHost(readYamlTopLevelString(lines, 'OPENAI_HOST'), extraHosts)) {
     lines = removeYamlTopLevelKey(lines, 'OPENAI_HOST');
     changed = true;
   }

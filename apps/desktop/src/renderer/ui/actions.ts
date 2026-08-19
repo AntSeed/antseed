@@ -15,6 +15,7 @@ export type AppActions = {
   openConversation: (id: string) => Promise<void>;
   sendMessage: (text: string, attachments?: RawChatAttachment[]) => void;
   sendMessageToConversation: (convId: string, text: string, attachments?: RawChatAttachment[]) => void;
+  generateImage: (prompt: string) => void;
   abortChat: () => Promise<void>;
   deleteConversation: (convId?: string) => Promise<void>;
   renameConversation: (convId: string, newTitle: string) => void;
@@ -34,6 +35,8 @@ export type AppActions = {
   setVprPeerListing: (peerId: string, listing: VprPeerListing) => void;
   setChatPermissionMode: (mode: ChatPermissionMode) => void;
   decideToolApproval: (decision: ToolApprovalDecision, requestId?: string) => void;
+  acceptReminderHome: () => void;
+  dismissReminderHome: () => void;
   rejectPaymentSession: () => void;
   retryAfterPayment: () => void;
   refreshCredits: () => Promise<void>;
@@ -46,6 +49,8 @@ export type AppActions = {
   openVprFloat?: (profileName?: string) => Promise<void>;
   closeVprFloat?: () => Promise<void>;
   setVprFloatAutoOpen?: (enabled: boolean) => void;
+  /** Debug aid: name the routed seller next to the model on the pill's chat rows. */
+  setVprFloatShowRoutedPeer?: (enabled: boolean) => void;
 };
 
 let _actions: AppActions | null = null;

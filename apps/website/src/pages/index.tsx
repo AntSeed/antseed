@@ -1147,25 +1147,29 @@ function LocalhostSection() {
 /* ============================================================
    3 STEPS
    ============================================================ */
-const STEPS = [
+/* The provider count streams from Antscan via useNetworkStats, same source as
+   the hero stat, so step 2 tracks the network instead of drifting. */
+const buildSteps = (providers: string) => [
   {
     num: '1',
     title: 'Pick your model',
-    body: 'Set by open market competition between providers, not a rate one company decided to charge.',
+    body: "Top tier names, fresh releases, and unique models you won't find anywhere else, all routed on the AntSeed P2P network.",
   },
   {
     num: '2',
     title: 'Set your route',
-    body: 'No account, no email, nothing tying your requests back to you. Choose TEE verified providers for hardware level privacy.',
+    body: `${providers} independent providers, routed automatically by reputation and price, so you can pick the one that works for you.`,
   },
   {
     num: '3',
     title: 'Keep your favorite app',
-    body: "The routing layer that can't go down, can't lock your account, and can't read your prompts.",
+    body: "Point any tool you already use at one local address. Same projects, same chats, same context you've built up.",
   },
 ];
 
 function StepsSection() {
+  const stats = useNetworkStats();
+  const steps = buildSteps(stats.providers);
   return (
     <section className={styles.stepsSection}>
       <div className={styles.sectionInner}>
@@ -1175,7 +1179,7 @@ function StepsSection() {
           </h2>
         </Reveal>
         <div className={styles.stepsGrid}>
-          {STEPS.map((step, i) => (
+          {steps.map((step, i) => (
             <Reveal key={step.num} className={styles.stepCard} delay={i * 100}>
               <div className={styles.stepHead}>
                 <span className={styles.stepNum}>{step.num}</span>
@@ -1373,7 +1377,7 @@ export default function Home(): JSX.Element {
       'AntSeed is a decentralized peer-to-peer marketplace for AI inference. Providers compete on price to run any AI model, with no central account.',
     sameAs: [
       'https://github.com/AntSeed/antseed',
-      'https://x.com/antseedai',
+      'https://x.com/antseed',
       'https://t.me/antseed',
     ],
   };

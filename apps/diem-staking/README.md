@@ -128,7 +128,7 @@ The website also ships `google-site-verification` and a JSON-LD
 - `google-site-verification` is per-host; Search Console wants a separate
   token for the `diemantseed.com` subdomain. Add one to `index.html` when
   the subdomain is verified.
-- The `SoftwareApplication` JSON-LD describes the AntStation desktop app —
+- The `SoftwareApplication` JSON-LD describes the VPR desktop app —
   wrong schema for this page. Avoid adding financial-product structured data
   unless reviewed for the Program's current legal and regulatory posture.
 

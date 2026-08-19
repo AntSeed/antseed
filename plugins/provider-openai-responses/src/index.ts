@@ -18,6 +18,7 @@ import {
   parseCsv,
   parseNonNegativeNumber,
   parseServiceAliasMap,
+  parseServiceCapabilitiesJson,
   parseServicePricingJson,
 } from '@antseed/provider-core';
 
@@ -520,6 +521,7 @@ class OpenAIResponsesProvider implements Provider {
   readonly services: string[];
   readonly pricing: Provider['pricing'];
   readonly serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
+  readonly serviceCapabilities?: Provider['serviceCapabilities'];
   readonly maxConcurrency: number;
 
   private readonly inner: BaseProvider;
@@ -530,6 +532,7 @@ class OpenAIResponsesProvider implements Provider {
     services: string[];
     pricing: Provider['pricing'];
     serviceApiProtocols?: Record<string, ServiceApiProtocol[]>;
+    serviceCapabilities?: Provider['serviceCapabilities'];
     maxConcurrency: number;
     baseUrl: string;
     authFilePath: string;
@@ -539,6 +542,7 @@ class OpenAIResponsesProvider implements Provider {
     this.services = config.services;
     this.pricing = config.pricing;
     this.serviceApiProtocols = config.serviceApiProtocols;
+    this.serviceCapabilities = config.serviceCapabilities;
     this.maxConcurrency = config.maxConcurrency;
     this.serviceRewriteMap = config.serviceRewriteMap;
 
@@ -553,6 +557,7 @@ class OpenAIResponsesProvider implements Provider {
       services: relayAllowedServices,
       pricing: config.pricing,
       ...(config.serviceApiProtocols ? { serviceApiProtocols: config.serviceApiProtocols } : {}),
+      ...(config.serviceCapabilities ? { serviceCapabilities: config.serviceCapabilities } : {}),
       relay: {
         baseUrl: relayBaseUrl,
         authHeaderName: 'authorization',
@@ -655,6 +660,7 @@ const plugin: AntseedProviderPlugin = {
     { key: 'ANTSEED_MAX_CONCURRENCY', label: 'Max Concurrency', type: 'number', required: false, default: DEFAULT_MAX_CONCURRENCY, description: 'Max concurrent requests' },
     { key: 'ANTSEED_ALLOWED_SERVICES', label: 'Allowed Services', type: 'string[]', required: false, description: 'Service allow-list' },
     { key: 'ANTSEED_SERVICE_ALIAS_MAP_JSON', label: 'Service Alias Map', type: 'string', required: false, description: 'JSON map of announced service -> upstream model name' },
+    { key: 'ANTSEED_SERVICE_CAPABILITIES_JSON', label: 'Service Capabilities JSON', type: 'string', required: false, description: 'Per-service model capability JSON' },
   ],
 
   createProvider(config: Record<string, string>): Provider {
@@ -677,6 +683,7 @@ const plugin: AntseedProviderPlugin = {
     const authFilePath = expandHome(config['OPENAI_RESPONSES_AUTH_FILE']?.trim() || DEFAULT_AUTH_FILE);
     const baseUrl = config['OPENAI_RESPONSES_BASE_URL']?.trim() || DEFAULT_BASE_URL;
     const serviceRewriteMap = parseServiceAliasMap(config['ANTSEED_SERVICE_ALIAS_MAP_JSON']);
+    const serviceCapabilities = parseServiceCapabilitiesJson(config['ANTSEED_SERVICE_CAPABILITIES_JSON']);
     const serviceApiProtocols = buildServiceApiProtocols(allowedServices, 'openai-responses');
 
     return new OpenAIResponsesProvider({
@@ -684,6 +691,7 @@ const plugin: AntseedProviderPlugin = {
       services: allowedServices,
       pricing,
       ...(serviceApiProtocols ? { serviceApiProtocols } : {}),
+      ...(serviceCapabilities ? { serviceCapabilities } : {}),
       maxConcurrency,
       baseUrl,
       authFilePath,

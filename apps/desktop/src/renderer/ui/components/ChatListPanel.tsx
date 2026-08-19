@@ -8,7 +8,12 @@ import {
 } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { MoreVerticalIcon, Add01Icon, Search01Icon } from '@hugeicons/core-free-icons';
-import { getPeerGradient, getPeerDisplayName, formatCompactTokens } from '../../core/peer-utils';
+import {
+  formatCompactTokens,
+  getPeerDisplayName,
+  getPeerGradient,
+  preferredPeerDisplayName,
+} from '../../core/peer-utils';
 import { displayModelLabel } from '../../modules/catalog/model-identity';
 import { formatUsdcAmount } from '../../core/format';
 import { shallowEqual, useUiSelector } from '../hooks/useUiSelector';
@@ -72,7 +77,10 @@ function getConversationPeerName(
   conv: ConvRecord,
   peerDisplayNameById: ReadonlyMap<string, string>,
 ): string {
-  const peerId = String(conv.peerId || '').trim();
+  // Image generation can deliberately use a different seller from the text
+  // route retained by the conversation. Prefer the seller that produced the
+  // latest response so the conversation row describes what actually ran.
+  const peerId = String(conv.lastResponsePeerId || conv.peerId || '').trim();
   if (!peerId) return 'Other';
   return peerDisplayNameById.get(peerId)
     || getPeerDisplayName(String(conv.peerLabel || ''))
@@ -93,6 +101,7 @@ function conversationMatchesSearch(
     conv.provider,
     conv.peerLabel,
     conv.peerId,
+    conv.lastResponsePeerId,
     conv.workspacePath,
     peerName,
   ].map((value) => String(value || '').toLowerCase()).join(' ');
@@ -194,6 +203,7 @@ function ConversationRow({
   sendingConvIds,
   approvalConvIds,
   chatActiveChannels,
+  showRoutedPeer,
   peerDisplayNameById,
   peerIconUrlById,
   onSelectConv,
@@ -207,6 +217,7 @@ function ConversationRow({
   sendingConvIds: ReadonlySet<string>;
   approvalConvIds: ReadonlySet<string>;
   chatActiveChannels: Map<string, { reservedUsdc: string; peerName: string }>;
+  showRoutedPeer: boolean;
   peerDisplayNameById: ReadonlyMap<string, string>;
   peerIconUrlById: ReadonlyMap<string, string>;
   onSelectConv: (id: string) => void;
@@ -225,7 +236,7 @@ function ConversationRow({
   const costLabel = totalTokens > 0
     ? `$${formatUsdcAmount(totalCost)}/${formatCompactTokens(totalTokens)}`
     : '';
-  const convPeerId = String(conv.peerId || '').trim();
+  const convPeerId = String(conv.lastResponsePeerId || conv.peerId || '').trim();
   const peerName = getConversationPeerName(conv, peerDisplayNameById);
   const session = convPeerId ? chatActiveChannels.get(convPeerId) : undefined;
   const usedUsdc = Number(conv.totalEstimatedCostUsd) || 0;
@@ -267,22 +278,26 @@ function ConversationRow({
         </div>
       </div>
       <div className={styles.meta}>
-        <span
-          className={`${styles.avatar}${showAvatarIcon ? ` ${styles.avatarIcon}` : ''}`}
-          style={showAvatarIcon ? undefined : { background: avatarGradient }}
-        >
-          {showAvatarIcon ? (
-            <img
-              className={styles.avatarImage}
-              src={avatarIconUrl ?? undefined}
-              alt=""
-              loading="lazy"
-              referrerPolicy="no-referrer"
-              onError={() => setAvatarIconFailed(true)}
-            />
-          ) : avatarLetter}
-        </span>
-        <span className={styles.peerName}>{peerName}</span>
+        {showRoutedPeer && (
+          <>
+            <span
+              className={`${styles.avatar}${showAvatarIcon ? ` ${styles.avatarIcon}` : ''}`}
+              style={showAvatarIcon ? undefined : { background: avatarGradient }}
+            >
+              {showAvatarIcon ? (
+                <img
+                  className={styles.avatarImage}
+                  src={avatarIconUrl ?? undefined}
+                  alt=""
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                  onError={() => setAvatarIconFailed(true)}
+                />
+              ) : avatarLetter}
+            </span>
+            <span className={styles.peerName}>{peerName}</span>
+          </>
+        )}
         {costLabel && <span className={styles.cost}>{costLabel}</span>}
         <span className={styles.time}>{timeLabel}</span>
       </div>
@@ -318,6 +333,7 @@ function ChatSearchModal({
   conversations,
   activeConvId,
   sendingConvIds,
+  showRoutedPeer,
   peerDisplayNameById,
   onSelectConv,
   onClose,
@@ -325,6 +341,7 @@ function ChatSearchModal({
   conversations: ConvRecord[];
   activeConvId: string | null;
   sendingConvIds: ReadonlySet<string>;
+  showRoutedPeer: boolean;
   peerDisplayNameById: ReadonlyMap<string, string>;
   onSelectConv: (id: string) => void;
   onClose: () => void;
@@ -429,7 +446,7 @@ function ChatSearchModal({
                     )}
                   </span>
                   <span className={styles.searchResultMeta}>
-                    <span>{peerName}</span>
+                    {showRoutedPeer && <span>{peerName}</span>}
                     {serviceLabel && <span>{serviceLabel}</span>}
                     {costLabel && <span>{costLabel}</span>}
                     <span>{timeLabel}</span>
@@ -455,6 +472,7 @@ export function ChatListPanel({ onSelectView }: { onSelectView?: (view: import('
     chatServiceOptions,
     chatSelectedServiceValue,
     chatSelectedPeerId,
+    vprFloatShowRoutedPeer,
   } = useUiSelector((state) => ({
     chatConversations: state.chatConversations,
     chatActiveConversation: state.chatActiveConversation,
@@ -466,6 +484,7 @@ export function ChatListPanel({ onSelectView }: { onSelectView?: (view: import('
     chatServiceOptions: state.chatServiceOptions,
     chatSelectedServiceValue: state.chatSelectedServiceValue,
     chatSelectedPeerId: state.chatSelectedPeerId,
+    vprFloatShowRoutedPeer: state.vprFloatShowRoutedPeer,
   }), shallowEqual);
   const actions = useActions();
   const conversations = Array.isArray(chatConversations) ? chatConversations : EMPTY_CONVERSATIONS;
@@ -499,12 +518,12 @@ export function ChatListPanel({ onSelectView }: { onSelectView?: (view: import('
     for (const row of rows) {
       const peerId = String(row.peerId || '').trim();
       if (!peerId || map.has(peerId)) continue;
-      const name = getPeerDisplayName(row.peerLabel) || String(row.peerDisplayName || '').trim();
+      const name = preferredPeerDisplayName(row.peerDisplayName, row.peerLabel);
       if (name) map.set(peerId, name);
     }
 
     for (const conv of allConversations) {
-      const peerId = String(conv.peerId || '').trim();
+      const peerId = String(conv.lastResponsePeerId || conv.peerId || '').trim();
       if (!peerId || map.has(peerId)) continue;
       const name = getPeerDisplayName(String(conv.peerLabel || ''));
       if (name) map.set(peerId, name);
@@ -631,6 +650,7 @@ export function ChatListPanel({ onSelectView }: { onSelectView?: (view: import('
               sendingConvIds={sendingConvIds}
               approvalConvIds={approvalConvIds}
               chatActiveChannels={chatActiveChannels}
+              showRoutedPeer={vprFloatShowRoutedPeer}
               peerDisplayNameById={peerDisplayNameById}
               peerIconUrlById={peerIconUrlById}
               onSelectConv={handleSelectConv}
@@ -647,6 +667,7 @@ export function ChatListPanel({ onSelectView }: { onSelectView?: (view: import('
           conversations={allConversations}
           activeConvId={chatActiveConversation}
           sendingConvIds={sendingConvIds}
+          showRoutedPeer={vprFloatShowRoutedPeer}
           peerDisplayNameById={peerDisplayNameById}
           onSelectConv={handleSelectConv}
           onClose={() => setChatSearchOpen(false)}

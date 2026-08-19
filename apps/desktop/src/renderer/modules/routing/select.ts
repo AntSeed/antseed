@@ -1,5 +1,12 @@
 import type { DiscoverRow, VprRoutingPreferences } from '../../core/state';
-import { totalRowPrice } from '../catalog/model-catalog.js';
+import {
+  chooseBestModelRoute,
+  isModelRouteCoolingDown,
+  isModelRouteEligible,
+  isModelRoutePeerAllowed,
+  modelRouteTotalPrice,
+  scoreModelRoute,
+} from '@antseed/node/model-routing';
 
 export type VprScoredRoute = {
   row: DiscoverRow;
@@ -7,59 +14,17 @@ export type VprScoredRoute = {
   reasons: string[];
 };
 
-// An unknown price must not score as free: the UI renders these routes as
-// "Price unknown", and treating them as $0 would let them beat cheap priced
-// routes and dodge the max-input-price preference entirely.
-const UNKNOWN_PRICE_PENALTY = 10;
-
-function hasKnownPrice(row: DiscoverRow): boolean {
-  return totalRowPrice(row) !== null;
+export function isRowCoolingDown(row: DiscoverRow, now: number = Date.now()): boolean {
+  return isModelRouteCoolingDown(row, now);
 }
 
-function comparableTotalPrice(row: DiscoverRow): number {
-  return totalRowPrice(row) ?? Number.POSITIVE_INFINITY;
-}
-
-function compareScoredRoutes(a: VprScoredRoute, b: VprScoredRoute): number {
-  const aKnown = hasKnownPrice(a.row);
-  const bKnown = hasKnownPrice(b.row);
-  if (aKnown !== bKnown) return aKnown ? -1 : 1;
-  return b.score - a.score
-    || comparableTotalPrice(a.row) - comparableTotalPrice(b.row)
-    || a.row.peerId.localeCompare(b.row.peerId);
-}
-
-export function scoreVprRoute(row: DiscoverRow, preferences: VprRoutingPreferences): VprScoredRoute {
-  const reasons: string[] = [];
-  let score = 100;
-
-  if (preferences.preferFreePeers && row.inputUsdPerMillion === 0 && row.outputUsdPerMillion === 0) {
-    score += 25;
-    reasons.push('free peer preferred');
-  }
-
-  if (row.inputUsdPerMillion !== null && row.inputUsdPerMillion > preferences.maxInputUsdPerMillion) {
-    score -= 50;
-    reasons.push('input price exceeds maximum');
-  }
-
-  if (row.onChainTrustScore !== null && row.onChainTrustScore < preferences.minTrustScore) {
-    score -= 50;
-    reasons.push('trust score below minimum');
-  }
-
-  const trustScore = row.onChainTrustScore ?? row.onChainReputationScore ?? 0;
-  score += Math.min(trustScore, 100) / 5;
-
-  const total = totalRowPrice(row);
-  if (total === null) {
-    score -= UNKNOWN_PRICE_PENALTY;
-    reasons.push('price unknown');
-  } else {
-    score -= total;
-  }
-
-  return { row, score, reasons };
+export function scoreVprRoute(
+  row: DiscoverRow,
+  preferences: VprRoutingPreferences,
+  now: number = Date.now(),
+): VprScoredRoute {
+  const scored = scoreModelRoute(row, preferences, now);
+  return { row, score: scored.score, reasons: scored.reasons };
 }
 
 /**
@@ -67,10 +32,19 @@ export function scoreVprRoute(row: DiscoverRow, preferences: VprRoutingPreferenc
  *
  * The blocklist is absolute. The allowlist is exclusive while it holds any
  * entry — an empty allowlist means "no restriction", not "nothing allowed".
+ *
+ * Deliberately knows nothing about cooldowns: those are a scoring penalty, not
+ * a filter, so that a network where every peer is cooling down still routes.
  */
 export function isPeerRoutable(peerId: string, preferences: VprRoutingPreferences): boolean {
-  if (preferences.blockedPeerIds.includes(peerId)) return false;
-  return preferences.allowedPeerIds.length === 0 || preferences.allowedPeerIds.includes(peerId);
+  return isModelRoutePeerAllowed(peerId, preferences);
+}
+
+export function isRouteEligibleForAutoSelection(
+  row: DiscoverRow,
+  preferences: VprRoutingPreferences,
+): boolean {
+  return isModelRouteEligible(row, preferences);
 }
 
 /** Drop every route whose peer the allow/block lists rule out. */
@@ -81,10 +55,20 @@ export function filterRoutableVprRoutes(
   return rows.filter((row) => isPeerRoutable(row.peerId, preferences));
 }
 
-export function chooseBestVprRoute(rows: DiscoverRow[], preferences: VprRoutingPreferences): DiscoverRow | null {
-  const best = filterRoutableVprRoutes(rows, preferences)
-    .map((row) => scoreVprRoute(row, preferences))
-    .sort(compareScoredRoutes)[0];
+/** Whether auto-selection can use a free route from this set. */
+export function hasEligibleFreeVprRoute(
+  rows: DiscoverRow[],
+  preferences: VprRoutingPreferences,
+): boolean {
+  return rows.some(
+    (row) => modelRouteTotalPrice(row) === 0 && isModelRouteEligible(row, preferences),
+  );
+}
 
-  return best?.row ?? null;
+export function chooseBestVprRoute(
+  rows: DiscoverRow[],
+  preferences: VprRoutingPreferences,
+  now: number = Date.now(),
+): DiscoverRow | null {
+  return chooseBestModelRoute(rows, preferences, now);
 }
