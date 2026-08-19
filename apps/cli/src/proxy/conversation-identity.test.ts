@@ -125,6 +125,35 @@ test('requests without any identity return null', () => {
   assert.equal(extractConversationIdentity({}, null), null)
 })
 
+test('identified clients without a session id get a stable synthetic conversation key', () => {
+  const firstRequest = {
+    model: 'antseed',
+    messages: [
+      { role: 'system', content: 'You are Hermes.' },
+      { role: 'user', content: 'Refactor the payment service.' },
+    ],
+  }
+  const laterRequest = {
+    ...firstRequest,
+    messages: [
+      ...firstRequest.messages,
+      { role: 'assistant', content: 'I will inspect it.' },
+      { role: 'user', content: 'Start with the retry logic.' },
+    ],
+  }
+  const first = extractConversationIdentity({ originator: 'hermes' }, firstRequest)
+  const later = extractConversationIdentity({ originator: 'hermes' }, laterRequest)
+  assert.equal(first?.tool, 'hermes')
+  assert.match(first?.sessionKey ?? '', /^synthetic-[0-9a-f]{32}$/)
+  assert.equal(later?.sessionKey, first?.sessionKey)
+})
+
+test('synthetic conversation keys ignore title-only housekeeping requests', () => {
+  assert.equal(extractConversationIdentity({ originator: 'hermes' }, {
+    messages: [{ role: 'user', content: 'Generate a title for this conversation:' }],
+  }), null)
+})
+
 test('snippet: anthropic messages with string content', () => {
   const snippet = extractFirstUserSnippet({
     messages: [{ role: 'user', content: 'fix the login bug in auth.ts' }],

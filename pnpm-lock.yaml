@@ -104,6 +104,9 @@ importers:
       officeparser:
         specifier: 6.1.0
         version: 6.1.0(encoding@0.1.13)
+      yaml:
+        specifier: ^2.8.2
+        version: 2.8.2
     devDependencies:
       '@antseed/ui':
         specifier: workspace:*

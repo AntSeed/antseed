@@ -1,7 +1,9 @@
 import {
   cloneElement,
+  createContext,
   isValidElement,
   useCallback,
+  useContext,
   useEffect,
   useId,
   useRef,
@@ -47,6 +49,8 @@ import styles from './InfoTooltip.module.scss';
 const VIEWPORT_MARGIN_PX = 12;
 const TRIGGER_GAP_PX = 8;
 const FALLBACK_WIDTH_PX = 260;
+const BASE_Z_INDEX = 200;
+const TooltipDepthContext = createContext(0);
 
 export type InfoTooltipAlign = 'left' | 'right';
 
@@ -83,6 +87,7 @@ export type InfoTooltipProps = {
 };
 
 export function InfoTooltip({ content, align = 'right', wide = false, narrow = false, interactive = false, children }: InfoTooltipProps) {
+  const tooltipDepth = useContext(TooltipDepthContext);
   const triggerRef = useRef<HTMLElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const closeTimerRef = useRef<number | null>(null);
@@ -246,12 +251,14 @@ export function InfoTooltip({ content, align = 'right', wide = false, narrow = f
             interactive ? styles.tooltipInteractive : '',
             open ? styles.tooltipOpen : '',
           ].filter(Boolean).join(' ')}
-          style={style}
+          style={{ ...style, zIndex: BASE_Z_INDEX + tooltipDepth }}
           onMouseEnter={interactive ? show : undefined}
           onMouseLeave={interactive ? scheduleHide : undefined}
           onPointerDown={interactive ? (event: PointerEvent<HTMLDivElement>) => event.stopPropagation() : undefined}
         >
-          {content}
+          <TooltipDepthContext.Provider value={tooltipDepth + 1}>
+            {content}
+          </TooltipDepthContext.Provider>
         </div>,
         document.body,
       )}

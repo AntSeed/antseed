@@ -10,7 +10,7 @@ function names(profiles: readonly unknown[]): string[] {
   return profiles.map((profile) => (profile as Record<string, unknown>)['name'] as string);
 }
 
-const DEFAULT_NAMES = ['opencode', 'codex', 't3code', 'pi', 'gooeypi', 'crush', 'goose', 'zed'];
+const DEFAULT_NAMES = ['opencode', 'codex', 't3code', 'pi', 'gooeypi', 'crush', 'goose', 'hermes', 'zed'];
 
 test('default app profiles are config-patch entries with unique names', () => {
   assert.deepEqual(names(DEFAULT_APP_PROFILES), DEFAULT_NAMES);
@@ -38,6 +38,15 @@ test('GooeyPi patches the shared Pi config without requiring pi on PATH', () => 
     api: 'openai-responses',
     originator: 'gooeypi',
   });
+});
+
+test('Hermes opens the installed Hermes desktop application by default', () => {
+  const profile = DEFAULT_APP_PROFILES.find((entry) => entry['name'] === 'hermes');
+  assert.ok(profile);
+  assert.equal(profile['appAction'], 'open-tool');
+  assert.equal(profile['toolName'], 'hermes');
+  assert.equal(profile['restartAppName'], 'Hermes');
+  assert.equal(profile['openUrl'], undefined);
 });
 
 test('platformConfigPath keeps the posix path off Windows and for home-rooted tools', () => {
@@ -77,6 +86,6 @@ test('mergeWithDefaultAppProfiles lets external profiles override same-name defa
     { name: 'opencode', displayName: 'OpenCode (private override)' },
   ];
   const merged = mergeWithDefaultAppProfiles(external);
-  assert.deepEqual(names(merged), ['acme', 'opencode', 'codex', 't3code', 'pi', 'gooeypi', 'crush', 'goose', 'zed']);
+  assert.deepEqual(names(merged), ['acme', 'opencode', 'codex', 't3code', 'pi', 'gooeypi', 'crush', 'goose', 'hermes', 'zed']);
   assert.equal((merged[1] as Record<string, unknown>)['displayName'], 'OpenCode (private override)');
 });

@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { parse } from 'yaml';
 
 import {
   applyConfigPatch,
@@ -593,6 +594,56 @@ test('removeConfigPatch (zed) removes the managed provider and matching default 
     assert.deepEqual(Object.keys(config['language_models']['openai_compatible']), ['Groq']);
     assert.equal(config['agent']['default_model'], undefined);
     assert.equal(config['agent']['always_allow_tool_actions'], true);
+  });
+});
+
+test('applyConfigPatch (hermes) adds an AntSeed provider and selects it', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'config.yaml');
+    await writeFile(configPath, 'display:\n  skin: cyberpunk\n', 'utf8');
+    const patch: ConfigPatchDef = {
+      format: 'hermes',
+      configPath,
+      providerKey: 'antseed',
+      baseURL: 'http://localhost:{buyerPort}/v1',
+    };
+
+    applyConfigPatch(patch, PEER_ID, 8377);
+
+    const config = parse(await readFile(configPath, 'utf8')) as Record<string, any>;
+    assert.equal(config['display']['skin'], 'cyberpunk');
+    assert.equal(config['providers']['antseed']['api'], 'http://localhost:8377/v1');
+    assert.equal(config['providers']['antseed']['transport'], 'chat_completions');
+    assert.deepEqual(config['providers']['antseed']['extra_headers'], { originator: 'hermes' });
+    assert.equal(config['providers']['antseed']['default_model'], 'antseed');
+    assert.equal(config['providers']['antseed']['models']['antseed']['context_length'], ANTSEED_MODEL_CONTEXT_WINDOW);
+    assert.deepEqual(config['model'], {
+      provider: 'antseed',
+      default: 'antseed',
+      base_url: '',
+      api_mode: 'chat_completions',
+    });
+    assert.ok(existsSync(`${configPath}.antseed.bak`));
+  });
+});
+
+test('removeConfigPatch (hermes) removes only the managed provider and selection', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'config.yaml');
+    const patch: ConfigPatchDef = {
+      format: 'hermes',
+      configPath,
+      providerKey: 'antseed',
+      baseURL: 'http://localhost:{buyerPort}/v1',
+    };
+    applyConfigPatch(patch, PEER_ID, 8377);
+
+    assert.equal(removeConfigPatch(patch), true);
+
+    const config = parse(await readFile(configPath, 'utf8')) as Record<string, any>;
+    assert.equal(config['providers']?.['antseed'], undefined);
+    assert.equal(config['model']?.['provider'], undefined);
+    assert.equal(config['model']?.['default'], undefined);
   });
 });
 

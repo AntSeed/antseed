@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Add01Icon, ArrowDown01Icon, ArrowLeft01Icon, ArrowReloadHorizontalIcon, ArrowRight01Icon, Copy01Icon, Settings02Icon, SquareLock01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
+import { Add01Icon, ArrowDown01Icon, ArrowLeft01Icon, ArrowReloadHorizontalIcon, ArrowRight01Icon, ArrowUpRight01Icon, Copy01Icon, Settings02Icon, SquareLock01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
 import { Modal } from '@antseed/ui';
 import type { InstalledAppEntry, SystemProxyProfileSummary } from '../../../types/bridge';
 import { chooseBestVprRoute, isPeerRoutable } from '../../../modules/routing/select';
@@ -23,6 +23,57 @@ import styles from './VprToolsView.module.scss';
 declare const __ANTSEED_SYSTEM_PROXY_PORT__: number;
 
 const DEFAULT_PORT = __ANTSEED_SYSTEM_PROXY_PORT__;
+
+const BUILT_IN_APP_INFO: Readonly<Record<string, { description: string; websiteUrl: string }>> = {
+  opencode: {
+    description: 'An open-source coding agent for the terminal, desktop, and IDE.',
+    websiteUrl: 'https://opencode.ai/',
+  },
+  codex: {
+    description: 'OpenAI’s coding agent for building, reviewing, and shipping software.',
+    websiteUrl: 'https://openai.com/codex/',
+  },
+  t3code: {
+    description: 'A desktop interface for running multiple coding agents in parallel.',
+    websiteUrl: 'https://github.com/pingdotgg/t3code',
+  },
+  pi: {
+    description: 'A minimal, extensible coding agent for the terminal.',
+    websiteUrl: 'https://pi.dev/',
+  },
+  gooeypi: {
+    description: 'A graphical desktop experience powered by the Pi coding-agent ecosystem.',
+    websiteUrl: 'https://pi.dev/',
+  },
+  crush: {
+    description: 'A terminal-based AI coding agent from Charm.',
+    websiteUrl: 'https://github.com/charmbracelet/crush',
+  },
+  goose: {
+    description: 'An open-source AI agent that can plan, code, and automate development tasks.',
+    websiteUrl: 'https://block.github.io/goose/',
+  },
+  hermes: {
+    description: 'A desktop AI agent with tools, skills, file previews, voice, profiles, and automation.',
+    websiteUrl: 'https://hermes-agent.nousresearch.com/',
+  },
+  zed: {
+    description: 'A high-performance collaborative code editor with built-in AI assistance.',
+    websiteUrl: 'https://zed.dev/download',
+  },
+};
+
+function appInfo(profile: SystemProxyProfileSummary): { description: string; websiteUrl?: string } {
+  const builtIn = BUILT_IN_APP_INFO[profile.name];
+  if (builtIn) return builtIn;
+  const domain = profile.domains[0];
+  return {
+    description: profile.custom
+      ? 'A custom AI application routed through AntSeed.'
+      : `${profile.displayName} is configured to use AntSeed for AI requests.`,
+    ...(domain ? { websiteUrl: `https://${domain}` } : {}),
+  };
+}
 
 /** Two-pane modal navigation: the main pane slides to the application list
     the same way the app's screens slide ('none' = no animation on open). */
@@ -340,6 +391,7 @@ export function VprToolsView() {
   }, []);
 
   const settingsProfile = settingsFor ? profiles.find((profile) => profile.name === settingsFor) ?? null : null;
+  const settingsInfo = settingsProfile ? appInfo(settingsProfile) : null;
   const settingsIdentity = settingsProfile
     ? (settingsProfile.toolSlugs?.length ? settingsProfile.toolSlugs : [settingsProfile.name]).join(', ')
     : '';
@@ -760,7 +812,21 @@ export function VprToolsView() {
         ) : (settingsProfile?.displayName ?? 'App settings')}
         subtitle={settingsPane.pane === 'apps'
           ? undefined
-          : (settingsProfile?.custom ? settingsProfile.domains[0] : 'App settings')}
+          : settingsInfo ? (
+            <span className={styles.modalAppSubtitle}>
+              {settingsInfo.description}
+              {settingsInfo.websiteUrl ? (
+                <button
+                  type="button"
+                  className={styles.settingWebsiteLink}
+                  onClick={() => void openUrl(settingsInfo.websiteUrl!)}
+                >
+                  Website / download
+                  <HugeiconsIcon icon={ArrowUpRight01Icon} size={12} strokeWidth={2} />
+                </button>
+              ) : null}
+            </span>
+          ) : undefined}
         className={styles.vprModal}
         bodyClassName={styles.settingsBody}
       >
