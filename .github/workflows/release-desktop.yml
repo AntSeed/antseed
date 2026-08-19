@@ -6,8 +6,9 @@ name: Release Desktop
 #
 # macOS: DMG + zip, arm64 + x64, code-signed with Developer ID and
 #        notarized via Apple App Store Connect API key.
-# Windows: NSIS installer, x64 + arm64. Optional code signing if the
-#          WIN_CSC_* secrets are set.
+# Windows: NSIS installer, x64 + arm64. Optional code signing via the
+#          CA's cloud signing API if the WIN_SIGN_* secrets are set
+#          (see apps/desktop/scripts/win-sign.js).
 # Linux: AppImage + deb, x64 + arm64, unsigned. Each arch builds on a
 #        native runner (ubuntu-latest / ubuntu-24.04-arm) so native
 #        modules never need cross-compilation.
@@ -30,9 +31,15 @@ name: Release Desktop
 #     APPLE_API_KEY_ID          e.g. 6JDM29LC2C
 #     APPLE_API_ISSUER          issuer UUID from App Store Connect
 #     APPLE_TEAM_ID             e.g. H3M5BXXQR2
-#   Windows (optional, for signed installers):
-#     WIN_CSC_LINK              base64 of a .pfx
-#     WIN_CSC_KEY_PASSWORD      password for the .pfx
+#   Windows (optional, for signed installers — the private key lives in
+#   the CA's cloud HSM, there is no .pfx. Signing talks straight to the
+#   CA's HTTPS API via the `ssign` CLI, authenticating with a TOTP. Both
+#   secrets live in the `release-signing` protected environment, not as
+#   repo secrets):
+#     WIN_SIGN_EMAIL            signing service account e-mail
+#     WIN_SIGN_OTP              TOTP seed (base32 or otpauth:// URI).
+#                               Long-lived signing credential — rotate by
+#                               re-issuing the service's QR if it leaks.
 #
 # Publishing auth uses the built-in GITHUB_TOKEN (contents: write).
 
@@ -178,6 +185,16 @@ jobs:
     needs: create-draft
     runs-on: windows-latest
     timeout-minutes: 45
+    # Gate the signing secrets behind a protected environment (required
+    # reviewer) — the TOTP seed is a long-lived signing credential and the
+    # repo is public.
+    environment: release-signing
+    env:
+      # Exposed at job level so steps can gate on `env.WIN_SIGN_EMAIL != ''`
+      # (the secrets context can't be used directly in step `if`s reliably).
+      WIN_SIGN_EMAIL: ${{ secrets.WIN_SIGN_EMAIL }}
+      # ssign revision the "Build ssign" step builds (security-reviewed).
+      SSIGN_REV: 326aa34137b3441812e5300f3a0dbef6bd5a2f97
 
     steps:
       - uses: actions/checkout@v4
@@ -211,14 +228,30 @@ jobs:
           pnpm run build:tier3
         shell: pwsh
 
+      - name: Cache ssign binary
+        if: env.WIN_SIGN_EMAIL != ''
+        id: ssign-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/ssign.exe
+          key: ssign-${{ env.SSIGN_REV }}-windows-x64
+
+      - name: Build ssign (cloud signing CLI)
+        # Built from a pinned, reviewed revision rather than a prebuilt
+        # binary — this tool handles the signing credential.
+        if: env.WIN_SIGN_EMAIL != '' && steps.ssign-cache.outputs.cache-hit != 'true'
+        run: cargo install --locked --git https://github.com/Le-Syl21/ssign --rev $env:SSIGN_REV ssign
+        shell: pwsh
+
       - name: Build & publish desktop (Windows)
         working-directory: apps/desktop
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Baked into the renderer bundle by vite.config.ts (Fun deposit CTA).
           ANTSEED_FUNKIT_API_KEY: ${{ secrets.ANTSEED_FUNKIT_API_KEY }}
-          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          # WIN_SIGN_EMAIL comes from the job-level env; both are read by
+          # apps/desktop/scripts/win-sign.js (the win.sign hook).
+          WIN_SIGN_OTP: ${{ secrets.WIN_SIGN_OTP }}
         run: |
           if ("${{ inputs.dry_run }}" -eq "true") {
             npm run dist:win
@@ -226,6 +259,20 @@ jobs:
             npm run release:win
           }
         shell: pwsh
+
+      - name: Verify Authenticode signatures
+        if: env.WIN_SIGN_EMAIL != ''
+        shell: pwsh
+        run: |
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $signtool) { throw 'signtool.exe not found' }
+          $failed = $false
+          Get-ChildItem apps/desktop/release/*.exe | ForEach-Object {
+            & $signtool.FullName verify /pa $_.FullName
+            if ($LASTEXITCODE -ne 0) { $failed = $true }
+          }
+          if ($failed) { throw 'signature verification failed' }
 
       - name: Upload installers as workflow artifacts
         if: always()

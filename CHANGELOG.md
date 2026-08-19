@@ -8,6 +8,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
+- Windows desktop installers are now Authenticode-signed with the AntSeed Foundation's code-signing certificate. The release build signs directly against the issuing CA's cloud HSM (the private key never exists outside it), with the credentials held in a reviewer-protected CI environment; local and fork builds without the signing secrets continue to produce unsigned installers unchanged.
+
 - Desktop image chats now require sellers that advertise `moderation` support and send `moderation: "low"`, preventing automatic fallback to sellers that would silently restore provider-side Safe Mode blurring. Model lists show reviewed tags such as **Uncensored**, **Coding**, **Reasoning**, **Vision**, **Web search**, and **Open weights** from a versioned declarative registry covering maintained OpenRouter and Venice catalogs with per-model provenance, instead of trusting seller-announced categories. Seller rows identify offers with **Moderation control**, and requests fail clearly when no compatible seller is available.
 - The AntSeed X (Twitter) account moved from `@antseedai` to `@antseed`; all website, desktop help, and brand guideline links now point to https://x.com/antseed.
 

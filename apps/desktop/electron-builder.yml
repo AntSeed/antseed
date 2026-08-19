@@ -102,11 +102,11 @@ dmg:
 
 win:
   icon: assets/antseed-dock-icon.png
-  # Custom sign hook: SSL.com eSigner cloud signing via CodeSignTool.
-  # No-ops when the ES_* env vars are absent (unsigned local builds).
-  # sha256 only — the default sha1+sha256 dual-sign would invoke the
-  # (metered) eSigner service twice per file for no modern-Windows gain.
-  sign: ./scripts/esigner-sign.js
+  # Custom sign hook: cloud code signing over the CA's HTTPS API (see the
+  # script header for the flow). No-ops when the WIN_SIGN_* env vars are
+  # absent (unsigned local builds). sha256 only — the sha1 pass adds
+  # nothing on any Windows that can run Electron.
+  sign: ./scripts/win-sign.js
   signingHashAlgorithms:
     - sha256
   target:
