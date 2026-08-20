@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'vitest';
 
 import type { DiscoverRow, VprRoutingPreferences } from '../../core/state';
-import { chooseBestVprRoute, filterRoutableVprRoutes, hasEligibleFreeVprRoute, isPeerRoutable, isRouteEligibleForAutoSelection, isRowCoolingDown, scoreVprRoute } from './select.js';
+import { bestFreeVprRouteReputation, chooseBestVprRoute, filterRoutableVprRoutes, isPeerRoutable, isRouteEligibleForAutoSelection, isRowCoolingDown, scoreVprRoute } from './select.js';
 import { projectRowsToVprModelCatalog } from '../catalog/model-catalog.js';
 
 const preferences: VprRoutingPreferences = {
@@ -346,7 +346,7 @@ test('scoreVprRoute explains why a cooling-down peer was deprioritized', () => {
   assert.ok(scored.score < 0);
 });
 
-test('hasEligibleFreeVprRoute requires a $0 route that passes the eligibility gate', () => {
+test('bestFreeVprRouteReputation requires a $0 route that passes the eligibility gate', () => {
   const freeRated = discoverRow({ peerId: 'free-rated', inputUsdPerMillion: 0, outputUsdPerMillion: 0 });
   const freeUnrated = discoverRow({
     peerId: 'free-unrated',
@@ -356,8 +356,25 @@ test('hasEligibleFreeVprRoute requires a $0 route that passes the eligibility ga
   });
   const paid = discoverRow({ peerId: 'paid' });
 
-  assert.equal(hasEligibleFreeVprRoute([freeRated, paid], preferences), true);
+  assert.equal(bestFreeVprRouteReputation([freeRated, paid], preferences), 75);
   // A free seller with no reputation fails the trust gate; a paid seller never counts.
-  assert.equal(hasEligibleFreeVprRoute([freeUnrated, paid], preferences), false);
-  assert.equal(hasEligibleFreeVprRoute([freeRated], { ...preferences, blockedPeerIds: ['free-rated'] }), false);
+  assert.equal(bestFreeVprRouteReputation([freeUnrated, paid], preferences), null);
+  assert.equal(bestFreeVprRouteReputation([freeRated], { ...preferences, blockedPeerIds: ['free-rated'] }), null);
+});
+
+test('bestFreeVprRouteReputation returns the highest trust score among eligible free routes', () => {
+  const lowRep = discoverRow({
+    peerId: 'free-low',
+    inputUsdPerMillion: 0,
+    outputUsdPerMillion: 0,
+    effectiveReputationScore: 63,
+  });
+  const highRep = discoverRow({
+    peerId: 'free-high',
+    inputUsdPerMillion: 0,
+    outputUsdPerMillion: 0,
+    effectiveReputationScore: 92,
+  });
+
+  assert.equal(bestFreeVprRouteReputation([lowRep, highRep], preferences), 92);
 });

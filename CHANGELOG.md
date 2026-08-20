@@ -8,6 +8,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
+- Desktop model prices, the **Free** badge, and "save up to" percentages now reflect only sellers the routing trust gate can actually select, so a low-trust seller's $0 or teaser offer no longer advertises a price a send would never be billed at (picking such a "Free" model previously failed with a 402 for unfunded users). The Recommended list's free ride-along models are trust-gated the same way, and the first-run default model is chosen from a free-model priority list (DeepSeek Flash, MiniMax, Haiku, Qwen, Nemotron, Gemma, Mistral Large), falling back to the free offer from the highest-trust seller.
+
 - Desktop Connected Apps now uses the correct Hermes portrait brand mark instead of the temporary pixel-art icon.
 - Desktop Connected Apps now includes Hermes Agent, configures its named OpenAI-compatible provider in `~/.hermes/config.yaml`, launches the installed Hermes desktop app by default, and shows concise app descriptions with website/download links directly in each app's settings header. Hermes chats now appear in Recent Chats even though Hermes does not send an explicit session header: the buyer derives a stable, privacy-preserving conversation key from the initial user-turn prefix and ignores title-generation housekeeping requests.
 - Nested desktop info tooltips now stack above their parent tooltip instead of being hidden behind it.

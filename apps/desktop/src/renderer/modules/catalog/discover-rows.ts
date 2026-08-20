@@ -107,7 +107,12 @@ export function normalizeDiscoverRow(raw: unknown): DiscoverRow | null {
     peerLabel: String(r.peerLabel ?? ''),
     inputUsdPerMillion: typeof r.inputUsdPerMillion === 'number' ? r.inputUsdPerMillion : null,
     outputUsdPerMillion: typeof r.outputUsdPerMillion === 'number' ? r.outputUsdPerMillion : null,
-    cachedInputUsdPerMillion: typeof r.cachedInputUsdPerMillion === 'number' ? r.cachedInputUsdPerMillion : null,
+    // Billing charges cached tokens at the input rate when a seller doesn't
+    // advertise a cached price (buyer-core pricing fallback) — mirror that
+    // here so every price display and free check sees the effective rate.
+    cachedInputUsdPerMillion: typeof r.cachedInputUsdPerMillion === 'number'
+      ? r.cachedInputUsdPerMillion
+      : (typeof r.inputUsdPerMillion === 'number' ? r.inputUsdPerMillion : null),
     minImageUsdPerImage: typeof r.minImageUsdPerImage === 'number' ? r.minImageUsdPerImage : null,
     maxImageUsdPerImage: typeof r.maxImageUsdPerImage === 'number' ? r.maxImageUsdPerImage : null,
     lifetimeSessions: Number(r.lifetimeSessions) || 0,
