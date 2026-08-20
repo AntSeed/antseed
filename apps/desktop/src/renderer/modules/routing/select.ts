@@ -68,7 +68,8 @@ export function bestFreeVprRouteReputation(
 ): number | null {
   let best: number | null = null;
   for (const row of rows) {
-    if (modelRouteTotalPrice(row) !== 0 || !isModelRouteEligible(row, preferences)) continue;
+    const chargesCachedTokens = row.cachedInputUsdPerMillion !== null && row.cachedInputUsdPerMillion > 0;
+    if (modelRouteTotalPrice(row) !== 0 || chargesCachedTokens || !isModelRouteEligible(row, preferences)) continue;
     const reputation = modelRouteReputationScore(row) ?? 0;
     if (best === null || reputation > best) best = reputation;
   }

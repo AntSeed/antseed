@@ -75,7 +75,10 @@ export function selectRecommendedVprCatalog(catalog: VprModelCatalogEntry[]): Vp
     if (winner) pick(winner);
   }
   for (const entry of catalog) {
-    if (isFreeCatalogEntry(entry) && entry.hasEligibleFreeSeller) pick(entry);
+    // Judged per route via hasEligibleFreeSeller, not via entry-minimum
+    // prices: another seller's nonzero cached price must not hide a model
+    // whose trusted seller genuinely offers it for free.
+    if (entry.kind !== 'image' && entry.hasEligibleFreeSeller) pick(entry);
   }
   return picked;
 }

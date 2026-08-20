@@ -121,7 +121,12 @@ function projectGroupToEntry(
     minImageUsdPerImage: minPrice(pricingRows.map((row) => row.minImageUsdPerImage)),
     maxImageUsdPerImage: maxPrice(pricingRows.map((row) => row.maxImageUsdPerImage)),
     expectedSavingsPct,
-    hasEligibleFreeSeller: eligibleRows.some((row) => totalRowPrice(row) === 0),
+    // Free means the route itself charges nothing, cached tokens included —
+    // judged per route so another seller's nonzero cached price can't veto a
+    // genuinely free offer.
+    hasEligibleFreeSeller: eligibleRows.some((row) =>
+      totalRowPrice(row) === 0
+      && (row.cachedInputUsdPerMillion === null || row.cachedInputUsdPerMillion <= 0)),
     bestPeerId: representative?.peerId ?? null,
   };
 }
