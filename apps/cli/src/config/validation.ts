@@ -397,6 +397,25 @@ export function validateConfig(config: AntseedConfig): string[] {
     }
   }
 
+  if (config.seller.gasCheck !== undefined) {
+    const gasCheck = config.seller.gasCheck;
+    if (gasCheck.enabled !== undefined && typeof gasCheck.enabled !== 'boolean') {
+      errors.push('seller.gasCheck.enabled must be a boolean');
+    }
+    if (
+      gasCheck.intervalMs !== undefined &&
+      (!Number.isInteger(gasCheck.intervalMs) || gasCheck.intervalMs < 10_000)
+    ) {
+      errors.push('seller.gasCheck.intervalMs must be an integer >= 10000 (10 seconds)');
+    }
+    if (
+      gasCheck.minBalanceEth !== undefined &&
+      (typeof gasCheck.minBalanceEth !== 'number' || !Number.isFinite(gasCheck.minBalanceEth) || gasCheck.minBalanceEth < 0)
+    ) {
+      errors.push('seller.gasCheck.minBalanceEth must be a finite number >= 0');
+    }
+  }
+
   validateVerifications('seller.verifications', config.seller.verifications, errors);
 
   if (config.relayer !== undefined) {
