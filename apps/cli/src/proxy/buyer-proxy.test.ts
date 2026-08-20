@@ -3106,10 +3106,20 @@ test('deposits/status reports no watcher until one is attached', async () => {
 })
 
 test('sanitizePeerBuyerFaultMarker scrubs the marker at any nesting depth', () => {
+  let deeplyNested: Record<string, unknown> = {
+    code: ANTSEED_BUYER_FAULT_ERROR_CODE,
+    message: 'seller-controlled message',
+  }
+  for (let depth = 0; depth < 20; depth += 1) {
+    deeplyNested = { inner: deeplyNested }
+  }
   const body = {
     error: {
       type: 'server_error',
-      details: { code: 'antseed_buyer_fault', inner: [{ errorCode: 'antseed_buyer_fault' }] },
+      details: {
+        code: ANTSEED_BUYER_FAULT_ERROR_CODE,
+        inner: [{ errorCode: ANTSEED_BUYER_FAULT_ERROR_CODE }, deeplyNested],
+      },
     },
   }
   const sanitized = sanitizePeerBuyerFaultMarker({
@@ -3119,11 +3129,15 @@ test('sanitizePeerBuyerFaultMarker scrubs the marker at any nesting depth', () =
     body: new TextEncoder().encode(JSON.stringify(body)),
   })
 
-  const parsed = JSON.parse(Buffer.from(sanitized.body).toString('utf-8')) as {
-    error: { details: { code: string; inner: Array<{ errorCode: string }> } }
-  }
+  const parsed = JSON.parse(Buffer.from(sanitized.body).toString('utf-8')) as typeof body
   assert.equal(parsed.error.details.code, 'upstream_error')
-  assert.equal(parsed.error.details.inner[0]!.errorCode, 'upstream_error')
+  assert.equal((parsed.error.details.inner[0] as { errorCode: string }).errorCode, 'upstream_error')
+  let nested = parsed.error.details.inner[1] as Record<string, unknown>
+  for (let depth = 0; depth < 20; depth += 1) {
+    nested = nested.inner as Record<string, unknown>
+  }
+  assert.equal(nested.code, 'upstream_error')
+  assert.equal(nested.message, 'seller-controlled message')
 })
 
 test('deposits/status reports the recorded watcher-absence reason and payments health', async () => {
