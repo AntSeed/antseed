@@ -6,11 +6,10 @@ import { IAntseedWashTradingRegistry } from "../interfaces/IAntseedWashTradingRe
 
 /**
  * @title AntseedWashTradingPointsPolicy
- * @notice Applies the registry's proven seller penalty to future points.
- *         Buyers are never penalized by this enforcement path.
+ * @notice Applies proven seller and captive-buyer penalties to future points.
  *
  * @dev    Registered in AntseedPointsPolicyRegistry. The policy is deliberately
- *         a single mapping read with no revert path and no value amplification,
+ *         two bounded mapping reads with no value amplification,
  *         per the stack's never-block-settlement invariant. Stateless: a new
  *         wash-trading registry means deploying a new policy.
  */
@@ -31,12 +30,12 @@ contract AntseedWashTradingPointsPolicy is IAntseedPointsPenaltyPolicy {
     }
 
     /// @inheritdoc IAntseedPointsPenaltyPolicy
-    function penaltyBps(bytes32, address, address seller, uint256)
+    function penaltyBps(bytes32, address buyer, address seller, uint256)
         external
         view
         returns (uint16 sellerPenaltyBps, uint16 buyerPenaltyBps)
     {
         sellerPenaltyBps = registry.sellerPenaltyBps(seller);
-        buyerPenaltyBps = 0;
+        buyerPenaltyBps = registry.buyerPenaltyBps(buyer);
     }
 }

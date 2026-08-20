@@ -2,9 +2,16 @@
 pragma solidity ^0.8.24;
 
 interface IAntseedWashTradingRegistry {
-    /// @notice Future seller-reward reduction proven for `seller`, in BPS.
-    function sellerPenaltyBps(address seller) external view returns (uint16);
+    function submitClosedCycleProof(bytes calldata seal, bytes calldata journalData) external returns (bool applied);
+    function submitReciprocalProof(bytes calldata seal, bytes calldata journalData)
+        external
+        returns (bool appliedA, bool appliedB);
+    function submitCoordinatedControlProof(bytes calldata seal, bytes calldata journalData)
+        external
+        returns (bool applied);
 
-    /// @notice True after one valid seller-penalty proof has been accepted.
+    function sellerPenaltyBps(address seller) external view returns (uint16);
+    function buyerPenaltyBps(address buyer) external view returns (uint16);
     function isSellerPenalized(address seller) external view returns (bool);
+    function isBuyerPenalized(address buyer) external view returns (bool);
 }

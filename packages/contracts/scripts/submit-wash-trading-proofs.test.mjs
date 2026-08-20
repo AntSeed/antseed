@@ -1,28 +1,40 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AbiCoder, Interface, sha256 } from "ethers";
+import { AbiCoder, Interface, keccak256, sha256 } from "ethers";
 import { decodeAndValidateEntry, validateManifest, validateStateProofEntry } from "./submit-wash-trading-proofs.mjs";
 
-test("submission manifest rejects missing and duplicate claims", () => {
-  const manifest = validManifest();
-  manifest.entries[0].seal = "0x";
-  assert.throws(() => validateManifest(manifest), /seal missing/);
+const CLOSED = "tuple(uint32 predicateVersion,bytes32 claimId,uint64 periodStartBlock,uint64 periodEndBlockExclusive,address seller,address funder,bytes32 cohortHash,uint32 cohortCount,uint128 qualifiedVolumeRaw,uint8 closureKind,uint32 closurePathCount,uint16 penaltyBps,address[] penalizedBuyers,tuple(uint64 number,bytes32 blockHash)[] blockRefs)";
+
+test("submission manifest rejects missing, duplicate, and analysis-only claims", () => {
+  const missing = validManifest();
+  missing.entries[0].seal = "0x";
+  assert.throws(() => validateManifest(missing), /seal missing/);
 
   const duplicate = validManifest();
   duplicate.entries.push({ ...duplicate.entries[0] });
   assert.throws(() => validateManifest(duplicate), /duplicate claim ID/);
+
+  const analysisOnly = validManifest();
+  analysisOnly.entries[0].enforceable = false;
+  assert.throws(() => validateManifest(analysisOnly), /analysis-only/);
 });
 
-test("submission manifest rejects unknown claim types", () => {
-  const manifest = validManifest();
-  manifest.entries[0].claimType = "P0_ATTACKER_CONTROLLED";
-  assert.throws(() => validateManifest(manifest), /unsupported claim type/);
+test("submission rejects unknown types and claim ID mismatches", () => {
+  const unknown = validManifest();
+  unknown.entries[0].claimType = "P0_ATTACKER_CONTROLLED";
+  assert.throws(() => validateManifest(unknown), /unsupported claim type/);
+
+  const mismatch = validManifest().entries[0];
+  mismatch.claimId = `0x${"9".repeat(64)}`;
+  assert.throws(() => decodeAndValidateEntry(mismatch), /claim ID mismatch/);
 });
 
-test("submission rejects cohort journals mislabeled as another claim type", () => {
-  const entry = validManifest().entries[0];
-  entry.claimType = "P0_CLOSED_LOOP";
-  assert.throws(() => decodeAndValidateEntry(entry, `0x${"2".repeat(64)}`), /journal claim type mismatch/);
+test("submission rejects noncanonical buyer arrays", () => {
+  const manifest = validManifest([
+    "0x0000000000000000000000000000000000000002",
+    "0x0000000000000000000000000000000000000001",
+  ]);
+  assert.throws(() => decodeAndValidateEntry(manifest.entries[0]), /not canonical/);
 });
 
 test("state proof manifest only permits checkpoint-oracle calls", () => {
@@ -40,22 +52,27 @@ test("state proof manifest only permits checkpoint-oracle calls", () => {
   );
 });
 
-function validManifest() {
-  const claimId = `0x${"1".repeat(64)}`;
-  const reportRoot = `0x${"2".repeat(64)}`;
-  const journalBytes = AbiCoder.defaultAbiCoder().encode([
-    "tuple(uint32 predicateVersion,uint8 claimType,bytes32 claimId,bytes32 reportRoot,address seller,uint16 penaltyBps,uint32 linkedBuyerCount,uint128 qualifiedVolumeRaw,tuple(uint64 number,bytes32 blockHash)[] blockRefs)",
-  ], [[1, 2, claimId, reportRoot, "0x0000000000000000000000000000000000000001", 9_000, 3, 1_000_000_000, [[1, `0x${"3".repeat(64)}`]]]]);
+function validManifest(penalizedBuyers = ["0x0000000000000000000000000000000000000001"]) {
+  const seller = "0x0000000000000000000000000000000000000010";
+  const funder = "0x0000000000000000000000000000000000000020";
+  const cohortHash = `0x${"3".repeat(64)}`;
+  const claimId = keccak256(AbiCoder.defaultAbiCoder().encode(
+    ["uint256", "uint8", "uint64", "uint64", "address", "address", "bytes32"],
+    [8_453, 1, 44_471_575, 49_936_173, seller, funder, cohortHash],
+  ));
+  const journalBytes = AbiCoder.defaultAbiCoder().encode([CLOSED], [[
+    2, claimId, 44_471_575, 49_936_173, seller, funder, cohortHash, 3, 1_000_000_000,
+    1, 1, 9_000, penalizedBuyers, [[1, `0x${"4".repeat(64)}`]],
+  ]]);
   return {
-    version: 1,
+    version: 2,
     kind: "antseed-wash-trading-proof-results",
     chainId: 8_453,
-    reportRoot,
     securityMode: "production",
     entries: [{
       claimId,
-      claimType: "P1_COORDINATED_CONTROL",
-      imageId: "4".repeat(64),
+      claimType: "P0_CLOSED_CYCLE",
+      imageId: "5".repeat(64),
       seal: "0x01",
       journalBytes,
       journalDigest: sha256(journalBytes),

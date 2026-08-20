@@ -93,30 +93,47 @@ contract AntseedBaseCheckpointOracleTest is Test {
 
         bytes32 sellerImageId = bytes32(uint256(0x5E11E2));
         bytes32 reciprocalImageId = bytes32(uint256(0x5E11E3));
-        bytes32 reportRoot = keccak256("report-root");
+        bytes32 coordinatedImageId = bytes32(uint256(0x5E11E4));
         AntseedWashTradingRegistry registry = new AntseedWashTradingRegistry(
-            address(verifier), address(oracle), sellerImageId, reciprocalImageId, reportRoot
+            address(verifier), address(oracle), sellerImageId, reciprocalImageId, coordinatedImageId
         );
         AntseedWashTradingRegistry.BlockRef[] memory blockRefs = new AntseedWashTradingRegistry.BlockRef[](1);
         blockRefs[0] = AntseedWashTradingRegistry.BlockRef({
             number: checkpoint.canonicalBlocks[0].number,
             blockHash: checkpoint.canonicalBlocks[0].blockHash
         });
-        AntseedWashTradingRegistry.CohortJournal memory sellerJournal = AntseedWashTradingRegistry.CohortJournal({
-            predicateVersion: 1,
-            claimType: 1,
-            claimId: keccak256("checkpoint-integration-claim"),
-            reportRoot: reportRoot,
+        bytes32 cohortHash = keccak256("checkpoint-integration-cohort");
+        AntseedWashTradingRegistry.ClosedCycleJournal memory sellerJournal = AntseedWashTradingRegistry
+            .ClosedCycleJournal({
+            predicateVersion: 2,
+            claimId: keccak256(
+                abi.encode(
+                    block.chainid,
+                    uint8(1),
+                    uint64(44_471_575),
+                    uint64(49_936_173),
+                    address(0x515E12),
+                    address(0xF00D),
+                    cohortHash
+                )
+            ),
+            periodStartBlock: 44_471_575,
+            periodEndBlockExclusive: 49_936_173,
             seller: address(0x515E12),
-            penaltyBps: 9_000,
-            linkedBuyerCount: 3,
+            funder: address(0xF00D),
+            cohortHash: cohortHash,
+            cohortCount: 3,
             qualifiedVolumeRaw: 1_000_000_000,
+            closureKind: 1,
+            closurePathCount: 1,
+            penaltyBps: 9_000,
+            penalizedBuyers: new address[](0),
             blockRefs: blockRefs
         });
         bytes memory sellerJournalData = abi.encode(sellerJournal);
         verifier.expect(sellerImageId, sha256(sellerJournalData), SEAL);
 
-        assertTrue(registry.submitCohortPenalty(SEAL, sellerJournalData));
+        assertTrue(registry.submitClosedCycleProof(SEAL, sellerJournalData));
         assertEq(registry.sellerPenaltyBps(address(0x515E12)), 9_000);
     }
 

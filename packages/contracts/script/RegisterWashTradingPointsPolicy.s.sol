@@ -42,6 +42,6 @@ contract RegisterWashTradingPointsPolicy is Script {
         console.log("PointsPolicyRegistry:    ", address(pointsRegistry));
         console.log("WashTradingRegistry:     ", washTradingRegistry);
         console.log("WashTradingPointsPolicy: ", address(policy));
-        console.log("Seller penalty source:  registry");
+        console.log("Seller/buyer penalty source: registry");
     }
 }

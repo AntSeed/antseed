@@ -46,24 +46,36 @@ forge test
 
 ## Wash-Trading Enforcement
 
-`AntseedWashTradingRegistry` accepts a pinned RISC Zero proof of conservative
-positive evidence for one seller. The guest must authenticate a seller-to-funder
-USDC path, funding of at least three distinct buyers, and at least 1,000 USDC of
-settlements by those buyers after funding. Every receipt is proven against its
-Base header and every referenced historical header must be accepted by the
-configured finalized Base state oracle.
+`AntseedWashTradingRegistry` accepts three separately pinned RISC Zero images:
 
-A valid proof permanently sets a 9,000-BPS reduction for that seller's future
-points through `AntseedWashTradingPointsPolicy`. It never penalizes buyers and
-does not claw back locked or claimed rewards.
+- `submitClosedCycleProof(seal, journalData)` for a common-funder cohort with
+  at least `1,000 USDC` of authenticated settlements followed by strict
+  seller-outward direct or relay closure;
+- `submitReciprocalProof(seal, journalData)` for a normalized pair with at
+  least 100 authenticated settlements, 10 in each direction, and `10 USDC` in
+  each direction; and
+- `submitCoordinatedControlProof(seal, journalData)` for a common-funder cohort
+  whose authenticated channel-state delta is at least `1,000 USDC` and at
+  least 50% of the seller's complete frozen-period emissions-counter delta.
 
-The proof does not claim complete seller activity, all buyers, a primary or
-first funder, a share of total volume, or a complete P0/P1 report. Because the
-rule uses only authenticated positive evidence, omitted data can only prevent a
-penalty; it cannot manufacture one. Enforcement therefore needs no evidence or
-findings root, fraud-proof guest, challenge window, watcher, revision, or
-finding-materialization lifecycle. See the sibling `loop-proof/README.md` for
-the exact guest statement and commands.
+Every proof authenticates its Base receipts, transactions, and/or EIP-1186
+state witnesses against supplied headers. Every committed `(blockNumber,
+blockHash)` must also be accepted by the finalized Base state oracle. The
+registry does not trust a report root, report leaf, dependency root, mutable
+funder allowlist, or generic router attribution.
+
+Accepted seller and qualifying buyer claims receive a monotonic `9,000 BPS`
+reduction in future points through `AntseedWashTradingPointsPolicy`, leaving
+10% of otherwise calculated points. Buyer penalties require an authenticated
+99% target-seller purchase share. Reciprocal proofs penalize both addresses as
+sellers. Penalties never stack additively, and previously accrued points,
+locked rewards, and historical reward state are unchanged.
+
+The exact guarantees, thresholds, pinned addresses/code hashes/storage slots,
+journal schemas, explicit non-guarantees, and production commands are specified
+in [`../../../loop-proof/README.md`](../../../loop-proof/README.md). That file is
+the canonical human-readable proof contract; the guest image IDs and Solidity
+validation remain the executable authority.
 
 ## Contracts
 
