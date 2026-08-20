@@ -89,19 +89,6 @@ function projectGroupToEntry(
     ) return route;
     return best;
   }, null)?.row ?? representativeRows[0];
-  const minTotal = minPrice(pricedRows.map((route) => route.total));
-  const maxTotal = maxPrice(pricedRows.map((route) => route.total));
-  // Text entries compare sellers on their token total. Image entries may
-  // contain quality/size tiers, so a cross-seller "saving" percentage would
-  // compare unlike outputs; keep that tile unset.
-  const expectedSavingsPct = kind === 'text'
-    && pricedRows.length >= 2
-    && minTotal !== null
-    && maxTotal !== null
-    && maxTotal > minTotal
-    ? Math.round((1 - minTotal / maxTotal) * 100)
-    : null;
-
   const label = preferredGroupLabel(group.rows);
 
   return {
@@ -120,7 +107,8 @@ function projectGroupToEntry(
     maxCachedInputUsdPerMillion: maxPrice(pricingRows.map((row) => row.cachedInputUsdPerMillion)),
     minImageUsdPerImage: minPrice(pricingRows.map((row) => row.minImageUsdPerImage)),
     maxImageUsdPerImage: maxPrice(pricingRows.map((row) => row.maxImageUsdPerImage)),
-    expectedSavingsPct,
+    // Filled by applyOpenRouterBaselines once a retail reference is available.
+    expectedSavingsPct: null,
     // Free means the route itself charges nothing, cached tokens included —
     // judged per route so another seller's nonzero cached price can't veto a
     // genuinely free offer.

@@ -20,7 +20,8 @@ function fableEntry(): VprModelCatalogEntry {
     maxCachedInputUsdPerMillion: 4.5,
     minImageUsdPerImage: null,
     maxImageUsdPerImage: null,
-    expectedSavingsPct: 97,
+    expectedSavingsPct: null,
+    hasEligibleFreeSeller: false,
     bestPeerId: 'peer',
   };
 }
@@ -32,6 +33,7 @@ test('matches a canonical Fable OpenRouter reference key', () => {
 
   assert.equal(entry.baselineInputUsdPerMillion, 5);
   assert.equal(entry.baselineOutputUsdPerMillion, 30);
+  assert.equal(entry.expectedSavingsPct, 95);
 });
 
 test('matches the legacy flattened Claude Fable reference key after restart', () => {
@@ -41,4 +43,11 @@ test('matches the legacy flattened Claude Fable reference key after restart', ()
 
   assert.equal(entry.baselineInputUsdPerMillion, 5);
   assert.equal(entry.baselineOutputUsdPerMillion, 30);
+  assert.equal(entry.expectedSavingsPct, 95);
+});
+
+test('leaves savings unset when no retail reference is available', () => {
+  const [entry] = applyOpenRouterBaselines([fableEntry()], null);
+
+  assert.equal(entry.expectedSavingsPct, null);
 });

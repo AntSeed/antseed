@@ -124,13 +124,13 @@ test('catalog retains cached-input pricing from a non-representative unified rou
   assert.equal(entry.maxCachedInputUsdPerMillion, 0.6);
 });
 
-test('expectedSavingsPct is 50 for totals 10 and 20', () => {
+test('expectedSavingsPct stays unset until a retail baseline is applied', () => {
   const [entry] = projectRowsToVprModelCatalog([
     discoverRow({ peerId: 'p1', inputUsdPerMillion: 4, outputUsdPerMillion: 6 }),
     discoverRow({ peerId: 'p2', inputUsdPerMillion: 8, outputUsdPerMillion: 12 }),
   ]);
 
-  assert.equal(entry.expectedSavingsPct, 50);
+  assert.equal(entry.expectedSavingsPct, null);
 });
 
 test('bestPeerId picks the lowest priced peer', () => {

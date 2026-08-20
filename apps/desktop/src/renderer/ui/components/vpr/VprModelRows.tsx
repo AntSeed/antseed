@@ -55,15 +55,9 @@ function isFreeEntry(entry: VprModelCatalogEntry): boolean {
 }
 
 function discountLabel(entry: VprModelCatalogEntry): string | null {
-  const prices = [
-    [entry.minInputUsdPerMillion, entry.baselineInputUsdPerMillion],
-    [entry.minOutputUsdPerMillion, entry.baselineOutputUsdPerMillion],
-  ].filter((pair): pair is [number, number] => pair[0] !== null && pair[1] !== null && pair[1] !== undefined);
-  if (prices.length === 0) return null;
-  const price = prices.reduce((total, pair) => total + pair[0], 0);
-  const baseline = prices.reduce((total, pair) => total + pair[1], 0);
-  if (baseline <= price || baseline <= 0) return null;
-  return `${Math.round((1 - price / baseline) * 100)}% off`;
+  return entry.expectedSavingsPct !== null && entry.expectedSavingsPct > 0
+    ? `${entry.expectedSavingsPct}% off`
+    : null;
 }
 
 function formatPrice(price: number | null): string {
