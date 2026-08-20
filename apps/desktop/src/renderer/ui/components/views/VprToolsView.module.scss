@@ -130,6 +130,28 @@
   color: var(--brand);
 }
 
+.settingWebsiteLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--brand);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.modalAppSubtitle .settingWebsiteLink {
+  margin-left: 6px;
+}
+
+.settingWebsiteLink:hover {
+  text-decoration: underline;
+}
+
 /* Green "Connected" line under the app name. */
 .appMeta {
   min-width: 0;

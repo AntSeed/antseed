@@ -14,7 +14,7 @@ import { setupShutdownHandler } from '../../shutdown.js'
 import { loadRouterPlugin, loadVerifierPlugin, buildPluginConfig, getPackageVersions } from '../../../plugins/loader.js'
 import { ensurePluginsUpToDate } from '../../../plugins/drift.js'
 import { resolvePluginPackage } from '../../../plugins/registry.js'
-import { BuyerProxy } from '../../../proxy/buyer-proxy.js'
+import { BuyerProxy, type DepositWatcherAbsenceReason } from '../../../proxy/buyer-proxy.js'
 import { DepositWatcher } from '../../../proxy/deposit-watcher.js'
 import { curatedVerifierIds, resolveVerifierPolicy, type VerifierPolicy } from '../../../plugins/verifier.js'
 import { resolveEffectiveBuyerConfig, type BuyerRuntimeOverrides } from '../../../config/effective.js'
@@ -291,14 +291,17 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         freeUsageContractAddress: cryptoOverrides?.freeUsageContractAddress,
         usdcContractAddress: cryptoOverrides?.usdcContractAddress,
       })
-      let settlementEnabled = settlementEnv ?? true
+      const settlementEnabled = settlementEnv ?? true
 
+      // Advisory only: a transient RPC failure at launch must not disable
+      // payments for the whole session. Buyer payments sign off-chain, and the
+      // node's RpcHealthMonitor re-probes in the background, so on-chain reads
+      // resume on their own once the RPC answers.
       if (settlementEnabled && settlementEnv !== true) {
         const rpcUp = await isRpcReachable(chainConfig.rpcUrl)
         if (!rpcUp) {
-          settlementEnabled = false
-          console.log(chalk.yellow(`Payments disabled: RPC node unreachable at ${chainConfig.rpcUrl}`))
-          console.log(chalk.dim('Start your chain node or set ANTSEED_ENABLE_SETTLEMENT=true to force-enable payments.'))
+          console.log(chalk.yellow(`Chain RPC not answering at ${chainConfig.rpcUrl} — payments stay enabled; on-chain reads resume automatically once it is reachable.`))
+          console.log(chalk.dim('Set ANTSEED_ENABLE_SETTLEMENT=false to run without payments.'))
         }
       }
 
@@ -487,6 +490,17 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       // second signer against the same wallet would race it.
       let depositWatcher: DepositWatcher | null = null
       const depositRelayAddress = cryptoOverrides?.depositRelayAddress || chainConfig.depositRelayAddress
+      let watcherAbsence: DepositWatcherAbsenceReason | null = null
+      if (!ownsProxyListener) {
+        watcherAbsence = 'external-daemon'
+      } else if (!paymentsConfig?.enabled) {
+        watcherAbsence = 'payments-disabled'
+      } else if (!depositRelayAddress) {
+        watcherAbsence = 'no-deposit-relay'
+      }
+      if (watcherAbsence !== null) {
+        proxy.setDepositWatcher(null, watcherAbsence)
+      }
       if (ownsProxyListener && paymentsConfig?.enabled && depositRelayAddress) {
         const identity = node.identity!
         depositWatcher = new DepositWatcher({

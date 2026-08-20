@@ -107,6 +107,20 @@ import { loadConfig } from '../config/loader.js'
 export { selectCandidatePeersForRouting, type CandidatePeerRouteSelection } from './routing.js'
 export { parsePeerPinnedService, rewritePeerPinnedServiceInBody, substituteRoutedModelAlias, ROUTED_MODEL_ALIAS } from './request-utils.js'
 
+/**
+ * Why this daemon runs no hot-wallet deposit watcher — surfaced on
+ * `/_antseed/deposits/status` so UIs can name the actual cause instead of
+ * guessing (a missing watcher used to be indistinguishable from "this chain
+ * has no deposit relay").
+ */
+export type DepositWatcherAbsenceReason = 'external-daemon' | 'payments-disabled' | 'no-deposit-relay'
+
+const WATCHER_ABSENCE_ERRORS: Record<DepositWatcherAbsenceReason, string> = {
+  'payments-disabled': 'Deposit watcher unavailable — payments are disabled on this buyer.',
+  'no-deposit-relay': 'Deposit watcher unavailable — this chain has no deposit relay.',
+  'external-daemon': 'Deposit watcher unavailable — another daemon owns the proxy port and runs the watcher.',
+}
+
 export interface BuyerProxyConfig {
   port: number
   node: AntseedNode
@@ -381,7 +395,7 @@ function adaptBuyerFaultErrorResponse(
   }
 }
 
-function sanitizePeerBuyerFaultMarker(response: SerializedHttpResponse): SerializedHttpResponse {
+export function sanitizePeerBuyerFaultMarker(response: SerializedHttpResponse): SerializedHttpResponse {
   if (response.statusCode < 400) return response
 
   let parsed: Record<string, unknown>
@@ -391,19 +405,27 @@ function sanitizePeerBuyerFaultMarker(response: SerializedHttpResponse): Seriali
     return response
   }
 
+  // Scrub the whole tree, not just the top level: a seller nesting the marker
+  // deeper (e.g. error.details.code) must not be able to have its failure
+  // classified as buyer-fault downstream. Iterate to avoid recursion limits
+  // without leaving deeply nested markers trusted by downstream clients.
   let changed = false
-  const scrub = (record: Record<string, unknown>): void => {
+  const pending: unknown[] = [parsed]
+  while (pending.length > 0) {
+    const value = pending.pop()
+    if (value === null || typeof value !== 'object') continue
+    if (Array.isArray(value)) {
+      pending.push(...value)
+      continue
+    }
+    const record = value as Record<string, unknown>
     for (const key of ['code', 'type', 'errorCode']) {
       if (record[key] === ANTSEED_BUYER_FAULT_ERROR_CODE) {
         record[key] = 'upstream_error'
         changed = true
       }
     }
-  }
-
-  scrub(parsed)
-  if (parsed.error && typeof parsed.error === 'object' && !Array.isArray(parsed.error)) {
-    scrub(parsed.error as Record<string, unknown>)
+    pending.push(...Object.values(record))
   }
 
   return changed
@@ -777,6 +799,8 @@ export class BuyerProxy {
    * plane instead of running a second signer against the same wallet.
    */
   private _depositWatcher: DepositWatcher | null = null
+  /** Why no watcher is attached, so UIs can show the actual cause. */
+  private _depositWatcherAbsence: DepositWatcherAbsenceReason | null = null
 
   /**
    * requestId -> the conversation that issued it, so the node's per-request
@@ -883,9 +907,13 @@ export class BuyerProxy {
     }
   }
 
-  /** Attach the hot-wallet deposit watcher (owned by `buyer start`). */
-  setDepositWatcher(watcher: DepositWatcher): void {
+  /**
+   * Attach the hot-wallet deposit watcher (owned by `buyer start`), or record
+   * why none runs so the status endpoint can report the cause.
+   */
+  setDepositWatcher(watcher: DepositWatcher | null, absenceReason: DepositWatcherAbsenceReason | null = null): void {
     this._depositWatcher = watcher
+    this._depositWatcherAbsence = watcher ? null : absenceReason
   }
 
   /** Latest relayer receipt for a sweep authNonce, if one has arrived. */
@@ -1935,6 +1963,13 @@ export class BuyerProxy {
       res.end(JSON.stringify({
         ok: true,
         watcher: this._depositWatcher !== null,
+        // Why no watcher runs (null while one is attached) — lets UIs say
+        // "payments are disabled" vs "this chain has no deposit relay".
+        reason: this._depositWatcher ? null : this._depositWatcherAbsence,
+        // Live payments health: configured/active flags + chain-RPC
+        // reachability from the node's background monitor. Optional call —
+        // tolerate an older @antseed/node without it.
+        payments: this._node.getPaymentsStatus?.() ?? null,
         status: this._depositWatcher?.status() ?? null,
       }))
       return
@@ -1968,11 +2003,10 @@ export class BuyerProxy {
       }
       const watcher = this._depositWatcher
       if (!watcher) {
+        const reason = this._depositWatcherAbsence
+        const error = (reason && WATCHER_ABSENCE_ERRORS[reason]) ?? 'Deposit watcher unavailable.'
         res.writeHead(503, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({
-          ok: false,
-          error: 'Deposit watcher unavailable — payments are disabled or this chain has no deposit relay.',
-        }))
+        res.end(JSON.stringify({ ok: false, reason, error }))
         return
       }
       if (mode === 'active') watcher.promote()

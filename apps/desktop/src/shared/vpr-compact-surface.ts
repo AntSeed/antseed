@@ -15,6 +15,7 @@ export type VprCompactModel = {
   minImageUsdPerImage: number | null;
   maxImageUsdPerImage: number | null;
   expectedSavingsPct: number | null;
+  hasEligibleFreeSeller: boolean;
   bestPeerId: string | null;
   baselineInputUsdPerMillion?: number | null;
   baselineOutputUsdPerMillion?: number | null;

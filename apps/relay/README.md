@@ -18,6 +18,10 @@ the minimal shim that lets a browser reach an **unmodified** seller. The
 WebRTC DataChannel itself is established directly between browser and seller;
 the relay only carries signaling.
 
+The service exposes `GET /healthz` for process liveness, `GET /readyz` for
+seller-cache freshness, and `GET /metrics` for aggregate JSON counters. The
+metrics contain no client IPs, seller IDs, SDP, or ICE data.
+
 ## Run
 
 ```bash
@@ -35,10 +39,18 @@ node apps/relay/dist/index.js
 | `RELAY_POLL_MS` | `300000` | DHT poll interval |
 | `RELAY_STATIC_SELLERS` | empty | `peerId@host:port,...` extra sellers (dev/e2e) |
 | `RELAY_MAX_BRIDGES_PER_IP` | `16` | Concurrent bridges per client IP |
+| `RELAY_MAX_BRIDGES_GLOBAL` | `1024` | Global concurrent signaling bridges |
+| `RELAY_MAX_BRIDGES_PER_SELLER` | `8` | Concurrent bridges to one seller |
+| `RELAY_MAX_PAYLOAD_BYTES` | `1048576` | Maximum WebSocket signaling message size |
 | `RELAY_TCP_CONNECT_TIMEOUT_MS` | `10000` | Seller dial timeout |
 | `RELAY_IDLE_TIMEOUT_MS` | `600000` | Idle bridge teardown |
+| `RELAY_READINESS_MAX_AGE_MS` | `900000` | Maximum DHT snapshot age accepted by `/readyz` |
+| `RELAY_ALLOWED_ORIGINS` | empty | Optional comma-separated browser Origin allowlist |
 | `RELAY_TRUST_PROXY` | unset | `1` when behind a TLS terminator: per-IP limits use the last `X-Forwarded-For` entry |
 
 Production note: browsers require `wss://` from HTTPS pages — terminate TLS
 in front of the relay (ALB, nginx, Caddy). Set `RELAY_TRUST_PROXY=1` there,
 otherwise every client shares the proxy's IP and one per-IP bridge cap.
+Set `RELAY_ALLOWED_ORIGINS` for a product-specific deployment; it reduces
+drive-by browser use but is not authentication because non-browser clients can
+forge `Origin`.

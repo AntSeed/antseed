@@ -44,10 +44,13 @@ function createMockBpm(): BuyerPaymentManager & Record<string, unknown> {
     getActiveSession: vi.fn().mockReturnValue(null),
     retireSession: vi.fn(),
     canReplayReserveAuth: vi.fn().mockReturnValue(false),
+    hasPendingReserveAuth: vi.fn().mockReturnValue(false),
+    reconcileReserveAmount: vi.fn().mockResolvedValue(undefined),
     extendCurrentSpendingAuth: vi.fn().mockResolvedValue(undefined),
     getCumulativeAmount: vi.fn().mockReturnValue(0n),
     resendCurrentSpendingAuth: vi.fn().mockResolvedValue(undefined),
     resendReserveAuth: vi.fn().mockResolvedValue(undefined),
+    resendPendingReserveAuth: vi.fn().mockResolvedValue(undefined),
     isLockConfirmed: vi.fn().mockReturnValue(false),
     isLockRejected: vi.fn().mockReturnValue(false),
     recordAndPersistTokens: vi.fn(),
@@ -193,6 +196,43 @@ describe('BuyerPaymentNegotiator', () => {
     });
   });
 
+  describe('recoverPendingReserveBeforeRequest', () => {
+    it('reconciles an initial reserve that reached chain before AuthAck was lost', async () => {
+      let pending = true;
+      (bpm.getActiveSession as ReturnType<typeof vi.fn>)
+        .mockReturnValue(makeActiveSession(SELLER_PEER_ID));
+      (bpm.hasPendingReserveAuth as ReturnType<typeof vi.fn>)
+        .mockImplementation(() => pending);
+      (bpm.reconcileReserveAmount as ReturnType<typeof vi.fn>)
+        .mockImplementation(async () => {
+          pending = false;
+          (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
+        });
+
+      await negotiator.recoverPendingReserveBeforeRequest(peer, conn);
+
+      expect(channelsClient.getSession).toHaveBeenCalled();
+      expect(bpm.reconcileReserveAmount).toHaveBeenCalledWith(peer.peerId, 1_000_000n);
+      expect(bpm.resendCurrentSpendingAuth).toHaveBeenCalledWith(peer.peerId, expect.anything());
+    });
+
+    it('fails closed when pending reserve recovery has no chain client', async () => {
+      (bpm.hasPendingReserveAuth as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      negotiator = new BuyerPaymentNegotiator(
+        identity,
+        bpm as unknown as BuyerPaymentManager,
+        depositsClient,
+        null,
+        channelStore,
+        config,
+        emitter,
+      );
+
+      await expect(negotiator.recoverPendingReserveBeforeRequest(peer, conn))
+        .rejects.toThrow(/without an on-chain channels client/);
+    });
+  });
+
   describe('handle402', () => {
     it('returns a non-payment error when no depositsClient is configured in auto mode', async () => {
       negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, null, channelsClient, channelStore, config, emitter);
@@ -215,11 +255,42 @@ describe('BuyerPaymentNegotiator', () => {
       expect(result.action).toBe('return');
     });
 
+    it('skips the balance precheck and still negotiates while the chain RPC is unreachable', async () => {
+      depositsClient = createMockDepositsClient(0n);
+      negotiator = new BuyerPaymentNegotiator(
+        identity,
+        bpm as unknown as BuyerPaymentManager,
+        depositsClient,
+        channelsClient,
+        channelStore,
+        { isChainReachable: () => false },
+        emitter,
+      );
+      bufferPaymentRequired(negotiator, peer.peerId, conn);
+      (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      });
+
+      const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
+      expect(result.action).toBe('retry');
+      expect(depositsClient.getBuyerBalance).not.toHaveBeenCalled();
+      expect(bpm.authorizeSpending).toHaveBeenCalledOnce();
+    });
+
     it('continues negotiation when the advisory balance read has a transient RPC failure', async () => {
       depositsClient = {
         getBuyerBalance: vi.fn().mockRejectedValue(new Error('could not detect network')),
       } as unknown as DepositsClient;
-      negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, depositsClient, channelsClient, channelStore, config, emitter);
+      const onChainReadFailure = vi.fn();
+      negotiator = new BuyerPaymentNegotiator(
+        identity,
+        bpm as unknown as BuyerPaymentManager,
+        depositsClient,
+        channelsClient,
+        channelStore,
+        { onChainReadFailure },
+        emitter,
+      );
       bufferPaymentRequired(negotiator, peer.peerId, conn);
       (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockImplementation(async () => {
         (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
@@ -228,6 +299,7 @@ describe('BuyerPaymentNegotiator', () => {
       const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
       expect(result.action).toBe('retry');
       expect(bpm.authorizeSpending).toHaveBeenCalledOnce();
+      expect(onChainReadFailure).toHaveBeenCalledOnce();
     });
 
     it('requires a fresh AuthAck when a seller with no local session asks for payment again', async () => {
@@ -892,6 +964,16 @@ describe('BuyerPaymentNegotiator', () => {
     it('throws when there is no active session', async () => {
       (bpm.getActiveSession as ReturnType<typeof vi.fn>).mockReturnValue(null);
       await expect(negotiator.requestChannelClose(SELLER_PEER_ID, conn)).rejects.toThrow(/No active payment channel/);
+    });
+
+    it('does not transmit close when the pre-close authorization is not durable', async () => {
+      vi.spyOn(negotiator, 'sendPostResponseAuthTo')
+        .mockRejectedValue(new Error('IndexedDB persistence failed'));
+
+      await expect(negotiator.requestChannelClose(SELLER_PEER_ID, conn))
+        .rejects.toThrow('IndexedDB persistence failed');
+      expect((bpm as Record<string, unknown>).buildCloseChannelRequest).not.toHaveBeenCalled();
+      expect(conn.send).not.toHaveBeenCalled();
     });
 
     it('sends the request and retires the session once the seller confirms', async () => {

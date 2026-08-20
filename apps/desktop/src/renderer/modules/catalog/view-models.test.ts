@@ -138,6 +138,7 @@ function catalogEntry(overrides: Partial<VprModelCatalogEntry> = {}): VprModelCa
     minImageUsdPerImage: null,
     maxImageUsdPerImage: null,
     expectedSavingsPct: null,
+    hasEligibleFreeSeller: true,
     bestPeerId: null,
     ...overrides,
   };

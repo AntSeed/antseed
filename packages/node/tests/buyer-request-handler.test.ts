@@ -40,6 +40,74 @@ function makeImageRequest(): SerializedHttpRequest {
   };
 }
 
+describe('BuyerRequestHandler payments-inactive 402 handling', () => {
+  function makeChatRequest(): SerializedHttpRequest {
+    return {
+      requestId: 'req-chat-402',
+      method: 'POST',
+      path: '/v1/chat/completions',
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({ model: 'llama-3', messages: [] })),
+    };
+  }
+
+  function makeHandlerWithSeller402(body: unknown): BuyerRequestHandler {
+    const proxyMux = {
+      sendProxyRequest: vi.fn((req: SerializedHttpRequest, onResponse: (r: SerializedHttpResponse, m: { streamingStart: boolean }) => void) => {
+        onResponse({
+          requestId: req.requestId,
+          statusCode: 402,
+          headers: { 'content-type': 'application/json' },
+          body: new TextEncoder().encode(JSON.stringify(body)),
+        }, { streamingStart: false });
+      }),
+      cancelProxyRequest: vi.fn(),
+    };
+    return new BuyerRequestHandler({}, {
+      localPeerId: 'b'.repeat(40),
+      negotiator: null,
+      verificationStorage: null,
+      verificationSampler: null,
+      getConnection: vi.fn(async () => ({ state: ConnectionState.Open }) as any),
+      getMux: vi.fn(() => proxyMux as any),
+      getVerificationMux: vi.fn(() => ({} as any)),
+      registerPaymentMux: vi.fn(),
+    });
+  }
+
+  const peer: PeerInfo = {
+    peerId: 'a'.repeat(40) as PeerInfo['peerId'],
+    lastSeen: Date.now(),
+    providers: ['openai'],
+  };
+
+  it('converts a seller 402 into a buyer-fault error when payments are not running', async () => {
+    const handler = makeHandlerWithSeller402({
+      error: 'payment_required',
+      minBudgetPerRequest: '10000',
+      suggestedAmount: '1000000',
+    });
+
+    const response = await handler.sendRequest(peer, makeChatRequest());
+    expect(response.statusCode).toBe(503);
+    expect(response.headers['x-antseed-fault-attribution']).toBe('buyer');
+    const parsed = JSON.parse(new TextDecoder().decode(response.body)) as Record<string, unknown>;
+    expect(parsed.error).toBe('buyer_payments_inactive');
+    expect(parsed.peerId).toBe(peer.peerId);
+    expect(parsed.message).toMatch(/payments are not running on this buyer/);
+    expect(parsed.message).toMatch(/not a balance problem/);
+  });
+
+  it('passes a non-payment 402 through untouched', async () => {
+    const handler = makeHandlerWithSeller402({ error: 'some_other_error' });
+
+    const response = await handler.sendRequest(peer, makeChatRequest());
+    expect(response.statusCode).toBe(402);
+    const parsed = JSON.parse(new TextDecoder().decode(response.body)) as Record<string, unknown>;
+    expect(parsed.error).toBe('some_other_error');
+  });
+});
+
 describe('BuyerRequestHandler billing guards', () => {
   it('rejects paid image requests when metadata lacks a service unit billing model', async () => {
     const paymentMux = {};

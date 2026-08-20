@@ -47,6 +47,13 @@ test('GPT renders the official OpenAI blossom', () => {
   assert.match(markup, /fill="currentColor"/);
 });
 
+test('Hermes renders its portrait mark as a theme-aware mask', () => {
+  const markup = renderToStaticMarkup(BrandIcon({ name: 'hermes', hints: ['Hermes Agent'] }));
+  assert.match(markup, /hermes-agent\.svg/);
+  assert.match(markup, /background-color:currentColor/);
+  assert.match(markup, /mask-size:contain/);
+});
+
 test('connected-app tool names resolve their marks', () => {
   assert.equal(resolveBrandKey('crush', 'Crush'), 'crush');
   assert.equal(resolveBrandKey('goose', 'Goose'), 'goose');
@@ -54,6 +61,9 @@ test('connected-app tool names resolve their marks', () => {
   assert.equal(resolveBrandKey('codex', 'Codex'), 'codex');
   assert.equal(resolveBrandKey('pi', 'pi'), 'pi');
   assert.equal(resolveBrandKey('gooeypi', 'GooeyPi'), 'pi');
+  assert.equal(resolveBrandKey('hermes', 'Hermes Agent'), 'hermes');
+  assert.equal(resolveBrandKey('hermes-agent'), 'hermes');
+  assert.equal(resolveBrandKey('openai', 'Hermes 4 70B'), 'openai');
   // Standalone-word guards: no false hits inside other identifiers.
   assert.equal(resolveBrandKey('amazed-tool', 'thing'), 'generic');
   assert.equal(resolveBrandKey('pixel-model', 'thing'), 'generic');

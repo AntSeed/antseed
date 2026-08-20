@@ -30,6 +30,23 @@ function canonicalReferenceKey(value: string): string {
   return canonicalModelKey(legacyClaudeKey);
 }
 
+function retailSavingsPct(
+  entry: VprModelCatalogEntry,
+  baselineInput: number | null,
+  baselineOutput: number | null,
+): number | null {
+  if (entry.kind === 'image') return null;
+  const prices = [
+    [entry.minInputUsdPerMillion, baselineInput],
+    [entry.minOutputUsdPerMillion, baselineOutput],
+  ].filter((pair): pair is [number, number] => pair[0] !== null && pair[1] !== null);
+  if (prices.length === 0) return null;
+  const price = prices.reduce((total, pair) => total + pair[0], 0);
+  const baseline = prices.reduce((total, pair) => total + pair[1], 0);
+  if (baseline <= price || baseline <= 0) return null;
+  return Math.round((1 - price / baseline) * 100);
+}
+
 /**
  * Warm the reference-price cache from the main process. Concurrent callers
  * share one request; resolves to the map (or `null` if unavailable).
@@ -91,6 +108,7 @@ export function applyOpenRouterBaselines(
       ...entry,
       baselineInputUsdPerMillion: baselineInput,
       baselineOutputUsdPerMillion: baselineOutput,
+      expectedSavingsPct: retailSavingsPct(entry, baselineInput, baselineOutput),
     };
   });
 }

@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { Document, parseDocument } from 'yaml';
 import {
   WSL_TOOL_PROBES,
   clearWslTargetsForTool,
@@ -29,6 +30,7 @@ const ROUTED_MODEL_ALIAS_LABEL = 'AntSeed Auto';
  *  - `pi`: JSON providers map plus a settings file (pi's models.json/settings.json)
  *  - `crush`: JSON `providers` map with an openai-compat entry (Crush's crush.json)
  *  - `goose`: flat env-style YAML keys (goose's config.yaml)
+ *  - `hermes`: nested YAML provider + model selection (Hermes' config.yaml)
  *  - `zed`: JSONC settings with `language_models.openai_compatible` (Zed's settings.json)
  */
 export type OpencodeConfigPatchDef = {
@@ -95,6 +97,15 @@ export type GooseConfigPatchDef = {
   readonly installProbe?: 'goose';
 };
 
+export type HermesConfigPatchDef = {
+  readonly format: 'hermes';
+  /** Hermes user configuration (`~/.hermes/config.yaml`). */
+  readonly configPath: string;
+  /** Key under Hermes' named `providers` map. */
+  readonly providerKey: string;
+  readonly baseURL: string;
+};
+
 export type ZedConfigPatchDef = {
   readonly format: 'zed';
   readonly configPath: string;
@@ -118,6 +129,7 @@ export type ConfigPatchDef =
   | PiConfigPatchDef
   | CrushConfigPatchDef
   | GooseConfigPatchDef
+  | HermesConfigPatchDef
   | ZedConfigPatchDef
   | T3CodeConfigPatchDef;
 
@@ -192,6 +204,14 @@ export function readConfigPatch(value: unknown, profileName: string): ConfigPatc
       providerKey,
       baseURL,
       ...(raw['installProbe'] === 'goose' ? { installProbe: 'goose' as const } : {}),
+    };
+  }
+  if (format === 'hermes') {
+    return {
+      format: 'hermes',
+      configPath,
+      providerKey,
+      baseURL,
     };
   }
   if (format === 'zed') {
@@ -407,6 +427,10 @@ export function applyConfigPatch(patch: ConfigPatchDef, peerId: string, buyerPor
     applyGooseConfigPatch(patch, buyerPort, wslTargetsFile);
     return;
   }
+  if (patch.format === 'hermes') {
+    applyHermesConfigPatch(patch, buyerPort);
+    return;
+  }
   if (patch.format === 'zed') {
     applyZedConfigPatch(patch, buyerPort);
     return;
@@ -566,6 +590,9 @@ export function removeConfigPatch(patch: ConfigPatchDef, wslTargetsFile?: string
   }
   if (patch.format === 'goose') {
     return removeGooseConfigPatch(patch, wslTargetsFile);
+  }
+  if (patch.format === 'hermes') {
+    return removeHermesConfigPatch(patch);
   }
   if (patch.format === 'zed') {
     return removeZedConfigPatch(patch);
@@ -1021,6 +1048,71 @@ function removeGooseProviderFromFile(filePath: string, patch: GooseConfigPatchDe
   backupConfigFile(filePath);
   while (lines.length > 0 && lines[lines.length - 1]!.trim() === '') lines.pop();
   writeTextFile(filePath, lines.length > 0 ? `${lines.join('\n')}\n` : '');
+  return true;
+}
+
+// --- Hermes Agent (`~/.hermes/config.yaml`) ---
+
+function readHermesConfigDocument(filePath: string): Document.Parsed {
+  const document = existsSync(filePath)
+    ? parseDocument(readFileSync(filePath, 'utf8'))
+    : parseDocument('{}\n');
+  if (document.errors.length > 0) {
+    throw new Error(`Unable to parse Hermes config: ${document.errors[0]!.message}`);
+  }
+  return document;
+}
+
+function writeHermesConfigDocument(filePath: string, document: Document.Parsed): void {
+  const dir = path.dirname(filePath);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(filePath, document.toString(), 'utf8');
+}
+
+function applyHermesConfigPatch(patch: HermesConfigPatchDef, buyerPort: number): void {
+  const filePath = expandTilde(patch.configPath);
+  const document = readHermesConfigDocument(filePath);
+  backupConfigFile(filePath);
+  document.setIn(['providers', patch.providerKey], {
+    name: 'AntSeed',
+    api: patch.baseURL.replace('{buyerPort}', String(buyerPort)),
+    transport: 'chat_completions',
+    extra_headers: {
+      originator: 'hermes',
+    },
+    default_model: ROUTED_MODEL_ALIAS,
+    models: {
+      [ROUTED_MODEL_ALIAS]: {
+        context_length: ANTSEED_MODEL_CONTEXT_WINDOW,
+      },
+    },
+  });
+  document.setIn(['model', 'provider'], patch.providerKey);
+  document.setIn(['model', 'default'], ROUTED_MODEL_ALIAS);
+  document.setIn(['model', 'base_url'], '');
+  document.setIn(['model', 'api_mode'], 'chat_completions');
+  writeHermesConfigDocument(filePath, document);
+}
+
+function removeHermesConfigPatch(patch: HermesConfigPatchDef): boolean {
+  const filePath = expandTilde(patch.configPath);
+  if (!existsSync(filePath)) return false;
+  const document = readHermesConfigDocument(filePath);
+  const providerApi = document.getIn(['providers', patch.providerKey, 'api']);
+  if (typeof providerApi !== 'string' || !/^https?:\/\/(localhost|127\.0\.0\.1):\d+\/v1\/?$/.test(providerApi)) {
+    return false;
+  }
+
+  let changed = document.deleteIn(['providers', patch.providerKey]);
+  if (document.getIn(['model', 'provider']) === patch.providerKey) {
+    changed = document.deleteIn(['model', 'provider']) || changed;
+    changed = document.deleteIn(['model', 'default']) || changed;
+    changed = document.deleteIn(['model', 'base_url']) || changed;
+    changed = document.deleteIn(['model', 'api_mode']) || changed;
+  }
+  if (!changed) return false;
+  backupConfigFile(filePath);
+  writeHermesConfigDocument(filePath, document);
   return true;
 }
 

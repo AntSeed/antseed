@@ -308,6 +308,35 @@ function normalizeSellerHealthCheck(
   };
 }
 
+function cloneSellerGasCheck(
+  value: AntseedConfig['seller']['gasCheck'],
+): AntseedConfig['seller']['gasCheck'] {
+  if (!value) return undefined;
+  return {
+    ...(value.enabled !== undefined ? { enabled: value.enabled } : {}),
+    ...(value.intervalMs !== undefined ? { intervalMs: value.intervalMs } : {}),
+    ...(value.minBalanceEth !== undefined ? { minBalanceEth: value.minBalanceEth } : {}),
+  };
+}
+
+function normalizeSellerGasCheck(
+  value: unknown,
+  fallback?: AntseedConfig['seller']['gasCheck'],
+): { gasCheck: NonNullable<AntseedConfig['seller']['gasCheck']> } | Record<string, never> {
+  if (!isRecord(value)) {
+    const cloned = cloneSellerGasCheck(fallback);
+    return cloned ? { gasCheck: cloned } : {};
+  }
+  // Keep user-supplied values (even malformed) so validateConfig reports them.
+  return {
+    gasCheck: {
+      ...(value['enabled'] !== undefined ? { enabled: value['enabled'] as boolean } : {}),
+      ...(value['intervalMs'] !== undefined ? { intervalMs: toFiniteOrNaN(value['intervalMs']) } : {}),
+      ...(value['minBalanceEth'] !== undefined ? { minBalanceEth: toFiniteOrNaN(value['minBalanceEth']) } : {}),
+    },
+  };
+}
+
 function mergeSellerConfig(
   defaults: AntseedConfig['seller'],
   value: unknown
@@ -322,6 +351,7 @@ function mergeSellerConfig(
       ...(defaults.agentDir ? { agentDir: defaults.agentDir } : {}),
       ...(normalizeVerifications(undefined, defaults.verifications)),
       ...(normalizeSellerHealthCheck(undefined, defaults.healthCheck)),
+      ...(normalizeSellerGasCheck(undefined, defaults.gasCheck)),
     };
   }
 
@@ -344,6 +374,7 @@ function mergeSellerConfig(
         : {}),
     ...(normalizeAgentDir(value['agentDir'], defaults.agentDir)),
     ...(normalizeSellerHealthCheck(value['healthCheck'], defaults.healthCheck)),
+    ...(normalizeSellerGasCheck(value['gasCheck'], defaults.gasCheck)),
   };
 }
 

@@ -345,6 +345,25 @@ export class BuyerRequestHandler {
 
     const response = await executeRequest();
 
+    // A seller demanded payment while this buyer runs no payment machinery
+    // (payments disabled or unconfigured). Forwarding the raw seller 402 would
+    // tell the user to add credits, but no amount of credits helps — the buyer
+    // cannot sign an authorization at all. Return a buyer-fault error naming
+    // the real cause. Clients that manage payment themselves (external
+    // spending auth) and control-plane calls still get the raw 402.
+    if (
+      response.statusCode === 402
+      && !negotiator
+      && !options?.controlPlane
+      && !externalSpendingAuth
+      && isPaymentRequired402(response)
+    ) {
+      debugWarn(
+        `[BuyerRequest] Seller ${peer.peerId.slice(0, 12)}... requires payment but payments are not running on this buyer — returning buyer-fault error`,
+      );
+      return buyerPaymentsInactiveResponse(response, peer.peerId);
+    }
+
     if (response.statusCode === 402 && negotiator && !externalSpendingAuth) {
       const result = await negotiator.handle402(response, peer, conn, req);
       if (result.action === 'return') return result.response;
@@ -584,6 +603,47 @@ export function stripPeerControlledResponseHeaders(
   return Object.keys(headers).length === Object.keys(response.headers).length
     ? response
     : { ...response, headers };
+}
+
+/** True when a 402 body carries the seller's payment_required contract (flat or wrapped). */
+function isPaymentRequired402(response: SerializedHttpResponse): boolean {
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(response.body)) as Record<string, unknown>;
+    if (parsed.error === 'payment_required') return true;
+    return typeof parsed.error === 'object' && parsed.error !== null
+      && (parsed.error as Record<string, unknown>).type === 'payment_required';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Buyer-fault replacement for a seller 402 when payments are not running on
+ * this buyer. Carries the fault-attribution header so downstream adapters
+ * shape it per protocol, routers stop failing over, and UIs report a
+ * buyer-side problem instead of asking the user to add credits.
+ */
+function buyerPaymentsInactiveResponse(
+  response: SerializedHttpResponse,
+  peerId: PeerId,
+): SerializedHttpResponse {
+  return {
+    ...response,
+    statusCode: 503,
+    headers: {
+      ...response.headers,
+      'content-type': 'application/json',
+      [ANTSEED_FAULT_ATTRIBUTION_HEADER]: 'buyer',
+    },
+    body: new TextEncoder().encode(JSON.stringify({
+      error: 'buyer_payments_inactive',
+      reason: 'payments_not_running',
+      peerId,
+      message: 'This seller requires payment, but payments are not running on this buyer, '
+        + 'so the request could not be authorized. This is not a balance problem — '
+        + 'enable payments on the buyer (check its startup logs and chain settings), or use a free peer.',
+    })),
+  };
 }
 
 function shouldExpectResponseAuth(

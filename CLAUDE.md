@@ -89,6 +89,13 @@ pnpm run typecheck    # Type-check all packages
 pnpm run clean        # Remove all dist/ directories
 ```
 
+## Nix
+`flake.nix` provides a dev shell (`nix develop`) and a buildable CLI package:
+`nix build .#` / `nix run .# -- <args>` produces/runs `antseed` from
+`apps/cli` (esbuild bundle + pinned native prebuilds for better-sqlite3,
+node-datachannel, keytar). The prebuild versions/hashes in `flake.nix` must be
+updated when those dependencies change in `pnpm-lock.yaml`.
+
 ## Build Order
 Build must respect: node -> provider-core/router-core -> plugins -> dashboard -> cli -> desktop.
 The root build script handles this via tiered execution.

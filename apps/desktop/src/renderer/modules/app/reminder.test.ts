@@ -47,6 +47,7 @@ function catalogEntry(overrides: Partial<VprModelCatalogEntry> = {}): VprModelCa
     minCachedInputUsdPerMillion: null,
     maxCachedInputUsdPerMillion: null,
     expectedSavingsPct: null,
+    hasEligibleFreeSeller: true,
     bestPeerId: 'peer',
     ...overrides,
   };

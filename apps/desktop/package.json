@@ -1,7 +1,7 @@
 {
   "name": "@antseed/desktop",
   "productName": "AntSeed VPR",
-  "version": "0.2.21",
+  "version": "0.2.27",
   "private": true,
   "description": "Desktop app for AntSeed",
   "author": "AntSeed <hello@antseed.com>",
@@ -51,7 +51,8 @@
     "electron-updater": "^6.8.3",
     "fflate": "0.8.2",
     "node-datachannel": "^0.7.0",
-    "officeparser": "6.1.0"
+    "officeparser": "6.1.0",
+    "yaml": "^2.8.2"
   },
   "devDependencies": {
     "@antseed/ui": "workspace:*",

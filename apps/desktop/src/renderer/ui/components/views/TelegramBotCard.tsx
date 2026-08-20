@@ -131,7 +131,19 @@ export function TelegramBotCard() {
         onClose={() => { setModalOpen(false); setError(null); setChangingBot(false); }}
         size="sm"
         title="Telegram Bot"
-        subtitle="Your VPR chat, from any device"
+        subtitle={(
+          <span className={styles.modalAppSubtitle}>
+            Connect a private Telegram bot to chat with your AntSeed agent from Telegram.
+            <button
+              type="button"
+              className={styles.settingWebsiteLink}
+              onClick={() => void window.antseedDesktop?.openExternalUrl?.('https://telegram.org/apps')}
+            >
+              Website / download
+              <HugeiconsIcon icon={ArrowUpRight01Icon} size={12} strokeWidth={2} />
+            </button>
+          </span>
+        )}
         className={styles.vprModal}
         bodyClassName={styles.settingsBody}
       >

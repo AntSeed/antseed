@@ -124,13 +124,13 @@ test('catalog retains cached-input pricing from a non-representative unified rou
   assert.equal(entry.maxCachedInputUsdPerMillion, 0.6);
 });
 
-test('expectedSavingsPct is 50 for totals 10 and 20', () => {
+test('expectedSavingsPct stays unset until a retail baseline is applied', () => {
   const [entry] = projectRowsToVprModelCatalog([
     discoverRow({ peerId: 'p1', inputUsdPerMillion: 4, outputUsdPerMillion: 6 }),
     discoverRow({ peerId: 'p2', inputUsdPerMillion: 8, outputUsdPerMillion: 12 }),
   ]);
 
-  assert.equal(entry.expectedSavingsPct, 50);
+  assert.equal(entry.expectedSavingsPct, null);
 });
 
 test('bestPeerId picks the lowest priced peer', () => {
@@ -213,9 +213,123 @@ test('selectDefaultVprModel skips a free model without a routable free peer', ()
       outputUsdPerMillion: 0,
     }),
   ]);
-  const isFreeEntryRoutable = (entry: { serviceId: string }): boolean => entry.serviceId === 'open-free';
+  const freeRouteReputation = (entry: { serviceId: string }): number | null =>
+    (entry.serviceId === 'open-free' ? 75 : null);
 
-  assert.equal(selectDefaultVprModel(catalog, null, isFreeEntryRoutable)?.serviceId, 'open-free');
+  assert.equal(selectDefaultVprModel(catalog, null, freeRouteReputation)?.serviceId, 'open-free');
+});
+
+test('catalog pricing ignores sellers auto-routing would not pick', () => {
+  // Hana-style case: an untrusted seller offers the model for $0 while the
+  // trusted sellers charge — the entry must NOT read as free, because a send
+  // would really route (and bill) through a trusted paid seller.
+  const [entry] = projectRowsToVprModelCatalog(
+    [
+      discoverRow({ peerId: 'untrusted-free', inputUsdPerMillion: 0, outputUsdPerMillion: 0 }),
+      discoverRow({ peerId: 'trusted-paid', inputUsdPerMillion: 0.135, outputUsdPerMillion: 0.54 }),
+    ],
+    (row) => row.peerId !== 'untrusted-free',
+  );
+
+  assert.equal(entry.minInputUsdPerMillion, 0.135);
+  assert.equal(entry.minOutputUsdPerMillion, 0.54);
+  assert.equal(entry.peerCount, 2);
+});
+
+test('catalog pricing falls back to all sellers when none pass the gate', () => {
+  const [entry] = projectRowsToVprModelCatalog(
+    [discoverRow({ peerId: 'only-untrusted', inputUsdPerMillion: 0, outputUsdPerMillion: 0 })],
+    () => false,
+  );
+
+  assert.equal(entry.minInputUsdPerMillion, 0);
+  assert.equal(entry.minOutputUsdPerMillion, 0);
+});
+
+test('selectDefaultVprModel picks the free model whose seller has the highest trust score', () => {
+  const catalog = projectRowsToVprModelCatalog([
+    // More peers = sorted first in the catalog, but its free seller is barely trusted.
+    discoverRow({
+      provider: 'openai',
+      serviceId: 'barely-free',
+      serviceLabel: 'Barely Free',
+      peerId: 'p1',
+      inputUsdPerMillion: 0,
+      outputUsdPerMillion: 0,
+    }),
+    discoverRow({ provider: 'openai', serviceId: 'barely-free', peerId: 'p2' }),
+    discoverRow({
+      provider: 'openai',
+      serviceId: 'proven-free',
+      serviceLabel: 'Proven Free',
+      peerId: 'p3',
+      inputUsdPerMillion: 0,
+      outputUsdPerMillion: 0,
+    }),
+  ]);
+  const freeRouteReputation = (entry: { serviceId: string }): number | null => {
+    if (entry.serviceId === 'barely-free') return 61;
+    if (entry.serviceId === 'proven-free') return 94;
+    return null;
+  };
+
+  assert.equal(selectDefaultVprModel(catalog, null, freeRouteReputation)?.serviceId, 'proven-free');
+});
+
+test('selectDefaultVprModel prefers a priority-list free model over a higher-trust unknown one', () => {
+  const catalog = projectRowsToVprModelCatalog([
+    discoverRow({
+      provider: 'openai',
+      serviceId: 'obscure-free',
+      serviceLabel: 'Obscure Free',
+      peerId: 'p1',
+      inputUsdPerMillion: 0,
+      outputUsdPerMillion: 0,
+    }),
+    discoverRow({
+      provider: 'openai',
+      serviceId: 'MiniMax-M3',
+      serviceLabel: 'MiniMax M3',
+      peerId: 'p2',
+      inputUsdPerMillion: 0,
+      outputUsdPerMillion: 0,
+    }),
+  ]);
+  const freeRouteReputation = (entry: { serviceId: string }): number | null => {
+    if (entry.serviceId === 'obscure-free') return 99;
+    if (entry.serviceId === 'MiniMax-M3') return 70;
+    return null;
+  };
+
+  assert.equal(selectDefaultVprModel(catalog, null, freeRouteReputation)?.serviceId, 'MiniMax-M3');
+});
+
+test('selectDefaultVprModel keeps a model with a free route even when a paid variant raises entry prices', () => {
+  // A second seller's paid cached-input price must not mask the model's
+  // genuinely free route — candidacy is judged per route by the callback.
+  const catalog = projectRowsToVprModelCatalog([
+    discoverRow({
+      provider: 'openai',
+      serviceId: 'mixed-model',
+      serviceLabel: 'Mixed Model',
+      peerId: 'free-seller',
+      inputUsdPerMillion: 0,
+      outputUsdPerMillion: 0,
+    }),
+    discoverRow({
+      provider: 'openai',
+      serviceId: 'mixed-model',
+      peerId: 'paid-seller',
+      inputUsdPerMillion: 1,
+      outputUsdPerMillion: 2,
+      cachedInputUsdPerMillion: 0.1,
+    }),
+  ]);
+
+  assert.equal(
+    selectDefaultVprModel(catalog, null, () => 80)?.serviceId,
+    'mixed-model',
+  );
 });
 
 test('selectDefaultVprModel falls back to the popular pick when no free model is routable', () => {
@@ -232,7 +346,7 @@ test('selectDefaultVprModel falls back to the popular pick when no free model is
     }),
   ]);
 
-  assert.equal(selectDefaultVprModel(catalog, null, () => false)?.serviceId, 'gpt-5.6');
+  assert.equal(selectDefaultVprModel(catalog, null, () => null)?.serviceId, 'gpt-5.6');
 });
 
 test('findCatalogEntry returns null when the service is absent', () => {

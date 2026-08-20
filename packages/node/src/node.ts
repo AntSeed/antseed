@@ -92,6 +92,7 @@ import { debugLog, debugWarn } from "./utils/debug.js";
 import { parsePublicAddress } from "./discovery/public-address.js";
 import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-payment-manager.js";
 import { BuyerPaymentNegotiator } from "./payments/buyer-payment-negotiator.js";
+import { RpcHealthMonitor, type RpcHealthStatus } from "./payments/rpc-health.js";
 import { SellerAddressResolver } from "./discovery/seller-address-resolver.js";
 import { Contract as EthersContract } from "ethers";
 import { SellerPaymentManager, type SellerPaymentConfig } from "./payments/seller-payment-manager.js";
@@ -328,6 +329,8 @@ export class AntseedNode extends EventEmitter {
   private _router: Router | null = null;
   private _started = false;
   private _announcer: PeerAnnouncer | null = null;
+  /** Set while advertising is paused (e.g. seller wallet out of gas). */
+  private _advertisingPausedReason: string | null = null;
   private _peerLookup: PeerLookup | null = null;
   private _muxes = new Map<PeerId, ProxyMux>();
   private _decoders = new Map<PeerId, FrameDecoder>();
@@ -356,6 +359,8 @@ export class AntseedNode extends EventEmitter {
   private _buyerPaymentManager: BuyerPaymentManager | null = null;
   /** Buyer-side payment negotiation (402 handling, SpendingAuth, cost tracking). */
   private _buyerNegotiator: BuyerPaymentNegotiator | null = null;
+  /** Background chain-RPC reachability monitor (created when payments are configured). */
+  private _rpcHealth: RpcHealthMonitor | null = null;
   /** Buyer-side request execution (streaming, timeouts, 402 retry). */
   private _buyerHandler: BuyerRequestHandler | null = null;
   /** Seller-side payment manager (initialized when seller has payment config). */
@@ -412,6 +417,31 @@ export class AntseedNode extends EventEmitter {
     await this._announcer?.refreshMetadata();
   }
 
+  /**
+   * Stop announcing this seller to the DHT and re-sign the metadata snapshot
+   * with zero providers, so buyers stop discovering a peer that cannot
+   * actually serve (e.g. its wallet has no ETH to fund settlement). The
+   * `/metadata` endpoint reflects the pause immediately; already-published
+   * DHT entries age out on the buyer's staleness cutoff.
+   */
+  async pauseAdvertising(reason: string): Promise<void> {
+    this._advertisingPausedReason = reason;
+    this._announcer?.stopPeriodicAnnounce();
+    await this._announcer?.refreshMetadata();
+  }
+
+  /** Resume DHT announcements after `pauseAdvertising` (announces immediately). */
+  resumeAdvertising(): void {
+    if (this._advertisingPausedReason === null) return;
+    this._advertisingPausedReason = null;
+    this._announcer?.startPeriodicAnnounce();
+  }
+
+  /** Why advertising is currently paused, or null when advertising normally. */
+  get advertisingPausedReason(): string | null {
+    return this._advertisingPausedReason;
+  }
+
   /** Register an embedded verifier prover (serves reserved attestation requests). */
   registerProver(prover: Prover): void {
     this._provers.push(prover);
@@ -433,6 +463,28 @@ export class AntseedNode extends EventEmitter {
   /** Buyer-side payment negotiator (null if payments not configured for buyer). */
   get buyerNegotiator(): BuyerPaymentNegotiator | null {
     return this._buyerNegotiator;
+  }
+
+  /**
+   * Live payments status for control planes and UIs. Payments stay enabled
+   * while the chain RPC is unreachable — buyer authorization is signed
+   * off-chain — so `rpc.state` is a health signal, not an on/off switch.
+   */
+  getPaymentsStatus(): {
+    configured: boolean;
+    buyerActive: boolean;
+    sellerActive: boolean;
+    chainId: number | null;
+    rpc: RpcHealthStatus | null;
+  } {
+    const payments = this._config.payments;
+    return {
+      configured: payments?.enabled === true,
+      buyerActive: this._buyerNegotiator !== null,
+      sellerActive: this._sellerPaymentManager !== null,
+      chainId: payments?.chainId ?? null,
+      rpc: this._rpcHealth?.status() ?? null,
+    };
   }
 
   /** Actual DHT port after binding (0 means not started). */
@@ -535,6 +587,10 @@ export class AntseedNode extends EventEmitter {
     // End all active buyer payment sessions before shutdown
     if (this._buyerNegotiator) {
       this._buyerNegotiator.cleanup();
+    }
+    if (this._rpcHealth) {
+      this._rpcHealth.stop();
+      this._rpcHealth = null;
     }
     if (this._sellerFreeUsageManager) {
       await this._sellerFreeUsageManager.flushAllPendingRecords();
@@ -960,11 +1016,13 @@ export class AntseedNode extends EventEmitter {
     const ON_CHAIN_STATS_TTL_MS = 60_000;
     const nowMs = Date.now();
     const queue = peers.slice();
+    const peersWithCompleteStats = new Set<PeerInfo>();
     const verifyOne = async (p: PeerInfo): Promise<void> => {
       if (
         typeof p.onChainStatsFetchedAt === 'number'
         && nowMs - p.onChainStatsFetchedAt < ON_CHAIN_STATS_TTL_MS
       ) {
+        peersWithCompleteStats.add(p);
         return;
       }
       try {
@@ -973,10 +1031,13 @@ export class AntseedNode extends EventEmitter {
           : peerIdToAddress(p.peerId);
         const [agentId, stake, stakedAt] = await Promise.all([
           stakingClient.getAgentId(evmAddress),
-          stakingClient.getStake(evmAddress).catch(() => 0n),
+          stakingClient.getStake(evmAddress).catch(() => null),
           stakingClient.getStakedAt(evmAddress).catch(() => null),
         ]);
         const stats = await channelsClient.getAgentStats(agentId);
+        if (stake === null || stakedAt === null) {
+          return;
+        }
         p.onChainAgentId = agentId;
         p.onChainStakeUsdcMicros = stake <= BigInt(Number.MAX_SAFE_INTEGER)
           ? Number(stake)
@@ -997,9 +1058,10 @@ export class AntseedNode extends EventEmitter {
           p.onChainStakedAtSec = stakedAt;
         }
         p.onChainStatsFetchedAt = Date.now();
+        peersWithCompleteStats.add(p);
       } catch {
-        // Per-peer verification failure — keep whatever seller metadata claimed
-        // (channelCount/ghostCount); volume/lastSettled remain undefined.
+        // Per-peer verification failure — preserve the previous complete
+        // snapshot, or leave a newly discovered peer unenriched.
       }
     };
     const workers: Array<Promise<void>> = [];
@@ -1014,15 +1076,16 @@ export class AntseedNode extends EventEmitter {
     }
     await Promise.all(workers);
 
-    this._applyTrustAndSybil(peers);
+    this._applyTrustAndSybil(peers, peersWithCompleteStats);
   }
 
-  private _applyTrustAndSybil(peers: PeerInfo[]): void {
+  private _applyTrustAndSybil(peers: PeerInfo[], peersToUpdate?: ReadonlySet<PeerInfo>): void {
     if (peers.length === 0) return;
     const ctx: SybilContext | undefined = peers.length >= 2
       ? buildSybilContext(peers)
       : undefined;
     for (const p of peers) {
+      if (peersToUpdate && !peersToUpdate.has(p)) continue;
       const trust = computeOnChainTrust(p);
       if (trust === null) continue;
       p.onChainTrustScore = trust;
@@ -1561,7 +1624,7 @@ export class AntseedNode extends EventEmitter {
           ...(p.serviceUnitBillingModels ? { serviceUnitBillingModels: { ...p.serviceUnitBillingModels } } : {}),
           ...(p.serviceCapabilities ? { serviceCapabilities: { ...p.serviceCapabilities } } : {}),
           maxConcurrency: p.maxConcurrency,
-          isAvailable: () => p.healthCheckAvailable !== false,
+          isAvailable: () => this._advertisingPausedReason === null && p.healthCheckAvailable !== false,
           pricing: {
             defaults: {
               inputUsdPerMillion: p.pricing.defaults.inputUsdPerMillion,
@@ -1708,7 +1771,10 @@ export class AntseedNode extends EventEmitter {
           this._depositsClient,
           this._channelsClient,
           this._channelStore,
-          {},
+          {
+            isChainReachable: () => this._rpcHealth?.reachable ?? true,
+            onChainReadFailure: () => this._rpcHealth?.reportFailure(),
+          },
           this,
           this._sellerAddressResolver ?? undefined,
           this._buyerFreeUsageManager,
@@ -1870,6 +1936,20 @@ export class AntseedNode extends EventEmitter {
       } catch (err) {
         debugWarn(`[Node] ChannelStore unavailable: ${err instanceof Error ? err.message : err}`);
       }
+    }
+
+    // Background RPC reachability: a down RPC at startup must not disable
+    // payments for the session — signing is off-chain. Call sites consult
+    // `reachable` to skip best-effort on-chain reads until the first success.
+    if (payments.rpcUrl && !this._rpcHealth) {
+      this._rpcHealth = new RpcHealthMonitor({
+        rpcUrls: [payments.rpcUrl, ...(payments.fallbackRpcUrls ?? [])],
+      });
+      this._rpcHealth.onReady(() => {
+        debugLog("[Node] Chain RPC reachable — on-chain reads enabled");
+        this.emit("payments:rpc-ready");
+      });
+      this._rpcHealth.start();
     }
 
     // Initialize DepositsClient
