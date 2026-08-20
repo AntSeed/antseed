@@ -105,7 +105,7 @@ contract AntseedBaseCheckpointOracleTest is Test {
         bytes32 cohortHash = keccak256("checkpoint-integration-cohort");
         AntseedWashTradingRegistry.ClosedCycleJournal memory sellerJournal = AntseedWashTradingRegistry
             .ClosedCycleJournal({
-            predicateVersion: 2,
+            predicateVersion: 3,
             claimId: keccak256(
                 abi.encode(
                     block.chainid,
@@ -127,7 +127,6 @@ contract AntseedBaseCheckpointOracleTest is Test {
             closureKind: 1,
             closurePathCount: 1,
             penaltyBps: 9_000,
-            penalizedBuyers: new address[](0),
             blockRefs: blockRefs
         });
         bytes memory sellerJournalData = abi.encode(sellerJournal);

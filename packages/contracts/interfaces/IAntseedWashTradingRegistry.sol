@@ -12,6 +12,8 @@ interface IAntseedWashTradingRegistry {
 
     function sellerPenaltyBps(address seller) external view returns (uint16);
     function buyerPenaltyBps(address buyer) external view returns (uint16);
+    function sellerProofTypeMask(address seller) external view returns (uint8);
+    function isSellerP0(address seller) external view returns (bool);
     function isSellerPenalized(address seller) external view returns (bool);
     function isBuyerPenalized(address buyer) external view returns (bool);
 }

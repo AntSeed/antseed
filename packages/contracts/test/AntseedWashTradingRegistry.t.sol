@@ -59,7 +59,7 @@ contract AntseedWashTradingRegistryTest is Test {
         policy = new AntseedWashTradingPointsPolicy(address(registry));
     }
 
-    function test_closedCycleAppliesSellerAndCaptiveBuyerPenalties() public {
+    function test_closedCycleAppliesSellerOnlyP0Penalty() public {
         AntseedWashTradingRegistry.ClosedCycleJournal memory journal = _closed();
         bytes memory data = abi.encode(journal);
         _allow(journal.blockRefs);
@@ -67,16 +67,17 @@ contract AntseedWashTradingRegistryTest is Test {
 
         assertTrue(registry.submitClosedCycleProof(hex"", data));
         assertEq(registry.sellerPenaltyBps(SELLER_A), 9_000);
-        assertEq(registry.buyerPenaltyBps(BUYER_A), 9_000);
+        assertEq(registry.buyerPenaltyBps(BUYER_A), 0);
         assertTrue(registry.isSellerPenalized(SELLER_A));
-        assertTrue(registry.isBuyerPenalized(BUYER_A));
+        assertTrue(registry.isSellerP0(SELLER_A));
+        assertEq(registry.sellerProofTypeMask(SELLER_A), 1);
 
         (uint16 sellerPenalty, uint16 buyerPenalty) = policy.penaltyBps(bytes32(0), BUYER_A, SELLER_A, 123);
         assertEq(sellerPenalty, 9_000);
-        assertEq(buyerPenalty, 9_000);
+        assertEq(buyerPenalty, 0);
     }
 
-    function test_reciprocalUpdatesBothSellersAndOnlyProvenBuyer() public {
+    function test_reciprocalMarksBothSellersP0WithoutBuyerPenalties() public {
         AntseedWashTradingRegistry.ReciprocalJournal memory journal = _reciprocal();
         bytes memory data = abi.encode(journal);
         _allow(journal.blockRefs);
@@ -86,8 +87,30 @@ contract AntseedWashTradingRegistryTest is Test {
         assertTrue(appliedB);
         assertEq(registry.sellerPenaltyBps(SELLER_A), 9_000);
         assertEq(registry.sellerPenaltyBps(SELLER_B), 9_000);
-        assertEq(registry.buyerPenaltyBps(journal.addressA), 9_000);
+        assertTrue(registry.isSellerP0(journal.addressA));
+        assertTrue(registry.isSellerP0(journal.addressB));
+        assertEq(registry.sellerProofTypeMask(journal.addressA), 2);
+        assertEq(registry.sellerProofTypeMask(journal.addressB), 2);
+        assertEq(registry.buyerPenaltyBps(journal.addressA), 0);
         assertEq(registry.buyerPenaltyBps(journal.addressB), 0);
+    }
+
+    function test_reciprocalRequiresEightyPercentVolumeReciprocity() public {
+        AntseedWashTradingRegistry.ReciprocalJournal memory journal = _reciprocal();
+        journal.volumeAToBRaw = 12_500_000;
+        journal.volumeBToARaw = 10_000_000;
+        bytes memory data = abi.encode(journal);
+        _allow(journal.blockRefs);
+        verifier.expect(RECIPROCAL_IMAGE_ID, sha256(data));
+        registry.submitReciprocalProof(hex"", data);
+
+        AntseedWashTradingRegistry.ReciprocalJournal memory below = _reciprocal();
+        below.volumeAToBRaw = 12_500_001;
+        below.volumeBToARaw = 10_000_000;
+        bytes memory belowData = abi.encode(below);
+        verifier.expect(RECIPROCAL_IMAGE_ID, sha256(belowData));
+        vm.expectRevert(AntseedWashTradingRegistry.InvalidProofJournal.selector);
+        registry.submitReciprocalProof(hex"", belowData);
     }
 
     function test_coordinatedControlAcceptsExactlyFiftyPercent() public {
@@ -98,6 +121,8 @@ contract AntseedWashTradingRegistryTest is Test {
         _allow(journal.blockRefs);
         verifier.expect(COORDINATED_IMAGE_ID, sha256(data));
         assertTrue(registry.submitCoordinatedControlProof(hex"", data));
+        assertFalse(registry.isSellerP0(SELLER_A));
+        assertEq(registry.sellerProofTypeMask(SELLER_A), 4);
     }
 
     function test_closedCycleAllowsSelfFundedSeller() public {
@@ -132,12 +157,30 @@ contract AntseedWashTradingRegistryTest is Test {
         AntseedWashTradingRegistry.CoordinatedControlJournal memory second = _coordinated();
         bytes memory secondData = abi.encode(second);
         verifier.expect(COORDINATED_IMAGE_ID, sha256(secondData));
-        assertFalse(registry.submitCoordinatedControlProof(hex"", secondData));
+        assertTrue(registry.submitCoordinatedControlProof(hex"", secondData));
         assertEq(registry.sellerPenaltyBps(SELLER_A), 9_000);
         assertEq(registry.buyerPenaltyBps(BUYER_A), 9_000);
+        assertTrue(registry.isSellerP0(SELLER_A));
+        assertEq(registry.sellerProofTypeMask(SELLER_A), 5);
     }
 
-    function test_rejectsWrongClaimIdPeriodDuplicateBuyersAndWrongImage() public {
+    function test_p0FlagRecordsAfterPriorP1Penalty() public {
+        AntseedWashTradingRegistry.CoordinatedControlJournal memory p1 = _coordinated();
+        bytes memory p1Data = abi.encode(p1);
+        _allow(p1.blockRefs);
+        verifier.expect(COORDINATED_IMAGE_ID, sha256(p1Data));
+        assertTrue(registry.submitCoordinatedControlProof(hex"", p1Data));
+        assertFalse(registry.isSellerP0(SELLER_A));
+
+        AntseedWashTradingRegistry.ClosedCycleJournal memory p0 = _closed();
+        bytes memory p0Data = abi.encode(p0);
+        verifier.expect(CLOSED_IMAGE_ID, sha256(p0Data));
+        assertFalse(registry.submitClosedCycleProof(hex"", p0Data));
+        assertTrue(registry.isSellerP0(SELLER_A));
+        assertEq(registry.sellerProofTypeMask(SELLER_A), 5);
+    }
+
+    function test_rejectsWrongClaimIdPeriodAndWrongImage() public {
         AntseedWashTradingRegistry.ClosedCycleJournal memory journal = _closed();
         bytes memory data = abi.encode(journal);
         verifier.expect(RECIPROCAL_IMAGE_ID, sha256(data));
@@ -154,15 +197,6 @@ contract AntseedWashTradingRegistryTest is Test {
         journal.periodEndBlockExclusive -= 1;
         journal.claimId =
             _cohortClaimId(1, journal.seller, journal.funder, journal.cohortHash, journal.periodEndBlockExclusive);
-        data = abi.encode(journal);
-        verifier.expect(CLOSED_IMAGE_ID, sha256(data));
-        vm.expectRevert(AntseedWashTradingRegistry.InvalidProofJournal.selector);
-        registry.submitClosedCycleProof(hex"", data);
-
-        journal = _closed();
-        journal.penalizedBuyers = new address[](2);
-        journal.penalizedBuyers[0] = BUYER_A;
-        journal.penalizedBuyers[1] = BUYER_A;
         data = abi.encode(journal);
         verifier.expect(CLOSED_IMAGE_ID, sha256(data));
         vm.expectRevert(AntseedWashTradingRegistry.InvalidProofJournal.selector);
@@ -193,11 +227,9 @@ contract AntseedWashTradingRegistryTest is Test {
     }
 
     function _closed() internal view returns (AntseedWashTradingRegistry.ClosedCycleJournal memory journal) {
-        address[] memory buyers = new address[](1);
-        buyers[0] = BUYER_A;
         bytes32 cohortHash = keccak256(abi.encode(_cohortBuyers()));
         journal = AntseedWashTradingRegistry.ClosedCycleJournal({
-            predicateVersion: 2,
+            predicateVersion: 3,
             claimId: _cohortClaimId(1, SELLER_A, FUNDER, cohortHash, 49_936_173),
             periodStartBlock: 44_471_575,
             periodEndBlockExclusive: 49_936_173,
@@ -209,7 +241,6 @@ contract AntseedWashTradingRegistryTest is Test {
             closureKind: 1,
             closurePathCount: 1,
             penaltyBps: 9_000,
-            penalizedBuyers: buyers,
             blockRefs: _blocks()
         });
     }
@@ -217,10 +248,8 @@ contract AntseedWashTradingRegistryTest is Test {
     function _reciprocal() internal view returns (AntseedWashTradingRegistry.ReciprocalJournal memory journal) {
         address addressA = SELLER_A < SELLER_B ? SELLER_A : SELLER_B;
         address addressB = SELLER_A < SELLER_B ? SELLER_B : SELLER_A;
-        address[] memory buyers = new address[](1);
-        buyers[0] = addressA;
         journal = AntseedWashTradingRegistry.ReciprocalJournal({
-            predicateVersion: 2,
+            predicateVersion: 3,
             claimId: keccak256(
                 abi.encode(block.chainid, uint8(2), uint64(44_471_575), uint64(49_936_173), addressA, addressB)
             ),
@@ -233,7 +262,6 @@ contract AntseedWashTradingRegistryTest is Test {
             volumeAToBRaw: 10_000_000,
             volumeBToARaw: 10_000_000,
             penaltyBps: 9_000,
-            penalizedBuyers: buyers,
             blockRefs: _blocks()
         });
     }
@@ -247,7 +275,7 @@ contract AntseedWashTradingRegistryTest is Test {
         buyers[0] = BUYER_A;
         bytes32 cohortHash = keccak256(abi.encode(_cohortBuyers()));
         journal = AntseedWashTradingRegistry.CoordinatedControlJournal({
-            predicateVersion: 2,
+            predicateVersion: 3,
             claimId: _coordinatedClaimId(SELLER_A, FUNDER_COHORT_HASH, cohortHash, 49_936_173),
             periodStartBlock: 44_471_575,
             periodEndBlockExclusive: 49_936_173,

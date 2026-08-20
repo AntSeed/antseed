@@ -24,8 +24,8 @@ const ALLOWED_STATE_SELECTORS = new Set(
   STATE_ORACLE_INTERFACE.fragments.map((fragment) => STATE_ORACLE_INTERFACE.getFunction(fragment.name).selector.toLowerCase()),
 );
 const BLOCK_REFS = "tuple(uint64 number,bytes32 blockHash)[]";
-const CLOSED_CYCLE_JOURNAL = `tuple(uint32 predicateVersion,bytes32 claimId,uint64 periodStartBlock,uint64 periodEndBlockExclusive,address seller,address funder,bytes32 cohortHash,uint32 cohortCount,uint128 qualifiedVolumeRaw,uint8 closureKind,uint32 closurePathCount,uint16 penaltyBps,address[] penalizedBuyers,${BLOCK_REFS} blockRefs)`;
-const RECIPROCAL_JOURNAL = `tuple(uint32 predicateVersion,bytes32 claimId,uint64 periodStartBlock,uint64 periodEndBlockExclusive,address addressA,address addressB,uint32 settlementCountAToB,uint32 settlementCountBToA,uint128 volumeAToBRaw,uint128 volumeBToARaw,uint16 penaltyBps,address[] penalizedBuyers,${BLOCK_REFS} blockRefs)`;
+const CLOSED_CYCLE_JOURNAL = `tuple(uint32 predicateVersion,bytes32 claimId,uint64 periodStartBlock,uint64 periodEndBlockExclusive,address seller,address funder,bytes32 cohortHash,uint32 cohortCount,uint128 qualifiedVolumeRaw,uint8 closureKind,uint32 closurePathCount,uint16 penaltyBps,${BLOCK_REFS} blockRefs)`;
+const RECIPROCAL_JOURNAL = `tuple(uint32 predicateVersion,bytes32 claimId,uint64 periodStartBlock,uint64 periodEndBlockExclusive,address addressA,address addressB,uint32 settlementCountAToB,uint32 settlementCountBToA,uint128 volumeAToBRaw,uint128 volumeBToARaw,uint16 penaltyBps,${BLOCK_REFS} blockRefs)`;
 const COORDINATED_CONTROL_JOURNAL = `tuple(uint32 predicateVersion,bytes32 claimId,uint64 periodStartBlock,uint64 periodEndBlockExclusive,address seller,bytes32 funderCohortHash,uint32 funderCount,bytes32 cohortHash,uint32 cohortCount,uint128 qualifiedCohortVolumeRaw,uint128 sellerPeriodVolumeRaw,uint16 penaltyBps,address[] penalizedBuyers,${BLOCK_REFS} blockRefs)`;
 const PERIOD_START = 44_471_575n;
 const PERIOD_END_EXCLUSIVE = 49_936_173n;
@@ -106,7 +106,7 @@ export async function runSubmission({
 }
 
 export function validateManifest(manifest) {
-  if (manifest.version !== 2 || manifest.kind !== "antseed-wash-trading-proof-results") {
+  if (manifest.version !== 3 || manifest.kind !== "antseed-wash-trading-proof-results") {
     throw new Error("unsupported proof manifest");
   }
   if (manifest.chainId !== 8_453) throw new Error("proof manifest must target Base chain ID 8453");
@@ -130,7 +130,7 @@ export function decodeAndValidateEntry(entry, chainId = 8_453) {
   const config = PROOF_CONFIG[entry.claimType];
   if (!config) throw new Error(`${entry.claimId}: unsupported claim type`);
   const decoded = AbiCoder.defaultAbiCoder().decode([config.journal], entry.journalBytes)[0];
-  if (decoded.predicateVersion !== 2n || decoded.penaltyBps !== 9_000n) {
+  if (decoded.predicateVersion !== 3n || decoded.penaltyBps !== 9_000n) {
     throw new Error(`${entry.claimId}: invalid predicate version or penalty`);
   }
   if (decoded.periodStartBlock !== PERIOD_START || decoded.periodEndBlockExclusive !== PERIOD_END_EXCLUSIVE) {
@@ -157,7 +157,9 @@ export function decodeAndValidateEntry(entry, chainId = 8_453) {
   if (expectedClaimId.toLowerCase() !== entry.claimId.toLowerCase() || decoded.claimId.toLowerCase() !== entry.claimId.toLowerCase()) {
     throw new Error(`${entry.claimId}: journal claim ID mismatch`);
   }
-  validateSortedAddresses(decoded.penalizedBuyers, entry.claimId);
+  if (entry.claimType === "P1_COORDINATED_CONTROL") {
+    validateSortedAddresses(decoded.penalizedBuyers, entry.claimId);
+  }
   let previous = -1n;
   if (decoded.blockRefs.length === 0 || decoded.blockRefs.length > 256) throw new Error(`${entry.claimId}: invalid block reference count`);
   for (const blockRef of decoded.blockRefs) {
@@ -222,7 +224,7 @@ async function main() {
   const submit = args.includes("--submit");
   const dryRun = args.includes("--dry-run");
   if (!manifestPath || !registryAddress || !rpcUrl || submit === dryRun) {
-    throw new Error("usage: node submit-wash-trading-proofs.mjs --manifest proof-results-v2.json --registry 0x... (--dry-run|--submit)");
+    throw new Error("usage: node submit-wash-trading-proofs.mjs --manifest proof-results-v3.json --registry 0x... (--dry-run|--submit)");
   }
   const resumePath = resolve(value("--resume") ?? `${manifestPath}.submission.json`);
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));

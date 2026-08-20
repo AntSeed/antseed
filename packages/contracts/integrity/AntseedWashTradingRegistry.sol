@@ -6,17 +6,19 @@ import { IAntseedWashTradingRegistry } from "../interfaces/IAntseedWashTradingRe
 import { IRiscZeroVerifier } from "../interfaces/IRiscZeroVerifier.sol";
 
 contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
-    uint32 public constant PREDICATE_VERSION = 2;
+    uint32 public constant PREDICATE_VERSION = 3;
     uint16 public constant PENALTY_BPS = 9_000;
     uint64 public constant PERIOD_START_BLOCK = 44_471_575;
     uint64 public constant PERIOD_END_BLOCK_EXCLUSIVE = 49_936_173;
     uint128 public constant MINIMUM_VOLUME_RAW = 1_000_000_000;
     uint128 public constant MINIMUM_RECIPROCAL_DIRECTION_VOLUME_RAW = 10_000_000;
+    uint16 public constant MINIMUM_RECIPROCAL_VOLUME_BPS = 8_000;
     uint32 public constant MAX_BUYERS = 160;
     uint32 public constant MAX_BLOCK_REFS = 256;
     uint8 public constant CLOSED_CYCLE_PROOF_TYPE = 1;
     uint8 public constant RECIPROCAL_PROOF_TYPE = 2;
     uint8 public constant COORDINATED_CONTROL_PROOF_TYPE = 3;
+    uint8 public constant P0_PROOF_TYPE_MASK = 0x03;
     uint8 public constant DIRECT_CLOSURE = 1;
     uint8 public constant RELAY_CLOSURE = 2;
 
@@ -38,7 +40,6 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
         uint8 closureKind;
         uint32 closurePathCount;
         uint16 penaltyBps;
-        address[] penalizedBuyers;
         BlockRef[] blockRefs;
     }
 
@@ -54,7 +55,6 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
         uint128 volumeAToBRaw;
         uint128 volumeBToARaw;
         uint16 penaltyBps;
-        address[] penalizedBuyers;
         BlockRef[] blockRefs;
     }
 
@@ -83,6 +83,7 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
 
     mapping(address seller => uint16 penaltyBps) public override sellerPenaltyBps;
     mapping(address buyer => uint16 penaltyBps) public override buyerPenaltyBps;
+    mapping(address seller => uint8 proofTypeMask) public override sellerProofTypeMask;
     mapping(bytes32 claimId => bool consumed) public consumedClaimIds;
 
     error ZeroAddress();
@@ -97,6 +98,7 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
         uint16 previousPenaltyBps,
         uint16 newPenaltyBps
     );
+    event SellerProofTypeRecorded(address indexed seller, bytes32 indexed claimId, uint8 indexed proofType);
     event BuyerPenaltyApplied(
         address indexed buyer,
         bytes32 indexed claimId,
@@ -130,10 +132,8 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
         _validateClosedCycle(journal);
         if (consumedClaimIds[journal.claimId]) return false;
         consumedClaimIds[journal.claimId] = true;
+        _recordSellerProof(journal.seller, journal.claimId, CLOSED_CYCLE_PROOF_TYPE);
         applied = _applySellerPenalty(journal.seller, journal.claimId, CLOSED_CYCLE_PROOF_TYPE);
-        if (_applyBuyerPenalties(journal.penalizedBuyers, journal.claimId, CLOSED_CYCLE_PROOF_TYPE) != 0) {
-            applied = true;
-        }
     }
 
     function submitReciprocalProof(bytes calldata seal, bytes calldata journalData)
@@ -145,9 +145,10 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
         _validateReciprocal(journal);
         if (consumedClaimIds[journal.claimId]) return (false, false);
         consumedClaimIds[journal.claimId] = true;
+        _recordSellerProof(journal.addressA, journal.claimId, RECIPROCAL_PROOF_TYPE);
+        _recordSellerProof(journal.addressB, journal.claimId, RECIPROCAL_PROOF_TYPE);
         appliedA = _applySellerPenalty(journal.addressA, journal.claimId, RECIPROCAL_PROOF_TYPE);
         appliedB = _applySellerPenalty(journal.addressB, journal.claimId, RECIPROCAL_PROOF_TYPE);
-        _applyBuyerPenalties(journal.penalizedBuyers, journal.claimId, RECIPROCAL_PROOF_TYPE);
     }
 
     function submitCoordinatedControlProof(bytes calldata seal, bytes calldata journalData)
@@ -159,6 +160,7 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
         _validateCoordinatedControl(journal);
         if (consumedClaimIds[journal.claimId]) return false;
         consumedClaimIds[journal.claimId] = true;
+        _recordSellerProof(journal.seller, journal.claimId, COORDINATED_CONTROL_PROOF_TYPE);
         applied = _applySellerPenalty(journal.seller, journal.claimId, COORDINATED_CONTROL_PROOF_TYPE);
         if (_applyBuyerPenalties(journal.penalizedBuyers, journal.claimId, COORDINATED_CONTROL_PROOF_TYPE) != 0) {
             applied = true;
@@ -167,6 +169,10 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
 
     function isSellerPenalized(address seller) external view returns (bool) {
         return sellerPenaltyBps[seller] != 0;
+    }
+
+    function isSellerP0(address seller) external view override returns (bool) {
+        return sellerProofTypeMask[seller] & P0_PROOF_TYPE_MASK != 0;
     }
 
     function isBuyerPenalized(address buyer) external view returns (bool) {
@@ -194,8 +200,7 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
                 journal.funder,
                 journal.cohortHash,
                 journal.cohortCount,
-                journal.penaltyBps,
-                journal.penalizedBuyers
+                journal.penaltyBps
             ) || journal.claimId != expectedClaimId || journal.qualifiedVolumeRaw < MINIMUM_VOLUME_RAW
                 || (journal.closureKind == DIRECT_CLOSURE && journal.closurePathCount != 1)
                 || (journal.closureKind == RELAY_CLOSURE && journal.closurePathCount < 3)
@@ -224,15 +229,9 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
                 || journal.settlementCountAToB < 10 || journal.settlementCountBToA < 10
                 || journal.volumeAToBRaw < MINIMUM_RECIPROCAL_DIRECTION_VOLUME_RAW
                 || journal.volumeBToARaw < MINIMUM_RECIPROCAL_DIRECTION_VOLUME_RAW
+                || uint256(_min(journal.volumeAToBRaw, journal.volumeBToARaw)) * 10_000
+                    < uint256(_max(journal.volumeAToBRaw, journal.volumeBToARaw)) * MINIMUM_RECIPROCAL_VOLUME_BPS
         ) revert InvalidProofJournal();
-        _validateBuyers(journal.penalizedBuyers);
-        for (uint256 index = 0; index < journal.penalizedBuyers.length; ++index) {
-            if (
-                journal.penalizedBuyers[index] != journal.addressA && journal.penalizedBuyers[index] != journal.addressB
-            ) {
-                revert InvalidProofJournal();
-            }
-        }
         _validateBlocks(journal.blockRefs);
     }
 
@@ -269,16 +268,13 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
         address funder,
         bytes32 cohortHash,
         uint32 cohortCount,
-        uint16 penaltyBps,
-        address[] memory penalizedBuyers
+        uint16 penaltyBps
     ) private pure returns (bool) {
         if (
             predicateVersion != PREDICATE_VERSION || periodStartBlock != PERIOD_START_BLOCK
                 || periodEndBlockExclusive != PERIOD_END_BLOCK_EXCLUSIVE || seller == address(0) || funder == address(0)
                 || cohortHash == bytes32(0) || cohortCount < 3 || cohortCount > MAX_BUYERS || penaltyBps != PENALTY_BPS
-                || penalizedBuyers.length > cohortCount
         ) return false;
-        _validateBuyers(penalizedBuyers);
         return true;
     }
 
@@ -314,6 +310,22 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
         sellerPenaltyBps[seller] = next;
         emit SellerPenaltyApplied(seller, claimId, proofType, previous, next);
         return true;
+    }
+
+    function _recordSellerProof(address seller, bytes32 claimId, uint8 proofType) private {
+        uint8 proofBit = uint8(1 << (proofType - 1));
+        uint8 previous = sellerProofTypeMask[seller];
+        if (previous & proofBit != 0) return;
+        sellerProofTypeMask[seller] = previous | proofBit;
+        emit SellerProofTypeRecorded(seller, claimId, proofType);
+    }
+
+    function _min(uint128 left, uint128 right) private pure returns (uint128) {
+        return left < right ? left : right;
+    }
+
+    function _max(uint128 left, uint128 right) private pure returns (uint128) {
+        return left > right ? left : right;
     }
 
     function _applyBuyerPenalties(address[] memory buyers, bytes32 claimId, uint8 proofType)

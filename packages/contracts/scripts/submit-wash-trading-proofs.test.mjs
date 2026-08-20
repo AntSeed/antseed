@@ -3,7 +3,7 @@ import test from "node:test";
 import { AbiCoder, Interface, keccak256, sha256 } from "ethers";
 import { decodeAndValidateEntry, validateManifest, validateStateProofEntry } from "./submit-wash-trading-proofs.mjs";
 
-const CLOSED = "tuple(uint32 predicateVersion,bytes32 claimId,uint64 periodStartBlock,uint64 periodEndBlockExclusive,address seller,address funder,bytes32 cohortHash,uint32 cohortCount,uint128 qualifiedVolumeRaw,uint8 closureKind,uint32 closurePathCount,uint16 penaltyBps,address[] penalizedBuyers,tuple(uint64 number,bytes32 blockHash)[] blockRefs)";
+const CLOSED = "tuple(uint32 predicateVersion,bytes32 claimId,uint64 periodStartBlock,uint64 periodEndBlockExclusive,address seller,address funder,bytes32 cohortHash,uint32 cohortCount,uint128 qualifiedVolumeRaw,uint8 closureKind,uint32 closurePathCount,uint16 penaltyBps,tuple(uint64 number,bytes32 blockHash)[] blockRefs)";
 
 test("submission manifest rejects missing, duplicate, and analysis-only claims", () => {
   const missing = validManifest();
@@ -29,14 +29,6 @@ test("submission rejects unknown types and claim ID mismatches", () => {
   assert.throws(() => decodeAndValidateEntry(mismatch), /claim ID mismatch/);
 });
 
-test("submission rejects noncanonical buyer arrays", () => {
-  const manifest = validManifest([
-    "0x0000000000000000000000000000000000000002",
-    "0x0000000000000000000000000000000000000001",
-  ]);
-  assert.throws(() => decodeAndValidateEntry(manifest.entries[0]), /not canonical/);
-});
-
 test("state proof manifest only permits checkpoint-oracle calls", () => {
   const oracle = "0x0000000000000000000000000000000000000001";
   const checkpoint = new Interface(["function submitCheckpoint(bytes,bytes)"])
@@ -52,7 +44,7 @@ test("state proof manifest only permits checkpoint-oracle calls", () => {
   );
 });
 
-function validManifest(penalizedBuyers = ["0x0000000000000000000000000000000000000001"]) {
+function validManifest() {
   const seller = "0x0000000000000000000000000000000000000010";
   const funder = "0x0000000000000000000000000000000000000020";
   const cohortHash = `0x${"3".repeat(64)}`;
@@ -61,11 +53,11 @@ function validManifest(penalizedBuyers = ["0x00000000000000000000000000000000000
     [8_453, 1, 44_471_575, 49_936_173, seller, funder, cohortHash],
   ));
   const journalBytes = AbiCoder.defaultAbiCoder().encode([CLOSED], [[
-    2, claimId, 44_471_575, 49_936_173, seller, funder, cohortHash, 3, 1_000_000_000,
-    1, 1, 9_000, penalizedBuyers, [[1, `0x${"4".repeat(64)}`]],
+    3, claimId, 44_471_575, 49_936_173, seller, funder, cohortHash, 3, 1_000_000_000,
+    1, 1, 9_000, [[1, `0x${"4".repeat(64)}`]],
   ]]);
   return {
-    version: 2,
+    version: 3,
     kind: "antseed-wash-trading-proof-results",
     chainId: 8_453,
     securityMode: "production",

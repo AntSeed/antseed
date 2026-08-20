@@ -258,13 +258,13 @@ Policies in the same category may describe overlapping evidence, so only the lar
 
 Registration validates the policy's category, and each evaluation call has a 100,000 gas allowance. If any policy reverts, exhausts its allowance, lacks the expected selector, returns malformed data, or reports a penalty above 10,000 BPS, the registry fails the complete evaluation. Usage accounting catches that failure, emits `PointsPolicyFailed`, and records zero points for both sides without reverting channel settlement.
 
-`AntseedWashTradingRegistry` accepts one pinned RISC Zero seller-penalty proof. The guest authenticates a seller-to-funder USDC path, funding of at least three distinct buyers, and at least 1,000 USDC of authentic `ChannelSettled` volume occurring after each buyer's funding. It pins Base chain ID and the USDC, Channels, and Deposits addresses, rejects duplicate log references, and commits every referenced Base block number and hash.
+`AntseedWashTradingRegistry` accepts three pinned RISC Zero proof types: P0 closed-loop, P0 reciprocal, and P1 coordinated control. P0 closed-loop authenticates positive funding of at least three buyers before selected seller settlements totaling at least 1,000 USDC, followed by seller-outward closure. P0 reciprocal authenticates at least 100 bidirectional settlements with minimum directional count, volume, and exact 80% volume-balance thresholds. P1 proves a common-funder cohort contributes at least 50% of the seller's complete frozen-period volume.
 
-The proof is deliberately not a complete P0/P1 analysis. Enforcement uses only monotonic positive evidence: omitting evidence can only reduce the proven buyer count or volume and therefore make a penalty harder to obtain. It cannot create an unsupported penalty. For this reason the enforcement path has no candidate lifecycle, findings root, challenge period, fraud proof, watcher dependency, buyer finding, or finding-materialization step. Full P0/P1 scans remain reporting-only.
+The proof is deliberately not a complete P0/P1 analysis. P0 uses authenticated receipt and transaction inclusion and does not require historical EIP-1186 state proofs. Its funding guarantee is intentionally narrow: positive funding before the selected settlements, not “first funder” or funding before the buyer's first-ever channel. Receipt-only attribution requires the recovered transaction signer to equal the funder and rejects unsupported smart-account attribution. P1 retains historical state witnesses for complete-period comparisons.
 
-After the verifier accepts the receipt, `IBaseAnalysisStateOracle` must authenticate every referenced historical Base block from finalized OP Stack/L1 commitments. An RPC response is not production-safe, EVM `blockhash()` reaches only 256 blocks, and a keeper cannot authenticate historical blocks it did not checkpoint. A valid proof sets a fixed 9,000-BPS reduction for the seller's future points. Buyer points and existing locked rewards are unchanged; there is no clawback or confiscation.
+After the verifier accepts the receipt, `IBaseAnalysisStateOracle` must authenticate every referenced historical Base block from finalized OP Stack/L1 commitments. An RPC response is not production-safe, and EVM `blockhash()` reaches only 256 blocks. A valid proof sets a fixed 9,000-BPS reduction for the seller's future points. P0 is seller-only and records a permanent P0 proof bit even if an earlier P1 proof already set the points penalty. P1 may also penalize independently qualified buyers.
 
-Operators first run `DeployWashTradingEnforcement.s.sol` with the RISC Zero verifier, finalized Base state oracle, and seller-penalty guest image ID. They then run `RegisterWashTradingPointsPolicy.s.sol` with the deployed proof registry and points-policy registry.
+Operators run `DeployWashTradingEnforcement.s.sol` with the RISC Zero verifier, the existing finalized Base state oracle, and all three guest image IDs. After submitting P0/P1 proofs, they register `AntseedWashTradingPointsPolicy`, then run `DeploySellerRewardGate.s.sol` to configure one immutable composite policy on both the locked rewards pool and the immediate emissions route.
 
 #### Per-Epoch Pro-Rata Distribution
 
@@ -289,7 +289,7 @@ Sellers call `claimSellerEmissions(epochs[])` for finalized epochs.
 
 If `sellerUnlockPolicy.canClaimSellerUnlocked(seller)` returns true, ANTS are minted directly to the seller.
 
-If the policy returns false (or is not set), ANTS are minted to `AntseedSellerRewardsPool` and recorded as locked for that seller. They remain locked until the unlock policy later allows release.
+If the policy returns false (or is not set), ANTS are minted to `AntseedSellerRewardsPool` and recorded as locked for that seller. The same composite policy gates pool claims, preventing the locked route from bypassing eligibility. At deployment, the policy validates a sorted inactivity snapshot against canonical live staking and channel state; only sellers more than 14 days past their last positive settlement are accepted. P0 sellers and sellers committed in that immutable snapshot remain blocked permanently, even after later positive settlements. Rewards are held, not forfeited or redirected.
 
 #### Buyer Claiming
 
