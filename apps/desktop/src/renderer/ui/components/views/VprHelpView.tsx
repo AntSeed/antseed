@@ -51,8 +51,8 @@ const HELP_TOPICS: HelpTopic[] = [
             body: 'The VPR discovers sellers, applies your preferences, and handles pay-per-request settlement from your credits without requiring a central AntSeed AI account.',
           },
           {
-            heading: 'How the VPN analogy differs',
-            body: 'The selected seller still provides the AI service and normally receives the request content needed to answer it. Use verified TEE routes when stronger confidentiality is required.',
+            heading: 'Privacy depends on the route',
+            body: 'The VPN comparison is about using one local endpoint and choosing where requests go. Standard sellers still receive the prompts they serve; verified TEE routes can add stronger confidentiality.',
           },
         ],
         links: [
