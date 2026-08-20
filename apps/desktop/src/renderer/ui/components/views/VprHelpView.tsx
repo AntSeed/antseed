@@ -96,6 +96,29 @@ const HELP_TOPICS: HelpTopic[] = [
         ],
       },
       {
+        key: 'api',
+        label: 'Use the local API',
+        intro: 'While the router is running, the VPR exposes an OpenAI- and Anthropic-compatible API at http://localhost:8377 for tools, SDKs, scripts, and curl.',
+        sections: [
+          {
+            heading: 'Browse available models',
+            body: 'GET /v1/models returns the network-wide model catalog from the local proxy. Use /v1/models?type=images to list image services only.',
+          },
+          {
+            heading: 'Send requests',
+            body: 'Use /v1/chat/completions, /v1/responses, or /v1/messages for text requests. Image clients can use /v1/images/generations and /v1/images/edits.',
+          },
+          {
+            heading: 'Choose the route',
+            body: 'Use model "antseed" to follow the model selected in VPR, a catalog model id for automatic seller selection, or <peerId>@<model> to pin one seller.',
+          },
+        ],
+        links: [
+          { label: 'Use the VPR local API', url: `${VPR_GUIDE_URL}#use-the-local-api` },
+          { label: 'Open the complete API guide', url: `${DOCS_BASE_URL}/guides/using-the-api` },
+        ],
+      },
+      {
         key: 'float',
         label: 'The floating window',
         intro: 'The floating window stays above your apps and shows the active model plus current token and cost activity.',

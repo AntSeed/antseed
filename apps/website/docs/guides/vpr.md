@@ -76,6 +76,60 @@ The certificate is generated locally and its private key does not leave your com
 
 Only apps connected through HTTPS interception need this certificate. Config-file integrations that point directly to the local VPR API do not.
 
+## Use the local API
+
+While the router is running, the VPR exposes a local API at `http://localhost:8377`. OpenAI-compatible clients commonly use `http://localhost:8377/v1` as their base URL, while Anthropic clients use the root URL and append `/v1/messages` themselves.
+
+The proxy binds to your computer rather than exposing the API to your local network. AntSeed does not require an API key for this local endpoint, although some clients require any non-empty placeholder such as `antseed` in their API-key field.
+
+### Browse models with `/v1/models`
+
+Request the model catalog before choosing a model id:
+
+```bash
+curl http://localhost:8377/v1/models
+```
+
+`GET /v1/models` is answered locally and is not billed. Its `data` array contains the model ids currently advertised across the network. Use one of those ids in the `model` field of a request. To list image services only:
+
+```bash
+curl 'http://localhost:8377/v1/models?type=images'
+```
+
+### Supported request endpoints
+
+| Endpoint | Use |
+|---|---|
+| `/v1/chat/completions` | OpenAI Chat Completions clients |
+| `/v1/responses` | OpenAI Responses clients such as Codex |
+| `/v1/messages` | Anthropic Messages clients such as Claude Code |
+| `/v1/images/generations` | OpenAI-compatible image generation |
+| `/v1/images/edits` | OpenAI-compatible multipart image editing |
+| `/v1/messages/count_tokens` | Local Anthropic token counting; never routed or billed |
+
+For example, send an OpenAI-compatible chat request using a model id returned by `/v1/models`:
+
+```bash
+curl http://localhost:8377/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{
+    "model": "deepseek-v4-flash",
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
+```
+
+### Select a model or seller through the API
+
+The request's `model` field controls routing:
+
+- `"model": "antseed"` follows the model or seller route currently selected in the VPR. Changing the VPR picker updates clients that use this alias without rewriting their configuration.
+- `"model": "<modelId>"` uses automatic seller selection for that catalog model under your VPR Price + Trust preferences.
+- `"model": "<peerId>@<modelId>"` hard-pins that request to one seller and disables automatic failover.
+
+If no VPR route is selected, the `antseed` alias returns `no_default_route`. Use a concrete model id when you want a request to route independently of the VPR picker.
+
+See [Using the API](/docs/guides/using-the-api) for SDK configuration, format translation, response headers, routing overrides, errors, and tool-specific examples.
+
 ## Use the floating window
 
 The floating window stays above your other apps and shows the active model plus current token and cost activity. Use it to change the model for new sessions or assign a model to an individual recent conversation.
