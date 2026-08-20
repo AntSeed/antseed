@@ -14,6 +14,7 @@ import { PRELOAD_PATH } from '../paths.js';
 import { adoptCheckoutWindow, checkoutWindowOpenHandler, closeCheckoutWindows } from '../payments/checkout-window.js';
 import {
   presentVprMenuBarWindow,
+  shouldDismissVprMenuBarOnBlur,
   subscribeToMacosMenuTracking,
   vprMenuBarBounds as calculateVprMenuBarBounds,
   vprMenuBarPointerX as calculateVprMenuBarPointerX,
@@ -30,6 +31,7 @@ let floatWindow: BrowserWindow | null = null;
 let vprMenuBarWindow: BrowserWindow | null = null;
 let vprMenuBarVisibilityHandler: ((visible: boolean) => void) | null = null;
 let vprMenuBarPointerPosition = 20;
+let vprMenuBarAnchor: Rectangle | null = null;
 const FLOAT_WINDOW_WIDTH = 272;
 const FLOAT_WINDOW_HEIGHT = 80;
 /** Pill height while a custom dropdown (chat / model) is open. */
@@ -242,6 +244,7 @@ export function openVprMenuBarWindow(
 ): BrowserWindow {
   const existing = getVprMenuBarWindow();
   const bounds = vprMenuBarBounds(anchor, vprMenuBarConversationCount(data));
+  vprMenuBarAnchor = anchor;
   vprMenuBarPointerPosition = calculateVprMenuBarPointerX(anchor, bounds);
   vprMenuBarVisibilityHandler = onVisibilityChanged ?? vprMenuBarVisibilityHandler;
   if (existing) {
@@ -288,7 +291,11 @@ export function openVprMenuBarWindow(
   created.setAlwaysOnTop(true, 'pop-up-menu');
   created.on('show', () => vprMenuBarVisibilityHandler?.(true));
   created.on('hide', () => vprMenuBarVisibilityHandler?.(false));
-  created.on('blur', () => created.hide());
+  created.on('blur', () => {
+    if (!vprMenuBarAnchor || shouldDismissVprMenuBarOnBlur(vprMenuBarAnchor, screen.getCursorScreenPoint())) {
+      created.hide();
+    }
+  });
   created.webContents.on('before-input-event', (_event, input) => {
     if (input.type === 'keyDown' && input.key === 'Escape') created.hide();
   });
@@ -303,6 +310,7 @@ export function openVprMenuBarWindow(
     unsubscribeMenuTracking();
     vprMenuBarVisibilityHandler?.(false);
     vprMenuBarVisibilityHandler = null;
+    vprMenuBarAnchor = null;
     if (vprMenuBarWindow === created) vprMenuBarWindow = null;
   });
   return created;

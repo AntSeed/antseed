@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   MACOS_BEGIN_MENU_TRACKING_NOTIFICATION,
   presentVprMenuBarWindow,
+  shouldDismissVprMenuBarOnBlur,
   subscribeToMacosMenuTracking,
   VPR_MENU_BAR_WINDOW_WIDTH,
   vprMenuBarBounds,
@@ -39,6 +40,15 @@ test('other platforms preserve inactive popup presentation', () => {
   presentVprMenuBarWindow(window, 'win32');
 
   assert.deepEqual(calls, ['showInactive']);
+});
+
+test('status icon clicks do not let blur preempt the tray toggle', () => {
+  const anchor = { x: 100, y: 4, width: 20, height: 20 };
+
+  assert.equal(shouldDismissVprMenuBarOnBlur(anchor, { x: 110, y: 14 }), false);
+  assert.equal(shouldDismissVprMenuBarOnBlur(anchor, { x: 99, y: 14 }), true);
+  assert.equal(shouldDismissVprMenuBarOnBlur(anchor, { x: 120, y: 14 }), true);
+  assert.equal(shouldDismissVprMenuBarOnBlur(anchor, { x: 110, y: 24 }), true);
 });
 
 test('status popover dimensions stay within the approved footprint', () => {

@@ -12,6 +12,7 @@ type MacosNotificationCenter = {
 };
 
 type RectangleLike = { x: number; y: number; width: number; height: number };
+type PointLike = { x: number; y: number };
 
 export const MACOS_BEGIN_MENU_TRACKING_NOTIFICATION = 'com.apple.HIToolbox.beginMenuTrackingNotification';
 export const VPR_MENU_BAR_WINDOW_WIDTH = 320;
@@ -53,6 +54,16 @@ export function vprMenuBarPointerX(
     18,
     bounds.width - 18,
   );
+}
+
+export function shouldDismissVprMenuBarOnBlur(
+  anchor: RectangleLike,
+  cursor: PointLike,
+): boolean {
+  return cursor.x < anchor.x
+    || cursor.x >= anchor.x + anchor.width
+    || cursor.y < anchor.y
+    || cursor.y >= anchor.y + anchor.height;
 }
 
 export function presentVprMenuBarWindow(
