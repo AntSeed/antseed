@@ -673,6 +673,52 @@ test('loadConfig rejects invalid seller healthCheck failureThreshold', async () 
   );
 });
 
+test('loadConfig preserves seller gasCheck setting', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        gasCheck: { enabled: false, intervalMs: 30_000, minBalanceEth: 0.0001 },
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.deepEqual(config.seller.gasCheck, { enabled: false, intervalMs: 30_000, minBalanceEth: 0.0001 });
+    }
+  );
+});
+
+test('loadConfig rejects invalid seller gasCheck intervalMs', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        gasCheck: { intervalMs: 1_000 },
+      },
+    }),
+    async (configPath) => {
+      await assert.rejects(
+        async () => loadConfig(configPath),
+        /seller\.gasCheck\.intervalMs/
+      );
+    }
+  );
+});
+
+test('loadConfig rejects invalid seller gasCheck minBalanceEth', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        gasCheck: { minBalanceEth: -1 },
+      },
+    }),
+    async (configPath) => {
+      await assert.rejects(
+        async () => loadConfig(configPath),
+        /seller\.gasCheck\.minBalanceEth/
+      );
+    }
+  );
+});
+
 test('loadConfig preserves seller agentDir setting', async () => {
   await withTempConfig(
     JSON.stringify({
