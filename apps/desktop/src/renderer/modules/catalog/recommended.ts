@@ -41,7 +41,7 @@ export function isFreeCatalogEntry(entry: VprModelCatalogEntry): boolean {
     && (cached === null || cached <= 0);
 }
 
-function entryMatchText(entry: VprModelCatalogEntry): string {
+export function entryMatchText(entry: VprModelCatalogEntry): string {
   return `${entry.serviceId} ${entry.label}`.toLowerCase();
 }
 
@@ -49,8 +49,10 @@ export function catalogEntryKey(entry: VprModelCatalogEntry): string {
   return favoriteModelKey(entry.provider, entry.serviceId);
 }
 
-/** The curated "Recommended" list: frontier models in lineup order, then any
- *  free models (free rides along by default — it costs nothing to try). */
+/** The curated "Recommended" list: frontier models in lineup order, then free
+ *  models whose $0 offer comes from a trusted seller (free rides along — it
+ *  costs nothing to try — but Recommended is an endorsement, so a model whose
+ *  only free sellers fail the routing trust gate stays out of it). */
 export function selectRecommendedVprCatalog(catalog: VprModelCatalogEntry[]): VprModelCatalogEntry[] {
   const picked: VprModelCatalogEntry[] = [];
   const pickedKeys = new Set<string>();
@@ -73,7 +75,7 @@ export function selectRecommendedVprCatalog(catalog: VprModelCatalogEntry[]): Vp
     if (winner) pick(winner);
   }
   for (const entry of catalog) {
-    if (isFreeCatalogEntry(entry)) pick(entry);
+    if (isFreeCatalogEntry(entry) && entry.hasEligibleFreeSeller) pick(entry);
   }
   return picked;
 }

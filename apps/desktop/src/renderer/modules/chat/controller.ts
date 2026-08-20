@@ -6,7 +6,7 @@ import { resolveVprChatOption } from './projection.js';
 import { supportsImageEdits, supportsServiceParameter } from '../catalog/model-capabilities.js';
 import { findCatalogEntry, projectRowsToVprModelCatalog, selectDefaultVprModel } from '../catalog/model-catalog.js';
 import { sameCanonicalModel } from '../catalog/model-identity.js';
-import { chooseBestVprRoute, filterRoutableVprRoutes, hasEligibleFreeVprRoute } from '../routing/select.js';
+import { bestFreeVprRouteReputation, chooseBestVprRoute, filterRoutableVprRoutes, isRouteEligibleForAutoSelection } from '../routing/select.js';
 import { routesForSelectedModel } from '../catalog/view-models.js';
 import { saveVprRouteSelection } from '../routing/preferences.js';
 import { syncBuyerDefaultRoute } from '../routing/proxy-sync.js';
@@ -1385,11 +1385,18 @@ export function initChatModule({
    * models only they offer — disappear immediately instead of lingering until
    * the next discovery refresh.
    */
-  function isFreeEntryRoutable(entry: VprModelCatalogEntry): boolean {
-    return hasEligibleFreeVprRoute(
+  function freeEntryRouteReputation(entry: VprModelCatalogEntry): number | null {
+    return bestFreeVprRouteReputation(
       routesForSelectedModel(uiState.vprRoutableRows, entry),
       uiState.vprRoutingPreferences,
     );
+  }
+
+  // Catalog price tags must only come from sellers auto-routing may pick, so
+  // an untrusted seller's $0 offer can't render a "Free" badge for a model
+  // that would really route (and bill) through a trusted paid seller.
+  function isPricingRowEligible(row: DiscoverRow): boolean {
+    return isRouteEligibleForAutoSelection(row, uiState.vprRoutingPreferences);
   }
 
   function applyPeerAccessRules(): void {
@@ -1398,7 +1405,7 @@ export function initChatModule({
       uiState.vprRoutingPreferences,
     );
     uiState.vprModelCatalog = applyOpenRouterBaselines(
-      projectRowsToVprModelCatalog(uiState.vprRoutableRows),
+      projectRowsToVprModelCatalog(uiState.vprRoutableRows, isPricingRowEligible),
       getCachedOpenRouterPrices(),
     );
 
@@ -1406,7 +1413,7 @@ export function initChatModule({
     // exclude — leaving it selected would strand every send with no route.
     const selected = uiState.vprRouteSelection.model;
     if (selected && routesForSelectedModel(uiState.vprRoutableRows, selected).length === 0) {
-      const defaultModel = selectDefaultVprModel(uiState.vprModelCatalog, null, isFreeEntryRoutable);
+      const defaultModel = selectDefaultVprModel(uiState.vprModelCatalog, null, freeEntryRouteReputation);
       uiState.vprRouteSelection = { model: defaultModel, mode: 'auto', peerId: null };
       saveVprRouteSelection(uiState.vprRouteSelection);
     }
@@ -1500,7 +1507,7 @@ export function initChatModule({
       // transient empty discovery snapshot must leave the last one standing.
       if (rows.length > 0 || uiState.vprModelCatalog.length === 0) {
         uiState.vprModelCatalog = applyOpenRouterBaselines(
-          projectRowsToVprModelCatalog(uiState.vprRoutableRows),
+          projectRowsToVprModelCatalog(uiState.vprRoutableRows, isPricingRowEligible),
           getCachedOpenRouterPrices(),
         );
       }
@@ -1521,7 +1528,7 @@ export function initChatModule({
         ? findCatalogEntry(uiState.vprModelCatalog, selectedRouteModel.provider, selectedRouteModel.serviceId)
         : null;
       if (!selectedRouteModel || selectedRouteEntry?.kind === 'image') {
-        const defaultModel = selectDefaultVprModel(uiState.vprModelCatalog, null, isFreeEntryRoutable);
+        const defaultModel = selectDefaultVprModel(uiState.vprModelCatalog, null, freeEntryRouteReputation);
         if (defaultModel) {
           uiState.vprRouteSelection = { model: defaultModel, mode: 'auto', peerId: null };
           saveVprRouteSelection(uiState.vprRouteSelection);

@@ -5,7 +5,7 @@ import type {
   VprSelectedModel,
 } from '../../core/state';
 import { CODING_ONLY_SUFFIX_RE, canonicalModelKey, displayModelLabel, sameCanonicalModel } from './model-identity';
-import { isFreeCatalogEntry, selectRecommendedVprCatalog } from './recommended';
+import { entryMatchText, selectRecommendedVprCatalog } from './recommended';
 import { serviceModelKind } from './model-capabilities';
 
 const VPR_MODEL_CATALOG_SEPARATOR = '\u0001';
@@ -54,7 +54,10 @@ function preferredGroupLabel(rows: DiscoverRow[]): string {
   })[0]?.label ?? '';
 }
 
-function projectGroupToEntry(group: ModelCatalogGroup): VprModelCatalogEntry {
+function projectGroupToEntry(
+  group: ModelCatalogGroup,
+  isPricingRowEligible: (row: DiscoverRow) => boolean,
+): VprModelCatalogEntry {
   const firstRow = group.rows[0];
   const categories = Array.from(new Set(group.rows.flatMap((row) => row.categories))).sort((a, b) => a.localeCompare(b));
   const protocols = [...new Set(group.rows.map((row) => row.protocol))].sort();
@@ -62,7 +65,14 @@ function projectGroupToEntry(group: ModelCatalogGroup): VprModelCatalogEntry {
     ? 'image'
     : 'text';
   const peerIds = new Set(group.rows.map((row) => row.peerId));
-  const pricedRows = group.rows
+  // Entry-level prices must reflect sellers auto-routing may actually pick:
+  // an untrusted seller's $0 offer must not label the model "Free" (or drive
+  // "save up to") when a send would really route to a trusted paid seller.
+  // When no seller passes the gate, fall back to all rows so the entry still
+  // shows the market instead of no price at all.
+  const eligibleRows = group.rows.filter(isPricingRowEligible);
+  const pricingRows = eligibleRows.length > 0 ? eligibleRows : group.rows;
+  const pricedRows = pricingRows
     .map((row) => ({ row, total: totalRowPrice(row) }))
     .filter((route): route is { row: DiscoverRow; total: number } => route.total !== null);
   const bestPricedRoute = pricedRows.reduce<{ row: DiscoverRow; total: number } | null>((best, route) => {
@@ -103,19 +113,23 @@ function projectGroupToEntry(group: ModelCatalogGroup): VprModelCatalogEntry {
     kind,
     protocols,
     minInputUsdPerMillion: bestPricedRoute?.row.inputUsdPerMillion ?? null,
-    maxInputUsdPerMillion: maxPrice(group.rows.map((row) => row.inputUsdPerMillion)),
+    maxInputUsdPerMillion: maxPrice(pricingRows.map((row) => row.inputUsdPerMillion)),
     minOutputUsdPerMillion: bestPricedRoute?.row.outputUsdPerMillion ?? null,
-    maxOutputUsdPerMillion: maxPrice(group.rows.map((row) => row.outputUsdPerMillion)),
-    minCachedInputUsdPerMillion: minPrice(group.rows.map((row) => row.cachedInputUsdPerMillion)),
-    maxCachedInputUsdPerMillion: maxPrice(group.rows.map((row) => row.cachedInputUsdPerMillion)),
-    minImageUsdPerImage: minPrice(group.rows.map((row) => row.minImageUsdPerImage)),
-    maxImageUsdPerImage: maxPrice(group.rows.map((row) => row.maxImageUsdPerImage)),
+    maxOutputUsdPerMillion: maxPrice(pricingRows.map((row) => row.outputUsdPerMillion)),
+    minCachedInputUsdPerMillion: minPrice(pricingRows.map((row) => row.cachedInputUsdPerMillion)),
+    maxCachedInputUsdPerMillion: maxPrice(pricingRows.map((row) => row.cachedInputUsdPerMillion)),
+    minImageUsdPerImage: minPrice(pricingRows.map((row) => row.minImageUsdPerImage)),
+    maxImageUsdPerImage: maxPrice(pricingRows.map((row) => row.maxImageUsdPerImage)),
     expectedSavingsPct,
+    hasEligibleFreeSeller: eligibleRows.some((row) => totalRowPrice(row) === 0),
     bestPeerId: representative?.peerId ?? null,
   };
 }
 
-export function projectRowsToVprModelCatalog(rows: DiscoverRow[]): VprModelCatalogEntry[] {
+export function projectRowsToVprModelCatalog(
+  rows: DiscoverRow[],
+  isPricingRowEligible: (row: DiscoverRow) => boolean = () => true,
+): VprModelCatalogEntry[] {
   const groups = new Map<string, ModelCatalogGroup>();
   for (const row of rows) {
     // Aggregate by canonical model identity so cosmetic serviceId/provider
@@ -131,27 +145,56 @@ export function projectRowsToVprModelCatalog(rows: DiscoverRow[]): VprModelCatal
   }
 
   return Array.from(groups.values())
-    .map(projectGroupToEntry)
+    .map((group) => projectGroupToEntry(group, isPricingRowEligible))
     .sort((a, b) => b.peerCount - a.peerCount || a.label.localeCompare(b.label));
 }
+
+/** Free models new users should land on first, best-first. Patterns (matched
+ *  against serviceId + label, like the recommended lineup) so seller-specific
+ *  variants ("gemma-4-31b-it", "google-gemma-4-31b-instruct") all hit their
+ *  slot. A slot only applies while some trusted seller actually offers a
+ *  matching model for free; within a slot the highest-trust free seller's
+ *  entry wins. */
+export const FREE_MODEL_PRIORITY: ReadonlyArray<RegExp> = [
+  /deep-?seek.*flash/,
+  /minimax[-\s]?m?[-\s]?3/,
+  /minimax[-\s]?m?[-\s]?2\.7/,
+  /haiku/,
+  /qwen[-\s]?3[-\s]?235b/,
+  /nemotron[-\s]?3[-\s]?super/,
+  /gemma/,
+  /mistral[-\s]?large/,
+];
 
 export function selectDefaultVprModel(
   catalog: VprModelCatalogEntry[],
   current: VprSelectedModel | null,
-  isFreeEntryRoutable: (entry: VprModelCatalogEntry) => boolean = () => true,
+  freeRouteReputation: (entry: VprModelCatalogEntry) => number | null =
+    (entry) => (entry.hasEligibleFreeSeller ? 0 : null),
 ): VprSelectedModel | null {
   if (current && findCatalogEntry(catalog, current.provider, current.serviceId)?.kind === 'text') return current;
   // First launch defaults to a free model — trying the VPR must cost nothing
-  // before any balance exists. Prefer a free model from the recommended
-  // lineup, then any free model on the network, then the recommended/popular
-  // fallback for networks without a routable free seller.
+  // before any balance exists. Candidates are entries with at least one
+  // eligible $0 route (judged per route, so another seller's paid variant of
+  // the same model can't mask a genuinely free offer). The hardcoded priority
+  // lineup wins first; past it, the candidate whose free seller has the
+  // highest trust score wins, so a barely-trusted seller never becomes the
+  // first-run default just by catalog order.
   const textCatalog = catalog.filter((entry) => entry.kind === 'text');
-  const recommended = selectRecommendedVprCatalog(textCatalog);
-  const isRoutableFreeEntry = (entry: VprModelCatalogEntry): boolean =>
-    isFreeCatalogEntry(entry) && isFreeEntryRoutable(entry);
-  const first = recommended.find(isRoutableFreeEntry)
-    ?? textCatalog.find(isRoutableFreeEntry)
-    ?? recommended[0]
+  const freeCandidates = textCatalog.flatMap((entry) => {
+    const reputation = freeRouteReputation(entry);
+    return reputation === null ? [] : [{ entry, reputation }];
+  });
+  const slotCandidates = FREE_MODEL_PRIORITY
+    .map((pattern) => freeCandidates.filter(({ entry }) => pattern.test(entryMatchText(entry))))
+    .find((matches) => matches.length > 0)
+    ?? freeCandidates;
+  let best: { entry: VprModelCatalogEntry; reputation: number } | null = null;
+  for (const candidate of slotCandidates) {
+    if (!best || candidate.reputation > best.reputation) best = candidate;
+  }
+  const first = best?.entry
+    ?? selectRecommendedVprCatalog(textCatalog)[0]
     ?? textCatalog[0];
   if (!first) return null;
   return {

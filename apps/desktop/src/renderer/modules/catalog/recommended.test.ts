@@ -5,6 +5,22 @@ import { projectRowsToVprModelCatalog, selectDefaultVprModel } from './model-cat
 import { favoriteModelKey } from './favorites.js';
 import { isFreeCatalogEntry, selectFavoriteVprCatalog, selectRecommendedVprCatalog } from './recommended.js';
 
+test('recommended free ride-along excludes models whose only free sellers fail the trust gate', () => {
+  const rows = [
+    discoverRow({ serviceId: 'trusted-free', peerId: 'trusted', inputUsdPerMillion: 0, outputUsdPerMillion: 0 }),
+    discoverRow({ serviceId: 'untrusted-free', peerId: 'untrusted', inputUsdPerMillion: 0, outputUsdPerMillion: 0 }),
+  ];
+  const catalog = projectRowsToVprModelCatalog(rows, (row) => row.peerId === 'trusted');
+
+  const recommended = selectRecommendedVprCatalog(catalog);
+  const ids = recommended.map((entry) => entry.serviceId);
+  assert.ok(ids.includes('trusted-free'));
+  assert.ok(!ids.includes('untrusted-free'));
+  // The untrusted-only model still shows its real (free) fallback price in
+  // the full catalog — it just isn't endorsed.
+  assert.equal(catalog.find((entry) => entry.serviceId === 'untrusted-free')?.minInputUsdPerMillion, 0);
+});
+
 function discoverRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
   const peerId = overrides.peerId ?? 'p1';
   const serviceId = overrides.serviceId ?? 's1';

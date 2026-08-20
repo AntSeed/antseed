@@ -144,6 +144,13 @@ export type VprModelCatalogEntry = {
   minImageUsdPerImage: number | null;
   maxImageUsdPerImage: number | null;
   expectedSavingsPct: number | null;
+  /**
+   * True when some seller auto-routing may actually pick (trust/allow/block
+   * gate) offers this model at $0. Distinguishes a genuinely usable free
+   * model from one that merely displays a low fallback price because none of
+   * its sellers pass the gate.
+   */
+  hasEligibleFreeSeller: boolean;
   bestPeerId: string | null;
   /**
    * Reference/retail price for the equivalent model on the OpenRouter catalog,
