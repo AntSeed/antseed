@@ -154,6 +154,8 @@ export {
 export { IdentityClient, type IdentityClientConfig } from './payments/evm/identity-client.js';
 export { StakingClient, type StakingClientConfig } from './payments/evm/staking-client.js';
 export { EmissionsClient, type EmissionsClientConfig, type EmissionsEpochParams } from './payments/evm/emissions-client.js';
+export { RpcHealthMonitor, probeRpcEndpoint } from './payments/rpc-health.js';
+export type { RpcHealthState, RpcHealthStatus, RpcHealthMonitorOptions } from './payments/rpc-health.js';
 export { ANTSTokenClient, type ANTSTokenClientConfig } from './payments/evm/ants-token-client.js';
 export {
   StatsClient,

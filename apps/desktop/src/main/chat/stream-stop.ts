@@ -39,6 +39,7 @@ type ClassifyChatStreamFailureInput = {
 };
 
 const COMMON_HTTP_STATUS_TEXT: Record<number, string> = {
+  402: 'Payment Required',
   408: 'Request Timeout',
   429: 'Too Many Requests',
   500: 'Internal Server Error',
@@ -169,6 +170,64 @@ function describeHttpStatus(statusCode: number): string {
   return COMMON_HTTP_STATUS_TEXT[statusCode] ?? 'HTTP Error';
 }
 
+type EmbeddedErrorBody = {
+  message: string;
+  /** The body's error identifier (`error` string, or nested `code`/`type`). */
+  errorId?: string;
+};
+
+/**
+ * Error identifiers the buyer proxy / payment negotiator author themselves.
+ * Only these bodies get their `message` displayed verbatim outside the
+ * marker-gated buyer-fault branch — an arbitrary seller error body must not
+ * be able to put attacker-chosen prose into the chat as a system message.
+ */
+const BUYER_AUTHORED_ERROR_IDS = new Set([
+  ANTSEED_BUYER_FAULT_ERROR_CODE,
+  'payment_negotiation_failed',
+  'buyer_payments_inactive',
+  'payment_required',
+]);
+
+/**
+ * Pull the human-readable `message` field (and the error identifier) out of
+ * an error body embedded in the failure text — agents wrap proxy JSON bodies
+ * as "unexpected status 503 {json}". The buyer proxy and negotiator author
+ * these messages for display; prefer them over generic HTTP boilerplate or a
+ * raw JSON blob.
+ */
+function extractEmbeddedErrorBody(raw: string): EmbeddedErrorBody | undefined {
+  const jsonStart = raw.indexOf('{');
+  if (jsonStart >= 0) {
+    try {
+      const parsed = JSON.parse(raw.slice(jsonStart)) as Record<string, unknown>;
+      const nested = parsed.error && typeof parsed.error === 'object' && !Array.isArray(parsed.error)
+        ? parsed.error as Record<string, unknown>
+        : undefined;
+      const message = [nested?.message, parsed.message].find(
+        (value): value is string => typeof value === 'string' && value.trim().length > 0,
+      );
+      const errorId = [parsed.error, nested?.code, nested?.type, parsed.code]
+        .find((value): value is string => typeof value === 'string' && value.trim().length > 0);
+      if (message && !message.trimStart().startsWith('{')) {
+        return { message: message.trim(), ...(errorId ? { errorId } : {}) };
+      }
+    } catch {
+      // Truncated or wrapped JSON — fall through to the field regexes.
+    }
+  }
+  const messageMatch = /"message"\s*:\s*"((?:[^"\\]|\\.)+)"/.exec(raw);
+  if (!messageMatch) return undefined;
+  try {
+    const decoded = (JSON.parse(`"${messageMatch[1]}"`) as string).trim();
+    if (decoded.length === 0) return undefined;
+    const idMatch = /"(?:error|code|type)"\s*:\s*"([A-Za-z0-9_.-]+)"/.exec(raw);
+    return { message: decoded, ...(idMatch ? { errorId: idMatch[1] } : {}) };
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Buyer-side faults the proxy reports as a structured 503 rather than a
  * peer-blaming 502. Matched on the codes the proxy and negotiator emit.
@@ -176,6 +235,12 @@ function describeHttpStatus(statusCode: number): string {
 function isBuyerFault(errorCodes: string[]): boolean {
   return errorCodes.some((code) => code.toLowerCase() === ANTSEED_BUYER_FAULT_ERROR_CODE);
 }
+
+/** The buyer-fault code as a JSON field, as it appears in a stringified proxy error body. */
+const BUYER_FAULT_JSON_MARKER = new RegExp(
+  `"(?:code|type|errorCode)"\\s*:\\s*"${ANTSEED_BUYER_FAULT_ERROR_CODE}"`,
+  'i',
+);
 
 function buildBuyerFaultMessage(normalized: string, statusCode: number): string {
   if (/chain[-_ ]rpc|rpc (?:url|endpoint)|could not reach.*rpc|unreachable.*rpc/i.test(normalized)) {
@@ -209,9 +274,21 @@ export function classifyChatStreamFailure({
 
   const rawMessage = uniqueStrings(signals.messages).join(' | ') || 'The stream stopped before completion.';
   const normalized = rawMessage.toLowerCase();
+  const embedded = extractEmbeddedErrorBody(rawMessage);
+  // Outside the marker-gated buyer-fault branch, only display messages from
+  // bodies the buyer side authors itself — never arbitrary seller prose.
+  const buyerAuthoredMessage = embedded?.errorId && BUYER_AUTHORED_ERROR_IDS.has(embedded.errorId)
+    ? embedded.message
+    : undefined;
   const statusCode = signals.statusCodes[0] ?? parseStatusCodeFromText(rawMessage);
   const errorCode = signals.errorCodes.find(Boolean) ?? parseErrorCodeFromText(rawMessage);
-  const buyerFault = isBuyerFault(signals.errorCodes);
+  // Agents often surface the proxy's JSON body as plain text, so also detect
+  // the buyer-fault marker as a JSON code field inside the message. Matching
+  // the JSON field (not the bare word) matters: the proxy scrubs these code
+  // fields from peer-authored bodies, so a seller echoing the marker as prose
+  // cannot spoof buyer-fault classification.
+  const buyerFault = isBuyerFault(signals.errorCodes)
+    || BUYER_FAULT_JSON_MARKER.test(rawMessage);
 
   // Keep the text-based abort match narrow so transport-side aborts (e.g.
   // "connection aborted by remote") aren't misclassified as user-initiated.
@@ -253,7 +330,11 @@ export function classifyChatStreamFailure({
       kind: 'http_error',
       source: 'transport',
       retryable: false,
-      message: buildBuyerFaultMessage(normalized, buyerStatusCode),
+      // The proxy/negotiator author their fault messages for display — show
+      // them verbatim; fall back to the curated heuristics otherwise. This
+      // branch is gated on the buyer-fault marker (which the proxy scrubs
+      // from peer bodies), so the embedded message is buyer-authored.
+      message: embedded?.message ?? buildBuyerFaultMessage(normalized, buyerStatusCode),
       statusCode: buyerStatusCode,
       ...(errorCode ? { errorCode } : {}),
     };
@@ -265,11 +346,14 @@ export function classifyChatStreamFailure({
     // another peer, would walk the whole peer list while hiding the one thing
     // the user actually needs to fix.
     const retryable = statusCode >= 500 || statusCode === 429;
+    const embeddedWithHint = buyerAuthoredMessage && retryable && !/\bretry\b/i.test(buyerAuthoredMessage)
+      ? `${buyerAuthoredMessage} You can retry.`
+      : buyerAuthoredMessage;
     return {
       kind: 'http_error',
       source: 'upstream',
       retryable,
-      message: buildHttpErrorMessage(statusCode, retryable),
+      message: embeddedWithHint ?? buildHttpErrorMessage(statusCode, retryable),
       statusCode,
       ...(errorCode ? { errorCode } : {}),
     };
@@ -299,9 +383,9 @@ export function classifyChatStreamFailure({
       kind: 'stream_error',
       source: 'upstream',
       retryable: false,
-      message: rawMessage === 'The stream stopped before completion.'
+      message: buyerAuthoredMessage ?? (rawMessage === 'The stream stopped before completion.'
         ? rawMessage
-        : `The stream stopped before completion: ${rawMessage}`,
+        : `The stream stopped before completion: ${rawMessage}`),
       ...(errorCode ? { errorCode } : {}),
     };
   }
@@ -310,9 +394,9 @@ export function classifyChatStreamFailure({
     kind: 'unknown',
     source: 'unknown',
     retryable: false,
-    message: rawMessage === 'The stream stopped before completion.'
+    message: buyerAuthoredMessage ?? (rawMessage === 'The stream stopped before completion.'
       ? rawMessage
-      : `The stream stopped before completion: ${rawMessage}`,
+      : `The stream stopped before completion: ${rawMessage}`),
     ...(errorCode ? { errorCode } : {}),
   };
 }
