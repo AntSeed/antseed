@@ -8,6 +8,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
+- Desktop Help now explains the Virtual Private Router as a VPN for AI and adds practical guidance for built-in chat, connected apps, per-conversation model and seller selection, floating-window controls, routing, credits, rewards, the local API, and troubleshooting. Each subject links to a new comprehensive VPR guide or relevant supporting source.
+
 - Desktop model prices and the **Free** badge now reflect only sellers the routing trust gate can actually select, so a low-trust seller's $0 or teaser offer no longer advertises a price a send would never be billed at (picking such a "Free" model previously failed with a 402 for unfunded users). Savings percentages in the model dropdown, model page, and model lists now consistently compare that eligible live price with the retail reference baseline. The Recommended list's free ride-along models are trust-gated the same way, and the first-run default model is chosen from a free-model priority list (DeepSeek Flash, MiniMax, Haiku, Qwen, Nemotron, Gemma, Mistral Large), falling back to the free offer from the highest-trust seller.
 
 - Desktop Connected Apps now uses the correct Hermes portrait brand mark instead of the temporary pixel-art icon.

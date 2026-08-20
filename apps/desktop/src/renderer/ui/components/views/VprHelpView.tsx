@@ -4,6 +4,7 @@ import {
   ArrowRight01Icon,
   ArrowUpRight01Icon,
   Copy01Icon,
+  GithubIcon,
   NewTwitterIcon,
   TelegramIcon,
 } from '@hugeicons/core-free-icons';
@@ -20,239 +21,537 @@ type Props = { onSelectView?: (view: import('../../types').ViewName) => void };
 const TELEGRAM_URL = 'https://t.me/antseed';
 const X_URL = 'https://x.com/antseed';
 const DOCS_BASE_URL = 'https://antseed.com/docs';
+const VPR_GUIDE_URL = `${DOCS_BASE_URL}/guides/vpr`;
+const INTEGRATIONS_URL = 'https://antseed.com/integrations';
+const GITHUB_ISSUES_URL = 'https://github.com/AntSeed/antseed/issues/new';
 
-type HelpSection = { heading: string; body: string };
+type HelpLink = { label: string; url: string };
+type HelpSection = { heading: string; body: string; link?: HelpLink };
 type HelpArticle = {
   key: string;
   label: string;
-  /** Lead paragraph shown before the titled sections. */
   intro: string;
   sections: HelpSection[];
-  /** Docs path (appended to DOCS_BASE_URL) for the "Read more" link. */
-  docsPath: string;
+  links?: HelpLink[];
 };
 type HelpTopic = { key: string; label: string; articles: HelpArticle[] };
 
 const HELP_TOPICS: HelpTopic[] = [
   {
-    key: 'how-to',
-    label: 'How to use AntSeed',
+    key: 'getting-started',
+    label: 'Getting started',
     articles: [
       {
         key: 'what-is',
-        label: 'What is AntSeed?',
-        intro: 'AntSeed is a peer-to-peer network of AI sellers. Instead of subscribing to a single provider, your requests are routed to the best available seller for the model you choose, and you pay only for the tokens you use.',
+        label: 'What the VPR does',
+        intro: 'The Virtual Private Router is like a VPN for AI: it routes AI requests from the tools you already use through the AntSeed network.',
         sections: [
           {
-            heading: 'Your local router',
-            body: 'The VPR (Virtual Peer Router) runs on your machine. It discovers sellers, compares their prices and reputation, opens a payment channel with the one it picks, and forwards your app traffic to it — all locally, with your keys.',
+            heading: 'Keep using your normal tools',
+            body: 'Connect apps such as coding assistants and AI clients, then keep working in their familiar interfaces while the VPR handles routing in the background.',
           },
           {
-            heading: 'Start and stop',
-            body: 'The power button on the main screen starts and stops the router. The status strip at the bottom shows network health, your port, and how many peers and services are currently visible.',
+            heading: 'Choose how requests route',
+            body: 'The VPR discovers sellers, applies your model, price, and trust preferences, and handles pay-per-request settlement from your credits.',
           },
         ],
-        docsPath: '/',
+        links: [
+          { label: 'Read the complete VPR guide', url: VPR_GUIDE_URL },
+          { label: 'Understand the AntSeed protocol', url: `${DOCS_BASE_URL}/overview` },
+        ],
       },
       {
-        key: 'models',
-        label: 'Choose a model and seller',
-        intro: 'Open Models to browse every model available on the network, with live prices and expected savings against retail. Tap a model to see its sellers, their reputation scores, and per-token prices.',
+        key: 'router',
+        label: 'Start the router',
+        intro: 'Use the power button on Home to start or stop the local router. The status area shows network health, the proxy port, and visible peers and services.',
         sections: [
           {
-            heading: 'Set the new session model',
-            body: 'Use sets the model new sessions start on: everything you connect routes through it. With Auto select on, AntSeed keeps re-picking the best seller for that model based on your price and trust preferences.',
+            heading: 'Discovery takes a moment',
+            body: 'Peer and model announcements can take a few seconds after startup. If Models stays empty, open it and use Refresh models.',
           },
           {
-            heading: 'Pin a seller',
-            body: 'Prefer a specific seller? Tap it in the sellers list to pin it. Pinned sellers stay fixed until you unpin them from the model page or Preferences.',
+            heading: 'Stopping the router',
+            body: 'Stopping the router prevents connected apps from sending new requests through AntSeed. It does not remove their saved connection settings.',
           },
         ],
-        docsPath: '/pricing',
+        links: [{ label: 'Start and use the VPR', url: `${VPR_GUIDE_URL}#start-the-router` }],
+      },
+      {
+        key: 'chat',
+        label: 'Chat inside the VPR',
+        intro: 'Use the built-in chat when you want to talk to a network model without opening another tool. Start from the Home prompt or open Chat directly.',
+        sections: [
+          {
+            heading: 'Change the conversation model',
+            body: 'Use the model picker in the chat header. For an existing thread, choose whether to continue it on the new model or start a new chat.',
+          },
+          {
+            heading: 'Manage chat history',
+            body: 'View chats opens your conversation list. You can return to previous chats, start a clean chat with the current model, and search messages in the active conversation.',
+          },
+        ],
+        links: [{ label: 'Use the built-in VPR chat', url: `${VPR_GUIDE_URL}#chat-inside-the-vpr` }],
       },
       {
         key: 'apps',
         label: 'Connect your apps',
-        intro: 'On the main screen, click any app under "Use it on your favorite app" to connect it in one click. The app keeps its normal interface, but its AI requests now route through AntSeed.',
+        intro: 'Open Connected apps and select a detected tool. The VPR updates a supported config file or routes the app through its local proxy.',
         sections: [
           {
-            heading: 'Restarts',
-            body: 'Some apps read a config file and need a restart to pick up the change — the Apps page offers a restart button next to those.',
+            heading: 'Restart when prompted',
+            body: 'Config-file integrations must be restarted before they read the new endpoint. Use the Restart action shown on the app row.',
           },
           {
-            heading: 'App pills and the pop-out',
-            body: 'Each connected app shows a pill on the main screen. The pop-out button detaches a small floating window you can keep above the app you are working in.',
+            heading: 'Manual integrations',
+            body: 'For apps not detected automatically, use Add custom app or follow the tool-specific endpoint instructions.',
           },
         ],
-        docsPath: '/config',
+        links: [
+          { label: 'Connect apps with the VPR', url: `${VPR_GUIDE_URL}#connect-an-ai-app` },
+          { label: 'Open tool-specific integration guides', url: INTEGRATIONS_URL },
+        ],
+      },
+      {
+        key: 'conversations',
+        label: 'Manage connected-tool conversations',
+        intro: 'Connected-tool sessions appear under Recent chats after they send traffic. Each conversation can keep its own model and seller route.',
+        sections: [
+          {
+            heading: 'Set one chat’s model',
+            body: 'Open Recent chats, select a conversation, and choose its model. Other conversations and the default model for new sessions are unchanged.',
+          },
+          {
+            heading: 'Set one chat’s seller',
+            body: 'Open the model row’s settings to use automatic selection or pin an exact seller for only that conversation.',
+          },
+          {
+            heading: 'Other controls',
+            body: 'Rename the conversation, open its connected app, or delete the stored chat entry from the conversation detail page.',
+          },
+        ],
+        links: [
+          { label: 'Manage connected-tool conversations', url: `${VPR_GUIDE_URL}#manage-connected-tool-conversations` },
+        ],
       },
       {
         key: 'float',
         label: 'The floating window',
-        intro: 'The floating pill stays on top of other windows and follows you across desktops. It shows the routed model and live token and cost totals for the current payment channel.',
+        intro: 'The floating window stays above your apps and shows the active model plus current token and cost activity.',
         sections: [
           {
-            heading: 'Switch model or pin a chat',
-            body: 'Click the model name to open the list: the New session model row changes the global route, and each recent chat can pin its own model. A chat that is receiving traffic shows a green pulse next to its name.',
+            heading: 'Models and conversations',
+            body: 'Change the default model for new sessions, assign a model to one recent conversation, or open the connected app that owns it.',
           },
           {
-            heading: 'Back to the main window',
-            body: 'Click the AntSeed icon to bring the main window back, or the X to close the pill.',
+            heading: 'Floating preferences',
+            body: 'Show on traffic opens it automatically when a connected app sends requests. Show routed peer displays the seller that actually served each chat.',
+          },
+          {
+            heading: 'Closing it is safe',
+            body: 'Closing the floating window does not stop the router, disconnect apps, or end conversations.',
           },
         ],
-        docsPath: '/faq',
+        links: [{ label: 'Use the floating window', url: `${VPR_GUIDE_URL}#use-the-floating-window` }],
       },
       {
-        key: 'balance',
-        label: 'Balance and payments',
-        intro: 'AntSeed is pay-per-use: you deposit USDC once, and each request is settled from a payment channel between you and the seller. There are no subscriptions and no lock-in.',
+        key: 'api',
+        label: 'Use the local API',
+        intro: 'While the router is running, the VPR exposes an OpenAI- and Anthropic-compatible API at http://localhost:8377 for tools, SDKs, scripts, and curl.',
         sections: [
           {
-            heading: 'Add and track balance',
-            body: 'Add balance from the Profile screen with a card or USDC on Base. Your balance, reserved funds, and per-channel spending are all visible there, and unused credits can be withdrawn at any time.',
+            heading: 'Browse available models',
+            body: 'GET /v1/models returns the network-wide model catalog from the local proxy. Use /v1/models?type=images to list image services only.',
           },
           {
-            heading: 'How sellers get paid',
-            body: 'Sellers are paid only for what they serve, with signed vouchers per request — if a seller disappears, your remaining balance stays yours.',
+            heading: 'Send requests',
+            body: 'Use /v1/chat/completions, /v1/responses, or /v1/messages for text requests. Image clients can use /v1/images/generations and /v1/images/edits.',
+          },
+          {
+            heading: 'Choose the route',
+            body: 'Use model "antseed" to follow the model selected in VPR, a catalog model id for automatic seller selection, or <peerId>@<model> to pin one seller.',
           },
         ],
-        docsPath: '/guides/payments',
+        links: [
+          { label: 'Use the VPR local API', url: `${VPR_GUIDE_URL}#use-the-local-api` },
+          { label: 'Open the complete API guide', url: `${DOCS_BASE_URL}/guides/using-the-api` },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'routing',
+    label: 'Models & routing',
+    articles: [
+      {
+        key: 'models',
+        label: 'Choose a model and seller',
+        intro: 'Open Models to browse currently advertised services, prices, seller availability, and expected savings where a retail comparison exists.',
+        sections: [
+          {
+            heading: 'Automatic selection',
+            body: 'Auto select ranks eligible sellers using trust, price, free-route preference, compatibility, and recent failures. Retryable failures can move an automatic route to another seller.',
+          },
+          {
+            heading: 'Seller pins',
+            body: 'A pinned seller is a hard route and does not fail over. Remove the pin before troubleshooting that seller’s availability or performance.',
+          },
+        ],
+        links: [
+          { label: 'Choose models and sellers', url: `${VPR_GUIDE_URL}#choose-a-model-and-seller` },
+          { label: 'How seller reputation works', url: `${DOCS_BASE_URL}/reputation` },
+        ],
       },
       {
         key: 'preferences',
         label: 'Routing preferences',
-        intro: 'Preferences control how Auto select picks sellers for every model set to Auto.',
+        intro: 'Preferences apply to every model using automatic seller selection.',
         sections: [
           {
-            heading: 'Trust, price and free peers',
-            body: 'Minimum trust score is a hard eligibility gate. Price preference strongly penalizes sellers above your preferred input-token price, while maxPricing remains the hard spending cap. Prefer free peers gives zero-cost offers a strong routing bonus.',
+            heading: 'Trust and price',
+            body: 'Minimum trust is an eligibility gate. Price preference changes ranking, while maximum pricing is the hard spending cap when configured.',
           },
           {
-            heading: 'Pausing auto select',
-            body: 'Turning Auto select off pauses routing decisions everywhere — connected apps stay on their last picked seller.',
+            heading: 'Free routes',
+            body: 'Prefer free peers gives zero-cost eligible offers a strong ranking advantage; it does not bypass trust or compatibility rules.',
           },
         ],
-        docsPath: '/pricing',
+        links: [{ label: 'Configure routing preferences', url: `${VPR_GUIDE_URL}#set-routing-preferences` }],
+      },
+      {
+        key: 'failover',
+        label: 'Automatic failover and pins',
+        intro: 'Automatic routes normally keep a soft affinity to the seller that served a conversation successfully, but they can switch after retryable failures.',
+        sections: [
+          {
+            heading: 'When routes switch',
+            body: 'A route may change when the seller is unavailable, cooling down, no longer eligible, or fails in a retryable way.',
+          },
+          {
+            heading: 'When routes stay fixed',
+            body: 'Explicit seller pins never switch automatically. Model-only selection allows the router to choose another eligible seller.',
+          },
+        ],
+        links: [
+          { label: 'Read the routing guide', url: `${VPR_GUIDE_URL}#automatic-seller-selection` },
+          { label: 'API routing and explicit pins', url: `${DOCS_BASE_URL}/guides/using-the-api#automatic-routing-and-explicit-pins` },
+        ],
       },
     ],
   },
   {
-    key: 'cannot-connect',
-    label: "I can't get connected",
+    key: 'privacy',
+    label: 'Privacy & security',
     articles: [
       {
-        key: 'no-peers',
-        label: 'No peers or models listed',
-        intro: 'Make sure the router is running — the power button on the main screen should be green and the status strip should read Healthy.',
+        key: 'prompt-visibility',
+        label: 'Who can see my requests?',
+        intro: 'AntSeed is anonymous by default: sellers receive a pseudonymous peer or wallet identity, not an AntSeed account, name, email, or personal profile.',
         sections: [
           {
-            heading: 'Give discovery a moment',
-            body: 'Peer discovery can take a few seconds after startup. If the Models list stays empty, use its Refresh models button.',
+            heading: 'Identity and content are separate',
+            body: 'A standard seller can process the prompt it serves, but AntSeed does not tell the seller who you are. Verified TEE routes can add stronger content confidentiality.',
           },
           {
-            heading: 'Check your firewall',
-            body: 'If the network still looks empty, your firewall may be blocking peer-to-peer connections. AntSeed uses WebRTC data channels; allow the app through your firewall and try again.',
+            heading: 'What stays local',
+            body: 'VPR configuration, connected-app setup, routing state, and local activity data remain on your device unless a feature explicitly sends them elsewhere.',
           },
         ],
-        docsPath: '/faq',
+        links: [
+          { label: 'Privacy and seller visibility', url: `${VPR_GUIDE_URL}#privacy-transport-and-seller-trust` },
+          { label: 'Review AntSeed security boundaries', url: `${DOCS_BASE_URL}/security` },
+        ],
       },
       {
-        key: 'app-connect',
-        label: "An app won't connect",
-        intro: 'Try disconnecting and reconnecting the app from the Apps page. Watch the status line under the app for the current connection state and request count.',
+        key: 'transport',
+        label: 'How peer traffic is encrypted',
+        intro: 'The preferred node-to-node transport is a mutually authenticated encrypted TCP channel using wallet-signed ephemeral keys.',
         sections: [
           {
-            heading: 'Config-file apps need a restart',
-            body: 'Apps that are configured through a config file (rather than a proxy) need to be restarted after connecting — use the restart button that appears on their row.',
+            heading: 'WebRTC is the fallback',
+            body: 'WebRTC DataChannels are used when a peer advertises WebRTC but cannot use direct encrypted TCP. WebRTC is not the primary VPR transport.',
           },
           {
-            heading: 'Check for overrides',
-            body: 'If the app was already running with its own API settings, check it is not overriding the base URL AntSeed configured.',
+            heading: 'App connection is separate',
+            body: 'Your local app may connect through a config-file endpoint or local HTTPS interception; that local connection is separate from the encrypted peer transport.',
           },
         ],
-        docsPath: '/config',
+        links: [
+          { label: 'Read the transport specification', url: `${DOCS_BASE_URL}/transport` },
+          { label: 'Learn about WebRTC data channels', url: 'https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Using_data_channels' },
+        ],
       },
       {
-        key: 'trust-ca',
+        key: 'certificate',
         label: 'Trust the local certificate',
-        intro: 'Apps connected through the local proxy need to trust the certificate AntSeed generates, so it can serve their API domains locally.',
+        intro: 'Apps connected through local HTTPS interception must trust the certificate authority the VPR generates on your computer.',
         sections: [
           {
-            heading: 'Trust the CA from Apps',
-            body: 'If requests fail with TLS or certificate errors, open Apps and use the Trust CA button that appears on the affected app when the certificate is not yet trusted.',
+            heading: 'When it is needed',
+            body: 'Only intercepted HTTPS apps need the certificate. Apps configured to call the local VPR API directly do not.',
           },
           {
-            heading: 'What macOS asks for',
-            body: 'macOS asks for your password once to add the certificate to your keychain. Nothing leaves your machine — the certificate is generated locally and only used for local interception.',
+            heading: 'Certificate errors',
+            body: 'Open Connected apps, expand HTTPS certificate, trust the current certificate, and restart the affected app.',
           },
         ],
-        docsPath: '/faq',
+        links: [{ label: 'Understand the local certificate', url: `${VPR_GUIDE_URL}#trust-the-local-https-certificate` }],
+      },
+      {
+        key: 'tee',
+        label: 'TEE-verified sellers',
+        intro: 'A Trusted Execution Environment can add hardware-backed confidentiality when a seller offers a verifiable TEE route.',
+        sections: [
+          {
+            heading: 'Verify the evidence',
+            body: 'Treat a TEE label as a claim to verify. Attestation must bind the hardware evidence to the workload, seller identity, and expected configuration.',
+          },
+          {
+            heading: 'Availability varies',
+            body: 'Not every seller or model runs in a TEE. Standard routes should be assumed visible to the seller unless stated and verified otherwise.',
+          },
+        ],
+        links: [
+          { label: 'Verify a seller’s TEE', url: `${DOCS_BASE_URL}/guides/verify-tee` },
+          { label: 'Read the TEE privacy guidance', url: `${VPR_GUIDE_URL}#tee-verified-sellers` },
+        ],
       },
     ],
   },
   {
-    key: 'connected-problem',
-    label: 'I can connect but there is a problem',
+    key: 'payments',
+    label: 'Credits & payments',
     articles: [
       {
-        key: 'payments',
-        label: 'Requests fail with payment errors',
-        intro: 'Payment errors usually mean your available balance is too low to reserve a channel with the seller. Check the Profile screen and add balance.',
+        key: 'balance',
+        label: 'Add and understand credits',
+        intro: 'Credits are USDC on Base deposited for your VPR signing identity. Paid requests consume credits through bounded seller payment channels.',
+        sections: [
+          {
+            heading: 'Available and reserved',
+            body: 'Available credits can open new channels or be withdrawn. Reserved credits are assigned to active channels but remain yours until authorized spending is settled.',
+          },
+          {
+            heading: 'Funding methods',
+            body: 'The Add credits screen can offer card or USDC funding methods depending on location and currently enabled providers.',
+          },
+        ],
+        links: [
+          { label: 'Manage VPR credits', url: `${VPR_GUIDE_URL}#credits-and-payments` },
+          { label: 'Read the complete payments guide', url: `${DOCS_BASE_URL}/guides/payments` },
+          { label: 'Verify official USDC addresses', url: 'https://developers.circle.com/stablecoins/usdc-contract-addresses' },
+        ],
+      },
+      {
+        key: 'channels',
+        label: 'Payment channels and activity',
+        intro: 'A paid session reserves a capped amount for one seller. Each request advances a cumulative authorization, so the seller can settle only up to the latest amount signed.',
         sections: [
           {
             heading: 'Channel switchovers',
-            body: 'When a channel is exhausted mid-session, AntSeed settles it and opens a new one automatically — a single failed request may just be that switchover; retry it.',
+            body: 'When a channel budget is exhausted, the VPR normally settles it and opens another automatically. One retry may be enough during the switchover.',
           },
           {
-            heading: 'Reserved funds',
-            body: 'Funds reserved for open channels are released back to your balance when channels settle or close.',
+            heading: 'Inspect or close channels',
+            body: 'Open Activity to view locked amounts, settlement state, spending history, and cooperative or on-chain close actions.',
           },
         ],
-        docsPath: '/guides/payments',
-      },
-      {
-        key: 'model-not-served',
-        label: '"Model is not served by this peer"',
-        intro: 'This means a request reached a seller that does not offer the requested model — usually after routing changed while an app kept its old model list.',
-        sections: [
-          {
-            heading: 'Re-select the model',
-            body: 'Re-select your model (main screen dropdown, model page, or the floating window) — this re-syncs every connected app to the new route.',
-          },
-          {
-            heading: 'Still stuck?',
-            body: 'If it persists, disconnect and reconnect the app from the Apps page.',
-          },
+        links: [
+          { label: 'Understand payment channels', url: `${VPR_GUIDE_URL}#payment-channels-and-reserved-funds` },
+          { label: 'Protocol payment flow', url: `${DOCS_BASE_URL}/payments` },
         ],
-        docsPath: '/faq',
-      },
-      {
-        key: 'slow',
-        label: 'Responses are slow or time out',
-        intro: 'Seller performance varies. Open the model page and try a different seller — reputation reflects reliability, and you can pin any seller you like.',
-        sections: [
-          {
-            heading: 'Automatic retries',
-            body: 'Timeouts are retried on another route automatically when possible. Frequent timeouts on one seller lower its score for future routing.',
-          },
-          {
-            heading: 'Large requests',
-            body: 'Very large requests take longer to upload over peer-to-peer connections; the floating window pulse shows when data is actually moving.',
-          },
-        ],
-        docsPath: '/faq',
       },
       {
         key: 'withdraw',
         label: 'Withdraw unused credits',
-        intro: 'Your deposit stays yours. Open Profile and use "Withdraw unused credits" to move available balance back to your wallet.',
+        intro: 'Open Credits and choose Withdraw unused credits. Only available balance can be withdrawn immediately.',
         sections: [
           {
             heading: 'Reserved funds',
-            body: 'Funds reserved by open channels become available after the channels settle or close; if a seller is unresponsive, a channel can be force-closed after a grace period.',
+            body: 'Credits reserved by active channels must be released through settlement or channel closure before they become withdrawable.',
+          },
+          {
+            heading: 'Unresponsive seller',
+            body: 'Use Activity to request an on-chain close, then follow the displayed grace-period instructions before withdrawing the released balance.',
           },
         ],
-        docsPath: '/guides/payments',
+        links: [{ label: 'Withdraw and release credits', url: `${VPR_GUIDE_URL}#withdraw-unused-credits` }],
+      },
+      {
+        key: 'identity',
+        label: 'Signer and funding wallet',
+        intro: 'The VPR signing identity authorizes protocol messages and bounded channel spending. It is separate from the wallet used to fund credits.',
+        sections: [
+          {
+            heading: 'Desktop key storage',
+            body: 'The desktop signing key is encrypted at rest using the operating system keychain. It does not need to hold normal wallet funds.',
+          },
+          {
+            heading: 'Bounded exposure',
+            body: 'A funding wallet can deposit for the signer without giving the VPR control of that wallet. Signed channel authorizations are seller-specific, capped, and time-limited.',
+          },
+        ],
+        links: [{ label: 'Signer security boundaries', url: `${DOCS_BASE_URL}/security#signing-identity-vs-funding-wallet` }],
+      },
+    ],
+  },
+  {
+    key: 'rewards',
+    label: 'Rewards',
+    articles: [
+      {
+        key: 'ants',
+        label: 'ANTS rewards and claims',
+        intro: 'Rewards shows ANTS attributed to eligible network usage on the selected chain. Availability and transferability depend on the deployed contracts and current network phase.',
+        sections: [
+          {
+            heading: 'Claiming',
+            body: 'When claims are available, the VPR opens a secure browser flow for the authorized wallet signature.',
+          },
+          {
+            heading: 'No guarantees',
+            body: 'A pending amount is not a promise of token value, future emissions, permanent eligibility, or immediate transferability.',
+          },
+        ],
+        links: [
+          { label: 'Understand VPR rewards', url: `${VPR_GUIDE_URL}#rewards` },
+          { label: 'Read the ANTS token overview', url: 'https://antseed.com/ants-token' },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'troubleshooting',
+    label: 'Troubleshooting',
+    articles: [
+      {
+        key: 'no-peers',
+        label: 'No peers or models listed',
+        intro: 'Confirm the router is running and the Home status area is healthy, then allow a few seconds for peer discovery.',
+        sections: [
+          {
+            heading: 'Refresh and inspect',
+            body: 'Use Refresh models. If the catalog stays empty, enable Developer mode and open Available peers to inspect discovery directly.',
+          },
+          {
+            heading: 'Check network controls',
+            body: 'Security software may be blocking peer connections. AntSeed prefers encrypted TCP and uses WebRTC DataChannels as a fallback; WebRTC is not its only transport.',
+          },
+        ],
+        links: [{ label: 'Troubleshoot missing peers and models', url: `${VPR_GUIDE_URL}#no-peers-or-models-are-listed` }],
+      },
+      {
+        key: 'app-connect',
+        label: "An app won't connect",
+        intro: 'Disconnect and reconnect the app from Connected apps, then restart it if the row requests a restart.',
+        sections: [
+          {
+            heading: 'Check overrides',
+            body: 'Confirm the app is not overriding the base URL or API settings written by the VPR.',
+          },
+          {
+            heading: 'Check compatibility',
+            body: 'Confirm the selected model supports the API format used by the app, or follow its integration-specific setup guide.',
+          },
+        ],
+        links: [
+          { label: 'Troubleshoot a connected app', url: `${VPR_GUIDE_URL}#a-connected-app-does-not-send-requests` },
+          { label: 'Open integration-specific guides', url: INTEGRATIONS_URL },
+        ],
+      },
+      {
+        key: 'tls',
+        label: 'Certificate or SSL errors',
+        intro: 'An intercepted HTTPS app must trust the current certificate generated by the VPR.',
+        sections: [
+          {
+            heading: 'Trust and restart',
+            body: 'Open Connected apps, expand HTTPS certificate, trust the current certificate, and restart the affected app.',
+          },
+          {
+            heading: 'Old certificate',
+            body: 'If an older AntSeed certificate is still trusted, trusting the current certificate replaces it for future intercepted connections.',
+          },
+        ],
+        links: [{ label: 'Fix certificate errors', url: `${VPR_GUIDE_URL}#an-app-reports-a-certificate-or-ssl-error` }],
+      },
+      {
+        key: 'payments',
+        label: 'Requests fail with payment errors',
+        intro: 'Open Credits and compare available balance with reserved balance. A paid channel cannot open without enough available credits for its capped authorization.',
+        sections: [
+          {
+            heading: 'Channel switchovers',
+            body: 'When a channel is exhausted, the VPR normally settles it and opens another automatically. Retry the request once before changing configuration.',
+          },
+          {
+            heading: 'Inspect Activity',
+            body: 'Use Activity to find channels that remain open, are settling, or are waiting for an on-chain close.',
+          },
+        ],
+        links: [{ label: 'Troubleshoot payment errors', url: `${VPR_GUIDE_URL}#requests-fail-with-payment-errors` }],
+      },
+      {
+        key: 'model-not-served',
+        label: '"Model is not served by this peer"',
+        intro: 'The app requested a model that the selected seller does not currently advertise.',
+        sections: [
+          {
+            heading: 'Refresh the route',
+            body: 'Re-select the model in the VPR. If the error persists, disconnect and reconnect the app to refresh its model and endpoint state.',
+          },
+          {
+            heading: 'Check the pin',
+            body: 'If the route is pinned, confirm that seller still offers the exact model or remove the pin to allow another eligible seller.',
+          },
+        ],
+        links: [{ label: 'Fix a model and seller mismatch', url: `${VPR_GUIDE_URL}#model-is-not-served-by-this-peer` }],
+      },
+      {
+        key: 'slow',
+        label: 'Responses are slow or time out',
+        intro: 'Seller performance and network paths vary. Try another eligible seller, or remove a hard seller pin so automatic routing can fail over.',
+        sections: [
+          {
+            heading: 'Automatic routes',
+            body: 'Retryable failures can cool down the current seller and move a model-only route to another eligible seller.',
+          },
+          {
+            heading: 'Large requests',
+            body: 'Large prompts and attachments take longer to upload. The floating activity pulse helps distinguish active transfer from a stalled request.',
+          },
+        ],
+        links: [{ label: 'Troubleshoot slow responses', url: `${VPR_GUIDE_URL}#responses-are-slow-or-time-out` }],
+      },
+      {
+        key: 'reserved',
+        label: 'Reserved credits stay unavailable',
+        intro: 'Reserved credits are assigned to an active payment channel and cannot be withdrawn until that channel settles or closes.',
+        sections: [
+          {
+            heading: 'Close the channel',
+            body: 'Open Activity and request a cooperative close when the seller is reachable. Otherwise request an on-chain close and follow the grace-period instructions.',
+          },
+        ],
+        links: [{ label: 'Release reserved credits', url: `${VPR_GUIDE_URL}#reserved-credits-remain-unavailable` }],
+      },
+      {
+        key: 'diagnostics',
+        label: 'Collect diagnostics and report a bug',
+        intro: 'Enable Developer mode from Help to reveal logs, peer discovery, connection details, configuration, and the diagnostic report action.',
+        sections: [
+          {
+            heading: 'Before sharing',
+            body: 'Review copied diagnostics for secrets or sensitive prompt content before posting them publicly.',
+          },
+          {
+            heading: 'Useful bug details',
+            body: 'Include the VPR version, operating system, affected app, expected result, actual result, and redacted diagnostics.',
+          },
+        ],
+        links: [
+          { label: 'Collect VPR diagnostics', url: `${VPR_GUIDE_URL}#collect-diagnostics` },
+          { label: 'Open a GitHub issue', url: GITHUB_ISSUES_URL },
+        ],
       },
     ],
   },
@@ -410,16 +709,34 @@ export function VprHelpView({ onSelectView }: Props) {
             <div key={section.heading} className={styles.articleSection}>
               <h3 className={styles.articleHeading}>{section.heading}</h3>
               <p className={styles.paragraph}>{section.body}</p>
+              {section.link && (
+                <button
+                  type="button"
+                  className={styles.docsLink}
+                  onClick={() => openExternal(section.link!.url)}
+                >
+                  <span>{section.link.label}</span>
+                  <HugeiconsIcon icon={ArrowUpRight01Icon} size={14} strokeWidth={2} />
+                </button>
+              )}
             </div>
           ))}
-          <button
-            type="button"
-            className={styles.docsLink}
-            onClick={() => openExternal(`${DOCS_BASE_URL}${article.docsPath}`)}
-          >
-            <span>Read more in the docs</span>
-            <HugeiconsIcon icon={ArrowUpRight01Icon} size={14} strokeWidth={2} />
-          </button>
+          {article.links && article.links.length > 0 && (
+            <div className={styles.resourceLinks}>
+              <span className={styles.resourceLabel}>Related resources</span>
+              {article.links.map((link) => (
+                <button
+                  key={link.url}
+                  type="button"
+                  className={styles.docsLink}
+                  onClick={() => openExternal(link.url)}
+                >
+                  <span>{link.label}</span>
+                  <HugeiconsIcon icon={ArrowUpRight01Icon} size={14} strokeWidth={2} />
+                </button>
+              ))}
+            </div>
+          )}
         </VprCard>
         {next && (
           <button
@@ -483,6 +800,14 @@ export function VprHelpView({ onSelectView }: Props) {
               <span className={styles.rowLabel}>Follow us on X</span>
               <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} className={styles.rowGlyph} />
             </button>
+            <button type="button" className={styles.row} onClick={() => openExternal(GITHUB_ISSUES_URL)}>
+              <HugeiconsIcon icon={GithubIcon} size={18} strokeWidth={1.8} className={styles.rowIcon} />
+              <span className={styles.rowText}>
+                <span className={styles.rowLabel}>Report a bug on GitHub</span>
+                <span className={styles.rowHint}>Include redacted diagnostics when possible</span>
+              </span>
+              <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} className={styles.rowGlyph} />
+            </button>
           </VprCard>
         </div>
 
@@ -500,6 +825,13 @@ export function VprHelpView({ onSelectView }: Props) {
                 <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} className={styles.rowGlyph} />
               </button>
             ))}
+            <button type="button" className={styles.row} onClick={() => openExternal(VPR_GUIDE_URL)}>
+              <span className={styles.rowText}>
+                <span className={styles.rowLabel}>Complete VPR guide</span>
+                <span className={styles.rowHint}>Full setup, security, payments and troubleshooting</span>
+              </span>
+              <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} className={styles.rowGlyph} />
+            </button>
           </VprCard>
         </div>
 
