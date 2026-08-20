@@ -33,6 +33,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Sellers now monitor their wallet's ETH balance while running (`seller.gasCheck`, enabled by default in payments mode). When the wallet can no longer fund on-chain settlement, the seller pauses advertising — instead of staying discoverable while rejecting every buyer — and prints a console notice with the wallet address to fund; `antseed seller status` shows the same warning. Advertising resumes automatically once the wallet is topped up.
 - Seller startup now warns when `seller.publicAddress` is missing or non-public, and `antseed seller doctor` classifies and locally probes the announced endpoint with explicit NAT guidance. The `/docs/transport/` guide now covers port forwarding, firewalls, and VPS/reverse-tunnel deployments.
 - CLI identity loading now fails safely when the data directory contains an app-encrypted, unreadable, or malformed identity instead of silently generating a second wallet and overwriting or competing with the existing signer.
 - Fixed Desktop image chats dropping an explicitly selected seller when moving from a model page into chat. Image follow-ups use true edits only with sellers that advertise image input support; generation-only sellers instead generate a new image from the cumulative prompt history, and payment progress no longer replaces the image shimmer with the text loader.

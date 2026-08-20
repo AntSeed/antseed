@@ -22,6 +22,17 @@ export {
   type ModelHealthTarget,
   type ServiceHealthSnapshot,
 } from './health/model-health-checker.js';
+export {
+  GasHealthMonitor,
+  DEFAULT_GAS_CHECK_INTERVAL_MS,
+  DEFAULT_MIN_GAS_BALANCE_WEI,
+  type GasHealthMonitorConfig,
+  type GasHealthEvent,
+  type GasHealthSnapshot,
+} from './health/gas-health-monitor.js';
+// Re-exported so CLI callers can format/parse gas balances without depending
+// on ethers directly.
+export { formatEther, parseEther } from 'ethers';
 export type { Router } from './interfaces/buyer-router.js';
 
 // Types (re-export everything)
