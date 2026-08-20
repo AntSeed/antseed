@@ -35,6 +35,11 @@ import {
   selectTargetProtocolForRequest,
 } from '@antseed/api-adapter';
 import { parseResponseUsage } from './utils/response-usage.js';
+import {
+  VideoGenerationController,
+  type VideoStreamResponse,
+} from './video/video-generation-controller.js';
+import { ANTSEED_STREAMING_RESPONSE_HEADER } from './types/http.js';
 
 type ProviderTokenPricing = import('./interfaces/seller-provider.js').ProviderTokenPricingUsdPerMillion;
 
@@ -53,6 +58,7 @@ export interface SellerRequestHandlerDeps {
   sessionTracker: SellerSessionTracker | null;
   channelsClient: ChannelsClient | null;
   announcer: PeerAnnouncer | null;
+  videoController?: VideoGenerationController | null;
   maxUploadBodyBytes?: number;
   reserveEstimateOverdraftUsdc?: bigint;
   emit: (event: string, ...args: unknown[]) => boolean;
@@ -199,6 +205,27 @@ export class SellerRequestHandler {
               error: { message: `Prover failed: ${message}`, type: 'verifier_error' },
             })),
           });
+        }
+        return;
+      }
+
+      const videoController = this._deps.videoController;
+      if (videoController?.enabled && videoController.isVideoPath(request.path)) {
+        const result = await videoController.handleRequest(request, buyerPeerId);
+        if (isVideoStreamResponse(result)) {
+          mux.sendProxyResponse({
+            ...result.response,
+            headers: {
+              ...result.response.headers,
+              [ANTSEED_STREAMING_RESPONSE_HEADER]: '1',
+            },
+          });
+          for await (const data of result.chunks) {
+            await mux.sendProxyChunkAsync({ requestId: request.requestId, data, done: false });
+          }
+          await mux.sendProxyChunkAsync({ requestId: request.requestId, data: new Uint8Array(0), done: true });
+        } else {
+          mux.sendProxyResponse(result);
         }
         return;
       }
@@ -1010,4 +1037,10 @@ export class SellerRequestHandler {
       debugWarn(`[SellerHandler] Failed to send ResponseAuth for ${request.requestId.slice(0, 8)}: ${err instanceof Error ? err.message : err}`);
     }
   }
+}
+
+function isVideoStreamResponse(
+  result: SerializedHttpResponse | VideoStreamResponse,
+): result is VideoStreamResponse {
+  return 'response' in result && 'chunks' in result;
 }

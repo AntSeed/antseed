@@ -44,6 +44,18 @@ export const TRUSTED_PROVIDER_PLUGINS: TrustedPlugin[] = [
     description: 'Local LLM provider (Ollama, llama.cpp)',
     package: '@antseed/provider-local-llm',
   },
+  {
+    name: 'runway',
+    type: 'provider',
+    description: 'Runway Gen-4-family video generation (API key)',
+    package: '@antseed/provider-runway',
+  },
+  {
+    name: 'veo',
+    type: 'provider',
+    description: 'Google Veo 3.1 through the Gemini Developer API',
+    package: '@antseed/provider-veo',
+  },
 ]
 
 export const TRUSTED_ROUTER_PLUGINS: TrustedPlugin[] = [

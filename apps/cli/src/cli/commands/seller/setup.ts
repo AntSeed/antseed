@@ -11,6 +11,7 @@ import { assertValidConfig } from '../../../config/validation.js';
 import { TRUSTED_PLUGINS } from '../../../plugins/registry.js';
 import { installPlugin } from '../../../plugins/manager.js';
 import type { AntseedConfig, SellerProviderConfig, SellerServiceConfig } from '../../../config/types.js';
+import type { ServiceCapabilities, UnitBillingModelV1 } from '@antseed/node';
 import { isImageModelId } from '@antseed/provider-core';
 import { parseServiceUnitBillingModelsInput } from '../../../config/service-metadata.js';
 import { promptServiceCapabilities } from './capability-prompts.js';
@@ -21,6 +22,8 @@ export function buildSellerSetupProviderEntry(input: {
   baseUrl?: string;
   inputUsdPerMillion?: number;
   outputUsdPerMillion?: number;
+  apiKeyEnv?: string;
+  videoPayment?: { upfrontBps: number };
   services?: Record<string, SellerServiceConfig>;
 }): SellerProviderConfig {
   const hasDefaults = input.inputUsdPerMillion !== undefined || input.outputUsdPerMillion !== undefined;
@@ -28,6 +31,8 @@ export function buildSellerSetupProviderEntry(input: {
     plugin: input.plugin,
     services: input.services ?? {},
     ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}),
+    ...(input.apiKeyEnv ? { apiKeyEnv: input.apiKeyEnv } : {}),
+    ...(input.videoPayment ? { videoPayment: input.videoPayment } : {}),
     ...(hasDefaults
       ? {
           defaults: {
@@ -88,6 +93,10 @@ export function getSellerSetupCredentialHint(pluginName: string): string {
       return 'sign in to Claude Code on this machine';
     case 'local-llm':
       return 'start your local LLM runtime (no API key required)';
+    case 'runway':
+      return 'export RUNWAY_API_KEY=<key>';
+    case 'veo':
+      return 'export GEMINI_API_KEY=<key>';
     default:
       return `set the credentials required by ${pluginName}`;
   }
@@ -156,8 +165,23 @@ export function registerSellerSetupCommand(sellerCmd: Command): void {
         const baseUrlInput = await rl.question('Base URL (leave empty for default): ');
         const baseUrl = baseUrlInput.trim() || undefined;
 
-        const inputStr = await rl.question('Default input price (USD per 1M tokens): ');
-        const outputStr = await rl.question('Default output price (USD per 1M tokens): ');
+        const videoPlugin = pluginName === 'runway' || pluginName === 'veo';
+        const defaultApiKeyEnv = pluginName === 'runway' ? 'RUNWAY_API_KEY' : pluginName === 'veo' ? 'GEMINI_API_KEY' : '';
+        const apiKeyEnvInput = videoPlugin
+          ? await rl.question(`API-key environment variable [${defaultApiKeyEnv}]: `)
+          : '';
+        const apiKeyEnv = videoPlugin ? apiKeyEnvInput.trim() || defaultApiKeyEnv : undefined;
+        const upfrontPercentInput = videoPlugin
+          ? await rl.question('Upfront payment percentage [50]: ')
+          : '';
+        const upfrontPercent = upfrontPercentInput.trim() ? Number(upfrontPercentInput) : 50;
+        if (videoPlugin && (!Number.isFinite(upfrontPercent) || upfrontPercent < 0 || upfrontPercent > 100)) {
+          console.error(chalk.red('\nError: upfront payment percentage must be from 0 through 100'));
+          return;
+        }
+
+        const inputStr = videoPlugin ? '' : await rl.question('Default input price (USD per 1M tokens): ');
+        const outputStr = videoPlugin ? '' : await rl.question('Default output price (USD per 1M tokens): ');
         const inputUsd = inputStr.trim() ? parseFloat(inputStr.trim()) : undefined;
         const outputUsd = outputStr.trim() ? parseFloat(outputStr.trim()) : undefined;
 
@@ -171,6 +195,9 @@ export function registerSellerSetupCommand(sellerCmd: Command): void {
         }
 
         console.log(chalk.bold('\nAdd your first service:\n'));
+        if (videoPlugin) {
+          console.log(chalk.dim(`Tested presets: ${Object.keys(VIDEO_PRESETS[pluginName] ?? {}).join(', ')}`));
+        }
         const services: Record<string, SellerServiceConfig> = {};
         let addMore = true;
         while (addMore) {
@@ -178,13 +205,28 @@ export function registerSellerSetupCommand(sellerCmd: Command): void {
           const serviceId = serviceIdInput.trim();
           if (!serviceId) break;
 
-          const upstreamInput = await rl.question(`Upstream model [${serviceId}]: `);
-          const svcInputStr = await rl.question('Input price (USD/1M, or enter for provider default): ');
-          const svcOutputStr = await rl.question('Output price (USD/1M, or enter for provider default): ');
-          const categoriesStr = await rl.question('Categories (comma-separated, e.g., chat,coding): ');
+          const preset = videoPlugin ? VIDEO_PRESETS[pluginName]?.[serviceId] : undefined;
+          if (videoPlugin && !preset) {
+            console.error(chalk.red(`  ${serviceId} is not a tested ${pluginName} preset`));
+            continue;
+          }
+          const upstreamInput = videoPlugin ? serviceId : await rl.question(`Upstream model [${serviceId}]: `);
+          const svcInputStr = videoPlugin ? '' : await rl.question('Input price (USD/1M, or enter for provider default): ');
+          const svcOutputStr = videoPlugin ? '' : await rl.question('Output price (USD/1M, or enter for provider default): ');
+          const categoriesStr = videoPlugin ? 'video' : await rl.question('Categories (comma-separated, e.g., chat,coding): ');
           const serviceKind = isImageModelId(upstreamInput.trim() || serviceId) ? 'image' : 'text';
-          const capabilities = await promptServiceCapabilities(rl, serviceKind);
-          const unitBillingModelsStr = await rl.question('Unit billing models JSON by protocol (optional): ');
+          const capabilities = preset?.capabilities ?? await promptServiceCapabilities(rl, serviceKind);
+          let unitBillingModels: SellerServiceConfig['unitBillingModels'];
+          if (videoPlugin) {
+            const perVideoInput = await rl.question('Fixed price per output video in USD [0]: ');
+            const perSecondInput = await rl.question('Price per output video second in USD: ');
+            unitBillingModels = {
+              'antseed-video-jobs-v1': videoBillingModel(perVideoInput, perSecondInput),
+            };
+          } else {
+            const unitBillingModelsStr = await rl.question('Unit billing models JSON by protocol (optional): ');
+            if (unitBillingModelsStr.trim()) unitBillingModels = parseServiceUnitBillingModelsInput(unitBillingModelsStr.trim());
+          }
 
           const service: SellerServiceConfig = {};
           const upstreamModel = upstreamInput.trim();
@@ -207,9 +249,7 @@ export function registerSellerSetupCommand(sellerCmd: Command): void {
           if (capabilities) {
             service.capabilities = capabilities;
           }
-          if (unitBillingModelsStr.trim()) {
-            service.unitBillingModels = parseServiceUnitBillingModelsInput(unitBillingModelsStr.trim());
-          }
+          if (unitBillingModels) service.unitBillingModels = unitBillingModels;
 
           services[serviceId] = service;
           console.log(chalk.green(`  Added: ${serviceId}`));
@@ -221,6 +261,8 @@ export function registerSellerSetupCommand(sellerCmd: Command): void {
         const providerEntry = buildSellerSetupProviderEntry({
           plugin: pluginName,
           baseUrl,
+          apiKeyEnv,
+          ...(videoPlugin ? { videoPayment: { upfrontBps: Math.round(upfrontPercent * 100) } } : {}),
           inputUsdPerMillion: inputUsd,
           outputUsdPerMillion: outputUsd,
           services,
@@ -268,4 +310,52 @@ export function registerSellerSetupCommand(sellerCmd: Command): void {
         rl.close();
       }
     });
+}
+
+const VIDEO_PRESETS: Record<string, Record<string, { capabilities: ServiceCapabilities }>> = {
+  runway: {
+    'gen4.5': { capabilities: videoCapabilities(['text_to_video', 'image_to_video'], 2, 10, ['720p'], ['16:9', '9:16'], false, 3_900_000) },
+    gen4_turbo: { capabilities: videoCapabilities(['image_to_video'], 2, 10, ['720p'], ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'], false, 3_900_000) },
+  },
+  veo: {
+    'veo-3.1-generate-preview': { capabilities: videoCapabilities(['text_to_video', 'image_to_video'], 4, 8, ['720p', '1080p'], ['16:9', '9:16'], true, 20 * 1024 * 1024, [4, 6, 8]) },
+    'veo-3.1-fast-generate-preview': { capabilities: videoCapabilities(['text_to_video', 'image_to_video'], 4, 8, ['720p', '1080p'], ['16:9', '9:16'], true, 20 * 1024 * 1024, [4, 6, 8]) },
+  },
+};
+
+function videoCapabilities(
+  generationModes: Array<'text_to_video' | 'image_to_video'>,
+  minDurationSeconds: number,
+  maxDurationSeconds: number,
+  resolutions: string[],
+  aspectRatios: string[],
+  generateAudio: boolean,
+  maxFirstFrameBytes: number,
+  allowedDurationsSeconds?: number[],
+): ServiceCapabilities {
+  return {
+    inputs: generationModes.includes('image_to_video') ? ['text', 'image'] : ['text'],
+    outputs: ['video'],
+    supportedParameters: ['duration_seconds', 'aspect_ratio', 'resolution', 'generate_audio', 'output_format'],
+    video: {
+      generationModes, minDurationSeconds, maxDurationSeconds, resolutions, aspectRatios,
+      generateAudio, outputFormats: ['mp4'], maxFirstFrameBytes,
+      ...(allowedDurationsSeconds ? { allowedDurationsSeconds } : {}),
+    },
+  };
+}
+
+function videoBillingModel(perVideoInput: string, perSecondInput: string): UnitBillingModelV1 {
+  const perVideo = perVideoInput.trim() ? Number(perVideoInput) : 0;
+  const perSecond = Number(perSecondInput);
+  if (!Number.isFinite(perVideo) || perVideo < 0) throw new Error('Fixed video price must be a non-negative number');
+  if (!Number.isFinite(perSecond) || perSecond < 0) throw new Error('Per-second video price must be a non-negative number');
+  if (perVideo === 0 && perSecond === 0) throw new Error('At least one video price must be greater than zero');
+  return {
+    version: 1,
+    components: [
+      ...(perVideo > 0 ? [{ unit: 'output_videos' as const, priceUsd: perVideo }] : []),
+      ...(perSecond > 0 ? [{ unit: 'output_video_seconds' as const, priceUsd: perSecond }] : []),
+    ],
+  };
 }

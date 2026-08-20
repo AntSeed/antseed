@@ -317,7 +317,7 @@ function resolveProbeProtocol(provider: Provider, service: string): ServiceApiPr
 }
 
 export function supportsHealthProbe(protocol: ServiceApiProtocol): boolean {
-  return protocol !== 'openai-images';
+  return protocol !== 'openai-images' && protocol !== 'antseed-video-jobs-v1';
 }
 
 /**
@@ -358,6 +358,8 @@ export function buildHealthProbeRequest(service: string, protocol: ServiceApiPro
       break;
     case 'openai-images':
       throw new Error('Health probes are not supported for openai-images services');
+    case 'antseed-video-jobs-v1':
+      throw new Error('Health probes are not supported for antseed-video-jobs-v1 services');
   }
   return {
     requestId: `health-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`,

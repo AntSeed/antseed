@@ -348,6 +348,36 @@ export class PeerConnection extends EventEmitter {
     this._rawSocket.write(Buffer.from(data));
   }
 
+  async waitForDrain(): Promise<void> {
+    const maxBufferedBytes = 4 * 1024 * 1024;
+    while (this._dataChannel?.isOpen() && this._dataChannel.bufferedAmount() > maxBufferedBytes) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      if (this._state !== ConnectionState.Open && this._state !== ConnectionState.Authenticated) {
+        throw new Error(`Connection to ${this.remotePeerId} closed while waiting for transport drain`);
+      }
+    }
+    if (this._rawSocket?.writableNeedDrain) {
+      await new Promise<void>((resolve, reject) => {
+        const socket = this._rawSocket;
+        if (!socket) {
+          reject(new Error(`Connection to ${this.remotePeerId} closed while waiting for transport drain`));
+          return;
+        }
+        const cleanup = (): void => {
+          socket.off('drain', onDrain);
+          socket.off('error', onError);
+          socket.off('close', onClose);
+        };
+        const onDrain = (): void => { cleanup(); resolve(); };
+        const onError = (error: Error): void => { cleanup(); reject(error); };
+        const onClose = (): void => { cleanup(); reject(new Error(`Connection to ${this.remotePeerId} closed while waiting for transport drain`)); };
+        socket.once('drain', onDrain);
+        socket.once('error', onError);
+        socket.once('close', onClose);
+      });
+    }
+  }
+
   /** Close the connection gracefully. */
   close(): void {
     if (this._state === ConnectionState.Closed) {

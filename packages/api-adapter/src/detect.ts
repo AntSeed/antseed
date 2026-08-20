@@ -36,6 +36,9 @@ export function detectRequestServiceApiProtocol(
   ) {
     return 'openai-images';
   }
+  if (normalizedPath.startsWith('/v1/video/generations')) {
+    return 'antseed-video-jobs-v1';
+  }
 
   const hasAnthropicVersionHeader = Object.keys(request.headers)
     .some((key) => key.toLowerCase() === 'anthropic-version');

@@ -129,6 +129,10 @@ function normalizeSellerProvider(value: unknown): SellerProviderConfig | null {
   if (typeof value['apiKeyEnv'] === 'string' && value['apiKeyEnv'].trim().length > 0) {
     out.apiKeyEnv = value['apiKeyEnv'].trim();
   }
+  if (isRecord(value['videoPayment'])) {
+    const upfrontBps = value['videoPayment']['upfrontBps'];
+    if (typeof upfrontBps === 'number') out.videoPayment = { upfrontBps };
+  }
   if (isRecord(value['pathRewrite'])) {
     const pr: Record<string, string> = {};
     for (const [k, v] of Object.entries(value['pathRewrite'])) {
@@ -162,6 +166,7 @@ function mergeSellerProviders(
       plugin: cfg.plugin,
       ...(cfg.baseUrl ? { baseUrl: cfg.baseUrl } : {}),
       ...(cfg.apiKeyEnv ? { apiKeyEnv: cfg.apiKeyEnv } : {}),
+      ...(cfg.videoPayment ? { videoPayment: { ...cfg.videoPayment } } : {}),
       ...(cfg.pathRewrite ? { pathRewrite: { ...cfg.pathRewrite } } : {}),
       ...(cfg.defaults ? { defaults: clonePricing(cfg.defaults) } : {}),
       services: { ...cfg.services },
@@ -418,6 +423,30 @@ function normalizeBuyerVerification(
   };
 }
 
+function cloneBuyerVideo(
+  value: AntseedConfig['buyer']['video'],
+): AntseedConfig['buyer']['video'] {
+  return value ? { ...value } : undefined;
+}
+
+function normalizeBuyerVideo(
+  value: unknown,
+  fallback?: AntseedConfig['buyer']['video'],
+): { video: NonNullable<AntseedConfig['buyer']['video']> } | Record<string, never> {
+  if (!isRecord(value)) {
+    const cloned = cloneBuyerVideo(fallback);
+    return cloned ? { video: cloned } : {};
+  }
+  return {
+    video: {
+      autoApprove: (value['autoApprove'] ?? fallback?.autoApprove) as boolean,
+      maxTotalUsdc: (value['maxTotalUsdc'] ?? fallback?.maxTotalUsdc) as string,
+      maxUpfrontBps: (value['maxUpfrontBps'] ?? fallback?.maxUpfrontBps) as number,
+      maxDurationSeconds: (value['maxDurationSeconds'] ?? fallback?.maxDurationSeconds) as number,
+    },
+  };
+}
+
 function mergeBuyerConfig(
   defaults: AntseedConfig['buyer'],
   value: unknown
@@ -436,6 +465,7 @@ function mergeBuyerConfig(
       disableMetadataV2Services: defaults.disableMetadataV2Services,
       autoSweep: defaults.autoSweep,
       ...(normalizeBuyerVerification(undefined, defaults.verification)),
+      ...(normalizeBuyerVideo(undefined, defaults.video)),
     };
   }
   return {
@@ -471,6 +501,7 @@ function mergeBuyerConfig(
       'buyer.autoSweep',
     ),
     ...(normalizeBuyerVerification(value['verification'], defaults.verification)),
+    ...(normalizeBuyerVideo(value['video'], defaults.video)),
   };
 }
 
