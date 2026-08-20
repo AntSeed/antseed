@@ -45,7 +45,7 @@ Don't compute this by hand and hope — step 4 validates it mechanically.
 
 ### 3. Bump versions
 
-Ask the user patch/minor/major if it isn't obvious (patch for fixes, minor for features). Bump only the computed set:
+Use a patch bump by default for every package, including packages with feature changes. Only use a minor or major bump when the user explicitly requests it. Bump only the computed set:
 
 ```bash
 pnpm --filter @antseed/protocol \
