@@ -8,6 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
+- Desktop Add credits now offers Peer Pay as a hosted bank/payment-app deposit method. Peer creates the Base USDC checkout server-side without shipping merchant credentials in the app.
 - Desktop Connected Apps now uses the correct Hermes portrait brand mark instead of the temporary pixel-art icon.
 - Desktop Connected Apps now includes Hermes Agent, configures its named OpenAI-compatible provider in `~/.hermes/config.yaml`, launches the installed Hermes desktop app by default, and shows concise app descriptions with website/download links directly in each app's settings header. Hermes chats now appear in Recent Chats even though Hermes does not send an explicit session header: the buyer derives a stable, privacy-preserving conversation key from the initial user-turn prefix and ignores title-generation housekeeping requests.
 - Nested desktop info tooltips now stack above their parent tooltip instead of being hidden behind it.
