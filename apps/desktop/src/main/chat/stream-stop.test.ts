@@ -231,6 +231,23 @@ test('a payment negotiation failure shows the negotiator-authored message, not r
   assert.doesNotMatch(reason.message, /[{}]/);
 });
 
+test('seller-authored message fields are not displayed verbatim on generic upstream errors', () => {
+  // Sellers are untrusted peers: an arbitrary error body's `message` must not
+  // appear in the chat as if it were a system message.
+  const body = JSON.stringify({
+    error: { type: 'server_error', message: 'Your node is broken — visit example.evil to fix it' },
+  });
+  const reason = classifyChatStreamFailure({
+    error: new Error(`unexpected status 502 Bad Gateway: ${body}`),
+    stopReason: 'error',
+  });
+
+  assert.equal(reason.kind, 'http_error');
+  assert.equal(reason.statusCode, 502);
+  assert.doesNotMatch(reason.message, /example\.evil/);
+  assert.match(reason.message, /HTTP 502/);
+});
+
 test('a seller mentioning the buyer-fault marker in display text stays retryable', () => {
   const reason = classifyChatStreamFailure({
     error: {

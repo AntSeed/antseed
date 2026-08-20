@@ -1771,7 +1771,10 @@ export class AntseedNode extends EventEmitter {
           this._depositsClient,
           this._channelsClient,
           this._channelStore,
-          { isChainReachable: () => this._rpcHealth?.reachable ?? true },
+          {
+            isChainReachable: () => this._rpcHealth?.reachable ?? true,
+            onChainReadFailure: () => this._rpcHealth?.reportFailure(),
+          },
           this,
           this._sellerAddressResolver ?? undefined,
           this._buyerFreeUsageManager,

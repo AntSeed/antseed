@@ -170,35 +170,59 @@ function describeHttpStatus(statusCode: number): string {
   return COMMON_HTTP_STATUS_TEXT[statusCode] ?? 'HTTP Error';
 }
 
+type EmbeddedErrorBody = {
+  message: string;
+  /** The body's error identifier (`error` string, or nested `code`/`type`). */
+  errorId?: string;
+};
+
 /**
- * Pull the human-readable `message` field out of an error body embedded in
- * the failure text (agents wrap proxy JSON bodies as "unexpected status 503
- * {json}"). The buyer proxy and negotiator author these messages for display —
- * prefer them over generic HTTP boilerplate or a raw JSON blob.
+ * Error identifiers the buyer proxy / payment negotiator author themselves.
+ * Only these bodies get their `message` displayed verbatim outside the
+ * marker-gated buyer-fault branch — an arbitrary seller error body must not
+ * be able to put attacker-chosen prose into the chat as a system message.
  */
-function extractEmbeddedJsonMessage(raw: string): string | undefined {
+const BUYER_AUTHORED_ERROR_IDS = new Set([
+  ANTSEED_BUYER_FAULT_ERROR_CODE,
+  'payment_negotiation_failed',
+  'buyer_payments_inactive',
+  'payment_required',
+]);
+
+/**
+ * Pull the human-readable `message` field (and the error identifier) out of
+ * an error body embedded in the failure text — agents wrap proxy JSON bodies
+ * as "unexpected status 503 {json}". The buyer proxy and negotiator author
+ * these messages for display; prefer them over generic HTTP boilerplate or a
+ * raw JSON blob.
+ */
+function extractEmbeddedErrorBody(raw: string): EmbeddedErrorBody | undefined {
   const jsonStart = raw.indexOf('{');
   if (jsonStart >= 0) {
     try {
       const parsed = JSON.parse(raw.slice(jsonStart)) as Record<string, unknown>;
       const nested = parsed.error && typeof parsed.error === 'object' && !Array.isArray(parsed.error)
-        ? (parsed.error as Record<string, unknown>).message
+        ? parsed.error as Record<string, unknown>
         : undefined;
-      const message = [nested, parsed.message].find(
+      const message = [nested?.message, parsed.message].find(
         (value): value is string => typeof value === 'string' && value.trim().length > 0,
       );
+      const errorId = [parsed.error, nested?.code, nested?.type, parsed.code]
+        .find((value): value is string => typeof value === 'string' && value.trim().length > 0);
       if (message && !message.trimStart().startsWith('{')) {
-        return message.trim();
+        return { message: message.trim(), ...(errorId ? { errorId } : {}) };
       }
     } catch {
-      // Truncated or wrapped JSON — fall through to the field regex.
+      // Truncated or wrapped JSON — fall through to the field regexes.
     }
   }
-  const match = /"message"\s*:\s*"((?:[^"\\]|\\.)+)"/.exec(raw);
-  if (!match) return undefined;
+  const messageMatch = /"message"\s*:\s*"((?:[^"\\]|\\.)+)"/.exec(raw);
+  if (!messageMatch) return undefined;
   try {
-    const decoded = (JSON.parse(`"${match[1]}"`) as string).trim();
-    return decoded.length > 0 ? decoded : undefined;
+    const decoded = (JSON.parse(`"${messageMatch[1]}"`) as string).trim();
+    if (decoded.length === 0) return undefined;
+    const idMatch = /"(?:error|code|type)"\s*:\s*"([A-Za-z0-9_.-]+)"/.exec(raw);
+    return { message: decoded, ...(idMatch ? { errorId: idMatch[1] } : {}) };
   } catch {
     return undefined;
   }
@@ -250,7 +274,12 @@ export function classifyChatStreamFailure({
 
   const rawMessage = uniqueStrings(signals.messages).join(' | ') || 'The stream stopped before completion.';
   const normalized = rawMessage.toLowerCase();
-  const embeddedMessage = extractEmbeddedJsonMessage(rawMessage);
+  const embedded = extractEmbeddedErrorBody(rawMessage);
+  // Outside the marker-gated buyer-fault branch, only display messages from
+  // bodies the buyer side authors itself — never arbitrary seller prose.
+  const buyerAuthoredMessage = embedded?.errorId && BUYER_AUTHORED_ERROR_IDS.has(embedded.errorId)
+    ? embedded.message
+    : undefined;
   const statusCode = signals.statusCodes[0] ?? parseStatusCodeFromText(rawMessage);
   const errorCode = signals.errorCodes.find(Boolean) ?? parseErrorCodeFromText(rawMessage);
   // Agents often surface the proxy's JSON body as plain text, so also detect
@@ -302,8 +331,10 @@ export function classifyChatStreamFailure({
       source: 'transport',
       retryable: false,
       // The proxy/negotiator author their fault messages for display — show
-      // them verbatim; fall back to the curated heuristics otherwise.
-      message: embeddedMessage ?? buildBuyerFaultMessage(normalized, buyerStatusCode),
+      // them verbatim; fall back to the curated heuristics otherwise. This
+      // branch is gated on the buyer-fault marker (which the proxy scrubs
+      // from peer bodies), so the embedded message is buyer-authored.
+      message: embedded?.message ?? buildBuyerFaultMessage(normalized, buyerStatusCode),
       statusCode: buyerStatusCode,
       ...(errorCode ? { errorCode } : {}),
     };
@@ -315,9 +346,9 @@ export function classifyChatStreamFailure({
     // another peer, would walk the whole peer list while hiding the one thing
     // the user actually needs to fix.
     const retryable = statusCode >= 500 || statusCode === 429;
-    const embeddedWithHint = embeddedMessage && retryable && !/\bretry\b/i.test(embeddedMessage)
-      ? `${embeddedMessage} You can retry.`
-      : embeddedMessage;
+    const embeddedWithHint = buyerAuthoredMessage && retryable && !/\bretry\b/i.test(buyerAuthoredMessage)
+      ? `${buyerAuthoredMessage} You can retry.`
+      : buyerAuthoredMessage;
     return {
       kind: 'http_error',
       source: 'upstream',
@@ -352,7 +383,7 @@ export function classifyChatStreamFailure({
       kind: 'stream_error',
       source: 'upstream',
       retryable: false,
-      message: embeddedMessage ?? (rawMessage === 'The stream stopped before completion.'
+      message: buyerAuthoredMessage ?? (rawMessage === 'The stream stopped before completion.'
         ? rawMessage
         : `The stream stopped before completion: ${rawMessage}`),
       ...(errorCode ? { errorCode } : {}),
@@ -363,7 +394,7 @@ export function classifyChatStreamFailure({
     kind: 'unknown',
     source: 'unknown',
     retryable: false,
-    message: embeddedMessage ?? (rawMessage === 'The stream stopped before completion.'
+    message: buyerAuthoredMessage ?? (rawMessage === 'The stream stopped before completion.'
       ? rawMessage
       : `The stream stopped before completion: ${rawMessage}`),
     ...(errorCode ? { errorCode } : {}),

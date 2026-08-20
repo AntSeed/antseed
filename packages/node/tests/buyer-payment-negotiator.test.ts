@@ -281,7 +281,16 @@ describe('BuyerPaymentNegotiator', () => {
       depositsClient = {
         getBuyerBalance: vi.fn().mockRejectedValue(new Error('could not detect network')),
       } as unknown as DepositsClient;
-      negotiator = new BuyerPaymentNegotiator(identity, bpm as unknown as BuyerPaymentManager, depositsClient, channelsClient, channelStore, config, emitter);
+      const onChainReadFailure = vi.fn();
+      negotiator = new BuyerPaymentNegotiator(
+        identity,
+        bpm as unknown as BuyerPaymentManager,
+        depositsClient,
+        channelsClient,
+        channelStore,
+        { onChainReadFailure },
+        emitter,
+      );
       bufferPaymentRequired(negotiator, peer.peerId, conn);
       (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockImplementation(async () => {
         (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
@@ -290,6 +299,7 @@ describe('BuyerPaymentNegotiator', () => {
       const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
       expect(result.action).toBe('retry');
       expect(bpm.authorizeSpending).toHaveBeenCalledOnce();
+      expect(onChainReadFailure).toHaveBeenCalledOnce();
     });
 
     it('requires a fresh AuthAck when a seller with no local session asks for payment again', async () => {

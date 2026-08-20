@@ -50,6 +50,12 @@ export interface BuyerNegotiatorConfig {
    * way, so payments keep working through RPC outages.
    */
   isChainReachable?: () => boolean;
+  /**
+   * Called when a best-effort on-chain read fails, so the reachability
+   * monitor can re-detect a mid-session RPC outage instead of staying
+   * optimistically "ready" forever.
+   */
+  onChainReadFailure?: () => void;
 }
 
 /** How long to wait for a seller's CloseChannelResult before giving up. */
@@ -118,6 +124,7 @@ export class BuyerPaymentNegotiator {
   private readonly _emit: NegotiationEmitter;
   private readonly _sellerAddressResolver?: SellerAddressResolver;
   private readonly _isChainReachable: (() => boolean) | null;
+  private readonly _onChainReadFailure: (() => void) | null;
 
   /** Tracks which seller peers the buyer has already negotiated payment for. */
   private readonly _lockedPeers = new Set<string>();
@@ -167,6 +174,7 @@ export class BuyerPaymentNegotiator {
     this._emit = emitter;
     this._sellerAddressResolver = sellerAddressResolver;
     this._isChainReachable = _config.isChainReachable ?? null;
+    this._onChainReadFailure = _config.onChainReadFailure ?? null;
   }
 
   get bpm(): BuyerPaymentManager {
@@ -673,6 +681,7 @@ export class BuyerPaymentNegotiator {
         }
       } catch (err) {
         debugWarn(`[BuyerNegotiator] Failed to check buyer balance: ${err instanceof Error ? err.message : err}`);
+        this._onChainReadFailure?.();
       }
     }
 

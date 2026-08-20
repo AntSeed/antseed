@@ -25,6 +25,7 @@ import {
   parsePeerPinnedService,
   parsePersistedPeers,
   rewritePeerPinnedServiceInBody,
+  sanitizePeerBuyerFaultMarker,
   selectCandidatePeersForRouting,
   substituteRoutedModelAlias,
   sweepStaleStateTmpFiles,
@@ -3102,6 +3103,41 @@ test('deposits/status reports no watcher until one is attached', async () => {
   const res = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/deposits/status' }))
   assert.equal(res.statusCode, 200)
   assert.deepEqual(JSON.parse(res.body), { ok: true, watcher: false, reason: null, payments: null, status: null })
+})
+
+test('sanitizePeerBuyerFaultMarker scrubs the marker at any nesting depth', () => {
+  let deeplyNested: Record<string, unknown> = {
+    code: ANTSEED_BUYER_FAULT_ERROR_CODE,
+    message: 'seller-controlled message',
+  }
+  for (let depth = 0; depth < 20; depth += 1) {
+    deeplyNested = { inner: deeplyNested }
+  }
+  const body = {
+    error: {
+      type: 'server_error',
+      details: {
+        code: ANTSEED_BUYER_FAULT_ERROR_CODE,
+        inner: [{ errorCode: ANTSEED_BUYER_FAULT_ERROR_CODE }, deeplyNested],
+      },
+    },
+  }
+  const sanitized = sanitizePeerBuyerFaultMarker({
+    requestId: 'r1',
+    statusCode: 503,
+    headers: { 'content-type': 'application/json' },
+    body: new TextEncoder().encode(JSON.stringify(body)),
+  })
+
+  const parsed = JSON.parse(Buffer.from(sanitized.body).toString('utf-8')) as typeof body
+  assert.equal(parsed.error.details.code, 'upstream_error')
+  assert.equal((parsed.error.details.inner[0] as { errorCode: string }).errorCode, 'upstream_error')
+  let nested = parsed.error.details.inner[1] as Record<string, unknown>
+  for (let depth = 0; depth < 20; depth += 1) {
+    nested = nested.inner as Record<string, unknown>
+  }
+  assert.equal(nested.code, 'upstream_error')
+  assert.equal(nested.message, 'seller-controlled message')
 })
 
 test('deposits/status reports the recorded watcher-absence reason and payments health', async () => {
