@@ -6,6 +6,13 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ## Unreleased
 
+### Added
+
+- Added the beta `antseed-video-jobs-v1` API and CLI flow at `/v1/video/generations`, with durable asynchronous jobs, persisted buyer-to-seller route affinity, cancellation, restart recovery, uploaded first-frame assets, and normalized video capabilities and billing (`output_videos` / `output_video_seconds`).
+- Added beta `@antseed/provider-runway` and `@antseed/provider-veo` plugins for tested Runway Gen-4-family and Gemini Developer API Veo 3.1 presets. Provider artifact URLs and credentials remain seller-side, and provider extensions cannot override canonical fields.
+- Added `antseed video create/status/list/cancel/download`, including buyer quote safety caps, resumable Range downloads, SHA-256 verification, atomic output rename, and signed delivery receipts.
+- Added configurable video milestone payments, defaulting to 50% after upstream acceptance and 50% after verified delivery, plus seller setup, discovery display, and `seller doctor --video-live` diagnostics. The split is documented as risk reduction rather than trustless escrow; refunds and subjective-quality disputes remain out of scope.
+
 ### Changed
 
 - Desktop Connected Apps now includes Hermes Agent, configures its named OpenAI-compatible provider in `~/.hermes/config.yaml`, launches the installed Hermes desktop app by default, and shows concise app descriptions with website/download links directly in each app's settings header. Hermes chats now appear in Recent Chats even though Hermes does not send an explicit session header: the buyer derives a stable, privacy-preserving conversation key from the initial user-turn prefix and ignores title-generation housekeeping requests.

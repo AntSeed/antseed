@@ -307,9 +307,14 @@ export function buildSellerPluginRuntimeEnv(
     runtimeEnv['ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON'] = JSON.stringify(serviceUnitBillingModels)
   }
   if (providerCfg.baseUrl) {
-    const baseUrlKey = resolvePluginPackage(providerCfg.plugin) === '@antseed/provider-local-llm'
+    const resolvedPackage = resolvePluginPackage(providerCfg.plugin)
+    const baseUrlKey = resolvedPackage === '@antseed/provider-local-llm'
       ? 'LOCAL_LLM_BASE_URL'
-      : 'OPENAI_BASE_URL'
+      : resolvedPackage === '@antseed/provider-runway'
+        ? 'RUNWAY_BASE_URL'
+        : resolvedPackage === '@antseed/provider-veo'
+          ? 'GEMINI_BASE_URL'
+          : 'OPENAI_BASE_URL'
     runtimeEnv[baseUrlKey] = providerCfg.baseUrl
   }
   if (providerCfg.pathRewrite && Object.keys(providerCfg.pathRewrite).length > 0) {
@@ -318,8 +323,17 @@ export function buildSellerPluginRuntimeEnv(
   if (providerCfg.apiKeyEnv) {
     const apiKey = process.env[providerCfg.apiKeyEnv]
     if (apiKey) {
-      runtimeEnv['OPENAI_API_KEY'] = apiKey
+      const resolvedPackage = resolvePluginPackage(providerCfg.plugin)
+      const apiKeyTarget = resolvedPackage === '@antseed/provider-runway'
+        ? 'RUNWAY_API_KEY'
+        : resolvedPackage === '@antseed/provider-veo'
+          ? 'GEMINI_API_KEY'
+          : 'OPENAI_API_KEY'
+      runtimeEnv[apiKeyTarget] = apiKey
     }
+  }
+  if (providerCfg.videoPayment) {
+    runtimeEnv['ANTSEED_VIDEO_UPFRONT_BPS'] = String(providerCfg.videoPayment.upfrontBps)
   }
 
   return runtimeEnv

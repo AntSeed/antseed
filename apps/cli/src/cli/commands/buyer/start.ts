@@ -385,6 +385,7 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         maxStreamDurationMs: effectiveBuyerConfig.maxStreamDurationMs,
         payments: paymentsConfig,
         verification: effectiveBuyerConfig.verification,
+        video: effectiveBuyerConfig.video,
       })
 
       node.setRouter(router)

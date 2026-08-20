@@ -194,6 +194,17 @@ export class ProxyMux {
     this._safeSendFrame(frame, chunk.done ? 'response-end' : 'response-chunk', chunk.requestId);
   }
 
+  /** Seller side: send a response chunk and wait for transport backpressure. */
+  async sendProxyChunkAsync(chunk: SerializedHttpResponseChunk): Promise<void> {
+    const type = chunk.done
+      ? MessageType.HttpResponseEnd
+      : MessageType.HttpResponseChunk;
+    const payload = encodeHttpResponseChunk(chunk);
+    const frame = encodeFrame({ type, messageId: this._nextMessageId(), payload });
+    this._connection.send(frame);
+    await this._connection.waitForDrain?.();
+  }
+
   /** Route an incoming frame to the correct handler based on message type. */
   async handleFrame(frame: FramedMessage): Promise<void> {
     try {

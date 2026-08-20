@@ -3166,3 +3166,40 @@ test('getSweepReceipt returns cached relayer receipts case-insensitively', () =>
   assert.equal(proxy.getSweepReceipt(nonce.toLowerCase()), receipt)
   assert.equal(proxy.getSweepReceipt('0x' + '00'.repeat(32)), null)
 })
+
+test('video route affinity persists and restores without failover', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'antseed-video-affinity-'))
+  try {
+    const peer = makePeer('a', ['runway'])
+    const first = new BuyerProxy({ port: 0, dataDir: dir, node: { router: null } as any })
+    const request = {
+      requestId: randomUUID(), method: 'POST', path: '/v1/video/generations',
+      headers: { 'content-type': 'application/json', 'idempotency-key': 'idem-video' },
+      body: new TextEncoder().encode(JSON.stringify({ model: 'gen4.5', prompt: 'test', duration_seconds: 4 })),
+    }
+    const response: SerializedHttpResponse = {
+      requestId: request.requestId, statusCode: 402, headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({
+        generation_id: 'vg_persisted', expires_at: Math.floor(Date.now() / 1000) + 3600,
+      })),
+    }
+    await (first as any)._recordVideoAffinity(request, response, peer, 'runway', 'gen4.5')
+
+    const restored = new BuyerProxy({ port: 0, dataDir: dir, node: { router: null } as any })
+    await (restored as any)._hydratePeersFromStateFile()
+    assert.deepEqual((restored as any)._videoAffinityForRequest({
+      ...request, method: 'GET', path: '/v1/video/generations/vg_persisted', body: new Uint8Array(), headers: {},
+    }), {
+      sellerPeerId: peer.peerId.toLowerCase(), provider: 'runway', service: 'gen4.5',
+      expiresAt: (JSON.parse(await readFile(join(dir, 'buyer.state.json'), 'utf8')) as any).videoAffinities.vg_persisted.expiresAt,
+    })
+    assert.deepEqual((restored as any)._videoAffinityForRequest(request), (restored as any)._videoAffinityForRequest({
+      ...request, method: 'GET', path: '/v1/video/generations/vg_persisted', body: new Uint8Array(), headers: {},
+    }))
+    assert.equal((restored as any)._videoAffinityForRequest({
+      ...request, method: 'GET', path: '/v1/video/generations/vg_unknown', body: new Uint8Array(), headers: {},
+    }), null)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})

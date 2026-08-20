@@ -28,6 +28,8 @@ import {
 } from '@antseed/api-adapter';
 import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 } from '@antseed/protocol/messages';
 import { buyerFault, peerFault } from './errors.js';
+import { verifyUtf8 } from '@antseed/protocol/signing';
+import type { VideoPaymentQuoteV1 } from '@antseed/protocol/video';
 
 export interface RequestStreamResponseMetadata {
   streaming: boolean;
@@ -45,6 +47,8 @@ export interface RequestExecutionOptions {
   signal?: AbortSignal;
   /** Skip payment/free-usage machinery for internal control-plane requests. */
   controlPlane?: boolean;
+  /** Deliver stream chunks only through callbacks instead of reconstructing the response body. */
+  collectResponseBody?: boolean;
 }
 
 export interface BuyerRequestHandlerConfig {
@@ -52,6 +56,12 @@ export interface BuyerRequestHandlerConfig {
   maxStreamBufferBytes?: number;
   maxStreamDurationMs?: number;
   responseAuthTimeoutMs?: number;
+  videoPolicy?: {
+    autoApprove?: boolean;
+    maxTotalUsdc?: string;
+    maxUpfrontBps?: number;
+    maxDurationSeconds?: number;
+  };
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 5 * 60_000;
@@ -307,7 +317,10 @@ export class BuyerRequestHandler {
           callbacks?.onResponseChunk?.(chunk);
 
           if (chunk.data.length > 0) {
-            if (callbacks?.onResponseChunk) {
+            if (options?.collectResponseBody === false) {
+              // Binary sinks consume chunks directly. Keeping them here would
+              // retain the complete artifact in memory before resolving.
+            } else if (callbacks?.onResponseChunk) {
               streamBufferedBytes += chunk.data.length;
               streamChunks.push(chunk.data);
             } else {
@@ -337,24 +350,25 @@ export class BuyerRequestHandler {
 
           finish({
             ...streamStartResponse,
-            body: concatChunks(streamChunks),
+            body: options?.collectResponseBody === false
+              ? new Uint8Array(0)
+              : concatChunks(streamChunks),
           });
         },
       );
     });
 
-    const response = await executeRequest();
+    let response = await executeRequest();
 
-    if (response.statusCode === 402 && negotiator && !externalSpendingAuth) {
-      const result = await negotiator.handle402(response, peer, conn, req);
-      if (result.action === 'return') return result.response;
-      startTime = Date.now();
-      const retriedResponse = await executeRequest();
-      if (!isFreeService) {
-        negotiator.estimateCostFromResponse(peer, retriedResponse, requestedService, req.requestId);
+    if (negotiator && !externalSpendingAuth) {
+      for (let attempt = 0; response.statusCode === 402 && attempt < 3; attempt += 1) {
+        const videoPolicyError = await validateVideoQuoteResponse(response, req, peer, this._config.videoPolicy);
+        if (videoPolicyError) return videoPolicyError;
+        const result = await negotiator.handle402(response, peer, conn, req);
+        if (result.action === 'return') return result.response;
+        startTime = Date.now();
+        response = await executeRequest();
       }
-      this._recordResponseAuth(peer, req, retriedResponse, requestedService, verificationMux);
-      return retriedResponse;
     }
 
     if (negotiator && !isFreeService) {
@@ -446,8 +460,142 @@ export class BuyerRequestHandler {
   }
 }
 
+export async function validateVideoQuoteResponse(
+  response: SerializedHttpResponse,
+  request: SerializedHttpRequest,
+  peer: BuyerPeerView,
+  configuredPolicy: BuyerRequestHandlerConfig['videoPolicy'],
+): Promise<SerializedHttpResponse | null> {
+  let body: Record<string, unknown>;
+  try {
+    const value = JSON.parse(new TextDecoder().decode(response.body)) as unknown;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    body = value as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const quoteValue = body['video_quote'];
+  if (!quoteValue || typeof quoteValue !== 'object' || Array.isArray(quoteValue)) return null;
+  const quote = quoteValue as VideoPaymentQuoteV1;
+  const sellerPeerId = peer.peerId;
+  const unsignedQuote = {
+    version: quote.version,
+    quote_id: quote.quote_id,
+    request_hash: quote.request_hash,
+    seller_peer_id: quote.seller_peer_id,
+    total_amount: quote.total_amount,
+    upfront_amount: quote.upfront_amount,
+    delivery_amount: quote.delivery_amount,
+    upfront_bps: quote.upfront_bps,
+    expires_at: quote.expires_at,
+  };
+  const parsedRequest = parseRequestObject(request.body);
+  const requestHash = parsedRequest ? await sha256Canonical(parsedRequest) : '';
+  const total = safeUnsignedBigInt(quote.total_amount);
+  const upfront = safeUnsignedBigInt(quote.upfront_amount);
+  const delivery = safeUnsignedBigInt(quote.delivery_amount);
+  const duration = typeof parsedRequest?.['duration_seconds'] === 'number' ? parsedRequest['duration_seconds'] : Number.POSITIVE_INFINITY;
+  const expectedTotal = parsedRequest ? advertisedVideoTotal(peer, request, parsedRequest) : null;
+  const policyTotal = minBigInt(
+    safeUnsignedBigInt(configuredPolicy?.maxTotalUsdc ?? '5000000') ?? 5_000_000n,
+    safeUnsignedBigInt(getHeaderCaseInsensitive(request.headers, 'x-antseed-video-max-total-usdc') ?? '') ?? 5_000_000n,
+  );
+  const headerUpfront = Number(getHeaderCaseInsensitive(request.headers, 'x-antseed-video-max-upfront-bps') ?? '5000');
+  const maxUpfrontBps = Math.min(configuredPolicy?.maxUpfrontBps ?? 5_000, Number.isInteger(headerUpfront) ? headerUpfront : 5_000);
+  const maxDurationSeconds = configuredPolicy?.maxDurationSeconds ?? 10;
+  let reason = '';
+  if (configuredPolicy?.autoApprove === false) reason = 'Video quote requires manual approval';
+  else if (quote.version !== 1 || quote.seller_peer_id.toLowerCase() !== sellerPeerId.toLowerCase()) reason = 'Video quote seller is invalid';
+  else if (!verifyUtf8(sellerPeerId, JSON.stringify(unsignedQuote), quote.signature)) reason = 'Video quote signature is invalid';
+  else if (quote.expires_at <= Math.floor(Date.now() / 1000)) reason = 'Video quote has expired';
+  else if (!requestHash || quote.request_hash !== requestHash) reason = 'Video quote request hash does not match';
+  else if (total === null || upfront === null || delivery === null || upfront + delivery !== total) reason = 'Video quote amounts are invalid';
+  else if (total > 0n && expectedTotal === null) reason = 'Seller did not advertise a matching video billing model';
+  else if (expectedTotal !== null && total !== expectedTotal) reason = `Video quote total ${total} does not match advertised price ${expectedTotal}`;
+  else if (!Number.isInteger(quote.upfront_bps) || quote.upfront_bps < 0 || quote.upfront_bps > 10_000) reason = 'Video quote upfront percentage is invalid';
+  else if (total > policyTotal) reason = `Video quote total ${total} exceeds buyer limit ${policyTotal}`;
+  else if (quote.upfront_bps > maxUpfrontBps) reason = `Video quote upfront ${quote.upfront_bps} bps exceeds buyer limit ${maxUpfrontBps} bps`;
+  else if (!Number.isSafeInteger(duration) || duration > maxDurationSeconds) reason = `Video duration ${duration} exceeds buyer limit ${maxDurationSeconds}`;
+  if (!reason) return null;
+  return {
+    ...response,
+    statusCode: 422,
+    headers: { ...response.headers, 'content-type': 'application/json', [ANTSEED_FAULT_ATTRIBUTION_HEADER]: 'buyer' },
+    body: new TextEncoder().encode(JSON.stringify({
+      error: { code: 'video_quote_rejected', message: reason, retryable: false },
+      video_quote: quote,
+    })),
+  };
+}
+
+function advertisedVideoTotal(
+  peer: BuyerPeerView,
+  request: SerializedHttpRequest,
+  body: Record<string, unknown>,
+): bigint | null {
+  const model = typeof body['model'] === 'string' ? body['model'] : '';
+  if (!model) return null;
+  const route = selectBillingRoute(peer, request, model);
+  if (!route?.unitModel || route.serviceApiProtocol !== 'antseed-video-jobs-v1') return null;
+  const duration = typeof body['duration_seconds'] === 'number' ? body['duration_seconds'] : 0;
+  const attributes: Record<string, string> = {
+    model,
+    ...(typeof body['resolution'] === 'string' ? { resolution: body['resolution'] } : {}),
+    ...(typeof body['aspect_ratio'] === 'string' ? { aspect_ratio: body['aspect_ratio'] } : {}),
+    audio: String(body['generate_audio'] === true),
+    output_format: typeof body['output_format'] === 'string' ? body['output_format'] : 'mp4',
+  };
+  let microUsdc = 0;
+  for (const component of route.unitModel.components) {
+    if (component.match && Object.entries(component.match).some(([key, value]) => attributes[key] !== value)) continue;
+    const units = component.unit === 'output_video_seconds' ? duration : component.unit === 'output_videos' ? 1 : 0;
+    microUsdc += component.priceUsd * units * 1_000_000;
+  }
+  return BigInt(Math.max(0, Math.round(microUsdc)));
+}
+
+function parseRequestObject(body: Uint8Array): Record<string, unknown> | null {
+  try {
+    const value = JSON.parse(new TextDecoder().decode(body)) as unknown;
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+async function sha256Canonical(value: unknown): Promise<string> {
+  const bytes = new TextEncoder().encode(stableJson(value));
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => `${JSON.stringify(key)}:${stableJson(child)}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+function safeUnsignedBigInt(value: string): bigint | null {
+  return /^(0|[1-9]\d*)$/.test(value) ? BigInt(value) : null;
+}
+
+function minBigInt(left: bigint, right: bigint): bigint {
+  return left < right ? left : right;
+}
+
+function getHeaderCaseInsensitive(headers: Record<string, string>, name: string): string | undefined {
+  return Object.entries(headers).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1];
+}
+
 /** Extract the service/model name from a JSON or multipart request body, or undefined if not found. */
 function extractServiceFromBody(request: SerializedHttpRequest): string | undefined {
+  const headerService = Object.entries(request.headers)
+    .find(([key]) => key.toLowerCase() === 'x-antseed-service' || key.toLowerCase() === 'x-antseed-model')?.[1]?.trim();
+  if (headerService) return headerService;
   const parsed = extractRequestBodyFields(request.headers, request.body);
   const service = parsed?.service ?? parsed?.model;
   if (typeof service === 'string' && service.length > 0) return service;

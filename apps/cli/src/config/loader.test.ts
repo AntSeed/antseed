@@ -81,6 +81,30 @@ test('loadConfig merges partial model routing preferences with defaults', async 
   );
 });
 
+test('loadConfig preserves buyer video approval overrides and default caps', async () => {
+  await withTempConfig(
+    JSON.stringify({ buyer: { video: { maxTotalUsdc: '2500000', maxUpfrontBps: 3000 } } }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.deepEqual(config.buyer.video, {
+        autoApprove: true,
+        maxTotalUsdc: '2500000',
+        maxUpfrontBps: 3000,
+        maxDurationSeconds: 10,
+      });
+    },
+  );
+});
+
+test('loadConfig rejects invalid buyer video approval limits', async () => {
+  await withTempConfig(
+    JSON.stringify({ buyer: { video: { maxTotalUsdc: '-1', maxUpfrontBps: 10001, maxDurationSeconds: 0 } } }),
+    async (configPath) => {
+      await assert.rejects(() => loadConfig(configPath), /buyer\.video\.maxTotalUsdc/);
+    },
+  );
+});
+
 test('loadConfig rejects invalid model routing peer ids', async () => {
   await withTempConfig(
     JSON.stringify({ buyer: { routingPreferences: { blockedPeerIds: ['not-a-peer'] } } }),

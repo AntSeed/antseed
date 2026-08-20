@@ -61,6 +61,10 @@ export interface SellerProviderConfig {
    * default env var (`OPENAI_API_KEY`) is used.
    */
   apiKeyEnv?: string;
+  /** Payment split for asynchronous video jobs. Defaults to 5000 (50%). */
+  videoPayment?: {
+    upfrontBps: number;
+  };
   /**
    * Rewrite request paths before forwarding upstream. Keys are exact incoming
    * paths, values are their replacements.
@@ -192,6 +196,13 @@ export interface BuyerCLIConfig {
   autoSweep?: boolean;
   /** Buyer-side response-auth evidence sampling settings. */
   verification?: BuyerVerificationConfig;
+  /** Automatic approval limits for signed asynchronous video quotes. */
+  video?: {
+    autoApprove: boolean;
+    maxTotalUsdc: string;
+    maxUpfrontBps: number;
+    maxDurationSeconds: number;
+  };
 }
 
 /**

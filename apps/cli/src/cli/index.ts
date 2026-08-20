@@ -14,6 +14,7 @@ import { registerDepositAlias } from './commands/buyer/deposit.js';
 import { registerMetricsCommand } from './commands/metrics.js';
 import { registerWrappedToolCommands } from './commands/wrapped-tools.js';
 import { registerSystemProxyCommands } from './commands/system-proxy/index.js';
+import { registerVideoCommands } from './commands/video/index.js';
 
 loadEnvFromFiles();
 
@@ -42,5 +43,6 @@ registerDepositAlias(program);
 registerMetricsCommand(program);
 registerWrappedToolCommands(program);
 registerSystemProxyCommands(program);
+registerVideoCommands(program);
 
 program.parse(process.argv);

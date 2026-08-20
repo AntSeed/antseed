@@ -105,6 +105,14 @@ function validateSellerProviders(
         errors.push(`${providerPath}.baseUrl must be a valid URL`);
       }
     }
+    if (
+      providerCfg.videoPayment
+      && (!Number.isInteger(providerCfg.videoPayment.upfrontBps)
+        || providerCfg.videoPayment.upfrontBps < 0
+        || providerCfg.videoPayment.upfrontBps > 10_000)
+    ) {
+      errors.push(`${providerPath}.videoPayment.upfrontBps must be an integer from 0 through 10000`);
+    }
     for (const [serviceId, serviceCfg] of Object.entries(providerCfg.services)) {
       const servicePath = `${providerPath}.services.${serviceId}`;
       if (serviceCfg.upstreamModel !== undefined && serviceCfg.upstreamModel.trim().length === 0) {
@@ -334,6 +342,21 @@ export function validateConfig(config: AntseedConfig): string[] {
 
   if (typeof config.buyer.disableMetadataV2Services !== 'boolean') {
     errors.push('buyer.disableMetadataV2Services must be a boolean');
+  }
+
+  if (config.buyer.video) {
+    if (typeof config.buyer.video.autoApprove !== 'boolean') {
+      errors.push('buyer.video.autoApprove must be a boolean');
+    }
+    if (typeof config.buyer.video.maxTotalUsdc !== 'string' || !/^(0|[1-9]\d*)$/.test(config.buyer.video.maxTotalUsdc)) {
+      errors.push('buyer.video.maxTotalUsdc must be unsigned USDC base units');
+    }
+    if (!Number.isInteger(config.buyer.video.maxUpfrontBps) || config.buyer.video.maxUpfrontBps < 0 || config.buyer.video.maxUpfrontBps > 10_000) {
+      errors.push('buyer.video.maxUpfrontBps must be an integer from 0 through 10000');
+    }
+    if (!Number.isInteger(config.buyer.video.maxDurationSeconds) || config.buyer.video.maxDurationSeconds < 1) {
+      errors.push('buyer.video.maxDurationSeconds must be a positive integer');
+    }
   }
 
   validateBuyerVerification('buyer.verification', config.buyer.verification, errors);

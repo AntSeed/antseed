@@ -24,7 +24,7 @@ import { canonicalModelKey, preferredModelDisplayName } from '@antseed/node/mode
 
 export { effectiveModelReputationScore } from '@antseed/node'
 
-export type NetworkModelType = 'text' | 'image'
+export type NetworkModelType = 'text' | 'image' | 'video'
 
 export type NetworkModelPeerOffer = {
   peerId: string
@@ -45,6 +45,9 @@ export type NetworkModelPeerOffer = {
   cachedInputUsdPerMillion?: number
   minImageUsdPerImage?: number
   maxImageUsdPerImage?: number
+  minVideoUsdPerSecond?: number
+  maxVideoUsdPerSecond?: number
+  upfrontBps?: number
 }
 
 export type NetworkModelCapabilityCoverage = {
@@ -286,6 +289,11 @@ export function buildNetworkModels(
       ...(offer.cachedInputUsdPerMillion !== undefined ? { cachedInputUsdPerMillion: offer.cachedInputUsdPerMillion } : {}),
       ...(offer.minImageUsdPerImage !== undefined ? { minImageUsdPerImage: offer.minImageUsdPerImage } : {}),
       ...(offer.maxImageUsdPerImage !== undefined ? { maxImageUsdPerImage: offer.maxImageUsdPerImage } : {}),
+      ...(offer.minVideoUsdPerSecond !== undefined ? { minVideoUsdPerSecond: offer.minVideoUsdPerSecond } : {}),
+      ...(offer.maxVideoUsdPerSecond !== undefined ? { maxVideoUsdPerSecond: offer.maxVideoUsdPerSecond } : {}),
+      ...(offer.minVideoUsdPerVideo !== undefined ? { minVideoUsdPerVideo: offer.minVideoUsdPerVideo } : {}),
+      ...(offer.maxVideoUsdPerVideo !== undefined ? { maxVideoUsdPerVideo: offer.maxVideoUsdPerVideo } : {}),
+      ...(offer.capabilities?.video?.upfrontBps !== undefined ? { upfrontBps: offer.capabilities.video.upfrontBps } : {}),
     })
   }
 

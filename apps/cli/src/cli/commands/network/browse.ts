@@ -106,6 +106,9 @@ function offerServiceLabel(offer: NetworkServiceOffer): string {
  * "unknown", not free — those are handled separately by the formatter.
  */
 function isFreeOffer(offer: NetworkServiceOffer): boolean {
+  if (offer.type === 'video') {
+    return (offer.minVideoUsdPerVideo ?? 0) === 0 && (offer.minVideoUsdPerSecond ?? 0) === 0;
+  }
   return (
     offer.inputUsdPerMillion === 0
     && offer.outputUsdPerMillion === 0
@@ -545,6 +548,9 @@ function renderExpandedTable(peers: PeerInfo[], requestedTags: Set<string>): voi
     service: string;
     input: string;
     output: string;
+    videoPricing: string;
+    upfront: string;
+    support: string;
     score: string;
     sessions: string;
     volume: string;
@@ -574,6 +580,11 @@ function renderExpandedTable(peers: PeerInfo[], requestedTags: Set<string>): voi
         service: offerServiceLabel(offer),
         input: formatUsdPerMillion(offer.inputUsdPerMillion ?? null),
         output: formatUsdPerMillion(offer.outputUsdPerMillion ?? null),
+        videoPricing: formatVideoPricing(offer),
+        upfront: offer.capabilities?.video?.upfrontBps === undefined
+          ? '—'
+          : `${(offer.capabilities.video.upfrontBps / 100).toFixed(0)}%`,
+        support: formatVideoSupport(offer),
         score: formatReputationScore(peer),
         sessions: typeof peer.onChainChannelCount === 'number' ? String(peer.onChainChannelCount) : '—',
         volume: formatUsdcVolume(peer.onChainTotalVolumeUsdcMicros ?? null),
@@ -594,6 +605,9 @@ function renderExpandedTable(peers: PeerInfo[], requestedTags: Set<string>): voi
     chalk.bold('Service'),
     chalk.bold('In $/1M'),
     chalk.bold('Out $/1M'),
+    chalk.bold('Video price'),
+    chalk.bold('Upfront'),
+    chalk.bold('Video support'),
     chalk.bold('Score'),
     chalk.bold('Sessions'),
     chalk.bold('Volume'),
@@ -620,6 +634,9 @@ function renderExpandedTable(peers: PeerInfo[], requestedTags: Set<string>): voi
       r.service === '—' || r.service === '(default)' ? chalk.dim(r.service) : r.service,
       r.input,
       r.output,
+      r.videoPricing,
+      r.upfront === '—' ? chalk.dim('—') : r.upfront,
+      r.support === '—' ? chalk.dim('—') : r.support,
       r.score,
       r.sessions === '—' ? chalk.dim('—') : r.sessions,
       r.volume,
@@ -648,6 +665,24 @@ function renderExpandedTable(peers: PeerInfo[], requestedTags: Set<string>): voi
     console.log(chalk.dim(`  Verified shows buyer-verified external claims: ${chalk.cyan('🌐')} domain, ${chalk.magenta('GH')} GitHub.`));
   }
   console.log('');
+}
+
+function formatVideoPricing(offer: NetworkServiceOffer): string {
+  if (offer.type !== 'video') return '—';
+  const fixed = offer.minVideoUsdPerVideo;
+  const perSecond = offer.minVideoUsdPerSecond;
+  const parts: string[] = [];
+  if (fixed !== undefined) parts.push(`$${fixed.toFixed(3)}/video`);
+  if (perSecond !== undefined) parts.push(`$${perSecond.toFixed(3)}/s`);
+  return parts.length > 0 ? parts.join(' + ') : '—';
+}
+
+function formatVideoSupport(offer: NetworkServiceOffer): string {
+  const video = offer.capabilities?.video;
+  if (offer.type !== 'video' || !video) return '—';
+  const modes = video.generationModes.map((mode) => mode === 'text_to_video' ? 'T2V' : 'I2V').join('/');
+  const durations = video.allowedDurationsSeconds?.join('/') ?? `${video.minDurationSeconds}-${video.maxDurationSeconds}`;
+  return `${modes} · ${durations}s · ${video.resolutions.join('/')}`;
 }
 
 /**

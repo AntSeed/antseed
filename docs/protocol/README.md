@@ -12,6 +12,7 @@ AntSeed is a peer-to-peer AI services network that enables direct connections be
   - [04-payments.md](spec/04-payments.md) — Settlement, deposits, sessions, and disputes
   - [05-reputation.md](spec/05-reputation.md) — Trust scoring and attestations
   - [06-security-overview.md](spec/06-security-overview.md) — End-to-end security model and hardening guidance
+  - [10-video-jobs.md](spec/10-video-jobs.md) — Durable Runway/Veo jobs, artifacts, and milestone payments
 - [templates/provider-plugin/](templates/provider-plugin/) — Starter template for building a provider plugin (offer AI services)
 - [templates/router-plugin/](templates/router-plugin/) — Starter template for building a router plugin (consume AI services)
 
@@ -57,4 +58,6 @@ cd my-router && npm install && npm run verify
 - [@antseed/provider-claude-code](https://npmjs.com/package/@antseed/provider-claude-code) — Claude Code provider (keychain, testing only)
 - [@antseed/provider-openai](https://npmjs.com/package/@antseed/provider-openai) — OpenAI-compatible provider (OpenAI, Together, OpenRouter)
 - [@antseed/provider-local-llm](https://npmjs.com/package/@antseed/provider-local-llm) — Local LLM provider
+- [@antseed/provider-runway](https://npmjs.com/package/@antseed/provider-runway) — Runway Gen-4-family video provider
+- [@antseed/provider-veo](https://npmjs.com/package/@antseed/provider-veo) — Veo 3.1 Gemini Developer API provider
 - [@antseed/router-local](https://npmjs.com/package/@antseed/router-local) — Local router (Claude Code, Codex)

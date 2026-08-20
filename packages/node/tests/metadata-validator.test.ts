@@ -305,7 +305,7 @@ describe('validateMetadata', () => {
     expect(bothErrors).toEqual([]);
   });
 
-  it('rejects non-image service unit billing models for now', () => {
+  it('rejects service unit billing models outside image and video protocols', () => {
     const errors = validateMetadata(validMetadata({
       version: SERVICE_UNIT_BILLING_METADATA_VERSION,
       providers: [
@@ -339,7 +339,7 @@ describe('validateMetadata', () => {
       expect.arrayContaining([
         expect.objectContaining({
           field: 'providers[0].serviceUnitBillingModels.gpt-4.1.openai-chat-completions',
-          message: expect.stringContaining('openai-images only'),
+          message: expect.stringContaining('openai-images and antseed-video-jobs-v1 only'),
         }),
         expect.objectContaining({
           field: 'providers[0].serviceUnitBillingModels.gpt-4.1.openai-chat-completions',

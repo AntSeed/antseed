@@ -140,6 +140,13 @@ export interface BuyerProxyConfig {
   verifier?: VerifierPolicy
 }
 
+interface VideoRouteAffinity {
+  sellerPeerId: string
+  provider: string
+  service: string
+  expiresAt: number
+}
+
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
 const MODEL_RATE_LIMIT_MAX_ATTEMPTS_PER_PEER = 3
 const MODEL_RATE_LIMIT_RETRY_DELAYS_MS = [250, 750] as const
@@ -179,6 +186,16 @@ async function waitForRetry(delayMs: number, signal: AbortSignal): Promise<boole
 function isValidRoutedModelTarget(value: string): boolean {
   if (value === ROUTED_MODEL_ALIAS) return false
   return !value.includes('@') || parsePeerPinnedService(value) !== null
+}
+
+function videoResourceIdFromPath(path: string): string | null {
+  const pathname = path.split('?')[0] ?? path
+  const match = /^\/v1\/video\/generations\/([^/]+)(?:\/|$)/i.exec(pathname)
+  return match?.[1] ?? null
+}
+
+function isVideoFollowUpPath(path: string): boolean {
+  return videoResourceIdFromPath(path) !== null
 }
 
 /** Returns `request` with its body's model field rewritten to `serviceId`, or unchanged if nothing rewrote. */
@@ -787,6 +804,7 @@ export class BuyerProxy {
    * deltas (buyer- and seller-initiated auth both advance the cumulative).
    */
   private readonly _requestConversations = new Map<string, { convId: string; counted: boolean }>()
+  private readonly _videoAffinities = new Map<string, VideoRouteAffinity>()
 
   constructor(config: BuyerProxyConfig) {
     this._node = config.node
@@ -932,6 +950,7 @@ export class BuyerProxy {
     try {
       const raw = await readFile(this._stateFile, 'utf-8')
       const parsed = JSON.parse(raw) as unknown
+      this._hydrateVideoAffinities(parsed)
       // Cooldowns survive a restart — a peer that died ten seconds before we
       // exited is still dead — but the parser clamps anything expired or
       // impossibly distant, so a restart can never extend one. Nothing new can
@@ -1013,6 +1032,7 @@ export class BuyerProxy {
     try {
       const raw = await readFile(this._stateFile, 'utf-8')
       const parsed = JSON.parse(raw) as Record<string, unknown>
+      this._hydrateVideoAffinities(parsed)
       if (!opts.preservePeerPin) {
         const pinnedPeer = typeof parsed.pinnedPeerId === 'string' && parsed.pinnedPeerId.trim().length > 0
           ? parsed.pinnedPeerId.trim().toLowerCase()
@@ -1096,6 +1116,85 @@ export class BuyerProxy {
       port: this._port,
       ...sessionOverrides,
     })
+  }
+
+  private _hydrateVideoAffinities(value: unknown): void {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return
+    const raw = (value as Record<string, unknown>)['videoAffinities']
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return
+    const now = Date.now()
+    this._videoAffinities.clear()
+    for (const [id, candidate] of Object.entries(raw as Record<string, unknown>)) {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue
+      const affinity = candidate as Record<string, unknown>
+      const sellerPeerId = typeof affinity['sellerPeerId'] === 'string' ? affinity['sellerPeerId'].toLowerCase() : ''
+      const provider = typeof affinity['provider'] === 'string' ? affinity['provider'] : ''
+      const service = typeof affinity['service'] === 'string' ? affinity['service'] : ''
+      const expiresAt = typeof affinity['expiresAt'] === 'number' ? affinity['expiresAt'] : 0
+      if (/^[0-9a-f]{40}$/.test(sellerPeerId) && provider && service && expiresAt > now) {
+        this._videoAffinities.set(id, { sellerPeerId, provider, service, expiresAt })
+      }
+    }
+  }
+
+  private _videoAffinityForRequest(request: SerializedHttpRequest): VideoRouteAffinity | null {
+    const pathId = videoResourceIdFromPath(request.path)
+    if (pathId) return this._videoAffinities.get(pathId) ?? null
+    if (request.method !== 'POST' || !request.path.toLowerCase().startsWith('/v1/video/generations')) return null
+    const idempotencyKey = Object.entries(request.headers).find(([key]) => key.toLowerCase() === 'idempotency-key')?.[1]
+    if (idempotencyKey) {
+      const affinity = this._videoAffinities.get(`idem:${idempotencyKey}`)
+      if (affinity) return affinity
+    }
+    const body = parseRequestBodyObject(request.body, request.headers)
+    const inputAssets = Array.isArray(body?.['input_assets']) ? body['input_assets'] : []
+    for (const input of inputAssets) {
+      if (!input || typeof input !== 'object' || Array.isArray(input)) continue
+      const assetId = typeof (input as Record<string, unknown>)['asset_id'] === 'string'
+        ? (input as Record<string, unknown>)['asset_id'] as string
+        : ''
+      const affinity = this._videoAffinities.get(assetId)
+      if (affinity) return affinity
+    }
+    return null
+  }
+
+  private async _recordVideoAffinity(
+    request: SerializedHttpRequest,
+    response: SerializedHttpResponse,
+    peer: PeerInfo,
+    provider: string,
+    service: string | null,
+  ): Promise<void> {
+    if (!service || (response.statusCode !== 402 && (response.statusCode < 200 || response.statusCode >= 300))) return
+    const normalizedPath = request.path.split('?')[0]?.toLowerCase() ?? ''
+    if (normalizedPath !== '/v1/video/assets' && normalizedPath !== '/v1/video/generations') return
+    let body: Record<string, unknown>
+    try {
+      const parsed = JSON.parse(new TextDecoder().decode(response.body)) as unknown
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return
+      body = parsed as Record<string, unknown>
+    } catch {
+      return
+    }
+    const id = typeof body['id'] === 'string'
+      ? body['id']
+      : typeof body['generation_id'] === 'string'
+        ? body['generation_id']
+        : ''
+    if (!id) return
+    const expiresSeconds = typeof body['expires_at'] === 'number' ? body['expires_at'] : null
+    const artifacts = Array.isArray(body['artifacts']) ? body['artifacts'] : []
+    const artifactExpiry = artifacts.reduce<number | null>((latest, artifact) => {
+      if (!artifact || typeof artifact !== 'object' || Array.isArray(artifact)) return latest
+      const expiry = (artifact as Record<string, unknown>)['expires_at']
+      return typeof expiry === 'number' ? Math.max(latest ?? 0, expiry) : latest
+    }, null)
+    const expiresAt = 1000 * (artifactExpiry ?? expiresSeconds ?? Math.floor(Date.now() / 1000) + 24 * 60 * 60)
+    this._videoAffinities.set(id, { sellerPeerId: peer.peerId.toLowerCase(), provider, service, expiresAt })
+    const idempotencyKey = Object.entries(request.headers).find(([key]) => key.toLowerCase() === 'idempotency-key')?.[1]
+    if (idempotencyKey) this._videoAffinities.set(`idem:${idempotencyKey}`, { sellerPeerId: peer.peerId.toLowerCase(), provider, service, expiresAt })
+    await this._mergeStateFile({ videoAffinities: Object.fromEntries(this._videoAffinities) })
   }
 
   private _startIncrementalDiscoverySweep(): void {
@@ -2131,6 +2230,31 @@ export class BuyerProxy {
       headers,
       body: new Uint8Array(body),
     }
+    if (method === 'POST' && /^\/v1\/video\/generations\/[^/]+\/artifacts\/[^/]+\/receipt$/i.test(normalizedPath)) {
+      const receiptBody = parseRequestBodyObject(serializedReq.body, serializedReq.headers)
+      const generationId = typeof receiptBody?.['generation_id'] === 'string' ? receiptBody['generation_id'] : ''
+      const artifactId = typeof receiptBody?.['artifact_id'] === 'string' ? receiptBody['artifact_id'] : ''
+      const sha256 = typeof receiptBody?.['sha256'] === 'string' ? receiptBody['sha256'] : ''
+      const bytes = typeof receiptBody?.['bytes'] === 'number' ? receiptBody['bytes'] : NaN
+      const receivedAt = typeof receiptBody?.['received_at'] === 'number' ? receiptBody['received_at'] : Math.floor(Date.now() / 1000)
+      if (!generationId || !artifactId || !/^[0-9a-f]{64}$/i.test(sha256) || !Number.isSafeInteger(bytes) || bytes < 0) {
+        res.writeHead(400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: { code: 'invalid_receipt', message: 'generation_id, artifact_id, sha256, and bytes are required' } }))
+        return
+      }
+      const signed = await this._node.signVideoDeliveryReceipt({
+        version: 1,
+        generation_id: generationId,
+        artifact_id: artifactId,
+        sha256: sha256.toLowerCase(),
+        bytes,
+        received_at: receivedAt,
+      })
+      serializedReq = {
+        ...serializedReq,
+        body: new TextEncoder().encode(JSON.stringify(signed)),
+      }
+    }
     const requiredParameters = parseRequiredParametersHeader(
       serializedReq.headers[REQUIRED_PARAMETERS_HEADER],
     )
@@ -2300,7 +2424,24 @@ export class BuyerProxy {
     })
 
     const requestProtocol = detectRequestServiceApiProtocol(serializedReq)
-    const requestedService = extractRequestedService(serializedReq)
+    let requestedService = extractRequestedService(serializedReq)
+    const videoAffinity = this._videoAffinityForRequest(serializedReq)
+    if (videoAffinity) {
+      serializedReq = {
+        ...serializedReq,
+        headers: {
+          ...serializedReq.headers,
+          'x-antseed-pin-peer': videoAffinity.sellerPeerId,
+          'x-antseed-provider': videoAffinity.provider,
+          'x-antseed-service': videoAffinity.service,
+        },
+      }
+      requestedService = videoAffinity.service
+    } else if (isVideoFollowUpPath(serializedReq.path)) {
+      res.writeHead(404, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ error: { code: 'generation_not_found', message: 'Unknown local video generation ID', retryable: false } }))
+      return
+    }
     log(`Routing: protocol=${requestProtocol ?? 'null'} service=${requestedService ?? 'null'}`)
     const explicitProvider = getExplicitProviderOverride(serializedReq)
     const explicitPeerId = getExplicitPeerIdOverride(serializedReq, effectivePinnedPeer ?? undefined, bodyPinnedPeer)
@@ -2881,6 +3022,7 @@ export class BuyerProxy {
       requestForPeer = withRoutedModel(requestForPeer, selectedRoutePlan.serviceId)
     }
     const clientWantsStreaming = requestWantsStreaming(serializedReq.headers, serializedReq.body)
+    const binaryArtifactStream = /^\/v1\/video\/generations\/[^/]+\/artifacts\/[^/]+\/content(?:\?|$)/i.test(serializedReq.path)
     let adaptResponse: ((response: SerializedHttpResponse) => SerializedHttpResponse) | null = null
     let streamResponseAdapter: StreamingResponseAdapter | null = null
 
@@ -2939,7 +3081,7 @@ export class BuyerProxy {
     this._markModelActivity()
 
     // Forward through P2P
-    const wantsStreaming = clientWantsStreaming
+      const wantsStreaming = clientWantsStreaming || binaryArtifactStream
     const startTime = Date.now()
     try {
       if (wantsStreaming) {
@@ -2959,7 +3101,7 @@ export class BuyerProxy {
             // Ensure content-type is set for SSE — some upstream APIs (e.g. Codex)
             // omit it, which can cause the client's fetch body reader to not
             // detect end-of-stream properly.
-            if (!streamingHeaders['content-type']) {
+            if (clientWantsStreaming && !streamingHeaders['content-type']) {
               streamingHeaders['content-type'] = 'text/event-stream'
             }
             res.writeHead(adaptedStartResponse.statusCode, streamingHeaders)
@@ -2979,7 +3121,10 @@ export class BuyerProxy {
               }
             }
           },
-        }, { signal: requestSignal })
+        }, {
+          signal: requestSignal,
+          collectResponseBody: !binaryArtifactStream,
+        })
 
         let responseForClient = adaptBuyerFaultErrorResponse(response, requestProtocol)
         if (
@@ -2994,6 +3139,7 @@ export class BuyerProxy {
         if (responseForClient.statusCode === 402) {
           responseForClient = inject402PeerId(responseForClient, selectedPeer.peerId)
         }
+        await this._recordVideoAffinity(requestForPeer, responseForClient, selectedPeer, selectedRoutePlan.provider, selectedRoutePlan.serviceId ?? requestedService)
 
         const latencyMs = Date.now() - startTime
         log(`Response: ${responseForClient.statusCode} (${latencyMs}ms, ${responseForClient.body.length} bytes)`)
@@ -3079,6 +3225,7 @@ export class BuyerProxy {
         if (response.statusCode === 402) {
           response = inject402PeerId(response, selectedPeer.peerId)
         }
+        await this._recordVideoAffinity(requestForPeer, response, selectedPeer, selectedRoutePlan.provider, selectedRoutePlan.serviceId ?? requestedService)
         const latencyMs = Date.now() - startTime
         this._markModelActivity()
 

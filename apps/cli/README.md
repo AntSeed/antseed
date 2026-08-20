@@ -26,6 +26,8 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 | `antseed buyer withdraw <amount>` | Withdraw USDC from deposits |
 | `antseed buyer balance` | Check wallet and deposit balance |
 | `antseed network browse` | Browse peers, models, and pricing (same catalog as `/v1/models`) |
+| `antseed video create` | Submit an asynchronous Runway or Veo generation |
+| `antseed video status/list/cancel/download` | Manage durable jobs and verified artifact downloads |
 | **Session** | |
 | `antseed buyer connection get` | Show current session state (pinned service, peer) |
 | `antseed buyer connection set` | Update service/peer overrides on a running proxy |
@@ -64,6 +66,40 @@ antseed seller start
 ```
 
 `config.json` is the durable source of truth. Env vars are for secrets and one-off overrides.
+
+## Video Generation
+
+Start the buyer proxy, then use the canonical asynchronous commands:
+
+```bash
+antseed buyer start
+antseed video create \
+  --model veo-3.1-generate-preview \
+  --prompt "A cinematic sunrise above an alpine observatory" \
+  --duration 8 --aspect-ratio 16:9 --resolution 1080p \
+  --provider veo --wait --download sunrise.mp4
+```
+
+Use `--image first-frame.png` for image-to-video. Creation is asynchronous unless `--wait` or `--download` is supplied. Downloads resume from `<output>.part`, validate `Content-Range`, verify SHA-256, and atomically rename only after success.
+
+Buyer auto-approval defaults to 5 USDC total, 50% upfront, and 10 seconds:
+
+```json
+{
+  "buyer": {
+    "video": {
+      "autoApprove": true,
+      "maxTotalUsdc": "5000000",
+      "maxUpfrontBps": 5000,
+      "maxDurationSeconds": 10
+    }
+  }
+}
+```
+
+Per-command `--max-total-usdc` and `--max-upfront-percent` can only tighten these caps. A rejected quote is printed without upstream submission.
+
+Runway and Veo sellers are configured through `antseed seller setup`. The default milestone split is 50% after upstream job acceptance and 50% after a hash-verified download receipt. This reduces each side's exposure but is not trustless escrow; v1 does not solve malicious pending-authorization use, receipt withholding, refunds, or creative-quality disputes. See `docs/protocol/spec/10-video-jobs.md` for the API and threat model.
 
 ### Buyer state isolation
 

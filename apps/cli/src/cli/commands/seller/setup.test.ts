@@ -15,6 +15,7 @@ test('buildSellerSetupProviderEntry builds seller provider config shape', () => 
     baseUrl: 'https://api.together.ai',
     inputUsdPerMillion: 1,
     outputUsdPerMillion: 2,
+    videoPayment: { upfrontBps: 3000 },
     services: {
       'kimi-k2.5': {
         upstreamModel: 'moonshotai/Kimi-K2.5',
@@ -27,12 +28,15 @@ test('buildSellerSetupProviderEntry builds seller provider config shape', () => 
   assert.equal(entry.baseUrl, 'https://api.together.ai');
   assert.equal(entry.defaults?.inputUsdPerMillion, 1);
   assert.equal(entry.defaults?.outputUsdPerMillion, 2);
+  assert.deepEqual(entry.videoPayment, { upfrontBps: 3000 });
   assert.deepEqual(entry.services['kimi-k2.5']?.categories, ['math', 'coding']);
 });
 
 test('getSellerSetupCredentialHint matches the selected plugin', () => {
   assert.equal(getSellerSetupCredentialHint('anthropic'), 'export ANTHROPIC_API_KEY=<key>');
   assert.equal(getSellerSetupCredentialHint('local-llm'), 'start your local LLM runtime (no API key required)');
+  assert.equal(getSellerSetupCredentialHint('runway'), 'export RUNWAY_API_KEY=<key>');
+  assert.equal(getSellerSetupCredentialHint('veo'), 'export GEMINI_API_KEY=<key>');
 });
 
 test('applySellerSetupRpcUrl stores valid custom RPC URLs, ignores blanks, and clears with dash', () => {

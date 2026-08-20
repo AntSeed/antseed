@@ -1,16 +1,18 @@
 import type { PeerId } from './peer-id.js';
 import type { PeerOffering } from './capability.js';
 import type { ServiceUnitBillingModelsV1 } from './billing.js';
+import type { VideoCapabilities } from './video.js';
 import {
   WELL_KNOWN_SERVICE_API_PROTOCOLS,
   type ServiceApiProtocol,
 } from './service-api.js';
 
-export const METADATA_VERSION = 12;
+export const METADATA_VERSION = 13;
 /** Oldest announced metadata version buyers still accept from sellers. */
 export const MIN_SUPPORTED_METADATA_VERSION = 10;
 export const SERVICE_UNIT_BILLING_METADATA_VERSION = 11;
 export const SERVICE_CAPABILITIES_METADATA_VERSION = 12;
+export const VIDEO_CAPABILITIES_METADATA_VERSION = 13;
 export const WELL_KNOWN_SERVICE_CATEGORIES = [
   "privacy",
   "legal",
@@ -56,6 +58,8 @@ export interface ServiceCapabilities {
    * image service. A hint for buyers, not an enforced contract.
    */
   supportedParameters?: string[];
+  /** Video-generation capabilities for services using antseed-video-jobs-v1. */
+  video?: VideoCapabilities;
 }
 
 /** Ceiling for announced contextWindow / maxOutputTokens (fits the u32 wire field). */
@@ -123,6 +127,17 @@ export function validateServiceCapabilityFields(caps: ServiceCapabilities): stri
         seen.add(parameter);
       }
     }
+  }
+  if (caps.video !== undefined) {
+    const video = caps.video;
+    if (!Array.isArray(video.generationModes) || video.generationModes.length === 0) errors.push('video.generationModes must not be empty');
+    if (!Number.isSafeInteger(video.minDurationSeconds) || video.minDurationSeconds <= 0) errors.push('video.minDurationSeconds must be a positive integer');
+    if (!Number.isSafeInteger(video.maxDurationSeconds) || video.maxDurationSeconds < video.minDurationSeconds) errors.push('video.maxDurationSeconds must be >= minDurationSeconds');
+    if (!Array.isArray(video.resolutions) || video.resolutions.length === 0) errors.push('video.resolutions must not be empty');
+    if (!Array.isArray(video.aspectRatios) || video.aspectRatios.length === 0) errors.push('video.aspectRatios must not be empty');
+    if (!Array.isArray(video.outputFormats) || video.outputFormats.length === 0) errors.push('video.outputFormats must not be empty');
+    if (typeof video.generateAudio !== 'boolean') errors.push('video.generateAudio must be a boolean');
+    if (video.upfrontBps !== undefined && (!Number.isSafeInteger(video.upfrontBps) || video.upfrontBps < 0 || video.upfrontBps > 10_000)) errors.push('video.upfrontBps must be between 0 and 10000');
   }
   return errors;
 }

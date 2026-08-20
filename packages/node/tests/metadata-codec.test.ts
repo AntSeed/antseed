@@ -302,6 +302,31 @@ describe('encodeMetadata / decodeMetadata', () => {
     expect(encodeMetadataForSigning(changed)).not.toEqual(encodeMetadataForSigning(original));
   });
 
+  it('round-trips v13 video capabilities and billing', () => {
+    const original = makeMetadata({
+      providers: [{
+        provider: 'veo', services: ['veo-3.1-generate-preview'],
+        defaultPricing: { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+        serviceApiProtocols: { 'veo-3.1-generate-preview': ['antseed-video-jobs-v1'] },
+        serviceUnitBillingModels: { 'veo-3.1-generate-preview': { 'antseed-video-jobs-v1': {
+          version: 1, components: [{ unit: 'output_video_seconds', priceUsd: 0.15, match: { resolution: '1080p' } }],
+        } } },
+        serviceCapabilities: { 'veo-3.1-generate-preview': { inputs: ['text', 'image'], outputs: ['video'], video: {
+          generationModes: ['text_to_video', 'image_to_video'], minDurationSeconds: 4, maxDurationSeconds: 8,
+          allowedDurationsSeconds: [4, 6, 8], resolutions: ['720p', '1080p'], aspectRatios: ['16:9', '9:16'],
+          generateAudio: true, outputFormats: ['mp4'], maxFirstFrameBytes: 20_000_000, upfrontBps: 5000,
+        } } },
+        maxConcurrency: 2, currentLoad: 0,
+      }],
+    });
+    const decoded = decodeMetadata(encodeMetadata(original));
+    expect(decoded.providers[0]?.serviceCapabilities?.['veo-3.1-generate-preview']?.video).toEqual(
+      original.providers[0]?.serviceCapabilities?.['veo-3.1-generate-preview']?.video,
+    );
+    expect(decoded.providers[0]?.serviceUnitBillingModels?.['veo-3.1-generate-preview']?.['antseed-video-jobs-v1']?.components[0]?.priceUsd)
+      .toBeCloseTo(0.15, 5);
+  });
+
   it('excludes service capabilities from v10 metadata bytes', () => {
     const original = makeMetadata({
       version: 10,
