@@ -80,6 +80,17 @@ async function buyerDaemonFetch(pathname: string, init?: RequestInit, timeoutMs 
   }
 }
 
+/** Banner text for the daemon-reported watcher-absence reason (older daemons send none). */
+function watcherAbsenceBanner(reason: string | null): string {
+  if (reason === 'payments-disabled') {
+    return 'Automatic deposit is paused because payments are disabled on this buyer. Your USDC is safe in the wallet.';
+  }
+  if (reason === 'no-deposit-relay') {
+    return 'Automatic deposit is not available on this chain yet. Your USDC is safe in the wallet.';
+  }
+  return 'Automatic deposit is not running right now. Your USDC is safe in the wallet.';
+}
+
 async function daemonWatchStatus(): Promise<{ watcher: boolean; reason: string | null; status: DaemonWatchStatus | null } | null> {
   const res = await buyerDaemonFetch('/_antseed/deposits/status', undefined, 3_000);
   if (!res) return null;
@@ -107,12 +118,7 @@ async function pollDaemonWatch(): Promise<void> {
     // cause once instead of re-asking (older daemons send no reason).
     if (pendingDaemonMode) {
       pendingDaemonMode = null;
-      const error = current.reason === 'payments-disabled'
-        ? 'Automatic deposit is paused because payments are disabled on this buyer. Your USDC is safe in the wallet.'
-        : current.reason === 'no-deposit-relay'
-          ? 'Automatic deposit is not available on this chain yet. Your USDC is safe in the wallet.'
-          : 'Automatic deposit is not running right now. Your USDC is safe in the wallet.';
-      sendDepositWatchStatus({ phase: 'error', error });
+      sendDepositWatchStatus({ phase: 'error', error: watcherAbsenceBanner(current.reason) });
     }
     return;
   }

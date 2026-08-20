@@ -490,13 +490,14 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
       // second signer against the same wallet would race it.
       let depositWatcher: DepositWatcher | null = null
       const depositRelayAddress = cryptoOverrides?.depositRelayAddress || chainConfig.depositRelayAddress
-      const watcherAbsence: DepositWatcherAbsenceReason | null = !ownsProxyListener
-        ? 'external-daemon'
-        : !paymentsConfig?.enabled
-          ? 'payments-disabled'
-          : !depositRelayAddress
-            ? 'no-deposit-relay'
-            : null
+      let watcherAbsence: DepositWatcherAbsenceReason | null = null
+      if (!ownsProxyListener) {
+        watcherAbsence = 'external-daemon'
+      } else if (!paymentsConfig?.enabled) {
+        watcherAbsence = 'payments-disabled'
+      } else if (!depositRelayAddress) {
+        watcherAbsence = 'no-deposit-relay'
+      }
       if (watcherAbsence !== null) {
         proxy.setDepositWatcher(null, watcherAbsence)
       }

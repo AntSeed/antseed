@@ -115,6 +115,12 @@ export { parsePeerPinnedService, rewritePeerPinnedServiceInBody, substituteRoute
  */
 export type DepositWatcherAbsenceReason = 'external-daemon' | 'payments-disabled' | 'no-deposit-relay'
 
+const WATCHER_ABSENCE_ERRORS: Record<DepositWatcherAbsenceReason, string> = {
+  'payments-disabled': 'Deposit watcher unavailable — payments are disabled on this buyer.',
+  'no-deposit-relay': 'Deposit watcher unavailable — this chain has no deposit relay.',
+  'external-daemon': 'Deposit watcher unavailable — another daemon owns the proxy port and runs the watcher.',
+}
+
 export interface BuyerProxyConfig {
   port: number
   node: AntseedNode
@@ -1990,13 +1996,7 @@ export class BuyerProxy {
       const watcher = this._depositWatcher
       if (!watcher) {
         const reason = this._depositWatcherAbsence
-        const error = reason === 'payments-disabled'
-          ? 'Deposit watcher unavailable — payments are disabled on this buyer.'
-          : reason === 'no-deposit-relay'
-            ? 'Deposit watcher unavailable — this chain has no deposit relay.'
-            : reason === 'external-daemon'
-              ? 'Deposit watcher unavailable — another daemon owns the proxy port and runs the watcher.'
-              : 'Deposit watcher unavailable.'
+        const error = (reason && WATCHER_ABSENCE_ERRORS[reason]) ?? 'Deposit watcher unavailable.'
         res.writeHead(503, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ ok: false, reason, error }))
         return
