@@ -9,8 +9,6 @@ description: Use the AntSeed Virtual Private Router—like a VPN for AI—to cho
 
 The AntSeed **Virtual Private Router (VPR)** is like a **VPN for AI**: your AI apps connect to one local router, while the VPR discovers available sellers, applies your routing preferences, and sends each compatible request through the selected route. You can change models or sellers without reconfiguring every connected tool.
 
-The analogy describes the consistent local entry point and route selection. It does not mean every seller is unable to see your prompts: the selected seller still provides the AI service and normally receives the request content needed to answer it. Verified TEE routes can add stronger confidentiality where available.
-
 The VPR also manages pay-per-request settlement from your AntSeed credits, so connected tools can use network sellers without maintaining a separate AntSeed subscription or central AI account.
 
 This guide follows the VPR interface from first launch through troubleshooting. For a protocol-level introduction, see [How AntSeed works](/docs/overview).
