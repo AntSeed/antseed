@@ -42,6 +42,7 @@ contract MockBeaconRoots {
 
 contract AntseedBaseCheckpointOracleTest is Test {
     bytes32 internal constant IMAGE_ID = bytes32(uint256(0xC0FFEE));
+    bytes32 internal constant HISTORICAL_IMAGE_ID = bytes32(uint256(0xBACCF111));
     bytes internal constant SEAL = hex"1234";
     uint256 internal constant ETHEREUM_TIMESTAMP = 1_787_000_000;
     bytes32 internal constant BEACON_ROOT = keccak256("beacon-root");
@@ -53,7 +54,7 @@ contract AntseedBaseCheckpointOracleTest is Test {
     function setUp() public {
         vm.chainId(8_453);
         verifier = new MockCheckpointVerifier();
-        oracle = new AntseedBaseCheckpointOracle(address(verifier), IMAGE_ID);
+        oracle = new AntseedBaseCheckpointOracle(address(verifier), IMAGE_ID, HISTORICAL_IMAGE_ID);
 
         MockBeaconRoots implementation = new MockBeaconRoots();
         vm.etch(oracle.BEACON_ROOTS(), address(implementation).code);
@@ -64,7 +65,7 @@ contract AntseedBaseCheckpointOracleTest is Test {
     function test_rejectsDeploymentOffBaseMainnet() public {
         vm.chainId(1);
         vm.expectRevert(abi.encodeWithSelector(AntseedBaseCheckpointOracle.WrongChain.selector, 1));
-        new AntseedBaseCheckpointOracle(address(verifier), IMAGE_ID);
+        new AntseedBaseCheckpointOracle(address(verifier), IMAGE_ID, HISTORICAL_IMAGE_ID);
     }
 
     function test_acceptsCheckpointAndStoresCanonicalBlocks() public {
@@ -91,36 +92,31 @@ contract AntseedBaseCheckpointOracleTest is Test {
         assertTrue(oracle.submitCheckpoint(SEAL, checkpointData));
 
         bytes32 sellerImageId = bytes32(uint256(0x5E11E2));
-        AntseedWashTradingRegistry registry =
-            new AntseedWashTradingRegistry(address(verifier), address(oracle), sellerImageId);
+        bytes32 reciprocalImageId = bytes32(uint256(0x5E11E3));
+        bytes32 reportRoot = keccak256("report-root");
+        AntseedWashTradingRegistry registry = new AntseedWashTradingRegistry(
+            address(verifier), address(oracle), sellerImageId, reciprocalImageId, reportRoot
+        );
         AntseedWashTradingRegistry.BlockRef[] memory blockRefs = new AntseedWashTradingRegistry.BlockRef[](1);
         blockRefs[0] = AntseedWashTradingRegistry.BlockRef({
             number: checkpoint.canonicalBlocks[0].number,
             blockHash: checkpoint.canonicalBlocks[0].blockHash
         });
-        AntseedWashTradingRegistry.SellerPenaltyJournal memory sellerJournal = AntseedWashTradingRegistry
-            .SellerPenaltyJournal({
-            predicateVersion: 2,
-            chainId: 8_453,
-            usdc: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913,
-            channels: 0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d,
-            deposits: 0x0F7a3a8f4Da01637d1202bb5443fcF7F88F99fD2,
+        AntseedWashTradingRegistry.CohortJournal memory sellerJournal = AntseedWashTradingRegistry.CohortJournal({
+            predicateVersion: 1,
+            claimType: 1,
+            claimId: keccak256("checkpoint-integration-claim"),
+            reportRoot: reportRoot,
             seller: address(0x515E12),
-            funder: address(0xF00D),
-            linkedBuyerCount: 3,
-            hopCount: 2,
             penaltyBps: 9_000,
-            sellerOutflowRaw: 1_100_000_000,
-            totalFundedRaw: 1_050_000_000,
-            suspiciousVolumeRaw: 1_000_000_000,
-            earliestFundingBlock: 120,
-            latestSettlementBlock: 190,
+            linkedBuyerCount: 3,
+            qualifiedVolumeRaw: 1_000_000_000,
             blockRefs: blockRefs
         });
         bytes memory sellerJournalData = abi.encode(sellerJournal);
         verifier.expect(sellerImageId, sha256(sellerJournalData), SEAL);
 
-        assertTrue(registry.submitSellerPenalty(SEAL, sellerJournalData));
+        assertTrue(registry.submitCohortPenalty(SEAL, sellerJournalData));
         assertEq(registry.sellerPenaltyBps(address(0x515E12)), 9_000);
     }
 

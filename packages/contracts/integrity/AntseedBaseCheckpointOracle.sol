@@ -17,6 +17,12 @@ contract AntseedBaseCheckpointOracle is IBaseAnalysisStateOracle {
     uint64 public constant BASE_CHAIN_ID = 8_453;
     uint64 public constant INTERMEDIATE_BLOCK_INTERVAL = 30;
     uint64 public constant AGGREGATE_VERIFIER_START_BLOCK = 46_302_960;
+    uint64 public constant HISTORICAL_START_BLOCK = 44_469_557;
+    uint64 public constant HISTORICAL_ANCHOR_BLOCK = 46_302_990;
+    uint32 public constant HISTORICAL_CHUNK_SIZE = 16_384;
+    uint16 public constant HISTORICAL_CHUNK_COUNT = 112;
+    uint8 public constant HISTORICAL_TREE_DEPTH = 14;
+    uint32 public constant HISTORICAL_JOURNAL_VERSION = 1;
     uint16 public constant BEACON_COMMITMENT_VERSION = 1;
     bytes32 public constant ETHEREUM_MAINNET_CONFIG_ID =
         0x47dc59f84afd2e9e7a48c4012004ab7c77fbd9acf822bf1143b8442c6c8851d4;
@@ -46,18 +52,53 @@ contract AntseedBaseCheckpointOracle is IBaseAnalysisStateOracle {
         CanonicalBlockRef[] canonicalBlocks;
     }
 
+    struct HistoricalChunkJournal {
+        uint32 version;
+        uint64 chainId;
+        uint64 startBlockNumber;
+        uint64 endBlockNumber;
+        uint64 successorBlockNumber;
+        bytes32 startBlockHash;
+        bytes32 endBlockHash;
+        bytes32 successorBlockHash;
+        uint32 blockCount;
+        bytes32 blockRoot;
+    }
+
+    struct HistoricalBlockProof {
+        uint64 blockNumber;
+        bytes32 blockHash;
+        bytes32[HISTORICAL_TREE_DEPTH] siblings;
+    }
+
     IRiscZeroVerifier public immutable verifier;
     bytes32 public immutable checkpointImageId;
+    bytes32 public immutable historicalChunkImageId;
 
     mapping(uint64 blockNumber => bytes32 blockHash) public canonicalBlockHashes;
     mapping(uint256 ethereumTimestamp => bytes32 beaconRoot) public archivedBeaconRoots;
     mapping(bytes32 journalDigest => bool consumed) public consumedJournalDigests;
+    mapping(uint16 chunkIndex => bytes32 blockRoot) public historicalChunkRoots;
+
+    bool public historicalBackfillStarted;
+    bool public historicalCoverageComplete;
+    uint16 public acceptedHistoricalChunkCount;
+    uint64 public historicalFrontierBlockNumber;
+    bytes32 public historicalFrontierBlockHash;
+    bytes32 public historicalRoot;
 
     error ZeroAddress();
     error ZeroImageId();
     error WrongChain(uint256 chainId);
     error InvalidCheckpointJournal();
     error InvalidSteelCommitment();
+    error HistoricalBackfillAlreadyStarted();
+    error HistoricalBackfillNotStarted();
+    error HistoricalBackfillComplete();
+    error HistoricalAnchorUnavailable();
+    error InvalidHistoricalChunkJournal();
+    error HistoricalJournalAlreadyConsumed(bytes32 journalDigest);
+    error InvalidHistoricalBlockProof(uint64 blockNumber);
     error BeaconRootUnavailable(uint256 timestamp);
     error ConflictingBeaconRoot(uint256 timestamp, bytes32 existingRoot, bytes32 newRoot);
     error ConflictingBlockHash(uint64 blockNumber, bytes32 existingHash, bytes32 newHash);
@@ -70,13 +111,26 @@ contract AntseedBaseCheckpointOracle is IBaseAnalysisStateOracle {
         bytes32 checkpointBlockHash,
         uint256 canonicalBlockCount
     );
+    event HistoricalBackfillStarted(uint64 indexed anchorBlockNumber, bytes32 indexed anchorBlockHash);
+    event HistoricalChunkAccepted(
+        bytes32 indexed journalDigest,
+        uint16 indexed chunkIndex,
+        uint64 indexed startBlockNumber,
+        uint64 endBlockNumber,
+        bytes32 blockRoot
+    );
+    event HistoricalCoverageFinalized(
+        uint64 indexed startBlockNumber, uint64 indexed anchorBlockNumber, bytes32 indexed historicalRoot
+    );
+    event HistoricalBlockMaterialized(uint64 indexed blockNumber, bytes32 indexed blockHash, uint16 indexed chunkIndex);
 
-    constructor(address verifier_, bytes32 checkpointImageId_) {
+    constructor(address verifier_, bytes32 checkpointImageId_, bytes32 historicalChunkImageId_) {
         if (block.chainid != BASE_CHAIN_ID) revert WrongChain(block.chainid);
         if (verifier_ == address(0)) revert ZeroAddress();
-        if (checkpointImageId_ == bytes32(0)) revert ZeroImageId();
+        if (checkpointImageId_ == bytes32(0) || historicalChunkImageId_ == bytes32(0)) revert ZeroImageId();
         verifier = IRiscZeroVerifier(verifier_);
         checkpointImageId = checkpointImageId_;
+        historicalChunkImageId = historicalChunkImageId_;
     }
 
     /**
@@ -127,6 +181,79 @@ contract AntseedBaseCheckpointOracle is IBaseAnalysisStateOracle {
         );
     }
 
+    function beginHistoricalBackfill() external {
+        if (historicalBackfillStarted) revert HistoricalBackfillAlreadyStarted();
+        bytes32 anchorHash = canonicalBlockHashes[HISTORICAL_ANCHOR_BLOCK];
+        if (anchorHash == bytes32(0)) revert HistoricalAnchorUnavailable();
+
+        historicalBackfillStarted = true;
+        historicalFrontierBlockNumber = HISTORICAL_ANCHOR_BLOCK;
+        historicalFrontierBlockHash = anchorHash;
+        emit HistoricalBackfillStarted(HISTORICAL_ANCHOR_BLOCK, anchorHash);
+    }
+
+    function submitHistoricalChunk(bytes calldata seal, bytes calldata journalData) external {
+        if (!historicalBackfillStarted) revert HistoricalBackfillNotStarted();
+        if (historicalCoverageComplete) revert HistoricalBackfillComplete();
+
+        bytes32 journalDigest = sha256(journalData);
+        if (consumedJournalDigests[journalDigest]) revert HistoricalJournalAlreadyConsumed(journalDigest);
+        verifier.verify(seal, historicalChunkImageId, journalDigest);
+
+        HistoricalChunkJournal memory journal = abi.decode(journalData, (HistoricalChunkJournal));
+        _validateHistoricalChunkJournal(journal);
+
+        uint16 chunkIndex = acceptedHistoricalChunkCount;
+        consumedJournalDigests[journalDigest] = true;
+        historicalChunkRoots[chunkIndex] = journal.blockRoot;
+        acceptedHistoricalChunkCount = chunkIndex + 1;
+        historicalFrontierBlockNumber = journal.startBlockNumber;
+        historicalFrontierBlockHash = journal.startBlockHash;
+        emit HistoricalChunkAccepted(
+            journalDigest, chunkIndex, journal.startBlockNumber, journal.endBlockNumber, journal.blockRoot
+        );
+
+        if (journal.startBlockNumber == HISTORICAL_START_BLOCK) {
+            if (acceptedHistoricalChunkCount != HISTORICAL_CHUNK_COUNT) revert InvalidHistoricalChunkJournal();
+            historicalRoot = _computeHistoricalRoot();
+            historicalCoverageComplete = true;
+            emit HistoricalCoverageFinalized(HISTORICAL_START_BLOCK, HISTORICAL_ANCHOR_BLOCK, historicalRoot);
+        }
+    }
+
+    function materializeHistoricalBlocks(HistoricalBlockProof[] calldata proofs) external returns (uint256 stored) {
+        for (uint256 proofIndex = 0; proofIndex < proofs.length; ++proofIndex) {
+            HistoricalBlockProof calldata proof = proofs[proofIndex];
+            uint16 chunkIndex = _historicalChunkIndex(proof.blockNumber);
+            bytes32 root = historicalChunkRoots[chunkIndex];
+            if (root == bytes32(0) || proof.blockHash == bytes32(0)) {
+                revert InvalidHistoricalBlockProof(proof.blockNumber);
+            }
+
+            uint64 chunkStart = _historicalChunkStart(chunkIndex);
+            bytes32 current = keccak256(abi.encodePacked(bytes1(0x00), proof.blockNumber, proof.blockHash));
+            uint256 position = proof.blockNumber - chunkStart;
+            for (uint256 level = 0; level < HISTORICAL_TREE_DEPTH; ++level) {
+                bytes32 sibling = proof.siblings[level];
+                current = position & 1 == 0
+                    ? keccak256(abi.encodePacked(bytes1(0x02), current, sibling))
+                    : keccak256(abi.encodePacked(bytes1(0x02), sibling, current));
+                position >>= 1;
+            }
+            if (current != root) revert InvalidHistoricalBlockProof(proof.blockNumber);
+
+            bytes32 existing = canonicalBlockHashes[proof.blockNumber];
+            if (existing != bytes32(0) && existing != proof.blockHash) {
+                revert ConflictingBlockHash(proof.blockNumber, existing, proof.blockHash);
+            }
+            if (existing == bytes32(0)) {
+                canonicalBlockHashes[proof.blockNumber] = proof.blockHash;
+                ++stored;
+                emit HistoricalBlockMaterialized(proof.blockNumber, proof.blockHash, chunkIndex);
+            }
+        }
+    }
+
     /// @inheritdoc IBaseAnalysisStateOracle
     function isCanonicalBlock(uint64 blockNumber, bytes32 blockHash) external view returns (bool) {
         return blockHash != bytes32(0) && canonicalBlockHashes[blockNumber] == blockHash;
@@ -172,6 +299,58 @@ contract AntseedBaseCheckpointOracle is IBaseAnalysisStateOracle {
             beaconRoot = _liveBeaconRoot(ethereumTimestamp);
         }
         if (beaconRoot != commitment.digest) revert InvalidSteelCommitment();
+    }
+
+    function _validateHistoricalChunkJournal(HistoricalChunkJournal memory journal) private view {
+        uint64 frontier = historicalFrontierBlockNumber;
+        uint64 expectedEnd = frontier - 1;
+        uint64 expectedStart = frontier > HISTORICAL_START_BLOCK + HISTORICAL_CHUNK_SIZE
+            ? frontier - HISTORICAL_CHUNK_SIZE
+            : HISTORICAL_START_BLOCK;
+        uint64 expectedBlockCount = expectedEnd - expectedStart + 1;
+
+        if (
+            journal.version != HISTORICAL_JOURNAL_VERSION || journal.chainId != BASE_CHAIN_ID
+                || journal.startBlockNumber != expectedStart || journal.endBlockNumber != expectedEnd
+                || journal.successorBlockNumber != frontier || journal.successorBlockHash != historicalFrontierBlockHash
+                || journal.blockCount != expectedBlockCount || journal.startBlockHash == bytes32(0)
+                || journal.endBlockHash == bytes32(0) || journal.blockRoot == bytes32(0)
+        ) revert InvalidHistoricalChunkJournal();
+    }
+
+    function _historicalChunkIndex(uint64 blockNumber) private pure returns (uint16 chunkIndex) {
+        if (blockNumber < HISTORICAL_START_BLOCK || blockNumber >= HISTORICAL_ANCHOR_BLOCK) {
+            revert InvalidHistoricalBlockProof(blockNumber);
+        }
+        chunkIndex = uint16((HISTORICAL_ANCHOR_BLOCK - 1 - blockNumber) / HISTORICAL_CHUNK_SIZE);
+    }
+
+    function _historicalChunkStart(uint16 chunkIndex) private pure returns (uint64) {
+        uint64 successor = HISTORICAL_ANCHOR_BLOCK - uint64(chunkIndex) * HISTORICAL_CHUNK_SIZE;
+        return successor > HISTORICAL_START_BLOCK + HISTORICAL_CHUNK_SIZE
+            ? successor - HISTORICAL_CHUNK_SIZE
+            : HISTORICAL_START_BLOCK;
+    }
+
+    function _computeHistoricalRoot() private view returns (bytes32) {
+        bytes32[128] memory nodes;
+        for (uint16 index = 0; index < HISTORICAL_CHUNK_COUNT; ++index) {
+            uint64 startBlock = _historicalChunkStart(index);
+            uint64 endBlock = HISTORICAL_ANCHOR_BLOCK - uint64(index) * HISTORICAL_CHUNK_SIZE - 1;
+            nodes[index] = keccak256(abi.encodePacked(bytes1(0x10), startBlock, endBlock, historicalChunkRoots[index]));
+        }
+        for (uint16 index = HISTORICAL_CHUNK_COUNT; index < 128; ++index) {
+            nodes[index] = keccak256(abi.encodePacked(bytes1(0x11), index));
+        }
+
+        uint256 width = 128;
+        while (width > 1) {
+            for (uint256 index = 0; index < width; index += 2) {
+                nodes[index >> 1] = keccak256(abi.encodePacked(bytes1(0x12), nodes[index], nodes[index + 1]));
+            }
+            width >>= 1;
+        }
+        return nodes[0];
     }
 
     function _liveBeaconRoot(uint256 ethereumTimestamp) private view returns (bytes32 beaconRoot) {

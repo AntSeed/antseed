@@ -5,93 +5,126 @@ import { IBaseAnalysisStateOracle } from "../interfaces/IBaseAnalysisStateOracle
 import { IAntseedWashTradingRegistry } from "../interfaces/IAntseedWashTradingRegistry.sol";
 import { IRiscZeroVerifier } from "../interfaces/IRiscZeroVerifier.sol";
 
-/**
- * @title AntseedWashTradingRegistry
- * @notice Applies a seller-only future-reward penalty from authenticated,
- *         monotonic positive evidence proven by the pinned RISC Zero guest.
- *
- * The proof need not be complete. Omitting evidence can only prevent a seller
- * from reaching the thresholds; it cannot create an unsupported penalty.
- */
 contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
-    uint32 public constant PREDICATE_VERSION = 2;
-    uint64 public constant BASE_CHAIN_ID = 8_453;
-    address public constant BASE_USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
-    address public constant ANTSEED_CHANNELS = 0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d;
-    address public constant ANTSEED_DEPOSITS = 0x0F7a3a8f4Da01637d1202bb5443fcF7F88F99fD2;
-    uint32 public constant MINIMUM_LINKED_BUYERS = 3;
-    uint128 public constant MINIMUM_SUSPICIOUS_VOLUME_RAW = 1_000_000_000;
+    uint32 public constant PREDICATE_VERSION = 1;
     uint16 public constant PENALTY_BPS = 9_000;
+    uint8 public constant P0_CLOSED_LOOP = 1;
+    uint8 public constant P1_COORDINATED_CONTROL = 2;
 
     struct BlockRef {
         uint64 number;
         bytes32 blockHash;
     }
 
-    struct SellerPenaltyJournal {
+    struct CohortJournal {
         uint32 predicateVersion;
-        uint64 chainId;
-        address usdc;
-        address channels;
-        address deposits;
+        uint8 claimType;
+        bytes32 claimId;
+        bytes32 reportRoot;
         address seller;
-        address funder;
-        uint32 linkedBuyerCount;
-        uint32 hopCount;
         uint16 penaltyBps;
-        uint128 sellerOutflowRaw;
-        uint128 totalFundedRaw;
-        uint128 suspiciousVolumeRaw;
-        uint64 earliestFundingBlock;
-        uint64 latestSettlementBlock;
+        uint32 linkedBuyerCount;
+        uint128 qualifiedVolumeRaw;
+        BlockRef[] blockRefs;
+    }
+
+    struct ReciprocalJournal {
+        uint32 predicateVersion;
+        bytes32 claimId;
+        bytes32 reportRoot;
+        address sellerA;
+        address sellerB;
+        uint16 penaltyBps;
+        uint32 settlementCount;
+        uint128 qualifiedVolumeRaw;
         BlockRef[] blockRefs;
     }
 
     IRiscZeroVerifier public immutable verifier;
     IBaseAnalysisStateOracle public immutable stateOracle;
-    bytes32 public immutable sellerPenaltyImageId;
+    bytes32 public immutable cohortImageId;
+    bytes32 public immutable reciprocalImageId;
+    bytes32 public immutable approvedReportRoot;
 
     mapping(address seller => uint16 penaltyBps) public override sellerPenaltyBps;
-    mapping(bytes32 journalDigest => bool consumed) public consumedJournalDigests;
+    mapping(bytes32 claimId => bool consumed) public consumedClaimIds;
 
     error ZeroAddress();
-    error ZeroImageId();
+    error ZeroConfiguration();
     error InvalidProofJournal();
     error NonCanonicalBlock(uint64 blockNumber, bytes32 blockHash);
 
     event SellerPenaltyApplied(
         address indexed seller,
-        address indexed funder,
-        bytes32 indexed journalDigest,
-        uint32 linkedBuyerCount,
-        uint128 suspiciousVolumeRaw,
-        uint16 penaltyBps
+        bytes32 indexed claimId,
+        uint8 indexed claimType,
+        uint16 previousPenaltyBps,
+        uint16 newPenaltyBps
     );
 
-    constructor(address verifier_, address stateOracle_, bytes32 sellerPenaltyImageId_) {
+    constructor(
+        address verifier_,
+        address stateOracle_,
+        bytes32 cohortImageId_,
+        bytes32 reciprocalImageId_,
+        bytes32 approvedReportRoot_
+    ) {
         if (verifier_ == address(0) || stateOracle_ == address(0)) revert ZeroAddress();
-        if (sellerPenaltyImageId_ == bytes32(0)) revert ZeroImageId();
+        if (cohortImageId_ == bytes32(0) || reciprocalImageId_ == bytes32(0) || approvedReportRoot_ == bytes32(0)) {
+            revert ZeroConfiguration();
+        }
         verifier = IRiscZeroVerifier(verifier_);
         stateOracle = IBaseAnalysisStateOracle(stateOracle_);
-        sellerPenaltyImageId = sellerPenaltyImageId_;
+        cohortImageId = cohortImageId_;
+        reciprocalImageId = reciprocalImageId_;
+        approvedReportRoot = approvedReportRoot_;
     }
 
-    /**
-     * @notice Verifies a seller-penalty receipt and applies the fixed penalty.
-     * @return applied True only when this call newly penalizes the seller.
-     */
-    function submitSellerPenalty(bytes calldata seal, bytes calldata journalData) external returns (bool applied) {
-        bytes32 journalDigest = sha256(journalData);
-        if (consumedJournalDigests[journalDigest]) return false;
+    function submitCohortPenalty(bytes calldata seal, bytes calldata journalData) external returns (bool applied) {
+        verifier.verify(seal, cohortImageId, sha256(journalData));
+        CohortJournal memory journal = abi.decode(journalData, (CohortJournal));
+        if (consumedClaimIds[journal.claimId]) return false;
+        if (
+            journal.predicateVersion != PREDICATE_VERSION
+                || (journal.claimType != P0_CLOSED_LOOP && journal.claimType != P1_COORDINATED_CONTROL)
+                || journal.claimId == bytes32(0) || journal.reportRoot != approvedReportRoot || journal.seller == address(0)
+                || journal.penaltyBps != PENALTY_BPS || journal.linkedBuyerCount < 3
+                || journal.qualifiedVolumeRaw < 1_000_000_000
+        ) revert InvalidProofJournal();
+        _validateBlocks(journal.blockRefs);
+        consumedClaimIds[journal.claimId] = true;
+        return _applyPenalty(journal.seller, journal.claimId, journal.claimType);
+    }
 
-        verifier.verify(seal, sellerPenaltyImageId, journalDigest);
-        SellerPenaltyJournal memory journal = abi.decode(journalData, (SellerPenaltyJournal));
-        _validateJournal(journal);
+    function submitReciprocalPenalty(bytes calldata seal, bytes calldata journalData)
+        external
+        returns (bool appliedA, bool appliedB)
+    {
+        verifier.verify(seal, reciprocalImageId, sha256(journalData));
+        ReciprocalJournal memory journal = abi.decode(journalData, (ReciprocalJournal));
+        if (consumedClaimIds[journal.claimId]) return (false, false);
+        if (
+            journal.predicateVersion != PREDICATE_VERSION || journal.claimId == bytes32(0)
+                || journal.reportRoot != approvedReportRoot || journal.sellerA == address(0)
+                || journal.sellerB == address(0) || journal.sellerA == journal.sellerB || journal.penaltyBps != PENALTY_BPS
+                || journal.settlementCount < 100 || journal.qualifiedVolumeRaw == 0
+        ) revert InvalidProofJournal();
+        _validateBlocks(journal.blockRefs);
+        consumedClaimIds[journal.claimId] = true;
+        appliedA = _applyPenalty(journal.sellerA, journal.claimId, 3);
+        appliedB = _applyPenalty(journal.sellerB, journal.claimId, 3);
+    }
 
+    function isSellerPenalized(address seller) external view returns (bool) {
+        return sellerPenaltyBps[seller] != 0;
+    }
+
+    function _validateBlocks(BlockRef[] memory blockRefs) private view {
+        if (blockRefs.length == 0) revert InvalidProofJournal();
         uint64 previousBlock;
-        for (uint256 i = 0; i < journal.blockRefs.length; ++i) {
-            BlockRef memory blockRef = journal.blockRefs[i];
-            if (blockRef.blockHash == bytes32(0) || (i != 0 && blockRef.number <= previousBlock)) {
+        for (uint256 index = 0; index < blockRefs.length; ++index) {
+            BlockRef memory blockRef = blockRefs[index];
+            if (blockRef.blockHash == bytes32(0) || (index != 0 && blockRef.number <= previousBlock)) {
                 revert InvalidProofJournal();
             }
             if (!stateOracle.isCanonicalBlock(blockRef.number, blockRef.blockHash)) {
@@ -99,35 +132,14 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
             }
             previousBlock = blockRef.number;
         }
+    }
 
-        consumedJournalDigests[journalDigest] = true;
-        if (sellerPenaltyBps[journal.seller] == PENALTY_BPS) return false;
-
-        sellerPenaltyBps[journal.seller] = PENALTY_BPS;
-        emit SellerPenaltyApplied(
-            journal.seller,
-            journal.funder,
-            journalDigest,
-            journal.linkedBuyerCount,
-            journal.suspiciousVolumeRaw,
-            PENALTY_BPS
-        );
+    function _applyPenalty(address seller, bytes32 claimId, uint8 claimType) private returns (bool applied) {
+        uint16 previousPenalty = sellerPenaltyBps[seller];
+        uint16 newPenalty = previousPenalty > PENALTY_BPS ? previousPenalty : PENALTY_BPS;
+        if (newPenalty == previousPenalty) return false;
+        sellerPenaltyBps[seller] = newPenalty;
+        emit SellerPenaltyApplied(seller, claimId, claimType, previousPenalty, newPenalty);
         return true;
-    }
-
-    /// @inheritdoc IAntseedWashTradingRegistry
-    function isSellerPenalized(address seller) external view returns (bool) {
-        return sellerPenaltyBps[seller] != 0;
-    }
-
-    function _validateJournal(SellerPenaltyJournal memory journal) private pure {
-        if (
-            journal.predicateVersion != PREDICATE_VERSION || journal.chainId != BASE_CHAIN_ID
-                || journal.usdc != BASE_USDC || journal.channels != ANTSEED_CHANNELS || journal.deposits != ANTSEED_DEPOSITS
-                || journal.seller == address(0) || journal.funder == address(0)
-                || journal.linkedBuyerCount < MINIMUM_LINKED_BUYERS || journal.penaltyBps != PENALTY_BPS
-                || journal.suspiciousVolumeRaw < MINIMUM_SUSPICIOUS_VOLUME_RAW || journal.earliestFundingBlock == 0
-                || journal.latestSettlementBlock <= journal.earliestFundingBlock || journal.blockRefs.length == 0
-        ) revert InvalidProofJournal();
     }
 }
