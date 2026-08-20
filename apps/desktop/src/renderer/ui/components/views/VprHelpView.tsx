@@ -77,6 +77,22 @@ const HELP_TOPICS: HelpTopic[] = [
         links: [{ label: 'Start and use the VPR', url: `${VPR_GUIDE_URL}#start-the-router` }],
       },
       {
+        key: 'chat',
+        label: 'Chat inside the VPR',
+        intro: 'Use the built-in chat when you want to talk to a network model without opening another tool. Start from the Home prompt or open Chat directly.',
+        sections: [
+          {
+            heading: 'Change the conversation model',
+            body: 'Use the model picker in the chat header. For an existing thread, choose whether to continue it on the new model or start a new chat.',
+          },
+          {
+            heading: 'Manage chat history',
+            body: 'View chats opens your conversation list. You can return to previous chats, start a clean chat with the current model, and search messages in the active conversation.',
+          },
+        ],
+        links: [{ label: 'Use the built-in VPR chat', url: `${VPR_GUIDE_URL}#chat-inside-the-vpr` }],
+      },
+      {
         key: 'apps',
         label: 'Connect your apps',
         intro: 'Open Connected apps and select a detected tool. The VPR updates a supported config file or routes the app through its local proxy.',
@@ -94,6 +110,48 @@ const HELP_TOPICS: HelpTopic[] = [
           { label: 'Connect apps with the VPR', url: `${VPR_GUIDE_URL}#connect-an-ai-app` },
           { label: 'Open tool-specific integration guides', url: INTEGRATIONS_URL },
         ],
+      },
+      {
+        key: 'conversations',
+        label: 'Manage connected-tool conversations',
+        intro: 'Connected-tool sessions appear under Recent chats after they send traffic. Each conversation can keep its own model and seller route.',
+        sections: [
+          {
+            heading: 'Set one chat’s model',
+            body: 'Open Recent chats, select a conversation, and choose its model. Other conversations and the default model for new sessions are unchanged.',
+          },
+          {
+            heading: 'Set one chat’s seller',
+            body: 'Open the model row’s settings to use automatic selection or pin an exact seller for only that conversation.',
+          },
+          {
+            heading: 'Other controls',
+            body: 'Rename the conversation, open its connected app, or delete the stored chat entry from the conversation detail page.',
+          },
+        ],
+        links: [
+          { label: 'Manage connected-tool conversations', url: `${VPR_GUIDE_URL}#manage-connected-tool-conversations` },
+        ],
+      },
+      {
+        key: 'float',
+        label: 'The floating window',
+        intro: 'The floating window stays above your apps and shows the active model plus current token and cost activity.',
+        sections: [
+          {
+            heading: 'Models and conversations',
+            body: 'Change the default model for new sessions, assign a model to one recent conversation, or open the connected app that owns it.',
+          },
+          {
+            heading: 'Floating preferences',
+            body: 'Show on traffic opens it automatically when a connected app sends requests. Show routed peer displays the seller that actually served each chat.',
+          },
+          {
+            heading: 'Closing it is safe',
+            body: 'Closing the floating window does not stop the router, disconnect apps, or end conversations.',
+          },
+        ],
+        links: [{ label: 'Use the floating window', url: `${VPR_GUIDE_URL}#use-the-floating-window` }],
       },
       {
         key: 'api',
@@ -117,22 +175,6 @@ const HELP_TOPICS: HelpTopic[] = [
           { label: 'Use the VPR local API', url: `${VPR_GUIDE_URL}#use-the-local-api` },
           { label: 'Open the complete API guide', url: `${DOCS_BASE_URL}/guides/using-the-api` },
         ],
-      },
-      {
-        key: 'float',
-        label: 'The floating window',
-        intro: 'The floating window stays above your apps and shows the active model plus current token and cost activity.',
-        sections: [
-          {
-            heading: 'New sessions and conversations',
-            body: 'Change the default model for new sessions or assign a model to an individual recent conversation. Active traffic shows a pulse.',
-          },
-          {
-            heading: 'Closing it is safe',
-            body: 'Closing the floating window does not stop the router or disconnect your apps.',
-          },
-        ],
-        links: [{ label: 'Use the floating window', url: `${VPR_GUIDE_URL}#use-the-floating-window` }],
       },
     ],
   },

@@ -56,6 +56,22 @@ Open **Preferences** to control automatic routing across models:
 
 Turning automatic selection off leaves connected apps on their last selected route. It does not automatically choose a replacement if that pinned route becomes unavailable.
 
+## Chat inside the VPR
+
+The VPR includes its own chat interface, so you can use network models without opening another tool. Type in **Ask anything. On any model...** on Home to start a conversation with the currently selected model.
+
+### Choose a model for the conversation
+
+The model picker in the chat header controls the active conversation. If the conversation already contains messages, the VPR asks whether to continue that thread on the new model or start a new chat so the existing thread keeps its current model.
+
+Use **New chat** to start a clean conversation with the same current model. The **View chats** control opens the conversation list; from there you can return to previous chats, search within the active conversation, and manage the chat history stored by the VPR.
+
+### Conversations keep their own route
+
+Changing the global model affects new sessions. An existing conversation keeps its own model until you deliberately change it. This prevents changing the Home picker from unexpectedly moving every active conversation.
+
+The internal chat and connected-tool conversations use the same model catalog, Price + Trust preferences, seller routing, credits, and payment channels.
+
 ## Connect an AI app
 
 Open **Connected apps** and select a detected tool. Depending on the application, the VPR connects it by updating a supported configuration file or by routing its API domains through the local proxy.
@@ -66,6 +82,12 @@ Some config-file integrations must be restarted before they read their updated s
 
 For manual endpoints, SDK examples, and supported wire formats, see [Using the API](/docs/guides/using-the-api). Tool-specific setup is available from the [Integrations directory](/integrations).
 
+### App settings
+
+Use the gear on an app row to choose which installed application the VPR opens, manage the client names used to attribute conversations, or disconnect and remove the integration.
+
+For config-file integrations, the VPR keeps a backup beside the original config and removes its changes when you disconnect. For HTTPS proxy integrations, disconnecting stops the local interception for that app.
+
 ### Trust the local HTTPS certificate
 
 Some connected apps use HTTPS endpoints that the local proxy must intercept on your device. For those apps, the VPR generates a local certificate authority and asks the operating system to trust it.
@@ -74,65 +96,57 @@ The certificate is generated locally and its private key does not leave your com
 
 Only apps connected through HTTPS interception need this certificate. Config-file integrations that point directly to the local VPR API do not.
 
-## Use the local API
+## Manage connected-tool conversations
 
-While the router is running, the VPR exposes a local API at `http://localhost:8377`. OpenAI-compatible clients commonly use `http://localhost:8377/v1` as their base URL, while Anthropic clients use the root URL and append `/v1/messages` themselves.
+After a connected app sends a request, its conversation appears under **Recent chats** on Home, Connected apps, and the floating window. Open the full Chats view from the Recent chats card to manage them.
 
-The proxy binds to your computer rather than exposing the API to your local network. AntSeed does not require an API key for this local endpoint, although some clients require any non-empty placeholder such as `antseed` in their API-key field.
+Each conversation keeps the model that served it. This lets one Claude Code, Codex, or other tool session stay on one model while another session uses a different model.
 
-### Browse models with `/v1/models`
+### Select a model for one conversation
 
-Request the model catalog before choosing a model id:
+1. Open **Recent chats** and select the conversation.
+2. Choose the model that conversation should use.
+3. Return to the connected tool and continue the same session.
 
-```bash
-curl http://localhost:8377/v1/models
-```
+Changing a conversation's model does not change the default model for new sessions or the models assigned to other conversations.
 
-`GET /v1/models` is answered locally and is not billed. Its `data` array contains the model ids currently advertised across the network. Use one of those ids in the `model` field of a request. To list image services only:
+### Select a specific seller for one conversation
 
-```bash
-curl 'http://localhost:8377/v1/models?type=images'
-```
+Each model row in a conversation has settings for its seller route:
 
-### Supported request endpoints
+- Leave **Auto select seller** on to use your Price + Trust preferences and automatic failover.
+- Turn it off to keep the seller currently serving the conversation.
+- Select a seller row to pin that exact seller for the conversation.
+- Select the pinned seller again, or turn automatic selection back on, to return the conversation to automatic routing.
 
-| Endpoint | Use |
-|---|---|
-| `/v1/chat/completions` | OpenAI Chat Completions clients |
-| `/v1/responses` | OpenAI Responses clients such as Codex |
-| `/v1/messages` | Anthropic Messages clients such as Claude Code |
-| `/v1/images/generations` | OpenAI-compatible image generation |
-| `/v1/images/edits` | OpenAI-compatible multipart image editing |
-| `/v1/messages/count_tokens` | Local Anthropic token counting; never routed or billed |
+A seller pin applies only to that conversation. It does not change the global seller choice for the model or other chats.
 
-For example, send an OpenAI-compatible chat request using a model id returned by `/v1/models`:
+### Rename, open, or delete a conversation
 
-```bash
-curl http://localhost:8377/v1/chat/completions \
-  -H 'content-type: application/json' \
-  -d '{
-    "model": "deepseek-v4-flash",
-    "messages": [{"role": "user", "content": "Hello"}]
-  }'
-```
-
-### Select a model or seller through the API
-
-The request's `model` field controls routing:
-
-- `"model": "antseed"` follows the model or seller route currently selected in the VPR. Changing the VPR picker updates clients that use this alias without rewriting their configuration.
-- `"model": "<modelId>"` uses automatic seller selection for that catalog model under your VPR Price + Trust preferences.
-- `"model": "<peerId>@<modelId>"` hard-pins that request to one seller and disables automatic failover.
-
-If no VPR route is selected, the `antseed` alias returns `no_default_route`. Use a concrete model id when you want a request to route independently of the VPR picker.
-
-See [Using the API](/docs/guides/using-the-api) for SDK configuration, format translation, response headers, routing overrides, errors, and tool-specific examples.
+The conversation detail page lets you rename a chat, open the connected application it belongs to, or delete its stored entry. If the external tool session is still active, a deleted entry can appear again when that tool sends its next request.
 
 ## Use the floating window
 
-The floating window stays above your other apps and shows the active model plus current token and cost activity. Use it to change the model for new sessions or assign a model to an individual recent conversation.
+The floating window stays above your other apps so routing information and conversation controls remain available while you work. It shows your balance, the active model, and current token and cost activity.
 
-A conversation with current traffic displays an activity pulse. Close the floating window with its close control; closing it does not stop the router or disconnect your apps.
+The status dot is red when routing is stopped, steady while the router is ready, and pulses while request traffic is moving. A conversation receiving traffic also displays an activity pulse in the conversation menu.
+
+Open the menu to:
+
+- Change the default model used by new sessions
+- Select a recent conversation and change only its model
+- Open the connected app that owns a conversation
+- See the model assigned to each conversation
+- See the seller that actually served the conversation when **Show routed peer** is enabled
+
+### Floating-window preferences
+
+Open **Preferences → Floating window** to control its behavior:
+
+- **Show on traffic** opens the floating window automatically when a connected app begins sending requests.
+- **Show routed peer** displays the seller that actually served each conversation in Recent chats, the internal chat list, and the floating window.
+
+You can still open or close the floating window manually. Closing it does not stop the router, disconnect apps, or end active conversations.
 
 ## Privacy, transport, and seller trust
 
@@ -191,6 +205,60 @@ See [Security: signing identity vs funding wallet](/docs/security#signing-identi
 The **Rewards** screen shows ANTS attributed to eligible network usage on the selected chain. Availability, transferability, and claim behavior depend on the deployed emissions contracts and current network phase.
 
 If claims are available, the VPR opens a secure browser flow for the authorized wallet signature. A displayed pending amount is not a promise of token value, future emissions, or permanent eligibility. See [Payments: ANTS token emissions](/docs/guides/payments#ants-token-emissions) and the [ANTS token overview](/ants-token).
+
+## Use the local API
+
+While the router is running, the VPR exposes a local API at `http://localhost:8377`. OpenAI-compatible clients commonly use `http://localhost:8377/v1` as their base URL, while Anthropic clients use the root URL and append `/v1/messages` themselves.
+
+The proxy binds to your computer rather than exposing the API to your local network. AntSeed does not require an API key for this local endpoint, although some clients require any non-empty placeholder such as `antseed` in their API-key field.
+
+### Browse models with `/v1/models`
+
+Request the model catalog before choosing a model id:
+
+```bash
+curl http://localhost:8377/v1/models
+```
+
+`GET /v1/models` is answered locally and is not billed. Its `data` array contains the model ids currently advertised across the network. Use one of those ids in the `model` field of a request. To list image services only:
+
+```bash
+curl 'http://localhost:8377/v1/models?type=images'
+```
+
+### Supported request endpoints
+
+| Endpoint | Use |
+|---|---|
+| `/v1/chat/completions` | OpenAI Chat Completions clients |
+| `/v1/responses` | OpenAI Responses clients such as Codex |
+| `/v1/messages` | Anthropic Messages clients such as Claude Code |
+| `/v1/images/generations` | OpenAI-compatible image generation |
+| `/v1/images/edits` | OpenAI-compatible multipart image editing |
+| `/v1/messages/count_tokens` | Local Anthropic token counting; never routed or billed |
+
+For example, send an OpenAI-compatible chat request using a model id returned by `/v1/models`:
+
+```bash
+curl http://localhost:8377/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{
+    "model": "deepseek-v4-flash",
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
+```
+
+### Select a model or seller through the API
+
+The request's `model` field controls routing:
+
+- `"model": "antseed"` follows the model or seller route currently selected in the VPR. Changing the VPR picker updates clients that use this alias without rewriting their configuration.
+- `"model": "<modelId>"` uses automatic seller selection for that catalog model under your VPR Price + Trust preferences.
+- `"model": "<peerId>@<modelId>"` hard-pins that request to one seller and disables automatic failover.
+
+If no VPR route is selected, the `antseed` alias returns `no_default_route`. Use a concrete model id when you want a request to route independently of the VPR picker.
+
+See [Using the API](/docs/guides/using-the-api) for SDK configuration, format translation, response headers, routing overrides, errors, and tool-specific examples.
 
 ## Troubleshooting
 

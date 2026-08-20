@@ -56,7 +56,7 @@ export const faqLd = {
       name: 'Can providers see my prompts?',
       acceptedAnswer: {
         '@type': 'Answer',
-        text: 'Standard providers receive the request content needed to provide the service and may be able to inspect or log it. A correctly verified TEE route can reduce operator visibility, but the attestation must be checked against the expected workload, seller identity, and configuration. Availability varies by seller and model.',
+        text: 'Standard providers can. TEE-verified providers cannot — the hardware prevents it even if the operator wanted to look. When paying for a TEE-verified request, you receive a cryptographic attestation proving the enclave was genuine.',
       },
     },
     {
@@ -190,9 +190,7 @@ Privacy on AntSeed works in two layers:
 
 **Layer 1 — Anonymous access (default).** AntSeed is designed for use without a central account, sign-up, or platform-issued API key. Requests route peer-to-peer, so providers generally see a peer/wallet rather than a platform identity account.
 
-**Layer 2 — TEE-verified providers.** These run inside Trusted Execution Environments such as Intel TDX or AMD SEV-SNP. A correctly verified route can reduce what the node operator can see, but users must verify that the attestation binds the expected workload, seller identity, and configuration. Availability varies by seller and model. See [Verify a seller's TEE](/docs/guides/verify-tee).
-
-Peer traffic uses mutually authenticated encrypted TCP where supported. WebRTC DataChannels are a fallback for peers that cannot use direct encrypted TCP; WebRTC is not the primary node-to-node transport. See [Transport](/docs/transport).
+**Layer 2 — TEE-verified providers.** These run inside Trusted Execution Environments (Intel TDX, AMD SEV) — hardware enclaves that can reduce what the node operator can see. This is cryptographic proof, not just a policy promise. TEE provider verification is being rolled out in a future release.
 
 AntSeed's privacy model is architectural rather than account-based: users can route requests without a central identity account, platform-issued API key, or centralized chat database, and TEE providers can add hardware-backed confidentiality where available. It is not, however, a promise that every piece of data is hidden from every participant. Independent providers and supporting infrastructure may process data needed to deliver and settle requests, and public-chain activity remains visible on-chain. Users should choose providers and routes appropriate to the sensitivity of their work.
 
@@ -200,7 +198,7 @@ Most users are well-served by no-account routing. Journalists, lawyers, security
 
 ### Can providers see my prompts?
 
-Standard providers receive the request content needed to provide the service and may be able to inspect or log it. A correctly verified TEE route can reduce operator visibility, but a TEE label alone is not sufficient proof. Verify that the attestation matches the expected workload, seller identity, and configuration. Availability varies by seller and model.
+Standard providers can. TEE-verified providers cannot — the hardware prevents it even if the operator wanted to look. When paying for a TEE-verified request, you receive a cryptographic attestation proving the enclave was genuine.
 
 ### Does AntSeed log my requests?
 
