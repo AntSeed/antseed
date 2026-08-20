@@ -328,6 +328,8 @@ export class AntseedNode extends EventEmitter {
   private _router: Router | null = null;
   private _started = false;
   private _announcer: PeerAnnouncer | null = null;
+  /** Set while advertising is paused (e.g. seller wallet out of gas). */
+  private _advertisingPausedReason: string | null = null;
   private _peerLookup: PeerLookup | null = null;
   private _muxes = new Map<PeerId, ProxyMux>();
   private _decoders = new Map<PeerId, FrameDecoder>();
@@ -410,6 +412,31 @@ export class AntseedNode extends EventEmitter {
    */
   async refreshSellerMetadata(): Promise<void> {
     await this._announcer?.refreshMetadata();
+  }
+
+  /**
+   * Stop announcing this seller to the DHT and re-sign the metadata snapshot
+   * with zero providers, so buyers stop discovering a peer that cannot
+   * actually serve (e.g. its wallet has no ETH to fund settlement). The
+   * `/metadata` endpoint reflects the pause immediately; already-published
+   * DHT entries age out on the buyer's staleness cutoff.
+   */
+  async pauseAdvertising(reason: string): Promise<void> {
+    this._advertisingPausedReason = reason;
+    this._announcer?.stopPeriodicAnnounce();
+    await this._announcer?.refreshMetadata();
+  }
+
+  /** Resume DHT announcements after `pauseAdvertising` (announces immediately). */
+  resumeAdvertising(): void {
+    if (this._advertisingPausedReason === null) return;
+    this._advertisingPausedReason = null;
+    this._announcer?.startPeriodicAnnounce();
+  }
+
+  /** Why advertising is currently paused, or null when advertising normally. */
+  get advertisingPausedReason(): string | null {
+    return this._advertisingPausedReason;
   }
 
   /** Register an embedded verifier prover (serves reserved attestation requests). */
@@ -1568,7 +1595,7 @@ export class AntseedNode extends EventEmitter {
           ...(p.serviceUnitBillingModels ? { serviceUnitBillingModels: { ...p.serviceUnitBillingModels } } : {}),
           ...(p.serviceCapabilities ? { serviceCapabilities: { ...p.serviceCapabilities } } : {}),
           maxConcurrency: p.maxConcurrency,
-          isAvailable: () => p.healthCheckAvailable !== false,
+          isAvailable: () => this._advertisingPausedReason === null && p.healthCheckAvailable !== false,
           pricing: {
             defaults: {
               inputUsdPerMillion: p.pricing.defaults.inputUsdPerMillion,

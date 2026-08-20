@@ -119,6 +119,18 @@ export interface SellerHealthCheckCLIConfig {
 }
 
 /**
+ * Periodic seller-wallet gas balance check settings.
+ */
+export interface SellerGasCheckCLIConfig {
+  /** Enable periodic ETH balance checks while payments are enabled. Default: true. */
+  enabled?: boolean;
+  /** Milliseconds between balance checks. Default: 60000 (1 minute). */
+  intervalMs?: number;
+  /** Minimum wallet balance in ETH before advertising is paused. Default: 0.00005. */
+  minBalanceEth?: number;
+}
+
+/**
  * Seller-specific configuration within the Antseed config.
  */
 export interface SellerCLIConfig {
@@ -159,6 +171,12 @@ export interface SellerCLIConfig {
    * are unadvertised until they recover. Set `enabled: false` to opt out.
    */
   healthCheck?: SellerHealthCheckCLIConfig;
+  /**
+   * Periodic seller-wallet ETH balance checks (payments mode only). Enabled by
+   * default; when the wallet cannot fund on-chain settlement the seller stops
+   * advertising until it is funded again. Set `enabled: false` to opt out.
+   */
+  gasCheck?: SellerGasCheckCLIConfig;
 }
 
 /**
