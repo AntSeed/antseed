@@ -8,7 +8,7 @@ import { IBaseAnalysisStateOracle } from "../interfaces/IBaseAnalysisStateOracle
 
 /**
  * @title DeployWashTradingEnforcement
- * @notice Deploys the immutable positive-evidence seller penalty registry
+ * @notice Deploys the immutable positive-evidence P0 seller registry
  *         against the existing canonical Base block oracle.
  *
  * Required env:
@@ -17,7 +17,6 @@ import { IBaseAnalysisStateOracle } from "../interfaces/IBaseAnalysisStateOracle
  *   BASE_STATE_ORACLE
  *   CLOSED_CYCLE_IMAGE_ID
  *   RECIPROCAL_IMAGE_ID
- *   COORDINATED_CONTROL_IMAGE_ID
  */
 contract DeployWashTradingEnforcement is Script {
     address internal constant BASE_RISC0_VERIFIER_ROUTER = 0xA326b2eb45A5C3C206dF905A58970DcA57B8719e;
@@ -30,25 +29,20 @@ contract DeployWashTradingEnforcement is Script {
         stateOracle = IBaseAnalysisStateOracle(stateOracleAddress);
         bytes32 closedCycleImageId = vm.envBytes32("CLOSED_CYCLE_IMAGE_ID");
         bytes32 reciprocalImageId = vm.envBytes32("RECIPROCAL_IMAGE_ID");
-        bytes32 coordinatedControlImageId = vm.envBytes32("COORDINATED_CONTROL_IMAGE_ID");
 
         vm.startBroadcast(deployerPrivateKey);
-        registry = new AntseedWashTradingRegistry(
-            verifier, stateOracleAddress, closedCycleImageId, reciprocalImageId, coordinatedControlImageId
-        );
+        registry = new AntseedWashTradingRegistry(verifier, stateOracleAddress, closedCycleImageId, reciprocalImageId);
         vm.stopBroadcast();
 
         require(address(registry.verifier()) == verifier, "verifier pointer mismatch");
         require(address(registry.stateOracle()) == address(stateOracle), "state oracle pointer mismatch");
         require(registry.closedCycleImageId() == closedCycleImageId, "closed-cycle image mismatch");
         require(registry.reciprocalImageId() == reciprocalImageId, "reciprocal image mismatch");
-        require(registry.coordinatedControlImageId() == coordinatedControlImageId, "coordinated-control image mismatch");
 
         console.log("WashTradingRegistry:", address(registry));
         console.log("RiscZeroVerifier:   ", verifier);
         console.log("BaseStateOracle:    ", address(stateOracle));
         console.logBytes32(closedCycleImageId);
         console.logBytes32(reciprocalImageId);
-        console.logBytes32(coordinatedControlImageId);
     }
 }

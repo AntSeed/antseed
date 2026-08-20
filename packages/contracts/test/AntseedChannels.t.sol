@@ -9,39 +9,6 @@ import "./mocks/MockERC8004Registry.sol";
 import "./mocks/MockUSDC.sol";
 import "../core/AntseedRegistry.sol";
 import "../stats/AntseedStats.sol";
-import { AntseedUsageAccounting } from "../emissions/AntseedUsageAccounting.sol";
-import { IAntseedPointsPenaltyPolicy } from "../interfaces/IAntseedPointsPenaltyPolicy.sol";
-import { AntseedPointsPolicyRegistry } from "../policies/AntseedPointsPolicyRegistry.sol";
-
-contract MockEmissionsGateForPointsPolicyChannelTest {
-    function effectiveEpoch() external pure returns (uint256) {
-        return 1;
-    }
-
-    function currentEpoch() external pure returns (uint256) {
-        return 1;
-    }
-}
-
-contract MockSellerPoolsForPointsPolicyChannelTest {
-    function agentIdForSeller(address) external pure returns (uint256) {
-        return 1;
-    }
-
-    function poolWeightAtEpoch(uint256, uint256) external pure returns (uint256) {
-        return 1;
-    }
-}
-
-contract RevertingPointsPolicyForChannelTest is IAntseedPointsPenaltyPolicy {
-    function penaltyCategory() external pure returns (bytes32) {
-        return keccak256("reverting");
-    }
-
-    function penaltyBps(bytes32, address, address, uint256) external pure returns (uint16, uint16) {
-        revert("policy broken");
-    }
-}
 
 contract AntseedChannelsTest is Test {
     MockUSDC public usdc;
@@ -511,28 +478,6 @@ contract AntseedChannelsTest is Test {
         uint256 fee1 = (uint256(USDC_30) * 200) / 10000;
         uint256 payout1 = uint256(USDC_30) - fee1;
         assertEq(usdc.balanceOf(seller), payout1);
-    }
-
-    function test_settleContinuesWhenRegisteredPointsPolicyReverts() public {
-        MockEmissionsGateForPointsPolicyChannelTest gate = new MockEmissionsGateForPointsPolicyChannelTest();
-        MockSellerPoolsForPointsPolicyChannelTest pools = new MockSellerPoolsForPointsPolicyChannelTest();
-        AntseedUsageAccounting usageAccounting =
-            new AntseedUsageAccounting(address(pools), address(channels), address(gate));
-        AntseedPointsPolicyRegistry pointsRegistry = new AntseedPointsPolicyRegistry(address(this));
-        pointsRegistry.registerPolicy(address(new RevertingPointsPolicyForChannelTest()));
-        usageAccounting.setPointsPolicy(address(pointsRegistry));
-        antseedRegistry.setEmissions(address(usageAccounting));
-
-        bytes32 channelId = doReserve(keccak256("failed-points-policy"), USDC_100, USDC_100);
-        bytes memory spendingAuth = signSpendingAuth(BUYER_PK, channelId, USDC_30, 1000, 500);
-
-        vm.prank(seller);
-        channels.settle(channelId, USDC_30, encodeMetadata(1000, 500), spendingAuth);
-
-        uint256 fee = (uint256(USDC_30) * 200) / 10_000;
-        assertEq(usdc.balanceOf(seller), uint256(USDC_30) - fee);
-        assertEq(usageAccounting.totalBuyerPointsByEpoch(1), 0);
-        assertEq(usageAccounting.totalSellerPointsByEpoch(1), 0);
     }
 
     function test_settle_thenClose() public {

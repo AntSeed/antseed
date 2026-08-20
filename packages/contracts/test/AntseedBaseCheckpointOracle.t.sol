@@ -93,10 +93,8 @@ contract AntseedBaseCheckpointOracleTest is Test {
 
         bytes32 sellerImageId = bytes32(uint256(0x5E11E2));
         bytes32 reciprocalImageId = bytes32(uint256(0x5E11E3));
-        bytes32 coordinatedImageId = bytes32(uint256(0x5E11E4));
-        AntseedWashTradingRegistry registry = new AntseedWashTradingRegistry(
-            address(verifier), address(oracle), sellerImageId, reciprocalImageId, coordinatedImageId
-        );
+        AntseedWashTradingRegistry registry =
+            new AntseedWashTradingRegistry(address(verifier), address(oracle), sellerImageId, reciprocalImageId);
         AntseedWashTradingRegistry.BlockRef[] memory blockRefs = new AntseedWashTradingRegistry.BlockRef[](1);
         blockRefs[0] = AntseedWashTradingRegistry.BlockRef({
             number: checkpoint.canonicalBlocks[0].number,
@@ -126,14 +124,13 @@ contract AntseedBaseCheckpointOracleTest is Test {
             qualifiedVolumeRaw: 1_000_000_000,
             closureKind: 1,
             closurePathCount: 1,
-            penaltyBps: 9_000,
             blockRefs: blockRefs
         });
         bytes memory sellerJournalData = abi.encode(sellerJournal);
         verifier.expect(sellerImageId, sha256(sellerJournalData), SEAL);
 
         assertTrue(registry.submitClosedCycleProof(SEAL, sellerJournalData));
-        assertEq(registry.sellerPenaltyBps(address(0x515E12)), 9_000);
+        assertTrue(registry.isSellerP0(address(0x515E12)));
     }
 
     function test_exactReplayIsIdempotent() public {

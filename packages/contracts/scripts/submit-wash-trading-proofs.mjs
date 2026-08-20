@@ -6,12 +6,10 @@ import { AbiCoder, Contract, Interface, JsonRpcProvider, Wallet, keccak256, sha2
 const REGISTRY_ABI = [
   "function closedCycleImageId() view returns (bytes32)",
   "function reciprocalImageId() view returns (bytes32)",
-  "function coordinatedControlImageId() view returns (bytes32)",
   "function stateOracle() view returns (address)",
   "function consumedClaimIds(bytes32) view returns (bool)",
   "function submitClosedCycleProof(bytes seal,bytes journalData) returns (bool)",
   "function submitReciprocalProof(bytes seal,bytes journalData) returns (bool,bool)",
-  "function submitCoordinatedControlProof(bytes seal,bytes journalData) returns (bool)",
 ];
 const STATE_ORACLE_INTERFACE = new Interface([
   "function archiveBeaconRoot(uint256 ethereumTimestamp)",
@@ -24,16 +22,14 @@ const ALLOWED_STATE_SELECTORS = new Set(
   STATE_ORACLE_INTERFACE.fragments.map((fragment) => STATE_ORACLE_INTERFACE.getFunction(fragment.name).selector.toLowerCase()),
 );
 const BLOCK_REFS = "tuple(uint64 number,bytes32 blockHash)[]";
-const CLOSED_CYCLE_JOURNAL = `tuple(uint32 predicateVersion,bytes32 claimId,uint64 periodStartBlock,uint64 periodEndBlockExclusive,address seller,address funder,bytes32 cohortHash,uint32 cohortCount,uint128 qualifiedVolumeRaw,uint8 closureKind,uint32 closurePathCount,uint16 penaltyBps,${BLOCK_REFS} blockRefs)`;
-const RECIPROCAL_JOURNAL = `tuple(uint32 predicateVersion,bytes32 claimId,uint64 periodStartBlock,uint64 periodEndBlockExclusive,address addressA,address addressB,uint32 settlementCountAToB,uint32 settlementCountBToA,uint128 volumeAToBRaw,uint128 volumeBToARaw,uint16 penaltyBps,${BLOCK_REFS} blockRefs)`;
-const COORDINATED_CONTROL_JOURNAL = `tuple(uint32 predicateVersion,bytes32 claimId,uint64 periodStartBlock,uint64 periodEndBlockExclusive,address seller,bytes32 funderCohortHash,uint32 funderCount,bytes32 cohortHash,uint32 cohortCount,uint128 qualifiedCohortVolumeRaw,uint128 sellerPeriodVolumeRaw,uint16 penaltyBps,address[] penalizedBuyers,${BLOCK_REFS} blockRefs)`;
+const CLOSED_CYCLE_JOURNAL = `tuple(uint32 predicateVersion,bytes32 claimId,uint64 periodStartBlock,uint64 periodEndBlockExclusive,address seller,address funder,bytes32 cohortHash,uint32 cohortCount,uint128 qualifiedVolumeRaw,uint8 closureKind,uint32 closurePathCount,${BLOCK_REFS} blockRefs)`;
+const RECIPROCAL_JOURNAL = `tuple(uint32 predicateVersion,bytes32 claimId,uint64 periodStartBlock,uint64 periodEndBlockExclusive,address addressA,address addressB,uint32 settlementCountAToB,uint32 settlementCountBToA,uint128 volumeAToBRaw,uint128 volumeBToARaw,${BLOCK_REFS} blockRefs)`;
 const PERIOD_START = 44_471_575n;
 const PERIOD_END_EXCLUSIVE = 49_936_173n;
-const MAX_PENALTY_GAS = 7_000_000n;
+const MAX_SUBMISSION_GAS = 7_000_000n;
 const PROOF_CONFIG = {
-  P0_CLOSED_CYCLE: { journal: CLOSED_CYCLE_JOURNAL, image: "closedCycleImageId", method: "submitClosedCycleProof", proofType: 1n },
+  P0_CLOSED_LOOP: { journal: CLOSED_CYCLE_JOURNAL, image: "closedCycleImageId", method: "submitClosedCycleProof", proofType: 1n },
   P0_RECIPROCAL: { journal: RECIPROCAL_JOURNAL, image: "reciprocalImageId", method: "submitReciprocalProof", proofType: 2n },
-  P1_COORDINATED_CONTROL: { journal: COORDINATED_CONTROL_JOURNAL, image: "coordinatedControlImageId", method: "submitCoordinatedControlProof", proofType: 3n },
 };
 
 export async function runSubmission({
@@ -56,10 +52,10 @@ export async function runSubmission({
   if (await provider.getCode(registryAddress) === "0x") throw new Error("registry address has no bytecode");
   const signer = submit ? new Wallet(privateKey, provider) : provider;
   const registry = new Contract(registryAddress, REGISTRY_ABI, signer);
-  const [closedCycleImageId, reciprocalImageId, coordinatedControlImageId, stateOracle] = await Promise.all([
-    registry.closedCycleImageId(), registry.reciprocalImageId(), registry.coordinatedControlImageId(), registry.stateOracle(),
+  const [closedCycleImageId, reciprocalImageId, stateOracle] = await Promise.all([
+    registry.closedCycleImageId(), registry.reciprocalImageId(), registry.stateOracle(),
   ]);
-  const images = { closedCycleImageId, reciprocalImageId, coordinatedControlImageId };
+  const images = { closedCycleImageId, reciprocalImageId };
 
   for (const stateProof of stateManifest?.entries ?? []) {
     await simulateAndMaybeSendRaw({ provider, signer, submit, entry: stateProof, stateOracle, resume, onPersist });
@@ -79,7 +75,7 @@ export async function runSubmission({
     const transaction = await registry[config.method].populateTransaction(entry.seal, entry.journalBytes);
     await provider.call({ ...transaction, from: submit ? signer.address : undefined });
     const gas = await provider.estimateGas({ ...transaction, from: submit ? signer.address : undefined });
-    if (gas > MAX_PENALTY_GAS) throw new Error(`${entry.claimId}: estimated gas ${gas} exceeds ${MAX_PENALTY_GAS}`);
+    if (gas > MAX_SUBMISSION_GAS) throw new Error(`${entry.claimId}: estimated gas ${gas} exceeds ${MAX_SUBMISSION_GAS}`);
     if (!submit) {
       results.push({ claimId: entry.claimId, status: "simulated", gas: gas.toString() });
       continue;
@@ -106,7 +102,7 @@ export async function runSubmission({
 }
 
 export function validateManifest(manifest) {
-  if (manifest.version !== 3 || manifest.kind !== "antseed-wash-trading-proof-results") {
+  if (manifest.version !== 1 || manifest.kind !== "antseed-wash-trading-proof-results") {
     throw new Error("unsupported proof manifest");
   }
   if (manifest.chainId !== 8_453) throw new Error("proof manifest must target Base chain ID 8453");
@@ -130,9 +126,7 @@ export function decodeAndValidateEntry(entry, chainId = 8_453) {
   const config = PROOF_CONFIG[entry.claimType];
   if (!config) throw new Error(`${entry.claimId}: unsupported claim type`);
   const decoded = AbiCoder.defaultAbiCoder().decode([config.journal], entry.journalBytes)[0];
-  if (decoded.predicateVersion !== 3n || decoded.penaltyBps !== 9_000n) {
-    throw new Error(`${entry.claimId}: invalid predicate version or penalty`);
-  }
+  if (decoded.predicateVersion !== 3n) throw new Error(`${entry.claimId}: invalid predicate version`);
   if (decoded.periodStartBlock !== PERIOD_START || decoded.periodEndBlockExclusive !== PERIOD_END_EXCLUSIVE) {
     throw new Error(`${entry.claimId}: invalid fixed period`);
   }
@@ -143,11 +137,6 @@ export function decodeAndValidateEntry(entry, chainId = 8_453) {
       ["uint256", "uint8", "uint64", "uint64", "address", "address"],
       [chainId, config.proofType, decoded.periodStartBlock, decoded.periodEndBlockExclusive, decoded.addressA, decoded.addressB],
     ));
-  } else if (entry.claimType === "P1_COORDINATED_CONTROL") {
-    expectedClaimId = keccak256(AbiCoder.defaultAbiCoder().encode(
-      ["uint256", "uint8", "uint64", "uint64", "address", "bytes32", "bytes32"],
-      [chainId, config.proofType, decoded.periodStartBlock, decoded.periodEndBlockExclusive, decoded.seller, decoded.funderCohortHash, decoded.cohortHash],
-    ));
   } else {
     expectedClaimId = keccak256(AbiCoder.defaultAbiCoder().encode(
       ["uint256", "uint8", "uint64", "uint64", "address", "address", "bytes32"],
@@ -157,9 +146,6 @@ export function decodeAndValidateEntry(entry, chainId = 8_453) {
   if (expectedClaimId.toLowerCase() !== entry.claimId.toLowerCase() || decoded.claimId.toLowerCase() !== entry.claimId.toLowerCase()) {
     throw new Error(`${entry.claimId}: journal claim ID mismatch`);
   }
-  if (entry.claimType === "P1_COORDINATED_CONTROL") {
-    validateSortedAddresses(decoded.penalizedBuyers, entry.claimId);
-  }
   let previous = -1n;
   if (decoded.blockRefs.length === 0 || decoded.blockRefs.length > 256) throw new Error(`${entry.claimId}: invalid block reference count`);
   for (const blockRef of decoded.blockRefs) {
@@ -167,16 +153,6 @@ export function decodeAndValidateEntry(entry, chainId = 8_453) {
     previous = blockRef.number;
   }
   return decoded;
-}
-
-function validateSortedAddresses(addresses, claimId) {
-  if (addresses.length > 160) throw new Error(`${claimId}: too many penalized buyers`);
-  let previous = 0n;
-  for (const address of addresses) {
-    const current = BigInt(address);
-    if (current === 0n || current <= previous) throw new Error(`${claimId}: penalized buyers are not canonical`);
-    previous = current;
-  }
 }
 
 function normalizeBytes32(value) {
@@ -224,7 +200,7 @@ async function main() {
   const submit = args.includes("--submit");
   const dryRun = args.includes("--dry-run");
   if (!manifestPath || !registryAddress || !rpcUrl || submit === dryRun) {
-    throw new Error("usage: node submit-wash-trading-proofs.mjs --manifest proof-results-v3.json --registry 0x... (--dry-run|--submit)");
+    throw new Error("usage: node submit-wash-trading-proofs.mjs --manifest proof-results.json --registry 0x... (--dry-run|--submit)");
   }
   const resumePath = resolve(value("--resume") ?? `${manifestPath}.submission.json`);
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));

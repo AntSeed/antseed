@@ -26,17 +26,16 @@ import { IAntseedUsageRewards } from "../interfaces/IAntseedUsageRewards.sol";
  *         Important behavior:
  *           - This is the intermediate points layer. Seller-pool stake math does
  *             not contain usage verification or wash-trading rules.
- *           - The points-policy hook may scale buyer/seller points for
- *             verification outcomes such as announcement-shard checks. New
- *             deployments install a category-aware penalty registry in this
- *             hook. If no hook is set, raw points pass through unchanged.
+ *           - A points policy may scale buyer/seller points for verification
+ *             outcomes such as announcement-shard checks. If no policy is set,
+ *             raw points pass through unchanged.
  *           - Pool-weighted points are based on the pool power for the current
  *             epoch. Because pool power is precomputed and frozen per epoch,
  *             settlement can record usage without touching stake positions.
  *           - Usage against pools below `minimumAccountedPoolPower` is ignored.
  *             Pool points are not capped here. Reputation, verification, and
- *             wash-trading point shaping belongs in the points-policy registry;
- *             reward caps are applied by reward controllers when claims mint.
+ *             wash-trading point shaping belongs in `pointsPolicy`; reward caps
+ *             are applied by reward controllers when claims mint.
  *           - Buyer rewards are weighted by the seller pool the buyer used, so
  *             buyer points from stronger pools carry more reward weight. Buyer
  *             points are not capped by that seller pool's total epoch volume.

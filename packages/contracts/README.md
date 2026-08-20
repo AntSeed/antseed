@@ -46,7 +46,7 @@ forge test
 
 ## Wash-Trading Enforcement
 
-`AntseedWashTradingRegistry` accepts three separately pinned RISC Zero images:
+`AntseedWashTradingRegistry` accepts two separately pinned RISC Zero images:
 
 - `submitClosedCycleProof(seal, journalData)` for a common-funder cohort with
   at least `1,000 USDC` of authenticated settlements followed by strict
@@ -54,21 +54,16 @@ forge test
 - `submitReciprocalProof(seal, journalData)` for a normalized pair with at
   least 100 authenticated settlements, 10 in each direction, and `10 USDC` in
   each direction, where the smaller directional volume is at least 80% of the
-  larger; and
-- `submitCoordinatedControlProof(seal, journalData)` for a common-funder cohort
-  whose authenticated channel-state delta is at least `1,000 USDC` and at
-  least 50% of the seller's complete frozen-period emissions-counter delta.
+  larger.
 
-P0 authenticates only Base receipts and transactions and therefore does not
-require historical `eth_getProof`. P1 additionally authenticates EIP-1186 state
-witnesses. Every committed `(blockNumber, blockHash)` must be accepted by the
-finalized Base state oracle. The registry does not trust a report root, report
-leaf, dependency root, mutable funder allowlist, or generic router attribution.
+The proofs authenticate Base receipts and transactions and therefore do not
+require historical `eth_getProof`. Every committed `(blockNumber, blockHash)`
+must be accepted by the finalized Base state oracle. The registry does not trust
+a report root, mutable funder allowlist, or generic router attribution.
 
-Accepted sellers and P1-qualified buyers receive a monotonic `9,000 BPS`
-reduction in future points through `AntseedWashTradingPointsPolicy`, leaving
-10% of otherwise calculated points. P0 is seller-only, and reciprocal proofs
-mark both addresses P0. Penalties never stack additively.
+Accepted closed-loop sellers are recorded as P0. Reciprocal proofs record both
+addresses as P0. The registry stores only the P0 proof-type mask and canonical
+policy integration.
 
 `AntseedSellerRewardEligibilityPolicy` is configured on both
 `AntseedSellerRewardsPool` and `AntseedEmissionsV2`. Its constructor validates

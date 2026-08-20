@@ -89,8 +89,7 @@ contract SellerRewardGateE2ETest is Test {
             address(new RewardGateVerifierMock()),
             address(new RewardGateOracleMock()),
             bytes32(uint256(1)),
-            bytes32(uint256(2)),
-            bytes32(uint256(3))
+            bytes32(uint256(2))
         );
         policy =
             new AntseedSellerRewardEligibilityPolicy(address(protocolRegistry), address(washRegistry), new address[](0));
@@ -181,9 +180,8 @@ contract SellerRewardGateE2ETest is Test {
             cohortHash: cohortHash,
             cohortCount: 3,
             qualifiedVolumeRaw: 1_000_000_000,
-            closureKind: 1,
-            closurePathCount: 1,
-            penaltyBps: 9_000,
+            closureKind: 3,
+            closurePathCount: 3,
             blockRefs: refs
         });
         washRegistry.submitClosedCycleProof(hex"", abi.encode(journal));

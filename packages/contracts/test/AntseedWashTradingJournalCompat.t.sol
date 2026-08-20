@@ -5,11 +5,9 @@ import "forge-std/Test.sol";
 import { AntseedWashTradingRegistry } from "../integrity/AntseedWashTradingRegistry.sol";
 
 contract AntseedWashTradingJournalCompatTest is Test {
-    function test_allV3JournalsAbiRoundTrip() public pure {
+    function test_journalsAbiRoundTrip() public pure {
         AntseedWashTradingRegistry.BlockRef[] memory refs = new AntseedWashTradingRegistry.BlockRef[](1);
         refs[0] = AntseedWashTradingRegistry.BlockRef({ number: 123, blockHash: bytes32(uint256(456)) });
-        address[] memory buyers = new address[](1);
-        buyers[0] = address(7);
 
         AntseedWashTradingRegistry.ClosedCycleJournal memory closed = AntseedWashTradingRegistry.ClosedCycleJournal({
             predicateVersion: 3,
@@ -23,7 +21,6 @@ contract AntseedWashTradingJournalCompatTest is Test {
             qualifiedVolumeRaw: 1_000_000_000,
             closureKind: 1,
             closurePathCount: 1,
-            penaltyBps: 9_000,
             blockRefs: refs
         });
         AntseedWashTradingRegistry.ClosedCycleJournal memory decodedClosed =
@@ -41,32 +38,10 @@ contract AntseedWashTradingJournalCompatTest is Test {
             settlementCountBToA: 10,
             volumeAToBRaw: 10_000_000,
             volumeBToARaw: 10_000_000,
-            penaltyBps: 9_000,
             blockRefs: refs
         });
         AntseedWashTradingRegistry.ReciprocalJournal memory decodedReciprocal =
             abi.decode(abi.encode(reciprocal), (AntseedWashTradingRegistry.ReciprocalJournal));
         assertEq(decodedReciprocal.volumeBToARaw, reciprocal.volumeBToARaw);
-
-        AntseedWashTradingRegistry.CoordinatedControlJournal memory coordinated = AntseedWashTradingRegistry
-            .CoordinatedControlJournal({
-            predicateVersion: 3,
-            claimId: bytes32(uint256(1)),
-            periodStartBlock: 44_471_575,
-            periodEndBlockExclusive: 49_936_173,
-            seller: address(3),
-            funderCohortHash: bytes32(uint256(4)),
-            funderCount: 2,
-            cohortHash: bytes32(uint256(5)),
-            cohortCount: 3,
-            qualifiedCohortVolumeRaw: 1_000_000_000,
-            sellerPeriodVolumeRaw: 2_000_000_000,
-            penaltyBps: 9_000,
-            penalizedBuyers: buyers,
-            blockRefs: refs
-        });
-        AntseedWashTradingRegistry.CoordinatedControlJournal memory decodedCoordinated =
-            abi.decode(abi.encode(coordinated), (AntseedWashTradingRegistry.CoordinatedControlJournal));
-        assertEq(decodedCoordinated.sellerPeriodVolumeRaw, coordinated.sellerPeriodVolumeRaw);
     }
 }
