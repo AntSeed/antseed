@@ -44,15 +44,15 @@ const HELP_TOPICS: HelpTopic[] = [
       {
         key: 'what-is',
         label: 'What the VPR does',
-        intro: 'The Virtual Private Router is like a VPN for AI: your apps connect to one local router, while the VPR selects AI sellers and routes compatible requests for you.',
+        intro: 'The Virtual Private Router is like a VPN for AI: it routes AI requests from the tools you already use through the AntSeed network.',
         sections: [
           {
-            heading: 'One local AI route',
-            body: 'The VPR discovers sellers, applies your preferences, and handles pay-per-request settlement from your credits without requiring a central AntSeed AI account.',
+            heading: 'Keep using your normal tools',
+            body: 'Connect apps such as coding assistants and AI clients, then keep working in their familiar interfaces while the VPR handles routing in the background.',
           },
           {
-            heading: 'Privacy depends on the route',
-            body: 'The VPN comparison is about using one local endpoint and choosing where requests go. Standard sellers still receive the prompts they serve; verified TEE routes can add stronger confidentiality.',
+            heading: 'Choose how requests route',
+            body: 'The VPR discovers sellers, applies your model, price, and trust preferences, and handles pay-per-request settlement from your credits.',
           },
         ],
         links: [
