@@ -624,6 +624,15 @@ const api = {
   vprFloatAction(action: unknown): void {
     ipcRenderer.send('vpr-float:action', action);
   },
+  vprMenuBarGetState(): Promise<unknown> {
+    return ipcRenderer.invoke('vpr-menu-bar:get-state') as Promise<unknown>;
+  },
+  vprMenuBarGetPlacement(): Promise<number> {
+    return ipcRenderer.invoke('vpr-menu-bar:get-placement') as Promise<number>;
+  },
+  vprMenuBarAction(action: unknown): void {
+    ipcRenderer.send('vpr-menu-bar:action', action);
+  },
   vprFloatSetExpanded(expanded: boolean): void {
     ipcRenderer.send('vpr-float:set-expanded', expanded);
   },
@@ -652,6 +661,21 @@ const api = {
     const listener = (_: unknown, action: unknown) => handler(action);
     ipcRenderer.on('vpr-float:action', listener);
     return () => ipcRenderer.off('vpr-float:action', listener);
+  },
+  onVprMenuBarData(handler: (data: unknown) => void): () => void {
+    const listener = (_: unknown, data: unknown) => handler(data);
+    ipcRenderer.on('vpr-menu-bar:data', listener);
+    return () => ipcRenderer.off('vpr-menu-bar:data', listener);
+  },
+  onVprMenuBarPlacement(handler: (pointerX: number) => void): () => void {
+    const listener = (_: unknown, pointerX: number) => handler(pointerX);
+    ipcRenderer.on('vpr-menu-bar:placement', listener);
+    return () => ipcRenderer.off('vpr-menu-bar:placement', listener);
+  },
+  onVprMenuBarVisibility(handler: (visible: boolean) => void): () => void {
+    const listener = (_: unknown, visible: boolean) => handler(Boolean(visible));
+    ipcRenderer.on('vpr-menu-bar:visibility', listener);
+    return () => ipcRenderer.off('vpr-menu-bar:visibility', listener);
   },
   onDesktopOpenFloatingWindow(handler: () => void): () => void {
     const listener = () => handler();

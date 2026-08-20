@@ -8,6 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
+- Desktop tray left-click now opens a full chat-first VPR status popover with live balance and routing state, recent session costs and model controls, app shortcuts, and links to Chats, Deposit, Home, and the retained detachable floating window; the native right-click tray menu remains available.
 - Desktop model prices and the **Free** badge now reflect only sellers the routing trust gate can actually select, so a low-trust seller's $0 or teaser offer no longer advertises a price a send would never be billed at (picking such a "Free" model previously failed with a 402 for unfunded users). Savings percentages in the model dropdown, model page, and model lists now consistently compare that eligible live price with the retail reference baseline. The Recommended list's free ride-along models are trust-gated the same way, and the first-run default model is chosen from a free-model priority list (DeepSeek Flash, MiniMax, Haiku, Qwen, Nemotron, Gemma, Mistral Large), falling back to the free offer from the highest-trust seller.
 
 - Desktop Connected Apps now uses the correct Hermes portrait brand mark instead of the temporary pixel-art icon.
@@ -19,7 +20,6 @@ This project uses selective package publishing. Each release entry lists the pub
 
 - Desktop image chats now require sellers that advertise `moderation` support and send `moderation: "low"`, preventing automatic fallback to sellers that would silently restore provider-side Safe Mode blurring. Model lists show reviewed tags such as **Uncensored**, **Coding**, **Reasoning**, **Vision**, **Web search**, and **Open weights** from a versioned declarative registry covering maintained OpenRouter and Venice catalogs with per-model provenance, instead of trusting seller-announced categories. Seller rows identify offers with **Moderation control**, and requests fail clearly when no compatible seller is available.
 - The AntSeed X (Twitter) account moved from `@antseedai` to `@antseed`; all website, desktop help, and brand guideline links now point to https://x.com/antseed.
-
 - Desktop Connected Apps now opens directly to the complete app list without the redundant search field at the top; application-picker searches remain available when choosing an installed app. The Home notice for apps that need restarting can now be dismissed for the current app launch and returns after Desktop is relaunched.
 - Desktop Connected Apps now includes GooeyPi, configures its Pi harness through `~/.pi/agent/models.json`, auto-detects the installed desktop app, and stamps distinct `originator` headers for Pi and GooeyPi so VPR conversations are attributed to the correct client instead of the underlying OpenAI SDK.
 - Buyer request and streaming duration limits are now configurable through `buyer.requestTimeoutMs` and `buyer.maxStreamDurationMs`, allowing slow or long-running generations to exceed the previous fixed five-minute cap.

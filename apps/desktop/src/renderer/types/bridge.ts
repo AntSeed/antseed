@@ -1,3 +1,11 @@
+import type {
+  VprCompactApp,
+  VprCompactConversation,
+  VprCompactModel,
+  VprCompactSurfaceAction,
+  VprCompactSurfaceData,
+} from '../../shared/vpr-compact-surface.js';
+
 export type RuntimeMode = 'connect' | 'system-proxy';
 
 export type RuntimeProcessState = {
@@ -499,10 +507,16 @@ export type DesktopBridge = {
   vprFloatGetCompact?: () => Promise<boolean>;
   vprFloatUpdate?: (data: VprFloatData) => void;
   vprFloatAction?: (action: VprFloatAction) => void;
+  vprMenuBarGetState?: () => Promise<VprFloatData | null>;
+  vprMenuBarGetPlacement?: () => Promise<number>;
+  vprMenuBarAction?: (action: import('../../shared/vpr-menu-bar.js').VprMenuBarAction) => void;
   onVprFloatData?: (handler: (data: VprFloatData) => void) => () => void;
   onVprFloatCompact?: (handler: (compact: boolean) => void) => () => void;
   onVprFloatClosed?: (handler: () => void) => () => void;
   onVprFloatAction?: (handler: (action: unknown) => void) => () => void;
+  onVprMenuBarData?: (handler: (data: VprFloatData | null) => void) => () => void;
+  onVprMenuBarPlacement?: (handler: (pointerX: number) => void) => () => void;
+  onVprMenuBarVisibility?: (handler: (visible: boolean) => void) => () => void;
   onDesktopOpenFloatingWindow?: (handler: () => void) => () => void;
   onDesktopConnectMain?: (handler: () => void) => () => void;
   onDesktopDisconnectMain?: (handler: () => void) => () => void;
@@ -538,94 +552,8 @@ export type BuyerConversationSummary = {
   lastActiveAt: number;
 };
 
-export type VprFloatApp = {
-  name: string;
-  displayName: string;
-  /** Client names that attribute conversations to this app (see
-      SystemProxyProfileSummary.toolSlugs). */
-  toolSlugs?: string[];
-  /** The associated application's real icon, same as the main window's app
-      rows use; without one the pill falls back to a drawn brand mark. */
-  iconDataUri?: string;
-};
-
-/** Full catalog entries flow to the pill so its model list renders exactly
-    like the Home dropdown (brand icon, discounted price, badges). Type-only
-    import — no runtime cycle with core/state. */
-export type VprFloatModel = import('../core/state').VprModelCatalogEntry;
-
-/** One chat row in the pill's chat dropdown. */
-export type VprFloatConversation = {
-  id: string;
-  tool: string;
-  /** Display name: user label, else prompt snippet, else the session key. */
-  title: string;
-  /** Compact session identifier for the meta line ("019f83b7"). */
-  sessionShort: string;
-  /** Service id of the pinned model, or null when following the default route. */
-  pinnedServiceId: string | null;
-  lastActiveAt: number;
-  /** True while the chat is receiving traffic (recent request activity) —
-      drives the green pulse on its row. */
-  active: boolean;
-  /** Formatted spend for this chat ("$0.42", "<$0.01"), or null when nothing
-      has been attributed to it yet. */
-  cost: string | null;
-  /** Display name of the seller that served the chat's most recent request,
-      or null while no request has resolved. Rendered only when the
-      "Show routed peer" debug preference is on. */
-  routedPeerName: string | null;
-};
-
-/** Display payload the main window pushes to the floating pill. */
-export type VprFloatData = {
-  /** Connected app profiles the pill's app dropdown can switch between. */
-  apps: VprFloatApp[];
-  /** Which app the pill should track (profile name). */
-  selectedApp: string;
-  /** Models available in the pill's model dropdown: the same curated list as
-      the Home dropdown (favorites, then the recommended lineup). */
-  models: VprFloatModel[];
-  /** `provider:serviceId` keys of user-starred models — matching rows get a
-      star, same as the Home dropdown. */
-  favoriteKeys?: string[];
-  selectedModel: { provider: string; serviceId: string } | null;
-  /** Seller names for pinned models, keyed `provider:serviceId` — pins are per
-      model, so a model keeps its seller while another one is selected. */
-  pinnedSellers?: Record<string, string>;
-  /** Recent tool chats, newest first (per-chat routing scope picker). */
-  conversations: VprFloatConversation[];
-  /** Usage line: buyer-wide total tokens ("1.2M tok"). */
-  usageLabel: string;
-  /** Current available balance ("$12.34") — remaining, not spent. */
-  balanceLabel?: string;
-  /** True when the balance is effectively empty but the selected default
-      model is paid — the pill shows an "Add balance" shortcut. */
-  needsFunds?: boolean;
-  /** True while the buyer (connect) runtime is running. When false the pill
-      shows a "Not connected" state and hides recent chats. */
-  runtimeOn?: boolean;
-  /** Shortened buyer identity (signer address), e.g. "0x1234...abcd". */
-  identityLabel?: string;
-  /** Debug preference: chat rows name the routed seller next to the model. */
-  showRoutedPeer?: boolean;
-  /**
-   * True when traffic moved through the system proxy or the buyer proxy
-   * since the previous payload — drives the pulse on the app icon.
-   */
-  trafficActive: boolean;
-  /**
-   * One-shot: set only on the payload that opens the pill right after an app
-   * connects — the pill expands out of compact mode and opens its dropdown so
-   * the "start a new session" guidance is visible without a click.
-   */
-  openMenu?: boolean;
-};
-
-export type VprFloatAction =
-  | 'open-main'
-  | { type: 'open-deposit' }
-  | { type: 'select-model'; provider: string; serviceId: string }
-  | { type: 'pin-chat-model'; conversationId: string; provider: string; serviceId: string }
-  | { type: 'open-chat-app'; conversationId: string }
-  | { type: 'set-compact'; compact: boolean };
+export type VprFloatApp = VprCompactApp;
+export type VprFloatModel = VprCompactModel;
+export type VprFloatConversation = VprCompactConversation;
+export type VprFloatData = VprCompactSurfaceData;
+export type VprFloatAction = VprCompactSurfaceAction;

@@ -202,9 +202,9 @@
   /* Ends above the fixed footer — the dark footer rounds its own bottom
      corners against the transparent window, so no panel background can
      fringe around them. */
-  bottom: 44px;
+  bottom: 8px;
   overflow: hidden;
-  border-radius: 16px 16px 0 0;
+  border-radius: 16px;
   background: var(--bg-card);
   box-shadow: var(--shadow-float);
   -webkit-app-region: no-drag;

@@ -1,0 +1,50 @@
+.shell {
+  --vpr-compact-footer-bg: #e6edf3;
+
+  position: fixed;
+  inset: 0;
+  padding: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  user-select: none;
+}
+
+.arrow {
+  position: absolute;
+  z-index: 2;
+  top: 2px;
+  left: var(--vpr-menu-pointer-x, 20px);
+  width: 15px;
+  height: 15px;
+  border-radius: 3px 0 0;
+  background: var(--bg-card);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.popover {
+  position: relative;
+  z-index: 3;
+  width: calc(100vw - 16px);
+  height: calc(100vh - 16px);
+  min-height: 256px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 0;
+  border-radius: 16px;
+  background: linear-gradient(
+    to bottom,
+    var(--bg-card) 0 calc(100% - 44px),
+    var(--vpr-compact-footer-bg) calc(100% - 44px)
+  );
+  box-shadow: none;
+  -webkit-app-region: no-drag;
+}
+
+:global(body:not(.dark-theme)) .shell {
+  --vpr-compact-footer-bg: #2a2a2c;
+}
+
+.popover button {
+  -webkit-app-region: no-drag;
+}

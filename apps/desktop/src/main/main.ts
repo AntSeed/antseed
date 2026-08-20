@@ -31,6 +31,7 @@ import {
   createWindow,
   createApplicationMenu,
   getMainWindow,
+  hideVprMenuBarWindow,
 } from './ui/window.js';
 import { createDesktopTray } from './ui/tray.js';
 import { ensureConfig } from './runtime/config-io.js';
@@ -68,6 +69,11 @@ import { LOCALHOST_URL } from './constants.js';
 import { registerAppIpc } from './ipc/app.js';
 import { registerDesktopIpc } from './ipc/desktop.js';
 import { registerFloatIpc } from './ipc/float.js';
+import {
+  initVprMenuBarIpc,
+  openVprMenuBar,
+  registerVprMenuBarIpc,
+} from './ipc/vpr-menu-bar.js';
 import { registerPaymentsIpc } from './ipc/payments.js';
 import { registerRuntimeIpc } from './ipc/runtime.js';
 import { registerSystemProxyIpc } from './ipc/system-proxy.js';
@@ -266,6 +272,7 @@ registerPaymentsIpc();
 registerDesktopIpc();
 registerAppIpc();
 registerFloatIpc();
+registerVprMenuBarIpc();
 registerSystemProxyIpc({ processManager });
 registerRuntimeIpc({
   processManager,
@@ -416,16 +423,39 @@ app.whenReady().then(async () => {
   startSystemProxyWatchdog();
 
   const showFloatingWindow = () => {
-    const win = getMainWindow();
-    if (win) {
-      win.webContents.send('desktop:open-floating-window');
-      return;
+    if (!getMainWindow()) {
+      createWindow(
+        { appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl },
+        { show: false },
+      );
     }
-    showMainWindow();
-    getMainWindow()?.webContents.once('did-finish-load', () => {
-      getMainWindow()?.webContents.send('desktop:open-floating-window');
-    });
+    const win = getMainWindow();
+    if (!win) return;
+    const open = (): void => {
+      if (!win.isDestroyed()) win.webContents.send('desktop:open-floating-window');
+    };
+    if (win.webContents.isLoadingMainFrame()) win.webContents.once('did-finish-load', open);
+    else open();
   };
+
+  initVprMenuBarIpc({
+    ensureMainWindow: (visible) => {
+      if (!getMainWindow()) {
+        createWindow(
+          { appName: APP_NAME, appIconPath: APP_ICON_PATH, isDev, rendererUrl },
+          { show: visible },
+        );
+      }
+      const win = getMainWindow();
+      if (visible && win) {
+        if (win.isMinimized()) win.restore();
+        win.show();
+        win.focus();
+      }
+      return win;
+    },
+    showFloatingWindow,
+  });
 
   const toggleMainConnection = () => {
     const running = getCombinedProcessState().some((state) => state.mode === 'connect' && state.running);
@@ -436,6 +466,8 @@ app.whenReady().then(async () => {
     appName: APP_NAME,
     iconPath: TRAY_ICON_PATH,
     onShow: showMainWindow,
+    onPrimaryClick: openVprMenuBar,
+    onBeforeContextMenu: hideVprMenuBarWindow,
     buildMenu: () => buildSystemProxyTrayMenu(showMainWindow, showFloatingWindow, toggleMainConnection),
   });
   refreshTrayMenu();

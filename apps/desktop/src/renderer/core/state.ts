@@ -13,6 +13,7 @@ import {
   DEFAULT_MODEL_ROUTING_PREFERENCES,
   type ModelRoutingPreferences,
 } from '@antseed/node/model-routing';
+import type { VprCompactModel } from '../../shared/vpr-compact-surface.js';
 
 export type BadgeTone = 'active' | 'idle' | 'warn' | 'bad';
 
@@ -73,7 +74,7 @@ export type ServiceCapabilitiesView = {
   supportedParameters?: string[];
 };
 
-export type VprModelKind = 'text' | 'image';
+export type VprModelKind = VprCompactModel['kind'];
 
 export type ChatServiceOptionEntry = {
   id: string;
@@ -127,39 +128,7 @@ export type ReminderOffer = {
   prospectiveUsd: string;
 };
 
-export type VprModelCatalogEntry = {
-  provider: string;
-  serviceId: string;
-  label: string;
-  peerCount: number;
-  categories: string[];
-  kind: VprModelKind;
-  protocols: string[];
-  minInputUsdPerMillion: number | null;
-  maxInputUsdPerMillion: number | null;
-  minOutputUsdPerMillion: number | null;
-  maxOutputUsdPerMillion: number | null;
-  minCachedInputUsdPerMillion: number | null;
-  maxCachedInputUsdPerMillion: number | null;
-  minImageUsdPerImage: number | null;
-  maxImageUsdPerImage: number | null;
-  expectedSavingsPct: number | null;
-  /**
-   * True when some seller auto-routing may actually pick (trust/allow/block
-   * gate) offers this model at $0. Distinguishes a genuinely usable free
-   * model from one that merely displays a low fallback price because none of
-   * its sellers pass the gate.
-   */
-  hasEligibleFreeSeller: boolean;
-  bestPeerId: string | null;
-  /**
-   * Reference/retail price for the equivalent model on the OpenRouter catalog,
-   * in USD per million tokens. Used to calculate the discount shown on the
-   * Home model list. `null`/absent when no OpenRouter match is found.
-   */
-  baselineInputUsdPerMillion?: number | null;
-  baselineOutputUsdPerMillion?: number | null;
-};
+export type VprModelCatalogEntry = VprCompactModel;
 
 export type DiscoverVerificationLink = {
   kind: 'domain' | 'github';

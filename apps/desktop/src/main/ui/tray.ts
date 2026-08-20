@@ -1,13 +1,23 @@
-import { Menu, nativeImage, Tray, type MenuItemConstructorOptions } from 'electron';
+import {
+  Menu,
+  nativeImage,
+  Tray,
+  type MenuItemConstructorOptions,
+  type Rectangle,
+} from 'electron';
+import { configureTrayClickBehavior } from './tray-click-behavior.js';
 
 let tray: Tray | null = null;
 let currentOptions: DesktopTrayOptions | null = null;
+let contextMenu: Menu | null = null;
 
 export type DesktopTrayOptions = {
   appName: string;
   iconPath: string | undefined;
   onShow: () => void;
   buildMenu?: () => MenuItemConstructorOptions[];
+  onPrimaryClick?: (bounds: Rectangle) => void;
+  onBeforeContextMenu?: () => void;
 };
 
 function defaultMenu({ appName, onShow }: Pick<DesktopTrayOptions, 'appName' | 'onShow'>): MenuItemConstructorOptions[] {
@@ -19,10 +29,10 @@ function defaultMenu({ appName, onShow }: Pick<DesktopTrayOptions, 'appName' | '
 }
 
 function rebuildMenu(): void {
-  if (!tray || !currentOptions) return;
-  tray.setContextMenu(Menu.buildFromTemplate(
+  if (!currentOptions) return;
+  contextMenu = Menu.buildFromTemplate(
     currentOptions.buildMenu?.() ?? defaultMenu(currentOptions),
-  ));
+  );
 }
 
 export function createDesktopTray(options: DesktopTrayOptions): void {
@@ -40,11 +50,20 @@ export function createDesktopTray(options: DesktopTrayOptions): void {
   image.setTemplateImage(true);
 
   tray = new Tray(image);
+  configureTrayClickBehavior(tray);
   currentOptions = options;
   tray.setToolTip(appName);
   rebuildMenu();
-  tray.on('click', () => {
-    tray?.popUpContextMenu();
+  tray.on('click', (_event, bounds) => {
+    if (currentOptions?.onPrimaryClick) {
+      currentOptions.onPrimaryClick(bounds);
+      return;
+    }
+    if (contextMenu) tray?.popUpContextMenu(contextMenu);
+  });
+  tray.on('right-click', () => {
+    currentOptions?.onBeforeContextMenu?.();
+    if (contextMenu) tray?.popUpContextMenu(contextMenu);
   });
 }
 

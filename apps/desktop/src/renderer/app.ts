@@ -804,9 +804,17 @@ function initializeBridge(): void {
   });
 
   void (async () => {
-    await refreshAll('startup');
-    await ensureConnectRuntimeStarted();
-    await refreshAll('startup');
+    try {
+      await refreshAll('startup');
+      await ensureConnectRuntimeStarted();
+      await refreshAll('startup');
+    } finally {
+      await Promise.all([
+        creditsApi.refreshCredits(),
+        creditsApi.refreshPaymentSummary(true),
+      ]);
+      vprFloatApi.markReady();
+    }
   })();
 
   void refreshPluginInventory().catch((err) => {
