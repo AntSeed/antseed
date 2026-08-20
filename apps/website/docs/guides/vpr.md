@@ -136,13 +136,15 @@ A conversation with current traffic displays an activity pulse. Close the floati
 
 ## Privacy, transport, and seller trust
 
-AntSeed removes the central platform account and central chat database from the request path, but that does not mean every seller is unable to see request content. Choose routes according to the sensitivity of the work.
+The VPR is anonymous by default. There is no central AntSeed account, platform-issued API key, or personal profile attached to your requests. Sellers generally receive a pseudonymous peer or wallet identity rather than your name, email, or identity on the tools you connected.
+
+### Anonymous access
+
+Identity anonymity and request content are separate. A standard seller can process the prompt it serves, but AntSeed does not tell the seller who you are. Verified TEE routes can add stronger content confidentiality where available.
 
 ### What stays local
 
 The VPR's configuration, signing identity, connected-app setup, routing decisions, and local activity data remain on your device unless a specific feature sends data elsewhere. The desktop signing key is encrypted at rest through the operating system keychain.
-
-The seller still receives the request content needed to provide the service. Standard sellers, their upstream inference providers, and supporting infrastructure may process or log that content according to their own practices.
 
 ### Encrypted peer transport
 

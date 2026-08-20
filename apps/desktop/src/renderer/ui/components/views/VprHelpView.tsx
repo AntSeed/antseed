@@ -203,11 +203,11 @@ const HELP_TOPICS: HelpTopic[] = [
       {
         key: 'prompt-visibility',
         label: 'Who can see my requests?',
-        intro: 'AntSeed removes the central platform account and central chat database, but a standard seller still receives the request content needed to provide the service.',
+        intro: 'AntSeed is anonymous by default: sellers receive a pseudonymous peer or wallet identity, not an AntSeed account, name, email, or personal profile.',
         sections: [
           {
-            heading: 'Choose for sensitivity',
-            body: 'Sellers, upstream inference providers, and supporting infrastructure may process or log request content. Choose a route appropriate for the data you send.',
+            heading: 'Identity and content are separate',
+            body: 'A standard seller can process the prompt it serves, but AntSeed does not tell the seller who you are. Verified TEE routes can add stronger content confidentiality.',
           },
           {
             heading: 'What stays local',
