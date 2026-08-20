@@ -8,9 +8,10 @@
  * live signal — callers keep payments enabled and consult `reachable` to skip
  * on-chain reads while the RPC is down, instead of deciding once at startup.
  *
- * Probing stops after the first success: the ready state is sticky, and every
- * on-chain call site already handles its own failures. `probeNow()` re-checks
- * on demand.
+ * Probing stops after the first success — there is no steady-state polling.
+ * A later outage is re-detected on demand: call sites report observed on-chain
+ * failures via `reportFailure()`, which restarts the backoff probe loop until
+ * the RPC answers again. `probeNow()` runs a single re-check on demand.
  */
 
 export type RpcHealthState = 'unknown' | 'ready' | 'unreachable';
@@ -73,6 +74,7 @@ export class RpcHealthMonitor {
   private _attempts = 0;
   private _timer: ReturnType<typeof setTimeout> | null = null;
   private _probing: Promise<boolean> | null = null;
+  private _loopActive = false;
   private _stopped = false;
 
   constructor(options: RpcHealthMonitorOptions) {
@@ -112,15 +114,29 @@ export class RpcHealthMonitor {
   /** Begin probing; retries with backoff until the first success, then stops. */
   start(): void {
     this._stopped = false;
-    void this._runProbeLoop(0);
+    if (!this._loopActive) {
+      void this._runProbeLoop(0);
+    }
   }
 
   stop(): void {
     this._stopped = true;
+    this._loopActive = false;
     if (this._timer) {
       clearTimeout(this._timer);
       this._timer = null;
     }
+  }
+
+  /**
+   * Tell the monitor an on-chain read just failed. Restarts background probing
+   * (with backoff) so a mid-session outage is re-detected and `reachable`
+   * flips to false until the RPC answers again. No-op while a probe loop is
+   * already running, so bursts of failures cost at most one probe round.
+   */
+  reportFailure(): void {
+    if (this._stopped || this._loopActive) return;
+    void this._runProbeLoop(0);
   }
 
   /** One on-demand probe round; updates state and returns the outcome. */
@@ -167,9 +183,16 @@ export class RpcHealthMonitor {
   }
 
   private async _runProbeLoop(round: number): Promise<void> {
-    if (this._stopped) return;
+    if (this._stopped) {
+      this._loopActive = false;
+      return;
+    }
+    this._loopActive = true;
     const ok = await this.probeNow();
-    if (ok || this._stopped) return;
+    if (ok || this._stopped) {
+      this._loopActive = false;
+      return;
+    }
     const delay = Math.min(this._retryBaseMs * 2 ** round, this._retryMaxMs);
     this._timer = setTimeout(() => {
       this._timer = null;

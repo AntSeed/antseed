@@ -395,7 +395,7 @@ function adaptBuyerFaultErrorResponse(
   }
 }
 
-function sanitizePeerBuyerFaultMarker(response: SerializedHttpResponse): SerializedHttpResponse {
+export function sanitizePeerBuyerFaultMarker(response: SerializedHttpResponse): SerializedHttpResponse {
   if (response.statusCode < 400) return response
 
   let parsed: Record<string, unknown>
@@ -405,20 +405,29 @@ function sanitizePeerBuyerFaultMarker(response: SerializedHttpResponse): Seriali
     return response
   }
 
+  // Scrub the whole tree, not just the top level: a seller nesting the marker
+  // deeper (e.g. error.details.code) must not be able to have its failure
+  // classified as buyer-fault downstream. Depth-capped against hostile bodies.
   let changed = false
-  const scrub = (record: Record<string, unknown>): void => {
+  const scrub = (value: unknown, depth: number): void => {
+    if (depth > 8 || value === null || typeof value !== 'object') return
+    if (Array.isArray(value)) {
+      for (const item of value) scrub(item, depth + 1)
+      return
+    }
+    const record = value as Record<string, unknown>
     for (const key of ['code', 'type', 'errorCode']) {
       if (record[key] === ANTSEED_BUYER_FAULT_ERROR_CODE) {
         record[key] = 'upstream_error'
         changed = true
       }
     }
+    for (const nested of Object.values(record)) {
+      scrub(nested, depth + 1)
+    }
   }
 
-  scrub(parsed)
-  if (parsed.error && typeof parsed.error === 'object' && !Array.isArray(parsed.error)) {
-    scrub(parsed.error as Record<string, unknown>)
-  }
+  scrub(parsed, 0)
 
   return changed
     ? { ...response, body: Buffer.from(JSON.stringify(parsed)) }

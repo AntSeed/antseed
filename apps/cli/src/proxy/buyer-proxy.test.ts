@@ -25,6 +25,7 @@ import {
   parsePeerPinnedService,
   parsePersistedPeers,
   rewritePeerPinnedServiceInBody,
+  sanitizePeerBuyerFaultMarker,
   selectCandidatePeersForRouting,
   substituteRoutedModelAlias,
   sweepStaleStateTmpFiles,
@@ -3102,6 +3103,27 @@ test('deposits/status reports no watcher until one is attached', async () => {
   const res = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/deposits/status' }))
   assert.equal(res.statusCode, 200)
   assert.deepEqual(JSON.parse(res.body), { ok: true, watcher: false, reason: null, payments: null, status: null })
+})
+
+test('sanitizePeerBuyerFaultMarker scrubs the marker at any nesting depth', () => {
+  const body = {
+    error: {
+      type: 'server_error',
+      details: { code: 'antseed_buyer_fault', inner: [{ errorCode: 'antseed_buyer_fault' }] },
+    },
+  }
+  const sanitized = sanitizePeerBuyerFaultMarker({
+    requestId: 'r1',
+    statusCode: 503,
+    headers: { 'content-type': 'application/json' },
+    body: new TextEncoder().encode(JSON.stringify(body)),
+  })
+
+  const parsed = JSON.parse(Buffer.from(sanitized.body).toString('utf-8')) as {
+    error: { details: { code: string; inner: Array<{ errorCode: string }> } }
+  }
+  assert.equal(parsed.error.details.code, 'upstream_error')
+  assert.equal(parsed.error.details.inner[0]!.errorCode, 'upstream_error')
 })
 
 test('deposits/status reports the recorded watcher-absence reason and payments health', async () => {

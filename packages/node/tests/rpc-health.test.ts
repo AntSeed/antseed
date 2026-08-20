@@ -121,6 +121,34 @@ describe('RpcHealthMonitor', () => {
     expect(monitor.reachable).toBe(true);
   });
 
+  it('re-detects a mid-session outage when a failure is reported, then recovers', async () => {
+    const stub = await startRpcStub(true);
+    const monitor = track(new RpcHealthMonitor({
+      rpcUrls: [stub.url],
+      probeTimeoutMs: 300,
+      retryBaseMs: 20,
+      retryMaxMs: 40,
+    }));
+    monitor.start();
+    await waitFor(() => monitor.status().state === 'ready');
+
+    // RPC dies later; the sticky ready state only flips once a call site
+    // reports an observed on-chain failure.
+    stub.setHealthy(false);
+    expect(monitor.reachable).toBe(true);
+    monitor.reportFailure();
+    await waitFor(() => monitor.status().state === 'unreachable');
+    expect(monitor.reachable).toBe(false);
+
+    // Reports while the probe loop is already running do not stack loops.
+    monitor.reportFailure();
+    monitor.reportFailure();
+
+    stub.setHealthy(true);
+    await waitFor(() => monitor.status().state === 'ready');
+    expect(monitor.reachable).toBe(true);
+  });
+
   it('rejects an empty URL list', () => {
     expect(() => new RpcHealthMonitor({ rpcUrls: [] })).toThrow(/at least one/i);
   });
