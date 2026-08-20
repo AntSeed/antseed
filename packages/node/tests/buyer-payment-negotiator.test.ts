@@ -255,6 +255,28 @@ describe('BuyerPaymentNegotiator', () => {
       expect(result.action).toBe('return');
     });
 
+    it('skips the balance precheck and still negotiates while the chain RPC is unreachable', async () => {
+      depositsClient = createMockDepositsClient(0n);
+      negotiator = new BuyerPaymentNegotiator(
+        identity,
+        bpm as unknown as BuyerPaymentManager,
+        depositsClient,
+        channelsClient,
+        channelStore,
+        { isChainReachable: () => false },
+        emitter,
+      );
+      bufferPaymentRequired(negotiator, peer.peerId, conn);
+      (bpm.authorizeSpending as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        (bpm.isLockConfirmed as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      });
+
+      const result = await negotiator.handle402(make402Response(), peer, conn, makeRequest());
+      expect(result.action).toBe('retry');
+      expect(depositsClient.getBuyerBalance).not.toHaveBeenCalled();
+      expect(bpm.authorizeSpending).toHaveBeenCalledOnce();
+    });
+
     it('continues negotiation when the advisory balance read has a transient RPC failure', async () => {
       depositsClient = {
         getBuyerBalance: vi.fn().mockRejectedValue(new Error('could not detect network')),

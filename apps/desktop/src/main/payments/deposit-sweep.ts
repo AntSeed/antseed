@@ -80,12 +80,12 @@ async function buyerDaemonFetch(pathname: string, init?: RequestInit, timeoutMs 
   }
 }
 
-async function daemonWatchStatus(): Promise<{ watcher: boolean; status: DaemonWatchStatus | null } | null> {
+async function daemonWatchStatus(): Promise<{ watcher: boolean; reason: string | null; status: DaemonWatchStatus | null } | null> {
   const res = await buyerDaemonFetch('/_antseed/deposits/status', undefined, 3_000);
   if (!res) return null;
-  const body = await res.json().catch(() => null) as { ok?: boolean; watcher?: boolean; status?: DaemonWatchStatus | null } | null;
+  const body = await res.json().catch(() => null) as { ok?: boolean; watcher?: boolean; reason?: string | null; status?: DaemonWatchStatus | null } | null;
   if (!res.ok || !body?.ok) return null;
-  return { watcher: body.watcher === true, status: body.status ?? null };
+  return { watcher: body.watcher === true, reason: typeof body.reason === 'string' ? body.reason : null, status: body.status ?? null };
 }
 
 async function daemonSetWatchMode(mode: 'active' | 'background'): Promise<boolean> {
@@ -103,14 +103,16 @@ async function pollDaemonWatch(): Promise<void> {
   if (!current) return; // daemon not up yet — pendingDaemonMode re-sends below
 
   if (!current.watcher) {
-    // The daemon answered but runs no watcher (payments disabled, or the
-    // chain has no deposit relay) — surface it once instead of re-asking.
+    // The daemon answered but runs no watcher — surface the daemon-reported
+    // cause once instead of re-asking (older daemons send no reason).
     if (pendingDaemonMode) {
       pendingDaemonMode = null;
-      sendDepositWatchStatus({
-        phase: 'error',
-        error: 'Automatic deposit is not available on this chain yet. Your USDC is safe in the wallet.',
-      });
+      const error = current.reason === 'payments-disabled'
+        ? 'Automatic deposit is paused because payments are disabled on this buyer. Your USDC is safe in the wallet.'
+        : current.reason === 'no-deposit-relay'
+          ? 'Automatic deposit is not available on this chain yet. Your USDC is safe in the wallet.'
+          : 'Automatic deposit is not running right now. Your USDC is safe in the wallet.';
+      sendDepositWatchStatus({ phase: 'error', error });
     }
     return;
   }

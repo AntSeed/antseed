@@ -1,5 +1,6 @@
 /** Shared HTTP helpers for the running buyer daemon's control plane. */
 import type { DepositWatcherStatus } from '../../../proxy/deposit-watcher.js'
+import type { DepositWatcherAbsenceReason } from '../../../proxy/buyer-proxy.js'
 
 /** Fetch against the local buyer daemon; null when nothing is listening. */
 export async function daemonFetch(
@@ -28,6 +29,8 @@ export async function daemonJson(port: number, path: string, timeoutMs = 5_000):
 
 export interface DaemonDepositsStatus {
   watcher: boolean
+  /** Why the daemon runs no watcher (null when one is attached, or on older daemons). */
+  reason: DepositWatcherAbsenceReason | null
   status: DepositWatcherStatus | null
 }
 
@@ -36,6 +39,7 @@ export async function daemonDepositsStatus(port: number): Promise<DaemonDeposits
   if (!body || body['ok'] !== true) return null
   return {
     watcher: body['watcher'] === true,
+    reason: (body['reason'] ?? null) as DepositWatcherAbsenceReason | null,
     status: (body['status'] ?? null) as DepositWatcherStatus | null,
   }
 }

@@ -42,7 +42,15 @@ import {
 } from './unit-billing.js';
 import { buyerFault, peerFault } from './errors.js';
 
-export interface BuyerNegotiatorConfig {}
+export interface BuyerNegotiatorConfig {
+  /**
+   * Live chain-RPC reachability signal. When it returns false the negotiator
+   * skips best-effort on-chain reads (like the pre-negotiation balance check)
+   * instead of letting them fail or hang — off-chain signing continues either
+   * way, so payments keep working through RPC outages.
+   */
+  isChainReachable?: () => boolean;
+}
 
 /** How long to wait for a seller's CloseChannelResult before giving up. */
 const CLOSE_REQUEST_TIMEOUT_MS = 60_000;
@@ -109,6 +117,7 @@ export class BuyerPaymentNegotiator {
   private readonly _identity: BuyerIdentity;
   private readonly _emit: NegotiationEmitter;
   private readonly _sellerAddressResolver?: SellerAddressResolver;
+  private readonly _isChainReachable: (() => boolean) | null;
 
   /** Tracks which seller peers the buyer has already negotiated payment for. */
   private readonly _lockedPeers = new Set<string>();
@@ -157,6 +166,7 @@ export class BuyerPaymentNegotiator {
     this._freeUsageManager = freeUsageManager ?? null;
     this._emit = emitter;
     this._sellerAddressResolver = sellerAddressResolver;
+    this._isChainReachable = _config.isChainReachable ?? null;
   }
 
   get bpm(): BuyerPaymentManager {
@@ -641,21 +651,29 @@ export class BuyerPaymentNegotiator {
     // Check on-chain balance before sending ReserveAuth. The seller locks the full
     // reserve ceiling on-chain, so a positive-but-too-small available balance would
     // otherwise make reserve()/topUp() revert with InsufficientBalance and trigger a
-    // noisy 402/auth-rejection retry loop.
-    try {
-      const buyerAddr = this._identity.wallet.address;
-      const balance = await this._depositsClient.getBuyerBalance(buyerAddr);
-      if (balance.available <= 0n) {
-        return returnPaymentRequired('insufficient_deposits', 'buyer deposits balance is zero');
+    // noisy 402/auth-rejection retry loop. Skipped while the chain RPC is known
+    // to be unreachable: the check is best-effort, and negotiation itself only
+    // signs off-chain — a seller that can reach the chain still settles fine.
+    if (this._isChainReachable && !this._isChainReachable()) {
+      debugWarn(
+        `[BuyerNegotiator] Chain RPC unreachable — skipping balance precheck for ${peer.peerId.slice(0, 12)}...`,
+      );
+    } else {
+      try {
+        const buyerAddr = this._identity.wallet.address;
+        const balance = await this._depositsClient.getBuyerBalance(buyerAddr);
+        if (balance.available <= 0n) {
+          return returnPaymentRequired('insufficient_deposits', 'buyer deposits balance is zero');
+        }
+        if (requestedReserveAmount != null && balance.available < requestedReserveAmount) {
+          return returnPaymentRequired(
+            'insufficient_deposits',
+            `buyer available deposits ${balance.available} are below requested reserve ${requestedReserveAmount}`,
+          );
+        }
+      } catch (err) {
+        debugWarn(`[BuyerNegotiator] Failed to check buyer balance: ${err instanceof Error ? err.message : err}`);
       }
-      if (requestedReserveAmount != null && balance.available < requestedReserveAmount) {
-        return returnPaymentRequired(
-          'insufficient_deposits',
-          `buyer available deposits ${balance.available} are below requested reserve ${requestedReserveAmount}`,
-        );
-      }
-    } catch (err) {
-      debugWarn(`[BuyerNegotiator] Failed to check buyer balance: ${err instanceof Error ? err.message : err}`);
     }
 
     // Re-buffer the PaymentRequired so _doNegotiatePayment can consume it

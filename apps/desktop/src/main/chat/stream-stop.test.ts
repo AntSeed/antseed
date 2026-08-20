@@ -188,6 +188,49 @@ test('an unreachable chain RPC names the RPC, not the peer', () => {
   assert.match(reason.message, /chain RPC/i);
 });
 
+test('a payments-inactive buyer fault surfaced as agent text shows the authored message', () => {
+  // Agents (pi/Hermes) wrap the proxy JSON body into a plain error string —
+  // the classifier must still recognize the buyer fault and show the authored
+  // message, not "add credits" or a raw JSON blob.
+  const body = JSON.stringify({
+    error: {
+      type: 'api_error',
+      code: ANTSEED_BUYER_FAULT_ERROR_CODE,
+      message: 'This seller requires payment, but payments are not running on this buyer, '
+        + 'so the request could not be authorized. This is not a balance problem — '
+        + 'enable payments on the buyer (check its startup logs and chain settings), or use a free peer.',
+    },
+  });
+  const reason = classifyChatStreamFailure({
+    error: new Error(`unexpected status 503 Service Unavailable: ${body}, url: http://localhost:8377/v1/responses`),
+    stopReason: 'error',
+  });
+
+  assert.equal(reason.kind, 'http_error');
+  assert.equal(reason.statusCode, 503);
+  assert.equal(reason.retryable, false);
+  assert.match(reason.message, /payments are not running on this buyer/);
+  assert.match(reason.message, /not a balance problem/);
+  assert.doesNotMatch(reason.message, /[{}]/);
+});
+
+test('a payment negotiation failure shows the negotiator-authored message, not raw JSON', () => {
+  const body = JSON.stringify({
+    error: 'payment_negotiation_failed',
+    reason: 'existing_channel_still_active',
+    message: 'An existing payment channel could not be recovered automatically. Close or recover the channel and retry.',
+  });
+  const reason = classifyChatStreamFailure({
+    error: new Error(`unexpected status 409 Conflict: ${body}`),
+    stopReason: 'error',
+  });
+
+  assert.equal(reason.kind, 'http_error');
+  assert.equal(reason.statusCode, 409);
+  assert.match(reason.message, /could not be recovered automatically/);
+  assert.doesNotMatch(reason.message, /[{}]/);
+});
+
 test('a seller mentioning the buyer-fault marker in display text stays retryable', () => {
   const reason = classifyChatStreamFailure({
     error: {

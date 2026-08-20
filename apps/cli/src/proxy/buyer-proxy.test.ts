@@ -3101,7 +3101,37 @@ test('deposits/status reports no watcher until one is attached', async () => {
 
   const res = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/deposits/status' }))
   assert.equal(res.statusCode, 200)
-  assert.deepEqual(JSON.parse(res.body), { ok: true, watcher: false, status: null })
+  assert.deepEqual(JSON.parse(res.body), { ok: true, watcher: false, reason: null, payments: null, status: null })
+})
+
+test('deposits/status reports the recorded watcher-absence reason and payments health', async () => {
+  const paymentsStatus = {
+    configured: true,
+    buyerActive: true,
+    sellerActive: false,
+    chainId: 8453,
+    rpc: { state: 'unreachable', lastCheckedAt: 123, lastReadyAt: null, lastError: 'probe failed', attempts: 2 },
+  }
+  const proxy = new BuyerProxy({
+    port: 0,
+    dataDir: '/tmp/antseed-test',
+    node: { router: null, getPaymentsStatus: () => paymentsStatus } as any,
+  })
+  proxy.setDepositWatcher(null, 'payments-disabled')
+
+  const res = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/deposits/status' }))
+  assert.equal(res.statusCode, 200)
+  const body = JSON.parse(res.body) as { watcher: boolean; reason: string | null; payments: unknown }
+  assert.equal(body.watcher, false)
+  assert.equal(body.reason, 'payments-disabled')
+  assert.deepEqual(body.payments, paymentsStatus)
+
+  const watchRes = await invokeProxy(proxy, makeProxyRequest({ path: '/_antseed/deposits/watch', body: { mode: 'active' } }))
+  assert.equal(watchRes.statusCode, 503)
+  const watchBody = JSON.parse(watchRes.body) as { ok: boolean; reason: string | null; error: string }
+  assert.equal(watchBody.ok, false)
+  assert.equal(watchBody.reason, 'payments-disabled')
+  assert.match(watchBody.error, /payments are disabled/)
 })
 
 test('deposits/watch returns 503 when no watcher is attached', async () => {
@@ -3149,7 +3179,7 @@ test('deposits/watch promotes and demotes an attached watcher and returns its st
   assert.deepEqual(calls, ['promote', 'demote'])
 
   const status = await invokeProxy(proxy, makeProxyRequest({ method: 'GET', path: '/_antseed/deposits/status' }))
-  assert.deepEqual(JSON.parse(status.body), { ok: true, watcher: true, status: fakeStatus })
+  assert.deepEqual(JSON.parse(status.body), { ok: true, watcher: true, reason: null, payments: null, status: fakeStatus })
 })
 
 test('getSweepReceipt returns cached relayer receipts case-insensitively', () => {
