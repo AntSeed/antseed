@@ -313,6 +313,11 @@ function actionSelectVprModel(provider: string, serviceId: string, peerId: strin
   // The text route is persisted and propagated to connected apps after the
   // corresponding chat option has been resolved above.
   uiState.vprRouteSelection = selection;
+  // An explicit pick ends the provisional-default window even when no chat
+  // option resolved above (handleServiceChange, which also ends it, only runs
+  // when one did) and even when the pick is the provisional model itself —
+  // otherwise the next refresh would keep re-picking over the user's choice.
+  chatApi.endProvisionalDefaultModel();
   saveVprRouteSelection(selection);
   notifyUiStateChanged();
   // The floating pill mirrors the selection — push it now instead of

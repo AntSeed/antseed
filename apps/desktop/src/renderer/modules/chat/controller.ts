@@ -128,6 +128,9 @@ export type ChatModuleApi = {
   /** Re-derive the routable rows, model catalog and service list after a peer
       allow/block rule changes. */
   applyPeerAccessRules: () => void;
+  /** End the provisional-default window after an explicit model choice made
+      outside this module (the model page's "Use" button). */
+  endProvisionalDefaultModel: () => void;
   refreshChatProxyStatus: () => Promise<void>;
   refreshChatConversations: () => Promise<void>;
   refreshWorkspace: () => Promise<void>;
@@ -1409,6 +1412,16 @@ export function initChatModule({
   }
 
   /**
+   * An explicit model choice ends the provisional-default window — even when
+   * it lands on the very model the provisional default chose. For selection
+   * paths outside this module (the model page's "Use" button) that must stop
+   * the refresh loop from re-picking over the user's choice.
+   */
+  function endProvisionalDefaultModel(): void {
+    setProvisionalDefaultModel(null);
+  }
+
+  /**
    * Pick the default model and adopt it into the route selection. Free-backed
    * picks are final (persisted); anything else is provisional (see above).
    * Returns the pick, or null when the catalog offers nothing to pick.
@@ -1577,9 +1590,13 @@ export function initChatModule({
         : null;
       if (provisionalDefaultModel && (!selectedRouteModel
         || selectedRouteModel.provider !== provisionalDefaultModel.provider
-        || selectedRouteModel.serviceId !== provisionalDefaultModel.serviceId)) {
-        // The selection moved off the provisional pick — that was an explicit
-        // choice (or a rules-driven re-pick); stop second-guessing it.
+        || selectedRouteModel.serviceId !== provisionalDefaultModel.serviceId
+        || uiState.vprRouteSelection.mode !== 'auto'
+        || uiState.vprRouteSelection.peerId !== null)) {
+        // The selection moved off the provisional pick — a different model, or
+        // the same model deliberately pinned to a seller. Either way that was
+        // an explicit choice (or a rules-driven re-pick); stop second-guessing
+        // it — re-picking here would flatten a pin back to auto.
         setProvisionalDefaultModel(null);
       }
       if (!selectedRouteModel || selectedRouteEntry?.kind === 'image' || provisionalDefaultModel !== null) {
@@ -3030,6 +3047,10 @@ export function initChatModule({
               categories: [...(option?.categories ?? [])],
             };
         uiState.vprRouteSelection = { model: selectedModel, mode: 'pinned-peer', peerId };
+        // An external explicit pick ends the provisional-default window even
+        // when it lands on the very model the provisional default chose —
+        // otherwise the next refresh's re-pick would flatten the pin to auto.
+        setProvisionalDefaultModel(null);
         uiState.vprModelPins = setVprModelPin(
           uiState.vprModelPins,
           selectedModel.provider,
@@ -3578,6 +3599,7 @@ export function initChatModule({
     decideToolApproval,
     refreshChatServiceOptions,
     applyPeerAccessRules,
+    endProvisionalDefaultModel,
     refreshChatProxyStatus,
     refreshChatConversations,
     refreshWorkspace,
