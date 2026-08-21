@@ -57,15 +57,16 @@
   transition: background 0.12s ease;
 }
 
-/* Lead recommendations: a thin frame around the first rows whose border is
-   cut by a small "Recommended" label — a group marker, not a separate list. */
+/* Lead recommendations: thin brand rules around the first rows, cut by a
+   small "Recommended" label — a group marker, not a separate list. Full
+   bleed: the rules run edge to edge with no inset. */
 .recommendedFrame {
   position: relative;
-  margin: 10px 10px 6px;
+  /* Only the label needs headroom above the top rule; sides stay flush. */
+  margin: 6px 0 4px;
   padding: 4px 0;
-  border: 1px solid rgba(var(--brand-rgb), 0.4);
-  border-radius: 14px;
-  overflow: visible;
+  border-top: 1px solid rgba(var(--brand-rgb), 0.4);
+  border-bottom: 1px solid rgba(var(--brand-rgb), 0.4);
 }
 
 .recommendedLegend {
@@ -81,21 +82,6 @@
   letter-spacing: 0.5px;
   line-height: 16px;
   text-transform: uppercase;
-}
-
-/* Rows inside the frame sit closer to its rounded edge, and the end rows
-   round with it so hover fills don't poke past the border. */
-.recommendedFrame .row {
-  padding-left: 12px;
-  padding-right: 12px;
-}
-
-.recommendedFrame .row:first-of-type {
-  border-radius: 13px 13px 0 0;
-}
-
-.recommendedFrame .row:last-of-type {
-  border-radius: 0 0 13px 13px;
 }
 
 .row + .row {
