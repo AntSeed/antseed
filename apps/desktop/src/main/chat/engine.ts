@@ -69,7 +69,7 @@ import {
   projectPersistedConversationRoute,
 } from './conversation-store.js';
 import { createStreamingRunner } from './streaming-run.js';
-import { generateChatImage } from './image-generation.js';
+import { generateChatImage, type GenerateChatImageResult } from './image-generation.js';
 import type {
   ActiveRun,
   ChatStreamErrorPayload,
@@ -93,7 +93,13 @@ export type PiChatEngine = {
   sendMessageStream(
     conversationId: string,
     userMessage: string,
-    options?: { service?: string; peerId?: string; permissionMode?: ChatPermissionMode },
+    options?: {
+      service?: string;
+      peerId?: string;
+      permissionMode?: ChatPermissionMode;
+      /** Prepared attachments (images, documents) — same pipeline as the app's paper-clip flow. */
+      attachments?: PreparedChatAttachment[];
+    },
   ): Promise<{ ok: boolean; error?: string; stopReason?: ChatStreamStopReason }>;
   abort(conversationId?: string): Promise<void>;
   /** Resolves a pending tool approval; returns false when the id is unknown (already decided). */
@@ -114,6 +120,18 @@ export type PiChatEngine = {
   getModelPicker(): ModelPickerSnapshot | null;
   /** Rebinds a conversation's model/peer — same semantics as the chat UI's model dropdown. */
   selectPeer(request: ChatPeerSelectionRequest): Promise<{ ok: boolean; error?: string }>;
+  /**
+   * Runs a one-shot image generation against an `openai-images` service and
+   * persists the result into the conversation — the same flow as the chat
+   * UI's image button. The generated image lands in the attachment store;
+   * the returned assistant message carries its file block.
+   */
+  generateImage(request: {
+    conversationId: string;
+    prompt: string;
+    peerId: string;
+    service: string;
+  }): Promise<GenerateChatImageResult>;
   /**
    * Sets the buyer default route (the sticky "current model" new conversations
    * inherit) and tells the renderer so the UI selection follows suit.
@@ -721,7 +739,7 @@ export function registerPiChatHandlers({
     }
   });
 
-  ipcMain.handle('chat:generate-image', async (_event, payload: unknown) => {
+  const generateImageRequest = async (payload: unknown): Promise<GenerateChatImageResult> => {
     const request = payload && typeof payload === 'object'
       ? payload as { conversationId?: unknown; prompt?: unknown; peerId?: unknown; moderation?: unknown; service?: unknown; sourceImageAttachmentId?: unknown }
       : {};
@@ -764,7 +782,9 @@ export function registerPiChatHandlers({
         activeImageRunsByConversation.delete(conversationId);
       }
     }
-  });
+  };
+
+  ipcMain.handle('chat:generate-image', async (_event, payload: unknown) => generateImageRequest(payload));
 
   ipcMain.handle(
     'chat:ai-send-stream',
@@ -878,7 +898,7 @@ export function registerPiChatHandlers({
       conversationId,
       userMessage,
       options?.service,
-      undefined,
+      options?.attachments,
       options?.peerId,
       options?.permissionMode,
     ),
@@ -888,6 +908,7 @@ export function registerPiChatHandlers({
     discoverServiceCatalog: discoverPolicyAllowedCatalog,
     getModelPicker: () => modelPickerSnapshot,
     selectPeer: applyPeerSelection,
+    generateImage: (request) => generateImageRequest(request),
     setDefaultRoute: async (peerId, service, provider) => {
       const result = await setBuyerDefaultRoute(peerId, service);
       sendToRenderer('chat:default-route-changed', { peerId, service, provider: provider ?? null });
