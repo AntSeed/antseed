@@ -71,4 +71,3 @@ if (!source.includes(JSON.stringify(botToken)) || !source.includes(JSON.stringif
 }
 writeFileSync(target, source);
 console.log('bake-feedback-telegram-config: baked Telegram feedback configuration.');
-

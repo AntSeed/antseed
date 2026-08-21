@@ -91,4 +91,3 @@ export function buildFeedbackDiagnosticLog(
   }
   return new Uint8Array(bytes);
 }
-

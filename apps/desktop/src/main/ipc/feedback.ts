@@ -24,4 +24,3 @@ export function registerFeedbackIpc(deps: { logBuffer: readonly LogEvent[] }): v
     });
   });
 }
-

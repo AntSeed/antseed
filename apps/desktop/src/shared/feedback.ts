@@ -31,9 +31,7 @@ export type FeedbackSubmitResult = {
   attachmentWarnings?: string[];
   error?: string;
 };
-
 export type FeedbackStatus = {
   configured: boolean;
   error?: string;
 };
-

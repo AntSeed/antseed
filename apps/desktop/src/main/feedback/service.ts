@@ -56,7 +56,6 @@ function decodeImage(image: FeedbackImageInput, index: number): TgUpload {
     mimeType: image.mimeType,
   };
 }
-
 export function validateFeedbackRequest(request: unknown): PreparedFeedbackRequest {
   if (!request || typeof request !== 'object' || Array.isArray(request)) {
     throw new FeedbackValidationError('Invalid feedback request.');
@@ -195,4 +194,3 @@ export async function submitTelegramFeedback(input: {
     ...(warnings.length > 0 ? { attachmentWarnings: warnings } : {}),
   };
 }
-
