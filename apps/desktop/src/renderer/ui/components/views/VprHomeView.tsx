@@ -30,6 +30,7 @@ import { buyerConversationsResource, systemProxyResource } from '../../../module
 import { useCachedResource } from '../../../modules/app/cached-resource';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
+import { useEverFunded } from '../../hooks/useEverFunded';
 import type { ViewName } from '../../types';
 import { OverlayScrollArea } from '../OverlayScrollArea';
 import { BottomNotice } from '../BottomNotice';
@@ -43,7 +44,6 @@ import styles from './VprHomeView.module.scss';
 type Props = { onSelectView?: (view: ViewName) => void };
 
 const ADD_BALANCE_DISMISSED_KEY = 'antseed.desktop.vpr.addBalanceDismissed';
-const HAS_EVER_FUNDED_KEY = 'antseed.desktop.vpr.hasEverFunded';
 const RESTART_NOTICE_DISMISSED_KEY = 'antseed.desktop.vpr.restartNoticeDismissed';
 const MODEL_CHANGE_NOTICE_MS = 4_000;
 /* Rows in the model dropdown (Figma) — the full catalog lives on Models. */
@@ -97,16 +97,9 @@ export function VprHomeView({ onSelectView }: Props) {
       return false;
     }
   });
-  // Sticky funding memory: false only until the first deposit is ever seen.
   // Gates the model dropdown lineup — free-only before funding, the regular
   // popular lineup permanently after (even if the balance drains to zero).
-  const [everFunded, setEverFunded] = useState(() => {
-    try {
-      return localStorage.getItem(HAS_EVER_FUNDED_KEY) === '1';
-    } catch {
-      return false;
-    }
-  });
+  const everFunded = useEverFunded();
 
   const runtimeOn = snap.processes.some((process) => process.mode === 'connect' && process.running === true);
 
@@ -309,16 +302,6 @@ export function VprHomeView({ onSelectView }: Props) {
     && !(Number.isFinite(creditsSpendableNum) && creditsSpendableNum > 5);
   const hasDeposited = Number(snap.creditsTotalOwned) > 0 || snap.creditsChannels.length > 0;
   const reminderOffer = hasDeposited ? null : snap.reminderOffer;
-
-  // The first observed deposit flips the dropdown to the popular lineup for
-  // good — the stored flag survives the balance draining back to zero.
-  useEffect(() => {
-    if (!hasDeposited || everFunded) return;
-    setEverFunded(true);
-    try {
-      localStorage.setItem(HAS_EVER_FUNDED_KEY, '1');
-    } catch { /* private mode */ }
-  }, [everFunded, hasDeposited]);
 
   function submitDraft(): void {
     const text = draft.trim();
