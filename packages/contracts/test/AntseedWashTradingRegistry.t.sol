@@ -51,17 +51,17 @@ contract AntseedWashTradingRegistryTest is Test {
             new AntseedWashTradingRegistry(address(verifier), address(oracle), CLOSED_IMAGE_ID, RECIPROCAL_IMAGE_ID);
     }
 
-    function test_closedCycleRecordsSellerP0FromMinimalJournal() public {
+    function test_closedCycleFlagsSellerFromMinimalJournal() public {
         AntseedWashTradingRegistry.ClosedCycleJournal memory journal = _closed(SELLER_A);
         bytes memory data = abi.encode(journal);
         _allow(journal.blockRefs);
         verifier.expect(CLOSED_IMAGE_ID, sha256(data));
 
         assertTrue(registry.submitClosedCycleProof(hex"", data));
-        assertTrue(registry.isSellerP0(SELLER_A));
+        assertTrue(registry.isSellerWashTradingFlagged(SELLER_A));
     }
 
-    function test_reciprocalRecordsBothSellersP0FromMinimalJournal() public {
+    function test_reciprocalFlagsBothSellersFromMinimalJournal() public {
         AntseedWashTradingRegistry.ReciprocalJournal memory journal = _reciprocal();
         bytes memory data = abi.encode(journal);
         _allow(journal.blockRefs);
@@ -70,8 +70,8 @@ contract AntseedWashTradingRegistryTest is Test {
         (bool recordedA, bool recordedB) = registry.submitReciprocalProof(hex"", data);
         assertTrue(recordedA);
         assertTrue(recordedB);
-        assertTrue(registry.isSellerP0(journal.addressA));
-        assertTrue(registry.isSellerP0(journal.addressB));
+        assertTrue(registry.isSellerWashTradingFlagged(journal.addressA));
+        assertTrue(registry.isSellerWashTradingFlagged(journal.addressB));
     }
 
     function test_replaysAndOverlappingProofsAreIdempotent() public {
@@ -95,8 +95,8 @@ contract AntseedWashTradingRegistryTest is Test {
             assertTrue(recordedA);
             assertFalse(recordedB);
         }
-        assertTrue(registry.isSellerP0(SELLER_A));
-        assertTrue(registry.isSellerP0(SELLER_B));
+        assertTrue(registry.isSellerWashTradingFlagged(SELLER_A));
+        assertTrue(registry.isSellerWashTradingFlagged(SELLER_B));
     }
 
     function test_rejectsNonCanonicalBlockReference() public {
@@ -122,7 +122,7 @@ contract AntseedWashTradingRegistryTest is Test {
 
         vm.expectRevert("wrong image");
         registry.submitClosedCycleProof(hex"", data);
-        assertFalse(registry.isSellerP0(SELLER_A));
+        assertFalse(registry.isSellerWashTradingFlagged(SELLER_A));
     }
 
     function test_constructorRejectsWrongChain() public {

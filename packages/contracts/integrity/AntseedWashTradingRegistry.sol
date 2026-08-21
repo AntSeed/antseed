@@ -31,7 +31,7 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
     bytes32 public immutable closedCycleImageId;
     bytes32 public immutable reciprocalImageId;
 
-    mapping(address seller => bool p0) public override isSellerP0;
+    mapping(address seller => bool flagged) public override isSellerWashTradingFlagged;
 
     error WrongChain(uint256 chainId);
     error ZeroAddress();
@@ -39,7 +39,7 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
     error ZeroConfiguration();
     error NonCanonicalBlock(uint64 blockNumber, bytes32 blockHash);
 
-    event SellerP0Recorded(address indexed seller, bytes32 indexed journalDigest, uint8 indexed proofType);
+    event SellerWashTradingFlagged(address indexed seller, bytes32 indexed journalDigest, uint8 indexed proofType);
 
     constructor(address verifier_, address stateOracle_, bytes32 closedCycleImageId_, bytes32 reciprocalImageId_) {
         if (block.chainid != BASE_CHAIN_ID) revert WrongChain(block.chainid);
@@ -58,7 +58,7 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
         verifier.verify(seal, closedCycleImageId, journalDigest);
         ClosedCycleJournal memory journal = abi.decode(journalData, (ClosedCycleJournal));
         _validateBlocks(journal.blockRefs);
-        return _recordSellerP0(journal.seller, journalDigest, CLOSED_CYCLE_PROOF_TYPE);
+        return _recordSellerFlag(journal.seller, journalDigest, CLOSED_CYCLE_PROOF_TYPE);
     }
 
     function submitReciprocalProof(bytes calldata seal, bytes calldata journalData)
@@ -69,8 +69,8 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
         verifier.verify(seal, reciprocalImageId, journalDigest);
         ReciprocalJournal memory journal = abi.decode(journalData, (ReciprocalJournal));
         _validateBlocks(journal.blockRefs);
-        recordedA = _recordSellerP0(journal.addressA, journalDigest, RECIPROCAL_PROOF_TYPE);
-        recordedB = _recordSellerP0(journal.addressB, journalDigest, RECIPROCAL_PROOF_TYPE);
+        recordedA = _recordSellerFlag(journal.addressA, journalDigest, RECIPROCAL_PROOF_TYPE);
+        recordedB = _recordSellerFlag(journal.addressB, journalDigest, RECIPROCAL_PROOF_TYPE);
     }
 
     function _validateBlocks(BlockRef[] memory blockRefs) private view {
@@ -82,10 +82,10 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
         }
     }
 
-    function _recordSellerP0(address seller, bytes32 journalDigest, uint8 proofType) private returns (bool) {
-        if (isSellerP0[seller]) return false;
-        isSellerP0[seller] = true;
-        emit SellerP0Recorded(seller, journalDigest, proofType);
+    function _recordSellerFlag(address seller, bytes32 journalDigest, uint8 proofType) private returns (bool) {
+        if (isSellerWashTradingFlagged[seller]) return false;
+        isSellerWashTradingFlagged[seller] = true;
+        emit SellerWashTradingFlagged(seller, journalDigest, proofType);
         return true;
     }
 }

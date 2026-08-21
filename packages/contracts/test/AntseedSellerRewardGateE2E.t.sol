@@ -9,6 +9,8 @@ import { AntseedWashTradingRegistry } from "../integrity/AntseedWashTradingRegis
 import { IAntseedChannels } from "../interfaces/IAntseedChannels.sol";
 import { AntseedEmissions } from "../legacy/AntseedEmissions.sol";
 import { AntseedEmissionsV2 } from "../legacy/AntseedEmissionsV2.sol";
+import { AntseedHistoricalClaimsPolicy } from "../policies/AntseedHistoricalClaimsPolicy.sol";
+import { AntseedSellerRewardPolicyRegistry } from "../policies/AntseedSellerRewardPolicyRegistry.sol";
 import { AntseedWashTradingRewardPolicy } from "../policies/AntseedWashTradingRewardPolicy.sol";
 import { AntseedSellerRewardsPool } from "../rewards/AntseedSellerRewardsPool.sol";
 
@@ -17,6 +19,12 @@ contract RewardGateVerifierMock {
 }
 
 contract RewardGateOracleMock {
+    bool public historicalCoverageComplete;
+
+    function setHistoricalCoverageComplete(bool complete) external {
+        historicalCoverageComplete = complete;
+    }
+
     function isCanonicalBlock(uint64, bytes32) external pure returns (bool) {
         return true;
     }
@@ -58,7 +66,10 @@ contract SellerRewardGateE2ETest is Test {
     AntseedEmissionsV2 internal emissions;
     AntseedSellerRewardsPool internal rewardsPool;
     AntseedWashTradingRegistry internal washRegistry;
-    AntseedWashTradingRewardPolicy internal policy;
+    AntseedSellerRewardPolicyRegistry internal rewardPolicyRegistry;
+    AntseedHistoricalClaimsPolicy internal historicalClaimsPolicy;
+    AntseedWashTradingRewardPolicy internal washTradingRewardPolicy;
+    RewardGateOracleMock internal baseStateOracle;
     RewardGateStakingMock internal staking;
     RewardGateChannelsMock internal channels;
 
@@ -86,19 +97,43 @@ contract SellerRewardGateE2ETest is Test {
         staking.setAgentId(SELLER, AGENT_ID);
         protocolRegistry.setStaking(address(staking));
 
+        baseStateOracle = new RewardGateOracleMock();
         washRegistry = new AntseedWashTradingRegistry(
-            address(new RewardGateVerifierMock()),
-            address(new RewardGateOracleMock()),
-            bytes32(uint256(1)),
-            bytes32(uint256(2))
+            address(new RewardGateVerifierMock()), address(baseStateOracle), bytes32(uint256(1)), bytes32(uint256(2))
         );
-        policy = new AntseedWashTradingRewardPolicy(address(washRegistry));
-        emissions.setSellerUnlockPolicy(address(policy));
-        rewardsPool.setSellerClaimPolicy(address(policy));
+        rewardPolicyRegistry = new AntseedSellerRewardPolicyRegistry(address(this));
+        historicalClaimsPolicy = new AntseedHistoricalClaimsPolicy(address(baseStateOracle), address(this));
+        washTradingRewardPolicy = new AntseedWashTradingRewardPolicy(address(washRegistry));
+        rewardPolicyRegistry.registerPolicy(address(historicalClaimsPolicy), true, true);
+        rewardPolicyRegistry.registerPolicy(address(washTradingRewardPolicy), true, true);
+        emissions.setSellerUnlockPolicy(address(rewardPolicyRegistry));
+        rewardsPool.setSellerClaimPolicy(address(rewardPolicyRegistry));
         token.setTransferWhitelist(address(rewardsPool), true);
     }
 
-    function test_nonP0SellerUsesImmediateRewardRoute() public {
+    function test_historicalClaimsStayLockedUntilBackfillFinalization() public {
+        channels.setLastSettledAt(AGENT_ID, uint64(block.timestamp));
+        _accrue(SELLER, 100);
+        _finalizeEpoch(5);
+
+        vm.prank(SELLER);
+        emissions.claimSellerEmissions(_epoch(4));
+        assertEq(token.balanceOf(SELLER), 0);
+        assertGt(rewardsPool.lockedRewards(SELLER), 0);
+
+        vm.prank(SELLER);
+        vm.expectRevert(AntseedSellerRewardsPool.NothingToClaim.selector);
+        rewardsPool.claim(SELLER);
+
+        _finalizeBackfill();
+        vm.prank(SELLER);
+        rewardsPool.claim(SELLER);
+        assertGt(token.balanceOf(SELLER), 0);
+        assertEq(rewardsPool.lockedRewards(SELLER), 0);
+    }
+
+    function test_unflaggedSellerUsesImmediateRewardRouteAfterBackfill() public {
+        _finalizeBackfill();
         channels.setLastSettledAt(AGENT_ID, uint64(block.timestamp));
         _accrue(SELLER, 100);
         _finalizeEpoch(5);
@@ -109,8 +144,9 @@ contract SellerRewardGateE2ETest is Test {
         assertEq(rewardsPool.lockedRewards(SELLER), 0);
     }
 
-    function test_p0ProofBlocksImmediateAndPoolRoutesPermanently() public {
-        _submitP0(SELLER);
+    function test_washTradingProofBlocksImmediateAndPoolRoutesPermanently() public {
+        _finalizeBackfill();
+        _submitWashTradingProof(SELLER);
         channels.setLastSettledAt(AGENT_ID, uint64(block.timestamp));
         _accrue(SELLER, 100);
         _finalizeEpoch(5);
@@ -124,7 +160,7 @@ contract SellerRewardGateE2ETest is Test {
         vm.prank(SELLER);
         vm.expectRevert(AntseedSellerRewardsPool.NothingToClaim.selector);
         rewardsPool.claim(SELLER);
-        assertTrue(washRegistry.isSellerP0(SELLER));
+        assertTrue(washRegistry.isSellerWashTradingFlagged(SELLER));
     }
 
     function _accrue(address seller, uint256 points) internal {
@@ -142,7 +178,12 @@ contract SellerRewardGateE2ETest is Test {
         epochs[0] = epoch;
     }
 
-    function _submitP0(address seller) internal {
+    function _finalizeBackfill() internal {
+        baseStateOracle.setHistoricalCoverageComplete(true);
+        historicalClaimsPolicy.finalizeBackfill(keccak256("complete-proof-release"));
+    }
+
+    function _submitWashTradingProof(address seller) internal {
         AntseedWashTradingRegistry.BlockRef[] memory refs = new AntseedWashTradingRegistry.BlockRef[](1);
         refs[0] = AntseedWashTradingRegistry.BlockRef({ number: 44_471_575, blockHash: bytes32(uint256(0x1234)) });
         AntseedWashTradingRegistry.ClosedCycleJournal memory journal =

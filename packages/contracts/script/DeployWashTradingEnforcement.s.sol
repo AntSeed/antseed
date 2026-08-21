@@ -8,7 +8,7 @@ import { IBaseAnalysisStateOracle } from "../interfaces/IBaseAnalysisStateOracle
 
 /**
  * @title DeployWashTradingEnforcement
- * @notice Deploys the immutable positive-evidence P0 seller registry
+ * @notice Deploys the immutable proof-backed wash-trading status registry
  *         against the existing canonical Base block oracle.
  *
  * Required env:

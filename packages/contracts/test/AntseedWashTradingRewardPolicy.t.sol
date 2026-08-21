@@ -2,24 +2,24 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
-import { IAntseedP0Registry } from "../interfaces/IAntseedP0Registry.sol";
 import { AntseedWashTradingRewardPolicy } from "../policies/AntseedWashTradingRewardPolicy.sol";
+import { IAntseedWashTradingStatus } from "../interfaces/IAntseedWashTradingStatus.sol";
 
-contract MockWashTradingStatusRegistry is IAntseedP0Registry {
-    mapping(address seller => bool p0) private sellerP0;
+contract MockWashTradingStatusRegistry is IAntseedWashTradingStatus {
+    mapping(address seller => bool flagged) private sellerFlags;
     bool public revertReads;
 
-    function setP0(address seller, bool p0) external {
-        sellerP0[seller] = p0;
+    function setWashTradingFlag(address seller, bool flagged) external {
+        sellerFlags[seller] = flagged;
     }
 
     function setRevertReads(bool value) external {
         revertReads = value;
     }
 
-    function isSellerP0(address seller) external view returns (bool) {
+    function isSellerWashTradingFlagged(address seller) external view returns (bool) {
         if (revertReads) revert("wash-trading registry unavailable");
-        return sellerP0[seller];
+        return sellerFlags[seller];
     }
 }
 
@@ -35,13 +35,13 @@ contract AntseedWashTradingRewardPolicyTest is Test {
         policy = new AntseedWashTradingRewardPolicy(address(registry));
     }
 
-    function test_nonP0SellerCanUseBothRewardRoutes() public view {
+    function test_unflaggedSellerCanUseBothRewardRoutes() public view {
         assertTrue(policy.canClaimSellerUnlocked(SELLER));
         assertEq(policy.claimableSellerRewards(SELLER, LOCKED), LOCKED);
     }
 
-    function test_p0SellerIsBlockedOnBothRewardRoutes() public {
-        registry.setP0(SELLER, true);
+    function test_flaggedSellerIsBlockedOnBothRewardRoutes() public {
+        registry.setWashTradingFlag(SELLER, true);
 
         assertFalse(policy.canClaimSellerUnlocked(SELLER));
         assertEq(policy.claimableSellerRewards(SELLER, LOCKED), 0);

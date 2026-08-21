@@ -8,9 +8,11 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
-- Contracts: added immutable RISC Zero P0 enforcement for authenticated closed-loop and reciprocal wash trading. Pinned guests own all predicate thresholds and publish minimal subject-plus-block-reference journals; Solidity verifies the receipt, Base chain, and canonical blocks before recording a monotonic seller flag. A minimal wash-trading reward policy blocks both immediate and locked seller reward claims without importing inactivity or staking rules.
+- Contracts: added immutable RISC Zero enforcement for authenticated closed-loop and reciprocal wash trading. Pinned guests own all predicate thresholds and publish minimal subject-plus-block-reference journals; Solidity verifies the receipt, Base chain, and canonical blocks before recording a monotonic wash-trading flag.
 
 - Contracts: added a points-policy registry that combines up to eight category-aware buyer/seller penalties behind usage accounting's existing hook. It takes the maximum penalty per category, adds category penalties with a 9,000-BPS soft ceiling, and treats 10,000 BPS as a hard veto. New recognized-usage deployments install an empty pass-through registry by default; policy failures fail closed without blocking settlement.
+
+- Contracts: added a seller-reward policy registry that preserves and composes existing immediate and locked-claim policies with separate historical-release and wash-trading gates. Historical claims fail closed until canonical backfill is complete and an owner records the signed proof-release digest; the one-way release enables unflagged claims while flagged sellers remain blocked.
 
 - Desktop: added seller-assisted channel closing to Activity for sellers advertising `payments.cooperative-close.v1`, with clear rejection feedback and the existing wallet-based on-chain close retained as a permanent fallback.
 

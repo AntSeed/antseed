@@ -111,7 +111,7 @@ contract AntseedBaseCheckpointOracleTest is Test {
         verifier.expect(sellerImageId, sha256(sellerJournalData), SEAL);
 
         assertTrue(registry.submitClosedCycleProof(SEAL, sellerJournalData));
-        assertTrue(registry.isSellerP0(address(0x515E12)));
+        assertTrue(registry.isSellerWashTradingFlagged(address(0x515E12)));
     }
 
     function test_exactReplayIsIdempotent() public {

@@ -61,18 +61,37 @@ require historical `eth_getProof`. Every committed `(blockNumber, blockHash)`
 must be accepted by the finalized Base state oracle. The registry does not trust
 a report root, mutable funder allowlist, or generic router attribution.
 
-Accepted closed-loop sellers are recorded as P0. Reciprocal proofs record both
-addresses as P0. The registry stores one monotonic boolean per seller. The
-pinned guest images are the executable authority for predicate thresholds and
-evidence semantics; their public journals contain only the affected seller or
-normalized pair plus the Base block references that Solidity must check for
-canonicality.
+Accepted closed-loop proofs flag the seller. Reciprocal proofs flag both
+addresses. The registry stores only one monotonic wash-trading boolean per
+seller. The pinned guest images are the executable authority for predicate
+thresholds and evidence semantics; their public journals contain only the
+affected seller or normalized pair plus the Base block references that Solidity
+must check for canonicality.
 
-`AntseedWashTradingRewardPolicy` is configured on both `AntseedSellerRewardsPool` and
-`AntseedEmissionsV2`. It has one immutable dependency and blocks both immediate
-and locked reward claims exactly when `isSellerP0(seller)` is true. Inactivity,
-staking status, and settlement recency are not part of this proof-backed policy.
-Locked rewards remain owned by the seller and are never confiscated.
+Future points and seller reward claims use separate policy registries:
+
+- `AntseedPointsPolicyRegistry` is the `AntseedUsageAccounting` points hook. It
+  evaluates at most eight category-aware leaves with a 100,000-gas allowance
+  each. Same-category penalties take the maximum, different categories add,
+  soft penalties cap at 9,000 BPS, and 10,000 BPS is a hard veto. An empty
+  registry passes raw points through. `AntseedWashTradingPointsPolicy` is the
+  wash-trading leaf and hard-vetoes future buyer and seller points associated
+  with a flagged seller.
+- `AntseedSellerRewardPolicyRegistry` implements both seller reward hooks. Every
+  applicable policy must approve immediate claims, while locked claims use the
+  minimum amount returned by applicable policies. Missing applicable policies,
+  failures, malformed results, and invalid amounts fail closed. Deployment
+  preserves the policies already installed on either hook, then adds
+  `AntseedHistoricalClaimsPolicy` and `AntseedWashTradingRewardPolicy` to both
+  routes.
+
+`AntseedHistoricalClaimsPolicy` blocks both seller reward routes until the Base
+state oracle reports complete historical coverage and the owner finalizes the
+backfill with a nonzero signed proof-release digest. Finalization is one-way.
+After release, the wash-trading reward policy continues to block flagged sellers
+on both routes. Inactivity, staking status, and settlement recency remain the
+responsibility of any separately registered policy. Locked rewards remain owned
+by the seller and are never confiscated.
 
 The exact guarantees, thresholds, pinned addresses/code hashes/storage slots,
 journal schemas, explicit non-guarantees, and production commands are specified
@@ -82,6 +101,16 @@ verification, Base chain binding, and canonical-block checks are the executable
 authority.
 
 ### Proof deployment gates
+
+The safe deployment and release order is:
+
+1. Install `AntseedSellerRewardPolicyRegistry` with the historical gate active.
+2. Backfill canonical historical coverage in the Base state oracle.
+3. Submit the complete wash-trading proof batch.
+4. Verify the signed proof-release manifest and its digest.
+5. Run `FinalizeSellerRewardBackfill.s.sol` with that digest.
+6. Allow unflagged historical rewards while flagged sellers remain blocked.
+7. Register `AntseedWashTradingPointsPolicy` independently for future accrual.
 
 Historical canonical state and seller proof submission are separate actions.
 The strict `antseed-base-state-plan` v1 file exists only to populate the

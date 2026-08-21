@@ -7,7 +7,7 @@ const REGISTRY_ABI = [
   "function closedCycleImageId() view returns (bytes32)",
   "function reciprocalImageId() view returns (bytes32)",
   "function stateOracle() view returns (address)",
-  "function isSellerP0(address seller) view returns (bool)",
+  "function isSellerWashTradingFlagged(address seller) view returns (bool)",
   "function submitClosedCycleProof(bytes seal,bytes journalData) returns (bool)",
   "function submitReciprocalProof(bytes seal,bytes journalData) returns (bool,bool)",
 ];
@@ -57,7 +57,7 @@ export async function runSubmission({
     if (normalizeBytes32(entry.imageId) !== normalizeBytes32(images[config.image])) {
       throw new Error(`${entry.claimId}: image ID mismatch`);
     }
-    if (await subjectsAreP0(registry, decoded.subjects)) {
+    if (await subjectsAreWashTradingFlagged(registry, decoded.subjects)) {
       results.push({ claimId: entry.claimId, status: "already-p0" });
       continue;
     }
@@ -79,8 +79,8 @@ export async function runSubmission({
       const pending = await verifyRecordedSubmission(provider, transaction, entry, registryAddress, existing);
       if (pending) throw new Error(`${entry.claimId}: recorded submission ${existing.hash} is still pending`);
       if (existing.receipt.status === 1) {
-        if (!await subjectsAreP0(registry, decoded.subjects)) {
-          throw new Error(`${entry.claimId}: recorded submission succeeded but did not mark every subject P0`);
+        if (!await subjectsAreWashTradingFlagged(registry, decoded.subjects)) {
+          throw new Error(`${entry.claimId}: recorded submission succeeded but did not flag every subject`);
         }
         results.push({ claimId: entry.claimId, status: "submitted", transactionHash: existing.hash });
         continue;
@@ -96,8 +96,8 @@ export async function runSubmission({
     await onPersist(resume);
     const receipt = await response.wait();
     if (receipt.status !== 1) throw new Error(`${entry.claimId}: submission reverted`);
-    if (!await subjectsAreP0(registry, decoded.subjects)) {
-      throw new Error(`${entry.claimId}: submission succeeded but did not mark every subject P0`);
+    if (!await subjectsAreWashTradingFlagged(registry, decoded.subjects)) {
+      throw new Error(`${entry.claimId}: submission succeeded but did not flag every subject`);
     }
     resume.transactions[entry.claimId].receipt = {
       status: receipt.status,
@@ -194,8 +194,8 @@ export function decodeAndValidateEntry(entry, chainId = 8_453) {
   return { blockRefs: decoded.blockRefs, subjects };
 }
 
-async function subjectsAreP0(registry, subjects) {
-  return (await Promise.all(subjects.map((subject) => registry.isSellerP0(subject)))).every(Boolean);
+async function subjectsAreWashTradingFlagged(registry, subjects) {
+  return (await Promise.all(subjects.map((subject) => registry.isSellerWashTradingFlagged(subject)))).every(Boolean);
 }
 
 function normalizeBytes32(value) {
