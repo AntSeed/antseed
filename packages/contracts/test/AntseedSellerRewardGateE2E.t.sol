@@ -9,7 +9,6 @@ import { AntseedWashTradingRegistry } from "../integrity/AntseedWashTradingRegis
 import { IAntseedChannels } from "../interfaces/IAntseedChannels.sol";
 import { AntseedEmissions } from "../legacy/AntseedEmissions.sol";
 import { AntseedEmissionsV2 } from "../legacy/AntseedEmissionsV2.sol";
-import { AntseedSellerRewardPolicyRegistry } from "../policies/AntseedSellerRewardPolicyRegistry.sol";
 import { AntseedWashTradingRewardPolicy } from "../policies/AntseedWashTradingRewardPolicy.sol";
 import { AntseedSellerRewardsPool } from "../rewards/AntseedSellerRewardsPool.sol";
 
@@ -65,7 +64,6 @@ contract SellerRewardGateE2ETest is Test {
     AntseedEmissionsV2 internal emissions;
     AntseedSellerRewardsPool internal rewardsPool;
     AntseedWashTradingRegistry internal washRegistry;
-    AntseedSellerRewardPolicyRegistry internal rewardPolicyRegistry;
     AntseedWashTradingRewardPolicy internal washTradingRewardPolicy;
     RewardGateOracleMock internal baseStateOracle;
     RewardGateStakingMock internal staking;
@@ -99,11 +97,10 @@ contract SellerRewardGateE2ETest is Test {
         washRegistry = new AntseedWashTradingRegistry(
             address(new RewardGateVerifierMock()), address(baseStateOracle), bytes32(uint256(1)), bytes32(uint256(2))
         );
-        rewardPolicyRegistry = new AntseedSellerRewardPolicyRegistry(address(baseStateOracle), address(this));
-        washTradingRewardPolicy = new AntseedWashTradingRewardPolicy(address(washRegistry));
-        rewardPolicyRegistry.registerPolicy(address(washTradingRewardPolicy), true, true);
-        emissions.setSellerUnlockPolicy(address(rewardPolicyRegistry));
-        rewardsPool.setSellerClaimPolicy(address(rewardPolicyRegistry));
+        washTradingRewardPolicy =
+            new AntseedWashTradingRewardPolicy(address(washRegistry), address(baseStateOracle), address(this));
+        emissions.setSellerUnlockPolicy(address(washTradingRewardPolicy));
+        rewardsPool.setSellerClaimPolicy(address(washTradingRewardPolicy));
         token.setTransferWhitelist(address(rewardsPool), true);
     }
 
@@ -176,7 +173,7 @@ contract SellerRewardGateE2ETest is Test {
 
     function _finalizeBackfill() internal {
         baseStateOracle.setHistoricalCoverageComplete(true);
-        rewardPolicyRegistry.finalizeBackfill(keccak256("complete-proof-release"));
+        washTradingRewardPolicy.finalizeBackfill(keccak256("complete-proof-release"));
     }
 
     function _submitWashTradingProof(address seller) internal {

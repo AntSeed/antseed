@@ -264,11 +264,11 @@ The proofs use authenticated receipt and transaction inclusion and do not requir
 
 After the verifier accepts the receipt, `IBaseAnalysisStateOracle` must authenticate every referenced historical Base block from finalized OP Stack/L1 commitments. An RPC response is not production-safe, and EVM `blockhash()` reaches only 256 blocks. A valid proof records a permanent wash-trading flag for every affected seller. `AntseedWashTradingPointsPolicy`, when registered, converts that flag into a 10,000-BPS hard veto for both sides of future usage involving that seller.
 
-Future points and historical seller rewards are independent policy layers. `AntseedPointsPolicyRegistry` controls accrual and registers `AntseedWashTradingPointsPolicy` as one bounded leaf. `AntseedSellerRewardPolicyRegistry` controls immediate and locked seller rewards while preserving policies previously configured on either route. Immediate claims require every applicable policy to approve; locked claims use the minimum amount returned by applicable policies. An empty applicable policy list, failed call, malformed result, invalid boolean, or amount above the locked balance fails closed.
+Future points and historical seller rewards are independent policy layers. `AntseedPointsPolicyRegistry` controls accrual and registers `AntseedWashTradingPointsPolicy` as one bounded leaf. `AntseedWashTradingRewardPolicy` is installed directly on both seller reward routes because wash trading is the only seller-reward restriction. It blocks immediate and locked claims for flagged sellers.
 
-The reward registry directly blocks all seller claims until the Base state oracle reports `historicalCoverageComplete()` and the owner records a nonzero signed proof-release digest with `finalizeBackfill`. This one-way release attests that the complete wash-trading proof batch was submitted. After release, the registry evaluates `AntseedWashTradingRewardPolicy` and the preserved existing policies, so unflagged sellers can claim while flagged sellers remain blocked.
+The reward policy blocks all seller claims until the Base state oracle reports `historicalCoverageComplete()` and the owner records a nonzero signed proof-release digest with `finalizeBackfill`. This one-way release attests that the complete wash-trading proof batch was submitted. After release, unflagged sellers can claim while flagged sellers remain blocked.
 
-Operators install the reward registry before backfilling, complete canonical historical coverage, submit the complete proof batch, verify its signed release manifest, and run `FinalizeSellerRewardBackfill.s.sol` with the manifest digest. Future-points enforcement is installed independently with `RegisterWashTradingPointsPolicy.s.sol`.
+Operators install the reward policy before backfilling, complete canonical historical coverage, submit the complete proof batch, verify its signed release manifest, and run `FinalizeSellerRewardBackfill.s.sol` with the manifest digest. Future-points enforcement is installed independently with `RegisterWashTradingPointsPolicy.s.sol`.
 
 #### Per-Epoch Pro-Rata Distribution
 
@@ -293,7 +293,7 @@ Sellers call `claimSellerEmissions(epochs[])` for finalized epochs.
 
 If `sellerUnlockPolicy.canClaimSellerUnlocked(seller)` returns true, ANTS are minted directly to the seller.
 
-If the policy returns false (or is not set), ANTS are minted to `AntseedSellerRewardsPool` and recorded as locked for that seller. Both claim routes point to `AntseedSellerRewardPolicyRegistry`, so existing unlock-only and claim-only rules compose with the historical-release and wash-trading policies instead of being replaced. Before backfill finalization, all historical seller rewards remain locked. After finalization, unflagged sellers may claim while flagged sellers remain blocked. Rewards are held, not forfeited or redirected.
+If the policy returns false (or is not set), ANTS are minted to `AntseedSellerRewardsPool` and recorded as locked for that seller. Both claim routes point directly to `AntseedWashTradingRewardPolicy`. Before backfill finalization, all historical seller rewards remain locked. After finalization, unflagged sellers may claim while flagged sellers remain blocked. Rewards are held, not forfeited or redirected.
 
 #### Buyer Claiming
 

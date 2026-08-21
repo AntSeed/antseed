@@ -3,30 +3,30 @@ pragma solidity ^0.8.24;
 
 import { Script, console } from "forge-std/Script.sol";
 
-import { AntseedSellerRewardPolicyRegistry } from "../policies/AntseedSellerRewardPolicyRegistry.sol";
+import { AntseedWashTradingRewardPolicy } from "../policies/AntseedWashTradingRewardPolicy.sol";
 
 /**
  * Required env:
  *   DEPLOYER_PRIVATE_KEY
- *   SELLER_REWARD_POLICY_REGISTRY
+ *   WASH_TRADING_REWARD_POLICY
  *   PROOF_RELEASE_DIGEST
  */
 contract FinalizeSellerRewardBackfill is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        address registryAddress = vm.envAddress("SELLER_REWARD_POLICY_REGISTRY");
+        address policyAddress = vm.envAddress("WASH_TRADING_REWARD_POLICY");
         bytes32 proofReleaseDigest = vm.envBytes32("PROOF_RELEASE_DIGEST");
-        require(registryAddress.code.length != 0, "seller reward registry has no code");
+        require(policyAddress.code.length != 0, "wash trading reward policy has no code");
         require(proofReleaseDigest != bytes32(0), "proof release digest is zero");
 
-        AntseedSellerRewardPolicyRegistry registry = AntseedSellerRewardPolicyRegistry(registryAddress);
+        AntseedWashTradingRewardPolicy policy = AntseedWashTradingRewardPolicy(policyAddress);
         vm.startBroadcast(deployerPrivateKey);
-        registry.finalizeBackfill(proofReleaseDigest);
+        policy.finalizeBackfill(proofReleaseDigest);
         vm.stopBroadcast();
 
-        require(registry.backfillFinalized(), "backfill not finalized");
-        require(registry.proofReleaseDigest() == proofReleaseDigest, "proof release digest mismatch");
-        console.log("SellerRewardPolicyRegistry:", registryAddress);
+        require(policy.backfillFinalized(), "backfill not finalized");
+        require(policy.proofReleaseDigest() == proofReleaseDigest, "proof release digest mismatch");
+        console.log("WashTradingRewardPolicy:", policyAddress);
         console.logBytes32(proofReleaseDigest);
     }
 }

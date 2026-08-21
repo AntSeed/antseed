@@ -6,14 +6,15 @@ import { AntseedWashTradingRegistry } from "../integrity/AntseedWashTradingRegis
 import { AntseedWashTradingRewardPolicy } from "../policies/AntseedWashTradingRewardPolicy.sol";
 
 contract AntseedWashTradingContractSizeTest is Test {
-    uint256 private constant POLICY_RUNTIME_SIZE_LIMIT = 1_024;
+    uint256 private constant POLICY_RUNTIME_SIZE_LIMIT = 2_048;
     uint256 private constant REGISTRY_RUNTIME_SIZE_LIMIT = 3_072;
     address private constant VERIFIER = address(0x1111);
     address private constant STATE_ORACLE = address(0x2222);
 
     function test_policyRuntimeSizeRemainsMinimal() public {
         vm.etch(STATE_ORACLE, hex"00");
-        AntseedWashTradingRewardPolicy policy = new AntseedWashTradingRewardPolicy(STATE_ORACLE);
+        AntseedWashTradingRewardPolicy policy =
+            new AntseedWashTradingRewardPolicy(STATE_ORACLE, STATE_ORACLE, address(this));
 
         assertLt(address(policy).code.length, POLICY_RUNTIME_SIZE_LIMIT);
     }

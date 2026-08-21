@@ -68,7 +68,7 @@ thresholds and evidence semantics; their public journals contain only the
 affected seller or normalized pair plus the Base block references that Solidity
 must check for canonicality.
 
-Future points and seller reward claims use separate policy registries:
+Future points and seller reward claims use separate policy hooks:
 
 - `AntseedPointsPolicyRegistry` is the `AntseedUsageAccounting` points hook. It
   evaluates at most eight category-aware leaves with a 100,000-gas allowance
@@ -77,20 +77,15 @@ Future points and seller reward claims use separate policy registries:
   registry passes raw points through. `AntseedWashTradingPointsPolicy` is the
   wash-trading leaf and hard-vetoes future buyer and seller points associated
   with a flagged seller.
-- `AntseedSellerRewardPolicyRegistry` implements both seller reward hooks. Every
-  applicable policy must approve immediate claims, while locked claims use the
-  minimum amount returned by applicable policies. Missing applicable policies,
-  failures, malformed results, and invalid amounts fail closed. Deployment
-  preserves the policies already installed on either hook, then adds
-  `AntseedWashTradingRewardPolicy` to both routes.
+- `AntseedWashTradingRewardPolicy` implements both seller reward hooks directly.
+  Before release it blocks all immediate and locked claims. After release it
+  allows unflagged sellers and blocks flagged sellers on both routes.
 
-The reward registry itself blocks both seller reward routes until the Base state
+The reward policy blocks both seller reward routes until the Base state
 oracle reports complete historical coverage and the owner finalizes the backfill
 with a nonzero signed proof-release digest. Finalization is one-way. After
-release, the wash-trading reward policy continues to block flagged sellers on
-both routes. Inactivity, staking status, and settlement recency remain the
-responsibility of any separately registered policy. Locked rewards remain owned
-by the seller and are never confiscated.
+release, it continues to block flagged sellers on both routes. Locked rewards
+remain owned by the seller and are never confiscated.
 
 The exact guarantees, thresholds, pinned addresses/code hashes/storage slots,
 journal schemas, explicit non-guarantees, and production commands are specified
@@ -103,7 +98,7 @@ authority.
 
 The safe deployment and release order is:
 
-1. Install `AntseedSellerRewardPolicyRegistry` with the historical gate active.
+1. Install `AntseedWashTradingRewardPolicy` on both seller reward routes with the historical gate active.
 2. Submit the EIP-2935-anchored history accumulator and materialize every required block hash.
 3. Submit the complete wash-trading proof batch.
 4. Verify the signed proof-release manifest and its digest.

@@ -5,13 +5,11 @@ import { Script, console } from "forge-std/Script.sol";
 
 import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
 import { AntseedEmissionsV2 } from "../legacy/AntseedEmissionsV2.sol";
-import { AntseedSellerRewardPolicyRegistry } from "../policies/AntseedSellerRewardPolicyRegistry.sol";
 import { AntseedWashTradingRewardPolicy } from "../policies/AntseedWashTradingRewardPolicy.sol";
 import { AntseedSellerRewardsPool } from "../rewards/AntseedSellerRewardsPool.sol";
 
 /**
- * @notice Installs a bounded seller-reward policy registry while preserving
- *         the policies already configured on both seller claim routes.
+ * @notice Installs the wash-trading policy on both seller reward routes.
  *
  * Required env:
  *   DEPLOYER_PRIVATE_KEY
@@ -20,13 +18,7 @@ import { AntseedSellerRewardsPool } from "../rewards/AntseedSellerRewardsPool.so
  *   WASH_TRADING_REGISTRY
  */
 contract DeploySellerRewardGate is Script {
-    function run()
-        external
-        returns (
-            AntseedSellerRewardPolicyRegistry rewardPolicyRegistry,
-            AntseedWashTradingRewardPolicy washTradingRewardPolicy
-        )
-    {
+    function run() external returns (AntseedWashTradingRewardPolicy washTradingRewardPolicy) {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
         address registryAddress = vm.envAddress("ANTSEED_REGISTRY");
@@ -46,44 +38,21 @@ contract DeploySellerRewardGate is Script {
         require(emissions.owner() == deployer, "deployer must own emissions");
         require(rewardsPool.owner() == deployer, "deployer must own rewards pool");
 
-        address existingUnlockPolicy = address(emissions.sellerUnlockPolicy());
-        address existingClaimPolicy = address(rewardsPool.sellerClaimPolicy());
-
         vm.startBroadcast(deployerPrivateKey);
-        rewardPolicyRegistry = new AntseedSellerRewardPolicyRegistry(baseStateOracle, deployer);
-        washTradingRewardPolicy = new AntseedWashTradingRewardPolicy(washTradingRegistry);
-
-        if (existingUnlockPolicy != address(0) && existingUnlockPolicy == existingClaimPolicy) {
-            rewardPolicyRegistry.registerPolicy(existingUnlockPolicy, true, true);
-        } else {
-            if (existingUnlockPolicy != address(0)) {
-                rewardPolicyRegistry.registerPolicy(existingUnlockPolicy, true, false);
-            }
-            if (existingClaimPolicy != address(0)) {
-                rewardPolicyRegistry.registerPolicy(existingClaimPolicy, false, true);
-            }
-        }
-        rewardPolicyRegistry.registerPolicy(address(washTradingRewardPolicy), true, true);
-
-        emissions.setSellerUnlockPolicy(address(rewardPolicyRegistry));
-        rewardsPool.setSellerClaimPolicy(address(rewardPolicyRegistry));
+        washTradingRewardPolicy = new AntseedWashTradingRewardPolicy(washTradingRegistry, baseStateOracle, deployer);
+        emissions.setSellerUnlockPolicy(address(washTradingRewardPolicy));
+        rewardsPool.setSellerClaimPolicy(address(washTradingRewardPolicy));
         vm.stopBroadcast();
 
-        require(address(emissions.sellerUnlockPolicy()) == address(rewardPolicyRegistry), "emissions policy mismatch");
-        require(address(rewardsPool.sellerClaimPolicy()) == address(rewardPolicyRegistry), "pool policy mismatch");
-        require(rewardPolicyRegistry.isPolicyRegistered(address(washTradingRewardPolicy)), "wash policy not registered");
-        if (existingUnlockPolicy != address(0)) {
-            require(rewardPolicyRegistry.isPolicyRegistered(existingUnlockPolicy), "unlock policy not preserved");
-        }
-        if (existingClaimPolicy != address(0)) {
-            require(rewardPolicyRegistry.isPolicyRegistered(existingClaimPolicy), "claim policy not preserved");
-        }
+        require(
+            address(emissions.sellerUnlockPolicy()) == address(washTradingRewardPolicy), "emissions policy mismatch"
+        );
+        require(address(rewardsPool.sellerClaimPolicy()) == address(washTradingRewardPolicy), "pool policy mismatch");
 
-        console.log("SellerRewardPolicyRegistry:", address(rewardPolicyRegistry));
-        console.log("WashTradingRewardPolicy:   ", address(washTradingRewardPolicy));
-        console.log("AntseedEmissionsV2:        ", emissionsAddress);
-        console.log("SellerRewardsPool:         ", rewardsPoolAddress);
-        console.log("BaseStateOracle:           ", baseStateOracle);
-        console.log("WashTradingRegistry:       ", washTradingRegistry);
+        console.log("WashTradingRewardPolicy:", address(washTradingRewardPolicy));
+        console.log("AntseedEmissionsV2:     ", emissionsAddress);
+        console.log("SellerRewardsPool:      ", rewardsPoolAddress);
+        console.log("BaseStateOracle:        ", baseStateOracle);
+        console.log("WashTradingRegistry:    ", washTradingRegistry);
     }
 }
