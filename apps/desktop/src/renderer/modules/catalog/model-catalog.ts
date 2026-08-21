@@ -150,14 +150,38 @@ export function projectRowsToVprModelCatalog(
  *  entry wins. */
 export const FREE_MODEL_PRIORITY: ReadonlyArray<RegExp> = [
   /deep-?seek.*flash/,
+  // "ox-alpha" / "ox alpha", not the tail of e.g. "fox-alpha".
+  /(^|[^a-z])ox[-\s]?alpha/,
+  /gpt[-\s]?oss[-\s]?120b/,
   /minimax[-\s]?m?[-\s]?3/,
   /minimax[-\s]?m?[-\s]?2\.7/,
   /haiku/,
   /qwen[-\s]?3[-\s]?235b/,
-  /nemotron[-\s]?3[-\s]?super/,
+  /gpt[-\s]?oss[-\s]?20b/,
+  /glm[-\s]?4.*flash/,
+  /nemotron[-\s]?3[-\s]?(?:super|ultra)/,
+  /nemotron[-\s]?120b/,
   /gemma/,
   /mistral[-\s]?large/,
 ];
+
+/**
+ * Stable-order free entries so the hardcoded priority lineup leads: entries
+ * matching an earlier FREE_MODEL_PRIORITY slot come first; entries outside
+ * every slot follow in their incoming (availability) order. Used by the
+ * free-first surfaces (Home dropdown lead, Models recommended frame) so a
+ * curated free model isn't buried just because few sellers serve it.
+ */
+export function sortFreeModelsByPriority(
+  entries: VprModelCatalogEntry[],
+): VprModelCatalogEntry[] {
+  const slotFor = (entry: VprModelCatalogEntry): number => {
+    const text = entryMatchText(entry);
+    const index = FREE_MODEL_PRIORITY.findIndex((pattern) => pattern.test(text));
+    return index === -1 ? FREE_MODEL_PRIORITY.length : index;
+  };
+  return [...entries].sort((a, b) => slotFor(a) - slotFor(b));
+}
 
 export function selectDefaultVprModel(
   catalog: VprModelCatalogEntry[],

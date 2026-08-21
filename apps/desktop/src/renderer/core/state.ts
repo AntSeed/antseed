@@ -39,6 +39,9 @@ export type PeerEntry = {
   port: number;
   providers: string[];
   services: string[];
+  /** Services this peer serves for $0 per its fetched pricing matrix — empty
+      until the peer's metadata has actually been resolved. */
+  freeServices: string[];
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
   capacityMsgPerHour: number;
@@ -277,6 +280,10 @@ export type RendererUiState = {
   /** 'blocked' = internet up but DHT unreachable (firewall/VPN dropping UDP);
       'no-peers' = on the DHT but discovery sweeps keep coming back empty. */
   networkAlert: 'none' | 'no-internet' | 'blocked' | 'no-peers';
+  /** Live DHT routing-table size from the buyer's status poll — the first
+      network signal that moves during startup, so the setup screen can show
+      bootstrap progress before any peer or service is discovered. */
+  dhtNodeCount: number;
 
   // --- Overview display ---
   overviewBadge: BadgeState;
@@ -402,6 +409,10 @@ export type RendererUiState = {
   vprModelCatalog: VprModelCatalogEntry[];
   /** Main text/connected-app route. Image models never replace this. */
   vprRouteSelection: VprRouteSelection;
+  /** True while the auto-picked default model is provisional: no trusted free
+   * route is discovered yet, so the pick keeps being re-evaluated. Surfaces a
+   * "finding free peers" hint during the first-use discovery warm-up. */
+  vprDefaultModelProvisional: boolean;
   /** Dedicated internal-chat image route, set only by “Use in chat”. */
   chatImageRouteSelection: VprRouteSelection | null;
   /** Remembered seller pin per model (`provider:serviceId` -> peer id), so a
@@ -464,6 +475,7 @@ export function createInitialUiState(): RendererUiState {
 
     // Network reachability alert
     networkAlert: 'none',
+    dhtNodeCount: 0,
 
     // Overview
     overviewBadge: { tone: 'idle', label: 'Idle' },
@@ -566,6 +578,7 @@ export function createInitialUiState(): RendererUiState {
       mode: 'auto',
       peerId: null,
     },
+    vprDefaultModelProvisional: false,
     chatImageRouteSelection: null,
     vprModelPins: {},
     vprRoutingPreferences: {

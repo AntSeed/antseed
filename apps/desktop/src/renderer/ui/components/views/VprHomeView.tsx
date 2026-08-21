@@ -15,7 +15,7 @@ import type { VprModelCatalogEntry } from '../../../core/state';
 import { getUiStateRef } from '../../../core/store';
 import { activeProfilesFromRuntimeState } from '../../../modules/routing/tools';
 import { pinnedSellerLabel, pinnedSellerLabels } from '../../../modules/catalog/view-models';
-import { findCatalogEntry } from '../../../modules/catalog/model-catalog';
+import { findCatalogEntry, sortFreeModelsByPriority } from '../../../modules/catalog/model-catalog';
 import { computeMeasuredSavings, formatSavedUsd } from '../../../modules/catalog/measured-savings';
 import { ensureOpenRouterPrices, getCachedOpenRouterPrices } from '../../../modules/catalog/openrouter-baseline';
 import { displayModelLabel } from '../../../modules/catalog/model-identity';
@@ -30,6 +30,7 @@ import { buyerConversationsResource, systemProxyResource } from '../../../module
 import { useCachedResource } from '../../../modules/app/cached-resource';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
+import { useEverFunded } from '../../hooks/useEverFunded';
 import type { ViewName } from '../../types';
 import { OverlayScrollArea } from '../OverlayScrollArea';
 import { BottomNotice } from '../BottomNotice';
@@ -47,6 +48,8 @@ const RESTART_NOTICE_DISMISSED_KEY = 'antseed.desktop.vpr.restartNoticeDismissed
 const MODEL_CHANGE_NOTICE_MS = 4_000;
 /* Rows in the model dropdown (Figma) — the full catalog lives on Models. */
 const DROPDOWN_MODEL_COUNT = 5;
+/* Free rows leading the dropdown before the first deposit ever lands. */
+const DROPDOWN_FREE_COUNT = 3;
 
 function isFreeEntry(entry: VprModelCatalogEntry | undefined): boolean {
   if (!entry || entry.kind === 'image') return false;
@@ -61,6 +64,7 @@ export function VprHomeView({ onSelectView }: Props) {
     selection: state.vprRouteSelection,
     modelPins: state.vprModelPins,
     discoverRows: state.vprRoutableRows,
+    defaultProvisional: state.vprDefaultModelProvisional,
     processes: state.processes,
     connectBadge: state.connectBadge,
     usage: state.creditsBuyerUsage,
@@ -95,6 +99,9 @@ export function VprHomeView({ onSelectView }: Props) {
       return false;
     }
   });
+  // Gates the model dropdown lineup — free-only before funding, the regular
+  // popular lineup permanently after (even if the balance drains to zero).
+  const everFunded = useEverFunded();
 
   const runtimeOn = snap.processes.some((process) => process.mode === 'connect' && process.running === true);
 
@@ -223,12 +230,29 @@ export function VprHomeView({ onSelectView }: Props) {
     const favoriteEntries = selectFavoriteVprCatalog(textCatalog, favorites);
     const recommended = selectRecommendedVprCatalog(textCatalog)
       .filter((entry) => !favorites.has(catalogEntryKey(entry)));
-    const top = [...favoriteEntries, ...recommended].slice(0, DROPDOWN_MODEL_COUNT);
-    if (selectedEntry?.kind === 'text' && !top.includes(selectedEntry)) {
-      return [selectedEntry, ...top.slice(0, DROPDOWN_MODEL_COUNT - 1)];
+    // Until the first deposit ever lands, the dropdown leads with the three
+    // most available trusted free models — paid rows would just 402 for an
+    // unfunded user — and the remaining rows come from the regular popular
+    // lineup. The first deposit switches to that lineup alone, for good.
+    // (While discovery is still cold there are no eligible free offers yet;
+    // the hero shows "Finding free peers…" and the lineup fills the gap.)
+    const freeLead = everFunded
+      ? []
+      : sortFreeModelsByPriority(textCatalog.filter((entry) => entry.hasEligibleFreeSeller))
+          .slice(0, DROPDOWN_FREE_COUNT);
+    const top: VprModelCatalogEntry[] = [];
+    for (const entry of [...favoriteEntries, ...freeLead, ...recommended]) {
+      if (top.length >= DROPDOWN_MODEL_COUNT) break;
+      if (!top.includes(entry)) top.push(entry);
+    }
+    // The selected model leads, matching the Models page — hoisted when it is
+    // already listed, prepended when it isn't.
+    if (selectedEntry?.kind === 'text' && top[0] !== selectedEntry) {
+      const rest = top.filter((entry) => entry !== selectedEntry);
+      return [selectedEntry, ...rest.slice(0, DROPDOWN_MODEL_COUNT - 1)];
     }
     return top;
-  }, [favorites, selectedEntry, snap.catalog]);
+  }, [everFunded, favorites, selectedEntry, snap.catalog]);
 
   // Every listed model that remembers a pin names its seller, not just the
   // selected one — pins survive switching models.
@@ -421,6 +445,12 @@ export function VprHomeView({ onSelectView }: Props) {
                       ?? (selectedModel ? displayModelLabel(selectedModel.serviceId, selectedModel.label) : 'None selected')}
                   </span>
                   {modelIsFree && <span className={styles.freeTag}>Free</span>}
+                  {/* First-use warm-up: the default is provisional while no
+                      trusted free seller is discovered yet — say so instead of
+                      presenting the paid fallback as a settled choice. */}
+                  {!modelIsFree && snap.defaultProvisional && (
+                    <span className={styles.searchingTag}>Finding free peers…</span>
+                  )}
                 </span>
                 <span className={styles.modelCardCaption}>
                   <span>Model for new chats</span>

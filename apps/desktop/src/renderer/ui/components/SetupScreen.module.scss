@@ -1,5 +1,5 @@
 /* ===================================================================
-   SetupScreen — first-run installation screen
+   SetupScreen — first-run screen: finding a free model on the network
    =================================================================== */
 
 /* Nothing visible on top — just an invisible drag handle so the frameless
@@ -58,63 +58,93 @@
 
 .subtitle {
   font-size: 13px;
+  line-height: 1.5;
   color: var(--text-muted);
-  margin: 0 0 32px;
+  margin: 0 0 28px;
+  max-width: 320px;
 }
 
 /* ------------------------------------------------------------------ */
-/*  Steps list                                                         */
+/*  Live discovery tallies                                             */
 /* ------------------------------------------------------------------ */
 
-.steps {
+.statRow {
+  display: flex;
+  width: 100%;
+  gap: 8px;
+}
+
+.statTile {
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  width: 100%;
+  align-items: center;
+  gap: 4px;
+  padding: 14px 6px 12px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 16px 20px;
 }
 
-.stepRow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
+.statIcon {
+  color: var(--text-muted);
+  transition: color 0.3s ease;
 
-.stepIcon {
-  width: 18px;
-  height: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.stepDot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--border-strong);
-}
-
-.stepLabel {
-  font-size: 13px;
-  color: var(--text-secondary);
-  transition: color 0.2s ease;
-
-  .done & {
-    color: var(--text-primary);
+  .statLive & {
+    color: var(--accent-green);
   }
+}
 
-  .active & {
+.statValue {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 24px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+
+  .statLive & {
     color: var(--text-primary);
+    animation: stat-pop 0.35s ease;
   }
+}
+
+@keyframes stat-pop {
+  0%   { transform: scale(1.25); }
+  100% { transform: scale(1);    }
+}
+
+.statLabel {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
 /* ------------------------------------------------------------------ */
-/*  Thinking dots (spinner for active step)                            */
+/*  Current activity — what the buyer node is doing right now          */
+/* ------------------------------------------------------------------ */
+
+.activity {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  /* Fixed height so phase swaps (and the ready state taking over)
+     never shift the layout below. */
+  height: 20px;
+  margin-top: 22px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  animation: rise-in 0.35s ease;
+}
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Thinking dots (spinner for the active phase)                       */
 /* ------------------------------------------------------------------ */
 
 @keyframes thinking-dot-pulse {
@@ -146,17 +176,14 @@
 .ready {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  margin-top: 20px;
+  height: 20px;
+  margin-top: 22px;
   font-size: 13px;
   font-weight: 500;
   color: var(--accent-green);
-  animation: fade-in 0.4s ease;
-}
-
-@keyframes fade-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to   { opacity: 1; transform: translateY(0);   }
+  animation: rise-in 0.4s ease;
 }
 
 .readyDot {
@@ -165,6 +192,21 @@
   border-radius: 50%;
   background: var(--accent-green);
   flex-shrink: 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  First-run note — pinned to the bottom of the page                  */
+/* ------------------------------------------------------------------ */
+
+.firstRunNote {
+  position: absolute;
+  bottom: 24px;
+  left: 0;
+  right: 0;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
 }
 
 /* ------------------------------------------------------------------ */
@@ -182,5 +224,5 @@
   background: rgba(251, 191, 36, 0.08);
   border: 1px solid rgba(251, 191, 36, 0.2);
   border-radius: 8px;
-  animation: fade-in 0.4s ease;
+  animation: rise-in 0.4s ease;
 }

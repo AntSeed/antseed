@@ -18,6 +18,11 @@ describe('canonicalModelKey', () => {
     expect(sameCanonicalModel('minimax-m2.7-fast', 'minimax-m27-fast')).toBe(true);
   });
 
+  it('merges the stealth alias of ox-alpha, not other stealth names', () => {
+    expect(sameCanonicalModel('stealth-ox-alpha', 'ox-alpha')).toBe(true);
+    expect(sameCanonicalModel('stealth-model-x', 'model-x')).toBe(false);
+  });
+
   it('merges conservative flattened vendor prefixes', () => {
     expect(sameCanonicalModel('openai-gpt-56-sol', 'gpt-5.6-sol')).toBe(true);
     expect(sameCanonicalModel('zai-org-glm-5-2', 'glm-5.2')).toBe(true);

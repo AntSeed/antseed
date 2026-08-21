@@ -15,6 +15,13 @@ export type DashboardNetworkPeer = {
   port: number;
   providers: string[];
   services: string[];
+  /**
+   * Services this peer actually serves for $0 (cached tokens included), from
+   * its per-service pricing matrix — present only once the peer's metadata
+   * has been fetched, unlike the headline default prices which fall back to 0
+   * when unknown.
+   */
+  freeServices: string[];
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
   capacityMsgPerHour: number;
@@ -190,6 +197,27 @@ export function parsePeerFromRaw(pr: Record<string, unknown>): DashboardNetworkP
     ? (pr.services as unknown[]).filter((s): s is string => typeof s === 'string')
     : [];
 
+  // Per-service $0 offers from the announced pricing matrix. Every service
+  // listed there carries explicit prices, so a zero here means the seller
+  // really serves it free — the same judgement the routing free-gate makes.
+  const freeServices: string[] = [];
+  if (pr.providerPricing && typeof pr.providerPricing === 'object') {
+    for (const entry of Object.values(pr.providerPricing as Record<string, unknown>)) {
+      const serviceMap = (entry as { services?: unknown } | null)?.services;
+      if (!serviceMap || typeof serviceMap !== 'object') continue;
+      for (const [service, pricing] of Object.entries(serviceMap as Record<string, unknown>)) {
+        const p = pricing as { inputUsdPerMillion?: unknown; outputUsdPerMillion?: unknown; cachedInputUsdPerMillion?: unknown } | null;
+        if (!p) continue;
+        const input = Number(p.inputUsdPerMillion);
+        const output = Number(p.outputUsdPerMillion);
+        const cached = p.cachedInputUsdPerMillion === undefined || p.cachedInputUsdPerMillion === null
+          ? 0
+          : Number(p.cachedInputUsdPerMillion);
+        if (input === 0 && output === 0 && cached <= 0) freeServices.push(service);
+      }
+    }
+  }
+
   return {
     peerId: pr.peerId as string,
     displayName,
@@ -197,6 +225,7 @@ export function parsePeerFromRaw(pr: Record<string, unknown>): DashboardNetworkP
     port: peerPort,
     providers,
     services,
+    freeServices,
     inputUsdPerMillion: Number(pr.defaultInputUsdPerMillion) || 0,
     outputUsdPerMillion: Number(pr.defaultOutputUsdPerMillion) || 0,
     capacityMsgPerHour: (Number(pr.maxConcurrency) || 0) * 60,
@@ -251,6 +280,7 @@ export async function refreshPeerCache(): Promise<void> {
         peer.displayName = peer.displayName ?? existing.displayName;
         peer.providers = peer.providers.length > 0 ? peer.providers : existing.providers;
         peer.services = peer.services.length > 0 ? peer.services : existing.services;
+        peer.freeServices = peer.freeServices.length > 0 ? peer.freeServices : existing.freeServices;
         peer.inputUsdPerMillion = peer.inputUsdPerMillion || existing.inputUsdPerMillion;
         peer.outputUsdPerMillion = peer.outputUsdPerMillion || existing.outputUsdPerMillion;
         peer.capacityMsgPerHour = peer.capacityMsgPerHour || existing.capacityMsgPerHour;

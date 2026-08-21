@@ -21,6 +21,13 @@ export type VprModelRowListProps = {
   /** `provider:serviceId` keys of user-starred models — matching rows get a
    * star so favorites read apart from the recommended lineup. */
   favoriteKeys?: ReadonlySet<string>;
+  /** The first N rows are the lead recommendations: they render inside a thin
+   * framed group whose border is cut by a small label, so the lead picks read
+   * apart from the rest of the list without becoming a separate section. */
+  recommendedCount?: number;
+  /** Label cutting the frame's border. Defaults to "Recommended"; hosts whose
+   * lead picks are the user's starred models pass "Favorites". */
+  recommendedLabel?: string;
   /** Drop the card chrome (bg/radius/shadow) — for hosts that provide their
    * own panel, e.g. the Home model dropdown. */
   frameless?: boolean;
@@ -224,29 +231,6 @@ function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pi
   );
 }
 
-/** The currently selected model as a standalone card pinned above the list
- * (Figma: checked "model list" row with the "• Auto" badge). */
-export function VprSelectedModelCard({ entry, auto, pinnedPeerLabel, onClick }: {
-  entry: VprModelCatalogEntry;
-  /** Whether seller routing for the model is in auto mode. */
-  auto: boolean;
-  /** Seller the model is pinned to, shown in place of the peer count. */
-  pinnedPeerLabel?: string | null;
-  onClick: () => void;
-}): JSX.Element {
-  return (
-    <div className={styles.list}>
-      <ModelRow
-        entry={entry}
-        checked
-        badge={<VprBadge tone="primary">{auto ? '• Auto' : 'Pinned'}</VprBadge>}
-        pinnedPeerLabel={auto ? null : pinnedPeerLabel}
-        onClick={onClick}
-      />
-    </div>
-  );
-}
-
 export function VprModelRowList({
   entries,
   selectedProvider,
@@ -255,6 +239,8 @@ export function VprModelRowList({
   emptyLabel,
   limit,
   favoriteKeys,
+  recommendedCount,
+  recommendedLabel,
   frameless,
   compact,
   selectOnly,
@@ -284,38 +270,49 @@ export function VprModelRowList({
     }
   }
 
+  const renderRow = (entry: VprModelCatalogEntry): JSX.Element => {
+    const key = `${entry.provider}:${entry.serviceId}`;
+    const selected = Boolean(selectedServiceId) && (
+      (entry.provider === selectedProvider && entry.serviceId === selectedServiceId)
+      || sameCanonicalModel(entry.serviceId, selectedServiceId ?? '')
+    );
+    const free = isFreeEntry(entry);
+    // Pins are per model, so any row can name a seller — not just the
+    // selected one.
+    const pinned = pinnedPeerLabels?.get(key) ?? null;
+
+    return (
+      <ModelRow
+        key={key}
+        entry={entry}
+        checked={selected}
+        compact={compact}
+        chevron={!selectOnly}
+        pinnedPeerLabel={pinned}
+        favorite={favoriteKeys?.has(favoriteModelKey(entry.provider, entry.serviceId))}
+        badge={free ? (
+          <VprBadge tone="green">Free</VprBadge>
+        ) : key === cheapestKey ? (
+          <VprBadge tone="green">Cheapest</VprBadge>
+        ) : null}
+        onClick={() => onSelect(entry.provider, entry.serviceId)}
+        onConfigure={onConfigure ? () => onConfigure(entry.provider, entry.serviceId) : undefined}
+      />
+    );
+  };
+
+  const framedEntries = visibleEntries.slice(0, Math.max(0, recommendedCount ?? 0));
+  const plainEntries = visibleEntries.slice(framedEntries.length);
+
   return (
     <div className={frameless ? styles.listBare : styles.list}>
-      {visibleEntries.map((entry) => {
-        const key = `${entry.provider}:${entry.serviceId}`;
-        const selected = Boolean(selectedServiceId) && (
-          (entry.provider === selectedProvider && entry.serviceId === selectedServiceId)
-          || sameCanonicalModel(entry.serviceId, selectedServiceId ?? '')
-        );
-        const free = isFreeEntry(entry);
-        // Pins are per model, so any row can name a seller — not just the
-        // selected one.
-        const pinned = pinnedPeerLabels?.get(key) ?? null;
-
-        return (
-          <ModelRow
-            key={key}
-            entry={entry}
-            checked={selected}
-            compact={compact}
-            chevron={!selectOnly}
-            pinnedPeerLabel={pinned}
-            favorite={favoriteKeys?.has(favoriteModelKey(entry.provider, entry.serviceId))}
-            badge={free ? (
-              <VprBadge tone="green">Free</VprBadge>
-            ) : key === cheapestKey ? (
-              <VprBadge tone="green">Cheapest</VprBadge>
-            ) : null}
-            onClick={() => onSelect(entry.provider, entry.serviceId)}
-            onConfigure={onConfigure ? () => onConfigure(entry.provider, entry.serviceId) : undefined}
-          />
-        );
-      })}
+      {framedEntries.length > 0 && (
+        <div className={styles.recommendedFrame}>
+          <span className={styles.recommendedLegend}>{recommendedLabel ?? 'Recommended'}</span>
+          {framedEntries.map(renderRow)}
+        </div>
+      )}
+      {plainEntries.map(renderRow)}
     </div>
   );
 }

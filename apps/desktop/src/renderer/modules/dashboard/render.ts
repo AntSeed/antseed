@@ -97,6 +97,10 @@ function normalizeNetworkData(
         .filter((s): s is string => typeof s === 'string')
         .map((s) => s.trim())
         .filter((s) => s.length > 0),
+      freeServices: safeArray(peer.freeServices)
+        .filter((s): s is string => typeof s === 'string')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0),
       inputUsdPerMillion: safeNumber(peer.inputUsdPerMillion, 0),
       outputUsdPerMillion: safeNumber(peer.outputUsdPerMillion, 0),
       capacityMsgPerHour: safeNumber(peer.capacityMsgPerHour, 0),
@@ -120,6 +124,7 @@ function normalizeNetworkData(
       port: 0,
       providers: [],
       services: [],
+      freeServices: [],
       inputUsdPerMillion: 0,
       outputUsdPerMillion: 0,
       capacityMsgPerHour: 0,
@@ -184,6 +189,7 @@ export function initDashboardRenderModule({
     uiState.peersMessage = message;
     uiState.configMessage = { text: message, type: 'info' };
     uiState.networkAlert = 'none';
+    uiState.dhtNodeCount = 0;
 
     uiState.ovNodeState = 'offline';
     uiState.ovPeers = '0';
@@ -246,6 +252,7 @@ export function initDashboardRenderModule({
     const proxyPort = runtimeProxyPort > 0 ? runtimeProxyPort : configuredProxyPort;
 
     uiState.networkAlert = deriveNetworkAlert(stats, buyerRuntimeState === 'connected');
+    uiState.dhtNodeCount = safeNumber(stats.dhtNodeCount, 0);
 
     // Overview stats
     uiState.ovNodeState = buyerRuntimeState;
