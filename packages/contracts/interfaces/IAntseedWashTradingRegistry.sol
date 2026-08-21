@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-interface IAntseedWashTradingRegistry {
+import { IAntseedP0Registry } from "./IAntseedP0Registry.sol";
+
+interface IAntseedWashTradingRegistry is IAntseedP0Registry {
     function submitClosedCycleProof(bytes calldata seal, bytes calldata journalData) external returns (bool recorded);
     function submitReciprocalProof(bytes calldata seal, bytes calldata journalData)
         external
         returns (bool recordedA, bool recordedB);
-
-    function sellerProofTypeMask(address seller) external view returns (uint8);
-    function isSellerP0(address seller) external view returns (bool);
 }

@@ -68,6 +68,11 @@ contract AntseedBaseCheckpointOracleTest is Test {
         new AntseedBaseCheckpointOracle(address(verifier), IMAGE_ID, HISTORICAL_IMAGE_ID);
     }
 
+    function test_rejectsCodeLessVerifier() public {
+        vm.expectRevert(abi.encodeWithSelector(AntseedBaseCheckpointOracle.NoCode.selector, address(1)));
+        new AntseedBaseCheckpointOracle(address(1), IMAGE_ID, HISTORICAL_IMAGE_ID);
+    }
+
     function test_acceptsCheckpointAndStoresCanonicalBlocks() public {
         AntseedBaseCheckpointOracle.CheckpointJournal memory journal = _journal();
         bytes memory journalData = abi.encode(journal);
@@ -100,32 +105,8 @@ contract AntseedBaseCheckpointOracleTest is Test {
             number: checkpoint.canonicalBlocks[0].number,
             blockHash: checkpoint.canonicalBlocks[0].blockHash
         });
-        bytes32 cohortHash = keccak256("checkpoint-integration-cohort");
-        AntseedWashTradingRegistry.ClosedCycleJournal memory sellerJournal = AntseedWashTradingRegistry
-            .ClosedCycleJournal({
-            predicateVersion: 3,
-            claimId: keccak256(
-                abi.encode(
-                    block.chainid,
-                    uint8(1),
-                    uint64(44_471_575),
-                    uint64(49_936_173),
-                    address(0x515E12),
-                    address(0xF00D),
-                    cohortHash
-                )
-            ),
-            periodStartBlock: 44_471_575,
-            periodEndBlockExclusive: 49_936_173,
-            seller: address(0x515E12),
-            funder: address(0xF00D),
-            cohortHash: cohortHash,
-            cohortCount: 3,
-            qualifiedVolumeRaw: 1_000_000_000,
-            closureKind: 1,
-            closurePathCount: 1,
-            blockRefs: blockRefs
-        });
+        AntseedWashTradingRegistry.ClosedCycleJournal memory sellerJournal =
+            AntseedWashTradingRegistry.ClosedCycleJournal({ seller: address(0x515E12), blockRefs: blockRefs });
         bytes memory sellerJournalData = abi.encode(sellerJournal);
         verifier.expect(sellerImageId, sha256(sellerJournalData), SEAL);
 

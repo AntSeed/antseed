@@ -85,9 +85,9 @@ contract AntseedBaseCheckpointOracle is IBaseAnalysisStateOracle {
     uint16 public acceptedHistoricalChunkCount;
     uint64 public historicalFrontierBlockNumber;
     bytes32 public historicalFrontierBlockHash;
-    bytes32 public historicalRoot;
 
     error ZeroAddress();
+    error NoCode(address target);
     error ZeroImageId();
     error WrongChain(uint256 chainId);
     error InvalidCheckpointJournal();
@@ -119,14 +119,12 @@ contract AntseedBaseCheckpointOracle is IBaseAnalysisStateOracle {
         uint64 endBlockNumber,
         bytes32 blockRoot
     );
-    event HistoricalCoverageFinalized(
-        uint64 indexed startBlockNumber, uint64 indexed anchorBlockNumber, bytes32 indexed historicalRoot
-    );
     event HistoricalBlockMaterialized(uint64 indexed blockNumber, bytes32 indexed blockHash, uint16 indexed chunkIndex);
 
     constructor(address verifier_, bytes32 checkpointImageId_, bytes32 historicalChunkImageId_) {
         if (block.chainid != BASE_CHAIN_ID) revert WrongChain(block.chainid);
         if (verifier_ == address(0)) revert ZeroAddress();
+        if (verifier_.code.length == 0) revert NoCode(verifier_);
         if (checkpointImageId_ == bytes32(0) || historicalChunkImageId_ == bytes32(0)) revert ZeroImageId();
         verifier = IRiscZeroVerifier(verifier_);
         checkpointImageId = checkpointImageId_;
@@ -215,9 +213,7 @@ contract AntseedBaseCheckpointOracle is IBaseAnalysisStateOracle {
 
         if (journal.startBlockNumber == HISTORICAL_START_BLOCK) {
             if (acceptedHistoricalChunkCount != HISTORICAL_CHUNK_COUNT) revert InvalidHistoricalChunkJournal();
-            historicalRoot = _computeHistoricalRoot();
             historicalCoverageComplete = true;
-            emit HistoricalCoverageFinalized(HISTORICAL_START_BLOCK, HISTORICAL_ANCHOR_BLOCK, historicalRoot);
         }
     }
 
@@ -330,27 +326,6 @@ contract AntseedBaseCheckpointOracle is IBaseAnalysisStateOracle {
         return successor > HISTORICAL_START_BLOCK + HISTORICAL_CHUNK_SIZE
             ? successor - HISTORICAL_CHUNK_SIZE
             : HISTORICAL_START_BLOCK;
-    }
-
-    function _computeHistoricalRoot() private view returns (bytes32) {
-        bytes32[128] memory nodes;
-        for (uint16 index = 0; index < HISTORICAL_CHUNK_COUNT; ++index) {
-            uint64 startBlock = _historicalChunkStart(index);
-            uint64 endBlock = HISTORICAL_ANCHOR_BLOCK - uint64(index) * HISTORICAL_CHUNK_SIZE - 1;
-            nodes[index] = keccak256(abi.encodePacked(bytes1(0x10), startBlock, endBlock, historicalChunkRoots[index]));
-        }
-        for (uint16 index = HISTORICAL_CHUNK_COUNT; index < 128; ++index) {
-            nodes[index] = keccak256(abi.encodePacked(bytes1(0x11), index));
-        }
-
-        uint256 width = 128;
-        while (width > 1) {
-            for (uint256 index = 0; index < width; index += 2) {
-                nodes[index >> 1] = keccak256(abi.encodePacked(bytes1(0x12), nodes[index], nodes[index + 1]));
-            }
-            width >>= 1;
-        }
-        return nodes[0];
     }
 
     function _liveBeaconRoot(uint256 ethereumTimestamp) private view returns (bytes32 beaconRoot) {

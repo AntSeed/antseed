@@ -8,7 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
-- Contracts: replaced the challengeable full-analysis lifecycle with one conservative RISC Zero seller-penalty proof. Enforcement now requires authenticated seller-to-funder funding of at least three distinct buyers and at least 1,000 USDC of post-funding settlement volume, plus canonical finalized Base block references. Valid proofs reduce future seller points by 9,000 BPS; buyers and existing locked rewards are unaffected. Full P0/P1 analytics remain reporting-only.
+- Contracts: added immutable RISC Zero P0 enforcement for authenticated closed-loop and reciprocal wash trading. Pinned guests own all predicate thresholds and publish minimal subject-plus-block-reference journals; Solidity verifies the receipt, Base chain, and canonical blocks before recording a monotonic seller flag. A minimal wash-trading reward policy blocks both immediate and locked seller reward claims without importing inactivity or staking rules.
 
 - Contracts: added a points-policy registry that combines up to eight category-aware buyer/seller penalties behind usage accounting's existing hook. It takes the maximum penalty per category, adds category penalties with a 9,000-BPS soft ceiling, and treats 10,000 BPS as a hard veto. New recognized-usage deployments install an empty pass-through registry by default; policy failures fail closed without blocking settlement.
 

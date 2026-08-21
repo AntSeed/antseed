@@ -74,6 +74,15 @@ jobs:
       - name: Build contracts
         run: cd packages/contracts && forge build
 
+      - name: Enforce wash-trading contract size budgets
+        run: cd packages/contracts && forge test --match-contract AntseedWashTradingContractSizeTest
+
+      - name: Test proof deployment scripts
+        run: node --test packages/contracts/scripts/*.test.mjs
+
+      - name: Test contracts
+        run: cd packages/contracts && forge test
+
       - name: Start Anvil
         run: anvil &
 

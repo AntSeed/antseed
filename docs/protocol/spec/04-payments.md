@@ -289,7 +289,7 @@ Sellers call `claimSellerEmissions(epochs[])` for finalized epochs.
 
 If `sellerUnlockPolicy.canClaimSellerUnlocked(seller)` returns true, ANTS are minted directly to the seller.
 
-If the policy returns false (or is not set), ANTS are minted to `AntseedSellerRewardsPool` and recorded as locked for that seller. The same composite policy gates pool claims, preventing the locked route from bypassing eligibility. At deployment, the policy validates a sorted inactivity snapshot against canonical live staking and channel state; only sellers more than 14 days past their last positive settlement are accepted. P0 sellers and sellers committed in that immutable snapshot remain blocked permanently, even after later positive settlements. Rewards are held, not forfeited or redirected.
+If the policy returns false (or is not set), ANTS are minted to `AntseedSellerRewardsPool` and recorded as locked for that seller. `AntseedWashTradingRewardPolicy` gates both immediate and pool claims, preventing the locked route from bypassing a proof-backed wash-trading decision. It depends only on the immutable wash-trading registry; inactivity, staking status, and settlement recency are outside this policy. Rewards are held, not forfeited or redirected.
 
 #### Buyer Claiming
 

@@ -9,7 +9,7 @@ import { AntseedWashTradingRegistry } from "../integrity/AntseedWashTradingRegis
 import { IAntseedChannels } from "../interfaces/IAntseedChannels.sol";
 import { AntseedEmissions } from "../legacy/AntseedEmissions.sol";
 import { AntseedEmissionsV2 } from "../legacy/AntseedEmissionsV2.sol";
-import { AntseedSellerRewardEligibilityPolicy } from "../policies/AntseedSellerRewardEligibilityPolicy.sol";
+import { AntseedWashTradingRewardPolicy } from "../policies/AntseedWashTradingRewardPolicy.sol";
 import { AntseedSellerRewardsPool } from "../rewards/AntseedSellerRewardsPool.sol";
 
 contract RewardGateVerifierMock {
@@ -58,11 +58,12 @@ contract SellerRewardGateE2ETest is Test {
     AntseedEmissionsV2 internal emissions;
     AntseedSellerRewardsPool internal rewardsPool;
     AntseedWashTradingRegistry internal washRegistry;
-    AntseedSellerRewardEligibilityPolicy internal policy;
+    AntseedWashTradingRewardPolicy internal policy;
     RewardGateStakingMock internal staking;
     RewardGateChannelsMock internal channels;
 
     function setUp() public {
+        vm.chainId(8_453);
         vm.warp(1_700_000_000);
         token = new ANTSToken();
         protocolRegistry = new AntseedRegistry();
@@ -91,44 +92,21 @@ contract SellerRewardGateE2ETest is Test {
             bytes32(uint256(1)),
             bytes32(uint256(2))
         );
-        policy =
-            new AntseedSellerRewardEligibilityPolicy(address(protocolRegistry), address(washRegistry), new address[](0));
+        policy = new AntseedWashTradingRewardPolicy(address(washRegistry));
         emissions.setSellerUnlockPolicy(address(policy));
         rewardsPool.setSellerClaimPolicy(address(policy));
         token.setTransferWhitelist(address(rewardsPool), true);
     }
 
-    function test_activeImmediateRouteAndSubmittedInactiveRouteUseSamePermanentGate() public {
+    function test_nonP0SellerUsesImmediateRewardRoute() public {
         channels.setLastSettledAt(AGENT_ID, uint64(block.timestamp));
         _accrue(SELLER, 100);
         _finalizeEpoch(5);
 
         vm.prank(SELLER);
         emissions.claimSellerEmissions(_epoch(4));
-        uint256 immediate = token.balanceOf(SELLER);
-        assertGt(immediate, 0);
+        assertGt(token.balanceOf(SELLER), 0);
         assertEq(rewardsPool.lockedRewards(SELLER), 0);
-
-        channels.setLastSettledAt(AGENT_ID, uint64(block.timestamp - 14 days - 1));
-        address[] memory inactiveSellers = new address[](1);
-        inactiveSellers[0] = SELLER;
-        policy =
-            new AntseedSellerRewardEligibilityPolicy(address(protocolRegistry), address(washRegistry), inactiveSellers);
-        emissions.setSellerUnlockPolicy(address(policy));
-        rewardsPool.setSellerClaimPolicy(address(policy));
-        _accrue(SELLER, 100);
-        _finalizeEpoch(6);
-        vm.prank(SELLER);
-        emissions.claimSellerEmissions(_epoch(5));
-        uint256 locked = rewardsPool.lockedRewards(SELLER);
-        assertGt(locked, 0);
-
-        channels.setLastSettledAt(AGENT_ID, uint64(block.timestamp));
-        vm.prank(SELLER);
-        vm.expectRevert(AntseedSellerRewardsPool.NothingToClaim.selector);
-        rewardsPool.claim(SELLER);
-        assertEq(rewardsPool.lockedRewards(SELLER), locked);
-        assertEq(token.balanceOf(SELLER), immediate);
     }
 
     function test_p0ProofBlocksImmediateAndPoolRoutesPermanently() public {
@@ -167,23 +145,8 @@ contract SellerRewardGateE2ETest is Test {
     function _submitP0(address seller) internal {
         AntseedWashTradingRegistry.BlockRef[] memory refs = new AntseedWashTradingRegistry.BlockRef[](1);
         refs[0] = AntseedWashTradingRegistry.BlockRef({ number: 44_471_575, blockHash: bytes32(uint256(0x1234)) });
-        bytes32 cohortHash = keccak256("seller-p0-cohort");
-        AntseedWashTradingRegistry.ClosedCycleJournal memory journal = AntseedWashTradingRegistry.ClosedCycleJournal({
-            predicateVersion: 3,
-            claimId: keccak256(
-                abi.encode(block.chainid, uint8(1), uint64(44_471_575), uint64(49_936_173), seller, seller, cohortHash)
-            ),
-            periodStartBlock: 44_471_575,
-            periodEndBlockExclusive: 49_936_173,
-            seller: seller,
-            funder: seller,
-            cohortHash: cohortHash,
-            cohortCount: 3,
-            qualifiedVolumeRaw: 1_000_000_000,
-            closureKind: 3,
-            closurePathCount: 3,
-            blockRefs: refs
-        });
+        AntseedWashTradingRegistry.ClosedCycleJournal memory journal =
+            AntseedWashTradingRegistry.ClosedCycleJournal({ seller: seller, blockRefs: refs });
         washRegistry.submitClosedCycleProof(hex"", abi.encode(journal));
     }
 }

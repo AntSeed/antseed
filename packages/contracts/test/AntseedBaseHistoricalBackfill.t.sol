@@ -133,7 +133,6 @@ contract AntseedBaseHistoricalBackfillTest is Test {
         assertTrue(oracle.historicalCoverageComplete());
         assertEq(oracle.acceptedHistoricalChunkCount(), 112);
         assertEq(oracle.historicalFrontierBlockNumber(), oracle.HISTORICAL_START_BLOCK());
-        assertEq(oracle.historicalRoot(), _expectedHistoricalRoot(roots));
 
         vm.expectRevert(AntseedBaseCheckpointOracle.HistoricalBackfillComplete.selector);
         oracle.submitHistoricalChunk(SEAL, hex"");
@@ -223,28 +222,6 @@ contract AntseedBaseHistoricalBackfillTest is Test {
                 : keccak256(abi.encodePacked(bytes1(0x02), siblings[level], current));
             position >>= 1;
         }
-    }
-
-    function _expectedHistoricalRoot(bytes32[112] memory roots) internal view returns (bytes32) {
-        bytes32[128] memory nodes;
-        for (uint16 index = 0; index < 112; ++index) {
-            uint64 successor = oracle.HISTORICAL_ANCHOR_BLOCK() - uint64(index) * oracle.HISTORICAL_CHUNK_SIZE();
-            uint64 start = successor > oracle.HISTORICAL_START_BLOCK() + oracle.HISTORICAL_CHUNK_SIZE()
-                ? successor - oracle.HISTORICAL_CHUNK_SIZE()
-                : oracle.HISTORICAL_START_BLOCK();
-            nodes[index] = keccak256(abi.encodePacked(bytes1(0x10), start, successor - 1, roots[index]));
-        }
-        for (uint16 index = 112; index < 128; ++index) {
-            nodes[index] = keccak256(abi.encodePacked(bytes1(0x11), index));
-        }
-        uint256 width = 128;
-        while (width > 1) {
-            for (uint256 index = 0; index < width; index += 2) {
-                nodes[index >> 1] = keccak256(abi.encodePacked(bytes1(0x12), nodes[index], nodes[index + 1]));
-            }
-            width >>= 1;
-        }
-        return nodes[0];
     }
 
     function _anchorHash() internal pure returns (bytes32) {
