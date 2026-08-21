@@ -57,22 +57,24 @@
   transition: background 0.12s ease;
 }
 
-/* Lead recommendations: thin brand rules around the first rows, cut by a
-   small "Recommended" label — a group marker, not a separate list. Full
-   bleed: the rules run edge to edge with no inset. */
+/* Lead recommendations: a rounded, brand-tinted group card around the first
+   rows, its top border cut by a small "Recommended" label — a group marker,
+   not a separate list. */
 .recommendedFrame {
   position: relative;
-  /* Only the label needs headroom above the top rule; sides stay flush. */
-  margin: 6px 0 4px;
+  /* Top margin is the label's headroom — the card clips overflow, so the
+     label must never rise above the card's content box. */
+  margin: 10px 6px 6px;
   padding: 4px 0;
-  border-top: 1px solid rgba(var(--brand-rgb), 0.4);
-  border-bottom: 1px solid rgba(var(--brand-rgb), 0.4);
+  border: 1px solid rgba(var(--brand-rgb), 0.35);
+  border-radius: 16px;
+  background: rgba(var(--brand-rgb), 0.08);
 }
 
 .recommendedLegend {
   position: absolute;
   top: -8px;
-  left: 16px;
+  left: 14px;
   padding: 0 6px;
   /* Same fill as the card so the label visually cuts the border. */
   background: var(--bg-card);
@@ -82,6 +84,23 @@
   letter-spacing: 0.5px;
   line-height: 16px;
   text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Keep the trio's content aligned with the plain rows below (6px frame inset
+   + 10px row padding = the list's 16px gutter), and round the end rows with
+   the frame so hover fills stay inside the border. */
+.recommendedFrame .row {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.recommendedFrame .row:first-of-type {
+  border-radius: 15px 15px 0 0;
+}
+
+.recommendedFrame .row:last-of-type {
+  border-radius: 0 0 15px 15px;
 }
 
 .row + .row {
