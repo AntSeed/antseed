@@ -244,8 +244,11 @@ export function VprHomeView({ onSelectView }: Props) {
       if (top.length >= DROPDOWN_MODEL_COUNT) break;
       if (!top.includes(entry)) top.push(entry);
     }
-    if (selectedEntry?.kind === 'text' && !top.includes(selectedEntry)) {
-      return [selectedEntry, ...top.slice(0, DROPDOWN_MODEL_COUNT - 1)];
+    // The selected model leads, matching the Models page — hoisted when it is
+    // already listed, prepended when it isn't.
+    if (selectedEntry?.kind === 'text' && top[0] !== selectedEntry) {
+      const rest = top.filter((entry) => entry !== selectedEntry);
+      return [selectedEntry, ...rest.slice(0, DROPDOWN_MODEL_COUNT - 1)];
     }
     return top;
   }, [everFunded, favorites, selectedEntry, snap.catalog]);
