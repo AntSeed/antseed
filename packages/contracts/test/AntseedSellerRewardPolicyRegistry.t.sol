@@ -50,14 +50,57 @@ contract InvalidBoolSellerRewardPolicy {
     }
 }
 
+contract SellerRewardHistoricalCoverageMock {
+    bool public historicalCoverageComplete;
+
+    function setHistoricalCoverageComplete(bool complete) external {
+        historicalCoverageComplete = complete;
+    }
+}
+
 contract SellerRewardPolicyRegistryTest is Test {
     address internal constant SELLER = address(0xA11CE);
     uint256 internal constant LOCKED = 100 ether;
+    bytes32 internal constant RELEASE_DIGEST = keccak256("proof-release");
 
+    SellerRewardHistoricalCoverageMock internal coverage;
     AntseedSellerRewardPolicyRegistry internal registry;
 
     function setUp() public {
-        registry = new AntseedSellerRewardPolicyRegistry(address(this));
+        coverage = new SellerRewardHistoricalCoverageMock();
+        registry = new AntseedSellerRewardPolicyRegistry(address(coverage), address(this));
+        coverage.setHistoricalCoverageComplete(true);
+        registry.finalizeBackfill(RELEASE_DIGEST);
+    }
+
+    function test_backfillGateBlocksBothRoutesBeforeFinalization() public {
+        AntseedSellerRewardPolicyRegistry gatedRegistry =
+            new AntseedSellerRewardPolicyRegistry(address(coverage), address(this));
+        gatedRegistry.registerPolicy(address(new MockSellerRewardPolicy(true, LOCKED, false)), true, true);
+
+        assertFalse(gatedRegistry.canClaimSellerUnlocked(SELLER));
+        assertEq(gatedRegistry.claimableSellerRewards(SELLER, LOCKED), 0);
+    }
+
+    function test_backfillFinalizationRequiresCompleteCoverageAndNonzeroDigest() public {
+        SellerRewardHistoricalCoverageMock incompleteCoverage = new SellerRewardHistoricalCoverageMock();
+        AntseedSellerRewardPolicyRegistry gatedRegistry =
+            new AntseedSellerRewardPolicyRegistry(address(incompleteCoverage), address(this));
+
+        vm.expectRevert(AntseedSellerRewardPolicyRegistry.HistoricalCoverageIncomplete.selector);
+        gatedRegistry.finalizeBackfill(RELEASE_DIGEST);
+
+        incompleteCoverage.setHistoricalCoverageComplete(true);
+        vm.expectRevert(AntseedSellerRewardPolicyRegistry.InvalidProofReleaseDigest.selector);
+        gatedRegistry.finalizeBackfill(bytes32(0));
+    }
+
+    function test_backfillFinalizesOnceAndStoresReleaseDigest() public {
+        assertTrue(registry.backfillFinalized());
+        assertEq(registry.proofReleaseDigest(), RELEASE_DIGEST);
+
+        vm.expectRevert(AntseedSellerRewardPolicyRegistry.BackfillAlreadyFinalized.selector);
+        registry.finalizeBackfill(keccak256("second-release"));
     }
 
     function test_unlockedClaimsUseDenyWinsComposition() public {
@@ -92,7 +135,9 @@ contract SellerRewardPolicyRegistryTest is Test {
         assertFalse(registry.canClaimSellerUnlocked(SELLER));
         assertEq(registry.claimableSellerRewards(SELLER, LOCKED), 0);
 
-        AntseedSellerRewardPolicyRegistry malformedRegistry = new AntseedSellerRewardPolicyRegistry(address(this));
+        AntseedSellerRewardPolicyRegistry malformedRegistry =
+            new AntseedSellerRewardPolicyRegistry(address(coverage), address(this));
+        malformedRegistry.finalizeBackfill(RELEASE_DIGEST);
         malformedRegistry.registerPolicy(address(new MalformedSellerRewardPolicy()), true, true);
         assertFalse(malformedRegistry.canClaimSellerUnlocked(SELLER));
         assertEq(malformedRegistry.claimableSellerRewards(SELLER, LOCKED), 0);

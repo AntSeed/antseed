@@ -81,7 +81,7 @@ contract AntseedBaseCheckpointOracle is IBaseAnalysisStateOracle {
     mapping(uint16 chunkIndex => bytes32 blockRoot) public historicalChunkRoots;
 
     bool public historicalBackfillStarted;
-    bool public historicalCoverageComplete;
+    bool public override historicalCoverageComplete;
     uint16 public acceptedHistoricalChunkCount;
     uint64 public historicalFrontierBlockNumber;
     bytes32 public historicalFrontierBlockHash;

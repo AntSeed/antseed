@@ -6,6 +6,7 @@ import { Ownable2Step } from "@openzeppelin/contracts/access/Ownable2Step.sol";
 
 import { IAntseedSellerClaimPolicy } from "../interfaces/IAntseedSellerClaimPolicy.sol";
 import { IAntseedSellerUnlockPolicy } from "../interfaces/IAntseedSellerUnlockPolicy.sol";
+import { IBaseAnalysisStateOracle } from "../interfaces/IBaseAnalysisStateOracle.sol";
 
 contract AntseedSellerRewardPolicyRegistry is IAntseedSellerClaimPolicy, IAntseedSellerUnlockPolicy, Ownable2Step {
     uint256 public constant MAX_POLICIES = 8;
@@ -19,20 +20,40 @@ contract AntseedSellerRewardPolicyRegistry is IAntseedSellerClaimPolicy, IAntsee
 
     RegisteredPolicy[] private _policies;
     mapping(address policy => uint256 indexPlusOne) private _policyIndexPlusOne;
+    IBaseAnalysisStateOracle public immutable baseStateOracle;
     uint256 public unlockedClaimPolicyCount;
     uint256 public lockedClaimPolicyCount;
+    bool public backfillFinalized;
+    bytes32 public proofReleaseDigest;
 
     event PolicyRegistered(
         address indexed policy, bool indexed checksUnlockedClaims, bool indexed checksLockedClaims, uint256 index
     );
     event PolicyRemoved(address indexed policy, uint256 indexed index);
+    event BackfillFinalized(bytes32 indexed proofReleaseDigest);
 
     error InvalidPolicy();
+    error InvalidAddress();
+    error InvalidProofReleaseDigest();
+    error HistoricalCoverageIncomplete();
+    error BackfillAlreadyFinalized();
     error PolicyAlreadyRegistered(address policy);
     error PolicyNotRegistered(address policy);
     error TooManyPolicies();
 
-    constructor(address initialOwner) Ownable(initialOwner) { }
+    constructor(address baseStateOracle_, address initialOwner) Ownable(initialOwner) {
+        if (baseStateOracle_ == address(0) || baseStateOracle_.code.length == 0) revert InvalidAddress();
+        baseStateOracle = IBaseAnalysisStateOracle(baseStateOracle_);
+    }
+
+    function finalizeBackfill(bytes32 proofReleaseDigest_) external onlyOwner {
+        if (backfillFinalized) revert BackfillAlreadyFinalized();
+        if (proofReleaseDigest_ == bytes32(0)) revert InvalidProofReleaseDigest();
+        if (!baseStateOracle.historicalCoverageComplete()) revert HistoricalCoverageIncomplete();
+        proofReleaseDigest = proofReleaseDigest_;
+        backfillFinalized = true;
+        emit BackfillFinalized(proofReleaseDigest_);
+    }
 
     function registerPolicy(address policy, bool checksUnlockedClaims, bool checksLockedClaims) external onlyOwner {
         if (
@@ -88,6 +109,7 @@ contract AntseedSellerRewardPolicyRegistry is IAntseedSellerClaimPolicy, IAntsee
     }
 
     function canClaimSellerUnlocked(address seller) external view returns (bool) {
+        if (!backfillFinalized) return false;
         if (unlockedClaimPolicyCount == 0) return false;
         uint256 count = _policies.length;
         for (uint256 index = 0; index < count; ++index) {
@@ -107,6 +129,7 @@ contract AntseedSellerRewardPolicyRegistry is IAntseedSellerClaimPolicy, IAntsee
     }
 
     function claimableSellerRewards(address seller, uint256 lockedAmount) external view returns (uint256 amount) {
+        if (!backfillFinalized) return 0;
         if (lockedClaimPolicyCount == 0) return 0;
         amount = lockedAmount;
         uint256 count = _policies.length;

@@ -82,14 +82,13 @@ Future points and seller reward claims use separate policy registries:
   minimum amount returned by applicable policies. Missing applicable policies,
   failures, malformed results, and invalid amounts fail closed. Deployment
   preserves the policies already installed on either hook, then adds
-  `AntseedHistoricalClaimsPolicy` and `AntseedWashTradingRewardPolicy` to both
-  routes.
+  `AntseedWashTradingRewardPolicy` to both routes.
 
-`AntseedHistoricalClaimsPolicy` blocks both seller reward routes until the Base
-state oracle reports complete historical coverage and the owner finalizes the
-backfill with a nonzero signed proof-release digest. Finalization is one-way.
-After release, the wash-trading reward policy continues to block flagged sellers
-on both routes. Inactivity, staking status, and settlement recency remain the
+The reward registry itself blocks both seller reward routes until the Base state
+oracle reports complete historical coverage and the owner finalizes the backfill
+with a nonzero signed proof-release digest. Finalization is one-way. After
+release, the wash-trading reward policy continues to block flagged sellers on
+both routes. Inactivity, staking status, and settlement recency remain the
 responsibility of any separately registered policy. Locked rewards remain owned
 by the seller and are never confiscated.
 

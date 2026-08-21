@@ -5,7 +5,6 @@ import { Script, console } from "forge-std/Script.sol";
 
 import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
 import { AntseedEmissionsV2 } from "../legacy/AntseedEmissionsV2.sol";
-import { AntseedHistoricalClaimsPolicy } from "../policies/AntseedHistoricalClaimsPolicy.sol";
 import { AntseedSellerRewardPolicyRegistry } from "../policies/AntseedSellerRewardPolicyRegistry.sol";
 import { AntseedWashTradingRewardPolicy } from "../policies/AntseedWashTradingRewardPolicy.sol";
 import { AntseedSellerRewardsPool } from "../rewards/AntseedSellerRewardsPool.sol";
@@ -25,7 +24,6 @@ contract DeploySellerRewardGate is Script {
         external
         returns (
             AntseedSellerRewardPolicyRegistry rewardPolicyRegistry,
-            AntseedHistoricalClaimsPolicy historicalClaimsPolicy,
             AntseedWashTradingRewardPolicy washTradingRewardPolicy
         )
     {
@@ -52,8 +50,7 @@ contract DeploySellerRewardGate is Script {
         address existingClaimPolicy = address(rewardsPool.sellerClaimPolicy());
 
         vm.startBroadcast(deployerPrivateKey);
-        rewardPolicyRegistry = new AntseedSellerRewardPolicyRegistry(deployer);
-        historicalClaimsPolicy = new AntseedHistoricalClaimsPolicy(baseStateOracle, deployer);
+        rewardPolicyRegistry = new AntseedSellerRewardPolicyRegistry(baseStateOracle, deployer);
         washTradingRewardPolicy = new AntseedWashTradingRewardPolicy(washTradingRegistry);
 
         if (existingUnlockPolicy != address(0) && existingUnlockPolicy == existingClaimPolicy) {
@@ -66,7 +63,6 @@ contract DeploySellerRewardGate is Script {
                 rewardPolicyRegistry.registerPolicy(existingClaimPolicy, false, true);
             }
         }
-        rewardPolicyRegistry.registerPolicy(address(historicalClaimsPolicy), true, true);
         rewardPolicyRegistry.registerPolicy(address(washTradingRewardPolicy), true, true);
 
         emissions.setSellerUnlockPolicy(address(rewardPolicyRegistry));
@@ -75,9 +71,6 @@ contract DeploySellerRewardGate is Script {
 
         require(address(emissions.sellerUnlockPolicy()) == address(rewardPolicyRegistry), "emissions policy mismatch");
         require(address(rewardsPool.sellerClaimPolicy()) == address(rewardPolicyRegistry), "pool policy mismatch");
-        require(
-            rewardPolicyRegistry.isPolicyRegistered(address(historicalClaimsPolicy)), "historical policy not registered"
-        );
         require(rewardPolicyRegistry.isPolicyRegistered(address(washTradingRewardPolicy)), "wash policy not registered");
         if (existingUnlockPolicy != address(0)) {
             require(rewardPolicyRegistry.isPolicyRegistered(existingUnlockPolicy), "unlock policy not preserved");
@@ -87,7 +80,6 @@ contract DeploySellerRewardGate is Script {
         }
 
         console.log("SellerRewardPolicyRegistry:", address(rewardPolicyRegistry));
-        console.log("HistoricalClaimsPolicy:    ", address(historicalClaimsPolicy));
         console.log("WashTradingRewardPolicy:   ", address(washTradingRewardPolicy));
         console.log("AntseedEmissionsV2:        ", emissionsAddress);
         console.log("SellerRewardsPool:         ", rewardsPoolAddress);

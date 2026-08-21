@@ -9,7 +9,6 @@ import { AntseedWashTradingRegistry } from "../integrity/AntseedWashTradingRegis
 import { IAntseedChannels } from "../interfaces/IAntseedChannels.sol";
 import { AntseedEmissions } from "../legacy/AntseedEmissions.sol";
 import { AntseedEmissionsV2 } from "../legacy/AntseedEmissionsV2.sol";
-import { AntseedHistoricalClaimsPolicy } from "../policies/AntseedHistoricalClaimsPolicy.sol";
 import { AntseedSellerRewardPolicyRegistry } from "../policies/AntseedSellerRewardPolicyRegistry.sol";
 import { AntseedWashTradingRewardPolicy } from "../policies/AntseedWashTradingRewardPolicy.sol";
 import { AntseedSellerRewardsPool } from "../rewards/AntseedSellerRewardsPool.sol";
@@ -67,7 +66,6 @@ contract SellerRewardGateE2ETest is Test {
     AntseedSellerRewardsPool internal rewardsPool;
     AntseedWashTradingRegistry internal washRegistry;
     AntseedSellerRewardPolicyRegistry internal rewardPolicyRegistry;
-    AntseedHistoricalClaimsPolicy internal historicalClaimsPolicy;
     AntseedWashTradingRewardPolicy internal washTradingRewardPolicy;
     RewardGateOracleMock internal baseStateOracle;
     RewardGateStakingMock internal staking;
@@ -101,10 +99,8 @@ contract SellerRewardGateE2ETest is Test {
         washRegistry = new AntseedWashTradingRegistry(
             address(new RewardGateVerifierMock()), address(baseStateOracle), bytes32(uint256(1)), bytes32(uint256(2))
         );
-        rewardPolicyRegistry = new AntseedSellerRewardPolicyRegistry(address(this));
-        historicalClaimsPolicy = new AntseedHistoricalClaimsPolicy(address(baseStateOracle), address(this));
+        rewardPolicyRegistry = new AntseedSellerRewardPolicyRegistry(address(baseStateOracle), address(this));
         washTradingRewardPolicy = new AntseedWashTradingRewardPolicy(address(washRegistry));
-        rewardPolicyRegistry.registerPolicy(address(historicalClaimsPolicy), true, true);
         rewardPolicyRegistry.registerPolicy(address(washTradingRewardPolicy), true, true);
         emissions.setSellerUnlockPolicy(address(rewardPolicyRegistry));
         rewardsPool.setSellerClaimPolicy(address(rewardPolicyRegistry));
@@ -180,7 +176,7 @@ contract SellerRewardGateE2ETest is Test {
 
     function _finalizeBackfill() internal {
         baseStateOracle.setHistoricalCoverageComplete(true);
-        historicalClaimsPolicy.finalizeBackfill(keccak256("complete-proof-release"));
+        rewardPolicyRegistry.finalizeBackfill(keccak256("complete-proof-release"));
     }
 
     function _submitWashTradingProof(address seller) internal {

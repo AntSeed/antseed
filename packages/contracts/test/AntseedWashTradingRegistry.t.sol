@@ -23,6 +23,7 @@ contract MockWashTradingVerifier is IRiscZeroVerifier {
 
 contract MockWashTradingStateOracle is IBaseAnalysisStateOracle {
     mapping(uint64 => bytes32) public canonicalHash;
+    bool public historicalCoverageComplete;
 
     function setCanonical(uint64 number, bytes32 blockHash) external {
         canonicalHash[number] = blockHash;
