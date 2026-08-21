@@ -68,6 +68,7 @@ import { LOCALHOST_URL } from './constants.js';
 import { registerAppIpc } from './ipc/app.js';
 import { registerDesktopIpc } from './ipc/desktop.js';
 import { registerFloatIpc } from './ipc/float.js';
+import { registerFeedbackIpc } from './ipc/feedback.js';
 import { registerPaymentsIpc } from './ipc/payments.js';
 import { registerRuntimeIpc } from './ipc/runtime.js';
 import { registerSystemProxyIpc } from './ipc/system-proxy.js';
@@ -265,6 +266,7 @@ function getCombinedProcessState(): RuntimeProcessState[] {
 registerPaymentsIpc();
 registerDesktopIpc();
 registerAppIpc();
+registerFeedbackIpc({ logBuffer });
 registerFloatIpc();
 registerSystemProxyIpc({ processManager });
 registerRuntimeIpc({

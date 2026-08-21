@@ -71,6 +71,33 @@ Build desktop assets:
 npm run build
 ```
 
+### Telegram feedback channel
+
+The Help & Support feedback action posts through a dedicated Telegram bot. Source builds
+keep the action disabled unless both variables are configured:
+
+```bash
+export ANTSEED_FEEDBACK_TELEGRAM_BOT_TOKEN='123456:bot-token'
+export ANTSEED_FEEDBACK_TELEGRAM_CHAT_ID='@channelusername' # or -100…
+npm run dev
+```
+
+Release CI runs `scripts/bake-feedback-telegram-config.mjs --require` before
+compilation, using GitHub Actions secrets with the same names. The generated
+source defaults remain `null` in git; the runtime environment overrides baked
+values for local testing.
+
+Use a disposable bot that is an administrator only in the feedback channel and
+grant only **Post Messages**. Never reuse the personal Telegram bridge bot. The
+token is compiled into public Electron artifacts and can be extracted, so treat
+it as exposed: monitor the channel, remove the bot or revoke the token to disable
+submissions, and rotate it immediately if abused. A server-side relay is required
+before this channel handles sensitive or high-volume production feedback.
+
+Diagnostic logs are opt-in and privacy-redacted before upload. The app masks
+credentials, emails, local home paths, IP addresses, wallet addresses, and peer
+IDs, retains at most 500 recent entries, and caps the log at 512 KiB.
+
 Start app from built assets:
 
 ```bash

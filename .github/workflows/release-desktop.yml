@@ -19,6 +19,9 @@ name: Release Desktop
 #   - Push of a `desktop-v*` tag builds all platforms.
 #
 # Required repo secrets:
+#   Telegram feedback:
+#     ANTSEED_FEEDBACK_TELEGRAM_BOT_TOKEN  dedicated feedback bot token
+#     ANTSEED_FEEDBACK_TELEGRAM_CHAT_ID    numeric channel ID or @username
 #   macOS:
 #     MAC_CSC_LINK              base64 of a .p12 containing the Developer
 #                               ID Application cert + private key
@@ -124,6 +127,12 @@ jobs:
           ANTSEED_COMPARABLE_PRICES_URL: ${{ vars.ANTSEED_COMPARABLE_PRICES_URL }}
         run: node scripts/bake-comparable-prices-url.mjs --require
 
+      - name: Bake Telegram feedback configuration
+        env:
+          ANTSEED_FEEDBACK_TELEGRAM_BOT_TOKEN: ${{ secrets.ANTSEED_FEEDBACK_TELEGRAM_BOT_TOKEN }}
+          ANTSEED_FEEDBACK_TELEGRAM_CHAT_ID: ${{ secrets.ANTSEED_FEEDBACK_TELEGRAM_CHAT_ID }}
+        run: node scripts/bake-feedback-telegram-config.mjs --require
+
       - name: Build monorepo (tiers 0-3)
         run: |
           pnpm run build:tier0
@@ -219,6 +228,13 @@ jobs:
         env:
           ANTSEED_COMPARABLE_PRICES_URL: ${{ vars.ANTSEED_COMPARABLE_PRICES_URL }}
         run: node scripts/bake-comparable-prices-url.mjs --require
+        shell: pwsh
+
+      - name: Bake Telegram feedback configuration
+        env:
+          ANTSEED_FEEDBACK_TELEGRAM_BOT_TOKEN: ${{ secrets.ANTSEED_FEEDBACK_TELEGRAM_BOT_TOKEN }}
+          ANTSEED_FEEDBACK_TELEGRAM_CHAT_ID: ${{ secrets.ANTSEED_FEEDBACK_TELEGRAM_CHAT_ID }}
+        run: node scripts/bake-feedback-telegram-config.mjs --require
         shell: pwsh
 
       - name: Build monorepo (tiers 0-3)
@@ -339,6 +355,12 @@ jobs:
         env:
           ANTSEED_COMPARABLE_PRICES_URL: ${{ vars.ANTSEED_COMPARABLE_PRICES_URL }}
         run: node scripts/bake-comparable-prices-url.mjs --require
+
+      - name: Bake Telegram feedback configuration
+        env:
+          ANTSEED_FEEDBACK_TELEGRAM_BOT_TOKEN: ${{ secrets.ANTSEED_FEEDBACK_TELEGRAM_BOT_TOKEN }}
+          ANTSEED_FEEDBACK_TELEGRAM_CHAT_ID: ${{ secrets.ANTSEED_FEEDBACK_TELEGRAM_CHAT_ID }}
+        run: node scripts/bake-feedback-telegram-config.mjs --require
 
       - name: Build monorepo (tiers 0-3)
         run: |
