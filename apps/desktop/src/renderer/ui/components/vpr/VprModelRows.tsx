@@ -22,10 +22,12 @@ export type VprModelRowListProps = {
    * star so favorites read apart from the recommended lineup. */
   favoriteKeys?: ReadonlySet<string>;
   /** The first N rows are the lead recommendations: they render inside a thin
-   * brand-colored frame whose border is cut by a small "Recommended" label,
-   * so the lead picks read apart from the rest of the list without becoming a
-   * separate section. */
+   * framed group whose border is cut by a small label, so the lead picks read
+   * apart from the rest of the list without becoming a separate section. */
   recommendedCount?: number;
+  /** Label cutting the frame's border. Defaults to "Recommended"; hosts whose
+   * lead picks are the user's starred models pass "Favorites". */
+  recommendedLabel?: string;
   /** Drop the card chrome (bg/radius/shadow) — for hosts that provide their
    * own panel, e.g. the Home model dropdown. */
   frameless?: boolean;
@@ -238,6 +240,7 @@ export function VprModelRowList({
   limit,
   favoriteKeys,
   recommendedCount,
+  recommendedLabel,
   frameless,
   compact,
   selectOnly,
@@ -305,7 +308,7 @@ export function VprModelRowList({
     <div className={frameless ? styles.listBare : styles.list}>
       {framedEntries.length > 0 && (
         <div className={styles.recommendedFrame}>
-          <span className={styles.recommendedLegend}>Recommended</span>
+          <span className={styles.recommendedLegend}>{recommendedLabel ?? 'Recommended'}</span>
           {framedEntries.map(renderRow)}
         </div>
       )}

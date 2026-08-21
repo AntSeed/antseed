@@ -150,28 +150,39 @@ export function VprExploreView({ onSelectView }: Props) {
     ? findCatalogEntry(snap.catalog, selectedModel.provider, selectedModel.serviceId)
     : null;
 
-  // The default view leads with three "Recommended" rows: the selected model
-  // first, then the user's favorites, then — until the first deposit ever
-  // lands — the most available free models (paid rows would just 402 for an
-  // unfunded user), or the popular lineup once funded. Searching or filtering
-  // drops the lead marking: the user is navigating the full list.
+  // The default view leads with three framed rows. The moment the user has
+  // starred anything, the frame becomes their "Favorites"; otherwise it's
+  // "Recommended": the selected model first, then — until the first deposit
+  // ever lands — the most available free models (paid rows would just 402 for
+  // an unfunded user), or the popular lineup once funded. Searching or
+  // filtering drops the frame: the user is navigating the full list.
   const filtersActive = listInputs.search.trim().length > 0
     || listInputs.types.length > 0
     || listInputs.families.length > 0;
+  const favoriteEntries = useMemo(
+    () => selectFavoriteVprCatalog(snap.catalog, favorites),
+    [favorites, snap.catalog],
+  );
   const recommendedEntries = useMemo(() => {
     if (filtersActive) return [];
     const picked: VprModelCatalogEntry[] = [];
     const add = (entry: VprModelCatalogEntry): void => {
       if (picked.length < RECOMMENDED_COUNT && !picked.includes(entry)) picked.push(entry);
     };
+    if (favoriteEntries.length > 0) {
+      // Favorites own the frame outright — no padding with other picks, so
+      // the label "Favorites" never covers a model the user didn't star.
+      if (selectedEntry && favoriteEntries.includes(selectedEntry)) add(selectedEntry);
+      for (const entry of favoriteEntries) add(entry);
+      return picked;
+    }
     if (selectedEntry) add(selectedEntry);
-    for (const entry of selectFavoriteVprCatalog(snap.catalog, favorites)) add(entry);
     const pool = everFunded
       ? sortVprCatalog(snap.catalog, 'Popular')
       : sortVprCatalog(filterVprCatalog(snap.catalog, { freeOnly: true }), 'Popular');
     for (const entry of pool) add(entry);
     return picked;
-  }, [everFunded, favorites, filtersActive, selectedEntry, snap.catalog]);
+  }, [everFunded, favoriteEntries, filtersActive, selectedEntry, snap.catalog]);
 
   // One flat list, no duplicate rows: the recommended trio leads (framed by
   // the row list), the rest of the catalog follows in the current sort order.
@@ -240,6 +251,7 @@ export function VprExploreView({ onSelectView }: Props) {
             selectedServiceId={selectedModel?.serviceId}
             favoriteKeys={favorites}
             recommendedCount={recommendedEntries.length}
+            recommendedLabel={favoriteEntries.length > 0 ? 'Favorites' : 'Recommended'}
             pinnedPeerLabels={listedPins}
             onSelect={openModelPage}
             emptyLabel="No matching models"
