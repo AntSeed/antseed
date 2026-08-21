@@ -48,6 +48,8 @@ const RESTART_NOTICE_DISMISSED_KEY = 'antseed.desktop.vpr.restartNoticeDismissed
 const MODEL_CHANGE_NOTICE_MS = 4_000;
 /* Rows in the model dropdown (Figma) — the full catalog lives on Models. */
 const DROPDOWN_MODEL_COUNT = 5;
+/* Free rows leading the dropdown before the first deposit ever lands. */
+const DROPDOWN_FREE_COUNT = 3;
 
 function isFreeEntry(entry: VprModelCatalogEntry | undefined): boolean {
   if (!entry || entry.kind === 'image') return false;
@@ -225,19 +227,23 @@ export function VprHomeView({ onSelectView }: Props) {
   // hero; everything past the cap lives behind "All models".
   const dropdownEntries = useMemo(() => {
     const textCatalog = snap.catalog.filter((entry) => entry.kind === 'text');
-    // Until the first deposit ever lands, the dropdown offers free models
-    // only — paid rows would just 402 for an unfunded user. Falls back to the
-    // full lineup while discovery hasn't surfaced a trusted free offer yet
-    // (the hero shows "Finding free peers…" meanwhile), and the first deposit
-    // switches to the regular popular lineup for good.
-    const freeCatalog = everFunded
-      ? textCatalog
-      : textCatalog.filter((entry) => entry.hasEligibleFreeSeller);
-    const source = freeCatalog.length > 0 ? freeCatalog : textCatalog;
-    const favoriteEntries = selectFavoriteVprCatalog(source, favorites);
-    const recommended = selectRecommendedVprCatalog(source)
+    const favoriteEntries = selectFavoriteVprCatalog(textCatalog, favorites);
+    const recommended = selectRecommendedVprCatalog(textCatalog)
       .filter((entry) => !favorites.has(catalogEntryKey(entry)));
-    const top = [...favoriteEntries, ...recommended].slice(0, DROPDOWN_MODEL_COUNT);
+    // Until the first deposit ever lands, the dropdown leads with the three
+    // most available trusted free models — paid rows would just 402 for an
+    // unfunded user — and the remaining rows come from the regular popular
+    // lineup. The first deposit switches to that lineup alone, for good.
+    // (While discovery is still cold there are no eligible free offers yet;
+    // the hero shows "Finding free peers…" and the lineup fills the gap.)
+    const freeLead = everFunded
+      ? []
+      : textCatalog.filter((entry) => entry.hasEligibleFreeSeller).slice(0, DROPDOWN_FREE_COUNT);
+    const top: VprModelCatalogEntry[] = [];
+    for (const entry of [...favoriteEntries, ...freeLead, ...recommended]) {
+      if (top.length >= DROPDOWN_MODEL_COUNT) break;
+      if (!top.includes(entry)) top.push(entry);
+    }
     if (selectedEntry?.kind === 'text' && !top.includes(selectedEntry)) {
       return [selectedEntry, ...top.slice(0, DROPDOWN_MODEL_COUNT - 1)];
     }

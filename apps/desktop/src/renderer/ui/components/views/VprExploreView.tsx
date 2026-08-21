@@ -32,6 +32,7 @@ import { availableModelFamilies } from '../../../modules/catalog/model-families'
 import { loadFavoriteModels } from '../../../modules/catalog/favorites';
 import { availableModelTags } from '../../../modules/catalog/model-metadata';
 import { setVprModelPageTarget } from '../../../modules/catalog/model-page-target';
+import { selectFavoriteVprCatalog } from '../../../modules/catalog/recommended';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { useEverFunded } from '../../hooks/useEverFunded';
@@ -45,8 +46,8 @@ import styles from './VprExploreView.module.scss';
 
 type Props = { onSelectView?: (view: ViewName) => void };
 
-/* Rows in the unfunded "Recommended for you" lead-in section. */
-const TOP_FREE_COUNT = 5;
+/* Lead rows marked "Recommended" at the top of the list. */
+const RECOMMENDED_COUNT = 3;
 
 function FilterIconView({ icon }: { icon: IconSvgElement }) {
   return <HugeiconsIcon icon={icon} size={16} strokeWidth={1.8} />;
@@ -144,39 +145,47 @@ export function VprExploreView({ onSelectView }: Props) {
     listInputs.sort,
   ), [listInputs, snap.catalog]);
 
-  // Until the first deposit ever lands, the default page leads with the top
-  // free models — paid rows would just 402 for an unfunded user. Searching or
-  // filtering dismisses the lead-in (the user is navigating the full list),
-  // and the first deposit removes it for good.
-  const filtersActive = listInputs.search.trim().length > 0
-    || listInputs.types.length > 0
-    || listInputs.families.length > 0;
-  const topFreeEntries = useMemo(() => {
-    if (everFunded || filtersActive) return [];
-    return sortVprCatalog(filterVprCatalog(snap.catalog, { freeOnly: true }), 'Popular')
-      .slice(0, TOP_FREE_COUNT);
-  }, [everFunded, filtersActive, snap.catalog]);
-
-  // Any listed model that remembers a pin names its seller in place of the
-  // peer count — pins are per model and survive switching between them.
-  const listedPins = useMemo(
-    () => pinnedSellerLabels(snap.discoverRows, snap.modelPins, [...topFreeEntries, ...entries]),
-    [entries, topFreeEntries, snap.discoverRows, snap.modelPins],
-  );
-
   const selectedModel = snap.selection.model;
   const selectedEntry = selectedModel
     ? findCatalogEntry(snap.catalog, selectedModel.provider, selectedModel.serviceId)
     : null;
 
-  // No separate selected-model card — the active model leads whichever list
-  // contains it, and the row's selected highlight marks it.
-  const hoistSelected = (list: VprModelCatalogEntry[]): VprModelCatalogEntry[] => {
-    if (!selectedEntry || !list.includes(selectedEntry)) return list;
-    return [selectedEntry, ...list.filter((entry) => entry !== selectedEntry)];
-  };
-  const leadEntries = hoistSelected(topFreeEntries);
-  const listEntries = hoistSelected(entries);
+  // The default view leads with three "Recommended" rows: the selected model
+  // first, then the user's favorites, then — until the first deposit ever
+  // lands — the most available free models (paid rows would just 402 for an
+  // unfunded user), or the popular lineup once funded. Searching or filtering
+  // drops the lead marking: the user is navigating the full list.
+  const filtersActive = listInputs.search.trim().length > 0
+    || listInputs.types.length > 0
+    || listInputs.families.length > 0;
+  const recommendedEntries = useMemo(() => {
+    if (filtersActive) return [];
+    const picked: VprModelCatalogEntry[] = [];
+    const add = (entry: VprModelCatalogEntry): void => {
+      if (picked.length < RECOMMENDED_COUNT && !picked.includes(entry)) picked.push(entry);
+    };
+    if (selectedEntry) add(selectedEntry);
+    for (const entry of selectFavoriteVprCatalog(snap.catalog, favorites)) add(entry);
+    const pool = everFunded
+      ? sortVprCatalog(snap.catalog, 'Popular')
+      : sortVprCatalog(filterVprCatalog(snap.catalog, { freeOnly: true }), 'Popular');
+    for (const entry of pool) add(entry);
+    return picked;
+  }, [everFunded, favorites, filtersActive, selectedEntry, snap.catalog]);
+
+  // One flat list, no duplicate rows: the recommended trio leads (framed by
+  // the row list), the rest of the catalog follows in the current sort order.
+  const listEntries = useMemo(
+    () => [...recommendedEntries, ...entries.filter((entry) => !recommendedEntries.includes(entry))],
+    [entries, recommendedEntries],
+  );
+
+  // Any listed model that remembers a pin names its seller in place of the
+  // peer count — pins are per model and survive switching between them.
+  const listedPins = useMemo(
+    () => pinnedSellerLabels(snap.discoverRows, snap.modelPins, listEntries),
+    [listEntries, snap.discoverRows, snap.modelPins],
+  );
 
   const openModelPage = (provider: string, serviceId: string): void => {
     // Drilling into a model only browses it — the model page's "Use" button
@@ -224,36 +233,17 @@ export function VprExploreView({ onSelectView }: Props) {
           </div>
         </div>
 
-        {leadEntries.length > 0 && (
-          <>
-            <div className={styles.sectionTitle}>Recommended for you</div>
-            <VprModelRowList
-              entries={leadEntries}
-              selectedProvider={selectedModel?.provider}
-              selectedServiceId={selectedModel?.serviceId}
-              favoriteKeys={favorites}
-              pinnedPeerLabels={listedPins}
-              onSelect={openModelPage}
-              emptyLabel="No matching models"
-            />
-          </>
-        )}
-
         {listEntries.length > 0 ? (
-          <>
-            {leadEntries.length > 0 && (
-              <div className={styles.sectionTitle}>All models ({listEntries.length})</div>
-            )}
-            <VprModelRowList
-              entries={listEntries}
-              selectedProvider={selectedModel?.provider}
-              selectedServiceId={selectedModel?.serviceId}
-              favoriteKeys={favorites}
-              pinnedPeerLabels={listedPins}
-              onSelect={openModelPage}
-              emptyLabel="No matching models"
-            />
-          </>
+          <VprModelRowList
+            entries={listEntries}
+            selectedProvider={selectedModel?.provider}
+            selectedServiceId={selectedModel?.serviceId}
+            favoriteKeys={favorites}
+            recommendedCount={recommendedEntries.length}
+            pinnedPeerLabels={listedPins}
+            onSelect={openModelPage}
+            emptyLabel="No matching models"
+          />
         ) : (
           snap.discoverRowsLoaded ? (
             <div className={styles.empty} role="status">
