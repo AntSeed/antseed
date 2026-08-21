@@ -64,7 +64,7 @@ test("reciprocal volumes use the guest-normalized pair directions", () => {
   const addressA = "0x0000000000000000000000000000000000000001";
   const addressB = "0x0000000000000000000000000000000000000002";
   const reciprocal = {
-    version: 1,
+    version: 2,
     kind: "antseed-wash-trading-proof-plan",
     chainId: 8_453,
     reportRoot: "0x01",
@@ -130,7 +130,7 @@ function plan() {
     amountRaw: amount.toString(),
   }));
   return {
-    version: 1,
+    version: 2,
     kind: "antseed-wash-trading-proof-plan",
     chainId: 8_453,
     reportRoot: "0x01",

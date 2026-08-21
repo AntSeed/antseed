@@ -203,7 +203,7 @@ function summarizeClaim(claim) {
 }
 
 function validateInputs(plan, bundle) {
-  if (plan?.version !== 1 || plan?.kind !== "antseed-wash-trading-proof-plan" || !Array.isArray(plan.claims)) throw new Error("unsupported proof plan");
+  if (plan?.version !== 2 || plan?.kind !== "antseed-wash-trading-proof-plan" || !Array.isArray(plan.claims)) throw new Error("unsupported proof plan");
   if (plan.chainId !== 8_453 || bundle.chainId !== plan.chainId || bundle.reportRoot !== plan.reportRoot) throw new Error("proof plan and bundle identity mismatch");
 }
 

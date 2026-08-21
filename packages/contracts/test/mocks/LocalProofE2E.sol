@@ -21,15 +21,14 @@ contract LocalProofE2EVerifier is IRiscZeroVerifier {
 
 contract LocalProofE2EStateOracle is IBaseAnalysisStateOracle {
     mapping(uint64 blockNumber => bytes32 blockHash) public canonicalBlockHashes;
-    bool public historicalBackfillStarted;
     bool public historicalCoverageComplete;
 
     function setCanonical(uint64 blockNumber, bytes32 blockHash) external {
         canonicalBlockHashes[blockNumber] = blockHash;
     }
 
-    function beginHistoricalBackfill() external {
-        historicalBackfillStarted = true;
+    function setHistoricalCoverageComplete() external {
+        historicalCoverageComplete = true;
     }
 
     function isCanonicalBlock(uint64 blockNumber, bytes32 blockHash) external view returns (bool) {

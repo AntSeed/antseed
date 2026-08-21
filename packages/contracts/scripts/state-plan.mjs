@@ -1,23 +1,23 @@
-import { Interface, JsonRpcProvider, Wallet, getAddress, keccak256, sha256, toUtf8Bytes } from "ethers";
+import { AbiCoder, Interface, JsonRpcProvider, Wallet, getAddress, keccak256, sha256, toUtf8Bytes } from "ethers";
 
 export const STATE_PLAN_VERSION = 1;
 export const STATE_PLAN_KIND = "antseed-base-state-plan";
 export const RESUME_VERSION = 3;
 
 const TRANSACTION_INTERFACE = new Interface([
-  "function archiveBeaconRoot(uint256 ethereumTimestamp)",
-  "function submitCheckpoint(bytes seal,bytes journalData)",
-  "function beginHistoricalBackfill()",
-  "function submitHistoricalChunk(bytes seal,bytes journalData)",
-  "function materializeHistoricalBlocks(tuple(uint64 blockNumber,bytes32 blockHash,bytes32[14] siblings)[] proofs)",
+  "function submitHistoricalAccumulator(bytes seal,bytes journalData)",
+  "function materializeHistoricalBlocks(tuple(uint64 blockNumber,bytes32 blockHash,bytes32[14] blockSiblings,bytes32 epochFirstParentHash,bytes32 epochEndBlockHash,bytes32[] mountainSiblings,bytes32[] peaks,uint32 targetPeakIndex)[] proofs)",
 ]);
 const CHECK_INTERFACE = new Interface([
-  "function archivedBeaconRoots(uint256 ethereumTimestamp) view returns (bytes32)",
-  "function historicalBackfillStarted() view returns (bool)",
-  "function consumedJournalDigests(bytes32 journalDigest) view returns (bool)",
-  "function historicalChunkRoots(uint16 chunkIndex) view returns (bytes32)",
+  "function historicalCoverageComplete() view returns (bool)",
+  "function historicalEndBlock() view returns (uint64)",
+  "function historicalEpochCount() view returns (uint32)",
+  "function historicalMmrRoot() view returns (bytes32)",
+  "function historicalJournalDigest() view returns (bytes32)",
   "function canonicalBlockHashes(uint64 blockNumber) view returns (bytes32)",
 ]);
+const ABI_CODER = AbiCoder.defaultAbiCoder();
+const ACCUMULATOR_JOURNAL_TYPE = "tuple(uint32 version,uint64 chainId,bytes32 epochImageId,uint64 startBlockNumber,uint64 endBlockNumber,uint64 anchorBlockNumber,bytes32 anchorBlockHash,uint64 blockCount,uint32 epochSize,uint32 epochCount,bytes32 mmrRoot)";
 const PLAN_KEYS = new Set(["version", "kind", "chainId", "oracle", "entries"]);
 const ENTRY_KEYS = new Set(["id", "order", "purpose", "to", "value", "data", "checks"]);
 const CHECK_KEYS = new Set(["to", "data", "expected"]);
@@ -38,7 +38,7 @@ export function validateStatePlan(plan, expectedOracle = null) {
     if (typeof entry.purpose !== "string" || entry.purpose.length === 0) throw new Error(`state plan entry ${entry.id} has no purpose`);
     if (normalizeAddress(entry.to, `${entry.id} target`) !== oracle) throw new Error(`state plan entry ${entry.id} targets a different oracle`);
     if (entry.value !== "0x0") throw new Error(`state plan entry ${entry.id} sends value`);
-    validateCalldata(entry.data, TRANSACTION_INTERFACE, `${entry.id} transaction`);
+    const transaction = validateCalldata(entry.data, TRANSACTION_INTERFACE, `${entry.id} transaction`);
     if (!Array.isArray(entry.checks) || entry.checks.length === 0) throw new Error(`state plan entry ${entry.id} has no completion checks`);
     for (const [checkIndex, check] of entry.checks.entries()) {
       requireExactKeys(check, CHECK_KEYS, `${entry.id} check ${checkIndex}`);
@@ -46,6 +46,7 @@ export function validateStatePlan(plan, expectedOracle = null) {
       validateCalldata(check.data, CHECK_INTERFACE, `${entry.id} check`);
       validateHex(check.expected, `${entry.id} expected result`, 32, 32);
     }
+    validateCompletionChecks(entry, transaction);
   }
   return plan;
 }
@@ -191,6 +192,56 @@ function validateCalldata(value, iface, label) {
   if (!transaction) throw new Error(`${label} uses an unauthorized selector`);
   const canonical = iface.encodeFunctionData(transaction.fragment, transaction.args);
   if (canonical.toLowerCase() !== value.toLowerCase()) throw new Error(`${label} is not canonical ABI calldata`);
+  return transaction;
+}
+
+function validateCompletionChecks(entry, transaction) {
+  if (transaction.name === "submitHistoricalAccumulator") {
+    let journal;
+    try { journal = ABI_CODER.decode([ACCUMULATOR_JOURNAL_TYPE], transaction.args.journalData)[0]; }
+    catch { throw new Error(`${entry.id} accumulator journal is malformed`); }
+    assertExactChecks(entry, [
+      expectedCheck("historicalCoverageComplete", [], ABI_CODER.encode(["bool"], [true])),
+      expectedCheck("historicalEndBlock", [], ABI_CODER.encode(["uint64"], [journal.endBlockNumber])),
+      expectedCheck("historicalEpochCount", [], ABI_CODER.encode(["uint32"], [journal.epochCount])),
+      expectedCheck("historicalMmrRoot", [], ABI_CODER.encode(["bytes32"], [journal.mmrRoot])),
+      expectedCheck("historicalJournalDigest", [], ABI_CODER.encode(["bytes32"], [sha256(transaction.args.journalData)])),
+    ]);
+    return;
+  }
+  if (transaction.name === "materializeHistoricalBlocks") {
+    const proofs = transaction.args.proofs;
+    if (proofs.length === 0) throw new Error(`${entry.id} materializes no blocks`);
+    const blockNumbers = new Set();
+    const expected = proofs.map((proof) => {
+      const blockNumber = proof.blockNumber.toString();
+      if (blockNumbers.has(blockNumber)) throw new Error(`${entry.id} contains a duplicate block`);
+      blockNumbers.add(blockNumber);
+      return expectedCheck(
+        "canonicalBlockHashes",
+        [proof.blockNumber],
+        ABI_CODER.encode(["bytes32"], [proof.blockHash]),
+      );
+    });
+    assertExactChecks(entry, expected);
+  }
+}
+
+function expectedCheck(name, args, expected) {
+  return { data: CHECK_INTERFACE.encodeFunctionData(name, args).toLowerCase(), expected: expected.toLowerCase() };
+}
+
+function assertExactChecks(entry, expectedChecks) {
+  if (entry.checks.length !== expectedChecks.length) throw new Error(`${entry.id} completion checks do not exactly bind the transaction`);
+  const actual = new Map();
+  for (const check of entry.checks) {
+    const data = check.data.toLowerCase();
+    if (actual.has(data)) throw new Error(`${entry.id} has duplicate completion checks`);
+    actual.set(data, check.expected.toLowerCase());
+  }
+  for (const expected of expectedChecks) {
+    if (actual.get(expected.data) !== expected.expected) throw new Error(`${entry.id} completion checks do not exactly bind the transaction`);
+  }
 }
 
 function validateHex(value, label, minimumBytes, maximumBytes = null) {

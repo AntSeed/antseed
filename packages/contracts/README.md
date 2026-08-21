@@ -104,7 +104,7 @@ authority.
 The safe deployment and release order is:
 
 1. Install `AntseedSellerRewardPolicyRegistry` with the historical gate active.
-2. Backfill canonical historical coverage in the Base state oracle.
+2. Submit the EIP-2935-anchored history accumulator and materialize every required block hash.
 3. Submit the complete wash-trading proof batch.
 4. Verify the signed proof-release manifest and its digest.
 5. Run `FinalizeSellerRewardBackfill.s.sol` with that digest.
@@ -112,9 +112,9 @@ The safe deployment and release order is:
 7. Register `AntseedWashTradingPointsPolicy` independently for future accrual.
 
 Historical canonical state and seller proof submission are separate actions.
-The strict `antseed-base-state-plan` v1 file exists only to populate the
-checkpoint oracle with authenticated Base block hashes required by proof
-journals. It does not contain proof submissions, settlement choices, or volume
+The strict `antseed-base-state-plan` v1 file exists only to submit the immutable
+history MMR and populate the Base oracle with membership-proven block hashes
+required by proof journals. It does not contain seller proof submissions, settlement choices, or volume
 values, and it cannot change the 1,000 USDC, reciprocal-direction, receipt-count,
 period, or reciprocity thresholds.
 

@@ -20,7 +20,7 @@ if (process.argv[1] && basename(process.argv[1]) === basename(new URL(import.met
   const planPaths = args.flatMap((arg, index) => arg === "--plan" ? [args[index + 1]] : []).filter(Boolean);
   const outIndex = args.indexOf("--out");
   const out = outIndex < 0 ? null : args[outIndex + 1];
-  if (planPaths.length === 0 || !out) throw new Error("usage: merge-base-state-plans.mjs --plan checkpoint.json --plan backfill.json [--plan materialize.json] --out state-plan.json");
+  if (planPaths.length === 0 || !out) throw new Error("usage: merge-base-state-plans.mjs --plan accumulator.json [--plan additional.json] --out state-plan.json");
   const plans = await Promise.all(planPaths.map(async (path) => JSON.parse(await readFile(path, "utf8"))));
   const merged = mergeStatePlans(plans);
   await writeFile(out, `${JSON.stringify(merged, null, 2)}\n`);

@@ -1,13 +1,28 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AbiCoder, Interface, keccak256 } from "ethers";
+import { AbiCoder, Interface, keccak256, sha256 } from "ethers";
 import { applyStatePlan, initializeResume, statePlanDigest, validateStatePlan } from "./state-plan.mjs";
 
 const ORACLE = "0x0000000000000000000000000000000000000001";
-const TRANSACTIONS = new Interface(["function beginHistoricalBackfill()"]);
-const CHECKS = new Interface(["function historicalBackfillStarted() view returns (bool)"]);
-const TRUE = AbiCoder.defaultAbiCoder().encode(["bool"], [true]);
-const FALSE = AbiCoder.defaultAbiCoder().encode(["bool"], [false]);
+const TRANSACTIONS = new Interface([
+  "function submitHistoricalAccumulator(bytes seal,bytes journalData)",
+  "function materializeHistoricalBlocks(tuple(uint64 blockNumber,bytes32 blockHash,bytes32[14] blockSiblings,bytes32 epochFirstParentHash,bytes32 epochEndBlockHash,bytes32[] mountainSiblings,bytes32[] peaks,uint32 targetPeakIndex)[] proofs)",
+]);
+const CHECKS = new Interface([
+  "function historicalCoverageComplete() view returns (bool)",
+  "function historicalEndBlock() view returns (uint64)",
+  "function historicalEpochCount() view returns (uint32)",
+  "function historicalMmrRoot() view returns (bytes32)",
+  "function historicalJournalDigest() view returns (bytes32)",
+  "function canonicalBlockHashes(uint64 blockNumber) view returns (bytes32)",
+]);
+const ABI_CODER = AbiCoder.defaultAbiCoder();
+const TRUE = ABI_CODER.encode(["bool"], [true]);
+const FALSE = ABI_CODER.encode(["bool"], [false]);
+const MMR_ROOT = `0x${"ab".repeat(32)}`;
+const JOURNAL_DATA = ABI_CODER.encode([
+  "tuple(uint32 version,uint64 chainId,bytes32 epochImageId,uint64 startBlockNumber,uint64 endBlockNumber,uint64 anchorBlockNumber,bytes32 anchorBlockHash,uint64 blockCount,uint32 epochSize,uint32 epochCount,bytes32 mmrRoot)",
+], [[2, 8_453, `0x${"11".repeat(32)}`, 44_469_557, 49_941_812, 49_941_812, `0x${"22".repeat(32)}`, 5_472_256, 16_384, 334, MMR_ROOT]]);
 
 test("strict state plan rejects legacy, reordered, unsafe, and unchecked entries", () => {
   assert.throws(() => validateStatePlan({ chainId: 8_453, oracle: ORACLE, transactions: [] }), /invalid fields/);
@@ -25,10 +40,13 @@ test("strict state plan rejects legacy, reordered, unsafe, and unchecked entries
   assert.throws(() => validateStatePlan(unauthorized), /unauthorized/);
   const malformed = validPlan();
   malformed.entries[0].data = new Interface(["function archiveBeaconRoot(uint256)"]).getFunction("archiveBeaconRoot").selector;
-  assert.throws(() => validateStatePlan(malformed), /malformed or unauthorized calldata/);
+  assert.throws(() => validateStatePlan(malformed), /unauthorized selector/);
   const oversizedCheck = validPlan();
   oversizedCheck.entries[0].checks[0].expected += "00";
   assert.throws(() => validateStatePlan(oversizedCheck), /not valid hex/);
+  const weakAccumulatorCheck = validPlan();
+  weakAccumulatorCheck.entries[0].checks.pop();
+  assert.throws(() => validateStatePlan(weakAccumulatorCheck), /do not exactly bind/);
 });
 
 test("resume files are bound to the exact canonical plan", () => {
@@ -40,25 +58,35 @@ test("resume files are bound to the exact canonical plan", () => {
   assert.throws(() => initializeResume(changed, resume), /does not match/);
 });
 
+test("materialization checks bind every exact block number and hash", () => {
+  const plan = materializationPlan();
+  assert.equal(validateStatePlan(plan), plan);
+  plan.entries[0].checks[0].expected = `0x${"44".repeat(32)}`;
+  assert.throws(() => validateStatePlan(plan), /do not exactly bind/);
+});
+
 test("completion checks skip before simulation and sending", async () => {
   let calls = 0;
   const provider = baseProvider({
-    call: async () => { calls += 1; return TRUE; },
+    call: async ({ data }) => { calls += 1; return expectedCheckResult(validPlan(), data); },
     estimateGas: async () => { throw new Error("estimate must not run"); },
   });
   const outcome = await applyStatePlan({
     plan: validPlan(), provider, rpcUrl: "http://127.0.0.1:8545", signer: { address: ORACLE },
     mode: "submit", confirmPlanDigest: statePlanDigest(validPlan()),
   });
-  assert.equal(calls, 2);
-  assert.deepEqual(outcome.results, [{ id: "historical-backfill:begin", status: "satisfied" }]);
+  assert.equal(calls, 10);
+  assert.deepEqual(outcome.results, [{ id: "historical-accumulator", status: "satisfied" }]);
 });
 
 test("fork execution persists and verifies exact completion", async () => {
   let completed = false;
   let persisted = 0;
   const provider = baseProvider({
-    call: async ({ data }) => data === validPlan().entries[0].checks[0].data ? (completed ? TRUE : FALSE) : "0x",
+    call: async ({ data }) => {
+      const expected = expectedCheckResult(validPlan(), data);
+      return expected == null ? "0x" : completed ? expected : FALSE;
+    },
     estimateGas: async () => 100_000n,
   });
   const signer = {
@@ -78,7 +106,7 @@ test("fork execution persists and verifies exact completion", async () => {
   });
   assert.equal(persisted, 2);
   assert.equal(outcome.results[0].status, "submitted");
-  assert.equal(outcome.resume.transactions["historical-backfill:begin"].calldataHash.length, 66);
+  assert.equal(outcome.resume.transactions["historical-accumulator"].calldataHash.length, 66);
 });
 
 test("interrupted execution refetches and verifies the recorded transaction", async () => {
@@ -96,7 +124,12 @@ test("interrupted execution refetches and verifies the recorded transaction", as
     receipt: { status: 0, blockNumber: 1, gasUsed: "1" },
   };
   const provider = baseProvider({
-    call: async () => { checks += 1; return checks === 1 ? FALSE : TRUE; },
+    call: async ({ data }) => {
+      const expected = expectedCheckResult(plan, data);
+      if (expected == null) return "0x";
+      checks += 1;
+      return checks === 1 ? FALSE : expected;
+    },
     getTransaction: async () => { transactionReads += 1; return { to: ORACLE, data: plan.entries[0].data, nonce: 7, value: 0n }; },
     getTransactionReceipt: async () => { receiptReads += 1; return { status: 1, blockNumber: 9, gasUsed: 80_000n }; },
   });
@@ -112,7 +145,7 @@ test("interrupted execution refetches and verifies the recorded transaction", as
 test("completed rerun sends zero transactions", async () => {
   let sends = 0;
   const provider = baseProvider({
-    call: async () => TRUE,
+    call: async ({ data }) => expectedCheckResult(validPlan(), data),
     estimateGas: async () => { throw new Error("estimate must not run"); },
   });
   const signer = {
@@ -133,19 +166,63 @@ function validPlan() {
     chainId: 8_453,
     oracle: ORACLE,
     entries: [{
-      id: "historical-backfill:begin",
+      id: "historical-accumulator",
       order: 0,
-      purpose: "begin historical backfill",
+      purpose: "submit historical accumulator",
       to: ORACLE,
       value: "0x0",
-      data: TRANSACTIONS.encodeFunctionData("beginHistoricalBackfill"),
+      data: TRANSACTIONS.encodeFunctionData("submitHistoricalAccumulator", ["0x12", JOURNAL_DATA]),
+      checks: accumulatorChecks(),
+    }],
+  };
+}
+
+function materializationPlan() {
+  const blockNumber = 44_469_557;
+  const blockHash = `0x${"33".repeat(32)}`;
+  const proof = {
+    blockNumber,
+    blockHash,
+    blockSiblings: Array(14).fill(`0x${"00".repeat(32)}`),
+    epochFirstParentHash: `0x${"11".repeat(32)}`,
+    epochEndBlockHash: `0x${"22".repeat(32)}`,
+    mountainSiblings: [],
+    peaks: [MMR_ROOT],
+    targetPeakIndex: 0,
+  };
+  return {
+    version: 1,
+    kind: "antseed-base-state-plan",
+    chainId: 8_453,
+    oracle: ORACLE,
+    entries: [{
+      id: "historical-materialization-0",
+      order: 0,
+      purpose: "materialize one block",
+      to: ORACLE,
+      value: "0x0",
+      data: TRANSACTIONS.encodeFunctionData("materializeHistoricalBlocks", [[proof]]),
       checks: [{
         to: ORACLE,
-        data: CHECKS.encodeFunctionData("historicalBackfillStarted"),
-        expected: TRUE,
+        data: CHECKS.encodeFunctionData("canonicalBlockHashes", [blockNumber]),
+        expected: ABI_CODER.encode(["bytes32"], [blockHash]),
       }],
     }],
   };
+}
+
+function accumulatorChecks() {
+  return [
+    ["historicalCoverageComplete", TRUE],
+    ["historicalEndBlock", ABI_CODER.encode(["uint64"], [49_941_812])],
+    ["historicalEpochCount", ABI_CODER.encode(["uint32"], [334])],
+    ["historicalMmrRoot", ABI_CODER.encode(["bytes32"], [MMR_ROOT])],
+    ["historicalJournalDigest", ABI_CODER.encode(["bytes32"], [sha256(JOURNAL_DATA)])],
+  ].map(([name, expected]) => ({ to: ORACLE, data: CHECKS.encodeFunctionData(name), expected }));
+}
+
+function expectedCheckResult(plan, data) {
+  return plan.entries.flatMap((entry) => entry.checks).find((check) => check.data === data)?.expected ?? null;
 }
 
 function baseProvider(overrides) {
