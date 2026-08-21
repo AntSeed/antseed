@@ -61,6 +61,7 @@ export function VprHomeView({ onSelectView }: Props) {
     selection: state.vprRouteSelection,
     modelPins: state.vprModelPins,
     discoverRows: state.vprRoutableRows,
+    defaultProvisional: state.vprDefaultModelProvisional,
     processes: state.processes,
     connectBadge: state.connectBadge,
     usage: state.creditsBuyerUsage,
@@ -421,6 +422,12 @@ export function VprHomeView({ onSelectView }: Props) {
                       ?? (selectedModel ? displayModelLabel(selectedModel.serviceId, selectedModel.label) : 'None selected')}
                   </span>
                   {modelIsFree && <span className={styles.freeTag}>Free</span>}
+                  {/* First-use warm-up: the default is provisional while no
+                      trusted free seller is discovered yet — say so instead of
+                      presenting the paid fallback as a settled choice. */}
+                  {!modelIsFree && snap.defaultProvisional && (
+                    <span className={styles.searchingTag}>Finding free peers…</span>
+                  )}
                 </span>
                 <span className={styles.modelCardCaption}>
                   <span>Model for new chats</span>

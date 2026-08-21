@@ -333,6 +333,26 @@
   line-height: 16px;
 }
 
+/* First-use hint while the default model is provisional and discovery is
+   still hunting for a trusted free seller. */
+.searchingTag {
+  padding: 0 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  white-space: nowrap;
+  animation: searchingTagPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes searchingTagPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
 .modelCardChevron {
   flex: 0 0 auto;
   color: var(--text-secondary);

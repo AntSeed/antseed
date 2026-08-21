@@ -180,6 +180,27 @@ test('filters the catalog by model family', () => {
   assert.equal(filterVprCatalog(entries, { families: [] }).length, 3);
 });
 
+test('filters the catalog to free models only', () => {
+  const entries = [
+    catalogEntry({ serviceId: 'free-model', minInputUsdPerMillion: 0, minOutputUsdPerMillion: 0 }),
+    catalogEntry({ serviceId: 'paid-model' }),
+    catalogEntry({
+      serviceId: 'free-image',
+      kind: 'image',
+      minInputUsdPerMillion: null,
+      minOutputUsdPerMillion: null,
+      minImageUsdPerImage: 0,
+    }),
+    catalogEntry({ serviceId: 'unpriced-model', minInputUsdPerMillion: null, minOutputUsdPerMillion: null }),
+  ];
+
+  assert.deepEqual(
+    filterVprCatalog(entries, { freeOnly: true }).map((entry) => entry.serviceId),
+    ['free-model', 'free-image'],
+  );
+  assert.equal(filterVprCatalog(entries, { freeOnly: false }).length, 4);
+});
+
 test('seller ordering matches effective reputation instead of raw trust', () => {
   const routes = [
     discoverRow({ peerId: 'flash', onChainTrustScore: 10_432, onChainReputationScore: 100, effectiveReputationScore: 50 }),

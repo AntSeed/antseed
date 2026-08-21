@@ -1402,6 +1402,12 @@ export function initChatModule({
   // user chooses a model explicitly.
   let provisionalDefaultModel: VprSelectedModel | null = null;
 
+  /** Keep the UI's "finding free peers" hint in step with the provisional pick. */
+  function setProvisionalDefaultModel(model: VprSelectedModel | null): void {
+    provisionalDefaultModel = model;
+    uiState.vprDefaultModelProvisional = model !== null;
+  }
+
   /**
    * Pick the default model and adopt it into the route selection. Free-backed
    * picks are final (persisted); anything else is provisional (see above).
@@ -1422,10 +1428,10 @@ export function initChatModule({
       uiState.vprRouteSelection = { model: defaultModel, mode: 'auto', peerId: null };
     }
     if (freeBacked) {
-      provisionalDefaultModel = null;
+      setProvisionalDefaultModel(null);
       saveVprRouteSelection(uiState.vprRouteSelection);
     } else {
-      provisionalDefaultModel = defaultModel;
+      setProvisionalDefaultModel(defaultModel);
     }
     return defaultModel;
   }
@@ -1574,7 +1580,7 @@ export function initChatModule({
         || selectedRouteModel.serviceId !== provisionalDefaultModel.serviceId)) {
         // The selection moved off the provisional pick — that was an explicit
         // choice (or a rules-driven re-pick); stop second-guessing it.
-        provisionalDefaultModel = null;
+        setProvisionalDefaultModel(null);
       }
       if (!selectedRouteModel || selectedRouteEntry?.kind === 'image' || provisionalDefaultModel !== null) {
         adoptDefaultVprModel();
@@ -2807,7 +2813,7 @@ export function initChatModule({
       };
       // An explicit pick ends the provisional-default window even when the
       // user picks the very model the provisional default landed on.
-      provisionalDefaultModel = null;
+      setProvisionalDefaultModel(null);
       if (rememberModelPin) {
         if (pinnedPeerId) {
           uiState.vprModelPins = setVprModelPin(

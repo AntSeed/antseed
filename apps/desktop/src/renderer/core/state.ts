@@ -402,6 +402,10 @@ export type RendererUiState = {
   vprModelCatalog: VprModelCatalogEntry[];
   /** Main text/connected-app route. Image models never replace this. */
   vprRouteSelection: VprRouteSelection;
+  /** True while the auto-picked default model is provisional: no trusted free
+   * route is discovered yet, so the pick keeps being re-evaluated. Surfaces a
+   * "finding free peers" hint during the first-use discovery warm-up. */
+  vprDefaultModelProvisional: boolean;
   /** Dedicated internal-chat image route, set only by “Use in chat”. */
   chatImageRouteSelection: VprRouteSelection | null;
   /** Remembered seller pin per model (`provider:serviceId` -> peer id), so a
@@ -566,6 +570,7 @@ export function createInitialUiState(): RendererUiState {
       mode: 'auto',
       peerId: null,
     },
+    vprDefaultModelProvisional: false,
     chatImageRouteSelection: null,
     vprModelPins: {},
     vprRoutingPreferences: {

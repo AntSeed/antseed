@@ -119,6 +119,7 @@ export function VprExploreView({ onSelectView }: Props) {
   const typeOptions = useMemo<readonly VprFilterOption<string>[]>(() => [
     { value: 'kind:text', label: 'Text', description: 'Chat and language models', icon: <FilterIconView icon={TextIcon} /> },
     { value: 'kind:image', label: 'Image', description: 'Image generation models', icon: <FilterIconView icon={Image01Icon} /> },
+    { value: 'free', label: 'Free', description: 'Models with a free offer', icon: <FilterIconView icon={Dollar01Icon} /> },
     ...tags.map((modelTag) => ({
       value: `tag:${modelTag}`,
       label: modelTag,
@@ -165,6 +166,7 @@ export function VprExploreView({ onSelectView }: Props) {
           .filter((value) => value.startsWith('tag:'))
           .map((value) => value.slice(4)),
         families: listInputs.families,
+        freeOnly: listInputs.types.includes('free'),
       }),
       listInputs.sort,
     );
