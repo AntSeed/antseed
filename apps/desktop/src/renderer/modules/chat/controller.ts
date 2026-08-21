@@ -1,4 +1,4 @@
-import type { BadgeTone, DiscoverRow, RendererUiState, VprModelCatalogEntry } from '../../core/state';
+import type { BadgeTone, DiscoverRow, RendererUiState, VprModelCatalogEntry, VprSelectedModel } from '../../core/state';
 import { LOCALHOST_URL } from '../../constants';
 import { notifyUiStateChanged, notifyUiStateChangedSync } from '../../core/store';
 import { normalizeDiscoverRow, projectRowsToChatServiceOptions } from '../catalog/discover-rows.js';
@@ -1392,6 +1392,44 @@ export function initChatModule({
     );
   }
 
+  // The auto-picked default model, while it is only provisional: not backed by
+  // an eligible free route. First-launch discovery snapshots are cold — DHT
+  // discovery is partial and on-chain reputation hasn't been fetched yet, so
+  // every free seller fails the trust gate and the default pick falls back to
+  // a paid model. Persisting that pick would lock a brand-new user onto a paid
+  // default forever, so a provisional pick is kept in memory only and
+  // re-evaluated on every refresh until a free-backed default appears or the
+  // user chooses a model explicitly.
+  let provisionalDefaultModel: VprSelectedModel | null = null;
+
+  /**
+   * Pick the default model and adopt it into the route selection. Free-backed
+   * picks are final (persisted); anything else is provisional (see above).
+   * Returns the pick, or null when the catalog offers nothing to pick.
+   */
+  function adoptDefaultVprModel(): VprSelectedModel | null {
+    const defaultModel = selectDefaultVprModel(uiState.vprModelCatalog, null, freeEntryRouteReputation);
+    if (!defaultModel) return null;
+    const entry = findCatalogEntry(uiState.vprModelCatalog, defaultModel.provider, defaultModel.serviceId);
+    const freeBacked = entry !== null && freeEntryRouteReputation(entry) !== null;
+    const current = uiState.vprRouteSelection;
+    const changed = !current.model
+      || current.model.provider !== defaultModel.provider
+      || current.model.serviceId !== defaultModel.serviceId
+      || current.mode !== 'auto'
+      || current.peerId !== null;
+    if (changed) {
+      uiState.vprRouteSelection = { model: defaultModel, mode: 'auto', peerId: null };
+    }
+    if (freeBacked) {
+      provisionalDefaultModel = null;
+      saveVprRouteSelection(uiState.vprRouteSelection);
+    } else {
+      provisionalDefaultModel = defaultModel;
+    }
+    return defaultModel;
+  }
+
   // Catalog price tags must only come from sellers auto-routing may pick, so
   // an untrusted seller's $0 offer can't render a "Free" badge for a model
   // that would really route (and bill) through a trusted paid seller.
@@ -1413,9 +1451,10 @@ export function initChatModule({
     // exclude — leaving it selected would strand every send with no route.
     const selected = uiState.vprRouteSelection.model;
     if (selected && routesForSelectedModel(uiState.vprRoutableRows, selected).length === 0) {
-      const defaultModel = selectDefaultVprModel(uiState.vprModelCatalog, null, freeEntryRouteReputation);
-      uiState.vprRouteSelection = { model: defaultModel, mode: 'auto', peerId: null };
-      saveVprRouteSelection(uiState.vprRouteSelection);
+      if (!adoptDefaultVprModel()) {
+        uiState.vprRouteSelection = { model: null, mode: 'auto', peerId: null };
+        saveVprRouteSelection(uiState.vprRouteSelection);
+      }
     }
 
     updateChatServiceOptions(projectRowsToChatServiceOptions(uiState.vprRoutableRows));
@@ -1522,17 +1561,23 @@ export function initChatModule({
       // Only auto-fill an empty selection. A user-chosen model that is briefly
       // missing from a partial discover snapshot (peer flap, partial DHT
       // results) must not be silently replaced — it resolves again as soon as
-      // its peer reappears in the catalog.
+      // its peer reappears in the catalog. A provisional default (auto-picked
+      // with no eligible free route in sight yet) is the one exception: it
+      // keeps being re-picked so the first-launch experience upgrades to a
+      // free model as soon as discovery and reputation warm up.
       const selectedRouteModel = uiState.vprRouteSelection.model;
       const selectedRouteEntry = selectedRouteModel
         ? findCatalogEntry(uiState.vprModelCatalog, selectedRouteModel.provider, selectedRouteModel.serviceId)
         : null;
-      if (!selectedRouteModel || selectedRouteEntry?.kind === 'image') {
-        const defaultModel = selectDefaultVprModel(uiState.vprModelCatalog, null, freeEntryRouteReputation);
-        if (defaultModel) {
-          uiState.vprRouteSelection = { model: defaultModel, mode: 'auto', peerId: null };
-          saveVprRouteSelection(uiState.vprRouteSelection);
-        }
+      if (provisionalDefaultModel && (!selectedRouteModel
+        || selectedRouteModel.provider !== provisionalDefaultModel.provider
+        || selectedRouteModel.serviceId !== provisionalDefaultModel.serviceId)) {
+        // The selection moved off the provisional pick — that was an explicit
+        // choice (or a rules-driven re-pick); stop second-guessing it.
+        provisionalDefaultModel = null;
+      }
+      if (!selectedRouteModel || selectedRouteEntry?.kind === 'image' || provisionalDefaultModel !== null) {
+        adoptDefaultVprModel();
       }
       // Keep the buyer proxy's default route on the current selection. Runs
       // on every poll tick, but main dedupes repeats — the repetition is what
@@ -2760,6 +2805,9 @@ export function initChatModule({
         mode: pinnedPeerId ? 'pinned-peer' : 'auto',
         peerId: pinnedPeerId || null,
       };
+      // An explicit pick ends the provisional-default window even when the
+      // user picks the very model the provisional default landed on.
+      provisionalDefaultModel = null;
       if (rememberModelPin) {
         if (pinnedPeerId) {
           uiState.vprModelPins = setVprModelPin(
