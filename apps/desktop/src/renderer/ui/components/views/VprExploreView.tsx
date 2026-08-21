@@ -73,7 +73,7 @@ const TAG_ICONS: Readonly<Record<string, IconSvgElement>> = {
 // Renderer-lifetime cache: tab/search/filter/sort survive drilling into a
 // model page and back (ViewHost unmounts inactive views).
 const exploreViewCache = {
-  tab: 'Recommended' as 'Recommended' | 'All',
+  tab: 'Recommended' as 'Recommended' | 'All' | 'Free',
   search: '',
   types: [] as string[],
   families: [] as string[],
@@ -150,7 +150,7 @@ export function VprExploreView({ onSelectView }: Props) {
   const entries = useMemo(() => {
     if (listInputs.tab === 'Recommended') {
       // Curated lineup order (frontier + free) — the sort control only
-      // exists on the All tab. Favorites get their own section above.
+      // exists on the All/Free tabs. Favorites get their own section above.
       const curated = selectRecommendedVprCatalog(snap.catalog)
         .filter((entry) => !favorites.has(catalogEntryKey(entry)))
         .slice(0, RECOMMENDED_LIMIT);
@@ -166,11 +166,17 @@ export function VprExploreView({ onSelectView }: Props) {
           .filter((value) => value.startsWith('tag:'))
           .map((value) => value.slice(4)),
         families: listInputs.families,
-        freeOnly: listInputs.types.includes('free'),
+        freeOnly: listInputs.tab === 'Free' || listInputs.types.includes('free'),
       }),
       listInputs.sort,
     );
   }, [favorites, listInputs, snap.catalog]);
+
+  // Tab badge: how many catalog models have a free offer right now.
+  const freeCount = useMemo(
+    () => filterVprCatalog(snap.catalog, { freeOnly: true }).length,
+    [snap.catalog],
+  );
 
   // Any listed model that remembers a pin names its seller in place of the
   // peer count — pins are per model and survive switching between them.
@@ -221,6 +227,15 @@ export function VprExploreView({ onSelectView }: Props) {
               >
                 All Models ({snap.catalog.length})
               </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === 'Free'}
+                className={`${styles.tab}${tab === 'Free' ? ` ${styles.tabActive}` : ''}`}
+                onClick={() => setTab('Free')}
+              >
+                Free ({freeCount})
+              </button>
             </div>
           </>
         )}
@@ -238,7 +253,7 @@ export function VprExploreView({ onSelectView }: Props) {
           />
         )}
 
-        {tab === 'All' && (
+        {tab !== 'Recommended' && (
           <div className={styles.filterRow}>
             <VprMultiFilterDropdown
               label="Type"
