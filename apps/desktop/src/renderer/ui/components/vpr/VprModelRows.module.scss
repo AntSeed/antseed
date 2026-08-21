@@ -78,9 +78,9 @@
      matches the card's so the corners align. */
   margin: -4px 0 0;
   padding: 8px 0 4px;
-  border: 1px solid rgba(var(--brand-rgb), 0.35);
+  border: 1px solid var(--border);
   border-radius: 16px;
-  background: rgba(var(--brand-rgb), 0.08);
+  background: var(--bg-surface);
 }
 
 .recommendedLegend {
@@ -94,9 +94,9 @@
   background: linear-gradient(
     to bottom,
     var(--bg-primary) 0 50%,
-    color-mix(in srgb, rgb(var(--brand-rgb)) 8%, var(--bg-card)) 50% 100%
+    var(--bg-surface) 50% 100%
   );
-  color: var(--brand);
+  color: var(--text-secondary);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.5px;
