@@ -6,6 +6,7 @@ import {
   findCatalogEntry,
   projectRowsToVprModelCatalog,
   selectDefaultVprModel,
+  sortFreeModelsByPriority,
 } from './model-catalog.js';
 
 function discoverRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
@@ -539,4 +540,24 @@ test('catalog merges Claude coding-only routes into their base model', () => {
   assert.equal(catalog.length, 1);
   assert.equal(catalog[0]?.label, 'Claude Opus 4.8');
   assert.equal(catalog[0]?.peerCount, 2);
+});
+
+test('sortFreeModelsByPriority leads with priority-slot models, keeps availability order past them', () => {
+  const catalog = projectRowsToVprModelCatalog([
+    discoverRow({ serviceId: 'minimax-m2.7', peerId: 'a1' }),
+    discoverRow({ serviceId: 'minimax-m2.7', peerId: 'a2' }),
+    discoverRow({ serviceId: 'minimax-m2.7', peerId: 'a3' }),
+    discoverRow({ serviceId: 'random-free-model', peerId: 'b1' }),
+    discoverRow({ serviceId: 'random-free-model', peerId: 'b2' }),
+    discoverRow({ serviceId: 'ox-alpha', peerId: 'c1' }),
+    discoverRow({ serviceId: 'deepseek-v4-flash', peerId: 'd1' }),
+  ]);
+
+  assert.deepEqual(
+    sortFreeModelsByPriority(catalog).map((entry) => entry.serviceId),
+    // deepseek (slot 1) and ox-alpha (slot 2) lead despite having the fewest
+    // sellers; minimax follows in its slot; unslotted models keep the
+    // incoming availability order at the tail.
+    ['deepseek-v4-flash', 'ox-alpha', 'minimax-m2.7', 'random-free-model'],
+  );
 });

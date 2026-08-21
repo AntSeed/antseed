@@ -15,7 +15,7 @@ import type { VprModelCatalogEntry } from '../../../core/state';
 import { getUiStateRef } from '../../../core/store';
 import { activeProfilesFromRuntimeState } from '../../../modules/routing/tools';
 import { pinnedSellerLabel, pinnedSellerLabels } from '../../../modules/catalog/view-models';
-import { findCatalogEntry } from '../../../modules/catalog/model-catalog';
+import { findCatalogEntry, sortFreeModelsByPriority } from '../../../modules/catalog/model-catalog';
 import { computeMeasuredSavings, formatSavedUsd } from '../../../modules/catalog/measured-savings';
 import { ensureOpenRouterPrices, getCachedOpenRouterPrices } from '../../../modules/catalog/openrouter-baseline';
 import { displayModelLabel } from '../../../modules/catalog/model-identity';
@@ -238,7 +238,8 @@ export function VprHomeView({ onSelectView }: Props) {
     // the hero shows "Finding free peers…" and the lineup fills the gap.)
     const freeLead = everFunded
       ? []
-      : textCatalog.filter((entry) => entry.hasEligibleFreeSeller).slice(0, DROPDOWN_FREE_COUNT);
+      : sortFreeModelsByPriority(textCatalog.filter((entry) => entry.hasEligibleFreeSeller))
+          .slice(0, DROPDOWN_FREE_COUNT);
     const top: VprModelCatalogEntry[] = [];
     for (const entry of [...favoriteEntries, ...freeLead, ...recommended]) {
       if (top.length >= DROPDOWN_MODEL_COUNT) break;

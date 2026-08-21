@@ -27,7 +27,7 @@ import {
   sortVprCatalog,
   type VprCatalogSort,
 } from '../../../modules/catalog/view-models';
-import { findCatalogEntry } from '../../../modules/catalog/model-catalog';
+import { findCatalogEntry, sortFreeModelsByPriority } from '../../../modules/catalog/model-catalog';
 import { availableModelFamilies } from '../../../modules/catalog/model-families';
 import { loadFavoriteModels } from '../../../modules/catalog/favorites';
 import { availableModelTags } from '../../../modules/catalog/model-metadata';
@@ -171,7 +171,13 @@ export function VprExploreView({ onSelectView }: Props) {
       ? favoriteEntries
       : (everFunded
           ? sortVprCatalog(snap.catalog, 'Popular')
-          : sortVprCatalog(filterVprCatalog(snap.catalog, { freeOnly: true }), 'Popular'));
+          // hasEligibleFreeSeller, not the price-based Free filter: entry
+          // prices fall back to untrusted rows when no seller passes the
+          // routing gate, so a $0 offer from a low-reputation seller must
+          // not put its model in the recommended frame.
+          : sortFreeModelsByPriority(
+              sortVprCatalog(snap.catalog.filter((entry) => entry.hasEligibleFreeSeller), 'Popular'),
+            ));
     const picks = source.slice(0, RECOMMENDED_COUNT);
     // The selected model leads the frame only when it's naturally one of the
     // picks. An off-frame selection stays out — it leads the list below
