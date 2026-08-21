@@ -13,36 +13,37 @@ import { IBaseAnalysisStateOracle } from "../interfaces/IBaseAnalysisStateOracle
  *
  * Required env:
  *   DEPLOYER_PRIVATE_KEY
- *   RISC0_VERIFIER
+ *   SP1_VERIFIER
  *   BASE_STATE_ORACLE
- *   CLOSED_CYCLE_IMAGE_ID
- *   RECIPROCAL_IMAGE_ID
+ *   CLOSED_CYCLE_PROGRAM_VKEY
+ *   RECIPROCAL_PROGRAM_VKEY
  */
 contract DeployWashTradingEnforcement is Script {
-    address internal constant BASE_RISC0_VERIFIER_ROUTER = 0xA326b2eb45A5C3C206dF905A58970DcA57B8719e;
+    address internal constant BASE_SP1_GROTH16_VERIFIER_GATEWAY = 0x397A5f7f3dBd538f23DE225B51f532c34448dA9B;
 
     function run() external returns (IBaseAnalysisStateOracle stateOracle, AntseedWashTradingRegistry registry) {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        address verifier = vm.envOr("RISC0_VERIFIER", BASE_RISC0_VERIFIER_ROUTER);
+        address verifier = vm.envOr("SP1_VERIFIER", BASE_SP1_GROTH16_VERIFIER_GATEWAY);
         address stateOracleAddress = vm.envAddress("BASE_STATE_ORACLE");
         require(stateOracleAddress.code.length != 0, "state oracle has no code");
         stateOracle = IBaseAnalysisStateOracle(stateOracleAddress);
-        bytes32 closedCycleImageId = vm.envBytes32("CLOSED_CYCLE_IMAGE_ID");
-        bytes32 reciprocalImageId = vm.envBytes32("RECIPROCAL_IMAGE_ID");
+        bytes32 closedCycleProgramVKey = vm.envBytes32("CLOSED_CYCLE_PROGRAM_VKEY");
+        bytes32 reciprocalProgramVKey = vm.envBytes32("RECIPROCAL_PROGRAM_VKEY");
 
         vm.startBroadcast(deployerPrivateKey);
-        registry = new AntseedWashTradingRegistry(verifier, stateOracleAddress, closedCycleImageId, reciprocalImageId);
+        registry =
+            new AntseedWashTradingRegistry(verifier, stateOracleAddress, closedCycleProgramVKey, reciprocalProgramVKey);
         vm.stopBroadcast();
 
         require(address(registry.verifier()) == verifier, "verifier pointer mismatch");
         require(address(registry.stateOracle()) == address(stateOracle), "state oracle pointer mismatch");
-        require(registry.closedCycleImageId() == closedCycleImageId, "closed-cycle image mismatch");
-        require(registry.reciprocalImageId() == reciprocalImageId, "reciprocal image mismatch");
+        require(registry.closedCycleProgramVKey() == closedCycleProgramVKey, "closed-cycle vkey mismatch");
+        require(registry.reciprocalProgramVKey() == reciprocalProgramVKey, "reciprocal vkey mismatch");
 
         console.log("WashTradingRegistry:", address(registry));
-        console.log("RiscZeroVerifier:   ", verifier);
+        console.log("SP1Verifier:        ", verifier);
         console.log("BaseStateOracle:    ", address(stateOracle));
-        console.logBytes32(closedCycleImageId);
-        console.logBytes32(reciprocalImageId);
+        console.logBytes32(closedCycleProgramVKey);
+        console.logBytes32(reciprocalProgramVKey);
     }
 }

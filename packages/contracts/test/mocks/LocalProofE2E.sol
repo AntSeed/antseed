@@ -2,20 +2,20 @@
 pragma solidity ^0.8.24;
 
 import { IBaseAnalysisStateOracle } from "../../interfaces/IBaseAnalysisStateOracle.sol";
-import { IRiscZeroVerifier } from "../../interfaces/IRiscZeroVerifier.sol";
+import { ISP1Verifier } from "../../interfaces/ISP1Verifier.sol";
 
-contract LocalProofE2EVerifier is IRiscZeroVerifier {
-    bytes32 public expectedImageId;
-    bytes32 public expectedJournalDigest;
+contract LocalProofE2EVerifier is ISP1Verifier {
+    bytes32 public expectedProgramVKey;
+    bytes32 public expectedPublicValuesDigest;
 
-    function expect(bytes32 imageId, bytes32 journalDigest) external {
-        expectedImageId = imageId;
-        expectedJournalDigest = journalDigest;
+    function expect(bytes32 programVKey, bytes32 publicValuesDigest) external {
+        expectedProgramVKey = programVKey;
+        expectedPublicValuesDigest = publicValuesDigest;
     }
 
-    function verify(bytes calldata, bytes32 imageId, bytes32 journalDigest) external view {
-        require(imageId == expectedImageId, "wrong image");
-        require(journalDigest == expectedJournalDigest, "wrong journal");
+    function verifyProof(bytes32 programVKey, bytes calldata publicValues, bytes calldata) external view {
+        require(programVKey == expectedProgramVKey, "wrong program vkey");
+        require(sha256(publicValues) == expectedPublicValuesDigest, "wrong public values");
     }
 }
 

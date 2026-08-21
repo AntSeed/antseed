@@ -5,7 +5,7 @@ export const STATE_PLAN_KIND = "antseed-base-state-plan";
 export const RESUME_VERSION = 3;
 
 const TRANSACTION_INTERFACE = new Interface([
-  "function submitHistoricalAccumulator(bytes seal,bytes journalData)",
+  "function submitHistoricalAccumulator(bytes proofBytes,bytes publicValues)",
   "function materializeHistoricalBlocks(tuple(uint64 blockNumber,bytes32 blockHash,bytes32[14] blockSiblings,bytes32 epochFirstParentHash,bytes32 epochEndBlockHash,bytes32[] mountainSiblings,bytes32[] peaks,uint32 targetPeakIndex)[] proofs)",
 ]);
 const CHECK_INTERFACE = new Interface([
@@ -17,7 +17,7 @@ const CHECK_INTERFACE = new Interface([
   "function canonicalBlockHashes(uint64 blockNumber) view returns (bytes32)",
 ]);
 const ABI_CODER = AbiCoder.defaultAbiCoder();
-const ACCUMULATOR_JOURNAL_TYPE = "tuple(uint32 version,uint64 chainId,bytes32 epochImageId,uint64 startBlockNumber,uint64 endBlockNumber,uint64 anchorBlockNumber,bytes32 anchorBlockHash,uint64 blockCount,uint32 epochSize,uint32 epochCount,bytes32 mmrRoot)";
+const ACCUMULATOR_JOURNAL_TYPE = "tuple(uint32 version,uint64 chainId,bytes32 epochRecursionVKey,uint64 startBlockNumber,uint64 endBlockNumber,uint64 anchorBlockNumber,bytes32 anchorBlockHash,uint64 blockCount,uint32 epochSize,uint32 epochCount,bytes32 mmrRoot)";
 const PLAN_KEYS = new Set(["version", "kind", "chainId", "oracle", "entries"]);
 const ENTRY_KEYS = new Set(["id", "order", "purpose", "to", "value", "data", "checks"]);
 const CHECK_KEYS = new Set(["to", "data", "expected"]);
@@ -198,14 +198,14 @@ function validateCalldata(value, iface, label) {
 function validateCompletionChecks(entry, transaction) {
   if (transaction.name === "submitHistoricalAccumulator") {
     let journal;
-    try { journal = ABI_CODER.decode([ACCUMULATOR_JOURNAL_TYPE], transaction.args.journalData)[0]; }
+    try { journal = ABI_CODER.decode([ACCUMULATOR_JOURNAL_TYPE], transaction.args.publicValues)[0]; }
     catch { throw new Error(`${entry.id} accumulator journal is malformed`); }
     assertExactChecks(entry, [
       expectedCheck("historicalCoverageComplete", [], ABI_CODER.encode(["bool"], [true])),
       expectedCheck("historicalEndBlock", [], ABI_CODER.encode(["uint64"], [journal.endBlockNumber])),
       expectedCheck("historicalEpochCount", [], ABI_CODER.encode(["uint32"], [journal.epochCount])),
       expectedCheck("historicalMmrRoot", [], ABI_CODER.encode(["bytes32"], [journal.mmrRoot])),
-      expectedCheck("historicalJournalDigest", [], ABI_CODER.encode(["bytes32"], [sha256(transaction.args.journalData)])),
+      expectedCheck("historicalJournalDigest", [], ABI_CODER.encode(["bytes32"], [sha256(transaction.args.publicValues)])),
     ]);
     return;
   }

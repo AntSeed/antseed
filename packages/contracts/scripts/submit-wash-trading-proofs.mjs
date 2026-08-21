@@ -4,23 +4,25 @@ import { basename, resolve } from "node:path";
 import { AbiCoder, Contract, JsonRpcProvider, Wallet, getAddress, keccak256, sha256, toUtf8Bytes } from "ethers";
 
 const REGISTRY_ABI = [
-  "function closedCycleImageId() view returns (bytes32)",
-  "function reciprocalImageId() view returns (bytes32)",
+  "function closedCycleProgramVKey() view returns (bytes32)",
+  "function reciprocalProgramVKey() view returns (bytes32)",
   "function stateOracle() view returns (address)",
   "function isSellerWashTradingFlagged(address seller) view returns (bool)",
-  "function submitClosedCycleProof(bytes seal,bytes journalData) returns (bool)",
-  "function submitReciprocalProof(bytes seal,bytes journalData) returns (bool,bool)",
+  "function submitClosedCycleProof(bytes proofBytes,bytes publicValues) returns (bool)",
+  "function submitReciprocalProof(bytes proofBytes,bytes publicValues) returns (bool,bool)",
 ];
 const STATE_ORACLE_ABI = ["function isCanonicalBlock(uint64 blockNumber,bytes32 blockHash) view returns (bool)"];
 const BLOCK_REFS = "tuple(uint64 number,bytes32 blockHash)[]";
 const CLOSED_CYCLE_JOURNAL = `tuple(address seller,${BLOCK_REFS} blockRefs)`;
 const RECIPROCAL_JOURNAL = `tuple(address addressA,address addressB,${BLOCK_REFS} blockRefs)`;
 const MAX_SUBMISSION_GAS = 7_000_000n;
-const SUBMISSION_RESUME_VERSION = 4;
+const SUBMISSION_RESUME_VERSION = 5;
 const PROOF_CONFIG = {
-  P0_CLOSED_LOOP: { journal: CLOSED_CYCLE_JOURNAL, image: "closedCycleImageId", method: "submitClosedCycleProof" },
-  P0_RECIPROCAL: { journal: RECIPROCAL_JOURNAL, image: "reciprocalImageId", method: "submitReciprocalProof" },
+  P0_CLOSED_LOOP: { journal: CLOSED_CYCLE_JOURNAL, vkey: "closedCycleProgramVKey", method: "submitClosedCycleProof" },
+  P0_RECIPROCAL: { journal: RECIPROCAL_JOURNAL, vkey: "reciprocalProgramVKey", method: "submitReciprocalProof" },
 };
+const MANIFEST_KEYS = ["version", "kind", "chainId", "securityMode", "entries"];
+const ENTRY_KEYS = ["claimId", "claimType", "subjects", "metrics", "programVKey", "journalBytes", "journalDigest", "proofBytes", "instructionCount"];
 
 export async function runSubmission({
   manifest,
@@ -35,7 +37,7 @@ export async function runSubmission({
   validateManifest(manifest);
   const localDevelopment = manifest.securityMode === "development" && allowDevelopmentOnLoopback && isLoopbackRpcUrl(rpcUrl);
   if (manifest.securityMode !== "production" && !localDevelopment) {
-    throw new Error(`refusing ${manifest.securityMode} receipts; production receipts are required`);
+    throw new Error(`refusing ${manifest.securityMode} proofs; production SP1 proofs are required`);
   }
   resume = initializeSubmissionResume(manifest, registryAddress, resume);
   const provider = new JsonRpcProvider(rpcUrl);
@@ -44,18 +46,18 @@ export async function runSubmission({
   if (await provider.getCode(registryAddress) === "0x") throw new Error("registry address has no bytecode");
   const signer = submit ? new Wallet(privateKey, provider) : provider;
   const registry = new Contract(registryAddress, REGISTRY_ABI, signer);
-  const [closedCycleImageId, reciprocalImageId, stateOracle] = await Promise.all([
-    registry.closedCycleImageId(), registry.reciprocalImageId(), registry.stateOracle(),
+  const [closedCycleProgramVKey, reciprocalProgramVKey, stateOracle] = await Promise.all([
+    registry.closedCycleProgramVKey(), registry.reciprocalProgramVKey(), registry.stateOracle(),
   ]);
-  const images = { closedCycleImageId, reciprocalImageId };
+  const programVKeys = { closedCycleProgramVKey, reciprocalProgramVKey };
   const stateOracleContract = new Contract(stateOracle, STATE_ORACLE_ABI, provider);
 
   const results = [];
   for (const entry of manifest.entries) {
     const decoded = decodeAndValidateEntry(entry, manifest.chainId);
     const config = PROOF_CONFIG[entry.claimType];
-    if (normalizeBytes32(entry.imageId) !== normalizeBytes32(images[config.image])) {
-      throw new Error(`${entry.claimId}: image ID mismatch`);
+    if (normalizeBytes32(entry.programVKey) !== normalizeBytes32(programVKeys[config.vkey])) {
+      throw new Error(`${entry.claimId}: SP1 program vkey mismatch`);
     }
     if (await subjectsAreWashTradingFlagged(registry, decoded.subjects)) {
       results.push({ claimId: entry.claimId, status: "already-p0" });
@@ -66,7 +68,7 @@ export async function runSubmission({
         throw new Error(`${entry.claimId}: Base block ${blockRef.number} is not canonical in the configured state oracle`);
       }
     }
-    const transaction = await registry[config.method].populateTransaction(entry.seal, entry.journalBytes);
+    const transaction = await registry[config.method].populateTransaction(entry.proofBytes, entry.journalBytes);
     await provider.call({ ...transaction, from: submit ? signer.address : undefined });
     const gas = await provider.estimateGas({ ...transaction, from: submit ? signer.address : undefined });
     if (gas > MAX_SUBMISSION_GAS) throw new Error(`${entry.claimId}: estimated gas ${gas} exceeds ${MAX_SUBMISSION_GAS}`);
@@ -147,16 +149,18 @@ async function verifyRecordedSubmission(provider, transaction, entry, registryAd
 }
 
 export function validateManifest(manifest) {
-  if (manifest.version !== 1 || manifest.kind !== "antseed-wash-trading-proof-results") {
+  requireExactKeys(manifest, MANIFEST_KEYS, "proof manifest");
+  if (manifest.version !== 2 || manifest.kind !== "antseed-wash-trading-proof-results") {
     throw new Error("unsupported proof manifest");
   }
   if (manifest.chainId !== 8_453) throw new Error("proof manifest must target Base chain ID 8453");
   if (!Array.isArray(manifest.entries) || manifest.entries.length === 0) throw new Error("proof manifest has no entries");
   const claims = new Set();
   for (const entry of manifest.entries) {
-    if (entry.enforceable === false) throw new Error(`${entry.claimId}: analysis-only entries cannot be submitted`);
+    requireExactKeys(entry, ENTRY_KEYS, `${entry.claimId ?? "proof entry"}`);
     if (!PROOF_CONFIG[entry.claimType]) throw new Error(`${entry.claimId}: unsupported claim type`);
-    if (!/^0x[0-9a-f]+$/i.test(entry.seal ?? "") || entry.seal === "0x") throw new Error(`${entry.claimId}: seal missing`);
+    if (!/^0x[0-9a-f]{64}$/i.test(entry.programVKey ?? "")) throw new Error(`${entry.claimId}: SP1 program vkey missing`);
+    if (!/^0x[0-9a-f]+$/i.test(entry.proofBytes ?? "") || entry.proofBytes === "0x") throw new Error(`${entry.claimId}: SP1 proof bytes missing`);
     if (!/^0x[0-9a-f]+$/i.test(entry.journalBytes ?? "")) throw new Error(`${entry.claimId}: journal missing`);
     if (!Array.isArray(entry.subjects) || entry.subjects.length === 0) throw new Error(`${entry.claimId}: subjects missing`);
     if (!entry.metrics || typeof entry.metrics !== "object" || Array.isArray(entry.metrics)) throw new Error(`${entry.claimId}: metrics missing`);

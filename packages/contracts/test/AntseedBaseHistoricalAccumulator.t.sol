@@ -3,15 +3,15 @@ pragma solidity ^0.8.24;
 
 import { Test } from "forge-std/Test.sol";
 import { AntseedBaseCheckpointOracle } from "../integrity/AntseedBaseCheckpointOracle.sol";
-import { IRiscZeroVerifier } from "../interfaces/IRiscZeroVerifier.sol";
+import { ISP1Verifier } from "../interfaces/ISP1Verifier.sol";
 
-contract AccumulatorVerifierMock is IRiscZeroVerifier {
-    function verify(bytes calldata, bytes32, bytes32) external pure { }
+contract AccumulatorVerifierMock is ISP1Verifier {
+    function verifyProof(bytes32, bytes calldata, bytes calldata) external pure { }
 }
 
 contract AntseedBaseHistoricalAccumulatorTest is Test {
-    bytes32 internal constant EPOCH_IMAGE_ID = bytes32(uint256(1));
-    bytes32 internal constant ACCUMULATOR_IMAGE_ID = bytes32(uint256(2));
+    bytes32 internal constant EPOCH_RECURSION_VKEY = bytes32(uint256(1));
+    bytes32 internal constant ACCUMULATOR_PROGRAM_VKEY = bytes32(uint256(2));
     uint32 internal constant EPOCH_COUNT = 334;
 
     AntseedBaseCheckpointOracle internal oracle;
@@ -22,7 +22,7 @@ contract AntseedBaseHistoricalAccumulatorTest is Test {
     function setUp() external {
         vm.chainId(8_453);
         oracle = new AntseedBaseCheckpointOracle(
-            address(new AccumulatorVerifierMock()), EPOCH_IMAGE_ID, ACCUMULATOR_IMAGE_ID
+            address(new AccumulatorVerifierMock()), EPOCH_RECURSION_VKEY, ACCUMULATOR_PROGRAM_VKEY
         );
         _buildProof();
         uint64 anchor = _anchor();
@@ -138,7 +138,7 @@ contract AntseedBaseHistoricalAccumulatorTest is Test {
         }
 
         AntseedBaseCheckpointOracle candidate = new AntseedBaseCheckpointOracle(
-            address(new AccumulatorVerifierMock()), EPOCH_IMAGE_ID, ACCUMULATOR_IMAGE_ID
+            address(new AccumulatorVerifierMock()), EPOCH_RECURSION_VKEY, ACCUMULATOR_PROGRAM_VKEY
         );
         AntseedBaseCheckpointOracle.AccumulatorJournal memory journal = _journal();
         journal.mmrRoot = keccak256(abi.encodePacked(bytes1(0x12), EPOCH_COUNT, allPeaks));
@@ -198,7 +198,7 @@ contract AntseedBaseHistoricalAccumulatorTest is Test {
         return AntseedBaseCheckpointOracle.AccumulatorJournal({
             version: oracle.JOURNAL_VERSION(),
             chainId: 8_453,
-            epochImageId: EPOCH_IMAGE_ID,
+            epochRecursionVKey: EPOCH_RECURSION_VKEY,
             startBlockNumber: oracle.HISTORICAL_START_BLOCK(),
             endBlockNumber: _anchor(),
             anchorBlockNumber: _anchor(),

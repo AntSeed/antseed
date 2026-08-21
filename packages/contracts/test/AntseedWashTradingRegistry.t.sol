@@ -4,20 +4,20 @@ pragma solidity ^0.8.24;
 import "forge-std/Test.sol";
 import { AntseedWashTradingRegistry } from "../integrity/AntseedWashTradingRegistry.sol";
 import { IBaseAnalysisStateOracle } from "../interfaces/IBaseAnalysisStateOracle.sol";
-import { IRiscZeroVerifier } from "../interfaces/IRiscZeroVerifier.sol";
+import { ISP1Verifier } from "../interfaces/ISP1Verifier.sol";
 
-contract MockWashTradingVerifier is IRiscZeroVerifier {
-    bytes32 public expectedImageId;
-    bytes32 public expectedJournalDigest;
+contract MockWashTradingVerifier is ISP1Verifier {
+    bytes32 public expectedProgramVKey;
+    bytes32 public expectedPublicValuesDigest;
 
-    function expect(bytes32 imageId, bytes32 journalDigest) external {
-        expectedImageId = imageId;
-        expectedJournalDigest = journalDigest;
+    function expect(bytes32 programVKey, bytes32 publicValuesDigest) external {
+        expectedProgramVKey = programVKey;
+        expectedPublicValuesDigest = publicValuesDigest;
     }
 
-    function verify(bytes calldata, bytes32 imageId, bytes32 journalDigest) external view {
-        require(imageId == expectedImageId, "wrong image");
-        require(journalDigest == expectedJournalDigest, "wrong journal");
+    function verifyProof(bytes32 programVKey, bytes calldata publicValues, bytes calldata) external view {
+        require(programVKey == expectedProgramVKey, "wrong program vkey");
+        require(sha256(publicValues) == expectedPublicValuesDigest, "wrong public values");
     }
 }
 
@@ -35,8 +35,8 @@ contract MockWashTradingStateOracle is IBaseAnalysisStateOracle {
 }
 
 contract AntseedWashTradingRegistryTest is Test {
-    bytes32 internal constant CLOSED_IMAGE_ID = bytes32(uint256(1));
-    bytes32 internal constant RECIPROCAL_IMAGE_ID = bytes32(uint256(2));
+    bytes32 internal constant CLOSED_PROGRAM_VKEY = bytes32(uint256(1));
+    bytes32 internal constant RECIPROCAL_PROGRAM_VKEY = bytes32(uint256(2));
     address internal constant SELLER_A = address(0xA11CE);
     address internal constant SELLER_B = address(0xB0B);
 
@@ -48,15 +48,16 @@ contract AntseedWashTradingRegistryTest is Test {
         vm.chainId(8_453);
         verifier = new MockWashTradingVerifier();
         oracle = new MockWashTradingStateOracle();
-        registry =
-            new AntseedWashTradingRegistry(address(verifier), address(oracle), CLOSED_IMAGE_ID, RECIPROCAL_IMAGE_ID);
+        registry = new AntseedWashTradingRegistry(
+            address(verifier), address(oracle), CLOSED_PROGRAM_VKEY, RECIPROCAL_PROGRAM_VKEY
+        );
     }
 
     function test_closedCycleFlagsSellerFromMinimalJournal() public {
         AntseedWashTradingRegistry.ClosedCycleJournal memory journal = _closed(SELLER_A);
         bytes memory data = abi.encode(journal);
         _allow(journal.blockRefs);
-        verifier.expect(CLOSED_IMAGE_ID, sha256(data));
+        verifier.expect(CLOSED_PROGRAM_VKEY, sha256(data));
 
         assertTrue(registry.submitClosedCycleProof(hex"", data));
         assertTrue(registry.isSellerWashTradingFlagged(SELLER_A));
@@ -66,7 +67,7 @@ contract AntseedWashTradingRegistryTest is Test {
         AntseedWashTradingRegistry.ReciprocalJournal memory journal = _reciprocal();
         bytes memory data = abi.encode(journal);
         _allow(journal.blockRefs);
-        verifier.expect(RECIPROCAL_IMAGE_ID, sha256(data));
+        verifier.expect(RECIPROCAL_PROGRAM_VKEY, sha256(data));
 
         (bool recordedA, bool recordedB) = registry.submitReciprocalProof(hex"", data);
         assertTrue(recordedA);
@@ -79,14 +80,14 @@ contract AntseedWashTradingRegistryTest is Test {
         AntseedWashTradingRegistry.ClosedCycleJournal memory closed = _closed(SELLER_A);
         bytes memory closedData = abi.encode(closed);
         _allow(closed.blockRefs);
-        verifier.expect(CLOSED_IMAGE_ID, sha256(closedData));
+        verifier.expect(CLOSED_PROGRAM_VKEY, sha256(closedData));
         assertTrue(registry.submitClosedCycleProof(hex"", closedData));
         assertFalse(registry.submitClosedCycleProof(hex"", closedData));
 
         AntseedWashTradingRegistry.ReciprocalJournal memory reciprocal = _reciprocal();
         bytes memory reciprocalData = abi.encode(reciprocal);
         _allow(reciprocal.blockRefs);
-        verifier.expect(RECIPROCAL_IMAGE_ID, sha256(reciprocalData));
+        verifier.expect(RECIPROCAL_PROGRAM_VKEY, sha256(reciprocalData));
         (bool recordedA, bool recordedB) = registry.submitReciprocalProof(hex"", reciprocalData);
 
         if (reciprocal.addressA == SELLER_A) {
@@ -103,7 +104,7 @@ contract AntseedWashTradingRegistryTest is Test {
     function test_rejectsNonCanonicalBlockReference() public {
         AntseedWashTradingRegistry.ClosedCycleJournal memory journal = _closed(SELLER_A);
         bytes memory data = abi.encode(journal);
-        verifier.expect(CLOSED_IMAGE_ID, sha256(data));
+        verifier.expect(CLOSED_PROGRAM_VKEY, sha256(data));
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -115,13 +116,13 @@ contract AntseedWashTradingRegistryTest is Test {
         registry.submitClosedCycleProof(hex"", data);
     }
 
-    function test_rejectsReceiptForWrongPinnedImage() public {
+    function test_rejectsProofForWrongPinnedProgramVKey() public {
         AntseedWashTradingRegistry.ClosedCycleJournal memory journal = _closed(SELLER_A);
         bytes memory data = abi.encode(journal);
         _allow(journal.blockRefs);
-        verifier.expect(RECIPROCAL_IMAGE_ID, sha256(data));
+        verifier.expect(RECIPROCAL_PROGRAM_VKEY, sha256(data));
 
-        vm.expectRevert("wrong image");
+        vm.expectRevert("wrong program vkey");
         registry.submitClosedCycleProof(hex"", data);
         assertFalse(registry.isSellerWashTradingFlagged(SELLER_A));
     }
@@ -129,23 +130,23 @@ contract AntseedWashTradingRegistryTest is Test {
     function test_constructorRejectsWrongChain() public {
         vm.chainId(1);
         vm.expectRevert(abi.encodeWithSelector(AntseedWashTradingRegistry.WrongChain.selector, uint256(1)));
-        new AntseedWashTradingRegistry(address(verifier), address(oracle), CLOSED_IMAGE_ID, RECIPROCAL_IMAGE_ID);
+        new AntseedWashTradingRegistry(address(verifier), address(oracle), CLOSED_PROGRAM_VKEY, RECIPROCAL_PROGRAM_VKEY);
     }
 
     function test_constructorRejectsZeroConfiguration() public {
         vm.expectRevert(AntseedWashTradingRegistry.ZeroAddress.selector);
-        new AntseedWashTradingRegistry(address(0), address(oracle), CLOSED_IMAGE_ID, RECIPROCAL_IMAGE_ID);
+        new AntseedWashTradingRegistry(address(0), address(oracle), CLOSED_PROGRAM_VKEY, RECIPROCAL_PROGRAM_VKEY);
 
         vm.expectRevert(AntseedWashTradingRegistry.ZeroConfiguration.selector);
-        new AntseedWashTradingRegistry(address(verifier), address(oracle), bytes32(0), RECIPROCAL_IMAGE_ID);
+        new AntseedWashTradingRegistry(address(verifier), address(oracle), bytes32(0), RECIPROCAL_PROGRAM_VKEY);
     }
 
     function test_constructorRejectsCodeLessDependencies() public {
         vm.expectRevert(abi.encodeWithSelector(AntseedWashTradingRegistry.NoCode.selector, address(1)));
-        new AntseedWashTradingRegistry(address(1), address(oracle), CLOSED_IMAGE_ID, RECIPROCAL_IMAGE_ID);
+        new AntseedWashTradingRegistry(address(1), address(oracle), CLOSED_PROGRAM_VKEY, RECIPROCAL_PROGRAM_VKEY);
 
         vm.expectRevert(abi.encodeWithSelector(AntseedWashTradingRegistry.NoCode.selector, address(2)));
-        new AntseedWashTradingRegistry(address(verifier), address(2), CLOSED_IMAGE_ID, RECIPROCAL_IMAGE_ID);
+        new AntseedWashTradingRegistry(address(verifier), address(2), CLOSED_PROGRAM_VKEY, RECIPROCAL_PROGRAM_VKEY);
     }
 
     function _closed(address seller)

@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import { IBaseAnalysisStateOracle } from "../interfaces/IBaseAnalysisStateOracle.sol";
 import { IAntseedWashTradingRegistry } from "../interfaces/IAntseedWashTradingRegistry.sol";
-import { IRiscZeroVerifier } from "../interfaces/IRiscZeroVerifier.sol";
+import { ISP1Verifier } from "../interfaces/ISP1Verifier.sol";
 
 contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
     uint256 private constant BASE_CHAIN_ID = 8_453;
@@ -26,10 +26,10 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
         BlockRef[] blockRefs;
     }
 
-    IRiscZeroVerifier public immutable verifier;
+    ISP1Verifier public immutable verifier;
     IBaseAnalysisStateOracle public immutable stateOracle;
-    bytes32 public immutable closedCycleImageId;
-    bytes32 public immutable reciprocalImageId;
+    bytes32 public immutable closedCycleProgramVKey;
+    bytes32 public immutable reciprocalProgramVKey;
 
     mapping(address seller => bool flagged) public override isSellerWashTradingFlagged;
 
@@ -41,33 +41,41 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
 
     event SellerWashTradingFlagged(address indexed seller, bytes32 indexed journalDigest, uint8 indexed proofType);
 
-    constructor(address verifier_, address stateOracle_, bytes32 closedCycleImageId_, bytes32 reciprocalImageId_) {
+    constructor(
+        address verifier_,
+        address stateOracle_,
+        bytes32 closedCycleProgramVKey_,
+        bytes32 reciprocalProgramVKey_
+    ) {
         if (block.chainid != BASE_CHAIN_ID) revert WrongChain(block.chainid);
         if (verifier_ == address(0) || stateOracle_ == address(0)) revert ZeroAddress();
         if (verifier_.code.length == 0) revert NoCode(verifier_);
         if (stateOracle_.code.length == 0) revert NoCode(stateOracle_);
-        if (closedCycleImageId_ == bytes32(0) || reciprocalImageId_ == bytes32(0)) revert ZeroConfiguration();
-        verifier = IRiscZeroVerifier(verifier_);
+        if (closedCycleProgramVKey_ == bytes32(0) || reciprocalProgramVKey_ == bytes32(0)) revert ZeroConfiguration();
+        verifier = ISP1Verifier(verifier_);
         stateOracle = IBaseAnalysisStateOracle(stateOracle_);
-        closedCycleImageId = closedCycleImageId_;
-        reciprocalImageId = reciprocalImageId_;
+        closedCycleProgramVKey = closedCycleProgramVKey_;
+        reciprocalProgramVKey = reciprocalProgramVKey_;
     }
 
-    function submitClosedCycleProof(bytes calldata seal, bytes calldata journalData) external returns (bool recorded) {
-        bytes32 journalDigest = sha256(journalData);
-        verifier.verify(seal, closedCycleImageId, journalDigest);
-        ClosedCycleJournal memory journal = abi.decode(journalData, (ClosedCycleJournal));
+    function submitClosedCycleProof(bytes calldata proofBytes, bytes calldata publicValues)
+        external
+        returns (bool recorded)
+    {
+        bytes32 journalDigest = sha256(publicValues);
+        verifier.verifyProof(closedCycleProgramVKey, publicValues, proofBytes);
+        ClosedCycleJournal memory journal = abi.decode(publicValues, (ClosedCycleJournal));
         _validateBlocks(journal.blockRefs);
         return _recordSellerFlag(journal.seller, journalDigest, CLOSED_CYCLE_PROOF_TYPE);
     }
 
-    function submitReciprocalProof(bytes calldata seal, bytes calldata journalData)
+    function submitReciprocalProof(bytes calldata proofBytes, bytes calldata publicValues)
         external
         returns (bool recordedA, bool recordedB)
     {
-        bytes32 journalDigest = sha256(journalData);
-        verifier.verify(seal, reciprocalImageId, journalDigest);
-        ReciprocalJournal memory journal = abi.decode(journalData, (ReciprocalJournal));
+        bytes32 journalDigest = sha256(publicValues);
+        verifier.verifyProof(reciprocalProgramVKey, publicValues, proofBytes);
+        ReciprocalJournal memory journal = abi.decode(publicValues, (ReciprocalJournal));
         _validateBlocks(journal.blockRefs);
         recordedA = _recordSellerFlag(journal.addressA, journalDigest, RECIPROCAL_PROOF_TYPE);
         recordedB = _recordSellerFlag(journal.addressB, journalDigest, RECIPROCAL_PROOF_TYPE);

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 import { IBaseAnalysisStateOracle } from "../interfaces/IBaseAnalysisStateOracle.sol";
-import { IRiscZeroVerifier } from "../interfaces/IRiscZeroVerifier.sol";
+import { ISP1Verifier } from "../interfaces/ISP1Verifier.sol";
 
 contract AntseedBaseCheckpointOracle is IBaseAnalysisStateOracle {
     uint64 public constant BASE_CHAIN_ID = 8_453;
@@ -11,13 +11,13 @@ contract AntseedBaseCheckpointOracle is IBaseAnalysisStateOracle {
     uint32 public constant EPOCH_SIZE = 16_384;
     uint8 public constant EPOCH_TREE_DEPTH = 14;
     uint64 public constant EIP2935_WINDOW = 8_191;
-    uint32 public constant JOURNAL_VERSION = 2;
+    uint32 public constant JOURNAL_VERSION = 3;
     address public constant HISTORY_STORAGE = 0x0000F90827F1C53a10cb7A02335B175320002935;
 
     struct AccumulatorJournal {
         uint32 version;
         uint64 chainId;
-        bytes32 epochImageId;
+        bytes32 epochRecursionVKey;
         uint64 startBlockNumber;
         uint64 endBlockNumber;
         uint64 anchorBlockNumber;
@@ -39,9 +39,9 @@ contract AntseedBaseCheckpointOracle is IBaseAnalysisStateOracle {
         uint32 targetPeakIndex;
     }
 
-    IRiscZeroVerifier public immutable verifier;
-    bytes32 public immutable epochImageId;
-    bytes32 public immutable accumulatorImageId;
+    ISP1Verifier public immutable verifier;
+    bytes32 public immutable epochRecursionVKey;
+    bytes32 public immutable accumulatorProgramVKey;
 
     mapping(uint64 blockNumber => bytes32 blockHash) public canonicalBlockHashes;
     bool public override historicalCoverageComplete;
@@ -52,7 +52,7 @@ contract AntseedBaseCheckpointOracle is IBaseAnalysisStateOracle {
 
     error ZeroAddress();
     error NoCode(address target);
-    error ZeroImageId();
+    error ZeroProgramVKey();
     error WrongChain(uint256 chainId);
     error HistoricalAccumulatorAlreadySubmitted();
     error InvalidAccumulatorJournal();
@@ -69,21 +69,23 @@ contract AntseedBaseCheckpointOracle is IBaseAnalysisStateOracle {
     );
     event HistoricalBlockMaterialized(uint64 indexed blockNumber, bytes32 indexed blockHash, uint32 indexed epochIndex);
 
-    constructor(address verifier_, bytes32 epochImageId_, bytes32 accumulatorImageId_) {
+    constructor(address verifier_, bytes32 epochRecursionVKey_, bytes32 accumulatorProgramVKey_) {
         if (block.chainid != BASE_CHAIN_ID) revert WrongChain(block.chainid);
         if (verifier_ == address(0)) revert ZeroAddress();
         if (verifier_.code.length == 0) revert NoCode(verifier_);
-        if (epochImageId_ == bytes32(0) || accumulatorImageId_ == bytes32(0)) revert ZeroImageId();
-        verifier = IRiscZeroVerifier(verifier_);
-        epochImageId = epochImageId_;
-        accumulatorImageId = accumulatorImageId_;
+        if (epochRecursionVKey_ == bytes32(0) || accumulatorProgramVKey_ == bytes32(0)) {
+            revert ZeroProgramVKey();
+        }
+        verifier = ISP1Verifier(verifier_);
+        epochRecursionVKey = epochRecursionVKey_;
+        accumulatorProgramVKey = accumulatorProgramVKey_;
     }
 
-    function submitHistoricalAccumulator(bytes calldata seal, bytes calldata journalData) external {
+    function submitHistoricalAccumulator(bytes calldata proofBytes, bytes calldata publicValues) external {
         if (historicalCoverageComplete) revert HistoricalAccumulatorAlreadySubmitted();
-        bytes32 journalDigest = sha256(journalData);
-        verifier.verify(seal, accumulatorImageId, journalDigest);
-        AccumulatorJournal memory journal = abi.decode(journalData, (AccumulatorJournal));
+        bytes32 journalDigest = sha256(publicValues);
+        verifier.verifyProof(accumulatorProgramVKey, publicValues, proofBytes);
+        AccumulatorJournal memory journal = abi.decode(publicValues, (AccumulatorJournal));
         _validateJournal(journal);
         bytes32 canonicalAnchor = _historyStorageHash(journal.anchorBlockNumber);
         if (canonicalAnchor != journal.anchorBlockHash) {
@@ -149,7 +151,7 @@ contract AntseedBaseCheckpointOracle is IBaseAnalysisStateOracle {
         uint256 expectedBlocks = uint256(journal.epochCount) * EPOCH_SIZE;
         if (
             journal.version != JOURNAL_VERSION || journal.chainId != BASE_CHAIN_ID
-                || journal.epochImageId != epochImageId || journal.startBlockNumber != HISTORICAL_START_BLOCK
+                || journal.epochRecursionVKey != epochRecursionVKey || journal.startBlockNumber != HISTORICAL_START_BLOCK
                 || journal.epochSize != EPOCH_SIZE || journal.epochCount == 0 || journal.blockCount != expectedBlocks
                 || journal.endBlockNumber != HISTORICAL_START_BLOCK + expectedBlocks - 1
                 || journal.endBlockNumber < REQUIRED_COVERAGE_END_BLOCK

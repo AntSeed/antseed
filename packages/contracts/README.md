@@ -31,7 +31,7 @@ AntseedEmissions ──calls──► ANTSToken.mint()
 ## Build
 
 ```bash
-cd packages/node
+cd packages/contracts
 forge build
 ```
 
@@ -46,12 +46,12 @@ forge test
 
 ## Wash-Trading Enforcement
 
-`AntseedWashTradingRegistry` accepts two separately pinned RISC Zero images:
+`AntseedWashTradingRegistry` accepts two separately pinned SP1 program vkeys:
 
-- `submitClosedCycleProof(seal, journalData)` for a common-funder cohort with
+- `submitClosedCycleProof(proofBytes, publicValues)` for a common-funder cohort with
   at least `1,000 USDC` of authenticated settlements followed by strict
   seller-outward direct or relay closure;
-- `submitReciprocalProof(seal, journalData)` for a normalized pair with at
+- `submitReciprocalProof(proofBytes, publicValues)` for a normalized pair with at
   least 100 authenticated settlements, 10 in each direction, and `10 USDC` in
   each direction, where the smaller directional volume is at least 80% of the
   larger.
@@ -63,7 +63,7 @@ a report root, mutable funder allowlist, or generic router attribution.
 
 Accepted closed-loop proofs flag the seller. Reciprocal proofs flag both
 addresses. The registry stores only one monotonic wash-trading boolean per
-seller. The pinned guest images are the executable authority for predicate
+seller. The pinned SP1 program vkeys are the executable authority for predicate
 thresholds and evidence semantics; their public journals contain only the
 affected seller or normalized pair plus the Base block references that Solidity
 must check for canonicality.
@@ -90,7 +90,7 @@ remain owned by the seller and are never confiscated.
 The exact guarantees, thresholds, pinned addresses/code hashes/storage slots,
 journal schemas, explicit non-guarantees, and production commands are specified
 in [`../../../loop-proof/README.md`](../../../loop-proof/README.md). That file is
-the canonical human-readable proof contract; the pinned guest images, receipt
+the canonical human-readable proof contract; the pinned SP1 programs, receipt
 verification, Base chain binding, and canonical-block checks are the executable
 authority.
 

@@ -13,7 +13,7 @@ import { AntseedWashTradingRewardPolicy } from "../policies/AntseedWashTradingRe
 import { AntseedSellerRewardsPool } from "../rewards/AntseedSellerRewardsPool.sol";
 
 contract RewardGateVerifierMock {
-    function verify(bytes calldata, bytes32, bytes32) external pure { }
+    function verifyProof(bytes32, bytes calldata, bytes calldata) external pure { }
 }
 
 contract RewardGateOracleMock {

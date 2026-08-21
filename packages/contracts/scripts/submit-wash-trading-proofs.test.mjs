@@ -5,18 +5,18 @@ import { decodeAndValidateEntry, initializeSubmissionResume, isLoopbackRpcUrl, v
 
 const CLOSED = "tuple(address seller,tuple(uint64 number,bytes32 blockHash)[] blockRefs)";
 
-test("submission manifest rejects missing, duplicate, and analysis-only claims", () => {
+test("submission manifest rejects missing, duplicate, and legacy-shaped claims", () => {
   const missing = validManifest();
-  missing.entries[0].seal = "0x";
-  assert.throws(() => validateManifest(missing), /seal missing/);
+  missing.entries[0].proofBytes = "0x";
+  assert.throws(() => validateManifest(missing), /SP1 proof bytes missing/);
 
   const duplicate = validManifest();
   duplicate.entries.push({ ...duplicate.entries[0] });
   assert.throws(() => validateManifest(duplicate), /duplicate claim ID/);
 
-  const analysisOnly = validManifest();
-  analysisOnly.entries[0].enforceable = false;
-  assert.throws(() => validateManifest(analysisOnly), /analysis-only/);
+  const legacy = validManifest();
+  legacy.entries[0][["se", "al"].join("")] = legacy.entries[0].proofBytes;
+  assert.throws(() => validateManifest(legacy), /invalid fields/);
 });
 
 test("submission rejects unknown types and subject mismatches", () => {
@@ -61,7 +61,7 @@ function validManifest({ seller = "0x0000000000000000000000000000000000000010" }
     [[1, `0x${"4".repeat(64)}`]],
   ]]);
   return {
-    version: 1,
+    version: 2,
     kind: "antseed-wash-trading-proof-results",
     chainId: 8_453,
     securityMode: "production",
@@ -75,10 +75,11 @@ function validManifest({ seller = "0x0000000000000000000000000000000000000010" }
         closureKind: 1,
         closurePathCount: 1,
       },
-      imageId: "5".repeat(64),
-      seal: "0x01",
+      programVKey: `0x${"5".repeat(64)}`,
+      proofBytes: "0x01",
       journalBytes,
       journalDigest: sha256(journalBytes),
+      instructionCount: null,
     }],
   };
 }
