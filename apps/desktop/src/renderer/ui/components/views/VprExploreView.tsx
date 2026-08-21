@@ -20,10 +20,9 @@ import {
   TheaterIcon,
   ZapIcon,
 } from '@hugeicons/core-free-icons';
-import type { VprModelKind } from '../../../core/state';
+import type { VprModelCatalogEntry, VprModelKind } from '../../../core/state';
 import {
   filterVprCatalog,
-  pinnedSellerLabel,
   pinnedSellerLabels,
   sortVprCatalog,
   type VprCatalogSort,
@@ -40,13 +39,13 @@ import { useRetainedState } from '../../hooks/useRetainedState';
 import type { ViewName } from '../../types';
 import { BrandIcon } from '../brand/BrandIcon';
 import { VprFilterDropdown, VprMultiFilterDropdown, type VprFilterOption } from '../vpr/VprFilterDropdown';
-import { VprModelRowList, VprSelectedModelCard } from '../vpr/VprModelRows';
+import { VprModelRowList } from '../vpr/VprModelRows';
 import { VprPage, VprSearch } from '../vpr/VprKit';
 import styles from './VprExploreView.module.scss';
 
 type Props = { onSelectView?: (view: ViewName) => void };
 
-/* Rows in the unfunded "Top free models" lead-in section. */
+/* Rows in the unfunded "Recommended for you" lead-in section. */
 const TOP_FREE_COUNT = 5;
 
 function FilterIconView({ icon }: { icon: IconSvgElement }) {
@@ -99,12 +98,6 @@ export function VprExploreView({ onSelectView }: Props) {
   ));
   // Starred on the model pages; fresh on every visit (the view remounts).
   const [favorites] = useState(loadFavoriteModels);
-
-  // Non-auto routing: the selected model's rows name the pinned seller.
-  const pinnedSeller = useMemo(
-    () => pinnedSellerLabel(snap.discoverRows, snap.selection),
-    [snap.discoverRows, snap.selection],
-  );
 
   const availableFamilies = useMemo(() => availableModelFamilies(snap.catalog), [snap.catalog]);
   const tags = useMemo(
@@ -176,6 +169,15 @@ export function VprExploreView({ onSelectView }: Props) {
     ? findCatalogEntry(snap.catalog, selectedModel.provider, selectedModel.serviceId)
     : null;
 
+  // No separate selected-model card — the active model leads whichever list
+  // contains it, and the row's selected highlight marks it.
+  const hoistSelected = (list: VprModelCatalogEntry[]): VprModelCatalogEntry[] => {
+    if (!selectedEntry || !list.includes(selectedEntry)) return list;
+    return [selectedEntry, ...list.filter((entry) => entry !== selectedEntry)];
+  };
+  const leadEntries = hoistSelected(topFreeEntries);
+  const listEntries = hoistSelected(entries);
+
   const openModelPage = (provider: string, serviceId: string): void => {
     // Drilling into a model only browses it — the model page's "Use" button
     // is what makes it the active route.
@@ -197,15 +199,6 @@ export function VprExploreView({ onSelectView }: Props) {
         )}
       >
       <div className={styles.stack}>
-        {selectedEntry && (
-          <VprSelectedModelCard
-            entry={selectedEntry}
-            auto={snap.selection.mode === 'auto'}
-            pinnedPeerLabel={pinnedSeller}
-            onClick={() => openModelPage(selectedEntry.provider, selectedEntry.serviceId)}
-          />
-        )}
-
         <div className={styles.filterRow}>
           <VprMultiFilterDropdown
             label="Type"
@@ -231,11 +224,11 @@ export function VprExploreView({ onSelectView }: Props) {
           </div>
         </div>
 
-        {topFreeEntries.length > 0 && (
+        {leadEntries.length > 0 && (
           <>
-            <div className={styles.sectionTitle}>Top free models</div>
+            <div className={styles.sectionTitle}>Recommended for you</div>
             <VprModelRowList
-              entries={topFreeEntries}
+              entries={leadEntries}
               selectedProvider={selectedModel?.provider}
               selectedServiceId={selectedModel?.serviceId}
               favoriteKeys={favorites}
@@ -246,13 +239,13 @@ export function VprExploreView({ onSelectView }: Props) {
           </>
         )}
 
-        {entries.length > 0 ? (
+        {listEntries.length > 0 ? (
           <>
-            {topFreeEntries.length > 0 && (
-              <div className={styles.sectionTitle}>All models ({entries.length})</div>
+            {leadEntries.length > 0 && (
+              <div className={styles.sectionTitle}>All models ({listEntries.length})</div>
             )}
             <VprModelRowList
-              entries={entries}
+              entries={listEntries}
               selectedProvider={selectedModel?.provider}
               selectedServiceId={selectedModel?.serviceId}
               favoriteKeys={favorites}

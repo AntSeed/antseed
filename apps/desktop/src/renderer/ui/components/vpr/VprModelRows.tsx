@@ -224,29 +224,6 @@ function ModelRow({ entry, checked, favorite, badge, compact, chevron = true, pi
   );
 }
 
-/** The currently selected model as a standalone card pinned above the list
- * (Figma: checked "model list" row with the "• Auto" badge). */
-export function VprSelectedModelCard({ entry, auto, pinnedPeerLabel, onClick }: {
-  entry: VprModelCatalogEntry;
-  /** Whether seller routing for the model is in auto mode. */
-  auto: boolean;
-  /** Seller the model is pinned to, shown in place of the peer count. */
-  pinnedPeerLabel?: string | null;
-  onClick: () => void;
-}): JSX.Element {
-  return (
-    <div className={styles.list}>
-      <ModelRow
-        entry={entry}
-        checked
-        badge={<VprBadge tone="primary">{auto ? '• Auto' : 'Pinned'}</VprBadge>}
-        pinnedPeerLabel={auto ? null : pinnedPeerLabel}
-        onClick={onClick}
-      />
-    </div>
-  );
-}
-
 export function VprModelRowList({
   entries,
   selectedProvider,
