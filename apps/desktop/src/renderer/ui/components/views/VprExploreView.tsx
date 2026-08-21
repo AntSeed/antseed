@@ -165,31 +165,42 @@ export function VprExploreView({ onSelectView }: Props) {
   );
   const recommendedEntries = useMemo(() => {
     if (filtersActive) return [];
-    const picked: VprModelCatalogEntry[] = [];
-    const add = (entry: VprModelCatalogEntry): void => {
-      if (picked.length < RECOMMENDED_COUNT && !picked.includes(entry)) picked.push(entry);
-    };
-    if (favoriteEntries.length > 0) {
-      // Favorites own the frame outright — no padding with other picks, so
-      // the label "Favorites" never covers a model the user didn't star.
-      if (selectedEntry && favoriteEntries.includes(selectedEntry)) add(selectedEntry);
-      for (const entry of favoriteEntries) add(entry);
-      return picked;
+    // Favorites own the frame outright — no padding with other picks, so the
+    // label "Favorites" never covers a model the user didn't star.
+    const source = favoriteEntries.length > 0
+      ? favoriteEntries
+      : (everFunded
+          ? sortVprCatalog(snap.catalog, 'Popular')
+          : sortVprCatalog(filterVprCatalog(snap.catalog, { freeOnly: true }), 'Popular'));
+    const picks = source.slice(0, RECOMMENDED_COUNT);
+    // The selected model leads the frame only when it's naturally one of the
+    // picks. An off-frame selection stays out — it leads the list below
+    // instead of displacing a real recommendation.
+    if (selectedEntry && picks.includes(selectedEntry) && picks[0] !== selectedEntry) {
+      return [selectedEntry, ...picks.filter((entry) => entry !== selectedEntry)];
     }
-    if (selectedEntry) add(selectedEntry);
-    const pool = everFunded
-      ? sortVprCatalog(snap.catalog, 'Popular')
-      : sortVprCatalog(filterVprCatalog(snap.catalog, { freeOnly: true }), 'Popular');
-    for (const entry of pool) add(entry);
-    return picked;
+    return picks;
   }, [everFunded, favoriteEntries, filtersActive, selectedEntry, snap.catalog]);
 
-  // One flat list, no duplicate rows: the recommended trio leads (framed by
-  // the row list), the rest of the catalog follows in the current sort order.
-  const listEntries = useMemo(
-    () => [...recommendedEntries, ...entries.filter((entry) => !recommendedEntries.includes(entry))],
-    [entries, recommendedEntries],
-  );
+  // One flat list, no duplicate rows: the framed picks lead, then the
+  // selected model when it isn't one of them, then the rest of the catalog in
+  // the current sort order.
+  const listEntries = useMemo(() => {
+    const rest = entries.filter((entry) => !recommendedEntries.includes(entry));
+    if (
+      recommendedEntries.length > 0
+      && selectedEntry
+      && !recommendedEntries.includes(selectedEntry)
+      && rest.includes(selectedEntry)
+    ) {
+      return [
+        ...recommendedEntries,
+        selectedEntry,
+        ...rest.filter((entry) => entry !== selectedEntry),
+      ];
+    }
+    return [...recommendedEntries, ...rest];
+  }, [entries, recommendedEntries, selectedEntry]);
 
   // Any listed model that remembers a pin names its seller in place of the
   // peer count — pins are per model and survive switching between them.
