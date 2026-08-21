@@ -85,13 +85,17 @@
 
 .recommendedLegend {
   position: absolute;
-  /* Half outside the card, straddling the top border as a pill. */
+  /* Half outside the card, straddling the top border. No chip border: the
+     background splits at the border line — page color above, frame tint
+     below — so the label reads as text sitting in a cut of the border. */
   top: -9px;
   left: 14px;
   padding: 1px 8px;
-  border: 1px solid rgba(var(--brand-rgb), 0.35);
-  border-radius: 999px;
-  background: color-mix(in srgb, rgb(var(--brand-rgb)) 10%, var(--bg-card));
+  background: linear-gradient(
+    to bottom,
+    var(--bg-primary) 0 50%,
+    color-mix(in srgb, rgb(var(--brand-rgb)) 8%, var(--bg-card)) 50% 100%
+  );
   color: var(--brand);
   font-size: 11px;
   font-weight: 600;
