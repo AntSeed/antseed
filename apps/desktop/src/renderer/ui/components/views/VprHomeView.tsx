@@ -43,6 +43,7 @@ import styles from './VprHomeView.module.scss';
 type Props = { onSelectView?: (view: ViewName) => void };
 
 const ADD_BALANCE_DISMISSED_KEY = 'antseed.desktop.vpr.addBalanceDismissed';
+const HAS_EVER_FUNDED_KEY = 'antseed.desktop.vpr.hasEverFunded';
 const RESTART_NOTICE_DISMISSED_KEY = 'antseed.desktop.vpr.restartNoticeDismissed';
 const MODEL_CHANGE_NOTICE_MS = 4_000;
 /* Rows in the model dropdown (Figma) — the full catalog lives on Models. */
@@ -92,6 +93,16 @@ export function VprHomeView({ onSelectView }: Props) {
   const [restartNoticeDismissed, setRestartNoticeDismissed] = useState(() => {
     try {
       return sessionStorage.getItem(RESTART_NOTICE_DISMISSED_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  // Sticky funding memory: false only until the first deposit is ever seen.
+  // Gates the model dropdown lineup — free-only before funding, the regular
+  // popular lineup permanently after (even if the balance drains to zero).
+  const [everFunded, setEverFunded] = useState(() => {
+    try {
+      return localStorage.getItem(HAS_EVER_FUNDED_KEY) === '1';
     } catch {
       return false;
     }
@@ -221,15 +232,24 @@ export function VprHomeView({ onSelectView }: Props) {
   // hero; everything past the cap lives behind "All models".
   const dropdownEntries = useMemo(() => {
     const textCatalog = snap.catalog.filter((entry) => entry.kind === 'text');
-    const favoriteEntries = selectFavoriteVprCatalog(textCatalog, favorites);
-    const recommended = selectRecommendedVprCatalog(textCatalog)
+    // Until the first deposit ever lands, the dropdown offers free models
+    // only — paid rows would just 402 for an unfunded user. Falls back to the
+    // full lineup while discovery hasn't surfaced a trusted free offer yet
+    // (the hero shows "Finding free peers…" meanwhile), and the first deposit
+    // switches to the regular popular lineup for good.
+    const freeCatalog = everFunded
+      ? textCatalog
+      : textCatalog.filter((entry) => entry.hasEligibleFreeSeller);
+    const source = freeCatalog.length > 0 ? freeCatalog : textCatalog;
+    const favoriteEntries = selectFavoriteVprCatalog(source, favorites);
+    const recommended = selectRecommendedVprCatalog(source)
       .filter((entry) => !favorites.has(catalogEntryKey(entry)));
     const top = [...favoriteEntries, ...recommended].slice(0, DROPDOWN_MODEL_COUNT);
     if (selectedEntry?.kind === 'text' && !top.includes(selectedEntry)) {
       return [selectedEntry, ...top.slice(0, DROPDOWN_MODEL_COUNT - 1)];
     }
     return top;
-  }, [favorites, selectedEntry, snap.catalog]);
+  }, [everFunded, favorites, selectedEntry, snap.catalog]);
 
   // Every listed model that remembers a pin names its seller, not just the
   // selected one — pins survive switching models.
@@ -289,6 +309,16 @@ export function VprHomeView({ onSelectView }: Props) {
     && !(Number.isFinite(creditsSpendableNum) && creditsSpendableNum > 5);
   const hasDeposited = Number(snap.creditsTotalOwned) > 0 || snap.creditsChannels.length > 0;
   const reminderOffer = hasDeposited ? null : snap.reminderOffer;
+
+  // The first observed deposit flips the dropdown to the popular lineup for
+  // good — the stored flag survives the balance draining back to zero.
+  useEffect(() => {
+    if (!hasDeposited || everFunded) return;
+    setEverFunded(true);
+    try {
+      localStorage.setItem(HAS_EVER_FUNDED_KEY, '1');
+    } catch { /* private mode */ }
+  }, [everFunded, hasDeposited]);
 
   function submitDraft(): void {
     const text = draft.trim();
