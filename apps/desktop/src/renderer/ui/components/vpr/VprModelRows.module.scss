@@ -62,11 +62,13 @@
    not a separate list. */
 .recommendedFrame {
   position: relative;
-  /* Full width of the card — no side or bottom gap. The top margin is only
-     the label's headroom: the card clips overflow, so the label must never
-     rise above the card's content box. */
-  margin: 10px 0 0;
-  padding: 4px 0;
+  /* Flush on every side: the negative top margin swallows the card's own
+     padding so the frame border coincides with the card edge, and its radius
+     matches the card's so the corners align. */
+  margin: -4px 0 0;
+  /* Extra top padding gives the hanging label its own strip above the
+     first row instead of overlapping its title. */
+  padding: 18px 0 4px;
   border: 1px solid rgba(var(--brand-rgb), 0.35);
   border-radius: 16px;
   background: rgba(var(--brand-rgb), 0.08);
@@ -74,11 +76,14 @@
 
 .recommendedLegend {
   position: absolute;
-  top: -8px;
+  /* The card clips anything above its edge, so the label hangs from the top
+     border instead of straddling it — overlapping the 1px line and matching
+     the frame fill, so the border still reads as cut by the label. */
+  top: -1px;
   left: 14px;
-  padding: 0 6px;
-  /* Same fill as the card so the label visually cuts the border. */
-  background: var(--bg-card);
+  padding: 2px 6px 0;
+  border-radius: 0 0 6px 6px;
+  background: color-mix(in srgb, rgb(var(--brand-rgb)) 8%, var(--bg-card));
   color: var(--brand);
   font-size: 11px;
   font-weight: 600;
