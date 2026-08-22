@@ -5,11 +5,13 @@ import '@fontsource-variable/geist-mono';
 import {
   track,
   isDownloadUrl,
+  isGetStartedUrl,
   isOutboundUrl,
   platformFromUrl,
   sectionOf,
   visibleLabel,
 } from '../lib/analytics';
+import {MOBILE_GET_STARTED_QUERY} from '../lib/useMobileGetStarted';
 
 /**
  * Global scroll state: `data-scrolled` on <html> drives the navbar
@@ -44,7 +46,12 @@ function useScrollState() {
  * and nothing here can block or alter navigation — the listener only reads.
  *
  * Emits:
- *   download_vpr   — any link to our GitHub releases (the conversion event)
+ *   download_vpr   — a link to our GitHub releases, on viewports wide enough
+ *                    to actually download (the desktop conversion event)
+ *   get_started    — the mobile funnel entry: a /get-started link, or a
+ *                    download link tapped on a phone viewport, where
+ *                    useMobileGetStarted reroutes to /get-started instead
+ *                    of downloading
  *   outbound_click — any link leaving antseed.com
  */
 function useClickTracking() {
@@ -80,11 +87,24 @@ function useClickTracking() {
       };
 
       if (isDownloadUrl(absolute)) {
+        // On phone viewports the VPR CTAs keep their download href but
+        // reroute to /get-started on tap (useMobileGetStarted, which runs
+        // after this capture listener) — count those as funnel entries, not
+        // download conversions.
+        if (window.matchMedia(MOBILE_GET_STARTED_QUERY).matches) {
+          track('get_started', common);
+          return;
+        }
         // Conversion event. Marked as the key event in GA4.
         track('download_vpr', {
           ...common,
           platform: platformFromUrl(absolute),
         });
+        return;
+      }
+
+      if (isGetStartedUrl(absolute)) {
+        track('get_started', common);
         return;
       }
 

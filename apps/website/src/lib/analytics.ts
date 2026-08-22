@@ -49,6 +49,20 @@ export function platformFromUrl(href: string): string {
   return 'releases_page';
 }
 
+/**
+ * True for internal links into the /get-started mobile onboarding flow
+ * (e.g. the mobile-sidebar navbar item). Expects an absolute URL.
+ */
+export function isGetStartedUrl(href: string): boolean {
+  try {
+    const url = new URL(href);
+    if (typeof window !== 'undefined' && url.hostname !== window.location.hostname) return false;
+    return /^\/get-started\/?$/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
 /** True for links leaving antseed.com. Protocol links (mailto:, tel:) excluded. */
 export function isOutboundUrl(href: string): boolean {
   if (!/^https?:\/\//i.test(href)) return false;
