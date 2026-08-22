@@ -270,6 +270,34 @@ test('getNetworkStats: falls back to the aggregator when the explorer returns no
   }
 });
 
+test('getNetworkStats: concurrent calls for different chains do not share in-flight state or cooldown', async () => {
+  resetNetworkStatsCache();
+  globalThis.fetch = async (url: string | URL | Request) => {
+    const u = String(url);
+    if (u.startsWith('https://down.example')) {
+      throw new Error('network down');
+    }
+    return {
+      ok: true,
+      json: async () => ([{ agentId: '5', requestCount: '50', inputTokens: '51', outputTokens: '52' }]),
+    } as unknown as Response;
+  };
+  try {
+    // First chain fails (both sources unreachable) and enters its cooldown…
+    const bad = await getNetworkStats({ explorerApiUrl: 'https://down.example', networkStatsUrl: 'https://down.example' });
+    assert.equal(bad.size, 0);
+    // …which must not block or contaminate a healthy chain queried right after.
+    const good = await getNetworkStats({ explorerApiUrl: 'https://up.example', networkStatsUrl: 'https://up.example' });
+    assert.equal(good.get(5)?.requests, 50n);
+    // And the failed chain still serves empty (cooldown), not the other chain's map.
+    const badAgain = await getNetworkStats({ explorerApiUrl: 'https://down.example', networkStatsUrl: 'https://down.example' });
+    assert.equal(badAgain.size, 0);
+  } finally {
+    resetNetworkStatsCache();
+    restoreFetch();
+  }
+});
+
 test('getNetworkStats: both sources failing with no prior cache returns empty', async () => {
   resetNetworkStatsCache();
   globalThis.fetch = async () => { throw new Error('network down'); };

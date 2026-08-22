@@ -55,15 +55,17 @@ export async function fetchNetworkStatsFromExplorer(
 
 const NETWORK_STATS_TTL_MS = 60_000;
 const NETWORK_STATS_FAILURE_COOLDOWN_MS = 30_000;
-let networkStatsCache: { key: string; fetchedAtMs: number; map: NetworkStatsMap } | null = null;
-let networkStatsInFlight: Promise<NetworkStatsMap> | null = null;
-let networkStatsLastFailureAt = 0;
+// All state is keyed by the URL pair so a chain-config switch mid-fetch can't
+// serve the previous chain's stats or inherit its failure cooldown.
+const networkStatsCache = new Map<string, { fetchedAtMs: number; map: NetworkStatsMap }>();
+const networkStatsInFlight = new Map<string, Promise<NetworkStatsMap>>();
+const networkStatsLastFailureAt = new Map<string, number>();
 
 /** Test-only: drop the module-level cache so runs don't leak into each other. */
 export function resetNetworkStatsCache(): void {
-  networkStatsCache = null;
-  networkStatsInFlight = null;
-  networkStatsLastFailureAt = 0;
+  networkStatsCache.clear();
+  networkStatsInFlight.clear();
+  networkStatsLastFailureAt.clear();
 }
 
 /**
@@ -85,32 +87,34 @@ export async function getNetworkStats(urls: {
   networkStatsUrl?: string;
 }, opts: { budgetMs?: number } = {}): Promise<NetworkStatsMap> {
   const key = `${urls.explorerApiUrl ?? ''}|${urls.networkStatsUrl ?? ''}`;
-  const stale = (): NetworkStatsMap => (networkStatsCache?.key === key ? networkStatsCache.map : new Map());
-  if (networkStatsCache && networkStatsCache.key === key
-    && Date.now() - networkStatsCache.fetchedAtMs < NETWORK_STATS_TTL_MS) {
-    return networkStatsCache.map;
+  const stale = (): NetworkStatsMap => networkStatsCache.get(key)?.map ?? new Map();
+  const cached = networkStatsCache.get(key);
+  if (cached && Date.now() - cached.fetchedAtMs < NETWORK_STATS_TTL_MS) {
+    return cached.map;
   }
 
-  if (!networkStatsInFlight) {
-    if (Date.now() - networkStatsLastFailureAt < NETWORK_STATS_FAILURE_COOLDOWN_MS) {
+  let inFlight = networkStatsInFlight.get(key);
+  if (!inFlight) {
+    if (Date.now() - (networkStatsLastFailureAt.get(key) ?? 0) < NETWORK_STATS_FAILURE_COOLDOWN_MS) {
       return stale();
     }
-    networkStatsInFlight = (async () => {
+    inFlight = (async () => {
       let map = await fetchNetworkStatsFromExplorer(urls.explorerApiUrl);
       if (map.size === 0) map = await fetchNetworkStats(urls.networkStatsUrl);
       if (map.size > 0) {
-        networkStatsCache = { key, fetchedAtMs: Date.now(), map };
+        networkStatsCache.set(key, { fetchedAtMs: Date.now(), map });
         return map;
       }
-      networkStatsLastFailureAt = Date.now();
+      networkStatsLastFailureAt.set(key, Date.now());
       return stale();
-    })().finally(() => { networkStatsInFlight = null; });
+    })().finally(() => { networkStatsInFlight.delete(key); });
+    networkStatsInFlight.set(key, inFlight);
   }
 
-  if (opts.budgetMs === undefined) return networkStatsInFlight;
+  if (opts.budgetMs === undefined) return inFlight;
   return new Promise<NetworkStatsMap>((resolve) => {
     const timer = setTimeout(() => { resolve(stale()); }, opts.budgetMs);
-    networkStatsInFlight?.then(
+    inFlight.then(
       (map) => { clearTimeout(timer); resolve(map); },
       () => { clearTimeout(timer); resolve(stale()); },
     );

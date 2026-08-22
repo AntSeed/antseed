@@ -1550,7 +1550,7 @@ export function initChatModule({
   }
 
   async function refreshChatServiceOptions(): Promise<void> {
-    // Skip if a fetch is already in-flight — the 12s timeout outlasts the 5s poll
+    // Skip if a fetch is already in-flight — the 30s timeout outlasts the 5s poll
     // cycle, so without this guard every result gets a stale token and is dropped.
     if (serviceRefreshInProgress) return;
     serviceRefreshInProgress = true;
