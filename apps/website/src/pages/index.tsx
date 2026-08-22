@@ -1,11 +1,11 @@
 import {useEffect, useRef, useState, type MutableRefObject, type RefObject, type ReactNode, type CSSProperties} from 'react';
 import Head from '@docusaurus/Head';
 import Link from '@docusaurus/Link';
-import {useHistory} from '@docusaurus/router';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
 import styles from './index.module.css';
 import {useLatestDesktopDownload} from '../lib/useLatestDesktopDownload';
+import {useMobileGetStarted} from '../lib/useMobileGetStarted';
 import {useNetworkStats} from '../lib/useNetworkStats';
 import {useMarketplaceShowcase} from '../lib/useMarketplacePrices';
 import {Button, Faq, Reveal, SectionHeader, ArrowRight} from '../components/ui';
@@ -430,20 +430,6 @@ function RotatingSub() {
 /* ============================================================
    HERO
    ============================================================ */
-/* On phones (where the label reads "Get Started") the VPR buttons route to
-   the /get-started Telegram flow instead of downloading an installer the
-   device can't run. Desktop keeps the direct download. Matches the 640px
-   breakpoint that swaps the label in custom.css. */
-function useMobileGetStarted() {
-  const history = useHistory();
-  return (e: {preventDefault: () => void}) => {
-    if (window.matchMedia('(max-width: 640px)').matches) {
-      e.preventDefault();
-      history.push('/get-started');
-    }
-  };
-}
-
 function DownloadCta({caption, size = 'lg'}: {caption?: string; size?: 'md' | 'lg'}) {
   const download = useLatestDesktopDownload();
   const onGetStarted = useMobileGetStarted();
