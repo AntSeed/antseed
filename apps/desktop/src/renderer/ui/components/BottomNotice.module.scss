@@ -77,6 +77,20 @@
   color: var(--danger);
 }
 
+.warning .icon,
+.warning .title {
+  color: rgb(var(--warning-rgb));
+}
+
+.toast.warning {
+  border-color: rgba(var(--warning-rgb), 0.32);
+}
+
+.toast.warning .icon {
+  background: rgba(var(--warning-rgb), 0.12);
+  color: rgb(var(--warning-rgb));
+}
+
 .text {
   display: flex;
   flex: 1 1 auto;
@@ -131,6 +145,15 @@
 
 .danger .action:hover {
   background: rgba(var(--danger-rgb), 0.2);
+}
+
+.warning .action {
+  background: rgba(var(--warning-rgb), 0.12);
+  color: rgb(var(--warning-rgb));
+}
+
+.warning .action:hover {
+  background: rgba(var(--warning-rgb), 0.2);
 }
 
 .dismiss {

@@ -68,6 +68,40 @@ type TgResponse<T> = {
   parameters?: { retry_after?: number };
 };
 
+export type TgChatId = number | string;
+
+export type TgUpload = {
+  data: Uint8Array;
+  filename: string;
+  mimeType: string;
+};
+
+function uploadBlob(upload: TgUpload): Blob {
+  const buffer = upload.data.buffer.slice(
+    upload.data.byteOffset,
+    upload.data.byteOffset + upload.data.byteLength,
+  ) as ArrayBuffer;
+  return new Blob([buffer], { type: upload.mimeType });
+}
+
+async function readTelegramResponse<T>(method: string, response: Response): Promise<T> {
+  let body: TgResponse<T>;
+  try {
+    body = await response.json() as TgResponse<T>;
+  } catch {
+    throw new TelegramApiError(method, response.status, 'Invalid response from Telegram');
+  }
+  if (!body.ok || body.result === undefined) {
+    throw new TelegramApiError(
+      method,
+      body.error_code ?? response.status,
+      body.description ?? 'Unknown error',
+      body.parameters?.retry_after ?? null,
+    );
+  }
+  return body.result;
+}
+
 async function tgCall<T>(
   token: string,
   method: string,
@@ -88,21 +122,28 @@ async function tgCall<T>(
     clearTimeout(timer);
   }
 
-  let body: TgResponse<T>;
+  return readTelegramResponse<T>(method, response);
+}
+
+async function tgMultipartCall<T>(
+  token: string,
+  method: string,
+  formData: FormData,
+  timeoutMs = 30_000,
+): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let response: Response;
   try {
-    body = await response.json() as TgResponse<T>;
-  } catch {
-    throw new TelegramApiError(method, response.status, 'Invalid response from Telegram');
+    response = await fetch(`${TELEGRAM_API_BASE}/bot${token}/${method}`, {
+      method: 'POST',
+      body: formData,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
   }
-  if (!body.ok || body.result === undefined) {
-    throw new TelegramApiError(
-      method,
-      body.error_code ?? response.status,
-      body.description ?? 'Unknown error',
-      body.parameters?.retry_after ?? null,
-    );
-  }
-  return body.result;
+  return readTelegramResponse<T>(method, response);
 }
 
 export type TelegramBotClient = {
@@ -112,10 +153,23 @@ export type TelegramBotClient = {
    * timeoutS: 0 for an immediate snapshot of the queued backlog only.
    */
   getUpdates(offset: number | undefined, signal?: AbortSignal, timeoutS?: number): Promise<TgUpdate[]>;
-  sendMessage(chatId: number, text: string, options?: {
+  sendMessage(chatId: TgChatId, text: string, options?: {
     replyMarkup?: TgReplyMarkup;
     disableNotification?: boolean;
     parseMode?: 'HTML';
+    replyToMessageId?: number;
+  }): Promise<TgMessage>;
+  sendPhoto(chatId: TgChatId, photo: TgUpload, options?: {
+    caption?: string;
+    replyToMessageId?: number;
+  }): Promise<TgMessage>;
+  sendMediaGroup(chatId: TgChatId, photos: TgUpload[], options?: {
+    caption?: string;
+    replyToMessageId?: number;
+  }): Promise<TgMessage[]>;
+  sendDocument(chatId: TgChatId, document: TgUpload, options?: {
+    caption?: string;
+    replyToMessageId?: number;
   }): Promise<TgMessage>;
   /**
    * Streams partial text into an ephemeral draft bubble (Bot API 9.3+).
@@ -175,7 +229,47 @@ export function createTelegramBotClient(token: string): TelegramBotClient {
       ...(options?.replyMarkup ? { reply_markup: options.replyMarkup } : {}),
       ...(options?.disableNotification ? { disable_notification: true } : {}),
       ...(options?.parseMode ? { parse_mode: options.parseMode } : {}),
+      ...(options?.replyToMessageId ? { reply_parameters: { message_id: options.replyToMessageId } } : {}),
     }),
+
+    sendPhoto: (chatId, photo, options) => {
+      const formData = new FormData();
+      formData.append('chat_id', String(chatId));
+      formData.append('photo', uploadBlob(photo), photo.filename);
+      if (options?.caption) formData.append('caption', options.caption);
+      if (options?.replyToMessageId) {
+        formData.append('reply_parameters', JSON.stringify({ message_id: options.replyToMessageId }));
+      }
+      return tgMultipartCall<TgMessage>(token, 'sendPhoto', formData);
+    },
+
+    sendMediaGroup: (chatId, photos, options) => {
+      const formData = new FormData();
+      formData.append('chat_id', String(chatId));
+      formData.append('media', JSON.stringify(photos.map((_photo, index) => ({
+        type: 'photo',
+        media: `attach://photo${index}`,
+        ...(index === 0 && options?.caption ? { caption: options.caption } : {}),
+      }))));
+      photos.forEach((photo, index) => {
+        formData.append(`photo${index}`, uploadBlob(photo), photo.filename);
+      });
+      if (options?.replyToMessageId) {
+        formData.append('reply_parameters', JSON.stringify({ message_id: options.replyToMessageId }));
+      }
+      return tgMultipartCall<TgMessage[]>(token, 'sendMediaGroup', formData);
+    },
+
+    sendDocument: (chatId, document, options) => {
+      const formData = new FormData();
+      formData.append('chat_id', String(chatId));
+      formData.append('document', uploadBlob(document), document.filename);
+      if (options?.caption) formData.append('caption', options.caption);
+      if (options?.replyToMessageId) {
+        formData.append('reply_parameters', JSON.stringify({ message_id: options.replyToMessageId }));
+      }
+      return tgMultipartCall<TgMessage>(token, 'sendDocument', formData);
+    },
 
     sendMessageDraft: async (chatId, draftId, text) => {
       await tgCall(token, 'sendMessageDraft', {

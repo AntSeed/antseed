@@ -13,3 +13,9 @@
  * disables the baseline entirely).
  */
 export const BAKED_COMPARABLE_PRICES_URL: string | null = null;
+
+/** Dedicated Telegram bot used only for the public desktop feedback channel. */
+export const BAKED_FEEDBACK_TELEGRAM_BOT_TOKEN: string | null = null;
+
+/** Numeric channel ID or public @channelusername for desktop feedback. */
+export const BAKED_FEEDBACK_TELEGRAM_CHAT_ID: string | null = null;

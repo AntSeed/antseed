@@ -1,3 +1,9 @@
+import type {
+  FeedbackStatus,
+  FeedbackSubmitRequest,
+  FeedbackSubmitResult,
+} from '../../shared/feedback';
+
 export type RuntimeMode = 'connect' | 'system-proxy';
 
 export type RuntimeProcessState = {
@@ -299,6 +305,8 @@ export type DesktopBridge = {
   getSystemLocale?: () => Promise<string>;
   /** Current app version from Electron `app.getVersion()`. */
   getAppVersion?: () => Promise<string>;
+  feedbackGetStatus?: () => Promise<FeedbackStatus>;
+  feedbackSubmit?: (request: FeedbackSubmitRequest) => Promise<FeedbackSubmitResult>;
   /**
    * OpenRouter reference/retail prices keyed by normalized model id/name
    * (USD per million tokens). Used to render the struck-through baseline on

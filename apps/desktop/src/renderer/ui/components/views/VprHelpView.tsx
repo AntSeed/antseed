@@ -1,16 +1,22 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
+  AlertCircleIcon,
   ArrowRight01Icon,
   ArrowUpRight01Icon,
+  ChatFeedback01Icon,
+  CheckmarkCircle01Icon,
   Copy01Icon,
   GithubIcon,
   NewTwitterIcon,
   TelegramIcon,
 } from '@hugeicons/core-free-icons';
+import type { FeedbackStatus, FeedbackSubmitResult } from '../../../../shared/feedback';
 import { getUiStateRef } from '../../../core/store';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
+import { BottomNotice } from '../BottomNotice';
+import { FeedbackModal } from '../FeedbackModal';
 import { VprCard, VprPage, VprSettingRow, VprToggle } from '../vpr/VprKit';
 import styles from './VprHelpView.module.scss';
 
@@ -665,9 +671,38 @@ export function VprHelpView({ onSelectView }: Props) {
   const [appVersion, setAppVersion] = useState<string>(
     typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '',
   );
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackStatus, setFeedbackStatus] = useState<FeedbackStatus | null>(null);
+  const [feedbackNotice, setFeedbackNotice] = useState<{
+    body: string;
+    tone: 'success' | 'warning';
+  } | null>(null);
   useEffect(() => {
     window.antseedDesktop?.getAppVersion?.().then(setAppVersion).catch(() => {});
+    const getFeedbackStatus = window.antseedDesktop?.feedbackGetStatus;
+    if (!getFeedbackStatus) {
+      setFeedbackStatus({ configured: false, error: 'Feedback is unavailable in this build.' });
+      return;
+    }
+    void getFeedbackStatus()
+      .then(setFeedbackStatus)
+      .catch(() => setFeedbackStatus({ configured: false, error: 'Feedback is unavailable in this build.' }));
   }, []);
+
+  useEffect(() => {
+    if (!feedbackNotice) return undefined;
+    const timer = window.setTimeout(() => setFeedbackNotice(null), 5_000);
+    return () => window.clearTimeout(timer);
+  }, [feedbackNotice]);
+
+  function handleFeedbackSubmitted(result: FeedbackSubmitResult): void {
+    setFeedbackOpen(false);
+    if (result.attachmentWarnings?.length) {
+      setFeedbackNotice({ body: result.attachmentWarnings.join('\n'), tone: 'warning' });
+      return;
+    }
+    setFeedbackNotice({ body: 'Thanks — your feedback was sent.', tone: 'success' });
+  }
 
   // Developer mode is the single switch for diagnostics: it enables debug
   // logging (settings module) and reveals the diagnostic screens below.
@@ -790,6 +825,26 @@ export function VprHelpView({ onSelectView }: Props) {
             Get help from the team and the community, and follow what we ship.
           </p>
           <VprCard>
+            <button
+              type="button"
+              className={styles.row}
+              disabled={!feedbackStatus?.configured}
+              title={feedbackStatus?.configured ? undefined : feedbackStatus?.error}
+              onClick={() => setFeedbackOpen(true)}
+            >
+              <HugeiconsIcon icon={ChatFeedback01Icon} size={18} strokeWidth={1.8} className={styles.rowIcon} />
+              <span className={styles.rowText}>
+                <span className={styles.rowLabel}>Give feedback</span>
+                <span className={styles.rowHint}>
+                  {feedbackStatus?.configured
+                    ? 'Share feedback, screenshots, and optional diagnostics'
+                    : feedbackStatus?.error ?? 'Checking feedback availability…'}
+                </span>
+              </span>
+              {feedbackStatus?.configured && (
+                <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} className={styles.rowGlyph} />
+              )}
+            </button>
             <button type="button" className={styles.row} onClick={() => openExternal(TELEGRAM_URL)}>
               <HugeiconsIcon icon={TelegramIcon} size={18} strokeWidth={1.8} className={styles.rowIcon} />
               <span className={styles.rowLabel}>Join our Telegram</span>
@@ -952,6 +1007,23 @@ export function VprHelpView({ onSelectView }: Props) {
       >
         {renderPage(nav.page)}
       </div>
+      <FeedbackModal
+        configured={feedbackStatus?.configured === true}
+        isOpen={feedbackOpen}
+        onClose={() => setFeedbackOpen(false)}
+        onSubmitted={handleFeedbackSubmitted}
+      />
+      {feedbackNotice && (
+        <BottomNotice
+          ariaLive="polite"
+          body={feedbackNotice.body}
+          icon={<HugeiconsIcon icon={feedbackNotice.tone === 'success' ? CheckmarkCircle01Icon : AlertCircleIcon} size={18} strokeWidth={1.8} />}
+          layout="toast"
+          onDismiss={() => setFeedbackNotice(null)}
+          priority="overlay"
+          tone={feedbackNotice.tone}
+        />
+      )}
     </section>
   );
 }

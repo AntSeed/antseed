@@ -1,5 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { RuntimeMode, RuntimeProcessState, StartOptions } from './runtime/process-manager.js';
+import type {
+  FeedbackStatus,
+  FeedbackSubmitRequest,
+  FeedbackSubmitResult,
+} from '../shared/feedback.js';
 
 type LogEvent = {
   mode: RuntimeMode;
@@ -183,6 +188,12 @@ const api = {
   },
   getAppVersion(): Promise<string> {
     return ipcRenderer.invoke('app:get-version') as Promise<string>;
+  },
+  feedbackGetStatus(): Promise<FeedbackStatus> {
+    return ipcRenderer.invoke('feedback:get-status') as Promise<FeedbackStatus>;
+  },
+  feedbackSubmit(request: FeedbackSubmitRequest): Promise<FeedbackSubmitResult> {
+    return ipcRenderer.invoke('feedback:submit', request) as Promise<FeedbackSubmitResult>;
   },
   getOpenRouterReferencePrices(): Promise<Record<string, { input: number | null; output: number | null }>> {
     return ipcRenderer.invoke('openrouter:reference-prices') as Promise<
