@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { fetchNetworkStats } from '../runtime/fetch-network-stats.js';
+import { getNetworkStats } from '../runtime/fetch-network-stats.js';
+import { raceBudget } from './race-budget.js';
 import { type ChatStreamStopReason } from './stream-stop.js';
 import {
   normalizeChatPeerSelectionRequest,
@@ -312,9 +313,12 @@ export function registerPiChatHandlers({
     }
 
     serviceCatalogRefreshPromise = (async () => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5_000);
+      let port = 0;
       try {
-        const port = await resolveProxyPort(configPath);
-        const response = await fetch(`${LOCALHOST_URL}:${port}/v1/models`);
+        port = await resolveProxyPort(configPath);
+        const response = await fetch(`${LOCALHOST_URL}:${port}/v1/models`, { signal: controller.signal });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const entries = buildChatServiceCatalogFromNetworkModels(await response.json());
         const limited = limitChatServiceCatalogEntries(entries);
@@ -325,11 +329,13 @@ export function registerPiChatHandlers({
         lastServiceCatalogEntries = resolved;
         return resolved;
       } catch (error) {
-        appendSystemLog(`Desktop model catalog refresh failed: ${asErrorMessage(error)}`);
+        appendSystemLog(`Desktop model catalog refresh failed (proxy :${String(port)}/v1/models): ${asErrorMessage(error)}`);
         if (lastServiceCatalogEntries.length > 0) return lastServiceCatalogEntries;
         const persisted = await loadPersistedServiceCatalog();
         lastServiceCatalogEntries = persisted;
         return persisted;
+      } finally {
+        clearTimeout(timer);
       }
     })().finally(() => { serviceCatalogRefreshPromise = null; });
 
@@ -431,33 +437,71 @@ export function registerPiChatHandlers({
     }
   });
 
+  type PeerMeteringStats = {
+    totalSessions: number;
+    totalRequests: number;
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    firstSessionAt: number | null;
+    lastSessionAt: number | null;
+  };
+
+  // Phase budgets for the discover-rows pipeline. The renderer drops the IPC
+  // result after 30s (CHAT_SERVICE_LIST_TIMEOUT_MS) — the sum of these plus
+  // the local file reads must stay comfortably under that, or the model list
+  // never populates while the runtime looks healthy. Generous enough for a
+  // slow machine or connection to finish each phase; a phase that still
+  // overruns is skipped for this cycle, not fatal.
+  const CATALOG_PHASE_BUDGET_MS = 8_000;
+  const METERING_FETCH_TIMEOUT_MS = 4_000;
+  const METERING_PHASE_BUDGET_MS = 5_000;
+  const ENRICHMENT_BUDGET_MS = 4_000;
+  const NETWORK_STATS_BUDGET_MS = 8_000;
+  const DISCOVER_ROWS_SLOW_MS = 3_000;
+  /** Last successful per-peer metering, reused when a cycle's fetch times out. */
+  const lastMeteringStats = new Map<string, PeerMeteringStats>();
+  let discoverRowsEverSucceeded = false;
+
   ipcMain.handle('chat:ai-list-discover-rows', async () => {
+    const startedAt = Date.now();
+    const phaseMs: Array<[string, number]> = [];
+    let phaseStartedAt = startedAt;
+    const endPhase = (name: string): void => {
+      const now = Date.now();
+      phaseMs.push([name, now - phaseStartedAt]);
+      phaseStartedAt = now;
+    };
     try {
       const buyerMaxPricing = await loadBuyerMaxPricingDefaults(configPath);
-      const entries = (await refreshServiceCatalogFromNetwork())
-        .filter((entry) => isCatalogEntryAllowedByBuyerMax(entry, buyerMaxPricing));
+      const entries = (await raceBudget(
+        refreshServiceCatalogFromNetwork(),
+        CATALOG_PHASE_BUDGET_MS,
+        () => lastServiceCatalogEntries,
+      )).filter((entry) => isCatalogEntryAllowedByBuyerMax(entry, buyerMaxPricing));
+      endPhase('catalog');
 
       const buyerPort = await resolveProxyPort(configPath);
-      const statsMap = new Map<string, {
-        totalSessions: number;
-        totalRequests: number;
-        totalInputTokens: number;
-        totalOutputTokens: number;
-        firstSessionAt: number | null;
-        lastSessionAt: number | null;
-      }>();
+      const statsMap = new Map<string, PeerMeteringStats>();
       // Per-peer lifetime metering. The buyer-proxy exposes
       // /_antseed/metering/<peerId>; fetch in parallel for every catalog peer.
       const uniqueCatalogPeerIds = Array.from(new Set(
         entries.map((e) => e.peerId ?? '').filter((p) => p.length > 0)
       ));
-      await Promise.all(uniqueCatalogPeerIds.map(async (peerId) => {
+      await raceBudget(Promise.all(uniqueCatalogPeerIds.map(async (peerId) => {
         try {
-          const resp = await fetch(
-            `${LOCALHOST_URL}:${buyerPort}/_antseed/metering/${encodeURIComponent(peerId)}`,
-          );
-          if (!resp.ok) return;
-          const body = await resp.json() as Record<string, unknown> | null;
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), METERING_FETCH_TIMEOUT_MS);
+          let body: Record<string, unknown> | null;
+          try {
+            const resp = await fetch(
+              `${LOCALHOST_URL}:${buyerPort}/_antseed/metering/${encodeURIComponent(peerId)}`,
+              { signal: controller.signal },
+            );
+            if (!resp.ok) return;
+            body = await resp.json() as Record<string, unknown> | null;
+          } finally {
+            clearTimeout(timer);
+          }
           if (!body || typeof body !== 'object') return;
           const sessions = Number(body.lifetimeSessions) || 0;
           const reqs = Number(body.lifetimeRequests) || 0;
@@ -466,18 +510,24 @@ export function registerPiChatHandlers({
           const firstAt = typeof body.lifetimeFirstSessionAt === 'number' ? body.lifetimeFirstSessionAt : null;
           const lastAt = typeof body.lifetimeLastSessionAt === 'number' ? body.lifetimeLastSessionAt : null;
           if (sessions === 0 && reqs === 0 && inTok === 0 && outTok === 0 && firstAt == null && lastAt == null) return;
-          statsMap.set(peerId, {
+          const stats: PeerMeteringStats = {
             totalSessions: sessions,
             totalRequests: reqs,
             totalInputTokens: inTok,
             totalOutputTokens: outTok,
             firstSessionAt: firstAt,
             lastSessionAt: lastAt,
-          });
+          };
+          statsMap.set(peerId, stats);
+          lastMeteringStats.set(peerId, stats);
         } catch {
-          // Ignore — peer simply has no metering info
+          // Timed out or unreachable — reuse the last known values so a slow
+          // cycle doesn't blank the lifetime columns.
+          const previous = lastMeteringStats.get(peerId);
+          if (previous) statsMap.set(peerId, previous);
         }
-      }));
+      })), METERING_PHASE_BUDGET_MS, () => []);
+      endPhase('metering');
 
       let discoveredPeersMap: Record<string, BuyerStateDiscoveredPeer> = {};
       let peerHealthMap: Record<string, RawPeerHealth> = {};
@@ -519,13 +569,18 @@ export function registerPiChatHandlers({
             );
           }
         }
-        await Promise.all(enrichmentTasks);
+        // Budgeted: already-cached domains resolve instantly; first-seen
+        // domains keep resolving in the background and land in the
+        // per-domain cache for the next cycle.
+        await raceBudget(Promise.all(enrichmentTasks), ENRICHMENT_BUDGET_MS, () => []);
       } catch {
         // No state file yet
       }
+      endPhase('enrichment');
 
-      // Network-wide stats from @antseed/network-stats. On non-mainnet chains and on any
-      // failure this returns an empty map and buildDiscoverRows falls back to local stats.
+      // Network-wide stats from the chain explorer (aggregator fallback). On
+      // non-mainnet chains and on any failure this returns an empty map and
+      // buildDiscoverRows falls back to local stats.
       const networkStats = await (async () => {
         try {
           const raw = await readFile(configPath, 'utf8');
@@ -536,11 +591,15 @@ export function registerPiChatHandlers({
             ? overrides.chainId
             : 'base-mainnet';
           const cc = resolveChainConfig({ chainId: selectedChain });
-          return await fetchNetworkStats(cc.networkStatsUrl);
+          return await getNetworkStats({
+            explorerApiUrl: cc.explorerApiUrl,
+            networkStatsUrl: cc.networkStatsUrl,
+          }, { budgetMs: NETWORK_STATS_BUDGET_MS });
         } catch {
           return new Map<number, { requests: bigint; inputTokens: bigint; outputTokens: bigint }>();
         }
       })();
+      endPhase('network-stats');
 
       const rows = (await buildDiscoverRows(entries, statsMap, discoveredPeersMap, networkStats, peerHealthMap))
         .filter((row) => isPriceAllowedByBuyerMax(
@@ -549,8 +608,20 @@ export function registerPiChatHandlers({
           row.cachedInputUsdPerMillion,
           buyerMaxPricing,
         ));
+      endPhase('build');
+
+      const totalMs = Date.now() - startedAt;
+      if (totalMs >= DISCOVER_ROWS_SLOW_MS) {
+        const breakdown = phaseMs.map(([name, ms]) => `${name}=${String(ms)}ms`).join(' ');
+        appendSystemLog(`Service discovery slow: ${String(totalMs)}ms (${breakdown}) — ${String(rows.length)} row(s) from ${String(entries.length)} service(s)`);
+      }
+      if (!discoverRowsEverSucceeded) {
+        discoverRowsEverSucceeded = true;
+        appendSystemLog(`Service discovery ready: ${String(rows.length)} row(s) from ${String(entries.length)} service(s) in ${String(totalMs)}ms`);
+      }
       return { ok: true, data: rows };
     } catch (error) {
+      appendSystemLog(`Service discovery failed after ${String(Date.now() - startedAt)}ms: ${asErrorMessage(error)}`);
       return { ok: false, data: [] as DiscoverRowEntry[], error: asErrorMessage(error) };
     }
   });

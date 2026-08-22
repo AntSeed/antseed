@@ -192,7 +192,11 @@ export function initChatModule({
   const CHAT_SERVICE_REFRESH_INTERVAL_MS = 60_000;
   // Faster retry during first-run setup while no services have been found yet.
   const CHAT_SERVICE_SETUP_REFRESH_INTERVAL_MS = 2_000;
-  const CHAT_SERVICE_LIST_TIMEOUT_MS = 12_000;
+  // Last-resort backstop only: the main-process handler bounds itself to
+  // ~26s worst case via per-phase budgets, so on a healthy machine this never
+  // fires. Generous so slow machines/connections still get their rows late
+  // rather than never.
+  const CHAT_SERVICE_LIST_TIMEOUT_MS = 30_000;
 
   // ---------------------------------------------------------------------------
   // Module-local state
@@ -1522,8 +1526,31 @@ export function initChatModule({
     }
   }
 
+  // Service-discovery failures (notably the 12s IPC timeout above) used to be
+  // invisible in exported logs — the runtime looked healthy while the model
+  // list stayed empty. Log the first failure, then one summary per minute,
+  // plus the recovery, so a log export tells the story.
+  let discoverFailureStreak = 0;
+  let discoverFailureLogAt = 0;
+  function noteDiscoverFailure(message: string): void {
+    discoverFailureStreak += 1;
+    const now = Date.now();
+    if (discoverFailureStreak === 1 || now - discoverFailureLogAt >= 60_000) {
+      discoverFailureLogAt = now;
+      appendSystemLog(discoverFailureStreak === 1
+        ? `Service discovery failed: ${message}`
+        : `Service discovery still failing (${String(discoverFailureStreak)} consecutive): ${message}`);
+    }
+  }
+  function noteDiscoverSuccess(rowCount: number): void {
+    if (discoverFailureStreak === 0) return;
+    appendSystemLog(`Service discovery recovered after ${String(discoverFailureStreak)} failure(s): ${String(rowCount)} row(s)`);
+    discoverFailureStreak = 0;
+    discoverFailureLogAt = 0;
+  }
+
   async function refreshChatServiceOptions(): Promise<void> {
-    // Skip if a fetch is already in-flight — the 12s timeout outlasts the 5s poll
+    // Skip if a fetch is already in-flight — the 30s timeout outlasts the 5s poll
     // cycle, so without this guard every result gets a stale token and is dropped.
     if (serviceRefreshInProgress) return;
     serviceRefreshInProgress = true;
@@ -1548,6 +1575,7 @@ export function initChatModule({
       if (!result.ok || !Array.isArray(result.data)) {
         uiState.chatDiscoverRowsLoaded = false;
         updateChatServiceOptions(fallback);
+        noteDiscoverFailure(result.error || 'Service catalog unavailable.');
         setRuntimeActivity('warn', result.error || 'Service catalog unavailable.');
         notifyUiStateChanged();
         return;
@@ -1560,6 +1588,7 @@ export function initChatModule({
       uiState.discoverRows = rows;
       uiState.vprRoutableRows = filterRoutableVprRoutes(rows, uiState.vprRoutingPreferences);
       uiState.chatDiscoverRowsLoaded = true;
+      noteDiscoverSuccess(rows.length);
       // Guard on the raw discovery result, not the projection: an allowlist
       // that excludes every discovered seller must empty the catalog, while a
       // transient empty discovery snapshot must leave the last one standing.
@@ -1621,6 +1650,7 @@ export function initChatModule({
       uiState.chatDiscoverRowsLoaded = false;
       updateChatServiceOptions(fallback);
       const message = toErrorMessage(error, 'Failed to load services');
+      noteDiscoverFailure(message);
       setRuntimeActivity('bad', message);
     } finally {
       serviceRefreshInProgress = false;
