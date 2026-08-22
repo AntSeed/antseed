@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchNetworkStats } from './fetch-network-stats.js';
+import {
+  fetchNetworkStats,
+  fetchNetworkStatsFromExplorer,
+  getNetworkStats,
+  resetNetworkStatsCache,
+} from './fetch-network-stats.js';
 
 // Helper to make a mock fetch that returns a resolved response object
 function mockFetch(response: unknown): typeof globalThis.fetch {
@@ -164,6 +169,115 @@ test('peer with malformed numeric string is skipped, others remain', async () =>
     assert.equal(entry.inputTokens, 888n);
     assert.equal(entry.outputTokens, 777n);
   } finally {
+    restoreFetch();
+  }
+});
+
+test('explorer: returns empty when URL is undefined', async () => {
+  let called = false;
+  globalThis.fetch = async () => { called = true; return null as unknown as Response; };
+  try {
+    const out = await fetchNetworkStatsFromExplorer(undefined);
+    assert.equal(out.size, 0);
+    assert.equal(called, false);
+  } finally {
+    restoreFetch();
+  }
+});
+
+test('explorer: maps /api/sellers rows to bigint stats, skipping null agentIds', async () => {
+  const calls: string[] = [];
+  globalThis.fetch = async (url: string | URL | Request) => {
+    calls.push(String(url));
+    return {
+      ok: true,
+      json: async () => ([
+        { agentId: '53008', requestCount: '2111335', inputTokens: '6120535493', outputTokens: '1169883968' },
+        { agentId: null, requestCount: '0', inputTokens: '0', outputTokens: '0' },
+        { agentId: '10', requestCount: 'not-a-number', inputTokens: '0', outputTokens: '0' },
+      ]),
+    } as unknown as Response;
+  };
+  try {
+    const out = await fetchNetworkStatsFromExplorer('https://antscan.example/');
+    assert.equal(calls[0], 'https://antscan.example/api/sellers');
+    assert.equal(out.size, 1);
+    const entry = out.get(53008);
+    assert.ok(entry, 'expected entry for agentId 53008');
+    assert.equal(entry.requests, 2111335n);
+    assert.equal(entry.inputTokens, 6120535493n);
+    assert.equal(entry.outputTokens, 1169883968n);
+  } finally {
+    restoreFetch();
+  }
+});
+
+test('explorer: non-array payload returns empty map', async () => {
+  globalThis.fetch = mockFetch({ ok: true, json: async () => ({ sellers: [] }) });
+  try {
+    const out = await fetchNetworkStatsFromExplorer('https://antscan.example');
+    assert.equal(out.size, 0);
+  } finally {
+    restoreFetch();
+  }
+});
+
+test('getNetworkStats: explorer result is cached — second call does not refetch', async () => {
+  resetNetworkStatsCache();
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return {
+      ok: true,
+      json: async () => ([{ agentId: '7', requestCount: '1', inputTokens: '2', outputTokens: '3' }]),
+    } as unknown as Response;
+  };
+  try {
+    const urls = { explorerApiUrl: 'https://antscan.example', networkStatsUrl: 'https://stats.example' };
+    const first = await getNetworkStats(urls);
+    const second = await getNetworkStats(urls);
+    assert.equal(calls, 1);
+    assert.equal(first, second);
+    assert.equal(first.get(7)?.requests, 1n);
+  } finally {
+    resetNetworkStatsCache();
+    restoreFetch();
+  }
+});
+
+test('getNetworkStats: falls back to the aggregator when the explorer returns nothing', async () => {
+  resetNetworkStatsCache();
+  const calls: string[] = [];
+  globalThis.fetch = async (url: string | URL | Request) => {
+    calls.push(String(url));
+    if (String(url).includes('/api/sellers')) {
+      return { ok: false, status: 503, statusText: 'down' } as unknown as Response;
+    }
+    return {
+      ok: true,
+      json: async () => ({
+        peers: [{ peerId: 'p', onChainStats: { agentId: 9, totalRequests: '4', totalInputTokens: '5', totalOutputTokens: '6' } }],
+      }),
+    } as unknown as Response;
+  };
+  try {
+    const out = await getNetworkStats({ explorerApiUrl: 'https://antscan.example', networkStatsUrl: 'https://stats.example' });
+    assert.deepEqual(calls, ['https://antscan.example/api/sellers', 'https://stats.example/stats']);
+    assert.equal(out.get(9)?.requests, 4n);
+  } finally {
+    resetNetworkStatsCache();
+    restoreFetch();
+  }
+});
+
+test('getNetworkStats: both sources failing with no prior cache returns empty', async () => {
+  resetNetworkStatsCache();
+  globalThis.fetch = async () => { throw new Error('network down'); };
+  try {
+    const out = await getNetworkStats({ explorerApiUrl: 'https://antscan.example', networkStatsUrl: 'https://stats.example' });
+    assert.equal(out.size, 0);
+  } finally {
+    resetNetworkStatsCache();
     restoreFetch();
   }
 });
