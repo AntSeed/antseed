@@ -19,6 +19,7 @@ const COLUMNS: {title: string; links: {label: string; to?: string; href?: string
       {label: '$ANTS Token', to: '/ants-token'},
       {label: 'vs OpenRouter', to: '/vs/openrouter'},
       {label: 'AntSeedStats ↗', href: 'https://antseedstats.com'},
+      {label: 'AIPs ↗', href: 'https://aips.antseed.com'},
     ],
   },
   {
