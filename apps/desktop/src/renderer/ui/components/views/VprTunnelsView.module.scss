@@ -9,7 +9,9 @@
 }
 
 .introTitle,
-.connectionTitle {
+.connectionTitle,
+.endpointTitle,
+.agentName {
   margin: 0;
   color: var(--text-primary);
   font-size: 13px;
@@ -24,25 +26,50 @@
   line-height: 17px;
 }
 
-.useCases {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 14px;
+.introText code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
 }
 
-.useCases span {
-  display: inline-flex;
+.agentList {
+  display: grid;
+  gap: 8px;
+}
+
+.agentCard {
+  display: flex;
   align-items: center;
-  gap: 5px;
-  color: var(--text-muted);
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-card);
+}
+
+.agentIcon {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+}
+
+.agentContent {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.agentDescription {
+  margin: 0;
+  color: var(--text-secondary);
   font-size: 11px;
-  font-weight: 500;
   line-height: 16px;
 }
 
-.useCases img {
-  width: 15px;
-  height: 15px;
+.agentLinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
 }
 
 .docsLink {
@@ -66,11 +93,71 @@
   text-underline-offset: 2px;
 }
 
+.endpointSection {
+  display: grid;
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.endpointTrigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 8px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.endpointTrigger:hover .endpointTitle {
+  color: var(--brand);
+}
+
+.endpointHeader {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.endpointTitle {
+  font-size: 14px;
+  line-height: 20px;
+  transition: color 0.12s ease;
+}
+
+.endpointSummary {
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.endpointChevron {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  transition: transform 0.16s ease;
+}
+
+.endpointChevronExpanded {
+  transform: rotate(180deg);
+}
+
+.endpointBody {
+  display: grid;
+  gap: 16px;
+  padding: 0 8px 4px;
+}
+
 .connectionDetails {
   gap: 12px;
-  margin-top: 4px;
+  margin: 0 8px;
+  width: auto;
   background: transparent;
-  padding: 14px 8px 0;
+  padding: 14px 0 0;
   border-top: 1px solid var(--border);
   border-radius: 0;
 }

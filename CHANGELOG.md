@@ -12,7 +12,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
-- Desktop and CLI now expose the authenticated VPR model API through optional ngrok or Cloudflare HTTPS tunnels for Cursor, remote agents, servers, and OpenAI-compatible SDKs. The new Desktop **Tunnels** view manages provider credentials, generated API keys, connection details, and tunnel lifecycle; the website guide documents bearer authentication, supported routes, Cursor setup, CLI usage, and troubleshooting.
+- Desktop and CLI now expose the authenticated VPR model API through optional ngrok or Cloudflare HTTPS tunnels for Cursor, remote agents, servers, and OpenAI-compatible SDKs. The new Desktop **Agents** view links maintained Hermes and OpenClaw integration pages and setup skills, explains local and remote connections, and manages provider credentials, generated API keys, connection details, and endpoint lifecycle. Website docs and skills now cover Hermes' current `providers:` schema, OpenClaw's required `authHeader: true` bearer authentication and current model commands, supported routes, Cursor setup, CLI usage, and troubleshooting.
 
 - Desktop Help now explains the Virtual Private Router as a VPN for AI and adds practical guidance for built-in chat, connected apps, per-conversation model and seller selection, floating-window controls, routing, credits, rewards, the local API, and troubleshooting. Each subject links to a new comprehensive VPR guide or relevant supporting source.
 

@@ -39,6 +39,7 @@ describe('view registry', () => {
       ['home', 'explore', 'tools', 'chat', 'tunnels', 'preferences', 'help'] satisfies ViewName[],
     );
     expect(navViews('bottom').map((entry) => entry.view)).toEqual(['credits'] satisfies ViewName[]);
+    expect(getViewRegistryEntry('tunnels').nav?.label).toBe('Agents');
     for (const entry of navViews('main')) {
       expect(entry.nav.label).toBeTruthy();
       expect(entry.nav.icon).toBeTruthy();

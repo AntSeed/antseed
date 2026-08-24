@@ -114,7 +114,7 @@ export const VIEW_REGISTRY = {
       receivesOnSelectView: true,
       slideIndex: 5,
       preloadPriority: 'idle',
-      nav: { slot: 'main', label: 'Tunnels', icon: NeuralNetworkIcon },
+      nav: { slot: 'main', label: 'Agents', icon: NeuralNetworkIcon },
     },
   ),
   chats: createViewEntry(

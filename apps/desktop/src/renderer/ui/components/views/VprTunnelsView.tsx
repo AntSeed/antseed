@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
-  ApiIcon,
+  ArrowDown01Icon,
   ArrowUpRight01Icon,
-  ComputerCloudIcon,
   Copy01Icon,
   Settings02Icon,
   Tick02Icon,
@@ -18,9 +17,27 @@ import styles from './VprToolsView.module.scss';
 import tunnelStyles from './VprTunnelsView.module.scss';
 
 const TUNNEL_DOCS_URL = 'https://antseed.com/docs/guides/public-tunnels';
-const CURSOR_ICON = new URL('../../../assets/cursor.svg', import.meta.url).href;
+const HERMES_ICON = new URL('../../../assets/hermes-agent.svg', import.meta.url).href;
+const OPENCLAW_ICON = new URL('../../../assets/openclaw.svg', import.meta.url).href;
 const MASKED_API_KEY = '••••••••••••••••••••••••••••••••';
 type CopyKind = 'url' | 'key';
+
+const AGENTS = [
+  {
+    name: 'Hermes Agent',
+    icon: HERMES_ICON,
+    description: 'Connect Hermes to the VPR with the OpenAI-compatible endpoint.',
+    integrationUrl: 'https://antseed.com/integrations/hermes/',
+    skillUrl: 'https://github.com/AntSeed/antseed/tree/main/skills/hermes-antseed',
+  },
+  {
+    name: 'OpenClaw',
+    icon: OPENCLAW_ICON,
+    description: 'Register AntSeed as an Anthropic Messages provider for OpenClaw.',
+    integrationUrl: 'https://antseed.com/integrations/openclaw/',
+    skillUrl: 'https://github.com/AntSeed/antseed/tree/main/skills/openclaw-antseed',
+  },
+] as const;
 
 const PROVIDERS: ReadonlyArray<{
   id: TunnelProvider;
@@ -67,6 +84,7 @@ export function VprTunnelsView() {
   const [busyProvider, setBusyProvider] = useState<TunnelProvider | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<'url' | 'key' | null>(null);
+  const [endpointExpanded, setEndpointExpanded] = useState(false);
 
   const refresh = useCallback(async () => {
     const next = await window.antseedDesktop?.publicTunnelGetStatus?.();
@@ -172,104 +190,147 @@ export function VprTunnelsView() {
 
   return (
     <section className={`view view-vpr-tunnels view-pinned-header ${styles.view}`} role="tabpanel">
-      <VprPage title="Tunnels" backFallback="home">
+      <VprPage title="Agents" backFallback="home">
         <div className={styles.stack}>
           <section className={tunnelStyles.intro}>
-            <h2 className={tunnelStyles.introTitle}>Use your VPR from anywhere</h2>
-            <p className={tunnelStyles.introText}>Publish the authenticated OpenAI-compatible API over HTTPS so tools outside this computer can reach your models.</p>
-            <div className={tunnelStyles.useCases}>
-              <span><HugeiconsIcon icon={ComputerCloudIcon} size={15} strokeWidth={1.8} />Remote agents</span>
-              <span><img src={CURSOR_ICON} alt="" />Cursor</span>
-              <span><HugeiconsIcon icon={ApiIcon} size={15} strokeWidth={1.8} />Apps and SDKs</span>
-            </div>
-            <button type="button" className={tunnelStyles.docsLink} onClick={() => void window.antseedDesktop?.openExternalUrl?.(TUNNEL_DOCS_URL)}>
-              Setup and API guide <HugeiconsIcon icon={ArrowUpRight01Icon} size={12} strokeWidth={2} />
-            </button>
+            <h2 className={tunnelStyles.introTitle}>Connect an agent to your VPR</h2>
+            <p className={tunnelStyles.introText}>Agents on this computer can use <code>http://127.0.0.1:8377/v1</code>. For an agent running elsewhere, define a protected internet-accessible endpoint below.</p>
           </section>
-          {error ? <p className={styles.note} role="alert">{error}</p> : null}
 
-          <div className={styles.appList}>
-            {PROVIDERS.map((provider) => {
-              const configured = status?.configuredProviders.includes(provider.id) ?? false;
-              const running = status?.running === true && status.activeProvider === provider.id;
-              return (
-                <div key={provider.id} className={`${styles.appPill}${running ? ` ${styles.appPillConnected}` : ''}`}>
-                  <div className={styles.appHead}>
-                    <span className={styles.appIdentity}>
-                      <BrandIcon name={provider.id} hints={[provider.name]} size={24} />
-                      <span className={styles.appText}>
-                        <span className={styles.appNameRow}><span className={styles.appName}>{provider.name}</span></span>
-                        {running ? <span className={styles.appMeta}><span className={styles.connectedDot} aria-hidden="true" />Connected</span> : null}
-                      </span>
-                    </span>
-                    {configured ? (
-                      <button type="button" className={styles.configAction} onClick={() => openConfigure(provider.id)} aria-label={`Configure ${provider.name}`}>
-                        <HugeiconsIcon icon={Settings02Icon} size={15} strokeWidth={2} />
-                      </button>
-                    ) : null}
-                    {configured ? (
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={running}
-                        className={`${styles.connectedToggle}${running ? '' : ` ${styles.connectedToggleOff}`}`}
-                        disabled={busyProvider !== null}
-                        onClick={() => void toggleTunnel(provider.id)}
-                        aria-label={`${running ? 'Stop' : 'Start'} ${provider.name}`}
-                        title={`${running ? 'Stop' : 'Start'} ${provider.name}`}
-                      >
-                        <span />
-                      </button>
-                    ) : (
-                      <button type="button" className={styles.connectAction} disabled={busyProvider !== null} onClick={() => openConfigure(provider.id)}>
-                        {busyProvider === provider.id ? 'Working…' : 'Configure'}
-                      </button>
-                    )}
-                  </div>
-                  <p className={styles.settingHint}>{provider.description}</p>
+          <div className={tunnelStyles.agentList}>
+            {AGENTS.map((agent) => (
+              <section key={agent.name} className={tunnelStyles.agentCard}>
+                <img className={tunnelStyles.agentIcon} src={agent.icon} alt="" />
+                <div className={tunnelStyles.agentContent}>
+                  <h2 className={tunnelStyles.agentName}>{agent.name}</h2>
+                  <p className={tunnelStyles.agentDescription}>{agent.description}</p>
+                  <span className={tunnelStyles.agentLinks}>
+                    <button type="button" className={tunnelStyles.docsLink} onClick={() => void window.antseedDesktop?.openExternalUrl?.(agent.integrationUrl)}>
+                      Setup guide <HugeiconsIcon icon={ArrowUpRight01Icon} size={12} strokeWidth={2} />
+                    </button>
+                    <button type="button" className={tunnelStyles.docsLink} onClick={() => void window.antseedDesktop?.openExternalUrl?.(agent.skillUrl)}>
+                      Agent skill <HugeiconsIcon icon={ArrowUpRight01Icon} size={12} strokeWidth={2} />
+                    </button>
+                  </span>
                 </div>
-              );
-            })}
+              </section>
+            ))}
           </div>
 
-          {hasConnectionDetails ? (
-            <section className={tunnelStyles.connectionDetails}>
-              <div>
-                <h2 className={tunnelStyles.connectionTitle}>Connection details</h2>
-                <p className={styles.settingHint}>Use these values in the remote client’s OpenAI provider settings.</p>
-              </div>
-              {baseUrl ? (
-                <section className={styles.settingSection}>
-                  <div className={styles.settingHead}><span className={styles.settingTitle}>OpenAI base URL</span></div>
-                  <div className={tunnelStyles.credentialRow}>
-                    <input readOnly className={styles.settingInput} value={baseUrl} />
-                    <button type="button" className={tunnelStyles.copyButton} onClick={() => copy(baseUrl, 'url')}>
-                      <HugeiconsIcon icon={copied === 'url' ? Tick02Icon : Copy01Icon} size={15} strokeWidth={2} />
-                      {copied === 'url' ? 'Copied' : 'Copy'}
-                    </button>
-                  </div>
-                </section>
-              ) : null}
-              {status?.configured ? (
-                <section className={styles.settingSection}>
-                  <div className={styles.settingHead}><span className={styles.settingTitle}>API key</span></div>
-                  <div className={tunnelStyles.credentialRow}>
-                    <div className={tunnelStyles.secretField}>
-                      <span className={tunnelStyles.secretValue}>{apiKeyVisible && apiKey ? apiKey : MASKED_API_KEY}</span>
-                      <button type="button" className={tunnelStyles.revealButton} onClick={() => void revealKey()} aria-label={apiKeyVisible ? 'Hide API key' : 'Reveal API key'}>
-                        <HugeiconsIcon icon={apiKeyVisible ? ViewOffSlashIcon : ViewIcon} size={16} strokeWidth={1.8} />
-                      </button>
+          <section className={tunnelStyles.endpointSection}>
+            <button
+              type="button"
+              className={tunnelStyles.endpointTrigger}
+              aria-expanded={endpointExpanded}
+              aria-controls="agents-public-endpoint"
+              onClick={() => setEndpointExpanded((expanded) => !expanded)}
+            >
+              <span className={tunnelStyles.endpointHeader}>
+                <span className={tunnelStyles.endpointTitle}>Define your internet-accessible AntSeed endpoint</span>
+                <span className={tunnelStyles.endpointSummary}>For agents and hosted clients running outside this computer</span>
+              </span>
+              <HugeiconsIcon
+                icon={ArrowDown01Icon}
+                size={18}
+                strokeWidth={1.8}
+                className={`${tunnelStyles.endpointChevron}${endpointExpanded ? ` ${tunnelStyles.endpointChevronExpanded}` : ''}`}
+              />
+            </button>
+
+            {endpointExpanded ? (
+              <div id="agents-public-endpoint" className={tunnelStyles.endpointBody}>
+                <p className={tunnelStyles.introText}>Publish only the authenticated model API. Remote requests require the generated AntSeed API key.</p>
+                <button type="button" className={tunnelStyles.docsLink} onClick={() => void window.antseedDesktop?.openExternalUrl?.(TUNNEL_DOCS_URL)}>
+                  Public tunnel setup guide <HugeiconsIcon icon={ArrowUpRight01Icon} size={12} strokeWidth={2} />
+                </button>
+
+                {error ? <p className={styles.note} role="alert">{error}</p> : null}
+
+                <div className={styles.appList}>
+                  {PROVIDERS.map((provider) => {
+                    const configured = status?.configuredProviders.includes(provider.id) ?? false;
+                    const running = status?.running === true && status.activeProvider === provider.id;
+                    return (
+                      <div key={provider.id} className={`${styles.appPill}${running ? ` ${styles.appPillConnected}` : ''}`}>
+                        <div className={styles.appHead}>
+                          <span className={styles.appIdentity}>
+                            <BrandIcon name={provider.id} hints={[provider.name]} size={24} />
+                            <span className={styles.appText}>
+                              <span className={styles.appNameRow}><span className={styles.appName}>{provider.name}</span></span>
+                              {running ? <span className={styles.appMeta}><span className={styles.connectedDot} aria-hidden="true" />Connected</span> : null}
+                            </span>
+                          </span>
+                          {configured ? (
+                            <button type="button" className={styles.configAction} onClick={() => openConfigure(provider.id)} aria-label={`Configure ${provider.name}`}>
+                              <HugeiconsIcon icon={Settings02Icon} size={15} strokeWidth={2} />
+                            </button>
+                          ) : null}
+                          {configured ? (
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={running}
+                              className={`${styles.connectedToggle}${running ? '' : ` ${styles.connectedToggleOff}`}`}
+                              disabled={busyProvider !== null}
+                              onClick={() => void toggleTunnel(provider.id)}
+                              aria-label={`${running ? 'Stop' : 'Start'} ${provider.name}`}
+                              title={`${running ? 'Stop' : 'Start'} ${provider.name}`}
+                            >
+                              <span />
+                            </button>
+                          ) : (
+                            <button type="button" className={styles.connectAction} disabled={busyProvider !== null} onClick={() => openConfigure(provider.id)}>
+                              {busyProvider === provider.id ? 'Working…' : 'Configure'}
+                            </button>
+                          )}
+                        </div>
+                        <p className={styles.settingHint}>{provider.description}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {hasConnectionDetails ? (
+                  <section className={tunnelStyles.connectionDetails}>
+                    <div>
+                      <h2 className={tunnelStyles.connectionTitle}>Connection details</h2>
+                      <p className={styles.settingHint}>Use these values in the remote agent or client’s provider settings.</p>
                     </div>
-                    <button type="button" className={tunnelStyles.copyButton} onClick={() => void copyApiKey()}>
-                      <HugeiconsIcon icon={copied === 'key' ? Tick02Icon : Copy01Icon} size={15} strokeWidth={2} />
-                      {copied === 'key' ? 'Copied' : 'Copy'}
-                    </button>
-                  </div>
-                  <p className={styles.settingHint}>Sent as <code>Authorization: Bearer &lt;API_KEY&gt;</code>. The same key works with either provider.</p>
-                </section>
-              ) : null}
-            </section>
-          ) : null}
+                    {baseUrl ? (
+                      <section className={styles.settingSection}>
+                        <div className={styles.settingHead}><span className={styles.settingTitle}>OpenAI base URL</span></div>
+                        <div className={tunnelStyles.credentialRow}>
+                          <input readOnly className={styles.settingInput} value={baseUrl} />
+                          <button type="button" className={tunnelStyles.copyButton} onClick={() => copy(baseUrl, 'url')}>
+                            <HugeiconsIcon icon={copied === 'url' ? Tick02Icon : Copy01Icon} size={15} strokeWidth={2} />
+                            {copied === 'url' ? 'Copied' : 'Copy'}
+                          </button>
+                        </div>
+                      </section>
+                    ) : null}
+                    {status?.configured ? (
+                      <section className={styles.settingSection}>
+                        <div className={styles.settingHead}><span className={styles.settingTitle}>API key</span></div>
+                        <div className={tunnelStyles.credentialRow}>
+                          <div className={tunnelStyles.secretField}>
+                            <span className={tunnelStyles.secretValue}>{apiKeyVisible && apiKey ? apiKey : MASKED_API_KEY}</span>
+                            <button type="button" className={tunnelStyles.revealButton} onClick={() => void revealKey()} aria-label={apiKeyVisible ? 'Hide API key' : 'Reveal API key'}>
+                              <HugeiconsIcon icon={apiKeyVisible ? ViewOffSlashIcon : ViewIcon} size={16} strokeWidth={1.8} />
+                            </button>
+                          </div>
+                          <button type="button" className={tunnelStyles.copyButton} onClick={() => void copyApiKey()}>
+                            <HugeiconsIcon icon={copied === 'key' ? Tick02Icon : Copy01Icon} size={15} strokeWidth={2} />
+                            {copied === 'key' ? 'Copied' : 'Copy'}
+                          </button>
+                        </div>
+                        <p className={styles.settingHint}>Sent as <code>Authorization: Bearer &lt;API_KEY&gt;</code>. The same key works with either provider.</p>
+                      </section>
+                    ) : null}
+                  </section>
+                ) : null}
+              </div>
+            ) : null}
+          </section>
         </div>
       </VprPage>
 
