@@ -16,6 +16,8 @@ There are two ways to get that proxy running:
 
 Everything in this guide works identically against both.
 
+If the client runs outside this computer—or uses a hosted backend that cannot reach `localhost`—open the VPR's **Agents** view and [define an authenticated internet-accessible endpoint](/docs/guides/agents#define-your-internet-accessible-antseed-endpoint).
+
 ## Quick Start (CLI)
 
 ```bash
@@ -354,9 +356,11 @@ With a config file like that in place, the startup command is still just:
 antseed buyer start
 ```
 
-## No API Key Needed
+## Local and public authentication
 
-The proxy does not require an API key. Authentication and payments are handled by the protocol using your node's identity key and on-chain USDC deposits. Tools that require an API key (like Codex) can use any placeholder value.
+The local proxy at `127.0.0.1:8377` does not validate an API key. Authentication and payments are handled by the protocol using your node's identity key and on-chain USDC deposits, so local tools that require an API-key field can use any non-empty placeholder.
+
+The VPR's public endpoint is different: it requires the generated `antseed_...` key as `Authorization: Bearer <API_KEY>`. Configure it from **VPR → Agents → Define your internet-accessible AntSeed endpoint** and follow the [Public HTTPS Tunnels guide](/docs/guides/public-tunnels).
 
 ## Monitor Buyer Usage
 
@@ -376,3 +380,6 @@ If you're using Pi, Codex or another agent, these skills can walk you through th
 - [`@skills/join-buyer`](https://github.com/AntSeed/antseed/tree/main/skills/join-buyer) — step-by-step buyer setup for Claude Code agents
 - [`@skills/antseed-images`](https://github.com/AntSeed/antseed/tree/main/skills/antseed-images) — discover image models from `/v1/models?type=images` and generate through automatic model-only peer routing
 - [`@skills/openclaw-antseed`](https://github.com/AntSeed/antseed/tree/main/skills/openclaw-antseed) — connect OpenClaw to AntSeed as a buyer
+- [`@skills/hermes-antseed`](https://github.com/AntSeed/antseed/tree/main/skills/hermes-antseed) — connect Hermes Agent through the local VPR or its authenticated public endpoint
+
+See the maintained [OpenClaw integration](/integrations/openclaw) and [Hermes integration](/integrations/hermes) for current upstream-compatible configuration examples.

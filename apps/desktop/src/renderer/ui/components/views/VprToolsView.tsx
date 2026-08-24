@@ -17,6 +17,7 @@ import { useActions } from '../../hooks/useActions';
 import { BrandIcon } from '../brand/BrandIcon';
 import { VprBadge, VprPage, VprSearch } from '../vpr/VprKit';
 import { TelegramBotCard } from './TelegramBotCard';
+import { CursorAppCard } from './CursorAppCard';
 import styles from './VprToolsView.module.scss';
 
 
@@ -547,13 +548,14 @@ export function VprToolsView() {
       <div className={styles.stack}>
         {message ? <p className={styles.note} role="status">{message}</p> : null}
 
-        <div className={styles.appList}>
-          <TelegramBotCard />
-          {orderedProfiles.map((profile) => {
+        <div className={styles.appScroll}>
+          <div className={styles.appList}>
+            <TelegramBotCard />
+            {orderedProfiles.map((profile) => {
               const connected = activeProfiles?.has(profile.name) ?? false;
               const setupComplete = setupProfiles.has(profile.name);
               const canRestart = connected && profile.canRestart === true;
-              return (
+              const profileCard = (
                 <div key={profile.name} className={`${styles.appPill}${connected ? ` ${styles.appPillConnected}` : ''}`}>
                   <div className={styles.appHead}>
                     <span className={styles.appIdentity}>
@@ -650,86 +652,92 @@ export function VprToolsView() {
 
                 </div>
               );
-          })}
+              return profile.name === 'codex'
+                ? [profileCard, <CursorAppCard key="cursor" />]
+                : profileCard;
+            })}
+          </div>
+
+          {/* The certificate only matters for intercepted (mitm proxy) apps —
+              keep the card hidden until one is connected, or one exists and
+              the cert still needs trusting to let it connect. */}
+          {caInfo && (hasConnectedProxyProfile || (hasProxyProfile && certNeedsTrust)) ? (() => {
+            const caExpanded = caOpenOverride ?? certNeedsTrust;
+            return (
+              <div className={styles.caCard}>
+                <button
+                  type="button"
+                  className={styles.caHead}
+                  aria-expanded={caExpanded}
+                  onClick={() => setCaOpenOverride(!caExpanded)}
+                >
+                  <HugeiconsIcon icon={SquareLock01Icon} size={14} strokeWidth={2} />
+                  <span className={styles.caTitle}>HTTPS certificate</span>
+                  <VprBadge tone={certBadgeTone}>{certBadgeLabel}</VprBadge>
+                  <HugeiconsIcon
+                    icon={ArrowDown01Icon}
+                    size={14}
+                    strokeWidth={2}
+                    className={`${styles.caChevron}${caExpanded ? ` ${styles.caChevronOpen}` : ''}`}
+                  />
+                </button>
+                {caExpanded ? (
+                  <>
+                    <p className={styles.caHint}>
+                      {caTrust === 'stale'
+                        ? 'An older AntSeed certificate is still trusted on this device — trust the current one to replace it, otherwise intercepted apps fail with an SSL certificate error.'
+                        : 'Apps whose HTTPS traffic is intercepted trust a certificate generated locally on this device. It never leaves your machine — inspect it any time.'}
+                    </p>
+                    <button type="button" className={styles.caPath} onClick={() => { void copyCaPath(); }} title={caInfo.path}>
+                      <code>{caInfo.path}</code>
+                      <HugeiconsIcon icon={caCopied ? Tick02Icon : Copy01Icon} size={13} strokeWidth={2} />
+                      <span>{caCopied ? 'Copied' : 'Copy'}</span>
+                    </button>
+                    {caInfo.exists || certNeedsTrust ? (
+                      <div className={styles.actions}>
+                        {caInfo.exists ? (
+                          <button type="button" onClick={() => { void revealCa(); }}>Reveal certificate</button>
+                        ) : null}
+                        {certNeedsTrust ? (
+                          <button type="button" onClick={() => { void trustCa(); }} disabled={trustBusy}>
+                            {trustBusy ? 'Trusting...' : 'Trust certificate'}
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
+              </div>
+            );
+          })() : null}
         </div>
 
-        <button
-          type="button"
-          className={styles.addAppButton}
-          onClick={() => {
-            setAddOpen(true);
-            setAddUrl('');
-            setAddApp(null);
-            setAddPane({ pane: 'main', dir: 'none' });
-            setAddSearch('');
-            setAddStep(1);
-            setAddedName(null);
-            setAddError(null);
-            setAddUnverified(false);
-            setMessage(null);
-            ensureInstalledApps();
-          }}
-        >
-          <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={2} />
-          Add custom app
-        </button>
+        <div className={styles.appFooter}>
+          <button
+            type="button"
+            className={styles.addAppButton}
+            onClick={() => {
+              setAddOpen(true);
+              setAddUrl('');
+              setAddApp(null);
+              setAddPane({ pane: 'main', dir: 'none' });
+              setAddSearch('');
+              setAddStep(1);
+              setAddedName(null);
+              setAddError(null);
+              setAddUnverified(false);
+              setMessage(null);
+              ensureInstalledApps();
+            }}
+          >
+            <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={2} />
+            Add custom app
+          </button>
 
-        {/* The certificate only matters for intercepted (mitm proxy) apps —
-            keep the card hidden until one is connected, or one exists and
-            the cert still needs trusting to let it connect. */}
-        {caInfo && (hasConnectedProxyProfile || (hasProxyProfile && certNeedsTrust)) ? (() => {
-          const caExpanded = caOpenOverride ?? certNeedsTrust;
-          return (
-            <div className={styles.caCard}>
-              <button
-                type="button"
-                className={styles.caHead}
-                aria-expanded={caExpanded}
-                onClick={() => setCaOpenOverride(!caExpanded)}
-              >
-                <HugeiconsIcon icon={SquareLock01Icon} size={14} strokeWidth={2} />
-                <span className={styles.caTitle}>HTTPS certificate</span>
-                <VprBadge tone={certBadgeTone}>{certBadgeLabel}</VprBadge>
-                <HugeiconsIcon
-                  icon={ArrowDown01Icon}
-                  size={14}
-                  strokeWidth={2}
-                  className={`${styles.caChevron}${caExpanded ? ` ${styles.caChevronOpen}` : ''}`}
-                />
-              </button>
-              {caExpanded ? (
-                <>
-                  <p className={styles.caHint}>
-                    {caTrust === 'stale'
-                      ? 'An older AntSeed certificate is still trusted on this device — trust the current one to replace it, otherwise intercepted apps fail with an SSL certificate error.'
-                      : 'Apps whose HTTPS traffic is intercepted trust a certificate generated locally on this device. It never leaves your machine — inspect it any time.'}
-                  </p>
-                  <button type="button" className={styles.caPath} onClick={() => { void copyCaPath(); }} title={caInfo.path}>
-                    <code>{caInfo.path}</code>
-                    <HugeiconsIcon icon={caCopied ? Tick02Icon : Copy01Icon} size={13} strokeWidth={2} />
-                    <span>{caCopied ? 'Copied' : 'Copy'}</span>
-                  </button>
-                  {caInfo.exists || certNeedsTrust ? (
-                    <div className={styles.actions}>
-                      {caInfo.exists ? (
-                        <button type="button" onClick={() => { void revealCa(); }}>Reveal certificate</button>
-                      ) : null}
-                      {certNeedsTrust ? (
-                        <button type="button" onClick={() => { void trustCa(); }} disabled={trustBusy}>
-                          {trustBusy ? 'Trusting...' : 'Trust certificate'}
-                        </button>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </>
-              ) : null}
-            </div>
-          );
-        })() : null}
-
-        <button type="button" className={styles.learnMore} onClick={() => setHelpOpen(true)}>
-          What are connected apps?
-        </button>
+          <button type="button" className={styles.learnMore} onClick={() => setHelpOpen(true)}>
+            What are connected apps?
+          </button>
+        </div>
       </div>
       </VprPage>
 

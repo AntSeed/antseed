@@ -11,6 +11,7 @@ export const VIEW_WINDOW_PRESETS = {
   explore: 'compact',
   model: 'compact',
   tools: 'compact',
+  tunnels: 'compact',
   chats: 'compact',
   preferences: 'compact',
   credits: 'compact',
