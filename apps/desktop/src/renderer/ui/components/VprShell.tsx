@@ -19,6 +19,7 @@ const VIEWS_WITH_HEADER_CREDITS: ReadonlySet<ViewName> = new Set([
   'explore',
   'model',
   'tools',
+  'tunnels',
   'chats',
   'credits',
   'deposit',

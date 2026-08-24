@@ -604,6 +604,11 @@ const api = {
   systemProxyRestartApp(app: string): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('system-proxy:restart-app', { app }) as Promise<{ ok: boolean; error?: string }>;
   },
+  publicTunnelGetStatus: () => ipcRenderer.invoke('public-tunnel:get-status'),
+  publicTunnelConfigure: (settings: { provider: 'cloudflare' | 'ngrok'; tunnelToken: string; publicUrl: string }) => ipcRenderer.invoke('public-tunnel:configure', settings),
+  publicTunnelStart: (settings?: { provider?: 'cloudflare' | 'ngrok' }) => ipcRenderer.invoke('public-tunnel:start', settings),
+  publicTunnelStop: () => ipcRenderer.invoke('public-tunnel:stop'),
+  publicTunnelGetApiKey: () => ipcRenderer.invoke('public-tunnel:get-api-key'),
 
   /* Floating always-on-top pill window */
   vprFloatOpen(data: unknown): Promise<{ ok: boolean }> {

@@ -16,6 +16,8 @@ There are two ways to get that proxy running:
 
 Everything in this guide works identically against both.
 
+If the client runs outside this computer—or uses a hosted backend that cannot reach `localhost`—publish only the authenticated model API through [a Cloudflare or ngrok tunnel](/docs/guides/public-tunnels).
+
 ## Quick Start (CLI)
 
 ```bash

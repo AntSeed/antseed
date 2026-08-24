@@ -68,3 +68,10 @@ test('connected-app tool names resolve their marks', () => {
   assert.equal(resolveBrandKey('amazed-tool', 'thing'), 'generic');
   assert.equal(resolveBrandKey('pixel-model', 'thing'), 'generic');
 });
+
+test('tunnel providers resolve their bundled brand marks', () => {
+  assert.equal(resolveBrandKey('cloudflare', 'Cloudflare Tunnel'), 'cloudflare');
+  assert.equal(resolveBrandKey('ngrok'), 'ngrok');
+  assert.match(renderToStaticMarkup(BrandIcon({ name: 'cloudflare' })), /cloudflare\.svg/);
+  assert.match(renderToStaticMarkup(BrandIcon({ name: 'ngrok' })), /ngrok\.svg/);
+});

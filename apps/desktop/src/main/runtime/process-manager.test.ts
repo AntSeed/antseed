@@ -62,6 +62,20 @@ test('resolveCommandArgs launches the System Proxy runtime with selected profile
   ]);
 });
 
+test('resolveCommandArgs launches the public tunnel through the CLI', () => {
+  const args = resolveCommandArgs({
+    mode: 'tunnel',
+    configPath: '/tmp/antseed-config.json',
+    tunnelBuyerPort: 9456,
+  });
+
+  assert.deepEqual(args, [
+    '--config', resolve('/tmp/antseed-config.json'),
+    '--data-dir', join(homedir(), '.antseed'),
+    'tunnel', 'start', '--buyer-port', '9456',
+  ]);
+});
+
 test('attached runtimes can be stopped locally without owning the shared process', async () => {
   const logs: string[] = [];
   const processManager = new ProcessManager((_mode, _stream, line) => logs.push(line));

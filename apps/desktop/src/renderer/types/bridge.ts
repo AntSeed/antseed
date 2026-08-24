@@ -1,4 +1,4 @@
-export type RuntimeMode = 'connect' | 'system-proxy';
+export type RuntimeMode = 'connect' | 'system-proxy' | 'tunnel';
 
 export type RuntimeProcessState = {
   mode: RuntimeMode;
@@ -487,6 +487,11 @@ export type DesktopBridge = {
     error?: string;
   }>;
   systemProxyRestartApp?: (app: string) => Promise<{ ok: boolean; error?: string }>;
+  publicTunnelGetStatus?: () => Promise<PublicTunnelStatus>;
+  publicTunnelConfigure?: (settings: { provider: TunnelProvider; tunnelToken: string; publicUrl: string }) => Promise<{ ok: boolean; status?: PublicTunnelStatus; error?: string }>;
+  publicTunnelStart?: (settings?: { provider?: TunnelProvider }) => Promise<{ ok: boolean; status?: PublicTunnelStatus; error?: string }>;
+  publicTunnelStop?: () => Promise<{ ok: boolean; status?: PublicTunnelStatus; error?: string }>;
+  publicTunnelGetApiKey?: () => Promise<{ apiKey: string | null }>;
 
   /* Floating always-on-top pill window */
   vprFloatSetExpanded?: (expanded: boolean) => void;
@@ -506,6 +511,15 @@ export type DesktopBridge = {
   onDesktopOpenFloatingWindow?: (handler: () => void) => () => void;
   onDesktopConnectMain?: (handler: () => void) => () => void;
   onDesktopDisconnectMain?: (handler: () => void) => () => void;
+};
+
+export type TunnelProvider = 'cloudflare' | 'ngrok';
+export type PublicTunnelStatus = {
+  configured: boolean;
+  configuredProviders: TunnelProvider[];
+  activeProvider: TunnelProvider | null;
+  running: boolean;
+  baseUrl: string | null;
 };
 
 /** One tool chat session seen by the buyer proxy (per-chat routing). */

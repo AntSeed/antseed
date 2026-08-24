@@ -1,0 +1,153 @@
+.intro,
+.connectionDetails {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--bg-surface);
+}
+
+.introTitle,
+.connectionTitle {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.introText {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.useCases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
+.useCases span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.useCases img {
+  width: 15px;
+  height: 15px;
+}
+
+.docsLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--brand);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.docsLink:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.connectionDetails {
+  gap: 12px;
+  margin-top: 4px;
+  background: transparent;
+  padding: 14px 8px 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+}
+
+.credentialRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.secretField {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.secretValue {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.revealButton {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.revealButton:hover {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.copyButton {
+  flex: 0 0 70px;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 20px;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.copyButton:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-surface);
+}

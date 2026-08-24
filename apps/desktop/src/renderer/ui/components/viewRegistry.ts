@@ -6,6 +6,7 @@ import {
   ConnectIcon,
   DiscoverCircleIcon,
   HelpCircleIcon,
+  NeuralNetworkIcon,
   PreferenceHorizontalIcon,
   SquarePowerIcon,
   UserIcon,
@@ -71,7 +72,7 @@ function createViewEntry(
 
 // Legacy dev routes have no slide relationship to the VPR screens; parking
 // them past the end keeps any transition involving them sliding "forward".
-const LEGACY_SLIDE_INDEX = 12;
+const LEGACY_SLIDE_INDEX = 13;
 
 export const VIEW_REGISTRY = {
   home: createViewEntry(
@@ -107,6 +108,15 @@ export const VIEW_REGISTRY = {
       nav: { slot: 'main', label: 'Apps', icon: ConnectIcon },
     },
   ),
+  tunnels: createViewEntry(
+    async () => (await import('./views/VprTunnelsView')).VprTunnelsView as ComponentType<RoutedViewProps>,
+    {
+      receivesOnSelectView: true,
+      slideIndex: 5,
+      preloadPriority: 'idle',
+      nav: { slot: 'main', label: 'Tunnels', icon: NeuralNetworkIcon },
+    },
+  ),
   chats: createViewEntry(
     async () => (await import('./views/VprChatsView')).VprChatsView as ComponentType<RoutedViewProps>,
     // Drill-in page (no nav item) reached from the Recent chats cards on
@@ -118,7 +128,7 @@ export const VIEW_REGISTRY = {
     async () => (await import('./views/VprPreferencesView')).VprPreferencesView as ComponentType<RoutedViewProps>,
     {
       receivesOnSelectView: true,
-      slideIndex: 4,
+      slideIndex: 6,
       preloadPriority: 'idle',
       nav: { slot: 'main', label: 'Prefs', icon: PreferenceHorizontalIcon },
     },
@@ -127,28 +137,28 @@ export const VIEW_REGISTRY = {
     async () => (await import('./views/VprCreditsView')).VprCreditsView as ComponentType<RoutedViewProps>,
     {
       receivesOnSelectView: true,
-      slideIndex: 5,
+      slideIndex: 7,
       preloadPriority: 'eager',
       nav: { slot: 'bottom', label: 'Profile', icon: UserIcon },
     },
   ),
   deposit: createViewEntry(
     async () => (await import('./views/VprDepositView')).VprDepositView as ComponentType<RoutedViewProps>,
-    { receivesOnSelectView: true, slideIndex: 6, preloadPriority: 'idle' },
+    { receivesOnSelectView: true, slideIndex: 8, preloadPriority: 'idle' },
   ),
   activity: createViewEntry(
     async () => (await import('./views/VprActivityView')).VprActivityView as ComponentType<RoutedViewProps>,
-    { receivesOnSelectView: true, slideIndex: 7, preloadPriority: 'idle' },
+    { receivesOnSelectView: true, slideIndex: 9, preloadPriority: 'idle' },
   ),
   rewards: createViewEntry(
     async () => (await import('./views/VprRewardsView')).VprRewardsView as ComponentType<RoutedViewProps>,
-    { receivesOnSelectView: true, slideIndex: 8, preloadPriority: 'idle' },
+    { receivesOnSelectView: true, slideIndex: 10, preloadPriority: 'idle' },
   ),
   chat: createViewEntry(
     async () => (await import('./views/ChatView')).ChatView as ComponentType<RoutedViewProps>,
     {
       receivesOnSelectView: true,
-      slideIndex: 9,
+      slideIndex: 4,
       preloadPriority: 'eager',
       nav: { slot: 'main', label: 'Chat', icon: BubbleChatIcon },
     },
@@ -157,7 +167,7 @@ export const VIEW_REGISTRY = {
     async () => (await import('./views/VprHelpView')).VprHelpView as ComponentType<RoutedViewProps>,
     {
       receivesOnSelectView: true,
-      slideIndex: 10,
+      slideIndex: 12,
       preloadPriority: 'idle',
       nav: { slot: 'main', label: 'Help', icon: HelpCircleIcon },
     },
