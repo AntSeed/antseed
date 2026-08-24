@@ -179,8 +179,13 @@ contract SellerRewardGateE2ETest is Test {
     function _submitWashTradingProof(address seller) internal {
         AntseedWashTradingRegistry.BlockRef[] memory refs = new AntseedWashTradingRegistry.BlockRef[](1);
         refs[0] = AntseedWashTradingRegistry.BlockRef({ number: 44_471_575, blockHash: bytes32(uint256(0x1234)) });
-        AntseedWashTradingRegistry.ClosedCycleJournal memory journal =
-            AntseedWashTradingRegistry.ClosedCycleJournal({ seller: seller, blockRefs: refs });
-        washRegistry.submitClosedCycleProof(hex"", abi.encode(journal));
+        AntseedWashTradingRegistry.SubjectRecord[] memory subjects =
+            new AntseedWashTradingRegistry.SubjectRecord[](1);
+        subjects[0] = AntseedWashTradingRegistry.SubjectRecord(seller, 9000e6, 10000e6);
+        bytes memory publicValues = abi.encode(AntseedWashTradingRegistry.WashJournal({
+            predicateId: 1, chainId: 8_453, periodStartBlock: 44_471_575, periodEndBlock: 49_936_172,
+            claimId: keccak256(abi.encode(seller)), subjects: subjects, blockRefs: refs
+        }));
+        washRegistry.submit(publicValues, hex"");
     }
 }

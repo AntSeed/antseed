@@ -6,94 +6,94 @@ import { IAntseedWashTradingRegistry } from "../interfaces/IAntseedWashTradingRe
 import { ISP1Verifier } from "../interfaces/ISP1Verifier.sol";
 
 contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
-    uint256 private constant BASE_CHAIN_ID = 8_453;
-    uint8 private constant CLOSED_CYCLE_PROOF_TYPE = 1;
-    uint8 private constant RECIPROCAL_PROOF_TYPE = 2;
+    uint64 private constant BASE_CHAIN_ID = 8_453;
 
     struct BlockRef {
         uint64 number;
         bytes32 blockHash;
     }
 
-    struct ClosedCycleJournal {
-        address seller;
+    struct SubjectRecord {
+        address subject;
+        uint128 washVolume;
+        uint128 settledVolume;
+    }
+
+    struct WashJournal {
+        uint8 predicateId;
+        uint64 chainId;
+        uint64 periodStartBlock;
+        uint64 periodEndBlock;
+        bytes32 claimId;
+        SubjectRecord[] subjects;
         BlockRef[] blockRefs;
     }
 
-    struct ReciprocalJournal {
-        address addressA;
-        address addressB;
-        BlockRef[] blockRefs;
+    struct WashRecord {
+        uint128 washVolume;
+        uint128 settledVolume;
     }
 
     ISP1Verifier public immutable verifier;
     IBaseAnalysisStateOracle public immutable stateOracle;
-    bytes32 public immutable closedCycleProgramVKey;
-    bytes32 public immutable reciprocalProgramVKey;
+    bytes32 public immutable closedLoopVKey;
+    bytes32 public immutable reciprocalVKey;
 
-    mapping(address seller => bool flagged) public override isSellerWashTradingFlagged;
+    mapping(address => WashRecord) public washRecords;
+    mapping(bytes32 => bool) public claimed;
 
-    error WrongChain(uint256 chainId);
-    error ZeroAddress();
-    error NoCode(address target);
-    error ZeroConfiguration();
-    error NonCanonicalBlock(uint64 blockNumber, bytes32 blockHash);
+    error WrongChain();
+    error AlreadyClaimed();
+    error InvalidVKey();
+    error NonCanonicalBlock(uint64 blockNumber);
 
-    event SellerWashTradingFlagged(address indexed seller, bytes32 indexed journalDigest, uint8 indexed proofType);
+    event WashProven(
+        address indexed subject, uint128 washVolume, uint128 settledVolume, bytes32 indexed claimId, uint8 predicateId
+    );
 
-    constructor(
-        address verifier_,
-        address stateOracle_,
-        bytes32 closedCycleProgramVKey_,
-        bytes32 reciprocalProgramVKey_
-    ) {
-        if (block.chainid != BASE_CHAIN_ID) revert WrongChain(block.chainid);
-        if (verifier_ == address(0) || stateOracle_ == address(0)) revert ZeroAddress();
-        if (verifier_.code.length == 0) revert NoCode(verifier_);
-        if (stateOracle_.code.length == 0) revert NoCode(stateOracle_);
-        if (closedCycleProgramVKey_ == bytes32(0) || reciprocalProgramVKey_ == bytes32(0)) revert ZeroConfiguration();
+    constructor(address verifier_, address stateOracle_, bytes32 closedLoopVKey_, bytes32 reciprocalVKey_) {
         verifier = ISP1Verifier(verifier_);
         stateOracle = IBaseAnalysisStateOracle(stateOracle_);
-        closedCycleProgramVKey = closedCycleProgramVKey_;
-        reciprocalProgramVKey = reciprocalProgramVKey_;
+        closedLoopVKey = closedLoopVKey_;
+        reciprocalVKey = reciprocalVKey_;
     }
 
-    function submitClosedCycleProof(bytes calldata proofBytes, bytes calldata publicValues)
-        external
-        returns (bool recorded)
-    {
-        bytes32 journalDigest = sha256(publicValues);
-        verifier.verifyProof(closedCycleProgramVKey, publicValues, proofBytes);
-        ClosedCycleJournal memory journal = abi.decode(publicValues, (ClosedCycleJournal));
-        _validateBlocks(journal.blockRefs);
-        return _recordSellerFlag(journal.seller, journalDigest, CLOSED_CYCLE_PROOF_TYPE);
-    }
+    function submit(bytes calldata publicValues, bytes calldata proofBytes) external {
+        WashJournal memory journal = abi.decode(publicValues, (WashJournal));
 
-    function submitReciprocalProof(bytes calldata proofBytes, bytes calldata publicValues)
-        external
-        returns (bool recordedA, bool recordedB)
-    {
-        bytes32 journalDigest = sha256(publicValues);
-        verifier.verifyProof(reciprocalProgramVKey, publicValues, proofBytes);
-        ReciprocalJournal memory journal = abi.decode(publicValues, (ReciprocalJournal));
-        _validateBlocks(journal.blockRefs);
-        recordedA = _recordSellerFlag(journal.addressA, journalDigest, RECIPROCAL_PROOF_TYPE);
-        recordedB = _recordSellerFlag(journal.addressB, journalDigest, RECIPROCAL_PROOF_TYPE);
-    }
+        if (journal.chainId != BASE_CHAIN_ID) revert WrongChain();
+        if (claimed[journal.claimId]) revert AlreadyClaimed();
 
-    function _validateBlocks(BlockRef[] memory blockRefs) private view {
-        for (uint256 index = 0; index < blockRefs.length; ++index) {
-            BlockRef memory blockRef = blockRefs[index];
-            if (!stateOracle.isCanonicalBlock(blockRef.number, blockRef.blockHash)) {
-                revert NonCanonicalBlock(blockRef.number, blockRef.blockHash);
+        bytes32 vkey = journal.predicateId == 1 ? closedLoopVKey : reciprocalVKey;
+        if (vkey == bytes32(0)) revert InvalidVKey();
+
+        verifier.verifyProof(vkey, publicValues, proofBytes);
+        claimed[journal.claimId] = true;
+
+        for (uint256 i = 0; i < journal.blockRefs.length; ++i) {
+            BlockRef memory ref = journal.blockRefs[i];
+            if (!stateOracle.isCanonicalBlock(ref.number, ref.blockHash)) {
+                revert NonCanonicalBlock(ref.number);
             }
+        }
+
+        for (uint256 i = 0; i < journal.subjects.length; ++i) {
+            SubjectRecord memory s = journal.subjects[i];
+            WashRecord storage r = washRecords[s.subject];
+            r.washVolume += s.washVolume;
+            if (s.settledVolume > r.settledVolume) r.settledVolume = s.settledVolume;
+            emit WashProven(s.subject, s.washVolume, s.settledVolume, journal.claimId, journal.predicateId);
         }
     }
 
-    function _recordSellerFlag(address seller, bytes32 journalDigest, uint8 proofType) private returns (bool) {
-        if (isSellerWashTradingFlagged[seller]) return false;
-        isSellerWashTradingFlagged[seller] = true;
-        emit SellerWashTradingFlagged(seller, journalDigest, proofType);
-        return true;
+    function isSellerWashTradingFlagged(address seller) external view override returns (bool) {
+        return washRecords[seller].washVolume > 0;
+    }
+
+    function washRatioBps(address seller) external view returns (uint256) {
+        WashRecord storage r = washRecords[seller];
+        if (r.settledVolume == 0) return 0;
+        uint256 ratio = (uint256(r.washVolume) * 10_000) / uint256(r.settledVolume);
+        return ratio > 10_000 ? 10_000 : ratio;
     }
 }

@@ -3,7 +3,7 @@ import test from "node:test";
 import { AbiCoder, sha256 } from "ethers";
 import { decodeAndValidateEntry, initializeSubmissionResume, isLoopbackRpcUrl, validateManifest } from "./submit-wash-trading-proofs.mjs";
 
-const CLOSED = "tuple(address seller,tuple(uint64 number,bytes32 blockHash)[] blockRefs)";
+const WASH_JOURNAL = "tuple(uint8 predicateId,uint64 chainId,uint64 periodStartBlock,uint64 periodEndBlock,bytes32 claimId,tuple(address subject,uint128 washVolume,uint128 settledVolume)[] subjects,tuple(uint64 number,bytes32 blockHash)[] blockRefs)";
 
 test("submission manifest rejects missing, duplicate, and legacy-shaped claims", () => {
   const missing = validManifest();
@@ -29,7 +29,7 @@ test("submission rejects unknown types and subject mismatches", () => {
   assert.throws(() => decodeAndValidateEntry(mismatch), /subjects mismatch/);
 });
 
-test("submission decodes the minimal closed-cycle journal", () => {
+test("submission decodes the wash journal", () => {
   const entry = validManifest().entries[0];
   const decoded = decodeAndValidateEntry(entry);
 
@@ -56,8 +56,13 @@ test("development submission is restricted to loopback RPC URLs", () => {
 
 function validManifest({ seller = "0x0000000000000000000000000000000000000010" } = {}) {
   const claimId = `0x${"1".repeat(64)}`;
-  const journalBytes = AbiCoder.defaultAbiCoder().encode([CLOSED], [[
-    seller,
+  const journalBytes = AbiCoder.defaultAbiCoder().encode([WASH_JOURNAL], [[
+    1,
+    8_453,
+    44_471_575,
+    49_936_172,
+    claimId,
+    [[seller, 9000_000_000n, 10000_000_000n]],
     [[1, `0x${"4".repeat(64)}`]],
   ]]);
   return {

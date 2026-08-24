@@ -4,22 +4,19 @@ import { basename, resolve } from "node:path";
 import { AbiCoder, Contract, JsonRpcProvider, Wallet, getAddress, keccak256, sha256, toUtf8Bytes } from "ethers";
 
 const REGISTRY_ABI = [
-  "function closedCycleProgramVKey() view returns (bytes32)",
-  "function reciprocalProgramVKey() view returns (bytes32)",
+  "function closedLoopVKey() view returns (bytes32)",
+  "function reciprocalVKey() view returns (bytes32)",
   "function stateOracle() view returns (address)",
   "function isSellerWashTradingFlagged(address seller) view returns (bool)",
-  "function submitClosedCycleProof(bytes proofBytes,bytes publicValues) returns (bool)",
-  "function submitReciprocalProof(bytes proofBytes,bytes publicValues) returns (bool,bool)",
+  "function submit(bytes publicValues,bytes proofBytes)",
 ];
 const STATE_ORACLE_ABI = ["function isCanonicalBlock(uint64 blockNumber,bytes32 blockHash) view returns (bool)"];
-const BLOCK_REFS = "tuple(uint64 number,bytes32 blockHash)[]";
-const CLOSED_CYCLE_JOURNAL = `tuple(address seller,${BLOCK_REFS} blockRefs)`;
-const RECIPROCAL_JOURNAL = `tuple(address addressA,address addressB,${BLOCK_REFS} blockRefs)`;
+const WASH_JOURNAL = "tuple(uint8 predicateId,uint64 chainId,uint64 periodStartBlock,uint64 periodEndBlock,bytes32 claimId,tuple(address subject,uint128 washVolume,uint128 settledVolume)[] subjects,tuple(uint64 number,bytes32 blockHash)[] blockRefs)";
 const MAX_SUBMISSION_GAS = 7_000_000n;
-const SUBMISSION_RESUME_VERSION = 5;
+const SUBMISSION_RESUME_VERSION = 6;
 const PROOF_CONFIG = {
-  P0_CLOSED_LOOP: { journal: CLOSED_CYCLE_JOURNAL, vkey: "closedCycleProgramVKey", method: "submitClosedCycleProof" },
-  P0_RECIPROCAL: { journal: RECIPROCAL_JOURNAL, vkey: "reciprocalProgramVKey", method: "submitReciprocalProof" },
+  P0_CLOSED_LOOP: { vkey: "closedLoopVKey" },
+  P0_RECIPROCAL: { vkey: "reciprocalVKey" },
 };
 const MANIFEST_KEYS = ["version", "kind", "chainId", "securityMode", "entries"];
 const ENTRY_KEYS = ["claimId", "claimType", "subjects", "metrics", "programVKey", "journalBytes", "journalDigest", "proofBytes", "instructionCount"];
@@ -46,10 +43,10 @@ export async function runSubmission({
   if (await provider.getCode(registryAddress) === "0x") throw new Error("registry address has no bytecode");
   const signer = submit ? new Wallet(privateKey, provider) : provider;
   const registry = new Contract(registryAddress, REGISTRY_ABI, signer);
-  const [closedCycleProgramVKey, reciprocalProgramVKey, stateOracle] = await Promise.all([
-    registry.closedCycleProgramVKey(), registry.reciprocalProgramVKey(), registry.stateOracle(),
+  const [closedLoopVKey, reciprocalVKey, stateOracle] = await Promise.all([
+    registry.closedLoopVKey(), registry.reciprocalVKey(), registry.stateOracle(),
   ]);
-  const programVKeys = { closedCycleProgramVKey, reciprocalProgramVKey };
+  const programVKeys = { closedLoopVKey, reciprocalVKey };
   const stateOracleContract = new Contract(stateOracle, STATE_ORACLE_ABI, provider);
 
   const results = [];
@@ -68,7 +65,7 @@ export async function runSubmission({
         throw new Error(`${entry.claimId}: Base block ${blockRef.number} is not canonical in the configured state oracle`);
       }
     }
-    const transaction = await registry[config.method].populateTransaction(entry.proofBytes, entry.journalBytes);
+    const transaction = await registry.submit.populateTransaction(entry.journalBytes, entry.proofBytes);
     await provider.call({ ...transaction, from: submit ? signer.address : undefined });
     const gas = await provider.estimateGas({ ...transaction, from: submit ? signer.address : undefined });
     if (gas > MAX_SUBMISSION_GAS) throw new Error(`${entry.claimId}: estimated gas ${gas} exceeds ${MAX_SUBMISSION_GAS}`);
@@ -177,20 +174,15 @@ export function decodeAndValidateEntry(entry, chainId = 8_453) {
   if (chainId !== 8_453) throw new Error(`${entry.claimId}: manifest is not for Base`);
   const config = PROOF_CONFIG[entry.claimType];
   if (!config) throw new Error(`${entry.claimId}: unsupported claim type`);
-  const decoded = AbiCoder.defaultAbiCoder().decode([config.journal], entry.journalBytes)[0];
-  let subjects;
-  if (entry.claimType === "P0_RECIPROCAL") {
-    if (BigInt(decoded.addressA) >= BigInt(decoded.addressB)) throw new Error(`${entry.claimId}: pair is not normalized`);
-    subjects = [getAddress(decoded.addressA), getAddress(decoded.addressB)];
-  } else {
-    subjects = [getAddress(decoded.seller)];
-  }
+  const decoded = AbiCoder.defaultAbiCoder().decode([WASH_JOURNAL], entry.journalBytes)[0];
+  if (Number(decoded.chainId) !== chainId) throw new Error(`${entry.claimId}: journal targets wrong chain`);
+  const subjects = decoded.subjects.map((s) => getAddress(s.subject));
   if (subjects.length !== entry.subjects.length
       || subjects.some((subject, index) => subject !== getAddress(entry.subjects[index]))) {
     throw new Error(`${entry.claimId}: journal subjects mismatch`);
   }
   let previous = -1n;
-  if (decoded.blockRefs.length === 0 || decoded.blockRefs.length > 2_048) throw new Error(`${entry.claimId}: invalid block reference count`);
+  if (decoded.blockRefs.length === 0 || decoded.blockRefs.length > 40_000) throw new Error(`${entry.claimId}: invalid block reference count`);
   for (const blockRef of decoded.blockRefs) {
     if (blockRef.number <= previous || /^0x0{64}$/i.test(blockRef.blockHash)) throw new Error(`${entry.claimId}: invalid block references`);
     previous = blockRef.number;
