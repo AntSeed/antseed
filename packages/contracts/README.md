@@ -125,6 +125,25 @@ receipt, and writes `antseed-proof-volume-report` v2. Submission remains blocked
 unless baseline, planner, receipt-delta, and host-verified raw volumes are
 exactly equal and no claim/evidence identity changed.
 
+### Local P0 development submission
+
+The Anvil-only harness accepts atomic development manifests containing only
+`P0_CLOSED_LOOP` and `P0_RECIPROCAL` entries. It deploys local verifier and
+BlockhashStore mocks, rebinds the manifest's atomic digest to that deployed
+store, seeds every exact block hash, submits the batch, verifies wash records,
+and confirms an identical replay returns `already-complete`.
+
+```bash
+anvil --chain-id 8453 --gas-limit 1000000000
+node scripts/submit-aip4-proof-anvil.mjs \
+  --manifest /path/to/development-proof-results.json \
+  --rpc-url http://127.0.0.1:8545 \
+  --submit-local
+```
+
+Development manifests and `proofBytes: 0x01` are rejected by the production
+submission path and by this harness when the RPC URL is not loopback.
+
 ## Contracts
 
 ### ANTSToken.sol

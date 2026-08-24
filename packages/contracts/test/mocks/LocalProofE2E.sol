@@ -4,17 +4,14 @@ pragma solidity ^0.8.24;
 import { ISP1Verifier } from "../../interfaces/ISP1Verifier.sol";
 
 contract LocalProofE2EVerifier is ISP1Verifier {
-    bytes32 public expectedProgramVKey;
-    bytes32 public expectedPublicValuesDigest;
+    mapping(bytes32 expectation => bool allowed) public expected;
 
     function expect(bytes32 programVKey, bytes32 publicValuesDigest) external {
-        expectedProgramVKey = programVKey;
-        expectedPublicValuesDigest = publicValuesDigest;
+        expected[keccak256(abi.encode(programVKey, publicValuesDigest))] = true;
     }
 
     function verifyProof(bytes32 programVKey, bytes calldata publicValues, bytes calldata) external view {
-        require(programVKey == expectedProgramVKey, "wrong program vkey");
-        require(sha256(publicValues) == expectedPublicValuesDigest, "wrong public values");
+        require(expected[keccak256(abi.encode(programVKey, sha256(publicValues)))], "unexpected proof");
     }
 }
 
