@@ -2,11 +2,11 @@ import { lazy } from 'react';
 import type { ComponentType, LazyExoticComponent } from 'react';
 import type { IconSvgElement } from '@hugeicons/react';
 import {
+  BotIcon,
   BubbleChatIcon,
   ConnectIcon,
   DiscoverCircleIcon,
   HelpCircleIcon,
-  NeuralNetworkIcon,
   PreferenceHorizontalIcon,
   SquarePowerIcon,
   UserIcon,
@@ -114,7 +114,7 @@ export const VIEW_REGISTRY = {
       receivesOnSelectView: true,
       slideIndex: 5,
       preloadPriority: 'idle',
-      nav: { slot: 'main', label: 'Agents', icon: NeuralNetworkIcon },
+      nav: { slot: 'main', label: 'Agents', icon: BotIcon },
     },
   ),
   chats: createViewEntry(

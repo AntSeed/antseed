@@ -1,12 +1,12 @@
 .view {
   height: 100%;
   min-height: 0;
-  overflow-y: auto;
-  overflow-x: clip;
-  padding: 8px 16px 24px;
+  overflow: hidden;
 }
 
 .stack {
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -55,6 +55,25 @@
   flex-direction: column;
   gap: 16px;
   padding: 0 8px;
+}
+
+.appScroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 0 2px 8px 0;
+}
+
+.appFooter {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 8px;
 }
 
 /* Rows sit directly on the page background — no pill chrome. */
