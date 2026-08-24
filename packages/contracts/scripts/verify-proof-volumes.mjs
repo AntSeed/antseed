@@ -10,6 +10,7 @@ const MAX_U128 = (1n << 128n) - 1n;
 export function createVolumeBaseline(plan, bundle) {
   validateInputs(plan, bundle);
   const claims = plan.claims.map((claim) => summarizeClaim(claim));
+  verifyAnalysisVolumes(claims, bundle.claims);
   return {
     version: 1,
     kind: "antseed-proof-volume-baseline",
@@ -96,7 +97,11 @@ export async function authenticateBaselineReceipts(body, bundle, callRpc) {
 
 export function compareVolumeBaseline(baseline, plan, results, receiptVolumes = null) {
   verifyVolumeBaselineSignature(baseline);
-  const current = createVolumeBaseline(plan, { chainId: plan.chainId, reportRoot: plan.reportRoot, contracts: { channels: "0x0000000000000000000000000000000000000001" } });
+  validatePlan(plan);
+  const current = {
+    claimCount: plan.claims.length,
+    claims: plan.claims.map((claim) => summarizeClaim(claim)),
+  };
   const differences = [];
   compareField(differences, "claimCount", baseline.body.claimCount, current.claimCount);
   const currentById = new Map(current.claims.map((claim) => [claim.claimId.toLowerCase(), claim]));
@@ -116,7 +121,7 @@ export function compareVolumeBaseline(baseline, plan, results, receiptVolumes = 
   for (const claim of current.claims) if (!baselineIds.has(claim.claimId.toLowerCase())) differences.push({ claimId: claim.claimId, field: "claim", expected: "absent", actual: "added" });
 
   if (!Array.isArray(results?.entries)) throw new Error("proof results are missing entries");
-  const resultsById = uniqueByClaimId(results.entries, "proof result");
+  const resultsById = uniqueByClaimId(results.entries, "proof result", (entry) => entry.sourceClaimId ?? entry.claimId);
   const receiptsById = receiptVolumes == null ? null : uniqueByClaimId(receiptVolumes, "receipt volume");
   const claims = [];
   for (const claim of baseline.body.claims) {
@@ -130,26 +135,36 @@ export function compareVolumeBaseline(baseline, plan, results, receiptVolumes = 
       differences,
       "proof.subjects",
       JSON.stringify(claim.subjects),
-      JSON.stringify(journal.subjects.map((subject) => subject.toLowerCase())),
+      JSON.stringify(journal.subjects.map((subject) => subject.subject.toLowerCase())),
       claim.claimId,
     );
     const receipt = receiptsById?.get(claim.claimId.toLowerCase()) ?? null;
     if (claim.claimType === "P0_CLOSED_LOOP") {
       const hostVolumeRaw = boundedRaw(result.metrics?.qualifiedVolumeRaw, `${claim.claimId} host qualified volume`).toString();
+      const journalVolumeRaw = boundedRaw(journal.subjects[0]?.washVolume, `${claim.claimId} journal wash volume`).toString();
+      const declaredJournalVolumeRaw = boundedRaw(result.metrics?.journalWashVolumeRaw, `${claim.claimId} declared journal wash volume`).toString();
+      const declaredReceiptVolumeRaw = boundedRaw(result.metrics?.authenticatedReceiptVolumeRaw, `${claim.claimId} declared authenticated receipt volume`).toString();
       compareField(differences, "host.volumeRaw", claim.volumeRaw, hostVolumeRaw, claim.claimId);
+      compareField(differences, "journal.volumeRaw", claim.volumeRaw, journalVolumeRaw, claim.claimId);
+      compareField(differences, "manifest.journalVolumeRaw", claim.volumeRaw, declaredJournalVolumeRaw, claim.claimId);
+      compareField(differences, "manifest.receiptVolumeRaw", claim.volumeRaw, declaredReceiptVolumeRaw, claim.claimId);
       if (receiptsById) compareField(differences, "receipt.volumeRaw", claim.volumeRaw, receipt?.volumeRaw ?? null, claim.claimId);
-      claims.push({ claimId: claim.claimId, claimType: claim.claimType, baselineVolumeRaw: claim.volumeRaw, plannerVolumeRaw: currentById.get(claim.claimId.toLowerCase())?.volumeRaw ?? null, receiptVolumeRaw: receipt?.volumeRaw ?? null, hostVolumeRaw });
+      claims.push({ claimId: claim.claimId, proofClaimId: result.claimId, claimType: claim.claimType, baselineVolumeRaw: claim.volumeRaw, plannerVolumeRaw: currentById.get(claim.claimId.toLowerCase())?.volumeRaw ?? null, receiptVolumeRaw: receipt?.volumeRaw ?? null, hostVolumeRaw, journalVolumeRaw });
     } else {
       const hostVolumeAToBRaw = boundedRaw(result.metrics?.volumeAToBRaw, `${claim.claimId} host A-to-B volume`).toString();
       const hostVolumeBToARaw = boundedRaw(result.metrics?.volumeBToARaw, `${claim.claimId} host B-to-A volume`).toString();
+      const journalVolumeAToBRaw = boundedRaw(journal.subjects[1]?.washVolume, `${claim.claimId} journal A-to-B volume`).toString();
+      const journalVolumeBToARaw = boundedRaw(journal.subjects[0]?.washVolume, `${claim.claimId} journal B-to-A volume`).toString();
       compareField(differences, "host.volumeAToBRaw", claim.volumeAToBRaw, hostVolumeAToBRaw, claim.claimId);
       compareField(differences, "host.volumeBToARaw", claim.volumeBToARaw, hostVolumeBToARaw, claim.claimId);
+      compareField(differences, "journal.volumeAToBRaw", claim.volumeAToBRaw, journalVolumeAToBRaw, claim.claimId);
+      compareField(differences, "journal.volumeBToARaw", claim.volumeBToARaw, journalVolumeBToARaw, claim.claimId);
       if (receiptsById) {
         compareField(differences, "receipt.volumeAToBRaw", claim.volumeAToBRaw, receipt?.volumeAToBRaw ?? null, claim.claimId);
         compareField(differences, "receipt.volumeBToARaw", claim.volumeBToARaw, receipt?.volumeBToARaw ?? null, claim.claimId);
       }
       const planned = currentById.get(claim.claimId.toLowerCase());
-      claims.push({ claimId: claim.claimId, claimType: claim.claimType, baselineVolumeAToBRaw: claim.volumeAToBRaw, baselineVolumeBToARaw: claim.volumeBToARaw, plannerVolumeAToBRaw: planned?.volumeAToBRaw ?? null, plannerVolumeBToARaw: planned?.volumeBToARaw ?? null, receiptVolumeAToBRaw: receipt?.volumeAToBRaw ?? null, receiptVolumeBToARaw: receipt?.volumeBToARaw ?? null, hostVolumeAToBRaw, hostVolumeBToARaw });
+      claims.push({ claimId: claim.claimId, proofClaimId: result.claimId, claimType: claim.claimType, baselineVolumeAToBRaw: claim.volumeAToBRaw, baselineVolumeBToARaw: claim.volumeBToARaw, plannerVolumeAToBRaw: planned?.volumeAToBRaw ?? null, plannerVolumeBToARaw: planned?.volumeBToARaw ?? null, receiptVolumeAToBRaw: receipt?.volumeAToBRaw ?? null, receiptVolumeBToARaw: receipt?.volumeBToARaw ?? null, hostVolumeAToBRaw, hostVolumeBToARaw, journalVolumeAToBRaw, journalVolumeBToARaw });
     }
   }
   return { version: 2, kind: "antseed-proof-volume-report", baselineDigest: baselineDigest(baseline.body), claimCount: baseline.body.claimCount, ok: differences.length === 0, claims, differences };
@@ -203,8 +218,35 @@ function summarizeClaim(claim) {
 }
 
 function validateInputs(plan, bundle) {
+  validatePlan(plan);
+  if (bundle?.chainId !== plan.chainId || bundle.reportRoot !== plan.reportRoot || !Array.isArray(bundle.claims)) throw new Error("proof plan and bundle identity mismatch");
+}
+
+function validatePlan(plan) {
   if (plan?.version !== 2 || plan?.kind !== "antseed-wash-trading-proof-plan" || !Array.isArray(plan.claims)) throw new Error("unsupported proof plan");
-  if (plan.chainId !== 8_453 || bundle.chainId !== plan.chainId || bundle.reportRoot !== plan.reportRoot) throw new Error("proof plan and bundle identity mismatch");
+  if (plan.chainId !== 8_453) throw new Error("proof plan is not for Base");
+}
+
+function verifyAnalysisVolumes(plannerClaims, analysisClaims) {
+  const analysisById = uniqueByClaimId(analysisClaims, "analysis claim");
+  if (analysisById.size !== plannerClaims.length) throw new Error("analysis and planner claim counts differ");
+  for (const planner of plannerClaims) {
+    const analysis = analysisById.get(planner.claimId.toLowerCase());
+    if (!analysis || analysis.type !== planner.claimType) throw new Error(`${planner.claimId}: approved analysis claim identity mismatch`);
+    const subjects = analysis.subjects?.map((subject) => subject.toLowerCase()) ?? [];
+    if (planner.claimType === "P0_RECIPROCAL") subjects.sort((left, right) => BigInt(left) < BigInt(right) ? -1 : BigInt(left) > BigInt(right) ? 1 : 0);
+    if (JSON.stringify(subjects) !== JSON.stringify(planner.subjects)) throw new Error(`${planner.claimId}: approved analysis subjects mismatch`);
+    if (planner.claimType === "P0_CLOSED_LOOP") {
+      const expected = boundedRaw(analysis.metrics?.qualifiedVolumeRaw, `${planner.claimId} analysis qualified volume`).toString();
+      if (expected !== planner.volumeRaw) throw new Error(`${planner.claimId}: planner volume differs from approved analysis volume`);
+    } else {
+      const expectedAToB = boundedRaw(analysis.metrics?.volumeAToBRaw, `${planner.claimId} analysis A-to-B volume`).toString();
+      const expectedBToA = boundedRaw(analysis.metrics?.volumeBToARaw, `${planner.claimId} analysis B-to-A volume`).toString();
+      if (expectedAToB !== planner.volumeAToBRaw || expectedBToA !== planner.volumeBToARaw) {
+        throw new Error(`${planner.claimId}: planner reciprocal volume differs from approved analysis volume`);
+      }
+    }
+  }
 }
 
 function baselineDigest(body) {
@@ -245,10 +287,10 @@ function summarizeAuthenticatedClaim(claim, settlements) {
   };
 }
 
-function uniqueByClaimId(entries, label) {
+function uniqueByClaimId(entries, label, identify = (entry) => entry.claimId) {
   const values = new Map();
   for (const entry of entries) {
-    const claimId = requiredLower(entry.claimId, `${label} claim ID`);
+    const claimId = requiredLower(identify(entry), `${label} claim ID`);
     if (values.has(claimId)) throw new Error(`duplicate ${label} claim ID ${entry.claimId}`);
     values.set(claimId, entry);
   }
@@ -298,7 +340,7 @@ async function main() {
   if (!rpcUrl) throw new Error("--rpc-url or BASE_RPC_URL is required");
   if (command === "capture") {
     const body = createVolumeBaseline(plan, bundle);
-    if (body.claimCount !== 26) throw new Error("deployment baseline must contain exactly 26 claims");
+    if (body.claimCount === 0) throw new Error("deployment baseline contains no claims");
     await authenticateBaselineReceipts(body, bundle, (method, params) => rpc(rpcUrl, method, params));
     const keyPath = value("--signing-key");
     if (!keyPath || !value("--out")) throw new Error("capture requires --signing-key and --out");
@@ -312,7 +354,9 @@ async function main() {
     const trustedKeyPath = value("--trusted-public-key") ?? process.env.VOLUME_BASELINE_PUBLIC_KEY;
     if (!trustedKeyPath) throw new Error("verify requires --trusted-public-key or VOLUME_BASELINE_PUBLIC_KEY");
     verifyVolumeBaselineSignature(baseline, await readFile(trustedKeyPath, "utf8"));
-    if (baseline.body.claimCount !== 26) throw new Error("deployment baseline must contain exactly 26 claims");
+    if (baseline.body.claimCount !== plan.claims?.length || baseline.body.claimCount !== results.entries?.length) {
+      throw new Error("baseline, proof plan, and proof result claim counts differ");
+    }
     const receiptVolumes = await authenticateBaselineReceipts(baseline.body, bundle, (method, params) => rpc(rpcUrl, method, params));
     const report = compareVolumeBaseline(baseline, plan, results, receiptVolumes);
     if (value("--report")) await writeFile(value("--report"), `${JSON.stringify(report, null, 2)}\n`);

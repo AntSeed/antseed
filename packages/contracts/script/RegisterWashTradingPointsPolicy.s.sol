@@ -23,6 +23,7 @@ contract RegisterWashTradingPointsPolicy is Script {
         AntseedPointsPolicyRegistry pointsPolicyRegistry = AntseedPointsPolicyRegistry(pointsPolicyRegistryAddress);
         vm.startBroadcast(deployerPrivateKey);
         washTradingPointsPolicy = new AntseedWashTradingPointsPolicy(washTradingRegistry);
+        require(washTradingPointsPolicy.configurationFinalized(), "wash penalty calibration unfinished");
         pointsPolicyRegistry.registerPolicy(address(washTradingPointsPolicy));
         vm.stopBroadcast();
 

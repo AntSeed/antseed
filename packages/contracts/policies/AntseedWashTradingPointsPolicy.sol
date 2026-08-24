@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import { IAntseedPointsPenaltyPolicy } from "../interfaces/IAntseedPointsPenaltyPolicy.sol";
 import { IAntseedWashTradingStatus } from "../interfaces/IAntseedWashTradingStatus.sol";
+import { WashPenaltyMath } from "./WashPenaltyMath.sol";
 
 contract AntseedWashTradingPointsPolicy is IAntseedPointsPenaltyPolicy {
     bytes32 public constant PENALTY_CATEGORY = keccak256("wash-trading");
@@ -25,7 +26,16 @@ contract AntseedWashTradingPointsPolicy is IAntseedPointsPenaltyPolicy {
         view
         returns (uint16 sellerPenaltyBps, uint16 buyerPenaltyBps)
     {
-        if (washTradingStatus.isSellerWashTradingFlagged(seller)) return (10_000, 10_000);
-        return (0, 0);
+        if (!washTradingStatus.backfillComplete()) return (0, 0);
+        uint16 retained = WashPenaltyMath.retainedBps(washTradingStatus.washRatioBps(seller));
+        return (uint16(10_000 - retained), 0);
+    }
+
+    function configurationFinalized() external pure returns (bool) {
+        return WashPenaltyMath.configurationFinalized();
+    }
+
+    function penaltyThetaBps() external pure returns (uint16) {
+        return WashPenaltyMath.thetaBps();
     }
 }

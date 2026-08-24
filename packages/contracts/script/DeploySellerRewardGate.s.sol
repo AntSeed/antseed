@@ -14,7 +14,6 @@ import { AntseedSellerRewardsPool } from "../rewards/AntseedSellerRewardsPool.so
  * Required env:
  *   DEPLOYER_PRIVATE_KEY
  *   ANTSEED_REGISTRY
- *   BASE_STATE_ORACLE
  *   WASH_TRADING_REGISTRY
  */
 contract DeploySellerRewardGate is Script {
@@ -22,10 +21,8 @@ contract DeploySellerRewardGate is Script {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
         address registryAddress = vm.envAddress("ANTSEED_REGISTRY");
-        address baseStateOracle = vm.envAddress("BASE_STATE_ORACLE");
         address washTradingRegistry = vm.envAddress("WASH_TRADING_REGISTRY");
         require(registryAddress.code.length != 0, "protocol registry has no code");
-        require(baseStateOracle.code.length != 0, "base state oracle has no code");
         require(washTradingRegistry.code.length != 0, "wash registry has no code");
 
         IAntseedRegistry protocolRegistry = IAntseedRegistry(registryAddress);
@@ -39,7 +36,8 @@ contract DeploySellerRewardGate is Script {
         require(rewardsPool.owner() == deployer, "deployer must own rewards pool");
 
         vm.startBroadcast(deployerPrivateKey);
-        washTradingRewardPolicy = new AntseedWashTradingRewardPolicy(washTradingRegistry, baseStateOracle, deployer);
+        washTradingRewardPolicy = new AntseedWashTradingRewardPolicy(washTradingRegistry);
+        require(washTradingRewardPolicy.configurationFinalized(), "wash penalty calibration unfinished");
         emissions.setSellerUnlockPolicy(address(washTradingRewardPolicy));
         rewardsPool.setSellerClaimPolicy(address(washTradingRewardPolicy));
         vm.stopBroadcast();
@@ -52,7 +50,6 @@ contract DeploySellerRewardGate is Script {
         console.log("WashTradingRewardPolicy:", address(washTradingRewardPolicy));
         console.log("AntseedEmissionsV2:     ", emissionsAddress);
         console.log("SellerRewardsPool:      ", rewardsPoolAddress);
-        console.log("BaseStateOracle:        ", baseStateOracle);
         console.log("WashTradingRegistry:    ", washTradingRegistry);
     }
 }

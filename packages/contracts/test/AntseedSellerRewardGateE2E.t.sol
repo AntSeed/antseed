@@ -16,16 +16,15 @@ contract RewardGateVerifierMock {
     function verifyProof(bytes32, bytes calldata, bytes calldata) external pure { }
 }
 
-contract RewardGateOracleMock {
-    bool public historicalCoverageComplete;
+contract RewardGateBlockhashStoreMock {
+    mapping(uint256 blockNumber => bytes32 blockHash) public getBlockhash;
 
-    function setHistoricalCoverageComplete(bool complete) external {
-        historicalCoverageComplete = complete;
+    function setCanonical(uint256 blockNumber, bytes32 blockHash) external {
+        getBlockhash[blockNumber] = blockHash;
     }
 
-    function isCanonicalBlock(uint64, bytes32) external pure returns (bool) {
-        return true;
-    }
+    function store(uint256) external { }
+    function storeVerifyHeader(uint256, bytes calldata) external { }
 }
 
 contract RewardGateStakingMock {
@@ -65,7 +64,7 @@ contract SellerRewardGateE2ETest is Test {
     AntseedSellerRewardsPool internal rewardsPool;
     AntseedWashTradingRegistry internal washRegistry;
     AntseedWashTradingRewardPolicy internal washTradingRewardPolicy;
-    RewardGateOracleMock internal baseStateOracle;
+    RewardGateBlockhashStoreMock internal blockhashStore;
     RewardGateStakingMock internal staking;
     RewardGateChannelsMock internal channels;
 
@@ -93,12 +92,30 @@ contract SellerRewardGateE2ETest is Test {
         staking.setAgentId(SELLER, AGENT_ID);
         protocolRegistry.setStaking(address(staking));
 
-        baseStateOracle = new RewardGateOracleMock();
-        washRegistry = new AntseedWashTradingRegistry(
-            address(new RewardGateVerifierMock()), address(baseStateOracle), bytes32(uint256(1)), bytes32(uint256(2))
+        blockhashStore = new RewardGateBlockhashStoreMock();
+        blockhashStore.setCanonical(44_471_575, bytes32(uint256(0x1234)));
+        bytes memory initialJournal = _journal(address(0xD00D), 1, 10, bytes32(uint256(1)));
+        bytes32 expectedBatchDigest = keccak256(
+            abi.encode(
+                keccak256("ANTSEED_AIP4_BACKFILL_V1"),
+                uint64(8_453),
+                bytes32(uint256(1)),
+                bytes32(uint256(2)),
+                address(blockhashStore),
+                uint256(1)
+            )
         );
-        washTradingRewardPolicy =
-            new AntseedWashTradingRewardPolicy(address(washRegistry), address(baseStateOracle), address(this));
+        expectedBatchDigest =
+            keccak256(abi.encode(expectedBatchDigest, bytes32(uint256(1)), sha256(initialJournal)));
+        washRegistry = new AntseedWashTradingRegistry(
+            address(new RewardGateVerifierMock()),
+            address(blockhashStore),
+            bytes32(uint256(1)),
+            bytes32(uint256(2)),
+            1,
+            expectedBatchDigest
+        );
+        washTradingRewardPolicy = new AntseedWashTradingRewardPolicy(address(washRegistry));
         emissions.setSellerUnlockPolicy(address(washTradingRewardPolicy));
         rewardsPool.setSellerClaimPolicy(address(washTradingRewardPolicy));
         token.setTransferWhitelist(address(rewardsPool), true);
@@ -118,7 +135,7 @@ contract SellerRewardGateE2ETest is Test {
         vm.expectRevert(AntseedSellerRewardsPool.NothingToClaim.selector);
         rewardsPool.claim(SELLER);
 
-        _finalizeBackfill();
+        _completeBackfill();
         vm.prank(SELLER);
         rewardsPool.claim(SELLER);
         assertGt(token.balanceOf(SELLER), 0);
@@ -126,7 +143,7 @@ contract SellerRewardGateE2ETest is Test {
     }
 
     function test_unflaggedSellerUsesImmediateRewardRouteAfterBackfill() public {
-        _finalizeBackfill();
+        _completeBackfill();
         channels.setLastSettledAt(AGENT_ID, uint64(block.timestamp));
         _accrue(SELLER, 100);
         _finalizeEpoch(5);
@@ -138,7 +155,7 @@ contract SellerRewardGateE2ETest is Test {
     }
 
     function test_washTradingProofBlocksImmediateAndPoolRoutesPermanently() public {
-        _finalizeBackfill();
+        _completeBackfill();
         _submitWashTradingProof(SELLER);
         channels.setLastSettledAt(AGENT_ID, uint64(block.timestamp));
         _accrue(SELLER, 100);
@@ -171,21 +188,30 @@ contract SellerRewardGateE2ETest is Test {
         epochs[0] = epoch;
     }
 
-    function _finalizeBackfill() internal {
-        baseStateOracle.setHistoricalCoverageComplete(true);
-        washTradingRewardPolicy.finalizeBackfill(keccak256("complete-proof-release"));
+    function _completeBackfill() internal {
+        bytes[] memory publicValues = new bytes[](1);
+        publicValues[0] = _journal(address(0xD00D), 1, 10, bytes32(uint256(1)));
+        bytes[] memory proofs = new bytes[](1);
+        washRegistry.submitBatch(publicValues, proofs);
     }
 
     function _submitWashTradingProof(address seller) internal {
+        washRegistry.submit(_journal(seller, 9000e6, 10000e6, keccak256(abi.encode(seller))), hex"");
+    }
+
+    function _journal(address seller, uint128 wash, uint128 settled, bytes32 claimId)
+        internal
+        pure
+        returns (bytes memory)
+    {
         AntseedWashTradingRegistry.BlockRef[] memory refs = new AntseedWashTradingRegistry.BlockRef[](1);
         refs[0] = AntseedWashTradingRegistry.BlockRef({ number: 44_471_575, blockHash: bytes32(uint256(0x1234)) });
         AntseedWashTradingRegistry.SubjectRecord[] memory subjects =
             new AntseedWashTradingRegistry.SubjectRecord[](1);
-        subjects[0] = AntseedWashTradingRegistry.SubjectRecord(seller, 9000e6, 10000e6);
-        bytes memory publicValues = abi.encode(AntseedWashTradingRegistry.WashJournal({
+        subjects[0] = AntseedWashTradingRegistry.SubjectRecord(seller, wash, settled);
+        return abi.encode(AntseedWashTradingRegistry.WashJournal({
             predicateId: 1, chainId: 8_453, periodStartBlock: 44_471_575, periodEndBlock: 49_936_172,
-            claimId: keccak256(abi.encode(seller)), subjects: subjects, blockRefs: refs
+            claimId: claimId, subjects: subjects, blockRefs: refs
         }));
-        washRegistry.submit(publicValues, hex"");
     }
 }

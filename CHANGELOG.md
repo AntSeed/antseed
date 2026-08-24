@@ -8,11 +8,11 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
-- Contracts: added immutable RISC Zero enforcement for authenticated closed-loop and reciprocal wash trading. Pinned guests own all predicate thresholds and publish minimal subject-plus-block-reference journals; Solidity verifies the receipt, Base chain, and canonical blocks before recording a monotonic wash-trading flag.
+- Contracts: added immutable SP1 enforcement for authenticated closed-loop and reciprocal wash trading. The registry pins the approved historical batch digest and Chainlink Base BlockhashStore, atomically records the complete batch, and retains only each seller's greatest proven wash ratio.
 
 - Contracts: added a points-policy registry that combines up to eight category-aware buyer/seller penalties behind usage accounting's existing hook. It takes the maximum penalty per category, adds category penalties with a 9,000-BPS soft ceiling, and treats 10,000 BPS as a hard veto. New recognized-usage deployments install an empty pass-through registry by default; policy failures fail closed without blocking settlement.
 
-- Contracts: added a seller-reward policy registry that preserves and composes existing immediate and locked-claim policies with a wash-trading policy. The registry itself fails closed until canonical backfill is complete and an owner records the signed proof-release digest; the one-way release enables unflagged claims while flagged sellers remain blocked.
+- Contracts: added shared proportional wash-penalty math for points and rewards, plus cumulative reward accounting that prevents repeated claims from draining withheld balances. Historical rewards remain frozen until the constructor-pinned proof batch completes atomically; points pass through during the pending period and buyers are never wash-penalized.
 
 - Desktop: added seller-assisted channel closing to Activity for sellers advertising `payments.cooperative-close.v1`, with clear rejection feedback and the existing wallet-based on-chain close retained as a permanent fallback.
 

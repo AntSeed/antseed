@@ -10,8 +10,8 @@ import { AntseedSellerRewardsPool } from "../rewards/AntseedSellerRewardsPool.so
 import { IAntseedSellerClaimPolicy } from "../interfaces/IAntseedSellerClaimPolicy.sol";
 
 contract MockFullClaimPolicy is IAntseedSellerClaimPolicy {
-    function claimableSellerRewards(address, uint256 locked) external pure returns (uint256) {
-        return locked;
+    function retainedSellerRewardsBps(address) external pure returns (uint16) {
+        return 10_000;
     }
 }
 

@@ -36,15 +36,14 @@ contract MockPairPointsPolicy is IAntseedPointsPolicy {
 }
 
 contract MockSellerClaimPolicy is IAntseedSellerClaimPolicy {
-    mapping(address => uint256) public claimable;
+    mapping(address => uint16) public retainedBps;
 
-    function setClaimable(address seller, uint256 amount) external {
-        claimable[seller] = amount;
+    function setRetainedBps(address seller, uint16 value) external {
+        retainedBps[seller] = value;
     }
 
-    function claimableSellerRewards(address seller, uint256 lockedAmount) external view returns (uint256 amount) {
-        amount = claimable[seller];
-        if (amount > lockedAmount) amount = lockedAmount;
+    function retainedSellerRewardsBps(address seller) external view returns (uint16) {
+        return retainedBps[seller];
     }
 }
 
@@ -341,7 +340,7 @@ contract AntseedEmissionsV2Test is Test {
         uint256 locked = rewardsPool.lockedRewards(seller1);
         MockSellerClaimPolicy claimPolicy = new MockSellerClaimPolicy();
         uint256 partialClaim = locked / 2;
-        claimPolicy.setClaimable(seller1, partialClaim);
+        claimPolicy.setRetainedBps(seller1, 5_000);
         rewardsPool.setSellerClaimPolicy(address(claimPolicy));
         token.setTransferWhitelist(address(rewardsPool), true);
 
@@ -363,7 +362,7 @@ contract AntseedEmissionsV2Test is Test {
 
         uint256 locked = rewardsPool.lockedRewards(seller1);
         MockSellerClaimPolicy claimPolicy = new MockSellerClaimPolicy();
-        claimPolicy.setClaimable(seller1, locked + 1);
+        claimPolicy.setRetainedBps(seller1, 10_000);
         rewardsPool.setSellerClaimPolicy(address(claimPolicy));
         token.setTransferWhitelist(address(rewardsPool), true);
 

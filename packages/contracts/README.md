@@ -46,27 +46,26 @@ forge test
 
 ## Wash-Trading Enforcement
 
-`AntseedWashTradingRegistry` accepts two separately pinned SP1 program vkeys:
+`AntseedWashTradingRegistry` pins the closed-loop and reciprocal SP1 vkeys, the
+Chainlink Base BlockhashStore at
+`0x78b69899C8cD252126cBB1A50171ec37286C3877`, and the approved historical
+batch count and digest in its constructor. Each journal contains one or two
+subjects, their proven wash and settled volumes, and authenticated Base block
+references. Solidity checks each block with
+`BlockhashStore.getBlockhash(blockNumber)` and exact hash equality.
 
-- `submitClosedCycleProof(proofBytes, publicValues)` for a common-funder cohort with
-  at least `1,000 USDC` of authenticated settlements followed by strict
-  seller-outward direct or relay closure;
-- `submitReciprocalProof(proofBytes, publicValues)` for a normalized pair with at
-  least 100 authenticated settlements, 10 in each direction, and `10 USDC` in
-  each direction, where the smaller directional volume is at least 80% of the
-  larger.
+The initial history is submitted with one `submitBatch(publicValues,
+proofBytes)` transaction. The ordered `(claimId, sha256(publicValues))`
+commitments must reproduce the constructor-pinned digest, every proof and
+journal invariant must pass, and any failure reverts the entire batch.
+`backfillComplete` becomes true only after the full loop succeeds. Before that,
+individual submissions are rejected; afterward, anyone may submit new evidence
+or a stronger ratio. Exact claim replays are idempotent.
 
-The proofs authenticate Base receipts and transactions and therefore do not
-require historical `eth_getProof`. Every committed `(blockNumber, blockHash)`
-must be accepted by the finalized Base state oracle. The registry does not trust
-a report root, mutable funder allowlist, or generic router attribution.
-
-Accepted closed-loop proofs flag the seller. Reciprocal proofs flag both
-addresses. The registry stores only one monotonic wash-trading boolean per
-seller. The pinned SP1 program vkeys are the executable authority for predicate
-thresholds and evidence semantics; their public journals contain only the
-affected seller or normalized pair plus the Base block references that Solidity
-must check for canonicality.
+The registry never adds wash volumes from overlapping claims. For each subject
+it retains only the greatest proven `washVolume / settledVolume` ratio using
+full-precision cross multiplication. A positive numerator with a zero
+denominator, or a numerator at least as large as its denominator, is 100%.
 
 Future points and seller reward claims use separate policy hooks:
 
@@ -74,18 +73,18 @@ Future points and seller reward claims use separate policy hooks:
   evaluates at most eight category-aware leaves with a 100,000-gas allowance
   each. Same-category penalties take the maximum, different categories add,
   soft penalties cap at 9,000 BPS, and 10,000 BPS is a hard veto. An empty
-  registry passes raw points through. `AntseedWashTradingPointsPolicy` is the
-  wash-trading leaf and hard-vetoes future buyer and seller points associated
-  with a flagged seller.
+  registry passes raw points through. `AntseedWashTradingPointsPolicy` passes
+  points through before the historical batch completes. Afterward it applies
+  the shared proportional seller penalty and always returns zero buyer penalty.
 - `AntseedWashTradingRewardPolicy` implements both seller reward hooks directly.
-  Before release it blocks all immediate and locked claims. After release it
-  allows unflagged sellers and blocks flagged sellers on both routes.
+  Before `backfillComplete`, immediate rewards remain locked and historical
+  claims retain 0 BPS. Afterward, unproven sellers retain 100% and proven
+  sellers retain the proportional BPS returned by `WashPenaltyMath`.
 
-The reward policy blocks both seller reward routes until the Base state
-oracle reports complete historical coverage and the owner finalizes the backfill
-with a nonzero signed proof-release digest. Finalization is one-way. After
-release, it continues to block flagged sellers on both routes. Locked rewards
-remain owned by the seller and are never confiscated.
+`AntseedSellerRewardsPool` records cumulative earned and paid amounts. A claim
+can pay at most `cumulativeRecorded × retainedBps / 10_000 - cumulativePaid`,
+so repeated claims cannot gradually drain the withheld balance. A later stronger
+proof can stop future payouts but does not claw back rewards already paid.
 
 The exact guarantees, thresholds, pinned addresses/code hashes/storage slots,
 journal schemas, explicit non-guarantees, and production commands are specified
@@ -98,51 +97,30 @@ authority.
 
 The safe deployment and release order is:
 
-1. Install `AntseedWashTradingRewardPolicy` on both seller reward routes with the historical gate active.
-2. Submit the EIP-2935-anchored history accumulator and materialize every required block hash.
-3. Submit the complete wash-trading proof batch.
-4. Verify the signed proof-release manifest and its digest.
-5. Run `FinalizeSellerRewardBackfill.s.sol` with that digest.
-6. Allow unflagged historical rewards while flagged sellers remain blocked.
-7. Register `AntseedWashTradingPointsPolicy` independently for future accrual.
-
-Historical canonical state and seller proof submission are separate actions.
-The strict `antseed-base-state-plan` v1 file exists only to submit the immutable
-history MMR and populate the Base oracle with membership-proven block hashes
-required by proof journals. It does not contain seller proof submissions, settlement choices, or volume
-values, and it cannot change the 1,000 USDC, reciprocal-direction, receipt-count,
-period, or reciprocity thresholds.
+1. Finalize the detection AIP's penalty formula and threshold in
+   `WashPenaltyMath`; deployment scripts intentionally reject the placeholder
+   configuration.
+2. Generate and approve the production proof manifest, ordered commitments,
+   batch digest, vkeys, and count.
+3. Deploy the registry with that exact count and digest, then install both
+   policies while historical rewards are frozen and points pass through.
+4. Verify or populate every required Chainlink BlockhashStore entry.
+5. Simulate the single `submitBatch` call, validate calldata and gas, and send
+   it only if the full transaction remains below the production limits.
+6. Verify `backfillComplete`, every claim digest, every final subject ratio,
+   and both policies after the same transaction succeeds.
 
 ```bash
-# Validate schema, target chain/oracle, selectors, and current completion state.
-node scripts/apply-base-state-plan.mjs \
-  --plan state-plan.json \
-  --rpc-url "$BASE_RPC_URL" \
-  --validate-only
+# Verify or backfill required Chainlink BlockhashStore entries.
+node scripts/backfill-blockhash-store.mjs --help
 
-# Apply to an Anvil Base fork only.
-node scripts/apply-base-state-plan.mjs \
-  --plan state-plan.json \
-  --rpc-url http://127.0.0.1:8545 \
-  --fork-submit
-
-# Production requires the exact digest printed by validate/fork execution.
-node scripts/apply-base-state-plan.mjs \
-  --plan state-plan.json \
-  --rpc-url "$BASE_RPC_URL" \
-  --submit \
-  --confirm-plan-digest 0x...
+# Recompute the constructor digest, simulate and estimate the one atomic
+# transaction, enforce gas/calldata limits, submit, and verify post-state.
+node scripts/submit-wash-trading-proofs.mjs --help
 ```
 
-The executor rejects legacy fields, wrong chain/oracle, nonzero value,
-unauthorized or malformed calldata, duplicate IDs, noncontiguous order, and
-missing completion checks. It checks completion before simulation and resume,
-persists resume files atomically, refetches recorded transactions/receipts, and
-verifies every completion check after execution. A completed rerun sends zero
-transactions.
-
 Before proof submission, `verify-proof-volumes.mjs` requires the trusted public
-key for the signed 26-claim baseline, refetches every selected settlement
+key for the signed approved-claim baseline, refetches every selected settlement
 receipt, and writes `antseed-proof-volume-report` v2. Submission remains blocked
 unless baseline, planner, receipt-delta, and host-verified raw volumes are
 exactly equal and no claim/evidence identity changed.

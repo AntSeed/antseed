@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import { Test } from "forge-std/Test.sol";
 
 import { AntseedWashTradingRegistry } from "../integrity/AntseedWashTradingRegistry.sol";
-import { LocalProofE2EStateOracle } from "./mocks/LocalProofE2E.sol";
+import { LocalProofE2EBlockhashStore } from "./mocks/LocalProofE2E.sol";
 
 contract PassthroughVerifier {
     function verifyProof(bytes32, bytes calldata, bytes calldata) external pure { }
@@ -17,19 +17,16 @@ contract LocalSP1ProofSubmissionE2ETest is Test {
     address internal constant ADDRESS_B = address(0xA11CE);
 
     AntseedWashTradingRegistry internal registry;
-    LocalProofE2EStateOracle internal stateOracle;
+    LocalProofE2EBlockhashStore internal blockhashStore;
 
     function setUp() public {
-        stateOracle = new LocalProofE2EStateOracle();
-        registry = new AntseedWashTradingRegistry(
-            address(new PassthroughVerifier()), address(stateOracle), CLOSED_LOOP_VKEY, RECIPROCAL_VKEY
-        );
+        blockhashStore = new LocalProofE2EBlockhashStore();
     }
 
     function test_developmentManifestSubmissionUsesSP1PublicValues() public {
         uint64 blockNumber = 44_469_557;
         bytes32 blockHash = keccak256("local canonical Base block");
-        stateOracle.setCanonical(blockNumber, blockHash);
+        blockhashStore.setCanonical(blockNumber, blockHash);
 
         AntseedWashTradingRegistry.BlockRef[] memory blockRefs = new AntseedWashTradingRegistry.BlockRef[](1);
         blockRefs[0] = AntseedWashTradingRegistry.BlockRef({ number: blockNumber, blockHash: blockHash });
@@ -49,7 +46,30 @@ contract LocalSP1ProofSubmissionE2ETest is Test {
             blockRefs: blockRefs
         }));
 
-        registry.submit(publicValues, hex"01");
+        bytes[] memory publicValuesBatch = new bytes[](1);
+        publicValuesBatch[0] = publicValues;
+        bytes32 digest = keccak256(
+            abi.encode(
+                keccak256("ANTSEED_AIP4_BACKFILL_V1"),
+                uint64(8_453),
+                CLOSED_LOOP_VKEY,
+                RECIPROCAL_VKEY,
+                address(blockhashStore),
+                uint256(1)
+            )
+        );
+        digest = keccak256(abi.encode(digest, keccak256("reciprocal-test"), sha256(publicValues)));
+        registry = new AntseedWashTradingRegistry(
+            address(new PassthroughVerifier()),
+            address(blockhashStore),
+            CLOSED_LOOP_VKEY,
+            RECIPROCAL_VKEY,
+            1,
+            digest
+        );
+        bytes[] memory proofs = new bytes[](1);
+        proofs[0] = hex"01";
+        registry.submitBatch(publicValuesBatch, proofs);
 
         assertTrue(registry.isSellerWashTradingFlagged(ADDRESS_A));
         assertTrue(registry.isSellerWashTradingFlagged(ADDRESS_B));

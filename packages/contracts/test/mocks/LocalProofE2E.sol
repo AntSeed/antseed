@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { IBaseAnalysisStateOracle } from "../../interfaces/IBaseAnalysisStateOracle.sol";
 import { ISP1Verifier } from "../../interfaces/ISP1Verifier.sol";
 
 contract LocalProofE2EVerifier is ISP1Verifier {
@@ -19,19 +18,13 @@ contract LocalProofE2EVerifier is ISP1Verifier {
     }
 }
 
-contract LocalProofE2EStateOracle is IBaseAnalysisStateOracle {
-    mapping(uint64 blockNumber => bytes32 blockHash) public canonicalBlockHashes;
-    bool public historicalCoverageComplete;
+contract LocalProofE2EBlockhashStore {
+    mapping(uint256 blockNumber => bytes32 blockHash) public getBlockhash;
 
     function setCanonical(uint64 blockNumber, bytes32 blockHash) external {
-        canonicalBlockHashes[blockNumber] = blockHash;
+        getBlockhash[blockNumber] = blockHash;
     }
 
-    function setHistoricalCoverageComplete() external {
-        historicalCoverageComplete = true;
-    }
-
-    function isCanonicalBlock(uint64 blockNumber, bytes32 blockHash) external view returns (bool) {
-        return canonicalBlockHashes[blockNumber] == blockHash;
-    }
+    function store(uint256) external { }
+    function storeVerifyHeader(uint256, bytes calldata) external { }
 }

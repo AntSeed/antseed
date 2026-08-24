@@ -25,7 +25,9 @@ const results = await runSubmission({
   resume,
   onPersist: (next) => writeJsonAtomic(resumePath, next),
 });
-for (const result of results) console.log(`${result.claimId} ${result.status}${result.transactionHash ? ` ${result.transactionHash}` : ""}`);
+for (const result of results) {
+  console.log(`${result.status} ${result.claimCount} claim(s)${result.transactionHash ? ` ${result.transactionHash}` : ""}`);
+}
 
 async function readJson(path) {
   try { return JSON.parse(await readFile(path, "utf8")); }

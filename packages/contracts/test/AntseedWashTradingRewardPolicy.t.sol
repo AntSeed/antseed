@@ -1,18 +1,22 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { Test } from "forge-std/Test.sol";
 
 import { AntseedWashTradingRewardPolicy } from "../policies/AntseedWashTradingRewardPolicy.sol";
 import { IAntseedWashTradingStatus } from "../interfaces/IAntseedWashTradingStatus.sol";
 
 contract MockWashTradingStatusRegistry is IAntseedWashTradingStatus {
-    mapping(address seller => bool flagged) private sellerFlags;
+    bool public backfillComplete;
     bool public revertReads;
+    mapping(address seller => uint16 ratioBps) private ratios;
 
-    function setWashTradingFlag(address seller, bool flagged) external {
-        sellerFlags[seller] = flagged;
+    function setBackfillComplete(bool complete) external {
+        backfillComplete = complete;
+    }
+
+    function setRatio(address seller, uint16 ratioBps) external {
+        ratios[seller] = ratioBps;
     }
 
     function setRevertReads(bool value) external {
@@ -21,113 +25,66 @@ contract MockWashTradingStatusRegistry is IAntseedWashTradingStatus {
 
     function isSellerWashTradingFlagged(address seller) external view returns (bool) {
         if (revertReads) revert("wash-trading registry unavailable");
-        return sellerFlags[seller];
-    }
-}
-
-contract RewardPolicyHistoricalCoverageMock {
-    bool public historicalCoverageComplete;
-
-    function setHistoricalCoverageComplete(bool complete) external {
-        historicalCoverageComplete = complete;
+        return ratios[seller] > 0;
     }
 
-    function isCanonicalBlock(uint64, bytes32) external pure returns (bool) {
-        return true;
+    function washRatioBps(address seller) external view returns (uint16) {
+        if (revertReads) revert("wash-trading registry unavailable");
+        return ratios[seller];
     }
 }
 
 contract AntseedWashTradingRewardPolicyTest is Test {
     address internal constant SELLER = address(0xA11CE);
-    address internal constant OTHER = address(0xB0B);
-    uint256 internal constant LOCKED = 100 ether;
-    bytes32 internal constant RELEASE_DIGEST = keccak256("complete-proof-release");
 
     MockWashTradingStatusRegistry internal registry;
-    RewardPolicyHistoricalCoverageMock internal coverage;
     AntseedWashTradingRewardPolicy internal policy;
 
     function setUp() public {
         registry = new MockWashTradingStatusRegistry();
-        coverage = new RewardPolicyHistoricalCoverageMock();
-        policy = new AntseedWashTradingRewardPolicy(address(registry), address(coverage), address(this));
+        policy = new AntseedWashTradingRewardPolicy(address(registry));
     }
 
-    function test_claimsStayBlockedBeforeBackfillFinalization() public view {
+    function test_rewardsStayFrozenBeforeBackfillCompletion() public view {
         assertFalse(policy.canClaimSellerUnlocked(SELLER));
-        assertEq(policy.claimableSellerRewards(SELLER, LOCKED), 0);
+        assertEq(policy.retainedSellerRewardsBps(SELLER), 0);
     }
 
-    function test_unflaggedSellerCanUseBothRewardRoutesAfterBackfill() public {
-        _finalizeBackfill();
-
+    function test_unprovenSellerCanUseBothRewardRoutesAfterCompletion() public {
+        registry.setBackfillComplete(true);
         assertTrue(policy.canClaimSellerUnlocked(SELLER));
-        assertEq(policy.claimableSellerRewards(SELLER, LOCKED), LOCKED);
+        assertEq(policy.retainedSellerRewardsBps(SELLER), 10_000);
     }
 
-    function test_flaggedSellerIsBlockedOnBothRewardRoutes() public {
-        _finalizeBackfill();
-        registry.setWashTradingFlag(SELLER, true);
-
+    function test_provenSellerUsesProportionalLockedRoute() public {
+        registry.setBackfillComplete(true);
+        registry.setRatio(SELLER, 2_500);
         assertFalse(policy.canClaimSellerUnlocked(SELLER));
-        assertEq(policy.claimableSellerRewards(SELLER, LOCKED), 0);
+        assertEq(policy.retainedSellerRewardsBps(SELLER), 2_500);
     }
 
-    function test_dependencyFailureFailsClosed() public {
-        _finalizeBackfill();
-        registry.setRevertReads(true);
+    function test_sellerAtThresholdRemainsFullyFrozen() public {
+        registry.setBackfillComplete(true);
+        registry.setRatio(SELLER, policy.penaltyThetaBps());
+        assertFalse(policy.canClaimSellerUnlocked(SELLER));
+        assertEq(policy.retainedSellerRewardsBps(SELLER), 0);
+    }
 
+    function test_dependencyFailureFailsClosedByReverting() public {
+        registry.setBackfillComplete(true);
+        registry.setRevertReads(true);
         vm.expectRevert("wash-trading registry unavailable");
         policy.canClaimSellerUnlocked(SELLER);
-        vm.expectRevert("wash-trading registry unavailable");
-        policy.claimableSellerRewards(SELLER, LOCKED);
     }
 
-    function test_finalizeBackfillRecordsReleaseDigestOnce() public {
-        _finalizeBackfill();
-
-        assertTrue(policy.backfillFinalized());
-        assertEq(policy.proofReleaseDigest(), RELEASE_DIGEST);
-        vm.expectRevert(AntseedWashTradingRewardPolicy.BackfillAlreadyFinalized.selector);
-        policy.finalizeBackfill(keccak256("second-release"));
-    }
-
-    function test_finalizeBackfillRequiresHistoricalCoverage() public {
-        vm.expectRevert(AntseedWashTradingRewardPolicy.HistoricalCoverageIncomplete.selector);
-        policy.finalizeBackfill(RELEASE_DIGEST);
-    }
-
-    function test_finalizeBackfillRejectsZeroDigest() public {
-        coverage.setHistoricalCoverageComplete(true);
-
-        vm.expectRevert(AntseedWashTradingRewardPolicy.InvalidProofReleaseDigest.selector);
-        policy.finalizeBackfill(bytes32(0));
-    }
-
-    function test_onlyOwnerCanFinalizeBackfill() public {
-        coverage.setHistoricalCoverageComplete(true);
-
-        vm.prank(OTHER);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, OTHER));
-        policy.finalizeBackfill(RELEASE_DIGEST);
-    }
-
-    function test_constructorRejectsInvalidWashTradingStatus() public {
+    function test_constructorRejectsInvalidStatus() public {
         vm.expectRevert(AntseedWashTradingRewardPolicy.InvalidAddress.selector);
-        new AntseedWashTradingRewardPolicy(address(0), address(coverage), address(this));
+        new AntseedWashTradingRewardPolicy(address(0));
         vm.expectRevert(AntseedWashTradingRewardPolicy.InvalidAddress.selector);
-        new AntseedWashTradingRewardPolicy(address(1), address(coverage), address(this));
+        new AntseedWashTradingRewardPolicy(address(1));
     }
 
-    function test_constructorRejectsInvalidBaseStateOracle() public {
-        vm.expectRevert(AntseedWashTradingRewardPolicy.InvalidAddress.selector);
-        new AntseedWashTradingRewardPolicy(address(registry), address(0), address(this));
-        vm.expectRevert(AntseedWashTradingRewardPolicy.InvalidAddress.selector);
-        new AntseedWashTradingRewardPolicy(address(registry), address(1), address(this));
-    }
-
-    function _finalizeBackfill() internal {
-        coverage.setHistoricalCoverageComplete(true);
-        policy.finalizeBackfill(RELEASE_DIGEST);
+    function test_productionConfigurationRemainsDisabled() public view {
+        assertFalse(policy.configurationFinalized());
     }
 }

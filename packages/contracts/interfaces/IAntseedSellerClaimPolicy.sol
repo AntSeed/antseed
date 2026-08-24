@@ -2,5 +2,5 @@
 pragma solidity ^0.8.24;
 
 interface IAntseedSellerClaimPolicy {
-    function claimableSellerRewards(address seller, uint256 lockedAmount) external view returns (uint256 amount);
+    function retainedSellerRewardsBps(address seller) external view returns (uint16 retainedBps);
 }
