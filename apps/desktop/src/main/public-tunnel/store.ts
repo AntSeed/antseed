@@ -13,6 +13,15 @@ export type PublicTunnelSettings = {
   apiKey: string;
 };
 
+function resolveActiveProvider(
+  preferred: TunnelProvider,
+  providers: PublicTunnelSettings['providers'],
+): TunnelProvider {
+  if (providers[preferred]) return preferred;
+  if (providers.cloudflare) return 'cloudflare';
+  return 'ngrok';
+}
+
 export async function loadPublicTunnelSettings(): Promise<PublicTunnelSettings | null> {
   if (!safeStorage.isEncryptionAvailable()) return null;
   try {
@@ -39,9 +48,7 @@ export async function loadPublicTunnelSettings(): Promise<PublicTunnelSettings |
       }
     }
     if (Object.keys(providers).length === 0) return null;
-    const resolvedActiveProvider = providers[activeProvider]
-      ? activeProvider
-      : providers.cloudflare ? 'cloudflare' : 'ngrok';
+    const resolvedActiveProvider = resolveActiveProvider(activeProvider, providers);
     return { activeProvider: resolvedActiveProvider, providers, apiKey: parsed.apiKey };
   } catch {
     return null;

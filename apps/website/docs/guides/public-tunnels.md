@@ -132,6 +132,7 @@ The tunnel gateway intentionally allows only these routes:
 |---|---|---|
 | `GET` | `/v1/models` | List available models and routes |
 | `POST` | `/v1/messages` | Anthropic-compatible messages |
+| `POST` | `/v1/messages/count_tokens` | Anthropic-compatible token-count preflight |
 | `POST` | `/v1/chat/completions` | OpenAI-compatible chat completions |
 | `POST` | `/v1/responses` | OpenAI Responses API |
 | `POST` | `/v1/images/generations` | Image generation |

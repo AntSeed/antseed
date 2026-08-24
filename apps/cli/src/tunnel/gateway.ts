@@ -16,6 +16,7 @@ const HOP_BY_HOP = new Set([
 const ALLOWED_ROUTES: ReadonlyArray<{ method: string; prefix: string }> = [
   { method: 'GET', prefix: '/v1/models' },
   { method: 'POST', prefix: '/v1/messages' },
+  { method: 'POST', prefix: '/v1/messages/count_tokens' },
   { method: 'POST', prefix: '/v1/chat/completions' },
   { method: 'POST', prefix: '/v1/responses' },
   { method: 'POST', prefix: '/v1/images/generations' },

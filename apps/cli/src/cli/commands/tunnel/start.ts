@@ -15,6 +15,72 @@ const DEFAULT_BUYER_PORT = 8377
 const DEFAULT_GATEWAY_PORT = 8379
 type TunnelProvider = 'cloudflare' | 'ngrok'
 
+function parseTunnelProvider(value: string): TunnelProvider {
+  const provider = value.trim().toLowerCase()
+  if (provider === 'cloudflare' || provider === 'ngrok') return provider
+  throw new Error('Tunnel provider must be cloudflare or ngrok.')
+}
+
+function providerDisplayName(provider: TunnelProvider): string {
+  return provider === 'cloudflare' ? 'Cloudflare Tunnel' : 'ngrok'
+}
+
+function providerTokenEnvironmentName(provider: TunnelProvider): string {
+  return provider === 'cloudflare' ? 'CLOUDFLARED_TUNNEL_TOKEN' : 'NGROK_AUTHTOKEN'
+}
+
+function resolveTunnelToken(provider: TunnelProvider): string {
+  const providerToken = process.env[providerTokenEnvironmentName(provider)]
+  return (process.env['ANTSEED_TUNNEL_TOKEN'] ?? providerToken ?? '').trim()
+}
+
+function parsePublicUrl(value: string, provider: TunnelProvider): URL | null {
+  if (!value) {
+    if (provider === 'cloudflare') {
+      throw new Error('ANTSEED_TUNNEL_PUBLIC_URL is required for Cloudflare Tunnel.')
+    }
+    return null
+  }
+
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    throw new Error('ANTSEED_TUNNEL_PUBLIC_URL must be a valid https:// URL.')
+  }
+  if (url.protocol !== 'https:') {
+    throw new Error('ANTSEED_TUNNEL_PUBLIC_URL must be an https:// URL.')
+  }
+  return url
+}
+
+function ngrokArgs(gatewayPort: number, publicUrl: URL | null): string[] {
+  return [
+    'http',
+    `http://127.0.0.1:${gatewayPort}`,
+    ...(publicUrl ? ['--url', publicUrl.origin] : []),
+    '--log', 'stdout', '--log-format', 'json', '--log-level', 'info',
+  ]
+}
+
+function waitForProcessStartup(child: ReturnType<typeof spawn>, provider: TunnelProvider): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, 1500)
+    child.once('error', (error) => {
+      clearTimeout(timer)
+      reject(error)
+    })
+    child.once('exit', (code) => {
+      clearTimeout(timer)
+      reject(new Error(`${provider} tunnel exited with code ${String(code)}`))
+    })
+  })
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 function findHttpsUrl(value: unknown): string | null {
   if (typeof value === 'string' && value.startsWith('https://')) return value
   if (!value || typeof value !== 'object') return null
@@ -86,25 +152,17 @@ export function registerTunnelStartCommand(cmd: Command): void {
       const dataDir = getGlobalOptions(cmd).dataDir
       const buyerPort = parseInt(options.buyerPort, 10) || DEFAULT_BUYER_PORT
       const gatewayPort = parseInt(options.gatewayPort, 10) || DEFAULT_GATEWAY_PORT
-      const providerInput = (options.provider ?? process.env['ANTSEED_TUNNEL_PROVIDER'] ?? 'cloudflare').trim().toLowerCase()
-      if (providerInput !== 'cloudflare' && providerInput !== 'ngrok') throw new Error('Tunnel provider must be cloudflare or ngrok.')
-      const provider: TunnelProvider = providerInput
-      const tunnelToken = (
-        process.env['ANTSEED_TUNNEL_TOKEN']
-        ?? (provider === 'cloudflare' ? process.env['CLOUDFLARED_TUNNEL_TOKEN'] : process.env['NGROK_AUTHTOKEN'])
-        ?? ''
-      ).trim()
+      const provider = parseTunnelProvider(options.provider ?? process.env['ANTSEED_TUNNEL_PROVIDER'] ?? 'cloudflare')
+      const tunnelToken = resolveTunnelToken(provider)
       const configuredPublicUrl = process.env['ANTSEED_TUNNEL_PUBLIC_URL']?.trim() ?? ''
       const apiKey = process.env['ANTSEED_TUNNEL_API_KEY']?.trim() ?? ''
-      if (!tunnelToken) throw new Error(`Set ${provider === 'cloudflare' ? 'CLOUDFLARED_TUNNEL_TOKEN' : 'NGROK_AUTHTOKEN'} before starting the tunnel.`)
-      let publicUrl: URL | null = null
-      if (configuredPublicUrl) {
-        try { publicUrl = new URL(configuredPublicUrl) } catch { throw new Error('ANTSEED_TUNNEL_PUBLIC_URL must be a valid https:// URL.') }
-        if (publicUrl.protocol !== 'https:') throw new Error('ANTSEED_TUNNEL_PUBLIC_URL must be an https:// URL.')
-      } else if (provider === 'cloudflare') {
-        throw new Error('ANTSEED_TUNNEL_PUBLIC_URL is required for Cloudflare Tunnel.')
+      if (!tunnelToken) {
+        throw new Error(`Set ${providerTokenEnvironmentName(provider)} before starting the tunnel.`)
       }
-      if (apiKey.length < 16) throw new Error('ANTSEED_TUNNEL_API_KEY must be at least 16 characters.')
+      let publicUrl = parsePublicUrl(configuredPublicUrl, provider)
+      if (apiKey.length < 16) {
+        throw new Error('ANTSEED_TUNNEL_API_KEY must be at least 16 characters.')
+      }
 
       const gateway = new TunnelGateway({
         buyerPort,
@@ -121,17 +179,15 @@ export function registerTunnelStartCommand(cmd: Command): void {
           : resolveNgrokBinary()
         const args = provider === 'cloudflare'
           ? ['tunnel', '--no-autoupdate', 'run']
-          : [
-            'http',
-            `http://127.0.0.1:${gatewayPort}`,
-            ...(publicUrl ? ['--url', publicUrl.origin] : []),
-            '--log', 'stdout', '--log-format', 'json', '--log-level', 'info',
-          ]
+          : ngrokArgs(gatewayPort, publicUrl)
+        const tunnelEnvironment = provider === 'cloudflare'
+          ? { TUNNEL_TOKEN: tunnelToken }
+          : { NGROK_AUTHTOKEN: tunnelToken }
         tunnelProcess = spawn(binary, args, {
           stdio: ['ignore', 'pipe', 'pipe'],
           env: {
             ...process.env,
-            ...(provider === 'cloudflare' ? { TUNNEL_TOKEN: tunnelToken } : { NGROK_AUTHTOKEN: tunnelToken }),
+            ...tunnelEnvironment,
           },
         })
         const ngrokUrlPromise = provider === 'ngrok' ? waitForNgrokUrl(tunnelProcess) : null
@@ -140,15 +196,11 @@ export function registerTunnelStartCommand(cmd: Command): void {
         if (ngrokUrlPromise) {
           publicUrl = await ngrokUrlPromise
         } else {
-          await new Promise<void>((resolve, reject) => {
-            const timer = setTimeout(resolve, 1500)
-            tunnelProcess!.once('error', (error) => { clearTimeout(timer); reject(error) })
-            tunnelProcess!.once('exit', (code) => { clearTimeout(timer); reject(new Error(`${provider} tunnel exited with code ${String(code)}`)) })
-          })
+          await waitForProcessStartup(tunnelProcess, provider)
         }
       } catch (error) {
         await gateway.stop()
-        spinner.fail(chalk.red(`Could not start ${provider === 'cloudflare' ? 'Cloudflare Tunnel' : 'ngrok'}: ${(error as Error).message}`))
+        spinner.fail(chalk.red(`Could not start ${providerDisplayName(provider)}: ${errorMessage(error)}`))
         process.exitCode = 1
         return
       }

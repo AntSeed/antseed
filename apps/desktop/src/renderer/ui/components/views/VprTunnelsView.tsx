@@ -19,6 +19,8 @@ import tunnelStyles from './VprTunnelsView.module.scss';
 
 const TUNNEL_DOCS_URL = 'https://antseed.com/docs/guides/public-tunnels';
 const CURSOR_ICON = new URL('../../../assets/cursor.svg', import.meta.url).href;
+const MASKED_API_KEY = '••••••••••••••••••••••••••••••••';
+type CopyKind = 'url' | 'key';
 
 const PROVIDERS: ReadonlyArray<{
   id: TunnelProvider;
@@ -85,9 +87,15 @@ export function VprTunnelsView() {
     setError(null);
     try {
       const configured = await bridge.publicTunnelConfigure({ provider, tunnelToken: token.trim(), publicUrl: publicUrl.trim() });
-      if (!configured.ok) { setError(configured.error ?? 'Could not save tunnel settings'); return; }
+      if (!configured.ok) {
+        setError(configured.error ?? 'Could not save tunnel settings');
+        return;
+      }
       const result = await bridge.publicTunnelStart({ provider });
-      if (!result.ok) { setError(result.error ?? 'Could not start tunnel'); return; }
+      if (!result.ok) {
+        setError(result.error ?? 'Could not start tunnel');
+        return;
+      }
       if (result.status) setStatus(result.status);
       setEditingProvider(null);
       setToken('');
@@ -97,7 +105,7 @@ export function VprTunnelsView() {
     }
   }, [editingProvider, publicUrl, token]);
 
-  const toggle = useCallback(async (provider: TunnelProvider) => {
+  const toggleTunnel = useCallback(async (provider: TunnelProvider) => {
     const bridge = window.antseedDesktop;
     const isRunning = status?.running === true && status.activeProvider === provider;
     setBusyProvider(provider);
@@ -106,41 +114,44 @@ export function VprTunnelsView() {
       const result = isRunning
         ? await bridge?.publicTunnelStop?.()
         : await bridge?.publicTunnelStart?.({ provider });
-      if (!result?.ok) { setError(result?.error ?? 'Tunnel action failed'); return; }
+      if (!result?.ok) {
+        setError(result?.error ?? 'Tunnel action failed');
+        return;
+      }
       if (result.status) setStatus(result.status);
     } finally {
       setBusyProvider(null);
     }
   }, [status?.activeProvider, status?.running]);
 
-  const copy = useCallback((value: string, kind: 'url' | 'key') => {
+  const copy = useCallback((value: string, kind: CopyKind) => {
     void navigator.clipboard.writeText(value).then(() => {
       setCopied(kind);
       setTimeout(() => setCopied(null), 1500);
     });
   }, []);
 
+  const loadApiKey = useCallback(async (): Promise<string | null> => {
+    if (apiKey) return apiKey;
+    const result = await window.antseedDesktop?.publicTunnelGetApiKey?.();
+    const loadedApiKey = result?.apiKey ?? null;
+    setApiKey(loadedApiKey);
+    return loadedApiKey;
+  }, [apiKey]);
+
   const revealKey = useCallback(async () => {
     if (apiKeyVisible) {
       setApiKeyVisible(false);
       return;
     }
-    if (!apiKey) {
-      const result = await window.antseedDesktop?.publicTunnelGetApiKey?.();
-      setApiKey(result?.apiKey ?? null);
-    }
+    await loadApiKey();
     setApiKeyVisible(true);
-  }, [apiKey, apiKeyVisible]);
+  }, [apiKeyVisible, loadApiKey]);
 
   const copyApiKey = useCallback(async () => {
-    let key = apiKey;
-    if (!key) {
-      const result = await window.antseedDesktop?.publicTunnelGetApiKey?.();
-      key = result?.apiKey ?? null;
-      setApiKey(key);
-    }
+    const key = await loadApiKey();
     if (key) copy(key, 'key');
-  }, [apiKey, copy]);
+  }, [copy, loadApiKey]);
 
   const openConfigure = useCallback((provider: TunnelProvider) => {
     setEditingProvider(provider);
@@ -150,6 +161,14 @@ export function VprTunnelsView() {
   }, []);
 
   const selectedProvider = PROVIDERS.find((provider) => provider.id === editingProvider) ?? null;
+  const baseUrl = status?.baseUrl ?? null;
+  const hasConnectionDetails = Boolean(baseUrl || status?.configured);
+  const publicUrlIsValid = publicUrl.trim().startsWith('https://');
+  const publicUrlIsRequired = selectedProvider?.id === 'cloudflare';
+  const configureDisabled = busyProvider !== null
+    || token.trim().length < 20
+    || (publicUrlIsRequired && !publicUrlIsValid)
+    || (publicUrl.trim().length > 0 && !publicUrlIsValid);
 
   return (
     <section className={`view view-vpr-tunnels view-pinned-header ${styles.view}`} role="tabpanel">
@@ -195,7 +214,7 @@ export function VprTunnelsView() {
                         aria-checked={running}
                         className={`${styles.connectedToggle}${running ? '' : ` ${styles.connectedToggleOff}`}`}
                         disabled={busyProvider !== null}
-                        onClick={() => void toggle(provider.id)}
+                        onClick={() => void toggleTunnel(provider.id)}
                         aria-label={`${running ? 'Stop' : 'Start'} ${provider.name}`}
                         title={`${running ? 'Stop' : 'Start'} ${provider.name}`}
                       >
@@ -213,18 +232,18 @@ export function VprTunnelsView() {
             })}
           </div>
 
-          {status?.baseUrl || status?.configured ? (
+          {hasConnectionDetails ? (
             <section className={tunnelStyles.connectionDetails}>
               <div>
                 <h2 className={tunnelStyles.connectionTitle}>Connection details</h2>
                 <p className={styles.settingHint}>Use these values in the remote client’s OpenAI provider settings.</p>
               </div>
-              {status?.baseUrl ? (
+              {baseUrl ? (
                 <section className={styles.settingSection}>
                   <div className={styles.settingHead}><span className={styles.settingTitle}>OpenAI base URL</span></div>
                   <div className={tunnelStyles.credentialRow}>
-                    <input readOnly className={styles.settingInput} value={status.baseUrl} />
-                    <button type="button" className={tunnelStyles.copyButton} onClick={() => copy(status.baseUrl!, 'url')}>
+                    <input readOnly className={styles.settingInput} value={baseUrl} />
+                    <button type="button" className={tunnelStyles.copyButton} onClick={() => copy(baseUrl, 'url')}>
                       <HugeiconsIcon icon={copied === 'url' ? Tick02Icon : Copy01Icon} size={15} strokeWidth={2} />
                       {copied === 'url' ? 'Copied' : 'Copy'}
                     </button>
@@ -236,7 +255,7 @@ export function VprTunnelsView() {
                   <div className={styles.settingHead}><span className={styles.settingTitle}>API key</span></div>
                   <div className={tunnelStyles.credentialRow}>
                     <div className={tunnelStyles.secretField}>
-                      <span className={tunnelStyles.secretValue}>{apiKeyVisible && apiKey ? apiKey : '••••••••••••••••••••••••••••••••'}</span>
+                      <span className={tunnelStyles.secretValue}>{apiKeyVisible && apiKey ? apiKey : MASKED_API_KEY}</span>
                       <button type="button" className={tunnelStyles.revealButton} onClick={() => void revealKey()} aria-label={apiKeyVisible ? 'Hide API key' : 'Reveal API key'}>
                         <HugeiconsIcon icon={apiKeyVisible ? ViewOffSlashIcon : ViewIcon} size={16} strokeWidth={1.8} />
                       </button>
@@ -266,12 +285,15 @@ export function VprTunnelsView() {
               </button>
             </section>
             <section className={styles.settingSection}>
-              <div className={styles.settingHead}><span className={styles.settingTitle}>Public hostname</span>{selectedProvider.id === 'cloudflare' ? <span className={styles.settingTag}>Required</span> : <span className={styles.settingTag}>Optional</span>}</div>
+              <div className={styles.settingHead}>
+                <span className={styles.settingTitle}>Public hostname</span>
+                <span className={styles.settingTag}>{publicUrlIsRequired ? 'Required' : 'Optional'}</span>
+              </div>
               <input type="url" className={styles.settingInput} value={publicUrl} placeholder={selectedProvider.urlPlaceholder} spellCheck={false} onChange={(event) => setPublicUrl(event.target.value)} />
             </section>
             {error ? <p className={styles.note} role="alert">{error}</p> : null}
             <div className={styles.settingFooter}>
-              <button type="button" className={styles.connectAction} disabled={busyProvider !== null || token.trim().length < 20 || (selectedProvider.id === 'cloudflare' && !publicUrl.trim().startsWith('https://')) || (publicUrl.trim().length > 0 && !publicUrl.trim().startsWith('https://'))} onClick={() => void configureAndStart()}>
+              <button type="button" className={styles.connectAction} disabled={configureDisabled} onClick={() => void configureAndStart()}>
                 {busyProvider ? 'Starting…' : 'Save and start'}
               </button>
             </div>

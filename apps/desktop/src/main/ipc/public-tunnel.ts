@@ -7,16 +7,46 @@ import { resolveBuyerProxyPort } from '../runtime/active-config.js';
 import { resolveConnectDataDir } from '../runtime/process-manager.js';
 import { loadPublicTunnelSettings, savePublicTunnelSettings, type TunnelProvider } from '../public-tunnel/store.js';
 
-function statePath(): string { return path.join(resolveConnectDataDir(), 'tunnel', 'tunnel.state.json'); }
+type PublicTunnelStatus = {
+  configured: boolean;
+  configuredProviders: TunnelProvider[];
+  activeProvider: TunnelProvider | null;
+  running: boolean;
+  baseUrl: string | null;
+};
 
-async function readStatus(processManager: ProcessManager) {
+const STATUS_ATTEMPTS = 60;
+const STATUS_INTERVAL_MS = 250;
+
+function statePath(): string {
+  return path.join(resolveConnectDataDir(), 'tunnel', 'tunnel.state.json');
+}
+
+function parseTunnelProvider(value: unknown): TunnelProvider | null {
+  if (value === 'cloudflare' || value === 'ngrok') return value;
+  return null;
+}
+
+function providerName(provider: TunnelProvider): string {
+  return provider === 'ngrok' ? 'ngrok' : 'Cloudflare';
+}
+
+function providerTokenName(provider: TunnelProvider): string {
+  return provider === 'ngrok' ? 'ngrok authtoken' : 'Cloudflare tunnel token';
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function readStatus(processManager: ProcessManager): Promise<PublicTunnelStatus> {
   const running = processManager.getState().some((state) => state.mode === 'tunnel' && state.running);
   let baseUrl: string | null = null;
   let runningProvider: TunnelProvider | null = null;
   try {
     const state = JSON.parse(await readFile(statePath(), 'utf8')) as Record<string, unknown>;
     baseUrl = typeof state.baseUrl === 'string' ? state.baseUrl : null;
-    runningProvider = state.provider === 'ngrok' ? 'ngrok' : state.provider === 'cloudflare' ? 'cloudflare' : null;
+    runningProvider = parseTunnelProvider(state.provider);
   } catch { /* not ready */ }
   const settings = await loadPublicTunnelSettings();
   return {
@@ -28,11 +58,11 @@ async function readStatus(processManager: ProcessManager) {
   };
 }
 
-async function waitForBaseUrl(processManager: ProcessManager): Promise<ReturnType<typeof readStatus> extends Promise<infer T> ? T : never> {
-  for (let attempt = 0; attempt < 60; attempt += 1) {
+async function waitForBaseUrl(processManager: ProcessManager): Promise<PublicTunnelStatus> {
+  for (let attempt = 0; attempt < STATUS_ATTEMPTS; attempt += 1) {
     const status = await readStatus(processManager);
     if (status.baseUrl || !status.running) return status;
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await new Promise((resolve) => setTimeout(resolve, STATUS_INTERVAL_MS));
   }
   return readStatus(processManager);
 }
@@ -43,11 +73,13 @@ export function registerPublicTunnelIpc(deps: { processManager: ProcessManager }
   ipcMain.handle('public-tunnel:configure', async (_event, input: unknown) => {
     if (!input || typeof input !== 'object') return { ok: false, error: 'Tunnel settings are required.' };
     const raw = input as Record<string, unknown>;
-    const provider: TunnelProvider = raw.provider === 'ngrok' ? 'ngrok' : 'cloudflare';
+    const provider = parseTunnelProvider(raw.provider) ?? 'cloudflare';
     const tunnelToken = typeof raw.tunnelToken === 'string' ? raw.tunnelToken.trim() : '';
     const publicUrlInput = typeof raw.publicUrl === 'string' ? raw.publicUrl.trim() : '';
     let publicUrl = '';
-    if (tunnelToken.length < 20) return { ok: false, error: `Enter a valid ${provider === 'ngrok' ? 'ngrok authtoken' : 'Cloudflare tunnel token'}.` };
+    if (tunnelToken.length < 20) {
+      return { ok: false, error: `Enter a valid ${providerTokenName(provider)}.` };
+    }
     if (publicUrlInput) {
       try {
         const parsed = new URL(publicUrlInput);
@@ -71,12 +103,12 @@ export function registerPublicTunnelIpc(deps: { processManager: ProcessManager }
   ipcMain.handle('public-tunnel:start', async (_event, input: unknown) => {
     const settings = await loadPublicTunnelSettings();
     const raw = input && typeof input === 'object' ? input as Record<string, unknown> : {};
-    const requestedProvider: TunnelProvider | null = raw.provider === 'ngrok'
-      ? 'ngrok'
-      : raw.provider === 'cloudflare' ? 'cloudflare' : null;
+    const requestedProvider = parseTunnelProvider(raw.provider);
     const provider = requestedProvider ?? settings?.activeProvider ?? 'cloudflare';
     const providerSettings = settings?.providers[provider];
-    if (!settings || !providerSettings) return { ok: false, error: `Configure ${provider === 'ngrok' ? 'ngrok' : 'Cloudflare'} first.` };
+    if (!settings || !providerSettings) {
+      return { ok: false, error: `Configure ${providerName(provider)} first.` };
+    }
     try {
       if (processManager.getState().some((state) => state.mode === 'tunnel' && state.running)) {
         await processManager.stop('tunnel');
@@ -97,11 +129,14 @@ export function registerPublicTunnelIpc(deps: { processManager: ProcessManager }
         },
       });
       const status = await waitForBaseUrl(processManager);
-      return status.baseUrl
-        ? { ok: true, status }
-        : { ok: false, status, error: `Tunnel exited before becoming ready. Check the runtime logs and ${provider === 'ngrok' ? 'ngrok authtoken' : 'Cloudflare tunnel token'}.` };
+      if (status.baseUrl) return { ok: true, status };
+      return {
+        ok: false,
+        status,
+        error: `Tunnel exited before becoming ready. Check the runtime logs and ${providerTokenName(provider)}.`,
+      };
     } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      return { ok: false, error: errorMessage(error) };
     }
   });
   ipcMain.handle('public-tunnel:stop', async () => {

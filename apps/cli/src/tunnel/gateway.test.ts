@@ -43,16 +43,21 @@ test('TunnelGateway exposes only authenticated supported API routes', async () =
     assert.equal((await request(gatewayPort, '/v1/models')).status, 401)
     assert.equal((await request(gatewayPort, '/v1/models', { key: 'wrong' })).status, 401)
     assert.equal((await request(gatewayPort, '/v1/models', { key: 'secret' })).status, 200)
+    assert.equal((await request(gatewayPort, '/v1/messages/count_tokens', { method: 'POST', key: 'secret', body: '{}' })).status, 200)
+    assert.equal((await request(gatewayPort, '/messages/count_tokens', { method: 'POST', key: 'secret', body: '{}' })).status, 200)
     assert.equal((await request(gatewayPort, '/v1/responses', { method: 'POST', key: 'secret', body: '{}' })).status, 200)
     assert.equal((await request(gatewayPort, '/responses', { method: 'POST', key: 'secret', body: '{}' })).status, 200)
     assert.equal((await request(gatewayPort, '/v1/v1/responses?cursor=1', { method: 'POST', key: 'secret', body: '{}' })).status, 200)
     assert.equal((await request(gatewayPort, '/responses/other', { method: 'POST', key: 'secret', body: '{}' })).status, 404)
     assert.deepEqual(captured, [
       { url: '/v1/models', auth: undefined },
+      { url: '/v1/messages/count_tokens', auth: undefined },
+      { url: '/v1/messages/count_tokens', auth: undefined },
       { url: '/v1/responses', auth: undefined },
       { url: '/v1/responses', auth: undefined },
       { url: '/v1/responses?cursor=1', auth: undefined },
     ])
+    assert.ok(logs.includes('gateway request: POST /messages/count_tokens -> /v1/messages/count_tokens'))
     assert.ok(logs.includes('gateway request: POST /responses -> /v1/responses'))
     assert.ok(logs.includes('gateway request: POST /v1/v1/responses?cursor=1 -> /v1/responses?cursor=1'))
   } finally {
