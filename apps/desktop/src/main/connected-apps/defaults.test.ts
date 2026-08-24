@@ -10,7 +10,7 @@ function names(profiles: readonly unknown[]): string[] {
   return profiles.map((profile) => (profile as Record<string, unknown>)['name'] as string);
 }
 
-const DEFAULT_NAMES = ['opencode', 'codex', 't3code', 'pi', 'gooeypi', 'crush', 'goose', 'hermes', 'zed'];
+const DEFAULT_NAMES = ['opencode', 'codex', 'hermes', 't3code', 'pi', 'gooeypi', 'crush', 'goose', 'zed'];
 
 test('default app profiles are config-patch entries with unique names', () => {
   assert.deepEqual(names(DEFAULT_APP_PROFILES), DEFAULT_NAMES);
@@ -86,6 +86,6 @@ test('mergeWithDefaultAppProfiles lets external profiles override same-name defa
     { name: 'opencode', displayName: 'OpenCode (private override)' },
   ];
   const merged = mergeWithDefaultAppProfiles(external);
-  assert.deepEqual(names(merged), ['acme', 'opencode', 'codex', 't3code', 'pi', 'gooeypi', 'crush', 'goose', 'hermes', 'zed']);
+  assert.deepEqual(names(merged), ['acme', 'opencode', 'codex', 'hermes', 't3code', 'pi', 'gooeypi', 'crush', 'goose', 'zed']);
   assert.equal((merged[1] as Record<string, unknown>)['displayName'], 'OpenCode (private override)');
 });
