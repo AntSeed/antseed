@@ -10,3 +10,7 @@ test('GooeyPi profiles auto-detect the GooeyPi desktop application', () => {
 test('Hermes profiles auto-detect the Hermes desktop application', () => {
   assert.equal(toolDesktopAppName('hermes'), 'Hermes');
 });
+
+test('Cursor conversations open the Cursor desktop application', () => {
+  assert.equal(toolDesktopAppName('cursor'), 'Cursor');
+});

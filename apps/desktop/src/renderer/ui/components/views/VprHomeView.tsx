@@ -34,7 +34,7 @@ import { useEverFunded } from '../../hooks/useEverFunded';
 import type { ViewName } from '../../types';
 import { OverlayScrollArea } from '../OverlayScrollArea';
 import { BottomNotice } from '../BottomNotice';
-import { BrandIcon } from '../brand/BrandIcon';
+import { BrandIcon, isThemeAwareAppBrand, resolveBrandKey } from '../brand/BrandIcon';
 import { VprModelRowList } from '../vpr/VprModelRows';
 import { hasSeenChats, rememberSeenChats, VprRecentChatsCard } from '../vpr/VprRecentChats';
 import { conversationRoutedPeerName } from '../../../modules/routing/conversations';
@@ -654,7 +654,7 @@ export function VprHomeView({ onSelectView }: Props) {
                   title={`Connect ${profile.displayName}`}
                 >
                   <span className={styles.toolIdentity}>
-                    {profile.iconDataUri
+                    {profile.iconDataUri && !isThemeAwareAppBrand(resolveBrandKey(profile.name, profile.displayName))
                       ? <img src={profile.iconDataUri} alt="" className={styles.appIcon} />
                       : <BrandIcon name={profile.name} hints={[profile.displayName]} size={20} />}
                     <span className={styles.toolLabel}>{profile.displayName}</span>

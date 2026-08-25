@@ -208,12 +208,25 @@ test('reload re-cleans snippets persisted by older extraction rules', async () =
           snippet: 'Generate a title for this conversation:',
           createdAt: Date.now(), lastActiveAt: Date.now(),
         },
+        {
+          tool: 'public-tunnel', sessionKey: 'old3',
+          snippet: 'OS Version: darwin 25.2.0 Shell: zsh Workspace Path: unknown Is directory a git…',
+          createdAt: Date.now(), lastActiveAt: Date.now(),
+        },
+        {
+          tool: 'codex-desktop', sessionKey: 'old4',
+          snippet: 'Here is a list of plugins that are available but not installed. - Airtable…',
+          createdAt: Date.now(), lastActiveAt: Date.now(),
+        },
       ],
     }), 'utf8')
     const store = new ConversationStore(dir)
     assert.equal(store.get('claude-code:old1')?.snippet, 'try to understand who reviews are from and more text')
     // Old title-request snippets are dropped so the next real turn names the chat.
     assert.equal(store.get('opencode:old2')?.snippet, '')
+    assert.equal(store.get('public-tunnel:old3'), null)
+    assert.equal(store.get('cursor:old3')?.snippet, '')
+    assert.equal(store.get('codex-desktop:old4')?.snippet, '')
     await store.flush()
   } finally {
     await rm(dir, { recursive: true, force: true })

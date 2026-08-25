@@ -36,5 +36,6 @@ export function toolDesktopAppName(tool: string): string | null {
   if (tool === 't3code') return 'T3 Code (Alpha)';
   if (tool === 'gooeypi') return 'GooeyPi';
   if (tool === 'hermes') return 'Hermes';
+  if (tool === 'cursor') return 'Cursor';
   return null;
 }

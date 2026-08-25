@@ -6,14 +6,7 @@ import type { ProcessManager } from '../runtime/process-manager.js';
 import { resolveBuyerProxyPort } from '../runtime/active-config.js';
 import { resolveConnectDataDir } from '../runtime/process-manager.js';
 import { loadPublicTunnelSettings, savePublicTunnelSettings, type TunnelProvider } from '../public-tunnel/store.js';
-
-type PublicTunnelStatus = {
-  configured: boolean;
-  configuredProviders: TunnelProvider[];
-  activeProvider: TunnelProvider | null;
-  running: boolean;
-  baseUrl: string | null;
-};
+import { createPublicTunnelLifecycle, type PublicTunnelStatus } from '../public-tunnel/lifecycle.js';
 
 const STATUS_ATTEMPTS = 60;
 const STATUS_INTERVAL_MS = 250;
@@ -27,16 +20,8 @@ function parseTunnelProvider(value: unknown): TunnelProvider | null {
   return null;
 }
 
-function providerName(provider: TunnelProvider): string {
-  return provider === 'ngrok' ? 'ngrok' : 'Cloudflare';
-}
-
 function providerTokenName(provider: TunnelProvider): string {
   return provider === 'ngrok' ? 'ngrok authtoken' : 'Cloudflare tunnel token';
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 async function readStatus(processManager: ProcessManager): Promise<PublicTunnelStatus> {
@@ -67,8 +52,30 @@ async function waitForBaseUrl(processManager: ProcessManager): Promise<PublicTun
   return readStatus(processManager);
 }
 
-export function registerPublicTunnelIpc(deps: { processManager: ProcessManager }): void {
+export function registerPublicTunnelIpc(deps: { processManager: ProcessManager }) {
   const { processManager } = deps;
+  const lifecycle = createPublicTunnelLifecycle({
+    loadSettings: loadPublicTunnelSettings,
+    saveSettings: savePublicTunnelSettings,
+    isRunning: () => processManager.getState().some((state) => state.mode === 'tunnel' && state.running),
+    startProcess: async ({ provider, buyerPort, tunnelToken, publicUrl, apiKey }) => {
+      await processManager.start({
+        mode: 'tunnel',
+        tunnelBuyerPort: buyerPort,
+        env: {
+          ANTSEED_TUNNEL_PROVIDER: provider,
+          ANTSEED_TUNNEL_TOKEN: tunnelToken,
+          CLOUDFLARED_TUNNEL_TOKEN: provider === 'cloudflare' ? tunnelToken : '',
+          NGROK_AUTHTOKEN: provider === 'ngrok' ? tunnelToken : '',
+          ANTSEED_TUNNEL_PUBLIC_URL: publicUrl,
+          ANTSEED_TUNNEL_API_KEY: apiKey,
+        },
+      });
+    },
+    stopProcess: () => processManager.stop('tunnel').then(() => undefined),
+    resolveBuyerPort: resolveBuyerProxyPort,
+    waitForReady: () => waitForBaseUrl(processManager),
+  });
   ipcMain.handle('public-tunnel:get-status', () => readStatus(processManager));
   ipcMain.handle('public-tunnel:configure', async (_event, input: unknown) => {
     if (!input || typeof input !== 'object') return { ok: false, error: 'Tunnel settings are required.' };
@@ -97,51 +104,19 @@ export function registerPublicTunnelIpc(deps: { processManager: ProcessManager }
       activeProvider: provider,
       providers: { ...existing?.providers, [provider]: { tunnelToken, publicUrl } },
       apiKey,
+      enabled: existing?.enabled ?? false,
     });
     return { ok: true, status: await readStatus(processManager) };
   });
   ipcMain.handle('public-tunnel:start', async (_event, input: unknown) => {
-    const settings = await loadPublicTunnelSettings();
     const raw = input && typeof input === 'object' ? input as Record<string, unknown> : {};
     const requestedProvider = parseTunnelProvider(raw.provider);
-    const provider = requestedProvider ?? settings?.activeProvider ?? 'cloudflare';
-    const providerSettings = settings?.providers[provider];
-    if (!settings || !providerSettings) {
-      return { ok: false, error: `Configure ${providerName(provider)} first.` };
-    }
-    try {
-      if (processManager.getState().some((state) => state.mode === 'tunnel' && state.running)) {
-        await processManager.stop('tunnel');
-      }
-      if (settings.activeProvider !== provider) {
-        await savePublicTunnelSettings({ ...settings, activeProvider: provider });
-      }
-      await processManager.start({
-        mode: 'tunnel',
-        tunnelBuyerPort: await resolveBuyerProxyPort(),
-        env: {
-          ANTSEED_TUNNEL_PROVIDER: provider,
-          ANTSEED_TUNNEL_TOKEN: providerSettings.tunnelToken,
-          CLOUDFLARED_TUNNEL_TOKEN: provider === 'cloudflare' ? providerSettings.tunnelToken : '',
-          NGROK_AUTHTOKEN: provider === 'ngrok' ? providerSettings.tunnelToken : '',
-          ANTSEED_TUNNEL_PUBLIC_URL: providerSettings.publicUrl,
-          ANTSEED_TUNNEL_API_KEY: settings.apiKey,
-        },
-      });
-      const status = await waitForBaseUrl(processManager);
-      if (status.baseUrl) return { ok: true, status };
-      return {
-        ok: false,
-        status,
-        error: `Tunnel exited before becoming ready. Check the runtime logs and ${providerTokenName(provider)}.`,
-      };
-    } catch (error) {
-      return { ok: false, error: errorMessage(error) };
-    }
+    return lifecycle.start(requestedProvider ?? undefined);
   });
   ipcMain.handle('public-tunnel:stop', async () => {
-    await processManager.stop('tunnel');
+    await lifecycle.stop();
     return { ok: true, status: await readStatus(processManager) };
   });
   ipcMain.handle('public-tunnel:get-api-key', async () => ({ apiKey: (await loadPublicTunnelSettings())?.apiKey ?? null }));
+  return { restoreAtLaunch: lifecycle.restore };
 }
