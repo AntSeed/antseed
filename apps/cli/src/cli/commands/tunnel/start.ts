@@ -59,6 +59,7 @@ function ngrokArgs(gatewayPort: number, publicUrl: URL | null): string[] {
     'http',
     `http://127.0.0.1:${gatewayPort}`,
     ...(publicUrl ? ['--url', publicUrl.origin] : []),
+    '--pooling-enabled',
     '--log', 'stdout', '--log-format', 'json', '--log-level', 'info',
   ]
 }
