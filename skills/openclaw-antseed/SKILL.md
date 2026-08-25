@@ -1,21 +1,21 @@
 ---
 name: openclaw-antseed
-description: "Connect OpenClaw to the AntSeed P2P AI network as a buyer. Use when: user asks to connect OpenClaw to AntSeed, route OpenClaw through AntSeed, set up AntSeed as a service provider for OpenClaw, or use P2P AI services in OpenClaw."
+description: "Connect OpenClaw to the AntSeed P2P AI network locally or through an authenticated public tunnel. Use when: user asks to connect OpenClaw to AntSeed, route OpenClaw through AntSeed, set up AntSeed as a service provider for OpenClaw, or use P2P AI services in OpenClaw."
 user-invocable: true
 metadata: { "openclaw": { "emoji": "\ud83c\udf31", "requires": { "bins": ["npm", "openclaw"] } } }
 ---
 
 # Connect OpenClaw to AntSeed P2P Network
 
-Set up AntSeed as a service provider for OpenClaw. This installs a local buyer proxy that connects to the AntSeed peer-to-peer network and routes LLM requests to available providers.
+Set up AntSeed as a service provider for OpenClaw. The agent can connect to a buyer proxy on the same machine or to the VPR's authenticated public endpoint.
 
 ## Architecture
 
 ```
-OpenClaw -> http://127.0.0.1:8377 (AntSeed buyer proxy) -> P2P network -> Provider node -> Upstream API
+OpenClaw -> local buyer proxy or HTTPS tunnel -> AntSeed P2P -> Provider node -> Upstream API
 ```
 
-The buyer proxy runs locally, discovers providers via DHT, negotiates payment channels automatically, and exposes an API-compatible HTTP endpoint.
+The buyer proxy discovers providers via DHT, negotiates payment channels automatically, and exposes an API-compatible HTTP endpoint. Never expose the local buyer port directly to the internet.
 
 ## Step 1: Install and initialize AntSeed
 
@@ -24,6 +24,8 @@ npm install -g @antseed/cli
 ```
 
 Verify: `antseed --version` (requires Node.js 20+).
+
+OpenClaw has its own, newer Node.js support policy. If `openclaw --version` rejects the runtime, install a Node version supported by the current OpenClaw release before continuing.
 
 ## Step 2: Set the identity
 
@@ -109,7 +111,32 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now antseed-buyer
 ```
 
-## Step 5: Configure OpenClaw service provider
+## Step 5: Choose the endpoint
+
+For OpenClaw running on the same machine as the buyer proxy:
+
+```bash
+export ANTSEED_BASE_URL="http://127.0.0.1:8377/v1"
+export ANTSEED_API_KEY="antseed-p2p"
+```
+
+The local buyer proxy accepts any non-empty placeholder key.
+
+For OpenClaw running elsewhere:
+
+1. Open **Agents** in the VPR.
+2. Under **Define your internet-accessible AntSeed endpoint**, configure and start ngrok or Cloudflare Tunnel.
+3. Copy the displayed **OpenAI base URL** and generated **API key**.
+4. Set them on the OpenClaw machine:
+
+```bash
+export ANTSEED_BASE_URL="https://your-endpoint.example/v1"
+export ANTSEED_API_KEY="antseed_your_generated_key"
+```
+
+The public endpoint requires the generated key as `Authorization: Bearer <API_KEY>`.
+
+## Step 6: Configure OpenClaw service provider
 
 ```bash
 cat ~/.openclaw/openclaw.json | python3 -c "
@@ -117,8 +144,9 @@ import sys, json
 cfg = json.load(sys.stdin)
 providers = cfg.setdefault('models', {}).setdefault('providers', {})
 providers['antseed'] = {
-    'baseUrl': 'http://127.0.0.1:8377',
-    'apiKey': 'antseed-p2p',
+    'baseUrl': '${ANTSEED_BASE_URL}',
+    'apiKey': '${ANTSEED_API_KEY}',
+    'authHeader': True,
     'api': 'anthropic-messages',
     'models': [{
         'id': 'SERVICE_ID_HERE',
@@ -133,36 +161,46 @@ json.dump(cfg, sys.stdout, indent=2)
 " > /tmp/oc_antseed.json && mv /tmp/oc_antseed.json ~/.openclaw/openclaw.json
 ```
 
-Replace `SERVICE_ID_HERE` with a model from the locally answered network catalog:
+Replace `SERVICE_ID_HERE` with a model from the VPR's network catalog:
 
 ```bash
-curl -s http://127.0.0.1:8377/v1/models | jq '.data[].id'
-curl -s 'http://127.0.0.1:8377/v1/models?type=text'
-curl -s http://127.0.0.1:8377/v1/models/<model-id>
+curl -s "$ANTSEED_BASE_URL/models" -H "Authorization: Bearer $ANTSEED_API_KEY" | jq '.data[].id'
+curl -s "$ANTSEED_BASE_URL/models?type=text" -H "Authorization: Bearer $ANTSEED_API_KEY"
+curl -s "$ANTSEED_BASE_URL/models/<model-id>" -H "Authorization: Bearer $ANTSEED_API_KEY"
 ```
 
 `antseed network browse` remains useful for a peer-oriented table of services and pricing.
 
 A request that names only a model selects the highest-ranked eligible offer under the shared Price + Trust preferences and can fail over on retryable peer failures. To force a specific seller instead, use `<peerId>@<service-id>` as the model id — explicit pins never fail over.
 
-Set as default:
+Set as default with OpenClaw's current model command:
 
 ```bash
-openclaw config set agents.defaults.model.primary "antseed/SERVICE_ID_HERE"
+openclaw models set "antseed/SERVICE_ID_HERE"
+openclaw gateway restart
 ```
 
-## Step 6: Verify
+## Step 7: Verify
 
 ```bash
-curl -s http://127.0.0.1:8377/v1/models
+curl -s "$ANTSEED_BASE_URL/models" \
+  -H "Authorization: Bearer $ANTSEED_API_KEY"
 ```
 
 If the proxy returns models from across the network, the connection is working. The list is independent of any pinned peer; each model's `peers` array is ordered by the buyer's current routing preferences.
 
 ## Notes
 
-- The API key value doesn't matter — set it to any non-empty string
+- A local connection accepts any non-empty placeholder API key; a public endpoint requires the generated `antseed_...` key
+- `authHeader: true` is required for the public endpoint so OpenClaw sends `Authorization: Bearer <API_KEY>` instead of the Anthropic-native `x-api-key` header
 - Streaming is supported (SSE)
 - Payment channels are negotiated automatically on first request
-- The buyer wallet needs USDC deposited (`antseed buyer deposit`) and ETH for gas on Base
+- The buyer wallet needs USDC deposited with `antseed buyer deposit`; it does not need ETH because sellers submit the on-chain transactions
 - Extra buyer config is optional; the only required pieces are identity plus whatever payment/deposit setup the user needs
+
+## References
+
+- AntSeed integration page: `https://antseed.com/integrations/openclaw/`
+- AntSeed public tunnel guide: `https://antseed.com/docs/guides/public-tunnels`
+- OpenClaw model-provider documentation: `https://docs.openclaw.ai/concepts/model-providers`
+- OpenClaw source: `https://github.com/openclaw/openclaw`

@@ -584,17 +584,27 @@ Deposits reserved:           0 USDC → 1 USDC`,
     oneLiner: 'Open-source autonomous agent runtime - register AntSeed as a custom provider in `openclaw.json`.',
     description: [
       '<strong>What OpenClaw is.</strong> OpenClaw is an open-source agent runtime for autonomous, long-running tasks (research, coding, web automation). It loads its provider catalog from <code>~/.openclaw/openclaw.json</code> - each entry is an HTTP endpoint plus a wire protocol (<code>anthropic-messages</code>, <code>openai-chat</code>, etc.) and a list of models.',
-      '<strong>How AntSeed plugs in.</strong> Add a provider entry called <code>antseed</code> that points at <code>http://127.0.0.1:8377</code> with <code>api: "anthropic-messages"</code>. Use the special model id <code>antseed</code> to follow the current VPR model picker, or list concrete ids from <code>GET /v1/models</code>. OpenClaw surfaces them as <code>antseed/antseed</code> and <code>antseed/&lt;service-id&gt;</code>.',
+      '<strong>How AntSeed plugs in.</strong> Add a provider entry called <code>antseed</code> with <code>api: "anthropic-messages"</code> and <code>authHeader: true</code>. Use <code>http://127.0.0.1:8377/v1</code> when OpenClaw runs beside the VPR. When it runs elsewhere, expand <strong>VPR → Agents → Define your internet-accessible AntSeed endpoint</strong>, start ngrok or Cloudflare, and copy the displayed URL and API key.',
       '<strong>Why a config entry instead of env vars.</strong> OpenClaw runs many providers in parallel (one per task, sometimes one per agent). A single base-URL override would force every agent through AntSeed; a named provider lets you mix AntSeed with hosted Anthropic, OpenAI, or local models on a per-agent basis.',
     ],
     install: [
       {
         label: 'Install OpenClaw',
         command: 'npm install -g openclaw',
-        note: 'Verify with `openclaw --version`. The config file lives at `~/.openclaw/openclaw.json` and is created on first launch.',
+        note:
+          'Verify with `openclaw --version`. OpenClaw has a newer Node.js support policy than AntSeed, so use a Node version accepted by the current OpenClaw release. The config file lives at `~/.openclaw/openclaw.json` and is created on first launch.',
       },
     ],
     configure: [
+      {
+        kind: 'env',
+        vars: {
+          ANTSEED_BASE_URL: 'http://127.0.0.1:8377/v1',
+          ANTSEED_API_KEY: 'antseed-p2p',
+        },
+        note:
+          'Local setup: keep these defaults. Remote setup: in VPR → Agents, expand “Define your internet-accessible AntSeed endpoint,” start ngrok or Cloudflare, then replace both values with the displayed URL and generated `antseed_...` key.',
+      },
       {
         kind: 'file',
         path: '~/.openclaw/openclaw.json  (merge into the existing `models.providers` object)',
@@ -603,8 +613,9 @@ Deposits reserved:           0 USDC → 1 USDC`,
   "models": {
     "providers": {
       "antseed": {
-        "baseUrl": "http://127.0.0.1:${ANT_PORT}",
-        "apiKey": "antseed-p2p",
+        "baseUrl": "\${ANTSEED_BASE_URL}",
+        "apiKey": "\${ANTSEED_API_KEY}",
+        "authHeader": true,
         "api": "anthropic-messages",
         "models": [
           {
@@ -641,18 +652,18 @@ Deposits reserved:           0 USDC → 1 USDC`,
         kind: 'code',
         language: 'bash',
         snippet: `# Follow the current VPR model picker for new agents:
-openclaw config set agents.defaults.model.primary "antseed/antseed"`,
+openclaw models set "antseed/antseed"`,
       },
     ],
     modelHints: {
       suggested: ['kimi-k2.6', 'deepseek-v4-flash', 'minimax-m2.7', 'gpt-oss-120b'],
       note:
-        'The special `antseed` id follows the current VPR model picker. Every other `id` under `models[]` must match a model id from `curl http://127.0.0.1:8377/v1/models`. `apiKey` is required by OpenClaw\'s validator but ignored by the proxy - any non-empty string works. Route to a specific peer by prefixing its advertised service id: `<peerId>@<service-id>`.',
+        'The special `antseed` id follows the current VPR model picker. Every other `id` under `models[]` must match a model id from `GET /v1/models`. Keep `authHeader: true`: OpenClaw otherwise uses Anthropic-native authentication, while the public AntSeed gateway requires `Authorization: Bearer <API_KEY>`. Route to a specific peer with `<peerId>@<service-id>`.',
     },
     test: [
       {
         label: 'Confirm the proxy advertises the model ids you put in config',
-        command: 'curl -s http://127.0.0.1:8377/v1/models | jq \'.data[].id\'',
+        command: 'curl -s "$ANTSEED_BASE_URL/models" -H "Authorization: Bearer $ANTSEED_API_KEY" | jq \'.data[].id\'',
         outputLabel: 'Example response',
         output: `"deepseek-v4-flash"
 "gpt-oss-120b"
@@ -662,14 +673,14 @@ openclaw config set agents.defaults.model.primary "antseed/antseed"`,
           'If a model id you listed in `openclaw.json` doesn\'t appear here, no peer on the network currently serves it. Remove the entry or pick another model from the list.',
       },
       {
-        label: 'Reload OpenClaw and check the provider list',
-        command: 'openclaw config reload && openclaw providers list',
+        label: 'Check the configured model catalog',
+        command: 'openclaw models list',
         note:
-          'Or restart OpenClaw. You should see `antseed` with the model count you configured.',
+          'Run `openclaw gateway restart` after editing the config. You should see the `antseed` provider and its configured models.',
       },
       {
         label: 'Run an agent against AntSeed',
-        command: 'openclaw run "Summarize the README in this repo" --model antseed/kimi-k2.6',
+        command: 'openclaw agent exec "Summarize the README in this repo" --model antseed/kimi-k2.6',
       },
     ],
     troubleshooting: [
@@ -681,7 +692,7 @@ openclaw config set agents.defaults.model.primary "antseed/antseed"`,
       {
         problem: 'OpenClaw lists `antseed/<id>` but every call returns `502 model_not_found`',
         fix:
-          'No policy-allowed peer on the network currently advertises that model. Check `curl http://127.0.0.1:8377/v1/models` and update the `models[]` entry, or pick another model.',
+          'No policy-allowed peer currently advertises that model. Check `GET $ANTSEED_BASE_URL/models` with the bearer key and update `models[]`, or pick another model.',
       },
       {
         problem: 'Streaming errors on long-running agents',
@@ -693,16 +704,24 @@ openclaw config set agents.defaults.model.primary "antseed/antseed"`,
         fix:
           'AntSeed opens a payment channel on the first request to a new peer (one on-chain transaction, ~5–15s on Base). Subsequent requests reuse the channel. Pre-warm by running a quick `curl` before launching the agent.',
       },
+      {
+        problem: 'OpenClaw runs remotely and cannot reach `127.0.0.1:8377`',
+        fix:
+          'Open VPR → Agents, expand “Define your internet-accessible AntSeed endpoint,” and start ngrok or Cloudflare. Put the displayed `/v1` URL in `ANTSEED_BASE_URL`, the generated key in `ANTSEED_API_KEY`, and keep `authHeader: true`. Do not expose port 8377 directly.',
+      },
     ],
     links: [
       { label: 'OpenClaw repo', href: 'https://github.com/openclaw/openclaw' },
+      { label: 'OpenClaw model-provider docs', href: 'https://docs.openclaw.ai/concepts/model-providers' },
       {
         label: 'AntSeed skill: openclaw-antseed (full walkthrough)',
         href: 'https://github.com/AntSeed/antseed/tree/main/skills/openclaw-antseed',
       },
+      { label: 'AntSeed Agents guide', href: '/docs/guides/agents' },
+      { label: 'AntSeed Public HTTPS Tunnels guide', href: '/docs/guides/public-tunnels' },
     ],
     agentSummary:
-      'Edit ~/.openclaw/openclaw.json: under models.providers, add an `antseed` entry with baseUrl=http://127.0.0.1:8377, api="anthropic-messages", apiKey="antseed-p2p", and model id `antseed` to follow the VPR picker. Concrete ids from GET /v1/models also work. Set the default with `openclaw config set agents.defaults.model.primary "antseed/antseed"`, then reload.',
+      'Set ANTSEED_BASE_URL and ANTSEED_API_KEY to the local VPR values or the public URL/key from VPR → Agents. In models.providers.antseed use api="anthropic-messages" and authHeader=true, add model `antseed`, run `openclaw models set "antseed/antseed"`, then `openclaw gateway restart`.',
   },
   {
     slug: 'hermes',
@@ -716,8 +735,8 @@ openclaw config set agents.defaults.model.primary "antseed/antseed"`,
     headline: 'Run Hermes on any model',
     oneLiner: "Nous Research's agent framework - register AntSeed as a custom provider in `config.yaml`.",
     description: [
-      '<strong>What Hermes is.</strong> Hermes is the agent framework from <a href="https://nousresearch.com/">Nous Research</a> (successor to OpenClaw\'s lineage). It\'s designed for autonomous, multi-step workflows - research agents, coding agents, swarms - and reads its model catalog from <code>~/.hermes/config.yaml</code>.',
-      '<strong>How AntSeed plugs in.</strong> Add an entry under <code>custom_providers</code> with <code>base_url: http://127.0.0.1:8377/v1</code>, <code>api_mode: chat_completions</code>, and a list of <code>models</code>. Use <code>antseed</code> to follow the current VPR picker, or add concrete ids from <code>GET /v1/models</code>.',
+      '<strong>What Hermes is.</strong> Hermes Agent is the open-source agent framework from <a href="https://nousresearch.com/">Nous Research</a>. It is designed for autonomous, multi-step workflows and reads provider configuration from <code>~/.hermes/config.yaml</code>.',
+      '<strong>How AntSeed plugs in.</strong> Current Hermes releases store named custom endpoints under the <code>providers:</code> mapping; <code>custom_providers:</code> is legacy and auto-migrated. Use the local VPR URL when Hermes runs beside it, or copy the authenticated URL and API key from <strong>VPR → Agents → Define your internet-accessible AntSeed endpoint</strong> for a remote Hermes host.',
       '<strong>One Hermes-specific gotcha.</strong> Some peers serve GPT-style models via the <code>openai-responses</code> protocol, which <em>requires</em> streaming. Hermes\' auxiliary calls (title generation, context compression) are non-streaming and will fail against those models with <code>HTTP 400: Stream must be set to true</code>. Pin auxiliary slots to a <code>chat_completions</code> model (config example below).',
     ],
     install: [
@@ -730,25 +749,42 @@ openclaw config set agents.defaults.model.primary "antseed/antseed"`,
     ],
     configure: [
       {
+        kind: 'env',
+        vars: {
+          ANTSEED_BASE_URL: 'http://127.0.0.1:8377/v1',
+          ANTSEED_API_KEY: 'antseed-p2p',
+        },
+        note:
+          'Local setup: keep these defaults. Remote setup: start ngrok or Cloudflare from VPR → Agents and replace both values with the displayed public URL and generated `antseed_...` key.',
+      },
+      {
         kind: 'file',
         path: '~/.hermes/config.yaml  (merge into your existing config)',
         language: 'yaml',
         snippet: `model:
   default: antseed
   provider: antseed
+  base_url: ""
+  api_mode: chat_completions
 
-custom_providers:
-  - name: antseed
-    base_url: http://127.0.0.1:${ANT_PORT}/v1
-    api_key: antseed-p2p
-    api_mode: chat_completions
+providers:
+  antseed:
+    name: AntSeed
+    api: \${ANTSEED_BASE_URL}
+    api_key: \${ANTSEED_API_KEY}
+    transport: chat_completions
+    extra_headers:
+      originator: hermes
+    default_model: antseed
     models:
-      - antseed
-      - deepseek-v4-flash
-      - kimi-k2.6
-      - glm-5
-      - gpt-oss-120b
-      - minimax-m2.7
+      antseed:
+        context_length: 200000
+      deepseek-v4-flash:
+        context_length: 128000
+      kimi-k2.6:
+        context_length: 256000
+      minimax-m2.7:
+        context_length: 200000
 
 # Pin auxiliary calls to a chat_completions model so non-streaming
 # requests (title generation, compression) don't break against
@@ -765,12 +801,12 @@ auxiliary:
     modelHints: {
       suggested: ['deepseek-v4-flash', 'kimi-k2.6', 'minimax-m2.7', 'gpt-oss-120b'],
       note:
-        'The special `antseed` id follows the current VPR model picker. Other ids listed under `models:` should come from `curl http://127.0.0.1:8377/v1/models`. `model.provider: antseed` selects the AntSeed integration, not a seller. Route to a specific peer by prefixing its advertised service id: `<peerId>@<service-id>`.',
+        'The special `antseed` id follows the current VPR model picker. Current Hermes expects `providers.<name>.models` as a mapping, though it still migrates older lists. A local connection accepts any non-empty placeholder `api_key`; a public endpoint requires the generated `antseed_...` key from VPR → Agents.',
     },
     test: [
       {
         label: 'Confirm the proxy advertises the same ids your config references',
-        command: 'curl -s http://127.0.0.1:8377/v1/models | jq \'.data[].id\'',
+        command: 'curl -s "$ANTSEED_BASE_URL/models" -H "Authorization: Bearer $ANTSEED_API_KEY" | jq \'.data[].id\'',
         outputLabel: 'Example response',
         output: `"deepseek-v4-flash"
 "glm-5"
@@ -804,7 +840,7 @@ auxiliary:
       {
         problem: 'Hermes runs on a remote host and can\'t reach `127.0.0.1:8377`',
         fix:
-          'Either run the buyer proxy on the same host as Hermes (recommended - keeps the hot signing key local), or expose the proxy via SSH tunnel: `ssh -N -L 127.0.0.1:8377:127.0.0.1:8377 user@hermes-host`. Do not bind the buyer proxy to a public interface.',
+          'Open VPR → Agents, expand “Define your internet-accessible AntSeed endpoint,” and start ngrok or Cloudflare. Put the displayed `/v1` URL in `ANTSEED_BASE_URL` and the generated key in `ANTSEED_API_KEY`; Hermes sends `api_key` as a bearer token. Do not expose port 8377 directly.',
       },
       {
         problem: 'Want to swap the routed model without restarting AntSeed',
@@ -814,13 +850,16 @@ auxiliary:
     ],
     links: [
       { label: 'Hermes Agent (Nous Research)', href: 'https://github.com/NousResearch/hermes-agent' },
+      { label: 'Hermes AI-provider docs', href: 'https://hermes-agent.nousresearch.com/docs/integrations/providers' },
       {
         label: 'AntSeed skill: hermes-antseed (full walkthrough including systemd, remote hosts, funding)',
         href: 'https://github.com/AntSeed/antseed/tree/main/skills/hermes-antseed',
       },
+      { label: 'AntSeed Agents guide', href: '/docs/guides/agents' },
+      { label: 'AntSeed Public HTTPS Tunnels guide', href: '/docs/guides/public-tunnels' },
     ],
     agentSummary:
-      'Edit ~/.hermes/config.yaml: add a `custom_providers` entry named `antseed` with base_url=http://127.0.0.1:8377/v1, api_mode=chat_completions, api_key="antseed-p2p", and a `models:` list whose ids match model ids from GET /v1/models. Set `model.default` to one of those ids and `model.provider: antseed`. Set `auxiliary.title_generation.model` and `auxiliary.compression.model` to a chat_completions model to avoid streaming errors against openai-responses peers.',
+      'Set ANTSEED_BASE_URL and ANTSEED_API_KEY to the local VPR values or the public URL/key from VPR → Agents. In ~/.hermes/config.yaml add providers.antseed with transport=chat_completions, set model.provider and model.default to antseed, and keep models as a mapping containing the `antseed` VPR alias.',
   },
 
   /* ---------------- (Additional frameworks) ---------------- */

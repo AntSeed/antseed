@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Moon02Icon, Sun02Icon, Tick02Icon } from '@hugeicons/core-free-icons';
+import { GlobalIcon, Moon02Icon, Sun02Icon, Tick02Icon } from '@hugeicons/core-free-icons';
 import { routesForSelectedModel } from '../../../modules/catalog/view-models';
 import { peerAccessSummaryLabel } from '../../../modules/routing/peer-access';
 import { buildVprPeerOptions } from '../../../modules/routing/tools';
@@ -10,12 +10,14 @@ import { useActions } from '../../hooks/useActions';
 import { activeThemeMode, applyThemeMode, type ThemeMode } from '../../lib/theme';
 import { formatUsdShort, VprCard, VprPage, VprSettingRow, VprSlider, VprToggle } from '../vpr/VprKit';
 import { VprPeerAccessDialog } from './VprPeerAccessDialog';
+import { usePublicEndpointModal } from '../tunnels/PublicEndpointModal';
 import styles from './VprPreferencesView.module.scss';
 
 type Props = { onSelectView?: (view: import('../../types').ViewName) => void };
 
 export function VprPreferencesView({ onSelectView }: Props) {
   const actions = useActions();
+  const { status: tunnelStatus, openPublicEndpointModal } = usePublicEndpointModal();
   const snap = useUiSelector((state) => ({
     preferences: state.vprRoutingPreferences,
     selection: state.vprRouteSelection,
@@ -179,6 +181,22 @@ export function VprPreferencesView({ onSelectView }: Props) {
                   onChange={(next) => actions.setVprFloatShowRoutedPeer?.(next)}
                   ariaLabel="Show routed peer"
                 />
+              )}
+            />
+          </VprCard>
+        </div>
+
+        <div className={styles.appearanceSection}>
+          <span className={styles.sectionLabel}>Connectivity</span>
+          <VprCard className={styles.card}>
+            <VprSettingRow
+              title="Internet-accessible endpoint"
+              hint={tunnelStatus?.running ? 'Running and ready for Cursor, agents, and hosted clients.' : 'Configure an authenticated public URL for remote apps and agents.'}
+              control={(
+                <button type="button" className={styles.accessManage} onClick={openPublicEndpointModal}>
+                  <HugeiconsIcon icon={GlobalIcon} size={13} strokeWidth={1.8} />
+                  {tunnelStatus?.running ? 'Manage' : 'Set up'}
+                </button>
               )}
             />
           </VprCard>

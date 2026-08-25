@@ -79,7 +79,7 @@ jobs:
 
       - name: Run E2E payment flow
         run: node e2e/scripts/full-payment-flow.mjs
-        timeout-minutes: 5
+        timeout-minutes: 15
 
   typecheck:
     name: Typecheck

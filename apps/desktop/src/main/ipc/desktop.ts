@@ -75,6 +75,13 @@ export function registerDesktopIpc(): void {
   ipcMain.handle('desktop:open-tool', async (_event, toolName: string) => {
     try {
       const key = typeof toolName === 'string' ? toolName : '';
+      if (key === 'cursor') {
+        const target = namedAppTarget('Cursor');
+        if (!target) return { ok: false, error: 'Could not find Cursor on this device.' };
+        const result = launchAppTarget(target);
+        if (result.ok) await waitForAppTarget(target);
+        return result;
+      }
       const profile = allSystemProxyProfiles().find((item) => item.name === key || item.toolName === key);
       if (!profile) {
         return { ok: false, error: 'Unknown tool.' };

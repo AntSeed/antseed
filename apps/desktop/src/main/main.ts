@@ -72,6 +72,7 @@ import { registerPaymentsIpc } from './ipc/payments.js';
 import { registerRuntimeIpc } from './ipc/runtime.js';
 import { registerSystemProxyIpc } from './ipc/system-proxy.js';
 import { registerTelegramIpc } from './ipc/telegram.js';
+import { registerPublicTunnelIpc } from './ipc/public-tunnel.js';
 import {
   effectiveLaunchTarget,
 } from './connected-apps/profile-targets.js';
@@ -267,6 +268,7 @@ registerDesktopIpc();
 registerAppIpc();
 registerFloatIpc();
 registerSystemProxyIpc({ processManager });
+registerPublicTunnelIpc({ processManager });
 registerRuntimeIpc({
   processManager,
   logBuffer,

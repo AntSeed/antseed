@@ -36,9 +36,10 @@ describe('view registry', () => {
 
   it('derives the nav rail from registry metadata in slide order', () => {
     expect(navViews('main').map((entry) => entry.view)).toEqual(
-      ['home', 'explore', 'tools', 'preferences', 'chat', 'help'] satisfies ViewName[],
+      ['home', 'explore', 'tools', 'chat', 'tunnels', 'preferences', 'help'] satisfies ViewName[],
     );
     expect(navViews('bottom').map((entry) => entry.view)).toEqual(['credits'] satisfies ViewName[]);
+    expect(getViewRegistryEntry('tunnels').nav?.label).toBe('Agents');
     for (const entry of navViews('main')) {
       expect(entry.nav.label).toBeTruthy();
       expect(entry.nav.icon).toBeTruthy();
@@ -49,7 +50,7 @@ describe('view registry', () => {
     expect(viewsForPreload('eager')).toEqual(
       ['home', 'explore', 'tools', 'credits', 'chat'] satisfies ViewName[],
     );
-    expect(viewsForPreload('idle')).toEqual(['model', 'preferences', 'deposit', 'activity', 'rewards', 'help'] satisfies ViewName[]);
+    expect(viewsForPreload('idle')).toEqual(['model', 'tunnels', 'preferences', 'deposit', 'activity', 'rewards', 'help'] satisfies ViewName[]);
   });
 
   it('assigns every view a slide position', () => {

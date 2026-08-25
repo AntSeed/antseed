@@ -9,6 +9,7 @@ import { ChatListPanel } from './ChatListPanel';
 import { DepositProgressBanner } from './DepositProgressBanner';
 import { NetworkAlertBanner } from './NetworkAlertBanner';
 import { UpdateBanner } from './UpdateBanner';
+import { PublicEndpointModalProvider } from './tunnels/PublicEndpointModal';
 import { VprNavContext } from './vpr/VprNavContext';
 import styles from './VprShell.module.scss';
 
@@ -19,6 +20,7 @@ const VIEWS_WITH_HEADER_CREDITS: ReadonlySet<ViewName> = new Set([
   'explore',
   'model',
   'tools',
+  'tunnels',
   'chats',
   'credits',
   'deposit',
@@ -69,7 +71,8 @@ export function VprShell({ activeView, onSelectView, onNavigateBack, children }:
   );
 
   return (
-    <div className={`${styles.shell}${chatPanelVisible ? ` ${styles.shellWithPanel}` : ''}`}>
+    <PublicEndpointModalProvider>
+      <div className={`${styles.shell}${chatPanelVisible ? ` ${styles.shellWithPanel}` : ''}`}>
       {/* Window-drag handle: the hidden-inset title bar has no native drag
           region, so this strip provides one. pointer-events: none keeps web
           clicks working; interactive elements overlapping it opt out with
@@ -162,6 +165,7 @@ export function VprShell({ activeView, onSelectView, onNavigateBack, children }:
         <span className={styles.statusSep} aria-hidden="true">|</span>
         <span className={styles.statusItem}>v{appVersion}</span>
       </footer>
-    </div>
+      </div>
+    </PublicEndpointModalProvider>
   );
 }
