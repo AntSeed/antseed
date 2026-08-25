@@ -49,8 +49,12 @@ function useScrollState() {
  * is covered without touching individual call sites.
  *
  * Emits:
- *   download_vpr   — a link to our GitHub releases, on viewports wide enough
- *                    to actually download (the desktop conversion event)
+ *   download_vpr   — a download link (our download proxy on
+ *                    download.antseed.com, or the GitHub releases fallback),
+ *                    on viewports wide enough to actually download (the
+ *                    desktop conversion event). The proxy then reports
+ *                    download started/completed/aborted server-side, so this
+ *                    click event is the top of that funnel.
  *   get_started    — the mobile funnel entry: a /get-started link, or a
  *                    download link tapped on a phone viewport, where
  *                    useMobileGetStarted reroutes to /get-started instead

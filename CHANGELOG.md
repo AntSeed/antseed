@@ -6,6 +6,10 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ## Unreleased
 
+### Added
+
+- Desktop installer downloads from the website now go through `download.antseed.com` (a new Cloudflare Worker, `apps/download-proxy`) instead of linking GitHub release assets directly. The proxy resolves the latest release server-side — so download buttons have a direct per-platform URL without any client-side GitHub API call — streams the installer, and reports download started/completed/aborted telemetry to GA4 alongside the existing `download_vpr` click event, giving full click → download-finished funnel visibility. Website-driven downloads are now also cleanly separated from electron-updater traffic, which keeps fetching from GitHub directly. Unresolvable requests (unknown platform, partial releases) fall back to the GitHub releases page as before.
+
 ### Fixed
 
 - Website download buttons no longer send first-time visitors to GitHub before device detection finishes. Early clicks now show a spinner in the button while the matching installer resolves, with the releases page used only as a fallback.

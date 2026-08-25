@@ -1,12 +1,24 @@
-import {useEffect, useMemo, useState} from 'react';
+import {useEffect, useState} from 'react';
 import ExecutionEnvironment from '@docusaurus/ExecutionEnvironment';
 
 /**
- * Resolves the best AntSeed Desktop download URL for the visitor's OS + arch
- * by fetching the latest GitHub Release and matching assets against the
- * detected platform. Falls back to the releases page when detection fails or
- * the matching asset isn't published yet (e.g. Windows during a partial
- * release).
+ * Resolves the AntSeed Desktop download URL for the visitor's OS + arch.
+ *
+ * Download CTAs point at our download proxy (a Cloudflare Worker on
+ * download.antseed.com, see apps/download-proxy) instead of GitHub release
+ * assets directly:
+ *   - the proxy resolves "latest release" server-side, so the client needs no
+ *     GitHub API call and the CTA has a direct href as soon as the platform
+ *     is detected;
+ *   - the proxy streams the installer and reports download started /
+ *     completed / aborted telemetry, which a plain link click can never
+ *     provide;
+ *   - website downloads are separated from electron-updater traffic (the
+ *     auto-updater keeps fetching from GitHub directly).
+ *
+ * The proxy 302s to the GitHub releases page when no matching installer is
+ * published (e.g. Windows during a partial release), so these URLs are safe
+ * to link unconditionally.
  *
  * Detection:
  *   - Mac arm64 / Mac x64: via `navigator.userAgentData.getHighEntropyValues`
@@ -16,48 +28,38 @@ import ExecutionEnvironment from '@docusaurus/ExecutionEnvironment';
  *     relied on.
  *   - Windows arm64 / Windows x64: same high-entropy API. Windows UA also
  *     lies about arch by default.
- *   - Linux arm64 / x64: same high-entropy API; matches the AppImage
+ *   - Linux arm64 / x64: same high-entropy API; the proxy serves the AppImage
  *     (distro-agnostic — deb users can pick theirs on the releases page).
- *   - Unknown (mobile, etc.): no installer is matched; the CTA links to
- *     the releases page where the user picks.
- *
- * Asset matching is done by regex against `asset.name` rather than URL
- * construction so the hook self-corrects when electron-builder changes its
- * artifact naming.
+ *   - Unknown (mobile, etc.): the CTA links to the releases page where the
+ *     user picks.
  */
 
-const GH_API_LATEST = 'https://api.github.com/repos/AntSeed/antseed/releases/latest';
+export const DOWNLOAD_BASE_URL = 'https://download.antseed.com';
 export const RELEASES_URL = 'https://github.com/AntSeed/antseed/releases/latest';
 
 export type DesktopPlatform = 'mac' | 'win' | 'linux' | 'unknown';
 export type DesktopArch = 'arm64' | 'x64';
-
-interface GitHubAsset {
-  name: string;
-  browser_download_url: string;
-}
-
-interface GitHubRelease {
-  tag_name?: string;
-  assets?: GitHubAsset[];
-}
 
 export interface DesktopDownload {
   /** Detected OS — used to pick label text. */
   platform: DesktopPlatform;
   /** Detected CPU arch. Unknown arch defaults to `arm64` for Mac, `x64` for Windows. */
   arch: DesktopArch;
-  /** Direct download URL for the matched installer, or `null` if none was found. */
+  /** Direct download URL through the proxy, or `null` when the OS is unknown. */
   url: string | null;
   /**
-   * URL a CTA should link to: prefers the direct installer URL, falls back
-   * to the releases page so users always have somewhere to go.
+   * URL a CTA should link to: prefers the proxy URL, falls back to the
+   * releases page so users always have somewhere to go.
    */
   href: string;
   /** Human label, e.g. "Download for Mac" / "Download for Windows" / "Download". */
   label: string;
-  /** Resolved release tag from the API, or null while loading. */
-  tag: string | null;
+}
+
+/** Proxy download URL for a detected platform, or null for unknown ones. */
+export function downloadUrlFor(platform: DesktopPlatform, arch: DesktopArch): string | null {
+  if (platform === 'unknown') return null;
+  return `${DOWNLOAD_BASE_URL}/vpr/${platform}-${arch}`;
 }
 
 function detectPlatform(): DesktopPlatform {
@@ -96,56 +98,6 @@ async function detectArch(platform: DesktopPlatform): Promise<DesktopArch> {
   }
 }
 
-function matchAsset(
-  assets: GitHubAsset[],
-  platform: DesktopPlatform,
-  arch: DesktopArch,
-): GitHubAsset | null {
-  const isBlockmap = (n: string) => /\.blockmap$/i.test(n);
-  const hasArm64 = (n: string) => /arm64/i.test(n);
-
-  if (platform === 'mac') {
-    return assets.find(a => {
-      if (isBlockmap(a.name)) return false;
-      if (!/\.dmg$/i.test(a.name)) return false;
-      return arch === 'arm64' ? hasArm64(a.name) : !hasArm64(a.name);
-    }) ?? null;
-  }
-
-  if (platform === 'win') {
-    return assets.find(a => {
-      if (isBlockmap(a.name)) return false;
-      if (!/\.exe$/i.test(a.name)) return false;
-      return arch === 'arm64' ? hasArm64(a.name) : !hasArm64(a.name);
-    }) ?? null;
-  }
-
-  if (platform === 'linux') {
-    // AppImage runs on any distro; .deb stays a releases-page choice.
-    return assets.find(a => {
-      if (isBlockmap(a.name)) return false;
-      if (!/\.AppImage$/i.test(a.name)) return false;
-      return arch === 'arm64' ? hasArm64(a.name) : !hasArm64(a.name);
-    }) ?? null;
-  }
-
-  return null;
-}
-
-// The hook is mounted by several CTAs at once (hero, pricing, footer CTA, and
-// the navbar item on every page), so the release lookup is memoized at module
-// level — one GitHub API request per full page load, shared by all instances.
-// A failed fetch caches `null` rather than retrying: if GitHub is down or
-// rate-limiting, hammering it on every SPA navigation only makes it worse.
-let latestReleasePromise: Promise<GitHubRelease | null> | null = null;
-
-function fetchLatestRelease(): Promise<GitHubRelease | null> {
-  latestReleasePromise ??= fetch(GH_API_LATEST)
-    .then(r => (r.ok ? (r.json() as Promise<GitHubRelease>) : null))
-    .catch(() => null);
-  return latestReleasePromise;
-}
-
 function labelFor(platform: DesktopPlatform): string {
   switch (platform) {
     case 'mac':
@@ -163,10 +115,7 @@ function labelFor(platform: DesktopPlatform): string {
 export async function resolveLatestDesktopDownload(): Promise<string | null> {
   const platform = detectPlatform();
   if (platform === 'unknown') return null;
-  const [arch, release] = await Promise.all([detectArch(platform), fetchLatestRelease()]);
-  const assets = Array.isArray(release?.assets) ? release.assets : [];
-  const matched = assets.length > 0 ? matchAsset(assets, platform, arch) : null;
-  return matched?.browser_download_url ?? null;
+  return downloadUrlFor(platform, await detectArch(platform));
 }
 
 /**
@@ -181,8 +130,6 @@ export function useLatestDesktopDownload(): DesktopDownload {
   // real values inside an effect after mount.
   const [platform, setPlatform] = useState<DesktopPlatform>('unknown');
   const [arch, setArch] = useState<DesktopArch>('x64');
-  const [tag, setTag] = useState<string | null>(null);
-  const [assets, setAssets] = useState<GitHubAsset[]>([]);
 
   useEffect(() => {
     if (!ExecutionEnvironment.canUseDOM) return;
@@ -196,32 +143,12 @@ export function useLatestDesktopDownload(): DesktopDownload {
     return () => { cancelled = true; };
   }, []);
 
-  useEffect(() => {
-    // Only fetch on platforms we actually ship installers for. Avoids burning
-    // GitHub's unauthenticated API rate limit for unknown (mobile, etc.)
-    // visitors who will be sent to the releases page anyway.
-    if (platform === 'unknown') return;
-    let cancelled = false;
-    fetchLatestRelease().then((data: GitHubRelease | null) => {
-      if (cancelled || !data) return;
-      if (data.tag_name) setTag(data.tag_name);
-      if (Array.isArray(data.assets)) setAssets(data.assets);
-    });
-    return () => { cancelled = true; };
-  }, [platform]);
-
-  const matched = useMemo(
-    () => (assets.length > 0 ? matchAsset(assets, platform, arch) : null),
-    [assets, platform, arch],
-  );
-
-  const url = matched?.browser_download_url ?? null;
+  const url = downloadUrlFor(platform, arch);
   return {
     platform,
     arch,
     url,
     href: url ?? RELEASES_URL,
     label: labelFor(platform),
-    tag,
   };
 }
