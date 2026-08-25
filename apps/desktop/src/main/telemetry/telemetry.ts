@@ -91,6 +91,7 @@ export type TelemetryContext = {
 };
 
 export type TelemetryService = {
+  readonly available: boolean;
   readonly enabled: boolean;
   context: () => TelemetryContext;
   /** Emits app_first_opened (once) and app_started; handles crash recovery. */
@@ -197,7 +198,8 @@ export async function createTelemetryService(
   let hasEmittedFirstModelShown = false;
   let hasEmittedFirstUserAction = false;
 
-  const isEnabled = () => !staticDisabled && !state.telemetryDisabled;
+  const available = !staticDisabled;
+  const isEnabled = () => available && !state.telemetryDisabled;
 
   const capture = <K extends TelemetryEventName>(
     event: K,
@@ -275,6 +277,10 @@ export async function createTelemetryService(
   };
 
   return {
+    get available() {
+      return available;
+    },
+
     get enabled() {
       return isEnabled();
     },

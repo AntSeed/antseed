@@ -398,8 +398,8 @@ export type DesktopBridge = {
   onFullscreenChange?: (handler: (isFullscreen: boolean) => void) => () => void;
   onWindowFocusChange?: (handler: (isFocused: boolean) => void) => () => void;
   getAppSetupStatus?: () => Promise<{ needed: boolean; complete: boolean }>;
-  getTelemetryStatus?: () => Promise<{ enabled: boolean; userDisabled: boolean }>;
-  setTelemetryEnabled?: (enabled: boolean) => Promise<{ ok: boolean; enabled?: boolean; userDisabled?: boolean; error?: string }>;
+  getTelemetryStatus?: () => Promise<import('../../shared/telemetry.js').TelemetryStatus>;
+  setTelemetryEnabled?: (enabled: boolean) => Promise<import('../../shared/telemetry.js').TelemetryStatusUpdateResult>;
   telemetryRecordUserAction?: (payload: import('../../shared/telemetry.js').UserActionSignal) => Promise<{ ok: boolean }>;
   telemetryRecordFirstModelShown?: (payload: import('../../shared/telemetry.js').FirstModelShownSignal) => Promise<{ ok: boolean }>;
   onAppSetupStep?: (handler: (data: { step: string; label: string }) => void) => () => void;

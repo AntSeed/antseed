@@ -68,3 +68,12 @@ export type UserActionSignal = {
   action: TelemetryUserAction;
   surface: TelemetryActionSurface;
 };
+
+export type TelemetryStatus = {
+  available: boolean;
+  enabled: boolean;
+  userDisabled: boolean;
+};
+
+export type TelemetryStatusUpdateResult = (TelemetryStatus & { ok: true })
+  | { ok: false; error: string };

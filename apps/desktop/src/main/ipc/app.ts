@@ -40,6 +40,7 @@ import {
 import {
   TELEMETRY_ACTION_SURFACES,
   TELEMETRY_USER_ACTIONS,
+  type TelemetryStatusUpdateResult,
   type UserActionSignal,
 } from '../../shared/telemetry.js';
 
@@ -72,18 +73,24 @@ export function registerAppIpc(): void {
   ipcMain.handle('telemetry:get-status', () => {
     const telemetry = getTelemetryService();
     return {
+      available: telemetry?.available ?? false,
       enabled: telemetry?.enabled ?? false,
       userDisabled: telemetry?.isUserOptedOut() ?? false,
     };
   });
 
-  ipcMain.handle('telemetry:set-enabled', async (_event, enabled: unknown) => {
+  ipcMain.handle('telemetry:set-enabled', async (_event, enabled: unknown): Promise<TelemetryStatusUpdateResult> => {
     const telemetry = getTelemetryService();
     if (!telemetry) {
       return { ok: false, error: 'Telemetry service not initialized' };
     }
     await telemetry.setUserOptedOut(!enabled);
-    return { ok: true, enabled: telemetry.enabled, userDisabled: telemetry.isUserOptedOut() };
+    return {
+      ok: true,
+      available: telemetry.available,
+      enabled: telemetry.enabled,
+      userDisabled: telemetry.isUserOptedOut(),
+    };
   });
 
   ipcMain.handle('telemetry:record-user-action', (_event, payload: unknown) => {

@@ -8,6 +8,7 @@ import { reputationScaleLabel, sellerMetaLabel, sellerReputationLabel } from '..
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { activeThemeMode, applyThemeMode, type ThemeMode } from '../../lib/theme';
+import type { TelemetryStatus } from '../../../../shared/telemetry';
 import { formatUsdShort, VprCard, VprPage, VprSettingRow, VprSlider, VprToggle } from '../vpr/VprKit';
 import { VprPeerAccessDialog } from './VprPeerAccessDialog';
 import { usePublicEndpointModal } from '../tunnels/PublicEndpointModal';
@@ -30,21 +31,34 @@ export function VprPreferencesView({ onSelectView }: Props) {
   }), shallowEqual);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => activeThemeMode());
   const [accessOpen, setAccessOpen] = useState(false);
-  const [telemetryEnabled, setTelemetryEnabled] = useState<boolean | null>(null);
+  const [telemetryStatus, setTelemetryStatus] = useState<TelemetryStatus | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    void window.antseedDesktop?.getTelemetryStatus?.().then((status) => {
-      if (!cancelled && status) setTelemetryEnabled(!status.userDisabled);
-    });
+    void window.antseedDesktop?.getTelemetryStatus?.()
+      .then((status) => {
+        if (!cancelled && status) setTelemetryStatus(status);
+      })
+      .catch(() => {});
     return () => { cancelled = true; };
   }, []);
 
   const toggleTelemetry = (next: boolean) => {
-    setTelemetryEnabled(next);
-    void window.antseedDesktop?.setTelemetryEnabled?.(next).then((result) => {
-      if (result && !result.ok) setTelemetryEnabled(!next);
+    const setTelemetryEnabled = window.antseedDesktop?.setTelemetryEnabled;
+    if (!telemetryStatus || !setTelemetryEnabled) return;
+
+    const previousStatus = telemetryStatus;
+    setTelemetryStatus({
+      ...previousStatus,
+      enabled: next,
+      userDisabled: !next,
     });
+    void setTelemetryEnabled(next)
+      .then((result) => {
+        if (result?.ok) setTelemetryStatus(result);
+        else setTelemetryStatus(previousStatus);
+      })
+      .catch(() => setTelemetryStatus(previousStatus));
   };
 
   const peerOptions = useMemo(
@@ -225,12 +239,15 @@ export function VprPreferencesView({ onSelectView }: Props) {
           <VprCard className={styles.card}>
             <VprSettingRow
               title="Anonymous telemetry"
-              hint="Help improve VPR by sharing coarse feature usage and reliability information. Prompts, messages, files, wallet addresses, and exact financial values are never collected."
+              hint={telemetryStatus?.available === false
+                ? 'Telemetry is unavailable in this build or has been disabled by configuration.'
+                : 'Help improve VPR by sharing coarse feature usage and reliability information. Prompts, messages, files, wallet addresses, and exact financial values are never collected.'}
               control={(
                 <VprToggle
-                  checked={telemetryEnabled ?? true}
+                  checked={telemetryStatus?.enabled ?? false}
                   onChange={toggleTelemetry}
                   ariaLabel="Anonymous telemetry"
+                  disabled={!telemetryStatus?.available}
                 />
               )}
             />

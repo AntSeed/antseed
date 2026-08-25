@@ -70,6 +70,7 @@ test('disabled in development builds', async (t) => {
   const dir = await makeTempDir(t);
   const captured: Captured = { payloads: [] };
   const service = await createTelemetryService(baseOptions(dir, captured, { isDev: true }));
+  assert.equal(service.available, false);
   assert.equal(service.enabled, false);
   await service.recordAppStarted();
   assert.equal(captured.payloads.length, 0);
@@ -119,6 +120,7 @@ test('enabled in production with valid config', async (t) => {
   const dir = await makeTempDir(t);
   const captured: Captured = { payloads: [] };
   const service = await createTelemetryService(baseOptions(dir, captured));
+  assert.equal(service.available, true);
   assert.equal(service.enabled, true);
 });
 

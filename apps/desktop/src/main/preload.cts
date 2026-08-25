@@ -1,6 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { RuntimeMode, RuntimeProcessState, StartOptions } from './runtime/process-manager.js';
-import type { FirstModelShownSignal, UserActionSignal } from '../shared/telemetry.js';
+import type {
+  FirstModelShownSignal,
+  TelemetryStatus,
+  TelemetryStatusUpdateResult,
+  UserActionSignal,
+} from '../shared/telemetry.js';
 
 type LogEvent = {
   mode: RuntimeMode;
@@ -503,11 +508,11 @@ const api = {
   getAppSetupStatus(): Promise<{ needed: boolean; complete: boolean }> {
     return ipcRenderer.invoke('app:get-setup-status') as Promise<{ needed: boolean; complete: boolean }>;
   },
-  getTelemetryStatus(): Promise<{ enabled: boolean; userDisabled: boolean }> {
-    return ipcRenderer.invoke('telemetry:get-status') as Promise<{ enabled: boolean; userDisabled: boolean }>;
+  getTelemetryStatus(): Promise<TelemetryStatus> {
+    return ipcRenderer.invoke('telemetry:get-status') as Promise<TelemetryStatus>;
   },
-  setTelemetryEnabled(enabled: boolean): Promise<{ ok: boolean; enabled?: boolean; userDisabled?: boolean; error?: string }> {
-    return ipcRenderer.invoke('telemetry:set-enabled', enabled) as Promise<{ ok: boolean; enabled?: boolean; userDisabled?: boolean; error?: string }>;
+  setTelemetryEnabled(enabled: boolean): Promise<TelemetryStatusUpdateResult> {
+    return ipcRenderer.invoke('telemetry:set-enabled', enabled) as Promise<TelemetryStatusUpdateResult>;
   },
   telemetryRecordUserAction(payload: UserActionSignal): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('telemetry:record-user-action', payload) as Promise<{ ok: boolean }>;
