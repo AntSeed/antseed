@@ -126,8 +126,8 @@ jobs:
 
       - name: Bake desktop telemetry config
         env:
-          POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
-          POSTHOG_PROJECT_API_KEY: ${{ secrets.POSTHOG_PROJECT_API_KEY }}
+          POSTHOG_HOST: ${{ vars.POSTHOG_HOST }}
+          POSTHOG_PROJECT_API_KEY: ${{ vars.POSTHOG_PROJECT_API_KEY }}
         run: node scripts/bake-desktop-telemetry-config.mjs --require
 
       - name: Build monorepo (tiers 0-3)
@@ -229,8 +229,8 @@ jobs:
 
       - name: Bake desktop telemetry config
         env:
-          POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
-          POSTHOG_PROJECT_API_KEY: ${{ secrets.POSTHOG_PROJECT_API_KEY }}
+          POSTHOG_HOST: ${{ vars.POSTHOG_HOST }}
+          POSTHOG_PROJECT_API_KEY: ${{ vars.POSTHOG_PROJECT_API_KEY }}
         run: node scripts/bake-desktop-telemetry-config.mjs --require
         shell: pwsh
 
@@ -355,8 +355,8 @@ jobs:
 
       - name: Bake desktop telemetry config
         env:
-          POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
-          POSTHOG_PROJECT_API_KEY: ${{ secrets.POSTHOG_PROJECT_API_KEY }}
+          POSTHOG_HOST: ${{ vars.POSTHOG_HOST }}
+          POSTHOG_PROJECT_API_KEY: ${{ vars.POSTHOG_PROJECT_API_KEY }}
         run: node scripts/bake-desktop-telemetry-config.mjs --require
 
       - name: Build monorepo (tiers 0-3)

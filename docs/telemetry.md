@@ -171,4 +171,4 @@ builds contain no default and therefore send nothing unless configured locally.
 
 The PostHog hosting region and retention period are deployment policy, not
 application defaults. They must be approved and documented here before the
-release secrets are enabled for production.
+release variables are enabled for production.
