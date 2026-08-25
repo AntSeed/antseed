@@ -1622,6 +1622,30 @@ html[data-theme='light'] .blog-wrapper .pagination-nav__link:hover {
   gap: 4px;
 }
 
+.downloadResolving {
+  position: relative;
+  color: transparent !important;
+  pointer-events: none;
+}
+.downloadResolving > * {
+  visibility: hidden !important;
+}
+.downloadResolving::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 16px;
+  height: 16px;
+  margin: -8px;
+  border: 2px solid var(--as-text-3);
+  border-top-color: var(--as-green);
+  border-radius: 50%;
+  animation: downloadSpin 0.7s linear infinite;
+}
+
+@keyframes downloadSpin { to { transform: rotate(360deg); } }
+
 @media (max-width: 640px) {
   .vprLabelDesktop {
     display: none;

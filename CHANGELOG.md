@@ -8,6 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Website download buttons no longer send first-time visitors to GitHub before device detection finishes. Early clicks now show a spinner in the button while the matching installer resolves, with the releases page used only as a fallback.
 - Desktop model discovery no longer stalls forever on slow machines or connections. The discovery pipeline previously did unbounded network work (per-peer metering, seller-domain metadata, a ~400KB network-stats download on every cycle) and could exceed the UI's 12s cutoff on every refresh, leaving "No models discovered yet" / "Loading models…" while the runtime was healthy. Each phase now has a hard time budget with graceful degradation, network-wide seller stats come from the Antscan explorer API (~20KB, cached 60s, aggregator fallback), and the UI cutoff is a generous 30s backstop. Discovery failures, recoveries, and slow-cycle phase timings are now written to the system log so exported logs capture this failure mode.
 
 ### Changed
