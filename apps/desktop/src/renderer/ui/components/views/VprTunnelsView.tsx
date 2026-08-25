@@ -1,17 +1,17 @@
 import { HugeiconsIcon } from '@hugeicons/react';
 import { ArrowRight01Icon, ArrowUpRight01Icon, GlobalIcon } from '@hugeicons/core-free-icons';
 import { usePublicEndpointModal } from '../tunnels/PublicEndpointModal';
+import { BrandIcon } from '../brand/BrandIcon';
 import { VprPage } from '../vpr/VprKit';
 import styles from './VprToolsView.module.scss';
 import tunnelStyles from './VprTunnelsView.module.scss';
 
-const HERMES_ICON = new URL('../../../assets/hermes-agent.svg', import.meta.url).href;
 const OPENCLAW_ICON = new URL('../../../assets/openclaw.svg', import.meta.url).href;
 
 const AGENTS = [
   {
     name: 'Hermes Agent',
-    icon: HERMES_ICON,
+    brand: 'hermes',
     description: 'Connect Hermes to the VPR with the OpenAI-compatible endpoint.',
     integrationUrl: 'https://antseed.com/integrations/hermes/',
     skillUrl: 'https://github.com/AntSeed/antseed/tree/main/skills/hermes-antseed',
@@ -54,7 +54,9 @@ export function VprTunnelsView() {
           <div className={tunnelStyles.agentList}>
             {AGENTS.map((agent) => (
               <section key={agent.name} className={tunnelStyles.agentCard}>
-                <img className={tunnelStyles.agentIcon} src={agent.icon} alt="" />
+                {'brand' in agent
+                  ? <BrandIcon brand={agent.brand} size={30} className={tunnelStyles.agentIcon} />
+                  : <img className={tunnelStyles.agentIcon} src={agent.icon} alt="" />}
                 <div className={tunnelStyles.agentContent}>
                   <h2 className={tunnelStyles.agentName}>{agent.name}</h2>
                   <p className={tunnelStyles.agentDescription}>{agent.description}</p>

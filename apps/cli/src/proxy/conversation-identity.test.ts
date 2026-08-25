@@ -7,6 +7,20 @@ import {
   isTitleGenerationRequest,
 } from './conversation-identity.js'
 
+const CURSOR_ENVIRONMENT = `<user_info>
+OS Version: darwin 25.2.0
+Shell: zsh
+Workspace Path: unknown
+Is directory a git repo: No
+Today's Date: August 25, 2026
+</user_info>
+<dynamic_tool_catalog>machine-generated tool instructions</dynamic_tool_catalog>`
+
+const cursorQuery = (prompt: string, time = '5:01 PM'): string => `<timestamp>Tuesday, Aug 25, 2026, ${time} (UTC+3)</timestamp>
+<user_query>
+${prompt}
+</user_query>`
+
 test('isCompletionRequestPath matches API turn endpoints', () => {
   assert.equal(isCompletionRequestPath('/v1/messages'), true)
   assert.equal(isCompletionRequestPath('/v1/messages?beta=true'), true)
@@ -148,6 +162,53 @@ test('identified clients without a session id get a stable synthetic conversatio
   assert.equal(later?.sessionKey, first?.sessionKey)
 })
 
+test('cursor synthetic conversation keys use the prompt after the environment preamble', () => {
+  const headers = {
+    'user-agent': 'Cursor/1.0',
+    // Covers older tunnel gateways which forwarded Cursor's User-Agent but
+    // stamped every request with the generic public-tunnel source.
+    'x-antseed-system-proxy-source': 'public-tunnel',
+  }
+  const first = extractConversationIdentity(headers, {
+    messages: [
+      { role: 'user', content: CURSOR_ENVIRONMENT },
+      { role: 'user', content: cursorQuery('Fix the login bug.') },
+    ],
+  })
+  const later = extractConversationIdentity(headers, {
+    messages: [
+      { role: 'user', content: CURSOR_ENVIRONMENT },
+      { role: 'user', content: cursorQuery('Fix the login bug.') },
+      { role: 'assistant', content: 'I will inspect it.' },
+      { role: 'user', content: cursorQuery('Start with auth.ts.', '5:02 PM') },
+    ],
+  })
+  const otherChat = extractConversationIdentity(headers, {
+    messages: [
+      { role: 'user', content: CURSOR_ENVIRONMENT },
+      // The prompt can be identical in two newly-opened chats. Cursor's
+      // retained first-turn timestamp distinguishes them on later requests.
+      { role: 'user', content: cursorQuery('Fix the login bug.', '5:03 PM') },
+    ],
+  })
+  assert.equal(first?.tool, 'cursor')
+  assert.match(first?.sessionKey ?? '', /^synthetic-[0-9a-f]{32}$/)
+  assert.equal(later?.sessionKey, first?.sessionKey)
+  assert.notEqual(otherChat?.sessionKey, first?.sessionKey)
+})
+
+test('Cursor User-Agent creates identity without a tunnel source header', () => {
+  const identity = extractConversationIdentity({ 'user-agent': 'Cursor/1.0' }, {
+    messages: [
+      { role: 'user', content: CURSOR_ENVIRONMENT },
+      { role: 'user', content: [{ type: 'text', text: cursorQuery('hi') }] },
+    ],
+  })
+
+  assert.equal(identity?.tool, 'cursor')
+  assert.match(identity?.sessionKey ?? '', /^synthetic-[0-9a-f]{32}$/)
+})
+
 test('synthetic conversation keys ignore title-only housekeeping requests', () => {
   assert.equal(extractConversationIdentity({ originator: 'hermes' }, {
     messages: [{ role: 'user', content: 'Generate a title for this conversation:' }],
@@ -182,6 +243,24 @@ test('snippet: responses input items skip environment context', () => {
     ],
   })
   assert.equal(snippet, 'say hi')
+})
+
+test('snippet: cursor environment preamble never becomes the title', () => {
+  assert.equal(extractFirstUserSnippet({
+    messages: [
+      { role: 'user', content: CURSOR_ENVIRONMENT },
+      { role: 'user', content: cursorQuery('Fix the login bug.') },
+    ],
+  }), 'Fix the login bug.')
+  assert.equal(extractFirstUserSnippet({
+    messages: [{ role: 'user', content: CURSOR_ENVIRONMENT }],
+  }), null)
+  assert.equal(extractFirstUserSnippet({
+    messages: [
+      { role: 'user', content: '<user_info>OS Version: darwin 25.2.0\nShell: zsh</user_info>' },
+      { role: 'user', content: cursorQuery('Fix the login bug.') },
+    ],
+  }), 'Fix the login bug.')
 })
 
 test('snippet: responses string input, whitespace collapsed and truncated', () => {
@@ -255,9 +334,31 @@ test('snippet: injected project-doc blobs never label a chat', () => {
   }), null)
 })
 
+test('snippet: Codex recommended plugins never label a chat', () => {
+  const pluginContext = `<recommended_plugins>
+Here is a list of plugins that are available but not installed.
+
+- Airtable
+- GitHub
+</recommended_plugins>`
+  assert.equal(extractFirstUserSnippet({
+    input: [
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: pluginContext }] },
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'fix the Cursor icon' }] },
+    ],
+  }), 'fix the Cursor icon')
+  assert.equal(extractFirstUserSnippet({
+    input: [
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Here is a list of plugins that are available but not installed. - Airtable' }] },
+    ],
+  }), null)
+})
+
 test('sanitizeStoredSnippet heals stored project-doc labels to empty', async () => {
   const { sanitizeStoredSnippet } = await import('./conversation-identity.js')
   assert.equal(sanitizeStoredSnippet('# AGENTS.md instructions for /Users/shahafan/Development/antseed # CLAUDE.md --…'), '')
+  assert.equal(sanitizeStoredSnippet('OS Version: darwin 25.2.0 Shell: zsh Workspace Path: unknown Is directory a git…'), '')
+  assert.equal(sanitizeStoredSnippet('Here is a list of plugins that are available but not installed. - Airtable…'), '')
   assert.equal(sanitizeStoredSnippet('fix the login bug'), 'fix the login bug')
 })
 
