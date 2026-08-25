@@ -88,7 +88,7 @@ export class TunnelGateway {
     }
     headers.host = `127.0.0.1:${this.options.buyerPort}`
     headers.connection = 'close'
-    headers['x-antseed-system-proxy-source'] = 'public-tunnel'
+    headers['x-antseed-system-proxy-source'] = tunnelRequestSource(req.headers)
 
     const upstream = http.request({
       hostname: '127.0.0.1',
@@ -115,6 +115,31 @@ export class TunnelGateway {
     })
     req.pipe(upstream)
   }
+}
+
+function tunnelRequestSource(headers: http.IncomingHttpHeaders): string {
+  const originator = normalizeSourceHeader(headers.originator)
+  if (originator) return originator.startsWith('cursor') ? 'cursor' : originator
+
+  if (Object.keys(headers).some((name) => name.toLowerCase().startsWith('x-cursor-'))) {
+    return 'cursor'
+  }
+
+  const userAgent = firstHeader(headers['user-agent']).trim()
+  const product = normalizeSource(userAgent.split(/[/\s]/, 1)[0] ?? '')
+  return product.startsWith('cursor') ? 'cursor' : 'public-tunnel'
+}
+
+function normalizeSourceHeader(value: string | string[] | undefined): string {
+  return normalizeSource(firstHeader(value))
+}
+
+function firstHeader(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? value[0] ?? '' : value ?? ''
+}
+
+function normalizeSource(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9.]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64)
 }
 
 function canonicalizeRoute(method: string, path: string): string | null {

@@ -200,6 +200,8 @@ function syntheticSessionKeyFromBody(body: Record<string, unknown> | null): stri
       const record = item as Record<string, unknown>
       if (record['role'] !== 'user') continue
       const texts = textFromContent(record['content'] ?? record['text'])
+        .map(stripCursorEnvironmentPreamble)
+        .filter((text) => text.length > 0)
       const genuineText = texts.find((text) => {
         const normalized = normalizeSnippet(text)
         return normalized.length > 0
@@ -248,6 +250,29 @@ export function extractConversationIdentity(
 function looksLikeMachineContext(text: string): boolean {
   const start = text.trimStart().toLowerCase()
   return NON_PROMPT_PREFIXES.some((prefix) => start.startsWith(prefix))
+    || looksLikeCursorEnvironment(start)
+}
+
+function looksLikeCursorEnvironment(text: string): boolean {
+  const normalized = text.trimStart().toLowerCase().replace(/\s+/g, ' ')
+  return normalized.startsWith('os version:')
+    && normalized.includes(' shell:')
+    && normalized.includes(' workspace path:')
+    && normalized.includes(' is directory a git')
+}
+
+export function isCursorEnvironmentSnippet(text: string): boolean {
+  return looksLikeCursorEnvironment(text)
+}
+
+function stripCursorEnvironmentPreamble(text: string): string {
+  if (!looksLikeCursorEnvironment(text)) return text
+  const lines = text.split(/\r?\n/)
+  const end = lines.findIndex((line) => /^\s*is directory a git\b/i.test(line))
+  if (end === -1) return ''
+  const tail = lines.slice(end + 1)
+  const separator = tail.findIndex((line) => line.trim().length === 0)
+  return separator === -1 ? '' : tail.slice(separator + 1).join('\n').trim()
 }
 
 function looksLikeTitleRequest(text: string): boolean {
@@ -312,7 +337,9 @@ export function extractFirstUserSnippet(parsedBody: Record<string, unknown> | nu
   // conversation stays unlabeled until a real turn arrives. Genuine prompts
   // are preferred over machine-context wrappers, and candidates that strip
   // down to nothing (pure markup) are passed over.
-  const usable = candidates.filter((text) => text.trim().length > 0 && !looksLikeTitleRequest(text))
+  const usable = candidates
+    .map(stripCursorEnvironmentPreamble)
+    .filter((text) => text.trim().length > 0 && !looksLikeTitleRequest(text))
   const genuine = usable.filter((text) => !looksLikeMachineContext(text))
   for (const text of [...genuine, ...usable]) {
     const normalized = normalizeSnippet(text)
@@ -356,7 +383,7 @@ export function isTitleGenerationRequest(parsedBody: Record<string, unknown> | n
  */
 export function sanitizeStoredSnippet(text: string): string {
   if (!text) return ''
-  if (looksLikeTitleRequest(text)) return ''
+  if (looksLikeTitleRequest(text) || looksLikeCursorEnvironment(text)) return ''
   const normalized = normalizeSnippet(text)
   // Stored labels from before the instruction-doc rule heal to empty so the
   // next real turn names the chat.

@@ -7,6 +7,12 @@ import {
   isTitleGenerationRequest,
 } from './conversation-identity.js'
 
+const CURSOR_ENVIRONMENT = `OS Version: darwin 25.2.0
+Shell: zsh
+Workspace Path: unknown
+Is directory a git repo: No
+Today's Date: August 25, 2026`
+
 test('isCompletionRequestPath matches API turn endpoints', () => {
   assert.equal(isCompletionRequestPath('/v1/messages'), true)
   assert.equal(isCompletionRequestPath('/v1/messages?beta=true'), true)
@@ -148,6 +154,25 @@ test('identified clients without a session id get a stable synthetic conversatio
   assert.equal(later?.sessionKey, first?.sessionKey)
 })
 
+test('cursor synthetic conversation keys use the prompt after the environment preamble', () => {
+  const headers = {
+    'user-agent': 'Cursor/1.0',
+    'x-antseed-system-proxy-source': 'cursor',
+  }
+  const first = extractConversationIdentity(headers, {
+    messages: [{ role: 'user', content: `${CURSOR_ENVIRONMENT}\n\nFix the login bug.` }],
+  })
+  const later = extractConversationIdentity(headers, {
+    messages: [
+      { role: 'user', content: `${CURSOR_ENVIRONMENT}\n\nFix the login bug.` },
+      { role: 'assistant', content: 'I will inspect it.' },
+      { role: 'user', content: 'Start with auth.ts.' },
+    ],
+  })
+  assert.match(first?.sessionKey ?? '', /^synthetic-[0-9a-f]{32}$/)
+  assert.equal(later?.sessionKey, first?.sessionKey)
+})
+
 test('synthetic conversation keys ignore title-only housekeeping requests', () => {
   assert.equal(extractConversationIdentity({ originator: 'hermes' }, {
     messages: [{ role: 'user', content: 'Generate a title for this conversation:' }],
@@ -182,6 +207,21 @@ test('snippet: responses input items skip environment context', () => {
     ],
   })
   assert.equal(snippet, 'say hi')
+})
+
+test('snippet: cursor environment preamble never becomes the title', () => {
+  assert.equal(extractFirstUserSnippet({
+    messages: [
+      { role: 'user', content: CURSOR_ENVIRONMENT },
+      { role: 'user', content: 'Fix the login bug.' },
+    ],
+  }), 'Fix the login bug.')
+  assert.equal(extractFirstUserSnippet({
+    messages: [{ role: 'user', content: `${CURSOR_ENVIRONMENT}\n\nFix the login bug.` }],
+  }), 'Fix the login bug.')
+  assert.equal(extractFirstUserSnippet({
+    messages: [{ role: 'user', content: CURSOR_ENVIRONMENT }],
+  }), null)
 })
 
 test('snippet: responses string input, whitespace collapsed and truncated', () => {
@@ -258,6 +298,7 @@ test('snippet: injected project-doc blobs never label a chat', () => {
 test('sanitizeStoredSnippet heals stored project-doc labels to empty', async () => {
   const { sanitizeStoredSnippet } = await import('./conversation-identity.js')
   assert.equal(sanitizeStoredSnippet('# AGENTS.md instructions for /Users/shahafan/Development/antseed # CLAUDE.md --…'), '')
+  assert.equal(sanitizeStoredSnippet('OS Version: darwin 25.2.0 Shell: zsh Workspace Path: unknown Is directory a git…'), '')
   assert.equal(sanitizeStoredSnippet('fix the login bug'), 'fix the login bug')
 })
 

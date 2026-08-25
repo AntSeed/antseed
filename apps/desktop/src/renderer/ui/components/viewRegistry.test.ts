@@ -36,7 +36,7 @@ describe('view registry', () => {
 
   it('derives the nav rail from registry metadata in slide order', () => {
     expect(navViews('main').map((entry) => entry.view)).toEqual(
-      ['home', 'explore', 'tools', 'chat', 'tunnels', 'preferences', 'help'] satisfies ViewName[],
+      ['home', 'chat', 'explore', 'tools', 'tunnels', 'preferences', 'help'] satisfies ViewName[],
     );
     expect(navViews('bottom').map((entry) => entry.view)).toEqual(['credits'] satisfies ViewName[]);
     expect(getViewRegistryEntry('tunnels').nav?.label).toBe('Agents');
