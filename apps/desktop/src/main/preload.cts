@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { RuntimeMode, RuntimeProcessState, StartOptions } from './runtime/process-manager.js';
+import type { FirstModelShownSignal, UserActionSignal } from '../shared/telemetry.js';
 
 type LogEvent = {
   mode: RuntimeMode;
@@ -507,6 +508,12 @@ const api = {
   },
   setTelemetryEnabled(enabled: boolean): Promise<{ ok: boolean; enabled?: boolean; userDisabled?: boolean; error?: string }> {
     return ipcRenderer.invoke('telemetry:set-enabled', enabled) as Promise<{ ok: boolean; enabled?: boolean; userDisabled?: boolean; error?: string }>;
+  },
+  telemetryRecordUserAction(payload: UserActionSignal): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('telemetry:record-user-action', payload) as Promise<{ ok: boolean }>;
+  },
+  telemetryRecordFirstModelShown(payload: FirstModelShownSignal): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('telemetry:first-model-shown', payload) as Promise<{ ok: boolean }>;
   },
   onAppSetupStep(handler: (data: { step: string; label: string }) => void): () => void {
     const listener = (_: unknown, data: { step: string; label: string }) => handler(data);

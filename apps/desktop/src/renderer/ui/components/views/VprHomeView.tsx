@@ -40,6 +40,7 @@ import { hasSeenChats, rememberSeenChats, VprRecentChatsCard } from '../vpr/VprR
 import { conversationRoutedPeerName } from '../../../modules/routing/conversations';
 import { formatCompactTokens, VprStatRow, VprStatTile } from '../vpr/VprKit';
 import styles from './VprHomeView.module.scss';
+import { recordFirstModelShown, recordUserAction } from '../../../modules/telemetry/actions';
 
 type Props = { onSelectView?: (view: ViewName) => void };
 
@@ -118,6 +119,13 @@ export function VprHomeView({ onSelectView }: Props) {
     () => pinnedSellerLabel(snap.discoverRows, snap.selection),
     [snap.discoverRows, snap.selection],
   );
+  useEffect(() => {
+    if (!selectedEntry) return;
+    recordFirstModelShown({
+      service: selectedEntry.serviceId,
+      peerId: snap.selection.mode === 'pinned-peer' ? snap.selection.peerId : null,
+    });
+  }, [selectedEntry, snap.selection.mode, snap.selection.peerId]);
   useEffect(() => {
     if (conversations) rememberSeenChats(conversations.length);
   }, [conversations]);
@@ -265,6 +273,7 @@ export function VprHomeView({ onSelectView }: Props) {
   // the profile can't be connected automatically (e.g. no route yet).
   async function connectApp(profileName: string): Promise<void> {
     if (connectingProfile !== null) return;
+    recordUserAction('app_connect', 'home');
     setConnectingProfile(profileName);
     try {
       const result = await connectVprProfile(window.antseedDesktop, getUiStateRef(), profileName);

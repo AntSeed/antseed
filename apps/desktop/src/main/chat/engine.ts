@@ -41,6 +41,7 @@ import {
   durationBucket,
   modelPricingSnapshot,
   publicModelId,
+  type TelemetryEventProperties,
 } from '../telemetry/events.js';
 import type { RawPeerHealth } from '../runtime/peer-cache.js';
 import {
@@ -83,6 +84,7 @@ import type {
   ChatStreamErrorPayload,
   RegisterPiChatHandlersOptions,
 } from './engine-types.js';
+import type { FirstModelShownSignal } from '../../shared/telemetry.js';
 
 augmentChatToolPath();
 
@@ -138,6 +140,7 @@ export function registerPiChatHandlers({
   appendSystemLog,
   getFirstChatDepositSnapshot,
   recordFirstChatStarted,
+  recordFirstModelShown,
   recordModelSelected,
   recordChatRequestStarted,
   recordChatRequestFinished,
@@ -307,12 +310,10 @@ export function registerPiChatHandlers({
   let lastBuyerEligibleServiceCatalogEntries: ChatServiceCatalogEntry[] = [];
   let lastServiceCatalogRefreshAt = 0;
 
-  const recordModelSelection = (
+  const modelTelemetryContext = (
     service: string,
     peerId: string | null,
-    selectionScope: 'default' | 'conversation',
-  ): void => {
-    if (!recordModelSelected) return;
+  ): Omit<TelemetryEventProperties['model_selected'], 'selection_scope'> => {
     const normalizedService = service.trim().toLowerCase();
     const catalogOffers = lastServiceCatalogEntries.filter((entry) => (
       entry.id.trim().toLowerCase() === normalizedService
@@ -323,15 +324,26 @@ export function registerPiChatHandlers({
       && (!peerId || entry.peerId === peerId)
     ));
     const pricing = modelPricingSnapshot(eligibleOffers);
+    return {
+      public_model_id: publicModelId(service, catalogOffers.length > 0),
+      service_category: classifyServiceCategory(service),
+      route_mode: peerId ? 'pinned' : 'auto',
+      pricing_tier: pricing.pricingTier,
+      has_free_eligible_offer: pricing.hasFreeEligibleOffer,
+      eligible_offer_count_bucket: pricing.eligibleOfferCountBucket,
+    };
+  };
+
+  const recordModelSelection = (
+    service: string,
+    peerId: string | null,
+    selectionScope: 'default' | 'conversation',
+  ): void => {
+    if (!recordModelSelected) return;
     try {
       void Promise.resolve(recordModelSelected({
-        public_model_id: publicModelId(service, catalogOffers.length > 0),
-        service_category: classifyServiceCategory(service),
+        ...modelTelemetryContext(service, peerId),
         selection_scope: selectionScope,
-        route_mode: peerId ? 'pinned' : 'auto',
-        pricing_tier: pricing.pricingTier,
-        has_free_eligible_offer: pricing.hasFreeEligibleOffer,
-        eligible_offer_count_bucket: pricing.eligibleOfferCountBucket,
       })).catch(() => {});
     } catch {
       // Telemetry must never affect model selection.
@@ -1028,6 +1040,19 @@ export function registerPiChatHandlers({
   ipcMain.handle('chat:set-buyer-default-route', async (_event, payload: { peerId?: unknown; service?: unknown }) => (
     setBuyerDefaultRoute(payload?.peerId, payload?.service)
   ));
+
+  ipcMain.handle('telemetry:first-model-shown', (_event, payload: unknown) => {
+    const signal = payload as Partial<FirstModelShownSignal> | null;
+    const service = typeof signal?.service === 'string' ? signal.service.trim() : '';
+    const peerId = typeof signal?.peerId === 'string' ? signal.peerId.trim() : '';
+    if (!service || !recordFirstModelShown) return { ok: false };
+    try {
+      void Promise.resolve(recordFirstModelShown(modelTelemetryContext(service, peerId || null))).catch(() => {});
+    } catch {
+      // Telemetry must never affect model rendering.
+    }
+    return { ok: true };
+  });
 
   return {
     createConversation,

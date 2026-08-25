@@ -11,6 +11,7 @@ import {
 import { Modal } from '@antseed/ui';
 import { usePublicEndpointModal } from '../tunnels/PublicEndpointModal';
 import styles from './VprToolsView.module.scss';
+import { recordUserAction } from '../../../modules/telemetry/actions';
 
 const CURSOR_ICON = new URL('../../../assets/cursor.svg', import.meta.url).href;
 const CURSOR_WEBSITE = 'https://cursor.com/';
@@ -45,6 +46,7 @@ export function CursorAppCard() {
   }, [endpointReady, loadApiKey]);
 
   const copy = useCallback((value: string, kind: CopyKind) => {
+    recordUserAction('api_config_copy', 'apps');
     void navigator.clipboard.writeText(value).then(() => {
       setCopied(kind);
       window.setTimeout(() => setCopied(null), 1500);

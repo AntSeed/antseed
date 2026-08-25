@@ -28,6 +28,7 @@ import {
   type TelemetryEventName,
   type TelemetryEventProperties,
 } from './events.js';
+import { TELEMETRY_ACTION_SURFACES, TELEMETRY_USER_ACTIONS } from '../../shared/telemetry.js';
 
 const MAX_STRING_LENGTH = 64;
 const MAX_ABS_NUMBER = Number.MAX_SAFE_INTEGER;
@@ -59,6 +60,8 @@ const PROPERTY_VALIDATORS: Record<string, ReadonlySet<string>> = {
   eligible_offer_count_bucket: OFFERS_AVAILABLE_BUCKETS,
   pricing_tier: MODEL_PRICING_TIERS,
   selection_scope: MODEL_SELECTION_SCOPES,
+  action: new Set(TELEMETRY_USER_ACTIONS),
+  surface: new Set(TELEMETRY_ACTION_SURFACES),
 };
 
 const EVENT_PROPERTY_VALIDATORS: Partial<Record<TelemetryEventName, Record<string, ReadonlySet<string>>>> = {

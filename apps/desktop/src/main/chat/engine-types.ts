@@ -19,6 +19,11 @@ export type FirstChatTelemetryInput = FirstChatDepositSnapshot & {
   hasAttachments: boolean;
 };
 
+export type FirstModelShownTelemetryInput = Omit<
+  TelemetryEventProperties['first_model_shown'],
+  'duration_bucket'
+>;
+
 export type RegisterPiChatHandlersOptions = {
   ipcMain: IpcMain;
   sendToRenderer: (channel: string, payload: unknown) => void;
@@ -28,6 +33,7 @@ export type RegisterPiChatHandlersOptions = {
   appendSystemLog: (line: string) => void;
   getFirstChatDepositSnapshot?: () => Promise<FirstChatDepositSnapshot | null>;
   recordFirstChatStarted?: (input: FirstChatTelemetryInput) => void | Promise<void>;
+  recordFirstModelShown?: (input: FirstModelShownTelemetryInput) => void | Promise<void>;
   recordModelSelected?: (
     input: TelemetryEventProperties['model_selected'],
   ) => void | Promise<void>;

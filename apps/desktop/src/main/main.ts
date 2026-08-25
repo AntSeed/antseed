@@ -373,6 +373,10 @@ const piChatEngine = registerPiChatHandlers({
     const telemetry = await telemetryReady;
     await telemetry?.recordFirstChatStarted(input);
   },
+  recordFirstModelShown: async (input) => {
+    const telemetry = await telemetryReady;
+    await telemetry?.recordFirstModelShown(input);
+  },
   recordModelSelected: async (input) => {
     const telemetry = await telemetryReady;
     await telemetry?.recordModelSelected(input);

@@ -37,6 +37,11 @@ import {
 import {
   writeFile,
 } from 'node:fs/promises';
+import {
+  TELEMETRY_ACTION_SURFACES,
+  TELEMETRY_USER_ACTIONS,
+  type UserActionSignal,
+} from '../../shared/telemetry.js';
 
 export function registerAppIpc(): void {
   ipcMain.handle('voice:transcribe', async (_event, audio: ArrayBuffer | Uint8Array) => {
@@ -79,6 +84,22 @@ export function registerAppIpc(): void {
     }
     await telemetry.setUserOptedOut(!enabled);
     return { ok: true, enabled: telemetry.enabled, userDisabled: telemetry.isUserOptedOut() };
+  });
+
+  ipcMain.handle('telemetry:record-user-action', (_event, payload: unknown) => {
+    const candidate = payload as Partial<UserActionSignal> | null;
+    if (!candidate
+      || !TELEMETRY_USER_ACTIONS.includes(candidate.action as never)
+      || !TELEMETRY_ACTION_SURFACES.includes(candidate.surface as never)) {
+      return { ok: false };
+    }
+    const telemetry = getTelemetryService();
+    if (!telemetry) return { ok: false };
+    void telemetry.recordUserAction({
+      action: candidate.action as UserActionSignal['action'],
+      surface: candidate.surface as UserActionSignal['surface'],
+    });
+    return { ok: true };
   });
 
   ipcMain.handle('openrouter:reference-prices', () => getOpenRouterReferencePrices());

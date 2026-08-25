@@ -38,6 +38,7 @@ import {
   BAKED_POSTHOG_HOST,
   BAKED_POSTHOG_PROJECT_API_KEY,
 } from '../generated/baked-defaults.js';
+import type { UserActionSignal } from '../../shared/telemetry.js';
 
 export const TELEMETRY_ENABLED_ENV = 'TELEMETRY_ENABLED';
 export const POSTHOG_HOST_ENV = 'POSTHOG_HOST';
@@ -96,6 +97,11 @@ export type TelemetryService = {
   recordNetworkRuntimeStarted: (nowMs?: number) => Promise<void>;
   recordDhtStarted: (routingNodeCount: number, nowMs?: number) => Promise<void>;
   recordPeersDiscovered: (peerCount: number, serviceCount: number, nowMs?: number) => Promise<void>;
+  recordFirstModelShown: (
+    input: Omit<TelemetryEventProperties['first_model_shown'], 'duration_bucket'>,
+    nowMs?: number,
+  ) => Promise<void>;
+  recordUserAction: (input: UserActionSignal, nowMs?: number) => Promise<void>;
   /** Arms the setup-duration clock. Call when first-run setup begins. */
   recordSetupStarted: (nowMs?: number) => Promise<void>;
   recordSetupCompleted: (nowMs?: number) => Promise<void>;
@@ -186,6 +192,8 @@ export async function createTelemetryService(
   let hasEmittedNetworkRuntimeStarted = false;
   let hasEmittedDhtStarted = false;
   let hasEmittedPeersDiscovered = false;
+  let hasEmittedFirstModelShown = false;
+  let hasEmittedFirstUserAction = false;
 
   const isEnabled = () => !staticDisabled && !state.telemetryDisabled;
 
@@ -308,6 +316,24 @@ export async function createTelemetryService(
         peer_count_bucket: countBucket(peerCount),
         service_count_bucket: countBucket(serviceCount),
       }, nowMs);
+    },
+
+    async recordFirstModelShown(input, nowMs = now()) {
+      if (hasEmittedFirstModelShown) return;
+      hasEmittedFirstModelShown = track('first_model_shown', {
+        ...input,
+        duration_bucket: durationBucket(durationSinceSessionStart(nowMs)),
+      }, nowMs);
+    },
+
+    async recordUserAction(input, nowMs = now()) {
+      const isFirstAction = !hasEmittedFirstUserAction;
+      const emitted = track('user_action', {
+        ...input,
+        duration_bucket: durationBucket(durationSinceSessionStart(nowMs)),
+        is_first_action: isFirstAction,
+      }, nowMs);
+      if (emitted && isFirstAction) hasEmittedFirstUserAction = true;
     },
 
     async recordSetupStarted(nowMs = now()) {

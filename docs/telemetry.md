@@ -39,6 +39,17 @@ Every event includes this envelope:
   reports peers. Properties: duration bucket from app launch and coarse peer
   and advertised-service count buckets. Cached peer state is used only as a
   compatibility fallback for older runtimes without a structured peer count.
+- `first_model_shown` — once per launch when the first selected model is
+  actually rendered on the Home screen. Properties: duration from app start,
+  public model ID, service category, route mode, buyer-eligible free/paid
+  pricing classification, and a coarse eligible-offer-count bucket.
+- `user_action` — for every allowlisted meaningful product action. Properties:
+  fixed `action` and `surface` enums, duration from app start, and
+  `is_first_action`. This covers navigation; runtime start/stop and discovery
+  refresh; chat creation/open/send/stop/retry, attachments, and image
+  generation; model/peer/routing choices; connected-app connect/disconnect and
+  configuration copy; deposit/withdraw starts; workspace changes; and plugin
+  installation.
 - `setup_completed` — when first-run setup completes. Properties:
   `duration_bucket` (`under_30s`, `30s_2m`, `2m_5m`, `over_5m`).
 - `deposit_completed` — when a deposit is observed credited. Properties:
@@ -102,6 +113,13 @@ Network lifecycle events reuse the buyer runtime's structured status signals.
 The desktop does not upload, parse, or derive telemetry properties from its
 human-readable logs. Model pricing is classified locally from offers that pass
 the buyer's routing price policy; exact prices never enter telemetry.
+
+User actions are explicit semantic signals from maintained controller paths.
+VPR does not enable PostHog autocapture and does not record arbitrary clicks,
+button labels, typed values, scrolls, hovers, URLs, clipboard contents, or view
+names outside the fixed documented surface enum. The main process validates
+the action and surface, calculates elapsed time, and marks only the first valid
+action in each launch with `is_first_action: true`.
 
 The setup event is emitted only after an actual first-run plugin installation
 starts. Routine refreshes of an already-installed plugin do not begin a setup

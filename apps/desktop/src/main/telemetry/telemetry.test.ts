@@ -308,6 +308,51 @@ test('runtime, DHT, and first peers emit once per launch with coarse counts', as
   assert.equal(peers[0]?.properties['service_count_bucket'], '6_20');
 });
 
+test('first model shown emits once per launch with time-to-model context', async (t) => {
+  const dir = await makeTempDir(t);
+  const captured: Captured = { payloads: [] };
+  const service = await createTelemetryService(baseOptions(dir, captured));
+  await service.recordAppStarted(0);
+  await service.recordFirstModelShown({
+    public_model_id: 'deepseek-v4-flash',
+    service_category: 'chat',
+    route_mode: 'auto',
+    pricing_tier: 'free',
+    has_free_eligible_offer: true,
+    eligible_offer_count_bucket: '2_3',
+  }, 45_000);
+  await service.recordFirstModelShown({
+    public_model_id: 'claude-sonnet-4-5',
+    service_category: 'chat',
+    route_mode: 'pinned',
+    pricing_tier: 'paid',
+    has_free_eligible_offer: false,
+    eligible_offer_count_bucket: '1',
+  }, 60_000);
+
+  const shown = captured.payloads.filter((payload) => payload.event === 'first_model_shown');
+  assert.equal(shown.length, 1);
+  assert.equal(shown[0]?.properties['public_model_id'], 'deepseek-v4-flash');
+  assert.equal(shown[0]?.properties['duration_bucket'], '30s_2m');
+  assert.equal(shown[0]?.properties['pricing_tier'], 'free');
+});
+
+test('user actions identify the first meaningful action per launch', async (t) => {
+  const dir = await makeTempDir(t);
+  const captured: Captured = { payloads: [] };
+  const service = await createTelemetryService(baseOptions(dir, captured));
+  await service.recordAppStarted(0);
+  await service.recordUserAction({ action: 'view_opened', surface: 'model' }, 10_000);
+  await service.recordUserAction({ action: 'model_select', surface: 'model' }, 40_000);
+
+  const actions = captured.payloads.filter((payload) => payload.event === 'user_action');
+  assert.equal(actions.length, 2);
+  assert.equal(actions[0]?.properties['is_first_action'], true);
+  assert.equal(actions[0]?.properties['duration_bucket'], 'under_30s');
+  assert.equal(actions[1]?.properties['is_first_action'], false);
+  assert.equal(actions[1]?.properties['duration_bucket'], '30s_2m');
+});
+
 test('setup completion requires a started transition and emits once across restarts', async (t) => {
   const dir = await makeTempDir(t);
   const captured: Captured = { payloads: [] };
@@ -621,6 +666,29 @@ test('sanitizer applies event-specific failure enums', () => {
     retryable: true,
   } as never);
   assert.deepEqual(sanitized, { method_category: 'usdc', retryable: true });
+});
+
+test('sanitizer accepts only fixed user action and surface values', () => {
+  assert.deepEqual(sanitizeTelemetryProperties('user_action', {
+    action: 'chat_send',
+    surface: 'chat',
+    duration_bucket: 'under_30s',
+    is_first_action: true,
+  }), {
+    action: 'chat_send',
+    surface: 'chat',
+    duration_bucket: 'under_30s',
+    is_first_action: true,
+  });
+  assert.deepEqual(sanitizeTelemetryProperties('user_action', {
+    action: 'raw_button_label',
+    surface: '/private/path',
+    duration_bucket: 'under_30s',
+    is_first_action: false,
+  } as never), {
+    duration_bucket: 'under_30s',
+    is_first_action: false,
+  });
 });
 
 test('sanitizer accepts only random UUID request correlation IDs', () => {

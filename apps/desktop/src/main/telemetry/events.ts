@@ -14,6 +14,8 @@
  * - Only coarse buckets for durations and amounts.
  */
 
+import type { TelemetryActionSurface, TelemetryUserAction } from '../../shared/telemetry.js';
+
 export const TELEMETRY_SCHEMA_VERSION = 1;
 
 export type DurationBucket = 'under_30s' | '30s_2m' | '2m_5m' | 'over_5m';
@@ -80,6 +82,23 @@ export type TelemetryEventProperties = {
     duration_bucket: DurationBucket;
     peer_count_bucket: CountBucket;
     service_count_bucket: CountBucket;
+  };
+  /** Emitted once per launch when the first selected model is visibly rendered. */
+  first_model_shown: {
+    duration_bucket: DurationBucket;
+    public_model_id: string;
+    service_category: ServiceCategory;
+    route_mode: RouteMode;
+    pricing_tier: ModelPricingTier;
+    has_free_eligible_offer: boolean;
+    eligible_offer_count_bucket: OffersAvailableBucket;
+  };
+  /** Emitted for every allowlisted meaningful user action. */
+  user_action: {
+    action: TelemetryUserAction;
+    surface: TelemetryActionSurface;
+    duration_bucket: DurationBucket;
+    is_first_action: boolean;
   };
   /** Emitted when first-run setup completes. */
   setup_completed: {
@@ -175,6 +194,16 @@ export const TELEMETRY_EVENT_ALLOWLIST: { readonly [K in TelemetryEventName]: Re
   network_runtime_started: new Set(['duration_bucket']),
   dht_started: new Set(['duration_bucket', 'routing_node_count_bucket']),
   peers_discovered: new Set(['duration_bucket', 'peer_count_bucket', 'service_count_bucket']),
+  first_model_shown: new Set([
+    'duration_bucket',
+    'public_model_id',
+    'service_category',
+    'route_mode',
+    'pricing_tier',
+    'has_free_eligible_offer',
+    'eligible_offer_count_bucket',
+  ]),
+  user_action: new Set(['action', 'surface', 'duration_bucket', 'is_first_action']),
   setup_completed: new Set(['duration_bucket']),
   deposit_completed: new Set(['method_category', 'amount_bucket', 'is_first_deposit', 'days_since_first_open']),
   deposit_failed: new Set(['method_category', 'failure_code', 'failure_stage', 'retryable']),
