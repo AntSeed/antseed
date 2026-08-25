@@ -79,6 +79,7 @@ const TITLE_REQUEST_PREFIXES = [
     requests these must never label a chat, not even as a fallback; matched
     against the tag-stripped text so a wrapper can't hide the doc header. */
 const INSTRUCTION_DOC_PATTERN = /^#*\s*(agents|claude|gemini)\.md\b/i
+const RECOMMENDED_PLUGINS_PATTERN = /^here is a list of plugins that are available but not installed\b/i
 
 function getHeader(headers: Record<string, string>, name: string): string {
   const direct = headers[name]
@@ -271,9 +272,21 @@ export function isCursorEnvironmentSnippet(text: string): boolean {
 }
 
 function normalizeConversationText(text: string): string {
-  if (looksLikeCursorEnvironment(text)) return ''
+  if (isDiscardedConversationContext(text)) return ''
   const cursorQuery = /<user_query(?:\s[^>]*)?>([\s\S]*?)<\/user_query>/i.exec(text)?.[1]
   return (cursorQuery ?? text).trim()
+}
+
+function isDiscardedConversationContext(text: string): boolean {
+  return looksLikeCursorEnvironment(text) || looksLikeRecommendedPlugins(text)
+}
+
+function looksLikeRecommendedPlugins(text: string): boolean {
+  const normalized = text
+    .replace(/<\/?recommended_plugins(?:\s[^>]*)?>/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return RECOMMENDED_PLUGINS_PATTERN.test(normalized)
 }
 
 function looksLikeTitleRequest(text: string): boolean {
@@ -384,7 +397,7 @@ export function isTitleGenerationRequest(parsedBody: Record<string, unknown> | n
  */
 export function sanitizeStoredSnippet(text: string): string {
   if (!text) return ''
-  if (looksLikeTitleRequest(text) || looksLikeCursorEnvironment(text)) return ''
+  if (looksLikeTitleRequest(text) || isDiscardedConversationContext(text)) return ''
   const normalized = normalizeSnippet(text)
   // Stored labels from before the instruction-doc rule heal to empty so the
   // next real turn names the chat.

@@ -334,10 +334,31 @@ test('snippet: injected project-doc blobs never label a chat', () => {
   }), null)
 })
 
+test('snippet: Codex recommended plugins never label a chat', () => {
+  const pluginContext = `<recommended_plugins>
+Here is a list of plugins that are available but not installed.
+
+- Airtable
+- GitHub
+</recommended_plugins>`
+  assert.equal(extractFirstUserSnippet({
+    input: [
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: pluginContext }] },
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'fix the Cursor icon' }] },
+    ],
+  }), 'fix the Cursor icon')
+  assert.equal(extractFirstUserSnippet({
+    input: [
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Here is a list of plugins that are available but not installed. - Airtable' }] },
+    ],
+  }), null)
+})
+
 test('sanitizeStoredSnippet heals stored project-doc labels to empty', async () => {
   const { sanitizeStoredSnippet } = await import('./conversation-identity.js')
   assert.equal(sanitizeStoredSnippet('# AGENTS.md instructions for /Users/shahafan/Development/antseed # CLAUDE.md --…'), '')
   assert.equal(sanitizeStoredSnippet('OS Version: darwin 25.2.0 Shell: zsh Workspace Path: unknown Is directory a git…'), '')
+  assert.equal(sanitizeStoredSnippet('Here is a list of plugins that are available but not installed. - Airtable…'), '')
   assert.equal(sanitizeStoredSnippet('fix the login bug'), 'fix the login bug')
 })
 
