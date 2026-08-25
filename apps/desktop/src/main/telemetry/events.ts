@@ -15,6 +15,7 @@
  */
 
 import type { TelemetryActionSurface, TelemetryUserAction } from '../../shared/telemetry.js';
+import { modelMetadataFor } from '../../shared/model-metadata.js';
 
 export const TELEMETRY_SCHEMA_VERSION = 1;
 
@@ -365,7 +366,9 @@ const PUBLIC_MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9._:/-]{0,63}$/;
 
 export function publicModelId(serviceId: string, isCurrentlyAdvertised: boolean): string {
   const normalized = serviceId.trim().toLowerCase();
-  return isCurrentlyAdvertised && PUBLIC_MODEL_ID_PATTERN.test(normalized)
+  return isCurrentlyAdvertised
+    && modelMetadataFor(serviceId) !== null
+    && PUBLIC_MODEL_ID_PATTERN.test(normalized)
     ? normalized
     : 'custom_or_unknown';
 }

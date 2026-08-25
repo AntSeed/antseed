@@ -105,9 +105,9 @@ bucket values are validated.
 
 Failure events use fixed local taxonomies. Error messages are classified on
 device and discarded before the telemetry service is called. Exact model IDs
-are included only when the selected service is in the current public catalog
-and matches a conservative slug format; other values become
-`custom_or_unknown`.
+are included only when the selected service is currently advertised, exists in
+the release-owned reviewed model registry, and matches a conservative slug
+format; other values become `custom_or_unknown`.
 
 Network lifecycle events reuse the buyer runtime's structured status signals.
 The desktop does not upload, parse, or derive telemetry properties from its

@@ -761,6 +761,7 @@ test('bucket helpers classify correctly', () => {
   assert.equal(httpStatusBucket(503), '5xx');
   assert.equal(publicModelId('DeepSeek-V4-Flash', true), 'deepseek-v4-flash');
   assert.equal(publicModelId('private model name', true), 'custom_or_unknown');
+  assert.equal(publicModelId('seller-specific-campaign-abc123', true), 'custom_or_unknown');
   assert.equal(publicModelId('deepseek-v4-flash', false), 'custom_or_unknown');
   assert.deepEqual(modelPricingSnapshot([
     { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
