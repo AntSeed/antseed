@@ -390,10 +390,17 @@ test('title turns are recognised so they cannot define a chat model', () => {
   assert.equal(isTitleGenerationRequest({
     messages: [{ role: 'user', content: 'You write concise thread titles for a coding chat.' }],
   }), true)
-  // Factory/Droid opts into its system-role one-shot title instruction.
+  // Factory/Droid puts the real first user message in the user role. Its
+  // title-specific system text follows a shared provider preamble, so the
+  // marker is not at the start of the instruction block.
   const droidTitleRequest = {
     messages: [
-      { role: 'system', content: 'Generate a title for this session' },
+      {
+        role: 'system',
+        content: `Shared provider compatibility preamble.
+You are a helper that generates concise session titles for a session picker.
+Input: one user message from the start of a session.`,
+      },
       { role: 'user', content: 'wowow' },
     ],
   }

@@ -82,6 +82,14 @@ const TITLE_REQUEST_PREFIXES = [
   'summarize this coding conversation',
 ]
 
+/** Some integrations prepend shared provider instructions before their title
+    prompt, so the title-specific text is not at the start of the system block.
+    These exact markers are checked only for explicitly opted-in instruction
+    roles; user messages continue to require a leading title prefix. */
+const TITLE_REQUEST_INSTRUCTION_MARKERS = [
+  'you are a helper that generates concise session titles for a session picker',
+]
+
 /** Injected project-doc blobs — Codex sends AGENTS.md / CLAUDE.md contents
     as a user message ("# AGENTS.md instructions for <cwd> ..."). Like title
     requests these must never label a chat, not even as a fallback; matched
@@ -302,6 +310,12 @@ function looksLikeTitleRequest(text: string): boolean {
   return TITLE_REQUEST_PREFIXES.some((prefix) => start.startsWith(prefix))
 }
 
+function looksLikeTitleInstruction(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/\s+/g, ' ').trim()
+  return looksLikeTitleRequest(normalized)
+    || TITLE_REQUEST_INSTRUCTION_MARKERS.some((marker) => normalized.includes(marker))
+}
+
 /** Strip XML-ish tags (prompts often open with wrappers like `<session>`),
     collapse whitespace, and truncate to label length. */
 function normalizeSnippet(text: string): string {
@@ -424,7 +438,7 @@ export function isTitleGenerationRequest(
   instructionCandidates.push(...instructionTextsFromMessageList(parsedBody['messages'], sources))
   instructionCandidates.push(...instructionTextsFromMessageList(parsedBody['input'], sources))
   const firstInstruction = instructionCandidates.find((text) => text.trim().length > 0)
-  if (firstInstruction !== undefined && looksLikeTitleRequest(firstInstruction)) return true
+  if (firstInstruction !== undefined && looksLikeTitleInstruction(firstInstruction)) return true
 
   const candidates: string[] = []
   candidates.push(...userTextsFromMessageList(parsedBody['messages']))

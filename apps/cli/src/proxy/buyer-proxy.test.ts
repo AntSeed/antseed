@@ -3018,7 +3018,12 @@ test('title request racing ahead of the first turn does not name the chat', asyn
       body: {
         model: 'antseed',
         messages: [
-          { role: 'system', content: 'Generate a title for this session' },
+          {
+            role: 'system',
+            content: `Shared provider compatibility preamble.
+You are a helper that generates concise session titles for a session picker.
+Input: one user message from the start of a session.`,
+          },
           { role: 'user', content: 'wowow' },
         ],
       },
@@ -3033,7 +3038,12 @@ test('title request racing ahead of the first turn does not name the chat', asyn
       body: {
         model: 'antseed',
         messages: [
-          { role: 'system', content: 'Generate a title for this session' },
+          {
+            role: 'system',
+            content: `Shared provider compatibility preamble.
+You are a helper that generates concise session titles for a session picker.
+Input: one user message from the start of a session.`,
+          },
           { role: 'user', content: 'wowow' },
         ],
       },
