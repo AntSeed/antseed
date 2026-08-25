@@ -13,9 +13,9 @@ import { shortPeerId } from './tools';
     cadence) or the pulse would flicker mid-conversation. */
 export const CONVERSATION_ACTIVE_HOLD_MS = 10_000;
 
-/** Display name: user label, else prompt snippet, else the session key. */
+/** Display name: user label, source-app title, prompt snippet, then session key. */
 export function conversationTitle(record: BuyerConversationSummary): string {
-  return record.label || record.snippet || record.sessionKey.slice(0, 12);
+  return record.label || record.integrationTitle || record.snippet || record.sessionKey.slice(0, 12);
 }
 
 /** Service id of the pinned model, or null when following the default route. */

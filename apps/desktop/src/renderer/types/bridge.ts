@@ -528,6 +528,8 @@ export type BuyerConversationSummary = {
   tool: string;
   sessionKey: string;
   snippet: string;
+  /** Title supplied by the source integration, when it exposes one. */
+  integrationTitle?: string | null;
   label: string | null;
   /** Per-chat route pin as `<peerId>@<service>`. The buyer pins a chat to
       the first model that serves it, so this is null only until the chat's

@@ -233,6 +233,28 @@ test('reload re-cleans snippets persisted by older extraction rules', async () =
   }
 })
 
+test('list decorates Codex rows with integration titles without changing other tools', async () => {
+  const dir = await makeDir()
+  try {
+    const store = new ConversationStore(
+      dir,
+      (tool, sessionKey) => tool === 'codex-desktop' && sessionKey === 'thread-1'
+        ? 'Codex sidebar title'
+        : null,
+    )
+    store.touch({ tool: 'codex-desktop', sessionKey: 'thread-1', snippet: '' })
+    store.touch({ tool: 'droid', sessionKey: 'thread-1', snippet: 'Droid prompt' })
+
+    const records = store.list()
+    assert.equal(records.find((record) => record.tool === 'codex-desktop')?.integrationTitle, 'Codex sidebar title')
+    assert.equal(records.find((record) => record.tool === 'droid')?.integrationTitle, undefined)
+    assert.equal(records.find((record) => record.tool === 'droid')?.snippet, 'Droid prompt')
+    await store.flush()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('addSpend accumulates cost and counts requests only when told to', async () => {
   const dir = await makeDir()
   try {

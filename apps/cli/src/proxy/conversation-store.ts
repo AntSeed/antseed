@@ -2,6 +2,10 @@ import { readFileSync } from 'node:fs'
 import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { isCursorEnvironmentSnippet, sanitizeStoredSnippet } from './conversation-identity.js'
+import {
+  createIntegrationConversationTitleResolver,
+  type IntegrationConversationTitleResolver,
+} from './conversation-title-sources.js'
 
 /**
  * File-backed store for tool conversations seen by the buyer proxy.
@@ -20,6 +24,8 @@ export type StoredConversation = {
   sessionKey: string
   /** First genuine user prompt, captured when the conversation is first seen. */
   snippet: string
+  /** Integration-owned title resolved from the source app. Not persisted. */
+  integrationTitle?: string | null
   /** User-assigned name; overrides the snippet for display when set. */
   label: string | null
   /** Per-chat route as `<peerId>@<service>`. Automatic routes are soft
@@ -104,11 +110,16 @@ export class ConversationStore {
   private readonly _dir: string
   private readonly _file: string
   private readonly _byId = new Map<string, StoredConversation>()
+  private readonly _resolveIntegrationTitle: IntegrationConversationTitleResolver
   private _writeQueue: Promise<void> = Promise.resolve()
 
-  constructor(dataDir: string) {
+  constructor(
+    dataDir: string,
+    resolveIntegrationTitle = createIntegrationConversationTitleResolver(),
+  ) {
     this._dir = dataDir
     this._file = join(dataDir, CONVERSATIONS_FILE)
+    this._resolveIntegrationTitle = resolveIntegrationTitle
     this._loadSync()
   }
 
@@ -259,7 +270,13 @@ export class ConversationStore {
   /** Newest-activity first (stable sort over reversed insertion order keeps
       same-millisecond ties in true recency order). */
   list(): StoredConversation[] {
-    return [...this._byId.values()].reverse().sort((a, b) => b.lastActiveAt - a.lastActiveAt)
+    return [...this._byId.values()]
+      .reverse()
+      .sort((a, b) => b.lastActiveAt - a.lastActiveAt)
+      .map((record) => {
+        const integrationTitle = this._resolveIntegrationTitle(record.tool, record.sessionKey)
+        return integrationTitle ? { ...record, integrationTitle } : record
+      })
   }
 
   get(id: string): StoredConversation | null {
