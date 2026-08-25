@@ -18,6 +18,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   TELEMETRY_SCHEMA_VERSION,
+  countBucket,
   daysSinceFirstOpenBucket,
   depositAmountBucket,
   durationBucket,
@@ -92,6 +93,9 @@ export type TelemetryService = {
   context: () => TelemetryContext;
   /** Emits app_first_opened (once) and app_started; handles crash recovery. */
   recordAppStarted: (nowMs?: number) => Promise<void>;
+  recordNetworkRuntimeStarted: (nowMs?: number) => Promise<void>;
+  recordDhtStarted: (routingNodeCount: number, nowMs?: number) => Promise<void>;
+  recordPeersDiscovered: (peerCount: number, serviceCount: number, nowMs?: number) => Promise<void>;
   /** Arms the setup-duration clock. Call when first-run setup begins. */
   recordSetupStarted: (nowMs?: number) => Promise<void>;
   recordSetupCompleted: (nowMs?: number) => Promise<void>;
@@ -107,6 +111,14 @@ export type TelemetryService = {
     serviceCategory: TelemetryEventProperties['first_chat_started']['service_category'];
     hasAttachments: boolean;
   } & FirstChatDepositSnapshot, nowMs?: number) => Promise<void>;
+  recordModelSelected: (
+    input: TelemetryEventProperties['model_selected'],
+    nowMs?: number,
+  ) => Promise<void>;
+  recordChatRequestStarted: (
+    input: TelemetryEventProperties['chat_request_started'],
+    nowMs?: number,
+  ) => Promise<void>;
   recordChatRequestFinished: (
     input: TelemetryEventProperties['chat_request_finished'],
     nowMs?: number,
@@ -171,6 +183,9 @@ export async function createTelemetryService(
     ? DEFAULT_HEARTBEAT_INTERVAL_MS
     : options.heartbeatIntervalMs;
   let heartbeatTimer: NodeJS.Timeout | null = null;
+  let hasEmittedNetworkRuntimeStarted = false;
+  let hasEmittedDhtStarted = false;
+  let hasEmittedPeersDiscovered = false;
 
   const isEnabled = () => !staticDisabled && !state.telemetryDisabled;
 
@@ -179,8 +194,8 @@ export async function createTelemetryService(
     properties: TelemetryEventProperties[K],
     eventTsMs = now(),
     captureSessionId: string = sessionId,
-  ): void => {
-    if (!isEnabled()) return;
+  ): boolean => {
+    if (!isEnabled()) return false;
     const payload = {
       event,
       distinct_id: state.installId,
@@ -201,12 +216,17 @@ export async function createTelemetryService(
       },
     };
     void transport(payload).catch(() => {});
+    return true;
   };
 
   const daysSinceFirstOpen = (nowMs: number): number => {
     if (state.firstOpenedAtMs === null) return 0;
     return Math.max(0, Math.floor((nowMs - state.firstOpenedAtMs) / MS_PER_DAY));
   };
+
+  const durationSinceSessionStart = (nowMs: number): number => (
+    state.lastSessionStartedAtMs !== null ? Math.max(0, nowMs - state.lastSessionStartedAtMs) : 0
+  );
 
   const startHeartbeat = (): void => {
     if (heartbeatTimer || heartbeatIntervalMs === null || heartbeatIntervalMs <= 0) return;
@@ -266,6 +286,30 @@ export async function createTelemetryService(
       startHeartbeat();
     },
 
+    async recordNetworkRuntimeStarted(nowMs = now()) {
+      if (hasEmittedNetworkRuntimeStarted) return;
+      hasEmittedNetworkRuntimeStarted = track('network_runtime_started', {
+        duration_bucket: durationBucket(durationSinceSessionStart(nowMs)),
+      }, nowMs);
+    },
+
+    async recordDhtStarted(routingNodeCount, nowMs = now()) {
+      if (hasEmittedDhtStarted || routingNodeCount <= 0) return;
+      hasEmittedDhtStarted = track('dht_started', {
+        duration_bucket: durationBucket(durationSinceSessionStart(nowMs)),
+        routing_node_count_bucket: countBucket(routingNodeCount),
+      }, nowMs);
+    },
+
+    async recordPeersDiscovered(peerCount, serviceCount, nowMs = now()) {
+      if (hasEmittedPeersDiscovered || peerCount <= 0) return;
+      hasEmittedPeersDiscovered = track('peers_discovered', {
+        duration_bucket: durationBucket(durationSinceSessionStart(nowMs)),
+        peer_count_bucket: countBucket(peerCount),
+        service_count_bucket: countBucket(serviceCount),
+      }, nowMs);
+    },
+
     async recordSetupStarted(nowMs = now()) {
       if (state.hasCompletedSetup || state.setupStartedAtMs !== null) return;
       state.setupStartedAtMs = nowMs;
@@ -322,6 +366,14 @@ export async function createTelemetryService(
         has_attachments: input.hasAttachments,
       }, nowMs);
       await save();
+    },
+
+    async recordModelSelected(input, nowMs = now()) {
+      track('model_selected', input, nowMs);
+    },
+
+    async recordChatRequestStarted(input, nowMs = now()) {
+      track('chat_request_started', input, nowMs);
     },
 
     async recordChatRequestFinished(input, nowMs = now()) {

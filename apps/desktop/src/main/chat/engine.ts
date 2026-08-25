@@ -35,7 +35,13 @@ import {
 } from './permissions.js';
 import { DEFAULT_BUYER_STATE_PATH, LOCALHOST_URL } from '../constants.js';
 import { asErrorMessage } from '../utils.js';
-import { countBucket, durationBucket } from '../telemetry/events.js';
+import {
+  classifyServiceCategory,
+  countBucket,
+  durationBucket,
+  modelPricingSnapshot,
+  publicModelId,
+} from '../telemetry/events.js';
 import type { RawPeerHealth } from '../runtime/peer-cache.js';
 import {
   buildChatServiceCatalogFromNetworkModels,
@@ -132,6 +138,8 @@ export function registerPiChatHandlers({
   appendSystemLog,
   getFirstChatDepositSnapshot,
   recordFirstChatStarted,
+  recordModelSelected,
+  recordChatRequestStarted,
   recordChatRequestFinished,
   recordDiscoveryCompleted,
 }: RegisterPiChatHandlersOptions): PiChatEngine {
@@ -296,7 +304,39 @@ export function registerPiChatHandlers({
   };
 
   let lastServiceCatalogEntries: ChatServiceCatalogEntry[] = [];
+  let lastBuyerEligibleServiceCatalogEntries: ChatServiceCatalogEntry[] = [];
   let lastServiceCatalogRefreshAt = 0;
+
+  const recordModelSelection = (
+    service: string,
+    peerId: string | null,
+    selectionScope: 'default' | 'conversation',
+  ): void => {
+    if (!recordModelSelected) return;
+    const normalizedService = service.trim().toLowerCase();
+    const catalogOffers = lastServiceCatalogEntries.filter((entry) => (
+      entry.id.trim().toLowerCase() === normalizedService
+      && (!peerId || entry.peerId === peerId)
+    ));
+    const eligibleOffers = lastBuyerEligibleServiceCatalogEntries.filter((entry) => (
+      entry.id.trim().toLowerCase() === normalizedService
+      && (!peerId || entry.peerId === peerId)
+    ));
+    const pricing = modelPricingSnapshot(eligibleOffers);
+    try {
+      void Promise.resolve(recordModelSelected({
+        public_model_id: publicModelId(service, catalogOffers.length > 0),
+        service_category: classifyServiceCategory(service),
+        selection_scope: selectionScope,
+        route_mode: peerId ? 'pinned' : 'auto',
+        pricing_tier: pricing.pricingTier,
+        has_free_eligible_offer: pricing.hasFreeEligibleOffer,
+        eligible_offer_count_bucket: pricing.eligibleOfferCountBucket,
+      })).catch(() => {});
+    } catch {
+      // Telemetry must never affect model selection.
+    }
+  };
   const SERVICE_CATALOG_DEBOUNCE_MS = 5_000;
   let serviceCatalogRefreshPromise: Promise<ChatServiceCatalogEntry[]> | null = null;
 
@@ -354,7 +394,9 @@ export function registerPiChatHandlers({
   const discoverPolicyAllowedCatalog = async (): Promise<ChatServiceCatalogEntry[]> => {
     const entries = await refreshServiceCatalogFromNetwork();
     const buyerMaxPricing = await loadBuyerMaxPricingDefaults(configPath);
-    return entries.filter((entry) => isCatalogEntryAllowedByBuyerMax(entry, buyerMaxPricing));
+    const eligibleEntries = entries.filter((entry) => isCatalogEntryAllowedByBuyerMax(entry, buyerMaxPricing));
+    lastBuyerEligibleServiceCatalogEntries = eligibleEntries;
+    return eligibleEntries;
   };
 
   // Curated model-picker snapshot pushed by the renderer — see
@@ -405,8 +447,10 @@ export function registerPiChatHandlers({
     waitForBuyerProxy,
     resolveProtocolForSend,
     getServiceCatalogEntries: () => lastServiceCatalogEntries,
+    getBuyerEligibleServiceCatalogEntries: () => lastBuyerEligibleServiceCatalogEntries,
     ...(getFirstChatDepositSnapshot ? { getFirstChatDepositSnapshot } : {}),
     ...(recordFirstChatStarted ? { recordFirstChatStarted } : {}),
+    ...(recordChatRequestStarted ? { recordChatRequestStarted } : {}),
     ...(recordChatRequestFinished ? { recordChatRequestFinished } : {}),
   });
 
@@ -486,6 +530,7 @@ export function registerPiChatHandlers({
         CATALOG_PHASE_BUDGET_MS,
         () => lastServiceCatalogEntries,
       )).filter((entry) => isCatalogEntryAllowedByBuyerMax(entry, buyerMaxPricing));
+      lastBuyerEligibleServiceCatalogEntries = entries;
       endPhase('catalog');
 
       const buyerPort = await resolveProxyPort(configPath);
@@ -926,6 +971,7 @@ export function registerPiChatHandlers({
       }
       if (service) {
         await store.setModel(conversationId, provider ?? undefined, service);
+        recordModelSelection(service, pinnedPeerId, 'conversation');
       }
     }
 
@@ -969,7 +1015,10 @@ export function registerPiChatHandlers({
         body: JSON.stringify({ model }),
       });
       const result = await response.json() as { ok?: boolean; error?: string };
-      if (result.ok) lastPostedDefaultRoute = model;
+      if (result.ok) {
+        lastPostedDefaultRoute = model;
+        recordModelSelection(service, peerId || null, 'default');
+      }
       return { ok: result.ok ?? false, error: result.error };
     } catch (err) {
       return { ok: false, error: asErrorMessage(err) };

@@ -2,8 +2,9 @@
 
 The AntSeed VPR desktop app collects anonymous, privacy-first product
 telemetry to understand the activation funnel (first open → setup → deposit →
-first chat) and app reliability. This document lists every event and property,
-what is never collected, and how to disable telemetry.
+first chat), network readiness, model selection, and app reliability. This
+document lists every event and property, what is never collected, and how to
+disable telemetry.
 
 Implementation: `apps/desktop/src/main/telemetry/`
 (`telemetry.ts`, `events.ts`, `sanitize.ts`, `posthog.ts`, `state.ts`).
@@ -28,6 +29,16 @@ Every event includes this envelope:
 - `app_first_opened` — once per installation. Properties: `first_open_date`
   (YYYY-MM-DD).
 - `app_started` — once per launch. Properties: `is_first_launch`.
+- `network_runtime_started` — once per launch when the buyer runtime's
+  structured status endpoint first responds. Properties: duration bucket from
+  app launch.
+- `dht_started` — once per launch when structured buyer status reports at
+  least one DHT routing node. Properties: duration bucket from app launch and
+  a coarse routing-node-count bucket.
+- `peers_discovered` — once per launch when structured buyer status first
+  reports peers. Properties: duration bucket from app launch and coarse peer
+  and advertised-service count buckets. Cached peer state is used only as a
+  compatibility fallback for older runtimes without a structured peer count.
 - `setup_completed` — when first-run setup completes. Properties:
   `duration_bucket` (`under_30s`, `30s_2m`, `2m_5m`, `over_5m`).
 - `deposit_completed` — when a deposit is observed credited. Properties:
@@ -41,9 +52,20 @@ Every event includes this envelope:
   request. Properties: `had_deposit`, `deposit_bucket`,
   `days_since_first_open`, `service_category` (`chat`, `image`, `other`),
   `has_attachments`.
+- `model_selected` — when the effective default or conversation model changes.
+  Properties: public advertised `public_model_id` (or `custom_or_unknown`),
+  `service_category`, default/conversation selection scope, auto/pinned route
+  mode, whether any buyer-policy-eligible offer is free, a `free`, `paid`,
+  `mixed`, or `unknown` pricing tier, and a coarse eligible-offer-count bucket.
+- `chat_request_started` — immediately before each valid remote chat attempt,
+  after local preflight and session construction succeed. Properties: a random
+  per-request `request_id`, public model ID, service category, route mode,
+  privacy-safe eligible-offer pricing context, a coarse offer-count bucket,
+  and `has_attachments`.
 - `chat_request_finished` — once for every valid remote chat attempt, including
-  success, failure, and cancellation. Properties: `outcome`, fixed
-  `failure_code` and `failure_stage`, public advertised `public_model_id` (or
+  success, failure, and cancellation. It carries the same random `request_id`
+  as `chat_request_started`, plus `outcome`, fixed `failure_code` and
+  `failure_stage`, public advertised `public_model_id` (or
   `custom_or_unknown`), `service_category`, `route_mode`, coarse offer-count,
   HTTP-status and duration buckets, retry flags, `had_partial_output`, and
   `has_attachments`. Peer IDs and raw stream errors are never sent.
@@ -76,6 +98,11 @@ are included only when the selected service is in the current public catalog
 and matches a conservative slug format; other values become
 `custom_or_unknown`.
 
+Network lifecycle events reuse the buyer runtime's structured status signals.
+The desktop does not upload, parse, or derive telemetry properties from its
+human-readable logs. Model pricing is classified locally from offers that pass
+the buyer's routing price policy; exact prices never enter telemetry.
+
 The setup event is emitted only after an actual first-run plugin installation
 starts. Routine refreshes of an already-installed plugin do not begin a setup
 measurement; a repair may only finish a first-run measurement that was already
@@ -90,6 +117,9 @@ bucket. The exact balance never enters the telemetry service.
 the app's user data directory. It is not derived from a wallet address,
 machine identifier, hostname, account, or OS identifier. A fresh
 `session_id` is generated on every launch.
+Each valid remote chat attempt also receives a random `request_id` used only to
+correlate its start and finish events. It is not derived from chat contents,
+the installation ID, a peer, or a wallet.
 
 ## How to disable telemetry
 

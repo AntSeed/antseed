@@ -50,6 +50,8 @@ export type ChatFailureCode =
   | 'unknown';
 export type ChatFailureStage = 'none' | 'request_validation' | 'payment' | 'user' | 'transport' | 'upstream' | 'streaming';
 export type RouteMode = 'auto' | 'pinned';
+export type ModelPricingTier = 'free' | 'paid' | 'mixed' | 'unknown';
+export type ModelSelectionScope = 'default' | 'conversation';
 export type FirstChatDepositSnapshot = {
   hadDeposit: boolean;
   depositBucket: DepositAmountBucket | 'none';
@@ -63,6 +65,21 @@ export type TelemetryEventProperties = {
   /** Emitted once per application launch. */
   app_started: {
     is_first_launch: boolean;
+  };
+  /** Emitted once per launch when the buyer runtime control plane responds. */
+  network_runtime_started: {
+    duration_bucket: DurationBucket;
+  };
+  /** Emitted once per launch when the DHT has at least one routing node. */
+  dht_started: {
+    duration_bucket: DurationBucket;
+    routing_node_count_bucket: CountBucket;
+  };
+  /** Emitted once per launch when the buyer first reports discovered peers. */
+  peers_discovered: {
+    duration_bucket: DurationBucket;
+    peer_count_bucket: CountBucket;
+    service_count_bucket: CountBucket;
   };
   /** Emitted when first-run setup completes. */
   setup_completed: {
@@ -90,8 +107,30 @@ export type TelemetryEventProperties = {
     service_category: ServiceCategory;
     has_attachments: boolean;
   };
+  /** Emitted when the effective default or conversation model changes. */
+  model_selected: {
+    public_model_id: string;
+    service_category: ServiceCategory;
+    selection_scope: ModelSelectionScope;
+    route_mode: RouteMode;
+    pricing_tier: ModelPricingTier;
+    has_free_eligible_offer: boolean;
+    eligible_offer_count_bucket: OffersAvailableBucket;
+  };
+  /** Emitted immediately before each valid remote chat attempt. */
+  chat_request_started: {
+    request_id: string;
+    public_model_id: string;
+    service_category: ServiceCategory;
+    route_mode: RouteMode;
+    pricing_tier: ModelPricingTier;
+    has_free_eligible_offer: boolean;
+    offers_available_bucket: OffersAvailableBucket;
+    has_attachments: boolean;
+  };
   /** Emitted once for every valid remote chat attempt, including failures. */
   chat_request_finished: {
+    request_id: string;
     outcome: ChatRequestOutcome;
     failure_code: ChatFailureCode;
     failure_stage: ChatFailureStage;
@@ -133,11 +172,34 @@ export type TelemetryEventName = keyof TelemetryEventProperties;
 export const TELEMETRY_EVENT_ALLOWLIST: { readonly [K in TelemetryEventName]: ReadonlySet<string> } = {
   app_first_opened: new Set(['first_open_date']),
   app_started: new Set(['is_first_launch']),
+  network_runtime_started: new Set(['duration_bucket']),
+  dht_started: new Set(['duration_bucket', 'routing_node_count_bucket']),
+  peers_discovered: new Set(['duration_bucket', 'peer_count_bucket', 'service_count_bucket']),
   setup_completed: new Set(['duration_bucket']),
   deposit_completed: new Set(['method_category', 'amount_bucket', 'is_first_deposit', 'days_since_first_open']),
   deposit_failed: new Set(['method_category', 'failure_code', 'failure_stage', 'retryable']),
   first_chat_started: new Set(['had_deposit', 'deposit_bucket', 'days_since_first_open', 'service_category', 'has_attachments']),
+  model_selected: new Set([
+    'public_model_id',
+    'service_category',
+    'selection_scope',
+    'route_mode',
+    'pricing_tier',
+    'has_free_eligible_offer',
+    'eligible_offer_count_bucket',
+  ]),
+  chat_request_started: new Set([
+    'request_id',
+    'public_model_id',
+    'service_category',
+    'route_mode',
+    'pricing_tier',
+    'has_free_eligible_offer',
+    'offers_available_bucket',
+    'has_attachments',
+  ]),
   chat_request_finished: new Set([
+    'request_id',
     'outcome',
     'failure_code',
     'failure_stage',
@@ -208,6 +270,8 @@ export const CHAT_FAILURE_STAGES: ReadonlySet<string> = new Set([
   'streaming',
 ]);
 export const ROUTE_MODES: ReadonlySet<string> = new Set(['auto', 'pinned']);
+export const MODEL_PRICING_TIERS: ReadonlySet<string> = new Set(['free', 'paid', 'mixed', 'unknown']);
+export const MODEL_SELECTION_SCOPES: ReadonlySet<string> = new Set(['default', 'conversation']);
 
 export function durationBucket(ms: number): DurationBucket {
   if (ms < 30_000) return 'under_30s';
@@ -275,6 +339,42 @@ export function publicModelId(serviceId: string, isCurrentlyAdvertised: boolean)
   return isCurrentlyAdvertised && PUBLIC_MODEL_ID_PATTERN.test(normalized)
     ? normalized
     : 'custom_or_unknown';
+}
+
+type ModelOfferPricing = {
+  inputUsdPerMillion?: number;
+  outputUsdPerMillion?: number;
+  cachedInputUsdPerMillion?: number;
+  minImageUsdPerImage?: number;
+  maxImageUsdPerImage?: number;
+};
+
+export type ModelPricingSnapshot = {
+  pricingTier: ModelPricingTier;
+  hasFreeEligibleOffer: boolean;
+  eligibleOfferCountBucket: OffersAvailableBucket;
+};
+
+function offerPricingKind(offer: ModelOfferPricing): 'free' | 'paid' | 'unknown' {
+  const textPrices = [offer.inputUsdPerMillion, offer.outputUsdPerMillion, offer.cachedInputUsdPerMillion]
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  const imagePrices = [offer.minImageUsdPerImage, offer.maxImageUsdPerImage]
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  const prices = textPrices.length > 0 ? textPrices : imagePrices;
+  if (prices.length === 0) return 'unknown';
+  return prices.every((price) => price === 0) ? 'free' : 'paid';
+}
+
+/** Classifies only buyer-eligible catalog offers; exact prices never leave the device. */
+export function modelPricingSnapshot(offers: ModelOfferPricing[]): ModelPricingSnapshot {
+  const kinds = offers.map(offerPricingKind);
+  const hasFree = kinds.includes('free');
+  const hasPaid = kinds.includes('paid');
+  return {
+    pricingTier: hasFree && hasPaid ? 'mixed' : hasFree ? 'free' : hasPaid ? 'paid' : 'unknown',
+    hasFreeEligibleOffer: hasFree,
+    eligibleOfferCountBucket: offersAvailableBucket(offers.length),
+  };
 }
 
 const IMAGE_SERVICE_PATTERN = /image|dall|flux|sdxl|stable[-_]?diffusion|midjourney|imagen/i;

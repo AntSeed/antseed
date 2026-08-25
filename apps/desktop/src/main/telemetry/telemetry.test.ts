@@ -22,6 +22,7 @@ import {
   daysSinceFirstOpenBucket,
   firstChatDepositSnapshot,
   httpStatusBucket,
+  modelPricingSnapshot,
   offersAvailableBucket,
   publicModelId,
   sessionDurationBucket,
@@ -30,6 +31,7 @@ import { classifyChatRequestFailure, classifyDepositFailure } from './classify.j
 import type { PostHogCapturePayload } from './posthog.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const REQUEST_ID = '123e4567-e89b-42d3-a456-426614174000';
 
 async function makeTempDir(t: test.TestContext): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'antseed-telemetry-'));
@@ -279,6 +281,33 @@ test('setup duration is bucketed', async (t) => {
   assert.equal(setup.properties['duration_bucket'], '30s_2m');
 });
 
+test('runtime, DHT, and first peers emit once per launch with coarse counts', async (t) => {
+  const dir = await makeTempDir(t);
+  const captured: Captured = { payloads: [] };
+  const service = await createTelemetryService(baseOptions(dir, captured));
+  await service.recordAppStarted(0);
+  await service.recordNetworkRuntimeStarted(10_000);
+  await service.recordNetworkRuntimeStarted(20_000);
+  await service.recordDhtStarted(0, 20_000);
+  await service.recordDhtStarted(4, 40_000);
+  await service.recordDhtStarted(8, 50_000);
+  await service.recordPeersDiscovered(0, 0, 60_000);
+  await service.recordPeersDiscovered(7, 12, 3 * 60_000);
+  await service.recordPeersDiscovered(20, 30, 4 * 60_000);
+
+  const runtime = captured.payloads.filter((payload) => payload.event === 'network_runtime_started');
+  const dht = captured.payloads.filter((payload) => payload.event === 'dht_started');
+  const peers = captured.payloads.filter((payload) => payload.event === 'peers_discovered');
+  assert.equal(runtime.length, 1);
+  assert.equal(runtime[0]?.properties['duration_bucket'], 'under_30s');
+  assert.equal(dht.length, 1);
+  assert.equal(dht[0]?.properties['routing_node_count_bucket'], '2_5');
+  assert.equal(peers.length, 1);
+  assert.equal(peers[0]?.properties['duration_bucket'], '2m_5m');
+  assert.equal(peers[0]?.properties['peer_count_bucket'], '6_20');
+  assert.equal(peers[0]?.properties['service_count_bucket'], '6_20');
+});
+
 test('setup completion requires a started transition and emits once across restarts', async (t) => {
   const dir = await makeTempDir(t);
   const captured: Captured = { payloads: [] };
@@ -358,6 +387,7 @@ test('chat_request_finished records model failures without raw peer errors', asy
     statusCode: 400,
   }, rawError);
   await service.recordChatRequestFinished({
+    request_id: REQUEST_ID,
     outcome: 'failed',
     failure_code: failure.failureCode,
     failure_stage: failure.failureStage,
@@ -381,6 +411,39 @@ test('chat_request_finished records model failures without raw peer errors', asy
   assert.equal(finished.properties['retryable'], true);
   assert.equal(JSON.stringify(finished).includes('12D3KooSecret'), false);
   assert.equal(JSON.stringify(finished).includes('not served'), false);
+});
+
+test('model selection and chat start share privacy-safe pricing context', async (t) => {
+  const dir = await makeTempDir(t);
+  const captured: Captured = { payloads: [] };
+  const service = await createTelemetryService(baseOptions(dir, captured));
+  await service.recordModelSelected({
+    public_model_id: 'deepseek-v4-flash',
+    service_category: 'chat',
+    selection_scope: 'default',
+    route_mode: 'auto',
+    pricing_tier: 'mixed',
+    has_free_eligible_offer: true,
+    eligible_offer_count_bucket: '2_3',
+  }, 0);
+  await service.recordChatRequestStarted({
+    request_id: REQUEST_ID,
+    public_model_id: 'deepseek-v4-flash',
+    service_category: 'chat',
+    route_mode: 'auto',
+    pricing_tier: 'mixed',
+    has_free_eligible_offer: true,
+    offers_available_bucket: '2_3',
+    has_attachments: false,
+  }, 1);
+
+  const selected = captured.payloads.find((payload) => payload.event === 'model_selected');
+  const started = captured.payloads.find((payload) => payload.event === 'chat_request_started');
+  assert.ok(selected);
+  assert.ok(started);
+  assert.equal(selected.properties['pricing_tier'], 'mixed');
+  assert.equal(selected.properties['has_free_eligible_offer'], true);
+  assert.equal(started.properties['request_id'], REQUEST_ID);
 });
 
 test('discovery_completed records coarse counts only', async (t) => {
@@ -499,6 +562,25 @@ test('opt-in again re-enables telemetry', async (t) => {
   assert.equal(service.enabled, true);
 });
 
+test('session milestones remain observable after opting in mid-session', async (t) => {
+  const dir = await makeTempDir(t);
+  const captured: Captured = { payloads: [] };
+  const service = await createTelemetryService(baseOptions(dir, captured));
+  await service.recordAppStarted(0);
+  await service.setUserOptedOut(true);
+  await service.recordNetworkRuntimeStarted(1_000);
+  await service.recordDhtStarted(3, 2_000);
+  await service.recordPeersDiscovered(2, 4, 3_000);
+  await service.setUserOptedOut(false);
+  await service.recordNetworkRuntimeStarted(4_000);
+  await service.recordDhtStarted(3, 5_000);
+  await service.recordPeersDiscovered(2, 4, 6_000);
+
+  assert.equal(captured.payloads.filter((payload) => payload.event === 'network_runtime_started').length, 1);
+  assert.equal(captured.payloads.filter((payload) => payload.event === 'dht_started').length, 1);
+  assert.equal(captured.payloads.filter((payload) => payload.event === 'peers_discovered').length, 1);
+});
+
 // ── Sanitizer ──
 
 test('sanitizer drops unknown properties and unsupported types', () => {
@@ -539,6 +621,32 @@ test('sanitizer applies event-specific failure enums', () => {
     retryable: true,
   } as never);
   assert.deepEqual(sanitized, { method_category: 'usdc', retryable: true });
+});
+
+test('sanitizer accepts only random UUID request correlation IDs', () => {
+  const valid = sanitizeTelemetryProperties('chat_request_started', {
+    request_id: REQUEST_ID,
+    public_model_id: 'deepseek-v4-flash',
+    service_category: 'chat',
+    route_mode: 'auto',
+    pricing_tier: 'free',
+    has_free_eligible_offer: true,
+    offers_available_bucket: '1',
+    has_attachments: false,
+  });
+  assert.equal(valid['request_id'], REQUEST_ID);
+
+  const invalid = sanitizeTelemetryProperties('chat_request_started', {
+    request_id: 'conversation-or-wallet-derived-id',
+    public_model_id: 'deepseek-v4-flash',
+    service_category: 'chat',
+    route_mode: 'auto',
+    pricing_tier: 'free',
+    has_free_eligible_offer: true,
+    offers_available_bucket: '1',
+    has_attachments: false,
+  });
+  assert.equal('request_id' in invalid, false);
 });
 
 // ── State persistence ──
@@ -586,6 +694,26 @@ test('bucket helpers classify correctly', () => {
   assert.equal(publicModelId('DeepSeek-V4-Flash', true), 'deepseek-v4-flash');
   assert.equal(publicModelId('private model name', true), 'custom_or_unknown');
   assert.equal(publicModelId('deepseek-v4-flash', false), 'custom_or_unknown');
+  assert.deepEqual(modelPricingSnapshot([
+    { inputUsdPerMillion: 0, outputUsdPerMillion: 0 },
+    { inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
+  ]), {
+    pricingTier: 'mixed',
+    hasFreeEligibleOffer: true,
+    eligibleOfferCountBucket: '2_3',
+  });
+  assert.deepEqual(modelPricingSnapshot([]), {
+    pricingTier: 'unknown',
+    hasFreeEligibleOffer: false,
+    eligibleOfferCountBucket: '0',
+  });
+  assert.deepEqual(modelPricingSnapshot([
+    { inputUsdPerMillion: 0, outputUsdPerMillion: 0, cachedInputUsdPerMillion: 0.5 },
+  ]), {
+    pricingTier: 'paid',
+    hasFreeEligibleOffer: false,
+    eligibleOfferCountBucket: '1',
+  });
   assert.equal(classifyServiceCategory('claude-sonnet-4-5'), 'chat');
   assert.equal(classifyServiceCategory('dall-e-3'), 'image');
   assert.equal(classifyServiceCategory('flux-schnell'), 'image');

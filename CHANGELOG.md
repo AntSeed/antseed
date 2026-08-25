@@ -8,7 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
-- Desktop now includes privacy-first anonymous activation and reliability telemetry for first open, setup completion, coarse deposit milestones and failures, first chat, per-request chat outcomes, model discovery outcomes, and clean/crash lifecycle signals. Events are main-process owned, strictly allowlisted and bucketed, normalize failures to fixed local taxonomies without sending raw errors or peer IDs, disable PostHog GeoIP enrichment and person profiles, use a random installation ID, remain off in development/source builds without explicit configuration, and can be disabled from Preferences.
+- Desktop now includes privacy-first anonymous activation and reliability telemetry for first open, buyer-runtime/DHT/peer readiness, setup completion, coarse deposit milestones and failures, first chat, buyer-eligible model selections and free/paid classification, correlated per-request chat starts/outcomes, model discovery outcomes, and clean/crash lifecycle signals. Events are main-process owned, consume structured runtime status rather than logs, are strictly allowlisted and bucketed, normalize failures to fixed local taxonomies without sending raw errors, exact prices, or peer IDs, disable PostHog GeoIP enrichment and person profiles, use random installation/session/request IDs, remain off in development/source builds without explicit configuration, and can be disabled from Preferences.
 
 ### Fixed
 

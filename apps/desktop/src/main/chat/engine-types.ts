@@ -28,6 +28,12 @@ export type RegisterPiChatHandlersOptions = {
   appendSystemLog: (line: string) => void;
   getFirstChatDepositSnapshot?: () => Promise<FirstChatDepositSnapshot | null>;
   recordFirstChatStarted?: (input: FirstChatTelemetryInput) => void | Promise<void>;
+  recordModelSelected?: (
+    input: TelemetryEventProperties['model_selected'],
+  ) => void | Promise<void>;
+  recordChatRequestStarted?: (
+    input: TelemetryEventProperties['chat_request_started'],
+  ) => void | Promise<void>;
   recordChatRequestFinished?: (
     input: TelemetryEventProperties['chat_request_finished'],
   ) => void | Promise<void>;

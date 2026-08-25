@@ -77,6 +77,7 @@ import {
   classifyServiceCategory,
   durationBucket,
   httpStatusBucket,
+  modelPricingSnapshot,
   offersAvailableBucket,
   publicModelId,
   type TelemetryEventProperties,
@@ -121,14 +122,16 @@ export type StreamingRunContext = {
    * value: the engine replaces the array wholesale on every refresh.
    */
   getServiceCatalogEntries: () => ChatServiceCatalogEntry[];
+  getBuyerEligibleServiceCatalogEntries: () => ChatServiceCatalogEntry[];
   getFirstChatDepositSnapshot?: StreamingRunContextTelemetry['getFirstChatDepositSnapshot'];
   recordFirstChatStarted?: StreamingRunContextTelemetry['recordFirstChatStarted'];
+  recordChatRequestStarted?: StreamingRunContextTelemetry['recordChatRequestStarted'];
   recordChatRequestFinished?: StreamingRunContextTelemetry['recordChatRequestFinished'];
 };
 
 type StreamingRunContextTelemetry = Pick<
   import('./engine-types.js').RegisterPiChatHandlersOptions,
-  'getFirstChatDepositSnapshot' | 'recordFirstChatStarted' | 'recordChatRequestFinished'
+  'getFirstChatDepositSnapshot' | 'recordFirstChatStarted' | 'recordChatRequestStarted' | 'recordChatRequestFinished'
 >;
 
 export type StreamingRunner = ReturnType<typeof createStreamingRunner>;
@@ -154,8 +157,10 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
     waitForBuyerProxy,
     resolveProtocolForSend,
     getServiceCatalogEntries,
+    getBuyerEligibleServiceCatalogEntries,
     getFirstChatDepositSnapshot,
     recordFirstChatStarted,
+    recordChatRequestStarted,
     recordChatRequestFinished,
   } = ctx;
 
@@ -428,10 +433,14 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
     let automaticRetrySucceeded = false;
     let hadPartialOutput = false;
     let telemetryFinished = false;
+    const requestId = randomUUID();
     const requestStartedAt = Date.now();
-    const offersForService = getServiceCatalogEntries().filter(
-      (entry) => entry.id.trim().toLowerCase() === normalizedServiceForCatalog,
-    ).length;
+    const eligibleOffersForService = getBuyerEligibleServiceCatalogEntries().filter((entry) => (
+      entry.id.trim().toLowerCase() === normalizedServiceForCatalog
+      && (routeMode !== 'pinned' || entry.peerId === preferredPeerId)
+    ));
+    const offersForService = eligibleOffersForService.length;
+    const pricing = modelPricingSnapshot(eligibleOffersForService);
     const finishTelemetry = (
       outcome: TelemetryEventProperties['chat_request_finished']['outcome'],
       reason?: ChatStreamStopReason,
@@ -443,6 +452,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
         ? classifyChatRequestFailure(reason, rawMessage)
         : { failureCode: 'none' as const, failureStage: 'none' as const, retryable: false };
       const payload: TelemetryEventProperties['chat_request_finished'] = {
+        request_id: requestId,
         outcome,
         failure_code: failure.failureCode,
         failure_stage: failure.failureStage,
@@ -752,6 +762,23 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
 
     const run: ActiveRun = { conversationId, session, unsubscribe };
     activeRunsByConversation.set(conversationId, run);
+
+    if (recordChatRequestStarted) {
+      try {
+        void Promise.resolve(recordChatRequestStarted({
+          request_id: requestId,
+          public_model_id: publicModelId(serviceId, catalogEntry !== undefined),
+          service_category: classifyServiceCategory(serviceId),
+          route_mode: routeMode,
+          pricing_tier: pricing.pricingTier,
+          has_free_eligible_offer: pricing.hasFreeEligibleOffer,
+          offers_available_bucket: pricing.eligibleOfferCountBucket,
+          has_attachments: (attachments?.length ?? 0) > 0,
+        })).catch(() => {});
+      } catch {
+        // Telemetry must never affect the chat request.
+      }
+    }
 
     // Capture only after every local preflight and session-construction step
     // succeeded. The balance read and transport stay off the chat critical path.

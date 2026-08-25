@@ -18,6 +18,8 @@ import {
   DEPOSIT_AMOUNT_BUCKETS,
   DURATION_BUCKETS,
   HTTP_STATUS_BUCKETS,
+  MODEL_PRICING_TIERS,
+  MODEL_SELECTION_SCOPES,
   OFFERS_AVAILABLE_BUCKETS,
   ROUTE_MODES,
   SERVICE_CATEGORIES,
@@ -53,6 +55,10 @@ const PROPERTY_VALIDATORS: Record<string, ReadonlySet<string>> = {
   service_count_bucket: COUNT_BUCKETS,
   peer_count_bucket: COUNT_BUCKETS,
   result_count_bucket: COUNT_BUCKETS,
+  routing_node_count_bucket: COUNT_BUCKETS,
+  eligible_offer_count_bucket: OFFERS_AVAILABLE_BUCKETS,
+  pricing_tier: MODEL_PRICING_TIERS,
+  selection_scope: MODEL_SELECTION_SCOPES,
 };
 
 const EVENT_PROPERTY_VALIDATORS: Partial<Record<TelemetryEventName, Record<string, ReadonlySet<string>>>> = {
@@ -71,6 +77,7 @@ const EVENT_PROPERTY_VALIDATORS: Partial<Record<TelemetryEventName, Record<strin
 };
 
 const PUBLIC_MODEL_ID_PATTERN = /^(?:custom_or_unknown|[a-z0-9][a-z0-9._:/-]{0,63})$/;
+const RANDOM_REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function sanitizeTelemetryProperties<K extends TelemetryEventName>(
   event: K,
@@ -90,6 +97,7 @@ export function sanitizeTelemetryProperties<K extends TelemetryEventName>(
       const propertyValidator = EVENT_PROPERTY_VALIDATORS[event]?.[key] ?? PROPERTY_VALIDATORS[key];
       if (propertyValidator && !propertyValidator.has(value)) continue;
       if (key === 'public_model_id' && !PUBLIC_MODEL_ID_PATTERN.test(value)) continue;
+      if (key === 'request_id' && !RANDOM_REQUEST_ID_PATTERN.test(value)) continue;
       out[key] = sanitizeString(value);
     }
     // Objects/arrays/null/undefined/functions are dropped.
