@@ -159,6 +159,16 @@ function labelFor(platform: DesktopPlatform): string {
   }
 }
 
+/** Resolve a confident direct-download URL after an early CTA click. */
+export async function resolveLatestDesktopDownload(): Promise<string | null> {
+  const platform = detectPlatform();
+  if (platform === 'unknown') return null;
+  const [arch, release] = await Promise.all([detectArch(platform), fetchLatestRelease()]);
+  const assets = Array.isArray(release?.assets) ? release.assets : [];
+  const matched = assets.length > 0 ? matchAsset(assets, platform, arch) : null;
+  return matched?.browser_download_url ?? null;
+}
+
 /**
  * React hook. Returns resolved download metadata. Safe to call during SSR
  * (returns a neutral fallback that points at the releases page).

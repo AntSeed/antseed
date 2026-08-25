@@ -12,6 +12,10 @@ import {
   visibleLabel,
 } from '../lib/analytics';
 import {MOBILE_GET_STARTED_QUERY} from '../lib/useMobileGetStarted';
+import {
+  RELEASES_URL,
+  resolveLatestDesktopDownload,
+} from '../lib/useLatestDesktopDownload';
 
 /**
  * Global scroll state: `data-scrolled` on <html> drives the navbar
@@ -41,9 +45,8 @@ function useScrollState() {
 }
 
 /**
- * Click tracking, delegated from the document rather than wired into each
- * button. Every current and future link is covered without touching call sites,
- * and nothing here can block or alter navigation — the listener only reads.
+ * Click handling delegated from the document so every current and future link
+ * is covered without touching individual call sites.
  *
  * Emits:
  *   download_vpr   — a link to our GitHub releases, on viewports wide enough
@@ -95,6 +98,17 @@ function useClickTracking() {
           track('get_started', common);
           return;
         }
+        if (
+          absolute === RELEASES_URL &&
+          e.type === 'click' &&
+          e.button === 0 &&
+          !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey
+        ) {
+          e.preventDefault();
+          anchor.classList.add('downloadResolving');
+          anchor.setAttribute('aria-busy', 'true');
+          resolveLatestDesktopDownload().then(url => window.location.assign(url ?? RELEASES_URL));
+        }
         // Conversion event. Marked as the key event in GA4.
         track('download_vpr', {
           ...common,
@@ -119,7 +133,7 @@ function useClickTracking() {
     // `click` covers left and Ctrl/Cmd-click; `auxclick` covers the middle
     // button, which opens a new tab and never fires `click`. A given gesture
     // fires exactly one of the two, so nothing is double-counted.
-    document.addEventListener('click', onClick, {capture: true, passive: true});
+    document.addEventListener('click', onClick, {capture: true});
     document.addEventListener('auxclick', onClick, {capture: true, passive: true});
     return () => {
       document.removeEventListener('click', onClick, {capture: true});
