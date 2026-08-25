@@ -204,6 +204,10 @@ test('applyConfigPatch (droid) adds and selects the routed model while preservin
     const original = {
       model: 'gpt-5-codex',
       reasoningEffort: 'high',
+      sessionDefaultSettings: {
+        model: 'custom:Local-Model-0',
+        reasoningEffort: 'high',
+      },
       customModels: [{
         model: 'local-model',
         displayName: 'Local Model',
@@ -218,11 +222,16 @@ test('applyConfigPatch (droid) adds and selects the routed model while preservin
     applyConfigPatch(patch, PEER_ID, 9456);
 
     const config = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, any>;
-    assert.equal(config['model'], 'antseed');
+    assert.equal(config['model'], 'gpt-5-codex');
+    assert.deepEqual(config['sessionDefaultSettings'], {
+      model: 'custom:AntSeed-Auto-0',
+      reasoningEffort: 'high',
+    });
     assert.equal(config['reasoningEffort'], 'high');
     assert.deepEqual(config['customModels'][0], original.customModels[0]);
     assert.deepEqual(config['customModels'][1], {
       model: 'antseed',
+      id: 'custom:AntSeed-Auto-0',
       displayName: 'AntSeed Auto',
       baseUrl: 'http://127.0.0.1:9456/v1',
       provider: 'generic-chat-completion-api',
@@ -281,13 +290,73 @@ test('removeConfigPatch (droid) preserves a model the user selected while connec
     await writeFile(configPath, '{"model":"gpt-5-codex"}\n', 'utf8');
     applyConfigPatch(patch, PEER_ID, 8377);
 
-    const connected = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, unknown>;
-    connected['model'] = 'claude-sonnet-4-5';
+    const connected = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, any>;
+    connected['sessionDefaultSettings']['model'] = 'claude-sonnet-4-5';
     await writeFile(configPath, `${JSON.stringify(connected, null, 2)}\n`, 'utf8');
 
     assert.equal(removeConfigPatch(patch), true);
     assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), {
-      model: 'claude-sonnet-4-5',
+      model: 'gpt-5-codex',
+      sessionDefaultSettings: {
+        model: 'claude-sonnet-4-5',
+      },
+    });
+  });
+});
+
+test('removeConfigPatch (droid) restores the prior default after Droid normalizes settings', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'settings.json');
+    const patch = makeDroidPatch(configPath);
+    await writeFile(configPath, '{"model":"gpt-5-codex"}\n', 'utf8');
+    applyConfigPatch(patch, PEER_ID, 8377);
+
+    const connected = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, any>;
+    delete connected['model'];
+    connected['customModels'][0]['index'] = 0;
+    connected['sessionDefaultSettings'] = {
+      model: 'custom:AntSeed-Auto-0',
+      reasoningEffort: 'none',
+    };
+    await writeFile(configPath, `${JSON.stringify(connected, null, 2)}\n`, 'utf8');
+
+    assert.equal(removeConfigPatch(patch), true);
+    assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), {
+      model: 'gpt-5-codex',
+      sessionDefaultSettings: {
+        reasoningEffort: 'none',
+      },
+    });
+  });
+});
+
+test('removeConfigPatch (droid) restores version 1 state after Droid normalization', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'settings.json');
+    const patch = makeDroidPatch(configPath);
+    await writeFile(configPath, `${JSON.stringify({
+      customModels: [{
+        model: 'antseed',
+        id: 'custom:AntSeed-Auto-0',
+        displayName: 'AntSeed Auto',
+        baseUrl: 'http://127.0.0.1:8377/v1',
+        provider: 'generic-chat-completion-api',
+      }],
+      sessionDefaultSettings: {
+        model: 'custom:AntSeed-Auto-0',
+      },
+    }, null, 2)}\n`, 'utf8');
+    await writeFile(`${configPath}.antseed.state.json`, `${JSON.stringify({
+      version: 1,
+      configExisted: true,
+      customModelsPresent: false,
+      modelPresent: true,
+      modelValue: 'gpt-5-codex',
+    }, null, 2)}\n`, 'utf8');
+
+    assert.equal(removeConfigPatch(patch), true);
+    assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), {
+      model: 'gpt-5-codex',
     });
   });
 });

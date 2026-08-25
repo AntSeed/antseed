@@ -21,6 +21,7 @@ import {
  */
 export const ROUTED_MODEL_ALIAS = 'antseed';
 const ROUTED_MODEL_ALIAS_LABEL = 'AntSeed Auto';
+const DROID_ROUTED_MODEL_ID = 'custom:AntSeed-Auto-0';
 
 /**
  * Config patches point a tool's own configuration at the buyer proxy. Each
@@ -675,10 +676,14 @@ function writeTextFile(filePath: string, content: string): void {
 // can restore the user's prior default without rolling back unrelated edits.
 
 type DroidPatchState = {
+  readonly version: 1 | 2;
   readonly configExisted: boolean;
   readonly customModelsPresent: boolean;
   readonly modelPresent: boolean;
   readonly modelValue?: unknown;
+  readonly sessionDefaultSettingsPresent: boolean;
+  readonly sessionDefaultModelPresent: boolean;
+  readonly sessionDefaultModelValue?: unknown;
 };
 
 function droidPatchStatePath(filePath: string): string {
@@ -688,27 +693,40 @@ function droidPatchStatePath(filePath: string): string {
 function readDroidPatchState(filePath: string): DroidPatchState | null {
   const state = tryReadConfigPatchFile(droidPatchStatePath(filePath));
   if (!state) return null;
-  if (state['version'] !== 1
+  if ((state['version'] !== 1 && state['version'] !== 2)
     || typeof state['configExisted'] !== 'boolean'
     || typeof state['customModelsPresent'] !== 'boolean'
-    || typeof state['modelPresent'] !== 'boolean') {
+    || typeof state['modelPresent'] !== 'boolean'
+    || (state['version'] === 2 && (
+      typeof state['sessionDefaultSettingsPresent'] !== 'boolean'
+      || typeof state['sessionDefaultModelPresent'] !== 'boolean'
+    ))) {
     throw new Error(`Invalid AntSeed Droid restore state at ${droidPatchStatePath(filePath)}`);
   }
   return {
+    version: state['version'],
     configExisted: state['configExisted'],
     customModelsPresent: state['customModelsPresent'],
     modelPresent: state['modelPresent'],
     ...(state['modelPresent'] ? { modelValue: state['modelValue'] } : {}),
+    sessionDefaultSettingsPresent: state['version'] === 2 && state['sessionDefaultSettingsPresent'] === true,
+    sessionDefaultModelPresent: state['version'] === 2 && state['sessionDefaultModelPresent'] === true,
+    ...(state['version'] === 2 && state['sessionDefaultModelPresent']
+      ? { sessionDefaultModelValue: state['sessionDefaultModelValue'] }
+      : {}),
   };
 }
 
 function writeDroidPatchState(filePath: string, state: DroidPatchState): void {
   writeJsonFile(droidPatchStatePath(filePath), {
-    version: 1,
+    version: 2,
     configExisted: state.configExisted,
     customModelsPresent: state.customModelsPresent,
     modelPresent: state.modelPresent,
     ...(state.modelPresent ? { modelValue: state.modelValue } : {}),
+    sessionDefaultSettingsPresent: state.sessionDefaultSettingsPresent,
+    sessionDefaultModelPresent: state.sessionDefaultModelPresent,
+    ...(state.sessionDefaultModelPresent ? { sessionDefaultModelValue: state.sessionDefaultModelValue } : {}),
   });
 }
 
@@ -734,6 +752,15 @@ function isDroidModel(value: unknown, model: string): boolean {
     && (value as JsonObject)['model'] === model);
 }
 
+function droidSessionDefaultSettings(config: JsonObject, filePath: string): JsonObject | undefined {
+  const settings = config['sessionDefaultSettings'];
+  if (settings === undefined) return undefined;
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+    throw new Error(`Droid sessionDefaultSettings at ${filePath} must be an object`);
+  }
+  return settings as JsonObject;
+}
+
 function applyDroidConfigPatch(patch: DroidConfigPatchDef, buyerPort: number, wslTargetsFile?: string): void {
   const filePath = expandTilde(patch.configPath);
   const baseURL = patch.baseURL.replace('{buyerPort}', String(buyerPort));
@@ -757,6 +784,7 @@ function applyDroidModelToFile(filePath: string, patch: DroidConfigPatchDef, bas
   const config = readConfigPatchFile(filePath);
   const customModelsPresent = Object.prototype.hasOwnProperty.call(config, 'customModels');
   const customModels = droidCustomModels(config, filePath);
+  const existingSessionDefaultSettings = droidSessionDefaultSettings(config, filePath);
   const state = readDroidPatchState(filePath);
   const matchingModels = customModels.filter((model) => isDroidModel(model, patch.providerKey));
   if (matchingModels.length > 0 && !state) {
@@ -766,11 +794,20 @@ function applyDroidModelToFile(filePath: string, patch: DroidConfigPatchDef, bas
   }
   if (!state) {
     const modelPresent = Object.prototype.hasOwnProperty.call(config, 'model');
+    const sessionDefaultSettingsPresent = existingSessionDefaultSettings !== undefined;
+    const sessionDefaultModelPresent = existingSessionDefaultSettings !== undefined
+      && Object.prototype.hasOwnProperty.call(existingSessionDefaultSettings, 'model');
     writeDroidPatchState(filePath, {
+      version: 2,
       configExisted,
       customModelsPresent,
       modelPresent,
       ...(modelPresent ? { modelValue: config['model'] } : {}),
+      sessionDefaultSettingsPresent,
+      sessionDefaultModelPresent,
+      ...(sessionDefaultModelPresent
+        ? { sessionDefaultModelValue: existingSessionDefaultSettings['model'] }
+        : {}),
     });
   }
 
@@ -778,6 +815,7 @@ function applyDroidModelToFile(filePath: string, patch: DroidConfigPatchDef, bas
     ...customModels.filter((model) => !isDroidModel(model, patch.providerKey)),
     {
       model: patch.providerKey,
+      id: DROID_ROUTED_MODEL_ID,
       displayName: patch.providerName,
       baseUrl: baseURL,
       provider: 'generic-chat-completion-api',
@@ -785,7 +823,9 @@ function applyDroidModelToFile(filePath: string, patch: DroidConfigPatchDef, bas
       ...(patch.originator ? { extraHeaders: { originator: patch.originator } } : {}),
     },
   ];
-  config['model'] = patch.providerKey;
+  const sessionDefaultSettings = existingSessionDefaultSettings ?? {};
+  sessionDefaultSettings['model'] = DROID_ROUTED_MODEL_ID;
+  config['sessionDefaultSettings'] = sessionDefaultSettings;
   writeJsonFile(filePath, config);
 }
 
@@ -819,7 +859,21 @@ function removeDroidModelFromFile(filePath: string, patch: DroidConfigPatchDef):
       changed = true;
     }
   }
-  if (config['model'] === patch.providerKey) {
+  const sessionDefaultSettings = droidSessionDefaultSettings(config, filePath);
+  const managedSessionDefault = sessionDefaultSettings?.['model'] === DROID_ROUTED_MODEL_ID;
+  if (managedSessionDefault && sessionDefaultSettings) {
+    if (state.sessionDefaultModelPresent) {
+      sessionDefaultSettings['model'] = state.sessionDefaultModelValue;
+    } else {
+      delete sessionDefaultSettings['model'];
+    }
+    if (!state.sessionDefaultSettingsPresent && Object.keys(sessionDefaultSettings).length === 0) {
+      delete config['sessionDefaultSettings'];
+    }
+    changed = true;
+  }
+  const modelPresent = Object.prototype.hasOwnProperty.call(config, 'model');
+  if (config['model'] === patch.providerKey || (managedSessionDefault && !modelPresent && state.modelPresent)) {
     if (state.modelPresent) config['model'] = state.modelValue;
     else delete config['model'];
     changed = true;
