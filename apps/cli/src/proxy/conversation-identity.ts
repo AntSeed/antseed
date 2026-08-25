@@ -79,6 +79,7 @@ const TITLE_REQUEST_PREFIXES = [
     requests these must never label a chat, not even as a fallback; matched
     against the tag-stripped text so a wrapper can't hide the doc header. */
 const INSTRUCTION_DOC_PATTERN = /^#*\s*(agents|claude|gemini)\.md\b/i
+const RECOMMENDED_PLUGINS_PATTERN = /^here is a list of plugins that are available but not installed\b/i
 
 function getHeader(headers: Record<string, string>, name: string): string {
   const direct = headers[name]
@@ -200,6 +201,8 @@ function syntheticSessionKeyFromBody(body: Record<string, unknown> | null): stri
       const record = item as Record<string, unknown>
       if (record['role'] !== 'user') continue
       const texts = textFromContent(record['content'] ?? record['text'])
+        .map(normalizeConversationText)
+        .filter((text) => text.length > 0)
       const genuineText = texts.find((text) => {
         const normalized = normalizeSnippet(text)
         return normalized.length > 0
@@ -227,18 +230,25 @@ export function extractConversationIdentity(
   const named = toolSessionHeader(headers)
   const source = systemProxySource(headers)
   const originator = slugifyTool(getHeader(headers, 'originator'))
+  const detectedTool = named?.tool || detectTool(headers)
+  // Older tunnel gateways stamped every request as `public-tunnel`. Cursor's
+  // User-Agent is the only client identity it sends, so let that refine the
+  // generic tunnel source while preserving named System Proxy profiles.
+  const tool = source === 'public-tunnel' && detectedTool === 'cursor'
+    ? 'cursor'
+    : source || detectedTool
   const sessionKey = named?.sessionKey
     || getHeader(headers, 'thread-id')
     || getHeader(headers, 'session-id')
     || getHeader(headers, 'x-session-id')
     || getHeader(headers, 'x-session-affinity')
     || sessionKeyFromBody(parsedBody)
-    || ((source || originator) ? syntheticSessionKeyFromBody(parsedBody) : '')
+    || ((source || originator || detectedTool === 'cursor') ? syntheticSessionKeyFromBody(parsedBody) : '')
   const trimmed = sessionKey.trim()
   if (!trimmed) return null
   const parent = getHeader(headers, 'x-parent-session-id').trim()
   return {
-    tool: source || named?.tool || detectTool(headers),
+    tool,
     sessionKey: trimmed,
     parentSessionKey: parent.length > 0 ? parent : null,
     isUserThread: isUserThread(headers),
@@ -248,6 +258,35 @@ export function extractConversationIdentity(
 function looksLikeMachineContext(text: string): boolean {
   const start = text.trimStart().toLowerCase()
   return NON_PROMPT_PREFIXES.some((prefix) => start.startsWith(prefix))
+    || looksLikeCursorEnvironment(start)
+}
+
+function looksLikeCursorEnvironment(text: string): boolean {
+  const normalized = text.trimStart().toLowerCase().replace(/\s+/g, ' ')
+  return (normalized.startsWith('os version:') || /^<user_info(?:\s[^>]*)?>\s*os version:/.test(normalized))
+    && normalized.includes(' shell:')
+}
+
+export function isCursorEnvironmentSnippet(text: string): boolean {
+  return looksLikeCursorEnvironment(text)
+}
+
+function normalizeConversationText(text: string): string {
+  if (isDiscardedConversationContext(text)) return ''
+  const cursorQuery = /<user_query(?:\s[^>]*)?>([\s\S]*?)<\/user_query>/i.exec(text)?.[1]
+  return (cursorQuery ?? text).trim()
+}
+
+function isDiscardedConversationContext(text: string): boolean {
+  return looksLikeCursorEnvironment(text) || looksLikeRecommendedPlugins(text)
+}
+
+function looksLikeRecommendedPlugins(text: string): boolean {
+  const normalized = text
+    .replace(/<\/?recommended_plugins(?:\s[^>]*)?>/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return RECOMMENDED_PLUGINS_PATTERN.test(normalized)
 }
 
 function looksLikeTitleRequest(text: string): boolean {
@@ -324,7 +363,9 @@ export function extractFirstUserSnippet(parsedBody: Record<string, unknown> | nu
   // conversation stays unlabeled until a real turn arrives. Genuine prompts
   // are preferred over machine-context wrappers, and candidates that strip
   // down to nothing (pure markup) are passed over.
-  const usable = candidates.filter((text) => text.trim().length > 0 && !looksLikeTitleRequest(text))
+  const usable = candidates
+    .map(normalizeConversationText)
+    .filter((text) => text.trim().length > 0 && !looksLikeTitleRequest(text))
   const genuine = usable.filter((text) => !looksLikeMachineContext(text))
   for (const text of [...genuine, ...usable]) {
     const normalized = normalizeSnippet(text)
@@ -375,7 +416,7 @@ export function isTitleGenerationRequest(parsedBody: Record<string, unknown> | n
  */
 export function sanitizeStoredSnippet(text: string): string {
   if (!text) return ''
-  if (looksLikeTitleRequest(text)) return ''
+  if (looksLikeTitleRequest(text) || isDiscardedConversationContext(text)) return ''
   const normalized = normalizeSnippet(text)
   // Stored labels from before the instruction-doc rule heal to empty so the
   // next real turn names the chat.

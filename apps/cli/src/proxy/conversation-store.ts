@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { sanitizeStoredSnippet } from './conversation-identity.js'
+import { isCursorEnvironmentSnippet, sanitizeStoredSnippet } from './conversation-identity.js'
 
 /**
  * File-backed store for tool conversations seen by the buyer proxy.
@@ -77,13 +77,15 @@ function sanitizeRecord(value: unknown): StoredConversation | null {
   const tool = typeof record.tool === 'string' ? record.tool : ''
   const sessionKey = typeof record.sessionKey === 'string' ? record.sessionKey : ''
   if (!tool || !sessionKey) return null
+  const rawSnippet = typeof record.snippet === 'string' ? record.snippet : ''
+  const normalizedTool = tool === 'public-tunnel' && isCursorEnvironmentSnippet(rawSnippet) ? 'cursor' : tool
   return {
-    id: conversationId(tool, sessionKey),
-    tool,
+    id: conversationId(normalizedTool, sessionKey),
+    tool: normalizedTool,
     sessionKey,
     // Persisted snippets are re-cleaned so rows written by older extraction
     // rules (raw XML wrappers, title-request text) heal on reload.
-    snippet: typeof record.snippet === 'string' ? sanitizeStoredSnippet(record.snippet) : '',
+    snippet: sanitizeStoredSnippet(rawSnippet),
     label: typeof record.label === 'string' && record.label.length > 0 ? record.label : null,
     pinnedModel: typeof record.pinnedModel === 'string' && record.pinnedModel.length > 0 ? record.pinnedModel : null,
     peerSource: record.peerSource === 'user' ? 'user' : 'auto',

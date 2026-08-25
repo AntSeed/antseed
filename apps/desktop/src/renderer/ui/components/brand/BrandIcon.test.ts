@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { test } from 'vitest';
-import { BrandIcon, resolveBrandKey } from './BrandIcon.js';
+import { BrandIcon, isThemeAwareAppBrand, resolveBrandKey } from './BrandIcon.js';
 
 test('model family wins over the transport provider slug', () => {
   // Sellers advertise models over a protocol whose provider slug ("openai",
@@ -47,11 +47,11 @@ test('GPT renders the official OpenAI blossom', () => {
   assert.match(markup, /fill="currentColor"/);
 });
 
-test('Hermes renders its portrait mark as a theme-aware mask', () => {
+test('Hermes renders its portrait mark as a theme-aware SVG', () => {
   const markup = renderToStaticMarkup(BrandIcon({ name: 'hermes', hints: ['Hermes Agent'] }));
-  assert.match(markup, /hermes-agent\.svg/);
-  assert.match(markup, /background-color:currentColor/);
-  assert.match(markup, /mask-size:contain/);
+  assert.match(markup, /viewBox="0 0 200 200"/);
+  assert.match(markup, /fill="currentColor"/);
+  assert.doesNotMatch(markup, /mask-image/);
 });
 
 test('connected-app tool names resolve their marks', () => {
@@ -63,10 +63,24 @@ test('connected-app tool names resolve their marks', () => {
   assert.equal(resolveBrandKey('gooeypi', 'GooeyPi'), 'pi');
   assert.equal(resolveBrandKey('hermes', 'Hermes Agent'), 'hermes');
   assert.equal(resolveBrandKey('hermes-agent'), 'hermes');
+  assert.equal(resolveBrandKey('cursor', 'Cursor'), 'cursor');
   assert.equal(resolveBrandKey('openai', 'Hermes 4 70B'), 'openai');
   // Standalone-word guards: no false hits inside other identifiers.
   assert.equal(resolveBrandKey('amazed-tool', 'thing'), 'generic');
   assert.equal(resolveBrandKey('pixel-model', 'thing'), 'generic');
+});
+
+test('Cursor renders its bundled brand mark', () => {
+  const markup = renderToStaticMarkup(BrandIcon({ name: 'cursor' }));
+  assert.match(markup, /viewBox="0 0 24 24"/);
+  assert.match(markup, /M11\.503\.131/);
+  assert.match(markup, /fill="currentColor"/);
+});
+
+test('dark application marks use theme-aware brand rendering', () => {
+  assert.equal(isThemeAwareAppBrand('cursor'), true);
+  assert.equal(isThemeAwareAppBrand('hermes'), true);
+  assert.equal(isThemeAwareAppBrand('codex'), false);
 });
 
 test('tunnel providers resolve their bundled brand marks', () => {

@@ -10,9 +10,9 @@ import {
 } from '@hugeicons/core-free-icons';
 import { Modal } from '@antseed/ui';
 import { usePublicEndpointModal } from '../tunnels/PublicEndpointModal';
+import { BrandIcon } from '../brand/BrandIcon';
 import styles from './VprToolsView.module.scss';
 
-const CURSOR_ICON = new URL('../../../assets/cursor.svg', import.meta.url).href;
 const CURSOR_WEBSITE = 'https://cursor.com/';
 const CURSOR_GUIDE = 'https://antseed.com/docs/guides/public-tunnels#use-it-with-cursor';
 const MASKED_API_KEY = '••••••••••••••••••••••••••••••••';
@@ -72,11 +72,17 @@ export function CursorAppCard() {
       <div className={`${styles.appPill}${endpointReady ? ` ${styles.appPillConnected}` : ''}`}>
         <div className={styles.appHead}>
           <span className={styles.appIdentity}>
-            <img src={CURSOR_ICON} alt="" className={styles.appIcon} />
+            <BrandIcon brand="cursor" size={24} />
             <span className={styles.appText}>
               <span className={styles.appNameRow}>
-                <button type="button" className={styles.appNameLink} onClick={() => void window.antseedDesktop?.openExternalUrl?.(CURSOR_WEBSITE)}>
-                  Cursor
+                <button
+                  type="button"
+                  className={styles.appNameLink}
+                  disabled={opening}
+                  onClick={() => void openCursor()}
+                  title="Open Cursor"
+                >
+                  {opening ? 'Opening…' : 'Cursor'}
                 </button>
               </span>
               {endpointReady ? (

@@ -5,7 +5,7 @@ import type { VprFloatApp, VprFloatData } from '../../types/bridge';
 import { conversationAge, conversationMatchesApp } from '../../modules/routing/conversations';
 import { displayToolName } from '../../modules/routing/tool-names';
 import { VprMark } from '../components/VprLogo';
-import { BrandIcon } from '../components/brand/BrandIcon';
+import { BrandIcon, isThemeAwareAppBrand, resolveBrandKey } from '../components/brand/BrandIcon';
 import { OverlayScrollArea } from '../components/OverlayScrollArea';
 import { VprBackTitle } from '../components/vpr/VprKit';
 import { VprModelRowList } from '../components/vpr/VprModelRows';
@@ -21,7 +21,9 @@ const COMPACT_MAX_WIDTH = 160;
  * main window's app rows show — falling back to the drawn brand mark.
  */
 function AppMark({ app, tool, size }: { app?: VprFloatApp | null; tool?: string; size: number }) {
-  if (app?.iconDataUri) {
+  const name = tool ?? app?.name;
+  const brandKey = resolveBrandKey(name, app?.displayName ?? name);
+  if (app?.iconDataUri && !isThemeAwareAppBrand(brandKey)) {
     return (
       <img
         src={app.iconDataUri}
@@ -31,8 +33,7 @@ function AppMark({ app, tool, size }: { app?: VprFloatApp | null; tool?: string;
       />
     );
   }
-  const name = tool ?? app?.name;
-  return <BrandIcon name={name} hints={[app?.displayName ?? name]} size={size} />;
+  return <BrandIcon brand={brandKey} size={size} />;
 }
 
 /**

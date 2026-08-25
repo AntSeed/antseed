@@ -88,7 +88,7 @@ export const VIEW_REGISTRY = {
     async () => (await import('./views/VprExploreView')).VprExploreView as ComponentType<RoutedViewProps>,
     {
       receivesOnSelectView: true,
-      slideIndex: 1,
+      slideIndex: 2,
       preloadPriority: 'eager',
       nav: { slot: 'main', label: 'Models', icon: DiscoverCircleIcon },
     },
@@ -97,7 +97,7 @@ export const VIEW_REGISTRY = {
     async () => (await import('./views/VprModelView')).VprModelView as ComponentType<RoutedViewProps>,
     // Idle preload: the model page is one tap away from the Models list, and
     // lazy-importing its chunk on that tap stalls the slide-in noticeably.
-    { receivesOnSelectView: true, slideIndex: 2, preloadPriority: 'idle' },
+    { receivesOnSelectView: true, slideIndex: 2.5, preloadPriority: 'idle' },
   ),
   tools: createViewEntry(
     async () => (await import('./views/VprToolsView')).VprToolsView as ComponentType<RoutedViewProps>,
@@ -112,7 +112,7 @@ export const VIEW_REGISTRY = {
     async () => (await import('./views/VprTunnelsView')).VprTunnelsView as ComponentType<RoutedViewProps>,
     {
       receivesOnSelectView: true,
-      slideIndex: 5,
+      slideIndex: 4,
       preloadPriority: 'idle',
       nav: { slot: 'main', label: 'Agents', icon: BotIcon },
     },
@@ -128,7 +128,7 @@ export const VIEW_REGISTRY = {
     async () => (await import('./views/VprPreferencesView')).VprPreferencesView as ComponentType<RoutedViewProps>,
     {
       receivesOnSelectView: true,
-      slideIndex: 6,
+      slideIndex: 5,
       preloadPriority: 'idle',
       nav: { slot: 'main', label: 'Prefs', icon: PreferenceHorizontalIcon },
     },
@@ -158,7 +158,7 @@ export const VIEW_REGISTRY = {
     async () => (await import('./views/ChatView')).ChatView as ComponentType<RoutedViewProps>,
     {
       receivesOnSelectView: true,
-      slideIndex: 4,
+      slideIndex: 1,
       preloadPriority: 'eager',
       nav: { slot: 'main', label: 'Chat', icon: BubbleChatIcon },
     },
@@ -167,7 +167,7 @@ export const VIEW_REGISTRY = {
     async () => (await import('./views/VprHelpView')).VprHelpView as ComponentType<RoutedViewProps>,
     {
       receivesOnSelectView: true,
-      slideIndex: 12,
+      slideIndex: 6,
       preloadPriority: 'idle',
       nav: { slot: 'main', label: 'Help', icon: HelpCircleIcon },
     },
