@@ -27,22 +27,29 @@ export function track(event: string, params: Record<string, unknown> = {}): void
 }
 
 /**
- * Any link that points at our GitHub releases counts as a VPR download —
- * both the direct per-platform asset URL and the releases-page fallback that
- * `useLatestDesktopDownload` returns when detection fails.
+ * Any link that points at our download proxy (download.antseed.com, see
+ * apps/download-proxy) or GitHub releases counts as a VPR download — the
+ * proxy URL is the normal per-platform CTA target, and the releases-page
+ * fallback is what `useLatestDesktopDownload` returns when detection fails.
  */
 export function isDownloadUrl(href: string): boolean {
-  return /^https?:\/\/(www\.)?github\.com\/AntSeed\/antseed\/releases(\/|$)/i.test(href);
+  return (
+    /^https?:\/\/download\.antseed\.com(\/|$)/i.test(href) ||
+    /^https?:\/\/(www\.)?github\.com\/AntSeed\/antseed\/releases(\/|$)/i.test(href)
+  );
 }
 
 /**
- * Which OS a download link is for, read from the release asset filename
- * (`…-arm64.dmg`, `…-x64.exe`, `….AppImage`). Derived from the URL rather than
- * passed down as a prop so no button or call site needs to know about
- * analytics. Returns 'releases_page' for the generic fallback link, where the
- * user picks the asset themselves and we genuinely don't know yet.
+ * Which OS a download link is for, read from the proxy path
+ * (`/vpr/mac-arm64`) or a release asset filename (`…-arm64.dmg`,
+ * `…-x64.exe`, `….AppImage`). Derived from the URL rather than passed down
+ * as a prop so no button or call site needs to know about analytics. Returns
+ * 'releases_page' for the generic fallback link, where the user picks the
+ * asset themselves and we genuinely don't know yet.
  */
 export function platformFromUrl(href: string): string {
+  const proxy = /\/vpr\/(mac|win|linux)-(?:arm64|x64)(\?|$)/i.exec(href);
+  if (proxy) return proxy[1].toLowerCase();
   if (/\.(dmg|pkg)(\?|$)/i.test(href)) return 'mac';
   if (/\.(exe|msi)(\?|$)/i.test(href)) return 'win';
   if (/\.(appimage|deb|rpm|tar\.gz)(\?|$)/i.test(href)) return 'linux';
