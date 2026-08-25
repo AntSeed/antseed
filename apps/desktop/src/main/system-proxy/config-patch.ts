@@ -1,6 +1,6 @@
 import { ANTSEED_MODEL_CONTEXT_WINDOW, ANTSEED_MODEL_MAX_OUTPUT_TOKENS } from '@antseed/node/types';
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { Document, parseDocument } from 'yaml';
@@ -27,6 +27,7 @@ const ROUTED_MODEL_ALIAS_LABEL = 'AntSeed Auto';
  * supported tool has its own on-disk format:
  *  - `opencode` (default): JSONC `provider` map (OpenCode's opencode.jsonc)
  *  - `codex`: TOML `[model_providers.*]` table (Codex CLI's config.toml)
+ *  - `droid`: JSON `customModels` array plus default model (Factory settings.json)
  *  - `pi`: JSON providers map plus a settings file (pi's models.json/settings.json)
  *  - `crush`: JSON `providers` map with an openai-compat entry (Crush's crush.json)
  *  - `goose`: flat env-style YAML keys (goose's config.yaml)
@@ -56,6 +57,18 @@ export type CodexConfigPatchDef = {
   readonly providerName: string;
   readonly baseURL: string;
   readonly installProbe?: 'codex';
+};
+
+export type DroidConfigPatchDef = {
+  readonly format: 'droid';
+  /** Droid CLI and Factory Desktop's shared user settings. */
+  readonly configPath: string;
+  /** Custom model ID sent to the buyer proxy. */
+  readonly providerKey: string;
+  readonly providerName: string;
+  readonly baseURL: string;
+  readonly originator?: string;
+  readonly installProbe?: 'droid';
 };
 
 export type PiConfigPatchDef = {
@@ -126,6 +139,7 @@ export type T3CodeConfigPatchDef = {
 export type ConfigPatchDef =
   | OpencodeConfigPatchDef
   | CodexConfigPatchDef
+  | DroidConfigPatchDef
   | PiConfigPatchDef
   | CrushConfigPatchDef
   | GooseConfigPatchDef
@@ -167,6 +181,18 @@ export function readConfigPatch(value: unknown, profileName: string): ConfigPatc
       providerName: readRequiredString(raw, 'providerName', profileName),
       baseURL,
       ...(raw['installProbe'] === 'codex' ? { installProbe: 'codex' as const } : {}),
+    };
+  }
+  if (format === 'droid') {
+    const originator = readString(raw, 'originator');
+    return {
+      format: 'droid',
+      configPath,
+      providerKey,
+      providerName: readRequiredString(raw, 'providerName', profileName),
+      baseURL,
+      ...(originator ? { originator } : {}),
+      ...(raw['installProbe'] === 'droid' ? { installProbe: 'droid' as const } : {}),
     };
   }
   if (format === 'pi') {
@@ -415,6 +441,10 @@ export function applyConfigPatch(patch: ConfigPatchDef, peerId: string, buyerPor
     applyCodexConfigPatch(patch, buyerPort, wslTargetsFile);
     return;
   }
+  if (patch.format === 'droid') {
+    applyDroidConfigPatch(patch, buyerPort, wslTargetsFile);
+    return;
+  }
   if (patch.format === 'pi') {
     applyPiConfigPatch(patch, buyerPort, wslTargetsFile);
     return;
@@ -582,6 +612,9 @@ export function removeConfigPatch(patch: ConfigPatchDef, wslTargetsFile?: string
   if (patch.format === 'codex') {
     return removeCodexConfigPatch(patch, wslTargetsFile);
   }
+  if (patch.format === 'droid') {
+    return removeDroidConfigPatch(patch, wslTargetsFile);
+  }
   if (patch.format === 'pi') {
     return removePiConfigPatch(patch, wslTargetsFile);
   }
@@ -633,6 +666,172 @@ function writeTextFile(filePath: string, content: string): void {
     mkdirSync(dir, { recursive: true });
   }
   writeFileSync(filePath, content, 'utf8');
+}
+
+// --- Droid CLI + Factory Desktop (`~/.factory/settings.json`) ---
+//
+// Both clients watch this file and share its `customModels` catalog. The
+// sidecar remembers only the fields AntSeed temporarily owns so disconnect
+// can restore the user's prior default without rolling back unrelated edits.
+
+type DroidPatchState = {
+  readonly configExisted: boolean;
+  readonly customModelsPresent: boolean;
+  readonly modelPresent: boolean;
+  readonly modelValue?: unknown;
+};
+
+function droidPatchStatePath(filePath: string): string {
+  return `${filePath}.antseed.state.json`;
+}
+
+function readDroidPatchState(filePath: string): DroidPatchState | null {
+  const state = tryReadConfigPatchFile(droidPatchStatePath(filePath));
+  if (!state) return null;
+  if (state['version'] !== 1
+    || typeof state['configExisted'] !== 'boolean'
+    || typeof state['customModelsPresent'] !== 'boolean'
+    || typeof state['modelPresent'] !== 'boolean') {
+    throw new Error(`Invalid AntSeed Droid restore state at ${droidPatchStatePath(filePath)}`);
+  }
+  return {
+    configExisted: state['configExisted'],
+    customModelsPresent: state['customModelsPresent'],
+    modelPresent: state['modelPresent'],
+    ...(state['modelPresent'] ? { modelValue: state['modelValue'] } : {}),
+  };
+}
+
+function writeDroidPatchState(filePath: string, state: DroidPatchState): void {
+  writeJsonFile(droidPatchStatePath(filePath), {
+    version: 1,
+    configExisted: state.configExisted,
+    customModelsPresent: state.customModelsPresent,
+    modelPresent: state.modelPresent,
+    ...(state.modelPresent ? { modelValue: state.modelValue } : {}),
+  });
+}
+
+function deleteDroidPatchState(filePath: string): void {
+  try {
+    unlinkSync(droidPatchStatePath(filePath));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+}
+
+function droidCustomModels(config: JsonObject, filePath: string): unknown[] {
+  const customModels = config['customModels'];
+  if (customModels === undefined) return [];
+  if (!Array.isArray(customModels)) {
+    throw new Error(`Droid customModels at ${filePath} must be an array`);
+  }
+  return customModels;
+}
+
+function isDroidModel(value: unknown, model: string): boolean {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value)
+    && (value as JsonObject)['model'] === model);
+}
+
+function applyDroidConfigPatch(patch: DroidConfigPatchDef, buyerPort: number, wslTargetsFile?: string): void {
+  const filePath = expandTilde(patch.configPath);
+  const baseURL = patch.baseURL.replace('{buyerPort}', String(buyerPort));
+  if (patch.installProbe !== 'droid') {
+    applyDroidModelToFile(filePath, patch, baseURL);
+    return;
+  }
+  applyWithInstallProbe({
+    tool: 'droid',
+    native: { configPath: filePath },
+    posix: { configPath: patch.configPath },
+    baseURL,
+    wslTargetsFile,
+    write: (paths, url) => applyDroidModelToFile(paths.configPath, patch, url),
+  });
+}
+
+function applyDroidModelToFile(filePath: string, patch: DroidConfigPatchDef, baseURL: string): void {
+  const configExisted = existsSync(filePath);
+  backupConfigFile(filePath);
+  const config = readConfigPatchFile(filePath);
+  const customModelsPresent = Object.prototype.hasOwnProperty.call(config, 'customModels');
+  const customModels = droidCustomModels(config, filePath);
+  const state = readDroidPatchState(filePath);
+  const matchingModels = customModels.filter((model) => isDroidModel(model, patch.providerKey));
+  if (matchingModels.length > 0 && !state) {
+    throw new Error(
+      `Droid already defines a custom model named ${patch.providerKey} in ${filePath}; refusing to overwrite it.`,
+    );
+  }
+  if (!state) {
+    const modelPresent = Object.prototype.hasOwnProperty.call(config, 'model');
+    writeDroidPatchState(filePath, {
+      configExisted,
+      customModelsPresent,
+      modelPresent,
+      ...(modelPresent ? { modelValue: config['model'] } : {}),
+    });
+  }
+
+  config['customModels'] = [
+    ...customModels.filter((model) => !isDroidModel(model, patch.providerKey)),
+    {
+      model: patch.providerKey,
+      displayName: patch.providerName,
+      baseUrl: baseURL,
+      provider: 'generic-chat-completion-api',
+      maxOutputTokens: ANTSEED_MODEL_MAX_OUTPUT_TOKENS,
+      ...(patch.originator ? { extraHeaders: { originator: patch.originator } } : {}),
+    },
+  ];
+  config['model'] = patch.providerKey;
+  writeJsonFile(filePath, config);
+}
+
+function removeDroidConfigPatch(patch: DroidConfigPatchDef, wslTargetsFile?: string): boolean {
+  let changed = removeDroidModelFromFile(expandTilde(patch.configPath), patch);
+  if (patch.installProbe === 'droid') {
+    changed = removeWslInstalls('droid', wslTargetsFile, (target) => (
+      removeDroidModelFromFile(target.configPath, patch)
+    )) || changed;
+  }
+  return changed;
+}
+
+function removeDroidModelFromFile(filePath: string, patch: DroidConfigPatchDef): boolean {
+  const state = readDroidPatchState(filePath);
+  if (!state) return false;
+  const config = tryReadConfigPatchFile(filePath);
+  if (!config) {
+    deleteDroidPatchState(filePath);
+    return true;
+  }
+  backupConfigFile(filePath);
+
+  let changed = false;
+  const customModels = config['customModels'];
+  if (Array.isArray(customModels)) {
+    const filtered = customModels.filter((model) => !isDroidModel(model, patch.providerKey));
+    if (filtered.length !== customModels.length) {
+      if (filtered.length === 0 && !state.customModelsPresent) delete config['customModels'];
+      else config['customModels'] = filtered;
+      changed = true;
+    }
+  }
+  if (config['model'] === patch.providerKey) {
+    if (state.modelPresent) config['model'] = state.modelValue;
+    else delete config['model'];
+    changed = true;
+  }
+
+  if (!state.configExisted && Object.keys(config).length === 0) {
+    unlinkSync(filePath);
+  } else if (changed) {
+    writeJsonFile(filePath, config);
+  }
+  deleteDroidPatchState(filePath);
+  return changed;
 }
 
 // --- Codex CLI (`~/.codex/config.toml`) ---

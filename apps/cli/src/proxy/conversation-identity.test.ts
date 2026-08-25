@@ -288,6 +288,14 @@ test('title turns are recognised so they cannot define a chat model', () => {
   assert.equal(isTitleGenerationRequest({
     messages: [{ role: 'user', content: 'You write concise thread titles for a coding chat.' }],
   }), true)
+  // Factory/Droid sends its one-shot session-title instruction as a system
+  // message, followed by the real first prompt as a user message.
+  assert.equal(isTitleGenerationRequest({
+    messages: [
+      { role: 'system', content: 'Generate a title for this session' },
+      { role: 'user', content: 'wowow' },
+    ],
+  }), true)
 })
 
 test('real turns are not mistaken for title turns', () => {
@@ -296,6 +304,7 @@ test('real turns are not mistaken for title turns', () => {
   // (it is in the history once titling ran) is still a real turn.
   assert.equal(isTitleGenerationRequest({
     messages: [
+      { role: 'system', content: 'You are a helpful coding assistant.' },
       { role: 'user', content: 'fix the failing tests' },
       { role: 'user', content: 'Generate a title for this conversation:' },
     ],

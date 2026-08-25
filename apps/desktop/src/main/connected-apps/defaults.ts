@@ -77,6 +77,25 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
     },
   },
   {
+    name: 'droid',
+    displayName: 'Droid',
+    kind: 'config-patch',
+    method: 'Config patch',
+    toolSlugs: ['droid'],
+    domains: [],
+    pathPrefixes: [],
+    configPatch: {
+      format: 'droid',
+      // Droid CLI and Factory Desktop share this live-reloaded user config.
+      configPath: '~/.factory/settings.json',
+      providerKey: 'antseed',
+      providerName: 'AntSeed Auto',
+      baseURL: 'http://localhost:{buyerPort}/v1',
+      originator: 'droid',
+      installProbe: 'droid',
+    },
+  },
+  {
     name: 't3code',
     displayName: 'T3 Code',
     kind: 'config-patch',

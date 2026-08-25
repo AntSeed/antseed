@@ -292,6 +292,18 @@ function userTextsFromMessageList(list: unknown): string[] {
   return texts
 }
 
+function instructionTextsFromMessageList(list: unknown): string[] {
+  if (!Array.isArray(list)) return []
+  const texts: string[] = []
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue
+    const record = item as Record<string, unknown>
+    if (record['role'] !== 'system' && record['role'] !== 'developer') continue
+    texts.push(...textFromContent(record['content']))
+  }
+  return texts
+}
+
 /**
  * Best-effort label for a new conversation: the first genuine user prompt in
  * the request, skipping machine-generated context wrappers (system reminders,
@@ -338,6 +350,13 @@ export function extractFirstUserSnippet(parsedBody: Record<string, unknown> | nu
  */
 export function isTitleGenerationRequest(parsedBody: Record<string, unknown> | null): boolean {
   if (!parsedBody) return false
+  const instructions = parsedBody['instructions']
+  const instructionCandidates: string[] = typeof instructions === 'string' ? [instructions] : []
+  instructionCandidates.push(...instructionTextsFromMessageList(parsedBody['messages']))
+  instructionCandidates.push(...instructionTextsFromMessageList(parsedBody['input']))
+  const firstInstruction = instructionCandidates.find((text) => text.trim().length > 0)
+  if (firstInstruction !== undefined && looksLikeTitleRequest(firstInstruction)) return true
+
   const candidates: string[] = []
   candidates.push(...userTextsFromMessageList(parsedBody['messages']))
   const input = parsedBody['input']

@@ -15,6 +15,7 @@ import {
   substituteBaseUrlHost,
   type CodexConfigPatchDef,
   type ConfigPatchDef,
+  type DroidConfigPatchDef,
   type OpencodeConfigPatchDef,
 } from './config-patch.js';
 import { DEFAULT_APP_PROFILES } from '../connected-apps/defaults.js';
@@ -183,6 +184,111 @@ test('removeConfigPatch removes only the configured provider and matching model 
 test('removeConfigPatch is a no-op when the target file does not exist', async () => {
   await withTempConfig(async (_dir, configPath) => {
     assert.equal(removeConfigPatch(makePatch(configPath)), false);
+  });
+});
+
+function makeDroidPatch(configPath: string): DroidConfigPatchDef {
+  return {
+    format: 'droid',
+    configPath,
+    providerKey: 'antseed',
+    providerName: 'AntSeed Auto',
+    baseURL: 'http://127.0.0.1:{buyerPort}/v1',
+    originator: 'droid',
+  };
+}
+
+test('applyConfigPatch (droid) adds and selects the routed model while preserving user settings', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'settings.json');
+    const original = {
+      model: 'gpt-5-codex',
+      reasoningEffort: 'high',
+      customModels: [{
+        model: 'local-model',
+        displayName: 'Local Model',
+        baseUrl: 'http://localhost:11434/v1',
+        provider: 'generic-chat-completion-api',
+      }],
+    };
+    await writeFile(configPath, `${JSON.stringify(original, null, 2)}\n`, 'utf8');
+
+    const patch = makeDroidPatch(configPath);
+    applyConfigPatch(patch, PEER_ID, 8377);
+    applyConfigPatch(patch, PEER_ID, 9456);
+
+    const config = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, any>;
+    assert.equal(config['model'], 'antseed');
+    assert.equal(config['reasoningEffort'], 'high');
+    assert.deepEqual(config['customModels'][0], original.customModels[0]);
+    assert.deepEqual(config['customModels'][1], {
+      model: 'antseed',
+      displayName: 'AntSeed Auto',
+      baseUrl: 'http://127.0.0.1:9456/v1',
+      provider: 'generic-chat-completion-api',
+      maxOutputTokens: ANTSEED_MODEL_MAX_OUTPUT_TOKENS,
+      extraHeaders: { originator: 'droid' },
+    });
+    assert.ok(existsSync(`${configPath}.antseed.state.json`));
+    assert.ok(existsSync(`${configPath}.antseed.bak`));
+
+    assert.equal(removeConfigPatch(patch), true);
+    assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), original);
+    assert.equal(existsSync(`${configPath}.antseed.state.json`), false);
+  });
+});
+
+test('applyConfigPatch (droid) refuses to replace an existing antseed custom model', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'settings.json');
+    const original = `${JSON.stringify({
+      model: 'antseed',
+      customModels: [{
+        model: 'antseed',
+        displayName: 'User AntSeed',
+        baseUrl: 'https://example.test/v1',
+        provider: 'generic-chat-completion-api',
+      }],
+    }, null, 2)}\n`;
+    await writeFile(configPath, original, 'utf8');
+
+    assert.throws(
+      () => applyConfigPatch(makeDroidPatch(configPath), PEER_ID, 8377),
+      /already defines a custom model named antseed/,
+    );
+    assert.equal(await readFile(configPath, 'utf8'), original);
+    assert.equal(existsSync(`${configPath}.antseed.state.json`), false);
+  });
+});
+
+test('removeConfigPatch (droid) removes a config created entirely by AntSeed', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'settings.json');
+    const patch = makeDroidPatch(configPath);
+
+    applyConfigPatch(patch, PEER_ID, 8377);
+    assert.ok(existsSync(configPath));
+    assert.equal(removeConfigPatch(patch), true);
+    assert.equal(existsSync(configPath), false);
+    assert.equal(existsSync(`${configPath}.antseed.state.json`), false);
+  });
+});
+
+test('removeConfigPatch (droid) preserves a model the user selected while connected', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'settings.json');
+    const patch = makeDroidPatch(configPath);
+    await writeFile(configPath, '{"model":"gpt-5-codex"}\n', 'utf8');
+    applyConfigPatch(patch, PEER_ID, 8377);
+
+    const connected = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, unknown>;
+    connected['model'] = 'claude-sonnet-4-5';
+    await writeFile(configPath, `${JSON.stringify(connected, null, 2)}\n`, 'utf8');
+
+    assert.equal(removeConfigPatch(patch), true);
+    assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), {
+      model: 'claude-sonnet-4-5',
+    });
   });
 });
 
