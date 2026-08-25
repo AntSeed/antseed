@@ -3,9 +3,13 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    pnpm2nix = {
+      url = "github:FliegendeWurst/pnpm2nix-nzbr";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs }:
+  outputs = { self, nixpkgs, pnpm2nix }:
     let
       systems = [
         "aarch64-darwin"
@@ -93,12 +97,13 @@
 
       packages = forAllSystems (system:
         let
-          pkgs = import nixpkgs { inherit system; };
+          pkgs = import nixpkgs {
+            inherit system;
+            overlays = [ pnpm2nix.overlays.default ];
+          };
           inherit (pkgs) lib stdenv;
 
           nodejs = pkgs.nodejs_22;
-          pnpm = pkgs.pnpm_9;
-          inherit (nodejs) version;
 
           platform = platformInfo.${system};
 
@@ -111,8 +116,6 @@
               hash = info.hashes.${system};
             }
           ) prebuildInfo;
-
-          cliVersion = (lib.importJSON ./apps/cli/package.json).version;
 
           # Modules the bundle needs at runtime that cannot be inlined:
           # the native packages above plus their pure-JS runtime deps.
@@ -127,58 +130,31 @@
           ];
         in
         {
-          default = stdenv.mkDerivation (finalAttrs: {
+          # Built with pnpm2nix (FliegendeWurst/pnpm2nix-nzbr): dependencies
+          # are fetched per-package using the integrity hashes in
+          # pnpm-lock.yaml, so there is no single pnpmDeps hash to keep in
+          # sync when the lockfile changes.
+          default = pkgs.mkPnpmPackage {
             pname = "antseed-cli";
-            version = cliVersion;
+            version = (lib.importJSON ./apps/cli/package.json).version;
 
-            src = lib.cleanSourceWith {
-              src = ./.;
-              filter = path: type:
-                (type != "directory" || baseNameOf path != "node_modules")
-                && lib.cleanSourceFilter path type;
-            };
+            workspace = ./.;
+            components = [ "apps/cli" ];
+            nodejs = nodejs;
+            # pnpm 9: the lockfile is v9.0 and package.json's "pnpm" field
+            # (patchedDependencies) is only read by pnpm < 10.
+            pnpm = pkgs.pnpm_9;
 
-            pnpmDeps = pkgs.fetchPnpmDeps {
-              inherit (finalAttrs) pname version src;
-              inherit pnpm;
-              fetcherVersion = 3;
-              pnpmWorkspaces = [ "@antseed/cli..." ];
-              hash = "sha256-EHNc17gKwWQSrrd/XVzxfnTpdG1IzJ0z2q+8exMYn6c=";
-            };
-
-            pnpmWorkspaces = [ "@antseed/cli..." ];
-
-            nativeBuildInputs = [
-              nodejs
-              pnpm
-              pkgs.pnpmConfigHook
-              pkgs.esbuild
-              pkgs.makeWrapper
-              pkgs.writableTmpDirAsHomeHook
-            ] ++ lib.optionals stdenv.isLinux [
-              pkgs.autoPatchelfHook
-            ];
-
-            # Shared libraries for the prebuilt native binaries (Linux).
-            buildInputs = lib.optionals stdenv.isLinux [
-              pkgs.glib
-              pkgs.libsecret
-              stdenv.cc.cc.lib
-            ];
-
-            buildPhase = ''
-              runHook preBuild
-
-              # pnpm installs with --ignore-scripts, so replicate the install
-              # scripts the build actually depends on.
-
+            # pnpm install runs with --ignore-scripts, so replicate the
+            # install-time bits the build depends on before compiling.
+            preBuild = ''
               # 1. packages/node postinstall: patch ethers type declarations.
               node packages/node/scripts/patch-ethers.js
 
               # 2. Native modules: unpack the pinned prebuilds exactly the way
-              #    prebuild-install would (it checks ./prebuilds/<tarball> first).
-              #    The workspace uses node-linker=hoisted, so packages are real
-              #    directories directly under node_modules/.
+              #    prebuild-install would (it checks ./prebuilds/<tarball>
+              #    first). The workspace uses node-linker=hoisted, so packages
+              #    are real directories directly under node_modules/.
               pi_bin="$(readlink -f node_modules/prebuild-install)/bin.js"
 
               install_prebuild() {
@@ -202,44 +178,62 @@
                 "install_prebuild ${name} ${prebuildTarballs.${name}} ${file} ${lib.optionalString info.napi "-r napi"}"
               ) prebuildInfo)}
 
-              # 3. Type-check/build the workspace packages the CLI depends on.
-              #    The pnpmConfigHook's patchShebangs only covers the root
-              #    node_modules, but pnpm recreates .bin wrapper scripts in
-              #    per-package node_modules whose /usr/bin/env shebangs break
-              #    inside the sandbox — patch those too.
+              # .bin wrapper scripts carry /usr/bin/env shebangs that don't
+              # resolve inside the sandbox.
+              patchShebangs node_modules
               find apps packages plugins -type d -name node_modules | while read -r d; do
                 patchShebangs "$d"
               done
-              #    Native bin wrappers (esbuild) can lose their exec bit in
-              #    the pnpm store, so restore it before vite shells out to them.
               for f in node_modules/@esbuild/*/bin/esbuild node_modules/*/node_modules/@esbuild/*/bin/esbuild; do
                 [ -f "$f" ] && chmod +x "$f"
               done
+            '';
+
+            # Build the CLI's whole workspace subgraph, then bundle it into a
+            # single ESM file; native modules stay external and are shipped
+            # alongside (same as build:bundle). ESM output breaks CJS deps
+            # that call require(); the banner shims it.
+            scriptFull = ''
               pnpm --filter='@antseed/cli...' run build
 
-              # 4. Bundle the CLI into a single ESM file; native modules stay
-              #    external and are shipped alongside (same as build:bundle).
-              # ESM output breaks CJS deps that call require(); shim it.
+              mkdir -p apps/cli/dist
               esbuild apps/cli/src/cli/index.ts \
                 --bundle --platform=node --format=esm \
                 --outfile=apps/cli/dist/bundle.mjs \
                 --external:better-sqlite3 --external:node-datachannel \
                 --external:koffi --external:keytar \
                 '--banner:js=import { createRequire as __antseedCreateRequire } from "node:module"; var require = __antseedCreateRequire(import.meta.url);'
-
-              runHook postBuild
             '';
 
-            installPhase = ''
-              runHook preInstall
+            # Only the bundle and the dashboard assets are packaged; the final
+            # layout is assembled in postInstall.
+            distDirs = [
+              "apps/cli/dist"
+              "apps/payments/dist/web"
+            ];
 
+            extraNativeBuildInputs = [
+              pkgs.esbuild
+              pkgs.makeWrapper
+            ] ++ lib.optionals stdenv.isLinux [
+              pkgs.autoPatchelfHook
+            ];
+
+            # Shared libraries for the prebuilt native binaries (Linux).
+            extraBuildInputs = lib.optionals stdenv.isLinux [
+              pkgs.glib
+              pkgs.libsecret
+              stdenv.cc.cc.lib
+            ];
+
+            postInstall = ''
               mkdir -p "$out/libexec/antseed/node_modules" "$out/bin"
 
-              cp apps/cli/dist/bundle.mjs "$out/libexec/antseed/"
-
+              mv "$out/apps/cli/dist/bundle.mjs" "$out/libexec/antseed/"
               # Web dashboard assets; @antseed/payments resolves ./web relative
               # to import.meta.url, which is the bundle's directory once built.
-              cp -r apps/payments/dist/web "$out/libexec/antseed/web"
+              mv "$out/apps/payments/dist/web" "$out/libexec/antseed/web"
+              rm -rf "$out/apps"
 
               for pkg in ${lib.concatStringsSep " " runtimeNodeModules}; do
                 if [ -e "node_modules/$pkg" ]; then
@@ -259,8 +253,6 @@
               makeWrapper ${nodejs}/bin/node "$out/bin/antseed" \
                 --add-flags "$out/libexec/antseed/bundle.mjs" \
                 --prefix PATH : ${lib.makeBinPath [ nodejs ]}
-
-              runHook postInstall
             '';
 
             meta = {
@@ -270,7 +262,7 @@
               mainProgram = "antseed";
               platforms = systems;
             };
-          });
+          };
         });
 
       apps = forAllSystems (system: {

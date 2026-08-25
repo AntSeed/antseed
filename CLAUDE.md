@@ -93,8 +93,11 @@ pnpm run clean        # Remove all dist/ directories
 `flake.nix` provides a dev shell (`nix develop`) and a buildable CLI package:
 `nix build .#` / `nix run .# -- <args>` produces/runs `antseed` from
 `apps/cli` (esbuild bundle + pinned native prebuilds for better-sqlite3,
-node-datachannel, keytar). The prebuild versions/hashes in `flake.nix` must be
-updated when those dependencies change in `pnpm-lock.yaml`.
+node-datachannel, keytar). Dependencies are fetched per-package via
+pnpm2nix-nzbr using the integrity hashes in `pnpm-lock.yaml`, so lockfile
+changes need no hash updates. The prebuild versions/hashes in `flake.nix` must
+still be updated when better-sqlite3/node-datachannel/keytar change in
+`pnpm-lock.yaml`.
 
 ## Build Order
 Build must respect: node -> provider-core/router-core -> plugins -> dashboard -> cli -> desktop.
