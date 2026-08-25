@@ -29,6 +29,7 @@ import {
 } from './events.js';
 import { classifyChatRequestFailure, classifyDepositFailure } from './classify.js';
 import type { PostHogCapturePayload } from './posthog.js';
+import { TELEMETRY_ACTION_SURFACES, TELEMETRY_USER_ACTIONS } from '../../shared/telemetry.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const REQUEST_ID = '123e4567-e89b-42d3-a456-426614174000';
@@ -538,20 +539,24 @@ test('first_chat_started fires once and records the immediate deposit snapshot',
   const service = await createTelemetryService(baseOptions(dir, captured));
   await service.recordAppStarted(0);
   await service.recordDepositCredited('10000000', 0);
+  let snapshotCalls = 0;
   await service.recordFirstChatStarted({
     serviceCategory: 'chat',
     hasAttachments: false,
-    hadDeposit: true,
-    depositBucket: '5_25',
+  }, async () => {
+    snapshotCalls += 1;
+    return { hadDeposit: true, depositBucket: '5_25' };
   }, DAY_MS);
   await service.recordFirstChatStarted({
     serviceCategory: 'image',
     hasAttachments: true,
-    hadDeposit: true,
-    depositBucket: '100_plus',
+  }, async () => {
+    snapshotCalls += 1;
+    return { hadDeposit: true, depositBucket: '100_plus' };
   }, DAY_MS);
 
   const chats = captured.payloads.filter((p) => p.event === 'first_chat_started');
+  assert.equal(snapshotCalls, 1);
   assert.equal(chats.length, 1);
   assert.equal(chats[0]?.properties['had_deposit'], true);
   assert.equal(chats[0]?.properties['deposit_bucket'], '5_25');
@@ -568,9 +573,7 @@ test('first_chat_started without a deposit reports had_deposit false', async (t)
   await service.recordFirstChatStarted({
     serviceCategory: 'chat',
     hasAttachments: true,
-    hadDeposit: false,
-    depositBucket: 'none',
-  }, 0);
+  }, async () => ({ hadDeposit: false, depositBucket: 'none' }), 0);
 
   const chat = captured.payloads.find((p) => p.event === 'first_chat_started');
   assert.ok(chat);
@@ -587,14 +590,177 @@ test('first_chat_started uses the immediate balance snapshot, not deposit event 
   await service.recordFirstChatStarted({
     serviceCategory: 'chat',
     hasAttachments: false,
-    hadDeposit: false,
-    depositBucket: 'none',
-  }, 0);
+  }, async () => ({ hadDeposit: false, depositBucket: 'none' }), 0);
 
   const chat = captured.payloads.find((p) => p.event === 'first_chat_started');
   assert.ok(chat);
   assert.equal(chat.properties['had_deposit'], false);
   assert.equal(chat.properties['deposit_bucket'], 'none');
+});
+
+test('first_chat_started skips deposit snapshots when unavailable, opted out, or already recorded', async (t) => {
+  const unavailableDir = await makeTempDir(t);
+  const unavailable = await createTelemetryService(baseOptions(
+    unavailableDir,
+    { payloads: [] },
+    { isDev: true },
+  ));
+  let snapshotCalls = 0;
+  const snapshot = async () => {
+    snapshotCalls += 1;
+    return { hadDeposit: false, depositBucket: 'none' } as const;
+  };
+
+  await unavailable.recordFirstChatStarted({ serviceCategory: 'chat', hasAttachments: false }, snapshot);
+
+  const optedOutDir = await makeTempDir(t);
+  const optedOut = await createTelemetryService(baseOptions(optedOutDir, { payloads: [] }));
+  await optedOut.setUserOptedOut(true);
+  await optedOut.recordFirstChatStarted({ serviceCategory: 'chat', hasAttachments: false }, snapshot);
+
+  const recordedDir = await makeTempDir(t);
+  const captured: Captured = { payloads: [] };
+  const first = await createTelemetryService(baseOptions(recordedDir, captured));
+  await first.recordFirstChatStarted({ serviceCategory: 'chat', hasAttachments: false }, snapshot);
+  const second = await createTelemetryService(baseOptions(recordedDir, captured));
+  await second.recordFirstChatStarted({ serviceCategory: 'image', hasAttachments: true }, snapshot);
+
+  assert.equal(snapshotCalls, 1);
+  assert.equal(captured.payloads.filter((payload) => payload.event === 'first_chat_started').length, 1);
+});
+
+test('first_chat_started claims the snapshot before concurrent chats can read it', async (t) => {
+  const dir = await makeTempDir(t);
+  const captured: Captured = { payloads: [] };
+  const service = await createTelemetryService(baseOptions(dir, captured));
+  let snapshotCalls = 0;
+  let resolveSnapshot: ((snapshot: { hadDeposit: true; depositBucket: '5_25' }) => void) | undefined;
+  const pendingSnapshot = new Promise<{ hadDeposit: true; depositBucket: '5_25' }>((resolve) => {
+    resolveSnapshot = resolve;
+  });
+  const snapshot = async () => {
+    snapshotCalls += 1;
+    return pendingSnapshot;
+  };
+
+  const first = service.recordFirstChatStarted({ serviceCategory: 'chat', hasAttachments: false }, snapshot);
+  const second = service.recordFirstChatStarted({ serviceCategory: 'image', hasAttachments: true }, snapshot);
+  assert.equal(snapshotCalls, 1);
+
+  resolveSnapshot?.({ hadDeposit: true, depositBucket: '5_25' });
+  await Promise.all([first, second]);
+
+  const chats = captured.payloads.filter((payload) => payload.event === 'first_chat_started');
+  assert.equal(chats.length, 1);
+  assert.equal(chats[0]?.properties['service_category'], 'chat');
+});
+
+test('first_chat_started releases its claim after snapshot failure, null data, or opt-out', async (t) => {
+  const dir = await makeTempDir(t);
+  const captured: Captured = { payloads: [] };
+  const service = await createTelemetryService(baseOptions(dir, captured));
+
+  await assert.rejects(
+    service.recordFirstChatStarted(
+      { serviceCategory: 'chat', hasAttachments: false },
+      async () => { throw new Error('RPC unavailable'); },
+    ),
+  );
+  await service.recordFirstChatStarted(
+    { serviceCategory: 'chat', hasAttachments: false },
+    async () => null,
+  );
+
+  let resolveSnapshot: ((snapshot: { hadDeposit: false; depositBucket: 'none' }) => void) | undefined;
+  const pendingSnapshot = new Promise<{ hadDeposit: false; depositBucket: 'none' }>((resolve) => {
+    resolveSnapshot = resolve;
+  });
+  const pending = service.recordFirstChatStarted(
+    { serviceCategory: 'chat', hasAttachments: false },
+    async () => pendingSnapshot,
+  );
+  await service.setUserOptedOut(true);
+  resolveSnapshot?.({ hadDeposit: false, depositBucket: 'none' });
+  await pending;
+  assert.equal(captured.payloads.filter((payload) => payload.event === 'first_chat_started').length, 0);
+
+  await service.setUserOptedOut(false);
+  await service.recordFirstChatStarted(
+    { serviceCategory: 'image', hasAttachments: true },
+    async () => ({ hadDeposit: true, depositBucket: '25_100' }),
+  );
+  const chats = captured.payloads.filter((payload) => payload.event === 'first_chat_started');
+  assert.equal(chats.length, 1);
+  assert.equal(chats[0]?.properties['service_category'], 'image');
+});
+
+test('user action delivery has one in-flight request and a bounded pending queue', async (t) => {
+  const dir = await makeTempDir(t);
+  const captured: Captured = { payloads: [] };
+  const pendingDeliveries: Array<() => void> = [];
+  let activeDeliveries = 0;
+  let maxActiveDeliveries = 0;
+  const service = await createTelemetryService(baseOptions(dir, captured, {
+    transport: async (payload: PostHogCapturePayload) => {
+      captured.payloads.push(payload);
+      activeDeliveries += 1;
+      maxActiveDeliveries = Math.max(maxActiveDeliveries, activeDeliveries);
+      await new Promise<void>((resolve) => {
+        pendingDeliveries.push(() => {
+          activeDeliveries -= 1;
+          resolve();
+        });
+      });
+    },
+  }));
+
+  for (let index = 0; index < 40; index += 1) {
+    await service.recordUserAction({
+      action: TELEMETRY_USER_ACTIONS[index % TELEMETRY_USER_ACTIONS.length]!,
+      surface: TELEMETRY_ACTION_SURFACES[Math.floor(index / TELEMETRY_USER_ACTIONS.length)]!,
+    }, index);
+  }
+
+  let drainAttempts = 0;
+  while (
+    captured.payloads.filter((payload) => payload.event === 'user_action').length < 33
+    || activeDeliveries > 0
+  ) {
+    pendingDeliveries.shift()?.();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    drainAttempts += 1;
+    assert.ok(drainAttempts < 100, 'user action queue did not drain');
+  }
+
+  const actions = captured.payloads.filter((payload) => payload.event === 'user_action');
+  assert.equal(maxActiveDeliveries, 1);
+  assert.equal(actions.length, 33);
+  assert.equal(actions.at(-1)?.properties['event_ts_ms'], 39);
+});
+
+test('user action delivery coalesces duplicate pending action and surface pairs', async (t) => {
+  const dir = await makeTempDir(t);
+  const captured: Captured = { payloads: [] };
+  const pendingDeliveries: Array<() => void> = [];
+  const service = await createTelemetryService(baseOptions(dir, captured, {
+    transport: async (payload: PostHogCapturePayload) => {
+      captured.payloads.push(payload);
+      await new Promise<void>((resolve) => pendingDeliveries.push(resolve));
+    },
+  }));
+
+  await service.recordUserAction({ action: 'chat_send', surface: 'chat' }, 1);
+  await service.recordUserAction({ action: 'routing_preferences_change', surface: 'preferences' }, 2);
+  await service.recordUserAction({ action: 'routing_preferences_change', surface: 'preferences' }, 3);
+  await service.recordUserAction({ action: 'routing_preferences_change', surface: 'preferences' }, 4);
+
+  pendingDeliveries.shift()?.();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(captured.payloads.filter((payload) => payload.event === 'user_action').length, 2);
+  assert.equal(captured.payloads.at(-1)?.properties['event_ts_ms'], 4);
+
+  pendingDeliveries.shift()?.();
+  await new Promise<void>((resolve) => setImmediate(resolve));
 });
 
 // ── Opt-out ──

@@ -5,6 +5,9 @@ import type {
 } from '../../../shared/telemetry.js';
 import type { ViewName } from '../../ui/types.js';
 
+const USER_ACTION_COALESCE_MS = 500;
+const pendingUserActions = new Map<string, ReturnType<typeof setTimeout>>();
+
 const VIEW_SURFACES: Record<ViewName, TelemetryActionSurface> = {
   home: 'home',
   explore: 'explore',
@@ -35,6 +38,19 @@ export function recordUserAction(action: TelemetryUserAction, surface: Telemetry
   } catch {
     // Telemetry must never affect user actions.
   }
+}
+
+export function recordUserActionCoalesced(
+  action: TelemetryUserAction,
+  surface: TelemetryActionSurface,
+): void {
+  const key = `${action}:${surface}`;
+  const pending = pendingUserActions.get(key);
+  if (pending) clearTimeout(pending);
+  pendingUserActions.set(key, setTimeout(() => {
+    pendingUserActions.delete(key);
+    recordUserAction(action, surface);
+  }, USER_ACTION_COALESCE_MS));
 }
 
 export function recordFirstModelShown(signal: FirstModelShownSignal): void {

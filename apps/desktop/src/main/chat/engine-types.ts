@@ -9,12 +9,11 @@ import type { IpcMain } from 'electron';
 import type { AgentSession } from '@mariozechner/pi-coding-agent';
 import type { ChatStreamStopReason } from './stream-stop.js';
 import type {
-  FirstChatDepositSnapshot,
   ServiceCategory,
   TelemetryEventProperties,
 } from '../telemetry/events.js';
 
-export type FirstChatTelemetryInput = FirstChatDepositSnapshot & {
+export type FirstChatTelemetryInput = {
   serviceCategory: ServiceCategory;
   hasAttachments: boolean;
 };
@@ -31,7 +30,6 @@ export type RegisterPiChatHandlersOptions = {
   isBuyerRuntimeRunning: () => boolean;
   ensureBuyerRuntimeStarted?: () => Promise<boolean>;
   appendSystemLog: (line: string) => void;
-  getFirstChatDepositSnapshot?: () => Promise<FirstChatDepositSnapshot | null>;
   recordFirstChatStarted?: (input: FirstChatTelemetryInput) => void | Promise<void>;
   recordFirstModelShown?: (input: FirstModelShownTelemetryInput) => void | Promise<void>;
   recordModelSelected?: (

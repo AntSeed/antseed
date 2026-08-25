@@ -56,7 +56,7 @@ import type { BadgeTone } from './core/state';
 import { createInitialUiState } from './core/state';
 import { initStore, notifyUiStateChanged } from './core/store';
 import type { DesktopBridge } from './types/bridge';
-import { recordUserAction } from './modules/telemetry/actions';
+import { recordUserAction, recordUserActionCoalesced } from './modules/telemetry/actions';
 
 /* ------------------------------------------------------------------ */
 /*  Bootstrap                                                          */
@@ -668,7 +668,7 @@ registerActions({
     notifyUiStateChanged();
   },
   updateVprRoutingPreferences: (patch) => {
-    recordUserAction('routing_preferences_change', 'preferences');
+    recordUserActionCoalesced('routing_preferences_change', 'preferences');
     uiState.vprRoutingPreferences = { ...uiState.vprRoutingPreferences, ...patch };
     saveVprRoutingPreferences(uiState.vprRoutingPreferences);
     syncBuyerRoutingPreferences();

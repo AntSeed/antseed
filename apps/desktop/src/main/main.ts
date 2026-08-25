@@ -365,13 +365,12 @@ const piChatEngine = registerPiChatHandlers({
   appendSystemLog: (line) => {
     appendLog("connect", "system", line);
   },
-  getFirstChatDepositSnapshot: async () => {
-    const credits = await refreshCreditsInfo();
-    return firstChatDepositSnapshot(credits.balanceUsdc);
-  },
   recordFirstChatStarted: async (input) => {
     const telemetry = await telemetryReady;
-    await telemetry?.recordFirstChatStarted(input);
+    await telemetry?.recordFirstChatStarted(input, async () => {
+      const credits = await refreshCreditsInfo();
+      return firstChatDepositSnapshot(credits.balanceUsdc);
+    });
   },
   recordFirstModelShown: async (input) => {
     const telemetry = await telemetryReady;

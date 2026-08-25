@@ -48,6 +48,7 @@ export const INSTALL_SOURCE_ENV = 'INSTALL_SOURCE';
 const USDC_BASE_UNITS = 1_000_000n;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 60_000;
+const MAX_PENDING_USER_ACTIONS = 32;
 const DEFAULT_SHUTDOWN_FLUSH_TIMEOUT_MS = 750;
 
 function isFalsyEnv(value: string | undefined): boolean {
@@ -118,7 +119,7 @@ export type TelemetryService = {
   recordFirstChatStarted: (input: {
     serviceCategory: TelemetryEventProperties['first_chat_started']['service_category'];
     hasAttachments: boolean;
-  } & FirstChatDepositSnapshot, nowMs?: number) => Promise<void>;
+  }, getDepositSnapshot: () => Promise<FirstChatDepositSnapshot | null>, nowMs?: number) => Promise<void>;
   recordModelSelected: (
     input: TelemetryEventProperties['model_selected'],
     nowMs?: number,
@@ -197,6 +198,14 @@ export async function createTelemetryService(
   let hasEmittedPeersDiscovered = false;
   let hasEmittedFirstModelShown = false;
   let hasEmittedFirstUserAction = false;
+  let firstChatClaimed = false;
+
+  type PendingUserAction = {
+    input: UserActionSignal;
+    nowMs: number;
+  };
+  const pendingUserActions: PendingUserAction[] = [];
+  let userActionDelivery: Promise<void> | null = null;
 
   const available = !staticDisabled;
   const isEnabled = () => available && !state.telemetryDisabled;
@@ -249,6 +258,49 @@ export async function createTelemetryService(
       delivery,
       new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
     ]);
+  };
+
+  const userActionKey = (input: UserActionSignal): string => `${input.action}:${input.surface}`;
+
+  const deliverNextUserAction = (): void => {
+    if (userActionDelivery) return;
+    if (!isEnabled()) {
+      pendingUserActions.length = 0;
+      return;
+    }
+    const next = pendingUserActions.shift();
+    if (!next) return;
+
+    const isFirstAction = !hasEmittedFirstUserAction;
+    const delivery = capture('user_action', {
+      ...next.input,
+      duration_bucket: durationBucket(durationSinceSessionStart(next.nowMs)),
+      is_first_action: isFirstAction,
+    }, next.nowMs);
+    if (!delivery) {
+      pendingUserActions.length = 0;
+      return;
+    }
+    if (isFirstAction) hasEmittedFirstUserAction = true;
+
+    userActionDelivery = delivery.finally(() => {
+      userActionDelivery = null;
+      deliverNextUserAction();
+    });
+    void userActionDelivery;
+  };
+
+  const enqueueUserAction = (input: UserActionSignal, nowMs: number): void => {
+    if (!isEnabled()) return;
+    const key = userActionKey(input);
+    const duplicateIndex = pendingUserActions.findIndex((pending) => userActionKey(pending.input) === key);
+    if (duplicateIndex >= 0) {
+      pendingUserActions[duplicateIndex] = { input, nowMs };
+    } else {
+      if (pendingUserActions.length >= MAX_PENDING_USER_ACTIONS) pendingUserActions.shift();
+      pendingUserActions.push({ input, nowMs });
+    }
+    deliverNextUserAction();
   };
 
   const daysSinceFirstOpen = (nowMs: number): number => {
@@ -355,13 +407,7 @@ export async function createTelemetryService(
     },
 
     async recordUserAction(input, nowMs = now()) {
-      const isFirstAction = !hasEmittedFirstUserAction;
-      const emitted = track('user_action', {
-        ...input,
-        duration_bucket: durationBucket(durationSinceSessionStart(nowMs)),
-        is_first_action: isFirstAction,
-      }, nowMs);
-      if (emitted && isFirstAction) hasEmittedFirstUserAction = true;
+      enqueueUserAction(input, nowMs);
     },
 
     async recordSetupStarted(nowMs = now()) {
@@ -409,17 +455,24 @@ export async function createTelemetryService(
       }, nowMs);
     },
 
-    async recordFirstChatStarted(input, nowMs = now()) {
-      if (state.hasEmittedFirstChat) return;
-      state.hasEmittedFirstChat = true;
-      track('first_chat_started', {
-        had_deposit: input.hadDeposit,
-        deposit_bucket: input.depositBucket,
-        days_since_first_open: daysSinceFirstOpenBucket(daysSinceFirstOpen(nowMs)),
-        service_category: input.serviceCategory,
-        has_attachments: input.hasAttachments,
-      }, nowMs);
-      await save();
+    async recordFirstChatStarted(input, getDepositSnapshot, nowMs = now()) {
+      if (!isEnabled() || state.hasEmittedFirstChat || firstChatClaimed) return;
+      firstChatClaimed = true;
+      try {
+        const deposit = await getDepositSnapshot();
+        if (!deposit || !isEnabled() || state.hasEmittedFirstChat) return;
+        state.hasEmittedFirstChat = true;
+        track('first_chat_started', {
+          had_deposit: deposit.hadDeposit,
+          deposit_bucket: deposit.depositBucket,
+          days_since_first_open: daysSinceFirstOpenBucket(daysSinceFirstOpen(nowMs)),
+          service_category: input.serviceCategory,
+          has_attachments: input.hasAttachments,
+        }, nowMs);
+        await save();
+      } finally {
+        firstChatClaimed = false;
+      }
     },
 
     async recordModelSelected(input, nowMs = now()) {
@@ -458,6 +511,7 @@ export async function createTelemetryService(
 
     async setUserOptedOut(disabled: boolean) {
       state.telemetryDisabled = Boolean(disabled);
+      if (state.telemetryDisabled) pendingUserActions.length = 0;
       await save();
     },
   };

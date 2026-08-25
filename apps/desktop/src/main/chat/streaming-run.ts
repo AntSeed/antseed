@@ -123,7 +123,6 @@ export type StreamingRunContext = {
    */
   getServiceCatalogEntries: () => ChatServiceCatalogEntry[];
   getBuyerEligibleServiceCatalogEntries: () => ChatServiceCatalogEntry[];
-  getFirstChatDepositSnapshot?: StreamingRunContextTelemetry['getFirstChatDepositSnapshot'];
   recordFirstChatStarted?: StreamingRunContextTelemetry['recordFirstChatStarted'];
   recordChatRequestStarted?: StreamingRunContextTelemetry['recordChatRequestStarted'];
   recordChatRequestFinished?: StreamingRunContextTelemetry['recordChatRequestFinished'];
@@ -131,7 +130,7 @@ export type StreamingRunContext = {
 
 type StreamingRunContextTelemetry = Pick<
   import('./engine-types.js').RegisterPiChatHandlersOptions,
-  'getFirstChatDepositSnapshot' | 'recordFirstChatStarted' | 'recordChatRequestStarted' | 'recordChatRequestFinished'
+  'recordFirstChatStarted' | 'recordChatRequestStarted' | 'recordChatRequestFinished'
 >;
 
 export type StreamingRunner = ReturnType<typeof createStreamingRunner>;
@@ -158,7 +157,6 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
     resolveProtocolForSend,
     getServiceCatalogEntries,
     getBuyerEligibleServiceCatalogEntries,
-    getFirstChatDepositSnapshot,
     recordFirstChatStarted,
     recordChatRequestStarted,
     recordChatRequestFinished,
@@ -781,16 +779,13 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
     }
 
     // Capture only after every local preflight and session-construction step
-    // succeeded. The balance read and transport stay off the chat critical path.
-    if (getFirstChatDepositSnapshot && recordFirstChatStarted) {
-      void getFirstChatDepositSnapshot().then((deposit) => {
-        if (!deposit) return;
-        return recordFirstChatStarted({
-          ...deposit,
-          serviceCategory: classifyServiceCategory(serviceId),
-          hasAttachments: (attachments?.length ?? 0) > 0,
-        });
-      }).catch(() => {});
+    // succeeded. The telemetry service gates the lazy balance read and keeps it
+    // off the chat critical path.
+    if (recordFirstChatStarted) {
+      void Promise.resolve(recordFirstChatStarted({
+        serviceCategory: classifyServiceCategory(serviceId),
+        hasAttachments: (attachments?.length ?? 0) > 0,
+      })).catch(() => {});
     }
 
     try {
