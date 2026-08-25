@@ -268,7 +268,7 @@ registerDesktopIpc();
 registerAppIpc();
 registerFloatIpc();
 registerSystemProxyIpc({ processManager });
-registerPublicTunnelIpc({ processManager });
+const publicTunnelRuntime = registerPublicTunnelIpc({ processManager });
 registerRuntimeIpc({
   processManager,
   logBuffer,
@@ -400,6 +400,14 @@ app.whenReady().then(async () => {
   };
 
   showMainWindow();
+
+  void publicTunnelRuntime.restoreAtLaunch().then((result) => {
+    if (result && !result.ok) {
+      appendLog('tunnel', 'system', `Public tunnel auto-start failed: ${result.error ?? 'Unknown error'}`);
+    }
+  }).catch((err) => {
+    appendLog('tunnel', 'system', `Public tunnel auto-start failed: ${err instanceof Error ? err.message : String(err)}`);
+  });
 
   // Fail open before anything else. Whatever the OS proxy is set to right now
   // was left behind by the previous run — and if that run ended in a crash,

@@ -200,7 +200,7 @@ function syntheticSessionKeyFromBody(body: Record<string, unknown> | null): stri
       const record = item as Record<string, unknown>
       if (record['role'] !== 'user') continue
       const texts = textFromContent(record['content'] ?? record['text'])
-        .map(stripCursorEnvironmentPreamble)
+        .map(normalizeConversationText)
         .filter((text) => text.length > 0)
       const genuineText = texts.find((text) => {
         const normalized = normalizeSnippet(text)
@@ -229,18 +229,25 @@ export function extractConversationIdentity(
   const named = toolSessionHeader(headers)
   const source = systemProxySource(headers)
   const originator = slugifyTool(getHeader(headers, 'originator'))
+  const detectedTool = named?.tool || detectTool(headers)
+  // Older tunnel gateways stamped every request as `public-tunnel`. Cursor's
+  // User-Agent is the only client identity it sends, so let that refine the
+  // generic tunnel source while preserving named System Proxy profiles.
+  const tool = source === 'public-tunnel' && detectedTool === 'cursor'
+    ? 'cursor'
+    : source || detectedTool
   const sessionKey = named?.sessionKey
     || getHeader(headers, 'thread-id')
     || getHeader(headers, 'session-id')
     || getHeader(headers, 'x-session-id')
     || getHeader(headers, 'x-session-affinity')
     || sessionKeyFromBody(parsedBody)
-    || ((source || originator) ? syntheticSessionKeyFromBody(parsedBody) : '')
+    || ((source || originator || detectedTool === 'cursor') ? syntheticSessionKeyFromBody(parsedBody) : '')
   const trimmed = sessionKey.trim()
   if (!trimmed) return null
   const parent = getHeader(headers, 'x-parent-session-id').trim()
   return {
-    tool: source || named?.tool || detectTool(headers),
+    tool,
     sessionKey: trimmed,
     parentSessionKey: parent.length > 0 ? parent : null,
     isUserThread: isUserThread(headers),
@@ -255,7 +262,7 @@ function looksLikeMachineContext(text: string): boolean {
 
 function looksLikeCursorEnvironment(text: string): boolean {
   const normalized = text.trimStart().toLowerCase().replace(/\s+/g, ' ')
-  return normalized.startsWith('os version:')
+  return (normalized.startsWith('os version:') || /^<user_info(?:\s[^>]*)?>\s*os version:/.test(normalized))
     && normalized.includes(' shell:')
 }
 
@@ -263,14 +270,10 @@ export function isCursorEnvironmentSnippet(text: string): boolean {
   return looksLikeCursorEnvironment(text)
 }
 
-function stripCursorEnvironmentPreamble(text: string): string {
-  if (!looksLikeCursorEnvironment(text)) return text
-  const lines = text.split(/\r?\n/)
-  const end = lines.findIndex((line) => /^\s*is directory a git\b/i.test(line))
-  if (end === -1) return ''
-  const tail = lines.slice(end + 1)
-  const separator = tail.findIndex((line) => line.trim().length === 0)
-  return separator === -1 ? '' : tail.slice(separator + 1).join('\n').trim()
+function normalizeConversationText(text: string): string {
+  if (looksLikeCursorEnvironment(text)) return ''
+  const cursorQuery = /<user_query(?:\s[^>]*)?>([\s\S]*?)<\/user_query>/i.exec(text)?.[1]
+  return (cursorQuery ?? text).trim()
 }
 
 function looksLikeTitleRequest(text: string): boolean {
@@ -336,7 +339,7 @@ export function extractFirstUserSnippet(parsedBody: Record<string, unknown> | nu
   // are preferred over machine-context wrappers, and candidates that strip
   // down to nothing (pure markup) are passed over.
   const usable = candidates
-    .map(stripCursorEnvironmentPreamble)
+    .map(normalizeConversationText)
     .filter((text) => text.trim().length > 0 && !looksLikeTitleRequest(text))
   const genuine = usable.filter((text) => !looksLikeMachineContext(text))
   for (const text of [...genuine, ...usable]) {
