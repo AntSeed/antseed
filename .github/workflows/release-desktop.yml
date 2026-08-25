@@ -124,6 +124,12 @@ jobs:
           ANTSEED_COMPARABLE_PRICES_URL: ${{ vars.ANTSEED_COMPARABLE_PRICES_URL }}
         run: node scripts/bake-comparable-prices-url.mjs --require
 
+      - name: Bake desktop telemetry config
+        env:
+          POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
+          POSTHOG_PROJECT_API_KEY: ${{ secrets.POSTHOG_PROJECT_API_KEY }}
+        run: node scripts/bake-desktop-telemetry-config.mjs --require
+
       - name: Build monorepo (tiers 0-3)
         run: |
           pnpm run build:tier0
@@ -219,6 +225,13 @@ jobs:
         env:
           ANTSEED_COMPARABLE_PRICES_URL: ${{ vars.ANTSEED_COMPARABLE_PRICES_URL }}
         run: node scripts/bake-comparable-prices-url.mjs --require
+        shell: pwsh
+
+      - name: Bake desktop telemetry config
+        env:
+          POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
+          POSTHOG_PROJECT_API_KEY: ${{ secrets.POSTHOG_PROJECT_API_KEY }}
+        run: node scripts/bake-desktop-telemetry-config.mjs --require
         shell: pwsh
 
       - name: Build monorepo (tiers 0-3)
@@ -339,6 +352,12 @@ jobs:
         env:
           ANTSEED_COMPARABLE_PRICES_URL: ${{ vars.ANTSEED_COMPARABLE_PRICES_URL }}
         run: node scripts/bake-comparable-prices-url.mjs --require
+
+      - name: Bake desktop telemetry config
+        env:
+          POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
+          POSTHOG_PROJECT_API_KEY: ${{ secrets.POSTHOG_PROJECT_API_KEY }}
+        run: node scripts/bake-desktop-telemetry-config.mjs --require
 
       - name: Build monorepo (tiers 0-3)
         run: |

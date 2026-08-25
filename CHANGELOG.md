@@ -6,6 +6,10 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ## Unreleased
 
+### Added
+
+- Desktop now includes privacy-first anonymous activation and reliability telemetry for first open, setup completion, coarse deposit milestones and failures, first chat, per-request chat outcomes, model discovery outcomes, and clean/crash lifecycle signals. Events are main-process owned, strictly allowlisted and bucketed, normalize failures to fixed local taxonomies without sending raw errors or peer IDs, disable PostHog GeoIP enrichment and person profiles, use a random installation ID, remain off in development/source builds without explicit configuration, and can be disabled from Preferences.
+
 ### Fixed
 
 - Desktop model discovery no longer stalls forever on slow machines or connections. The discovery pipeline previously did unbounded network work (per-peer metering, seller-domain metadata, a ~400KB network-stats download on every cycle) and could exceed the UI's 12s cutoff on every refresh, leaving "No models discovered yet" / "Loading models…" while the runtime was healthy. Each phase now has a hard time budget with graceful degradation, network-wide seller stats come from the Antscan explorer API (~20KB, cached 60s, aggregator fallback), and the UI cutoff is a generous 30s backstop. Discovery failures, recoveries, and slow-cycle phase timings are now written to the system log so exported logs capture this failure mode.

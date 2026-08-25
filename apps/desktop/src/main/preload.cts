@@ -502,6 +502,12 @@ const api = {
   getAppSetupStatus(): Promise<{ needed: boolean; complete: boolean }> {
     return ipcRenderer.invoke('app:get-setup-status') as Promise<{ needed: boolean; complete: boolean }>;
   },
+  getTelemetryStatus(): Promise<{ enabled: boolean; userDisabled: boolean }> {
+    return ipcRenderer.invoke('telemetry:get-status') as Promise<{ enabled: boolean; userDisabled: boolean }>;
+  },
+  setTelemetryEnabled(enabled: boolean): Promise<{ ok: boolean; enabled?: boolean; userDisabled?: boolean; error?: string }> {
+    return ipcRenderer.invoke('telemetry:set-enabled', enabled) as Promise<{ ok: boolean; enabled?: boolean; userDisabled?: boolean; error?: string }>;
+  },
   onAppSetupStep(handler: (data: { step: string; label: string }) => void): () => void {
     const listener = (_: unknown, data: { step: string; label: string }) => handler(data);
     ipcRenderer.on('app:setup-step', listener);

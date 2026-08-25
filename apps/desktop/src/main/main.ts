@@ -87,6 +87,10 @@ import {
   DEFAULT_SYSTEM_PROXY_PORT,
 } from './system-proxy/profiles.js';
 import { resolveBuyerProxyPort } from './runtime/active-config.js';
+import { createTelemetryService } from './telemetry/telemetry.js';
+import { setTelemetryService } from './telemetry/runtime.js';
+import { firstChatDepositSnapshot } from './telemetry/events.js';
+import { refreshCreditsInfo } from './payments/credits.js';
 
 // Re-export types that may be used by other main-process modules
 export type { LogEvent, RuntimeActivityEvent } from './runtime/log-parser.js';
@@ -101,6 +105,26 @@ export type { InstalledPlugin } from './runtime/plugins.js';
 
 let isQuitting = false;
 let isInstallingUpdate = false;
+
+// Telemetry initialization starts before app.whenReady() so crash recovery
+// reads the state file left by the previous session. All failures are swallowed
+// and network delivery stays fire-and-forget.
+const telemetryReady = createTelemetryService({
+  userDataDir: app.getPath('userData'),
+  isDev,
+  appVersion: app.getVersion(),
+  platform: process.platform,
+  arch: process.arch,
+}).then(async (service) => {
+  setTelemetryService(service);
+  await service.recordAppStarted();
+  return service;
+}).catch(() => null);
+
+async function recordTelemetryCleanShutdown(): Promise<void> {
+  const telemetry = await telemetryReady;
+  await telemetry?.recordCleanShutdown();
+}
 
 // The `antseed-attachment://` scheme must be registered as privileged
 // *before* `app.whenReady()` fires. The actual request handler is wired
@@ -341,6 +365,22 @@ const piChatEngine = registerPiChatHandlers({
   appendSystemLog: (line) => {
     appendLog("connect", "system", line);
   },
+  getFirstChatDepositSnapshot: async () => {
+    const credits = await refreshCreditsInfo();
+    return firstChatDepositSnapshot(credits.balanceUsdc);
+  },
+  recordFirstChatStarted: async (input) => {
+    const telemetry = await telemetryReady;
+    await telemetry?.recordFirstChatStarted(input);
+  },
+  recordChatRequestFinished: async (input) => {
+    const telemetry = await telemetryReady;
+    await telemetry?.recordChatRequestFinished(input);
+  },
+  recordDiscoveryCompleted: async (input) => {
+    const telemetry = await telemetryReady;
+    await telemetry?.recordDiscoveryCompleted(input);
+  },
 });
 
 // ── Telegram bridge ──
@@ -363,6 +403,9 @@ registerTelegramIpc({ telegramBridge });
 
 app.whenReady().then(async () => {
   installAttachmentProtocol();
+  // Make sure the telemetry service finished initializing before any
+  // instrumentation below (setup completion, deposits, chat) can fire.
+  await telemetryReady;
   app.setName(INTERNAL_APP_NAME);
   app.setAboutPanelOptions({
     applicationName: APP_NAME,
@@ -483,6 +526,8 @@ app.whenReady().then(async () => {
     setAppSetupNeeded: (v) => { setAppSetupStatus({ needed: v }); },
     getAppSetupComplete: () => getAppSetupStatus().complete,
     setAppSetupComplete: (v) => { setAppSetupStatus({ complete: v }); },
+    onAppSetupStarted: () => { void telemetryReady.then((telemetry) => telemetry?.recordSetupStarted()); },
+    onAppSetupCompleted: () => { void telemetryReady.then((telemetry) => telemetry?.recordSetupCompleted()); },
     getMainWindow,
     appendLog,
   }).catch(() => {
@@ -760,7 +805,7 @@ app.whenReady().then(async () => {
 
     try {
       spawnMacUpdateWatchdog();
-      await stopDesktopServices();
+      await Promise.allSettled([stopDesktopServices(), recordTelemetryCleanShutdown()]);
       isQuitting = true;
       autoUpdater.quitAndInstall(false, true);
       return { ok: true };
@@ -798,7 +843,10 @@ app.on('before-quit', (event) => {
   // downstream of anything that can block.
   restoreOsSystemProxySync();
 
-  void stopDesktopServices().finally(() => {
+  // PostHog delivery remains fire-and-forget, but the local crash marker must
+  // be cleared before exit or the next launch will report a false crash.
+  const telemetryShutdown = recordTelemetryCleanShutdown();
+  void Promise.allSettled([stopDesktopServices(), telemetryShutdown]).finally(() => {
     app.exit(0);
   });
 });
@@ -807,12 +855,14 @@ app.on('before-quit', (event) => {
 // stop signal before before-quit fires.
 process.on('SIGINT', () => {
   restoreOsSystemProxySync();
-  void stopDesktopServices().finally(() => process.exit(0));
+  const telemetryShutdown = recordTelemetryCleanShutdown();
+  void Promise.allSettled([stopDesktopServices(), telemetryShutdown]).finally(() => process.exit(0));
 });
 
 process.on('SIGTERM', () => {
   restoreOsSystemProxySync();
-  void stopDesktopServices().finally(() => process.exit(0));
+  const telemetryShutdown = recordTelemetryCleanShutdown();
+  void Promise.allSettled([stopDesktopServices(), telemetryShutdown]).finally(() => process.exit(0));
 });
 
 // Suppress EPIPE errors from console.error/console.warn when the dev terminal

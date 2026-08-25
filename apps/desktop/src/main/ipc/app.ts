@@ -19,6 +19,9 @@ import {
   invalidateCreditsCache,
 } from '../payments/credits.js';
 import {
+  getTelemetryService,
+} from '../telemetry/runtime.js';
+import {
   getMainWindow,
 } from '../ui/window.js';
 import {
@@ -60,6 +63,23 @@ export function registerAppIpc(): void {
   ipcMain.handle('app:get-system-locale', () => app.getLocale());
 
   ipcMain.handle('app:get-version', () => app.getVersion());
+
+  ipcMain.handle('telemetry:get-status', () => {
+    const telemetry = getTelemetryService();
+    return {
+      enabled: telemetry?.enabled ?? false,
+      userDisabled: telemetry?.isUserOptedOut() ?? false,
+    };
+  });
+
+  ipcMain.handle('telemetry:set-enabled', async (_event, enabled: unknown) => {
+    const telemetry = getTelemetryService();
+    if (!telemetry) {
+      return { ok: false, error: 'Telemetry service not initialized' };
+    }
+    await telemetry.setUserOptedOut(!enabled);
+    return { ok: true, enabled: telemetry.enabled, userDisabled: telemetry.isUserOptedOut() };
+  });
 
   ipcMain.handle('openrouter:reference-prices', () => getOpenRouterReferencePrices());
 

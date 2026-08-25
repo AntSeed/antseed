@@ -35,6 +35,7 @@ import {
 } from './permissions.js';
 import { DEFAULT_BUYER_STATE_PATH, LOCALHOST_URL } from '../constants.js';
 import { asErrorMessage } from '../utils.js';
+import { countBucket, durationBucket } from '../telemetry/events.js';
 import type { RawPeerHealth } from '../runtime/peer-cache.js';
 import {
   buildChatServiceCatalogFromNetworkModels,
@@ -129,6 +130,10 @@ export function registerPiChatHandlers({
   isBuyerRuntimeRunning,
   ensureBuyerRuntimeStarted,
   appendSystemLog,
+  getFirstChatDepositSnapshot,
+  recordFirstChatStarted,
+  recordChatRequestFinished,
+  recordDiscoveryCompleted,
 }: RegisterPiChatHandlersOptions): PiChatEngine {
   void loadChatWorkspaceDir().catch(() => {});
   const store = new PiConversationStore();
@@ -400,6 +405,9 @@ export function registerPiChatHandlers({
     waitForBuyerProxy,
     resolveProtocolForSend,
     getServiceCatalogEntries: () => lastServiceCatalogEntries,
+    ...(getFirstChatDepositSnapshot ? { getFirstChatDepositSnapshot } : {}),
+    ...(recordFirstChatStarted ? { recordFirstChatStarted } : {}),
+    ...(recordChatRequestFinished ? { recordChatRequestFinished } : {}),
   });
 
   ipcMain.handle('chat:ai-get-proxy-status', async () => {
@@ -619,9 +627,38 @@ export function registerPiChatHandlers({
         discoverRowsEverSucceeded = true;
         appendSystemLog(`Service discovery ready: ${String(rows.length)} row(s) from ${String(entries.length)} service(s) in ${String(totalMs)}ms`);
       }
+      if (recordDiscoveryCompleted) {
+        try {
+          void Promise.resolve(recordDiscoveryCompleted({
+            outcome: 'success',
+            duration_bucket: durationBucket(totalMs),
+            service_count_bucket: countBucket(entries.length),
+            peer_count_bucket: countBucket(uniqueCatalogPeerIds.length),
+            result_count_bucket: countBucket(rows.length),
+            was_empty: rows.length === 0,
+          })).catch(() => {});
+        } catch {
+          // Telemetry must never affect discovery results.
+        }
+      }
       return { ok: true, data: rows };
     } catch (error) {
-      appendSystemLog(`Service discovery failed after ${String(Date.now() - startedAt)}ms: ${asErrorMessage(error)}`);
+      const totalMs = Date.now() - startedAt;
+      appendSystemLog(`Service discovery failed after ${String(totalMs)}ms: ${asErrorMessage(error)}`);
+      if (recordDiscoveryCompleted) {
+        try {
+          void Promise.resolve(recordDiscoveryCompleted({
+            outcome: 'failed',
+            duration_bucket: durationBucket(totalMs),
+            service_count_bucket: '0',
+            peer_count_bucket: '0',
+            result_count_bucket: '0',
+            was_empty: true,
+          })).catch(() => {});
+        } catch {
+          // Telemetry must never replace the original discovery failure.
+        }
+      }
       return { ok: false, data: [] as DiscoverRowEntry[], error: asErrorMessage(error) };
     }
   });

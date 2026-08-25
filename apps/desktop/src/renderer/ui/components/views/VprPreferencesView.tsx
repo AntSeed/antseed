@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { GlobalIcon, Moon02Icon, Sun02Icon, Tick02Icon } from '@hugeicons/core-free-icons';
 import { routesForSelectedModel } from '../../../modules/catalog/view-models';
@@ -15,6 +15,8 @@ import styles from './VprPreferencesView.module.scss';
 
 type Props = { onSelectView?: (view: import('../../types').ViewName) => void };
 
+const TELEMETRY_DOC_URL = 'https://github.com/AntSeed/antseed/blob/main/docs/telemetry.md';
+
 export function VprPreferencesView({ onSelectView }: Props) {
   const actions = useActions();
   const { status: tunnelStatus, openPublicEndpointModal } = usePublicEndpointModal();
@@ -28,6 +30,22 @@ export function VprPreferencesView({ onSelectView }: Props) {
   }), shallowEqual);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => activeThemeMode());
   const [accessOpen, setAccessOpen] = useState(false);
+  const [telemetryEnabled, setTelemetryEnabled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.antseedDesktop?.getTelemetryStatus?.().then((status) => {
+      if (!cancelled && status) setTelemetryEnabled(!status.userDisabled);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const toggleTelemetry = (next: boolean) => {
+    setTelemetryEnabled(next);
+    void window.antseedDesktop?.setTelemetryEnabled?.(next).then((result) => {
+      if (result && !result.ok) setTelemetryEnabled(!next);
+    });
+  };
 
   const peerOptions = useMemo(
     () => buildVprPeerOptions(snap.lastPeers, snap.discoverRows),
@@ -199,6 +217,30 @@ export function VprPreferencesView({ onSelectView }: Props) {
                 </button>
               )}
             />
+          </VprCard>
+        </div>
+
+        <div className={styles.appearanceSection}>
+          <span className={styles.sectionLabel}>Privacy</span>
+          <VprCard className={styles.card}>
+            <VprSettingRow
+              title="Anonymous telemetry"
+              hint="Help improve VPR by sharing coarse feature usage and reliability information. Prompts, messages, files, wallet addresses, and exact financial values are never collected."
+              control={(
+                <VprToggle
+                  checked={telemetryEnabled ?? true}
+                  onChange={toggleTelemetry}
+                  ariaLabel="Anonymous telemetry"
+                />
+              )}
+            />
+            <button
+              type="button"
+              className={styles.telemetryDetails}
+              onClick={() => { void window.antseedDesktop?.openExternalUrl?.(TELEMETRY_DOC_URL); }}
+            >
+              Review every event and privacy control
+            </button>
           </VprCard>
         </div>
 
