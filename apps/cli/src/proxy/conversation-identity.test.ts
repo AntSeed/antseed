@@ -222,6 +222,12 @@ test('snippet: cursor environment preamble never becomes the title', () => {
   assert.equal(extractFirstUserSnippet({
     messages: [{ role: 'user', content: CURSOR_ENVIRONMENT }],
   }), null)
+  assert.equal(extractFirstUserSnippet({
+    messages: [
+      { role: 'user', content: 'OS Version: darwin 25.2.0\nShell: zsh' },
+      { role: 'user', content: 'Fix the login bug.' },
+    ],
+  }), 'Fix the login bug.')
 })
 
 test('snippet: responses string input, whitespace collapsed and truncated', () => {

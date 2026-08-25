@@ -257,8 +257,6 @@ function looksLikeCursorEnvironment(text: string): boolean {
   const normalized = text.trimStart().toLowerCase().replace(/\s+/g, ' ')
   return normalized.startsWith('os version:')
     && normalized.includes(' shell:')
-    && normalized.includes(' workspace path:')
-    && normalized.includes(' is directory a git')
 }
 
 export function isCursorEnvironmentSnippet(text: string): boolean {
