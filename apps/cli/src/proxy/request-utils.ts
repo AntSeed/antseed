@@ -316,6 +316,10 @@ export const SYSTEM_ROUTED_MODEL_HEADER = 'x-antseed-system-routed'
     rather than to a generic SDK User-Agent. Stripped before dispatch. */
 export const SYSTEM_PROXY_SOURCE_HEADER = 'x-antseed-system-proxy-source'
 
+/** Integration-declared locations that may carry title-generation
+    housekeeping instructions. Internal — stripped before dispatch. */
+export const TITLE_INSTRUCTION_SOURCES_HEADER = 'x-antseed-title-instruction-sources'
+
 /**
  * Replace a proxy-assigned model with the chat's pinned route. Only used for
  * requests carrying SYSTEM_ROUTED_MODEL_HEADER — client-chosen models are

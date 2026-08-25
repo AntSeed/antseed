@@ -42,6 +42,14 @@ export type ConversationIdentity = {
   isUserThread: boolean
 }
 
+export type TitleInstructionSource = 'system' | 'developer' | 'instructions'
+
+const TITLE_INSTRUCTION_SOURCES = new Set<TitleInstructionSource>([
+  'system',
+  'developer',
+  'instructions',
+])
+
 /* Snippets are labels, not previews — keep them short. */
 const SNIPPET_MAX_CHARS = 80
 
@@ -331,16 +339,30 @@ function userTextsFromMessageList(list: unknown): string[] {
   return texts
 }
 
-function instructionTextsFromMessageList(list: unknown): string[] {
+function instructionTextsFromMessageList(
+  list: unknown,
+  roles: ReadonlySet<TitleInstructionSource>,
+): string[] {
   if (!Array.isArray(list)) return []
   const texts: string[] = []
   for (const item of list) {
     if (!item || typeof item !== 'object') continue
     const record = item as Record<string, unknown>
     if (record['role'] !== 'system' && record['role'] !== 'developer') continue
+    if (!roles.has(record['role'])) continue
     texts.push(...textFromContent(record['content']))
   }
   return texts
+}
+
+export function parseTitleInstructionSources(value: string | undefined): TitleInstructionSource[] {
+  if (!value) return []
+  const sources: TitleInstructionSource[] = []
+  for (const rawSource of value.split(',')) {
+    const source = rawSource.trim().toLowerCase() as TitleInstructionSource
+    if (TITLE_INSTRUCTION_SOURCES.has(source) && !sources.includes(source)) sources.push(source)
+  }
+  return sources
 }
 
 /**
@@ -389,12 +411,18 @@ export function extractFirstUserSnippet(parsedBody: Record<string, unknown> | nu
  * model — and that becomes the chat's pin, outranking the selected model for
  * the rest of the session.
  */
-export function isTitleGenerationRequest(parsedBody: Record<string, unknown> | null): boolean {
+export function isTitleGenerationRequest(
+  parsedBody: Record<string, unknown> | null,
+  titleInstructionSources: readonly TitleInstructionSource[] = [],
+): boolean {
   if (!parsedBody) return false
+  const sources = new Set(titleInstructionSources)
   const instructions = parsedBody['instructions']
-  const instructionCandidates: string[] = typeof instructions === 'string' ? [instructions] : []
-  instructionCandidates.push(...instructionTextsFromMessageList(parsedBody['messages']))
-  instructionCandidates.push(...instructionTextsFromMessageList(parsedBody['input']))
+  const instructionCandidates: string[] = sources.has('instructions') && typeof instructions === 'string'
+    ? [instructions]
+    : []
+  instructionCandidates.push(...instructionTextsFromMessageList(parsedBody['messages'], sources))
+  instructionCandidates.push(...instructionTextsFromMessageList(parsedBody['input'], sources))
   const firstInstruction = instructionCandidates.find((text) => text.trim().length > 0)
   if (firstInstruction !== undefined && looksLikeTitleRequest(firstInstruction)) return true
 

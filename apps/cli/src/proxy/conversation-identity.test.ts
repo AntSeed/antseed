@@ -5,6 +5,7 @@ import {
   extractFirstUserSnippet,
   isCompletionRequestPath,
   isTitleGenerationRequest,
+  parseTitleInstructionSources,
 } from './conversation-identity.js'
 
 const CURSOR_ENVIRONMENT = `<user_info>
@@ -389,14 +390,29 @@ test('title turns are recognised so they cannot define a chat model', () => {
   assert.equal(isTitleGenerationRequest({
     messages: [{ role: 'user', content: 'You write concise thread titles for a coding chat.' }],
   }), true)
-  // Factory/Droid sends its one-shot session-title instruction as a system
-  // message, followed by the real first prompt as a user message.
-  assert.equal(isTitleGenerationRequest({
+  // Factory/Droid opts into its system-role one-shot title instruction.
+  const droidTitleRequest = {
     messages: [
       { role: 'system', content: 'Generate a title for this session' },
       { role: 'user', content: 'wowow' },
     ],
-  }), true)
+  }
+  assert.equal(isTitleGenerationRequest(droidTitleRequest), false)
+  assert.equal(isTitleGenerationRequest(droidTitleRequest, ['system']), true)
+  assert.equal(isTitleGenerationRequest(droidTitleRequest, ['developer']), false)
+
+  assert.equal(isTitleGenerationRequest({
+    instructions: 'Generate a title for this session',
+    input: 'wowow',
+  }, ['instructions']), true)
+})
+
+test('title instruction source headers accept only supported deduplicated values', () => {
+  assert.deepEqual(
+    parseTitleInstructionSources('system, developer,system,assistant'),
+    ['system', 'developer'],
+  )
+  assert.deepEqual(parseTitleInstructionSources(undefined), [])
 })
 
 test('real turns are not mistaken for title turns', () => {

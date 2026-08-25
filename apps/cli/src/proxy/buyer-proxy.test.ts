@@ -30,7 +30,12 @@ import {
   substituteRoutedModelAlias,
   sweepStaleStateTmpFiles,
 } from './buyer-proxy.js'
-import { extractRequestedService, overrideRoutedModelInBody, SYSTEM_ROUTED_MODEL_HEADER } from './request-utils.js'
+import {
+  extractRequestedService,
+  overrideRoutedModelInBody,
+  SYSTEM_ROUTED_MODEL_HEADER,
+  TITLE_INSTRUCTION_SOURCES_HEADER,
+} from './request-utils.js'
 
 function makePeer(seed: string, providers: string[]): PeerInfo {
   const repeated = (seed.repeat(40) + 'a'.repeat(40)).slice(0, 40)
@@ -653,6 +658,31 @@ test('required parameters filter automatic routes and are stripped before seller
   assert.equal(res.statusCode, 200)
   assert.equal(selectedPeerId, supported.peerId)
   assert.equal(forwardedHeaders['x-antseed-required-parameters'], undefined)
+})
+
+test('title instruction source metadata is stripped before seller dispatch', async () => {
+  const peer = makePeer('a', ['openai'])
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], permissiveRouter())
+  let forwardedHeaders: Record<string, string> = {}
+  ;(proxy as any)._node.sendRequest = async (
+    _peer: PeerInfo,
+    request: { requestId: string; headers: Record<string, string> },
+  ) => {
+    forwardedHeaders = request.headers
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ choices: [] })),
+    }
+  }
+
+  await invokeProxy(proxy, makeProxyRequest({
+    headers: { [TITLE_INSTRUCTION_SOURCES_HEADER]: 'system' },
+    body: { model: 'gpt-4o', messages: [{ role: 'user', content: 'hello' }] },
+  }))
+
+  assert.equal(forwardedHeaders[TITLE_INSTRUCTION_SOURCES_HEADER], undefined)
 })
 
 test('required parameters fail clearly when no automatic route advertises support', async () => {
@@ -2980,7 +3010,11 @@ test('title request racing ahead of the first turn does not name the chat', asyn
     }))
     await invokeProxy(proxy, makeProxyRequest({
       path: '/v1/chat/completions',
-      headers: { originator: 'droid', 'user-agent': 'factory-cli/0.202.0' },
+      headers: {
+        originator: 'droid',
+        'user-agent': 'factory-cli/0.202.0',
+        [TITLE_INSTRUCTION_SOURCES_HEADER]: 'system',
+      },
       body: {
         model: 'antseed',
         messages: [
@@ -2990,6 +3024,21 @@ test('title request racing ahead of the first turn does not name the chat', asyn
       },
     }))
     assert.equal(store.list().filter((conversation: any) => conversation.tool === 'droid').length, 1)
+
+    // An identical shape from an integration that did not opt in remains a
+    // normal conversation request; system-role scanning is not global.
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/chat/completions',
+      headers: { originator: 'other-agent', 'user-agent': 'other-agent/1.0' },
+      body: {
+        model: 'antseed',
+        messages: [
+          { role: 'system', content: 'Generate a title for this session' },
+          { role: 'user', content: 'wowow' },
+        ],
+      },
+    }))
+    assert.equal(store.list().filter((conversation: any) => conversation.tool === 'other-agent').length, 1)
 
     // The real first turn creates the conversation afterwards.
     await invokeProxy(proxy, makeProxyRequest({
