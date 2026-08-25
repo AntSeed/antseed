@@ -108,7 +108,7 @@ let isInstallingUpdate = false;
 
 // Telemetry initialization starts before app.whenReady() so crash recovery
 // reads the state file left by the previous session. All failures are swallowed
-// and network delivery stays fire-and-forget.
+// and routine network delivery stays fire-and-forget.
 const telemetryReady = createTelemetryService({
   userDataDir: app.getPath('userData'),
   isDev,
@@ -855,8 +855,8 @@ app.on('before-quit', (event) => {
   // downstream of anything that can block.
   restoreOsSystemProxySync();
 
-  // PostHog delivery remains fire-and-forget, but the local crash marker must
-  // be cleared before exit or the next launch will report a false crash.
+  // Briefly flush the final close event and clear the local crash marker before
+  // exit, otherwise delivery is lost or the next launch reports a false crash.
   const telemetryShutdown = recordTelemetryCleanShutdown();
   void Promise.allSettled([stopDesktopServices(), telemetryShutdown]).finally(() => {
     app.exit(0);

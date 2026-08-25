@@ -266,6 +266,25 @@ test('clean shutdown emits app_closed with was_crash false and no crash event ne
   assert.equal(closedEvents.length, 1);
 });
 
+test('clean shutdown waits briefly for app_closed delivery', async (t) => {
+  const dir = await makeTempDir(t);
+  let closeDelivered = false;
+  const service = await createTelemetryService({
+    ...baseOptions(dir, { payloads: [] }),
+    shutdownFlushTimeoutMs: 100,
+    transport: async (payload) => {
+      if (payload.event !== 'app_closed') return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      closeDelivered = true;
+    },
+  });
+
+  await service.recordAppStarted(0);
+  await service.recordCleanShutdown(60_000);
+
+  assert.equal(closeDelivered, true);
+});
+
 // ── Setup / deposit / chat events ──
 
 test('setup duration is bucketed', async (t) => {

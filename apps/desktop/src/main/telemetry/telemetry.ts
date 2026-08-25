@@ -12,7 +12,7 @@
  * - Disabled in development builds, when the TELEMETRY_ENABLED kill switch
  *   is falsy, when PostHog config is missing, or when the user opts out in
  *   Settings.
- * - Fire-and-forget transport: telemetry failures never affect the app.
+ * - Routine captures are fire-and-forget; clean shutdown uses a bounded flush.
  * - First-open and first-chat events fire exactly once per installation.
  */
 import { randomUUID } from 'node:crypto';
@@ -48,6 +48,7 @@ export const INSTALL_SOURCE_ENV = 'INSTALL_SOURCE';
 const USDC_BASE_UNITS = 1_000_000n;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 60_000;
+const DEFAULT_SHUTDOWN_FLUSH_TIMEOUT_MS = 750;
 
 function isFalsyEnv(value: string | undefined): boolean {
   if (!value) return false;
@@ -149,6 +150,7 @@ export type CreateTelemetryServiceOptions = {
   nowMs?: () => number;
   transport?: PostHogTransport;
   heartbeatIntervalMs?: number | null;
+  shutdownFlushTimeoutMs?: number;
 };
 
 export async function createTelemetryService(
@@ -197,13 +199,13 @@ export async function createTelemetryService(
 
   const isEnabled = () => !staticDisabled && !state.telemetryDisabled;
 
-  const track = <K extends TelemetryEventName>(
+  const capture = <K extends TelemetryEventName>(
     event: K,
     properties: TelemetryEventProperties[K],
     eventTsMs = now(),
     captureSessionId: string = sessionId,
-  ): boolean => {
-    if (!isEnabled()) return false;
+  ): Promise<void> | null => {
+    if (!isEnabled()) return null;
     const payload = {
       event,
       distinct_id: state.installId,
@@ -223,8 +225,28 @@ export async function createTelemetryService(
         ...sanitizeTelemetryProperties(event, properties),
       },
     };
-    void transport(payload).catch(() => {});
+    return transport(payload).catch(() => {});
+  };
+
+  const track = <K extends TelemetryEventName>(
+    event: K,
+    properties: TelemetryEventProperties[K],
+    eventTsMs = now(),
+    captureSessionId: string = sessionId,
+  ): boolean => {
+    const delivery = capture(event, properties, eventTsMs, captureSessionId);
+    if (!delivery) return false;
+    void delivery;
     return true;
+  };
+
+  const awaitShutdownDelivery = async (delivery: Promise<void> | null): Promise<void> => {
+    if (!delivery) return;
+    const timeoutMs = options.shutdownFlushTimeoutMs ?? DEFAULT_SHUTDOWN_FLUSH_TIMEOUT_MS;
+    await Promise.race([
+      delivery,
+      new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+    ]);
   };
 
   const daysSinceFirstOpen = (nowMs: number): number => {
@@ -413,7 +435,7 @@ export async function createTelemetryService(
     async recordCleanShutdown(nowMs = now()) {
       if (!state.sessionActive) return;
       stopHeartbeat();
-      track('app_closed', {
+      const delivery = capture('app_closed', {
         was_crash: false,
         session_duration_bucket: sessionDurationBucket(
           state.lastSessionStartedAtMs !== null ? Math.max(0, nowMs - state.lastSessionStartedAtMs) : 0,
@@ -423,7 +445,7 @@ export async function createTelemetryService(
       state.lastSessionId = null;
       state.lastSessionStartedAtMs = null;
       state.lastSessionHeartbeatAtMs = null;
-      await save();
+      await Promise.all([save(), awaitShutdownDelivery(delivery)]);
     },
 
     isUserOptedOut: () => state.telemetryDisabled,

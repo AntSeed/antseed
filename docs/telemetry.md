@@ -153,15 +153,17 @@ builds contain no default and therefore send nothing unless configured locally.
 
 ## Data handling
 
-- Events are sent to PostHog over HTTPS, fire-and-forget with a short
-  timeout; PostHog outages never affect the app.
-- Telemetry failures never block startup, chat, payments, or shutdown.
+- Events are sent to PostHog over HTTPS with a short timeout. Routine captures
+  are fire-and-forget; clean shutdown uses a bounded final flush.
+- Telemetry failures never affect startup, chat, or payments, and cannot delay
+  shutdown beyond the short flush timeout.
 - Every capture sets `$geoip_disable: true`, so PostHog does not enrich events
   with location derived from the request IP.
 - Every capture sets `$process_person_profile: false`; anonymous installation
   events do not create PostHog person profiles.
-- Clean shutdown waits only for the local crash marker to be cleared. It never
-  waits for PostHog delivery.
+- Clean shutdown waits briefly for the final `app_closed` capture while also
+  clearing the local crash marker. Delivery remains bounded by a short flush
+  timeout.
 - While VPR runs, a local-only heartbeat updates the crash marker once per
   minute. Crash recovery uses the last heartbeat, so time spent offline before
   the next launch is not counted as session duration.
