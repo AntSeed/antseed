@@ -242,7 +242,9 @@ export class ClaudeDesktopGateway {
       // Claude may send a slot id from a catalog served before this process
       // started; make sure the slot map exists before resolving against it.
       if (this.slotModels.size === 0) this.assignSlots();
-      const payload = rewriteModel(body, this.slotModels);
+      // The identity note goes only on real message turns — count_tokens
+      // never reaches a model.
+      const payload = rewriteModel(body, this.slotModels, { identityNote: url === '/v1/messages' });
       headers['content-length'] = String(Buffer.byteLength(payload));
       const upstream = http.request(
         { host: '127.0.0.1', port: this.options.buyerPort, path: url, method: 'POST', headers },
@@ -278,8 +280,18 @@ export class ClaudeDesktopGateway {
  * An explicit `<peerId>@<service>` pin and the alias itself pass through;
  * anything unparseable is forwarded verbatim so the buyer proxy produces the
  * meaningful error.
+ *
+ * With `identityNote`, a routing note is appended to the system prompt:
+ * Claude Desktop tells the model it is the Claude id from the catalog, and
+ * since only Claude ids can be advertised (see CLAUDE_MODEL_SLOTS), the
+ * network model serving the chat would otherwise claim to be that Claude
+ * model when asked what it is.
  */
-export function rewriteModel(body: Buffer, slotModels: ReadonlyMap<string, string>): Buffer {
+export function rewriteModel(
+  body: Buffer,
+  slotModels: ReadonlyMap<string, string>,
+  opts: { identityNote?: boolean } = {},
+): Buffer {
   let parsed: unknown;
   try {
     parsed = JSON.parse(body.toString('utf8'));
@@ -289,9 +301,38 @@ export function rewriteModel(body: Buffer, slotModels: ReadonlyMap<string, strin
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return body;
   const request = parsed as Record<string, unknown>;
   const model = request['model'];
-  if (typeof model === 'string' && (model === ROUTED_MODEL_ALIAS || model.includes('@'))) return body;
-  request['model'] = (typeof model === 'string' ? slotModels.get(model) : undefined) ?? ROUTED_MODEL_ALIAS;
+  const passthrough = typeof model === 'string' && (model === ROUTED_MODEL_ALIAS || model.includes('@'));
+  if (passthrough && !opts.identityNote) return body;
+  const resolved = passthrough
+    ? model
+    : (typeof model === 'string' ? slotModels.get(model) : undefined) ?? ROUTED_MODEL_ALIAS;
+  request['model'] = resolved;
+  if (opts.identityNote) appendIdentityNote(request, resolved);
   return Buffer.from(JSON.stringify(request), 'utf8');
+}
+
+function identityNote(resolvedModel: string): string {
+  const serving = resolvedModel === ROUTED_MODEL_ALIAS
+    ? 'the model currently selected in the AntSeed desktop app, which is typically not an Anthropic model'
+    : `"${resolvedModel}"`;
+  return 'Routing note from AntSeed: this conversation is served over the AntSeed peer-to-peer network by '
+    + `${serving}. Client metadata naming a Claude model refers to a routing alias, not the serving model — `
+    + 'when asked which model you are, answer with your actual identity.';
+}
+
+/** Appended as the last system block so earlier prompt-cache breakpoints
+    Claude Desktop may have set stay valid. Unknown system shapes are left
+    alone rather than guessed at. */
+function appendIdentityNote(request: Record<string, unknown>, resolvedModel: string): void {
+  const note = identityNote(resolvedModel);
+  const system = request['system'];
+  if (system === undefined || system === null) {
+    request['system'] = note;
+  } else if (typeof system === 'string') {
+    request['system'] = `${system}\n\n${note}`;
+  } else if (Array.isArray(system)) {
+    request['system'] = [...system, { type: 'text', text: note }];
+  }
 }
 
 type BodyError = Error & { statusCode: number };

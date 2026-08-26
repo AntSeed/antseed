@@ -176,7 +176,7 @@ test('/v1/messages forwards to the buyer proxy with the model rewritten to the r
   });
 });
 
-test('/v1/messages/count_tokens forwards and returns the buyer response', async () => {
+test('/v1/messages/count_tokens forwards without an identity note', async () => {
   await withGateway(async (gateway, buyer) => {
     const res = await gatewayFetch(gateway, '/v1/messages/count_tokens', {
       method: 'POST',
@@ -185,8 +185,46 @@ test('/v1/messages/count_tokens forwards and returns the buyer response', async 
     });
     assert.equal(res.status, 200);
     assert.deepEqual(await res.json(), { input_tokens: 7 });
+    const forwarded = JSON.parse(buyer.requests[0]!.body) as Record<string, unknown>;
     assert.equal(buyer.requests[0]!.url, '/v1/messages/count_tokens');
+    assert.equal(forwarded['system'], undefined);
   });
+});
+
+test('/v1/messages appends a routing identity note to the system prompt', async () => {
+  const picker: ClaudeGatewayModel[] = [{ label: 'GLM 5.2', model: 'glm-5.2' }];
+  await withGateway(async (gateway, buyer) => {
+    const send = async (extra: Record<string, unknown>) => {
+      await gatewayFetch(gateway, '/v1/messages', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(extra),
+      });
+      return JSON.parse(buyer.requests[buyer.requests.length - 1]!.body) as Record<string, unknown>;
+    };
+
+    // A mapped slot names the serving model; Claude's own system string is kept.
+    const mapped = await send({ model: 'claude-opus-5', system: 'You are a helpful assistant.', messages: [] });
+    assert.ok((mapped['system'] as string).startsWith('You are a helpful assistant.'));
+    assert.ok((mapped['system'] as string).includes('served over the AntSeed peer-to-peer network by "glm-5.2"'));
+
+    // Block-array system prompts get the note as a trailing text block, so
+    // earlier cache breakpoints stay valid.
+    const blocks = await send({
+      model: 'claude-fable-5',
+      system: [{ type: 'text', text: 'base', cache_control: { type: 'ephemeral' } }],
+      messages: [],
+    });
+    const systemBlocks = blocks['system'] as { type: string; text: string }[];
+    assert.equal(systemBlocks.length, 2);
+    assert.deepEqual(systemBlocks[0], { type: 'text', text: 'base', cache_control: { type: 'ephemeral' } });
+    assert.equal(systemBlocks[1]!.type, 'text');
+    assert.ok(systemBlocks[1]!.text.includes('model currently selected in the AntSeed desktop app'));
+
+    // No system prompt at all still gets the note.
+    const bare = await send({ model: 'claude-opus-5', messages: [] });
+    assert.ok((bare['system'] as string).includes('"glm-5.2"'));
+  }, () => picker);
 });
 
 test('requests carrying an Origin header are rejected', async () => {
