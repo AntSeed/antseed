@@ -15,6 +15,7 @@ import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import type { AppLaunchTarget } from '../connected-apps/launch-settings.js';
 import {
   isMultiInstanceDevelopment,
+  shouldRemoveSharedConfigPatches,
 } from '../dev-instance.js';
 import {
   getMacAppProcessInfo,
@@ -466,7 +467,7 @@ export async function stopManagedRuntimes(): Promise<void> {
     if (!isMultiInstanceDevelopment() || isOsSystemProxyConfigured(DEFAULT_SYSTEM_PROXY_PORT)) {
       await clearSystemProxyTransportSettings();
     }
-    if (!isMultiInstanceDevelopment()) {
+    if (shouldRemoveSharedConfigPatches('shutdown')) {
       await unlink(systemProxyPidPath()).catch(() => undefined);
       removeAllConfigPatches();
       await stopWslRelays();
@@ -723,7 +724,7 @@ export async function stopSystemProxyRuntime(clearSettings: boolean): Promise<Ru
       setupProfileNames,
       running: false,
     }), 'utf8').catch(() => undefined);
-    if (!isMultiInstanceDevelopment()) {
+    if (shouldRemoveSharedConfigPatches('disconnect')) {
       removeAllConfigPatches();
     }
     await stopClaudeDesktopGateway();

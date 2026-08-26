@@ -76,6 +76,14 @@ const TITLE_REQUEST_PREFIXES = [
   'you are coming up with a succinct title',
 ]
 
+/** Some integrations prepend shared provider instructions before their title
+    prompt, so the title-specific text is not at the start of the instruction
+    block. These exact markers are safe to recognize in system/developer roles
+    and top-level instructions; user messages still require a leading prefix. */
+const TITLE_REQUEST_INSTRUCTION_MARKERS = [
+  'you are a helper that generates concise session titles for a session picker',
+]
+
 /** Injected project-doc blobs — Codex sends AGENTS.md / CLAUDE.md contents
     as a user message ("# AGENTS.md instructions for <cwd> ..."). Like title
     requests these must never label a chat, not even as a fallback; matched
@@ -296,6 +304,11 @@ function looksLikeTitleRequest(text: string): boolean {
   return TITLE_REQUEST_PREFIXES.some((prefix) => start.startsWith(prefix))
 }
 
+function containsKnownTitleInstructionMarker(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/\s+/g, ' ').trim()
+  return TITLE_REQUEST_INSTRUCTION_MARKERS.some((marker) => normalized.includes(marker))
+}
+
 /** Strip XML-ish tags (prompts often open with wrappers like `<session>`),
     collapse whitespace, and truncate to label length. */
 function normalizeSnippet(text: string): string {
@@ -328,6 +341,18 @@ function userTextsFromMessageList(list: unknown): string[] {
     if (!item || typeof item !== 'object') continue
     const record = item as Record<string, unknown>
     if (record['role'] !== 'user') continue
+    texts.push(...textFromContent(record['content']))
+  }
+  return texts
+}
+
+function instructionTextsFromMessageList(list: unknown): string[] {
+  if (!Array.isArray(list)) return []
+  const texts: string[] = []
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue
+    const record = item as Record<string, unknown>
+    if (record['role'] !== 'system' && record['role'] !== 'developer') continue
     texts.push(...textFromContent(record['content']))
   }
   return texts
@@ -366,7 +391,8 @@ export function extractFirstUserSnippet(parsedBody: Record<string, unknown> | nu
 
 /**
  * True when the request is a tool's title/summary housekeeping turn rather
- * than a chat turn — its *leading* user message is a title instruction.
+ * than a chat turn. Exact known helper markers may appear in instruction
+ * roles; generic title phrasing must be the *leading* user message.
  *
  * Keyed on the first message because OpenCode sends
  * `[{"Generate a title for this conversation:"}, ...the real conversation]`,
@@ -379,8 +405,18 @@ export function extractFirstUserSnippet(parsedBody: Record<string, unknown> | nu
  * model — and that becomes the chat's pin, outranking the selected model for
  * the rest of the session.
  */
-export function isTitleGenerationRequest(parsedBody: Record<string, unknown> | null): boolean {
+export function isTitleGenerationRequest(
+  parsedBody: Record<string, unknown> | null,
+): boolean {
   if (!parsedBody) return false
+  const instructions = parsedBody['instructions']
+  const instructionCandidates: string[] = typeof instructions === 'string'
+    ? [instructions]
+    : []
+  instructionCandidates.push(...instructionTextsFromMessageList(parsedBody['messages']))
+  instructionCandidates.push(...instructionTextsFromMessageList(parsedBody['input']))
+  if (instructionCandidates.some(containsKnownTitleInstructionMarker)) return true
+
   const candidates: string[] = []
   candidates.push(...userTextsFromMessageList(parsedBody['messages']))
   const input = parsedBody['input']

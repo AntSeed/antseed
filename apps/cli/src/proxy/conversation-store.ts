@@ -55,6 +55,8 @@ const MAX_CONVERSATIONS = 50
 /** Conversations idle longer than this are pruned. */
 const MAX_IDLE_MS = 7 * 24 * 60 * 60 * 1000
 const MAX_LABEL_CHARS = 120
+const LEGACY_DROID_TITLE_MAX_INPUT_TOKENS = 1_500n
+const LEGACY_DROID_CHAT_MIN_INPUT_TOKENS = 5_000n
 
 export function conversationId(tool: string, sessionKey: string): string {
   return `${tool}:${sessionKey}`
@@ -100,6 +102,30 @@ function sanitizeRecord(value: unknown): StoredConversation | null {
   }
 }
 
+/** Droid used to send its title helper under a separate synthetic session,
+    leaving two persisted rows with the same snippet. Its body-derived helper
+    key is reused across launches, so the two records may have distant creation
+    times even though both are reactivated together.
+    New requests are filtered before storage; this only heals those legacy
+    pairs, using the captured helper/full-prompt average token sizes to avoid merging
+    genuine chats that happen to start with the same text. */
+function removeLegacyDroidTitleDuplicates(records: StoredConversation[]): StoredConversation[] {
+  const duplicateIds = new Set<string>()
+  for (const candidate of records) {
+    if (candidate.tool !== 'droid' || !candidate.snippet || candidate.label) continue
+    const candidateRequests = BigInt(Math.max(candidate.requestCount, 1))
+    if (BigInt(candidate.inputTokens) > LEGACY_DROID_TITLE_MAX_INPUT_TOKENS * candidateRequests) continue
+    const matchingChat = records.some((record) => (
+      record.id !== candidate.id
+      && record.tool === 'droid'
+      && record.snippet === candidate.snippet
+      && BigInt(record.inputTokens) >= LEGACY_DROID_CHAT_MIN_INPUT_TOKENS * BigInt(Math.max(record.requestCount, 1))
+    ))
+    if (matchingChat) duplicateIds.add(candidate.id)
+  }
+  return duplicateIds.size === 0 ? records : records.filter((record) => !duplicateIds.has(record.id))
+}
+
 export class ConversationStore {
   private readonly _dir: string
   private readonly _file: string
@@ -121,10 +147,10 @@ export class ConversationStore {
     }
     try {
       const parsed = JSON.parse(raw) as { conversations?: unknown[] }
-      const records = (parsed.conversations ?? [])
+      const records = removeLegacyDroidTitleDuplicates((parsed.conversations ?? [])
         .map(sanitizeRecord)
         .filter((record): record is StoredConversation => record !== null)
-        .sort((a, b) => a.lastActiveAt - b.lastActiveAt) // map order tracks recency
+        .sort((a, b) => a.lastActiveAt - b.lastActiveAt)) // map order tracks recency
       for (const record of records) {
         this._byId.set(record.id, record)
       }
