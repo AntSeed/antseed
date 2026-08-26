@@ -315,6 +315,19 @@ test('snippet: pure title request yields null, never a label', () => {
   }), null)
 })
 
+test('claude desktop title housekeeping is recognized and never labels a chat', () => {
+  // Claude Desktop fires this from a session id of its own; without the
+  // prefix it becomes a phantom chat row per new Claude conversation.
+  const body = {
+    messages: [{
+      role: 'user',
+      content: 'You are coming up with a succinct title for an agent chat session based on the messages so far.',
+    }],
+  }
+  assert.equal(isTitleGenerationRequest(body), true)
+  assert.equal(extractFirstUserSnippet(body), null)
+})
+
 test('snippet: injected project-doc blobs never label a chat', () => {
   // Codex sends AGENTS.md/CLAUDE.md contents as a user message ahead of the
   // real prompt; the doc must be skipped in favor of the genuine turn.

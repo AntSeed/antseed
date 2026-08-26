@@ -77,22 +77,36 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
     },
   },
   {
-    name: 'droid',
-    displayName: 'Droid',
+    name: 'claude-desktop',
+    displayName: 'Claude',
     kind: 'config-patch',
     method: 'Config patch',
-    toolSlugs: ['droid'],
+    // The gateway stamps every forwarded request with the claude-desktop
+    // source marker, so this exact slug is the whole identity. No generic
+    // 'claude' entry: it would prefix-match t3code's claude-code/claude-cli
+    // sessions and steal them in first-match-wins attribution.
+    toolSlugs: ['claude-desktop'],
     domains: [],
     pathPrefixes: [],
+    // 'open-tool' opens Claude after connect even when it was not running
+    // (restartAppName is both the restart target for a running Claude and
+    // the open-tool launch fallback).
+    appAction: 'open-tool',
+    restartAppName: 'Claude',
     configPatch: {
-      format: 'droid',
-      // Droid CLI and Factory Desktop share this live-reloaded user config.
-      configPath: '~/.factory/settings.json',
-      providerKey: 'antseed',
-      providerName: 'AntSeed Auto',
-      baseURL: 'http://localhost:{buyerPort}/v1',
-      originator: 'droid',
-      installProbe: 'droid',
+      format: 'claude-desktop',
+      // Claude's normal-profile config: the patch flips deploymentMode to
+      // "3p" here, which makes Claude boot against the Claude-3p profile
+      // directory below, where the AntSeed gateway profile is written.
+      // Windows paths are NOT resolved here — Claude has several install
+      // layouts there (classic, MSIX, Nest), so claudeDesktopPatchTargets
+      // derives its own candidate roots on win32 and these apply elsewhere.
+      configPath: '~/Library/Application Support/Claude/claude_desktop_config.json',
+      thirdPartyDir: '~/Library/Application Support/Claude-3p',
+      // Claude talks to the desktop's local Claude gateway (Anthropic-native
+      // model catalog + forwarding to the buyer proxy), not the buyer proxy
+      // directly — see connected-apps/claude-desktop-gateway.ts.
+      baseURL: 'http://127.0.0.1:{claudeGatewayPort}',
     },
   },
   {
@@ -111,6 +125,25 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
       configPath: '~/.hermes/config.yaml',
       providerKey: 'antseed',
       baseURL: 'http://localhost:{buyerPort}/v1',
+    },
+  },
+  {
+    name: 'droid',
+    displayName: 'Droid',
+    kind: 'config-patch',
+    method: 'Config patch',
+    toolSlugs: ['droid'],
+    domains: [],
+    pathPrefixes: [],
+    configPatch: {
+      format: 'droid',
+      // Droid CLI and Factory Desktop share this live-reloaded user config.
+      configPath: '~/.factory/settings.json',
+      providerKey: 'antseed',
+      providerName: 'AntSeed Auto',
+      baseURL: 'http://localhost:{buyerPort}/v1',
+      originator: 'droid',
+      installProbe: 'droid',
     },
   },
   {

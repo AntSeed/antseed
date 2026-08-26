@@ -10,7 +10,7 @@ function names(profiles: readonly unknown[]): string[] {
   return profiles.map((profile) => (profile as Record<string, unknown>)['name'] as string);
 }
 
-const DEFAULT_NAMES = ['opencode', 'codex', 'droid', 'hermes', 't3code', 'pi', 'gooeypi', 'crush', 'goose', 'zed'];
+const DEFAULT_NAMES = ['opencode', 'codex', 'claude-desktop', 'hermes', 'droid', 't3code', 'pi', 'gooeypi', 'crush', 'goose', 'zed'];
 
 test('default app profiles are config-patch entries with unique names', () => {
   assert.deepEqual(names(DEFAULT_APP_PROFILES), DEFAULT_NAMES);
@@ -18,11 +18,30 @@ test('default app profiles are config-patch entries with unique names', () => {
     assert.equal(profile['kind'], 'config-patch');
     const patch = profile['configPatch'] as Record<string, unknown>;
     assert.equal(typeof patch['configPath'], 'string');
-    assert.equal(typeof patch['providerKey'], 'string');
-    assert.ok((patch['baseURL'] as string).includes('{buyerPort}'));
+    // The claude-desktop format writes no provider entry (its gateway
+    // ignores auth), so it alone carries no providerKey; it also talks to
+    // the desktop's Claude gateway while every other tool is pointed
+    // straight at the buyer proxy.
+    if (patch['format'] !== 'claude-desktop') {
+      assert.equal(typeof patch['providerKey'], 'string');
+    }
+    const portPlaceholder = patch['format'] === 'claude-desktop' ? '{claudeGatewayPort}' : '{buyerPort}';
+    assert.ok((patch['baseURL'] as string).includes(portPlaceholder));
     const slugs = profile['toolSlugs'] as string[];
     assert.ok(Array.isArray(slugs) && slugs.length > 0);
   }
+});
+
+test('Claude Desktop patches the third-party profile and opens Claude on connect', () => {
+  const profile = DEFAULT_APP_PROFILES.find((entry) => entry['name'] === 'claude-desktop');
+  assert.ok(profile);
+  // 'open-tool' launches Claude after connect even when it was not running;
+  // restartAppName doubles as the restart target and the launch fallback.
+  assert.equal(profile['appAction'], 'open-tool');
+  assert.equal(profile['restartAppName'], 'Claude');
+  const patch = profile['configPatch'] as Record<string, unknown>;
+  assert.equal(patch['format'], 'claude-desktop');
+  assert.equal(typeof patch['thirdPartyDir'], 'string');
 });
 
 test('GooeyPi patches the shared Pi config without requiring pi on PATH', () => {
@@ -86,6 +105,6 @@ test('mergeWithDefaultAppProfiles lets external profiles override same-name defa
     { name: 'opencode', displayName: 'OpenCode (private override)' },
   ];
   const merged = mergeWithDefaultAppProfiles(external);
-  assert.deepEqual(names(merged), ['acme', 'opencode', 'codex', 'droid', 'hermes', 't3code', 'pi', 'gooeypi', 'crush', 'goose', 'zed']);
+  assert.deepEqual(names(merged), ['acme', 'opencode', 'codex', 'claude-desktop', 'hermes', 'droid', 't3code', 'pi', 'gooeypi', 'crush', 'goose', 'zed']);
   assert.equal((merged[1] as Record<string, unknown>)['displayName'], 'OpenCode (private override)');
 });

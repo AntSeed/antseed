@@ -34,6 +34,17 @@ test('unknown identifiers fall back to the generic mark', () => {
   assert.equal(resolveBrandKey(), 'generic');
 });
 
+test('Droid resolves the Factory mark and stays theme-aware', () => {
+  assert.equal(resolveBrandKey('droid', 'Droid'), 'droid');
+  assert.equal(resolveBrandKey('factory'), 'droid');
+  // Standalone-word match only — "android" must not become a Droid mark.
+  assert.equal(resolveBrandKey('android-model'), 'generic');
+  assert.equal(isThemeAwareAppBrand('droid'), true);
+  const markup = renderToStaticMarkup(BrandIcon({ brand: 'droid', size: 24 }));
+  assert.match(markup, /viewBox="0 0 508 508"/);
+  assert.match(markup, /fill="currentColor"/);
+});
+
 test('MiniMax renders the official waveform and brand gradient', () => {
   const markup = renderToStaticMarkup(BrandIcon({ brand: 'minimax' }));
   assert.match(markup, /viewBox="0 0 32 32"/);
