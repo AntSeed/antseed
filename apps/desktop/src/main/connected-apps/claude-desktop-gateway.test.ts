@@ -25,20 +25,10 @@ type StubBuyer = {
   close: () => Promise<void>;
 };
 
-/** A stand-in buyer proxy that records message requests, answers the default
-    route lookup, and streams a canned SSE reply. */
-async function startStubBuyer(routedModel: string | null = 'abc123@gpt-5.6-sol'): Promise<StubBuyer> {
+/** A stand-in buyer proxy that records requests and streams a canned SSE reply. */
+async function startStubBuyer(): Promise<StubBuyer> {
   const requests: StubRequest[] = [];
   const server = http.createServer((req, res) => {
-    if (req.method === 'GET' && req.url === '/_antseed/route') {
-      if (routedModel === null) {
-        res.writeHead(404).end();
-        return;
-      }
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, model: routedModel }));
-      return;
-    }
     const chunks: Buffer[] = [];
     req.on('data', (chunk: Buffer) => chunks.push(chunk));
     req.on('end', () => {
@@ -186,7 +176,7 @@ test('/v1/messages forwards to the buyer proxy with the model rewritten to the r
   });
 });
 
-test('/v1/messages/count_tokens forwards without an identity note', async () => {
+test('/v1/messages/count_tokens forwards without the routing note', async () => {
   await withGateway(async (gateway, buyer) => {
     const res = await gatewayFetch(gateway, '/v1/messages/count_tokens', {
       method: 'POST',
@@ -201,8 +191,7 @@ test('/v1/messages/count_tokens forwards without an identity note', async () => 
   });
 });
 
-test('/v1/messages appends a routing identity note to the system prompt', async () => {
-  const picker: ClaudeGatewayModel[] = [{ label: 'GLM 5.2', model: 'glm-5.2' }];
+test('/v1/messages appends the AntSeed routing note to the system prompt', async () => {
   await withGateway(async (gateway, buyer) => {
     const send = async (extra: Record<string, unknown>) => {
       await gatewayFetch(gateway, '/v1/messages', {
@@ -213,22 +202,10 @@ test('/v1/messages appends a routing identity note to the system prompt', async 
       return JSON.parse(buyer.requests[buyer.requests.length - 1]!.body) as Record<string, unknown>;
     };
 
-    // A mapped slot names the serving model; Claude's own system string is kept.
-    const mapped = await send({ model: 'claude-opus-5', system: 'You are a helpful assistant.', messages: [] });
-    assert.ok((mapped['system'] as string).startsWith('You are a helpful assistant.'));
-    assert.ok((mapped['system'] as string).includes('served over the AntSeed peer-to-peer network by "glm-5.2"'));
-
-    // Claude Desktop's own identity metadata is corrected at the source —
-    // the model trusts its system prompt over an appended note, so the id
-    // and display-name phrases must name the serving model.
-    const metadata = await send({
-      model: 'claude-opus-5',
-      system: 'Environment: the active model is Claude Opus 5 (model ID: claude-opus-5), also known as Opus 5.',
-      messages: [],
-    });
-    assert.ok((metadata['system'] as string).startsWith(
-      'Environment: the active model is glm-5.2 (model ID: glm-5.2), also known as glm-5.2.',
-    ));
+    // Claude's own system string is kept; the note rides at the end.
+    const withSystem = await send({ model: 'claude-opus-5', system: 'You are a helpful assistant.', messages: [] });
+    assert.ok((withSystem['system'] as string).startsWith('You are a helpful assistant.'));
+    assert.ok((withSystem['system'] as string).includes('delivered through the AntSeed peer-to-peer network'));
 
     // Block-array system prompts get the note as a trailing text block, so
     // earlier cache breakpoints stay valid.
@@ -241,32 +218,12 @@ test('/v1/messages appends a routing identity note to the system prompt', async 
     assert.equal(systemBlocks.length, 2);
     assert.deepEqual(systemBlocks[0], { type: 'text', text: 'base', cache_control: { type: 'ephemeral' } });
     assert.equal(systemBlocks[1]!.type, 'text');
-    assert.ok(systemBlocks[1]!.text.includes('"gpt-5.6-sol" (the route currently selected'));
+    assert.ok(systemBlocks[1]!.text.includes('AntSeed peer-to-peer network'));
 
-    // No system prompt at all still gets the note; the Auto alias names the
-    // buyer's currently routed model so the serving model can answer with
-    // its real identity instead of the Claude id from client metadata.
+    // No system prompt at all still gets the note.
     const bare = await send({ model: 'antseed', messages: [] });
-    assert.ok((bare['system'] as string).includes('"gpt-5.6-sol" (the route currently selected'));
-  }, () => picker);
-});
-
-test('the identity note falls back to generic wording when the route lookup fails', async () => {
-  const buyer = await startStubBuyer(null);
-  const gateway = new ClaudeDesktopGateway({ port: 0, buyerPort: buyer.port });
-  await gateway.start();
-  try {
-    await fetch(`http://127.0.0.1:${gateway.port}/v1/messages`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'antseed', messages: [] }),
-    });
-    const forwarded = JSON.parse(buyer.requests[0]!.body) as Record<string, unknown>;
-    assert.ok((forwarded['system'] as string).includes('model currently selected in the AntSeed desktop app'));
-  } finally {
-    await gateway.stop();
-    await buyer.close();
-  }
+    assert.ok((bare['system'] as string).includes('AntSeed peer-to-peer network'));
+  });
 });
 
 test('requests carrying an Origin header are rejected', async () => {

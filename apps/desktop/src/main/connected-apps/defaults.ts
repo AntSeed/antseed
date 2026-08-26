@@ -78,7 +78,7 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
   },
   {
     name: 'claude-desktop',
-    displayName: 'Claude Desktop',
+    displayName: 'Claude',
     kind: 'config-patch',
     method: 'Config patch',
     // The gateway stamps every forwarded request with the claude-desktop

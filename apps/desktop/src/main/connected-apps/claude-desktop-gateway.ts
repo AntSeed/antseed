@@ -28,9 +28,6 @@ import {
 const MAX_REQUEST_BODY_BYTES = 64 * 1024 * 1024;
 export const CLAUDE_GATEWAY_HEALTH_PATH = '/_antseed/claude-gateway';
 export const CLAUDE_GATEWAY_HEALTH_HEADER = 'x-antseed-claude-gateway';
-/** How long a routed-model lookup for the identity note stays fresh. */
-const ROUTE_CACHE_TTL_MS = 5_000;
-const ROUTE_LOOKUP_TIMEOUT_MS = 750;
 
 /**
  * Claude Desktop's picker only lists the model ids it knows, grouped by
@@ -41,12 +38,12 @@ const ROUTE_LOOKUP_TIMEOUT_MS = 750;
  * the top of the desktop's curated model picker. Advertised in Claude's
  * preferred order.
  */
-const CLAUDE_MODEL_SLOTS: readonly { id: string; family: string; createdAt: string; familyDefault: boolean; identityPhrases: readonly string[] }[] = [
-  { id: 'claude-fable-5', family: 'fable', createdAt: '2026-06-09T00:00:00Z', familyDefault: true, identityPhrases: ['Claude Fable 5', 'Fable 5'] },
-  { id: 'claude-opus-5', family: 'opus', createdAt: '2026-07-24T00:00:00Z', familyDefault: true, identityPhrases: ['Claude Opus 5', 'Opus 5'] },
-  { id: 'claude-sonnet-5', family: 'sonnet', createdAt: '2026-06-30T00:00:00Z', familyDefault: true, identityPhrases: ['Claude Sonnet 5', 'Sonnet 5'] },
-  { id: 'claude-sonnet-4-6', family: 'sonnet', createdAt: '2025-11-18T00:00:00Z', familyDefault: false, identityPhrases: ['Claude Sonnet 4.6', 'Sonnet 4.6'] },
-  { id: 'claude-haiku-4-5-20251001', family: 'haiku', createdAt: '2025-10-01T00:00:00Z', familyDefault: true, identityPhrases: ['Claude Haiku 4.5', 'Haiku 4.5'] },
+const CLAUDE_MODEL_SLOTS: readonly { id: string; family: string; createdAt: string; familyDefault: boolean }[] = [
+  { id: 'claude-fable-5', family: 'fable', createdAt: '2026-06-09T00:00:00Z', familyDefault: true },
+  { id: 'claude-opus-5', family: 'opus', createdAt: '2026-07-24T00:00:00Z', familyDefault: true },
+  { id: 'claude-sonnet-5', family: 'sonnet', createdAt: '2026-06-30T00:00:00Z', familyDefault: true },
+  { id: 'claude-sonnet-4-6', family: 'sonnet', createdAt: '2025-11-18T00:00:00Z', familyDefault: false },
+  { id: 'claude-haiku-4-5-20251001', family: 'haiku', createdAt: '2025-10-01T00:00:00Z', familyDefault: true },
 ];
 const CLAUDE_GATEWAY_MODEL_LABEL = 'AntSeed Auto';
 
@@ -225,51 +222,17 @@ export class ClaudeDesktopGateway {
     }));
   }
 
-  /**
-   * What the routed-model alias currently resolves to (the service part of
-   * the buyer's default route), so the identity note can name the model that
-   * actually answers instead of "whatever the desktop routes to" — without a
-   * name, models fall back to the Claude id in the client metadata when asked
-   * what they are. Cached briefly; null (buyer down, no route yet) falls back
-   * to the generic wording.
-   */
-  private routeCache: { model: string | null; fetchedAt: number } = { model: null, fetchedAt: 0 };
-
-  private async resolveRoutedModelName(): Promise<string | null> {
-    const now = Date.now();
-    if (now - this.routeCache.fetchedAt < ROUTE_CACHE_TTL_MS) return this.routeCache.model;
-    let model: string | null = null;
-    try {
-      const response = await fetch(
-        `http://127.0.0.1:${this.options.buyerPort}/_antseed/route`,
-        { signal: AbortSignal.timeout(ROUTE_LOOKUP_TIMEOUT_MS) },
-      );
-      if (response.ok) {
-        const payload = await response.json() as { model?: unknown };
-        if (typeof payload.model === 'string' && payload.model.trim().length > 0) {
-          const route = payload.model.trim();
-          const at = route.indexOf('@');
-          model = at >= 0 ? route.slice(at + 1) : route;
-        }
-      }
-    } catch {
-      // Buyer unreachable or slow — the note keeps its generic wording.
-    }
-    this.routeCache = { model, fetchedAt: now };
-    return model;
-  }
-
   private forwardMessages(req: http.IncomingMessage, res: http.ServerResponse, url: string): void {
     collectBody(req, (err, body) => {
       if (err) {
         writeAnthropicError(res, err.statusCode, 'invalid_request_error', err.message);
         return;
       }
-      void this.forwardCollectedBody(req, res, url, body);
+      this.forwardCollectedBody(req, res, url, body);
     });
   }
 
-  private async forwardCollectedBody(req: http.IncomingMessage, res: http.ServerResponse, url: string, body: Buffer): Promise<void> {
+  private forwardCollectedBody(req: http.IncomingMessage, res: http.ServerResponse, url: string, body: Buffer): void {
       const headers: Record<string, string> = {
         'content-type': 'application/json',
         // Claude authenticates to this loopback gateway with the placeholder
@@ -284,11 +247,9 @@ export class ClaudeDesktopGateway {
       // Claude may send a slot id from a catalog served before this process
       // started; make sure the slot map exists before resolving against it.
       if (this.slotModels.size === 0) this.assignSlots();
-      // The identity note goes only on real message turns — count_tokens
+      // The routing note goes only on real message turns — count_tokens
       // never reaches a model.
-      const identityNote = url === '/v1/messages';
-      const routedModelName = identityNote ? await this.resolveRoutedModelName() : null;
-      const payload = rewriteModel(body, this.slotModels, { identityNote, routedModelName });
+      const payload = rewriteModel(body, this.slotModels, { routingNote: url === '/v1/messages' });
       headers['content-length'] = String(Buffer.byteLength(payload));
       const upstream = http.request(
         { host: '127.0.0.1', port: this.options.buyerPort, path: url, method: 'POST', headers },
@@ -324,16 +285,16 @@ export class ClaudeDesktopGateway {
  * anything unparseable is forwarded verbatim so the buyer proxy produces the
  * meaningful error.
  *
- * With `identityNote`, a routing note is appended to the system prompt:
- * Claude Desktop tells the model it is the Claude id from the catalog, and
- * since only Claude ids can be advertised (see CLAUDE_MODEL_SLOTS), the
- * network model serving the chat would otherwise claim to be that Claude
- * model when asked what it is.
+ * With `routingNote`, a short note is appended to the system prompt saying
+ * the conversation runs through the AntSeed network. Claude Desktop's own
+ * system prompt asserts a Claude identity the model trusts over anything a
+ * gateway writes, so no identity correction is attempted — the note only
+ * flags that infrastructure context may not reflect the serving model.
  */
 export function rewriteModel(
   body: Buffer,
   slotModels: ReadonlyMap<string, string>,
-  opts: { identityNote?: boolean; routedModelName?: string | null } = {},
+  opts: { routingNote?: boolean } = {},
 ): Buffer {
   let parsed: unknown;
   try {
@@ -345,72 +306,23 @@ export function rewriteModel(
   const request = parsed as Record<string, unknown>;
   const model = request['model'];
   const passthrough = typeof model === 'string' && (model === ROUTED_MODEL_ALIAS || model.includes('@'));
-  if (passthrough && !opts.identityNote) return body;
-  const resolved = passthrough
-    ? model
-    : (typeof model === 'string' ? slotModels.get(model) : undefined) ?? ROUTED_MODEL_ALIAS;
-  request['model'] = resolved;
-  if (opts.identityNote) {
-    const servingName = resolved === ROUTED_MODEL_ALIAS ? opts.routedModelName ?? null : resolved;
-    // Claude Desktop asserts the catalog model's identity in its own system
-    // prompt, and the model trusts that over anything appended later — an
-    // appended correction alone gets dismissed as unreliable. Rewrite the
-    // identity claims at their source, then let the note explain why.
-    if (servingName && typeof model === 'string' && model !== servingName) {
-      rewriteSystemIdentity(request, model, servingName);
-    }
-    appendIdentityNote(request, resolved, opts.routedModelName ?? null);
+  if (passthrough && !opts.routingNote) return body;
+  if (!passthrough) {
+    request['model'] = (typeof model === 'string' ? slotModels.get(model) : undefined) ?? ROUTED_MODEL_ALIAS;
   }
+  if (opts.routingNote) appendRoutingNote(request);
   return Buffer.from(JSON.stringify(request), 'utf8');
 }
 
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/** Replace the requested Claude model's id and display-name phrases inside
-    the system prompt with the serving model's name, so the "environment
-    metadata" Claude Desktop injects names the model that actually answers. */
-function rewriteSystemIdentity(request: Record<string, unknown>, requestedModel: string, servingName: string): void {
-  const phrases = [
-    requestedModel,
-    ...(CLAUDE_MODEL_SLOTS.find((slot) => slot.id === requestedModel)?.identityPhrases ?? []),
-  ];
-  const pattern = new RegExp(phrases.map(escapeRegExp).join('|'), 'gi');
-  const rewrite = (text: string): string => text.replace(pattern, servingName);
-  const system = request['system'];
-  if (typeof system === 'string') {
-    request['system'] = rewrite(system);
-    return;
-  }
-  if (!Array.isArray(system)) return;
-  request['system'] = system.map((block) => {
-    if (!block || typeof block !== 'object' || Array.isArray(block)) return block;
-    const record = block as Record<string, unknown>;
-    if (record['type'] !== 'text' || typeof record['text'] !== 'string') return block;
-    return { ...record, text: rewrite(record['text']) };
-  });
-}
-
-function identityNote(resolvedModel: string, routedModelName: string | null): string {
-  let serving: string;
-  if (resolvedModel !== ROUTED_MODEL_ALIAS) {
-    serving = `"${resolvedModel}"`;
-  } else if (routedModelName) {
-    serving = `"${routedModelName}" (the route currently selected in the AntSeed desktop app)`;
-  } else {
-    serving = 'the model currently selected in the AntSeed desktop app, which is typically not an Anthropic model';
-  }
-  return 'Routing note from AntSeed: this conversation is served over the AntSeed peer-to-peer network by '
-    + `${serving}. Client metadata naming a Claude model refers to a routing alias, not the serving model — `
-    + 'when asked which model you are, answer with your actual identity.';
-}
+const ROUTING_NOTE = 'Note from AntSeed: this conversation is delivered through the AntSeed peer-to-peer '
+  + 'network, not directly through Anthropic. Environment metadata comes from the Claude client '
+  + 'infrastructure and may not describe the model actually serving the conversation.';
 
 /** Appended as the last system block so earlier prompt-cache breakpoints
     Claude Desktop may have set stay valid. Unknown system shapes are left
     alone rather than guessed at. */
-function appendIdentityNote(request: Record<string, unknown>, resolvedModel: string, routedModelName: string | null): void {
-  const note = identityNote(resolvedModel, routedModelName);
+function appendRoutingNote(request: Record<string, unknown>): void {
+  const note = ROUTING_NOTE;
   const system = request['system'];
   if (system === undefined || system === null) {
     request['system'] = note;
