@@ -1,6 +1,8 @@
 import { ANTSEED_MODEL_MAX_OUTPUT_TOKENS } from '@antseed/node/types';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
+import path from 'node:path';
 import {
   CLAUDE_GATEWAY_DEFAULT_PORT,
   ROUTED_MODEL_ALIAS,
@@ -86,6 +88,11 @@ export type ClaudeDesktopGatewayOptions = {
   /** Curated picker models for the catalog slots; defaults to the shared
       source injected via setClaudeDesktopGatewayModelSource. */
   readonly listModels?: () => readonly ClaudeGatewayModel[];
+  /** Where slot bindings persist. Claude caches the catalog across AntSeed
+      restarts, so a fresh gateway must keep meaning the same models for the
+      ids Claude already knows — without this file every app restart would
+      rebind slots from the current picker order and silently re-point them. */
+  readonly stateFile?: string;
 };
 
 export class ClaudeDesktopGateway {
@@ -93,8 +100,45 @@ export class ClaudeDesktopGateway {
   private boundPort: number | null = null;
   /** Claude slot id → model to route, as last advertised by /v1/models. */
   private slotModels = new Map<string, string>();
+  /** Claude slot id → display name last advertised for its model. */
+  private slotLabels = new Map<string, string>();
 
-  constructor(private readonly options: ClaudeDesktopGatewayOptions) {}
+  constructor(private readonly options: ClaudeDesktopGatewayOptions) {
+    this.loadPersistedSlots();
+  }
+
+  private loadPersistedSlots(): void {
+    if (!this.options.stateFile) return;
+    try {
+      const raw = JSON.parse(readFileSync(this.options.stateFile, 'utf8')) as Record<string, unknown>;
+      for (const slot of CLAUDE_MODEL_SLOTS.slice(1)) {
+        const entry = raw[slot.id];
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+        const { model, label } = entry as Record<string, unknown>;
+        if (typeof model !== 'string' || model.trim().length === 0) continue;
+        this.slotModels.set(slot.id, model);
+        this.slotLabels.set(slot.id, typeof label === 'string' && label.trim().length > 0 ? label : model);
+      }
+    } catch {
+      // Missing or unreadable state — bindings start fresh.
+    }
+  }
+
+  private persistSlots(): void {
+    if (!this.options.stateFile) return;
+    const state: Record<string, { model: string; label: string }> = {};
+    for (const slot of CLAUDE_MODEL_SLOTS.slice(1)) {
+      const model = this.slotModels.get(slot.id);
+      if (!model) continue;
+      state[slot.id] = { model, label: this.slotLabels.get(slot.id) ?? model };
+    }
+    try {
+      mkdirSync(path.dirname(this.options.stateFile), { recursive: true });
+      writeFileSync(this.options.stateFile, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+    } catch {
+      // Best-effort — bindings still hold for this process.
+    }
+  }
 
   /** The listening port — resolved from the socket when constructed with 0. */
   get port(): number {
@@ -206,6 +250,23 @@ export class ClaudeDesktopGateway {
 
     const autoSlot = CLAUDE_MODEL_SLOTS[0]!;
     const assignableSlots = CLAUDE_MODEL_SLOTS.slice(1);
+    const currentAssignments = () => {
+      const assignments = [{ slot: autoSlot, label: CLAUDE_GATEWAY_MODEL_LABEL, model: ROUTED_MODEL_ALIAS }];
+      for (const slot of assignableSlots) {
+        const model = this.slotModels.get(slot.id);
+        if (model) assignments.push({ slot, label: this.slotLabels.get(slot.id) ?? model, model });
+      }
+      return assignments;
+    };
+
+    // The renderer has not pushed the picker snapshot yet (fresh launch) —
+    // keep whatever bindings persisted rather than wiping them and letting
+    // Claude's cached catalog ids fall back to the Auto route.
+    if (picks.length === 0) {
+      this.slotModels.set(autoSlot.id, ROUTED_MODEL_ALIAS);
+      return currentAssignments();
+    }
+
     // Keep bindings whose model is still offered; the rest free their slot.
     const bindings = new Map<string, string>();
     for (const slot of assignableSlots) {
@@ -213,21 +274,31 @@ export class ClaudeDesktopGateway {
       if (model && model !== ROUTED_MODEL_ALIAS && seen.has(model)) bindings.set(slot.id, model);
     }
     const boundModels = new Set(bindings.values());
+    // A network model whose id matches a Claude slot id (the network does
+    // offer Claude models) claims its namesake slot first, so the id Claude
+    // sends means exactly that model.
     for (const model of picks) {
       if (boundModels.has(model)) continue;
-      const freeSlot = assignableSlots.find((slot) => !bindings.has(slot.id));
-      if (!freeSlot) break;
-      bindings.set(freeSlot.id, model);
+      const ownSlot = assignableSlots.find((slot) => slot.id === model && !bindings.has(slot.id));
+      if (!ownSlot) continue;
+      bindings.set(ownSlot.id, model);
+      boundModels.add(model);
+    }
+    // The rest fill the remaining free slots in picker order.
+    for (const model of picks) {
+      if (boundModels.has(model)) continue;
+      const target = assignableSlots.find((slot) => !bindings.has(slot.id));
+      if (!target) break;
+      bindings.set(target.id, model);
       boundModels.add(model);
     }
 
-    const assignments = [{ slot: autoSlot, label: CLAUDE_GATEWAY_MODEL_LABEL, model: ROUTED_MODEL_ALIAS }];
-    for (const slot of assignableSlots) {
-      const model = bindings.get(slot.id);
-      if (model) assignments.push({ slot, label: labels.get(model) ?? model, model });
-    }
-    this.slotModels = new Map(assignments.map(({ slot, model }) => [slot.id, model]));
-    return assignments;
+    this.slotModels = new Map([[autoSlot.id, ROUTED_MODEL_ALIAS], ...bindings]);
+    this.slotLabels = new Map(
+      [...bindings].map(([slotId, model]) => [slotId, labels.get(model) ?? this.slotLabels.get(slotId) ?? model]),
+    );
+    this.persistSlots();
+    return currentAssignments();
   }
 
   private serveModels(res: http.ServerResponse): void {
@@ -399,10 +470,19 @@ let activeGateway: ClaudeDesktopGateway | null = null;
  * Start (or re-point) the singleton gateway. Kept in lockstep with the
  * `claude-desktop` profile's connect state by the system-proxy runtime.
  */
-export async function ensureClaudeDesktopGateway(buyerPort: number, log?: (line: string) => void): Promise<void> {
+export async function ensureClaudeDesktopGateway(
+  buyerPort: number,
+  log?: (line: string) => void,
+  stateFile?: string,
+): Promise<void> {
   if (activeGateway?.running && activeGateway.buyerPort === buyerPort) return;
   await stopClaudeDesktopGateway();
-  const gateway = new ClaudeDesktopGateway({ port: CLAUDE_GATEWAY_DEFAULT_PORT, buyerPort, ...(log ? { log } : {}) });
+  const gateway = new ClaudeDesktopGateway({
+    port: CLAUDE_GATEWAY_DEFAULT_PORT,
+    buyerPort,
+    ...(log ? { log } : {}),
+    ...(stateFile ? { stateFile } : {}),
+  });
   await gateway.start();
   activeGateway = gateway;
 }

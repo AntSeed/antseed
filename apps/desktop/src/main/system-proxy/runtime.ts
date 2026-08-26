@@ -27,6 +27,7 @@ import { getNetworkSnapshot, lookupPeer, type DashboardNetworkPeer } from '../ru
 import type { ProcessManager, RuntimeMode, RuntimeProcessState } from '../runtime/process-manager.js';
 import { applyWindowView, getMainWindow } from '../ui/window.js';
 import { updateDesktopTray } from '../ui/tray.js';
+import path from 'node:path';
 import { ensureClaudeDesktopGateway, stopClaudeDesktopGateway } from '../connected-apps/claude-desktop-gateway.js';
 import { applyConfigPatch, removeConfigPatch } from './config-patch.js';
 import {
@@ -575,7 +576,11 @@ export async function startSystemProxyRuntimeInner(opts: SystemProxyStartRequest
         // Claude Desktop's config points at the desktop's Claude gateway, not
         // the buyer proxy — bring it up before the patch so a gateway failure
         // fails the connect instead of leaving Claude aimed at a dead port.
-        await ensureClaudeDesktopGateway(buyerProxyPort, (line) => deps().appendLog('system-proxy', 'system', line));
+        await ensureClaudeDesktopGateway(
+          buyerProxyPort,
+          (line) => deps().appendLog('system-proxy', 'system', line),
+          path.join(systemProxyDataDir(), 'claude-gateway.slots.json'),
+        );
       }
       // The patched config carries only the routed-model alias; the buyer
       // resolves it to the default route posted above, so the model picked in

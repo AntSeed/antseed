@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import nodePath from 'node:path';
 
 import {
   CLAUDE_GATEWAY_HEALTH_HEADER,
@@ -185,6 +188,59 @@ test('a slot freed by a departed model is rebound to a new one', async () => {
       // GLM left the picker, so its slot went to the newcomer; GPT kept its slot.
       ['claude-opus-5', 'Qwen4 235B'],
       ['claude-sonnet-5', 'GPT 5.6 Sol'],
+    ]);
+  }, () => picker);
+});
+
+test('slot bindings persist across gateway restarts and survive an empty picker', async () => {
+  const dir = await mkdtemp(nodePath.join(tmpdir(), 'antseed-claude-gateway-'));
+  const stateFile = nodePath.join(dir, 'claude-gateway.slots.json');
+  try {
+    const buyer = await startStubBuyer();
+    const picker: ClaudeGatewayModel[] = [{ label: 'GLM 5.2', model: 'glm-5.2' }];
+    const first = new ClaudeDesktopGateway({ port: 0, buyerPort: buyer.port, stateFile, listModels: () => picker });
+    await first.start();
+    await fetch(`http://127.0.0.1:${first.port}/v1/models`);
+    await first.stop();
+
+    // A fresh process (app restart) with the picker not yet pushed: the
+    // persisted binding must keep Claude's cached id meaning the same model.
+    const second = new ClaudeDesktopGateway({ port: 0, buyerPort: buyer.port, stateFile, listModels: () => [] });
+    await second.start();
+    const res = await fetch(`http://127.0.0.1:${second.port}/v1/models`);
+    const body = await res.json() as { data: { id: string; display_name: string }[] };
+    assert.deepEqual(body.data.map((model) => [model.id, model.display_name]), [
+      ['claude-fable-5', 'AntSeed Auto'],
+      ['claude-opus-5', 'GLM 5.2'],
+    ]);
+    await fetch(`http://127.0.0.1:${second.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-opus-5', messages: [] }),
+    });
+    const forwarded = JSON.parse(buyer.requests[buyer.requests.length - 1]!.body) as Record<string, unknown>;
+    assert.equal(forwarded['model'], 'glm-5.2');
+    await second.stop();
+    await buyer.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a network model matching a Claude slot id claims that slot', async () => {
+  const picker: ClaudeGatewayModel[] = [
+    { label: 'GLM 5.2', model: 'glm-5.2' },
+    { label: 'Claude Opus 5', model: 'claude-opus-5' },
+  ];
+  await withGateway(async (gateway) => {
+    const res = await gatewayFetch(gateway, '/v1/models');
+    const body = await res.json() as { data: { id: string; display_name: string }[] };
+    assert.deepEqual(body.data.map((model) => [model.id, model.display_name]), [
+      ['claude-fable-5', 'AntSeed Auto'],
+      // glm binds first in picker order, but the network Opus offer takes its
+      // namesake slot so the id Claude sends means exactly that model.
+      ['claude-opus-5', 'Claude Opus 5'],
+      ['claude-sonnet-5', 'GLM 5.2'],
     ]);
   }, () => picker);
 });
