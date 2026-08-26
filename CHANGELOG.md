@@ -23,6 +23,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
+- Ox Alpha is no longer part of the desktop's curated free model lineup (first-run default and free-first model lists).
+
 - Desktop Connected Apps now includes Droid. Connecting adds and selects an `AntSeed Auto` custom model in the live-reloaded Factory settings shared by Droid CLI and Factory Desktop, routes it through the local VPR, refuses to overwrite an existing `antseed` custom model, and restores the user's previous default model on disconnect.
 
 - Desktop installers are dramatically smaller. The Windows installer drops from ~424 MB to roughly a third of that: it previously packed both an x64 and an arm64 app into one universal installer — and the arm64 half shipped x64 native modules, so it could not have started anyway. Windows now ships x64 only (Windows-on-ARM runs it under emulation). All platforms additionally shed the bundled ~74 MB Whisper Tiny voice model (see below), dead transitive code that was never reachable at runtime (an OCR engine and PDF-rendering backends pulled in by the document-attachment parser, which only extracts text with OCR disabled), duplicate minified/sandbox/browser builds, other platforms' Whisper binaries, and sourcemaps/type declarations across the app and the bundled plugin runtime.
