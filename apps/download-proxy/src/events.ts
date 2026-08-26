@@ -95,25 +95,57 @@ export function unresolvedEvent(
 
 const GA4_ENDPOINT = 'https://www.google-analytics.com/mp/collect';
 
+const GA_CLIENT_ID_RE = /^\d{5,15}\.\d{5,15}$/;
+const GA_SESSION_ID_RE = /^\d{8,12}$/;
+
+export interface GaIds {
+  clientId: string | null;
+  sessionId: string | null;
+}
+
 /**
- * Fire-and-forget delivery: console line always, GA4 when configured. The
- * Measurement Protocol requires a client_id; a random UUID per request means
- * each download appears as its own GA4 "user", which is fine for funnel
- * counting (joining to the website session is a possible later refinement by
- * passing the GA client id as a query param on the download URL).
+ * GA attribution ids the website appends to download URLs (?cid=...&sid=...),
+ * read from the visitor's first-party _ga cookies. Strictly validated — these
+ * arrive on a public URL, and anything malformed is dropped rather than
+ * forwarded to GA.
  */
-export async function deliverEvent(
-  event: DownloadEvent,
-  measurementId: string | undefined,
-  apiSecret: string | undefined,
-): Promise<void> {
-  console.log(JSON.stringify({event: event.name, ...event.params}));
-  if (!measurementId || !apiSecret) return;
+export function parseGaIds(params: URLSearchParams): GaIds {
+  const cid = params.get('cid');
+  const sid = params.get('sid');
+  return {
+    clientId: cid && GA_CLIENT_ID_RE.test(cid) ? cid : null,
+    sessionId: sid && GA_SESSION_ID_RE.test(sid) ? sid : null,
+  };
+}
+
+export interface Ga4Delivery {
+  measurementId?: string;
+  apiSecret?: string;
+  ids?: GaIds;
+}
+
+/**
+ * Fire-and-forget delivery: console line always, GA4 when configured. When
+ * the website passed the visitor's GA client id (see parseGaIds), the event
+ * is sent under that client_id — and session_id — so it lands inside the
+ * same GA4 user and session as the download_vpr click, inheriting source,
+ * campaign, and landing page. Without it (direct links, shared URLs), a
+ * random UUID keeps the event countable but unattributed.
+ */
+export async function deliverEvent(event: DownloadEvent, ga: Ga4Delivery): Promise<void> {
+  console.log(JSON.stringify({event: event.name, ...event.params, attributed: ga.ids?.clientId ? 1 : 0}));
+  if (!ga.measurementId || !ga.apiSecret) return;
+  const params = ga.ids?.sessionId
+    ? {...event.params, session_id: Number(ga.ids.sessionId)}
+    : event.params;
   const url =
-    `${GA4_ENDPOINT}?measurement_id=${encodeURIComponent(measurementId)}` +
-    `&api_secret=${encodeURIComponent(apiSecret)}`;
+    `${GA4_ENDPOINT}?measurement_id=${encodeURIComponent(ga.measurementId)}` +
+    `&api_secret=${encodeURIComponent(ga.apiSecret)}`;
   await fetch(url, {
     method: 'POST',
-    body: JSON.stringify({client_id: crypto.randomUUID(), events: [event]}),
+    body: JSON.stringify({
+      client_id: ga.ids?.clientId ?? crypto.randomUUID(),
+      events: [{name: event.name, params}],
+    }),
   }).catch(() => {});
 }

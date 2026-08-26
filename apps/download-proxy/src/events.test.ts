@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest';
-import {endEvent, startEvent, unresolvedEvent, type DownloadContext} from './events';
+import {endEvent, parseGaIds, startEvent, unresolvedEvent, type DownloadContext} from './events';
 
 const ctx: DownloadContext = {
   target: {platform: 'mac', arch: 'arm64'},
@@ -61,6 +61,17 @@ describe('download events', () => {
 
     const empty = startEvent({...ctx, userAgent: ''});
     expect(empty.params['user_agent']).toBe('unknown');
+  });
+
+  it('accepts well-formed GA attribution ids and rejects garbage', () => {
+    const good = parseGaIds(new URLSearchParams('cid=1234567890.1699999999&sid=1756223000'));
+    expect(good).toEqual({clientId: '1234567890.1699999999', sessionId: '1756223000'});
+
+    expect(parseGaIds(new URLSearchParams(''))).toEqual({clientId: null, sessionId: null});
+    expect(parseGaIds(new URLSearchParams('cid=GA1.1.123.456')).clientId).toBeNull();
+    expect(parseGaIds(new URLSearchParams('cid=<script>alert(1)</script>')).clientId).toBeNull();
+    expect(parseGaIds(new URLSearchParams('sid=abc')).sessionId).toBeNull();
+    expect(parseGaIds(new URLSearchParams('cid=123.456&sid=99')).clientId).toBeNull();
   });
 
   it('builds unresolved events with a reason', () => {
