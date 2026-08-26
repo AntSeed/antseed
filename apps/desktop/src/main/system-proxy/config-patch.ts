@@ -152,11 +152,12 @@ export type T3CodeConfigPatchDef = {
  */
 export type ClaudeDesktopConfigPatchDef = {
   readonly format: 'claude-desktop';
-  /** Claude's normal-profile claude_desktop_config.json (deploymentMode flip). */
+  /** Claude's normal-profile claude_desktop_config.json (deploymentMode
+      flip). posix only — Windows candidates come from
+      claudeDesktopPatchTargets, which probes every known install layout. */
   readonly configPath: string;
   /** Claude's third-party profile root (the `Claude-3p` directory). */
   readonly thirdPartyDir: string;
-  readonly providerKey: string;
   /** Gateway base URL carrying the `{claudeGatewayPort}` placeholder. */
   readonly baseURL: string;
 };
@@ -205,10 +206,21 @@ export function readConfigPatch(value: unknown, profileName: string): ConfigPatc
     throw new Error(`configPatch for ${profileName} must be an object`);
   }
   const raw = value as Record<string, unknown>;
+  const format = readString(raw, 'format');
+  // Claude Desktop's gateway profile has no provider entry of its own —
+  // auth is a placeholder key the loopback gateway ignores — so it skips
+  // the providerKey every other format requires.
+  if (format === 'claude-desktop') {
+    return {
+      format: 'claude-desktop',
+      configPath: readRequiredString(raw, 'configPath', profileName),
+      thirdPartyDir: readRequiredString(raw, 'thirdPartyDir', profileName),
+      baseURL: readRequiredString(raw, 'baseURL', profileName),
+    };
+  }
   const configPath = readRequiredString(raw, 'configPath', profileName);
   const providerKey = readRequiredString(raw, 'providerKey', profileName);
   const baseURL = readRequiredString(raw, 'baseURL', profileName);
-  const format = readString(raw, 'format');
   if (format === 'codex') {
     return {
       format: 'codex',
@@ -291,15 +303,6 @@ export function readConfigPatch(value: unknown, profileName: string): ConfigPatc
       configPath,
       providerKey,
       providerName: readRequiredString(raw, 'providerName', profileName),
-      baseURL,
-    };
-  }
-  if (format === 'claude-desktop') {
-    return {
-      format: 'claude-desktop',
-      configPath,
-      thirdPartyDir: readRequiredString(raw, 'thirdPartyDir', profileName),
-      providerKey,
       baseURL,
     };
   }

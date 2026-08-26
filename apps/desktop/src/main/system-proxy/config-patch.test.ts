@@ -941,7 +941,6 @@ function makeClaudeDesktopPatch(dir: string): ClaudeDesktopConfigPatchDef {
     format: 'claude-desktop',
     configPath: path.join(dir, 'Claude', 'claude_desktop_config.json'),
     thirdPartyDir: path.join(dir, 'Claude-3p'),
-    providerKey: 'antseed',
     baseURL: 'http://127.0.0.1:{claudeGatewayPort}',
   };
 }

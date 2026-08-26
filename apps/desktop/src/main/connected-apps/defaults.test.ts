@@ -18,9 +18,13 @@ test('default app profiles are config-patch entries with unique names', () => {
     assert.equal(profile['kind'], 'config-patch');
     const patch = profile['configPatch'] as Record<string, unknown>;
     assert.equal(typeof patch['configPath'], 'string');
-    assert.equal(typeof patch['providerKey'], 'string');
-    // Claude Desktop talks to the desktop's Claude gateway; every other tool
-    // is pointed straight at the buyer proxy.
+    // The claude-desktop format writes no provider entry (its gateway
+    // ignores auth), so it alone carries no providerKey; it also talks to
+    // the desktop's Claude gateway while every other tool is pointed
+    // straight at the buyer proxy.
+    if (patch['format'] !== 'claude-desktop') {
+      assert.equal(typeof patch['providerKey'], 'string');
+    }
     const portPlaceholder = patch['format'] === 'claude-desktop' ? '{claudeGatewayPort}' : '{buyerPort}';
     assert.ok((patch['baseURL'] as string).includes(portPlaceholder));
     const slugs = profile['toolSlugs'] as string[];

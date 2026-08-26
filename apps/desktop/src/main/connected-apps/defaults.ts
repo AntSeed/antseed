@@ -98,15 +98,11 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
       // Claude's normal-profile config: the patch flips deploymentMode to
       // "3p" here, which makes Claude boot against the Claude-3p profile
       // directory below, where the AntSeed gateway profile is written.
-      configPath: platformConfigPath('~/Library/Application Support/Claude/claude_desktop_config.json', {
-        base: 'APPDATA',
-        segments: ['Claude', 'claude_desktop_config.json'],
-      }),
-      thirdPartyDir: platformConfigPath('~/Library/Application Support/Claude-3p', {
-        base: 'APPDATA',
-        segments: ['Claude-3p'],
-      }),
-      providerKey: 'antseed',
+      // Windows paths are NOT resolved here — Claude has several install
+      // layouts there (classic, MSIX, Nest), so claudeDesktopPatchTargets
+      // derives its own candidate roots on win32 and these apply elsewhere.
+      configPath: '~/Library/Application Support/Claude/claude_desktop_config.json',
+      thirdPartyDir: '~/Library/Application Support/Claude-3p',
       // Claude talks to the desktop's local Claude gateway (Anthropic-native
       // model catalog + forwarding to the buyer proxy), not the buyer proxy
       // directly — see connected-apps/claude-desktop-gateway.ts.
