@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const WHISPER_TIMEOUT_MS = 60_000;
+const MODEL_DOWNLOAD_TIMEOUT_MS = 5 * 60_000;
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 const CONFIG_FILE = 'voice-transcription.json';
 
@@ -122,11 +123,19 @@ async function downloadModel(modelId: VoiceModelId): Promise<void> {
   await mkdir(path.dirname(targetPath), { recursive: true });
   const tempPath = `${targetPath}.download`;
 
-  const response = await fetch(model.url);
-  if (!response.ok) throw new Error(`Download failed: HTTP ${response.status}`);
-  const bytes = Buffer.from(await response.arrayBuffer());
-  await writeFile(tempPath, bytes);
-  await rename(tempPath, targetPath);
+  try {
+    const response = await fetch(model.url, { signal: AbortSignal.timeout(MODEL_DOWNLOAD_TIMEOUT_MS) });
+    if (!response.ok) throw new Error(`Download failed: HTTP ${response.status}`);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    await writeFile(tempPath, bytes);
+    await rename(tempPath, targetPath);
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => undefined);
+    if (error instanceof Error && error.name === 'TimeoutError') {
+      throw new Error(`Model download timed out after ${MODEL_DOWNLOAD_TIMEOUT_MS / 60_000} minutes.`);
+    }
+    throw error;
+  }
 }
 
 // Serializes concurrent first-use downloads (e.g. two quick recordings) so a
