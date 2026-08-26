@@ -2,6 +2,12 @@ name = "antseed-download-proxy"
 main = "src/index.ts"
 compatibility_date = "2026-08-01"
 
+# Retain per-request logs (the JSON telemetry lines from events.ts) in
+# Workers Logs, queryable from the dashboard — without this, logs exist only
+# while someone runs `wrangler tail`.
+[observability]
+enabled = true
+
 # download.antseed.com must be a zone (or subdomain of a zone) on the same
 # Cloudflare account. Remove this block to deploy on the workers.dev subdomain
 # while DNS is being set up.
