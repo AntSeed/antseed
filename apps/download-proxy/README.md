@@ -45,7 +45,15 @@ resumed byte ranges. The transfer runs through workerd's native pipe (a JS
 per-chunk pump would exceed the Workers CPU limit on installer-sized files),
 so per-chunk byte counting isn't possible: `download_completed` implies the
 full `total_bytes` were delivered (enforced by `FixedLengthStream`), while
-`download_aborted` delivered an unknown prefix and carries only `duration_ms`. Each proxy event uses a random Measurement Protocol
+`download_aborted` delivered an unknown prefix and carries only `duration_ms`.
+
+Session attribution: the website's click handler appends the visitor's GA
+ids to proxy links (`?cid=<_ga client id>&sid=<session id>`), and the worker
+sends events under that `client_id`/`session_id` — so downloads land inside
+the visitor's GA4 session and inherit source/campaign/landing-page. Ids are
+strictly validated (digits-and-dot shapes only) and dropped otherwise.
+Direct or shared links without ids still count, under a random client_id
+with `attributed: 0` in the console line. Each proxy event uses a random Measurement Protocol
 `client_id`, so GA4 sees them as standalone hits (fine for counting; joining
 to the website session would require passing the GA client id on the URL).
 

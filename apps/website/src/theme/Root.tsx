@@ -10,6 +10,7 @@ import {
   platformFromUrl,
   sectionOf,
   visibleLabel,
+  withGaAttribution,
 } from '../lib/analytics';
 import {MOBILE_GET_STARTED_QUERY} from '../lib/useMobileGetStarted';
 import {
@@ -111,7 +112,18 @@ function useClickTracking() {
           e.preventDefault();
           anchor.classList.add('downloadResolving');
           anchor.setAttribute('aria-busy', 'true');
-          resolveLatestDesktopDownload().then(url => window.location.assign(url ?? RELEASES_URL));
+          resolveLatestDesktopDownload().then(url =>
+            window.location.assign(url ? withGaAttribution(url) : RELEASES_URL),
+          );
+        } else {
+          // Attach the visitor's GA ids to proxy links just-in-time, so the
+          // server-side download events join this GA session and inherit
+          // source/campaign attribution. Rewriting href during the capture
+          // phase affects the navigation this same click performs.
+          const attributed = withGaAttribution(absolute);
+          if (attributed !== absolute) {
+            anchor.setAttribute('href', attributed);
+          }
         }
         // Conversion event. Marked as the key event in GA4.
         track('download_vpr', {
