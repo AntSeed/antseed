@@ -81,10 +81,11 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
     displayName: 'Claude Desktop',
     kind: 'config-patch',
     method: 'Config patch',
-    // Claude Desktop stamps `x-claude-cli-session-id` on its chat requests,
-    // but the `claude-cli` slug already belongs to t3code's Claude Code
-    // sessions — claiming it here would make attribution ambiguous.
-    toolSlugs: ['claude-desktop', 'claude'],
+    // The gateway stamps every forwarded request with the claude-desktop
+    // source marker, so this exact slug is the whole identity. No generic
+    // 'claude' entry: it would prefix-match t3code's claude-code/claude-cli
+    // sessions and steal them in first-match-wins attribution.
+    toolSlugs: ['claude-desktop'],
     domains: [],
     pathPrefixes: [],
     // 'open-tool' opens Claude after connect even when it was not running
