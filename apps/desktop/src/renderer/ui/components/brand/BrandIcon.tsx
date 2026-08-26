@@ -1,4 +1,5 @@
 import type { CSSProperties, JSX } from 'react';
+import { DroidBrandIcon } from './DroidBrandIcon';
 import { HermesBrandIcon } from './HermesBrandIcon';
 
 /**
@@ -31,6 +32,7 @@ export type BrandKey =
   | 'llama'
   | 'telegram'
   | 'hermes'
+  | 'droid'
   | 'cursor'
   | 'cloudflare'
   | 'ngrok'
@@ -230,6 +232,7 @@ const glyphs: Record<BrandKey, BrandGlyph> = {
   ),
   // Hermes Agent — monochrome portrait mark.
   hermes: HermesBrandIcon,
+  droid: DroidBrandIcon,
   cursor: ({ size }) => (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
       <path
@@ -278,6 +281,7 @@ const MATCHERS: Array<[BrandKey, RegExp]> = [
   // Vendors that double as provider/protocol slugs.
   ['telegram', /telegram/i],
   ['hermes', /^(?:hermes(?:-agent)?)(?: hermes(?: agent)?)?$/i],
+  ['droid', /(^|[^a-z0-9])(droid|factory)([^a-z0-9]|$)/i],
   ['cursor', /(^|[^a-z0-9])cursor([^a-z0-9]|$)/i],
   ['anthropic', /(anthropic|claude)/i],
   ['codex', /codex/i],
@@ -294,7 +298,7 @@ const MATCHERS: Array<[BrandKey, RegExp]> = [
    by haystack so the matcher regexes only ever run once per identifier. */
 const BRAND_KEY_CACHE_LIMIT = 4096;
 const brandKeyCache = new Map<string, BrandKey>();
-const THEME_AWARE_APP_BRANDS = new Set<BrandKey>(['cursor', 'hermes']);
+const THEME_AWARE_APP_BRANDS = new Set<BrandKey>(['cursor', 'hermes', 'droid']);
 
 export function resolveBrandKey(...candidates: Array<string | null | undefined>): BrandKey {
   const haystack = candidates.filter(Boolean).join(' ');
