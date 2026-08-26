@@ -39,7 +39,9 @@ type ClassifyChatStreamFailureInput = {
 };
 
 const COMMON_HTTP_STATUS_TEXT: Record<number, string> = {
+  401: 'Unauthorized',
   402: 'Payment Required',
+  403: 'Forbidden',
   408: 'Request Timeout',
   429: 'Too Many Requests',
   500: 'Internal Server Error',
@@ -144,7 +146,7 @@ function parseStatusCodeFromText(text: string): number | undefined {
     /\bstatus(?:\s+code)?\s*(?:=|:)?\s*(\d{3})\b/i,
     /\bhttp\s*(\d{3})\b/i,
     /\bresponse failed:\s*(\d{3})\b/i,
-    /\b(\d{3})\s+(?:bad gateway|gateway timeout|service unavailable|too many requests|request timeout|internal server error)\b/i,
+    /\b(\d{3})\s+(?:bad gateway|gateway timeout|service unavailable|too many requests|request timeout|internal server error|forbidden|unauthorized)\b/i,
   ];
 
   for (const pattern of patterns) {
@@ -345,7 +347,10 @@ export function classifyChatStreamFailure({
     // an unreachable chain RPC, bad config. Retrying, or worse failing over to
     // another peer, would walk the whole peer list while hiding the one thing
     // the user actually needs to fix.
-    const retryable = statusCode >= 500 || statusCode === 429;
+    // 401/403 are seller-level rejections (the seller's upstream revoked or
+    // blocked it) — the buyer proxy re-routes those to another seller, so a
+    // retry goes somewhere new instead of repeating the same refusal.
+    const retryable = statusCode >= 500 || statusCode === 429 || statusCode === 403 || statusCode === 401;
     const embeddedWithHint = buyerAuthoredMessage && retryable && !/\bretry\b/i.test(buyerAuthoredMessage)
       ? `${buyerAuthoredMessage} You can retry.`
       : buyerAuthoredMessage;
