@@ -170,6 +170,9 @@ test('/v1/messages forwards to the buyer proxy with the model rewritten to the r
     // Claude's placeholder credential must never reach the buyer proxy.
     assert.equal(forwarded.headers['authorization'], undefined);
     assert.equal(forwarded.headers['x-api-key'], 'antseed');
+    // Attribution marker: Claude Desktop shares its session-header slug with
+    // t3code's Claude Code, so the gateway names the source itself.
+    assert.equal(forwarded.headers['x-antseed-system-proxy-source'], 'claude-desktop');
   });
 });
 

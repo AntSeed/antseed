@@ -64,6 +64,16 @@ export function setClaudeDesktopGatewayModelSource(source: () => readonly Claude
   sharedModelSource = source;
 }
 
+/**
+ * Internal marker the buyer proxy uses for conversation attribution and
+ * strips before dispatch. Claude Desktop stamps `x-claude-cli-session-id` on
+ * its requests — the same slug as t3code's Claude Code sessions — so without
+ * this source override its chats would display under T3 Code. Must match
+ * SYSTEM_PROXY_SOURCE_HEADER in apps/cli/src/proxy/request-utils.ts.
+ */
+const SYSTEM_PROXY_SOURCE_HEADER = 'x-antseed-system-proxy-source';
+const CLAUDE_DESKTOP_SOURCE = 'claude-desktop';
+
 /** Request headers forwarded to the buyer proxy verbatim. */
 const FORWARDED_REQUEST_HEADERS = ['accept', 'anthropic-version', 'anthropic-beta', 'user-agent'] as const;
 /** Hop-by-hop headers never copied onto the downstream response. */
@@ -223,6 +233,7 @@ export class ClaudeDesktopGateway {
         // Claude authenticates to this loopback gateway with the placeholder
         // key from its profile; never forward that credential upstream.
         'x-api-key': 'antseed',
+        [SYSTEM_PROXY_SOURCE_HEADER]: CLAUDE_DESKTOP_SOURCE,
       };
       for (const name of FORWARDED_REQUEST_HEADERS) {
         const value = req.headers[name];
