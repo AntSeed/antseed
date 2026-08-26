@@ -1,20 +1,21 @@
-// Runs prepare-dist + electron-builder once per arch so each DMG contains
-// the matching arch's native binaries.
+// Builds and publishes both mac arches in ONE electron-builder invocation.
+// scripts/before-pack.js runs prepare-dist per arch as each app is packed,
+// so every DMG/zip still gets matching-arch native modules.
 //
-// latest-mac.yml gotcha: each electron-builder pass uploads a latest-mac.yml
-// containing only its own arch's files, so the second (arm64) pass used to
-// leave a channel file with no x64 entries. electron-updater picks the file
-// whose URL contains process.arch and otherwise falls back to the FIRST
-// entry — so Intel machines were handed the arm64 zip. After both passes we
-// merge the two channel files (x64 entries first, so the no-arch-in-name x64
-// zip wins the fallback) and replace the uploaded asset.
+// A single invocation matters for auto-updates: electron-builder generates
+// one latest-mac.yml listing both arches' artifacts. The previous release
+// flow ran electron-builder once per arch, and the second (arm64) pass
+// uploaded a channel file containing only arm64 entries — clobbering the
+// x64 one. electron-updater picks the file whose name contains
+// process.arch and otherwise falls back to the FIRST entry, so Intel
+// machines were handed the arm64 zip and updates silently broke.
 
 import { config } from 'dotenv';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
-import { parse, stringify } from 'yaml';
+import { parse } from 'yaml';
 
 config();
 
@@ -23,78 +24,23 @@ const desktopDir = path.resolve(__dirname, '..');
 const releaseDir = path.resolve(desktopDir, 'release');
 
 const electronBuilderBin = path.resolve(desktopDir, '../../node_modules/.bin/electron-builder');
-const prepareDistScript = path.resolve(desktopDir, 'scripts', 'prepare-dist.mjs');
 
 const publish = process.argv.includes('--no-publish') ? 'never' : 'always';
 
-const channelFiles = {};
+rmSync(releaseDir, { recursive: true, force: true });
 
-for (const arch of ['x64', 'arm64']) {
-  console.log(`\n=== [release-mac] arch=${arch} publish=${publish} ===`);
-  const env = { ...process.env, ANTSEED_PACK_ARCH: arch };
+console.log(`\n=== [release-mac] x64 + arm64, publish=${publish} ===`);
+execFileSync(electronBuilderBin, ['--mac', '--x64', '--arm64', '--publish', publish], {
+  stdio: 'inherit',
+  cwd: desktopDir,
+});
 
-  // Wipe any prior arch's output so its artifacts can't get re-uploaded
-  // by the next electron-builder run.
-  rmSync(releaseDir, { recursive: true, force: true });
-
-  execFileSync(process.execPath, [prepareDistScript], { stdio: 'inherit', cwd: desktopDir, env });
-  execFileSync(electronBuilderBin, ['--mac', `--${arch}`, '--publish', publish], { stdio: 'inherit', cwd: desktopDir, env });
-
-  channelFiles[arch] = parse(readFileSync(path.join(releaseDir, 'latest-mac.yml'), 'utf8'));
+// Safety net: the x64 zip/dmg carry no arch marker in their names, so
+// electron-updater on Intel relies on the first-file fallback. Fail loudly
+// if the generated channel file ever lists an arm64 artifact first.
+const channel = parse(readFileSync(path.join(releaseDir, 'latest-mac.yml'), 'utf8'));
+const urls = (channel.files ?? []).map((file) => file.url);
+if (urls.length < 4 || /arm64/i.test(urls[0])) {
+  throw new Error(`[release-mac] Unexpected latest-mac.yml file order/content: ${urls.join(', ')}`);
 }
-
-if (publish === 'always') {
-  await replaceChannelFile(mergeChannelFiles(channelFiles.x64, channelFiles.arm64));
-}
-
-function mergeChannelFiles(x64, arm64) {
-  const seen = new Set();
-  // x64 first: electron-updater falls back to files[0] when no entry name
-  // matches process.arch, and the x64 artifacts carry no arch marker.
-  const files = [...(x64.files ?? []), ...(arm64.files ?? [])].filter((file) => {
-    if (seen.has(file.url)) return false;
-    seen.add(file.url);
-    return true;
-  });
-  return { ...arm64, ...x64, files };
-}
-
-async function replaceChannelFile(merged) {
-  const owner = 'AntSeed';
-  const repo = 'antseed';
-  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
-  if (!token) throw new Error('[release-mac] GH_TOKEN is required to fix up latest-mac.yml');
-
-  const headers = {
-    authorization: `token ${token}`,
-    accept: 'application/vnd.github+json',
-  };
-  const { version } = JSON.parse(readFileSync(path.join(desktopDir, 'package.json'), 'utf8'));
-  const tag = `v${version}`;
-
-  // The release is usually still a draft, so look it up via the list endpoint
-  // (GET by tag only returns published releases).
-  const listRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases?per_page=30`, { headers });
-  if (!listRes.ok) throw new Error(`[release-mac] Listing releases failed: HTTP ${listRes.status}`);
-  const release = (await listRes.json()).find((r) => r.tag_name === tag || r.name === version);
-  if (!release) throw new Error(`[release-mac] No release found for ${tag}`);
-
-  const existing = release.assets.find((asset) => asset.name === 'latest-mac.yml');
-  if (existing) {
-    const delRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases/assets/${existing.id}`, {
-      method: 'DELETE',
-      headers,
-    });
-    if (!delRes.ok) throw new Error(`[release-mac] Deleting latest-mac.yml failed: HTTP ${delRes.status}`);
-  }
-
-  const body = stringify(merged, { lineWidth: 0 });
-  const uploadUrl = release.upload_url.replace(/\{.*\}$/, '') + '?name=latest-mac.yml';
-  const upRes = await fetch(uploadUrl, {
-    method: 'POST',
-    headers: { ...headers, 'content-type': 'text/yaml' },
-    body,
-  });
-  if (!upRes.ok) throw new Error(`[release-mac] Uploading merged latest-mac.yml failed: HTTP ${upRes.status}`);
-  console.log(`[release-mac] Replaced latest-mac.yml with merged x64+arm64 channel file (${merged.files.length} entries).`);
-}
+console.log(`[release-mac] latest-mac.yml lists ${urls.length} files, x64 first: ${urls.join(', ')}`);

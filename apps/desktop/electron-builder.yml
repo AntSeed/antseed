@@ -110,6 +110,10 @@ extraResources:
       - "!**/*.d.mts"
       - "!**/*.d.cts"
 
+# Runs prepare-dist for the arch being packed (mac only) so a single
+# electron-builder invocation can build x64 + arm64 with matching-arch
+# native modules — and generate ONE latest-mac.yml listing both arches.
+beforePack: ./scripts/before-pack.js
 afterPack: ./scripts/after-pack.js
 
 mac:
@@ -128,11 +132,10 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   notarize: true
-  # NOTE: arch is intentionally NOT pinned here. release-mac.mjs runs
-  # electron-builder once per arch (--x64, then --arm64) so each DMG / zip
-  # is packed with prepare-dist's matching-arch native modules. Pinning
-  # arch in the yaml would cause every invocation to build both archs and
-  # collide on the second pass with "already_exists" upload errors.
+  # NOTE: arch is intentionally NOT pinned here. release-mac.mjs passes
+  # --x64 --arm64 in one invocation (per-arch native modules handled by
+  # scripts/before-pack.js), while ad-hoc local builds default to the host
+  # arch only.
   target:
     - target: dmg
     - target: zip
