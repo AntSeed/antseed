@@ -30,7 +30,11 @@ import {
   substituteRoutedModelAlias,
   sweepStaleStateTmpFiles,
 } from './buyer-proxy.js'
-import { extractRequestedService, overrideRoutedModelInBody, SYSTEM_ROUTED_MODEL_HEADER } from './request-utils.js'
+import {
+  extractRequestedService,
+  overrideRoutedModelInBody,
+  SYSTEM_ROUTED_MODEL_HEADER,
+} from './request-utils.js'
 
 function makePeer(seed: string, providers: string[]): PeerInfo {
   const repeated = (seed.repeat(40) + 'a'.repeat(40)).slice(0, 40)
@@ -2963,6 +2967,61 @@ test('title request racing ahead of the first turn does not name the chat', asyn
       },
     }))
     assert.equal(store.get('claude-code:cc_race'), null)
+
+    // Factory/Droid has no session header. Its main turn and concurrent
+    // one-shot title request therefore hash to different synthetic keys. The
+    // system-role title instruction must keep the second key out of the list.
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/chat/completions',
+      headers: { originator: 'droid', 'user-agent': 'factory-cli/0.202.0' },
+      body: {
+        model: 'antseed',
+        messages: [
+          { role: 'system', content: 'You are Droid, an AI software engineering agent.' },
+          { role: 'user', content: 'wowow' },
+        ],
+      },
+    }))
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/chat/completions',
+      headers: {
+        originator: 'droid',
+        'user-agent': 'factory-cli/0.202.0',
+      },
+      body: {
+        model: 'antseed',
+        messages: [
+          {
+            role: 'system',
+            content: `Shared provider compatibility preamble.
+You are a helper that generates concise session titles for a session picker.
+Input: one user message from the start of a session.`,
+          },
+          { role: 'user', content: 'wowow' },
+        ],
+      },
+    }))
+    assert.equal(store.list().filter((conversation: any) => conversation.tool === 'droid').length, 1)
+
+    // The exact helper marker describes housekeeping regardless of which
+    // integration sends it, so it does not create another conversation row.
+    await invokeProxy(proxy, makeProxyRequest({
+      path: '/v1/chat/completions',
+      headers: { originator: 'other-agent', 'user-agent': 'other-agent/1.0' },
+      body: {
+        model: 'antseed',
+        messages: [
+          {
+            role: 'system',
+            content: `Shared provider compatibility preamble.
+You are a helper that generates concise session titles for a session picker.
+Input: one user message from the start of a session.`,
+          },
+          { role: 'user', content: 'wowow' },
+        ],
+      },
+    }))
+    assert.equal(store.list().filter((conversation: any) => conversation.tool === 'other-agent').length, 0)
 
     // The real first turn creates the conversation afterwards.
     await invokeProxy(proxy, makeProxyRequest({

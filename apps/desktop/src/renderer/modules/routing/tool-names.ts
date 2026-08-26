@@ -10,6 +10,7 @@
 
 const TOOL_DISPLAY_NAMES: Record<string, string> = {
   'claude-code': 'Claude Code',
+  droid: 'Droid',
   opencode: 'OpenCode',
   pi: 'pi',
   vpr: 'VPR',

@@ -81,6 +81,52 @@ test('persists to conversations.json and reloads across instances', async () => 
   }
 })
 
+test('reload removes legacy Droid title-helper duplicates without merging real chats', async () => {
+  const dir = await makeDir()
+  try {
+    const { writeFile } = await import('node:fs/promises')
+    const now = Date.now()
+    const record = (sessionKey: string, inputTokens: string, createdAt: number, overrides: Record<string, unknown> = {}) => ({
+      tool: 'droid',
+      sessionKey,
+      snippet: 'same first prompt',
+      inputTokens,
+      createdAt,
+      lastActiveAt: createdAt,
+      ...overrides,
+    })
+    await writeFile(join(dir, CONVERSATIONS_FILE), JSON.stringify({
+      conversations: [
+        record('title', '301', now),
+        record('chat', '14802', now + 218),
+        record('reused-title', '2400', now - 86_400_000, { requestCount: 8, peerSource: 'user' }),
+        record('reused-chat', '29602', now + 10_000, { requestCount: 2 }),
+        record('unmatched-small-chat', '301', now + 15_000, { snippet: 'different prompt' }),
+        record('same-size-chat', '14802', now + 20_000),
+        record('same-size-chat-2', '14900', now + 20_100),
+        record('named-title', '301', now + 30_000, { label: 'Keep me' }),
+        record('named-chat', '14802', now + 30_100),
+        { ...record('codex-title', '301', now), tool: 'codex' },
+        { ...record('codex-chat', '14802', now + 100), tool: 'codex' },
+      ],
+    }), 'utf8')
+
+    const store = new ConversationStore(dir)
+    assert.equal(store.get('droid:title'), null)
+    assert.ok(store.get('droid:chat'))
+    assert.equal(store.get('droid:reused-title'), null)
+    assert.ok(store.get('droid:reused-chat'))
+    assert.ok(store.get('droid:unmatched-small-chat'))
+    assert.ok(store.get('droid:same-size-chat'))
+    assert.ok(store.get('droid:same-size-chat-2'))
+    assert.equal(store.get('droid:named-title')?.label, 'Keep me')
+    assert.ok(store.get('codex:codex-title'))
+    assert.ok(store.get('codex:codex-chat'))
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('label can be cleared and pin can be cleared', async () => {
   const dir = await makeDir()
   try {

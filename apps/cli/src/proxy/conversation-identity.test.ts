@@ -389,6 +389,34 @@ test('title turns are recognised so they cannot define a chat model', () => {
   assert.equal(isTitleGenerationRequest({
     messages: [{ role: 'user', content: 'You write concise thread titles for a coding chat.' }],
   }), true)
+  // Factory/Droid puts the real first user message in the user role. Its
+  // title-specific system text follows a shared provider preamble, so the
+  // marker is not at the start of the instruction block.
+  const droidTitleRequest = {
+    messages: [
+      {
+        role: 'system',
+        content: `Shared provider compatibility preamble.
+You are a helper that generates concise session titles for a session picker.
+Input: one user message from the start of a session.`,
+      },
+      { role: 'user', content: 'wowow' },
+    ],
+  }
+  assert.equal(isTitleGenerationRequest(droidTitleRequest), true)
+
+  assert.equal(isTitleGenerationRequest({
+    instructions: `Shared provider compatibility preamble.
+You are a helper that generates concise session titles for a session picker.`,
+    input: 'wowow',
+  }), true)
+  assert.equal(isTitleGenerationRequest({
+    input: [{
+      type: 'message',
+      role: 'developer',
+      content: 'You are a helper that generates concise session titles for a session picker.',
+    }],
+  }), true)
 })
 
 test('real turns are not mistaken for title turns', () => {
@@ -397,8 +425,21 @@ test('real turns are not mistaken for title turns', () => {
   // (it is in the history once titling ran) is still a real turn.
   assert.equal(isTitleGenerationRequest({
     messages: [
+      { role: 'system', content: 'You are a helpful coding assistant.' },
       { role: 'user', content: 'fix the failing tests' },
       { role: 'user', content: 'Generate a title for this conversation:' },
+    ],
+  }), false)
+  // Broad title phrasing in instructions is not enough; instruction-role
+  // detection deliberately uses only exact known housekeeping markers.
+  assert.equal(isTitleGenerationRequest({
+    instructions: 'Generate a title for this session',
+    input: 'wowow',
+  }), false)
+  assert.equal(isTitleGenerationRequest({
+    messages: [
+      { role: 'system', content: 'Generate a title for this session' },
+      { role: 'user', content: 'wowow' },
     ],
   }), false)
   assert.equal(isTitleGenerationRequest(null), false)
