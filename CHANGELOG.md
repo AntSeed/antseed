@@ -8,6 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Website download buttons now offer an "All platforms & versions" link that opens a modal listing every installer (macOS Apple Silicon/Intel, Windows x64, Linux AppImage x86_64/ARM64) as direct `download.antseed.com` links, with older versions and `.deb` packages linked to the GitHub releases page. This gives visitors whose OS was detected wrong — privacy browsers that spoof a Windows user agent on Linux, for example — a way to pick the right installer without leaving the page.
 - Desktop installer downloads from the website now go through `download.antseed.com` (a new Cloudflare Worker, `apps/download-proxy`) instead of linking GitHub release assets directly. The proxy resolves the latest release server-side — so download buttons have a direct per-platform URL without any client-side GitHub API call — streams the installer, and reports download started/completed/aborted telemetry to GA4 alongside the existing `download_vpr` click event, giving full click → download-finished funnel visibility. Website-driven downloads are now also cleanly separated from electron-updater traffic, which keeps fetching from GitHub directly. Unresolvable requests (unknown platform, partial releases) fall back to the GitHub releases page as before.
 
 ### Fixed

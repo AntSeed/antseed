@@ -5,6 +5,7 @@ import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
 import styles from './index.module.css';
 import {useLatestDesktopDownload} from '../lib/useLatestDesktopDownload';
+import {AllVersionsLink} from '../lib/AllVersionsLink';
 import {useMobileGetStarted} from '../lib/useMobileGetStarted';
 import {useNetworkStats} from '../lib/useNetworkStats';
 import {useMarketplaceShowcase} from '../lib/useMarketplacePrices';
@@ -440,6 +441,7 @@ function DownloadCta({caption, size = 'lg'}: {caption?: string; size?: 'md' | 'l
         <span className="vprLabelMobile">Get Started<ArrowRight /></span>
       </Button>
       {caption && <span className={styles.ctaCaption}>{caption}</span>}
+      <AllVersionsLink />
     </div>
   );
 }
@@ -1314,6 +1316,7 @@ function FinalCta() {
         <div className={styles.ctaBlock}>
           <FinalCtaButton />
           <span className={styles.ctaCaptionLight}>No account needed. Just start.</span>
+          <AllVersionsLink light />
         </div>
       </Reveal>
     </section>
