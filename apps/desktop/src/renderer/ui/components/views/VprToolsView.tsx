@@ -653,7 +653,7 @@ export function VprToolsView() {
 
                 </div>
               );
-              return profile.name === 'codex'
+              return profile.name === 'claude-desktop'
                 ? [profileCard, <CursorAppCard key="cursor" />]
                 : profileCard;
             })}
