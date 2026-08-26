@@ -111,6 +111,42 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
     },
   },
   {
+    name: 'claude-desktop',
+    displayName: 'Claude Desktop',
+    kind: 'config-patch',
+    method: 'Config patch',
+    // Claude Desktop stamps `x-claude-cli-session-id` on its chat requests,
+    // but the `claude-cli` slug already belongs to t3code's Claude Code
+    // sessions — claiming it here would make attribution ambiguous.
+    toolSlugs: ['claude-desktop', 'claude'],
+    domains: [],
+    pathPrefixes: [],
+    // 'open-tool' opens Claude after connect even when it was not running
+    // (restartAppName is both the restart target for a running Claude and
+    // the open-tool launch fallback).
+    appAction: 'open-tool',
+    restartAppName: 'Claude',
+    configPatch: {
+      format: 'claude-desktop',
+      // Claude's normal-profile config: the patch flips deploymentMode to
+      // "3p" here, which makes Claude boot against the Claude-3p profile
+      // directory below, where the AntSeed gateway profile is written.
+      configPath: platformConfigPath('~/Library/Application Support/Claude/claude_desktop_config.json', {
+        base: 'APPDATA',
+        segments: ['Claude', 'claude_desktop_config.json'],
+      }),
+      thirdPartyDir: platformConfigPath('~/Library/Application Support/Claude-3p', {
+        base: 'APPDATA',
+        segments: ['Claude-3p'],
+      }),
+      providerKey: 'antseed',
+      // Claude talks to the desktop's local Claude gateway (Anthropic-native
+      // model catalog + forwarding to the buyer proxy), not the buyer proxy
+      // directly — see connected-apps/claude-desktop-gateway.ts.
+      baseURL: 'http://127.0.0.1:{claudeGatewayPort}',
+    },
+  },
+  {
     name: 'pi',
     displayName: 'pi',
     kind: 'config-patch',

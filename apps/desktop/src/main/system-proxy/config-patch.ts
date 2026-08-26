@@ -1,6 +1,6 @@
 import { ANTSEED_MODEL_CONTEXT_WINDOW, ANTSEED_MODEL_MAX_OUTPUT_TOKENS } from '@antseed/node/types';
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { Document, parseDocument } from 'yaml';
@@ -123,6 +123,28 @@ export type T3CodeConfigPatchDef = {
   readonly baseURL: string;
 };
 
+/**
+ * Claude Desktop ships a native third-party inference mode: when the profile
+ * config says `deploymentMode: "3p"` it boots against a separate profile
+ * directory (`Claude-3p`) whose applied entry in `configLibrary/` names an
+ * Anthropic-Messages-compatible gateway to send all inference to. The patch
+ * writes that profile pointing at the desktop's local Claude gateway (see
+ * connected-apps/claude-desktop-gateway.ts), which serves the model catalog
+ * in Anthropic's native shape and forwards requests to the buyer proxy. The
+ * 1p and 3p profiles are separate directories, so the user's normal Claude
+ * login and state are untouched.
+ */
+export type ClaudeDesktopConfigPatchDef = {
+  readonly format: 'claude-desktop';
+  /** Claude's normal-profile claude_desktop_config.json (deploymentMode flip). */
+  readonly configPath: string;
+  /** Claude's third-party profile root (the `Claude-3p` directory). */
+  readonly thirdPartyDir: string;
+  readonly providerKey: string;
+  /** Gateway base URL carrying the `{claudeGatewayPort}` placeholder. */
+  readonly baseURL: string;
+};
+
 export type ConfigPatchDef =
   | OpencodeConfigPatchDef
   | CodexConfigPatchDef
@@ -131,7 +153,18 @@ export type ConfigPatchDef =
   | GooseConfigPatchDef
   | HermesConfigPatchDef
   | ZedConfigPatchDef
-  | T3CodeConfigPatchDef;
+  | T3CodeConfigPatchDef
+  | ClaudeDesktopConfigPatchDef;
+
+/**
+ * Loopback port of the desktop's Claude Desktop gateway. Lives here (not in
+ * claude-desktop-gateway.ts) so this electron-free module stays the single
+ * import direction: the gateway imports from config-patch, never the reverse.
+ */
+export const CLAUDE_GATEWAY_DEFAULT_PORT = Number(process.env['ANTSEED_CLAUDE_GATEWAY_PORT']) || 8380;
+/** Fixed id of the managed third-party profile entry in Claude's configLibrary. */
+export const CLAUDE_DESKTOP_PROFILE_ID = '00000000-0000-4000-8000-0000a4753eed';
+const CLAUDE_DESKTOP_PROFILE_NAME = 'AntSeed';
 
 export function readString(raw: Record<string, unknown>, key: string): string | undefined {
   const value = raw[key];
@@ -229,6 +262,15 @@ export function readConfigPatch(value: unknown, profileName: string): ConfigPatc
       configPath,
       providerKey,
       providerName: readRequiredString(raw, 'providerName', profileName),
+      baseURL,
+    };
+  }
+  if (format === 'claude-desktop') {
+    return {
+      format: 'claude-desktop',
+      configPath,
+      thirdPartyDir: readRequiredString(raw, 'thirdPartyDir', profileName),
+      providerKey,
       baseURL,
     };
   }
@@ -439,6 +481,10 @@ export function applyConfigPatch(patch: ConfigPatchDef, peerId: string, buyerPor
     applyT3CodeConfigPatch(patch, buyerPort);
     return;
   }
+  if (patch.format === 'claude-desktop') {
+    applyClaudeDesktopConfigPatch(patch);
+    return;
+  }
   applyOpencodeConfigPatch(patch, buyerPort, wslTargetsFile);
 }
 
@@ -599,6 +645,9 @@ export function removeConfigPatch(patch: ConfigPatchDef, wslTargetsFile?: string
   }
   if (patch.format === 't3code') {
     return removeT3CodeConfigPatch(patch);
+  }
+  if (patch.format === 'claude-desktop') {
+    return removeClaudeDesktopConfigPatch(patch);
   }
   let changed = removeOpencodeProviderFromFile(expandTilde(patch.configPath), patch);
   if (patch.installProbe === 'opencode') {
@@ -1226,4 +1275,215 @@ function removeT3CodeConfigPatch(patch: T3CodeConfigPatchDef): boolean {
   backupConfigFile(filePath);
   writeJsonFile(filePath, config);
   return true;
+}
+
+/** One Claude Desktop install location: the normal-profile config plus the
+    third-party profile directory next to it. */
+export type ClaudeDesktopPatchTarget = {
+  readonly configPath: string;
+  readonly thirdPartyDir: string;
+};
+
+function claudeDesktopSafeListDir(dir: string): string[] {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Candidate install locations for Claude Desktop, most likely first. macOS
+ * has a single documented location (the profile's own paths). Windows varies
+ * by installer: `%APPDATA%\Claude` for the classic installer, the MSIX
+ * package's virtualized `LocalCache\Roaming\Claude` for Store/winget
+ * installs, plus the `%LOCALAPPDATA%` and "Claude Nest" variants Ollama's
+ * integration probes. Apply writes the first candidate that exists; remove
+ * unwinds every candidate this patch owns. The third-party profile directory
+ * is always the sibling `<root>-3p`, mirroring Claude's own 1p/3p layout.
+ */
+export function claudeDesktopPatchTargets(
+  patch: ClaudeDesktopConfigPatchDef,
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+  listDir: (dir: string) => string[] = claudeDesktopSafeListDir,
+): ClaudeDesktopPatchTarget[] {
+  if (platform !== 'win32') {
+    return [{ configPath: expandTilde(patch.configPath), thirdPartyDir: expandTilde(patch.thirdPartyDir) }];
+  }
+  const roaming = env['APPDATA'] || path.join(homedir(), 'AppData', 'Roaming');
+  const local = env['LOCALAPPDATA'] || path.join(homedir(), 'AppData', 'Local');
+  const packagesDir = path.join(local, 'Packages');
+  const msixRoots = listDir(packagesDir)
+    .filter((name) => name.startsWith('Claude_'))
+    .map((name) => path.join(packagesDir, name, 'LocalCache', 'Roaming', 'Claude'));
+  const roots = [
+    path.join(roaming, 'Claude'),
+    ...msixRoots,
+    path.join(local, 'Claude'),
+    path.join(roaming, 'Claude Nest'),
+    path.join(local, 'Claude Nest'),
+  ];
+  const seen = new Set<string>();
+  const targets: ClaudeDesktopPatchTarget[] = [];
+  for (const root of roots) {
+    const key = root.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    targets.push({
+      configPath: path.join(root, 'claude_desktop_config.json'),
+      thirdPartyDir: `${root}-3p`,
+    });
+  }
+  return targets;
+}
+
+type ClaudeDesktopPatchPaths = {
+  readonly desktopConfig: string;
+  readonly meta: string;
+  readonly profile: string;
+};
+
+function claudeDesktopPatchPaths(target: ClaudeDesktopPatchTarget): ClaudeDesktopPatchPaths {
+  return {
+    desktopConfig: path.join(target.thirdPartyDir, 'claude_desktop_config.json'),
+    meta: path.join(target.thirdPartyDir, 'configLibrary', '_meta.json'),
+    profile: path.join(target.thirdPartyDir, 'configLibrary', `${CLAUDE_DESKTOP_PROFILE_ID}.json`),
+  };
+}
+
+function claudeDesktopMetaEntries(meta: JsonObject): unknown[] {
+  return Array.isArray(meta['entries']) ? meta['entries'] : [];
+}
+
+function isOwnClaudeDesktopMetaEntry(entry: unknown): boolean {
+  return !!entry && typeof entry === 'object' && !Array.isArray(entry)
+    && (entry as JsonObject)['id'] === CLAUDE_DESKTOP_PROFILE_ID;
+}
+
+function applyClaudeDesktopConfigPatch(patch: ClaudeDesktopConfigPatchDef): void {
+  const targets = claudeDesktopPatchTargets(patch);
+  const target = targets.find((candidate) => existsSync(path.dirname(candidate.configPath)));
+  if (!target) {
+    throw new Error(
+      'Claude Desktop was not found on this machine — nothing to connect. '
+      + `Looked for ${targets.map((candidate) => path.dirname(candidate.configPath)).join(', ')}. `
+      + 'Install Claude Desktop (or run it once), then reconnect.',
+    );
+  }
+  const normalConfigPath = target.configPath;
+  const gatewayBaseUrl = patch.baseURL.replace('{claudeGatewayPort}', String(CLAUDE_GATEWAY_DEFAULT_PORT));
+  const paths = claudeDesktopPatchPaths(target);
+
+  // Claude reads deploymentMode from the normal profile at startup and, when
+  // it says '3p', boots against the third-party profile directory instead —
+  // the normal profile (login, chats, MCP config) is left as-is.
+  backupConfigFile(normalConfigPath);
+  const normalConfig = readConfigPatchFile(normalConfigPath);
+  normalConfig['deploymentMode'] = '3p';
+  writeJsonFile(normalConfigPath, normalConfig);
+
+  const desktopConfig = readConfigPatchFile(paths.desktopConfig);
+  desktopConfig['deploymentMode'] = '3p';
+  writeJsonFile(paths.desktopConfig, desktopConfig);
+
+  const profile = readConfigPatchFile(paths.profile);
+  profile['inferenceProvider'] = 'gateway';
+  profile['inferenceGatewayBaseUrl'] = gatewayBaseUrl;
+  // The gateway is loopback-only and ignores credentials; Claude just needs a
+  // non-empty key for its gateway auth scheme.
+  profile['inferenceGatewayApiKey'] = 'antseed';
+  profile['inferenceGatewayAuthScheme'] = 'bearer';
+  profile['deploymentDisplayName'] = CLAUDE_DESKTOP_PROFILE_NAME;
+  profile['chatTabEnabled'] = true;
+  profile['disableDeploymentModeChooser'] = true;
+  // Cowork needs unrestricted egress for user-configured plugins/MCP servers.
+  profile['coworkEgressAllowedHosts'] = ['*'];
+  profile['disableEssentialTelemetry'] = true;
+  profile['disableNonessentialTelemetry'] = true;
+  // Model discovery comes from the gateway's /v1/models — a pinned list here
+  // would shadow it.
+  delete profile['inferenceModels'];
+  writeJsonFile(paths.profile, profile);
+
+  const meta = readConfigPatchFile(paths.meta);
+  meta['appliedId'] = CLAUDE_DESKTOP_PROFILE_ID;
+  meta['entries'] = [
+    ...claudeDesktopMetaEntries(meta).filter((entry) => !isOwnClaudeDesktopMetaEntry(entry)),
+    { id: CLAUDE_DESKTOP_PROFILE_ID, name: CLAUDE_DESKTOP_PROFILE_NAME },
+  ];
+  writeJsonFile(paths.meta, meta);
+}
+
+function removeClaudeDesktopConfigPatch(patch: ClaudeDesktopConfigPatchDef): boolean {
+  // Every candidate root is checked: the install this patch configured may
+  // not be the first candidate anymore (e.g. an MSIX Claude installed since).
+  let changed = false;
+  for (const target of claudeDesktopPatchTargets(patch)) {
+    if (removeClaudeDesktopTarget(target)) changed = true;
+  }
+  return changed;
+}
+
+function removeClaudeDesktopTarget(target: ClaudeDesktopPatchTarget): boolean {
+  const paths = claudeDesktopPatchPaths(target);
+  const meta = tryReadConfigPatchFile(paths.meta);
+  const profile = tryReadConfigPatchFile(paths.profile);
+  // Only unwind a third-party setup this patch created: our profile file
+  // pointing at a loopback gateway, or the configLibrary applying our entry.
+  // An enterprise/MDM-provisioned 3p profile must keep its deployment mode.
+  const gatewayUrl = profile && typeof profile['inferenceGatewayBaseUrl'] === 'string'
+    ? profile['inferenceGatewayBaseUrl']
+    : undefined;
+  const ownsProfileFile = profile?.['inferenceProvider'] === 'gateway' && isLoopbackHost(gatewayUrl);
+  const ownsSetup = ownsProfileFile
+    || meta?.['appliedId'] === CLAUDE_DESKTOP_PROFILE_ID
+    || claudeDesktopMetaEntries(meta ?? {}).some(isOwnClaudeDesktopMetaEntry);
+  if (!ownsSetup) return false;
+
+  let changed = false;
+  for (const configPath of [target.configPath, paths.desktopConfig]) {
+    const config = tryReadConfigPatchFile(configPath);
+    if (config && config['deploymentMode'] === '3p') {
+      config['deploymentMode'] = '1p';
+      writeJsonFile(configPath, config);
+      changed = true;
+    }
+  }
+  if (meta) {
+    let metaChanged = false;
+    if (meta['appliedId'] === CLAUDE_DESKTOP_PROFILE_ID) {
+      delete meta['appliedId'];
+      metaChanged = true;
+    }
+    const entries = claudeDesktopMetaEntries(meta);
+    const filtered = entries.filter((entry) => !isOwnClaudeDesktopMetaEntry(entry));
+    if (filtered.length !== entries.length) {
+      meta['entries'] = filtered;
+      metaChanged = true;
+    }
+    if (metaChanged) {
+      writeJsonFile(paths.meta, meta);
+      changed = true;
+    }
+  }
+  if (profile && ownsProfileFile) {
+    for (const key of [
+      'inferenceProvider',
+      'inferenceGatewayBaseUrl',
+      'inferenceGatewayApiKey',
+      'inferenceGatewayAuthScheme',
+      'deploymentDisplayName',
+      'coworkEgressAllowedHosts',
+      'disableEssentialTelemetry',
+      'disableNonessentialTelemetry',
+      'inferenceModels',
+    ]) {
+      delete profile[key];
+    }
+    profile['disableDeploymentModeChooser'] = false;
+    writeJsonFile(paths.profile, profile);
+    changed = true;
+  }
+  return changed;
 }

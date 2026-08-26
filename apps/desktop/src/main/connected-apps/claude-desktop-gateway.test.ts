@@ -1,0 +1,260 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
+
+import {
+  CLAUDE_GATEWAY_HEALTH_HEADER,
+  CLAUDE_GATEWAY_HEALTH_PATH,
+  ClaudeDesktopGateway,
+  rewriteModel,
+  type ClaudeGatewayModel,
+} from './claude-desktop-gateway.js';
+import { ROUTED_MODEL_ALIAS } from '../system-proxy/config-patch.js';
+
+type StubRequest = {
+  method: string;
+  url: string;
+  headers: http.IncomingHttpHeaders;
+  body: string;
+};
+
+type StubBuyer = {
+  port: number;
+  requests: StubRequest[];
+  close: () => Promise<void>;
+};
+
+/** A stand-in buyer proxy that records requests and streams a canned SSE reply. */
+async function startStubBuyer(): Promise<StubBuyer> {
+  const requests: StubRequest[] = [];
+  const server = http.createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    req.on('end', () => {
+      requests.push({
+        method: req.method ?? '',
+        url: req.url ?? '',
+        headers: req.headers,
+        body: Buffer.concat(chunks).toString('utf8'),
+      });
+      if (req.url === '/v1/messages/count_tokens') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ input_tokens: 7 }));
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write('event: message_start\ndata: {"type":"message_start"}\n\n');
+      res.end('event: message_stop\ndata: {"type":"message_stop"}\n\n');
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    port: (server.address() as AddressInfo).port,
+    requests,
+    close: () => new Promise((resolve) => server.close(() => resolve())),
+  };
+}
+
+async function withGateway(
+  fn: (gateway: ClaudeDesktopGateway, buyer: StubBuyer) => Promise<void>,
+  listModels?: () => readonly ClaudeGatewayModel[],
+): Promise<void> {
+  const buyer = await startStubBuyer();
+  const gateway = new ClaudeDesktopGateway({ port: 0, buyerPort: buyer.port, ...(listModels ? { listModels } : {}) });
+  await gateway.start();
+  try {
+    await fn(gateway, buyer);
+  } finally {
+    await gateway.stop();
+    await buyer.close();
+  }
+}
+
+function gatewayFetch(gateway: ClaudeDesktopGateway, path: string, init?: RequestInit): Promise<Response> {
+  return fetch(`http://127.0.0.1:${gateway.port}${path}`, init);
+}
+
+test('health endpoint answers with the gateway marker header', async () => {
+  await withGateway(async (gateway) => {
+    const res = await gatewayFetch(gateway, CLAUDE_GATEWAY_HEALTH_PATH);
+    assert.equal(res.status, 204);
+    assert.equal(res.headers.get(CLAUDE_GATEWAY_HEALTH_HEADER), '1');
+  });
+});
+
+test('/v1/models without a picker snapshot serves only the AntSeed Auto entry', async () => {
+  await withGateway(async (gateway) => {
+    const res = await gatewayFetch(gateway, '/v1/models');
+    assert.equal(res.status, 200);
+    const body = await res.json() as { data: Record<string, unknown>[]; has_more: boolean; first_id: string };
+    assert.equal(body.has_more, false);
+    assert.equal(body.first_id, body.data[0]!['id']);
+    assert.equal(body.data.length, 1);
+    assert.equal(body.data[0]!['display_name'], 'AntSeed Auto');
+    assert.equal(body.data[0]!['anthropic_family_tier'], 'fable');
+    assert.equal(body.data[0]!['is_family_default'], true);
+  });
+});
+
+test('/v1/models advertises curated picker models behind the remaining Claude ids', async () => {
+  const picker: ClaudeGatewayModel[] = [
+    { label: 'GLM 5.2', model: 'glm-5.2' },
+    { label: 'GPT 5.6 Sol', model: 'gpt-5.6-sol' },
+    { label: 'GLM 5.2', model: 'glm-5.2' }, // duplicate — must be dropped
+    { label: 'DeepSeek Flash', model: 'deepseek-flash' },
+    { label: 'Qwen4 235B', model: 'qwen4-235b' },
+    { label: 'One Too Many', model: 'overflow-model' }, // only 4 slots after Auto
+  ];
+  await withGateway(async (gateway) => {
+    const res = await gatewayFetch(gateway, '/v1/models');
+    const body = await res.json() as { data: Record<string, unknown>[] };
+    assert.deepEqual(
+      body.data.map((model) => [model['id'], model['display_name'], model['anthropic_family_tier']]),
+      [
+        ['claude-fable-5', 'AntSeed Auto', 'fable'],
+        ['claude-opus-5', 'GLM 5.2', 'opus'],
+        ['claude-sonnet-5', 'GPT 5.6 Sol', 'sonnet'],
+        ['claude-sonnet-4-6', 'DeepSeek Flash', 'sonnet'],
+        ['claude-haiku-4-5-20251001', 'Qwen4 235B', 'haiku'],
+      ],
+    );
+    for (const model of body.data) {
+      assert.equal(model['type'], 'model');
+      assert.equal(typeof model['created_at'], 'string');
+    }
+  }, () => picker);
+});
+
+test('a picked slot model routes as itself; unadvertised ids fall back to the alias', async () => {
+  const picker: ClaudeGatewayModel[] = [{ label: 'GLM 5.2', model: 'glm-5.2' }];
+  await withGateway(async (gateway, buyer) => {
+    const send = async (model: string) => {
+      await gatewayFetch(gateway, '/v1/messages', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model, messages: [] }),
+      });
+      return JSON.parse(buyer.requests[buyer.requests.length - 1]!.body) as Record<string, unknown>;
+    };
+    // The slot map builds lazily on the first message even when Claude uses a
+    // catalog cached from a previous gateway process (no /v1/models call yet).
+    assert.equal((await send('claude-opus-5'))['model'], 'glm-5.2');
+    assert.equal((await send('claude-haiku-4-5-20251001'))['model'], ROUTED_MODEL_ALIAS);
+  }, () => picker);
+});
+
+test('/v1/messages forwards to the buyer proxy with the model rewritten to the routed alias', async () => {
+  await withGateway(async (gateway, buyer) => {
+    const res = await gatewayFetch(gateway, '/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'anthropic-version': '2023-06-01',
+        authorization: 'Bearer antseed',
+      },
+      body: JSON.stringify({ model: 'claude-sonnet-5', max_tokens: 16, messages: [], stream: true }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'text/event-stream');
+    const text = await res.text();
+    assert.ok(text.includes('message_start') && text.includes('message_stop'));
+
+    assert.equal(buyer.requests.length, 1);
+    const forwarded = buyer.requests[0]!;
+    assert.equal(forwarded.url, '/v1/messages');
+    const body = JSON.parse(forwarded.body) as Record<string, unknown>;
+    assert.equal(body['model'], ROUTED_MODEL_ALIAS);
+    assert.equal(body['max_tokens'], 16);
+    assert.equal(forwarded.headers['anthropic-version'], '2023-06-01');
+    // Claude's placeholder credential must never reach the buyer proxy.
+    assert.equal(forwarded.headers['authorization'], undefined);
+    assert.equal(forwarded.headers['x-api-key'], 'antseed');
+  });
+});
+
+test('/v1/messages/count_tokens forwards and returns the buyer response', async () => {
+  await withGateway(async (gateway, buyer) => {
+    const res = await gatewayFetch(gateway, '/v1/messages/count_tokens', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-fable-5', messages: [] }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { input_tokens: 7 });
+    assert.equal(buyer.requests[0]!.url, '/v1/messages/count_tokens');
+  });
+});
+
+test('requests carrying an Origin header are rejected', async () => {
+  await withGateway(async (gateway) => {
+    const res = await gatewayFetch(gateway, '/v1/models', { headers: { origin: 'https://evil.example' } });
+    assert.equal(res.status, 403);
+  });
+});
+
+test('requests with a non-loopback Host are rejected', async () => {
+  // fetch() refuses to override Host, so speak raw HTTP for this one.
+  await withGateway(async (gateway) => {
+    const status = await new Promise<number>((resolve, reject) => {
+      const req = http.request(
+        { host: '127.0.0.1', port: gateway.port, path: '/v1/models', headers: { host: `gateway.example:${gateway.port}` } },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode ?? 0);
+        },
+      );
+      req.on('error', reject);
+      req.end();
+    });
+    assert.equal(status, 403);
+  });
+});
+
+test('unknown routes return an Anthropic-shaped 404', async () => {
+  await withGateway(async (gateway) => {
+    const res = await gatewayFetch(gateway, '/v1/chat/completions', { method: 'POST', body: '{}' });
+    assert.equal(res.status, 404);
+    const body = await res.json() as { type: string; error: { type: string } };
+    assert.equal(body.type, 'error');
+    assert.equal(body.error.type, 'not_found_error');
+  });
+});
+
+test('an unreachable buyer proxy yields an Anthropic-shaped 502', async () => {
+  const buyer = await startStubBuyer();
+  const deadPort = buyer.port;
+  await buyer.close();
+  const gateway = new ClaudeDesktopGateway({ port: 0, buyerPort: deadPort });
+  await gateway.start();
+  try {
+    const res = await fetch(`http://127.0.0.1:${gateway.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-sonnet-5', messages: [] }),
+    });
+    assert.equal(res.status, 502);
+    const body = await res.json() as { error: { type: string } };
+    assert.equal(body.error.type, 'api_error');
+  } finally {
+    await gateway.stop();
+  }
+});
+
+test('rewriteModel keeps explicit peer pins and the alias, and tolerates non-JSON bodies', () => {
+  const slots = new Map([['claude-opus-5', 'glm-5.2']]);
+  const mapped = JSON.parse(rewriteModel(Buffer.from(JSON.stringify({ model: 'claude-opus-5' })), slots).toString('utf8')) as Record<string, unknown>;
+  assert.equal(mapped['model'], 'glm-5.2');
+
+  const unmapped = JSON.parse(rewriteModel(Buffer.from(JSON.stringify({ model: 'claude-sonnet-5' })), slots).toString('utf8')) as Record<string, unknown>;
+  assert.equal(unmapped['model'], ROUTED_MODEL_ALIAS);
+
+  const pinned = JSON.parse(rewriteModel(Buffer.from(JSON.stringify({ model: '0xabc@llama-3.3-70b' })), slots).toString('utf8')) as Record<string, unknown>;
+  assert.equal(pinned['model'], '0xabc@llama-3.3-70b');
+
+  const aliased = JSON.parse(rewriteModel(Buffer.from(JSON.stringify({ model: ROUTED_MODEL_ALIAS })), slots).toString('utf8')) as Record<string, unknown>;
+  assert.equal(aliased['model'], ROUTED_MODEL_ALIAS);
+
+  const invalid = Buffer.from('not json');
+  assert.equal(rewriteModel(invalid, slots), invalid);
+});

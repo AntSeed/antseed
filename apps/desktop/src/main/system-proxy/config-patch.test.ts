@@ -1,18 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ANTSEED_MODEL_CONTEXT_WINDOW, ANTSEED_MODEL_MAX_OUTPUT_TOKENS } from '@antseed/node/types';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parse } from 'yaml';
 
 import {
+  CLAUDE_DESKTOP_PROFILE_ID,
+  CLAUDE_GATEWAY_DEFAULT_PORT,
   applyConfigPatch,
+  claudeDesktopPatchTargets,
   parseJsoncObject,
   readConfigPatch,
   removeConfigPatch,
   substituteBaseUrlHost,
+  type ClaudeDesktopConfigPatchDef,
   type CodexConfigPatchDef,
   type ConfigPatchDef,
   type OpencodeConfigPatchDef,
@@ -749,4 +753,158 @@ test('removeConfigPatch (goose) unpatches WSL configs carrying the gateway host'
     assert.ok(!raw.includes('GOOSE_PROVIDER'));
     assert.equal(existsSync(wslTargetsFile), false);
   });
+});
+
+// ---------------------------------------------------------------------------
+// Claude Desktop third-party inference patch
+// ---------------------------------------------------------------------------
+
+function makeClaudeDesktopPatch(dir: string): ClaudeDesktopConfigPatchDef {
+  return {
+    format: 'claude-desktop',
+    configPath: path.join(dir, 'Claude', 'claude_desktop_config.json'),
+    thirdPartyDir: path.join(dir, 'Claude-3p'),
+    providerKey: 'antseed',
+    baseURL: 'http://127.0.0.1:{claudeGatewayPort}',
+  };
+}
+
+test('applyConfigPatch writes the Claude third-party profile and flips both deployment modes', async () => {
+  await withTempConfig(async (dir) => {
+    const patch = makeClaudeDesktopPatch(dir);
+    await mkdir(path.dirname(patch.configPath), { recursive: true });
+    await writeFile(patch.configPath, JSON.stringify({ mcpServers: { fs: { command: 'fs-server' } } }), 'utf8');
+
+    applyConfigPatch(patch, PEER_ID, 9456);
+
+    const normal = parseJsoncObject(await readFile(patch.configPath, 'utf8'), patch.configPath);
+    assert.equal(normal['deploymentMode'], '3p');
+    // Untouched beyond the mode flip — Claude's own settings must survive.
+    assert.deepEqual(normal['mcpServers'], { fs: { command: 'fs-server' } });
+    assert.ok(existsSync(`${patch.configPath}.antseed.bak`));
+
+    const thirdParty = parseJsoncObject(
+      await readFile(path.join(patch.thirdPartyDir, 'claude_desktop_config.json'), 'utf8'), 'claude_desktop_config.json');
+    assert.equal(thirdParty['deploymentMode'], '3p');
+
+    const profilePath = path.join(patch.thirdPartyDir, 'configLibrary', `${CLAUDE_DESKTOP_PROFILE_ID}.json`);
+    const profile = parseJsoncObject(await readFile(profilePath, 'utf8'), profilePath);
+    assert.equal(profile['inferenceProvider'], 'gateway');
+    assert.equal(profile['inferenceGatewayBaseUrl'], `http://127.0.0.1:${CLAUDE_GATEWAY_DEFAULT_PORT}`);
+    assert.equal(profile['inferenceGatewayAuthScheme'], 'bearer');
+    assert.equal(profile['deploymentDisplayName'], 'AntSeed');
+    assert.equal(profile['disableDeploymentModeChooser'], true);
+    assert.deepEqual(profile['coworkEgressAllowedHosts'], ['*']);
+
+    const metaPath = path.join(patch.thirdPartyDir, 'configLibrary', '_meta.json');
+    const meta = parseJsoncObject(await readFile(metaPath, 'utf8'), metaPath);
+    assert.equal(meta['appliedId'], CLAUDE_DESKTOP_PROFILE_ID);
+    assert.deepEqual(meta['entries'], [{ id: CLAUDE_DESKTOP_PROFILE_ID, name: 'AntSeed' }]);
+
+    // Re-apply is idempotent: no duplicate configLibrary entries.
+    applyConfigPatch(patch, PEER_ID, 9456);
+    const metaAgain = parseJsoncObject(await readFile(metaPath, 'utf8'), metaPath);
+    assert.deepEqual(metaAgain['entries'], [{ id: CLAUDE_DESKTOP_PROFILE_ID, name: 'AntSeed' }]);
+  });
+});
+
+test('applyConfigPatch refuses to configure Claude Desktop when it is not installed', async () => {
+  await withTempConfig(async (dir) => {
+    const patch = makeClaudeDesktopPatch(dir);
+    assert.throws(() => applyConfigPatch(patch, PEER_ID, 9456), /Claude Desktop was not found/);
+    assert.equal(existsSync(patch.thirdPartyDir), false);
+  });
+});
+
+test('removeConfigPatch restores the Claude profile it wrote', async () => {
+  await withTempConfig(async (dir) => {
+    const patch = makeClaudeDesktopPatch(dir);
+    await mkdir(path.dirname(patch.configPath), { recursive: true });
+    applyConfigPatch(patch, PEER_ID, 9456);
+
+    assert.equal(removeConfigPatch(patch), true);
+
+    const normal = parseJsoncObject(await readFile(patch.configPath, 'utf8'), patch.configPath);
+    assert.equal(normal['deploymentMode'], '1p');
+    const thirdParty = parseJsoncObject(
+      await readFile(path.join(patch.thirdPartyDir, 'claude_desktop_config.json'), 'utf8'), 'claude_desktop_config.json');
+    assert.equal(thirdParty['deploymentMode'], '1p');
+
+    const metaPath = path.join(patch.thirdPartyDir, 'configLibrary', '_meta.json');
+    const meta = parseJsoncObject(await readFile(metaPath, 'utf8'), metaPath);
+    assert.equal(meta['appliedId'], undefined);
+    assert.deepEqual(meta['entries'], []);
+
+    const profilePath = path.join(patch.thirdPartyDir, 'configLibrary', `${CLAUDE_DESKTOP_PROFILE_ID}.json`);
+    const profile = parseJsoncObject(await readFile(profilePath, 'utf8'), profilePath);
+    assert.equal(profile['inferenceProvider'], undefined);
+    assert.equal(profile['inferenceGatewayBaseUrl'], undefined);
+    assert.equal(profile['disableDeploymentModeChooser'], false);
+
+    // Nothing left to unwind on a second remove.
+    assert.equal(removeConfigPatch(patch), false);
+  });
+});
+
+test('removeConfigPatch leaves a third-party setup it did not create alone', async () => {
+  await withTempConfig(async (dir) => {
+    const patch = makeClaudeDesktopPatch(dir);
+    await mkdir(path.dirname(patch.configPath), { recursive: true });
+    await writeFile(patch.configPath, JSON.stringify({ deploymentMode: '3p' }), 'utf8');
+    const configLibrary = path.join(patch.thirdPartyDir, 'configLibrary');
+    await mkdir(configLibrary, { recursive: true });
+    // An enterprise/MDM-provisioned gateway profile: different id, remote host.
+    await writeFile(path.join(configLibrary, '_meta.json'), JSON.stringify({
+      appliedId: 'corp-profile',
+      entries: [{ id: 'corp-profile', name: 'Corp Gateway' }],
+    }), 'utf8');
+
+    assert.equal(removeConfigPatch(patch), false);
+
+    const normal = parseJsoncObject(await readFile(patch.configPath, 'utf8'), patch.configPath);
+    assert.equal(normal['deploymentMode'], '3p');
+    const meta = parseJsoncObject(await readFile(path.join(configLibrary, '_meta.json'), 'utf8'), '_meta.json');
+    assert.equal(meta['appliedId'], 'corp-profile');
+  });
+});
+
+test('claudeDesktopPatchTargets: posix uses the profile paths as the single target', () => {
+  const patch = makeClaudeDesktopPatch('/base');
+  const targets = claudeDesktopPatchTargets(patch, 'darwin', {});
+  assert.deepEqual(targets, [{
+    configPath: path.join('/base', 'Claude', 'claude_desktop_config.json'),
+    thirdPartyDir: path.join('/base', 'Claude-3p'),
+  }]);
+});
+
+test('claudeDesktopPatchTargets: windows probes classic, MSIX, local, and Nest roots in order', () => {
+  const patch = makeClaudeDesktopPatch('/ignored');
+  const env = { APPDATA: '/win/Roaming', LOCALAPPDATA: '/win/Local' };
+  const listDir = (dir: string) => (
+    dir === path.join('/win/Local', 'Packages')
+      ? ['Claude_pzs8sxrjxfjjc', 'SomeOtherApp_abc', 'Claude_dev123']
+      : []
+  );
+  const targets = claudeDesktopPatchTargets(patch, 'win32', env, listDir);
+  assert.deepEqual(targets.map((target) => target.configPath), [
+    path.join('/win/Roaming', 'Claude', 'claude_desktop_config.json'),
+    path.join('/win/Local', 'Packages', 'Claude_pzs8sxrjxfjjc', 'LocalCache', 'Roaming', 'Claude', 'claude_desktop_config.json'),
+    path.join('/win/Local', 'Packages', 'Claude_dev123', 'LocalCache', 'Roaming', 'Claude', 'claude_desktop_config.json'),
+    path.join('/win/Local', 'Claude', 'claude_desktop_config.json'),
+    path.join('/win/Roaming', 'Claude Nest', 'claude_desktop_config.json'),
+    path.join('/win/Local', 'Claude Nest', 'claude_desktop_config.json'),
+  ]);
+  // The 3p profile directory is always the sibling `<root>-3p`.
+  assert.equal(targets[0]!.thirdPartyDir, path.join('/win/Roaming', 'Claude-3p'));
+  assert.equal(
+    targets[1]!.thirdPartyDir,
+    path.join('/win/Local', 'Packages', 'Claude_pzs8sxrjxfjjc', 'LocalCache', 'Roaming', 'Claude-3p'),
+  );
+});
+
+test('claudeDesktopPatchTargets: a missing Packages directory just skips the MSIX candidates', () => {
+  const patch = makeClaudeDesktopPatch('/ignored');
+  const targets = claudeDesktopPatchTargets(patch, 'win32', { APPDATA: '/r', LOCALAPPDATA: '/l' }, () => []);
+  assert.equal(targets.length, 4);
+  assert.equal(targets[0]!.configPath, path.join('/r', 'Claude', 'claude_desktop_config.json'));
 });

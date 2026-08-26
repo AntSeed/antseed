@@ -26,6 +26,7 @@ import { getNetworkSnapshot, lookupPeer, type DashboardNetworkPeer } from '../ru
 import type { ProcessManager, RuntimeMode, RuntimeProcessState } from '../runtime/process-manager.js';
 import { applyWindowView, getMainWindow } from '../ui/window.js';
 import { updateDesktopTray } from '../ui/tray.js';
+import { ensureClaudeDesktopGateway, stopClaudeDesktopGateway } from '../connected-apps/claude-desktop-gateway.js';
 import { applyConfigPatch, removeConfigPatch } from './config-patch.js';
 import {
   DEFAULT_SYSTEM_PROXY_PORT,
@@ -569,6 +570,12 @@ export async function startSystemProxyRuntimeInner(opts: SystemProxyStartRequest
     const profile = SYSTEM_PROXY_PROFILES.find((p) => p.name === name);
     if (!profile?.configPatch) continue;
     try {
+      if (profile.configPatch.format === 'claude-desktop') {
+        // Claude Desktop's config points at the desktop's Claude gateway, not
+        // the buyer proxy — bring it up before the patch so a gateway failure
+        // fails the connect instead of leaving Claude aimed at a dead port.
+        await ensureClaudeDesktopGateway(buyerProxyPort, (line) => deps().appendLog('system-proxy', 'system', line));
+      }
       // The patched config carries only the routed-model alias; the buyer
       // resolves it to the default route posted above, so the model picked in
       // the floating pill / VPR applies to running tool sessions.
@@ -629,6 +636,14 @@ export async function startSystemProxyRuntimeInner(opts: SystemProxyStartRequest
 
   const appliedProfiles = allProfiles.filter((name) => !failedConfigPatchProfiles.has(name));
   const appliedConfigPatchProfiles = configPatchProfiles.filter((name) => !failedConfigPatchProfiles.has(name));
+  // The Claude gateway only has a reason to exist while a claude-desktop
+  // profile is connected — stop it on disconnect (and on connect failure, so
+  // it does not linger after its profile was dropped from the active set).
+  const claudeDesktopActive = appliedConfigPatchProfiles.some((name) =>
+    SYSTEM_PROXY_PROFILES.find((p) => p.name === name)?.configPatch?.format === 'claude-desktop');
+  if (!claudeDesktopActive) {
+    await stopClaudeDesktopGateway();
+  }
   traySystemProxyPeerId = opts.peerId;
   traySystemProxyModel = opts.defaultModel ?? '';
   traySystemProxyProfiles = new Set(appliedProfiles);
@@ -711,6 +726,7 @@ export async function stopSystemProxyRuntime(clearSettings: boolean): Promise<Ru
     if (!isMultiInstanceDevelopment()) {
       removeAllConfigPatches();
     }
+    await stopClaudeDesktopGateway();
     await stopWslRelays();
     traySystemProxyProfiles = new Set();
     activeSystemProxyState = null;

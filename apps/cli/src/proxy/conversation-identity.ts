@@ -72,6 +72,8 @@ const TITLE_REQUEST_PREFIXES = [
   'write a short title',
   'summarize this conversation in a title',
   'summarize this coding conversation',
+  // Claude Desktop titles each new chat from a session of its own.
+  'you are coming up with a succinct title',
 ]
 
 /** Injected project-doc blobs — Codex sends AGENTS.md / CLAUDE.md contents
