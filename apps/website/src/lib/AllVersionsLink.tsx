@@ -1,5 +1,7 @@
 import React, {useCallback, useEffect, useState} from 'react';
+import {createPortal} from 'react-dom';
 import {DesktopDownloadIcon} from './DesktopDownloadIcon';
+import {LinuxIcon} from '../components/ui';
 import {
   ALL_VERSIONS_URL,
   DOWNLOAD_BASE_URL,
@@ -51,7 +53,12 @@ function AllVersionsModal({onClose}: {onClose: () => void}) {
     };
   }, [onClose]);
 
-  return (
+  // Portal to <body>: the CTA blocks sit inside Reveal wrappers whose
+  // `will-change: transform` makes them the containing block for
+  // position:fixed descendants — rendered in place, the overlay anchors to
+  // the wrong box and the card lands off-screen. Only mounted after a click,
+  // so document.body is always available (no SSR concern).
+  return createPortal(
     <div className="vprVersionsOverlay" onClick={onClose} role="presentation">
       <div
         className="vprVersionsModal"
@@ -74,7 +81,12 @@ function AllVersionsModal({onClose}: {onClose: () => void}) {
               href={`${DOWNLOAD_BASE_URL}/vpr/${row.target}`}
             >
               <span className="vprVersionsIcon">
-                <DesktopDownloadIcon platform={row.platform} size={20} />
+                {/* DesktopDownloadIcon has no Tux — reuse the CTA button's. */}
+                {row.platform === 'linux' ? (
+                  <LinuxIcon />
+                ) : (
+                  <DesktopDownloadIcon platform={row.platform} size={20} />
+                )}
               </span>
               <span className="vprVersionsName">
                 {row.label}
@@ -83,11 +95,17 @@ function AllVersionsModal({onClose}: {onClose: () => void}) {
             </a>
           ))}
         </div>
-        <a className="vprVersionsFooter" href={ALL_VERSIONS_URL}>
+        <a
+          className="vprVersionsFooter"
+          href={ALL_VERSIONS_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
           Older versions &amp; .deb packages →
         </a>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
