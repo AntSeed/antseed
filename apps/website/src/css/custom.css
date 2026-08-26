@@ -1753,6 +1753,15 @@ html[data-theme='light'] .blog-wrapper .pagination-nav__link:hover {
   font-weight: 400;
   color: var(--as-text-3);
 }
+.vprVersionsDetected {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--as-green-deep);
+  background: rgba(16, 185, 129, 0.12);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
 .vprVersionsFooter {
   display: block;
   text-align: center;

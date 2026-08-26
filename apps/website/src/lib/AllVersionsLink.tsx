@@ -5,6 +5,7 @@ import {LinuxIcon} from '../components/ui';
 import {
   ALL_VERSIONS_URL,
   DOWNLOAD_BASE_URL,
+  useLatestDesktopDownload,
   type DesktopPlatform,
 } from './useLatestDesktopDownload';
 
@@ -40,6 +41,12 @@ const TARGET_ROWS: TargetRow[] = [
 ];
 
 function AllVersionsModal({onClose}: {onClose: () => void}) {
+  // Badge the row matching the visitor's detected OS/arch — the same
+  // detection the main CTA uses, so a wrong guess (UA-spoofing privacy
+  // browser) is visible at a glance and explains what the button would do.
+  const {platform, arch} = useLatestDesktopDownload();
+  const detectedTarget = platform === 'unknown' ? null : `${platform}-${arch}`;
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -92,6 +99,9 @@ function AllVersionsModal({onClose}: {onClose: () => void}) {
                 {row.label}
                 <span className="vprVersionsSub">{row.sub}</span>
               </span>
+              {row.target === detectedTarget && (
+                <span className="vprVersionsDetected">Detected</span>
+              )}
             </a>
           ))}
         </div>
