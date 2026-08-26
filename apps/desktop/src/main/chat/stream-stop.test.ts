@@ -15,6 +15,25 @@ test('classifyChatStreamFailure detects retryable upstream 502 failures', () => 
   assert.equal(reason.retryable, true);
 });
 
+test('classifyChatStreamFailure treats a seller 403 as retryable with a clean message', () => {
+  // A seller whose upstream revoked or blocked it relays an HTML error page.
+  // The status must be parsed out of the "403 Forbidden" text and the failure
+  // classified retryable — the buyer proxy re-routes to another seller, so a
+  // retry goes somewhere new instead of repeating the refusal.
+  const reason = classifyChatStreamFailure({
+    error: new Error(
+      '403 <html> <head><title>403 Forbidden</title></head> <body> <center><h1>403 Forbidden</h1></center> </body> </html>',
+    ),
+    stopReason: 'error',
+  });
+
+  assert.equal(reason.kind, 'http_error');
+  assert.equal(reason.statusCode, 403);
+  assert.equal(reason.retryable, true);
+  assert.doesNotMatch(reason.message, /<html>/);
+  assert.match(reason.message, /403/);
+});
+
 test('classifyChatStreamFailure detects timeout failures', () => {
   const reason = classifyChatStreamFailure({
     error: { message: 'headers timeout', code: 'UND_ERR_HEADERS_TIMEOUT' },

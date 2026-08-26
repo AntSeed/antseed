@@ -1302,6 +1302,70 @@ test('pinned proxy request reports when the pinned peer is not discoverable', as
   assert.match(res.body, /It may be offline, not announcing, or temporarily unreachable/)
 })
 
+test('pinned proxy request surfaces a 403 without failing over to another peer', async () => {
+  // An explicit pin is a hard constraint: even with another peer serving the
+  // same model, the pinned peer's error is surfaced rather than re-routed.
+  const pinnedPeer = makePeer('a', ['openai'])
+  pinnedPeer.providerServiceApiProtocols = {
+    openai: { services: { 'gpt-5': ['openai-chat-completions'] } },
+  }
+  const otherPeer = makePeer('b', ['openai'])
+  otherPeer.providerServiceApiProtocols = {
+    openai: { services: { 'GPT 5': ['openai-chat-completions'] } },
+  }
+  const proxy = makeBuyerProxyWithPeers([pinnedPeer, otherPeer], [pinnedPeer, otherPeer], permissiveRouter())
+  const attempts: string[] = []
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string }) => {
+    attempts.push(peer.peerId)
+    return {
+      requestId: request.requestId,
+      statusCode: 403,
+      headers: { 'content-type': 'text/html' },
+      body: Buffer.from('<html><body><h1>403 Forbidden</h1></body></html>'),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-antseed-pin-peer': pinnedPeer.peerId },
+    body: { model: 'gpt-5', messages: [] },
+  }))
+
+  assert.equal(res.statusCode, 403)
+  assert.deepEqual(attempts, [pinnedPeer.peerId])
+})
+
+test('model-only routing fails over to the next peer after a 401 or 403', async () => {
+  for (const statusCode of [401, 403]) {
+    const first = makePeer('a', ['openai'])
+    first.reputationScore = 95
+    first.providerServiceApiProtocols = {
+      openai: { services: { 'gpt-5': ['openai-chat-completions'] } },
+    }
+    const second = makePeer('b', ['openai'])
+    second.reputationScore = 80
+    second.providerServiceApiProtocols = {
+      openai: { services: { 'GPT 5': ['openai-chat-completions'] } },
+    }
+    const proxy = makeBuyerProxyWithPeers([first, second], [first, second], permissiveRouter())
+    const attempts: string[] = []
+    ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string }) => {
+      attempts.push(peer.peerId)
+      return {
+        requestId: request.requestId,
+        statusCode: peer.peerId === first.peerId ? statusCode : 200,
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from(JSON.stringify({ peerId: peer.peerId })),
+      }
+    }
+
+    const res = await invokeProxy(proxy, makeProxyRequest({ body: { model: 'gpt-5', messages: [] } }))
+
+    assert.equal(res.statusCode, 200, `expected failover to succeed for upstream ${statusCode}`)
+    assert.deepEqual(attempts, [first.peerId, second.peerId])
+    assert.equal(JSON.parse(res.body).peerId, second.peerId)
+  }
+})
+
 test('pinned proxy request rewrites a canonical alias to the advertised service id', async () => {
   const pinnedPeer = makePeer('a', ['openai'])
   pinnedPeer.providerServiceApiProtocols = {

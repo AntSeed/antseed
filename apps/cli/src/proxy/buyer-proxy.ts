@@ -154,7 +154,13 @@ export interface BuyerProxyConfig {
   verifier?: VerifierPolicy
 }
 
-const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
+// 401/403 are included: sellers relay upstream auth failures (revoked or
+// expired key, region/WAF block) that are specific to that seller's upstream
+// account, so another peer serving the same model can usually complete the
+// request. 402 stays terminal (buyer payment flow), and 404 stays terminal
+// because model_not_found already has dedicated unadvertise handling while a
+// generic 404 would repeat identically on every peer.
+const RETRYABLE_STATUS_CODES = new Set([401, 403, 408, 429, 500, 502, 503, 504])
 const MODEL_RATE_LIMIT_MAX_ATTEMPTS_PER_PEER = 3
 const MODEL_RATE_LIMIT_RETRY_DELAYS_MS = [250, 750] as const
 const MODEL_RATE_LIMIT_MAX_RETRY_AFTER_MS = 2_000
