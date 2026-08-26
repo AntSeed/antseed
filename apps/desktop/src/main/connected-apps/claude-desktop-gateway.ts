@@ -181,24 +181,51 @@ export class ClaudeDesktopGateway {
     return host === '::1' || host.startsWith('127.');
   }
 
-  /** Slot assignments: "AntSeed Auto" first, then the curated picker models
-      (deduped, in picker order) behind the remaining Claude ids. Also
-      refreshes the slot→model routing map used by forwardMessages. */
+  /**
+   * Slot assignments: "AntSeed Auto" always holds the first slot; curated
+   * picker models occupy the rest. Bindings are sticky per model, not
+   * positional: Claude caches the catalog it fetched, so the id it sends
+   * with a message must keep meaning the model it displayed — a picker
+   * reorder (selection change, favorites) must never silently re-point an
+   * already-advertised id at a different model. A model keeps its slot while
+   * it remains in the picker; slots whose model left become free for new
+   * ones. Also refreshes the slot→model routing map used by forwardMessages.
+   */
   private assignSlots(): { slot: typeof CLAUDE_MODEL_SLOTS[number]; label: string; model: string }[] {
     const listed = (this.options.listModels ?? sharedModelSource)?.() ?? [];
-    const picks: ClaudeGatewayModel[] = [];
     const seen = new Set<string>();
+    const labels = new Map<string, string>();
+    const picks: string[] = [];
     for (const entry of listed) {
       const model = entry.model.trim();
       if (!model || seen.has(model)) continue;
       seen.add(model);
-      picks.push({ label: entry.label.trim() || model, model });
-      if (picks.length >= CLAUDE_MODEL_SLOTS.length - 1) break;
+      labels.set(model, entry.label.trim() || model);
+      picks.push(model);
     }
-    const assignments = [
-      { slot: CLAUDE_MODEL_SLOTS[0]!, label: CLAUDE_GATEWAY_MODEL_LABEL, model: ROUTED_MODEL_ALIAS },
-      ...picks.map((pick, index) => ({ slot: CLAUDE_MODEL_SLOTS[index + 1]!, ...pick })),
-    ];
+
+    const autoSlot = CLAUDE_MODEL_SLOTS[0]!;
+    const assignableSlots = CLAUDE_MODEL_SLOTS.slice(1);
+    // Keep bindings whose model is still offered; the rest free their slot.
+    const bindings = new Map<string, string>();
+    for (const slot of assignableSlots) {
+      const model = this.slotModels.get(slot.id);
+      if (model && model !== ROUTED_MODEL_ALIAS && seen.has(model)) bindings.set(slot.id, model);
+    }
+    const boundModels = new Set(bindings.values());
+    for (const model of picks) {
+      if (boundModels.has(model)) continue;
+      const freeSlot = assignableSlots.find((slot) => !bindings.has(slot.id));
+      if (!freeSlot) break;
+      bindings.set(freeSlot.id, model);
+      boundModels.add(model);
+    }
+
+    const assignments = [{ slot: autoSlot, label: CLAUDE_GATEWAY_MODEL_LABEL, model: ROUTED_MODEL_ALIAS }];
+    for (const slot of assignableSlots) {
+      const model = bindings.get(slot.id);
+      if (model) assignments.push({ slot, label: labels.get(model) ?? model, model });
+    }
     this.slotModels = new Map(assignments.map(({ slot, model }) => [slot.id, model]));
     return assignments;
   }

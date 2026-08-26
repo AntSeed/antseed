@@ -126,6 +126,69 @@ test('/v1/models advertises curated picker models behind the remaining Claude id
   }, () => picker);
 });
 
+test('slot bindings stay stable when the picker reorders', async () => {
+  // Claude caches the catalog it fetched — an id it shows as one model must
+  // keep routing to that model even after the picker order changes (e.g. the
+  // user switches the VPR selection, which moves entries to the front).
+  let picker: ClaudeGatewayModel[] = [
+    { label: 'GLM 5.2', model: 'glm-5.2' },
+    { label: 'GPT 5.6 Sol', model: 'gpt-5.6-sol' },
+  ];
+  await withGateway(async (gateway, buyer) => {
+    const catalog = async () => {
+      const res = await gatewayFetch(gateway, '/v1/models');
+      const body = await res.json() as { data: { id: string; display_name: string }[] };
+      return body.data.map((model) => [model.id, model.display_name]);
+    };
+    assert.deepEqual(await catalog(), [
+      ['claude-fable-5', 'AntSeed Auto'],
+      ['claude-opus-5', 'GLM 5.2'],
+      ['claude-sonnet-5', 'GPT 5.6 Sol'],
+    ]);
+
+    picker = [
+      { label: 'GPT 5.6 Sol', model: 'gpt-5.6-sol' },
+      { label: 'GLM 5.2', model: 'glm-5.2' },
+    ];
+    // Same bindings after the reorder — nothing swaps slots.
+    assert.deepEqual(await catalog(), [
+      ['claude-fable-5', 'AntSeed Auto'],
+      ['claude-opus-5', 'GLM 5.2'],
+      ['claude-sonnet-5', 'GPT 5.6 Sol'],
+    ]);
+
+    await gatewayFetch(gateway, '/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-opus-5', messages: [] }),
+    });
+    const forwarded = JSON.parse(buyer.requests[buyer.requests.length - 1]!.body) as Record<string, unknown>;
+    assert.equal(forwarded['model'], 'glm-5.2');
+  }, () => picker);
+});
+
+test('a slot freed by a departed model is rebound to a new one', async () => {
+  let picker: ClaudeGatewayModel[] = [
+    { label: 'GLM 5.2', model: 'glm-5.2' },
+    { label: 'GPT 5.6 Sol', model: 'gpt-5.6-sol' },
+  ];
+  await withGateway(async (gateway) => {
+    await gatewayFetch(gateway, '/v1/models');
+    picker = [
+      { label: 'GPT 5.6 Sol', model: 'gpt-5.6-sol' },
+      { label: 'Qwen4 235B', model: 'qwen4-235b' },
+    ];
+    const res = await gatewayFetch(gateway, '/v1/models');
+    const body = await res.json() as { data: { id: string; display_name: string }[] };
+    assert.deepEqual(body.data.map((model) => [model.id, model.display_name]), [
+      ['claude-fable-5', 'AntSeed Auto'],
+      // GLM left the picker, so its slot went to the newcomer; GPT kept its slot.
+      ['claude-opus-5', 'Qwen4 235B'],
+      ['claude-sonnet-5', 'GPT 5.6 Sol'],
+    ]);
+  }, () => picker);
+});
+
 test('a picked slot model routes as itself; unadvertised ids fall back to the alias', async () => {
   const picker: ClaudeGatewayModel[] = [{ label: 'GLM 5.2', model: 'glm-5.2' }];
   await withGateway(async (gateway, buyer) => {
