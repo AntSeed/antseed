@@ -1683,6 +1683,8 @@ html[data-theme='light'] .blog-wrapper .pagination-nav__link:hover {
   padding: 24px;
 }
 .vprVersionsModal {
+  /* The trigger sits in centered CTA blocks — don't inherit their alignment. */
+  text-align: left;
   background: #FFFEFB;
   color: var(--as-text);
   border-radius: 16px;
@@ -1753,6 +1755,7 @@ html[data-theme='light'] .blog-wrapper .pagination-nav__link:hover {
 }
 .vprVersionsFooter {
   display: block;
+  text-align: center;
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid rgba(0, 30, 18, 0.08);
