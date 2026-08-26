@@ -41,12 +41,12 @@ const ROUTE_LOOKUP_TIMEOUT_MS = 750;
  * the top of the desktop's curated model picker. Advertised in Claude's
  * preferred order.
  */
-const CLAUDE_MODEL_SLOTS: readonly { id: string; family: string; createdAt: string; familyDefault: boolean }[] = [
-  { id: 'claude-fable-5', family: 'fable', createdAt: '2026-06-09T00:00:00Z', familyDefault: true },
-  { id: 'claude-opus-5', family: 'opus', createdAt: '2026-07-24T00:00:00Z', familyDefault: true },
-  { id: 'claude-sonnet-5', family: 'sonnet', createdAt: '2026-06-30T00:00:00Z', familyDefault: true },
-  { id: 'claude-sonnet-4-6', family: 'sonnet', createdAt: '2025-11-18T00:00:00Z', familyDefault: false },
-  { id: 'claude-haiku-4-5-20251001', family: 'haiku', createdAt: '2025-10-01T00:00:00Z', familyDefault: true },
+const CLAUDE_MODEL_SLOTS: readonly { id: string; family: string; createdAt: string; familyDefault: boolean; identityPhrases: readonly string[] }[] = [
+  { id: 'claude-fable-5', family: 'fable', createdAt: '2026-06-09T00:00:00Z', familyDefault: true, identityPhrases: ['Claude Fable 5', 'Fable 5'] },
+  { id: 'claude-opus-5', family: 'opus', createdAt: '2026-07-24T00:00:00Z', familyDefault: true, identityPhrases: ['Claude Opus 5', 'Opus 5'] },
+  { id: 'claude-sonnet-5', family: 'sonnet', createdAt: '2026-06-30T00:00:00Z', familyDefault: true, identityPhrases: ['Claude Sonnet 5', 'Sonnet 5'] },
+  { id: 'claude-sonnet-4-6', family: 'sonnet', createdAt: '2025-11-18T00:00:00Z', familyDefault: false, identityPhrases: ['Claude Sonnet 4.6', 'Sonnet 4.6'] },
+  { id: 'claude-haiku-4-5-20251001', family: 'haiku', createdAt: '2025-10-01T00:00:00Z', familyDefault: true, identityPhrases: ['Claude Haiku 4.5', 'Haiku 4.5'] },
 ];
 const CLAUDE_GATEWAY_MODEL_LABEL = 'AntSeed Auto';
 
@@ -350,8 +350,46 @@ export function rewriteModel(
     ? model
     : (typeof model === 'string' ? slotModels.get(model) : undefined) ?? ROUTED_MODEL_ALIAS;
   request['model'] = resolved;
-  if (opts.identityNote) appendIdentityNote(request, resolved, opts.routedModelName ?? null);
+  if (opts.identityNote) {
+    const servingName = resolved === ROUTED_MODEL_ALIAS ? opts.routedModelName ?? null : resolved;
+    // Claude Desktop asserts the catalog model's identity in its own system
+    // prompt, and the model trusts that over anything appended later — an
+    // appended correction alone gets dismissed as unreliable. Rewrite the
+    // identity claims at their source, then let the note explain why.
+    if (servingName && typeof model === 'string' && model !== servingName) {
+      rewriteSystemIdentity(request, model, servingName);
+    }
+    appendIdentityNote(request, resolved, opts.routedModelName ?? null);
+  }
   return Buffer.from(JSON.stringify(request), 'utf8');
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Replace the requested Claude model's id and display-name phrases inside
+    the system prompt with the serving model's name, so the "environment
+    metadata" Claude Desktop injects names the model that actually answers. */
+function rewriteSystemIdentity(request: Record<string, unknown>, requestedModel: string, servingName: string): void {
+  const phrases = [
+    requestedModel,
+    ...(CLAUDE_MODEL_SLOTS.find((slot) => slot.id === requestedModel)?.identityPhrases ?? []),
+  ];
+  const pattern = new RegExp(phrases.map(escapeRegExp).join('|'), 'gi');
+  const rewrite = (text: string): string => text.replace(pattern, servingName);
+  const system = request['system'];
+  if (typeof system === 'string') {
+    request['system'] = rewrite(system);
+    return;
+  }
+  if (!Array.isArray(system)) return;
+  request['system'] = system.map((block) => {
+    if (!block || typeof block !== 'object' || Array.isArray(block)) return block;
+    const record = block as Record<string, unknown>;
+    if (record['type'] !== 'text' || typeof record['text'] !== 'string') return block;
+    return { ...record, text: rewrite(record['text']) };
+  });
 }
 
 function identityNote(resolvedModel: string, routedModelName: string | null): string {

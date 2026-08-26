@@ -218,6 +218,18 @@ test('/v1/messages appends a routing identity note to the system prompt', async 
     assert.ok((mapped['system'] as string).startsWith('You are a helpful assistant.'));
     assert.ok((mapped['system'] as string).includes('served over the AntSeed peer-to-peer network by "glm-5.2"'));
 
+    // Claude Desktop's own identity metadata is corrected at the source —
+    // the model trusts its system prompt over an appended note, so the id
+    // and display-name phrases must name the serving model.
+    const metadata = await send({
+      model: 'claude-opus-5',
+      system: 'Environment: the active model is Claude Opus 5 (model ID: claude-opus-5), also known as Opus 5.',
+      messages: [],
+    });
+    assert.ok((metadata['system'] as string).startsWith(
+      'Environment: the active model is glm-5.2 (model ID: glm-5.2), also known as glm-5.2.',
+    ));
+
     // Block-array system prompts get the note as a trailing text block, so
     // earlier cache breakpoints stay valid.
     const blocks = await send({
