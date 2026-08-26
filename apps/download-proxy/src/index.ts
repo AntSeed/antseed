@@ -120,6 +120,8 @@ export default {
       country: (request.cf?.country as string | undefined) ?? 'unknown',
       partial: origin.status === 206,
       totalBytes: contentLength ?? asset.size,
+      userAgent: request.headers.get('user-agent') ?? '',
+      botCategory: (request.cf?.verifiedBotCategory as string | undefined) || null,
     };
 
     emit(env, ctx, startEvent(downloadCtx));

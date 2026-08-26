@@ -8,6 +8,8 @@ const ctx: DownloadContext = {
   country: 'DE',
   partial: false,
   totalBytes: 200_000_000,
+  userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+  botCategory: null,
 };
 
 describe('download events', () => {
@@ -45,6 +47,20 @@ describe('download events', () => {
   it('marks range responses as partial', () => {
     const event = startEvent({...ctx, partial: true});
     expect(event.params['partial']).toBe(1);
+  });
+
+  it('truncates the user agent to the GA4 param limit and tags verified bots', () => {
+    const longUa = 'x'.repeat(300);
+    const event = startEvent({...ctx, userAgent: longUa, botCategory: 'Search Engine Crawler'});
+    expect((event.params['user_agent'] as string).length).toBe(100);
+    expect(event.params['bot_category']).toBe('Search Engine Crawler');
+
+    const human = startEvent(ctx);
+    expect(human.params['user_agent']).toBe(ctx.userAgent);
+    expect(human.params['bot_category']).toBeUndefined();
+
+    const empty = startEvent({...ctx, userAgent: ''});
+    expect(empty.params['user_agent']).toBe('unknown');
   });
 
   it('builds unresolved events with a reason', () => {

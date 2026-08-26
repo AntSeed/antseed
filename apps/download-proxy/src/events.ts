@@ -32,6 +32,10 @@ export interface DownloadContext {
   country: string;
   partial: boolean;
   totalBytes: number | null;
+  /** Client User-Agent — separates real browsers from bots and scripts. */
+  userAgent: string;
+  /** Cloudflare's verified-bot category (e.g. "Search Engine Crawler"), or null. */
+  botCategory: string | null;
 }
 
 function baseParams(ctx: DownloadContext): Record<string, string | number> {
@@ -42,7 +46,13 @@ function baseParams(ctx: DownloadContext): Record<string, string | number> {
     release_tag: ctx.tag ?? 'unknown',
     country: ctx.country,
     partial: ctx.partial ? 1 : 0,
+    // GA4 Measurement Protocol caps param values at 100 chars; a truncated
+    // UA still identifies the client family.
+    user_agent: ctx.userAgent.slice(0, 100) || 'unknown',
   };
+  if (ctx.botCategory) {
+    params['bot_category'] = ctx.botCategory;
+  }
   if (ctx.totalBytes !== null) {
     params['total_bytes'] = ctx.totalBytes;
   }
