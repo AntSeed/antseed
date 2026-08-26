@@ -97,7 +97,9 @@ export async function runBackfill({ manifest, headers, rpcUrl, submit = false, p
   const blockhashStoreAddress = getAddress(manifest.batch?.blockhashStore ?? BASE_BLOCKHASH_STORE);
   if (blockhashStoreAddress !== getAddress(BASE_BLOCKHASH_STORE)) throw new Error("manifest does not use the immutable Base Chainlink BlockhashStore");
   if (await provider.getCode(blockhashStoreAddress) === "0x") throw new Error("BlockhashStore address has no bytecode");
-  const signer = submit ? new Wallet(privateKey, provider) : provider;
+  if (submit && !privateKey) throw new Error("SUBMITTER_PRIVATE_KEY is required with --submit");
+  const wallet = submit ? new Wallet(privateKey, provider) : null;
+  const signer = wallet ?? provider;
   const store = new Contract(blockhashStoreAddress, BLOCKHASH_STORE_ABI, signer);
   const storedNumbers = new Set();
   for (const ref of requiredRefs) {
@@ -118,12 +120,12 @@ export async function runBackfill({ manifest, headers, rpcUrl, submit = false, p
   const latestBlock = BigInt(await provider.getBlockNumber());
   const plan = buildBackfillPlan(requiredRefs, headerByNumber, storedNumbers, latestBlock);
   if (!submit) return { status: "planned", requiredBlockCount: requiredRefs.length, transactionCount: plan.length, plan };
-  if (!privateKey) throw new Error("SUBMITTER_PRIVATE_KEY is required with --submit");
   const receipts = [];
+  let nextNonce = await provider.getTransactionCount(wallet.address, "pending");
   for (const step of plan) {
     const transaction = step.method === "store"
-      ? await store.store(step.blockNumber)
-      : await store.storeVerifyHeader(step.blockNumber, step.header);
+      ? await store.store(step.blockNumber, { nonce: nextNonce++ })
+      : await store.storeVerifyHeader(step.blockNumber, step.header, { nonce: nextNonce++ });
     const receipt = await transaction.wait();
     if (receipt.status !== 1) throw new Error(`BlockhashStore ${step.method} failed for ${step.blockNumber}`);
     const stored = await store.getBlockhash(step.blockNumber);

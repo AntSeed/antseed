@@ -119,6 +119,20 @@ node scripts/backfill-blockhash-store.mjs --help
 node scripts/submit-wash-trading-proofs.mjs --help
 ```
 
+Run the deterministic production-shaped Anvil lifecycle test to verify that
+proof submission is blocked before canonical block backfill, interrupted
+backfill resumes, and the atomic proof batch succeeds only after every required
+block hash is present. The test deploys the real registry and policy contracts
+with a local verifier fixture.
+
+```bash
+node --test --test-name-pattern="production-shaped proof submission" \
+  scripts/backfill-blockhash-store.anvil.test.mjs
+```
+
+Set `BASE_MAINNET_RPC_URL` to additionally exercise the deployed Base
+BlockhashStore against the pinned fork fixture.
+
 Before proof submission, `verify-proof-volumes.mjs` requires the trusted public
 key for the signed approved-claim baseline, refetches every selected settlement
 receipt, and writes `antseed-proof-volume-report` v2. Submission remains blocked
