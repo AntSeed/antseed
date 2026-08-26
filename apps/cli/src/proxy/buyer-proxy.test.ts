@@ -1930,6 +1930,78 @@ test('POST /_antseed/peer-health/clear rejects a malformed peer id', async () =>
   assert.equal(res.statusCode, 400)
 })
 
+test('pinned peer stays pinned: a 403 is surfaced and no sibling is tried', async () => {
+  const peerA = makePeer('a', ['openai'])
+  const peerB = makePeer('b', ['openai'])
+  const attemptedPeers: string[] = []
+  const router = { allowsPeerForPolicy: () => true, onResult: () => {} }
+  const proxy = makeBuyerProxyWithPeers([peerA, peerB], [peerA, peerB], router)
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string }) => {
+    attemptedPeers.push(peer.peerId)
+    return {
+      requestId: request.requestId,
+      statusCode: 403,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{"error":"forbidden"}'),
+    }
+  }
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-antseed-pin-peer': peerA.peerId },
+  }))
+
+  // A pin is an exclusive choice: only the pinned peer is contacted, and its
+  // 403 is surfaced verbatim rather than falling over to the sibling peerB.
+  assert.deepEqual(attemptedPeers, [peerA.peerId])
+  assert.equal(res.statusCode, 403)
+  assert.match(res.body, /forbidden/)
+})
+
+test('auto-routing fails over to the next candidate on a 403 and records the forbidding peer as a routing failure', async () => {
+  const peerA = makePeer('a', ['openai'])
+  const peerB = makePeer('b', ['openai'])
+  const attemptedPeers: string[] = []
+  const routerResults: Array<{ peerId: string; success: boolean }> = []
+  const router = {
+    allowsPeerForPolicy: () => true,
+    onResult: (peer: PeerInfo, result: { success: boolean }) => {
+      routerResults.push({ peerId: peer.peerId, success: result.success })
+    },
+  }
+  peerA.reputationScore = 95
+  peerA.providerServiceApiProtocols = {
+    openai: { services: { 'kimi-k3': ['openai-chat-completions'] } },
+  }
+  peerB.reputationScore = 70
+  peerB.providerServiceApiProtocols = {
+    openai: { services: { 'kimi-k3': ['openai-chat-completions'] } },
+  }
+  const proxy = makeBuyerProxyWithPeers([peerA, peerB], [peerA, peerB], router)
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string }) => {
+    attemptedPeers.push(peer.peerId)
+    const forbidden = peer.peerId === peerA.peerId
+    return {
+      requestId: request.requestId,
+      statusCode: forbidden ? 403 : 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(forbidden ? '{"error":"forbidden"}' : '{"ok":true}'),
+    }
+  }
+
+  // No pin header: this is the auto-routing (model-only) path, where a
+  // peer-level 403 should move to the next candidate rather than being
+  // surfaced, and the forbidding peer should be recorded as a routing failure.
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    body: { model: 'kimi-k3', messages: [{ role: 'user', content: 'hello' }] },
+  }))
+
+  assert.equal(res.statusCode, 200)
+  assert.ok(attemptedPeers.includes(peerA.peerId))
+  assert.ok(attemptedPeers.includes(peerB.peerId))
+  const forbiddingResult = routerResults.find((r) => r.peerId === peerA.peerId)
+  assert.equal(forbiddingResult?.success, false)
+})
+
 test('non-stream transformed responses requests force upstream stream without streaming to client', async () => {
   const peer = makePeer('a', ['openai-responses'])
   peer.providerServiceApiProtocols = {

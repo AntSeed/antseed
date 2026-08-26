@@ -153,6 +153,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Fixed automatic model routing treating a peer-level rejection as a healthy result. On the model-only (auto-routing) path, a peer that returns an auth rejection (401/403) now counts as a routing failure — previously it was recorded as a success, so a forbidding peer kept healthy router stats and was never bypassed — and the buyer moves on to the next candidate peer that offers the same model. Peer pins are unchanged and remain exclusive: a pinned peer's response (including a 401/403) is always surfaced verbatim and never fails over to another peer.
 - Fixed image SpendingAuth service attribution when a budget/headroom authorization races ahead of the delivered response. Headroom-only messages no longer consume the request accounting slot, and the eventual image charge is attributed exactly once to the requested service with one request and zero synthetic text tokens.
 - OpenAI-compatible sellers now recognize Venice image-generation model families such as Flux, Qwen Image, Nano Banana, Recraft, Seedream, and Krea as `openai-images` services, so they advertise image output capabilities and route through image endpoints instead of Chat Completions.
 - Fixed three "Read more in the docs" links in the desktop VPR Help view opening 404 pages (`/docs/getting-started/intro`, `/docs/getting-started/configuration`, `/docs/guides/pricing`). They now point at the docs' published slugs (`/docs/`, `/docs/config`, `/docs/pricing`).

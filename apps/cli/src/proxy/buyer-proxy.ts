@@ -155,6 +155,16 @@ export interface BuyerProxyConfig {
 }
 
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
+/**
+ * Status codes that make the *peer* — not the request — the problem, so the
+ * buyer should transparently fail over to another peer offering the same
+ * service. This is the retryable transport/overload set plus peer-level auth
+ * rejections (401/403): a seller that forbids the buyer's traffic (revoked
+ * key, mismatched allowlist, quota lockout) can't serve this request, but a
+ * sibling peer usually can. Recording these as routing failures also stops a
+ * broken peer from keeping healthy stats.
+ */
+const FAILOVER_STATUS_CODES = new Set([401, 403, ...RETRYABLE_STATUS_CODES])
 const MODEL_RATE_LIMIT_MAX_ATTEMPTS_PER_PEER = 3
 const MODEL_RATE_LIMIT_RETRY_DELAYS_MS = [250, 750] as const
 const MODEL_RATE_LIMIT_MAX_RETRY_AFTER_MS = 2_000
@@ -2515,7 +2525,13 @@ export class BuyerProxy {
             selected.serviceId,
             explicitProvider,
             router,
-            RETRYABLE_STATUS_CODES,
+            // Auto-routing chose this peer, so a peer-level auth rejection
+            // (401/403) is the peer's problem, not the request's: fail over to
+            // the next candidate that serves this model and record the peer as
+            // a routing failure instead of surfacing the 403 or counting it as
+            // healthy. (Peer pins are exclusive and never fail over — see the
+            // pinned path below.)
+            FAILOVER_STATUS_CODES,
             clientAbortController.signal,
           )
           if (result.done) {
@@ -2740,6 +2756,11 @@ export class BuyerProxy {
       }
     }
 
+    // A pin is an *exclusive* choice, not a preference: the buyer explicitly
+    // selected this seller, so we never fail over to a different peer. If the
+    // pinned peer can't serve the request, surface its response verbatim.
+    // (Transparent failover across sibling peers is auto-routing behaviour —
+    // see the model-only routing path above.)
     log(`Using pinned peer ${selectedPeer.peerId.slice(0, 12)}...`)
     const result = await this._dispatchToPeer(
       res,
@@ -2747,24 +2768,26 @@ export class BuyerProxy {
       selectedPeer,
       routingPlans,
       requestProtocol,
-      requestedService,
+      pinnedServiceId,
       explicitProvider,
       router,
       RETRYABLE_STATUS_CODES,
       clientAbortController.signal,
     )
-    if (result.done && trackedConversationId && pinnedServiceId) {
-      this._conversations.recordRoutedModel(
-        trackedConversationId,
-        `${selectedPeer.peerId}@${pinnedServiceId}`,
-      )
+    if (result.done) {
+      if (trackedConversationId && pinnedServiceId) {
+        this._conversations.recordRoutedModel(
+          trackedConversationId,
+          `${selectedPeer.peerId}@${pinnedServiceId}`,
+        )
+      }
+      return
     }
-    if (!result.done) {
-      // Pinned peer returned a retryable error. We never retry against another
-      // peer for an explicit pin, so surface the error to the client.
-      res.writeHead(result.statusCode, result.responseHeaders)
-      res.end(result.responseBody)
-    }
+    // Pinned peer returned a retryable error. We never retry against another
+    // peer — the pin disables auto-selection — so surface the error to the
+    // client.
+    res.writeHead(result.statusCode, result.responseHeaders)
+    res.end(result.responseBody)
   }
 
   private async _verifyPeer(
