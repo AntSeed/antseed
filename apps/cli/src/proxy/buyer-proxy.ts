@@ -51,7 +51,6 @@ import {
   ROUTED_MODEL_ALIAS,
   SYSTEM_PROXY_SOURCE_HEADER,
   SYSTEM_ROUTED_MODEL_HEADER,
-  TITLE_INSTRUCTION_SOURCES_HEADER,
   normalizePeerId,
 } from './request-utils.js'
 import {
@@ -84,7 +83,6 @@ import {
   extractFirstUserSnippet,
   isCompletionRequestPath,
   isTitleGenerationRequest,
-  parseTitleInstructionSources,
   parseRequestBodyObject,
 } from './conversation-identity.js'
 import { ConversationStore } from './conversation-store.js'
@@ -2159,8 +2157,6 @@ export class BuyerProxy {
     // it never reaches a seller.
     const systemRoutedModel = headers[SYSTEM_ROUTED_MODEL_HEADER] === '1'
     delete headers[SYSTEM_ROUTED_MODEL_HEADER]
-    const titleInstructionSources = parseTitleInstructionSources(headers[TITLE_INSTRUCTION_SOURCES_HEADER])
-    delete headers[TITLE_INSTRUCTION_SOURCES_HEADER]
 
     let serializedReq: SerializedHttpRequest = {
       requestId: randomUUID(),
@@ -2277,7 +2273,7 @@ export class BuyerProxy {
       // first real turn, so it must not become the chat's model: that pin
       // outranks the default route for every later turn, which would strand
       // the whole session on a model the user never picked.
-      const titleTurn = isTitleGenerationRequest(conversationBody, titleInstructionSources)
+      const titleTurn = isTitleGenerationRequest(conversationBody)
       const snippet = known?.snippet ? null : extractFirstUserSnippet(conversationBody)
       // Some tools (T3/Claude) fire title-only requests when a new chat opens.
       // Route them normally, but do not create a blank AntSeed conversation row

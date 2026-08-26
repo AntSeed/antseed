@@ -42,14 +42,6 @@ export type ConversationIdentity = {
   isUserThread: boolean
 }
 
-export type TitleInstructionSource = 'system' | 'developer' | 'instructions'
-
-const TITLE_INSTRUCTION_SOURCES = new Set<TitleInstructionSource>([
-  'system',
-  'developer',
-  'instructions',
-])
-
 /* Snippets are labels, not previews — keep them short. */
 const SNIPPET_MAX_CHARS = 80
 
@@ -83,9 +75,9 @@ const TITLE_REQUEST_PREFIXES = [
 ]
 
 /** Some integrations prepend shared provider instructions before their title
-    prompt, so the title-specific text is not at the start of the system block.
-    These exact markers are checked only for explicitly opted-in instruction
-    roles; user messages continue to require a leading title prefix. */
+    prompt, so the title-specific text is not at the start of the instruction
+    block. These exact markers are safe to recognize in system/developer roles
+    and top-level instructions; user messages still require a leading prefix. */
 const TITLE_REQUEST_INSTRUCTION_MARKERS = [
   'you are a helper that generates concise session titles for a session picker',
 ]
@@ -310,10 +302,9 @@ function looksLikeTitleRequest(text: string): boolean {
   return TITLE_REQUEST_PREFIXES.some((prefix) => start.startsWith(prefix))
 }
 
-function looksLikeTitleInstruction(text: string): boolean {
+function containsKnownTitleInstructionMarker(text: string): boolean {
   const normalized = text.toLowerCase().replace(/\s+/g, ' ').trim()
-  return looksLikeTitleRequest(normalized)
-    || TITLE_REQUEST_INSTRUCTION_MARKERS.some((marker) => normalized.includes(marker))
+  return TITLE_REQUEST_INSTRUCTION_MARKERS.some((marker) => normalized.includes(marker))
 }
 
 /** Strip XML-ish tags (prompts often open with wrappers like `<session>`),
@@ -353,30 +344,16 @@ function userTextsFromMessageList(list: unknown): string[] {
   return texts
 }
 
-function instructionTextsFromMessageList(
-  list: unknown,
-  roles: ReadonlySet<TitleInstructionSource>,
-): string[] {
+function instructionTextsFromMessageList(list: unknown): string[] {
   if (!Array.isArray(list)) return []
   const texts: string[] = []
   for (const item of list) {
     if (!item || typeof item !== 'object') continue
     const record = item as Record<string, unknown>
     if (record['role'] !== 'system' && record['role'] !== 'developer') continue
-    if (!roles.has(record['role'])) continue
     texts.push(...textFromContent(record['content']))
   }
   return texts
-}
-
-export function parseTitleInstructionSources(value: string | undefined): TitleInstructionSource[] {
-  if (!value) return []
-  const sources: TitleInstructionSource[] = []
-  for (const rawSource of value.split(',')) {
-    const source = rawSource.trim().toLowerCase() as TitleInstructionSource
-    if (TITLE_INSTRUCTION_SOURCES.has(source) && !sources.includes(source)) sources.push(source)
-  }
-  return sources
 }
 
 /**
@@ -412,7 +389,8 @@ export function extractFirstUserSnippet(parsedBody: Record<string, unknown> | nu
 
 /**
  * True when the request is a tool's title/summary housekeeping turn rather
- * than a chat turn — its *leading* user message is a title instruction.
+ * than a chat turn. Exact known helper markers may appear in instruction
+ * roles; generic title phrasing must be the *leading* user message.
  *
  * Keyed on the first message because OpenCode sends
  * `[{"Generate a title for this conversation:"}, ...the real conversation]`,
@@ -427,18 +405,15 @@ export function extractFirstUserSnippet(parsedBody: Record<string, unknown> | nu
  */
 export function isTitleGenerationRequest(
   parsedBody: Record<string, unknown> | null,
-  titleInstructionSources: readonly TitleInstructionSource[] = [],
 ): boolean {
   if (!parsedBody) return false
-  const sources = new Set(titleInstructionSources)
   const instructions = parsedBody['instructions']
-  const instructionCandidates: string[] = sources.has('instructions') && typeof instructions === 'string'
+  const instructionCandidates: string[] = typeof instructions === 'string'
     ? [instructions]
     : []
-  instructionCandidates.push(...instructionTextsFromMessageList(parsedBody['messages'], sources))
-  instructionCandidates.push(...instructionTextsFromMessageList(parsedBody['input'], sources))
-  const firstInstruction = instructionCandidates.find((text) => text.trim().length > 0)
-  if (firstInstruction !== undefined && looksLikeTitleInstruction(firstInstruction)) return true
+  instructionCandidates.push(...instructionTextsFromMessageList(parsedBody['messages']))
+  instructionCandidates.push(...instructionTextsFromMessageList(parsedBody['input']))
+  if (instructionCandidates.some(containsKnownTitleInstructionMarker)) return true
 
   const candidates: string[] = []
   candidates.push(...userTextsFromMessageList(parsedBody['messages']))

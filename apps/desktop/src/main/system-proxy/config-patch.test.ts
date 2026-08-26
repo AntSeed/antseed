@@ -195,9 +195,6 @@ function makeDroidPatch(configPath: string): DroidConfigPatchDef {
     providerName: 'AntSeed Auto',
     baseURL: 'http://127.0.0.1:{buyerPort}/v1',
     originator: 'droid',
-    conversationTracking: {
-      titleInstructionSources: ['system'],
-    },
   };
 }
 
@@ -241,7 +238,6 @@ test('applyConfigPatch (droid) adds and selects the routed model while preservin
       maxOutputTokens: ANTSEED_MODEL_MAX_OUTPUT_TOKENS,
       extraHeaders: {
         originator: 'droid',
-        'x-antseed-title-instruction-sources': 'system',
       },
     });
     assert.ok(existsSync(`${configPath}.antseed.state.json`));
@@ -840,43 +836,6 @@ test('readConfigPatch parses every default app profile under its declared format
     const parsed = readConfigPatch(rawPatch, name);
     assert.ok(parsed, `default profile ${name} must define a configPatch`);
     assert.equal(parsed.format, rawPatch['format'] ?? 'opencode', `profile ${name} fell through to another format`);
-  }
-});
-
-test('readConfigPatch validates and deduplicates conversation tracking sources', () => {
-  const parsed = readConfigPatch({
-    configPath: '/tmp/settings.json',
-    providerKey: 'antseed',
-    providerName: 'AntSeed Auto',
-    baseURL: 'http://localhost:{buyerPort}/v1',
-    format: 'droid',
-    conversationTracking: {
-      titleInstructionSources: ['system', 'developer', 'system'],
-    },
-  }, 'droid');
-  assert.deepEqual(parsed?.conversationTracking?.titleInstructionSources, ['system', 'developer']);
-
-  assert.throws(() => readConfigPatch({
-    configPath: '/tmp/settings.json',
-    providerKey: 'antseed',
-    providerName: 'AntSeed Auto',
-    baseURL: 'http://localhost:{buyerPort}/v1',
-    format: 'droid',
-    conversationTracking: {
-      titleInstructionSources: ['assistant'],
-    },
-  }, 'droid'), /unsupported source assistant/);
-});
-
-test('only Droid opts into system-role title instructions by default', () => {
-  for (const profile of DEFAULT_APP_PROFILES) {
-    const raw = profile as Record<string, unknown>;
-    const name = raw['name'] as string;
-    const parsed = readConfigPatch(raw['configPatch'], name);
-    assert.deepEqual(
-      parsed?.conversationTracking?.titleInstructionSources,
-      name === 'droid' ? ['system'] : undefined,
-    );
   }
 });
 

@@ -21,18 +21,9 @@ import {
  */
 export const ROUTED_MODEL_ALIAS = 'antseed';
 const ROUTED_MODEL_ALIAS_LABEL = 'AntSeed Auto';
+// Droid requires the `custom:` namespace to resolve this through `customModels`;
+// an unprefixed value is treated as a Factory-managed model and triggers Factory authentication.
 const DROID_ROUTED_MODEL_ID = 'custom:AntSeed-Auto-0';
-const TITLE_INSTRUCTION_SOURCES_HEADER = 'x-antseed-title-instruction-sources';
-
-export type TitleInstructionSource = 'system' | 'developer' | 'instructions';
-
-export type ConversationTrackingDef = {
-  readonly titleInstructionSources: readonly TitleInstructionSource[];
-};
-
-type ConfigPatchTrackingDef = {
-  readonly conversationTracking?: ConversationTrackingDef;
-};
 
 /**
  * Config patches point a tool's own configuration at the buyer proxy. Each
@@ -46,7 +37,7 @@ type ConfigPatchTrackingDef = {
  *  - `hermes`: nested YAML provider + model selection (Hermes' config.yaml)
  *  - `zed`: JSONC settings with `language_models.openai_compatible` (Zed's settings.json)
  */
-export type OpencodeConfigPatchDef = ConfigPatchTrackingDef & {
+export type OpencodeConfigPatchDef = {
   readonly format?: 'opencode';
   readonly configPath: string;
   readonly providerKey: string;
@@ -62,7 +53,7 @@ export type OpencodeConfigPatchDef = ConfigPatchTrackingDef & {
   readonly installProbe?: 'opencode';
 };
 
-export type CodexConfigPatchDef = ConfigPatchTrackingDef & {
+export type CodexConfigPatchDef = {
   readonly format: 'codex';
   readonly configPath: string;
   readonly providerKey: string;
@@ -71,7 +62,7 @@ export type CodexConfigPatchDef = ConfigPatchTrackingDef & {
   readonly installProbe?: 'codex';
 };
 
-export type DroidConfigPatchDef = ConfigPatchTrackingDef & {
+export type DroidConfigPatchDef = {
   readonly format: 'droid';
   /** Droid CLI and Factory Desktop's shared user settings. */
   readonly configPath: string;
@@ -83,7 +74,7 @@ export type DroidConfigPatchDef = ConfigPatchTrackingDef & {
   readonly installProbe?: 'droid';
 };
 
-export type PiConfigPatchDef = ConfigPatchTrackingDef & {
+export type PiConfigPatchDef = {
   readonly format: 'pi';
   /** pi models.json (custom providers). */
   readonly configPath: string;
@@ -96,7 +87,7 @@ export type PiConfigPatchDef = ConfigPatchTrackingDef & {
   readonly installProbe?: 'pi';
 };
 
-export type CrushConfigPatchDef = ConfigPatchTrackingDef & {
+export type CrushConfigPatchDef = {
   readonly format: 'crush';
   readonly configPath: string;
   /** POSIX config path for WSL installs — `configPath` is resolved to a
@@ -109,7 +100,7 @@ export type CrushConfigPatchDef = ConfigPatchTrackingDef & {
   readonly installProbe?: 'crush';
 };
 
-export type GooseConfigPatchDef = ConfigPatchTrackingDef & {
+export type GooseConfigPatchDef = {
   readonly format: 'goose';
   /** goose config.yaml (flat env-style keys). */
   readonly configPath: string;
@@ -122,7 +113,7 @@ export type GooseConfigPatchDef = ConfigPatchTrackingDef & {
   readonly installProbe?: 'goose';
 };
 
-export type HermesConfigPatchDef = ConfigPatchTrackingDef & {
+export type HermesConfigPatchDef = {
   readonly format: 'hermes';
   /** Hermes user configuration (`~/.hermes/config.yaml`). */
   readonly configPath: string;
@@ -131,7 +122,7 @@ export type HermesConfigPatchDef = ConfigPatchTrackingDef & {
   readonly baseURL: string;
 };
 
-export type ZedConfigPatchDef = ConfigPatchTrackingDef & {
+export type ZedConfigPatchDef = {
   readonly format: 'zed';
   readonly configPath: string;
   readonly providerKey: string;
@@ -140,7 +131,7 @@ export type ZedConfigPatchDef = ConfigPatchTrackingDef & {
   readonly baseURL: string;
 };
 
-export type T3CodeConfigPatchDef = ConfigPatchTrackingDef & {
+export type T3CodeConfigPatchDef = {
   readonly format: 't3code';
   readonly configPath: string;
   readonly providerKey: string;
@@ -170,33 +161,6 @@ export function readRequiredString(raw: Record<string, unknown>, key: string, co
   return value;
 }
 
-function readConversationTracking(
-  raw: Record<string, unknown>,
-  profileName: string,
-): ConversationTrackingDef | undefined {
-  const value = raw['conversationTracking'];
-  if (value === undefined) return undefined;
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error(`conversationTracking for ${profileName} must be an object`);
-  }
-  const sources = (value as Record<string, unknown>)['titleInstructionSources'];
-  if (!Array.isArray(sources)) {
-    throw new Error(`conversationTracking.titleInstructionSources for ${profileName} must be an array`);
-  }
-  const allowedSources = new Set<TitleInstructionSource>(['system', 'developer', 'instructions']);
-  const titleInstructionSources: TitleInstructionSource[] = [];
-  for (const source of sources) {
-    if (typeof source !== 'string' || !allowedSources.has(source as TitleInstructionSource)) {
-      throw new Error(
-        `conversationTracking.titleInstructionSources for ${profileName} contains unsupported source ${String(source)}`,
-      );
-    }
-    const typedSource = source as TitleInstructionSource;
-    if (!titleInstructionSources.includes(typedSource)) titleInstructionSources.push(typedSource);
-  }
-  return { titleInstructionSources };
-}
-
 /** Parses a profile's configPatch blob into a ConfigPatchDef. Every format in
  *  the union needs its own branch here — an unmatched format falls through to
  *  opencode, whose `npm` requirement then throws at profile load (i.e. app
@@ -212,8 +176,6 @@ export function readConfigPatch(value: unknown, profileName: string): ConfigPatc
   const providerKey = readRequiredString(raw, 'providerKey', profileName);
   const baseURL = readRequiredString(raw, 'baseURL', profileName);
   const format = readString(raw, 'format');
-  const conversationTracking = readConversationTracking(raw, profileName);
-  const tracking = conversationTracking ? { conversationTracking } : {};
   if (format === 'codex') {
     return {
       format: 'codex',
@@ -221,7 +183,6 @@ export function readConfigPatch(value: unknown, profileName: string): ConfigPatc
       providerKey,
       providerName: readRequiredString(raw, 'providerName', profileName),
       baseURL,
-      ...tracking,
       ...(raw['installProbe'] === 'codex' ? { installProbe: 'codex' as const } : {}),
     };
   }
@@ -233,7 +194,6 @@ export function readConfigPatch(value: unknown, profileName: string): ConfigPatc
       providerKey,
       providerName: readRequiredString(raw, 'providerName', profileName),
       baseURL,
-      ...tracking,
       ...(originator ? { originator } : {}),
       ...(raw['installProbe'] === 'droid' ? { installProbe: 'droid' as const } : {}),
     };
@@ -247,7 +207,6 @@ export function readConfigPatch(value: unknown, profileName: string): ConfigPatc
       settingsPath: readRequiredString(raw, 'settingsPath', profileName),
       providerKey,
       baseURL,
-      ...tracking,
       api: api === 'openai-responses' || api === 'anthropic-messages' ? api : 'openai-completions',
       ...(originator ? { originator } : {}),
       ...(raw['installProbe'] === 'pi' ? { installProbe: 'pi' as const } : {}),
@@ -262,7 +221,6 @@ export function readConfigPatch(value: unknown, profileName: string): ConfigPatc
       providerKey,
       providerName: readRequiredString(raw, 'providerName', profileName),
       baseURL,
-      ...tracking,
       ...(raw['installProbe'] === 'crush' ? { installProbe: 'crush' as const } : {}),
     };
   }
@@ -274,7 +232,6 @@ export function readConfigPatch(value: unknown, profileName: string): ConfigPatc
       ...(wslConfigPath ? { wslConfigPath } : {}),
       providerKey,
       baseURL,
-      ...tracking,
       ...(raw['installProbe'] === 'goose' ? { installProbe: 'goose' as const } : {}),
     };
   }
@@ -284,7 +241,6 @@ export function readConfigPatch(value: unknown, profileName: string): ConfigPatc
       configPath,
       providerKey,
       baseURL,
-      ...tracking,
     };
   }
   if (format === 'zed') {
@@ -294,7 +250,6 @@ export function readConfigPatch(value: unknown, profileName: string): ConfigPatc
       providerKey,
       providerName: readRequiredString(raw, 'providerName', profileName),
       baseURL,
-      ...tracking,
     };
   }
   if (format === 't3code') {
@@ -304,7 +259,6 @@ export function readConfigPatch(value: unknown, profileName: string): ConfigPatc
       providerKey,
       providerName: readRequiredString(raw, 'providerName', profileName),
       baseURL,
-      ...tracking,
     };
   }
   return {
@@ -314,7 +268,6 @@ export function readConfigPatch(value: unknown, profileName: string): ConfigPatc
     npm: readRequiredString(raw, 'npm', profileName),
     providerName: readRequiredString(raw, 'providerName', profileName),
     baseURL,
-    ...tracking,
     ...(raw['installProbe'] === 'opencode' ? { installProbe: 'opencode' as const } : {}),
   };
 }
@@ -860,13 +813,7 @@ function applyDroidModelToFile(filePath: string, patch: DroidConfigPatchDef, bas
     });
   }
 
-  const titleInstructionSources = patch.conversationTracking?.titleInstructionSources ?? [];
-  const extraHeaders = {
-    ...(patch.originator ? { originator: patch.originator } : {}),
-    ...(titleInstructionSources.length > 0
-      ? { [TITLE_INSTRUCTION_SOURCES_HEADER]: titleInstructionSources.join(',') }
-      : {}),
-  };
+  const extraHeaders = patch.originator ? { originator: patch.originator } : {};
   config['customModels'] = [
     ...customModels.filter((model) => !isDroidModel(model, patch.providerKey)),
     {

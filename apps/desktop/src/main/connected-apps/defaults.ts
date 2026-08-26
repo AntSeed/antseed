@@ -92,9 +92,6 @@ export const DEFAULT_APP_PROFILES: readonly Record<string, unknown>[] = [
       providerName: 'AntSeed Auto',
       baseURL: 'http://localhost:{buyerPort}/v1',
       originator: 'droid',
-      conversationTracking: {
-        titleInstructionSources: ['system'],
-      },
       installProbe: 'droid',
     },
   },

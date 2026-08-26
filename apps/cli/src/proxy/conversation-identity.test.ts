@@ -5,7 +5,6 @@ import {
   extractFirstUserSnippet,
   isCompletionRequestPath,
   isTitleGenerationRequest,
-  parseTitleInstructionSources,
 } from './conversation-identity.js'
 
 const CURSOR_ENVIRONMENT = `<user_info>
@@ -404,22 +403,20 @@ Input: one user message from the start of a session.`,
       { role: 'user', content: 'wowow' },
     ],
   }
-  assert.equal(isTitleGenerationRequest(droidTitleRequest), false)
-  assert.equal(isTitleGenerationRequest(droidTitleRequest, ['system']), true)
-  assert.equal(isTitleGenerationRequest(droidTitleRequest, ['developer']), false)
+  assert.equal(isTitleGenerationRequest(droidTitleRequest), true)
 
   assert.equal(isTitleGenerationRequest({
-    instructions: 'Generate a title for this session',
+    instructions: `Shared provider compatibility preamble.
+You are a helper that generates concise session titles for a session picker.`,
     input: 'wowow',
-  }, ['instructions']), true)
-})
-
-test('title instruction source headers accept only supported deduplicated values', () => {
-  assert.deepEqual(
-    parseTitleInstructionSources('system, developer,system,assistant'),
-    ['system', 'developer'],
-  )
-  assert.deepEqual(parseTitleInstructionSources(undefined), [])
+  }), true)
+  assert.equal(isTitleGenerationRequest({
+    input: [{
+      type: 'message',
+      role: 'developer',
+      content: 'You are a helper that generates concise session titles for a session picker.',
+    }],
+  }), true)
 })
 
 test('real turns are not mistaken for title turns', () => {
@@ -431,6 +428,18 @@ test('real turns are not mistaken for title turns', () => {
       { role: 'system', content: 'You are a helpful coding assistant.' },
       { role: 'user', content: 'fix the failing tests' },
       { role: 'user', content: 'Generate a title for this conversation:' },
+    ],
+  }), false)
+  // Broad title phrasing in instructions is not enough; instruction-role
+  // detection deliberately uses only exact known housekeeping markers.
+  assert.equal(isTitleGenerationRequest({
+    instructions: 'Generate a title for this session',
+    input: 'wowow',
+  }), false)
+  assert.equal(isTitleGenerationRequest({
+    messages: [
+      { role: 'system', content: 'Generate a title for this session' },
+      { role: 'user', content: 'wowow' },
     ],
   }), false)
   assert.equal(isTitleGenerationRequest(null), false)
