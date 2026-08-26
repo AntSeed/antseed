@@ -440,8 +440,8 @@ function DownloadCta({caption, size = 'lg'}: {caption?: string; size?: 'md' | 'l
         <span className="vprLabelDesktop">Download VPR</span>
         <span className="vprLabelMobile">Get Started<ArrowRight /></span>
       </Button>
-      {caption && <span className={styles.ctaCaption}>{caption}</span>}
       <AllVersionsLink />
+      {caption && <span className={styles.ctaCaption}>{caption}</span>}
     </div>
   );
 }
@@ -1315,8 +1315,8 @@ function FinalCta() {
         <p className={styles.finalSub}>Every Model, No Middleman. Anonymous and Always On.</p>
         <div className={styles.ctaBlock}>
           <FinalCtaButton />
-          <span className={styles.ctaCaptionLight}>No account needed. Just start.</span>
           <AllVersionsLink light />
+          <span className={styles.ctaCaptionLight}>No account needed. Just start.</span>
         </div>
       </Reveal>
     </section>
