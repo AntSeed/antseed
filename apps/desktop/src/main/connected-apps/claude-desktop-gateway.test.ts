@@ -25,10 +25,20 @@ type StubBuyer = {
   close: () => Promise<void>;
 };
 
-/** A stand-in buyer proxy that records requests and streams a canned SSE reply. */
-async function startStubBuyer(): Promise<StubBuyer> {
+/** A stand-in buyer proxy that records message requests, answers the default
+    route lookup, and streams a canned SSE reply. */
+async function startStubBuyer(routedModel: string | null = 'abc123@gpt-5.6-sol'): Promise<StubBuyer> {
   const requests: StubRequest[] = [];
   const server = http.createServer((req, res) => {
+    if (req.method === 'GET' && req.url === '/_antseed/route') {
+      if (routedModel === null) {
+        res.writeHead(404).end();
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, model: routedModel }));
+      return;
+    }
     const chunks: Buffer[] = [];
     req.on('data', (chunk: Buffer) => chunks.push(chunk));
     req.on('end', () => {
@@ -219,12 +229,32 @@ test('/v1/messages appends a routing identity note to the system prompt', async 
     assert.equal(systemBlocks.length, 2);
     assert.deepEqual(systemBlocks[0], { type: 'text', text: 'base', cache_control: { type: 'ephemeral' } });
     assert.equal(systemBlocks[1]!.type, 'text');
-    assert.ok(systemBlocks[1]!.text.includes('model currently selected in the AntSeed desktop app'));
+    assert.ok(systemBlocks[1]!.text.includes('"gpt-5.6-sol" (the route currently selected'));
 
-    // No system prompt at all still gets the note.
-    const bare = await send({ model: 'claude-opus-5', messages: [] });
-    assert.ok((bare['system'] as string).includes('"glm-5.2"'));
+    // No system prompt at all still gets the note; the Auto alias names the
+    // buyer's currently routed model so the serving model can answer with
+    // its real identity instead of the Claude id from client metadata.
+    const bare = await send({ model: 'antseed', messages: [] });
+    assert.ok((bare['system'] as string).includes('"gpt-5.6-sol" (the route currently selected'));
   }, () => picker);
+});
+
+test('the identity note falls back to generic wording when the route lookup fails', async () => {
+  const buyer = await startStubBuyer(null);
+  const gateway = new ClaudeDesktopGateway({ port: 0, buyerPort: buyer.port });
+  await gateway.start();
+  try {
+    await fetch(`http://127.0.0.1:${gateway.port}/v1/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'antseed', messages: [] }),
+    });
+    const forwarded = JSON.parse(buyer.requests[0]!.body) as Record<string, unknown>;
+    assert.ok((forwarded['system'] as string).includes('model currently selected in the AntSeed desktop app'));
+  } finally {
+    await gateway.stop();
+    await buyer.close();
+  }
 });
 
 test('requests carrying an Origin header are rejected', async () => {

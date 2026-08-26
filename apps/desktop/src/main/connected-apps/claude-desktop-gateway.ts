@@ -28,6 +28,9 @@ import {
 const MAX_REQUEST_BODY_BYTES = 64 * 1024 * 1024;
 export const CLAUDE_GATEWAY_HEALTH_PATH = '/_antseed/claude-gateway';
 export const CLAUDE_GATEWAY_HEALTH_HEADER = 'x-antseed-claude-gateway';
+/** How long a routed-model lookup for the identity note stays fresh. */
+const ROUTE_CACHE_TTL_MS = 5_000;
+const ROUTE_LOOKUP_TIMEOUT_MS = 750;
 
 /**
  * Claude Desktop's picker only lists the model ids it knows, grouped by
@@ -222,12 +225,51 @@ export class ClaudeDesktopGateway {
     }));
   }
 
+  /**
+   * What the routed-model alias currently resolves to (the service part of
+   * the buyer's default route), so the identity note can name the model that
+   * actually answers instead of "whatever the desktop routes to" — without a
+   * name, models fall back to the Claude id in the client metadata when asked
+   * what they are. Cached briefly; null (buyer down, no route yet) falls back
+   * to the generic wording.
+   */
+  private routeCache: { model: string | null; fetchedAt: number } = { model: null, fetchedAt: 0 };
+
+  private async resolveRoutedModelName(): Promise<string | null> {
+    const now = Date.now();
+    if (now - this.routeCache.fetchedAt < ROUTE_CACHE_TTL_MS) return this.routeCache.model;
+    let model: string | null = null;
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${this.options.buyerPort}/_antseed/route`,
+        { signal: AbortSignal.timeout(ROUTE_LOOKUP_TIMEOUT_MS) },
+      );
+      if (response.ok) {
+        const payload = await response.json() as { model?: unknown };
+        if (typeof payload.model === 'string' && payload.model.trim().length > 0) {
+          const route = payload.model.trim();
+          const at = route.indexOf('@');
+          model = at >= 0 ? route.slice(at + 1) : route;
+        }
+      }
+    } catch {
+      // Buyer unreachable or slow — the note keeps its generic wording.
+    }
+    this.routeCache = { model, fetchedAt: now };
+    return model;
+  }
+
   private forwardMessages(req: http.IncomingMessage, res: http.ServerResponse, url: string): void {
     collectBody(req, (err, body) => {
       if (err) {
         writeAnthropicError(res, err.statusCode, 'invalid_request_error', err.message);
         return;
       }
+      void this.forwardCollectedBody(req, res, url, body);
+    });
+  }
+
+  private async forwardCollectedBody(req: http.IncomingMessage, res: http.ServerResponse, url: string, body: Buffer): Promise<void> {
       const headers: Record<string, string> = {
         'content-type': 'application/json',
         // Claude authenticates to this loopback gateway with the placeholder
@@ -244,7 +286,9 @@ export class ClaudeDesktopGateway {
       if (this.slotModels.size === 0) this.assignSlots();
       // The identity note goes only on real message turns — count_tokens
       // never reaches a model.
-      const payload = rewriteModel(body, this.slotModels, { identityNote: url === '/v1/messages' });
+      const identityNote = url === '/v1/messages';
+      const routedModelName = identityNote ? await this.resolveRoutedModelName() : null;
+      const payload = rewriteModel(body, this.slotModels, { identityNote, routedModelName });
       headers['content-length'] = String(Buffer.byteLength(payload));
       const upstream = http.request(
         { host: '127.0.0.1', port: this.options.buyerPort, path: url, method: 'POST', headers },
@@ -270,7 +314,6 @@ export class ClaudeDesktopGateway {
         if (!res.writableEnded) upstream.destroy();
       });
       upstream.end(payload);
-    });
   }
 }
 
@@ -290,7 +333,7 @@ export class ClaudeDesktopGateway {
 export function rewriteModel(
   body: Buffer,
   slotModels: ReadonlyMap<string, string>,
-  opts: { identityNote?: boolean } = {},
+  opts: { identityNote?: boolean; routedModelName?: string | null } = {},
 ): Buffer {
   let parsed: unknown;
   try {
@@ -307,14 +350,19 @@ export function rewriteModel(
     ? model
     : (typeof model === 'string' ? slotModels.get(model) : undefined) ?? ROUTED_MODEL_ALIAS;
   request['model'] = resolved;
-  if (opts.identityNote) appendIdentityNote(request, resolved);
+  if (opts.identityNote) appendIdentityNote(request, resolved, opts.routedModelName ?? null);
   return Buffer.from(JSON.stringify(request), 'utf8');
 }
 
-function identityNote(resolvedModel: string): string {
-  const serving = resolvedModel === ROUTED_MODEL_ALIAS
-    ? 'the model currently selected in the AntSeed desktop app, which is typically not an Anthropic model'
-    : `"${resolvedModel}"`;
+function identityNote(resolvedModel: string, routedModelName: string | null): string {
+  let serving: string;
+  if (resolvedModel !== ROUTED_MODEL_ALIAS) {
+    serving = `"${resolvedModel}"`;
+  } else if (routedModelName) {
+    serving = `"${routedModelName}" (the route currently selected in the AntSeed desktop app)`;
+  } else {
+    serving = 'the model currently selected in the AntSeed desktop app, which is typically not an Anthropic model';
+  }
   return 'Routing note from AntSeed: this conversation is served over the AntSeed peer-to-peer network by '
     + `${serving}. Client metadata naming a Claude model refers to a routing alias, not the serving model — `
     + 'when asked which model you are, answer with your actual identity.';
@@ -323,8 +371,8 @@ function identityNote(resolvedModel: string): string {
 /** Appended as the last system block so earlier prompt-cache breakpoints
     Claude Desktop may have set stay valid. Unknown system shapes are left
     alone rather than guessed at. */
-function appendIdentityNote(request: Record<string, unknown>, resolvedModel: string): void {
-  const note = identityNote(resolvedModel);
+function appendIdentityNote(request: Record<string, unknown>, resolvedModel: string, routedModelName: string | null): void {
+  const note = identityNote(resolvedModel, routedModelName);
   const system = request['system'];
   if (system === undefined || system === null) {
     request['system'] = note;
