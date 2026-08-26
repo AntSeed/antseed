@@ -150,8 +150,6 @@ export function projectRowsToVprModelCatalog(
  *  entry wins. */
 export const FREE_MODEL_PRIORITY: ReadonlyArray<RegExp> = [
   /deep-?seek.*flash/,
-  // "ox-alpha" / "ox alpha", not the tail of e.g. "fox-alpha".
-  /(^|[^a-z])ox[-\s]?alpha/,
   /gpt[-\s]?oss[-\s]?120b/,
   /minimax[-\s]?m?[-\s]?3/,
   /minimax[-\s]?m?[-\s]?2\.7/,
