@@ -44,6 +44,53 @@ cd packages/node
 forge test
 ```
 
+## Recognized Usage and Integrity Deployment
+
+The recognized-usage migration is intentionally split from the epoch-boundary
+pointer flip. It is not one automatic deployment transaction.
+
+1. Run `DeployRecognizedUsage.s.sol` early enough in the current epoch. It
+   deploys `AntseedEmissionsGate`, seller pools and registries, usage accounting
+   and reward controllers, `AntseedPointsPolicyRegistry`, and
+   `AntseedVerification`. The verification contract controls the 10% verifier
+   minter bucket. `AntseedUsageAccounting.pointsPolicy` is set only to the
+   policy registry. No wash or verification leaf is registered by this script.
+2. Deploy `AntseedWashTradingRegistry` with
+   `DeployWashTradingEnforcement.s.sol` using the approved vkeys, batch count,
+   and digest.
+3. Run `ConfigureIntegrityPolicies.s.sol` with the printed
+   `POINTS_POLICY_REGISTRY`, the wash registry, and `VERIFICATION`. It deploys
+   missing wash and verification leaves, or reuses the optional
+   `WASH_TRADING_POINTS_POLICY` and `VERIFICATION_POINTS_POLICY` addresses.
+   Registration is idempotent. `REGISTER_WASH_POLICY` defaults to `true`;
+   `REGISTER_VERIFICATION_POLICY` defaults to `false`. A false flag never
+   removes an already registered policy.
+4. Install `AntseedWashTradingRewardPolicy` separately with
+   `DeploySellerRewardGate.s.sol` for the legacy emissions and locked seller
+   reward-pool claim paths. This reward policy is not a points-registry leaf.
+5. Submit and verify the historical wash-proof batch. The registered wash
+   points policy returns zero penalty until `backfillComplete`, so installing it
+   before the batch does not suppress seller or buyer points.
+6. At the next epoch boundary, run `scripts/cutover-flip.sh` (or manage the
+   equivalent pause, wait, `CutoverFlip.s.sol`, verification, and unpause steps
+   manually). Only this second broadcast changes the protocol registry's
+   emissions and staking pointers.
+
+`AntseedEmissionsGate.effectiveEpoch` is the epoch after broadcast one. All
+minter shares must be configured in the gate's deployment epoch, which is why
+`DeployRecognizedUsage` refuses to start within one hour of a boundary. The
+legacy stack remains active until the boundary flip, and the wrapper pauses
+channels before the boundary so new-epoch usage cannot land on the legacy
+ledger. Verification attestations and rewards may be collected after verifier
+approval, but verification cannot change routing points until governance later
+registers `AntseedVerificationPointsPolicy`.
+
+```bash
+forge script script/DeployRecognizedUsage.s.sol --rpc-url "$BASE_MAINNET_RPC_URL" --broadcast --via-ir
+forge script script/DeployWashTradingEnforcement.s.sol --rpc-url "$BASE_MAINNET_RPC_URL" --broadcast --via-ir
+forge script script/ConfigureIntegrityPolicies.s.sol --rpc-url "$BASE_MAINNET_RPC_URL" --broadcast --via-ir
+```
+
 ## Wash-Trading Enforcement
 
 `AntseedWashTradingRegistry` pins the closed-loop and reciprocal SP1 vkeys, the

@@ -12,6 +12,7 @@ import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
 import { AntseedPointsPolicyRegistry } from "../policies/AntseedPointsPolicyRegistry.sol";
 import { AntseedSellerPools } from "../sellers/AntseedSellerPools.sol";
 import { AntseedSellerRegistry } from "../sellers/AntseedSellerRegistry.sol";
+import { AntseedVerification } from "../verification/AntseedVerification.sol";
 
 interface IANTSTokenAdmin {
     function owner() external view returns (address);
@@ -47,7 +48,6 @@ interface IAntseedLegacyEmissionsAdmin {
  *   DEPLOYER_PRIVATE_KEY   Broadcaster key. MUST be the owner of ANTSToken and
  *                          the legacy emissions contract (checked upfront).
  *   ANTSEED_REGISTRY       Existing (legacy) AntseedRegistry address.
- *   VERIFICATION_WALLET    Recipient of the verification bucket.
  *
  * Optional env:
  *   EMISSIONS_RESERVE_WALLET          Destination for ANTS emission reserve flows
@@ -87,8 +87,6 @@ contract DeployRecognizedUsage is Script {
         require(existingChannels != address(0), "channels not set");
         require(existingDeposits != address(0), "deposits not set");
 
-        address verificationWallet = vm.envAddress("VERIFICATION_WALLET");
-        require(verificationWallet != address(0), "verification wallet not set");
         address emissionsReserveWallet = vm.envOr("EMISSIONS_RESERVE_WALLET", address(0));
         address teamWallet = registry.teamWallet();
         address protocolReserve = registry.protocolReserve();
@@ -172,7 +170,9 @@ contract DeployRecognizedUsage is Script {
         sellerPools.setStakingSource(address(sellerRegistry));
 
         console.log("EmissionsGate:          ", address(gate));
-        gate.setMinter(VERIFICATION_MINTER_ID, verificationWallet, 10_000, true);
+
+        AntseedVerification verification = new AntseedVerification(registryAddress, address(gate));
+        console.log("Verification:           ", address(verification));
 
         AntseedUsageAccounting usageAccounting =
             new AntseedUsageAccounting(address(sellerPools), existingChannels, address(gate));
@@ -219,6 +219,7 @@ contract DeployRecognizedUsage is Script {
         sellerPools.setRewardStaker(address(sellerPoolsRewards), true);
         gate.setMinter(SELLER_POOLS_MINTER_ID, address(sellerPoolsRewards), 40_000, true);
         gate.setMinter(USAGE_MINTER_ID, address(usageRewards), 20_000, true);
+        gate.setMinter(VERIFICATION_MINTER_ID, address(verification), 10_000, true);
 
         // Mint authority moves only after every bucket minter is configured: a
         // broadcast that fails before this line leaves the legacy emissions
@@ -257,7 +258,15 @@ contract DeployRecognizedUsage is Script {
         console.log("Legacy claims deposits:   ", existingDeposits);
         console.log("Team recipient:           ", teamWallet);
         console.log("Reserve recipient:        ", gate.emissionsReserve());
-        console.log("Verification recipient:   ", verificationWallet);
+        console.log("Verification controller:  ", address(verification));
+        console.log("Points policy registry:   ", address(pointsPolicyRegistry));
+        console.log("Integrity policies:        NONE REGISTERED by this broadcast");
+        console.log("");
+        console.log("NEXT STEP (integrity policy configuration):");
+        console.log("- Deploy the wash-trading proof registry, then run");
+        console.log("  ConfigureIntegrityPolicies.s.sol. It registers the wash leaf");
+        console.log("  by default and deploys verification in shadow mode without");
+        console.log("  registering its points adapter.");
         console.log("");
         console.log("NEXT STEP (broadcast 2 of 2):");
         console.log("- Run scripts/cutover-flip.sh: it pauses AntseedChannels 60s");
@@ -294,6 +303,9 @@ contract DeployRecognizedUsage is Script {
         console.log("  included). Transfer ownership to the ops multisig, and once");
         console.log("  minters/deposits/escrow are final call gate.renounceOwnership()");
         console.log("  to freeze the emission plan.");
+        console.log("- No verifier is whitelisted yet: call verification.setVerifier");
+        console.log("  for each approved verifier. Verification results stay shadow-");
+        console.log("  only until its points policy is deliberately registered.");
         console.log("- KEEP AntseedRegistry ownership: it is the only key that can open");
         console.log("  the temporary setStaking(legacy) window needed to withdraw the");
         console.log("  proxy's legacy USDC stake (SellerRegistry.unstake reverts by");
