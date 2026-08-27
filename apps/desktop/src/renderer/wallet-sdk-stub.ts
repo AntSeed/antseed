@@ -11,9 +11,9 @@
  */
 export default {};
 
-/** Named exports demanded statically by @dynamic-labs/ethereum (Crossmint's
-    embedded-wallet layer) and @wagmi/connectors — all inside never-loaded
-    lazy chunks or never-invoked connector factories. Values are inert. */
+/** Named exports demanded statically by @wagmi/connectors — all inside
+    never-loaded lazy chunks or never-invoked connector factories. Values
+    are inert. */
 export class CoinbaseWalletSDK {}
 export class MetaMaskSDK {}
 export const ProviderInterface = undefined;
