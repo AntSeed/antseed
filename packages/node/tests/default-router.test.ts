@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { DefaultRouter } from '../src/routing/default-router.js';
+import { serviceHash } from '../src/payments/evm/verifier-client.js';
 import type { PeerInfo } from '../src/types/peer.js';
 import type { SerializedHttpRequest } from '../src/types/http.js';
 
@@ -12,6 +13,31 @@ function makePeer(overrides?: Partial<PeerInfo>): PeerInfo {
     defaultInputUsdPerMillion: 10,
     ...overrides,
   };
+}
+
+function verification(
+  lifecycle: 'verified' | 'flagged' | 'suspended',
+  enforcementActive = true,
+) {
+  const diffCount = lifecycle === 'verified' ? 0 : lifecycle === 'flagged' ? 1 : 2;
+  return {
+    serviceHash: serviceHash('kimi-k2'),
+    lifecycle,
+    sameCount: lifecycle === 'verified' ? 1 : 0,
+    diffCount,
+    undeterminedCount: 0,
+    activeDiffVerifierCount: diffCount,
+    requiredDiffVerifierCount: 2,
+    enforcementActive,
+    consecutiveDiffCount: diffCount,
+    lastVerdict: lifecycle === 'verified' ? 1 : 2,
+    lastConclusiveVerdict: lifecycle === 'verified' ? 1 : 2,
+    latestAuditId: '0x' + '11'.repeat(32),
+    latestEvidenceHash: '0x' + '22'.repeat(32),
+    latestVerifier: '0x' + '33'.repeat(20),
+    latestBlockNumber: 100,
+    modelShareBps: lifecycle === 'verified' ? 0 : 2500,
+  } as const;
 }
 
 const dummyReq: SerializedHttpRequest = {
@@ -99,6 +125,100 @@ describe('DefaultRouter', () => {
       });
 
       const selected = router.selectPeer(dummyReq, [newSeller]);
+      expect(selected?.peerId).toBe('a'.repeat(40));
+    });
+
+    it('should exclude a cheaper seller after a second consecutive DIFF for the requested model', () => {
+      const router = new DefaultRouter();
+      const flagged = makePeer({
+        peerId: 'a'.repeat(40) as any,
+        defaultInputUsdPerMillion: 1,
+        modelVerification: {
+          'kimi-k2': verification('suspended'),
+        },
+      });
+      const clean = makePeer({
+        peerId: 'b'.repeat(40) as any,
+        defaultInputUsdPerMillion: 100,
+        modelVerification: {
+          'kimi-k2': verification('verified'),
+        },
+      });
+      const req: SerializedHttpRequest = {
+        ...dummyReq,
+        body: new TextEncoder().encode(JSON.stringify({ model: 'kimi-k2' })),
+      };
+
+      const selected = router.selectPeer(req, [flagged, clean]);
+      expect(selected?.peerId).toBe('b'.repeat(40));
+    });
+
+    it('should deprioritize rather than exclude after the first DIFF', () => {
+      const router = new DefaultRouter();
+      const singleAccuser = makePeer({
+        peerId: 'a'.repeat(40) as any,
+        defaultInputUsdPerMillion: 1,
+        modelVerification: {
+          'kimi-k2': verification('flagged'),
+        },
+      });
+      const pricier = makePeer({ peerId: 'b'.repeat(40) as any, defaultInputUsdPerMillion: 100 });
+      const req: SerializedHttpRequest = {
+        ...dummyReq,
+        body: new TextEncoder().encode(JSON.stringify({ model: 'kimi-k2' })),
+      };
+
+      const selected = router.selectPeer(req, [singleAccuser, pricier]);
+      expect(selected?.peerId).toBe('b'.repeat(40));
+    });
+
+    it('should keep verification informational while the policy is unregistered', () => {
+      const router = new DefaultRouter();
+      const shadowFlagged = makePeer({
+        peerId: 'a'.repeat(40) as any,
+        defaultInputUsdPerMillion: 1,
+        modelVerification: {
+          'kimi-k2': verification('suspended', false),
+        },
+      });
+      const clean = makePeer({ peerId: 'b'.repeat(40) as any, defaultInputUsdPerMillion: 100 });
+      const request: SerializedHttpRequest = {
+        ...dummyReq,
+        body: new TextEncoder().encode(JSON.stringify({ model: 'kimi-k2' })),
+      };
+
+      expect(router.selectPeer(request, [shadowFlagged, clean])?.peerId).toBe('a'.repeat(40));
+    });
+
+    it('should not apply a service suspension when the request names no service', () => {
+      const router = new DefaultRouter();
+      const flagged = makePeer({
+        peerId: 'a'.repeat(40) as any,
+        defaultInputUsdPerMillion: 1,
+        modelVerification: {
+          'kimi-k2': verification('suspended'),
+        },
+      });
+      const clean = makePeer({ peerId: 'b'.repeat(40) as any, defaultInputUsdPerMillion: 100 });
+
+      const selected = router.selectPeer(dummyReq, [flagged, clean]);
+      expect(selected?.peerId).toBe('a'.repeat(40));
+    });
+
+    it('should keep a peer whose service penalty was cleared by SAME', () => {
+      const router = new DefaultRouter();
+      const retracted = makePeer({
+        peerId: 'a'.repeat(40) as any,
+        defaultInputUsdPerMillion: 1,
+        modelVerification: {
+          'kimi-k2': verification('verified'),
+        },
+      });
+      const request = {
+        ...dummyReq,
+        body: new TextEncoder().encode(JSON.stringify({ model: 'kimi-k2' })),
+      };
+      const selected = router.selectPeer(request, [retracted]);
       expect(selected?.peerId).toBe('a'.repeat(40));
     });
 
