@@ -25,6 +25,9 @@ importers:
       '@antseed/api-adapter':
         specifier: workspace:*
         version: link:../../packages/api-adapter
+      '@antseed/fingerprints':
+        specifier: workspace:*
+        version: link:../../packages/fingerprints
       '@antseed/node':
         specifier: workspace:*
         version: link:../../packages/node
@@ -503,6 +506,15 @@ importers:
       vitest:
         specifier: ^2.0.0
         version: 2.1.9(@types/node@22.7.5)(lightningcss@1.27.0)(sass@1.97.3)(terser@5.46.0)
+
+  packages/fingerprints:
+    devDependencies:
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.0.0
+        version: 2.1.9(@types/node@22.7.5)(sass@1.97.3)(terser@5.46.0)
 
   packages/node:
     dependencies:
