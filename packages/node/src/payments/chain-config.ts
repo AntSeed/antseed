@@ -29,6 +29,12 @@ export interface ChainConfig {
   statsDeployBlock?: number;
   /** Public URL of the @antseed/network-stats aggregator that indexes the stats contract for this chain. */
   networkStatsUrl?: string;
+  /** AntseedVerification contract address (attestations, status, and verifier rewards). */
+  verificationContractAddress?: string;
+  /** AntseedVerificationPointsPolicy adapter address. */
+  verificationPointsPolicyAddress?: string;
+  /** AntseedPointsPolicyRegistry address used to detect whether verification enforcement is active. */
+  pointsPolicyRegistryAddress?: string;
   /** AntseedDepositRelay contract for gasless USDC sweeps from buyer hot wallets. */
   depositRelayAddress?: string;
 }
@@ -119,6 +125,9 @@ export function resolveChainConfig(overrides?: {
   emissionsContractAddress?: string;
   legacyEmissionsContractAddress?: string;
   antsTokenAddress?: string;
+  verificationContractAddress?: string;
+  verificationPointsPolicyAddress?: string;
+  pointsPolicyRegistryAddress?: string;
   depositRelayAddress?: string;
 }): ChainConfig {
   const base = getChainConfig(overrides?.chainId);
@@ -141,6 +150,15 @@ export function resolveChainConfig(overrides?: {
     ...(overrides?.emissionsContractAddress ? { emissionsContractAddress: overrides.emissionsContractAddress } : {}),
     ...(overrides?.legacyEmissionsContractAddress ? { legacyEmissionsContractAddress: overrides.legacyEmissionsContractAddress } : {}),
     ...(overrides?.antsTokenAddress ? { antsTokenAddress: overrides.antsTokenAddress } : {}),
+    ...(overrides?.verificationContractAddress
+      ? { verificationContractAddress: overrides.verificationContractAddress }
+      : {}),
+    ...(overrides?.verificationPointsPolicyAddress
+      ? { verificationPointsPolicyAddress: overrides.verificationPointsPolicyAddress }
+      : {}),
+    ...(overrides?.pointsPolicyRegistryAddress
+      ? { pointsPolicyRegistryAddress: overrides.pointsPolicyRegistryAddress }
+      : {}),
     ...(overrides?.depositRelayAddress ? { depositRelayAddress: overrides.depositRelayAddress } : {}),
   };
 }

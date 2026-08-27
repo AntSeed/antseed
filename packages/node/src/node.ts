@@ -95,6 +95,15 @@ import { SellerAddressResolver } from "./discovery/seller-address-resolver.js";
 import { Contract as EthersContract } from "ethers";
 import { SellerPaymentManager, type SellerPaymentConfig } from "./payments/seller-payment-manager.js";
 import { IdentityClient } from "./payments/evm/identity-client.js";
+import {
+  DEFAULT_DIFF_PENALTY_BPS,
+  DEFAULT_MIN_DISTINCT_DIFF_VERIFIERS,
+  VerifierClient,
+  serviceHash,
+  type AttestationSubmittedEvent,
+  type VerificationPolicyState,
+} from "./payments/evm/verifier-client.js";
+import { derivePeerModelVerification } from "./routing/verification-score.js";
 import { SellerRequestHandler } from "./seller-request-handler.js";
 import {
   BuyerRequestHandler,
@@ -150,6 +159,12 @@ export interface NodePaymentsConfig {
   identityRegistryAddress?: string;
   /** AntseedStaking contract address */
   stakingAddress?: string;
+  /** Optional AntseedVerification address. Enables model verification reputation and verifier rewards. */
+  verificationContractAddress?: string;
+  /** Optional AntseedVerificationPointsPolicy address. */
+  verificationPointsPolicyAddress?: string;
+  /** Optional AntseedPointsPolicyRegistry address used to detect enforcement activation. */
+  pointsPolicyRegistryAddress?: string;
   /** Chain ID for EIP-712 domain. Default: 8453 (Base) */
   chainId?: number;
   /** Default maximum USDC per spending auth. Default: 500000 ($0.50) */
@@ -321,6 +336,7 @@ export class AntseedNode extends EventEmitter {
   private _stakingClient: StakingClient | null = null;
   private _sellerAddressResolver: SellerAddressResolver | null = null;
   private _identityClient: IdentityClient | null = null;
+  private _verifierClient: VerifierClient | null = null;
   private _paymentMuxes = new Map<PeerId, PaymentMux>();
   private _verificationMuxes = new Map<PeerId, VerificationMux>();
   private _sweepMuxes = new Map<PeerId, SweepMux>();
@@ -361,6 +377,14 @@ export class AntseedNode extends EventEmitter {
     results: PeerVerificationResults;
   }>();
   private _externalVerificationInFlight = new Set<string>();
+  private _modelVerificationAttestationCache = new Map<number, {
+    attestations: AttestationSubmittedEvent[];
+    fetchedAt: number;
+  }>();
+  private _modelVerificationAttestationInFlight = new Map<number, Promise<{
+    attestations: AttestationSubmittedEvent[];
+    fetchedAt: number;
+  } | null>>();
 
   constructor(config: NodeConfig) {
     super();
@@ -618,11 +642,14 @@ export class AntseedNode extends EventEmitter {
     this._sellerFreeUsageManager = null;
     this._stakingClient = null;
     this._identityClient = null;
+    this._verifierClient = null;
     this._sellerAddressResolver = null;
     this._buyerPaymentManager = null;
     this._buyerNegotiator = null;
     this._buyerHandler = null;
     this._backgroundPeerDiscoveryPromise = null;
+    this._modelVerificationAttestationCache.clear();
+    this._modelVerificationAttestationInFlight.clear();
     this._sellerPaymentManager = null;
     this._sessionTracker = null;
     this._started = false;
@@ -669,6 +696,7 @@ export class AntseedNode extends EventEmitter {
     // On-chain enrichment runs after the metadata filter so we don't waste
     // RPC calls on peers we'll discard.
     await this._enrichPeersWithOnChainStats(filtered);
+    await this._enrichPeersWithVerification(filtered, service);
 
     for (const p of filtered) {
       debugLog(`[Node]   peer ${p.peerId.slice(0, 12)}... providers=[${p.providers.join(",")}] addr=${p.publicAddress ?? "?"}`);
@@ -730,6 +758,14 @@ export class AntseedNode extends EventEmitter {
         return;
       }
       await this._enrichPeersWithOnChainStats(peersToEnrich);
+      if (!this._started) {
+        return;
+      }
+      // Verifier-registry enrichment rides the same queue so background /
+      // incremental discovery emits peers with their substitution flags, not
+      // just channel stats. It needs onChainAgentId, which the on-chain stats
+      // pass above just resolved.
+      await this._enrichPeersWithVerification(peersToEnrich);
       if (!this._started) {
         return;
       }
@@ -908,6 +944,9 @@ export class AntseedNode extends EventEmitter {
     this._attachCachedExternalVerificationResults([peer]);
     this._queueExternalVerification([peer]);
     await this._enrichPeersWithOnChainStats([peer]);
+    // Same verification enrichment as wildcard discoverPeers(): derive every
+    // service advertised by this peer from one cached agent-attestation read.
+    await this._enrichPeersWithVerification([peer]);
     return peer;
   }
 
@@ -941,6 +980,7 @@ export class AntseedNode extends EventEmitter {
       if (
         typeof p.onChainStatsFetchedAt === 'number'
         && nowMs - p.onChainStatsFetchedAt < ON_CHAIN_STATS_TTL_MS
+        && p.onChainSellerAddress !== undefined
       ) {
         return;
       }
@@ -955,6 +995,7 @@ export class AntseedNode extends EventEmitter {
         ]);
         const stats = await channelsClient.getAgentStats(agentId);
         p.onChainAgentId = agentId;
+        p.onChainSellerAddress = evmAddress;
         p.onChainStakeUsdcMicros = stake <= BigInt(Number.MAX_SAFE_INTEGER)
           ? Number(stake)
           : Number.MAX_SAFE_INTEGER;
@@ -975,7 +1016,8 @@ export class AntseedNode extends EventEmitter {
       }
     };
     const workers: Array<Promise<void>> = [];
-    for (let i = 0; i < Math.min(DISCOVERY_RPC_CONCURRENCY, queue.length); i++) {
+    const workerCount = Math.min(DISCOVERY_RPC_CONCURRENCY, queue.length);
+    for (let i = 0; i < workerCount; i++) {
       workers.push((async () => {
         for (;;) {
           const next = queue.shift();
@@ -987,6 +1029,111 @@ export class AntseedNode extends EventEmitter {
     await Promise.all(workers);
 
     this._applyTrustAndSybil(peers);
+  }
+
+  /** Attach per-service model-verification reputation to discovered peers. */
+  private async _enrichPeersWithVerification(peers: PeerInfo[], service?: string): Promise<void> {
+    const client = this._verifierClient;
+    if (!client || peers.length === 0) return;
+
+    const VERIFICATION_RPC_CONCURRENCY = 8;
+    const MODEL_VERIFICATION_TTL_MS = 60_000;
+    const requestedService = service?.trim().toLowerCase() || null;
+    const serviceKeysByPeer = new Map<PeerInfo, string[]>();
+    const queue = peers.filter((p) => {
+      if (typeof p.onChainAgentId !== 'number' || p.onChainAgentId <= 0) return false;
+      const serviceKeys = advertisedServiceKeys(p);
+      if (requestedService) serviceKeys.add(requestedService);
+      if (serviceKeys.size === 0) return false;
+      serviceKeysByPeer.set(p, [...serviceKeys]);
+      return true;
+    });
+    if (queue.length === 0) return;
+
+    const shadowPolicyState: VerificationPolicyState = {
+      registered: false,
+      minDistinctDiffVerifiers: DEFAULT_MIN_DISTINCT_DIFF_VERIFIERS,
+      diffPenaltyBps: DEFAULT_DIFF_PENALTY_BPS,
+    };
+    const policyState = typeof client.verificationPolicyState === 'function'
+      ? await client.verificationPolicyState().catch(() => shadowPolicyState)
+      : shadowPolicyState;
+
+    const loadAttestations = async (agentId: number): Promise<{
+      attestations: AttestationSubmittedEvent[];
+      fetchedAt: number;
+    } | null> => {
+      const cached = this._modelVerificationAttestationCache.get(agentId);
+      if (cached && Date.now() - cached.fetchedAt < MODEL_VERIFICATION_TTL_MS) {
+        return cached;
+      }
+
+      const inFlight = this._modelVerificationAttestationInFlight.get(agentId);
+      if (inFlight) return inFlight;
+
+      const request = (async () => {
+        try {
+          const entry = {
+            attestations: await client.queryAttestations(agentId),
+            fetchedAt: Date.now(),
+          };
+          this._modelVerificationAttestationCache.set(agentId, entry);
+          return entry;
+        } catch {
+          return cached ?? null;
+        }
+      })().finally(() => {
+        this._modelVerificationAttestationInFlight.delete(agentId);
+      });
+      this._modelVerificationAttestationInFlight.set(agentId, request);
+      return request;
+    };
+
+    const enrichOne = async (p: PeerInfo): Promise<void> => {
+      const agentId = p.onChainAgentId!;
+      const cached = await loadAttestations(agentId);
+      if (!cached) return;
+
+      const serviceKeys = serviceKeysByPeer.get(p) ?? [];
+      const next: NonNullable<PeerInfo['modelVerification']> = {};
+      await Promise.all(serviceKeys.map(async (serviceKey) => {
+        const targetServiceHash = serviceHash(serviceKey);
+        const matching = cached.attestations.filter(
+          (event) => event.serviceHash.toLowerCase() === targetServiceHash.toLowerCase(),
+        );
+        const activeDiffVerifierCount = typeof client.activeServiceDiffVerifierCount === 'function'
+          ? await client
+            .activeServiceDiffVerifierCount(agentId, targetServiceHash)
+            .then(Number)
+            .catch(() => undefined)
+          : undefined;
+        if (matching.length > 0 || (activeDiffVerifierCount ?? 0) > 0) {
+          next[serviceKey] = derivePeerModelVerification(targetServiceHash, matching, {
+            ...(activeDiffVerifierCount !== undefined ? { activeDiffVerifierCount } : {}),
+            minDistinctDiffVerifiers: policyState.minDistinctDiffVerifiers,
+            enforcementActive: policyState.registered,
+          });
+        } else {
+          delete next[serviceKey];
+        }
+      }));
+      p.modelVerification = next;
+      p.modelVerificationFetchedAt = cached.fetchedAt;
+    };
+
+    const workers: Array<Promise<void>> = [];
+    const pending = queue.slice();
+    const workerCount = Math.min(VERIFICATION_RPC_CONCURRENCY, pending.length);
+    for (let i = 0; i < workerCount; i++) {
+      workers.push((async () => {
+        for (;;) {
+          const next = pending.shift();
+          if (!next) return;
+          await enrichOne(next);
+        }
+      })());
+    }
+    await Promise.all(workers);
   }
 
   private _applyTrustAndSybil(peers: PeerInfo[]): void {
@@ -1682,7 +1829,13 @@ export class AntseedNode extends EventEmitter {
           disableMetadataV2Services: payments.disableMetadataV2Services ?? false,
           dataDir: paymentsDir,
         };
-        this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig, this._channelStore, this._sellerAddressResolver ?? undefined);
+        this._buyerPaymentManager = new BuyerPaymentManager(
+          identity,
+          buyerPaymentConfig,
+          this._channelStore,
+          this._sellerAddressResolver ?? undefined,
+          this._verificationStorage ?? undefined,
+        );
         // Re-emit per-request spend so callers can attribute it to whatever
         // issued the request — the node only knows the seller and requestId.
         this._buyerPaymentManager.setSpendListener((event) => this.emit('payment:spend', event));
@@ -1945,6 +2098,24 @@ export class AntseedNode extends EventEmitter {
         ...(payments.chainId ? { evmChainId: payments.chainId } : {}),
       });
       debugLog(`[Node] IdentityClient initialized (contract=${payments.identityRegistryAddress.slice(0, 10)}...)`);
+    }
+
+    // Initialize VerifierClient (model-verification reputation). Read
+    // only — the buyer never writes attestations, it just scores sellers.
+    if (payments.rpcUrl && payments.verificationContractAddress) {
+      this._verifierClient = new VerifierClient({
+        rpcUrl: payments.rpcUrl,
+        ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
+        contractAddress: payments.verificationContractAddress,
+        ...(payments.verificationPointsPolicyAddress
+          ? { verificationPointsPolicyAddress: payments.verificationPointsPolicyAddress }
+          : {}),
+        ...(payments.pointsPolicyRegistryAddress
+          ? { pointsPolicyRegistryAddress: payments.pointsPolicyRegistryAddress }
+          : {}),
+        ...(payments.chainId ? { evmChainId: payments.chainId } : {}),
+      });
+      debugLog(`[Node] VerifierClient initialized (contract=${payments.verificationContractAddress.slice(0, 10)}...)`);
     }
 
     // Initialize SellerPaymentManager for seller role
@@ -2466,4 +2637,19 @@ function peerOffersService(peer: PeerInfo, service: string): boolean {
     }
   }
   return false;
+}
+
+function advertisedServiceKeys(peer: PeerInfo): Set<string> {
+  const services = new Set<string>();
+  const add = (service: string): void => {
+    const normalized = service.trim().toLowerCase();
+    if (normalized.length > 0) services.add(normalized);
+  };
+  for (const provider of peer.metadata?.providers ?? []) {
+    for (const service of provider.services ?? []) add(service);
+  }
+  for (const pricing of Object.values(peer.providerPricing ?? {})) {
+    for (const service of Object.keys(pricing.services ?? {})) add(service);
+  }
+  return services;
 }

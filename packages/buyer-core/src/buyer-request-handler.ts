@@ -18,6 +18,8 @@ import type { ResponseAuthSink } from './interfaces.js';
 import type { ResponseAuthSampler } from './interfaces.js';
 import type { BuyerFreeUsageManager } from './buyer-free-usage-manager.js';
 import { verifyResponseAuth } from './response-auth.js';
+import { encodeHttpRequest, encodeHttpResponse } from '@antseed/protocol/request-codec';
+import { extractServiceFromBody } from '@antseed/protocol/json-codec';
 import { isFreeUnitBillingModel } from '@antseed/protocol/billing';
 import type { ServiceApiProtocol } from '@antseed/protocol/service-api';
 import {
@@ -43,6 +45,8 @@ export interface RequestExecutionOptions {
   signal?: AbortSignal;
   /** Skip payment/free-usage machinery for internal control-plane requests. */
   controlPlane?: boolean;
+  /** Persist exact signed request/response preimages for portable verifier evidence. */
+  captureResponseAuthPreimages?: boolean;
 }
 
 export interface BuyerRequestHandlerConfig {
@@ -118,7 +122,7 @@ export class BuyerRequestHandler {
     }
 
     // Track which service the buyer requested so auth validation uses buyer's own pricing.
-    const requestedService = options?.controlPlane ? undefined : extractServiceFromBody(req);
+    const requestedService = options?.controlPlane ? undefined : extractServiceFromRequest(req);
     const billingRoute = requestedService ? selectBillingRoute(peer, req, requestedService) : null;
     // Decide free vs paid from the resolved route (provider + protocol), mirroring
     // the seller's per-request gate so both sides classify the request the same way.
@@ -160,7 +164,10 @@ export class BuyerRequestHandler {
 
     let startTime = Date.now();
 
-    const executeRequest = (): Promise<SerializedHttpResponse> => new Promise<SerializedHttpResponse>((resolve, reject) => {
+    const executeRequest = (): Promise<{
+      response: SerializedHttpResponse;
+      expectedChannelId: string | null;
+    }> => new Promise((resolve, reject) => {
       const timeoutMs = this._config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
       const maxStreamBufferBytes = Math.max(1, this._config.maxStreamBufferBytes ?? 16 * 1024 * 1024);
       const maxStreamDurationMs = Math.max(1, this._config.maxStreamDurationMs ?? 5 * 60_000);
@@ -248,6 +255,8 @@ export class BuyerRequestHandler {
 
       resetTimeout(streamInitialResponseTimeoutMs);
 
+      const expectedChannelId = negotiator?.bpm?.getActiveSession(peer.peerId)?.sessionId ?? null;
+
       const finish = (response: SerializedHttpResponse): void => {
         if (settled) return;
         settled = true;
@@ -256,7 +265,7 @@ export class BuyerRequestHandler {
         cleanupConnectionListener();
         const cleaned = stripStreamingHeader(response);
         debugLog(`[BuyerRequest] Response for ${req.requestId.slice(0, 8)}: status=${cleaned.statusCode} (${Date.now() - startTime}ms, ${cleaned.body.length}b)`);
-        resolve(cleaned);
+        resolve({ response: cleaned, expectedChannelId });
       };
 
       const fail = (error: Error): void => {
@@ -331,17 +340,27 @@ export class BuyerRequestHandler {
       );
     });
 
-    const response = await executeRequest();
+    const firstAttempt = await executeRequest();
+    const response = firstAttempt.response;
 
     if (response.statusCode === 402 && negotiator && !externalSpendingAuth) {
       const result = await negotiator.handle402(response, peer, conn, req);
       if (result.action === 'return') return result.response;
       startTime = Date.now();
-      const retriedResponse = await executeRequest();
+      const retriedAttempt = await executeRequest();
+      const retriedResponse = retriedAttempt.response;
       if (!isFreeService) {
         negotiator.estimateCostFromResponse(peer, retriedResponse, requestedService, req.requestId);
       }
-      this._recordResponseAuth(peer, req, retriedResponse, requestedService, verificationMux);
+      this._recordResponseAuth(
+        peer,
+        req,
+        retriedResponse,
+        requestedService,
+        verificationMux,
+        retriedAttempt.expectedChannelId,
+        options?.captureResponseAuthPreimages === true,
+      );
       return retriedResponse;
     }
 
@@ -349,7 +368,15 @@ export class BuyerRequestHandler {
       negotiator.estimateCostFromResponse(peer, response, requestedService, req.requestId);
     }
 
-    this._recordResponseAuth(peer, req, response, requestedService, verificationMux);
+    this._recordResponseAuth(
+      peer,
+      req,
+      response,
+      requestedService,
+      verificationMux,
+      firstAttempt.expectedChannelId,
+      options?.captureResponseAuthPreimages === true,
+    );
     return response;
   }
 
@@ -381,6 +408,8 @@ export class BuyerRequestHandler {
     response: SerializedHttpResponse,
     requestedService: string | undefined,
     verificationMux: VerificationMux,
+    expectedChannelId: string | null,
+    capturePreimages: boolean,
   ): void {
     if (!shouldExpectResponseAuth(peer, response, requestedService)) {
       return;
@@ -388,7 +417,6 @@ export class BuyerRequestHandler {
 
     const storage = this._deps.verificationStorage;
     const advertisedService = requestedService ?? 'unknown';
-    const expectedChannelId = this._deps.negotiator?.bpm?.getActiveSession(peer.peerId)?.sessionId ?? null;
     const responseAuthPromise = verificationMux.waitForResponseAuth(
       request.requestId,
       this._config.responseAuthTimeoutMs ?? DEFAULT_RESPONSE_AUTH_GRACE_MS,
@@ -416,6 +444,8 @@ export class BuyerRequestHandler {
           receivedAt: Date.now(),
           verified: verification.valid,
           verificationError: verification.reason ?? null,
+          requestPreimage: capturePreimages ? encodeHttpRequest(request) : null,
+          responsePreimage: capturePreimages ? encodeHttpResponse(stripStreamingHeader(response)) : null,
         });
 
         void this._deps.verificationSampler?.maybeStoreResponseAuthSample({
@@ -435,7 +465,9 @@ export class BuyerRequestHandler {
 }
 
 /** Extract the service/model name from a JSON or multipart request body, or undefined if not found. */
-function extractServiceFromBody(request: SerializedHttpRequest): string | undefined {
+function extractServiceFromRequest(request: SerializedHttpRequest): string | undefined {
+  const jsonService = extractServiceFromBody(request.body);
+  if (jsonService) return jsonService;
   const parsed = extractRequestBodyFields(request.headers, request.body);
   const service = parsed?.service ?? parsed?.model;
   if (typeof service === 'string' && service.length > 0) return service;
