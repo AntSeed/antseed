@@ -112,6 +112,11 @@ function makeBuyerProxyWithPeers(initialPeers: PeerInfo[], refreshedPeers = init
   return proxy
 }
 
+const basicRouter = {
+  selectPeer: (_req: unknown, peers: PeerInfo[]) => peers[0] ?? null,
+  onResult: () => undefined,
+}
+
 async function invokeProxy(proxy: BuyerProxy, req: Readable): Promise<ReturnType<typeof makeProxyResponse>> {
   const res = makeProxyResponse()
   await (proxy as any)._handleRequest(req, res)
@@ -427,6 +432,36 @@ test('pinned proxy request reports when the pinned peer is not discoverable', as
   assert.match(res.body, /It may be offline, not announcing, or temporarily unreachable/)
 })
 
+test('verifier preimage capture header stays local and enables exact capture', async () => {
+  const peer = makePeer('a', ['openai'])
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], basicRouter)
+  let capturedHeaders: Record<string, string> | null = null
+  let capturedCaptureFlag: boolean | undefined
+  ;(proxy as any)._node.sendRequest = async (
+    _peer: PeerInfo,
+    request: { requestId: string; headers: Record<string, string> },
+    options: { captureResponseAuthPreimages?: boolean },
+  ) => {
+    capturedHeaders = request.headers
+    capturedCaptureFlag = options.captureResponseAuthPreimages
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{"choices":[{"message":{"content":"ok"}}]}'),
+    }
+  }
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    headers: {
+      'x-antseed-pin-peer': peer.peerId,
+      'x-antseed-capture-response-auth-preimages': '1',
+    },
+  }))
+  assert.equal(res.statusCode, 200)
+  assert.equal(capturedHeaders?.['x-antseed-capture-response-auth-preimages'], undefined)
+  assert.equal(capturedCaptureFlag, true)
+})
+
 test('pinned proxy request reports explicit provider mismatch separately', async () => {
   const pinnedPeer = makePeer('a', ['local-llm'])
   const proxy = makeBuyerProxyWithPeers([pinnedPeer])
@@ -495,7 +530,6 @@ test('local buyer payment failures only update diagnostic failure state', async 
   const peer = makePeer('a', ['openai'])
   const routerResults: unknown[] = []
   const router = {
-    allowsPeerForPolicy: () => true,
     onResult: (_peer: PeerInfo, result: unknown) => {
       routerResults.push(result)
     },
@@ -524,7 +558,6 @@ test('transport failures only update diagnostic failure state', async () => {
   const peer = makePeer('a', ['openai'])
   const routerResults: Array<{ success: boolean }> = []
   const router = {
-    allowsPeerForPolicy: () => true,
     onResult: (_peer: PeerInfo, result: { success: boolean }) => {
       routerResults.push(result)
     },
@@ -553,7 +586,6 @@ test('/v1/models retryable response reports router success', async () => {
   const peer = makePeer('a', ['openai'])
   const routerResults: Array<{ success: boolean }> = []
   const router = {
-    allowsPeerForPolicy: () => true,
     onResult: (_peer: PeerInfo, result: { success: boolean }) => {
       routerResults.push(result)
     },
@@ -593,12 +625,15 @@ test('non-stream transformed responses requests force upstream stream without st
   let sendRequestStreamCalls = 0
   let capturedRequestBody: Record<string, unknown> | null = null
   let capturedRequestHeaders: Record<string, string> | null = null
-  const proxy = makeBuyerProxyWithPeers([peer], [peer])
+  let capturedRequestId: string | null = null
+  const callerRequestId = '123e4567-e89b-42d3-a456-426614174000'
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], basicRouter)
   ;(proxy as any)._node.sendRequest = async (
     _peer: PeerInfo,
     request: { requestId: string; body: Uint8Array; headers: Record<string, string> },
   ) => {
     sendRequestCalls += 1
+    capturedRequestId = request.requestId
     capturedRequestBody = parseJsonBody(request.body)
     capturedRequestHeaders = request.headers
     return {
@@ -627,6 +662,7 @@ test('non-stream transformed responses requests force upstream stream without st
     path: '/v1/messages',
     headers: {
       'x-antseed-pin-peer': peer.peerId,
+      'x-antseed-request-id': callerRequestId,
     },
     body: {
       model: 'gpt-5.6-sol',
@@ -640,6 +676,9 @@ test('non-stream transformed responses requests force upstream stream without st
   assert.equal(sendRequestStreamCalls, 0)
   assert.equal(capturedRequestBody?.['stream'], true)
   assert.equal(capturedRequestHeaders?.['x-antseed-client-stream-requested'], 'false')
+  assert.equal(capturedRequestHeaders?.['x-antseed-request-id'], undefined)
+  assert.equal(capturedRequestId, callerRequestId)
+  assert.equal(res.headers['x-antseed-request-id'], callerRequestId)
   const body = JSON.parse(res.body) as { content?: Array<{ type: string; text: string }> }
   assert.equal(body.content?.[0]?.text, 'hi')
 })
@@ -657,7 +696,7 @@ test('accept-sse transformed responses requests stream adapted client events wit
   let sendRequestStreamCalls = 0
   let capturedRequestBody: Record<string, unknown> | null = null
   let capturedRequestHeaders: Record<string, string> | null = null
-  const proxy = makeBuyerProxyWithPeers([peer], [peer])
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], basicRouter)
   ;(proxy as any)._node.sendRequest = async () => {
     sendRequestCalls += 1
     throw new Error('sendRequest should not be used')
@@ -727,21 +766,24 @@ test('model peer prefix pins the request peer and strips the routed model', asyn
   const pinnedPeer = makePeer('a', ['openai'])
   let capturedRequestBody: Record<string, unknown> | null = null
   let capturedPeerId: string | null = null
-  const router = {
-    allowsPeerForPolicy: (req: { body: Uint8Array }, peer: PeerInfo) => {
-      capturedRequestBody = parseJsonBody(req.body)
-      capturedPeerId = peer.peerId
-      return false
-    },
+  const proxy = makeBuyerProxyWithPeers([pinnedPeer], [pinnedPeer], basicRouter)
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string; body: Uint8Array }) => {
+    capturedRequestBody = parseJsonBody(request.body)
+    capturedPeerId = peer.peerId
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{}'),
+    }
   }
-  const proxy = makeBuyerProxyWithPeers([pinnedPeer], [pinnedPeer], router)
   const req = makeProxyRequest({
     body: { model: `${pinnedPeer.peerId}@gpt-4o`, messages: [] },
   })
 
   const res = await invokeProxy(proxy, req)
 
-  assert.equal(res.statusCode, 502)
+  assert.equal(res.statusCode, 200)
   assert.equal(capturedPeerId, pinnedPeer.peerId)
   assert.equal(capturedRequestBody?.['model'], 'gpt-4o')
   assert.equal(capturedRequestBody?.['service'], 'gpt-4o')
@@ -752,14 +794,21 @@ test('x-antseed-pin-peer header takes precedence over model peer prefix', async 
   const headerPinnedPeer = makePeer('b', ['openai'])
   let capturedRequestBody: Record<string, unknown> | null = null
   let capturedPeerId: string | null = null
-  const router = {
-    allowsPeerForPolicy: (req: { body: Uint8Array }, peer: PeerInfo) => {
-      capturedRequestBody = parseJsonBody(req.body)
-      capturedPeerId = peer.peerId
-      return false
-    },
+  const proxy = makeBuyerProxyWithPeers(
+    [modelPinnedPeer, headerPinnedPeer],
+    [modelPinnedPeer, headerPinnedPeer],
+    basicRouter,
+  )
+  ;(proxy as any)._node.sendRequest = async (peer: PeerInfo, request: { requestId: string; body: Uint8Array }) => {
+    capturedRequestBody = parseJsonBody(request.body)
+    capturedPeerId = peer.peerId
+    return {
+      requestId: request.requestId,
+      statusCode: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{}'),
+    }
   }
-  const proxy = makeBuyerProxyWithPeers([modelPinnedPeer, headerPinnedPeer], [modelPinnedPeer, headerPinnedPeer], router)
   const req = makeProxyRequest({
     headers: {
       'x-antseed-pin-peer': headerPinnedPeer.peerId,
@@ -769,7 +818,7 @@ test('x-antseed-pin-peer header takes precedence over model peer prefix', async 
 
   const res = await invokeProxy(proxy, req)
 
-  assert.equal(res.statusCode, 502)
+  assert.equal(res.statusCode, 200)
   assert.equal(capturedPeerId, headerPinnedPeer.peerId)
   assert.equal(capturedRequestBody?.['model'], 'gpt-4o')
   assert.equal(capturedRequestBody?.['service'], 'gpt-4o')

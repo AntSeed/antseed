@@ -8,6 +8,7 @@ import type {
   TokenPricingUsdPerMillion,
 } from './types.js';
 import { validateServiceMetadata } from './service-metadata.js';
+import { CANONICAL_KBF_DOMAINS } from '../verifier/canonical-kbf-domains.js';
 
 const SERVICE_CATEGORY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const MAX_PUBLIC_ADDRESS_LENGTH = 255;
@@ -24,6 +25,7 @@ const VERIFICATION_NAMESPACES = new Set(['domains', 'github']);
 const MIN_SELLER_UPLOAD_BODY_BYTES = 1024 * 1024;
 const MIN_BUYER_PEER_REFRESH_INTERVAL_MS = 1_000;
 export const MIN_BUYER_METADATA_FETCH_TIMEOUT_MS = 100;
+const CANONICAL_KBF_DOMAIN_KEYS = new Set<string>(CANONICAL_KBF_DOMAINS.map((domain) => domain.key));
 
 function validatePricingLeaf(
   path: string,
@@ -296,6 +298,345 @@ function validateBuyerVerification(
   }
 }
 
+// The loader preserves this section as-is, so reject unknown keys here rather
+// than silently accepting verifier typos.
+const VERIFIER_KEYS = new Set([
+  'referencesDir', 'banksDir', 'evidenceDir', 'probeRequestTimeoutMs', 'responseAuthWaitTimeoutMs',
+  'auditMaxConcurrentModels', 'auditMaxConcurrentPeersPerModel',
+  'auditMaxConcurrentBatches', 'auditMaxConcurrentBatchesPerPeer',
+  'auditConcurrencyPromotionLatencyMs', 'auditPeerTimeoutMs',
+  'contrastSelection', 'referenceEndpoint',
+  'referenceMaxRequestsPerBuild', 'referenceBatchRetryCount', 'referenceRetryBaseDelayMs',
+  'referenceMaxNoProgressRounds', 'referenceMaxConcurrentRequests', 'referenceMaxConcurrentRequestsPerModel',
+  'referenceMinimumProbeCount', 'referenceMaximumProbeCount', 'referenceProbeStep',
+  'referenceMinimumStatisticalPower',
+]);
+const VERIFIER_REFERENCE_ENDPOINT_KEYS = new Set([
+  'baseUrl', 'apiKey', 'apiKeyEnv', 'sourceId', 'trust', 'antseedPeerId', 'models', 'contrastModelBank',
+]);
+const VERIFIER_REFERENCE_MODEL_KEYS = new Set([
+  'enabled', 'serviceAliases', 'upstreamModel', 'pricing', 'referenceRoute', 'contrastModels', 'excludedDomains',
+]);
+const VERIFIER_REFERENCE_ROUTE_KEYS = new Set(['type', 'service', 'peerId', 'pricing']);
+const VERIFIER_CONTRAST_SELECTION_KEYS = new Set([
+  'catalogSource', 'inputWeight', 'maxPriceRatio', 'maxModels', 'minimumIntelligenceIndex',
+]);
+const VERIFIER_CONTRAST_MODEL_KEYS = new Set(['enabled', 'upstreamModel', 'pricing', 'capabilityRank']);
+const VERIFIER_PRICING_KEYS = new Set(['inputUsdPerMillion', 'outputUsdPerMillion']);
+
+function validateVerifierConfig(
+  path: string,
+  verifier: AntseedConfig['verifier'],
+  errors: string[],
+): void {
+  if (verifier === undefined) return;
+  if (!verifier || typeof verifier !== 'object' || Array.isArray(verifier)) {
+    errors.push(`${path} must be an object when provided`);
+    return;
+  }
+  for (const key of Object.keys(verifier).filter((k) => !VERIFIER_KEYS.has(k))) {
+    errors.push(`${path}.${key} is not a supported verifier option`);
+  }
+  const positiveInts: Array<[string, number | undefined]> = [
+    ['probeRequestTimeoutMs', verifier.probeRequestTimeoutMs],
+    ['responseAuthWaitTimeoutMs', verifier.responseAuthWaitTimeoutMs],
+    ['auditMaxConcurrentModels', verifier.auditMaxConcurrentModels],
+    ['auditMaxConcurrentPeersPerModel', verifier.auditMaxConcurrentPeersPerModel],
+    ['auditMaxConcurrentBatches', verifier.auditMaxConcurrentBatches],
+    ['auditMaxConcurrentBatchesPerPeer', verifier.auditMaxConcurrentBatchesPerPeer],
+    ['auditConcurrencyPromotionLatencyMs', verifier.auditConcurrencyPromotionLatencyMs],
+    ['auditPeerTimeoutMs', verifier.auditPeerTimeoutMs],
+    ['referenceMaxRequestsPerBuild', verifier.referenceMaxRequestsPerBuild],
+    ['referenceRetryBaseDelayMs', verifier.referenceRetryBaseDelayMs],
+    ['referenceMaxNoProgressRounds', verifier.referenceMaxNoProgressRounds],
+    ['referenceMaxConcurrentRequests', verifier.referenceMaxConcurrentRequests],
+    ['referenceMaxConcurrentRequestsPerModel', verifier.referenceMaxConcurrentRequestsPerModel],
+    ['referenceMinimumProbeCount', verifier.referenceMinimumProbeCount],
+    ['referenceMaximumProbeCount', verifier.referenceMaximumProbeCount],
+    ['referenceProbeStep', verifier.referenceProbeStep],
+  ];
+  for (const [key, value] of positiveInts) {
+    if (value !== undefined && (!Number.isInteger(value) || value < 1)) {
+      errors.push(`${path}.${key} must be an integer >= 1`);
+    }
+  }
+  if (verifier.referenceBatchRetryCount !== undefined
+    && (!Number.isInteger(verifier.referenceBatchRetryCount) || verifier.referenceBatchRetryCount < 0)) {
+    errors.push(`${path}.referenceBatchRetryCount must be an integer >= 0`);
+  }
+  const minimumProbeCount = verifier.referenceMinimumProbeCount ?? 100;
+  const maximumProbeCount = verifier.referenceMaximumProbeCount ?? 500;
+  const probeStep = verifier.referenceProbeStep ?? 10;
+  for (const [key, value] of [
+    ['referenceMinimumProbeCount', minimumProbeCount],
+    ['referenceMaximumProbeCount', maximumProbeCount],
+    ['referenceProbeStep', probeStep],
+  ] as const) {
+    if (value < 10 || value > 500 || value % 10 !== 0) {
+      errors.push(`${path}.${key} must be a multiple of 10 from 10 through 500`);
+    }
+  }
+  if (minimumProbeCount > maximumProbeCount) {
+    errors.push(`${path}.referenceMinimumProbeCount must not exceed referenceMaximumProbeCount`);
+  } else if ((maximumProbeCount - minimumProbeCount) % probeStep !== 0) {
+    errors.push(`${path}.referenceProbeStep must divide the configured probe-count range`);
+  }
+  if (verifier.referenceMinimumStatisticalPower !== undefined
+    && (!(verifier.referenceMinimumStatisticalPower > 0) || verifier.referenceMinimumStatisticalPower > 1)) {
+    errors.push(`${path}.referenceMinimumStatisticalPower must be in (0, 1]`);
+  }
+  const dirKeys: Array<[string, unknown]> = [
+    ['referencesDir', verifier.referencesDir],
+    ['banksDir', verifier.banksDir],
+    ['evidenceDir', verifier.evidenceDir],
+  ];
+  for (const [key, value] of dirKeys) {
+    if (value !== undefined && (typeof value !== 'string' || value.trim().length === 0)) {
+      errors.push(`${path}.${key} must be a non-empty string when provided`);
+    }
+  }
+  const maxContrastModels = validateContrastSelection(
+    `${path}.contrastSelection`,
+    verifier.contrastSelection,
+    errors,
+  );
+  if (verifier.referenceEndpoint !== undefined) {
+    validateReferenceEndpoint(
+      `${path}.referenceEndpoint`,
+      verifier.referenceEndpoint,
+      maxContrastModels,
+      verifier.contrastSelection?.catalogSource === 'openrouter',
+      errors,
+    );
+  }
+}
+
+function validateContrastSelection(path: string, selection: unknown, errors: string[]): number {
+  const defaultMaximum = 3;
+  if (selection === undefined) return defaultMaximum;
+  if (!selection || typeof selection !== 'object' || Array.isArray(selection)) {
+    errors.push(`${path} must be an object when provided`);
+    return defaultMaximum;
+  }
+  const value = selection as Record<string, unknown>;
+  for (const key of Object.keys(value).filter((key) => !VERIFIER_CONTRAST_SELECTION_KEYS.has(key))) {
+    errors.push(`${path}.${key} is not supported`);
+  }
+  if (value.catalogSource !== undefined && value.catalogSource !== 'openrouter') {
+    errors.push(`${path}.catalogSource must be "openrouter" when provided`);
+  }
+  if (value.inputWeight !== undefined
+    && (typeof value.inputWeight !== 'number' || !Number.isFinite(value.inputWeight)
+      || value.inputWeight < 0 || value.inputWeight > 1)) {
+    errors.push(`${path}.inputWeight must be in [0, 1]`);
+  }
+  if (value.maxPriceRatio !== undefined
+    && (typeof value.maxPriceRatio !== 'number' || !Number.isFinite(value.maxPriceRatio)
+      || value.maxPriceRatio <= 0 || value.maxPriceRatio > 1)) {
+    errors.push(`${path}.maxPriceRatio must be in (0, 1]`);
+  }
+  if (value.maxModels !== undefined
+    && (!Number.isInteger(value.maxModels) || Number(value.maxModels) < 1 || Number(value.maxModels) > 3)) {
+    errors.push(`${path}.maxModels must be an integer from 1 through 3`);
+  }
+  if (value.minimumIntelligenceIndex !== undefined
+    && (typeof value.minimumIntelligenceIndex !== 'number'
+      || !Number.isFinite(value.minimumIntelligenceIndex)
+      || value.minimumIntelligenceIndex < 0)) {
+    errors.push(`${path}.minimumIntelligenceIndex must be a finite number >= 0`);
+  }
+  return Number.isInteger(value.maxModels) && Number(value.maxModels) >= 1 && Number(value.maxModels) <= 3
+    ? Number(value.maxModels)
+    : defaultMaximum;
+}
+
+function validateReferenceEndpoint(
+  path: string,
+  endpoint: unknown,
+  maxContrastModels: number,
+  usesOpenRouterCatalog: boolean,
+  errors: string[],
+): void {
+  if (!endpoint || typeof endpoint !== 'object' || Array.isArray(endpoint)) {
+    errors.push(`${path} must be an object when provided`);
+    return;
+  }
+  const value = endpoint as Record<string, unknown>;
+  for (const key of Object.keys(value).filter((key) => !VERIFIER_REFERENCE_ENDPOINT_KEYS.has(key))) {
+    errors.push(`${path}.${key} is not a supported reference endpoint option`);
+  }
+  for (const key of ['baseUrl', 'sourceId'] as const) {
+    if (typeof value[key] !== 'string' || value[key].trim().length === 0) {
+      errors.push(`${path}.${key} must be a non-empty string`);
+    }
+  }
+  if (value.apiKey !== undefined && typeof value.apiKey !== 'string') errors.push(`${path}.apiKey must be a string`);
+  if (value.apiKeyEnv !== undefined && (typeof value.apiKeyEnv !== 'string' || value.apiKeyEnv.trim().length === 0)) {
+    errors.push(`${path}.apiKeyEnv must be a non-empty string`);
+  }
+  if (value.antseedPeerId !== undefined && (typeof value.antseedPeerId !== 'string' || !/^[0-9a-fA-F]{40}$/.test(value.antseedPeerId))) {
+    errors.push(`${path}.antseedPeerId must be a 40-character hex peer id`);
+  }
+  if (value.trust !== 'smoke' && value.trust !== 'trusted') errors.push(`${path}.trust must be "smoke" or "trusted"`);
+  if (!value.models || typeof value.models !== 'object' || Array.isArray(value.models)) {
+    errors.push(`${path}.models must be a non-empty object`);
+    return;
+  }
+  const models = Object.entries(value.models as Record<string, unknown>);
+  if (models.length === 0) errors.push(`${path}.models must not be empty`);
+  if (usesOpenRouterCatalog && value.contrastModelBank !== undefined) {
+    errors.push(`${path}.contrastModelBank must be omitted when contrastSelection.catalogSource is "openrouter"`);
+  }
+  for (const [service, modelConfig] of models) {
+    const modelPath = `${path}.models[${JSON.stringify(service)}]`;
+    if (!modelConfig || typeof modelConfig !== 'object' || Array.isArray(modelConfig)) {
+      errors.push(`${modelPath} must be an object`);
+      continue;
+    }
+    const model = modelConfig as Record<string, unknown>;
+    for (const key of Object.keys(model).filter((key) => !VERIFIER_REFERENCE_MODEL_KEYS.has(key))) {
+      errors.push(`${modelPath}.${key} is not supported`);
+    }
+    if (typeof model.upstreamModel !== 'string' || model.upstreamModel.trim().length === 0) {
+      errors.push(`${modelPath}.upstreamModel must be a non-empty string`);
+    }
+    if (model.enabled !== undefined && typeof model.enabled !== 'boolean') {
+      errors.push(`${modelPath}.enabled must be a boolean`);
+    }
+    if (model.serviceAliases !== undefined) {
+      if (!Array.isArray(model.serviceAliases)
+        || model.serviceAliases.some((alias) => typeof alias !== 'string' || alias.trim().length === 0)) {
+        errors.push(`${modelPath}.serviceAliases must be a string array when provided`);
+      } else {
+        const normalizedServices = [service, ...model.serviceAliases]
+          .map((alias) => alias.trim().toLowerCase());
+        if (new Set(normalizedServices).size !== normalizedServices.length) {
+          errors.push(`${modelPath}.serviceAliases must not duplicate the model service or another alias`);
+        }
+      }
+    }
+    const hasExplicitContrasts = Array.isArray(model.contrastModels) && model.contrastModels.length > 0;
+    if (model.pricing !== undefined) {
+      validatePricing(`${modelPath}.pricing`, model.pricing, errors);
+      if (usesOpenRouterCatalog) {
+        errors.push(`${modelPath}.pricing must be omitted when contrastSelection.catalogSource is "openrouter"`);
+      }
+    } else if (!usesOpenRouterCatalog && !hasExplicitContrasts && model.enabled !== false) {
+      errors.push(`${modelPath}.pricing is required for automatic contrast-model selection`);
+    }
+    if (model.referenceRoute !== undefined) {
+      validateReferenceRoute(`${modelPath}.referenceRoute`, model.referenceRoute, errors);
+    }
+    if (model.contrastModels !== undefined) {
+      if (!Array.isArray(model.contrastModels)
+        || model.contrastModels.some((contrast) => typeof contrast !== 'string' || contrast.trim().length === 0)) {
+        errors.push(`${modelPath}.contrastModels must be a string array when provided`);
+      } else if (model.contrastModels.length > maxContrastModels) {
+        errors.push(`${modelPath}.contrastModels must contain at most ${maxContrastModels} entries`);
+      } else if (new Set(model.contrastModels.map((contrast) => contrast.trim().toLowerCase())).size
+        !== model.contrastModels.length) {
+        errors.push(`${modelPath}.contrastModels must not contain duplicates`);
+      }
+    }
+    if (model.excludedDomains !== undefined) {
+      if (!Array.isArray(model.excludedDomains)) {
+        errors.push(`${modelPath}.excludedDomains must be an array when provided`);
+      } else {
+        const excludedDomains = model.excludedDomains;
+        for (let index = 0; index < excludedDomains.length; index += 1) {
+          const domain = excludedDomains[index];
+          if (typeof domain !== 'string' || !CANONICAL_KBF_DOMAIN_KEYS.has(domain)) {
+            errors.push(`${modelPath}.excludedDomains[${index}] must be a canonical KBF domain`);
+          }
+        }
+        if (new Set(excludedDomains).size !== excludedDomains.length) {
+          errors.push(`${modelPath}.excludedDomains must not contain duplicates`);
+        }
+        if (excludedDomains.length >= CANONICAL_KBF_DOMAINS.length) {
+          errors.push(`${modelPath}.excludedDomains must leave at least one canonical KBF domain enabled`);
+        }
+      }
+    }
+  }
+  const requiresAutomaticSelection = models.some(([, modelConfig]) => {
+    if (!modelConfig || typeof modelConfig !== 'object' || Array.isArray(modelConfig)) return false;
+    const model = modelConfig as Record<string, unknown>;
+    return model.enabled !== false && (!Array.isArray(model.contrastModels) || model.contrastModels.length === 0);
+  });
+  if (!usesOpenRouterCatalog && requiresAutomaticSelection && value.contrastModelBank === undefined) {
+    errors.push(`${path}.contrastModelBank is required when an enabled model has no explicit contrastModels`);
+  }
+  if (value.contrastModelBank !== undefined) {
+    validateContrastModelBank(`${path}.contrastModelBank`, value.contrastModelBank, errors);
+  }
+}
+
+function validateReferenceRoute(path: string, route: unknown, errors: string[]): void {
+  if (!route || typeof route !== 'object' || Array.isArray(route)) {
+    errors.push(`${path} must be an object when provided`);
+    return;
+  }
+  const value = route as Record<string, unknown>;
+  for (const key of Object.keys(value).filter((key) => !VERIFIER_REFERENCE_ROUTE_KEYS.has(key))) {
+    errors.push(`${path}.${key} is not supported`);
+  }
+  if (value.type !== 'antseed') errors.push(`${path}.type must be "antseed"`);
+  if (typeof value.service !== 'string' || value.service.trim().length === 0) {
+    errors.push(`${path}.service must be a non-empty string`);
+  }
+  if (typeof value.peerId !== 'string' || !/^[0-9a-fA-F]{40}$/.test(value.peerId)) {
+    errors.push(`${path}.peerId must be a 40-character hex peer id`);
+  }
+  validatePricing(`${path}.pricing`, value.pricing, errors);
+}
+
+function validateContrastModelBank(path: string, bank: unknown, errors: string[]): void {
+  if (!bank || typeof bank !== 'object' || Array.isArray(bank)) {
+    errors.push(`${path} must be a non-empty object when provided`);
+    return;
+  }
+  const entries = Object.entries(bank as Record<string, unknown>);
+  if (entries.length === 0) errors.push(`${path} must not be empty`);
+  for (const [name, candidateConfig] of entries) {
+    const candidatePath = `${path}[${JSON.stringify(name)}]`;
+    if (!candidateConfig || typeof candidateConfig !== 'object' || Array.isArray(candidateConfig)) {
+      errors.push(`${candidatePath} must be an object`);
+      continue;
+    }
+    const candidate = candidateConfig as Record<string, unknown>;
+    for (const key of Object.keys(candidate).filter((key) => !VERIFIER_CONTRAST_MODEL_KEYS.has(key))) {
+      errors.push(`${candidatePath}.${key} is not supported`);
+    }
+    if (candidate.enabled !== undefined && typeof candidate.enabled !== 'boolean') {
+      errors.push(`${candidatePath}.enabled must be a boolean`);
+    }
+    if (typeof candidate.upstreamModel !== 'string' || candidate.upstreamModel.trim().length === 0) {
+      errors.push(`${candidatePath}.upstreamModel must be a non-empty string`);
+    }
+    validatePricing(`${candidatePath}.pricing`, candidate.pricing, errors);
+    if (typeof candidate.capabilityRank !== 'number'
+      || !Number.isFinite(candidate.capabilityRank) || candidate.capabilityRank < 0) {
+      errors.push(`${candidatePath}.capabilityRank must be a finite number >= 0`);
+    }
+  }
+}
+
+function validatePricing(path: string, pricing: unknown, errors: string[]): void {
+  if (!pricing || typeof pricing !== 'object' || Array.isArray(pricing)) {
+    errors.push(`${path} must be an object`);
+    return;
+  }
+  const value = pricing as Record<string, unknown>;
+  for (const key of Object.keys(value).filter((key) => !VERIFIER_PRICING_KEYS.has(key))) {
+    errors.push(`${path}.${key} is not supported`);
+  }
+  for (const key of ['inputUsdPerMillion', 'outputUsdPerMillion'] as const) {
+    if (typeof value[key] !== 'number' || !Number.isFinite(value[key]) || Number(value[key]) < 0) {
+      errors.push(`${path}.${key} must be a finite number >= 0`);
+    }
+  }
+}
+
 /**
  * Validate the full config and return all issues.
  */
@@ -387,6 +728,8 @@ export function validateConfig(config: AntseedConfig): string[] {
   }
 
   validateVerifications('seller.verifications', config.seller.verifications, errors);
+
+  validateVerifierConfig('verifier', config.verifier, errors);
 
   if (config.relayer !== undefined) {
     if (config.relayer.enabled !== undefined && typeof config.relayer.enabled !== 'boolean') {
