@@ -6,7 +6,18 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ## Unreleased
 
+### Published
+
+- `@antseed/cli`
+- `@antseed/fingerprints`
+- `@antseed/node`
+
 ### Added
+
+- Added `@antseed/fingerprints` and the end-to-end `antseed verifier` workflow for trusted KBF reference building, bounded concurrent seller audits, authenticated evidence capture, resumable run artifacts, IPFS publication, model-bundle submission, verifier status, and reward claiming.
+- Added buyer-accepted request-cost receipts and exact request/response preimages to `verification.db`, so transparent audits bind each scored exchange to the routed seller, service, request, response, verified `ResponseAuth`, and accounted audit cost.
+- Added on-chain verification bundle and reward support through `AntseedVerification`, including distinct active verifier status per agent and service, per-verifier latest verdicts, exact USD-micro credit accounting, and verifier-only claims from the 10% emissions bucket.
+- Added the split `AntseedVerificationPointsPolicy` integration to Node and CLI configuration. Deployments can configure the verification core, verification policy adapter, and points-policy registry independently while keeping attestations and rewards live in shadow mode.
 
 - Desktop: added seller-assisted channel closing to Activity for sellers advertising `payments.cooperative-close.v1`, with clear rejection feedback and the existing wallet-based on-chain close retained as a permanent fallback.
 
@@ -32,6 +43,9 @@ This project uses selective package publishing. Each release entry lists the pub
 - Added `AntseedNode.requestChannelClose(peerId, opts)` to `@antseed/node`, plus the `payments.cooperative-close.v1` capability advertised in discovery metadata and the connection handshake.
 
 ### Changed
+
+- Changed model-verification routing to use distinct active `DIFF` verifiers instead of consecutive results. One verifier cannot trigger enforcement, same-verifier `SAME` or `UNDETERMINED` retracts only that verifier's same-service accusation, and cross-service results cannot clear a standing accusation.
+- Changed verification enforcement to fail safe: buyer discovery may surface flagged or threshold-reaching services, but automatic routing only deprioritizes or excludes them after the configured points-policy registry confirms that the verification adapter is registered. The adapter is deployed unregistered by default.
 
 - diemantseed.com: eligible $ANTS incentives are now claimed directly from the staking page's Claim tab (same wallet, per completed epoch) instead of requiring the desktop app; the claim banner, how-it-works steps, and FAQ were updated to match. Desktop download links and copy now use the current VPR branding (formerly AntStation). Failed wallet transactions show the concise error message instead of the full request dump.
 - Removed the DIEM claim flow from the desktop app and payments portal now that DIEM staking $ANTS are claimed on diemantseed.com: the VPR Rewards view no longer shows the "DIEM staking rewards" card, the portal's DIEM claim page is gone, and legacy `diem-rewards` portal links fold into the network-rewards claim page.

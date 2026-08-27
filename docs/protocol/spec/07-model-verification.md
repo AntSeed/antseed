@@ -1,1221 +1,551 @@
-# 07 - Model Verification
+# Model Verification
 
-**Status:** Mixed. `ResponseAuth`, `VerificationMux`, buyer-side response-auth
-storage, and random buyer-side request/response evidence samples are implemented
-in `@antseed/node`. Fingerprint verifiers, fingerprint swarm distribution,
-reference storage, audit runners, and slashing are proposed next-step work.
+AntSeed model verification is integrated into the existing `antseed verifier`
+CLI and the already-running buyer proxy. It does not start a second verifier
+daemon or expose a new buyer-proxy endpoint.
 
-## Overview
+The verifier builds append-only KBF probe banks from a trusted reference
+endpoint, reserves one powered subset per model and epoch, uses that exact
+subset for every seller audited for the model in the epoch, sends two probe
+batches concurrently through the buyer proxy, and records the buyer node's
+verified `ResponseAuth` for every successful batch.
 
-The reputation layer ([05-reputation.md](./05-reputation.md)) and metering layer
-([03-metering.md](./03-metering.md)) answer **whether** a request was served and
-**how much** was billed. Neither answers **what** was served.
-
-A Seller can advertise a premium model (e.g. `claude-sonnet-4-6`) on the DHT and
-silently serve a cheaper substitute — a different model family, a nano-tier
-endpoint, or an aggressively quantized copy of the correct model. The Buyer pays
-the advertised price and receives degraded output. Settlement volume,
-ghost-channel rate, and ERC-8004 feedback all score the cheating Seller exactly
-as well as an honest one, because delivery still happened.
-
-This is not hypothetical. "Real Money, Fake Models" audits shadow APIs claiming
-to serve official frontier models and finds utility, safety, and identity
-divergence between claimed and served behavior
-(https://arxiv.org/abs/2603.01919). AntSeed's model-verification layer is the
-protocol response to that failure mode: make served bytes attributable first,
-then run black-box identity checks over attributable evidence.
-
-**Model verification** is the set of mechanisms that let a Buyer gain confidence
-that the model it paid for is the model it received, and — where the evidence is
-strong enough — escalate a confirmed substitution to on-chain slashing. The v1
-implementation target is a **buyer-run fingerprint suite** backed by signed
-response evidence. The Seller is not trusted to provide the fingerprint result.
-
-There is no central verification authority. Every mechanism here is either
-Buyer-local or settled through existing peer-to-peer and on-chain primitives.
-
----
-
-## Implementation Status
-
-This spec intentionally separates the evidence substrate that already exists
-from the fingerprint/audit layers that still need to be built.
-
-### Implemented
-
-Implemented in the `@antseed/node` package:
-
-- `ResponseAuthPayload` protocol type:
-  - `version`;
-  - `requestId`;
-  - optional `channelId`;
-  - `buyerPeerId`;
-  - `sellerPeerId`;
-  - `advertisedService`;
-  - `provider`;
-  - `statusCode`;
-  - `requestHash`;
-  - `responseHash`;
-  - `responseStartedAt`;
-  - `responseCompletedAt`;
-  - `signature`.
-- Connection capability:
-  - `verification.response-auth.v1`.
-- Verification frame:
-  - `MessageType.VerificationResponseAuth = 0x80`.
-- `VerificationMux`:
-  - sends response-auth frames;
-  - waits by `requestId`;
-  - buffers out-of-order auths;
-  - allows one listener for unsolicited response-auth handling;
-  - reserves `0x80-0x8f` for verification messages.
-- Seller behavior:
-  - creates `ResponseAuth` after a completed inference response;
-  - signs with the Seller identity;
-  - sends it only when the Buyer advertised `verification.response-auth.v1`,
-    preserving compatibility with older Buyers.
-- Buyer behavior:
-  - waits for `ResponseAuth` after receiving the response;
-  - verifies request hash, response hash, request id, status code, buyer id,
-    seller id, advertised service, optional channel id, and Seller signature;
-  - stores the auth and verification result in `verification.db`.
-- Verification storage:
-  - SQLite table `response_auths`;
-  - indexed by seller, advertised service, and received timestamp.
-- Buyer-side full evidence sampling:
-  - random sample rate default `0.005`;
-  - max encoded request + response bytes default `16 MiB`;
-  - default directory `<dataDir>/verification_samples`;
-  - stores `manifest.json`, `request.bin`, and `response.bin`;
-  - stores only verified `ResponseAuth` samples.
-
-The implemented evidence chain is:
+## Commands
 
 ```text
-encoded request bytes
-  -> requestHash
-  -> ResponseAuth.signature
-  -> response_auths row
-  -> optional verification_samples/<sellerPeerId>/<sampleId>/
+antseed verifier reference build <model>
+antseed verifier reference build --all
+antseed verifier run <model>
+antseed verifier run --all
+antseed verifier run --all --allow-probe-reuse
+antseed verifier run --resume-run <run-id>
+antseed verifier run <model> --resume-run <run-id>
+antseed verifier status [--json]
+antseed verifier submit --run-id <run-id> --dry-run
+antseed verifier submit --run-id <run-id> [--yes]
+antseed verifier submit --run-id <run-id> --publish-ipfs [--yes]
+antseed verifier claim
 ```
 
-### Not Implemented Yet
+`<model>` and `--all` are mutually exclusive and exactly one is required for
+`reference build` and `run`. All-model commands continue after per-model
+failures and exit nonzero if any model or peer fails. Reference builds and
+audit runs use bounded concurrency across models and sellers.
 
-Still proposed:
+`run --resume-run <run-id>` creates a new immutable repair run for only the
+`UNDETERMINED` sellers in the source run. A model argument may narrow the repair
+to one source model. The verifier rejects repairs when the epoch, seller,
+service, reference ID, query-profile hash, or assigned probe IDs differ. Within
+the same epoch, a normal `run` also discovers an interrupted or most-recent
+undetermined run and repairs only its unresolved batches. Use a fresh epoch or
+finish the repair before intentionally starting another complete audit.
 
-- `@antseed/fingerprints` package;
-- KBF verifier implementation;
-- non-KBF verifier families;
-- public fingerprint swarm;
-- buyer-local fingerprint reference store;
-- KBF/fingerprint audit runner;
-- audit result manifests under `<dataDir>/fingerprints/audits`;
-- forced evidence storage for audit probes;
-- local routing policy based on fingerprint verdicts;
-- commit-reveal for slashable audits;
-- off-chain exhibit verifier;
-- on-chain slash signal for confirmed substitution.
+`reference build --all` skips a model when its existing bank can produce a
+reference that satisfies the configured sizing, coverage, self-test, and
+statistical-power requirements. Building an explicit `<model>` always runs and
+can be used to replenish or intentionally expand that model's bank.
 
-The next implementation should build on the existing `ResponseAuth` and
-verification sample substrate instead of replacing it.
+`reference build` creates a powered reference and appends its probes and
+per-probe self-test outcomes to the model's bank. `run` never calls the trusted
+reference endpoint. It uses the verification contract's epoch when an address
+is configured; otherwise it uses UTC calendar days (`YYYY-MM-DD`). It resolves
+the buyer snapshot and ResponseAuth database once, then processes models and
+eligible peers through bounded worker pools.
 
----
+## Configuration
 
-## Threat Model
+```yaml
+payments:
+  crypto:
+    chainId: base-mainnet
+    verificationContractAddress: 0x...
+    verificationPointsPolicyAddress: 0x...
+    pointsPolicyRegistryAddress: 0x...
 
-The adversary is a profit-motivated Seller that:
+verifier:
+  responseAuthWaitTimeoutMs: 35000
+  probeRequestTimeoutMs: 120000
+  auditMaxConcurrentModels: 3
+  auditMaxConcurrentPeersPerModel: 4
+  auditMaxConcurrentBatches: 12
+  auditMaxConcurrentBatchesPerPeer: 2
+  auditConcurrencyPromotionLatencyMs: 30000
+  auditPeerTimeoutMs: 600000
 
-- Sees every request in plaintext before responding.
-- Can run more than one backend and route each request to whichever backend it
-  chooses, based on the request content.
-- Will serve the advertised model only when it believes it is being watched, and
-  the cheap substitute otherwise.
+  contrastSelection:
+    catalogSource: openrouter
+    inputWeight: 0.90
+    maxPriceRatio: 0.30
+    maxModels: 3
+    minimumIntelligenceIndex: 30
 
-This last capability is the crux. **Any verification signal that is
-distinguishable from ordinary Buyer traffic is a defeat device waiting to
-happen**: the Seller detects the probe, serves the real model for that request,
-and cheats everything else. Distinguishability is the property to design out, not
-a detail to tune later.
+  referenceMinimumProbeCount: 100
+  referenceMaximumProbeCount: 500
+  referenceProbeStep: 10
+  referenceMinimumStatisticalPower: 0.90
 
-A secondary adversary is a malicious **Buyer** that fabricates or cherry-picks
-evidence to slash an honest Seller. Any mechanism that can trigger an on-chain
-penalty MUST be robust against this.
+  referenceEndpoint:
+    baseUrl: https://openrouter.ai/api/v1
+    apiKeyEnv: OPENROUTER_API_KEY
+    sourceId: openrouter-v1
+    trust: trusted
 
-External motivation:
-
-- "Real Money, Fake Models" documents deceptive model claims in shadow APIs and
-  motivates treating model identity as an auditable market claim, not a label to
-  trust blindly: https://arxiv.org/abs/2603.01919.
-
----
-
-## Mechanisms
-
-The mechanisms below are layered. Each is independently useful; combined, they
-form an `unattested → signed → attested` trust ladder consistent with the
-existing reputation tiers.
-
-### M1 — Behavioral Probes (weakest; bounded usefulness)
-
-The approach proposed in issue #504. The Buyer (or a router middleware) injects
-small structured prompts with deterministic, automatically scorable answers —
-exact integer counts, fixed-schema JSON, multi-step arithmetic, fixed-length
-output — and scores the response with a pure matcher function. An aggregate score
-below a threshold over a session yields a fail verdict.
-
-**Strengths:** zero Seller-side changes; cheap (≤30 output tokens per probe);
-honest Sellers pass automatically; catches the lazy/casual substitution case.
-
-**Limitations (MUST be understood before relying on this):**
-
-- **Distinguishability.** Probes drawn from a fixed bank, sent as side-channel
-  requests that bypass normal routing, are detectable by the adversary in the
-  threat model above. A static probe bank published in this repository ossifies
-  the moment it is public.
-- **Tier, not identity.** Capability probes (arithmetic, format compliance)
-  separate a nano tier from a frontier tier. They do **not** distinguish two
-  models of similar capability (e.g. a 70B open model impersonating Sonnet), and
-  they do **not** detect quantization of the correct model.
-- **Self-reported identity is not a signal.** "Who made you?" probes are trivially
-  defeated by a one-line system prompt, and open models routinely misreport their
-  creator due to training contamination. This probe class SHOULD NOT be used.
-
-M1 is acceptable as a cheap first-pass deterrent and as a way to prioritize where
-to spend the more expensive mechanisms. It MUST NOT, on its own, drive on-chain
-penalties.
-
-### M2 — Reference Shadow Sampling (recommended core mechanism)
-
-Instead of synthetic probes, sample **real** Buyer traffic. Because the probe is
-an actual user request, the Seller cannot treat it differently without treating
-all traffic the same way — distinguishability is eliminated by construction.
-
-On a small random fraction `p` of real requests (default `p = 0.02`):
-
-1. The Buyer sends the request to the selected Seller as normal.
-2. The Buyer also sends the identical request to a **reference** for the same
-   advertised model: the canonical upstream API (when the Buyer holds a key) or a
-   TEE-attested peer (see M5) serving that model.
-3. The Buyer stores both responses locally, keyed by the request.
-
-A single (request, response) pair proves nothing: at any temperature, serving
-stacks are not bitwise deterministic (batching, MoE routing, kernel differences).
-Verification is therefore **distributional and accumulated**, never per-request:
-
-- The Buyer accumulates `N` sampled triples for a given Seller (default `N ≥ 30`).
-- It runs a two-sample statistical test comparing the Seller's output
-  distribution against the reference's (e.g. a Model-Equality-style test over
-  per-request similarity, or a distance over output-length / token-distribution
-  features). This detects both family substitution and quantization in aggregate.
-- Pass → samples are discarded; nothing is published. Fail → the Seller is
-  flagged.
-
-**Cost:** `2×` tokens on the sampled fraction only — i.e. ~`p` overhead on total
-spend. Probe spend flows through the normal payment channel and SHOULD be tagged
-in metering so it is distinguishable from organic usage for accounting.
-
-### M3 — Signed Responses (non-repudiation; enables disputes)
-
-M1 and M2 let a Buyer adjust its **own** routing. They do not, by themselves,
-support a verdict any third party can trust, because an unsigned response is
-hearsay: the Seller can claim the Buyer fabricated it.
-
-To make verdicts portable, the Seller signs a `ResponseAuthPayload` after every
-completed response when the Buyer supports `verification.response-auth.v1`.
-
-```jsonc
-{
-  "version": 1,
-  "requestId": "req-...",
-  "channelId": "0x...",
-  "buyerPeerId": "0x...",
-  "sellerPeerId": "0x...",
-  "advertisedService": "gpt-5.4",
-  "provider": "openai",
-  "statusCode": 200,
-  "requestHash": "0x...",
-  "responseHash": "0x...",
-  "responseStartedAt": 1790000000000,
-  "responseCompletedAt": 1790000001200,
-  "signature": "0x..."
-}
+    models:
+      claude-opus-5:
+        enabled: true
+        upstreamModel: anthropic/claude-opus-5
+      claude-opus-4-6:
+        enabled: true
+        serviceAliases:
+          - claude-opus-4.6
+        upstreamModel: anthropic/claude-opus-4.6
+      claude-sonnet-5:
+        enabled: true
+        upstreamModel: anthropic/claude-sonnet-5
+        referenceRoute:
+          type: antseed
+          service: sonnet-reference-service
+          peerId: 0123456789abcdef0123456789abcdef01234567
+          pricing:
+            inputUsdPerMillion: 0.30
+            outputUsdPerMillion: 0.80
+      gpt-5.6-sol:
+        enabled: true
+        upstreamModel: openai/gpt-5.6-sol
 ```
 
-The merged implementation signs the following length-prefixed fields under the
-domain tag `antseed-response-auth-v1`:
+`verificationContractAddress` is the core attestation, status, epoch, and
+verifier-reward contract. It is required for on-chain epoch resolution,
+submission, and reward claiming. `verificationPointsPolicyAddress` is the
+seller-points adapter, and `pointsPolicyRegistryAddress` is the composite
+integrity registry. Buyers need both policy addresses to verify whether model
+verification enforcement is active. If either is missing or unreadable, the
+buyer fails safe to shadow mode: it still exposes attestation status, but does
+not exclude or deprioritize sellers because of verification results.
+
+`banksDir` and `evidenceDir` are optional. When omitted, they default to
+`<dataDir>/verifier/banks` and `<dataDir>/verifier/evidence`, so the normal
+`~/.antseed` data directory needs no reusable-path configuration.
+
+With `catalogSource: openrouter`, `reference build` fetches `/api/v1/models`
+once at command startup. Audited-model and candidate prices come from each
+model's `pricing.prompt` and `pricing.completion`. Candidate capability comes
+from `benchmarks.artificial_analysis.intelligence_index`; models without that
+score are not automatic contrast candidates. Manual model pricing,
+`contrastModels`, and `contrastModelBank` should be omitted when automatic
+selection is desired.
+
+`serviceAliases` maps alternate network service spellings to the same logical
+audited model and probe bank. Each seller is audited at most once, using an
+eligible spelling that seller actually advertises. The primary mapping key is
+always included automatically and aliases must not duplicate it.
+
+The audited model's `upstreamModel` remains the trusted source of ground-truth
+answers. Cheap models are contrasts only. Automatic selection computes:
 
 ```text
-domainTag
-version
-requestId
-channelId || ""
-buyerPeerId
-sellerPeerId
-advertisedService
-provider
-statusCode
-requestHash
-responseHash
-responseStartedAt
-responseCompletedAt
+blended cost = input price × inputWeight + output price × (1 - inputWeight)
 ```
 
-- `requestHash = keccak256(encodeHttpRequest(request))`.
-- `responseHash = keccak256(encodeHttpResponse(responseWithoutStreamingHeader))`.
-- The streaming marker header is stripped before response hashing so streamed
-  and reconstructed responses hash consistently.
-- Signature verification recovers against the normalized Seller PeerId.
-- The Buyer verifies request hash, response hash, request id, status code, buyer
-  id, seller id, advertised service, optional channel id, and signature.
-- `ResponseAuth` is transported via `VerificationMux` as
-  `MessageType.VerificationResponseAuth = 0x80`.
-- The Buyer stores all received auths and verification results in the
-  `response_auths` SQLite table.
-- The Buyer may randomly store full request/response evidence in
-  `<dataDir>/verification_samples`.
+An audited model may set `referenceRoute.type: antseed` to send only its target
+candidate-generation, stability, and self-test requests through the local buyer
+proxy. The buyer proxy URL is derived from `buyer.proxyPort`; the configured
+`service` is sent as the request model and every request is pinned to `peerId`.
+Contrast requests continue to use `referenceEndpoint`. Route pricing is used for
+target request cost accounting, while OpenRouter catalog pricing still drives
+automatic contrast selection. The buyer proxy must already be running. An
+unavailable peer or service fails the build without falling back, and the
+checkpoint remains available for a later resume.
 
-The signature binds *who emitted which bytes for which request*. It carries no
-quality claim on its own — quality comes from M2's statistics or the fingerprint
-verifiers in this spec.
+Candidates must cost at most the audited model's blended cost multiplied by
+`maxPriceRatio`. Disabled candidates and the target upstream model are excluded.
+Candidates below `minimumIntelligenceIndex` are excluded. Eligible candidates
+sort by Artificial Analysis Intelligence Index descending, blended cost
+ascending, then OpenRouter model ID. The verifier selects up to `maxModels` and
+fails when none qualify. A non-empty explicit `contrastModels` list overrides
+automatic selection and may contain at most three entries.
 
-The hash is a binding commitment, not a privacy mechanism: the Buyer retains full
-plaintext. Hashing only avoids signing megabytes and lets a third party recompute
-and verify cheaply.
+The default policy is 90% input weighting, a 30% maximum price ratio, and three
+contrast models. `reference build` stores the selected contrasts in the probe
+bank. Audit runs use that stored selection and do not refresh the OpenRouter
+catalog or create billable reference traffic implicitly.
 
-Any Seller participating in a verifiable/signed trust tier MUST sign every
-response requested by a Buyer that advertises `ResponseAuth` support. The
-signature is unconditional: the Seller does not learn which responses the Buyer
-will later sample, audit, or dispute.
+Reference builds persist integer USD micro-costs from OpenRouter response usage
+and the catalog price snapshot. Costs are grouped by model and by purpose:
+candidate generation, target-model stability checks, contrast-model checks, and
+the final target-model self-test. Cached responses resumed from the same
+unfinished checkpoint are charged once when that completed reference is first
+appended to the bank. A reference ID already present in the bank does not create
+a second claimable cost entry.
 
-Backward compatibility is implemented by connection-capability negotiation:
+Reference consistency follows the KBF enrollment procedure. Candidate probes
+are queried in domain-homogeneous batches of at most ten under temperatures
+`0`, `0.7`, and `0.7`, with an independently shuffled order for each pass.
+Exact domains require all three rounded answers to agree. Relative domains
+require the first pass to match the consensus under the domain tolerance and
+the maximum deviation from the three-answer mean to be at most 2%. The
+final reference self-test, contrast checks, and seller audits also use
+domain-homogeneous batches. Probe answers are always remapped to their original
+probe IDs before self-test scoring or audit verification.
 
-- new Seller + new Buyer: Seller sends `ResponseAuth`;
-- new Seller + old Buyer: Seller does not send unsupported verification frames;
-- old Seller + new Buyer: Buyer logs missing `ResponseAuth` and treats it as
-  unavailable evidence, not a transport failure.
+Every accepted generated probe preserves its three enrollment temperatures,
+the three parsed enrollment answers, and the exact stability rule used to form
+the stored reference consensus. This metadata travels with the probe into the
+bank, per-seller evidence packs, and model-run consensus evidence.
 
-### M4 — Passive Fingerprinting (free; always on; triage only)
+## Probe Banks
 
-From ordinary traffic the Buyer derives per-Seller statistics that need no extra
-requests: inter-token latency distribution, time-to-first-token, output-length
-distribution, and stop/refusal patterns. Each Seller is compared against the
-cohort of Sellers advertising the same model; outliers are flagged.
-
-This is weak on its own (timing is noisy and environment-dependent) and MUST NOT
-drive penalties. Its value is **triage**: it is zero-cost and tells the Buyer
-where to spend M2 sampling budget instead of sampling uniformly.
-
-### M5 — TEE Attestation (strongest; premium tier)
-
-An attested Seller proves, via a hardware remote-attestation quote, which
-endpoint and weights it serves. Attested Sellers:
-
-- Require no statistical inference — the attestation is the proof.
-- Double as the trusted **reference** for M2, which bootstraps verification for
-  Buyers that do not hold canonical upstream API keys.
-
-Attestation is the top of the trust ladder and is expected to command a price
-premium. It is out of scope for v1 beyond reserving the tier.
-
----
-
-## Fingerprint Verifier Suite
-
-Fingerprint verifiers are black-box tests run by the Buyer against the Seller's
-normal inference endpoint. They do not require the Seller to reveal weights,
-runtime configuration, upstream credentials, or hardware claims.
-
-Every verifier MUST follow the same contract:
-
-1. It receives a `FingerprintReference` selected by the Buyer for an advertised
-   service.
-2. It emits normal `SerializedHttpRequest` objects that travel through the
-   existing Buyer → Seller transport path.
-3. It consumes the resulting `SerializedHttpResponse` bytes and the verified
-   `ResponseAuth` for each request.
-4. It writes an `AuditResult` with a deterministic verdict and enough metadata
-   to reproduce the result later.
-
-The initial suite SHOULD include the following verifier families. Each family is
-independent; a failure by one family is routing evidence, not automatic slashing
-evidence. Strong enforcement requires cross-family agreement or arbiter
-confirmation.
-
-### F1 — Knowledge Boundary Fingerprinting (KBF)
-
-KBF probes facts near the claimed model's knowledge boundary: the reference model
-answers them consistently, while contrast models answer differently or fail. The
-canonical prompt form is numeric cloze completion:
+Probe banks and per-seller ledgers are stored at:
 
 ```text
-TASK: Answer these factual recall questions using only values stored in your weights.
-RULES: Output ONLY in (N) <number> format, one per line.
-
-(1) The melting point of tantalum carbide is ___°C.
-(2) The diploid chromosome number (2n) of <organism> is ___.
+<banksDir>/<model-slug>/
+├── bank.json
+├── epochs/<epoch>.json
+└── sellers/<peer-id-hash>.json
 ```
 
-KBF is useful because numeric answers are mechanically parsed and scored. It is
-also limited: when multiple frontier models answer a probe set perfectly, that
-probe set has no discriminating power. KBF therefore depends on fresh, private,
-model-specific references, not only public probes checked into source control.
+Successful reference builds append probes and self-test outcomes. Repeated probe
+IDs are deduplicated only when their canonical probe content and self-test
+evidence match. The append is rejected when an ID conflicts or when model,
+query-profile, provenance, statistical assumptions, or the reference-enrollment
+algorithm are incompatible. An operator must archive or remove an incompatible
+legacy bank before appending probes built by a newer enrollment algorithm.
 
-An AntSeed KBF verifier MUST implement:
+Before the first seller dispatch for a model and epoch, the verifier
+cryptographically shuffles eligible bank probes. It evaluates configured
+10-probe sizing steps and persists the first subset meeting coverage, self-test
+error, and statistical-power requirements in `epochs/<epoch>.json`. Every
+seller reservation in that model and epoch records the same reference ID and
+ordered probe IDs, including later runs and repair runs. Seller audit IDs and
+ledgers remain independent.
 
-- domain-specific prompt templates;
-- domain-specific numeric ranges and tolerances;
-- position-aware numeric parsing using `(N)` prefixes;
-- match-vector computation: `1` match, `0` mismatch, `null` unparseable;
-- reference self-error loading;
-- CP99 upper-bound computation for the reference error rate;
-- one-sided binomial verdict computation;
-- `SAME`, `DIFF`, `UNDETERMINED`, and `UNKNOWN` verdicts.
+By default, a newly created epoch reference excludes probes used by persisted
+references from earlier epochs. `--allow-probe-reuse` allows a new epoch
+reference to select those earlier probes again. It never changes the already
+persisted reference for the current epoch. Deterministic first-batch
+ineligibility responses void only that seller's assignment; the shared epoch
+reference remains available to the other sellers. Historical reservations made
+before epoch references were introduced retain their original probe subsets.
 
-`SAME` means "not statistically inconsistent with the reference under this
-probe set." It MUST NOT be represented as proof that the exact model was served.
-`DIFF` is the only verdict that can become adverse evidence.
+## ResponseAuth
 
-### F2 — Behavioral Classifier Fingerprints
+`verifier run` opens `<dataDir>/verification.db` once using the exported
+`VerificationStorage`. Only peers advertising
+`verification.response-auth.v1` are scheduled; advertised peers without it are
+recorded as skipped. Before reserving probes, the verifier independently applies
+`buyer.minPeerReputation` and `buyer.maxPricing.defaults` to each advertised
+seller using the pricing and reputation in the buyer snapshot. Sellers outside
+that configured policy are recorded as reasoned preflight skips and receive no
+audit traffic. A structured first-batch `model_not_found` response stops the
+audit, voids its probe reservation, and records a reasoned `SKIPPED` entry plus
+evidence. Peers that never advertised the model are not included in that model's
+report.
 
-The Buyer sends prompts selected because known models respond differently and
-consistently. The response is converted into features such as refusal style,
-format adherence, verbosity, JSON compliance, instruction-following behavior,
-and answer shape. A classifier or nearest-reference scorer returns a model
-identity score.
+After each successful proxy response, the verifier reads
+`x-antseed-request-id` and polls `getResponseAuth(requestId)` every 100 ms for up
+to `responseAuthWaitTimeoutMs`. The stored record must be verified and match the
+request ID, seller peer ID, and advertised service.
 
-This family is broader than KBF and can detect stylistic or policy differences,
-but it is easier to perturb with wrapper prompts. It SHOULD be treated as a
-routing and triage signal unless combined with stronger evidence.
+Future verifier requests ask the local buyer proxy to retain the exact AntSeed
+codec bytes hashed by `ResponseAuth`. The local capture control header is
+removed before P2P routing. For every successful exchange, evidence contains:
 
-### F3 — Adversarial Trigger Fingerprints
+- the seller-signed `ResponseAuth` payload and signature;
+- the exact encoded request and response bytes, in base64;
+- the exact `antseed-response-auth-v1` signature-message bytes, in base64; and
+- the recomputed Keccak-256 request and response hashes.
 
-The Buyer sends private trigger prompts that produce distinctive behavior in the
-reference model but not in common substitutes. These prompts can include unusual
-formatting, suffixes, ordering constraints, or instruction conflicts.
+The reader rejects missing or hash-mismatching preimages. Therefore a rebuilt
+buyer proxy must be restarted before starting a new audit. Existing historical
+evidence remains readable, but cannot retroactively gain bytes that were not
+retained when those requests ran. If any successful batch lacks valid
+authenticated evidence, observations are preserved but the audit verdict is
+forced to `UNDETERMINED`.
 
-Triggers MUST be private and rotatable. Public triggers become defeat devices:
-the Seller can route trigger-looking traffic to the real model and cheap traffic
-elsewhere.
+`evidenceLevel` is retained as a proof-scope boundary, not a quality score. It
+prevents seller-signed proxy observations from being described as payment or
+on-chain evidence. Each readable manifest repeats that scope explicitly.
 
-### F4 — Perturbation Fingerprints
+Each successful exchange also records the buyer proxy's token counts, selected
+seller prices, token-count source, and estimated USD cost. Audit, model, epoch,
+and status summaries aggregate these values. Missing or partial telemetry is
+not treated as zero-cost work: summaries retain a `missingCostExchangeCount` so
+operators can distinguish a complete estimate from a partial one.
 
-The Buyer sends a base prompt and a set of semantic-preserving perturbations:
-synonym swaps, clause reordering, punctuation changes, or equivalent JSON key
-orderings. The verifier scores how output changes across the perturbation set.
+## Runtime and Artifacts
 
-This tests the model's response surface, not only its final answer. It is more
-expensive than KBF because one logical probe expands into multiple requests.
+Models and their eligible peers are processed through bounded worker pools.
+Defaults allow three models, four peers per model, twelve total buyer-proxy
+batches, and up to two batches per seller audit concurrently. Each seller audit
+starts with one batch. A successful authenticated first batch completing within
+`auditConcurrencyPromotionLatencyMs` promotes that seller to its configured
+per-audit maximum; any HTTP 429 permanently reduces the remainder of that audit
+to one batch at a time. A shared seller lock prevents one seller from being
+audited for multiple models simultaneously. Transient proxy failures use
+bounded retries. Each seller audit has a hard ten-minute wall-clock deadline
+that starts when its first batch acquires global execution capacity, aborts
+every remaining batch, and finalizes the seller as `UNDETERMINED`. Each request
+retains its 120-second timeout. Retryable `408`, `429`, `5xx`, payment-lock
+timeouts, and semantic temporary-unavailable responses receive at most five
+attempts with bounded exponential backoff, jitter, and `Retry-After` support.
+Temporary unavailability, throttling, and request timeouts remain
+`UNDETERMINED`; only deterministic policy or stale-advertisement responses are
+classified as skipped.
 
-### F5 — Tokenizer and Rare-Token Fingerprints
+Every completed batch is atomically checkpointed with its answers,
+`ResponseAuth`, cost, and structured failure reason. Repairs reuse only
+successful authenticated batches and resend failed, missing, or invalid-auth
+batches. The repair artifact links to its parent audit and reports incremental
+repair cost separately from cumulative audit cost. A deterministic first-batch
+failure stops pending work and voids the reservation; an exhausted transient
+first batch stops redundant work but preserves the reservation for resume.
 
-The Buyer uses prompts containing rare token fragments, unusual Unicode, or
-tokenizer-sensitive strings. Models with different tokenizers or pretraining
-distributions often degrade differently.
-
-This family is useful for detecting model families and serving stacks. It is
-fragile across sanitizers, relays, and wrapper systems, so it SHOULD NOT be the
-sole source of an adverse verdict.
-
-### F6 — Instruction-Hierarchy Fingerprints
-
-The Buyer sends prompts that exercise system/user conflict handling, refusal
-boundaries, schema repair, and hidden-instruction resistance. This often
-fingerprints the **Seller stack** (base model plus wrapper), not only the base
-model.
-
-For AntSeed this is still valuable: Buyers care about the service they receive,
-including wrappers. For model-identity slashing, the verifier MUST distinguish
-"different wrapper" from "different claimed model" in the verdict reason.
-
-### F7 — Output-Distribution Fingerprints
-
-When an API supports seeds, logprobs, top-token data, or repeated stochastic
-sampling, the verifier compares output distributions instead of single answers.
-This is strong when available and unavailable on many endpoints.
-
-The verifier MUST record which distribution features were exposed by the Seller
-or upstream-compatible API. Missing logprobs is not an adverse signal by itself.
-
-### F8 — Service Runtime Fingerprints
-
-The Buyer observes protocol and runtime behavior: error shapes, streaming chunk
-cadence, headers, timeout behavior, context-window failure modes, and
-OpenAI/Anthropic compatibility quirks. This identifies serving software or relay
-type more than model identity.
-
-Runtime fingerprints are triage signals. They can justify increasing KBF or
-shadow-sampling budget, but they MUST NOT drive slashing directly.
-
-### F9 — Passive Proxy-Reader Provenance
-
-The Buyer analyzes ordinary signed responses after the fact with a provenance
-classifier or "reader" model trained to infer which model family or serving stack
-likely produced the text. READER-style methods fit here: they extract
-representations from generated text and decode authorship/provenance without
-requiring active challenge prompts.
-
-This family is important because it can run over normal user traffic already
-covered by `ResponseAuth`. It does not make audit traffic distinguishable to the
-Seller, and it can prioritize which Sellers should receive active KBF,
-behavioral, or perturbation audits.
-
-Limitations:
-
-- It is usually weaker than a targeted active audit for exact model identity.
-- It may fingerprint the full Seller stack, including wrappers and system
-  prompts, not only the base model.
-- It needs calibrated references and should report confidence, coverage, and
-  abstentions rather than forcing a verdict.
-
-Reference: "READER: Robust Evidence-based Authorship Decoding via Extracted
-Representations" (`arXiv:2606.10794`,
-https://arxiv.org/abs/2606.10794).
-
----
-
-## Package Boundaries
-
-The implementation SHOULD be split into pure verifier logic and AntSeed runtime
-orchestration.
-
-### `@antseed/fingerprints`
-
-Day-one pure TypeScript package. No P2P, payment, SQLite, or provider
-dependencies. This package is the canonical home for verifier interfaces,
-reference schemas, public fingerprint-pack schemas, and the first implemented
-verifier family.
-
-Responsibilities:
-
-- shared `FingerprintVerifier` interface;
-- shared reference, probe, audit-result, and fingerprint-pack schemas;
-- canonical JSON hashing for reference IDs, pack IDs, and audit IDs;
-- verifier registry and dispatch by `kind`;
-- KBF schemas and validators;
-- domain definitions and tolerances;
-- prompt construction;
-- numeric parser;
-- match-vector scoring;
-- CP99 / binomial statistics;
-- verdict computation;
-- fixtures and tests using small public reference files;
-- import/export helpers for public fingerprint packs.
-
-Non-responsibilities:
-
-- peer selection;
-- sending network requests;
-- verifying `ResponseAuth`;
-- storing buyer evidence;
-- fingerprint swarm discovery, fetching, seeding, and mirroring;
-- slashing.
-
-KBF is implemented as the first verifier module inside this package:
+One PID-aware run lock prevents concurrent verifier runs from reserving the same
+seller probes. Stale locks are recovered when their owner PID is no longer
+alive. Status, summaries, banks, ledgers, and evidence files use temporary-file
+plus rename writes.
 
 ```text
-packages/fingerprints/
-  src/
-    index.ts
-    types.ts
-    canonical-json.ts
-    verifiers/
-      kbf/
-        index.ts
-        domains.ts
-        parser.ts
-        scoring.ts
-        verdict.ts
+<evidenceDir>/
+├── status.json
+├── runs/
+│   ├── <run-id>.json
+│   └── <run-id>.summary.json
+├── bundles/<run-id>/<model-slug>.json
+├── submissions/<chain-id>/<verification-contract>/<run-id>.json
+└── epochs/<epoch>/
+    ├── events.jsonl
+    └── <model-slug>/
+        ├── report.html
+        ├── references/
+        │   └── <reference-id>/
+        │       └── probe-integrity.json
+        └── audits/
+            └── <run-id>/
+                ├── summary.json
+                ├── probe-consensus.json
+                ├── manifest.json
+                ├── .checkpoints/<seller-evidence-id>.json
+                └── sellers/
+                    └── <seller-peer-id>/
+                        ├── README.md
+                        ├── manifest.json
+                        ├── evidence.json
+                        └── exchanges/<batch-index>.json
 ```
 
-Future verifier families (behavioral classifiers, perturbation tests, rare-token
-tests, runtime fingerprints, passive proxy-reader provenance) MUST plug into the
-same package-level interfaces instead of creating one-off package APIs.
-
-### `@antseed/fingerprint-swarm`
-
-Optional package or node module for torrent-style public fingerprint pack
-distribution. It is separate from pure verifier math because it needs discovery,
-signatures, pack fetching, seeding, mirroring, and local trust policy. See
-[08-fingerprint-swarm.md](./08-fingerprint-swarm.md).
-
-Responsibilities:
-
-- publish signed public fingerprint packs;
-- discover packs by model/service/verifier kind;
-- fetch and seed packs by content hash;
-- validate pack signatures and provenance;
-- maintain local trust scores for pack publishers;
-- expose a swarm API to `@antseed/node`.
-
-This can start as an `@antseed/node` module if creating a package is premature,
-but the protocol and storage model MUST be designed as decentralized and
-content-addressed from day one.
-
-### `@antseed/node`
-
-Runtime integration package.
-
-Responsibilities:
-
-- load references from buyer-local storage;
-- discover and import public fingerprint packs;
-- select which Seller/service pairs to audit;
-- send audit requests through the ordinary Buyer request path;
-- wait for and verify `ResponseAuth`;
-- store full request/response samples using the existing verification sample
-  format;
-- call `@antseed/fingerprints` with parsed responses;
-- store audit result manifests;
-- expose routing/reputation hooks based on audit results.
-
-`@antseed/node` MUST NOT embed verifier-specific math in request handlers. Request
-handlers should only provide an authenticated request/response transport and
-sample persistence surface.
-
----
-
-## Reference Lifecycle
-
-References are the durable inputs a Buyer uses to evaluate a Seller. They are
-separate from audit results.
-
-### Public References
-
-Public references and fingerprints are useful for tests, demos, interop,
-bootstrap, and network-wide reputation. They are weaker than private probes for
-adversarial production use because a Seller can learn them, but they are still
-strategically important: AntSeed SHOULD become the decentralized public
-fingerprint swarm for model fingerprints, verifier references, staleness
-signals, and reproducible audit packs.
-
-Repository fixtures MAY live in:
-
-```text
-packages/fingerprints/references/public/<model-slug>.json
-```
-
-If the checked-in set becomes large, move static fixtures to an optional data
-package:
-
-```text
-packages/fingerprint-references/
-```
-
-Public references imported or adapted from third-party repositories MUST retain
-license and provenance metadata in the file and package license notices.
-
-Checked-in references are not the long-term distribution layer. The long-term
-distribution layer is a public, decentralized, content-addressed fingerprint
-swarm of signed packs. See [08-fingerprint-swarm.md](./08-fingerprint-swarm.md)
-for pack announcements, swarm topics, seeding, mirrors, chunk hashes, and trust
-policy.
-
-### Private Buyer References
-
-Private references are the normal production path. They are generated or
-imported by the Buyer and stored locally:
-
-```text
-<dataDir>/fingerprints/
-  references/
-    <referenceId>.json
-  audits/
-    <sellerPeerId>/
-      <auditId>.json
-```
-
-`referenceId` MUST be content-addressed:
-
-```text
-referenceId = "sha256:" || sha256(canonical-json(reference-without-local-fields))
-```
-
-The canonicalization function MUST be deterministic across platforms:
-
-- UTF-8 JSON;
-- object keys sorted lexicographically;
-- no insignificant whitespace;
-- finite numbers only;
-- no `NaN`, `Infinity`, or `-Infinity`;
-- no local filesystem paths in hashed content.
-
-### Reference Schema
-
-All verifier references share a common envelope:
-
-```jsonc
-{
-  "version": 1,
-  "kind": "kbf",
-  "referenceId": "sha256:...",
-  "referenceModel": "openai/gpt-5.4",
-  "serviceAliases": ["gpt-5.4", "openai/gpt-5.4"],
-  "createdAt": "2026-06-14T00:00:00.000Z",
-  "source": "public | generated | imported",
-  "generator": {
-    "name": "@antseed/fingerprints",
-    "version": "0.1.0",
-    "verifierKind": "kbf",
-    "params": {}
-  },
-  "provenance": {
-    "license": "Apache-2.0",
-    "url": "https://github.com/Ooo0ption/KBF",
-    "commit": "<optional>"
-  },
-  "selfTest": {
-    "hamming": 3,
-    "total": 224,
-    "coverage": 1.0,
-    "errorRate": 0.0134
-  },
-  "probes": []
-}
-```
-
-Verifier-specific payloads live inside `probes` and optional extension fields.
-Unknown extension fields MUST be preserved by import/export tools and ignored by
-verifiers that do not understand them.
-
-### KBF Probe Schema
-
-```jsonc
-{
-  "id": "chemistry_mp:tantalum-carbide",
-  "name": "tantalum carbide",
-  "domain": "chemistry_mp",
-  "template": "The melting point of {name} is ___°C.",
-  "consensus": 3880.0,
-  "range": [-300, 4000],
-  "tolerance": {
-    "mode": "absolute",
-    "value": 3.0
-  },
-  "consensusRaw": {
-    "t0": 3880.0,
-    "t07_a": 3880.0,
-    "t07_b": 3880.0
-  },
-  "contrast": {
-    "model": "qwen/qwen3.5-9b",
-    "value": 3980.0,
-    "agrees": false
-  }
-}
-```
-
-Generation rules:
-
-- A probe is valid only if the reference model answers consistently under the
-  configured consensus passes.
-- A probe SHOULD be screened against one or more contrast models.
-- Numeric comparison MUST use the probe's domain tolerance.
-- A probe set SHOULD include multiple domains so a substitute cannot overfit one
-  narrow capability.
-- Public probe sets MUST be considered stale over time. Stronger future models
-  may answer all old probes correctly.
-
----
-
-## Buyer Audit Execution
-
-A Buyer audit is a normal AntSeed request sequence with extra local bookkeeping.
-The Seller should not be able to tell whether a request is user traffic or audit
-traffic.
-
-### Audit Selection
-
-The Buyer chooses `(sellerPeerId, advertisedService, referenceId, verifierKind)`
-using local policy:
-
-- random background coverage;
-- higher sampling for new Sellers;
-- higher sampling for Sellers with passive-runtime outliers;
-- higher sampling for expensive or slashable claims;
-- lower sampling after recent clean audits.
-
-Selection is Buyer-local and MUST NOT be advertised to the Seller.
-
-### Request Construction
-
-For KBF, the verifier batches probes by domain. Each batch becomes a normal
-upstream-compatible HTTP request. Example for OpenAI-compatible chat:
-
-```jsonc
-{
-  "model": "gpt-5.4",
-  "messages": [
-    {
-      "role": "system",
-      "content": "Follow the user's instructions exactly. Output only what is requested."
-    },
-    {
-      "role": "user",
-      "content": "TASK: ...\n\n(1) ...\n(2) ..."
-    }
-  ],
-  "temperature": 0,
-  "max_tokens": 800
-}
-```
-
-The Buyer MAY apply protocol adapters for OpenAI Chat, OpenAI Responses,
-Anthropic Messages, or future formats. The adapter belongs in the verifier
-package only if it is transport-agnostic. Actual sending belongs in
-`@antseed/node`.
-
-### ResponseAuth Requirement
-
-The underlying `ResponseAuth` mechanism is implemented for normal Buyer/Seller
-requests when both peers support `verification.response-auth.v1`. The fingerprint
-audit runner is not implemented yet, but when it is, every audit request MUST
-require a valid `ResponseAuth` before its response can enter a verifier result.
-Missing or invalid auth produces:
-
-```text
-auditProbeStatus = "unauthenticated"
-```
-
-Unauthenticated probes do not count as model mismatches. They count as Seller
-non-cooperation for routing/reputation policy.
-
-### Evidence Sampling
-
-Random buyer-side evidence sampling is implemented today for verified
-`ResponseAuth` records. Audit-specific forced sampling is not implemented yet.
-When fingerprint audits are added, audit requests SHOULD be stored even if the
-normal random verification sampler would skip them. The sample directory format
-remains:
-
-```text
-<dataDir>/verification_samples/
-  <sellerPeerId>/
-    <sampleId>/
-      manifest.json
-      request.bin
-      response.bin
-```
-
-The audit result stores the `sampleId` for each probe batch. It does not duplicate
-request or response bytes.
-
-### Audit Result Schema
-
-```jsonc
-{
-  "version": 1,
-  "auditId": "sha256:...",
-  "verifier": {
-    "kind": "kbf",
-    "package": "@antseed/fingerprints",
-    "version": "0.1.0"
-  },
-  "sellerPeerId": "0x...",
-  "advertisedService": "gpt-5.4",
-  "referenceId": "sha256:...",
-  "referenceModel": "openai/gpt-5.4",
-  "startedAt": "2026-06-14T00:00:00.000Z",
-  "completedAt": "2026-06-14T00:05:00.000Z",
-  "probeCount": 224,
-  "authenticatedProbeCount": 224,
-  "parsedProbeCount": 220,
-  "matchVectorHash": "sha256:...",
-  "stats": {
-    "selfHamming": 3,
-    "selfTotal": 224,
-    "targetHamming": 40,
-    "targetTotal": 220,
-    "selfCoverage": 1.0,
-    "targetCoverage": 0.9821,
-    "p0Cp99": 0.0634,
-    "pValueBinomial": 0.00001
-  },
-  "verdict": "SAME | DIFF | UNDETERMINED | UNKNOWN",
-  "verdictReason": null,
-  "samples": [
-    {
-      "batchId": "chemistry_mp:0001",
-      "requestId": "req-...",
-      "sampleId": "req-...-abcd",
-      "responseAuthRequestHash": "0x...",
-      "responseAuthResponseHash": "0x..."
-    }
-  ]
-}
-```
-
-`auditId` MUST be a content hash over the canonical audit result excluding local
-paths. This lets arbiters and Buyers refer to the same exhibit without trusting a
-database row ID.
-
-### Local Routing Policy
-
-Buyer-local policy MAY act immediately:
-
-- `SAME`: no action; optionally reduce audit frequency for this Seller/service.
-- `UNDETERMINED`: increase coverage or mark reference as weak.
-- `UNKNOWN`: reference is invalid for enforcement; do not penalize Seller.
-- `DIFF`: remove Seller from local routing for this service and persist the audit
-  result.
-- repeated unauthenticated audit probes: downgrade trust tier.
-
-Local routing does not require consensus and does not slash.
-
----
-
-## Reference Growth and Rotation
-
-References are living data. They decay as models improve, facts become common in
-training data, public probes leak, or serving behavior changes.
-
-Reference maintenance rules:
-
-- Public references are for reproducibility and smoke tests.
-- Private references are for production enforcement.
-- Buyers SHOULD rotate private KBF references periodically.
-- Buyers SHOULD maintain at least two independent private references for
-  expensive/slashable services.
-- References SHOULD record the contrast models and generation method used.
-- References SHOULD be re-self-tested after major upstream model updates.
-- A reference with high self-error or low self-coverage MUST NOT be used for
-  adverse action.
-- A reference whose probes are answered perfectly by multiple strong contrast
-  models SHOULD be marked stale.
-
-Growing references is both a local Buyer capability and a network capability.
-From day one, AntSeed SHOULD support public signed fingerprint packs so the
-network can accumulate shared model fingerprints over time. Private Buyer
-references remain local and SHOULD NOT be published. On-chain storage of probe
-files is explicitly out of scope. Storing probes on-chain makes them public,
-expensive, and easy for Sellers to route around.
-
----
-
-## Verification Flow
-
-The end-to-end flow combines the mechanisms. Note what is continuous, what is
-sampled, and what is rare:
-
-**Every request (100%):**
-
-1. Buyer → Seller request; Seller → response; Seller also sends `ResponseAuth`
-   when both peers negotiated `verification.response-auth.v1` (M3).
-2. Buyer verifies `responseAuth` recovers to the Seller's PeerId and stores the
-   auth payload in verification storage. If no auth arrives, Buyer logs missing
-   evidence rather than failing the HTTP response.
-3. Buyer may store full request/response bytes in the verification sample
-   directory according to local sampling policy.
-4. Buyer updates passive fingerprint statistics (M4).
-
-**Sampled request (`p`, Seller cannot tell which):**
-
-5. Buyer additionally queries the reference and stores both signed responses
-   locally (M2).
-
-**Accumulation (per Seller, ongoing, Buyer-local):**
-
-6. Once `N` samples exist, Buyer runs the distributional test (M2). Pass →
-   discard. Fail → flag the Seller.
-
-**Local enforcement (immediate, no consensus needed):**
-
-7. A flagged Seller is dropped from this Buyer's `selectPeer()` candidate pool.
-   This is the Buyer's own routing choice and requires no external agreement.
-
-**Escalation (rare; only on a flagged, signed Seller):**
-
-8. If the Buyer seeks on-chain consequences, it assembles an **evidence exhibit**:
-   the signed sample set plus the corresponding reference responses.
-9. The exhibit is submitted to a dispute path. Raw request/response bytes leave
-   the Buyer **only at this step** and go to the arbiter, not to any public feed.
-   On-chain, only a commitment (a hash of the exhibit) need be stored; the bytes
-   may live off-chain and be revealed during adjudication.
-10. The arbiter does not trust the Buyer. It (a) verifies every `responseAuth`
-   mechanically — proving the samples are genuinely the Seller's — and (b)
-   re-runs the test, or better, re-queries the accused Seller and the reference
-   itself with fresh requests, since a real substitution reproduces over fresh
-   samples while a fabricated accusation does not. On confirmation, the swappable
-   slashing contract (`AntseedSlashing`) burns the Seller's stake.
-
----
-
-## Slashing Roadmap
-
-Fingerprinting is probabilistic. On-chain contracts MUST NOT slash directly from
-a Buyer-local verifier result. The on-chain role is to accept a compact,
-verifier-signed outcome after an off-chain dispute process has checked the
+`status.json` is a readable snapshot of the active or most recent run. Model-
+specific audit directories keep historical seller evidence immutable. After
+every completed run, `epochs/<epoch>/<model>/report.html` is atomically replaced
+with the latest run for that model and epoch. Each report table includes `Reason`,
+`Next Action`, and clickable `Evidence` columns. The report is standalone HTML
+with embedded styling and no external assets, so it can be opened directly from
+the local evidence directory or a copied evidence ZIP. All report evidence links
+are relative to the report, so they remain usable after extraction on another
+machine. The report includes model and whole-run reason-code breakdowns. Machine
+summaries, status,
+events, progress, and submission exclusions retain the same structured reason:
+`code`, `summary`, `retryable`, `source`, affected/total batch counts, and safe
+optional upstream status, provider code, and request ID. Secrets and
+authorization values are sanitized. `events.jsonl` is append-only progress
+history. `evidence.json` remains the canonical complete per-seller artifact for
+existing readers. Model reference integrity is stored once per reference ID and
+contains probe definitions, three-pass enrollment evidence, and reference
+self-test outcomes. Each seller `exchanges/` file contains one request batch and
+its exact signed preimages. The model-run `probe-consensus.json` groups only
+authenticated seller answers with exact preimages by probe. Every authenticated
+answer remains visible, but reference-point voting includes only sellers whose
+answer is backed by verified ResponseAuth and exact signed preimages. The
+seller's final model-level `SAME`, `DIFF`, or `UNDETERMINED` verdict does not
+change that per-probe vote. Each authenticated seller contributes at most one
+vote per probe. A reference point is
+`CONFIRMED` when at least half of eligible answers match the reference, including
+an exact tie, `REJECTED` when fewer than half match, and `NO_RESPONSE` when no
+eligible seller answered. The artifact records the decision rule, support and
+rejection counts, rates, and global reference-point totals. Each seller
+contribution links back to its peer ID, final verdict, internal seller evidence
+ID, evidence hash, batch index, request ID, signed request/response hashes, and
+ResponseAuth signature. Every probe also records the full question text, domain,
+reference answer, physical validity range, tolerance rule, and the inclusive
+answer interval derived from that tolerance. Each probe enumerates every audited
+seller by peer ID as `CONFIRMED`, `REJECTED`, `NO_RESPONSE`, or `EXCLUDED`, with
+counts for every category. `NO_RESPONSE` means no verified answer exists for that
+probe; `EXCLUDED` is reserved for a verified response that cannot produce a
+scoreable per-probe outcome. The global decision records the eligible answer
+count and minimum confirmation count, and uses all authenticated `CONFIRMED` and
+`REJECTED` answers, including those from an `UNDETERMINED` seller. A missing or
+malformed numeric answer in a completed authenticated
+response is `REJECTED` under the fixed-denominator rule, not `NO_RESPONSE`. The
+HTML report renders one expandable story per question: the OpenRouter-enrolled
+reference answer, all seller categories and addresses, the global majority
+decision, and a portable link to each signed exchange JSON containing the raw
+buyer-proxy request, raw response, signature, and exact signed preimages.
+
+`SAME` and `DIFF` require 100% authenticated coverage. `UNDETERMINED` means the
+statistical verdict could not be completed and remains resumable; examples are
+deadlines, throttling, temporary upstream failures, payment-lock timeouts, and
+invalid or missing ResponseAuth. `SKIPPED` means a deterministic condition made
+the seller ineligible, such as stale model advertising, invalid upstream
+credentials, buyer policy rejection, or incompatibility with the canonical
+temperature-zero request profile. `FAILED` is reserved for verifier-side hard
+failures such as an incompatible or missing probe reservation. These outcomes
+never rely on coverage alone: their report text comes from persisted batch
 evidence.
 
-### Slashable Claim
+## On-Chain Model Bundles
 
-A Seller can make a slashable model-identity claim by advertising or registering
-a policy commitment:
+`verifier run` remains off-chain. A completed run created against a configured
+verification contract writes `runs/<run-id>.json`, which records the exact
+on-chain epoch window and stable model order. `verifier submit --run-id ...`
+loads that manifest and refuses submission when the current epoch differs or
+the run timestamps fall outside the recorded epoch window.
 
-```jsonc
-{
-  "claimType": "model_identity",
-  "service": "gpt-5.4",
-  "referencePolicy": "sha256:...",
-  "acceptedVerifiers": ["kbf", "behavioral-classifier"],
-  "minCoverage": 0.8,
-  "alpha": 0.05,
-  "stakeSubjectToSlash": "100000000"
-}
+Submission groups valid seller audits by model and sends one
+`submitVerificationBundle` transaction per model. Each transaction commits the
+expected epoch, total model-audit cost, one canonical bundle evidence hash, one
+optional evidence URI, and one ordered list of seller agent IDs, service hashes,
+verdicts, and model-share BPS. The shared `VerificationBundleSubmitted` event
+emits the URI as a non-indexed string while keeping the evidence hash, verifier,
+and epoch indexed. Empty URIs remain valid for local-only submissions; non-empty
+URIs must use `ipfs://` and are limited to 200 UTF-8 bytes.
+The bundle contains the canonical probe-consensus hash, reference ID, decision
+rule, and vote summary, so the on-chain evidence hash commits to the exact
+per-probe majority decisions. This URI-bearing ABI requires redeploying the
+verification contract.
+Probe counts and a separate requested-credit value are not part of the contract
+ABI or events. Invalid or tampered seller artifacts are excluded before
+broadcast and listed with their reason in the bundle evidence.
+
+### Public IPFS Evidence
+
+`verifier submit --publish-ipfs` publishes one complete public Pinata folder per
+model before broadcasting that model's transaction. The command requires a
+`PINATA_JWT` environment variable with public upload permission. The JWT is
+never accepted as a command argument, written to configuration, persisted in a
+ledger, or included in an error message.
+
+Each folder contains the canonical bundle, selected run manifest and summary,
+probe consensus, reference-integrity evidence, finalized seller manifests and
+evidence, signed exchange files, and an immutable HTML report rendered for the
+selected run. Run and bundle paths remain relative to `evidenceDir`. The
+selected model's complete subtree is relocated as a unit from
+`epochs/<epoch>/<model>/` to `model/` so all report-relative links remain valid
+while satisfying Pinata's public multipart depth limit. `publication.json`
+records both roots and indexes every included file by published relative path,
+byte size, and SHA-256 hash. PID locks, status snapshots, event logs,
+`.checkpoints`, submission ledgers, and other operational state are excluded.
+
+Pinata returns one CIDv1 for the model folder. The CLI submits `ipfs://<cid>` as
+the bundle's `evidenceUri`, records the CID, URI, size, file count, timestamps,
+and publication status in the local submission ledger, and prints the URI in
+the final summary. Consumers query `VerificationBundleSubmitted` by its indexed
+`evidenceHash`, fetch the emitted URI, locate the bundle path from
+`publication.json`, canonicalize the bundle, and verify its SHA-256 against the
+event hash. The URI is event-only and is not stored in contract state.
+
+Publication is fail-closed per model. The CLI retries network errors, HTTP 429,
+and HTTP 5xx responses up to three attempts, but authentication and other HTTP
+4xx failures are immediate. A failed pin prevents that model's cost reservation
+and transaction while other models continue. Successful ledger publications
+are reused by evidence hash on retry. After broadcast, the CLI requires the
+confirmed event URI to equal the pinned URI before marking the model submitted.
+A bundle previously submitted with an empty URI cannot be retroactively
+anchored because historical events are immutable.
+
+Verdicts map to `SAME = 1`, `DIFF = 2`, and `UNDETERMINED = 3`. The core contract
+stores each approved verifier's latest verdict independently for every
+`(agentId, serviceHash)`. A `DIFF` activates that verifier's accusation for the
+service. A later `SAME` or `UNDETERMINED` retracts only the same verifier's
+accusation for that same service; a result for another service cannot clear it.
+Repeated submissions from one verifier never count as multiple corroborators.
+At agent level, one verifier counts once even when it has active `DIFF` verdicts
+for several services.
+
+The status surface exposes `activeAgentDiffVerifierCount`,
+`activeServiceDiffVerifierCount`, and `latestVerifierVerdict`. Revoking verifier
+approval blocks new submissions but preserves historical verdict state. The
+contract owner may use `clearVerifierVerdict(agentId, serviceHash, verifier)` to
+remediate one stored verdict after a compromise or dispute while keeping the
+agent and service counters consistent.
+
+`modelShareBps` remains evidence metadata and currently submits as zero. It does
+not scale or clear the points penalty. The separate
+`AntseedVerificationPointsPolicy` applies one fixed seller-only penalty when the
+agent-level count reaches its corroboration threshold. The defaults are two
+distinct active `DIFF` verifiers and `10_000` BPS (100%); governance may raise
+the threshold and may configure the fixed penalty from zero through `10_000`
+BPS. Buyer points are never penalized by this adapter.
+
+### Shadow Enforcement and Registry Activation
+
+`AntseedUsageAccounting.pointsPolicy` remains permanently pointed at
+`AntseedPointsPolicyRegistry`. Verification is one leaf in the
+`model-verification` category; wash trading is a separate `wash-trading`
+category. The registry keeps the maximum penalty within each category and adds
+penalties across categories, capped at 100%.
+
+`DeployRecognizedUsage` deploys `AntseedVerification` and assigns it control of
+the 10% verification emissions bucket, but does not register either integrity
+leaf. `ConfigureIntegrityPolicies` deploys or reuses the verification adapter,
+registers the wash-trading leaf by default, and leaves the verification adapter
+unregistered by default (`REGISTER_VERIFICATION_POLICY=false`). Therefore
+verifiers can submit bundles and earn rewards immediately after approval while
+verification remains shadow-only.
+
+Buyer discovery reads service-level distinct-`DIFF` counts and the adapter's
+configured threshold. It marks one active accusation as `flagged` and a
+threshold-reaching service as `suspended`, but `DefaultRouter` only deprioritizes
+or excludes those services when the points registry confirms that the
+verification adapter is registered. Explicit peer pins remain authoritative.
+Registering the adapter is the deliberate enforcement activation step; it is
+not tied to the deployment block or performed automatically by the verifier
+submission flow.
+
+The bundle cost is the sum of buyer-accepted per-request inference costs and all
+unclaimed reference-generation costs for that model. The verifier supplies the
+request UUID before proxy dispatch, and the buyer persists the accepted request
+cost in `verification.db`; successful payment-disabled requests fall back to
+response telemetry, while failed requests without an accepted receipt add zero.
+USDC base units and USD micro-units are both six-decimal dollar values.
+
+One verifier credit represents exactly one dollar of accounted audit cost. The
+contract stores the credit weight in USD micro-units so fractional-dollar costs
+remain exact:
+
+```text
+1 credit = 1 USD = 1_000_000 credit USD micros
+awardedCreditUsdMicros = min(totalAuditCostUsdMicros, remainingEpochAllowanceUsdMicros)
 ```
 
-The claim says: "I am willing to be penalized if independent verification shows
-that this service is statistically inconsistent with the claimed reference under
-this policy." It does not require the Seller to know the Buyer's private probes.
+For example, an audit costing `$1.20` contributes `1.20` credits, represented as
+`1_200_000` credit USD micros. Credits are accounting weights, not guaranteed
+dollar payouts. ANTS rewards remain pro-rata through the existing verifier
+reward pool. The per-verifier epoch allowance is 100 credits, represented as
+`100_000_000` credit USD micros. Zero-cost bundles receive zero credit and are
+valid; bundles above the remaining allowance still apply their seller results.
 
-### Commit-Reveal for Adverse Audits
+Verifier reward accounting starts no earlier than the epoch after deployment,
+matching the emissions gate's next-epoch minter activation. Bundles submitted
+before that epoch still publish and apply their seller results, but award zero
+credit. A bundle also awards zero credit whenever the gate exposes no verifier
+budget for the current epoch, so delayed or temporarily unavailable minter
+wiring cannot create dead credits. On the first claim or zero-credit remainder
+settlement for a finalized epoch, the contract freezes that epoch's reward
+budget and credit denominator. A temporarily unavailable minter budget cannot
+consume a verifier's existing credits.
 
-If private probes can lead to slashing, the Buyer MUST be unable to choose only
-bad probes after seeing responses. Use commit-reveal:
+Reference costs move through `unclaimed → reserved → claimed`. Submission
+reserves them atomically against the content-addressed bundle ID before
+broadcast, keeps the reservation after a failed transaction for an idempotent
+retry, and marks them claimed only after the bundle is confirmed on-chain. The
+submission ledger records transaction hashes, block numbers, costs, credits,
+errors, reservation IDs, and optional Pinata publication state per model.
+`--dry-run --publish-ipfs` builds and previews the public package's file count
+and size without reading `PINATA_JWT`, uploading, reserving costs, or sending
+transactions.
 
-1. Before sending audit requests, Buyer computes:
-
-   ```text
-   probeSetCommitment = sha256(referenceId || verifierKind || orderedProbeIds || nonce)
-   ```
-
-2. Buyer records the commitment locally and MAY submit it to a cheap timestamping
-   or dispute-intent path when the audit starts.
-3. Buyer sends the ordered probe set through normal request flow.
-4. After responses, Buyer reveals `orderedProbeIds` and `nonce` inside the
-   evidence exhibit.
-5. Arbiter verifies that the revealed probes match the pre-response commitment.
-
-For local routing, commit-reveal is optional. For slashing, it is mandatory.
-
-### Evidence Exhibit
-
-An exhibit is off-chain data addressed to an arbiter or verifier committee:
-
-```jsonc
-{
-  "version": 1,
-  "claim": { "sellerPeerId": "0x...", "service": "gpt-5.4" },
-  "auditId": "sha256:...",
-  "probeSetCommitment": "sha256:...",
-  "reference": { "referenceId": "sha256:...", "bytesHash": "sha256:..." },
-  "auditResult": { "bytesHash": "sha256:..." },
-  "samples": [
-    {
-      "requestBytesHash": "0x...",
-      "responseBytesHash": "0x...",
-      "responseAuth": {},
-      "requestBytes": "<off-chain bytes>",
-      "responseBytes": "<off-chain bytes>"
-    }
-  ]
-}
-```
-
-The arbiter verifies:
-
-- every `ResponseAuth` signature recovers to the Seller PeerId;
-- every signed request hash matches the supplied request bytes;
-- every signed response hash matches the supplied response bytes;
-- every request occurred after the probe-set commitment;
-- the audit result recomputes from the reference and samples;
-- coverage thresholds are met;
-- the verdict is `DIFF` under the registered policy.
-
-### On-Chain Slash Signal
-
-The slashing contract receives only a compact outcome:
-
-```jsonc
-{
-  "seller": "0x...",
-  "service": "gpt-5.4",
-  "claimHash": "bytes32",
-  "auditBundleHash": "bytes32",
-  "verdict": "DIFF",
-  "verifierSet": "bytes32",
-  "signatures": ["0x..."],
-  "deadline": 1790000000
-}
-```
-
-Raw prompts, completions, and probe files do not go on-chain. The contract checks
-the verifier signatures and applies the slash policy for `claimHash`.
-
-Recommended enforcement ladder:
-
-- single local `DIFF`: Buyer routing downgrade;
-- repeated independent local `DIFF`: reputation warning and increased sampling;
-- arbiter-confirmed `DIFF` against a slashable claim: stake slash;
-- missing `ResponseAuth` on audit traffic: non-cooperation penalty, not
-  model-fraud slashing by itself.
-
----
-
-## Privacy
-
-Verification MUST NOT broadcast Buyer traffic. Real prompts and completions are
-sensitive. Accordingly:
-
-- M2 samples are stored Buyer-locally and discarded on a pass.
-- Raw bytes leave the Buyer only inside a dispute exhibit, addressed to an
-  arbiter, and only for a Seller already flagged.
-- On-chain artifacts are commitments (hashes), never plaintext.
-
----
-
-## Abuse Resistance (malicious Buyer)
-
-Signed responses (M3) make the Seller non-repudiable, which neutralizes the
-naive forge-evidence attack: a Buyer cannot invent a signed response. The
-residual attack is **selective omission** — a Buyer presenting only unfavorable
-samples. This is countered by requiring the exhibit's sample set to reconcile
-against the Buyer's metered request history (already retained for billing per
-[03-metering.md](./03-metering.md)) and by the arbiter's own fresh re-query in
-step 9, which does not depend on the Buyer's samples at all.
-
----
-
-## Parameters
-
-| Parameter | Symbol | Default | Notes |
-|---|---|---|---|
-| ResponseAuth wait grace | — | 30s | Implemented Buyer wait after response before logging missing auth |
-| Verification sample rate | — | 0.005 | Implemented random full evidence sample rate for verified auths |
-| Verification sample byte cap | — | 16 MiB | Implemented max encoded request + response bytes per sample |
-| Sample rate | `p` | 0.02 | Fraction of real requests duplicated to reference (M2) |
-| Min samples per verdict | `N` | 30 | Below this, no M2 verdict is emitted |
-| Distributional fail threshold | — | tuned on real traffic | Drives *local* flagging only |
-| Probe cadence (if M1 used) | — | 1 / 20 requests | M1 is deterrence/triage only |
-| KBF batch size | — | 10 probes | One AntSeed request per domain batch |
-| KBF min coverage | — | 0.5 | Below this, verdict is `UNDETERMINED` |
-| KBF CP confidence | — | 0.99 | Upper bound for reference self-error |
-| KBF alpha | — | 0.05 | One-sided binomial threshold for `DIFF` |
-| Audit sample retention | — | always for audit probes | Audit probes bypass random sample-rate skipping |
-
-Thresholds that affect **local** routing may be liberal. Thresholds that gate
-**on-chain** penalties MUST be conservative and are ultimately the arbiter's
-decision in step 9, not a Buyer-side constant.
-
----
-
-## Implementation Milestones
-
-Completed milestones:
-
-1. ResponseAuth substrate:
-   - protocol type and codec;
-   - `VerificationMux`;
-   - capability-gated Seller sending;
-   - Buyer verification;
-   - `verification.db` response-auth storage;
-   - random verified request/response evidence samples.
-
-The next implementation SHOULD proceed in small PRs with clean package
-boundaries:
-
-1. `@antseed/fingerprints` pure package:
-   - shared `FingerprintVerifier` interface;
-   - schema types for references, fingerprint packs, probes, match vectors, and
-     results;
-   - canonical JSON hash helper;
-   - verifier registry;
-   - public pack import/export helpers;
-   - KBF verifier module;
-   - numeric parser;
-   - tolerance matcher;
-   - CP99 and binomial functions;
-   - verdict computation;
-   - unit tests with small fixture references.
-
-2. Fingerprint swarm support:
-   - define pack signing bytes;
-   - validate publisher signatures;
-   - announce pack metadata on fingerprint swarm topics;
-   - fetch packs from peers and mirrors by content hash;
-   - seed verified packs for other peers;
-   - verify `packId`;
-   - import trusted references into local storage;
-   - expose pack trust/staleness metadata.
-
-3. Buyer-local reference store in `@antseed/node`:
-   - import public/generated references;
-   - validate schema;
-   - compute and verify `referenceId`;
-   - write under `<dataDir>/fingerprints/references/<referenceId>.json`;
-   - list references by `serviceAliases`.
-
-4. KBF audit runner in `@antseed/node`:
-   - select Seller/service/reference;
-   - construct KBF request batches;
-   - send through the ordinary Buyer request path;
-   - require verified `ResponseAuth`;
-   - force-store audit request/response samples;
-   - call `@antseed/fingerprints` to compute the verdict;
-   - write `<dataDir>/fingerprints/audits/<sellerPeerId>/<auditId>.json`.
-
-5. Local routing integration:
-   - avoid Sellers with recent `DIFF` for the requested service;
-   - increase audit rate for `UNDETERMINED` or unauthenticated probes;
-   - surface audit status in diagnostics without broadcasting raw prompts.
-
-6. Additional fingerprint families:
-   - add behavioral-classifier, perturbation, rare-token, instruction-hierarchy,
-     output-distribution, runtime, and passive proxy-reader verifier modules
-     behind the day-one `FingerprintVerifier` interface;
-   - keep each verifier module transport-agnostic;
-   - reuse the same reference store, sample store, and audit-result schema.
-
-7. Dispute/slashing prototype:
-   - add probe-set commitment support;
-   - build an off-chain exhibit verifier;
-   - define verifier committee signatures;
-   - add compact slash signal support to `AntseedSlashing`.
-
-Do not start with slashing. Slashing depends on mature evidence format,
-commit-reveal, reproducible verifier code, and independent adjudication.
-
----
-
-## Relationship to Other Layers
-
-- **Reputation ([05](./05-reputation.md)):** a confirmed substitution is the kind
-  of signal the future ERC-8004 `Accuracy` path could carry — but only after
-  arbiter confirmation (step 9), never directly from an M1/M2 fail verdict.
-- **Metering ([03](./03-metering.md)):** carries `responseAuth` (M3) and the
-  retained request history used for abuse resistance. Audit requests are normal
-  paid requests unless the Buyer and Seller later agree on a separate audit
-  accounting policy.
-- **Security ([06](./06-security-overview.md)):** model substitution is a
-  trust-boundary violation between Buyer and Seller; this document is the
-  cross-reference for that residual risk.
-- **Transport ([02](./02-transport.md)):** fingerprint requests use ordinary
-  request/response framing. No verifier-specific frame type is required for
-  fingerprint audits.
-- **Fingerprint Swarm ([08](./08-fingerprint-swarm.md)):** distributes public
-  fingerprint packs by content hash. Model verification imports trusted packs
-  from the swarm, then runs Buyer-local audits and stores signed evidence.
-
----
-
-## Summary
-
-| Mechanism | Cost | Detects | Drives penalties? |
-|---|---|---|---|
-| M1 Behavioral probes | very low | tier mismatch, lazy substitution | No (deterrence/triage) |
-| M2 Reference shadow sampling | ~`p` of spend | family substitution, quantization | Local routing; on-chain only via M3 exhibit |
-| M3 Signed responses | negligible | nothing alone — enables M2 evidence | Yes, as exhibit input |
-| M4 Passive fingerprinting | free | gross outliers | No (triage) |
-| M5 TEE attestation | premium | proves served endpoint/weights | Authoritative |
-| F1 KBF | low to medium | knowledge-boundary mismatch | Local routing; slashing only after dispute |
-| F2-F9 Fingerprint suite | variable | behavioral/runtime/provenance/model-family mismatch | Local routing and triage unless independently confirmed |
-
-The implemented base is **M3 ResponseAuth + buyer-side verification storage +
-random verified evidence samples**. The recommended next implementation is
-**`@antseed/fingerprints` + public fingerprint packs + buyer-local audit
-storage**: implement the shared fingerprint package with KBF as the first
-verifier, publish and mirror signed public fingerprint packs, store trusted
-references by content hash, run Buyer-side audits through the normal request
-path, and persist auditable manifests that point to signed request/response
-samples. M2 remains the stronger long-term distributional check for real
-traffic; F2-F9 expand the suite through the same package and public fingerprint
-swarm. On-chain slashing comes last.
+Distributed workers, automatic epoch scheduling, transaction-gas reimbursement,
+and daemon operation remain out of scope. Existing verification contracts that
+do not emit `evidenceUri`,
+reference banks without cost metadata, and old audit artifacts are intentionally
+incompatible and must be redeployed or regenerated.
