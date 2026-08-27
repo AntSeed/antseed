@@ -83,7 +83,12 @@ contract AntseedVerifierRewardsTest is Test {
         );
 
         assertTrue(verification.isVerificationSubmitted(evidenceHash));
-        assertEq(verification.agentPointsPenaltyBps(agentId), 2_500);
+        assertEq(verification.activeAgentDiffVerifierCount(agentId), 1);
+        assertEq(verification.activeServiceDiffVerifierCount(agentId, SERVICE_HASH), 1);
+        assertEq(
+            verification.latestVerifierVerdict(agentId, SERVICE_HASH, verifierA),
+            uint8(IAntseedVerification.Verdict.DIFF)
+        );
         assertEq(verification.epochCreditUsdMicros(_currentEpoch(), verifierA), 0);
         assertEq(verification.epochTotalCreditUsdMicros(_currentEpoch()), 0);
     }

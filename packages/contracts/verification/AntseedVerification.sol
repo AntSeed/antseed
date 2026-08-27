@@ -25,7 +25,13 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
     uint64 public override maxCreditUsdMicrosPerVerifierPerEpoch = 100_000_000;
 
     mapping(bytes32 evidenceHash => bool submitted) private _submittedVerifications;
-    mapping(uint256 agentId => uint16 penaltyBps) private _agentPointsPenaltyBps;
+    mapping(uint256 agentId => mapping(bytes32 serviceHash => mapping(address verifier => Verdict verdict)))
+        private _latestVerifierVerdicts;
+    mapping(uint256 agentId => uint256 verifierCount) private _activeAgentDiffVerifierCounts;
+    mapping(uint256 agentId => mapping(bytes32 serviceHash => uint256 verifierCount))
+        private _activeServiceDiffVerifierCounts;
+    mapping(uint256 agentId => mapping(address verifier => uint256 serviceCount))
+        private _activeDiffServiceCountsByVerifier;
 
     mapping(uint256 epoch => mapping(address verifier => uint256 creditUsdMicros)) public override epochCreditUsdMicros;
     mapping(uint256 epoch => uint256 creditUsdMicros) public override epochTotalCreditUsdMicros;
@@ -52,7 +58,16 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
         Verdict verdict,
         uint16 modelShareBps
     );
-    event AgentPointsPenaltySet(uint256 indexed agentId, uint16 penaltyBps);
+    event VerifierVerdictTransitioned(
+        uint256 indexed agentId,
+        bytes32 indexed serviceHash,
+        address indexed verifier,
+        Verdict previousVerdict,
+        Verdict newVerdict
+    );
+    event VerifierVerdictRemediated(
+        uint256 indexed agentId, bytes32 indexed serviceHash, address indexed verifier, Verdict previousVerdict
+    );
     event VerifierRewardClaimed(uint256 indexed epoch, address indexed verifier, uint256 amount);
     event VerifierEpochRemainderSettled(uint256 indexed epoch, uint256 amount);
 
@@ -71,6 +86,7 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
     error AlreadyClaimed();
     error NothingToClaim();
     error NothingToSettle();
+    error NoStoredVerdict();
 
     modifier onlyApprovedVerifier() {
         if (!approvedVerifiers[msg.sender]) revert NotApprovedVerifier();
@@ -145,7 +161,7 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
         );
         for (uint256 i = 0; i < results.length; i++) {
             VerificationResult calldata result = results[i];
-            _applyAttestationPenalty(result.agentId, result.verdict, result.modelShareBps);
+            _transitionVerifierVerdict(result.agentId, result.serviceHash, msg.sender, result.verdict);
             emit VerificationResultSubmitted(
                 evidenceHash, result.agentId, result.serviceHash, result.verdict, result.modelShareBps
             );
@@ -170,8 +186,36 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
         return emissionsGate.currentEpoch();
     }
 
-    function agentPointsPenaltyBps(uint256 agentId) external view override returns (uint16) {
-        return _agentPointsPenaltyBps[agentId];
+    function activeAgentDiffVerifierCount(uint256 agentId) external view override returns (uint256) {
+        return _activeAgentDiffVerifierCounts[agentId];
+    }
+
+    function activeServiceDiffVerifierCount(uint256 agentId, bytes32 serviceHash)
+        external
+        view
+        override
+        returns (uint256)
+    {
+        return _activeServiceDiffVerifierCounts[agentId][serviceHash];
+    }
+
+    function latestVerifierVerdict(uint256 agentId, bytes32 serviceHash, address verifier)
+        external
+        view
+        override
+        returns (uint8)
+    {
+        return uint8(_latestVerifierVerdicts[agentId][serviceHash][verifier]);
+    }
+
+    function clearVerifierVerdict(uint256 agentId, bytes32 serviceHash, address verifier) external override onlyOwner {
+        if (agentId == 0 || serviceHash == bytes32(0)) revert InvalidValue();
+        if (verifier == address(0)) revert InvalidAddress();
+
+        Verdict previousVerdict = _latestVerifierVerdicts[agentId][serviceHash][verifier];
+        if (previousVerdict == Verdict.UNKNOWN) revert NoStoredVerdict();
+        _transitionVerifierVerdict(agentId, serviceHash, verifier, Verdict.UNKNOWN);
+        emit VerifierVerdictRemediated(agentId, serviceHash, verifier, previousVerdict);
     }
 
     function claimVerifierReward(uint256 epoch) external override nonReentrant {
@@ -249,12 +293,35 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
         }
     }
 
-    function _applyAttestationPenalty(uint256 agentId, Verdict verdict, uint16 modelShareBps) private {
-        if (verdict == Verdict.UNDETERMINED) return;
-        uint16 nextPenalty = verdict == Verdict.DIFF ? modelShareBps : 0;
-        if (_agentPointsPenaltyBps[agentId] == nextPenalty) return;
-        _agentPointsPenaltyBps[agentId] = nextPenalty;
-        emit AgentPointsPenaltySet(agentId, nextPenalty);
+    function _transitionVerifierVerdict(
+        uint256 agentId,
+        bytes32 serviceHash,
+        address verifier,
+        Verdict newVerdict
+    ) private {
+        Verdict previousVerdict = _latestVerifierVerdicts[agentId][serviceHash][verifier];
+        if (previousVerdict == newVerdict) return;
+
+        if (previousVerdict == Verdict.DIFF) {
+            uint256 activeServiceCount = _activeDiffServiceCountsByVerifier[agentId][verifier];
+            _activeDiffServiceCountsByVerifier[agentId][verifier] = activeServiceCount - 1;
+            _activeServiceDiffVerifierCounts[agentId][serviceHash] -= 1;
+            if (activeServiceCount == 1) _activeAgentDiffVerifierCounts[agentId] -= 1;
+        }
+
+        if (newVerdict == Verdict.DIFF) {
+            uint256 activeServiceCount = _activeDiffServiceCountsByVerifier[agentId][verifier];
+            if (activeServiceCount == 0) _activeAgentDiffVerifierCounts[agentId] += 1;
+            _activeDiffServiceCountsByVerifier[agentId][verifier] = activeServiceCount + 1;
+            _activeServiceDiffVerifierCounts[agentId][serviceHash] += 1;
+        }
+
+        if (newVerdict == Verdict.UNKNOWN) {
+            delete _latestVerifierVerdicts[agentId][serviceHash][verifier];
+        } else {
+            _latestVerifierVerdicts[agentId][serviceHash][verifier] = newVerdict;
+        }
+        emit VerifierVerdictTransitioned(agentId, serviceHash, verifier, previousVerdict, newVerdict);
     }
 
     function _validateResult(VerificationResult calldata result) private pure {

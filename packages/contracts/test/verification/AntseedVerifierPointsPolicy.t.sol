@@ -29,11 +29,14 @@ contract AntseedVerifierPointsPolicyTest is Test {
 
     address private seller = address(0xA11CE);
     address private buyer = address(0xB0B);
-    address private verifier = address(0xF00D);
+    address private verifierA = address(0xF00D);
+    address private verifierB = address(0xF00E);
+    address private verifierC = address(0xF00F);
 
     AntseedRegistry private registry;
     MockPointsPolicyStaking private staking;
     AntseedVerification private verification;
+    AntseedVerificationPointsPolicy private policy;
     AntseedPointsPolicyRegistry private pointsPolicyRegistry;
 
     function setUp() public {
@@ -48,10 +51,12 @@ contract AntseedVerifierPointsPolicyTest is Test {
         registry.setStaking(address(staking));
         AntseedEmissionsGate gate = new AntseedEmissionsGate(address(0x1111), address(0x2222), 15_000, 15_000);
         verification = new AntseedVerification(address(registry), address(gate));
-        AntseedVerificationPointsPolicy policy = new AntseedVerificationPointsPolicy(address(registry), address(verification));
+        policy = new AntseedVerificationPointsPolicy(address(this), address(registry), address(verification));
         pointsPolicyRegistry = new AntseedPointsPolicyRegistry(address(this));
         pointsPolicyRegistry.registerPolicy(address(policy));
-        verification.setVerifier(verifier, true);
+        verification.setVerifier(verifierA, true);
+        verification.setVerifier(verifierB, true);
+        verification.setVerifier(verifierC, true);
         identity.setOwner(AGENT_ID, seller);
     }
 
@@ -59,21 +64,68 @@ contract AntseedVerifierPointsPolicyTest is Test {
         _assertPoints(RAW_POINTS, RAW_POINTS, RAW_POINTS);
     }
 
-    function test_proportionalPenaltyDiscountsSellerPoints() public {
-        _submit(IAntseedVerification.Verdict.DIFF, 2_500, keccak256("diff"));
-        _assertPoints(RAW_POINTS, 750, RAW_POINTS);
-    }
-
-    function test_penaltyStaysActiveUntilCleared() public {
-        _submit(IAntseedVerification.Verdict.DIFF, 2_500, keccak256("diff"));
-        _assertPoints(RAW_POINTS, 750, RAW_POINTS);
-        _submit(IAntseedVerification.Verdict.SAME, 0, keccak256("same"));
+    function test_oneVerifierCannotTriggerPenalty() public {
+        _submit(verifierA, IAntseedVerification.Verdict.DIFF, 10_000, keccak256("one-diff"));
         _assertPoints(RAW_POINTS, RAW_POINTS, RAW_POINTS);
     }
 
-    function test_fullPenaltyZeroesSellerPoints() public {
-        _submit(IAntseedVerification.Verdict.DIFF, 10_000, keccak256("full"));
+    function test_repeatedDiffFromOneVerifierCountsOnce() public {
+        _submit(verifierA, IAntseedVerification.Verdict.DIFF, 1_000, keccak256("diff-a"));
+        _submit(verifierA, IAntseedVerification.Verdict.DIFF, 9_000, keccak256("diff-b"));
+
+        assertEq(verification.activeAgentDiffVerifierCount(AGENT_ID), 1);
+        _assertPoints(RAW_POINTS, RAW_POINTS, RAW_POINTS);
+    }
+
+    function test_twoDistinctDiffVerifiersTriggerDefaultFullPenalty() public {
+        _submit(verifierA, IAntseedVerification.Verdict.DIFF, 1, keccak256("diff-a"));
+        _submit(verifierB, IAntseedVerification.Verdict.DIFF, 9_999, keccak256("diff-b"));
+
         _assertPoints(RAW_POINTS, 0, RAW_POINTS);
+    }
+
+    function test_sameServiceRetractionRemovesCorroboration() public {
+        _submit(verifierA, IAntseedVerification.Verdict.DIFF, 2_500, keccak256("diff-a"));
+        _submit(verifierB, IAntseedVerification.Verdict.DIFF, 2_500, keccak256("diff-b"));
+        _assertPoints(RAW_POINTS, 0, RAW_POINTS);
+
+        _submit(verifierB, IAntseedVerification.Verdict.UNDETERMINED, 0, keccak256("retract-b"));
+        _assertPoints(RAW_POINTS, RAW_POINTS, RAW_POINTS);
+    }
+
+    function test_configuredPenaltyDiscountsOnlySellerPoints() public {
+        policy.setDiffPenaltyBps(2_500);
+        _submit(verifierA, IAntseedVerification.Verdict.DIFF, 1_000, keccak256("diff-a"));
+        _submit(verifierB, IAntseedVerification.Verdict.DIFF, 9_000, keccak256("diff-b"));
+
+        _assertPoints(RAW_POINTS, 750, RAW_POINTS);
+    }
+
+    function test_governanceCanOnlyRaiseCorroborationThreshold() public {
+        policy.setMinDistinctDiffVerifiers(3);
+        _submit(verifierA, IAntseedVerification.Verdict.DIFF, 1_000, keccak256("diff-a"));
+        _submit(verifierB, IAntseedVerification.Verdict.DIFF, 1_000, keccak256("diff-b"));
+        _assertPoints(RAW_POINTS, RAW_POINTS, RAW_POINTS);
+
+        _submit(verifierC, IAntseedVerification.Verdict.DIFF, 1_000, keccak256("diff-c"));
+        _assertPoints(RAW_POINTS, 0, RAW_POINTS);
+
+        vm.expectRevert(AntseedVerificationPointsPolicy.InvalidMinimumCorroboration.selector);
+        policy.setMinDistinctDiffVerifiers(2);
+    }
+
+    function test_policyConfigurationIsOwnerOnlyAndBounded() public {
+        vm.startPrank(address(0xBAD));
+        vm.expectRevert();
+        policy.setMinDistinctDiffVerifiers(3);
+        vm.expectRevert();
+        policy.setDiffPenaltyBps(5_000);
+        vm.stopPrank();
+
+        vm.expectRevert(AntseedVerificationPointsPolicy.InvalidMinimumCorroboration.selector);
+        policy.setMinDistinctDiffVerifiers(1);
+        vm.expectRevert(AntseedVerificationPointsPolicy.InvalidPenaltyBps.selector);
+        policy.setDiffPenaltyBps(10_001);
     }
 
     function test_unknownSellerPassesAllPointsThrough() public view {
@@ -89,7 +141,9 @@ contract AntseedVerifierPointsPolicyTest is Test {
     }
 
     function test_extremePointsDoNotOverflow() public {
-        _submit(IAntseedVerification.Verdict.DIFF, 2_500, keccak256("extreme"));
+        policy.setDiffPenaltyBps(2_500);
+        _submit(verifierA, IAntseedVerification.Verdict.DIFF, 2_500, keccak256("extreme-a"));
+        _submit(verifierB, IAntseedVerification.Verdict.DIFF, 2_500, keccak256("extreme-b"));
         uint256 rawPoints = type(uint256).max;
         uint256 expectedSellerPoints = (rawPoints / 10_000) * 7_500 + ((rawPoints % 10_000) * 7_500) / 10_000;
         _assertPoints(rawPoints, expectedSellerPoints, rawPoints);
@@ -100,11 +154,22 @@ contract AntseedVerifierPointsPolicyTest is Test {
         vm.expectRevert(AntseedVerification.InvalidAddress.selector);
         new AntseedVerification(address(0), address(gate));
 
+        vm.expectRevert();
+        new AntseedVerificationPointsPolicy(address(0), address(registry), address(verification));
+
         vm.expectRevert(AntseedVerificationPointsPolicy.InvalidAddress.selector);
-        new AntseedVerificationPointsPolicy(address(0), address(verification));
+        new AntseedVerificationPointsPolicy(address(this), address(0), address(verification));
+
+        vm.expectRevert(AntseedVerificationPointsPolicy.InvalidAddress.selector);
+        new AntseedVerificationPointsPolicy(address(this), address(registry), address(0));
     }
 
-    function _submit(IAntseedVerification.Verdict verdict, uint16 modelShareBps, bytes32 evidenceHash) private {
+    function _submit(
+        address verifier,
+        IAntseedVerification.Verdict verdict,
+        uint16 modelShareBps,
+        bytes32 evidenceHash
+    ) private {
         uint256 epoch = verification.currentEpoch();
         IAntseedVerification.VerificationResult[] memory results = new IAntseedVerification.VerificationResult[](1);
         results[0] = IAntseedVerification.VerificationResult({
