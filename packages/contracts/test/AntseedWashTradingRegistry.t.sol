@@ -169,7 +169,7 @@ contract AntseedWashTradingRegistryTest is Test {
         registry.submitBatch(batch, _proofs(1));
 
         registry.submit(original, "");
-        assertEq(registry.washRatioBps(SELLER), 5_000);
+        _assertRecord(registry, 1, 2, 5_000);
 
         bytes memory changed = _journal(bytes32(uint256(1)), SELLER, 3, 4, 1, BLOCK_NUMBER, BLOCK_HASH);
         vm.expectRevert(
@@ -183,7 +183,18 @@ contract AntseedWashTradingRegistryTest is Test {
         registry.submit(changed, "");
     }
 
-    function test_overlappingClaimsRetainOnlyStrictlyGreaterRatio() public {
+    function test_distinctClaimIdsDoNotAddWashOrSettledVolumes() public {
+        bytes[] memory batch = _one(_journal(bytes32(uint256(1)), SELLER, 3, 10, 1, BLOCK_NUMBER, BLOCK_HASH));
+        AntseedWashTradingRegistry registry = _deploy(batch);
+        registry.submitBatch(batch, _proofs(1));
+
+        registry.submit(_journal(bytes32(uint256(2)), SELLER, 4, 20, 1, BLOCK_NUMBER, BLOCK_HASH), "");
+
+        _assertRecord(registry, 3, 10, 3_000);
+        assertEq(registry.claimJournalDigest(bytes32(uint256(2))), sha256(_journal(bytes32(uint256(2)), SELLER, 4, 20, 1, BLOCK_NUMBER, BLOCK_HASH)));
+    }
+
+    function test_lowerAndEqualRatiosDoNotReplaceMaterializedRecord() public {
         bytes[] memory batch = _one(_journal(bytes32(uint256(1)), SELLER, 1, 2, 1, BLOCK_NUMBER, BLOCK_HASH));
         AntseedWashTradingRegistry registry = _deploy(batch);
         registry.submitBatch(batch, _proofs(1));
@@ -193,6 +204,12 @@ contract AntseedWashTradingRegistryTest is Test {
 
         registry.submit(_journal(bytes32(uint256(3)), SELLER, 50, 100, 1, BLOCK_NUMBER, BLOCK_HASH), "");
         _assertRecord(registry, 1, 2, 5_000);
+    }
+
+    function test_higherRatioReplacesMaterializedRecord() public {
+        bytes[] memory batch = _one(_journal(bytes32(uint256(1)), SELLER, 1, 2, 1, BLOCK_NUMBER, BLOCK_HASH));
+        AntseedWashTradingRegistry registry = _deploy(batch);
+        registry.submitBatch(batch, _proofs(1));
 
         registry.submit(_journal(bytes32(uint256(4)), SELLER, 3, 4, 1, BLOCK_NUMBER, BLOCK_HASH), "");
         _assertRecord(registry, 3, 4, 7_500);

@@ -113,6 +113,9 @@ The registry never adds wash volumes from overlapping claims. For each subject
 it retains only the greatest proven `washVolume / settledVolume` ratio using
 full-precision cross multiplication. A positive numerator with a zero
 denominator, or a numerator at least as large as its denominator, is 100%.
+Because claims materialize only their greatest individually proven ratio, the
+journal ABI does not need an `economicId`, and the external `loop-proof`
+programs and public-value shapes remain unchanged.
 
 Future points and seller reward claims use separate policy hooks:
 
