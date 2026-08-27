@@ -255,7 +255,10 @@ export class BuyerRequestHandler {
 
       resetTimeout(streamInitialResponseTimeoutMs);
 
-      const expectedChannelId = negotiator?.bpm?.getActiveSession(peer.peerId)?.sessionId ?? null;
+      const paymentManager = negotiator?.bpm;
+      const expectedChannelId = paymentManager && typeof paymentManager.getActiveSession === "function"
+        ? paymentManager.getActiveSession(peer.peerId)?.sessionId ?? null
+        : null;
 
       const finish = (response: SerializedHttpResponse): void => {
         if (settled) return;
