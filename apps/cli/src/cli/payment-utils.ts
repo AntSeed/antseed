@@ -11,6 +11,7 @@ import {
   IdentityClient,
   EmissionsClient,
   ChannelStore,
+  VerifierClient,
 } from '@antseed/node/payments';
 import type { Identity } from '@antseed/node';
 import type { AntseedConfig } from '../config/types.js';
@@ -106,6 +107,9 @@ type ResolvedCryptoConfig = NonNullable<AntseedConfig['payments']['crypto']> & {
   stakingContractAddress?: string;
   identityRegistryAddress?: string;
   emissionsContractAddress?: string;
+  verificationContractAddress?: string;
+  verificationPointsPolicyAddress?: string;
+  pointsPolicyRegistryAddress?: string;
   depositRelayAddress?: string;
   evmChainId: number;
 };
@@ -154,6 +158,10 @@ export function requireCryptoConfig(
     stakingContractAddress: crypto.stakingContractAddress || resolved.stakingContractAddress,
     emissionsContractAddress: crypto.emissionsContractAddress || resolved.emissionsContractAddress,
     identityRegistryAddress: crypto.identityRegistryAddress || resolved.identityRegistryAddress,
+    verificationContractAddress: crypto.verificationContractAddress || resolved.verificationContractAddress,
+    verificationPointsPolicyAddress:
+      crypto.verificationPointsPolicyAddress || resolved.verificationPointsPolicyAddress,
+    pointsPolicyRegistryAddress: crypto.pointsPolicyRegistryAddress || resolved.pointsPolicyRegistryAddress,
     depositRelayAddress: crypto.depositRelayAddress || resolved.depositRelayAddress,
     evmChainId: resolved.evmChainId,
   };
@@ -237,6 +245,28 @@ export function createEmissionsClient(config: AntseedConfig, overrides?: CryptoC
     rpcUrl: crypto.rpcUrl,
     ...fallbackClientOpts(crypto),
     contractAddress: crypto.emissionsContractAddress,
+    evmChainId: crypto.evmChainId,
+  });
+}
+
+/**
+ * Create a VerifierClient from the CLI config.
+ */
+export function createVerifierClient(config: AntseedConfig, overrides?: CryptoConfigOverrides): VerifierClient {
+  const crypto = requireCryptoConfig(config, overrides);
+  if (!crypto.verificationContractAddress) {
+    throw new Error('No verification contract address configured. Set payments.crypto.verificationContractAddress in your config file.');
+  }
+  return new VerifierClient({
+    rpcUrl: crypto.rpcUrl,
+    ...fallbackClientOpts(crypto),
+    contractAddress: crypto.verificationContractAddress,
+    ...(crypto.verificationPointsPolicyAddress
+      ? { verificationPointsPolicyAddress: crypto.verificationPointsPolicyAddress }
+      : {}),
+    ...(crypto.pointsPolicyRegistryAddress
+      ? { pointsPolicyRegistryAddress: crypto.pointsPolicyRegistryAddress }
+      : {}),
     evmChainId: crypto.evmChainId,
   });
 }
