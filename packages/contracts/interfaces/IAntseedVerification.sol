@@ -49,7 +49,7 @@ interface IAntseedVerification is IAntseedVerificationStatus {
     function epochCreditUsdMicros(uint256 epoch, address verifier) external view returns (uint256);
     function epochTotalCreditUsdMicros(uint256 epoch) external view returns (uint256);
     function currentEpoch() external view returns (uint256);
-    function agentPointsPenaltyBps(uint256 agentId) external view returns (uint16);
+    function clearVerifierVerdict(uint256 agentId, bytes32 serviceHash, address verifier) external;
 
     function claimVerifierReward(uint256 epoch) external;
     function settleEpochRemainder(uint256 epoch) external returns (uint256 burnedAmount, uint256 reserveAmount);
