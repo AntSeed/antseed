@@ -4,9 +4,6 @@ import {
 } from '@antseed/protocol/http';
 import type { ServiceApiProtocol } from '@antseed/protocol/service-api';
 
-const PEER_ERROR_INTRO = 'AntSeed is a peer-to-peer network. This peer could not complete the request. '
-  + 'Try another peer or use Auto routing.';
-
 const USER_ACTIONABLE_PEER_ERROR_IDS = new Set([
   'content_policy_violation',
   'context_length_exceeded',
@@ -31,6 +28,10 @@ type PeerErrorDetails = {
   message: string | null;
 };
 
+export interface AdaptPeerFaultErrorOptions {
+  pinned?: boolean;
+}
+
 function parsePeerError(response: SerializedHttpResponse): PeerErrorDetails {
   let body: Record<string, unknown> | null = null;
   try {
@@ -45,7 +46,7 @@ function parsePeerError(response: SerializedHttpResponse): PeerErrorDetails {
     : null;
   const idCandidate = [error?.code, error?.type, body?.code, body?.type, body?.error]
     .find((value): value is string => typeof value === 'string' && value.trim().length > 0);
-  const messageCandidate = [error?.message, body?.message]
+  const messageCandidate = [error?.peer_message, error?.message, body?.message]
     .find((value): value is string => typeof value === 'string' && value.trim().length > 0);
 
   let message = messageCandidate?.trim() ?? null;
@@ -73,6 +74,7 @@ function isUserActionablePeerError(response: SerializedHttpResponse, errorId: st
 export function adaptPeerFaultErrorResponse(
   response: SerializedHttpResponse,
   requestProtocol: ServiceApiProtocol | null,
+  options?: AdaptPeerFaultErrorOptions,
 ): SerializedHttpResponse {
   if (
     response.statusCode < 400
@@ -95,17 +97,26 @@ export function adaptPeerFaultErrorResponse(
     return { ...response, headers };
   }
 
-  const alreadyWrapped = details.error?.antseed_fault === 'peer'
-    || (typeof details.error?.message === 'string' && details.error.message.startsWith(PEER_ERROR_INTRO));
-  if (alreadyWrapped) return { ...response, headers };
+  const pinned = options?.pinned === true;
+  const alreadyWrapped = details.error?.antseed_fault === 'peer';
+  const alreadyPinned = details.error?.antseed_pinned === true;
+  if (alreadyWrapped && (!pinned || alreadyPinned)) return { ...response, headers };
 
-  const message = details.message ? `${PEER_ERROR_INTRO} Peer message: ${details.message}` : PEER_ERROR_INTRO;
+  const peerLabel = pinned ? 'pinned peer' : 'peer';
+  const originalMessage = details.message ?? 'No additional details were provided.';
+  const message = [
+    `Oops, ${peerLabel} could not complete the request.`,
+    'AntSeed is a peer-to-peer network. Try another peer or use Auto routing.',
+    `Original Response: ${JSON.stringify({ message: originalMessage, status: response.statusCode })}`,
+  ].join('\n');
   const error = {
     ...(details.error ?? {}),
     type: typeof details.error?.type === 'string' ? details.error.type : details.id ?? 'upstream_error',
     message,
     antseed_fault: 'peer',
-    ...(details.message ? { peer_message: details.message } : {}),
+    antseed_pinned: pinned,
+    peer_message: originalMessage,
+    peer_status: response.statusCode,
   };
   const body = requestProtocol === 'anthropic-messages'
     ? { type: 'error', error }

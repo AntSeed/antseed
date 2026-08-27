@@ -1579,16 +1579,27 @@ test('a pinned seller failure explains the peer boundary and preserves the selle
   }))
 
   const parsed = JSON.parse(res.body) as {
-    error: { type: string; message: string; antseed_fault: string; peer_message: string }
+    error: {
+      type: string
+      message: string
+      antseed_fault: string
+      antseed_pinned: boolean
+      peer_message: string
+      peer_status: number
+    }
   }
   assert.equal(res.statusCode, 503)
   assert.equal(res.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER], 'peer')
   assert.equal(parsed.error.type, 'billing_configuration_error')
   assert.equal(parsed.error.antseed_fault, 'peer')
+  assert.equal(parsed.error.antseed_pinned, true)
   assert.equal(parsed.error.peer_message, 'No billing tier matches this request.')
-  assert.match(parsed.error.message, /AntSeed is a peer-to-peer network/)
-  assert.match(parsed.error.message, /Try another peer or use Auto routing/)
-  assert.match(parsed.error.message, /Peer message: No billing tier matches this request\./)
+  assert.equal(parsed.error.peer_status, 503)
+  assert.equal(parsed.error.message, [
+    'Oops, pinned peer could not complete the request.',
+    'AntSeed is a peer-to-peer network. Try another peer or use Auto routing.',
+    'Original Response: {"message":"No billing tier matches this request.","status":503}',
+  ].join('\n'))
 })
 
 test('a seller cannot inject the reserved buyer-fault error code', async () => {
@@ -1637,7 +1648,7 @@ test('an untagged transport failure records a streak without evicting the peer',
 
   assert.equal(res.statusCode, 502)
   const parsed = JSON.parse(res.body) as { error: { message: string; peer_message: string } }
-  assert.match(parsed.error.message, /AntSeed is a peer-to-peer network/)
+  assert.match(parsed.error.message, /Oops, pinned peer could not complete the request/)
   assert.equal(parsed.error.peer_message, 'Request abc123 timed out')
   assert.equal(res.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER], 'peer')
   assert.equal(routerResults.length, 0)
@@ -2214,8 +2225,8 @@ test('transformed pre-stream seller errors preserve peer guidance', async () => 
   assert.equal(res.statusCode, 503)
   assert.equal(res.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER], 'peer')
   assert.match(res.headers['content-type'] ?? '', /text\/event-stream/)
-  assert.match(res.body, /AntSeed is a peer-to-peer network/)
-  assert.match(res.body, /Peer message: The seller upstream is unavailable\./)
+  assert.match(res.body, /Oops, pinned peer could not complete the request/)
+  assert.match(res.body, /Original Response:.*The seller upstream is unavailable\./)
 })
 
 test('model peer prefix pins the request peer and strips the routed model', async () => {
@@ -3357,6 +3368,34 @@ test('adaptPeerFaultErrorResponse leaves actionable request errors unchanged', (
 
   assert.equal(Buffer.from(response.body).toString('utf8'), body.toString('utf8'))
   assert.equal(response.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER], 'peer')
+})
+
+test('adaptPeerFaultErrorResponse upgrades a generic wrapper for a pinned route', () => {
+  const raw = {
+    requestId: 'req-pinned-upgrade',
+    statusCode: 429,
+    headers: { 'content-type': 'application/json' },
+    body: Buffer.from(JSON.stringify({
+      error: {
+        type: 'rate_limit_error',
+        message: 'Insufficient balance or no resource package. Please recharge.',
+      },
+    })),
+  }
+  const generic = adaptPeerFaultErrorResponse(raw, 'openai-chat-completions')
+  const pinned = adaptPeerFaultErrorResponse(generic, 'openai-chat-completions', { pinned: true })
+  const parsed = JSON.parse(Buffer.from(pinned.body).toString('utf8')) as {
+    error: { message: string; antseed_pinned: boolean; peer_message: string; peer_status: number }
+  }
+
+  assert.equal(parsed.error.antseed_pinned, true)
+  assert.equal(parsed.error.peer_message, 'Insufficient balance or no resource package. Please recharge.')
+  assert.equal(parsed.error.peer_status, 429)
+  assert.equal(parsed.error.message, [
+    'Oops, pinned peer could not complete the request.',
+    'AntSeed is a peer-to-peer network. Try another peer or use Auto routing.',
+    'Original Response: {"message":"Insufficient balance or no resource package. Please recharge.","status":429}',
+  ].join('\n'))
 })
 
 test('adaptPeerFaultErrorResponse preserves payment-required control messages', () => {

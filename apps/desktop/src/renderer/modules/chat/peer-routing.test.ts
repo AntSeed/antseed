@@ -2400,20 +2400,30 @@ test('a retryable mid-stream failure preserves partial output without resending'
   assert.equal(uiState.chatMessages.length, 1);
 });
 
-test('a retryable failure never moves a pinned conversation off its peer', async () => {
+test('a retryable failure on a pinned conversation is shown instead of retried', async () => {
   const { api, uiState, streamErrorHandlers } = setupFailoverHarness('pinned');
   await api.refreshChatConversations();
   await api.openConversation('conv-a');
 
+  const message = [
+    'Oops, pinned peer could not complete the request.',
+    'AntSeed is a peer-to-peer network. Try another peer or use Auto routing.',
+    'Original Response: {"message":"Insufficient balance","status":429}',
+  ].join('\n');
   streamErrorHandlers[0]?.({
     conversationId: 'conv-a',
-    error: 'Connection lost',
-    stopReason: RETRYABLE_STREAM_FAILURE,
+    error: message,
+    stopReason: {
+      kind: 'http_error',
+      source: 'upstream',
+      retryable: true,
+      message,
+      statusCode: 429,
+    },
   });
 
-  // The user chose this peer; the retry must stay on it.
-  await new Promise((resolve) => setTimeout(resolve, 50));
   assert.equal(uiState.chatRoutingNotice, null);
+  assert.equal(uiState.chatError, message);
 });
 
 test('a non-retryable failure reports an error instead of failing over', async () => {

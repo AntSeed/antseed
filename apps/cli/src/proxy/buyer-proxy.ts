@@ -2523,6 +2523,7 @@ export class BuyerProxy {
             explicitProvider,
             router,
             RETRYABLE_STATUS_CODES,
+            false,
             clientAbortController.signal,
           )
           if (result.done) {
@@ -2758,6 +2759,7 @@ export class BuyerProxy {
       explicitProvider,
       router,
       RETRYABLE_STATUS_CODES,
+      true,
       clientAbortController.signal,
     )
     if (result.done && trackedConversationId && pinnedServiceId) {
@@ -2871,6 +2873,7 @@ export class BuyerProxy {
     explicitProvider: string | null,
     router: Router | null,
     retryableStatusCodes: Set<number>,
+    pinned: boolean,
     requestSignal: AbortSignal,
   ): Promise<
     | { done: true }
@@ -2983,7 +2986,7 @@ export class BuyerProxy {
     const wantsStreaming = clientWantsStreaming
     const peerResponseProtocol = selectedRoutePlan.selection?.targetProtocol ?? requestProtocol
     const adaptPeerResponse = (response: SerializedHttpResponse): SerializedHttpResponse =>
-      adaptPeerFaultErrorResponse(response, peerResponseProtocol)
+      adaptPeerFaultErrorResponse(response, peerResponseProtocol, { pinned })
     const startTime = Date.now()
     try {
       if (wantsStreaming) {
@@ -3023,7 +3026,7 @@ export class BuyerProxy {
               }
             }
           },
-        }, { signal: requestSignal })
+        }, { signal: requestSignal, pinned })
 
         let responseForClient = adaptBuyerFaultErrorResponse(response, requestProtocol)
         responseForClient = adaptPeerResponse(responseForClient)
@@ -3107,7 +3110,10 @@ export class BuyerProxy {
         res.end(Buffer.from(responseForClient.body))
         return { done: true }
       } else {
-        const upstreamResponse = await this._node.sendRequest(selectedPeer, requestForPeer, { signal: requestSignal })
+        const upstreamResponse = await this._node.sendRequest(selectedPeer, requestForPeer, {
+          signal: requestSignal,
+          pinned,
+        })
         if (upstreamResponse.statusCode >= 400 && !adaptResponse) {
           log(`Upstream raw error detail: ${summarizeErrorResponse(upstreamResponse)}`)
         }
