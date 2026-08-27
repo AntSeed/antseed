@@ -408,6 +408,10 @@ export function initChatModule({
       : null;
   }
 
+  function isPinnedConversation(convId: string): boolean {
+    return findConversationSummary(convId)?.routeMode === 'pinned';
+  }
+
   /**
    * Pick a different healthy peer for a conversation whose current peer just
    * failed.
@@ -426,7 +430,7 @@ export function initChatModule({
     const conversation = findConversationSummary(convId);
     // Threads with no recorded mode predate route-mode tracking; they are
     // treated as auto, since failover only runs after a failure.
-    if (conversation?.routeMode === 'pinned') return null;
+    if (isPinnedConversation(convId)) return null;
 
     const serviceId = normalizeChatServiceId(conversation?.service);
     if (serviceId.length === 0) return null;
@@ -2670,8 +2674,11 @@ export function initChatModule({
               // finalized the partial message. Don't overwrite with an error.
               clearPaymentRetry(convId);
               setConversationSending(convId, false);
-            } else if (result.stopReason?.retryable === false) {
-              reportChatError(result.stopReason.message || result.error, 'Request failed');
+            } else if (
+              result.stopReason?.retryable === false
+              || isPinnedConversation(convId)
+            ) {
+              reportChatError(result.stopReason?.message || result.error, 'Request failed');
               setConversationSending(convId, false);
             } else {
               scheduleChatRetry(
@@ -3542,6 +3549,7 @@ export function initChatModule({
         streamFailedAtByConversation.set(data.conversationId, Date.now());
 
         const isActiveConversation = data.conversationId === uiState.chatActiveConversation;
+        const isPinned = isPinnedConversation(data.conversationId);
         if (isActiveConversation) {
           // Ensure the waiting-for-stream flag is cleared even if the error fires
           // before chat:ai-stream-start is received (which is the only other place
@@ -3566,7 +3574,7 @@ export function initChatModule({
             } else {
               clearPaymentRetry(data.conversationId);
             }
-          } else if (stopReason?.retryable === false || outputAlreadyStarted) {
+          } else if (stopReason?.retryable === false || outputAlreadyStarted || isPinned) {
             clearPaymentRetry(data.conversationId);
             if (isActiveConversation) {
               reportChatError(stopReason?.message || data.error, 'Request failed');

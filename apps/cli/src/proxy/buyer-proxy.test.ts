@@ -10,6 +10,7 @@ import {
   ANTSEED_FAULT_ATTRIBUTION_HEADER,
   CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
   CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
+  adaptPeerFaultErrorResponse,
   buyerFault,
   computeOnChainReputationScore,
   type ModelRoutingPreferences,
@@ -1558,6 +1559,49 @@ test('a buyer-authored 503 does not affect router metrics or peer health', async
   assert.equal(health?.cooldownUntil, 0)
 })
 
+test('a pinned seller failure explains the peer boundary and preserves the seller message', async () => {
+  const peer = makePeer('a', ['openai'])
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], permissiveRouter())
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: { requestId: string }) => ({
+    requestId: request.requestId,
+    statusCode: 503,
+    headers: { 'content-type': 'application/json' },
+    body: Buffer.from(JSON.stringify({
+      error: {
+        type: 'billing_configuration_error',
+        message: 'No billing tier matches this request.',
+      },
+    })),
+  })
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-antseed-pin-peer': peer.peerId },
+  }))
+
+  const parsed = JSON.parse(res.body) as {
+    error: {
+      type: string
+      message: string
+      antseed_fault: string
+      antseed_pinned: boolean
+      peer_message: string
+      peer_status: number
+    }
+  }
+  assert.equal(res.statusCode, 503)
+  assert.equal(res.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER], 'peer')
+  assert.equal(parsed.error.type, 'billing_configuration_error')
+  assert.equal(parsed.error.antseed_fault, 'peer')
+  assert.equal(parsed.error.antseed_pinned, true)
+  assert.equal(parsed.error.peer_message, 'No billing tier matches this request.')
+  assert.equal(parsed.error.peer_status, 503)
+  assert.equal(parsed.error.message, [
+    'Oops, pinned peer could not complete the request.',
+    'AntSeed is a peer-to-peer network. Try another peer or use Auto routing.',
+    'Original Response: {"message":"No billing tier matches this request.","status":503}',
+  ].join('\n'))
+})
+
 test('a seller cannot inject the reserved buyer-fault error code', async () => {
   const peer = makePeer('a', ['openai'])
   const proxy = makeBuyerProxyWithPeers([peer], [peer], permissiveRouter())
@@ -1603,7 +1647,10 @@ test('an untagged transport failure records a streak without evicting the peer',
   }))
 
   assert.equal(res.statusCode, 502)
-  assert.match(res.body, /Request abc123 timed out/)
+  const parsed = JSON.parse(res.body) as { error: { message: string; peer_message: string } }
+  assert.match(parsed.error.message, /Oops, pinned peer could not complete the request/)
+  assert.equal(parsed.error.peer_message, 'Request abc123 timed out')
+  assert.equal(res.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER], 'peer')
   assert.equal(routerResults.length, 0)
   assert.equal((proxy as any)._peerHealth.get(peer.peerId)?.lastReason, 'request-failed')
   // Cooldown never evicts discovery metadata — the peer stays routable.
@@ -2135,6 +2182,51 @@ test('accept-sse transformed responses requests stream adapted client events wit
   assert.match(res.body, /event: content_block_delta/)
   assert.match(res.body, /"text":"hi"/)
   assert.doesNotMatch(res.body, /event: response\.completed/)
+})
+
+test('transformed pre-stream seller errors preserve peer guidance', async () => {
+  const peer = makePeer('a', ['openai-responses'])
+  peer.providerServiceApiProtocols = {
+    'openai-responses': {
+      services: {
+        'gpt-5.6-sol': ['openai-responses'],
+      },
+    },
+  }
+  const proxy = makeBuyerProxyWithPeers([peer], [peer])
+  ;(proxy as any)._node.sendRequestStream = async (
+    _peer: PeerInfo,
+    request: { requestId: string },
+  ) => ({
+    requestId: request.requestId,
+    statusCode: 503,
+    headers: { 'content-type': 'application/json' },
+    body: Buffer.from(JSON.stringify({
+      error: {
+        type: 'server_error',
+        message: 'The seller upstream is unavailable.',
+      },
+    })),
+  })
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    path: '/v1/messages',
+    headers: {
+      accept: 'text/event-stream',
+      'x-antseed-pin-peer': peer.peerId,
+    },
+    body: {
+      model: 'gpt-5.6-sol',
+      max_tokens: 128,
+      messages: [{ role: 'user', content: 'hello' }],
+    },
+  }))
+
+  assert.equal(res.statusCode, 503)
+  assert.equal(res.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER], 'peer')
+  assert.match(res.headers['content-type'] ?? '', /text\/event-stream/)
+  assert.match(res.body, /Oops, pinned peer could not complete the request/)
+  assert.match(res.body, /Original Response:.*The seller upstream is unavailable\./)
 })
 
 test('model peer prefix pins the request peer and strips the routed model', async () => {
@@ -3261,6 +3353,65 @@ test('sanitizePeerBuyerFaultMarker scrubs the marker at any nesting depth', () =
   }
   assert.equal(nested.code, 'upstream_error')
   assert.equal(nested.message, 'seller-controlled message')
+})
+
+test('adaptPeerFaultErrorResponse leaves actionable request errors unchanged', () => {
+  const body = Buffer.from(JSON.stringify({
+    error: { type: 'invalid_request_error', message: 'The prompt is too long.' },
+  }))
+  const response = adaptPeerFaultErrorResponse({
+    requestId: 'req-actionable',
+    statusCode: 400,
+    headers: { 'content-type': 'application/json' },
+    body,
+  }, 'openai-chat-completions')
+
+  assert.equal(Buffer.from(response.body).toString('utf8'), body.toString('utf8'))
+  assert.equal(response.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER], 'peer')
+})
+
+test('adaptPeerFaultErrorResponse upgrades a generic wrapper for a pinned route', () => {
+  const raw = {
+    requestId: 'req-pinned-upgrade',
+    statusCode: 429,
+    headers: { 'content-type': 'application/json' },
+    body: Buffer.from(JSON.stringify({
+      error: {
+        type: 'rate_limit_error',
+        message: 'Insufficient balance or no resource package. Please recharge.',
+      },
+    })),
+  }
+  const generic = adaptPeerFaultErrorResponse(raw, 'openai-chat-completions')
+  const pinned = adaptPeerFaultErrorResponse(generic, 'openai-chat-completions', { pinned: true })
+  const parsed = JSON.parse(Buffer.from(pinned.body).toString('utf8')) as {
+    error: { message: string; antseed_pinned: boolean; peer_message: string; peer_status: number }
+  }
+
+  assert.equal(parsed.error.antseed_pinned, true)
+  assert.equal(parsed.error.peer_message, 'Insufficient balance or no resource package. Please recharge.')
+  assert.equal(parsed.error.peer_status, 429)
+  assert.equal(parsed.error.message, [
+    'Oops, pinned peer could not complete the request.',
+    'AntSeed is a peer-to-peer network. Try another peer or use Auto routing.',
+    'Original Response: {"message":"Insufficient balance or no resource package. Please recharge.","status":429}',
+  ].join('\n'))
+})
+
+test('adaptPeerFaultErrorResponse preserves payment-required control messages', () => {
+  const body = Buffer.from(JSON.stringify({
+    error: 'payment_required',
+    minBudgetPerRequest: '1000',
+  }))
+  const response = adaptPeerFaultErrorResponse({
+    requestId: 'req-payment',
+    statusCode: 402,
+    headers: { 'content-type': 'application/json' },
+    body,
+  }, 'openai-chat-completions')
+
+  assert.equal(Buffer.from(response.body).toString('utf8'), body.toString('utf8'))
+  assert.equal(response.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER], undefined)
 })
 
 test('deposits/status reports the recorded watcher-absence reason and payments health', async () => {
