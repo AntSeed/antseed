@@ -58,6 +58,8 @@ type WorkspaceSetResult =
   | { ok: true; data: { current: string; default: string } }
   | { ok: false; error: string };
 
+type ChatSendResult = Awaited<ReturnType<NonNullable<DesktopBridge['chatAiSendStream']>>>;
+
 type Conversation = {
   id: string;
   title: string;
@@ -2100,7 +2102,10 @@ function failoverOption(peerId: string, serviceId = 'model-a') {
  * Build a chat module with two interchangeable peers and one conversation
  * already bound to `peer-a`, ready for a stream failure.
  */
-function setupFailoverHarness(routeMode: 'auto' | 'pinned' | undefined) {
+function setupFailoverHarness(
+  routeMode: 'auto' | 'pinned' | undefined,
+  sendResult: ChatSendResult = { ok: true },
+) {
   installDomTimers();
 
   const uiState = createInitialUiState();
@@ -2144,7 +2149,7 @@ function setupFailoverHarness(routeMode: 'auto' | 'pinned' | undefined) {
     chatPrepareAttachments: async () => ({ ok: true, data: [] }),
     chatAiSendStream: async (conversationId, _message, _service, _provider, _attachments, peerId) => {
       sends.push({ conversationId, peerId });
-      return { ok: true };
+      return sendResult;
     },
     chatAiSelectPeer: async (payload) => {
       persistedSelections.push(payload);
@@ -2424,6 +2429,22 @@ test('a retryable failure on a pinned conversation is shown instead of retried',
 
   assert.equal(uiState.chatRoutingNotice, null);
   assert.equal(uiState.chatError, message);
+});
+
+test('a pinned send failure without a stop reason is shown instead of retried', async () => {
+  const { api, uiState, sends } = setupFailoverHarness('pinned', {
+    ok: false,
+    error: 'Conversation not found',
+  });
+  await api.refreshChatConversations();
+  await api.openConversation('conv-a');
+
+  api.sendMessage('hello');
+
+  await waitFor(() => uiState.chatError !== null);
+  assert.equal(uiState.chatError, 'Conversation not found');
+  assert.equal(uiState.chatRoutingNotice, null);
+  assert.equal(sends.length, 1);
 });
 
 test('a non-retryable failure reports an error instead of failing over', async () => {

@@ -2678,7 +2678,7 @@ export function initChatModule({
               result.stopReason?.retryable === false
               || isPinnedConversation(convId)
             ) {
-              reportChatError(result.stopReason.message || result.error, 'Request failed');
+              reportChatError(result.stopReason?.message || result.error, 'Request failed');
               setConversationSending(convId, false);
             } else {
               scheduleChatRetry(
