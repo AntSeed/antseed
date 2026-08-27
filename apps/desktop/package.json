@@ -56,7 +56,6 @@
   },
   "devDependencies": {
     "@antseed/ui": "workspace:*",
-    "@crossmint/client-sdk-react-ui": "^4.3.1",
     "@electron/notarize": "^3.1.1",
     "@funkit/connect": "^11.0.0",
     "@hugeicons/core-free-icons": "^4.0.0",
