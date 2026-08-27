@@ -2,10 +2,10 @@
 pragma solidity ^0.8.24;
 
 import { IAntseedEmissionsGate } from "./IAntseedEmissionsGate.sol";
-import { IAntseedPointsPolicy } from "./IAntseedPointsPolicy.sol";
 import { IAntseedRegistry } from "./IAntseedRegistry.sol";
+import { IAntseedVerificationStatus } from "./IAntseedVerificationStatus.sol";
 
-interface IAntseedVerification is IAntseedPointsPolicy {
+interface IAntseedVerification is IAntseedVerificationStatus {
     struct VerificationResult {
         uint256 agentId;
         bytes32 serviceHash;
