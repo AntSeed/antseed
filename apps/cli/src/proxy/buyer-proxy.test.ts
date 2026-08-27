@@ -2173,6 +2173,51 @@ test('accept-sse transformed responses requests stream adapted client events wit
   assert.doesNotMatch(res.body, /event: response\.completed/)
 })
 
+test('transformed pre-stream seller errors preserve peer guidance', async () => {
+  const peer = makePeer('a', ['openai-responses'])
+  peer.providerServiceApiProtocols = {
+    'openai-responses': {
+      services: {
+        'gpt-5.6-sol': ['openai-responses'],
+      },
+    },
+  }
+  const proxy = makeBuyerProxyWithPeers([peer], [peer])
+  ;(proxy as any)._node.sendRequestStream = async (
+    _peer: PeerInfo,
+    request: { requestId: string },
+  ) => ({
+    requestId: request.requestId,
+    statusCode: 503,
+    headers: { 'content-type': 'application/json' },
+    body: Buffer.from(JSON.stringify({
+      error: {
+        type: 'server_error',
+        message: 'The seller upstream is unavailable.',
+      },
+    })),
+  })
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    path: '/v1/messages',
+    headers: {
+      accept: 'text/event-stream',
+      'x-antseed-pin-peer': peer.peerId,
+    },
+    body: {
+      model: 'gpt-5.6-sol',
+      max_tokens: 128,
+      messages: [{ role: 'user', content: 'hello' }],
+    },
+  }))
+
+  assert.equal(res.statusCode, 503)
+  assert.equal(res.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER], 'peer')
+  assert.match(res.headers['content-type'] ?? '', /text\/event-stream/)
+  assert.match(res.body, /AntSeed is a peer-to-peer network/)
+  assert.match(res.body, /Peer message: The seller upstream is unavailable\./)
+})
+
 test('model peer prefix pins the request peer and strips the routed model', async () => {
   const pinnedPeer = makePeer('a', ['openai'])
   let capturedRequestBody: Record<string, unknown> | null = null

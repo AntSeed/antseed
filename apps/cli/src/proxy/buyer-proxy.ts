@@ -3032,7 +3032,7 @@ export class BuyerProxy {
           && adaptResponse
           && responseForClient.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER]?.toLowerCase() !== 'buyer'
         ) {
-          responseForClient = adaptResponse(response)
+          responseForClient = adaptResponse(responseForClient)
         }
         responseForClient = adaptOpenAICompatibleErrorResponse(responseForClient, requestProtocol)
         responseForClient = this._withFriendlyUploadLimitError(responseForClient, requestForPeer.body.length, requestedService)
