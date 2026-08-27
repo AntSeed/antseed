@@ -31,7 +31,7 @@ AntseedEmissions ──calls──► ANTSToken.mint()
 ## Build
 
 ```bash
-cd packages/node
+cd packages/contracts
 forge build
 ```
 
@@ -43,6 +43,120 @@ Requires [Foundry](https://getfoundry.sh/) and OpenZeppelin contracts (installed
 cd packages/node
 forge test
 ```
+
+## Wash-Trading Enforcement
+
+`AntseedWashTradingRegistry` pins the closed-loop and reciprocal SP1 vkeys, the
+Chainlink Base BlockhashStore at
+`0x78b69899C8cD252126cBB1A50171ec37286C3877`, and the approved historical
+batch count and digest in its constructor. Each journal contains one or two
+subjects, their proven wash and settled volumes, and authenticated Base block
+references. Solidity checks each block with
+`BlockhashStore.getBlockhash(blockNumber)` and exact hash equality.
+
+The initial history is submitted with one `submitBatch(publicValues,
+proofBytes)` transaction. The ordered `(claimId, sha256(publicValues))`
+commitments must reproduce the constructor-pinned digest, every proof and
+journal invariant must pass, and any failure reverts the entire batch.
+`backfillComplete` becomes true only after the full loop succeeds. Before that,
+individual submissions are rejected; afterward, anyone may submit new evidence
+or a stronger ratio. Exact claim replays are idempotent.
+
+The registry never adds wash volumes from overlapping claims. For each subject
+it retains only the greatest proven `washVolume / settledVolume` ratio using
+full-precision cross multiplication. A positive numerator with a zero
+denominator, or a numerator at least as large as its denominator, is 100%.
+
+Future points and seller reward claims use separate policy hooks:
+
+- `AntseedPointsPolicyRegistry` is the `AntseedUsageAccounting` points hook. It
+  evaluates at most eight category-aware leaves with a 100,000-gas allowance
+  each. Same-category penalties take the maximum, different categories add,
+  soft penalties cap at 9,000 BPS, and 10,000 BPS is a hard veto. An empty
+  registry passes raw points through. `AntseedWashTradingPointsPolicy` passes
+  points through before the historical batch completes. Afterward it applies
+  the shared proportional seller penalty and always returns zero buyer penalty.
+- `AntseedWashTradingRewardPolicy` implements both seller reward hooks directly.
+  Before `backfillComplete`, immediate rewards remain locked and historical
+  claims retain 0 BPS. Afterward, unproven sellers retain 100% and proven
+  sellers retain the proportional BPS returned by `WashPenaltyMath`.
+
+`AntseedSellerRewardsPool` records cumulative earned and paid amounts. A claim
+can pay at most `cumulativeRecorded × retainedBps / 10_000 - cumulativePaid`,
+so repeated claims cannot gradually drain the withheld balance. A later stronger
+proof can stop future payouts but does not claw back rewards already paid.
+
+The exact guarantees, thresholds, pinned addresses/code hashes/storage slots,
+journal schemas, explicit non-guarantees, and production commands are specified
+in [`../../../loop-proof/README.md`](../../../loop-proof/README.md). That file is
+the canonical human-readable proof contract; the pinned SP1 programs, receipt
+verification, Base chain binding, and canonical-block checks are the executable
+authority.
+
+### Proof deployment gates
+
+The safe deployment and release order is:
+
+1. Finalize the detection AIP's penalty formula and threshold in
+   `WashPenaltyMath`; deployment scripts intentionally reject the placeholder
+   configuration.
+2. Generate and approve the production proof manifest, ordered commitments,
+   batch digest, vkeys, and count.
+3. Deploy the registry with that exact count and digest, then install both
+   policies while historical rewards are frozen and points pass through.
+4. Verify or populate every required Chainlink BlockhashStore entry.
+5. Simulate the single `submitBatch` call, validate calldata and gas, and send
+   it only if the full transaction remains below the production limits.
+6. Verify `backfillComplete`, every claim digest, every final subject ratio,
+   and both policies after the same transaction succeeds.
+
+```bash
+# Verify or backfill required Chainlink BlockhashStore entries.
+node scripts/backfill-blockhash-store.mjs --help
+
+# Recompute the constructor digest, simulate and estimate the one atomic
+# transaction, enforce gas/calldata limits, submit, and verify post-state.
+node scripts/submit-wash-trading-proofs.mjs --help
+```
+
+Run the deterministic production-shaped Anvil lifecycle test to verify that
+proof submission is blocked before canonical block backfill, interrupted
+backfill resumes, and the atomic proof batch succeeds only after every required
+block hash is present. The test deploys the real registry and policy contracts
+with a local verifier fixture.
+
+```bash
+node --test --test-name-pattern="production-shaped proof submission" \
+  scripts/backfill-blockhash-store.anvil.test.mjs
+```
+
+Set `BASE_MAINNET_RPC_URL` to additionally exercise the deployed Base
+BlockhashStore against the pinned fork fixture.
+
+Before proof submission, `verify-proof-volumes.mjs` requires the trusted public
+key for the signed approved-claim baseline, refetches every selected settlement
+receipt, and writes `antseed-proof-volume-report` v2. Submission remains blocked
+unless baseline, planner, receipt-delta, and host-verified raw volumes are
+exactly equal and no claim/evidence identity changed.
+
+### Local P0 development submission
+
+The Anvil-only harness accepts atomic development manifests containing only
+`P0_CLOSED_LOOP` and `P0_RECIPROCAL` entries. It deploys local verifier and
+BlockhashStore mocks, rebinds the manifest's atomic digest to that deployed
+store, seeds every exact block hash, submits the batch, verifies wash records,
+and confirms an identical replay returns `already-complete`.
+
+```bash
+anvil --chain-id 8453 --gas-limit 1000000000
+node scripts/submit-aip4-proof-anvil.mjs \
+  --manifest /path/to/development-proof-results.json \
+  --rpc-url http://127.0.0.1:8545 \
+  --submit-local
+```
+
+Development manifests and `proofBytes: 0x01` are rejected by the production
+submission path and by this harness when the RPC URL is not loopback.
 
 ## Contracts
 
