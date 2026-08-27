@@ -8,7 +8,6 @@ import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import { IAntseedEmissionsGate } from "../interfaces/IAntseedEmissionsGate.sol";
 import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
-import { IAntseedStaking } from "../interfaces/IAntseedStaking.sol";
 import { IAntseedVerification } from "../interfaces/IAntseedVerification.sol";
 import { IERC8004Registry } from "../interfaces/IERC8004Registry.sol";
 
@@ -175,24 +174,6 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
         return _agentPointsPenaltyBps[agentId];
     }
 
-    function points(bytes32, address, address seller, uint256 rawPoints)
-        external
-        view
-        override
-        returns (uint256 sellerPoints, uint256 buyerPoints)
-    {
-        buyerPoints = rawPoints;
-        sellerPoints = rawPoints;
-
-        uint256 agentId = _resolveSellerAgentId(seller);
-        if (agentId == 0) return (sellerPoints, buyerPoints);
-
-        uint16 penaltyBps = _agentPointsPenaltyBps[agentId];
-        if (penaltyBps == 0) return (sellerPoints, buyerPoints);
-        if (penaltyBps >= BPS_DENOMINATOR) return (0, buyerPoints);
-        sellerPoints = _applyKeepBps(rawPoints, BPS_DENOMINATOR - penaltyBps);
-    }
-
     function claimVerifierReward(uint256 epoch) external override nonReentrant {
         if (epoch < firstRewardedEpoch) revert PreEffectiveEpoch();
         if (epoch >= currentEpoch()) revert EpochNotFinalized();
@@ -268,27 +249,6 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
         }
     }
 
-    function _resolveSellerAgentId(address seller) private view returns (uint256) {
-        (bool registryOk, uint256 stakingValue) =
-            _readUint256(address(registry), abi.encodeCall(IAntseedRegistry.staking, ()));
-        if (!registryOk) return 0;
-
-        address staking = address(uint160(stakingValue));
-        if (staking == address(0)) return 0;
-
-        (bool stakingOk, uint256 agentId) = _readUint256(staking, abi.encodeCall(IAntseedStaking.getAgentId, (seller)));
-        return stakingOk ? agentId : 0;
-    }
-
-    function _readUint256(address target, bytes memory callData) private view returns (bool ok, uint256 value) {
-        if (target.code.length == 0) return (false, 0);
-
-        bytes memory data;
-        (ok, data) = target.staticcall(callData);
-        if (!ok || data.length < 32) return (false, 0);
-        value = abi.decode(data, (uint256));
-    }
-
     function _applyAttestationPenalty(uint256 agentId, Verdict verdict, uint16 modelShareBps) private {
         if (verdict == Verdict.UNDETERMINED) return;
         uint16 nextPenalty = verdict == Verdict.DIFF ? modelShareBps : 0;
@@ -306,7 +266,4 @@ contract AntseedVerification is IAntseedVerification, Ownable2Step, ReentrancyGu
         if (result.verdict != Verdict.DIFF && result.modelShareBps != 0) revert InvalidModelShare();
     }
 
-    function _applyKeepBps(uint256 amount, uint256 keepBps) private pure returns (uint256) {
-        return Math.mulDiv(amount, keepBps, BPS_DENOMINATOR);
-    }
 }
