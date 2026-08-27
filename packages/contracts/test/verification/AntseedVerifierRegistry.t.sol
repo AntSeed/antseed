@@ -132,7 +132,8 @@ contract AntseedVerifierRegistryTest is Test {
         _submit(verifier, keccak256("bundle-a"), _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.SAME, 0), 2_000_000);
         _submit(verifier, keccak256("bundle-b"), _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.DIFF, 2_500), 2_000_000);
 
-        assertEq(verification.agentPointsPenaltyBps(agentId), 2_500);
+        assertEq(verification.activeAgentDiffVerifierCount(agentId), 1);
+        assertEq(verification.activeServiceDiffVerifierCount(agentId, SERVICE_HASH), 1);
         assertEq(verification.epochCreditUsdMicros(verification.currentEpoch(), verifier), 3_000_000);
         assertEq(verification.epochTotalCreditUsdMicros(verification.currentEpoch()), 3_000_000);
     }
@@ -172,12 +173,14 @@ contract AntseedVerifierRegistryTest is Test {
         assertEq(verification.epochCreditUsdMicros(verification.currentEpoch(), verifier), 3_000_000);
     }
 
-    function test_zeroCostAndZeroShareDiffAreAcceptedAndClearPenalty() public {
-        _submit(verifier, keccak256("penalty"), _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.DIFF, 2_500), 1_000_000);
+    function test_zeroCostAndZeroShareDiffAreAcceptedWithoutClearingVerdict() public {
+        _submit(verifier, keccak256("initial-diff"), _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.DIFF, 2_500), 1_000_000);
         _submit(verifier, keccak256("zero"), _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.DIFF, 0), 0);
 
         assertEq(verification.epochCreditUsdMicros(verification.currentEpoch(), verifier), 1_000_000);
-        assertEq(verification.agentPointsPenaltyBps(agentId), 0);
+        assertEq(verification.activeAgentDiffVerifierCount(agentId), 1);
+        assertEq(verification.activeServiceDiffVerifierCount(agentId, SERVICE_HASH), 1);
+        _assertLatest(agentId, SERVICE_HASH, verifier, IAntseedVerification.Verdict.DIFF);
     }
 
     function test_rejectsBundleAfterExpectedEpochChanges() public {
@@ -194,17 +197,95 @@ contract AntseedVerifierRegistryTest is Test {
         );
     }
 
-    function test_undeterminedLeavesPenaltyUnchanged() public {
+    function test_undeterminedRetractsSameServiceDiff() public {
         _submit(verifier, keccak256("diff"), _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.DIFF, 2_500), 1_000_000);
         _submit(verifier, keccak256("undetermined"), _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.UNDETERMINED, 0), 1_000_000);
 
-        assertEq(verification.agentPointsPenaltyBps(agentId), 2_500);
+        assertEq(verification.activeAgentDiffVerifierCount(agentId), 0);
+        assertEq(verification.activeServiceDiffVerifierCount(agentId, SERVICE_HASH), 0);
+        _assertLatest(agentId, SERVICE_HASH, verifier, IAntseedVerification.Verdict.UNDETERMINED);
     }
 
-    function test_latestConclusiveResultAcrossBundlesControlsAgentPenalty() public {
+    function test_oneVerifierCountsOnceAcrossMultipleServices() public {
         _submit(verifier, keccak256("diff-one"), _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.DIFF, 2_000), 1_000_000);
-        _submit(secondVerifier, keccak256("diff-two"), _oneResult(agentId, OTHER_SERVICE_HASH, IAntseedVerification.Verdict.DIFF, 3_000), 1_000_000);
-        assertEq(verification.agentPointsPenaltyBps(agentId), 3_000);
+        _submit(verifier, keccak256("diff-two"), _oneResult(agentId, OTHER_SERVICE_HASH, IAntseedVerification.Verdict.DIFF, 3_000), 1_000_000);
+
+        assertEq(verification.activeAgentDiffVerifierCount(agentId), 1);
+        assertEq(verification.activeServiceDiffVerifierCount(agentId, SERVICE_HASH), 1);
+        assertEq(verification.activeServiceDiffVerifierCount(agentId, OTHER_SERVICE_HASH), 1);
+    }
+
+    function test_twoDistinctDiffVerifiersAreCountedPerServiceAndAgent() public {
+        _submit(verifier, keccak256("diff-one"), _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.DIFF, 2_000), 1_000_000);
+        _submit(secondVerifier, keccak256("diff-two"), _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.DIFF, 3_000), 1_000_000);
+
+        assertEq(verification.activeAgentDiffVerifierCount(agentId), 2);
+        assertEq(verification.activeServiceDiffVerifierCount(agentId, SERVICE_HASH), 2);
+    }
+
+    function test_sameServiceRetractionRemovesOnlyRetractingVerifier() public {
+        _submit(verifier, keccak256("diff-one"), _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.DIFF, 2_000), 1_000_000);
+        _submit(secondVerifier, keccak256("diff-two"), _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.DIFF, 3_000), 1_000_000);
+        _submit(verifier, keccak256("same-one"), _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.SAME, 0), 1_000_000);
+
+        assertEq(verification.activeAgentDiffVerifierCount(agentId), 1);
+        assertEq(verification.activeServiceDiffVerifierCount(agentId, SERVICE_HASH), 1);
+        _assertLatest(agentId, SERVICE_HASH, verifier, IAntseedVerification.Verdict.SAME);
+        _assertLatest(agentId, SERVICE_HASH, secondVerifier, IAntseedVerification.Verdict.DIFF);
+    }
+
+    function test_crossServiceSameCannotClearStandingDiff() public {
+        _submit(verifier, keccak256("diff"), _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.DIFF, 2_000), 1_000_000);
+        _submit(verifier, keccak256("same-other"), _oneResult(agentId, OTHER_SERVICE_HASH, IAntseedVerification.Verdict.SAME, 0), 1_000_000);
+
+        assertEq(verification.activeAgentDiffVerifierCount(agentId), 1);
+        assertEq(verification.activeServiceDiffVerifierCount(agentId, SERVICE_HASH), 1);
+        assertEq(verification.activeServiceDiffVerifierCount(agentId, OTHER_SERVICE_HASH), 0);
+        _assertLatest(agentId, SERVICE_HASH, verifier, IAntseedVerification.Verdict.DIFF);
+    }
+
+    function test_ownerRemediationUpdatesServiceAndAgentCounts() public {
+        _submit(verifier, keccak256("diff-one"), _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.DIFF, 2_000), 1_000_000);
+        _submit(verifier, keccak256("diff-two"), _oneResult(agentId, OTHER_SERVICE_HASH, IAntseedVerification.Verdict.DIFF, 3_000), 1_000_000);
+        _submit(secondVerifier, keccak256("diff-three"), _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.DIFF, 4_000), 1_000_000);
+
+        verification.clearVerifierVerdict(agentId, SERVICE_HASH, verifier);
+        assertEq(verification.activeAgentDiffVerifierCount(agentId), 2);
+        assertEq(verification.activeServiceDiffVerifierCount(agentId, SERVICE_HASH), 1);
+        _assertLatest(agentId, SERVICE_HASH, verifier, IAntseedVerification.Verdict.UNKNOWN);
+
+        verification.clearVerifierVerdict(agentId, OTHER_SERVICE_HASH, verifier);
+        assertEq(verification.activeAgentDiffVerifierCount(agentId), 1);
+        assertEq(verification.activeServiceDiffVerifierCount(agentId, OTHER_SERVICE_HASH), 0);
+    }
+
+    function test_revokedVerifierCannotSubmitAndHistoricalVerdictRemains() public {
+        _submit(verifier, keccak256("diff"), _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.DIFF, 2_000), 1_000_000);
+        verification.setVerifier(verifier, false);
+
+        assertEq(verification.activeAgentDiffVerifierCount(agentId), 1);
+        _assertLatest(agentId, SERVICE_HASH, verifier, IAntseedVerification.Verdict.DIFF);
+        vm.prank(verifier);
+        vm.expectRevert(AntseedVerification.NotApprovedVerifier.selector);
+        verification.submitVerificationBundle(
+            _currentEpoch(),
+            1_000_000,
+            keccak256("retracted-after-revocation"),
+            "",
+            _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.SAME, 0)
+        );
+    }
+
+    function test_onlyOwnerCanRemediateAndUnknownVerdictCannotBeCleared() public {
+        _submit(verifier, keccak256("diff"), _oneResult(agentId, SERVICE_HASH, IAntseedVerification.Verdict.DIFF, 2_000), 1_000_000);
+
+        vm.prank(address(0xBAD));
+        vm.expectRevert();
+        verification.clearVerifierVerdict(agentId, SERVICE_HASH, verifier);
+
+        verification.clearVerifierVerdict(agentId, SERVICE_HASH, verifier);
+        vm.expectRevert(AntseedVerification.NoStoredVerdict.selector);
+        verification.clearVerifierVerdict(agentId, SERVICE_HASH, verifier);
     }
 
     function test_rejectsDuplicateEvidenceUnknownSelfDuplicateResultAndInvalidInputs() public {
@@ -294,6 +375,15 @@ contract AntseedVerifierRegistryTest is Test {
             verdict: verdict,
             modelShareBps: modelShareBps
         });
+    }
+
+    function _assertLatest(
+        uint256 targetAgentId,
+        bytes32 serviceHash,
+        address targetVerifier,
+        IAntseedVerification.Verdict expectedVerdict
+    ) private view {
+        assertEq(verification.latestVerifierVerdict(targetAgentId, serviceHash, targetVerifier), uint8(expectedVerdict));
     }
 
     function _register(address owner) private returns (uint256 registeredAgentId) {
