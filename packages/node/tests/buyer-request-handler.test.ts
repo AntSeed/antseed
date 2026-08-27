@@ -51,12 +51,12 @@ describe('BuyerRequestHandler payments-inactive 402 handling', () => {
     };
   }
 
-  function makeHandlerWithSeller402(body: unknown): BuyerRequestHandler {
+  function makeHandlerWithSellerResponse(statusCode: number, body: unknown): BuyerRequestHandler {
     const proxyMux = {
       sendProxyRequest: vi.fn((req: SerializedHttpRequest, onResponse: (r: SerializedHttpResponse, m: { streamingStart: boolean }) => void) => {
         onResponse({
           requestId: req.requestId,
-          statusCode: 402,
+          statusCode,
           headers: { 'content-type': 'application/json' },
           body: new TextEncoder().encode(JSON.stringify(body)),
         }, { streamingStart: false });
@@ -82,7 +82,7 @@ describe('BuyerRequestHandler payments-inactive 402 handling', () => {
   };
 
   it('converts a seller 402 into a buyer-fault error when payments are not running', async () => {
-    const handler = makeHandlerWithSeller402({
+    const handler = makeHandlerWithSellerResponse(402, {
       error: 'payment_required',
       minBudgetPerRequest: '10000',
       suggestedAmount: '1000000',
@@ -98,13 +98,22 @@ describe('BuyerRequestHandler payments-inactive 402 handling', () => {
     expect(parsed.message).toMatch(/not a balance problem/);
   });
 
-  it('passes a non-payment 402 through untouched', async () => {
-    const handler = makeHandlerWithSeller402({ error: 'some_other_error' });
+  it('wraps a non-payment seller error with peer guidance', async () => {
+    const handler = makeHandlerWithSellerResponse(402, {
+      error: 'billing_configuration_error',
+      message: 'No billing tier matches this request.',
+    });
 
     const response = await handler.sendRequest(peer, makeChatRequest());
     expect(response.statusCode).toBe(402);
-    const parsed = JSON.parse(new TextDecoder().decode(response.body)) as Record<string, unknown>;
-    expect(parsed.error).toBe('some_other_error');
+    expect(response.headers['x-antseed-fault-attribution']).toBe('peer');
+    const parsed = JSON.parse(new TextDecoder().decode(response.body)) as {
+      error: { type: string; message: string; peer_message: string };
+    };
+    expect(parsed.error.type).toBe('billing_configuration_error');
+    expect(parsed.error.peer_message).toBe('No billing tier matches this request.');
+    expect(parsed.error.message).toMatch(/AntSeed is a peer-to-peer network/);
+    expect(parsed.error.message).toMatch(/Try another peer or use Auto routing/);
   });
 });
 

@@ -28,6 +28,7 @@ import {
 } from '@antseed/api-adapter';
 import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 } from '@antseed/protocol/messages';
 import { buyerFault, peerFault } from './errors.js';
+import { adaptPeerFaultErrorResponse } from './peer-error-response.js';
 
 export interface RequestStreamResponseMetadata {
   streaming: boolean;
@@ -122,6 +123,9 @@ export class BuyerRequestHandler {
 
     // Track which service the buyer requested so auth validation uses buyer's own pricing.
     const requestedService = options?.controlPlane ? undefined : extractServiceFromBody(req);
+    const requestProtocol = options?.controlPlane ? null : detectRequestServiceApiProtocol(req);
+    const adaptPeerResponse = (response: SerializedHttpResponse): SerializedHttpResponse =>
+      adaptPeerFaultErrorResponse(response, requestProtocol);
     const billingRoute = requestedService ? selectBillingRoute(peer, req, requestedService) : null;
     // Decide free vs paid from the resolved route (provider + protocol), mirroring
     // the seller's per-request gate so both sides classify the request the same way.
@@ -137,7 +141,6 @@ export class BuyerRequestHandler {
           debugWarn(`[BuyerRequest] Failed to prepare free usage channel for ${peer.peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
         }
       } else {
-        const requestProtocol = detectRequestServiceApiProtocol(req);
         if (
           requestProtocol === "openai-images"
           && (
@@ -282,12 +285,17 @@ export class BuyerRequestHandler {
             streamStartResponse = stripPeerControlledResponseHeaders(stripStreamingHeader(response));
             debugLog(`[BuyerRequest] Stream started for ${req.requestId.slice(0, 8)}; idle-timeout=${streamIdleTimeoutMs}ms`);
             resetTimeout(streamIdleTimeoutMs);
-            callbacks?.onResponseStart?.(streamStartResponse, { streaming: true });
+            callbacks?.onResponseStart?.(
+              adaptPeerResponse(streamStartResponse),
+              { streaming: true },
+            );
             return;
           }
 
           callbacks?.onResponseStart?.(
-            stripPeerControlledResponseHeaders(stripStreamingHeader(response)),
+            adaptPeerResponse(
+              stripPeerControlledResponseHeaders(stripStreamingHeader(response)),
+            ),
             { streaming: false },
           );
           finish(response);
@@ -366,14 +374,16 @@ export class BuyerRequestHandler {
 
     if (response.statusCode === 402 && negotiator && !externalSpendingAuth) {
       const result = await negotiator.handle402(response, peer, conn, req);
-      if (result.action === 'return') return result.response;
+      if (result.action === 'return') {
+        return adaptPeerResponse(result.response);
+      }
       startTime = Date.now();
       const retriedResponse = await executeRequest();
       if (!isFreeService) {
         negotiator.estimateCostFromResponse(peer, retriedResponse, requestedService, req.requestId);
       }
       this._recordResponseAuth(peer, req, retriedResponse, requestedService, verificationMux);
-      return retriedResponse;
+      return adaptPeerResponse(retriedResponse);
     }
 
     if (negotiator && !isFreeService) {
@@ -381,7 +391,7 @@ export class BuyerRequestHandler {
     }
 
     this._recordResponseAuth(peer, req, response, requestedService, verificationMux);
-    return response;
+    return adaptPeerResponse(response);
   }
 
   private _prepareDirectFreeUsageOpen(peer: BuyerPeerView, conn: BuyerConnection): void {

@@ -10,6 +10,7 @@ import {
   ANTSEED_FAULT_ATTRIBUTION_HEADER,
   CONNECTION_CAPABILITY_COOPERATIVE_CLOSE_V1,
   CONNECTION_CAPABILITY_RELAYS_SWEEPS_V1,
+  adaptPeerFaultErrorResponse,
   buyerFault,
   computeOnChainReputationScore,
   type ModelRoutingPreferences,
@@ -1558,6 +1559,38 @@ test('a buyer-authored 503 does not affect router metrics or peer health', async
   assert.equal(health?.cooldownUntil, 0)
 })
 
+test('a pinned seller failure explains the peer boundary and preserves the seller message', async () => {
+  const peer = makePeer('a', ['openai'])
+  const proxy = makeBuyerProxyWithPeers([peer], [peer], permissiveRouter())
+  ;(proxy as any)._node.sendRequest = async (_peer: PeerInfo, request: { requestId: string }) => ({
+    requestId: request.requestId,
+    statusCode: 503,
+    headers: { 'content-type': 'application/json' },
+    body: Buffer.from(JSON.stringify({
+      error: {
+        type: 'billing_configuration_error',
+        message: 'No billing tier matches this request.',
+      },
+    })),
+  })
+
+  const res = await invokeProxy(proxy, makeProxyRequest({
+    headers: { 'x-antseed-pin-peer': peer.peerId },
+  }))
+
+  const parsed = JSON.parse(res.body) as {
+    error: { type: string; message: string; antseed_fault: string; peer_message: string }
+  }
+  assert.equal(res.statusCode, 503)
+  assert.equal(res.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER], 'peer')
+  assert.equal(parsed.error.type, 'billing_configuration_error')
+  assert.equal(parsed.error.antseed_fault, 'peer')
+  assert.equal(parsed.error.peer_message, 'No billing tier matches this request.')
+  assert.match(parsed.error.message, /AntSeed is a peer-to-peer network/)
+  assert.match(parsed.error.message, /Try another peer or use Auto routing/)
+  assert.match(parsed.error.message, /Peer message: No billing tier matches this request\./)
+})
+
 test('a seller cannot inject the reserved buyer-fault error code', async () => {
   const peer = makePeer('a', ['openai'])
   const proxy = makeBuyerProxyWithPeers([peer], [peer], permissiveRouter())
@@ -1603,7 +1636,10 @@ test('an untagged transport failure records a streak without evicting the peer',
   }))
 
   assert.equal(res.statusCode, 502)
-  assert.match(res.body, /Request abc123 timed out/)
+  const parsed = JSON.parse(res.body) as { error: { message: string; peer_message: string } }
+  assert.match(parsed.error.message, /AntSeed is a peer-to-peer network/)
+  assert.equal(parsed.error.peer_message, 'Request abc123 timed out')
+  assert.equal(res.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER], 'peer')
   assert.equal(routerResults.length, 0)
   assert.equal((proxy as any)._peerHealth.get(peer.peerId)?.lastReason, 'request-failed')
   // Cooldown never evicts discovery metadata — the peer stays routable.
@@ -3261,6 +3297,37 @@ test('sanitizePeerBuyerFaultMarker scrubs the marker at any nesting depth', () =
   }
   assert.equal(nested.code, 'upstream_error')
   assert.equal(nested.message, 'seller-controlled message')
+})
+
+test('adaptPeerFaultErrorResponse leaves actionable request errors unchanged', () => {
+  const body = Buffer.from(JSON.stringify({
+    error: { type: 'invalid_request_error', message: 'The prompt is too long.' },
+  }))
+  const response = adaptPeerFaultErrorResponse({
+    requestId: 'req-actionable',
+    statusCode: 400,
+    headers: { 'content-type': 'application/json' },
+    body,
+  }, 'openai-chat-completions')
+
+  assert.equal(Buffer.from(response.body).toString('utf8'), body.toString('utf8'))
+  assert.equal(response.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER], 'peer')
+})
+
+test('adaptPeerFaultErrorResponse preserves payment-required control messages', () => {
+  const body = Buffer.from(JSON.stringify({
+    error: 'payment_required',
+    minBudgetPerRequest: '1000',
+  }))
+  const response = adaptPeerFaultErrorResponse({
+    requestId: 'req-payment',
+    statusCode: 402,
+    headers: { 'content-type': 'application/json' },
+    body,
+  }, 'openai-chat-completions')
+
+  assert.equal(Buffer.from(response.body).toString('utf8'), body.toString('utf8'))
+  assert.equal(response.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER], undefined)
 })
 
 test('deposits/status reports the recorded watcher-absence reason and payments health', async () => {

@@ -7,6 +7,7 @@ import {
   ANTSEED_BUYER_FAULT_ERROR_CODE,
   ANTSEED_FAULT_ATTRIBUTION_HEADER,
   ANTSEED_ATTEST_PATH,
+  adaptPeerFaultErrorResponse,
   computeOnChainReputationScore,
   decodeSweepRequest,
   faultAttributionOf,
@@ -2980,6 +2981,9 @@ export class BuyerProxy {
 
     // Forward through P2P
     const wantsStreaming = clientWantsStreaming
+    const peerResponseProtocol = selectedRoutePlan.selection?.targetProtocol ?? requestProtocol
+    const adaptPeerResponse = (response: SerializedHttpResponse): SerializedHttpResponse =>
+      adaptPeerFaultErrorResponse(response, peerResponseProtocol)
     const startTime = Date.now()
     try {
       if (wantsStreaming) {
@@ -3022,6 +3026,7 @@ export class BuyerProxy {
         }, { signal: requestSignal })
 
         let responseForClient = adaptBuyerFaultErrorResponse(response, requestProtocol)
+        responseForClient = adaptPeerResponse(responseForClient)
         if (
           !streamed
           && adaptResponse
@@ -3108,6 +3113,7 @@ export class BuyerProxy {
         }
 
         let response = adaptBuyerFaultErrorResponse(upstreamResponse, requestProtocol)
+        response = adaptPeerResponse(response)
         if (
           adaptResponse
           && response.headers[ANTSEED_FAULT_ATTRIBUTION_HEADER]?.toLowerCase() !== 'buyer'
@@ -3251,7 +3257,19 @@ export class BuyerProxy {
         }
       }
 
-      return { done: false, statusCode: 502, responseBody: Buffer.from(`P2P request failed: ${message}`), responseHeaders: { 'content-type': 'text/plain' }, errorMessage: message }
+      const peerResponse = adaptPeerResponse({
+        requestId: requestForPeer.requestId,
+        statusCode: 502,
+        headers: { 'content-type': 'text/plain' },
+        body: Buffer.from(message),
+      })
+      return {
+        done: false,
+        statusCode: peerResponse.statusCode,
+        responseBody: Buffer.from(peerResponse.body),
+        responseHeaders: peerResponse.headers,
+        errorMessage: message,
+      }
     }
   }
 }
