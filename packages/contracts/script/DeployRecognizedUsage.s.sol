@@ -10,10 +10,7 @@ import { AntseedSellerPoolsRewards } from "../emissions/AntseedSellerPoolsReward
 import { AntseedUsageAccounting } from "../emissions/AntseedUsageAccounting.sol";
 import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
 import { AntseedPointsPolicyRegistry } from "../policies/AntseedPointsPolicyRegistry.sol";
-<<<<<<< HEAD
-=======
 import { AntseedPositionInit } from "../sellers/AntseedPositionInit.sol";
->>>>>>> origin/contracts-update-all
 import { AntseedSellerPools } from "../sellers/AntseedSellerPools.sol";
 import { AntseedSellerRegistry } from "../sellers/AntseedSellerRegistry.sol";
 
