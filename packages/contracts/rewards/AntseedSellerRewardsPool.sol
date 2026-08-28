@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/math/Math.sol";
 
 import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
 import { IAntseedSellerClaimPolicy } from "../interfaces/IAntseedSellerClaimPolicy.sol";
@@ -26,6 +27,8 @@ contract AntseedSellerRewardsPool is Ownable, ReentrancyGuard {
     IAntseedSellerClaimPolicy public sellerClaimPolicy;
 
     mapping(address => uint256) public lockedRewards;
+    mapping(address => uint256) public cumulativeRecordedRewards;
+    mapping(address => uint256) public cumulativePaidRewards;
     uint256 public totalLockedRewards;
 
     event LockedRewardRecorded(address indexed seller, uint256 amount);
@@ -38,6 +41,7 @@ contract AntseedSellerRewardsPool is Ownable, ReentrancyGuard {
     error NotEmissionsContract();
     error NoSellerClaimPolicy();
     error NothingToClaim();
+    error InvalidRetainedBps();
 
     modifier onlyEmissions() {
         if (msg.sender != registry.emissions()) revert NotEmissionsContract();
@@ -54,6 +58,7 @@ contract AntseedSellerRewardsPool is Ownable, ReentrancyGuard {
         if (amount == 0) revert InvalidAmount();
 
         lockedRewards[seller] += amount;
+        cumulativeRecordedRewards[seller] += amount;
         totalLockedRewards += amount;
 
         emit LockedRewardRecorded(seller, amount);
@@ -65,12 +70,21 @@ contract AntseedSellerRewardsPool is Ownable, ReentrancyGuard {
         IAntseedSellerClaimPolicy policy = sellerClaimPolicy;
         if (address(policy) == address(0)) revert NoSellerClaimPolicy();
 
+        uint16 retainedBps = policy.retainedSellerRewardsBps(msg.sender);
+        if (retainedBps > 10_000) revert InvalidRetainedBps();
+
+        uint256 maximumLifetimePayout =
+            Math.mulDiv(cumulativeRecordedRewards[msg.sender], retainedBps, 10_000);
+        uint256 alreadyPaid = cumulativePaidRewards[msg.sender];
+        if (maximumLifetimePayout <= alreadyPaid) revert NothingToClaim();
+
         uint256 locked = lockedRewards[msg.sender];
-        uint256 amount = policy.claimableSellerRewards(msg.sender, locked);
+        uint256 amount = maximumLifetimePayout - alreadyPaid;
         if (amount > locked) amount = locked;
         if (amount == 0) revert NothingToClaim();
 
         lockedRewards[msg.sender] = locked - amount;
+        cumulativePaidRewards[msg.sender] = alreadyPaid + amount;
         totalLockedRewards -= amount;
 
         IERC20(registry.antsToken()).safeTransfer(recipient, amount);

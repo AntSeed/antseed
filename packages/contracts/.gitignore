@@ -1,4 +1,5 @@
 out/
 cache_forge/
+foundry.lock
 lib/
 broadcast/

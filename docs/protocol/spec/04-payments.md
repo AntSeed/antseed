@@ -251,7 +251,23 @@ For epochs `<= MIGRATION_EPOCH`, V1 points are combined with V2 points on claim.
 
 #### Points Policy Hook
 
-An optional `IAntseedPointsPolicy` can be set by owner. If set and its `points()` call succeeds, it returns weighted seller/buyer points. If not set, or if the call reverts, raw points are used.
+`AntseedUsageAccounting` exposes one `IAntseedPointsPolicy` hook. New deployments set that hook to an owned `AntseedPointsPolicyRegistry`, which contains at most eight `IAntseedPointsPenaltyPolicy` contracts. Each registered policy declares a nonzero penalty category and independently returns seller and buyer penalties between 0 and 10,000 basis points for the original settled usage.
+
+Policies in the same category may describe overlapping evidence, so only the largest seller and buyer penalty in each category applies. Category maxima are added across categories. Ordinary combined penalties saturate at 9,000 BPS, preserving 10% of raw points; a single 10,000-BPS result is an explicit hard veto for that side and reduces its points to zero. The final penalty is applied once to raw points, making results independent of registration order and preventing policies from amplifying points. An empty registry passes raw points through unchanged.
+
+Registration validates the policy's category, and each evaluation call has a 100,000 gas allowance. If any policy reverts, exhausts its allowance, lacks the expected selector, returns malformed data, or reports a penalty above 10,000 BPS, the registry fails the complete evaluation. Usage accounting catches that failure, emits `PointsPolicyFailed`, and records zero points for both sides without reverting channel settlement.
+
+`AntseedWashTradingRegistry` accepts two pinned SP1 proof formats: closed-loop and reciprocal. The guests authenticate Base receipts, funding transaction signers, period-end buyer balances with no opening-balance credit, and period-end seller statistics. Their journals commit one or two subjects, proven wash and settled volumes, and every referenced Base block.
+
+The registry pins the Chainlink Base BlockhashStore, both predicate vkeys, and the approved historical batch count and digest in its constructor. Every journal block must equal `BlockhashStore.getBlockhash(blockNumber)`. The initial history is one atomic `submitBatch`: ordered `(claimId, sha256(publicValues))` commitments must reproduce the pinned digest and every SP1 proof and policy invariant must pass. Any failure reverts all records and leaves `backfillComplete = false`; success records every claim and sets `backfillComplete = true` in the same transaction. Individual submissions are permissionless only after completion, and exact replays are idempotent.
+
+Overlapping claims are not added together. For each seller, the registry retains only the greatest proven `washVolume / settledVolume` ratio using full-precision cross multiplication. Positive wash volume with zero settled volume, or wash volume at least equal to settled volume, is treated as 100%.
+
+Future points and historical seller rewards remain separate policy layers but use the same `WashPenaltyMath.retainedBps` function. Before completion, points pass through unchanged, immediate seller rewards remain locked, and historical reward claims retain 0 BPS. After completion, buyers always receive zero wash-trading penalty, unproven sellers receive full points and reward access, and proven sellers receive the proportional retained BPS. Sellers at or above the configured threshold receive zero points and no further locked-reward payout.
+
+`AntseedSellerRewardsPool` enforces a cumulative lifetime entitlement: `cumulativeRecordedRewards × retainedBps / 10_000`, less the amount already paid. Repeated claims therefore cannot drain the withheld share. A later proof that raises the seller's ratio stops further payouts until their entitlement again exceeds the amount already paid; there are no clawbacks.
+
+Operators finalize the detection AIP's penalty formula and threshold, produce the approved proof manifest and constructor digest, deploy the registry, install both policies, verify or backfill every required Chainlink BlockhashStore entry, and then simulate and submit the single historical batch. Production activation remains disabled while `WashPenaltyMath.configurationFinalized()` is false.
 
 #### Per-Epoch Pro-Rata Distribution
 
@@ -276,7 +292,7 @@ Sellers call `claimSellerEmissions(epochs[])` for finalized epochs.
 
 If `sellerUnlockPolicy.canClaimSellerUnlocked(seller)` returns true, ANTS are minted directly to the seller.
 
-If the policy returns false (or is not set), ANTS are minted to `AntseedSellerRewardsPool` and recorded as locked for that seller. They remain locked until the unlock policy later allows release.
+If the policy returns false (or is not set), ANTS are minted to `AntseedSellerRewardsPool` and recorded as locked for that seller. Both claim routes point directly to `AntseedWashTradingRewardPolicy`. Before backfill finalization, all historical seller rewards remain locked. After finalization, unflagged sellers may claim while flagged sellers remain blocked. Rewards are held, not forfeited or redirected.
 
 #### Buyer Claiming
 
