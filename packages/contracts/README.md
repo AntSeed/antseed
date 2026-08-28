@@ -102,8 +102,10 @@ The safe deployment and release order is:
    configuration.
 2. Generate and approve the production proof manifest, ordered commitments,
    batch digest, vkeys, and count.
-3. Deploy the registry with that exact count and digest, then install both
-   policies while historical rewards are frozen and points pass through.
+3. Deploy the registry with that exact count and digest, then run
+   `ConfigureWashTradingPolicies.s.sol` to deploy or reuse the wash-only points
+   and reward policies. The script is idempotent and does not reference model
+   verification.
 4. Verify or populate every required Chainlink BlockhashStore entry.
 5. Simulate the single `submitBatch` call, validate calldata and gas, and send
    it only if the full transaction remains below the production limits.
