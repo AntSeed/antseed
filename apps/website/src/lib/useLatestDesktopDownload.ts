@@ -1,5 +1,6 @@
 import {useEffect, useState} from 'react';
 import ExecutionEnvironment from '@docusaurus/ExecutionEnvironment';
+import {isMobileGetStartedVisitor} from './useMobileGetStarted';
 
 /**
  * Resolves the AntSeed Desktop download URL for the visitor's OS + arch.
@@ -66,6 +67,10 @@ export function downloadUrlFor(platform: DesktopPlatform, arch: DesktopArch): st
 
 function detectPlatform(): DesktopPlatform {
   if (typeof navigator === 'undefined') return 'unknown';
+  // Phones in "Desktop site" mode spoof a desktop UA (Samsung Internet
+  // reports X11/Linux) — never resolve an installer for a device that can't
+  // run one; 'unknown' falls back to the releases page.
+  if (isMobileGetStartedVisitor()) return 'unknown';
   const ua = navigator.userAgent;
   if (/Windows/.test(ua)) return 'win';
   if (/Macintosh|Mac OS X/.test(ua)) return 'mac';
