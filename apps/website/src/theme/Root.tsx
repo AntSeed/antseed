@@ -12,7 +12,7 @@ import {
   visibleLabel,
   withGaAttribution,
 } from '../lib/analytics';
-import {MOBILE_GET_STARTED_QUERY} from '../lib/useMobileGetStarted';
+import {isMobileGetStartedVisitor} from '../lib/useMobileGetStarted';
 import {
   RELEASES_URL,
   resolveLatestDesktopDownload,
@@ -95,11 +95,11 @@ function useClickTracking() {
       };
 
       if (isDownloadUrl(absolute)) {
-        // On phone viewports the VPR CTAs keep their download href but
-        // reroute to /get-started on tap (useMobileGetStarted, which runs
-        // after this capture listener) — count those as funnel entries, not
-        // download conversions.
-        if (window.matchMedia(MOBILE_GET_STARTED_QUERY).matches) {
+        // On phones (including "Desktop site" mode) the VPR CTAs keep their
+        // download href but reroute to /get-started on tap
+        // (useMobileGetStarted, which runs after this capture listener) —
+        // count those as funnel entries, not download conversions.
+        if (isMobileGetStartedVisitor()) {
           track('get_started', common);
           return;
         }
