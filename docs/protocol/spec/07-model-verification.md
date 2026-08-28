@@ -478,16 +478,19 @@ BPS. Buyer points are never penalized by this adapter.
 
 ### Shadow Enforcement and Registry Activation
 
-`AntseedUsageAccounting.pointsPolicy` remains permanently pointed at
-`AntseedPointsPolicyRegistry`. Verification is one leaf in the
-`model-verification` category; wash trading is a separate `wash-trading`
-category. The registry keeps the maximum penalty within each category and adds
-penalties across categories, capped at 100%.
+`contracts-update-all` provides the shared recognized-usage foundation:
+`AntseedUsageAccounting.pointsPolicy` remains permanently pointed at the empty
+`AntseedPointsPolicyRegistry` deployed by `DeployRecognizedUsage`. Verification
+adds only its own `model-verification` leaf. Other integrity features may add
+independent categories, but verification has no deployment or runtime
+dependency on them. The registry keeps the maximum penalty within each category
+and adds penalties across categories, capped at 100%.
 
-`DeployRecognizedUsage` deploys `AntseedVerification` and assigns it control of
-the 10% verification emissions bucket, but does not register either integrity
-leaf. `ConfigureIntegrityPolicies` deploys or reuses the verification adapter,
-registers the wash-trading leaf by default, and leaves the verification adapter
+`DeployRecognizedUsage` initially assigns the 10% verification emissions bucket
+to `VERIFICATION_WALLET`. Before emissions-gate ownership is finalized, run
+`ConfigureVerification.s.sol` to deploy or reuse `AntseedVerification`, transfer
+that existing bucket controller to the verification contract, and deploy or
+reuse `AntseedVerificationPointsPolicy`. The script leaves the adapter
 unregistered by default (`REGISTER_VERIFICATION_POLICY=false`). Therefore
 verifiers can submit bundles and earn rewards immediately after approval while
 verification remains shadow-only.
