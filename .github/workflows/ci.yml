@@ -114,3 +114,24 @@ jobs:
 
       - name: Typecheck
         run: pnpm run typecheck
+
+  nix-build:
+    name: Nix build (antseed CLI)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      # First build fetches each dependency tarball individually; keep the
+      # store between runs so lockfile churn only fetches what changed.
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Build antseed CLI
+        run: nix build .#
+
+      - name: Smoke test
+        run: |
+          ./result/bin/antseed --version
+          ./result/bin/antseed --help > /dev/null
