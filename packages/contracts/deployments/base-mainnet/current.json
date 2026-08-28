@@ -1,0 +1,24 @@
+{
+  "$schema": "../schema.json",
+  "network": "base-mainnet",
+  "chainId": 8453,
+  "release": "000-legacy-baseline",
+  "status": "active",
+  "sourceCommit": null,
+  "transactions": [],
+  "notes": "Baseline reconstructed from the repository's production chain configuration. Unknown historical provenance is represented as null.",
+  "contracts": {
+    "usdc": { "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "deploymentBlock": null, "transactionHash": null, "runtimeCodeHash": null, "version": null, "external": true },
+    "antsToken": { "address": "0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263", "deploymentBlock": null, "transactionHash": null, "runtimeCodeHash": null, "version": "legacy", "external": false },
+    "registry": { "address": "0xf33fC901BFa97326379A369401F4490E231B69B0", "deploymentBlock": null, "transactionHash": null, "runtimeCodeHash": null, "version": "legacy", "external": false },
+    "staking": { "address": "0x3652E6B22919bd322A25723B94BB207602E5c8e6", "deploymentBlock": null, "transactionHash": null, "runtimeCodeHash": null, "version": "legacy", "external": false },
+    "deposits": { "address": "0x0F7a3a8f4Da01637d1202bb5443fcF7F88F99fD2", "deploymentBlock": null, "transactionHash": null, "runtimeCodeHash": null, "version": "legacy", "external": false },
+    "channels": { "address": "0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d", "deploymentBlock": 44469557, "transactionHash": null, "runtimeCodeHash": null, "version": "7", "external": false },
+    "freeUsage": { "address": "0xB24DcDE777C4ad9AC385Ec9500b3Dc527a4F91Ad", "deploymentBlock": null, "transactionHash": null, "runtimeCodeHash": null, "version": "1", "external": false },
+    "stats": { "address": "0x15649ff076BFa5e37e24EE3154a00503149954Fd", "deploymentBlock": 44469557, "transactionHash": null, "runtimeCodeHash": null, "version": "1", "external": false },
+    "emissions": { "address": "0xF13bE52c4A3afC6AE29536f073588d01A0564088", "deploymentBlock": null, "transactionHash": null, "runtimeCodeHash": null, "version": "2", "external": false },
+    "legacyEmissions": { "address": "0x36877fBa8Fa333aa46a1c57b66D132E4995C86b5", "deploymentBlock": null, "transactionHash": null, "runtimeCodeHash": null, "version": "1", "external": false },
+    "identityRegistry": { "address": "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432", "deploymentBlock": null, "transactionHash": null, "runtimeCodeHash": null, "version": null, "external": true },
+    "depositRelay": { "address": "0x34a44542e76f9b4cff3a31902eDF14AbF2C3B3DD", "deploymentBlock": null, "transactionHash": null, "runtimeCodeHash": null, "version": "1", "external": false }
+  }
+}

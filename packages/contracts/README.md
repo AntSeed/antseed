@@ -168,12 +168,70 @@ ANTS emission controller using the Synthetix reward-per-point pattern. O(1) gas 
 
 ### Recognized-Usage Cutover Foundation
 
-`DeployRecognizedUsage.s.sol` deploys the shared recognized-usage contracts before
+`script/migrations/M001RecognizedUsage/Deploy.s.sol` deploys the shared
+recognized-usage contracts before
 the epoch-boundary registry flip. The deployment includes an empty
 `AntseedPointsPolicyRegistry` and permanently points `AntseedUsageAccounting`
 at that registry. Feature branches deploy and register their own penalty-policy
 leaves; the foundation broadcast does not deploy or register wash-trading or
 model-verification policies.
+
+`script/migrations/M001RecognizedUsage/Cutover.s.sol` performs the matching
+epoch-boundary activation. Both scripts require expected legacy addresses and
+abort if the live Registry does not match them. Cutover re-checks that the 10%
+verification bucket is editable, no policy is active, and both administrative
+contracts remain owned by the deployer. After each non-fork broadcast, the
+CLI records Foundry receipts using the append-only process in
+`deployments/README.md`; it updates `current.json` only after activation checks pass.
+
+Use the repository deployment CLI instead of invoking the Foundry scripts
+directly:
+
+```bash
+# Simulate the next safe phase without sending transactions. A pre-boundary
+# cutover review runs on a disposable Anvil fork advanced past the boundary.
+pnpm contracts:deploy -- M001 --network base-sepolia --dry-run
+
+# Broadcast on Base Sepolia. During cutover, the M001 scheduler waits until the
+# pause window and epoch boundary before continuing.
+pnpm contracts:deploy -- M001 --network base-sepolia --broadcast
+
+# Rehearse both phases against a pinned Base-mainnet Anvil fork.
+BASE_MAINNET_RPC_URL=https://... \
+  pnpm contracts:deploy -- M001 --network base-mainnet --fork-test
+
+# After the fork rehearsal and plan review, simulate or broadcast against Base mainnet.
+pnpm contracts:deploy -- M001 --network base-mainnet --dry-run
+pnpm contracts:deploy -- M001 --network base-mainnet --broadcast
+```
+
+Testnet deployment phases require `BASESCAN_API_KEY`; the runner submits
+new contracts for explorer verification as part of the broadcast.
+
+A dry run writes `deployments/<network>/pending/<release>.plan.json` and a
+matching `VALIDATION.md` describing every transaction it would send. Review
+those artifacts rather than terminal output; a successful broadcast removes
+them once the history record exists.
+
+The cutover phase pauses `AntseedChannels` 60 seconds before the epoch
+boundary, flips the registry pointers, and unpauses **only** after both
+pointers are verified on chain. Any other outcome leaves Channels paused for a
+human to resume, because settlements against a half-migrated ledger could not
+be paid. M001-specific sequencing lives in `scripts/deployments/m001-cutover.mjs`;
+the shared runtime contains only reusable guarded-maintenance primitives. Run
+`pnpm contracts:check` to exercise both layers and the complete contract suite.
+
+M001 supports Base Sepolia and Base mainnet dry runs and broadcasts. Before a
+mainnet broadcast, run the pinned `--fork-test`, commit and review the generated
+pending plan, and run `pnpm contracts:check -- <base-commit>`. Production
+broadcasts still require a clean tree, matching owner keys, source verification,
+explicit network confirmation, and the canonical Registry/ANTS baseline.
+
+The CLI derives `ready`, `awaiting-epoch`, `cutover-ready`,
+`cutover-incomplete`, `active`, or `invalid` from live RPC reads. A broadcast
+requires typing the network name, while non-interactive automation must set
+`ANTSEED_DEPLOY_CONFIRM` to that same name. Deployment records and validation
+are automatic after each successful broadcast.
 
 The same broadcast deploys `AntseedPositionInit`, an immutable starter-position
 faucet for eligible legacy sellers. Fund it conservatively and have sellers call
@@ -182,9 +240,16 @@ that epoch. Every starter position uses the shared `POSITION_INIT_END_EPOCH`, so
 claiming later never gives a seller more power than an earlier claimant.
 
 The verification emission bucket initially remains controlled by
-`VERIFICATION_WALLET`. A verification feature deployment may transfer that
-controller to its rewards contract before ownership of the emissions gate is
-finalized.
+`VERIFICATION_WALLET`. A separate verification deployment may transfer that
+controller to its rewards contract.
+M001 leaves the bucket at 10% and editable, registers no points policies, and
+leaves `AntseedEmissionsGate` and `AntseedPointsPolicyRegistry` owned by the
+deployer.
+Do not renounce gate ownership or replace/lock the verification minter before
+that rollout has transferred the controller and passed its post-deployment checks.
+Run `M001RecognizedUsageFork.t.sol` with `BASE_MAINNET_RPC_URL` to validate the
+live canonical starting state. Set `BASE_MAINNET_FORK_BLOCK` when using an
+archive-capable RPC to pin the check to a specific block.
 
 ## Configuration
 

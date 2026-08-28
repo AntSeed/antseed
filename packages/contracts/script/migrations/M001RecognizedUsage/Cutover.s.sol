@@ -3,8 +3,8 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Script.sol";
 
-import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
-import { AntseedLegacyRewardsPoolRegistry } from "../rewards/AntseedLegacyRewardsPoolRegistry.sol";
+import { IAntseedRegistry } from "../../../interfaces/IAntseedRegistry.sol";
+import { AntseedLegacyRewardsPoolRegistry } from "../../../rewards/AntseedLegacyRewardsPoolRegistry.sol";
 
 interface IAntseedRegistryFlipAdmin is IAntseedRegistry {
     function owner() external view returns (address);
@@ -14,11 +14,19 @@ interface IAntseedRegistryFlipAdmin is IAntseedRegistry {
 
 interface IUsageAccountingLike {
     function emissionsGate() external view returns (address);
+    function pointsPolicy() external view returns (address);
 }
 
 interface IEmissionsGateClock {
     function currentEpoch() external view returns (uint256);
     function effectiveEpoch() external view returns (uint256);
+    function owner() external view returns (address);
+    function minters(bytes32 id) external view returns (address controller, uint32 shareBps, bool editable);
+}
+
+interface IPointsPolicyRegistryLike {
+    function owner() external view returns (address);
+    function policyCount() external view returns (uint256);
 }
 
 interface ISellerRewardsPoolAdmin {
@@ -42,9 +50,9 @@ interface IDiemStakingProxyFlip {
 }
 
 /**
- * @title CutoverFlip
+ * @title M001CutoverRecognizedUsage
  * @notice Broadcast #2 of the two-broadcast cutover. Run after
- *         DeployRecognizedUsage, once the epoch that was in flight during that
+ *         M001 Deploy, once the epoch that was in flight during that
  *         deploy has finalized (the gate's effectiveEpoch has started).
  *
  *         Two phases, two keys:
@@ -74,6 +82,11 @@ interface IDiemStakingProxyFlip {
  *   ANTSEED_REGISTRY             Legacy AntseedRegistry address.
  *   USAGE_ACCOUNTING             AntseedUsageAccounting from broadcast #1.
  *   SELLER_REGISTRY              AntseedSellerRegistry from broadcast #1.
+ *   EXPECTED_LEGACY_EMISSIONS    Registry emissions pointer before M001.
+ *   EXPECTED_LEGACY_STAKING      Registry staking pointer before M001.
+ *   VERIFICATION_WALLET          M001 verification bucket controller.
+ *   DEPLOYER_PRIVATE_KEY         Owner of the emissions gate and points
+ *                                policy registry created by broadcast #1.
  *
  * Optional env:
  *   DIEM_STAKING_PROXY           Deployed DiemStakingProxy. Unset skips the
@@ -90,12 +103,14 @@ interface IDiemStakingProxyFlip {
  * Usage:
  *   cd packages/contracts
  *   source .env
- *   forge script script/CutoverFlip.s.sol \
+ *   forge script script/migrations/M001RecognizedUsage/Cutover.s.sol:M001CutoverRecognizedUsage \
  *     --rpc-url $BASE_MAINNET_RPC_URL \
  *     --broadcast \
  *     --via-ir
  */
-contract CutoverFlip is Script {
+contract M001CutoverRecognizedUsage is Script {
+    bytes32 public constant VERIFICATION_MINTER_ID = keccak256("antseed.emissions.verification.v1");
+
     function run() external {
         uint256 ownerPrivateKey = vm.envUint("REGISTRY_OWNER_PRIVATE_KEY");
         address registryOwner = vm.addr(ownerPrivateKey);
@@ -103,13 +118,35 @@ contract CutoverFlip is Script {
         address usageAccounting = vm.envAddress("USAGE_ACCOUNTING");
         address sellerRegistry = vm.envAddress("SELLER_REGISTRY");
         address proxyAddress = vm.envOr("DIEM_STAKING_PROXY", address(0));
+        address expectedLegacyEmissions = vm.envAddress("EXPECTED_LEGACY_EMISSIONS");
+        address expectedLegacyStaking = vm.envAddress("EXPECTED_LEGACY_STAKING");
+        address verificationWallet = vm.envAddress("VERIFICATION_WALLET");
+        address deployer = vm.addr(vm.envUint("DEPLOYER_PRIVATE_KEY"));
 
         require(registry.owner() == registryOwner, "REGISTRY_OWNER_PRIVATE_KEY is not the registry owner");
         address currentEmissions = registry.emissions();
+        require(
+            currentEmissions == expectedLegacyEmissions || currentEmissions == usageAccounting,
+            "unexpected emissions starting state"
+        );
+        require(
+            registry.staking() == expectedLegacyStaking || registry.staking() == sellerRegistry,
+            "unexpected staking starting state"
+        );
         bool emissionsDone = currentEmissions == usageAccounting;
         bool stakingDone = registry.staking() == sellerRegistry;
 
-        IEmissionsGateClock gate = IEmissionsGateClock(IUsageAccountingLike(usageAccounting).emissionsGate());
+        IUsageAccountingLike accounting = IUsageAccountingLike(usageAccounting);
+        IEmissionsGateClock gate = IEmissionsGateClock(accounting.emissionsGate());
+        IPointsPolicyRegistryLike pointsPolicyRegistry = IPointsPolicyRegistryLike(accounting.pointsPolicy());
+        (address verificationController, uint32 verificationShareBps, bool verificationEditable) =
+            gate.minters(VERIFICATION_MINTER_ID);
+        require(verificationController == verificationWallet, "unexpected verification controller");
+        require(verificationShareBps == 10_000, "unexpected verification share");
+        require(verificationEditable, "verification minter must remain editable");
+        require(pointsPolicyRegistry.policyCount() == 0, "M001 must not activate points policies");
+        require(gate.owner() == deployer, "unexpected emissions gate owner");
+        require(pointsPolicyRegistry.owner() == deployer, "unexpected points policy registry owner");
         uint256 effectiveEpoch = gate.effectiveEpoch();
         // The claim below funds pre-effective epochs from legacy V2, which
         // only serves finalized epochs. Until the effective epoch starts, the
@@ -195,7 +232,9 @@ contract CutoverFlip is Script {
 
         uint256 poolOwnerPrivateKey = vm.envOr("SELLER_REWARDS_POOL_OWNER_PRIVATE_KEY", uint256(0));
         if (poolOwnerPrivateKey == 0) poolOwnerPrivateKey = vm.envOr("DIEM_STAKER_PRIVATE_KEY", uint256(0));
-        require(poolOwnerPrivateKey != 0, "SELLER_REWARDS_POOL_OWNER_PRIVATE_KEY not set (pool needs its registry pinned)");
+        require(
+            poolOwnerPrivateKey != 0, "SELLER_REWARDS_POOL_OWNER_PRIVATE_KEY not set (pool needs its registry pinned)"
+        );
         require(
             ISellerRewardsPoolAdmin(pool).owner() == vm.addr(poolOwnerPrivateKey),
             "SELLER_REWARDS_POOL_OWNER_PRIVATE_KEY is not the pool owner"

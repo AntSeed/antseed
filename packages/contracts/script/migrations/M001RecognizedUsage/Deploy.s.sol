@@ -3,16 +3,16 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Script.sol";
 
-import { AntseedUsageRewards } from "../emissions/AntseedUsageRewards.sol";
-import { AntseedEmissionsGate } from "../emissions/AntseedEmissionsGate.sol";
-import { AntseedLegacyEmissionsEscrow } from "../emissions/AntseedLegacyEmissionsEscrow.sol";
-import { AntseedSellerPoolsRewards } from "../emissions/AntseedSellerPoolsRewards.sol";
-import { AntseedUsageAccounting } from "../emissions/AntseedUsageAccounting.sol";
-import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
-import { AntseedPointsPolicyRegistry } from "../policies/AntseedPointsPolicyRegistry.sol";
-import { AntseedPositionInit } from "../sellers/AntseedPositionInit.sol";
-import { AntseedSellerPools } from "../sellers/AntseedSellerPools.sol";
-import { AntseedSellerRegistry } from "../sellers/AntseedSellerRegistry.sol";
+import { AntseedUsageRewards } from "../../../emissions/AntseedUsageRewards.sol";
+import { AntseedEmissionsGate } from "../../../emissions/AntseedEmissionsGate.sol";
+import { AntseedLegacyEmissionsEscrow } from "../../../emissions/AntseedLegacyEmissionsEscrow.sol";
+import { AntseedSellerPoolsRewards } from "../../../emissions/AntseedSellerPoolsRewards.sol";
+import { AntseedUsageAccounting } from "../../../emissions/AntseedUsageAccounting.sol";
+import { IAntseedRegistry } from "../../../interfaces/IAntseedRegistry.sol";
+import { AntseedPointsPolicyRegistry } from "../../../policies/AntseedPointsPolicyRegistry.sol";
+import { AntseedPositionInit } from "../../../sellers/AntseedPositionInit.sol";
+import { AntseedSellerPools } from "../../../sellers/AntseedSellerPools.sol";
+import { AntseedSellerRegistry } from "../../../sellers/AntseedSellerRegistry.sol";
 
 interface IANTSTokenAdmin {
     function owner() external view returns (address);
@@ -32,14 +32,14 @@ interface IAntseedLegacyEmissionsAdmin {
 }
 
 /**
- * @title DeployRecognizedUsage
+ * @title M001DeployRecognizedUsage
  * @notice Broadcast #1 of the two-broadcast cutover. Deploys the seller-pool /
  *         recognized-usage stack, moves the ANTS mint authority to
  *         AntseedEmissionsGate, funds the legacy escrow, and re-points the
  *         legacy emissions contract at it. It deliberately does NOT touch the
  *         registry emissions/staking pointers: the network keeps running on
  *         the legacy stack (claims paid from the escrow pot) until
- *         CutoverFlip.s.sol runs in the next epoch. That split lets the
+ *         M001 Cutover runs in the next epoch. That split lets the
  *         in-flight epoch finalize and be claimed from legacy V2 (with its
  *         real pot) BEFORE the pointer flip, so the deployed DiemStakingProxy
  *         can never freeze the cutover epoch at a zero pot.
@@ -48,6 +48,10 @@ interface IAntseedLegacyEmissionsAdmin {
  *   DEPLOYER_PRIVATE_KEY   Broadcaster key. MUST be the owner of ANTSToken and
  *                          the legacy emissions contract (checked upfront).
  *   ANTSEED_REGISTRY       Existing (legacy) AntseedRegistry address.
+ *   EXPECTED_ANTS_TOKEN    Current registry antsToken pointer.
+ *   EXPECTED_CHANNELS      Current registry channels pointer.
+ *   EXPECTED_LEGACY_EMISSIONS Current registry emissions pointer.
+ *   EXPECTED_LEGACY_STAKING   Current registry staking pointer.
  *   VERIFICATION_WALLET    Recipient of the verification bucket.
  *
  * Optional env:
@@ -62,15 +66,14 @@ interface IAntseedLegacyEmissionsAdmin {
  * Usage:
  *   cd packages/contracts
  *   source .env
- *   forge script script/DeployRecognizedUsage.s.sol \
+ *   forge script script/migrations/M001RecognizedUsage/Deploy.s.sol:M001DeployRecognizedUsage \
  *     --rpc-url $BASE_MAINNET_RPC_URL \
  *     --broadcast \
  *     --verify \
  *     --etherscan-api-key $BASESCAN_API_KEY \
  *     --via-ir
  */
-contract DeployRecognizedUsage is Script {
-    address public constant ANTS_TOKEN = 0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263;
+contract M001DeployRecognizedUsage is Script {
     bytes32 public constant VERIFICATION_MINTER_ID = keccak256("antseed.emissions.verification.v1");
     bytes32 public constant SELLER_POOLS_MINTER_ID = keccak256("antseed.emissions.seller-pools.v1");
     bytes32 public constant USAGE_MINTER_ID = keccak256("antseed.emissions.usage.v1");
@@ -86,8 +89,15 @@ contract DeployRecognizedUsage is Script {
         address existingChannels = registry.channels();
         address existingDeposits = registry.deposits();
         address existingStaking = registry.staking();
+        address expectedEmissions = vm.envAddress("EXPECTED_LEGACY_EMISSIONS");
+        address expectedStaking = vm.envAddress("EXPECTED_LEGACY_STAKING");
+        address expectedChannels = vm.envAddress("EXPECTED_CHANNELS");
+        address expectedAntsToken = vm.envAddress("EXPECTED_ANTS_TOKEN");
         require(antsToken != address(0), "ANTS token not set");
-        require(antsToken == ANTS_TOKEN, "registry ANTS mismatch");
+        require(antsToken == expectedAntsToken, "unexpected ANTS token");
+        require(existingEmissions == expectedEmissions, "unexpected legacy emissions");
+        require(existingStaking == expectedStaking, "unexpected legacy staking");
+        require(existingChannels == expectedChannels, "unexpected channels");
         require(existingEmissions != address(0), "existing emissions not set");
         require(existingChannels != address(0), "channels not set");
         require(existingDeposits != address(0), "deposits not set");
@@ -267,6 +277,17 @@ contract DeployRecognizedUsage is Script {
 
         vm.stopBroadcast();
 
+        (address verificationController, uint32 verificationShareBps, bool verificationEditable) =
+            gate.minters(VERIFICATION_MINTER_ID);
+        require(verificationController == verificationWallet, "unexpected verification controller");
+        require(verificationShareBps == 10_000, "unexpected verification share");
+        require(verificationEditable, "verification minter must remain editable");
+        require(pointsPolicyRegistry.policyCount() == 0, "M001 must not activate points policies");
+        require(gate.owner() == deployer, "unexpected gate owner");
+        require(gate.pendingOwner() == address(0), "unexpected pending gate owner");
+        require(pointsPolicyRegistry.owner() == deployer, "unexpected points registry owner");
+        require(pointsPolicyRegistry.pendingOwner() == address(0), "unexpected pending points registry owner");
+
         console.log("");
         console.log("=== Recognized usage deployment complete (broadcast 1 of 2) ===");
         console.log("Token gate is:            ", address(gate));
@@ -286,9 +307,15 @@ contract DeployRecognizedUsage is Script {
         console.log("Verification recipient:   ", verificationWallet);
         console.log("Points policy registry:   ", address(pointsPolicyRegistry));
         console.log("Points policies:           NONE REGISTERED by this broadcast");
+        console.log("Emissions gate owner:      ", gate.owner());
+        console.log("Points policy owner:       ", pointsPolicyRegistry.owner());
+        console.log("");
+        console.log("- Keep the verification bucket editable until the separate");
+        console.log("  verification rollout replaces its controller.");
         console.log("");
         console.log("NEXT STEP (broadcast 2 of 2):");
-        console.log("- Run scripts/cutover-flip.sh: it pauses AntseedChannels 60s");
+        console.log("- Rerun `pnpm contracts:deploy -- M001 --network <network>");
+        console.log("  --broadcast`: it pauses AntseedChannels 60s");
         console.log("  before the epoch boundary (so no usage anywhere on the network");
         console.log("  can land on the legacy ledger for the new epoch), waits for the");
         console.log("  epoch to finalize, runs CutoverFlip.s.sol, then unpauses");
@@ -300,8 +327,8 @@ contract DeployRecognizedUsage is Script {
         console.log("  setStaking after a run that died past setEmissions), or");
         console.log("  force-unpause manually. Running CutoverFlip by hand instead");
         console.log("  requires managing the Channels pause yourself (owner key).");
-        console.log("- Once the current epoch finalizes, run CutoverFlip.s.sol (or");
-        console.log("  scripts/cutover-flip.sh to wait + run automatically). It claims");
+        console.log("- Once the current epoch finalizes, rerun the deployment CLI");
+        console.log("  (it waits for the boundary and runs the flip). It claims");
         console.log("  the finalized epoch's Diem pot from legacy V2 (paid by the");
         console.log("  escrow) BEFORE flipping, then sets registry emissions/staking");
         console.log("  to the new stack. Env it needs:");
@@ -315,13 +342,12 @@ contract DeployRecognizedUsage is Script {
         console.log("- Create + seed an ANTS seller pool for the proxy's agent id right");
         console.log("  after the flip: usage of pool-less agents is not accounted, so");
         console.log("  the proxy earns nothing in the new stack until it has a pool.");
-        console.log("- The deployer EOA still owns ANTSToken, the gate, and every new");
-        console.log("  contract. Until it is dealt with, that key can re-point the");
-        console.log("  token's mint authority (ANTSToken.setRegistry) and rotate any");
-        console.log("  bucket controller (gate.setMinterController, locked buckets");
-        console.log("  included). Transfer ownership to the ops multisig, and once");
-        console.log("  minters/deposits/escrow are final call gate.renounceOwnership()");
-        console.log("  to freeze the emission plan.");
+        console.log("- Do NOT renounce EmissionsGate ownership before verification:");
+        console.log("  that rollout must rotate the editable 10% controller from");
+        console.log("  VERIFICATION_WALLET to AntseedVerification. Any later ownership");
+        console.log("  change must happen only after verification is deployed and checked.");
+        console.log("- ANTSToken and the remaining ownable contracts still require their");
+        console.log("  separately reviewed production ownership handoff.");
         console.log("- KEEP AntseedRegistry ownership: it is the only key that can open");
         console.log("  the temporary setStaking(legacy) window needed to withdraw the");
         console.log("  proxy's legacy USDC stake (SellerRegistry.unstake reverts by");

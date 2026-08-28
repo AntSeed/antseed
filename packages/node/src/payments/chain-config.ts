@@ -1,4 +1,5 @@
 import type { ChainId } from './types.js';
+import { DEPLOYED_CONTRACT_ADDRESSES } from './generated-contract-addresses.js';
 
 export interface ChainConfig {
   chainId: ChainId;
@@ -40,39 +41,20 @@ export interface ChainConfig {
  */
 const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
   'base-mainnet': {
+    ...DEPLOYED_CONTRACT_ADDRESSES['base-mainnet'],
     chainId: 'base-mainnet',
-    evmChainId: 8453,
     rpcUrl: 'https://base.publicnode.com',
     fallbackRpcUrls: [
       'https://base.drpc.org',
       'https://base.llamarpc.com',
       'https://mainnet.base.org',
     ],
-    usdcContractAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-    depositsContractAddress: '0x0F7a3a8f4Da01637d1202bb5443fcF7F88F99fD2',
-    channelsContractAddress: '0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d',
-    freeUsageContractAddress: '0xB24DcDE777C4ad9AC385Ec9500b3Dc527a4F91Ad',
-    stakingContractAddress: '0x3652E6B22919bd322A25723B94BB207602E5c8e6',
-    emissionsContractAddress: '0xF13bE52c4A3afC6AE29536f073588d01A0564088',
-    legacyEmissionsContractAddress: '0x36877fBa8Fa333aa46a1c57b66D132E4995C86b5',
-    antsTokenAddress: '0xa87EE81b2C0Bc659307ca2D9ffdC38514DD85263',
-    identityRegistryAddress: '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432',
-    channelsDeployBlock: 44469557,
-    statsContractAddress: '0x15649ff076bfa5e37e24ee3154a00503149954fd',
-    statsDeployBlock: 44469557,
     networkStatsUrl: 'https://network.antseed.com',
-    depositRelayAddress: '0x34a44542e76f9b4cff3a31902eDF14AbF2C3B3DD',
   },
   'base-sepolia': {
+    ...DEPLOYED_CONTRACT_ADDRESSES['base-sepolia'],
     chainId: 'base-sepolia',
-    evmChainId: 84532,
     rpcUrl: 'https://sepolia.base.org',
-    usdcContractAddress: '0xcA04797CaB6B412Cee6798B7314a05AdFDc3Cf23',
-    depositsContractAddress: '0x96f083A9801AFdcE7D764651954A1A9Fbd489FEA',
-    channelsContractAddress: '0x3b0b94AC27C042CAC17103A897Fb5cEb7D8b4cf7',
-    stakingContractAddress: '0x1CB76B197a20E41f9AA01806B41C59e16Cad46a7',
-    emissionsContractAddress: '0x9B30DAcfC20F0927fFD49fB0B84cf3EB83976a33',
-    identityRegistryAddress: '0x8004A818BFB912233c491871b3d84c89A494BD9e',
     // depositRelayAddress: TODO — set after AntseedDepositRelay sepolia deployment
   },
   'base-local': {
