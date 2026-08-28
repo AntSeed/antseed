@@ -11,9 +11,11 @@ import { registerIdentityCommands } from './commands/identity/index.js';
 import { registerAgentCommand } from './commands/agent.js';
 import { registerDevCommand } from './commands/dev.js';
 import { registerPaymentsCommand } from './commands/payments.js';
+import { registerDepositAlias } from './commands/buyer/deposit.js';
 import { registerMetricsCommand } from './commands/metrics.js';
 import { registerWrappedToolCommands } from './commands/wrapped-tools.js';
 import { registerSystemProxyCommands } from './commands/system-proxy/index.js';
+import { registerTunnelCommands } from './commands/tunnel/index.js';
 
 loadEnvFromFiles();
 
@@ -39,8 +41,10 @@ registerIdentityCommands(program);
 registerDevCommand(program);
 registerAgentCommand(program);
 registerPaymentsCommand(program);
+registerDepositAlias(program);
 registerMetricsCommand(program);
 registerWrappedToolCommands(program);
 registerSystemProxyCommands(program);
+registerTunnelCommands(program);
 
 await program.parseAsync(process.argv);

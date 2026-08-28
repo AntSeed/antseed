@@ -77,9 +77,9 @@ Session lifecycle with EIP-712 ReserveAuth + SpendingAuth. Holds NO USDC — all
 - `settle(bytes32 channelId, uint128 amount, bytes calldata metadata, bytes calldata buyerSig)` — validates SpendingAuth, calls Deposits.chargeAndCreditPayouts(), session stays open
 - `close(bytes32 channelId, uint128 amount, bytes calldata metadata, bytes calldata buyerSig)` — like settle but finalizes session, releases remaining lock
 
-**Timeout (permissionless):**
-- `requestTimeout(bytes32 channelId)` — after deadline, marks session timed out
-- `withdraw(bytes32 channelId)` — after 15min grace, releases locked funds to buyer
+**Timeout (buyer/operator):**
+- `requestClose(bytes32 channelId)` — buyer/operator, anytime while active; starts grace period
+- `withdraw(bytes32 channelId)` — after 15min grace, releases remaining locked funds to buyer deposit
 
 **EIP-712 types (domain: name="AntseedChannels", version="7"):**
 ```
@@ -207,7 +207,7 @@ All constants are configurable by the contract owner via dedicated setter functi
 |---|---|---|
 | `MIN_BUYER_DEPOSIT` | 10 USDC | Minimum deposit to participate |
 | `MIN_SELLER_STAKE` | 10 USDC | Minimum stake to accept sessions |
-| `TIMEOUT_GRACE_PERIOD` | 15 min | Grace period after requestTimeout before withdraw |
+| `TIMEOUT_GRACE_PERIOD` | 15 min | Grace period after requestClose before withdraw |
 | `PLATFORM_FEE_BPS` | 500 (5%) | Platform fee in basis points |
 | `MAX_PLATFORM_FEE_BPS` | 1000 (10%) | Maximum platform fee |
 

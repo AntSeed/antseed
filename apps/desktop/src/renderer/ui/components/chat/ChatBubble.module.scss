@@ -1017,6 +1017,32 @@ button.fileAttachment {
   text-overflow: ellipsis;
 }
 
+.generatedImageButton {
+  appearance: none;
+  display: block;
+  max-width: min(520px, 100%);
+  margin: 8px 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-card);
+  cursor: zoom-in;
+
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
+
+.generatedImage {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 520px;
+  object-fit: contain;
+}
+
 .copyResponseBtn {
   position: relative;
   display: flex;

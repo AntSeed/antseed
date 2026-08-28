@@ -1,11 +1,12 @@
-import type { DiscoverRow, RendererUiState } from '../../core/state';
+import type { BadgeTone, DiscoverRow, RendererUiState, VprModelCatalogEntry, VprSelectedModel } from '../../core/state';
 import { LOCALHOST_URL } from '../../constants';
-import type { BadgeTone } from '../../core/state';
 import { notifyUiStateChanged, notifyUiStateChangedSync } from '../../core/store';
 import { normalizeDiscoverRow, projectRowsToChatServiceOptions } from '../catalog/discover-rows.js';
 import { resolveVprChatOption } from './projection.js';
+import { supportsImageEdits, supportsServiceParameter } from '../catalog/model-capabilities.js';
 import { findCatalogEntry, projectRowsToVprModelCatalog, selectDefaultVprModel } from '../catalog/model-catalog.js';
-import { filterRoutableVprRoutes } from '../routing/select.js';
+import { sameCanonicalModel } from '../catalog/model-identity.js';
+import { bestFreeVprRouteReputation, chooseBestVprRoute, filterRoutableVprRoutes, isRouteEligibleForAutoSelection } from '../routing/select.js';
 import { routesForSelectedModel } from '../catalog/view-models.js';
 import { saveVprRouteSelection } from '../routing/preferences.js';
 import { syncBuyerDefaultRoute } from '../routing/proxy-sync.js';
@@ -32,6 +33,7 @@ import {
   cloneContentBlock,
   formatCompactNumber,
   getMyrmecochoryLabel,
+  isImageRequestPhase,
   normalizeAssistantMeta,
   paymentLogToThinkingPhase,
 } from '../../ui/components/chat/chat-shared';
@@ -47,6 +49,14 @@ type ChatConversationSummary = {
   service?: string;
   provider?: string;
   peerId?: string;
+  /** Seller that produced the latest assistant response. Display-only; the
+   * conversation's `peerId` remains its text route. */
+  lastResponsePeerId?: string;
+  /**
+   * How this thread's peer was chosen. Absent on threads created before route
+   * modes were recorded; those are treated as 'auto'.
+   */
+  routeMode?: 'auto' | 'pinned';
   workspacePath?: string;
   createdAt?: number;
   updatedAt?: number;
@@ -75,13 +85,52 @@ type ChatModuleOptions = {
   uiState: RendererUiState;
   appendSystemLog: (message: string) => void;
   onPaymentCardShown?: () => void;
+  onResponseCompleted?: (conversationId: string, usage: {
+    inputTokens: number;
+    outputTokens: number;
+    service: string | null;
+  }) => void;
 };
+
+const CUMULATIVE_IMAGE_PROMPT_HEADER = 'Generate a new image using the full conversation history below as cumulative instructions.';
+const CUMULATIVE_IMAGE_PROMPT_FOOTER = 'Return only the newly generated image.';
+
+function buildCumulativeImagePrompt(priorPrompts: string[], currentPrompt: string): string {
+  const previousPrompt = priorPrompts.at(-1) ?? '';
+  if (previousPrompt.startsWith(CUMULATIVE_IMAGE_PROMPT_HEADER)
+    && previousPrompt.endsWith(CUMULATIVE_IMAGE_PROMPT_FOOTER)) {
+    const history = previousPrompt
+      .slice(CUMULATIVE_IMAGE_PROMPT_HEADER.length, -CUMULATIVE_IMAGE_PROMPT_FOOTER.length)
+      .trim();
+    const followUpNumbers = [...history.matchAll(/^Follow-up (\d+):/gm)]
+      .map((match) => Number.parseInt(match[1] ?? '0', 10));
+    const nextFollowUp = Math.max(0, ...followUpNumbers) + 1;
+    return [
+      CUMULATIVE_IMAGE_PROMPT_HEADER,
+      '',
+      history,
+      `Follow-up ${String(nextFollowUp)}: ${currentPrompt}`,
+      '',
+      CUMULATIVE_IMAGE_PROMPT_FOOTER,
+    ].join('\n');
+  }
+  return [
+    CUMULATIVE_IMAGE_PROMPT_HEADER,
+    '',
+    ...[...priorPrompts, currentPrompt].map((entry, index) => `${index === 0 ? 'Initial request' : `Follow-up ${String(index)}`}: ${entry}`),
+    '',
+    CUMULATIVE_IMAGE_PROMPT_FOOTER,
+  ].join('\n');
+}
 
 export type ChatModuleApi = {
   refreshChatServiceOptions: () => Promise<void>;
   /** Re-derive the routable rows, model catalog and service list after a peer
       allow/block rule changes. */
   applyPeerAccessRules: () => void;
+  /** End the provisional-default window after an explicit model choice made
+      outside this module (the model page's "Use" button). */
+  endProvisionalDefaultModel: () => void;
   refreshChatProxyStatus: () => Promise<void>;
   refreshChatConversations: () => Promise<void>;
   refreshWorkspace: () => Promise<void>;
@@ -93,9 +142,15 @@ export type ChatModuleApi = {
   openConversation: (convId: string) => Promise<void>;
   sendMessage: (text: string, attachments?: RawChatAttachment[]) => void;
   sendMessageToConversation: (convId: string, text: string, attachments?: RawChatAttachment[]) => void;
+  generateImage: (prompt: string) => void;
   retryAfterPayment: () => void;
   abortChat: () => Promise<void>;
-  handleServiceChange: (value: string, explicitPeerId?: string, rememberModelPin?: boolean) => void;
+  handleServiceChange: (
+    value: string,
+    explicitPeerId?: string,
+    rememberModelPin?: boolean,
+    routeMode?: 'auto' | 'pinned',
+  ) => void;
   handleServiceFocus: () => void;
   handleServiceBlur: () => void;
   clearPinnedPeer: () => void;
@@ -109,6 +164,7 @@ export function initChatModule({
   uiState,
   appendSystemLog,
   onPaymentCardShown,
+  onResponseCompleted,
 }: ChatModuleOptions): ChatModuleApi {
   // ---------------------------------------------------------------------------
   // Constants
@@ -136,7 +192,11 @@ export function initChatModule({
   const CHAT_SERVICE_REFRESH_INTERVAL_MS = 60_000;
   // Faster retry during first-run setup while no services have been found yet.
   const CHAT_SERVICE_SETUP_REFRESH_INTERVAL_MS = 2_000;
-  const CHAT_SERVICE_LIST_TIMEOUT_MS = 12_000;
+  // Last-resort backstop only: the main-process handler bounds itself to
+  // ~26s worst case via per-phase budgets, so on a healthy machine this never
+  // fires. Generous so slow machines/connections still get their rows late
+  // rather than never.
+  const CHAT_SERVICE_LIST_TIMEOUT_MS = 30_000;
 
   // ---------------------------------------------------------------------------
   // Module-local state
@@ -330,12 +390,112 @@ export function initChatModule({
 
   const chatRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const chatRetryAttempts = new Map<string, number>();
+  const chatRetryFailedPeerIds = new Map<string, Set<string>>();
 
   function clearPaymentRetry(convId: string): void {
     const timer = chatRetryTimers.get(convId);
     if (timer) clearTimeout(timer);
     chatRetryTimers.delete(convId);
     chatRetryAttempts.delete(convId);
+    chatRetryFailedPeerIds.delete(convId);
+    uiState.chatRoutingNotice = null;
+  }
+
+  function findConversationSummary(convId: string): ChatConversationSummary | null {
+    if (activeConversation?.id === convId) return activeConversation;
+    return Array.isArray(uiState.chatConversations)
+      ? (uiState.chatConversations as ChatConversationSummary[]).find((c) => c.id === convId) ?? null
+      : null;
+  }
+
+  function isPinnedConversation(convId: string): boolean {
+    return findConversationSummary(convId)?.routeMode === 'pinned';
+  }
+
+  /**
+   * Pick a different healthy peer for a conversation whose current peer just
+   * failed.
+   *
+   * Returns null when failover must not happen: the thread is pinned (the user
+   * chose that peer), or no better alternative exists — retrying the same peer
+   * still beats refusing to send.
+   */
+  function resolveFailoverSelection(
+    convId: string,
+    failedPeerId: string | undefined,
+    excludePeerIds: string[],
+  ): { selection: ChatServiceSelection; fromLabel: string; toLabel: string } | null {
+    if (!failedPeerId) return null;
+
+    const conversation = findConversationSummary(convId);
+    // Threads with no recorded mode predate route-mode tracking; they are
+    // treated as auto, since failover only runs after a failure.
+    if (isPinnedConversation(convId)) return null;
+
+    const serviceId = normalizeChatServiceId(conversation?.service);
+    if (serviceId.length === 0) return null;
+
+    const provider = normalizeProviderId(conversation?.provider) ?? '';
+    const catalogEntry = provider
+      ? findCatalogEntry(uiState.vprModelCatalog, provider, serviceId)
+      : null;
+    const model = catalogEntry
+      ? {
+          provider: catalogEntry.provider,
+          serviceId: catalogEntry.serviceId,
+          label: catalogEntry.label,
+          categories: [...catalogEntry.categories],
+        }
+      : { provider, serviceId, label: serviceId, categories: [] };
+
+    const option = resolveVprChatOption(
+      uiState.chatServiceOptions,
+      uiState.discoverRows,
+      { model, mode: 'auto', peerId: null },
+      uiState.vprRoutingPreferences,
+      { excludePeerIds },
+    );
+    if (!option || option.peerId === failedPeerId) return null;
+
+    const selection = decodeChatServiceSelection(option.value);
+    if (selection.id.length === 0 || !selection.peerId) return null;
+
+    const failedLabel = uiState.discoverRows.find((row) => row.peerId === failedPeerId)?.peerLabel
+      ?? `${failedPeerId.slice(0, 8)}...`;
+    return {
+      selection,
+      fromLabel: failedLabel,
+      toLabel: option.peerLabel || `${option.peerId?.slice(0, 8)}...`,
+    };
+  }
+
+  /**
+   * Rebind a conversation to a new peer in renderer state.
+   *
+   * Applied eagerly rather than threaded through the retry context so both
+   * retry entry points pick it up: the one that re-dispatches with an explicit
+   * selection, and the one that re-reads the conversation's own peer.
+   */
+  function applyFailoverSelection(convId: string, selection: ChatServiceSelection): void {
+    const patch = {
+      service: selection.id,
+      provider: selection.provider ?? undefined,
+      peerId: undefined,
+      routeMode: 'auto' as const,
+    };
+    if (activeConversation?.id === convId) Object.assign(activeConversation, patch);
+    if (Array.isArray(uiState.chatConversations)) {
+      const row = (uiState.chatConversations as ChatConversationSummary[]).find((c) => c.id === convId);
+      if (row) Object.assign(row, patch);
+    }
+    void bridge?.chatAiSelectPeer?.({
+      conversationId: convId,
+      peerId: null,
+      service: selection.id,
+      provider: selection.provider,
+      routeMode: 'auto',
+    }).catch(() => undefined);
+    notifyUiStateChanged();
   }
 
   function scheduleChatRetry(
@@ -359,21 +519,54 @@ export function initChatModule({
     const existing = chatRetryTimers.get(convId);
     if (existing) clearTimeout(existing);
     chatRetryAttempts.set(convId, nextAttempt);
-    appendSystemLog(
-      reason === 'payment'
-        ? `Payment negotiation is still settling. Retrying in ${PAYMENT_AUTO_RETRY_DELAY_MS / 1000}s...`
-        : `Chat request failed. Retrying in ${PAYMENT_AUTO_RETRY_DELAY_MS / 1000}s...`,
-    );
+
+    // Retrying the same dead peer is what made a failed conversation fail
+    // three times in a row. Move to a healthy peer before arming the timer, so
+    // both retry paths below dispatch to the new one.
+    let retryCtx = ctx;
+    if (reason === 'request') {
+      const failedPeerId = ctx?.selection?.peerId ?? findConversationSummary(convId)?.peerId;
+      const failedPeerIds = chatRetryFailedPeerIds.get(convId) ?? new Set<string>();
+      if (failedPeerId) failedPeerIds.add(failedPeerId);
+      chatRetryFailedPeerIds.set(convId, failedPeerIds);
+      const failover = resolveFailoverSelection(convId, failedPeerId, [...failedPeerIds]);
+      if (failover) {
+        applyFailoverSelection(convId, failover.selection);
+        if (ctx) {
+          retryCtx = {
+            ...ctx,
+            selection: { id: failover.selection.id, provider: failover.selection.provider },
+          };
+        }
+        const notice = `${failover.fromLabel} isn't responding. `
+          + `Retrying on ${failover.toLabel} in ${PAYMENT_AUTO_RETRY_DELAY_MS / 1000}s...`;
+        if (convId === uiState.chatActiveConversation) {
+          uiState.chatRoutingNotice = notice;
+        }
+        appendSystemLog(notice);
+      }
+    }
+
+    if (!uiState.chatRoutingNotice || reason === 'payment') {
+      appendSystemLog(
+        reason === 'payment'
+          ? `Payment negotiation is still settling. Retrying in ${PAYMENT_AUTO_RETRY_DELAY_MS / 1000}s...`
+          : `Chat request failed. Retrying in ${PAYMENT_AUTO_RETRY_DELAY_MS / 1000}s...`,
+      );
+    }
 
     const timer = setTimeout(() => {
       chatRetryTimers.delete(convId);
-      if (ctx?.content != null) {
-        setConversationSending(convId, true);
-        dispatchChatRequest(convId, ctx.content, ctx.attachments, ctx.selection);
-      } else if (convId === uiState.chatActiveConversation) {
-        retryAfterPayment();
-      } else {
+      if (convId !== uiState.chatActiveConversation && uiState.chatRoutingNotice) {
+        uiState.chatRoutingNotice = null;
         notifyUiStateChanged();
+      }
+      const ctxForRetry = retryCtx;
+      if (ctxForRetry?.content != null) {
+        setConversationSending(convId, true);
+        dispatchChatRequest(convId, ctxForRetry.content, ctxForRetry.attachments, ctxForRetry.selection);
+      } else {
+        retryAfterPayment(convId);
       }
     }, PAYMENT_AUTO_RETRY_DELAY_MS);
     chatRetryTimers.set(convId, timer);
@@ -433,6 +626,24 @@ export function initChatModule({
     const id = normalizeChatServiceId(parts[1]);
     const peerId = parts[2]?.trim() || undefined;
     return { id, provider, peerId };
+  }
+
+  function modelOnlySelection(selection: ChatServiceSelection): ChatServiceSelection {
+    return { id: selection.id, provider: selection.provider };
+  }
+
+  function selectionForCurrentRoute(selection: ChatServiceSelection): ChatServiceSelection {
+    return uiState.vprRouteSelection.mode === 'pinned-peer'
+      ? selection
+      : modelOnlySelection(selection);
+  }
+
+  function pinnedConversationPeerId(
+    conversation: ChatConversationSummary | null | undefined,
+    fallbackPeerId = '',
+  ): string | undefined {
+    if (conversation?.routeMode !== 'pinned') return undefined;
+    return conversation.peerId?.trim() || fallbackPeerId.trim() || undefined;
   }
 
   function findMatchingChatServiceOptionValue(
@@ -1008,7 +1219,7 @@ export function initChatModule({
 
     const conversationModel = normalizeChatServiceId(conversation?.service);
     if (conversationModel.length > 0) {
-      const conversationPeerId = conversation?.peerId?.trim() || undefined;
+      const conversationPeerId = pinnedConversationPeerId(conversation);
       return {
         id: conversationModel,
         provider: normalizeProviderId(conversation?.provider),
@@ -1021,12 +1232,15 @@ export function initChatModule({
 
   function getSelectedChatServiceSelection(): ChatServiceSelection {
     // Active conversations are immutable unless the user explicitly switches
-    // service/peer. Always prefer the conversation's persisted model+peer over
-    // the global dropdown value, because the dropdown can be refreshed/re-sorted
-    // by Discover while a thread is open.
+    // service/peer. Always prefer the persisted model and any explicit pin over
+    // the global dropdown value, because Discover may refresh or re-sort it
+    // while a thread is open.
     const conversationModel = normalizeChatServiceId(activeConversation?.service);
     if (conversationModel.length > 0) {
-      const conversationPeerId = activeConversation?.peerId?.trim() || uiState.chatSelectedPeerId || undefined;
+      const conversationPeerId = pinnedConversationPeerId(
+        activeConversation,
+        uiState.chatSelectedPeerId,
+      );
       return {
         id: conversationModel,
         provider: normalizeProviderId(activeConversation?.provider),
@@ -1042,19 +1256,24 @@ export function initChatModule({
     );
     if (vprOption) {
       const selected = decodeChatServiceSelection(vprOption.value);
-      if (selected.id.length > 0) return selected;
+      if (selected.id.length > 0) {
+        return selectionForCurrentRoute(selected);
+      }
     }
 
     const selectedValue = decodeChatServiceSelection(uiState.chatSelectedServiceValue);
-    if (selectedValue.id.length > 0) return selectedValue;
+    if (selectedValue.id.length > 0) {
+      return selectionForCurrentRoute(selectedValue);
+    }
 
     if (uiState.chatServiceOptions.length > 0) {
       const firstOption = decodeChatServiceSelection(uiState.chatServiceOptions[0].value);
       if (firstOption.id.length > 0) {
-        return {
+        const selection = {
           ...firstOption,
           peerId: firstOption.peerId ?? uiState.chatServiceOptions[0].peerId,
         };
+        return selectionForCurrentRoute(selection);
       }
     }
 
@@ -1177,13 +1396,81 @@ export function initChatModule({
    * models only they offer — disappear immediately instead of lingering until
    * the next discovery refresh.
    */
+  function freeEntryRouteReputation(entry: VprModelCatalogEntry): number | null {
+    return bestFreeVprRouteReputation(
+      routesForSelectedModel(uiState.vprRoutableRows, entry),
+      uiState.vprRoutingPreferences,
+    );
+  }
+
+  // The auto-picked default model, while it is only provisional: not backed by
+  // an eligible free route. First-launch discovery snapshots are cold — DHT
+  // discovery is partial and on-chain reputation hasn't been fetched yet, so
+  // every free seller fails the trust gate and the default pick falls back to
+  // a paid model. Persisting that pick would lock a brand-new user onto a paid
+  // default forever, so a provisional pick is kept in memory only and
+  // re-evaluated on every refresh until a free-backed default appears or the
+  // user chooses a model explicitly.
+  let provisionalDefaultModel: VprSelectedModel | null = null;
+
+  /** Keep the UI's "finding free peers" hint in step with the provisional pick. */
+  function setProvisionalDefaultModel(model: VprSelectedModel | null): void {
+    provisionalDefaultModel = model;
+    uiState.vprDefaultModelProvisional = model !== null;
+  }
+
+  /**
+   * An explicit model choice ends the provisional-default window — even when
+   * it lands on the very model the provisional default chose. For selection
+   * paths outside this module (the model page's "Use" button) that must stop
+   * the refresh loop from re-picking over the user's choice.
+   */
+  function endProvisionalDefaultModel(): void {
+    setProvisionalDefaultModel(null);
+  }
+
+  /**
+   * Pick the default model and adopt it into the route selection. Free-backed
+   * picks are final (persisted); anything else is provisional (see above).
+   * Returns the pick, or null when the catalog offers nothing to pick.
+   */
+  function adoptDefaultVprModel(): VprSelectedModel | null {
+    const defaultModel = selectDefaultVprModel(uiState.vprModelCatalog, null, freeEntryRouteReputation);
+    if (!defaultModel) return null;
+    const entry = findCatalogEntry(uiState.vprModelCatalog, defaultModel.provider, defaultModel.serviceId);
+    const freeBacked = entry !== null && freeEntryRouteReputation(entry) !== null;
+    const current = uiState.vprRouteSelection;
+    const changed = !current.model
+      || current.model.provider !== defaultModel.provider
+      || current.model.serviceId !== defaultModel.serviceId
+      || current.mode !== 'auto'
+      || current.peerId !== null;
+    if (changed) {
+      uiState.vprRouteSelection = { model: defaultModel, mode: 'auto', peerId: null };
+    }
+    if (freeBacked) {
+      setProvisionalDefaultModel(null);
+      saveVprRouteSelection(uiState.vprRouteSelection);
+    } else {
+      setProvisionalDefaultModel(defaultModel);
+    }
+    return defaultModel;
+  }
+
+  // Catalog price tags must only come from sellers auto-routing may pick, so
+  // an untrusted seller's $0 offer can't render a "Free" badge for a model
+  // that would really route (and bill) through a trusted paid seller.
+  function isPricingRowEligible(row: DiscoverRow): boolean {
+    return isRouteEligibleForAutoSelection(row, uiState.vprRoutingPreferences);
+  }
+
   function applyPeerAccessRules(): void {
     uiState.vprRoutableRows = filterRoutableVprRoutes(
       uiState.discoverRows,
       uiState.vprRoutingPreferences,
     );
     uiState.vprModelCatalog = applyOpenRouterBaselines(
-      projectRowsToVprModelCatalog(uiState.vprRoutableRows),
+      projectRowsToVprModelCatalog(uiState.vprRoutableRows, isPricingRowEligible),
       getCachedOpenRouterPrices(),
     );
 
@@ -1191,9 +1478,10 @@ export function initChatModule({
     // exclude — leaving it selected would strand every send with no route.
     const selected = uiState.vprRouteSelection.model;
     if (selected && routesForSelectedModel(uiState.vprRoutableRows, selected).length === 0) {
-      const defaultModel = selectDefaultVprModel(uiState.vprModelCatalog, null);
-      uiState.vprRouteSelection = { model: defaultModel, mode: 'auto', peerId: null };
-      saveVprRouteSelection(uiState.vprRouteSelection);
+      if (!adoptDefaultVprModel()) {
+        uiState.vprRouteSelection = { model: null, mode: 'auto', peerId: null };
+        saveVprRouteSelection(uiState.vprRouteSelection);
+      }
     }
 
     updateChatServiceOptions(projectRowsToChatServiceOptions(uiState.vprRoutableRows));
@@ -1242,8 +1530,31 @@ export function initChatModule({
     }
   }
 
+  // Service-discovery failures (notably the 12s IPC timeout above) used to be
+  // invisible in exported logs — the runtime looked healthy while the model
+  // list stayed empty. Log the first failure, then one summary per minute,
+  // plus the recovery, so a log export tells the story.
+  let discoverFailureStreak = 0;
+  let discoverFailureLogAt = 0;
+  function noteDiscoverFailure(message: string): void {
+    discoverFailureStreak += 1;
+    const now = Date.now();
+    if (discoverFailureStreak === 1 || now - discoverFailureLogAt >= 60_000) {
+      discoverFailureLogAt = now;
+      appendSystemLog(discoverFailureStreak === 1
+        ? `Service discovery failed: ${message}`
+        : `Service discovery still failing (${String(discoverFailureStreak)} consecutive): ${message}`);
+    }
+  }
+  function noteDiscoverSuccess(rowCount: number): void {
+    if (discoverFailureStreak === 0) return;
+    appendSystemLog(`Service discovery recovered after ${String(discoverFailureStreak)} failure(s): ${String(rowCount)} row(s)`);
+    discoverFailureStreak = 0;
+    discoverFailureLogAt = 0;
+  }
+
   async function refreshChatServiceOptions(): Promise<void> {
-    // Skip if a fetch is already in-flight — the 12s timeout outlasts the 5s poll
+    // Skip if a fetch is already in-flight — the 30s timeout outlasts the 5s poll
     // cycle, so without this guard every result gets a stale token and is dropped.
     if (serviceRefreshInProgress) return;
     serviceRefreshInProgress = true;
@@ -1268,6 +1579,7 @@ export function initChatModule({
       if (!result.ok || !Array.isArray(result.data)) {
         uiState.chatDiscoverRowsLoaded = false;
         updateChatServiceOptions(fallback);
+        noteDiscoverFailure(result.error || 'Service catalog unavailable.');
         setRuntimeActivity('warn', result.error || 'Service catalog unavailable.');
         notifyUiStateChanged();
         return;
@@ -1280,12 +1592,13 @@ export function initChatModule({
       uiState.discoverRows = rows;
       uiState.vprRoutableRows = filterRoutableVprRoutes(rows, uiState.vprRoutingPreferences);
       uiState.chatDiscoverRowsLoaded = true;
+      noteDiscoverSuccess(rows.length);
       // Guard on the raw discovery result, not the projection: an allowlist
       // that excludes every discovered seller must empty the catalog, while a
       // transient empty discovery snapshot must leave the last one standing.
       if (rows.length > 0 || uiState.vprModelCatalog.length === 0) {
         uiState.vprModelCatalog = applyOpenRouterBaselines(
-          projectRowsToVprModelCatalog(uiState.vprRoutableRows),
+          projectRowsToVprModelCatalog(uiState.vprRoutableRows, isPricingRowEligible),
           getCachedOpenRouterPrices(),
         );
       }
@@ -1300,12 +1613,27 @@ export function initChatModule({
       // Only auto-fill an empty selection. A user-chosen model that is briefly
       // missing from a partial discover snapshot (peer flap, partial DHT
       // results) must not be silently replaced — it resolves again as soon as
-      // its peer reappears in the catalog.
-      if (!uiState.vprRouteSelection.model) {
-        const defaultModel = selectDefaultVprModel(uiState.vprModelCatalog, null);
-        if (defaultModel) {
-          uiState.vprRouteSelection = { model: defaultModel, mode: 'auto', peerId: null };
-        }
+      // its peer reappears in the catalog. A provisional default (auto-picked
+      // with no eligible free route in sight yet) is the one exception: it
+      // keeps being re-picked so the first-launch experience upgrades to a
+      // free model as soon as discovery and reputation warm up.
+      const selectedRouteModel = uiState.vprRouteSelection.model;
+      const selectedRouteEntry = selectedRouteModel
+        ? findCatalogEntry(uiState.vprModelCatalog, selectedRouteModel.provider, selectedRouteModel.serviceId)
+        : null;
+      if (provisionalDefaultModel && (!selectedRouteModel
+        || selectedRouteModel.provider !== provisionalDefaultModel.provider
+        || selectedRouteModel.serviceId !== provisionalDefaultModel.serviceId
+        || uiState.vprRouteSelection.mode !== 'auto'
+        || uiState.vprRouteSelection.peerId !== null)) {
+        // The selection moved off the provisional pick — a different model, or
+        // the same model deliberately pinned to a seller. Either way that was
+        // an explicit choice (or a rules-driven re-pick); stop second-guessing
+        // it — re-picking here would flatten a pin back to auto.
+        setProvisionalDefaultModel(null);
+      }
+      if (!selectedRouteModel || selectedRouteEntry?.kind === 'image' || provisionalDefaultModel !== null) {
+        adoptDefaultVprModel();
       }
       // Keep the buyer proxy's default route on the current selection. Runs
       // on every poll tick, but main dedupes repeats — the repetition is what
@@ -1326,6 +1654,7 @@ export function initChatModule({
       uiState.chatDiscoverRowsLoaded = false;
       updateChatServiceOptions(fallback);
       const message = toErrorMessage(error, 'Failed to load services');
+      noteDiscoverFailure(message);
       setRuntimeActivity('bad', message);
     } finally {
       serviceRefreshInProgress = false;
@@ -1845,11 +2174,17 @@ export function initChatModule({
     }
 
     try {
-      const peerId = (selection.peerId ?? uiState.chatSelectedPeerId) || undefined;
+      // Record how this thread's peer was chosen: a pinned thread must keep its
+      // peer forever, while an auto thread may be re-routed if the peer dies.
+      const routeMode = uiState.vprRouteSelection.mode === 'pinned-peer' ? 'pinned' : 'auto';
+      const peerId = routeMode === 'pinned'
+        ? (selection.peerId ?? uiState.chatSelectedPeerId) || undefined
+        : undefined;
       const result = await bridge.chatAiCreateConversation(
         selection.id,
         selection.provider ?? undefined,
         peerId,
+        routeMode,
       );
       if (result.ok && result.data) {
         const conversationId = getConversationId(result.data);
@@ -2100,6 +2435,174 @@ export function initChatModule({
    * Dispatches via streaming or non-streaming bridge, handles stuck-request
    * recovery, payment-required errors, and fallback timeouts.
    */
+  function resolveSelectedImageRoute({
+    requiresImageInput = false,
+    preferredPeerId = '',
+  }: {
+    requiresImageInput?: boolean;
+    preferredPeerId?: string;
+  } = {}): { service: string; peerId?: string; moderation?: 'low' } | null {
+    const selection = uiState.chatImageRouteSelection;
+    const model = selection?.model;
+    if (!model) return null;
+    const routes = routesForSelectedModel(uiState.vprRoutableRows, model)
+      .filter((row) => row.protocol === 'openai-images');
+    if (routes.length === 0) return null;
+    if (selection.mode === 'pinned-peer' && selection.peerId) {
+      const route = routes.find((row) => row.peerId === selection.peerId);
+      if (!route || (requiresImageInput && !supportsImageEdits(route))) return null;
+      return { service: route.serviceId, peerId: route.peerId, moderation: 'low' };
+    }
+    const eligibleRoutes = requiresImageInput ? routes.filter(supportsImageEdits) : routes;
+    const moderationRoutes = eligibleRoutes.filter((row) => supportsServiceParameter(row, 'moderation'));
+    // Prefer capability-compatible sellers for requests that resolve to one
+    // concrete peer (image edits). If none advertise support, keep a route so
+    // the buyer proxy can fail with its explicit required-capability error.
+    const routingPool = moderationRoutes.length > 0 ? moderationRoutes : eligibleRoutes;
+    const preferredRoute = routingPool.find((row) => row.peerId === preferredPeerId);
+    const route = preferredRoute ?? chooseBestVprRoute(routingPool, uiState.vprRoutingPreferences);
+    if (!route) return null;
+    if (requiresImageInput) {
+      return { service: route.serviceId, peerId: route.peerId, moderation: 'low' };
+    }
+    // Keep model-only routing for generation. The internal required-parameter
+    // header makes the buyer proxy filter fallback candidates to sellers that
+    // advertise moderation instead of silently dropping the field.
+    return { service: model.serviceId, moderation: 'low' };
+  }
+
+  function generateImage(prompt: string): void {
+    const content = prompt.trim();
+    if (!content || !bridge?.chatGenerateImage) return;
+    let route = resolveSelectedImageRoute();
+    if (!route) {
+      showChatError('No seller is currently available for this image model.');
+      return;
+    }
+
+    void (async () => {
+      let convId = uiState.chatActiveConversation;
+      if (!convId) {
+        const textSelection = getSelectedChatServiceSelection();
+        if (!textSelection.id) {
+          showChatError('Choose a text model before starting an image conversation.');
+          return;
+        }
+        convId = await createConversationForSelection(textSelection, { activate: true });
+      }
+      if (!convId) return;
+      if (isConversationSending(convId)) {
+        showChatError('This conversation already has a request in progress.');
+        return;
+      }
+
+      clearChatError();
+      const optimisticUserMessage: ChatMessage = {
+        role: 'user',
+        content,
+        createdAt: Date.now(),
+      };
+      const existingBeforeRequest = getLocalConversationMessages(convId) ?? (
+        convId === uiState.chatActiveConversation ? uiState.chatMessages as ChatMessage[] : []
+      );
+      let sourceImageAttachmentId = '';
+      let sourceImagePeerId = '';
+      let sourceImageServiceId = '';
+      let editing = false;
+      for (let messageIndex = existingBeforeRequest.length - 1; messageIndex >= 0 && !sourceImageAttachmentId; messageIndex -= 1) {
+        const message = existingBeforeRequest[messageIndex];
+        if (message?.role !== 'assistant' || !Array.isArray(message.content)) continue;
+        for (let blockIndex = message.content.length - 1; blockIndex >= 0; blockIndex -= 1) {
+          const block = message.content[blockIndex];
+          if (block?.type === 'file' && block.generated === true && typeof block.attachmentId === 'string') {
+            sourceImageAttachmentId = block.attachmentId.trim();
+            sourceImagePeerId = typeof message.meta?.peerId === 'string' ? message.meta.peerId.trim() : '';
+            sourceImageServiceId = typeof message.meta?.service === 'string' ? message.meta.service.trim() : '';
+            break;
+          }
+        }
+      }
+      if (sourceImageAttachmentId) {
+        const preferredPeerId = sourceImagePeerId && sameCanonicalModel(sourceImageServiceId, route.service)
+          ? sourceImagePeerId
+          : '';
+        const editRoute = resolveSelectedImageRoute({ requiresImageInput: true, preferredPeerId });
+        if (editRoute) {
+          route = editRoute;
+          editing = true;
+        }
+      }
+      const priorImagePrompts = existingBeforeRequest.flatMap((message, messageIndex) => {
+        const nextMessage = existingBeforeRequest[messageIndex + 1];
+        const generatedImageFollows = nextMessage?.role === 'assistant'
+          && Array.isArray(nextMessage.content)
+          && nextMessage.content.some((block) => block?.type === 'file' && block.generated === true);
+        return message.role === 'user' && generatedImageFollows && typeof message.content === 'string' && message.content.trim()
+          ? [message.content.trim()]
+          : [];
+      });
+      const requestPrompt = sourceImageAttachmentId && !editing && priorImagePrompts.length > 0
+        ? buildCumulativeImagePrompt(priorImagePrompts, content)
+        : content;
+      optimisticUserMessage.content = requestPrompt;
+      const pendingMessages = [...existingBeforeRequest, optimisticUserMessage];
+      setLocalConversationMessages(convId, pendingMessages);
+      if (convId === uiState.chatActiveConversation) uiState.chatMessages = pendingMessages;
+      if (activeConversation?.id === convId) {
+        activeConversation.messages = pendingMessages;
+        activeConversation.updatedAt = optimisticUserMessage.createdAt;
+      }
+
+      setConversationSending(convId, true);
+      uiState.chatThinkingPhase = editing ? 'Editing image' : 'Generating image';
+      notifyUiStateChanged();
+      queueScrollChatToBottom();
+      try {
+        const result = await bridge.chatGenerateImage!({
+          conversationId: convId,
+          prompt: requestPrompt,
+          service: route.service,
+          ...(route.peerId ? { peerId: route.peerId } : {}),
+          ...(route.moderation ? { moderation: route.moderation } : {}),
+          ...(editing ? { sourceImageAttachmentId } : {}),
+        });
+        if (!result.ok || !result.user || !result.assistant) {
+          throw new Error(result.error || 'Image generation failed.');
+        }
+        const responsePeerId = typeof result.assistant.meta?.peerId === 'string'
+          ? result.assistant.meta.peerId.trim()
+          : route.peerId ?? '';
+        const existing = getLocalConversationMessages(convId) ?? pendingMessages;
+        // The prompt was projected optimistically before the slow image call;
+        // main persists that same user turn alongside the generated attachment.
+        // Append only the returned assistant message to avoid a duplicate prompt.
+        const messages = [...existing, result.assistant as ChatMessage];
+        setLocalConversationMessages(convId, messages);
+        if (convId === uiState.chatActiveConversation) uiState.chatMessages = messages;
+        if (activeConversation?.id === convId) {
+          activeConversation.messages = messages;
+          activeConversation.updatedAt = Date.now();
+          activeConversation.lastResponsePeerId = responsePeerId || undefined;
+          updateThreadMeta(activeConversation);
+        }
+        if (Array.isArray(uiState.chatConversations)) {
+          const summary = (uiState.chatConversations as ChatConversationSummary[])
+            .find((conversation) => conversation.id === convId);
+          if (summary) summary.lastResponsePeerId = responsePeerId || undefined;
+        }
+        scheduleChatConversationsRefresh();
+        notifyUiStateChanged();
+        queueScrollChatToBottom();
+      } catch (error) {
+        if (toErrorMessage(error) !== 'Request aborted') {
+          reportChatError(error, 'Image generation failed');
+        }
+      } finally {
+        setConversationSending(convId, false);
+      }
+    })();
+  }
+
   function dispatchChatRequest(
     convId: string,
     content: string,
@@ -2171,8 +2674,11 @@ export function initChatModule({
               // finalized the partial message. Don't overwrite with an error.
               clearPaymentRetry(convId);
               setConversationSending(convId, false);
-            } else if (result.stopReason?.retryable === false) {
-              reportChatError(result.stopReason.message || result.error, 'Request failed');
+            } else if (
+              result.stopReason?.retryable === false
+              || isPinnedConversation(convId)
+            ) {
+              reportChatError(result.stopReason?.message || result.error, 'Request failed');
               setConversationSending(convId, false);
             } else {
               scheduleChatRetry(
@@ -2257,13 +2763,17 @@ export function initChatModule({
    * payment-approval card visible while the user stays in the same chat;
    * context switches are responsible for dismissing transient notices.
    */
-  function retryAfterPayment(): void {
+  function retryAfterPayment(convId = uiState.chatActiveConversation): void {
     if (!bridge) return;
+    if (!convId) return;
 
     // Find the last user message to resend
     type MsgShape = { role?: string; content?: unknown };
-    const lastUserMsg = ([...uiState.chatMessages] as MsgShape[]).reverse().find(m => m.role === 'user');
-    if (!lastUserMsg || !uiState.chatActiveConversation) return;
+    const messages = getLocalConversationMessages(convId) ?? (
+      convId === uiState.chatActiveConversation ? uiState.chatMessages : []
+    );
+    const lastUserMsg = ([...messages] as MsgShape[]).reverse().find(m => m.role === 'user');
+    if (!lastUserMsg) return;
 
     const content = typeof lastUserMsg.content === 'string'
       ? lastUserMsg.content
@@ -2284,7 +2794,6 @@ export function initChatModule({
       }
     }
 
-    const convId = uiState.chatActiveConversation;
     setConversationSending(convId, true);
     dispatchChatRequest(convId, content, attachments.length > 0 ? attachments : undefined);
   }
@@ -2305,7 +2814,12 @@ export function initChatModule({
   // Service select handlers (called by ChatView)
   // ---------------------------------------------------------------------------
 
-  function handleServiceChange(value: string, explicitPeerId?: string, rememberModelPin = true): void {
+  function handleServiceChange(
+    value: string,
+    explicitPeerId?: string,
+    rememberModelPin = true,
+    routeMode?: 'auto' | 'pinned',
+  ): void {
     uiState.chatSelectedServiceValue = value;
     pendingServiceOptions = null;
     clearTransientChatNotices();
@@ -2323,6 +2837,8 @@ export function initChatModule({
     const decoded = decodeChatServiceSelection(value);
     const nextServiceId = normalizeChatServiceId(selectedOption?.id ?? decoded.id);
     const nextProvider = normalizeProviderId(selectedOption?.provider ?? decoded.provider);
+    const nextRouteMode = routeMode ?? (peerId ? 'pinned' : 'auto');
+    const pinnedPeerId = nextRouteMode === 'pinned' ? peerId : '';
 
     // Write the explicit pick through to the VPR route selection so the two
     // never disagree about which model+peer a new conversation targets. The
@@ -2346,16 +2862,19 @@ export function initChatModule({
           };
       uiState.vprRouteSelection = {
         model: selectedModel,
-        mode: peerId ? 'pinned-peer' : 'auto',
-        peerId: peerId || null,
+        mode: pinnedPeerId ? 'pinned-peer' : 'auto',
+        peerId: pinnedPeerId || null,
       };
+      // An explicit pick ends the provisional-default window even when the
+      // user picks the very model the provisional default landed on.
+      setProvisionalDefaultModel(null);
       if (rememberModelPin) {
-        if (peerId) {
+        if (pinnedPeerId) {
           uiState.vprModelPins = setVprModelPin(
             uiState.vprModelPins,
             selectedModel.provider,
             selectedModel.serviceId,
-            peerId,
+            pinnedPeerId,
           );
         } else {
           uiState.vprModelPins = clearVprModelPin(
@@ -2371,8 +2890,11 @@ export function initChatModule({
     }
 
     if (activeConversation) {
-      activeConversation.peerId = peerId || undefined;
-      activeConversation.peerLabel = selectedOption?.peerDisplayName || selectedOption?.peerLabel || undefined;
+      activeConversation.peerId = pinnedPeerId || undefined;
+      activeConversation.peerLabel = pinnedPeerId
+        ? selectedOption?.peerDisplayName || selectedOption?.peerLabel || undefined
+        : undefined;
+      activeConversation.routeMode = nextRouteMode;
 
       if (nextServiceId) {
         activeConversation.service = nextServiceId;
@@ -2384,8 +2906,9 @@ export function initChatModule({
         const list = uiState.chatConversations as ChatConversationSummary[];
         const summary = list.find((c) => c.id === convId);
         if (summary) {
-          summary.peerId = peerId || '';
+          summary.peerId = pinnedPeerId || '';
           summary.peerLabel = activeConversation.peerLabel ?? '';
+          summary.routeMode = nextRouteMode;
           if (nextServiceId) {
             summary.service = nextServiceId;
             summary.provider = nextProvider ?? '';
@@ -2396,13 +2919,14 @@ export function initChatModule({
     if (bridge?.chatAiSelectPeer) {
       void bridge.chatAiSelectPeer({
         conversationId: uiState.chatActiveConversation,
-        peerId: peerId || null,
+        peerId: pinnedPeerId || null,
         // Persist the model rebinding too — the in-memory summary update
         // above is otherwise reverted by the next conversation-list refresh.
         ...(nextServiceId ? { service: nextServiceId, provider: nextProvider ?? '' } : {}),
+        routeMode: nextRouteMode,
       }).catch(() => undefined);
     }
-    void refreshChatPermissionModeForPeer(peerId);
+    void refreshChatPermissionModeForPeer(pinnedPeerId);
 
     notifyUiStateChanged();
   }
@@ -2449,6 +2973,14 @@ export function initChatModule({
     if (bridge.onChatAiDone) {
       bridge.onChatAiDone((data) => {
         const incomingMessage = data.message as ChatMessage;
+        const responsePeerId = typeof incomingMessage.meta?.peerId === 'string'
+          ? incomingMessage.meta.peerId.trim()
+          : '';
+        if (responsePeerId && Array.isArray(uiState.chatConversations)) {
+          const summary = (uiState.chatConversations as ChatConversationSummary[])
+            .find((conversation) => conversation.id === data.conversationId);
+          if (summary) summary.lastResponsePeerId = responsePeerId;
+        }
         const isStreamingCommit = hasConversationStreamingMessage(data.conversationId);
         if (isStreamingCommit) {
           updateStreamingMessage(data.conversationId, (message) => {
@@ -2552,6 +3084,10 @@ export function initChatModule({
               categories: [...(option?.categories ?? [])],
             };
         uiState.vprRouteSelection = { model: selectedModel, mode: 'pinned-peer', peerId };
+        // An external explicit pick ends the provisional-default window even
+        // when it lands on the very model the provisional default chose —
+        // otherwise the next refresh's re-pick would flatten the pin to auto.
+        setProvisionalDefaultModel(null);
         uiState.vprModelPins = setVprModelPin(
           uiState.vprModelPins,
           selectedModel.provider,
@@ -2922,6 +3458,9 @@ export function initChatModule({
         const finalizedStreamingMessage = materializeStreamingMessage(
           getConversationStreamingMessage(data.conversationId),
         );
+        const completionMeta = finalizedStreamingMessage
+          ? normalizeAssistantMeta(finalizedStreamingMessage)
+          : null;
 
         streamCompletedAtByConversation.set(data.conversationId, Date.now());
         clearPaymentRetry(data.conversationId);
@@ -2957,6 +3496,15 @@ export function initChatModule({
         }
 
         scheduleChatConversationsRefresh();
+        // Only count completions that finalized an assistant message; an empty
+        // or duplicated done event must not inflate the reminder request counters.
+        if (completionMeta) {
+          onResponseCompleted?.(data.conversationId, {
+            inputTokens: completionMeta.inputTokens ?? 0,
+            outputTokens: completionMeta.outputTokens ?? 0,
+            service: completionMeta.service ?? null,
+          });
+        }
       });
     }
 
@@ -2982,7 +3530,15 @@ export function initChatModule({
         const finalized = materializeStreamingMessage(
           getConversationStreamingMessage(data.conversationId),
         );
-        if (finalized) {
+        const outputAlreadyStarted = Boolean(
+          finalized
+          && (Array.isArray(finalized.content)
+            ? finalized.content.length > 0
+            : typeof finalized.content === 'string'
+              ? finalized.content.length > 0
+              : finalized.content != null),
+        );
+        if (finalized && outputAlreadyStarted) {
           if (data.conversationId === uiState.chatActiveConversation) {
             commitAssistantMessage(finalized);
           } else {
@@ -2992,39 +3548,45 @@ export function initChatModule({
         setConversationStreamingMessage(data.conversationId, null);
         streamFailedAtByConversation.set(data.conversationId, Date.now());
 
-        if (data.conversationId === uiState.chatActiveConversation) {
+        const isActiveConversation = data.conversationId === uiState.chatActiveConversation;
+        const isPinned = isPinnedConversation(data.conversationId);
+        if (isActiveConversation) {
           // Ensure the waiting-for-stream flag is cleared even if the error fires
           // before chat:ai-stream-start is received (which is the only other place
           // this flag gets cleared), preventing a permanent UI spinner lock.
           uiState.chatWaitingForStream = false;
           notifyUiStateChanged();
-          if (shouldClearSending) {
-            setConversationSending(data.conversationId, false);
-          }
+        }
+        if (shouldClearSending) {
+          setConversationSending(data.conversationId, false);
+          if (!isActiveConversation) notifyUiStateChanged();
+        }
 
-          if (isAbort) {
-            clearPaymentRetry(data.conversationId);
-          } else {
-            const errStr = typeof data.error === 'string' ? data.error : '';
-            const paymentMatch = /^payment_required:(\d+)$/i.exec(errStr);
-            if (paymentMatch) {
+        if (isAbort) {
+          clearPaymentRetry(data.conversationId);
+        } else {
+          const errStr = typeof data.error === 'string' ? data.error : '';
+          const paymentMatch = /^payment_required:(\d+)$/i.exec(errStr);
+          if (paymentMatch) {
+            if (isActiveConversation) {
               void handlePaymentRequired(paymentMatch[1], { convId: data.conversationId });
               if (bridge.chatAiAbort) void bridge.chatAiAbort(data.conversationId).catch(() => {});
-            } else if (stopReason?.retryable === false) {
-              clearPaymentRetry(data.conversationId);
-              reportChatError(stopReason.message || data.error, 'Request failed');
             } else {
-              scheduleChatRetry(
-                { convId: data.conversationId },
-                'request',
-                stopReason?.message ?? data.error,
-              );
+              clearPaymentRetry(data.conversationId);
             }
-            appendSystemLog(`AI Chat error (${stopReasonSummary}): ${data.error}`);
+          } else if (stopReason?.retryable === false || outputAlreadyStarted || isPinned) {
+            clearPaymentRetry(data.conversationId);
+            if (isActiveConversation) {
+              reportChatError(stopReason?.message || data.error, 'Request failed');
+            }
+          } else {
+            scheduleChatRetry(
+              { convId: data.conversationId },
+              'request',
+              stopReason?.message ?? data.error,
+            );
           }
-        } else if (shouldClearSending) {
-          setConversationSending(data.conversationId, false);
-          notifyUiStateChanged();
+          appendSystemLog(`AI Chat error (${stopReasonSummary}): ${data.error}`);
         }
       });
     }
@@ -3053,6 +3615,7 @@ export function initChatModule({
 
   function handleLogLineForThinkingPhase(line: string): void {
     if (!uiState.chatSending) return;
+    if (isImageRequestPhase(uiState.chatThinkingPhase)) return;
     const phase = paymentLogToThinkingPhase(line);
     if (!phase) return;
     clearThinkingPhaseExpiry();
@@ -3074,6 +3637,7 @@ export function initChatModule({
     decideToolApproval,
     refreshChatServiceOptions,
     applyPeerAccessRules,
+    endProvisionalDefaultModel,
     refreshChatProxyStatus,
     refreshChatConversations,
     refreshWorkspace,
@@ -3085,6 +3649,7 @@ export function initChatModule({
     openConversation,
     sendMessage,
     sendMessageToConversation,
+    generateImage,
     retryAfterPayment,
     abortChat,
     handleServiceChange,

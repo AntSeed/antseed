@@ -208,7 +208,15 @@ export function computeOnChainTrustBreakdown(
     ? Math.max(0, (nowMs - stakedAtSec * 1000) / 86_400_000)
     : null;
 
-  const maturityDays = daysSinceStaked ?? 0;
+  // Some migrated/facade accounts have no usable staking timestamp. Only
+  // infer maturity once verified activity reaches the channel-confidence
+  // cap; ordinary accounts with an unknown age retain the $25 new-seller
+  // volume cap.
+  const inferredMatureAccount = daysSinceStaked === null
+    && stakeUsdc >= ON_CHAIN_TRUST_STAKE_THRESHOLD_USDC
+    && channels >= ON_CHAIN_TRUST_CHANNEL_CONFIDENCE_CAP;
+  const maturityDays = daysSinceStaked
+    ?? (inferredMatureAccount ? ON_CHAIN_TRUST_MATURITY_DAYS : 0);
   const volumeCreditCapUsdc = ON_CHAIN_TRUST_INITIAL_CREDIT_USDC
     + maturityDays * ON_CHAIN_TRUST_DAILY_CREDIT_USDC;
   const creditedVolumeUsdc = Math.min(volumeUsdc, volumeCreditCapUsdc);

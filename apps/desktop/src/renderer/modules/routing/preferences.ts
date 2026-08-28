@@ -1,7 +1,10 @@
 import type { VprPeerListing, VprRoutingPreferences, VprRouteSelection } from '../../core/state';
+import type { ModelRoutingPreferences } from '@antseed/node/model-routing';
 
 export const VPR_PREFERENCES_STORAGE_KEY = 'antseed.desktop.vpr.preferences';
 export const VPR_ROUTE_SELECTION_STORAGE_KEY = 'antseed.desktop.vpr.routeSelection';
+const VPR_PREFERENCES_VERSION = 2;
+const ROUTING_PEER_ID_PATTERN = /^(?:0x)?[0-9a-f]{40}$/i;
 
 type StoredObject = Record<string, unknown>;
 
@@ -78,6 +81,13 @@ export function loadVprRoutingPreferences(fallback: VprRoutingPreferences): VprR
     return fallback;
   }
 
+  // Pre-versioned preferences defaulted minTrustScore to 0; a stored 0 there
+  // means "never touched", so it adopts the new default instead.
+  let minTrustScore = readNonNegativeFiniteNumber(parsed.minTrustScore, fallback.minTrustScore);
+  if (parsed.version !== VPR_PREFERENCES_VERSION && minTrustScore === 0) {
+    minTrustScore = fallback.minTrustScore;
+  }
+
   return {
     autoRouting: readBoolean(parsed.autoRouting, fallback.autoRouting),
     preferFreePeers: readBoolean(parsed.preferFreePeers, fallback.preferFreePeers),
@@ -85,7 +95,7 @@ export function loadVprRoutingPreferences(fallback: VprRoutingPreferences): VprR
       parsed.maxInputUsdPerMillion,
       fallback.maxInputUsdPerMillion,
     ),
-    minTrustScore: readNonNegativeFiniteNumber(parsed.minTrustScore, fallback.minTrustScore),
+    minTrustScore,
     allowedPeerIds: Array.isArray(parsed.allowedPeerIds)
       ? normalizePeerIdList(parsed.allowedPeerIds)
       : fallback.allowedPeerIds,
@@ -99,7 +109,24 @@ export function saveVprRoutingPreferences(value: VprRoutingPreferences): void {
   if (typeof localStorage === 'undefined') {
     return;
   }
-  localStorage.setItem(VPR_PREFERENCES_STORAGE_KEY, JSON.stringify(value));
+  localStorage.setItem(VPR_PREFERENCES_STORAGE_KEY, JSON.stringify({
+    version: VPR_PREFERENCES_VERSION,
+    ...value,
+  }));
+}
+
+export function buyerModelRoutingPreferences(
+  value: VprRoutingPreferences,
+): ModelRoutingPreferences {
+  const validPeerIds = (peerIds: string[]): string[] => normalizePeerIdList(peerIds)
+    .filter((peerId) => ROUTING_PEER_ID_PATTERN.test(peerId));
+  return {
+    preferFreePeers: value.preferFreePeers,
+    maxInputUsdPerMillion: value.maxInputUsdPerMillion,
+    minTrustScore: value.minTrustScore,
+    allowedPeerIds: validPeerIds(value.allowedPeerIds),
+    blockedPeerIds: validPeerIds(value.blockedPeerIds),
+  };
 }
 
 export function peerListingOf(preferences: VprRoutingPreferences, peerId: string): VprPeerListing {

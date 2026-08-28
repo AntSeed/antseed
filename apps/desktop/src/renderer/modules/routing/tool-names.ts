@@ -10,8 +10,12 @@
 
 const TOOL_DISPLAY_NAMES: Record<string, string> = {
   'claude-code': 'Claude Code',
+  droid: 'Droid',
   opencode: 'OpenCode',
   pi: 'pi',
+  vpr: 'VPR',
+  // Chats created before the AntStation → VPR rename keep their stored slug.
+  antstation: 'VPR',
 };
 
 export function displayToolName(tool: string): string {

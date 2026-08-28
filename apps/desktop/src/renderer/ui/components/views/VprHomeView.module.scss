@@ -3,6 +3,7 @@
 /* Doubled class beats the global `.view` rule (display: block, overflow-y:
    auto) regardless of stylesheet injection order. */
 .view.view {
+  position: relative;
   height: 100%;
   min-height: 0;
   display: flex;
@@ -304,83 +305,6 @@
   font-weight: 500;
 }
 
-.modelChangeBanner {
-  position: fixed;
-  z-index: 220;
-  left: calc(88px + (100vw - 88px) / 2);
-  bottom: 40px;
-  width: min(392px, calc(100vw - 120px));
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--success-subtle-border);
-  border-radius: 14px;
-  background: var(--bg-card);
-  box-shadow: var(--shadow-float);
-  color: var(--text-primary);
-  transform: translateX(-50%);
-  animation: model-change-banner-in 0.2s ease-out;
-  -webkit-app-region: no-drag;
-}
-
-@keyframes model-change-banner-in {
-  from {
-    opacity: 0;
-    transform: translate(-50%, 10px);
-  }
-  to {
-    opacity: 1;
-    transform: translate(-50%, 0);
-  }
-}
-
-.modelChangeBannerIcon {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: var(--success-subtle-bg);
-  color: var(--success-subtle-text);
-}
-
-.modelChangeBannerText {
-  flex: 1 1 auto;
-  min-width: 0;
-  white-space: pre-line;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 16px;
-}
-
-.modelChangeBannerClose {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-.modelChangeBannerClose:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.modelChangeBannerClose:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(var(--brand-rgb), 0.4);
-}
-
 .modelCardTitle {
   display: inline-flex;
   align-items: center;
@@ -407,6 +331,26 @@
   font-size: 12px;
   font-weight: 500;
   line-height: 16px;
+}
+
+/* First-use hint while the default model is provisional and discovery is
+   still hunting for a trusted free seller. */
+.searchingTag {
+  padding: 0 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  white-space: nowrap;
+  animation: searchingTagPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes searchingTagPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 
 .modelCardChevron {
@@ -450,21 +394,34 @@
 }
 
 .restartBanner {
+  position: relative;
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
+  gap: 4px;
+  padding: 4px;
   border: 1px solid rgba(245, 158, 11, 0.35);
   border-radius: 14px;
   background: rgba(245, 158, 11, 0.1);
   color: #f59e0b;
+}
+
+.restartBannerBody {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 38px 8px 10px;
+  border: none;
+  background: transparent;
+  color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
-.restartBanner > span {
+.restartBannerBody > span {
   flex: 1 1 auto;
   min-width: 0;
   display: grid;
@@ -481,6 +438,27 @@
   color: var(--text-secondary);
   font-size: 11px;
   line-height: 16px;
+}
+
+.restartBannerClose {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: rgba(245, 158, 11, 0.72);
+  cursor: pointer;
+}
+
+.restartBannerClose:hover {
+  background: rgba(245, 158, 11, 0.12);
+  color: #f59e0b;
 }
 
 .balanceBanner {
@@ -537,6 +515,105 @@
 
 .balanceClose:hover {
   color: #ffffff;
+}
+
+/* ---------- Reminder card ---------- */
+
+.reminderCard {
+  position: relative;
+  width: 100%;
+  padding: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(var(--brand-rgb), 0.42);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 100% 100%, rgba(var(--brand-rgb), 0.12), transparent 44%),
+    rgba(var(--brand-rgb), 0.06);
+  box-shadow: var(--shadow-sm);
+}
+
+.reminderContent {
+  width: 100%;
+  display: grid;
+  gap: 14px;
+}
+
+.reminderHeadline {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.reminderIcon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(var(--brand-rgb), 0.16);
+  color: var(--brand);
+}
+
+.reminderIcon {
+  width: 52px;
+  height: 52px;
+}
+
+.reminderHeadlineText {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.reminderTitle {
+  color: var(--text-primary);
+  font-size: 18px;
+  line-height: 24px;
+}
+
+.reminderProof {
+  display: grid;
+  gap: 4px;
+}
+
+.reminderProof strong {
+  color: var(--text-primary);
+  font-size: 15px;
+  line-height: 21px;
+}
+
+.reminderProof em {
+  color: var(--brand);
+  font-style: normal;
+  font-weight: 800;
+}
+
+.reminderActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.reminderPrimary,
+.reminderSecondary {
+  min-height: 42px;
+  padding: 9px 14px;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.reminderPrimary {
+  border: 1px solid var(--brand);
+  background: var(--brand);
+  color: #07130f;
+}
+
+.reminderSecondary {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-primary);
 }
 
 .usageGroup {

@@ -1,7 +1,9 @@
 import {
   cloneElement,
+  createContext,
   isValidElement,
   useCallback,
+  useContext,
   useEffect,
   useId,
   useRef,
@@ -13,6 +15,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from 'react';
+import { createPortal } from 'react-dom';
 import styles from './InfoTooltip.module.scss';
 
 /**
@@ -46,6 +49,8 @@ import styles from './InfoTooltip.module.scss';
 const VIEWPORT_MARGIN_PX = 12;
 const TRIGGER_GAP_PX = 8;
 const FALLBACK_WIDTH_PX = 260;
+const BASE_Z_INDEX = 200;
+const TooltipDepthContext = createContext(0);
 
 export type InfoTooltipAlign = 'left' | 'right';
 
@@ -69,6 +74,8 @@ export type InfoTooltipProps = {
   align?: InfoTooltipAlign;
   /** Wider panel for structured content such as a balance breakdown. */
   wide?: boolean;
+  /** Narrow panel for short labels or compact lists. */
+  narrow?: boolean;
   /** Keep the panel usable on hover and allow click-to-pin behavior. */
   interactive?: boolean;
   /**
@@ -79,7 +86,8 @@ export type InfoTooltipProps = {
   children: ReactElement;
 };
 
-export function InfoTooltip({ content, align = 'right', wide = false, interactive = false, children }: InfoTooltipProps) {
+export function InfoTooltip({ content, align = 'right', wide = false, narrow = false, interactive = false, children }: InfoTooltipProps) {
+  const tooltipDepth = useContext(TooltipDepthContext);
   const triggerRef = useRef<HTMLElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const closeTimerRef = useRef<number | null>(null);
@@ -123,8 +131,8 @@ export function InfoTooltip({ content, align = 'right', wide = false, interactiv
       window.clearTimeout(closeTimerRef.current);
       closeTimerRef.current = null;
     }
-    reposition();
     setOpen(true);
+    requestAnimationFrame(reposition);
   }, [reposition]);
 
   const hide = useCallback(() => {
@@ -231,23 +239,29 @@ export function InfoTooltip({ content, align = 'right', wide = false, interactiv
   return (
     <>
       {triggerNode}
-      <div
-        ref={tooltipRef}
-        id={tooltipId}
-        role={interactive ? 'dialog' : 'tooltip'}
-        className={[
-          styles.tooltip,
-          wide ? styles.tooltipWide : '',
-          interactive ? styles.tooltipInteractive : '',
-          open ? styles.tooltipOpen : '',
-        ].filter(Boolean).join(' ')}
-        style={style}
-        onMouseEnter={interactive ? show : undefined}
-        onMouseLeave={interactive ? scheduleHide : undefined}
-        onPointerDown={interactive ? (event: PointerEvent<HTMLDivElement>) => event.stopPropagation() : undefined}
-      >
-        {content}
-      </div>
+      {typeof document !== 'undefined' && createPortal(
+        <div
+          ref={tooltipRef}
+          id={tooltipId}
+          role={interactive ? 'dialog' : 'tooltip'}
+          className={[
+            styles.tooltip,
+            wide ? styles.tooltipWide : '',
+            narrow ? styles.tooltipNarrow : '',
+            interactive ? styles.tooltipInteractive : '',
+            open ? styles.tooltipOpen : '',
+          ].filter(Boolean).join(' ')}
+          style={{ ...style, zIndex: BASE_Z_INDEX + tooltipDepth }}
+          onMouseEnter={interactive ? show : undefined}
+          onMouseLeave={interactive ? scheduleHide : undefined}
+          onPointerDown={interactive ? (event: PointerEvent<HTMLDivElement>) => event.stopPropagation() : undefined}
+        >
+          <TooltipDepthContext.Provider value={tooltipDepth + 1}>
+            {content}
+          </TooltipDepthContext.Provider>
+        </div>,
+        document.body,
+      )}
     </>
   );
 }

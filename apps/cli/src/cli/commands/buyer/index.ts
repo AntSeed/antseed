@@ -7,6 +7,7 @@ import { registerBuyerSweepCommand } from './sweep.js';
 import { registerBuyerBalanceCommand } from './balance.js';
 import { registerBuyerConnectionCommand } from './connection.js';
 import { registerBuyerChannelsCommand } from './channels.js';
+import { registerBuyerActivityCommand } from './activity.js';
 import { registerBuyerMeteringCommand } from './metering.js';
 import { registerBuyerEmissionsCommand } from './emissions.js';
 
@@ -23,6 +24,7 @@ export function registerBuyerCommands(program: Command): void {
   registerBuyerBalanceCommand(buyerCmd);
   registerBuyerConnectionCommand(buyerCmd);
   registerBuyerChannelsCommand(buyerCmd);
+  registerBuyerActivityCommand(buyerCmd);
   registerBuyerMeteringCommand(buyerCmd);
   registerBuyerEmissionsCommand(buyerCmd);
 }

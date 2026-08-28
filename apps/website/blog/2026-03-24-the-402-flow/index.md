@@ -91,11 +91,11 @@ Buyer                              Seller                       Deposits Contrac
 
 The buyer's only on-chain transaction is the initial deposit — which funds all future sessions with any seller. Opening a session is the seller's transaction, locking funds from the buyer's existing balance. After that, unlimited requests with off-chain signature verification. The seller settles on-chain when the session ends — calling `settle()` or `close()` with the buyer's latest SpendingAuth signature.
 
-## Same DataChannel, Zero Overhead
+## Same Connection, Zero Overhead
 
 Here's something x402 and MPP can't do: payment negotiation on the same transport as the actual traffic, with no additional infrastructure.
 
-AntSeed peers are already connected over a WebRTC DataChannel for proxying AI requests and responses. The payment flow — 402 trigger, ReserveAuth, SpendingAuth, acknowledgments — rides that same DataChannel. The protocol multiplexes payment messages alongside proxy traffic using a frame-level type byte. Payment messages are just another message type on an open connection.
+AntSeed peers are already connected over an encrypted peer-to-peer connection for proxying AI requests and responses. The payment flow — 402 trigger, ReserveAuth, SpendingAuth, acknowledgments — rides that same connection. The protocol multiplexes payment messages alongside proxy traffic using a frame-level type byte. Payment messages are just another message type on an open connection.
 
 This means there is no payment service to deploy. No WebSocket sidecar for payment negotiation. No HTTP callbacks to a facilitator. No second connection to establish. When a buyer hits a 402, the entire negotiation — signing, sending the authorization, waiting for the on-chain reserve, receiving the acknowledgment, retrying the request — happens on the connection that's already open.
 
@@ -140,7 +140,7 @@ No facilitator, no per-session buyer transaction. The buyer deposits USDC once. 
 | | **x402** | **MPP** | **AntSeed** |
 |---|---|---|---|
 | Intermediary | Facilitator (Coinbase) | Stripe + Tempo | None (smart contract only) |
-| Payment transport | HTTP headers + facilitator round-trip | HTTP headers + Stripe/Tempo API | Same WebRTC DataChannel as traffic |
+| Payment transport | HTTP headers + facilitator round-trip | HTTP headers + Stripe/Tempo API | Same encrypted connection as traffic |
 | Buyer transaction to open session | Per-request | Per-session | None (seller reserves from buyer's deposit) |
 | On-chain settlement | 1 tx per request | Batched (amortized) | Batched (amortized) |
 | Session model | Per-request | Pre-authorized session | ReserveAuth ceiling + cumulative SpendingAuth |

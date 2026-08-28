@@ -31,6 +31,8 @@ export default defineConfig(({ mode }) => {
   // key in config.payments.funkit.apiKey still overrides the baked one.
   const fileEnv = loadEnv(mode, __dirname, '');
   const funkitApiKey = process.env.ANTSEED_FUNKIT_API_KEY ?? fileEnv.ANTSEED_FUNKIT_API_KEY ?? '';
+  const rendererPort = Number(process.env.ANTSEED_DESKTOP_RENDERER_PORT) || 5174;
+  const systemProxyPort = Number(process.env.ANTSEED_SYSTEM_PROXY_PORT) || 8378;
 
   return {
   plugins: [react()],
@@ -62,10 +64,11 @@ export default defineConfig(({ mode }) => {
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
     __FUNKIT_API_KEY__: JSON.stringify(funkitApiKey),
+    __ANTSEED_SYSTEM_PROXY_PORT__: JSON.stringify(systemProxyPort),
   },
   server: {
     host: '127.0.0.1',
-    port: 5174,
+    port: rendererPort,
     strictPort: true,
   },
   };

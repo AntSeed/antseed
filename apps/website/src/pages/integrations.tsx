@@ -169,7 +169,7 @@ export default function ConnectHub(): JSX.Element {
             '@type': 'BreadcrumbList',
             itemListElement: [
               {'@type': 'ListItem', position: 1, name: 'Home', item: 'https://antseed.com/'},
-              {'@type': 'ListItem', position: 2, name: 'Integrations', item: 'https://antseed.com/integrations'},
+              {'@type': 'ListItem', position: 2, name: 'Integrations', item: 'https://antseed.com/integrations/'},
             ],
           })}
         </script>

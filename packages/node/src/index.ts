@@ -9,6 +9,7 @@ export {
   type BuyerUsageTotals,
   type BuyerUsageChannelPoint,
   type BuyerUsageServicePoint,
+  type BuyerChannelSummary,
 } from './node.js';
 export type { Provider, ProviderStreamCallbacks } from './interfaces/seller-provider.js';
 export {
@@ -21,11 +22,40 @@ export {
   type ModelHealthTarget,
   type ServiceHealthSnapshot,
 } from './health/model-health-checker.js';
+export {
+  GasHealthMonitor,
+  DEFAULT_GAS_CHECK_INTERVAL_MS,
+  DEFAULT_MIN_GAS_BALANCE_WEI,
+  type GasHealthMonitorConfig,
+  type GasHealthEvent,
+  type GasHealthSnapshot,
+} from './health/gas-health-monitor.js';
+// Re-exported so CLI callers can format/parse gas balances without depending
+// on ethers directly.
+export { formatEther, parseEther } from 'ethers';
 export type { Router } from './interfaces/buyer-router.js';
 
 // Types (re-export everything)
 export * from './types/index.js';
 export * from './billing/index.js';
+export { canonicalModelKey, preferredModelDisplayName, sameCanonicalModel } from './model-identity.js';
+export {
+  compareNetworkServiceOfferPrice,
+  selectLowestPricedCanonicalOffers,
+  selectLowestPricedNetworkServiceOffer,
+} from './discovery/service-catalog.js';
+
+// Fault attribution — lets consumers tell a dead peer from a broken buyer.
+export {
+  AntseedRequestError,
+  buyerFault,
+  peerFault,
+  faultAttributionOf,
+  faultCodeOf,
+  type FaultAttribution,
+  type AntseedErrorCode,
+} from './errors.js';
+export { adaptPeerFaultErrorResponse } from '@antseed/buyer-core';
 
 // Submodule re-exports (commonly used)
 export {
@@ -89,6 +119,15 @@ export {
 } from './discovery/verification-links.js';
 export { MetadataServer, type MetadataServerConfig } from './discovery/metadata-server.js';
 export { parsePublicAddress, MAX_PUBLIC_ADDRESS_LENGTH, type ParsedPublicAddress } from './discovery/public-address.js';
+export {
+  buildNetworkServiceOffers,
+  inferServiceProtocol,
+  resolveServiceProtocol,
+  type CatalogServiceCapabilities,
+  type CatalogServiceProtocol,
+  type NetworkServiceCatalogPeer,
+  type NetworkServiceOffer,
+} from './discovery/service-catalog.js';
 export { MeteringStorage } from './metering/storage.js';
 export { BalanceManager } from './payments/balance-manager.js';
 export {
@@ -116,6 +155,8 @@ export {
 export { IdentityClient, type IdentityClientConfig } from './payments/evm/identity-client.js';
 export { StakingClient, type StakingClientConfig } from './payments/evm/staking-client.js';
 export { EmissionsClient, type EmissionsClientConfig, type EmissionsEpochParams } from './payments/evm/emissions-client.js';
+export { RpcHealthMonitor, probeRpcEndpoint } from './payments/rpc-health.js';
+export type { RpcHealthState, RpcHealthStatus, RpcHealthMonitorOptions } from './payments/rpc-health.js';
 export { ANTSTokenClient, type ANTSTokenClientConfig } from './payments/evm/ants-token-client.js';
 export {
   StatsClient,
@@ -220,12 +261,33 @@ export {
   type StreamingResponseAdapter,
 } from './proxy/service-api-adapter.js';
 export { DefaultRouter, type DefaultRouterConfig } from './routing/default-router.js';
+export {
+  DEFAULT_MODEL_ROUTING_PREFERENCES,
+  chooseBestModelRoute,
+  isModelRouteCoolingDown,
+  isModelRouteEligible,
+  isModelRoutePeerAllowed,
+  modelRouteReputationScore,
+  modelRouteTotalPrice,
+  rankModelRoutes,
+  scoreModelRoute,
+  type ModelRouteCandidate,
+  type ModelRoutingPreferences,
+  type ScoredModelRoute,
+} from './routing/model-route-ranking.js';
 
 export type { AntseedPlugin, AntseedProviderPlugin, AntseedRouterPlugin, AntseedVerifierPlugin, Prover, VerifyContext, VerifyResult, ClaimResult, SellerRequest, SellerResponse, PluginConfigKey, ConfigField } from './interfaces/plugin.js'
 export { ANTSEED_ATTEST_PATH } from './interfaces/plugin.js'
 
 // Reputation
 export { UptimeTracker } from './reputation/uptime-tracker.js';
+export {
+  MISSING_CACHED_INPUT_PRICE_REPUTATION_MULTIPLIER,
+  compareEffectiveModelReputation,
+  effectiveModelReputationScore,
+  normalizedModelReputationScore,
+  type ModelReputationSource,
+} from './reputation/model-reputation.js';
 export {
   computeOnChainTrust,
   computeOnChainTrustBreakdown,

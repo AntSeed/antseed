@@ -277,14 +277,16 @@ function copyDepTree(name, parentSourceDir, parentDestDir, topDestRoot, visited)
   if (!EXPLICITLY_BUNDLED_PACKAGES.has(name)) {
     mkdirSync(path.dirname(destDir), { recursive: true });
     rmSync(destDir, { recursive: true, force: true });
-    cpSync(sourceDir, destDir, { recursive: true, dereference: true });
-
-    // Strip nested node_modules from the freshly copied source — we re-place
-    // any conflicting nested deps ourselves at the next recursion level.
-    const nestedNm = path.join(destDir, 'node_modules');
-    if (existsSync(nestedNm)) {
-      rmSync(nestedNm, { recursive: true, force: true });
-    }
+    // Skip the package's nested node_modules during the copy instead of
+    // copying it and deleting it after: we re-place any conflicting nested
+    // deps ourselves at the next recursion level, and dereference: true would
+    // crash on the dangling .bin symlinks pnpm sometimes leaves in there.
+    const nestedNm = path.join(sourceDir, 'node_modules');
+    cpSync(sourceDir, destDir, {
+      recursive: true,
+      dereference: true,
+      filter: (src) => src !== nestedNm,
+    });
   }
 
   for (const depName of Object.keys(pkg.dependencies ?? {})) {

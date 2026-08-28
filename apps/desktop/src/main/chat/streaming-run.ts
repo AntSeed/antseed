@@ -20,7 +20,7 @@ import {
 import type { AssistantMessage, AssistantMessageEvent, Message } from '@mariozechner/pi-ai';
 import { createBrowserPreviewTool, createStartDevServerTool } from './dev-tools.js';
 import { webFetchTool } from './web-fetch.js';
-import { buildAntstationSystemPrompt } from './system-prompt.js';
+import { buildVprSystemPrompt } from './system-prompt.js';
 import {
   classifyChatStreamFailure,
   formatChatStreamStopForLog,
@@ -61,12 +61,18 @@ import {
 } from './message-projection.js';
 import {
   makeProxyService,
+  fetchProxyConversationRoute,
   normalizePaymentBody,
   resolveProxyPort,
   resolveSystemPrompt,
   PROXY_RUNTIME_API_KEY,
 } from './proxy-service.js';
-import { CHAT_AGENT_DIR, extractPeerFromEntries, PiConversationStore } from './conversation-store.js';
+import {
+  CHAT_AGENT_DIR,
+  extractPeerFromEntries,
+  isPersistedPeerBindingPinned,
+  PiConversationStore,
+} from './conversation-store.js';
 import {
   generateConversationTitleWithModel,
   getMessageText,
@@ -199,7 +205,12 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
     const serviceId = normalizeServiceId(serviceOverride || context.model?.modelId);
     const persistedPeer = extractPeerFromEntries(sessionManager);
     const peerOverrideId = normalizePeerId(peerOverride) ?? null;
-    const preferredPeerId = peerOverrideId ?? preferredPeerByConversationId.get(conversationId) ?? persistedPeer?.peerId ?? null;
+    const persistedPinnedPeerId = isPersistedPeerBindingPinned(persistedPeer) ? persistedPeer.peerId : null;
+    const preferredPeerId = peerOverrideId
+      ?? preferredPeerByConversationId.get(conversationId)
+      ?? persistedPeer?.peerId
+      ?? null;
+    const routeMode = peerOverrideId || persistedPinnedPeerId ? 'pinned' : 'auto';
     const persistedPermissionMode: ChatPermissionMode = preferredPeerId
       ? await getPeerPermissionMode(preferredPeerId)
       : 'manual';
@@ -210,7 +221,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
       preferredPeerByConversationId.set(conversationId, preferredPeerId);
       if (peerOverrideId && persistedPeer?.peerId !== peerOverrideId) {
         const peerLabel = getServiceCatalogEntries().find((entry) => entry.peerId === peerOverrideId)?.peerLabel;
-        void store.setPeer(conversationId, peerOverrideId, peerLabel);
+        void store.setPeer(conversationId, peerOverrideId, peerLabel, 'pinned');
       }
     }
     // Catalog entry for this (service, peer) pair drives both the API
@@ -238,7 +249,14 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
     // and another via openai-responses, the map can return the wrong
     // protocol for the peer we're actually pinned to. Fall back to the
     // map only when we have no catalog row to read from.
-    const protocol = catalogEntry?.protocol ?? await resolveProtocolForSend(serviceId);
+    const advertisedProtocol = catalogEntry?.protocol;
+    if (advertisedProtocol === 'openai-images') {
+      return {
+        ok: false,
+        error: `Service "${serviceId}" generates images and cannot be used for text chat. Select a text-capable model.`,
+      };
+    }
+    const protocol: ChatServiceProtocol = advertisedProtocol ?? await resolveProtocolForSend(serviceId);
     const supportsMultimodal = catalogEntry?.categories?.includes('multimodal') ?? false;
     const droppedImageCount = supportsMultimodal ? 0 : attachmentImages.length;
     if (droppedImageCount > 0) {
@@ -256,6 +274,8 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
       preferredPeerId,
       null,
       supportsMultimodal,
+      routeMode,
+      conversationId,
     );
 
     const authStorage = AuthStorage.inMemory();
@@ -265,7 +285,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
     // Pass the system prompt via resourceLoader so it is applied on every turn.
     // (agent-session rebuilds _baseSystemPrompt from the loader each turn, so a
     // one-shot session.agent.setSystemPrompt call would be overridden.)
-    // Priority: user override (env/config) → AntStation default.
+    // Priority: user override (env/config) → VPR default.
     const userSystemPrompt = await resolveSystemPrompt(configPath);
     const sessionWorkspaceDir = sessionManager.getCwd()?.trim();
     const chatWorkspaceDir = sessionWorkspaceDir && existsSync(sessionWorkspaceDir)
@@ -332,7 +352,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
       agentDir: CHAT_AGENT_DIR,
       settingsManager,
       extensionFactories: [toolApprovalExtension],
-      systemPrompt: buildAntstationSystemPrompt(userSystemPrompt, chatWorkspaceDir, permissionMode),
+      systemPrompt: buildVprSystemPrompt(userSystemPrompt, chatWorkspaceDir, permissionMode),
     });
     await resourceLoader.reload();
 
@@ -596,7 +616,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
           if (message.stopReason === 'error' || message.stopReason === 'aborted') {
             terminalStreamError = errorMsg || rawContent || (message.stopReason === 'aborted'
               ? 'Request aborted'
-              : 'The stream stopped before completion.');
+              : 'The request ended unexpectedly.');
             terminalStreamFailure = classifyChatStreamFailure({
               error: message,
               message: terminalStreamError,
@@ -713,10 +733,22 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
         }
       }
 
-      if (pendingAssistantMessage) {
+      const completedAssistantMessage = pendingAssistantMessage as AiChatMessage | null;
+      if (completedAssistantMessage) {
+        const routed = await fetchProxyConversationRoute(proxyPort, conversationId);
+        if (routed?.peerId) {
+          completedAssistantMessage.meta = {
+            ...(completedAssistantMessage.meta ?? {}),
+            peerId: routed.peerId,
+            service: routed.service,
+          };
+          preferredPeerByConversationId.set(conversationId, routed.peerId);
+          const peerLabel = getServiceCatalogEntries().find((entry) => entry.peerId === routed.peerId)?.peerLabel;
+          await store.setPeer(conversationId, routed.peerId, peerLabel, routeMode);
+        }
         sendToRenderer('chat:ai-done', {
           conversationId,
-          message: pendingAssistantMessage,
+          message: completedAssistantMessage,
         });
         pendingAssistantMessage = null;
       }

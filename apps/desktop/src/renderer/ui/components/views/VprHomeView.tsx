@@ -2,19 +2,20 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
   ArrowDown01Icon,
+  ArrowReloadHorizontalIcon,
   ArrowRight02Icon,
   ArrowUp02Icon,
-    ArrowUpRight01Icon,
-    Cancel01Icon,
-    PowerIcon,
-    ArrowReloadHorizontalIcon,
-    Tick02Icon,
+  ArrowUpRight01Icon,
+  Cancel01Icon,
+  PowerIcon,
+  SparklesIcon,
+  Tick02Icon,
 } from '@hugeicons/core-free-icons';
 import type { VprModelCatalogEntry } from '../../../core/state';
 import { getUiStateRef } from '../../../core/store';
 import { activeProfilesFromRuntimeState } from '../../../modules/routing/tools';
 import { pinnedSellerLabel, pinnedSellerLabels } from '../../../modules/catalog/view-models';
-import { findCatalogEntry } from '../../../modules/catalog/model-catalog';
+import { findCatalogEntry, sortFreeModelsByPriority } from '../../../modules/catalog/model-catalog';
 import { computeMeasuredSavings, formatSavedUsd } from '../../../modules/catalog/measured-savings';
 import { ensureOpenRouterPrices, getCachedOpenRouterPrices } from '../../../modules/catalog/openrouter-baseline';
 import { displayModelLabel } from '../../../modules/catalog/model-identity';
@@ -29,9 +30,11 @@ import { buyerConversationsResource, systemProxyResource } from '../../../module
 import { useCachedResource } from '../../../modules/app/cached-resource';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
+import { useEverFunded } from '../../hooks/useEverFunded';
 import type { ViewName } from '../../types';
 import { OverlayScrollArea } from '../OverlayScrollArea';
-import { BrandIcon } from '../brand/BrandIcon';
+import { BottomNotice } from '../BottomNotice';
+import { BrandIcon, isThemeAwareAppBrand, resolveBrandKey } from '../brand/BrandIcon';
 import { VprModelRowList } from '../vpr/VprModelRows';
 import { hasSeenChats, rememberSeenChats, VprRecentChatsCard } from '../vpr/VprRecentChats';
 import { conversationRoutedPeerName } from '../../../modules/routing/conversations';
@@ -41,12 +44,15 @@ import styles from './VprHomeView.module.scss';
 type Props = { onSelectView?: (view: ViewName) => void };
 
 const ADD_BALANCE_DISMISSED_KEY = 'antseed.desktop.vpr.addBalanceDismissed';
+const RESTART_NOTICE_DISMISSED_KEY = 'antseed.desktop.vpr.restartNoticeDismissed';
 const MODEL_CHANGE_NOTICE_MS = 4_000;
 /* Rows in the model dropdown (Figma) — the full catalog lives on Models. */
 const DROPDOWN_MODEL_COUNT = 5;
+/* Free rows leading the dropdown before the first deposit ever lands. */
+const DROPDOWN_FREE_COUNT = 3;
 
 function isFreeEntry(entry: VprModelCatalogEntry | undefined): boolean {
-  if (!entry) return false;
+  if (!entry || entry.kind === 'image') return false;
   const { minInputUsdPerMillion: i, minOutputUsdPerMillion: o } = entry;
   return i !== null && o !== null && i <= 0 && o <= 0;
 }
@@ -58,11 +64,15 @@ export function VprHomeView({ onSelectView }: Props) {
     selection: state.vprRouteSelection,
     modelPins: state.vprModelPins,
     discoverRows: state.vprRoutableRows,
+    defaultProvisional: state.vprDefaultModelProvisional,
     processes: state.processes,
     connectBadge: state.connectBadge,
     usage: state.creditsBuyerUsage,
     floatOpen: state.vprFloatOpen,
     creditsSpendable: state.creditsSpendableUsdc,
+    creditsTotalOwned: state.creditsTotalOwnedUsdc,
+    creditsChannels: state.creditsChannels,
+    reminderOffer: state.reminderOffer,
     networkAlert: state.networkAlert,
     // Unfiltered discover list, for routed-peer name resolution.
     allRows: state.discoverRows,
@@ -82,6 +92,16 @@ export function VprHomeView({ onSelectView }: Props) {
       return false;
     }
   });
+  const [restartNoticeDismissed, setRestartNoticeDismissed] = useState(() => {
+    try {
+      return sessionStorage.getItem(RESTART_NOTICE_DISMISSED_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  // Gates the model dropdown lineup — free-only before funding, the regular
+  // popular lineup permanently after (even if the balance drains to zero).
+  const everFunded = useEverFunded();
 
   const runtimeOn = snap.processes.some((process) => process.mode === 'connect' && process.running === true);
 
@@ -125,10 +145,11 @@ export function VprHomeView({ onSelectView }: Props) {
   // (average best-vs-worst peer spread) until priced usage exists.
   const [referencePrices, setReferencePrices] = useState(getCachedOpenRouterPrices);
   useEffect(() => {
-    if (referencePrices) return;
+    if (referencePrices) return undefined;
     let cancelled = false;
     void ensureOpenRouterPrices().then((map) => {
-      if (!cancelled && map) setReferencePrices(map);
+      if (cancelled) return;
+      if (map) setReferencePrices(map);
     });
     return () => { cancelled = true; };
   }, [referencePrices]);
@@ -163,17 +184,23 @@ export function VprHomeView({ onSelectView }: Props) {
     if (modelChangeNoticeTimer.current !== null) window.clearTimeout(modelChangeNoticeTimer.current);
   }, []);
 
-  function selectModelForNewChats(provider: string, serviceId: string): void {
-    const entry = findCatalogEntry(snap.catalog, provider, serviceId);
-    const label = entry?.label ?? displayModelLabel(serviceId);
-    setModelMenuOpen(false);
-    actions.selectVprModel(provider, serviceId);
+  function applyModelForNewChats(entry: VprModelCatalogEntry): void {
+    const label = entry.label ?? displayModelLabel(entry.serviceId);
+    actions.selectVprModel(entry.provider, entry.serviceId);
     setModelChangeNotice(`${label} selected for new chats.\nExisting chats are unchanged.`);
     if (modelChangeNoticeTimer.current !== null) window.clearTimeout(modelChangeNoticeTimer.current);
     modelChangeNoticeTimer.current = window.setTimeout(() => {
       setModelChangeNotice(null);
       modelChangeNoticeTimer.current = null;
     }, MODEL_CHANGE_NOTICE_MS);
+  }
+
+  function selectModelForNewChats(provider: string, serviceId: string): void {
+    const entry = findCatalogEntry(snap.catalog, provider, serviceId);
+    if (!entry) return;
+    setModelMenuOpen(false);
+    if (entry.kind === 'image') return;
+    applyModelForNewChats(entry);
   }
 
   // Favorites are starred on the model pages (localStorage); re-read on each
@@ -199,15 +226,33 @@ export function VprHomeView({ onSelectView }: Props) {
   // whole list is capped — favorites included — so the menu can't outgrow the
   // hero; everything past the cap lives behind "All models".
   const dropdownEntries = useMemo(() => {
-    const favoriteEntries = selectFavoriteVprCatalog(snap.catalog, favorites);
-    const recommended = selectRecommendedVprCatalog(snap.catalog)
+    const textCatalog = snap.catalog.filter((entry) => entry.kind === 'text');
+    const favoriteEntries = selectFavoriteVprCatalog(textCatalog, favorites);
+    const recommended = selectRecommendedVprCatalog(textCatalog)
       .filter((entry) => !favorites.has(catalogEntryKey(entry)));
-    const top = [...favoriteEntries, ...recommended].slice(0, DROPDOWN_MODEL_COUNT);
-    if (selectedEntry && !top.includes(selectedEntry)) {
-      return [selectedEntry, ...top.slice(0, DROPDOWN_MODEL_COUNT - 1)];
+    // Until the first deposit ever lands, the dropdown leads with the three
+    // most available trusted free models — paid rows would just 402 for an
+    // unfunded user — and the remaining rows come from the regular popular
+    // lineup. The first deposit switches to that lineup alone, for good.
+    // (While discovery is still cold there are no eligible free offers yet;
+    // the hero shows "Finding free peers…" and the lineup fills the gap.)
+    const freeLead = everFunded
+      ? []
+      : sortFreeModelsByPriority(textCatalog.filter((entry) => entry.hasEligibleFreeSeller))
+          .slice(0, DROPDOWN_FREE_COUNT);
+    const top: VprModelCatalogEntry[] = [];
+    for (const entry of [...favoriteEntries, ...freeLead, ...recommended]) {
+      if (top.length >= DROPDOWN_MODEL_COUNT) break;
+      if (!top.includes(entry)) top.push(entry);
+    }
+    // The selected model leads, matching the Models page — hoisted when it is
+    // already listed, prepended when it isn't.
+    if (selectedEntry?.kind === 'text' && top[0] !== selectedEntry) {
+      const rest = top.filter((entry) => entry !== selectedEntry);
+      return [selectedEntry, ...rest.slice(0, DROPDOWN_MODEL_COUNT - 1)];
     }
     return top;
-  }, [favorites, selectedEntry, snap.catalog]);
+  }, [everFunded, favorites, selectedEntry, snap.catalog]);
 
   // Every listed model that remembers a pin names its seller, not just the
   // selected one — pins survive switching models.
@@ -246,6 +291,13 @@ export function VprHomeView({ onSelectView }: Props) {
     } catch { /* private mode */ }
   }
 
+  function dismissRestartNotice(): void {
+    setRestartNoticeDismissed(true);
+    try {
+      sessionStorage.setItem(RESTART_NOTICE_DISMISSED_KEY, '1');
+    } catch { /* private mode */ }
+  }
+
   // Visual-only: with the network unreachable the runtime is still running,
   // but showing the hero lit would promise routing that can't happen.
   const networkDown = snap.networkAlert !== 'none';
@@ -258,6 +310,8 @@ export function VprHomeView({ onSelectView }: Props) {
   const creditsSpendableNum = Number(snap.creditsSpendable);
   const showAddBalance = !addBalanceDismissed
     && !(Number.isFinite(creditsSpendableNum) && creditsSpendableNum > 5);
+  const hasDeposited = Number(snap.creditsTotalOwned) > 0 || snap.creditsChannels.length > 0;
+  const reminderOffer = hasDeposited ? null : snap.reminderOffer;
 
   function submitDraft(): void {
     const text = draft.trim();
@@ -285,6 +339,53 @@ export function VprHomeView({ onSelectView }: Props) {
       onOpen={() => onSelectView?.('chats')}
     />
   );
+
+  const reminderCard = reminderOffer ? (
+    <section className={styles.reminderCard} aria-labelledby="reminder-offer-title">
+      <div className={styles.reminderContent}>
+        <div className={styles.reminderHeadline}>
+          <span className={styles.reminderIcon} aria-hidden="true">
+            <HugeiconsIcon icon={SparklesIcon} size={26} strokeWidth={2} />
+          </span>
+          <div className={styles.reminderHeadlineText}>
+            <strong id="reminder-offer-title" className={styles.reminderTitle}>
+              {reminderOffer.variant === 'd1'
+                ? `Your first day cost you $0 for ${reminderOffer.requestsCount} requests worth $${reminderOffer.retrospectiveUsd}.`
+                : `So far, you’ve paid $0 for ${reminderOffer.requestsCount} requests worth $${reminderOffer.retrospectiveUsd}.`}
+            </strong>
+          </div>
+        </div>
+
+        <div className={styles.reminderProof}>
+          <strong>
+            Your $10 can turn into <em>~${Math.round(Number(
+              reminderOffer.prospectiveUsd,
+            )).toLocaleString('en-US')}</em> in frontier-model value.
+          </strong>
+        </div>
+
+        <div className={styles.reminderActions}>
+          <button
+            type="button"
+            className={styles.reminderPrimary}
+            onClick={() => {
+              actions.acceptReminderHome();
+              onSelectView?.('deposit');
+            }}
+          >
+            Deposit $10
+          </button>
+          <button
+            type="button"
+            className={styles.reminderSecondary}
+            onClick={actions.dismissReminderHome}
+          >
+            Not now
+          </button>
+        </div>
+      </div>
+    </section>
+  ) : null;
 
   return (
     <section className={`view view-vpr-home ${styles.view}`} role="tabpanel">
@@ -344,6 +445,12 @@ export function VprHomeView({ onSelectView }: Props) {
                       ?? (selectedModel ? displayModelLabel(selectedModel.serviceId, selectedModel.label) : 'None selected')}
                   </span>
                   {modelIsFree && <span className={styles.freeTag}>Free</span>}
+                  {/* First-use warm-up: the default is provisional while no
+                      trusted free seller is discovered yet — say so instead of
+                      presenting the paid fallback as a settled choice. */}
+                  {!modelIsFree && snap.defaultProvisional && (
+                    <span className={styles.searchingTag}>Finding free peers…</span>
+                  )}
                 </span>
                 <span className={styles.modelCardCaption}>
                   <span>Model for new chats</span>
@@ -407,16 +514,27 @@ export function VprHomeView({ onSelectView }: Props) {
           <div className={styles.connectedGroup}>
             {/* Connected apps live on the Apps page — home leads with the
                 chats themselves. */}
-            {restartProfiles.length > 0 ? (
-              <button type="button" className={styles.restartBanner} onClick={() => onSelectView?.('tools')}>
-                <HugeiconsIcon icon={ArrowReloadHorizontalIcon} size={18} strokeWidth={2} />
-                <span>
-                  <strong>{restartProfiles.length === 1 ? restartProfiles[0]!.displayName : `${restartProfiles.length} apps`} need a restart</strong>
-                  <small>Restart to apply the VPR connection.</small>
-                </span>
-                <HugeiconsIcon icon={ArrowRight02Icon} size={16} strokeWidth={2} />
-              </button>
+            {restartProfiles.length > 0 && !restartNoticeDismissed ? (
+              <div className={styles.restartBanner}>
+                <button type="button" className={styles.restartBannerBody} onClick={() => onSelectView?.('tools')}>
+                  <HugeiconsIcon icon={ArrowReloadHorizontalIcon} size={18} strokeWidth={2} />
+                  <span>
+                    <strong>{restartProfiles.length === 1 ? restartProfiles[0]!.displayName : `${restartProfiles.length} apps`} need a restart</strong>
+                    <small>Restart to apply the VPR connection.</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={styles.restartBannerClose}
+                  onClick={dismissRestartNotice}
+                  aria-label="Dismiss app restart notice"
+                >
+                  <HugeiconsIcon icon={Cancel01Icon} size={16} strokeWidth={2} />
+                </button>
+              </div>
             ) : null}
+
+            {reminderCard}
 
             {recentChats}
 
@@ -425,7 +543,7 @@ export function VprHomeView({ onSelectView }: Props) {
               <HugeiconsIcon icon={ArrowRight02Icon} size={16} strokeWidth={2} />
             </button>
 
-            {showAddBalance && (
+            {showAddBalance && !snap.reminderOffer ? (
               <div className={styles.balanceBanner}>
                 <button
                   type="button"
@@ -446,7 +564,7 @@ export function VprHomeView({ onSelectView }: Props) {
                   <HugeiconsIcon icon={Cancel01Icon} size={16} strokeWidth={2} />
                 </button>
               </div>
-            )}
+            ) : null}
 
             <div className={styles.usageGroup}>
               <p className={styles.usageLabel}>Usage</p>
@@ -463,7 +581,7 @@ export function VprHomeView({ onSelectView }: Props) {
                       <span
                         className={styles.savingValue}
                         title={measuredSavings
-                          ? `Measured vs retail: paid $${measuredSavings.actualUsd.toFixed(2)} for usage worth $${measuredSavings.baselineUsd.toFixed(2)} at OpenRouter prices`
+                          ? `Measured vs retail: paid $${measuredSavings.actualUsd.toFixed(2)} for usage worth $${measuredSavings.baselineUsd.toFixed(2)} at retail reference prices`
                           : 'Estimated from current network price spread'}
                       >
                         {measuredSavings
@@ -536,7 +654,7 @@ export function VprHomeView({ onSelectView }: Props) {
                   title={`Connect ${profile.displayName}`}
                 >
                   <span className={styles.toolIdentity}>
-                    {profile.iconDataUri
+                    {profile.iconDataUri && !isThemeAwareAppBrand(resolveBrandKey(profile.name, profile.displayName))
                       ? <img src={profile.iconDataUri} alt="" className={styles.appIcon} />
                       : <BrandIcon name={profile.name} hints={[profile.displayName]} size={20} />}
                     <span className={styles.toolLabel}>{profile.displayName}</span>
@@ -550,6 +668,8 @@ export function VprHomeView({ onSelectView }: Props) {
           </div>
           )}
 
+          {reminderCard}
+
           {recentChats}
 
           <button type="button" className={styles.moreApps} onClick={() => onSelectView?.('tools')}>
@@ -561,20 +681,15 @@ export function VprHomeView({ onSelectView }: Props) {
       </div>
       </OverlayScrollArea>
       {modelChangeNotice ? (
-        <div className={styles.modelChangeBanner} role="status" aria-live="polite">
-          <span className={styles.modelChangeBannerIcon} aria-hidden="true">
-            <HugeiconsIcon icon={Tick02Icon} size={16} strokeWidth={2.2} />
-          </span>
-          <span className={styles.modelChangeBannerText}>{modelChangeNotice}</span>
-          <button
-            type="button"
-            className={styles.modelChangeBannerClose}
-            aria-label="Dismiss model change confirmation"
-            onClick={() => setModelChangeNotice(null)}
-          >
-            <HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={2} />
-          </button>
-        </div>
+        <BottomNotice
+          ariaLive="polite"
+          body={modelChangeNotice}
+          dismissIcon={<HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={2} />}
+          dismissLabel="Dismiss model change confirmation"
+          icon={<HugeiconsIcon icon={Tick02Icon} size={16} strokeWidth={2.2} />}
+          layout="toast"
+          onDismiss={() => setModelChangeNotice(null)}
+        />
       ) : null}
     </section>
   );

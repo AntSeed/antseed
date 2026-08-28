@@ -3,8 +3,6 @@ import type { KeyboardEvent } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
   Add01Icon,
-  ArrowLeft03Icon,
-  ArrowRight03Icon,
   ArrowUp02Icon,
   ArrowRight01Icon,
   ArrowDown02Icon,
@@ -12,17 +10,22 @@ import {
   Cancel01Icon,
   Folder01Icon,
   Mic01Icon,
+  PanelLeftCloseIcon,
+  PanelLeftOpenIcon,
   Search01Icon,
   SecurityWarningIcon,
   Shield01Icon
 } from '@hugeicons/core-free-icons';
 import { displayModelLabel } from '../../../modules/catalog/model-identity';
+import { findCatalogEntry } from '../../../modules/catalog/model-catalog';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { useRetainedState } from '../../hooks/useRetainedState';
 import { ChatBubble } from '../chat/ChatBubble';
+import { isImageRequestPhase } from '../chat/chat-shared';
 import { hasSearchPhraseMatch, isToolResultOnlyMessage } from '../chat/chat-utils.js';
 import { WalkingAnt } from '../chat/WalkingAnt';
+import { ImageGenerationPlaceholder } from '../chat/ImageGenerationPlaceholder';
 import { SessionApprovalCard } from '../chat/SessionApprovalCard';
 import { ToolApprovalCard } from '../chat/ToolApprovalCard';
 import { LowBalanceWarning } from '../chat/LowBalanceWarning';
@@ -37,7 +40,7 @@ import type { ChatPermissionMode, RawChatAttachment } from '../../../types/bridg
 import type { VprModelCatalogEntry } from '../../../core/state';
 import { getPeerDisplayName } from '../../../core/peer-utils';
 import { getUiStateRef, notifyUiStateChangedSync } from '../../../core/store';
-import { AntStationStackedLogo } from '../AntStationLogo';
+import { VprStackedLogo } from '../VprLogo';
 import { cancelVoiceRecording, startVoiceRecording, stopVoiceRecording } from '../../lib/voice-recorder';
 import styles from './ChatView.module.scss';
 import bubbleStyles from '../chat/ChatBubble.module.scss';
@@ -169,6 +172,7 @@ type PendingDraft = {
   conversationId: string | null;
   text: string;
   attachments: RawChatAttachment[];
+  mode: 'text' | 'image';
 };
 
 type ChatViewCache = {
@@ -238,6 +242,7 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     chatConversationsLoaded: state.chatConversationsLoaded,
     chatDiscoverRowsLoaded: state.chatDiscoverRowsLoaded,
     chatError: state.chatError,
+    chatRoutingNotice: state.chatRoutingNotice,
     chatInputDisabled: state.chatInputDisabled,
     chatLowBalanceWarning: state.chatLowBalanceWarning,
     chatMessages: state.chatMessages,
@@ -268,6 +273,7 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     discoverRows: state.discoverRows,
     vprModelCatalog: state.vprModelCatalog,
     vprRouteSelection: state.vprRouteSelection,
+    chatImageRouteSelection: state.chatImageRouteSelection,
   }), shallowEqual);
   const actions = useActions();
   const [inputValue, setInputValue] = useRetainedState(chatViewCache, 'inputValue');
@@ -508,6 +514,10 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     typeof activeConversationSummary?.peerId === 'string'
       ? activeConversationSummary.peerId.trim()
       : '';
+  const activeConversationResponsePeerId =
+    typeof activeConversationSummary?.lastResponsePeerId === 'string'
+      ? activeConversationSummary.lastResponsePeerId.trim()
+      : '';
   const activeConversationServiceId =
     typeof activeConversationSummary?.service === 'string'
       ? activeConversationSummary.service.trim()
@@ -520,10 +530,16 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     typeof activeConversationSummary?.peerLabel === 'string'
       ? activeConversationSummary.peerLabel.trim()
       : '';
+  const activeConversationDisplayPeerId = activeConversationResponsePeerId || activeConversationPeerId;
+  const activeConversationDisplayPeerRow = snap.discoverRows.find(
+    (row) => row.peerId === activeConversationDisplayPeerId,
+  );
   const activeConversationPeerName =
-    getPeerDisplayName(activeConversationPeerLabel)
+    activeConversationDisplayPeerRow?.peerDisplayName
+    || getPeerDisplayName(activeConversationDisplayPeerRow?.peerLabel || activeConversationPeerLabel)
+    || activeConversationDisplayPeerRow?.peerLabel
     || activeConversationPeerLabel
-    || (activeConversationPeerId ? activeConversationPeerId.slice(0, 8) : '');
+    || (activeConversationDisplayPeerId ? activeConversationDisplayPeerId.slice(0, 8) : '');
   const openingActiveConversation = Boolean(
     snap.chatOpeningConversationId
     && snap.chatOpeningConversationId === snap.chatActiveConversation,
@@ -548,22 +564,32 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     ? activeConversationServiceId || currentServiceOption?.label || 'Loading chat...'
     : currentServiceOption?.label || activeConversationServiceId || 'Select a model');
 
-  // The model shown in the header dropdown: an open conversation is bound to
-  // its own model; otherwise the VPR route selection (or the chat option the
-  // selector currently points at) decides.
-  const selectedModelProvider = snap.chatActiveConversation
-    ? (activeConversationProvider || currentServiceOption?.provider || '')
-    : (snap.vprRouteSelection.model?.provider || currentServiceOption?.provider || '');
-  const selectedModelServiceId = snap.chatActiveConversation
-    ? (activeConversationServiceId || currentServiceOption?.id || '')
-    : (snap.vprRouteSelection.model?.serviceId || currentServiceOption?.id || '');
+  const selectedCatalogEntry = useMemo(
+    () => findCatalogEntry(snap.vprModelCatalog, snap.chatImageRouteSelection?.model?.provider ?? '', snap.chatImageRouteSelection?.model?.serviceId ?? ''),
+    [snap.chatImageRouteSelection?.model, snap.vprModelCatalog],
+  );
+  const imageMode = selectedCatalogEntry?.kind === 'image';
+  // Text conversations stay bound to their text model, but an explicit image
+  // selection becomes the visible composer mode until the user picks text
+  // again. This makes the header accurately describe what Send will do.
+  const selectedModelProvider = imageMode
+    ? (snap.chatImageRouteSelection?.model?.provider || '')
+    : snap.chatActiveConversation
+      ? (activeConversationProvider || currentServiceOption?.provider || '')
+      : (snap.vprRouteSelection.model?.provider || currentServiceOption?.provider || '');
+  const selectedModelServiceId = imageMode
+    ? (snap.chatImageRouteSelection?.model?.serviceId || '')
+    : snap.chatActiveConversation
+      ? (activeConversationServiceId || currentServiceOption?.id || '')
+      : (snap.vprRouteSelection.model?.serviceId || currentServiceOption?.id || '');
   const supportsMultimodal = currentServiceOption?.categories?.includes('multimodal') ?? false;
   const hasAttachedImages = useMemo(
     () => attachedFiles.some((file) => isImageAttachmentLike(file.name, file.mimeType)),
     [attachedFiles],
   );
-  const peerDisplayName =
-    currentPeerNotFound
+  const peerDisplayName = snap.chatActiveConversation && activeConversationResponsePeerId
+    ? activeConversationPeerName
+    : currentPeerNotFound
       ? ''
       : openingActiveConversation
         ? activeConversationPeerName
@@ -580,7 +606,7 @@ export function ChatView({ onSelectView }: ChatViewProps) {
   // in so switching chats while a response streams cannot send the draft in the
   // newly-opened chat.
   useEffect(() => {
-    if (snap.chatInputDisabled || currentPeerNotFound) return;
+    if (snap.chatInputDisabled || (currentPeerNotFound && !imageMode)) return;
     // preventScroll: this runs on mount, while the view-slide transition still
     // has the pane translated off-screen. A plain focus() makes Chromium
     // scroll the overflow-hidden ancestors to reveal the input, visibly
@@ -590,12 +616,14 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     const head = activePendingQueue[0];
     if (!head) return;
     setPendingQueue((prev) => prev.filter((item) => item.id !== head.id));
-    if (head.conversationId) {
+    if (head.mode === 'image') {
+      actions.generateImage(head.text);
+    } else if (head.conversationId) {
       actions.sendMessageToConversation(head.conversationId, head.text, head.attachments);
     } else {
       actions.sendMessage(head.text, head.attachments);
     }
-  }, [snap.chatInputDisabled, activePendingQueue, actions, currentPeerNotFound]);
+  }, [snap.chatInputDisabled, activePendingQueue, actions, currentPeerNotFound, imageMode]);
 
   // --- Divider drag (pointer capture — no orphaned listeners) ---
   const handleDividerPointerDown = useCallback((e: React.PointerEvent) => {
@@ -767,7 +795,7 @@ export function ChatView({ onSelectView }: ChatViewProps) {
   const handleSend = useCallback(() => {
     const text = inputValue.trim();
     if (!text && attachedFiles.length === 0) return;
-    if (currentPeerNotFound) return;
+    if (currentPeerNotFound && !imageMode) return;
     // If the current turn is still streaming, park the draft as a pending
     // card above the composer and clear the input so the user can keep
     // typing the next one. The disabled→enabled effect flushes the queue
@@ -779,14 +807,15 @@ export function ChatView({ onSelectView }: ChatViewProps) {
           : `pending-${String(Date.now())}-${String(Math.random())}`;
       setPendingQueue((prev) => [
         ...prev,
-        { id, conversationId: snap.chatActiveConversation, text, attachments: attachedFiles },
+        { id, conversationId: snap.chatActiveConversation, text, attachments: attachedFiles, mode: imageMode ? 'image' : 'text' },
       ]);
       resetComposer();
       return;
     }
 
     if (
-      lowReputationPeer
+      !imageMode
+      && lowReputationPeer
       && visibleMessages.length === 0
       && !approvedLowReputationPeersRef.current.has(lowReputationPeer.peerId)
     ) {
@@ -797,9 +826,13 @@ export function ChatView({ onSelectView }: ChatViewProps) {
 
     const filesToSend = attachedFiles;
     resetComposer();
-    actions.sendMessage(text, filesToSend);
+    if (imageMode) {
+      actions.generateImage(text);
+    } else {
+      actions.sendMessage(text, filesToSend);
+    }
     scrollChatToBottom('smooth');
-  }, [inputValue, attachedFiles, actions, snap.chatInputDisabled, snap.chatActiveConversation, resetComposer, lowReputationPeer, visibleMessages.length, currentPeerNotFound]);
+  }, [inputValue, attachedFiles, actions, snap.chatInputDisabled, snap.chatActiveConversation, resetComposer, lowReputationPeer, visibleMessages.length, currentPeerNotFound, imageMode]);
 
   const handleLowReputationContinue = useCallback(() => {
     if (lowReputationPeer) {
@@ -847,6 +880,10 @@ export function ChatView({ onSelectView }: ChatViewProps) {
   }, []);
 
   const attachFiles = useCallback(async (files: FileList | File[]) => {
+    if (imageMode) {
+      setAttachmentError('Image generation currently accepts a text prompt only.');
+      return;
+    }
     const incoming = Array.from(files);
     if (incoming.length === 0) return;
     const accepted: File[] = [];
@@ -891,15 +928,21 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     } catch (error) {
       setAttachmentError(error instanceof Error ? error.message : String(error));
     }
-  }, [attachedFiles, readRawAttachment, supportsMultimodal]);
+  }, [attachedFiles, readRawAttachment, supportsMultimodal, imageMode]);
 
   useEffect(() => {
+    if (imageMode) {
+      setAttachmentWarning(attachedFiles.length > 0
+        ? 'Attachments are not used for image generation. Remove them or select a text model to send them.'
+        : null);
+      return;
+    }
     if (supportsMultimodal || !hasAttachedImages) {
       setAttachmentWarning(null);
       return;
     }
     setAttachmentWarning("Selected model doesn't support images. Attached images will be omitted when you send this message.");
-  }, [supportsMultimodal, hasAttachedImages]);
+  }, [attachedFiles.length, hasAttachedImages, imageMode, supportsMultimodal]);
 
   useEffect(() => {
     if (supportsMultimodal && attachmentError?.includes("doesn't support images")) {
@@ -934,26 +977,26 @@ export function ChatView({ onSelectView }: ChatViewProps) {
   }, [attachFiles]);
 
   const handleFileDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    if (currentPeerNotFound) return;
+    if (currentPeerNotFound || imageMode) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     setIsDragOver(true);
-  }, [currentPeerNotFound]);
+  }, [currentPeerNotFound, imageMode]);
 
   const handleFileDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    if (currentPeerNotFound) return;
+    if (currentPeerNotFound || imageMode) return;
     e.preventDefault();
     if (!e.currentTarget.contains(e.relatedTarget as Node)) {
       setIsDragOver(false);
     }
-  }, [currentPeerNotFound]);
+  }, [currentPeerNotFound, imageMode]);
 
   const handleFileDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (currentPeerNotFound || imageMode) return;
     e.preventDefault();
     setIsDragOver(false);
-    if (currentPeerNotFound) return;
     if (e.dataTransfer.files.length > 0) void attachFiles(e.dataTransfer.files);
-  }, [attachFiles, currentPeerNotFound]);
+  }, [attachFiles, currentPeerNotFound, imageMode]);
 
 
   const handleInput = useCallback(() => {
@@ -1076,8 +1119,11 @@ export function ChatView({ onSelectView }: ChatViewProps) {
     snap.chatSendingConversationId === snap.chatActiveConversation ||
     activeConversationIsSending
   );
-  const chatComposerDisabled = currentPeerNotFound;
-  const chatSendDisabled = currentPeerNotFound || (snap.chatSendDisabled && attachedFiles.length === 0);
+  const imageRequestInProgress = showThinkingIndicator && isImageRequestPhase(snap.chatThinkingPhase);
+  const imageUiMode = imageMode || imageRequestInProgress;
+  const chatComposerDisabled = currentPeerNotFound && !imageMode;
+  const chatSendDisabled = chatComposerDisabled
+    || (imageMode ? snap.chatSendDisabled || inputValue.trim().length === 0 : snap.chatSendDisabled && attachedFiles.length === 0);
 
   const workspacePath = snap.chatWorkspacePath || snap.chatWorkspaceDefaultPath;
   const workspaceLabel = getPathEnding(workspacePath);
@@ -1105,28 +1151,30 @@ export function ChatView({ onSelectView }: ChatViewProps) {
             type="button"
             className={styles.panelToggle}
             onClick={handleTogglePanelExpanded}
-            title={snap.chatPanelExpanded ? 'Collapse to the thin view' : 'Expand to show conversations'}
-            aria-label={snap.chatPanelExpanded ? 'Collapse to the thin view' : 'Expand to show conversations'}
+            title={snap.chatPanelExpanded ? 'Hide chats' : 'View chats'}
+            aria-label={snap.chatPanelExpanded ? 'Hide chats' : 'View chats'}
             aria-pressed={snap.chatPanelExpanded}
           >
             <HugeiconsIcon
-              icon={snap.chatPanelExpanded ? ArrowLeft03Icon : ArrowRight03Icon}
-              size={16}
+              icon={snap.chatPanelExpanded ? PanelLeftOpenIcon : PanelLeftCloseIcon}
+              size={17}
               strokeWidth={1.8}
             />
+            <span>{snap.chatPanelExpanded ? 'Hide chats' : 'View chats'}</span>
           </button>
           <div className={styles.serviceSwitcherAnchor}>
             <VprModelDropdown
               catalog={snap.vprModelCatalog}
+              kind={imageUiMode ? 'image' : 'text'}
               selectedProvider={selectedModelProvider}
               selectedServiceId={selectedModelServiceId}
               fallbackLabel={currentServiceLabel}
-              disabled={snap.chatInputDisabled || snap.chatSending}
+              disabled={(snap.chatInputDisabled || snap.chatSending) && !imageRequestInProgress}
               onSelect={handleModelSwitch}
               onBrowseAll={() => onSelectView?.('explore')}
             />
           </div>
-          {currentPeerNotFound && (
+          {currentPeerNotFound && !imageMode && (
             <span className={styles.headerLabelGroup}>
               <span className={styles.serviceLabel}>Peer was not found</span>
             </span>
@@ -1250,7 +1298,7 @@ export function ChatView({ onSelectView }: ChatViewProps) {
           <div className={styles.chatMessages} ref={scrollRef} data-chat-scroll>
             {showWelcome ? (
               <div className={styles.chatWelcome}>
-                <AntStationStackedLogo height={72} />
+                <VprStackedLogo height={72} />
                 <div className={styles.chatWelcomeSubtitle}>
                   Start typing. Best provider auto-selected by reputation.
                 </div>
@@ -1287,12 +1335,14 @@ export function ChatView({ onSelectView }: ChatViewProps) {
                 conversationId={snap.chatActiveConversation || undefined}
               />
             ) : null}
-            {showThinkingIndicator && (
+            {imageRequestInProgress ? (
+              <ImageGenerationPlaceholder editing={snap.chatThinkingPhase === 'Editing image'} />
+            ) : showThinkingIndicator ? (
               <WalkingAnt
                 elapsedMs={snap.chatThinkingElapsedMs}
                 phaseLabel={snap.chatThinkingPhase}
               />
-            )}
+            ) : null}
             {activePendingQueue.map((item) => (
               <div
                 key={`pending-${item.id}`}
@@ -1360,6 +1410,8 @@ export function ChatView({ onSelectView }: ChatViewProps) {
 
           <div className={styles.chatInputArea}>
             {snap.chatError && <div className={styles.chatError}>{snap.chatError}</div>}
+            {/* A successful failover is informational, not a failure — amber, not red. */}
+            {snap.chatRoutingNotice && <div className={styles.chatWarning}>{snap.chatRoutingNotice}</div>}
             {attachmentError && <div className={styles.chatError}>{attachmentError}</div>}
             {voiceError && <div className={styles.chatError}>{voiceError}</div>}
             {attachmentWarning && <div className={styles.chatWarning}>{attachmentWarning}</div>}
@@ -1434,13 +1486,13 @@ export function ChatView({ onSelectView }: ChatViewProps) {
                 multiple
                 style={{ display: 'none' }}
                 onChange={handleFileAttach}
-                disabled={chatComposerDisabled}
+                disabled={chatComposerDisabled || imageMode}
               />
               <textarea
                 ref={inputRef}
                 className={styles.chatTextInput}
                 placeholder={
-                  currentPeerNotFound
+                  currentPeerNotFound && !imageMode
                     ? 'Peer was not found. Choose another service from Discover to continue.'
                     : voiceState === 'recording'
                     ? 'Recording… click the mic again to transcribe, or press Esc to cancel'
@@ -1448,7 +1500,9 @@ export function ChatView({ onSelectView }: ChatViewProps) {
                       ? 'Transcribing locally…'
                       : snap.chatInputDisabled
                         ? 'Type your next message — it will send when the current response finishes…'
-                        : 'Type a message... (Shift+Enter for newline)'
+                        : imageMode
+                          ? 'Describe the image you want to create…'
+                          : 'Type a message... (Shift+Enter for newline)'
                 }
                 rows={1}
                 value={inputValue}
@@ -1462,9 +1516,9 @@ export function ChatView({ onSelectView }: ChatViewProps) {
                 <div className={styles.chatInputActionsLeft}>
                   <button
                     className={`${styles.chatAttachBtn} ${supportsMultimodal ? '' : styles.chatAttachBtnLimited}`}
-                    title={supportsMultimodal ? 'Attach files' : "Attach files (images unavailable for selected model)"}
+                    title={imageMode ? 'Image generation currently accepts a text prompt only' : supportsMultimodal ? 'Attach files' : "Attach files (images unavailable for selected model)"}
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={chatComposerDisabled}
+                    disabled={chatComposerDisabled || imageMode}
                     type="button"
                   >
                     <HugeiconsIcon icon={Add01Icon} size={18} strokeWidth={2} />
@@ -1487,8 +1541,14 @@ export function ChatView({ onSelectView }: ChatViewProps) {
                     Stop
                   </button>
                 ) : (
-                  <button className={styles.chatSendBtn} disabled={chatSendDisabled} onClick={handleSend}>
-                    <HugeiconsIcon icon={ArrowUp02Icon} size={18} strokeWidth={2.5} />
+                  <button
+                    className={styles.chatSendBtn}
+                    disabled={chatSendDisabled}
+                    onClick={handleSend}
+                    aria-label={imageMode ? 'Generate image' : 'Send message'}
+                    title={imageMode ? 'Generate image' : 'Send message'}
+                  >
+                    {imageMode ? <span className={styles.chatGenerateLabel}>Generate</span> : <HugeiconsIcon icon={ArrowUp02Icon} size={18} strokeWidth={2.5} />}
                   </button>
                 )}
               </div>
@@ -1580,6 +1640,7 @@ export function ChatView({ onSelectView }: ChatViewProps) {
         visible={switchDialogOpen}
         currentLabel={currentServiceLabel}
         nextLabel={pendingSwitchModel?.label || 'new model'}
+        imageOnly={pendingSwitchModel?.kind === 'image'}
         onContinue={handleSwitchContinue}
         onStartNew={handleSwitchStartNew}
         onCancel={handleSwitchCancel}

@@ -5,7 +5,7 @@
  * structural — implementations don't need to import this package.
  */
 
-import type { Wallet } from 'ethers';
+import type { AbstractSigner } from 'ethers';
 import type {
   ConnectionState,
   PeerId,
@@ -32,10 +32,18 @@ export interface BuyerConnection extends FrameSender {
   off(event: 'stateChange', listener: (state: ConnectionState) => void): unknown;
 }
 
-/** Local identity: the hot wallet whose address is the peerId. */
+/**
+ * The signer surface the buyer machinery needs: EIP-712 signing plus a
+ * synchronously readable address. ethers `Wallet` satisfies it; so does any
+ * AbstractSigner subclass (non-extractable WebCrypto keys, embedded wallets)
+ * that exposes its address as a property.
+ */
+export type BuyerSigner = AbstractSigner & { readonly address: string };
+
+/** Local identity: the hot-wallet signer whose address is the peerId. */
 export interface BuyerIdentity {
   peerId: PeerId;
-  wallet: Wallet;
+  wallet: BuyerSigner;
 }
 
 /**

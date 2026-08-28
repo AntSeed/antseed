@@ -1,5 +1,6 @@
 import type {
   DaemonStateSnapshot,
+  DesktopBuyerSpendHistory,
   DesktopBuyerUsageTotals,
   DesktopPaymentChannelSummary,
   DesktopRewardsSummary,
@@ -8,6 +9,10 @@ import type {
 } from '../types/bridge';
 import type { ChatMessage } from '../ui/components/chat/chat-shared';
 import type { ChatPermissionMode, ToolApprovalRequest } from '../types/bridge';
+import {
+  DEFAULT_MODEL_ROUTING_PREFERENCES,
+  type ModelRoutingPreferences,
+} from '@antseed/node/model-routing';
 
 export type BadgeTone = 'active' | 'idle' | 'warn' | 'bad';
 
@@ -34,6 +39,9 @@ export type PeerEntry = {
   port: number;
   providers: string[];
   services: string[];
+  /** Services this peer serves for $0 per its fetched pricing matrix — empty
+      until the peer's metadata has actually been resolved. */
+  freeServices: string[];
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
   capacityMsgPerHour: number;
@@ -57,11 +65,25 @@ export type ConfigFormData = {
   cryptoChainId: string;
 };
 
+export type ServiceCapabilitiesView = {
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  inputs?: string[];
+  outputs?: string[];
+  reasoning?: boolean;
+  toolUse?: boolean;
+  structuredOutput?: boolean;
+  supportedParameters?: string[];
+};
+
+export type VprModelKind = 'text' | 'image';
+
 export type ChatServiceOptionEntry = {
   id: string;
   label: string;
   provider: string;
   protocol: string;
+  capabilities?: ServiceCapabilitiesView | null;
   count: number;
   value: string;
   peerId: string;
@@ -71,6 +93,8 @@ export type ChatServiceOptionEntry = {
   inputUsdPerMillion: number | null;
   outputUsdPerMillion: number | null;
   cachedInputUsdPerMillion?: number | null;
+  minImageUsdPerImage?: number | null;
+  maxImageUsdPerImage?: number | null;
   categories: string[];
   description: string;
 };
@@ -90,22 +114,21 @@ export type VprRouteSelection = {
   peerId: string | null;
 };
 
-export type VprRoutingPreferences = {
+export type VprRoutingPreferences = ModelRoutingPreferences & {
   autoRouting: boolean;
-  preferFreePeers: boolean;
-  maxInputUsdPerMillion: number;
-  minTrustScore: number;
-  /**
-   * Peer allowlist. While non-empty, auto routing only ever considers these
-   * peers — every other seller is dropped before scoring.
-   */
-  allowedPeerIds: string[];
-  /** Peers auto routing never selects. Takes precedence over the allowlist. */
-  blockedPeerIds: string[];
 };
 
 /** Which routing list a peer sits on. A peer is never on both. */
 export type VprPeerListing = 'allowed' | 'blocked' | 'none';
+
+export type ReminderState = 'armed_d1' | 'armed_d2' | 'armed_d5' | 'armed_d15' | 'done';
+export type ReminderVariant = 'd1' | 'd2' | 'd5' | 'd15';
+export type ReminderOffer = {
+  variant: ReminderVariant;
+  requestsCount: number;
+  retrospectiveUsd: string;
+  prospectiveUsd: string;
+};
 
 export type VprModelCatalogEntry = {
   provider: string;
@@ -113,13 +136,24 @@ export type VprModelCatalogEntry = {
   label: string;
   peerCount: number;
   categories: string[];
+  kind: VprModelKind;
+  protocols: string[];
   minInputUsdPerMillion: number | null;
   maxInputUsdPerMillion: number | null;
   minOutputUsdPerMillion: number | null;
   maxOutputUsdPerMillion: number | null;
   minCachedInputUsdPerMillion: number | null;
   maxCachedInputUsdPerMillion: number | null;
+  minImageUsdPerImage: number | null;
+  maxImageUsdPerImage: number | null;
   expectedSavingsPct: number | null;
+  /**
+   * True when some seller auto-routing may actually pick (trust/allow/block
+   * gate) offers this model at $0. Distinguishes a genuinely usable free
+   * model from one that merely displays a low fallback price because none of
+   * its sellers pass the gate.
+   */
+  hasEligibleFreeSeller: boolean;
   bestPeerId: string | null;
   /**
    * Reference/retail price for the equivalent model on the OpenRouter catalog,
@@ -147,6 +181,9 @@ export type DiscoverRow = {
   categories: string[];
   provider: string;            // internal, not shown
   protocol: string;
+  /** Seller-specific capability hints. These are deliberately not merged at
+   * model level because different peers may serve different model variants. */
+  capabilities?: ServiceCapabilitiesView | null;
 
   // Peer
   peerId: string;
@@ -169,6 +206,8 @@ export type DiscoverRow = {
   inputUsdPerMillion: number | null;
   outputUsdPerMillion: number | null;
   cachedInputUsdPerMillion: number | null;
+  minImageUsdPerImage: number | null;
+  maxImageUsdPerImage: number | null;
 
   // Local buyer history (from ChannelStore)
   lifetimeSessions: number;
@@ -192,6 +231,8 @@ export type DiscoverRow = {
   onChainLastSettledAt: number;
   onChainReputationScore: number | null; // displayed 0-100 score
   onChainTrustScore: number | null;
+  /** Model-specific 0-100 reputation after pricing-completeness adjustments. */
+  effectiveReputationScore?: number | null;
   onChainSybilRisk: number | null;
   onChainSybilFlags: string[];
 
@@ -206,6 +247,12 @@ export type DiscoverRow = {
   networkOutputTokens: string | null;
 
   // Derived — encoded selection for existing chat open path
+  // Peer health (buyer-proxy cooldown). A peer that recently stopped
+  // responding is deprioritized by auto routing until its cooldown lapses.
+  peerCooldownUntil: number | null;
+  peerFailureStreak: number;
+  peerLastFailureReason: string | null;
+
   selectionValue: string;
 };
 
@@ -215,6 +262,8 @@ export type ActiveChannelInfo = {
 };
 
 export type RendererUiState = {
+  reminderState: ReminderState;
+  reminderOffer: ReminderOffer | null;
   // --- Process / runtime state ---
   processes: RuntimeProcessState[];
   refreshing: boolean;
@@ -231,6 +280,10 @@ export type RendererUiState = {
   /** 'blocked' = internet up but DHT unreachable (firewall/VPN dropping UDP);
       'no-peers' = on the DHT but discovery sweeps keep coming back empty. */
   networkAlert: 'none' | 'no-internet' | 'blocked' | 'no-peers';
+  /** Live DHT routing-table size from the buyer's status poll — the first
+      network signal that moves during startup, so the setup screen can show
+      bootstrap progress before any peer or service is discovered. */
+  dhtNodeCount: number;
 
   // --- Overview display ---
   overviewBadge: BadgeState;
@@ -286,6 +339,7 @@ export type RendererUiState = {
   creditsEvmAddress: string | null;
   creditsOperatorAddress: string | null;
   creditsBuyerUsage: DesktopBuyerUsageTotals | null;
+  creditsBuyerSpendHistory: DesktopBuyerSpendHistory | null;
   creditsChannels: DesktopPaymentChannelSummary[];
   creditsRewards: DesktopRewardsSummary | null;
   creditsSummaryLoading: boolean;
@@ -329,6 +383,12 @@ export type RendererUiState = {
   /** IDs of all conversations currently running a request, across the whole app. */
   chatSendingConversationIds: string[];
   chatError: string | null;
+  /**
+   * Non-error routing notice, e.g. "peer X isn't responding, retrying on Y".
+   * Kept separate from `chatError` because a successful failover is not a
+   * failure and must not be rendered as one.
+   */
+  chatRoutingNotice: string | null;
   chatRoutedPeer: string;
   chatRoutedPeerId: string;
   chatSessionStarted: string;
@@ -347,7 +407,14 @@ export type RendererUiState = {
    */
   vprRoutableRows: DiscoverRow[];
   vprModelCatalog: VprModelCatalogEntry[];
+  /** Main text/connected-app route. Image models never replace this. */
   vprRouteSelection: VprRouteSelection;
+  /** True while the auto-picked default model is provisional: no trusted free
+   * route is discovered yet, so the pick keeps being re-evaluated. Surfaces a
+   * "finding free peers" hint during the first-use discovery warm-up. */
+  vprDefaultModelProvisional: boolean;
+  /** Dedicated internal-chat image route, set only by “Use in chat”. */
+  chatImageRouteSelection: VprRouteSelection | null;
   /** Remembered seller pin per model (`provider:serviceId` -> peer id), so a
    * pinned model stays pinned across model switches. */
   vprModelPins: Record<string, string>;
@@ -392,6 +459,8 @@ const MAX_LOGS = 2000;
 
 export function createInitialUiState(): RendererUiState {
   return {
+    reminderState: 'armed_d1',
+    reminderOffer: null,
     // Process / runtime
     processes: [],
     refreshing: false,
@@ -406,6 +475,7 @@ export function createInitialUiState(): RendererUiState {
 
     // Network reachability alert
     networkAlert: 'none',
+    dhtNodeCount: 0,
 
     // Overview
     overviewBadge: { tone: 'idle', label: 'Idle' },
@@ -454,6 +524,7 @@ export function createInitialUiState(): RendererUiState {
     creditsEvmAddress: null,
     creditsOperatorAddress: null,
     creditsBuyerUsage: null,
+    creditsBuyerSpendHistory: null,
     creditsChannels: [],
     creditsRewards: null,
     creditsSummaryLoading: false,
@@ -488,6 +559,7 @@ export function createInitialUiState(): RendererUiState {
     chatSendingConversationId: null,
     chatSendingConversationIds: [],
     chatError: null,
+    chatRoutingNotice: null,
     chatRoutedPeer: '',
     chatRoutedPeerId: '',
     chatSessionStarted: '',
@@ -506,12 +578,12 @@ export function createInitialUiState(): RendererUiState {
       mode: 'auto',
       peerId: null,
     },
+    vprDefaultModelProvisional: false,
+    chatImageRouteSelection: null,
     vprModelPins: {},
     vprRoutingPreferences: {
       autoRouting: true,
-      preferFreePeers: false,
-      maxInputUsdPerMillion: 25,
-      minTrustScore: 0,
+      ...DEFAULT_MODEL_ROUTING_PREFERENCES,
       allowedPeerIds: [],
       blockedPeerIds: [],
     },

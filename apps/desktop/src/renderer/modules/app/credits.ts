@@ -6,6 +6,7 @@ type CreditsModuleOptions = {
   bridge?: DesktopBridge;
   uiState: RendererUiState;
   onBalanceSufficientForPayment?: () => void;
+  onPaymentStateChanged?: () => void | Promise<void>;
 };
 
 export type CreditsModuleApi = {
@@ -26,7 +27,12 @@ const PAYMENT_SUMMARY_THROTTLE_MS = 55_000;
 
 const MAX_AUTO_RETRIES = 2;
 
-export function initCreditsModule({ bridge, uiState, onBalanceSufficientForPayment }: CreditsModuleOptions): CreditsModuleApi {
+export function initCreditsModule({
+  bridge,
+  uiState,
+  onBalanceSufficientForPayment,
+  onPaymentStateChanged,
+}: CreditsModuleOptions): CreditsModuleApi {
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
   let fastRefreshTimer: ReturnType<typeof setInterval> | null = null;
   let autoRetryCount = 0;
@@ -101,6 +107,7 @@ export function initCreditsModule({ bridge, uiState, onBalanceSufficientForPayme
         }
 
         if (changed) notifyUiStateChanged();
+        await onPaymentStateChanged?.();
 
       }
     } catch {
@@ -111,20 +118,24 @@ export function initCreditsModule({ bridge, uiState, onBalanceSufficientForPayme
   async function refreshPaymentSummary(force = false): Promise<void> {
     if (paymentSummaryRefreshInFlight) return;
     if (!force && Date.now() - lastPaymentSummaryRefreshAt < PAYMENT_SUMMARY_THROTTLE_MS) return;
-    if (!bridge?.paymentsGetBuyerUsage && !bridge?.paymentsGetChannels && !bridge?.paymentsGetRewardsSummary) return;
+    if (!bridge?.paymentsGetBuyerUsage && !bridge?.paymentsGetBuyerSpendHistory && !bridge?.paymentsGetChannels && !bridge?.paymentsGetRewardsSummary) return;
 
     paymentSummaryRefreshInFlight = true;
     uiState.creditsSummaryLoading = true;
     notifyUiStateChanged();
     try {
-      const [usage, channels, rewards] = await Promise.all([
+      const [usage, spendHistory, channels, rewards] = await Promise.all([
         bridge?.paymentsGetBuyerUsage?.().catch(() => null) ?? Promise.resolve(null),
+        bridge?.paymentsGetBuyerSpendHistory?.().catch(() => null) ?? Promise.resolve(null),
         bridge?.paymentsGetChannels?.().catch(() => null) ?? Promise.resolve(null),
         bridge?.paymentsGetRewardsSummary?.().catch(() => null) ?? Promise.resolve(null),
       ]);
 
       if (usage?.ok && usage.data) {
         uiState.creditsBuyerUsage = usage.data;
+      }
+      if (spendHistory?.ok && spendHistory.data) {
+        uiState.creditsBuyerSpendHistory = spendHistory.data;
       }
       if (channels?.ok && Array.isArray(channels.data)) {
         uiState.creditsChannels = channels.data;
@@ -144,6 +155,7 @@ export function initCreditsModule({ bridge, uiState, onBalanceSufficientForPayme
       paymentSummaryRefreshInFlight = false;
       uiState.creditsSummaryLoading = false;
       notifyUiStateChanged();
+      await onPaymentStateChanged?.();
     }
   }
 

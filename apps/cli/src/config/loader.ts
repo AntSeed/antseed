@@ -1,6 +1,10 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
+import {
+  DEFAULT_MODEL_ROUTING_PREFERENCES,
+  type ModelRoutingPreferences,
+} from '@antseed/node/model-routing';
 import type {
   HierarchicalPricingConfig,
   AntseedConfig,
@@ -304,6 +308,35 @@ function normalizeSellerHealthCheck(
   };
 }
 
+function cloneSellerGasCheck(
+  value: AntseedConfig['seller']['gasCheck'],
+): AntseedConfig['seller']['gasCheck'] {
+  if (!value) return undefined;
+  return {
+    ...(value.enabled !== undefined ? { enabled: value.enabled } : {}),
+    ...(value.intervalMs !== undefined ? { intervalMs: value.intervalMs } : {}),
+    ...(value.minBalanceEth !== undefined ? { minBalanceEth: value.minBalanceEth } : {}),
+  };
+}
+
+function normalizeSellerGasCheck(
+  value: unknown,
+  fallback?: AntseedConfig['seller']['gasCheck'],
+): { gasCheck: NonNullable<AntseedConfig['seller']['gasCheck']> } | Record<string, never> {
+  if (!isRecord(value)) {
+    const cloned = cloneSellerGasCheck(fallback);
+    return cloned ? { gasCheck: cloned } : {};
+  }
+  // Keep user-supplied values (even malformed) so validateConfig reports them.
+  return {
+    gasCheck: {
+      ...(value['enabled'] !== undefined ? { enabled: value['enabled'] as boolean } : {}),
+      ...(value['intervalMs'] !== undefined ? { intervalMs: toFiniteOrNaN(value['intervalMs']) } : {}),
+      ...(value['minBalanceEth'] !== undefined ? { minBalanceEth: toFiniteOrNaN(value['minBalanceEth']) } : {}),
+    },
+  };
+}
+
 function mergeSellerConfig(
   defaults: AntseedConfig['seller'],
   value: unknown
@@ -318,6 +351,7 @@ function mergeSellerConfig(
       ...(defaults.agentDir ? { agentDir: defaults.agentDir } : {}),
       ...(normalizeVerifications(undefined, defaults.verifications)),
       ...(normalizeSellerHealthCheck(undefined, defaults.healthCheck)),
+      ...(normalizeSellerGasCheck(undefined, defaults.gasCheck)),
     };
   }
 
@@ -340,12 +374,53 @@ function mergeSellerConfig(
         : {}),
     ...(normalizeAgentDir(value['agentDir'], defaults.agentDir)),
     ...(normalizeSellerHealthCheck(value['healthCheck'], defaults.healthCheck)),
+    ...(normalizeSellerGasCheck(value['gasCheck'], defaults.gasCheck)),
   };
 }
 
 function normalizeMinPeerReputation(value: unknown, fallback: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
   return value === 50 ? fallback : value;
+}
+
+function normalizeRoutingPeerIds(value: unknown, fallback: string[]): string[] {
+  if (value === undefined) return [...fallback];
+  if (!Array.isArray(value)) return [String(value)];
+  return value.map((entry) => String(entry));
+}
+
+function cloneRoutingPreferences(value: ModelRoutingPreferences): ModelRoutingPreferences {
+  return {
+    ...value,
+    allowedPeerIds: [...value.allowedPeerIds],
+    blockedPeerIds: [...value.blockedPeerIds],
+  };
+}
+
+function mergeBuyerRoutingPreferences(
+  fallback: ModelRoutingPreferences,
+  value: unknown,
+): ModelRoutingPreferences {
+  if (!isRecord(value)) {
+    return cloneRoutingPreferences(fallback);
+  }
+
+  const preferFreePeers = value['preferFreePeers'];
+  const maxInputUsdPerMillion = value['maxInputUsdPerMillion'];
+  const minTrustScore = value['minTrustScore'];
+  return {
+    preferFreePeers: preferFreePeers === undefined
+      ? fallback.preferFreePeers
+      : preferFreePeers as boolean,
+    maxInputUsdPerMillion: maxInputUsdPerMillion === undefined
+      ? fallback.maxInputUsdPerMillion
+      : toFiniteOrNaN(maxInputUsdPerMillion),
+    minTrustScore: minTrustScore === undefined
+      ? fallback.minTrustScore
+      : toFiniteOrNaN(minTrustScore),
+    allowedPeerIds: normalizeRoutingPeerIds(value['allowedPeerIds'], fallback.allowedPeerIds),
+    blockedPeerIds: normalizeRoutingPeerIds(value['blockedPeerIds'], fallback.blockedPeerIds),
+  };
 }
 
 function cloneBuyerVerification(
@@ -378,20 +453,29 @@ function mergeBuyerConfig(
   defaults: AntseedConfig['buyer'],
   value: unknown
 ): AntseedConfig['buyer'] {
+  const defaultRoutingPreferences = defaults.routingPreferences ?? DEFAULT_MODEL_ROUTING_PREFERENCES;
   if (!isRecord(value)) {
     return {
       maxPricing: mergeHierarchicalPricing(defaults.maxPricing, undefined),
       minPeerReputation: defaults.minPeerReputation,
+      routingPreferences: cloneRoutingPreferences(defaultRoutingPreferences),
       proxyPort: defaults.proxyPort,
       peerRefreshIntervalMs: defaults.peerRefreshIntervalMs,
       metadataFetchTimeoutMs: defaults.metadataFetchTimeoutMs,
+      requestTimeoutMs: defaults.requestTimeoutMs,
+      maxStreamDurationMs: defaults.maxStreamDurationMs,
       disableMetadataV2Services: defaults.disableMetadataV2Services,
+      autoSweep: defaults.autoSweep,
       ...(normalizeBuyerVerification(undefined, defaults.verification)),
     };
   }
   return {
     maxPricing: mergeHierarchicalPricing(defaults.maxPricing, value['maxPricing']),
     minPeerReputation: normalizeMinPeerReputation(value['minPeerReputation'], defaults.minPeerReputation),
+    routingPreferences: mergeBuyerRoutingPreferences(
+      defaultRoutingPreferences,
+      value['routingPreferences'],
+    ),
     proxyPort: typeof value['proxyPort'] === 'number'
       ? value['proxyPort']
       : defaults.proxyPort,
@@ -401,10 +485,21 @@ function mergeBuyerConfig(
     metadataFetchTimeoutMs: typeof value['metadataFetchTimeoutMs'] === 'number'
       ? value['metadataFetchTimeoutMs']
       : defaults.metadataFetchTimeoutMs,
+    requestTimeoutMs: typeof value['requestTimeoutMs'] === 'number'
+      ? value['requestTimeoutMs']
+      : defaults.requestTimeoutMs,
+    maxStreamDurationMs: typeof value['maxStreamDurationMs'] === 'number'
+      ? value['maxStreamDurationMs']
+      : defaults.maxStreamDurationMs,
     disableMetadataV2Services: normalizeBooleanConfigValue(
       value['disableMetadataV2Services'],
       defaults.disableMetadataV2Services,
       'buyer.disableMetadataV2Services',
+    ),
+    autoSweep: normalizeBooleanConfigValue(
+      value['autoSweep'],
+      defaults.autoSweep ?? true,
+      'buyer.autoSweep',
     ),
     ...(normalizeBuyerVerification(value['verification'], defaults.verification)),
   };

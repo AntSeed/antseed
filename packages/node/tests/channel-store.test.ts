@@ -93,6 +93,73 @@ describe('ChannelStore', () => {
     expect(loaded!.requestCount).toBe(3);
   });
 
+  it('atomically commits an authorization with its service totals', () => {
+    const channel = makeChannel();
+    store.upsertChannel(channel);
+
+    store.commitAuthorization({
+      ...channel,
+      authMax: '250000',
+      tokensDelivered: '12',
+      previousConsumption: '8',
+      requestCount: 1,
+    }, [{
+      serviceId: '0x' + '11'.repeat(32),
+      cumulativeAmount: 250000n,
+      cumulativeInputTokens: 12n,
+      cumulativeCachedInputTokens: 2n,
+      cumulativeOutputTokens: 8n,
+      cumulativeRequestCount: 1n,
+      cumulativeOutputImages: 0n,
+    }]);
+
+    expect(store.getChannel(channel.sessionId)).toMatchObject({
+      authMax: '250000',
+      tokensDelivered: '12',
+      previousConsumption: '8',
+      requestCount: 1,
+    });
+    expect(store.getServiceTotals(channel.sessionId)).toEqual([
+      expect.objectContaining({
+        cumulativeAmount: '250000',
+        cumulativeInputTokens: '12',
+        cumulativeOutputTokens: '8',
+      }),
+    ]);
+  });
+
+  it('rolls back the channel snapshot when service-total persistence fails', () => {
+    const channel = makeChannel();
+    store.upsertChannel(channel);
+    store.replaceServiceTotals(channel.sessionId, [{
+      serviceId: '0x' + '22'.repeat(32),
+      cumulativeAmount: '10',
+      cumulativeInputTokens: '1',
+      cumulativeCachedInputTokens: '0',
+      cumulativeOutputTokens: '1',
+      cumulativeRequestCount: '1',
+      cumulativeOutputImages: '0',
+    }]);
+
+    expect(() => store.commitAuthorization({ ...channel, authMax: '999' }, [{
+      serviceId: null as unknown as string,
+      cumulativeAmount: 999n,
+      cumulativeInputTokens: 9n,
+      cumulativeCachedInputTokens: 0n,
+      cumulativeOutputTokens: 9n,
+      cumulativeRequestCount: 1n,
+      cumulativeOutputImages: 0n,
+    }])).toThrow();
+
+    expect(store.getChannel(channel.sessionId)?.authMax).toBe(channel.authMax);
+    expect(store.getServiceTotals(channel.sessionId)).toEqual([
+      expect.objectContaining({
+        serviceId: '0x' + '22'.repeat(32),
+        cumulativeAmount: '10',
+      }),
+    ]);
+  });
+
   it('test_getActiveByPeer: returns correct active channel', () => {
     const s1 = makeChannel({ sessionId: '0x' + '01'.repeat(32), status: CHANNEL_STATUS.SETTLED, createdAt: Date.now() - 1000 });
     const s2 = makeChannel({ sessionId: '0x' + '02'.repeat(32), status: CHANNEL_STATUS.ACTIVE, createdAt: Date.now() });
@@ -248,7 +315,9 @@ describe('ChannelStore', () => {
         cumulativeCachedInputTokens: '100',
         cumulativeOutputTokens: '200',
         cumulativeRequestCount: '3',
+        cumulativeOutputImages: '2',
       }]);
+      // Rows written before migration 005 hydrate without the images field.
       store.replaceServiceTotals(free.sessionId, [{
         serviceId: '0x' + '11'.repeat(32),
         cumulativeAmount: '0',
@@ -265,6 +334,7 @@ describe('ChannelStore', () => {
       expect(totals[0].inputTokens).toBe('900');
       expect(totals[0].cachedInputTokens).toBe('100');
       expect(totals[0].outputTokens).toBe('500');
+      expect(totals[0].outputImages).toBe('2');
       expect(totals[0].requestCount).toBe(5);
     });
 

@@ -7,15 +7,17 @@
  * not assignable by importers anyway.
  */
 import { app } from 'electron';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { desktopInstanceName, desktopUserDataDir, isMultiInstanceDevelopment } from './dev-instance.js';
 import { ASSETS_DIR, RENDERER_INDEX_PATH } from './paths.js';
 
 export const isDev = Boolean(process.env['VITE_DEV_SERVER_URL']);
 export const rendererUrl = process.env['VITE_DEV_SERVER_URL'] ?? `file://${RENDERER_INDEX_PATH}`;
 
 export const INTERNAL_APP_NAME = 'AntStation Desktop';
-export const APP_NAME = 'AntSeed VPR';
+const devInstanceName = isMultiInstanceDevelopment() ? desktopInstanceName() : '';
+export const APP_NAME = devInstanceName ? `AntSeed VPR [${devInstanceName}]` : 'AntSeed VPR';
 export const DESKTOP_DEBUG_ENV = 'ANTSEED_DESKTOP_DEBUG';
 export const DESKTOP_DEBUG_FLAGS = new Set(['--debug-runtime', '--desktop-debug']);
 
@@ -106,6 +108,11 @@ export const TRAY_ICON_PATH = resolveAssetPath('antseed-mark.png', 'antseed-dock
 // since it determines the macOS keychain entry. On macOS dev runs some surfaces
 // may still show "Electron" because the underlying bundle is Electron.app.
 app.setName(INTERNAL_APP_NAME);
+const userDataDir = desktopUserDataDir();
+if (isMultiInstanceDevelopment() && userDataDir) {
+  mkdirSync(userDataDir, { recursive: true });
+  app.setPath('userData', userDataDir);
+}
 
 /** Verbose runtime logging, toggled from the renderer's developer settings. */
 let desktopDebugEnabled = isTruthyEnv(process.env[DESKTOP_DEBUG_ENV]) || hasDesktopDebugFlag(process.argv);

@@ -46,7 +46,9 @@ export interface BuyerServiceUsageTotal {
   amountUsdc: string; // bigint as string (base units)
   inputTokens: string; // bigint as string
   cachedInputTokens: string; // bigint as string
+  /** Includes OUTPUT_IMAGE_TOKEN_EQUIVALENT credits for generated images. */
   outputTokens: string; // bigint as string
+  outputImages: string; // bigint as string
   requestCount: number;
 }
 
@@ -62,6 +64,7 @@ export class ChannelStore {
     receipt: Omit<StoredReceipt, 'id'>,
   ) => void;
   private readonly _replaceServiceTotalsTxn: (sessionId: string, totals: StoredChannelServiceTotal[]) => void;
+  private readonly _commitAuthorizationTxn: (channel: StoredChannel, totals: StoredChannelServiceTotal[]) => void;
 
   private readonly _stmts: {
     upsert: Database.Statement;
@@ -99,7 +102,7 @@ export class ChannelStore {
         this.insertReceipt(receipt);
       },
     );
-    this._replaceServiceTotalsTxn = this._db.transaction((sessionId: string, totals: StoredChannelServiceTotal[]) => {
+    const replaceServiceTotals = (sessionId: string, totals: StoredChannelServiceTotal[]) => {
       this._stmts.deleteServiceTotals.run(sessionId);
       for (const total of totals) {
         this._stmts.insertServiceTotal.run({
@@ -110,10 +113,18 @@ export class ChannelStore {
           cumulativeCachedInputTokens: total.cumulativeCachedInputTokens,
           cumulativeOutputTokens: total.cumulativeOutputTokens,
           cumulativeRequestCount: total.cumulativeRequestCount,
+          cumulativeOutputImages: total.cumulativeOutputImages ?? '0',
           updatedAt: total.updatedAt,
         });
       }
-    });
+    };
+    this._replaceServiceTotalsTxn = this._db.transaction(replaceServiceTotals);
+    this._commitAuthorizationTxn = this._db.transaction(
+      (channel: StoredChannel, totals: StoredChannelServiceTotal[]) => {
+        this.upsertChannel(channel);
+        replaceServiceTotals(channel.sessionId, totals);
+      },
+    );
   }
 
   private _prepareStatements() {
@@ -219,11 +230,11 @@ export class ChannelStore {
         INSERT INTO payment_channel_service_totals (
           session_id, service_id, cumulative_amount, cumulative_input_tokens,
           cumulative_cached_input_tokens, cumulative_output_tokens,
-          cumulative_request_count, updated_at
+          cumulative_request_count, cumulative_output_images, updated_at
         ) VALUES (
           @sessionId, @serviceId, @cumulativeAmount, @cumulativeInputTokens,
           @cumulativeCachedInputTokens, @cumulativeOutputTokens,
-          @cumulativeRequestCount, @updatedAt
+          @cumulativeRequestCount, @cumulativeOutputImages, @updatedAt
         )
       `),
       getServiceTotals: this._db.prepare(
@@ -464,17 +475,21 @@ export class ChannelStore {
   }
 
   replaceMetadataServiceTotals(sessionId: string, services: readonly SpendingAuthServiceMetadata[] = []): void {
-    this.replaceServiceTotals(
-      sessionId,
-      services.map((service) => ({
-        serviceId: service.serviceId,
-        cumulativeAmount: service.cumulativeAmount.toString(),
-        cumulativeInputTokens: service.cumulativeInputTokens.toString(),
-        cumulativeCachedInputTokens: service.cumulativeCachedInputTokens.toString(),
-        cumulativeOutputTokens: service.cumulativeOutputTokens.toString(),
-        cumulativeRequestCount: service.cumulativeRequestCount.toString(),
-      })),
-    );
+    this.replaceServiceTotals(sessionId, this._metadataTotals(services));
+  }
+
+  /** Persist the signed channel snapshot and its exact service totals atomically. */
+  commitAuthorization(
+    channel: StoredChannel,
+    services: readonly SpendingAuthServiceMetadata[] = [],
+  ): void {
+    const updatedAt = Date.now();
+    const totals = this._metadataTotals(services).map((total) => ({
+      sessionId: channel.sessionId,
+      ...total,
+      updatedAt,
+    }));
+    this._commitAuthorizationTxn(channel, totals);
   }
 
   getServiceTotals(sessionId: string): StoredChannelServiceTotal[] {
@@ -492,7 +507,7 @@ export class ChannelStore {
       .prepare(`
         SELECT t.service_id, t.cumulative_amount, t.cumulative_input_tokens,
                t.cumulative_cached_input_tokens, t.cumulative_output_tokens,
-               t.cumulative_request_count
+               t.cumulative_request_count, t.cumulative_output_images
         FROM payment_channel_service_totals t
         JOIN payment_channels c ON c.session_id = t.session_id
         WHERE c.role = ? AND c.buyer_evm_addr = ?
@@ -504,23 +519,25 @@ export class ChannelStore {
         cumulative_cached_input_tokens: string;
         cumulative_output_tokens: string;
         cumulative_request_count: string;
+        cumulative_output_images: string;
       }>;
 
     const byService = new Map<string, {
-      amount: bigint; input: bigint; cached: bigint; output: bigint; requests: bigint;
+      amount: bigint; input: bigint; cached: bigint; output: bigint; requests: bigint; images: bigint;
     }>();
     const toBigInt = (value: string): bigint => {
       try { return BigInt(value || '0'); } catch { return 0n; }
     };
     for (const row of rows) {
       const entry = byService.get(row.service_id) ?? {
-        amount: 0n, input: 0n, cached: 0n, output: 0n, requests: 0n,
+        amount: 0n, input: 0n, cached: 0n, output: 0n, requests: 0n, images: 0n,
       };
       entry.amount += toBigInt(row.cumulative_amount);
       entry.input += toBigInt(row.cumulative_input_tokens);
       entry.cached += toBigInt(row.cumulative_cached_input_tokens);
       entry.output += toBigInt(row.cumulative_output_tokens);
       entry.requests += toBigInt(row.cumulative_request_count);
+      entry.images += toBigInt(row.cumulative_output_images);
       byService.set(row.service_id, entry);
     }
     return Array.from(byService.entries()).map(([serviceId, entry]) => ({
@@ -529,6 +546,7 @@ export class ChannelStore {
       inputTokens: entry.input.toString(),
       cachedInputTokens: entry.cached.toString(),
       outputTokens: entry.output.toString(),
+      outputImages: entry.images.toString(),
       requestCount: Number(entry.requests),
     }));
   }
@@ -541,16 +559,34 @@ export class ChannelStore {
       cumulativeCachedInputTokens: BigInt(total.cumulativeCachedInputTokens),
       cumulativeOutputTokens: BigInt(total.cumulativeOutputTokens),
       cumulativeRequestCount: BigInt(total.cumulativeRequestCount),
+      cumulativeOutputImages: BigInt(total.cumulativeOutputImages ?? '0'),
     }));
   }
 
   getChannelMetadata(channel: StoredChannel): SpendingAuthMetadata {
+    const services = this.getMetadataServiceTotals(channel.sessionId);
     return {
       cumulativeInputTokens: BigInt(channel.tokensDelivered),
       cumulativeOutputTokens: BigInt(channel.previousConsumption),
       cumulativeRequestCount: BigInt(channel.requestCount),
-      services: this.getMetadataServiceTotals(channel.sessionId),
+      // No channel column for images — recovered from the per-service rows.
+      cumulativeOutputImages: services.reduce((sum, s) => sum + s.cumulativeOutputImages, 0n),
+      services,
     };
+  }
+
+  private _metadataTotals(
+    services: readonly SpendingAuthServiceMetadata[],
+  ): Omit<StoredChannelServiceTotal, 'sessionId' | 'updatedAt'>[] {
+    return services.map((service) => ({
+      serviceId: service.serviceId,
+      cumulativeAmount: service.cumulativeAmount.toString(),
+      cumulativeInputTokens: service.cumulativeInputTokens.toString(),
+      cumulativeCachedInputTokens: service.cumulativeCachedInputTokens.toString(),
+      cumulativeOutputTokens: service.cumulativeOutputTokens.toString(),
+      cumulativeRequestCount: service.cumulativeRequestCount.toString(),
+      cumulativeOutputImages: (service.cumulativeOutputImages ?? 0n).toString(),
+    }));
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────
@@ -606,6 +642,7 @@ interface ServiceTotalRow {
   cumulative_cached_input_tokens: string;
   cumulative_output_tokens: string;
   cumulative_request_count: string;
+  cumulative_output_images: string;
   updated_at: number;
 }
 
@@ -658,6 +695,7 @@ function rowToServiceTotal(row: ServiceTotalRow): StoredChannelServiceTotal {
     cumulativeCachedInputTokens: row.cumulative_cached_input_tokens,
     cumulativeOutputTokens: row.cumulative_output_tokens,
     cumulativeRequestCount: row.cumulative_request_count,
+    cumulativeOutputImages: row.cumulative_output_images ?? '0',
     updatedAt: row.updated_at,
   };
 }

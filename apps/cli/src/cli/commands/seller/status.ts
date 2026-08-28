@@ -52,6 +52,7 @@ export function registerSellerStatusCommand(sellerCmd: Command): void {
             activeChannels: status.activeChannels,
             uptime: status.uptime,
             walletAddress,
+            notices: status.notices,
             providers: providerSummary,
           }, null, 2));
           return;
@@ -64,6 +65,9 @@ export function registerSellerStatusCommand(sellerCmd: Command): void {
         };
         const colorFn = stateColors[status.state] ?? chalk.white;
         console.log(chalk.bold('Seller Status: ') + colorFn(status.state.toUpperCase()));
+        for (const notice of status.notices) {
+          console.log(chalk.yellow(`⚠ ${notice}`));
+        }
         console.log('');
 
         const table = new Table({
