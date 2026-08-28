@@ -4,9 +4,9 @@ pragma solidity ^0.8.24;
 import { Test } from "forge-std/Test.sol";
 
 import { AntseedRegistry } from "../../core/AntseedRegistry.sol";
-import { AntseedEmissionsGate } from "../../emissions/AntseedEmissionsGate.sol";
+import { MockVerificationEmissionsGate as AntseedEmissionsGate } from "./mocks/MockVerificationEmissionsGate.sol";
 import { IAntseedVerification } from "../../interfaces/IAntseedVerification.sol";
-import { AntseedPointsPolicyRegistry } from "../../policies/AntseedPointsPolicyRegistry.sol";
+import { TestPointsPolicyRegistry as PointsPolicyRegistry } from "./mocks/TestPointsPolicyRegistry.sol";
 import { AntseedVerificationPointsPolicy } from "../../policies/AntseedVerificationPointsPolicy.sol";
 import { AntseedVerification } from "../../verification/AntseedVerification.sol";
 import { MockERC8004Registry } from "../mocks/MockERC8004Registry.sol";
@@ -23,7 +23,7 @@ contract EmptyPointsPolicyTarget { }
 
 contract AntseedVerifierPointsPolicyTest is Test {
     uint256 private constant GENESIS = 1_775_728_461;
-    uint256 private constant AGENT_ID = 42;
+    uint256 private AGENT_ID;
     uint256 private constant RAW_POINTS = 1_000;
     bytes32 private constant SERVICE_HASH = keccak256("gpt-5.6-sol");
 
@@ -37,7 +37,7 @@ contract AntseedVerifierPointsPolicyTest is Test {
     MockPointsPolicyStaking private staking;
     AntseedVerification private verification;
     AntseedVerificationPointsPolicy private policy;
-    AntseedPointsPolicyRegistry private pointsPolicyRegistry;
+    PointsPolicyRegistry private pointsPolicyRegistry;
 
     function setUp() public {
         vm.warp(GENESIS + 8 days);
@@ -52,12 +52,13 @@ contract AntseedVerifierPointsPolicyTest is Test {
         AntseedEmissionsGate gate = new AntseedEmissionsGate(address(0x1111), address(0x2222), 15_000, 15_000);
         verification = new AntseedVerification(address(registry), address(gate));
         policy = new AntseedVerificationPointsPolicy(address(this), address(registry), address(verification));
-        pointsPolicyRegistry = new AntseedPointsPolicyRegistry(address(this));
+        pointsPolicyRegistry = new PointsPolicyRegistry(address(this));
         pointsPolicyRegistry.registerPolicy(address(policy));
         verification.setVerifier(verifierA, true);
         verification.setVerifier(verifierB, true);
         verification.setVerifier(verifierC, true);
-        identity.setOwner(AGENT_ID, seller);
+        vm.prank(seller);
+        AGENT_ID = identity.register();
     }
 
     function test_noPenaltyPassesAllPointsThrough() public view {

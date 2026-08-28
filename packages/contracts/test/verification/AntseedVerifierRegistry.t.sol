@@ -5,7 +5,7 @@ import { Test } from "forge-std/Test.sol";
 import { Vm } from "forge-std/Vm.sol";
 
 import { AntseedRegistry } from "../../core/AntseedRegistry.sol";
-import { AntseedEmissionsGate } from "../../emissions/AntseedEmissionsGate.sol";
+import { MockVerificationEmissionsGate as AntseedEmissionsGate } from "./mocks/MockVerificationEmissionsGate.sol";
 import { IAntseedVerification } from "../../interfaces/IAntseedVerification.sol";
 import { AntseedVerification } from "../../verification/AntseedVerification.sol";
 import { MockERC8004Registry } from "../mocks/MockERC8004Registry.sol";
