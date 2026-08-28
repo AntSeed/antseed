@@ -186,6 +186,17 @@ The verification emission bucket initially remains controlled by
 controller to its rewards contract before ownership of the emissions gate is
 finalized.
 
+`ConfigureVerification.s.sol` is the verification-only follow-up. It deploys
+or reuses `AntseedVerification`, transfers the existing 10% verification
+minter bucket to it, and deploys or reuses
+`AntseedVerificationPointsPolicy`. The policy remains unregistered by default,
+so verification submissions and verifier rewards can run in shadow mode
+without changing recognized-usage points. Set
+`REGISTER_VERIFICATION_POLICY=true` only for a deliberate enforcement
+activation. The script is idempotent when the deployed verification and policy
+addresses are supplied on reruns, and it has no dependency on wash-trading
+contracts or deployment scripts.
+
 ## Configuration
 
 All constants are configurable by the contract owner via dedicated setter functions (e.g., `setFirstSignCap()`, `setWithdrawalDelay()`).
