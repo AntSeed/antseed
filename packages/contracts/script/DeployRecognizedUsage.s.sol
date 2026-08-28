@@ -10,6 +10,10 @@ import { AntseedSellerPoolsRewards } from "../emissions/AntseedSellerPoolsReward
 import { AntseedUsageAccounting } from "../emissions/AntseedUsageAccounting.sol";
 import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
 import { AntseedPointsPolicyRegistry } from "../policies/AntseedPointsPolicyRegistry.sol";
+<<<<<<< HEAD
+=======
+import { AntseedPositionInit } from "../sellers/AntseedPositionInit.sol";
+>>>>>>> origin/contracts-update-all
 import { AntseedSellerPools } from "../sellers/AntseedSellerPools.sol";
 import { AntseedSellerRegistry } from "../sellers/AntseedSellerRegistry.sol";
 
@@ -53,6 +57,10 @@ interface IAntseedLegacyEmissionsAdmin {
  *   EMISSIONS_RESERVE_WALLET          Destination for ANTS emission reserve flows
  *                                     via the reserve minter controller. Unset =
  *                                     ANTS reserve flows use protocolReserve.
+ *   POSITION_INIT_AMOUNT              ANTS per starter position (default 1e18).
+ *   POSITION_INIT_END_EPOCH           Shared end epoch of all starter
+ *                                     positions; claims stop once reached
+ *                                     (default effectiveEpoch + 104).
  *
  * Usage:
  *   cd packages/contracts
@@ -86,6 +94,7 @@ contract DeployRecognizedUsage is Script {
         require(existingEmissions != address(0), "existing emissions not set");
         require(existingChannels != address(0), "channels not set");
         require(existingDeposits != address(0), "deposits not set");
+        require(existingStaking != address(0), "staking not set");
 
         address verificationWallet = vm.envAddress("VERIFICATION_WALLET");
         require(verificationWallet != address(0), "verification wallet not set");
@@ -174,6 +183,23 @@ contract DeployRecognizedUsage is Script {
         console.log("EmissionsGate:          ", address(gate));
         gate.setMinter(VERIFICATION_MINTER_ID, verificationWallet, 10_000, true);
 
+        // Starter-position faucet: every existing legacy seller can create one
+        // small ANTS position in their own pool, so pools have nonzero power
+        // (and usage accounting turns on) from the first rewarded epoch even
+        // though nobody holds transferable ANTS yet. All starter positions
+        // share one end epoch (default: max lock measured from the first
+        // rewarded epoch), so a late claim never outweighs an early one and
+        // the faucet expires by itself. Unowned and immutable — it also
+        // switches off when its funded pot runs out.
+        AntseedPositionInit positionInit = new AntseedPositionInit(
+            address(sellerPools),
+            existingStaking,
+            vm.envOr("POSITION_INIT_AMOUNT", uint256(1 ether)),
+            vm.envOr("POSITION_INIT_END_EPOCH", effectiveEpoch + 104)
+        );
+        console.log("PositionInit:         ", address(positionInit));
+        console.log("PositionInit end epoch:", positionInit.initEndEpoch());
+
         AntseedUsageAccounting usageAccounting =
             new AntseedUsageAccounting(address(sellerPools), existingChannels, address(gate));
         console.log("UsageAccounting:        ", address(usageAccounting));
@@ -216,6 +242,9 @@ contract DeployRecognizedUsage is Script {
         IANTSTokenAdmin(antsToken).setTransferWhitelist(address(usageRewards), true);
         IANTSTokenAdmin(antsToken).setTransferWhitelist(address(sellerPoolsRewards), true);
         IANTSTokenAdmin(antsToken).setTransferWhitelist(address(legacyEscrow), true);
+        // The starter-position faucet is the transfer sender when it stakes
+        // into SellerPools on sellers' behalf.
+        IANTSTokenAdmin(antsToken).setTransferWhitelist(address(positionInit), true);
         sellerPools.setRewardStaker(address(sellerPoolsRewards), true);
         gate.setMinter(SELLER_POOLS_MINTER_ID, address(sellerPoolsRewards), 40_000, true);
         gate.setMinter(USAGE_MINTER_ID, address(usageRewards), 20_000, true);
@@ -258,6 +287,8 @@ contract DeployRecognizedUsage is Script {
         console.log("Team recipient:           ", teamWallet);
         console.log("Reserve recipient:        ", gate.emissionsReserve());
         console.log("Verification recipient:   ", verificationWallet);
+        console.log("Points policy registry:   ", address(pointsPolicyRegistry));
+        console.log("Points policies:           NONE REGISTERED by this broadcast");
         console.log("");
         console.log("NEXT STEP (broadcast 2 of 2):");
         console.log("- Run scripts/cutover-flip.sh: it pauses AntseedChannels 60s");
@@ -303,6 +334,13 @@ contract DeployRecognizedUsage is Script {
         console.log("  only after seller pools are seeded with ANTS stake.");
         console.log("- Sellers cannot stake ANTS into pools until they are transfer-");
         console.log("  whitelisted or transfers are enabled.");
+        console.log("- Fund the PositionInit faucet with ANTS from a wallet that already");
+        console.log("  holds them (temporarily whitelist that wallet as a SENDER via");
+        console.log("  ANTSToken.setTransferWhitelist, transfer, then de-whitelist).");
+        console.log("  Fund in small increments: the faucet has no owner and no sweep,");
+        console.log("  leftovers strand forever. Announce the claim window: grants");
+        console.log("  staked before the flip epoch's boundary have power at the first");
+        console.log("  rewarded epoch; later claims activate one epoch after staking.");
         console.log("- Legacy EmissionsV2 is registered against the escrow: all its");
         console.log("  claims and team/reserve flushes (any epoch, any time) pay from");
         console.log("  the pre-minted pot. Sweep the escrow leftovers only after legacy");
