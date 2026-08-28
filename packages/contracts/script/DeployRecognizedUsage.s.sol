@@ -9,6 +9,7 @@ import { AntseedLegacyEmissionsEscrow } from "../emissions/AntseedLegacyEmission
 import { AntseedSellerPoolsRewards } from "../emissions/AntseedSellerPoolsRewards.sol";
 import { AntseedUsageAccounting } from "../emissions/AntseedUsageAccounting.sol";
 import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
+import { AntseedPointsPolicyRegistry } from "../policies/AntseedPointsPolicyRegistry.sol";
 import { AntseedPositionInit } from "../sellers/AntseedPositionInit.sol";
 import { AntseedSellerPools } from "../sellers/AntseedSellerPools.sol";
 import { AntseedSellerRegistry } from "../sellers/AntseedSellerRegistry.sol";
@@ -120,7 +121,9 @@ contract DeployRecognizedUsage is Script {
             uint256 legacyEpochDuration = IAntseedLegacyEmissionsClock(existingEmissions).EPOCH_DURATION();
             uint256 legacyCurrentEpoch = IAntseedLegacyEmissionsClock(existingEmissions).currentEpoch();
             uint256 nextBoundary = legacyGenesis + (legacyCurrentEpoch + 1) * legacyEpochDuration;
-            require(nextBoundary - block.timestamp > 1 hours, "too close to epoch boundary; deploy earlier in the epoch");
+            require(
+                nextBoundary - block.timestamp > 1 hours, "too close to epoch boundary; deploy earlier in the epoch"
+            );
         }
 
         vm.startBroadcast(deployerPrivateKey);
@@ -198,6 +201,10 @@ contract DeployRecognizedUsage is Script {
             new AntseedUsageAccounting(address(sellerPools), existingChannels, address(gate));
         console.log("UsageAccounting:        ", address(usageAccounting));
 
+        AntseedPointsPolicyRegistry pointsPolicyRegistry = new AntseedPointsPolicyRegistry(deployer);
+        usageAccounting.setPointsPolicy(address(pointsPolicyRegistry));
+        console.log("PointsPolicyRegistry:   ", address(pointsPolicyRegistry));
+
         AntseedSellerPoolsRewards sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
         console.log("SellerPoolsRewards: ", address(sellerPoolsRewards));
@@ -220,8 +227,7 @@ contract DeployRecognizedUsage is Script {
         // itself, so its unchanged mint() claims draw from a fixed pre-minted
         // pot instead of minting. The gate then refuses pre-effective epochs
         // unconditionally.
-        AntseedLegacyEmissionsEscrow legacyEscrow =
-            new AntseedLegacyEmissionsEscrow(registryAddress, existingEmissions);
+        AntseedLegacyEmissionsEscrow legacyEscrow = new AntseedLegacyEmissionsEscrow(registryAddress, existingEmissions);
         console.log("LegacyEmissionsEscrow:  ", address(legacyEscrow));
 
         // SellerPools must be able to pay out withdrawals and slash to the dead
@@ -278,6 +284,8 @@ contract DeployRecognizedUsage is Script {
         console.log("Team recipient:           ", teamWallet);
         console.log("Reserve recipient:        ", gate.emissionsReserve());
         console.log("Verification recipient:   ", verificationWallet);
+        console.log("Points policy registry:   ", address(pointsPolicyRegistry));
+        console.log("Points policies:           NONE REGISTERED by this broadcast");
         console.log("");
         console.log("NEXT STEP (broadcast 2 of 2):");
         console.log("- Run scripts/cutover-flip.sh: it pauses AntseedChannels 60s");

@@ -166,6 +166,26 @@ ANTS emission controller using the Synthetix reward-per-point pattern. O(1) gas 
 6. **AntseedChannels** — deploy with `(registryAddress)`
 7. **AntseedEmissions** — deploy with `(antsTokenAddress, channelsAddress)`, then call `antsToken.setEmissionsContract(emissions)`
 
+### Recognized-Usage Cutover Foundation
+
+`DeployRecognizedUsage.s.sol` deploys the shared recognized-usage contracts before
+the epoch-boundary registry flip. The deployment includes an empty
+`AntseedPointsPolicyRegistry` and permanently points `AntseedUsageAccounting`
+at that registry. Feature branches deploy and register their own penalty-policy
+leaves; the foundation broadcast does not deploy or register wash-trading or
+model-verification policies.
+
+The same broadcast deploys `AntseedPositionInit`, an immutable starter-position
+faucet for eligible legacy sellers. Fund it conservatively and have sellers call
+`initPosition()` before the first rewarded epoch if their usage must count from
+that epoch. Every starter position uses the shared `POSITION_INIT_END_EPOCH`, so
+claiming later never gives a seller more power than an earlier claimant.
+
+The verification emission bucket initially remains controlled by
+`VERIFICATION_WALLET`. A verification feature deployment may transfer that
+controller to its rewards contract before ownership of the emissions gate is
+finalized.
+
 ## Configuration
 
 All constants are configurable by the contract owner via dedicated setter functions (e.g., `setFirstSignCap()`, `setWithdrawalDelay()`).
