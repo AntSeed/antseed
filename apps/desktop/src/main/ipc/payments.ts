@@ -184,9 +184,10 @@ export function registerPaymentsIpc(): void {
         parsed.searchParams.set('cur', cur);
         if (amountStr) parsed.searchParams.set('amount', amountStr);
         parsed.searchParams.set('sig', await identity.wallet.signMessage(message));
-        // The chooser's Stripe row is the only path here — open the page on
-        // exactly that integration (no provider tab strip). Unsigned, UX-only.
-        parsed.searchParams.set('provider', 'stripe');
+        // The chooser's primary CTA is the only path here — open the page on
+        // exactly the Crossmint integration (no provider tab strip).
+        // Unsigned, UX-only.
+        parsed.searchParams.set('provider', 'crossmint');
       }
       const url = parsed.toString();
 

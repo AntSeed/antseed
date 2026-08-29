@@ -15,7 +15,7 @@
  *
  * Plain `_blank` links (terms, explorers) still go to the system browser.
  */
-import { app, shell, BrowserWindow, type BrowserWindowConstructorOptions, type HandlerDetails } from 'electron';
+import { app, screen, shell, BrowserWindow, type BrowserWindowConstructorOptions, type HandlerDetails } from 'electron';
 
 type WindowOpenResponse =
   | { action: 'deny' }
@@ -91,10 +91,16 @@ export function adoptCheckoutWindow(win: BrowserWindow): void {
  */
 export function openCheckoutPopup(url: string, parent?: BrowserWindow | null): BrowserWindow {
   // Narrow, like the Fun SDK's sign-in popups — the page renders its bare
-  // one-column checkout at this width.
+  // one-column checkout at this width. Tall enough that the Crossmint card
+  // form fits without inner scrolling, clamped to the work area of whichever
+  // display the app sits on.
+  const display = parent && !parent.isDestroyed()
+    ? screen.getDisplayMatching(parent.getBounds())
+    : screen.getPrimaryDisplay();
+  const height = Math.min(800, display.workArea.height - 24);
   const win = new BrowserWindow({
     width: 420,
-    height: 700,
+    height,
     minWidth: 360,
     minHeight: 560,
     ...(parent && !parent.isDestroyed() ? { parent } : {}),

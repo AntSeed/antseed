@@ -9,6 +9,7 @@
  */
 import { app, BrowserWindow, shell } from 'electron';
 import { createServer as createPaymentsServer } from '@antseed/payments';
+import { isDev } from '../app-context.js';
 import { LOCALHOST, LOCALHOST_URL } from '../constants.js';
 import { ACTIVE_CONFIG_PATH } from '../runtime/active-config.js';
 import { readConfig } from '../runtime/config-io.js';
@@ -114,9 +115,16 @@ export function openPaymentsPopup(url: string): void {
 // the CDP secret key never ships inside the app.
 export type CardProvider = { id: string; label: string; url: string };
 
+// The hosted pay page. Dev builds target the locally-run checkout (the
+// antseed-pay repo's `pnpm dev` on :3120) so the flow is testable end-to-end
+// before a deploy; ANTSEED_PAY_URL overrides the target in any build.
+const ANTSEED_PAY_URL =
+  process.env['ANTSEED_PAY_URL']?.trim()
+  || (isDev ? 'http://localhost:3120/' : 'https://antseed-pay.com/');
+
 export const DEFAULT_CARD_PROVIDERS: CardProvider[] = [
   { id: 'meridian', label: 'Meridian', url: 'https://antseed.mrdn.finance/?buyer={address}' },
-  { id: 'antseed-pay', label: 'AntSeed Pay', url: 'https://antseed-pay.com/' },
+  { id: 'antseed-pay', label: 'AntSeed Pay', url: ANTSEED_PAY_URL },
 ];
 
 // A configured empty array is respected (zero providers = card disabled);
