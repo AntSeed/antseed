@@ -153,9 +153,9 @@ export interface PeerModelVerification {
   undeterminedCount: number;
   /** Active distinct verifiers whose latest verdict for this service is DIFF. */
   activeDiffVerifierCount: number;
-  /** Corroboration threshold configured on the verification points-policy adapter. */
+  /** Informational corroboration threshold used by local lifecycle derivation. */
   requiredDiffVerifierCount: number;
-  /** Whether the adapter is currently registered in the points-policy registry. */
+  /** Whether a separate downstream policy has enabled routing consequences. */
   enforcementActive: boolean;
   /** Compatibility alias for activeDiffVerifierCount. */
   consecutiveDiffCount: number;
@@ -167,6 +167,6 @@ export interface PeerModelVerification {
   latestEvidenceHash: string;
   latestVerifier: string;
   latestBlockNumber: number;
-  /** Evidence metadata from the latest still-active DIFF verdict. */
+  /** Deprecated compatibility field; detailed estimates live in off-chain evidence. */
   modelShareBps: number;
 }

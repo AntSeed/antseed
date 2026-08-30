@@ -234,7 +234,7 @@ test('model bundles account costs once and derive deterministic IDs', async () =
     assert.notEqual(changedConsensus.evidence.consensus.evidenceHash, first.evidence.consensus.evidenceHash)
     assert.notEqual(changedConsensus.evidenceHash, first.evidenceHash)
     assert.equal(first.results.length, 2)
-    assert.equal(first.results[1]!.modelShareBps, 0)
+    assert.equal(first.evidence.results[1]!.modelShareBps, 0)
     assert.equal(first.evidence.inferenceCostUsdMicros, '1450000')
     assert.equal(first.evidence.referenceCostUsdMicros, '600000')
     assert.equal(first.evidence.totalAuditCostUsdMicros, '2050000')

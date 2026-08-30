@@ -29,7 +29,6 @@ function event(
     agentId: 7n,
     serviceHash: SERVICE_HASH,
     verdict: verdict as AttestationSubmittedEvent['verdict'],
-    modelShareBps: verdict === VERIFIER_VERDICT_DIFF ? 2500 : 0,
     evidenceHash: '0x' + '22'.repeat(32),
     epoch: 1n,
     blockNumber,
@@ -77,28 +76,27 @@ describe('derivePeerModelVerification', () => {
     const flagged = derivePeerModelVerification(SERVICE_HASH, [event(VERIFIER_VERDICT_DIFF, 10)]);
     expect(flagged.lifecycle).toBe('flagged');
     expect(flagged.consecutiveDiffCount).toBe(1);
-    expect(flagged.modelShareBps).toBe(2500);
+    expect(flagged.modelShareBps).toBe(0);
 
     const suspended = derivePeerModelVerification(SERVICE_HASH, [
       event(VERIFIER_VERDICT_DIFF, 10),
       event(VERIFIER_VERDICT_DIFF, 11, {
         verifier: '0x' + '22'.repeat(20),
-        modelShareBps: 4000,
       }),
     ]);
     expect(suspended.lifecycle).toBe('suspended');
     expect(suspended.consecutiveDiffCount).toBe(2);
-    expect(suspended.modelShareBps).toBe(4000);
+    expect(suspended.modelShareBps).toBe(0);
   });
 
   it('repeated DIFF submissions from one verifier count once', () => {
     const result = derivePeerModelVerification(SERVICE_HASH, [
       event(VERIFIER_VERDICT_DIFF, 10),
-      event(VERIFIER_VERDICT_DIFF, 11, { modelShareBps: 4000 }),
+      event(VERIFIER_VERDICT_DIFF, 11),
     ]);
     expect(result.lifecycle).toBe('flagged');
     expect(result.activeDiffVerifierCount).toBe(1);
-    expect(result.modelShareBps).toBe(4000);
+    expect(result.modelShareBps).toBe(0);
   });
 
   it('SAME retracts only the submitting verifier on the same service', () => {
@@ -110,7 +108,7 @@ describe('derivePeerModelVerification', () => {
     expect(result.lifecycle).toBe('flagged');
     expect(result.activeDiffVerifierCount).toBe(1);
     expect(result.lastConclusiveVerdict).toBe(VERIFIER_VERDICT_SAME);
-    expect(result.modelShareBps).toBe(2500);
+    expect(result.modelShareBps).toBe(0);
   });
 
   it('UNDETERMINED retracts only that verifier and preserves other active accusations', () => {
@@ -124,7 +122,7 @@ describe('derivePeerModelVerification', () => {
     expect(result.lastVerdict).toBe(VERIFIER_VERDICT_UNDETERMINED);
     expect(result.lastConclusiveVerdict).toBe(VERIFIER_VERDICT_DIFF);
     expect(result.activeDiffVerifierCount).toBe(1);
-    expect(result.modelShareBps).toBe(2500);
+    expect(result.modelShareBps).toBe(0);
   });
 
   it('sorts events by chain position and ignores other services', () => {

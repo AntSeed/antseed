@@ -40,7 +40,6 @@ function attestation(
     agentId: 7n,
     serviceHash: serviceHash('kimi-k2'),
     verdict: verdict as AttestationSubmittedEvent['verdict'],
-    modelShareBps: verdict === VERIFIER_VERDICT_DIFF ? 2500 : 0,
     evidenceHash: '0x' + '22'.repeat(32),
     epoch: 1n,
     blockNumber,

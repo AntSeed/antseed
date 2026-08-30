@@ -286,7 +286,6 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
     const diff = await readClient.queryAttestations(2n)
     assert.equal(diff.length, 1)
     assert.equal(diff[0]!.verdict, VERIFIER_VERDICT_DIFF)
-    assert.equal(diff[0]!.modelShareBps, 0)
     const undetermined = await readClient.queryAttestations(3n)
     assert.equal(undetermined.length, 1)
     assert.equal(undetermined[0]!.verdict, VERIFIER_VERDICT_UNDETERMINED)

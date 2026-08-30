@@ -53,26 +53,20 @@ test('createDefaultConfig includes a Base mainnet crypto payment default', () =>
   });
 });
 
-test('loadConfig preserves the split verification contract addresses', async () => {
+test('loadConfig preserves the verification contract address', async () => {
   const verificationContractAddress = '0x' + '12'.repeat(20);
-  const verificationPointsPolicyAddress = '0x' + '34'.repeat(20);
-  const pointsPolicyRegistryAddress = '0x' + '56'.repeat(20);
   await withTempConfig(
     JSON.stringify({
       payments: {
         crypto: {
           chainId: 'base-mainnet',
           verificationContractAddress,
-          verificationPointsPolicyAddress,
-          pointsPolicyRegistryAddress,
         },
       },
     }),
     async (configPath) => {
       const config = await loadConfig(configPath);
       assert.equal(config.payments.crypto?.verificationContractAddress, verificationContractAddress);
-      assert.equal(config.payments.crypto?.verificationPointsPolicyAddress, verificationPointsPolicyAddress);
-      assert.equal(config.payments.crypto?.pointsPolicyRegistryAddress, pointsPolicyRegistryAddress);
     },
   );
 });

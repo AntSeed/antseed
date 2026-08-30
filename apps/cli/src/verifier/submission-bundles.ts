@@ -251,7 +251,7 @@ export async function prepareModelVerificationBundle(input: {
       inferenceCostUsdMicros: inferenceCostUsdMicros.toString(),
       costSources: sellerCosts,
     })
-    contractResults.push({ agentId, serviceHash: hashedService, verdict, modelShareBps })
+    contractResults.push({ agentId, serviceHash: hashedService, verdict })
   }
 
   const inferenceCostUsdMicros = sumMicros(results.map((result) => result.inferenceCostUsdMicros))
@@ -330,7 +330,6 @@ export async function readPreparedModelVerificationBundle(input: {
     agentId: BigInt(result.agentId),
     serviceHash: result.serviceHash,
     verdict: verifierVerdict(result.verdict),
-    modelShareBps: result.modelShareBps,
   }))
   return {
     model: evidence.model,

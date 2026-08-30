@@ -1,11 +1,7 @@
 import { EventLog, Interface, Log, Wallet, type Provider } from 'ethers';
 import { describe, expect, it, vi } from 'vitest';
 import {
-  DEFAULT_DIFF_PENALTY_BPS,
-  DEFAULT_MIN_DISTINCT_DIFF_VERIFIERS,
-  POINTS_POLICY_REGISTRY_ABI,
   VERIFICATION_ABI,
-  VERIFICATION_POINTS_POLICY_ABI,
   VERIFIER_VERDICT_DIFF,
   VerifierClient,
   serviceHash,
@@ -13,8 +9,6 @@ import {
 } from '../src/payments/evm/verifier-client.js';
 
 const VERIFICATION_ADDRESS = '0x' + '10'.repeat(20);
-const VERIFICATION_POLICY_ADDRESS = '0x' + '12'.repeat(20);
-const POINTS_POLICY_REGISTRY_ADDRESS = '0x' + '13'.repeat(20);
 const AUDIT_ID = '0x' + '11'.repeat(32);
 const SERVICE_HASH = '0x' + '44'.repeat(32);
 
@@ -38,7 +32,6 @@ describe('VerifierClient combined ABI', () => {
         agentId: 9,
         serviceHash: SERVICE_HASH,
         verdict: VERIFIER_VERDICT_DIFF,
-        modelShareBps: 2500,
       }],
     };
 
@@ -49,30 +42,26 @@ describe('VerifierClient combined ABI', () => {
       'submitVerificationBundle',
       input.evidenceHash,
       input.evidenceUri,
-      [{ agentId: 9n, serviceHash: SERVICE_HASH, verdict: VERIFIER_VERDICT_DIFF, modelShareBps: 2500 }],
+      [{ agentId: 9n, serviceHash: SERVICE_HASH, verdict: VERIFIER_VERDICT_DIFF }],
     );
   });
 
-  it('separates verification status from points-policy configuration', () => {
+  it('keeps the verification ABI raw and consequence-free', () => {
     const iface = new Interface(VERIFICATION_ABI);
-    const policyIface = new Interface(VERIFICATION_POINTS_POLICY_ABI);
-    const registryIface = new Interface(POINTS_POLICY_REGISTRY_ABI);
     expect(iface.getFunction('submitVerificationBundle')).not.toBeNull();
     expect(iface.getFunction('isVerificationSubmitted')).not.toBeNull();
     expect(iface.getFunction('verificationBundle')).not.toBeNull();
-    expect(iface.getFunction('activeAgentDiffVerifierCount')).not.toBeNull();
-    expect(iface.getFunction('activeServiceDiffVerifierCount')).not.toBeNull();
-    expect(iface.getFunction('latestVerifierVerdict')).not.toBeNull();
-    expect(iface.getFunction('clearVerifierVerdict')).not.toBeNull();
+    expect(iface.getFunction('verificationResult')).not.toBeNull();
+    expect(iface.getFunction('activeAgentDiffVerifierCount')).toBeNull();
+    expect(iface.getFunction('activeServiceDiffVerifierCount')).toBeNull();
+    expect(iface.getFunction('latestVerifierVerdict')).toBeNull();
+    expect(iface.getFunction('clearVerifierVerdict')).toBeNull();
     expect(iface.getFunction('claimVerifierReward')).toBeNull();
     expect(iface.getFunction('pendingVerifierReward')).toBeNull();
     expect(iface.getFunction('epochCreditUsdMicros')).toBeNull();
     expect(iface.getFunction('emissionsGate')).toBeNull();
     expect(iface.getFunction('currentEpoch')).toBeNull();
     expect(iface.getFunction('agentPointsPenaltyBps')).toBeNull();
-    expect(policyIface.getFunction('minDistinctDiffVerifiers')).not.toBeNull();
-    expect(policyIface.getFunction('diffPenaltyBps')).not.toBeNull();
-    expect(registryIface.getFunction('isPolicyRegistered')).not.toBeNull();
     expect(iface.getFunction('latestAttestation')).toBeNull();
     expect(iface.getFunction('servicePointsPenaltyBps')).toBeNull();
     expect(iface.getFunction('epochRewardClaimed')).toBeNull();
@@ -83,40 +72,6 @@ describe('VerifierClient combined ABI', () => {
     expect(iface.getFunction('gate')).toBeNull();
     expect(iface.getFunction('commitProbes')).toBeNull();
     expect(iface.getFunction('claimDelegateReward')).toBeNull();
-  });
-
-  it('keeps the policy state in shadow mode when adapter wiring is absent', async () => {
-    const client = new VerifierClient({
-      rpcUrl: 'http://127.0.0.1:1',
-      contractAddress: VERIFICATION_ADDRESS,
-    });
-
-    await expect(client.verificationPolicyState()).resolves.toEqual({
-      registered: false,
-      minDistinctDiffVerifiers: DEFAULT_MIN_DISTINCT_DIFF_VERIFIERS,
-      diffPenaltyBps: DEFAULT_DIFF_PENALTY_BPS,
-    });
-  });
-
-  it('reads activation and corroboration from the adapter and points registry', async () => {
-    const client = new VerifierClient({
-      rpcUrl: 'http://127.0.0.1:1',
-      contractAddress: VERIFICATION_ADDRESS,
-      verificationPointsPolicyAddress: VERIFICATION_POLICY_ADDRESS,
-      pointsPolicyRegistryAddress: POINTS_POLICY_REGISTRY_ADDRESS,
-    });
-    (client as any)._verificationPointsPolicyInstance = {
-      getFunction: (name: string) => async () => name === 'minDistinctDiffVerifiers' ? 3n : 7500n,
-    };
-    (client as any)._pointsPolicyRegistryInstance = {
-      getFunction: () => async () => true,
-    };
-
-    await expect(client.verificationPolicyState()).resolves.toEqual({
-      registered: true,
-      minDistinctDiffVerifiers: 3,
-      diffPenaltyBps: 7500,
-    });
   });
 
   it('exposes shared bundle and compact result event shapes', () => {
@@ -133,8 +88,8 @@ describe('VerifierClient combined ABI', () => {
       'evidenceHash',
       'agentId',
       'serviceHash',
+      'verifier',
       'verdict',
-      'modelShareBps',
     ]);
   });
 

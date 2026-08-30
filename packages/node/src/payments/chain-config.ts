@@ -33,10 +33,6 @@ export interface ChainConfig {
   explorerApiUrl?: string;
   /** AntseedVerification contract address. */
   verificationContractAddress?: string;
-  /** AntseedVerificationPointsPolicy adapter address. */
-  verificationPointsPolicyAddress?: string;
-  /** AntseedPointsPolicyRegistry address used to detect policy activation. */
-  pointsPolicyRegistryAddress?: string;
   /** AntseedDepositRelay contract for gasless USDC sweeps from buyer hot wallets. */
   depositRelayAddress?: string;
 }
@@ -140,8 +136,6 @@ export function resolveChainConfig(overrides?: {
   legacyEmissionsContractAddress?: string;
   antsTokenAddress?: string;
   verificationContractAddress?: string;
-  verificationPointsPolicyAddress?: string;
-  pointsPolicyRegistryAddress?: string;
   depositRelayAddress?: string;
 }): ChainConfig {
   const base = getChainConfig(overrides?.chainId);
@@ -166,12 +160,6 @@ export function resolveChainConfig(overrides?: {
     ...(overrides?.antsTokenAddress ? { antsTokenAddress: overrides.antsTokenAddress } : {}),
     ...(overrides?.verificationContractAddress
       ? { verificationContractAddress: overrides.verificationContractAddress }
-      : {}),
-    ...(overrides?.verificationPointsPolicyAddress
-      ? { verificationPointsPolicyAddress: overrides.verificationPointsPolicyAddress }
-      : {}),
-    ...(overrides?.pointsPolicyRegistryAddress
-      ? { pointsPolicyRegistryAddress: overrides.pointsPolicyRegistryAddress }
       : {}),
     ...(overrides?.depositRelayAddress ? { depositRelayAddress: overrides.depositRelayAddress } : {}),
   };

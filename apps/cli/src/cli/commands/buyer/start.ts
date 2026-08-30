@@ -291,8 +291,6 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
         freeUsageContractAddress: cryptoOverrides?.freeUsageContractAddress,
         usdcContractAddress: cryptoOverrides?.usdcContractAddress,
         verificationContractAddress: cryptoOverrides?.verificationContractAddress,
-        verificationPointsPolicyAddress: cryptoOverrides?.verificationPointsPolicyAddress,
-        pointsPolicyRegistryAddress: cryptoOverrides?.pointsPolicyRegistryAddress,
       })
       const settlementEnabled = settlementEnv ?? true
 
@@ -327,12 +325,6 @@ export function registerBuyerStartCommand(buyerCmd: Command): void {
           ...(chainConfig.identityRegistryAddress ? { identityRegistryAddress: chainConfig.identityRegistryAddress } : {}),
           ...(chainConfig.verificationContractAddress
             ? { verificationContractAddress: chainConfig.verificationContractAddress }
-            : {}),
-          ...(chainConfig.verificationPointsPolicyAddress
-            ? { verificationPointsPolicyAddress: chainConfig.verificationPointsPolicyAddress }
-            : {}),
-          ...(chainConfig.pointsPolicyRegistryAddress
-            ? { pointsPolicyRegistryAddress: chainConfig.pointsPolicyRegistryAddress }
             : {}),
           chainId: chainConfig.evmChainId,
           defaultDepositAmountUSDC: cryptoOverrides?.defaultLockAmountUSDC

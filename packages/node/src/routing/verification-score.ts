@@ -65,7 +65,6 @@ export function derivePeerModelVerification(
     options.activeDiffVerifierCount ?? activeDiffEvents.length,
   );
   const requiredDiffVerifierCount = Math.max(2, options.minDistinctDiffVerifiers ?? 2);
-  const latestActiveDiff = activeDiffEvents.at(-1);
   const latest = ordered.at(-1);
   return {
     serviceHash: expectedServiceHash,
@@ -83,7 +82,7 @@ export function derivePeerModelVerification(
     latestEvidenceHash: latest?.evidenceHash ?? `0x${'0'.repeat(64)}`,
     latestVerifier: latest?.verifier ?? `0x${'0'.repeat(40)}`,
     latestBlockNumber: latest?.blockNumber ?? 0,
-    modelShareBps: latestActiveDiff?.modelShareBps ?? 0,
+    modelShareBps: 0,
   };
 }
 

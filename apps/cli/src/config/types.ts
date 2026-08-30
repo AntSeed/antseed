@@ -276,10 +276,6 @@ export interface PaymentsCLIConfig {
     emissionsContractAddress?: string;
     /** Deployed AntseedVerification contract address */
     verificationContractAddress?: string;
-    /** Deployed AntseedVerificationPointsPolicy adapter address */
-    verificationPointsPolicyAddress?: string;
-    /** Deployed AntseedPointsPolicyRegistry address */
-    pointsPolicyRegistryAddress?: string;
     /** Deployed AntseedDepositRelay contract address (gasless deposit sweeps) */
     depositRelayAddress?: string;
     /** Default lock amount per session in human-readable USDC (e.g. "1" = 1 USDC) */

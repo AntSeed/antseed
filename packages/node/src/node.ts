@@ -98,12 +98,9 @@ import { Contract as EthersContract } from "ethers";
 import { SellerPaymentManager, type SellerPaymentConfig } from "./payments/seller-payment-manager.js";
 import { IdentityClient } from "./payments/evm/identity-client.js";
 import {
-  DEFAULT_DIFF_PENALTY_BPS,
-  DEFAULT_MIN_DISTINCT_DIFF_VERIFIERS,
   VerifierClient,
   serviceHash,
   type AttestationSubmittedEvent,
-  type VerificationPolicyState,
 } from "./payments/evm/verifier-client.js";
 import { derivePeerModelVerification } from "./routing/verification-score.js";
 import { SellerRequestHandler } from "./seller-request-handler.js";
@@ -185,10 +182,6 @@ export interface NodePaymentsConfig {
   stakingAddress?: string;
   /** Optional AntseedVerification address. */
   verificationContractAddress?: string;
-  /** Optional AntseedVerificationPointsPolicy address. */
-  verificationPointsPolicyAddress?: string;
-  /** Optional AntseedPointsPolicyRegistry address. */
-  pointsPolicyRegistryAddress?: string;
   /** Chain ID for EIP-712 domain. Default: 8453 (Base) */
   chainId?: number;
   /** Default maximum USDC per spending auth. Default: 500000 ($0.50) */
@@ -1128,15 +1121,6 @@ export class AntseedNode extends EventEmitter {
     });
     if (pending.length === 0) return;
 
-    const shadowPolicyState: VerificationPolicyState = {
-      registered: false,
-      minDistinctDiffVerifiers: DEFAULT_MIN_DISTINCT_DIFF_VERIFIERS,
-      diffPenaltyBps: DEFAULT_DIFF_PENALTY_BPS,
-    };
-    const policyState = typeof client.verificationPolicyState === 'function'
-      ? await client.verificationPolicyState().catch(() => shadowPolicyState)
-      : shadowPolicyState;
-
     const loadAttestations = async (agentId: number): Promise<{
       attestations: AttestationSubmittedEvent[];
       fetchedAt: number;
@@ -1168,16 +1152,9 @@ export class AntseedNode extends EventEmitter {
         const matching = cached.attestations.filter(
           (event) => event.serviceHash.toLowerCase() === targetServiceHash.toLowerCase(),
         );
-        const activeDiffVerifierCount = typeof client.activeServiceDiffVerifierCount === 'function'
-          ? await client.activeServiceDiffVerifierCount(peer.onChainAgentId!, targetServiceHash)
-            .then(Number)
-            .catch(() => undefined)
-          : undefined;
-        if (matching.length > 0 || (activeDiffVerifierCount ?? 0) > 0) {
+        if (matching.length > 0) {
           next[serviceKey] = derivePeerModelVerification(targetServiceHash, matching, {
-            ...(activeDiffVerifierCount !== undefined ? { activeDiffVerifierCount } : {}),
-            minDistinctDiffVerifiers: policyState.minDistinctDiffVerifiers,
-            enforcementActive: policyState.registered,
+            enforcementActive: false,
           });
         }
       }));
@@ -2179,12 +2156,6 @@ export class AntseedNode extends EventEmitter {
         rpcUrl: payments.rpcUrl,
         ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
         contractAddress: payments.verificationContractAddress,
-        ...(payments.verificationPointsPolicyAddress
-          ? { verificationPointsPolicyAddress: payments.verificationPointsPolicyAddress }
-          : {}),
-        ...(payments.pointsPolicyRegistryAddress
-          ? { pointsPolicyRegistryAddress: payments.pointsPolicyRegistryAddress }
-          : {}),
       });
       debugLog(`[Node] VerifierClient initialized (contract=${payments.verificationContractAddress.slice(0, 10)}...)`);
     }
