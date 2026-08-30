@@ -36,9 +36,6 @@ export interface VerificationResultInput {
 }
 
 export interface SubmitVerificationBundleInput {
-  expectedEpoch: number | bigint;
-  /** Exact audit cost and credit weight in USD micros: $1 = 1_000_000, $1.20 = 1_200_000. */
-  totalAuditCostUsdMicros: number | bigint;
   evidenceHash: string;
   evidenceUri: string;
   results: VerificationResultInput[];
@@ -47,9 +44,6 @@ export interface SubmitVerificationBundleInput {
 export interface VerificationBundleSubmittedEvent {
   evidenceHash: string;
   verifier: string;
-  epoch: bigint;
-  totalAuditCostUsdMicros: bigint;
-  awardedCreditUsdMicros: bigint;
   resultCount: number;
   evidenceUri: string;
   blockNumber: number;
@@ -65,7 +59,6 @@ export interface AttestationSubmittedEvent {
   verdict: VerifierVerdict;
   modelShareBps: number;
   evidenceHash: string;
-  epoch: bigint;
   blockNumber: number;
   logIndex: number;
   transactionHash: string;
@@ -82,28 +75,16 @@ export const DEFAULT_DIFF_PENALTY_BPS = 10_000;
 
 export const VERIFICATION_ABI = [
   'function setVerifier(address verifier, bool approved) external',
-  'function setMaxCreditUsdMicrosPerVerifierPerEpoch(uint64 maximum) external',
-  'function submitVerificationBundle(uint256 expectedEpoch,uint64 totalAuditCostUsdMicros,bytes32 evidenceHash,string evidenceUri,(uint256 agentId,bytes32 serviceHash,uint8 verdict,uint16 modelShareBps)[] results) external',
+  'function submitVerificationBundle(bytes32 evidenceHash,string evidenceUri,(uint256 agentId,bytes32 serviceHash,uint8 verdict,uint16 modelShareBps)[] results) external',
   'function isVerificationSubmitted(bytes32 evidenceHash) external view returns (bool)',
+  'function verificationBundle(bytes32 evidenceHash) external view returns ((address verifier,uint64 submittedAt,uint32 resultCount,string evidenceUri))',
   'function registry() external view returns (address)',
-  'function emissionsGate() external view returns (address)',
-  'function firstRewardedEpoch() external view returns (uint256)',
   'function approvedVerifiers(address verifier) external view returns (bool)',
-  'function maxCreditUsdMicrosPerVerifierPerEpoch() external view returns (uint64)',
-  'function epochCreditUsdMicros(uint256 epoch, address verifier) external view returns (uint256)',
-  'function epochTotalCreditUsdMicros(uint256 epoch) external view returns (uint256)',
-  'function currentEpoch() external view returns (uint256)',
   'function activeAgentDiffVerifierCount(uint256 agentId) external view returns (uint256)',
   'function activeServiceDiffVerifierCount(uint256 agentId,bytes32 serviceHash) external view returns (uint256)',
   'function latestVerifierVerdict(uint256 agentId,bytes32 serviceHash,address verifier) external view returns (uint8)',
   'function clearVerifierVerdict(uint256 agentId,bytes32 serviceHash,address verifier) external',
-  'function claimVerifierReward(uint256 epoch) external',
-  'function settleEpochRemainder(uint256 epoch) external returns (uint256 burnedAmount,uint256 reserveAmount)',
-  'function pendingVerifierReward(uint256 epoch,address verifier) external view returns (uint256)',
-  'function verifierEpochBudget(uint256 epoch) external view returns (uint256)',
-  'function verifierEpochTotalCreditUsdMicros(uint256 epoch) external view returns (uint256)',
-  'function epochRemainderSettled(uint256 epoch) external view returns (bool)',
-  'event VerificationBundleSubmitted(bytes32 indexed evidenceHash,address indexed verifier,uint256 indexed epoch,uint64 totalAuditCostUsdMicros,uint64 awardedCreditUsdMicros,uint32 resultCount,string evidenceUri)',
+  'event VerificationBundleSubmitted(bytes32 indexed evidenceHash,address indexed verifier,uint32 resultCount,string evidenceUri)',
   'event VerificationResultSubmitted(bytes32 indexed evidenceHash,uint256 indexed agentId,bytes32 indexed serviceHash,uint8 verdict,uint16 modelShareBps)',
   'event VerifierVerdictTransitioned(uint256 indexed agentId,bytes32 indexed serviceHash,address indexed verifier,uint8 previousVerdict,uint8 newVerdict)',
   'event VerifierVerdictRemediated(uint256 indexed agentId,bytes32 indexed serviceHash,address indexed verifier,uint8 previousVerdict)',
@@ -120,12 +101,6 @@ export const VERIFICATION_POINTS_POLICY_ABI = [
 
 export const POINTS_POLICY_REGISTRY_ABI = [
   'function isPolicyRegistered(address policy) external view returns (bool)',
-] as const;
-
-const EMISSIONS_GATE_EPOCH_ABI = [
-  'function GENESIS() external view returns (uint256)',
-  'function EPOCH_DURATION() external view returns (uint256)',
-  'function currentEpoch() external view returns (uint256)',
 ] as const;
 
 const ANTSEED_REGISTRY_ABI = [
@@ -190,20 +165,11 @@ export class VerifierClient extends BaseEvmClient {
     return this._execWrite(signer, VERIFICATION_ABI, 'setVerifier', getAddress(verifier), approved);
   }
 
-  async setMaxCreditUsdMicrosPerVerifierPerEpoch(
-    signer: AbstractSigner,
-    maximum: number | bigint,
-  ): Promise<string> {
-    return this._execWrite(signer, VERIFICATION_ABI, 'setMaxCreditUsdMicrosPerVerifierPerEpoch', BigInt(maximum));
-  }
-
   async submitVerificationBundle(signer: AbstractSigner, input: SubmitVerificationBundleInput): Promise<string> {
     return this._execWrite(
       signer,
       VERIFICATION_ABI,
       'submitVerificationBundle',
-      BigInt(input.expectedEpoch),
-      BigInt(input.totalAuditCostUsdMicros),
       input.evidenceHash,
       input.evidenceUri,
       input.results.map((result) => ({
@@ -233,47 +199,8 @@ export class VerifierClient extends BaseEvmClient {
     return getAddress(String(await identityRegistry.getFunction('ownerOf')(BigInt(agentId))));
   }
 
-  async emissionsGate(): Promise<string> {
-    return getAddress(String(await this._contract().getFunction('emissionsGate')()));
-  }
-
   async approvedVerifier(verifier: string): Promise<boolean> {
     return Boolean(await this._contract().getFunction('approvedVerifiers')(getAddress(verifier)));
-  }
-
-  async maxCreditUsdMicrosPerVerifierPerEpoch(): Promise<bigint> {
-    return BigInt(await this._contract().getFunction('maxCreditUsdMicrosPerVerifierPerEpoch')());
-  }
-
-  async currentEpoch(): Promise<bigint> {
-    return BigInt(await this._contract().getFunction('currentEpoch')());
-  }
-
-  async currentEpochWindow(): Promise<{ epoch: bigint; startedAt: number; endsAt: number }> {
-    const gateAddress = await this.emissionsGate();
-    const gate = new Contract(gateAddress, EMISSIONS_GATE_EPOCH_ABI, this._provider);
-    const [genesisValue, durationValue, epochValue] = await Promise.all([
-      gate.getFunction('GENESIS')(),
-      gate.getFunction('EPOCH_DURATION')(),
-      gate.getFunction('currentEpoch')(),
-    ]);
-    const genesis = BigInt(genesisValue);
-    const duration = BigInt(durationValue);
-    const epoch = BigInt(epochValue);
-    const startedAt = genesis + epoch * duration;
-    const endsAt = startedAt + duration;
-    if (startedAt > BigInt(Number.MAX_SAFE_INTEGER) || endsAt > BigInt(Number.MAX_SAFE_INTEGER)) {
-      throw new Error('epoch window exceeds safe integer range');
-    }
-    return { epoch, startedAt: Number(startedAt), endsAt: Number(endsAt) };
-  }
-
-  async epochCreditUsdMicros(epoch: number | bigint, verifier: string): Promise<bigint> {
-    return BigInt(await this._contract().getFunction('epochCreditUsdMicros')(BigInt(epoch), getAddress(verifier)));
-  }
-
-  async epochTotalCreditUsdMicros(epoch: number | bigint): Promise<bigint> {
-    return BigInt(await this._contract().getFunction('epochTotalCreditUsdMicros')(BigInt(epoch)));
   }
 
   async activeAgentDiffVerifierCount(agentId: number | bigint): Promise<bigint> {
@@ -372,36 +299,6 @@ export class VerifierClient extends BaseEvmClient {
     return { registered, minDistinctDiffVerifiers, diffPenaltyBps };
   }
 
-  async claimVerifierReward(signer: AbstractSigner, epoch: number | bigint): Promise<string> {
-    return this._execWrite(signer, VERIFICATION_ABI, 'claimVerifierReward', BigInt(epoch));
-  }
-
-  async settleEpochRemainder(signer: AbstractSigner, epoch: number | bigint): Promise<string> {
-    return this._execWrite(signer, VERIFICATION_ABI, 'settleEpochRemainder', BigInt(epoch));
-  }
-
-  async firstRewardedEpoch(): Promise<bigint> {
-    return BigInt(await this._contract().getFunction('firstRewardedEpoch')());
-  }
-
-  async pendingVerifierReward(epoch: number | bigint, verifier: string): Promise<bigint> {
-    return BigInt(
-      await this._contract().getFunction('pendingVerifierReward')(BigInt(epoch), getAddress(verifier)),
-    );
-  }
-
-  async verifierEpochBudget(epoch: number | bigint): Promise<bigint> {
-    return BigInt(await this._contract().getFunction('verifierEpochBudget')(BigInt(epoch)));
-  }
-
-  async verifierEpochTotalCreditUsdMicros(epoch: number | bigint): Promise<bigint> {
-    return BigInt(await this._contract().getFunction('verifierEpochTotalCreditUsdMicros')(BigInt(epoch)));
-  }
-
-  async epochRemainderSettled(epoch: number | bigint): Promise<boolean> {
-    return Boolean(await this._contract().getFunction('epochRemainderSettled')(BigInt(epoch)));
-  }
-
   async queryAttestations(
     agentId: number | bigint,
     fromBlock: number | 'earliest' = 'earliest',
@@ -431,7 +328,6 @@ export class VerifierClient extends BaseEvmClient {
         verdict: Number(log.args.verdict ?? log.args[3]) as VerifierVerdict,
         modelShareBps: Number(log.args.modelShareBps ?? log.args[4]),
         evidenceHash,
-        epoch: bundle.epoch,
         blockNumber: log.blockNumber,
         logIndex: log.index,
         transactionHash: log.transactionHash,
@@ -456,11 +352,8 @@ export class VerifierClient extends BaseEvmClient {
       return [{
         evidenceHash: String(log.args.evidenceHash ?? log.args[0]),
         verifier: getAddress(String(log.args.verifier ?? log.args[1])),
-        epoch: BigInt(log.args.epoch ?? log.args[2]),
-        totalAuditCostUsdMicros: BigInt(log.args.totalAuditCostUsdMicros ?? log.args[3]),
-        awardedCreditUsdMicros: BigInt(log.args.awardedCreditUsdMicros ?? log.args[4]),
-        resultCount: Number(log.args.resultCount ?? log.args[5]),
-        evidenceUri: String(log.args.evidenceUri ?? log.args[6]),
+        resultCount: Number(log.args.resultCount ?? log.args[2]),
+        evidenceUri: String(log.args.evidenceUri ?? log.args[3]),
         blockNumber: log.blockNumber,
         logIndex: log.index,
         transactionHash: log.transactionHash,

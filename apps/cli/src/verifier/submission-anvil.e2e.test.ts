@@ -22,7 +22,6 @@ import {
   VERIFIER_VERDICT_UNDETERMINED,
   VerifierClient,
 } from '@antseed/node/payments'
-import { id } from 'ethers'
 import {
   modelAuditSellersDirectory,
   modelReferencesDirectory,
@@ -40,17 +39,12 @@ import {
   type ProxyAuditEvidenceV1,
 } from './proxy-evidence.js'
 import { submissionLedgerPath, type SubmissionLedgerV1 } from './submission-ledger.js'
-import {
-  rewardCreditShortfallReason,
-  summarizeSubmissionCosts,
-} from '../cli/commands/verifier/submit.js'
+import { summarizeSubmissionCosts } from '../cli/commands/verifier/submit.js'
 
 const RUN_ANVIL_E2E = process.env['ANTSEED_RUN_VERIFIER_ANVIL_E2E'] === '1'
 const RUN_REAL_PINATA = process.env['ANTSEED_RUN_REAL_PINATA'] === '1'
 const DEPLOYER_PRIVATE_KEY = 'ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
 const VERIFIER_ADDRESS = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'
-const VERIFICATION_MINTER_ID = id('antseed.emissions.verification.v1')
-const EPOCH_DURATION_SECONDS = 7 * 24 * 60 * 60
 const SELLER_ADDRESSES = [
   '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
   '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC',
@@ -83,20 +77,11 @@ interface WrittenAudit {
 test('submission cost summary does not attribute failed bundles to the epoch cap', () => {
   const summary = summarizeSubmissionCosts([{
     totalAuditCostUsdMicros: 288_393n,
-    awardedCreditUsdMicros: null,
     status: 'failed',
   }])
   assert.equal(summary.totalAuditCostUsdMicros, 288_393n)
   assert.equal(summary.submittedAuditCostUsdMicros, 0n)
   assert.equal(summary.failedAuditCostUsdMicros, 288_393n)
-  assert.equal(summary.awardedCreditUsdMicros, 0n)
-  assert.equal(summary.submittedCostWithoutCreditUsdMicros, 0n)
-  assert.equal(rewardCreditShortfallReason({
-    epoch: 18n,
-    firstRewardedEpoch: 19n,
-    epochRewardBudget: 0n,
-    remainingAllowanceUsdMicros: 100_000_000n,
-  }), 'epoch 18 precedes first rewarded epoch 19')
 })
 
 test('verifier submit sends per-model bundles to Anvil with retry-safe accounting', {
@@ -118,28 +103,16 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
       rpcUrl,
       'test/mocks/MockERC8004Registry.sol:MockERC8004Registry',
     )
-    const emissionsGateAddress = deployContract(
-      rpcUrl,
-      'emissions/AntseedEmissionsGate.sol:AntseedEmissionsGate',
-      [SELLER_ADDRESSES[0], SELLER_ADDRESSES[1], '15000', '15000'],
-    )
     const verificationAddress = deployContract(
       rpcUrl,
       'verification/AntseedVerification.sol:AntseedVerification',
-      [registryAddress, emissionsGateAddress],
+      [registryAddress],
     )
     castSend(rpcUrl, registryAddress, 'setIdentityRegistry(address)', [identityRegistryAddress])
     castSend(rpcUrl, verificationAddress, 'setVerifier(address,bool)', [VERIFIER_ADDRESS, 'true'])
-    castSend(rpcUrl, emissionsGateAddress, 'setMinter(bytes32,address,uint32,bool)', [
-      VERIFICATION_MINTER_ID,
-      verificationAddress,
-      '10000',
-      'true',
-    ])
     for (const [index, sellerAddress] of SELLER_ADDRESSES.entries()) {
       castSend(rpcUrl, identityRegistryAddress, 'setOwner(uint256,address)', [String(index + 1), sellerAddress])
     }
-    increaseTime(rpcUrl, EPOCH_DURATION_SECONDS)
 
     const dataDir = join(directory, 'data')
     const evidenceDir = join(dataDir, 'verifier', 'evidence')
@@ -169,8 +142,13 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
     const storage = new VerificationStorage(join(dataDir, 'verification.db'))
     storage.close()
 
-    const verifierClient = createVerifierClient(rpcUrl, verificationAddress)
-    const epochWindow = await verifierClient.currentEpochWindow()
+    const nowSeconds = Math.floor(Date.now() / 1_000)
+    const dayStartedAt = nowSeconds - (nowSeconds % (24 * 60 * 60))
+    const epochWindow = {
+      epoch: new Date(dayStartedAt * 1_000).toISOString().slice(0, 10),
+      startedAt: dayStartedAt,
+      endsAt: dayStartedAt + 24 * 60 * 60,
+    }
     const runId = 'anvil-bundle-run'
     const timestamps = {
       epochStartedAt: new Date(epochWindow.startedAt * 1_000).toISOString(),
@@ -182,7 +160,7 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
     const modelA = await writeModelFixture({
       evidenceDir,
       banksDir,
-      epoch: epochWindow.epoch.toString(),
+      epoch: epochWindow.epoch,
       runId,
       model: MODELS[0],
       timestamps,
@@ -196,7 +174,7 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
     const modelB = await writeModelFixture({
       evidenceDir,
       banksDir,
-      epoch: epochWindow.epoch.toString(),
+      epoch: epochWindow.epoch,
       runId,
       model: MODELS[1],
       timestamps,
@@ -209,7 +187,7 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
     const modelC = await writeModelFixture({
       evidenceDir,
       banksDir,
-      epoch: epochWindow.epoch.toString(),
+      epoch: epochWindow.epoch,
       runId,
       model: MODELS[2],
       timestamps,
@@ -227,11 +205,11 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
       skippedCount: 0,
       cost: emptyAuditCostSummary(),
     }))
-    const summaryPath = await writeEpochAuditSummary(evidenceDir, epochWindow.epoch.toString(), {
+    const summaryPath = await writeEpochAuditSummary(evidenceDir, epochWindow.epoch, {
       version: 1,
       kind: 'antseed-verifier-epoch-summary',
       runId,
-      epoch: epochWindow.epoch.toString(),
+      epoch: epochWindow.epoch,
       ...timestamps,
       reportPaths: [],
       models: summaryModels,
@@ -243,8 +221,8 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
       kind: 'antseed-verifier-run-manifest',
       runId,
       state: 'completed',
-      epoch: epochWindow.epoch.toString(),
-      epochSource: 'onchain',
+      epoch: epochWindow.epoch,
+      epochSource: 'utc-day',
       ...timestamps,
       summaryPath,
       modelOrder: [...MODELS],
@@ -291,11 +269,6 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
     assert.equal((await createVerifierClient(rpcUrl, verificationAddress).queryAttestations(1n)).length, 1)
     assert.equal((await createVerifierClient(rpcUrl, verificationAddress).queryAttestations(2n)).length, 1)
     assert.equal((await createVerifierClient(rpcUrl, verificationAddress).queryAttestations(4n)).length, 1)
-    assert.equal(
-      await createVerifierClient(rpcUrl, verificationAddress)
-        .epochCreditUsdMicros(epochWindow.epoch, VERIFIER_ADDRESS),
-      1_400_000n,
-    )
 
     await writeFile(modelB.audits[0]!.path, originalModelBEvidence)
     const retry = runCli(dataDir, configPath, rpcUrl, runId, ['--yes', '--publish-ipfs'], pinataOptions)
@@ -309,8 +282,6 @@ test('verifier submit sends per-model bundles to Anvil with retry-safe accountin
     assert.equal(bundles.length, 3)
     assert.equal((await readClient.queryAttestations(1n)).length, 1)
     assert.equal((await readClient.queryAttestations(4n)).length, 1)
-    assert.equal(await readClient.epochCreditUsdMicros(epochWindow.epoch, VERIFIER_ADDRESS), 100_000_000n)
-    assert.equal(await readClient.epochTotalCreditUsdMicros(epochWindow.epoch), 100_000_000n)
 
     const diff = await readClient.queryAttestations(2n)
     assert.equal(diff.length, 1)
@@ -878,11 +849,6 @@ function castSend(rpcUrl: string, contract: string, signature: string, args: str
     signature,
     ...args,
   ], repoRoot)
-}
-
-function increaseTime(rpcUrl: string, seconds: number): void {
-  runCommand('cast', ['rpc', '--rpc-url', rpcUrl, 'evm_increaseTime', String(seconds)], repoRoot)
-  runCommand('cast', ['rpc', '--rpc-url', rpcUrl, 'evm_mine'], repoRoot)
 }
 
 function runCommand(command: string, args: string[], cwd: string): string {

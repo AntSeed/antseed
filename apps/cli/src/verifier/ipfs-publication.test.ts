@@ -286,7 +286,6 @@ function fixtureBundle(
       referenceCostUsdMicros: '0',
       totalAuditCostUsdMicros: '0',
     },
-    expectedEpoch: BigInt(epoch),
     totalAuditCostUsdMicros: 0n,
     results: [],
     referenceCostIds: [],

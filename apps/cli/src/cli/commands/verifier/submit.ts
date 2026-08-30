@@ -47,7 +47,6 @@ interface PreparedSubmission {
   bundle: PreparedModelVerificationBundle
   modelSummaryPath: string
   alreadySubmitted: boolean
-  expectedAwardedCreditUsdMicros: bigint
   publication: PreparedVerificationPublication | null
 }
 
@@ -58,7 +57,6 @@ interface PreparationFailure {
 
 export interface SubmissionCostSummaryItem {
   totalAuditCostUsdMicros: bigint
-  awardedCreditUsdMicros: bigint | null
   status: ModelSubmissionStatus
 }
 
@@ -66,20 +64,13 @@ export interface SubmissionCostSummary {
   totalAuditCostUsdMicros: bigint
   submittedAuditCostUsdMicros: bigint
   failedAuditCostUsdMicros: bigint
-  awardedCreditUsdMicros: bigint
-  submittedCostWithoutCreditUsdMicros: bigint
 }
 
 export function summarizeSubmissionCosts(items: SubmissionCostSummaryItem[]): SubmissionCostSummary {
   return items.reduce<SubmissionCostSummary>((summary, item) => {
     summary.totalAuditCostUsdMicros += item.totalAuditCostUsdMicros
     if (item.status === 'submitted' || item.status === 'skipped') {
-      const awarded = item.awardedCreditUsdMicros ?? 0n
       summary.submittedAuditCostUsdMicros += item.totalAuditCostUsdMicros
-      summary.awardedCreditUsdMicros += awarded
-      if (item.totalAuditCostUsdMicros > awarded) {
-        summary.submittedCostWithoutCreditUsdMicros += item.totalAuditCostUsdMicros - awarded
-      }
     } else {
       summary.failedAuditCostUsdMicros += item.totalAuditCostUsdMicros
     }
@@ -88,23 +79,7 @@ export function summarizeSubmissionCosts(items: SubmissionCostSummaryItem[]): Su
     totalAuditCostUsdMicros: 0n,
     submittedAuditCostUsdMicros: 0n,
     failedAuditCostUsdMicros: 0n,
-    awardedCreditUsdMicros: 0n,
-    submittedCostWithoutCreditUsdMicros: 0n,
   })
-}
-
-export function rewardCreditShortfallReason(input: {
-  epoch: bigint
-  firstRewardedEpoch: bigint
-  epochRewardBudget: bigint
-  remainingAllowanceUsdMicros: bigint
-}): string {
-  if (input.epoch < input.firstRewardedEpoch) {
-    return `epoch ${input.epoch} precedes first rewarded epoch ${input.firstRewardedEpoch}`
-  }
-  if (input.epochRewardBudget === 0n) return `verifier reward budget is zero for epoch ${input.epoch}`
-  if (input.remainingAllowanceUsdMicros === 0n) return 'per-verifier epoch credit cap reached'
-  return 'per-verifier epoch credit cap limited the award'
 }
 
 export function registerVerifierSubmitCommand(verifierCmd: Command): void {
@@ -122,32 +97,13 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
       const evidenceDir = config.verifier?.evidenceDir ?? join(globalOptions.dataDir, 'verifier', 'evidence')
       const banksDir = config.verifier?.banksDir ?? join(globalOptions.dataDir, 'verifier', 'banks')
       const manifest = await readVerifierRunManifest(evidenceDir, options.runId)
-      if (manifest.epochSource !== 'onchain') {
-        throw new Error('only verifier runs created from an on-chain epoch can be submitted')
-      }
-
       const rpcOverrides = options.rpcUrl ? { rpcUrl: String(options.rpcUrl) } : {}
       const verifierClient = createVerifierClient(config, rpcOverrides)
       const { identity, address } = await loadCryptoContext(globalOptions.dataDir)
-      const runEpoch = BigInt(manifest.epoch)
-      const [
-        window,
-        network,
-        approved,
-        maxCreditUsdMicros,
-        creditUsdMicrosBefore,
-        firstRewardedEpoch,
-        epochRewardBudget,
-      ] = await Promise.all([
-        verifierClient.currentEpochWindow(),
+      const [network, approved] = await Promise.all([
         verifierClient.provider.getNetwork(),
         verifierClient.approvedVerifier(address),
-        verifierClient.maxCreditUsdMicrosPerVerifierPerEpoch(),
-        verifierClient.epochCreditUsdMicros(runEpoch, address),
-        verifierClient.firstRewardedEpoch(),
-        verifierClient.verifierEpochBudget(runEpoch),
       ])
-      validateRunEpoch(manifest, window)
       if (!approved) throw new Error(`verifier wallet ${address} is not approved by the verification contract`)
 
       const ledgerPath = submissionLedgerPath(
@@ -168,10 +124,6 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
       try {
         const prepared: PreparedSubmission[] = []
         const preparationFailures: PreparationFailure[] = []
-        const rewardCreditAvailable = runEpoch >= firstRewardedEpoch && epochRewardBudget > 0n
-        let remainingPreviewCreditUsdMicros = maxCreditUsdMicros > creditUsdMicrosBefore
-          ? maxCreditUsdMicros - creditUsdMicrosBefore
-          : 0n
         for (const model of manifest.modelOrder) {
           const modelManifest = manifest.models.find((entry) => normalized(entry.model) === normalized(model))
           if (!modelManifest) {
@@ -197,10 +149,6 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
               })
             if (bundle.results.length === 0) throw new Error('no valid seller results remain after preflight validation')
             const alreadySubmitted = await verifierClient.isVerificationSubmitted(bundle.evidenceHash)
-            const expectedAwardedCreditUsdMicros = alreadySubmitted || !rewardCreditAvailable
-              ? 0n
-              : minBigInt(bundle.totalAuditCostUsdMicros, remainingPreviewCreditUsdMicros)
-            if (!alreadySubmitted) remainingPreviewCreditUsdMicros -= expectedAwardedCreditUsdMicros
             const publication = options.publishIpfs
               ? await prepareVerificationPublication({
                 evidenceDir,
@@ -213,7 +161,6 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
               bundle,
               modelSummaryPath: modelManifest.summaryPath,
               alreadySubmitted,
-              expectedAwardedCreditUsdMicros,
               publication,
             })
           } catch (error) {
@@ -222,16 +169,7 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
         }
 
         printPreview(prepared, preparationFailures)
-        if (!rewardCreditAvailable) {
-          console.log(chalk.yellow(
-            `Reward credit unavailable: ${rewardCreditShortfallReason({
-              epoch: runEpoch,
-              firstRewardedEpoch,
-              epochRewardBudget,
-              remainingAllowanceUsdMicros: remainingPreviewCreditUsdMicros,
-            })}.`,
-          ))
-        }
+        console.log(chalk.dim('Shadow mode: bundles are registered without verifier reward accounting.'))
         if (options.dryRun) {
           console.log(chalk.dim(
             'Dry run complete; no IPFS uploads, reference-cost reservations, or transactions were performed.',
@@ -277,7 +215,6 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
               })
               ledger.models[bundle.model] = ledgerEntry(bundle, {
                 status: 'skipped',
-                awardedCreditUsdMicros: event.awardedCreditUsdMicros.toString(),
                 transactionHash: event.transactionHash,
                 blockNumber: event.blockNumber,
                 error: null,
@@ -331,7 +268,6 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
             }
             ledger.models[bundle.model] = ledgerEntry(bundle, {
               status: 'pending',
-              awardedCreditUsdMicros: null,
               transactionHash: null,
               blockNumber: null,
               error: null,
@@ -346,8 +282,6 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
             })
 
             const transactionHash = await verifierClient.submitVerificationBundle(identity.wallet, {
-              expectedEpoch: bundle.expectedEpoch,
-              totalAuditCostUsdMicros: bundle.totalAuditCostUsdMicros,
               evidenceHash: bundle.evidenceHash,
               evidenceUri,
               results: bundle.results,
@@ -364,7 +298,6 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
             })
             ledger.models[bundle.model] = ledgerEntry(bundle, {
               status: 'submitted',
-              awardedCreditUsdMicros: event.awardedCreditUsdMicros.toString(),
               transactionHash,
               blockNumber: event.blockNumber,
               error: null,
@@ -374,15 +307,12 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
             successfulBundles += 1
             submittedSellerResults += bundle.results.length
             console.log(chalk.green(
-              `${bundle.model}: submitted ${bundle.results.length} seller result(s), `
-              + `${formatCredits(event.awardedCreditUsdMicros)}/${formatCredits(bundle.totalAuditCostUsdMicros)} `
-              + `credit(s) awarded (${transactionHash})`,
+              `${bundle.model}: registered ${bundle.results.length} seller result(s) (${transactionHash})`,
             ))
           } catch (error) {
             const failure = asError(error)
             ledger.models[bundle.model] = ledgerEntry(bundle, {
               status: 'failed',
-              awardedCreditUsdMicros: null,
               transactionHash: ledger.models[bundle.model]?.transactionHash ?? null,
               blockNumber: null,
               error: failure.message,
@@ -397,17 +327,10 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
         for (const failure of preparationFailures) {
           console.warn(chalk.yellow(`${failure.model}: preflight failed: ${failure.error.message}`))
         }
-        const creditUsdMicrosAfter = await verifierClient.epochCreditUsdMicros(runEpoch, address)
-        const remainingAllowanceUsdMicros = maxCreditUsdMicros > creditUsdMicrosAfter
-          ? maxCreditUsdMicros - creditUsdMicrosAfter
-          : 0n
         const costSummary = summarizeSubmissionCosts(prepared.map((item) => {
           const entry = ledger.models[item.bundle.model]
           return {
             totalAuditCostUsdMicros: item.bundle.totalAuditCostUsdMicros,
-            awardedCreditUsdMicros: entry?.awardedCreditUsdMicros == null
-              ? null
-              : BigInt(entry.awardedCreditUsdMicros),
             status: entry?.status ?? 'failed',
           }
         }))
@@ -415,26 +338,9 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
         console.log(`  Model bundles: ${prepared.length + preparationFailures.length}`)
         console.log(`  Submitted: ${successfulBundles}; skipped: ${skippedBundles}; failed: ${failedBundles}`)
         console.log(`  Seller results submitted: ${submittedSellerResults}`)
-        console.log(`  Total audit cost: ${formatUsdMicros(costSummary.totalAuditCostUsdMicros)} (${formatCredits(costSummary.totalAuditCostUsdMicros)} credits)`)
+        console.log(`  Total audit cost recorded: ${formatUsdMicros(costSummary.totalAuditCostUsdMicros)}`)
         console.log(`  Submitted audit cost: ${formatUsdMicros(costSummary.submittedAuditCostUsdMicros)}`)
         console.log(`  Failed bundle audit cost: ${formatUsdMicros(costSummary.failedAuditCostUsdMicros)}`)
-        console.log(`  Awarded reward credit: ${formatCredits(costSummary.awardedCreditUsdMicros)}`)
-        console.log(
-          `  Epoch credit balance: ${formatCredits(creditUsdMicrosBefore)} before, `
-          + `${formatCredits(creditUsdMicrosAfter)} after; ${formatCredits(remainingAllowanceUsdMicros)} remaining`,
-        )
-        if (costSummary.submittedCostWithoutCreditUsdMicros > 0n) {
-          console.log(
-            `  Submitted audit cost without reward credit: `
-            + `${formatUsdMicros(costSummary.submittedCostWithoutCreditUsdMicros)}`,
-          )
-          console.log(`  Reward credit reason: ${rewardCreditShortfallReason({
-            epoch: runEpoch,
-            firstRewardedEpoch,
-            epochRewardBudget,
-            remainingAllowanceUsdMicros,
-          })}`)
-        }
         for (const publication of publishedUris) console.log(`  IPFS (${publication.model}): ${publication.uri}`)
         console.log(chalk.dim(`Submission ledger: ${ledgerPath}`))
         if (failedBundles > 0) process.exitCode = 1
@@ -446,7 +352,7 @@ export function registerVerifierSubmitCommand(verifierCmd: Command): void {
 
 function printPreview(prepared: PreparedSubmission[], failures: PreparationFailure[]): void {
   const table = new Table({
-    head: ['Model', 'Results', 'SAME', 'DIFF', 'UNDET', 'Inference', 'Reference', 'Audit Cost', 'IPFS', 'Expected Award'],
+    head: ['Model', 'Results', 'SAME', 'DIFF', 'UNDET', 'Inference', 'Reference', 'Audit Cost', 'IPFS', 'Status'],
   })
   for (const item of prepared) {
     const verdictCounts = item.bundle.evidence.results.reduce((counts, result) => {
@@ -463,7 +369,7 @@ function printPreview(prepared: PreparedSubmission[], failures: PreparationFailu
       formatUsdMicros(BigInt(item.bundle.evidence.referenceCostUsdMicros)),
       formatUsdMicros(item.bundle.totalAuditCostUsdMicros),
       item.publication ? `${item.publication.fileCount} files / ${formatBytes(item.publication.totalBytes)}` : 'off',
-      item.alreadySubmitted ? 'already submitted' : formatCredits(item.expectedAwardedCreditUsdMicros),
+      item.alreadySubmitted ? 'already submitted' : 'ready',
     ])
   }
   for (const failure of failures) {
@@ -499,7 +405,7 @@ async function requireBundleEvent(
 function ledgerEntry(
   bundle: PreparedModelVerificationBundle,
   state: Pick<ModelSubmissionLedgerEntryV1,
-    'status' | 'awardedCreditUsdMicros' | 'transactionHash' | 'blockNumber' | 'error' | 'lastAttemptAt'>,
+    'status' | 'transactionHash' | 'blockNumber' | 'error' | 'lastAttemptAt'>,
   publication?: ModelSubmissionPublicationV1,
 ): ModelSubmissionLedgerEntryV1 {
   return {
@@ -608,41 +514,14 @@ function validateLedger(
   }
 }
 
-function validateRunEpoch(
-  manifest: Awaited<ReturnType<typeof readVerifierRunManifest>>,
-  window: { epoch: bigint; startedAt: number; endsAt: number },
-): void {
-  if (BigInt(manifest.epoch) !== window.epoch) {
-    throw new Error(`run epoch ${manifest.epoch} does not match current on-chain epoch ${window.epoch}`)
-  }
-  const runStartedAt = Date.parse(manifest.startedAt)
-  const runCompletedAt = Date.parse(manifest.completedAt)
-  const epochStartedAt = window.startedAt * 1_000
-  const epochEndsAt = window.endsAt * 1_000
-  if (!Number.isFinite(runStartedAt) || !Number.isFinite(runCompletedAt)
-    || runStartedAt < epochStartedAt || runCompletedAt > epochEndsAt) {
-    throw new Error('verifier run timestamps are outside the current on-chain epoch window')
-  }
-}
-
 function formatUsdMicros(value: bigint): string {
   const whole = value / 1_000_000n
   const fraction = (value % 1_000_000n).toString().padStart(6, '0')
   return `$${whole}.${fraction}`
 }
 
-function formatCredits(value: bigint): string {
-  const whole = value / 1_000_000n
-  const fraction = (value % 1_000_000n).toString().padStart(6, '0')
-  return `${whole}.${fraction}`
-}
-
 function formatBytes(value: number): string {
   if (value < 1_024) return `${value} B`
   if (value < 1_048_576) return `${(value / 1_024).toFixed(1)} KiB`
   return `${(value / 1_048_576).toFixed(1)} MiB`
-}
-
-function minBigInt(left: bigint, right: bigint): bigint {
-  return left < right ? left : right
 }

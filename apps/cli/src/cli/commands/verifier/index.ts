@@ -1,5 +1,4 @@
 import type { Command } from 'commander'
-import { registerVerifierClaimCommand } from './claim.js'
 import { registerVerifierReferenceCommand } from './reference.js'
 import { registerVerifierRunCommand } from './run.js'
 import { registerVerifierStatusCommand } from './status.js'
@@ -13,5 +12,4 @@ export function registerVerifierCommands(program: Command): void {
   registerVerifierReferenceCommand(verifier)
   registerVerifierStatusCommand(verifier)
   registerVerifierSubmitCommand(verifier)
-  registerVerifierClaimCommand(verifier)
 }

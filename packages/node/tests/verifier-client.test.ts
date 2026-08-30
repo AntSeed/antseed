@@ -32,8 +32,6 @@ describe('VerifierClient combined ABI', () => {
     const execWrite = vi.fn().mockResolvedValue('0xattest');
     (client as unknown as { _execWrite: typeof execWrite })._execWrite = execWrite;
     const input: SubmitVerificationBundleInput = {
-      expectedEpoch: 7,
-      totalAuditCostUsdMicros: 1_500_000,
       evidenceHash: '0x' + '99'.repeat(32),
       evidenceUri: 'ipfs://bafytest',
       results: [{
@@ -49,25 +47,10 @@ describe('VerifierClient combined ABI', () => {
       signer,
       VERIFICATION_ABI,
       'submitVerificationBundle',
-      7n,
-      1_500_000n,
       input.evidenceHash,
       input.evidenceUri,
       [{ agentId: 9n, serviceHash: SERVICE_HASH, verdict: VERIFIER_VERDICT_DIFF, modelShareBps: 2500 }],
     );
-  });
-
-  it('encodes verifier rewards through the same contract', async () => {
-    const client = new VerifierClient({
-      rpcUrl: 'http://127.0.0.1:1',
-      contractAddress: VERIFICATION_ADDRESS,
-    });
-    const signer = Wallet.createRandom();
-    const execWrite = vi.fn().mockResolvedValue('0xclaim');
-    (client as unknown as { _execWrite: typeof execWrite })._execWrite = execWrite;
-
-    await expect(client.claimVerifierReward(signer, 7)).resolves.toBe('0xclaim');
-    expect(execWrite).toHaveBeenCalledWith(signer, VERIFICATION_ABI, 'claimVerifierReward', 7n);
   });
 
   it('separates verification status from points-policy configuration', () => {
@@ -76,11 +59,16 @@ describe('VerifierClient combined ABI', () => {
     const registryIface = new Interface(POINTS_POLICY_REGISTRY_ABI);
     expect(iface.getFunction('submitVerificationBundle')).not.toBeNull();
     expect(iface.getFunction('isVerificationSubmitted')).not.toBeNull();
-    expect(iface.getFunction('claimVerifierReward')).not.toBeNull();
+    expect(iface.getFunction('verificationBundle')).not.toBeNull();
     expect(iface.getFunction('activeAgentDiffVerifierCount')).not.toBeNull();
     expect(iface.getFunction('activeServiceDiffVerifierCount')).not.toBeNull();
     expect(iface.getFunction('latestVerifierVerdict')).not.toBeNull();
     expect(iface.getFunction('clearVerifierVerdict')).not.toBeNull();
+    expect(iface.getFunction('claimVerifierReward')).toBeNull();
+    expect(iface.getFunction('pendingVerifierReward')).toBeNull();
+    expect(iface.getFunction('epochCreditUsdMicros')).toBeNull();
+    expect(iface.getFunction('emissionsGate')).toBeNull();
+    expect(iface.getFunction('currentEpoch')).toBeNull();
     expect(iface.getFunction('agentPointsPenaltyBps')).toBeNull();
     expect(policyIface.getFunction('minDistinctDiffVerifiers')).not.toBeNull();
     expect(policyIface.getFunction('diffPenaltyBps')).not.toBeNull();
@@ -137,9 +125,6 @@ describe('VerifierClient combined ABI', () => {
     expect(bundle?.inputs.map((input) => input.name)).toEqual([
       'evidenceHash',
       'verifier',
-      'epoch',
-      'totalAuditCostUsdMicros',
-      'awardedCreditUsdMicros',
       'resultCount',
       'evidenceUri',
     ]);
@@ -161,7 +146,7 @@ describe('VerifierClient combined ABI', () => {
     const iface = new Interface(VERIFICATION_ABI);
     const fragment = iface.getEvent('VerificationBundleSubmitted')!;
     const evidenceUri = 'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3r3eifqeedsvt2eubqtskghpm';
-    const encoded = iface.encodeEventLog(fragment, [AUDIT_ID, VERIFICATION_ADDRESS, 7, 100, 90, 1, evidenceUri]);
+    const encoded = iface.encodeEventLog(fragment, [AUDIT_ID, VERIFICATION_ADDRESS, 1, evidenceUri]);
     const log = new Log({
       transactionHash: '0x' + '22'.repeat(32),
       blockHash: '0x' + '33'.repeat(32),

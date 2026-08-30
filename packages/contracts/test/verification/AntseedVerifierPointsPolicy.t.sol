@@ -4,7 +4,6 @@ pragma solidity ^0.8.24;
 import { Test } from "forge-std/Test.sol";
 
 import { AntseedRegistry } from "../../core/AntseedRegistry.sol";
-import { MockVerificationEmissionsGate as AntseedEmissionsGate } from "./mocks/MockVerificationEmissionsGate.sol";
 import { IAntseedVerification } from "../../interfaces/IAntseedVerification.sol";
 import { TestPointsPolicyRegistry as PointsPolicyRegistry } from "./mocks/TestPointsPolicyRegistry.sol";
 import { AntseedVerificationPointsPolicy } from "../../policies/AntseedVerificationPointsPolicy.sol";
@@ -46,19 +45,18 @@ contract AntseedVerifierPointsPolicyTest is Test {
         registry.setProtocolReserve(address(0x2222));
         MockERC8004Registry identity = new MockERC8004Registry();
         registry.setIdentityRegistry(address(identity));
+        vm.prank(seller);
+        AGENT_ID = identity.register();
         staking = new MockPointsPolicyStaking();
         staking.setAgentId(seller, AGENT_ID);
         registry.setStaking(address(staking));
-        AntseedEmissionsGate gate = new AntseedEmissionsGate(address(0x1111), address(0x2222), 15_000, 15_000);
-        verification = new AntseedVerification(address(registry), address(gate));
+        verification = new AntseedVerification(address(registry));
         policy = new AntseedVerificationPointsPolicy(address(this), address(registry), address(verification));
         pointsPolicyRegistry = new PointsPolicyRegistry(address(this));
         pointsPolicyRegistry.registerPolicy(address(policy));
         verification.setVerifier(verifierA, true);
         verification.setVerifier(verifierB, true);
         verification.setVerifier(verifierC, true);
-        vm.prank(seller);
-        AGENT_ID = identity.register();
     }
 
     function test_noPenaltyPassesAllPointsThrough() public view {
@@ -151,9 +149,8 @@ contract AntseedVerifierPointsPolicyTest is Test {
     }
 
     function test_constructorRejectsZeroAddress() public {
-        AntseedEmissionsGate gate = new AntseedEmissionsGate(address(0x1111), address(0x2222), 15_000, 15_000);
         vm.expectRevert(AntseedVerification.InvalidAddress.selector);
-        new AntseedVerification(address(0), address(gate));
+        new AntseedVerification(address(0));
 
         vm.expectRevert();
         new AntseedVerificationPointsPolicy(address(0), address(registry), address(verification));
@@ -165,13 +162,9 @@ contract AntseedVerifierPointsPolicyTest is Test {
         new AntseedVerificationPointsPolicy(address(this), address(registry), address(0));
     }
 
-    function _submit(
-        address verifier,
-        IAntseedVerification.Verdict verdict,
-        uint16 modelShareBps,
-        bytes32 evidenceHash
-    ) private {
-        uint256 epoch = verification.currentEpoch();
+    function _submit(address verifier, IAntseedVerification.Verdict verdict, uint16 modelShareBps, bytes32 evidenceHash)
+        private
+    {
         IAntseedVerification.VerificationResult[] memory results = new IAntseedVerification.VerificationResult[](1);
         results[0] = IAntseedVerification.VerificationResult({
             agentId: AGENT_ID,
@@ -180,18 +173,11 @@ contract AntseedVerifierPointsPolicyTest is Test {
             modelShareBps: modelShareBps
         });
         vm.prank(verifier);
-        verification.submitVerificationBundle(
-            epoch,
-            1_000_000,
-            evidenceHash,
-            "",
-            results
-        );
+        verification.submitVerificationBundle(evidenceHash, "", results);
     }
 
     function _assertPoints(uint256 rawPoints, uint256 expectedSellerPoints, uint256 expectedBuyerPoints) private view {
-        (uint256 sellerPoints, uint256 buyerPoints) =
-            pointsPolicyRegistry.points(bytes32(0), buyer, seller, rawPoints);
+        (uint256 sellerPoints, uint256 buyerPoints) = pointsPolicyRegistry.points(bytes32(0), buyer, seller, rawPoints);
         assertEq(sellerPoints, expectedSellerPoints);
         assertEq(buyerPoints, expectedBuyerPoints);
     }

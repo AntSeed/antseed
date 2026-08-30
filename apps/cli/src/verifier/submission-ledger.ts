@@ -26,7 +26,6 @@ export interface ModelSubmissionLedgerEntryV1 {
   inferenceCostUsdMicros: string
   referenceCostUsdMicros: string
   totalAuditCostUsdMicros: string
-  awardedCreditUsdMicros: string | null
   status: ModelSubmissionStatus
   transactionHash: string | null
   blockNumber: number | null

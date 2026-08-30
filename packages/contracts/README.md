@@ -168,6 +168,19 @@ ANTS emission controller using the Synthetix reward-per-point pattern. O(1) gas 
 
 ## Configuration
 
+### Verification Registry Shadow Mode
+
+`AntseedVerification` is a verification registry only. Approved verifiers submit an
+evidence hash, optional IPFS URI, and seller/service verdicts; the contract stores
+bundle metadata and maintains the latest active verdict state. It has no emissions
+controller, reward credit, claim, or settlement logic.
+
+A future verification accounting contract can accept an `evidenceHash`, read
+`verificationBundle(evidenceHash)` to confirm the verifier, submission time, and
+result count, and keep its own consumed-hash mapping before applying a separately
+governed reward formula. Deploying that contract is not required for registry-only
+shadow mode.
+
 All constants are configurable by the contract owner via dedicated setter functions (e.g., `setFirstSignCap()`, `setWithdrawalDelay()`).
 
 ### AntseedDeposits / AntseedChannels / AntseedStaking

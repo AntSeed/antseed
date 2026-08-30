@@ -105,7 +105,6 @@ export interface PreparedModelVerificationBundle {
   evidenceHash: string
   evidencePath: string
   evidence: ModelVerificationBundleEvidenceV1
-  expectedEpoch: bigint
   totalAuditCostUsdMicros: bigint
   results: VerificationResultInput[]
   referenceCostIds: string[]
@@ -298,7 +297,6 @@ export async function prepareModelVerificationBundle(input: {
     evidenceHash,
     evidencePath: modelBundleEvidencePath(input.evidenceDir, input.manifest.runId, input.model),
     evidence,
-    expectedEpoch: BigInt(input.manifest.epoch),
     totalAuditCostUsdMicros,
     results: contractResults,
     referenceCostIds: input.referenceCosts.map((entry) => entry.costId),
@@ -339,7 +337,6 @@ export async function readPreparedModelVerificationBundle(input: {
     evidenceHash,
     evidencePath: input.evidencePath,
     evidence,
-    expectedEpoch: BigInt(evidence.expectedEpoch),
     totalAuditCostUsdMicros: BigInt(evidence.totalAuditCostUsdMicros),
     results,
     referenceCostIds: evidence.referenceCosts.map((entry) => entry.costId),

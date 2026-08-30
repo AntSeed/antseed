@@ -55,7 +55,6 @@ import {
   type ProxyAuditEvidenceV1,
 } from '../../../verifier/proxy-evidence.js'
 import { openResponseAuthReader } from '../../../verifier/response-auth-reader.js'
-import { createVerifierClient } from '../../payment-utils.js'
 import { getGlobalOptions } from '../types.js'
 import { VerifierRunProgress } from './run-progress.js'
 import { failureOutcomeReason } from '../../../verifier/outcome-reason.js'
@@ -105,15 +104,7 @@ export function registerVerifierRunCommand(verifier: Command): void {
       let status: VerifierStatusV1 | null = null
       let runProgress: VerifierRunProgress | null = null
       try {
-        const configuredVerificationAddress = config.payments.crypto?.verificationContractAddress?.trim()
-        const epochWindow = configuredVerificationAddress
-          ? await createVerifierClient(config).currentEpochWindow().then((window) => ({
-            epoch: window.epoch.toString(),
-            startedAt: window.startedAt,
-            endsAt: window.endsAt,
-            source: 'onchain' as const,
-          }))
-          : utcDayAuditEpochWindow()
+        const epochWindow = utcDayAuditEpochWindow()
         const epoch = epochWindow.epoch
         if (requestedResumeManifest && requestedResumeManifest.epoch !== epoch) {
           throw new Error(
