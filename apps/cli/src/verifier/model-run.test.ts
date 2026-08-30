@@ -99,7 +99,8 @@ function reference(count: number): KbfReferenceV1 {
 
 async function runTarget(
   count: number,
-  answerMode: 'valid' | 'out-of-range' | 'malformed' | 'sse' | 'transport-failure' | 'hanging'
+  answerMode: 'valid' | 'out-of-range' | 'all-wrong' | 'partial-malformed' | 'malformed'
+    | 'malformed-first-batch' | 'empty-responses' | 'content-filter' | 'sse' | 'transport-failure' | 'hanging'
     | 'rate-limited' | 'semantic-unavailable' = 'valid',
   transientFailures = 0,
   authMode: 'verified' | 'missing' | 'unverified' | 'wrong-request' | 'wrong-seller' | 'wrong-service' = 'verified',
@@ -158,6 +159,8 @@ async function runTarget(
         changedAnswer = true
         return `(${index + 1}) ${count + 100}`
       }
+      if (answerMode === 'all-wrong') return `(${index + 1}) ${count + 100}`
+      if (answerMode === 'partial-malformed' && index > 0) return `(${index + 1}) unknown`
       return `(${index + 1}) ${value}`
     }).join('\n')
     const telemetryHeaders: Record<string, string> = includeCost ? {
@@ -187,9 +190,14 @@ async function runTarget(
         ...telemetryHeaders,
       } })
     }
-    return Response.json(answerMode === 'malformed'
+    const responseBody = answerMode === 'malformed' || (answerMode === 'malformed-first-batch' && firstProbe === 1)
       ? { choices: [{ message: {} }] }
-      : { choices: [{ message: { content } }] }, {
+      : answerMode === 'empty-responses'
+        ? { object: 'response', status: 'completed', output: [] }
+        : answerMode === 'content-filter'
+          ? { choices: [{ message: { content: null }, finish_reason: 'content_filter' }] }
+          : { choices: [{ message: { content } }] }
+    return Response.json(responseBody, {
       headers: { 'x-antseed-request-id': requestId, ...telemetryHeaders },
     })
   }
@@ -528,12 +536,63 @@ test('one out-of-range answer remains in the fixed discrepancy denominator', asy
   assert.equal(run.evidence.result.stats.targetTotal, 100)
 })
 
-test('a malformed completed response counts every missing answer as a discrepancy', async () => {
-  const run = await runTarget(100, 'malformed')
+for (const answerMode of ['malformed', 'empty-responses', 'content-filter'] as const) {
+  test(`${answerMode} completed responses are unavailable and produce UNDETERMINED`, async () => {
+    const run = await runTarget(100, answerMode)
+    assert.equal(run.result.status, 'UNDETERMINED')
+    assert.equal(run.result.parsedProbeCount, 0)
+    assert.equal(run.evidence.result.stats.targetHamming, 0)
+    assert.equal(run.evidence.result.stats.targetTotal, 0)
+    assert.equal(run.result.outcomeReason?.code, 'malformed_output')
+    assert.equal(run.result.outcomeReason?.affectedBatchCount, 10)
+    assert.equal(run.result.outcomeReason?.nextAction, 'seller must return parseable output')
+    assert.equal(run.evidence.exchanges.every((exchange) => (
+      exchange.status === 'succeeded'
+      && exchange.outcomeReason?.code === 'malformed_output'
+      && exchange.matches.every((match) => match === null)
+    )), true)
+  })
+}
+
+test('fully parsed wrong answers remain DIFF', async () => {
+  const run = await runTarget(100, 'all-wrong')
   assert.equal(run.result.status, 'DIFF')
   assert.equal(run.result.parsedProbeCount, 100)
   assert.equal(run.evidence.result.stats.targetHamming, 100)
   assert.equal(run.evidence.result.stats.targetTotal, 100)
+  assert.equal(run.result.outcomeReason, null)
+})
+
+test('selective omissions remain discrepancies when a batch has a parseable answer', async () => {
+  const run = await runTarget(100, 'partial-malformed')
+  assert.equal(run.result.status, 'DIFF')
+  assert.equal(run.result.parsedProbeCount, 100)
+  assert.equal(run.evidence.result.stats.targetHamming, 90)
+  assert.equal(run.evidence.result.stats.targetTotal, 100)
+  assert.equal(run.evidence.exchanges.every((exchange) => (
+    exchange.matches[0] === 1
+    && exchange.matches.slice(1).every((match) => match === 0)
+    && exchange.outcomeReason === null
+  )), true)
+})
+
+test('one wholly malformed batch makes the audit UNDETERMINED and can be repaired by resume', async () => {
+  const first = await runTarget(100, 'malformed-first-batch')
+  assert.equal(first.result.status, 'UNDETERMINED')
+  assert.equal(first.result.parsedProbeCount, 90)
+  assert.equal(first.result.outcomeReason?.code, 'malformed_output')
+  assert.equal(first.result.outcomeReason?.affectedBatchCount, 1)
+  assert.equal(first.evidence.exchanges[0]?.matches.every((match) => match === null), true)
+
+  const resumed = await runTarget(100, 'valid', 0, 'verified', true, 10_000, {
+    parentAuditId: first.result.auditId,
+    reservationAuditId: first.result.auditId,
+    parentEvidenceHash: first.result.evidenceHash,
+    exchanges: first.evidence.exchanges,
+  })
+  assert.equal(resumed.result.status, 'SAME')
+  assert.equal(resumed.requestCount, 1)
+  assert.deepEqual(resumed.evidence.resume?.reusedBatchIndexes, [1, 2, 3, 4, 5, 6, 7, 8, 9])
 })
 
 test('responses SSE is decoded even when the request used stream false', async () => {

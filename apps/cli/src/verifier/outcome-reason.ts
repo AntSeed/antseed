@@ -13,6 +13,7 @@ export type VerificationOutcomeReasonCode =
   | 'price_above_maximum'
   | 'policy_rejected'
   | 'stale_model_advertisement'
+  | 'malformed_output'
   | 'transport_error'
   | 'audit_failed'
 
@@ -32,6 +33,7 @@ export type VerificationNextAction =
   | 'seller must support canonical request profile'
   | 'restart or repair payment channel'
   | 'adjust buyer routing policy'
+  | 'seller must return parseable output'
   | 'rebuild verifier reference'
   | 'inspect verifier evidence'
 

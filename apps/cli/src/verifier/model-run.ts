@@ -759,7 +759,10 @@ async function executeProxyProbeBatch(
       const answers = completion === null
         ? new Array<number | null>(probes.length).fill(null)
         : parseKbfAnswers(completion, probes.length)
-      const matches = computeMatchVector(answers, probes)
+      const malformedOutput = answers.every((answer) => answer === null)
+      const matches = malformedOutput
+        ? new Array<null>(probes.length).fill(null)
+        : computeMatchVector(answers, probes)
       const completedAt = Date.now()
       const returnedRequestId = response.headers.get('x-antseed-request-id')
       const responseAuth = returnedRequestId === requestId
@@ -800,7 +803,7 @@ async function executeProxyProbeBatch(
         cost: attemptCost,
         attemptCosts,
         outcomeReason: responseAuth.status === 'verified'
-          ? null
+          ? malformedOutput ? malformedOutputReason(requestId) : null
           : responseAuthReason(responseAuth.status, responseAuth.failureReason, requestId),
         responseAuth: {
           requestId: responseAuth.requestId,
@@ -1087,6 +1090,7 @@ function isReusableExchange(exchange: ProxyAuditEvidenceExchangeV1): boolean {
   return exchange.status === 'succeeded'
     && exchange.responseAuth.status === 'verified'
     && exchange.responseAuth.signedPreimages !== null
+    && exchange.outcomeReason?.code !== 'malformed_output'
     && exchange.answers.length === exchange.probeIds.length
     && exchange.matches.length === exchange.probeIds.length
 }
@@ -1096,12 +1100,16 @@ function summarizeUndeterminedReason(
   totalBatchCount: number,
 ): VerificationOutcomeReasonV1 {
   const reasons = exchanges.flatMap((exchange) => {
-    if (exchange.status === 'succeeded' && exchange.responseAuth.status !== 'verified') {
-      return [exchange.outcomeReason ?? responseAuthReason(
-        exchange.responseAuth.status,
-        exchange.responseAuth.failureReason,
-        exchange.responseAuth.requestId,
-      )]
+    if (exchange.status === 'succeeded') {
+      if (exchange.outcomeReason) return [exchange.outcomeReason]
+      if (exchange.responseAuth.status !== 'verified') {
+        return [responseAuthReason(
+          exchange.responseAuth.status,
+          exchange.responseAuth.failureReason,
+          exchange.responseAuth.requestId,
+        )]
+      }
+      return []
     }
     return exchange.status === 'failed'
       ? [exchange.outcomeReason ?? transportReason(exchange.failureReason ?? 'proxy batch failed')]
@@ -1126,7 +1134,22 @@ function summarizeUndeterminedReason(
     totalBatchCount,
     nextAction: reasons.some((reason) => reason.source === 'payment')
       ? 'restart or repair payment channel'
+      : reasons.some((reason) => reason.code === 'malformed_output')
+        ? 'seller must return parseable output'
       : 'resume audit',
+  }
+}
+
+function malformedOutputReason(requestId: string): VerificationOutcomeReasonV1 {
+  return {
+    code: 'malformed_output',
+    summary: 'successful authenticated response contained no parseable final answers',
+    retryable: false,
+    source: 'provider',
+    affectedBatchCount: 1,
+    totalBatchCount: 1,
+    nextAction: 'seller must return parseable output',
+    requestId,
   }
 }
 

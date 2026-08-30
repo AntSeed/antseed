@@ -9,13 +9,14 @@ import {
   decideReferencePoint,
   REFERENCE_VOTE_DECISION_RULE,
   writeModelProbeConsensusEvidence,
+  type ModelProbeConsensusEvidenceV1,
 } from './model-consensus-evidence.js'
 
 function audit(
   peerId: string,
-  answer: number,
-  match: 0 | 1,
-  verdict: 'SAME' | 'DIFF' | 'UNDETERMINED' = match ? 'SAME' : 'DIFF',
+  answer: number | null,
+  match: 0 | 1 | null,
+  verdict: 'SAME' | 'DIFF' | 'UNDETERMINED' = match === 1 ? 'SAME' : 'DIFF',
 ): ProxyAuditEvidenceV1 {
   return {
     version: 1, kind: 'antseed-buyer-proxy-kbf-audit',
@@ -51,9 +52,11 @@ function audit(
           responseAuthSigningBase64: 'AA==', requestHash: `0x${'44'.repeat(32)}`, responseHash: `0x${'55'.repeat(32)}` },
       },
     }],
-    result: { selectedProbeCount: 1, parsedProbeCount: 1, matchVector: [match], matchVectorHash: `0x${'77'.repeat(32)}`,
-      stats: { selfHamming: 0, selfTotal: 1, targetHamming: match ? 0 : 1, targetTotal: 1,
-        selfCoverage: 1, targetCoverage: 1, p0Cp99: 0.1, pValueBinomial: 1 },
+    result: { selectedProbeCount: 1, parsedProbeCount: match === null ? 0 : 1,
+      matchVector: [match], matchVectorHash: `0x${'77'.repeat(32)}`,
+      stats: { selfHamming: 0, selfTotal: 1, targetHamming: match === null ? 0 : match === 1 ? 0 : 1,
+        targetTotal: match === null ? 0 : 1, selfCoverage: 1, targetCoverage: match === null ? 0 : 1,
+        p0Cp99: 0.1, pValueBinomial: match === null ? null : 1 },
       verdict, verdictReason: null, cost: emptyAuditCostSummary() },
   }
 }
@@ -208,6 +211,73 @@ test('model consensus evidence aggregates authenticated seller support by probe'
     assert.equal(manifest.version, 1)
     assert.equal(manifest.evidenceLevel, undefined)
     assert.equal(manifest.scope.rawSellerResponses, 'linked-seller-exchange-files')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('malformed output remains authenticated evidence but is excluded from reference voting', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'antseed-model-consensus-malformed-'))
+  try {
+    const runDirectory = join(directory, 'audits', 'run-1')
+    const peerId = '1'.repeat(40)
+    const malformed = audit(peerId, null, null, 'UNDETERMINED')
+    malformed.exchanges[0]!.outcomeReason = {
+      code: 'malformed_output',
+      summary: 'successful authenticated response contained no parseable final answers',
+      retryable: false,
+      source: 'provider',
+      affectedBatchCount: 1,
+      totalBatchCount: 1,
+      nextAction: 'seller must return parseable output',
+    }
+    malformed.result.parsedProbeCount = 0
+    malformed.result.stats.targetHamming = 0
+    malformed.result.stats.targetTotal = 0
+    malformed.result.stats.targetCoverage = 0
+    malformed.result.outcomeReason = malformed.exchanges[0]!.outcomeReason
+    const writtenEvidence = await writeProxyAuditEvidence(
+      join(runDirectory, 'sellers'),
+      'audit-malformed',
+      malformed,
+    )
+    const written = await writeModelProbeConsensusEvidence({
+      directory: runDirectory,
+      referencesDirectory: join(directory, 'references'),
+      runId: 'run-1',
+      epoch: '2026-08-30',
+      model: 'model-a',
+      createdAt: '2026-08-30T10:01:00.000Z',
+      results: [{
+        peerId,
+        displayName: null,
+        agentId: null,
+        service: 'model-a',
+        status: 'UNDETERMINED',
+        auditId: 'audit-malformed',
+        parsedProbeCount: 0,
+        probeCount: 1,
+        correctProbeCount: 0,
+        incorrectProbeCount: 0,
+        correctRate: null,
+        requestCount: 1,
+        cost: emptyAuditCostSummary(),
+        evidencePath: writtenEvidence.path,
+        evidenceHash: writtenEvidence.evidenceHash,
+      }],
+    })
+    const evidence = JSON.parse(await readFile(written.consensusPath, 'utf8')) as ModelProbeConsensusEvidenceV1
+    assert.equal(evidence.summary.authenticatedSellerCount, 1)
+    assert.equal(evidence.summary.eligibleSellerCount, 0)
+    assert.equal(evidence.summary.authenticatedAnswerCount, 0)
+    assert.equal(evidence.summary.eligibleAnswerCount, 0)
+    assert.equal(evidence.sellers[0]?.eligibleForReferenceVote, false)
+    assert.equal(evidence.probes[0]?.sellerAnswers[0]?.sellerDecision, 'EXCLUDED')
+    assert.equal(
+      evidence.probes[0]?.sellerAnswers[0]?.decisionReason,
+      'malformed-output-batch-not-scoreable',
+    )
+    assert.equal(evidence.probes[0]?.referenceDecision, 'NO_RESPONSE')
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

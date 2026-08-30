@@ -616,7 +616,7 @@ function renderConsensusSellerAnswers(
         : null
       return `<tr>
         <td><code>${escapeHtml(answer.peerId)}</code></td>
-        <td class="numeric">${escapeHtml(answer.answer === null ? 'unparsed' : String(answer.answer))}</td>
+        <td class="numeric">${escapeHtml(answer.match === null ? 'unavailable' : answer.answer === null ? 'unparsed' : String(answer.answer))}</td>
         <td>${renderVerdict(answer.sellerVerdict)}</td>
         <td>${exchangePath ? renderFileLink(exchangePath, 'Open signed exchange JSON', reportDirectory) : '—'}
           <small class="evidence-description">Contains the raw buyer-proxy request and response, ResponseAuth signature, exact signed request/response preimages, and hashes.</small>

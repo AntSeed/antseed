@@ -20,10 +20,10 @@ function command(): Command {
   return program
 }
 
-test('verifier exposes proxy run, reference, and claim workflows', () => {
+test('verifier exposes registry-only run, reference, status, and submit workflows', () => {
   const verifier = command().commands.find((entry) => entry.name() === 'verifier')
   assert.ok(verifier)
-  assert.deepEqual(verifier.commands.map((entry) => entry.name()).sort(), ['claim', 'reference', 'run', 'status', 'submit'])
+  assert.deepEqual(verifier.commands.map((entry) => entry.name()).sort(), ['reference', 'run', 'status', 'submit'])
 })
 
 test('verifier submit exposes model-bundle submission controls', () => {

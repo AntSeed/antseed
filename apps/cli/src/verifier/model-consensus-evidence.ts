@@ -151,6 +151,7 @@ export interface ModelProbeConsensusEvidenceV1 {
         | 'within-reference-tolerance'
         | 'outside-reference-tolerance'
         | 'missing-or-malformed-answer-in-completed-response'
+        | 'malformed-output-batch-not-scoreable'
         | 'answer-not-scoreable'
       sellerEvidenceId: string
       evidenceHash: string
@@ -247,7 +248,9 @@ export async function writeModelProbeConsensusEvidence(input: {
         || !auth.requestId) continue
       signedExchangeCount += 1
       authenticatedSellers.add(result.peerId.toLowerCase())
-      eligibleSellers.add(result.peerId.toLowerCase())
+      if (exchange.matches.some((match) => match !== null)) {
+        eligibleSellers.add(result.peerId.toLowerCase())
+      }
       for (const [index, probeId] of exchange.probeIds.entries()) {
         const accumulator = probeById.get(probeId)
         if (!accumulator) continue
@@ -257,7 +260,9 @@ export async function writeModelProbeConsensusEvidence(input: {
           ? 'EXCLUDED'
           : match === 1 ? 'CONFIRMED' : 'REJECTED'
         const decisionReason = match === null
-          ? 'answer-not-scoreable'
+          ? exchange.outcomeReason?.code === 'malformed_output'
+            ? 'malformed-output-batch-not-scoreable'
+            : 'answer-not-scoreable'
           : match === 1
             ? 'within-reference-tolerance'
             : answer === null
@@ -431,7 +436,7 @@ export async function writeModelProbeConsensusEvidence(input: {
     sellers: sellers
       .map((seller) => ({
         ...seller,
-        eligibleForReferenceVote: authenticatedSellers.has(seller.peerId.toLowerCase()),
+        eligibleForReferenceVote: eligibleSellers.has(seller.peerId.toLowerCase()),
       }))
       .sort((left, right) => left.peerId.localeCompare(right.peerId)),
     probes,
