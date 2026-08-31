@@ -19,11 +19,9 @@ EMPTY='sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
 
 # The pnpmDeps hash is the only literal `hash = "sha256-..."` assignment in
 # flake.nix (the native prebuild hashes live in per-system attrsets), so the
-# first match is the right one. sed -i.bak works with both GNU and BSD sed.
-# `|` delimiters because base64 hashes contain `/`.
+# first match is the right one. Perl is available on both macOS and NixOS.
 if ! grep -q "hash = \"$EMPTY\";" "$FLAKE"; then
-  sed -i.bak -E '0,\|hash = "sha256-[A-Za-z0-9+/=]+";|s||hash = "'"$EMPTY"'";|' "$FLAKE"
-  rm -f "$FLAKE.bak"
+  perl -0pi -e 's/hash = "sha256-[A-Za-z0-9+\/=]+";/hash = "'"$EMPTY"'";/' "$FLAKE"
 fi
 
 echo "Building with a placeholder hash to compute the real one..."
@@ -37,8 +35,7 @@ if [ -z "$got" ]; then
   exit 1
 fi
 
-sed -i.bak -E '0,\|hash = "sha256-[A-Za-z0-9+/=]+";|s||hash = "'"$got"'";|' "$FLAKE"
-rm -f "$FLAKE.bak"
+perl -0pi -e 's/hash = "sha256-[A-Za-z0-9+\/=]+";/hash = "'"$got"'";/' "$FLAKE"
 echo "Updated pnpmDeps hash in $FLAKE: $got"
 
 echo "Verifying with a full build..."
