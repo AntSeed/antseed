@@ -17,7 +17,8 @@ Every event includes this envelope:
 | --- | --- |
 | `schema_version` | Event schema version (currently `1`). |
 | `event_ts_ms` | Event timestamp in milliseconds. |
-| `session_id` | Random UUID regenerated on every launch. |
+| `session_id` | Random UUIDv7 regenerated on every launch. |
+| `$session_id` | The same launch id under PostHog's reserved name, so each launch appears in PostHog's Sessions explorer. |
 | `app_version` | Desktop app version (e.g. `0.2.31`). |
 | `platform` | Operating system (`darwin`, `win32`, `linux`). |
 | `arch` | CPU architecture (`x64`, `arm64`). |
@@ -138,7 +139,8 @@ The buyer's normalized lowercase EVM address is sent as PostHog's required
 `distinct_id`. It is read from the same encrypted signing identity used by the
 desktop app and is not duplicated as an event property or stored in telemetry
 state. If no valid identity is available, telemetry events are not sent. A
-fresh random `session_id` is generated on every launch.
+fresh random `session_id` (a UUIDv7, also sent as `$session_id`) is generated
+on every launch.
 Each valid remote chat attempt also receives a random `request_id` used only to
 correlate its start and finish events. It is not derived from chat contents,
 the on-chain identifier, a peer, or a wallet.

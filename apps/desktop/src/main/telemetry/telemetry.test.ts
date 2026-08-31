@@ -11,6 +11,7 @@ import {
   INSTALL_SOURCE_ENV,
   createTelemetryService,
   type TelemetryService,
+  uuidV7,
 } from './telemetry.js';
 import { sanitizeTelemetryProperties } from './sanitize.js';
 import { loadTelemetryState, saveTelemetryState, defaultTelemetryState } from './state.js';
@@ -270,6 +271,7 @@ test('envelope includes schema/platform/arch/version/install_source', async (t) 
   assert.equal(props['app_version'], '1.2.3');
   assert.equal(props['install_source'], 'dmg');
   assert.equal(typeof props['session_id'], 'string');
+  assert.equal(props['$session_id'], props['session_id']);
   assert.equal(typeof props['event_ts_ms'], 'number');
   assert.equal(props['$geoip_disable'], true);
   assert.equal(props['$process_person_profile'], false);
@@ -309,7 +311,29 @@ test('unclean previous session emits recovered app_closed with was_crash on next
   assert.equal(recovered.properties['event_ts_ms'], 1_000);
   const started = captured.payloads.filter((payload) => payload.event === 'app_started');
   assert.equal(recovered.properties['session_id'], started[0]?.properties['session_id']);
+  assert.equal(recovered.properties['$session_id'], started[0]?.properties['session_id']);
   assert.notEqual(recovered.properties['session_id'], started[1]?.properties['session_id']);
+});
+
+test('launch session id is a UUIDv7 carrying the launch timestamp', async (t) => {
+  const dir = await makeTempDir(t);
+  const captured: Captured = { payloads: [] };
+  const launchedAt = 1_800_000_000_000;
+  const service = await createTelemetryService(baseOptions(dir, captured, { nowMs: () => launchedAt }));
+  await service.recordAppStarted();
+
+  const sessionId = String(captured.payloads[0]?.properties['session_id']);
+  assert.match(sessionId, /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  const embeddedMs = parseInt(sessionId.replace(/-/g, '').slice(0, 12), 16);
+  assert.equal(embeddedMs, launchedAt);
+  assert.equal(new Set(captured.payloads.map((p) => p.properties['$session_id'])).size, 1);
+});
+
+test('uuidV7 yields distinct, monotonic-prefixed ids', () => {
+  const a = uuidV7(1_000);
+  const b = uuidV7(2_000);
+  assert.notEqual(a, b);
+  assert.ok(a.replace(/-/g, '').slice(0, 12) < b.replace(/-/g, '').slice(0, 12));
 });
 
 test('crash recovery uses the last heartbeat instead of time spent offline', async (t) => {
