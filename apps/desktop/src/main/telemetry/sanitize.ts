@@ -20,7 +20,6 @@ import {
   DURATION_BUCKETS,
   HTTP_STATUS_BUCKETS,
   MODEL_PRICING_TIERS,
-  MODEL_SELECTION_SCOPES,
   OFFERS_AVAILABLE_BUCKETS,
   ROUTE_MODES,
   SERVICE_CATEGORIES,
@@ -57,7 +56,6 @@ const PROPERTY_VALIDATORS: Record<string, ReadonlySet<string>> = {
   routing_node_count_bucket: COUNT_BUCKETS,
   eligible_offer_count_bucket: OFFERS_AVAILABLE_BUCKETS,
   pricing_tier: MODEL_PRICING_TIERS,
-  selection_scope: MODEL_SELECTION_SCOPES,
   action: new Set(TELEMETRY_USER_ACTIONS),
   surface: new Set(TELEMETRY_ACTION_SURFACES),
 };

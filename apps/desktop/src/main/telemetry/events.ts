@@ -55,7 +55,6 @@ export type ChatFailureCode =
 export type ChatFailureStage = 'none' | 'request_validation' | 'payment' | 'user' | 'transport' | 'upstream' | 'streaming';
 export type RouteMode = 'auto' | 'pinned';
 export type ModelPricingTier = 'free' | 'paid' | 'mixed' | 'unknown';
-export type ModelSelectionScope = 'default' | 'conversation';
 export type DiscoveryFailureCode = 'timeout' | 'invalid_data' | 'io_error' | 'unknown';
 export type FirstChatDepositSnapshot = {
   hadDeposit: boolean;
@@ -133,7 +132,6 @@ export type TelemetryEventProperties = {
   model_selected: {
     public_model_id: string;
     service_category: ServiceCategory;
-    selection_scope: ModelSelectionScope;
     route_mode: RouteMode;
     pricing_tier: ModelPricingTier;
     has_free_eligible_offer: boolean;
@@ -210,7 +208,6 @@ export const TELEMETRY_EVENT_ALLOWLIST: { readonly [K in TelemetryEventName]: Re
   model_selected: new Set([
     'public_model_id',
     'service_category',
-    'selection_scope',
     'route_mode',
     'pricing_tier',
     'has_free_eligible_offer',
@@ -293,7 +290,6 @@ export const CHAT_FAILURE_STAGES: ReadonlySet<string> = new Set([
 ]);
 export const ROUTE_MODES: ReadonlySet<string> = new Set(['auto', 'pinned']);
 export const MODEL_PRICING_TIERS: ReadonlySet<string> = new Set(['free', 'paid', 'mixed', 'unknown']);
-export const MODEL_SELECTION_SCOPES: ReadonlySet<string> = new Set(['default', 'conversation']);
 
 export function durationBucket(ms: number): DurationBucket {
   if (ms < 30_000) return 'under_30s';

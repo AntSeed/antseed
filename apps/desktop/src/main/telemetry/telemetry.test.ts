@@ -58,6 +58,7 @@ function baseOptions(dir: string, captured: Captured, overrides: Record<string, 
     platform: 'darwin',
     arch: 'arm64',
     getDistinctId: () => BUYER_ADDRESS,
+    hadExistingIdentity: false,
     env: {
       [POSTHOG_HOST_ENV]: 'https://posthog.example.com',
       [POSTHOG_PROJECT_API_KEY_ENV]: 'phc_test',
@@ -160,6 +161,46 @@ test('app_first_opened fires exactly once per installation', async (t) => {
   assert.equal(startedEvents[1]?.properties['is_first_launch'], false);
 });
 
+test('legacy installs with no telemetry state do not emit app_first_opened', async (t) => {
+  const dir = await makeTempDir(t);
+  const captured: Captured = { payloads: [] };
+  const service = await createTelemetryService(baseOptions(dir, captured, {
+    hadExistingIdentity: true,
+  }));
+  await service.recordAppStarted();
+
+  assert.equal(captured.payloads.some((payload) => payload.event === 'app_first_opened'), false);
+  const started = captured.payloads.find((payload) => payload.event === 'app_started');
+  assert.equal(started?.properties['is_first_launch'], false);
+});
+
+test('legacy installs with invalid telemetry state do not emit app_first_opened', async (t) => {
+  const dir = await makeTempDir(t);
+  const { writeFile } = await import('node:fs/promises');
+  await writeFile(join(dir, 'telemetry-state.json'), '{}', 'utf8');
+  const captured: Captured = { payloads: [] };
+  const service = await createTelemetryService(baseOptions(dir, captured, {
+    hadExistingIdentity: true,
+  }));
+  await service.recordAppStarted();
+
+  assert.equal(captured.payloads.some((payload) => payload.event === 'app_first_opened'), false);
+  assert.equal(captured.payloads.find((payload) => payload.event === 'app_started')?.properties['is_first_launch'], false);
+});
+
+test('stored telemetry state takes precedence over the legacy identity signal', async (t) => {
+  const dir = await makeTempDir(t);
+  await saveTelemetryState(dir, defaultTelemetryState());
+  const captured: Captured = { payloads: [] };
+  const service = await createTelemetryService(baseOptions(dir, captured, {
+    hadExistingIdentity: true,
+  }));
+  await service.recordAppStarted();
+
+  assert.equal(captured.payloads.filter((payload) => payload.event === 'app_first_opened').length, 1);
+  assert.equal(captured.payloads.find((payload) => payload.event === 'app_started')?.properties['is_first_launch'], true);
+});
+
 test('normalized on-chain address is the stable distinct identifier', async (t) => {
   const dir = await makeTempDir(t);
   const captured: Captured = { payloads: [] };
@@ -201,12 +242,11 @@ test('captures use the current on-chain address after signer import', async (t) 
   await service.recordModelSelected({
     public_model_id: 'deepseek-v4-flash',
     service_category: 'chat',
-    selection_scope: 'default',
     route_mode: 'auto',
     pricing_tier: 'free',
     has_free_eligible_offer: true,
     eligible_offer_count_bucket: '1',
-  });
+  }, 'deepseek-v4-flash:');
 
   assert.equal(captured.payloads[0]?.distinct_id, BUYER_ADDRESS);
   assert.equal(captured.payloads.at(-1)?.distinct_id, IMPORTED_BUYER_ADDRESS);
@@ -404,7 +444,7 @@ test('user actions identify the first meaningful action per launch', async (t) =
   const service = await createTelemetryService(baseOptions(dir, captured));
   await service.recordAppStarted(0);
   await service.recordUserAction({ action: 'view_opened', surface: 'model' }, 10_000);
-  await service.recordUserAction({ action: 'model_select', surface: 'model' }, 40_000);
+  await service.recordUserAction({ action: 'model_picker_open', surface: 'model' }, 40_000);
 
   const actions = captured.payloads.filter((payload) => payload.event === 'user_action');
   assert.equal(actions.length, 2);
@@ -526,12 +566,11 @@ test('model selection and chat start share privacy-safe pricing context', async 
   await service.recordModelSelected({
     public_model_id: 'deepseek-v4-flash',
     service_category: 'chat',
-    selection_scope: 'default',
     route_mode: 'auto',
     pricing_tier: 'mixed',
     has_free_eligible_offer: true,
     eligible_offer_count_bucket: '2_3',
-  }, 0);
+  }, 'deepseek-v4-flash:', 0);
   await service.recordChatRequestStarted({
     request_id: REQUEST_ID,
     public_model_id: 'deepseek-v4-flash',
@@ -550,6 +589,26 @@ test('model selection and chat start share privacy-safe pricing context', async 
   assert.equal(selected.properties['pricing_tier'], 'mixed');
   assert.equal(selected.properties['has_free_eligible_offer'], true);
   assert.equal(started.properties['request_id'], REQUEST_ID);
+});
+
+test('paired model persistence paths emit one effective selection', async (t) => {
+  const dir = await makeTempDir(t);
+  const captured: Captured = { payloads: [] };
+  const service = await createTelemetryService(baseOptions(dir, captured));
+  const selection = {
+    public_model_id: 'deepseek-v4-flash',
+    service_category: 'chat' as const,
+    route_mode: 'pinned' as const,
+    pricing_tier: 'paid' as const,
+    has_free_eligible_offer: false,
+    eligible_offer_count_bucket: '1' as const,
+  };
+
+  await service.recordModelSelected(selection, 'deepseek-v4-flash:peer-a', 0);
+  await service.recordModelSelected(selection, 'deepseek-v4-flash:peer-a', 1);
+  await service.recordModelSelected(selection, 'deepseek-v4-flash:peer-b', 2);
+
+  assert.equal(captured.payloads.filter((payload) => payload.event === 'model_selected').length, 2);
 });
 
 test('discovery_failed records only a fixed failure code and duration', async (t) => {

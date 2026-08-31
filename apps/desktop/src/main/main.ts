@@ -18,7 +18,7 @@ import { registerPiChatHandlers } from './chat/engine.js';
 import { setClaudeDesktopGatewayModelSource } from './connected-apps/claude-desktop-gateway.js';
 import { emitChatEvent } from './chat/event-bus.js';
 import { createTelegramBridge } from './telegram/bridge.js';
-import { ensureSecureIdentity, getSecureIdentity, secureIdentityEnv } from './identity.js';
+import { ensureSecureIdentity, getSecureIdentity, hasStoredIdentity, secureIdentityEnv } from './identity.js';
 import type { LogEvent, RuntimeActivityEvent } from './runtime/log-parser.js';
 import { parseRuntimeActivityFromLog } from './runtime/log-parser.js';
 import {
@@ -109,7 +109,7 @@ let isInstallingUpdate = false;
 
 let telemetryReady = Promise.resolve<Awaited<ReturnType<typeof createTelemetryService>> | null>(null);
 
-function initializeTelemetry(): Promise<Awaited<ReturnType<typeof createTelemetryService>> | null> {
+function initializeTelemetry(hadExistingIdentity: boolean): Promise<Awaited<ReturnType<typeof createTelemetryService>> | null> {
   return createTelemetryService({
     userDataDir: app.getPath('userData'),
     isDev,
@@ -117,6 +117,7 @@ function initializeTelemetry(): Promise<Awaited<ReturnType<typeof createTelemetr
     platform: process.platform,
     arch: process.arch,
     getDistinctId: () => getSecureIdentity()?.wallet.address ?? null,
+    hadExistingIdentity,
   }).then(async (service) => {
     setTelemetryService(service);
     await service.recordAppStarted();
@@ -379,9 +380,9 @@ const piChatEngine = registerPiChatHandlers({
     const telemetry = await telemetryReady;
     await telemetry?.recordFirstModelShown(input);
   },
-  recordModelSelected: async (input) => {
+  recordModelSelected: async (input, selectionKey) => {
     const telemetry = await telemetryReady;
-    await telemetry?.recordModelSelected(input);
+    await telemetry?.recordModelSelected(input, selectionKey);
   },
   recordChatRequestStarted: async (input) => {
     const telemetry = await telemetryReady;
@@ -436,8 +437,9 @@ app.whenReady().then(async () => {
   if (process.platform === 'darwin' && APP_ICON_PATH && app.dock) {
     app.dock.setIcon(APP_ICON_PATH);
   }
+  const hadExistingIdentity = hasStoredIdentity();
   await ensureSecureIdentity();
-  telemetryReady = initializeTelemetry();
+  telemetryReady = initializeTelemetry(hadExistingIdentity);
   await telemetryReady;
   createApplicationMenu(APP_NAME, APP_ICON_PATH);
 

@@ -26,6 +26,11 @@ export type TelemetryState = {
   telemetryDisabled: boolean;
 };
 
+export type TelemetryStateLoadResult = {
+  state: TelemetryState;
+  source: 'stored' | 'missing' | 'invalid';
+};
+
 export function defaultTelemetryState(): TelemetryState {
   return {
     schemaVersion: 1,
@@ -60,12 +65,12 @@ function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
 
-function normalize(raw: unknown): TelemetryState {
-  const defaults = defaultTelemetryState();
+function normalize(raw: unknown): TelemetryState | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    return defaults;
+    return null;
   }
   const record = raw as Record<string, unknown>;
+  if (record['schemaVersion'] !== 1) return null;
   return {
     schemaVersion: 1,
     firstOpenDate: asStringOrNull(record['firstOpenDate']),
@@ -92,11 +97,23 @@ export function telemetryStatePath(userDataDir: string): string {
 
 /** Loads and normalizes state; corrupt or missing files fall back to defaults. */
 export async function loadTelemetryState(userDataDir: string): Promise<TelemetryState> {
+  return (await loadTelemetryStateResult(userDataDir)).state;
+}
+
+export async function loadTelemetryStateResult(userDataDir: string): Promise<TelemetryStateLoadResult> {
   try {
     const text = await readFile(telemetryStatePath(userDataDir), 'utf8');
-    return normalize(JSON.parse(text));
-  } catch {
-    return defaultTelemetryState();
+    try {
+      const state = normalize(JSON.parse(text));
+      return state
+        ? { state, source: 'stored' }
+        : { state: defaultTelemetryState(), source: 'invalid' };
+    } catch {
+      return { state: defaultTelemetryState(), source: 'invalid' };
+    }
+  } catch (error) {
+    const source = (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'invalid';
+    return { state: defaultTelemetryState(), source };
   }
 }
 
