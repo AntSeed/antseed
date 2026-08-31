@@ -4,6 +4,7 @@ import { Command } from 'commander';
 import { loadEnvFromFiles } from '../env/load-env.js';
 import { registerSellerCommands } from './commands/seller/index.js';
 import { registerBuyerCommands } from './commands/buyer/index.js';
+import { registerVerifierCommands } from './commands/verifier/index.js';
 import { registerConfigCommand } from './commands/config/index.js';
 import { registerNetworkCommands } from './commands/network/index.js';
 import { registerIdentityCommands } from './commands/identity/index.js';
@@ -33,6 +34,7 @@ program
 
 registerSellerCommands(program);
 registerBuyerCommands(program);
+registerVerifierCommands(program);
 registerConfigCommand(program);
 registerNetworkCommands(program);
 registerIdentityCommands(program);
@@ -45,4 +47,4 @@ registerWrappedToolCommands(program);
 registerSystemProxyCommands(program);
 registerTunnelCommands(program);
 
-program.parse(process.argv);
+await program.parseAsync(process.argv);
