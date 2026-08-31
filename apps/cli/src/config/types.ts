@@ -4,7 +4,17 @@ import type {
   UnitBillingModelV1,
 } from '@antseed/node';
 import type { ModelRoutingPreferences } from '@antseed/node/model-routing';
-import type { CanonicalKbfDomainKey } from '../verifier/canonical-kbf-domains.js';
+import type { VerifierCLIConfig } from '../verifier/config-schema.js';
+
+export type {
+  VerifierAntseedReferenceRouteConfig,
+  VerifierCLIConfig,
+  VerifierContrastModelConfig,
+  VerifierContrastSelectionConfig,
+  VerifierModelPricingConfig,
+  VerifierReferenceEndpointConfig,
+  VerifierReferenceModelConfig,
+} from '../verifier/config-schema.js';
 
 /**
  * Dual token pricing in USD per 1M tokens.
@@ -309,132 +319,6 @@ export interface NetworkCLIConfig {
 /**
  * Top-level Antseed configuration structure.
  */
-/** Verifier configuration for model-wide buyer-proxy verification runs. */
-export interface VerifierCLIConfig {
-  /** Directory containing one reusable powered reference per model. */
-  referencesDir?: string;
-  /** Directory containing accumulated per-model probe banks. */
-  banksDir?: string;
-  /** Directory for per-peer evidence packs and run summaries. */
-  evidenceDir?: string;
-  /** Timeout for each buyer-proxy probe request. Default: 120000. */
-  probeRequestTimeoutMs?: number;
-  /** Time to wait for the buyer node to persist ResponseAuth. Default: 35000. */
-  responseAuthWaitTimeoutMs?: number;
-  /** Maximum audited models processed concurrently. Default: 3. */
-  auditMaxConcurrentModels?: number;
-  /** Maximum seller audits processed concurrently per model. Default: 4. */
-  auditMaxConcurrentPeersPerModel?: number;
-  /** Maximum buyer-proxy probe batches across the entire verifier run. Default: 12. */
-  auditMaxConcurrentBatches?: number;
-  /** Maximum probe batches sent concurrently to one seller audit. Default: 2. */
-  auditMaxConcurrentBatchesPerPeer?: number;
-  /** Maximum first-batch latency that permits raising seller concurrency above one. Default: 30000. */
-  auditConcurrencyPromotionLatencyMs?: number;
-  /** Hard wall-clock deadline for one seller audit. Default: 600000. */
-  auditPeerTimeoutMs?: number;
-  /** Automatic cheap contrast-model selection policy. */
-  contrastSelection?: VerifierContrastSelectionConfig;
-  /** Trusted endpoint used only by the explicit reference-build command. */
-  referenceEndpoint?: VerifierReferenceEndpointConfig;
-  /** Maximum physical reference-endpoint requests, including retries. Default: 2000. */
-  referenceMaxRequestsPerBuild?: number;
-  /** Retries after the initial transiently failed reference request. Default: 3. */
-  referenceBatchRetryCount?: number;
-  /** Initial exponential retry delay in milliseconds. Default: 500. */
-  referenceRetryBaseDelayMs?: number;
-  /** Consecutive candidate rounds with zero accepted probes before failure. Default: 3. */
-  referenceMaxNoProgressRounds?: number;
-  /** Maximum concurrent reference requests across models. Default: 4. */
-  referenceMaxConcurrentRequests?: number;
-  /** Maximum concurrent reference requests to one model. Default: 3. */
-  referenceMaxConcurrentRequestsPerModel?: number;
-  /** Initial reference size. Default: 100. */
-  referenceMinimumProbeCount?: number;
-  /** Maximum adaptive reference size. Default: 500. */
-  referenceMaximumProbeCount?: number;
-  /** Adaptive reference growth increment. Default: 10. */
-  referenceProbeStep?: number;
-  /** Required one-sided binomial power. Default: 0.9. */
-  referenceMinimumStatisticalPower?: number;
-}
-
-export interface VerifierContrastSelectionConfig {
-  /** Dynamic model catalog used for prices and capability scores. */
-  catalogSource?: 'openrouter';
-  /** Input-token share used for blended price comparison. Default: 0.9. */
-  inputWeight?: number;
-  /** Maximum contrast blended price relative to the audited model. Default: 0.3. */
-  maxPriceRatio?: number;
-  /** Maximum selected contrast models. Default: 3; maximum: 3. */
-  maxModels?: number;
-  /** Minimum Artificial Analysis Intelligence Index accepted from OpenRouter. */
-  minimumIntelligenceIndex?: number;
-}
-
-export interface VerifierModelPricingConfig {
-  inputUsdPerMillion: number;
-  outputUsdPerMillion: number;
-}
-
-export interface VerifierAntseedReferenceRouteConfig {
-  /** Route target reference requests through the local AntSeed buyer proxy. */
-  type: 'antseed';
-  /** AntSeed network service requested from the pinned peer. */
-  service: string;
-  /** Exact AntSeed peer used as the target reference source. */
-  peerId: string;
-  /** Advertised target-route pricing used for reference cost accounting. */
-  pricing: VerifierModelPricingConfig;
-}
-
-export interface VerifierReferenceModelConfig {
-  /** Whether all-model commands include this audited service. Default: true. */
-  enabled?: boolean;
-  /** Additional network service ids audited with the same logical model and probe bank. */
-  serviceAliases?: string[];
-  /** Model id sent to the reference endpoint. */
-  upstreamModel: string;
-  /** Trusted upstream pricing used for automatic contrast selection. */
-  pricing?: VerifierModelPricingConfig;
-  /** Optional target-only route through the local AntSeed buyer proxy. */
-  referenceRoute?: VerifierAntseedReferenceRouteConfig;
-  /** Explicit contrast models. Overrides automatic selection. */
-  contrastModels?: string[];
-  /** Canonical KBF domains that reference generation and audits must skip. */
-  excludedDomains?: CanonicalKbfDomainKey[];
-}
-
-export interface VerifierContrastModelConfig {
-  /** Whether automatic selection may use this model. Default: true. */
-  enabled?: boolean;
-  /** Model id sent to the reference endpoint. */
-  upstreamModel: string;
-  /** Candidate pricing used for blended cost comparison. */
-  pricing: VerifierModelPricingConfig;
-  /** Operator-maintained capability rank; higher values are preferred. */
-  capabilityRank: number;
-}
-
-export interface VerifierReferenceEndpointConfig {
-  /** OpenAI-compatible base URL, e.g. "http://127.0.0.1:8377/v1". */
-  baseUrl: string;
-  /** API key sent as a Bearer token. Prefer apiKeyEnv over inlining secrets. */
-  apiKey?: string;
-  /** Environment variable containing the API key. */
-  apiKeyEnv?: string;
-  /** Stable operator-controlled identity used to invalidate references. */
-  sourceId: string;
-  /** Whether references from this endpoint are smoke-only or trusted. */
-  trust: 'smoke' | 'trusted';
-  /** Optional AntSeed buyer-proxy peer pin. Omit for direct trusted APIs. */
-  antseedPeerId?: string;
-  /** Network service id to upstream reference/contrast model configuration. */
-  models: Record<string, VerifierReferenceModelConfig>;
-  /** Cheap capable models eligible for automatic contrast selection. */
-  contrastModelBank?: Record<string, VerifierContrastModelConfig>;
-}
-
 /**
  * Seller-side deposit-sweep relayer configuration. ON by default (opt-out).
  */

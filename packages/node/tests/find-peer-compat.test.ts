@@ -54,46 +54,6 @@ describe('AntseedNode.findPeer compatibility', () => {
     expect((node as any)._peerLookup.findAll).toHaveBeenCalledTimes(1);
   });
 
-  it('checks advertised services without inventing verification entries', async () => {
-    const targetId = 'a'.repeat(40);
-    const nowSec = Math.floor(Date.now() / 1000);
-    const node = new AntseedNode({ role: 'buyer' });
-
-    (node as any)._peerLookup = {
-      findByPeerId: vi.fn().mockResolvedValue([
-        {
-          metadata: buildMetadata(targetId),
-          host: '34.10.10.10',
-          port: 6882,
-        },
-      ]),
-      findAll: vi.fn(),
-    };
-    (node as any)._stakingClient = {
-      getAgentId: vi.fn().mockResolvedValue(55),
-      getStake: vi.fn().mockResolvedValue(10_000_000n),
-      getStakedAt: vi.fn().mockResolvedValue(nowSec - 86_400),
-    };
-    (node as any)._channelsClient = {
-      getAgentStats: vi.fn().mockResolvedValue({
-        channelCount: 3,
-        ghostCount: 0,
-        totalVolumeUsdc: 5_000_000n,
-        lastSettledAt: nowSec,
-      }),
-    };
-    (node as any)._verifierClient = {
-      queryAttestations: vi.fn().mockResolvedValue([]),
-    };
-
-    const peer = await node.findPeer(targetId);
-
-    expect(peer?.onChainAgentId).toBe(55);
-    expect(peer?.modelVerification).toEqual({});
-    expect(peer?.modelVerificationFetchedAt).toEqual(expect.any(Number));
-    expect((node as any)._verifierClient.queryAttestations).toHaveBeenCalledWith(55);
-  });
-
   it('does not scan wildcard when the per-peer topic returns a match', async () => {
     const targetId = 'a'.repeat(40);
     const node = new AntseedNode({ role: 'buyer' });

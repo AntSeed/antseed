@@ -38,7 +38,8 @@
     "dotenv": "^16.6.1",
     "open": "^11.0.0",
     "ora": "^9.3.0",
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
