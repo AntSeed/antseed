@@ -29,7 +29,7 @@ import {
 import { sanitizeTelemetryProperties } from './sanitize.js';
 import { createPostHogTransport, type PostHogTransport } from './posthog.js';
 import {
-  loadTelemetryState,
+  loadTelemetryStateResult,
   saveTelemetryState,
   type TelemetryState,
 } from './state.js';
@@ -126,6 +126,7 @@ export type TelemetryService = {
   }, getDepositSnapshot: () => Promise<FirstChatDepositSnapshot | null>, nowMs?: number) => Promise<void>;
   recordModelSelected: (
     input: TelemetryEventProperties['model_selected'],
+    selectionKey: string,
     nowMs?: number,
   ) => Promise<void>;
   recordChatRequestStarted: (
@@ -153,6 +154,7 @@ export type CreateTelemetryServiceOptions = {
   platform: string;
   arch: string;
   getDistinctId: () => string | null;
+  hadExistingIdentity: boolean;
   env?: NodeJS.ProcessEnv;
   nowMs?: () => number;
   transport?: PostHogTransport;
@@ -181,7 +183,11 @@ export async function createTelemetryService(
 
   // State loads even when statically disabled so the in-app toggle answers
   // correctly and nothing crashes in dev.
-  const state: TelemetryState = await loadTelemetryState(options.userDataDir);
+  const loadedState = await loadTelemetryStateResult(options.userDataDir);
+  const state: TelemetryState = loadedState.state;
+  if (loadedState.source !== 'stored' && options.hadExistingIdentity) {
+    state.hasEmittedFirstOpen = true;
+  }
 
   const transport: PostHogTransport = options.transport
     ?? createPostHogTransport({ host: host || 'https://localhost', projectApiKey: apiKey || 'disabled' });
@@ -203,6 +209,7 @@ export async function createTelemetryService(
   let hasEmittedPeersDiscovered = false;
   let hasEmittedFirstModelShown = false;
   let hasEmittedFirstUserAction = false;
+  let lastModelSelectionKey: string | null = null;
   let firstChatClaimed = false;
 
   type PendingUserAction = {
@@ -484,8 +491,11 @@ export async function createTelemetryService(
       }
     },
 
-    async recordModelSelected(input, nowMs = now()) {
-      track('model_selected', input, nowMs);
+    async recordModelSelected(input, selectionKey, nowMs = now()) {
+      if (selectionKey === lastModelSelectionKey) return;
+      if (track('model_selected', input, nowMs)) {
+        lastModelSelectionKey = selectionKey;
+      }
     },
 
     async recordChatRequestStarted(input, nowMs = now()) {

@@ -633,14 +633,12 @@ registerActions({
   deleteConversation: (id) => { recordUserAction('conversation_delete', 'chats'); return chatApi.deleteConversation(id); },
   renameConversation: (id, title) => { recordUserAction('conversation_rename', 'chats'); chatApi.renameConversation(id, title); },
   handleServiceChange: (value, peerId) => {
-    recordUserAction(peerId ? 'peer_select' : 'model_select', 'chat');
     chatApi.handleServiceChange(value, peerId);
   },
   handleServiceFocus: () => { recordUserAction('model_picker_open', 'chat'); chatApi.handleServiceFocus(); },
   handleServiceBlur: chatApi.handleServiceBlur,
   clearPinnedPeer: () => { recordUserAction('route_mode_change', 'chat'); chatApi.clearPinnedPeer(); },
   selectVprModel: (provider, serviceId, peerId) => {
-    recordUserAction(peerId ? 'peer_select' : 'model_select', 'model');
     actionSelectVprModel(provider, serviceId, peerId);
   },
   clearVprPinnedPeer: () => {
@@ -657,7 +655,7 @@ registerActions({
     notifyUiStateChanged();
   },
   setVprModelSellerPin: (provider, serviceId, peerId) => {
-    recordUserAction(peerId ? 'peer_select' : 'route_mode_change', 'model');
+    recordUserAction('route_mode_change', 'model');
     uiState.vprModelPins = peerId
       ? setVprModelPin(uiState.vprModelPins, provider, serviceId, peerId)
       : clearVprModelPin(uiState.vprModelPins, provider, serviceId);

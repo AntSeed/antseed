@@ -34,6 +34,7 @@ export type RegisterPiChatHandlersOptions = {
   recordFirstModelShown?: (input: FirstModelShownTelemetryInput) => void | Promise<void>;
   recordModelSelected?: (
     input: TelemetryEventProperties['model_selected'],
+    selectionKey: string,
   ) => void | Promise<void>;
   recordChatRequestStarted?: (
     input: TelemetryEventProperties['chat_request_started'],

@@ -13,8 +13,6 @@ export const TELEMETRY_USER_ACTIONS = [
   'image_generate',
   'attachment_add',
   'model_picker_open',
-  'model_select',
-  'peer_select',
   'route_mode_change',
   'routing_preferences_change',
   'peer_access_change',

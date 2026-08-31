@@ -46,7 +46,7 @@ Every event includes this envelope:
   fixed `action` and `surface` enums, duration from app start, and
   `is_first_action`. This covers navigation; runtime start/stop and discovery
   refresh; chat creation/open/send/stop/retry, attachments, and image
-  generation; model/peer/routing choices; connected-app connect/disconnect and
+  generation; routing choices; connected-app connect/disconnect and
   configuration copy; deposit/withdraw starts; workspace changes; and plugin
   installation.
 - `setup_completed` — when first-run setup completes. Properties:
@@ -62,11 +62,14 @@ Every event includes this envelope:
   request. Properties: `had_deposit`, `deposit_bucket`,
   `days_since_first_open`, `service_category` (`chat`, `image`, `other`),
   `has_attachments`.
-- `model_selected` — when the effective default or conversation model changes.
+- `model_selected` — once when the effective model or seller route changes,
+  even when that selection is persisted through both default-route and active-
+  conversation paths.
   Properties: public advertised `public_model_id` (or `custom_or_unknown`),
-  `service_category`, default/conversation selection scope, auto/pinned route
-  mode, whether any buyer-policy-eligible offer is free, a `free`, `paid`,
-  `mixed`, or `unknown` pricing tier, and a coarse eligible-offer-count bucket.
+  `service_category`, auto/pinned route mode, whether any buyer-policy-eligible
+  offer is free, a `free`, `paid`, `mixed`, or `unknown` pricing tier, and a
+  coarse eligible-offer-count bucket. Model and seller selections are not also
+  emitted as generic `user_action` events.
 - `chat_request_started` — immediately before each valid remote chat attempt,
   after local preflight and session construction succeed. Properties: a random
   per-request `request_id`, public model ID, service category, route mode,
@@ -139,6 +142,12 @@ fresh random `session_id` is generated on every launch.
 Each valid remote chat attempt also receives a random `request_id` used only to
 correlate its start and finish events. It is not derived from chat contents,
 the on-chain identifier, a peer, or a wallet.
+
+When telemetry is introduced to an existing VPR installation, the pre-existing
+encrypted or legacy signing identity suppresses `app_first_opened` if no valid
+telemetry state exists yet. This prevents an upgrade from being counted as a
+new installation. A genuinely fresh install, where the app creates both the
+identity and telemetry state for the first time, still emits the event.
 
 ## How to disable telemetry
 

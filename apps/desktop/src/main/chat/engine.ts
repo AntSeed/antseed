@@ -312,7 +312,7 @@ export function registerPiChatHandlers({
   const modelTelemetryContext = (
     service: string,
     peerId: string | null,
-  ): Omit<TelemetryEventProperties['model_selected'], 'selection_scope'> => {
+  ): TelemetryEventProperties['model_selected'] => {
     const normalizedService = service.trim().toLowerCase();
     const catalogOffers = lastServiceCatalogEntries.filter((entry) => (
       entry.id.trim().toLowerCase() === normalizedService
@@ -336,14 +336,17 @@ export function registerPiChatHandlers({
   const recordModelSelection = (
     service: string,
     peerId: string | null,
-    selectionScope: 'default' | 'conversation',
   ): void => {
     if (!recordModelSelected) return;
     try {
-      void Promise.resolve(recordModelSelected({
-        ...modelTelemetryContext(service, peerId),
-        selection_scope: selectionScope,
-      })).catch(() => {});
+      const selectionKey = JSON.stringify([
+        service.trim().toLowerCase(),
+        peerId?.trim() ?? null,
+      ]);
+      void Promise.resolve(recordModelSelected(
+        modelTelemetryContext(service, peerId),
+        selectionKey,
+      )).catch(() => {});
     } catch {
       // Telemetry must never affect model selection.
     }
@@ -963,7 +966,7 @@ export function registerPiChatHandlers({
       }
       if (service) {
         await store.setModel(conversationId, provider ?? undefined, service);
-        recordModelSelection(service, pinnedPeerId, 'conversation');
+        recordModelSelection(service, pinnedPeerId);
       }
     }
 
@@ -1009,7 +1012,7 @@ export function registerPiChatHandlers({
       const result = await response.json() as { ok?: boolean; error?: string };
       if (result.ok) {
         lastPostedDefaultRoute = model;
-        recordModelSelection(service, peerId || null, 'default');
+        recordModelSelection(service, peerId || null);
       }
       return { ok: result.ok ?? false, error: result.error };
     } catch (err) {
