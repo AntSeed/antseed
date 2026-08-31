@@ -122,11 +122,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: DeterminateSystems/nix-installer-action@main
 
-      # First build fetches each dependency tarball individually; keep the
-      # store between runs so lockfile churn only fetches what changed.
-      - uses: DeterminateSystems/magic-nix-cache-action@main
+      # Pinned SHA — DeterminateSystems/nix-installer-action @main as of 2026-08-31
+      - uses: DeterminateSystems/nix-installer-action@33c9ab3ef95cd57c164d9d6eb1f9a46338538d41
+
+      # Pinned SHA — DeterminateSystems/magic-nix-cache-action @main as of 2026-08-31
+      - uses: DeterminateSystems/magic-nix-cache-action@55718cd9ebf1737a061487d5ada21abf31e99a98
 
       - name: Build antseed CLI
         run: nix build .#
