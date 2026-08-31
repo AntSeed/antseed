@@ -91,6 +91,7 @@ import {
 import { debugLog, debugWarn } from "./utils/debug.js";
 import { parsePublicAddress } from "./discovery/public-address.js";
 import { BuyerPaymentManager, type BuyerPaymentConfig } from "./payments/buyer-payment-manager.js";
+import type { BuyerSigner, BuyerIdentity } from "@antseed/buyer-core";
 import { BuyerPaymentNegotiator } from "./payments/buyer-payment-negotiator.js";
 import { RpcHealthMonitor, type RpcHealthStatus } from "./payments/rpc-health.js";
 import { SellerAddressResolver } from "./discovery/seller-address-resolver.js";
@@ -142,6 +143,35 @@ export type BuyerChannelSummary = {
 };
 
 export interface NodePaymentsConfig {
+  /**
+   * Optional external signer that holds BUYER payment authority, separate from the
+   * libp2p identity.
+   *
+   * By default the node uses its libp2p identity wallet as the on-chain buyer, which
+   * requires the operator to hold a raw secp256k1 private key. That rules out buyers
+   * whose keys are structurally non-exportable — threshold-signature wallets, MPC
+   * custody, HSMs, and custodial platforms signing on a user's behalf.
+   *
+   * When set, this signer becomes the on-chain buyer: it signs the EIP-712 ReserveAuth
+   * and SpendingAuth messages, and its address is the `buyer` recorded in channels.
+   * The libp2p identity continues to own peer identity and signed peer metadata, which
+   * are network concerns rather than financial ones.
+   *
+   * Must satisfy `BuyerSigner` (an ethers `AbstractSigner` exposing a synchronous
+   * `address`), because the buyer address is read synchronously when computing
+   * channel IDs. `AntseedChannels._verifySignature` requires strict EOA recovery
+   * (`ECDSA.recover(digest, sig) == buyer`) with no ERC-1271 fallback, so the signer
+   * must recover to a plain address — a contract wallet will not work.
+   *
+   * NOTE on funding: `BuyerPaymentManager.deposit()` and `.withdraw()` submit real
+   * transactions through this signer and so need transaction-signing and gas. A signer that
+   * only implements `signTypedData` is still fully usable — it funds itself through the
+   * protocol's gasless paths instead: `AntseedDepositRelay.sweepDeposit(...)` needs only an
+   * EIP-3009 `ReceiveWithAuthorization` (docs/protocol/spec/09-deposit-sweep.md), and
+   * `setOperator` is EIP-712 meta-transactional so an operator can withdraw on its behalf.
+   * `AntseedDeposits.deposit(buyer, amount)` also accepts a deposit from any sender.
+   */
+  buyerSigner?: BuyerSigner;
   /** Enable seller-side payment channels and automatic settlement. */
   enabled?: boolean;
   /** Payment method used for settlement. Default: "crypto" */
@@ -357,6 +387,13 @@ export class AntseedNode extends EventEmitter {
   private _sellerHandler: SellerRequestHandler | null = null;
   /** Buyer-side payment manager (initialized when buyer has payment config). */
   private _buyerPaymentManager: BuyerPaymentManager | null = null;
+  /**
+   * External buyer payment signer, when `payments.buyerSigner` is configured. Null means
+   * the libp2p identity wallet is the buyer, which is the default. Read through
+   * `_buyerEvmAddress` rather than directly, so every buyer-address lookup agrees with
+   * whoever actually signs.
+   */
+  private _buyerSigner: BuyerSigner | null = null;
   /** Buyer-side payment negotiation (402 handling, SpendingAuth, cost tracking). */
   private _buyerNegotiator: BuyerPaymentNegotiator | null = null;
   /** Background chain-RPC reachability monitor (created when payments are configured). */
@@ -393,6 +430,10 @@ export class AntseedNode extends EventEmitter {
   constructor(config: NodeConfig) {
     super();
     this._config = config;
+    // Resolved here rather than during start-up: _initializePayments (which builds the
+    // free-usage manager) runs before the buyer payment block in _startBuyer, so anything
+    // assigned there would be invisible to the earlier consumer.
+    this._buyerSigner = config.payments?.buyerSigner ?? null;
   }
 
   get peerId(): string | null {
@@ -458,6 +499,37 @@ export class AntseedNode extends EventEmitter {
   /** Buyer-side payment manager (null if payments not enabled or not in buyer mode). */
   get buyerPaymentManager(): BuyerPaymentManager | null {
     return this._buyerPaymentManager;
+  }
+
+  /**
+   * The address recorded as `buyer` in payment channels: the external payment signer when
+   * one is configured, otherwise the libp2p identity wallet.
+   *
+   * Every buyer-address lookup must go through here. Reading `_identity.wallet.address`
+   * directly would disagree with whoever signs the SpendingAuth as soon as an external
+   * signer is configured, and channel lookups would silently return nothing.
+   */
+  private get _buyerEvmAddress(): string | null {
+    // Deliberately not `_buyerSigner?.address ?? _identity...`: if a signer IS configured but
+    // its address is unusable, falling through to the identity would report an address that
+    // can never be the buyer, and an operator reading `buyerAddress` could fund the wrong
+    // one. Null is the honest answer in that case.
+    if (this._buyerSigner) return this._buyerSigner.address ?? null;
+    return this._identity?.wallet.address ?? null;
+  }
+
+  /**
+   * The `BuyerIdentity` that owns payment authority: the external signer when configured,
+   * otherwise the libp2p identity. Used for every buyer-side money component so they cannot
+   * disagree about who the buyer is.
+   */
+  private _buyerPaymentIdentity(identity: Identity): BuyerIdentity {
+    return this._buyerSigner ? { peerId: identity.peerId, wallet: this._buyerSigner } : identity;
+  }
+
+  /** The address this node pays from, or null when payments are not configured for a buyer. */
+  get buyerAddress(): string | null {
+    return this._buyerEvmAddress;
   }
 
   /** Buyer-side payment negotiator (null if payments not configured for buyer). */
@@ -1199,7 +1271,7 @@ export class AntseedNode extends EventEmitter {
     lifetimeFirstSessionAt: number | null;
     lifetimeLastSessionAt: number | null;
   } | null {
-    const buyerAddress = this._identity?.wallet.address ?? null;
+    const buyerAddress = this._buyerEvmAddress;
     const channel = (buyerAddress != null)
       ? (
         this._channelStore?.getActiveChannelByPeerAndBuyer(sellerPeerId, CHANNEL_ROLE.BUYER, buyerAddress)
@@ -1254,7 +1326,7 @@ export class AntseedNode extends EventEmitter {
    * SpendingAuth amount stored in authMax.
    */
   getActiveBuyerChannels(): BuyerChannelSummary[] {
-    const buyerAddress = this._identity?.wallet.address ?? null;
+    const buyerAddress = this._buyerEvmAddress;
     if (!buyerAddress || !this._channelStore) return [];
     const stored = this._channelStore.getActiveChannelsByBuyer(CHANNEL_ROLE.BUYER, buyerAddress);
     return stored.map((c) => {
@@ -1282,7 +1354,7 @@ export class AntseedNode extends EventEmitter {
 
   /** All buyer channels (any local status), used for history views. */
   getAllBuyerChannels(): BuyerChannelSummary[] {
-    const buyerAddress = this._identity?.wallet.address ?? null;
+    const buyerAddress = this._buyerEvmAddress;
     if (!buyerAddress || !this._channelStore) return [];
     const stored = this._channelStore.getAllChannelsByBuyer('buyer', buyerAddress);
     return stored.map((c) => {
@@ -1317,7 +1389,7 @@ export class AntseedNode extends EventEmitter {
    * buyer-payment-manager.recordAndPersistTokens.
    */
   getBuyerUsageTotals(): BuyerUsageTotals {
-    const buyerAddress = this._identity?.wallet.address ?? null;
+    const buyerAddress = this._buyerEvmAddress;
     if (!buyerAddress || !this._channelStore) return EMPTY_BUYER_USAGE;
     // Paid channels plus free-usage sessions — both carry real traffic and
     // the desktop usage tiles/float must reflect the sum.
@@ -1758,15 +1830,24 @@ export class AntseedNode extends EventEmitter {
           disableMetadataV2Services: payments.disableMetadataV2Services ?? false,
           dataDir: paymentsDir,
         };
-        this._buyerPaymentManager = new BuyerPaymentManager(identity, buyerPaymentConfig, this._channelStore, this._sellerAddressResolver ?? undefined);
+        // Payment authority and peer identity are separate concerns. By default they are
+        // the same key; when payments.buyerSigner is configured, the external signer owns
+        // the money and the libp2p identity keeps only the peerId and metadata signing.
+        // (_buyerSigner is resolved in the constructor — see the note there.)
+        const paymentIdentity = this._buyerPaymentIdentity(identity);
+        this._buyerPaymentManager = new BuyerPaymentManager(paymentIdentity, buyerPaymentConfig, this._channelStore, this._sellerAddressResolver ?? undefined);
         // Re-emit per-request spend so callers can attribute it to whatever
         // issued the request — the node only knows the seller and requestId.
         this._buyerPaymentManager.setSpendListener((event) => this.emit('payment:spend', event));
-        debugLog(`[Node] Buyer payment manager initialized (wallet=${identity.wallet.address.slice(0, 10)}... chainId=${buyerPaymentConfig.chainId} deposits=${buyerPaymentConfig.depositsContractAddress.slice(0, 10)}...)`);
+        debugLog(`[Node] Buyer payment manager initialized (buyer=${paymentIdentity.wallet.address.slice(0, 10)}...${this._buyerSigner ? ' external-signer' : ''} chainId=${buyerPaymentConfig.chainId} deposits=${buyerPaymentConfig.depositsContractAddress.slice(0, 10)}...)`);
 
         // Create negotiator that wraps the BPM with 402 handling and per-request auth
         this._buyerNegotiator = new BuyerPaymentNegotiator(
-          identity,
+          // Must be the payment identity, not the libp2p one: handle402() prechecks the
+          // deposit balance of _identity.wallet.address, so passing the libp2p identity
+          // makes every paid request fail with insufficient_deposits when an external
+          // signer holds the funds.
+          paymentIdentity,
           this._buyerPaymentManager,
           this._depositsClient,
           this._channelsClient,
@@ -2016,7 +2097,10 @@ export class AntseedNode extends EventEmitter {
           chainId: payments.chainId ?? 8453,
         };
         this._buyerFreeUsageManager = new BuyerFreeUsageManager(
-          this._identity,
+          // Same buyer identity as the paid path: free channels are persisted under this
+          // address and getBuyerUsageTotals() queries it, so a split here would silently
+          // drop free-usage traffic from the totals.
+          this._buyerPaymentIdentity(this._identity),
           {
             chainId: freeUsageConfig.chainId,
             freeUsageContractAddress: freeUsageConfig.freeUsageContractAddress,
