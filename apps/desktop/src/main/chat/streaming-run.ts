@@ -690,7 +690,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
           if (message.stopReason === 'error' || message.stopReason === 'aborted') {
             terminalStreamError = errorMsg || rawContent || (message.stopReason === 'aborted'
               ? 'Request aborted'
-              : 'The stream stopped before completion.');
+              : 'The request ended unexpectedly.');
             terminalStreamFailure = classifyChatStreamFailure({
               error: message,
               message: terminalStreamError,

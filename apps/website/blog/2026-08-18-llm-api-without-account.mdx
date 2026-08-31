@@ -17,14 +17,6 @@ export const llmApiFaqLd = {
   mainEntity: [
     {
       '@type': 'Question',
-      name: 'Can I use an LLM API without any account at all?',
-      acceptedAnswer: {
-        '@type': 'Answer',
-        text: "Yes, but the list is short. Pollinations' original text endpoint and LLM7 (using the literal string \"unused\" as your key) both return completions with no registration step. Almost everything else marketed as \"no signup\" turns out to need a Google, GitHub, or Cloudflare account before your first real call.",
-      },
-    },
-    {
-      '@type': 'Question',
       name: 'Is a keyless API the same as an anonymous AI API?',
       acceptedAnswer: {
         '@type': 'Answer',
@@ -44,7 +36,7 @@ export const llmApiFaqLd = {
       name: 'Do I need crypto to use AntSeed?',
       acceptedAnswer: {
         '@type': 'Answer',
-        text: 'Yes. AntSeed swaps an account for a funded wallet: you pre-deposit USDC on Base mainnet before your first request. There is no free tier and no trial. That is real friction, just a different kind than an email signup, and we are not going to pretend it is free.',
+        text: "No — you don't need to already hold crypto. AntSeed settles in USDC on Base, but the desktop app has a card checkout (Stripe-backed, US region for now) that funds your balance from a card without you touching crypto directly, alongside the crypto-native path. AntSeed itself doesn't hand out free trial credit, though individual providers can and do price their own services at $0.",
       },
     },
     {
@@ -94,7 +86,7 @@ Sorted by ascending friction, not alphabetically. "What you hand over instead" i
 |---|---|---|---|---|---|
 | [Pollinations](https://github.com/pollinations/pollinations/blob/main/APIDOCS.md) (text endpoint) | No | IP address, no persistent ID | Free | Partial (simple GET endpoint) | Their newer `/v1` endpoint now wants a bearer key |
 | [LLM7](https://github.com/chigwell/llm7.io) | No (`unused` as key) | IP address, shared rate bucket | Free | Yes | 30 RPM anonymous; email gets you 120 RPM |
-| [AntSeed](/docs/guides/payments) | No (funded wallet instead) | A public, pseudonymous wallet address | USDC pre-deposit, no free tier | Yes | No account, but real money up front |
+| [AntSeed](/docs/guides/payments) | No (funded wallet instead) | A public, pseudonymous wallet address | USDC pre-deposit — card or crypto | Yes | No account, but real money up front |
 | [Puter](https://developer.puter.com/tutorials/free-llm-api/) | No for the developer | The end user's own Puter login | End user pays via their account | No (custom SDK) | The "no account" is yours, not your users' |
 | [OpenRouter](https://openrouter.ai) free tier | Yes (email, GitHub, or Google) | An email or federated identity | Free, rate-limited | Yes | 20 req/min, 1,000/day; no card needed |
 | [Groq](https://console.groq.com) | Yes (email, verified) | A verified email address | Free tier, no card | Yes | Email verification step before first key |
@@ -155,9 +147,9 @@ curl http://localhost:8377/v1/chat/completions \
 
 No API key header is checked by the local proxy. Tools that insist on sending one can send any placeholder string and it will be ignored.
 
-Payment is USDC on Base mainnet: [install the AntSeed CLI](/docs/install), then pre-deposit before your first paid request, since [how USDC settlement works](/docs/guides/payments) confirms there's no free tier and no trial credit. Prices are quoted per provider as `inputUsdPerMillion` and `outputUsdPerMillion`. One detail worth knowing: any address can fund a node's deposit — a team treasury, a hardware wallet, an exchange withdrawal — without that funding source ever touching the node's private key.
+Payment settles in USDC on Base mainnet: [install the AntSeed CLI](/docs/install), then pre-deposit before your first paid request. [How USDC settlement works](/docs/guides/payments) covers the crypto-native funding paths — exchange withdrawal, another wallet, a card on-ramp — and the desktop app separately offers a built-in card checkout that funds the same balance without you needing to already hold crypto. Prices are quoted per provider as `inputUsdPerMillion` and `outputUsdPerMillion`, and providers can set either to zero. One detail worth knowing: any address can fund a node's deposit — a team treasury, a hardware wallet, an exchange withdrawal — without that funding source ever touching the node's private key.
 
-State the cost of admission plainly: you need real, funded USDC before AntSeed does anything for you. That's the trade for not needing a login.
+State the cost of admission plainly: you need a funded balance — card or crypto — before AntSeed does anything for you. That's the trade for not needing a login.
 
 ## Tier 3: "no signup" that is actually a signup
 
@@ -184,10 +176,6 @@ That last one matters more than it sounds. A roundup that recommends its own pro
 
 ## FAQ
 
-### Can I use an LLM API without any account at all?
-
-Yes, but the list is short. Pollinations' original text endpoint and LLM7 (using the literal string "unused" as your key) both return completions with no registration step. Almost everything else marketed as "no signup" turns out to need a Google, GitHub, or Cloudflare account before your first real call.
-
 ### Is a keyless API the same as an anonymous AI API?
 
 No. Keyless means you didn't create an account. Anonymous means the provider can't tie your requests back to you at all. A keyless endpoint still sees your IP address and can bucket your usage by it, which is an identifier in every practical sense, even without a login form.
@@ -198,7 +186,7 @@ Not a free one, and be skeptical of anyone claiming otherwise. Production-grade 
 
 ### Do I need crypto to use AntSeed?
 
-Yes. AntSeed swaps an account for a funded wallet: you pre-deposit USDC on Base mainnet before your first request. There is no free tier and no trial. That is real friction, just a different kind than an email signup, and we are not going to pretend it is free.
+No — you don't need to already hold crypto. AntSeed settles in USDC on Base, but the desktop app has a card checkout (Stripe-backed, US region for now) that funds your balance from a card without you touching crypto directly, alongside the crypto-native path. AntSeed itself doesn't hand out free trial credit, though individual providers can and do price their own services at $0.
 
 ### Are no-account LLM APIs against the model providers' terms?
 

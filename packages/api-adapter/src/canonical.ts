@@ -27,8 +27,15 @@ export type CanonicalContentPart =
   | { type: 'text'; text: string }
   | { type: 'image'; url?: string; mediaType?: string; data?: string };
 
+export type CanonicalResponseMessagePhase = 'commentary' | 'final_answer';
+
 export type CanonicalInputItem =
-  | { type: 'message'; role: 'user' | 'assistant'; content: CanonicalContentPart[] }
+  | {
+    type: 'message';
+    role: 'user' | 'assistant';
+    content: CanonicalContentPart[];
+    phase?: CanonicalResponseMessagePhase;
+  }
   | { type: 'function_call'; id: string; name: string; arguments: Record<string, unknown> | string }
   | { type: 'function_call_output'; callId: string; output: string };
 
@@ -78,7 +85,7 @@ function assignToolsAndToolChoice(
 }
 
 export type CanonicalOutputItem =
-  | { type: 'text'; text: string }
+  | { type: 'text'; text: string; phase?: CanonicalResponseMessagePhase }
   | { type: 'function_call'; id: string; name: string; arguments: Record<string, unknown> | string };
 
 export interface CanonicalLlmResponse {
@@ -105,11 +112,18 @@ function toolParameters(parameters: unknown): Record<string, unknown> {
 
 export function renderCanonicalRequestToOpenAIChatBody(
   request: CanonicalLlmRequest,
-  options: { toolCallContent?: '' | null; groupAssistantToolCallsWithPreviousMessage?: boolean } = {},
+  options: {
+    toolCallContent?: '' | null;
+    groupAssistantToolCallsWithPreviousMessage?: boolean;
+    preserveResponsesAgentSemantics?: boolean;
+  } = {},
 ): Record<string, unknown> {
   const messages: unknown[] = [];
-  if (request.instructions !== undefined && request.instructions.length > 0) {
-    messages.push({ role: 'system', content: request.instructions });
+  const instructions = options.preserveResponsesAgentSemantics && request.tools?.length
+    ? appendResponsesChatCompatibilityInstructions(request.instructions)
+    : request.instructions;
+  if (instructions !== undefined && instructions.length > 0) {
+    messages.push({ role: 'system', content: instructions });
   }
 
   for (const item of request.input) {
@@ -123,7 +137,13 @@ export function renderCanonicalRequestToOpenAIChatBody(
           continue;
         }
       }
-      messages.push({ role: item.role, content: renderCanonicalContentToOpenAIChat(item.content) });
+      messages.push({
+        role: item.role,
+        content: renderCanonicalContentToOpenAIChat(item.content),
+        ...(options.preserveResponsesAgentSemantics && item.role === 'assistant' && item.phase
+          ? { name: item.phase }
+          : {}),
+      });
       continue;
     }
     if (item.type === 'function_call') {
@@ -185,6 +205,7 @@ export function renderCanonicalRequestToOpenAIResponsesBody(
         type: 'message',
         role: item.role,
         content: renderCanonicalContentToOpenAIResponses(item.content, item.role),
+        ...(item.role === 'assistant' && item.phase ? { phase: item.phase } : {}),
       });
       continue;
     }
@@ -515,7 +536,8 @@ export function normalizeOpenAIResponsesRequestBody(body: Record<string, unknown
       // Non-message items (reasoning, web_search_call, ...) carry no renderable
       // text — dropping them avoids injecting empty user messages mid-history.
       if (type !== 'message' && textFromCanonicalContent(content).length === 0) continue;
-      request.input.push({ type: 'message', role, content });
+      const phase = role === 'assistant' ? normalizeResponseMessagePhase(msg.phase) : undefined;
+      request.input.push({ type: 'message', role, content, ...(phase ? { phase } : {}) });
     }
   }
 
@@ -550,11 +572,12 @@ export function normalizeOpenAIChatResponseBody(
     ? firstChoice.message as Record<string, unknown>
     : {};
 
-  const output: CanonicalOutputItem[] = [];
   const text = toStringContent(message.content);
-  if (text.length > 0) output.push({ type: 'text', text });
-
   const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+  const output: CanonicalOutputItem[] = [];
+  if (text.length > 0) {
+    output.push({ type: 'text', text, phase: toolCalls.length > 0 ? 'commentary' : 'final_answer' });
+  }
   for (const [index, rawToolCall] of toolCalls.entries()) {
     if (!rawToolCall || typeof rawToolCall !== 'object') continue;
     const toolCall = rawToolCall as Record<string, unknown>;
@@ -588,7 +611,8 @@ export function normalizeOpenAIResponsesResponseBody(
     const item = itemRaw as Record<string, unknown>;
     if (item.type === 'message') {
       const text = textFromResponsesContent(item.content);
-      if (text.length > 0) output.push({ type: 'text', text });
+      const phase = normalizeResponseMessagePhase(item.phase);
+      if (text.length > 0) output.push({ type: 'text', text, ...(phase ? { phase } : {}) });
       continue;
     }
     if (item.type === 'function_call') {
@@ -692,10 +716,10 @@ export function renderCanonicalResponseToOpenAIChatBody(response: CanonicalLlmRe
 
 export function renderCanonicalResponseToOpenAIResponsesBody(response: CanonicalLlmResponse): Record<string, unknown> {
   const output: unknown[] = [];
-  const text = response.output
-    .filter((item): item is { type: 'text'; text: string } => item.type === 'text')
-    .map((item) => item.text)
-    .join('');
+  const textItems = response.output
+    .filter((item): item is Extract<CanonicalOutputItem, { type: 'text' }> => item.type === 'text');
+  const text = textItems.map((item) => item.text).join('');
+  const phase = textItems.find((item) => item.phase)?.phase;
 
   if (text.length > 0) {
     output.push({
@@ -704,6 +728,7 @@ export function renderCanonicalResponseToOpenAIResponsesBody(response: Canonical
       role: 'assistant',
       status: 'completed',
       content: [{ type: 'output_text', text, annotations: [] }],
+      ...(phase ? { phase } : {}),
     });
   }
 
@@ -799,6 +824,20 @@ function parseToolArguments(args: Record<string, unknown> | string): Record<stri
 
 function modelFromBody(body: Record<string, unknown>): string | null {
   return typeof body.model === 'string' && body.model.trim().length > 0 ? body.model.trim() : null;
+}
+
+function normalizeResponseMessagePhase(value: unknown): CanonicalResponseMessagePhase | undefined {
+  return value === 'commentary' || value === 'final_answer' ? value : undefined;
+}
+
+function appendResponsesChatCompatibilityInstructions(instructions: string | undefined): string {
+  const compatibility = [
+    'Chat Completions compatibility requirement:',
+    '- Assistant messages named "commentary" are interim progress updates, not final answers.',
+    '- If more work remains, do not end with commentary alone; include the next tool call in the same response.',
+    '- Return text without a tool call only when it is the final answer to the user.',
+  ].join('\n');
+  return instructions ? `${instructions}\n\n${compatibility}` : compatibility;
 }
 
 function isAssistantMessage(value: unknown): value is Record<string, unknown> {

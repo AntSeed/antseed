@@ -1169,6 +1169,37 @@ describe('transformRequest responses to chat', () => {
     expect(body.user).toBe('user-123');
   });
 
+  it('preserves Responses phases and prevents commentary-only completion in chat tool workflows', () => {
+    const request = makeResponsesRequest({
+      body: new TextEncoder().encode(JSON.stringify({
+        model: 'gpt-5.6-sol',
+        instructions: 'Keep working until the task is complete.',
+        input: [
+          {
+            type: 'message',
+            role: 'assistant',
+            phase: 'commentary',
+            content: [{ type: 'output_text', text: 'I am checking the diff.' }],
+          },
+          { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Continue.' }] },
+        ],
+        tools: [{ type: 'function', name: 'exec_command', parameters: { type: 'object' } }],
+      })),
+    });
+
+    const result = transformRequest(request, { from: 'openai-responses', to: 'openai-chat-completions' });
+    const body = JSON.parse(new TextDecoder().decode(result!.request.body)) as Record<string, unknown>;
+    const messages = body.messages as Array<Record<string, unknown>>;
+
+    expect(messages[0]?.role).toBe('system');
+    expect(messages[0]?.content).toContain('do not end with commentary alone');
+    expect(messages[1]).toEqual({
+      role: 'assistant',
+      name: 'commentary',
+      content: 'I am checking the diff.',
+    });
+  });
+
   it('converts Responses API flat tools to Chat Completions nested format', () => {
     const responsesTools = [{ type: 'function', name: 'search', description: 'Search the web', parameters: { type: 'object' } }];
     const request = makeResponsesRequest({
@@ -1502,6 +1533,7 @@ describe('transformResponse chat to responses', () => {
     expect(output[0].id).toBe('msg_chatcmpl-abc_1');
     expect(output[0].role).toBe('assistant');
     expect(output[0].status).toBe('completed');
+    expect(output[0].phase).toBe('final_answer');
 
     const content = output[0].content as Array<Record<string, unknown>>;
     expect(content[0]).toEqual({
@@ -1580,6 +1612,8 @@ describe('transformResponse chat to responses', () => {
 
     // Should have message item + function_call item
     const functionCall = output.find((item) => item.type === 'function_call');
+    const message = output.find((item) => item.type === 'message');
+    expect(message?.phase).toBe('commentary');
     expect(functionCall).toBeDefined();
     expect(functionCall!.name).toBe('write');
     expect(functionCall!.id).toBe('fc_call_123');
@@ -2047,6 +2081,29 @@ describe('createStreamingAdapter chat to responses', () => {
     expect(sseText).toContain('event: response.function_call_arguments.done');
     expect(sseText).toContain('"name":"write"');
     expect(sseText).toContain('hello.txt');
+  });
+
+  it('marks streamed text as commentary when accompanied by tool calls', () => {
+    const adapter = createStreamAdapterForTest('openai-chat-completions', 'openai-responses', '');
+    const chunks = adapter.adaptChunk({
+      requestId: 'req-commentary-tool',
+      data: new TextEncoder().encode(
+        'data: {"id":"chatcmpl-tool","model":"gpt-5.6-sol","choices":[{"delta":{"content":"I am checking."},"finish_reason":null}]}\n\n'
+        + 'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"exec_command","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}\n\n'
+        + 'data: [DONE]\n\n',
+      ),
+      done: true,
+    });
+
+    const events = parseSseEvents(chunks.map((chunk) => new TextDecoder().decode(chunk.data)).join(''));
+    const messageDone = events.find((event) => {
+      if (event.event !== 'response.output_item.done') return false;
+      return JSON.parse(event.data).item?.type === 'message';
+    });
+    const completed = events.find((event) => event.event === 'response.completed');
+
+    expect(JSON.parse(messageDone!.data).item.phase).toBe('commentary');
+    expect(JSON.parse(completed!.data).response.output[0].phase).toBe('commentary');
   });
 
   it('emits response.created first and avoids phantom text items for tool-only streams', () => {

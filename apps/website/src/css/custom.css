@@ -1622,6 +1622,161 @@ html[data-theme='light'] .blog-wrapper .pagination-nav__link:hover {
   gap: 4px;
 }
 
+.downloadResolving {
+  position: relative;
+  color: transparent !important;
+  pointer-events: none;
+}
+.downloadResolving > * {
+  visibility: hidden !important;
+}
+.downloadResolving::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 16px;
+  height: 16px;
+  margin: -8px;
+  border: 2px solid var(--as-text-3);
+  border-top-color: var(--as-green);
+  border-radius: 50%;
+  animation: downloadSpin 0.7s linear infinite;
+}
+
+@keyframes downloadSpin { to { transform: rotate(360deg); } }
+
+/* "All platforms & versions" — text-link trigger under download CTAs plus
+   the modal it opens (AllVersionsLink.tsx). The modal commits to the site's
+   light card look on every page, including dark closing bands. */
+.vprAllVersions {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--as-text-3);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.vprAllVersions:hover {
+  color: var(--as-green-deep);
+}
+.vprAllVersionsLight {
+  color: rgba(255, 255, 255, 0.75);
+}
+.vprAllVersionsLight:hover {
+  color: #FFFFFF;
+}
+
+.vprVersionsOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(0, 30, 18, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.vprVersionsModal {
+  /* The trigger sits in centered CTA blocks — don't inherit their alignment. */
+  text-align: left;
+  background: #FFFEFB;
+  color: var(--as-text);
+  border-radius: 16px;
+  box-shadow: 0 24px 64px rgba(0, 30, 18, 0.25);
+  width: 100%;
+  max-width: 420px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  padding: 20px;
+}
+.vprVersionsHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.vprVersionsTitle {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--as-text);
+}
+.vprVersionsClose {
+  margin-left: auto;
+  background: none;
+  border: none;
+  padding: 0 4px;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--as-text-3);
+  cursor: pointer;
+}
+.vprVersionsClose:hover {
+  color: var(--as-text);
+}
+.vprVersionsList {
+  display: flex;
+  flex-direction: column;
+}
+.vprVersionsRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 8px;
+  border-radius: 10px;
+  color: var(--as-text);
+  text-decoration: none;
+}
+.vprVersionsRow:hover {
+  background: rgba(16, 185, 129, 0.08);
+  color: var(--as-text);
+  text-decoration: none;
+}
+.vprVersionsIcon {
+  display: inline-flex;
+  color: var(--as-text);
+}
+.vprVersionsName {
+  display: flex;
+  flex-direction: column;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 18px;
+}
+.vprVersionsSub {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--as-text-3);
+}
+.vprVersionsDetected {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--as-green-deep);
+  background: rgba(16, 185, 129, 0.12);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.vprVersionsFooter {
+  display: block;
+  text-align: center;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(0, 30, 18, 0.08);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--as-text-3);
+}
+.vprVersionsFooter:hover {
+  color: var(--as-green-deep);
+  text-decoration: none;
+}
+
 @media (max-width: 640px) {
   .vprLabelDesktop {
     display: none;
@@ -1634,5 +1789,10 @@ html[data-theme='light'] .blog-wrapper .pagination-nav__link:hover {
   }
   .vprBtn {
     padding-left: 20px !important;
+  }
+  /* Phone CTAs read "Get Started" and reroute — a desktop-installer list
+     below them would be noise. */
+  .vprAllVersions {
+    display: none;
   }
 }

@@ -14,7 +14,7 @@ import {
 } from '../../../modules/routing/tools';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
-import { BrandIcon } from '../brand/BrandIcon';
+import { BrandIcon, isThemeAwareAppBrand, resolveBrandKey } from '../brand/BrandIcon';
 import { VprBadge, VprPage, VprSearch } from '../vpr/VprKit';
 import { TelegramBotCard } from './TelegramBotCard';
 import { CursorAppCard } from './CursorAppCard';
@@ -558,14 +558,15 @@ export function VprToolsView() {
               const connected = activeProfiles?.has(profile.name) ?? false;
               const setupComplete = setupProfiles.has(profile.name);
               const canRestart = connected && profile.canRestart === true;
+              const brandKey = resolveBrandKey(profile.name, profile.displayName);
               const profileCard = (
                 <div key={profile.name} className={`${styles.appPill}${connected ? ` ${styles.appPillConnected}` : ''}`}>
                   <div className={styles.appHead}>
                     <span className={styles.appIdentity}>
-                      {profile.iconDataUri ? (
+                      {profile.iconDataUri && !isThemeAwareAppBrand(brandKey) ? (
                         <img src={profile.iconDataUri} alt="" className={styles.appIcon} />
                       ) : (
-                        <BrandIcon name={profile.name} hints={[profile.displayName]} size={24} />
+                        <BrandIcon brand={brandKey} size={24} />
                       )}
                       <span className={styles.appText}>
                         <span className={styles.appNameRow}>
@@ -655,7 +656,7 @@ export function VprToolsView() {
 
                 </div>
               );
-              return profile.name === 'codex'
+              return profile.name === 'claude-desktop'
                 ? [profileCard, <CursorAppCard key="cursor" />]
                 : profileCard;
             })}

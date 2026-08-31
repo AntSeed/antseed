@@ -39,7 +39,9 @@ type ClassifyChatStreamFailureInput = {
 };
 
 const COMMON_HTTP_STATUS_TEXT: Record<number, string> = {
+  401: 'Unauthorized',
   402: 'Payment Required',
+  403: 'Forbidden',
   408: 'Request Timeout',
   429: 'Too Many Requests',
   500: 'Internal Server Error',
@@ -47,6 +49,12 @@ const COMMON_HTTP_STATUS_TEXT: Record<number, string> = {
   503: 'Service Unavailable',
   504: 'Gateway Timeout',
 };
+
+const DEFAULT_FAILURE_MESSAGE = 'The request ended unexpectedly.';
+const PROTOCOL_PEER_ERROR_MARKERS = [
+  'AntSeed is a peer-to-peer network.',
+  'Original Response:',
+];
 
 function collectErrorSignals(
   value: unknown,
@@ -144,7 +152,8 @@ function parseStatusCodeFromText(text: string): number | undefined {
     /\bstatus(?:\s+code)?\s*(?:=|:)?\s*(\d{3})\b/i,
     /\bhttp\s*(\d{3})\b/i,
     /\bresponse failed:\s*(\d{3})\b/i,
-    /\b(\d{3})\s+(?:bad gateway|gateway timeout|service unavailable|too many requests|request timeout|internal server error)\b/i,
+    /"status"\s*:\s*(\d{3})\b/i,
+    /\b(\d{3})\s+(?:bad gateway|gateway timeout|service unavailable|too many requests|request timeout|internal server error|forbidden|unauthorized)\b/i,
   ];
 
   for (const pattern of patterns) {
@@ -262,6 +271,28 @@ function buildHttpErrorMessage(statusCode: number, retryable: boolean): string {
     : `The stream stopped with HTTP ${String(statusCode)} (${statusText}).`;
 }
 
+function isSafeHttpErrorMessage(message: string): boolean {
+  if (message.length === 0 || /<\/?(?:html|head|body|script|style)\b/i.test(message)) {
+    return false;
+  }
+  if (!/[{}]/.test(message)) {
+    return true;
+  }
+  return PROTOCOL_PEER_ERROR_MARKERS.every((marker) => message.includes(marker));
+}
+
+function extractHttpErrorMessage(rawMessage: string, statusCode: number): string | undefined {
+  const statusPrefix = new RegExp(
+    `^\\s*(?:(?:unexpected\\s+)?(?:http\\s+)?status(?:\\s+code)?\\s*[:=-]?\\s*)?${String(statusCode)}\\b\\s*[:=-]?\\s*`,
+    'i',
+  );
+  const message = rawMessage
+    .replace(statusPrefix, '')
+    .replace(/,\s*url:\s*\S+\s*$/i, '')
+    .trim();
+  return isSafeHttpErrorMessage(message) ? message : undefined;
+}
+
 export function classifyChatStreamFailure({
   error,
   message,
@@ -272,7 +303,7 @@ export function classifyChatStreamFailure({
     signals.messages.push(message.trim());
   }
 
-  const rawMessage = uniqueStrings(signals.messages).join(' | ') || 'The stream stopped before completion.';
+  const rawMessage = uniqueStrings(signals.messages).join(' | ') || DEFAULT_FAILURE_MESSAGE;
   const normalized = rawMessage.toLowerCase();
   const embedded = extractEmbeddedErrorBody(rawMessage);
   // Outside the marker-gated buyer-fault branch, only display messages from
@@ -345,15 +376,19 @@ export function classifyChatStreamFailure({
     // an unreachable chain RPC, bad config. Retrying, or worse failing over to
     // another peer, would walk the whole peer list while hiding the one thing
     // the user actually needs to fix.
-    const retryable = statusCode >= 500 || statusCode === 429;
+    // 401/403 are seller-level rejections (the seller's upstream revoked or
+    // blocked it) — the buyer proxy re-routes those to another seller, so a
+    // retry goes somewhere new instead of repeating the same refusal.
+    const retryable = statusCode >= 500 || statusCode === 429 || statusCode === 403 || statusCode === 401;
     const embeddedWithHint = buyerAuthoredMessage && retryable && !/\bretry\b/i.test(buyerAuthoredMessage)
       ? `${buyerAuthoredMessage} You can retry.`
       : buyerAuthoredMessage;
+    const surfacedMessage = extractHttpErrorMessage(rawMessage, statusCode);
     return {
       kind: 'http_error',
       source: 'upstream',
       retryable,
-      message: embeddedWithHint ?? buildHttpErrorMessage(statusCode, retryable),
+      message: embeddedWithHint ?? surfacedMessage ?? buildHttpErrorMessage(statusCode, retryable),
       statusCode,
       ...(errorCode ? { errorCode } : {}),
     };
@@ -383,9 +418,7 @@ export function classifyChatStreamFailure({
       kind: 'stream_error',
       source: 'upstream',
       retryable: false,
-      message: buyerAuthoredMessage ?? (rawMessage === 'The stream stopped before completion.'
-        ? rawMessage
-        : `The stream stopped before completion: ${rawMessage}`),
+      message: buyerAuthoredMessage ?? rawMessage,
       ...(errorCode ? { errorCode } : {}),
     };
   }
@@ -394,9 +427,7 @@ export function classifyChatStreamFailure({
     kind: 'unknown',
     source: 'unknown',
     retryable: false,
-    message: buyerAuthoredMessage ?? (rawMessage === 'The stream stopped before completion.'
-      ? rawMessage
-      : `The stream stopped before completion: ${rawMessage}`),
+    message: buyerAuthoredMessage ?? rawMessage,
     ...(errorCode ? { errorCode } : {}),
   };
 }

@@ -51,13 +51,11 @@ import {
   PAYMENTS_PORT,
   PAY_PAGE_KINDS,
   type PayPageKind,
-  crossmintApiBase,
   fetchOnrampAvailability,
   focusMainWindow,
   getPaymentsPortalToken,
   openPaymentsPopup,
   readCardProviders,
-  readCrossmintClientKey,
   readFunkitApiKey,
   startPaymentsPortal,
 } from '../payments/portal.js';
@@ -226,16 +224,6 @@ export function registerPaymentsIpc(): void {
     try {
       const availability = await fetchOnrampAvailability();
       return { ok: true, data: availability };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  });
-
-  ipcMain.handle('payments:crossmint-config', async () => {
-    try {
-      const clientKey = await readCrossmintClientKey();
-      if (!clientKey) return { ok: true, data: null };
-      return { ok: true, data: { clientKey, apiBase: crossmintApiBase(clientKey) } };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }

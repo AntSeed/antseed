@@ -559,7 +559,6 @@ const api = {
   paymentsOpenPayPage: (opts: { kind?: string; amountUsdc?: string; channelId?: string }) => ipcRenderer.invoke('payments:open-pay-page', opts),
   paymentsCardProviders: () => ipcRenderer.invoke('payments:card-providers'),
   paymentsOpenCardProvider: (opts?: { providerId?: string; amountUsdc?: string }) => ipcRenderer.invoke('payments:open-card-provider', opts),
-  paymentsCrossmintConfig: () => ipcRenderer.invoke('payments:crossmint-config'),
   paymentsFunkitConfig: () => ipcRenderer.invoke('payments:funkit-config'),
   paymentsOnrampAvailability: () => ipcRenderer.invoke('payments:onramp-availability'),
   paymentsCloseCheckoutWindows: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('payments:close-checkout-windows') as Promise<{ ok: boolean }>,

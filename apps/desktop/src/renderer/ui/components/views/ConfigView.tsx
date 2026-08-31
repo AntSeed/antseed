@@ -207,7 +207,7 @@ export function ConfigView({ onSelectView }: ConfigViewProps) {
           <span className={styles.cardTitle}>Voice transcription</span>
           <VprSettingRow
             title="Local Whisper model"
-            hint="Voice messages are transcribed locally — Tiny is bundled, Base is more accurate"
+            hint="Voice messages are transcribed locally — Tiny downloads on first use, Base is more accurate"
             control={(
               <select
                 className={styles.select}
@@ -216,8 +216,9 @@ export function ConfigView({ onSelectView }: ConfigViewProps) {
                 disabled={!voiceStatus}
               >
                 {(voiceStatus?.models || []).map((model) => (
-                  <option key={model.id} value={model.id} disabled={!model.installed}>
-                    {model.label} {model.size}{model.installed ? '' : ' — not installed'}
+                  <option key={model.id} value={model.id} disabled={!model.installed && model.id !== 'tiny'}>
+                    {model.label} {model.size}
+                    {model.installed ? '' : model.id === 'tiny' ? ' — downloads on first use' : ' — not installed'}
                   </option>
                 ))}
               </select>

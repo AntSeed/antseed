@@ -1,20 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ANTSEED_MODEL_CONTEXT_WINDOW, ANTSEED_MODEL_MAX_OUTPUT_TOKENS } from '@antseed/node/types';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parse } from 'yaml';
 
 import {
+  CLAUDE_DESKTOP_PROFILE_ID,
+  CLAUDE_GATEWAY_DEFAULT_PORT,
   applyConfigPatch,
+  claudeDesktopPatchTargets,
   parseJsoncObject,
   readConfigPatch,
   removeConfigPatch,
   substituteBaseUrlHost,
+  type ClaudeDesktopConfigPatchDef,
   type CodexConfigPatchDef,
   type ConfigPatchDef,
+  type DroidConfigPatchDef,
   type OpencodeConfigPatchDef,
 } from './config-patch.js';
 import { DEFAULT_APP_PROFILES } from '../connected-apps/defaults.js';
@@ -183,6 +188,182 @@ test('removeConfigPatch removes only the configured provider and matching model 
 test('removeConfigPatch is a no-op when the target file does not exist', async () => {
   await withTempConfig(async (_dir, configPath) => {
     assert.equal(removeConfigPatch(makePatch(configPath)), false);
+  });
+});
+
+function makeDroidPatch(configPath: string): DroidConfigPatchDef {
+  return {
+    format: 'droid',
+    configPath,
+    providerKey: 'antseed',
+    providerName: 'AntSeed Auto',
+    baseURL: 'http://127.0.0.1:{buyerPort}/v1',
+    originator: 'droid',
+  };
+}
+
+test('applyConfigPatch (droid) adds and selects the routed model while preserving user settings', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'settings.json');
+    const original = {
+      model: 'gpt-5-codex',
+      reasoningEffort: 'high',
+      sessionDefaultSettings: {
+        model: 'custom:Local-Model-0',
+        reasoningEffort: 'high',
+      },
+      customModels: [{
+        model: 'local-model',
+        displayName: 'Local Model',
+        baseUrl: 'http://localhost:11434/v1',
+        provider: 'generic-chat-completion-api',
+      }],
+    };
+    await writeFile(configPath, `${JSON.stringify(original, null, 2)}\n`, 'utf8');
+
+    const patch = makeDroidPatch(configPath);
+    applyConfigPatch(patch, PEER_ID, 8377);
+    applyConfigPatch(patch, PEER_ID, 9456);
+
+    const config = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, any>;
+    assert.equal(config['model'], 'gpt-5-codex');
+    assert.deepEqual(config['sessionDefaultSettings'], {
+      model: 'custom:AntSeed-Auto-0',
+      reasoningEffort: 'high',
+    });
+    assert.equal(config['reasoningEffort'], 'high');
+    assert.deepEqual(config['customModels'][0], original.customModels[0]);
+    assert.deepEqual(config['customModels'][1], {
+      model: 'antseed',
+      id: 'custom:AntSeed-Auto-0',
+      displayName: 'AntSeed Auto',
+      baseUrl: 'http://127.0.0.1:9456/v1',
+      provider: 'generic-chat-completion-api',
+      maxOutputTokens: ANTSEED_MODEL_MAX_OUTPUT_TOKENS,
+      extraHeaders: {
+        originator: 'droid',
+      },
+    });
+    assert.ok(existsSync(`${configPath}.antseed.state.json`));
+    assert.ok(existsSync(`${configPath}.antseed.bak`));
+
+    assert.equal(removeConfigPatch(patch), true);
+    assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), original);
+    assert.equal(existsSync(`${configPath}.antseed.state.json`), false);
+  });
+});
+
+test('applyConfigPatch (droid) refuses to replace an existing antseed custom model', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'settings.json');
+    const original = `${JSON.stringify({
+      model: 'antseed',
+      customModels: [{
+        model: 'antseed',
+        displayName: 'User AntSeed',
+        baseUrl: 'https://example.test/v1',
+        provider: 'generic-chat-completion-api',
+      }],
+    }, null, 2)}\n`;
+    await writeFile(configPath, original, 'utf8');
+
+    assert.throws(
+      () => applyConfigPatch(makeDroidPatch(configPath), PEER_ID, 8377),
+      /already defines a custom model named antseed/,
+    );
+    assert.equal(await readFile(configPath, 'utf8'), original);
+    assert.equal(existsSync(`${configPath}.antseed.state.json`), false);
+  });
+});
+
+test('removeConfigPatch (droid) removes a config created entirely by AntSeed', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'settings.json');
+    const patch = makeDroidPatch(configPath);
+
+    applyConfigPatch(patch, PEER_ID, 8377);
+    assert.ok(existsSync(configPath));
+    assert.equal(removeConfigPatch(patch), true);
+    assert.equal(existsSync(configPath), false);
+    assert.equal(existsSync(`${configPath}.antseed.state.json`), false);
+  });
+});
+
+test('removeConfigPatch (droid) preserves a model the user selected while connected', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'settings.json');
+    const patch = makeDroidPatch(configPath);
+    await writeFile(configPath, '{"model":"gpt-5-codex"}\n', 'utf8');
+    applyConfigPatch(patch, PEER_ID, 8377);
+
+    const connected = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, any>;
+    connected['sessionDefaultSettings']['model'] = 'claude-sonnet-4-5';
+    await writeFile(configPath, `${JSON.stringify(connected, null, 2)}\n`, 'utf8');
+
+    assert.equal(removeConfigPatch(patch), true);
+    assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), {
+      model: 'gpt-5-codex',
+      sessionDefaultSettings: {
+        model: 'claude-sonnet-4-5',
+      },
+    });
+  });
+});
+
+test('removeConfigPatch (droid) restores the prior default after Droid normalizes settings', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'settings.json');
+    const patch = makeDroidPatch(configPath);
+    await writeFile(configPath, '{"model":"gpt-5-codex"}\n', 'utf8');
+    applyConfigPatch(patch, PEER_ID, 8377);
+
+    const connected = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, any>;
+    delete connected['model'];
+    connected['customModels'][0]['index'] = 0;
+    connected['sessionDefaultSettings'] = {
+      model: 'custom:AntSeed-Auto-0',
+      reasoningEffort: 'none',
+    };
+    await writeFile(configPath, `${JSON.stringify(connected, null, 2)}\n`, 'utf8');
+
+    assert.equal(removeConfigPatch(patch), true);
+    assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), {
+      model: 'gpt-5-codex',
+      sessionDefaultSettings: {
+        reasoningEffort: 'none',
+      },
+    });
+  });
+});
+
+test('removeConfigPatch (droid) restores version 1 state after Droid normalization', async () => {
+  await withTempConfig(async (dir) => {
+    const configPath = path.join(dir, 'settings.json');
+    const patch = makeDroidPatch(configPath);
+    await writeFile(configPath, `${JSON.stringify({
+      customModels: [{
+        model: 'antseed',
+        id: 'custom:AntSeed-Auto-0',
+        displayName: 'AntSeed Auto',
+        baseUrl: 'http://127.0.0.1:8377/v1',
+        provider: 'generic-chat-completion-api',
+      }],
+      sessionDefaultSettings: {
+        model: 'custom:AntSeed-Auto-0',
+      },
+    }, null, 2)}\n`, 'utf8');
+    await writeFile(`${configPath}.antseed.state.json`, `${JSON.stringify({
+      version: 1,
+      configExisted: true,
+      customModelsPresent: false,
+      modelPresent: true,
+      modelValue: 'gpt-5-codex',
+    }, null, 2)}\n`, 'utf8');
+
+    assert.equal(removeConfigPatch(patch), true);
+    assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), {
+      model: 'gpt-5-codex',
+    });
   });
 });
 
@@ -749,4 +930,157 @@ test('removeConfigPatch (goose) unpatches WSL configs carrying the gateway host'
     assert.ok(!raw.includes('GOOSE_PROVIDER'));
     assert.equal(existsSync(wslTargetsFile), false);
   });
+});
+
+// ---------------------------------------------------------------------------
+// Claude Desktop third-party inference patch
+// ---------------------------------------------------------------------------
+
+function makeClaudeDesktopPatch(dir: string): ClaudeDesktopConfigPatchDef {
+  return {
+    format: 'claude-desktop',
+    configPath: path.join(dir, 'Claude', 'claude_desktop_config.json'),
+    thirdPartyDir: path.join(dir, 'Claude-3p'),
+    baseURL: 'http://127.0.0.1:{claudeGatewayPort}',
+  };
+}
+
+test('applyConfigPatch writes the Claude third-party profile and flips both deployment modes', async () => {
+  await withTempConfig(async (dir) => {
+    const patch = makeClaudeDesktopPatch(dir);
+    await mkdir(path.dirname(patch.configPath), { recursive: true });
+    await writeFile(patch.configPath, JSON.stringify({ mcpServers: { fs: { command: 'fs-server' } } }), 'utf8');
+
+    applyConfigPatch(patch, PEER_ID, 9456);
+
+    const normal = parseJsoncObject(await readFile(patch.configPath, 'utf8'), patch.configPath);
+    assert.equal(normal['deploymentMode'], '3p');
+    // Untouched beyond the mode flip — Claude's own settings must survive.
+    assert.deepEqual(normal['mcpServers'], { fs: { command: 'fs-server' } });
+    assert.ok(existsSync(`${patch.configPath}.antseed.bak`));
+
+    const thirdParty = parseJsoncObject(
+      await readFile(path.join(patch.thirdPartyDir, 'claude_desktop_config.json'), 'utf8'), 'claude_desktop_config.json');
+    assert.equal(thirdParty['deploymentMode'], '3p');
+
+    const profilePath = path.join(patch.thirdPartyDir, 'configLibrary', `${CLAUDE_DESKTOP_PROFILE_ID}.json`);
+    const profile = parseJsoncObject(await readFile(profilePath, 'utf8'), profilePath);
+    assert.equal(profile['inferenceProvider'], 'gateway');
+    assert.equal(profile['inferenceGatewayBaseUrl'], `http://127.0.0.1:${CLAUDE_GATEWAY_DEFAULT_PORT}`);
+    assert.equal(profile['inferenceGatewayAuthScheme'], 'bearer');
+    assert.equal(profile['deploymentDisplayName'], 'AntSeed');
+    assert.equal(profile['disableDeploymentModeChooser'], true);
+    assert.deepEqual(profile['coworkEgressAllowedHosts'], ['*']);
+
+    const metaPath = path.join(patch.thirdPartyDir, 'configLibrary', '_meta.json');
+    const meta = parseJsoncObject(await readFile(metaPath, 'utf8'), metaPath);
+    assert.equal(meta['appliedId'], CLAUDE_DESKTOP_PROFILE_ID);
+    assert.deepEqual(meta['entries'], [{ id: CLAUDE_DESKTOP_PROFILE_ID, name: 'AntSeed' }]);
+
+    // Re-apply is idempotent: no duplicate configLibrary entries.
+    applyConfigPatch(patch, PEER_ID, 9456);
+    const metaAgain = parseJsoncObject(await readFile(metaPath, 'utf8'), metaPath);
+    assert.deepEqual(metaAgain['entries'], [{ id: CLAUDE_DESKTOP_PROFILE_ID, name: 'AntSeed' }]);
+  });
+});
+
+test('applyConfigPatch refuses to configure Claude Desktop when it is not installed', async () => {
+  await withTempConfig(async (dir) => {
+    const patch = makeClaudeDesktopPatch(dir);
+    assert.throws(() => applyConfigPatch(patch, PEER_ID, 9456), /Claude Desktop was not found/);
+    assert.equal(existsSync(patch.thirdPartyDir), false);
+  });
+});
+
+test('removeConfigPatch restores the Claude profile it wrote', async () => {
+  await withTempConfig(async (dir) => {
+    const patch = makeClaudeDesktopPatch(dir);
+    await mkdir(path.dirname(patch.configPath), { recursive: true });
+    applyConfigPatch(patch, PEER_ID, 9456);
+
+    assert.equal(removeConfigPatch(patch), true);
+
+    const normal = parseJsoncObject(await readFile(patch.configPath, 'utf8'), patch.configPath);
+    assert.equal(normal['deploymentMode'], '1p');
+    const thirdParty = parseJsoncObject(
+      await readFile(path.join(patch.thirdPartyDir, 'claude_desktop_config.json'), 'utf8'), 'claude_desktop_config.json');
+    assert.equal(thirdParty['deploymentMode'], '1p');
+
+    const metaPath = path.join(patch.thirdPartyDir, 'configLibrary', '_meta.json');
+    const meta = parseJsoncObject(await readFile(metaPath, 'utf8'), metaPath);
+    assert.equal(meta['appliedId'], undefined);
+    assert.deepEqual(meta['entries'], []);
+
+    const profilePath = path.join(patch.thirdPartyDir, 'configLibrary', `${CLAUDE_DESKTOP_PROFILE_ID}.json`);
+    const profile = parseJsoncObject(await readFile(profilePath, 'utf8'), profilePath);
+    assert.equal(profile['inferenceProvider'], undefined);
+    assert.equal(profile['inferenceGatewayBaseUrl'], undefined);
+    assert.equal(profile['disableDeploymentModeChooser'], false);
+
+    // Nothing left to unwind on a second remove.
+    assert.equal(removeConfigPatch(patch), false);
+  });
+});
+
+test('removeConfigPatch leaves a third-party setup it did not create alone', async () => {
+  await withTempConfig(async (dir) => {
+    const patch = makeClaudeDesktopPatch(dir);
+    await mkdir(path.dirname(patch.configPath), { recursive: true });
+    await writeFile(patch.configPath, JSON.stringify({ deploymentMode: '3p' }), 'utf8');
+    const configLibrary = path.join(patch.thirdPartyDir, 'configLibrary');
+    await mkdir(configLibrary, { recursive: true });
+    // An enterprise/MDM-provisioned gateway profile: different id, remote host.
+    await writeFile(path.join(configLibrary, '_meta.json'), JSON.stringify({
+      appliedId: 'corp-profile',
+      entries: [{ id: 'corp-profile', name: 'Corp Gateway' }],
+    }), 'utf8');
+
+    assert.equal(removeConfigPatch(patch), false);
+
+    const normal = parseJsoncObject(await readFile(patch.configPath, 'utf8'), patch.configPath);
+    assert.equal(normal['deploymentMode'], '3p');
+    const meta = parseJsoncObject(await readFile(path.join(configLibrary, '_meta.json'), 'utf8'), '_meta.json');
+    assert.equal(meta['appliedId'], 'corp-profile');
+  });
+});
+
+test('claudeDesktopPatchTargets: posix uses the profile paths as the single target', () => {
+  const patch = makeClaudeDesktopPatch('/base');
+  const targets = claudeDesktopPatchTargets(patch, 'darwin', {});
+  assert.deepEqual(targets, [{
+    configPath: path.join('/base', 'Claude', 'claude_desktop_config.json'),
+    thirdPartyDir: path.join('/base', 'Claude-3p'),
+  }]);
+});
+
+test('claudeDesktopPatchTargets: windows probes classic, MSIX, local, and Nest roots in order', () => {
+  const patch = makeClaudeDesktopPatch('/ignored');
+  const env = { APPDATA: '/win/Roaming', LOCALAPPDATA: '/win/Local' };
+  const listDir = (dir: string) => (
+    dir === path.join('/win/Local', 'Packages')
+      ? ['Claude_pzs8sxrjxfjjc', 'SomeOtherApp_abc', 'Claude_dev123']
+      : []
+  );
+  const targets = claudeDesktopPatchTargets(patch, 'win32', env, listDir);
+  assert.deepEqual(targets.map((target) => target.configPath), [
+    path.join('/win/Roaming', 'Claude', 'claude_desktop_config.json'),
+    path.join('/win/Local', 'Packages', 'Claude_pzs8sxrjxfjjc', 'LocalCache', 'Roaming', 'Claude', 'claude_desktop_config.json'),
+    path.join('/win/Local', 'Packages', 'Claude_dev123', 'LocalCache', 'Roaming', 'Claude', 'claude_desktop_config.json'),
+    path.join('/win/Local', 'Claude', 'claude_desktop_config.json'),
+    path.join('/win/Roaming', 'Claude Nest', 'claude_desktop_config.json'),
+    path.join('/win/Local', 'Claude Nest', 'claude_desktop_config.json'),
+  ]);
+  // The 3p profile directory is always the sibling `<root>-3p`.
+  assert.equal(targets[0]!.thirdPartyDir, path.join('/win/Roaming', 'Claude-3p'));
+  assert.equal(
+    targets[1]!.thirdPartyDir,
+    path.join('/win/Local', 'Packages', 'Claude_pzs8sxrjxfjjc', 'LocalCache', 'Roaming', 'Claude-3p'),
+  );
+});
+
+test('claudeDesktopPatchTargets: a missing Packages directory just skips the MSIX candidates', () => {
+  const patch = makeClaudeDesktopPatch('/ignored');
+  const targets = claudeDesktopPatchTargets(patch, 'win32', { APPDATA: '/r', LOCALAPPDATA: '/l' }, () => []);
+  assert.equal(targets.length, 4);
+  assert.equal(targets[0]!.configPath, path.join('/r', 'Claude', 'claude_desktop_config.json'));
 });

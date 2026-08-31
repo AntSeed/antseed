@@ -549,15 +549,14 @@ test('sortFreeModelsByPriority leads with priority-slot models, keeps availabili
     discoverRow({ serviceId: 'minimax-m2.7', peerId: 'a3' }),
     discoverRow({ serviceId: 'random-free-model', peerId: 'b1' }),
     discoverRow({ serviceId: 'random-free-model', peerId: 'b2' }),
-    discoverRow({ serviceId: 'ox-alpha', peerId: 'c1' }),
     discoverRow({ serviceId: 'deepseek-v4-flash', peerId: 'd1' }),
   ]);
 
   assert.deepEqual(
     sortFreeModelsByPriority(catalog).map((entry) => entry.serviceId),
-    // deepseek (slot 1) and ox-alpha (slot 2) lead despite having the fewest
-    // sellers; minimax follows in its slot; unslotted models keep the
-    // incoming availability order at the tail.
-    ['deepseek-v4-flash', 'ox-alpha', 'minimax-m2.7', 'random-free-model'],
+    // deepseek (slot 1) leads despite having the fewest sellers; minimax
+    // follows in its slot; unslotted models keep the incoming availability
+    // order at the tail.
+    ['deepseek-v4-flash', 'minimax-m2.7', 'random-free-model'],
   );
 });

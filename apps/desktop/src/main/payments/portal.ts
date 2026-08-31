@@ -183,28 +183,6 @@ export async function fetchOnrampAvailability(): Promise<OnrampAvailability> {
   }
 }
 
-// Crossmint Stablecoin Onramp — in-app embedded checkout for buying USDC on
-// Base with a card, delivered to the buyer hot wallet (then swept into
-// deposits by the same watcher as QR/card transfers). The client-side key is
-// public by design: it ships in the app and is origin-restricted in the
-// Crossmint console, exactly like DEFAULT_CARD_PROVIDERS embeds AntSeed's
-// hosted URL. Overridable via config.payments.crossmint.clientKey.
-export const DEFAULT_CROSSMINT_CLIENT_KEY = 'ck_production_ABDYKwqzx1t6ZCbkVTyWGUMQvnARXTXHMkjgQY5LS7TFy81sDDQnRez9aY3ogznqmWM4uQ7PuUzm9S4Tj7WxPdFj1Rj5BEzZJB9sSErLxC7qmKrPFPBvhqsYCvWL6wHfzWQqtekvcXUZhuFCiWHcRALx4UsZdTZ7MHb11xCesc56WizPx9o6BKtLqA9yQhcLppJX3sYngJPn7sBCT6n9sqHt';
-
-export function crossmintApiBase(clientKey: string): string {
-  return clientKey.startsWith('ck_staging_') ? 'https://staging.crossmint.com' : 'https://www.crossmint.com';
-}
-
-export async function readCrossmintClientKey(): Promise<string> {
-  try {
-    const config = await readConfig(ACTIVE_CONFIG_PATH);
-    const key = asString(asRecord(asRecord(config.payments).crossmint).clientKey as string, '');
-    return key || DEFAULT_CROSSMINT_CLIENT_KEY;
-  } catch {
-    return DEFAULT_CROSSMINT_CLIENT_KEY;
-  }
-}
-
 // Fun (fun.xyz) checkout — the primary in-app deposit flow: card/cash or a
 // crypto transfer, with the bought USDC delivered on Base to the buyer hot
 // wallet (then swept into deposits by the same watcher as QR/card transfers).
