@@ -14,7 +14,7 @@
  * - Routine captures are fire-and-forget; clean shutdown uses a bounded flush.
  * - First-open and first-chat events fire exactly once per installation.
  */
-import { randomUUID } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import {
   TELEMETRY_SCHEMA_VERSION,
   countBucket,
@@ -49,6 +49,23 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 60_000;
 const MAX_PENDING_USER_ACTIONS = 32;
 const DEFAULT_SHUTDOWN_FLUSH_TIMEOUT_MS = 750;
+
+/**
+ * RFC 9562 UUIDv7: 48-bit unix-ms timestamp, version/variant bits, 74 random
+ * bits. Kept local — node:crypto only generates v4.
+ */
+export function uuidV7(timestampMs: number): string {
+  const bytes = randomBytes(16);
+  let remaining = Math.max(0, Math.floor(timestampMs));
+  for (let i = 5; i >= 0; i -= 1) {
+    bytes[i] = remaining % 256;
+    remaining = Math.floor(remaining / 256);
+  }
+  bytes[6] = (bytes[6]! & 0x0f) | 0x70;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
 function isFalsyEnv(value: string | undefined): boolean {
   if (!value) return false;
@@ -192,7 +209,10 @@ export async function createTelemetryService(
   const transport: PostHogTransport = options.transport
     ?? createPostHogTransport({ host: host || 'https://localhost', projectApiKey: apiKey || 'disabled' });
 
-  const sessionId = randomUUID();
+  // UUIDv7 on purpose: PostHog's Sessions explorer keys on `$session_id` and
+  // derives the session start from the v7 timestamp bits, silently ignoring
+  // other UUID versions.
+  const sessionId = uuidV7(now());
   let saveQueue = Promise.resolve();
   const save = (): Promise<void> => {
     const snapshot = { ...state };
@@ -245,6 +265,7 @@ export async function createTelemetryService(
         schema_version: TELEMETRY_SCHEMA_VERSION,
         event_ts_ms: eventTsMs,
         session_id: captureSessionId,
+        $session_id: captureSessionId,
         app_version: context.appVersion,
         platform: context.platform,
         arch: context.arch,
