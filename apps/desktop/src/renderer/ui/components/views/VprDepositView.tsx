@@ -17,6 +17,7 @@ import { VprCard, VprPage } from '../vpr/VprKit';
 import type { DepositWatchStatus } from '../../../types/bridge';
 import { BalanceSummaryCard } from './BalanceSummaryCard';
 import styles from './VprDepositView.module.scss';
+import { recordUserAction } from '../../../modules/telemetry/actions';
 
 // The Fun (fun.xyz) checkout SDK is heavy (it bundles wagmi/viem), so it loads
 // as its own chunk the first time the deposit chooser renders the CTA.
@@ -467,6 +468,7 @@ export function VprDepositView({ onSelectView }: Props) {
   const [payPageNotice, setPayPageNotice] = useState<string | null>(null);
 
   const openBrowserWallet = useCallback(() => {
+    recordUserAction('deposit_start', 'deposit');
     setPayPageNotice(null);
     const call = window.antseedDesktop?.paymentsOpenPayPage?.({ kind: 'deposit', amountUsdc: amount });
     if (!call) {
@@ -481,6 +483,7 @@ export function VprDepositView({ onSelectView }: Props) {
   }, [amount]);
 
   const openCardProvider = useCallback((providerId: string) => {
+    recordUserAction('deposit_start', 'deposit');
     setCardNotice(null);
     void window.antseedDesktop?.paymentsOpenCardProvider?.({ providerId, amountUsdc: amount }).then((result) => {
       if (!result.ok) {
@@ -703,7 +706,14 @@ export function VprDepositView({ onSelectView }: Props) {
             {payPageNotice && <div className={styles.cardNotice} role="alert">{payPageNotice}</div>}
 
             <div className={styles.methodGroup}>
-              <button type="button" className={styles.methodCta} onClick={() => goToStage('crypto')}>
+              <button
+                type="button"
+                className={styles.methodCta}
+                onClick={() => {
+                  recordUserAction('deposit_start', 'deposit');
+                  goToStage('crypto');
+                }}
+              >
                 <span className={styles.methodCtaIcon}>
                   <BaseMark size={22} />
                 </span>

@@ -19,6 +19,7 @@ import { VprBadge, VprPage, VprSearch } from '../vpr/VprKit';
 import { TelegramBotCard } from './TelegramBotCard';
 import { CursorAppCard } from './CursorAppCard';
 import styles from './VprToolsView.module.scss';
+import { recordUserAction } from '../../../modules/telemetry/actions';
 
 
 declare const __ANTSEED_SYSTEM_PROXY_PORT__: number;
@@ -231,6 +232,7 @@ export function VprToolsView() {
   const startProfiles = useCallback(async (names: string[]): Promise<boolean> => {
     const bridge = window.antseedDesktop;
     if (!bridge?.systemProxyStart || !defaultPeerId) return false;
+    recordUserAction('app_connect', 'apps');
     setBusy(names.join(','));
     setMessage(null);
     const defaultRoute = { peerId: defaultPeerId, model: defaultModel };
@@ -257,6 +259,7 @@ export function VprToolsView() {
 
   const disconnect = useCallback(async () => {
     const bridge = window.antseedDesktop;
+    recordUserAction('app_disconnect', 'apps');
     setBusy('stop');
     const result = await bridge?.systemProxyStop?.();
     setBusy(null);

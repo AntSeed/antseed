@@ -56,6 +56,7 @@ import type { BadgeTone } from './core/state';
 import { createInitialUiState } from './core/state';
 import { initStore, notifyUiStateChanged } from './core/store';
 import type { DesktopBridge } from './types/bridge';
+import { recordUserAction, recordUserActionCoalesced } from './modules/telemetry/actions';
 
 /* ------------------------------------------------------------------ */
 /*  Bootstrap                                                          */
@@ -606,29 +607,44 @@ async function actionClearLogs(): Promise<void> {
 /* ------------------------------------------------------------------ */
 
 registerActions({
-  startConnect: actionStartConnect,
-  stopConnect: actionStopConnect,
-  startAll: actionStartAll,
-  stopAll: actionStopAll,
-  refreshAll: () => refreshAll('manual'),
+  startConnect: () => { recordUserAction('runtime_start', 'connection'); return actionStartConnect(); },
+  stopConnect: () => { recordUserAction('runtime_stop', 'connection'); return actionStopConnect(); },
+  startAll: () => { recordUserAction('runtime_start', 'home'); return actionStartAll(); },
+  stopAll: () => { recordUserAction('runtime_stop', 'home'); return actionStopAll(); },
+  refreshAll: () => { recordUserAction('discovery_refresh', 'unknown'); return refreshAll('manual'); },
   clearLogs: actionClearLogs,
-  scanDht: actionScanDht,
-  saveConfig: saveConfig,
-  createNewConversation: chatApi.createNewConversation,
-  startNewChat: chatApi.startNewChat,
-  openConversation: chatApi.openConversation,
-  sendMessage: chatApi.sendMessage,
-  sendMessageToConversation: chatApi.sendMessageToConversation,
-  generateImage: chatApi.generateImage,
-  abortChat: chatApi.abortChat,
-  deleteConversation: chatApi.deleteConversation,
-  renameConversation: chatApi.renameConversation,
-  handleServiceChange: chatApi.handleServiceChange,
-  handleServiceFocus: chatApi.handleServiceFocus,
+  scanDht: () => { recordUserAction('discovery_refresh', 'peers'); return actionScanDht(); },
+  saveConfig: (formData) => { recordUserAction('settings_save', 'config'); return saveConfig(formData); },
+  createNewConversation: () => { recordUserAction('chat_new', 'chat'); return chatApi.createNewConversation(); },
+  startNewChat: () => { recordUserAction('chat_new', 'chat'); chatApi.startNewChat(); },
+  openConversation: (id) => { recordUserAction('chat_open', 'chats'); return chatApi.openConversation(id); },
+  sendMessage: (text, attachments) => {
+    recordUserAction('chat_send', 'chat');
+    if ((attachments?.length ?? 0) > 0) recordUserAction('attachment_add', 'chat');
+    chatApi.sendMessage(text, attachments);
+  },
+  sendMessageToConversation: (id, text, attachments) => {
+    recordUserAction('chat_send', 'chat');
+    if ((attachments?.length ?? 0) > 0) recordUserAction('attachment_add', 'chat');
+    chatApi.sendMessageToConversation(id, text, attachments);
+  },
+  generateImage: (prompt) => { recordUserAction('image_generate', 'chat'); chatApi.generateImage(prompt); },
+  abortChat: () => { recordUserAction('chat_stop', 'chat'); return chatApi.abortChat(); },
+  deleteConversation: (id) => { recordUserAction('conversation_delete', 'chats'); return chatApi.deleteConversation(id); },
+  renameConversation: (id, title) => { recordUserAction('conversation_rename', 'chats'); chatApi.renameConversation(id, title); },
+  handleServiceChange: (value, peerId) => {
+    recordUserAction(peerId ? 'peer_select' : 'model_select', 'chat');
+    chatApi.handleServiceChange(value, peerId);
+  },
+  handleServiceFocus: () => { recordUserAction('model_picker_open', 'chat'); chatApi.handleServiceFocus(); },
   handleServiceBlur: chatApi.handleServiceBlur,
-  clearPinnedPeer: chatApi.clearPinnedPeer,
-  selectVprModel: actionSelectVprModel,
+  clearPinnedPeer: () => { recordUserAction('route_mode_change', 'chat'); chatApi.clearPinnedPeer(); },
+  selectVprModel: (provider, serviceId, peerId) => {
+    recordUserAction(peerId ? 'peer_select' : 'model_select', 'model');
+    actionSelectVprModel(provider, serviceId, peerId);
+  },
   clearVprPinnedPeer: () => {
+    recordUserAction('route_mode_change', 'model');
     // Forgetting the pin has to reach the per-model store too, or selecting
     // the model again would restore the pin the user just cleared.
     const model = uiState.vprRouteSelection.model;
@@ -641,6 +657,7 @@ registerActions({
     notifyUiStateChanged();
   },
   setVprModelSellerPin: (provider, serviceId, peerId) => {
+    recordUserAction(peerId ? 'peer_select' : 'route_mode_change', 'model');
     uiState.vprModelPins = peerId
       ? setVprModelPin(uiState.vprModelPins, provider, serviceId, peerId)
       : clearVprModelPin(uiState.vprModelPins, provider, serviceId);
@@ -651,6 +668,7 @@ registerActions({
     notifyUiStateChanged();
   },
   updateVprRoutingPreferences: (patch) => {
+    recordUserActionCoalesced('routing_preferences_change', 'preferences');
     uiState.vprRoutingPreferences = { ...uiState.vprRoutingPreferences, ...patch };
     saveVprRoutingPreferences(uiState.vprRoutingPreferences);
     syncBuyerRoutingPreferences();
@@ -662,6 +680,7 @@ registerActions({
     notifyUiStateChanged();
   },
   setVprPeerListing: (peerId, listing) => {
+    recordUserAction('peer_access_change', 'peers');
     uiState.vprRoutingPreferences = applyPeerListing(uiState.vprRoutingPreferences, peerId, listing);
     saveVprRoutingPreferences(uiState.vprRoutingPreferences);
     syncBuyerRoutingPreferences();
@@ -688,8 +707,8 @@ registerActions({
     notifyUiStateChanged();
     void applyVprRouteToConnectedProxy(bridge, uiState);
   },
-  setChatPermissionMode: chatApi.setChatPermissionMode,
-  decideToolApproval: chatApi.decideToolApproval,
+  setChatPermissionMode: (mode) => { recordUserAction('chat_permission_change', 'chat'); chatApi.setChatPermissionMode(mode); },
+  decideToolApproval: (decision, id) => { recordUserAction('tool_approval_decision', 'chat'); chatApi.decideToolApproval(decision, id); },
   acceptReminderHome: reminderApi.acceptHome,
   dismissReminderHome: reminderApi.dismissHome,
   rejectPaymentSession: () => {
@@ -700,20 +719,27 @@ registerActions({
     uiState.chatPaymentApprovalError = null;
     notifyUiStateChanged();
   },
-  retryAfterPayment: () => chatApi.retryAfterPayment(),
+  retryAfterPayment: () => { recordUserAction('chat_retry', 'chat'); chatApi.retryAfterPayment(); },
   refreshCredits: () => creditsApi.refreshCredits(),
   refreshPaymentSummary: (force?: boolean) => creditsApi.refreshPaymentSummary(force),
   refreshWorkspace: chatApi.refreshWorkspace,
-  chooseWorkspace: chatApi.chooseWorkspace,
+  chooseWorkspace: () => { recordUserAction('workspace_change', 'chat'); return chatApi.chooseWorkspace(); },
   refreshPlugins: refreshPluginInventory,
   installPlugin: () => {
+    recordUserAction('plugin_install', 'setup');
     const packageName = resolveRouterPackageName(
       uiState.pluginHints.router || uiState.connectRouterValue,
     );
     return installPluginPackage(packageName);
   },
-  openVprFloat: (profileName?: string) => vprFloatApi.openFloat(profileName),
-  closeVprFloat: () => vprFloatApi.closeFloat(),
+  openVprFloat: (profileName?: string) => {
+    recordUserAction('floating_window_open', 'floating_window');
+    return vprFloatApi.openFloat(profileName);
+  },
+  closeVprFloat: () => {
+    recordUserAction('floating_window_close', 'floating_window');
+    return vprFloatApi.closeFloat();
+  },
   setVprFloatAutoOpen: (enabled: boolean) => {
     uiState.vprFloatAutoOpen = enabled;
     saveFloatAutoOpen(enabled);
