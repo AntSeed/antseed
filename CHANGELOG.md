@@ -28,6 +28,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Changed
 
+- The `download.antseed.com` proxy now reports download telemetry per download instead of per HTTP request. Download managers that fetch an installer as several concurrent byte ranges, and browsers resuming a paused download, previously produced one `download_started`/`download_completed` per range (about 3× inflation for those clients); now only the request covering the first byte starts a download and only the one delivering the last byte finishes it, with other segments logged locally. Every proxy event also carries an `attributed` (1/0) GA4 param saying whether the visitor's browser passed its GA ids — `attributed=0` downloads come from browsers that blocked GA and so never fired the website's `download_vpr` click, which explains why server-side download counts can exceed click counts.
 - Ox Alpha is no longer part of the desktop's curated free model lineup (first-run default and free-first model lists).
 
 - Desktop Connected Apps now includes Droid. Connecting adds and selects an `AntSeed Auto` custom model in the live-reloaded Factory settings shared by Droid CLI and Factory Desktop, routes it through the local VPR, refuses to overwrite an existing `antseed` custom model, and restores the user's previous default model on disconnect.
