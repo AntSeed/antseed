@@ -27,6 +27,8 @@ import {
   deliverEvent,
   endEvent,
   parseGaIds,
+  segmentEvent,
+  segmentRole,
   startEvent,
   unresolvedEvent,
   type DownloadContext,
@@ -136,16 +138,28 @@ export default {
       botCategory: (request.cf?.verifiedBotCategory as string | undefined) || null,
     };
 
-    emit(env, ctx, startEvent(downloadCtx), gaIds);
+    // One download can arrive as many Range requests (download managers,
+    // resumes). Only the segment covering byte 0 starts it and only the one
+    // delivering the last byte ends it; middle segments are logged, not
+    // reported, so GA counts downloads rather than requests.
+    const role = segmentRole(origin.status, origin.headers.get('content-range'));
+    if (role.first) {
+      emit(env, ctx, startEvent(downloadCtx), gaIds);
+    }
     const {readable, done} = trackedStream(origin.body, contentLength);
     ctx.waitUntil(
-      done.then(result =>
-        deliverEvent(endEvent(downloadCtx, result), {
+      done.then(result => {
+        if (!role.final) {
+          const segment = segmentEvent(downloadCtx, result);
+          console.log(JSON.stringify({event: segment.name, ...segment.params, attributed: gaIds.clientId ? 1 : 0}));
+          return;
+        }
+        return deliverEvent(endEvent(downloadCtx, result), {
           measurementId: env.GA4_MEASUREMENT_ID,
           apiSecret: env.GA4_API_SECRET,
           ids: gaIds,
-        }),
-      ),
+        });
+      }),
     );
     return new Response(readable, {status: origin.status, headers});
   },
