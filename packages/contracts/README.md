@@ -44,6 +44,38 @@ cd packages/node
 forge test
 ```
 
+Submit the complete development-only 26-claim historical aggregate from the
+loop-proof checkout through a digest-pinned verifier to the one-shot historical
+registry on Anvil:
+
+```bash
+LOOP_PROOF_DIR=/path/to/loop-proof \
+  node --test scripts/wash-trading-development-anvil.test.mjs
+```
+
+This test exercises the full local integration path but does not provide
+production cryptographic assurance. Production deployments must use a real SP1
+Groth16 proof and verifier. The historical registry records seller addresses and
+proven wash volume only; ongoing epoch submissions and penalties require a
+separate future registry.
+
+Prepare the immutable constructor values from the final aggregate artifact:
+
+```bash
+AGGREGATE=/path/to/loop-proof/out/production/aggregate-proof.json
+export HISTORICAL_AGGREGATOR_PROGRAM_VKEY=$(jq -r .aggregatorProgramVKey "$AGGREGATE")
+export HISTORICAL_REPORT_ROOT=$(jq -r .reportRoot "$AGGREGATE")
+export HISTORICAL_MANIFEST_DIGEST=$(jq -r .manifestDigest "$AGGREGATE")
+export HISTORICAL_PERIOD_START_BLOCK=$(jq -r .periodStartBlock "$AGGREGATE")
+export HISTORICAL_PERIOD_END_BLOCK=$(jq -r .periodEndBlock "$AGGREGATE")
+export HISTORICAL_SOURCE_CLAIM_COUNT=$(jq -r .sourceClaimCount "$AGGREGATE")
+export HISTORICAL_SELLER_COUNT=$(jq -r .sellerCount "$AGGREGATE")
+export HISTORICAL_TOTAL_PROVEN_WASH_VOLUME=$(jq -r .provenWashVolumeRaw "$AGGREGATE")
+```
+
+Set `SP1_VERIFIER` and `DEPLOYER_PRIVATE_KEY` separately, then run
+`forge script script/DeployWashTradingRegistry.s.sol --rpc-url <rpc> --broadcast`.
+
 ## Contracts
 
 ### ANTSToken.sol

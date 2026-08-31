@@ -7,28 +7,22 @@ import { AntseedWashTradingRegistry } from "../integrity/AntseedWashTradingRegis
 
 contract DeployWashTradingRegistry is Script {
     function run() external returns (AntseedWashTradingRegistry registry) {
-        uint256 ownerPrivateKey = vm.envUint("WASH_REGISTRY_OWNER_PRIVATE_KEY");
-        address owner = vm.addr(ownerPrivateKey);
+        uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
 
-        vm.startBroadcast(ownerPrivateKey);
+        vm.startBroadcast(deployerPrivateKey);
         registry = new AntseedWashTradingRegistry(
-            owner, vm.envAddress("SP1_VERIFIER"), vm.envAddress("BLOCKHASH_STORE"), vm.envAddress("EMISSIONS_V2")
-        );
-        registry.registerChildProgram(
-            vm.envBytes32("CLOSED_LOOP_PROGRAM_ID"),
-            vm.envBytes32("CLOSED_LOOP_PROGRAM_VKEY"),
-            vm.envBytes32("WASH_VOLUME_SOURCE_ID")
-        );
-        registry.registerChildProgram(
-            vm.envBytes32("RECIPROCAL_PROGRAM_ID"),
-            vm.envBytes32("RECIPROCAL_PROGRAM_VKEY"),
-            vm.envBytes32("WASH_VOLUME_SOURCE_ID")
-        );
-        registry.registerAggregatorProgram(
-            vm.envBytes32("AGGREGATOR_PROGRAM_ID"), vm.envBytes32("AGGREGATOR_PROGRAM_VKEY")
+            vm.envAddress("SP1_VERIFIER"),
+            vm.envBytes32("HISTORICAL_AGGREGATOR_PROGRAM_VKEY"),
+            vm.envBytes32("HISTORICAL_REPORT_ROOT"),
+            vm.envBytes32("HISTORICAL_MANIFEST_DIGEST"),
+            uint64(vm.envUint("HISTORICAL_PERIOD_START_BLOCK")),
+            uint64(vm.envUint("HISTORICAL_PERIOD_END_BLOCK")),
+            uint32(vm.envUint("HISTORICAL_SOURCE_CLAIM_COUNT")),
+            uint32(vm.envUint("HISTORICAL_SELLER_COUNT")),
+            uint128(vm.envUint("HISTORICAL_TOTAL_PROVEN_WASH_VOLUME"))
         );
         vm.stopBroadcast();
 
-        console.log("WashTradingRegistry:", address(registry));
+        console.log("HistoricalWashTradingRegistry:", address(registry));
     }
 }

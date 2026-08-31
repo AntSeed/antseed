@@ -2,19 +2,19 @@
 pragma solidity ^0.8.24;
 
 interface IAntseedWashTradingRegistry {
-    struct PeriodSummary {
-        uint128 totalVolume;
-        uint128 maxProvenWashVolume;
-        uint32 findingCount;
-        uint64 firstAcceptedAt;
-    }
+    function submitHistoricalAggregate(bytes calldata publicValues, bytes calldata proofBytes) external;
 
-    function latestOffenseEpoch(uint256 agentId) external view returns (uint64);
-    function latestOffenseAcceptedEpoch(uint256 agentId) external view returns (uint64);
-    function hasOffense(uint256 agentId) external view returns (bool);
-
-    function periodSummary(uint256 agentId, bytes32 sourceId, uint64 periodStartBlock, uint64 periodEndBlock)
-        external
-        view
-        returns (PeriodSummary memory);
+    function historicalResultSubmitted() external view returns (bool);
+    function aggregatorProgramVKey() external view returns (bytes32);
+    function reportRoot() external view returns (bytes32);
+    function manifestDigest() external view returns (bytes32);
+    function periodStartBlock() external view returns (uint64);
+    function periodEndBlock() external view returns (uint64);
+    function expectedSourceClaimCount() external view returns (uint32);
+    function expectedSellerCount() external view returns (uint32);
+    function expectedTotalProvenWashVolume() external view returns (uint128);
+    function totalProvenWashVolume() external view returns (uint128);
+    function blockReferenceCount() external view returns (uint32);
+    function provenWashVolume(address seller) external view returns (uint128);
+    function isProvenWashTrader(address seller) external view returns (bool);
 }
