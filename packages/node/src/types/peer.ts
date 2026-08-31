@@ -115,4 +115,58 @@ export interface PeerInfo {
   metadata?: PeerMetadata;
   /** Buyer-computed results for external ownership claims announced in metadata. */
   verificationResults?: PeerVerificationResults;
+  /**
+   * Model-verification reputation from AntseedVerification, keyed by
+   * normalized service/model id. Populated only when the node is configured
+   * with a verification contract address and the peer has an on-chain agent id.
+   */
+  modelVerification?: Record<string, PeerModelVerification>;
+  /**
+   * When `modelVerification` was last read from the verification contract (epoch ms).
+   * Stamped by enrichment; consumers age a substitution flag out past
+   * `MODEL_VERIFICATION_MAX_AGE_MS` so a peer retained after enrichment
+   * stops updating (registry unconfigured, RPC down) is not blocked forever
+   * on a flag that can no longer lift. Absent on entries set before stamping
+   * existed — treated as no age information (flag honored).
+   */
+  modelVerificationFetchedAt?: number;
+}
+
+export type PeerVerificationLifecycle =
+  | 'bootstrap'
+  | 'provisional'
+  | 'verified'
+  | 'flagged'
+  | 'suspended';
+
+/** Buyer-computed verification lifecycle for one service. */
+export interface PeerModelVerification {
+  /** Keccak-256 hash of the normalized service identifier. */
+  serviceHash: string;
+  /** Lifecycle derived from active distinct-verifier state plus event metadata. */
+  lifecycle: PeerVerificationLifecycle;
+  /** Total SAME attestations observed for this service. */
+  sameCount: number;
+  /** Total conclusive DIFF attestations observed for this service. */
+  diffCount: number;
+  /** Total availability-only UNDETERMINED attestations observed. */
+  undeterminedCount: number;
+  /** Active distinct verifiers whose latest verdict for this service is DIFF. */
+  activeDiffVerifierCount: number;
+  /** Informational corroboration threshold used by local lifecycle derivation. */
+  requiredDiffVerifierCount: number;
+  /** Whether a separate downstream policy has enabled routing consequences. */
+  enforcementActive: boolean;
+  /** Compatibility alias for activeDiffVerifierCount. */
+  consecutiveDiffCount: number;
+  /** Latest on-chain verdict, including UNDETERMINED. */
+  lastVerdict: number;
+  /** Latest conclusive SAME or DIFF verdict; UNDETERMINED never changes it. */
+  lastConclusiveVerdict: number;
+  latestAuditId: string;
+  latestEvidenceHash: string;
+  latestVerifier: string;
+  latestBlockNumber: number;
+  /** Deprecated compatibility field; detailed estimates live in off-chain evidence. */
+  modelShareBps: number;
 }
