@@ -1,10 +1,10 @@
 # VPR Desktop Telemetry
 
-The AntSeed VPR desktop app collects anonymous, privacy-first product
-telemetry to understand the activation funnel (first open → setup → deposit →
-first chat), network readiness, model selection, and app reliability. This
-document lists every event and property, what is never collected, and how to
-disable telemetry.
+The AntSeed VPR desktop app collects privacy-conscious product telemetry to
+understand the activation funnel (first open → setup → deposit → first chat),
+network readiness, model selection, and app reliability. Events are associated
+with the buyer's public on-chain address. This document lists every event and
+property, what is never collected, and how to disable telemetry.
 
 Implementation: `apps/desktop/src/main/telemetry/`
 (`telemetry.ts`, `events.ts`, `sanitize.ts`, `posthog.ts`, `state.ts`).
@@ -17,7 +17,6 @@ Every event includes this envelope:
 | --- | --- |
 | `schema_version` | Event schema version (currently `1`). |
 | `event_ts_ms` | Event timestamp in milliseconds. |
-| `install_id` | Random UUID generated once on first launch. |
 | `session_id` | Random UUID regenerated on every launch. |
 | `app_version` | Desktop app version (e.g. `0.2.31`). |
 | `platform` | Operating system (`darwin`, `win32`, `linux`). |
@@ -80,9 +79,10 @@ Every event includes this envelope:
   `custom_or_unknown`), `service_category`, `route_mode`, coarse offer-count,
   HTTP-status and duration buckets, retry flags, `had_partial_output`, and
   `has_attachments`. Peer IDs and raw stream errors are never sent.
-- `discovery_completed` — after every model discovery request. Properties:
-  `outcome`, duration bucket, coarse service/peer/result count buckets, and
-  `was_empty`.
+- `discovery_failed` — only when a model discovery request fails. Properties:
+  duration bucket and a fixed `failure_code` (`timeout`, `invalid_data`,
+  `io_error`, or `unknown`). Successful periodic discovery requests do not
+  emit telemetry.
 - `app_closed` — on clean shutdown (`was_crash: false`), or recovered on the
   next launch after an unclean shutdown (`was_crash: true`). Properties:
   `was_crash`, `session_duration_bucket`.
@@ -90,7 +90,7 @@ Every event includes this envelope:
 ## What we never collect
 
 - Prompts, chat messages, or assistant responses
-- Wallet addresses or transaction hashes
+- Transaction hashes
 - Exact balances, deposits, or spending (only coarse buckets)
 - Files, attachment contents, file names, or paths
 - Environment variables, command lines, logs, or stack traces
@@ -129,19 +129,20 @@ Immediately before the first valid chat is submitted, VPR reads the current
 on-chain deposit balance locally and converts it to `had_deposit` and a coarse
 bucket. The exact balance never enters the telemetry service.
 
-## Anonymous ID
+## On-chain identifier
 
-`install_id` is a random UUID generated on first launch and stored locally in
-the app's user data directory. It is not derived from a wallet address,
-machine identifier, hostname, account, or OS identifier. A fresh
-`session_id` is generated on every launch.
+The buyer's normalized lowercase EVM address is sent as PostHog's required
+`distinct_id`. It is read from the same encrypted signing identity used by the
+desktop app and is not duplicated as an event property or stored in telemetry
+state. If no valid identity is available, telemetry events are not sent. A
+fresh random `session_id` is generated on every launch.
 Each valid remote chat attempt also receives a random `request_id` used only to
 correlate its start and finish events. It is not derived from chat contents,
-the installation ID, a peer, or a wallet.
+the on-chain identifier, a peer, or a wallet.
 
 ## How to disable telemetry
 
-- In the app: **Preferences → Privacy → Anonymous telemetry** toggle.
+- In the app: **Preferences → Privacy → Product telemetry** toggle.
 - Environment kill switch: set `TELEMETRY_ENABLED=false` (or `0` / `no`).
 - Telemetry is always disabled in development builds and when no PostHog
   project is configured.
@@ -159,8 +160,8 @@ builds contain no default and therefore send nothing unless configured locally.
   shutdown beyond the short flush timeout.
 - Every capture sets `$geoip_disable: true`, so PostHog does not enrich events
   with location derived from the request IP.
-- Every capture sets `$process_person_profile: false`; anonymous installation
-  events do not create PostHog person profiles.
+- Every capture sets `$process_person_profile: false`; captures do not create
+  PostHog person profiles.
 - Clean shutdown waits briefly for the final `app_closed` capture while also
   clearing the local crash marker. Delivery remains bounded by a short flush
   timeout.

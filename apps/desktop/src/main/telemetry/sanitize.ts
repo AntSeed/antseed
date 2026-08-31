@@ -16,6 +16,7 @@ import {
   DEPOSIT_FAILURE_CODES,
   DEPOSIT_FAILURE_STAGES,
   DEPOSIT_AMOUNT_BUCKETS,
+  DISCOVERY_FAILURE_CODES,
   DURATION_BUCKETS,
   HTTP_STATUS_BUCKETS,
   MODEL_PRICING_TIERS,
@@ -53,9 +54,6 @@ const PROPERTY_VALIDATORS: Record<string, ReadonlySet<string>> = {
   route_mode: ROUTE_MODES,
   offers_available_bucket: OFFERS_AVAILABLE_BUCKETS,
   http_status_bucket: HTTP_STATUS_BUCKETS,
-  service_count_bucket: COUNT_BUCKETS,
-  peer_count_bucket: COUNT_BUCKETS,
-  result_count_bucket: COUNT_BUCKETS,
   routing_node_count_bucket: COUNT_BUCKETS,
   eligible_offer_count_bucket: OFFERS_AVAILABLE_BUCKETS,
   pricing_tier: MODEL_PRICING_TIERS,
@@ -74,8 +72,8 @@ const EVENT_PROPERTY_VALIDATORS: Partial<Record<TelemetryEventName, Record<strin
     failure_code: CHAT_FAILURE_CODES,
     failure_stage: CHAT_FAILURE_STAGES,
   },
-  discovery_completed: {
-    outcome: new Set(['success', 'failed']),
+  discovery_failed: {
+    failure_code: DISCOVERY_FAILURE_CODES,
   },
 };
 

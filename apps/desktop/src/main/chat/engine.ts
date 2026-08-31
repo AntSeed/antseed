@@ -37,12 +37,12 @@ import { DEFAULT_BUYER_STATE_PATH, LOCALHOST_URL } from '../constants.js';
 import { asErrorMessage } from '../utils.js';
 import {
   classifyServiceCategory,
-  countBucket,
   durationBucket,
   modelPricingSnapshot,
   publicModelId,
   type TelemetryEventProperties,
 } from '../telemetry/events.js';
+import { classifyDiscoveryFailure } from '../telemetry/classify.js';
 import type { RawPeerHealth } from '../runtime/peer-cache.js';
 import {
   buildChatServiceCatalogFromNetworkModels,
@@ -143,7 +143,7 @@ export function registerPiChatHandlers({
   recordModelSelected,
   recordChatRequestStarted,
   recordChatRequestFinished,
-  recordDiscoveryCompleted,
+  recordDiscoveryFailed,
 }: RegisterPiChatHandlersOptions): PiChatEngine {
   void loadChatWorkspaceDir().catch(() => {});
   const store = new PiConversationStore();
@@ -682,33 +682,15 @@ export function registerPiChatHandlers({
         discoverRowsEverSucceeded = true;
         appendSystemLog(`Service discovery ready: ${String(rows.length)} row(s) from ${String(entries.length)} service(s) in ${String(totalMs)}ms`);
       }
-      if (recordDiscoveryCompleted) {
-        try {
-          void Promise.resolve(recordDiscoveryCompleted({
-            outcome: 'success',
-            duration_bucket: durationBucket(totalMs),
-            service_count_bucket: countBucket(entries.length),
-            peer_count_bucket: countBucket(uniqueCatalogPeerIds.length),
-            result_count_bucket: countBucket(rows.length),
-            was_empty: rows.length === 0,
-          })).catch(() => {});
-        } catch {
-          // Telemetry must never affect discovery results.
-        }
-      }
       return { ok: true, data: rows };
     } catch (error) {
       const totalMs = Date.now() - startedAt;
       appendSystemLog(`Service discovery failed after ${String(totalMs)}ms: ${asErrorMessage(error)}`);
-      if (recordDiscoveryCompleted) {
+      if (recordDiscoveryFailed) {
         try {
-          void Promise.resolve(recordDiscoveryCompleted({
-            outcome: 'failed',
+          void Promise.resolve(recordDiscoveryFailed({
             duration_bucket: durationBucket(totalMs),
-            service_count_bucket: '0',
-            peer_count_bucket: '0',
-            result_count_bucket: '0',
-            was_empty: true,
+            failure_code: classifyDiscoveryFailure(asErrorMessage(error)),
           })).catch(() => {});
         } catch {
           // Telemetry must never replace the original discovery failure.

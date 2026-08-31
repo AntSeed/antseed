@@ -238,15 +238,15 @@ export function VprPreferencesView({ onSelectView }: Props) {
           <span className={styles.sectionLabel}>Privacy</span>
           <VprCard className={styles.card}>
             <VprSettingRow
-              title="Anonymous telemetry"
+              title="Product telemetry"
               hint={telemetryStatus?.available === false
                 ? 'Telemetry is unavailable in this build or has been disabled by configuration.'
-                : 'Help improve VPR by sharing coarse feature usage and reliability information. Prompts, messages, files, wallet addresses, and exact financial values are never collected.'}
+                : 'Help improve VPR by sharing coarse feature usage and reliability information linked to your public on-chain address. Prompts, messages, files, and exact financial values are never collected.'}
               control={(
                 <VprToggle
                   checked={telemetryStatus?.enabled ?? false}
                   onChange={toggleTelemetry}
-                  ariaLabel="Anonymous telemetry"
+                  ariaLabel="Product telemetry"
                   disabled={!telemetryStatus?.available}
                 />
               )}

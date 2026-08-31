@@ -9,7 +9,8 @@
  *
  * Hard rules (see the telemetry design issue):
  * - Never prompts, chat contents, assistant responses, file names or paths.
- * - Never wallet addresses, transaction hashes, or exact balances/amounts.
+ * - The buyer wallet address is used only as the PostHog distinct identifier.
+ * - Never transaction hashes or exact balances/amounts.
  * - Never peer IDs, env vars, command lines, logs, or stack traces.
  * - Only coarse buckets for durations and amounts.
  */
@@ -55,6 +56,7 @@ export type ChatFailureStage = 'none' | 'request_validation' | 'payment' | 'user
 export type RouteMode = 'auto' | 'pinned';
 export type ModelPricingTier = 'free' | 'paid' | 'mixed' | 'unknown';
 export type ModelSelectionScope = 'default' | 'conversation';
+export type DiscoveryFailureCode = 'timeout' | 'invalid_data' | 'io_error' | 'unknown';
 export type FirstChatDepositSnapshot = {
   hadDeposit: boolean;
   depositBucket: DepositAmountBucket | 'none';
@@ -166,14 +168,10 @@ export type TelemetryEventProperties = {
     duration_bucket: DurationBucket;
     has_attachments: boolean;
   };
-  /** Emitted after each discovery request, whether it succeeds or fails. */
-  discovery_completed: {
-    outcome: 'success' | 'failed';
+  /** Emitted only when a discovery request fails. */
+  discovery_failed: {
     duration_bucket: DurationBucket;
-    service_count_bucket: CountBucket;
-    peer_count_bucket: CountBucket;
-    result_count_bucket: CountBucket;
-    was_empty: boolean;
+    failure_code: DiscoveryFailureCode;
   };
   /**
    * Emitted on clean shutdown (was_crash=false), or recovered on the next
@@ -245,14 +243,7 @@ export const TELEMETRY_EVENT_ALLOWLIST: { readonly [K in TelemetryEventName]: Re
     'duration_bucket',
     'has_attachments',
   ]),
-  discovery_completed: new Set([
-    'outcome',
-    'duration_bucket',
-    'service_count_bucket',
-    'peer_count_bucket',
-    'result_count_bucket',
-    'was_empty',
-  ]),
+  discovery_failed: new Set(['duration_bucket', 'failure_code']),
   app_closed: new Set(['was_crash', 'session_duration_bucket']),
 };
 
@@ -264,6 +255,7 @@ export const SERVICE_CATEGORIES: ReadonlySet<string> = new Set(['chat', 'image',
 export const COUNT_BUCKETS: ReadonlySet<string> = new Set(['0', '1', '2_5', '6_20', '21_plus']);
 export const OFFERS_AVAILABLE_BUCKETS: ReadonlySet<string> = new Set(['0', '1', '2_3', '4_plus']);
 export const HTTP_STATUS_BUCKETS: ReadonlySet<string> = new Set(['none', '4xx', '5xx', 'other']);
+export const DISCOVERY_FAILURE_CODES: ReadonlySet<string> = new Set(['timeout', 'invalid_data', 'io_error', 'unknown']);
 export const DEPOSIT_FAILURE_CODES: ReadonlySet<string> = new Set([
   'payments_disabled',
   'deposit_relay_unavailable',

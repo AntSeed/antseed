@@ -3,7 +3,16 @@ import type {
   ChatFailureStage,
   DepositFailureCode,
   DepositFailureStage,
+  DiscoveryFailureCode,
 } from './events.js';
+
+export function classifyDiscoveryFailure(error: string): DiscoveryFailureCode {
+  const normalized = error.toLowerCase();
+  if (/timed? ?out|timeout|abort/.test(normalized)) return 'timeout';
+  if (/json|parse|invalid|malformed|unexpected token/.test(normalized)) return 'invalid_data';
+  if (/enoent|eacces|eperm|file|directory|read/.test(normalized)) return 'io_error';
+  return 'unknown';
+}
 
 export type NormalizedDepositFailure = {
   failureCode: DepositFailureCode;

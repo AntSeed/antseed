@@ -27,12 +27,14 @@ import {
   publicModelId,
   sessionDurationBucket,
 } from './events.js';
-import { classifyChatRequestFailure, classifyDepositFailure } from './classify.js';
+import { classifyChatRequestFailure, classifyDepositFailure, classifyDiscoveryFailure } from './classify.js';
 import type { PostHogCapturePayload } from './posthog.js';
 import { TELEMETRY_ACTION_SURFACES, TELEMETRY_USER_ACTIONS } from '../../shared/telemetry.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const REQUEST_ID = '123e4567-e89b-42d3-a456-426614174000';
+const BUYER_ADDRESS = '0x1234567890abcdef1234567890abcdef12345678';
+const IMPORTED_BUYER_ADDRESS = '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd';
 
 async function makeTempDir(t: test.TestContext): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'antseed-telemetry-'));
@@ -55,6 +57,7 @@ function baseOptions(dir: string, captured: Captured, overrides: Record<string, 
     appVersion: '1.2.3',
     platform: 'darwin',
     arch: 'arm64',
+    getDistinctId: () => BUYER_ADDRESS,
     env: {
       [POSTHOG_HOST_ENV]: 'https://posthog.example.com',
       [POSTHOG_PROJECT_API_KEY_ENV]: 'phc_test',
@@ -157,20 +160,56 @@ test('app_first_opened fires exactly once per installation', async (t) => {
   assert.equal(startedEvents[1]?.properties['is_first_launch'], false);
 });
 
-test('install_id is a stable random UUID across restarts', async (t) => {
+test('normalized on-chain address is the stable distinct identifier', async (t) => {
   const dir = await makeTempDir(t);
   const captured: Captured = { payloads: [] };
-  const first = await createTelemetryService(baseOptions(dir, captured));
+  const first = await createTelemetryService(baseOptions(dir, captured, {
+    getDistinctId: () => BUYER_ADDRESS.toUpperCase(),
+  }));
   await first.recordAppStarted();
   await first.recordCleanShutdown();
   const second = await createTelemetryService(baseOptions(dir, captured));
   await second.recordAppStarted();
 
   const ids = new Set(captured.payloads.map((p) => p.distinct_id));
-  assert.equal(ids.size, 1);
-  const [id] = ids;
-  assert.match(String(id), /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
-  assert.equal(captured.payloads.every((p) => p.properties['install_id'] === id), true);
+  assert.deepEqual([...ids], [BUYER_ADDRESS]);
+  assert.equal(captured.payloads.every((p) => !('install_id' in p.properties)), true);
+});
+
+test('captures are skipped without a valid on-chain address', async (t) => {
+  const dir = await makeTempDir(t);
+  const captured: Captured = { payloads: [] };
+  const service = await createTelemetryService(baseOptions(dir, captured, {
+    getDistinctId: () => 'not-an-address',
+  }));
+
+  assert.equal(service.available, true);
+  assert.equal(service.enabled, false);
+  await service.recordAppStarted();
+  assert.equal(captured.payloads.length, 0);
+});
+
+test('captures use the current on-chain address after signer import', async (t) => {
+  const dir = await makeTempDir(t);
+  const captured: Captured = { payloads: [] };
+  let address = BUYER_ADDRESS;
+  const service = await createTelemetryService(baseOptions(dir, captured, {
+    getDistinctId: () => address,
+  }));
+  await service.recordAppStarted();
+  address = IMPORTED_BUYER_ADDRESS;
+  await service.recordModelSelected({
+    public_model_id: 'deepseek-v4-flash',
+    service_category: 'chat',
+    selection_scope: 'default',
+    route_mode: 'auto',
+    pricing_tier: 'free',
+    has_free_eligible_offer: true,
+    eligible_offer_count_bucket: '1',
+  });
+
+  assert.equal(captured.payloads[0]?.distinct_id, BUYER_ADDRESS);
+  assert.equal(captured.payloads.at(-1)?.distinct_id, IMPORTED_BUYER_ADDRESS);
 });
 
 test('envelope includes schema/platform/arch/version/install_source', async (t) => {
@@ -194,7 +233,7 @@ test('envelope includes schema/platform/arch/version/install_source', async (t) 
   assert.equal(typeof props['event_ts_ms'], 'number');
   assert.equal(props['$geoip_disable'], true);
   assert.equal(props['$process_person_profile'], false);
-  assert.equal(props['distinct_id'], captured.payloads[0]?.distinct_id);
+  assert.equal('distinct_id' in props, false);
 });
 
 test('unknown INSTALL_SOURCE falls back to unknown', async (t) => {
@@ -405,8 +444,8 @@ test('deposit_completed sends buckets only, never exact amounts', async (t) => {
   assert.equal(deposit.properties['amount_bucket'], '5_25');
   assert.equal(deposit.properties['is_first_deposit'], true);
   assert.equal(deposit.properties['days_since_first_open'], '0');
-  // The exact amount must appear nowhere in the payload.
-  const serialized = JSON.stringify(deposit);
+  // The exact amount must appear nowhere in the event properties.
+  const serialized = JSON.stringify(deposit.properties);
   assert.equal(serialized.includes('12345678'), false);
   assert.equal(serialized.includes('12.345678'), false);
 });
@@ -513,24 +552,24 @@ test('model selection and chat start share privacy-safe pricing context', async 
   assert.equal(started.properties['request_id'], REQUEST_ID);
 });
 
-test('discovery_completed records coarse counts only', async (t) => {
+test('discovery_failed records only a fixed failure code and duration', async (t) => {
   const dir = await makeTempDir(t);
   const captured: Captured = { payloads: [] };
   const service = await createTelemetryService(baseOptions(dir, captured));
-  await service.recordDiscoveryCompleted({
-    outcome: 'success',
+  await service.recordDiscoveryFailed({
     duration_bucket: '30s_2m',
-    service_count_bucket: '21_plus',
-    peer_count_bucket: '6_20',
-    result_count_bucket: '2_5',
-    was_empty: false,
+    failure_code: 'timeout',
   }, 0);
 
-  const discovery = captured.payloads.find((payload) => payload.event === 'discovery_completed');
+  const discovery = captured.payloads.find((payload) => payload.event === 'discovery_failed');
   assert.ok(discovery);
-  assert.equal(discovery.properties['service_count_bucket'], '21_plus');
-  assert.equal(discovery.properties['peer_count_bucket'], '6_20');
-  assert.equal(discovery.properties['result_count_bucket'], '2_5');
+  assert.deepEqual({
+    duration_bucket: discovery.properties['duration_bucket'],
+    failure_code: discovery.properties['failure_code'],
+  }, {
+    duration_bucket: '30s_2m',
+    failure_code: 'timeout',
+  });
 });
 
 test('first_chat_started fires once and records the immediate deposit snapshot', async (t) => {
@@ -855,6 +894,13 @@ test('sanitizer applies event-specific failure enums', () => {
   assert.deepEqual(sanitized, { method_category: 'usdc', retryable: true });
 });
 
+test('discovery failures are reduced to fixed local categories', () => {
+  assert.equal(classifyDiscoveryFailure('Request timed out after 30 seconds'), 'timeout');
+  assert.equal(classifyDiscoveryFailure('Unexpected token while parsing JSON'), 'invalid_data');
+  assert.equal(classifyDiscoveryFailure('ENOENT while reading peer state file'), 'io_error');
+  assert.equal(classifyDiscoveryFailure('Discovery failed'), 'unknown');
+});
+
 test('sanitizer accepts only fixed user action and surface values', () => {
   assert.deepEqual(sanitizeTelemetryProperties('user_action', {
     action: 'chat_send',
@@ -906,22 +952,25 @@ test('sanitizer accepts only random UUID request correlation IDs', () => {
 
 // ── State persistence ──
 
-test('corrupt state file falls back to defaults with a fresh install id', async (t) => {
+test('corrupt state file falls back to milestone defaults', async (t) => {
   const dir = await makeTempDir(t);
   const { writeFile } = await import('node:fs/promises');
   await writeFile(join(dir, 'telemetry-state.json'), 'not json at all', 'utf8');
   const state = await loadTelemetryState(dir);
   assert.equal(state.hasEmittedFirstOpen, false);
-  assert.match(state.installId, /^[0-9a-f-]{36}$/i);
 });
 
-test('invalid install id is regenerated', async (t) => {
+test('legacy install id is ignored while milestones are preserved', async (t) => {
   const dir = await makeTempDir(t);
-  const state = defaultTelemetryState();
-  await saveTelemetryState(dir, { ...state, installId: 'machine-derived-not-ok' });
+  const { writeFile } = await import('node:fs/promises');
+  await writeFile(join(dir, 'telemetry-state.json'), JSON.stringify({
+    ...defaultTelemetryState(),
+    installId: 'legacy-random-id',
+    hasCompletedSetup: true,
+  }), 'utf8');
   const loaded = await loadTelemetryState(dir);
-  assert.notEqual(loaded.installId, 'machine-derived-not-ok');
-  assert.match(loaded.installId, /^[0-9a-f-]{36}$/i);
+  assert.equal('installId' in loaded, false);
+  assert.equal(loaded.hasCompletedSetup, true);
 });
 
 // ── Bucket helpers ──

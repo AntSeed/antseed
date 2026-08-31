@@ -1,10 +1,9 @@
 /**
- * Privacy-first product telemetry for the desktop app (design: the PostHog
+ * Privacy-conscious product telemetry for the desktop app (design: the PostHog
  * activation-funnel issue).
  *
  * What this service guarantees:
- * - A random anonymous install ID, generated once and persisted; never
- *   derived from a wallet, machine, hostname, account, or OS identifier.
+ * - The normalized buyer wallet address is the PostHog distinct identifier.
  * - A fresh random session ID per launch.
  * - Only events from ./events.ts's typed catalog are sent, and every
  *   property passes through ./sanitize.ts's allowlist — unknown properties
@@ -84,6 +83,11 @@ function isValidHttpsUrl(value: string): boolean {
   }
 }
 
+function normalizeDistinctId(value: string | null): string | null {
+  const normalized = value?.trim().toLowerCase() ?? '';
+  return /^0x[0-9a-f]{40}$/.test(normalized) ? normalized : null;
+}
+
 export type TelemetryContext = {
   platform: string;
   arch: string;
@@ -132,8 +136,8 @@ export type TelemetryService = {
     input: TelemetryEventProperties['chat_request_finished'],
     nowMs?: number,
   ) => Promise<void>;
-  recordDiscoveryCompleted: (
-    input: TelemetryEventProperties['discovery_completed'],
+  recordDiscoveryFailed: (
+    input: TelemetryEventProperties['discovery_failed'],
     nowMs?: number,
   ) => Promise<void>;
   /** Clean shutdown: emits app_closed and clears the crash flag. */
@@ -148,6 +152,7 @@ export type CreateTelemetryServiceOptions = {
   appVersion: string;
   platform: string;
   arch: string;
+  getDistinctId: () => string | null;
   env?: NodeJS.ProcessEnv;
   nowMs?: () => number;
   transport?: PostHogTransport;
@@ -208,7 +213,11 @@ export async function createTelemetryService(
   let userActionDelivery: Promise<void> | null = null;
 
   const available = !staticDisabled;
-  const isEnabled = () => available && !state.telemetryDisabled;
+  const isEnabled = () => (
+    available
+    && !state.telemetryDisabled
+    && normalizeDistinctId(options.getDistinctId()) !== null
+  );
 
   const capture = <K extends TelemetryEventName>(
     event: K,
@@ -217,18 +226,18 @@ export async function createTelemetryService(
     captureSessionId: string = sessionId,
   ): Promise<void> | null => {
     if (!isEnabled()) return null;
+    const distinctId = normalizeDistinctId(options.getDistinctId());
+    if (!distinctId) return null;
     const payload = {
       event,
-      distinct_id: state.installId,
+      distinct_id: distinctId,
       timestamp: new Date(eventTsMs).toISOString(),
       properties: {
-        distinct_id: state.installId,
         $geoip_disable: true,
         $process_person_profile: false,
         schema_version: TELEMETRY_SCHEMA_VERSION,
         event_ts_ms: eventTsMs,
         session_id: captureSessionId,
-        install_id: state.installId,
         app_version: context.appVersion,
         platform: context.platform,
         arch: context.arch,
@@ -487,8 +496,8 @@ export async function createTelemetryService(
       track('chat_request_finished', input, nowMs);
     },
 
-    async recordDiscoveryCompleted(input, nowMs = now()) {
-      track('discovery_completed', input, nowMs);
+    async recordDiscoveryFailed(input, nowMs = now()) {
+      track('discovery_failed', input, nowMs);
     },
 
     async recordCleanShutdown(nowMs = now()) {

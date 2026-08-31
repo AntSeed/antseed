@@ -1,19 +1,13 @@
 /**
- * Persistent anonymous telemetry state, stored as JSON in the Electron
- * userData directory (survives app updates, never leaves the device except
- * as the anonymous identifiers on the events themselves).
- *
- * `install_id` is a random UUID generated on first launch. It is never
- * derived from a wallet address, machine ID, hostname, account, or OS
- * identifier.
+ * Persistent telemetry state, stored as JSON in the Electron userData
+ * directory. The on-chain identifier is read from the encrypted identity and
+ * is not duplicated here.
  */
-import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 export type TelemetryState = {
   schemaVersion: number;
-  installId: string;
   /** ISO date (YYYY-MM-DD) of the first launch; coarse on purpose. */
   firstOpenDate: string | null;
   firstOpenedAtMs: number | null;
@@ -35,7 +29,6 @@ export type TelemetryState = {
 export function defaultTelemetryState(): TelemetryState {
   return {
     schemaVersion: 1,
-    installId: randomUUID(),
     firstOpenDate: null,
     firstOpenedAtMs: null,
     hasEmittedFirstOpen: false,
@@ -73,10 +66,8 @@ function normalize(raw: unknown): TelemetryState {
     return defaults;
   }
   const record = raw as Record<string, unknown>;
-  const installId = asStringOrNull(record['installId']);
   return {
     schemaVersion: 1,
-    installId: installId && isUuid(installId) ? installId : defaults.installId,
     firstOpenDate: asStringOrNull(record['firstOpenDate']),
     firstOpenedAtMs: asNumberOrNull(record['firstOpenedAtMs']),
     hasEmittedFirstOpen: asBoolean(record['hasEmittedFirstOpen'], false),

@@ -41,8 +41,8 @@ export type RegisterPiChatHandlersOptions = {
   recordChatRequestFinished?: (
     input: TelemetryEventProperties['chat_request_finished'],
   ) => void | Promise<void>;
-  recordDiscoveryCompleted?: (
-    input: TelemetryEventProperties['discovery_completed'],
+  recordDiscoveryFailed?: (
+    input: TelemetryEventProperties['discovery_failed'],
   ) => void | Promise<void>;
 };
 

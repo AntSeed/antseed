@@ -18,7 +18,7 @@ import { registerPiChatHandlers } from './chat/engine.js';
 import { setClaudeDesktopGatewayModelSource } from './connected-apps/claude-desktop-gateway.js';
 import { emitChatEvent } from './chat/event-bus.js';
 import { createTelegramBridge } from './telegram/bridge.js';
-import { ensureSecureIdentity, secureIdentityEnv } from './identity.js';
+import { ensureSecureIdentity, getSecureIdentity, secureIdentityEnv } from './identity.js';
 import type { LogEvent, RuntimeActivityEvent } from './runtime/log-parser.js';
 import { parseRuntimeActivityFromLog } from './runtime/log-parser.js';
 import {
@@ -107,20 +107,22 @@ export type { InstalledPlugin } from './runtime/plugins.js';
 let isQuitting = false;
 let isInstallingUpdate = false;
 
-// Telemetry initialization starts before app.whenReady() so crash recovery
-// reads the state file left by the previous session. All failures are swallowed
-// and routine network delivery stays fire-and-forget.
-const telemetryReady = createTelemetryService({
-  userDataDir: app.getPath('userData'),
-  isDev,
-  appVersion: app.getVersion(),
-  platform: process.platform,
-  arch: process.arch,
-}).then(async (service) => {
-  setTelemetryService(service);
-  await service.recordAppStarted();
-  return service;
-}).catch(() => null);
+let telemetryReady = Promise.resolve<Awaited<ReturnType<typeof createTelemetryService>> | null>(null);
+
+function initializeTelemetry(): Promise<Awaited<ReturnType<typeof createTelemetryService>> | null> {
+  return createTelemetryService({
+    userDataDir: app.getPath('userData'),
+    isDev,
+    appVersion: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    getDistinctId: () => getSecureIdentity()?.wallet.address ?? null,
+  }).then(async (service) => {
+    setTelemetryService(service);
+    await service.recordAppStarted();
+    return service;
+  }).catch(() => null);
+}
 
 async function recordTelemetryCleanShutdown(): Promise<void> {
   const telemetry = await telemetryReady;
@@ -389,9 +391,9 @@ const piChatEngine = registerPiChatHandlers({
     const telemetry = await telemetryReady;
     await telemetry?.recordChatRequestFinished(input);
   },
-  recordDiscoveryCompleted: async (input) => {
+  recordDiscoveryFailed: async (input) => {
     const telemetry = await telemetryReady;
-    await telemetry?.recordDiscoveryCompleted(input);
+    await telemetry?.recordDiscoveryFailed(input);
   },
 });
 
@@ -424,9 +426,6 @@ registerTelegramIpc({ telegramBridge });
 
 app.whenReady().then(async () => {
   installAttachmentProtocol();
-  // Make sure the telemetry service finished initializing before any
-  // instrumentation below (setup completion, deposits, chat) can fire.
-  await telemetryReady;
   app.setName(INTERNAL_APP_NAME);
   app.setAboutPanelOptions({
     applicationName: APP_NAME,
@@ -437,6 +436,9 @@ app.whenReady().then(async () => {
   if (process.platform === 'darwin' && APP_ICON_PATH && app.dock) {
     app.dock.setIcon(APP_ICON_PATH);
   }
+  await ensureSecureIdentity();
+  telemetryReady = initializeTelemetry();
+  await telemetryReady;
   createApplicationMenu(APP_NAME, APP_ICON_PATH);
 
   // Ensure config.json exists before anything else (first launch).
@@ -536,11 +538,6 @@ app.whenReady().then(async () => {
       appendLog('system-proxy', 'system', `System Proxy auto-start failed: ${err instanceof Error ? err.message : String(err)}`);
     });
   }
-
-  // Pre-load identity from encrypted store so it's ready before the first CLI spawn.
-  void ensureSecureIdentity().catch(() => {
-    // Failure is logged inside ensureSecureIdentity; CLI falls back to file-based identity.
-  });
 
   // Resume the Telegram bridge if a bot was connected in a previous session.
   // Needs app-ready because the token store decrypts via safeStorage.
