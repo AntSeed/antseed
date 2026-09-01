@@ -4,6 +4,7 @@ import type { ViewName } from '../types';
 import { shallowEqual, useUiSelector } from '../hooks/useUiSelector';
 import { selectHeadlineBalanceUsdc } from '../../core/balance';
 import { formatCredits } from '../../core/format';
+import { shouldNotifyAppsOnboarding } from '../../modules/app/apps-onboarding';
 import { navViews } from './viewRegistry';
 import { ChatListPanel } from './ChatListPanel';
 import { DepositProgressBanner } from './DepositProgressBanner';
@@ -95,6 +96,12 @@ export function VprShell({ activeView, onSelectView, onNavigateBack, children }:
                 <span className={styles.navLabel}>{nav.label}</span>
                 {view === 'chat' && snap.chatNeedsAttention && activeView !== 'chat' && (
                   <span className={styles.navDot} aria-label="Chat activity" />
+                )}
+                {/* One-shot onboarding nudge: the user hasn't opened Apps
+                    yet — opening it plays the connect-your-tools walkthrough
+                    and clears the dot for good. */}
+                {view === 'tools' && activeView !== 'tools' && shouldNotifyAppsOnboarding() && (
+                  <span className={styles.navDot} aria-label="Connect your apps" />
                 )}
               </button>
             );
