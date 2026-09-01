@@ -770,11 +770,12 @@ export function VprHomeView({ onSelectView }: Props) {
         <div className={styles.connectGroup}>
           {appsPitch}
 
-          {usageTiles}
-
           {reminderCard}
 
           {recentChats}
+
+          {/* Usage sits last on both variants. */}
+          {usageTiles}
         </div>
         )}
       </div>
