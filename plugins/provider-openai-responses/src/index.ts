@@ -295,6 +295,9 @@ function prepareRequestBody(
       const rewritten = serviceRewriteMap[requestedService.trim().toLowerCase()];
       if (rewritten && rewritten.trim().length > 0) {
         parsed.model = rewritten.trim();
+        if (requestedService.trim().toLowerCase().endsWith('-fast')) {
+          parsed.service_tier = 'priority';
+        }
       }
     }
 
