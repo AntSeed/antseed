@@ -34,13 +34,17 @@ const PREVIEW_MODELS: Array<{ brand: BrandKey; label: string; chip: string; free
   { brand: 'glm', label: 'GLM 5.2', chip: '$0.30', free: false },
 ];
 
-/** One line per scene, shown under the frame in sync with it. */
-const SCENE_CAPTIONS = [
-  'Turn it on — your VPR joins the network',
-  'Chat with any model, pay per use',
-  'The latest models, free ones included',
-  'Connect the apps you already use',
+const SCENE_DURATION_SECONDS = 4;
+const PREVIEW_SCENES = [
+  { caption: 'Turn it on — your VPR joins the network', icon: SquarePowerIcon },
+  { caption: 'Chat with any model, pay per use', icon: BubbleChatIcon },
+  { caption: 'The latest models, free ones included', icon: DiscoverCircleIcon },
+  { caption: 'Connect the apps you already use', icon: ConnectIcon },
 ];
+
+function sceneDelay(index: number): string {
+  return `${index * SCENE_DURATION_SECONDS}s`;
+}
 
 /**
  * Miniature VPR window that plays as a walkthrough-loader: the nav rail on
@@ -54,8 +58,8 @@ export function SetupAppPreview() {
     <div className={styles.walkthrough} aria-hidden="true">
       {/* Caption line above the frame, one entry per scene, on the same clock. */}
       <div className={styles.captions}>
-        {SCENE_CAPTIONS.map((caption, index) => (
-          <span key={caption} className={styles.caption} style={{ animationDelay: `${index * 4}s` }}>
+        {PREVIEW_SCENES.map(({ caption }, index) => (
+          <span key={caption} className={styles.caption} style={{ animationDelay: sceneDelay(index) }}>
             {caption}
           </span>
         ))}
@@ -64,11 +68,18 @@ export function SetupAppPreview() {
         {/* The rail's active tab follows the scene on stage: VPR → Models →
             Apps → Chat, on the same 16s clock as the scenes. */}
         <div className={styles.rail}>
-          <span className={`${styles.railItem} ${styles.railItemCycle}`} style={{ animationDelay: '0s' }}><HugeiconsIcon icon={SquarePowerIcon} size={13} strokeWidth={2} /></span>
-          <span className={`${styles.railItem} ${styles.railItemCycle}`} style={{ animationDelay: '4s' }}><HugeiconsIcon icon={BubbleChatIcon} size={13} strokeWidth={2} /></span>
-          <span className={`${styles.railItem} ${styles.railItemCycle}`} style={{ animationDelay: '8s' }}><HugeiconsIcon icon={DiscoverCircleIcon} size={13} strokeWidth={2} /></span>
-          <span className={`${styles.railItem} ${styles.railItemCycle}`} style={{ animationDelay: '12s' }}><HugeiconsIcon icon={ConnectIcon} size={13} strokeWidth={2} /></span>
-          <span className={styles.railItem}><HugeiconsIcon icon={PreferenceHorizontalIcon} size={13} strokeWidth={2} /></span>
+          {PREVIEW_SCENES.map(({ caption, icon }, index) => (
+            <span
+              key={caption}
+              className={`${styles.railItem} ${styles.railItemCycle}`}
+              style={{ animationDelay: sceneDelay(index) }}
+            >
+              <HugeiconsIcon icon={icon} size={13} strokeWidth={2} />
+            </span>
+          ))}
+          <span className={styles.railItem}>
+            <HugeiconsIcon icon={PreferenceHorizontalIcon} size={13} strokeWidth={2} />
+          </span>
         </div>
 
         <div className={styles.pane}>

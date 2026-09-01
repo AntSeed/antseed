@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
+import type { BadgeTone } from '../../core/state';
 import type { ViewName } from '../types';
 import { shallowEqual, useUiSelector } from '../hooks/useUiSelector';
 import { selectHeadlineBalanceUsdc } from '../../core/balance';
@@ -42,6 +43,18 @@ type VprShellProps = {
 
 const mainNavEntries = navViews('main');
 const bottomNavEntries = navViews('bottom');
+
+function statusClassName(tone: BadgeTone): string {
+  if (tone === 'bad') return `${styles.statusItem} ${styles.statusBad}`;
+  if (tone === 'warn') return `${styles.statusItem} ${styles.statusWarn}`;
+  return styles.statusItem;
+}
+
+function networkStatusClassName(networkHealth: string): string {
+  if (networkHealth === 'Down') return `${styles.statusItem} ${styles.statusBad}`;
+  if (networkHealth === 'Limited') return `${styles.statusItem} ${styles.statusWarn}`;
+  return styles.statusItem;
+}
 
 export function VprShell({ activeView, onSelectView, onNavigateBack, children }: VprShellProps) {
   const snap = useUiSelector((state) => ({
@@ -151,27 +164,11 @@ export function VprShell({ activeView, onSelectView, onNavigateBack, children }:
         <DepositProgressBanner />
       </main>
       <footer className={styles.statusStrip}>
-        <span
-          className={`${styles.statusItem}${
-            snap.networkHealth === 'Down'
-              ? ` ${styles.statusBad}`
-              : snap.networkHealth === 'Limited'
-                ? ` ${styles.statusWarn}`
-                : ''
-          }`}
-        >
+        <span className={networkStatusClassName(snap.networkHealth)}>
           {snap.networkHealth}
         </span>
         <span className={styles.statusSep} aria-hidden="true">|</span>
-        <span
-          className={`${styles.statusItem}${
-            snap.connectBadgeTone === 'bad'
-              ? ` ${styles.statusBad}`
-              : snap.connectBadgeTone === 'warn'
-                ? ` ${styles.statusWarn}`
-                : ''
-          }`}
-        >
+        <span className={statusClassName(snap.connectBadgeTone)}>
           {snap.connectBadgeLabel}
         </span>
         <span className={styles.statusSep} aria-hidden="true">|</span>

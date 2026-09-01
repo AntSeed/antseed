@@ -45,7 +45,7 @@ export function DisconnectConfirmDialog({ visible, onConfirm, onCancel }: Discon
         <input
           type="checkbox"
           checked={dontShowAgain}
-          onChange={(e) => setDontShowAgain(e.target.checked)}
+          onChange={(event) => setDontShowAgain(event.target.checked)}
         />
         Don&apos;t show this again
       </label>
