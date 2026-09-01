@@ -593,7 +593,7 @@ export function createInitialUiState(): RendererUiState {
       blockedPeerIds: [],
     },
     vprFloatOpen: false,
-    vprFloatAutoOpen: false,
+    vprFloatAutoOpen: true,
     vprFloatShowRoutedPeer: false,
     chatDiscoverRowsLoaded: false,
     chatSelectedServiceValue: '',
