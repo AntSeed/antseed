@@ -8,6 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Desktop's Home screen keeps the "Use AntSeed on your favorite app" pills visible after connecting a tool — previously connecting anything hid the whole list. The pitch now disappears only once the user has chats, and an already-connected app's pill shows as connected (green dot, green-tinted border) and opens the Apps page instead of reconnecting.
 - Desktop's floating window now shows on traffic by default: when a connected app starts sending requests, the pill pops up on its own unless the "Show on traffic" preference is explicitly turned off (previously it defaulted to off).
 - Desktop now nudges new users toward connecting their apps: a notification dot sits on the Apps nav item until the screen is first opened, and that first visit plays an animated coach-mark walkthrough — tooltips bobbing over the live view with a pulsing beacon, pointing at the app list and the "Add custom app" button. Shown once per install.
 - Desktop's Home power button now asks for confirmation before disconnecting, so a mis-click no longer stops routing (and drops connected apps and in-progress chats). The prompt reuses the standard confirm modal and has a "Don't show this again" checkbox that is remembered per install.

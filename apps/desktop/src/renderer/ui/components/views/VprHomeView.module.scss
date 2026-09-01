@@ -863,6 +863,18 @@
   cursor: default;
 }
 
+.toolPillConnected {
+  border-color: rgba(var(--accent-green-rgb), 0.45);
+}
+
+.toolConnectedDot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-green);
+}
+
 /* Real application icon (extracted from the installed app) on app pills. */
 .appIcon {
   flex: 0 0 auto;

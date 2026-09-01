@@ -468,23 +468,66 @@ export function VprHomeView({ onSelectView }: Props) {
         </div>
   ) : null;
 
-  const renderProfilePill = (profile: SystemProxyProfileSummary) => (
-    <button
-      key={profile.name}
-      type="button"
-      className={styles.toolPill}
-      disabled={connectingProfile !== null}
-      onClick={() => { void connectApp(profile.name); }}
-      title={`Connect ${profile.displayName}`}
-    >
-      {profile.iconDataUri && !isThemeAwareAppBrand(resolveBrandKey(profile.name, profile.displayName))
-        ? <img src={profile.iconDataUri} alt="" className={styles.appIcon} />
-        : <BrandIcon name={profile.name} hints={[profile.displayName]} size={16} />}
-      <span className={styles.toolLabel}>
-        {connectingProfile === profile.name ? 'Connecting...' : profile.displayName}
-      </span>
-    </button>
-  );
+  const renderProfilePill = (profile: SystemProxyProfileSummary) => {
+    // A connected app keeps its pill, shown as connected; clicking it leads
+    // to the Apps page where the connection is managed.
+    const connected = activeProfiles?.has(profile.name) ?? false;
+    return (
+      <button
+        key={profile.name}
+        type="button"
+        className={`${styles.toolPill}${connected ? ` ${styles.toolPillConnected}` : ''}`}
+        disabled={!connected && connectingProfile !== null}
+        onClick={() => {
+          if (connected) onSelectView?.('tools');
+          else void connectApp(profile.name);
+        }}
+        title={connected ? `${profile.displayName} is connected` : `Connect ${profile.displayName}`}
+      >
+        {profile.iconDataUri && !isThemeAwareAppBrand(resolveBrandKey(profile.name, profile.displayName))
+          ? <img src={profile.iconDataUri} alt="" className={styles.appIcon} />
+          : <BrandIcon name={profile.name} hints={[profile.displayName]} size={16} />}
+        <span className={styles.toolLabel}>
+          {connectingProfile === profile.name ? 'Connecting...' : profile.displayName}
+        </span>
+        {connected && <span className={styles.toolConnectedDot} aria-label="Connected" />}
+      </button>
+    );
+  };
+
+  /* Connect pitch — shown on both Home variants until the user has chats:
+     connecting one tool shouldn't hide the rest of the catalog. Once chats
+     exist the user knows the flow (the full list lives on the Apps page). */
+  const appsPitch = (conversations === null ? !expectChats : conversations.length === 0) ? (
+    <div className={styles.appsGroup}>
+      <p className={styles.appsLabel}>Use AntSeed on your favorite app</p>
+
+      <div className={styles.toolList}>
+        {/* Same lead items as the Apps tab (Telegram, Claude, Cursor), then
+            the catalog — the full list lives on the Apps page. */}
+        <button
+          type="button"
+          className={styles.toolPill}
+          onClick={() => onSelectView?.('tools')}
+          title="Set up Telegram Bot"
+        >
+          <BrandIcon name="telegram" hints={['Telegram Bot']} size={16} />
+          <span className={styles.toolLabel}>Telegram Bot</span>
+        </button>
+        {claudeProfile ? renderProfilePill(claudeProfile) : null}
+        <button
+          type="button"
+          className={styles.toolPill}
+          onClick={() => onSelectView?.('tools')}
+          title="Set up Cursor"
+        >
+          <BrandIcon name="cursor" hints={['Cursor']} size={16} />
+          <span className={styles.toolLabel}>Cursor</span>
+        </button>
+        {homePreviewProfiles.map(renderProfilePill)}
+      </div>
+    </div>
+  ) : null;
 
   /* Usage tiles — shown on both Home variants, zeros included, so the
      module is there from the first launch. */
@@ -718,43 +761,14 @@ export function VprHomeView({ onSelectView }: Props) {
               </div>
             ) : null}
 
+            {appsPitch}
+
             {usageTiles}
           </div>
         ) : (
         /* Routed apps + recent chats (the ask input lives in the hero) */
         <div className={styles.connectGroup}>
-          {/* The connect pitch is for first-timers — once chats exist the
-              user knows the flow (the full catalog lives on the Apps page). */}
-          {(conversations === null ? !expectChats : conversations.length === 0) && (
-          <div className={styles.appsGroup}>
-            <p className={styles.appsLabel}>Use AntSeed on your favorite app</p>
-
-            <div className={styles.toolList}>
-              {/* Same lead items as the Apps tab (Telegram, Claude, Cursor), then
-                  the catalog — the full list lives on the Apps page. */}
-              <button
-                type="button"
-                className={styles.toolPill}
-                onClick={() => onSelectView?.('tools')}
-                title="Set up Telegram Bot"
-              >
-                <BrandIcon name="telegram" hints={['Telegram Bot']} size={16} />
-                <span className={styles.toolLabel}>Telegram Bot</span>
-              </button>
-              {claudeProfile ? renderProfilePill(claudeProfile) : null}
-              <button
-                type="button"
-                className={styles.toolPill}
-                onClick={() => onSelectView?.('tools')}
-                title="Set up Cursor"
-              >
-                <BrandIcon name="cursor" hints={['Cursor']} size={16} />
-                <span className={styles.toolLabel}>Cursor</span>
-              </button>
-              {homePreviewProfiles.map(renderProfilePill)}
-            </div>
-          </div>
-          )}
+          {appsPitch}
 
           {usageTiles}
 
