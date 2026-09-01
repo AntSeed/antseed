@@ -147,7 +147,6 @@ export function TelegramBotCard() {
             </button>
           </span>
         )}
-        className={styles.vprModal}
         bodyClassName={styles.settingsBody}
       >
         {showTokenForm ? (

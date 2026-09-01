@@ -124,7 +124,6 @@ export function CursorAppCard() {
             </button>
           </span>
         )}
-        className={styles.vprModal}
         bodyClassName={styles.settingsBody}
       >
         <section className={styles.settingSection}>

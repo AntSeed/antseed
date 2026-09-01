@@ -373,6 +373,8 @@ export type RendererUiState = {
   chatConversations: unknown[];
   chatConversationsLoaded: boolean;
   chatProxyPort: number;
+  /** Buyer proxy port answered the last reachability probe. */
+  chatProxyOnline: boolean;
   /** Chat opens thin (compact window, no conversation list). The header
       toggle expands the window to the standard preset and shows the panel. */
   chatPanelExpanded: boolean;
@@ -467,7 +469,7 @@ export function createInitialUiState(): RendererUiState {
     daemonState: null,
 
     // Runtime display
-    connectBadge: { tone: 'idle', label: 'Stopped' },
+    connectBadge: { tone: 'bad', label: 'Stopped' },
     runtimeActivity: { tone: 'idle', message: 'Idle' },
 
     // Logs
@@ -552,7 +554,10 @@ export function createInitialUiState(): RendererUiState {
     chatConversations: [],
     chatConversationsLoaded: false,
     chatProxyPort: 0,
-    chatPanelExpanded: false,
+    chatProxyOnline: false,
+    // Chat opens wide (standard preset) with the conversation list showing;
+    // the in-view toggle collapses it to the thin panel.
+    chatPanelExpanded: true,
     chatMessages: [],
     chatStreamingMessage: null,
     chatSending: false,
@@ -588,7 +593,7 @@ export function createInitialUiState(): RendererUiState {
       blockedPeerIds: [],
     },
     vprFloatOpen: false,
-    vprFloatAutoOpen: false,
+    vprFloatAutoOpen: true,
     vprFloatShowRoutedPeer: false,
     chatDiscoverRowsLoaded: false,
     chatSelectedServiceValue: '',

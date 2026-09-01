@@ -816,13 +816,6 @@ export function VprHelpView({ onSelectView }: Props) {
         <div className={styles.section}>
           <p className={styles.sectionLabel}>VPR</p>
           <VprCard>
-            <button type="button" className={styles.row} onClick={openPublicEndpointModal}>
-              <span className={styles.rowText}>
-                <span className={styles.rowLabel}>Internet-accessible endpoint</span>
-                <span className={styles.rowHint}>{tunnelStatus?.running ? 'Running — view URL, API key, or provider settings' : 'Set up ngrok or Cloudflare for Cursor and remote agents'}</span>
-              </span>
-              <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} className={styles.rowGlyph} />
-            </button>
             {HELP_TOPICS.map((entry) => (
               <button
                 key={entry.key}
@@ -840,6 +833,13 @@ export function VprHelpView({ onSelectView }: Props) {
                 <span className={styles.rowHint}>Full setup, security, payments and troubleshooting</span>
               </span>
               <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} className={styles.rowGlyph} />
+            </button>
+            <button type="button" className={styles.row} onClick={openPublicEndpointModal}>
+              <span className={styles.rowText}>
+                <span className={styles.rowLabel}>Internet-accessible endpoint</span>
+                <span className={styles.rowHint}>{tunnelStatus?.running ? 'Running — view URL, API key, or provider settings' : 'Set up ngrok or Cloudflare for Cursor and remote agents'}</span>
+              </span>
+              <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} className={styles.rowGlyph} />
             </button>
           </VprCard>
         </div>

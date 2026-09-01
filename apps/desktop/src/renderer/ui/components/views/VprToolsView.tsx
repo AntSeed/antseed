@@ -18,6 +18,8 @@ import { BrandIcon, isThemeAwareAppBrand, resolveBrandKey } from '../brand/Brand
 import { VprBadge, VprPage, VprSearch } from '../vpr/VprKit';
 import { TelegramBotCard } from './TelegramBotCard';
 import { CursorAppCard } from './CursorAppCard';
+import { AppsOnboarding } from './AppsOnboarding';
+import { isAppsOnboardingSeen, persistAppsOnboardingSeen } from '../../../modules/app/apps-onboarding';
 import styles from './VprToolsView.module.scss';
 import { recordUserAction } from '../../../modules/telemetry/actions';
 
@@ -105,6 +107,13 @@ export function VprToolsView() {
   const proxyResource = useCachedResource(systemProxyResource);
   const profiles = proxyResource.data?.profiles ?? [];
   const proxyState = proxyResource.data?.state ?? null;
+  // First-ever visit to this screen (however the user got here): play the
+  // coach-mark walkthrough once, and mark it seen immediately so the nav dot
+  // never comes back.
+  const [showOnboarding, setShowOnboarding] = useState(() => !isAppsOnboardingSeen());
+  useEffect(() => {
+    if (showOnboarding) persistAppsOnboardingSeen();
+  }, [showOnboarding]);
   const [busy, setBusy] = useState<string | null>(null);
   // The app being connected right now. Connecting also restarts an app that
   // was already running, so the row has to stay busy well past the click.
@@ -745,6 +754,8 @@ export function VprToolsView() {
       </div>
       </VprPage>
 
+      {showOnboarding && <AppsOnboarding onDone={() => setShowOnboarding(false)} />}
+
       {/* Connected-apps explainer. */}
       <Modal
         isOpen={helpOpen}
@@ -752,7 +763,6 @@ export function VprToolsView() {
         size="sm"
         title="Connected apps"
         subtitle="How VPR works with your tools"
-        className={styles.vprModal}
         bodyClassName={styles.settingsBody}
       >
         <section className={styles.settingSection}>
@@ -839,7 +849,6 @@ export function VprToolsView() {
               ) : null}
             </span>
           ) : undefined}
-        className={styles.vprModal}
         bodyClassName={styles.settingsBody}
       >
         {settingsProfile ? (() => {
@@ -1011,7 +1020,6 @@ export function VprToolsView() {
           : addStep === 1 ? 'Route another app through VPR'
           : addStep === 2 ? 'Trust the HTTPS certificate'
           : 'Connect the app'}
-        className={styles.vprModal}
         bodyClassName={styles.settingsBody}
       >
         {addPane.pane !== 'apps' ? (
