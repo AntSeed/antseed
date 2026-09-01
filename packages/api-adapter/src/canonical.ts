@@ -20,15 +20,6 @@ export type CanonicalToolChoice =
   | 'required'
   | { type: 'function'; name: string };
 
-export type CanonicalReasoningEffort =
-  | 'none'
-  | 'minimal'
-  | 'low'
-  | 'medium'
-  | 'high'
-  | 'xhigh'
-  | 'max';
-
 // Anthropic requires max_tokens; the OpenAI protocols treat it as optional.
 export const DEFAULT_ANTHROPIC_MAX_TOKENS = 16_384;
 
@@ -72,7 +63,7 @@ export interface CanonicalLlmRequest {
   instructions?: string;
   input: CanonicalInputItem[];
   maxOutputTokens?: number;
-  reasoningEffort?: CanonicalReasoningEffort;
+  reasoningEffort?: string;
   temperature?: number;
   topP?: number;
   stop?: string | string[];
@@ -484,7 +475,7 @@ export function normalizeOpenAIChatRequestBody(body: Record<string, unknown>): C
 
   if (typeof body.max_tokens === 'number') request.maxOutputTokens = body.max_tokens;
   if (typeof body.reasoning_effort === 'string' && body.reasoning_effort.length > 0) {
-    request.reasoningEffort = body.reasoning_effort as CanonicalReasoningEffort;
+    request.reasoningEffort = body.reasoning_effort;
   }
   if (typeof body.temperature === 'number') request.temperature = body.temperature;
   if (typeof body.top_p === 'number') request.topP = body.top_p;
@@ -560,7 +551,7 @@ export function normalizeOpenAIResponsesRequestBody(body: Record<string, unknown
   if (body.reasoning && typeof body.reasoning === 'object' && !Array.isArray(body.reasoning)) {
     const effort = (body.reasoning as Record<string, unknown>).effort;
     if (typeof effort === 'string' && effort.length > 0) {
-      request.reasoningEffort = effort as CanonicalReasoningEffort;
+      request.reasoningEffort = effort;
     }
   }
   if (typeof body.temperature === 'number') request.temperature = body.temperature;

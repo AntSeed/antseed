@@ -35,15 +35,6 @@ const RESPONSE_PATH_PREFIX = '/v1/responses';
 const RELAY_PATH = '/responses';
 const AUTH_CLAIM_PATH = 'https://api.openai.com/auth';
 const CLIENT_STREAM_REQUESTED_HEADER = 'x-antseed-client-stream-requested';
-const SUPPORTED_REASONING_EFFORTS = new Set([
-  'none',
-  'minimal',
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'max',
-]);
 
 function expandHome(path: string): string {
   if (path === '~') return homedir();
@@ -282,7 +273,7 @@ function extractAccountIdFromTokens(accessToken: string, idToken: string | undef
 function prepareRequestBody(
   request: SerializedHttpRequest,
   serviceRewriteMap: Record<string, string> | undefined,
-): { request: SerializedHttpRequest; forcedStream: boolean } | { response: SerializedHttpResponse } {
+): { request: SerializedHttpRequest; forcedStream: boolean } {
   if (request.method === 'GET' || request.method === 'HEAD') {
     return { request, forcedStream: false };
   }
@@ -294,10 +285,6 @@ function prepareRequestBody(
 
   try {
     const parsed = JSON.parse(new TextDecoder().decode(request.body)) as Record<string, unknown>;
-    const reasoningProfileError = validateReasoningProfile(parsed);
-    if (reasoningProfileError) {
-      return { response: buildRequestProfileError(request.requestId, reasoningProfileError) };
-    }
     parsed.store ??= false;
     const clientStreamRequested = parseClientStreamRequestedHeader(request.headers);
     const forcedStream = clientStreamRequested === false || parsed.stream !== true;
@@ -359,20 +346,6 @@ function prepareRequestBody(
   } catch {
     return { request, forcedStream: false };
   }
-}
-
-function validateReasoningProfile(body: Record<string, unknown>): string | null {
-  if (body.reasoning === undefined || body.reasoning === null) return null;
-  if (typeof body.reasoning !== 'object' || Array.isArray(body.reasoning)) {
-    return 'Reasoning profile must be an object';
-  }
-
-  const effort = (body.reasoning as Record<string, unknown>).effort;
-  if (effort === undefined) return null;
-  if (typeof effort !== 'string' || !SUPPORTED_REASONING_EFFORTS.has(effort)) {
-    return `Unsupported reasoning effort: '${String(effort)}'`;
-  }
-  return null;
 }
 
 function parseClientStreamRequestedHeader(headers: Record<string, string>): boolean | undefined {
@@ -497,21 +470,6 @@ function buildError(requestId: string, statusCode: number, error: string): Seria
     statusCode,
     headers: { 'content-type': 'application/json' },
     body: new TextEncoder().encode(JSON.stringify({ error })),
-  };
-}
-
-function buildRequestProfileError(requestId: string, message: string): SerializedHttpResponse {
-  return {
-    requestId,
-    statusCode: 400,
-    headers: { 'content-type': 'application/json' },
-    body: new TextEncoder().encode(JSON.stringify({
-      error: {
-        type: 'invalid_request_error',
-        code: 'request_profile_incompatible',
-        message,
-      },
-    })),
   };
 }
 
@@ -676,9 +634,6 @@ class OpenAIResponsesProvider implements Provider {
     }
 
     const preparedBody = prepareRequestBody(req, this.serviceRewriteMap);
-    if ('response' in preparedBody) {
-      return preparedBody;
-    }
     return {
       request: {
         ...preparedBody.request,
