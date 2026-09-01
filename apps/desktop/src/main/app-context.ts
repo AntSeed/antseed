@@ -13,7 +13,15 @@ import { desktopInstanceName, desktopUserDataDir, isMultiInstanceDevelopment } f
 import { ASSETS_DIR, RENDERER_INDEX_PATH } from './paths.js';
 
 export const isDev = Boolean(process.env['VITE_DEV_SERVER_URL']);
-export const rendererUrl = process.env['VITE_DEV_SERVER_URL'] ?? `file://${RENDERER_INDEX_PATH}`;
+/* Dev-only: ANTSEED_DESKTOP_FORCE_SETUP=1 keeps the first-run setup screen
+   on screen regardless of setup state, for styling it (AppShell reads the
+   query flag only in dev builds). */
+const forceSetupQuery = process.env['VITE_DEV_SERVER_URL'] && process.env['ANTSEED_DESKTOP_FORCE_SETUP'] === '1'
+  ? '?forceSetup=1'
+  : '';
+export const rendererUrl = process.env['VITE_DEV_SERVER_URL']
+  ? `${process.env['VITE_DEV_SERVER_URL']}${forceSetupQuery}`
+  : `file://${RENDERER_INDEX_PATH}`;
 
 export const INTERNAL_APP_NAME = 'AntStation Desktop';
 const devInstanceName = isMultiInstanceDevelopment() ? desktopInstanceName() : '';
