@@ -8,6 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Desktop now finds T3 Code installed under any release channel — the launch-target lookup previously only checked for "T3 Code (Alpha)", so stable/Beta/Nightly installs got no app icon, no default "Open with" application, and no restart action. All channel variants are now probed (stable first), and the T3 Code rows fall back to the official t3.codes icon instead of the generic mark when the app isn't installed.
 - Desktop's Home screen keeps the "Use AntSeed on your favorite app" pills visible after connecting a tool — previously connecting anything hid the whole list. The pitch now disappears only once the user has chats, and an already-connected app's pill shows as connected (green dot, green-tinted border) and opens the Apps page instead of reconnecting.
 - Desktop's floating window now shows on traffic by default: when a connected app starts sending requests, the pill pops up on its own unless the "Show on traffic" preference is explicitly turned off (previously it defaulted to off).
 - Desktop now nudges new users toward connecting their apps: a notification dot sits on the Apps nav item until the screen is first opened, and that first visit plays an animated coach-mark walkthrough — tooltips bobbing over the live view with a pulsing beacon, pointing at the app list and the "Add custom app" button. Shown once per install.
