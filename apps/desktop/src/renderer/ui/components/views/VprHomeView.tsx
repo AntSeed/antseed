@@ -158,7 +158,7 @@ export function VprHomeView({ onSelectView }: Props) {
     [profiles],
   );
   // Pills wrap, so the preview can afford most of the catalog; the tail and
-  // custom apps stay behind "More apps".
+  // custom apps live on the Apps page.
   const homePreviewProfiles = useMemo(
     () => profiles.filter((profile) => profile.name !== 'claude-desktop').slice(0, HOME_APP_PILL_LIMIT),
     [profiles],
@@ -486,6 +486,38 @@ export function VprHomeView({ onSelectView }: Props) {
     </button>
   );
 
+  /* Usage tiles — shown on both Home variants, zeros included, so the
+     module is there from the first launch. */
+  const usageTiles = (
+    <div className={styles.usageGroup}>
+      <p className={styles.usageLabel}>Usage</p>
+      <VprStatRow>
+        <VprStatTile label="Requests" value={(snap.usage?.totalRequests ?? 0).toLocaleString('en-US')} />
+        <VprStatTile
+          label="Tokens"
+          value={formatCompactTokens(snap.usage?.totalInputTokens, snap.usage?.totalOutputTokens)}
+        />
+        <VprStatTile
+          label="Saving"
+          value={expectedSavingsPct !== null && (snap.usage?.totalRequests ?? 0) > 0
+            ? (
+              <span
+                className={styles.savingValue}
+                title={measuredSavings
+                  ? `Measured vs retail: paid $${measuredSavings.actualUsd.toFixed(2)} for usage worth $${measuredSavings.baselineUsd.toFixed(2)} at retail reference prices`
+                  : 'Estimated from current network price spread'}
+              >
+                {measuredSavings
+                  ? `${formatSavedUsd(measuredSavings.baselineUsd - measuredSavings.actualUsd)}`
+                  : `${expectedSavingsPct}%`}
+              </span>
+            )
+            : formatSavedUsd(0)}
+        />
+      </VprStatRow>
+    </div>
+  );
+
   return (
     <section className={`view view-vpr-home ${styles.view}`} role="tabpanel">
       {/* The hero is pinned outside the scroller — only the content below it
@@ -663,11 +695,6 @@ export function VprHomeView({ onSelectView }: Props) {
 
             {recentChats}
 
-            <button type="button" className={styles.moreApps} onClick={() => onSelectView?.('tools')}>
-              <span>Connect more apps</span>
-              <HugeiconsIcon icon={ArrowRight02Icon} size={16} strokeWidth={2} />
-            </button>
-
             {showAddBalance && !snap.reminderOffer ? (
               <div className={styles.balanceBanner}>
                 <button
@@ -691,48 +718,20 @@ export function VprHomeView({ onSelectView }: Props) {
               </div>
             ) : null}
 
-            <div className={styles.usageGroup}>
-              <p className={styles.usageLabel}>Usage</p>
-              <VprStatRow>
-                <VprStatTile label="Requests" value={(snap.usage?.totalRequests ?? 0).toLocaleString('en-US')} />
-                <VprStatTile
-                  label="Tokens"
-                  value={formatCompactTokens(snap.usage?.totalInputTokens, snap.usage?.totalOutputTokens)}
-                />
-                <VprStatTile
-                  label="Saving"
-                  value={expectedSavingsPct !== null && (snap.usage?.totalRequests ?? 0) > 0
-                    ? (
-                      <span
-                        className={styles.savingValue}
-                        title={measuredSavings
-                          ? `Measured vs retail: paid $${measuredSavings.actualUsd.toFixed(2)} for usage worth $${measuredSavings.baselineUsd.toFixed(2)} at retail reference prices`
-                          : 'Estimated from current network price spread'}
-                      >
-                        {measuredSavings
-                          ? `${formatSavedUsd(measuredSavings.baselineUsd - measuredSavings.actualUsd)}`
-                          : `${expectedSavingsPct}%`}
-                      </span>
-                    )
-                    : '-'}
-                />
-              </VprStatRow>
-            </div>
+            {usageTiles}
           </div>
         ) : (
         /* Routed apps + recent chats (the ask input lives in the hero) */
         <div className={styles.connectGroup}>
           {/* The connect pitch is for first-timers — once chats exist the
-              user knows the flow, so only the "More apps" link (below the
-              chats) remains. */}
+              user knows the flow (the full catalog lives on the Apps page). */}
           {(conversations === null ? !expectChats : conversations.length === 0) && (
           <div className={styles.appsGroup}>
             <p className={styles.appsLabel}>Use AntSeed on your favorite app</p>
 
             <div className={styles.toolList}>
               {/* Same lead items as the Apps tab (Telegram, Claude, Cursor), then
-                  the catalog — the full list lives on the Apps page behind
-                  "More apps". */}
+                  the catalog — the full list lives on the Apps page. */}
               <button
                 type="button"
                 className={styles.toolPill}
@@ -757,14 +756,11 @@ export function VprHomeView({ onSelectView }: Props) {
           </div>
           )}
 
+          {usageTiles}
+
           {reminderCard}
 
           {recentChats}
-
-          <button type="button" className={styles.moreApps} onClick={() => onSelectView?.('tools')}>
-            <span>More apps</span>
-            <HugeiconsIcon icon={ArrowRight02Icon} size={16} strokeWidth={2} />
-          </button>
         </div>
         )}
       </div>
