@@ -33,7 +33,7 @@ contract AntseedSparseBlockhashStore {
     error BlockhashConflict(uint64 blockNumber);
 
     event HeaderBatchVerified(
-        bytes32 indexed sessionId,
+        bytes32 indexed sessionKey,
         uint64 indexed anchorBlock,
         uint64 firstHeaderBlock,
         uint64 nextHeaderBlock,
@@ -58,6 +58,10 @@ contract AntseedSparseBlockhashStore {
         if (blockHash == bytes32(0)) blockHash = CHAINLINK_BLOCKHASH_STORE.getBlockhash(blockNumber);
     }
 
+    function frontierKey(address submitter, bytes32 sessionId) public pure returns (bytes32) {
+        return keccak256(abi.encodePacked(submitter, sessionId));
+    }
+
     function verifyHeaderBatch(
         bytes32 sessionId,
         uint64 anchorBlock,
@@ -70,7 +74,8 @@ contract AntseedSparseBlockhashStore {
         if (headerCount > anchorBlock) revert HeaderRangeUnderflow();
         _validateBitmap(storeBitmap, headerCount);
 
-        Frontier memory frontier = frontiers[sessionId];
+        bytes32 sessionKey = frontierKey(msg.sender, sessionId);
+        Frontier memory frontier = frontiers[sessionKey];
         if (frontier.expectedHeaderHash == bytes32(0)) {
             bytes32 anchorHash = CHAINLINK_BLOCKHASH_STORE.getBlockhash(anchorBlock);
             if (anchorHash == bytes32(0)) revert MissingAnchor(anchorBlock);
@@ -84,9 +89,9 @@ contract AntseedSparseBlockhashStore {
         (uint64 currentHeaderBlock, bytes32 expectedHeaderHash, uint256 storedBlockCount) =
             _verifyHeaders(firstHeaderBlock, frontier.expectedHeaderHash, descendingHeaders, storeBitmap);
 
-        frontiers[sessionId] = Frontier(anchorBlock, currentHeaderBlock, expectedHeaderHash);
+        frontiers[sessionKey] = Frontier(anchorBlock, currentHeaderBlock, expectedHeaderHash);
         emit HeaderBatchVerified(
-            sessionId, anchorBlock, firstHeaderBlock, currentHeaderBlock, headerCount, storedBlockCount
+            sessionKey, anchorBlock, firstHeaderBlock, currentHeaderBlock, headerCount, storedBlockCount
         );
     }
 

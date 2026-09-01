@@ -122,6 +122,16 @@ node scripts/plan-wash-trading-blockhash-backfill.mjs \
   --out "$BACKFILL_PLAN"
 
 jq '{digest, artifacts, liveCoverage, totals}' "$BACKFILL_PLAN"
+
+export HEADER_CACHE=/path/to/wash-trading-header-cache
+node scripts/prefetch-wash-trading-blockhash-headers.mjs \
+  --plan "$BACKFILL_PLAN" \
+  --rpc-url "$BASE_RPC_URL" \
+  --cache-dir "$HEADER_CACHE" \
+  --chunk-size 500 \
+  --rpc-batch-size 50 \
+  --rpc-batch-delay-ms 500 \
+  --concurrency 4
 ```
 
 Verify the first batch without sending a transaction:
@@ -131,9 +141,11 @@ node scripts/execute-wash-trading-blockhash-backfill.mjs \
   --plan "$BACKFILL_PLAN" \
   --rpc-url "$BASE_RPC_URL" \
   --header-rpc-url "$BASE_RPC_URL" \
+  --header-cache "$HEADER_CACHE" \
   --batch-size 200 \
   --maximum-complete-ranges 64 \
-  --header-rpc-batch-size 100 \
+  --header-rpc-batch-size 50 \
+  --header-rpc-batch-delay-ms 500 \
   --maximum-batches 1
 ```
 
@@ -147,9 +159,11 @@ node scripts/execute-wash-trading-blockhash-backfill.mjs \
   --plan "$BACKFILL_PLAN" \
   --rpc-url http://127.0.0.1:8555 \
   --header-rpc-url "$BASE_RPC_URL" \
+  --header-cache "$HEADER_CACHE" \
   --batch-size 200 \
   --maximum-complete-ranges 64 \
-  --header-rpc-batch-size 100 \
+  --header-rpc-batch-size 50 \
+  --header-rpc-batch-delay-ms 500 \
   --maximum-batches 1 \
   --execute \
   --approve-plan-digest "$BACKFILL_PLAN_DIGEST"
@@ -165,9 +179,11 @@ node scripts/execute-wash-trading-blockhash-backfill.mjs \
   --plan "$BACKFILL_PLAN" \
   --rpc-url "$BASE_RPC_URL" \
   --header-rpc-url "$BASE_RPC_URL" \
+  --header-cache "$HEADER_CACHE" \
   --batch-size 200 \
   --maximum-complete-ranges 64 \
-  --header-rpc-batch-size 100 \
+  --header-rpc-batch-size 50 \
+  --header-rpc-batch-delay-ms 500 \
   --maximum-batches 1 \
   --execute \
   --allow-live \
@@ -177,9 +193,10 @@ node scripts/execute-wash-trading-blockhash-backfill.mjs \
 The executor deploys `AntseedSparseBlockhashStore` once and stores its address,
 completed short ranges, and long-range cursors in `<plan>.checkpoint.json`.
 Independent short paths are packed into one transaction without permanent
-frontiers. Long paths retain an onchain frontier so another account can
-permissionlessly continue the same verified chain. Never delete or replace the
-checkpoint during a live run.
+frontiers. Long paths retain a signer-namespaced onchain frontier so another
+caller cannot poison or skip work in the active session; resume live runs with
+the same `BACKFILL_PRIVATE_KEY`. Never delete or replace the checkpoint during
+a live run.
 Backfilling does not submit seller proofs; after all ranges complete, deploy the
 registry with the sparse-store address, then stage, authenticate, and finalize
 the existing paid seller proof artifacts.

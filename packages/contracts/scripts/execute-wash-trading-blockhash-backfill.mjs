@@ -16,17 +16,20 @@ import {
   BASE_CHAIN_ID,
   JsonRpcClient,
   buildTargetBitmap,
+  mapWithConcurrency,
   normalizeHash,
   parseArguments,
   positiveInteger,
   stableDigest,
 } from "./wash-trading-blockhash-backfill-lib.mjs";
+import { openHeaderCache } from "./wash-trading-header-cache-lib.mjs";
 
 const contractsDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const { value, has } = parseArguments(process.argv.slice(2));
 const planPath = value("--plan");
 const rpcUrl = value("--rpc-url") ?? "http://127.0.0.1:8545";
 const headerRpcUrl = value("--header-rpc-url") ?? rpcUrl;
+const headerCacheDirectory = value("--header-cache");
 const checkpointPath = value("--checkpoint") ?? `${planPath}.checkpoint.json`;
 const batchSize = positiveInteger(value("--batch-size") ?? "200", "batch size");
 const maximumCompleteRanges = positiveInteger(
@@ -37,12 +40,19 @@ const headerRpcBatchSize = positiveInteger(
   value("--header-rpc-batch-size") ?? "100",
   "header RPC batch size",
 );
+const headerRpcBatchDelayMs = value("--header-rpc-batch-delay-ms") === null
+  ? 0
+  : positiveInteger(value("--header-rpc-batch-delay-ms"), "header RPC batch delay");
 const maximumBatches = value("--maximum-batches") === null
   ? Number.POSITIVE_INFINITY
   : positiveInteger(value("--maximum-batches"), "maximum batches");
 if (!planPath) throw new Error("usage: execute-wash-trading-blockhash-backfill.mjs --plan PLAN.json --rpc-url URL [--execute]");
-if (has("--execute") && !/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(rpcUrl) && !has("--allow-live")) {
+const localRpc = /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(rpcUrl);
+if (has("--execute") && !localRpc && !has("--allow-live")) {
   throw new Error("live backfill requires both --execute and --allow-live");
+}
+if (has("--execute") && !localRpc && !process.env.BACKFILL_PRIVATE_KEY) {
+  throw new Error("live backfill requires BACKFILL_PRIVATE_KEY; the public Anvil key is never used on Base");
 }
 
 const plan = JSON.parse(await readFile(planPath, "utf8"));
@@ -53,11 +63,17 @@ const { digest, ...planWithoutDigest } = plan;
 if (digest !== stableDigest(planWithoutDigest)) throw new Error("backfill plan digest mismatch");
 const approvedDigest = value("--approve-plan-digest");
 if (has("--execute") && approvedDigest !== digest) throw new Error(`execution requires --approve-plan-digest ${digest}`);
+const headerCache = headerCacheDirectory === null ? null : await openHeaderCache(headerCacheDirectory, digest);
 
 const provider = new JsonRpcProvider(rpcUrl);
 const network = await provider.getNetwork();
 if (network.chainId !== BASE_CHAIN_ID) throw new Error(`expected Base chain ID ${BASE_CHAIN_ID}, got ${network.chainId}`);
-const headerRpc = new JsonRpcClient(headerRpcUrl, { batchSize: headerRpcBatchSize, concurrency: 1, retries: 20 });
+const headerRpc = new JsonRpcClient(headerRpcUrl, {
+  batchSize: headerRpcBatchSize,
+  concurrency: 1,
+  retries: 20,
+  minimumBatchIntervalMs: headerRpcBatchDelayMs,
+});
 const chainlinkStore = new Contract(
   plan.chainlinkBlockhashStore,
   ["function getBlockhash(uint256) view returns (bytes32)"],
@@ -78,6 +94,7 @@ const sparseStore = new Contract(
   [
     "function getBlockhash(uint256) view returns (bytes32)",
     "function frontiers(bytes32) view returns (uint64 anchorBlock,uint64 nextHeaderBlock,bytes32 expectedHeaderHash)",
+    "function frontierKey(address,bytes32) pure returns (bytes32)",
     "function verifyHeaderBatch(bytes32,uint64,bytes[],bytes)",
     "function verifyCompleteHeaderBatches((uint64 anchorBlock,bytes[] descendingHeaders,bytes storeBitmap)[] batches)",
   ],
@@ -151,9 +168,10 @@ for (let rangeCursor = 0; rangeCursor < orderedRanges.length;) {
   }
 
   let cursor = checkpoint.cursors[String(range.index)] ?? range.endBlock;
-  const liveAnchor = normalizeHash(await chainlinkStore.getBlockhash(range.anchorBlock));
+  const liveAnchor = normalizeHash(await readChainlinkAnchor(range.anchorBlock));
   if (liveAnchor !== normalizeHash(range.anchorHash)) throw new Error(`range ${range.index}: anchor changed`);
   const sessionId = solidityPackedKeccak256(["bytes32", "uint256"], [digest, range.index]);
+  const sessionKey = solidityPackedKeccak256(["address", "bytes32"], [signer.address, sessionId]);
   const requiredReferences = new Map(range.requiredReferences.map((reference) => [reference.number, reference.blockHash]));
   while (cursor >= range.startBlock && submittedBatches < maximumBatches) {
     const batchStart = Math.max(range.startBlock, cursor - batchSize + 1);
@@ -161,7 +179,7 @@ for (let rangeCursor = 0; rangeCursor < orderedRanges.length;) {
     const headers = await rawHeaders(headerRpc, blockNumbers.map((number) => number + 1));
     let expectedChildHash = liveAnchor;
     if (cursor !== range.endBlock) {
-      const frontier = await sparseStore.frontiers(sessionId);
+      const frontier = await sparseStore.frontiers(sessionKey);
       if (Number(frontier.nextHeaderBlock) !== cursor + 1) {
         throw new Error(`range ${range.index}: sparse frontier does not match checkpoint cursor`);
       }
@@ -229,6 +247,7 @@ async function deploySparseStore() {
 }
 
 async function rawHeaders(client, blockNumbers) {
+  if (headerCache !== null) return headerCache.readHeaders(blockNumbers);
   const headers = new Array(blockNumbers.length);
   await client.mapBatches(
     blockNumbers,
@@ -255,7 +274,7 @@ async function prepareCompleteRanges(ranges) {
     Array.from({ length: range.endBlock - range.startBlock + 1 }, (_, index) => range.endBlock - index));
   const allBlockNumbers = blockNumberGroups.flat();
   const allHeaders = await rawHeaders(headerRpc, allBlockNumbers.map((number) => number + 1));
-  const anchors = await Promise.all(ranges.map((range) => chainlinkStore.getBlockhash(range.anchorBlock)));
+  const anchors = await mapWithConcurrency(ranges, 4, (range) => readChainlinkAnchor(range.anchorBlock));
   const prepared = [];
   let headerCursor = 0;
   for (let index = 0; index < ranges.length; ++index) {
@@ -293,6 +312,18 @@ async function verifyStoredTargets(targets) {
       throw new Error(`block ${targets[index].number}: sparse backfill verification failed`);
     }
   }
+}
+
+async function readChainlinkAnchor(blockNumber) {
+  for (let attempt = 1; attempt <= 20; ++attempt) {
+    try {
+      return await chainlinkStore.getBlockhash(blockNumber);
+    } catch (error) {
+      if (attempt === 20) throw error;
+      await new Promise((done) => setTimeout(done, 250 * attempt));
+    }
+  }
+  throw new Error("unreachable Chainlink anchor retry state");
 }
 
 async function readCheckpoint() {

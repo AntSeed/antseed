@@ -144,11 +144,13 @@ export function buildTargetBitmap(blockNumbers, requiredReferences) {
 }
 
 export class JsonRpcClient {
-  constructor(url, { batchSize = 250, concurrency = 12, retries = 5 } = {}) {
+  constructor(url, { batchSize = 250, concurrency = 12, retries = 5, minimumBatchIntervalMs = 0 } = {}) {
     this.url = url;
     this.batchSize = batchSize;
     this.concurrency = concurrency;
     this.retries = retries;
+    this.minimumBatchIntervalMs = minimumBatchIntervalMs;
+    this.nextBatchAt = 0;
     this.nextId = 1;
   }
 
@@ -161,6 +163,7 @@ export class JsonRpcClient {
   async batch(calls) {
     const requests = calls.map((call) => ({ jsonrpc: "2.0", id: this.nextId++, ...call }));
     for (let attempt = 1; attempt <= this.retries; ++attempt) {
+      await this.waitForBatchSlot();
       const response = await fetch(this.url, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -181,6 +184,14 @@ export class JsonRpcClient {
       await new Promise((done) => setTimeout(done, 250 * attempt));
     }
     throw new Error("unreachable JSON-RPC retry state");
+  }
+
+  async waitForBatchSlot() {
+    if (this.minimumBatchIntervalMs === 0) return;
+    const now = Date.now();
+    const scheduledAt = Math.max(now, this.nextBatchAt);
+    this.nextBatchAt = scheduledAt + this.minimumBatchIntervalMs;
+    if (scheduledAt > now) await new Promise((done) => setTimeout(done, scheduledAt - now));
   }
 
   async mapBatches(values, makeCall, consume) {

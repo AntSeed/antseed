@@ -40,7 +40,8 @@ contract AntseedSparseBlockhashStoreTest is Test {
 
         assertEq(store.localBlockhash(99), bytes32(0));
         assertEq(store.localBlockhash(98), TERMINAL_PARENT);
-        (uint64 anchorBlock, uint64 nextHeaderBlock, bytes32 expectedHeaderHash) = store.frontiers(SESSION);
+        (uint64 anchorBlock, uint64 nextHeaderBlock, bytes32 expectedHeaderHash) =
+            store.frontiers(store.frontierKey(address(this), SESSION));
         assertEq(anchorBlock, 100);
         assertEq(nextHeaderBlock, 98);
         assertEq(expectedHeaderHash, TERMINAL_PARENT);
@@ -82,8 +83,36 @@ contract AntseedSparseBlockhashStoreTest is Test {
 
         assertEq(store.localBlockhash(99), bytes32(uint256(91)));
         assertEq(store.localBlockhash(89), bytes32(uint256(81)));
-        (,, bytes32 expectedHeaderHash) = store.frontiers(SESSION);
+        (,, bytes32 expectedHeaderHash) = store.frontiers(store.frontierKey(address(this), SESSION));
         assertEq(expectedHeaderHash, bytes32(0));
+    }
+
+    function test_namespacesPersistentFrontiersBySubmitter() public {
+        address attacker = address(0xBAD);
+        bytes memory victimSecond = _shortHeader(TERMINAL_PARENT);
+        bytes memory victimFirst = _shortHeader(keccak256(victimSecond));
+        bytes memory attackerHeader = _shortHeader(bytes32(uint256(88)));
+        chainlink.set(100, keccak256(victimFirst));
+        chainlink.set(101, keccak256(attackerHeader));
+        bytes[] memory attackerHeaders = new bytes[](1);
+        attackerHeaders[0] = attackerHeader;
+
+        vm.prank(attacker);
+        store.verifyHeaderBatch(SESSION, 101, attackerHeaders, hex"00");
+
+        bytes[] memory victimHeaders = new bytes[](1);
+        victimHeaders[0] = victimFirst;
+        store.verifyHeaderBatch(SESSION, 100, victimHeaders, hex"00");
+        victimHeaders[0] = victimSecond;
+        store.verifyHeaderBatch(SESSION, 100, victimHeaders, hex"01");
+
+        (uint64 attackerAnchor, uint64 attackerNext,) = store.frontiers(store.frontierKey(attacker, SESSION));
+        (uint64 callerAnchor, uint64 callerNext,) = store.frontiers(store.frontierKey(address(this), SESSION));
+        assertEq(attackerAnchor, 101);
+        assertEq(attackerNext, 100);
+        assertEq(callerAnchor, 100);
+        assertEq(callerNext, 98);
+        assertEq(store.localBlockhash(98), TERMINAL_PARENT);
     }
 
     function test_returnsLocalOrChainlinkHash() public {
