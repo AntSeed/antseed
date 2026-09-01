@@ -39,6 +39,7 @@ import {
 } from 'node:fs/promises';
 import {
   TELEMETRY_ACTION_SURFACES,
+  TELEMETRY_APP_NAMES,
   TELEMETRY_USER_ACTIONS,
   type TelemetryStatusUpdateResult,
   type UserActionSignal,
@@ -97,7 +98,8 @@ export function registerAppIpc(): void {
     const candidate = payload as Partial<UserActionSignal> | null;
     if (!candidate
       || !TELEMETRY_USER_ACTIONS.includes(candidate.action as never)
-      || !TELEMETRY_ACTION_SURFACES.includes(candidate.surface as never)) {
+      || !TELEMETRY_ACTION_SURFACES.includes(candidate.surface as never)
+      || (candidate.app !== undefined && !TELEMETRY_APP_NAMES.includes(candidate.app as never))) {
       return { ok: false };
     }
     const telemetry = getTelemetryService();
@@ -105,6 +107,7 @@ export function registerAppIpc(): void {
     void telemetry.recordUserAction({
       action: candidate.action as UserActionSignal['action'],
       surface: candidate.surface as UserActionSignal['surface'],
+      ...(candidate.app !== undefined ? { app: candidate.app as UserActionSignal['app'] } : {}),
     });
     return { ok: true };
   });

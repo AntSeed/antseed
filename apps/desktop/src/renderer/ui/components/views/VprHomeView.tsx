@@ -45,6 +45,7 @@ import { isBuyerReady } from '../../../modules/app/connect-badge';
 import { isDisconnectConfirmDismissed, persistDisconnectConfirmDismissed } from '../../../modules/app/disconnect-confirm';
 import styles from './VprHomeView.module.scss';
 import { recordFirstModelShown, recordUserAction } from '../../../modules/telemetry/actions';
+import { normalizeTelemetryAppName } from '../../../../shared/telemetry.js';
 
 type Props = { onSelectView?: (view: ViewName) => void };
 
@@ -292,7 +293,7 @@ export function VprHomeView({ onSelectView }: Props) {
   // the profile can't be connected automatically (e.g. no route yet).
   async function connectApp(profileName: string): Promise<void> {
     if (connectingProfile !== null) return;
-    recordUserAction('app_connect', 'home');
+    recordUserAction('app_connect', 'home', normalizeTelemetryAppName(profileName));
     setConnectingProfile(profileName);
     try {
       const result = await connectVprProfile(window.antseedDesktop, getUiStateRef(), profileName);

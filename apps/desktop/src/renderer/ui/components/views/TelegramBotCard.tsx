@@ -38,7 +38,7 @@ export function TelegramBotCard() {
     const bridge = window.antseedDesktop;
     const token = tokenDraft.trim();
     if (!token || !bridge?.telegramConnect) return;
-    recordUserAction('app_connect', 'apps');
+    recordUserAction('app_connect', 'apps', 'telegram');
     setConnectBusy(true);
     setError(null);
     try {
@@ -59,7 +59,7 @@ export function TelegramBotCard() {
     const bridge = window.antseedDesktop;
     if (!bridge?.telegramDisconnect) return;
     if (!window.confirm('Disconnect the Telegram bot? The saved token is removed from this device.')) return;
-    recordUserAction('app_disconnect', 'apps');
+    recordUserAction('app_disconnect', 'apps', 'telegram');
     const result = await bridge.telegramDisconnect();
     if (result.data) setStatus(result.data);
     setChangingBot(false);

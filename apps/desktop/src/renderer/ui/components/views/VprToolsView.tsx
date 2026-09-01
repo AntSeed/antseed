@@ -22,6 +22,7 @@ import { AppsOnboarding } from './AppsOnboarding';
 import { isAppsOnboardingSeen, persistAppsOnboardingSeen } from '../../../modules/app/apps-onboarding';
 import styles from './VprToolsView.module.scss';
 import { recordUserAction } from '../../../modules/telemetry/actions';
+import { normalizeTelemetryAppName } from '../../../../shared/telemetry.js';
 
 
 declare const __ANTSEED_SYSTEM_PROXY_PORT__: number;
@@ -241,7 +242,6 @@ export function VprToolsView() {
   const startProfiles = useCallback(async (names: string[]): Promise<boolean> => {
     const bridge = window.antseedDesktop;
     if (!bridge?.systemProxyStart || !defaultPeerId) return false;
-    recordUserAction('app_connect', 'apps');
     setBusy(names.join(','));
     setMessage(null);
     const defaultRoute = { peerId: defaultPeerId, model: defaultModel };
@@ -266,9 +266,9 @@ export function VprToolsView() {
     return true;
   }, [activeProfileNames.length, defaultModel, defaultPeerId, peerOptions, profiles, proxyState?.running]);
 
-  const disconnect = useCallback(async () => {
+  const disconnect = useCallback(async (appName?: string) => {
     const bridge = window.antseedDesktop;
-    recordUserAction('app_disconnect', 'apps');
+    recordUserAction('app_disconnect', 'apps', appName !== undefined ? normalizeTelemetryAppName(appName) : undefined);
     setBusy('stop');
     const result = await bridge?.systemProxyStop?.();
     setBusy(null);
@@ -290,6 +290,7 @@ export function VprToolsView() {
   }, []);
 
   const connectProfile = useCallback(async (profileName: string) => {
+    recordUserAction('app_connect', 'apps', normalizeTelemetryAppName(profileName));
     const names = Array.from(new Set([...activeProfileNames, profileName]));
     setConnecting(profileName);
     try {
@@ -317,9 +318,10 @@ export function VprToolsView() {
   const disconnectProfile = useCallback((profileName: string) => {
     const remaining = activeProfileNames.filter((name) => name !== profileName);
     if (remaining.length === 0) {
-      void disconnect();
+      void disconnect(profileName);
       return;
     }
+    recordUserAction('app_disconnect', 'apps', normalizeTelemetryAppName(profileName));
     void startProfiles(remaining);
   }, [activeProfileNames, disconnect, startProfiles]);
 
@@ -515,7 +517,7 @@ export function VprToolsView() {
       if (connected) {
         const remaining = activeProfileNames.filter((name) => name !== profileName);
         if (remaining.length === 0) {
-          await disconnect();
+          await disconnect(profileName);
         } else {
           await startProfiles(remaining);
         }
