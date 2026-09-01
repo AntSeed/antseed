@@ -12,6 +12,7 @@ import {
   Tick02Icon,
 } from '@hugeicons/core-free-icons';
 import type { VprModelCatalogEntry } from '../../../core/state';
+import type { SystemProxyProfileSummary } from '../../../types/bridge';
 import { getUiStateRef } from '../../../core/store';
 import { activeProfilesFromRuntimeState } from '../../../modules/routing/tools';
 import { pinnedSellerLabel, pinnedSellerLabels } from '../../../modules/catalog/view-models';
@@ -61,6 +62,10 @@ function isFreeEntry(entry: VprModelCatalogEntry | undefined): boolean {
   return i !== null && o !== null && i <= 0 && o <= 0;
 }
 
+/* Nudge for first-timers: the chat opens pre-filled with this so the very
+   first thing to do on Home is press send. */
+const SUGGESTED_FIRST_PROMPT = 'What is AntSeed?';
+
 export function VprHomeView({ onSelectView }: Props) {
   const actions = useActions();
   const snap = useUiSelector((state) => ({
@@ -89,7 +94,7 @@ export function VprHomeView({ onSelectView }: Props) {
   const proxyState = proxyResource.data?.state ?? null;
   const conversations = conversationsResource.data;
   const [expectChats] = useState(hasSeenChats);
-  const [draft, setDraft] = useState('');
+  const [draft, setDraft] = useState(() => (hasSeenChats() ? '' : SUGGESTED_FIRST_PROMPT));
   const [addBalanceDismissed, setAddBalanceDismissed] = useState(() => {
     try {
       return localStorage.getItem(ADD_BALANCE_DISMISSED_KEY) === '1';
@@ -145,9 +150,18 @@ export function VprHomeView({ onSelectView }: Props) {
     () => profiles.filter((profile) => activeProfiles?.has(profile.name) ?? false),
     [activeProfiles, profiles],
   );
-  // Match the Apps tab ordering in the first-run home preview: Telegram is
-  // the special built-in app row, followed by the first catalog profiles.
-  const homePreviewProfiles = useMemo(() => profiles.slice(0, 2), [profiles]);
+  // First-run home preview, mirroring the Apps tab: Telegram (built-in),
+  // Claude + Cursor (the two headline desktop integrations), then the top of
+  // the catalog. Claude is a proxy profile; Cursor is set up from the Apps
+  // page (public endpoint), so its row navigates there.
+  const claudeProfile = useMemo(
+    () => profiles.find((profile) => profile.name === 'claude-desktop') ?? null,
+    [profiles],
+  );
+  const homePreviewProfiles = useMemo(
+    () => profiles.filter((profile) => profile.name !== 'claude-desktop').slice(0, 2),
+    [profiles],
+  );
   const restartProfiles = useMemo(
     () => connectedProfiles.filter((profile) => profile.needsRestart),
     [connectedProfiles],
@@ -421,6 +435,59 @@ export function VprHomeView({ onSelectView }: Props) {
     </section>
   ) : null;
 
+  /* Model picker panel — shared by the composer pill (first-timers) and the
+     standalone model card (connected-apps variant). */
+  const modelMenu = modelMenuOpen ? (
+        <div className={styles.modelMenu} role="listbox">
+          <VprModelRowList
+            entries={dropdownEntries}
+            selectedProvider={selectedModel?.provider}
+            selectedServiceId={selectedModel?.serviceId}
+            favoriteKeys={favorites}
+            selectOnly
+            pinnedPeerLabels={dropdownPins}
+            dense
+            onSelect={(provider, serviceId) => {
+              selectModelForNewChats(provider, serviceId);
+            }}
+            emptyLabel="No models discovered yet"
+            frameless
+          />
+          <button
+            type="button"
+            className={styles.modelMenuFooter}
+            onClick={() => {
+              setModelMenuOpen(false);
+              onSelectView?.('explore');
+            }}
+          >
+            <span>All models</span>
+            <HugeiconsIcon icon={ArrowRight02Icon} size={16} strokeWidth={2} />
+          </button>
+        </div>
+  ) : null;
+
+  const renderProfileRow = (profile: SystemProxyProfileSummary) => (
+    <button
+      key={profile.name}
+      type="button"
+      className={styles.toolRow}
+      disabled={connectingProfile !== null}
+      onClick={() => { void connectApp(profile.name); }}
+      title={`Connect ${profile.displayName}`}
+    >
+      <span className={styles.toolIdentity}>
+        {profile.iconDataUri && !isThemeAwareAppBrand(resolveBrandKey(profile.name, profile.displayName))
+          ? <img src={profile.iconDataUri} alt="" className={styles.appIcon} />
+          : <BrandIcon name={profile.name} hints={[profile.displayName]} size={20} />}
+        <span className={styles.toolLabel}>{profile.displayName}</span>
+      </span>
+      <span className={styles.toolConnect}>
+        {connectingProfile === profile.name ? 'Connecting...' : 'Connect'}
+      </span>
+    </button>
+  );
+
   return (
     <section className={`view view-vpr-home ${styles.view}`} role="tabpanel">
       {/* The hero is pinned outside the scroller — only the content below it
@@ -460,6 +527,60 @@ export function VprHomeView({ onSelectView }: Props) {
               : snap.connectBadge.label}
           </div>
 
+          {!hasConnectedApps ? (
+            /* Chat comes first: one composer card — prompt on top, model pill
+               and send below — so the first thing to do is press send. Hidden
+               once apps are connected; that variant leads with the chats. */
+            <div className={styles.heroAsk}>
+              <form
+                className={styles.composer}
+                onSubmit={(event) => { event.preventDefault(); submitDraft(); }}
+              >
+                <input
+                  className={styles.askInput}
+                  type="text"
+                  value={draft}
+                  placeholder="How can I help you today?"
+                  aria-label="How can I help you today?"
+                  onChange={(event) => setDraft(event.target.value)}
+                  // The suggestion is meant to be replaced as easily as sent.
+                  onFocus={(event) => { if (event.target.value === SUGGESTED_FIRST_PROMPT) event.target.select(); }}
+                />
+                <div className={styles.composerFooter}>
+                  <div className={styles.modelDropdownInline} ref={modelMenuRef}>
+                    <button
+                      type="button"
+                      className={styles.modelPill}
+                      onClick={() => setModelMenuOpen((open) => !open)}
+                      aria-haspopup="listbox"
+                      aria-expanded={modelMenuOpen}
+                      title="Change model for new chats"
+                    >
+                      {selectedModel && (
+                        <BrandIcon name={selectedModel.provider} hints={[selectedModel.label]} size={16} />
+                      )}
+                      <span className={styles.modelPillName}>{defaultModelLabel}</span>
+                      {modelIsFree && <span className={styles.freeTag}>Free</span>}
+                      {!modelIsFree && snap.defaultProvisional && (
+                        <span className={styles.searchingTag}>Finding free peers…</span>
+                      )}
+                      <HugeiconsIcon icon={ArrowDown01Icon} size={18} strokeWidth={2} className={styles.modelPillChevron} />
+                    </button>
+                    {modelMenu}
+                  </div>
+                  <button
+                    type="submit"
+                    className={`${styles.askSend}${draft === SUGGESTED_FIRST_PROMPT ? ` ${styles.askSendPing}` : ''}`}
+                    aria-label="Send message"
+                    title="Send message"
+                    disabled={draft.trim().length === 0}
+                  >
+                    <HugeiconsIcon icon={ArrowUp02Icon} size={22} strokeWidth={2} />
+                  </button>
+                </div>
+              </form>
+            </div>
+          ) : (
           <div className={styles.modelDropdown} ref={modelMenuRef}>
             <button
               type="button"
@@ -504,35 +625,9 @@ export function VprHomeView({ onSelectView }: Props) {
               </span>
               <HugeiconsIcon icon={ArrowDown01Icon} size={24} strokeWidth={2} className={styles.modelCardChevron} />
             </button>
-            {modelMenuOpen && (
-              <div className={styles.modelMenu} role="listbox">
-                <VprModelRowList
-                  entries={dropdownEntries}
-                  selectedProvider={selectedModel?.provider}
-                  selectedServiceId={selectedModel?.serviceId}
-                  favoriteKeys={favorites}
-                  selectOnly
-                  pinnedPeerLabels={dropdownPins}
-                  onSelect={(provider, serviceId) => {
-                    selectModelForNewChats(provider, serviceId);
-                  }}
-                  emptyLabel="No models discovered yet"
-                  frameless
-                />
-                <button
-                  type="button"
-                  className={styles.modelMenuFooter}
-                  onClick={() => {
-                    setModelMenuOpen(false);
-                    onSelectView?.('explore');
-                  }}
-                >
-                  <span>All models</span>
-                  <HugeiconsIcon icon={ArrowRight02Icon} size={16} strokeWidth={2} />
-                </button>
-              </div>
-            )}
+            {modelMenu}
           </div>
+          )}
         </div>
       </div>
       </div>
@@ -629,33 +724,8 @@ export function VprHomeView({ onSelectView }: Props) {
             </div>
           </div>
         ) : (
-        /* Ask + routed apps */
+        /* Routed apps + recent chats (the ask input lives in the hero) */
         <div className={styles.connectGroup}>
-          <h2 className={styles.connectHeading}>Routing to your existing apps or start chatting here</h2>
-
-          <form
-            className={styles.askForm}
-            onSubmit={(event) => { event.preventDefault(); submitDraft(); }}
-          >
-            <input
-              className={styles.askInput}
-              type="text"
-              value={draft}
-              placeholder="Ask anything. On any model..."
-              aria-label="Ask anything. On any model"
-              onChange={(event) => setDraft(event.target.value)}
-            />
-            <button
-              type="submit"
-              className={styles.askSend}
-              aria-label="Send message"
-              title="Send message"
-              disabled={draft.trim().length === 0}
-            >
-              <HugeiconsIcon icon={ArrowUp02Icon} size={24} strokeWidth={2} />
-            </button>
-          </form>
-
           {/* The connect pitch is for first-timers — once chats exist the
               user knows the flow, so only the "More apps" link (below the
               chats) remains. */}
@@ -678,26 +748,20 @@ export function VprHomeView({ onSelectView }: Props) {
                 </span>
                 <span className={styles.toolConnect}>Set up</span>
               </button>
-              {homePreviewProfiles.map((profile) => (
-                <button
-                  key={profile.name}
-                  type="button"
-                  className={styles.toolRow}
-                  disabled={connectingProfile !== null}
-                  onClick={() => { void connectApp(profile.name); }}
-                  title={`Connect ${profile.displayName}`}
-                >
-                  <span className={styles.toolIdentity}>
-                    {profile.iconDataUri && !isThemeAwareAppBrand(resolveBrandKey(profile.name, profile.displayName))
-                      ? <img src={profile.iconDataUri} alt="" className={styles.appIcon} />
-                      : <BrandIcon name={profile.name} hints={[profile.displayName]} size={20} />}
-                    <span className={styles.toolLabel}>{profile.displayName}</span>
-                  </span>
-                  <span className={styles.toolConnect}>
-                    {connectingProfile === profile.name ? 'Connecting...' : 'Connect'}
-                  </span>
-                </button>
-              ))}
+              {claudeProfile ? renderProfileRow(claudeProfile) : null}
+              <button
+                type="button"
+                className={styles.toolRow}
+                onClick={() => onSelectView?.('tools')}
+                title="Set up Cursor"
+              >
+                <span className={styles.toolIdentity}>
+                  <BrandIcon name="cursor" hints={['Cursor']} size={20} />
+                  <span className={styles.toolLabel}>Cursor</span>
+                </span>
+                <span className={styles.toolConnect}>Set up</span>
+              </button>
+              {homePreviewProfiles.map(renderProfileRow)}
             </div>
           </div>
           )}
