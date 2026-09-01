@@ -113,7 +113,7 @@ console.log(`WASH_TRADING_PRODUCTION_ANVIL_RESULT=${JSON.stringify({
   totalAuthenticatedChunks,
   totalGasUsed: totalGasUsed.toString(),
   elapsedSeconds: Math.round((Date.now() - startedAt) / 1000),
-  transactionMode: "base-fork-real-sp1-and-chainlink-blockhash-store",
+  transactionMode: "base-fork-real-sp1-and-authenticated-blockhash-store",
 })}`);
 
 async function deploy(relativeArtifact, constructorArguments) {

@@ -86,6 +86,63 @@ export function mergeBackfillRanges(ranges) {
   return merged;
 }
 
+export function decodeAnchorBitmap(bitmap, startBlock, count) {
+  const bytes = Buffer.from(String(bitmap).replace(/^0x/, ""), "hex");
+  if (bytes.length !== Math.ceil(count / 8)) throw new Error("anchor bitmap length mismatch");
+  const anchors = [];
+  for (let index = 0; index < count; ++index) {
+    if ((bytes[index >> 3] & (1 << (index & 7))) !== 0) anchors.push(startBlock + index);
+  }
+  return anchors;
+}
+
+export function findNextCatalogAnchor(anchorBlocks, startBlock, maximumDistance) {
+  let low = 0;
+  let high = anchorBlocks.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (anchorBlocks[middle] < startBlock) low = middle + 1;
+    else high = middle;
+  }
+  const anchorBlock = anchorBlocks[low];
+  if (anchorBlock === undefined || anchorBlock > startBlock + maximumDistance) {
+    throw new Error(`no catalog anchor found in [${startBlock}, ${startBlock + maximumDistance}]`);
+  }
+  return anchorBlock;
+}
+
+export function buildCatalogBackfillRanges(missingNumbers, anchorBlocks, maximumAnchorSearch) {
+  const ranges = [];
+  for (const blockNumber of missingNumbers) {
+    const current = ranges.at(-1);
+    if (current && blockNumber <= current.endBlock) {
+      current.requiredReferenceCount += 1;
+      continue;
+    }
+    const anchorBlock = findNextCatalogAnchor(anchorBlocks, blockNumber + 1, maximumAnchorSearch);
+    ranges.push({
+      startBlock: blockNumber,
+      endBlock: anchorBlock - 1,
+      anchorBlock,
+      requiredReferenceCount: 1,
+    });
+  }
+  return ranges;
+}
+
+export function buildTargetBitmap(blockNumbers, requiredReferences) {
+  const bitmap = new Uint8Array(Math.ceil(blockNumbers.length / 8));
+  const targets = [];
+  for (let index = 0; index < blockNumbers.length; ++index) {
+    const number = blockNumbers[index];
+    const blockHash = requiredReferences.get(number);
+    if (!blockHash) continue;
+    bitmap[index >> 3] |= 1 << (index & 7);
+    targets.push({ number, blockHash });
+  }
+  return { bitmap: `0x${Buffer.from(bitmap).toString("hex")}`, targets };
+}
+
 export class JsonRpcClient {
   constructor(url, { batchSize = 250, concurrency = 12, retries = 5 } = {}) {
     this.url = url;
@@ -142,7 +199,7 @@ export class JsonRpcClient {
   }
 }
 
-export async function readStoredBlockhashes(client, blockhashStore, numbers, progress) {
+export async function readStoredBlockhashes(client, blockhashStore, numbers, progress, { blockTag = "latest" } = {}) {
   const address = getAddress(blockhashStore);
   const values = new Map();
   let completed = 0;
@@ -150,12 +207,13 @@ export async function readStoredBlockhashes(client, blockhashStore, numbers, pro
     numbers,
     (number) => ({
       method: "eth_call",
-      params: [{ to: address, data: blockhashStoreInterface.encodeFunctionData("getBlockhash", [number]) }, "latest"],
+      params: [{ to: address, data: blockhashStoreInterface.encodeFunctionData("getBlockhash", [number]) }, blockTag],
     }),
     async (batch, results) => {
       for (let index = 0; index < batch.length; ++index) {
         const response = results[index];
-        if (response.error) values.set(batch[index], null);
+        if (isMissingBlockhashError(response.error)) values.set(batch[index], null);
+        else if (response.error) throw new Error(`getBlockhash(${batch[index]}): ${response.error.message}`);
         else values.set(batch[index], normalizeHash(blockhashStoreInterface.decodeFunctionResult("getBlockhash", response.result)[0]));
       }
       completed += batch.length;
@@ -163,6 +221,10 @@ export async function readStoredBlockhashes(client, blockhashStore, numbers, pro
     },
   );
   return values;
+}
+
+export function isMissingBlockhashError(error) {
+  return Number(error?.code) === 3 && String(error?.message ?? "").includes("blockhash not found in store");
 }
 
 export async function findNextStoredBlock(client, blockhashStore, startBlock, maximumDistance) {

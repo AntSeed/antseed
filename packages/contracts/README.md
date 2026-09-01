@@ -58,11 +58,12 @@ WASH_TRADING_ARTIFACT_DIR=/path/to/unified-development-artifacts \
 
 This test exercises the full local integration path but does not provide
 production cryptographic assurance. Production deployments must use a real SP1
-Groth16 proof and verifier plus the Base Chainlink BlockhashStore. A staged
-proof changes no seller result until every committed block-reference chunk has
-been authenticated. The registry stores the greatest proven wash-volume lower
-bound for each seller as `{provenWashVolume, evidenceDigest}`. Later proofs must
-strictly increase the seller's proven wash volume.
+Groth16 proof and verifier plus `AntseedSparseBlockhashStore`, whose historical
+hashes are verified backwards from Base Chainlink `BlockhashStore` anchors. A
+staged proof changes no seller result until every committed block-reference
+chunk has been authenticated. The registry stores the greatest proven
+wash-volume lower bound for each seller as `{provenWashVolume, evidenceDigest}`.
+Later proofs must strictly increase the seller's proven wash volume.
 
 Prepare the immutable constructor values from any seller proof produced by the
 pinned programs:
@@ -75,10 +76,18 @@ export WASH_TRADING_RECIPROCAL_PROGRAM_VKEY=$(jq -r .reciprocalProgramVKey "$SEL
 export HISTORICAL_PERIOD_START_BLOCK=$(jq -r .periodStartBlock "$SELLER_PROOF")
 export HISTORICAL_PERIOD_END_BLOCK=$(jq -r .periodEndBlock "$SELLER_PROOF")
 export CHAINLINK_BLOCKHASH_STORE=<base-chainlink-blockhash-store>
+export WASH_TRADING_BLOCKHASH_STORE=<deployed-antseed-sparse-blockhash-store>
 ```
 
-Set `SP1_VERIFIER` and `DEPLOYER_PRIVATE_KEY` separately, then run
-`forge script script/DeployWashTradingRegistry.s.sol --rpc-url <rpc> --broadcast`.
+Set `SP1_VERIFIER` and `DEPLOYER_PRIVATE_KEY` separately. Deploy the sparse
+store if it was not already deployed by the backfill executor, then deploy the
+registry:
+
+```bash
+forge script script/DeployWashTradingBlockhashStore.s.sol --rpc-url <rpc> --broadcast
+forge script script/DeployWashTradingRegistry.s.sol --rpc-url <rpc> --broadcast
+```
+
 After deployment, call `stageSellerProof`, submit each artifact chunk with
 `authenticateBlockReferences(proofId, ...)`, then call
 `finalizeSellerProof(proofId)`. The contract never adds claims onchain and never
@@ -86,20 +95,30 @@ accepts a lower or equal result.
 
 ### Backfill historical Base block hashes
 
-Production seller proofs authenticate every committed Base block hash against
-Chainlink's `BlockhashStore`. Generate a digest-pinned plan for only the hashes
-that the proof artifacts require. The planner may conservatively include blocks
-between required references so each range can be verified backwards from an
-already stored anchor:
+Production seller proofs authenticate every committed Base block hash against a
+sparse store anchored to Chainlink's `BlockhashStore`. Generate a digest-pinned
+plan containing the exact missing proof targets. Intermediate headers are still
+verified, but only bitmap-selected proof hashes are persisted:
 
 ```bash
 export BASE_RPC_URL=<base-archive-rpc-with-debug_getRawHeader>
 export WASH_TRADING_ARTIFACT_DIR=/path/to/production/sellers
+export CHAINLINK_ANCHOR_CATALOG=/path/to/chainlink-blockhash-anchor-catalog.json
 export BACKFILL_PLAN=/path/to/wash-trading-blockhash-backfill-plan.json
+
+export MIN_REQUIRED_BLOCK=$(jq -s 'map(.periodStartBlock) | min' "$WASH_TRADING_ARTIFACT_DIR"/*.json)
+export CURRENT_BASE_BLOCK=$(cast block-number --rpc-url "$BASE_RPC_URL")
+node scripts/enumerate-chainlink-blockhash-anchors.mjs \
+  --rpc-url "$BASE_RPC_URL" \
+  --start-block "$MIN_REQUIRED_BLOCK" \
+  --end-block "$CURRENT_BASE_BLOCK" \
+  --concurrency 4 \
+  --out "$CHAINLINK_ANCHOR_CATALOG"
 
 node scripts/plan-wash-trading-blockhash-backfill.mjs \
   --artifact-dir "$WASH_TRADING_ARTIFACT_DIR" \
   --rpc-url "$BASE_RPC_URL" \
+  --anchor-catalog "$CHAINLINK_ANCHOR_CATALOG" \
   --out "$BACKFILL_PLAN"
 
 jq '{digest, artifacts, liveCoverage, totals}' "$BACKFILL_PLAN"
@@ -112,7 +131,8 @@ node scripts/execute-wash-trading-blockhash-backfill.mjs \
   --plan "$BACKFILL_PLAN" \
   --rpc-url "$BASE_RPC_URL" \
   --header-rpc-url "$BASE_RPC_URL" \
-  --batch-size 100 \
+  --batch-size 200 \
+  --maximum-complete-ranges 64 \
   --header-rpc-batch-size 100 \
   --maximum-batches 1
 ```
@@ -127,7 +147,8 @@ node scripts/execute-wash-trading-blockhash-backfill.mjs \
   --plan "$BACKFILL_PLAN" \
   --rpc-url http://127.0.0.1:8555 \
   --header-rpc-url "$BASE_RPC_URL" \
-  --batch-size 100 \
+  --batch-size 200 \
+  --maximum-complete-ranges 64 \
   --header-rpc-batch-size 100 \
   --maximum-batches 1 \
   --execute \
@@ -144,7 +165,8 @@ node scripts/execute-wash-trading-blockhash-backfill.mjs \
   --plan "$BACKFILL_PLAN" \
   --rpc-url "$BASE_RPC_URL" \
   --header-rpc-url "$BASE_RPC_URL" \
-  --batch-size 100 \
+  --batch-size 200 \
+  --maximum-complete-ranges 64 \
   --header-rpc-batch-size 100 \
   --maximum-batches 1 \
   --execute \
@@ -152,11 +174,15 @@ node scripts/execute-wash-trading-blockhash-backfill.mjs \
   --approve-plan-digest "$BACKFILL_PLAN_DIGEST"
 ```
 
-The executor deploys `AntseedBlockhashStoreBatcher` once and stores its address
-and per-range cursors in `<plan>.checkpoint.json`. Never delete or replace that
-checkpoint during a live run. Backfilling does not submit seller proofs; after
-all ranges complete, stage, authenticate, and finalize the existing paid seller
-proof artifacts against the registry.
+The executor deploys `AntseedSparseBlockhashStore` once and stores its address,
+completed short ranges, and long-range cursors in `<plan>.checkpoint.json`.
+Independent short paths are packed into one transaction without permanent
+frontiers. Long paths retain an onchain frontier so another account can
+permissionlessly continue the same verified chain. Never delete or replace the
+checkpoint during a live run.
+Backfilling does not submit seller proofs; after all ranges complete, deploy the
+registry with the sparse-store address, then stage, authenticate, and finalize
+the existing paid seller proof artifacts.
 
 ## Contracts
 

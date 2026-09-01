@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildCatalogBackfillRanges,
+  buildTargetBitmap,
   clusterBlockNumbers,
+  decodeAnchorBitmap,
+  findNextCatalogAnchor,
+  isMissingBlockhashError,
   mergeBackfillRanges,
   normalizeHash,
   positiveInteger,
@@ -64,6 +69,30 @@ test("merges adjacent backfill ranges under the highest anchor", () => {
   ]);
 });
 
+test("decodes storage scanner bitmaps", () => {
+  assert.deepEqual(decodeAnchorBitmap("0x8501", 100, 10), [100, 102, 107, 108]);
+  assert.throws(() => decodeAnchorBitmap("0x01", 100, 9), /length mismatch/);
+});
+
+test("builds the exact union of nearest-anchor paths", () => {
+  const anchors = [15, 22, 40];
+  assert.equal(findNextCatalogAnchor(anchors, 13, 10), 15);
+  assert.deepEqual(buildCatalogBackfillRanges([10, 12, 16, 21, 30], anchors, 20), [
+    { startBlock: 10, endBlock: 14, anchorBlock: 15, requiredReferenceCount: 2 },
+    { startBlock: 16, endBlock: 21, anchorBlock: 22, requiredReferenceCount: 2 },
+    { startBlock: 30, endBlock: 39, anchorBlock: 40, requiredReferenceCount: 1 },
+  ]);
+  assert.throws(() => findNextCatalogAnchor(anchors, 23, 5), /no catalog anchor/);
+});
+
+test("builds a least-significant-bit target bitmap", () => {
+  const required = new Map([[12, hash("a")], [10, hash("b")]]);
+  assert.deepEqual(buildTargetBitmap([12, 11, 10], required), {
+    bitmap: "0x05",
+    targets: [{ number: 12, blockHash: hash("a") }, { number: 10, blockHash: hash("b") }],
+  });
+});
+
 test("pins plan approval to deterministic serialized content", () => {
   const plan = { version: 1, ranges: [{ startBlock: 10, endBlock: 20 }], live: false };
   assert.equal(stableDigest(plan), "0x829cf5a231653587c5c5efc917652e00367f255b71d51d2109cbd1527cadb609");
@@ -75,4 +104,10 @@ test("validates numeric and bytes32 inputs", () => {
   assert.throws(() => positiveInteger("0", "batch size"), /must be a positive integer/);
   assert.equal(normalizeHash(hash("A")), hash("a"));
   assert.throws(() => normalizeHash("0x1234"), /invalid bytes32/);
+});
+
+test("distinguishes missing blockhash reverts from transient RPC failures", () => {
+  assert.equal(isMissingBlockhashError({ code: 3, message: "execution reverted: blockhash not found in store" }), true);
+  assert.equal(isMissingBlockhashError({ code: -32005, message: "compute units per second capacity exceeded" }), false);
+  assert.equal(isMissingBlockhashError(null), false);
 });

@@ -4,7 +4,6 @@ pragma solidity ^0.8.24;
 import "forge-std/Test.sol";
 
 import { AntseedWashTradingRegistry } from "../integrity/AntseedWashTradingRegistry.sol";
-import { AntseedBlockhashStoreBatcher } from "../integrity/AntseedBlockhashStoreBatcher.sol";
 import { IAntseedWashTradingRegistry } from "../interfaces/IAntseedWashTradingRegistry.sol";
 import { ISP1Verifier } from "../interfaces/ISP1Verifier.sol";
 
@@ -35,20 +34,6 @@ contract MockBlockhashStore {
     }
 
     function storeVerifyHeader(uint256, bytes calldata) external { }
-}
-
-contract RecordingBlockhashStore {
-    uint256[] public blockNumbers;
-    bytes32[] public headerDigests;
-
-    function getBlockhash(uint256) external pure returns (bytes32) {
-        return bytes32(0);
-    }
-
-    function storeVerifyHeader(uint256 blockNumber, bytes calldata header) external {
-        blockNumbers.push(blockNumber);
-        headerDigests.push(keccak256(header));
-    }
 }
 
 contract AntseedWashTradingRegistryTest is Test {
@@ -240,47 +225,5 @@ contract AntseedWashTradingRegistryTest is Test {
 
     function _leaf(uint32 index, uint64 number, bytes32 blockHash) internal pure returns (bytes32) {
         return keccak256(abi.encode(index, _refs(number, blockHash)));
-    }
-}
-
-contract AntseedBlockhashStoreBatcherTest is Test {
-    RecordingBlockhashStore internal store;
-    AntseedBlockhashStoreBatcher internal batcher;
-
-    function setUp() public {
-        store = new RecordingBlockhashStore();
-        batcher = new AntseedBlockhashStoreBatcher(address(store));
-    }
-
-    function test_forwardsStrictlyDescendingHeaderBatch() public {
-        uint256[] memory numbers = new uint256[](3);
-        numbers[0] = 12;
-        numbers[1] = 11;
-        numbers[2] = 10;
-        bytes[] memory headers = new bytes[](3);
-        headers[0] = hex"aa";
-        headers[1] = hex"bb";
-        headers[2] = hex"cc";
-
-        batcher.storeVerifyHeaders(numbers, headers);
-
-        assertEq(store.blockNumbers(0), 12);
-        assertEq(store.blockNumbers(1), 11);
-        assertEq(store.blockNumbers(2), 10);
-        assertEq(store.headerDigests(0), keccak256(headers[0]));
-        assertEq(store.headerDigests(1), keccak256(headers[1]));
-        assertEq(store.headerDigests(2), keccak256(headers[2]));
-    }
-
-    function test_rejectsNonDescendingBatch() public {
-        uint256[] memory numbers = new uint256[](2);
-        numbers[0] = 10;
-        numbers[1] = 11;
-        bytes[] memory headers = new bytes[](2);
-        headers[0] = hex"aa";
-        headers[1] = hex"bb";
-
-        vm.expectRevert(AntseedBlockhashStoreBatcher.BlockNumbersNotStrictlyDescending.selector);
-        batcher.storeVerifyHeaders(numbers, headers);
     }
 }
