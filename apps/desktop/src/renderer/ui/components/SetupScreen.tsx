@@ -149,6 +149,8 @@ export function SetupScreen() {
           <div className={styles.brand}>
             <VprMark size={64} color="var(--accent-green)" />
           </div>
+          <SetupAppPreview />
+
           {/* Logo marquee: the families of models on the network, drifting by
               while discovery runs — the wait has something alive to look at. */}
           <div className={styles.marquee} aria-hidden="true">
@@ -163,7 +165,6 @@ export function SetupScreen() {
 
           {/* The app itself as the loader: a miniature VPR window cycling
               Home → Models → Chat, filling in with real discovered models. */}
-          <SetupAppPreview />
 
           {/* networkAlert carries a startup grace period, so this only appears
               once the network — not slow bootstrap — is the problem. */}

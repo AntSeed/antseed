@@ -50,7 +50,7 @@
 .marquee {
   width: 100%;
   overflow: hidden;
-  margin-bottom: 18px;
+  margin-top: 18px;
   /* Soft edges so logos fade in/out instead of being clipped. */
   mask-image: linear-gradient(to right, transparent, #000 15%, #000 85%, transparent);
   -webkit-mask-image: linear-gradient(to right, transparent, #000 15%, #000 85%, transparent);

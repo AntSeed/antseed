@@ -130,12 +130,7 @@ export function AppShell() {
     }
   }, [snap.appSetupStatusKnown, snap.appSetupNeeded, snap.appSetupComplete, snap.freeDefaultReady, hasServices, setupDismissed]);
 
-  // Dev-only preview hook: `ANTSEED_DESKTOP_FORCE_SETUP=1 pnpm run dev` pins
-  // the setup screen so it can be styled without a fresh profile.
-  const forceSetup = import.meta.env.DEV
-    && typeof window !== 'undefined'
-    && new URLSearchParams(window.location.search).get('forceSetup') === '1';
-  const showSetup = setupVisible || forceSetup;
+  const showSetup = setupVisible;
 
   useEffect(() => {
     return window.antseedDesktop?.onNavigateView?.((viewName) => {

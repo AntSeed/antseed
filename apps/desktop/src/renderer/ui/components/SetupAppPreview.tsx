@@ -52,6 +52,14 @@ const SCENE_CAPTIONS = [
 export function SetupAppPreview() {
   return (
     <div className={styles.walkthrough} aria-hidden="true">
+      {/* Caption line above the frame, one entry per scene, on the same clock. */}
+      <div className={styles.captions}>
+        {SCENE_CAPTIONS.map((caption, index) => (
+          <span key={caption} className={styles.caption} style={{ animationDelay: `${index * 4}s` }}>
+            {caption}
+          </span>
+        ))}
+      </div>
       <div className={styles.frame}>
         {/* The rail's active tab follows the scene on stage: VPR → Models →
             Apps → Chat, on the same 16s clock as the scenes. */}
@@ -142,14 +150,6 @@ export function SetupAppPreview() {
         </div>
       </div>
 
-      {/* Caption line, one entry per scene, cycling on the same clock. */}
-      <div className={styles.captions}>
-        {SCENE_CAPTIONS.map((caption, index) => (
-          <span key={caption} className={styles.caption} style={{ animationDelay: `${index * 4}s` }}>
-            {caption}
-          </span>
-        ))}
-      </div>
     </div>
   );
 }
