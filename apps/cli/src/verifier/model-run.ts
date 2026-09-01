@@ -679,6 +679,7 @@ async function executeProxyProbeBatch(
   let lastRequestId: string | null = null
   const attemptCosts = [] as NonNullable<ProxyAuditEvidenceExchangeV1['attemptCosts']>
   let responseAuthRetryCount = 0
+  let blankTokenExhaustionRetryCount = 0
   const fetchFn = context.fetchFn ?? fetch
   const sleepFn = context.sleepFn ?? sleep
   const randomFn = context.randomFn ?? Math.random
@@ -785,6 +786,14 @@ async function executeProxyProbeBatch(
         responseAuthRetryCount += 1
         lastFailure = responseAuth.failureReason ?? 'successful response lacked verified ResponseAuth'
         lastOutcomeReason = responseAuthReason(responseAuth.status, lastFailure, requestId)
+        await sleepWithSignal(PROBE_RETRY_BASE_DELAY_MS, context.signal, sleepFn)
+        continue
+      }
+      if (responseAuth.status === 'verified'
+        && blankTokenExhaustionRetryCount < 1
+        && attemptCount < PROBE_REQUEST_ATTEMPTS
+        && isBlankReasoningTokenExhaustion(body, responseBody, completion, answers)) {
+        blankTokenExhaustionRetryCount += 1
         await sleepWithSignal(PROBE_RETRY_BASE_DELAY_MS, context.signal, sleepFn)
         continue
       }
@@ -1264,6 +1273,41 @@ function extractCompletionText(body: Uint8Array): string | null {
     return extractCompletionFromJson(JSON.parse(text) as Record<string, unknown>)
   } catch {
     return extractCompletionFromSse(text)
+  }
+}
+
+function isBlankReasoningTokenExhaustion(
+  requestBody: Uint8Array,
+  responseBody: Uint8Array,
+  completion: string | null,
+  answers: Array<number | null>,
+): boolean {
+  if ((completion ?? '').trim() !== '' || answers.some((answer) => answer !== null)) return false
+  try {
+    const request = JSON.parse(responseText(requestBody)) as {
+      max_tokens?: unknown
+      max_completion_tokens?: unknown
+    }
+    const response = JSON.parse(responseText(responseBody)) as {
+      choices?: Array<{ finish_reason?: unknown }>
+      usage?: {
+        completion_tokens?: unknown
+        completion_tokens_details?: { reasoning_tokens?: unknown }
+      }
+    }
+    const requestedMaxTokens = request.max_completion_tokens ?? request.max_tokens
+    const completionTokens = response.usage?.completion_tokens
+    const reasoningTokens = response.usage?.completion_tokens_details?.reasoning_tokens
+    return typeof requestedMaxTokens === 'number'
+      && Number.isFinite(requestedMaxTokens)
+      && requestedMaxTokens > 0
+      && response.choices?.[0]?.finish_reason === 'length'
+      && typeof completionTokens === 'number'
+      && typeof reasoningTokens === 'number'
+      && completionTokens >= requestedMaxTokens
+      && reasoningTokens >= completionTokens
+  } catch {
+    return false
   }
 }
 

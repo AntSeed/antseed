@@ -101,7 +101,8 @@ async function runTarget(
   count: number,
   answerMode: 'valid' | 'out-of-range' | 'all-wrong' | 'partial-malformed' | 'malformed'
     | 'malformed-first-batch' | 'empty-responses' | 'content-filter' | 'sse' | 'transport-failure' | 'hanging'
-    | 'rate-limited' | 'semantic-unavailable' = 'valid',
+    | 'rate-limited' | 'semantic-unavailable' | 'blank-token-exhaustion'
+    | 'persistent-blank-token-exhaustion' = 'valid',
   transientFailures = 0,
   authMode: 'verified' | 'missing' | 'unverified' | 'wrong-request' | 'wrong-seller' | 'wrong-service' = 'verified',
   includeCost = true,
@@ -113,6 +114,7 @@ async function runTarget(
   let requestCount = 0
   let failureCount = 0
   let changedAnswer = false
+  let returnedBlankTokenExhaustion = false
   let slowBatchCompleted = false
   let finalBatchStartedAfterSlow = false
   const requests: Array<{ headers: RequestInit['headers']; body: string }> = []
@@ -174,6 +176,20 @@ async function runTarget(
       'x-antseed-provider': 'test',
       'x-antseed-service': 'GPT-5.6-SOL',
     } : {}
+    if ((answerMode === 'blank-token-exhaustion' || answerMode === 'persistent-blank-token-exhaustion')
+      && prompt.includes('test probe 1 value')
+      && (answerMode === 'persistent-blank-token-exhaustion' || !returnedBlankTokenExhaustion)) {
+      returnedBlankTokenExhaustion = true
+      return Response.json({
+        choices: [{ message: { content: '' }, finish_reason: 'length' }],
+        usage: {
+          completion_tokens: 1600,
+          completion_tokens_details: { reasoning_tokens: 1600 },
+        },
+      }, {
+        headers: { 'x-antseed-request-id': requestId, ...telemetryHeaders },
+      })
+    }
     if (answerMode === 'sse') {
       return new Response([
         'event: response.output_text.delta',
@@ -486,6 +502,31 @@ test('proxy runtime retries transient failures', async () => {
   assert.equal(run.evidence.exchanges[0]?.attemptCount, 3)
 })
 
+test('proxy runtime retries one verified blank reasoning-token exhaustion', async () => {
+  const run = await runTarget(100, 'blank-token-exhaustion')
+  const firstExchange = run.evidence.exchanges[0]
+  const firstBatchRequests = run.requests.filter((request) => request.body.includes('test probe 1 value'))
+
+  assert.equal(run.result.status, 'SAME')
+  assert.equal(run.requestCount, 11)
+  assert.equal(firstExchange?.attemptCount, 2)
+  assert.equal(firstExchange?.requestIds.length, 2)
+  assert.notEqual(firstExchange?.requestIds[0], firstExchange?.requestIds[1])
+  assert.equal(firstExchange?.attemptCosts?.length, 2)
+  assert.equal(firstExchange?.responseAuth.status, 'verified')
+  assert.equal(firstBatchRequests.length, 2)
+  assert.equal(firstBatchRequests[0]?.body, firstBatchRequests[1]?.body)
+})
+
+test('proxy runtime retries persistent blank reasoning-token exhaustion only once', async () => {
+  const run = await runTarget(100, 'persistent-blank-token-exhaustion')
+
+  assert.equal(run.requestCount, 11)
+  assert.equal(run.evidence.exchanges[0]?.attemptCount, 2)
+  assert.equal(run.evidence.exchanges[0]?.requestIds.length, 2)
+  assert.equal(run.evidence.exchanges[0]?.attemptCosts?.length, 2)
+})
+
 test('stale model advertisement skips after one model-not-found response', async () => {
   const run = await runSkippedTarget(Response.json({
     error: {
@@ -546,6 +587,8 @@ for (const answerMode of ['malformed', 'empty-responses', 'content-filter'] as c
     assert.equal(run.result.outcomeReason?.code, 'malformed_output')
     assert.equal(run.result.outcomeReason?.affectedBatchCount, 10)
     assert.equal(run.result.outcomeReason?.nextAction, 'seller must return parseable output')
+    assert.equal(run.requestCount, 10)
+    assert.equal(run.evidence.exchanges.every((exchange) => exchange.attemptCount === 1), true)
     assert.equal(run.evidence.exchanges.every((exchange) => (
       exchange.status === 'succeeded'
       && exchange.outcomeReason?.code === 'malformed_output'
