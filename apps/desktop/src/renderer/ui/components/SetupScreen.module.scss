@@ -67,7 +67,7 @@
 /* The track holds the logo list twice; sliding by half loops seamlessly. */
 @keyframes marquee-drift {
   from { transform: translateX(0); }
-  to   { transform: translateX(calc(-50% - 14px)); }
+  to   { transform: translateX(-50%); }
 }
 
 .marqueeLogo {
@@ -86,65 +86,6 @@
   .marqueeTrack {
     animation: none;
   }
-}
-
-/* ------------------------------------------------------------------ */
-/*  Trust cards — what the user gets, with live numbers as they land   */
-/* ------------------------------------------------------------------ */
-
-.trustList {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: 100%;
-  text-align: left;
-}
-
-.trustCard {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-}
-
-.trustIcon {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  background: rgba(var(--accent-green-rgb), 0.1);
-  color: var(--accent-green);
-}
-
-.trustText {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.trustTitle {
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 18px;
-  color: var(--text-primary);
-}
-
-.trustDetail {
-  font-size: 12px;
-  line-height: 16px;
-  color: var(--text-muted);
-  animation: rise-in 0.35s ease;
-}
-
-.trustDetailLive {
-  color: var(--text-secondary);
 }
 
 /* ------------------------------------------------------------------ */
