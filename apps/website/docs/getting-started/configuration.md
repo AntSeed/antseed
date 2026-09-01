@@ -278,6 +278,21 @@ antseed config seller add-service openai flux.1-schnell \
   --unit-billing-models '{"openai-images":{"version":1,"components":[{"unit":"output_images","priceUsd":0.003}]}}'
 ```
 
+The testing-only `openai-responses` provider treats an aliased service whose id
+ends in `-fast` as OpenAI Fast processing. Configure it with the existing
+service command:
+
+```bash
+antseed config seller add-service chatgpt gpt-5.6-sol-fast \
+  --upstream gpt-5.6-sol \
+  --input 10 --output 40 \
+  --categories chat,coding,fast
+```
+
+The provider rewrites the advertised service to `gpt-5.6-sol` and forces
+`service_tier: "priority"`. Subscription-backed providers remain for testing
+and development only; do not resell raw subscription access.
+
 The interactive `antseed seller setup` flow builds the capabilities object for you with one question per field, tailored to the service's protocol: image models are asked about input modalities and supported request parameters (image output is announced automatically), text models about context window, modalities, reasoning, tool use, structured output, and supported parameters. Answer `y` at the capabilities prompt, or paste a JSON object there to skip the guided flow. Unit billing models are still entered as JSON. The CLI serializes both into plugin runtime config. Seller startup warns when unit billing is configured for a plugin that does not declare support.
 
 To remove one:
