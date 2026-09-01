@@ -555,7 +555,9 @@ export function createInitialUiState(): RendererUiState {
     chatConversationsLoaded: false,
     chatProxyPort: 0,
     chatProxyOnline: false,
-    chatPanelExpanded: false,
+    // Chat opens wide (standard preset) with the conversation list showing;
+    // the in-view toggle collapses it to the thin panel.
+    chatPanelExpanded: true,
     chatMessages: [],
     chatStreamingMessage: null,
     chatSending: false,
