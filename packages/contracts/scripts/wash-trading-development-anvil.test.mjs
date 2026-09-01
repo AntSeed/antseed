@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -11,25 +10,20 @@ if (!process.env.LOOP_PROOF_DIR) {
   throw new Error("LOOP_PROOF_DIR must point to the loop-proof checkout");
 }
 const proofDirectory = resolve(process.env.LOOP_PROOF_DIR);
+const artifactDirectory = resolve(
+  process.env.WASH_TRADING_ARTIFACT_DIR ?? resolve(proofDirectory, "out", "development-proof-artifacts"),
+);
 
-test("complete 26-claim development aggregate submits end-to-end on Anvil", { timeout: 900_000 }, async (context) => {
-  const artifact = resolve(proofDirectory, "out", "approved-development-proofs", "aggregate-proof.json");
-  const outputDirectory = await mkdtemp(resolve(tmpdir(), "antseed-wash-development-"));
-  const calldataArtifact = resolve(outputDirectory, "submit-historical-aggregate-calldata.json");
-  await run("node", [
-    "scripts/generate-aggregate-calldata.mjs",
-    "--aggregate", artifact,
-    "--output", calldataArtifact,
-  ], proofDirectory);
-  const generated = JSON.parse(await readFile(artifact, "utf8"));
-  const generatedCalldata = JSON.parse(await readFile(calldataArtifact, "utf8"));
+test("development seller proof submits end-to-end on Anvil", { timeout: 900_000 }, async (context) => {
+  const artifactPath = process.env.WASH_TRADING_SELLER_PROOF
+    ? resolve(process.env.WASH_TRADING_SELLER_PROOF)
+    : await firstSellerArtifact(resolve(artifactDirectory, "sellers"));
+  const generated = JSON.parse(await readFile(artifactPath, "utf8"));
+  assert.equal(generated.version, 2);
+  assert.equal(generated.kind, "antseed-wash-trading-seller-proof");
   assert.equal(generated.securityMode, "development");
-  assert.equal(generated.childCount, 26);
-  assert.equal(generated.sourceClaimCount, 26);
-  assert.equal(generated.sellerCount, 50);
-  assert.equal(generated.provenWashVolumeRaw, "76636051035");
-  assert.equal(generatedCalldata.callSignature, "submitHistoricalAggregate(bytes,bytes)");
-  assert.equal(generatedCalldata.calldata.slice(0, 10), "0x2a64a7e6");
+  assert.ok(generated.childCount >= 1);
+  assert.ok(BigInt(generated.provenWashVolumeRaw) > 0n);
 
   await run("forge", [
     "build",
@@ -48,8 +42,7 @@ test("complete 26-claim development aggregate submits end-to-end on Anvil", { ti
 
   const output = await run("node", [
     "scripts/submit-wash-trading-development-anvil.mjs",
-    "--artifact", artifact,
-    "--calldata-artifact", calldataArtifact,
+    "--artifact", artifactPath,
     "--rpc-url", rpcUrl,
     "--submit-development",
   ], contractsDirectory);
@@ -57,13 +50,23 @@ test("complete 26-claim development aggregate submits end-to-end on Anvil", { ti
   const resultLine = output.split("\n").find((line) => line.startsWith(marker));
   assert.ok(resultLine, `missing development result in output:\n${output}`);
   const result = JSON.parse(resultLine.slice(marker.length));
-  assert.equal(result.childCount, 26);
-  assert.equal(result.sourceClaimCount, 26);
-  assert.equal(result.sellerCount, 50);
-  assert.equal(result.totalProvenWashVolumeRaw, "76636051035");
-  assert.ok(BigInt(result.gasUsed) > 0n);
-  assert.equal(result.transactionMode, "single-historical-aggregate");
+  assert.equal(result.seller.toLowerCase(), generated.seller.toLowerCase());
+  assert.equal(result.provenWashVolumeRaw, generated.provenWashVolumeRaw);
+  assert.equal(result.childCount, generated.childCount);
+  assert.equal(result.authenticatedBlockReferenceCount, generated.blockReferenceCount);
+  assert.equal(result.blockAuthenticationChunkCount, generated.blockAuthenticationChunkCount);
+  assert.ok(BigInt(result.submissionGasUsed) > 0n);
+  assert.ok(BigInt(result.authenticationGasUsed) > 0n);
+  assert.ok(BigInt(result.finalizationGasUsed) > 0n);
+  assert.equal(result.transactionMode, "staged-seller-proof-with-block-authentication");
 });
+
+async function firstSellerArtifact(directory) {
+  const { readdir } = await import("node:fs/promises");
+  const files = (await readdir(directory)).filter((name) => name.endsWith(".json")).sort();
+  if (files.length === 0) throw new Error(`no seller proof artifacts in ${directory}`);
+  return resolve(directory, files[0]);
+}
 
 async function waitForRpc(rpcUrl, child) {
   for (let attempt = 0; attempt < 100; attempt += 1) {

@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Script.sol";
 
-import { AntseedWashTradingRegistry } from "../integrity/AntseedWashTradingRegistry.sol";
+import {AntseedWashTradingRegistry} from "../integrity/AntseedWashTradingRegistry.sol";
 
 contract DeployWashTradingRegistry is Script {
     function run() external returns (AntseedWashTradingRegistry registry) {
@@ -12,17 +12,15 @@ contract DeployWashTradingRegistry is Script {
         vm.startBroadcast(deployerPrivateKey);
         registry = new AntseedWashTradingRegistry(
             vm.envAddress("SP1_VERIFIER"),
-            vm.envBytes32("HISTORICAL_AGGREGATOR_PROGRAM_VKEY"),
-            vm.envBytes32("HISTORICAL_REPORT_ROOT"),
-            vm.envBytes32("HISTORICAL_MANIFEST_DIGEST"),
+            vm.envAddress("CHAINLINK_BLOCKHASH_STORE"),
+            vm.envBytes32("WASH_TRADING_SELLER_AGGREGATOR_PROGRAM_VKEY"),
+            vm.envBytes32("WASH_TRADING_CLOSED_LOOP_PROGRAM_VKEY"),
+            vm.envBytes32("WASH_TRADING_RECIPROCAL_PROGRAM_VKEY"),
             uint64(vm.envUint("HISTORICAL_PERIOD_START_BLOCK")),
-            uint64(vm.envUint("HISTORICAL_PERIOD_END_BLOCK")),
-            uint32(vm.envUint("HISTORICAL_SOURCE_CLAIM_COUNT")),
-            uint32(vm.envUint("HISTORICAL_SELLER_COUNT")),
-            uint128(vm.envUint("HISTORICAL_TOTAL_PROVEN_WASH_VOLUME"))
+            uint64(vm.envUint("HISTORICAL_PERIOD_END_BLOCK"))
         );
         vm.stopBroadcast();
 
-        console.log("HistoricalWashTradingRegistry:", address(registry));
+        console.log("AntseedWashTradingRegistry:", address(registry));
     }
 }

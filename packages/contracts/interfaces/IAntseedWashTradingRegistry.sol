@@ -2,19 +2,33 @@
 pragma solidity ^0.8.24;
 
 interface IAntseedWashTradingRegistry {
-    function submitHistoricalAggregate(bytes calldata publicValues, bytes calldata proofBytes) external;
+    struct BlockRef {
+        uint64 number;
+        bytes32 blockHash;
+    }
 
-    function historicalResultSubmitted() external view returns (bool);
-    function aggregatorProgramVKey() external view returns (bytes32);
-    function reportRoot() external view returns (bytes32);
-    function manifestDigest() external view returns (bytes32);
+    function stageSellerProof(bytes calldata publicValues, bytes calldata proofBytes)
+        external
+        returns (bytes32 proofId);
+    function authenticateBlockReferences(
+        bytes32 proofId,
+        uint32 chunkIndex,
+        BlockRef[] calldata references,
+        bytes32[] calldata proof
+    ) external;
+    function finalizeSellerProof(bytes32 proofId) external;
+
+    function sellerAggregatorProgramVKey() external view returns (bytes32);
+    function closedLoopProgramVKey() external view returns (bytes32);
+    function reciprocalProgramVKey() external view returns (bytes32);
     function periodStartBlock() external view returns (uint64);
     function periodEndBlock() external view returns (uint64);
-    function expectedSourceClaimCount() external view returns (uint32);
-    function expectedSellerCount() external view returns (uint32);
-    function expectedTotalProvenWashVolume() external view returns (uint128);
-    function totalProvenWashVolume() external view returns (uint128);
-    function blockReferenceCount() external view returns (uint32);
+    function proofStaged(bytes32 proofId) external view returns (bool);
+    function proofFinalized(bytes32 proofId) external view returns (bool);
+    function proofAuthenticatedBlockReferenceCount(bytes32 proofId) external view returns (uint32);
+    function proofAuthenticatedBlockChunkCount(bytes32 proofId) external view returns (uint32);
+    function proofBlockChunkAuthenticated(bytes32 proofId, uint32 chunkIndex) external view returns (bool);
     function provenWashVolume(address seller) external view returns (uint128);
+    function sellerEvidenceDigest(address seller) external view returns (bytes32);
     function isProvenWashTrader(address seller) external view returns (bool);
 }

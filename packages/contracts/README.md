@@ -44,37 +44,119 @@ cd packages/node
 forge test
 ```
 
-Submit the complete development-only 26-claim historical aggregate from the
-loop-proof checkout through a digest-pinned verifier to the one-shot historical
-registry on Anvil:
+Submit a development-only seller proof from the loop-proof checkout through a
+digest-pinned verifier to the permissionless historical registry on Anvil. The
+test stages one seller proof, authenticates every committed evidence block
+through a local BlockhashStore mock, finalizes the result, and checks its wash
+volume and evidence digest:
 
 ```bash
 LOOP_PROOF_DIR=/path/to/loop-proof \
+WASH_TRADING_ARTIFACT_DIR=/path/to/unified-development-artifacts \
   node --test scripts/wash-trading-development-anvil.test.mjs
 ```
 
 This test exercises the full local integration path but does not provide
 production cryptographic assurance. Production deployments must use a real SP1
-Groth16 proof and verifier. The historical registry records seller addresses and
-proven wash volume only; ongoing epoch submissions and penalties require a
-separate future registry.
+Groth16 proof and verifier plus the Base Chainlink BlockhashStore. A staged
+proof changes no seller result until every committed block-reference chunk has
+been authenticated. The registry stores the greatest proven wash-volume lower
+bound for each seller as `{provenWashVolume, evidenceDigest}`. Later proofs must
+strictly increase the seller's proven wash volume.
 
-Prepare the immutable constructor values from the final aggregate artifact:
+Prepare the immutable constructor values from any seller proof produced by the
+pinned programs:
 
 ```bash
-AGGREGATE=/path/to/loop-proof/out/production/aggregate-proof.json
-export HISTORICAL_AGGREGATOR_PROGRAM_VKEY=$(jq -r .aggregatorProgramVKey "$AGGREGATE")
-export HISTORICAL_REPORT_ROOT=$(jq -r .reportRoot "$AGGREGATE")
-export HISTORICAL_MANIFEST_DIGEST=$(jq -r .manifestDigest "$AGGREGATE")
-export HISTORICAL_PERIOD_START_BLOCK=$(jq -r .periodStartBlock "$AGGREGATE")
-export HISTORICAL_PERIOD_END_BLOCK=$(jq -r .periodEndBlock "$AGGREGATE")
-export HISTORICAL_SOURCE_CLAIM_COUNT=$(jq -r .sourceClaimCount "$AGGREGATE")
-export HISTORICAL_SELLER_COUNT=$(jq -r .sellerCount "$AGGREGATE")
-export HISTORICAL_TOTAL_PROVEN_WASH_VOLUME=$(jq -r .provenWashVolumeRaw "$AGGREGATE")
+SELLER_PROOF=/path/to/loop-proof/out/production/sellers/0x....json
+export WASH_TRADING_SELLER_AGGREGATOR_PROGRAM_VKEY=$(jq -r .aggregatorProgramVKey "$SELLER_PROOF")
+export WASH_TRADING_CLOSED_LOOP_PROGRAM_VKEY=$(jq -r .closedLoopProgramVKey "$SELLER_PROOF")
+export WASH_TRADING_RECIPROCAL_PROGRAM_VKEY=$(jq -r .reciprocalProgramVKey "$SELLER_PROOF")
+export HISTORICAL_PERIOD_START_BLOCK=$(jq -r .periodStartBlock "$SELLER_PROOF")
+export HISTORICAL_PERIOD_END_BLOCK=$(jq -r .periodEndBlock "$SELLER_PROOF")
+export CHAINLINK_BLOCKHASH_STORE=<base-chainlink-blockhash-store>
 ```
 
 Set `SP1_VERIFIER` and `DEPLOYER_PRIVATE_KEY` separately, then run
 `forge script script/DeployWashTradingRegistry.s.sol --rpc-url <rpc> --broadcast`.
+After deployment, call `stageSellerProof`, submit each artifact chunk with
+`authenticateBlockReferences(proofId, ...)`, then call
+`finalizeSellerProof(proofId)`. The contract never adds claims onchain and never
+accepts a lower or equal result.
+
+### Backfill historical Base block hashes
+
+Production seller proofs authenticate every committed Base block hash against
+Chainlink's `BlockhashStore`. Generate a digest-pinned plan for only the hashes
+that the proof artifacts require. The planner may conservatively include blocks
+between required references so each range can be verified backwards from an
+already stored anchor:
+
+```bash
+export BASE_RPC_URL=<base-archive-rpc-with-debug_getRawHeader>
+export WASH_TRADING_ARTIFACT_DIR=/path/to/production/sellers
+export BACKFILL_PLAN=/path/to/wash-trading-blockhash-backfill-plan.json
+
+node scripts/plan-wash-trading-blockhash-backfill.mjs \
+  --artifact-dir "$WASH_TRADING_ARTIFACT_DIR" \
+  --rpc-url "$BASE_RPC_URL" \
+  --out "$BACKFILL_PLAN"
+
+jq '{digest, artifacts, liveCoverage, totals}' "$BACKFILL_PLAN"
+```
+
+Verify the first batch without sending a transaction:
+
+```bash
+node scripts/execute-wash-trading-blockhash-backfill.mjs \
+  --plan "$BACKFILL_PLAN" \
+  --rpc-url "$BASE_RPC_URL" \
+  --header-rpc-url "$BASE_RPC_URL" \
+  --batch-size 100 \
+  --header-rpc-batch-size 100 \
+  --maximum-batches 1
+```
+
+Test the exact transaction path against a Base-forked Anvil before live use:
+
+```bash
+anvil --fork-url "$BASE_RPC_URL" --port 8555
+
+export BACKFILL_PLAN_DIGEST=$(jq -r .digest "$BACKFILL_PLAN")
+node scripts/execute-wash-trading-blockhash-backfill.mjs \
+  --plan "$BACKFILL_PLAN" \
+  --rpc-url http://127.0.0.1:8555 \
+  --header-rpc-url "$BASE_RPC_URL" \
+  --batch-size 100 \
+  --header-rpc-batch-size 100 \
+  --maximum-batches 1 \
+  --execute \
+  --approve-plan-digest "$BACKFILL_PLAN_DIGEST"
+```
+
+Live Base execution additionally requires `BACKFILL_PRIVATE_KEY` and the
+explicit `--allow-live` guard. Start with one batch, inspect the receipt and
+checkpoint, then repeat the same command to resume:
+
+```bash
+export BACKFILL_PRIVATE_KEY=<funded-base-private-key>
+node scripts/execute-wash-trading-blockhash-backfill.mjs \
+  --plan "$BACKFILL_PLAN" \
+  --rpc-url "$BASE_RPC_URL" \
+  --header-rpc-url "$BASE_RPC_URL" \
+  --batch-size 100 \
+  --header-rpc-batch-size 100 \
+  --maximum-batches 1 \
+  --execute \
+  --allow-live \
+  --approve-plan-digest "$BACKFILL_PLAN_DIGEST"
+```
+
+The executor deploys `AntseedBlockhashStoreBatcher` once and stores its address
+and per-range cursors in `<plan>.checkpoint.json`. Never delete or replace that
+checkpoint during a live run. Backfilling does not submit seller proofs; after
+all ranges complete, stage, authenticate, and finalize the existing paid seller
+proof artifacts against the registry.
 
 ## Contracts
 

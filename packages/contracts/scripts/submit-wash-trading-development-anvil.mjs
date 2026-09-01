@@ -11,20 +11,18 @@ const value = (flag) => {
   return index < 0 ? null : args[index + 1];
 };
 const artifactPath = value("--artifact");
-const calldataArtifactPath = value("--calldata-artifact");
 const rpcUrl = value("--rpc-url") ?? "http://127.0.0.1:8545";
-if (!artifactPath || !calldataArtifactPath || !args.includes("--submit-development")) {
-  throw new Error("usage: submit-wash-trading-development-anvil.mjs --artifact aggregate.json --calldata-artifact calldata.json --rpc-url URL --submit-development");
+if (!artifactPath || !args.includes("--submit-development")) {
+  throw new Error("usage: submit-wash-trading-development-anvil.mjs --artifact seller-proof.json --rpc-url URL --submit-development");
 }
 if (!/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(rpcUrl)) {
-  throw new Error("development aggregate submission is restricted to loopback RPC URLs");
+  throw new Error("development seller proof submission is restricted to loopback RPC URLs");
 }
 
 const artifact = JSON.parse(await readFile(resolve(artifactPath), "utf8"));
 validateArtifact(artifact);
-const calldataArtifact = JSON.parse(await readFile(resolve(calldataArtifactPath), "utf8"));
-validateCalldataArtifact(calldataArtifact, artifact);
 const journal = decodeJournal(artifact.publicValues);
+validateJournal(artifact, journal);
 const provider = new JsonRpcProvider(rpcUrl);
 const network = await provider.getNetwork();
 if (network.chainId !== 8_453n) throw new Error(`expected chain ID 8453, got ${network.chainId}`);
@@ -39,76 +37,66 @@ const verifier = await deploy("WashTradingDevelopmentE2E.sol/WashTradingDevelopm
   keccak256(artifact.publicValues),
   keccak256(artifact.proofBytes),
 ]);
+const blockhashStore = await deploy("WashTradingDevelopmentE2E.sol/WashTradingDevelopmentBlockhashStore.json", []);
+for (const chunk of artifact.blockAuthenticationChunks) {
+  await (await blockhashStore.setBlockhashes(
+    chunk.references.map((reference) => reference.number),
+    chunk.references.map((reference) => reference.blockHash),
+    { nonce: nonce++ },
+  )).wait();
+}
 const registry = await deploy("AntseedWashTradingRegistry.sol/AntseedWashTradingRegistry.json", [
   await verifier.getAddress(),
+  await blockhashStore.getAddress(),
   artifact.aggregatorProgramVKey,
-  journal.reportRoot,
-  journal.manifestDigest,
+  journal.closedLoopProgramVKey,
+  journal.reciprocalProgramVKey,
   journal.periodStartBlock,
   journal.periodEndBlock,
-  journal.sourceClaimCount,
-  journal.sellers.length,
-  journal.totalProvenWashVolume,
 ]);
 
-const submissionReceipt = await (await signer.sendTransaction({
-  to: await registry.getAddress(),
-  data: calldataArtifact.calldata,
-  nonce: nonce++,
-})).wait();
+const submissionReceipt = await (await registry.stageSellerProof(
+  artifact.publicValues,
+  artifact.proofBytes,
+  { nonce: nonce++ },
+)).wait();
+const proofId = keccak256(artifact.publicValues);
+if (!await registry.proofStaged(proofId)) throw new Error("seller proof was not staged");
+if (await registry.proofFinalized(proofId)) throw new Error("seller proof finalized before block authentication");
+let authenticationGasUsed = 0n;
+for (const chunk of artifact.blockAuthenticationChunks) {
+  const receipt = await (await registry.authenticateBlockReferences(
+    proofId,
+    chunk.index,
+    chunk.references,
+    chunk.proof,
+    { nonce: nonce++ },
+  )).wait();
+  authenticationGasUsed += receipt.gasUsed;
+}
+const finalizationReceipt = await (await registry.finalizeSellerProof(proofId, { nonce: nonce++ })).wait();
 
-if (!await registry.historicalResultSubmitted()) throw new Error("historical snapshot was not finalized");
-if (await registry.totalProvenWashVolume() !== journal.totalProvenWashVolume) {
-  throw new Error("historical total wash volume mismatch");
+if (!await registry.proofFinalized(proofId)) throw new Error("seller proof was not finalized");
+if (await registry.provenWashVolume(journal.seller) !== journal.provenWashVolume) {
+  throw new Error("onchain wash volume mismatch");
 }
-for (const result of journal.sellers) {
-  if (await registry.provenWashVolume(result.seller) !== result.provenWashVolume) {
-    throw new Error(`seller ${result.seller} volume mismatch`);
-  }
-  if (!await registry.isProvenWashTrader(result.seller)) {
-    throw new Error(`seller ${result.seller} was not marked as proven`);
-  }
+if (await registry.sellerEvidenceDigest(journal.seller) !== journal.evidenceDigest) {
+  throw new Error("onchain evidence digest mismatch");
 }
-
-let replayRejected = false;
-try {
-  await registry.submitHistoricalAggregate.staticCall(artifact.publicValues, artifact.proofBytes);
-} catch {
-  replayRejected = true;
-}
-if (!replayRejected) throw new Error("historical snapshot replay was accepted");
-
-let alteredRejected = false;
-try {
-  const replacementByte = artifact.publicValues.endsWith("00") ? "01" : "00";
-  const alteredValues = `${artifact.publicValues.slice(0, -2)}${replacementByte}`;
-  const secondRegistry = await deploy("AntseedWashTradingRegistry.sol/AntseedWashTradingRegistry.json", [
-    await verifier.getAddress(),
-    artifact.aggregatorProgramVKey,
-    journal.reportRoot,
-    journal.manifestDigest,
-    journal.periodStartBlock,
-    journal.periodEndBlock,
-    journal.sourceClaimCount,
-    journal.sellers.length,
-    journal.totalProvenWashVolume,
-  ]);
-  await secondRegistry.submitHistoricalAggregate.staticCall(alteredValues, artifact.proofBytes);
-} catch {
-  alteredRejected = true;
-}
-if (!alteredRejected) throw new Error("altered development public values were accepted");
 
 console.log(`WASH_TRADING_DEVELOPMENT_RESULT=${JSON.stringify({
   registry: await registry.getAddress(),
-  verifier: await verifier.getAddress(),
+  proofId,
+  seller: journal.seller,
+  provenWashVolumeRaw: journal.provenWashVolume.toString(),
   childCount: artifact.childCount,
-  sourceClaimCount: Number(journal.sourceClaimCount),
-  sellerCount: journal.sellers.length,
-  totalProvenWashVolumeRaw: journal.totalProvenWashVolume.toString(),
   blockReferenceCount: Number(journal.blockReferenceCount),
-  gasUsed: submissionReceipt.gasUsed.toString(),
-  transactionMode: "single-historical-aggregate",
+  authenticatedBlockReferenceCount: Number(await registry.proofAuthenticatedBlockReferenceCount(proofId)),
+  blockAuthenticationChunkCount: Number(journal.blockAuthenticationChunkCount),
+  submissionGasUsed: submissionReceipt.gasUsed.toString(),
+  authenticationGasUsed: authenticationGasUsed.toString(),
+  finalizationGasUsed: finalizationReceipt.gasUsed.toString(),
+  transactionMode: "staged-seller-proof-with-block-authentication",
 })}`);
 
 async function deploy(relativeArtifact, constructorArguments) {
@@ -120,49 +108,49 @@ async function deploy(relativeArtifact, constructorArguments) {
 }
 
 function validateArtifact(candidate) {
-  if (candidate?.kind !== "antseed-wash-trading-aggregate-proof" || candidate.securityMode !== "development") {
-    throw new Error("artifact is not a development aggregate proof");
+  if (candidate?.version !== 2 || candidate.kind !== "antseed-wash-trading-seller-proof" || candidate.securityMode !== "development") {
+    throw new Error("artifact is not a development seller proof");
   }
   for (const field of ["aggregatorProgramVKey", "publicValues", "proofBytes"]) {
     if (!/^0x[0-9a-f]*$/i.test(candidate[field] ?? "")) throw new Error(`${field} is invalid`);
   }
   if (candidate.proofBytes === "0x") throw new Error("development proof bytes must be nonempty");
-}
-
-function validateCalldataArtifact(candidate, aggregate) {
-  if (
-    candidate?.kind !== "antseed-wash-trading-submit-historical-aggregate-calldata"
-      || candidate.callSignature !== "submitHistoricalAggregate(bytes,bytes)"
-      || candidate.calldata?.slice(0, 10).toLowerCase() !== "0x2a64a7e6"
-      || candidate.aggregatorProgramId?.toLowerCase() !== aggregate.aggregatorProgramId.toLowerCase()
-      || candidate.aggregatorProgramVKey?.toLowerCase() !== aggregate.aggregatorProgramVKey.toLowerCase()
-      || candidate.publicValues?.toLowerCase() !== aggregate.publicValues.toLowerCase()
-      || candidate.proofBytes?.toLowerCase() !== aggregate.proofBytes.toLowerCase()
-  ) {
-    throw new Error("calldata artifact does not match the aggregate proof");
+  if (!Array.isArray(candidate.blockAuthenticationChunks)
+    || candidate.blockAuthenticationChunks.length !== candidate.blockAuthenticationChunkCount) {
+    throw new Error("invalid block authentication chunks");
   }
 }
 
 function decodeJournal(publicValues) {
   const [journal] = AbiCoder.defaultAbiCoder().decode([
-    "tuple(uint32 schemaVersion,uint64 chainId,bytes32 reportRoot,bytes32 manifestDigest,uint64 periodStartBlock,uint64 periodEndBlock,uint32 sourceClaimCount,tuple(address seller,uint128 provenWashVolume)[] sellers,uint128 totalProvenWashVolume,uint32 blockReferenceCount)",
+    "tuple(uint32 schemaVersion,uint64 chainId,uint64 periodStartBlock,uint64 periodEndBlock,bytes32 closedLoopProgramVKey,bytes32 reciprocalProgramVKey,address seller,uint128 provenWashVolume,bytes32 evidenceDigest,uint32 blockReferenceCount,uint32 blockAuthenticationChunkSize,uint32 blockAuthenticationChunkCount,bytes32 blockAuthenticationRoot)",
   ], publicValues);
-  if (journal.schemaVersion !== 1n || journal.chainId !== 8_453n || journal.sellers.length === 0) {
-    throw new Error("aggregate journal identity mismatch");
-  }
   return {
     schemaVersion: journal.schemaVersion,
     chainId: journal.chainId,
-    reportRoot: journal.reportRoot,
-    manifestDigest: journal.manifestDigest,
     periodStartBlock: journal.periodStartBlock,
     periodEndBlock: journal.periodEndBlock,
-    sourceClaimCount: journal.sourceClaimCount,
-    sellers: journal.sellers.map((result) => ({
-      seller: getAddress(result.seller),
-      provenWashVolume: result.provenWashVolume,
-    })),
-    totalProvenWashVolume: journal.totalProvenWashVolume,
+    closedLoopProgramVKey: journal.closedLoopProgramVKey,
+    reciprocalProgramVKey: journal.reciprocalProgramVKey,
+    seller: getAddress(journal.seller),
+    provenWashVolume: journal.provenWashVolume,
+    evidenceDigest: journal.evidenceDigest,
     blockReferenceCount: journal.blockReferenceCount,
+    blockAuthenticationChunkSize: journal.blockAuthenticationChunkSize,
+    blockAuthenticationChunkCount: journal.blockAuthenticationChunkCount,
+    blockAuthenticationRoot: journal.blockAuthenticationRoot,
   };
+}
+
+function validateJournal(artifact, journal) {
+  if (journal.schemaVersion !== 1n || journal.chainId !== 8_453n
+    || journal.seller !== getAddress(artifact.seller)
+    || journal.provenWashVolume.toString() !== artifact.provenWashVolumeRaw
+    || journal.evidenceDigest.toLowerCase() !== artifact.evidenceDigest.toLowerCase()
+    || Number(journal.blockReferenceCount) !== artifact.blockReferenceCount
+    || Number(journal.blockAuthenticationChunkSize) !== artifact.blockAuthenticationChunkSize
+    || Number(journal.blockAuthenticationChunkCount) !== artifact.blockAuthenticationChunkCount
+    || journal.blockAuthenticationRoot.toLowerCase() !== artifact.blockAuthenticationRoot.toLowerCase()) {
+    throw new Error("seller journal does not match artifact metadata");
+  }
 }
