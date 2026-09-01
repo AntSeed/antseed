@@ -62,9 +62,8 @@ function isFreeEntry(entry: VprModelCatalogEntry | undefined): boolean {
   return i !== null && o !== null && i <= 0 && o <= 0;
 }
 
-/* Nudge for first-timers: the chat opens pre-filled with this so the very
-   first thing to do on Home is press send. */
-const SUGGESTED_FIRST_PROMPT = 'What is AntSeed?';
+/* Catalog apps shown as pills on Home (plus Telegram, Claude, Cursor). */
+const HOME_APP_PILL_LIMIT = 11;
 
 export function VprHomeView({ onSelectView }: Props) {
   const actions = useActions();
@@ -94,7 +93,7 @@ export function VprHomeView({ onSelectView }: Props) {
   const proxyState = proxyResource.data?.state ?? null;
   const conversations = conversationsResource.data;
   const [expectChats] = useState(hasSeenChats);
-  const [draft, setDraft] = useState(() => (hasSeenChats() ? '' : SUGGESTED_FIRST_PROMPT));
+  const [draft, setDraft] = useState('');
   const [addBalanceDismissed, setAddBalanceDismissed] = useState(() => {
     try {
       return localStorage.getItem(ADD_BALANCE_DISMISSED_KEY) === '1';
@@ -158,8 +157,10 @@ export function VprHomeView({ onSelectView }: Props) {
     () => profiles.find((profile) => profile.name === 'claude-desktop') ?? null,
     [profiles],
   );
+  // Pills wrap, so the preview can afford most of the catalog; the tail and
+  // custom apps stay behind "More apps".
   const homePreviewProfiles = useMemo(
-    () => profiles.filter((profile) => profile.name !== 'claude-desktop').slice(0, 2),
+    () => profiles.filter((profile) => profile.name !== 'claude-desktop').slice(0, HOME_APP_PILL_LIMIT),
     [profiles],
   );
   const restartProfiles = useMemo(
@@ -467,23 +468,20 @@ export function VprHomeView({ onSelectView }: Props) {
         </div>
   ) : null;
 
-  const renderProfileRow = (profile: SystemProxyProfileSummary) => (
+  const renderProfilePill = (profile: SystemProxyProfileSummary) => (
     <button
       key={profile.name}
       type="button"
-      className={styles.toolRow}
+      className={styles.toolPill}
       disabled={connectingProfile !== null}
       onClick={() => { void connectApp(profile.name); }}
       title={`Connect ${profile.displayName}`}
     >
-      <span className={styles.toolIdentity}>
-        {profile.iconDataUri && !isThemeAwareAppBrand(resolveBrandKey(profile.name, profile.displayName))
-          ? <img src={profile.iconDataUri} alt="" className={styles.appIcon} />
-          : <BrandIcon name={profile.name} hints={[profile.displayName]} size={20} />}
-        <span className={styles.toolLabel}>{profile.displayName}</span>
-      </span>
-      <span className={styles.toolConnect}>
-        {connectingProfile === profile.name ? 'Connecting...' : 'Connect'}
+      {profile.iconDataUri && !isThemeAwareAppBrand(resolveBrandKey(profile.name, profile.displayName))
+        ? <img src={profile.iconDataUri} alt="" className={styles.appIcon} />
+        : <BrandIcon name={profile.name} hints={[profile.displayName]} size={16} />}
+      <span className={styles.toolLabel}>
+        {connectingProfile === profile.name ? 'Connecting...' : profile.displayName}
       </span>
     </button>
   );
@@ -543,8 +541,6 @@ export function VprHomeView({ onSelectView }: Props) {
                   placeholder="How can I help you today?"
                   aria-label="How can I help you today?"
                   onChange={(event) => setDraft(event.target.value)}
-                  // The suggestion is meant to be replaced as easily as sent.
-                  onFocus={(event) => { if (event.target.value === SUGGESTED_FIRST_PROMPT) event.target.select(); }}
                 />
                 <div className={styles.composerFooter}>
                   <div className={styles.modelDropdownInline} ref={modelMenuRef}>
@@ -570,7 +566,7 @@ export function VprHomeView({ onSelectView }: Props) {
                   </div>
                   <button
                     type="submit"
-                    className={`${styles.askSend}${draft === SUGGESTED_FIRST_PROMPT ? ` ${styles.askSendPing}` : ''}`}
+                    className={`${styles.askSend}${!expectChats && draft.trim().length > 0 ? ` ${styles.askSendPing}` : ''}`}
                     aria-label="Send message"
                     title="Send message"
                     disabled={draft.trim().length === 0}
@@ -731,37 +727,32 @@ export function VprHomeView({ onSelectView }: Props) {
               chats) remains. */}
           {(conversations === null ? !expectChats : conversations.length === 0) && (
           <div className={styles.appsGroup}>
-            <p className={styles.appsLabel}>Use it on your favorite app</p>
+            <p className={styles.appsLabel}>Use AntSeed on your favorite app</p>
 
             <div className={styles.toolList}>
-              {/* Same lead item as the Apps tab, then the top of the catalog —
-                  the full list lives on the Apps page behind "More apps". */}
+              {/* Same lead items as the Apps tab (Telegram, Claude, Cursor), then
+                  the catalog — the full list lives on the Apps page behind
+                  "More apps". */}
               <button
                 type="button"
-                className={styles.toolRow}
+                className={styles.toolPill}
                 onClick={() => onSelectView?.('tools')}
                 title="Set up Telegram Bot"
               >
-                <span className={styles.toolIdentity}>
-                  <BrandIcon name="telegram" hints={['Telegram Bot']} size={20} />
-                  <span className={styles.toolLabel}>Telegram Bot</span>
-                </span>
-                <span className={styles.toolConnect}>Set up</span>
+                <BrandIcon name="telegram" hints={['Telegram Bot']} size={16} />
+                <span className={styles.toolLabel}>Telegram Bot</span>
               </button>
-              {claudeProfile ? renderProfileRow(claudeProfile) : null}
+              {claudeProfile ? renderProfilePill(claudeProfile) : null}
               <button
                 type="button"
-                className={styles.toolRow}
+                className={styles.toolPill}
                 onClick={() => onSelectView?.('tools')}
                 title="Set up Cursor"
               >
-                <span className={styles.toolIdentity}>
-                  <BrandIcon name="cursor" hints={['Cursor']} size={20} />
-                  <span className={styles.toolLabel}>Cursor</span>
-                </span>
-                <span className={styles.toolConnect}>Set up</span>
+                <BrandIcon name="cursor" hints={['Cursor']} size={16} />
+                <span className={styles.toolLabel}>Cursor</span>
               </button>
-              {homePreviewProfiles.map(renderProfileRow)}
+              {homePreviewProfiles.map(renderProfilePill)}
             </div>
           </div>
           )}
