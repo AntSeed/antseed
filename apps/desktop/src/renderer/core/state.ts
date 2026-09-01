@@ -373,6 +373,8 @@ export type RendererUiState = {
   chatConversations: unknown[];
   chatConversationsLoaded: boolean;
   chatProxyPort: number;
+  /** Buyer proxy port answered the last reachability probe. */
+  chatProxyOnline: boolean;
   /** Chat opens thin (compact window, no conversation list). The header
       toggle expands the window to the standard preset and shows the panel. */
   chatPanelExpanded: boolean;
@@ -467,7 +469,7 @@ export function createInitialUiState(): RendererUiState {
     daemonState: null,
 
     // Runtime display
-    connectBadge: { tone: 'idle', label: 'Stopped' },
+    connectBadge: { tone: 'bad', label: 'Stopped' },
     runtimeActivity: { tone: 'idle', message: 'Idle' },
 
     // Logs
@@ -552,6 +554,7 @@ export function createInitialUiState(): RendererUiState {
     chatConversations: [],
     chatConversationsLoaded: false,
     chatProxyPort: 0,
+    chatProxyOnline: false,
     chatPanelExpanded: false,
     chatMessages: [],
     chatStreamingMessage: null,

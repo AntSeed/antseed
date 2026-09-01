@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
   ArrowDown01Icon,
@@ -39,6 +39,9 @@ import { VprModelRowList } from '../vpr/VprModelRows';
 import { hasSeenChats, rememberSeenChats, VprRecentChatsCard } from '../vpr/VprRecentChats';
 import { conversationRoutedPeerName } from '../../../modules/routing/conversations';
 import { formatCompactTokens, VprStatRow, VprStatTile } from '../vpr/VprKit';
+import { DisconnectConfirmDialog } from './DisconnectConfirmDialog';
+import { isBuyerReady } from '../../../modules/app/connect-badge';
+import { isDisconnectConfirmDismissed, persistDisconnectConfirmDismissed } from '../../../modules/app/disconnect-confirm';
 import styles from './VprHomeView.module.scss';
 import { recordFirstModelShown, recordUserAction } from '../../../modules/telemetry/actions';
 
@@ -67,6 +70,7 @@ export function VprHomeView({ onSelectView }: Props) {
     discoverRows: state.vprRoutableRows,
     defaultProvisional: state.vprDefaultModelProvisional,
     processes: state.processes,
+    proxyOnline: state.chatProxyOnline,
     connectBadge: state.connectBadge,
     usage: state.creditsBuyerUsage,
     floatOpen: state.vprFloatOpen,
@@ -310,8 +314,29 @@ export function VprHomeView({ onSelectView }: Props) {
   // Visual-only: with the network unreachable the runtime is still running,
   // but showing the hero lit would promise routing that can't happen.
   const networkDown = snap.networkAlert !== 'none';
-  const connected = (snap.connectBadge.tone === 'active' || runtimeOn) && !networkDown;
-  const powerLit = runtimeOn && !networkDown;
+  // Lit only once the buyer proxy actually answers — `runtimeOn` is true the
+  // moment the process is spawned, which is too early to promise routing.
+  const buyerReady = isBuyerReady(snap.processes, snap.proxyOnline);
+  const connected = buyerReady && !networkDown;
+  const powerLit = buyerReady && !networkDown;
+  // Power button off: confirm first unless the user opted out of the prompt.
+  const [disconnectConfirmOpen, setDisconnectConfirmOpen] = useState(false);
+  const onPowerClick = useCallback(() => {
+    if (!runtimeOn) {
+      void actions.startAll();
+      return;
+    }
+    if (isDisconnectConfirmDismissed()) {
+      void actions.stopAll();
+      return;
+    }
+    setDisconnectConfirmOpen(true);
+  }, [actions, runtimeOn]);
+  const confirmDisconnect = useCallback((dontShowAgain: boolean) => {
+    persistDisconnectConfirmDismissed(dontShowAgain);
+    setDisconnectConfirmOpen(false);
+    void actions.stopAll();
+  }, [actions]);
 
   // The Add Balance banner is a nudge for low balances only — with more than
   // $5 left it's just noise. Keyed off spendable, not the unreserved slice: an
@@ -421,7 +446,7 @@ export function VprHomeView({ onSelectView }: Props) {
           <button
             type="button"
             className={`${styles.power}${powerLit ? ` ${styles.powerOn}` : ` ${styles.powerOff}`}`}
-            onClick={() => { void (runtimeOn ? actions.stopAll() : actions.startAll()); }}
+            onClick={onPowerClick}
             aria-pressed={runtimeOn}
             aria-label={runtimeOn ? 'Stop routing' : 'Start routing'}
             title={runtimeOn ? 'Stop routing' : 'Start routing'}
@@ -700,6 +725,11 @@ export function VprHomeView({ onSelectView }: Props) {
           onDismiss={() => setModelChangeNotice(null)}
         />
       ) : null}
+      <DisconnectConfirmDialog
+        visible={disconnectConfirmOpen}
+        onConfirm={confirmDisconnect}
+        onCancel={() => setDisconnectConfirmOpen(false)}
+      />
     </section>
   );
 }

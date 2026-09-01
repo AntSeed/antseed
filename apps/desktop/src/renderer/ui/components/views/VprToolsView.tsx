@@ -752,7 +752,6 @@ export function VprToolsView() {
         size="sm"
         title="Connected apps"
         subtitle="How VPR works with your tools"
-        className={styles.vprModal}
         bodyClassName={styles.settingsBody}
       >
         <section className={styles.settingSection}>
@@ -839,7 +838,6 @@ export function VprToolsView() {
               ) : null}
             </span>
           ) : undefined}
-        className={styles.vprModal}
         bodyClassName={styles.settingsBody}
       >
         {settingsProfile ? (() => {
@@ -1011,7 +1009,6 @@ export function VprToolsView() {
           : addStep === 1 ? 'Route another app through VPR'
           : addStep === 2 ? 'Trust the HTTPS certificate'
           : 'Connect the app'}
-        className={styles.vprModal}
         bodyClassName={styles.settingsBody}
       >
         {addPane.pane !== 'apps' ? (

@@ -46,6 +46,7 @@ export function VprShell({ activeView, onSelectView, onNavigateBack, children }:
   const snap = useUiSelector((state) => ({
     headlineBalanceUsdc: selectHeadlineBalanceUsdc(state),
     connectBadgeLabel: state.connectBadge.label,
+    connectBadgeTone: state.connectBadge.tone,
     networkHealth: state.ovDhtHealth,
     proxyPort: state.ovProxyPort,
     peers: state.ovPeers,
@@ -155,7 +156,17 @@ export function VprShell({ activeView, onSelectView, onNavigateBack, children }:
           {snap.networkHealth}
         </span>
         <span className={styles.statusSep} aria-hidden="true">|</span>
-        <span className={styles.statusItem}>{snap.connectBadgeLabel}</span>
+        <span
+          className={`${styles.statusItem}${
+            snap.connectBadgeTone === 'bad'
+              ? ` ${styles.statusBad}`
+              : snap.connectBadgeTone === 'warn'
+                ? ` ${styles.statusWarn}`
+                : ''
+          }`}
+        >
+          {snap.connectBadgeLabel}
+        </span>
         <span className={styles.statusSep} aria-hidden="true">|</span>
         <span className={styles.statusItem}>Port: {snap.proxyPort}</span>
         <span className={styles.statusSep} aria-hidden="true">|</span>
