@@ -679,7 +679,7 @@ async function executeProxyProbeBatch(
   let lastRequestId: string | null = null
   const attemptCosts = [] as NonNullable<ProxyAuditEvidenceExchangeV1['attemptCosts']>
   let responseAuthRetryCount = 0
-  let blankTokenExhaustionRetryCount = 0
+  let blankLengthRetryCount = 0
   const fetchFn = context.fetchFn ?? fetch
   const sleepFn = context.sleepFn ?? sleep
   const randomFn = context.randomFn ?? Math.random
@@ -790,10 +790,10 @@ async function executeProxyProbeBatch(
         continue
       }
       if (responseAuth.status === 'verified'
-        && blankTokenExhaustionRetryCount < 1
+        && blankLengthRetryCount < 1
         && attemptCount < PROBE_REQUEST_ATTEMPTS
-        && isBlankReasoningTokenExhaustion(body, responseBody, completion, answers)) {
-        blankTokenExhaustionRetryCount += 1
+        && isBlankLengthResponse(responseBody, completion, answers)) {
+        blankLengthRetryCount += 1
         await sleepWithSignal(PROBE_RETRY_BASE_DELAY_MS, context.signal, sleepFn)
         continue
       }
@@ -1276,39 +1276,35 @@ function extractCompletionText(body: Uint8Array): string | null {
   }
 }
 
-function isBlankReasoningTokenExhaustion(
-  requestBody: Uint8Array,
+function isBlankLengthResponse(
   responseBody: Uint8Array,
   completion: string | null,
   answers: Array<number | null>,
 ): boolean {
   if ((completion ?? '').trim() !== '' || answers.some((answer) => answer !== null)) return false
+  const text = responseText(responseBody)
   try {
-    const request = JSON.parse(responseText(requestBody)) as {
-      max_tokens?: unknown
-      max_completion_tokens?: unknown
-    }
-    const response = JSON.parse(responseText(responseBody)) as {
-      choices?: Array<{ finish_reason?: unknown }>
-      usage?: {
-        completion_tokens?: unknown
-        completion_tokens_details?: { reasoning_tokens?: unknown }
+    return hasLengthFinishReason(JSON.parse(text) as Record<string, unknown>)
+  } catch {
+    for (const line of text.split(/\r?\n/)) {
+      if (!line.startsWith('data:')) continue
+      const data = line.slice('data:'.length).trim()
+      if (!data || data === '[DONE]') continue
+      try {
+        if (hasLengthFinishReason(JSON.parse(data) as Record<string, unknown>)) return true
+      } catch {
+        continue
       }
     }
-    const requestedMaxTokens = request.max_completion_tokens ?? request.max_tokens
-    const completionTokens = response.usage?.completion_tokens
-    const reasoningTokens = response.usage?.completion_tokens_details?.reasoning_tokens
-    return typeof requestedMaxTokens === 'number'
-      && Number.isFinite(requestedMaxTokens)
-      && requestedMaxTokens > 0
-      && response.choices?.[0]?.finish_reason === 'length'
-      && typeof completionTokens === 'number'
-      && typeof reasoningTokens === 'number'
-      && completionTokens >= requestedMaxTokens
-      && reasoningTokens >= completionTokens
-  } catch {
     return false
   }
+}
+
+function hasLengthFinishReason(value: Record<string, unknown>): boolean {
+  const choices = Array.isArray(value.choices) ? value.choices : []
+  return choices.some((choice) => choice !== null
+    && typeof choice === 'object'
+    && (choice as Record<string, unknown>).finish_reason === 'length')
 }
 
 function extractCompletionFromJson(parsed: Record<string, unknown>): string | null {

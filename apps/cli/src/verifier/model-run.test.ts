@@ -101,8 +101,8 @@ async function runTarget(
   count: number,
   answerMode: 'valid' | 'out-of-range' | 'all-wrong' | 'partial-malformed' | 'malformed'
     | 'malformed-first-batch' | 'empty-responses' | 'content-filter' | 'sse' | 'transport-failure' | 'hanging'
-    | 'rate-limited' | 'semantic-unavailable' | 'blank-token-exhaustion'
-    | 'persistent-blank-token-exhaustion' = 'valid',
+    | 'rate-limited' | 'semantic-unavailable' | 'blank-length'
+    | 'persistent-blank-length' = 'valid',
   transientFailures = 0,
   authMode: 'verified' | 'missing' | 'unverified' | 'wrong-request' | 'wrong-seller' | 'wrong-service' = 'verified',
   includeCost = true,
@@ -114,7 +114,7 @@ async function runTarget(
   let requestCount = 0
   let failureCount = 0
   let changedAnswer = false
-  let returnedBlankTokenExhaustion = false
+  let returnedBlankLength = false
   let slowBatchCompleted = false
   let finalBatchStartedAfterSlow = false
   const requests: Array<{ headers: RequestInit['headers']; body: string }> = []
@@ -176,16 +176,13 @@ async function runTarget(
       'x-antseed-provider': 'test',
       'x-antseed-service': 'GPT-5.6-SOL',
     } : {}
-    if ((answerMode === 'blank-token-exhaustion' || answerMode === 'persistent-blank-token-exhaustion')
+    if ((answerMode === 'blank-length' || answerMode === 'persistent-blank-length')
       && prompt.includes('test probe 1 value')
-      && (answerMode === 'persistent-blank-token-exhaustion' || !returnedBlankTokenExhaustion)) {
-      returnedBlankTokenExhaustion = true
+      && (answerMode === 'persistent-blank-length' || !returnedBlankLength)) {
+      returnedBlankLength = true
       return Response.json({
-        choices: [{ message: { content: '' }, finish_reason: 'length' }],
-        usage: {
-          completion_tokens: 1600,
-          completion_tokens_details: { reasoning_tokens: 1600 },
-        },
+        choices: [{ message: { content: null }, finish_reason: 'length' }],
+        usage: { completion_tokens: 0 },
       }, {
         headers: { 'x-antseed-request-id': requestId, ...telemetryHeaders },
       })
@@ -502,8 +499,8 @@ test('proxy runtime retries transient failures', async () => {
   assert.equal(run.evidence.exchanges[0]?.attemptCount, 3)
 })
 
-test('proxy runtime retries one verified blank reasoning-token exhaustion', async () => {
-  const run = await runTarget(100, 'blank-token-exhaustion')
+test('proxy runtime retries one verified blank length response without usable token telemetry', async () => {
+  const run = await runTarget(100, 'blank-length')
   const firstExchange = run.evidence.exchanges[0]
   const firstBatchRequests = run.requests.filter((request) => request.body.includes('test probe 1 value'))
 
@@ -518,8 +515,8 @@ test('proxy runtime retries one verified blank reasoning-token exhaustion', asyn
   assert.equal(firstBatchRequests[0]?.body, firstBatchRequests[1]?.body)
 })
 
-test('proxy runtime retries persistent blank reasoning-token exhaustion only once', async () => {
-  const run = await runTarget(100, 'persistent-blank-token-exhaustion')
+test('proxy runtime retries persistent blank length responses only once', async () => {
+  const run = await runTarget(100, 'persistent-blank-length')
 
   assert.equal(run.requestCount, 11)
   assert.equal(run.evidence.exchanges[0]?.attemptCount, 2)
