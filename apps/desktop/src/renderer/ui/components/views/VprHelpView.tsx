@@ -12,6 +12,7 @@ import { getUiStateRef } from '../../../core/store';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { VprCard, VprPage, VprSettingRow, VprToggle } from '../vpr/VprKit';
+import { usePublicEndpointModal } from '../tunnels/PublicEndpointModal';
 import styles from './VprHelpView.module.scss';
 
 declare const __APP_VERSION__: string;
@@ -600,6 +601,7 @@ function pageKey(page: HelpPage): string {
 const helpScrollByPage = new Map<string, number>();
 
 export function VprHelpView({ onSelectView }: Props) {
+  const { status: tunnelStatus, openPublicEndpointModal } = usePublicEndpointModal();
   const snap = useUiSelector((state) => ({
     connectBadgeLabel: state.connectBadge.label,
     networkHealth: state.ovDhtHealth,
@@ -831,6 +833,13 @@ export function VprHelpView({ onSelectView }: Props) {
                 <span className={styles.rowHint}>Full setup, security, payments and troubleshooting</span>
               </span>
               <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={2} className={styles.rowGlyph} />
+            </button>
+            <button type="button" className={styles.row} onClick={openPublicEndpointModal}>
+              <span className={styles.rowText}>
+                <span className={styles.rowLabel}>Internet-accessible endpoint</span>
+                <span className={styles.rowHint}>{tunnelStatus?.running ? 'Running — view URL, API key, or provider settings' : 'Set up ngrok or Cloudflare for Cursor and remote agents'}</span>
+              </span>
+              <HugeiconsIcon icon={ArrowRight01Icon} size={16} strokeWidth={2} className={styles.rowGlyph} />
             </button>
           </VprCard>
         </div>

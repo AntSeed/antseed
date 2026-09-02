@@ -212,6 +212,8 @@ While the router is running, the VPR exposes a local API at `http://localhost:83
 
 The proxy binds to your computer rather than exposing the API to your local network. AntSeed does not require an API key for this local endpoint, although some clients require any non-empty placeholder such as `antseed` in their API-key field.
 
+For Hermes, OpenClaw, Cursor, or another client running elsewhere, open **Agents**, expand **Define your internet-accessible AntSeed endpoint**, and start ngrok or Cloudflare. The public endpoint requires its generated bearer key; see [Connect Agents](/docs/guides/agents) and [Public HTTPS Tunnels](/docs/guides/public-tunnels).
+
 ### Browse models with `/v1/models`
 
 Request the model catalog before choosing a model id:

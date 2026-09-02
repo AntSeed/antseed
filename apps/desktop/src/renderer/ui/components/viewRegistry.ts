@@ -2,6 +2,7 @@ import { lazy } from 'react';
 import type { ComponentType, LazyExoticComponent } from 'react';
 import type { IconSvgElement } from '@hugeicons/react';
 import {
+  BotIcon,
   BubbleChatIcon,
   ConnectIcon,
   DiscoverCircleIcon,
@@ -71,7 +72,7 @@ function createViewEntry(
 
 // Legacy dev routes have no slide relationship to the VPR screens; parking
 // them past the end keeps any transition involving them sliding "forward".
-const LEGACY_SLIDE_INDEX = 12;
+const LEGACY_SLIDE_INDEX = 13;
 
 export const VIEW_REGISTRY = {
   home: createViewEntry(
@@ -87,7 +88,7 @@ export const VIEW_REGISTRY = {
     async () => (await import('./views/VprExploreView')).VprExploreView as ComponentType<RoutedViewProps>,
     {
       receivesOnSelectView: true,
-      slideIndex: 1,
+      slideIndex: 2,
       preloadPriority: 'eager',
       nav: { slot: 'main', label: 'Models', icon: DiscoverCircleIcon },
     },
@@ -96,7 +97,7 @@ export const VIEW_REGISTRY = {
     async () => (await import('./views/VprModelView')).VprModelView as ComponentType<RoutedViewProps>,
     // Idle preload: the model page is one tap away from the Models list, and
     // lazy-importing its chunk on that tap stalls the slide-in noticeably.
-    { receivesOnSelectView: true, slideIndex: 2, preloadPriority: 'idle' },
+    { receivesOnSelectView: true, slideIndex: 2.5, preloadPriority: 'idle' },
   ),
   tools: createViewEntry(
     async () => (await import('./views/VprToolsView')).VprToolsView as ComponentType<RoutedViewProps>,
@@ -105,6 +106,15 @@ export const VIEW_REGISTRY = {
       slideIndex: 3,
       preloadPriority: 'eager',
       nav: { slot: 'main', label: 'Apps', icon: ConnectIcon },
+    },
+  ),
+  tunnels: createViewEntry(
+    async () => (await import('./views/VprTunnelsView')).VprTunnelsView as ComponentType<RoutedViewProps>,
+    {
+      receivesOnSelectView: true,
+      slideIndex: 4,
+      preloadPriority: 'idle',
+      nav: { slot: 'main', label: 'Agents', icon: BotIcon },
     },
   ),
   chats: createViewEntry(
@@ -118,7 +128,7 @@ export const VIEW_REGISTRY = {
     async () => (await import('./views/VprPreferencesView')).VprPreferencesView as ComponentType<RoutedViewProps>,
     {
       receivesOnSelectView: true,
-      slideIndex: 4,
+      slideIndex: 5,
       preloadPriority: 'idle',
       nav: { slot: 'main', label: 'Prefs', icon: PreferenceHorizontalIcon },
     },
@@ -127,28 +137,28 @@ export const VIEW_REGISTRY = {
     async () => (await import('./views/VprCreditsView')).VprCreditsView as ComponentType<RoutedViewProps>,
     {
       receivesOnSelectView: true,
-      slideIndex: 5,
+      slideIndex: 7,
       preloadPriority: 'eager',
       nav: { slot: 'bottom', label: 'Profile', icon: UserIcon },
     },
   ),
   deposit: createViewEntry(
     async () => (await import('./views/VprDepositView')).VprDepositView as ComponentType<RoutedViewProps>,
-    { receivesOnSelectView: true, slideIndex: 6, preloadPriority: 'idle' },
+    { receivesOnSelectView: true, slideIndex: 8, preloadPriority: 'idle' },
   ),
   activity: createViewEntry(
     async () => (await import('./views/VprActivityView')).VprActivityView as ComponentType<RoutedViewProps>,
-    { receivesOnSelectView: true, slideIndex: 7, preloadPriority: 'idle' },
+    { receivesOnSelectView: true, slideIndex: 9, preloadPriority: 'idle' },
   ),
   rewards: createViewEntry(
     async () => (await import('./views/VprRewardsView')).VprRewardsView as ComponentType<RoutedViewProps>,
-    { receivesOnSelectView: true, slideIndex: 8, preloadPriority: 'idle' },
+    { receivesOnSelectView: true, slideIndex: 10, preloadPriority: 'idle' },
   ),
   chat: createViewEntry(
     async () => (await import('./views/ChatView')).ChatView as ComponentType<RoutedViewProps>,
     {
       receivesOnSelectView: true,
-      slideIndex: 9,
+      slideIndex: 1,
       preloadPriority: 'eager',
       nav: { slot: 'main', label: 'Chat', icon: BubbleChatIcon },
     },
@@ -157,7 +167,7 @@ export const VIEW_REGISTRY = {
     async () => (await import('./views/VprHelpView')).VprHelpView as ComponentType<RoutedViewProps>,
     {
       receivesOnSelectView: true,
-      slideIndex: 10,
+      slideIndex: 6,
       preloadPriority: 'idle',
       nav: { slot: 'main', label: 'Help', icon: HelpCircleIcon },
     },

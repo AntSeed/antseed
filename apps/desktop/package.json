@@ -1,7 +1,7 @@
 {
   "name": "@antseed/desktop",
   "productName": "AntSeed VPR",
-  "version": "0.2.29",
+  "version": "0.2.38",
   "private": true,
   "description": "Desktop app for AntSeed",
   "author": "AntSeed <hello@antseed.com>",
@@ -56,7 +56,6 @@
   },
   "devDependencies": {
     "@antseed/ui": "workspace:*",
-    "@crossmint/client-sdk-react-ui": "^4.3.1",
     "@electron/notarize": "^3.1.1",
     "@funkit/connect": "^11.0.0",
     "@hugeicons/core-free-icons": "^4.0.0",

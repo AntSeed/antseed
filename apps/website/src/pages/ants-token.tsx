@@ -2,6 +2,7 @@ import {useState, useEffect, useRef} from 'react';
 import Layout from '@theme/Layout';
 import styles from './ants-token.module.css';
 import {useLatestDesktopDownload} from '../lib/useLatestDesktopDownload';
+import {useMobileGetStarted} from '../lib/useMobileGetStarted';
 import {
   Button,
   FinalCta,
@@ -190,6 +191,7 @@ function VerifyReceipt() {
 /* ── MAIN PAGE ─────────────────────────────────────────────────── */
 export default function AntsToken(): JSX.Element {
   const download = useLatestDesktopDownload();
+  const onGetStarted = useMobileGetStarted();
   const {epoch, timeLeft} = useEpochCountdown();
 
   const totalSupply = epoch * INITIAL_EMISSION;
@@ -219,7 +221,10 @@ export default function AntsToken(): JSX.Element {
           </span>
         }
         lead="ANTS is the native token of AntSeed and the trust and reputation layer of the network: real, payment-backed usage and locked ANTS behind seller identities turn open participation into reputation buyers can verify.">
-        <Button href={download.href} variant="clay" arrow>Download VPR</Button>
+        <Button href={download.href} variant="clay" arrow onClick={onGetStarted}>
+          <span className="vprLabelDesktop">Download VPR</span>
+          <span className="vprLabelMobile">Get Started</span>
+        </Button>
         <Button to="/docs/lightpaper" variant="ghost">Lightpaper</Button>
       </PageHero>
 
@@ -336,7 +341,10 @@ export default function AntsToken(): JSX.Element {
             <a href={STATS_URL} target="_blank" rel="noopener noreferrer">Network dashboard</a>
           </>
         }>
-        <Button href={download.href} variant="white" size="lg" arrow>Download VPR</Button>
+        <Button href={download.href} variant="white" size="lg" arrow onClick={onGetStarted}>
+          <span className="vprLabelDesktop">Download VPR</span>
+          <span className="vprLabelMobile">Get Started</span>
+        </Button>
         <Button to="/providers" variant="light" size="lg">Become a provider</Button>
       </FinalCta>
     </Layout>

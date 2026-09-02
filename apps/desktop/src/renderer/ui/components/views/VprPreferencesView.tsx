@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Moon02Icon, Sun02Icon, Tick02Icon } from '@hugeicons/core-free-icons';
+import { GlobalIcon, Moon02Icon, Sun02Icon, Tick02Icon } from '@hugeicons/core-free-icons';
 import { routesForSelectedModel } from '../../../modules/catalog/view-models';
 import { peerAccessSummaryLabel } from '../../../modules/routing/peer-access';
 import { buildVprPeerOptions } from '../../../modules/routing/tools';
@@ -8,14 +8,19 @@ import { reputationScaleLabel, sellerMetaLabel, sellerReputationLabel } from '..
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
 import { activeThemeMode, applyThemeMode, type ThemeMode } from '../../lib/theme';
+import type { TelemetryStatus } from '../../../../shared/telemetry';
 import { formatUsdShort, VprCard, VprPage, VprSettingRow, VprSlider, VprToggle } from '../vpr/VprKit';
 import { VprPeerAccessDialog } from './VprPeerAccessDialog';
+import { usePublicEndpointModal } from '../tunnels/PublicEndpointModal';
 import styles from './VprPreferencesView.module.scss';
 
 type Props = { onSelectView?: (view: import('../../types').ViewName) => void };
 
+const TELEMETRY_DOC_URL = 'https://github.com/AntSeed/antseed/blob/main/docs/telemetry.md';
+
 export function VprPreferencesView({ onSelectView }: Props) {
   const actions = useActions();
+  const { status: tunnelStatus, openPublicEndpointModal } = usePublicEndpointModal();
   const snap = useUiSelector((state) => ({
     preferences: state.vprRoutingPreferences,
     selection: state.vprRouteSelection,
@@ -26,6 +31,35 @@ export function VprPreferencesView({ onSelectView }: Props) {
   }), shallowEqual);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => activeThemeMode());
   const [accessOpen, setAccessOpen] = useState(false);
+  const [telemetryStatus, setTelemetryStatus] = useState<TelemetryStatus | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.antseedDesktop?.getTelemetryStatus?.()
+      .then((status) => {
+        if (!cancelled && status) setTelemetryStatus(status);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const toggleTelemetry = (next: boolean) => {
+    const setTelemetryEnabled = window.antseedDesktop?.setTelemetryEnabled;
+    if (!telemetryStatus || !setTelemetryEnabled) return;
+
+    const previousStatus = telemetryStatus;
+    setTelemetryStatus({
+      ...previousStatus,
+      enabled: next,
+      userDisabled: !next,
+    });
+    void setTelemetryEnabled(next)
+      .then((result) => {
+        if (result?.ok) setTelemetryStatus(result);
+        else setTelemetryStatus(previousStatus);
+      })
+      .catch(() => setTelemetryStatus(previousStatus));
+  };
 
   const peerOptions = useMemo(
     () => buildVprPeerOptions(snap.lastPeers, snap.discoverRows),
@@ -181,6 +215,49 @@ export function VprPreferencesView({ onSelectView }: Props) {
                 />
               )}
             />
+          </VprCard>
+        </div>
+
+        <div className={styles.appearanceSection}>
+          <span className={styles.sectionLabel}>Connectivity</span>
+          <VprCard className={styles.card}>
+            <VprSettingRow
+              title="Internet-accessible endpoint"
+              hint={tunnelStatus?.running ? 'Running and ready for Cursor, agents, and hosted clients.' : 'Configure an authenticated public URL for remote apps and agents.'}
+              control={(
+                <button type="button" className={styles.accessManage} onClick={openPublicEndpointModal}>
+                  <HugeiconsIcon icon={GlobalIcon} size={13} strokeWidth={1.8} />
+                  {tunnelStatus?.running ? 'Manage' : 'Set up'}
+                </button>
+              )}
+            />
+          </VprCard>
+        </div>
+
+        <div className={styles.appearanceSection}>
+          <span className={styles.sectionLabel}>Privacy</span>
+          <VprCard className={styles.card}>
+            <VprSettingRow
+              title="Product telemetry"
+              hint={telemetryStatus?.available === false
+                ? 'Telemetry is unavailable in this build or has been disabled by configuration.'
+                : 'Help improve VPR by sharing coarse feature usage and reliability information linked to your public on-chain address. Prompts, messages, files, and exact financial values are never collected.'}
+              control={(
+                <VprToggle
+                  checked={telemetryStatus?.enabled ?? false}
+                  onChange={toggleTelemetry}
+                  ariaLabel="Product telemetry"
+                  disabled={!telemetryStatus?.available}
+                />
+              )}
+            />
+            <button
+              type="button"
+              className={styles.telemetryDetails}
+              onClick={() => { void window.antseedDesktop?.openExternalUrl?.(TELEMETRY_DOC_URL); }}
+            >
+              Review every event and privacy control
+            </button>
           </VprCard>
         </div>
 

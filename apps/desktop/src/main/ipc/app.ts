@@ -19,6 +19,9 @@ import {
   invalidateCreditsCache,
 } from '../payments/credits.js';
 import {
+  getTelemetryService,
+} from '../telemetry/runtime.js';
+import {
   getMainWindow,
 } from '../ui/window.js';
 import {
@@ -34,6 +37,13 @@ import {
 import {
   writeFile,
 } from 'node:fs/promises';
+import {
+  TELEMETRY_ACTION_SURFACES,
+  TELEMETRY_APP_NAMES,
+  TELEMETRY_USER_ACTIONS,
+  type TelemetryStatusUpdateResult,
+  type UserActionSignal,
+} from '../../shared/telemetry.js';
 
 export function registerAppIpc(): void {
   ipcMain.handle('voice:transcribe', async (_event, audio: ArrayBuffer | Uint8Array) => {
@@ -60,6 +70,47 @@ export function registerAppIpc(): void {
   ipcMain.handle('app:get-system-locale', () => app.getLocale());
 
   ipcMain.handle('app:get-version', () => app.getVersion());
+
+  ipcMain.handle('telemetry:get-status', () => {
+    const telemetry = getTelemetryService();
+    return {
+      available: telemetry?.available ?? false,
+      enabled: telemetry?.enabled ?? false,
+      userDisabled: telemetry?.isUserOptedOut() ?? false,
+    };
+  });
+
+  ipcMain.handle('telemetry:set-enabled', async (_event, enabled: unknown): Promise<TelemetryStatusUpdateResult> => {
+    const telemetry = getTelemetryService();
+    if (!telemetry) {
+      return { ok: false, error: 'Telemetry service not initialized' };
+    }
+    await telemetry.setUserOptedOut(!enabled);
+    return {
+      ok: true,
+      available: telemetry.available,
+      enabled: telemetry.enabled,
+      userDisabled: telemetry.isUserOptedOut(),
+    };
+  });
+
+  ipcMain.handle('telemetry:record-user-action', (_event, payload: unknown) => {
+    const candidate = payload as Partial<UserActionSignal> | null;
+    if (!candidate
+      || !TELEMETRY_USER_ACTIONS.includes(candidate.action as never)
+      || !TELEMETRY_ACTION_SURFACES.includes(candidate.surface as never)
+      || (candidate.app !== undefined && !TELEMETRY_APP_NAMES.includes(candidate.app as never))) {
+      return { ok: false };
+    }
+    const telemetry = getTelemetryService();
+    if (!telemetry) return { ok: false };
+    void telemetry.recordUserAction({
+      action: candidate.action as UserActionSignal['action'],
+      surface: candidate.surface as UserActionSignal['surface'],
+      ...(candidate.app !== undefined ? { app: candidate.app as UserActionSignal['app'] } : {}),
+    });
+    return { ok: true };
+  });
 
   ipcMain.handle('openrouter:reference-prices', () => getOpenRouterReferencePrices());
 

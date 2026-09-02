@@ -1,4 +1,4 @@
-export type RuntimeMode = 'connect' | 'system-proxy';
+export type RuntimeMode = 'connect' | 'system-proxy' | 'tunnel';
 
 export type RuntimeProcessState = {
   mode: RuntimeMode;
@@ -398,6 +398,10 @@ export type DesktopBridge = {
   onFullscreenChange?: (handler: (isFullscreen: boolean) => void) => () => void;
   onWindowFocusChange?: (handler: (isFocused: boolean) => void) => () => void;
   getAppSetupStatus?: () => Promise<{ needed: boolean; complete: boolean }>;
+  getTelemetryStatus?: () => Promise<import('../../shared/telemetry.js').TelemetryStatus>;
+  setTelemetryEnabled?: (enabled: boolean) => Promise<import('../../shared/telemetry.js').TelemetryStatusUpdateResult>;
+  telemetryRecordUserAction?: (payload: import('../../shared/telemetry.js').UserActionSignal) => Promise<{ ok: boolean }>;
+  telemetryRecordFirstModelShown?: (payload: import('../../shared/telemetry.js').FirstModelShownSignal) => Promise<{ ok: boolean }>;
   onAppSetupStep?: (handler: (data: { step: string; label: string }) => void) => () => void;
   onAppSetupComplete?: (handler: () => void) => () => void;
   onUpdateStatus?: (handler: (data: UpdateStatus) => void) => () => void;
@@ -436,7 +440,6 @@ export type DesktopBridge = {
   paymentsOpenPayPage?: (opts: { kind?: 'deposit' | 'withdraw' | 'authorize' | 'claim' | 'close-channel'; amountUsdc?: string; channelId?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
   paymentsCardProviders?: () => Promise<{ ok: boolean; data?: Array<{ id: string; label: string }>; error?: string }>;
   paymentsOpenCardProvider?: (opts?: { providerId?: string; amountUsdc?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
-  paymentsCrossmintConfig?: () => Promise<{ ok: boolean; data?: { clientKey: string; apiBase: string } | null; error?: string }>;
   paymentsFunkitConfig?: () => Promise<{ ok: boolean; data?: { apiKey: string } | null; error?: string }>;
   paymentsOnrampAvailability?: () => Promise<{ ok: boolean; data?: { country: string | null; stripe: boolean }; error?: string }>;
   /** Closes any app-owned Fun checkout/sign-in popup windows (login-only flows produce no deposit, so the deposit watcher can't close them). */
@@ -487,6 +490,11 @@ export type DesktopBridge = {
     error?: string;
   }>;
   systemProxyRestartApp?: (app: string) => Promise<{ ok: boolean; error?: string }>;
+  publicTunnelGetStatus?: () => Promise<PublicTunnelStatus>;
+  publicTunnelConfigure?: (settings: { provider: TunnelProvider; tunnelToken: string; publicUrl: string }) => Promise<{ ok: boolean; status?: PublicTunnelStatus; error?: string }>;
+  publicTunnelStart?: (settings?: { provider?: TunnelProvider }) => Promise<{ ok: boolean; status?: PublicTunnelStatus; error?: string }>;
+  publicTunnelStop?: () => Promise<{ ok: boolean; status?: PublicTunnelStatus; error?: string }>;
+  publicTunnelGetApiKey?: () => Promise<{ apiKey: string | null }>;
 
   /* Floating always-on-top pill window */
   vprFloatSetExpanded?: (expanded: boolean) => void;
@@ -506,6 +514,15 @@ export type DesktopBridge = {
   onDesktopOpenFloatingWindow?: (handler: () => void) => () => void;
   onDesktopConnectMain?: (handler: () => void) => () => void;
   onDesktopDisconnectMain?: (handler: () => void) => () => void;
+};
+
+export type TunnelProvider = 'cloudflare' | 'ngrok';
+export type PublicTunnelStatus = {
+  configured: boolean;
+  configuredProviders: TunnelProvider[];
+  activeProvider: TunnelProvider | null;
+  running: boolean;
+  baseUrl: string | null;
 };
 
 /** One tool chat session seen by the buyer proxy (per-chat routing). */

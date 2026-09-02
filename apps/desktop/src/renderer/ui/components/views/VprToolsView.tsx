@@ -14,10 +14,15 @@ import {
 } from '../../../modules/routing/tools';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
-import { BrandIcon } from '../brand/BrandIcon';
+import { BrandIcon, isThemeAwareAppBrand, resolveBrandKey } from '../brand/BrandIcon';
 import { VprBadge, VprPage, VprSearch } from '../vpr/VprKit';
 import { TelegramBotCard } from './TelegramBotCard';
+import { CursorAppCard } from './CursorAppCard';
+import { AppsOnboarding } from './AppsOnboarding';
+import { isAppsOnboardingSeen, persistAppsOnboardingSeen } from '../../../modules/app/apps-onboarding';
 import styles from './VprToolsView.module.scss';
+import { recordUserAction } from '../../../modules/telemetry/actions';
+import { normalizeTelemetryAppName } from '../../../../shared/telemetry.js';
 
 
 declare const __ANTSEED_SYSTEM_PROXY_PORT__: number;
@@ -103,6 +108,13 @@ export function VprToolsView() {
   const proxyResource = useCachedResource(systemProxyResource);
   const profiles = proxyResource.data?.profiles ?? [];
   const proxyState = proxyResource.data?.state ?? null;
+  // First-ever visit to this screen (however the user got here): play the
+  // coach-mark walkthrough once, and mark it seen immediately so the nav dot
+  // never comes back.
+  const [showOnboarding, setShowOnboarding] = useState(() => !isAppsOnboardingSeen());
+  useEffect(() => {
+    if (showOnboarding) persistAppsOnboardingSeen();
+  }, [showOnboarding]);
   const [busy, setBusy] = useState<string | null>(null);
   // The app being connected right now. Connecting also restarts an app that
   // was already running, so the row has to stay busy well past the click.
@@ -254,8 +266,9 @@ export function VprToolsView() {
     return true;
   }, [activeProfileNames.length, defaultModel, defaultPeerId, peerOptions, profiles, proxyState?.running]);
 
-  const disconnect = useCallback(async () => {
+  const disconnect = useCallback(async (appName?: string) => {
     const bridge = window.antseedDesktop;
+    recordUserAction('app_disconnect', 'apps', appName !== undefined ? normalizeTelemetryAppName(appName) : undefined);
     setBusy('stop');
     const result = await bridge?.systemProxyStop?.();
     setBusy(null);
@@ -277,6 +290,7 @@ export function VprToolsView() {
   }, []);
 
   const connectProfile = useCallback(async (profileName: string) => {
+    recordUserAction('app_connect', 'apps', normalizeTelemetryAppName(profileName));
     const names = Array.from(new Set([...activeProfileNames, profileName]));
     setConnecting(profileName);
     try {
@@ -304,9 +318,10 @@ export function VprToolsView() {
   const disconnectProfile = useCallback((profileName: string) => {
     const remaining = activeProfileNames.filter((name) => name !== profileName);
     if (remaining.length === 0) {
-      void disconnect();
+      void disconnect(profileName);
       return;
     }
+    recordUserAction('app_disconnect', 'apps', normalizeTelemetryAppName(profileName));
     void startProfiles(remaining);
   }, [activeProfileNames, disconnect, startProfiles]);
 
@@ -502,7 +517,7 @@ export function VprToolsView() {
       if (connected) {
         const remaining = activeProfileNames.filter((name) => name !== profileName);
         if (remaining.length === 0) {
-          await disconnect();
+          await disconnect(profileName);
         } else {
           await startProfiles(remaining);
         }
@@ -547,20 +562,22 @@ export function VprToolsView() {
       <div className={styles.stack}>
         {message ? <p className={styles.note} role="status">{message}</p> : null}
 
-        <div className={styles.appList}>
-          <TelegramBotCard />
-          {orderedProfiles.map((profile) => {
+        <div className={styles.appScroll}>
+          <div className={styles.appList}>
+            <TelegramBotCard />
+            {orderedProfiles.map((profile) => {
               const connected = activeProfiles?.has(profile.name) ?? false;
               const setupComplete = setupProfiles.has(profile.name);
               const canRestart = connected && profile.canRestart === true;
-              return (
+              const brandKey = resolveBrandKey(profile.name, profile.displayName);
+              const profileCard = (
                 <div key={profile.name} className={`${styles.appPill}${connected ? ` ${styles.appPillConnected}` : ''}`}>
                   <div className={styles.appHead}>
                     <span className={styles.appIdentity}>
-                      {profile.iconDataUri ? (
+                      {profile.iconDataUri && !isThemeAwareAppBrand(brandKey) ? (
                         <img src={profile.iconDataUri} alt="" className={styles.appIcon} />
                       ) : (
-                        <BrandIcon name={profile.name} hints={[profile.displayName]} size={24} />
+                        <BrandIcon brand={brandKey} size={24} />
                       )}
                       <span className={styles.appText}>
                         <span className={styles.appNameRow}>
@@ -650,88 +667,96 @@ export function VprToolsView() {
 
                 </div>
               );
-          })}
+              return profile.name === 'claude-desktop'
+                ? [profileCard, <CursorAppCard key="cursor" />]
+                : profileCard;
+            })}
+          </div>
+
+          {/* The certificate only matters for intercepted (mitm proxy) apps —
+              keep the card hidden until one is connected, or one exists and
+              the cert still needs trusting to let it connect. */}
+          {caInfo && (hasConnectedProxyProfile || (hasProxyProfile && certNeedsTrust)) ? (() => {
+            const caExpanded = caOpenOverride ?? certNeedsTrust;
+            return (
+              <div className={styles.caCard}>
+                <button
+                  type="button"
+                  className={styles.caHead}
+                  aria-expanded={caExpanded}
+                  onClick={() => setCaOpenOverride(!caExpanded)}
+                >
+                  <HugeiconsIcon icon={SquareLock01Icon} size={14} strokeWidth={2} />
+                  <span className={styles.caTitle}>HTTPS certificate</span>
+                  <VprBadge tone={certBadgeTone}>{certBadgeLabel}</VprBadge>
+                  <HugeiconsIcon
+                    icon={ArrowDown01Icon}
+                    size={14}
+                    strokeWidth={2}
+                    className={`${styles.caChevron}${caExpanded ? ` ${styles.caChevronOpen}` : ''}`}
+                  />
+                </button>
+                {caExpanded ? (
+                  <>
+                    <p className={styles.caHint}>
+                      {caTrust === 'stale'
+                        ? 'An older AntSeed certificate is still trusted on this device — trust the current one to replace it, otherwise intercepted apps fail with an SSL certificate error.'
+                        : 'Apps whose HTTPS traffic is intercepted trust a certificate generated locally on this device. It never leaves your machine — inspect it any time.'}
+                    </p>
+                    <button type="button" className={styles.caPath} onClick={() => { void copyCaPath(); }} title={caInfo.path}>
+                      <code>{caInfo.path}</code>
+                      <HugeiconsIcon icon={caCopied ? Tick02Icon : Copy01Icon} size={13} strokeWidth={2} />
+                      <span>{caCopied ? 'Copied' : 'Copy'}</span>
+                    </button>
+                    {caInfo.exists || certNeedsTrust ? (
+                      <div className={styles.actions}>
+                        {caInfo.exists ? (
+                          <button type="button" onClick={() => { void revealCa(); }}>Reveal certificate</button>
+                        ) : null}
+                        {certNeedsTrust ? (
+                          <button type="button" onClick={() => { void trustCa(); }} disabled={trustBusy}>
+                            {trustBusy ? 'Trusting...' : 'Trust certificate'}
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
+              </div>
+            );
+          })() : null}
         </div>
 
-        <button
-          type="button"
-          className={styles.addAppButton}
-          onClick={() => {
-            setAddOpen(true);
-            setAddUrl('');
-            setAddApp(null);
-            setAddPane({ pane: 'main', dir: 'none' });
-            setAddSearch('');
-            setAddStep(1);
-            setAddedName(null);
-            setAddError(null);
-            setAddUnverified(false);
-            setMessage(null);
-            ensureInstalledApps();
-          }}
-        >
-          <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={2} />
-          Add custom app
-        </button>
+        <div className={styles.appFooter}>
+          <button
+            type="button"
+            className={styles.addAppButton}
+            onClick={() => {
+              setAddOpen(true);
+              setAddUrl('');
+              setAddApp(null);
+              setAddPane({ pane: 'main', dir: 'none' });
+              setAddSearch('');
+              setAddStep(1);
+              setAddedName(null);
+              setAddError(null);
+              setAddUnverified(false);
+              setMessage(null);
+              ensureInstalledApps();
+            }}
+          >
+            <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={2} />
+            Add custom app
+          </button>
 
-        {/* The certificate only matters for intercepted (mitm proxy) apps —
-            keep the card hidden until one is connected, or one exists and
-            the cert still needs trusting to let it connect. */}
-        {caInfo && (hasConnectedProxyProfile || (hasProxyProfile && certNeedsTrust)) ? (() => {
-          const caExpanded = caOpenOverride ?? certNeedsTrust;
-          return (
-            <div className={styles.caCard}>
-              <button
-                type="button"
-                className={styles.caHead}
-                aria-expanded={caExpanded}
-                onClick={() => setCaOpenOverride(!caExpanded)}
-              >
-                <HugeiconsIcon icon={SquareLock01Icon} size={14} strokeWidth={2} />
-                <span className={styles.caTitle}>HTTPS certificate</span>
-                <VprBadge tone={certBadgeTone}>{certBadgeLabel}</VprBadge>
-                <HugeiconsIcon
-                  icon={ArrowDown01Icon}
-                  size={14}
-                  strokeWidth={2}
-                  className={`${styles.caChevron}${caExpanded ? ` ${styles.caChevronOpen}` : ''}`}
-                />
-              </button>
-              {caExpanded ? (
-                <>
-                  <p className={styles.caHint}>
-                    {caTrust === 'stale'
-                      ? 'An older AntSeed certificate is still trusted on this device — trust the current one to replace it, otherwise intercepted apps fail with an SSL certificate error.'
-                      : 'Apps whose HTTPS traffic is intercepted trust a certificate generated locally on this device. It never leaves your machine — inspect it any time.'}
-                  </p>
-                  <button type="button" className={styles.caPath} onClick={() => { void copyCaPath(); }} title={caInfo.path}>
-                    <code>{caInfo.path}</code>
-                    <HugeiconsIcon icon={caCopied ? Tick02Icon : Copy01Icon} size={13} strokeWidth={2} />
-                    <span>{caCopied ? 'Copied' : 'Copy'}</span>
-                  </button>
-                  {caInfo.exists || certNeedsTrust ? (
-                    <div className={styles.actions}>
-                      {caInfo.exists ? (
-                        <button type="button" onClick={() => { void revealCa(); }}>Reveal certificate</button>
-                      ) : null}
-                      {certNeedsTrust ? (
-                        <button type="button" onClick={() => { void trustCa(); }} disabled={trustBusy}>
-                          {trustBusy ? 'Trusting...' : 'Trust certificate'}
-                        </button>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </>
-              ) : null}
-            </div>
-          );
-        })() : null}
-
-        <button type="button" className={styles.learnMore} onClick={() => setHelpOpen(true)}>
-          What are connected apps?
-        </button>
+          <button type="button" className={styles.learnMore} onClick={() => setHelpOpen(true)}>
+            What are connected apps?
+          </button>
+        </div>
       </div>
       </VprPage>
+
+      {showOnboarding && <AppsOnboarding onDone={() => setShowOnboarding(false)} />}
 
       {/* Connected-apps explainer. */}
       <Modal
@@ -740,7 +765,6 @@ export function VprToolsView() {
         size="sm"
         title="Connected apps"
         subtitle="How VPR works with your tools"
-        className={styles.vprModal}
         bodyClassName={styles.settingsBody}
       >
         <section className={styles.settingSection}>
@@ -827,7 +851,6 @@ export function VprToolsView() {
               ) : null}
             </span>
           ) : undefined}
-        className={styles.vprModal}
         bodyClassName={styles.settingsBody}
       >
         {settingsProfile ? (() => {
@@ -999,7 +1022,6 @@ export function VprToolsView() {
           : addStep === 1 ? 'Route another app through VPR'
           : addStep === 2 ? 'Trust the HTTPS certificate'
           : 'Connect the app'}
-        className={styles.vprModal}
         bodyClassName={styles.settingsBody}
       >
         {addPane.pane !== 'apps' ? (

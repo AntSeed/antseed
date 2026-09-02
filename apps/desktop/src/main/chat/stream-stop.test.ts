@@ -15,6 +15,42 @@ test('classifyChatStreamFailure detects retryable upstream 502 failures', () => 
   assert.equal(reason.retryable, true);
 });
 
+test('classifyChatStreamFailure preserves protocol peer guidance without a stream prefix', () => {
+  const message = [
+    'Oops, pinned peer could not complete the request.',
+    'AntSeed is a peer-to-peer network. Try another peer or use Auto routing.',
+    'Original Response: {"message":"Insufficient balance or no resource package. Please recharge.","status":429}',
+  ].join('\n');
+  const reason = classifyChatStreamFailure({
+    error: new Error(`429 ${message}`),
+    stopReason: 'error',
+  });
+
+  assert.equal(reason.kind, 'http_error');
+  assert.equal(reason.statusCode, 429);
+  assert.equal(reason.retryable, true);
+  assert.equal(reason.message, message);
+});
+
+test('classifyChatStreamFailure treats a seller 403 as retryable with a clean message', () => {
+  // A seller whose upstream revoked or blocked it relays an HTML error page.
+  // The status must be parsed out of the "403 Forbidden" text and the failure
+  // classified retryable — the buyer proxy re-routes to another seller, so a
+  // retry goes somewhere new instead of repeating the refusal.
+  const reason = classifyChatStreamFailure({
+    error: new Error(
+      '403 <html> <head><title>403 Forbidden</title></head> <body> <center><h1>403 Forbidden</h1></center> </body> </html>',
+    ),
+    stopReason: 'error',
+  });
+
+  assert.equal(reason.kind, 'http_error');
+  assert.equal(reason.statusCode, 403);
+  assert.equal(reason.retryable, true);
+  assert.doesNotMatch(reason.message, /<html>/);
+  assert.match(reason.message, /403/);
+});
+
 test('classifyChatStreamFailure detects timeout failures', () => {
   const reason = classifyChatStreamFailure({
     error: { message: 'headers timeout', code: 'UND_ERR_HEADERS_TIMEOUT' },
@@ -111,7 +147,7 @@ test('classifyChatStreamFailure falls back to stream_error when stopReason is er
   assert.equal(reason.kind, 'stream_error');
   assert.equal(reason.source, 'upstream');
   assert.equal(reason.retryable, false);
-  assert.ok(reason.message.includes('Something weird happened upstream'));
+  assert.equal(reason.message, 'Something weird happened upstream');
 });
 
 test('classifyChatStreamFailure falls back to unknown when no signals match', () => {
@@ -120,6 +156,7 @@ test('classifyChatStreamFailure falls back to unknown when no signals match', ()
   assert.equal(reason.kind, 'unknown');
   assert.equal(reason.source, 'unknown');
   assert.equal(reason.retryable, false);
+  assert.equal(reason.message, 'The request ended unexpectedly.');
 });
 
 test('classifyChatStreamFailure recurses through `cause` chains', () => {

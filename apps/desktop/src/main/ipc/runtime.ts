@@ -25,7 +25,7 @@ export type ApiResult = {
 export type RuntimeIpcDeps = {
   processManager: ProcessManager;
   logBuffer: LogEvent[];
-  appendLog: (mode: 'connect' | 'system-proxy', stream: 'stdout' | 'stderr' | 'system', line: string) => void;
+  appendLog: (mode: RuntimeMode, stream: 'stdout' | 'stderr' | 'system', line: string) => void;
   getCombinedProcessState: () => RuntimeProcessState[];
   killOrphanBuyerProxy: () => Promise<void>;
   requestBuyerPeerRefresh: () => Promise<void>;

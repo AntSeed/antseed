@@ -49,6 +49,7 @@ const REQUEST_RENDERERS: Partial<Record<ServiceApiProtocol, RequestRenderer>> = 
     {
       toolCallContent: options.from === 'openai-responses' ? null : undefined,
       groupAssistantToolCallsWithPreviousMessage: options.from === 'anthropic-messages',
+      preserveResponsesAgentSemantics: options.from === 'openai-responses',
     },
   ),
   'openai-responses': (request, options) => renderCanonicalRequestToOpenAIResponsesBody(

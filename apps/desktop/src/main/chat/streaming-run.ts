@@ -74,6 +74,16 @@ import {
   PiConversationStore,
 } from './conversation-store.js';
 import {
+  classifyServiceCategory,
+  durationBucket,
+  httpStatusBucket,
+  modelPricingSnapshot,
+  offersAvailableBucket,
+  publicModelId,
+  type TelemetryEventProperties,
+} from '../telemetry/events.js';
+import { classifyChatRequestFailure } from '../telemetry/classify.js';
+import {
   generateConversationTitleWithModel,
   getMessageText,
   shouldGenerateConversationTitleForSession,
@@ -112,7 +122,16 @@ export type StreamingRunContext = {
    * value: the engine replaces the array wholesale on every refresh.
    */
   getServiceCatalogEntries: () => ChatServiceCatalogEntry[];
+  getBuyerEligibleServiceCatalogEntries: () => ChatServiceCatalogEntry[];
+  recordFirstChatStarted?: StreamingRunContextTelemetry['recordFirstChatStarted'];
+  recordChatRequestStarted?: StreamingRunContextTelemetry['recordChatRequestStarted'];
+  recordChatRequestFinished?: StreamingRunContextTelemetry['recordChatRequestFinished'];
 };
+
+type StreamingRunContextTelemetry = Pick<
+  import('./engine-types.js').RegisterPiChatHandlersOptions,
+  'recordFirstChatStarted' | 'recordChatRequestStarted' | 'recordChatRequestFinished'
+>;
 
 export type StreamingRunner = ReturnType<typeof createStreamingRunner>;
 
@@ -137,6 +156,10 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
     waitForBuyerProxy,
     resolveProtocolForSend,
     getServiceCatalogEntries,
+    getBuyerEligibleServiceCatalogEntries,
+    recordFirstChatStarted,
+    recordChatRequestStarted,
+    recordChatRequestFinished,
   } = ctx;
 
   const runStreamingPrompt = async (
@@ -158,6 +181,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
     if (trimmedMessage.length === 0 && attachmentPromptText.length === 0 && attachmentImages.length === 0) {
       return { ok: false, error: 'Empty message' };
     }
+
 
     const existingRun = activeRunsByConversation.get(conversationId);
     if (existingRun) {
@@ -256,6 +280,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
         error: `Service "${serviceId}" generates images and cannot be used for text chat. Select a text-capable model.`,
       };
     }
+
     const protocol: ChatServiceProtocol = advertisedProtocol ?? await resolveProtocolForSend(serviceId);
     const supportsMultimodal = catalogEntry?.categories?.includes('multimodal') ?? false;
     const droppedImageCount = supportsMultimodal ? 0 : attachmentImages.length;
@@ -401,6 +426,54 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
     let pendingAssistantMessage: AiChatMessage | null = null;
     let terminalStreamError: string | null = null;
     let terminalStreamFailure: ChatStreamStopReason | null = null;
+    let paymentRequiredFailure: ChatStreamStopReason | null = null;
+    let automaticRetryAttempted = false;
+    let automaticRetrySucceeded = false;
+    let hadPartialOutput = false;
+    let telemetryFinished = false;
+    const requestId = randomUUID();
+    const requestStartedAt = Date.now();
+    const eligibleOffersForService = getBuyerEligibleServiceCatalogEntries().filter((entry) => (
+      entry.id.trim().toLowerCase() === normalizedServiceForCatalog
+      && (routeMode !== 'pinned' || entry.peerId === preferredPeerId)
+    ));
+    const offersForService = eligibleOffersForService.length;
+    const pricing = modelPricingSnapshot(eligibleOffersForService);
+    const finishTelemetry = (
+      outcome: TelemetryEventProperties['chat_request_finished']['outcome'],
+      reason?: ChatStreamStopReason,
+      rawMessage = '',
+    ): void => {
+      if (telemetryFinished || !recordChatRequestFinished) return;
+      telemetryFinished = true;
+      const failure = reason
+        ? classifyChatRequestFailure(reason, rawMessage)
+        : { failureCode: 'none' as const, failureStage: 'none' as const, retryable: false };
+      const payload: TelemetryEventProperties['chat_request_finished'] = {
+        request_id: requestId,
+        outcome,
+        failure_code: failure.failureCode,
+        failure_stage: failure.failureStage,
+        public_model_id: publicModelId(serviceId, catalogEntry !== undefined),
+        service_category: classifyServiceCategory(serviceId),
+        route_mode: routeMode,
+        offers_available_bucket: offersAvailableBucket(offersForService),
+        http_status_bucket: httpStatusBucket(failure.statusCode ?? reason?.statusCode),
+        retryable: failure.failureCode === 'model_not_served_by_peer'
+          ? routeMode === 'auto'
+          : failure.retryable,
+        automatic_retry_attempted: automaticRetryAttempted,
+        automatic_retry_succeeded: automaticRetrySucceeded,
+        had_partial_output: hadPartialOutput,
+        duration_bucket: durationBucket(Date.now() - requestStartedAt),
+        has_attachments: (attachments?.length ?? 0) > 0,
+      };
+      try {
+        void Promise.resolve(recordChatRequestFinished(payload)).catch(() => {});
+      } catch {
+        // Telemetry must never affect the chat request.
+      }
+    };
 
     const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
       if (event.type === 'turn_start') {
@@ -424,6 +497,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
           return;
         }
         if (update.type === 'text_delta') {
+          if (update.delta.length > 0) hadPartialOutput = true;
           sendToRenderer('chat:ai-stream-delta', {
             conversationId,
             index: update.contentIndex,
@@ -592,7 +666,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
             } else {
               cacheFallbackPaymentRequired(conversationId, suggestedAmount);
             }
-            emitPaymentRequiredStreamError(conversationId, suggestedAmount);
+            paymentRequiredFailure = emitPaymentRequiredStreamError(conversationId, suggestedAmount);
             const activeRun = activeRunsByConversation.get(conversationId);
             if (activeRun) void abortAndClearActiveRun(activeRun);
             return;
@@ -607,7 +681,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
               ? paymentBody.suggestedAmount : '100000';
             // Cache payment info so the approve IPC handler can build the SpendingAuth
             cachedPaymentRequired.set(conversationId, paymentBody);
-            emitPaymentRequiredStreamError(conversationId, suggestedAmount);
+            paymentRequiredFailure = emitPaymentRequiredStreamError(conversationId, suggestedAmount);
             const activeRun = activeRunsByConversation.get(conversationId);
             if (activeRun) void abortAndClearActiveRun(activeRun);
             return;
@@ -616,7 +690,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
           if (message.stopReason === 'error' || message.stopReason === 'aborted') {
             terminalStreamError = errorMsg || rawContent || (message.stopReason === 'aborted'
               ? 'Request aborted'
-              : 'The stream stopped before completion.');
+              : 'The request ended unexpectedly.');
             terminalStreamFailure = classifyChatStreamFailure({
               error: message,
               message: terminalStreamError,
@@ -649,6 +723,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
       }
 
       if (event.type === 'auto_retry_start') {
+        automaticRetryAttempted = true;
         const reason = classifyChatStreamFailure({
           error: event.errorMessage,
           message: event.errorMessage,
@@ -664,6 +739,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
 
       if (event.type === 'auto_retry_end') {
         if (event.success) {
+          automaticRetrySucceeded = true;
           appendSystemLog(`AI stream retry succeeded on attempt ${String(event.attempt)}.`);
         } else if (event.finalError) {
           const reason = classifyChatStreamFailure({
@@ -685,9 +761,42 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
     const run: ActiveRun = { conversationId, session, unsubscribe };
     activeRunsByConversation.set(conversationId, run);
 
+    if (recordChatRequestStarted) {
+      try {
+        void Promise.resolve(recordChatRequestStarted({
+          request_id: requestId,
+          public_model_id: publicModelId(serviceId, catalogEntry !== undefined),
+          service_category: classifyServiceCategory(serviceId),
+          route_mode: routeMode,
+          pricing_tier: pricing.pricingTier,
+          has_free_eligible_offer: pricing.hasFreeEligibleOffer,
+          offers_available_bucket: pricing.eligibleOfferCountBucket,
+          has_attachments: (attachments?.length ?? 0) > 0,
+        })).catch(() => {});
+      } catch {
+        // Telemetry must never affect the chat request.
+      }
+    }
+
+    // Capture only after every local preflight and session-construction step
+    // succeeded. The telemetry service gates the lazy balance read and keeps it
+    // off the chat critical path.
+    if (recordFirstChatStarted) {
+      void Promise.resolve(recordFirstChatStarted({
+        serviceCategory: classifyServiceCategory(serviceId),
+        hasAttachments: (attachments?.length ?? 0) > 0,
+      })).catch(() => {});
+    }
+
     try {
       const promptText = [trimmedMessage, attachmentPromptText].filter((part) => part.length > 0).join('\n\n');
       await session.prompt(promptText || ' ', { images: effectiveAttachmentImages.length > 0 ? effectiveAttachmentImages : undefined });
+
+      if (paymentRequiredFailure !== null) {
+        const paymentFailure = paymentRequiredFailure as ChatStreamStopReason;
+        finishTelemetry('failed', paymentFailure);
+        return { ok: false, error: 'Payment required', stopReason: paymentFailure };
+      }
 
       if (terminalStreamFailure !== null) {
         // `terminalStreamFailure` is mutated inside the subscribe callback,
@@ -701,6 +810,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
           stopReason: streamFailure,
         });
         appendSystemLog(`Pi chat error: ${formatChatStreamStopForLog(streamFailure)}`);
+        finishTelemetry('failed', streamFailure, terminalStreamError ?? streamFailure.message);
         return {
           ok: false,
           error: terminalStreamError ?? streamFailure.message,
@@ -729,6 +839,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
           }
           pendingAssistantMessage = null;
           const reason = emitPaymentRequiredStreamError(conversationId, amt);
+          finishTelemetry('failed', reason, lastText);
           return { ok: false, error: 'Payment required', stopReason: reason };
         }
       }
@@ -756,6 +867,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
         streamDone = true;
         sendToRenderer('chat:ai-stream-done', { conversationId });
       }
+      finishTelemetry('success');
 
       if (shouldGenerateConversationTitle) {
         try {
@@ -780,6 +892,9 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
       // Always discard any buffered assistant message on error — it will not be committed.
       pendingAssistantMessage = null;
       if ((error as Error).name === 'AbortError') {
+        if (paymentRequiredFailure) {
+          finishTelemetry('failed', paymentRequiredFailure, asErrorMessage(error));
+        }
         const reason = classifyChatStreamFailure({
           error,
           message: 'Request aborted',
@@ -790,6 +905,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
           error: 'Request aborted',
           stopReason: reason,
         });
+        if (!paymentRequiredFailure) finishTelemetry('cancelled', reason, 'Request aborted');
         return { ok: false, error: 'Aborted', stopReason: reason };
       }
       const message = asErrorMessage(error);
@@ -816,6 +932,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
           });
         }
         const reason = emitPaymentRequiredStreamError(conversationId, amt);
+        finishTelemetry('failed', reason, message);
         return { ok: false, error: message, stopReason: reason };
       } else {
         const reason = classifyChatStreamFailure({
@@ -829,6 +946,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
           stopReason: reason,
         });
         appendSystemLog(`Pi chat error: ${formatChatStreamStopForLog(reason)}`);
+        finishTelemetry('failed', reason, message);
         return { ok: false, error: message, stopReason: reason };
       }
     } finally {

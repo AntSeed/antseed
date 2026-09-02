@@ -4,7 +4,7 @@
  */
 import { ipcMain } from 'electron';
 import {
-  toolDesktopAppName,
+  toolDesktopAppNames,
   toolResumeCommand,
 } from '../../shared/tool-resume.js';
 import {
@@ -75,6 +75,13 @@ export function registerDesktopIpc(): void {
   ipcMain.handle('desktop:open-tool', async (_event, toolName: string) => {
     try {
       const key = typeof toolName === 'string' ? toolName : '';
+      if (key === 'cursor') {
+        const target = namedAppTarget('Cursor');
+        if (!target) return { ok: false, error: 'Could not find Cursor on this device.' };
+        const result = launchAppTarget(target);
+        if (result.ok) await waitForAppTarget(target);
+        return result;
+      }
       const profile = allSystemProxyProfiles().find((item) => item.name === key || item.toolName === key);
       if (!profile) {
         return { ok: false, error: 'Unknown tool.' };
@@ -133,19 +140,22 @@ export function registerDesktopIpc(): void {
   ipcMain.handle('desktop:open-tool-session', (_event, tool: unknown, sessionKey: unknown, target: unknown) => {
     const toolSlug = typeof tool === 'string' ? tool : '';
     if (target === 'app') {
-      const appName = toolDesktopAppName(toolSlug);
-      if (!appName) {
+      const appNames = toolDesktopAppNames(toolSlug);
+      if (appNames.length === 0) {
         return { ok: false, error: 'This tool has no known desktop app.' };
       }
       if (process.platform !== 'darwin') {
-        return { ok: false, error: `Open the ${appName} app manually on this platform.` };
+        return { ok: false, error: `Open the ${appNames[0]} app manually on this platform.` };
       }
-      try {
-        execFileSync('open', ['-a', appName], { stdio: 'pipe' });
-        return { ok: true };
-      } catch {
-        return { ok: false, error: `The ${appName} app doesn't seem to be installed.` };
+      for (const appName of appNames) {
+        try {
+          execFileSync('open', ['-a', appName], { stdio: 'pipe' });
+          return { ok: true };
+        } catch {
+          // Try the next release-channel variant.
+        }
       }
+      return { ok: false, error: `The ${appNames[0]} app doesn't seem to be installed.` };
     }
     const command = toolResumeCommand(
       toolSlug,

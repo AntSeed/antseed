@@ -29,6 +29,8 @@ export interface ChainConfig {
   statsDeployBlock?: number;
   /** Public URL of the @antseed/network-stats aggregator that indexes the stats contract for this chain. */
   networkStatsUrl?: string;
+  /** Public REST API of the chain explorer (Antscan). Serves per-seller on-chain stats at /api/sellers. */
+  explorerApiUrl?: string;
   /** AntseedDepositRelay contract for gasless USDC sweeps from buyer hot wallets. */
   depositRelayAddress?: string;
 }
@@ -72,6 +74,7 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     statsContractAddress: '0x15649ff076bfa5e37e24ee3154a00503149954fd',
     statsDeployBlock: 44469557,
     networkStatsUrl: 'https://network.antseed.com',
+    explorerApiUrl: 'https://antscan.co',
     depositRelayAddress: '0x34a44542e76f9b4cff3a31902eDF14AbF2C3B3DD',
   },
   'base-sepolia': {

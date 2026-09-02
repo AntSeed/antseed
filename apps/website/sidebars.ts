@@ -19,6 +19,8 @@ const sidebars: SidebarsConfig = {
       items: [
         'guides/vpr',
         'guides/using-the-api',
+        'guides/agents',
+        'guides/public-tunnels',
         'guides/become-a-provider',
         'guides/tee-provider',
         'guides/verify-tee',
