@@ -53,9 +53,14 @@ contract AntseedSparseBlockhashStore {
         CHAINLINK_BLOCKHASH_STORE = IBlockhashStore(chainlinkBlockhashStore_);
     }
 
+    /// @notice Canonical hash of `blockNumber`, or `bytes32(0)` when unknown.
+    /// @dev Chainlink's `BlockhashStore` reverts ("blockhash not found in
+    ///      store") for unknown blocks instead of returning zero. The revert
+    ///      is swallowed here so callers see the store's own zero sentinel and
+    ///      raise their own errors (`NonCanonicalBlock`, `MissingAnchor`).
     function getBlockhash(uint256 blockNumber) external view returns (bytes32 blockHash) {
         blockHash = localBlockhash[blockNumber];
-        if (blockHash == bytes32(0)) blockHash = CHAINLINK_BLOCKHASH_STORE.getBlockhash(blockNumber);
+        if (blockHash == bytes32(0)) blockHash = _chainlinkBlockhash(blockNumber);
     }
 
     function frontierKey(address submitter, bytes32 sessionId) public pure returns (bytes32) {
@@ -77,7 +82,7 @@ contract AntseedSparseBlockhashStore {
         bytes32 sessionKey = frontierKey(msg.sender, sessionId);
         Frontier memory frontier = frontiers[sessionKey];
         if (frontier.expectedHeaderHash == bytes32(0)) {
-            bytes32 anchorHash = CHAINLINK_BLOCKHASH_STORE.getBlockhash(anchorBlock);
+            bytes32 anchorHash = _chainlinkBlockhash(anchorBlock);
             if (anchorHash == bytes32(0)) revert MissingAnchor(anchorBlock);
             frontier = Frontier(anchorBlock, anchorBlock, anchorHash);
         } else if (frontier.anchorBlock != anchorBlock) {
@@ -104,7 +109,7 @@ contract AntseedSparseBlockhashStore {
             if (headerCount > batch.anchorBlock) revert HeaderRangeUnderflow();
             _validateBitmap(batch.storeBitmap, headerCount);
 
-            bytes32 anchorHash = CHAINLINK_BLOCKHASH_STORE.getBlockhash(batch.anchorBlock);
+            bytes32 anchorHash = _chainlinkBlockhash(batch.anchorBlock);
             if (anchorHash == bytes32(0)) revert MissingAnchor(batch.anchorBlock);
             (uint64 nextHeaderBlock,, uint256 storedBlockCount) =
                 _verifyHeaders(batch.anchorBlock, anchorHash, batch.descendingHeaders, batch.storeBitmap);
@@ -137,6 +142,14 @@ contract AntseedSparseBlockhashStore {
             }
             currentHeaderBlock = parentBlock;
             expectedHeaderHash = parentHash;
+        }
+    }
+
+    function _chainlinkBlockhash(uint256 blockNumber) internal view returns (bytes32) {
+        try CHAINLINK_BLOCKHASH_STORE.getBlockhash(blockNumber) returns (bytes32 blockHash) {
+            return blockHash;
+        } catch {
+            return bytes32(0);
         }
     }
 

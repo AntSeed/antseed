@@ -2,7 +2,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { AbiCoder, ContractFactory, JsonRpcProvider, Wallet, getAddress, keccak256 } from "ethers";
+import { AbiCoder, ContractFactory, Interface, JsonRpcProvider, Wallet, getAddress, keccak256 } from "ethers";
 
 const contractsDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -12,7 +12,13 @@ const value = (flag) => {
 };
 const artifactDirectory = resolve(value("--artifact-dir") ?? "");
 const rpcUrl = value("--rpc-url") ?? "http://127.0.0.1:8545";
-const verifierAddress = getAddress(value("--sp1-verifier") ?? "0x397A5f7f3dBd538f23DE225B51f532c34448dA9B");
+// Concrete SP1VerifierGroth16 v6.1.0 on Base (VERIFIER_HASH 0x4388a21c...). Never the
+// upgradeable SP1VerifierGateway (0x397A...dA9B): its owner can add routes that would
+// accept foreign "proofs" against the registry's immutable program vkeys.
+const verifierAddress = getAddress(value("--sp1-verifier") ?? "0xb69f2584CBcFf99a58C4e7002E8b89Af54a6f4e2");
+const expectedVerifierHash = (value("--sp1-verifier-hash")
+  ?? "0x4388a21c687fdd5f218d7e3d13190cac4c5355818d3605fd5fb811df468ee696").toLowerCase();
+if (!/^0x[0-9a-f]{64}$/.test(expectedVerifierHash)) throw new Error("--sp1-verifier-hash must be a bytes32 hex string");
 const blockhashStoreAddress = getAddress(
   value("--blockhash-store") ?? "0x78b69899C8cD252126cBB1A50171ec37286C3877",
 );
@@ -32,6 +38,12 @@ if (network.chainId !== 8_453n) throw new Error(`expected chain ID 8453, got ${n
 if (await provider.getCode(verifierAddress) === "0x") {
   throw new Error(`SP1 verifier is not deployed at ${verifierAddress}; start Anvil with a Base mainnet fork`);
 }
+const liveVerifierHash = await readVerifierHash(provider, verifierAddress);
+if (liveVerifierHash !== expectedVerifierHash) {
+  throw new Error(
+    `SP1 verifier at ${verifierAddress} reports VERIFIER_HASH ${liveVerifierHash ?? "<none: routing gateway?>"}; expected ${expectedVerifierHash}`,
+  );
+}
 if (await provider.getCode(blockhashStoreAddress) === "0x") {
   throw new Error(`BlockhashStore is not deployed at ${blockhashStoreAddress}; start Anvil with a Base mainnet fork`);
 }
@@ -44,6 +56,7 @@ let nonce = await provider.getTransactionCount(signer.address, "pending");
 const batchAuthenticator = await deploy("WashTradingDevelopmentE2E.sol/WashTradingLocalBatchAuthenticator.json", []);
 const registry = await deploy("AntseedWashTradingRegistry.sol/AntseedWashTradingRegistry.json", [
   verifierAddress,
+  expectedVerifierHash,
   blockhashStoreAddress,
   configuration.aggregatorProgramVKey,
   configuration.closedLoopProgramVKey,
@@ -105,6 +118,7 @@ for (let artifactIndex = 0; artifactIndex < artifacts.length; artifactIndex += 1
 console.log(`WASH_TRADING_PRODUCTION_ANVIL_RESULT=${JSON.stringify({
   registry: await registry.getAddress(),
   verifier: verifierAddress,
+  verifierHash: expectedVerifierHash,
   blockhashStore: blockhashStoreAddress,
   batchAuthenticator: await batchAuthenticator.getAddress(),
   sellerCount: artifacts.length,
@@ -115,6 +129,16 @@ console.log(`WASH_TRADING_PRODUCTION_ANVIL_RESULT=${JSON.stringify({
   elapsedSeconds: Math.round((Date.now() - startedAt) / 1000),
   transactionMode: "base-fork-real-sp1-and-authenticated-blockhash-store",
 })}`);
+
+async function readVerifierHash(rpcProvider, address) {
+  const verifierInterface = new Interface(["function VERIFIER_HASH() view returns (bytes32)"]);
+  try {
+    const result = await rpcProvider.call({ to: address, data: verifierInterface.encodeFunctionData("VERIFIER_HASH") });
+    return verifierInterface.decodeFunctionResult("VERIFIER_HASH", result)[0].toLowerCase();
+  } catch {
+    return null;
+  }
+}
 
 async function deploy(relativeArtifact, constructorArguments) {
   const compiled = JSON.parse(await readFile(resolve(contractsDirectory, "out", relativeArtifact), "utf8"));

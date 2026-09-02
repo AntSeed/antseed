@@ -47,6 +47,7 @@ for (const chunk of artifact.blockAuthenticationChunks) {
 }
 const registry = await deploy("AntseedWashTradingRegistry.sol/AntseedWashTradingRegistry.json", [
   await verifier.getAddress(),
+  await verifier.VERIFIER_HASH(),
   await blockhashStore.getAddress(),
   artifact.aggregatorProgramVKey,
   journal.closedLoopProgramVKey,

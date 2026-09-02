@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import { IAntseedWashTradingRegistry } from "../interfaces/IAntseedWashTradingRegistry.sol";
 import { IBlockhashStore } from "../interfaces/IBlockhashStore.sol";
-import { ISP1Verifier } from "../interfaces/ISP1Verifier.sol";
+import { ISP1Verifier, ISP1VerifierWithHash } from "../interfaces/ISP1Verifier.sol";
 
 contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
     uint32 public constant SCHEMA_VERSION = 1;
@@ -44,7 +44,11 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
         bytes32 evidenceDigest;
     }
 
+    /// @dev Concrete SP1 verifier deployment (not the routing gateway).
     ISP1Verifier public immutable verifier;
+    /// @dev `verifier.VERIFIER_HASH()` at deployment; identifies the exact
+    ///      SP1 circuit release the pinned program vkeys belong to.
+    bytes32 public immutable verifierHash;
     IBlockhashStore public immutable blockhashStore;
     bytes32 public immutable sellerAggregatorProgramVKey;
     bytes32 public immutable closedLoopProgramVKey;
@@ -85,6 +89,7 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
 
     error ZeroAddress();
     error InvalidConfiguration();
+    error InvalidVerifier();
     error InvalidSellerProof();
     error SellerProofAlreadyStaged(bytes32 proofId);
     error SellerProofNotStaged(bytes32 proofId);
@@ -100,6 +105,7 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
 
     constructor(
         address verifier_,
+        bytes32 expectedVerifierHash_,
         address blockhashStore_,
         bytes32 sellerAggregatorProgramVKey_,
         bytes32 closedLoopProgramVKey_,
@@ -112,7 +118,15 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
             sellerAggregatorProgramVKey_ == bytes32(0) || closedLoopProgramVKey_ == bytes32(0)
                 || reciprocalProgramVKey_ == bytes32(0) || periodStartBlock_ == 0 || periodStartBlock_ > periodEndBlock_
         ) revert InvalidConfiguration();
+        if (expectedVerifierHash_ == bytes32(0)) revert InvalidVerifier();
+        // Reverts for the SP1VerifierGateway, which does not expose
+        // VERIFIER_HASH(); a concrete verifier must match the expected release.
+        (bool ok, bytes memory data) = verifier_.staticcall(abi.encodeCall(ISP1VerifierWithHash.VERIFIER_HASH, ()));
+        if (!ok || data.length != 32 || abi.decode(data, (bytes32)) != expectedVerifierHash_) {
+            revert InvalidVerifier();
+        }
         verifier = ISP1Verifier(verifier_);
+        verifierHash = expectedVerifierHash_;
         blockhashStore = IBlockhashStore(blockhashStore_);
         sellerAggregatorProgramVKey = sellerAggregatorProgramVKey_;
         closedLoopProgramVKey = closedLoopProgramVKey_;

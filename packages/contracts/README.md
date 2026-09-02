@@ -59,8 +59,10 @@ WASH_TRADING_ARTIFACT_DIR=/path/to/unified-development-artifacts \
 This test exercises the full local integration path but does not provide
 production cryptographic assurance. Production deployments must use a real SP1
 Groth16 proof and verifier plus `AntseedSparseBlockhashStore`, whose historical
-hashes are verified backwards from Base Chainlink `BlockhashStore` anchors. A
-staged proof changes no seller result until every committed block-reference
+hashes are verified backwards from Base Chainlink `BlockhashStore` anchors
+(Chainlink's store reverts for unknown blocks; the sparse store maps that to
+`bytes32(0)` so its own `MissingAnchor` / the registry's `NonCanonicalBlock`
+errors fire instead). A staged proof changes no seller result until every committed block-reference
 chunk has been authenticated. The registry stores the greatest proven
 wash-volume lower bound for each seller as `{provenWashVolume, evidenceDigest}`.
 Later proofs must strictly increase the seller's proven wash volume.
@@ -79,9 +81,30 @@ export CHAINLINK_BLOCKHASH_STORE=<base-chainlink-blockhash-store>
 export WASH_TRADING_BLOCKHASH_STORE=<deployed-antseed-sparse-blockhash-store>
 ```
 
-Set `SP1_VERIFIER` and `DEPLOYER_PRIVATE_KEY` separately. Deploy the sparse
-store if it was not already deployed by the backfill executor, then deploy the
-registry:
+Set `SP1_VERIFIER`, `SP1_VERIFIER_HASH`, and `DEPLOYER_PRIVATE_KEY` separately.
+`SP1_VERIFIER` must be the **concrete** `SP1VerifierGroth16` deployment for the
+SP1 release the guests were built with — never the `SP1VerifierGateway`
+(`0x397A5f7f3dBd538f23DE225B51f532c34448dA9B` on Base). The gateway is owned and
+routable: its owner can add a route for a new proof selector, and that route
+could accept foreign "proofs" against the registry's immutable program vkeys.
+The registry constructor calls `VERIFIER_HASH()` on the verifier and reverts
+with `InvalidVerifier` if it is missing (the gateway does not implement it) or
+differs from `SP1_VERIFIER_HASH`, and records the hash as `verifierHash`.
+
+For SP1 `v6.1.0` (the pinned `sp1-sdk` in loop-proof) on Base:
+
+```bash
+export SP1_VERIFIER=0xb69f2584CBcFf99a58C4e7002E8b89Af54a6f4e2
+export SP1_VERIFIER_HASH=0x4388a21c687fdd5f218d7e3d13190cac4c5355818d3605fd5fb811df468ee696
+cast call "$SP1_VERIFIER" 'VERSION()(string)' --rpc-url <rpc>        # "v6.1.0"
+cast call "$SP1_VERIFIER" 'VERIFIER_HASH()(bytes32)' --rpc-url <rpc> # == SP1_VERIFIER_HASH
+```
+
+`VERIFIER_HASH` is `sha256` of the Groth16 verifying key shipped in the matching
+`sp1-verifier` crate (`vk-artifacts/groth16_vk.bin`); its first four bytes are
+the selector prefix of every proof the guests produce. Re-derive both values
+whenever `sp1-sdk` is bumped. Deploy the sparse store if it was not already
+deployed by the backfill executor, then deploy the registry:
 
 ```bash
 forge script script/DeployWashTradingBlockhashStore.s.sol --rpc-url <rpc> --broadcast

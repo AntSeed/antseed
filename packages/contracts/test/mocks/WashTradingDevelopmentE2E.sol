@@ -20,6 +20,8 @@ contract WashTradingDevelopmentBlockhashStore {
 }
 
 contract WashTradingDevelopmentVerifier is ISP1Verifier {
+    /// @dev Sentinel identity for the digest-pinned development verifier.
+    bytes32 public constant VERIFIER_HASH = keccak256("antseed-wash-trading-development-verifier-v1");
     bytes32 public immutable expectedDigest;
 
     constructor(bytes32 programVKey, bytes32 publicValuesDigest, bytes32 proofDigest) {
@@ -42,7 +44,10 @@ contract WashTradingLocalBatchAuthenticator {
         IAntseedWashTradingRegistry.BlockRef[][] calldata chunkReferences,
         bytes32[][] calldata chunkProofs
     ) external {
-        require(chunkIndexes.length == chunkReferences.length && chunkIndexes.length == chunkProofs.length, "length mismatch");
+        require(
+            chunkIndexes.length == chunkReferences.length && chunkIndexes.length == chunkProofs.length,
+            "length mismatch"
+        );
         for (uint256 chunk; chunk < chunkIndexes.length; ++chunk) {
             registry.authenticateBlockReferences(
                 proofId, chunkIndexes[chunk], chunkReferences[chunk], chunkProofs[chunk]

@@ -12,6 +12,7 @@ contract DeployWashTradingRegistry is Script {
         vm.startBroadcast(deployerPrivateKey);
         registry = new AntseedWashTradingRegistry(
             vm.envAddress("SP1_VERIFIER"),
+            vm.envBytes32("SP1_VERIFIER_HASH"),
             vm.envAddress("WASH_TRADING_BLOCKHASH_STORE"),
             vm.envBytes32("WASH_TRADING_SELLER_AGGREGATOR_PROGRAM_VKEY"),
             vm.envBytes32("WASH_TRADING_CLOSED_LOOP_PROGRAM_VKEY"),

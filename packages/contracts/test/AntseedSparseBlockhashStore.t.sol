@@ -5,11 +5,19 @@ import "forge-std/Test.sol";
 
 import { AntseedSparseBlockhashStore } from "../integrity/AntseedSparseBlockhashStore.sol";
 
+/// @dev Mirrors Base Chainlink `BlockhashStore` (0x78b6...3877): unknown
+///      blocks revert with a string rather than returning `bytes32(0)`.
 contract SparseChainlinkBlockhashStoreMock {
-    mapping(uint256 blockNumber => bytes32 blockHash) public getBlockhash;
+    mapping(uint256 blockNumber => bytes32 blockHash) internal blockHashes;
 
     function set(uint256 blockNumber, bytes32 blockHash) external {
-        getBlockhash[blockNumber] = blockHash;
+        blockHashes[blockNumber] = blockHash;
+    }
+
+    function getBlockhash(uint256 blockNumber) external view returns (bytes32) {
+        bytes32 blockHash = blockHashes[blockNumber];
+        require(blockHash != bytes32(0), "blockhash not found in store");
+        return blockHash;
     }
 
     function storeVerifyHeader(uint256, bytes calldata) external { }
@@ -125,6 +133,23 @@ contract AntseedSparseBlockhashStoreTest is Test {
 
         assertEq(store.getBlockhash(99), TERMINAL_PARENT);
         assertEq(store.getBlockhash(80), bytes32(uint256(81)));
+    }
+
+    function test_unknownChainlinkBlockReadsAsZeroAndMissingAnchorReverts() public {
+        vm.expectRevert(bytes("blockhash not found in store"));
+        chainlink.getBlockhash(12_345);
+        assertEq(store.getBlockhash(12_345), bytes32(0));
+
+        bytes[] memory headers = new bytes[](1);
+        headers[0] = _shortHeader(TERMINAL_PARENT);
+        vm.expectRevert(abi.encodeWithSelector(AntseedSparseBlockhashStore.MissingAnchor.selector, 12_345));
+        store.verifyHeaderBatch(SESSION, 12_345, headers, hex"00");
+
+        AntseedSparseBlockhashStore.CompleteHeaderBatch[] memory batches =
+            new AntseedSparseBlockhashStore.CompleteHeaderBatch[](1);
+        batches[0] = AntseedSparseBlockhashStore.CompleteHeaderBatch(12_345, headers, hex"00");
+        vm.expectRevert(abi.encodeWithSelector(AntseedSparseBlockhashStore.MissingAnchor.selector, 12_345));
+        store.verifyCompleteHeaderBatches(batches);
     }
 
     function test_rejectsTamperedHeaderAndInvalidBitmap() public {
