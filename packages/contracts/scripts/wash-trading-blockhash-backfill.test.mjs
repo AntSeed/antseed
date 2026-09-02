@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildCatalogBackfillRanges,
-  buildTargetBitmap,
   clusterBlockNumbers,
   decodeAnchorBitmap,
   findNextCatalogAnchor,
@@ -83,14 +82,6 @@ test("builds the exact union of nearest-anchor paths", () => {
     { startBlock: 30, endBlock: 39, anchorBlock: 40, requiredReferenceCount: 1 },
   ]);
   assert.throws(() => findNextCatalogAnchor(anchors, 23, 5), /no catalog anchor/);
-});
-
-test("builds a least-significant-bit target bitmap", () => {
-  const required = new Map([[12, hash("a")], [10, hash("b")]]);
-  assert.deepEqual(buildTargetBitmap([12, 11, 10], required), {
-    bitmap: "0x05",
-    targets: [{ number: 12, blockHash: hash("a") }, { number: 10, blockHash: hash("b") }],
-  });
 });
 
 test("pins plan approval to deterministic serialized content", () => {

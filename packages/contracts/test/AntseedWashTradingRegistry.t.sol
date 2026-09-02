@@ -32,11 +32,17 @@ contract MockSP1Gateway is ISP1Verifier {
     function verifyProof(bytes32, bytes calldata, bytes calldata) external view { }
 }
 
+/// @dev Mirrors Chainlink's BlockhashStore: unknown blocks revert with a string reason.
 contract MockBlockhashStore {
-    mapping(uint256 blockNumber => bytes32 blockHash) public getBlockhash;
+    mapping(uint256 blockNumber => bytes32 blockHash) internal blockHashes;
 
     function set(uint64 blockNumber, bytes32 blockHash) external {
-        getBlockhash[blockNumber] = blockHash;
+        blockHashes[blockNumber] = blockHash;
+    }
+
+    function getBlockhash(uint256 blockNumber) external view returns (bytes32 blockHash) {
+        blockHash = blockHashes[blockNumber];
+        require(blockHash != bytes32(0), "blockhash not found in store");
     }
 
     function storeVerifyHeader(uint256, bytes calldata) external { }
@@ -194,6 +200,11 @@ contract AntseedWashTradingRegistryTest is Test {
         bytes32[] memory proof = _proof(_leaf(1, BLOCK_B, BLOCK_HASH_B));
         IAntseedWashTradingRegistry.BlockRef[] memory refs = _refs(BLOCK_A, bytes32(uint256(999)));
         vm.expectRevert(abi.encodeWithSelector(AntseedWashTradingRegistry.NonCanonicalBlock.selector, BLOCK_A));
+        registry.authenticateBlockReferences(proofId, 0, refs, proof);
+
+        // A block Chainlink does not hold reverts inside the store; the registry maps it to its own error.
+        refs = _refs(BLOCK_A + 1, BLOCK_HASH_A);
+        vm.expectRevert(abi.encodeWithSelector(AntseedWashTradingRegistry.NonCanonicalBlock.selector, BLOCK_A + 1));
         registry.authenticateBlockReferences(proofId, 0, refs, proof);
 
         refs = _refs(BLOCK_A, BLOCK_HASH_A);

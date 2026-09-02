@@ -130,19 +130,6 @@ export function buildCatalogBackfillRanges(missingNumbers, anchorBlocks, maximum
   return ranges;
 }
 
-export function buildTargetBitmap(blockNumbers, requiredReferences) {
-  const bitmap = new Uint8Array(Math.ceil(blockNumbers.length / 8));
-  const targets = [];
-  for (let index = 0; index < blockNumbers.length; ++index) {
-    const number = blockNumbers[index];
-    const blockHash = requiredReferences.get(number);
-    if (!blockHash) continue;
-    bitmap[index >> 3] |= 1 << (index & 7);
-    targets.push({ number, blockHash });
-  }
-  return { bitmap: `0x${Buffer.from(bitmap).toString("hex")}`, targets };
-}
-
 export class JsonRpcClient {
   constructor(url, { batchSize = 250, concurrency = 12, retries = 5, minimumBatchIntervalMs = 0 } = {}) {
     this.url = url;

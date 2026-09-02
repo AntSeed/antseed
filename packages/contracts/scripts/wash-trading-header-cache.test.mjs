@@ -47,7 +47,7 @@ test("reconstructs canonical post-Prague Base headers from standard RPC blocks",
   assert.equal(encodeRpcBlockHeader(block, 42), expected);
 });
 
-test("deduplicates exact header paths from sparse plan ranges", () => {
+test("deduplicates exact header paths from plan ranges", () => {
   assert.deepEqual(uniquePlanHeaderNumbers({ ranges: [
     { startBlock: 10, anchorBlock: 13 },
     { startBlock: 12, anchorBlock: 15 },

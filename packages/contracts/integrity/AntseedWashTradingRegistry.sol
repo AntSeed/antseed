@@ -217,8 +217,7 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
         for (uint256 index; index < references.length; ++index) {
             BlockRef calldata blockRef = references[index];
             if (index != 0 && blockRef.number <= previousNumber) revert UnorderedBlockReference(blockRef.number);
-            if (blockRef.blockHash == bytes32(0) || blockhashStore.getBlockhash(blockRef.number) != blockRef.blockHash)
-            {
+            if (blockRef.blockHash == bytes32(0) || _canonicalBlockhash(blockRef.number) != blockRef.blockHash) {
                 revert NonCanonicalBlock(blockRef.number);
             }
             previousNumber = blockRef.number;
@@ -300,5 +299,15 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
     function _finalChunkSize(StagedProof storage staged) internal view returns (uint32) {
         return staged.blockReferenceCount
             - staged.blockAuthenticationChunkSize * (staged.blockAuthenticationChunkCount - 1);
+    }
+
+    /// @dev Chainlink's `BlockhashStore` reverts ("blockhash not found in store") for unknown
+    ///      blocks; map that to `bytes32(0)` so `NonCanonicalBlock` surfaces instead.
+    function _canonicalBlockhash(uint64 blockNumber) internal view returns (bytes32) {
+        try blockhashStore.getBlockhash(blockNumber) returns (bytes32 blockHash) {
+            return blockHash;
+        } catch {
+            return bytes32(0);
+        }
     }
 }

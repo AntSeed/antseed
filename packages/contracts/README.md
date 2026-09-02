@@ -58,11 +58,12 @@ WASH_TRADING_ARTIFACT_DIR=/path/to/unified-development-artifacts \
 
 This test exercises the full local integration path but does not provide
 production cryptographic assurance. Production deployments must use a real SP1
-Groth16 proof and verifier plus `AntseedSparseBlockhashStore`, whose historical
-hashes are verified backwards from Base Chainlink `BlockhashStore` anchors
-(Chainlink's store reverts for unknown blocks; the sparse store maps that to
-`bytes32(0)` so its own `MissingAnchor` / the registry's `NonCanonicalBlock`
-errors fire instead). A staged proof changes no seller result until every committed block-reference
+Groth16 proof and verifier, and authenticate every committed block reference
+against Chainlink's public `BlockhashStore` on Base
+(`0x78b69899C8cD252126cBB1A50171ec37286C3877`). Chainlink's store reverts for
+unknown blocks; the registry maps that revert to `bytes32(0)` so its own
+`NonCanonicalBlock` error fires instead. No AntSeed-owned contract sits in the
+block-hash path. A staged proof changes no seller result until every committed block-reference
 chunk has been authenticated. The registry stores the greatest proven
 wash-volume lower bound for each seller as `{provenWashVolume, evidenceDigest}`.
 Later proofs must strictly increase the seller's proven wash volume.
@@ -77,8 +78,9 @@ export WASH_TRADING_CLOSED_LOOP_PROGRAM_VKEY=$(jq -r .closedLoopProgramVKey "$SE
 export WASH_TRADING_RECIPROCAL_PROGRAM_VKEY=$(jq -r .reciprocalProgramVKey "$SELLER_PROOF")
 export HISTORICAL_PERIOD_START_BLOCK=$(jq -r .periodStartBlock "$SELLER_PROOF")
 export HISTORICAL_PERIOD_END_BLOCK=$(jq -r .periodEndBlock "$SELLER_PROOF")
-export CHAINLINK_BLOCKHASH_STORE=<base-chainlink-blockhash-store>
-export WASH_TRADING_BLOCKHASH_STORE=<deployed-antseed-sparse-blockhash-store>
+# Chainlink BlockhashStore on Base mainnet. The deploy script defaults to this
+# address and refuses any other store on chain ID 8453.
+export WASH_TRADING_BLOCKHASH_STORE=0x78b69899C8cD252126cBB1A50171ec37286C3877
 ```
 
 Set `SP1_VERIFIER`, `SP1_VERIFIER_HASH`, and `DEPLOYER_PRIVATE_KEY` separately.
@@ -103,11 +105,11 @@ cast call "$SP1_VERIFIER" 'VERIFIER_HASH()(bytes32)' --rpc-url <rpc> # == SP1_VE
 `VERIFIER_HASH` is `sha256` of the Groth16 verifying key shipped in the matching
 `sp1-verifier` crate (`vk-artifacts/groth16_vk.bin`); its first four bytes are
 the selector prefix of every proof the guests produce. Re-derive both values
-whenever `sp1-sdk` is bumped. Deploy the sparse store if it was not already
-deployed by the backfill executor, then deploy the registry:
+whenever `sp1-sdk` is bumped. Complete the Chainlink backfill below first
+(the registry only reads hashes, so a proof whose blocks are missing from the
+store cannot be authenticated), then deploy the registry:
 
 ```bash
-forge script script/DeployWashTradingBlockhashStore.s.sol --rpc-url <rpc> --broadcast
 forge script script/DeployWashTradingRegistry.s.sol --rpc-url <rpc> --broadcast
 ```
 
@@ -118,10 +120,14 @@ accepts a lower or equal result.
 
 ### Backfill historical Base block hashes
 
-Production seller proofs authenticate every committed Base block hash against a
-sparse store anchored to Chainlink's `BlockhashStore`. Generate a digest-pinned
-plan containing the exact missing proof targets. Intermediate headers are still
-verified, but only bitmap-selected proof hashes are persisted:
+Production seller proofs authenticate every committed Base block hash against
+Chainlink's `BlockhashStore`, which only holds hashes that were stored while the
+block was inside the EVM's 256-block `blockhash()` window. Every other hash the
+proofs need is written into the same store permissionlessly with
+`storeVerifyHeader(n, rawHeader(n + 1))`, walking the parent-hash chain
+backwards from the nearest block Chainlink already knows. Generate a
+digest-pinned plan containing the exact missing proof targets and the anchor
+each walk starts from:
 
 ```bash
 export BASE_RPC_URL=<base-archive-rpc-with-debug_getRawHeader>
@@ -157,72 +163,64 @@ node scripts/prefetch-wash-trading-blockhash-headers.mjs \
   --concurrency 4
 ```
 
-Verify the first batch without sending a transaction:
+### Executing the Chainlink backfill
+
+Each header becomes one `storeVerifyHeader(n, rawHeader(n + 1))` call; ~138 of
+them are packed per transaction through the canonical `Multicall3`
+(`0xcA11bde05977b3631167028862bE2a173976CA11`), which is atomic, so one
+transaction either stores a whole descending run of hashes or nothing. Chainlink
+verifies `keccak256(header)` against the hash it already holds for `n + 1` and
+stores the header's `parentHash` as `hash(n)`; the executor additionally checks
+the same chain locally against the cached headers and the proofs' committed
+hashes before sending. Measured cost is ~36k gas per header, of which ~20k is
+Chainlink's storage write.
+
+Dry run (estimates gas for the first batch, sends nothing):
 
 ```bash
-node scripts/execute-wash-trading-blockhash-backfill.mjs \
+node scripts/execute-wash-trading-chainlink-backfill.mjs \
   --plan "$BACKFILL_PLAN" \
   --rpc-url "$BASE_RPC_URL" \
-  --header-rpc-url "$BASE_RPC_URL" \
   --header-cache "$HEADER_CACHE" \
-  --batch-size 200 \
-  --maximum-complete-ranges 64 \
-  --header-rpc-batch-size 50 \
-  --header-rpc-batch-delay-ms 500 \
-  --maximum-batches 1
+  --checkpoint "$HEADER_CACHE/mainnet-chainlink-backfill.checkpoint.json" \
+  --batch-size 150
 ```
 
-Test the exact transaction path against a Base-forked Anvil before live use:
+Test the exact transaction path against a Base-forked Anvil (`anvil --fork-url
+"$BASE_RPC_URL" --port 8555`) by adding `--execute --approve-plan-digest
+"$BACKFILL_PLAN_DIGEST"` with `--rpc-url http://127.0.0.1:8555`. Live Base
+execution additionally requires `BACKFILL_PRIVATE_KEY` and the explicit
+`--allow-live` guard. Start with one batch, inspect the receipt and the stored
+hashes on Chainlink, then repeat the same command without `--maximum-batches`
+to resume:
 
 ```bash
-anvil --fork-url "$BASE_RPC_URL" --port 8555
-
 export BACKFILL_PLAN_DIGEST=$(jq -r .digest "$BACKFILL_PLAN")
-node scripts/execute-wash-trading-blockhash-backfill.mjs \
-  --plan "$BACKFILL_PLAN" \
-  --rpc-url http://127.0.0.1:8555 \
-  --header-rpc-url "$BASE_RPC_URL" \
-  --header-cache "$HEADER_CACHE" \
-  --batch-size 200 \
-  --maximum-complete-ranges 64 \
-  --header-rpc-batch-size 50 \
-  --header-rpc-batch-delay-ms 500 \
-  --maximum-batches 1 \
-  --execute \
-  --approve-plan-digest "$BACKFILL_PLAN_DIGEST"
-```
-
-Live Base execution additionally requires `BACKFILL_PRIVATE_KEY` and the
-explicit `--allow-live` guard. Start with one batch, inspect the receipt and
-checkpoint, then repeat the same command to resume:
-
-```bash
 export BACKFILL_PRIVATE_KEY=<funded-base-private-key>
-node scripts/execute-wash-trading-blockhash-backfill.mjs \
+node scripts/execute-wash-trading-chainlink-backfill.mjs \
   --plan "$BACKFILL_PLAN" \
   --rpc-url "$BASE_RPC_URL" \
-  --header-rpc-url "$BASE_RPC_URL" \
   --header-cache "$HEADER_CACHE" \
-  --batch-size 200 \
-  --maximum-complete-ranges 64 \
-  --header-rpc-batch-size 50 \
-  --header-rpc-batch-delay-ms 500 \
+  --checkpoint "$HEADER_CACHE/mainnet-chainlink-backfill.checkpoint.json" \
+  --batch-size 150 \
+  --in-flight 4 \
   --maximum-batches 1 \
   --execute \
   --allow-live \
   --approve-plan-digest "$BACKFILL_PLAN_DIGEST"
 ```
 
-The executor deploys `AntseedSparseBlockhashStore` once and stores its address,
-completed short ranges, and long-range cursors in `<plan>.checkpoint.json`.
-Independent short paths are packed into one transaction without permanent
-frontiers. Long paths retain a signer-namespaced onchain frontier so another
-caller cannot poison or skip work in the active session; resume live runs with
-the same `BACKFILL_PRIVATE_KEY`. Never delete or replace the checkpoint during
-a live run.
-Backfilling does not submit seller proofs; after all ranges complete, deploy the
-registry with the sparse-store address, then stage, authenticate, and finalize
-the existing paid seller proof artifacts.
+`--in-flight N` keeps N transactions pending with consecutive nonces and
+settles them in order; every range is checkpointed only after its receipt
+succeeds and the required hashes read back from Chainlink. Ranges longer than
+one batch resume through the per-range `cursors` in the checkpoint because the
+previous transaction already stored the hash the next one verifies against.
+
+Never delete or replace the checkpoint during a live run. Base's sequencer
+rejects raw transactions above 128 KiB, which is what bounds the batch to ~138
+headers. Backfilling does not submit seller proofs; after all ranges complete,
+deploy the registry against the Chainlink store, then stage, authenticate, and
+finalize the existing paid seller proof artifacts.
 
 ## Contracts
 

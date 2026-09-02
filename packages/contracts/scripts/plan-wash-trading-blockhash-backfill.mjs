@@ -161,6 +161,8 @@ if (missingReferenceCursor !== missingReferences.length) {
 }
 const planWithoutDigest = {
   version: 2,
+  // Serialized identifier; it is part of the plan digest, so it is kept stable even though the
+  // plan now feeds Chainlink's BlockhashStore directly (the "sparse" walk semantics are unchanged).
   kind: "antseed-wash-trading-sparse-blockhash-backfill-plan",
   chainId: Number(BASE_CHAIN_ID),
   chainlinkBlockhashStore,

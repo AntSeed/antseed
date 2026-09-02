@@ -40,7 +40,7 @@ if (
   plan.version !== 2
   || plan.kind !== "antseed-wash-trading-sparse-blockhash-backfill-plan"
   || stableDigest(planWithoutDigest) !== digest
-) throw new Error("invalid sparse blockhash backfill plan");
+) throw new Error("invalid blockhash backfill plan");
 
 const client = new JsonRpcClient(rpcUrl, {
   batchSize: rpcBatchSize,
