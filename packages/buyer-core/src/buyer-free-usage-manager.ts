@@ -269,6 +269,7 @@ export class BuyerFreeUsageManager {
       cachedInputTokens: 0n,
       outputTokens,
       requests: 1n,
+      outputImages: 0n,
     });
     const metadataHash = computeFreeUsageMetadataHash(metadata);
     const encodedMetadata = encodeFreeUsageMetadata(metadata);

@@ -18,7 +18,11 @@ import {
   selectFavoriteVprCatalog,
   selectRecommendedVprCatalog,
 } from '../../../modules/catalog/recommended';
-import { resolvePeerForModel, routesForSelectedModel } from '../../../modules/catalog/view-models';
+import {
+  compareModelRoutesByReputation,
+  resolvePeerForModel,
+  routesForSelectedModel,
+} from '../../../modules/catalog/view-models';
 import { shortPeerId } from '../../../modules/routing/tools';
 import { isFreeRoute, sellerMetaLabel, sellerReputationLabel } from '../../../modules/catalog/seller-format';
 import { buyerConversationsResource, systemProxyResource } from '../../../modules/app/vpr-resources';
@@ -126,18 +130,15 @@ export function VprChatsView({ onSelectView: _onSelectView }: Props) {
   }, [favorites, selected, snap.catalog]);
 
   const pinChat = useCallback(async (id: string, provider: string, serviceId: string) => {
-    // The model's own seller pin outranks the auto-scored best route — the
-    // same order the global route resolves in. A model change also resets a
-    // per-chat seller choice: it was made for the old model.
-    const peerId = resolvePeerForModel(snap.discoverRows, snap.pins, snap.preferences, { provider, serviceId });
-    if (!peerId) {
+    const hasRoute = routesForSelectedModel(snap.discoverRows, { provider, serviceId }).length > 0;
+    if (!hasRoute) {
       setMessage(`No available route for ${serviceId} right now`);
       return;
     }
     setMessage(null);
-    await window.antseedDesktop?.buyerConversationsUpdate?.({ id, pinnedModel: `${peerId}@${serviceId}`, peerSource: 'auto' });
+    await window.antseedDesktop?.buyerConversationsUpdate?.({ id, pinnedModel: serviceId, peerSource: 'auto' });
     await refresh();
-  }, [refresh, snap.discoverRows, snap.pins, snap.preferences]);
+  }, [refresh, snap.discoverRows]);
 
   // Per-chat seller choice: pick the exact peer this chat's requests go to
   // (switching the chat's model too when the config page is for another
@@ -159,11 +160,7 @@ export function VprChatsView({ onSelectView: _onSelectView }: Props) {
   const configEntry = configModel ? findCatalogEntry(snap.catalog, configModel.provider, configModel.serviceId) : null;
   const configRoutes = useMemo(() => {
     if (!configModel) return [];
-    return [...routesForSelectedModel(snap.discoverRows, configModel)].sort((a, b) => {
-      const scoreA = a.onChainTrustScore ?? a.onChainReputationScore ?? -1;
-      const scoreB = b.onChainTrustScore ?? b.onChainReputationScore ?? -1;
-      return scoreB - scoreA;
-    });
+    return [...routesForSelectedModel(snap.discoverRows, configModel)].sort(compareModelRoutesByReputation);
   }, [configModel, snap.discoverRows]);
   // The chat's current peer counts as active only on its own model's page.
   const configIsChatModel = Boolean(selected && configModel

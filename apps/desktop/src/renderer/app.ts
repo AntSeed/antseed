@@ -11,6 +11,7 @@ import {
 } from './modules/app/plugin-setup';
 import { initAppSetupModule } from './modules/app/setup';
 import { initCreditsModule } from './modules/app/credits';
+import { initReminderModule } from './modules/app/reminder';
 import { initVprFloatModule } from './modules/app/float';
 import {
   loadFloatAutoOpen,
@@ -20,11 +21,11 @@ import {
 } from './modules/app/float-settings';
 import { initModelPickerSync } from './modules/catalog/picker-sync';
 import { applyVprRouteToConnectedProxy } from './modules/routing/proxy-sync';
-import { findCatalogEntry } from './modules/catalog/model-catalog';
+import { createVprRouteSelection, findCatalogEntry } from './modules/catalog/model-catalog';
 import { resolveVprChatOption } from './modules/chat/projection';
-import type { VprRouteSelection } from './core/state';
 import {
   applyPeerListing,
+  buyerModelRoutingPreferences,
   loadVprRouteSelection,
   loadVprRoutingPreferences,
   saveVprRouteSelection,
@@ -55,6 +56,7 @@ import type { BadgeTone } from './core/state';
 import { createInitialUiState } from './core/state';
 import { initStore, notifyUiStateChanged } from './core/store';
 import type { DesktopBridge } from './types/bridge';
+import { recordUserAction, recordUserActionCoalesced } from './modules/telemetry/actions';
 
 /* ------------------------------------------------------------------ */
 /*  Bootstrap                                                          */
@@ -165,6 +167,23 @@ const {
   defaultDashboardPort: DEFAULT_DASHBOARD_PORT,
 });
 
+let lastQueuedBuyerRoutingPreferences = '';
+let buyerRoutingPreferencesSyncVersion = 0;
+function syncBuyerRoutingPreferences(): void {
+  if (!bridge?.updateConfig) return;
+  const routingPreferences = buyerModelRoutingPreferences(uiState.vprRoutingPreferences);
+  const serialized = JSON.stringify(routingPreferences);
+  if (serialized === lastQueuedBuyerRoutingPreferences) return;
+  lastQueuedBuyerRoutingPreferences = serialized;
+  const version = ++buyerRoutingPreferencesSyncVersion;
+  void updateDashboardConfig({ buyer: { routingPreferences } }).then((result) => {
+    if (result.ok || version !== buyerRoutingPreferencesSyncVersion) return;
+    lastQueuedBuyerRoutingPreferences = '';
+    appendSystemLog(`Buyer routing preferences were not saved: ${result.error ?? 'unknown error'}`);
+  });
+}
+syncBuyerRoutingPreferences();
+
 const {
   clearRouterPluginHint,
   updatePluginHintFromLog,
@@ -199,6 +218,8 @@ const {
   populateSettingsForm,
 });
 
+const reminderApi = initReminderModule({ bridge, uiState });
+
 // Credits API is created after chat, so use late-bound reference.
 let creditsApi: ReturnType<typeof initCreditsModule>;
 
@@ -207,6 +228,7 @@ const chatApi = initChatModule({
   uiState,
   appendSystemLog,
   onPaymentCardShown: () => creditsApi?.notifyPaymentCardVisible(),
+  onResponseCompleted: reminderApi.onResponseCompleted,
 });
 
 initAppSetupModule({ uiState, bridge: bridge ?? null });
@@ -215,6 +237,7 @@ creditsApi = initCreditsModule({
   bridge: bridge as DesktopBridge,
   uiState,
   onBalanceSufficientForPayment: () => chatApi.retryAfterPayment(),
+  onPaymentStateChanged: reminderApi.reconcilePayer,
 });
 creditsApi.startPeriodicRefresh();
 
@@ -241,6 +264,26 @@ function rememberedPinFor(provider: string, serviceId: string): string | null {
 function actionSelectVprModel(provider: string, serviceId: string, peerId: string | null = null): void {
   const entry = findCatalogEntry(uiState.vprModelCatalog, provider, serviceId);
   if (!entry) return;
+  // Image models are internal-chat tools, not VPR defaults. Restore a
+  // remembered explicit seller pin when the model page hands the model to
+  // chat; clearing Auto removes that remembered pin first.
+  if (entry.kind === 'image') {
+    const pinnedPeerId = peerId ?? rememberedPinFor(entry.provider, entry.serviceId);
+    const selection = createVprRouteSelection(entry, pinnedPeerId);
+    uiState.chatImageRouteSelection = selection;
+    if (selection.peerId) {
+      uiState.vprModelPins = setVprModelPin(
+        uiState.vprModelPins,
+        entry.provider,
+        entry.serviceId,
+        selection.peerId,
+      );
+      saveVprModelPins(uiState.vprModelPins);
+    }
+    notifyUiStateChanged();
+    return;
+  }
+  uiState.chatImageRouteSelection = null;
   // A bare model switch restores that model's own pin instead of dropping to
   // auto — pinning one model then browsing others must not unpin it. Only
   // clearVprPinnedPeer (the "Auto select seller" toggle) forgets a pin.
@@ -249,31 +292,33 @@ function actionSelectVprModel(provider: string, serviceId: string, peerId: strin
     uiState.vprModelPins = setVprModelPin(uiState.vprModelPins, entry.provider, entry.serviceId, pinnedPeerId);
     saveVprModelPins(uiState.vprModelPins);
   }
-  const selection: VprRouteSelection = {
-    model: {
-      provider: entry.provider,
-      serviceId: entry.serviceId,
-      label: entry.label,
-      categories: [...entry.categories],
-    },
-    mode: pinnedPeerId ? 'pinned-peer' : 'auto',
-    peerId: pinnedPeerId,
-  };
+  const selection = createVprRouteSelection(entry, pinnedPeerId);
   // Auto mode resolves the peer through the routing-preferences scorer, not
   // whichever chat option happens to sort first.
-  const option = resolveVprChatOption(
-    uiState.chatServiceOptions,
-    uiState.vprRoutableRows,
-    selection,
-    uiState.vprRoutingPreferences,
-  );
+  const option = entry.kind === 'text'
+    ? resolveVprChatOption(
+        uiState.chatServiceOptions,
+        uiState.vprRoutableRows,
+        selection,
+        uiState.vprRoutingPreferences,
+      )
+    : null;
   if (option) {
-    chatApi.handleServiceChange(option.value, pinnedPeerId ?? option.peerId, false);
+    chatApi.handleServiceChange(
+      option.value,
+      pinnedPeerId ?? option.peerId,
+      false,
+      selection.mode === 'auto' ? 'auto' : 'pinned',
+    );
   }
-  // handleServiceChange writes a pinned selection through; restore the
-  // requested mode so auto keeps re-resolving the best route on future
-  // sends instead of staying pinned to today's winner.
+  // The text route is persisted and propagated to connected apps after the
+  // corresponding chat option has been resolved above.
   uiState.vprRouteSelection = selection;
+  // An explicit pick ends the provisional-default window even when no chat
+  // option resolved above (handleServiceChange, which also ends it, only runs
+  // when one did) and even when the pick is the provisional model itself —
+  // otherwise the next refresh would keep re-picking over the user's choice.
+  chatApi.endProvisionalDefaultModel();
   saveVprRouteSelection(selection);
   notifyUiStateChanged();
   // The floating pill mirrors the selection — push it now instead of
@@ -562,28 +607,42 @@ async function actionClearLogs(): Promise<void> {
 /* ------------------------------------------------------------------ */
 
 registerActions({
-  startConnect: actionStartConnect,
-  stopConnect: actionStopConnect,
-  startAll: actionStartAll,
-  stopAll: actionStopAll,
-  refreshAll: () => refreshAll('manual'),
+  startConnect: () => { recordUserAction('runtime_start', 'connection'); return actionStartConnect(); },
+  stopConnect: () => { recordUserAction('runtime_stop', 'connection'); return actionStopConnect(); },
+  startAll: () => { recordUserAction('runtime_start', 'home'); return actionStartAll(); },
+  stopAll: () => { recordUserAction('runtime_stop', 'home'); return actionStopAll(); },
+  refreshAll: () => { recordUserAction('discovery_refresh', 'unknown'); return refreshAll('manual'); },
   clearLogs: actionClearLogs,
-  scanDht: actionScanDht,
-  saveConfig: saveConfig,
-  createNewConversation: chatApi.createNewConversation,
-  startNewChat: chatApi.startNewChat,
-  openConversation: chatApi.openConversation,
-  sendMessage: chatApi.sendMessage,
-  sendMessageToConversation: chatApi.sendMessageToConversation,
-  abortChat: chatApi.abortChat,
-  deleteConversation: chatApi.deleteConversation,
-  renameConversation: chatApi.renameConversation,
-  handleServiceChange: chatApi.handleServiceChange,
-  handleServiceFocus: chatApi.handleServiceFocus,
+  scanDht: () => { recordUserAction('discovery_refresh', 'peers'); return actionScanDht(); },
+  saveConfig: (formData) => { recordUserAction('settings_save', 'config'); return saveConfig(formData); },
+  createNewConversation: () => { recordUserAction('chat_new', 'chat'); return chatApi.createNewConversation(); },
+  startNewChat: () => { recordUserAction('chat_new', 'chat'); chatApi.startNewChat(); },
+  openConversation: (id) => { recordUserAction('chat_open', 'chats'); return chatApi.openConversation(id); },
+  sendMessage: (text, attachments) => {
+    recordUserAction('chat_send', 'chat');
+    if ((attachments?.length ?? 0) > 0) recordUserAction('attachment_add', 'chat');
+    chatApi.sendMessage(text, attachments);
+  },
+  sendMessageToConversation: (id, text, attachments) => {
+    recordUserAction('chat_send', 'chat');
+    if ((attachments?.length ?? 0) > 0) recordUserAction('attachment_add', 'chat');
+    chatApi.sendMessageToConversation(id, text, attachments);
+  },
+  generateImage: (prompt) => { recordUserAction('image_generate', 'chat'); chatApi.generateImage(prompt); },
+  abortChat: () => { recordUserAction('chat_stop', 'chat'); return chatApi.abortChat(); },
+  deleteConversation: (id) => { recordUserAction('conversation_delete', 'chats'); return chatApi.deleteConversation(id); },
+  renameConversation: (id, title) => { recordUserAction('conversation_rename', 'chats'); chatApi.renameConversation(id, title); },
+  handleServiceChange: (value, peerId) => {
+    chatApi.handleServiceChange(value, peerId);
+  },
+  handleServiceFocus: () => { recordUserAction('model_picker_open', 'chat'); chatApi.handleServiceFocus(); },
   handleServiceBlur: chatApi.handleServiceBlur,
-  clearPinnedPeer: chatApi.clearPinnedPeer,
-  selectVprModel: actionSelectVprModel,
+  clearPinnedPeer: () => { recordUserAction('route_mode_change', 'chat'); chatApi.clearPinnedPeer(); },
+  selectVprModel: (provider, serviceId, peerId) => {
+    actionSelectVprModel(provider, serviceId, peerId);
+  },
   clearVprPinnedPeer: () => {
+    recordUserAction('route_mode_change', 'model');
     // Forgetting the pin has to reach the per-model store too, or selecting
     // the model again would restore the pin the user just cleared.
     const model = uiState.vprRouteSelection.model;
@@ -596,6 +655,7 @@ registerActions({
     notifyUiStateChanged();
   },
   setVprModelSellerPin: (provider, serviceId, peerId) => {
+    recordUserAction('route_mode_change', 'model');
     uiState.vprModelPins = peerId
       ? setVprModelPin(uiState.vprModelPins, provider, serviceId, peerId)
       : clearVprModelPin(uiState.vprModelPins, provider, serviceId);
@@ -606,8 +666,10 @@ registerActions({
     notifyUiStateChanged();
   },
   updateVprRoutingPreferences: (patch) => {
+    recordUserActionCoalesced('routing_preferences_change', 'preferences');
     uiState.vprRoutingPreferences = { ...uiState.vprRoutingPreferences, ...patch };
     saveVprRoutingPreferences(uiState.vprRoutingPreferences);
+    syncBuyerRoutingPreferences();
     // Peer rules gate which sellers and models are visible at all, so a patch
     // touching them has to re-derive the catalog, not just repaint.
     if (patch.allowedPeerIds || patch.blockedPeerIds) {
@@ -616,8 +678,10 @@ registerActions({
     notifyUiStateChanged();
   },
   setVprPeerListing: (peerId, listing) => {
+    recordUserAction('peer_access_change', 'peers');
     uiState.vprRoutingPreferences = applyPeerListing(uiState.vprRoutingPreferences, peerId, listing);
     saveVprRoutingPreferences(uiState.vprRoutingPreferences);
+    syncBuyerRoutingPreferences();
     chatApi.applyPeerAccessRules();
 
     // A pin the new lists rule out would keep routing to a peer the user just
@@ -641,8 +705,10 @@ registerActions({
     notifyUiStateChanged();
     void applyVprRouteToConnectedProxy(bridge, uiState);
   },
-  setChatPermissionMode: chatApi.setChatPermissionMode,
-  decideToolApproval: chatApi.decideToolApproval,
+  setChatPermissionMode: (mode) => { recordUserAction('chat_permission_change', 'chat'); chatApi.setChatPermissionMode(mode); },
+  decideToolApproval: (decision, id) => { recordUserAction('tool_approval_decision', 'chat'); chatApi.decideToolApproval(decision, id); },
+  acceptReminderHome: reminderApi.acceptHome,
+  dismissReminderHome: reminderApi.dismissHome,
   rejectPaymentSession: () => {
     uiState.chatPaymentApprovalVisible = false;
     uiState.chatPaymentApprovalPeerName = null;
@@ -651,20 +717,27 @@ registerActions({
     uiState.chatPaymentApprovalError = null;
     notifyUiStateChanged();
   },
-  retryAfterPayment: () => chatApi.retryAfterPayment(),
+  retryAfterPayment: () => { recordUserAction('chat_retry', 'chat'); chatApi.retryAfterPayment(); },
   refreshCredits: () => creditsApi.refreshCredits(),
   refreshPaymentSummary: (force?: boolean) => creditsApi.refreshPaymentSummary(force),
   refreshWorkspace: chatApi.refreshWorkspace,
-  chooseWorkspace: chatApi.chooseWorkspace,
+  chooseWorkspace: () => { recordUserAction('workspace_change', 'chat'); return chatApi.chooseWorkspace(); },
   refreshPlugins: refreshPluginInventory,
   installPlugin: () => {
+    recordUserAction('plugin_install', 'setup');
     const packageName = resolveRouterPackageName(
       uiState.pluginHints.router || uiState.connectRouterValue,
     );
     return installPluginPackage(packageName);
   },
-  openVprFloat: (profileName?: string) => vprFloatApi.openFloat(profileName),
-  closeVprFloat: () => vprFloatApi.closeFloat(),
+  openVprFloat: (profileName?: string) => {
+    recordUserAction('floating_window_open', 'floating_window');
+    return vprFloatApi.openFloat(profileName);
+  },
+  closeVprFloat: () => {
+    recordUserAction('floating_window_close', 'floating_window');
+    return vprFloatApi.closeFloat();
+  },
   setVprFloatAutoOpen: (enabled: boolean) => {
     uiState.vprFloatAutoOpen = enabled;
     saveFloatAutoOpen(enabled);

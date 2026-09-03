@@ -8,6 +8,7 @@ import { formatCompactTokens, VprCard, VprPage, VprStatRow, VprStatTile } from '
 import { BalanceSummaryCard } from './BalanceSummaryCard';
 import { ExportSignerKeyDialog, ImportSignerKeyDialog } from './SignerKeyDialogs';
 import styles from './VprCreditsView.module.scss';
+import { recordUserAction } from '../../../modules/telemetry/actions';
 
 const PAYMENT_SUMMARY_POLL_MS = 60_000;
 
@@ -91,7 +92,10 @@ export function VprCreditsView({ onSelectView }: Props) {
           <button
             type="button"
             className={styles.withdraw}
-            onClick={() => window.antseedDesktop?.paymentsOpenPayPage?.({ kind: 'withdraw' })}
+            onClick={() => {
+              recordUserAction('withdraw_start', 'credits');
+              void window.antseedDesktop?.paymentsOpenPayPage?.({ kind: 'withdraw' });
+            }}
           >
             Withdraw unused credits
           </button>

@@ -1,11 +1,12 @@
 import {useEffect, useRef, useState, type MutableRefObject, type RefObject, type ReactNode, type CSSProperties} from 'react';
 import Head from '@docusaurus/Head';
 import Link from '@docusaurus/Link';
-import {useHistory} from '@docusaurus/router';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
 import styles from './index.module.css';
 import {useLatestDesktopDownload} from '../lib/useLatestDesktopDownload';
+import {AllVersionsLink} from '../lib/AllVersionsLink';
+import {useMobileGetStarted} from '../lib/useMobileGetStarted';
 import {useNetworkStats} from '../lib/useNetworkStats';
 import {useMarketplaceShowcase} from '../lib/useMarketplacePrices';
 import {Button, Faq, Reveal, SectionHeader, ArrowRight} from '../components/ui';
@@ -430,20 +431,6 @@ function RotatingSub() {
 /* ============================================================
    HERO
    ============================================================ */
-/* On phones (where the label reads "Get Started") the VPR buttons route to
-   the /get-started Telegram flow instead of downloading an installer the
-   device can't run. Desktop keeps the direct download. Matches the 640px
-   breakpoint that swaps the label in custom.css. */
-function useMobileGetStarted() {
-  const history = useHistory();
-  return (e: {preventDefault: () => void}) => {
-    if (window.matchMedia('(max-width: 640px)').matches) {
-      e.preventDefault();
-      history.push('/get-started');
-    }
-  };
-}
-
 function DownloadCta({caption, size = 'lg'}: {caption?: string; size?: 'md' | 'lg'}) {
   const download = useLatestDesktopDownload();
   const onGetStarted = useMobileGetStarted();
@@ -453,6 +440,7 @@ function DownloadCta({caption, size = 'lg'}: {caption?: string; size?: 'md' | 'l
         <span className="vprLabelDesktop">Download VPR</span>
         <span className="vprLabelMobile">Get Started<ArrowRight /></span>
       </Button>
+      <AllVersionsLink />
       {caption && <span className={styles.ctaCaption}>{caption}</span>}
     </div>
   );
@@ -1327,6 +1315,7 @@ function FinalCta() {
         <p className={styles.finalSub}>Every Model, No Middleman. Anonymous and Always On.</p>
         <div className={styles.ctaBlock}>
           <FinalCtaButton />
+          <AllVersionsLink light />
           <span className={styles.ctaCaptionLight}>No account needed. Just start.</span>
         </div>
       </Reveal>
@@ -1377,7 +1366,7 @@ export default function Home(): JSX.Element {
       'AntSeed is a decentralized peer-to-peer marketplace for AI inference. Providers compete on price to run any AI model, with no central account.',
     sameAs: [
       'https://github.com/AntSeed/antseed',
-      'https://x.com/antseedai',
+      'https://x.com/antseed',
       'https://t.me/antseed',
     ],
   };

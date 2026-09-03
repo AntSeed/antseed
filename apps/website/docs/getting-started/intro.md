@@ -13,7 +13,7 @@ AntSeed is a peer-to-peer network for AI services. Providers offer AI inference 
 
 **Providers** serve AI inference on the network however they choose — through frontier API access, local GPUs, fine-tuned models, TEE-secured environments, or skilled agents. They set pricing, register on-chain, and start serving requests. Earnings arrive in USDC automatically.
 
-**Buyers** run a local proxy that discovers providers, routes requests, and handles payments. Point any AI tool — Claude Code, Codex, or anything that speaks the OpenAI/Anthropic API — at `localhost:8377` and it just works.
+**Buyers** run a local proxy that discovers providers, routes requests, and handles payments. Point a tool on the same computer at `localhost:8377`, or publish the VPR's authenticated model API for a remote agent from the **Agents** view. The recommended way to run it is the [VPR desktop app](/docs/install#desktop-app): it starts the proxy, launches installed tools from **Apps**, and manages Hermes/OpenClaw guidance plus optional ngrok or Cloudflare endpoints from **Agents**. The CLI covers headless and scripted setups.
 
 ```
 Your Tool (Claude Code, Codex, curl)
@@ -35,7 +35,7 @@ Your Tool (Claude Code, Codex, curl)
 
 ## What Makes It Different
 
-- **No middleman** — buyers connect directly to providers via encrypted WebRTC
+- **No middleman** — buyers connect directly to providers over an end-to-end encrypted peer-to-peer channel
 - **Real payments** — USDC on Base, per-request metering, automatic settlement
 - **Any model** — providers choose what to serve, buyers choose what to use
 - **Open market** — providers compete on price, quality, and reputation

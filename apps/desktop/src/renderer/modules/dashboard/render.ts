@@ -97,6 +97,10 @@ function normalizeNetworkData(
         .filter((s): s is string => typeof s === 'string')
         .map((s) => s.trim())
         .filter((s) => s.length > 0),
+      freeServices: safeArray(peer.freeServices)
+        .filter((s): s is string => typeof s === 'string')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0),
       inputUsdPerMillion: safeNumber(peer.inputUsdPerMillion, 0),
       outputUsdPerMillion: safeNumber(peer.outputUsdPerMillion, 0),
       capacityMsgPerHour: safeNumber(peer.capacityMsgPerHour, 0),
@@ -120,6 +124,7 @@ function normalizeNetworkData(
       port: 0,
       providers: [],
       services: [],
+      freeServices: [],
       inputUsdPerMillion: 0,
       outputUsdPerMillion: 0,
       capacityMsgPerHour: 0,
@@ -184,6 +189,7 @@ export function initDashboardRenderModule({
     uiState.peersMessage = message;
     uiState.configMessage = { text: message, type: 'info' };
     uiState.networkAlert = 'none';
+    uiState.dhtNodeCount = 0;
 
     uiState.ovNodeState = 'offline';
     uiState.ovPeers = '0';
@@ -222,8 +228,6 @@ export function initDashboardRenderModule({
     const peers = normalizedNetwork.peers;
     const stats = normalizedNetwork.stats;
     const serviceCount = normalizedNetwork.serviceCount;
-    const dht = networkHealth(stats, peers.length);
-
     const statusPayload = results.status.ok ? (results.status.data as Record<string, unknown>) : null;
     const dataSourcesPayload = results.dataSources.ok ? (results.dataSources.data as Record<string, unknown> | null) : null;
     const configPayload = results.config.ok ? (results.config.data as Record<string, unknown> | null) : null;
@@ -234,6 +238,11 @@ export function initDashboardRenderModule({
     const daemonDetailsCount = daemonChannelDetails.length;
 
     const buyerRuntimeState = isModeRunning('connect') ? 'connected' : 'offline';
+    const dht = networkHealth(stats, peers.length);
+    // Network stats are owned by the main process and keep the last DHT
+    // snapshot after the buyer runtime stops, so the footer would keep saying
+    // "Healthy" while disconnected. Report the network as offline instead.
+    const ovDhtHealth = buyerRuntimeState === 'offline' ? 'Offline' : dht.label;
     const activeChannels = Math.max(
       safeNumber(statusPayload?.activeChannels, 0),
       daemonActiveChannels,
@@ -246,11 +255,12 @@ export function initDashboardRenderModule({
     const proxyPort = runtimeProxyPort > 0 ? runtimeProxyPort : configuredProxyPort;
 
     uiState.networkAlert = deriveNetworkAlert(stats, buyerRuntimeState === 'connected');
+    uiState.dhtNodeCount = safeNumber(stats.dhtNodeCount, 0);
 
     // Overview stats
     uiState.ovNodeState = buyerRuntimeState;
     uiState.ovPeers = formatInt(peers.length);
-    uiState.ovDhtHealth = dht.label;
+    uiState.ovDhtHealth = ovDhtHealth;
     uiState.ovProxyPort = proxyPort > 0 ? String(proxyPort) : '-';
     uiState.ovServiceCount = formatInt(serviceCount);
     uiState.ovLastScan = formatRelativeTime(stats.lastScanAt);

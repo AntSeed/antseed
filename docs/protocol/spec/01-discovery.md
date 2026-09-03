@@ -108,6 +108,13 @@ MIN_SUPPORTED_METADATA_VERSION = 10
 | maxConcurrency   | number   | Maximum concurrent requests (>= 1)                           |
 | currentLoad      | number   | Current number of active requests                            |
 
+For a service using the `openai-images` API protocol, modality capabilities are normative routing claims:
+
+- `{ inputs: ["text"], outputs: ["image"] }` means image generation only.
+- `{ inputs: ["text", "image"], outputs: ["image"] }` means image generation and image editing.
+
+A seller MUST advertise `image` input only when the exact announced service can accept an image-bearing edit request through its configured provider adapter and upstream route. Support elsewhere in the upstream vendor's API, or through a different upstream model, does not make the announced service edit-capable. Buyers MUST NOT route `/v1/images/edits` to a service that omits `image` from its inputs.
+
 ### Binary Encoding Format
 
 **Source:** `node/src/discovery/metadata-codec.ts`
@@ -425,11 +432,29 @@ Periodic re-announcement is managed by `startPeriodicAnnounce()`, which calls `a
 
 ---
 
-## Peer Scoring
+## Peer Scoring and Model Route Planning
 
 **Source:** `@antseed/router-core/src/peer-scorer.ts`
 
-Discovery returns signed metadata and on-chain stats; router plugins own final peer selection. The official local router filters candidates by buyer pricing policy, optional minimum reputation, and failure cooldown, then scores remaining candidates with these default weights:
+Discovery returns signed metadata and on-chain stats. Router plugins enforce general buyer policy and provide generic request selection. For requests that name only a model, the CLI buyer proxy adds a shared model-route planning layer: it canonicalizes the requested model, resolves each peer's matching advertised service, rejects candidates disallowed by router policy, and ranks the remaining offers with `@antseed/node/model-routing`. The same ranking orders each model's `peers` array in the locally answered `/v1/models` catalog.
+
+The default model-only preferences are:
+
+```ts
+{
+  preferFreePeers: false,
+  maxInputUsdPerMillion: 25,
+  minTrustScore: 60,
+  allowedPeerIds: [],
+  blockedPeerIds: [],
+}
+```
+
+`minTrustScore` and seller access lists determine model-route eligibility. Eligible offers are ordered using effective trust, token or image price, cached-input pricing coverage, recent peer failures, cooldown state, and free-peer preference. When at least one offer for a model advertises cached-input pricing, an offer that omits it receives a model-specific effective-reputation reduction; if no offer advertises it, no seller is penalized.
+
+Recognized conversations softly prefer their previous successful automatic route while it remains healthy and policy-eligible. Peer-attributed retryable failures can advance to the next ranked offer; HTTP 429 receives up to three attempts on the same peer before fallback. Explicit peer pins remain hard and bypass automatic peer selection.
+
+For generic router scoring outside this model-specific planning layer, the official local router filters candidates by buyer pricing policy, optional minimum reputation, and failure cooldown, then scores remaining candidates with these default weights:
 
 | Dimension   | Default Weight | Description                              |
 |-------------|----------------|------------------------------------------|
@@ -440,7 +465,7 @@ Discovery returns signed metadata and on-chain stats; router plugins own final p
 | freshness   | 0.10           | Recently seen peers score higher         |
 | reliability | 0.05           | Lower failure rate and streak scores higher |
 
-Price, latency, and capacity are normalized across the eligible candidate pool. Reputation is a 0-100 effective reputation score normalized to 0-1: official routers compute it from on-chain settlement stats when available, then fall back to the optional `PeerInfo.reputationScore` field.
+Price, latency, and capacity are normalized across the eligible candidate pool. Reputation is a 0-100 effective reputation score normalized to 0-1: official routers compute it from on-chain settlement stats when available, then fall back to the optional `PeerInfo.reputationScore` field. These generic router-core weights are separate from the shared model-route ranking described above.
 
 ---
 

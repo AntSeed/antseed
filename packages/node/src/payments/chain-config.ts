@@ -30,6 +30,8 @@ export interface ChainConfig {
   statsDeployBlock?: number;
   /** Public URL of the @antseed/network-stats aggregator that indexes the stats contract for this chain. */
   networkStatsUrl?: string;
+  /** Public REST API of the chain explorer (Antscan). Serves per-seller on-chain stats at /api/sellers. */
+  explorerApiUrl?: string;
   /** AntseedDepositRelay contract for gasless USDC sweeps from buyer hot wallets. */
   depositRelayAddress?: string;
 }
@@ -43,13 +45,25 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
   'base-mainnet': {
     ...DEPLOYED_CONTRACT_ADDRESSES['base-mainnet'],
     chainId: 'base-mainnet',
-    rpcUrl: 'https://base.publicnode.com',
+    // Benchmarked 2026-08-10 (3-concurrent eth_call, archive-depth support):
+    //   tenderly — ~150ms, 9/9 reliable, serves archive calls (primary)
+    //   drpc     — ~175ms, 9/9 reliable, serves archive calls
+    //   nodies   — ~270ms, 9/9 reliable, serves archive calls
+    //   mainnet.base.org — flaky under concurrent reads (last resort)
+    // Explicitly NOT listed:
+    //   publicnode — 403s archive-depth requests ("Archive requests require a
+    //     personal token"); FallbackProvider treats the JSON-RPC error body as
+    //     a valid result (indistinguishable from a revert), so with quorum=1
+    //     the 403 poisons the whole call instead of failing over.
+    //   llamarpc — down (521) and returns missing revert data on concurrent reads.
+    rpcUrl: 'https://base.gateway.tenderly.co',
     fallbackRpcUrls: [
       'https://base.drpc.org',
-      'https://base.llamarpc.com',
+      'https://base-public.nodies.app',
       'https://mainnet.base.org',
     ],
     networkStatsUrl: 'https://network.antseed.com',
+    explorerApiUrl: 'https://antscan.co',
   },
   'base-sepolia': {
     ...DEPLOYED_CONTRACT_ADDRESSES['base-sepolia'],

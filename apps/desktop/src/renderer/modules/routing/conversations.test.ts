@@ -1,27 +1,43 @@
-import { describe, expect, it } from 'vitest';
-import { conversationMatchesApp } from './conversations';
+import assert from 'node:assert/strict';
+import { test } from 'vitest';
+import type { BuyerConversationSummary } from '../../types/bridge.js';
+import {
+  conversationPinnedPeerId,
+  conversationPinnedServiceId,
+  conversationRoutedPeerId,
+} from './conversations.js';
 
-describe('conversationMatchesApp', () => {
-  it('matches on the profile name with prefix flexibility', () => {
-    expect(conversationMatchesApp('codex', { name: 'codex' })).toBe(true);
-    expect(conversationMatchesApp('codex-exec', { name: 'codex' })).toBe(true);
-    expect(conversationMatchesApp('codex', { name: 'codex-cli' })).toBe(true);
-    expect(conversationMatchesApp('opencode', { name: 'codex' })).toBe(false);
-  });
+function conversation(overrides: Partial<BuyerConversationSummary>): BuyerConversationSummary {
+  return {
+    id: 'opencode:session',
+    tool: 'opencode',
+    sessionKey: 'session',
+    label: null,
+    snippet: null,
+    pinnedModel: null,
+    peerSource: 'auto',
+    lastModel: null,
+    lastActiveAt: 0,
+    spentUsdc: '0',
+    ...overrides,
+  } as BuyerConversationSummary;
+}
 
-  it('matches on configured client names (toolSlugs), not just the profile name', () => {
-    const app = { name: 'vendor', toolSlugs: ['acme-code', 'acme-cli'] };
-    expect(conversationMatchesApp('acme-cli', app)).toBe(true);
-    expect(conversationMatchesApp('acme-code', app)).toBe(true);
-    expect(conversationMatchesApp('acme-code-subagent', app)).toBe(true);
-    expect(conversationMatchesApp('codex', app)).toBe(false);
-  });
+test('model-only automatic routes expose a service without a pinned peer', () => {
+  const record = conversation({ pinnedModel: 'gpt-5.6-sol' });
+  assert.equal(conversationPinnedServiceId(record), 'gpt-5.6-sol');
+  assert.equal(conversationPinnedPeerId(record), null);
+  assert.equal(conversationRoutedPeerId(record), null);
+});
 
-  it('keeps the profile name as a fallback when slugs are configured', () => {
-    expect(conversationMatchesApp('opencode', { name: 'opencode', toolSlugs: ['oc-desktop'] })).toBe(true);
+test('explicit seller routes expose both peer and service', () => {
+  const peerId = 'a'.repeat(40);
+  const record = conversation({
+    pinnedModel: `${peerId}@openai-gpt-56-sol`,
+    peerSource: 'user',
+    lastModel: `${peerId}@openai-gpt-56-sol`,
   });
-
-  it('ignores empty slug entries', () => {
-    expect(conversationMatchesApp('anything', { name: 'custom-api', toolSlugs: [''] })).toBe(false);
-  });
+  assert.equal(conversationPinnedServiceId(record), 'openai-gpt-56-sol');
+  assert.equal(conversationPinnedPeerId(record), peerId);
+  assert.equal(conversationRoutedPeerId(record), peerId);
 });

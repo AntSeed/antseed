@@ -5,6 +5,7 @@ const HOP_BY_HOP_HEADERS = new Set([
 
 const INTERNAL_HEADERS = new Set([
   'x-antseed-provider',
+  'x-antseed-service',
 ]);
 
 export interface StripRelayRequestHeadersOptions {

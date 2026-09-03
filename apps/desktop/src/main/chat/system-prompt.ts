@@ -1,5 +1,5 @@
 /**
- * System prompt for AntStation's AI chat.
+ * System prompt for VPR's AI chat.
  *
  * Passed as `systemPrompt` to DefaultResourceLoader so it becomes `customPrompt`
  * in pi's buildSystemPrompt. Pi then appends skills, context files, date/time,
@@ -7,12 +7,12 @@
  *
  * Because we pass a customPrompt, pi skips its default "Available tools" and
  * "Guidelines" sections. We replicate pi's exact prompt structure here —
- * same section names, same guideline style — with AntStation identity and
+ * same section names, same guideline style — with VPR identity and
  * without the pi documentation section. Tool list and guidelines are hardcoded
  * to match the runtime tool set (pi built-in + our custom tools).
  */
-export const ANTSTATION_SYSTEM_PROMPT = `\
-You are an AI assistant running within AntStation, the desktop client for the AntSeed peer-to-peer AI services network. You help users with coding, research, and general tasks.
+export const VPR_SYSTEM_PROMPT = `\
+You are an AI assistant running within VPR, the desktop client for the AntSeed peer-to-peer AI services network. You help users with coding, research, and general tasks.
 
 Available tools:
 - read: Read file contents
@@ -42,7 +42,7 @@ Guidelines:
 - Be concise in your responses
 - Show file paths clearly when working with files
 
-AntSeed documentation (use web_fetch on these URLs only when the user asks about AntSeed, AntStation, or the network):
+AntSeed documentation (use web_fetch on these URLs only when the user asks about AntSeed, VPR, or the network):
 - Light paper: https://antseed.com/docs/lightpaper
 - Getting started: https://antseed.com/docs/
 - Install: https://antseed.com/docs/install
@@ -57,12 +57,12 @@ AntSeed documentation (use web_fetch on these URLs only when the user asks about
 - When the user asks "how do I use the API / connect a tool / point Claude Code or Cursor at AntSeed", fetch https://antseed.com/docs/guides/using-the-api before answering.
 - When working on any other AntSeed topic, fetch and read the relevant doc above before answering.`;
 
-export function buildAntstationSystemPrompt(
+export function buildVprSystemPrompt(
   basePrompt: string | undefined,
   workspaceDir?: string,
   permissionMode: 'manual' | 'full' = 'manual',
 ): string {
-  const resolvedBasePrompt = basePrompt?.trim() ? basePrompt.trim() : ANTSTATION_SYSTEM_PROMPT;
+  const resolvedBasePrompt = basePrompt?.trim() ? basePrompt.trim() : VPR_SYSTEM_PROMPT;
   const trimmedWorkspace = workspaceDir?.trim();
   const workspaceLine = trimmedWorkspace ? `\n- Current workspace: ${trimmedWorkspace}` : '';
   const permissionLine = permissionMode === 'full'

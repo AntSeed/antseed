@@ -100,6 +100,6 @@ All communication happens over an untrusted network. Every trust-critical operat
 2. Deposit only what you need for a session. Top up as needed rather than pre-loading large amounts into AntseedDeposits.
 3. Keep `allowPrivateIPs=false` in production.
 4. Keep signature verification and stale metadata rejection enabled (both on by default).
-5. Prefer WebRTC transport for end-to-end encryption.
+5. Encrypted TCP (`transport.tcp-enc.v1`) is used automatically between peers that advertise it; set `requireSecureTransport` to refuse plaintext/unsigned transports once your peers are upgraded.
 6. On servers, use `ANTSEED_IDENTITY_HEX` with a secrets manager instead of storing keys on disk.
 7. Back up your secp256k1 private key — it is the only way to recover your PeerId (EVM address) and on-chain wallet.

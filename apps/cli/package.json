@@ -1,6 +1,6 @@
 {
   "name": "@antseed/cli",
-  "version": "0.1.142",
+  "version": "0.1.157",
   "description": "Antseed Network CLI and Web Dashboard",
   "type": "module",
   "files": [
@@ -21,7 +21,7 @@
     "start:seed": "node dist/cli/index.js seed",
     "start:connect": "node dist/cli/index.js connect",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node --test dist/config/*.test.js dist/cli/commands/**/*.test.js dist/proxy/*.test.js dist/plugins/*.test.js dist/system-proxy/*.test.js"
+    "test": "npm run build && node --test dist/config/*.test.js dist/cli/commands/**/*.test.js dist/proxy/*.test.js dist/plugins/*.test.js dist/system-proxy/*.test.js dist/tunnel/*.test.js"
   },
   "dependencies": {
     "@antseed/ant-agent": "workspace:*",
@@ -36,7 +36,8 @@
     "commander": "^14.0.3",
     "dotenv": "^16.6.1",
     "open": "^11.0.0",
-    "ora": "^9.3.0"
+    "ora": "^9.3.0",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

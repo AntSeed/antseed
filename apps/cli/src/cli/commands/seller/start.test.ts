@@ -186,6 +186,22 @@ test('buildSellerPluginRuntimeEnv sets OPENAI_BASE_URL from provider baseUrl', (
   assert.equal(runtimeEnv['OPENAI_BASE_URL'], 'https://api.together.ai');
 });
 
+test('buildSellerPluginRuntimeEnv sets LOCAL_LLM_BASE_URL for local LLM providers', () => {
+  const config = createDefaultConfig();
+  config.seller.providers = {
+    local: {
+      plugin: 'local-llm',
+      baseUrl: 'http://192.168.1.100:11434',
+      services: {
+        'qwen3.5-9b': {},
+      },
+    },
+  };
+  const runtimeEnv = buildSellerPluginRuntimeEnv(config.seller, 'local');
+  assert.equal(runtimeEnv['LOCAL_LLM_BASE_URL'], 'http://192.168.1.100:11434');
+  assert.equal(runtimeEnv['OPENAI_BASE_URL'], undefined);
+});
+
 test('assertSellerPrerequisites fails when no services are configured', async () => {
   const config = createDefaultConfig();
   const seller = config.seller;

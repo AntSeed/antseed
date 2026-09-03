@@ -47,6 +47,97 @@ describe('AntseedNode incremental discovery enrichment', () => {
     expect(peers[0]?.onChainReputationScore).toEqual(expect.any(Number));
   });
 
+  it('does not overwrite a verified staking timestamp when a refresh returns zero', async () => {
+    const node = new AntseedNode({ role: 'buyer' });
+    const previousStakedAt = Math.floor(Date.now() / 1000) - 90 * 86_400;
+    const peer = makePeer();
+    peer.onChainStakedAtSec = previousStakedAt;
+    (node as any)._stakingClient = {
+      getAgentId: vi.fn().mockResolvedValue(123),
+      getStake: vi.fn().mockResolvedValue(10_000_000n),
+      getStakedAt: vi.fn().mockResolvedValue(0),
+    };
+    (node as any)._channelsClient = {
+      getAgentStats: vi.fn().mockResolvedValue({
+        channelCount: 1_208,
+        ghostCount: 16,
+        totalVolumeUsdc: 5_428_786_420n,
+        lastSettledAt: Math.floor(Date.now() / 1000),
+      }),
+    };
+
+    await (node as any)._enrichPeersWithOnChainStats([peer]);
+
+    expect(peer.onChainStakedAtSec).toBe(previousStakedAt);
+    expect(peer.onChainTrustScore).toBeCloseTo(5_428.78642, 6);
+    expect(peer.onChainReputationScore).toBeGreaterThan(90);
+  });
+
+  it('keeps the last-known score when the staking timestamp read fails', async () => {
+    const node = new AntseedNode({ role: 'buyer' });
+    const previousFetchedAt = Date.now() - 120_000;
+    const peer = makePeer();
+    peer.onChainStakedAtSec = Math.floor(Date.now() / 1000) - 90 * 86_400;
+    peer.onChainStakeUsdcMicros = 10_000_000;
+    peer.onChainTrustScore = 5_428.78642;
+    peer.onChainReputationScore = 80;
+    peer.onChainStatsFetchedAt = previousFetchedAt;
+    (node as any)._stakingClient = {
+      getAgentId: vi.fn().mockResolvedValue(123),
+      getStake: vi.fn().mockResolvedValue(10_000_000n),
+      getStakedAt: vi.fn().mockRejectedValue(new Error('transient RPC failure')),
+    };
+    (node as any)._channelsClient = {
+      getAgentStats: vi.fn().mockResolvedValue({
+        channelCount: 1_208,
+        ghostCount: 16,
+        totalVolumeUsdc: 5_428_786_420n,
+        lastSettledAt: Math.floor(Date.now() / 1000),
+      }),
+    };
+
+    await (node as any)._enrichPeersWithOnChainStats([peer]);
+
+    expect(peer.onChainChannelCount).toBeUndefined();
+    expect(peer.onChainTotalVolumeUsdcMicros).toBeUndefined();
+    expect(peer.onChainTrustScore).toBe(5_428.78642);
+    expect(peer.onChainReputationScore).toBe(80);
+    expect(peer.onChainStatsFetchedAt).toBe(previousFetchedAt);
+  });
+
+  it('keeps the last-known stake and score when the stake read fails', async () => {
+    const node = new AntseedNode({ role: 'buyer' });
+    const previousFetchedAt = Date.now() - 120_000;
+    const peer = makePeer();
+    peer.onChainStakedAtSec = Math.floor(Date.now() / 1000) - 90 * 86_400;
+    peer.onChainStakeUsdcMicros = 10_000_000;
+    peer.onChainTrustScore = 5_428.78642;
+    peer.onChainReputationScore = 80;
+    peer.onChainStatsFetchedAt = previousFetchedAt;
+    (node as any)._stakingClient = {
+      getAgentId: vi.fn().mockResolvedValue(123),
+      getStake: vi.fn().mockRejectedValue(new Error('transient RPC failure')),
+      getStakedAt: vi.fn().mockResolvedValue(peer.onChainStakedAtSec),
+    };
+    (node as any)._channelsClient = {
+      getAgentStats: vi.fn().mockResolvedValue({
+        channelCount: 1_208,
+        ghostCount: 16,
+        totalVolumeUsdc: 5_428_786_420n,
+        lastSettledAt: Math.floor(Date.now() / 1000),
+      }),
+    };
+
+    await (node as any)._enrichPeersWithOnChainStats([peer]);
+
+    expect(peer.onChainStakeUsdcMicros).toBe(10_000_000);
+    expect(peer.onChainChannelCount).toBeUndefined();
+    expect(peer.onChainTotalVolumeUsdcMicros).toBeUndefined();
+    expect(peer.onChainTrustScore).toBe(5_428.78642);
+    expect(peer.onChainReputationScore).toBe(80);
+    expect(peer.onChainStatsFetchedAt).toBe(previousFetchedAt);
+  });
+
   it('emits external verification results without blocking initial discovery events', async () => {
     const node = new AntseedNode({ role: 'buyer' });
     const peer = makePeer();
