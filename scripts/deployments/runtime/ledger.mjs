@@ -12,7 +12,9 @@ import { writeJsonAtomic, writeJsonOnce } from './artifacts.mjs';
  * writable output root, the RPC endpoint, and the checkpoint location.
  */
 export async function loadContext(migration, network, overrides = {}) {
-  const canonicalRoot = CANONICAL_DEPLOYMENTS_ROOT;
+  // A fork rehearsal may layer one migration on the records an earlier one
+  // wrote to a temporary root; that root is then the baseline to read.
+  const canonicalRoot = overrides.canonicalRoot ?? CANONICAL_DEPLOYMENTS_ROOT;
   const outputRoot = overrides.outputRoot ?? process.env.CONTRACT_DEPLOYMENTS_ROOT ?? canonicalRoot;
   if (outputRoot !== canonicalRoot && !(await fileExists(path.join(outputRoot, network, 'current.json')))) {
     await cp(canonicalRoot, outputRoot, { recursive: true });
@@ -92,7 +94,9 @@ export async function currentRelease(context) {
 /** Regenerates derived config and re-runs the ledger validator against the output root. */
 export function validateArtifacts(context) {
   const env = { CONTRACT_DEPLOYMENTS_ROOT: context.outputRoot };
-  if (context.outputRoot === context.canonicalRoot) {
+  // Only the repository ledger feeds the generated chain config; a temporary
+  // rehearsal root (fork tests) must never rewrite it.
+  if (context.outputRoot === CANONICAL_DEPLOYMENTS_ROOT) {
     run('node', ['scripts/generate-contract-chain-config.mjs'], { env });
   }
   run('node', ['scripts/validate-contract-deployments.mjs'], { env });

@@ -267,6 +267,47 @@ Run `M001RecognizedUsageFork.t.sol` with `BASE_MAINNET_RPC_URL` to validate the
 live canonical starting state. Set `BASE_MAINNET_FORK_BLOCK` when using an
 archive-capable RPC to pin the check to a specific block.
 
+### Legacy Seller Claims (M002)
+
+Sellers whose legacy EmissionsV2 rewards were routed to
+`AntseedSellerRewardsPool` cannot claim them yet: the pool has no
+`sellerClaimPolicy`, and ANTS transfers are disabled with the pool (the
+transfer *sender*) never whitelisted. M001 deliberately leaves both alone.
+
+`script/migrations/M002LegacySellerClaims/Install.s.sol` fixes both in one
+idempotent broadcast, after M001 has activated:
+
+1. `deployer` (ANTSToken owner) — `setTransferWhitelist(pool, true)`, skipped
+   when transfers are already enabled or the pool is already whitelisted.
+2. `sellerRewardsPoolOwner` — deploys `AntseedLegacySellerClaimPolicy` and
+   installs it with `pool.setSellerClaimPolicy`, skipped when the pool already
+   has the policy this ledger recorded.
+
+`AntseedLegacySellerClaimPolicy` is stateless: the pool calls
+`claimableSellerRewards(seller, locked)` as a view, so the policy re-derives
+each seller's *cumulative* locked amount from EmissionsV2/V1 state (epochs
+`0 … effectiveEpoch − 1`, mirroring `claimSellerEmissions`), treats
+`cumulative − locked` as already released, and pays out `RELEASE_BPS`
+(default 1538 ≈ 10/65) of the cumulative amount, optionally linearly vested
+(`VEST_START_EPOCH`, `VEST_EPOCHS`). Sellers the wash-trading registry has
+proven (`isProvenWashTrader`) — or that the policy owner flags manually — can
+claim nothing; their ANTS stays in the pool. The CLI defaults
+`WASH_TRADING_REGISTRY` to the registry M001 pinned into `AntseedPositionInit`
+so both gates read the same source.
+
+```bash
+pnpm contracts:deploy -- M002 --network base-mainnet --fork-test   # M001 + M002 rehearsal
+pnpm contracts:deploy -- M002 --network base-mainnet --dry-run
+pnpm contracts:deploy -- M002 --network base-mainnet --broadcast \
+  --signer deployer=account:antseed-owner \
+  --signer sellerRewardsPoolOwner=account:antseed-ops
+```
+
+States: `ready` (M001 active, at least one install missing), `active`,
+`not-applicable` (no rewards pool on the legacy emissions contract), or
+`invalid` (M001 not active, or a claim policy this ledger did not install). Writes `history/002-legacy-seller-claims.json` and updates
+`current.json`. Runbook: `script/migrations/M002LegacySellerClaims/README.md`.
+
 ## Configuration
 
 All constants are configurable by the contract owner via dedicated setter functions (e.g., `setFirstSignCap()`, `setWithdrawalDelay()`).

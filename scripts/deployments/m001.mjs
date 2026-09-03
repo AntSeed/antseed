@@ -717,44 +717,55 @@ function prepareForkStaker(context) {
   cast(context.rpcUrl, ['rpc', 'anvil_setBalance', BASE_MAINNET_DIEM_STAKER, '0x3635C9ADC5DEA00000']);
 }
 
+/**
+ * Drives M001 to `active` on an already-running Base-mainnet Anvil fork and
+ * returns the records it wrote under `outputRoot`. Shared with later
+ * migrations that rehearse on top of an activated M001 (see m002.mjs).
+ */
+export async function rehearseM001OnFork({ rpcUrl, outputRoot, network }, drive) {
+  const context = await loadContext(migration, network, { rpcUrl, outputRoot, forkTest: true });
+  prepareForkOwners(context);
+  const environment = {
+    WASH_TRADING_REGISTRY: process.env.WASH_TRADING_REGISTRY ?? deployForkWashTradingStub(rpcUrl),
+    VERIFICATION_WALLET: ANVIL_ACCOUNT_1,
+    DIEM_STAKING_PROXY: BASE_MAINNET_DIEM_PROXY,
+    ANTSEED_DEPLOY_CONFIRM: network,
+  };
+  // Every role is an Anvil-unlocked account; the fork test signs nothing.
+  const signers = {
+    deployer: `unlocked:${ANVIL_ACCOUNT_0}`,
+    registryOwner: `unlocked:${ANVIL_ACCOUNT_0}`,
+    channelsOwner: `unlocked:${ANVIL_ACCOUNT_1}`,
+    sellerRewardsPoolOwner: `unlocked:${ANVIL_ACCOUNT_1}`,
+    diemStaker: `unlocked:${BASE_MAINNET_DIEM_STAKER}`,
+  };
+  const overrides = { rpcUrl, outputRoot, forkTest: true, environment, signers };
+  const broadcast = { migration: 'M001', network, mode: 'broadcast', signers: {} };
+
+  let observation = await drive(migration, broadcast, overrides);
+  if (observation.state !== 'awaiting-epoch') throw new Error(`Expected awaiting-epoch, got ${observation.state}`);
+
+  const checkpoint = observation.deployment.checkpoint;
+  advanceTimeTo(rpcUrl, checkpoint.cutoverTimestamp + 1);
+  prepareForkStaker(context);
+
+  observation = await drive(migration, broadcast, overrides);
+  if (observation.state !== 'active') throw new Error(`Expected active, got ${observation.state}`);
+
+  observation = await drive(migration, broadcast, overrides);
+  if (observation.state !== 'active') throw new Error('Repeated broadcast was not an active no-op');
+  return { observation, environment, signers };
+}
+
+export const M001_FORK = { forkBlock: BASE_MAINNET_FORK_BLOCK, chainId: 8453 };
+
 async function forkTest(options, { runMigration: drive }) {
   const forkUrl = process.env.BASE_MAINNET_RPC_URL;
   if (!forkUrl) throw new Error('BASE_MAINNET_RPC_URL is required for --fork-test');
   const outputRoot = await mkdtemp(path.join(tmpdir(), 'antseed-m001-deployments-'));
 
-  await withAnvilFork({ forkUrl, forkBlockNumber: BASE_MAINNET_FORK_BLOCK, chainId: 8453 }, async ({ rpcUrl }) => {
-    const context = await loadContext(migration, options.network, { rpcUrl, outputRoot, forkTest: true });
-    prepareForkOwners(context);
-    const environment = {
-      WASH_TRADING_REGISTRY: process.env.WASH_TRADING_REGISTRY ?? deployForkWashTradingStub(rpcUrl),
-      VERIFICATION_WALLET: ANVIL_ACCOUNT_1,
-      DIEM_STAKING_PROXY: BASE_MAINNET_DIEM_PROXY,
-      ANTSEED_DEPLOY_CONFIRM: options.network,
-    };
-    // Every role is an Anvil-unlocked account; the fork test signs nothing.
-    const signers = {
-      deployer: `unlocked:${ANVIL_ACCOUNT_0}`,
-      registryOwner: `unlocked:${ANVIL_ACCOUNT_0}`,
-      channelsOwner: `unlocked:${ANVIL_ACCOUNT_1}`,
-      sellerRewardsPoolOwner: `unlocked:${ANVIL_ACCOUNT_1}`,
-      diemStaker: `unlocked:${BASE_MAINNET_DIEM_STAKER}`,
-    };
-    const overrides = { rpcUrl, outputRoot, forkTest: true, environment, signers };
-    const broadcast = { ...options, mode: 'broadcast' };
-
-    let observation = await drive(migration, broadcast, overrides);
-    if (observation.state !== 'awaiting-epoch') throw new Error(`Expected awaiting-epoch, got ${observation.state}`);
-
-    const checkpoint = observation.deployment.checkpoint;
-    advanceTimeTo(rpcUrl, checkpoint.cutoverTimestamp + 1);
-    prepareForkStaker(context);
-
-    observation = await drive(migration, broadcast, overrides);
-    if (observation.state !== 'active') throw new Error(`Expected active, got ${observation.state}`);
-
-    observation = await drive(migration, broadcast, overrides);
-    if (observation.state !== 'active') throw new Error('Repeated broadcast was not an active no-op');
-
+  await withAnvilFork({ forkUrl, forkBlockNumber: M001_FORK.forkBlock, chainId: M001_FORK.chainId }, async ({ rpcUrl }) => {
+    await rehearseM001OnFork({ rpcUrl, outputRoot, network: options.network }, drive);
     console.log(`M001 fork test passed. Temporary records: ${outputRoot}`);
   });
 }
