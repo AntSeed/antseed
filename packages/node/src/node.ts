@@ -184,6 +184,8 @@ export interface NodePaymentsConfig {
   minBudgetPerRequest?: string;
   /** Minimum unsettled delta (base units) required before idle settle submits a tx. Default: "2000" (~$0.002). */
   minSettleDelta?: string;
+  /** Serve channels whose buyer already requested close on-chain, risking uncollectible work. Default: false. */
+  serveWhileClosePending?: boolean;
   /** Optional seller-side slack for estimate-only reserve preflight checks. Unset disables estimate-only rejection. */
   reserveEstimateOverdraftUsdc?: string;
   /** Maximum USDC the buyer authorizes per single request (base units). Default: "500000" ($0.50). */
@@ -2066,6 +2068,9 @@ export class AntseedNode extends EventEmitter {
         dataDir: paymentsDir,
         ...(payments.minBudgetPerRequest ? { minBudgetPerRequest: payments.minBudgetPerRequest } : {}),
         ...(payments.minSettleDelta ? { minSettleDelta: payments.minSettleDelta } : {}),
+        ...(payments.serveWhileClosePending !== undefined
+          ? { serveWhileClosePending: payments.serveWhileClosePending }
+          : {}),
       };
       this._sellerPaymentManager = new SellerPaymentManager(this._identity, sellerConfig, this._channelStore);
       debugLog(`[Node] SellerPaymentManager initialized`);
