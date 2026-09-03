@@ -34,5 +34,10 @@ export interface Router {
     success: boolean;
     latencyMs: number;
     tokens: number;
+    freshInputTokens?: number;
+    cachedInputTokens?: number;
+    outputTokens?: number;
+    estimatedCostUsd?: number | null;
+    requestId?: string;
   }): void;
 }
