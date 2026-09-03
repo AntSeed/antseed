@@ -1,6 +1,19 @@
 import type { PeerInfo } from '../types/peer.js';
 import type { SerializedHttpRequest } from '../types/http.js';
 
+export type RouteCandidate = {
+  peer: PeerInfo;
+  peerId: string;
+  serviceId: string;
+  request: SerializedHttpRequest;
+  reputation: number;
+  hasCachedInputPricing: boolean;
+  inputUsdPerMillion: number | null;
+  cachedInputUsdPerMillion?: number | null;
+  outputUsdPerMillion: number | null;
+  minImageUsdPerImage: number | null;
+};
+
 /**
  * Interface that buyer nodes implement for peer selection.
  *
