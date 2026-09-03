@@ -9,6 +9,19 @@ import { AntseedPositionInit } from "../sellers/AntseedPositionInit.sol";
 import { AntseedSellerPools } from "../sellers/AntseedSellerPools.sol";
 import { AntseedSellerRegistry } from "../sellers/AntseedSellerRegistry.sol";
 import { MockERC8004Registry } from "./mocks/MockERC8004Registry.sol";
+import { IAntseedWashTradingStatus } from "../interfaces/IAntseedWashTradingStatus.sol";
+
+contract MockWashTradingStatusForInit is IAntseedWashTradingStatus {
+    mapping(address => bool) public wash;
+
+    function set(address seller, bool value) external {
+        wash[seller] = value;
+    }
+
+    function isProvenWashTrader(address seller) external view returns (bool) {
+        return wash[seller];
+    }
+}
 
 contract MockLegacySellerStaking {
     mapping(address => uint256) public sellerAgentId;
@@ -40,6 +53,7 @@ contract AntseedPositionInitTest is Test {
     AntseedRegistry registry;
     MockERC8004Registry identityRegistry;
     MockLegacySellerStaking legacyStaking;
+    MockWashTradingStatusForInit washRegistry;
     AntseedSellerPools pools;
     AntseedSellerRegistry sellerRegistry;
     AntseedPositionInit positionInit;
@@ -58,6 +72,7 @@ contract AntseedPositionInitTest is Test {
         registry = new AntseedRegistry();
         identityRegistry = new MockERC8004Registry();
         legacyStaking = new MockLegacySellerStaking();
+        washRegistry = new MockWashTradingStatusForInit();
         token = new ANTSToken();
         token.setRegistry(address(registry));
         registry.setAntsToken(address(token));
@@ -65,12 +80,12 @@ contract AntseedPositionInitTest is Test {
         registry.setIdentityRegistry(address(identityRegistry));
 
         pools = new AntseedSellerPools(address(token), address(this), address(identityRegistry), address(0));
-        sellerRegistry =
-            new AntseedSellerRegistry(address(identityRegistry), address(pools), address(legacyStaking));
+        sellerRegistry = new AntseedSellerRegistry(address(identityRegistry), address(pools), address(legacyStaking));
         pools.setStakingSource(address(sellerRegistry));
 
-        positionInit =
-            new AntseedPositionInit(address(pools), address(legacyStaking), INIT_AMOUNT, INIT_END_EPOCH);
+        positionInit = new AntseedPositionInit(
+            address(pools), address(legacyStaking), address(washRegistry), INIT_AMOUNT, INIT_END_EPOCH
+        );
 
         token.setTransferWhitelist(address(pools), true);
         token.setTransferWhitelist(address(positionInit), true);
@@ -183,8 +198,9 @@ contract AntseedPositionInitTest is Test {
     }
 
     function test_depletedPotBlocksInitsUntilRefunded() public {
-        AntseedPositionInit smallInit =
-            new AntseedPositionInit(address(pools), address(legacyStaking), INIT_AMOUNT, INIT_END_EPOCH);
+        AntseedPositionInit smallInit = new AntseedPositionInit(
+            address(pools), address(legacyStaking), address(washRegistry), INIT_AMOUNT, INIT_END_EPOCH
+        );
         token.setTransferWhitelist(address(smallInit), true);
         token.mint(address(smallInit), INIT_AMOUNT);
 
@@ -203,8 +219,9 @@ contract AntseedPositionInitTest is Test {
     }
 
     function test_initRevertsWithoutTransferWhitelist() public {
-        AntseedPositionInit unlisted =
-            new AntseedPositionInit(address(pools), address(legacyStaking), INIT_AMOUNT, INIT_END_EPOCH);
+        AntseedPositionInit unlisted = new AntseedPositionInit(
+            address(pools), address(legacyStaking), address(washRegistry), INIT_AMOUNT, INIT_END_EPOCH
+        );
         token.mint(address(unlisted), INIT_AMOUNT);
 
         vm.prank(seller);
@@ -212,19 +229,48 @@ contract AntseedPositionInitTest is Test {
         unlisted.initPosition();
     }
 
+    function test_provenWashTraderCannotInit() public {
+        washRegistry.set(seller, true);
+        vm.prank(seller);
+        vm.expectRevert(AntseedPositionInit.WashTrader.selector);
+        positionInit.initPosition();
+        assertFalse(positionInit.agentInitialized(agentId));
+        assertEq(positionInit.remainingInits(), 10);
+
+        // Honest sellers are unaffected.
+        vm.prank(otherSeller);
+        positionInit.initPosition();
+        assertTrue(positionInit.agentInitialized(otherAgentId));
+    }
+
+    function test_washTraderClearedLaterCanInit() public {
+        washRegistry.set(seller, true);
+        vm.prank(seller);
+        vm.expectRevert(AntseedPositionInit.WashTrader.selector);
+        positionInit.initPosition();
+
+        washRegistry.set(seller, false);
+        vm.prank(seller);
+        positionInit.initPosition();
+        assertTrue(positionInit.agentInitialized(agentId));
+    }
+
     function test_constructorValidation() public {
         vm.expectRevert(AntseedPositionInit.InvalidAddress.selector);
-        new AntseedPositionInit(address(0), address(legacyStaking), INIT_AMOUNT, INIT_END_EPOCH);
+        new AntseedPositionInit(address(pools), address(legacyStaking), address(0), INIT_AMOUNT, INIT_END_EPOCH);
 
         vm.expectRevert(AntseedPositionInit.InvalidAddress.selector);
-        new AntseedPositionInit(address(pools), address(0), INIT_AMOUNT, INIT_END_EPOCH);
+        new AntseedPositionInit(address(0), address(legacyStaking), address(washRegistry), INIT_AMOUNT, INIT_END_EPOCH);
+
+        vm.expectRevert(AntseedPositionInit.InvalidAddress.selector);
+        new AntseedPositionInit(address(pools), address(0), address(washRegistry), INIT_AMOUNT, INIT_END_EPOCH);
 
         vm.expectRevert(AntseedPositionInit.InvalidValue.selector);
-        new AntseedPositionInit(address(pools), address(legacyStaking), 0, INIT_END_EPOCH);
+        new AntseedPositionInit(address(pools), address(legacyStaking), address(washRegistry), 0, INIT_END_EPOCH);
 
         // End epoch must be in the future relative to the pools' clock.
         vm.warp(genesis + 5 * EPOCH_DURATION);
         vm.expectRevert(AntseedPositionInit.InvalidValue.selector);
-        new AntseedPositionInit(address(pools), address(legacyStaking), INIT_AMOUNT, 5);
+        new AntseedPositionInit(address(pools), address(legacyStaking), address(washRegistry), INIT_AMOUNT, 5);
     }
 }

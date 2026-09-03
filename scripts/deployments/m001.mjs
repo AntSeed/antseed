@@ -16,7 +16,7 @@ import {
   sameAddress,
 } from './runtime/chain.mjs';
 import { advanceTimeTo, impersonatedSend, withAnvilFork } from './runtime/anvil.mjs';
-import { privateKeyAddress } from './runtime/chain.mjs';
+import { cast, privateKeyAddress } from './runtime/chain.mjs';
 import { requireEnvironment } from './runtime/env.mjs';
 import { fileExists } from './runtime/fsx.mjs';
 import {
@@ -65,6 +65,7 @@ const DEPLOYED_CONTRACT_NAMES = {
   AntseedUsageRewards: 'usageRewards',
   AntseedLegacyEmissionsEscrow: 'legacyEmissionsEscrow',
   AntseedLegacyRewardsPoolRegistry: 'legacyRewardsPoolRegistry',
+  AntseedLegacySellerClaimPolicy: 'legacySellerClaimPolicy',
 };
 
 const REQUIRED_DEPLOYED_CONTRACTS = ['usageAccounting', 'sellerRegistry', 'emissionsGate', 'pointsPolicyRegistry'];
@@ -283,6 +284,10 @@ function verifyRoleKeys(context, observation, env) {
   if (!context.forkTest) requireEnvironment(['BASESCAN_API_KEY'], env);
   const deployer = privateKeyAddress(env.DEPLOYER_PRIVATE_KEY);
   if (observation.state === 'ready') {
+    requireEnvironment(['WASH_TRADING_REGISTRY'], env);
+    if (!hasCode(context.rpcUrl, env.WASH_TRADING_REGISTRY)) {
+      throw new Error('WASH_TRADING_REGISTRY has no code on this network (deploy the wash-trading registry before M001)');
+    }
     if (!sameAddress(call(context.rpcUrl, context.expected.antsToken, 'owner()(address)'), deployer)) {
       throw new Error('DEPLOYER_PRIVATE_KEY is not the ANTSToken owner');
     }
@@ -595,6 +600,20 @@ function prepareForkOwners(context) {
   }
 }
 
+/**
+ * The pinned fork predates the wash-trading registry. Deploy a minimal stub
+ * whose `isProvenWashTrader(address)` always returns false so PositionInit
+ * can be constructed against it; a real address can be supplied via
+ * WASH_TRADING_REGISTRY to exercise the live contract instead.
+ */
+function deployForkWashTradingStub(rpcUrl) {
+  // PUSH1 0x00 PUSH1 0x00 MSTORE PUSH1 0x20 PUSH1 0x00 RETURN — returns 32 zero bytes for any call.
+  const runtime = '600060005260206000f3';
+  const initcode = `0x69${runtime}600052600a6016f3`;
+  const receipt = JSON.parse(cast(rpcUrl, ['send', '--private-key', ANVIL_KEY_0, '--json', '--create', initcode]));
+  return receipt.contractAddress;
+}
+
 function fundForkCutoverEpoch(context, checkpoint) {
   const proxy = process.env.DIEM_STAKING_PROXY ?? BASE_MAINNET_DIEM_PROXY;
   const targetEpoch = checkpoint.effectiveEpoch - 1;
@@ -619,6 +638,7 @@ async function forkTest(options, { runMigration: drive }) {
     prepareForkOwners(context);
     const environment = {
       DEPLOYER_PRIVATE_KEY: ANVIL_KEY_0,
+      WASH_TRADING_REGISTRY: process.env.WASH_TRADING_REGISTRY ?? deployForkWashTradingStub(rpcUrl),
       REGISTRY_OWNER_PRIVATE_KEY: ANVIL_KEY_0,
       CHANNELS_OWNER_PRIVATE_KEY: ANVIL_KEY_1,
       DIEM_STAKER_PRIVATE_KEY: ANVIL_KEY_1,

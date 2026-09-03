@@ -7,6 +7,7 @@ import { IAntseedSellerClaimPolicy } from "../interfaces/IAntseedSellerClaimPoli
 import { IAntseedWashTradingStatus } from "../interfaces/IAntseedWashTradingStatus.sol";
 
 interface IEmissionsV2View {
+    function legacyEmissions() external view returns (address);
     function MIGRATION_EPOCH() external view returns (uint256);
     function currentEpoch() external view returns (uint256);
     function getEpochEmission(uint256 epoch) external view returns (uint256);
@@ -64,7 +65,7 @@ contract AntseedLegacySellerClaimPolicy is IAntseedSellerClaimPolicy, Ownable2St
     uint256 public constant BPS = 10_000;
 
     IEmissionsV2View public immutable v2;
-    IEmissionsV1View public immutable v1;
+    IEmissionsV1View public immutable v1; // = v2.legacyEmissions(); only contributes points for epochs <= migrationEpoch
     uint256 public immutable migrationEpoch; // V1 points are merged for epochs <= migrationEpoch
     uint256 public immutable lastEpoch; // last epoch that could have been locked into the pool
     uint256 public immutable releaseBps; // e.g. 1538 = 10/65
@@ -82,15 +83,16 @@ contract AntseedLegacySellerClaimPolicy is IAntseedSellerClaimPolicy, Ownable2St
 
     constructor(
         address v2_,
-        address v1_,
         uint256 lastEpoch_,
         uint256 releaseBps_,
         uint256 vestStart_,
         uint256 vestEpochs_,
         address washTradingRegistry_
     ) Ownable(msg.sender) {
-        if (v2_ == address(0) || v1_ == address(0)) revert InvalidAddress();
+        if (v2_ == address(0)) revert InvalidAddress();
         if (releaseBps_ == 0 || releaseBps_ > BPS) revert InvalidValue();
+        address v1_ = IEmissionsV2View(v2_).legacyEmissions();
+        if (v1_ == address(0)) revert InvalidAddress();
         v2 = IEmissionsV2View(v2_);
         v1 = IEmissionsV1View(v1_);
         migrationEpoch = IEmissionsV2View(v2_).MIGRATION_EPOCH();

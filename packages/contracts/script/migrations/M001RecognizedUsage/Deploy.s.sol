@@ -53,6 +53,9 @@ interface IAntseedLegacyEmissionsAdmin {
  *   EXPECTED_LEGACY_EMISSIONS Current registry emissions pointer.
  *   EXPECTED_LEGACY_STAKING   Current registry staking pointer.
  *   VERIFICATION_WALLET    Recipient of the verification bucket.
+ *   WASH_TRADING_REGISTRY  Deployed AntseedWashTradingRegistry. Pinned into
+ *                          the immutable PositionInit faucet so proven wash
+ *                          traders never receive a starter position.
  *
  * Optional env:
  *   EMISSIONS_RESERVE_WALLET          Destination for ANTS emission reserve flows
@@ -198,9 +201,12 @@ contract M001DeployRecognizedUsage is Script {
         // rewarded epoch), so a late claim never outweighs an early one and
         // the faucet expires by itself. Unowned and immutable — it also
         // switches off when its funded pot runs out.
+        address washTradingRegistry = vm.envAddress("WASH_TRADING_REGISTRY");
+        require(washTradingRegistry.code.length != 0, "WASH_TRADING_REGISTRY has no code");
         AntseedPositionInit positionInit = new AntseedPositionInit(
             address(sellerPools),
             existingStaking,
+            washTradingRegistry,
             vm.envOr("POSITION_INIT_AMOUNT", uint256(1 ether)),
             vm.envOr("POSITION_INIT_END_EPOCH", effectiveEpoch + 104)
         );

@@ -237,7 +237,13 @@ The same broadcast deploys `AntseedPositionInit`, an immutable starter-position
 faucet for eligible legacy sellers. Fund it conservatively and have sellers call
 `initPosition()` before the first rewarded epoch if their usage must count from
 that epoch. Every starter position uses the shared `POSITION_INIT_END_EPOCH`, so
-claiming later never gives a seller more power than an earlier claimant.
+claiming later never gives a seller more power than an earlier claimant. The
+faucet pins the deployed `AntseedWashTradingRegistry` (`WASH_TRADING_REGISTRY`,
+required — deploy the registry before M001) and refuses sellers it has proven
+as wash traders, so a wash trader never gets the starter position that would
+switch their recognized-usage accounting on. The `--fork-test` mode deploys an
+always-false stub when `WASH_TRADING_REGISTRY` is unset, because the pinned
+fork predates the registry.
 
 The verification emission bucket initially remains controlled by
 `VERIFICATION_WALLET`. A separate verification deployment may transfer that
@@ -251,7 +257,7 @@ Run `M001RecognizedUsageFork.t.sol` with `BASE_MAINNET_RPC_URL` to validate the
 live canonical starting state. Set `BASE_MAINNET_FORK_BLOCK` when using an
 archive-capable RPC to pin the check to a specific block.
 
-### Legacy Seller Claims (M002)
+### Legacy Seller Claims
 
 The deployed `AntseedSellerRewardsPool` holds ANTS that legacy EmissionsV2
 locked for sellers, and its `claim()` reverts until a seller claim policy is
@@ -276,12 +282,13 @@ Sellers that were unlock-eligible (direct mint) are over-counted as
 "released", which only lowers their claimable amount; the policy never
 returns more than `locked`.
 
-`script/migrations/M002LegacySellerClaims/Deploy.s.sol` deploys the policy and
-calls `pool.setSellerClaimPolicy` from `SELLER_REWARDS_POOL_OWNER_PRIVATE_KEY`.
-It refuses to run until M001 Cutover has flipped `registry.emissions()`
-(so the last lockable epoch, `gate.effectiveEpoch() − 1`, is fixed) and is a
-no-op if the pool already has a policy. Optional env: `RELEASE_BPS`,
-`VEST_START_EPOCH`, `VEST_EPOCHS`, `WASH_TRADING_REGISTRY`, `LAST_LOCKED_EPOCH`.
+M001 Cutover installs the policy right after it pins the pool's registry
+facade, signed by `SELLER_REWARDS_POOL_OWNER_PRIVATE_KEY`, with
+`lastEpoch = gate.effectiveEpoch() − 1` (the last epoch legacy V2 can lock).
+It skips when the pool already has a policy. Optional env: `RELEASE_BPS`,
+`VEST_START_EPOCH`, `VEST_EPOCHS`; `WASH_TRADING_REGISTRY` is shared with the
+PositionInit faucet and may be left unset for the policy (wire it later with
+`setWashTradingRegistry`).
 
 ## Configuration
 

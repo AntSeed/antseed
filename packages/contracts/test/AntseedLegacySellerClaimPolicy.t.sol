@@ -105,7 +105,7 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
         returns (AntseedLegacySellerClaimPolicy policy)
     {
         policy = new AntseedLegacySellerClaimPolicy(
-            address(v2), address(legacy), lastEpoch, RELEASE_BPS, vestStart, vestEpochs, address(washRegistry)
+            address(v2), lastEpoch, RELEASE_BPS, vestStart, vestEpochs, address(washRegistry)
         );
         pool.setSellerClaimPolicy(address(policy));
     }
@@ -280,7 +280,7 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
 
     function test_claimableNeverExceedsLocked() public {
         AntseedLegacySellerClaimPolicy policy =
-            new AntseedLegacySellerClaimPolicy(address(v2), address(legacy), 10, 10_000, 0, 0, address(0));
+            new AntseedLegacySellerClaimPolicy(address(v2), 10, 10_000, 0, 0, address(0));
         pool.setSellerClaimPolicy(address(policy));
 
         vm.prank(seller1);
@@ -290,14 +290,18 @@ contract AntseedLegacySellerClaimPolicyTest is Test {
         assertEq(policy.claimableSellerRewards(seller1, locked / 3), locked / 3);
     }
 
+    function policyDerivesV1() internal returns (address) {
+        return address(new AntseedLegacySellerClaimPolicy(address(v2), 10, 1538, 0, 0, address(0)).v1());
+    }
+
     function test_constructorValidation() public {
         vm.expectRevert(AntseedLegacySellerClaimPolicy.InvalidValue.selector);
-        new AntseedLegacySellerClaimPolicy(address(v2), address(legacy), 10, 0, 0, 0, address(0));
+        new AntseedLegacySellerClaimPolicy(address(v2), 10, 0, 0, 0, address(0));
         vm.expectRevert(AntseedLegacySellerClaimPolicy.InvalidValue.selector);
-        new AntseedLegacySellerClaimPolicy(address(v2), address(legacy), 10, 10_001, 0, 0, address(0));
+        new AntseedLegacySellerClaimPolicy(address(v2), 10, 10_001, 0, 0, address(0));
         vm.expectRevert(AntseedLegacySellerClaimPolicy.InvalidValue.selector);
-        new AntseedLegacySellerClaimPolicy(address(v2), address(legacy), 3, 1538, 0, 0, address(0));
+        new AntseedLegacySellerClaimPolicy(address(v2), 3, 1538, 0, 0, address(0));
         vm.expectRevert(AntseedLegacySellerClaimPolicy.InvalidAddress.selector);
-        new AntseedLegacySellerClaimPolicy(address(0), address(legacy), 10, 1538, 0, 0, address(0));
+        new AntseedLegacySellerClaimPolicy(address(0), 10, 1538, 0, 0, address(0));
     }
 }
