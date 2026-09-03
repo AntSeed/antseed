@@ -14,6 +14,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Fixed
 
+- Contracts: M002 rejects a `LAST_LOCKED_EPOCH` override that omits legacy deposits; documents the no-mixed-payouts-per-seller requirement and covers late pre-migration claims and repeated pool withdrawals. Migration broadcasts now confirm transactions sequentially to avoid unlocked-signer nonce races during Anvil rehearsals.
+
 - Desktop: added seller-assisted channel closing to Activity for sellers advertising `payments.cooperative-close.v1`, with clear rejection feedback and the existing wallet-based on-chain close retained as a permanent fallback.
 
 - Discovery metadata v12 widens service catalog and per-service map counts to support up to 512 services per provider. Metadata now allows 64 categories and 4 API protocols per service, a 128 KiB signed binary snapshot, and a bounded 256 KiB HTTP metadata response. Buyers remain compatible with v10/v11 sellers, while sellers validate the same limits before announcing.

@@ -49,6 +49,62 @@ seller's cumulative locked amount from V2 claim flags and V2/V1 points, so
 `cumulative − locked` is what the seller already withdrew; nothing is
 double-counted across claims and nothing needs storage.
 
+## Required accounting assumptions
+
+This rollout assumes the pool has never paid out and **all V2 seller rewards
+for each pool participant have gone, and continue to go, into this same pool**.
+Mixing direct and locked V2 payouts for one seller is unsupported: their claim
+flags are indistinguishable and would reduce the reconstructed withdrawal
+allowance. Direct-only addresses with no pool deposits, buyer payouts, and
+rewards claimed directly through V1 do not affect another seller's allowance.
+
+Keep pool participants ineligible for direct V2 payouts, direct-only addresses
+out of the pool, and V2's rewards-pool address unchanged, including for late
+claims after cutover. M002 does not enforce those future owner actions.
+Removing mixed-payout tests does not add mixed-payout support.
+
+Scan epochs **0 through `effectiveEpoch − 1`**, not just from `MIGRATION_EPOCH`:
+old rewards earned under V1 can be claimed later through V2 into the pool.
+`LAST_LOCKED_EPOCH`, if supplied, must equal that exact upper bound.
+
+Before mainnet broadcast:
+
+- Recheck V2's unlock-policy and pool-address history, distinguishing seller
+  claims from buyer claims; verify no mixed seller histories or other pools.
+- Check pool claim history and reconcile recorded deposits with each seller's
+  locked balance and the pool total. A missing policy today alone does not
+  prove there were no withdrawals in the past.
+- Run the M001 → M002 fork rehearsal, then a dry run against the actual active
+  M001 deployment. Check the real wash registry (the default fork uses a stub),
+  signer ownership, token transfer permission, and release/vesting parameters.
+- Obtain agreement on `1538 / 10000`: approximately `10 / 65` of the locked
+  seller allocation, not 10% of each seller's locked balance.
+
+These checks establish the deployment preconditions; they are not an audit
+guarantee. Recheck them immediately before broadcast because owners can change
+configuration after a rehearsal.
+
+### Mainnet history check (2026-09-03)
+
+At Base block `50,827,725`, the pool had 212 deposits across 82 sellers, zero
+withdrawal events, and no claim policy had ever been installed. Its token
+balance and total locked balance both matched deposits: 27,153,751.852988306343576944 ANTS.
+
+V2's migration epoch is **4**. The [epoch-3 claim](https://basescan.org/tx/0xccbd262b981b9c9674c05414505386757e74fc258c034ea7356db32e64dbf7ef)
+locked 14,821.253507455354316010 ANTS through V2. Starting the scan at epoch 4
+would omit that real deposit; keep the scan starting at 0.
+
+The broader claim that V2 never paid directly is false: transaction traces
+show 17 direct seller payouts to `0x1f228613116E2d08014DfdCC198377C8dedf18C9`
+(DiemStakingProxy), the only address enabled in the unlock-policy history.
+For example, see [this direct proxy payout](https://basescan.org/tx/0x4c928c2e6c54c86e0a7cc07f5746b14c8e80dfcbacc9f131f7ad48625441561d).
+That is separate from withdrawals from the seller rewards pool.
+
+All 82 pool sellers' reconstructed cumulative rewards matched their locked
+balances exactly. None had a direct V2 payout; the direct-only proxy had zero
+pool balance. This verifies the no-mixed-history requirement at that block,
+not the stronger (incorrect) claim that V2 never made any direct payouts.
+
 ## Signers
 
 | `--signer` role | Must be | Sends |
@@ -74,6 +130,14 @@ owner and need no wallet.
 `--fork-test` on Base mainnet runs the full M001 rehearsal (deploy, advance
 past the boundary, cutover) on a disposable Anvil fork and then applies M002
 on top of the records M001 wrote, checking that a second apply is a no-op.
+Foundry broadcasts use `--slow` so each transaction confirms before the next
+is sent; this avoids the nonce failures seen with concurrent unlocked sends
+on the pinned Anvil fork.
+
+The 2026-09-03 rehearsal at fork block `50,571,469` passed M001 deploy/cutover,
+M002 dry-run/install, and idempotent reruns. A real pool seller's forked claim
+paid the configured share once; repeat and manually flagged claims reverted.
+The wash-registry stub does not validate production wash-trading data.
 
 ## After
 

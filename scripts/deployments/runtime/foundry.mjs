@@ -25,15 +25,15 @@ export function parseHexNumber(value) {
  * Runs a Foundry script. `contractNames` maps Solidity contract names to
  * ledger keys so a migration never has to parse broadcast files itself.
  */
-export function runForgeScript({ target, rpcUrl, broadcast, verify, etherscanApiKey, env, walletArgs = [] }) {
+export function runForgeScript({ target, rpcUrl, broadcast, verify, etherscanApiKey, env, walletArgs = [] }, dependencies = {}) {
   const args = ['script', target, '--rpc-url', rpcUrl, '--via-ir', ...walletArgs];
   if (broadcast) {
-    args.push('--broadcast');
+    args.push('--broadcast', '--slow');
     // Basescan only accepts Etherscan V2 API keys; pin the version so a stale
     // Foundry default cannot fail verification after transactions were sent.
     if (verify) args.push('--verify', '--etherscan-api-key', etherscanApiKey, '--etherscan-api-version', 'v2');
   }
-  run('forge', args, { cwd: CONTRACTS_ROOT, env });
+  (dependencies.run ?? run)('forge', args, { cwd: CONTRACTS_ROOT, env });
 }
 
 /** Converts a Foundry broadcast file into ledger transactions and contract entries. */

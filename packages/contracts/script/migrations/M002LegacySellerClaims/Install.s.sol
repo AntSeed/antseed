@@ -89,7 +89,7 @@ interface IEmissionsGateView {
  *                                AntseedPositionInit.
  *
  * Optional env:
- *   LAST_LOCKED_EPOCH            Overrides `effectiveEpoch - 1`.
+ *   LAST_LOCKED_EPOCH            If set, must equal `effectiveEpoch - 1`.
  *   RELEASE_BPS                  Share of cumulative locked rewards released.
  *                                Default 1538 (~10/65).
  *   VEST_START_EPOCH             Epoch at which linear vesting begins. Default 0.
@@ -161,6 +161,7 @@ contract M002InstallLegacySellerClaims is Script {
         uint256 lastEpoch = cfg.lastEpochOverride == 0 ? effectiveEpoch - 1 : cfg.lastEpochOverride;
         require(lastEpoch >= v2.MIGRATION_EPOCH(), "last locked epoch precedes the V2 migration epoch");
         require(lastEpoch < effectiveEpoch, "LAST_LOCKED_EPOCH must precede the gate's effective epoch");
+        require(lastEpoch == effectiveEpoch - 1, "LAST_LOCKED_EPOCH must equal the gate's effective epoch minus one");
 
         require(cfg.washTradingRegistry != address(0), "WASH_TRADING_REGISTRY not set");
         require(cfg.washTradingRegistry.code.length != 0, "WASH_TRADING_REGISTRY has no code");

@@ -29,6 +29,7 @@ import { writeJsonAtomic, writeJsonOnce } from './deployments/runtime/artifacts.
 import { currentRelease, historyRecordExists, readCheckpoint } from './deployments/runtime/ledger.mjs';
 import { executePhases } from './deployments/runtime/runner.mjs';
 import { withAnvilFork } from './deployments/runtime/anvil.mjs';
+import { runForgeScript } from './deployments/runtime/foundry.mjs';
 import {
   PAUSE_LEAD_SECONDS,
   cutoverSchedule,
@@ -48,6 +49,18 @@ const ADDRESS = {
   usageAccounting: '0x0000000000000000000000000000000000000006',
   sellerRegistry: '0x0000000000000000000000000000000000000007',
 };
+
+test('broadcasts Foundry transactions sequentially without changing dry runs', () => {
+  for (const broadcast of [false, true]) {
+    let invocation;
+    runForgeScript({ target: 'Install.s.sol:Install', rpcUrl: 'http://localhost:8545', broadcast }, {
+      run: (command, args) => { invocation = { command, args }; },
+    });
+    assert.equal(invocation.command, 'forge');
+    assert.equal(invocation.args.includes('--broadcast'), broadcast);
+    assert.equal(invocation.args.includes('--slow'), broadcast);
+  }
+});
 
 function observation(overrides = {}) {
   return {

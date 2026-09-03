@@ -285,17 +285,33 @@ contract M002LegacySellerClaimsTest is Test {
         script.runWith(cfg);
     }
 
+    function test_rejectsLastEpochOverrideThatOmitsLockedEpochs() public {
+        M002InstallLegacySellerClaims.Config memory cfg = _cfg();
+        cfg.lastEpochOverride = EFFECTIVE_EPOCH - 2;
+        vm.expectRevert("LAST_LOCKED_EPOCH must equal the gate's effective epoch minus one");
+        script.runWith(cfg);
+        assertEq(address(pool.sellerClaimPolicy()), address(0));
+        assertFalse(token.transferWhitelist(address(pool)));
+    }
+
+    function test_acceptsExactLastEpochOverride() public {
+        M002InstallLegacySellerClaims.Config memory cfg = _cfg();
+        cfg.lastEpochOverride = EFFECTIVE_EPOCH - 1;
+        script.runWith(cfg);
+        assertEq(_policy().lastEpoch(), EFFECTIVE_EPOCH - 1);
+    }
+
     function test_optionalVestAndReleaseOverrides() public {
         M002InstallLegacySellerClaims.Config memory cfg = _cfg();
         cfg.releaseBps = 5000;
         cfg.vestStart = EFFECTIVE_EPOCH;
         cfg.vestEpochs = 10;
-        cfg.lastEpochOverride = 4;
+        cfg.lastEpochOverride = EFFECTIVE_EPOCH - 1;
         script.runWith(cfg);
         AntseedLegacySellerClaimPolicy policy = _policy();
         assertEq(policy.releaseBps(), 5000);
         assertEq(policy.vestStart(), EFFECTIVE_EPOCH);
         assertEq(policy.vestEpochs(), 10);
-        assertEq(policy.lastEpoch(), 4);
+        assertEq(policy.lastEpoch(), EFFECTIVE_EPOCH - 1);
     }
 }
