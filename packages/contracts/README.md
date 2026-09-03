@@ -251,6 +251,38 @@ Run `M001RecognizedUsageFork.t.sol` with `BASE_MAINNET_RPC_URL` to validate the
 live canonical starting state. Set `BASE_MAINNET_FORK_BLOCK` when using an
 archive-capable RPC to pin the check to a specific block.
 
+### Legacy Seller Claims (M002)
+
+The deployed `AntseedSellerRewardsPool` holds ANTS that legacy EmissionsV2
+locked for sellers, and its `claim()` reverts until a seller claim policy is
+set. `policies/AntseedLegacySellerClaimPolicy.sol` is that policy. It is
+stateless — the pool calls it as a `view` — so instead of tracking what has
+been paid it re-derives each seller's cumulative locked amount from
+EmissionsV2/V1 state (the same points/share/cap math as
+`claimSellerEmissions`) and treats `cumulative − locked` as already released:
+
+```
+entitled  = cumulative × releaseBps / 10_000       (default 1538 ≈ 10/65)
+entitled ×= min(1, (currentEpoch − vestStart) / vestEpochs)   (only if vestEpochs > 0)
+claimable = min(locked, entitled − released)
+claimable = 0 if the seller is a proven wash trader
+```
+
+Wash-trading status comes from a settable source implementing
+`IAntseedWashTradingStatus.isProvenWashTrader(address)` (the
+`AntseedWashTradingRegistry` from the wash-trading rollout), plus an owner
+manual flag (`setSellerFlagged`) for use before that registry is deployed.
+Sellers that were unlock-eligible (direct mint) are over-counted as
+"released", which only lowers their claimable amount; the policy never
+returns more than `locked`.
+
+`script/migrations/M002LegacySellerClaims/Deploy.s.sol` deploys the policy and
+calls `pool.setSellerClaimPolicy` from `SELLER_REWARDS_POOL_OWNER_PRIVATE_KEY`.
+It refuses to run until M001 Cutover has flipped `registry.emissions()`
+(so the last lockable epoch, `gate.effectiveEpoch() − 1`, is fixed) and is a
+no-op if the pool already has a policy. Optional env: `RELEASE_BPS`,
+`VEST_START_EPOCH`, `VEST_EPOCHS`, `WASH_TRADING_REGISTRY`, `LAST_LOCKED_EPOCH`.
+
 ## Configuration
 
 All constants are configurable by the contract owner via dedicated setter functions (e.g., `setFirstSignCap()`, `setWithdrawalDelay()`).
