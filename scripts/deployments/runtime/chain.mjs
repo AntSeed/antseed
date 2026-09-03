@@ -40,10 +40,6 @@ export function chainId(rpcUrl) {
   return Number(cast(rpcUrl, ['chain-id']));
 }
 
-export function privateKeyAddress(privateKey) {
-  return capture('cast', ['wallet', 'address', '--private-key', privateKey]);
-}
-
 export function transactionSucceeded(rpcUrl, hash) {
   try {
     return JSON.parse(cast(rpcUrl, ['receipt', hash, '--json'])).status === '0x1';

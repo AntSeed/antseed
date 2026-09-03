@@ -16,10 +16,10 @@ Each network contains:
 5. Migration scripts must assert their expected starting state before broadcasting.
 6. Validate records with `node scripts/validate-contract-deployments.mjs`.
 7. Mark contracts created by that record with `deployedInRelease: true`; only reconstructed legacy provenance may remain `null`.
-8. Release-specific guarantees live in a per-migration schema (for example `schema.m001.json`), not in the shared schema or the validator.
-9. Multi-phase migrations must finish from the same clean Git commit that produced their first on-chain phase.
+8. Release-specific guarantees live in the owning migration's `recordErrors`, not in the shared validator.
+9. Later phases of a multi-phase migration read their inputs from the committed history record of the earlier phase, and refuse to broadcast unless the local `forge build` matches the code deployed on chain.
 10. Deployment records are created atomically and may never be overwritten, including by a resumed run.
-11. Non-fork deployment phases require `BASESCAN_API_KEY` and submit source verification during broadcast.
+11. Non-fork deployment phases require `BASESCAN_API_KEY` (an Etherscan V2 key) and submit source verification during broadcast.
 
 `packages/node/src/payments/generated-contract-addresses.ts` is generated from
 each network's `current.json`. A successful canonical migration regenerates it
@@ -63,29 +63,25 @@ yet executed".
 
 ## Bytecode provenance
 
-`pnpm contracts:check` rebuilds the contracts locally and compares the result
-against every `runtimeCodeHash` recorded in the ledger, and against the code
-actually deployed on chain when an RPC URL is available. This
-depends on `bytecode_hash = "none"` and `cbor_metadata = false` in
+`pnpm contracts:check` rebuilds the contracts locally and, for every network
+with an RPC URL set, compares the code deployed at each `deployedInRelease`
+address against the local artifact (immutable slots masked). This depends on
+`bytecode_hash = "none"` and `cbor_metadata = false` in
 `packages/contracts/foundry.toml`: the Solidity default embeds a metadata digest
 derived from absolute source paths, so identical source would otherwise produce
-different runtime code on different machines.
+different runtime code on different machines. Contracts deployed before that
+setting (the legacy baseline) are not compared.
 
 ## Validation
 
 `scripts/validate-contract-deployments.mjs` checks every record in two layers:
 
-1. `schema.json` — the shared shape, enforced with Ajv in strict mode. It is the
-   single source of truth for record structure; there is no parallel hand-written
-   check to drift from it.
-2. `schema.<migration>.json` — invariants that apply only to the releases one
-   migration owns. `schema.m001.json` proves the verification bucket remains
-   editable at 10%, that no points policy is active, and that both
+1. The shared record shape, as plain assertions in the script. `schema.json`
+   documents the same shape for editor tooling.
+2. Invariants that apply only to the releases one migration owns, declared as
+   `recordErrors(record)` on the migration. M001 proves the verification bucket
+   remains editable at 10%, that no points policy is active, and that both
    administrative contracts have recorded owners.
-
-The validator resolves the second layer through the migration registry, so a new
-migration adds its rules by declaring `recordSchema` and never by editing shared
-validation code.
 
 ## Commands
 
@@ -98,10 +94,10 @@ validation code.
 
 ## Adding a migration
 
-Migration modules live in `scripts/deployments/mNNN.mjs` and are discovered
-automatically. A module declares *what* the rollout is and lets
-`scripts/deployments/runtime/` handle *how* it executes — dotenv loading, the
-per-network broadcast lock, live-state observation, typed confirmation,
+Migration modules live in `scripts/deployments/mNNN.mjs` and are listed
+explicitly in `scripts/deployments/index.mjs`. A module declares *what* the
+rollout is and lets `scripts/deployments/runtime/` handle *how* it executes —
+dotenv loading, live-state observation, signer resolution, typed confirmation,
 clean-tree enforcement, Foundry receipt parsing, record writing, and artifact
 validation are all shared.
 
@@ -111,18 +107,15 @@ export const migration = {
   networks: ['base-sepolia'],
   releases: ['002-example'],          // releases this migration may write
   phases: [                           // first phase whose guard passes is run
-    { id: 'deploy', guard: (observation) => observation.state === 'ready', run },
+    { id: 'deploy', guard: (o) => o.state === 'ready', signers: () => ['deployer'], run },
   ],
+  expectedSigner,                     // role -> live owner address, for dry runs
   expectedState,                      // pointers read from current.json
   observe,                            // live RPC reads -> { state, ... }
-  recordSchema,                       // release-specific invariants
+  recordErrors,                       // release-specific invariants
   run: (options, overrides) => runMigration(migration, options, overrides),
 };
 ```
 
 The registry rejects a migration that declares no phases, a phase without an
 `id`/`guard`/`run`, no releases, or a release another migration already claims.
-
-The runner takes a per-network migration lock during broadcasts. If a process
-exits unexpectedly, verify that no deployment is still active before removing
-the lock path printed by the command.

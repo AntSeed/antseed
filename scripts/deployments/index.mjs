@@ -1,9 +1,8 @@
-import { readdir } from 'node:fs/promises';
-import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { migration as m001 } from './m001.mjs';
+import { parseSignerSpecs } from './runtime/signers.mjs';
 
-const migrationsDirectory = path.dirname(fileURLToPath(import.meta.url));
-const migrationFilePattern = /^m\d{3}\.mjs$/;
+/** Every deployment migration, in order. Add new migrations here explicitly. */
+const MIGRATIONS = [m001];
 
 export function buildMigrationRegistry(migrations) {
   const registry = new Map();
@@ -31,16 +30,11 @@ export function buildMigrationRegistry(migrations) {
   return registry;
 }
 
-async function discoverMigrations() {
-  const files = (await readdir(migrationsDirectory)).filter((file) => migrationFilePattern.test(file)).sort();
-  const modules = await Promise.all(files.map((file) => import(pathToFileURL(path.join(migrationsDirectory, file)))));
-  return buildMigrationRegistry(modules.map((module) => module.migration));
-}
-
-export const deploymentMigrations = await discoverMigrations();
+export const deploymentMigrations = buildMigrationRegistry(MIGRATIONS);
 
 export function parseDeployArgs(args, registry = deploymentMigrations) {
-  const options = { migration: null, network: null, mode: null };
+  const options = { migration: null, network: null, mode: null, signers: {} };
+  const signerSpecs = [];
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === '--') {
@@ -49,6 +43,8 @@ export function parseDeployArgs(args, registry = deploymentMigrations) {
       options.migration = argument.toUpperCase();
     } else if (argument === '--network') {
       options.network = args[++index] ?? null;
+    } else if (argument === '--signer') {
+      signerSpecs.push(args[++index] ?? '');
     } else if (['--dry-run', '--broadcast', '--fork-test'].includes(argument)) {
       if (options.mode !== null) throw new Error('Choose exactly one of --dry-run, --broadcast, or --fork-test');
       options.mode = argument.slice(2);
@@ -63,6 +59,7 @@ export function parseDeployArgs(args, registry = deploymentMigrations) {
   }
   if (!options.network) throw new Error('--network is required');
   if (!options.mode) throw new Error('Choose exactly one of --dry-run, --broadcast, or --fork-test');
+  options.signers = parseSignerSpecs(signerSpecs);
   migration.validateOptions?.(options);
   return options;
 }

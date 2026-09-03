@@ -1,27 +1,22 @@
 import { loadDotEnv } from './env.mjs';
-import { acquireMigrationLock } from './lock.mjs';
-import { assertCheckpointSourceCommit, loadContext, validateArtifacts } from './ledger.mjs';
+import { assertCheckpointBytecode, loadContext, validateArtifacts } from './ledger.mjs';
 import { assertCleanForBroadcast, confirmBroadcast } from './preflight.mjs';
 import { buildPlan, clearPlan, writePlan } from './plan.mjs';
+import { addresses, resolveSigners } from './signers.mjs';
 
 /**
  * Generic driver shared by every migration.
  *
  * A migration declares WHAT it is (baseline, expected state, phases, how to
  * classify live state) and the runner owns HOW a rollout executes: dotenv
- * loading, locking, observation, guard evaluation, confirmation, clean-tree
+ * loading, observation, guard evaluation, confirmation, clean-tree
  * enforcement, phase dispatch, record writing, and artifact validation.
  */
 export async function runMigration(migration, options, overrides = {}) {
   if (options.mode === 'fork-test') return migration.forkTest(options, { runMigration });
   await loadDotEnv();
   const context = await loadContext(migration, options.network, overrides);
-  const release = options.mode === 'broadcast' ? await acquireMigrationLock(context, migration.id) : async () => {};
-  try {
-    return await executePhases(migration, options, overrides, context);
-  } finally {
-    await release();
-  }
+  return executePhases(migration, options, overrides, context);
 }
 
 export async function executePhases(migration, options, overrides, context) {
@@ -53,16 +48,24 @@ export async function executePhases(migration, options, overrides, context) {
 
   await phase.preflight?.(context, observation);
 
-  const environment = migration.environment(context, observation, overrides.environment);
-  migration.verifyRoleKeys(context, observation, environment);
+  // Signers are resolved to addresses here and only ever reach the Solidity
+  // scripts as addresses; Foundry pairs them with the wallets in `forgeArgs`.
+  const roles = phase.signers(observation, context);
+  const specs = { ...options.signers, ...overrides.signers };
+  const { signers, forgeArgs } = options.mode === 'broadcast'
+    ? await resolveSigners(specs, roles, { rpcUrl: context.rpcUrl })
+    : await resolveSigners(dryRunSpecs(specs, roles, migration, context, observation), roles, { rpcUrl: context.rpcUrl });
+  const environment = migration.environment(context, observation, addresses(signers), overrides.environment);
+  migration.verifyRoles(context, observation, environment);
+  const wallet = { signers, forgeArgs };
 
   if (options.mode === 'broadcast') {
     assertCleanForBroadcast(context, migration.allowedDirtyReleases(observation));
-    if (observation.deployment) assertCheckpointSourceCommit(context, observation.deployment.checkpoint);
+    if (observation.deployment) await assertCheckpointBytecode(context, observation.deployment.checkpoint);
     if (!context.forkTest) await confirmBroadcast(migration.id, options.network);
   }
 
-  const runResult = await phase.run(context, options.mode, environment, observation);
+  const runResult = await phase.run(context, options.mode, environment, observation, wallet);
   const planDescriptor = phase.plan
     ? await phase.plan(context, observation, runResult)
     : null;
@@ -80,6 +83,19 @@ export async function executePhases(migration, options, overrides, context) {
   }
 
   return migration.observe(context);
+}
+
+/**
+ * A dry run needs addresses to simulate as, not wallets. Any role without a
+ * signer falls back to the live owner the migration expects, so a review can
+ * be generated without touching a keystore or hardware wallet.
+ */
+function dryRunSpecs(specs, roles, migration, context, observation) {
+  const resolved = { ...specs };
+  for (const role of roles) {
+    if (!resolved[role]) resolved[role] = `unlocked:${migration.expectedSigner(role, context, observation)}`;
+  }
+  return resolved;
 }
 
 /** Picks the first phase whose guard accepts the observed state, if any. */

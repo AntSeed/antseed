@@ -15,8 +15,14 @@ via_ir = true
 # Reproducible builds: the default "ipfs" bytecode hash embeds a metadata digest
 # that varies with absolute source paths, so the same commit can produce
 # different runtime code on different machines. Pinning it to "none" lets
-# `pnpm contracts:check` compare a local build of a
-# recorded sourceCommit against the code actually deployed on chain.
+# `pnpm contracts:check` compare a local build against the code actually
+# deployed on chain.
+#
+# NOTE: this changes the runtime bytecode of EVERY contract in this package.
+# Contracts deployed before this setting (the legacy baseline) will not match a
+# local build; only contracts recorded with `deployedInRelease: true` are
+# compared. Explorer verification still succeeds: Etherscan/Basescan compile
+# with the submitted settings, so the metadata-free output matches exactly.
 bytecode_hash = "none"
 cbor_metadata = false
 ffi = false
@@ -38,11 +44,6 @@ call_override = false
 # Regenerates committed gas snapshots. Used by `pnpm contracts:snapshot`.
 [profile.snapshot]
 gas_snapshot_emit = true
-
-# Fails when measured gas drifts from the committed snapshots. Used in CI.
-[profile.ci]
-gas_snapshot_emit = false
-gas_snapshot_check = true
 
 # Heavy campaign for deep custody/invariant exploration.
 # Run with: FOUNDRY_PROFILE=deep-fuzz forge test

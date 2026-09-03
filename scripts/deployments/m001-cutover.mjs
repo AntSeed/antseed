@@ -1,35 +1,63 @@
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { withAnvilFork } from './runtime/anvil.mjs';
-import { call, numberValue, sameAddress } from './runtime/chain.mjs';
+import { call, cast, numberValue, sameAddress } from './runtime/chain.mjs';
 import { runForgeScript, simulationPath } from './runtime/foundry.mjs';
-import {
-  ownsPause,
-  pauseDecision,
-  pauseWindow,
-  recoveryInstructions,
-  sendAndRecord,
-  shouldResume,
-  sleep,
-  waitUntil,
-} from './runtime/pause.mjs';
 
 /**
  * M001's epoch-boundary cutover: pause settlements, wait for the boundary, flip
  * the registry pointers, verify the end state, and only then unpause.
  *
- * Generic guarded-maintenance mechanics live in runtime/pause.mjs. Contract
- * names, timing, role keys, pointer verification, and recovery guidance remain
- * here because they are policy for this migration rather than runtime behavior.
+ * The safety property is simple: Channels is unpaused only when this process
+ * took (or provably adopted) the pause AND both registry pointers are verified
+ * on chain. Any other outcome leaves Channels paused for a human.
  */
 
 const CUTOVER_SCRIPT = 'script/migrations/M001RecognizedUsage/Cutover.s.sol:M001CutoverRecognizedUsage';
 export const PAUSE_LEAD_SECONDS = 60;
 
 export function cutoverSchedule({ genesis, epochDuration, effectiveEpoch }) {
-  return pauseWindow({
-    boundary: genesis + effectiveEpoch * epochDuration,
-    leadSeconds: PAUSE_LEAD_SECONDS,
-  });
+  const target = genesis + effectiveEpoch * epochDuration;
+  return { target, pauseAt: target - PAUSE_LEAD_SECONDS };
+}
+
+/**
+ * `adopt` resumes a pause this migration previously took and can prove;
+ * `foreign` means somebody else paused the contract, so we must not unpause it.
+ */
+export function pauseDecision({ simulation, isPaused, canAdopt }) {
+  if (simulation) return 'skip-simulation';
+  if (!isPaused) return 'pause';
+  return canAdopt ? 'adopt' : 'foreign';
+}
+
+export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export async function waitUntil(timestamp, now = () => Math.floor(Date.now() / 1000)) {
+  while (now() < timestamp) {
+    const remaining = timestamp - now();
+    await sleep(Math.min(remaining + 1, 300) * 1000);
+  }
+}
+
+/** `wallet` is the cast wallet selection for the signer (e.g. `--keystore <file>`); no key is handled here. */
+async function sendAndRecord({ rpcUrl, contract, signature, wallet, receiptFile }) {
+  const output = cast(rpcUrl, ['send', contract, signature, ...wallet, '--json']);
+  if (receiptFile) {
+    await mkdir(path.dirname(receiptFile), { recursive: true });
+    await writeFile(receiptFile, output);
+  }
+}
+
+function recoveryInstructions({ channels, rpcUrl }) {
+  return [
+    '',
+    '!! AntseedChannels REMAINS PAUSED: the cutover did not reach its verified end state.',
+    '!! Fix the failure and rerun the migration - the phase is idempotent and',
+    '!! finishes whatever is left.',
+    '!! To recover manually instead:',
+    `!!   cast send ${channels} 'unpause()' --account <channels-owner keystore> --rpc-url ${rpcUrl}`,
+  ].join('\n');
 }
 
 export function verifyPointers({ emissions, staking, expectedEmissions, expectedStaking }) {
@@ -66,17 +94,10 @@ function operationalTransactions({ channels, pauseOwner, pauseAt }) {
   };
 }
 
-function m001RecoveryInstructions({ channels, rpcUrl }) {
-  return recoveryInstructions({
-    resourceLabel: 'AntseedChannels',
-    recoveryCommand: `cast send ${channels} 'unpause()' --private-key \${CHANNELS_OWNER_PRIVATE_KEY:-$DIEM_STAKER_PRIVATE_KEY} --rpc-url ${rpcUrl}`,
-  });
-}
-
 async function runCutoverOnRpc(options, deps, schedule) {
   const {
     rpcUrl, registry, usageAccounting, sellerRegistry, receiptDirectory,
-    simulation, canAdoptPause, pauseKey, pauseOwner, environment, etherscanApiKey, forkTest,
+    simulation, canAdoptPause, pauseWallet, pauseOwner, environment, etherscanApiKey, forkTest, walletArgs,
   } = options;
   const { target, pauseAt, effectiveEpoch } = schedule;
   const log = deps.log ?? console.log;
@@ -102,7 +123,7 @@ async function runCutoverOnRpc(options, deps, schedule) {
   if (decision === 'pause') {
     log('pausing channels...');
     await send({
-      rpcUrl, contract: channels, signature: 'pause()', privateKey: pauseKey,
+      rpcUrl, contract: channels, signature: 'pause()', wallet: pauseWallet,
       receiptFile: receiptDirectory ? path.join(receiptDirectory, 'pause.json') : null,
     });
     log('channels paused');
@@ -114,7 +135,7 @@ async function runCutoverOnRpc(options, deps, schedule) {
     log('DRY_RUN: recording the Channels pause without sending it');
   }
 
-  let pauseOwned = ownsPause(decision);
+  let pauseOwned = decision === 'pause' || decision === 'adopt';
   let endStateVerified = false;
 
   try {
@@ -139,6 +160,7 @@ async function runCutoverOnRpc(options, deps, schedule) {
       verify: !forkTest,
       etherscanApiKey,
       env: environment,
+      walletArgs,
     });
 
     if (simulation) {
@@ -163,10 +185,10 @@ async function runCutoverOnRpc(options, deps, schedule) {
     log('registry pointers verified: emissions and staking are on the new stack');
     endStateVerified = true;
 
-    if (shouldResume({ pauseOwned, endStateVerified })) {
+    if (pauseOwned && endStateVerified) {
       log('unpausing channels...');
       await send({
-        rpcUrl, contract: channels, signature: 'unpause()', privateKey: pauseKey,
+        rpcUrl, contract: channels, signature: 'unpause()', wallet: pauseWallet,
         receiptFile: receiptDirectory ? path.join(receiptDirectory, 'unpause.json') : null,
       });
       pauseOwned = false;
@@ -176,7 +198,7 @@ async function runCutoverOnRpc(options, deps, schedule) {
     return { endStateVerified, pauseOwned, channels };
   } finally {
     if (pauseOwned && !endStateVerified) {
-      console.error(m001RecoveryInstructions({ channels, rpcUrl }));
+      console.error(recoveryInstructions({ channels, rpcUrl }));
     }
   }
 }

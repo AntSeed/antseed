@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { createRequire } from 'node:module';
 import {
   buildMigrationRegistry,
   buildReleaseOwners,
@@ -21,28 +20,18 @@ import {
   validateM001Options,
 } from './deployments/m001.mjs';
 import { writeJsonAtomic, writeJsonOnce } from './deployments/runtime/artifacts.mjs';
-import { currentRelease, historyRecordExists } from './deployments/runtime/ledger.mjs';
-import {
-  ownsPause,
-  pauseDecision,
-  pauseWindow,
-  recoveryInstructions,
-  shouldResume,
-} from './deployments/runtime/pause.mjs';
+import { currentRelease, historyRecordExists, readCheckpoint } from './deployments/runtime/ledger.mjs';
 import { executePhases } from './deployments/runtime/runner.mjs';
 import { withAnvilFork } from './deployments/runtime/anvil.mjs';
-import { acquireMigrationLock } from './deployments/runtime/lock.mjs';
 import {
   PAUSE_LEAD_SECONDS,
   cutoverSchedule,
+  pauseDecision,
   runCutover,
   verifyPointers,
 } from './deployments/m001-cutover.mjs';
-
-const { Ajv2020 } = createRequire(import.meta.url)('ajv/dist/2020');
-const sharedSchema = JSON.parse(
-  await readFile(new URL('../packages/contracts/deployments/schema.json', import.meta.url), 'utf8'),
-);
+import { recordErrors } from './validate-contract-deployments.mjs';
+import { parseSignerSpecs, resolveSigners } from './deployments/runtime/signers.mjs';
 
 const ADDRESS = {
   registry: '0x0000000000000000000000000000000000000001',
@@ -93,10 +82,46 @@ test('parses the explicit deployment modes', () => {
     migration: 'M001',
     network: 'base-sepolia',
     mode: 'dry-run',
+    signers: {},
   });
+  assert.deepEqual(
+    parseDeployArgs(['M001', '--network', 'base-sepolia', '--broadcast', '--signer', 'deployer=account:deployer']).signers,
+    { deployer: 'account:deployer' },
+  );
   assert.equal(parseDeployArgs(['m001', '--network', 'base-sepolia', '--broadcast']).mode, 'broadcast');
   assert.equal(parseDeployArgs(['--', 'M001', '--network', 'base-sepolia', '--broadcast']).mode, 'broadcast');
   assert.equal(parseDeployArgs(['M001', '--network', 'base-mainnet', '--fork-test']).mode, 'fork-test');
+});
+
+test('parses signer specs and resolves them to addresses, never keys', async () => {
+  assert.deepEqual(parseSignerSpecs(['a=ledger', 'b=keystore:/k/b']), { a: 'ledger', b: 'keystore:/k/b' });
+  assert.throws(() => parseSignerSpecs(['a=ledger', 'a=ledger:1']), /given twice/);
+  assert.throws(() => parseSignerSpecs(['nonsense']), /<role>=<spec>/);
+
+  await assert.rejects(resolveSigners({}, ['deployer']), /--signer deployer=<spec>/);
+  await assert.rejects(resolveSigners({ x: 'vault:abc' }, ['x']), /Unknown signer spec/);
+  await assert.rejects(
+    resolveSigners({ a: 'ledger:0', b: 'ledger:1' }, ['a', 'b'], { rpcUrl: 'http://x' }),
+    /one --ledger per run/,
+  );
+
+  const keystoreDirectory = await mkdtemp(path.join(tmpdir(), 'antseed-keystore-'));
+  try {
+    const file = path.join(keystoreDirectory, 'owner.json');
+    await writeJsonAtomic(file, { address: '0000000000000000000000000000000000000001', crypto: {} });
+    const { signers, forgeArgs } = await resolveSigners(
+      { registryOwner: `keystore:${file}`, channelsOwner: `keystore:${file}`, staker: `unlocked:${ADDRESS.ants}` },
+      ['registryOwner', 'channelsOwner', 'staker'],
+      { rpcUrl: 'http://x' },
+    );
+    assert.equal(signers.registryOwner.address, ADDRESS.registry);
+    assert.equal(signers.staker.address, ADDRESS.ants);
+    assert.deepEqual(forgeArgs, ['--keystore', file, '--unlocked'], 'one wallet flag per distinct wallet');
+    assert.deepEqual(signers.channelsOwner.castArgs, ['--keystore', file]);
+    assert.equal(JSON.stringify(signers).includes('crypto'), false, 'keystore contents never leave the resolver');
+  } finally {
+    await rm(keystoreDirectory, { recursive: true, force: true });
+  }
 });
 
 test('rejects missing and conflicting modes', () => {
@@ -161,7 +186,7 @@ test('reports incomplete network baselines before deployment', () => {
   );
 });
 
-test('discovers migration modules through the deployment registry', () => {
+test('registers migrations explicitly', () => {
   assert.equal(getDeploymentMigration('M001').id, 'M001');
   assert.deepEqual([...deploymentMigrations.keys()], ['M001']);
 });
@@ -348,6 +373,7 @@ test('passes phase run results into async plans and preserves transaction order'
     network: 'test-network',
     outputRoot: directory,
     canonical: { chainId: 999 },
+    rpcUrl: 'http://127.0.0.1:1',
   };
   let planSawRunResult = false;
   const migrationUnderTest = {
@@ -355,7 +381,10 @@ test('passes phase run results into async plans and preserves transaction order'
     phases: [{
       id: 'change',
       guard: () => true,
-      async run() {
+      signers: () => ['actor'],
+      async run(_context, _mode, environment, _observation, wallet) {
+        assert.equal(environment.ACTOR, ADDRESS.ants, 'the runner passes signer ADDRESSES to the phase');
+        assert.deepEqual(wallet.forgeArgs, ['--unlocked']);
         return { simulationFile, marker: 'phase-result' };
       },
       async plan(_context, _observation, runResult) {
@@ -381,8 +410,9 @@ test('passes phase run results into async plans and preserves transaction order'
     }],
     observe: async () => ({ state: 'ready' }),
     printStatus() {},
-    environment: () => ({}),
-    verifyRoleKeys() {},
+    environment: (_context, _observation, signerAddresses) => ({ ACTOR: signerAddresses.actor }),
+    verifyRoles() {},
+    expectedSigner: () => ADDRESS.ants,
   };
 
   try {
@@ -440,20 +470,28 @@ test('always terminates disposable Anvil forks after success or failure', async 
   assert.equal(children[1].args.includes('42'), true);
 });
 
-test('creates the lock parent for a fresh deployment output root', async () => {
-  const parent = await mkdtemp(path.join(tmpdir(), 'antseed-lock-parent-'));
-  const outputRoot = path.join(parent, 'fresh-output-root');
+test('rebuilds a missing checkpoint from the committed history record', async () => {
+  const outputRoot = await mkdtemp(path.join(tmpdir(), 'antseed-checkpoint-'));
+  const context = {
+    outputRoot,
+    network: 'base-sepolia',
+    checkpointFile: path.join(outputRoot, '.deployments', 'm001-base-sepolia.json'),
+  };
+  const release = '001-recognized-usage-deployed';
   try {
-    const release = await acquireMigrationLock({ outputRoot, network: 'test-network' }, 'M999');
-    await assert.rejects(
-      acquireMigrationLock({ outputRoot, network: 'test-network' }, 'M999'),
-      /Another M999 broadcast may be running/,
-    );
-    await release();
-    const releaseAgain = await acquireMigrationLock({ outputRoot, network: 'test-network' }, 'M999');
-    await releaseAgain();
+    assert.equal(await readCheckpoint(context, release, () => { throw new Error('unreachable'); }), null);
+
+    await writeJsonOnce(path.join(outputRoot, 'base-sepolia', 'history', `${release}.json`), { release, effectiveEpoch: 7 });
+    const rebuilt = await readCheckpoint(context, release, (record) => ({ fromRecord: record.effectiveEpoch }));
+    assert.deepEqual(rebuilt, { fromRecord: 7 });
+    assert.deepEqual(JSON.parse(await readFile(context.checkpointFile, 'utf8')), rebuilt, 'the rebuilt checkpoint is cached');
+
+    // Once cached, the local checkpoint wins and history is not consulted again.
+    await writeJsonAtomic(context.checkpointFile, { fromRecord: 7, cutoverStarted: true });
+    const cached = await readCheckpoint(context, release, () => { throw new Error('unreachable'); });
+    assert.equal(cached.cutoverStarted, true);
   } finally {
-    await rm(parent, { recursive: true, force: true });
+    await rm(outputRoot, { recursive: true, force: true });
   }
 });
 
@@ -462,9 +500,8 @@ test('permits only the phase-one record to be dirty during a cutover broadcast',
   assert.deepEqual(migration.allowedDirtyReleases({ state: 'cutover-ready' }), ['001-recognized-usage-deployed']);
 });
 
-test('enforces M001 release invariants through its own schema', () => {
-  const ajv = new Ajv2020({ allErrors: true, strict: true });
-  const validate = ajv.compile(migration.recordSchema);
+test('enforces M001 release invariants', () => {
+  const validate = (record) => migration.recordErrors(record).length === 0;
   const verificationConfiguration = {
     verificationMinterController: ADDRESS.registry,
     verificationMinterShareBps: 10_000,
@@ -493,9 +530,8 @@ test('enforces M001 release invariants through its own schema', () => {
   );
 });
 
-test('accepts the shared schema for baselines and executed releases alike', () => {
-  const ajv = new Ajv2020({ allErrors: true, strict: true });
-  const validate = ajv.compile(sharedSchema);
+test('accepts the shared record shape for baselines and executed releases alike', () => {
+  const validate = (record) => recordErrors(record).length === 0;
   const baseline = {
     network: 'base-sepolia',
     chainId: 84532,
@@ -526,26 +562,11 @@ test('accepts the shared schema for baselines and executed releases alike', () =
   );
 });
 
-test('models guarded maintenance without migration-specific policy', () => {
+test('never adopts a pause somebody else took', () => {
   assert.equal(pauseDecision({ simulation: true, isPaused: false }), 'skip-simulation');
   assert.equal(pauseDecision({ simulation: false, isPaused: false }), 'pause');
   assert.equal(pauseDecision({ simulation: false, isPaused: true, canAdopt: true }), 'adopt');
   assert.equal(pauseDecision({ simulation: false, isPaused: true, canAdopt: false }), 'foreign');
-
-  assert.equal(ownsPause('pause'), true);
-  assert.equal(ownsPause('adopt'), true);
-  assert.equal(ownsPause('foreign'), false, 'never unpause a pause somebody else took');
-  assert.equal(ownsPause('skip-simulation'), false);
-  assert.equal(shouldResume({ pauseOwned: true, endStateVerified: true }), true);
-  assert.equal(shouldResume({ pauseOwned: true, endStateVerified: false }), false);
-  assert.equal(shouldResume({ pauseOwned: false, endStateVerified: true }), false);
-  assert.throws(() => pauseWindow({ boundary: 100 }), /leadSeconds/);
-  assert.deepEqual(pauseWindow({ boundary: 100, leadSeconds: 15 }), { target: 100, pauseAt: 85 });
-  assert.match(recoveryInstructions({
-    resourceLabel: 'ExampleService',
-    recoveryCommand: 'example resume --safe',
-  }), /ExampleService REMAINS PAUSED[\s\S]*example resume --safe/);
-  assert.throws(() => recoveryInstructions({ resourceLabel: 'ExampleService' }), /recoveryCommand/);
 });
 
 test('rejects a cutover whose registry pointers did not reach the new stack', () => {

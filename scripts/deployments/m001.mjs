@@ -1,14 +1,14 @@
-import { readFileSync } from 'node:fs';
 import { mkdir, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 
-import { sourceCommit } from './runtime/exec.mjs';
+import { capture, sourceCommit } from './runtime/exec.mjs';
 import {
   booleanValue,
   call,
   callJson,
+  cast,
   chainId,
   hasCode,
   normalizeAddress,
@@ -16,7 +16,6 @@ import {
   sameAddress,
 } from './runtime/chain.mjs';
 import { advanceTimeTo, impersonatedSend, withAnvilFork } from './runtime/anvil.mjs';
-import { cast, privateKeyAddress } from './runtime/chain.mjs';
 import { requireEnvironment } from './runtime/env.mjs';
 import { fileExists } from './runtime/fsx.mjs';
 import {
@@ -29,7 +28,7 @@ import {
   simulationPath,
 } from './runtime/foundry.mjs';
 import {
-  assertCheckpointSourceCommit,
+  assertCheckpointBytecode,
   currentRelease,
   historyRecordExists,
   loadContext,
@@ -42,10 +41,13 @@ import { runCutover } from './m001-cutover.mjs';
 import { runMigration } from './runtime/runner.mjs';
 
 const VERIFICATION_MINTER_ID = '0xd8018a5ea0ce31650e6d51e87c96f1d258a180b37e42ce66e7adf1c8ac666b57';
+// --fork-test rehearsal fixtures (Base mainnet only).
 const BASE_MAINNET_FORK_BLOCK = 50_571_469;
 const BASE_MAINNET_DIEM_PROXY = '0x1f228613116E2d08014DfdCC198377C8dedf18C9';
-const ANVIL_KEY_0 = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
-const ANVIL_KEY_1 = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';
+// An account with DIEM staked on the proxy at the fork block; impersonated to
+// fund the pre-cutover reward epoch so Cutover.s.sol exercises its
+// "already funded" path exactly as it will on mainnet.
+const BASE_MAINNET_DIEM_STAKER = '0x48F4142F4AbF7b77a03f0cDffcd511eDD9B6d54a';
 const ANVIL_ACCOUNT_0 = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266';
 const ANVIL_ACCOUNT_1 = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
 const M001_TESTNET = 'base-sepolia';
@@ -144,13 +146,26 @@ export function applyActiveContracts(current, activeContracts) {
 }
 
 /**
- * M001-specific ledger assertions, expressed as a JSON Schema that lives beside
- * the shared one. The generic validator reaches this through the migration
- * registry, so release-specific rules never leak into shared code.
+ * M001-specific ledger invariants: the verification bucket stays editable at
+ * 10%, no penalty policy is active, and both administrative contracts have
+ * recorded owners. The shared validator calls this for the releases M001 owns.
  */
-export const recordSchema = JSON.parse(
-  readFileSync(new URL('../../packages/contracts/deployments/schema.m001.json', import.meta.url), 'utf8'),
-);
+export function recordErrors(record) {
+  const errors = [];
+  const configuration = record.verificationConfiguration;
+  if (!configuration || typeof configuration !== 'object') return ['verificationConfiguration is required'];
+  const address = /^0x[0-9a-fA-F]{40}$/;
+  const expect = (key, ok, description) => {
+    if (!ok(configuration[key])) errors.push(`verificationConfiguration.${key} must be ${description}`);
+  };
+  expect('verificationMinterController', (value) => address.test(value ?? ''), 'an address');
+  expect('verificationMinterShareBps', (value) => value === 10_000, '10000');
+  expect('verificationMinterEditable', (value) => value === true, 'true');
+  expect('pointsPolicyCount', (value) => value === 0, '0');
+  expect('emissionsGateOwner', (value) => address.test(value ?? ''), 'an address');
+  expect('pointsPolicyRegistryOwner', (value) => address.test(value ?? ''), 'an address');
+  return errors;
+}
 
 // ---------------------------------------------------------------------------
 // Observation
@@ -216,7 +231,7 @@ async function observeM001(context) {
     currentEpoch: numberValue(call(rpcUrl, expected.legacyEmissions, 'currentEpoch()(uint256)')),
   };
 
-  const checkpoint = await readCheckpoint(context);
+  const checkpoint = await readCheckpoint(context, DEPLOYED_RELEASE, (record) => checkpointFromRecord(context, record));
   if (checkpoint) {
     const valid = checkpointMatchesChain(context, checkpoint, liveChainId);
     observation.deployment = {
@@ -249,13 +264,64 @@ function printStatus(observation) {
 }
 
 // ---------------------------------------------------------------------------
-// Environment and role keys
+// Environment and signer roles
 // ---------------------------------------------------------------------------
 
-function migrationEnvironment(context, observation, extra = {}) {
+/**
+ * Signer roles per phase. The CLI resolves each to a wallet (`--signer
+ * role=keystore:...|account:...|ledger[:i]|unlocked:0x...`) and passes the
+ * resulting ADDRESS to the Solidity script under the same name in upper
+ * snake case; the key never leaves Foundry's wallet layer.
+ */
+export const DEPLOY_SIGNERS = ['deployer'];
+export const CUTOVER_SIGNERS = ['registryOwner', 'channelsOwner', 'deployer'];
+export const CUTOVER_PROXY_SIGNERS = ['diemStaker', 'sellerRewardsPoolOwner'];
+
+const SIGNER_ENV = {
+  deployer: 'DEPLOYER',
+  registryOwner: 'REGISTRY_OWNER',
+  channelsOwner: 'CHANNELS_OWNER',
+  diemStaker: 'DIEM_STAKER',
+  sellerRewardsPoolOwner: 'SELLER_REWARDS_POOL_OWNER',
+};
+
+function usesDiemProxy(context) {
+  return context.network === 'base-mainnet' || Boolean(process.env.DIEM_STAKING_PROXY);
+}
+
+function cutoverSigners(context) {
+  return usesDiemProxy(context) ? [...CUTOVER_SIGNERS, ...CUTOVER_PROXY_SIGNERS] : CUTOVER_SIGNERS;
+}
+
+/** Live owner for a role, used to simulate dry runs without any wallet. */
+function expectedSigner(role, context, observation) {
+  const { rpcUrl, expected } = context;
+  const owner = (address) => call(rpcUrl, address, 'owner()(address)');
+  switch (role) {
+    case 'deployer':
+      return observation.deployment
+        ? owner(observation.deployment.checkpoint.contracts.emissionsGate.address)
+        : owner(expected.antsToken);
+    case 'registryOwner': return owner(expected.registry);
+    case 'channelsOwner': return owner(expected.channels);
+    case 'sellerRewardsPoolOwner': return owner(call(rpcUrl, expected.legacyEmissions, 'sellerRewardsPool()(address)'));
+    case 'diemStaker': return process.env.DIEM_STAKER ?? BASE_MAINNET_DIEM_STAKER;
+    default: throw new Error(`Unknown signer role ${role}`);
+  }
+}
+
+/**
+ * Environment handed to the Foundry scripts. Signer roles arrive as addresses
+ * and are exported under their `SIGNER_ENV` names; `extra` carries fork-test
+ * fixtures and never a key.
+ */
+function migrationEnvironment(context, observation, signerAddresses = {}, extra = {}) {
   const checkpoint = observation.deployment?.checkpoint ?? null;
   const environment = {
     ...process.env,
+    ...Object.fromEntries(
+      Object.entries(signerAddresses).filter(([role]) => SIGNER_ENV[role]).map(([role, address]) => [SIGNER_ENV[role], address]),
+    ),
     BASE_MAINNET_RPC_URL: context.rpcUrl,
     BASE_SEPOLIA_RPC_URL: context.rpcUrl,
     ANTSEED_REGISTRY: context.expected.registry,
@@ -263,7 +329,6 @@ function migrationEnvironment(context, observation, extra = {}) {
     EXPECTED_CHANNELS: context.expected.channels,
     EXPECTED_LEGACY_EMISSIONS: context.expected.legacyEmissions,
     EXPECTED_LEGACY_STAKING: context.expected.legacyStaking,
-    REGISTRY_OWNER_PRIVATE_KEY: process.env.REGISTRY_OWNER_PRIVATE_KEY ?? process.env.DEPLOYER_PRIVATE_KEY,
     ...(context.network === 'base-mainnet' ? { DIEM_STAKING_PROXY: BASE_MAINNET_DIEM_PROXY } : {}),
     ...extra,
   };
@@ -271,37 +336,41 @@ function migrationEnvironment(context, observation, extra = {}) {
     environment.USAGE_ACCOUNTING = checkpoint.contracts.usageAccounting.address;
     environment.SELLER_REGISTRY = checkpoint.contracts.sellerRegistry.address;
   }
-  if (!environment.REGISTRY_OWNER_PRIVATE_KEY) environment.REGISTRY_OWNER_PRIVATE_KEY = environment.DEPLOYER_PRIVATE_KEY;
-  if (!environment.CHANNELS_OWNER_PRIVATE_KEY) environment.CHANNELS_OWNER_PRIVATE_KEY = environment.DIEM_STAKER_PRIVATE_KEY;
-  if (!environment.SELLER_REWARDS_POOL_OWNER_PRIVATE_KEY) {
-    environment.SELLER_REWARDS_POOL_OWNER_PRIVATE_KEY = environment.DIEM_STAKER_PRIVATE_KEY;
-  }
   return environment;
 }
 
-function verifyRoleKeys(context, observation, env) {
-  requireEnvironment(['DEPLOYER_PRIVATE_KEY', 'VERIFICATION_WALLET'], env);
+/**
+ * Every signer address must match the on-chain role it claims before a single
+ * transaction is built. Roles are never inferred from one another.
+ */
+function verifyRoles(context, observation, env) {
+  requireEnvironment(['VERIFICATION_WALLET'], env);
   if (!context.forkTest) requireEnvironment(['BASESCAN_API_KEY'], env);
-  const deployer = privateKeyAddress(env.DEPLOYER_PRIVATE_KEY);
+  const { rpcUrl, expected } = context;
+  const mustOwn = (role, contract, label) => {
+    requireEnvironment([SIGNER_ENV[role]], env);
+    if (!sameAddress(call(rpcUrl, contract, 'owner()(address)'), env[SIGNER_ENV[role]])) {
+      throw new Error(`${role} (${env[SIGNER_ENV[role]]}) is not the ${label} owner`);
+    }
+  };
   if (observation.state === 'ready') {
     requireEnvironment(['WASH_TRADING_REGISTRY'], env);
-    if (!hasCode(context.rpcUrl, env.WASH_TRADING_REGISTRY)) {
+    if (!hasCode(rpcUrl, env.WASH_TRADING_REGISTRY)) {
       throw new Error('WASH_TRADING_REGISTRY has no code on this network (deploy the wash-trading registry before M001)');
     }
-    if (!sameAddress(call(context.rpcUrl, context.expected.antsToken, 'owner()(address)'), deployer)) {
-      throw new Error('DEPLOYER_PRIVATE_KEY is not the ANTSToken owner');
-    }
-    if (!sameAddress(call(context.rpcUrl, context.expected.legacyEmissions, 'owner()(address)'), deployer)) {
-      throw new Error('DEPLOYER_PRIVATE_KEY is not the legacy emissions owner');
-    }
+    mustOwn('deployer', expected.antsToken, 'ANTSToken');
+    mustOwn('deployer', expected.legacyEmissions, 'legacy emissions');
     return;
   }
-  requireEnvironment(['REGISTRY_OWNER_PRIVATE_KEY', 'CHANNELS_OWNER_PRIVATE_KEY'], env);
-  if (!sameAddress(call(context.rpcUrl, context.expected.registry, 'owner()(address)'), privateKeyAddress(env.REGISTRY_OWNER_PRIVATE_KEY))) {
-    throw new Error('REGISTRY_OWNER_PRIVATE_KEY is not the Registry owner');
-  }
-  if (!sameAddress(call(context.rpcUrl, context.expected.channels, 'owner()(address)'), privateKeyAddress(env.CHANNELS_OWNER_PRIVATE_KEY))) {
-    throw new Error('CHANNELS_OWNER_PRIVATE_KEY is not the Channels owner');
+  const gate = observation.deployment.checkpoint.contracts.emissionsGate.address;
+  mustOwn('deployer', gate, 'emissions gate');
+  mustOwn('registryOwner', expected.registry, 'Registry');
+  mustOwn('channelsOwner', expected.channels, 'Channels');
+  if (env.DIEM_STAKING_PROXY) {
+    requireEnvironment(['DIEM_STAKER'], env);
+    mustOwn('sellerRewardsPoolOwner', call(rpcUrl, expected.legacyEmissions, 'sellerRewardsPool()(address)'), 'seller rewards pool');
+    const staked = BigInt(call(rpcUrl, env.DIEM_STAKING_PROXY, 'staked(address)(uint256)', [env.DIEM_STAKER]).split(/\s/)[0]);
+    if (staked === 0n) throw new Error(`diemStaker (${env.DIEM_STAKER}) has no DIEM staked on the proxy`);
   }
 }
 
@@ -309,7 +378,8 @@ function verifyRoleKeys(context, observation, env) {
 // Records
 // ---------------------------------------------------------------------------
 
-async function verificationConfiguration(context, contracts, fallbackController) {
+/** Recorded from chain state only; nothing here is inferred from the environment. */
+async function verificationConfiguration(context, contracts) {
   const minter = callJson(
     context.rpcUrl,
     contracts.emissionsGate.address,
@@ -317,7 +387,7 @@ async function verificationConfiguration(context, contracts, fallbackController)
     [VERIFICATION_MINTER_ID],
   );
   return {
-    verificationMinterController: minter[0] ?? fallbackController,
+    verificationMinterController: minter[0],
     verificationMinterShareBps: Number(minter[1] ?? 0),
     verificationMinterEditable: booleanValue(minter[2]),
     pointsPolicyCount: numberValue(call(context.rpcUrl, contracts.pointsPolicyRegistry.address, 'policyCount()(uint256)')),
@@ -326,7 +396,28 @@ async function verificationConfiguration(context, contracts, fallbackController)
   };
 }
 
-async function recordDeployment(context, environment) {
+/**
+ * Rebuilds the local checkpoint from the committed deployment record so the
+ * cutover can run from any machine that has the record in its tree.
+ */
+function checkpointFromRecord(context, record) {
+  const gate = record.contracts.emissionsGate.address;
+  const genesis = numberValue(call(context.rpcUrl, gate, 'genesis()(uint256)'));
+  const epochDuration = numberValue(call(context.rpcUrl, gate, 'epochDuration()(uint256)'));
+  return {
+    network: record.network,
+    chainId: record.chainId,
+    sourceCommit: record.sourceCommit,
+    effectiveEpoch: record.effectiveEpoch,
+    cutoverTimestamp: genesis + record.effectiveEpoch * epochDuration,
+    contracts: record.contracts,
+    deployTransactions: record.transactions,
+    verificationConfiguration: record.verificationConfiguration,
+    cutoverStarted: false,
+  };
+}
+
+async function recordDeployment(context) {
   const parsed = await parseBroadcast(
     broadcastPath('Deploy.s.sol', context.canonical.chainId),
     context.rpcUrl,
@@ -339,7 +430,7 @@ async function recordDeployment(context, environment) {
   const effectiveEpoch = numberValue(call(context.rpcUrl, gate.address, 'effectiveEpoch()(uint256)'));
   const genesis = numberValue(call(context.rpcUrl, gate.address, 'genesis()(uint256)'));
   const epochDuration = numberValue(call(context.rpcUrl, gate.address, 'epochDuration()(uint256)'));
-  const verification = await verificationConfiguration(context, parsed.contracts, environment.VERIFICATION_WALLET);
+  const verification = await verificationConfiguration(context, parsed.contracts);
 
   const checkpoint = {
     network: context.network,
@@ -405,7 +496,7 @@ async function recordActivation(context, checkpoint) {
     emissions: checkpoint.contracts.usageAccounting.address,
     staking: checkpoint.contracts.sellerRegistry.address,
   };
-  const verification = await verificationConfiguration(context, activeContracts, process.env.VERIFICATION_WALLET);
+  const verification = await verificationConfiguration(context, activeContracts);
 
   if (!(await historyRecordExists(context, ACTIVATED_RELEASE))) {
     await writeHistoryRecord(context, ACTIVATED_RELEASE, {
@@ -448,7 +539,7 @@ async function recoverDeployment(context, observation) {
   if (!gate || !escrow) return false;
   if (!sameAddress(call(context.rpcUrl, context.expected.antsToken, 'registry()(address)'), gate)) return false;
   if (!sameAddress(call(context.rpcUrl, context.expected.legacyEmissions, 'registry()(address)'), escrow)) return false;
-  await recordDeployment(context, { VERIFICATION_WALLET: process.env.VERIFICATION_WALLET });
+  await recordDeployment(context);
   console.log('Recovered the M001 deployment checkpoint from confirmed Foundry receipts.');
   return true;
 }
@@ -460,6 +551,7 @@ async function recoverDeployment(context, observation) {
 const deployPhase = {
   id: 'deploy',
   guard: (observation) => observation.state === 'ready',
+  signers: () => DEPLOY_SIGNERS,
   plan: (context) => ({
     release: DEPLOYED_RELEASE,
     phaseId: 'deploy',
@@ -469,7 +561,7 @@ const deployPhase = {
       'legacyEmissions.registry': { before: context.expected.registry, after: 'AntseedLegacyEmissionsEscrow (deployed by this phase)' },
     },
   }),
-  async run(context, mode, environment) {
+  async run(context, mode, environment, _observation, wallet) {
     runForgeScript({
       target: 'script/migrations/M001RecognizedUsage/Deploy.s.sol:M001DeployRecognizedUsage',
       rpcUrl: context.rpcUrl,
@@ -477,9 +569,10 @@ const deployPhase = {
       verify: !context.forkTest,
       etherscanApiKey: environment.BASESCAN_API_KEY,
       env: environment,
+      walletArgs: wallet.forgeArgs,
     });
     if (mode !== 'broadcast') return;
-    const checkpoint = await recordDeployment(context, environment);
+    const checkpoint = await recordDeployment(context);
     console.log(`M001 deployment complete. Cutover available at ${new Date(checkpoint.cutoverTimestamp * 1000).toISOString()}.`);
     console.log('Rerun the same command after that time.');
   },
@@ -488,6 +581,7 @@ const deployPhase = {
 const cutoverPhase = {
   id: 'cutover',
   guard: (observation) => shouldRunM001Cutover(observation.state),
+  signers: (_observation, context) => cutoverSigners(context),
   plan: (context, observation, runResult) => ({
     release: ACTIVATED_RELEASE,
     phaseId: 'cutover',
@@ -519,7 +613,7 @@ const cutoverPhase = {
       throw new Error('Channels is paused without a confirmed M001 pause receipt; refusing to adopt the pause');
     }
   },
-  async run(context, mode, environment, observation) {
+  async run(context, mode, environment, observation, wallet) {
     const checkpoint = observation.deployment.checkpoint;
     if (mode === 'broadcast') await mkdir(context.receiptDirectory, { recursive: true });
     if (mode === 'broadcast' && !checkpoint.cutoverStarted) {
@@ -540,8 +634,9 @@ const cutoverPhase = {
         receiptDirectory: context.receiptDirectory,
         simulation: mode === 'dry-run',
         canAdoptPause,
-        pauseKey: environment.CHANNELS_OWNER_PRIVATE_KEY ?? environment.DIEM_STAKER_PRIVATE_KEY,
-        pauseOwner: privateKeyAddress(environment.CHANNELS_OWNER_PRIVATE_KEY ?? environment.DIEM_STAKER_PRIVATE_KEY),
+        pauseOwner: environment.CHANNELS_OWNER,
+        pauseWallet: wallet.signers.channelsOwner.castArgs,
+        walletArgs: wallet.forgeArgs,
         etherscanApiKey: environment.BASESCAN_API_KEY,
         forkTest: context.forkTest,
         pollSeconds: environment.POLL_SECS ? Number(environment.POLL_SECS) : undefined,
@@ -568,7 +663,7 @@ async function finalize(context, observation, mode) {
   const historyWritten = await historyRecordExists(context, ACTIVATED_RELEASE);
   const currentWritten = await currentRelease(context) === ACTIVATED_RELEASE;
   if (historyWritten && currentWritten) return false;
-  assertCheckpointSourceCommit(context, observation.deployment.checkpoint);
+  await assertCheckpointBytecode(context, observation.deployment.checkpoint);
   await recordActivation(context, observation.deployment.checkpoint);
   console.log(historyWritten
     ? 'Recovered M001 current.json from confirmed on-chain state; the history record already existed.'
@@ -610,22 +705,17 @@ function deployForkWashTradingStub(rpcUrl) {
   // PUSH1 0x00 PUSH1 0x00 MSTORE PUSH1 0x20 PUSH1 0x00 RETURN — returns 32 zero bytes for any call.
   const runtime = '600060005260206000f3';
   const initcode = `0x69${runtime}600052600a6016f3`;
-  const receipt = JSON.parse(cast(rpcUrl, ['send', '--private-key', ANVIL_KEY_0, '--json', '--create', initcode]));
+  // `--create <CODE>` is a cast subcommand and must be the final argument.
+  const receipt = JSON.parse(
+    capture('cast', ['send', '--rpc-url', rpcUrl, '--unlocked', '--from', ANVIL_ACCOUNT_0, '--json', '--create', initcode]),
+  );
   return receipt.contractAddress;
 }
 
-function fundForkCutoverEpoch(context, checkpoint) {
-  const proxy = process.env.DIEM_STAKING_PROXY ?? BASE_MAINNET_DIEM_PROXY;
-  const targetEpoch = checkpoint.effectiveEpoch - 1;
-  const backlog = callJson(context.rpcUrl, proxy, 'syncBacklog()(uint32,uint32,uint32)');
-  const remaining = Number(backlog[2] ?? 0);
-  if (remaining > 0) {
-    impersonatedSend(context.rpcUrl, ANVIL_ACCOUNT_0, proxy, 'syncRewardEpochs(uint32)', [String(remaining)]);
-  }
-  const reward = callJson(context.rpcUrl, proxy, 'rewardEpochs(uint32)(uint256,uint256,uint256,bool)', [String(targetEpoch)]);
-  if (booleanValue(reward[3]) || BigInt(reward[1] ?? 0) === 0n) return;
-  const historicalStaker = '0x48F4142F4AbF7b77a03f0cDffcd511eDD9B6d54a';
-  impersonatedSend(context.rpcUrl, historicalStaker, proxy, 'claimAnts(uint32[])', [`[${targetEpoch}]`]);
+/** Unlocks the impersonated staker so Cutover.s.sol can claim as it on the fork. */
+function prepareForkStaker(context) {
+  cast(context.rpcUrl, ['rpc', 'anvil_impersonateAccount', BASE_MAINNET_DIEM_STAKER]);
+  cast(context.rpcUrl, ['rpc', 'anvil_setBalance', BASE_MAINNET_DIEM_STAKER, '0x3635C9ADC5DEA00000']);
 }
 
 async function forkTest(options, { runMigration: drive }) {
@@ -637,17 +727,20 @@ async function forkTest(options, { runMigration: drive }) {
     const context = await loadContext(migration, options.network, { rpcUrl, outputRoot, forkTest: true });
     prepareForkOwners(context);
     const environment = {
-      DEPLOYER_PRIVATE_KEY: ANVIL_KEY_0,
       WASH_TRADING_REGISTRY: process.env.WASH_TRADING_REGISTRY ?? deployForkWashTradingStub(rpcUrl),
-      REGISTRY_OWNER_PRIVATE_KEY: ANVIL_KEY_0,
-      CHANNELS_OWNER_PRIVATE_KEY: ANVIL_KEY_1,
-      DIEM_STAKER_PRIVATE_KEY: ANVIL_KEY_1,
-      SELLER_REWARDS_POOL_OWNER_PRIVATE_KEY: ANVIL_KEY_1,
       VERIFICATION_WALLET: ANVIL_ACCOUNT_1,
       DIEM_STAKING_PROXY: BASE_MAINNET_DIEM_PROXY,
       ANTSEED_DEPLOY_CONFIRM: options.network,
     };
-    const overrides = { rpcUrl, outputRoot, forkTest: true, environment };
+    // Every role is an Anvil-unlocked account; the fork test signs nothing.
+    const signers = {
+      deployer: `unlocked:${ANVIL_ACCOUNT_0}`,
+      registryOwner: `unlocked:${ANVIL_ACCOUNT_0}`,
+      channelsOwner: `unlocked:${ANVIL_ACCOUNT_1}`,
+      sellerRewardsPoolOwner: `unlocked:${ANVIL_ACCOUNT_1}`,
+      diemStaker: `unlocked:${BASE_MAINNET_DIEM_STAKER}`,
+    };
+    const overrides = { rpcUrl, outputRoot, forkTest: true, environment, signers };
     const broadcast = { ...options, mode: 'broadcast' };
 
     let observation = await drive(migration, broadcast, overrides);
@@ -655,7 +748,7 @@ async function forkTest(options, { runMigration: drive }) {
 
     const checkpoint = observation.deployment.checkpoint;
     advanceTimeTo(rpcUrl, checkpoint.cutoverTimestamp + 1);
-    fundForkCutoverEpoch(context, checkpoint);
+    prepareForkStaker(context);
 
     observation = await drive(migration, broadcast, overrides);
     if (observation.state !== 'active') throw new Error(`Expected active, got ${observation.state}`);
@@ -682,11 +775,12 @@ export const migration = {
   observe: observeM001,
   printStatus,
   environment: migrationEnvironment,
-  verifyRoleKeys,
+  verifyRoles,
+  expectedSigner,
   recover: recoverDeployment,
   finalize,
   idleMessage,
-  recordSchema,
+  recordErrors,
   allowedDirtyReleases: (observation) => (observation.state === 'ready' ? [] : [DEPLOYED_RELEASE]),
   forkTest,
   run: (options, overrides) => runMigration(migration, options, overrides),

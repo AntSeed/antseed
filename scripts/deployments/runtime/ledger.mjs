@@ -1,8 +1,9 @@
 import { cp } from 'node:fs/promises';
 import path from 'node:path';
 import { CANONICAL_DEPLOYMENTS_ROOT } from './paths.mjs';
-import { run, sourceCommit } from './exec.mjs';
+import { run } from './exec.mjs';
 import { fileExists, readJson } from './fsx.mjs';
+import { buildArtifactIndex, compareRuntimeCode, findArtifact } from './bytecode.mjs';
 import { rpcEnvName } from './env.mjs';
 import { writeJsonAtomic, writeJsonOnce } from './artifacts.mjs';
 
@@ -47,9 +48,17 @@ export function currentFile(context) {
   return path.join(networkRoot(context), 'current.json');
 }
 
-export async function readCheckpoint(context) {
-  if (!(await fileExists(context.checkpointFile))) return null;
-  return readJson(context.checkpointFile);
+/**
+ * The checkpoint is a local, gitignored cache of in-progress state. The
+ * committed history record for `release` is the durable source, so a later
+ * phase can run from any machine once that record is in the tree.
+ */
+export async function readCheckpoint(context, release, fromHistory) {
+  if (await fileExists(context.checkpointFile)) return readJson(context.checkpointFile);
+  if (!release || !(await historyRecordExists(context, release))) return null;
+  const checkpoint = await fromHistory(await readJson(historyFile(context, release)));
+  await writeCheckpoint(context, checkpoint);
+  return checkpoint;
 }
 
 export async function writeCheckpoint(context, checkpoint) {
@@ -89,12 +98,28 @@ export function validateArtifacts(context) {
   run('node', ['scripts/validate-contract-deployments.mjs'], { env });
 }
 
-export function assertCheckpointSourceCommit(context, checkpoint) {
-  const currentCommit = sourceCommit();
-  if (currentCommit !== checkpoint.sourceCommit) {
+/**
+ * A later phase must run against the same contract code an earlier phase
+ * deployed. Rather than pinning the Git commit, compare the local build with
+ * the code on chain for every contract the checkpoint recorded.
+ */
+export async function assertCheckpointBytecode(context, checkpoint) {
+  const index = await buildArtifactIndex();
+  const mismatches = [];
+  for (const [key, contract] of Object.entries(checkpoint.contracts ?? {})) {
+    if (!contract.deployedInRelease) continue;
+    const found = await findArtifact(index, key);
+    if (!found) {
+      mismatches.push(`${key}: no local artifact`);
+      continue;
+    }
+    const reason = compareRuntimeCode(context.rpcUrl, contract.address, found.artifact);
+    if (reason) mismatches.push(`${key} (${found.name} at ${contract.address}): ${reason}`);
+  }
+  if (mismatches.length) {
     throw new Error(
-      `${context.migrationId} was deployed from ${checkpoint.sourceCommit}, but the current commit is ${currentCommit}. `
-      + 'Check out the deployment commit before broadcasting or recovering a later migration phase.',
+      `${context.migrationId} local build does not match the deployed contracts; `
+      + `check out the source that produced ${checkpoint.sourceCommit} or rebuild:\n- ${mismatches.join('\n- ')}`,
     );
   }
 }

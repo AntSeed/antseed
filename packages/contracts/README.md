@@ -193,8 +193,9 @@ directly:
 pnpm contracts:deploy -- M001 --network base-sepolia --dry-run
 
 # Broadcast on Base Sepolia. During cutover, the M001 scheduler waits until the
-# pause window and epoch boundary before continuing.
-pnpm contracts:deploy -- M001 --network base-sepolia --broadcast
+# pause window and epoch boundary, then prompts to unlock each wallet.
+pnpm contracts:deploy -- M001 --network base-sepolia --broadcast \
+  --signer deployer=account:sepolia-owner
 
 # Rehearse both phases against a pinned Base-mainnet Anvil fork.
 BASE_MAINNET_RPC_URL=https://... \
@@ -202,7 +203,8 @@ BASE_MAINNET_RPC_URL=https://... \
 
 # After the fork rehearsal and plan review, simulate or broadcast against Base mainnet.
 pnpm contracts:deploy -- M001 --network base-mainnet --dry-run
-pnpm contracts:deploy -- M001 --network base-mainnet --broadcast
+pnpm contracts:deploy -- M001 --network base-mainnet --broadcast \
+  --signer deployer=account:antseed-owner   # + cutover roles, see the M001 README
 ```
 
 Testnet deployment phases require `BASESCAN_API_KEY`; the runner submits
@@ -224,8 +226,16 @@ the shared runtime contains only reusable guarded-maintenance primitives. Run
 M001 supports Base Sepolia and Base mainnet dry runs and broadcasts. Before a
 mainnet broadcast, run the pinned `--fork-test`, commit and review the generated
 pending plan, and run `pnpm contracts:check -- <base-commit>`. Production
-broadcasts still require a clean tree, matching owner keys, source verification,
-explicit network confirmation, and the canonical Registry/ANTS baseline.
+broadcasts still require a clean tree, one explicitly named wallet per signer
+role (`--signer role=account:…|keystore:…|ledger`; none are defaulted from one
+another and no private key is ever read by the repository), source
+verification, explicit network confirmation, and the canonical Registry/ANTS
+baseline. The cutover phase reads
+its inputs from the committed `001-recognized-usage-deployed.json` record and
+refuses to broadcast unless the local build matches the deployed code, so it
+can run from any machine and any later commit that has not changed those
+contracts. Operator runbook and post-flip checklist:
+`script/migrations/M001RecognizedUsage/README.md`.
 
 The CLI derives `ready`, `awaiting-epoch`, `cutover-ready`,
 `cutover-incomplete`, `active`, or `invalid` from live RPC reads. A broadcast
@@ -283,7 +293,7 @@ Sellers that were unlock-eligible (direct mint) are over-counted as
 returns more than `locked`.
 
 M001 Cutover installs the policy right after it pins the pool's registry
-facade, signed by `SELLER_REWARDS_POOL_OWNER_PRIVATE_KEY`, with
+facade, signed as `SELLER_REWARDS_POOL_OWNER` (the `sellerRewardsPoolOwner` signer), with
 `lastEpoch = gate.effectiveEpoch() − 1` (the last epoch legacy V2 can lock).
 It skips when the pool already has a policy. Optional env: `RELEASE_BPS`,
 `VEST_START_EPOCH`, `VEST_EPOCHS`; `WASH_TRADING_REGISTRY` is shared with the

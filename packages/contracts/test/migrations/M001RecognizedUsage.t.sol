@@ -121,7 +121,6 @@ contract CutoverClaimPolicyHarness is M001CutoverRecognizedUsage {
 contract M001LegacySellerClaimPolicyInstallTest is Test {
     uint256 constant INITIAL_EMISSION = 1000 ether;
     uint256 constant EPOCH_DURATION = 1 weeks;
-    uint256 constant POOL_OWNER_KEY = 0xA11CE;
 
     ANTSToken token;
     AntseedRegistry registry;
@@ -131,7 +130,7 @@ contract M001LegacySellerClaimPolicyInstallTest is Test {
     MockWashRegistryForM001Claims washRegistry;
     CutoverClaimPolicyHarness harness;
 
-    address poolOwner = vm.addr(POOL_OWNER_KEY);
+    address poolOwner = address(0xA11CE);
     address seller = address(0x10);
     address washSeller = address(0x11);
 
@@ -176,7 +175,7 @@ contract M001LegacySellerClaimPolicyInstallTest is Test {
 
     function _cfg() internal view returns (M001CutoverRecognizedUsage.SellerClaimPolicyConfig memory) {
         return M001CutoverRecognizedUsage.SellerClaimPolicyConfig({
-            poolOwnerPrivateKey: POOL_OWNER_KEY,
+            poolOwner: poolOwner,
             releaseBps: 1538,
             vestStart: 0,
             vestEpochs: 0,
@@ -228,17 +227,17 @@ contract M001LegacySellerClaimPolicyInstallTest is Test {
         assertEq(address(pool.sellerClaimPolicy()), address(0));
     }
 
-    function test_rejectsWrongPoolOwnerKey() public {
+    function test_rejectsWrongPoolOwner() public {
         M001CutoverRecognizedUsage.SellerClaimPolicyConfig memory cfg = _cfg();
-        cfg.poolOwnerPrivateKey = 0xB0B;
-        vm.expectRevert("SELLER_REWARDS_POOL_OWNER_PRIVATE_KEY is not the pool owner");
+        cfg.poolOwner = address(0xB0B);
+        vm.expectRevert("SELLER_REWARDS_POOL_OWNER is not the pool owner");
         harness.installSellerClaimPolicy(address(v2), 6, cfg);
     }
 
-    function test_rejectsMissingPoolOwnerKey() public {
+    function test_rejectsMissingPoolOwner() public {
         M001CutoverRecognizedUsage.SellerClaimPolicyConfig memory cfg = _cfg();
-        cfg.poolOwnerPrivateKey = 0;
-        vm.expectRevert("SELLER_REWARDS_POOL_OWNER_PRIVATE_KEY not set (pool needs a claim policy)");
+        cfg.poolOwner = address(0);
+        vm.expectRevert("SELLER_REWARDS_POOL_OWNER not set (pool needs a claim policy)");
         harness.installSellerClaimPolicy(address(v2), 6, cfg);
     }
 
@@ -283,36 +282,37 @@ contract M001LegacySellerClaimPolicyInstallTest is Test {
 ///      process-global, so it must not share a suite with other tests
 ///      that would race on the same variables.
 contract M001LegacySellerClaimPolicyEnvTest is Test {
-    function test_configFromEnv_defaultsAndStakerFallback() public {
+    function test_configFromEnv_defaultsAndNoOwnerFallback() public {
         CutoverClaimPolicyHarness harness = new CutoverClaimPolicyHarness();
 
-        vm.setEnv("SELLER_REWARDS_POOL_OWNER_PRIVATE_KEY", "");
-        vm.setEnv("DIEM_STAKER_PRIVATE_KEY", vm.toString(uint256(0xA11CE)));
+        // The pool owner is never inferred from another role.
+        vm.setEnv("SELLER_REWARDS_POOL_OWNER", "");
+        vm.setEnv("DIEM_STAKER", vm.toString(address(0xA11CE)));
         vm.setEnv("RELEASE_BPS", "");
         vm.setEnv("VEST_START_EPOCH", "");
         vm.setEnv("VEST_EPOCHS", "");
         vm.setEnv("WASH_TRADING_REGISTRY", "");
         M001CutoverRecognizedUsage.SellerClaimPolicyConfig memory cfg = harness.configFromEnv();
-        assertEq(cfg.poolOwnerPrivateKey, 0xA11CE, "falls back to staker key");
+        assertEq(cfg.poolOwner, address(0), "pool owner is not defaulted from the staker");
         assertEq(cfg.releaseBps, 1538);
         assertEq(cfg.vestStart, 0);
         assertEq(cfg.vestEpochs, 0);
         assertEq(cfg.washTradingRegistry, address(0));
 
-        vm.setEnv("SELLER_REWARDS_POOL_OWNER_PRIVATE_KEY", vm.toString(uint256(0xB0B)));
+        vm.setEnv("SELLER_REWARDS_POOL_OWNER", vm.toString(address(0xB0B)));
         vm.setEnv("RELEASE_BPS", "5000");
         vm.setEnv("VEST_START_EPOCH", "6");
         vm.setEnv("VEST_EPOCHS", "10");
         vm.setEnv("WASH_TRADING_REGISTRY", vm.toString(address(0xCAFE)));
         cfg = harness.configFromEnv();
-        assertEq(cfg.poolOwnerPrivateKey, 0xB0B, "explicit pool owner key wins");
+        assertEq(cfg.poolOwner, address(0xB0B), "explicit pool owner address");
         assertEq(cfg.releaseBps, 5000);
         assertEq(cfg.vestStart, 6);
         assertEq(cfg.vestEpochs, 10);
         assertEq(cfg.washTradingRegistry, address(0xCAFE));
 
-        vm.setEnv("SELLER_REWARDS_POOL_OWNER_PRIVATE_KEY", "");
-        vm.setEnv("DIEM_STAKER_PRIVATE_KEY", "");
+        vm.setEnv("SELLER_REWARDS_POOL_OWNER", "");
+        vm.setEnv("DIEM_STAKER", "");
         vm.setEnv("RELEASE_BPS", "");
         vm.setEnv("VEST_START_EPOCH", "");
         vm.setEnv("VEST_EPOCHS", "");

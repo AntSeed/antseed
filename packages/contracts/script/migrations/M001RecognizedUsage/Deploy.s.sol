@@ -44,9 +44,14 @@ interface IAntseedLegacyEmissionsAdmin {
  *         real pot) BEFORE the pointer flip, so the deployed DiemStakingProxy
  *         can never freeze the cutover epoch at a zero pot.
  *
+ * Signer: this script never reads a private key. It broadcasts as DEPLOYER
+ * (an address) and Foundry resolves the matching signer from the wallet
+ * options on the command line (--account <keystore>, --ledger, --trezor, or
+ * --interactive). DEPLOYER must own ANTSToken and the legacy emissions
+ * contract (checked upfront).
+ *
  * Required env:
- *   DEPLOYER_PRIVATE_KEY   Broadcaster key. MUST be the owner of ANTSToken and
- *                          the legacy emissions contract (checked upfront).
+ *   DEPLOYER               Broadcaster address (see above).
  *   ANTSEED_REGISTRY       Existing (legacy) AntseedRegistry address.
  *   EXPECTED_ANTS_TOKEN    Current registry antsToken pointer.
  *   EXPECTED_CHANNELS      Current registry channels pointer.
@@ -71,6 +76,7 @@ interface IAntseedLegacyEmissionsAdmin {
  *   source .env
  *   forge script script/migrations/M001RecognizedUsage/Deploy.s.sol:M001DeployRecognizedUsage \
  *     --rpc-url $BASE_MAINNET_RPC_URL \
+ *     --account deployer \
  *     --broadcast \
  *     --verify \
  *     --etherscan-api-key $BASESCAN_API_KEY \
@@ -82,8 +88,7 @@ contract M001DeployRecognizedUsage is Script {
     bytes32 public constant USAGE_MINTER_ID = keccak256("antseed.emissions.usage.v1");
 
     function run() external {
-        uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        address deployer = vm.addr(deployerPrivateKey);
+        address deployer = vm.envAddress("DEPLOYER");
         address registryAddress = vm.envAddress("ANTSEED_REGISTRY");
 
         IAntseedRegistry registry = IAntseedRegistry(registryAddress);
@@ -139,7 +144,7 @@ contract M001DeployRecognizedUsage is Script {
             );
         }
 
-        vm.startBroadcast(deployerPrivateKey);
+        vm.startBroadcast(deployer);
 
         AntseedEmissionsGate gate = new AntseedEmissionsGate(teamWallet, protocolReserve, 15_000, 15_000);
         if (emissionsReserveWallet != address(0)) {
@@ -269,7 +274,7 @@ contract M001DeployRecognizedUsage is Script {
         // legacy claims never touch a token that only accepts the gate.
         //
         // The registry emissions/staking pointers are deliberately NOT flipped
-        // here. Until CutoverFlip.s.sol runs (next epoch), the network keeps
+        // here. Until Cutover.s.sol runs (next epoch), the network keeps
         // operating fully on the legacy stack: Channels accruals, seller
         // eligibility, and all legacy claims — now paid from the escrow pot —
         // keep working, while the gate cannot mint anything (its first
@@ -297,8 +302,8 @@ contract M001DeployRecognizedUsage is Script {
         console.log("");
         console.log("=== Recognized usage deployment complete (broadcast 1 of 2) ===");
         console.log("Token gate is:            ", address(gate));
-        console.log("Registry emissions:        UNCHANGED (legacy) until CutoverFlip");
-        console.log("Registry staking:          UNCHANGED (legacy) until CutoverFlip");
+        console.log("Registry emissions:        UNCHANGED (legacy) until Cutover");
+        console.log("Registry staking:          UNCHANGED (legacy) until Cutover");
         console.log("Seller pools bucket:      2-40% dynamic (40% max)");
         console.log("Usage bucket:             buyer 5-10%, seller/operator 5-10% dynamic (20% max)");
         console.log("Team bucket:              15%");
@@ -316,70 +321,7 @@ contract M001DeployRecognizedUsage is Script {
         console.log("Emissions gate owner:      ", gate.owner());
         console.log("Points policy owner:       ", pointsPolicyRegistry.owner());
         console.log("");
-        console.log("- Keep the verification bucket editable until the separate");
-        console.log("  verification rollout replaces its controller.");
-        console.log("");
-        console.log("NEXT STEP (broadcast 2 of 2):");
-        console.log("- Rerun `pnpm contracts:deploy -- M001 --network <network>");
-        console.log("  --broadcast`: it pauses AntseedChannels 60s");
-        console.log("  before the epoch boundary (so no usage anywhere on the network");
-        console.log("  can land on the legacy ledger for the new epoch), waits for the");
-        console.log("  epoch to finalize, runs CutoverFlip.s.sol, then unpauses");
-        console.log("  Channels ONLY after verifying on-chain that both registry");
-        console.log("  pointers reached the new stack (which implies the proxy pots");
-        console.log("  were funded first - the flips are the last txs broadcast). If");
-        console.log("  the flip fails, Channels stay paused: fix the cause and rerun");
-        console.log("  (CutoverFlip is idempotent and finishes whatever is left, e.g.");
-        console.log("  setStaking after a run that died past setEmissions), or");
-        console.log("  force-unpause manually. Running CutoverFlip by hand instead");
-        console.log("  requires managing the Channels pause yourself (owner key).");
-        console.log("- Once the current epoch finalizes, rerun the deployment CLI");
-        console.log("  (it waits for the boundary and runs the flip). It claims");
-        console.log("  the finalized epoch's Diem pot from legacy V2 (paid by the");
-        console.log("  escrow) BEFORE flipping, then sets registry emissions/staking");
-        console.log("  to the new stack. Env it needs:");
-        console.log("    USAGE_ACCOUNTING=          ", address(usageAccounting));
-        console.log("    SELLER_REGISTRY=           ", address(sellerRegistry));
-        console.log("    DIEM_STAKING_PROXY=        <deployed proxy address>");
-        console.log("    REGISTRY_OWNER_PRIVATE_KEY=<AntseedRegistry owner key>");
-        console.log("    DIEM_STAKER_PRIVATE_KEY=   <key with DIEM staked on the proxy>");
-        console.log("");
-        console.log("POST-FLIP CHECKLIST (manual):");
-        console.log("- Create + seed an ANTS seller pool for the proxy's agent id right");
-        console.log("  after the flip: usage of pool-less agents is not accounted, so");
-        console.log("  the proxy earns nothing in the new stack until it has a pool.");
-        console.log("- Do NOT renounce EmissionsGate ownership before verification:");
-        console.log("  that rollout must rotate the editable 10% controller from");
-        console.log("  VERIFICATION_WALLET to AntseedVerification. Any later ownership");
-        console.log("  change must happen only after verification is deployed and checked.");
-        console.log("- ANTSToken and the remaining ownable contracts still require their");
-        console.log("  separately reviewed production ownership handoff.");
-        console.log("- KEEP AntseedRegistry ownership: it is the only key that can open");
-        console.log("  the temporary setStaking(legacy) window needed to withdraw the");
-        console.log("  proxy's legacy USDC stake (SellerRegistry.unstake reverts by");
-        console.log("  design). Do not renounce it before that stake is out.");
-        console.log("- Sellers staked in legacy USDC staking stay eligible via the");
-        console.log("  SellerRegistry legacy fallback. Call setLegacyStakeEligibilityEnabled(false)");
-        console.log("  only after seller pools are seeded with ANTS stake.");
-        console.log("- Sellers cannot stake ANTS into pools until they are transfer-");
-        console.log("  whitelisted or transfers are enabled.");
-        console.log("- Fund the PositionInit faucet with ANTS from a wallet that already");
-        console.log("  holds them (temporarily whitelist that wallet as a SENDER via");
-        console.log("  ANTSToken.setTransferWhitelist, transfer, then de-whitelist).");
-        console.log("  Fund in small increments: the faucet has no owner and no sweep,");
-        console.log("  leftovers strand forever. Announce the claim window: grants");
-        console.log("  staked before the flip epoch's boundary have power at the first");
-        console.log("  rewarded epoch; later claims activate one epoch after staking.");
-        console.log("- Legacy EmissionsV2 is registered against the escrow: all its");
-        console.log("  claims and team/reserve flushes (any epoch, any time) pay from");
-        console.log("  the pre-minted pot. Sweep the escrow leftovers only after legacy");
-        console.log("  claim activity has wound down.");
-        console.log("- Locked-path legacy sellers (not unlock-approved) claim through");
-        console.log("  AntseedSellerRewardsPool, whose auth reads its registry's");
-        console.log("  emissions() live. CutoverFlip pins the pool to a dedicated");
-        console.log("  facade before flipping (signed by the pool owner key), so those");
-        console.log("  claims keep working. Fallback for stragglers either way:");
-        console.log("  EmissionsV2.setSellerUnlockPolicy (plain onlyOwner, works even");
-        console.log("  after any registry renouncement).");
+        console.log("Next: see script/migrations/M001RecognizedUsage/README.md for the");
+        console.log("cutover (broadcast 2 of 2) and the post-flip checklist.");
     }
 }

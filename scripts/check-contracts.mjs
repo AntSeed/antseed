@@ -18,9 +18,10 @@ function run(command, args, options = {}) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-run('forge', ['test'], {
+// Fails when measured gas drifts from the committed snapshots; regenerate
+// deliberately with `pnpm contracts:snapshot`.
+run('forge', ['test', '--gas-snapshot-check', 'true'], {
   cwd: path.join(repositoryRoot, 'packages/contracts'),
-  env: { FOUNDRY_PROFILE: 'ci' },
 });
 run('node', ['--test', 'scripts/deploy-contracts.test.mjs']);
 run('node', ['scripts/validate-contract-deployments.mjs']);
