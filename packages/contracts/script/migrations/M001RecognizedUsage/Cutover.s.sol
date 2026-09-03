@@ -5,7 +5,6 @@ import "forge-std/Script.sol";
 
 import { IAntseedRegistry } from "../../../interfaces/IAntseedRegistry.sol";
 import { AntseedLegacyRewardsPoolRegistry } from "../../../rewards/AntseedLegacyRewardsPoolRegistry.sol";
-import { AntseedLegacySellerClaimPolicy } from "../../../policies/AntseedLegacySellerClaimPolicy.sol";
 
 interface IAntseedRegistryFlipAdmin is IAntseedRegistry {
     function owner() external view returns (address);
@@ -33,15 +32,7 @@ interface IPointsPolicyRegistryLike {
 interface ISellerRewardsPoolAdmin {
     function owner() external view returns (address);
     function registry() external view returns (address);
-    function sellerClaimPolicy() external view returns (address);
-    function totalLockedRewards() external view returns (uint256);
     function setRegistry(address _registry) external;
-    function setSellerClaimPolicy(address policy) external;
-}
-
-interface ILegacyEmissionsV2Pool {
-    function sellerRewardsPool() external view returns (address);
-    function MIGRATION_EPOCH() external view returns (uint256);
 }
 
 interface IDiemStakingProxyFlip {
@@ -73,10 +64,8 @@ interface IDiemStakingProxyFlip {
  *              the pot is stored forever — the pointer flip below can no
  *              longer affect it, and the zero-pot freeze is impossible.
  *           2. POOL OWNER: pins the deployed AntseedSellerRewardsPool
- *              at a registry facade (so locked legacy claims keep working
- *              after the flip) and installs AntseedLegacySellerClaimPolicy
- *              so sellers can claim their released share of locked legacy
- *              rewards — zero for proven wash traders.
+ *              at a registry facade so locked legacy claims keep working
+ *              after the flip.
  *           3. REGISTRY OWNER: flips registry.setEmissions to
  *              AntseedUsageAccounting and registry.setStaking to
  *              AntseedSellerRegistry.
@@ -117,19 +106,7 @@ interface IDiemStakingProxyFlip {
  *                                AntseedSellerRewardsPool (auto-discovered via
  *                                the legacy emissions contract). Required when
  *                                the proxy is set. Signs the pinned registry
- *                                facade wiring and the legacy seller claim
- *                                policy install below.
- *   WASH_TRADING_REGISTRY        Deployed AntseedWashTradingRegistry, wired
- *                                into the legacy seller claim policy. Unset
- *                                leaves only the policy owner's manual flag
- *                                active (wire later via setWashTradingRegistry).
- *   RELEASE_BPS                  Share of each seller's cumulative locked
- *                                legacy rewards the claim policy releases.
- *                                Default 1538 (~10/65).
- *   VEST_START_EPOCH             Epoch at which the release starts vesting
- *                                linearly. Default 0.
- *   VEST_EPOCHS                  Linear vesting length in epochs. Default 0
- *                                (release immediately).
+ *                                facade wiring below.
  *
  * Usage:
  *   cd packages/contracts
@@ -208,7 +185,6 @@ contract M001CutoverRecognizedUsage is Script {
                 console.log("will permanently freeze them at a zero pot after this flip.");
             }
             _pinRewardsPoolRegistry(registry, currentEmissions);
-            _installSellerClaimPolicy(currentEmissions, effectiveEpoch, _sellerClaimPolicyConfigFromEnv());
         } else {
             // Resume path: setEmissions landed in a previous run, so every tx
             // broadcast before it (proxy claims, facade pin) landed too. The
@@ -275,81 +251,6 @@ contract M001CutoverRecognizedUsage is Script {
         console.log("");
         console.log("SellerRewardsPool:      ", pool);
         console.log("Pinned registry facade: ", address(facade));
-    }
-
-    struct SellerClaimPolicyConfig {
-        address poolOwner;
-        uint256 releaseBps;
-        uint256 vestStart;
-        uint256 vestEpochs;
-        address washTradingRegistry;
-    }
-
-    function _sellerClaimPolicyConfigFromEnv() internal view returns (SellerClaimPolicyConfig memory cfg) {
-        cfg.poolOwner = vm.envOr("SELLER_REWARDS_POOL_OWNER", address(0));
-        cfg.releaseBps = vm.envOr("RELEASE_BPS", uint256(1538));
-        cfg.vestStart = vm.envOr("VEST_START_EPOCH", uint256(0));
-        cfg.vestEpochs = vm.envOr("VEST_EPOCHS", uint256(0));
-        cfg.washTradingRegistry = vm.envOr("WASH_TRADING_REGISTRY", address(0));
-    }
-
-    /// @dev Install the legacy seller claim policy on the deployed
-    ///      AntseedSellerRewardsPool. Until a policy is set the pool's
-    ///      claim() reverts, so every seller's locked legacy ANTS is frozen.
-    ///      The policy is stateless: it re-derives each seller's cumulative
-    ///      locked amount from EmissionsV2/V1 state up to `effectiveEpoch - 1`
-    ///      (the last epoch legacy V2 could lock, fixed by the flip below),
-    ///      releases `releaseBps` of it, and returns zero for proven wash
-    ///      traders. Skips when the pool already has a policy.
-    function _installSellerClaimPolicy(
-        address legacyEmissions,
-        uint256 effectiveEpoch,
-        SellerClaimPolicyConfig memory cfg
-    ) internal {
-        (bool ok, bytes memory data) = legacyEmissions.staticcall(abi.encodeWithSignature("sellerRewardsPool()"));
-        address pool = (ok && data.length == 32) ? abi.decode(data, (address)) : address(0);
-        if (pool == address(0)) return; // already reported by _pinRewardsPoolRegistry
-
-        address existing = ISellerRewardsPoolAdmin(pool).sellerClaimPolicy();
-        if (existing != address(0)) {
-            console.log("");
-            console.log("SellerRewardsPool claim policy already set:", existing);
-            return;
-        }
-
-        require(cfg.poolOwner != address(0), "SELLER_REWARDS_POOL_OWNER not set (pool needs a claim policy)");
-        require(
-            ISellerRewardsPoolAdmin(pool).owner() == cfg.poolOwner, "SELLER_REWARDS_POOL_OWNER is not the pool owner"
-        );
-
-        uint256 lastEpoch = effectiveEpoch - 1;
-        require(
-            lastEpoch >= ILegacyEmissionsV2Pool(legacyEmissions).MIGRATION_EPOCH(),
-            "claim policy last epoch precedes the V2 migration epoch"
-        );
-        if (cfg.washTradingRegistry != address(0)) {
-            require(cfg.washTradingRegistry.code.length != 0, "WASH_TRADING_REGISTRY has no code");
-        }
-
-        vm.startBroadcast(cfg.poolOwner);
-        AntseedLegacySellerClaimPolicy policy = new AntseedLegacySellerClaimPolicy(
-            legacyEmissions, lastEpoch, cfg.releaseBps, cfg.vestStart, cfg.vestEpochs, cfg.washTradingRegistry
-        );
-        ISellerRewardsPoolAdmin(pool).setSellerClaimPolicy(address(policy));
-        vm.stopBroadcast();
-
-        require(ISellerRewardsPoolAdmin(pool).sellerClaimPolicy() == address(policy), "claim policy install failed");
-
-        console.log("");
-        console.log("LegacySellerClaimPolicy:", address(policy));
-        console.log("  pool total locked:    ", ISellerRewardsPoolAdmin(pool).totalLockedRewards());
-        console.log("  last locked epoch:    ", lastEpoch);
-        console.log("  release bps:          ", cfg.releaseBps);
-        console.log("  vest start / epochs:  ", cfg.vestStart, cfg.vestEpochs);
-        console.log("  wash-trading registry:", cfg.washTradingRegistry);
-        if (cfg.washTradingRegistry == address(0)) {
-            console.log("  WARNING: no wash-trading registry - wire it via policy.setWashTradingRegistry(<addr>).");
-        }
     }
 
     /// @dev Claim every unfunded pre-effective reward epoch on the proxy while

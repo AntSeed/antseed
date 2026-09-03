@@ -67,7 +67,6 @@ const DEPLOYED_CONTRACT_NAMES = {
   AntseedUsageRewards: 'usageRewards',
   AntseedLegacyEmissionsEscrow: 'legacyEmissionsEscrow',
   AntseedLegacyRewardsPoolRegistry: 'legacyRewardsPoolRegistry',
-  AntseedLegacySellerClaimPolicy: 'legacySellerClaimPolicy',
 };
 
 const REQUIRED_DEPLOYED_CONTRACTS = ['usageAccounting', 'sellerRegistry', 'emissionsGate', 'pointsPolicyRegistry'];

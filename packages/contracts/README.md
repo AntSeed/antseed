@@ -267,39 +267,6 @@ Run `M001RecognizedUsageFork.t.sol` with `BASE_MAINNET_RPC_URL` to validate the
 live canonical starting state. Set `BASE_MAINNET_FORK_BLOCK` when using an
 archive-capable RPC to pin the check to a specific block.
 
-### Legacy Seller Claims
-
-The deployed `AntseedSellerRewardsPool` holds ANTS that legacy EmissionsV2
-locked for sellers, and its `claim()` reverts until a seller claim policy is
-set. `policies/AntseedLegacySellerClaimPolicy.sol` is that policy. It is
-stateless — the pool calls it as a `view` — so instead of tracking what has
-been paid it re-derives each seller's cumulative locked amount from
-EmissionsV2/V1 state (the same points/share/cap math as
-`claimSellerEmissions`) and treats `cumulative − locked` as already released:
-
-```
-entitled  = cumulative × releaseBps / 10_000       (default 1538 ≈ 10/65)
-entitled ×= min(1, (currentEpoch − vestStart) / vestEpochs)   (only if vestEpochs > 0)
-claimable = min(locked, entitled − released)
-claimable = 0 if the seller is a proven wash trader
-```
-
-Wash-trading status comes from a settable source implementing
-`IAntseedWashTradingStatus.isProvenWashTrader(address)` (the
-`AntseedWashTradingRegistry` from the wash-trading rollout), plus an owner
-manual flag (`setSellerFlagged`) for use before that registry is deployed.
-Sellers that were unlock-eligible (direct mint) are over-counted as
-"released", which only lowers their claimable amount; the policy never
-returns more than `locked`.
-
-M001 Cutover installs the policy right after it pins the pool's registry
-facade, signed as `SELLER_REWARDS_POOL_OWNER` (the `sellerRewardsPoolOwner` signer), with
-`lastEpoch = gate.effectiveEpoch() − 1` (the last epoch legacy V2 can lock).
-It skips when the pool already has a policy. Optional env: `RELEASE_BPS`,
-`VEST_START_EPOCH`, `VEST_EPOCHS`; `WASH_TRADING_REGISTRY` is shared with the
-PositionInit faucet and may be left unset for the policy (wire it later with
-`setWashTradingRegistry`).
-
 ## Configuration
 
 All constants are configurable by the contract owner via dedicated setter functions (e.g., `setFirstSignCap()`, `setWithdrawalDelay()`).
