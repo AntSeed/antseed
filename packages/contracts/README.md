@@ -172,9 +172,9 @@ ANTS emission controller using the Synthetix reward-per-point pattern. O(1) gas 
 recognized-usage contracts before
 the epoch-boundary registry flip. The deployment includes an empty
 `AntseedPointsPolicyRegistry` and permanently points `AntseedUsageAccounting`
-at that registry. Feature branches deploy and register their own penalty-policy
+at that registry. Feature branches deploy and register their own points-modifier
 leaves; the foundation broadcast does not deploy or register wash-trading or
-model-verification policies.
+model-verification modifiers.
 
 `script/migrations/M001RecognizedUsage/Cutover.s.sol` performs the matching
 epoch-boundary activation. Both scripts require expected legacy addresses and
