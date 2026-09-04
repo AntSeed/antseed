@@ -14,7 +14,7 @@ const artifactDirectory = resolve(value("--artifact-dir") ?? "");
 const rpcUrl = value("--rpc-url") ?? "http://127.0.0.1:8545";
 // Concrete SP1VerifierGroth16 v6.1.0 on Base (VERIFIER_HASH 0x4388a21c...). Never the
 // upgradeable SP1VerifierGateway (0x397A...dA9B): its owner can add routes that would
-// accept foreign "proofs" against the registry's immutable program vkeys.
+// accept foreign "proofs" against the registry's immutable seller program vkey.
 const verifierAddress = getAddress(value("--sp1-verifier") ?? "0xb69f2584CBcFf99a58C4e7002E8b89Af54a6f4e2");
 const expectedVerifierHash = (value("--sp1-verifier-hash")
   ?? "0x4388a21c687fdd5f218d7e3d13190cac4c5355818d3605fd5fb811df468ee696").toLowerCase();
@@ -58,9 +58,7 @@ const registry = await deploy("AntseedWashTradingRegistry.sol/AntseedWashTrading
   verifierAddress,
   expectedVerifierHash,
   blockhashStoreAddress,
-  configuration.aggregatorProgramVKey,
-  configuration.closedLoopProgramVKey,
-  configuration.reciprocalProgramVKey,
+  configuration.sellerProgramVKey,
   configuration.periodStartBlock,
   configuration.periodEndBlock,
 ]);
@@ -160,11 +158,12 @@ function validateArtifacts(candidates) {
   const sellers = new Set();
   let configuration;
   for (const candidate of candidates) {
-    if (candidate?.version !== 2 || candidate.kind !== "antseed-wash-trading-seller-proof"
-      || candidate.securityMode !== "production") {
+    if (candidate?.version !== 3 || candidate.kind !== "antseed-wash-trading-seller-proof"
+      || candidate.proofArchitecture !== "direct-seller-v1" || candidate.securityMode !== "production"
+      || candidate.proved !== true || candidate.verified !== true) {
       throw new Error("artifact directory contains a non-production seller proof");
     }
-    for (const field of ["aggregatorProgramVKey", "closedLoopProgramVKey", "reciprocalProgramVKey", "publicValues", "proofBytes"]) {
+    for (const field of ["sellerProgramVKey", "publicValues", "proofBytes"]) {
       if (!/^0x[0-9a-f]+$/i.test(candidate[field] ?? "")) throw new Error(`${field} is invalid`);
     }
     if (!Array.isArray(candidate.blockAuthenticationChunks)
@@ -177,9 +176,7 @@ function validateArtifacts(candidates) {
     if (sellers.has(seller)) throw new Error(`${journal.seller}: duplicate seller artifact`);
     sellers.add(seller);
     const current = {
-      aggregatorProgramVKey: candidate.aggregatorProgramVKey.toLowerCase(),
-      closedLoopProgramVKey: journal.closedLoopProgramVKey.toLowerCase(),
-      reciprocalProgramVKey: journal.reciprocalProgramVKey.toLowerCase(),
+      sellerProgramVKey: candidate.sellerProgramVKey.toLowerCase(),
       periodStartBlock: journal.periodStartBlock,
       periodEndBlock: journal.periodEndBlock,
     };
@@ -193,15 +190,13 @@ function validateArtifacts(candidates) {
 
 function decodeJournal(publicValues) {
   const [journal] = AbiCoder.defaultAbiCoder().decode([
-    "tuple(uint32 schemaVersion,uint64 chainId,uint64 periodStartBlock,uint64 periodEndBlock,bytes32 closedLoopProgramVKey,bytes32 reciprocalProgramVKey,address seller,uint128 provenWashVolume,bytes32 evidenceDigest,uint32 blockReferenceCount,uint32 blockAuthenticationChunkSize,uint32 blockAuthenticationChunkCount,bytes32 blockAuthenticationRoot)",
+    "tuple(uint32 schemaVersion,uint64 chainId,uint64 periodStartBlock,uint64 periodEndBlock,address seller,uint128 provenWashVolume,bytes32 evidenceDigest,uint32 blockReferenceCount,uint32 blockAuthenticationChunkSize,uint32 blockAuthenticationChunkCount,bytes32 blockAuthenticationRoot)",
   ], publicValues);
   return {
     schemaVersion: journal.schemaVersion,
     chainId: journal.chainId,
     periodStartBlock: journal.periodStartBlock,
     periodEndBlock: journal.periodEndBlock,
-    closedLoopProgramVKey: journal.closedLoopProgramVKey,
-    reciprocalProgramVKey: journal.reciprocalProgramVKey,
     seller: getAddress(journal.seller),
     provenWashVolume: journal.provenWashVolume,
     evidenceDigest: journal.evidenceDigest,
@@ -213,13 +208,11 @@ function decodeJournal(publicValues) {
 }
 
 function validateJournal(artifact, journal) {
-  if (journal.schemaVersion !== 1n || journal.chainId !== 8_453n
+  if (journal.schemaVersion !== 2n || journal.chainId !== 8_453n
     || journal.seller !== getAddress(artifact.seller)
     || journal.provenWashVolume.toString() !== artifact.provenWashVolumeRaw
     || journal.periodStartBlock !== BigInt(artifact.periodStartBlock)
     || journal.periodEndBlock !== BigInt(artifact.periodEndBlock)
-    || journal.closedLoopProgramVKey.toLowerCase() !== artifact.closedLoopProgramVKey.toLowerCase()
-    || journal.reciprocalProgramVKey.toLowerCase() !== artifact.reciprocalProgramVKey.toLowerCase()
     || journal.evidenceDigest.toLowerCase() !== artifact.evidenceDigest.toLowerCase()
     || Number(journal.blockReferenceCount) !== artifact.blockReferenceCount
     || Number(journal.blockAuthenticationChunkSize) !== artifact.blockAuthenticationChunkSize

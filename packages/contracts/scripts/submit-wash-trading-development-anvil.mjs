@@ -33,7 +33,7 @@ const signer = new Wallet(
 let nonce = await provider.getTransactionCount(signer.address, "pending");
 
 const verifier = await deploy("WashTradingDevelopmentE2E.sol/WashTradingDevelopmentVerifier.json", [
-  artifact.aggregatorProgramVKey,
+  artifact.sellerProgramVKey,
   keccak256(artifact.publicValues),
   keccak256(artifact.proofBytes),
 ]);
@@ -49,9 +49,7 @@ const registry = await deploy("AntseedWashTradingRegistry.sol/AntseedWashTrading
   await verifier.getAddress(),
   await verifier.VERIFIER_HASH(),
   await blockhashStore.getAddress(),
-  artifact.aggregatorProgramVKey,
-  journal.closedLoopProgramVKey,
-  journal.reciprocalProgramVKey,
+  artifact.sellerProgramVKey,
   journal.periodStartBlock,
   journal.periodEndBlock,
 ]);
@@ -90,7 +88,7 @@ console.log(`WASH_TRADING_DEVELOPMENT_RESULT=${JSON.stringify({
   proofId,
   seller: journal.seller,
   provenWashVolumeRaw: journal.provenWashVolume.toString(),
-  childCount: artifact.childCount,
+  claimCount: artifact.claimCount,
   blockReferenceCount: Number(journal.blockReferenceCount),
   authenticatedBlockReferenceCount: Number(await registry.proofAuthenticatedBlockReferenceCount(proofId)),
   blockAuthenticationChunkCount: Number(journal.blockAuthenticationChunkCount),
@@ -109,10 +107,12 @@ async function deploy(relativeArtifact, constructorArguments) {
 }
 
 function validateArtifact(candidate) {
-  if (candidate?.version !== 2 || candidate.kind !== "antseed-wash-trading-seller-proof" || candidate.securityMode !== "development") {
+  if (candidate?.version !== 3 || candidate.kind !== "antseed-wash-trading-seller-proof"
+    || candidate.proofArchitecture !== "direct-seller-v1" || candidate.securityMode !== "development"
+    || candidate.proved !== true || candidate.verified !== true) {
     throw new Error("artifact is not a development seller proof");
   }
-  for (const field of ["aggregatorProgramVKey", "publicValues", "proofBytes"]) {
+  for (const field of ["sellerProgramVKey", "publicValues", "proofBytes"]) {
     if (!/^0x[0-9a-f]*$/i.test(candidate[field] ?? "")) throw new Error(`${field} is invalid`);
   }
   if (candidate.proofBytes === "0x") throw new Error("development proof bytes must be nonempty");
@@ -124,15 +124,13 @@ function validateArtifact(candidate) {
 
 function decodeJournal(publicValues) {
   const [journal] = AbiCoder.defaultAbiCoder().decode([
-    "tuple(uint32 schemaVersion,uint64 chainId,uint64 periodStartBlock,uint64 periodEndBlock,bytes32 closedLoopProgramVKey,bytes32 reciprocalProgramVKey,address seller,uint128 provenWashVolume,bytes32 evidenceDigest,uint32 blockReferenceCount,uint32 blockAuthenticationChunkSize,uint32 blockAuthenticationChunkCount,bytes32 blockAuthenticationRoot)",
+    "tuple(uint32 schemaVersion,uint64 chainId,uint64 periodStartBlock,uint64 periodEndBlock,address seller,uint128 provenWashVolume,bytes32 evidenceDigest,uint32 blockReferenceCount,uint32 blockAuthenticationChunkSize,uint32 blockAuthenticationChunkCount,bytes32 blockAuthenticationRoot)",
   ], publicValues);
   return {
     schemaVersion: journal.schemaVersion,
     chainId: journal.chainId,
     periodStartBlock: journal.periodStartBlock,
     periodEndBlock: journal.periodEndBlock,
-    closedLoopProgramVKey: journal.closedLoopProgramVKey,
-    reciprocalProgramVKey: journal.reciprocalProgramVKey,
     seller: getAddress(journal.seller),
     provenWashVolume: journal.provenWashVolume,
     evidenceDigest: journal.evidenceDigest,
@@ -144,7 +142,7 @@ function decodeJournal(publicValues) {
 }
 
 function validateJournal(artifact, journal) {
-  if (journal.schemaVersion !== 1n || journal.chainId !== 8_453n
+  if (journal.schemaVersion !== 2n || journal.chainId !== 8_453n
     || journal.seller !== getAddress(artifact.seller)
     || journal.provenWashVolume.toString() !== artifact.provenWashVolumeRaw
     || journal.evidenceDigest.toLowerCase() !== artifact.evidenceDigest.toLowerCase()

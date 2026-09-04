@@ -19,9 +19,7 @@ interface IAntseedWashTradingRegistry {
     function finalizeSellerProof(bytes32 proofId) external;
 
     function verifierHash() external view returns (bytes32);
-    function sellerAggregatorProgramVKey() external view returns (bytes32);
-    function closedLoopProgramVKey() external view returns (bytes32);
-    function reciprocalProgramVKey() external view returns (bytes32);
+    function sellerProgramVKey() external view returns (bytes32);
     function periodStartBlock() external view returns (uint64);
     function periodEndBlock() external view returns (uint64);
     function proofStaged(bytes32 proofId) external view returns (bool);

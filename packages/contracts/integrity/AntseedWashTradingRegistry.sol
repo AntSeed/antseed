@@ -6,7 +6,7 @@ import { IBlockhashStore } from "../interfaces/IBlockhashStore.sol";
 import { ISP1Verifier, ISP1VerifierWithHash } from "../interfaces/ISP1Verifier.sol";
 
 contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
-    uint32 public constant SCHEMA_VERSION = 1;
+    uint32 public constant SCHEMA_VERSION = 2;
     uint64 public constant BASE_CHAIN_ID = 8_453;
 
     struct SellerJournal {
@@ -14,8 +14,6 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
         uint64 chainId;
         uint64 periodStartBlock;
         uint64 periodEndBlock;
-        bytes32 closedLoopProgramVKey;
-        bytes32 reciprocalProgramVKey;
         address seller;
         uint128 provenWashVolume;
         bytes32 evidenceDigest;
@@ -47,12 +45,10 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
     /// @dev Concrete SP1 verifier deployment (not the routing gateway).
     ISP1Verifier public immutable verifier;
     /// @dev `verifier.VERIFIER_HASH()` at deployment; identifies the exact
-    ///      SP1 circuit release the pinned program vkeys belong to.
+    ///      SP1 circuit release the pinned seller program vkey belongs to.
     bytes32 public immutable verifierHash;
     IBlockhashStore public immutable blockhashStore;
-    bytes32 public immutable sellerAggregatorProgramVKey;
-    bytes32 public immutable closedLoopProgramVKey;
-    bytes32 public immutable reciprocalProgramVKey;
+    bytes32 public immutable sellerProgramVKey;
     uint64 public immutable periodStartBlock;
     uint64 public immutable periodEndBlock;
 
@@ -107,17 +103,14 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
         address verifier_,
         bytes32 expectedVerifierHash_,
         address blockhashStore_,
-        bytes32 sellerAggregatorProgramVKey_,
-        bytes32 closedLoopProgramVKey_,
-        bytes32 reciprocalProgramVKey_,
+        bytes32 sellerProgramVKey_,
         uint64 periodStartBlock_,
         uint64 periodEndBlock_
     ) {
         if (verifier_ == address(0) || blockhashStore_ == address(0)) revert ZeroAddress();
-        if (
-            sellerAggregatorProgramVKey_ == bytes32(0) || closedLoopProgramVKey_ == bytes32(0)
-                || reciprocalProgramVKey_ == bytes32(0) || periodStartBlock_ == 0 || periodStartBlock_ > periodEndBlock_
-        ) revert InvalidConfiguration();
+        if (sellerProgramVKey_ == bytes32(0) || periodStartBlock_ == 0 || periodStartBlock_ > periodEndBlock_) {
+            revert InvalidConfiguration();
+        }
         if (expectedVerifierHash_ == bytes32(0)) revert InvalidVerifier();
         // Reverts for the SP1VerifierGateway, which does not expose
         // VERIFIER_HASH(); a concrete verifier must match the expected release.
@@ -128,9 +121,7 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
         verifier = ISP1Verifier(verifier_);
         verifierHash = expectedVerifierHash_;
         blockhashStore = IBlockhashStore(blockhashStore_);
-        sellerAggregatorProgramVKey = sellerAggregatorProgramVKey_;
-        closedLoopProgramVKey = closedLoopProgramVKey_;
-        reciprocalProgramVKey = reciprocalProgramVKey_;
+        sellerProgramVKey = sellerProgramVKey_;
         periodStartBlock = periodStartBlock_;
         periodEndBlock = periodEndBlock_;
     }
@@ -141,16 +132,14 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
     {
         proofId = keccak256(publicValues);
         if (stagedProofs[proofId].exists) revert SellerProofAlreadyStaged(proofId);
-        verifier.verifyProof(sellerAggregatorProgramVKey, publicValues, proofBytes);
+        verifier.verifyProof(sellerProgramVKey, publicValues, proofBytes);
         SellerJournal memory journal = abi.decode(publicValues, (SellerJournal));
         if (
             journal.schemaVersion != SCHEMA_VERSION || journal.chainId != BASE_CHAIN_ID
                 || journal.periodStartBlock != periodStartBlock || journal.periodEndBlock != periodEndBlock
-                || journal.closedLoopProgramVKey != closedLoopProgramVKey
-                || journal.reciprocalProgramVKey != reciprocalProgramVKey || journal.seller == address(0)
-                || journal.provenWashVolume == 0 || journal.evidenceDigest == bytes32(0) || journal.blockReferenceCount == 0
-                || journal.blockAuthenticationChunkSize == 0 || journal.blockAuthenticationChunkCount == 0
-                || journal.blockAuthenticationRoot == bytes32(0)
+                || journal.seller == address(0) || journal.provenWashVolume == 0 || journal.evidenceDigest == bytes32(0)
+                || journal.blockReferenceCount == 0 || journal.blockAuthenticationChunkSize == 0
+                || journal.blockAuthenticationChunkCount == 0 || journal.blockAuthenticationRoot == bytes32(0)
         ) revert InvalidSellerProof();
         uint256 maximumReferences =
             uint256(journal.blockAuthenticationChunkSize) * uint256(journal.blockAuthenticationChunkCount);

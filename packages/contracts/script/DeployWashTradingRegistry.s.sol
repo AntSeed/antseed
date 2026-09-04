@@ -23,9 +23,7 @@ contract DeployWashTradingRegistry is Script {
             vm.envAddress("SP1_VERIFIER"),
             vm.envBytes32("SP1_VERIFIER_HASH"),
             blockhashStore,
-            vm.envBytes32("WASH_TRADING_SELLER_AGGREGATOR_PROGRAM_VKEY"),
-            vm.envBytes32("WASH_TRADING_CLOSED_LOOP_PROGRAM_VKEY"),
-            vm.envBytes32("WASH_TRADING_RECIPROCAL_PROGRAM_VKEY"),
+            vm.envBytes32("WASH_TRADING_SELLER_PROGRAM_VKEY"),
             uint64(vm.envUint("HISTORICAL_PERIOD_START_BLOCK")),
             uint64(vm.envUint("HISTORICAL_PERIOD_END_BLOCK"))
         );

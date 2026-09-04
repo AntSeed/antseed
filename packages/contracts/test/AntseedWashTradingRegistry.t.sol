@@ -54,9 +54,7 @@ contract AntseedWashTradingRegistryTest is Test {
         uint128 amount;
     }
 
-    bytes32 internal constant AGGREGATOR_VKEY = bytes32(uint256(11));
-    bytes32 internal constant CLOSED_VKEY = bytes32(uint256(12));
-    bytes32 internal constant RECIPROCAL_VKEY = bytes32(uint256(13));
+    bytes32 internal constant SELLER_VKEY = bytes32(uint256(11));
     bytes32 internal constant BLOCK_HASH_A = bytes32(uint256(44));
     bytes32 internal constant BLOCK_HASH_B = bytes32(uint256(55));
     uint64 internal constant BLOCK_A = 120;
@@ -73,56 +71,33 @@ contract AntseedWashTradingRegistryTest is Test {
         blockhashStore.set(BLOCK_A, BLOCK_HASH_A);
         blockhashStore.set(BLOCK_B, BLOCK_HASH_B);
         registry = new AntseedWashTradingRegistry(
-            address(verifier),
-            verifier.VERIFIER_HASH(),
-            address(blockhashStore),
-            AGGREGATOR_VKEY,
-            CLOSED_VKEY,
-            RECIPROCAL_VKEY,
-            100,
-            199
+            address(verifier), verifier.VERIFIER_HASH(), address(blockhashStore), SELLER_VKEY, 100, 199
         );
         assertEq(registry.verifierHash(), verifier.VERIFIER_HASH());
+        assertEq(registry.sellerProgramVKey(), SELLER_VKEY);
+    }
+
+    function test_rejectsZeroSellerProgramVKey() public {
+        bytes32 expectedVerifierHash = verifier.VERIFIER_HASH();
+        vm.expectRevert(AntseedWashTradingRegistry.InvalidConfiguration.selector);
+        new AntseedWashTradingRegistry(
+            address(verifier), expectedVerifierHash, address(blockhashStore), bytes32(0), 100, 199
+        );
     }
 
     function test_rejectsGatewayAndMismatchedVerifierHash() public {
         MockSP1Gateway gateway = new MockSP1Gateway();
         bytes32 expectedHash = verifier.VERIFIER_HASH();
         vm.expectRevert(AntseedWashTradingRegistry.InvalidVerifier.selector);
-        new AntseedWashTradingRegistry(
-            address(gateway),
-            expectedHash,
-            address(blockhashStore),
-            AGGREGATOR_VKEY,
-            CLOSED_VKEY,
-            RECIPROCAL_VKEY,
-            100,
-            199
-        );
+        new AntseedWashTradingRegistry(address(gateway), expectedHash, address(blockhashStore), SELLER_VKEY, 100, 199);
 
         vm.expectRevert(AntseedWashTradingRegistry.InvalidVerifier.selector);
         new AntseedWashTradingRegistry(
-            address(verifier),
-            keccak256("other-release"),
-            address(blockhashStore),
-            AGGREGATOR_VKEY,
-            CLOSED_VKEY,
-            RECIPROCAL_VKEY,
-            100,
-            199
+            address(verifier), keccak256("other-release"), address(blockhashStore), SELLER_VKEY, 100, 199
         );
 
         vm.expectRevert(AntseedWashTradingRegistry.InvalidVerifier.selector);
-        new AntseedWashTradingRegistry(
-            address(verifier),
-            bytes32(0),
-            address(blockhashStore),
-            AGGREGATOR_VKEY,
-            CLOSED_VKEY,
-            RECIPROCAL_VKEY,
-            100,
-            199
-        );
+        new AntseedWashTradingRegistry(address(verifier), bytes32(0), address(blockhashStore), SELLER_VKEY, 100, 199);
     }
 
     function test_blockAuthenticationLeafMatchesRustAbi() public pure {
@@ -133,7 +108,7 @@ contract AntseedWashTradingRegistryTest is Test {
         );
     }
 
-    /// @dev Vector shared with loop-proof `predicate/tests/aggregate.rs`
+    /// @dev Vector shared with loop-proof `predicate/tests/seller.rs`
     ///      (`evidence_digest_matches_solidity_abi_encode`).
     function test_evidenceDigestMatchesRustAbi() public pure {
         SellerSettlement[] memory settlements = new SellerSettlement[](2);
@@ -187,7 +162,7 @@ contract AntseedWashTradingRegistryTest is Test {
 
     function test_rejectsWrongProgramIdentityAndPeriod() public {
         AntseedWashTradingRegistry.SellerJournal memory journal = _journal(300, bytes32(uint256(71)));
-        journal.closedLoopProgramVKey = bytes32(uint256(999));
+        journal.schemaVersion = 1;
         _expectStageRevert(journal, AntseedWashTradingRegistry.InvalidSellerProof.selector);
 
         journal = _journal(300, bytes32(uint256(72)));
@@ -239,14 +214,14 @@ contract AntseedWashTradingRegistryTest is Test {
 
     function _stage(AntseedWashTradingRegistry.SellerJournal memory journal) internal returns (bytes32 proofId) {
         (bytes memory values, bytes memory proof) = _submission(journal);
-        verifier.expect(AGGREGATOR_VKEY, values, proof);
+        verifier.expect(SELLER_VKEY, values, proof);
         proofId = registry.stageSellerProof(values, proof);
         assertEq(proofId, keccak256(values));
     }
 
     function _expectStageRevert(AntseedWashTradingRegistry.SellerJournal memory journal, bytes4 selector) internal {
         (bytes memory values, bytes memory proof) = _submission(journal);
-        verifier.expect(AGGREGATOR_VKEY, values, proof);
+        verifier.expect(SELLER_VKEY, values, proof);
         vm.expectRevert(selector);
         registry.stageSellerProof(values, proof);
     }
@@ -266,12 +241,10 @@ contract AntseedWashTradingRegistryTest is Test {
         returns (AntseedWashTradingRegistry.SellerJournal memory journal)
     {
         journal = AntseedWashTradingRegistry.SellerJournal({
-            schemaVersion: 1,
+            schemaVersion: 2,
             chainId: 8453,
             periodStartBlock: 100,
             periodEndBlock: 199,
-            closedLoopProgramVKey: CLOSED_VKEY,
-            reciprocalProgramVKey: RECIPROCAL_VKEY,
             seller: SELLER_A,
             provenWashVolume: washVolume,
             evidenceDigest: evidenceDigest,

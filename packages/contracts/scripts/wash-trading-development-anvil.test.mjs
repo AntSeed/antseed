@@ -19,10 +19,11 @@ test("development seller proof submits end-to-end on Anvil", { timeout: 900_000 
     ? resolve(process.env.WASH_TRADING_SELLER_PROOF)
     : await firstSellerArtifact(resolve(artifactDirectory, "sellers"));
   const generated = JSON.parse(await readFile(artifactPath, "utf8"));
-  assert.equal(generated.version, 2);
+  assert.equal(generated.version, 3);
   assert.equal(generated.kind, "antseed-wash-trading-seller-proof");
+  assert.equal(generated.proofArchitecture, "direct-seller-v1");
   assert.equal(generated.securityMode, "development");
-  assert.ok(generated.childCount >= 1);
+  assert.ok(generated.claimCount >= 1);
   assert.ok(BigInt(generated.provenWashVolumeRaw) > 0n);
 
   await run("forge", [
@@ -52,7 +53,7 @@ test("development seller proof submits end-to-end on Anvil", { timeout: 900_000 
   const result = JSON.parse(resultLine.slice(marker.length));
   assert.equal(result.seller.toLowerCase(), generated.seller.toLowerCase());
   assert.equal(result.provenWashVolumeRaw, generated.provenWashVolumeRaw);
-  assert.equal(result.childCount, generated.childCount);
+  assert.equal(result.claimCount, generated.claimCount);
   assert.equal(result.authenticatedBlockReferenceCount, generated.blockReferenceCount);
   assert.equal(result.blockAuthenticationChunkCount, generated.blockAuthenticationChunkCount);
   assert.ok(BigInt(result.submissionGasUsed) > 0n);
