@@ -3,6 +3,7 @@ import { BaseEvmClient } from './base-evm-client.js';
 
 export interface SellerRegistryClientConfig { rpcUrl: string; fallbackRpcUrls?: string[]; contractAddress: string; evmChainId?: number; }
 const ABI = [
+  'function agentSeller(uint256 agentId) external view returns (address)',
   'function registerSeller(uint256 agentId) external',
   'function getAgentId(address seller) external view returns (uint256)',
   'function getStake(address seller) external view returns (uint256)',
@@ -19,4 +20,36 @@ export class SellerRegistryClient extends BaseEvmClient {
   isStakedAboveMin(seller: string): Promise<boolean> { return this.contract().getFunction('isStakedAboveMin')(seller); }
   minSellerPoolStake(): Promise<bigint> { return this.contract().getFunction('minSellerPoolStake')(); }
   legacyStakeEligibilityEnabled(): Promise<boolean> { return this.contract().getFunction('legacyStakeEligibilityEnabled')(); }
+  async isRegisteredSeller(seller: string, agentId: number): Promise<boolean> {
+    if (!agentId) return false;
+    const registry = this.contract();
+    const [resolvedId, boundSeller] = await Promise.all([this.getAgentId(seller), registry.getFunction('agentSeller')(agentId)]);
+    return resolvedId === agentId && boundSeller.toLowerCase() === seller.toLowerCase();
+  }
+
+  async getRegisteredAgentId(seller: string): Promise<number> {
+    const agentId = await this.getAgentId(seller);
+    return await this.isRegisteredSeller(seller, agentId) ? agentId : 0;
+  }
+
+  async registerSellerBinding(signer: AbstractSigner, agentId: number, confirmed: (hash: string) => void | Promise<void> = () => {}): Promise<boolean> {
+    const address = await signer.getAddress();
+    const boundAgentId = await this.getAgentId(address);
+    if (boundAgentId !== 0 && boundAgentId !== agentId) {
+      throw new Error(`Seller is already bound to agent ${boundAgentId}, not ${agentId}.`);
+    }
+    if (await this.isRegisteredSeller(address, agentId)) return false;
+    await confirmed(await this.registerSeller(signer, agentId));
+    if (!await this.isRegisteredSeller(address, agentId)) {
+      throw new SellerRegistrationVerificationError();
+    }
+    return true;
+  }
+}
+
+export class SellerRegistrationVerificationError extends Error {
+  constructor() {
+    super('Registration could not be verified.');
+    this.name = 'SellerRegistrationVerificationError';
+  }
 }

@@ -15,7 +15,8 @@ import {
   resolveCliContractStack,
 } from '../payment-utils.js';
 import { legacyEpochs, newEpochs } from '@antseed/node/payments';
-import { claimBuyerEpochRewards, claimEpochRewards, pendingEpochRewards, RewardClaimProgress } from './reward-actions.js';
+import { claimBuyerEpochRewards, claimEpochRewards, pendingEpochRewards } from '@antseed/node/payments';
+import { RewardClaimProgress } from './reward-actions.js';
 
 export type EmissionsRole = 'seller' | 'buyer';
 

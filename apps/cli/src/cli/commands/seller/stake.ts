@@ -1,4 +1,4 @@
-import { Option, type Command } from 'commander';
+import type { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
 import { getGlobalOptions } from '../types.js';
@@ -12,7 +12,7 @@ import {
   resolveCliContractStack,
   createLegacyStakingClient,
 } from '../../payment-utils.js';
-import { runPoolStake } from './pool.js';
+import { registerSellerStarterCommand, runPoolStake } from './pool.js';
 
 type GlobalOptions = ReturnType<typeof getGlobalOptions>;
 
@@ -108,38 +108,28 @@ async function runLegacyUnstake(global: GlobalOptions): Promise<void> {
 export function registerSellerStakeCommand(sellerCmd: Command): void {
   sellerCmd
     .command('stake <amount>')
-    .description('Stake as a provider — ANTS after the recognized-usage upgrade, USDC before it')
-    .option('--epochs <n>', 'ANTS lock duration in epochs after the recognized-usage upgrade', (value) => Number(value))
-    .addOption(new Option('--agent-id <id>', 'seller agent ID fallback').argParser(Number).hideHelp())
-    .action(async (amount: string, options: { epochs?: number; agentId?: number }) => {
+    .description('Stake ANTS into your seller pool')
+    .option('--epochs <n>', 'required ANTS lock duration in epochs', (value) => Number(value))
+    .action(async (amount: string, options: { epochs?: number }) => {
       const globalOpts = getGlobalOptions(sellerCmd);
       const config = await loadConfig(globalOpts.config);
       const stack = await resolveCliContractStack(config);
 
-      if (stack.mode === 'recognized-usage') {
-        if (options.epochs === undefined) {
-          console.error(chalk.red('ANTS pool staking requires a lock duration. Use: antseed seller stake <ants> --epochs <n>'));
-          process.exit(1);
-        }
-        await runPoolStake(globalOpts, amount, { epochs: options.epochs, agentId: options.agentId });
+      if (stack.mode !== 'recognized-usage') {
+        console.error(chalk.red('ANTS staking is not available on this network. For legacy USDC staking, use: antseed seller legacy stake <amount>'));
+        process.exitCode = 1;
         return;
       }
-
-      if (options.epochs !== undefined) {
-        console.error(chalk.red('--epochs applies to ANTS pool staking, which is only available after the recognized-usage cutover.'));
-        process.exit(1);
+      if (options.epochs === undefined) {
+        console.error(chalk.red('ANTS pool staking requires a lock duration. Use: antseed seller stake <ants> --epochs <n>'));
+        process.exitCode = 1;
+        return;
       }
-      await runLegacyStake(globalOpts, amount, { agentId: options.agentId });
+      await runPoolStake(globalOpts, amount, { epochs: options.epochs });
     });
 
-  sellerCmd
-    .command('unstake', { hidden: true })
-    .description('Withdraw legacy USDC stake (alias of `antseed seller legacy unstake`)')
-    .action(async () => {
-      await runLegacyUnstake(getGlobalOptions(sellerCmd));
-    });
-
-  const legacy = sellerCmd.command('legacy').description('Legacy USDC staking commands');
+  const legacy = sellerCmd.command('legacy').description('Legacy seller stake and migration commands');
+  registerSellerStarterCommand(legacy);
 
   legacy
     .command('stake <amount>')

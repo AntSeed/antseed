@@ -1,4 +1,4 @@
-import { Contract, type AbstractSigner } from 'ethers';
+import { Contract, Interface, zeroPadValue, type AbstractSigner } from 'ethers';
 import { BaseEvmClient } from './base-evm-client.js';
 
 export interface ANTSTokenClientConfig {
@@ -78,5 +78,15 @@ export class ANTSTokenClient extends BaseEvmClient {
     const receipt = await tx.wait();
     if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
+  }
+  async receivedInTransaction(transactionHash: string, recipient: string): Promise<bigint> {
+    const receipt = await this.provider.getTransactionReceipt(transactionHash);
+    if (!receipt || receipt.status !== 1) throw new Error(`Confirmed receipt unavailable: ${transactionHash}`);
+    const tokenInterface = new Interface(['event Transfer(address indexed from, address indexed to, uint256 value)']);
+    const topics = tokenInterface.encodeFilterTopics('Transfer', [null, recipient]);
+    return receipt.logs.reduce((received, log) => {
+      if (log.address.toLowerCase() !== this.contractAddress.toLowerCase() || log.topics[0] !== topics[0] || log.topics[2]?.toLowerCase() !== zeroPadValue(recipient, 32).toLowerCase()) return received;
+      return received + (tokenInterface.parseLog(log)!.args.value as bigint);
+    }, 0n);
   }
 }

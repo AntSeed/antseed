@@ -16,7 +16,8 @@ import {
   resolveCliContractStack,
 } from '../../payment-utils.js';
 import { pastEpochs } from '../emissions.js';
-import { claimEpochRewards, claimPoolRewards, pendingEpochRewards, previewPoolRewards, RewardClaimProgress } from '../reward-actions.js';
+import { claimEpochRewards, claimPoolRewards, pendingEpochRewards, previewPoolRewards } from '@antseed/node/payments';
+import { RewardClaimProgress } from '../reward-actions.js';
 
 export interface SellerRewardSummary {
   legacy: bigint;

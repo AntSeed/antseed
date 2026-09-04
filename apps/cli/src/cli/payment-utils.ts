@@ -17,15 +17,13 @@ import {
   PositionInitClient,
   EmissionsGateClient,
   ChannelStore,
+  ANTSTokenClient,
+  SellerPoolsClient,
+  SellerPoolsRewardsClient,
+  SellerRegistryClient,
 } from '@antseed/node/payments';
 import type { Identity } from '@antseed/node';
 import type { AntseedConfig } from '../config/types.js';
-import {
-  CliAntsTokenClient as ANTSTokenClient,
-  CliSellerPoolsClient as SellerPoolsClient,
-  CliSellerPoolsRewardsClient as SellerPoolsRewardsClient,
-  CliSellerRegistryClient as SellerRegistryClient,
-} from './seller-contract-clients.js';
 
 export const ANTSEED_BASE_RPC_URL_ENV = 'ANTSEED_BASE_RPC_URL';
 

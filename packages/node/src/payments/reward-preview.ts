@@ -1,4 +1,4 @@
-import type { SellerPoolPosition } from '@antseed/node/payments';
+import type { SellerPoolPosition } from './evm/seller-pools-client.js';
 
 export const REWARD_INDEX_SCALE = 10n ** 30n;
 

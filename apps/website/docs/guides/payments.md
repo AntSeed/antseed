@@ -121,18 +121,18 @@ Providers must stake a minimum of $10 USDC to participate:
 antseed seller legacy stake 10
 ```
 
-When the configured network registry has moved to the recognized-usage stack, the CLI rejects new legacy USDC stakes and directs sellers to ANTS pools instead:
+After the configured network completes the recognized-usage upgrade, the CLI rejects new legacy USDC stakes and directs sellers to ANTS positions instead:
 
 ```bash
 antseed seller register
-antseed seller pool bootstrap
+antseed seller legacy claim-starter
 antseed seller stake 100 --epochs 4
 antseed seller pool positions
 ```
 
-The CLI verifies `AntseedRegistry.emissions()` and `staking()` before stack-aware commands. A mismatch between the registry and `payments.crypto` address overrides fails loudly instead of silently selecting another contract stack. `antseed network contracts` shows the active mode and pointer matches.
+`seller stake` always stakes ANTS and never falls back to USDC. The CLI verifies `AntseedRegistry.emissions()` and `staking()` before commands that depend on the upgrade state. A mismatch between the registry and `payments.crypto` address overrides fails loudly instead of silently selecting the wrong contracts.
 
-Staking binds your wallet to an on-chain agent identity (ERC-8004). To withdraw your stake:
+After the upgrade, `antseed seller register` explicitly binds your wallet to its on-chain agent identity (ERC-8004); staking requires this registration and never performs it silently. To withdraw your legacy USDC stake:
 
 ```bash
 antseed seller legacy unstake
@@ -149,10 +149,10 @@ Providers and buyers earn ANTS tokens based on eligible USDC volume. Emissions a
 Check your pending emissions:
 
 ```bash
-antseed seller emissions info
+antseed seller rewards
 ```
 
-After cutover, emissions commands include finalized rewards from both stacks. `--legacy-only` and `--new-only` restrict reads or claims when an operator wants to process the stacks separately.
+After cutover, `seller rewards` includes finalized legacy, recognized-usage, and pool-staking rewards. Reading rewards does not send transactions; `seller rewards claim` collects all eligible seller rewards into the current wallet. Buyer emissions commands retain their `--legacy-only` and `--new-only` filters.
 
 ## Contract Addresses (Base Mainnet)
 

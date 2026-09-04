@@ -145,15 +145,15 @@ pnpm m001:sandbox status --out .m001-sandbox
 The deploy command writes a copied deployment ledger and `.m001-sandbox/cli-config.json`. Point CLI commands at that file to verify legacy mode, then cut over and reuse the refreshed file:
 
 ```bash
-antseed --config .m001-sandbox/cli-config.json --data-dir /tmp/antseed-m001 seller emissions info
-antseed --config .m001-sandbox/cli-config.json --data-dir /tmp/antseed-m001 network contracts
+antseed --config .m001-sandbox/cli-config.json --data-dir /tmp/antseed-m001 seller rewards
 
 pnpm m001:sandbox cutover --out .m001-sandbox
 pnpm m001:sandbox fund-position-init 5 --out .m001-sandbox
 pnpm m001:sandbox advance-epoch 2 --out .m001-sandbox
 pnpm m001:sandbox fund-ants 0xYourCliWallet 100 --out .m001-sandbox
 
-antseed --config .m001-sandbox/cli-config.json --data-dir /tmp/antseed-m001 seller pool bootstrap
+antseed --config .m001-sandbox/cli-config.json --data-dir /tmp/antseed-m001 seller register
+antseed --config .m001-sandbox/cli-config.json --data-dir /tmp/antseed-m001 seller legacy claim-starter
 antseed --config .m001-sandbox/cli-config.json --data-dir /tmp/antseed-m001 seller stake 100 --epochs 4
 antseed --config .m001-sandbox/cli-config.json --data-dir /tmp/antseed-m001 seller pool positions
 

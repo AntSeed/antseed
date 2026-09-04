@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { getGlobalOptions } from '../types.js';
 import { loadConfig } from '../../../config/loader.js';
-import { registerSellerBinding } from '../../seller-contract-clients.js';
+import { SellerRegistrationVerificationError } from '@antseed/node/payments';
 import {
   createIdentityClient,
   loadCryptoContext,
@@ -48,7 +48,7 @@ export function registerSellerRegisterCommand(sellerCmd: Command): void {
           if (!agentId) throw new Error('Could not determine agent ID. Pass --agent-id <id>.');
           const sellerRegistry = createSellerRegistryClient(config);
           spinner.start('Checking seller registration...');
-          const registered = await registerSellerBinding(sellerRegistry, wallet, address, agentId,
+          const registered = await sellerRegistry.registerSellerBinding(wallet, agentId,
             (hash) => console.log(chalk.dim(`Transaction: ${hash}`)));
           if (registered) {
             spinner.succeed(chalk.green('Seller bound to recognized-usage registry'));
@@ -61,7 +61,8 @@ export function registerSellerRegisterCommand(sellerCmd: Command): void {
 
         if (agentId) console.log(chalk.dim(`Agent ID: ${agentId}`));
       } catch (err) {
-        spinner.fail(chalk.red(`Registration failed: ${(err as Error).message}`));
+        const guidance = err instanceof SellerRegistrationVerificationError ? ' Re-run: antseed seller register' : '';
+        spinner.fail(chalk.red(`Registration failed: ${(err as Error).message}${guidance}`));
         process.exit(1);
       }
     });
