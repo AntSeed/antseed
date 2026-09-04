@@ -84,9 +84,27 @@ export class SellerRequestHandler {
   private readonly _providerLoadCounts = new Map<string, number>();
   private readonly _attestRateWindows = new Map<string, { start: number; count: number }>();
   private _metadataRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private _draining = false;
+  private _aborted = false;
+  private readonly _pendingRequests = new Set<Promise<void>>();
 
   constructor(deps: SellerRequestHandlerDeps) {
     this._deps = deps;
+  }
+
+  async drain(timeoutMs: number): Promise<boolean> {
+    this._draining = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const completed = await Promise.race([
+        Promise.allSettled([...this._pendingRequests]).then(() => true),
+        new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), timeoutMs); }),
+      ]);
+      this._aborted = !completed;
+      return completed;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private _allowAttest(buyerPeerId: string): boolean {
@@ -123,7 +141,7 @@ export class SellerRequestHandler {
       maxUploadBodyBytes: this._deps.maxUploadBodyBytes,
     });
 
-    mux.onProxyRequest(async (request: SerializedHttpRequest) => {
+    const processRequest = async (request: SerializedHttpRequest): Promise<void> => {
       debugLog(`[SellerHandler] Received request: ${request.method} ${request.path} (reqId=${request.requestId.slice(0, 8)})`);
 
       // Handle /v1/models locally — free metadata endpoint, no payment required.
@@ -183,6 +201,7 @@ export class SellerRequestHandler {
             headers: request.headers,
             body: request.body,
           });
+          if (this._aborted) return;
           mux.sendProxyResponse({
             requestId: request.requestId,
             statusCode: resp.statusCode,
@@ -190,6 +209,7 @@ export class SellerRequestHandler {
             body: resp.body,
           });
         } catch (err) {
+          if (this._aborted) return;
           const message = err instanceof Error ? err.message : String(err);
           mux.sendProxyResponse({
             requestId: request.requestId,
@@ -293,6 +313,7 @@ export class SellerRequestHandler {
           // that has queued later auths behind its per-buyer mutex) so we don't
           // 402 against a stale accepted cumulative.
           await spm.waitForPendingAuths(buyerPeerId);
+          if (this._aborted) return;
           // Re-read after the await — the session may have been evicted (timeout
           // checker, disconnect) while the on-chain top-up was confirming.
           const session = spm.getChannelByPeer(buyerPeerId);
@@ -458,6 +479,7 @@ export class SellerRequestHandler {
         ...request,
         headers: { ...request.headers },
       };
+      if (this._aborted) return;
 
       // Track active seller session at request start
       this._deps.sessionTracker?.getOrCreateSession(buyerPeerId, provider.name);
@@ -500,6 +522,7 @@ export class SellerRequestHandler {
         try {
           const response = await this._executeRequest(provider, request, {
             onResponseStart: (streamResponseStart) => {
+              if (this._aborted) return;
               streamedResponseStarted = true;
               responseStartedAt = Date.now();
               statusCode = streamResponseStart.statusCode;
@@ -508,6 +531,7 @@ export class SellerRequestHandler {
               mux.sendProxyResponse(streamResponseStart);
             },
             onResponseChunk: (chunk) => {
+              if (this._aborted) return;
               if (!streamedResponseStarted) return;
               // Hold the done chunk — send it after usage is parsed so we can append cost trailer
               if (chunk.done) {
@@ -517,6 +541,7 @@ export class SellerRequestHandler {
               mux.sendProxyChunk(chunk);
             },
           });
+          if (this._aborted) return;
           statusCode = response.statusCode;
           responseBody = response.body ?? new Uint8Array(0);
           responseForAuth = response;
@@ -547,6 +572,7 @@ export class SellerRequestHandler {
             });
           }
         } catch (err) {
+          if (this._aborted) return;
           const message = err instanceof Error ? err.message : "Internal error";
           debugWarn(`[SellerHandler] Provider exception: provider="${provider.name}" model="${requestedModel}" buyer=${buyerPeerId.slice(0, 12)}... (${Date.now() - startTime}ms) ${message}`);
           responseBody = new TextEncoder().encode(message);
@@ -611,6 +637,7 @@ export class SellerRequestHandler {
             providerUsage: responseUsage,
           });
         }
+        if (this._aborted) return;
 
         // Record spend and send NeedAuth with cost data after every request.
         // The buyer validates the cost independently and responds with SpendingAuth.
@@ -677,6 +704,25 @@ export class SellerRequestHandler {
       } finally {
         this.adjustProviderLoad(provider.name, -1);
         if (isBillable) spm!.endBillableRequest(buyerPeerId);
+      }
+    };
+
+    mux.onProxyRequest(async (request: SerializedHttpRequest) => {
+      if (this._draining) {
+        mux.sendProxyResponse({
+          requestId: request.requestId,
+          statusCode: 503,
+          headers: { 'content-type': 'application/json', 'retry-after': '2' },
+          body: new TextEncoder().encode(JSON.stringify({ error: 'seller_shutting_down' })),
+        });
+        return;
+      }
+      const operation = processRequest(request);
+      this._pendingRequests.add(operation);
+      try {
+        await operation;
+      } finally {
+        this._pendingRequests.delete(operation);
       }
     });
 
@@ -974,7 +1020,7 @@ export class SellerRequestHandler {
   }
 
   private _scheduleMetadataRefresh(): void {
-    if (!this._deps.announcer || this._metadataRefreshTimer) {
+    if (this._draining || !this._deps.announcer || this._metadataRefreshTimer) {
       return;
     }
 

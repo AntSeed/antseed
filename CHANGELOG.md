@@ -8,6 +8,8 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Seller shutdown now stops new work and drains active requests, final payment authorizations, and outgoing transport buffers before closing connections. Configure the default 60-second drain budget with `antseed seller start --shutdown-drain-timeout-ms` or the SDK's `shutdownDrainTimeoutMs` option.
+
 - Desktop telemetry's `app_connect` / `app_disconnect` user actions now carry which app was connected, as an `app` property drawn from a fixed local taxonomy (the packaged profile names plus the Telegram bot); user-added custom apps report as `custom`, so raw app names never leave the device. Connect events are also attributed to the specific app being connected rather than firing on every profile-set restart (profile switches and custom-app removals no longer emit spurious `app_connect`).
 - Desktop now finds T3 Code installed under any release channel — the launch-target lookup previously only checked for "T3 Code (Alpha)", so stable/Beta/Nightly installs got no app icon, no default "Open with" application, and no restart action. All channel variants are now probed (stable first), and the T3 Code rows fall back to the official t3.codes icon instead of the generic mark when the app isn't installed.
 - Desktop's Home screen keeps the "Use AntSeed on your favorite app" pills visible after connecting a tool — previously connecting anything hid the whole list. The pitch now disappears only once the user has chats, and an already-connected app's pill shows as connected (green dot, green-tinted border) and opens the Apps page instead of reconnecting.

@@ -87,6 +87,7 @@ interface LatestAuth {
  * The seller tracks spending locally and settles/closes via the contract at session end.
  */
 export class SellerPaymentManager {
+  private _draining = false;
   private readonly _signer: AbstractSigner;
   private readonly _channelsClient: ChannelsClient;
   private readonly _config: SellerPaymentConfig;
@@ -501,6 +502,7 @@ export class SellerPaymentManager {
       const channelsDomain = makeChannelsDomain(this._config.chainId, channelsAddr);
 
       if (existingCumulative === undefined) {
+        if (this._draining) return 'rejected';
         const hasReserveFields = payload.reserveSalt != null
           || payload.reserveMaxAmount != null
           || payload.reserveDeadline != null;
@@ -1522,6 +1524,32 @@ export class SellerPaymentManager {
       ...(pricing?.outputUsdPerMillion != null ? { outputUsdPerMillion: pricing.outputUsdPerMillion } : {}),
       ...(pricing?.cachedInputUsdPerMillion != null ? { cachedInputUsdPerMillion: pricing.cachedInputUsdPerMillion } : {}),
     };
+  }
+
+  async drainPendingPayments(timeoutMs: number): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const complete = await Promise.race([
+        (async () => {
+          const deadline = Date.now() + timeoutMs;
+          await Promise.all([...this._buyerLocks.values()]);
+          const results = await Promise.all(this._channelStore.getActiveChannels(CHANNEL_ROLE.SELLER).map(async (channel) => {
+            const reached = await this.awaitAcceptedAtLeast(channel.sessionId, this.getCumulativeSpend(channel.sessionId), Math.max(0, deadline - Date.now()));
+            await this.waitForPendingAuths(channel.peerId);
+            return reached;
+          }));
+          return results.every(Boolean);
+        })(),
+        new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), timeoutMs); }),
+      ]);
+      if (!complete) debugWarn('[SellerPayment] Shutdown deadline reached before all final spending authorizations arrived');
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  beginDrain(): void {
+    this._draining = true;
   }
 
   // ── Buyer-requested cooperative close ─────────────────────────
