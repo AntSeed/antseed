@@ -184,34 +184,6 @@ export async function assertSellerPrerequisites(input: {
   throw new Error('seller prerequisites not met')
 }
 
-async function isRpcReachable(rpcUrl: string, timeoutMs = 1500): Promise<boolean> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), timeoutMs)
-
-  try {
-    const response = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'eth_chainId',
-        params: [],
-      }),
-      signal: controller.signal,
-    })
-
-    if (!response.ok) return false
-
-    const payload = await response.json() as { result?: unknown }
-    return typeof payload.result === 'string' && payload.result.startsWith('0x')
-  } catch {
-    return false
-  } finally {
-    clearTimeout(timeout)
-  }
-}
-
 function toUSDCBaseUnits(value: string | undefined, fallbackBaseUnits: string): string {
   if (value === undefined) return fallbackBaseUnits
   const parsed = Number.parseFloat(value.trim())
@@ -521,17 +493,10 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       }
 
       const settlementEnv = parseOptionalBoolEnv(process.env['ANTSEED_ENABLE_SETTLEMENT'])
-      let paymentsEnabled = settlementEnv ?? paymentConfig !== null
-      const cryptoRpcUrl = paymentConfig?.crypto?.rpcUrl
-
-      if (paymentsEnabled && cryptoRpcUrl && settlementEnv !== true) {
-        const rpcUp = await isRpcReachable(cryptoRpcUrl)
-        if (!rpcUp) {
-          paymentsEnabled = false
-          console.log(chalk.yellow(`Payments disabled: RPC node unreachable at ${cryptoRpcUrl}`))
-          console.log(chalk.dim('Start your chain node or set ANTSEED_ENABLE_SETTLEMENT=true to force-enable payments.'))
-        }
-      }
+      // Never auto-disable payments on a transient RPC probe failure: a seller
+      // without its payment stack would serve paid requests for free and sign
+      // channel-less ResponseAuths. ANTSEED_ENABLE_SETTLEMENT=false stays explicit.
+      const paymentsEnabled = settlementEnv ?? paymentConfig !== null
 
       const primaryProviderName = selectedProviderNames[0] ?? providers[0]?.name ?? 'unknown'
 
