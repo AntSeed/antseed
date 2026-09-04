@@ -208,7 +208,7 @@ function decodeJournal(publicValues) {
 }
 
 function validateJournal(artifact, journal) {
-  if (journal.schemaVersion !== 2n || journal.chainId !== 8_453n
+  if (journal.schemaVersion !== 1n || journal.chainId !== 8_453n
     || journal.seller !== getAddress(artifact.seller)
     || journal.provenWashVolume.toString() !== artifact.provenWashVolumeRaw
     || journal.periodStartBlock !== BigInt(artifact.periodStartBlock)

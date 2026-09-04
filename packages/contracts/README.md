@@ -68,7 +68,7 @@ chunk has been authenticated. The registry stores the greatest proven
 wash-volume lower bound for each seller as `{provenWashVolume, evidenceDigest}`.
 Later proofs must strictly increase the seller's proven wash volume.
 
-Prepare the immutable constructor values from any schema-2 direct seller proof
+Prepare the immutable constructor values from any schema-1 direct seller proof
 produced by the pinned seller program:
 
 ```bash
@@ -91,7 +91,7 @@ The registry constructor calls `VERIFIER_HASH()` on the verifier and reverts
 with `InvalidVerifier` if it is missing (the gateway does not implement it) or
 differs from `SP1_VERIFIER_HASH`, and records the hash as `verifierHash`.
 
-The direct proof journal uses schema 2 and contains no child-program vkeys.
+The direct proof journal uses schema 1 and contains no child-program vkeys.
 The registry verifies every seller proof against only
 `WASH_TRADING_SELLER_PROGRAM_VKEY`; the proof itself re-runs the closed-loop and
 reciprocal predicates over raw authenticated evidence.

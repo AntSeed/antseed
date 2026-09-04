@@ -6,7 +6,7 @@ import { IBlockhashStore } from "../interfaces/IBlockhashStore.sol";
 import { ISP1Verifier, ISP1VerifierWithHash } from "../interfaces/ISP1Verifier.sol";
 
 contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
-    uint32 public constant SCHEMA_VERSION = 2;
+    uint32 public constant SCHEMA_VERSION = 1;
     uint64 public constant BASE_CHAIN_ID = 8_453;
 
     struct SellerJournal {

@@ -162,7 +162,7 @@ contract AntseedWashTradingRegistryTest is Test {
 
     function test_rejectsWrongProgramIdentityAndPeriod() public {
         AntseedWashTradingRegistry.SellerJournal memory journal = _journal(300, bytes32(uint256(71)));
-        journal.schemaVersion = 1;
+        journal.schemaVersion = 2;
         _expectStageRevert(journal, AntseedWashTradingRegistry.InvalidSellerProof.selector);
 
         journal = _journal(300, bytes32(uint256(72)));
@@ -241,7 +241,7 @@ contract AntseedWashTradingRegistryTest is Test {
         returns (AntseedWashTradingRegistry.SellerJournal memory journal)
     {
         journal = AntseedWashTradingRegistry.SellerJournal({
-            schemaVersion: 2,
+            schemaVersion: 1,
             chainId: 8453,
             periodStartBlock: 100,
             periodEndBlock: 199,
