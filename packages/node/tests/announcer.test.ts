@@ -53,6 +53,30 @@ function makeBaseConfig(): AnnouncerConfig {
 }
 
 describe('PeerAnnouncer provider availability', () => {
+  it('reloads per-instance and cached-input prices without a stale announce overwriting them', async () => {
+    const base = makeBaseConfig();
+    base.providers.push({ provider: 'openai', services: ['second'], maxConcurrency: 1 });
+    const announcer = new PeerAnnouncer(base);
+    await announcer.refreshMetadata();
+    const oldMetadata = announcer.getLatestMetadata()!;
+    let finish!: () => void;
+    vi.spyOn(announcer as any, '_buildSignedMetadata').mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => { finish = resolve; });
+      return oldMetadata;
+    });
+    const staleAnnounce = announcer.announce();
+    announcer.updatePricing([
+      { defaults: { inputUsdPerMillion: 2, outputUsdPerMillion: 4, cachedInputUsdPerMillion: 1 } },
+      { defaults: { inputUsdPerMillion: 6, outputUsdPerMillion: 8 } },
+    ]);
+    await announcer.refreshMetadata();
+    finish();
+    await staleAnnounce;
+    const metadata = announcer.getLatestMetadata()!;
+    expect(metadata.providers[0]!.defaultPricing).toEqual({ inputUsdPerMillion: 2, outputUsdPerMillion: 4, cachedInputUsdPerMillion: 1 });
+    expect(metadata.providers[1]!.defaultPricing.inputUsdPerMillion).toBe(6);
+  });
+
   it('omits unavailable providers and restores them when they recover', async () => {
     let available = true;
     const announcer = new PeerAnnouncer({

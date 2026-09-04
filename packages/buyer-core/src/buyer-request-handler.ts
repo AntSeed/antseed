@@ -128,11 +128,13 @@ export class BuyerRequestHandler {
     const requestProtocol = options?.controlPlane ? null : detectRequestServiceApiProtocol(req);
     const adaptPeerResponse = (response: SerializedHttpResponse): SerializedHttpResponse =>
       adaptPeerFaultErrorResponse(response, requestProtocol, { pinned: options?.pinned });
-    const billingRoute = requestedService ? selectBillingRoute(peer, req, requestedService) : null;
+    const selectedRoute = requestedService ? selectBillingRoute(peer, req, requestedService) : null;
+    const sessionPricing = requestedService ? negotiator?.getSessionPricing?.(peer.peerId, requestedService) : null;
+    const billingRoute = selectedRoute && sessionPricing ? { ...selectedRoute, tokenPricing: sessionPricing } : selectedRoute;
     // Decide free vs paid from the resolved route (provider + protocol), mirroring
     // the seller's per-request gate so both sides classify the request the same way.
     const isFreeService = requestedService
-      ? (billingRoute ? isBillingRouteFree(billingRoute) : isPeerServiceFree(peer, requestedService))
+      ? (billingRoute ? isBillingRouteFree(billingRoute) : isPeerServiceFree(peer, requestedService, sessionPricing ?? undefined))
       : false;
     if (negotiator && requestedService) {
       if (isFreeService) {
@@ -679,7 +681,7 @@ function isBillingRouteFree(route: SelectedBillingRoute): boolean {
 }
 
 /** Fallback gate when no billing route could be resolved for the service. */
-function isPeerServiceFree(peer: BuyerPeerView, service: string): boolean {
+function isPeerServiceFree(peer: BuyerPeerView, service: string, sessionPricing?: SelectedBillingRoute['tokenPricing']): boolean {
   // Unit-billed services (e.g. images) can have zero token pricing but still
   // charge per unit — stay conservative when any announced model is paid.
   for (const providerModels of Object.values(peer.providerServiceUnitBillingModels ?? {})) {
@@ -689,7 +691,7 @@ function isPeerServiceFree(peer: BuyerPeerView, service: string): boolean {
       if (model && !isFreeUnitBillingModel(model)) return false;
     }
   }
-  const servicePricing = findPeerServicePricing(peer, service);
+  const servicePricing = sessionPricing ?? findPeerServicePricing(peer, service);
   if (!servicePricing) return false;
   return (servicePricing.inputUsdPerMillion ?? 0) === 0
     && (servicePricing.outputUsdPerMillion ?? 0) === 0

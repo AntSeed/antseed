@@ -13,6 +13,7 @@ export type AntseedErrorCode =
   | 'invalid-spending-auth-header'
   | 'chain-rpc-unavailable'
   | 'peer-not-authorized'
+  | 'peer-pricing-changed'
   | 'peer-protocol-violation';
 
 export interface AntseedRequestErrorOptions {

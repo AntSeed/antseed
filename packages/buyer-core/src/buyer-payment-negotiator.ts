@@ -41,6 +41,7 @@ import {
   type FinalUnitBillingResult,
 } from './unit-billing.js';
 import { buyerFault, peerFault } from './errors.js';
+import { parseProviderPricing, snapshotProviderPricing, type ProviderPricingMatrixEntry } from '@antseed/protocol/peer-pricing';
 
 export interface BuyerNegotiatorConfig {
   /**
@@ -262,12 +263,17 @@ export class BuyerPaymentNegotiator {
     return this._muxes.get(peerId);
   }
 
+  getSessionPricing(peerId: string, service: string): ServicePricing | null {
+    return this._bpm.getSessionPricing(peerId, service);
+  }
+
   trackRequestBillingContext(
     request: SerializedHttpRequest,
     service: string,
     route: SelectedBillingRoute | null,
   ): void {
     if (route) {
+      const tokenPricing = this._bpm.getSessionPricing(route.sellerPeerId, service) ?? route.tokenPricing;
       const captured = captureUnitBillingContext({
         sellerPeerId: route.sellerPeerId,
         provider: route.provider,
@@ -279,7 +285,7 @@ export class BuyerPaymentNegotiator {
         context: captured.context,
         requestFacts: captured.requestFacts,
         ...(route.unitModel ? { unitModel: route.unitModel } : {}),
-        ...(route.tokenPricing ? { tokenPricing: route.tokenPricing } : {}),
+        ...(tokenPricing ? { tokenPricing } : {}),
       });
     } else {
       this._bpm.trackRequestService(request.requestId, service);
@@ -498,12 +504,16 @@ export class BuyerPaymentNegotiator {
         minBudgetPerRequest: String(directPaymentBody.minBudgetPerRequest ?? '10000'),
         suggestedAmount: String(directPaymentBody.suggestedAmount ?? '100000'),
         requestId: req.requestId,
+        ...(directPaymentBody.providerPricing !== undefined ? { providerPricing: parseProviderPricing(directPaymentBody.providerPricing) } : {}),
         ...(directPaymentBody.inputUsdPerMillion != null ? { inputUsdPerMillion: Number(directPaymentBody.inputUsdPerMillion) } : {}),
         ...(directPaymentBody.outputUsdPerMillion != null ? { outputUsdPerMillion: Number(directPaymentBody.outputUsdPerMillion) } : {}),
         ...(directPaymentBody.cachedInputUsdPerMillion != null ? { cachedInputUsdPerMillion: Number(directPaymentBody.cachedInputUsdPerMillion) } : {}),
       }
       : null;
     const paymentRequirements = buffered ?? bodyRequirements;
+    if (paymentRequirements?.providerPricing && !this._bpm.getActiveSession(peer.peerId)) {
+      this._validateQuotedPricing(peer, paymentRequirements.providerPricing);
+    }
 
     const requestedReserveAmount = (() => {
       if (!paymentRequirements) return null;
@@ -956,6 +966,25 @@ export class BuyerPaymentNegotiator {
     };
   }
 
+  private _validateQuotedPricing(peer: BuyerPeerView, quoted: Record<string, ProviderPricingMatrixEntry>): void {
+    const advertisedPricing = peer.metadata ? snapshotProviderPricing(peer.metadata.providers) : peer.providerPricing;
+    const samePrice = (left: ServicePricing, right: ServicePricing): boolean =>
+      left.inputUsdPerMillion === right.inputUsdPerMillion
+      && left.outputUsdPerMillion === right.outputUsdPerMillion
+      && (left.cachedInputUsdPerMillion ?? left.inputUsdPerMillion) === (right.cachedInputUsdPerMillion ?? right.inputUsdPerMillion);
+    if (!advertisedPricing || Object.keys(advertisedPricing).length === 0) {
+      throw peerFault('Seller pricing snapshot requires fresh discovery metadata', 'peer-pricing-changed');
+    }
+    for (const [provider, advertised] of Object.entries(advertisedPricing)) {
+      const pricing = quoted[provider];
+      if (!pricing || (!peer.metadata && !samePrice(pricing.defaults, advertised.defaults))
+        || Object.keys(advertised.services ?? {}).some((service) =>
+          !samePrice(pricing.services?.[service] ?? pricing.defaults, advertised.services?.[service] ?? advertised.defaults))) {
+        throw peerFault('Seller pricing changed since discovery; refresh the peer before opening a payment session', 'peer-pricing-changed');
+      }
+    }
+  }
+
   /**
    * Build the full pricing map from peer metadata (defaults + all per-service overrides).
    * This ensures the buyer knows pricing for every service the seller offers,
@@ -1028,6 +1057,7 @@ export class BuyerPaymentNegotiator {
     });
 
     debugLog(`[BuyerNegotiator] PaymentRequired from ${peer.peerId.slice(0, 12)}...: minBudgetPerRequest=${requirements.minBudgetPerRequest} suggested=${requirements.suggestedAmount}`);
+    if (requirements.providerPricing) this._validateQuotedPricing(peer, requirements.providerPricing);
 
     // Validate seller's per-request minimum
     const minBudgetPerRequest = BigInt(requirements.minBudgetPerRequest);
@@ -1084,14 +1114,25 @@ export class BuyerPaymentNegotiator {
 
     // Build full pricing map from peer metadata (defaults + all per-service overrides)
     const pricingMap = this._buildPricingMap(peer);
+    if (pricingMap && requirements.providerPricing) {
+      for (const entry of Object.values(requirements.providerPricing)) {
+        Object.assign(pricingMap.services, entry.services);
+      }
+    }
 
     try {
-      await this._bpm.authorizeSpending(peer.peerId, pmux, minBudgetPerRequest, amount, pricing, pricingMap, peer.metadata);
+      await this._bpm.authorizeSpending(peer.peerId, pmux, minBudgetPerRequest, amount, requirements.providerPricing ? undefined : pricing, pricingMap, peer.metadata);
       debugLog(`[BuyerNegotiator] SpendingAuth sent to seller ${peer.peerId.slice(0, 12)}..., waiting for AuthAck...`);
 
       await this._waitForLockConfirmation(peer.peerId, { requestedReserve: amount, minBudgetPerRequest });
       debugLog(`[BuyerNegotiator] AuthAck received from seller ${peer.peerId.slice(0, 12)}...`);
       this._lockedPeers.add(peer.peerId);
+
+      const billing = this._bpm.getRequestBilling?.(requirements.requestId);
+      if (billing) {
+        const tokenPricing = this._bpm.getSessionPricing(peer.peerId, billing.context.service);
+        if (tokenPricing) this._bpm.trackRequestBilling(requirements.requestId, { ...billing, tokenPricing });
+      }
 
       this._emit.emit('payment:signed', {
         peerId: peer.peerId,

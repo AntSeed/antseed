@@ -272,6 +272,30 @@ antseed buyer start --disable-metadata-v2-services
 
 For production sellers, prefer a dedicated Base JSON-RPC endpoint over public defaults. You can set it durably with `payments.crypto.rpcUrl`, at runtime with `ANTSEED_BASE_RPC_URL`, or for one run with `antseed seller start --base-rpc-url <url>`.
 
+### Live seller prices
+
+`antseed seller start` watches its selected config file for changes to
+`seller.providers.<name>.defaults` and
+`seller.providers.<name>.services.<service>.pricing`. Valid token-price changes
+are applied without a restart and discovery metadata is refreshed. Atomic file
+replacement is supported, with a five-second polling fallback for missed file
+events. Invalid, incomplete, or missing files leave the working prices unchanged.
+
+Existing payment channels keep a saved snapshot of their agreed prices, including
+cached-input rates, until a new channel is negotiated. A response already running
+also keeps its original rates. New channels use the new price list. Updated buyers
+reject quotes that no longer match discovery rather than signing against stale
+prices; refresh discovery or route to another seller in that case. Upgrade buyers
+alongside sellers to get this stale-quote check; older buyers ignore the additional
+quote fields.
+
+Channels created before this upgrade are initialized with startup pricing because
+older sellers did not save a price snapshot.
+
+Runtime flag and environment-variable precedence remains the same as at startup.
+Only token pricing is reloaded: credentials, provider/service membership, agent
+configuration, and unit/image billing models still require a restart.
+
 ### Graceful seller shutdown
 
 On SIGINT or SIGTERM, the seller stops advertising and rejects new requests with

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { runMigrations } from '../storage/migrate.js';
 import { channelMigrations } from '../storage/migrations/channels/index.js';
 import type { SpendingAuthMetadata, SpendingAuthServiceMetadata } from './evm/signatures.js';
+import { parseProviderPricing, type ProviderPricingMatrixEntry } from '@antseed/protocol/peer-pricing';
 
 // Channel constants/types + BuyerChannelStore interface moved to @antseed/buyer-core.
 export {
@@ -67,6 +68,8 @@ export class ChannelStore {
   private readonly _commitAuthorizationTxn: (channel: StoredChannel, totals: StoredChannelServiceTotal[]) => void;
 
   private readonly _stmts: {
+    getSellerPricing: Database.Statement;
+    setSellerPricing: Database.Statement;
     upsert: Database.Statement;
     getById: Database.Statement;
     getActiveByPeer: Database.Statement;
@@ -129,6 +132,8 @@ export class ChannelStore {
 
   private _prepareStatements() {
     return {
+      getSellerPricing: this._db.prepare('SELECT seller_pricing_json FROM payment_channels WHERE session_id = ?'),
+      setSellerPricing: this._db.prepare('UPDATE payment_channels SET seller_pricing_json = COALESCE(seller_pricing_json, ?) WHERE session_id = ?'),
       upsert: this._db.prepare(`
         INSERT INTO payment_channels (
           session_id, peer_id, role, channel_kind, seller_evm_addr, buyer_evm_addr,
@@ -275,6 +280,19 @@ export class ChannelStore {
   getChannel(sessionId: string): StoredChannel | null {
     const row = this._stmts.getById.get(sessionId) as ChannelRow | undefined;
     return row ? rowToChannel(row) : null;
+  }
+
+  getSellerPricing(sessionId: string): Record<string, ProviderPricingMatrixEntry> | undefined {
+    const row = this._stmts.getSellerPricing.get(sessionId) as { seller_pricing_json: string | null } | undefined;
+    return row?.seller_pricing_json ? parseProviderPricing(JSON.parse(row.seller_pricing_json)) : undefined;
+  }
+
+  upsertChannelWithSellerPricing(channel: StoredChannel, pricing: Record<string, ProviderPricingMatrixEntry>): void {
+    const serialized = JSON.stringify(parseProviderPricing(pricing));
+    this._db.transaction(() => {
+      this.upsertChannel(channel);
+      this._stmts.setSellerPricing.run(serialized, channel.sessionId);
+    })();
   }
 
   getActiveChannelByPeer(peerId: string, role: ChannelRole, channelKind: ChannelKind = CHANNEL_KIND.PAID): StoredChannel | null {

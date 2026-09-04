@@ -20,8 +20,10 @@ import { debugLog, debugWarn } from '../utils/debug.js';
 import { peerIdToAddress } from '../types/peer.js';
 import { ChannelStore, CHANNEL_ROLE, CHANNEL_STATUS, type StoredChannel } from './channel-store.js';
 import { classifyOnChainChannel, matchesChannelParties } from './channel-session-state.js';
+import type { ProviderPricing } from '../interfaces/seller-provider.js';
 
 export interface SellerPaymentConfig {
+  getProviderPricing?: () => Record<string, ProviderPricing>;
   rpcUrl: string;
   fallbackRpcUrls?: string[];
   channelsContractAddress: string;
@@ -88,6 +90,8 @@ interface LatestAuth {
  */
 export class SellerPaymentManager {
   private _draining = false;
+  private readonly _sessionProviderPricing = new Map<string, Record<string, ProviderPricing>>();
+  private readonly _quotedProviderPricing = new Map<string, Record<string, ProviderPricing>>();
   private readonly _signer: AbstractSigner;
   private readonly _channelsClient: ChannelsClient;
   private readonly _config: SellerPaymentConfig;
@@ -210,6 +214,11 @@ export class SellerPaymentManager {
     // Hydrate from persisted channels
     const activeChannels = this._channelStore.getActiveChannels(CHANNEL_ROLE.SELLER);
     for (const channel of activeChannels) {
+      if (config.getProviderPricing) {
+        const pricing = this._channelStore.getSellerPricing(channel.sessionId) ?? structuredClone(config.getProviderPricing());
+        this._channelStore.upsertChannelWithSellerPricing(channel, pricing);
+        this._sessionProviderPricing.set(channel.sessionId, pricing);
+      }
       this._activeBuyers.add(channel.peerId);
       this._hydratedChannelIds.add(channel.sessionId);
       this._acceptedCumulative.set(channel.sessionId, BigInt(channel.authMax));
@@ -304,6 +313,7 @@ export class SellerPaymentManager {
   ): void {
     this._channelStore.updateChannelStatus(channelId, status);
     this._acceptedCumulative.delete(channelId);
+    this._sessionProviderPricing.delete(channelId);
     this._spent.delete(channelId);
     this._latestAuth.delete(channelId);
     this._closeRetryCount.delete(channelId);
@@ -484,6 +494,7 @@ export class SellerPaymentManager {
     payload: SpendingAuthPayload,
     paymentMux: PaymentMux,
   ): Promise<'accepted' | 'reserved' | 'rejected'> {
+    const quotedPricing = this._quotedProviderPricing.get(buyerPeerId);
     const buyerEvmAddr = peerIdToAddress(buyerPeerId);
     try {
       const channelId = payload.channelId;
@@ -607,6 +618,7 @@ export class SellerPaymentManager {
             metadataHash: payload.metadataHash,
             metadata: payload.metadata,
           },
+          quotedPricing,
         );
 
         // Send AuthAck
@@ -1094,8 +1106,15 @@ export class SellerPaymentManager {
     reserveMaxAmount: bigint,
     spent: bigint,
     latestAuth: LatestAuth,
+    quotedPricing?: Record<string, ProviderPricing>,
   ): void {
-    this._channelStore.upsertChannel(session);
+    const pricing = this._channelStore.getSellerPricing(session.sessionId) ?? quotedPricing ?? this._config.getProviderPricing?.();
+    if (pricing) this._channelStore.upsertChannelWithSellerPricing(session, pricing);
+    else this._channelStore.upsertChannel(session);
+    if (pricing && !this._sessionProviderPricing.has(session.sessionId)) {
+      this._sessionProviderPricing.set(session.sessionId, structuredClone(pricing));
+    }
+    this._quotedProviderPricing.delete(buyerPeerId);
     this._hydratedChannelIds.delete(session.sessionId);
     this._acceptedCumulative.set(session.sessionId, cumulativeAmount);
     this._reserveMax.set(session.sessionId, reserveMaxAmount);
@@ -1215,6 +1234,7 @@ export class SellerPaymentManager {
    * touch persisted status — callers set that first (SETTLED / TIMEOUT).
    */
   private _forgetChannel(channelId: string, buyerPeerId: string): void {
+    this._sessionProviderPricing.delete(channelId);
     this._acceptedCumulative.delete(channelId);
     this._spent.delete(channelId);
     this._latestAuth.delete(channelId);
@@ -1261,6 +1281,7 @@ export class SellerPaymentManager {
   // ── Disconnect handling ───────────────────────────────────────
 
   onBuyerDisconnect(buyerPeerId: string): void {
+    this._quotedProviderPricing.delete(buyerPeerId);
     const session = this._channelStore.getActiveChannelByPeer(buyerPeerId, CHANNEL_ROLE.SELLER);
     if (!session) return;
 
@@ -1503,7 +1524,21 @@ export class SellerPaymentManager {
     requestId: string,
     buyerPeerId?: string,
     pricing?: { inputUsdPerMillion?: number; outputUsdPerMillion?: number; cachedInputUsdPerMillion?: number },
+    options?: { newSession?: boolean; provider?: string; service?: string },
   ): PaymentRequiredPayload {
+    const quote = buyerPeerId ? this._quotedProviderPricing.get(buyerPeerId) : undefined;
+    let providerPricing = options?.newSession
+      ? quote
+      : this._getProviderPricing(buyerPeerId);
+    if (!providerPricing && buyerPeerId && this._config.getProviderPricing) {
+      if (this._quotedProviderPricing.size >= 1024) {
+        throw new Error('Too many pending seller price quotes');
+      }
+      providerPricing = structuredClone(this._config.getProviderPricing());
+      this._quotedProviderPricing.set(buyerPeerId, providerPricing);
+    }
+    const selected = options?.provider ? providerPricing?.[options.provider] : undefined;
+    if (selected) pricing = (options?.service ? selected.services?.[options.service] : undefined) ?? selected.defaults;
     const minBudgetPerRequest = this._config.minBudgetPerRequest ?? DEFAULT_MIN_BUDGET_PER_REQUEST;
 
     let suggestedAmount = SellerPaymentManager.DEFAULT_SUGGESTED_AMOUNT;
@@ -1520,10 +1555,23 @@ export class SellerPaymentManager {
       minBudgetPerRequest,
       suggestedAmount: suggestedAmount.toString(),
       requestId,
+      ...(providerPricing ? { providerPricing: structuredClone(providerPricing) } : {}),
       ...(pricing?.inputUsdPerMillion != null ? { inputUsdPerMillion: pricing.inputUsdPerMillion } : {}),
       ...(pricing?.outputUsdPerMillion != null ? { outputUsdPerMillion: pricing.outputUsdPerMillion } : {}),
       ...(pricing?.cachedInputUsdPerMillion != null ? { cachedInputUsdPerMillion: pricing.cachedInputUsdPerMillion } : {}),
     };
+  }
+
+  private _getProviderPricing(buyerPeerId?: string): Record<string, ProviderPricing> | undefined {
+    if (!buyerPeerId) return undefined;
+    const channel = this.getChannelByPeer(buyerPeerId);
+    if (channel) return this._sessionProviderPricing.get(channel.sessionId) ?? this._channelStore.getSellerPricing(channel.sessionId);
+    return this._quotedProviderPricing.get(buyerPeerId);
+  }
+
+  getSessionProviderPricing(buyerPeerId: string, providerName: string): ProviderPricing | undefined {
+    const pricing = this._getProviderPricing(buyerPeerId)?.[providerName];
+    return pricing ? structuredClone(pricing) : undefined;
   }
 
   async drainPendingPayments(timeoutMs: number): Promise<void> {

@@ -12,7 +12,30 @@ import {
   mergeSellerRuntimeEnv,
   parseOptionalPositiveIntegerEnv,
   selectSellerProviderNames,
+  resolveReloadedSellerPricing,
 } from './start.js';
+
+test('price reload preserves runtime precedence, clears removed overrides, and ignores non-pricing settings', () => {
+  const config = createDefaultConfig();
+  config.seller.providers = {
+    first: { plugin: 'openai', defaults: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 }, services: { model: { upstreamModel: 'original', pricing: { inputUsdPerMillion: 3, outputUsdPerMillion: 4 } } } },
+  };
+  const next = structuredClone(config.seller);
+  next.providers.first!.defaults = { inputUsdPerMillion: 10, outputUsdPerMillion: 20, cachedInputUsdPerMillion: 5 };
+  next.providers.first!.services.model!.upstreamModel = 'changed';
+  delete next.providers.first!.services.model!.pricing;
+  next.providers.first!.services.added = { pricing: { inputUsdPerMillion: 100, outputUsdPerMillion: 200 } };
+  const sources = [{ providerName: 'first', baseConfig: { ANTSEED_INPUT_USD_PER_MILLION: '7' }, fallback: { inputUsdPerMillion: 9, outputUsdPerMillion: 9 } }];
+  const original = structuredClone(config.seller);
+  const prices = resolveReloadedSellerPricing(config.seller, next, sources, false);
+  assert.deepEqual(prices.first, { defaults: { inputUsdPerMillion: 7, outputUsdPerMillion: 20, cachedInputUsdPerMillion: 5 } });
+  assert.deepEqual(config.seller, original);
+  assert.equal(resolveReloadedSellerPricing(config.seller, next, sources, true).first!.defaults.inputUsdPerMillion, 10);
+  delete next.providers.first!.defaults;
+  assert.deepEqual(resolveReloadedSellerPricing(config.seller, next, sources, false).first!.defaults, { inputUsdPerMillion: 7, outputUsdPerMillion: 9 });
+  delete next.providers.first!.services.model;
+  assert.throws(() => resolveReloadedSellerPricing(config.seller, next, sources, false), /require a restart/);
+});
 
 test('seller start runtime overrides are runtime-only and win over env/config', () => {
   const config = createDefaultConfig();

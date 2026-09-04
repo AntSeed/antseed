@@ -189,6 +189,39 @@ describe('BuyerRequestHandler payments-inactive 402 handling', () => {
 });
 
 describe('BuyerRequestHandler billing guards', () => {
+  it.each([true, false])('classifies free/paid requests using agreed session prices (paid=%s)', async (paid) => {
+    const negotiator = {
+      getOrCreatePaymentMux: vi.fn(() => ({})),
+      getSessionPricing: () => ({ inputUsdPerMillion: paid ? 1 : 0, outputUsdPerMillion: paid ? 2 : 0 }),
+      trackRequestBillingContext: vi.fn(), estimateCostFromResponse: vi.fn(),
+      trackFreeUsageRequestService: vi.fn(), prepareFreeUsageOpen: vi.fn(async () => {}),
+    };
+    const handler = new BuyerRequestHandler({}, {
+      localPeerId: 'b'.repeat(40), negotiator: negotiator as any,
+      verificationStorage: null, verificationSampler: null,
+      getConnection: vi.fn(async () => ({ state: ConnectionState.Open }) as any),
+      getMux: vi.fn(() => ({
+        sendProxyRequest: (request: SerializedHttpRequest, onResponse: (response: SerializedHttpResponse, metadata: { streamingStart: boolean }) => void) => {
+          onResponse({ requestId: request.requestId, statusCode: 200, headers: {}, body: new Uint8Array() }, { streamingStart: false });
+        },
+        cancelProxyRequest: vi.fn(),
+      }) as any),
+      getVerificationMux: vi.fn(() => ({} as any)), registerPaymentMux: vi.fn(),
+    });
+    const price = { inputUsdPerMillion: paid ? 0 : 1, outputUsdPerMillion: paid ? 0 : 2 };
+    const peer: PeerInfo = {
+      peerId: 'a'.repeat(40) as PeerInfo['peerId'], lastSeen: Date.now(), providers: ['openai'],
+      providerPricing: { openai: { defaults: price, services: { model: price } } },
+    };
+    await handler.sendRequest(peer, {
+      requestId: 'request', method: 'POST', path: '/v1/chat/completions', headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode(JSON.stringify({ model: 'model' })),
+    });
+    expect(negotiator.trackRequestBillingContext).toHaveBeenCalledTimes(paid ? 1 : 0);
+    expect(negotiator.estimateCostFromResponse).toHaveBeenCalledTimes(paid ? 1 : 0);
+    expect(negotiator.prepareFreeUsageOpen).toHaveBeenCalledTimes(paid ? 0 : 1);
+  });
+
   it('rejects paid image requests when metadata lacks a service unit billing model', async () => {
     const paymentMux = {};
     const negotiator = {

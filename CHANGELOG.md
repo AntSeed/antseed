@@ -8,6 +8,7 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Sellers automatically reload token pricing from their config file without restarting, refresh discovery prices, and preserve agreed channel rates (including cached-input prices) across requests and seller restarts. Updated buyers reject stale discovery quotes before opening a new payment channel.
 - Seller shutdown now stops new work and drains active requests, final payment authorizations, and outgoing transport buffers before closing connections. Configure the default 60-second drain budget with `antseed seller start --shutdown-drain-timeout-ms` or the SDK's `shutdownDrainTimeoutMs` option.
 
 - Desktop telemetry's `app_connect` / `app_disconnect` user actions now carry which app was connected, as an `app` property drawn from a fixed local taxonomy (the packaged profile names plus the Telegram bot); user-added custom apps report as `custom`, so raw app names never leave the device. Connect events are also attributed to the specific app being connected rather than firing on every profile-set restart (profile switches and custom-app removals no longer emit spurious `app_connect`).
