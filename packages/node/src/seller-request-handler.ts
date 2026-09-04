@@ -238,9 +238,31 @@ export class SellerRequestHandler {
       const isFreeService = isZeroTokenPricing(requestPricing)
         && (!unitBillingModel || isFreeUnitBillingModel(unitBillingModel));
 
-      // Reject with 402 if no active payment session and channels client is configured.
       const spm = this._deps.sellerPaymentManager;
-      const spmAuthorized = spm?.hasSession(buyerPeerId) ?? false;
+      // Paid requests need the payment stack; without it, fail closed instead of
+      // serving for free with a channel-less ResponseAuth.
+      if (!isFreeService && (!spm || !this._deps.channelsClient)) {
+        debugWarn(`[SellerHandler] Paid request but payment infrastructure is not initialized — returning 503`);
+        mux.sendProxyResponse({
+          requestId: request.requestId,
+          statusCode: 503,
+          headers: { 'content-type': 'application/json' },
+          body: new TextEncoder().encode(JSON.stringify({
+            error: {
+              message: 'Seller payment infrastructure is unavailable. Try again later.',
+              type: 'payment_unavailable',
+              code: 'payment_unavailable',
+            },
+          })),
+        });
+        return;
+      }
+
+      // Reject with 402 if no active payment session and channels client is configured.
+      // Both the in-memory session set and the channel store must agree; the store
+      // row is what billing and ResponseAuth are bound to below.
+      const activeSession = spm?.getChannelByPeer(buyerPeerId) ?? null;
+      const spmAuthorized = (spm?.hasSession(buyerPeerId) ?? false) && activeSession !== null;
       if (this._deps.channelsClient && !spmAuthorized) {
         // Free services skip the payment channel handshake entirely — no 402,
         // no ReserveAuth, no on-chain reserve.
@@ -286,8 +308,11 @@ export class SellerRequestHandler {
       // Check budget before routing — reject if buyer hasn't authorized enough.
       // Free requests must not be blocked by an existing exhausted/blocked paid
       // payment channel for the same buyer.
+      // The channel admitted here is what the rest of the request is bound to;
+      // never re-read it after the provider call.
+      let admittedSession: { sessionId: string; authMax?: string | null } | null = null;
       if (spm && !isFreeService) {
-        const initialSession = spm.getChannelByPeer(buyerPeerId);
+        const initialSession = activeSession;
         if (initialSession) {
           // Drain any in-flight SpendingAuth processing (e.g. an on-chain top-up
           // that has queued later auths behind its per-buyer mutex) so we don't
@@ -451,6 +476,7 @@ export class SellerRequestHandler {
             }
             return;
           }
+          admittedSession = session;
         }
       }
 
@@ -481,7 +507,7 @@ export class SellerRequestHandler {
       // Hold the channel open for the whole billable span — provider call,
       // spend recording, and NeedAuth — so a buyer-requested close can't land
       // between serving the request and claiming its cost.
-      const isBillable = !isFreeService && (spm?.hasSession(buyerPeerId) ?? false);
+      const isBillable = admittedSession !== null;
       if (isBillable) spm!.beginBillableRequest(buyerPeerId);
       this.adjustProviderLoad(provider.name, 1);
       try {
@@ -602,7 +628,7 @@ export class SellerRequestHandler {
 
         // Record spend and send NeedAuth with cost data after every request.
         // The buyer validates the cost independently and responds with SpendingAuth.
-        if (!isFreeService && spm?.hasSession(buyerPeerId)) {
+        if (spm && admittedSession) {
           const usage = responseUsage;
           const tokenCostUsdc = computeCostUsdc(
             usage.freshInputTokens,
@@ -611,7 +637,7 @@ export class SellerRequestHandler {
             usage.cachedInputTokens,
           );
           const costUsdc = tokenCostUsdc + unitCostUsdc;
-          const session = spm.getChannelByPeer(buyerPeerId);
+          const session = admittedSession;
           if (session) {
             spm.recordSpend(session.sessionId, costUsdc);
             const cumulativeSpend = spm.getCumulativeSpend(session.sessionId);
@@ -647,7 +673,7 @@ export class SellerRequestHandler {
         const buyerSupportsResponseAuth = conn.hasRemoteCapability(CONNECTION_CAPABILITY_RESPONSE_AUTH_V1);
 
         if (responseForAuth && buyerSupportsResponseAuth) {
-          const channelId = spm?.getChannelByPeer(buyerPeerId)?.sessionId ?? null;
+          const channelId = admittedSession?.sessionId ?? null;
           this._sendResponseAuthBestEffort(
             verificationMux,
             responseAuthRequest,
