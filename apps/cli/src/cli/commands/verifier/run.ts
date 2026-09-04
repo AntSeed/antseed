@@ -66,6 +66,7 @@ import {
 interface RunOptions {
   all?: boolean
   allowProbeReuse?: boolean
+  peer?: string
   resumeRun?: string
 }
 
@@ -83,16 +84,43 @@ export interface ResumeCandidate {
   exchanges: ProxyAuditEvidenceV1['exchanges']
 }
 
+export function normalizeVerifierPeerId(value: string): string {
+  const normalized = value.trim().replace(/^0x/i, '').toLowerCase()
+  if (!/^[0-9a-f]{40}$/.test(normalized)) {
+    throw new Error('peer id must be exactly 40 hexadecimal characters, optionally prefixed with 0x')
+  }
+  return normalized
+}
+
+export function selectVerifierPeer<T extends { peerId: string }>(peers: readonly T[], peerId: string): T {
+  const selected = peers.find((peer) => peer.peerId.trim().replace(/^0x/i, '').toLowerCase() === peerId)
+  if (!selected) {
+    throw new Error(`peer ${peerId} is not present in the buyer proxy's live discovered-peer snapshot`)
+  }
+  return selected
+}
+
+export function filterResumeCandidatesByPeer(
+  candidates: ReadonlyMap<string, ResumeCandidate>,
+  peerId: string,
+): Map<string, ResumeCandidate> {
+  return new Map([...candidates].filter(([, candidate]) => (
+    candidate.peerId.trim().replace(/^0x/i, '').toLowerCase() === peerId
+  )))
+}
+
 export function registerVerifierRunCommand(verifier: Command): void {
   verifier
     .command('run [model]')
     .description('Verify live peers for one configured model or every enabled model')
     .option('--all', 'verify every enabled configured model')
     .option('--allow-probe-reuse', 'allow a new epoch reference to reuse probes assigned in earlier epochs')
+    .option('--peer <peerId>', 'verify only this discovered seller peer')
     .option('--resume-run <runId>', 'repair only undetermined sellers from a compatible run')
     .action(async (modelValue: string | undefined, options: RunOptions, command: Command) => {
       const globalOptions = getGlobalOptions(command)
       const config = await loadConfig(globalOptions.config)
+      const selectedPeerId = options.peer ? normalizeVerifierPeerId(options.peer) : null
       const banksDir = config.verifier?.banksDir ?? join(globalOptions.dataDir, 'verifier', 'banks')
       const evidenceDir = config.verifier?.evidenceDir ?? join(globalOptions.dataDir, 'verifier', 'evidence')
       const requestedResumeManifest = options.resumeRun
@@ -121,8 +149,11 @@ export function registerVerifierRunCommand(verifier: Command): void {
           : previousStatus?.epoch === epoch
             ? await loadCheckpointResumeCandidates(evidenceDir, previousStatus.runId, epoch, models)
             : new Map<string, ResumeCandidate>()
+        const selectedResumeCandidates = selectedPeerId
+          ? filterResumeCandidatesByPeer(discoveredResumeCandidates, selectedPeerId)
+          : discoveredResumeCandidates
         const resumeCandidates = await filterCompatibleResumeCandidates({
-          candidates: discoveredResumeCandidates,
+          candidates: selectedResumeCandidates,
           banksDir,
           config: config.verifier,
           epoch,
@@ -131,14 +162,40 @@ export function registerVerifierRunCommand(verifier: Command): void {
         const resumeSourceRunId = requestedResumeManifest?.runId
           ?? (resumeCandidates.size > 0 ? previousStatus?.runId ?? null : null)
         const resumeOnly = resumeSourceRunId !== null
-        const runModels = resumeOnly
+        let runModels = resumeOnly
           ? models.filter((model) => [...resumeCandidates.values()]
             .some((candidate) => candidate.model.toLowerCase() === model.toLowerCase()))
           : models
         if (resumeOnly && runModels.length === 0) {
-          throw new Error(`resume run ${resumeSourceRunId} has no undetermined audits for the selected models`)
+          const peerSuffix = selectedPeerId ? ` and peer ${selectedPeerId}` : ''
+          throw new Error(`resume run ${resumeSourceRunId} has no undetermined audits for the selected models${peerSuffix}`)
         }
         const proxy = await loadBuyerProxySnapshot(globalOptions.dataDir)
+        const selectedPeers = selectedPeerId
+          ? [selectVerifierPeer(proxy.peers, selectedPeerId)]
+          : proxy.peers
+        const targetPolicy = {
+          minReputation: config.buyer.minPeerReputation,
+          maxPricing: config.buyer.maxPricing.defaults,
+        }
+        if (selectedPeerId && !resumeOnly) {
+          const advertisedModels = runModels.filter((model) => {
+            const eligibility = classifyVerificationTargetServices(
+              selectedPeers[0]!,
+              verifierModelServices(config.verifier, model),
+              targetPolicy,
+            )
+            return eligibility.eligible || eligibility.code !== 'model_not_advertised'
+          })
+          if (options.all) {
+            runModels = advertisedModels
+            if (runModels.length === 0) {
+              throw new Error(`peer ${selectedPeerId} does not advertise any enabled configured verifier model`)
+            }
+          } else if (advertisedModels.length === 0) {
+            throw new Error(`peer ${selectedPeerId} does not advertise model ${runModels[0]}`)
+          }
+        }
         responseAuthReader = await openResponseAuthReader({
           dataDir: globalOptions.dataDir,
           timeoutMs: config.verifier?.responseAuthWaitTimeoutMs,
@@ -148,17 +205,14 @@ export function registerVerifierRunCommand(verifier: Command): void {
           domain: 'antseed-verifier-epoch-run-v1',
           epoch,
           models: runModels.map((model) => model.toLowerCase()),
+          peerIds: selectedPeerId ? [selectedPeerId] : undefined,
           buyerProxy: proxy.baseUrl,
           startedAt: startedAtMs,
         })
-        const targetPolicy = {
-          minReputation: config.buyer.minPeerReputation,
-          maxPricing: config.buyer.maxPricing.defaults,
-        }
         const preparedModels = runModels.map((model) => {
           const skipped: ModelVerificationSkip[] = []
           const configuredServices = verifierModelServices(config.verifier, model)
-          const targets = proxy.peers.flatMap((peer) => {
+          const targets = selectedPeers.flatMap((peer) => {
             const resumeCandidate = resumeCandidates.get(resumeKey(model, peer.peerId))
             if (resumeOnly && !resumeCandidate) return []
             const services = resumeCandidate
@@ -195,6 +249,9 @@ export function registerVerifierRunCommand(verifier: Command): void {
           })
           return { model, skipped, targets }
         })
+        if (selectedPeerId && preparedModels.every((entry) => entry.targets.length + entry.skipped.length === 0)) {
+          throw new Error(`peer ${selectedPeerId} does not currently advertise any selected verifier model`)
+        }
         status = {
           version: 1,
           kind: 'antseed-verifier-status',
@@ -228,6 +285,7 @@ export function registerVerifierRunCommand(verifier: Command): void {
         console.log(chalk.dim(`Epoch: ${epoch} (${status.epochStartedAt} – ${status.epochEndsAt})`))
         console.log(chalk.dim(`Epoch source: ${epochWindow.source}`))
         console.log(chalk.dim(`Buyer proxy: ${proxy.baseUrl} (pid ${proxy.pid})`))
+        if (selectedPeerId) console.log(chalk.dim(`Peer selector: ${selectedPeerId}`))
         console.log(chalk.dim('Evidence: verified ResponseAuth required for every successful batch'))
         console.log(chalk.dim(
           `Eligibility: reputation >= ${targetPolicy.minReputation}; maximum pricing input $${targetPolicy.maxPricing.inputUsdPerMillion}/M, output $${targetPolicy.maxPricing.outputUsdPerMillion}/M (buyer config)`,
@@ -566,6 +624,7 @@ export function registerVerifierRunCommand(verifier: Command): void {
           startedAt: status.startedAt,
           completedAt,
           summaryPath: epochSummaryPath,
+          selection: selectedPeerId ? { peerIds: [selectedPeerId] } : undefined,
           modelOrder: runModels,
           models: epochModels,
           failureCount: status.failures,

@@ -12,7 +12,15 @@ import {
   type ProxyAuditEvidenceV1,
 } from '../../../verifier/proxy-evidence.js'
 import { registerVerifierCommands } from './index.js'
-import { filterCompatibleResumeCandidates, loadResumeCandidates, resolveRunModels } from './run.js'
+import {
+  filterCompatibleResumeCandidates,
+  filterResumeCandidatesByPeer,
+  loadResumeCandidates,
+  normalizeVerifierPeerId,
+  resolveRunModels,
+  selectVerifierPeer,
+  type ResumeCandidate,
+} from './run.js'
 
 function command(): Command {
   const program = new Command().exitOverride().configureOutput({ writeErr: () => undefined, writeOut: () => undefined })
@@ -46,8 +54,52 @@ test('verifier reference exposes only the explicit build workflow', () => {
 test('verifier run accepts one model or all configured models', () => {
   const verifier = command().commands.find((entry) => entry.name() === 'verifier')!
   const run = verifier.commands.find((entry) => entry.name() === 'run')!
-  assert.deepEqual(run.options.map((option) => option.long), ['--all', '--allow-probe-reuse', '--resume-run'])
+  assert.deepEqual(
+    run.options.map((option) => option.long),
+    ['--all', '--allow-probe-reuse', '--peer', '--resume-run'],
+  )
   assert.deepEqual(run.registeredArguments.map((argument) => argument.name()), ['model'])
+})
+
+test('verifier peer selector normalizes supported peer ids', () => {
+  assert.equal(normalizeVerifierPeerId(`0x${'AB'.repeat(20)}`), 'ab'.repeat(20))
+  assert.equal(normalizeVerifierPeerId(`  ${'12'.repeat(20)}  `), '12'.repeat(20))
+})
+
+test('verifier peer selector rejects malformed peer ids', () => {
+  assert.throws(() => normalizeVerifierPeerId('not-a-peer'), /exactly 40 hexadecimal characters/)
+  assert.throws(() => normalizeVerifierPeerId('11'.repeat(19)), /exactly 40 hexadecimal characters/)
+})
+
+test('verifier peer selector requires the peer in the live snapshot', () => {
+  const peerId = '11'.repeat(20)
+  assert.equal(selectVerifierPeer([{ peerId }, { peerId: '22'.repeat(20) }], peerId).peerId, peerId)
+  assert.throws(
+    () => selectVerifierPeer([{ peerId }], '33'.repeat(20)),
+    /not present in the buyer proxy's live discovered-peer snapshot/,
+  )
+})
+
+test('verifier peer selector intersects resume candidates', () => {
+  const selectedPeerId = '11'.repeat(20)
+  const candidate = (peerId: string): ResumeCandidate => ({
+    model: 'model-a',
+    peerId,
+    service: 'model-a',
+    auditId: `0x${'22'.repeat(32)}`,
+    reservationAuditId: `0x${'33'.repeat(32)}`,
+    evidencePath: '/tmp/evidence.json',
+    evidenceHash: `0x${'44'.repeat(32)}`,
+    referenceId: 'reference',
+    queryProfileHash: `0x${'55'.repeat(32)}`,
+    probeIds: ['probe'],
+    exchanges: [],
+  })
+  const selected = filterResumeCandidatesByPeer(new Map([
+    ['selected', candidate(selectedPeerId)],
+    ['other', candidate('66'.repeat(20))],
+  ]), selectedPeerId)
+  assert.deepEqual([...selected.keys()], ['selected'])
 })
 
 test('explicit resume limits model selection to the source manifest', () => {

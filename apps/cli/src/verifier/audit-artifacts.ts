@@ -65,6 +65,9 @@ export interface VerifierRunManifestV1 {
   startedAt: string
   completedAt: string
   summaryPath: string
+  selection?: {
+    peerIds: string[]
+  }
   modelOrder: string[]
   models: EpochAuditSummaryV1['models']
   failureCount: number
