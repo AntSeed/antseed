@@ -221,6 +221,7 @@ export interface NodeVerificationConfig {
 
 export interface NodeConfig {
   role: 'seller' | 'buyer';
+  shutdownDrainTimeoutMs?: number;
   displayName?: string;
   /** Publicly reachable seller address override ("host:port") announced in metadata. */
   publicAddress?: string;
@@ -330,6 +331,7 @@ export class AntseedNode extends EventEmitter {
   private _provers: Prover[] = [];
   private _router: Router | null = null;
   private _started = false;
+  private _stopPromise: Promise<void> | null = null;
   private _announcer: PeerAnnouncer | null = null;
   /** Set while advertising is paused (e.g. seller wallet out of gas). */
   private _advertisingPausedReason: string | null = null;
@@ -394,6 +396,9 @@ export class AntseedNode extends EventEmitter {
 
   constructor(config: NodeConfig) {
     super();
+    if (config.shutdownDrainTimeoutMs !== undefined && (!Number.isSafeInteger(config.shutdownDrainTimeoutMs) || config.shutdownDrainTimeoutMs < 0 || config.shutdownDrainTimeoutMs > 2_147_483_647)) {
+      throw new Error('shutdownDrainTimeoutMs must be an integer between 0 and 2147483647');
+    }
     this._config = config;
   }
 
@@ -434,6 +439,7 @@ export class AntseedNode extends EventEmitter {
 
   /** Resume DHT announcements after `pauseAdvertising` (announces immediately). */
   resumeAdvertising(): void {
+    if (this._stopPromise) return;
     if (this._advertisingPausedReason === null) return;
     this._advertisingPausedReason = null;
     this._announcer?.startPeriodicAnnounce();
@@ -573,9 +579,42 @@ export class AntseedNode extends EventEmitter {
     this.emit("started");
   }
 
-  async stop(): Promise<void> {
+  stop(): Promise<void> {
+    if (!this._started) return Promise.resolve();
+    if (!this._stopPromise) {
+      this._stopPromise = this._stop().finally(() => { this._stopPromise = null; });
+    }
+    return this._stopPromise;
+  }
+
+  private async _stop(): Promise<void> {
     if (!this._started) {
       return;
+    }
+
+    if (this._sellerHandler) {
+      const timeoutMs = this._config.shutdownDrainTimeoutMs ?? 60_000;
+      const deadline = Date.now() + timeoutMs;
+      this._sellerPaymentManager?.beginDrain();
+      const draining = this._sellerHandler.drain(timeoutMs);
+      void this.pauseAdvertising('shutting-down').catch((err: unknown) => {
+        debugWarn(`[Node] Could not refresh shutdown metadata: ${String(err)}`);
+      });
+      const completed = await draining;
+      if (!completed) {
+        debugWarn(`[Node] Seller drain timed out after ${timeoutMs}ms; closing remaining requests`);
+      } else {
+        await this._sellerPaymentManager?.drainPendingPayments(Math.max(0, deadline - Date.now()));
+      }
+      await Promise.all([...this._connectionManager?.connections.values() ?? []].map(async (connection) => {
+        try {
+          if (!await connection.drainOutgoing(Math.max(0, deadline - Date.now()))) {
+            debugWarn('[Node] Shutdown deadline reached before outgoing transport buffers drained');
+          }
+        } catch (err) {
+          debugWarn(`[Node] Could not drain outgoing transport: ${String(err)}`);
+        }
+      }));
     }
 
     // Give in-transit NeedAuth messages time to arrive on the DataChannel,

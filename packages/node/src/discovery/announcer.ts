@@ -123,6 +123,7 @@ export class PeerAnnouncer {
 
   async announce(): Promise<void> {
     this._latestMetadata = await this._buildSignedMetadata(true);
+    if (this.stopped) return;
 
     const failures = await this._announceTopics();
     if (failures > 0) {

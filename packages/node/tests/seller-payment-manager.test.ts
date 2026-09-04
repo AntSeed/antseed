@@ -189,6 +189,24 @@ describe('SellerPaymentManager', () => {
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(true);
   });
 
+  it('waits for final spending authorization during drain, but respects the deadline', async () => {
+    const channelId = makeChannelId(72);
+    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, payload, mux);
+    manager.recordSpend(channelId, 100n);
+    let drained = false;
+    const draining = manager.drainPendingPayments(1000).then(() => { drained = true; });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(drained).toBe(false);
+    const auth = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { cumulativeAmount: 100n });
+    await manager.handleSpendingAuth(buyerIdentity.peerId, auth, mux);
+    await draining;
+    expect(drained).toBe(true);
+    manager.recordSpend(channelId, 1n);
+    await manager.drainPendingPayments(5);
+    expect(manager.getCumulativeSpend(channelId)).toBe(101n);
+  });
+
   it('retries overlapping initial reserves after delegated account transaction backpressure', async () => {
     vi.useFakeTimers();
     try {
