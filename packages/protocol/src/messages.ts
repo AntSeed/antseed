@@ -169,6 +169,7 @@ export interface NeedFreeUsageAuthPayload {
  * Sent via PaymentMux alongside the HTTP 402 response.
  */
 export interface PaymentRequiredPayload {
+  providerPricing?: Record<string, import('./peer-pricing.js').ProviderPricingMatrixEntry>;
   minBudgetPerRequest: string;
   suggestedAmount: string;
   requestId: string;

@@ -1,3 +1,4 @@
+import { parseProviderPricing } from './peer-pricing.js';
 import {
   PAYMENT_CODE_CHANNEL_EXHAUSTED,
   CLOSE_CHANNEL_REJECT_CODES,
@@ -159,6 +160,7 @@ export function decodePaymentRequired(data: Uint8Array): PaymentRequiredPayload 
     suggestedAmount: requireStringField(obj, 'suggestedAmount'),
     requestId: requireStringField(obj, 'requestId'),
   };
+  if (obj.providerPricing !== undefined) result.providerPricing = parseProviderPricing(obj.providerPricing);
   if (typeof obj.inputUsdPerMillion === 'number') result.inputUsdPerMillion = obj.inputUsdPerMillion;
   if (typeof obj.outputUsdPerMillion === 'number') result.outputUsdPerMillion = obj.outputUsdPerMillion;
   if (typeof obj.cachedInputUsdPerMillion === 'number') result.cachedInputUsdPerMillion = obj.cachedInputUsdPerMillion;

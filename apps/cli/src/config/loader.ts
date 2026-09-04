@@ -21,7 +21,7 @@ import { assertValidConfig } from './validation.js';
 /**
  * Resolve a config path, expanding ~ to the user's home directory.
  */
-function resolveConfigPath(configPath: string): string {
+export function resolveConfigPath(configPath: string): string {
   if (configPath.startsWith('~')) {
     return resolve(homedir(), configPath.slice(2));
   }
@@ -515,14 +515,14 @@ function normalizeBooleanConfigValue(value: unknown, defaultValue: boolean, path
  * Load configuration from a JSON file.
  * Returns default configuration if the file does not exist.
  */
-export async function loadConfig(configPath: string): Promise<AntseedConfig> {
+export async function loadConfig(configPath: string, options?: { strict?: boolean }): Promise<AntseedConfig> {
   const resolved = resolveConfigPath(configPath);
 
   let raw: string;
   try {
     raw = await readFile(resolved, 'utf-8');
   } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+    if (!options?.strict && (err as NodeJS.ErrnoException).code === 'ENOENT') {
       return createDefaultConfig();
     }
     throw err;
@@ -532,11 +532,34 @@ export async function loadConfig(configPath: string): Promise<AntseedConfig> {
   try {
     parsedRaw = JSON.parse(raw);
   } catch {
+    if (options?.strict) throw new Error(`Could not parse config at ${resolved}`);
     console.warn(`Warning: Could not parse config at ${resolved}. Using defaults.`);
     return createDefaultConfig();
   }
 
   const defaults = createDefaultConfig();
+  if (options?.strict && !isRecord(parsedRaw)) throw new Error('Config must be an object');
+  if (options?.strict && isRecord(parsedRaw) && isRecord(parsedRaw.seller) && isRecord(parsedRaw.seller.providers)) {
+    for (const provider of Object.values(parsedRaw.seller.providers)) {
+      if (!isRecord(provider)) throw new Error('Seller provider must be an object');
+      const prices = [provider.defaults];
+      if (isRecord(provider.services)) {
+        for (const service of Object.values(provider.services)) {
+          if (!isRecord(service)) throw new Error('Seller service must be an object');
+          prices.push(service.pricing);
+        }
+      }
+      for (const pricing of prices) {
+        if (pricing === undefined) continue;
+        if (!isRecord(pricing)) throw new Error('Seller pricing must be an object');
+        for (const field of ['inputUsdPerMillion', 'outputUsdPerMillion', 'cachedInputUsdPerMillion']) {
+          const rate = pricing[field];
+          if (field === 'cachedInputUsdPerMillion' && rate === undefined) continue;
+          if (typeof rate !== 'number' || !Number.isFinite(rate) || rate < 0) throw new Error(`Invalid seller pricing ${field}`);
+        }
+      }
+    }
+  }
   const parsed = isRecord(parsedRaw) ? parsedRaw : {};
 
   const merged: AntseedConfig = {

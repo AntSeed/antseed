@@ -189,6 +189,39 @@ describe('SellerPaymentManager', () => {
     expect(manager.hasSession(buyerIdentity.peerId)).toBe(true);
   });
 
+  it('pins a complete quote through reserve, reload, and seller restart', async () => {
+    let pricing = { openai: { defaults: { inputUsdPerMillion: 2, outputUsdPerMillion: 4 }, services: { model: { inputUsdPerMillion: 3, outputUsdPerMillion: 6 } } } };
+    const config: SellerPaymentConfig = {
+      rpcUrl: 'http://127.0.0.1:8545', channelsContractAddress: CONTRACT_ADDR,
+      chainId: CHAIN_ID, dataDir: tempDir, getProviderPricing: () => pricing,
+    };
+    manager = new SellerPaymentManager(sellerIdentity, config, store);
+    let finishReserve!: () => void;
+    vi.spyOn(manager.channelsClient, 'reserve').mockImplementation(async () => {
+      await new Promise<void>((resolve) => { finishReserve = resolve; });
+      return '0xreserve';
+    });
+    const quoted = manager.getPaymentRequirements('request', buyerIdentity.peerId, pricing.openai.defaults);
+    const original = structuredClone(pricing);
+    const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, makeChannelId(71), { isReserve: true });
+    const reserving = manager.handleSpendingAuth(buyerIdentity.peerId, payload, mux);
+    await vi.waitFor(() => expect(finishReserve).toBeTypeOf('function'));
+    pricing = { openai: { defaults: { inputUsdPerMillion: 20, outputUsdPerMillion: 40 }, services: { model: { inputUsdPerMillion: 30, outputUsdPerMillion: 60 } } } };
+    finishReserve();
+    expect(await reserving).toBe('reserved');
+    expect(manager.getSessionProviderPricing(buyerIdentity.peerId, 'openai')).toEqual(original.openai);
+    quoted.providerPricing!.openai!.defaults.inputUsdPerMillion = 999;
+    expect(manager.getSessionProviderPricing(buyerIdentity.peerId, 'openai')).toEqual(original.openai);
+    const newBuyer = createTestIdentity();
+    expect(manager.getPaymentRequirements('new-request', newBuyer.peerId).providerPricing).toEqual(pricing);
+    const renewal = manager.getPaymentRequirements('renewal', buyerIdentity.peerId, original.openai.defaults, { newSession: true, provider: 'openai', service: 'model' });
+    expect(renewal.providerPricing).toEqual(pricing);
+    expect(renewal.inputUsdPerMillion).toBe(30);
+    expect(manager.getSessionProviderPricing(buyerIdentity.peerId, 'openai')).toEqual(original.openai);
+    const restarted = new SellerPaymentManager(sellerIdentity, config, store);
+    expect(restarted.getSessionProviderPricing(buyerIdentity.peerId, 'openai')).toEqual(original.openai);
+  });
+
   it('waits for final spending authorization during drain, but respects the deadline', async () => {
     const channelId = makeChannelId(72);
     const payload = await buildSpendingAuth(buyerIdentity, sellerIdentity, channelId, { isReserve: true });

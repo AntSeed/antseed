@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { parseProviderPricing, snapshotProviderPricing } from '@antseed/protocol/peer-pricing';
 
 import type { Identity, IdentityStore } from "./p2p/identity.js";
 import { loadOrCreateIdentity } from "./p2p/identity.js";
@@ -328,6 +329,7 @@ export class AntseedNode extends EventEmitter {
   private _dht: DHTNode | null = null;
   private _connectionManager: ConnectionManager | null = null;
   private _providers: Provider[] = [];
+  private readonly _providerPricingServices = new Map<Provider, string[]>();
   private _provers: Prover[] = [];
   private _router: Router | null = null;
   private _started = false;
@@ -411,6 +413,7 @@ export class AntseedNode extends EventEmitter {
   }
 
   registerProvider(provider: Provider): void {
+    this._providerPricingServices.set(provider, [...provider.services]);
     this._providers.push(provider);
   }
 
@@ -422,6 +425,28 @@ export class AntseedNode extends EventEmitter {
    */
   async refreshSellerMetadata(): Promise<void> {
     await this._announcer?.refreshMetadata();
+  }
+
+  async updateSellerPricing(pricing: ReadonlyMap<Provider, Provider['pricing']>): Promise<void> {
+    if (this._stopPromise) throw new Error('Cannot reload prices during shutdown');
+    const updates = [...pricing].map(([provider, prices]) => {
+      if (!this._providers.includes(provider)) throw new Error(`Unknown provider: ${provider.name}`);
+      return { provider, pricing: parseProviderPricing({ prices }).prices! };
+    });
+    for (const { provider, pricing: updated } of updates) {
+      provider.pricing.defaults = updated.defaults;
+      if (updated.services) provider.pricing.services = updated.services;
+      else delete provider.pricing.services;
+    }
+    this._announcer?.updatePricing(this._providers.map((provider) => provider.pricing));
+    await this.refreshSellerMetadata().catch((err: unknown) => {
+      debugWarn(`[Node] Prices applied but metadata refresh failed; periodic announcement will retry: ${String(err)}`);
+    });
+    if (this._announcer && this._advertisingPausedReason === null && !this._stopPromise) {
+      void this._announcer.announce().catch((err: unknown) => {
+        debugWarn(`[Node] Price announcement failed; periodic announcement will retry: ${String(err)}`);
+      });
+    }
   }
 
   /**
@@ -1666,13 +1691,7 @@ export class AntseedNode extends EventEmitter {
           ...(p.serviceCapabilities ? { serviceCapabilities: { ...p.serviceCapabilities } } : {}),
           maxConcurrency: p.maxConcurrency,
           isAvailable: () => this._advertisingPausedReason === null && p.healthCheckAvailable !== false,
-          pricing: {
-            defaults: {
-              inputUsdPerMillion: p.pricing.defaults.inputUsdPerMillion,
-              outputUsdPerMillion: p.pricing.defaults.outputUsdPerMillion,
-            },
-            ...(p.pricing.services ? { services: { ...p.pricing.services } } : {}),
-          },
+          pricing: structuredClone(p.pricing),
         })),
         ...(this._config.displayName ? { displayName: this._config.displayName } : {}),
         ...(this._config.publicAddress ? { publicAddress: this._config.publicAddress } : {}),
@@ -2100,6 +2119,12 @@ export class AntseedNode extends EventEmitter {
     if (this._config.role === 'seller' && this._identity && this._channelStore &&
         payments.rpcUrl && payments.channelsAddress) {
       const sellerConfig: SellerPaymentConfig = {
+        getProviderPricing: () => snapshotProviderPricing(this._providers.map((provider) => ({
+          provider: provider.name,
+          services: [...new Set([...(this._providerPricingServices.get(provider) ?? provider.services), ...Object.keys(provider.pricing.services ?? {})])],
+          defaultPricing: provider.pricing.defaults,
+          ...(provider.pricing.services ? { servicePricing: provider.pricing.services } : {}),
+        }))),
         rpcUrl: payments.rpcUrl,
         ...(fallbackRpcUrls ? { fallbackRpcUrls } : {}),
         channelsContractAddress: payments.channelsAddress,

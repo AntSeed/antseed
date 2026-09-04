@@ -41,6 +41,8 @@ import { ensureDerivedIdentityDisplayName } from '../../../config/identity-displ
 import { AntAgentProvider, loadAntAgent, type AntAgentDefinition } from '@antseed/ant-agent'
 import { resolvePluginPackage } from '../../../plugins/registry.js'
 import { startupReachabilityWarning } from './reachability.js'
+import { watchSellerPrices } from './price-reload.js'
+import { parseServicePricingJson } from '@antseed/provider-core'
 
 function getStateFile(dataDir: string): string {
   return join(dataDir, 'daemon.state.json')
@@ -369,6 +371,48 @@ export function mergeSellerRuntimeEnv(
   return merged
 }
 
+export interface SellerPriceReloadSource {
+  providerName: string
+  baseConfig: Record<string, string>
+  fallback: Provider['pricing']['defaults']
+}
+
+export function resolveReloadedSellerPricing(
+  previousConfig: SellerCLIConfig,
+  nextConfig: SellerCLIConfig,
+  sources: SellerPriceReloadSource[],
+  forcePricingOverride: boolean,
+): Record<string, Provider['pricing']> {
+  const pricingOnly = structuredClone(previousConfig)
+  return Object.fromEntries(sources.map((source) => {
+    const previous = previousConfig.providers[source.providerName]!
+    const updated = nextConfig.providers[source.providerName]
+    if (!updated || updated.plugin !== previous.plugin
+      || Object.keys(previous.services).some((service) => !updated.services[service])) {
+      throw new Error(`Provider/service removal or plugin changes require a restart: ${source.providerName}`)
+    }
+    const target = pricingOnly.providers[source.providerName]!
+    if (updated.defaults) target.defaults = updated.defaults
+    else delete target.defaults
+    for (const [service, entry] of Object.entries(target.services)) {
+      const pricing = updated.services[service]?.pricing
+      if (pricing) entry.pricing = pricing
+      else delete entry.pricing
+    }
+    const merged = mergeSellerRuntimeEnv(source.baseConfig, buildSellerPluginRuntimeEnv(pricingOnly, source.providerName), { forcePricingOverride })
+    const services = parseServicePricingJson(merged['ANTSEED_SERVICE_PRICING_JSON'])
+    return [source.providerName, {
+      defaults: {
+        inputUsdPerMillion: Number(merged['ANTSEED_INPUT_USD_PER_MILLION'] ?? source.fallback.inputUsdPerMillion),
+        outputUsdPerMillion: Number(merged['ANTSEED_OUTPUT_USD_PER_MILLION'] ?? source.fallback.outputUsdPerMillion),
+        ...(merged['ANTSEED_CACHED_INPUT_USD_PER_MILLION'] !== undefined
+          ? { cachedInputUsdPerMillion: Number(merged['ANTSEED_CACHED_INPUT_USD_PER_MILLION']) } : {}),
+      },
+      ...(services ? { services } : {}),
+    }]
+  }))
+}
+
 export function registerSellerStartCommand(sellerCmd: Command): void {
   sellerCmd
     .command('start')
@@ -449,6 +493,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       await ensurePluginsUpToDate(selectedProviderPackages)
 
       const providers: Provider[] = []
+      const priceReloadSources: SellerPriceReloadSource[] = []
       for (const providerName of selectedProviderNames) {
         const providerCfg = effectiveSellerConfig.providers[providerName]!
         const packageName = resolvePluginPackage(providerCfg.plugin)
@@ -470,6 +515,18 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
             await provider.init()
           }
           providers.push(provider)
+          const defaultValue = (key: string, fallback: number): number => {
+            const field = configFields.find((entry) => entry.key === key)
+            return field && 'default' in field && typeof field.default === 'number' ? field.default : fallback
+          }
+          priceReloadSources.push({
+            providerName,
+            baseConfig: { ...basePluginConfig },
+            fallback: {
+              inputUsdPerMillion: defaultValue('ANTSEED_INPUT_USD_PER_MILLION', provider.pricing.defaults.inputUsdPerMillion),
+              outputUsdPerMillion: defaultValue('ANTSEED_OUTPUT_USD_PER_MILLION', provider.pricing.defaults.outputUsdPerMillion),
+            },
+          })
           spinner.succeed(chalk.green(`Provider "${providerName}" loaded via ${packageName}`))
         } catch (err) {
           spinner.fail(chalk.red(`Failed to load provider "${providerName}": ${(err as Error).message}`))
@@ -1020,7 +1077,22 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         }
       }
 
+      const priceWatcher = watchSellerPrices(globalOpts.config, {
+        initialPricing: Object.fromEntries(providers.map((provider, index) => [selectedProviderNames[index]!, provider.pricing])),
+        readPricing: async () => {
+          const next = resolveEffectiveSellerConfig({
+            config: await loadConfig(globalOpts.config, { strict: true }),
+            sellerOverrides: runtimeOverrides,
+          })
+          return resolveReloadedSellerPricing(effectiveSellerConfig, next, priceReloadSources, forcePricingOverride)
+        },
+        applyPricing: (pricing) => node.updateSellerPricing(new Map(registeredProviders.map((provider, index) => [provider, pricing[selectedProviderNames[index]!]!]))),
+        onReload: () => console.log(chalk.green('Seller prices reloaded. Existing payment sessions keep their agreed rates. Other settings require a restart.')),
+        onError: (error) => console.warn(chalk.yellow(`Price reload failed; keeping current prices: ${error instanceof Error ? error.message : String(error)}`)),
+      })
+
       setupShutdownHandler(async () => {
+        await priceWatcher.close()
         healthChecker?.stop()
         gasMonitor?.stop()
         clearInterval(stateInterval)

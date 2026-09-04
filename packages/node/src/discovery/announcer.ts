@@ -1,6 +1,7 @@
 import type { Identity } from "../p2p/identity.js";
 import { signData } from "../p2p/identity.js";
 import type { DHTNode } from "./dht-node.js";
+import type { ProviderPricingMatrixEntry } from '@antseed/protocol/peer-pricing';
 import {
   ANTSEED_WILDCARD_TOPIC,
   capabilityTopic,
@@ -63,23 +64,14 @@ export interface AnnouncerConfig {
     /** Runtime availability predicate. Unavailable providers are omitted. */
     isAvailable?: () => boolean;
     /** Per-instance pricing. Takes precedence over the shared pricing Map. */
-    pricing?: {
-      defaults: { inputUsdPerMillion: number; outputUsdPerMillion: number };
-      services?: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }>;
-    };
+    pricing?: ProviderPricingMatrixEntry;
   }>;
   displayName?: string;
   publicAddress?: string;
   /** External ownership claims to include in signed metadata for client verification. */
   verifications?: PeerVerifications;
   region: string;
-  pricing: Map<
-    string,
-    {
-      defaults: { inputUsdPerMillion: number; outputUsdPerMillion: number };
-      services?: Record<string, { inputUsdPerMillion: number; outputUsdPerMillion: number }>;
-    }
-  >;
+  pricing: Map<string, ProviderPricingMatrixEntry>;
   offerings?: PeerOffering[];
   stakeAmountUSDC?: number;
   paymentsEnabled?: boolean;
@@ -116,13 +108,16 @@ export class PeerAnnouncer {
   private stopped = false;
   private readonly loadMap: Map<string, number> = new Map();
   private _latestMetadata: PeerMetadata | null = null;
+  private _metadataRevision = 0;
 
   constructor(config: AnnouncerConfig) {
     this.config = config;
   }
 
   async announce(): Promise<void> {
-    this._latestMetadata = await this._buildSignedMetadata(true);
+    const revision = ++this._metadataRevision;
+    const metadata = await this._buildSignedMetadata(true);
+    if (revision === this._metadataRevision) this._latestMetadata = metadata;
     if (this.stopped) return;
 
     const failures = await this._announceTopics();
@@ -139,7 +134,19 @@ export class PeerAnnouncer {
    * Useful for high-frequency fields like current provider load.
    */
   async refreshMetadata(): Promise<void> {
-    this._latestMetadata = await this._buildSignedMetadata(false);
+    const revision = ++this._metadataRevision;
+    const metadata = await this._buildSignedMetadata(false);
+    if (revision === this._metadataRevision) this._latestMetadata = metadata;
+  }
+
+  updatePricing(pricing: ProviderPricingMatrixEntry[]): void {
+    for (const [index, provider] of this.config.providers.entries()) {
+      const updated = pricing[index];
+      if (updated) {
+        provider.pricing = structuredClone(updated);
+        this.config.pricing.set(provider.provider, structuredClone(updated));
+      }
+    }
   }
 
   startPeriodicAnnounce(): void {

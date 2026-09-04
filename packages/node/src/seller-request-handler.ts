@@ -250,7 +250,11 @@ export class SellerRequestHandler {
         return;
       }
 
-      const requestPricing = this.resolveProviderPricing(provider, request);
+      const sessionPricing = this._deps.sellerPaymentManager?.getSessionProviderPricing?.(buyerPeerId, provider.name);
+      const requestedService = this._extractRequestedService(request);
+      const requestPricing = { ...(sessionPricing
+        ? (requestedService ? sessionPricing.services?.[requestedService] : undefined) ?? sessionPricing.defaults
+        : this.resolveProviderPricing(provider, request)) };
       const requestBilling = this._captureSellerBillingContext(provider, request);
       const unitBillingModel = requestBilling
         ? this.resolveProviderUnitBillingModel(provider, requestBilling.context)
@@ -269,11 +273,13 @@ export class SellerRequestHandler {
         } else {
           const requirements = spm?.getPaymentRequirements(
             request.requestId, buyerPeerId, requestPricing,
+            { provider: provider.name, service: requestedService ?? undefined },
           );
           if (requirements) {
             debugLog(`[SellerHandler] No payment session for ${buyerPeerId.slice(0, 12)}... — sending 402 + PaymentRequired`);
             const paymentBody = JSON.stringify({
               error: 'payment_required',
+              ...(requirements.providerPricing ? { providerPricing: requirements.providerPricing } : {}),
               minBudgetPerRequest: requirements.minBudgetPerRequest,
               suggestedAmount: requirements.suggestedAmount,
               ...(requirements.inputUsdPerMillion != null ? { inputUsdPerMillion: requirements.inputUsdPerMillion } : {}),
@@ -392,8 +398,12 @@ export class SellerRequestHandler {
             && estimatedRequestCost > effectiveEstimateLimit;
 
           if (isBlocked || (spent > 0n && (spent > accepted || isAtExactSpendLimit)) || estimatedCostExceedsLockedReserve) {
+            const target = spent;
+            const isAlreadyExhausted = reserveMax > 0n && (accepted >= reserveMax || target > reserveMax);
+            const isFullyExhausted = isBlocked || estimatedCostExceedsLockedReserve || isAlreadyExhausted;
             const baseRequirements = spm.getPaymentRequirements(
               request.requestId, buyerPeerId, requestPricing,
+              { newSession: isFullyExhausted, provider: provider.name, service: requestedService ?? undefined },
             );
             // Tell the buyer exactly how much delivered spend remains unsigned.
             // Do not add forward headroom here: SpendingAuth is claimable
@@ -401,9 +411,6 @@ export class SellerRequestHandler {
             // for work the seller has not delivered. The preflight reserve
             // check also returns target=spent: it is a hard stop before routing
             // work that cannot fit inside the currently locked reserve.
-            const target = spent;
-            const isAlreadyExhausted = reserveMax > 0n && (accepted >= reserveMax || target > reserveMax);
-            const isFullyExhausted = isBlocked || estimatedCostExceedsLockedReserve || isAlreadyExhausted;
             const requirements = {
               ...baseRequirements,
               requiredCumulativeAmount: target.toString(),
@@ -440,6 +447,7 @@ export class SellerRequestHandler {
               body: new TextEncoder().encode(JSON.stringify({
                 error: 'payment_required',
                 minBudgetPerRequest: requirements.minBudgetPerRequest,
+                ...(requirements.providerPricing ? { providerPricing: requirements.providerPricing } : {}),
                 suggestedAmount: requirements.suggestedAmount,
                 requiredCumulativeAmount: requirements.requiredCumulativeAmount,
                 currentSpent: requirements.currentSpent,
