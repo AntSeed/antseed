@@ -12,7 +12,8 @@ export const generatedChainConfigFile = path.join(
   'packages/node/src/payments/generated-contract-addresses.ts',
 );
 
-const contractFields = {
+export const contractFields = {
+  registry: 'registryContractAddress',
   usdc: 'usdcContractAddress',
   deposits: 'depositsContractAddress',
   channels: 'channelsContractAddress',
@@ -20,17 +21,27 @@ const contractFields = {
   staking: 'stakingContractAddress',
   emissions: 'emissionsContractAddress',
   legacyEmissions: 'legacyEmissionsContractAddress',
+  legacyStaking: 'legacyStakingContractAddress',
+  legacyEmissionsV1: 'legacyEmissionsV1ContractAddress',
   antsToken: 'antsTokenAddress',
   identityRegistry: 'identityRegistryAddress',
   stats: 'statsContractAddress',
   depositRelay: 'depositRelayAddress',
+  emissionsGate: 'emissionsGateAddress',
+  sellerPools: 'sellerPoolsAddress',
+  sellerRegistry: 'sellerRegistryAddress',
+  positionInit: 'positionInitAddress',
+  usageAccounting: 'usageAccountingAddress',
+  usageRewards: 'usageRewardsAddress',
+  sellerPoolsRewards: 'sellerPoolsRewardsAddress',
+  legacyEmissionsEscrow: 'legacyEmissionsEscrowAddress',
 };
 
 async function readDeployment(network) {
   return JSON.parse(await readFile(path.join(deploymentsRoot, network, 'current.json'), 'utf8'));
 }
 
-function renderNetwork(record) {
+export function renderNetwork(record) {
   const values = { evmChainId: record.chainId };
   for (const [contractName, field] of Object.entries(contractFields)) {
     const contract = record.contracts[contractName];

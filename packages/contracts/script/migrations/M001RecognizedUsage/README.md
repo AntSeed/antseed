@@ -129,3 +129,35 @@ Writes `history/001-recognized-usage-activated.json` and updates
   after legacy claim activity has wound down.
 - Fallback for locked-path stragglers: `EmissionsV2.setSellerUnlockPolicy`
   (plain `onlyOwner`, works even after any registry renouncement).
+
+## Local CLI rehearsal
+
+Use the persistent M001 sandbox to rehearse CLI behavior on the same pinned Base mainnet fork as the migration fork test. The sandbox runs the deploy phase first and deliberately stops before cutover, preserving the Anvil process between commands.
+
+```bash
+export BASE_MAINNET_RPC_URL=https://your-archive-base-rpc.example
+export ANTS_HOLDER=0x... # ANTS balance at BASE_MAINNET_FORK_BLOCK
+
+pnpm m001:sandbox up --port 8545 --out .m001-sandbox
+pnpm m001:sandbox status --out .m001-sandbox
+```
+
+The deploy command writes a copied deployment ledger and `.m001-sandbox/cli-config.json`. Point CLI commands at that file to verify legacy mode, then cut over and reuse the refreshed file:
+
+```bash
+antseed --config .m001-sandbox/cli-config.json --data-dir /tmp/antseed-m001 seller emissions info
+antseed --config .m001-sandbox/cli-config.json --data-dir /tmp/antseed-m001 network contracts
+
+pnpm m001:sandbox cutover --out .m001-sandbox
+pnpm m001:sandbox fund-position-init 5 --out .m001-sandbox
+pnpm m001:sandbox advance-epoch 2 --out .m001-sandbox
+pnpm m001:sandbox fund-ants 0xYourCliWallet 100 --out .m001-sandbox
+
+antseed --config .m001-sandbox/cli-config.json --data-dir /tmp/antseed-m001 seller pool bootstrap
+antseed --config .m001-sandbox/cli-config.json --data-dir /tmp/antseed-m001 seller stake 100 --epochs 4
+antseed --config .m001-sandbox/cli-config.json --data-dir /tmp/antseed-m001 seller pool positions
+
+pnpm m001:sandbox down --out .m001-sandbox
+```
+
+Additional helpers are `fund-seller <address>`, `advance-epoch [n]`, `fund-ants <address> <amount>`, and `fund-position-init <n>`. The generated config carries all ledger-derived address overrides; the CLI still reads the registry and refuses commands if either active pointer disagrees.

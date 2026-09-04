@@ -6,6 +6,7 @@ import { registerSellerRegisterCommand } from './register.js';
 import { registerSellerStakeCommand } from './stake.js';
 import { registerSellerEmissionsCommand } from './emissions.js';
 import { registerSellerDoctorCommand } from './doctor.js';
+import { registerSellerPoolCommand } from './pool.js';
 
 export function registerSellerCommands(program: Command): void {
   const sellerCmd = program
@@ -18,5 +19,6 @@ export function registerSellerCommands(program: Command): void {
   registerSellerRegisterCommand(sellerCmd);
   registerSellerStakeCommand(sellerCmd);
   registerSellerEmissionsCommand(sellerCmd);
+  registerSellerPoolCommand(sellerCmd);
   registerSellerDoctorCommand(sellerCmd);
 }

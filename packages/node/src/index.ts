@@ -155,6 +155,24 @@ export {
 export { IdentityClient, type IdentityClientConfig } from './payments/evm/identity-client.js';
 export { StakingClient, type StakingClientConfig } from './payments/evm/staking-client.js';
 export { EmissionsClient, type EmissionsClientConfig, type EmissionsEpochParams } from './payments/evm/emissions-client.js';
+export { RegistryClient, type RegistryClientConfig } from './payments/evm/registry-client.js';
+export { UsageAccountingClient, type UsageAccountingClientConfig } from './payments/evm/usage-accounting-client.js';
+export { UsageRewardsClient, type UsageRewardsClientConfig } from './payments/evm/usage-rewards-client.js';
+export { SellerPoolsClient, type SellerPoolsClientConfig, type SellerPoolPosition } from './payments/evm/seller-pools-client.js';
+export { SellerPoolsRewardsClient, type SellerPoolsRewardsClientConfig } from './payments/evm/seller-pools-rewards-client.js';
+export { SellerRegistryClient, type SellerRegistryClientConfig } from './payments/evm/seller-registry-client.js';
+export { PositionInitClient, type PositionInitClientConfig } from './payments/evm/position-init-client.js';
+export { EmissionsGateClient, type EmissionsGateClientConfig } from './payments/evm/emissions-gate-client.js';
+export {
+  ContractStackMismatchError,
+  legacyEpochs,
+  newEpochs,
+  resolveContractStack,
+  type ContractStackAddresses,
+  type ContractStackMode,
+  type ContractStackResolution,
+  type ContractStackRpcOptions,
+} from './payments/contract-stack.js';
 export { RpcHealthMonitor, probeRpcEndpoint } from './payments/rpc-health.js';
 export type { RpcHealthState, RpcHealthStatus, RpcHealthMonitorOptions } from './payments/rpc-health.js';
 export { ANTSTokenClient, type ANTSTokenClientConfig } from './payments/evm/ants-token-client.js';

@@ -10,6 +10,7 @@ export interface ANTSTokenClientConfig {
 
 const ANTS_TOKEN_ABI = [
   'function balanceOf(address account) external view returns (uint256)',
+  'function allowance(address owner, address spender) external view returns (uint256)',
   'function totalSupply() external view returns (uint256)',
   'function name() external view returns (string)',
   'function symbol() external view returns (string)',
@@ -29,6 +30,11 @@ export class ANTSTokenClient extends BaseEvmClient {
   async balanceOf(address: string): Promise<bigint> {
     const contract = new Contract(this._contractAddress, ANTS_TOKEN_ABI, this._provider);
     return contract.getFunction('balanceOf')(address);
+  }
+
+  async allowance(owner: string, spender: string): Promise<bigint> {
+    const contract = new Contract(this._contractAddress, ANTS_TOKEN_ABI, this._provider);
+    return contract.getFunction('allowance')(owner, spender);
   }
 
   async totalSupply(): Promise<bigint> {

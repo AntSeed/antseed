@@ -265,6 +265,8 @@ export interface PaymentsCLIConfig {
     depositsContractAddress?: string;
     /** Deployed AntseedChannels contract address override */
     channelsContractAddress?: string;
+    /** Deployed AntseedRegistry contract address */
+    registryContractAddress?: string;
     /** Deployed AntseedFreeUsage contract address override */
     freeUsageContractAddress?: string;
     /** Deployed AntseedStaking contract address */
@@ -275,6 +277,18 @@ export interface PaymentsCLIConfig {
     identityRegistryAddress?: string;
     /** Deployed AntseedEmissions contract address */
     emissionsContractAddress?: string;
+    legacyEmissionsContractAddress?: string;
+    legacyStakingContractAddress?: string;
+    legacyEmissionsV1ContractAddress?: string;
+    antsTokenAddress?: string;
+    emissionsGateAddress?: string;
+    sellerPoolsAddress?: string;
+    sellerRegistryAddress?: string;
+    positionInitAddress?: string;
+    usageAccountingAddress?: string;
+    usageRewardsAddress?: string;
+    sellerPoolsRewardsAddress?: string;
+    legacyEmissionsEscrowAddress?: string;
     /** Deployed AntseedDepositRelay contract address (gasless deposit sweeps) */
     depositRelayAddress?: string;
     /** Default lock amount per session in human-readable USDC (e.g. "1" = 1 USDC) */

@@ -118,13 +118,24 @@ Sellers relay buyer deposit sweeps by default: the node verifies and simulates e
 Providers must stake a minimum of $10 USDC to participate:
 
 ```bash
-antseed seller stake 10
+antseed seller legacy stake 10
 ```
+
+When the configured network registry has moved to the recognized-usage stack, the CLI rejects new legacy USDC stakes and directs sellers to ANTS pools instead:
+
+```bash
+antseed seller register
+antseed seller pool bootstrap
+antseed seller stake 100 --epochs 4
+antseed seller pool positions
+```
+
+The CLI verifies `AntseedRegistry.emissions()` and `staking()` before stack-aware commands. A mismatch between the registry and `payments.crypto` address overrides fails loudly instead of silently selecting another contract stack. `antseed network contracts` shows the active mode and pointer matches.
 
 Staking binds your wallet to an on-chain agent identity (ERC-8004). To withdraw your stake:
 
 ```bash
-antseed seller unstake
+antseed seller legacy unstake
 ```
 
 ### ANTS Token Emissions
@@ -140,6 +151,8 @@ Check your pending emissions:
 ```bash
 antseed seller emissions info
 ```
+
+After cutover, emissions commands include finalized rewards from both stacks. `--legacy-only` and `--new-only` restrict reads or claims when an operator wants to process the stacks separately.
 
 ## Contract Addresses (Base Mainnet)
 

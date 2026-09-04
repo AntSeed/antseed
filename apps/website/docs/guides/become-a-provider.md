@@ -14,7 +14,7 @@ AntSeed is designed for providers who build differentiated services — such as 
 :::
 
 :::info Seller ANTS emissions
-Starting from the current epoch, seller ANTS emissions are tracked but routed into a dedicated Provider Pool and locked for now. These incentives are not freely claimable yet. Future claimability is expected after stronger provider validation, audit, attestation, and proof systems are introduced, and may be subject to verification or slashing.
+The CLI verifies the active contract stack through `AntseedRegistry`. On the legacy stack, seller rewards follow the existing emissions path. After the recognized-usage cutover, finalized legacy rewards remain claimable and new seller/operator plus pool-staker rewards use the recognized-usage contracts.
 :::
 
 ## Prerequisites
@@ -213,12 +213,23 @@ antseed seller status
 # Register your identity on-chain (ERC-8004)
 antseed seller register
 
-# Stake USDC (minimum $10)
-antseed seller stake 10
+# Stake USDC (minimum $10, legacy stack)
+antseed seller legacy stake 10
 
 # Verify everything is ready
 antseed seller status
 ```
+
+On networks that have completed the recognized-usage cutover, use an ANTS seller pool instead of creating new legacy USDC stake:
+
+```bash
+antseed seller register
+antseed seller pool bootstrap
+antseed seller stake 100 --epochs 4
+antseed seller pool positions
+```
+
+Pool stake activates after the contract's activation delay. The CLI reports positions as pending, active, matured, closed, or withdrawn and refuses an early withdrawal unless `--force` is supplied to acknowledge slashing.
 
 ## 7. Add Your Services
 
@@ -342,7 +353,7 @@ This release emits discovery metadata v12. Older buyers reject newer metadata an
 
 USDC earnings are paid directly to your wallet address on each `settle()` or `close()` call. No claim step needed for USDC.
 
-Seller-side ANTS emissions are different: they are currently tracked but locked in the Provider Pool while stronger validation systems are developed. Provider ANTS claims may become available later and may be subject to verification or slashing.
+Seller-side ANTS rewards are epoch-based. The CLI claims finalized legacy epochs from the legacy emissions contract and, after recognized-usage cutover, claims new operator rewards while exposing separately indexed seller-pool staker rewards.
 
 :::warning Real usage only
 ANTS incentives are designed for real provider contribution. Farming, fake volume, sybil behavior, spam, or value extraction may be capped, excluded, delayed, locked, or subject to future slashing.

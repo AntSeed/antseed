@@ -259,7 +259,7 @@ export function registerSellerSetupCommand(sellerCmd: Command): void {
         console.log(chalk.bold('\nNext steps:\n'));
         console.log(`  ${chalk.cyan('1.')} Set credentials: ${chalk.dim(getSellerSetupCredentialHint(pluginName))}`);
         console.log(`  ${chalk.cyan('2.')} Register on-chain: ${chalk.dim('antseed seller register')}`);
-        console.log(`  ${chalk.cyan('3.')} Stake USDC: ${chalk.dim('antseed seller stake 10')}`);
+        console.log(`  ${chalk.cyan('3.')} Stake: ${chalk.dim('antseed seller stake 10')} ${chalk.dim('(add --epochs <n> on recognized-usage networks)')}`);
         console.log(`  ${chalk.cyan('4.')} Start selling: ${chalk.dim('antseed seller start')}`);
         console.log('');
 

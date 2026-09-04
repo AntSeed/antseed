@@ -13,8 +13,13 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 | **Providing** | |
 | `antseed seller start` | Start providing AI services on the P2P network |
 | `antseed seller register` | Register peer identity on-chain (ERC-8004) |
-| `antseed seller stake <amount>` | Stake USDC as a provider (min $10) |
-| `antseed seller unstake` | Withdraw staked USDC |
+| `antseed seller stake <amount> --epochs <n>` | Stake ANTS into your seller pool (recognized-usage stack) |
+| `antseed seller legacy stake <amount>` | Stake USDC as a provider before cutover (min $10) |
+| `antseed seller legacy unstake` | Withdraw legacy USDC stake |
+| `antseed seller pool bootstrap` | Claim the legacy-seller starter ANTS position after the recognized-usage cutover |
+| `antseed seller pool positions` | List seller-pool positions and lifecycle state |
+| `antseed seller pool rewards [claim]` | View or claim indexed pool rewards |
+| `antseed seller pool withdraw <id...> [--force]` | Withdraw matured positions or explicitly accept early-exit slashing |
 | `antseed seller emissions claim` | Claim accumulated seller payouts |
 | **Buying** | |
 | `antseed buyer start` | Start the buyer proxy and connect to sellers |
@@ -41,6 +46,7 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 | `antseed metrics serve` | Serve Prometheus metrics for buyers and sellers |
 | `antseed buyer channels` | List payment channels |
 | `antseed seller emissions info` | View ANTS emissions and epoch info |
+| `antseed network contracts [--json]` | Verify configured stack addresses against the on-chain registry |
 | `antseed dev` | Run seller + buyer locally for testing |
 | `antseed network bootstrap` | Run a dedicated DHT bootstrap node |
 
@@ -341,11 +347,44 @@ export ANTSEED_IDENTITY_HEX=<your-private-key-hex>
 antseed seller register
 
 # 4. Stake USDC (minimum $10)
-antseed seller stake 10
+antseed seller legacy stake 10
 
 # 6. Start providing
 antseed seller start
 ```
+
+After the M001 recognized-usage cutover, new seller stake moves from legacy USDC staking to ANTS seller pools:
+
+```bash
+antseed seller register
+antseed seller pool bootstrap
+antseed seller stake 100 --epochs 4
+antseed seller pool positions
+antseed seller pool rewards
+antseed seller pool rewards claim
+```
+
+`antseed seller stake` targets the active stack: ANTS seller pools after cutover (`--epochs` required) and legacy USDC before it. `antseed seller legacy stake` is explicit legacy USDC staking and refuses to run after cutover. `antseed seller legacy unstake` (also available as `antseed seller unstake`) withdraws legacy stake and warns that doing so can remove temporary eligibility before an ANTS pool becomes active. Emissions commands verify the registry before every read or claim and, after cutover, process finalized legacy epochs and recognized-usage epochs in the same run. Use `--legacy-only` or `--new-only` to restrict a claim.
+
+### M001 Anvil rehearsal
+
+The repository includes a persistent Base-mainnet fork sandbox for exercising the exact pre-cutover and post-cutover CLI paths. It requires an archive-capable `BASE_MAINNET_RPC_URL` and an `ANTS_HOLDER` address with ANTS at the pinned fork block. Seller USDC is sourced from the forked legacy staking contract.
+
+```bash
+export BASE_MAINNET_RPC_URL=https://your-archive-base-rpc.example
+export ANTS_HOLDER=0x...
+
+pnpm m001:sandbox up
+pnpm m001:sandbox status
+
+# Use .m001-sandbox/cli-config.json with CLI commands before cutover.
+pnpm m001:sandbox cutover
+pnpm m001:sandbox advance-epoch 2
+pnpm m001:sandbox fund-ants 0xYourCliWallet 100
+pnpm m001:sandbox down
+```
+
+Use `--port <port>` and `--out <dir>` on each sandbox command to override the defaults (`8545` and `.m001-sandbox/`).
 
 ### Buyer Setup (Consuming)
 

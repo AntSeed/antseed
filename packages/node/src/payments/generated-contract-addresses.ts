@@ -3,6 +3,7 @@
 export const DEPLOYED_CONTRACT_ADDRESSES = {
   'base-mainnet': {
     evmChainId: 8453,
+    registryContractAddress: '0xf33fC901BFa97326379A369401F4490E231B69B0',
     usdcContractAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     depositsContractAddress: '0x0F7a3a8f4Da01637d1202bb5443fcF7F88F99fD2',
     channelsContractAddress: '0xBA66d3b4fbCf472F6F11D6F9F96aaCE96516F09d',
@@ -19,6 +20,7 @@ export const DEPLOYED_CONTRACT_ADDRESSES = {
   },
   'base-sepolia': {
     evmChainId: 84532,
+    registryContractAddress: '0x81562e904D228Ee05DB473f5c9453F0f0D65ad5A',
     usdcContractAddress: '0xcA04797CaB6B412Cee6798B7314a05AdFDc3Cf23',
     depositsContractAddress: '0x96f083A9801AFdcE7D764651954A1A9Fbd489FEA',
     channelsContractAddress: '0x3b0b94AC27C042CAC17103A897Fb5cEb7D8b4cf7',

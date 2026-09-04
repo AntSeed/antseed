@@ -32,6 +32,8 @@ import {
 } from './deployments/m001-cutover.mjs';
 import { recordErrors } from './validate-contract-deployments.mjs';
 import { parseSignerSpecs, resolveSigners } from './deployments/runtime/signers.mjs';
+import { parseSandboxArgs } from './m001-sandbox.mjs';
+import { renderNetwork } from './generate-contract-chain-config.mjs';
 
 const ADDRESS = {
   registry: '0x0000000000000000000000000000000000000001',
@@ -91,6 +93,28 @@ test('parses the explicit deployment modes', () => {
   assert.equal(parseDeployArgs(['m001', '--network', 'base-sepolia', '--broadcast']).mode, 'broadcast');
   assert.equal(parseDeployArgs(['--', 'M001', '--network', 'base-sepolia', '--broadcast']).mode, 'broadcast');
   assert.equal(parseDeployArgs(['M001', '--network', 'base-mainnet', '--fork-test']).mode, 'fork-test');
+});
+
+test('parses M001 sandbox options without starting Anvil', () => {
+  const parsed = parseSandboxArgs(['up', '--port', '18545', '--out', 'tmp/sandbox']);
+  assert.equal(parsed.command, 'up');
+  assert.equal(parsed.port, 18545);
+  assert.equal(parsed.out.endsWith(path.join('tmp', 'sandbox')), true);
+});
+
+test('renders recognized-usage deployment fields into chain config', () => {
+  const rendered = renderNetwork({ chainId: 8453, contracts: {
+    registry: { address: ADDRESS.registry },
+    legacyStaking: { address: ADDRESS.legacyStaking },
+    legacyEmissionsV1: { address: ADDRESS.legacyEmissions },
+    usageAccounting: { address: ADDRESS.usageAccounting },
+    sellerRegistry: { address: ADDRESS.sellerRegistry },
+  } });
+  assert.equal(rendered.registryContractAddress, ADDRESS.registry);
+  assert.equal(rendered.legacyStakingContractAddress, ADDRESS.legacyStaking);
+  assert.equal(rendered.legacyEmissionsV1ContractAddress, ADDRESS.legacyEmissions);
+  assert.equal(rendered.usageAccountingAddress, ADDRESS.usageAccounting);
+  assert.equal(rendered.sellerRegistryAddress, ADDRESS.sellerRegistry);
 });
 
 test('parses signer specs and resolves them to addresses, never keys', async () => {
@@ -259,6 +283,7 @@ test('updates canonical contract aliases when a migration activates', () => {
     contracts: {
       emissions: { address: ADDRESS.legacyEmissions, deployedInRelease: null },
       staking: { address: ADDRESS.legacyStaking, deployedInRelease: null },
+      legacyEmissions: { address: '0x0000000000000000000000000000000000000008', deployedInRelease: null },
     },
   };
   const activeContracts = {
@@ -270,6 +295,9 @@ test('updates canonical contract aliases when a migration activates', () => {
 
   assert.equal(current.contracts.emissions.address, ADDRESS.usageAccounting);
   assert.equal(current.contracts.staking.address, ADDRESS.sellerRegistry);
+  assert.equal(current.contracts.legacyEmissions.address, ADDRESS.legacyEmissions);
+  assert.equal(current.contracts.legacyStaking.address, ADDRESS.legacyStaking);
+  assert.equal(current.contracts.legacyEmissionsV1.address, '0x0000000000000000000000000000000000000008');
   assert.notEqual(current.contracts.emissions, current.contracts.usageAccounting);
   assert.equal(current.contracts.emissions.deployedInRelease, true);
 });
@@ -456,6 +484,10 @@ test('always terminates disposable Anvil forks after success or failure', async 
   assert.equal(result, 'http://127.0.0.1:18545');
   assert.equal(children[0].killed, true);
   assert.equal(children[0].args.includes('--fork-block-number'), false, 'latest block is used when none is pinned');
+  assert.equal(children[0].args.includes('--no-rate-limit'), true);
+  assert.equal(children[0].args.includes('--retries'), true);
+  assert.equal(children[0].args.includes('--timeout'), true);
+  assert.equal(children[0].args.includes('--disable-min-priority-fee'), true);
   assert.deepEqual(advances, [{ rpcUrl: result, timestamp: 1234 }]);
 
   await assert.rejects(
@@ -468,6 +500,16 @@ test('always terminates disposable Anvil forks after success or failure', async 
   );
   assert.equal(children[1].killed, true);
   assert.equal(children[1].args.includes('42'), true);
+
+  await withAnvilFork(
+    { forkUrl: 'https://rpc.example', chainId: 999, port: 19545, keepAlive: true },
+    async ({ rpcUrl, child }) => {
+      assert.equal(rpcUrl, 'http://127.0.0.1:19545');
+      assert.equal(child, children[2]);
+    },
+    dependencies,
+  );
+  assert.equal(children[2].killed, false);
 });
 
 test('rebuilds a missing checkpoint from the committed history record', async () => {

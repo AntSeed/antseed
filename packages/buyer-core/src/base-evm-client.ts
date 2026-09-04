@@ -12,7 +12,7 @@ import {
 } from 'ethers';
 
 const FALLBACK_STALL_TIMEOUT_MS = 750;
-const JSON_RPC_REQUEST_TIMEOUT_MS = 2_500;
+const JSON_RPC_REQUEST_TIMEOUT_MS = 10_000;
 
 function createJsonRpcProvider(url: string, network?: Network, opts?: object): JsonRpcProvider {
   const request = new FetchRequest(url);

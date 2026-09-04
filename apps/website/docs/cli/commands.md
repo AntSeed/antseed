@@ -24,8 +24,14 @@ antseed seller start                  Start providing AI services
 antseed seller start --base-rpc-url <url>
                                       Use a custom Base RPC URL for this run
 antseed seller register               Register peer identity on-chain (ERC-8004)
-antseed seller stake <amount>         Stake USDC as a provider (min $10)
-antseed seller unstake                Withdraw staked USDC
+antseed seller stake <amount> --epochs <n>
+                                      Stake ANTS into your seller pool (post-cutover)
+antseed seller legacy stake <amount>  Stake USDC as a provider (pre-cutover, min $10)
+antseed seller legacy unstake         Withdraw legacy USDC stake
+antseed seller pool bootstrap         Claim the legacy-seller starter ANTS position
+antseed seller pool positions         List pool positions
+antseed seller pool rewards [claim]   View or claim indexed pool rewards
+antseed seller pool withdraw <id...>  Withdraw pool positions (`--force` for early exit)
 antseed seller emissions claim        Claim accumulated seller payouts
 ```
 
@@ -55,6 +61,7 @@ antseed peer <peerId>                 View a peer's profile
 antseed profile                       Manage your peer profile
 antseed buyer channels                List payment channels
 antseed seller emissions info         View epoch info and ANTS emissions
+antseed network contracts             Verify configured contracts against the registry
 antseed network bootstrap             Run a dedicated DHT bootstrap node
 antseed buyer connection              Manage connection settings
 antseed dev                           Run seller + buyer locally for testing
