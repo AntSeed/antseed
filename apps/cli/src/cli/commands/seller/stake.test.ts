@@ -17,7 +17,9 @@ test('seller stake is stack-aware and accepts an ANTS lock duration', () => {
   const stake = findCommand(sellerCommand(), 'stake');
   assert.ok(stake);
   assert.ok(stake!.options.some((option) => option.long === '--epochs'));
-  assert.ok(stake!.options.some((option) => option.long === '--agent-id'));
+  const agentId = stake!.options.find((option) => option.long === '--agent-id');
+  assert.ok(agentId);
+  assert.equal(agentId!.hidden, true);
 });
 
 test('legacy USDC staking lives under seller legacy', () => {
@@ -31,10 +33,35 @@ test('seller unstake remains available as a legacy alias', () => {
   assert.ok(findCommand(sellerCommand(), 'unstake'));
 });
 
-test('pool bootstrap replaces pool init but keeps the old name as an alias', () => {
+test('primary help shows aggregate rewards while retaining hidden compatibility commands', () => {
+  const seller = sellerCommand();
+  const help = seller.helpInformation();
+  assert.match(help, /rewards/);
+  assert.doesNotMatch(help, /\n\s+emissions\s/);
+  assert.doesNotMatch(help, /\n\s+unstake\s/);
+  const pool = findCommand(seller, 'pool')!;
+  assert.ok(findCommand(pool, 'rewards'));
+  assert.doesNotMatch(pool.helpInformation(), /\n\s+rewards/);
+});
+
+test('pool claim-starter keeps bootstrap and init as aliases', () => {
   const pool = findCommand(sellerCommand(), 'pool')!;
-  const bootstrap = findCommand(pool, 'bootstrap');
-  assert.ok(bootstrap);
-  assert.ok(bootstrap!.aliases().includes('init'));
-  assert.ok(findCommand(pool, 'stake'));
+  const claimStarter = findCommand(pool, 'claim-starter');
+  assert.ok(claimStarter);
+  assert.deepEqual(claimStarter!.aliases(), ['bootstrap', 'init']);
+  assert.equal(findCommand(pool, 'stake'), undefined);
+});
+
+test('seller rewards provides the minimal aggregate reward surface', () => {
+  const rewards = findCommand(sellerCommand(), 'rewards');
+  assert.ok(rewards);
+  assert.ok(findCommand(rewards!, 'claim'));
+});
+
+test('pool withdrawal requires explicit slashing consent instead of force', () => {
+  const pool = findCommand(sellerCommand(), 'pool')!;
+  const withdraw = findCommand(pool, 'withdraw')!;
+  assert.ok(withdraw.options.some((option) => option.long === '--accept-slashing'));
+  assert.ok(withdraw.options.some((option) => option.long === '--yes'));
+  assert.ok(!withdraw.options.some((option) => option.long === '--force'));
 });

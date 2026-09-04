@@ -61,7 +61,7 @@ export function registerSellerStatusCommand(sellerCmd: Command): void {
               const pools = createSellerPoolsClient(config);
               const agentId = await registry.getAgentId(walletAddress);
               const [legacyStake, activePoolStake, eligible, positionCount] = await Promise.all([
-                createLegacyStakingClient(config).getStake(walletAddress),
+                stack.addresses.legacyStakingContractAddress ? createLegacyStakingClient(config).getStake(walletAddress) : 0n,
                 agentId ? pools.poolActiveStakeAtEpoch(agentId, stack.currentEpoch) : 0n,
                 registry.isStakedAboveMin(walletAddress),
                 pools.stakerPositionCount(walletAddress),

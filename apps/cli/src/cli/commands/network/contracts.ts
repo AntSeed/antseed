@@ -38,7 +38,7 @@ export function registerNetworkContractsCommand(networkCmd: Command): void {
           }, null, 2));
           return;
         }
-        console.log(chalk.bold(`Contract Stack (${crypto.chainId})\n`));
+        console.log(chalk.bold(`Contracts (${crypto.chainId})\n`));
         console.log(`Mode: ${chalk.cyan(stack.mode)}`);
         console.log(`Current epoch: ${stack.currentEpoch}`);
         if (stack.firstRewardedEpoch !== undefined) console.log(`First rewarded epoch: ${stack.firstRewardedEpoch}`);

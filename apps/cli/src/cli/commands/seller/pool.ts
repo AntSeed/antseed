@@ -1,4 +1,6 @@
 import type { Command } from 'commander';
+import { isAddress, ZeroAddress } from 'ethers';
+import { createInterface } from 'node:readline/promises';
 import chalk from 'chalk';
 import Table from 'cli-table3';
 import ora from 'ora';
@@ -12,11 +14,14 @@ import {
   createSellerPoolsRewardsClient,
   createSellerRegistryClient,
   formatAnts,
+  formatAntsExact,
   loadCryptoContext,
   parseAntsToBaseUnits,
   resolveCliContractStack,
 } from '../../payment-utils.js';
 import type { SellerPoolPosition } from '@antseed/node/payments';
+import { claimPoolRewards, previewPoolRewards, RewardClaimProgress } from '../reward-actions.js';
+import { requireSellerBinding } from '../../seller-contract-clients.js';
 
 export function positionState(position: SellerPoolPosition, currentEpoch: number): string {
   if (position.withdrawn) return 'withdrawn';
@@ -35,15 +40,47 @@ export function validateStakeEpochs(epochs: number, min: number, max: number): v
 async function requirePoolStack(config: Awaited<ReturnType<typeof loadConfig>>) {
   const stack = await resolveCliContractStack(config);
   if (stack.mode !== 'recognized-usage') {
-    throw new Error('Seller pool commands require the recognized-usage contract stack. Run them after M001 cutover.');
+    throw new Error('Seller pool commands are available after the recognized-usage upgrade.');
   }
   return stack;
 }
 
-export function registerSellerPoolCommand(sellerCmd: Command): void {
-  const pool = sellerCmd.command('pool').description('Manage recognized-usage ANTS seller-pool positions');
+export interface EarlyExitEstimate {
+  id: number;
+  amount: bigint;
+  slashBps: number;
+  slashedAmount: bigint;
+  returnedAmount: bigint;
+}
 
-  pool.command('bootstrap').alias('init').description('Claim the legacy-seller starter ANTS position').action(async () => {
+export function estimateEarlyExit(position: SellerPoolPosition, slashBps: number): EarlyExitEstimate {
+  const slashedAmount = position.amount * BigInt(slashBps) / 10_000n;
+  return {
+    id: position.id,
+    amount: position.amount,
+    slashBps,
+    slashedAmount,
+    returnedAmount: position.amount - slashedAmount,
+  };
+}
+
+async function confirmEarlyExit(totalSlashed: bigint): Promise<void> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error('Early withdrawal needs interactive confirmation. Re-run in a terminal, or add --yes after reviewing the slashing estimate.');
+  }
+  const input = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await input.question(chalk.red(`Withdraw with an estimated burn of ${formatAntsExact(totalSlashed)} ANTS? [y/N] `));
+    if (!['y', 'yes'].includes(answer.trim().toLowerCase())) throw new Error('Withdrawal cancelled.');
+  } finally {
+    input.close();
+  }
+}
+
+export function registerSellerPoolCommand(sellerCmd: Command): void {
+  const pool = sellerCmd.command('pool').description('Manage ANTS staking positions');
+
+  pool.command('claim-starter').aliases(['bootstrap', 'init']).description('Claim the legacy-seller starter ANTS position').action(async () => {
     const global = getGlobalOptions(pool);
     const config = await loadConfig(global.config);
     const spinner = ora('Checking starter position...').start();
@@ -70,14 +107,6 @@ export function registerSellerPoolCommand(sellerCmd: Command): void {
     }
   });
 
-  pool.command('stake <amount>')
-    .description('Stake ANTS into a seller pool (alias of `antseed seller stake`)')
-    .requiredOption('--epochs <n>', 'lock duration in epochs', (value) => Number(value))
-    .option('--agent-id <id>', 'seller agent ID', (value) => Number(value))
-    .action(async (amount: string, options: PoolStakeOptions) => {
-      await runPoolStake(getGlobalOptions(pool), amount, options);
-    });
-
   pool.command('positions').description('List your seller-pool positions').option('--json', 'output as JSON', false).action(async (options) => {
     const global = getGlobalOptions(pool);
     const config = await loadConfig(global.config);
@@ -85,7 +114,7 @@ export function registerSellerPoolCommand(sellerCmd: Command): void {
       const stack = await requirePoolStack(config);
       const { address } = await loadCryptoContext(global.dataDir);
       const pools = createSellerPoolsClient(config);
-      const ids = await pools.stakerPositionIds(address);
+      const ids = await pools.allStakerPositionIds(address);
       const positions = await Promise.all(ids.map(async (id) => {
         const position = await pools.position(id);
         return { ...position, state: positionState(position, stack.currentEpoch), withdrawableEpoch: await pools.positionWithdrawableEpoch(id) };
@@ -107,19 +136,53 @@ export function registerSellerPoolCommand(sellerCmd: Command): void {
     }
   });
 
-  pool.command('withdraw <ids...>').description('Withdraw seller-pool positions').option('--force', 'allow early exit and slashing', false).action(async (rawIds: string[], options) => {
+  pool.command('withdraw <ids...>')
+    .description('Withdraw seller-pool positions')
+    .option('--accept-slashing', 'allow an early exit after showing the estimated principal loss', false)
+    .option('-y, --yes', 'skip the interactive confirmation after accepting slashing', false)
+    .action(async (rawIds: string[], options: { acceptSlashing?: boolean; yes?: boolean }) => {
     const global = getGlobalOptions(pool);
     const config = await loadConfig(global.config);
     const spinner = ora('Checking positions...').start();
     try {
       const stack = await requirePoolStack(config);
       const ids = rawIds.map((value) => Number(value));
-      if (ids.some((id) => !Number.isInteger(id) || id <= 0)) throw new Error('Position IDs must be positive integers.');
-      const positions = await Promise.all(ids.map((id) => createSellerPoolsClient(config).position(id)));
-      const early = positions.filter((position) => !position.withdrawn && position.closedAtEpoch === 0 && stack.currentEpoch < position.stakeEndEpoch);
-      if (early.length > 0 && !options.force) throw new Error(`Position(s) ${early.map((position) => position.id).join(', ')} are still locked; re-run with --force to accept early-exit slashing.`);
-      const { wallet } = await loadCryptoContext(global.dataDir);
-      const txHash = await createSellerPoolsClient(config).withdrawStakes(wallet, ids);
+      if (ids.some((id) => !Number.isSafeInteger(id) || id <= 0)) throw new Error('Position IDs must be positive safe integers.');
+      if (new Set(ids).size !== ids.length) throw new Error('Position IDs must not be repeated.');
+      const { wallet, address } = await loadCryptoContext(global.dataDir);
+      const pools = createSellerPoolsClient(config);
+      const positions = await Promise.all(ids.map((id) => pools.position(id)));
+      const notOwned = positions.filter((position) => position.owner.toLowerCase() !== address.toLowerCase());
+      if (notOwned.length > 0) throw new Error(`Position(s) ${notOwned.map((position) => position.id).join(', ')} are not owned by this wallet.`);
+      const unavailable = positions.filter((position) => position.withdrawn || position.closedAtEpoch !== 0);
+      if (unavailable.length > 0) throw new Error(`Position(s) ${unavailable.map((position) => position.id).join(', ')} are already closed or withdrawn.`);
+      const withdrawableEpochs = await Promise.all(positions.map((position) => pools.positionWithdrawableEpoch(position.id)));
+      const pending = positions.filter((_position, index) => stack.currentEpoch < withdrawableEpochs[index]!);
+      if (pending.length > 0) {
+        throw new Error(`Position change pending for position(s) ${pending.map((position) => position.id).join(', ')}; try again in the next epoch.`);
+      }
+      if (options.yes && !options.acceptSlashing) throw new Error('--yes requires --accept-slashing.');
+      const estimates = (await Promise.all(positions
+        .map(async (position) => estimateEarlyExit(position, await pools.earlyExitSlashBps(position.id)))))
+        .filter((estimate) => estimate.slashBps > 0);
+      const totalSlashed = estimates.reduce((total, estimate) => total + estimate.slashedAmount, 0n);
+      if (estimates.length > 0) {
+        spinner.stop();
+        console.log(chalk.bold('Early-exit slashing estimate:\n'));
+        for (const estimate of estimates) {
+          console.log(`  Position ${estimate.id}: burn ${chalk.red(`${formatAntsExact(estimate.slashedAmount)} ANTS`)} (${(estimate.slashBps / 100).toFixed(2)}%), return ${formatAntsExact(estimate.returnedAmount)} ANTS`);
+        }
+        console.log(chalk.red(`\nEstimated principal burned: ${formatAntsExact(totalSlashed)} ANTS`));
+        console.log(chalk.yellow('Final slashing is determined on-chain. Rates may change before the transaction confirms.'));
+        if (!options.acceptSlashing) throw new Error('Positions are still locked. Re-run with --accept-slashing to proceed.');
+        if (!options.yes) await confirmEarlyExit(totalSlashed);
+        spinner.start('Withdrawing positions...');
+      }
+      const latestQuotes = await Promise.all(positions.map(async (position) => estimateEarlyExit(position, await pools.earlyExitSlashBps(position.id))));
+      if (latestQuotes.reduce((total, quote) => total + quote.slashedAmount, 0n) > totalSlashed) {
+        throw new Error('The slashing estimate increased. Re-run the command to review the new estimate.');
+      }
+      const txHash = await pools.withdrawStakes(wallet, ids);
       spinner.succeed(chalk.green(`Withdrew ${ids.length} position(s)`));
       console.log(chalk.dim(`Transaction: ${txHash}`));
     } catch (error) {
@@ -128,7 +191,7 @@ export function registerSellerPoolCommand(sellerCmd: Command): void {
     }
   });
 
-  const rewards = pool.command('rewards').description('Show or claim indexed seller-pool rewards').option('--json', 'output as JSON', false);
+  const rewards = pool.command('rewards', { hidden: true }).description('Show or claim pool rewards (use seller rewards for all rewards)').option('--json', 'output as JSON', false);
   rewards.action(async (options) => {
     const global = getGlobalOptions(rewards);
     const config = await loadConfig(global.config);
@@ -137,10 +200,9 @@ export function registerSellerPoolCommand(sellerCmd: Command): void {
       const { address } = await loadCryptoContext(global.dataDir);
       const pools = createSellerPoolsClient(config);
       const rewardsClient = createSellerPoolsRewardsClient(config);
-      const ids = await pools.stakerPositionIds(address);
-      const pending = await Promise.all(ids.map(async (id) => ({ id, amount: await rewardsClient.pendingIndexedStakerReward(id) })));
+      const pending = await previewPoolRewards(pools, rewardsClient, address);
       const total = pending.reduce((sum, item) => sum + item.amount, 0n);
-      if (options.json) console.log(JSON.stringify({ positions: pending, total }, (_key, value) => typeof value === 'bigint' ? value.toString() : value, 2));
+      if (options.json) console.log(JSON.stringify({ positions: pending.map(({ id, amount }) => ({ id, amount })), total }, (_key, value) => typeof value === 'bigint' ? value.toString() : value, 2));
       else {
         for (const item of pending) console.log(`Position ${item.id}: ${formatAnts(item.amount)} ANTS`);
         console.log(chalk.bold(`Total: ${formatAnts(total)} ANTS`));
@@ -151,30 +213,32 @@ export function registerSellerPoolCommand(sellerCmd: Command): void {
     }
   });
 
-  rewards.command('claim').description('Claim indexed rewards').option('--position <id>', 'claim one position', (value) => Number(value)).option('--recipient <address>', 'reward recipient').action(async (options) => {
+  rewards.command('claim').description('Claim pool rewards').option('--position <id>', 'claim one position', (value) => Number(value)).option('--recipient <address>', 'reward recipient').action(async (options) => {
     const global = getGlobalOptions(rewards);
     const config = await loadConfig(global.config);
     const spinner = ora('Checking pending rewards...').start();
+    let progress: RewardClaimProgress | undefined;
     try {
+      if (options.position !== undefined && (!Number.isSafeInteger(options.position) || options.position <= 0)) {
+        throw new Error('Position ID must be a positive integer.');
+      }
       await requirePoolStack(config);
       const { wallet, address } = await loadCryptoContext(global.dataDir);
       const pools = createSellerPoolsClient(config);
       const rewardsClient = createSellerPoolsRewardsClient(config);
-      const ids = options.position ? [options.position] : await pools.stakerPositionIds(address);
-      const pendingIds = [];
-      for (const id of ids) if (await rewardsClient.pendingIndexedStakerReward(id) > 0n) pendingIds.push(id);
-      if (pendingIds.length === 0) {
-        spinner.succeed(chalk.yellow('No indexed pool rewards pending.'));
-        return;
-      }
       const recipient = options.recipient || address;
-      const txHash = pendingIds.length === 1
-        ? await rewardsClient.claimStakerRewards(wallet, pendingIds[0]!, recipient)
-        : await rewardsClient.claimStakerRewardsBatch(wallet, pendingIds, recipient);
-      spinner.succeed(chalk.green(`Claimed rewards for ${pendingIds.length} position(s)`));
-      console.log(chalk.dim(`Transaction: ${txHash}`));
+      if (!isAddress(recipient) || recipient === ZeroAddress) throw new Error('Reward recipient must be a valid nonzero address.');
+      const token = createAntsTokenClient(config);
+      progress = new RewardClaimProgress(
+        (hash, kind) => console.log(chalk.dim(`${kind === 'accounting' ? 'Preparation' : 'Claim'} transaction confirmed: ${hash}`)),
+        (hash) => token.receivedInTransaction(hash, recipient),
+      );
+      await claimPoolRewards(pools, rewardsClient, wallet, address, recipient, progress.record, () => {
+        spinner.text = 'Updating pool rewards (preparation transactions require gas)...';
+      }, options.position);
+      spinner.succeed(progress.claimed > 0n ? chalk.green(`Claimed ${formatAnts(progress.claimed)} ANTS`) : chalk.yellow('No pool rewards pending.'));
     } catch (error) {
-      spinner.fail(chalk.red((error as Error).message));
+      spinner.fail(chalk.red(progress?.failure((error as Error).message) ?? (error as Error).message));
       process.exitCode = 1;
     }
   });
@@ -185,7 +249,7 @@ export interface PoolStakeOptions {
   agentId?: number;
 }
 
-/** Stake ANTS into a seller pool. Shared by `seller stake` and `seller pool stake`. */
+/** Stake ANTS into a seller pool through the primary `seller stake` command. */
 export async function runPoolStake(
   global: { config: string; dataDir: string },
   amount: string,
@@ -201,16 +265,7 @@ export async function runPoolStake(
     const registry = createSellerRegistryClient(config);
     const [minEpochs, maxEpochs] = await Promise.all([pools.minStakeEpochs(), pools.maxStakeEpochs()]);
     validateStakeEpochs(options.epochs, minEpochs, maxEpochs);
-    let agentId = options.agentId || await registry.getAgentId(address);
-    if (!agentId) agentId = await createLegacyStakingClient(config).getAgentId(address);
-    if (!agentId) throw new Error('No seller agent ID found. Pass --agent-id <id> or run antseed seller register.');
-    const boundAgentId = await registry.getAgentId(address);
-    if (boundAgentId === 0) {
-      spinner.text = 'Binding seller registry...';
-      await registry.registerSeller(wallet, agentId);
-    } else if (boundAgentId !== agentId) {
-      throw new Error(`Seller is bound to agent ${boundAgentId}, not ${agentId}.`);
-    }
+    const agentId = await requireSellerBinding(registry, address, options.agentId);
     const token = createAntsTokenClient(config);
     const balance = await token.balanceOf(address);
     if (balance < amountBaseUnits) throw new Error(`Insufficient ANTS balance: have ${formatAnts(balance)}, need ${formatAnts(amountBaseUnits)}.`);

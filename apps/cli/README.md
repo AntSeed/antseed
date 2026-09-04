@@ -13,14 +13,13 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 | **Providing** | |
 | `antseed seller start` | Start providing AI services on the P2P network |
 | `antseed seller register` | Register peer identity on-chain (ERC-8004) |
-| `antseed seller stake <amount> --epochs <n>` | Stake ANTS into your seller pool (recognized-usage stack) |
+| `antseed seller stake <amount> [--epochs <n>]` | Stake as a provider: ANTS after the recognized-usage upgrade, USDC before it |
 | `antseed seller legacy stake <amount>` | Stake USDC as a provider before cutover (min $10) |
 | `antseed seller legacy unstake` | Withdraw legacy USDC stake |
-| `antseed seller pool bootstrap` | Claim the legacy-seller starter ANTS position after the recognized-usage cutover |
+| `antseed seller pool claim-starter` | Claim the legacy-seller starter ANTS position after the recognized-usage upgrade |
 | `antseed seller pool positions` | List seller-pool positions and lifecycle state |
-| `antseed seller pool rewards [claim]` | View or claim indexed pool rewards |
-| `antseed seller pool withdraw <id...> [--force]` | Withdraw matured positions or explicitly accept early-exit slashing |
-| `antseed seller emissions claim` | Claim accumulated seller payouts |
+| `antseed seller pool withdraw <id...> [--accept-slashing]` | Withdraw positions, with a slashing estimate and confirmation for early exits |
+| `antseed seller rewards [claim]` | View or claim all seller rewards |
 | **Buying** | |
 | `antseed buyer start` | Start the buyer proxy and connect to sellers |
 | `antseed buyer start --router <name>` | Start the buyer proxy with a non-default router |
@@ -357,14 +356,22 @@ After the M001 recognized-usage cutover, new seller stake moves from legacy USDC
 
 ```bash
 antseed seller register
-antseed seller pool bootstrap
+antseed seller pool claim-starter
 antseed seller stake 100 --epochs 4
 antseed seller pool positions
-antseed seller pool rewards
-antseed seller pool rewards claim
+antseed seller rewards
+antseed seller rewards claim
 ```
 
-`antseed seller stake` targets the active stack: ANTS seller pools after cutover (`--epochs` required) and legacy USDC before it. `antseed seller legacy stake` is explicit legacy USDC staking and refuses to run after cutover. `antseed seller legacy unstake` (also available as `antseed seller unstake`) withdraws legacy stake and warns that doing so can remove temporary eligibility before an ANTS pool becomes active. Emissions commands verify the registry before every read or claim and, after cutover, process finalized legacy epochs and recognized-usage epochs in the same run. Use `--legacy-only` or `--new-only` to restrict a claim.
+`antseed seller stake` automatically uses ANTS after the recognized-usage upgrade (`--epochs` required) and legacy USDC before it. `antseed seller legacy stake` is explicit legacy USDC staking and refuses to run after the upgrade. `antseed seller legacy unstake` (also available as `antseed seller unstake`) withdraws legacy stake and warns that doing so can remove temporary eligibility before an ANTS position becomes active. `antseed seller rewards` combines legacy emissions, recognized-use emissions, and pool-staking rewards. The specialized `seller emissions` and `seller pool rewards` commands remain available for advanced use.
+
+`seller register` explicitly binds your existing agent identity to the current seller registry, independently of legacy stake. Repeating it when already bound sends no transaction. If registration needs updating, `seller stake` stops and asks you to run `antseed seller register`; staking never registers you silently.
+
+`seller rewards` is read-only: it calculates unclaimed rewards from completed epochs using existing contract getters, including pool earnings that have not yet been indexed. It does not sign transactions or spend gas. Pool previews use the same reward-index and position-segment rounding as the payout calculation. The pool contribution is read at a single block; amounts can change before a claim confirms. Historical position discovery includes withdrawn and closed positions using receipt burn events and may require an archive-capable RPC with historical log support. Read failures are reported rather than treated as zero rewards.
+
+`seller rewards claim` prepares pool accounting in bounded transactions when necessary, then claims the rewards. Preparation and claims require gas. Confirmed transaction hashes are printed immediately, and received amounts are read from ANTS transfer receipts. If a later step fails, the CLI reports partial completion; rerun the command to collect remaining rewards. Compatibility commands `seller emissions`, `seller pool rewards`, and `seller unstake` remain callable but are hidden from the primary help listing.
+
+Early withdrawal requires `--accept-slashing` and interactive confirmation; add `--yes` for automation. The CLI rechecks the estimate before submitting. Existing contracts determine slashing at execution and do not accept a maximum-loss bound, so the displayed estimate is not a guaranteed cap if rates change before confirmation.
 
 ### M001 Anvil rehearsal
 

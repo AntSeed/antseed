@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { getGlobalOptions } from '../types.js';
 import { loadConfig } from '../../../config/loader.js';
+import { registerSellerBinding } from '../../seller-contract-clients.js';
 import {
   createIdentityClient,
   loadCryptoContext,
@@ -40,21 +41,18 @@ export function registerSellerRegisterCommand(sellerCmd: Command): void {
         } else {
           const sellerRegistry = createSellerRegistryClient(config);
           agentId = agentId || await sellerRegistry.getAgentId(address);
-          if (!agentId) agentId = await createLegacyStakingClient(config).getAgentId(address);
+          if (!agentId && stack.addresses.legacyStakingContractAddress) agentId = await createLegacyStakingClient(config).getAgentId(address);
         }
 
         if (stack.mode === 'recognized-usage') {
           if (!agentId) throw new Error('Could not determine agent ID. Pass --agent-id <id>.');
           const sellerRegistry = createSellerRegistryClient(config);
-          const boundAgentId = await sellerRegistry.getAgentId(address);
-          if (boundAgentId === 0) {
-            spinner.start('Binding seller to recognized-usage registry...');
-            const txHash = await sellerRegistry.registerSeller(wallet, agentId);
+          spinner.start('Checking seller registration...');
+          const registered = await registerSellerBinding(sellerRegistry, wallet, address, agentId,
+            (hash) => console.log(chalk.dim(`Transaction: ${hash}`)));
+          if (registered) {
             spinner.succeed(chalk.green('Seller bound to recognized-usage registry'));
-            console.log(chalk.dim(`Transaction: ${txHash}`));
-          } else if (boundAgentId !== agentId) {
-            throw new Error(`Seller is already bound to agent ${boundAgentId}, not ${agentId}.`);
-          } else if (alreadyRegistered) {
+          } else {
             spinner.succeed(chalk.yellow('Already registered and bound'));
           }
         } else if (alreadyRegistered) {

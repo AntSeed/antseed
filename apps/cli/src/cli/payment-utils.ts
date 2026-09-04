@@ -4,7 +4,6 @@ import {
   ChannelsClient,
   StakingClient,
   DepositRelayClient,
-  ANTSTokenClient,
   loadOrCreateIdentity,
   resolveChainConfig,
   resolveContractStack,
@@ -15,15 +14,18 @@ import {
   EmissionsClient,
   UsageAccountingClient,
   UsageRewardsClient,
-  SellerPoolsClient,
-  SellerPoolsRewardsClient,
-  SellerRegistryClient,
   PositionInitClient,
   EmissionsGateClient,
   ChannelStore,
 } from '@antseed/node/payments';
 import type { Identity } from '@antseed/node';
 import type { AntseedConfig } from '../config/types.js';
+import {
+  CliAntsTokenClient as ANTSTokenClient,
+  CliSellerPoolsClient as SellerPoolsClient,
+  CliSellerPoolsRewardsClient as SellerPoolsRewardsClient,
+  CliSellerRegistryClient as SellerRegistryClient,
+} from './seller-contract-clients.js';
 
 export const ANTSEED_BASE_RPC_URL_ENV = 'ANTSEED_BASE_RPC_URL';
 
@@ -79,6 +81,12 @@ export function formatAnts(baseUnits: bigint): string {
   const frac = baseUnits % 10n ** 18n;
   const fracStr = frac.toString().padStart(18, '0').replace(/0+$/, '').slice(0, 6) || '0';
   return `${whole}.${fracStr}`;
+}
+
+export function formatAntsExact(baseUnits: bigint): string {
+  const whole = baseUnits / 10n ** 18n;
+  const fraction = (baseUnits % 10n ** 18n).toString().padStart(18, '0').replace(/0+$/, '') || '0';
+  return `${whole}.${fraction}`;
 }
 
 /** Parse a positive human-readable ANTS amount into 18-decimal base units. */
@@ -190,8 +198,8 @@ export function requireCryptoConfig(
     legacyEmissionsContractAddress: crypto.legacyEmissionsContractAddress || resolved.legacyEmissionsContractAddress,
     legacyStakingContractAddress: crypto.legacyStakingContractAddress || resolved.legacyStakingContractAddress,
     legacyEmissionsV1ContractAddress: crypto.legacyEmissionsV1ContractAddress || resolved.legacyEmissionsV1ContractAddress,
-    antsTokenAddress: crypto.antsTokenAddress || resolved.antsTokenAddress,
-    registryContractAddress: crypto.registryContractAddress || resolved.registryContractAddress,
+    antsTokenAddress: crypto.antsTokenAddress || (crypto.chainId === 'base-local' ? '0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0' : resolved.antsTokenAddress),
+    registryContractAddress: crypto.registryContractAddress || (crypto.chainId === 'base-local' ? '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9' : resolved.registryContractAddress),
     emissionsGateAddress: crypto.emissionsGateAddress || resolved.emissionsGateAddress,
     sellerPoolsAddress: crypto.sellerPoolsAddress || resolved.sellerPoolsAddress,
     sellerRegistryAddress: crypto.sellerRegistryAddress || resolved.sellerRegistryAddress,

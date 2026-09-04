@@ -5,6 +5,7 @@ import { getGlobalOptions } from './types.js';
 import { loadConfig } from '../../config/loader.js';
 import {
   createEmissionsClient,
+  createAntsTokenClient,
   createLegacyEmissionsClient,
   createSellerPoolsClient,
   createUsageAccountingClient,
@@ -14,6 +15,7 @@ import {
   resolveCliContractStack,
 } from '../payment-utils.js';
 import { legacyEpochs, newEpochs } from '@antseed/node/payments';
+import { claimBuyerEpochRewards, claimEpochRewards, pendingEpochRewards, RewardClaimProgress } from './reward-actions.js';
 
 export type EmissionsRole = 'seller' | 'buyer';
 
@@ -48,14 +50,14 @@ function pendingJsonKey(role: EmissionsRole): 'pendingSeller' | 'pendingBuyer' {
 
 export function registerEmissionsCommand(parentCmd: Command, role: EmissionsRole): void {
   const emissions = parentCmd
-    .command('emissions')
+    .command('emissions', { hidden: role === 'seller' })
     .description('View epoch info and pending ANTS emissions');
 
   emissions
     .command('info')
     .description('Show current epoch info and pending emissions')
     .option('--json', 'output as JSON', false)
-    .option('--legacy-only', 'show only legacy-stack rewards', false)
+    .option('--legacy-only', 'show only rewards earned before the recognized-usage upgrade', false)
     .option('--new-only', 'show only recognized-usage rewards', false)
     .action(async (options) => {
       const globalOpts = getGlobalOptions(parentCmd);
@@ -78,32 +80,33 @@ export function registerEmissionsCommand(parentCmd: Command, role: EmissionsRole
         let emissionRate = 0n;
         let epochDuration = 0;
 
-        if (selected.legacy && legacyIds.length >= 0) {
+        if (selected.legacy && (stack.mode === 'legacy' || stack.addresses.legacyEmissionsContractAddress)) {
           const client = stack.mode === 'legacy' ? createEmissionsClient(config) : createLegacyEmissionsClient(config);
           const [epochInfo, pending] = await Promise.all([
             client.getEpochInfo(),
-            client.pendingEmissions(address, legacyIds),
+            pendingEpochRewards(legacyIds, async (epochs) => claimablePendingForRole(await client.pendingEmissions(address, epochs), role)),
           ]);
           emissionRate = epochInfo.emission;
           epochDuration = epochInfo.epochDuration;
-          legacyPending = claimablePendingForRole(pending, role);
+          legacyPending = pending;
         }
 
         let noCurrentPool = false;
         if (selected.recognized && stack.mode === 'recognized-usage') {
           if (role === 'seller') {
             const usage = createUsageAccountingClient(config);
-            const pending = await usage.pendingEmissions(address, recognizedIds);
-            recognizedPending = pending.seller;
+            recognizedPending = await pendingEpochRewards(recognizedIds, async (epochs) => (await usage.pendingEmissions(address, epochs)).seller);
             const pools = createSellerPoolsClient(config);
             const agentId = await pools.agentIdForSeller(address);
             noCurrentPool = agentId === 0 || !(await pools.hasPoolAtEpoch(agentId, stack.currentEpoch));
           } else {
             const rewards = createUsageRewardsClient(config);
-            const amounts = await Promise.all(recognizedIds.map(async (epoch) => (
-              await rewards.buyerEpochClaimed(address, epoch) ? 0n : rewards.pendingBuyerReward(address, epoch)
-            )));
-            recognizedPending = amounts.reduce((total, value) => total + value, 0n);
+            recognizedPending = await pendingEpochRewards(recognizedIds, async (epochs) => {
+              const amounts = await Promise.all(epochs.map(async (epoch) => (
+                await rewards.buyerEpochClaimed(address, epoch) ? 0n : rewards.pendingBuyerReward(address, epoch)
+              )));
+              return amounts.reduce((total, value) => total + value, 0n);
+            });
           }
         }
 
@@ -144,7 +147,7 @@ export function registerEmissionsCommand(parentCmd: Command, role: EmissionsRole
   emissions
     .command('claim')
     .description(`Claim pending ${role} ANTS emissions`)
-    .option('--legacy-only', 'claim only legacy-stack rewards', false)
+    .option('--legacy-only', 'claim only rewards earned before the recognized-usage upgrade', false)
     .option('--new-only', 'claim only recognized-usage rewards', false)
     .action(async (options) => {
       const globalOpts = getGlobalOptions(parentCmd);
@@ -154,6 +157,7 @@ export function registerEmissionsCommand(parentCmd: Command, role: EmissionsRole
       console.log(chalk.dim(`Wallet: ${address}`));
 
       const spinner = ora(`Claiming ${role} emissions...`).start();
+      let progress: RewardClaimProgress | undefined;
 
       try {
         const selected = selectedEmissionStacks(options);
@@ -164,50 +168,42 @@ export function registerEmissionsCommand(parentCmd: Command, role: EmissionsRole
         const recognizedIds = stack.mode === 'recognized-usage'
           ? newEpochs(stack.currentEpoch, stack.firstRewardedEpoch!)
           : [];
-        let claimed = 0n;
-        const transactions: string[] = [];
+        const token = createAntsTokenClient(config);
+        progress = new RewardClaimProgress(
+          (hash) => console.log(chalk.dim(`Claim transaction confirmed: ${hash}`)),
+          (hash) => token.receivedInTransaction(hash, address),
+        );
 
-        if (selected.legacy) {
+        if (selected.legacy && (stack.mode === 'legacy' || stack.addresses.legacyEmissionsContractAddress)) {
           const client = stack.mode === 'legacy' ? createEmissionsClient(config) : createLegacyEmissionsClient(config);
-          const pending = await client.pendingEmissions(address, legacyIds);
-          const amount = claimablePendingForRole(pending, role);
-          if (amount > 0n) {
-            transactions.push(role === 'seller'
-              ? await client.claimSellerEmissions(wallet, legacyIds)
-              : await client.claimBuyerEmissions(wallet, address, legacyIds));
-            claimed += amount;
-          }
+          await claimEpochRewards(legacyIds,
+            async (epochs) => claimablePendingForRole(await client.pendingEmissions(address, epochs), role),
+            (epochs) => role === 'seller' ? client.claimSellerEmissions(wallet, epochs) : client.claimBuyerEmissions(wallet, address, epochs),
+            progress.record);
         }
 
         if (selected.recognized && stack.mode === 'recognized-usage') {
           if (role === 'seller') {
             const usage = createUsageAccountingClient(config);
-            const pending = await usage.pendingEmissions(address, recognizedIds);
-            if (pending.seller > 0n) {
-              transactions.push(await usage.claimSellerEmissions(wallet, recognizedIds));
-              claimed += pending.seller;
-            }
+            await claimEpochRewards(recognizedIds,
+              async (epochs) => (await usage.pendingEmissions(address, epochs)).seller,
+              (epochs) => usage.claimSellerEmissions(wallet, epochs), progress.record);
           } else {
             const rewards = createUsageRewardsClient(config);
-            for (const epoch of recognizedIds.slice(-104)) {
-              if (await rewards.buyerEpochClaimed(address, epoch)) continue;
-              const amount = await rewards.pendingBuyerReward(address, epoch);
-              if (amount === 0n) continue;
-              transactions.push(await rewards.claimBuyerReward(wallet, address, epoch));
-              claimed += amount;
-            }
+            await claimBuyerEpochRewards(recognizedIds,
+              async (epoch) => await rewards.buyerEpochClaimed(address, epoch) ? 0n : rewards.pendingBuyerReward(address, epoch),
+              (epoch) => rewards.claimBuyerReward(wallet, address, epoch), progress.record);
           }
         }
 
-        if (claimed === 0n) {
+        if (progress.claimed === 0n) {
           spinner.succeed(chalk.yellow(`No pending ${role} emissions to claim.`));
           return;
         }
 
-        spinner.succeed(chalk.green(`Claimed ${formatAnts(claimed)} ANTS`));
-        for (const txHash of transactions) console.log(chalk.dim(`Transaction: ${txHash}`));
+        spinner.succeed(chalk.green(`Claimed ${formatAnts(progress.claimed)} ANTS`));
       } catch (err) {
-        spinner.fail(chalk.red(`Claim failed: ${(err as Error).message}`));
+        spinner.fail(chalk.red(progress?.failure((err as Error).message) ?? `Claim failed: ${(err as Error).message}`));
         process.exit(1);
       }
     });

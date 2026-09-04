@@ -1,4 +1,4 @@
-import type { Command } from 'commander';
+import { Option, type Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
 import { getGlobalOptions } from '../types.js';
@@ -36,7 +36,7 @@ async function runLegacyStake(
   try {
     const stack = await resolveCliContractStack(config);
     if (stack.mode === 'recognized-usage') {
-      spinner.fail(chalk.red('Legacy USDC staking is closed after cutover. Use: antseed seller stake <ants> --epochs <n>'));
+      spinner.fail(chalk.red('New USDC stakes are closed after the recognized-usage upgrade. Use: antseed seller stake <ants> --epochs <n>'));
       process.exit(1);
     }
     const { wallet, address } = await loadCryptoContext(global.dataDir);
@@ -85,7 +85,7 @@ async function runLegacyUnstake(global: GlobalOptions): Promise<void> {
       : createStakingClient(config);
     console.log(chalk.dim(`Wallet: ${address}`));
     if (stack.mode === 'recognized-usage') {
-      console.log(chalk.yellow('⚠ Withdrawing legacy USDC stake may remove temporary post-cutover eligibility until your ANTS pool is active.'));
+      console.log(chalk.yellow('⚠ Withdrawing legacy USDC stake may remove temporary eligibility until your ANTS position becomes active.'));
     }
     const stake = await stakingClient.getStake(address);
     if (stake === 0n) {
@@ -108,9 +108,9 @@ async function runLegacyUnstake(global: GlobalOptions): Promise<void> {
 export function registerSellerStakeCommand(sellerCmd: Command): void {
   sellerCmd
     .command('stake <amount>')
-    .description('Stake as a provider — ANTS into your seller pool after cutover, USDC before it')
-    .option('--epochs <n>', 'ANTS lock duration in epochs (recognized-usage stack)', (value) => Number(value))
-    .option('--agent-id <id>', 'seller agent ID (from antseed seller register output)', parseInt)
+    .description('Stake as a provider — ANTS after the recognized-usage upgrade, USDC before it')
+    .option('--epochs <n>', 'ANTS lock duration in epochs after the recognized-usage upgrade', (value) => Number(value))
+    .addOption(new Option('--agent-id <id>', 'seller agent ID fallback').argParser(Number).hideHelp())
     .action(async (amount: string, options: { epochs?: number; agentId?: number }) => {
       const globalOpts = getGlobalOptions(sellerCmd);
       const config = await loadConfig(globalOpts.config);
@@ -133,7 +133,7 @@ export function registerSellerStakeCommand(sellerCmd: Command): void {
     });
 
   sellerCmd
-    .command('unstake')
+    .command('unstake', { hidden: true })
     .description('Withdraw legacy USDC stake (alias of `antseed seller legacy unstake`)')
     .action(async () => {
       await runLegacyUnstake(getGlobalOptions(sellerCmd));
@@ -143,7 +143,7 @@ export function registerSellerStakeCommand(sellerCmd: Command): void {
 
   legacy
     .command('stake <amount>')
-    .description('Stake USDC as a provider (legacy stack only, e.g. "10" = 10 USDC)')
+    .description('Stake USDC before the recognized-usage upgrade (e.g. "10" = 10 USDC)')
     .option('--agent-id <id>', 'ERC-8004 agent ID (from antseed seller register output)', parseInt)
     .action(async (amount: string, options: { agentId?: number }) => {
       await runLegacyStake(getGlobalOptions(legacy), amount, options);
