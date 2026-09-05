@@ -8,15 +8,6 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import { IAntseedSellerPools } from "../interfaces/IAntseedSellerPools.sol";
 import { IAntseedStaking } from "../interfaces/IAntseedStaking.sol";
 import { IAntseedWashTradingStatus } from "../interfaces/IAntseedWashTradingStatus.sol";
-import { IERC8004Registry } from "../interfaces/IERC8004Registry.sol";
-
-interface IPositionInitLegacyStaking {
-    function sellers(address seller) external view returns (uint256 stake, uint256 stakedAt);
-}
-
-interface IPositionInitPoolIdentity {
-    function identityRegistry() external view returns (address);
-}
 
 /**
  * @title AntseedPositionInit
@@ -30,13 +21,8 @@ interface IPositionInitPoolIdentity {
  *         own agent pool, turning their accounting on.
  *
  *         Eligibility is anchored to the legacy USDC staking contract: the
- *         caller must have first staked strictly before this faucet was
- *         deployed, currently own its bound agent, and stake above the legacy
- *         minimum. Each seller wallet and each agent id can claim only once,
- *         so changing agents cannot turn reused collateral into more grants.
- *         The cutoff identifies historical staker wallets, not unique people
- *         or continuous historical stake. Multiple pre-existing wallets can
- *         each qualify, and only recorded wash-trading findings are excluded.
+ *         caller must have an agent binding there and stake above the legacy
+ *         minimum, so only sellers who put up real USDC stake can claim.
  *         Sellers the wash-trading registry has proven as wash traders are
  *         refused: a starter position is what switches their recognized-usage
  *         accounting on, and proven wash usage must never be recognized.
@@ -65,11 +51,9 @@ contract AntseedPositionInit is ReentrancyGuard {
     // ─── Position Terms ──────────────────────────────────────────────
     uint256 public immutable initAmount;
     uint256 public immutable initEndEpoch;
-    uint256 public immutable eligibilityCutoff;
 
     // ─── Claim Tracking ──────────────────────────────────────────────
     mapping(uint256 => bool) public agentInitialized;
-    mapping(address => bool) public sellerInitialized;
 
     // ─── Events ──────────────────────────────────────────────────────
     event PositionInitialized(
@@ -104,7 +88,6 @@ contract AntseedPositionInit is ReentrancyGuard {
         washTradingRegistry = IAntseedWashTradingStatus(_washTradingRegistry);
         initAmount = _initAmount;
         initEndEpoch = _initEndEpoch;
-        eligibilityCutoff = block.timestamp;
 
         // Approve the token pools actually pulls — its pinned immutable.
         IERC20 token = IAntseedSellerPools(_sellerPools).antsToken();
@@ -121,18 +104,14 @@ contract AntseedPositionInit is ReentrancyGuard {
      * @notice Create one position of `initAmount` ANTS in the caller's own
      *         agent pool, locked from the next activation epoch until
      *         `initEndEpoch`. The lANTS position belongs to the caller.
-     *         One starter position per historical seller wallet and per agent
-     *         id, forever. Proven wash traders are refused.
+     *         One starter position per agent id, forever. Proven wash traders
+     *         are refused.
      */
     function initPosition() external nonReentrant returns (uint256 positionId) {
         uint256 agentId = legacyStaking.getAgentId(msg.sender);
         if (agentId == 0 || !legacyStaking.isStakedAboveMin(msg.sender)) revert NotLegacySeller();
-        (, uint256 stakedAt) = IPositionInitLegacyStaking(address(legacyStaking)).sellers(msg.sender);
-        if (stakedAt == 0 || stakedAt >= eligibilityCutoff) revert NotLegacySeller();
-        address identityRegistry = IPositionInitPoolIdentity(address(sellerPools)).identityRegistry();
-        if (IERC8004Registry(identityRegistry).ownerOf(agentId) != msg.sender) revert NotLegacySeller();
         if (washTradingRegistry.isProvenWashTrader(msg.sender)) revert WashTrader();
-        if (sellerInitialized[msg.sender] || agentInitialized[agentId]) revert AlreadyInitialized();
+        if (agentInitialized[agentId]) revert AlreadyInitialized();
         if (antsToken.balanceOf(address(this)) < initAmount) revert InitDepleted();
 
         // stakeFor recomputes the same activation epoch in this transaction,
@@ -142,7 +121,6 @@ contract AntseedPositionInit is ReentrancyGuard {
         uint256 stakeEpochs = initEndEpoch - startEpoch;
 
         agentInitialized[agentId] = true;
-        sellerInitialized[msg.sender] = true;
         positionId = sellerPools.stakeFor(msg.sender, agentId, initAmount, stakeEpochs);
         emit PositionInitialized(msg.sender, agentId, positionId, initAmount, stakeEpochs);
     }
