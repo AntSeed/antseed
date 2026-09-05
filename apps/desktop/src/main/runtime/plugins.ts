@@ -37,6 +37,8 @@ export interface EnsureDefaultPluginContext {
   setAppSetupNeeded: (value: boolean) => void;
   getAppSetupComplete: () => boolean;
   setAppSetupComplete: (value: boolean) => void;
+  onAppSetupStarted?: () => void;
+  onAppSetupCompleted?: () => void;
   getMainWindow: () => BrowserWindow | null;
   appendLog: AppendLogFn;
 }
@@ -441,6 +443,7 @@ export async function ensureDefaultPlugin(
     return;
   }
   ctx.setAppSetupNeeded(true);
+  if (!installed) ctx.onAppSetupStarted?.();
   ctx.getMainWindow()?.webContents.send('app:setup-step', { step: 'installing', label: 'Installing router plugin' });
   ctx.appendLog(
     'connect',
@@ -482,6 +485,10 @@ export async function ensureDefaultPlugin(
     }
     ctx.appendLog('connect', 'system', `Installed plugin "${packageName}".`);
     ctx.setAppSetupComplete(true);
+    // Completion is always forwarded so a retry can finish a persisted
+    // first-run measurement. The telemetry service ignores completion unless
+    // a matching setup start exists.
+    ctx.onAppSetupCompleted?.();
     ctx.getMainWindow()?.webContents.send('app:setup-step', { step: 'done', label: 'Router plugin ready' });
     ctx.getMainWindow()?.webContents.send('app:setup-complete');
   } catch (err) {
