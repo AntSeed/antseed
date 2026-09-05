@@ -25,6 +25,7 @@ test("development seller proof submits end-to-end on Anvil", { timeout: 900_000 
   assert.equal(generated.securityMode, "development");
   assert.ok(generated.claimCount >= 1);
   assert.ok(BigInt(generated.provenWashVolumeRaw) > 0n);
+  assert.ok(BigInt(generated.totalSellerVolumeRaw) > 0n);
 
   await run("forge", [
     "build",
@@ -53,6 +54,9 @@ test("development seller proof submits end-to-end on Anvil", { timeout: 900_000 
   const result = JSON.parse(resultLine.slice(marker.length));
   assert.equal(result.seller.toLowerCase(), generated.seller.toLowerCase());
   assert.equal(result.provenWashVolumeRaw, generated.provenWashVolumeRaw);
+  assert.equal(result.totalSellerVolumeRaw, generated.totalSellerVolumeRaw);
+  assert.equal(result.provenWashShareBps,
+    (BigInt(generated.provenWashVolumeRaw) * 10_000n / BigInt(generated.totalSellerVolumeRaw)).toString());
   assert.equal(result.claimCount, generated.claimCount);
   assert.equal(result.authenticatedBlockReferenceCount, generated.blockReferenceCount);
   assert.equal(result.blockAuthenticationChunkCount, generated.blockAuthenticationChunkCount);
@@ -60,6 +64,14 @@ test("development seller proof submits end-to-end on Anvil", { timeout: 900_000 
   assert.ok(BigInt(result.authenticationGasUsed) > 0n);
   assert.ok(BigInt(result.finalizationGasUsed) > 0n);
   assert.equal(result.transactionMode, "staged-seller-proof-with-block-authentication");
+  assert.equal(result.blockhashStoreMode, "development-mock");
+  await assert.rejects(run("node", [
+    "scripts/submit-wash-trading-development-anvil.mjs",
+    "--artifact", artifactPath,
+    "--rpc-url", rpcUrl,
+    "--submit-development",
+    "--use-chainlink-blockhash-store",
+  ], contractsDirectory), /Chainlink BlockhashStore is not deployed/);
 });
 
 async function firstSellerArtifact(directory) {

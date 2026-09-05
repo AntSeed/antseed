@@ -16,6 +16,7 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
         uint64 periodEndBlock;
         address seller;
         uint128 provenWashVolume;
+        uint128 totalSellerVolume;
         bytes32 evidenceDigest;
         uint32 blockReferenceCount;
         uint32 blockAuthenticationChunkSize;
@@ -26,6 +27,7 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
     struct StagedProof {
         address seller;
         uint128 provenWashVolume;
+        uint128 totalSellerVolume;
         bytes32 evidenceDigest;
         uint32 blockReferenceCount;
         uint32 blockAuthenticationChunkSize;
@@ -39,6 +41,7 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
 
     struct SellerRecord {
         uint128 provenWashVolume;
+        uint128 totalSellerVolume;
         bytes32 evidenceDigest;
     }
 
@@ -60,6 +63,7 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
         bytes32 indexed proofId,
         address indexed seller,
         uint128 provenWashVolume,
+        uint128 totalSellerVolume,
         bytes32 evidenceDigest,
         uint32 blockReferenceCount,
         uint32 blockAuthenticationChunkSize,
@@ -79,6 +83,7 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
         address indexed seller,
         uint128 previousProvenWashVolume,
         uint128 provenWashVolume,
+        uint128 totalSellerVolume,
         bytes32 evidenceDigest,
         address submitter
     );
@@ -98,6 +103,7 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
     error NonCanonicalBlock(uint64 blockNumber);
     error IncompleteBlockAuthentication();
     error StrongerResultRequired();
+    error TotalVolumeMismatch();
 
     constructor(
         address verifier_,
@@ -138,8 +144,9 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
             journal.schemaVersion != SCHEMA_VERSION || journal.chainId != BASE_CHAIN_ID
                 || journal.periodStartBlock != periodStartBlock || journal.periodEndBlock != periodEndBlock
                 || journal.seller == address(0) || journal.provenWashVolume == 0 || journal.evidenceDigest == bytes32(0)
-                || journal.blockReferenceCount == 0 || journal.blockAuthenticationChunkSize == 0
-                || journal.blockAuthenticationChunkCount == 0 || journal.blockAuthenticationRoot == bytes32(0)
+                || journal.totalSellerVolume == 0 || journal.blockReferenceCount == 0
+                || journal.blockAuthenticationChunkSize == 0 || journal.blockAuthenticationChunkCount == 0
+                || journal.blockAuthenticationRoot == bytes32(0)
         ) revert InvalidSellerProof();
         uint256 maximumReferences =
             uint256(journal.blockAuthenticationChunkSize) * uint256(journal.blockAuthenticationChunkCount);
@@ -151,6 +158,7 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
         stagedProofs[proofId] = StagedProof({
             seller: journal.seller,
             provenWashVolume: journal.provenWashVolume,
+            totalSellerVolume: journal.totalSellerVolume,
             evidenceDigest: journal.evidenceDigest,
             blockReferenceCount: journal.blockReferenceCount,
             blockAuthenticationChunkSize: journal.blockAuthenticationChunkSize,
@@ -165,6 +173,7 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
             proofId,
             journal.seller,
             journal.provenWashVolume,
+            journal.totalSellerVolume,
             journal.evidenceDigest,
             journal.blockReferenceCount,
             journal.blockAuthenticationChunkSize,
@@ -244,12 +253,22 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
 
         SellerRecord storage current = sellerRecords[staged.seller];
         if (staged.provenWashVolume <= current.provenWashVolume) revert StrongerResultRequired();
+        if (current.totalSellerVolume != 0 && staged.totalSellerVolume != current.totalSellerVolume) {
+            revert TotalVolumeMismatch();
+        }
         uint128 previousVolume = current.provenWashVolume;
         current.provenWashVolume = staged.provenWashVolume;
+        current.totalSellerVolume = staged.totalSellerVolume;
         current.evidenceDigest = staged.evidenceDigest;
         staged.finalized = true;
         emit SellerResultUpdated(
-            proofId, staged.seller, previousVolume, staged.provenWashVolume, staged.evidenceDigest, msg.sender
+            proofId,
+            staged.seller,
+            previousVolume,
+            staged.provenWashVolume,
+            staged.totalSellerVolume,
+            staged.evidenceDigest,
+            msg.sender
         );
     }
 
@@ -275,6 +294,21 @@ contract AntseedWashTradingRegistry is IAntseedWashTradingRegistry {
 
     function provenWashVolume(address seller) external view returns (uint128) {
         return sellerRecords[seller].provenWashVolume;
+    }
+
+    function totalSellerVolume(address seller) external view returns (uint128) {
+        return sellerRecords[seller].totalSellerVolume;
+    }
+
+    /// @notice Proven wash volume divided by the authenticated period-end
+    ///         agent volume counter, in basis points. The numerator is a
+    ///         lower bound from selected evidence. The denominator is fixed
+    ///         across replacements, so the share only increases. Can exceed 10_000
+    ///         when selected settlements predate the seller's staking.
+    function provenWashShareBps(address seller) external view returns (uint256) {
+        SellerRecord storage record = sellerRecords[seller];
+        if (record.totalSellerVolume == 0) return 0;
+        return (uint256(record.provenWashVolume) * 10_000) / uint256(record.totalSellerVolume);
     }
 
     function sellerEvidenceDigest(address seller) external view returns (bytes32) {

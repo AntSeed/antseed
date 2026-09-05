@@ -160,6 +160,31 @@ contract AntseedWashTradingRegistryTest is Test {
         assertEq(registry.sellerEvidenceDigest(SELLER_A), bytes32(uint256(74)));
     }
 
+    function test_totalSellerVolumeIsRecordedAndExposedAsShare() public {
+        _finalize(_journal(300, bytes32(uint256(71))));
+        assertEq(registry.totalSellerVolume(SELLER_A), 1000);
+        assertEq(registry.provenWashShareBps(SELLER_A), 3000);
+        assertEq(registry.totalSellerVolume(address(0xB0B)), 0);
+        assertEq(registry.provenWashShareBps(address(0xB0B)), 0);
+    }
+
+    function test_rejectsConflictingTotalSellerVolume() public {
+        _finalize(_journal(300, bytes32(uint256(71))));
+
+        AntseedWashTradingRegistry.SellerJournal memory journal = _journal(450, bytes32(uint256(72)));
+        journal.totalSellerVolume = 999;
+        bytes32 conflicting = _stage(journal);
+        _authenticateAll(conflicting);
+        vm.expectRevert(AntseedWashTradingRegistry.TotalVolumeMismatch.selector);
+        registry.finalizeSellerProof(conflicting);
+    }
+
+    function test_rejectsZeroTotalSellerVolume() public {
+        AntseedWashTradingRegistry.SellerJournal memory journal = _journal(300, bytes32(uint256(71)));
+        journal.totalSellerVolume = 0;
+        _expectStageRevert(journal, AntseedWashTradingRegistry.InvalidSellerProof.selector);
+    }
+
     function test_rejectsWrongProgramIdentityAndPeriod() public {
         AntseedWashTradingRegistry.SellerJournal memory journal = _journal(300, bytes32(uint256(71)));
         journal.schemaVersion = 2;
@@ -247,6 +272,7 @@ contract AntseedWashTradingRegistryTest is Test {
             periodEndBlock: 199,
             seller: SELLER_A,
             provenWashVolume: washVolume,
+            totalSellerVolume: 1000,
             evidenceDigest: evidenceDigest,
             blockReferenceCount: 2,
             blockAuthenticationChunkSize: 1,

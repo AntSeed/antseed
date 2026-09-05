@@ -64,6 +64,7 @@ const registry = await deploy("AntseedWashTradingRegistry.sol/AntseedWashTrading
 ]);
 
 let totalProvenWashVolume = 0n;
+let totalSellerVolume = 0n;
 let totalGasUsed = 0n;
 let totalAuthenticatedReferences = 0;
 let totalAuthenticatedChunks = 0;
@@ -100,6 +101,12 @@ for (let artifactIndex = 0; artifactIndex < artifacts.length; artifactIndex += 1
   const onchainVolume = await registry.provenWashVolume(journal.seller);
   const onchainEvidenceDigest = await registry.sellerEvidenceDigest(journal.seller);
   if (onchainVolume !== journal.provenWashVolume) throw new Error(`${journal.seller}: onchain wash volume mismatch`);
+  if (await registry.totalSellerVolume(journal.seller) !== journal.totalSellerVolume) {
+    throw new Error(`${journal.seller}: onchain total volume mismatch`);
+  }
+  if (await registry.provenWashShareBps(journal.seller) !== journal.provenWashVolume * 10_000n / journal.totalSellerVolume) {
+    throw new Error(`${journal.seller}: onchain wash share mismatch`);
+  }
   if (onchainEvidenceDigest.toLowerCase() !== journal.evidenceDigest.toLowerCase()) {
     throw new Error(`${journal.seller}: onchain evidence digest mismatch`);
   }
@@ -108,6 +115,7 @@ for (let artifactIndex = 0; artifactIndex < artifacts.length; artifactIndex += 1
     throw new Error(`${journal.seller}: authenticated block-reference count mismatch`);
   }
   totalProvenWashVolume += journal.provenWashVolume;
+  totalSellerVolume += journal.totalSellerVolume;
   process.stderr.write(
     `[${artifactIndex + 1}/${artifacts.length}] finalized ${journal.seller} volume=${journal.provenWashVolume}\n`,
   );
@@ -121,6 +129,7 @@ console.log(`WASH_TRADING_PRODUCTION_ANVIL_RESULT=${JSON.stringify({
   batchAuthenticator: await batchAuthenticator.getAddress(),
   sellerCount: artifacts.length,
   totalProvenWashVolumeRaw: totalProvenWashVolume.toString(),
+  totalSellerVolumeRaw: totalSellerVolume.toString(),
   totalAuthenticatedReferences,
   totalAuthenticatedChunks,
   totalGasUsed: totalGasUsed.toString(),
@@ -190,7 +199,7 @@ function validateArtifacts(candidates) {
 
 function decodeJournal(publicValues) {
   const [journal] = AbiCoder.defaultAbiCoder().decode([
-    "tuple(uint32 schemaVersion,uint64 chainId,uint64 periodStartBlock,uint64 periodEndBlock,address seller,uint128 provenWashVolume,bytes32 evidenceDigest,uint32 blockReferenceCount,uint32 blockAuthenticationChunkSize,uint32 blockAuthenticationChunkCount,bytes32 blockAuthenticationRoot)",
+    "tuple(uint32 schemaVersion,uint64 chainId,uint64 periodStartBlock,uint64 periodEndBlock,address seller,uint128 provenWashVolume,uint128 totalSellerVolume,bytes32 evidenceDigest,uint32 blockReferenceCount,uint32 blockAuthenticationChunkSize,uint32 blockAuthenticationChunkCount,bytes32 blockAuthenticationRoot)",
   ], publicValues);
   return {
     schemaVersion: journal.schemaVersion,
@@ -199,6 +208,7 @@ function decodeJournal(publicValues) {
     periodEndBlock: journal.periodEndBlock,
     seller: getAddress(journal.seller),
     provenWashVolume: journal.provenWashVolume,
+    totalSellerVolume: journal.totalSellerVolume,
     evidenceDigest: journal.evidenceDigest,
     blockReferenceCount: journal.blockReferenceCount,
     blockAuthenticationChunkSize: journal.blockAuthenticationChunkSize,
@@ -211,6 +221,7 @@ function validateJournal(artifact, journal) {
   if (journal.schemaVersion !== 1n || journal.chainId !== 8_453n
     || journal.seller !== getAddress(artifact.seller)
     || journal.provenWashVolume.toString() !== artifact.provenWashVolumeRaw
+    || journal.totalSellerVolume === 0n || journal.totalSellerVolume.toString() !== artifact.totalSellerVolumeRaw
     || journal.periodStartBlock !== BigInt(artifact.periodStartBlock)
     || journal.periodEndBlock !== BigInt(artifact.periodEndBlock)
     || journal.evidenceDigest.toLowerCase() !== artifact.evidenceDigest.toLowerCase()

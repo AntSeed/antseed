@@ -28,6 +28,8 @@ interface IAntseedWashTradingRegistry {
     function proofAuthenticatedBlockChunkCount(bytes32 proofId) external view returns (uint32);
     function proofBlockChunkAuthenticated(bytes32 proofId, uint32 chunkIndex) external view returns (bool);
     function provenWashVolume(address seller) external view returns (uint128);
+    function totalSellerVolume(address seller) external view returns (uint128);
+    function provenWashShareBps(address seller) external view returns (uint256);
     function sellerEvidenceDigest(address seller) external view returns (bytes32);
     function isProvenWashTrader(address seller) external view returns (bool);
 }

@@ -65,8 +65,32 @@ unknown blocks; the registry maps that revert to `bytes32(0)` so its own
 `NonCanonicalBlock` error fires instead. No AntSeed-owned contract sits in the
 block-hash path. A staged proof changes no seller result until every committed block-reference
 chunk has been authenticated. The registry stores the greatest proven
-wash-volume lower bound for each seller as `{provenWashVolume, evidenceDigest}`.
-Later proofs must strictly increase the seller's proven wash volume.
+wash-volume lower bound for each seller as `{provenWashVolume, totalSellerVolume, evidenceDigest}`.
+The total is the authenticated period-end channels counter; this enforcement period
+starts at protocol genesis, so no opening counter is subtracted. The registry exposes
+`provenWashShareBps(seller)` as `provenWashVolume * 10000 / totalSellerVolume`.
+Later proofs must strictly increase the seller's proven wash volume and preserve
+the recorded total. Zero totals and mismatched replacement totals are rejected.
+
+For a Base-fork rehearsal, the development submission script also accepts
+`--use-chainlink-blockhash-store`. This uses the existing Chainlink store without
+seeding or replacing it, while retaining the digest-pinned development verifier.
+Missing hashes must be backfilled on the local fork before finalization can pass.
+The RPC remains restricted to loopback URLs; this mode is not a live deployment
+or a test of real Groth16 proof verification.
+
+The updated seller guest uses a fixed 50% return-coverage floor for closed-loop
+evidence (`returnedCredit / provenWashVolume`), distinct from the registry's
+`provenWashShareBps` ratio (`provenWashVolume / totalSellerVolume`). The floor is
+pinned by the guest vkey, not a mutable registry setting. Each seller input contains
+exactly one closed-loop or reciprocal evidence bundle.
+
+The current total-volume witness requires a nonzero seller-to-agent binding at
+period end. Unstaking clears that binding, so those sellers currently fail proof
+generation even if historical wash evidence exists. The agent counter excludes
+settlements made without an agent binding; it is not an unconditional wallet-wide
+lifetime-volume total. Supporting historical bindings requires a separately
+validated predicate update and a new guest vkey.
 
 Prepare the immutable constructor values from any schema-1 direct seller proof
 produced by the pinned seller program:
@@ -92,6 +116,9 @@ with `InvalidVerifier` if it is missing (the gateway does not implement it) or
 differs from `SP1_VERIFIER_HASH`, and records the hash as `verifierHash`.
 
 The direct proof journal uses schema 1 and contains no child-program vkeys.
+Its ABI includes `uint128 totalSellerVolume` immediately after `uint128 provenWashVolume`.
+Previous journal encodings and guest vkeys are incompatible: build the new guest
+and deploy a new registry with its matching seller vkey before production submission.
 The registry verifies every seller proof against only
 `WASH_TRADING_SELLER_PROGRAM_VKEY`; the proof itself re-runs the closed-loop and
 reciprocal predicates over raw authenticated evidence.
