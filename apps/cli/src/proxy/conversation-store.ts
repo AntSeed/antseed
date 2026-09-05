@@ -1,14 +1,14 @@
 import { readFileSync } from 'node:fs'
 import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { sanitizeStoredSnippet } from './conversation-identity.js'
+import { isCursorEnvironmentSnippet, sanitizeStoredSnippet } from './conversation-identity.js'
 
 /**
  * File-backed store for tool conversations seen by the buyer proxy.
  *
  * Each record maps one tool chat session (identified on the wire — see
  * conversation-identity.ts) to a display label and an optional per-chat
- * routed-model pin. Persists as `conversations.json` in the buyer data dir,
+ * routed-model affinity. Persists as `conversations.json` in the buyer data dir,
  * written atomically (tmp + rename) with writes serialized behind a queue,
  * mirroring how buyer.state.json is handled. No database involved.
  */
@@ -22,12 +22,11 @@ export type StoredConversation = {
   snippet: string
   /** User-assigned name; overrides the snippet for display when set. */
   label: string | null
-  /** Per-chat route pin as `<peerId>@<service>`. The default route only
-      steers a chat's first request: the model that serves it is pinned here
-      (see touch), so later default changes affect only new chats. Null only
-      until the chat's first resolved request. */
+  /** Per-chat route as `<peerId>@<service>`. Automatic routes are soft
+      affinity; user-selected routes are hard pins. Null only until the
+      chat's first resolved request. */
   pinnedModel: string | null
-  /** How the pin's peer was chosen. 'auto' means routing picked it (first
+  /** How the route's peer was chosen. 'auto' means routing picked it (first
       request affinity, or the desktop re-pointing chats when a seller is
       pinned for the model); 'user' means the user chose this seller for this
       specific chat, which nothing overrides until they clear it. */
@@ -56,6 +55,8 @@ const MAX_CONVERSATIONS = 50
 /** Conversations idle longer than this are pruned. */
 const MAX_IDLE_MS = 7 * 24 * 60 * 60 * 1000
 const MAX_LABEL_CHARS = 120
+const LEGACY_DROID_TITLE_MAX_INPUT_TOKENS = 1_500n
+const LEGACY_DROID_CHAT_MIN_INPUT_TOKENS = 5_000n
 
 export function conversationId(tool: string, sessionKey: string): string {
   return `${tool}:${sessionKey}`
@@ -78,13 +79,15 @@ function sanitizeRecord(value: unknown): StoredConversation | null {
   const tool = typeof record.tool === 'string' ? record.tool : ''
   const sessionKey = typeof record.sessionKey === 'string' ? record.sessionKey : ''
   if (!tool || !sessionKey) return null
+  const rawSnippet = typeof record.snippet === 'string' ? record.snippet : ''
+  const normalizedTool = tool === 'public-tunnel' && isCursorEnvironmentSnippet(rawSnippet) ? 'cursor' : tool
   return {
-    id: conversationId(tool, sessionKey),
-    tool,
+    id: conversationId(normalizedTool, sessionKey),
+    tool: normalizedTool,
     sessionKey,
     // Persisted snippets are re-cleaned so rows written by older extraction
     // rules (raw XML wrappers, title-request text) heal on reload.
-    snippet: typeof record.snippet === 'string' ? sanitizeStoredSnippet(record.snippet) : '',
+    snippet: sanitizeStoredSnippet(rawSnippet),
     label: typeof record.label === 'string' && record.label.length > 0 ? record.label : null,
     pinnedModel: typeof record.pinnedModel === 'string' && record.pinnedModel.length > 0 ? record.pinnedModel : null,
     peerSource: record.peerSource === 'user' ? 'user' : 'auto',
@@ -97,6 +100,30 @@ function sanitizeRecord(value: unknown): StoredConversation | null {
     createdAt: typeof record.createdAt === 'number' ? record.createdAt : Date.now(),
     lastActiveAt: typeof record.lastActiveAt === 'number' ? record.lastActiveAt : Date.now(),
   }
+}
+
+/** Droid used to send its title helper under a separate synthetic session,
+    leaving two persisted rows with the same snippet. Its body-derived helper
+    key is reused across launches, so the two records may have distant creation
+    times even though both are reactivated together.
+    New requests are filtered before storage; this only heals those legacy
+    pairs, using the captured helper/full-prompt average token sizes to avoid merging
+    genuine chats that happen to start with the same text. */
+function removeLegacyDroidTitleDuplicates(records: StoredConversation[]): StoredConversation[] {
+  const duplicateIds = new Set<string>()
+  for (const candidate of records) {
+    if (candidate.tool !== 'droid' || !candidate.snippet || candidate.label) continue
+    const candidateRequests = BigInt(Math.max(candidate.requestCount, 1))
+    if (BigInt(candidate.inputTokens) > LEGACY_DROID_TITLE_MAX_INPUT_TOKENS * candidateRequests) continue
+    const matchingChat = records.some((record) => (
+      record.id !== candidate.id
+      && record.tool === 'droid'
+      && record.snippet === candidate.snippet
+      && BigInt(record.inputTokens) >= LEGACY_DROID_CHAT_MIN_INPUT_TOKENS * BigInt(Math.max(record.requestCount, 1))
+    ))
+    if (matchingChat) duplicateIds.add(candidate.id)
+  }
+  return duplicateIds.size === 0 ? records : records.filter((record) => !duplicateIds.has(record.id))
 }
 
 export class ConversationStore {
@@ -120,10 +147,10 @@ export class ConversationStore {
     }
     try {
       const parsed = JSON.parse(raw) as { conversations?: unknown[] }
-      const records = (parsed.conversations ?? [])
+      const records = removeLegacyDroidTitleDuplicates((parsed.conversations ?? [])
         .map(sanitizeRecord)
         .filter((record): record is StoredConversation => record !== null)
-        .sort((a, b) => a.lastActiveAt - b.lastActiveAt) // map order tracks recency
+        .sort((a, b) => a.lastActiveAt - b.lastActiveAt)) // map order tracks recency
       for (const record of records) {
         this._byId.set(record.id, record)
       }
@@ -267,6 +294,22 @@ export class ConversationStore {
 
   getPinnedModel(tool: string, sessionKey: string): string | null {
     return this._byId.get(conversationId(tool, sessionKey))?.pinnedModel ?? null
+  }
+
+  recordRoutedModel(id: string, routedModel: string): StoredConversation | null {
+    const existing = this._byId.get(id)
+    if (!existing) return null
+    const record = {
+      ...existing,
+      pinnedModel: existing.peerSource === 'user' && existing.pinnedModel
+        ? existing.pinnedModel
+        : routedModel,
+      lastModel: routedModel,
+      lastActiveAt: Date.now(),
+    }
+    this._byId.set(id, record)
+    void this._persist()
+    return record
   }
 
   setLabel(id: string, label: string | null): StoredConversation | null {

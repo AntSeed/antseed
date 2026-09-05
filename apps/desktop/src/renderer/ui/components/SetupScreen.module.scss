@@ -1,5 +1,5 @@
 /* ===================================================================
-   SetupScreen — first-run installation screen
+   SetupScreen — first-run screen: finding a free model on the network
    =================================================================== */
 
 /* Nothing visible on top — just an invisible drag handle so the frameless
@@ -24,7 +24,7 @@
 }
 
 .content {
-  margin-top: 10%;
+  margin-top: 6%;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -40,81 +40,126 @@
   flex-direction: column;
   align-items: center;
   gap: 10px;
-  margin-bottom: 28px;
-}
-
-.brandName {
-  color: var(--accent-green);
-  font-size: 20px;
-  font-weight: 700;
-}
-
-.title {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 8px;
-}
-
-.subtitle {
-  font-size: 13px;
-  color: var(--text-muted);
-  margin: 0 0 32px;
+  margin-bottom: 20px;
 }
 
 /* ------------------------------------------------------------------ */
-/*  Steps list                                                         */
+/*  Logo marquee — model families on the network, drifting by           */
 /* ------------------------------------------------------------------ */
 
-.steps {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+.marquee {
   width: 100%;
+  overflow: hidden;
+  margin-top: 18px;
+  /* Soft edges so logos fade in/out instead of being clipped. */
+  mask-image: linear-gradient(to right, transparent, #000 15%, #000 85%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 15%, #000 85%, transparent);
+}
+
+.marqueeTrack {
+  display: flex;
+  width: max-content;
+  gap: 28px;
+  padding: 4px 14px;
+  animation: marquee-drift 28s linear infinite;
+}
+
+/* The track holds the logo list twice; sliding by half loops seamlessly. */
+@keyframes marquee-drift {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+.marqueeLogo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 16px 20px;
+  color: var(--text-secondary);
 }
 
-.stepRow {
+@media (prefers-reduced-motion: reduce) {
+  .marqueeTrack {
+    animation: none;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Footer — activity line, compact tallies, first-run note            */
+/* ------------------------------------------------------------------ */
+
+.footer {
+  position: absolute;
+  bottom: 20px;
+  left: 0;
+  right: 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
-.stepIcon {
-  width: 18px;
-  height: 18px;
+.statStrip {
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
-.stepDot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--border-strong);
+.statItem {
+  white-space: nowrap;
 }
 
-.stepLabel {
-  font-size: 13px;
+.statItemLive .statValue {
   color: var(--text-secondary);
-  transition: color 0.2s ease;
+  font-weight: 600;
+  display: inline-block;
+  animation: stat-pop 0.35s ease;
+}
 
-  .done & {
-    color: var(--text-primary);
-  }
+@keyframes stat-pop {
+  0%   { transform: scale(1.25); }
+  100% { transform: scale(1);    }
+}
 
-  .active & {
-    color: var(--text-primary);
-  }
+.statSep {
+  opacity: 0.6;
 }
 
 /* ------------------------------------------------------------------ */
-/*  Thinking dots (spinner for active step)                            */
+/*  Current activity — what the buyer node is doing right now          */
+/* ------------------------------------------------------------------ */
+
+.activity {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  /* Fixed height so phase swaps (and the ready state taking over)
+     never shift the layout below. */
+  height: 20px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  animation: rise-in 0.35s ease;
+}
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Thinking dots (spinner for the active phase)                       */
 /* ------------------------------------------------------------------ */
 
 @keyframes thinking-dot-pulse {
@@ -146,17 +191,13 @@
 .ready {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  margin-top: 20px;
+  height: 20px;
   font-size: 13px;
   font-weight: 500;
   color: var(--accent-green);
-  animation: fade-in 0.4s ease;
-}
-
-@keyframes fade-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to   { opacity: 1; transform: translateY(0);   }
+  animation: rise-in 0.4s ease;
 }
 
 .readyDot {
@@ -165,6 +206,17 @@
   border-radius: 50%;
   background: var(--accent-green);
   flex-shrink: 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  First-run note (in the footer)                                     */
+/* ------------------------------------------------------------------ */
+
+.firstRunNote {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
 }
 
 /* ------------------------------------------------------------------ */
@@ -182,5 +234,5 @@
   background: rgba(251, 191, 36, 0.08);
   border: 1px solid rgba(251, 191, 36, 0.2);
   border-radius: 8px;
-  animation: fade-in 0.4s ease;
+  animation: rise-in 0.4s ease;
 }

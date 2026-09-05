@@ -79,7 +79,7 @@ jobs:
 
       - name: Run E2E payment flow
         run: node e2e/scripts/full-payment-flow.mjs
-        timeout-minutes: 5
+        timeout-minutes: 15
 
   typecheck:
     name: Typecheck
@@ -114,3 +114,29 @@ jobs:
 
       - name: Typecheck
         run: pnpm run typecheck
+
+  nix-build:
+    name: Nix build (antseed CLI)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned SHA — DeterminateSystems/nix-installer-action @main as of 2026-08-31
+      - uses: DeterminateSystems/nix-installer-action@33c9ab3ef95cd57c164d9d6eb1f9a46338538d41
+
+      # First build fetches each dependency tarball individually; keep the
+      # store between runs so lockfile churn only fetches what changed.
+      # Pinned SHA — DeterminateSystems/magic-nix-cache-action @main as of 2026-08-31
+      - uses: DeterminateSystems/magic-nix-cache-action@55718cd9ebf1737a061487d5ada21abf31e99a98
+
+      # Fails when the pnpmDeps fixed-output hash in flake.nix is stale —
+      # after touching pnpm-lock.yaml, regenerate with
+      # ./scripts/update-nix-hash.sh (see NIX-PNPM-HASH in flake.nix).
+      - name: Build antseed CLI
+        run: nix build .#
+
+      - name: Smoke test
+        run: |
+          ./result/bin/antseed --version
+          ./result/bin/antseed --help > /dev/null

@@ -37,21 +37,42 @@ export function findChatOptionForVprSelection(
  * the routing-preferences scorer instead of whichever option sorts first, so
  * preferences apply to real dispatch — not just the "best route" labels.
  */
+export type ResolveVprChatOptions = {
+  /**
+   * Peers to skip, used when failing a conversation over from a peer that just
+   * stopped responding. Ignored entirely in pinned mode.
+   */
+  excludePeerIds?: string[];
+  now?: number;
+};
+
 export function resolveVprChatOption(
   options: ChatServiceOptionEntry[],
   rows: DiscoverRow[],
   selection: VprRouteSelection,
   preferences: VprRoutingPreferences,
+  opts?: ResolveVprChatOptions,
 ): ChatServiceOptionEntry | null {
   if (!selection.model) return null;
+  // Pinned mode returns before any health or exclusion logic: the user chose
+  // this peer, and failover must never quietly move them off it.
   if (selection.mode === 'pinned-peer' && selection.peerId) {
     return findChatOptionForVprSelection(options, selection);
   }
 
+  const candidates = routesForSelectedModel(rows, selection.model);
+  const excluded = new Set(opts?.excludePeerIds ?? []);
+  const filtered = excluded.size > 0
+    ? candidates.filter((row) => !excluded.has(row.peerId))
+    : candidates;
+  // Excluding everything must not strand the send — better to retry the peer
+  // that just failed than to refuse to dispatch at all.
+  const usable = filtered.length > 0 ? filtered : candidates;
+
   // The option is looked up by the chosen ROW's provider/serviceId (not the
   // selection's): the entry may aggregate serviceId variants, and the request
   // must carry the id the routed peer actually advertises.
-  const bestRoute = chooseBestVprRoute(routesForSelectedModel(rows, selection.model), preferences);
+  const bestRoute = chooseBestVprRoute(usable, preferences, opts?.now ?? Date.now());
   if (bestRoute) {
     const bestOption = options.find((option) => (
       option.provider === bestRoute.provider &&
@@ -64,5 +85,7 @@ export function resolveVprChatOption(
     if (bestOption) return bestOption;
   }
 
-  return findChatOptionForVprSelection(options, selection);
+  return candidates.length === 0
+    ? findChatOptionForVprSelection(options, selection)
+    : null;
 }

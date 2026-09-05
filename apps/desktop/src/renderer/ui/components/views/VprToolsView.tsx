@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Add01Icon, ArrowDown01Icon, ArrowLeft01Icon, ArrowReloadHorizontalIcon, ArrowRight01Icon, Copy01Icon, Settings02Icon, SquareLock01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
+import { Add01Icon, ArrowDown01Icon, ArrowLeft01Icon, ArrowReloadHorizontalIcon, ArrowRight01Icon, ArrowUpRight01Icon, Copy01Icon, Settings02Icon, SquareLock01Icon, Tick02Icon } from '@hugeicons/core-free-icons';
 import { Modal } from '@antseed/ui';
 import type { InstalledAppEntry, SystemProxyProfileSummary } from '../../../types/bridge';
 import { chooseBestVprRoute, isPeerRoutable } from '../../../modules/routing/select';
@@ -14,13 +14,71 @@ import {
 } from '../../../modules/routing/tools';
 import { shallowEqual, useUiSelector } from '../../hooks/useUiSelector';
 import { useActions } from '../../hooks/useActions';
-import { BrandIcon } from '../brand/BrandIcon';
+import { BrandIcon, isThemeAwareAppBrand, resolveBrandKey } from '../brand/BrandIcon';
 import { VprBadge, VprPage, VprSearch } from '../vpr/VprKit';
 import { TelegramBotCard } from './TelegramBotCard';
+import { CursorAppCard } from './CursorAppCard';
+import { AppsOnboarding } from './AppsOnboarding';
+import { isAppsOnboardingSeen, persistAppsOnboardingSeen } from '../../../modules/app/apps-onboarding';
 import styles from './VprToolsView.module.scss';
+import { recordUserAction } from '../../../modules/telemetry/actions';
+import { normalizeTelemetryAppName } from '../../../../shared/telemetry.js';
 
 
-const DEFAULT_PORT = 8378;
+declare const __ANTSEED_SYSTEM_PROXY_PORT__: number;
+
+const DEFAULT_PORT = __ANTSEED_SYSTEM_PROXY_PORT__;
+
+const BUILT_IN_APP_INFO: Readonly<Record<string, { description: string; websiteUrl: string }>> = {
+  opencode: {
+    description: 'An open-source coding agent for the terminal, desktop, and IDE.',
+    websiteUrl: 'https://opencode.ai/',
+  },
+  codex: {
+    description: 'OpenAI’s coding agent for building, reviewing, and shipping software.',
+    websiteUrl: 'https://openai.com/codex/',
+  },
+  t3code: {
+    description: 'A desktop interface for running multiple coding agents in parallel.',
+    websiteUrl: 'https://github.com/pingdotgg/t3code',
+  },
+  pi: {
+    description: 'A minimal, extensible coding agent for the terminal.',
+    websiteUrl: 'https://pi.dev/',
+  },
+  gooeypi: {
+    description: 'A graphical desktop experience powered by the Pi coding-agent ecosystem.',
+    websiteUrl: 'https://pi.dev/',
+  },
+  crush: {
+    description: 'A terminal-based AI coding agent from Charm.',
+    websiteUrl: 'https://github.com/charmbracelet/crush',
+  },
+  goose: {
+    description: 'An open-source AI agent that can plan, code, and automate development tasks.',
+    websiteUrl: 'https://block.github.io/goose/',
+  },
+  hermes: {
+    description: 'A desktop AI agent with tools, skills, file previews, voice, profiles, and automation.',
+    websiteUrl: 'https://hermes-agent.nousresearch.com/',
+  },
+  zed: {
+    description: 'A high-performance collaborative code editor with built-in AI assistance.',
+    websiteUrl: 'https://zed.dev/download',
+  },
+};
+
+function appInfo(profile: SystemProxyProfileSummary): { description: string; websiteUrl?: string } {
+  const builtIn = BUILT_IN_APP_INFO[profile.name];
+  if (builtIn) return builtIn;
+  const domain = profile.domains[0];
+  return {
+    description: profile.custom
+      ? 'A custom AI application routed through AntSeed.'
+      : `${profile.displayName} is configured to use AntSeed for AI requests.`,
+    ...(domain ? { websiteUrl: `https://${domain}` } : {}),
+  };
+}
 
 /** Two-pane modal navigation: the main pane slides to the application list
     the same way the app's screens slide ('none' = no animation on open). */
@@ -50,6 +108,13 @@ export function VprToolsView() {
   const proxyResource = useCachedResource(systemProxyResource);
   const profiles = proxyResource.data?.profiles ?? [];
   const proxyState = proxyResource.data?.state ?? null;
+  // First-ever visit to this screen (however the user got here): play the
+  // coach-mark walkthrough once, and mark it seen immediately so the nav dot
+  // never comes back.
+  const [showOnboarding, setShowOnboarding] = useState(() => !isAppsOnboardingSeen());
+  useEffect(() => {
+    if (showOnboarding) persistAppsOnboardingSeen();
+  }, [showOnboarding]);
   const [busy, setBusy] = useState<string | null>(null);
   // The app being connected right now. Connecting also restarts an app that
   // was already running, so the row has to stay busy well past the click.
@@ -58,7 +123,6 @@ export function VprToolsView() {
   const [guiTest, setGuiTest] = useState<GuiTestResult | null>(null);
   const [trustBusy, setTrustBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const [addUrl, setAddUrl] = useState('');
   const [addBusy, setAddBusy] = useState(false);
@@ -202,8 +266,9 @@ export function VprToolsView() {
     return true;
   }, [activeProfileNames.length, defaultModel, defaultPeerId, peerOptions, profiles, proxyState?.running]);
 
-  const disconnect = useCallback(async () => {
+  const disconnect = useCallback(async (appName?: string) => {
     const bridge = window.antseedDesktop;
+    recordUserAction('app_disconnect', 'apps', appName !== undefined ? normalizeTelemetryAppName(appName) : undefined);
     setBusy('stop');
     const result = await bridge?.systemProxyStop?.();
     setBusy(null);
@@ -225,6 +290,7 @@ export function VprToolsView() {
   }, []);
 
   const connectProfile = useCallback(async (profileName: string) => {
+    recordUserAction('app_connect', 'apps', normalizeTelemetryAppName(profileName));
     const names = Array.from(new Set([...activeProfileNames, profileName]));
     setConnecting(profileName);
     try {
@@ -252,9 +318,10 @@ export function VprToolsView() {
   const disconnectProfile = useCallback((profileName: string) => {
     const remaining = activeProfileNames.filter((name) => name !== profileName);
     if (remaining.length === 0) {
-      void disconnect();
+      void disconnect(profileName);
       return;
     }
+    recordUserAction('app_disconnect', 'apps', normalizeTelemetryAppName(profileName));
     void startProfiles(remaining);
   }, [activeProfileNames, disconnect, startProfiles]);
 
@@ -339,6 +406,7 @@ export function VprToolsView() {
   }, []);
 
   const settingsProfile = settingsFor ? profiles.find((profile) => profile.name === settingsFor) ?? null : null;
+  const settingsInfo = settingsProfile ? appInfo(settingsProfile) : null;
   const settingsIdentity = settingsProfile
     ? (settingsProfile.toolSlugs?.length ? settingsProfile.toolSlugs : [settingsProfile.name]).join(', ')
     : '';
@@ -449,7 +517,7 @@ export function VprToolsView() {
       if (connected) {
         const remaining = activeProfileNames.filter((name) => name !== profileName);
         if (remaining.length === 0) {
-          await disconnect();
+          await disconnect(profileName);
         } else {
           await startProfiles(remaining);
         }
@@ -467,18 +535,12 @@ export function VprToolsView() {
     }
   }, [activeProfileNames, disconnect, refresh, startProfiles]);
 
-  const visibleProfiles = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    const filtered = query
-      ? profiles.filter((profile) => profile.displayName.toLowerCase().includes(query) || profile.name.toLowerCase().includes(query))
-      : profiles;
+  const orderedProfiles = useMemo(() => {
     // Connected apps float to the top; the sort is stable, so each group keeps
     // its original order.
     const isConnected = (name: string): boolean => activeProfiles?.has(name) ?? false;
-    return [...filtered].sort((a, b) => Number(isConnected(b.name)) - Number(isConnected(a.name)));
-  }, [profiles, search, activeProfiles]);
-
-  const telegramVisible = !search.trim() || 'telegram bot'.includes(search.trim().toLowerCase());
+    return [...profiles].sort((a, b) => Number(isConnected(b.name)) - Number(isConnected(a.name)));
+  }, [profiles, activeProfiles]);
 
   // Certificate trust presentation. A live probe failure (certTrustError) or a
   // stale/absent keychain state all mean the same thing to the user: press
@@ -498,28 +560,24 @@ export function VprToolsView() {
     <section className={`view view-vpr-tools view-pinned-header ${styles.view}`} role="tabpanel">
       <VprPage title="Connected apps" backFallback="home">
       <div className={styles.stack}>
-
-        <VprSearch value={search} onChange={setSearch} placeholder="Search app" />
-
         {message ? <p className={styles.note} role="status">{message}</p> : null}
 
-        {visibleProfiles.length === 0 && !telegramVisible ? (
-          <div className={styles.empty}>{profiles.length === 0 ? 'No tool profiles configured' : 'No apps match your search'}</div>
-        ) : (
+        <div className={styles.appScroll}>
           <div className={styles.appList}>
-            {telegramVisible ? <TelegramBotCard /> : null}
-            {visibleProfiles.map((profile) => {
+            <TelegramBotCard />
+            {orderedProfiles.map((profile) => {
               const connected = activeProfiles?.has(profile.name) ?? false;
               const setupComplete = setupProfiles.has(profile.name);
               const canRestart = connected && profile.canRestart === true;
-              return (
+              const brandKey = resolveBrandKey(profile.name, profile.displayName);
+              const profileCard = (
                 <div key={profile.name} className={`${styles.appPill}${connected ? ` ${styles.appPillConnected}` : ''}`}>
                   <div className={styles.appHead}>
                     <span className={styles.appIdentity}>
-                      {profile.iconDataUri ? (
+                      {profile.iconDataUri && !isThemeAwareAppBrand(brandKey) ? (
                         <img src={profile.iconDataUri} alt="" className={styles.appIcon} />
                       ) : (
-                        <BrandIcon name={profile.name} hints={[profile.displayName]} size={24} />
+                        <BrandIcon brand={brandKey} size={24} />
                       )}
                       <span className={styles.appText}>
                         <span className={styles.appNameRow}>
@@ -609,89 +667,96 @@ export function VprToolsView() {
 
                 </div>
               );
+              return profile.name === 'claude-desktop'
+                ? [profileCard, <CursorAppCard key="cursor" />]
+                : profileCard;
             })}
           </div>
-        )}
 
-        <button
-          type="button"
-          className={styles.addAppButton}
-          onClick={() => {
-            setAddOpen(true);
-            setAddUrl('');
-            setAddApp(null);
-            setAddPane({ pane: 'main', dir: 'none' });
-            setAddSearch('');
-            setAddStep(1);
-            setAddedName(null);
-            setAddError(null);
-            setAddUnverified(false);
-            setMessage(null);
-            ensureInstalledApps();
-          }}
-        >
-          <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={2} />
-          Add custom app
-        </button>
+          {/* The certificate only matters for intercepted (mitm proxy) apps —
+              keep the card hidden until one is connected, or one exists and
+              the cert still needs trusting to let it connect. */}
+          {caInfo && (hasConnectedProxyProfile || (hasProxyProfile && certNeedsTrust)) ? (() => {
+            const caExpanded = caOpenOverride ?? certNeedsTrust;
+            return (
+              <div className={styles.caCard}>
+                <button
+                  type="button"
+                  className={styles.caHead}
+                  aria-expanded={caExpanded}
+                  onClick={() => setCaOpenOverride(!caExpanded)}
+                >
+                  <HugeiconsIcon icon={SquareLock01Icon} size={14} strokeWidth={2} />
+                  <span className={styles.caTitle}>HTTPS certificate</span>
+                  <VprBadge tone={certBadgeTone}>{certBadgeLabel}</VprBadge>
+                  <HugeiconsIcon
+                    icon={ArrowDown01Icon}
+                    size={14}
+                    strokeWidth={2}
+                    className={`${styles.caChevron}${caExpanded ? ` ${styles.caChevronOpen}` : ''}`}
+                  />
+                </button>
+                {caExpanded ? (
+                  <>
+                    <p className={styles.caHint}>
+                      {caTrust === 'stale'
+                        ? 'An older AntSeed certificate is still trusted on this device — trust the current one to replace it, otherwise intercepted apps fail with an SSL certificate error.'
+                        : 'Apps whose HTTPS traffic is intercepted trust a certificate generated locally on this device. It never leaves your machine — inspect it any time.'}
+                    </p>
+                    <button type="button" className={styles.caPath} onClick={() => { void copyCaPath(); }} title={caInfo.path}>
+                      <code>{caInfo.path}</code>
+                      <HugeiconsIcon icon={caCopied ? Tick02Icon : Copy01Icon} size={13} strokeWidth={2} />
+                      <span>{caCopied ? 'Copied' : 'Copy'}</span>
+                    </button>
+                    {caInfo.exists || certNeedsTrust ? (
+                      <div className={styles.actions}>
+                        {caInfo.exists ? (
+                          <button type="button" onClick={() => { void revealCa(); }}>Reveal certificate</button>
+                        ) : null}
+                        {certNeedsTrust ? (
+                          <button type="button" onClick={() => { void trustCa(); }} disabled={trustBusy}>
+                            {trustBusy ? 'Trusting...' : 'Trust certificate'}
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
+              </div>
+            );
+          })() : null}
+        </div>
 
-        {/* The certificate only matters for intercepted (mitm proxy) apps —
-            keep the card hidden until one is connected, or one exists and
-            the cert still needs trusting to let it connect. */}
-        {caInfo && (hasConnectedProxyProfile || (hasProxyProfile && certNeedsTrust)) ? (() => {
-          const caExpanded = caOpenOverride ?? certNeedsTrust;
-          return (
-            <div className={styles.caCard}>
-              <button
-                type="button"
-                className={styles.caHead}
-                aria-expanded={caExpanded}
-                onClick={() => setCaOpenOverride(!caExpanded)}
-              >
-                <HugeiconsIcon icon={SquareLock01Icon} size={14} strokeWidth={2} />
-                <span className={styles.caTitle}>HTTPS certificate</span>
-                <VprBadge tone={certBadgeTone}>{certBadgeLabel}</VprBadge>
-                <HugeiconsIcon
-                  icon={ArrowDown01Icon}
-                  size={14}
-                  strokeWidth={2}
-                  className={`${styles.caChevron}${caExpanded ? ` ${styles.caChevronOpen}` : ''}`}
-                />
-              </button>
-              {caExpanded ? (
-                <>
-                  <p className={styles.caHint}>
-                    {caTrust === 'stale'
-                      ? 'An older AntSeed certificate is still trusted on this device — trust the current one to replace it, otherwise intercepted apps fail with an SSL certificate error.'
-                      : 'Apps whose HTTPS traffic is intercepted trust a certificate generated locally on this device. It never leaves your machine — inspect it any time.'}
-                  </p>
-                  <button type="button" className={styles.caPath} onClick={() => { void copyCaPath(); }} title={caInfo.path}>
-                    <code>{caInfo.path}</code>
-                    <HugeiconsIcon icon={caCopied ? Tick02Icon : Copy01Icon} size={13} strokeWidth={2} />
-                    <span>{caCopied ? 'Copied' : 'Copy'}</span>
-                  </button>
-                  {caInfo.exists || certNeedsTrust ? (
-                    <div className={styles.actions}>
-                      {caInfo.exists ? (
-                        <button type="button" onClick={() => { void revealCa(); }}>Reveal certificate</button>
-                      ) : null}
-                      {certNeedsTrust ? (
-                        <button type="button" onClick={() => { void trustCa(); }} disabled={trustBusy}>
-                          {trustBusy ? 'Trusting...' : 'Trust certificate'}
-                        </button>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </>
-              ) : null}
-            </div>
-          );
-        })() : null}
+        <div className={styles.appFooter}>
+          <button
+            type="button"
+            className={styles.addAppButton}
+            onClick={() => {
+              setAddOpen(true);
+              setAddUrl('');
+              setAddApp(null);
+              setAddPane({ pane: 'main', dir: 'none' });
+              setAddSearch('');
+              setAddStep(1);
+              setAddedName(null);
+              setAddError(null);
+              setAddUnverified(false);
+              setMessage(null);
+              ensureInstalledApps();
+            }}
+          >
+            <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={2} />
+            Add custom app
+          </button>
 
-        <button type="button" className={styles.learnMore} onClick={() => setHelpOpen(true)}>
-          What are connected apps?
-        </button>
+          <button type="button" className={styles.learnMore} onClick={() => setHelpOpen(true)}>
+            What are connected apps?
+          </button>
+        </div>
       </div>
       </VprPage>
+
+      {showOnboarding && <AppsOnboarding onDone={() => setShowOnboarding(false)} />}
 
       {/* Connected-apps explainer. */}
       <Modal
@@ -700,7 +765,6 @@ export function VprToolsView() {
         size="sm"
         title="Connected apps"
         subtitle="How VPR works with your tools"
-        className={styles.vprModal}
         bodyClassName={styles.settingsBody}
       >
         <section className={styles.settingSection}>
@@ -772,8 +836,21 @@ export function VprToolsView() {
         ) : (settingsProfile?.displayName ?? 'App settings')}
         subtitle={settingsPane.pane === 'apps'
           ? undefined
-          : (settingsProfile?.custom ? settingsProfile.domains[0] : 'App settings')}
-        className={styles.vprModal}
+          : settingsInfo ? (
+            <span className={styles.modalAppSubtitle}>
+              {settingsInfo.description}
+              {settingsInfo.websiteUrl ? (
+                <button
+                  type="button"
+                  className={styles.settingWebsiteLink}
+                  onClick={() => void openUrl(settingsInfo.websiteUrl!)}
+                >
+                  Website / download
+                  <HugeiconsIcon icon={ArrowUpRight01Icon} size={12} strokeWidth={2} />
+                </button>
+              ) : null}
+            </span>
+          ) : undefined}
         bodyClassName={styles.settingsBody}
       >
         {settingsProfile ? (() => {
@@ -945,7 +1022,6 @@ export function VprToolsView() {
           : addStep === 1 ? 'Route another app through VPR'
           : addStep === 2 ? 'Trust the HTTPS certificate'
           : 'Connect the app'}
-        className={styles.vprModal}
         bodyClassName={styles.settingsBody}
       >
         {addPane.pane !== 'apps' ? (

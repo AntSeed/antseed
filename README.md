@@ -145,5 +145,5 @@ See [packages/node/README.md](packages/node/README.md) for the `Provider` and `R
 - **Build**: tsc for libraries, Vite for web apps
 - **Test**: vitest
 - **Desktop**: Electron
-- **P2P**: BitTorrent DHT + WebRTC data channels
+- **P2P**: BitTorrent DHT discovery + direct end-to-end encrypted TCP (preferred); WebRTC data channels for peers that cannot open TCP sockets
 - **Payments**: On-chain USDC deposits and sessions (Base/Arbitrum)

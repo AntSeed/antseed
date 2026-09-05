@@ -3,7 +3,56 @@ import { test } from 'vitest';
 import type { DiscoverRow } from '../../core/state';
 import { projectRowsToVprModelCatalog, selectDefaultVprModel } from './model-catalog.js';
 import { favoriteModelKey } from './favorites.js';
-import { selectFavoriteVprCatalog, selectRecommendedVprCatalog } from './recommended.js';
+import { isFreeCatalogEntry, selectFavoriteVprCatalog, selectRecommendedVprCatalog } from './recommended.js';
+
+test('recommended free ride-along survives another trusted seller advertising a cached price', () => {
+  // deepseek-v4-flash case: Apex offers it fully free while Open Bird (also
+  // trusted) charges and advertises a nonzero cached-input price. The entry
+  // minimum mixes sellers, so the ride-along must judge per route.
+  const rows = [
+    discoverRow({ serviceId: 'mixed-free', peerId: 'free-seller', inputUsdPerMillion: 0, outputUsdPerMillion: 0 }),
+    discoverRow({
+      serviceId: 'mixed-free',
+      peerId: 'paid-seller',
+      inputUsdPerMillion: 0.049,
+      outputUsdPerMillion: 0.098,
+      cachedInputUsdPerMillion: 0.0098,
+    }),
+  ];
+  const catalog = projectRowsToVprModelCatalog(rows);
+
+  assert.ok(selectRecommendedVprCatalog(catalog).some((entry) => entry.serviceId === 'mixed-free'));
+});
+
+test('a free route that charges cached tokens does not count as a free seller', () => {
+  const catalog = projectRowsToVprModelCatalog([
+    discoverRow({
+      serviceId: 'cached-billed',
+      inputUsdPerMillion: 0,
+      outputUsdPerMillion: 0,
+      cachedInputUsdPerMillion: 0.01,
+    }),
+  ]);
+
+  assert.equal(catalog[0]?.hasEligibleFreeSeller, false);
+  assert.ok(!selectRecommendedVprCatalog(catalog).some((entry) => entry.serviceId === 'cached-billed'));
+});
+
+test('recommended free ride-along excludes models whose only free sellers fail the trust gate', () => {
+  const rows = [
+    discoverRow({ serviceId: 'trusted-free', peerId: 'trusted', inputUsdPerMillion: 0, outputUsdPerMillion: 0 }),
+    discoverRow({ serviceId: 'untrusted-free', peerId: 'untrusted', inputUsdPerMillion: 0, outputUsdPerMillion: 0 }),
+  ];
+  const catalog = projectRowsToVprModelCatalog(rows, (row) => row.peerId === 'trusted');
+
+  const recommended = selectRecommendedVprCatalog(catalog);
+  const ids = recommended.map((entry) => entry.serviceId);
+  assert.ok(ids.includes('trusted-free'));
+  assert.ok(!ids.includes('untrusted-free'));
+  // The untrusted-only model still shows its real (free) fallback price in
+  // the full catalog — it just isn't endorsed.
+  assert.equal(catalog.find((entry) => entry.serviceId === 'untrusted-free')?.minInputUsdPerMillion, 0);
+});
 
 function discoverRow(overrides: Partial<DiscoverRow> = {}): DiscoverRow {
   const peerId = overrides.peerId ?? 'p1';
@@ -164,4 +213,30 @@ test('selectFavoriteVprCatalog returns only starred entries in catalog order', (
   const favorites = selectFavoriteVprCatalog(catalog, new Set([favoriteModelKey('openai', 'obscure-model')]));
 
   assert.deepEqual(favorites.map((entry) => entry.serviceId), ['obscure-model']);
+});
+
+test('recommended exact matching prefers the base model over a more popular variant', () => {
+  const catalog = projectRowsToVprModelCatalog([
+    discoverRow({ provider: 'openai', serviceId: 'gpt-5.6-terra', peerId: 'p1' }),
+    discoverRow({ provider: 'openai', serviceId: 'gpt-5.6-terra', peerId: 'p2' }),
+    discoverRow({ provider: 'openai', serviceId: 'gpt-5.6', peerId: 'p3' }),
+  ]);
+
+  assert.equal(selectRecommendedVprCatalog(catalog)[0]?.serviceId, 'gpt-5.6');
+});
+
+test('a paid cached-input rate disqualifies an otherwise free entry', () => {
+  const [paidCached] = projectRowsToVprModelCatalog([
+    discoverRow({ inputUsdPerMillion: 0, outputUsdPerMillion: 0, cachedInputUsdPerMillion: 5 }),
+  ]);
+  const [noCached] = projectRowsToVprModelCatalog([
+    discoverRow({ inputUsdPerMillion: 0, outputUsdPerMillion: 0, cachedInputUsdPerMillion: null }),
+  ]);
+  const [freeCached] = projectRowsToVprModelCatalog([
+    discoverRow({ inputUsdPerMillion: 0, outputUsdPerMillion: 0, cachedInputUsdPerMillion: 0 }),
+  ]);
+
+  assert.equal(isFreeCatalogEntry(paidCached!), false);
+  assert.equal(isFreeCatalogEntry(noCached!), true);
+  assert.equal(isFreeCatalogEntry(freeCached!), true);
 });

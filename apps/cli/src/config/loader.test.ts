@@ -3,7 +3,12 @@ import test from 'node:test';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { DEFAULT_BUYER_METADATA_FETCH_TIMEOUT_MS, DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS } from './defaults.js';
+import {
+  DEFAULT_BUYER_MAX_STREAM_DURATION_MS,
+  DEFAULT_BUYER_METADATA_FETCH_TIMEOUT_MS,
+  DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS,
+  DEFAULT_BUYER_REQUEST_TIMEOUT_MS,
+} from './defaults.js';
 import { loadConfig } from './loader.js';
 import { createDefaultConfig } from './defaults.js';
 import { deriveDisplayNameFromPeerId, shouldDeriveDisplayName } from './identity-display-name.js';
@@ -39,6 +44,53 @@ test('createDefaultConfig uses a higher seller concurrency default', () => {
   const config = createDefaultConfig();
 
   assert.equal(config.seller.maxConcurrentBuyers, 50);
+});
+
+test('createDefaultConfig includes shared model routing preferences', () => {
+  const config = createDefaultConfig();
+
+  assert.deepEqual(config.buyer.routingPreferences, {
+    preferFreePeers: false,
+    maxInputUsdPerMillion: 25,
+    minTrustScore: 60,
+    allowedPeerIds: [],
+    blockedPeerIds: [],
+  });
+});
+
+test('loadConfig merges partial model routing preferences with defaults', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      buyer: {
+        routingPreferences: {
+          preferFreePeers: true,
+          allowedPeerIds: ['0x' + 'a'.repeat(40)],
+        },
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.deepEqual(config.buyer.routingPreferences, {
+        preferFreePeers: true,
+        maxInputUsdPerMillion: 25,
+        minTrustScore: 60,
+        allowedPeerIds: ['0x' + 'a'.repeat(40)],
+        blockedPeerIds: [],
+      });
+    },
+  );
+});
+
+test('loadConfig rejects invalid model routing peer ids', async () => {
+  await withTempConfig(
+    JSON.stringify({ buyer: { routingPreferences: { blockedPeerIds: ['not-a-peer'] } } }),
+    async (configPath) => {
+      await assert.rejects(
+        () => loadConfig(configPath),
+        /buyer\.routingPreferences\.blockedPeerIds/,
+      );
+    },
+  );
 });
 
 test('loadConfig reads nested seller.providers[name].services[id] shape', async () => {
@@ -143,22 +195,28 @@ test('loadConfig applies the default buyer peer refresh interval when missing', 
       const config = await loadConfig(configPath);
       assert.equal(config.buyer.peerRefreshIntervalMs, DEFAULT_BUYER_PEER_REFRESH_INTERVAL_MS);
       assert.equal(config.buyer.metadataFetchTimeoutMs, DEFAULT_BUYER_METADATA_FETCH_TIMEOUT_MS);
+      assert.equal(config.buyer.requestTimeoutMs, DEFAULT_BUYER_REQUEST_TIMEOUT_MS);
+      assert.equal(config.buyer.maxStreamDurationMs, DEFAULT_BUYER_MAX_STREAM_DURATION_MS);
     }
   );
 });
 
-test('loadConfig preserves explicit buyer peerRefreshIntervalMs and metadataFetchTimeoutMs', async () => {
+test('loadConfig preserves explicit buyer discovery and request timeouts', async () => {
   await withTempConfig(
     JSON.stringify({
       buyer: {
         peerRefreshIntervalMs: 15_000,
         metadataFetchTimeoutMs: 2_500,
+        requestTimeoutMs: 600_000,
+        maxStreamDurationMs: 900_000,
       },
     }),
     async (configPath) => {
       const config = await loadConfig(configPath);
       assert.equal(config.buyer.peerRefreshIntervalMs, 15_000);
       assert.equal(config.buyer.metadataFetchTimeoutMs, 2_500);
+      assert.equal(config.buyer.requestTimeoutMs, 600_000);
+      assert.equal(config.buyer.maxStreamDurationMs, 900_000);
     }
   );
 });
@@ -185,6 +243,32 @@ test('loadConfig defaults and preserves buyer metadata v2 service opt-out settin
     async (configPath) => {
       const config = await loadConfig(configPath);
       assert.equal(config.buyer.disableMetadataV2Services, true);
+    }
+  );
+});
+
+test('loadConfig defaults buyer autoSweep on and preserves an explicit false', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      buyer: {
+        proxyPort: 9123,
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.equal(config.buyer.autoSweep, true);
+    }
+  );
+
+  await withTempConfig(
+    JSON.stringify({
+      buyer: {
+        autoSweep: false,
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.equal(config.buyer.autoSweep, false);
     }
   );
 });
@@ -272,6 +356,18 @@ test('loadConfig rejects invalid buyer metadataFetchTimeoutMs', async () => {
         /buyer\.metadataFetchTimeoutMs/
       );
     }
+  );
+});
+
+test('loadConfig rejects invalid buyer request duration limits', async () => {
+  await withTempConfig(
+    JSON.stringify({ buyer: { requestTimeoutMs: 0, maxStreamDurationMs: -1 } }),
+    async (configPath) => {
+      await assert.rejects(
+        async () => loadConfig(configPath),
+        /buyer\.requestTimeoutMs.*buyer\.maxStreamDurationMs/s,
+      );
+    },
   );
 });
 
@@ -572,6 +668,52 @@ test('loadConfig rejects invalid seller healthCheck failureThreshold', async () 
       await assert.rejects(
         async () => loadConfig(configPath),
         /seller\.healthCheck\.failureThreshold/
+      );
+    }
+  );
+});
+
+test('loadConfig preserves seller gasCheck setting', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        gasCheck: { enabled: false, intervalMs: 30_000, minBalanceEth: 0.0001 },
+      },
+    }),
+    async (configPath) => {
+      const config = await loadConfig(configPath);
+      assert.deepEqual(config.seller.gasCheck, { enabled: false, intervalMs: 30_000, minBalanceEth: 0.0001 });
+    }
+  );
+});
+
+test('loadConfig rejects invalid seller gasCheck intervalMs', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        gasCheck: { intervalMs: 1_000 },
+      },
+    }),
+    async (configPath) => {
+      await assert.rejects(
+        async () => loadConfig(configPath),
+        /seller\.gasCheck\.intervalMs/
+      );
+    }
+  );
+});
+
+test('loadConfig rejects invalid seller gasCheck minBalanceEth', async () => {
+  await withTempConfig(
+    JSON.stringify({
+      seller: {
+        gasCheck: { minBalanceEth: -1 },
+      },
+    }),
+    async (configPath) => {
+      await assert.rejects(
+        async () => loadConfig(configPath),
+        /seller\.gasCheck\.minBalanceEth/
       );
     }
   );

@@ -36,6 +36,24 @@ agents, fine-tuned models, managed products). Subscription-based plugins
 (provider-claude-code, provider-claude-oauth) are for testing/development only.
 Reselling subscription credentials violates upstream provider terms of service.
 
+**AntSeed is not a crypto company.** Settlement happens in USDC on Base, but
+buyers are not required to already hold or handle crypto: the desktop app
+offers a card checkout (Stripe-backed onramp, region-gated) alongside crypto
+funding, and USDC can be funded from an exchange withdrawal, another wallet,
+or a card on-ramp (see `apps/website/docs/guides/payments.md`,
+`apps/desktop/src/renderer/ui/components/views/VprDepositView.tsx`, and
+`apps/cli/README.md`). Never describe AntSeed as crypto-only, wallet-only, or
+as requiring the user to already own cryptocurrency.
+
+**When writing marketing or blog content that states a fact about AntSeed**
+(pricing, payment flow, CLI behavior, protocol mechanics, what is or isn't
+free) — source it only from this repository (code, docs, CHANGELOG) or the
+live antseed.com website. Never state an AntSeed-specific fact from general
+knowledge, a web search, or inference from silence in a doc (e.g. "the doc
+doesn't mention a free tier, so there must not be one" is not a valid basis
+for a claim). If a fact can't be verified from those two sources, say so
+explicitly rather than asserting it.
+
 ## Repository Structure
 ```
 packages/           Core libraries (published to npm as @antseed/*)
@@ -88,6 +106,13 @@ pnpm run test         # Run all tests
 pnpm run typecheck    # Type-check all packages
 pnpm run clean        # Remove all dist/ directories
 ```
+
+## Nix
+`flake.nix` provides a dev shell (`nix develop`) and a buildable CLI package:
+`nix build .#` / `nix run .# -- <args>` produces/runs `antseed` from
+`apps/cli` (esbuild bundle + pinned native prebuilds for better-sqlite3,
+node-datachannel, keytar). The prebuild versions/hashes in `flake.nix` must be
+updated when those dependencies change in `pnpm-lock.yaml`.
 
 ## Build Order
 Build must respect: node -> provider-core/router-core -> plugins -> dashboard -> cli -> desktop.

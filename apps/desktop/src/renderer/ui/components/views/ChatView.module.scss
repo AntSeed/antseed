@@ -32,24 +32,34 @@
   min-width: 0;
 }
 
-/* Bare icon button — the expand/collapse toggle carries no chrome of its
-   own, just the arrow glyph. */
 .panel-toggle {
   appearance: none;
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 4px;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 2px;
   border: none;
+  border-radius: 4px;
   background: none;
   color: var(--text-muted);
   cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: color 0.15s;
 
-  &:hover,
+  &:hover {
+    color: var(--text-primary);
+  }
+
   &:focus-visible {
     color: var(--text-primary);
-    outline: none;
+    outline: 2px solid color-mix(in srgb, var(--text-muted) 45%, transparent);
+    outline-offset: 3px;
   }
 }
 
@@ -906,8 +916,9 @@
 
 .chat-send-btn {
   border-radius: 10px;
-  padding: 0;
-  width: 40px;
+  padding: 0 12px;
+  min-width: 40px;
+  width: auto;
   height: 40px;
   background: #1fd87a;
   border: none !important;
@@ -927,6 +938,12 @@
   &:disabled {
     opacity: 0.3;
   }
+}
+
+.chat-generate-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
 }
 
 /* ===================================================================

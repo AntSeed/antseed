@@ -55,7 +55,7 @@ export interface RawChannel {
   peerId: string;
   seller: string;
   buyer: string;
-  reserveMax: string;
+  reserveCeiling: string | null;
   cumulativeSigned: string;
   deadline: number;
   reservedAt: number;

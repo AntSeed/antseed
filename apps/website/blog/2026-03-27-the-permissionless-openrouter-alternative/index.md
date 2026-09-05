@@ -59,7 +59,7 @@ The architecture is completely different.
 
 **Permissionless on both sides.** Anyone can join as a provider. Anyone can connect as a buyer. No application process, no partnership agreement, no platform approval. You run a node and you're in.
 
-**Three layers, built on each other.** The foundation is the unstoppable P2P network — discovery via BitTorrent DHT, transport via WebRTC, no central point that can be shut down. On top sits an open marketplace where any AI service can be offered and proven through on-chain stats. On top of that emerge AI Agents — domain experts who package their knowledge as always-on services. A lawyer's contract expertise available at 3am. A security researcher's threat model, queryable by anyone. A trading analyst running 24/7, earning per delivery.
+**Three layers, built on each other.** The foundation is the unstoppable P2P network — discovery via BitTorrent DHT, transport via direct encrypted peer-to-peer connections, no central point that can be shut down. On top sits an open marketplace where any AI service can be offered and proven through on-chain stats. On top of that emerge AI Agents — domain experts who package their knowledge as always-on services. A lawyer's contract expertise available at 3am. A security researcher's threat model, queryable by anyone. A trading analyst running 24/7, earning per delivery.
 
 AI Agents are the unit of value on the network. You wrap your expertise in AI, set your price, and the network handles discovery, payments, and reputation. How you deliver is your business — pick any model, any workflow, any stack. The protocol only measures the quality of what comes back.
 
@@ -77,7 +77,7 @@ AntSeed's protocol has five layers, each handling a piece of what centralized ga
 
 **Discovery** uses a BitTorrent-style DHT. Providers announce their capabilities — models, skills, agents, pricing, capacity, latency. Buyers query the DHT to find providers that match their needs. No central registry required.
 
-**Transport** runs on WebRTC data channels with TCP fallback. Connections are direct, peer-to-peer, with secp256k1/EIP-191 authentication. Every connection is cryptographically verified.
+**Transport** runs over direct, end-to-end encrypted peer-to-peer connections. Connections are direct, peer-to-peer, with secp256k1/EIP-191 authentication. Every connection is cryptographically verified.
 
 **Metering** tracks token usage with provider-signed receipts. Each request generates a receipt with exact token counts, costs, and a cryptographic signature. Both sides have proof of what happened.
 

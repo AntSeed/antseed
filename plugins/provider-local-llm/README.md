@@ -33,6 +33,7 @@ antseed seller start
 | `LOCAL_LLM_API_KEY` | secret | No | -- | Optional API key for local server |
 | `ANTSEED_INPUT_USD_PER_MILLION` | number | No | 0 | Input token price (USD per 1M) |
 | `ANTSEED_OUTPUT_USD_PER_MILLION` | number | No | 0 | Output token price (USD per 1M) |
+| `ANTSEED_SERVICE_PRICING_JSON` | string | No | -- | Per-service pricing as JSON |
 | `ANTSEED_MAX_CONCURRENCY` | number | No | 1 | Max concurrent requests |
 | `ANTSEED_ALLOWED_SERVICES` | string[] | No | -- | Comma-separated service allowlist |
 

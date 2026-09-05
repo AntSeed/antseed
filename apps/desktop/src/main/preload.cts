@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { RuntimeMode, RuntimeProcessState, StartOptions } from './runtime/process-manager.js';
+import type {
+  FirstModelShownSignal,
+  TelemetryStatus,
+  TelemetryStatusUpdateResult,
+  UserActionSignal,
+} from '../shared/telemetry.js';
 
 type LogEvent = {
   mode: RuntimeMode;
@@ -261,8 +267,8 @@ const api = {
   chatAiGetConversation(id: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
     return ipcRenderer.invoke('chat:ai-get-conversation', id);
   },
-  chatAiCreateConversation(service: string, provider?: string, peerId?: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
-    return ipcRenderer.invoke('chat:ai-create-conversation', service, provider, peerId);
+  chatAiCreateConversation(service: string, provider?: string, peerId?: string, routeMode?: 'auto' | 'pinned'): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+    return ipcRenderer.invoke('chat:ai-create-conversation', service, provider, peerId, routeMode);
   },
   chatAiListDiscoverRows(): Promise<{ ok: boolean; data?: unknown[]; error?: string }> {
     return ipcRenderer.invoke('chat:ai-list-discover-rows');
@@ -278,6 +284,9 @@ const api = {
   },
   attachmentDownload(conversationId: string, attachmentId: string, suggestedName: string): Promise<{ ok: boolean; path?: string; error?: string }> {
     return ipcRenderer.invoke('attachment:download', conversationId, attachmentId, suggestedName);
+  },
+  chatGenerateImage(payload: { conversationId: string; prompt: string; peerId?: string; moderation?: 'auto' | 'low'; service: string; sourceImageAttachmentId?: string }): Promise<{ ok: boolean; user?: unknown; assistant?: unknown; error?: string }> {
+    return ipcRenderer.invoke('chat:generate-image', payload);
   },
   chatAiSend(conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string, permissionMode?: ChatPermissionMode): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:ai-send', conversationId, message, service, provider, attachments, peerId, permissionMode);
@@ -297,10 +306,10 @@ const api = {
   chatAiAbort(conversationId?: string): Promise<{ ok: boolean }> {
     return ipcRenderer.invoke('chat:ai-abort', conversationId);
   },
-  chatAiSelectPeer(payload: { conversationId?: string | null; peerId?: string | null; service?: string | null; provider?: string | null }): Promise<{ ok: boolean; error?: string }> {
+  chatAiSelectPeer(payload: { conversationId?: string | null; peerId?: string | null; service?: string | null; provider?: string | null; routeMode?: 'auto' | 'pinned' | null }): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:ai-select-peer', payload);
   },
-  chatSetBuyerDefaultRoute(payload: { peerId: string; service: string }): Promise<{ ok: boolean; error?: string }> {
+  chatSetBuyerDefaultRoute(payload: { peerId?: string; service: string }): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('chat:set-buyer-default-route', payload);
   },
   chatSyncModelPicker(payload: unknown): Promise<{ ok: boolean }> {
@@ -499,6 +508,18 @@ const api = {
   getAppSetupStatus(): Promise<{ needed: boolean; complete: boolean }> {
     return ipcRenderer.invoke('app:get-setup-status') as Promise<{ needed: boolean; complete: boolean }>;
   },
+  getTelemetryStatus(): Promise<TelemetryStatus> {
+    return ipcRenderer.invoke('telemetry:get-status') as Promise<TelemetryStatus>;
+  },
+  setTelemetryEnabled(enabled: boolean): Promise<TelemetryStatusUpdateResult> {
+    return ipcRenderer.invoke('telemetry:set-enabled', enabled) as Promise<TelemetryStatusUpdateResult>;
+  },
+  telemetryRecordUserAction(payload: UserActionSignal): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('telemetry:record-user-action', payload) as Promise<{ ok: boolean }>;
+  },
+  telemetryRecordFirstModelShown(payload: FirstModelShownSignal): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke('telemetry:first-model-shown', payload) as Promise<{ ok: boolean }>;
+  },
   onAppSetupStep(handler: (data: { step: string; label: string }) => void): () => void {
     const listener = (_: unknown, data: { step: string; label: string }) => handler(data);
     ipcRenderer.on('app:setup-step', listener);
@@ -538,11 +559,11 @@ const api = {
   paymentsOpenPayPage: (opts: { kind?: string; amountUsdc?: string; channelId?: string }) => ipcRenderer.invoke('payments:open-pay-page', opts),
   paymentsCardProviders: () => ipcRenderer.invoke('payments:card-providers'),
   paymentsOpenCardProvider: (opts?: { providerId?: string; amountUsdc?: string }) => ipcRenderer.invoke('payments:open-card-provider', opts),
-  paymentsCrossmintConfig: () => ipcRenderer.invoke('payments:crossmint-config'),
   paymentsFunkitConfig: () => ipcRenderer.invoke('payments:funkit-config'),
   paymentsOnrampAvailability: () => ipcRenderer.invoke('payments:onramp-availability'),
   paymentsCloseCheckoutWindows: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('payments:close-checkout-windows') as Promise<{ ok: boolean }>,
   paymentsGetBuyerUsage: () => ipcRenderer.invoke('payments:get-buyer-usage'),
+  paymentsGetBuyerSpendHistory: () => ipcRenderer.invoke('payments:get-buyer-spend-history'),
   paymentsGetChannels: () => ipcRenderer.invoke('payments:get-channels'),
   paymentsRequestCooperativeClose: (opts: { peerId: string }) => ipcRenderer.invoke('payments:request-cooperative-close', opts),
   paymentsGetRewardsSummary: () => ipcRenderer.invoke('payments:get-rewards-summary'),
@@ -600,6 +621,11 @@ const api = {
   systemProxyRestartApp(app: string): Promise<{ ok: boolean; error?: string }> {
     return ipcRenderer.invoke('system-proxy:restart-app', { app }) as Promise<{ ok: boolean; error?: string }>;
   },
+  publicTunnelGetStatus: () => ipcRenderer.invoke('public-tunnel:get-status'),
+  publicTunnelConfigure: (settings: { provider: 'cloudflare' | 'ngrok'; tunnelToken: string; publicUrl: string }) => ipcRenderer.invoke('public-tunnel:configure', settings),
+  publicTunnelStart: (settings?: { provider?: 'cloudflare' | 'ngrok' }) => ipcRenderer.invoke('public-tunnel:start', settings),
+  publicTunnelStop: () => ipcRenderer.invoke('public-tunnel:stop'),
+  publicTunnelGetApiKey: () => ipcRenderer.invoke('public-tunnel:get-api-key'),
 
   /* Floating always-on-top pill window */
   vprFloatOpen(data: unknown): Promise<{ ok: boolean }> {

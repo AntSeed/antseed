@@ -3,7 +3,11 @@ import type { BuyerConnection } from './interfaces.js';
 import { PaymentMux } from './payment-mux.js';
 import type { PeerId } from '@antseed/protocol/peer-id';
 import type { BuyerPeerView } from './interfaces.js';
-import type { SerializedHttpRequest, SerializedHttpResponse } from '@antseed/protocol/http';
+import {
+  ANTSEED_FAULT_ATTRIBUTION_HEADER,
+  type SerializedHttpRequest,
+  type SerializedHttpResponse,
+} from '@antseed/protocol/http';
 import {
   PAYMENT_CODE_CHANNEL_EXHAUSTED,
   type PaymentRequiredPayload,
@@ -13,7 +17,12 @@ import type { BuyerPaymentManager } from './buyer-payment-manager.js';
 import type { BuyerFreeUsageManager } from './buyer-free-usage-manager.js';
 import type { DepositsClient } from './deposits-client.js';
 import type { ChannelsClient } from './channels-client.js';
-import { CHANNEL_ROLE, CHANNEL_STATUS, type BuyerChannelStore } from './channel-store-types.js';
+import {
+  CHANNEL_ROLE,
+  CHANNEL_STATUS,
+  type BuyerChannelStore,
+  type StoredChannel,
+} from './channel-store-types.js';
 import { classifyOnChainChannel } from './channel-session-state.js';
 import { peerIdToAddress } from '@antseed/protocol/peer-id';
 import { debugLog, debugWarn } from './debug.js';
@@ -31,8 +40,23 @@ import {
   extractUnitResponseUsage,
   type FinalUnitBillingResult,
 } from './unit-billing.js';
+import { buyerFault, peerFault } from './errors.js';
 
-export interface BuyerNegotiatorConfig {}
+export interface BuyerNegotiatorConfig {
+  /**
+   * Live chain-RPC reachability signal. When it returns false the negotiator
+   * skips best-effort on-chain reads (like the pre-negotiation balance check)
+   * instead of letting them fail or hang — off-chain signing continues either
+   * way, so payments keep working through RPC outages.
+   */
+  isChainReachable?: () => boolean;
+  /**
+   * Called when a best-effort on-chain read fails, so the reachability
+   * monitor can re-detect a mid-session RPC outage instead of staying
+   * optimistically "ready" forever.
+   */
+  onChainReadFailure?: () => void;
+}
 
 /** How long to wait for a seller's CloseChannelResult before giving up. */
 const CLOSE_REQUEST_TIMEOUT_MS = 60_000;
@@ -99,6 +123,8 @@ export class BuyerPaymentNegotiator {
   private readonly _identity: BuyerIdentity;
   private readonly _emit: NegotiationEmitter;
   private readonly _sellerAddressResolver?: SellerAddressResolver;
+  private readonly _isChainReachable: (() => boolean) | null;
+  private readonly _onChainReadFailure: (() => void) | null;
 
   /** Tracks which seller peers the buyer has already negotiated payment for. */
   private readonly _lockedPeers = new Set<string>();
@@ -118,8 +144,8 @@ export class BuyerPaymentNegotiator {
   private readonly _lastResponseCost = new Map<string, LastResponseCost>();
   /** Buyer-side payment muxes keyed by seller peerId. */
   private readonly _muxes = new Map<PeerId, PaymentMux>();
-  /** In-flight NeedAuth handlers keyed by seller peerId. */
-  private readonly _pendingNeedAuth = new Map<string, Promise<void>>();
+  /** Every in-flight NeedAuth handler, retained until its work settles. */
+  private readonly _pendingNeedAuth = new Set<Promise<void>>();
   /** In-flight cooperative-close requests keyed by seller peerId. */
   private readonly _pendingCloseRequests = new Map<string, {
     channelId: string;
@@ -147,6 +173,8 @@ export class BuyerPaymentNegotiator {
     this._freeUsageManager = freeUsageManager ?? null;
     this._emit = emitter;
     this._sellerAddressResolver = sellerAddressResolver;
+    this._isChainReachable = _config.isChainReachable ?? null;
+    this._onChainReadFailure = _config.onChainReadFailure ?? null;
   }
 
   get bpm(): BuyerPaymentManager {
@@ -172,9 +200,7 @@ export class BuyerPaymentNegotiator {
     const pmux = new PaymentMux(conn);
     this._muxes.set(peerId, pmux);
 
-    pmux.onAuthAck((payload) => {
-      this._bpm.handleAuthAck(peerId, payload);
-    });
+    pmux.onAuthAck((payload) => this._bpm.handleAuthAck(peerId, payload));
 
     pmux.onFreeUsageAck((payload) => {
       this._freeUsageManager?.handleAck(peerId, payload);
@@ -183,18 +209,19 @@ export class BuyerPaymentNegotiator {
     pmux.onNeedFreeUsageAuth((payload) => {
       const p = this._freeUsageManager?.handleNeedAuth(peerId, payload, pmux);
       if (p) {
-        this._pendingNeedAuth.set(peerId, p);
-        p.finally(() => {
-          if (this._pendingNeedAuth.get(peerId) === p) this._pendingNeedAuth.delete(peerId);
+        this._pendingNeedAuth.add(p);
+        return p.finally(() => {
+          this._pendingNeedAuth.delete(p);
         });
       }
+      return undefined;
     });
 
     pmux.onNeedAuth((payload) => {
       const p = this._bpm.handleNeedAuth(peerId, payload, pmux);
-      this._pendingNeedAuth.set(peerId, p);
-      p.finally(() => {
-        if (this._pendingNeedAuth.get(peerId) === p) this._pendingNeedAuth.delete(peerId);
+      this._pendingNeedAuth.add(p);
+      return p.finally(() => {
+        this._pendingNeedAuth.delete(p);
       });
     });
 
@@ -292,6 +319,33 @@ export class BuyerPaymentNegotiator {
   }
 
   /**
+   * Resolve an ambiguously delivered ReserveAuth before a reloaded browser can
+   * issue its first request. Waiting for a seller 402 is insufficient: a seller
+   * that committed the reserve before the browser crashed may still recognize
+   * the channel and serve immediately.
+   */
+  async recoverPendingReserveBeforeRequest(
+    peer: BuyerPeerView,
+    conn: BuyerConnection,
+  ): Promise<void> {
+    if (!this._bpm.hasPendingReserveAuth(peer.peerId)) return;
+    if (!this._channelsClient) {
+      throw buyerFault(
+        `Cannot recover pending reserve for ${peer.peerId.slice(0, 12)}... without an on-chain channels client`,
+        'buyer-session-state',
+      );
+    }
+
+    const recovered = await this._recoverExistingSession(peer, conn);
+    if (!recovered && this._bpm.hasPendingReserveAuth(peer.peerId)) {
+      throw buyerFault(
+        `Unable to reconcile pending reserve for ${peer.peerId.slice(0, 12)}...`,
+        'buyer-session-state',
+      );
+    }
+  }
+
+  /**
    * Send a SpendingAuth to the seller immediately after receiving a response.
    * This ensures the seller always has a valid SpendingAuth for close(),
    * even if the buyer disconnects before the next request.
@@ -370,9 +424,10 @@ export class BuyerPaymentNegotiator {
     // Flush any SpendingAuth the buyer still owes for the last response first —
     // otherwise the seller rejects with 'pending_auth' on the very first try.
     await this.drainPendingNeedAuth();
-    await this.sendPostResponseAuthTo(peerId, conn).catch((err) => {
-      debugWarn(`[BuyerNegotiator] Pre-close auth flush failed for ${peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
-    });
+    // A close request can carry a claimable SpendingAuth. If persisting the
+    // outstanding response authorization fails, abort rather than signing and
+    // transmitting another authorization from non-durable in-memory state.
+    await this.sendPostResponseAuthTo(peerId, conn);
 
     const pmux = this.getOrCreatePaymentMux(peerId, conn);
     const payload = await this._bpm.buildCloseChannelRequest(peerId, { includeAuth });
@@ -490,7 +545,11 @@ export class BuyerPaymentNegotiator {
         action: 'return',
         response: {
           ...response,
-          headers: { ...response.headers, 'content-type': 'application/json' },
+          headers: {
+            ...response.headers,
+            'content-type': 'application/json',
+            [ANTSEED_FAULT_ATTRIBUTION_HEADER]: 'buyer',
+          },
           body: new TextEncoder().encode(enrichedBody),
         },
       };
@@ -600,21 +659,30 @@ export class BuyerPaymentNegotiator {
     // Check on-chain balance before sending ReserveAuth. The seller locks the full
     // reserve ceiling on-chain, so a positive-but-too-small available balance would
     // otherwise make reserve()/topUp() revert with InsufficientBalance and trigger a
-    // noisy 402/auth-rejection retry loop.
-    try {
-      const buyerAddr = this._identity.wallet.address;
-      const balance = await this._depositsClient.getBuyerBalance(buyerAddr);
-      if (balance.available <= 0n) {
-        return returnPaymentRequired('insufficient_deposits', 'buyer deposits balance is zero');
+    // noisy 402/auth-rejection retry loop. Skipped while the chain RPC is known
+    // to be unreachable: the check is best-effort, and negotiation itself only
+    // signs off-chain — a seller that can reach the chain still settles fine.
+    if (this._isChainReachable && !this._isChainReachable()) {
+      debugWarn(
+        `[BuyerNegotiator] Chain RPC unreachable — skipping balance precheck for ${peer.peerId.slice(0, 12)}...`,
+      );
+    } else {
+      try {
+        const buyerAddr = this._identity.wallet.address;
+        const balance = await this._depositsClient.getBuyerBalance(buyerAddr);
+        if (balance.available <= 0n) {
+          return returnPaymentRequired('insufficient_deposits', 'buyer deposits balance is zero');
+        }
+        if (requestedReserveAmount != null && balance.available < requestedReserveAmount) {
+          return returnPaymentRequired(
+            'insufficient_deposits',
+            `buyer available deposits ${balance.available} are below requested reserve ${requestedReserveAmount}`,
+          );
+        }
+      } catch (err) {
+        debugWarn(`[BuyerNegotiator] Failed to check buyer balance: ${err instanceof Error ? err.message : err}`);
+        this._onChainReadFailure?.();
       }
-      if (requestedReserveAmount != null && balance.available < requestedReserveAmount) {
-        return returnPaymentRequired(
-          'insufficient_deposits',
-          `buyer available deposits ${balance.available} are below requested reserve ${requestedReserveAmount}`,
-        );
-      }
-    } catch (err) {
-      debugWarn(`[BuyerNegotiator] Failed to check buyer balance: ${err instanceof Error ? err.message : err}`);
     }
 
     // Re-buffer the PaymentRequired so _doNegotiatePayment can consume it
@@ -743,7 +811,10 @@ export class BuyerPaymentNegotiator {
       const decoded = new TextDecoder().decode(decodedBytes);
       payload = parseJsonObject(decoded) as typeof payload;
     } catch {
-      throw new Error('Invalid x-antseed-spending-auth header: failed to decode');
+      throw buyerFault(
+        'Invalid x-antseed-spending-auth header: failed to decode',
+        'invalid-spending-auth-header',
+      );
     }
 
     debugLog(`[BuyerNegotiator] External SpendingAuth: channel=${payload.channelId.slice(0, 18)}... amount=${payload.cumulativeAmount}`);
@@ -753,7 +824,7 @@ export class BuyerPaymentNegotiator {
     // Store session so handleAuthAck can find it
     if (this._channelStore) {
       const reserveDeadline = payload.reserveDeadline ?? (Math.floor(Date.now() / 1000) + 3600);
-      this._channelStore.upsertChannel({
+      const externalChannel: StoredChannel = {
         sessionId: payload.channelId,
         peerId: peer.peerId,
         role: CHANNEL_ROLE.BUYER,
@@ -770,12 +841,30 @@ export class BuyerPaymentNegotiator {
         settledAt: null,
         settledAmount: null,
         status: CHANNEL_STATUS.ACTIVE,
-        latestBuyerSig: null,
-        latestSpendingAuthSig: null,
-        latestMetadata: null,
+        latestBuyerSig: payload.spendingAuthSig,
+        latestSpendingAuthSig: payload.reserveSalt ? null : payload.spendingAuthSig,
+        latestMetadata: payload.metadata,
+        ...(payload.reserveSalt
+          ? {
+              reserveSalt: payload.reserveSalt,
+              initialReserveAmount: payload.reserveMaxAmount ?? null,
+              reserveMaxAmount: payload.reserveMaxAmount ?? null,
+              latestReserveAuthSig: payload.spendingAuthSig,
+              latestReserveDeadline: reserveDeadline,
+              reserveAuthPending: true,
+              confirmedReserveAmount: '0',
+            }
+          : {}),
         createdAt: Date.now(),
         updatedAt: Date.now(),
-      });
+      };
+      if (this._channelStore.commitAuthorization) {
+        await this._channelStore.commitAuthorization(externalChannel);
+      } else {
+        this._channelStore.upsertChannel(externalChannel);
+        await this._channelStore.flush?.();
+      }
+      this._bpm.adoptPersistedAuthorization(externalChannel);
     }
 
     pmux.sendSpendingAuth(payload);
@@ -826,8 +915,11 @@ export class BuyerPaymentNegotiator {
 
   /** Wait for in-flight NeedAuth handlers to complete (settlement safety). */
   async drainPendingNeedAuth(): Promise<void> {
-    const pending = [...this._pendingNeedAuth.values()];
-    if (pending.length > 0) {
+    // Handlers can enqueue more work while an earlier snapshot is settling.
+    // Keep draining until the tracker is empty; the caller can then synchronously
+    // close transports before another WebRTC message task is dispatched.
+    while (this._pendingNeedAuth.size > 0) {
+      const pending = [...this._pendingNeedAuth.values()];
       await Promise.allSettled(pending);
     }
   }
@@ -840,7 +932,7 @@ export class BuyerPaymentNegotiator {
 
     for (const [, pending] of this._pendingPaymentRequired) {
       clearTimeout(pending.timer);
-      pending.reject(new Error('Node stopped'));
+      pending.reject(buyerFault('Node stopped', 'node-stopped'));
     }
     this._pendingPaymentRequired.clear();
     this._bufferedPaymentRequired.clear();
@@ -848,7 +940,7 @@ export class BuyerPaymentNegotiator {
 
     for (const [, pending] of this._pendingCloseRequests) {
       clearTimeout(pending.timer);
-      pending.reject(new Error('Node stopped'));
+      pending.reject(buyerFault('Node stopped', 'node-stopped'));
     }
     this._pendingCloseRequests.clear();
   }
@@ -940,8 +1032,9 @@ export class BuyerPaymentNegotiator {
     // Validate seller's per-request minimum
     const minBudgetPerRequest = BigInt(requirements.minBudgetPerRequest);
     if (minBudgetPerRequest > this._bpm.maxPerRequestUsdc) {
-      throw new Error(
+      throw buyerFault(
         `Seller ${peer.peerId.slice(0, 12)}... minBudgetPerRequest=${minBudgetPerRequest} exceeds buyer maxPerRequestUsdc=${this._bpm.maxPerRequestUsdc}`,
+        'buyer-budget-too-low',
       );
     }
 
@@ -950,13 +1043,19 @@ export class BuyerPaymentNegotiator {
     try {
       amount = BigInt(requirements.suggestedAmount);
     } catch {
-      throw new Error(`Invalid suggestedAmount from seller ${peer.peerId.slice(0, 12)}...: "${requirements.suggestedAmount}"`);
+      throw peerFault(
+        `Invalid suggestedAmount from seller ${peer.peerId.slice(0, 12)}...: "${requirements.suggestedAmount}"`,
+        'peer-protocol-violation',
+      );
     }
     if (amount > this._bpm.maxReserveAmountUsdc) {
       amount = this._bpm.maxReserveAmountUsdc;
     }
     if (amount <= 0n) {
-      throw new Error(`Invalid reserve amount for payment to ${peer.peerId.slice(0, 12)}...`);
+      throw buyerFault(
+        `Invalid reserve amount for payment to ${peer.peerId.slice(0, 12)}...`,
+        'buyer-reserve-misconfigured',
+      );
     }
 
     const sellerEvmAddr = await this._resolveSellerAddr(peer);
@@ -1135,6 +1234,9 @@ export class BuyerPaymentNegotiator {
     }
 
     const pmux = this.getOrCreatePaymentMux(peer.peerId, conn);
+    await this._bpm.reconcileReserveAmount(peer.peerId, onChain.channel.deposit);
+    const hasPendingReserve = this._bpm.hasPendingReserveAuth(peer.peerId);
+    let recoveredBeforeTopUp = false;
     if (requireFreshAck) {
       // A 402 with only base PaymentRequired fields while the buyer has an
       // active local session means the seller does not currently recognize
@@ -1142,6 +1244,16 @@ export class BuyerPaymentNegotiator {
       // AuthAck is stale in that case; require a fresh one before retrying so
       // we do not immediately replay the request into another 402.
       this._bpm.clearLockConfirmation(peer.peerId);
+      if (hasPendingReserve) {
+        await this._bpm.resendCurrentSpendingAuth(peer.peerId, pmux);
+        await this._waitForLockConfirmation(peer.peerId, {
+          minBudgetPerRequest: minBudgetPerRequest ?? undefined,
+        });
+        recoveredBeforeTopUp = true;
+      }
+    }
+    if (hasPendingReserve) {
+      await this._bpm.resendPendingReserveAuth(peer.peerId, pmux);
     }
     if (minBudgetPerRequest != null && minBudgetPerRequest > 0n) {
       const cumulativeBefore = this._bpm.getCumulativeAmount(peer.peerId);
@@ -1165,7 +1277,7 @@ export class BuyerPaymentNegotiator {
         this._firstRequestSent.delete(peer.peerId);
         return false;
       }
-    } else {
+    } else if (!recoveredBeforeTopUp) {
       await this._bpm.resendCurrentSpendingAuth(peer.peerId, pmux);
     }
     await this._waitForLockConfirmation(peer.peerId, {

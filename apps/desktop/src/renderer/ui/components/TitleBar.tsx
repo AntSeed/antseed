@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
-import { AntStationLogo } from './AntStationLogo';
+import { VprLogo } from './VprLogo';
 import type { UpdateStatus } from '../../types/bridge';
 import styles from './TitleBar.module.scss';
 
@@ -183,7 +183,7 @@ export function TitleBar() {
   return (
     <header className={styles.titleBar}>
       <div className={styles.titleBarLeft}>
-        <AntStationLogo height={20} className={styles.titleBarLogo} />
+        <VprLogo height={20} className={styles.titleBarLogo} />
       </div>
       {updateControl && (
         <div className={styles.titleBarCenter}>

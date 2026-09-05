@@ -26,4 +26,6 @@ export interface ConnectionConfig {
     host: string;
     port: number;
   };
+  /** Remote capabilities learned from discovery metadata; gates transport security on outbound connections. */
+  remoteCapabilities?: string[];
 }

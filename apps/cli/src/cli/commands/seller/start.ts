@@ -8,9 +8,14 @@ import { loadConfig } from '../../../config/loader.js'
 import {
   AntseedNode,
   ModelHealthChecker,
+  GasHealthMonitor,
   CONNECTION_CAPABILITY_MODEL_HEALTH_V1,
   DEFAULT_HEALTH_CHECK_INTERVAL_MS,
   DEFAULT_HEALTH_CHECK_FAILURE_THRESHOLD,
+  DEFAULT_GAS_CHECK_INTERVAL_MS,
+  DEFAULT_MIN_GAS_BALANCE_WEI,
+  formatEther,
+  parseEther,
   type Provider,
   type Prover,
   type ConfigField,
@@ -35,6 +40,7 @@ import { resolveEffectiveSellerConfig, type SellerRuntimeOverrides } from '../..
 import { ensureDerivedIdentityDisplayName } from '../../../config/identity-display-name.js'
 import { AntAgentProvider, loadAntAgent, type AntAgentDefinition } from '@antseed/ant-agent'
 import { resolvePluginPackage } from '../../../plugins/registry.js'
+import { startupReachabilityWarning } from './reachability.js'
 
 function getStateFile(dataDir: string): string {
   return join(dataDir, 'daemon.state.json')
@@ -61,7 +67,10 @@ function parseOptionalBoolEnv(value: string | undefined): boolean | null {
 }
 
 const PUBLIC_BASE_RPC_HOSTS = new Set([
+  'base.gateway.tenderly.co',
+  'base-public.nodies.app',
   'base.publicnode.com',
+  'base-rpc.publicnode.com',
   'base.drpc.org',
   'base.llamarpc.com',
   'mainnet.base.org',
@@ -303,7 +312,10 @@ export function buildSellerPluginRuntimeEnv(
     runtimeEnv['ANTSEED_SERVICE_UNIT_BILLING_MODELS_JSON'] = JSON.stringify(serviceUnitBillingModels)
   }
   if (providerCfg.baseUrl) {
-    runtimeEnv['OPENAI_BASE_URL'] = providerCfg.baseUrl
+    const baseUrlKey = resolvePluginPackage(providerCfg.plugin) === '@antseed/provider-local-llm'
+      ? 'LOCAL_LLM_BASE_URL'
+      : 'OPENAI_BASE_URL'
+    runtimeEnv[baseUrlKey] = providerCfg.baseUrl
   }
   if (providerCfg.pathRewrite && Object.keys(providerCfg.pathRewrite).length > 0) {
     runtimeEnv['OPENAI_PATH_REWRITE_JSON'] = JSON.stringify(providerCfg.pathRewrite)
@@ -572,6 +584,12 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
       }
       const healthCheckCfg = effectiveSellerConfig.healthCheck
       const healthCheckEnabled = healthCheckCfg?.enabled !== false
+      const gasCheckCfg = effectiveSellerConfig.gasCheck
+      const gasCheckEnabled = paymentsEnabled && Boolean(config.payments.crypto) && gasCheckCfg?.enabled !== false
+      const gasCheckIntervalMs = gasCheckCfg?.intervalMs ?? DEFAULT_GAS_CHECK_INTERVAL_MS
+      const minGasBalanceWei = gasCheckCfg?.minBalanceEth !== undefined
+        ? parseEther(String(gasCheckCfg.minBalanceEth))
+        : DEFAULT_MIN_GAS_BALANCE_WEI
 
       console.log(chalk.bold('Effective seller settings:'))
       console.log(chalk.dim(`  providers: ${selectedProviderNames.join(', ')}`))
@@ -610,6 +628,9 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         console.log(chalk.dim(`  model health checks: every ${Math.round(intervalMs / 1000)}s, unadvertise after ${failureThreshold} consecutive failures`))
       } else {
         console.log(chalk.dim('  model health checks: disabled'))
+      }
+      if (gasCheckEnabled) {
+        console.log(chalk.dim(`  gas checks: every ${Math.round(gasCheckIntervalMs / 1000)}s, pause advertising below ${formatEther(minGasBalanceWei)} ETH`))
       }
       const maxUploadBodyBytes = parseOptionalPositiveIntegerEnv(process.env['ANTSEED_MAX_UPLOAD_BODY_BYTES'])
         ?? effectiveSellerConfig.maxUploadBodyBytes
@@ -758,6 +779,11 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         console.log(chalk.dim(`  Peer ID: ${node.peerId ?? 'unknown'}`))
         console.log(chalk.dim(`  DHT port: ${node.dhtPort}`))
         console.log(chalk.dim(`  Signaling port: ${node.signalingPort}`))
+        const reachabilityWarning = startupReachabilityWarning(config.seller.publicAddress)
+        if (reachabilityWarning) {
+          console.log('')
+          console.warn(chalk.yellow.bold(reachabilityWarning))
+        }
         if (requestedVerifierIds.length > 0) {
           console.log(chalk.dim(`  Verifiers advertised: ${requestedVerifierIds.join(', ')}`))
         }
@@ -793,6 +819,10 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         })
         healthChecker.start()
       }
+
+      // Operator-facing notices surfaced via daemon.state.json (seller status
+      // command and desktop). Currently only the out-of-gas notice.
+      let gasNotice: string | null = null
 
       // Write daemon state so dashboard and connect can discover this seeder
       const startedAt = Date.now()
@@ -911,6 +941,7 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
           earningsToday: '0',
           tokensToday: 0,
           uptime: formatUptime(),
+          notices: gasNotice ? [gasNotice] : [],
           updatedAt: now,
           proxyPort: null,
         }
@@ -948,8 +979,44 @@ export function registerSellerStartCommand(sellerCmd: Command): void {
         await writeDaemonState().catch(() => {})
       }, 1_000)
 
+      // Periodic seller-wallet gas checks: a seller whose wallet cannot fund
+      // reserve/settle/close transactions rejects every buyer that connects,
+      // so pause advertising (and say so) until the wallet is funded again.
+      let gasMonitor: GasHealthMonitor | null = null
+      if (gasCheckEnabled && node.identity) {
+        const gasWalletAddress = node.identity.wallet.address
+        try {
+          const gasStakingClient = createStakingClient(config, { rpcUrl: baseRpcUrlOverride })
+          gasMonitor = new GasHealthMonitor({
+            address: gasWalletAddress,
+            getBalance: (address) => gasStakingClient.provider.getBalance(address),
+            intervalMs: gasCheckIntervalMs,
+            minBalanceWei: minGasBalanceWei,
+            onChange: (event) => {
+              const balanceSummary = `wallet ${event.address} holds ${formatEther(event.balanceWei)} ETH (minimum ${formatEther(event.minBalanceWei)} ETH)`
+              if (event.status === 'depleted') {
+                gasNotice = `Out of gas: ${balanceSummary}. Advertising is paused; send ETH to ${event.address} to resume.`
+                console.log(chalk.yellow.bold('\nSeller out of gas — advertising paused.'))
+                console.log(chalk.yellow(`  On-chain settlement would fail and buyers would be rejected: ${balanceSummary}.`))
+                console.log(chalk.cyan(`  Send ETH to ${event.address} — advertising resumes automatically once funded.`))
+                void node.pauseAdvertising('out-of-gas').catch(() => {})
+              } else {
+                gasNotice = null
+                console.log(chalk.green(`Gas balance restored (${formatEther(event.balanceWei)} ETH) — advertising resumed.`))
+                node.resumeAdvertising()
+              }
+              scheduleDaemonStateWrite()
+            },
+          })
+          gasMonitor.start()
+        } catch (err) {
+          console.log(chalk.dim(`  gas checks unavailable: ${(err as Error).message}`))
+        }
+      }
+
       setupShutdownHandler(async () => {
         healthChecker?.stop()
+        gasMonitor?.stop()
         clearInterval(stateInterval)
         node.off('connection', scheduleDaemonStateWrite)
         node.off('session:updated', scheduleDaemonStateWrite)

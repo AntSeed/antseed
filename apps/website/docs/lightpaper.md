@@ -31,7 +31,7 @@ The protocol does not care what happens between request and response. It is a ne
 
 ### Two Layers. One Protocol.
 
-**Layer 1: Open Peer-to-Peer Infrastructure.** Open source. Peer-to-peer. Anonymous by design. No central account. Discovery via BitTorrent DHT. Transport via WebRTC. The network routes around failures, and independent nodes may continue operating without reliance on a single hosted service. Blocking a service generally requires action against the independent providers who choose to serve it.
+**Layer 1: Open Peer-to-Peer Infrastructure.** Open source. Peer-to-peer. Anonymous by design. No central account. Discovery via BitTorrent DHT. Transport via direct, end-to-end encrypted peer-to-peer connections. The network routes around failures, and independent nodes may continue operating without reliance on a single hosted service. Blocking a service generally requires action against the independent providers who choose to serve it.
 
 **Layer 2: An Open Marketplace for AI Services.** Gasless payments. On-chain stats. Cumulative payment channels. Any provider. Any service. Set your own price. Buyers deposit USDC. Providers settle via cryptographic vouchers. Every settlement is recorded on-chain.
 

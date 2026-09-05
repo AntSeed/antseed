@@ -1,5 +1,5 @@
 import type { AntseedProviderPlugin, Provider, ServiceApiProtocol } from '@antseed/node';
-import { BaseProvider, StaticTokenProvider, parseServiceAliasMap, parseServiceCapabilitiesJson } from '@antseed/provider-core';
+import { BaseProvider, StaticTokenProvider, parseServiceAliasMap, parseServiceCapabilitiesJson, parseServicePricingJson } from '@antseed/provider-core';
 
 function parseNonNegativeNumber(raw: string | undefined, key: string, fallback: number): number {
   const parsed = raw === undefined ? fallback : Number.parseFloat(raw);
@@ -31,6 +31,7 @@ const plugin: AntseedProviderPlugin = {
     { key: 'ANTSEED_CACHED_INPUT_USD_PER_MILLION', label: 'Cached Input Price', type: 'number', required: false, description: 'Cached input price in USD per 1M tokens (defaults to input price)' },
     { key: 'ANTSEED_MAX_CONCURRENCY', label: 'Max Concurrency', type: 'number', required: false, default: 1, description: 'Max concurrent requests' },
     { key: 'ANTSEED_ALLOWED_SERVICES', label: 'Allowed Services', type: 'string[]', required: false, description: 'Service allow-list' },
+    { key: 'ANTSEED_SERVICE_PRICING_JSON', label: 'Service Pricing JSON', type: 'string', required: false, description: 'Per-service pricing JSON' },
     { key: 'ANTSEED_SERVICE_ALIAS_MAP_JSON', label: 'Service Alias Map', type: 'string', required: false, description: 'JSON map of announced service → upstream model name' },
     { key: 'ANTSEED_SERVICE_CAPABILITIES_JSON', label: 'Service Capabilities JSON', type: 'string', required: false, description: 'Per-service model capability JSON' },
   ],
@@ -38,6 +39,7 @@ const plugin: AntseedProviderPlugin = {
   createProvider(config: Record<string, string>): Provider {
     const baseUrl = config['LOCAL_LLM_BASE_URL'] ?? 'http://localhost:11434';
     const apiKey = config['LOCAL_LLM_API_KEY'] ?? '';
+    const servicePricing = parseServicePricingJson(config['ANTSEED_SERVICE_PRICING_JSON']);
 
     const pricing: Provider['pricing'] = {
       defaults: {
@@ -45,6 +47,7 @@ const plugin: AntseedProviderPlugin = {
         outputUsdPerMillion: parseNonNegativeNumber(config['ANTSEED_OUTPUT_USD_PER_MILLION'], 'ANTSEED_OUTPUT_USD_PER_MILLION', 0),
         ...(config['ANTSEED_CACHED_INPUT_USD_PER_MILLION'] ? { cachedInputUsdPerMillion: parseNonNegativeNumber(config['ANTSEED_CACHED_INPUT_USD_PER_MILLION'], 'ANTSEED_CACHED_INPUT_USD_PER_MILLION', 0) } : {}),
       },
+      ...(servicePricing ? { services: servicePricing } : {}),
     };
 
     const maxConcurrency = parseInt(config['ANTSEED_MAX_CONCURRENCY'] ?? '1', 10);

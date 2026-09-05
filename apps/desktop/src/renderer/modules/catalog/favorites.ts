@@ -1,6 +1,6 @@
 /** Starred models on the model page, persisted per install (localStorage). */
 
-import { canonicalModelKey } from './model-identity';
+import { canonicalModelKey, canonicalPersistedModelKey } from './model-identity';
 
 export const VPR_FAVORITES_STORAGE_KEY = 'antseed.desktop.vpr.favoriteModels';
 
@@ -21,7 +21,13 @@ export function loadFavoriteModels(): Set<string> {
     const raw = localStorage.getItem(VPR_FAVORITES_STORAGE_KEY);
     const parsed: unknown = raw ? JSON.parse(raw) : [];
     if (!Array.isArray(parsed)) return new Set();
-    return new Set(parsed.filter((entry): entry is string => typeof entry === 'string'));
+    const favorites = new Set<string>();
+    for (const entry of parsed) {
+      if (typeof entry !== 'string') continue;
+      const key = canonicalPersistedModelKey(entry);
+      if (key) favorites.add(key);
+    }
+    return favorites;
   } catch {
     return new Set();
   }

@@ -5,6 +5,7 @@ import { Modal } from '@antseed/ui';
 import type { TelegramBridgeStatus } from '../../../types/bridge';
 import { BrandIcon } from '../brand/BrandIcon';
 import styles from './VprToolsView.module.scss';
+import { recordUserAction } from '../../../modules/telemetry/actions';
 
 /**
  * "Telegram Bot" row in Connected apps. Unlike proxy-profile apps this does
@@ -37,6 +38,7 @@ export function TelegramBotCard() {
     const bridge = window.antseedDesktop;
     const token = tokenDraft.trim();
     if (!token || !bridge?.telegramConnect) return;
+    recordUserAction('app_connect', 'apps', 'telegram');
     setConnectBusy(true);
     setError(null);
     try {
@@ -57,6 +59,7 @@ export function TelegramBotCard() {
     const bridge = window.antseedDesktop;
     if (!bridge?.telegramDisconnect) return;
     if (!window.confirm('Disconnect the Telegram bot? The saved token is removed from this device.')) return;
+    recordUserAction('app_disconnect', 'apps', 'telegram');
     const result = await bridge.telegramDisconnect();
     if (result.data) setStatus(result.data);
     setChangingBot(false);
@@ -131,8 +134,19 @@ export function TelegramBotCard() {
         onClose={() => { setModalOpen(false); setError(null); setChangingBot(false); }}
         size="sm"
         title="Telegram Bot"
-        subtitle="Your VPR chat, from any device"
-        className={styles.vprModal}
+        subtitle={(
+          <span className={styles.modalAppSubtitle}>
+            Connect a private Telegram bot to chat with your AntSeed agent from Telegram.
+            <button
+              type="button"
+              className={styles.settingWebsiteLink}
+              onClick={() => void window.antseedDesktop?.openExternalUrl?.('https://telegram.org/apps')}
+            >
+              Website / download
+              <HugeiconsIcon icon={ArrowUpRight01Icon} size={12} strokeWidth={2} />
+            </button>
+          </span>
+        )}
         bodyClassName={styles.settingsBody}
       >
         {showTokenForm ? (

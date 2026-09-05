@@ -120,3 +120,7 @@ export type { ServicePricing } from './pricing.js';
 // Readiness checks
 export { checkSellerReadiness, checkBuyerReadiness } from './readiness.js';
 export type { ReadinessCheck } from './readiness.js';
+
+// Chain RPC reachability (background monitor with retry)
+export { RpcHealthMonitor, probeRpcEndpoint } from './rpc-health.js';
+export type { RpcHealthState, RpcHealthStatus, RpcHealthMonitorOptions } from './rpc-health.js';

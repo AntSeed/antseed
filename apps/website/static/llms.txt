@@ -4,13 +4,15 @@
 
 ## What is AntSeed?
 
-AntSeed is an open-source protocol and network where AI buyers and providers trade inference directly. Buyers connect to a local proxy daemon that routes requests to the best available peer by price, latency, and reputation. Providers — anyone with a GPU, Mac Mini, or inference farm — advertise models and earn from serving requests.
+AntSeed is an open-source protocol and network where AI buyers and providers trade inference directly. Buyers connect to a local proxy daemon that exposes a network-wide `/v1/models` catalog, unifies compatible model aliases, and routes model-only requests using shared Price + Trust preferences. Providers — operators with value-added models, infrastructure, TEEs, fine-tunes, agents, or managed workflows — advertise services and earn from serving requests.
 
 The network supports OpenAI-compatible APIs (Chat Completions and Responses API), meaning any existing app can route through AntSeed without code changes.
 
 ## Key concepts
 
 - **P2P inference routing** — requests are routed peer-to-peer via DHT, not through a central server
+- **Model-only auto-routing** — bare model ids select among eligible sellers; explicit peer pins are optional hard overrides
+- **Conversation affinity** — successful automatic routes are reused softly for later turns and can fail over when needed
 - **Reputation scoring** — providers build track records; poor performers get fewer routes
 - **TEE attestation** — privacy-preserving providers can cryptographically prove hardware integrity
 - **Bound agents** — providers can wrap services with personas, on-demand knowledge, and custom tools

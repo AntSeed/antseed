@@ -1,4 +1,5 @@
 export * from './interfaces.js';
+export * from './errors.js';
 export * from './channel-store-types.js';
 export * from './debug.js';
 export * from './pricing.js';
@@ -20,3 +21,4 @@ export * from './buyer-payment-manager.js';
 export * from './buyer-payment-negotiator.js';
 export * from './buyer-free-usage-manager.js';
 export * from './buyer-request-handler.js';
+export * from './peer-error-response.js';

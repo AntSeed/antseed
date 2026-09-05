@@ -5,14 +5,14 @@ import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { Ownable2Step } from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 
-import { IAntseedPointsPenaltyPolicy } from "../interfaces/IAntseedPointsPenaltyPolicy.sol";
+import { IAntseedPointsModifier } from "../interfaces/IAntseedPointsModifier.sol";
 import { IAntseedPointsPolicy } from "../interfaces/IAntseedPointsPolicy.sol";
 
 contract AntseedPointsPolicyRegistry is IAntseedPointsPolicy, Ownable2Step {
     uint256 public constant MAX_POLICIES = 8;
-    uint256 public constant POLICY_GAS_LIMIT = 100_000;
     uint16 public constant BPS_DENOMINATOR = 10_000;
-    uint16 public constant MAX_SOFT_PENALTY_BPS = 9_000;
+    uint16 public constant MIN_POINTS_MULTIPLIER_BPS = 1_000;
+    uint16 public constant MAX_POINTS_MULTIPLIER_BPS = 20_000;
 
     struct RegisteredPolicy {
         address policy;
@@ -29,8 +29,9 @@ contract AntseedPointsPolicyRegistry is IAntseedPointsPolicy, Ownable2Step {
     error PolicyAlreadyRegistered(address policy);
     error PolicyNotRegistered(address policy);
     error TooManyPolicies();
-    error PolicyEvaluationFailed(address policy, uint256 index);
-    error InvalidPenaltyBps(address policy, uint256 index, uint256 sellerPenaltyBps, uint256 buyerPenaltyBps);
+    error InvalidPointsMultiplier(
+        address policy, uint256 index, uint256 sellerMultiplierBps, uint256 buyerMultiplierBps
+    );
 
     constructor(address initialOwner) Ownable(initialOwner) { }
 
@@ -39,10 +40,12 @@ contract AntseedPointsPolicyRegistry is IAntseedPointsPolicy, Ownable2Step {
         if (_policyIndexPlusOne[policy] != 0) revert PolicyAlreadyRegistered(policy);
         if (_policies.length == MAX_POLICIES) revert TooManyPolicies();
 
-        (bool success, bytes memory result) =
-            policy.staticcall{ gas: POLICY_GAS_LIMIT }(abi.encodeCall(IAntseedPointsPenaltyPolicy.penaltyCategory, ()));
-        if (!success || result.length != 32) revert InvalidPolicy();
-        bytes32 category = abi.decode(result, (bytes32));
+        bytes32 category;
+        try IAntseedPointsModifier(policy).modifierCategory() returns (bytes32 policyCategory) {
+            category = policyCategory;
+        } catch {
+            revert InvalidPolicy();
+        }
         if (category == bytes32(0)) revert InvalidPolicy();
 
         uint256 index = _policies.length;
@@ -87,21 +90,17 @@ contract AntseedPointsPolicyRegistry is IAntseedPointsPolicy, Ownable2Step {
         returns (uint256 sellerPoints, uint256 buyerPoints)
     {
         bytes32[MAX_POLICIES] memory categories;
-        uint16[MAX_POLICIES] memory sellerCategoryPenalties;
-        uint16[MAX_POLICIES] memory buyerCategoryPenalties;
+        uint16[MAX_POLICIES] memory sellerCategoryMultipliers;
+        uint16[MAX_POLICIES] memory buyerCategoryMultipliers;
         uint256 categoryCount;
 
         uint256 count = _policies.length;
         for (uint256 index = 0; index < count; ++index) {
             RegisteredPolicy memory registered = _policies[index];
-            (bool success, bytes memory result) = registered.policy.staticcall{ gas: POLICY_GAS_LIMIT }(
-                abi.encodeCall(IAntseedPointsPenaltyPolicy.penaltyBps, (channelId, buyer, seller, rawPoints))
-            );
-            if (!success || result.length != 64) revert PolicyEvaluationFailed(registered.policy, index);
-
-            (uint256 sellerPenalty, uint256 buyerPenalty) = abi.decode(result, (uint256, uint256));
-            if (sellerPenalty > BPS_DENOMINATOR || buyerPenalty > BPS_DENOMINATOR) {
-                revert InvalidPenaltyBps(registered.policy, index, sellerPenalty, buyerPenalty);
+            (uint16 sellerMultiplier, uint16 buyerMultiplier) =
+                IAntseedPointsModifier(registered.policy).pointsMultiplierBps(channelId, buyer, seller, rawPoints);
+            if (sellerMultiplier > MAX_POINTS_MULTIPLIER_BPS || buyerMultiplier > MAX_POINTS_MULTIPLIER_BPS) {
+                revert InvalidPointsMultiplier(registered.policy, index, sellerMultiplier, buyerMultiplier);
             }
 
             uint256 categoryIndex = categoryCount;
@@ -113,29 +112,63 @@ contract AntseedPointsPolicyRegistry is IAntseedPointsPolicy, Ownable2Step {
             }
             if (categoryIndex == categoryCount) {
                 categories[categoryCount] = registered.category;
+                sellerCategoryMultipliers[categoryCount] = BPS_DENOMINATOR;
+                buyerCategoryMultipliers[categoryCount] = BPS_DENOMINATOR;
                 ++categoryCount;
             }
-            if (sellerPenalty > sellerCategoryPenalties[categoryIndex]) {
-                sellerCategoryPenalties[categoryIndex] = uint16(sellerPenalty);
-            }
-            if (buyerPenalty > buyerCategoryPenalties[categoryIndex]) {
-                buyerCategoryPenalties[categoryIndex] = uint16(buyerPenalty);
-            }
+            sellerCategoryMultipliers[categoryIndex] =
+                _strongerMultiplier(sellerCategoryMultipliers[categoryIndex], sellerMultiplier);
+            buyerCategoryMultipliers[categoryIndex] =
+                _strongerMultiplier(buyerCategoryMultipliers[categoryIndex], buyerMultiplier);
         }
 
-        uint256 totalSellerPenalty;
-        uint256 totalBuyerPenalty;
-        for (uint256 index = 0; index < categoryCount; ++index) {
-            totalSellerPenalty = _addCategoryPenalty(totalSellerPenalty, sellerCategoryPenalties[index]);
-            totalBuyerPenalty = _addCategoryPenalty(totalBuyerPenalty, buyerCategoryPenalties[index]);
-        }
-        sellerPoints = Math.mulDiv(rawPoints, BPS_DENOMINATOR - totalSellerPenalty, BPS_DENOMINATOR);
-        buyerPoints = Math.mulDiv(rawPoints, BPS_DENOMINATOR - totalBuyerPenalty, BPS_DENOMINATOR);
+        sellerPoints =
+            Math.mulDiv(rawPoints, _combinedMultiplier(sellerCategoryMultipliers, categoryCount), BPS_DENOMINATOR);
+        buyerPoints =
+            Math.mulDiv(rawPoints, _combinedMultiplier(buyerCategoryMultipliers, categoryCount), BPS_DENOMINATOR);
     }
 
-    function _addCategoryPenalty(uint256 totalPenalty, uint16 categoryPenalty) private pure returns (uint256) {
-        if (totalPenalty == BPS_DENOMINATOR || categoryPenalty == 0) return totalPenalty;
-        if (categoryPenalty == BPS_DENOMINATOR) return BPS_DENOMINATOR;
-        return Math.min(MAX_SOFT_PENALTY_BPS, totalPenalty + categoryPenalty);
+    function _strongerMultiplier(uint16 currentMultiplier, uint16 candidateMultiplier) private pure returns (uint16) {
+        uint256 currentDistance = currentMultiplier > BPS_DENOMINATOR
+            ? currentMultiplier - BPS_DENOMINATOR
+            : BPS_DENOMINATOR - currentMultiplier;
+        uint256 candidateDistance = candidateMultiplier > BPS_DENOMINATOR
+            ? candidateMultiplier - BPS_DENOMINATOR
+            : BPS_DENOMINATOR - candidateMultiplier;
+        if (
+            candidateDistance > currentDistance
+                || candidateDistance == currentDistance && candidateMultiplier < currentMultiplier
+        ) {
+            return candidateMultiplier;
+        }
+        return currentMultiplier;
+    }
+
+    function _combinedMultiplier(uint16[MAX_POLICIES] memory categoryMultipliers, uint256 categoryCount)
+        private
+        pure
+        returns (uint256)
+    {
+        uint256 totalReduction;
+        uint256 totalBoost;
+        for (uint256 index = 0; index < categoryCount; ++index) {
+            uint16 multiplier = categoryMultipliers[index];
+            if (multiplier == 0) return 0;
+            if (multiplier < BPS_DENOMINATOR) {
+                totalReduction += BPS_DENOMINATOR - multiplier;
+            } else {
+                totalBoost += multiplier - BPS_DENOMINATOR;
+            }
+        }
+
+        if (totalBoost >= totalReduction) {
+            return Math.min(MAX_POINTS_MULTIPLIER_BPS, BPS_DENOMINATOR + totalBoost - totalReduction);
+        }
+
+        uint256 netReduction = totalReduction - totalBoost;
+        if (netReduction >= BPS_DENOMINATOR - MIN_POINTS_MULTIPLIER_BPS) {
+            return MIN_POINTS_MULTIPLIER_BPS;
+        }
+        return BPS_DENOMINATOR - netReduction;
     }
 }

@@ -49,7 +49,6 @@ If you want non-default behavior, create or edit `~/.antseed/config.json`:
 ```json
 {
   "buyer": {
-    "minPeerReputation": 50,
     "maxPricing": {
       "defaults": {
         "inputUsdPerMillion": 25,
@@ -103,12 +102,16 @@ antseed config buyer set maxPricing.defaults.inputUsdPerMillion 25
 antseed config buyer set maxPricing.defaults.cachedInputUsdPerMillion 12
 antseed config buyer set maxPricing.defaults.outputUsdPerMillion 75
 
-# Minimum peer reputation score (0-100, higher = stricter)
-antseed config buyer set minPeerReputation 50
+# Shared model-only Price + Trust preferences
+# minTrustScore is a hard eligibility gate; the default is 60
+antseed config buyer set routingPreferences.minTrustScore 60
+antseed config buyer set routingPreferences.maxInputUsdPerMillion 25
 
 ```
 
-These settings are optional. Skip them if the defaults are fine.
+These settings are optional. Skip them if the defaults are fine. The desktop VPR
+writes the same `buyer.routingPreferences`, and a running proxy hot-reloads valid
+changes from `config.json`.
 
 Advanced: if you intentionally want a non-default proxy port:
 
@@ -198,17 +201,34 @@ response = client.chat.completions.create(
 
 The API key value doesn't matter when going through the proxy — set it to any non-empty string.
 
-## Step 10: Browse available services and pick a peer
+## Step 10: Discover models and route by name
 
-The buyer proxy does not auto-select peers — every request returns `no_peer_pinned` until you pin one. Browse the network, pick a peer that offers the service you want, and pin it:
+Pinning a peer is optional. A request that names only a model selects the highest-ranked eligible offer under the shared Price + Trust preferences. Ranking also accounts for cached-input pricing coverage, recent failures, cooldowns, free-peer preference, and seller access rules. Peer-attributed retryable failures can advance to the next ranked offer; 429s get up to three attempts on the same peer before fallback.
+
+List every model on the network — `GET /v1/models` is answered locally from the buyer's discovered-peer cache and covers the whole network, no pin needed:
 
 ```bash
-antseed network browse                              # peers + their services
-antseed network peer <peerId>                       # full pricing/metadata for one peer
-antseed buyer connection set --peer <peerId>        # pin for this session (survives restart)
+curl -s http://localhost:8377/v1/models | jq '.data[].id'      # all models
+curl -s 'http://localhost:8377/v1/models?type=images' | jq     # only image models (?type=text also works)
+curl -s http://localhost:8377/v1/models/<id>                   # one model in detail
+antseed network browse                                         # peers + services + pricing
 ```
 
-Or pass `x-antseed-pin-peer: <peerId>` as a per-request header if the caller can inject headers.
+Close aliases such as `claude-opus-5`, `opus-5`, and `opus5` are grouped into one entry with an `aliases` array and a `peers` array listing every seller serving the model in routing-preference order. Duplicate aliases from one seller collapse to its cheapest matching offer. Send a request with any returned id or alias and the proxy routes it.
+
+For recognized conversations, a successful automatic route becomes a soft affinity: later turns prefer the seller and service that actually served the chat while they remain healthy and eligible. Automatic affinity can fail over; explicit pins cannot.
+
+### Optional: force a specific seller
+
+Three pin mechanisms override auto-selection (precedence: header > model prefix > session pin):
+
+| Mechanism | Scope | How |
+|---|---|---|
+| Header `x-antseed-pin-peer: <peerId>` | one request | works even when the tool controls the model field |
+| Model prefix `<peerId>@<service-id>` | one request | `"model": "<peerId>@deepseek-v3.1"` |
+| Session pin | until changed | `antseed buyer connection set --peer <peerId>` (survives restart) |
+
+Pinned requests never fail over to a different peer. Inspect a peer with `antseed network peer <peerId>`; clear the session pin with `antseed buyer connection clear`.
 
 ## Step 11: Monitor usage
 
@@ -243,14 +263,15 @@ All signing happens with the identity key. No additional wallets or browser exte
 - [ ] `antseed buyer balance` shows deposited USDC > 0
 - [ ] `antseed buyer status` shows the proxy is ready
 - [ ] `antseed buyer start` starts without errors
-- [ ] `curl http://localhost:8377/v1/models` returns available models
+- [ ] `curl http://localhost:8377/v1/models` lists models from across the network
 - [ ] Tools work with `OPENAI_BASE_URL=http://localhost:8377`
 
 ## Troubleshooting
 
 - **"Payment setup failed"**: Check `antseed buyer balance` — you need deposited USDC. Run `antseed buyer deposit <amount>`.
 - **"No peers found"**: The network may be sparse. Try `antseed network browse` to check. Add bootstrap nodes to config if needed.
-- **`no_peer_pinned`**: Pin a peer with `antseed buyer connection set --peer <peerId>` (see Step 10) or send the `x-antseed-pin-peer` header.
+- **`missing_routing_target` (400)**: The request names neither a model nor an explicit peer. Add a bare model id for automatic routing.
+- **`model_not_found` (502)**: No policy-allowed peer currently advertises the requested model or alias. Check `curl localhost:8377/v1/models`; adjust buyer policy or choose another model.
 - **"Lock confirmation timed out"**: The provider's on-chain reserve is slow. This is usually a testnet issue — retry the request.
 - **"Connection refused on 8377"**: Make sure `antseed buyer start` is still running.
 - **Tool says "invalid API key"**: Set the API key env var to any non-empty value (e.g., `antseed`).

@@ -4,8 +4,8 @@ import { ArrowExpand02Icon, ArrowRight01Icon, ArrowShrink02Icon, ArrowUpRight01I
 import type { VprFloatApp, VprFloatData } from '../../types/bridge';
 import { conversationAge, conversationMatchesApp } from '../../modules/routing/conversations';
 import { displayToolName } from '../../modules/routing/tool-names';
-import { AntStationMark } from '../components/AntStationLogo';
-import { BrandIcon } from '../components/brand/BrandIcon';
+import { VprMark } from '../components/VprLogo';
+import { BrandIcon, isThemeAwareAppBrand, resolveBrandKey } from '../components/brand/BrandIcon';
 import { OverlayScrollArea } from '../components/OverlayScrollArea';
 import { VprBackTitle } from '../components/vpr/VprKit';
 import { VprModelRowList } from '../components/vpr/VprModelRows';
@@ -21,7 +21,9 @@ const COMPACT_MAX_WIDTH = 160;
  * main window's app rows show — falling back to the drawn brand mark.
  */
 function AppMark({ app, tool, size }: { app?: VprFloatApp | null; tool?: string; size: number }) {
-  if (app?.iconDataUri) {
+  const name = tool ?? app?.name;
+  const brandKey = resolveBrandKey(name, app?.displayName ?? name);
+  if (app?.iconDataUri && !isThemeAwareAppBrand(brandKey)) {
     return (
       <img
         src={app.iconDataUri}
@@ -31,8 +33,7 @@ function AppMark({ app, tool, size }: { app?: VprFloatApp | null; tool?: string;
       />
     );
   }
-  const name = tool ?? app?.name;
-  return <BrandIcon name={name} hints={[app?.displayName ?? name]} size={size} />;
+  return <BrandIcon brand={brandKey} size={size} />;
 }
 
 /**
@@ -187,7 +188,7 @@ export function FloatApp() {
 
   // The pill leads with the AntSeed identity — the badge is always the
   // AntSeed mark; model branding stays inside the dropdown rows.
-  const badgeIcon = <AntStationMark size={26} />;
+  const badgeIcon = <VprMark size={26} />;
 
   // The idle state used to read "Ready", which people took to mean the app was
   // doing something — the one thing it doesn't mean. Name the connection
@@ -438,7 +439,7 @@ export function FloatApp() {
             title="Open VPR"
           >
             <span className={styles.menuFooterLabel}>
-              <AntStationMark size={14} />
+              <VprMark size={14} />
               <span>Open VPR</span>
             </span>
             <HugeiconsIcon icon={ArrowUpRight01Icon} size={13} strokeWidth={2} />

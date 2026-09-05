@@ -1,4 +1,5 @@
 import {
+  ANTSEED_FAULT_ATTRIBUTION_HEADER,
   ANTSEED_STREAMING_RESPONSE_HEADER,
   ANTSEED_SPENDING_AUTH_HEADER,
   type SerializedHttpRequest,
@@ -26,6 +27,8 @@ import {
   selectTargetProtocolForRequest,
 } from '@antseed/api-adapter';
 import { CONNECTION_CAPABILITY_RESPONSE_AUTH_V1 } from '@antseed/protocol/messages';
+import { buyerFault, peerFault } from './errors.js';
+import { adaptPeerFaultErrorResponse } from './peer-error-response.js';
 
 export interface RequestStreamResponseMetadata {
   streaming: boolean;
@@ -43,6 +46,8 @@ export interface RequestExecutionOptions {
   signal?: AbortSignal;
   /** Skip payment/free-usage machinery for internal control-plane requests. */
   controlPlane?: boolean;
+  /** Present peer failures as coming from an explicitly pinned route. */
+  pinned?: boolean;
 }
 
 export interface BuyerRequestHandlerConfig {
@@ -53,6 +58,7 @@ export interface BuyerRequestHandlerConfig {
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 5 * 60_000;
+const DEFAULT_MAX_STREAM_DURATION_MS = 30 * 60_000;
 const DEFAULT_RESPONSE_AUTH_GRACE_MS = 30_000;
 
 export interface BuyerRequestHandlerDeps {
@@ -90,7 +96,7 @@ export class BuyerRequestHandler {
     options?: RequestExecutionOptions,
   ): Promise<SerializedHttpResponse> {
     if (!req.requestId || typeof req.requestId !== "string") {
-      throw new Error("requestId must be a non-empty string");
+      throw buyerFault("requestId must be a non-empty string", 'invalid-request');
     }
 
     const opName = callbacks ? "sendRequestStream" : "sendRequest";
@@ -119,6 +125,9 @@ export class BuyerRequestHandler {
 
     // Track which service the buyer requested so auth validation uses buyer's own pricing.
     const requestedService = options?.controlPlane ? undefined : extractServiceFromBody(req);
+    const requestProtocol = options?.controlPlane ? null : detectRequestServiceApiProtocol(req);
+    const adaptPeerResponse = (response: SerializedHttpResponse): SerializedHttpResponse =>
+      adaptPeerFaultErrorResponse(response, requestProtocol, { pinned: options?.pinned });
     const billingRoute = requestedService ? selectBillingRoute(peer, req, requestedService) : null;
     // Decide free vs paid from the resolved route (provider + protocol), mirroring
     // the seller's per-request gate so both sides classify the request the same way.
@@ -134,7 +143,6 @@ export class BuyerRequestHandler {
           debugWarn(`[BuyerRequest] Failed to prepare free usage channel for ${peer.peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
         }
       } else {
-        const requestProtocol = detectRequestServiceApiProtocol(req);
         if (
           requestProtocol === "openai-images"
           && (
@@ -163,7 +171,7 @@ export class BuyerRequestHandler {
     const executeRequest = (): Promise<SerializedHttpResponse> => new Promise<SerializedHttpResponse>((resolve, reject) => {
       const timeoutMs = this._config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
       const maxStreamBufferBytes = Math.max(1, this._config.maxStreamBufferBytes ?? 16 * 1024 * 1024);
-      const maxStreamDurationMs = Math.max(1, this._config.maxStreamDurationMs ?? 5 * 60_000);
+      const maxStreamDurationMs = Math.max(1, this._config.maxStreamDurationMs ?? DEFAULT_MAX_STREAM_DURATION_MS);
       const streamInitialResponseTimeoutMs = callbacks ? Math.max(timeoutMs, 90_000) : timeoutMs;
       const streamIdleTimeoutMs = Math.max(timeoutMs, 60_000);
       let settled = false;
@@ -171,6 +179,7 @@ export class BuyerRequestHandler {
       let streamStartedAtMs = 0;
       let streamBufferedBytes = 0;
       let streamStartResponse: SerializedHttpResponse | null = null;
+      let forwardStreamToCallbacks = false;
       const streamChunks: Uint8Array[] = [];
       let activeTimeout: ReturnType<typeof setTimeout> | null = null;
       let activeTimeoutMs = streamInitialResponseTimeoutMs;
@@ -254,7 +263,7 @@ export class BuyerRequestHandler {
         if (activeTimeout) clearTimeout(activeTimeout);
         cleanupAbortListener();
         cleanupConnectionListener();
-        const cleaned = stripStreamingHeader(response);
+        const cleaned = stripPeerControlledResponseHeaders(stripStreamingHeader(response));
         debugLog(`[BuyerRequest] Response for ${req.requestId.slice(0, 8)}: status=${cleaned.statusCode} (${Date.now() - startTime}ms, ${cleaned.body.length}b)`);
         resolve(cleaned);
       };
@@ -276,14 +285,22 @@ export class BuyerRequestHandler {
             streamStarted = true;
             streamStartedAtMs = Date.now();
             streamBufferedBytes = 0;
-            streamStartResponse = stripStreamingHeader(response);
+            streamStartResponse = stripPeerControlledResponseHeaders(stripStreamingHeader(response));
+            forwardStreamToCallbacks = response.statusCode < 400;
             debugLog(`[BuyerRequest] Stream started for ${req.requestId.slice(0, 8)}; idle-timeout=${streamIdleTimeoutMs}ms`);
             resetTimeout(streamIdleTimeoutMs);
-            callbacks?.onResponseStart?.(streamStartResponse, { streaming: true });
+            if (forwardStreamToCallbacks) {
+              callbacks?.onResponseStart?.(streamStartResponse, { streaming: true });
+            }
             return;
           }
 
-          callbacks?.onResponseStart?.(stripStreamingHeader(response), { streaming: false });
+          callbacks?.onResponseStart?.(
+            adaptPeerResponse(
+              stripPeerControlledResponseHeaders(stripStreamingHeader(response)),
+            ),
+            { streaming: false },
+          );
           finish(response);
         },
         (chunk) => {
@@ -298,28 +315,32 @@ export class BuyerRequestHandler {
             return;
           }
 
-          callbacks?.onResponseChunk?.(chunk);
+          if (forwardStreamToCallbacks) {
+            callbacks?.onResponseChunk?.(chunk);
+          }
 
           if (chunk.data.length > 0) {
-            if (callbacks?.onResponseChunk) {
-              streamBufferedBytes += chunk.data.length;
-              streamChunks.push(chunk.data);
-            } else {
-              const nextBufferedBytes = streamBufferedBytes + chunk.data.length;
-              if (nextBufferedBytes > maxStreamBufferBytes) {
-                mux.cancelProxyRequest(req.requestId);
-                fail(new Error(`Stream ${req.requestId} exceeded max buffered size (${maxStreamBufferBytes} bytes)`));
-                return;
-              }
-              streamBufferedBytes = nextBufferedBytes;
-              streamChunks.push(chunk.data);
+            const nextBufferedBytes = streamBufferedBytes + chunk.data.length;
+            const enforceBufferLimit = !forwardStreamToCallbacks || !callbacks?.onResponseChunk;
+            if (enforceBufferLimit && nextBufferedBytes > maxStreamBufferBytes) {
+              mux.cancelProxyRequest(req.requestId);
+              fail(buyerFault(
+                `Stream ${req.requestId} exceeded max buffered size (${maxStreamBufferBytes} bytes)`,
+                'buyer-stream-limit',
+              ));
+              return;
             }
+            streamBufferedBytes = nextBufferedBytes;
+            streamChunks.push(chunk.data);
           }
 
           if (!chunk.done) return;
 
           if (!streamStartResponse) {
-            fail(new Error(`Stream ${req.requestId} ended before response start`));
+            fail(peerFault(
+              `Stream ${req.requestId} ended before response start`,
+              'peer-protocol-violation',
+            ));
             return;
           }
 
@@ -333,16 +354,37 @@ export class BuyerRequestHandler {
 
     const response = await executeRequest();
 
+    // A seller demanded payment while this buyer runs no payment machinery
+    // (payments disabled or unconfigured). Forwarding the raw seller 402 would
+    // tell the user to add credits, but no amount of credits helps — the buyer
+    // cannot sign an authorization at all. Return a buyer-fault error naming
+    // the real cause. Clients that manage payment themselves (external
+    // spending auth) and control-plane calls still get the raw 402.
+    if (
+      response.statusCode === 402
+      && !negotiator
+      && !options?.controlPlane
+      && !externalSpendingAuth
+      && isPaymentRequired402(response)
+    ) {
+      debugWarn(
+        `[BuyerRequest] Seller ${peer.peerId.slice(0, 12)}... requires payment but payments are not running on this buyer — returning buyer-fault error`,
+      );
+      return buyerPaymentsInactiveResponse(response, peer.peerId);
+    }
+
     if (response.statusCode === 402 && negotiator && !externalSpendingAuth) {
       const result = await negotiator.handle402(response, peer, conn, req);
-      if (result.action === 'return') return result.response;
+      if (result.action === 'return') {
+        return adaptPeerResponse(result.response);
+      }
       startTime = Date.now();
       const retriedResponse = await executeRequest();
       if (!isFreeService) {
         negotiator.estimateCostFromResponse(peer, retriedResponse, requestedService, req.requestId);
       }
       this._recordResponseAuth(peer, req, retriedResponse, requestedService, verificationMux);
-      return retriedResponse;
+      return adaptPeerResponse(retriedResponse);
     }
 
     if (negotiator && !isFreeService) {
@@ -350,7 +392,7 @@ export class BuyerRequestHandler {
     }
 
     this._recordResponseAuth(peer, req, response, requestedService, verificationMux);
-    return response;
+    return adaptPeerResponse(response);
   }
 
   private _prepareDirectFreeUsageOpen(peer: BuyerPeerView, conn: BuyerConnection): void {
@@ -559,6 +601,60 @@ function stripStreamingHeader(response: SerializedHttpResponse): SerializedHttpR
   const headers = { ...response.headers };
   delete headers[ANTSEED_STREAMING_RESPONSE_HEADER];
   return { ...response, headers };
+}
+
+export function stripPeerControlledResponseHeaders(
+  response: SerializedHttpResponse,
+): SerializedHttpResponse {
+  const headers = Object.fromEntries(
+    Object.entries(response.headers).filter(
+      ([name]) => name.toLowerCase() !== ANTSEED_FAULT_ATTRIBUTION_HEADER,
+    ),
+  );
+  return Object.keys(headers).length === Object.keys(response.headers).length
+    ? response
+    : { ...response, headers };
+}
+
+/** True when a 402 body carries the seller's payment_required contract (flat or wrapped). */
+function isPaymentRequired402(response: SerializedHttpResponse): boolean {
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(response.body)) as Record<string, unknown>;
+    if (parsed.error === 'payment_required') return true;
+    return typeof parsed.error === 'object' && parsed.error !== null
+      && (parsed.error as Record<string, unknown>).type === 'payment_required';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Buyer-fault replacement for a seller 402 when payments are not running on
+ * this buyer. Carries the fault-attribution header so downstream adapters
+ * shape it per protocol, routers stop failing over, and UIs report a
+ * buyer-side problem instead of asking the user to add credits.
+ */
+function buyerPaymentsInactiveResponse(
+  response: SerializedHttpResponse,
+  peerId: PeerId,
+): SerializedHttpResponse {
+  return {
+    ...response,
+    statusCode: 503,
+    headers: {
+      ...response.headers,
+      'content-type': 'application/json',
+      [ANTSEED_FAULT_ATTRIBUTION_HEADER]: 'buyer',
+    },
+    body: new TextEncoder().encode(JSON.stringify({
+      error: 'buyer_payments_inactive',
+      reason: 'payments_not_running',
+      peerId,
+      message: 'This seller requires payment, but payments are not running on this buyer, '
+        + 'so the request could not be authorized. This is not a balance problem — '
+        + 'enable payments on the buyer (check its startup logs and chain settings), or use a free peer.',
+    })),
+  };
 }
 
 function shouldExpectResponseAuth(

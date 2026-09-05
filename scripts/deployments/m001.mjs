@@ -146,7 +146,7 @@ export function applyActiveContracts(current, activeContracts) {
 
 /**
  * M001-specific ledger invariants: the verification bucket stays editable at
- * 10%, no penalty policy is active, and both administrative contracts have
+ * 10%, no points modifier is active, and both administrative contracts have
  * recorded owners. The shared validator calls this for the releases M001 owns.
  */
 export function recordErrors(record) {

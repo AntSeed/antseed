@@ -14,6 +14,10 @@ import { readFileSync } from 'node:fs';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import type { AppLaunchTarget } from '../connected-apps/launch-settings.js';
 import {
+  isMultiInstanceDevelopment,
+  shouldRemoveSharedConfigPatches,
+} from '../dev-instance.js';
+import {
   getMacAppProcessInfo,
   isAppTargetRunning,
   namedAppTarget,
@@ -23,6 +27,8 @@ import { getNetworkSnapshot, lookupPeer, type DashboardNetworkPeer } from '../ru
 import type { ProcessManager, RuntimeMode, RuntimeProcessState } from '../runtime/process-manager.js';
 import { applyWindowView, getMainWindow } from '../ui/window.js';
 import { updateDesktopTray } from '../ui/tray.js';
+import path from 'node:path';
+import { ensureClaudeDesktopGateway, stopClaudeDesktopGateway } from '../connected-apps/claude-desktop-gateway.js';
 import { applyConfigPatch, removeConfigPatch } from './config-patch.js';
 import {
   DEFAULT_SYSTEM_PROXY_PORT,
@@ -447,17 +453,26 @@ export async function clearSystemProxyTransportSettings(port = DEFAULT_SYSTEM_PR
 
 export async function stopManagedRuntimes(): Promise<void> {
   try {
-    await deps().processManager.stopAll();
+    if (isMultiInstanceDevelopment()) {
+      await deps().processManager.stop('system-proxy');
+      await deps().processManager.stop('connect', true);
+    } else {
+      await deps().processManager.stopAll();
+    }
   } finally {
     // Quit path: restore OS proxy settings and unpatch tool configs so
     // nothing routes through the dead proxy while the app is closed — but
     // keep system-proxy.state.json: launch reads it to reconnect the same
     // profiles automatically. Explicit disconnects go through
     // stopSystemProxyRuntime(true), which does delete it.
-    await clearSystemProxyTransportSettings();
-    await unlink(systemProxyPidPath()).catch(() => undefined);
-    removeAllConfigPatches();
-    await stopWslRelays();
+    if (!isMultiInstanceDevelopment() || isOsSystemProxyConfigured(DEFAULT_SYSTEM_PROXY_PORT)) {
+      await clearSystemProxyTransportSettings();
+    }
+    if (shouldRemoveSharedConfigPatches('shutdown')) {
+      await unlink(systemProxyPidPath()).catch(() => undefined);
+      removeAllConfigPatches();
+      await stopWslRelays();
+    }
     traySystemProxyProfiles = new Set();
   }
 }
@@ -557,6 +572,16 @@ export async function startSystemProxyRuntimeInner(opts: SystemProxyStartRequest
     const profile = SYSTEM_PROXY_PROFILES.find((p) => p.name === name);
     if (!profile?.configPatch) continue;
     try {
+      if (profile.configPatch.format === 'claude-desktop') {
+        // Claude Desktop's config points at the desktop's Claude gateway, not
+        // the buyer proxy — bring it up before the patch so a gateway failure
+        // fails the connect instead of leaving Claude aimed at a dead port.
+        await ensureClaudeDesktopGateway(
+          buyerProxyPort,
+          (line) => deps().appendLog('system-proxy', 'system', line),
+          path.join(systemProxyDataDir(), 'claude-gateway.slots.json'),
+        );
+      }
       // The patched config carries only the routed-model alias; the buyer
       // resolves it to the default route posted above, so the model picked in
       // the floating pill / VPR applies to running tool sessions.
@@ -617,6 +642,14 @@ export async function startSystemProxyRuntimeInner(opts: SystemProxyStartRequest
 
   const appliedProfiles = allProfiles.filter((name) => !failedConfigPatchProfiles.has(name));
   const appliedConfigPatchProfiles = configPatchProfiles.filter((name) => !failedConfigPatchProfiles.has(name));
+  // The Claude gateway only has a reason to exist while a claude-desktop
+  // profile is connected — stop it on disconnect (and on connect failure, so
+  // it does not linger after its profile was dropped from the active set).
+  const claudeDesktopActive = appliedConfigPatchProfiles.some((name) =>
+    SYSTEM_PROXY_PROFILES.find((p) => p.name === name)?.configPatch?.format === 'claude-desktop');
+  if (!claudeDesktopActive) {
+    await stopClaudeDesktopGateway();
+  }
   traySystemProxyPeerId = opts.peerId;
   traySystemProxyModel = opts.defaultModel ?? '';
   traySystemProxyProfiles = new Set(appliedProfiles);
@@ -696,7 +729,10 @@ export async function stopSystemProxyRuntime(clearSettings: boolean): Promise<Ru
       setupProfileNames,
       running: false,
     }), 'utf8').catch(() => undefined);
-    removeAllConfigPatches();
+    if (shouldRemoveSharedConfigPatches('disconnect')) {
+      removeAllConfigPatches();
+    }
+    await stopClaudeDesktopGateway();
     await stopWslRelays();
     traySystemProxyProfiles = new Set();
     activeSystemProxyState = null;

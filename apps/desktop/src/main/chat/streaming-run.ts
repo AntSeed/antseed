@@ -20,7 +20,7 @@ import {
 import type { AssistantMessage, AssistantMessageEvent, Message } from '@mariozechner/pi-ai';
 import { createBrowserPreviewTool, createStartDevServerTool } from './dev-tools.js';
 import { webFetchTool } from './web-fetch.js';
-import { buildAntstationSystemPrompt } from './system-prompt.js';
+import { buildVprSystemPrompt } from './system-prompt.js';
 import {
   classifyChatStreamFailure,
   formatChatStreamStopForLog,
@@ -61,12 +61,28 @@ import {
 } from './message-projection.js';
 import {
   makeProxyService,
+  fetchProxyConversationRoute,
   normalizePaymentBody,
   resolveProxyPort,
   resolveSystemPrompt,
   PROXY_RUNTIME_API_KEY,
 } from './proxy-service.js';
-import { CHAT_AGENT_DIR, extractPeerFromEntries, PiConversationStore } from './conversation-store.js';
+import {
+  CHAT_AGENT_DIR,
+  extractPeerFromEntries,
+  isPersistedPeerBindingPinned,
+  PiConversationStore,
+} from './conversation-store.js';
+import {
+  classifyServiceCategory,
+  durationBucket,
+  httpStatusBucket,
+  modelPricingSnapshot,
+  offersAvailableBucket,
+  publicModelId,
+  type TelemetryEventProperties,
+} from '../telemetry/events.js';
+import { classifyChatRequestFailure } from '../telemetry/classify.js';
 import {
   generateConversationTitleWithModel,
   getMessageText,
@@ -106,7 +122,16 @@ export type StreamingRunContext = {
    * value: the engine replaces the array wholesale on every refresh.
    */
   getServiceCatalogEntries: () => ChatServiceCatalogEntry[];
+  getBuyerEligibleServiceCatalogEntries: () => ChatServiceCatalogEntry[];
+  recordFirstChatStarted?: StreamingRunContextTelemetry['recordFirstChatStarted'];
+  recordChatRequestStarted?: StreamingRunContextTelemetry['recordChatRequestStarted'];
+  recordChatRequestFinished?: StreamingRunContextTelemetry['recordChatRequestFinished'];
 };
+
+type StreamingRunContextTelemetry = Pick<
+  import('./engine-types.js').RegisterPiChatHandlersOptions,
+  'recordFirstChatStarted' | 'recordChatRequestStarted' | 'recordChatRequestFinished'
+>;
 
 export type StreamingRunner = ReturnType<typeof createStreamingRunner>;
 
@@ -131,6 +156,10 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
     waitForBuyerProxy,
     resolveProtocolForSend,
     getServiceCatalogEntries,
+    getBuyerEligibleServiceCatalogEntries,
+    recordFirstChatStarted,
+    recordChatRequestStarted,
+    recordChatRequestFinished,
   } = ctx;
 
   const runStreamingPrompt = async (
@@ -152,6 +181,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
     if (trimmedMessage.length === 0 && attachmentPromptText.length === 0 && attachmentImages.length === 0) {
       return { ok: false, error: 'Empty message' };
     }
+
 
     const existingRun = activeRunsByConversation.get(conversationId);
     if (existingRun) {
@@ -199,7 +229,12 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
     const serviceId = normalizeServiceId(serviceOverride || context.model?.modelId);
     const persistedPeer = extractPeerFromEntries(sessionManager);
     const peerOverrideId = normalizePeerId(peerOverride) ?? null;
-    const preferredPeerId = peerOverrideId ?? preferredPeerByConversationId.get(conversationId) ?? persistedPeer?.peerId ?? null;
+    const persistedPinnedPeerId = isPersistedPeerBindingPinned(persistedPeer) ? persistedPeer.peerId : null;
+    const preferredPeerId = peerOverrideId
+      ?? preferredPeerByConversationId.get(conversationId)
+      ?? persistedPeer?.peerId
+      ?? null;
+    const routeMode = peerOverrideId || persistedPinnedPeerId ? 'pinned' : 'auto';
     const persistedPermissionMode: ChatPermissionMode = preferredPeerId
       ? await getPeerPermissionMode(preferredPeerId)
       : 'manual';
@@ -210,7 +245,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
       preferredPeerByConversationId.set(conversationId, preferredPeerId);
       if (peerOverrideId && persistedPeer?.peerId !== peerOverrideId) {
         const peerLabel = getServiceCatalogEntries().find((entry) => entry.peerId === peerOverrideId)?.peerLabel;
-        void store.setPeer(conversationId, peerOverrideId, peerLabel);
+        void store.setPeer(conversationId, peerOverrideId, peerLabel, 'pinned');
       }
     }
     // Catalog entry for this (service, peer) pair drives both the API
@@ -238,7 +273,15 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
     // and another via openai-responses, the map can return the wrong
     // protocol for the peer we're actually pinned to. Fall back to the
     // map only when we have no catalog row to read from.
-    const protocol = catalogEntry?.protocol ?? await resolveProtocolForSend(serviceId);
+    const advertisedProtocol = catalogEntry?.protocol;
+    if (advertisedProtocol === 'openai-images') {
+      return {
+        ok: false,
+        error: `Service "${serviceId}" generates images and cannot be used for text chat. Select a text-capable model.`,
+      };
+    }
+
+    const protocol: ChatServiceProtocol = advertisedProtocol ?? await resolveProtocolForSend(serviceId);
     const supportsMultimodal = catalogEntry?.categories?.includes('multimodal') ?? false;
     const droppedImageCount = supportsMultimodal ? 0 : attachmentImages.length;
     if (droppedImageCount > 0) {
@@ -256,6 +299,8 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
       preferredPeerId,
       null,
       supportsMultimodal,
+      routeMode,
+      conversationId,
     );
 
     const authStorage = AuthStorage.inMemory();
@@ -265,7 +310,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
     // Pass the system prompt via resourceLoader so it is applied on every turn.
     // (agent-session rebuilds _baseSystemPrompt from the loader each turn, so a
     // one-shot session.agent.setSystemPrompt call would be overridden.)
-    // Priority: user override (env/config) → AntStation default.
+    // Priority: user override (env/config) → VPR default.
     const userSystemPrompt = await resolveSystemPrompt(configPath);
     const sessionWorkspaceDir = sessionManager.getCwd()?.trim();
     const chatWorkspaceDir = sessionWorkspaceDir && existsSync(sessionWorkspaceDir)
@@ -332,7 +377,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
       agentDir: CHAT_AGENT_DIR,
       settingsManager,
       extensionFactories: [toolApprovalExtension],
-      systemPrompt: buildAntstationSystemPrompt(userSystemPrompt, chatWorkspaceDir, permissionMode),
+      systemPrompt: buildVprSystemPrompt(userSystemPrompt, chatWorkspaceDir, permissionMode),
     });
     await resourceLoader.reload();
 
@@ -381,6 +426,54 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
     let pendingAssistantMessage: AiChatMessage | null = null;
     let terminalStreamError: string | null = null;
     let terminalStreamFailure: ChatStreamStopReason | null = null;
+    let paymentRequiredFailure: ChatStreamStopReason | null = null;
+    let automaticRetryAttempted = false;
+    let automaticRetrySucceeded = false;
+    let hadPartialOutput = false;
+    let telemetryFinished = false;
+    const requestId = randomUUID();
+    const requestStartedAt = Date.now();
+    const eligibleOffersForService = getBuyerEligibleServiceCatalogEntries().filter((entry) => (
+      entry.id.trim().toLowerCase() === normalizedServiceForCatalog
+      && (routeMode !== 'pinned' || entry.peerId === preferredPeerId)
+    ));
+    const offersForService = eligibleOffersForService.length;
+    const pricing = modelPricingSnapshot(eligibleOffersForService);
+    const finishTelemetry = (
+      outcome: TelemetryEventProperties['chat_request_finished']['outcome'],
+      reason?: ChatStreamStopReason,
+      rawMessage = '',
+    ): void => {
+      if (telemetryFinished || !recordChatRequestFinished) return;
+      telemetryFinished = true;
+      const failure = reason
+        ? classifyChatRequestFailure(reason, rawMessage)
+        : { failureCode: 'none' as const, failureStage: 'none' as const, retryable: false };
+      const payload: TelemetryEventProperties['chat_request_finished'] = {
+        request_id: requestId,
+        outcome,
+        failure_code: failure.failureCode,
+        failure_stage: failure.failureStage,
+        public_model_id: publicModelId(serviceId, catalogEntry !== undefined),
+        service_category: classifyServiceCategory(serviceId),
+        route_mode: routeMode,
+        offers_available_bucket: offersAvailableBucket(offersForService),
+        http_status_bucket: httpStatusBucket(failure.statusCode ?? reason?.statusCode),
+        retryable: failure.failureCode === 'model_not_served_by_peer'
+          ? routeMode === 'auto'
+          : failure.retryable,
+        automatic_retry_attempted: automaticRetryAttempted,
+        automatic_retry_succeeded: automaticRetrySucceeded,
+        had_partial_output: hadPartialOutput,
+        duration_bucket: durationBucket(Date.now() - requestStartedAt),
+        has_attachments: (attachments?.length ?? 0) > 0,
+      };
+      try {
+        void Promise.resolve(recordChatRequestFinished(payload)).catch(() => {});
+      } catch {
+        // Telemetry must never affect the chat request.
+      }
+    };
 
     const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
       if (event.type === 'turn_start') {
@@ -404,6 +497,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
           return;
         }
         if (update.type === 'text_delta') {
+          if (update.delta.length > 0) hadPartialOutput = true;
           sendToRenderer('chat:ai-stream-delta', {
             conversationId,
             index: update.contentIndex,
@@ -572,7 +666,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
             } else {
               cacheFallbackPaymentRequired(conversationId, suggestedAmount);
             }
-            emitPaymentRequiredStreamError(conversationId, suggestedAmount);
+            paymentRequiredFailure = emitPaymentRequiredStreamError(conversationId, suggestedAmount);
             const activeRun = activeRunsByConversation.get(conversationId);
             if (activeRun) void abortAndClearActiveRun(activeRun);
             return;
@@ -587,7 +681,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
               ? paymentBody.suggestedAmount : '100000';
             // Cache payment info so the approve IPC handler can build the SpendingAuth
             cachedPaymentRequired.set(conversationId, paymentBody);
-            emitPaymentRequiredStreamError(conversationId, suggestedAmount);
+            paymentRequiredFailure = emitPaymentRequiredStreamError(conversationId, suggestedAmount);
             const activeRun = activeRunsByConversation.get(conversationId);
             if (activeRun) void abortAndClearActiveRun(activeRun);
             return;
@@ -596,7 +690,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
           if (message.stopReason === 'error' || message.stopReason === 'aborted') {
             terminalStreamError = errorMsg || rawContent || (message.stopReason === 'aborted'
               ? 'Request aborted'
-              : 'The stream stopped before completion.');
+              : 'The request ended unexpectedly.');
             terminalStreamFailure = classifyChatStreamFailure({
               error: message,
               message: terminalStreamError,
@@ -629,6 +723,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
       }
 
       if (event.type === 'auto_retry_start') {
+        automaticRetryAttempted = true;
         const reason = classifyChatStreamFailure({
           error: event.errorMessage,
           message: event.errorMessage,
@@ -644,6 +739,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
 
       if (event.type === 'auto_retry_end') {
         if (event.success) {
+          automaticRetrySucceeded = true;
           appendSystemLog(`AI stream retry succeeded on attempt ${String(event.attempt)}.`);
         } else if (event.finalError) {
           const reason = classifyChatStreamFailure({
@@ -665,9 +761,42 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
     const run: ActiveRun = { conversationId, session, unsubscribe };
     activeRunsByConversation.set(conversationId, run);
 
+    if (recordChatRequestStarted) {
+      try {
+        void Promise.resolve(recordChatRequestStarted({
+          request_id: requestId,
+          public_model_id: publicModelId(serviceId, catalogEntry !== undefined),
+          service_category: classifyServiceCategory(serviceId),
+          route_mode: routeMode,
+          pricing_tier: pricing.pricingTier,
+          has_free_eligible_offer: pricing.hasFreeEligibleOffer,
+          offers_available_bucket: pricing.eligibleOfferCountBucket,
+          has_attachments: (attachments?.length ?? 0) > 0,
+        })).catch(() => {});
+      } catch {
+        // Telemetry must never affect the chat request.
+      }
+    }
+
+    // Capture only after every local preflight and session-construction step
+    // succeeded. The telemetry service gates the lazy balance read and keeps it
+    // off the chat critical path.
+    if (recordFirstChatStarted) {
+      void Promise.resolve(recordFirstChatStarted({
+        serviceCategory: classifyServiceCategory(serviceId),
+        hasAttachments: (attachments?.length ?? 0) > 0,
+      })).catch(() => {});
+    }
+
     try {
       const promptText = [trimmedMessage, attachmentPromptText].filter((part) => part.length > 0).join('\n\n');
       await session.prompt(promptText || ' ', { images: effectiveAttachmentImages.length > 0 ? effectiveAttachmentImages : undefined });
+
+      if (paymentRequiredFailure !== null) {
+        const paymentFailure = paymentRequiredFailure as ChatStreamStopReason;
+        finishTelemetry('failed', paymentFailure);
+        return { ok: false, error: 'Payment required', stopReason: paymentFailure };
+      }
 
       if (terminalStreamFailure !== null) {
         // `terminalStreamFailure` is mutated inside the subscribe callback,
@@ -681,6 +810,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
           stopReason: streamFailure,
         });
         appendSystemLog(`Pi chat error: ${formatChatStreamStopForLog(streamFailure)}`);
+        finishTelemetry('failed', streamFailure, terminalStreamError ?? streamFailure.message);
         return {
           ok: false,
           error: terminalStreamError ?? streamFailure.message,
@@ -709,14 +839,27 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
           }
           pendingAssistantMessage = null;
           const reason = emitPaymentRequiredStreamError(conversationId, amt);
+          finishTelemetry('failed', reason, lastText);
           return { ok: false, error: 'Payment required', stopReason: reason };
         }
       }
 
-      if (pendingAssistantMessage) {
+      const completedAssistantMessage = pendingAssistantMessage as AiChatMessage | null;
+      if (completedAssistantMessage) {
+        const routed = await fetchProxyConversationRoute(proxyPort, conversationId);
+        if (routed?.peerId) {
+          completedAssistantMessage.meta = {
+            ...(completedAssistantMessage.meta ?? {}),
+            peerId: routed.peerId,
+            service: routed.service,
+          };
+          preferredPeerByConversationId.set(conversationId, routed.peerId);
+          const peerLabel = getServiceCatalogEntries().find((entry) => entry.peerId === routed.peerId)?.peerLabel;
+          await store.setPeer(conversationId, routed.peerId, peerLabel, routeMode);
+        }
         sendToRenderer('chat:ai-done', {
           conversationId,
-          message: pendingAssistantMessage,
+          message: completedAssistantMessage,
         });
         pendingAssistantMessage = null;
       }
@@ -724,6 +867,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
         streamDone = true;
         sendToRenderer('chat:ai-stream-done', { conversationId });
       }
+      finishTelemetry('success');
 
       if (shouldGenerateConversationTitle) {
         try {
@@ -748,6 +892,9 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
       // Always discard any buffered assistant message on error — it will not be committed.
       pendingAssistantMessage = null;
       if ((error as Error).name === 'AbortError') {
+        if (paymentRequiredFailure) {
+          finishTelemetry('failed', paymentRequiredFailure, asErrorMessage(error));
+        }
         const reason = classifyChatStreamFailure({
           error,
           message: 'Request aborted',
@@ -758,6 +905,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
           error: 'Request aborted',
           stopReason: reason,
         });
+        if (!paymentRequiredFailure) finishTelemetry('cancelled', reason, 'Request aborted');
         return { ok: false, error: 'Aborted', stopReason: reason };
       }
       const message = asErrorMessage(error);
@@ -784,6 +932,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
           });
         }
         const reason = emitPaymentRequiredStreamError(conversationId, amt);
+        finishTelemetry('failed', reason, message);
         return { ok: false, error: message, stopReason: reason };
       } else {
         const reason = classifyChatStreamFailure({
@@ -797,6 +946,7 @@ export function createStreamingRunner(ctx: StreamingRunContext) {
           stopReason: reason,
         });
         appendSystemLog(`Pi chat error: ${formatChatStreamStopForLog(reason)}`);
+        finishTelemetry('failed', reason, message);
         return { ok: false, error: message, stopReason: reason };
       }
     } finally {

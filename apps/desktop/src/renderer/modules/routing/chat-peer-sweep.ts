@@ -2,16 +2,10 @@ import type { DiscoverRow } from '../../core/state';
 import type { DesktopBridge } from '../../types/bridge';
 import { sameCanonicalModel } from '../catalog/model-identity';
 import { routesForSelectedModel } from '../catalog/view-models';
-import { conversationPinnedPeerId } from './conversations';
 
 /**
- * Re-point existing chats when the user pins a seller for a model.
- *
- * A chat's remembered peer is mere affinity — auto-routing picked it on the
- * chat's first request — so a deliberate per-model seller pin outranks it.
- * Ambient re-ranking never moves a chat; only this sweep does, and only for
- * chats whose peer the user did not choose themselves (`peerSource: 'user'`
- * rows stay put).
+ * Existing automatic chats remain model-only. A seller pin applies only when
+ * the user explicitly selects that seller for the individual conversation.
  */
 export async function sweepAutoChatsToSeller(
   bridge: DesktopBridge | undefined,
@@ -26,19 +20,18 @@ export async function sweepAutoChatsToSeller(
   if (!route) return false;
 
   const records = (await bridge?.buyerConversationsList?.()) ?? [];
-  const targetPeer = peerId.toLowerCase();
   const moved = records.filter((record) => {
     if (record.peerSource === 'user') return false;
-    const pinnedService = record.pinnedModel?.split('@').slice(1).join('@');
+    const pinnedService = record.pinnedModel?.split('@').at(-1);
     if (!pinnedService || !sameCanonicalModel(pinnedService, model.serviceId)) return false;
-    return conversationPinnedPeerId(record) !== targetPeer;
+    return record.pinnedModel !== model.serviceId;
   });
   if (moved.length === 0) return false;
 
   await Promise.all(moved.map((record) =>
     bridge?.buyerConversationsUpdate?.({
       id: record.id,
-      pinnedModel: `${route.peerId}@${route.serviceId}`,
+      pinnedModel: model.serviceId,
       peerSource: 'auto',
     }),
   ));

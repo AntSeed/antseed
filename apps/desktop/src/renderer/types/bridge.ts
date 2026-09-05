@@ -1,4 +1,4 @@
-export type RuntimeMode = 'connect' | 'system-proxy';
+export type RuntimeMode = 'connect' | 'system-proxy' | 'tunnel';
 
 export type RuntimeProcessState = {
   mode: RuntimeMode;
@@ -60,16 +60,36 @@ export type DesktopBuyerUsageTotals = {
   services?: DesktopBuyerServiceUsage[];
 };
 
+export type DesktopBuyerSpendDay = {
+  day: string;
+  dayStart: number;
+  spentUsdc: string;
+  inputTokens: string;
+  outputTokens: string;
+};
+
+export type DesktopBuyerSpendHistory = {
+  available: boolean;
+  source: 'local';
+  unavailableReason: 'buyer-unreachable' | null;
+  days: DesktopBuyerSpendDay[];
+};
+
 export type DesktopPaymentChannelSummary = {
   channelId: string;
   peerId: string;
   seller: string;
-  reserveMax: string;
+  sellerDisplayName: string | null;
+  onChainStateKnown: boolean;
+  reserveCeiling: string | null;
   cumulativeSigned: string;
-  /** Already settled on-chain (bigint string). cumulativeSigned - settledUsdc
+  /** Amount locked for this channel on-chain (bigint string). */
+  onChainDeposit: string;
+  /** Already settled on-chain (bigint string). cumulativeSigned - onChainSettled
       is what the seller can still claim against this channel. */
-  settledUsdc: string;
+  onChainSettled: string;
   reservedAt: number;
+  updatedAt: number;
   status: string;
   requestCount: number;
   /** Cumulative input tokens delivered over this channel (bigint string). */
@@ -314,11 +334,12 @@ export type DesktopBridge = {
   chatAiListConversations?: () => Promise<{ ok: boolean; data: unknown[] }>;
   chatAiListDiscoverRows?: () => Promise<{ ok: boolean; data?: unknown[]; error?: string }>;
   chatAiGetConversation?: (id: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
-  chatAiCreateConversation?: (service: string, provider?: string, peerId?: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>;
+  chatAiCreateConversation?: (service: string, provider?: string, peerId?: string, routeMode?: 'auto' | 'pinned') => Promise<{ ok: boolean; data?: unknown; error?: string }>;
   chatAiDeleteConversation?: (id: string) => Promise<{ ok: boolean }>;
   chatAiRenameConversation?: (id: string, title: string) => Promise<{ ok: boolean; error?: string }>;
   chatPrepareAttachments?: (conversationId: string, attachments: RawChatAttachment[]) => Promise<{ ok: boolean; data?: PreparedChatAttachment[]; error?: string }>;
   attachmentDownload?: (conversationId: string, attachmentId: string, suggestedName: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
+  chatGenerateImage?: (payload: { conversationId: string; prompt: string; peerId?: string; moderation?: 'auto' | 'low'; service: string; sourceImageAttachmentId?: string }) => Promise<{ ok: boolean; user?: { role: string; content: unknown; createdAt?: number }; assistant?: { role: string; content: unknown; createdAt?: number; meta?: Record<string, unknown> }; error?: string }>;
   chatAiSend?: (conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string, permissionMode?: ChatPermissionMode) => Promise<{ ok: boolean; error?: string }>;
   chatAiSendStream?: (conversationId: string, message: string, service?: string, provider?: string, attachments?: PreparedChatAttachment[], peerId?: string, permissionMode?: ChatPermissionMode) => Promise<{ ok: boolean; error?: string; stopReason?: ChatAiStreamStopReason }>;
   chatPeerPermissionModeGet?: (peerId: string) => Promise<{ ok: boolean; mode?: ChatPermissionMode; error?: string }>;
@@ -329,8 +350,8 @@ export type DesktopBridge = {
   telegramDisconnect?: () => Promise<{ ok: boolean; data?: TelegramBridgeStatus; error?: string }>;
   onTelegramStatusChanged?: (handler: (data: TelegramBridgeStatus) => void) => () => void;
   chatAiAbort?: (conversationId?: string) => Promise<{ ok: boolean }>;
-  chatAiSelectPeer?: (payload: { conversationId?: string | null; peerId?: string | null; service?: string | null; provider?: string | null }) => Promise<{ ok: boolean; error?: string }>;
-  chatSetBuyerDefaultRoute?: (payload: { peerId: string; service: string }) => Promise<{ ok: boolean; error?: string }>;
+  chatAiSelectPeer?: (payload: { conversationId?: string | null; peerId?: string | null; service?: string | null; provider?: string | null; routeMode?: 'auto' | 'pinned' | null }) => Promise<{ ok: boolean; error?: string }>;
+  chatSetBuyerDefaultRoute?: (payload: { peerId?: string; service: string }) => Promise<{ ok: boolean; error?: string }>;
   chatSyncModelPicker?: (payload: import('../../shared/model-picker.js').ModelPickerSnapshot) => Promise<{ ok: boolean }>;
   onChatDefaultRouteChanged?: (handler: (data: { peerId: string; service: string; provider: string | null }) => void) => () => void;
   chatAiGetProxyStatus?: () => Promise<{ ok: boolean; data: { running: boolean; port: number } }>;
@@ -377,6 +398,10 @@ export type DesktopBridge = {
   onFullscreenChange?: (handler: (isFullscreen: boolean) => void) => () => void;
   onWindowFocusChange?: (handler: (isFocused: boolean) => void) => () => void;
   getAppSetupStatus?: () => Promise<{ needed: boolean; complete: boolean }>;
+  getTelemetryStatus?: () => Promise<import('../../shared/telemetry.js').TelemetryStatus>;
+  setTelemetryEnabled?: (enabled: boolean) => Promise<import('../../shared/telemetry.js').TelemetryStatusUpdateResult>;
+  telemetryRecordUserAction?: (payload: import('../../shared/telemetry.js').UserActionSignal) => Promise<{ ok: boolean }>;
+  telemetryRecordFirstModelShown?: (payload: import('../../shared/telemetry.js').FirstModelShownSignal) => Promise<{ ok: boolean }>;
   onAppSetupStep?: (handler: (data: { step: string; label: string }) => void) => () => void;
   onAppSetupComplete?: (handler: () => void) => () => void;
   onUpdateStatus?: (handler: (data: UpdateStatus) => void) => () => void;
@@ -415,12 +440,12 @@ export type DesktopBridge = {
   paymentsOpenPayPage?: (opts: { kind?: 'deposit' | 'withdraw' | 'authorize' | 'claim' | 'close-channel'; amountUsdc?: string; channelId?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
   paymentsCardProviders?: () => Promise<{ ok: boolean; data?: Array<{ id: string; label: string }>; error?: string }>;
   paymentsOpenCardProvider?: (opts?: { providerId?: string; amountUsdc?: string }) => Promise<{ ok: boolean; url?: string; error?: string }>;
-  paymentsCrossmintConfig?: () => Promise<{ ok: boolean; data?: { clientKey: string; apiBase: string } | null; error?: string }>;
   paymentsFunkitConfig?: () => Promise<{ ok: boolean; data?: { apiKey: string } | null; error?: string }>;
   paymentsOnrampAvailability?: () => Promise<{ ok: boolean; data?: { country: string | null; stripe: boolean }; error?: string }>;
   /** Closes any app-owned Fun checkout/sign-in popup windows (login-only flows produce no deposit, so the deposit watcher can't close them). */
   paymentsCloseCheckoutWindows?: () => Promise<{ ok: boolean }>;
   paymentsGetBuyerUsage?: () => Promise<{ ok: boolean; data: DesktopBuyerUsageTotals | null; error: string | null; lastActivityAt?: number | null }>;
+  paymentsGetBuyerSpendHistory?: () => Promise<{ ok: boolean; data: DesktopBuyerSpendHistory | null; error: string | null }>;
   paymentsGetChannels?: () => Promise<{ ok: boolean; data: DesktopPaymentChannelSummary[]; error: string | null }>;
   paymentsRequestCooperativeClose?: (opts: { peerId: string }) => Promise<{
     ok: boolean;
@@ -465,6 +490,11 @@ export type DesktopBridge = {
     error?: string;
   }>;
   systemProxyRestartApp?: (app: string) => Promise<{ ok: boolean; error?: string }>;
+  publicTunnelGetStatus?: () => Promise<PublicTunnelStatus>;
+  publicTunnelConfigure?: (settings: { provider: TunnelProvider; tunnelToken: string; publicUrl: string }) => Promise<{ ok: boolean; status?: PublicTunnelStatus; error?: string }>;
+  publicTunnelStart?: (settings?: { provider?: TunnelProvider }) => Promise<{ ok: boolean; status?: PublicTunnelStatus; error?: string }>;
+  publicTunnelStop?: () => Promise<{ ok: boolean; status?: PublicTunnelStatus; error?: string }>;
+  publicTunnelGetApiKey?: () => Promise<{ apiKey: string | null }>;
 
   /* Floating always-on-top pill window */
   vprFloatSetExpanded?: (expanded: boolean) => void;
@@ -484,6 +514,15 @@ export type DesktopBridge = {
   onDesktopOpenFloatingWindow?: (handler: () => void) => () => void;
   onDesktopConnectMain?: (handler: () => void) => () => void;
   onDesktopDisconnectMain?: (handler: () => void) => () => void;
+};
+
+export type TunnelProvider = 'cloudflare' | 'ngrok';
+export type PublicTunnelStatus = {
+  configured: boolean;
+  configuredProviders: TunnelProvider[];
+  activeProvider: TunnelProvider | null;
+  running: boolean;
+  baseUrl: string | null;
 };
 
 /** One tool chat session seen by the buyer proxy (per-chat routing). */

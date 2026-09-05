@@ -26,13 +26,22 @@ export function makeProxyService(
   preferredPeerId?: string | null,
   spendingAuth?: string | null,
   supportsMultimodal: boolean = false,
+  routeMode: 'auto' | 'pinned' = 'auto',
+  conversationId?: string | null,
 ): Model<any> {
   // The buyer proxy resolves the route plan from the pinned peer + the
   // service ID in the request body, so we don't need to send
   // `x-antseed-provider`. Stripping it keeps internal labels (e.g. the
   // local `antseed-proxy` SDK key) out of the wire entirely.
   const headers: Record<string, string> = {};
-  if (preferredPeerId) headers['x-antseed-pin-peer'] = preferredPeerId;
+  if (preferredPeerId) {
+    headers[routeMode === 'pinned' ? 'x-antseed-pin-peer' : 'x-antseed-prefer-peer'] = preferredPeerId;
+  }
+  // The buyer proxy derives the conversation identity generically from the
+  // `x-<tool>-session-id` header name, so this yields tool slug "vpr" and
+  // conversation key `vpr:<id>`. Existing chats stored under the legacy
+  // `antstation:` key re-establish peer affinity on their next message.
+  if (conversationId) headers['x-vpr-session-id'] = conversationId;
   if (spendingAuth) headers['x-antseed-spending-auth'] = spendingAuth;
 
   // The OpenAI SDK appends API paths (e.g. /responses, /chat/completions)
@@ -80,6 +89,31 @@ export function makeProxyService(
   }
 
   return { ...base, api: 'anthropic-messages' as const };
+}
+
+export async function fetchProxyConversationRoute(
+  port: number,
+  conversationId: string,
+): Promise<{ peerId: string; service: string } | null> {
+  try {
+    const id = encodeURIComponent(`vpr:${conversationId}`);
+    const response = await fetch(`${LOCALHOST_URL}:${port}/_antseed/conversations/${id}`, {
+      signal: AbortSignal.timeout(2_000),
+    });
+    if (!response.ok) return null;
+    const payload = await response.json() as { conversation?: { lastModel?: unknown } };
+    const lastModel = typeof payload.conversation?.lastModel === 'string'
+      ? payload.conversation.lastModel.trim()
+      : '';
+    const separator = lastModel.indexOf('@');
+    if (separator <= 0 || separator === lastModel.length - 1) return null;
+    return {
+      peerId: lastModel.slice(0, separator),
+      service: lastModel.slice(separator + 1),
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function isPortReachable(port: number, timeoutMs = 700): Promise<boolean> {
