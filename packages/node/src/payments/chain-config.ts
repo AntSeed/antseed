@@ -14,6 +14,7 @@ export interface ChainConfig {
   fallbackRpcUrls?: string[];
   depositsContractAddress: string;
   channelsContractAddress: string;
+  registryContractAddress?: string;
   /** Optional AntseedFreeUsage contract address for zero-price signed usage. */
   freeUsageContractAddress?: string;
   stakingContractAddress?: string;
@@ -21,7 +22,17 @@ export interface ChainConfig {
   identityRegistryAddress?: string;
   emissionsContractAddress?: string;
   legacyEmissionsContractAddress?: string;
+  legacyStakingContractAddress?: string;
+  legacyEmissionsV1ContractAddress?: string;
   antsTokenAddress?: string;
+  emissionsGateAddress?: string;
+  sellerPoolsAddress?: string;
+  sellerRegistryAddress?: string;
+  positionInitAddress?: string;
+  usageAccountingAddress?: string;
+  usageRewardsAddress?: string;
+  sellerPoolsRewardsAddress?: string;
+  legacyEmissionsEscrowAddress?: string;
   /** Block when Channels contract was deployed. Floor for event log scans. */
   channelsDeployBlock?: number;
   /** AntseedStats contract address. Populated only where an indexer aggregates it. */
@@ -78,6 +89,7 @@ const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     // Nonce sequence: 0=USDC, 1=Registry, 2=ANTSToken, 3=AntseedRegistry, 4=Staking, 5=Deposits, 6=Channels, 7=Stats, 8=Emissions, 9=DepositRelay
     usdcContractAddress: '0x5FbDB2315678afecb367f032d93F642f64180aa3',
     identityRegistryAddress: '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512',
+    registryContractAddress: '0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0',
     stakingContractAddress: '0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9',
     depositsContractAddress: '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707',
     channelsContractAddress: '0x0165878A594ca255338adfa4d48449f69242Eb8F',
@@ -108,13 +120,24 @@ export function resolveChainConfig(overrides?: {
   fallbackRpcUrls?: string[];
   depositsContractAddress?: string;
   channelsContractAddress?: string;
+  registryContractAddress?: string;
   freeUsageContractAddress?: string;
   stakingContractAddress?: string;
   usdcContractAddress?: string;
   identityRegistryAddress?: string;
   emissionsContractAddress?: string;
   legacyEmissionsContractAddress?: string;
+  legacyStakingContractAddress?: string;
+  legacyEmissionsV1ContractAddress?: string;
   antsTokenAddress?: string;
+  emissionsGateAddress?: string;
+  sellerPoolsAddress?: string;
+  sellerRegistryAddress?: string;
+  positionInitAddress?: string;
+  usageAccountingAddress?: string;
+  usageRewardsAddress?: string;
+  sellerPoolsRewardsAddress?: string;
+  legacyEmissionsEscrowAddress?: string;
   depositRelayAddress?: string;
 }): ChainConfig {
   const base = getChainConfig(overrides?.chainId);
@@ -130,13 +153,24 @@ export function resolveChainConfig(overrides?: {
     ...(resolvedFallbacks !== undefined ? { fallbackRpcUrls: resolvedFallbacks } : {}),
     ...(overrides?.depositsContractAddress ? { depositsContractAddress: overrides.depositsContractAddress } : {}),
     ...(overrides?.channelsContractAddress ? { channelsContractAddress: overrides.channelsContractAddress } : {}),
+    ...(overrides?.registryContractAddress ? { registryContractAddress: overrides.registryContractAddress } : {}),
     ...(overrides?.freeUsageContractAddress ? { freeUsageContractAddress: overrides.freeUsageContractAddress } : {}),
     ...(overrides?.stakingContractAddress ? { stakingContractAddress: overrides.stakingContractAddress } : {}),
     ...(overrides?.usdcContractAddress ? { usdcContractAddress: overrides.usdcContractAddress } : {}),
     ...(overrides?.identityRegistryAddress ? { identityRegistryAddress: overrides.identityRegistryAddress } : {}),
     ...(overrides?.emissionsContractAddress ? { emissionsContractAddress: overrides.emissionsContractAddress } : {}),
     ...(overrides?.legacyEmissionsContractAddress ? { legacyEmissionsContractAddress: overrides.legacyEmissionsContractAddress } : {}),
+    ...(overrides?.legacyStakingContractAddress ? { legacyStakingContractAddress: overrides.legacyStakingContractAddress } : {}),
+    ...(overrides?.legacyEmissionsV1ContractAddress ? { legacyEmissionsV1ContractAddress: overrides.legacyEmissionsV1ContractAddress } : {}),
     ...(overrides?.antsTokenAddress ? { antsTokenAddress: overrides.antsTokenAddress } : {}),
+    ...(overrides?.emissionsGateAddress ? { emissionsGateAddress: overrides.emissionsGateAddress } : {}),
+    ...(overrides?.sellerPoolsAddress ? { sellerPoolsAddress: overrides.sellerPoolsAddress } : {}),
+    ...(overrides?.sellerRegistryAddress ? { sellerRegistryAddress: overrides.sellerRegistryAddress } : {}),
+    ...(overrides?.positionInitAddress ? { positionInitAddress: overrides.positionInitAddress } : {}),
+    ...(overrides?.usageAccountingAddress ? { usageAccountingAddress: overrides.usageAccountingAddress } : {}),
+    ...(overrides?.usageRewardsAddress ? { usageRewardsAddress: overrides.usageRewardsAddress } : {}),
+    ...(overrides?.sellerPoolsRewardsAddress ? { sellerPoolsRewardsAddress: overrides.sellerPoolsRewardsAddress } : {}),
+    ...(overrides?.legacyEmissionsEscrowAddress ? { legacyEmissionsEscrowAddress: overrides.legacyEmissionsEscrowAddress } : {}),
     ...(overrides?.depositRelayAddress ? { depositRelayAddress: overrides.depositRelayAddress } : {}),
   };
 }

@@ -14,7 +14,7 @@ AntSeed is designed for providers who build differentiated services — such as 
 :::
 
 :::info Seller ANTS emissions
-Starting from the current epoch, seller ANTS emissions are tracked but routed into a dedicated Provider Pool and locked for now. These incentives are not freely claimable yet. Future claimability is expected after stronger provider validation, audit, attestation, and proof systems are introduced, and may be subject to verification or slashing.
+The CLI checks `AntseedRegistry` to determine whether the recognized-usage upgrade is active. Before the upgrade, seller rewards follow the existing emissions path. After it, finalized earlier rewards remain claimable and new seller/operator plus pool-staker rewards use the recognized-usage contracts.
 :::
 
 ## Prerequisites
@@ -213,12 +213,25 @@ antseed seller status
 # Register your identity on-chain (ERC-8004)
 antseed seller register
 
-# Stake USDC (minimum $10)
-antseed seller stake 10
+# Stake USDC before the recognized-usage upgrade (minimum $10)
+antseed seller legacy stake 10
 
 # Verify everything is ready
 antseed seller status
 ```
+
+On networks that have completed the recognized-usage cutover, use an ANTS seller pool instead of creating new legacy USDC stake:
+
+```bash
+antseed seller register
+antseed seller legacy claim-starter
+antseed seller stake 100 --epochs 4
+antseed seller pool positions
+```
+
+`seller stake` always means ANTS; use `seller legacy stake` for USDC on networks that have not upgraded. The starter claim is only for eligible legacy sellers; new sellers register and stake ANTS without that step.
+
+Pool stake activates after the contract's activation delay. The CLI reports positions as pending, active, matured, closed, or withdrawn. For an early withdrawal, `--accept-slashing` first prints the estimated principal loss and then requires confirmation; add `--yes` only for non-interactive automation after reviewing that estimate. The rate can change before the transaction executes, so the estimate is not a guaranteed maximum loss.
 
 ## 7. Add Your Services
 
@@ -342,7 +355,7 @@ This release emits discovery metadata v12. Older buyers reject newer metadata an
 
 USDC earnings are paid directly to your wallet address on each `settle()` or `close()` call. No claim step needed for USDC.
 
-Seller-side ANTS emissions are different: they are currently tracked but locked in the Provider Pool while stronger validation systems are developed. Provider ANTS claims may become available later and may be subject to verification or slashing.
+Seller-side ANTS rewards are epoch-based. The CLI claims finalized legacy epochs from the legacy emissions contract and, after recognized-usage cutover, claims new operator rewards while exposing separately indexed seller-pool staker rewards.
 
 :::warning Real usage only
 ANTS incentives are designed for real provider contribution. Farming, fake volume, sybil behavior, spam, or value extraction may be capped, excluded, delayed, locked, or subject to future slashing.

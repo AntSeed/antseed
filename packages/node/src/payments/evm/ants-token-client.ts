@@ -1,4 +1,4 @@
-import { Contract, type AbstractSigner } from 'ethers';
+import { Contract, Interface, zeroPadValue, type AbstractSigner } from 'ethers';
 import { BaseEvmClient } from './base-evm-client.js';
 
 export interface ANTSTokenClientConfig {
@@ -10,6 +10,7 @@ export interface ANTSTokenClientConfig {
 
 const ANTS_TOKEN_ABI = [
   'function balanceOf(address account) external view returns (uint256)',
+  'function allowance(address owner, address spender) external view returns (uint256)',
   'function totalSupply() external view returns (uint256)',
   'function name() external view returns (string)',
   'function symbol() external view returns (string)',
@@ -29,6 +30,11 @@ export class ANTSTokenClient extends BaseEvmClient {
   async balanceOf(address: string): Promise<bigint> {
     const contract = new Contract(this._contractAddress, ANTS_TOKEN_ABI, this._provider);
     return contract.getFunction('balanceOf')(address);
+  }
+
+  async allowance(owner: string, spender: string): Promise<bigint> {
+    const contract = new Contract(this._contractAddress, ANTS_TOKEN_ABI, this._provider);
+    return contract.getFunction('allowance')(owner, spender);
   }
 
   async totalSupply(): Promise<bigint> {
@@ -72,5 +78,15 @@ export class ANTSTokenClient extends BaseEvmClient {
     const receipt = await tx.wait();
     if (!receipt) throw new Error('Transaction was dropped or replaced');
     return receipt.hash;
+  }
+  async receivedInTransaction(transactionHash: string, recipient: string): Promise<bigint> {
+    const receipt = await this.provider.getTransactionReceipt(transactionHash);
+    if (!receipt || receipt.status !== 1) throw new Error(`Confirmed receipt unavailable: ${transactionHash}`);
+    const tokenInterface = new Interface(['event Transfer(address indexed from, address indexed to, uint256 value)']);
+    const topics = tokenInterface.encodeFilterTopics('Transfer', [null, recipient]);
+    return receipt.logs.reduce((received, log) => {
+      if (log.address.toLowerCase() !== this.contractAddress.toLowerCase() || log.topics[0] !== topics[0] || log.topics[2]?.toLowerCase() !== zeroPadValue(recipient, 32).toLowerCase()) return received;
+      return received + (tokenInterface.parseLog(log)!.args.value as bigint);
+    }, 0n);
   }
 }

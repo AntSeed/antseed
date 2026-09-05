@@ -84,6 +84,36 @@ export type { ANTSTokenClientConfig } from './evm/ants-token-client.js';
 // Emissions
 export { EmissionsClient } from './evm/emissions-client.js';
 export type { EmissionsClientConfig, EmissionsEpochParams } from './evm/emissions-client.js';
+export { RegistryClient } from './evm/registry-client.js';
+export type { RegistryClientConfig } from './evm/registry-client.js';
+export { UsageAccountingClient } from './evm/usage-accounting-client.js';
+export type { UsageAccountingClientConfig } from './evm/usage-accounting-client.js';
+export { UsageRewardsClient } from './evm/usage-rewards-client.js';
+export type { UsageRewardsClientConfig } from './evm/usage-rewards-client.js';
+export { SellerPoolsClient, estimateEarlyExit } from './evm/seller-pools-client.js';
+export type { SellerPoolsClientConfig, SellerPoolPosition, EarlyExitEstimate } from './evm/seller-pools-client.js';
+export { SellerPoolsRewardsClient } from './evm/seller-pools-rewards-client.js';
+export type { SellerPoolsRewardsClientConfig } from './evm/seller-pools-rewards-client.js';
+export { SellerRegistryClient, SellerRegistrationVerificationError } from './evm/seller-registry-client.js';
+export type { SellerRegistryClientConfig } from './evm/seller-registry-client.js';
+export { pendingEpochRewards, claimEpochRewards, claimBuyerEpochRewards, previewPoolRewards, claimPoolRewards } from './reward-claims.js';
+export type { RewardTransactionRecorder } from './reward-claims.js';
+export { PositionInitClient } from './evm/position-init-client.js';
+export type { PositionInitClientConfig } from './evm/position-init-client.js';
+export { EmissionsGateClient } from './evm/emissions-gate-client.js';
+export type { EmissionsGateClientConfig } from './evm/emissions-gate-client.js';
+export {
+  ContractStackMismatchError,
+  legacyEpochs,
+  newEpochs,
+  resolveContractStack,
+} from './contract-stack.js';
+export type {
+  ContractStackAddresses,
+  ContractStackMode,
+  ContractStackResolution,
+  ContractStackRpcOptions,
+} from './contract-stack.js';
 
 // Channel persistence
 export { ChannelStore, CHANNEL_KIND, CHANNEL_ROLE, CHANNEL_STATUS } from './channel-store.js';

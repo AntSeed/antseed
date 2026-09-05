@@ -13,9 +13,13 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 | **Providing** | |
 | `antseed seller start` | Start providing AI services on the P2P network |
 | `antseed seller register` | Register peer identity on-chain (ERC-8004) |
-| `antseed seller stake <amount>` | Stake USDC as a provider (min $10) |
-| `antseed seller unstake` | Withdraw staked USDC |
-| `antseed seller emissions claim` | Claim accumulated seller payouts |
+| `antseed seller stake <ants> --epochs <n>` | Stake ANTS into your seller pool; never stakes USDC |
+| `antseed seller legacy stake <amount>` | Stake USDC as a provider before cutover (min $10) |
+| `antseed seller legacy unstake` | Withdraw legacy USDC stake |
+| `antseed seller legacy claim-starter` | Claim the legacy-seller starter ANTS position after the recognized-usage upgrade |
+| `antseed seller pool positions` | List seller-pool positions and lifecycle state |
+| `antseed seller pool withdraw <id...> [--accept-slashing]` | Withdraw positions, with a slashing estimate and confirmation for early exits |
+| `antseed seller rewards [claim]` | View or claim all seller rewards |
 | **Buying** | |
 | `antseed buyer start` | Start the buyer proxy and connect to sellers |
 | `antseed buyer start --router <name>` | Start the buyer proxy with a non-default router |
@@ -40,7 +44,6 @@ Command-line interface and web dashboard for the AntSeed Network — a P2P netwo
 | `antseed dashboard` | Start the web dashboard |
 | `antseed metrics serve` | Serve Prometheus metrics for buyers and sellers |
 | `antseed buyer channels` | List payment channels |
-| `antseed seller emissions info` | View ANTS emissions and epoch info |
 | `antseed dev` | Run seller + buyer locally for testing |
 | `antseed network bootstrap` | Run a dedicated DHT bootstrap node |
 
@@ -341,11 +344,68 @@ export ANTSEED_IDENTITY_HEX=<your-private-key-hex>
 antseed seller register
 
 # 4. Stake USDC (minimum $10)
-antseed seller stake 10
+antseed seller legacy stake 10
 
 # 6. Start providing
 antseed seller start
 ```
+
+After the M001 recognized-usage cutover, new seller stake moves from legacy USDC staking to ANTS seller pools:
+
+```bash
+antseed seller register
+antseed seller legacy claim-starter
+antseed seller stake 100 --epochs 4
+antseed seller pool positions
+antseed seller rewards
+antseed seller rewards claim
+```
+
+`antseed seller stake <ants> --epochs <n>` always stakes ANTS and requires the recognized-usage upgrade. On older networks it stops without sending a transaction and directs you to `antseed seller legacy stake <usdc>`. New legacy USDC stakes are rejected after the upgrade. `antseed seller legacy unstake` withdraws legacy stake and warns that doing so can remove temporary eligibility before an ANTS position becomes active. `antseed seller legacy claim-starter` claims the starter position for an eligible legacy seller. `antseed seller rewards` combines legacy emissions, recognized-use emissions, and pool-staking rewards.
+
+`seller register` explicitly binds your existing agent identity to the current seller registry, independently of legacy stake. Repeating it when already bound sends no transaction. If registration needs updating, `seller stake` stops and asks you to run `antseed seller register`; staking never registers you silently.
+
+`seller rewards` is read-only: it calculates unclaimed rewards from completed epochs using existing contract getters, including pool earnings that have not yet been indexed. It does not sign transactions or spend gas. Pool previews use the same reward-index and position-segment rounding as the payout calculation. The pool contribution is read at a single block; amounts can change before a claim confirms. Historical position discovery includes withdrawn and closed positions using receipt burn events and may require an archive-capable RPC with historical log support. Read failures are reported rather than treated as zero rewards.
+
+`seller rewards claim` prepares pool accounting in bounded transactions when necessary, then claims all eligible seller rewards to the current wallet. Preparation and claims require gas. Confirmed transaction hashes are printed immediately, and received amounts are read from ANTS transfer receipts. If a later step fails, the CLI reports partial completion; rerun the command to collect remaining rewards. Position-specific claims and alternate reward recipients are not exposed by this minimal command.
+
+#### Command migration
+
+These are intentional command-surface breaks, not hidden aliases:
+
+| Removed command or behavior | Replacement |
+|---|---|
+| `seller stake <amount>` staking USDC | `seller legacy stake <usdc>` |
+| `seller stake --agent-id <id>` | Bind the identity with `seller register --agent-id <id>` first, then stake ANTS without an identity override |
+| `seller unstake` | `seller legacy unstake` |
+| `seller pool claim-starter`, `seller pool bootstrap`, `seller pool init` | `seller legacy claim-starter` |
+| `seller emissions info`, `seller pool rewards` | `seller rewards` |
+| `seller emissions claim`, `seller pool rewards claim` | `seller rewards claim` (all eligible rewards to the current wallet; no era, position, or recipient flags) |
+| `network contracts` | No replacement command; registry/address validation remains automatic inside payment commands |
+
+Buyer emissions commands and their `--legacy-only` / `--new-only` filters are unchanged.
+
+Early withdrawal requires `--accept-slashing` and interactive confirmation; add `--yes` for automation. The CLI rechecks the estimate before submitting. Existing contracts determine slashing at execution and do not accept a maximum-loss bound, so the displayed estimate is not a guaranteed cap if rates change before confirmation.
+
+### M001 Anvil rehearsal
+
+The repository includes a persistent Base-mainnet fork sandbox for exercising the exact pre-cutover and post-cutover CLI paths. It requires an archive-capable `BASE_MAINNET_RPC_URL` and an `ANTS_HOLDER` address with ANTS at the pinned fork block. Seller USDC is sourced from the forked legacy staking contract.
+
+```bash
+export BASE_MAINNET_RPC_URL=https://your-archive-base-rpc.example
+export ANTS_HOLDER=0x...
+
+pnpm m001:sandbox up
+pnpm m001:sandbox status
+
+# Use .m001-sandbox/cli-config.json with CLI commands before cutover.
+pnpm m001:sandbox cutover
+pnpm m001:sandbox advance-epoch 2
+pnpm m001:sandbox fund-ants 0xYourCliWallet 100
+pnpm m001:sandbox down
+```
+
+Use `--port <port>` and `--out <dir>` on each sandbox command to override the defaults (`8545` and `.m001-sandbox/`).
 
 ### Buyer Setup (Consuming)
 
@@ -418,6 +478,12 @@ Endpoints:
 See [Metrics](../../apps/website/docs/guides/metrics.md) for metric names, labels, and operational notes.
 
 ## Development
+
+Blockchain access and reward calculations live in `@antseed/node/payments`.
+The CLI uses those SDK clients for registration, position discovery, reward
+previews/claims, slashing estimates, and confirmed token receipts. Command
+parsing, output, actionable instructions, and withdrawal confirmation stay in
+the CLI; it has no direct `ethers` dependency.
 
 ```bash
 npm install

@@ -42,14 +42,14 @@ import { runMigration } from './runtime/runner.mjs';
 
 const VERIFICATION_MINTER_ID = '0xd8018a5ea0ce31650e6d51e87c96f1d258a180b37e42ce66e7adf1c8ac666b57';
 // --fork-test rehearsal fixtures (Base mainnet only).
-const BASE_MAINNET_FORK_BLOCK = 50_571_469;
-const BASE_MAINNET_DIEM_PROXY = '0x1f228613116E2d08014DfdCC198377C8dedf18C9';
+export const BASE_MAINNET_FORK_BLOCK = 50_571_469;
+export const BASE_MAINNET_DIEM_PROXY = '0x1f228613116E2d08014DfdCC198377C8dedf18C9';
 // An account with DIEM staked on the proxy at the fork block; impersonated to
 // fund the pre-cutover reward epoch so Cutover.s.sol exercises its
 // "already funded" path exactly as it will on mainnet.
-const BASE_MAINNET_DIEM_STAKER = '0x48F4142F4AbF7b77a03f0cDffcd511eDD9B6d54a';
-const ANVIL_ACCOUNT_0 = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266';
-const ANVIL_ACCOUNT_1 = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
+export const BASE_MAINNET_DIEM_STAKER = '0x48F4142F4AbF7b77a03f0cDffcd511eDD9B6d54a';
+export const ANVIL_ACCOUNT_0 = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266';
+export const ANVIL_ACCOUNT_1 = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
 const M001_TESTNET = 'base-sepolia';
 const M001_ANVIL_FORK = 'base-mainnet';
 
@@ -137,7 +137,13 @@ export function validateM001Baseline(canonical) {
 }
 
 export function applyActiveContracts(current, activeContracts) {
+  const legacyEmissionsV2 = current.contracts.emissions;
+  const legacyStaking = current.contracts.staking;
+  const legacyEmissionsV1 = current.contracts.legacyEmissions;
   for (const contract of Object.values(current.contracts)) contract.deployedInRelease = false;
+  if (legacyEmissionsV2) current.contracts.legacyEmissions = { ...legacyEmissionsV2, deployedInRelease: false };
+  if (legacyStaking) current.contracts.legacyStaking = { ...legacyStaking, deployedInRelease: false };
+  if (legacyEmissionsV1) current.contracts.legacyEmissionsV1 = { ...legacyEmissionsV1, deployedInRelease: false };
   Object.assign(current.contracts, activeContracts);
   current.contracts.emissions = { ...activeContracts.usageAccounting };
   current.contracts.staking = { ...activeContracts.sellerRegistry };
@@ -569,6 +575,7 @@ const deployPhase = {
       etherscanApiKey: environment.BASESCAN_API_KEY,
       env: environment,
       walletArgs: wallet.forgeArgs,
+      slow: context.forkTest,
     });
     if (mode !== 'broadcast') return;
     const checkpoint = await recordDeployment(context);
@@ -679,7 +686,7 @@ function idleMessage(observation) {
 // Fork test
 // ---------------------------------------------------------------------------
 
-function prepareForkOwners(context) {
+export function prepareForkOwners(context) {
   const { rpcUrl, expected } = context;
   const rewardsPool = call(rpcUrl, expected.legacyEmissions, 'sellerRewardsPool()(address)');
   for (const [contract, recipient] of [
@@ -700,7 +707,7 @@ function prepareForkOwners(context) {
  * can be constructed against it; a real address can be supplied via
  * WASH_TRADING_REGISTRY to exercise the live contract instead.
  */
-function deployForkWashTradingStub(rpcUrl) {
+export function deployForkWashTradingStub(rpcUrl) {
   // PUSH1 0x00 PUSH1 0x00 MSTORE PUSH1 0x20 PUSH1 0x00 RETURN — returns 32 zero bytes for any call.
   const runtime = '600060005260206000f3';
   const initcode = `0x69${runtime}600052600a6016f3`;
@@ -712,7 +719,7 @@ function deployForkWashTradingStub(rpcUrl) {
 }
 
 /** Unlocks the impersonated staker so Cutover.s.sol can claim as it on the fork. */
-function prepareForkStaker(context) {
+export function prepareForkStaker(context) {
   cast(context.rpcUrl, ['rpc', 'anvil_impersonateAccount', BASE_MAINNET_DIEM_STAKER]);
   cast(context.rpcUrl, ['rpc', 'anvil_setBalance', BASE_MAINNET_DIEM_STAKER, '0x3635C9ADC5DEA00000']);
 }

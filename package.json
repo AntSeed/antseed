@@ -34,6 +34,7 @@
     "contracts:deploy": "node scripts/deploy-contracts.mjs",
     "contracts:snapshot": "cd packages/contracts && FOUNDRY_PROFILE=snapshot forge test",
     "contracts:check": "node scripts/check-contracts.mjs",
+    "m001:sandbox": "node scripts/m001-sandbox.mjs",
     "clean": "node ./scripts/remove-paths.mjs apps/cli/dist apps/desktop/dist apps/diem-staking/dist apps/network-stats/dist apps/relay/dist apps/website/build e2e/dist packages/api-adapter/dist packages/web-sdk/dist packages/buyer-core/dist packages/protocol/dist packages/bound-agent/dist packages/node/dist packages/provider-core/dist packages/router-core/dist plugins/provider-anthropic/dist plugins/provider-claude-code/dist plugins/provider-claude-oauth/dist plugins/provider-local-llm/dist plugins/provider-openai/dist plugins/provider-openai-responses/dist plugins/router-local/dist",
     "publish:all": "pnpm run build && pnpm -r publish --no-git-checks",
     "publish:dry": "pnpm run build && pnpm -r publish --no-git-checks --dry-run",
