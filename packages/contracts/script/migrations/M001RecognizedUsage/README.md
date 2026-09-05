@@ -11,6 +11,12 @@ pnpm contracts:deploy -- M001 --network <base-sepolia|base-mainnet> --broadcast 
 The CLI reads live chain state and runs whichever phase is next. Rerunning
 after a failure is safe: every step is idempotent.
 
+Both deployment and cutover broadcasts automatically use Foundry's `--slow`
+mode: each transaction must be confirmed successfully before the next is sent.
+Production and fork rehearsals use the same setting. Dry runs remain
+simulation-only. This does not make the migration atomic or undo transactions
+that succeeded before an interruption.
+
 ## Signers
 
 No private key is ever read by this repository. Each role is named on the

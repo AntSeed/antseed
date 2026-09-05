@@ -28,7 +28,7 @@ export function parseHexNumber(value) {
 export function runForgeScript({ target, rpcUrl, broadcast, verify, etherscanApiKey, env, walletArgs = [] }) {
   const args = ['script', target, '--rpc-url', rpcUrl, '--via-ir', ...walletArgs];
   if (broadcast) {
-    args.push('--broadcast');
+    args.push('--broadcast', '--slow');
     // Basescan only accepts Etherscan V2 API keys; pin the version so a stale
     // Foundry default cannot fail verification after transactions were sent.
     if (verify) args.push('--verify', '--etherscan-api-key', etherscanApiKey, '--etherscan-api-version', 'v2');
@@ -46,8 +46,9 @@ export async function parseBroadcast(file, rpcUrl, contractNames) {
     if (!transaction.hash) continue;
     const receipt = receipts.get(transaction.hash.toLowerCase());
     if (!receipt || receipt.status !== '0x1') continue;
+    const isCreation = transaction.transactionType === 'CREATE' || transaction.transactionType === 'CREATE2';
     transactions.push({
-      action: transaction.transactionType === 'CREATE'
+      action: isCreation
         ? `deploy ${transaction.contractName}`
         : transaction.function ?? 'contract call',
       hash: transaction.hash,
@@ -57,7 +58,7 @@ export async function parseBroadcast(file, rpcUrl, contractNames) {
     });
     const key = contractNames[transaction.contractName];
     const address = transaction.contractAddress ?? receipt.contractAddress;
-    if (key && address) {
+    if (isCreation && key && address) {
       contracts[key] = {
         address,
         deploymentBlock: parseHexNumber(receipt.blockNumber),

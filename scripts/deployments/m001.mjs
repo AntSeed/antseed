@@ -137,6 +137,10 @@ export function validateM001Baseline(canonical) {
 }
 
 export function applyActiveContracts(current, activeContracts) {
+  current.registryBefore ??= {
+    emissions: current.contracts.emissions.address,
+    staking: current.contracts.staking.address,
+  };
   for (const contract of Object.values(current.contracts)) contract.deployedInRelease = false;
   Object.assign(current.contracts, activeContracts);
   current.contracts.emissions = { ...activeContracts.usageAccounting };
@@ -175,8 +179,8 @@ function expectedState(canonical) {
     registry: canonical.contracts.registry.address,
     antsToken: canonical.contracts.antsToken.address,
     channels: canonical.contracts.channels.address,
-    legacyEmissions: canonical.contracts.emissions.address,
-    legacyStaking: canonical.contracts.staking.address,
+    legacyEmissions: canonical.registryBefore?.emissions ?? canonical.contracts.emissions.address,
+    legacyStaking: canonical.registryBefore?.staking ?? canonical.contracts.staking.address,
   };
 }
 

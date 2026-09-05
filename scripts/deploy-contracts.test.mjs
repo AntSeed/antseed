@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import childProcess from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { parseBroadcast, runForgeScript } from './deployments/runtime/foundry.mjs';
 
 import {
   buildMigrationRegistry,
@@ -272,7 +275,208 @@ test('updates canonical contract aliases when a migration activates', () => {
   assert.equal(current.contracts.staking.address, ADDRESS.sellerRegistry);
   assert.notEqual(current.contracts.emissions, current.contracts.usageAccounting);
   assert.equal(current.contracts.emissions.deployedInRelease, true);
+  assert.deepEqual(current.registryBefore, {
+    emissions: ADDRESS.legacyEmissions,
+    staking: ADDRESS.legacyStaking,
+  });
+  applyActiveContracts(current, structuredClone(activeContracts));
+  assert.equal(current.registryBefore.emissions, ADDRESS.legacyEmissions);
+  assert.equal(current.registryBefore.staking, ADDRESS.legacyStaking);
 });
+
+for (const broadcast of [true, false]) {
+  test(`Foundry ${broadcast ? 'broadcasts are sequential' : 'simulations do not enable broadcasting'}`, (t) => {
+    const calls = [];
+    t.mock.method(childProcess, 'spawnSync', (command, args) => {
+      calls.push({ command, args });
+      return { status: 0, stdout: '', stderr: '' };
+    });
+    syncBuiltinESMExports();
+    t.after(() => {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    });
+    for (const verify of [true, false]) {
+      runForgeScript({
+        target: 'script/Example.s.sol:Example',
+        rpcUrl: 'http://unused',
+        broadcast,
+        verify,
+        etherscanApiKey: 'test-key',
+        walletArgs: ['--account', 'operator'],
+        env: {},
+      });
+      assert.deepEqual(calls.at(-1), {
+        command: 'forge',
+        args: [
+          'script', 'script/Example.s.sol:Example', '--rpc-url', 'http://unused', '--via-ir',
+          '--account', 'operator',
+          ...(broadcast ? ['--broadcast', '--slow'] : []),
+          ...(broadcast && verify
+            ? ['--verify', '--etherscan-api-key', 'test-key', '--etherscan-api-version', 'v2']
+            : []),
+        ],
+      });
+    }
+  });
+}
+
+function mockCast(t, reply) {
+  t.mock.method(childProcess, 'spawnSync', (command, args) => {
+    assert.equal(command, 'cast', 'no deployment commands may run');
+    return { status: 0, stdout: reply(args), stderr: '' };
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+}
+
+for (const creationType of ['CREATE', 'CREATE2', null]) {
+  test(`preserves creation provenance with ${creationType ?? 'CALL-only'} broadcasts`, async (t) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'antseed-broadcast-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const codeHash = `0x${'ab'.repeat(32)}`;
+    mockCast(t, (args) => {
+      if (args[0] === 'codehash') return codeHash;
+      assert.deepEqual(args.slice(0, 3), ['call', ADDRESS.sellerRegistry, 'owner()(address)']);
+      return ADDRESS.registry;
+    });
+    const creation = {
+      hash: `0x${'11'.repeat(32)}`,
+      transactionType: creationType,
+      contractName: 'AntseedSellerPools',
+      contractAddress: ADDRESS.sellerRegistry,
+      arguments: [ADDRESS.ants, ADDRESS.registry],
+    };
+    const configuration = {
+      ...creation,
+      hash: `0x${'22'.repeat(32)}`,
+      transactionType: 'CALL',
+      function: 'setRewardStaker(address,bool)',
+      arguments: [ADDRESS.channels, true],
+    };
+    const transactions = creationType ? [creation, configuration] : [configuration];
+    const file = path.join(directory, 'run-latest.json');
+    await writeJsonAtomic(file, {
+      transactions,
+      receipts: transactions.map((transaction, index) => ({
+        transactionHash: transaction.hash,
+        status: '0x1',
+        blockNumber: `0x${(100 + index).toString(16)}`,
+        from: ADDRESS.registry,
+        to: transaction.transactionType === 'CALL' ? ADDRESS.sellerRegistry : null,
+      })),
+    });
+    const parsed = await parseBroadcast(file, 'http://unused', { AntseedSellerPools: 'sellerPools' });
+    assert.equal(parsed.transactions.length, transactions.length);
+    assert.equal(parsed.transactions.at(-1).action, configuration.function);
+    if (!creationType) {
+      assert.deepEqual(parsed.contracts, {});
+      return;
+    }
+    assert.equal(parsed.transactions[0].action, 'deploy AntseedSellerPools');
+    assert.deepEqual(parsed.contracts.sellerPools, {
+      address: ADDRESS.sellerRegistry,
+      deploymentBlock: 100,
+      transactionHash: creation.hash,
+      runtimeCodeHash: codeHash,
+      version: '1',
+      external: false,
+      deployedInRelease: true,
+      constructorArguments: creation.arguments,
+      owner: ADDRESS.registry,
+    });
+  });
+}
+
+for (const cached of [true, false]) {
+  test(`recognizes activation from disk ${cached ? 'with' : 'without'} a local checkpoint`, async (t) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'antseed-activated-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const emissionsGate = '0x0000000000000000000000000000000000000008';
+    const pointsPolicyRegistry = '0x0000000000000000000000000000000000000009';
+    const contracts = Object.fromEntries(Object.entries({
+      usageAccounting: ADDRESS.usageAccounting,
+      sellerRegistry: ADDRESS.sellerRegistry,
+      emissionsGate,
+      pointsPolicyRegistry,
+    }).map(([key, address]) => [key, { address }]));
+    const checkpoint = {
+      chainId: 8453,
+      effectiveEpoch: 11,
+      cutoverTimestamp: 2100,
+      contracts,
+      verificationConfiguration: {
+        verificationMinterController: ADDRESS.channels,
+        emissionsGateOwner: ADDRESS.registry,
+        pointsPolicyRegistryOwner: ADDRESS.registry,
+      },
+    };
+    const current = {
+      network: 'base-mainnet',
+      chainId: 8453,
+      release: migration.releases[1],
+      contracts: Object.fromEntries(Object.entries({
+        registry: ADDRESS.registry,
+        antsToken: ADDRESS.ants,
+        channels: ADDRESS.channels,
+        emissions: ADDRESS.legacyEmissions,
+        staking: ADDRESS.legacyStaking,
+      }).map(([key, address]) => [key, { address }])),
+    };
+    applyActiveContracts(current, contracts);
+    const currentPath = path.join(directory, current.network, 'current.json');
+    const checkpointFile = path.join(directory, '.deployments', 'checkpoint.json');
+    await writeJsonAtomic(currentPath, current);
+    await writeJsonAtomic(path.join(directory, current.network, 'history', `${migration.releases[0]}.json`), checkpoint);
+    await writeJsonAtomic(path.join(directory, current.network, 'history', `${migration.releases[1]}.json`), { release: current.release });
+    if (cached) await writeJsonAtomic(checkpointFile, checkpoint);
+    mockCast(t, (args) => {
+      if (args[0] === 'chain-id') return '8453';
+      if (args[0] === 'code') return '0x1234';
+      assert.equal(args[0], 'call', 'restart must only read chain state');
+      const [, address, signature] = args;
+      if (signature === 'registry()(address)') {
+        assert.ok([ADDRESS.ants, ADDRESS.legacyEmissions].includes(address), 'never call the legacy ABI on the new usage accounting contract');
+        return emissionsGate;
+      }
+      const replies = {
+        'antsToken()(address)': ADDRESS.ants,
+        'channels()(address)': ADDRESS.channels,
+        'emissions()(address)': ADDRESS.usageAccounting,
+        'staking()(address)': ADDRESS.sellerRegistry,
+        'paused()(bool)': 'false',
+        'currentEpoch()(uint256)': '12',
+        'emissionsGate()(address)': emissionsGate,
+        'pointsPolicy()(address)': pointsPolicyRegistry,
+        'minters(bytes32)(address,uint32,bool)': JSON.stringify([ADDRESS.channels, 10000, true]),
+        'policyCount()(uint256)': '0',
+        'owner()(address)': ADDRESS.registry,
+        'genesis()(uint256)': '1000',
+        'epochDuration()(uint256)': '100',
+      };
+      assert.ok(Object.hasOwn(replies, signature), `unexpected call: ${signature}`);
+      return replies[signature];
+    });
+    const canonical = JSON.parse(await readFile(currentPath, 'utf8'));
+    const context = {
+      canonical,
+      expected: migration.expectedState(canonical),
+      network: canonical.network,
+      outputRoot: directory,
+      checkpointFile,
+      rpcUrl: 'http://unused',
+    };
+    const result = await executePhases(migration, { mode: 'broadcast', signers: {} }, {}, context);
+    assert.equal(result.state, 'active');
+    assert.equal(context.expected.legacyEmissions, ADDRESS.legacyEmissions);
+    assert.equal(context.expected.legacyStaking, ADDRESS.legacyStaking);
+    assert.equal(migration.idleMessage(result), 'M001 is already active; no transactions required.');
+    assert.deepEqual(JSON.parse(await readFile(currentPath, 'utf8')), current);
+  });
+}
 
 test('classifies the complete M001 lifecycle', () => {
   assert.equal(classifyM001(observation()), 'ready');
