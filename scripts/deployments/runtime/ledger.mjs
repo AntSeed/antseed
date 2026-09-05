@@ -89,6 +89,27 @@ export async function currentRelease(context) {
   return (await readJson(file)).release ?? null;
 }
 
+export function buildReleaseRecord(context, fields) {
+  return { ...fields, $schema: '../../schema.json', network: context.network, chainId: context.canonical.chainId };
+}
+
+export function applyContractAliases(current, contracts, aliases) {
+  current.registryBefore ??= Object.fromEntries(
+    Object.keys(aliases).map((key) => [key, current.contracts[key].address]),
+  );
+  for (const contract of Object.values(current.contracts)) contract.deployedInRelease = false;
+  Object.assign(current.contracts, contracts);
+  for (const [alias, key] of Object.entries(aliases)) current.contracts[alias] = { ...contracts[key] };
+  return current;
+}
+
+export async function writeActivationRecords(context, record, current) {
+  if (!(await historyRecordExists(context, record.release))) {
+    await writeHistoryRecord(context, record.release, record);
+  }
+  if (await currentRelease(context) !== record.release) await writeCurrent(context, current);
+}
+
 /** Regenerates derived config and re-runs the ledger validator against the output root. */
 export function validateArtifacts(context) {
   const env = { CONTRACT_DEPLOYMENTS_ROOT: context.outputRoot };

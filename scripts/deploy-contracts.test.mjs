@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import fsPromises, { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { parseBroadcast, runForgeScript } from './deployments/runtime/foundry.mjs';
+import { broadcastPath, mergeBroadcast, parseBroadcast, runForgeScript } from './deployments/runtime/foundry.mjs';
 
 import {
   buildMigrationRegistry,
@@ -15,7 +15,6 @@ import {
   parseDeployArgs,
 } from './deployments/index.mjs';
 import {
-  applyActiveContracts,
   buildActivationRecord,
   classifyM001,
   migration,
@@ -24,11 +23,11 @@ import {
   validateM001Options,
 } from './deployments/m001.mjs';
 import { writeJsonAtomic, writeJsonOnce } from './deployments/runtime/artifacts.mjs';
-import { currentRelease, historyRecordExists, loadContext, readCheckpoint, validateArtifacts } from './deployments/runtime/ledger.mjs';
+import { applyContractAliases, buildReleaseRecord, currentRelease, historyRecordExists, loadContext, readCheckpoint, validateArtifacts, writeActivationRecords } from './deployments/runtime/ledger.mjs';
 import { executePhases, runMigration } from './deployments/runtime/runner.mjs';
 import { withAnvilFork } from './deployments/runtime/anvil.mjs';
 import { resolveRehearsal, runRehearsal } from './deployments/runtime/rehearsal.mjs';
-import { CANONICAL_DEPLOYMENTS_ROOT } from './deployments/runtime/paths.mjs';
+import { CANONICAL_DEPLOYMENTS_ROOT, CONTRACTS_ROOT } from './deployments/runtime/paths.mjs';
 import {
   PAUSE_LEAD_SECONDS,
   cutoverSchedule,
@@ -37,7 +36,7 @@ import {
   verifyPointers,
 } from './deployments/m001-cutover.mjs';
 import { recordErrors } from './validate-contract-deployments.mjs';
-import { parseSignerSpecs, resolveSigners } from './deployments/runtime/signers.mjs';
+import { assertSignerOwners, parseSignerSpecs, resolveSigners, signerEnvironment } from './deployments/runtime/signers.mjs';
 
 const ADDRESS = {
   registry: '0x0000000000000000000000000000000000000001',
@@ -514,7 +513,7 @@ test('updates canonical contract aliases when a migration activates', () => {
     sellerRegistry: { address: ADDRESS.sellerRegistry, deployedInRelease: true },
   };
 
-  applyActiveContracts(current, activeContracts);
+  applyContractAliases(current, activeContracts, { emissions: 'usageAccounting', staking: 'sellerRegistry' });
 
   assert.equal(current.contracts.emissions.address, ADDRESS.usageAccounting);
   assert.equal(current.contracts.staking.address, ADDRESS.sellerRegistry);
@@ -524,7 +523,7 @@ test('updates canonical contract aliases when a migration activates', () => {
     emissions: ADDRESS.legacyEmissions,
     staking: ADDRESS.legacyStaking,
   });
-  applyActiveContracts(current, structuredClone(activeContracts));
+  applyContractAliases(current, structuredClone(activeContracts), { emissions: 'usageAccounting', staking: 'sellerRegistry' });
   assert.equal(current.registryBefore.emissions, ADDRESS.legacyEmissions);
   assert.equal(current.registryBefore.staking, ADDRESS.legacyStaking);
 });
@@ -675,7 +674,7 @@ for (const [cached, registryState] of [[true, 'valid'], [false, 'valid'], [true,
         staking: ADDRESS.legacyStaking,
       }).map(([key, address]) => [key, { address }])),
     };
-    applyActiveContracts(current, contracts);
+    applyContractAliases(current, contracts, { emissions: 'usageAccounting', staking: 'sellerRegistry' });
     const currentPath = path.join(directory, current.network, 'current.json');
     const checkpointFile = path.join(directory, '.deployments', 'checkpoint.json');
     await writeJsonAtomic(currentPath, current);
@@ -789,6 +788,367 @@ test('requires migrations to declare phases and releases', () => {
     /require an id, a guard, and a run function/,
   );
   assert.throws(() => buildMigrationRegistry([{ ...base, releases: [] }]), /must declare the releases it writes/);
+});
+
+test('signer helpers map declared roles and enforce every owner requirement', (testContext) => {
+  const names = { deployer: 'DEPLOYER', admin: 'ADMIN' };
+  const environment = signerEnvironment(names, { deployer: ADDRESS.registry, ignored: ADDRESS.channels });
+  assert.deepEqual(environment, { DEPLOYER: ADDRESS.registry });
+  const calls = [];
+  mockCast(testContext, (args) => { calls.push(args); return ADDRESS.registry; });
+  const requirements = [['deployer', ADDRESS.ants, 'token'], ['deployer', ADDRESS.channels, 'channels']];
+  assert.doesNotThrow(() => assertSignerOwners('http://unused', environment, names, requirements));
+  assert.equal(calls.length, 2);
+  assert.throws(() => assertSignerOwners('http://unused', {}, names, requirements), /DEPLOYER/);
+  assert.throws(() => assertSignerOwners('http://unused', { DEPLOYER: ADDRESS.channels }, names, requirements), /not the token owner/);
+});
+
+test('release helpers preserve explicit metadata, transaction order, and creation provenance', () => {
+  const context = { network: 'base-sepolia', canonical: { chainId: 84532 } };
+  const fields = { release: '002-example', status: 'deployed', sourceCommit: 'reviewed-commit', effectiveEpoch: 11 };
+  assert.deepEqual(buildReleaseRecord(context, fields), {
+    ...fields, $schema: '../../schema.json', network: 'base-sepolia', chainId: 84532,
+  });
+  const previous = { transactions: [{ hash: '0xAB', action: 'old' }, { hash: '0xcd' }], contracts: { first: { address: ADDRESS.ants } } };
+  const parsed = { transactions: [{ hash: '0xab', action: 'confirmed' }, { hash: '0xef' }], contracts: { second: { address: ADDRESS.channels } } };
+  const merged = mergeBroadcast(previous, parsed);
+  assert.deepEqual(merged.transactions, [parsed.transactions[0], previous.transactions[1], parsed.transactions[1]]);
+  assert.deepEqual(merged.contracts, { ...previous.contracts, ...parsed.contracts });
+  assert.deepEqual(mergeBroadcast(merged, parsed), merged);
+  assert.equal(previous.transactions[0].action, 'old');
+});
+
+test('activation record writes never overwrite existing history while repairing current', async (testContext) => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'antseed-activation-records-'));
+  testContext.after(() => rm(directory, { recursive: true, force: true }));
+  const context = { outputRoot: directory, network: 'test' };
+  const record = { release: '002-example', sourceCommit: 'reviewed-commit' };
+  const history = path.join(directory, 'test/history/002-example.json');
+  await writeJsonAtomic(history, record);
+  const original = await readFile(history, 'utf8');
+  await writeActivationRecords(context, { ...record, sourceCommit: 'different-commit' }, record);
+  assert.equal(await readFile(history, 'utf8'), original);
+  assert.equal(await currentRelease(context), record.release);
+});
+
+let fixtureChainId = 990000;
+
+async function m001Fixture(testContext) {
+  const directory = await mkdtemp(path.join(tmpdir(), 'antseed-readable-m001-'));
+  const network = 'base-sepolia';
+  const chainId = ++fixtureChainId;
+  const contracts = {
+    AntseedUsageAccounting: ADDRESS.usageAccounting,
+    AntseedSellerRegistry: ADDRESS.sellerRegistry,
+    AntseedEmissionsGate: '0x0000000000000000000000000000000000000008',
+    AntseedPointsPolicyRegistry: '0x0000000000000000000000000000000000000009',
+    AntseedLegacyEmissionsEscrow: '0x000000000000000000000000000000000000000a',
+    AntseedPositionInit: '0x000000000000000000000000000000000000000b',
+    AntseedWashTradingRegistry: '0x000000000000000000000000000000000000000c',
+  };
+  const canonical = {
+    network, chainId, release: '000-baseline', status: 'active', $schema: '../schema.json',
+    contracts: Object.fromEntries(Object.entries({
+      registry: ADDRESS.registry, antsToken: ADDRESS.ants, channels: ADDRESS.channels,
+      emissions: ADDRESS.legacyEmissions, staking: ADDRESS.legacyStaking,
+    }).map(([name, address]) => [name, { address }])),
+  };
+  const context = {
+    migrationId: 'M001', network, canonical, expected: migration.expectedState(canonical),
+    outputRoot: directory, checkpointFile: path.join(directory, 'checkpoint.json'),
+    receiptDirectory: path.join(directory, 'receipts'), rpcUrl: 'http://unused', forkTest: true,
+  };
+  const paths = {
+    deploy: broadcastPath('Deploy.s.sol', chainId), cutover: broadcastPath('Cutover.s.sol', chainId),
+    deployed: path.join(directory, network, 'history/001-recognized-usage-deployed.json'),
+    activated: path.join(directory, network, 'history/001-recognized-usage-activated.json'),
+    current: path.join(directory, network, 'current.json'),
+  };
+  const deployment = {
+    transactions: Object.entries(contracts).map(([contractName, contractAddress], index) => ({
+      hash: `0x${String(index + 1).padStart(64, '0')}`, transactionType: 'CREATE', contractName, contractAddress, arguments: [],
+    })),
+  };
+  const activation = {
+    transactions: [{ hash: `0x${'ab'.repeat(32)}`, transactionType: 'CALL', function: 'setEmissions(address)' }],
+  };
+  for (const [file, broadcast] of [[paths.deploy, deployment], [paths.cutover, activation]]) {
+    broadcast.receipts = broadcast.transactions.map(({ hash }) => ({
+      transactionHash: hash, status: '0x1', blockNumber: '0x10', from: ADDRESS.registry, to: ADDRESS.registry,
+    }));
+    await writeJsonAtomic(file, broadcast);
+  }
+  const state = { deployed: false, active: false, paused: false, failForge: false, badBytecode: false, policyCount: 0, receiptsLive: true };
+  const calls = [];
+  const owners = {};
+  const artifactRoot = path.join(CONTRACTS_ROOT, 'out');
+  const originalReadFile = fsPromises.readFile;
+  const originalReaddir = fsPromises.readdir;
+  const artifactFiles = new Set(Object.keys(contracts).map(name => path.join(artifactRoot, `${name}.sol`, `${name}.json`)));
+  testContext.mock.method(fsPromises, 'readdir', (target, options) => {
+    if (target === artifactRoot) return Promise.resolve(Object.keys(contracts).map(name => ({ name: `${name}.sol`, isDirectory: () => true })));
+    const name = path.basename(target, '.sol');
+    if (Object.hasOwn(contracts, name) && path.dirname(target) === artifactRoot) return Promise.resolve([`${name}.json`]);
+    return originalReaddir(target, options);
+  });
+  testContext.mock.method(fsPromises, 'readFile', (target, options) => artifactFiles.has(target)
+    ? Promise.resolve(JSON.stringify({ deployedBytecode: { object: '0x6000', immutableReferences: {} } }))
+    : originalReadFile(target, options));
+  testContext.mock.method(childProcess, 'spawnSync', (command, args, options) => {
+    calls.push({ command, args, options });
+    const result = stdout => ({ status: 0, stdout, stderr: '' });
+    if (command === 'git') {
+      assert.deepEqual(args, ['rev-parse', 'HEAD']);
+      return result('a'.repeat(40));
+    }
+    if (command === 'forge') {
+      if (state.failForge) return { status: 1, stdout: '', stderr: '' };
+      if (args.includes('--broadcast')) {
+        if (args[1].includes('/Deploy.s.sol:')) state.deployed = true;
+        else state.active = true;
+      }
+      return result('');
+    }
+    assert.equal(command, 'cast', 'must never execute a real deployment');
+    const [operation, address, signature] = args;
+    if (operation === 'codehash') return result(`0x${'ab'.repeat(32)}`);
+    if (operation === 'chain-id') return result(String(chainId));
+    if (operation === 'code') return result(state.badBytecode ? '0x6001' : '0x6000');
+    if (operation === 'receipt') return result(JSON.stringify({ status: state.receiptsLive ? '0x1' : '0x0' }));
+    if (operation === 'send') {
+      state.paused = signature === 'pause()';
+      return result(JSON.stringify({
+        transactionHash: state.paused ? '0x00' : '0xff', blockNumber: '0x11', from: ADDRESS.registry, to: ADDRESS.channels,
+      }));
+    }
+    assert.equal(operation, 'call');
+    if (signature === 'owner()(address)') return result(owners[address] ?? ADDRESS.registry);
+    if (signature === 'registry()(address)') return result(!state.deployed ? ADDRESS.registry
+      : address === ADDRESS.ants ? contracts.AntseedEmissionsGate : contracts.AntseedLegacyEmissionsEscrow);
+    const replies = {
+      'antsToken()(address)': ADDRESS.ants, 'channels()(address)': ADDRESS.channels,
+      'emissions()(address)': state.active ? ADDRESS.usageAccounting : ADDRESS.legacyEmissions,
+      'staking()(address)': state.active ? ADDRESS.sellerRegistry : ADDRESS.legacyStaking,
+      'emissionsGate()(address)': contracts.AntseedEmissionsGate,
+      'pointsPolicy()(address)': contracts.AntseedPointsPolicyRegistry,
+      'washTradingRegistry()(address)': contracts.AntseedWashTradingRegistry,
+      'sellerRewardsPool()(address)': ADDRESS.channels,
+      'paused()(bool)': String(state.paused), 'currentEpoch()(uint256)': '11',
+      'effectiveEpoch()(uint256)': '11', 'genesis()(uint256)': '1000', 'epochDuration()(uint256)': '100',
+      'policyCount()(uint256)': String(state.policyCount),
+      'minters(bytes32)(address,uint32,bool)': JSON.stringify([ADDRESS.registry, 10000, true]),
+      'staked(address)(uint256)': '1',
+    };
+    assert.ok(Object.hasOwn(replies, signature), `unexpected call: ${signature}`);
+    return result(replies[signature]);
+  });
+  syncBuiltinESMExports();
+  testContext.after(async () => {
+    testContext.mock.restoreAll();
+    syncBuiltinESMExports();
+    await Promise.all([directory, path.dirname(paths.deploy), path.dirname(paths.cutover)]
+      .map(target => rm(target, { recursive: true, force: true })));
+  });
+  const environment = { BASESCAN_API_KEY: 'test', CHANNELS_OWNER: ADDRESS.registry };
+  const wallet = { forgeArgs: ['--account', 'registry-owner'], signers: { channelsOwner: { castArgs: ['--account', 'registry-owner'] } } };
+  return {
+    context, paths, deployment, activation, state, calls, owners, contracts, environment, wallet,
+    deploy: mode => migration.phases[0].run(context, mode, environment, {}, wallet),
+    cutover: async () => {
+      const checkpoint = JSON.parse(await readFile(context.checkpointFile, 'utf8'));
+      return migration.phases[1].run(context, 'broadcast', environment, { deployment: { checkpoint } }, wallet);
+    },
+  };
+}
+
+for (const mode of ['dry-run', 'broadcast']) {
+  for (const failForge of [false, true]) {
+    test(`M001 deploy ${mode} ${failForge ? 'failure' : 'success'} records only successful broadcasts`, async (testContext) => {
+      const fixture = await m001Fixture(testContext);
+      fixture.state.failForge = failForge;
+      if (failForge) await assert.rejects(fixture.deploy(mode), /forge exited/);
+      else await fixture.deploy(mode);
+      const forge = fixture.calls.find(call => call.command === 'forge');
+      assert.equal(forge.args.includes('--broadcast'), mode === 'broadcast');
+      assert.equal(forge.args.includes('--slow'), mode === 'broadcast');
+      assert.equal(forge.args.includes('--verify'), false);
+      assert.ok(forge.args.includes('registry-owner'));
+      if (mode === 'broadcast' && !failForge) {
+        const record = JSON.parse(await readFile(fixture.paths.deployed, 'utf8'));
+        const checkpoint = JSON.parse(await readFile(fixture.context.checkpointFile, 'utf8'));
+        assert.equal(record.sourceCommit, 'a'.repeat(40));
+        assert.equal(record.effectiveEpoch, 11);
+        assert.equal(record.cutoverStarted, undefined);
+        assert.equal(record.cutoverTimestamp, undefined);
+        assert.equal(checkpoint.cutoverTimestamp, 2100);
+        await rm(fixture.context.checkpointFile);
+        const observed = await migration.observe(fixture.context);
+        assert.deepEqual(observed.deployment.checkpoint, checkpoint);
+      } else {
+        await assert.rejects(readFile(fixture.context.checkpointFile), { code: 'ENOENT' });
+        await assert.rejects(readFile(fixture.paths.deployed), { code: 'ENOENT' });
+      }
+    });
+  }
+}
+
+test('M001 refuses deployment receipts missing required contracts', async (testContext) => {
+  const fixture = await m001Fixture(testContext);
+  fixture.deployment.receipts = [];
+  await writeJsonAtomic(fixture.paths.deploy, fixture.deployment);
+  await assert.rejects(fixture.deploy('broadcast'), /all required M001 contracts/);
+  await assert.rejects(readFile(fixture.context.checkpointFile), { code: 'ENOENT' });
+});
+
+for (const receiptsLive of [false, true]) {
+  test(`M001 recovery ${receiptsLive ? 'rebuilds records from confirmed receipts' : 'refuses unconfirmed receipts'}`, async (testContext) => {
+    const fixture = await m001Fixture(testContext);
+    fixture.state.deployed = true;
+    fixture.state.receiptsLive = receiptsLive;
+    const observed = await migration.observe(fixture.context);
+    assert.equal(observed.state, 'invalid');
+    assert.equal(await migration.recover(fixture.context, observed), receiptsLive);
+    if (receiptsLive) assert.equal((await migration.observe(fixture.context)).state, 'cutover-ready');
+    else await assert.rejects(readFile(fixture.context.checkpointFile), { code: 'ENOENT' });
+    assert.equal(fixture.calls.some(call => call.command === 'forge' || call.args[0] === 'send'), false);
+  });
+}
+
+test('M001 uses one configuration snapshot for checkpoint validation', async (testContext) => {
+  const fixture = await m001Fixture(testContext);
+  await fixture.deploy('broadcast');
+  fixture.calls.length = 0;
+  assert.equal((await migration.observe(fixture.context)).deployment.valid, true);
+  for (const signature of ['minters(bytes32)(address,uint32,bool)', 'policyCount()(uint256)', 'washTradingRegistry()(address)']) {
+    assert.equal(fixture.calls.filter(call => call.args.includes(signature)).length, 1);
+  }
+  fixture.state.policyCount = 1;
+  assert.equal((await migration.observe(fixture.context)).state, 'invalid');
+  fixture.state.policyCount = 0;
+  fixture.owners[fixture.contracts.AntseedEmissionsGate] = ADDRESS.channels;
+  assert.equal((await migration.observe(fixture.context)).state, 'invalid');
+});
+
+test('M001 signer discovery and validation share ownership targets without dropping either legacy owner', async (testContext) => {
+  const fixture = await m001Fixture(testContext);
+  const environment = {
+    VERIFICATION_WALLET: ADDRESS.registry, SP1_VERIFIER: ADDRESS.channels,
+    SP1_VERIFIER_HASH: `0x${'1'.repeat(64)}`, WASH_TRADING_SELLER_PROGRAM_VKEY: `0x${'2'.repeat(64)}`,
+    HISTORICAL_PERIOD_START_BLOCK: '1', HISTORICAL_PERIOD_END_BLOCK: '100',
+    DEPLOYER: ADDRESS.registry, REGISTRY_OWNER: ADDRESS.registry, CHANNELS_OWNER: ADDRESS.registry,
+    DIEM_STAKING_PROXY: ADDRESS.channels, DIEM_STAKER: ADDRESS.registry, SELLER_REWARDS_POOL_OWNER: ADDRESS.registry,
+  };
+  const ready = { state: 'ready' };
+  assert.equal(migration.expectedSigner('deployer', fixture.context, ready), ADDRESS.registry);
+  migration.verifyRoles(fixture.context, ready, environment);
+  fixture.owners[ADDRESS.legacyEmissions] = ADDRESS.channels;
+  assert.throws(() => migration.verifyRoles(fixture.context, ready, environment), /not the legacy emissions owner/);
+  delete fixture.owners[ADDRESS.legacyEmissions];
+  await fixture.deploy('broadcast');
+  const deployed = await migration.observe(fixture.context);
+  migration.verifyRoles(fixture.context, deployed, environment);
+  for (const [role, contract] of [
+    ['deployer', fixture.contracts.AntseedEmissionsGate], ['registryOwner', ADDRESS.registry],
+    ['channelsOwner', ADDRESS.channels], ['sellerRewardsPoolOwner', ADDRESS.channels],
+  ]) {
+    fixture.owners[contract] = ADDRESS.ants;
+    assert.equal(migration.expectedSigner(role, fixture.context, deployed), ADDRESS.ants);
+    assert.throws(() => migration.verifyRoles(fixture.context, deployed, environment), /not the .* owner/);
+    delete fixture.owners[contract];
+  }
+});
+
+test('M001 environment keeps overrides and checkpoint addresses in their original precedence', async (testContext) => {
+  const fixture = await m001Fixture(testContext);
+  const signerAddresses = { deployer: ADDRESS.registry };
+  const extra = { DEPLOYER: ADDRESS.ants, ANTSEED_REGISTRY: ADDRESS.channels, DIEM_STAKING_PROXY: ADDRESS.ants };
+  const ready = migration.environment(fixture.context, { state: 'ready' }, signerAddresses, extra);
+  assert.equal(ready.DEPLOYER, extra.DEPLOYER);
+  assert.equal(ready.ANTSEED_REGISTRY, extra.ANTSEED_REGISTRY);
+  assert.equal(ready.DIEM_STAKING_PROXY, extra.DIEM_STAKING_PROXY);
+  await fixture.deploy('broadcast');
+  const observed = await migration.observe(fixture.context);
+  const deployed = migration.environment(fixture.context, observed, signerAddresses, {
+    USAGE_ACCOUNTING: ADDRESS.ants, SELLER_REGISTRY: ADDRESS.ants,
+  });
+  assert.equal(deployed.USAGE_ACCOUNTING, ADDRESS.usageAccounting);
+  assert.equal(deployed.SELLER_REGISTRY, ADDRESS.sellerRegistry);
+});
+
+for (const fails of [false, true]) {
+  test(`M001 ${fails ? 'failed' : 'successful'} cutover captures partial receipts and ${fails ? 'does not activate' : 'preserves transaction order'}`, async (testContext) => {
+    const fixture = await m001Fixture(testContext);
+    await fixture.deploy('broadcast');
+    fixture.state.failForge = fails;
+    if (fails) await assert.rejects(fixture.cutover(), /forge exited/);
+    else await fixture.cutover();
+    const checkpoint = JSON.parse(await readFile(fixture.context.checkpointFile, 'utf8'));
+    assert.equal(checkpoint.cutoverTransactions.length, 1);
+    if (fails) {
+      assert.equal(fixture.state.paused, true);
+      await assert.rejects(readFile(fixture.paths.activated), { code: 'ENOENT' });
+      fixture.state.failForge = false;
+      await fixture.cutover();
+    }
+    const record = JSON.parse(await readFile(fixture.paths.activated, 'utf8'));
+    assert.deepEqual(record.transactions.map(({ hash }) => hash), ['0x00', fixture.activation.transactions[0].hash, '0xff']);
+    const current = JSON.parse(await readFile(fixture.paths.current, 'utf8'));
+    assert.equal(current.contracts.emissions.address, ADDRESS.usageAccounting);
+    assert.equal(current.registryBefore.emissions, ADDRESS.legacyEmissions);
+    assert.equal(fixture.state.paused, false);
+  });
+}
+
+test('M001 receipt capture errors prevent activation records', async (testContext) => {
+  const fixture = await m001Fixture(testContext);
+  await fixture.deploy('broadcast');
+  await fsPromises.writeFile(fixture.paths.cutover, 'invalid JSON');
+  await assert.rejects(fixture.cutover(), SyntaxError);
+  await assert.rejects(readFile(fixture.paths.activated), { code: 'ENOENT' });
+});
+
+test('M001 requires confirmed cutover receipts before activation records', async (testContext) => {
+  const fixture = await m001Fixture(testContext);
+  await fixture.deploy('broadcast');
+  fixture.activation.receipts = [];
+  await writeJsonAtomic(fixture.paths.cutover, fixture.activation);
+  await assert.rejects(fixture.cutover(), /Confirmed Foundry cutover receipts/);
+  await assert.rejects(readFile(fixture.paths.activated), { code: 'ENOENT' });
+});
+
+for (const missing of ['history', 'current', 'both']) {
+  test(`M001 finalization repairs missing ${missing} independently and is then a no-op`, async (testContext) => {
+    const fixture = await m001Fixture(testContext);
+    await fixture.deploy('broadcast');
+    await fixture.cutover();
+    const history = await readFile(fixture.paths.activated, 'utf8');
+    const current = await readFile(fixture.paths.current, 'utf8');
+    if (missing !== 'current') await rm(fixture.paths.activated);
+    if (missing !== 'history') await rm(fixture.paths.current);
+    const checkpoint = JSON.parse(await readFile(fixture.context.checkpointFile, 'utf8'));
+    const observation = { state: 'active', deployment: { checkpoint } };
+    assert.equal(await migration.finalize(fixture.context, observation, 'dry-run'), false);
+    assert.equal(await migration.finalize(fixture.context, { ...observation, state: 'cutover-incomplete' }, 'broadcast'), false);
+    fixture.calls.length = 0;
+    assert.equal(await migration.finalize(fixture.context, observation, 'broadcast'), true);
+    assert.ok(fixture.calls.some(call => call.args[0] === 'code'));
+    assert.equal(await readFile(fixture.paths.activated, 'utf8'), history);
+    assert.equal(await readFile(fixture.paths.current, 'utf8'), current);
+    fixture.calls.length = 0;
+    assert.equal(await migration.finalize(fixture.context, observation, 'broadcast'), false);
+    assert.deepEqual(fixture.calls, []);
+  });
+}
+
+test('M001 finalization verifies bytecode before writing anything', async (testContext) => {
+  const fixture = await m001Fixture(testContext);
+  await fixture.deploy('broadcast');
+  const checkpoint = JSON.parse(await readFile(fixture.context.checkpointFile, 'utf8'));
+  fixture.state.badBytecode = true;
+  await assert.rejects(migration.finalize(fixture.context, { state: 'active', deployment: { checkpoint } }, 'broadcast'), /local build does not match/);
+  await assert.rejects(readFile(fixture.paths.activated), { code: 'ENOENT' });
+  await assert.rejects(readFile(fixture.paths.current), { code: 'ENOENT' });
+  assert.equal(JSON.parse(await readFile(fixture.context.checkpointFile, 'utf8')).cutoverTransactions, undefined);
 });
 
 test('maps every declared release to exactly one owning migration', () => {
