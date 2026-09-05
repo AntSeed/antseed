@@ -1,6 +1,10 @@
 # M001 — Recognized usage cutover
 
-Two broadcasts, one epoch apart. Run both through the deployment CLI:
+Two CLI broadcast runs: deploy during the current epoch, then activate at the
+next epoch boundary. They are not necessarily a full epoch apart. For the
+step-by-step operator walkthrough, see
+[the contracts README](../../../README.md#operator-walkthrough-deploy-then-start-the-waiting-cutover-process).
+Run both through the deployment CLI:
 
 ```bash
 pnpm contracts:deploy -- M001 --network <base-sepolia|base-mainnet> --dry-run
@@ -8,8 +12,19 @@ pnpm contracts:deploy -- M001 --network <base-sepolia|base-mainnet> --broadcast 
   --signer <role>=<wallet> [...]
 ```
 
-The CLI reads live chain state and runs whichever phase is next. Rerunning
-after a failure is safe: every step is idempotent.
+The CLI reads live chain state and runs whichever phase is next. Deployment
+exits after writing its record. Start the second run before boundary minus
+60 seconds and leave it running: this process performs the waiting, not a
+background service. Keep an operator available to sign. After a failure,
+inspect receipts and live state before choosing the recovery action; do not
+assume a fresh invocation can recover every partially completed transaction
+sequence.
+
+Both deployment and cutover broadcasts automatically use Foundry's `--slow`
+mode: each transaction must be confirmed successfully before the next is sent.
+Production and fork rehearsals use the same setting. Dry runs remain
+simulation-only. This does not make the migration atomic or undo transactions
+that succeeded before an interruption.
 
 ## Signers
 

@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import childProcess from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { parseBroadcast, runForgeScript } from './deployments/runtime/foundry.mjs';
 
 import {
   buildMigrationRegistry,
@@ -26,10 +29,11 @@ import {
   validateM002Options,
 } from './deployments/m002.mjs';
 import { writeJsonAtomic, writeJsonOnce } from './deployments/runtime/artifacts.mjs';
-import { currentRelease, historyRecordExists, readCheckpoint } from './deployments/runtime/ledger.mjs';
-import { executePhases } from './deployments/runtime/runner.mjs';
+import { currentRelease, historyRecordExists, loadContext, readCheckpoint, validateArtifacts } from './deployments/runtime/ledger.mjs';
+import { executePhases, runMigration } from './deployments/runtime/runner.mjs';
 import { withAnvilFork } from './deployments/runtime/anvil.mjs';
-import { runForgeScript } from './deployments/runtime/foundry.mjs';
+import { resolveRehearsal, runRehearsal } from './deployments/runtime/rehearsal.mjs';
+import { CANONICAL_DEPLOYMENTS_ROOT } from './deployments/runtime/paths.mjs';
 import {
   PAUSE_LEAD_SECONDS,
   cutoverSchedule,
@@ -50,17 +54,245 @@ const ADDRESS = {
   sellerRegistry: '0x0000000000000000000000000000000000000007',
 };
 
-test('broadcasts Foundry transactions sequentially without changing dry runs', () => {
-  for (const broadcast of [false, true]) {
-    let invocation;
-    runForgeScript({ target: 'Install.s.sol:Install', rpcUrl: 'http://localhost:8545', broadcast }, {
-      run: (command, args) => { invocation = { command, args }; },
-    });
-    assert.equal(invocation.command, 'forge');
-    assert.equal(invocation.args.includes('--broadcast'), broadcast);
-    assert.equal(invocation.args.includes('--slow'), broadcast);
-  }
+const REHEARSAL_FORK = { rpcEnv: 'ANTSEED_TEST_FORK_RPC_URL', forkBlockNumber: 123, chainId: 8453 };
+const REHEARSAL_OPTIONS = { migration: 'M004', network: 'base-mainnet', mode: 'fork-test', signers: {} };
+
+function rehearsalMigration(id, prerequisites = [], fork) {
+  return { id, rehearsal: { prerequisites, fork, async run() {} } };
+}
+
+test('resolves rehearsal prerequisites once, in order, inheriting the pinned fork', () => {
+  const first = rehearsalMigration('M001', [], REHEARSAL_FORK);
+  const second = rehearsalMigration('M002', ['M001']);
+  const third = rehearsalMigration('M003', ['M001']);
+  const target = rehearsalMigration('M004', ['M002', 'M003']);
+  const registry = new Map([first, second, third, target].map((entry) => [entry.id, entry]));
+  const result = resolveRehearsal(target, REHEARSAL_OPTIONS, registry);
+  assert.deepEqual(result.migrations.map((entry) => entry.id), ['M001', 'M002', 'M003', 'M004']);
+  assert.deepEqual(result.fork, REHEARSAL_FORK);
+  assert.deepEqual(resolveRehearsal(first, REHEARSAL_OPTIONS, registry).migrations, [first]);
 });
+
+test('rejects invalid rehearsal declarations before loading environment or starting Anvil', async () => {
+  const first = rehearsalMigration('M001', [], REHEARSAL_FORK);
+  const registry = new Map([[first.id, first]]);
+  const cases = [
+    [rehearsalMigration('M002', ['M009']), /unknown rehearsal prerequisite M009/],
+    [rehearsalMigration('M002', ['M002']), /Cyclic rehearsal prerequisite/],
+    [{ id: 'M002' }, /no rehearsal hook/],
+    [rehearsalMigration('M002', 'M001'), /prerequisites must be an array/],
+    [rehearsalMigration('M002'), /no rehearsal fork configuration/],
+    [rehearsalMigration('M002', [], { ...REHEARSAL_FORK, forkBlockNumber: undefined }), /pinned rehearsal fork/],
+    [rehearsalMigration('M002', ['M001'], { ...REHEARSAL_FORK, chainId: 1 }), /fork conflicts/],
+  ];
+  for (const [target, expected] of cases) {
+    registry.set(target.id, target);
+    await assert.rejects(runRehearsal(target, REHEARSAL_OPTIONS, {
+      registry,
+      runMigration() { assert.fail('must not drive a migration'); },
+    }, {
+      loadDotEnv() { assert.fail('must validate before loading environment'); },
+      withAnvilFork() { assert.fail('must not start Anvil'); },
+    }), expected);
+  }
+  first.rehearsal.prerequisites = ['M002'];
+  const target = rehearsalMigration('M002', ['M001']);
+  registry.set(target.id, target);
+  assert.throws(() => resolveRehearsal(target, REHEARSAL_OPTIONS, registry), /Cyclic rehearsal prerequisite/);
+});
+
+test('validates the network for prerequisite rehearsals and preserves M001 standalone configuration', () => {
+  const target = rehearsalMigration('M002', ['M001']);
+  const registry = new Map([[migration.id, migration]]);
+  assert.throws(() => resolveRehearsal(target, {
+    ...REHEARSAL_OPTIONS, network: 'base-sepolia',
+  }, registry), /Base Sepolia.*Base mainnet.*fork-test/);
+  const result = resolveRehearsal(migration, { ...REHEARSAL_OPTIONS, migration: 'M001' }, registry);
+  assert.deepEqual(result.migrations, [migration]);
+  assert.equal(result.fork.rpcEnv, 'BASE_MAINNET_RPC_URL');
+  assert.equal(result.fork.forkBlockNumber, 50_571_469);
+  assert.equal(result.fork.chainId, 8453);
+});
+
+test('M001 rehearsal retains its fixtures, epoch advancement, activation, and no-op check', async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'antseed-m001-hook-'));
+  const calls = [];
+  const driven = [];
+  const previousRegistry = process.env.WASH_TRADING_REGISTRY;
+  delete process.env.WASH_TRADING_REGISTRY;
+  t.after(async () => {
+    if (previousRegistry === undefined) delete process.env.WASH_TRADING_REGISTRY;
+    else process.env.WASH_TRADING_REGISTRY = previousRegistry;
+    await rm(directory, { recursive: true, force: true });
+  });
+  await writeJsonAtomic(path.join(directory, 'base-mainnet', 'current.json'), {
+    network: 'base-mainnet',
+    contracts: Object.fromEntries(['registry', 'antsToken', 'channels', 'emissions', 'staking']
+      .map((key) => [key, { address: ADDRESS.registry }])),
+  });
+  mockCast(t, (args) => {
+    assert.ok(args.includes('http://127.0.0.1:9999'));
+    calls.push(args);
+    if (args.includes('--create')) return JSON.stringify({ contractAddress: ADDRESS.channels });
+    return ADDRESS.registry;
+  });
+  await migration.rehearsal.run({
+    rpcUrl: 'http://127.0.0.1:9999',
+    outputRoot: directory,
+    network: 'base-mainnet',
+    async runMigration(overrides) {
+      driven.push(overrides);
+      return driven.length === 1
+        ? { state: 'awaiting-epoch', deployment: { checkpoint: { cutoverTimestamp: 2000 } } }
+        : { state: 'active' };
+    },
+  });
+  assert.equal(driven.length, 3);
+  assert.ok(driven.every((overrides) => overrides === driven[0]));
+  assert.equal(driven[0].environment.WASH_TRADING_REGISTRY, ADDRESS.channels);
+  assert.deepEqual(Object.keys(driven[0].signers), [
+    'deployer', 'registryOwner', 'channelsOwner', 'sellerRewardsPoolOwner', 'diemStaker',
+  ]);
+  assert.ok(Object.values(driven[0].signers).every((signer) => signer.startsWith('unlocked:')));
+  assert.equal(calls.filter((args) => args.includes('transferOwnership(address)')).length, 5);
+  assert.ok(calls.some((args) => args[1] === 'anvil_setNextBlockTimestamp' && args[2] === '2001'));
+  assert.ok(calls.some((args) => args[1] === 'anvil_impersonateAccount'
+    && `unlocked:${args[2]}` === driven[0].signers.diemStaker));
+});
+
+for (const failPrerequisite of [false, true]) {
+  test(`rehearsals isolate their ledger and clean up Anvil on ${failPrerequisite ? 'failure' : 'success'}`, async (t) => {
+    const canonicalRoot = await mkdtemp(path.join(tmpdir(), 'antseed-rehearsal-baseline-'));
+    const logs = [];
+    const calls = [];
+    let outputRoot;
+    let stopped = false;
+    let environmentLoaded = false;
+    const previousRpc = process.env[REHEARSAL_FORK.rpcEnv];
+    delete process.env[REHEARSAL_FORK.rpcEnv];
+    t.mock.method(console, 'log', (message) => logs.push(message));
+    t.after(async () => {
+      if (previousRpc === undefined) delete process.env[REHEARSAL_FORK.rpcEnv];
+      else process.env[REHEARSAL_FORK.rpcEnv] = previousRpc;
+      await rm(canonicalRoot, { recursive: true, force: true });
+      if (outputRoot) await rm(outputRoot, { recursive: true, force: true });
+    });
+    const baseline = { release: '000-baseline', network: 'base-mainnet' };
+    const canonicalFile = path.join(canonicalRoot, 'base-mainnet', 'current.json');
+    await writeJsonAtomic(canonicalFile, baseline);
+    const first = rehearsalMigration('M001', [], REHEARSAL_FORK);
+    const second = rehearsalMigration('M002', ['M001']);
+    for (const current of [first, second]) {
+      current.expectedState = (canonical) => canonical;
+      current.rehearsal.run = async (context) => {
+        outputRoot ??= context.outputRoot;
+        assert.equal(context.outputRoot, outputRoot);
+        assert.equal(context.rpcUrl, 'http://127.0.0.1:9999');
+        assert.equal(context.network, 'base-mainnet');
+        await context.runMigration({
+          signers: { deployer: `unlocked:${ADDRESS.registry}` },
+          environment: { FIXTURE: current.id },
+          rpcUrl: 'https://must-not-be-used',
+          outputRoot: canonicalRoot,
+          canonicalRoot,
+          forkTest: false,
+        });
+        if (failPrerequisite && current.id === 'M001') throw new Error('prerequisite failed');
+      };
+    }
+    const run = runRehearsal(second, {
+      ...REHEARSAL_OPTIONS, migration: 'M002', signers: { deployer: 'account:live-wallet' },
+    }, {
+      registry: new Map([[first.id, first], [second.id, second]]),
+      async runMigration(current, options, overrides) {
+        assert.equal(environmentLoaded, true);
+        assert.equal(options.mode, 'broadcast');
+        assert.equal(options.migration, current.id);
+        assert.deepEqual(options.signers, {});
+        assert.equal(overrides.rpcUrl, 'http://127.0.0.1:9999');
+        assert.equal(overrides.forkTest, true);
+        assert.equal(overrides.outputRoot, outputRoot);
+        assert.equal(overrides.canonicalRoot, outputRoot);
+        assert.notEqual(outputRoot, canonicalRoot);
+        assert.equal(overrides.environment.FIXTURE, current.id);
+        assert.deepEqual(overrides.signers, { deployer: `unlocked:${ADDRESS.registry}` });
+        const context = await loadContext(current, options.network, overrides);
+        assert.equal(context.canonical.release, calls.length ? 'M001-active' : '000-baseline');
+        if (calls.length) {
+          assert.equal(await historyRecordExists(context, 'M001-active'), true);
+        }
+        calls.push(current.id);
+        await writeJsonAtomic(path.join(outputRoot, options.network, 'current.json'), { release: `${current.id}-active` });
+        await writeJsonOnce(path.join(outputRoot, options.network, 'history', `${current.id}-active.json`), { release: `${current.id}-active` });
+      },
+    }, {
+      canonicalRoot,
+      async loadDotEnv() {
+        environmentLoaded = true;
+        process.env[REHEARSAL_FORK.rpcEnv] = 'https://test-fork-source';
+      },
+      withAnvilFork: (request, body) => withAnvilFork(request, body, {
+        availablePort: async () => 9999,
+        spawn(command, args) {
+          assert.equal(environmentLoaded, true);
+          assert.equal(command, 'anvil');
+          assert.ok(args.includes('https://test-fork-source'));
+          assert.ok(args.includes('123'));
+          return { kill(signal) { assert.equal(signal, 'SIGTERM'); stopped = true; } };
+        },
+        waitForAnvil: async () => {},
+      }),
+    });
+    if (failPrerequisite) await assert.rejects(run, /prerequisite failed/);
+    else await run;
+    assert.equal(stopped, true);
+    assert.deepEqual(calls, failPrerequisite ? ['M001'] : ['M001', 'M002']);
+    assert.deepEqual(JSON.parse(await readFile(canonicalFile, 'utf8')), baseline);
+    assert.equal(JSON.parse(await readFile(path.join(outputRoot, 'base-mainnet', 'current.json'), 'utf8')).release,
+      failPrerequisite ? 'M001-active' : 'M002-active');
+    assert.ok(logs.some((message) => message.includes(outputRoot)));
+    assert.equal(logs.some((message) => message.includes('fork test passed')), !failPrerequisite);
+  });
+}
+
+test('temporary canonical roots never regenerate repository chain configuration', (t) => {
+  const calls = [];
+  t.mock.method(childProcess, 'spawnSync', (command, args, options) => {
+    calls.push({ command, args, root: options.env.CONTRACT_DEPLOYMENTS_ROOT });
+    return { status: 0, stdout: '', stderr: '' };
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const temporary = path.join(tmpdir(), 'rehearsal-ledger');
+  validateArtifacts({ outputRoot: temporary, canonicalRoot: temporary });
+  assert.deepEqual(calls, [{ command: 'node', args: ['scripts/validate-contract-deployments.mjs'], root: temporary }]);
+  calls.length = 0;
+  validateArtifacts({ outputRoot: CANONICAL_DEPLOYMENTS_ROOT, canonicalRoot: CANONICAL_DEPLOYMENTS_ROOT });
+  assert.deepEqual(calls.map((entry) => entry.args[0]), [
+    'scripts/generate-contract-chain-config.mjs', 'scripts/validate-contract-deployments.mjs',
+  ]);
+});
+
+for (const mode of ['dry-run', 'broadcast']) {
+  test(`${mode} does not resolve or execute rehearsal prerequisites`, async (t) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'antseed-non-rehearsal-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    await writeJsonAtomic(path.join(directory, 'base-mainnet', 'current.json'), { release: 'active' });
+    const current = {
+      ...rehearsalMigration('M002', ['MISSING']),
+      expectedState: (canonical) => canonical,
+      observe: async () => ({ state: 'active' }),
+      phases: [],
+      printStatus() {},
+      idleMessage: () => 'already active',
+    };
+    current.rehearsal.run = () => assert.fail('must not rehearse during ordinary deployment');
+    const result = await runMigration(current, { ...REHEARSAL_OPTIONS, mode }, {
+      canonicalRoot: directory, outputRoot: directory, rpcUrl: 'http://unused',
+    });
+    assert.equal(result.state, 'active');
+  });
+}
 
 function observation(overrides = {}) {
   return {
@@ -292,7 +524,208 @@ test('updates canonical contract aliases when a migration activates', () => {
   assert.equal(current.contracts.staking.address, ADDRESS.sellerRegistry);
   assert.notEqual(current.contracts.emissions, current.contracts.usageAccounting);
   assert.equal(current.contracts.emissions.deployedInRelease, true);
+  assert.deepEqual(current.registryBefore, {
+    emissions: ADDRESS.legacyEmissions,
+    staking: ADDRESS.legacyStaking,
+  });
+  applyActiveContracts(current, structuredClone(activeContracts));
+  assert.equal(current.registryBefore.emissions, ADDRESS.legacyEmissions);
+  assert.equal(current.registryBefore.staking, ADDRESS.legacyStaking);
 });
+
+for (const broadcast of [true, false]) {
+  test(`Foundry ${broadcast ? 'broadcasts are sequential' : 'simulations do not enable broadcasting'}`, (t) => {
+    const calls = [];
+    t.mock.method(childProcess, 'spawnSync', (command, args) => {
+      calls.push({ command, args });
+      return { status: 0, stdout: '', stderr: '' };
+    });
+    syncBuiltinESMExports();
+    t.after(() => {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    });
+    for (const verify of [true, false]) {
+      runForgeScript({
+        target: 'script/Example.s.sol:Example',
+        rpcUrl: 'http://unused',
+        broadcast,
+        verify,
+        etherscanApiKey: 'test-key',
+        walletArgs: ['--account', 'operator'],
+        env: {},
+      });
+      assert.deepEqual(calls.at(-1), {
+        command: 'forge',
+        args: [
+          'script', 'script/Example.s.sol:Example', '--rpc-url', 'http://unused', '--via-ir',
+          '--account', 'operator',
+          ...(broadcast ? ['--broadcast', '--slow'] : []),
+          ...(broadcast && verify
+            ? ['--verify', '--etherscan-api-key', 'test-key', '--etherscan-api-version', 'v2']
+            : []),
+        ],
+      });
+    }
+  });
+}
+
+function mockCast(t, reply) {
+  t.mock.method(childProcess, 'spawnSync', (command, args) => {
+    assert.equal(command, 'cast', 'no deployment commands may run');
+    return { status: 0, stdout: reply(args), stderr: '' };
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+}
+
+for (const creationType of ['CREATE', 'CREATE2', null]) {
+  test(`preserves creation provenance with ${creationType ?? 'CALL-only'} broadcasts`, async (t) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'antseed-broadcast-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const codeHash = `0x${'ab'.repeat(32)}`;
+    mockCast(t, (args) => {
+      if (args[0] === 'codehash') return codeHash;
+      assert.deepEqual(args.slice(0, 3), ['call', ADDRESS.sellerRegistry, 'owner()(address)']);
+      return ADDRESS.registry;
+    });
+    const creation = {
+      hash: `0x${'11'.repeat(32)}`,
+      transactionType: creationType,
+      contractName: 'AntseedSellerPools',
+      contractAddress: ADDRESS.sellerRegistry,
+      arguments: [ADDRESS.ants, ADDRESS.registry],
+    };
+    const configuration = {
+      ...creation,
+      hash: `0x${'22'.repeat(32)}`,
+      transactionType: 'CALL',
+      function: 'setRewardStaker(address,bool)',
+      arguments: [ADDRESS.channels, true],
+    };
+    const transactions = creationType ? [creation, configuration] : [configuration];
+    const file = path.join(directory, 'run-latest.json');
+    await writeJsonAtomic(file, {
+      transactions,
+      receipts: transactions.map((transaction, index) => ({
+        transactionHash: transaction.hash,
+        status: '0x1',
+        blockNumber: `0x${(100 + index).toString(16)}`,
+        from: ADDRESS.registry,
+        to: transaction.transactionType === 'CALL' ? ADDRESS.sellerRegistry : null,
+      })),
+    });
+    const parsed = await parseBroadcast(file, 'http://unused', { AntseedSellerPools: 'sellerPools' });
+    assert.equal(parsed.transactions.length, transactions.length);
+    assert.equal(parsed.transactions.at(-1).action, configuration.function);
+    if (!creationType) {
+      assert.deepEqual(parsed.contracts, {});
+      return;
+    }
+    assert.equal(parsed.transactions[0].action, 'deploy AntseedSellerPools');
+    assert.deepEqual(parsed.contracts.sellerPools, {
+      address: ADDRESS.sellerRegistry,
+      deploymentBlock: 100,
+      transactionHash: creation.hash,
+      runtimeCodeHash: codeHash,
+      version: '1',
+      external: false,
+      deployedInRelease: true,
+      constructorArguments: creation.arguments,
+      owner: ADDRESS.registry,
+    });
+  });
+}
+
+for (const cached of [true, false]) {
+  test(`recognizes activation from disk ${cached ? 'with' : 'without'} a local checkpoint`, async (t) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'antseed-activated-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const emissionsGate = '0x0000000000000000000000000000000000000008';
+    const pointsPolicyRegistry = '0x0000000000000000000000000000000000000009';
+    const contracts = Object.fromEntries(Object.entries({
+      usageAccounting: ADDRESS.usageAccounting,
+      sellerRegistry: ADDRESS.sellerRegistry,
+      emissionsGate,
+      pointsPolicyRegistry,
+    }).map(([key, address]) => [key, { address }]));
+    const checkpoint = {
+      chainId: 8453,
+      effectiveEpoch: 11,
+      cutoverTimestamp: 2100,
+      contracts,
+      verificationConfiguration: {
+        verificationMinterController: ADDRESS.channels,
+        emissionsGateOwner: ADDRESS.registry,
+        pointsPolicyRegistryOwner: ADDRESS.registry,
+      },
+    };
+    const current = {
+      network: 'base-mainnet',
+      chainId: 8453,
+      release: migration.releases[1],
+      contracts: Object.fromEntries(Object.entries({
+        registry: ADDRESS.registry,
+        antsToken: ADDRESS.ants,
+        channels: ADDRESS.channels,
+        emissions: ADDRESS.legacyEmissions,
+        staking: ADDRESS.legacyStaking,
+      }).map(([key, address]) => [key, { address }])),
+    };
+    applyActiveContracts(current, contracts);
+    const currentPath = path.join(directory, current.network, 'current.json');
+    const checkpointFile = path.join(directory, '.deployments', 'checkpoint.json');
+    await writeJsonAtomic(currentPath, current);
+    await writeJsonAtomic(path.join(directory, current.network, 'history', `${migration.releases[0]}.json`), checkpoint);
+    await writeJsonAtomic(path.join(directory, current.network, 'history', `${migration.releases[1]}.json`), { release: current.release });
+    if (cached) await writeJsonAtomic(checkpointFile, checkpoint);
+    mockCast(t, (args) => {
+      if (args[0] === 'chain-id') return '8453';
+      if (args[0] === 'code') return '0x1234';
+      assert.equal(args[0], 'call', 'restart must only read chain state');
+      const [, address, signature] = args;
+      if (signature === 'registry()(address)') {
+        assert.ok([ADDRESS.ants, ADDRESS.legacyEmissions].includes(address), 'never call the legacy ABI on the new usage accounting contract');
+        return emissionsGate;
+      }
+      const replies = {
+        'antsToken()(address)': ADDRESS.ants,
+        'channels()(address)': ADDRESS.channels,
+        'emissions()(address)': ADDRESS.usageAccounting,
+        'staking()(address)': ADDRESS.sellerRegistry,
+        'paused()(bool)': 'false',
+        'currentEpoch()(uint256)': '12',
+        'emissionsGate()(address)': emissionsGate,
+        'pointsPolicy()(address)': pointsPolicyRegistry,
+        'minters(bytes32)(address,uint32,bool)': JSON.stringify([ADDRESS.channels, 10000, true]),
+        'policyCount()(uint256)': '0',
+        'owner()(address)': ADDRESS.registry,
+        'genesis()(uint256)': '1000',
+        'epochDuration()(uint256)': '100',
+      };
+      assert.ok(Object.hasOwn(replies, signature), `unexpected call: ${signature}`);
+      return replies[signature];
+    });
+    const canonical = JSON.parse(await readFile(currentPath, 'utf8'));
+    const context = {
+      canonical,
+      expected: migration.expectedState(canonical),
+      network: canonical.network,
+      outputRoot: directory,
+      checkpointFile,
+      rpcUrl: 'http://unused',
+    };
+    const result = await executePhases(migration, { mode: 'broadcast', signers: {} }, {}, context);
+    assert.equal(result.state, 'active');
+    assert.equal(context.expected.legacyEmissions, ADDRESS.legacyEmissions);
+    assert.equal(context.expected.legacyStaking, ADDRESS.legacyStaking);
+    assert.equal(migration.idleMessage(result), 'M001 is already active; no transactions required.');
+    assert.deepEqual(JSON.parse(await readFile(currentPath, 'utf8')), current);
+  });
+}
 
 test('classifies the complete M001 lifecycle', () => {
   assert.equal(classifyM001(observation()), 'ready');
@@ -931,4 +1364,30 @@ test('M002 has a single idempotent install phase owned by two signers', () => {
   assert.equal(m002.phases[0].guard({ state: 'active' }), false);
   assert.deepEqual(m002.allowedDirtyReleases({ state: 'ready' }), []);
   assert.deepEqual(buildReleaseOwners().get('002-legacy-seller-claims'), m002);
+});
+
+test('M002 rehearses through the framework with M001 as its prerequisite', () => {
+  assert.deepEqual(m002.rehearsal.prerequisites, ['M001']);
+  assert.equal(m002.rehearsal.fork, undefined);
+  const result = resolveRehearsal(m002, { ...REHEARSAL_OPTIONS, migration: 'M002' }, deploymentMigrations);
+  assert.deepEqual(result.migrations.map((entry) => entry.id), ['M001', 'M002']);
+  assert.deepEqual(result.fork, migration.rehearsal.fork);
+});
+
+test('M002 rehearsal checks activation and an idempotent second apply', async () => {
+  for (const states of [['active', 'active'], ['ready'], ['active', 'ready']]) {
+    const driven = [];
+    const run = m002.rehearsal.run({
+      network: 'base-mainnet',
+      async runMigration(overrides) {
+        driven.push(overrides);
+        return { state: states[driven.length - 1] };
+      },
+    });
+    if (states.every((state) => state === 'active')) await run;
+    else await assert.rejects(run, /Expected M002 active|not an active no-op/);
+    assert.equal(driven.length, states.length);
+    assert.deepEqual(Object.keys(driven[0].signers), ['deployer', 'sellerRewardsPoolOwner']);
+    assert.ok(Object.values(driven[0].signers).every((signer) => signer.startsWith('unlocked:')));
+  }
 });

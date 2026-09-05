@@ -184,31 +184,110 @@ contracts remain owned by the deployer. After each non-fork broadcast, the
 CLI records Foundry receipts using the append-only process in
 `deployments/README.md`; it updates `current.json` only after activation checks pass.
 
-Use the repository deployment CLI instead of invoking the Foundry scripts
-directly:
+#### Operator walkthrough: deploy, then start the waiting cutover process
+
+**There are two separate CLI runs. The first deploys and exits. The second
+stays running, waits for the next epoch boundary, and performs the cutover.**
+The CLI chooses the phase from live chain state; there is no separate
+`deploy`/`cutover` subcommand and no background scheduler after the CLI exits.
+
+Run the commands below from the repository root. These examples target Base
+mainnet. Before starting, configure the RPC, explorer API key, deployment
+inputs, and wallets described in
+[the M001 runbook](script/migrations/M001RecognizedUsage/README.md).
+The required wash-trading registry must already be deployed. Account names
+below are examples, not defaults: each wallet must hold its named on-chain
+role. Deploy well before the boundary; the deployment script refuses to start
+with one hour or less remaining in the current epoch.
+
+**1. Rehearse, simulate, and review deployment.**
 
 ```bash
-# Simulate the next safe phase without sending transactions. A pre-boundary
-# cutover review runs on a disposable Anvil fork advanced past the boundary.
-pnpm contracts:deploy -- M001 --network base-sepolia --dry-run
-
-# Broadcast on Base Sepolia. During cutover, the M001 scheduler waits until the
-# pause window and epoch boundary, then prompts to unlock each wallet.
-pnpm contracts:deploy -- M001 --network base-sepolia --broadcast \
-  --signer deployer=account:sepolia-owner
-
 # Rehearse both phases against a pinned Base-mainnet Anvil fork.
 BASE_MAINNET_RPC_URL=https://... \
   pnpm contracts:deploy -- M001 --network base-mainnet --fork-test
 
-# After the fork rehearsal and plan review, simulate or broadcast against Base mainnet.
+# Simulate deployment against the configured mainnet RPC without sending transactions.
 pnpm contracts:deploy -- M001 --network base-mainnet --dry-run
-pnpm contracts:deploy -- M001 --network base-mainnet --broadcast \
-  --signer deployer=account:antseed-owner   # + cutover roles, see the M001 README
 ```
 
-Testnet deployment phases require `BASESCAN_API_KEY`; the runner submits
-new contracts for explorer verification as part of the broadcast.
+Review the generated pending plan and `VALIDATION.md`, commit the reviewed
+artifacts, and run `pnpm contracts:check -- <base-commit>` before broadcasting.
+
+**2. Broadcast deployment. This command finishes and exits.**
+
+```bash
+pnpm contracts:deploy -- M001 --network base-mainnet --broadcast \
+  --signer deployer=account:antseed-owner
+```
+
+This deploys the new stack, moves ANTS mint authority to the emissions gate,
+funds the legacy escrow, and connects legacy emissions to that escrow. It
+does **not** flip Registry `emissions`/`staking` pointers or pause Channels;
+the network continues using the legacy stack.
+
+The CLI prints the cutover timestamp and writes
+`packages/contracts/deployments/base-mainnet/history/001-recognized-usage-deployed.json`.
+Commit and share that record before handing the cutover to another operator.
+The timestamp is the activation boundary, **not the time to start the second
+command**. Even if the deployment output says to rerun after that time, start
+the cutover process before its pause window as described below.
+
+**3. Review cutover before the boundary.**
+
+```bash
+pnpm contracts:deploy -- M001 --network base-mainnet --dry-run
+```
+
+Because deployment is now recorded, the same command simulates the next phase:
+cutover. It advances a disposable Anvil fork to the boundary rather than
+waiting or pausing live Channels. Review and commit this phase's generated
+plan and validation document, and rerun the checks before broadcasting.
+
+**4. Start the cutover command early and leave it running.**
+
+```bash
+pnpm contracts:deploy -- M001 --network base-mainnet --broadcast \
+  --signer deployer=account:antseed-owner \
+  --signer registryOwner=account:antseed-owner \
+  --signer channelsOwner=account:antseed-ops \
+  --signer sellerRewardsPoolOwner=account:antseed-ops \
+  --signer diemStaker=account:antseed-ops
+```
+
+Start comfortably before **boundary minus 60 seconds**, complete the initial
+checks and network confirmation, and keep the machine awake and connected.
+The process waits locally; it does not schedule a future on-chain transaction.
+Keep the signing operator available for wallet unlocks or hardware approvals.
+
+```text
+Wait until boundary − 60 seconds
+  → Sign and submit Channels.pause()
+  → Wait until the effective epoch has started on chain
+  → Prepare legacy rewards and flip Registry emissions/staking pointers
+  → Verify both pointers on chain
+  → Sign and submit Channels.unpause()
+  → Write activation history and current.json, then exit
+```
+
+The 60-second window is when the CLI attempts to pause, not a guarantee of
+timely transaction inclusion. Allow for signing and confirmation delays. If
+the window is missed, stop and reconcile with the migration operator rather
+than treating a late run as the normal procedure.
+
+**5. Verify completion and hand off.**
+
+Review and commit `001-recognized-usage-activated.json` and the updated
+`current.json`, and complete the M001 runbook's manual post-flip checklist.
+A subsequent invocation against those records and the completed on-chain
+state reports `M001 is already active; no transactions required.`
+If execution fails during the flip, inspect the receipts and live state; do
+not blindly unpause Channels or start a new deployment.
+
+For Base Sepolia, use `--network base-sepolia` and its configured wallets/RPC.
+Cutover requires `deployer`, `registryOwner`, and `channelsOwner`; the two
+legacy-proxy roles are also required when `DIEM_STAKING_PROXY` is configured.
+Non-fork deployment phases require `BASESCAN_API_KEY` for explorer verification.
 
 A dry run writes `deployments/<network>/pending/<release>.plan.json` and a
 matching `VALIDATION.md` describing every transaction it would send. Review
@@ -242,6 +321,36 @@ The CLI derives `ready`, `awaiting-epoch`, `cutover-ready`,
 requires typing the network name, while non-interactive automation must set
 `ANTSEED_DEPLOY_CONFIRM` to that same name. Deployment records and validation
 are automatic after each successful broadcast.
+
+#### Shared fork-test framework
+
+`--fork-test` runs a practice deployment on one disposable, pinned Anvil fork;
+it never broadcasts to the source network. The deployment runtime loads
+`packages/contracts/.env`, copies the repository deployment ledger into a
+temporary directory, and runs the selected migration's declared prerequisites
+before its own rehearsal. Each prerequisite runs once, in dependency order.
+Missing prerequisites, cycles, unsupported networks, and conflicting fork
+configurations fail before Anvil starts. Real `--dry-run` and `--broadcast`
+commands do not execute prerequisites automatically.
+
+Migration modules declare `rehearsal: { prerequisites, fork, run }` alongside
+their normal phases. `prerequisites` lists registered migration IDs. `fork`
+contains `rpcEnv`, `forkBlockNumber`, and `chainId`; a later migration can omit
+it to inherit its prerequisites' configuration. All migrations in a rehearsal
+must use the same fork. No migration imports another migration's test helper.
+
+The `run({ rpcUrl, outputRoot, network, runMigration })` hook owns only its
+migration-specific fixtures, time advancement, and success checks. Its bound
+`runMigration({ environment, signers })` driver runs that migration's next phase
+in broadcast mode against the local fork, with isolated records and no live
+wallet arguments inherited from the CLI. M001's hook prepares owners and its
+wash-registry fixture, deploys, advances past the cutover boundary, activates,
+and checks an idempotent rerun.
+
+Later migrations read the temporary ledger updated by their prerequisites.
+That ledger never regenerates repository chain configuration. The framework
+stops Anvil on success or failure and prints the retained temporary records'
+location for inspection; remove that directory manually when no longer needed.
 
 The same broadcast deploys `AntseedPositionInit`, an immutable starter-position
 faucet for eligible legacy sellers. Fund it conservatively and have sellers call

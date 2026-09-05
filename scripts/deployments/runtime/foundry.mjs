@@ -25,7 +25,7 @@ export function parseHexNumber(value) {
  * Runs a Foundry script. `contractNames` maps Solidity contract names to
  * ledger keys so a migration never has to parse broadcast files itself.
  */
-export function runForgeScript({ target, rpcUrl, broadcast, verify, etherscanApiKey, env, walletArgs = [] }, dependencies = {}) {
+export function runForgeScript({ target, rpcUrl, broadcast, verify, etherscanApiKey, env, walletArgs = [] }) {
   const args = ['script', target, '--rpc-url', rpcUrl, '--via-ir', ...walletArgs];
   if (broadcast) {
     args.push('--broadcast', '--slow');
@@ -33,7 +33,7 @@ export function runForgeScript({ target, rpcUrl, broadcast, verify, etherscanApi
     // Foundry default cannot fail verification after transactions were sent.
     if (verify) args.push('--verify', '--etherscan-api-key', etherscanApiKey, '--etherscan-api-version', 'v2');
   }
-  (dependencies.run ?? run)('forge', args, { cwd: CONTRACTS_ROOT, env });
+  run('forge', args, { cwd: CONTRACTS_ROOT, env });
 }
 
 /** Converts a Foundry broadcast file into ledger transactions and contract entries. */
@@ -46,8 +46,9 @@ export async function parseBroadcast(file, rpcUrl, contractNames) {
     if (!transaction.hash) continue;
     const receipt = receipts.get(transaction.hash.toLowerCase());
     if (!receipt || receipt.status !== '0x1') continue;
+    const isCreation = transaction.transactionType === 'CREATE' || transaction.transactionType === 'CREATE2';
     transactions.push({
-      action: transaction.transactionType === 'CREATE'
+      action: isCreation
         ? `deploy ${transaction.contractName}`
         : transaction.function ?? 'contract call',
       hash: transaction.hash,
@@ -57,7 +58,7 @@ export async function parseBroadcast(file, rpcUrl, contractNames) {
     });
     const key = contractNames[transaction.contractName];
     const address = transaction.contractAddress ?? receipt.contractAddress;
-    if (key && address) {
+    if (isCreation && key && address) {
       contracts[key] = {
         address,
         deploymentBlock: parseHexNumber(receipt.blockNumber),

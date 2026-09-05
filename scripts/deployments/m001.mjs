@@ -1,5 +1,4 @@
-import { mkdir, mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 
@@ -15,7 +14,7 @@ import {
   numberValue,
   sameAddress,
 } from './runtime/chain.mjs';
-import { advanceTimeTo, impersonatedSend, withAnvilFork } from './runtime/anvil.mjs';
+import { advanceTimeTo, impersonatedSend } from './runtime/anvil.mjs';
 import { requireEnvironment } from './runtime/env.mjs';
 import { fileExists } from './runtime/fsx.mjs';
 import {
@@ -137,6 +136,10 @@ export function validateM001Baseline(canonical) {
 }
 
 export function applyActiveContracts(current, activeContracts) {
+  current.registryBefore ??= {
+    emissions: current.contracts.emissions.address,
+    staking: current.contracts.staking.address,
+  };
   for (const contract of Object.values(current.contracts)) contract.deployedInRelease = false;
   Object.assign(current.contracts, activeContracts);
   current.contracts.emissions = { ...activeContracts.usageAccounting };
@@ -175,8 +178,8 @@ function expectedState(canonical) {
     registry: canonical.contracts.registry.address,
     antsToken: canonical.contracts.antsToken.address,
     channels: canonical.contracts.channels.address,
-    legacyEmissions: canonical.contracts.emissions.address,
-    legacyStaking: canonical.contracts.staking.address,
+    legacyEmissions: canonical.registryBefore?.emissions ?? canonical.contracts.emissions.address,
+    legacyStaking: canonical.registryBefore?.staking ?? canonical.contracts.staking.address,
   };
 }
 
@@ -717,13 +720,8 @@ function prepareForkStaker(context) {
   cast(context.rpcUrl, ['rpc', 'anvil_setBalance', BASE_MAINNET_DIEM_STAKER, '0x3635C9ADC5DEA00000']);
 }
 
-/**
- * Drives M001 to `active` on an already-running Base-mainnet Anvil fork and
- * returns the records it wrote under `outputRoot`. Shared with later
- * migrations that rehearse on top of an activated M001 (see m002.mjs).
- */
-export async function rehearseM001OnFork({ rpcUrl, outputRoot, network }, drive) {
-  const context = await loadContext(migration, network, { rpcUrl, outputRoot, forkTest: true });
+async function rehearse({ rpcUrl, outputRoot, network, runMigration: drive }) {
+  const context = await loadContext(migration, network, { rpcUrl, outputRoot, canonicalRoot: outputRoot, forkTest: true });
   prepareForkOwners(context);
   const environment = {
     WASH_TRADING_REGISTRY: process.env.WASH_TRADING_REGISTRY ?? deployForkWashTradingStub(rpcUrl),
@@ -739,35 +737,20 @@ export async function rehearseM001OnFork({ rpcUrl, outputRoot, network }, drive)
     sellerRewardsPoolOwner: `unlocked:${ANVIL_ACCOUNT_1}`,
     diemStaker: `unlocked:${BASE_MAINNET_DIEM_STAKER}`,
   };
-  const overrides = { rpcUrl, outputRoot, forkTest: true, environment, signers };
-  const broadcast = { migration: 'M001', network, mode: 'broadcast', signers: {} };
+  const overrides = { environment, signers };
 
-  let observation = await drive(migration, broadcast, overrides);
+  let observation = await drive(overrides);
   if (observation.state !== 'awaiting-epoch') throw new Error(`Expected awaiting-epoch, got ${observation.state}`);
 
   const checkpoint = observation.deployment.checkpoint;
   advanceTimeTo(rpcUrl, checkpoint.cutoverTimestamp + 1);
   prepareForkStaker(context);
 
-  observation = await drive(migration, broadcast, overrides);
+  observation = await drive(overrides);
   if (observation.state !== 'active') throw new Error(`Expected active, got ${observation.state}`);
 
-  observation = await drive(migration, broadcast, overrides);
+  observation = await drive(overrides);
   if (observation.state !== 'active') throw new Error('Repeated broadcast was not an active no-op');
-  return { observation, environment, signers };
-}
-
-export const M001_FORK = { forkBlock: BASE_MAINNET_FORK_BLOCK, chainId: 8453 };
-
-async function forkTest(options, { runMigration: drive }) {
-  const forkUrl = process.env.BASE_MAINNET_RPC_URL;
-  if (!forkUrl) throw new Error('BASE_MAINNET_RPC_URL is required for --fork-test');
-  const outputRoot = await mkdtemp(path.join(tmpdir(), 'antseed-m001-deployments-'));
-
-  await withAnvilFork({ forkUrl, forkBlockNumber: M001_FORK.forkBlock, chainId: M001_FORK.chainId }, async ({ rpcUrl }) => {
-    await rehearseM001OnFork({ rpcUrl, outputRoot, network: options.network }, drive);
-    console.log(`M001 fork test passed. Temporary records: ${outputRoot}`);
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -792,6 +775,10 @@ export const migration = {
   idleMessage,
   recordErrors,
   allowedDirtyReleases: (observation) => (observation.state === 'ready' ? [] : [DEPLOYED_RELEASE]),
-  forkTest,
+  rehearsal: {
+    prerequisites: [],
+    fork: { rpcEnv: 'BASE_MAINNET_RPC_URL', forkBlockNumber: BASE_MAINNET_FORK_BLOCK, chainId: 8453 },
+    run: rehearse,
+  },
   run: (options, overrides) => runMigration(migration, options, overrides),
 };

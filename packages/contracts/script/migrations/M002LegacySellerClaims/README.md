@@ -130,9 +130,10 @@ owner and need no wallet.
 `--fork-test` on Base mainnet runs the full M001 rehearsal (deploy, advance
 past the boundary, cutover) on a disposable Anvil fork and then applies M002
 on top of the records M001 wrote, checking that a second apply is a no-op.
-Foundry broadcasts use `--slow` so each transaction confirms before the next
-is sent; this avoids the nonce failures seen with concurrent unlocked sends
-on the pinned Anvil fork.
+M002 declares M001 as its prerequisite; the shared deployment framework owns
+fork startup, prerequisite ordering, temporary records, and cleanup. M002's
+rehearsal hook only applies M002 and checks its results. Ordinary dry runs and
+broadcasts still require M001 to have been activated separately.
 
 The 2026-09-03 rehearsal at fork block `50,571,469` passed M001 deploy/cutover,
 M002 dry-run/install, and idempotent reruns. A real pool seller's forked claim

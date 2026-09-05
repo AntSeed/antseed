@@ -1,15 +1,10 @@
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
 import process from 'node:process';
 
 import { sourceCommit } from './runtime/exec.mjs';
 import { booleanValue, call, chainId, hasCode, numberValue, sameAddress } from './runtime/chain.mjs';
-import { withAnvilFork } from './runtime/anvil.mjs';
 import { requireEnvironment } from './runtime/env.mjs';
 import { broadcastIsLive, broadcastPath, parseBroadcast, runForgeScript, simulationPath } from './runtime/foundry.mjs';
-import { currentRelease, historyRecordExists, loadContext, writeCurrent, writeHistoryRecord } from './runtime/ledger.mjs';
-import { M001_FORK, rehearseM001OnFork } from './m001.mjs';
+import { currentRelease, historyRecordExists, writeCurrent, writeHistoryRecord } from './runtime/ledger.mjs';
 import { runMigration } from './runtime/runner.mjs';
 
 /**
@@ -414,39 +409,18 @@ function idleMessage(observation) {
 // Fork test
 // ---------------------------------------------------------------------------
 
-/**
- * Rehearses M002 on top of a full M001 rehearsal: runs the M001 fork flow to
- * `active` on a disposable Anvil fork, then applies M002 against the ledger
- * M001 wrote there and checks that a repeated apply is a no-op.
- */
-async function forkTest(options, { runMigration: drive }) {
-  const forkUrl = process.env.BASE_MAINNET_RPC_URL;
-  if (!forkUrl) throw new Error('BASE_MAINNET_RPC_URL is required for --fork-test');
-  const outputRoot = await mkdtemp(path.join(tmpdir(), 'antseed-m002-deployments-'));
-
-  await withAnvilFork({ forkUrl, forkBlockNumber: M001_FORK.forkBlock, chainId: M001_FORK.chainId }, async ({ rpcUrl }) => {
-    await rehearseM001OnFork({ rpcUrl, outputRoot, network: options.network }, drive);
-
-    // M002 reads the baseline M001 just wrote into the temporary output root.
-    const overrides = {
-      rpcUrl,
-      outputRoot,
-      canonicalRoot: outputRoot,
-      forkTest: true,
-      environment: { ANTSEED_DEPLOY_CONFIRM: options.network },
-      signers: {
-        deployer: `unlocked:${ANVIL_ACCOUNT_0}`,
-        sellerRewardsPoolOwner: `unlocked:${ANVIL_ACCOUNT_1}`,
-      },
-    };
-    const broadcast = { ...options, mode: 'broadcast' };
-    let observation = await drive(migration, broadcast, overrides);
-    if (observation.state !== 'active') throw new Error(`Expected M002 active, got ${observation.state}`);
-    observation = await drive(migration, broadcast, overrides);
-    if (observation.state !== 'active') throw new Error('Repeated M002 broadcast was not an active no-op');
-
-    console.log(`M002 fork test passed. Temporary records: ${outputRoot}`);
-  });
+async function rehearse({ network, runMigration: drive }) {
+  const overrides = {
+    environment: { ANTSEED_DEPLOY_CONFIRM: network },
+    signers: {
+      deployer: `unlocked:${ANVIL_ACCOUNT_0}`,
+      sellerRewardsPoolOwner: `unlocked:${ANVIL_ACCOUNT_1}`,
+    },
+  };
+  let observation = await drive(overrides);
+  if (observation.state !== 'active') throw new Error(`Expected M002 active, got ${observation.state}`);
+  observation = await drive(overrides);
+  if (observation.state !== 'active') throw new Error('Repeated M002 broadcast was not an active no-op');
 }
 
 // ---------------------------------------------------------------------------
@@ -470,6 +444,6 @@ export const migration = {
   idleMessage,
   recordErrors,
   allowedDirtyReleases: () => [],
-  forkTest,
+  rehearsal: { prerequisites: ['M001'], run: rehearse },
   run: (options, overrides) => runMigration(migration, options, overrides),
 };
