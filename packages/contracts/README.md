@@ -322,6 +322,36 @@ requires typing the network name, while non-interactive automation must set
 `ANTSEED_DEPLOY_CONFIRM` to that same name. Deployment records and validation
 are automatic after each successful broadcast.
 
+#### Shared fork-test framework
+
+`--fork-test` runs a practice deployment on one disposable, pinned Anvil fork;
+it never broadcasts to the source network. The deployment runtime loads
+`packages/contracts/.env`, copies the repository deployment ledger into a
+temporary directory, and runs the selected migration's declared prerequisites
+before its own rehearsal. Each prerequisite runs once, in dependency order.
+Missing prerequisites, cycles, unsupported networks, and conflicting fork
+configurations fail before Anvil starts. Real `--dry-run` and `--broadcast`
+commands do not execute prerequisites automatically.
+
+Migration modules declare `rehearsal: { prerequisites, fork, run }` alongside
+their normal phases. `prerequisites` lists registered migration IDs. `fork`
+contains `rpcEnv`, `forkBlockNumber`, and `chainId`; a later migration can omit
+it to inherit its prerequisites' configuration. All migrations in a rehearsal
+must use the same fork. No migration imports another migration's test helper.
+
+The `run({ rpcUrl, outputRoot, network, runMigration })` hook owns only its
+migration-specific fixtures, time advancement, and success checks. Its bound
+`runMigration({ environment, signers })` driver runs that migration's next phase
+in broadcast mode against the local fork, with isolated records and no live
+wallet arguments inherited from the CLI. M001's hook prepares owners and its
+wash-registry fixture, deploys, advances past the cutover boundary, activates,
+and checks an idempotent rerun.
+
+Later migrations read the temporary ledger updated by their prerequisites.
+That ledger never regenerates repository chain configuration. The framework
+stops Anvil on success or failure and prints the retained temporary records'
+location for inspection; remove that directory manually when no longer needed.
+
 The same broadcast deploys `AntseedPositionInit`, an immutable starter-position
 faucet for eligible legacy sellers. Fund it conservatively and have sellers call
 `initPosition()` before the first rewarded epoch if their usage must count from

@@ -23,9 +23,11 @@ import {
   validateM001Options,
 } from './deployments/m001.mjs';
 import { writeJsonAtomic, writeJsonOnce } from './deployments/runtime/artifacts.mjs';
-import { currentRelease, historyRecordExists, readCheckpoint } from './deployments/runtime/ledger.mjs';
-import { executePhases } from './deployments/runtime/runner.mjs';
+import { currentRelease, historyRecordExists, loadContext, readCheckpoint, validateArtifacts } from './deployments/runtime/ledger.mjs';
+import { executePhases, runMigration } from './deployments/runtime/runner.mjs';
 import { withAnvilFork } from './deployments/runtime/anvil.mjs';
+import { resolveRehearsal, runRehearsal } from './deployments/runtime/rehearsal.mjs';
+import { CANONICAL_DEPLOYMENTS_ROOT } from './deployments/runtime/paths.mjs';
 import {
   PAUSE_LEAD_SECONDS,
   cutoverSchedule,
@@ -45,6 +47,246 @@ const ADDRESS = {
   usageAccounting: '0x0000000000000000000000000000000000000006',
   sellerRegistry: '0x0000000000000000000000000000000000000007',
 };
+
+const REHEARSAL_FORK = { rpcEnv: 'ANTSEED_TEST_FORK_RPC_URL', forkBlockNumber: 123, chainId: 8453 };
+const REHEARSAL_OPTIONS = { migration: 'M004', network: 'base-mainnet', mode: 'fork-test', signers: {} };
+
+function rehearsalMigration(id, prerequisites = [], fork) {
+  return { id, rehearsal: { prerequisites, fork, async run() {} } };
+}
+
+test('resolves rehearsal prerequisites once, in order, inheriting the pinned fork', () => {
+  const first = rehearsalMigration('M001', [], REHEARSAL_FORK);
+  const second = rehearsalMigration('M002', ['M001']);
+  const third = rehearsalMigration('M003', ['M001']);
+  const target = rehearsalMigration('M004', ['M002', 'M003']);
+  const registry = new Map([first, second, third, target].map((entry) => [entry.id, entry]));
+  const result = resolveRehearsal(target, REHEARSAL_OPTIONS, registry);
+  assert.deepEqual(result.migrations.map((entry) => entry.id), ['M001', 'M002', 'M003', 'M004']);
+  assert.deepEqual(result.fork, REHEARSAL_FORK);
+  assert.deepEqual(resolveRehearsal(first, REHEARSAL_OPTIONS, registry).migrations, [first]);
+});
+
+test('rejects invalid rehearsal declarations before loading environment or starting Anvil', async () => {
+  const first = rehearsalMigration('M001', [], REHEARSAL_FORK);
+  const registry = new Map([[first.id, first]]);
+  const cases = [
+    [rehearsalMigration('M002', ['M009']), /unknown rehearsal prerequisite M009/],
+    [rehearsalMigration('M002', ['M002']), /Cyclic rehearsal prerequisite/],
+    [{ id: 'M002' }, /no rehearsal hook/],
+    [rehearsalMigration('M002', 'M001'), /prerequisites must be an array/],
+    [rehearsalMigration('M002'), /no rehearsal fork configuration/],
+    [rehearsalMigration('M002', [], { ...REHEARSAL_FORK, forkBlockNumber: undefined }), /pinned rehearsal fork/],
+    [rehearsalMigration('M002', ['M001'], { ...REHEARSAL_FORK, chainId: 1 }), /fork conflicts/],
+  ];
+  for (const [target, expected] of cases) {
+    registry.set(target.id, target);
+    await assert.rejects(runRehearsal(target, REHEARSAL_OPTIONS, {
+      registry,
+      runMigration() { assert.fail('must not drive a migration'); },
+    }, {
+      loadDotEnv() { assert.fail('must validate before loading environment'); },
+      withAnvilFork() { assert.fail('must not start Anvil'); },
+    }), expected);
+  }
+  first.rehearsal.prerequisites = ['M002'];
+  const target = rehearsalMigration('M002', ['M001']);
+  registry.set(target.id, target);
+  assert.throws(() => resolveRehearsal(target, REHEARSAL_OPTIONS, registry), /Cyclic rehearsal prerequisite/);
+});
+
+test('validates the network for prerequisite rehearsals and preserves M001 standalone configuration', () => {
+  const target = rehearsalMigration('M002', ['M001']);
+  const registry = new Map([[migration.id, migration]]);
+  assert.throws(() => resolveRehearsal(target, {
+    ...REHEARSAL_OPTIONS, network: 'base-sepolia',
+  }, registry), /Base Sepolia.*Base mainnet.*fork-test/);
+  const result = resolveRehearsal(migration, { ...REHEARSAL_OPTIONS, migration: 'M001' }, registry);
+  assert.deepEqual(result.migrations, [migration]);
+  assert.equal(result.fork.rpcEnv, 'BASE_MAINNET_RPC_URL');
+  assert.equal(result.fork.forkBlockNumber, 50_571_469);
+  assert.equal(result.fork.chainId, 8453);
+});
+
+test('M001 rehearsal retains its fixtures, epoch advancement, activation, and no-op check', async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'antseed-m001-hook-'));
+  const calls = [];
+  const driven = [];
+  const previousRegistry = process.env.WASH_TRADING_REGISTRY;
+  delete process.env.WASH_TRADING_REGISTRY;
+  t.after(async () => {
+    if (previousRegistry === undefined) delete process.env.WASH_TRADING_REGISTRY;
+    else process.env.WASH_TRADING_REGISTRY = previousRegistry;
+    await rm(directory, { recursive: true, force: true });
+  });
+  await writeJsonAtomic(path.join(directory, 'base-mainnet', 'current.json'), {
+    network: 'base-mainnet',
+    contracts: Object.fromEntries(['registry', 'antsToken', 'channels', 'emissions', 'staking']
+      .map((key) => [key, { address: ADDRESS.registry }])),
+  });
+  mockCast(t, (args) => {
+    assert.ok(args.includes('http://127.0.0.1:9999'));
+    calls.push(args);
+    if (args.includes('--create')) return JSON.stringify({ contractAddress: ADDRESS.channels });
+    return ADDRESS.registry;
+  });
+  await migration.rehearsal.run({
+    rpcUrl: 'http://127.0.0.1:9999',
+    outputRoot: directory,
+    network: 'base-mainnet',
+    async runMigration(overrides) {
+      driven.push(overrides);
+      return driven.length === 1
+        ? { state: 'awaiting-epoch', deployment: { checkpoint: { cutoverTimestamp: 2000 } } }
+        : { state: 'active' };
+    },
+  });
+  assert.equal(driven.length, 3);
+  assert.ok(driven.every((overrides) => overrides === driven[0]));
+  assert.equal(driven[0].environment.WASH_TRADING_REGISTRY, ADDRESS.channels);
+  assert.deepEqual(Object.keys(driven[0].signers), [
+    'deployer', 'registryOwner', 'channelsOwner', 'sellerRewardsPoolOwner', 'diemStaker',
+  ]);
+  assert.ok(Object.values(driven[0].signers).every((signer) => signer.startsWith('unlocked:')));
+  assert.equal(calls.filter((args) => args.includes('transferOwnership(address)')).length, 5);
+  assert.ok(calls.some((args) => args[1] === 'anvil_setNextBlockTimestamp' && args[2] === '2001'));
+  assert.ok(calls.some((args) => args[1] === 'anvil_impersonateAccount'
+    && `unlocked:${args[2]}` === driven[0].signers.diemStaker));
+});
+
+for (const failPrerequisite of [false, true]) {
+  test(`rehearsals isolate their ledger and clean up Anvil on ${failPrerequisite ? 'failure' : 'success'}`, async (t) => {
+    const canonicalRoot = await mkdtemp(path.join(tmpdir(), 'antseed-rehearsal-baseline-'));
+    const logs = [];
+    const calls = [];
+    let outputRoot;
+    let stopped = false;
+    let environmentLoaded = false;
+    const previousRpc = process.env[REHEARSAL_FORK.rpcEnv];
+    delete process.env[REHEARSAL_FORK.rpcEnv];
+    t.mock.method(console, 'log', (message) => logs.push(message));
+    t.after(async () => {
+      if (previousRpc === undefined) delete process.env[REHEARSAL_FORK.rpcEnv];
+      else process.env[REHEARSAL_FORK.rpcEnv] = previousRpc;
+      await rm(canonicalRoot, { recursive: true, force: true });
+      if (outputRoot) await rm(outputRoot, { recursive: true, force: true });
+    });
+    const baseline = { release: '000-baseline', network: 'base-mainnet' };
+    const canonicalFile = path.join(canonicalRoot, 'base-mainnet', 'current.json');
+    await writeJsonAtomic(canonicalFile, baseline);
+    const first = rehearsalMigration('M001', [], REHEARSAL_FORK);
+    const second = rehearsalMigration('M002', ['M001']);
+    for (const current of [first, second]) {
+      current.expectedState = (canonical) => canonical;
+      current.rehearsal.run = async (context) => {
+        outputRoot ??= context.outputRoot;
+        assert.equal(context.outputRoot, outputRoot);
+        assert.equal(context.rpcUrl, 'http://127.0.0.1:9999');
+        assert.equal(context.network, 'base-mainnet');
+        await context.runMigration({
+          signers: { deployer: `unlocked:${ADDRESS.registry}` },
+          environment: { FIXTURE: current.id },
+          rpcUrl: 'https://must-not-be-used',
+          outputRoot: canonicalRoot,
+          canonicalRoot,
+          forkTest: false,
+        });
+        if (failPrerequisite && current.id === 'M001') throw new Error('prerequisite failed');
+      };
+    }
+    const run = runRehearsal(second, {
+      ...REHEARSAL_OPTIONS, migration: 'M002', signers: { deployer: 'account:live-wallet' },
+    }, {
+      registry: new Map([[first.id, first], [second.id, second]]),
+      async runMigration(current, options, overrides) {
+        assert.equal(environmentLoaded, true);
+        assert.equal(options.mode, 'broadcast');
+        assert.equal(options.migration, current.id);
+        assert.deepEqual(options.signers, {});
+        assert.equal(overrides.rpcUrl, 'http://127.0.0.1:9999');
+        assert.equal(overrides.forkTest, true);
+        assert.equal(overrides.outputRoot, outputRoot);
+        assert.equal(overrides.canonicalRoot, outputRoot);
+        assert.notEqual(outputRoot, canonicalRoot);
+        assert.equal(overrides.environment.FIXTURE, current.id);
+        assert.deepEqual(overrides.signers, { deployer: `unlocked:${ADDRESS.registry}` });
+        const context = await loadContext(current, options.network, overrides);
+        assert.equal(context.canonical.release, calls.length ? 'M001-active' : '000-baseline');
+        if (calls.length) {
+          assert.equal(await historyRecordExists(context, 'M001-active'), true);
+        }
+        calls.push(current.id);
+        await writeJsonAtomic(path.join(outputRoot, options.network, 'current.json'), { release: `${current.id}-active` });
+        await writeJsonOnce(path.join(outputRoot, options.network, 'history', `${current.id}-active.json`), { release: `${current.id}-active` });
+      },
+    }, {
+      canonicalRoot,
+      async loadDotEnv() {
+        environmentLoaded = true;
+        process.env[REHEARSAL_FORK.rpcEnv] = 'https://test-fork-source';
+      },
+      withAnvilFork: (request, body) => withAnvilFork(request, body, {
+        availablePort: async () => 9999,
+        spawn(command, args) {
+          assert.equal(environmentLoaded, true);
+          assert.equal(command, 'anvil');
+          assert.ok(args.includes('https://test-fork-source'));
+          assert.ok(args.includes('123'));
+          return { kill(signal) { assert.equal(signal, 'SIGTERM'); stopped = true; } };
+        },
+        waitForAnvil: async () => {},
+      }),
+    });
+    if (failPrerequisite) await assert.rejects(run, /prerequisite failed/);
+    else await run;
+    assert.equal(stopped, true);
+    assert.deepEqual(calls, failPrerequisite ? ['M001'] : ['M001', 'M002']);
+    assert.deepEqual(JSON.parse(await readFile(canonicalFile, 'utf8')), baseline);
+    assert.equal(JSON.parse(await readFile(path.join(outputRoot, 'base-mainnet', 'current.json'), 'utf8')).release,
+      failPrerequisite ? 'M001-active' : 'M002-active');
+    assert.ok(logs.some((message) => message.includes(outputRoot)));
+    assert.equal(logs.some((message) => message.includes('fork test passed')), !failPrerequisite);
+  });
+}
+
+test('temporary canonical roots never regenerate repository chain configuration', (t) => {
+  const calls = [];
+  t.mock.method(childProcess, 'spawnSync', (command, args, options) => {
+    calls.push({ command, args, root: options.env.CONTRACT_DEPLOYMENTS_ROOT });
+    return { status: 0, stdout: '', stderr: '' };
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const temporary = path.join(tmpdir(), 'rehearsal-ledger');
+  validateArtifacts({ outputRoot: temporary, canonicalRoot: temporary });
+  assert.deepEqual(calls, [{ command: 'node', args: ['scripts/validate-contract-deployments.mjs'], root: temporary }]);
+  calls.length = 0;
+  validateArtifacts({ outputRoot: CANONICAL_DEPLOYMENTS_ROOT, canonicalRoot: CANONICAL_DEPLOYMENTS_ROOT });
+  assert.deepEqual(calls.map((entry) => entry.args[0]), [
+    'scripts/generate-contract-chain-config.mjs', 'scripts/validate-contract-deployments.mjs',
+  ]);
+});
+
+for (const mode of ['dry-run', 'broadcast']) {
+  test(`${mode} does not resolve or execute rehearsal prerequisites`, async (t) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'antseed-non-rehearsal-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    await writeJsonAtomic(path.join(directory, 'base-mainnet', 'current.json'), { release: 'active' });
+    const current = {
+      ...rehearsalMigration('M002', ['MISSING']),
+      expectedState: (canonical) => canonical,
+      observe: async () => ({ state: 'active' }),
+      phases: [],
+      printStatus() {},
+      idleMessage: () => 'already active',
+    };
+    current.rehearsal.run = () => assert.fail('must not rehearse during ordinary deployment');
+    const result = await runMigration(current, { ...REHEARSAL_OPTIONS, mode }, {
+      canonicalRoot: directory, outputRoot: directory, rpcUrl: 'http://unused',
+    });
+    assert.equal(result.state, 'active');
+  });
+}
 
 function observation(overrides = {}) {
   return {
