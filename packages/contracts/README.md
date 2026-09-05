@@ -565,12 +565,19 @@ faucet for eligible legacy sellers. Fund it conservatively and have sellers call
 `initPosition()` before the first rewarded epoch if their usage must count from
 that epoch. Every starter position uses the shared `POSITION_INIT_END_EPOCH`, so
 claiming later never gives a seller more power than an earlier claimant. The
-faucet pins the deployed `AntseedWashTradingRegistry` (`WASH_TRADING_REGISTRY`,
-required — deploy the registry before M001) and refuses sellers it has proven
-as wash traders, so a wash trader never gets the starter position that would
-switch their recognized-usage accounting on. The `--fork-test` mode deploys an
-always-false stub when `WASH_TRADING_REGISTRY` is unset, because the pinned
-fork predates the registry.
+same M001 broadcast first deploys `AntseedWashTradingRegistry`, then pins it
+into the faucet. Configure `SP1_VERIFIER`, `SP1_VERIFIER_HASH`,
+`WASH_TRADING_SELLER_PROGRAM_VKEY`, `HISTORICAL_PERIOD_START_BLOCK`, and
+`HISTORICAL_PERIOD_END_BLOCK` before deployment. `WASH_TRADING_BLOCKHASH_STORE`
+defaults to Chainlink's Base store, which is mandatory on Base mainnet; supply
+a deployed store explicitly on other networks. No separately deployed registry
+or `WASH_TRADING_REGISTRY` input is needed. The ledger records the registry's
+constructor arguments and bytecode, and validates the faucet's pinned address
+on deployment and restart. The faucet refuses sellers already proven as wash
+traders; deploying an empty registry does not submit historical proofs.
+The `--fork-test` mode deploys the real registry, using a rehearsal-only verifier
+stub unless `SP1_VERIFIER` and its matching hash are supplied. Proof verification
+is not exercised by that stub; it is never used by ordinary deployment runs.
 
 The verification emission bucket initially remains controlled by
 `VERIFICATION_WALLET`. A separate verification deployment may transfer that

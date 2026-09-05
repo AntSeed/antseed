@@ -8,6 +8,7 @@ import { AntseedEmissionsGate } from "../../../emissions/AntseedEmissionsGate.so
 import { AntseedLegacyEmissionsEscrow } from "../../../emissions/AntseedLegacyEmissionsEscrow.sol";
 import { AntseedSellerPoolsRewards } from "../../../emissions/AntseedSellerPoolsRewards.sol";
 import { AntseedUsageAccounting } from "../../../emissions/AntseedUsageAccounting.sol";
+import { AntseedWashTradingRegistry } from "../../../integrity/AntseedWashTradingRegistry.sol";
 import { IAntseedRegistry } from "../../../interfaces/IAntseedRegistry.sol";
 import { AntseedPointsPolicyRegistry } from "../../../policies/AntseedPointsPolicyRegistry.sol";
 import { AntseedPositionInit } from "../../../sellers/AntseedPositionInit.sol";
@@ -58,11 +59,15 @@ interface IAntseedLegacyEmissionsAdmin {
  *   EXPECTED_LEGACY_EMISSIONS Current registry emissions pointer.
  *   EXPECTED_LEGACY_STAKING   Current registry staking pointer.
  *   VERIFICATION_WALLET    Recipient of the verification bucket.
- *   WASH_TRADING_REGISTRY  Deployed AntseedWashTradingRegistry. Pinned into
- *                          the immutable PositionInit faucet so proven wash
- *                          traders never receive a starter position.
+ *   SP1_VERIFIER           Concrete SP1 verifier deployment (not the gateway).
+ *   SP1_VERIFIER_HASH      Expected concrete verifier release hash.
+ *   WASH_TRADING_SELLER_PROGRAM_VKEY  Historical seller proof program vkey.
+ *   HISTORICAL_PERIOD_START_BLOCK    First block covered by historical proofs.
+ *   HISTORICAL_PERIOD_END_BLOCK      Last block covered by historical proofs.
  *
  * Optional env:
+ *   WASH_TRADING_BLOCKHASH_STORE      Defaults to Chainlink's Base store;
+ *                                     that address is mandatory on Base mainnet.
  *   EMISSIONS_RESERVE_WALLET          Destination for ANTS emission reserve flows
  *                                     via the reserve minter controller. Unset =
  *                                     ANTS reserve flows use protocolReserve.
@@ -86,6 +91,7 @@ contract M001DeployRecognizedUsage is Script {
     bytes32 public constant VERIFICATION_MINTER_ID = keccak256("antseed.emissions.verification.v1");
     bytes32 public constant SELLER_POOLS_MINTER_ID = keccak256("antseed.emissions.seller-pools.v1");
     bytes32 public constant USAGE_MINTER_ID = keccak256("antseed.emissions.usage.v1");
+    address internal constant BASE_CHAINLINK_BLOCKHASH_STORE = 0x78b69899C8cD252126cBB1A50171ec37286C3877;
 
     function run() external {
         address deployer = vm.envAddress("DEPLOYER");
@@ -145,6 +151,9 @@ contract M001DeployRecognizedUsage is Script {
         }
 
         vm.startBroadcast(deployer);
+
+        AntseedWashTradingRegistry washTradingRegistry = _deployWashTradingRegistry();
+        console.log("WashTradingRegistry:    ", address(washTradingRegistry));
 
         AntseedEmissionsGate gate = new AntseedEmissionsGate(teamWallet, protocolReserve, 15_000, 15_000);
         if (emissionsReserveWallet != address(0)) {
@@ -206,12 +215,10 @@ contract M001DeployRecognizedUsage is Script {
         // rewarded epoch), so a late claim never outweighs an early one and
         // the faucet expires by itself. Unowned and immutable — it also
         // switches off when its funded pot runs out.
-        address washTradingRegistry = vm.envAddress("WASH_TRADING_REGISTRY");
-        require(washTradingRegistry.code.length != 0, "WASH_TRADING_REGISTRY has no code");
         AntseedPositionInit positionInit = new AntseedPositionInit(
             address(sellerPools),
             existingStaking,
-            washTradingRegistry,
+            address(washTradingRegistry),
             vm.envOr("POSITION_INIT_AMOUNT", uint256(1 ether)),
             vm.envOr("POSITION_INIT_END_EPOCH", effectiveEpoch + 104)
         );
@@ -323,5 +330,24 @@ contract M001DeployRecognizedUsage is Script {
         console.log("");
         console.log("Next: see script/migrations/M001RecognizedUsage/README.md for the");
         console.log("cutover (broadcast 2 of 2) and the post-flip checklist.");
+    }
+
+    function _deployWashTradingRegistry() internal returns (AntseedWashTradingRegistry) {
+        address blockhashStore = vm.envOr("WASH_TRADING_BLOCKHASH_STORE", BASE_CHAINLINK_BLOCKHASH_STORE);
+        require(blockhashStore.code.length != 0, "blockhash store has no code");
+        if (block.chainid == 8453) {
+            require(blockhashStore == BASE_CHAINLINK_BLOCKHASH_STORE, "Base registry must use Chainlink BlockhashStore");
+        }
+        uint256 periodStart = vm.envUint("HISTORICAL_PERIOD_START_BLOCK");
+        uint256 periodEnd = vm.envUint("HISTORICAL_PERIOD_END_BLOCK");
+        require(periodStart <= type(uint64).max && periodEnd <= type(uint64).max, "historical period exceeds uint64");
+        return new AntseedWashTradingRegistry(
+            vm.envAddress("SP1_VERIFIER"),
+            vm.envBytes32("SP1_VERIFIER_HASH"),
+            blockhashStore,
+            vm.envBytes32("WASH_TRADING_SELLER_PROGRAM_VKEY"),
+            uint64(periodStart),
+            uint64(periodEnd)
+        );
     }
 }

@@ -16,6 +16,7 @@ import {
 } from './deployments/index.mjs';
 import {
   applyActiveContracts,
+  buildActivationRecord,
   classifyM001,
   migration,
   shouldRunM001Cutover,
@@ -112,11 +113,11 @@ test('M001 rehearsal retains its fixtures, epoch advancement, activation, and no
   const directory = await mkdtemp(path.join(tmpdir(), 'antseed-m001-hook-'));
   const calls = [];
   const driven = [];
-  const previousRegistry = process.env.WASH_TRADING_REGISTRY;
-  delete process.env.WASH_TRADING_REGISTRY;
+  const previousVerifier = process.env.SP1_VERIFIER;
+  delete process.env.SP1_VERIFIER;
   t.after(async () => {
-    if (previousRegistry === undefined) delete process.env.WASH_TRADING_REGISTRY;
-    else process.env.WASH_TRADING_REGISTRY = previousRegistry;
+    if (previousVerifier === undefined) delete process.env.SP1_VERIFIER;
+    else process.env.SP1_VERIFIER = previousVerifier;
     await rm(directory, { recursive: true, force: true });
   });
   await writeJsonAtomic(path.join(directory, 'base-mainnet', 'current.json'), {
@@ -143,7 +144,9 @@ test('M001 rehearsal retains its fixtures, epoch advancement, activation, and no
   });
   assert.equal(driven.length, 3);
   assert.ok(driven.every((overrides) => overrides === driven[0]));
-  assert.equal(driven[0].environment.WASH_TRADING_REGISTRY, ADDRESS.channels);
+  assert.equal(driven[0].environment.SP1_VERIFIER, ADDRESS.channels);
+  assert.equal(driven[0].environment.SP1_VERIFIER_HASH, `0x${'0'.repeat(63)}1`);
+  assert.equal(driven[0].environment.WASH_TRADING_REGISTRY, undefined);
   assert.deepEqual(Object.keys(driven[0].signers), [
     'deployer', 'registryOwner', 'channelsOwner', 'sellerRewardsPoolOwner', 'diemStaker',
   ]);
@@ -633,17 +636,20 @@ for (const creationType of ['CREATE', 'CREATE2', null]) {
   });
 }
 
-for (const cached of [true, false]) {
-  test(`recognizes activation from disk ${cached ? 'with' : 'without'} a local checkpoint`, async (t) => {
+for (const [cached, registryState] of [[true, 'valid'], [false, 'valid'], [true, 'missing'], [true, 'mismatched']]) {
+  test(`checks activation ${cached ? 'with' : 'without'} a local checkpoint and ${registryState} wash registry`, async (t) => {
     const directory = await mkdtemp(path.join(tmpdir(), 'antseed-activated-'));
     t.after(() => rm(directory, { recursive: true, force: true }));
     const emissionsGate = '0x0000000000000000000000000000000000000008';
     const pointsPolicyRegistry = '0x0000000000000000000000000000000000000009';
+    const washTradingRegistry = '0x0000000000000000000000000000000000000010';
     const contracts = Object.fromEntries(Object.entries({
       usageAccounting: ADDRESS.usageAccounting,
       sellerRegistry: ADDRESS.sellerRegistry,
       emissionsGate,
       pointsPolicyRegistry,
+      washTradingRegistry,
+      positionInit: '0x0000000000000000000000000000000000000011',
     }).map(([key, address]) => [key, { address }]));
     const checkpoint = {
       chainId: 8453,
@@ -651,6 +657,7 @@ for (const cached of [true, false]) {
       cutoverTimestamp: 2100,
       contracts,
       verificationConfiguration: {
+        washTradingRegistry,
         verificationMinterController: ADDRESS.channels,
         emissionsGateOwner: ADDRESS.registry,
         pointsPolicyRegistryOwner: ADDRESS.registry,
@@ -677,7 +684,7 @@ for (const cached of [true, false]) {
     if (cached) await writeJsonAtomic(checkpointFile, checkpoint);
     mockCast(t, (args) => {
       if (args[0] === 'chain-id') return '8453';
-      if (args[0] === 'code') return '0x1234';
+      if (args[0] === 'code') return registryState === 'missing' && args[1] === washTradingRegistry ? '0x' : '0x1234';
       assert.equal(args[0], 'call', 'restart must only read chain state');
       const [, address, signature] = args;
       if (signature === 'registry()(address)') {
@@ -693,6 +700,7 @@ for (const cached of [true, false]) {
         'currentEpoch()(uint256)': '12',
         'emissionsGate()(address)': emissionsGate,
         'pointsPolicy()(address)': pointsPolicyRegistry,
+        'washTradingRegistry()(address)': registryState === 'mismatched' ? ADDRESS.channels : washTradingRegistry,
         'minters(bytes32)(address,uint32,bool)': JSON.stringify([ADDRESS.channels, 10000, true]),
         'policyCount()(uint256)': '0',
         'owner()(address)': ADDRESS.registry,
@@ -711,6 +719,12 @@ for (const cached of [true, false]) {
       checkpointFile,
       rpcUrl: 'http://unused',
     };
+    if (registryState !== 'valid') {
+      const result = await migration.observe(context);
+      assert.equal(result.state, 'invalid');
+      assert.equal(result.deployment.valid, false);
+      return;
+    }
     const result = await executePhases(migration, { mode: 'broadcast', signers: {} }, {}, context);
     assert.equal(result.state, 'active');
     assert.equal(context.expected.legacyEmissions, ADDRESS.legacyEmissions);
@@ -947,8 +961,13 @@ test('permits only the phase-one record to be dirty during a cutover broadcast',
 });
 
 test('enforces M001 release invariants', () => {
-  const validate = (record) => migration.recordErrors(record).length === 0;
+  const contracts = {
+    washTradingRegistry: { address: ADDRESS.registry },
+    positionInit: { address: ADDRESS.channels },
+  };
+  const validate = (record) => migration.recordErrors({ contracts, ...record }).length === 0;
   const verificationConfiguration = {
+    washTradingRegistry: ADDRESS.registry,
     verificationMinterController: ADDRESS.registry,
     verificationMinterShareBps: 10_000,
     verificationMinterEditable: true,
@@ -958,6 +977,12 @@ test('enforces M001 release invariants', () => {
   };
 
   assert.equal(validate({ verificationConfiguration }), true);
+  assert.equal(validate({ verificationConfiguration, contracts: {} }), false, 'M001 must record its registry and faucet');
+  assert.equal(
+    validate({ verificationConfiguration: { ...verificationConfiguration, washTradingRegistry: ADDRESS.ants } }),
+    false,
+    'the faucet must pin the registry deployed by M001',
+  );
   assert.equal(validate({}), false, 'verificationConfiguration is required');
   assert.equal(
     validate({ verificationConfiguration: { ...verificationConfiguration, verificationMinterShareBps: 5000 } }),
@@ -974,6 +999,100 @@ test('enforces M001 release invariants', () => {
     false,
     'the verification minter must remain editable',
   );
+});
+
+for (const hasCutoverDeployment of [false, true]) {
+  test(`M001 activation record preserves inherited wiring ${hasCutoverDeployment ? 'with' : 'without'} cutover deployments`, () => {
+    const provenance = {
+      deployedInRelease: true,
+      deploymentBlock: 100,
+      transactionHash: `0x${'1'.repeat(64)}`,
+      runtimeCodeHash: `0x${'2'.repeat(64)}`,
+      constructorArguments: [],
+      owner: null,
+    };
+    const contracts = Object.fromEntries(Object.entries({
+      washTradingRegistry: ADDRESS.registry,
+      positionInit: ADDRESS.channels,
+      usageAccounting: ADDRESS.usageAccounting,
+      sellerRegistry: ADDRESS.sellerRegistry,
+    }).map(([name, address]) => [name, { ...provenance, address }]));
+    const checkpoint = {
+      sourceCommit: 'a'.repeat(40),
+      effectiveEpoch: 11,
+      contracts,
+      ...(hasCutoverDeployment ? {
+        cutoverContracts: {
+          legacyRewardsPoolRegistry: { ...provenance, address: ADDRESS.legacyEmissions, deploymentBlock: 200 },
+        },
+      } : {}),
+    };
+    const original = structuredClone(checkpoint);
+    const verification = {
+      washTradingRegistry: ADDRESS.registry,
+      verificationMinterController: ADDRESS.registry,
+      verificationMinterShareBps: 10_000,
+      verificationMinterEditable: true,
+      pointsPolicyCount: 0,
+      emissionsGateOwner: ADDRESS.ants,
+      pointsPolicyRegistryOwner: ADDRESS.channels,
+    };
+    const record = buildActivationRecord({
+      network: 'base-mainnet',
+      canonical: { chainId: 8453 },
+      expected: { legacyEmissions: ADDRESS.legacyEmissions, legacyStaking: ADDRESS.legacyStaking },
+    }, checkpoint, [{
+      action: 'setEmissions(address)',
+      hash: `0x${'3'.repeat(64)}`,
+      blockNumber: 200,
+      from: ADDRESS.ants,
+      to: ADDRESS.registry,
+    }], verification);
+
+    assert.equal(record.release, migration.releases[1]);
+    assert.deepEqual(recordErrors(record), []);
+    assert.deepEqual(migration.recordErrors(record), []);
+    for (const name of Object.keys(contracts)) {
+      assert.deepEqual(record.contracts[name], { ...contracts[name], deployedInRelease: false });
+    }
+    if (hasCutoverDeployment) {
+      assert.deepEqual(record.contracts.legacyRewardsPoolRegistry, checkpoint.cutoverContracts.legacyRewardsPoolRegistry);
+      assert.equal(record.contracts.legacyRewardsPoolRegistry.deployedInRelease, true);
+    }
+    assert.deepEqual(checkpoint, original, 'activation must not mutate deployment provenance');
+  });
+}
+
+test('M001 deployment requires proof configuration instead of an existing registry', (t) => {
+  const environment = {
+    DEPLOYER: ADDRESS.registry,
+    VERIFICATION_WALLET: ADDRESS.channels,
+    BASESCAN_API_KEY: 'test-key',
+    SP1_VERIFIER: ADDRESS.ants,
+    SP1_VERIFIER_HASH: `0x${'1'.repeat(64)}`,
+    WASH_TRADING_SELLER_PROGRAM_VKEY: `0x${'2'.repeat(64)}`,
+    HISTORICAL_PERIOD_START_BLOCK: '100',
+    HISTORICAL_PERIOD_END_BLOCK: '199',
+  };
+  const context = {
+    rpcUrl: 'http://unused',
+    expected: { antsToken: ADDRESS.ants, legacyEmissions: ADDRESS.legacyEmissions },
+  };
+  mockCast(t, (args) => {
+    assert.equal(args[0], 'call');
+    assert.equal(args[2], 'owner()(address)');
+    return ADDRESS.registry;
+  });
+  assert.doesNotThrow(() => migration.verifyRoles(context, { state: 'ready' }, environment));
+  for (const key of [
+    'SP1_VERIFIER', 'SP1_VERIFIER_HASH', 'WASH_TRADING_SELLER_PROGRAM_VKEY',
+    'HISTORICAL_PERIOD_START_BLOCK', 'HISTORICAL_PERIOD_END_BLOCK',
+  ]) {
+    assert.throws(
+      () => migration.verifyRoles(context, { state: 'ready' }, { ...environment, [key]: undefined }),
+      new RegExp(key),
+    );
+  }
 });
 
 test('accepts the shared record shape for baselines and executed releases alike', () => {

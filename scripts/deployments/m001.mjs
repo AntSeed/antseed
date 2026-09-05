@@ -60,6 +60,7 @@ const DEPLOYED_CONTRACT_NAMES = {
   AntseedSellerPools: 'sellerPools',
   AntseedSellerRegistry: 'sellerRegistry',
   AntseedPositionInit: 'positionInit',
+  AntseedWashTradingRegistry: 'washTradingRegistry',
   AntseedUsageAccounting: 'usageAccounting',
   AntseedPointsPolicyRegistry: 'pointsPolicyRegistry',
   AntseedSellerPoolsRewards: 'sellerPoolsRewards',
@@ -68,7 +69,9 @@ const DEPLOYED_CONTRACT_NAMES = {
   AntseedLegacyRewardsPoolRegistry: 'legacyRewardsPoolRegistry',
 };
 
-const REQUIRED_DEPLOYED_CONTRACTS = ['usageAccounting', 'sellerRegistry', 'emissionsGate', 'pointsPolicyRegistry'];
+const REQUIRED_DEPLOYED_CONTRACTS = [
+  'usageAccounting', 'sellerRegistry', 'emissionsGate', 'pointsPolicyRegistry', 'positionInit', 'washTradingRegistry',
+];
 
 // ---------------------------------------------------------------------------
 // Pure state logic
@@ -166,6 +169,12 @@ export function recordErrors(record) {
   expect('pointsPolicyCount', (value) => value === 0, '0');
   expect('emissionsGateOwner', (value) => address.test(value ?? ''), 'an address');
   expect('pointsPolicyRegistryOwner', (value) => address.test(value ?? ''), 'an address');
+  expect(
+    'washTradingRegistry',
+    (value) => address.test(value ?? '') && sameAddress(value, record.contracts?.washTradingRegistry?.address),
+    'the recorded washTradingRegistry address',
+  );
+  if (!address.test(record.contracts?.positionInit?.address ?? '')) errors.push('contracts.positionInit is required');
   return errors;
 }
 
@@ -198,6 +207,10 @@ function checkpointMatchesChain(context, checkpoint, liveChainId) {
 
   if (!sameAddress(call(rpcUrl, usageAccounting, 'emissionsGate()(address)'), emissionsGate)) return false;
   if (!sameAddress(call(rpcUrl, usageAccounting, 'pointsPolicy()(address)'), pointsPolicyRegistry)) return false;
+  if (!sameAddress(expected.washTradingRegistry, address('washTradingRegistry'))) return false;
+  if (!sameAddress(
+    call(rpcUrl, address('positionInit'), 'washTradingRegistry()(address)'), address('washTradingRegistry'),
+  )) return false;
 
   const minter = callJson(rpcUrl, emissionsGate, 'minters(bytes32)(address,uint32,bool)', [VERIFICATION_MINTER_ID]);
   if (!sameAddress(minter[0], expected.verificationMinterController)) return false;
@@ -356,10 +369,10 @@ function verifyRoles(context, observation, env) {
     }
   };
   if (observation.state === 'ready') {
-    requireEnvironment(['WASH_TRADING_REGISTRY'], env);
-    if (!hasCode(rpcUrl, env.WASH_TRADING_REGISTRY)) {
-      throw new Error('WASH_TRADING_REGISTRY has no code on this network (deploy the wash-trading registry before M001)');
-    }
+    requireEnvironment([
+      'SP1_VERIFIER', 'SP1_VERIFIER_HASH', 'WASH_TRADING_SELLER_PROGRAM_VKEY',
+      'HISTORICAL_PERIOD_START_BLOCK', 'HISTORICAL_PERIOD_END_BLOCK',
+    ], env);
     mustOwn('deployer', expected.antsToken, 'ANTSToken');
     mustOwn('deployer', expected.legacyEmissions, 'legacy emissions');
     return;
@@ -382,6 +395,10 @@ function verifyRoles(context, observation, env) {
 
 /** Recorded from chain state only; nothing here is inferred from the environment. */
 async function verificationConfiguration(context, contracts) {
+  const washTradingRegistry = call(context.rpcUrl, contracts.positionInit.address, 'washTradingRegistry()(address)');
+  if (!sameAddress(washTradingRegistry, contracts.washTradingRegistry.address)) {
+    throw new Error('PositionInit is not wired to the M001 wash-trading registry');
+  }
   const minter = callJson(
     context.rpcUrl,
     contracts.emissionsGate.address,
@@ -389,6 +406,7 @@ async function verificationConfiguration(context, contracts) {
     [VERIFICATION_MINTER_ID],
   );
   return {
+    washTradingRegistry,
     verificationMinterController: minter[0],
     verificationMinterShareBps: Number(minter[1] ?? 0),
     verificationMinterEditable: booleanValue(minter[2]),
@@ -477,6 +495,31 @@ async function captureCutoverBroadcast(context, checkpoint) {
   return true;
 }
 
+export function buildActivationRecord(context, checkpoint, transactions, verification) {
+  return {
+    $schema: '../../schema.json',
+    network: context.network,
+    chainId: context.canonical.chainId,
+    release: ACTIVATED_RELEASE,
+    status: 'active',
+    sourceCommit: checkpoint.sourceCommit,
+    effectiveEpoch: checkpoint.effectiveEpoch,
+    transactions,
+    registryBefore: { emissions: context.expected.legacyEmissions, staking: context.expected.legacyStaking },
+    registryAfter: {
+      emissions: checkpoint.contracts.usageAccounting.address,
+      staking: checkpoint.contracts.sellerRegistry.address,
+    },
+    verificationConfiguration: verification,
+    contracts: {
+      ...Object.fromEntries(Object.entries(checkpoint.contracts).map(([name, contract]) => [
+        name, { ...contract, deployedInRelease: false },
+      ])),
+      ...checkpoint.cutoverContracts,
+    },
+  };
+}
+
 /**
  * Writes the activation history record and `current.json`. Each write is guarded
  * by its own check so an interrupted run can be resumed: `writeHistoryRecord` is
@@ -501,20 +544,9 @@ async function recordActivation(context, checkpoint) {
   const verification = await verificationConfiguration(context, activeContracts);
 
   if (!(await historyRecordExists(context, ACTIVATED_RELEASE))) {
-    await writeHistoryRecord(context, ACTIVATED_RELEASE, {
-      $schema: '../../schema.json',
-      network: context.network,
-      chainId: context.canonical.chainId,
-      release: ACTIVATED_RELEASE,
-      status: 'active',
-      sourceCommit: checkpoint.sourceCommit,
-      effectiveEpoch: checkpoint.effectiveEpoch,
-      transactions,
-      registryBefore: { emissions: context.expected.legacyEmissions, staking: context.expected.legacyStaking },
-      registryAfter,
-      verificationConfiguration: verification,
-      contracts: checkpoint.cutoverContracts ?? {},
-    });
+    await writeHistoryRecord(
+      context, ACTIVATED_RELEASE, buildActivationRecord(context, checkpoint, transactions, verification),
+    );
   }
 
   if (await currentRelease(context) === ACTIVATED_RELEASE) return;
@@ -697,17 +729,9 @@ function prepareForkOwners(context) {
   }
 }
 
-/**
- * The pinned fork predates the wash-trading registry. Deploy a minimal stub
- * whose `isProvenWashTrader(address)` always returns false so PositionInit
- * can be constructed against it; a real address can be supplied via
- * WASH_TRADING_REGISTRY to exercise the live contract instead.
- */
-function deployForkWashTradingStub(rpcUrl) {
-  // PUSH1 0x00 PUSH1 0x00 MSTORE PUSH1 0x20 PUSH1 0x00 RETURN — returns 32 zero bytes for any call.
-  const runtime = '600060005260206000f3';
+function deployForkVerifierStub(rpcUrl) {
+  const runtime = '600160005260206000f3';
   const initcode = `0x69${runtime}600052600a6016f3`;
-  // `--create <CODE>` is a cast subcommand and must be the final argument.
   const receipt = JSON.parse(
     capture('cast', ['send', '--rpc-url', rpcUrl, '--unlocked', '--from', ANVIL_ACCOUNT_0, '--json', '--create', initcode]),
   );
@@ -724,7 +748,11 @@ async function rehearse({ rpcUrl, outputRoot, network, runMigration: drive }) {
   const context = await loadContext(migration, network, { rpcUrl, outputRoot, canonicalRoot: outputRoot, forkTest: true });
   prepareForkOwners(context);
   const environment = {
-    WASH_TRADING_REGISTRY: process.env.WASH_TRADING_REGISTRY ?? deployForkWashTradingStub(rpcUrl),
+    SP1_VERIFIER: process.env.SP1_VERIFIER ?? deployForkVerifierStub(rpcUrl),
+    SP1_VERIFIER_HASH: process.env.SP1_VERIFIER ? process.env.SP1_VERIFIER_HASH : `0x${'0'.repeat(63)}1`,
+    WASH_TRADING_SELLER_PROGRAM_VKEY: process.env.WASH_TRADING_SELLER_PROGRAM_VKEY ?? `0x${'0'.repeat(63)}1`,
+    HISTORICAL_PERIOD_START_BLOCK: process.env.HISTORICAL_PERIOD_START_BLOCK ?? '1',
+    HISTORICAL_PERIOD_END_BLOCK: process.env.HISTORICAL_PERIOD_END_BLOCK ?? String(BASE_MAINNET_FORK_BLOCK),
     VERIFICATION_WALLET: ANVIL_ACCOUNT_1,
     DIEM_STAKING_PROXY: BASE_MAINNET_DIEM_PROXY,
     ANTSEED_DEPLOY_CONFIRM: network,

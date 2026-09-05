@@ -58,6 +58,26 @@ emissions at it. Registry `emissions`/`staking` pointers are **not** touched:
 the network keeps running on the legacy stack until the in-flight epoch
 finalizes.
 
+This phase also deploys `AntseedWashTradingRegistry` and pins its address into
+the new `AntseedPositionInit`. Do not deploy a separate registry for M001.
+Set `SP1_VERIFIER` to a concrete SP1 verifier (not the gateway),
+`SP1_VERIFIER_HASH` to its release hash, `WASH_TRADING_SELLER_PROGRAM_VKEY` to
+the seller proof program vkey, and `HISTORICAL_PERIOD_START_BLOCK` /
+`HISTORICAL_PERIOD_END_BLOCK` to the proof's nonzero, ordered uint64 block range.
+`WASH_TRADING_BLOCKHASH_STORE` defaults to Chainlink's Base deployment and
+cannot be overridden on Base mainnet; other networks need a deployed store.
+M001 uses the existing deployer signer, not `DEPLOYER_PRIVATE_KEY`.
+
+The deployment record includes the registry's address, constructor arguments,
+and bytecode provenance. Deployment and resumed cutover checks require
+`PositionInit.washTradingRegistry()` to match that record. Activation history
+retains these contract entries with their original provenance, marked as
+inherited rather than newly deployed during cutover. Submit historical
+proofs to this new registry before funding the faucet or allowing starter
+claims: it is empty immediately after deployment, and prior submissions to
+another registry are not copied. The fork rehearsal deploys the real registry
+with a test-only verifier stub by default, not a replacement status registry.
+
 Signer: `--signer deployer=…` must own `ANTSToken` and the legacy emissions
 contract (checked before anything is sent).
 
