@@ -3,8 +3,8 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Script.sol";
 
-import { IAntseedRegistry } from "../interfaces/IAntseedRegistry.sol";
-import { AntseedLegacyRewardsPoolRegistry } from "../rewards/AntseedLegacyRewardsPoolRegistry.sol";
+import { IAntseedRegistry } from "../../../interfaces/IAntseedRegistry.sol";
+import { AntseedLegacyRewardsPoolRegistry } from "../../../rewards/AntseedLegacyRewardsPoolRegistry.sol";
 
 interface IAntseedRegistryFlipAdmin is IAntseedRegistry {
     function owner() external view returns (address);
@@ -14,11 +14,19 @@ interface IAntseedRegistryFlipAdmin is IAntseedRegistry {
 
 interface IUsageAccountingLike {
     function emissionsGate() external view returns (address);
+    function pointsPolicy() external view returns (address);
 }
 
 interface IEmissionsGateClock {
     function currentEpoch() external view returns (uint256);
     function effectiveEpoch() external view returns (uint256);
+    function owner() external view returns (address);
+    function minters(bytes32 id) external view returns (address controller, uint32 shareBps, bool editable);
+}
+
+interface IPointsPolicyRegistryLike {
+    function owner() external view returns (address);
+    function policyCount() external view returns (uint256);
 }
 
 interface ISellerRewardsPoolAdmin {
@@ -42,20 +50,23 @@ interface IDiemStakingProxyFlip {
 }
 
 /**
- * @title CutoverFlip
+ * @title M001CutoverRecognizedUsage
  * @notice Broadcast #2 of the two-broadcast cutover. Run after
- *         DeployRecognizedUsage, once the epoch that was in flight during that
+ *         M001 Deploy, once the epoch that was in flight during that
  *         deploy has finalized (the gate's effectiveEpoch has started).
  *
- *         Two phases, two keys:
- *           1. STAKER key: syncs the DiemStakingProxy's reward epochs and
+ *         Two phases, two signers:
+ *           1. STAKER: syncs the DiemStakingProxy's reward epochs and
  *              claims every pre-effective epoch whose pot is not yet funded.
  *              registry.emissions() still resolves to legacy EmissionsV2 at
  *              this point, so each claim funds the proxy's epoch pot with its
  *              REAL ANTS amount, paid from the legacy escrow. Once funded,
  *              the pot is stored forever — the pointer flip below can no
  *              longer affect it, and the zero-pot freeze is impossible.
- *           2. REGISTRY OWNER key: flips registry.setEmissions to
+ *           2. POOL OWNER: pins the deployed AntseedSellerRewardsPool
+ *              at a registry facade so locked legacy claims keep working
+ *              after the flip.
+ *           3. REGISTRY OWNER: flips registry.setEmissions to
  *              AntseedUsageAccounting and registry.setStaking to
  *              AntseedSellerRegistry.
  *
@@ -69,47 +80,81 @@ interface IDiemStakingProxyFlip {
  *         setStaking. When both pointers are already at their targets it
  *         exits with nothing to do.
  *
+ * Signers: this script never reads a private key. Every broadcast names the
+ * address it acts as, and Foundry resolves the matching signer from the wallet
+ * options on the command line (--account <keystore> once per distinct signer,
+ * --ledger, --trezor, or --interactive N).
+ *
  * Required env:
- *   REGISTRY_OWNER_PRIVATE_KEY   AntseedRegistry owner (signs the flips).
+ *   REGISTRY_OWNER               AntseedRegistry owner address (signs the flips).
  *   ANTSEED_REGISTRY             Legacy AntseedRegistry address.
  *   USAGE_ACCOUNTING             AntseedUsageAccounting from broadcast #1.
  *   SELLER_REGISTRY              AntseedSellerRegistry from broadcast #1.
+ *   EXPECTED_LEGACY_EMISSIONS    Registry emissions pointer before M001.
+ *   EXPECTED_LEGACY_STAKING      Registry staking pointer before M001.
+ *   VERIFICATION_WALLET          M001 verification bucket controller.
+ *   DEPLOYER                     Owner address of the emissions gate and
+ *                                points policy registry created by
+ *                                broadcast #1 (read-only check).
  *
  * Optional env:
  *   DIEM_STAKING_PROXY           Deployed DiemStakingProxy. Unset skips the
  *                                claim phase (testnets without a proxy).
- *   DIEM_STAKER_PRIVATE_KEY      Key with DIEM staked on the proxy (signs the
- *                                claims). Required when the proxy is set.
- *   SELLER_REWARDS_POOL_OWNER_PRIVATE_KEY
- *                                Owner of the deployed AntseedSellerRewardsPool
- *                                (auto-discovered via the legacy emissions
- *                                contract). Falls back to
- *                                DIEM_STAKER_PRIVATE_KEY. Signs the pinned
- *                                registry facade wiring below.
+ *   DIEM_STAKER                  Address with DIEM staked on the proxy (signs
+ *                                the claims). Required when the proxy is set.
+ *   SELLER_REWARDS_POOL_OWNER    Owner address of the deployed
+ *                                AntseedSellerRewardsPool (auto-discovered via
+ *                                the legacy emissions contract). Required when
+ *                                the proxy is set. Signs the pinned registry
+ *                                facade wiring below.
  *
  * Usage:
  *   cd packages/contracts
  *   source .env
- *   forge script script/CutoverFlip.s.sol \
+ *   forge script script/migrations/M001RecognizedUsage/Cutover.s.sol:M001CutoverRecognizedUsage \
  *     --rpc-url $BASE_MAINNET_RPC_URL \
+ *     --account registry-owner --account channels-owner \
  *     --broadcast \
  *     --via-ir
  */
-contract CutoverFlip is Script {
+contract M001CutoverRecognizedUsage is Script {
+    bytes32 public constant VERIFICATION_MINTER_ID = keccak256("antseed.emissions.verification.v1");
+
     function run() external {
-        uint256 ownerPrivateKey = vm.envUint("REGISTRY_OWNER_PRIVATE_KEY");
-        address registryOwner = vm.addr(ownerPrivateKey);
+        address registryOwner = vm.envAddress("REGISTRY_OWNER");
         IAntseedRegistryFlipAdmin registry = IAntseedRegistryFlipAdmin(vm.envAddress("ANTSEED_REGISTRY"));
         address usageAccounting = vm.envAddress("USAGE_ACCOUNTING");
         address sellerRegistry = vm.envAddress("SELLER_REGISTRY");
         address proxyAddress = vm.envOr("DIEM_STAKING_PROXY", address(0));
+        address expectedLegacyEmissions = vm.envAddress("EXPECTED_LEGACY_EMISSIONS");
+        address expectedLegacyStaking = vm.envAddress("EXPECTED_LEGACY_STAKING");
+        address verificationWallet = vm.envAddress("VERIFICATION_WALLET");
+        address deployer = vm.envAddress("DEPLOYER");
 
-        require(registry.owner() == registryOwner, "REGISTRY_OWNER_PRIVATE_KEY is not the registry owner");
+        require(registry.owner() == registryOwner, "REGISTRY_OWNER is not the registry owner");
         address currentEmissions = registry.emissions();
+        require(
+            currentEmissions == expectedLegacyEmissions || currentEmissions == usageAccounting,
+            "unexpected emissions starting state"
+        );
+        require(
+            registry.staking() == expectedLegacyStaking || registry.staking() == sellerRegistry,
+            "unexpected staking starting state"
+        );
         bool emissionsDone = currentEmissions == usageAccounting;
         bool stakingDone = registry.staking() == sellerRegistry;
 
-        IEmissionsGateClock gate = IEmissionsGateClock(IUsageAccountingLike(usageAccounting).emissionsGate());
+        IUsageAccountingLike accounting = IUsageAccountingLike(usageAccounting);
+        IEmissionsGateClock gate = IEmissionsGateClock(accounting.emissionsGate());
+        IPointsPolicyRegistryLike pointsPolicyRegistry = IPointsPolicyRegistryLike(accounting.pointsPolicy());
+        (address verificationController, uint32 verificationShareBps, bool verificationEditable) =
+            gate.minters(VERIFICATION_MINTER_ID);
+        require(verificationController == verificationWallet, "unexpected verification controller");
+        require(verificationShareBps == 10_000, "unexpected verification share");
+        require(verificationEditable, "verification minter must remain editable");
+        require(pointsPolicyRegistry.policyCount() == 0, "M001 must not activate points policies");
+        require(gate.owner() == deployer, "unexpected emissions gate owner");
+        require(pointsPolicyRegistry.owner() == deployer, "unexpected points policy registry owner");
         uint256 effectiveEpoch = gate.effectiveEpoch();
         // The claim below funds pre-effective epochs from legacy V2, which
         // only serves finalized epochs. Until the effective epoch starts, the
@@ -152,7 +197,7 @@ contract CutoverFlip is Script {
             }
         }
 
-        vm.startBroadcast(ownerPrivateKey);
+        vm.startBroadcast(registryOwner);
         if (!emissionsDone) registry.setEmissions(usageAccounting);
         if (!stakingDone) registry.setStaking(sellerRegistry);
         vm.stopBroadcast();
@@ -193,15 +238,11 @@ contract CutoverFlip is Script {
             return;
         }
 
-        uint256 poolOwnerPrivateKey = vm.envOr("SELLER_REWARDS_POOL_OWNER_PRIVATE_KEY", uint256(0));
-        if (poolOwnerPrivateKey == 0) poolOwnerPrivateKey = vm.envOr("DIEM_STAKER_PRIVATE_KEY", uint256(0));
-        require(poolOwnerPrivateKey != 0, "SELLER_REWARDS_POOL_OWNER_PRIVATE_KEY not set (pool needs its registry pinned)");
-        require(
-            ISellerRewardsPoolAdmin(pool).owner() == vm.addr(poolOwnerPrivateKey),
-            "SELLER_REWARDS_POOL_OWNER_PRIVATE_KEY is not the pool owner"
-        );
+        address poolOwner = vm.envOr("SELLER_REWARDS_POOL_OWNER", address(0));
+        require(poolOwner != address(0), "SELLER_REWARDS_POOL_OWNER not set (pool needs its registry pinned)");
+        require(ISellerRewardsPoolAdmin(pool).owner() == poolOwner, "SELLER_REWARDS_POOL_OWNER is not the pool owner");
 
-        vm.startBroadcast(poolOwnerPrivateKey);
+        vm.startBroadcast(poolOwner);
         AntseedLegacyRewardsPoolRegistry facade =
             new AntseedLegacyRewardsPoolRegistry(legacyEmissions, registry.antsToken());
         ISellerRewardsPoolAdmin(pool).setRegistry(address(facade));
@@ -218,15 +259,14 @@ contract CutoverFlip is Script {
     ///      legacy path out. Reverts (in simulation, before anything is sent)
     ///      if an epoch with points cannot be funded by this staker.
     function _fundProxyRewardEpochs(IDiemStakingProxyFlip proxy, uint32 cutoverEpoch) internal {
-        uint256 stakerPrivateKey = vm.envUint("DIEM_STAKER_PRIVATE_KEY");
-        address staker = vm.addr(stakerPrivateKey);
+        address staker = vm.envAddress("DIEM_STAKER");
 
         console.log("");
         console.log("DiemStakingProxy:       ", address(proxy));
         console.log("Staker:                 ", staker);
         console.log("Staker DIEM staked:     ", proxy.staked(staker));
 
-        vm.startBroadcast(stakerPrivateKey);
+        vm.startBroadcast(staker);
 
         // Close every finalized reward epoch so rewardEpochs() below reflects
         // real totals. Chunked to respect the proxy's per-call capture bound.
