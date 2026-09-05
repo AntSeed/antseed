@@ -44,6 +44,214 @@ cd packages/node
 forge test
 ```
 
+Submit a development-only seller proof from the loop-proof checkout through a
+digest-pinned verifier to the permissionless historical registry on Anvil. The
+test stages one seller proof, authenticates every committed evidence block
+through a local BlockhashStore mock, finalizes the result, and checks its wash
+volume and evidence digest:
+
+```bash
+LOOP_PROOF_DIR=/path/to/loop-proof \
+WASH_TRADING_ARTIFACT_DIR=/path/to/unified-development-artifacts \
+  node --test scripts/wash-trading-development-anvil.test.mjs
+```
+
+This test exercises the full local integration path but does not provide
+production cryptographic assurance. Production deployments must use a real SP1
+Groth16 proof and verifier, and authenticate every committed block reference
+against Chainlink's public `BlockhashStore` on Base
+(`0x78b69899C8cD252126cBB1A50171ec37286C3877`). Chainlink's store reverts for
+unknown blocks; the registry maps that revert to `bytes32(0)` so its own
+`NonCanonicalBlock` error fires instead. No AntSeed-owned contract sits in the
+block-hash path. A staged proof changes no seller result until every committed block-reference
+chunk has been authenticated. The registry stores the greatest proven
+wash-volume lower bound for each seller as `{provenWashVolume, totalSellerVolume, evidenceDigest}`.
+The total is the authenticated period-end channels counter; this enforcement period
+starts at protocol genesis, so no opening counter is subtracted. The registry exposes
+`provenWashShareBps(seller)` as `provenWashVolume * 10000 / totalSellerVolume`.
+Later proofs must strictly increase the seller's proven wash volume and preserve
+the recorded total. Zero totals and mismatched replacement totals are rejected.
+
+For a Base-fork rehearsal, the development submission script also accepts
+`--use-chainlink-blockhash-store`. This uses the existing Chainlink store without
+seeding or replacing it, while retaining the digest-pinned development verifier.
+Missing hashes must be backfilled on the local fork before finalization can pass.
+The RPC remains restricted to loopback URLs; this mode is not a live deployment
+or a test of real Groth16 proof verification.
+
+The updated seller guest uses a fixed 50% return-coverage floor for closed-loop
+evidence (`returnedCredit / provenWashVolume`), distinct from the registry's
+`provenWashShareBps` ratio (`provenWashVolume / totalSellerVolume`). The floor is
+pinned by the guest vkey, not a mutable registry setting. Each seller input contains
+exactly one closed-loop or reciprocal evidence bundle.
+
+The current total-volume witness requires a nonzero seller-to-agent binding at
+period end. Unstaking clears that binding, so those sellers currently fail proof
+generation even if historical wash evidence exists. The agent counter excludes
+settlements made without an agent binding; it is not an unconditional wallet-wide
+lifetime-volume total. Supporting historical bindings requires a separately
+validated predicate update and a new guest vkey.
+
+Prepare the immutable constructor values from any schema-1 direct seller proof
+produced by the pinned seller program:
+
+```bash
+SELLER_PROOF=/path/to/loop-proof/out/production/sellers/0x....json
+export WASH_TRADING_SELLER_PROGRAM_VKEY=$(jq -r .sellerProgramVKey "$SELLER_PROOF")
+export HISTORICAL_PERIOD_START_BLOCK=$(jq -r .periodStartBlock "$SELLER_PROOF")
+export HISTORICAL_PERIOD_END_BLOCK=$(jq -r .periodEndBlock "$SELLER_PROOF")
+# Chainlink BlockhashStore on Base mainnet. The deploy script defaults to this
+# address and refuses any other store on chain ID 8453.
+export WASH_TRADING_BLOCKHASH_STORE=0x78b69899C8cD252126cBB1A50171ec37286C3877
+```
+
+Set `SP1_VERIFIER`, `SP1_VERIFIER_HASH`, and `DEPLOYER_PRIVATE_KEY` separately.
+`SP1_VERIFIER` must be the **concrete** `SP1VerifierGroth16` deployment for the
+SP1 release the guests were built with — never the `SP1VerifierGateway`
+(`0x397A5f7f3dBd538f23DE225B51f532c34448dA9B` on Base). The gateway is owned and
+routable: its owner can add a route for a new proof selector, and that route
+could accept foreign "proofs" against the registry's immutable program vkeys.
+The registry constructor calls `VERIFIER_HASH()` on the verifier and reverts
+with `InvalidVerifier` if it is missing (the gateway does not implement it) or
+differs from `SP1_VERIFIER_HASH`, and records the hash as `verifierHash`.
+
+The direct proof journal uses schema 1 and contains no child-program vkeys.
+Its ABI includes `uint128 totalSellerVolume` immediately after `uint128 provenWashVolume`.
+Previous journal encodings and guest vkeys are incompatible: build the new guest
+and deploy a new registry with its matching seller vkey before production submission.
+The registry verifies every seller proof against only
+`WASH_TRADING_SELLER_PROGRAM_VKEY`; the proof itself re-runs the closed-loop and
+reciprocal predicates over raw authenticated evidence.
+
+For SP1 `v6.1.0` (the pinned `sp1-sdk` in loop-proof) on Base:
+
+```bash
+export SP1_VERIFIER=0xb69f2584CBcFf99a58C4e7002E8b89Af54a6f4e2
+export SP1_VERIFIER_HASH=0x4388a21c687fdd5f218d7e3d13190cac4c5355818d3605fd5fb811df468ee696
+cast call "$SP1_VERIFIER" 'VERSION()(string)' --rpc-url <rpc>        # "v6.1.0"
+cast call "$SP1_VERIFIER" 'VERIFIER_HASH()(bytes32)' --rpc-url <rpc> # == SP1_VERIFIER_HASH
+```
+
+`VERIFIER_HASH` is `sha256` of the Groth16 verifying key shipped in the matching
+`sp1-verifier` crate (`vk-artifacts/groth16_vk.bin`); its first four bytes are
+the selector prefix of every proof the guests produce. Re-derive both values
+whenever `sp1-sdk` is bumped. Complete the Chainlink backfill below first
+(the registry only reads hashes, so a proof whose blocks are missing from the
+store cannot be authenticated), then deploy the registry:
+
+```bash
+forge script script/DeployWashTradingRegistry.s.sol --rpc-url <rpc> --broadcast
+```
+
+After deployment, call `stageSellerProof`, submit each artifact chunk with
+`authenticateBlockReferences(proofId, ...)`, then call
+`finalizeSellerProof(proofId)`. The contract never adds claims onchain and never
+accepts a lower or equal result.
+
+### Backfill historical Base block hashes
+
+Production seller proofs authenticate every committed Base block hash against
+Chainlink's `BlockhashStore`, which only holds hashes that were stored while the
+block was inside the EVM's 256-block `blockhash()` window. Every other hash the
+proofs need is written into the same store permissionlessly with
+`storeVerifyHeader(n, rawHeader(n + 1))`, walking the parent-hash chain
+backwards from the nearest block Chainlink already knows. Generate a
+digest-pinned plan containing the exact missing proof targets and the anchor
+each walk starts from:
+
+```bash
+export BASE_RPC_URL=<base-archive-rpc-with-debug_getRawHeader>
+export WASH_TRADING_ARTIFACT_DIR=/path/to/production/sellers
+export CHAINLINK_ANCHOR_CATALOG=/path/to/chainlink-blockhash-anchor-catalog.json
+export BACKFILL_PLAN=/path/to/wash-trading-blockhash-backfill-plan.json
+
+export MIN_REQUIRED_BLOCK=$(jq -s 'map(.periodStartBlock) | min' "$WASH_TRADING_ARTIFACT_DIR"/*.json)
+export CURRENT_BASE_BLOCK=$(cast block-number --rpc-url "$BASE_RPC_URL")
+node scripts/enumerate-chainlink-blockhash-anchors.mjs \
+  --rpc-url "$BASE_RPC_URL" \
+  --start-block "$MIN_REQUIRED_BLOCK" \
+  --end-block "$CURRENT_BASE_BLOCK" \
+  --concurrency 4 \
+  --out "$CHAINLINK_ANCHOR_CATALOG"
+
+node scripts/plan-wash-trading-blockhash-backfill.mjs \
+  --artifact-dir "$WASH_TRADING_ARTIFACT_DIR" \
+  --rpc-url "$BASE_RPC_URL" \
+  --anchor-catalog "$CHAINLINK_ANCHOR_CATALOG" \
+  --out "$BACKFILL_PLAN"
+
+jq '{digest, artifacts, liveCoverage, totals}' "$BACKFILL_PLAN"
+
+export HEADER_CACHE=/path/to/wash-trading-header-cache
+node scripts/prefetch-wash-trading-blockhash-headers.mjs \
+  --plan "$BACKFILL_PLAN" \
+  --rpc-url "$BASE_RPC_URL" \
+  --cache-dir "$HEADER_CACHE" \
+  --chunk-size 500 \
+  --rpc-batch-size 50 \
+  --rpc-batch-delay-ms 500 \
+  --concurrency 4
+```
+
+### Executing the Chainlink backfill
+
+Each header becomes one `storeVerifyHeader(n, rawHeader(n + 1))` call; ~138 of
+them are packed per transaction through the canonical `Multicall3`
+(`0xcA11bde05977b3631167028862bE2a173976CA11`), which is atomic, so one
+transaction either stores a whole descending run of hashes or nothing. Chainlink
+verifies `keccak256(header)` against the hash it already holds for `n + 1` and
+stores the header's `parentHash` as `hash(n)`; the executor additionally checks
+the same chain locally against the cached headers and the proofs' committed
+hashes before sending. Measured cost is ~36k gas per header, of which ~20k is
+Chainlink's storage write.
+
+Dry run (estimates gas for the first batch, sends nothing):
+
+```bash
+node scripts/execute-wash-trading-chainlink-backfill.mjs \
+  --plan "$BACKFILL_PLAN" \
+  --rpc-url "$BASE_RPC_URL" \
+  --header-cache "$HEADER_CACHE" \
+  --checkpoint "$HEADER_CACHE/mainnet-chainlink-backfill.checkpoint.json" \
+  --batch-size 150
+```
+
+Test the exact transaction path against a Base-forked Anvil (`anvil --fork-url
+"$BASE_RPC_URL" --port 8555`) by adding `--execute --approve-plan-digest
+"$BACKFILL_PLAN_DIGEST"` with `--rpc-url http://127.0.0.1:8555`. Live Base
+execution additionally requires `BACKFILL_PRIVATE_KEY` and the explicit
+`--allow-live` guard. Start with one batch, inspect the receipt and the stored
+hashes on Chainlink, then repeat the same command without `--maximum-batches`
+to resume:
+
+```bash
+export BACKFILL_PLAN_DIGEST=$(jq -r .digest "$BACKFILL_PLAN")
+export BACKFILL_PRIVATE_KEY=<funded-base-private-key>
+node scripts/execute-wash-trading-chainlink-backfill.mjs \
+  --plan "$BACKFILL_PLAN" \
+  --rpc-url "$BASE_RPC_URL" \
+  --header-cache "$HEADER_CACHE" \
+  --checkpoint "$HEADER_CACHE/mainnet-chainlink-backfill.checkpoint.json" \
+  --batch-size 150 \
+  --in-flight 4 \
+  --maximum-batches 1 \
+  --execute \
+  --allow-live \
+  --approve-plan-digest "$BACKFILL_PLAN_DIGEST"
+```
+
+`--in-flight N` keeps N transactions pending with consecutive nonces and
+settles them in order; every range is checkpointed only after its receipt
+succeeds and the required hashes read back from Chainlink. Ranges longer than
+one batch resume through the per-range `cursors` in the checkpoint because the
+previous transaction already stored the hash the next one verifies against.
+
+Never delete or replace the checkpoint during a live run. Base's sequencer
+rejects raw transactions above 128 KiB, which is what bounds the batch to ~138
+headers. Backfilling does not submit seller proofs; after all ranges complete,
+deploy the registry against the Chainlink store, then stage, authenticate, and
+finalize the existing paid seller proof artifacts.
+
 ## Contracts
 
 ### ANTSToken.sol
