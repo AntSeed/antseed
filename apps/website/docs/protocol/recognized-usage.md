@@ -30,13 +30,48 @@ before an epoch boundary to have power in that epoch.
 Legacy USDC staking remains an eligibility fallback until explicitly disabled;
 the new seller registry does not expose the legacy USDC withdrawal flow.
 
+### Moving stake and early withdrawal
+
+Moving stake preserves the full ANTS principal and the original lock and
+early-exit terms. Rewards already accrued remain claimable using the old
+position ID; future rewards follow the new seller pool when the move takes
+effect, normally in the next epoch. Moving does not bypass the lock.
+
+The Base mainnet settings checked on **September 6, 2026** are:
+
+- **Move-weight penalty: 0%** (`moveWeightPenaltyBps = 0`). If configured above
+  zero, this penalty reduces the moved position's future staking weight, not
+  its principal or already-accrued rewards.
+- **Maximum early-withdrawal slash: 50%** (`maxSlashBps = 5000`).
+- **Minimum early-withdrawal slash: 5%** (`minEarlyExitSlashBps = 500`).
+
+Before the lock ends, the principal penalty is:
+
+```text
+slash percentage = max(5%, min(50%, 50% × remaining lock epochs / total lock epochs))
+```
+
+For example, withdrawing 1,000 ANTS halfway through the lock slashes 250 ANTS
+and returns 750 ANTS. The calculation uses whole epochs, with integer rounding
+in the contract. **At or after lock expiry, the slash is zero.** Withdrawal
+does not slash previously earned rewards, but it removes the position's power
+from the withdrawal epoch onward.
+
+These percentages are owner-configurable settings, not immutable guarantees.
+Check the pool contract's current values before moving or withdrawing stake.
+
 ## Starter positions and seller proxies
 
 Fund `AntseedPositionInit` with ANTS separately. Before global transfers are
 enabled, the funding wallet must be a whitelisted sender. Fund conservatively:
 the faucet has no owner or sweep function, so unused funds cannot be recovered.
 
-An eligible seller can call `initPosition()`. For a contract seller, an
+Starter grants require an agent ID registered in **legacy USDC staking** and
+legacy stake meeting its minimum: `legacyStaking.getAgentId(seller) != 0` and
+`legacyStaking.isStakedAboveMin(seller) == true`. Eligibility through the new
+seller registry or ANTS pools alone does not qualify a seller for this grant.
+
+A qualifying seller can call `initPosition()`. For a contract seller, an
 authorized operator can call `initPosition(seller)`. When caller and seller
 differ, the seller's `isOperator(caller)` must return true. Owning the proxy or
 staking DIEM does not by itself satisfy that check.
@@ -44,6 +79,12 @@ staking DIEM does not by itself satisfy that check.
 The caller owns the resulting position, its staking rewards, and withdrawal
 rights; the seller's agent pool receives the power. There is one starter grant
 per agent. Historical wash flags do not prevent initialization.
+
+All starter positions share the faucet's fixed `initEndEpoch`. Initialization
+requires `currentEpoch() + stakeActivationDelay() < initEndEpoch`; at or beyond
+that limit, it reverts with `InitExpired`. Claiming later does not extend the
+lock's end epoch. The faucet must also hold at least `initAmount` ANTS for each
+grant.
 
 With the recognized-usage CLI, use `antseed seller legacy claim-starter`
 for starter-position initialization. It creates a staking position;
