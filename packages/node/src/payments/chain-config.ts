@@ -33,7 +33,6 @@ export interface ChainConfig {
   registryContractAddress?: string;
   depositsContractAddress: string;
   channelsContractAddress: string;
-  registryContractAddress?: string;
   /** Optional AntseedFreeUsage contract address for zero-price signed usage. */
   freeUsageContractAddress?: string;
   stakingContractAddress?: string;

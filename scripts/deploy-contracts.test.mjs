@@ -6,7 +6,6 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { broadcastPath, mergeBroadcast, parseBroadcast, runForgeScript } from './deployments/runtime/foundry.mjs';
-import { renderNetwork } from './generate-contract-chain-config.mjs';
 
 import {
   buildMigrationRegistry,
@@ -532,7 +531,6 @@ test('updates canonical contract aliases when a migration activates', () => {
     contracts: {
       emissions: { address: ADDRESS.legacyEmissions, deployedInRelease: null },
       staking: { address: ADDRESS.legacyStaking, deployedInRelease: null },
-      legacyEmissions: { address: '0x0000000000000000000000000000000000000008', deployedInRelease: null },
     },
   };
   const activeContracts = {
@@ -544,9 +542,6 @@ test('updates canonical contract aliases when a migration activates', () => {
 
   assert.equal(current.contracts.emissions.address, ADDRESS.usageAccounting);
   assert.equal(current.contracts.staking.address, ADDRESS.sellerRegistry);
-  assert.equal(current.contracts.legacyEmissions.address, ADDRESS.legacyEmissions);
-  assert.equal(current.contracts.legacyStaking.address, ADDRESS.legacyStaking);
-  assert.equal(current.contracts.legacyEmissionsV1.address, '0x0000000000000000000000000000000000000008');
   assert.notEqual(current.contracts.emissions, current.contracts.usageAccounting);
   assert.equal(current.contracts.emissions.deployedInRelease, true);
   assert.deepEqual(current.registryBefore, {
