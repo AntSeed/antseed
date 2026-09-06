@@ -91,18 +91,16 @@ for starter-position initialization. It creates a staking position;
 it does not withdraw locked legacy rewards. That separate release is described
 in [Locked seller rewards: M002](./legacy-emissions.md#locked-seller-rewards-m002).
 
-## Points policies and historical wash trading
+## Reward policies
 
-The owner-managed registry applies policies in registration order. Each policy
-receives `points(channelId, buyer, seller, sellerPoints, buyerPoints)` and returns
-`(sellerPoints, buyerPoints)`. This preserves the existing accounting interface.
-A zeroed side cannot be restored; evaluation ends when both sides are zero.
+Paid usage does not automatically earn ANTS. The registered points policies
+transform buyer and seller points before accounting records them. The historical
+wash-trading policy zeros both sides when the seller's finalized proven wash
+volume reaches 25% of its authenticated historical total. It does not block USDC
+settlement or starter positions, and it does not erase previously recorded points.
 
-The registered wash policy zeros both sides for a seller flagged by the
-historical proof registry's **25% authenticated seller-volume threshold**.
-Flagging affects future records only: it does not erase already credited points.
-The policy reads proofs accepted by the configured registry; submissions to a
-different registry are not automatically recognized.
+See [Reward Policies](./reward-policies.md) for how policies compose, the
+wash-trading rule, and how SP1 proofs are anchored to Base history.
 
 ## Emissions and destinations
 

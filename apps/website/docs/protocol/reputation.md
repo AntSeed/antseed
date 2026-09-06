@@ -51,18 +51,16 @@ Buyers submit structured feedback via the deployed ERC-8004 ReputationRegistry (
 
 Feedback and routing reputation do not automatically grant ANTS or apply a
 fixed on-chain reward multiplier. Recognized-usage accounting applies the
-configured points policies; the registered historical wash-trading policy
+configured [reward policies](./reward-policies.md); the registered historical wash-trading policy
 can zero future rewards without changing settlement stats.
 
 ## ANTS Rewards
 
 **Protocol start: September 10, 2026 at 09:54:21 UTC (epoch 22).**
 
-ANTS rewards use recognized usage, seller-pool power, and epoch-based reward
-accounting. Allocation ceilings are 40% for pool rewards, 20% for buyer and
-seller/operator usage rewards, 15% for the reserve, 15% for the team, and 10%
-for verification. Actual pool and usage rewards depend on the contracts'
-eligibility and dynamic allocation rules.
+Routing reputation helps a buyer choose a seller. ANTS reward accounting is
+separate: it uses recognized usage, seller-pool power, and the configured policies.
+A high routing score does not override a reward exclusion.
 
 See [Recognized Usage and ANTS Rewards](./recognized-usage.md) for the standard
 reward model. **Looking for pre-migration emissions?** The [legacy guide](./legacy-emissions.md)
