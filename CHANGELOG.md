@@ -8,6 +8,12 @@ This project uses selective package publishing. Each release entry lists the pub
 
 ### Added
 
+- Docs: documented ANTS stake-move and early-withdrawal penalties, preserved reward claims, owner-configurable settings, and the legacy-USDC eligibility and expiry requirements for starter positions.
+
+- Docs: clarified the M002 release of 10% of cumulative locked seller rewards, less prior releases, with zero for flagged wash traders; distinguished the recognized-usage CLI starter-position command from legacy reward withdrawals and documented the activation requirements.
+
+- Protocol: documented recognized usage as the reward model starting September 10, 2026 (epoch 22), published all 11 contract addresses, and added a separate legacy-emissions guide with the corrected 65% seller / 5% buyer allocation. SDK chain configuration exposes `recognizedUsage` deployment metadata while active staking/emissions endpoints continue following the confirmed deployment ledger.
+
 - Contracts: simplified `AntseedPointsPolicyRegistry` to chain each policy's returned seller/buyer points in registration order. Zeroed sides cannot be restored, and evaluation stops as soon as both sides reach zero. Removed category merging and multiplier caps/floors without changing the accounting contract or its original seller-first policy returns.
 - Contracts: moved historical wash-trading filtering from starter-position eligibility into `AntseedWashTradingPointsPolicy`. M001 registers this modifier so usage with proven wash-trading sellers earns zero seller and buyer points without blocking initialization or USDC settlement. Existing points, proof formats, and the 25% threshold are unchanged.
 - Contracts: `AntseedPositionInit.initPosition(seller)` lets a seller's authorized operator initialize its starter pool position. Seller eligibility and the one-time grant remain seller-based; the calling operator owns the position and its staker reward/withdrawal rights, allowing existing seller proxies to bootstrap without receiving NFTs. Self-initialization remains available.

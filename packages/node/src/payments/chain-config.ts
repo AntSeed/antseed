@@ -1,6 +1,24 @@
 import type { ChainId } from './types.js';
 import { DEPLOYED_CONTRACT_ADDRESSES } from './generated-contract-addresses.js';
 
+export interface RecognizedUsageDeployment {
+  status: 'deployed' | 'active';
+  effectiveEpoch: number;
+  contracts: {
+    washTradingRegistry: string;
+    emissionsGate: string;
+    sellerPools: string;
+    sellerRegistry: string;
+    positionInit: string;
+    usageAccounting: string;
+    pointsPolicyRegistry: string;
+    washTradingPointsPolicy: string;
+    sellerPoolsRewards: string;
+    usageRewards: string;
+    legacyEmissionsEscrow: string;
+  };
+}
+
 export interface ChainConfig {
   chainId: ChainId;
   evmChainId: number;
@@ -12,6 +30,7 @@ export interface ChainConfig {
    * after the primary).
    */
   fallbackRpcUrls?: string[];
+  registryContractAddress?: string;
   depositsContractAddress: string;
   channelsContractAddress: string;
   /** Optional AntseedFreeUsage contract address for zero-price signed usage. */
@@ -22,6 +41,7 @@ export interface ChainConfig {
   emissionsContractAddress?: string;
   legacyEmissionsContractAddress?: string;
   antsTokenAddress?: string;
+  recognizedUsage?: RecognizedUsageDeployment;
   /** Block when Channels contract was deployed. Floor for event log scans. */
   channelsDeployBlock?: number;
   /** AntseedStats contract address. Populated only where an indexer aggregates it. */

@@ -329,7 +329,17 @@ For tools that can only set a model name, use `<peerId>@<model>` as the model. T
 
 Payments run on **Base Mainnet** by default. Contract addresses are resolved automatically — no manual configuration needed.
 
-### Provider Setup (Selling)
+**Protocol start: September 10, 2026 at 09:54:21 UTC (epoch 22).**
+See [Recognized Usage and ANTS Rewards](../website/docs/protocol/recognized-usage.md)
+for ANTS pool positions, seller eligibility, and usage rewards. The SDK exposes
+the contract inventory as `getChainConfig('base-mainnet').recognizedUsage`.
+
+Looking for pre-migration USDC staking or rewards? See
+[Legacy emissions and claims](../website/docs/protocol/legacy-emissions.md).
+The setup commands below use that legacy USDC interface; they do not create
+ANTS pool positions.
+
+### Legacy USDC Provider Setup (Pre-Migration)
 
 ```bash
 # 1. Set your identity (secp256k1 private key)
