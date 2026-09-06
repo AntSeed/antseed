@@ -636,19 +636,24 @@ for (const creationType of ['CREATE', 'CREATE2', null]) {
   });
 }
 
-for (const [cached, registryState] of [[true, 'valid'], [false, 'valid'], [true, 'missing'], [true, 'mismatched']]) {
+for (const [cached, registryState] of [
+  [true, 'valid'], [false, 'valid'], [true, 'missing'], [true, 'mismatched'],
+  [true, 'missing-policy'], [true, 'wrong-policy'],
+]) {
   test(`checks activation ${cached ? 'with' : 'without'} a local checkpoint and ${registryState} wash registry`, async (t) => {
     const directory = await mkdtemp(path.join(tmpdir(), 'antseed-activated-'));
     t.after(() => rm(directory, { recursive: true, force: true }));
     const emissionsGate = '0x0000000000000000000000000000000000000008';
     const pointsPolicyRegistry = '0x0000000000000000000000000000000000000009';
     const washTradingRegistry = '0x0000000000000000000000000000000000000010';
+    const washTradingPointsPolicy = '0x0000000000000000000000000000000000000012';
     const contracts = Object.fromEntries(Object.entries({
       usageAccounting: ADDRESS.usageAccounting,
       sellerRegistry: ADDRESS.sellerRegistry,
       emissionsGate,
       pointsPolicyRegistry,
       washTradingRegistry,
+      washTradingPointsPolicy,
       positionInit: '0x0000000000000000000000000000000000000011',
     }).map(([key, address]) => [key, { address }]));
     const checkpoint = {
@@ -658,6 +663,7 @@ for (const [cached, registryState] of [[true, 'valid'], [false, 'valid'], [true,
       contracts,
       verificationConfiguration: {
         washTradingRegistry,
+        washTradingPointsPolicy,
         verificationMinterController: ADDRESS.channels,
         emissionsGateOwner: ADDRESS.registry,
         pointsPolicyRegistryOwner: ADDRESS.registry,
@@ -684,7 +690,11 @@ for (const [cached, registryState] of [[true, 'valid'], [false, 'valid'], [true,
     if (cached) await writeJsonAtomic(checkpointFile, checkpoint);
     mockCast(t, (args) => {
       if (args[0] === 'chain-id') return '8453';
-      if (args[0] === 'code') return registryState === 'missing' && args[1] === washTradingRegistry ? '0x' : '0x1234';
+      if (args[0] === 'code') {
+        const missing = registryState === 'missing' && args[1] === washTradingRegistry
+          || registryState === 'missing-policy' && args[1] === washTradingPointsPolicy;
+        return missing ? '0x' : '0x1234';
+      }
       assert.equal(args[0], 'call', 'restart must only read chain state');
       const [, address, signature] = args;
       if (signature === 'registry()(address)') {
@@ -702,7 +712,8 @@ for (const [cached, registryState] of [[true, 'valid'], [false, 'valid'], [true,
         'pointsPolicy()(address)': pointsPolicyRegistry,
         'washTradingRegistry()(address)': registryState === 'mismatched' ? ADDRESS.channels : washTradingRegistry,
         'minters(bytes32)(address,uint32,bool)': JSON.stringify([ADDRESS.channels, 10000, true]),
-        'policyCount()(uint256)': '0',
+        'policyCount()(uint256)': '1',
+        'policyAt(uint256)(address)': registryState === 'wrong-policy' ? ADDRESS.channels : washTradingPointsPolicy,
         'owner()(address)': ADDRESS.registry,
         'genesis()(uint256)': '1000',
         'epochDuration()(uint256)': '100',
@@ -846,6 +857,7 @@ async function m001Fixture(testContext) {
     AntseedLegacyEmissionsEscrow: '0x000000000000000000000000000000000000000a',
     AntseedPositionInit: '0x000000000000000000000000000000000000000b',
     AntseedWashTradingRegistry: '0x000000000000000000000000000000000000000c',
+    AntseedWashTradingPointsPolicy: '0x000000000000000000000000000000000000000d',
   };
   const canonical = {
     network, chainId, release: '000-baseline', status: 'active', $schema: '../schema.json',
@@ -879,7 +891,7 @@ async function m001Fixture(testContext) {
     }));
     await writeJsonAtomic(file, broadcast);
   }
-  const state = { deployed: false, active: false, paused: false, failForge: false, badBytecode: false, policyCount: 0, receiptsLive: true };
+  const state = { deployed: false, active: false, paused: false, failForge: false, badBytecode: false, policyCount: 1, receiptsLive: true };
   const calls = [];
   const owners = {};
   const artifactRoot = path.join(CONTRACTS_ROOT, 'out');
@@ -937,6 +949,7 @@ async function m001Fixture(testContext) {
       'paused()(bool)': String(state.paused), 'currentEpoch()(uint256)': '11',
       'effectiveEpoch()(uint256)': '11', 'genesis()(uint256)': '1000', 'epochDuration()(uint256)': '100',
       'policyCount()(uint256)': String(state.policyCount),
+      'policyAt(uint256)(address)': contracts.AntseedWashTradingPointsPolicy,
       'minters(bytes32)(address,uint32,bool)': JSON.stringify([ADDRESS.registry, 10000, true]),
       'staked(address)(uint256)': '1',
     };
@@ -1020,12 +1033,15 @@ test('M001 uses one configuration snapshot for checkpoint validation', async (te
   await fixture.deploy('broadcast');
   fixture.calls.length = 0;
   assert.equal((await migration.observe(fixture.context)).deployment.valid, true);
-  for (const signature of ['minters(bytes32)(address,uint32,bool)', 'policyCount()(uint256)', 'washTradingRegistry()(address)']) {
+  for (const signature of [
+    'minters(bytes32)(address,uint32,bool)', 'policyCount()(uint256)',
+    'washTradingRegistry()(address)', 'policyAt(uint256)(address)',
+  ]) {
     assert.equal(fixture.calls.filter(call => call.args.includes(signature)).length, 1);
   }
-  fixture.state.policyCount = 1;
-  assert.equal((await migration.observe(fixture.context)).state, 'invalid');
   fixture.state.policyCount = 0;
+  assert.equal((await migration.observe(fixture.context)).state, 'invalid');
+  fixture.state.policyCount = 1;
   fixture.owners[fixture.contracts.AntseedEmissionsGate] = ADDRESS.channels;
   assert.equal((await migration.observe(fixture.context)).state, 'invalid');
 });
@@ -1337,15 +1353,17 @@ test('permits only the phase-one record to be dirty during a cutover broadcast',
 test('enforces M001 release invariants', () => {
   const contracts = {
     washTradingRegistry: { address: ADDRESS.registry },
+    washTradingPointsPolicy: { address: ADDRESS.sellerRegistry },
     positionInit: { address: ADDRESS.channels },
   };
   const validate = (record) => migration.recordErrors({ contracts, ...record }).length === 0;
   const verificationConfiguration = {
     washTradingRegistry: ADDRESS.registry,
+    washTradingPointsPolicy: ADDRESS.sellerRegistry,
     verificationMinterController: ADDRESS.registry,
     verificationMinterShareBps: 10_000,
     verificationMinterEditable: true,
-    pointsPolicyCount: 0,
+    pointsPolicyCount: 1,
     emissionsGateOwner: ADDRESS.ants,
     pointsPolicyRegistryOwner: ADDRESS.channels,
   };
@@ -1355,18 +1373,23 @@ test('enforces M001 release invariants', () => {
   assert.equal(
     validate({ verificationConfiguration: { ...verificationConfiguration, washTradingRegistry: ADDRESS.ants } }),
     false,
-    'the faucet must pin the registry deployed by M001',
+    'the points policy must pin the registry deployed by M001',
   );
   assert.equal(validate({}), false, 'verificationConfiguration is required');
+  assert.equal(
+    validate({ verificationConfiguration: { ...verificationConfiguration, washTradingPointsPolicy: ADDRESS.ants } }),
+    false,
+    'the registered policy must match the deployment record',
+  );
   assert.equal(
     validate({ verificationConfiguration: { ...verificationConfiguration, verificationMinterShareBps: 5000 } }),
     false,
     'the verification bucket must stay at 10%',
   );
   assert.equal(
-    validate({ verificationConfiguration: { ...verificationConfiguration, pointsPolicyCount: 1 } }),
+    validate({ verificationConfiguration: { ...verificationConfiguration, pointsPolicyCount: 0 } }),
     false,
-    'M001 must not activate a points policy',
+    'M001 must activate the wash-trading points policy',
   );
   assert.equal(
     validate({ verificationConfiguration: { ...verificationConfiguration, verificationMinterEditable: false } }),
@@ -1387,6 +1410,7 @@ for (const hasCutoverDeployment of [false, true]) {
     };
     const contracts = Object.fromEntries(Object.entries({
       washTradingRegistry: ADDRESS.registry,
+      washTradingPointsPolicy: ADDRESS.sellerRegistry,
       positionInit: ADDRESS.channels,
       usageAccounting: ADDRESS.usageAccounting,
       sellerRegistry: ADDRESS.sellerRegistry,
@@ -1404,10 +1428,11 @@ for (const hasCutoverDeployment of [false, true]) {
     const original = structuredClone(checkpoint);
     const verification = {
       washTradingRegistry: ADDRESS.registry,
+      washTradingPointsPolicy: ADDRESS.sellerRegistry,
       verificationMinterController: ADDRESS.registry,
       verificationMinterShareBps: 10_000,
       verificationMinterEditable: true,
-      pointsPolicyCount: 0,
+      pointsPolicyCount: 1,
       emissionsGateOwner: ADDRESS.ants,
       pointsPolicyRegistryOwner: ADDRESS.channels,
     };

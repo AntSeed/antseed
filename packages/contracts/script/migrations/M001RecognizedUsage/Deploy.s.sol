@@ -11,6 +11,7 @@ import { AntseedUsageAccounting } from "../../../emissions/AntseedUsageAccountin
 import { AntseedWashTradingRegistry } from "../../../integrity/AntseedWashTradingRegistry.sol";
 import { IAntseedRegistry } from "../../../interfaces/IAntseedRegistry.sol";
 import { AntseedPointsPolicyRegistry } from "../../../policies/AntseedPointsPolicyRegistry.sol";
+import { AntseedWashTradingPointsPolicy } from "../../../policies/AntseedWashTradingPointsPolicy.sol";
 import { AntseedPositionInit } from "../../../sellers/AntseedPositionInit.sol";
 import { AntseedSellerPools } from "../../../sellers/AntseedSellerPools.sol";
 import { AntseedSellerRegistry } from "../../../sellers/AntseedSellerRegistry.sol";
@@ -218,7 +219,6 @@ contract M001DeployRecognizedUsage is Script {
         AntseedPositionInit positionInit = new AntseedPositionInit(
             address(sellerPools),
             existingStaking,
-            address(washTradingRegistry),
             vm.envOr("POSITION_INIT_AMOUNT", uint256(1 ether)),
             vm.envOr("POSITION_INIT_END_EPOCH", effectiveEpoch + 104)
         );
@@ -230,8 +230,12 @@ contract M001DeployRecognizedUsage is Script {
         console.log("UsageAccounting:        ", address(usageAccounting));
 
         AntseedPointsPolicyRegistry pointsPolicyRegistry = new AntseedPointsPolicyRegistry(deployer);
+        AntseedWashTradingPointsPolicy washTradingPointsPolicy =
+            new AntseedWashTradingPointsPolicy(address(washTradingRegistry));
+        pointsPolicyRegistry.registerPolicy(address(washTradingPointsPolicy));
         usageAccounting.setPointsPolicy(address(pointsPolicyRegistry));
         console.log("PointsPolicyRegistry:   ", address(pointsPolicyRegistry));
+        console.log("WashTradingPointsPolicy:", address(washTradingPointsPolicy));
 
         AntseedSellerPoolsRewards sellerPoolsRewards =
             new AntseedSellerPoolsRewards(address(gate), address(sellerPools), address(usageAccounting));
@@ -300,7 +304,8 @@ contract M001DeployRecognizedUsage is Script {
         require(verificationController == verificationWallet, "unexpected verification controller");
         require(verificationShareBps == 10_000, "unexpected verification share");
         require(verificationEditable, "verification minter must remain editable");
-        require(pointsPolicyRegistry.policyCount() == 0, "M001 must not activate points policies");
+        require(pointsPolicyRegistry.policyCount() == 1, "unexpected points policy count");
+        require(pointsPolicyRegistry.isPolicyRegistered(address(washTradingPointsPolicy)), "wash policy missing");
         require(gate.owner() == deployer, "unexpected gate owner");
         require(gate.pendingOwner() == address(0), "unexpected pending gate owner");
         require(pointsPolicyRegistry.owner() == deployer, "unexpected points registry owner");

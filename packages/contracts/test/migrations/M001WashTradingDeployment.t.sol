@@ -6,6 +6,8 @@ import { AntseedWashTradingRegistry } from "../../integrity/AntseedWashTradingRe
 import { AntseedRegistry } from "../../core/AntseedRegistry.sol";
 import { ANTSToken } from "../../core/ANTSToken.sol";
 import { AntseedPositionInit } from "../../sellers/AntseedPositionInit.sol";
+import { AntseedWashTradingPointsPolicy } from "../../policies/AntseedWashTradingPointsPolicy.sol";
+import { AntseedPointsPolicyRegistry } from "../../policies/AntseedPointsPolicyRegistry.sol";
 import { MockERC8004Registry } from "../mocks/MockERC8004Registry.sol";
 import { MockSP1Verifier, MockBlockhashStore } from "../AntseedWashTradingRegistry.t.sol";
 
@@ -77,7 +79,7 @@ contract M001WashTradingDeploymentTest is Test {
         _configureEnvironment();
         _checkInvalidBlockRange();
         _configureEnvironment();
-        _checkFullDeployPinsNewRegistryIntoPositionInit();
+        _checkFullDeployPinsNewRegistryIntoPointsPolicy();
     }
 
     function _checkPinnedProofConfiguration() internal {
@@ -121,7 +123,7 @@ contract M001WashTradingDeploymentTest is Test {
         script.deployWashTradingRegistry();
     }
 
-    function _checkFullDeployPinsNewRegistryIntoPositionInit() internal {
+    function _checkFullDeployPinsNewRegistryIntoPointsPolicy() internal {
         address deployer = makeAddr("m001-deployer");
         vm.deal(deployer, 100 ether);
         deployCodeTo("ANTSToken.sol:ANTSToken", ANTS_TOKEN);
@@ -154,17 +156,25 @@ contract M001WashTradingDeploymentTest is Test {
         script.run();
         Vm.Log[] memory logs = vm.getRecordedLogs();
         address faucet;
+        address policy;
+        address policyRegistry;
         for (uint256 index; index < logs.length; index++) {
             if (
-                logs[index].emitter == ANTS_TOKEN
+                faucet == address(0) && logs[index].emitter == ANTS_TOKEN
                     && logs[index].topics[0] == keccak256("Approval(address,address,uint256)")
             ) {
                 faucet = address(uint160(uint256(logs[index].topics[1])));
-                break;
+            }
+            if (logs[index].topics[0] == keccak256("PolicyRegistered(address,uint256)")) {
+                policy = address(uint160(uint256(logs[index].topics[1])));
+                policyRegistry = logs[index].emitter;
             }
         }
         assertTrue(faucet != address(0));
-        assertEq(address(AntseedPositionInit(faucet).washTradingRegistry()), expectedWashRegistry);
+        assertTrue(policy != address(0));
+        assertEq(address(AntseedWashTradingPointsPolicy(policy).washTradingRegistry()), expectedWashRegistry);
+        assertEq(AntseedPointsPolicyRegistry(policyRegistry).policyCount(), 1);
+        assertTrue(AntseedPointsPolicyRegistry(policyRegistry).isPolicyRegistered(policy));
         _assertRegistry(AntseedWashTradingRegistry(expectedWashRegistry));
         assertEq(registry.emissions(), address(legacy));
         assertEq(registry.staking(), address(legacy));

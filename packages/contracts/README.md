@@ -386,16 +386,29 @@ ANTS emission controller using the Synthetix reward-per-point pattern. O(1) gas 
 
 `script/migrations/M001RecognizedUsage/Deploy.s.sol` deploys the shared
 recognized-usage contracts before
-the epoch-boundary registry flip. The deployment includes an empty
-`AntseedPointsPolicyRegistry` and permanently points `AntseedUsageAccounting`
-at that registry. Feature branches deploy and register their own points-modifier
-leaves; the foundation broadcast does not deploy or register wash-trading or
-model-verification modifiers.
+the epoch-boundary registry flip. The deployment wires `AntseedUsageAccounting`
+to `AntseedPointsPolicyRegistry` with one registered modifier:
+`AntseedWashTradingPointsPolicy`. Usage with a proven wash-trading seller earns
+zero seller and buyer points; other usage retains its raw points. This does not
+block USDC settlement or starter-position initialization. Model-verification
+modifiers can be registered separately later.
+
+Accounting still calls `points(channelId, buyer, seller, rawPoints)` once.
+The registry initializes both sides to `rawPoints`, then calls each registered
+policy's `points(channelId, buyer, seller, sellerPoints, buyerPoints)` in order,
+passing its output to the next policy. Both interfaces return
+`(sellerPoints, buyerPoints)`, preserving accounting's original unpacking. A zeroed side stays zero; once both sides
+are zero the registry immediately returns without calling any later policies.
+There are no category-merging rules, multiplier floors, or multiplier caps.
+Registration/removal remains owner-controlled and limited to eight policies;
+removal preserves the remaining order, while re-registration appends a policy.
+Policies are trusted to return appropriately scaled points. Changing a policy
+affects future recording only, not existing credited points.
 
 `script/migrations/M001RecognizedUsage/Cutover.s.sol` performs the matching
 epoch-boundary activation. Both scripts require expected legacy addresses and
 abort if the live Registry does not match them. Cutover re-checks that the 10%
-verification bucket is editable, no policy is active, and both administrative
+verification bucket is editable, the recorded wash-trading policy is active, and both administrative
 contracts remain owned by the deployer. After each non-fork broadcast, the
 CLI records Foundry receipts using the append-only process in
 `deployments/README.md`; it updates `current.json` only after activation checks pass.
@@ -411,7 +424,7 @@ Run the commands below from the repository root. These examples target Base
 mainnet. Before starting, configure the RPC, explorer API key, deployment
 inputs, and wallets described in
 [the M001 runbook](script/migrations/M001RecognizedUsage/README.md).
-The required wash-trading registry must already be deployed. Account names
+M001 deploys the wash-trading registry and its points policy. Account names
 below are examples, not defaults: each wallet must hold its named on-chain
 role. Deploy well before the boundary; the deployment script refuses to start
 with one hour or less remaining in the current epoch.
@@ -581,15 +594,21 @@ receive an NFT or call the faucet itself.
 Every starter position uses the shared `POSITION_INIT_END_EPOCH`, so
 claiming later never gives a seller more power than an earlier claimant. The
 same M001 broadcast first deploys `AntseedWashTradingRegistry`, then pins it
-into the faucet. Configure `SP1_VERIFIER`, `SP1_VERIFIER_HASH`,
+into `AntseedWashTradingPointsPolicy`. The faucet has no wash-status dependency.
+Configure `SP1_VERIFIER`, `SP1_VERIFIER_HASH`,
 `WASH_TRADING_SELLER_PROGRAM_VKEY`, `HISTORICAL_PERIOD_START_BLOCK`, and
 `HISTORICAL_PERIOD_END_BLOCK` before deployment. `WASH_TRADING_BLOCKHASH_STORE`
 defaults to Chainlink's Base store, which is mandatory on Base mainnet; supply
 a deployed store explicitly on other networks. No separately deployed registry
 or `WASH_TRADING_REGISTRY` input is needed. The ledger records the registry's
-constructor arguments and bytecode, and validates the faucet's pinned address
-on deployment and restart. The faucet refuses sellers already proven as wash
-traders; deploying an empty registry does not submit historical proofs.
+constructor arguments and bytecode, and validates the policy's pinned registry
+and registration on deployment and restart. Submit and finalize historical
+proofs before cutover: deploying an empty registry does not submit proofs, and
+flagging affects future usage records only, not points already recorded.
+The existing 25% threshold and proof format are unchanged. Flagged sellers can
+initialize positions and serve paid usage, but that usage contributes no buyer,
+seller, or pool-weighted points. This is seller-based filtering, not a ban on
+the address earning as a buyer of other sellers or as a staker in other pools.
 The `--fork-test` mode deploys the real registry, using a rehearsal-only verifier
 stub unless `SP1_VERIFIER` and its matching hash are supplied. Proof verification
 is not exercised by that stub; it is never used by ordinary deployment runs.
@@ -597,7 +616,7 @@ is not exercised by that stub; it is never used by ordinary deployment runs.
 The verification emission bucket initially remains controlled by
 `VERIFICATION_WALLET`. A separate verification deployment may transfer that
 controller to its rewards contract.
-M001 leaves the bucket at 10% and editable, registers no points policies, and
+M001 leaves the bucket at 10% and editable, registers the wash-trading policy, and
 leaves `AntseedEmissionsGate` and `AntseedPointsPolicyRegistry` owned by the
 deployer.
 Do not renounce gate ownership or replace/lock the verification minter before

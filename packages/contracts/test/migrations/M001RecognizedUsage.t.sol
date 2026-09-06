@@ -6,6 +6,7 @@ import "forge-std/Test.sol";
 import { AntseedRegistry } from "../../core/AntseedRegistry.sol";
 import { AntseedEmissionsGate } from "../../emissions/AntseedEmissionsGate.sol";
 import { AntseedPointsPolicyRegistry } from "../../policies/AntseedPointsPolicyRegistry.sol";
+import { AntseedWashTradingPointsPolicy } from "../../policies/AntseedWashTradingPointsPolicy.sol";
 
 contract M001RecognizedUsageTest is Test {
     AntseedRegistry internal registry;
@@ -48,13 +49,16 @@ contract M001RecognizedUsageTest is Test {
     function test_m001LeavesVerificationConfigurationWithDeployer() public {
         AntseedEmissionsGate gate = new AntseedEmissionsGate(address(0x4001), address(0x4002), 15_000, 15_000);
         AntseedPointsPolicyRegistry pointsPolicyRegistry = new AntseedPointsPolicyRegistry(address(this));
+        AntseedWashTradingPointsPolicy washPolicy = new AntseedWashTradingPointsPolicy(address(0x5001));
+        pointsPolicyRegistry.registerPolicy(address(washPolicy));
 
         gate.setMinter(VERIFICATION_MINTER_ID, VERIFICATION_WALLET, 10_000, true);
         (address controller, uint32 shareBps, bool editable) = gate.minters(VERIFICATION_MINTER_ID);
         assertEq(controller, VERIFICATION_WALLET);
         assertEq(shareBps, 10_000);
         assertTrue(editable);
-        assertEq(pointsPolicyRegistry.policyCount(), 0);
+        assertEq(pointsPolicyRegistry.policyCount(), 1);
+        assertTrue(pointsPolicyRegistry.isPolicyRegistered(address(washPolicy)));
         assertEq(gate.owner(), address(this));
         assertEq(gate.pendingOwner(), address(0));
         assertEq(pointsPolicyRegistry.owner(), address(this));

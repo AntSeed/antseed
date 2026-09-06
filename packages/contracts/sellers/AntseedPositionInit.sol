@@ -7,7 +7,6 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import { IAntseedSellerPools } from "../interfaces/IAntseedSellerPools.sol";
 import { IAntseedStaking } from "../interfaces/IAntseedStaking.sol";
-import { IAntseedWashTradingStatus } from "../interfaces/IAntseedWashTradingStatus.sol";
 
 interface ISellerDelegation {
     function isOperator(address account) external view returns (bool);
@@ -27,9 +26,6 @@ interface ISellerDelegation {
  *         Eligibility is anchored to the legacy USDC staking contract: the
  *         seller must have an agent binding there and stake above the legacy
  *         minimum, so only sellers who put up real USDC stake can claim.
- *         Sellers the wash-trading registry has proven as wash traders are
- *         refused: a starter position is what switches their recognized-usage
- *         accounting on, and proven wash usage must never be recognized.
  *
  *         All starter positions share one fixed `initEndEpoch` instead of a
  *         fixed lock duration: a claim locks from its activation epoch until
@@ -49,7 +45,6 @@ contract AntseedPositionInit is ReentrancyGuard {
     // ─── External Contracts ──────────────────────────────────────────
     IAntseedSellerPools public immutable sellerPools;
     IAntseedStaking public immutable legacyStaking;
-    IAntseedWashTradingStatus public immutable washTradingRegistry;
     IERC20 public immutable antsToken;
 
     // ─── Position Terms ──────────────────────────────────────────────
@@ -68,21 +63,14 @@ contract AntseedPositionInit is ReentrancyGuard {
     error InvalidAddress();
     error InvalidValue();
     error NotLegacySeller();
-    error WashTrader();
     error AlreadyInitialized();
     error InitDepleted();
     error InitExpired();
     error NotOperator();
 
     // ─── Constructor ─────────────────────────────────────────────────
-    constructor(
-        address _sellerPools,
-        address _legacyStaking,
-        address _washTradingRegistry,
-        uint256 _initAmount,
-        uint256 _initEndEpoch
-    ) {
-        if (_sellerPools == address(0) || _legacyStaking == address(0) || _washTradingRegistry == address(0)) {
+    constructor(address _sellerPools, address _legacyStaking, uint256 _initAmount, uint256 _initEndEpoch) {
+        if (_sellerPools == address(0) || _legacyStaking == address(0)) {
             revert InvalidAddress();
         }
         if (_initAmount == 0) revert InvalidValue();
@@ -90,7 +78,6 @@ contract AntseedPositionInit is ReentrancyGuard {
 
         sellerPools = IAntseedSellerPools(_sellerPools);
         legacyStaking = IAntseedStaking(_legacyStaking);
-        washTradingRegistry = IAntseedWashTradingStatus(_washTradingRegistry);
         initAmount = _initAmount;
         initEndEpoch = _initEndEpoch;
 
@@ -109,8 +96,7 @@ contract AntseedPositionInit is ReentrancyGuard {
      * @notice Create one position of `initAmount` ANTS in the caller's own
      *         agent pool, locked from the next activation epoch until
      *         `initEndEpoch`. The lANTS position belongs to the caller.
-     *         One starter position per agent id, forever. Proven wash traders
-     *         are refused.
+     *         One starter position per agent id, forever.
      */
     function initPosition() external nonReentrant returns (uint256 positionId) {
         return _initPosition(msg.sender);
@@ -130,7 +116,6 @@ contract AntseedPositionInit is ReentrancyGuard {
 
         uint256 agentId = legacyStaking.getAgentId(seller);
         if (agentId == 0 || !legacyStaking.isStakedAboveMin(seller)) revert NotLegacySeller();
-        if (washTradingRegistry.isProvenWashTrader(seller)) revert WashTrader();
         if (agentInitialized[agentId]) revert AlreadyInitialized();
         if (antsToken.balanceOf(address(this)) < initAmount) revert InitDepleted();
 
