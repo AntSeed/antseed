@@ -9,9 +9,10 @@ import {
   buildNetworkServiceOffers,
   compareEffectiveModelReputation,
   computeOnChainReputationScore,
+  computeRawOnChainScore,
+  routingReputationBreakdown,
   effectiveModelReputationScore,
   modelRouteTotalPrice,
-  normalizedModelReputationScore as normalizeModelReputationScore,
   rankModelRoutes,
   selectLowestPricedCanonicalOffers,
   type CatalogServiceCapabilities,
@@ -103,7 +104,7 @@ function normalizedModelAlias(serviceId: string): string {
 
 function onChainReputationScore(peer: PeerInfo | undefined, nowMs: number): number | null {
   if (!peer) return null
-  const score = peer.onChainReputationScore ?? computeOnChainReputationScore(peer, nowMs)
+  const score = computeRawOnChainScore(peer, nowMs) ?? peer.onChainReputationScore
   return typeof score === 'number' && Number.isFinite(score) ? score : null
 }
 
@@ -113,10 +114,9 @@ function legacyPeerReputationScore(peer: PeerInfo, nowMs: number): number | null
 }
 
 export function normalizedModelReputationScore(peer: PeerInfo, nowMs: number = Date.now()): number | null {
-  return normalizeModelReputationScore({
-    ...peer,
-    onChainReputationScore: peer.onChainReputationScore ?? computeOnChainReputationScore(peer, nowMs),
-  })
+  const breakdown = routingReputationBreakdown(peer, nowMs)
+  return breakdown.rawChainScore === null && breakdown.legacyChainScore === null && breakdown.external.points === 0
+    ? null : breakdown.effectiveReputationScore
 }
 
 function countReported<T>(values: Array<T | undefined>): number {

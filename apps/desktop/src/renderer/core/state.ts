@@ -233,6 +233,7 @@ export type DiscoverRow = {
   onChainTrustScore: number | null;
   /** Model-specific 0-100 reputation after pricing-completeness adjustments. */
   effectiveReputationScore?: number | null;
+  reputationBreakdown?: { version: 1; rawChainScore: number | null; legacyChainScore: number | null; externalScore: number };
   onChainSybilRisk: number | null;
   onChainSybilFlags: string[];
 

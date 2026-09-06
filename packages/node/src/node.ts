@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { ExternalHistoryCollector } from './reputation/external-history.js';
 
 import type { Identity, IdentityStore } from "./p2p/identity.js";
 import { loadOrCreateIdentity } from "./p2p/identity.js";
@@ -106,8 +107,7 @@ import {
 } from "./buyer-request-handler.js";
 import {
   buildSybilContext,
-  computeOnChainScore,
-  computeOnChainScoreWithRisk,
+  computeRawOnChainScore,
   computeOnChainSybilRisk,
   computeOnChainTrust,
   type SybilContext,
@@ -385,6 +385,7 @@ export class AntseedNode extends EventEmitter {
   private _partialPeerEnrichmentChain: Promise<void> = Promise.resolve();
   /** Serializes non-blocking external claim verification for discovered peers. */
   private _externalVerificationChain: Promise<void> = Promise.resolve();
+  private _externalHistoryCollector = new ExternalHistoryCollector();
   private _externalVerificationCache = new Map<PeerId, {
     claimsKey: string;
     checkedAtMs: number;
@@ -845,6 +846,7 @@ export class AntseedNode extends EventEmitter {
     const queued: PeerInfo[] = [];
     const nowMs = Date.now();
     for (const peer of peers) {
+      if (this._externalVerificationInFlight.size >= 512) break;
       const claimsKey = this._externalVerificationClaimsKey(peer);
       if (!claimsKey) continue;
       const cacheKey = `${peer.peerId}:${claimsKey}`;
@@ -916,16 +918,17 @@ export class AntseedNode extends EventEmitter {
         domains,
         github,
       };
+      results.externalHistory = await this._externalHistoryCollector.collect(results);
+      if (this._externalVerificationCache.size >= 512) {
+        this._externalVerificationCache.delete(this._externalVerificationCache.keys().next().value!);
+      }
       this._externalVerificationCache.set(peer.peerId, {
         claimsKey,
         checkedAtMs,
         results,
       });
       const verifiedPeer: PeerInfo = { ...peer, verificationResults: results };
-      const risk = typeof verifiedPeer.onChainSybilRisk === 'number'
-        ? verifiedPeer.onChainSybilRisk
-        : 0;
-      verifiedPeer.onChainReputationScore = computeOnChainScoreWithRisk(verifiedPeer, risk) ?? verifiedPeer.onChainReputationScore;
+      verifiedPeer.onChainReputationScore = computeRawOnChainScore(verifiedPeer) ?? undefined;
       return verifiedPeer;
     } catch (err) {
       debugWarn(`[Node] External verification failed for ${peer.peerId.slice(0, 12)}...: ${err instanceof Error ? err.message : err}`);
@@ -1096,7 +1099,7 @@ export class AntseedNode extends EventEmitter {
         p.onChainSybilRisk = sybil.risk;
         p.onChainSybilFlags = sybil.flags;
       }
-      p.onChainReputationScore = computeOnChainScore(p, ctx) ?? undefined;
+      p.onChainReputationScore = computeRawOnChainScore(p) ?? undefined;
     }
   }
 

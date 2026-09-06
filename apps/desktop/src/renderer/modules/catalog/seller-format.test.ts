@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
 import type { DiscoverRow } from '../../core/state';
-import { sellerMetaLabel, sellerReputationLabel } from './seller-format.js';
+import { sellerMetaLabel, sellerReputationLabel, sellerReputationExplanation } from './seller-format.js';
+
+test('seller reputation explains public history separately from chain evidence', () => {
+  const route = { effectiveReputationScore: 70,
+    reputationBreakdown: { version: 1, rawChainScore: 0, legacyChainScore: null, externalScore: 70 } } as DiscoverRow;
+  assert.match(sellerReputationExplanation(route), /Chain: 0.0\/10/);
+  assert.match(sellerReputationExplanation(route), /Public history after failure penalties: 7.0\/10/);
+  assert.match(sellerReputationExplanation(route), /not proof of service quality/);
+});
 
 test('seller reputation displays the effective model score, not raw trust', () => {
   const route = {

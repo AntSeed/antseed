@@ -10,7 +10,7 @@ import { loadConfig } from '../../../config/loader.js';
 import {
   AntseedNode,
   buildNetworkServiceOffers,
-  computeOnChainReputationScore,
+  computeRoutingReputationScore,
   type NetworkServiceOffer,
   type PeerInfo,
 } from '@antseed/node';
@@ -211,7 +211,7 @@ function resolveBestPaidPricing(peer: PeerInfo): { input: number | null; output:
 }
 
 function effectiveOnChainReputationScore(peer: PeerInfo): number | null {
-  return peer.onChainReputationScore ?? computeOnChainReputationScore(peer);
+  return computeRoutingReputationScore(peer);
 }
 
 const BROWSE_SYBIL_WARN_THRESHOLD = 0.30;

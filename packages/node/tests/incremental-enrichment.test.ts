@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AntseedNode, type PeerInfo } from '../src/node.js';
 import { GITHUB_VERIFICATION_PROOF_TYPE } from '../src/discovery/github-verification.js';
+import * as publicJson from '../src/reputation/public-json.js';
 
 function makePeer(peerId = 'a'.repeat(40)): PeerInfo {
   return {
@@ -160,7 +161,8 @@ describe('AntseedNode incremental discovery enrichment', () => {
     }), { status: 200 }));
 
     node.on('peers:discovered', discovered);
-    vi.stubGlobal('fetch', fetchMock);
+    const proofFetch = vi.spyOn(publicJson, 'fetchPublicProof').mockImplementation(fetchMock);
+    (node as any)._externalHistoryCollector = { collect: vi.fn().mockResolvedValue({ version: 1, identities: [] }) };
     try {
       (node as any)._started = true;
       (node as any)._queueExternalVerification([peer]);
@@ -173,8 +175,9 @@ describe('AntseedNode incremental discovery enrichment', () => {
       const [[peers]] = discovered.mock.calls as [[PeerInfo[]]];
       expect(peers[0]?.verificationResults?.verified).toBe(true);
       expect(peers[0]?.verificationResults?.github[0]?.username).toBe('octocat');
+      expect(peers[0]?.verificationResults?.externalHistory?.version).toBe(1);
     } finally {
-      vi.unstubAllGlobals();
+      proofFetch.mockRestore();
     }
   });
 });

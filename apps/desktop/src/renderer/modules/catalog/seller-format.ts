@@ -10,6 +10,14 @@ export function sellerReputationLabel(route: DiscoverRow): string {
   return reputationScaleLabel(score);
 }
 
+export function sellerReputationExplanation(route: DiscoverRow): string {
+  const breakdown = route.reputationBreakdown;
+  if (!breakdown) return `Routing reputation: ${sellerReputationLabel(route)}/10`;
+  const chain = breakdown.rawChainScore ?? breakdown.legacyChainScore;
+  const chainLabel = chain === null ? 'unavailable' : `${(chain / 10).toFixed(1)}/10`;
+  return `Routing: ${sellerReputationLabel(route)}/10. Chain: ${chainLabel}. Public history after failure penalties: ${(breakdown.externalScore / 10).toFixed(1)}/10. Public history is a heuristic, not proof of service quality.`;
+}
+
 /** 0-100 score → "9.8" (10-point scale). */
 export function reputationScaleLabel(score: number): string {
   return (Math.min(score, 100) / 10).toFixed(1);

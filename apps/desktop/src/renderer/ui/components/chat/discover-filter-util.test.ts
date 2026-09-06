@@ -78,6 +78,7 @@ test('rowChannelCount uses the larger of active vs metadata channel count', () =
 });
 
 test('matchesMinReputationScore gates rows by reputation threshold', () => {
+  assert.ok(matchesMinReputationScore(mkRow({ onChainReputationScore: 0, effectiveReputationScore: 70 }), 60));
   assert.ok(matchesMinReputationScore(mkRow({ onChainReputationScore: 75 }), 50));
   assert.ok(matchesMinReputationScore(mkRow({ onChainReputationScore: 50 }), 50));
   assert.ok(!matchesMinReputationScore(mkRow({ onChainReputationScore: 49 }), 50));

@@ -4,6 +4,15 @@ import { isTextCapableRow } from './model-capabilities';
 
 const CHAT_SERVICE_SELECTION_SEPARATOR = '\u0001';
 
+function normalizeReputationBreakdown(raw: unknown): DiscoverRow['reputationBreakdown'] {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const value = raw as Record<string, unknown>;
+  const score = (input: unknown) => typeof input === 'number' && Number.isFinite(input) && input >= 0 && input <= 100 ? input : null;
+  const externalScore = score(value.externalScore);
+  if (value.version !== 1 || externalScore === null) return undefined;
+  return { version: 1, rawChainScore: score(value.rawChainScore), legacyChainScore: score(value.legacyChainScore), externalScore };
+}
+
 function toNullableBigintString(v: unknown): string | null {
   if (v === null || v === undefined) return null;
   if (typeof v === 'string' && /^\d+$/.test(v)) return v;
@@ -134,6 +143,7 @@ export function normalizeDiscoverRow(raw: unknown): DiscoverRow | null {
     onChainTrustScore: typeof r.onChainTrustScore === 'number' && Number.isFinite(r.onChainTrustScore)
       ? r.onChainTrustScore
       : null,
+    reputationBreakdown: normalizeReputationBreakdown(r.reputationBreakdown),
     effectiveReputationScore: typeof r.effectiveReputationScore === 'number' && Number.isFinite(r.effectiveReputationScore)
       ? r.effectiveReputationScore
       : null,

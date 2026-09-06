@@ -13,6 +13,7 @@ import {
   adaptPeerFaultErrorResponse,
   buyerFault,
   computeOnChainReputationScore,
+  computeRoutingReputationScore,
   type ModelRoutingPreferences,
   type PeerInfo,
   type SerializedHttpResponse,
@@ -574,12 +575,12 @@ test('selectCandidatePeersForRouting can still include peers without service pro
 
 test('model-only request routes to the highest-ranked canonical service match', async () => {
   const lower = makePeer('a', ['anthropic'])
-  lower.reputationScore = 40
+  lower.onChainReputationScore = 40
   lower.providerServiceApiProtocols = {
     anthropic: { services: { 'Claude Opus 5': ['anthropic-messages'] } },
   }
   const higher = makePeer('b', ['anthropic'])
-  higher.reputationScore = 90
+  higher.onChainReputationScore = 90
   higher.providerServiceApiProtocols = {
     anthropic: { services: { 'opus-5': ['anthropic-messages'] } },
   }
@@ -824,7 +825,7 @@ test('model-only request applies a cached-input pricing reputation penalty', asy
 
 test('model-only cached-input pricing penalty does not bury a substantially stronger peer', async () => {
   const priced = makePeer('a', ['openai'])
-  priced.reputationScore = 20
+  priced.onChainReputationScore = 20
   priced.providerPricing = {
     openai: {
       defaults: { inputUsdPerMillion: 2, outputUsdPerMillion: 4 },
@@ -837,7 +838,7 @@ test('model-only cached-input pricing penalty does not bury a substantially stro
     openai: { services: { 'cache-model': ['openai-chat-completions'] } },
   }
   const unpriced = makePeer('b', ['openai'])
-  unpriced.reputationScore = 100
+  unpriced.onChainReputationScore = 100
   unpriced.providerServiceApiProtocols = {
     openai: { services: { 'cache-model': ['openai-chat-completions'] } },
   }
@@ -861,12 +862,12 @@ test('model-only cached-input pricing penalty does not bury a substantially stro
 
 test('model-only request keeps reputation ordering when cached-input pricing is absent for all peers', async () => {
   const lower = makePeer('a', ['openai'])
-  lower.reputationScore = 20
+  lower.onChainReputationScore = 20
   lower.providerServiceApiProtocols = {
     openai: { services: { 'no-cache-model': ['openai-chat-completions'] } },
   }
   const higher = makePeer('b', ['openai'])
-  higher.reputationScore = 100
+  higher.onChainReputationScore = 100
   higher.providerServiceApiProtocols = {
     openai: { services: { 'no-cache-model': ['openai-chat-completions'] } },
   }
@@ -981,12 +982,12 @@ test('model-only request uses the cheapest duplicate service advertised by one p
 
 test('antseed alias with a model-only default route uses automatic peer selection', async () => {
   const lower = makePeer('a', ['openai'])
-  lower.reputationScore = 40
+  lower.onChainReputationScore = 40
   lower.providerServiceApiProtocols = {
     openai: { services: { 'gpt-56-sol': ['openai-chat-completions'] } },
   }
   const higher = makePeer('b', ['openai'])
-  higher.reputationScore = 90
+  higher.onChainReputationScore = 90
   higher.providerServiceApiProtocols = {
     openai: { services: { 'openai-gpt-56-sol': ['openai-chat-completions'] } },
   }
@@ -1047,7 +1048,7 @@ test('model-only routing skips higher-reputation peers rejected by buyer policy'
 
 test('/models order and model-only dispatch use the same Price + Trust ranking', async () => {
   const cobaltRelay = makePeer('a', ['openai'])
-  cobaltRelay.reputationScore = 99
+  cobaltRelay.onChainReputationScore = 99
   cobaltRelay.providerPricing = {
     openai: { defaults: { inputUsdPerMillion: 1.88, outputUsdPerMillion: 9.38 } },
   }
@@ -1055,7 +1056,7 @@ test('/models order and model-only dispatch use the same Price + Trust ranking',
     openai: { services: { 'kimi-k3': ['openai-chat-completions'] } },
   }
   const emberRoute = makePeer('b', ['openai'])
-  emberRoute.reputationScore = 96
+  emberRoute.onChainReputationScore = 96
   emberRoute.providerPricing = {
     openai: { defaults: { inputUsdPerMillion: 0.9, outputUsdPerMillion: 2.7 } },
   }
@@ -1093,7 +1094,7 @@ test('/models order and model-only dispatch use the same Price + Trust ranking',
 
 test('Price + Trust routing falls back after the preferred cheaper peer fails', async () => {
   const cobaltRelay = makePeer('a', ['openai'])
-  cobaltRelay.reputationScore = 99
+  cobaltRelay.onChainReputationScore = 99
   cobaltRelay.providerPricing = {
     openai: { defaults: { inputUsdPerMillion: 1.88, outputUsdPerMillion: 9.38 } },
   }
@@ -1101,7 +1102,7 @@ test('Price + Trust routing falls back after the preferred cheaper peer fails', 
     openai: { services: { 'kimi-k3': ['openai-chat-completions'] } },
   }
   const emberRoute = makePeer('b', ['openai'])
-  emberRoute.reputationScore = 96
+  emberRoute.onChainReputationScore = 96
   emberRoute.providerPricing = {
     openai: { defaults: { inputUsdPerMillion: 0.9, outputUsdPerMillion: 2.7 } },
   }
@@ -2518,6 +2519,8 @@ test('parsePersistedPeers restores sellerContract into peer.metadata', () => {
 
 test('parsePersistedPeers restores external verification claims and results', () => {
   const verificationResults = {
+    externalHistory: { version: 1, identities: [{ kind: 'domain', claim: 'example.com', identityId: 'domain:example.com',
+      status: 'available', fetchedAtMs: NOW - 500, createdAtMs: NOW - 10 * 365.25 * 86_400_000 }] },
     verified: true,
     checkedAtMs: NOW - 500,
     domains: [
@@ -2553,6 +2556,8 @@ test('parsePersistedPeers restores external verification claims and results', ()
     domains: [{ domain: 'example.com', methods: ['dns-txt'] }],
   })
   assert.deepEqual(peer!.verificationResults, verificationResults)
+  assert.equal(computeRoutingReputationScore(peer!, NOW), 12)
+  assert.equal(computeRoutingReputationScore(peer!, NOW + 8 * 86_400_000), 0)
 })
 
 test('parsePersistedPeers leaves metadata undefined when sellerContract is absent', () => {

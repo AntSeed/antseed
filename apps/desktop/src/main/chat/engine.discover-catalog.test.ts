@@ -9,6 +9,21 @@ import {
 const venicePeerId = '9'.repeat(40);
 const flashPeerId = 'f'.repeat(40);
 
+test('persisted catalog recomputes public-history bootstrap without overwriting chain scores', () => {
+  const now = Date.now();
+  const catalog = buildChatServiceCatalogFromPersistedPeers({ discoveredPeers: [{
+    peerId: flashPeerId, providers: ['openai'], onChainReputationScore: 0,
+    providerServiceApiProtocols: { openai: { services: { 'example-model': ['openai-chat-completions'] } } },
+    verificationResults: { verified: true, checkedAtMs: now, domains: [],
+      github: [{ username: 'portfolio', repository: 'proof', peerId: flashPeerId, verified: true, checkedAtMs: now }],
+      externalHistory: { version: 1, identities: [{ kind: 'github', claim: 'portfolio', identityId: 'github:42',
+        status: 'available', fetchedAtMs: now, createdAtMs: now - 10 * 365.25 * 86_400_000,
+        projects: Array.from({ length: 10 }, (_, index) => ({ id: index + 1, name: `project-${index}`,
+          createdAtMs: now - 4 * 365.25 * 86_400_000, stars: 100, archived: false })) }] } },
+  }] });
+  assert.equal(catalog[0]?.effectiveReputationScore, 70);
+});
+
 function modelsPayload(): unknown {
   return {
     object: 'list',
